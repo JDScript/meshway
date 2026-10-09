@@ -61,6 +61,7 @@ impl Live {
             packet[20] == 0
                 && packet[21] == 0
                 && u16::from_be_bytes([packet[24], packet[25]]) == source
+                && u16::from_be_bytes([packet[26], packet[27]]) == self.tuple.sequence()
         } else {
             (protocol != 6 || packet.len() >= 40)
                 && u16::from_be_bytes([packet[20], packet[21]]) == destination
@@ -69,17 +70,18 @@ impl Live {
     }
 }
 
-pub(super) type View = Arc<RwLock<BTreeMap<u128, Live>>>;
+pub(super) type View = Arc<RwLock<BTreeMap<super::ExitIncarnation, Live>>>;
 
 struct Write {
-    incarnation: u128,
     packet: Vec<u8>,
     reply: oneshot::Sender<Result<()>>,
     authority: super::super::super::protection::Scope,
+    live: Live,
+    packet_guard: Box<dyn super::ExitSendGuard>,
 }
 
 struct Reply {
-    incarnation: u128,
+    incarnation: super::ExitIncarnation,
     packet: Vec<u8>,
     guard: Live,
     authority: super::super::super::protection::Scope,
@@ -87,7 +89,7 @@ struct Reply {
 
 /// A reverse-NAT packet still requires admission in the unique data-plane flow.
 pub struct ExitReply {
-    pub incarnation: u128,
+    pub incarnation: super::ExitIncarnation,
     pub packet: Vec<u8>,
 }
 
@@ -123,9 +125,10 @@ pub(super) struct Writer {
 impl Writer {
     pub async fn send(
         &self,
-        incarnation: u128,
         packet: Vec<u8>,
         authority: super::super::super::protection::Scope,
+        live: Live,
+        packet_guard: Box<dyn super::ExitSendGuard>,
     ) -> Result<()> {
         if self.stop.is_cancelled() {
             return Err(Error::Expired);
@@ -136,10 +139,11 @@ impl Writer {
         let (reply, result) = oneshot::channel();
         self.sender
             .try_send(Write {
-                incarnation,
                 packet,
                 reply,
                 authority,
+                live,
+                packet_guard,
             })
             .map_err(|error| match error {
                 mpsc::error::TrySendError::Full(_) => Error::Capacity,
@@ -181,14 +185,14 @@ impl Owner {
                     _ = stopping.cancelled() => break,
                     write = writes.recv() => {
                         let Some(write) = write else { break; };
-                        let guard = view.read().ok().and_then(|view| view.get(&write.incarnation).cloned());
-                        let result = match guard {
-                            Some(guard) if guard.valid() && write.authority.check().is_ok() && guard.tuple.matches(&write.packet) => {
+                        let guard = write.live;
+                        let result = match &guard {
+                            guard if guard.valid() && write.authority.check().is_ok() && guard.tuple.matches(&write.packet) => {
                                 tokio::select! { biased;
                                     _ = stopping.cancelled() => Err(Error::Expired),
                                     _ = guard.ended() => Err(Error::Expired),
                                     _ = write.authority.invalidated() => Err(Error::Expired),
-                                    result = tun.send(&write.packet) => result.map_err(Error::from),
+                                    result = super::guard::checked(write.packet_guard.as_ref(), tun.send(&write.packet)) => result.map_err(|_| Error::Expired).and_then(|result| result.map_err(Error::from)),
                                 }
                             }
                             _ => Err(Error::Expired),
@@ -297,7 +301,7 @@ mod tests {
         };
         sender
             .try_send(Reply {
-                incarnation: 1,
+                incarnation: super::super::ExitIncarnation::new([1; 32]),
                 packet: vec![1],
                 guard: guard.clone(),
                 authority: shared.bootstrap(),
@@ -308,18 +312,21 @@ mod tests {
         next.retired = CancellationToken::new();
         sender
             .try_send(Reply {
-                incarnation: 2,
+                incarnation: super::super::ExitIncarnation::new([2; 32]),
                 packet: vec![2],
                 guard: next.clone(),
                 authority: shared.bootstrap(),
             })
             .unwrap_or_else(|_| panic!("queue capacity"));
-        assert_eq!(reader.recv().await.unwrap().incarnation, 2);
+        assert_eq!(
+            reader.recv().await.unwrap().incarnation,
+            super::super::ExitIncarnation::new([2; 32])
+        );
         let mut expired = next.clone();
         expired.gate_until = Instant::now();
         sender
             .try_send(Reply {
-                incarnation: 3,
+                incarnation: super::super::ExitIncarnation::new([3; 32]),
                 packet: vec![3],
                 guard: expired,
                 authority: shared.bootstrap(),
@@ -327,7 +334,7 @@ mod tests {
             .unwrap_or_else(|_| panic!("queue capacity"));
         sender
             .try_send(Reply {
-                incarnation: 4,
+                incarnation: super::super::ExitIncarnation::new([4; 32]),
                 packet: vec![4],
                 guard: next,
                 authority: shared.bootstrap(),

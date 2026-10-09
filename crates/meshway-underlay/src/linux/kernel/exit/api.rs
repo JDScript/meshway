@@ -2,7 +2,7 @@
 /// the already-admitted first packet, not a claim that conntrack exists yet.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ProjectionAck {
-    pub incarnation: u128,
+    pub incarnation: super::ExitIncarnation,
 }
 
 /// Second-stage result. Failure is returned only after the qualification has
@@ -10,10 +10,10 @@ pub struct ProjectionAck {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CtConfirmation {
     Confirmed {
-        incarnation: u128,
+        incarnation: super::ExitIncarnation,
         conntrack_id: u32,
     },
     ConfirmFailed {
-        incarnation: u128,
+        incarnation: super::ExitIncarnation,
     },
 }

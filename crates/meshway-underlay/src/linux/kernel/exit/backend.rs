@@ -26,7 +26,7 @@ pub(super) struct Backend {
     pub commands: Commands,
     pub routing: Routing,
     pub view: View,
-    pub live: BTreeMap<u128, Live>,
+    pub live: BTreeMap<super::ExitIncarnation, Live>,
     pub local: Vec<Ipv4Addr>,
     pub stop: CancellationToken,
 }
@@ -62,7 +62,30 @@ impl Backend {
         backend.store.persist(&backend.ledger).await?;
         backend.verify().await?;
         if !backend.ledger.quarantine.is_empty() {
-            let batch = json!({"nftables": [backend.ledger.program.element("add", "quarantine", backend.ledger.quarantine.iter().map(conntrack::Tuple::key).collect())]});
+            let elements: Vec<_> = ["quarantine", "echo_quarantine"]
+                .into_iter()
+                .filter_map(|name| {
+                    let values: Vec<_> = backend
+                        .ledger
+                        .quarantine
+                        .iter()
+                        .filter(|tuple| tuple.set() == name)
+                        .map(conntrack::RetiredTuple::key)
+                        .collect();
+                    (!values.is_empty())
+                        .then(|| backend.ledger.program.element("add", name, values))
+                })
+                .collect();
+            let batch = json!({"nftables": elements});
+            objects::mutate(&mut backend.commands, &batch).await?;
+        }
+        if !backend.ledger.legacy_quarantine.is_empty() {
+            let set = if backend.ledger.program.legacy {
+                "quarantine"
+            } else {
+                "legacy_quarantine"
+            };
+            let batch = json!({"nftables": [backend.ledger.program.element("add", set, backend.ledger.legacy_quarantine.iter().map(conntrack::Tuple::key).collect())]});
             objects::mutate(&mut backend.commands, &batch).await?;
         }
         backend
@@ -83,20 +106,22 @@ impl Backend {
         )
         .await?;
         let dump = objects::dump(&mut self.commands, &self.ledger.program).await?;
-        let key = format!("inet/{}/set/flows", self.ledger.program.filter());
         let mut seen = Vec::new();
-        for element in dump.elements.get(&key).into_iter().flatten() {
-            let key = element_key(element);
-            if seen.contains(&key)
-                || !self
-                    .ledger
-                    .projections
-                    .iter()
-                    .any(|flow| !flow.retired && flow.tuple.key() == *key)
-            {
-                return Err(Error::Conflict);
+        for name in ["flows", "echo_flows"] {
+            let key = format!("inet/{}/set/{name}", self.ledger.program.filter());
+            for element in dump.elements.get(&key).into_iter().flatten() {
+                let key = element_key(element);
+                if seen.contains(&key)
+                    || !self
+                        .ledger
+                        .projections
+                        .iter()
+                        .any(|flow| !flow.retired && flow.tuple.key() == *key)
+                {
+                    return Err(Error::Conflict);
+                }
+                seen.push(key);
             }
-            seen.push(key);
         }
         if self
             .live
@@ -109,11 +134,14 @@ impl Backend {
     }
     pub async fn install(
         &mut self,
-        incarnation: u128,
+        incarnation: super::ExitIncarnation,
         tuple: OriginalTuple,
         deadline: Deadline,
         scope: ExitScope,
     ) -> Result<ProjectionAck> {
+        if self.ledger.program.legacy {
+            return Err(Error::Expired);
+        }
         if self.stop.is_cancelled() || !deadline.valid() || scope.revoked.is_cancelled() {
             return Err(Error::Expired);
         }
@@ -127,10 +155,11 @@ impl Backend {
             }
             return Ok(ProjectionAck { incarnation });
         }
-        if incarnation == 0
+        if incarnation.is_zero()
             || self.ledger.projections.len() >= HISTORY
             || self.live.len() >= CAPACITY
             || self.ledger.quarantine.len()
+                + self.ledger.legacy_quarantine.len()
                 + self
                     .ledger
                     .projections
@@ -156,12 +185,25 @@ impl Backend {
         self.verify().await?;
         // A mark-owned entry without this incarnation's journal binding is not
         // adoptable either. Install replay above retains the existing binding.
-        if conntrack::lookup_owned(&mut self.commands, tuple, self.ledger.program.mark)
-            .await
-            .map_err(|_| Error::Conflict)?
-            .is_some()
+        if let Some(entry) =
+            conntrack::lookup_owned(&mut self.commands, tuple, self.ledger.program.mark)
+                .await
+                .map_err(|_| Error::Conflict)?
         {
-            return Err(Error::Conflict);
+            let shared = matches!(tuple.transport, super::ExitTransport::IcmpEcho { .. })
+                && self
+                    .live
+                    .values()
+                    .any(|live| live.valid() && live.tuple.same_connection(tuple))
+                && self
+                    .ledger
+                    .projections
+                    .iter()
+                    .filter(|flow| !flow.retired && flow.tuple.same_connection(tuple))
+                    .all(|flow| flow.ct.as_ref().is_none_or(|ct| ct == &entry));
+            if !shared {
+                return Err(Error::Conflict);
+            }
         }
         self.ledger.pending = true;
         self.ledger.projections.push(Projection {
@@ -183,7 +225,7 @@ impl Backend {
             .await?;
         let seconds = timeout(&deadline)?;
         let submitted = Instant::now();
-        let batch = json!({"nftables": [self.ledger.program.element("add", "flows", vec![timed(tuple, seconds)])]});
+        let batch = json!({"nftables": [self.ledger.program.element("add", tuple.set(), vec![timed(tuple, seconds)])]});
         objects::mutate(&mut self.commands, &batch).await?;
         self.verify_element(tuple, true).await?;
         let gate_until = submitted + Duration::from_secs(seconds);
@@ -211,7 +253,7 @@ impl Backend {
         self.store.persist(&self.ledger).await?;
         Ok(ProjectionAck { incarnation })
     }
-    pub async fn confirm(&mut self, incarnation: u128) -> Result<CtConfirmation> {
+    pub async fn confirm(&mut self, incarnation: super::ExitIncarnation) -> Result<CtConfirmation> {
         let live = self.live.get(&incarnation).cloned().ok_or(Error::Expired)?;
         let until = (Instant::now() + Duration::from_secs(3))
             .min(live.deadline.expires_at())
@@ -268,7 +310,7 @@ impl Backend {
     }
     pub async fn renew(
         &mut self,
-        incarnation: u128,
+        incarnation: super::ExitIncarnation,
         deadline: Deadline,
         scope: ExitScope,
     ) -> Result<ProjectionAck> {
@@ -310,9 +352,13 @@ impl Backend {
         self.ledger.pending = true;
         self.store.persist(&self.ledger).await?;
         let seconds = seconds.min(timeout(&deadline)?);
+        if !old.valid() {
+            self.close_projection(incarnation).await?;
+            return Err(Error::Expired);
+        }
         let submitted = Instant::now();
         // An expired old element makes DELETE fail and aborts the entire batch.
-        let batch = json!({"nftables": [self.ledger.program.element("delete", "flows", vec![old.tuple.key()]), self.ledger.program.element("add", "flows", vec![timed(old.tuple, seconds)])]});
+        let batch = json!({"nftables": [self.ledger.program.element("delete", old.tuple.set(), vec![old.tuple.key()]), self.ledger.program.element("add", old.tuple.set(), vec![timed(old.tuple, seconds)])]});
         if objects::mutate(&mut self.commands, &batch).await.is_err() {
             self.close_projection(incarnation).await?;
             return Err(Error::Expired);
@@ -320,6 +366,7 @@ impl Backend {
         self.verify_element(old.tuple, true).await?;
         let gate_until = submitted + Duration::from_secs(seconds);
         if self.stop.is_cancelled()
+            || !old.valid()
             || scope.revoked.is_cancelled()
             || !deadline.valid()
             || Instant::now() >= gate_until
@@ -355,7 +402,11 @@ impl Backend {
         if dump.objects != expected.objects || dump.handles != expected.handles {
             return Err(Error::Conflict);
         }
-        let key = format!("inet/{}/set/flows", self.ledger.program.filter());
+        let key = format!(
+            "inet/{}/set/{}",
+            self.ledger.program.filter(),
+            self.ledger.program.flow_set(tuple)
+        );
         let matches = dump
             .elements
             .get(&key)
@@ -368,7 +419,7 @@ impl Backend {
         }
         Ok(())
     }
-    pub async fn close_projection(&mut self, incarnation: u128) -> Result<()> {
+    pub async fn close_projection(&mut self, incarnation: super::ExitIncarnation) -> Result<()> {
         if let Some(live) = self.live.remove(&incarnation) {
             live.retired.cancel();
         }
@@ -394,7 +445,11 @@ impl Backend {
         if dump.objects != expected.objects || dump.handles != expected.handles {
             return Err(Error::Conflict);
         }
-        let key = format!("inet/{}/set/flows", self.ledger.program.filter());
+        let key = format!(
+            "inet/{}/set/{}",
+            self.ledger.program.filter(),
+            self.ledger.program.flow_set(tuple)
+        );
         if dump
             .elements
             .get(&key)
@@ -402,13 +457,13 @@ impl Backend {
             .flatten()
             .any(|value| element_key(value) == &tuple.key())
         {
-            let _result = objects::mutate(&mut self.commands, &json!({"nftables": [self.ledger.program.element("delete", "flows", vec![tuple.key()])]})).await;
+            let _result = objects::mutate(&mut self.commands, &json!({"nftables": [self.ledger.program.element("delete", tuple.set(), vec![tuple.key()])]})).await;
         }
         self.verify_element(tuple, false).await?;
         self.ledger.pending = false;
         self.store.persist(&self.ledger).await
     }
-    pub async fn retire(&mut self, incarnation: u128) -> Result<()> {
+    pub async fn retire(&mut self, incarnation: super::ExitIncarnation) -> Result<()> {
         self.close_projection(incarnation).await?;
         let record = self
             .ledger
@@ -429,28 +484,47 @@ impl Backend {
             }) {
                 return Err(Error::Conflict);
             }
-            if !self.ledger.quarantine.contains(&entry.reply) {
-                if self.ledger.quarantine.len() >= HISTORY {
-                    return Err(Error::Capacity);
+            let retired = conntrack::RetiredTuple {
+                tuple: entry.reply.clone(),
+                sequence: record.tuple.sequence(),
+            };
+            if self.ledger.program.legacy {
+                if !self.ledger.legacy_quarantine.contains(&entry.reply) {
+                    self.ledger.legacy_quarantine.push(entry.reply.clone());
                 }
-                self.ledger.quarantine.push(entry.reply.clone());
+                self.store.persist(&self.ledger).await?;
+                objects::mutate(&mut self.commands, &json!({"nftables": [self.ledger.program.element("add", "quarantine", vec![entry.reply.key()])]})).await?;
+            } else {
+                if !self.ledger.quarantine.contains(&retired) {
+                    if self.ledger.quarantine.len() + self.ledger.legacy_quarantine.len() >= HISTORY
+                    {
+                        return Err(Error::Capacity);
+                    }
+                    self.ledger.quarantine.push(retired.clone());
+                }
+                self.ledger
+                    .projections
+                    .iter_mut()
+                    .find(|flow| flow.incarnation == incarnation)
+                    .ok_or(Error::Journal)?
+                    .ct = Some(entry.clone());
+                self.store.persist(&self.ledger).await?;
+                objects::mutate(&mut self.commands, &json!({"nftables": [self.ledger.program.element("add", retired.set(), vec![retired.key()])]})).await?;
             }
-            self.ledger
-                .projections
-                .iter_mut()
-                .find(|flow| flow.incarnation == incarnation)
-                .ok_or(Error::Journal)?
-                .ct = Some(entry.clone());
-            self.store.persist(&self.ledger).await?;
-            objects::mutate(&mut self.commands, &json!({"nftables": [self.ledger.program.element("add", "quarantine", vec![entry.reply.key()])]})).await?;
-            conntrack::delete(
-                &mut self.commands,
-                record.tuple,
-                &entry,
-                self.ledger.program.mark,
-            )
-            .await
-            .map_err(|_| Error::Netlink)?;
+            let shared = self
+                .live
+                .values()
+                .any(|live| live.valid() && live.tuple.same_connection(record.tuple));
+            if !shared {
+                conntrack::delete(
+                    &mut self.commands,
+                    record.tuple,
+                    &entry,
+                    self.ledger.program.mark,
+                )
+                .await
+                .map_err(|_| Error::Netlink)?;
+            }
         }
         self.ledger
             .projections
@@ -468,7 +542,7 @@ impl Backend {
     }
     /// Reconcile a failed/cancelled admitted operation before accepting another
     /// request. A lost caller cannot leave a positive kernel qualification.
-    pub async fn failed(&mut self, incarnation: u128) -> Result<()> {
+    pub async fn failed(&mut self, incarnation: super::ExitIncarnation) -> Result<()> {
         if self
             .ledger
             .projections
@@ -528,6 +602,10 @@ impl Backend {
             || dump
                 .elements
                 .get(&format!("{prefix}/flows"))
+                .is_some_and(|elements| !elements.is_empty())
+            || dump
+                .elements
+                .get(&format!("{prefix}/echo_flows"))
                 .is_some_and(|elements| !elements.is_empty())
             || !closed.is_some_and(|elements| {
                 elements.len() == 2

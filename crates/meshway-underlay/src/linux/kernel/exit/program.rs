@@ -8,6 +8,8 @@ pub(super) const HISTORY: usize = 4096;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Program {
+    #[serde(default)]
+    pub legacy: bool,
     pub installation: String,
     pub interface: u32,
     pub interface_name: String,
@@ -73,13 +75,37 @@ impl Program {
         for (family, name) in self.tables() {
             out.push(json!({"create": {"table": {"family": family, "name": name, "comment": format!("meshway-exit:{}:{}:{:08x}", self.installation, self.interface, self.mark)}}}));
         }
-        for (name, timed) in [("flows", true), ("quarantine", false)] {
-            let mut set = json!({"family": "inet", "table": self.filter(), "name": name, "type": ["ipv4_addr", "ipv4_addr", "inet_proto", "inet_service", "inet_service"], "size": HISTORY});
+        for (name, timed) in [
+            ("flows", true),
+            ("quarantine", false),
+            ("echo_flows", true),
+            ("echo_quarantine", false),
+        ] {
+            if self.legacy && name.starts_with("echo_") {
+                continue;
+            }
+            let kind = if name.starts_with("echo_") {
+                json!(["ipv4_addr", "ipv4_addr", "inet_service", "mark"])
+            } else {
+                json!([
+                    "ipv4_addr",
+                    "ipv4_addr",
+                    "inet_proto",
+                    "inet_service",
+                    "inet_service"
+                ])
+            };
+            let mut set = json!({"family": "inet", "table": self.filter(), "name": name, "type": kind, "size": HISTORY});
             if timed {
                 set["flags"] = json!(["timeout"]);
                 set["timeout"] = json!(1);
             }
             out.push(json!({"add": {"set": set}}));
+        }
+        if !self.legacy {
+            out.push(json!({"add": {"set": {"family": "inet", "table": self.filter(), "name": "legacy_quarantine", "type": ["ipv4_addr", "ipv4_addr", "inet_proto", "inet_service", "inet_service"], "size": HISTORY}}}));
+            // Old journals did not retain ICMP sequence. Their known wire
+            // tuples remain broad negative tombstones; never infer a sequence.
         }
         out.push(json!({"add": {"set": {"family": "inet", "table": self.filter(), "name": "closing", "type": "mark", "size": 2}}}));
         out.push(json!({"add": {"set": {"family": "inet", "table": self.filter(), "name": "mesh", "type": "ipv4_addr", "flags": ["interval"], "elem": self.pools.iter().map(|pool| json!({"prefix": {"addr": pool.network().to_string(), "len": pool.prefix_len()}})).collect::<Vec<_>>()}}}));
@@ -177,6 +203,18 @@ impl Program {
             ],
         ));
         let active = || eq(original("original"), json!("@flows"));
+        if !self.legacy {
+            for chain in ["route", "forward", "final"] {
+                out.push(self.rule(
+                    chain,
+                    vec![
+                        self.owned(),
+                        eq(original("reply"), json!("@legacy_quarantine")),
+                        json!({"drop": null}),
+                    ],
+                ));
+            }
+        }
         let direction = |name| eq(ct("direction"), json!(name));
         // Route preparation grants no CT ownership. The only first assignment
         // occurs at FORWARD for a qualified NEW connection with a clear bit.
@@ -255,9 +293,104 @@ impl Program {
             ));
         }
         out.push(json!({"add": {"rule": {"family": "ip", "table": self.nat(), "chain": "postrouting", "expr": [self.owned(), direction("original"), self.ingress(), {"masquerade": null}]}}}));
+        let out: Vec<_> = out
+            .into_iter()
+            .flat_map(|rule| {
+                if self.legacy {
+                    vec![rule]
+                } else {
+                    sequence_rules(rule, self.mark)
+                }
+            })
+            .collect();
         json!({"nftables": out})
     }
     pub fn close_gate(&self) -> Value {
-        json!({"nftables": [self.element("add", "closing", vec![json!(0), json!(self.mark)]), {"flush": {"set": {"family": "inet", "table": self.filter(), "name": "flows"}}}]})
+        let mut commands = vec![
+            self.element("add", "closing", vec![json!(0), json!(self.mark)]),
+            json!({"flush": {"set": {"family": "inet", "table": self.filter(), "name": "flows"}}}),
+        ];
+        if !self.legacy {
+            commands.push(json!({"flush": {"set": {"family": "inet", "table": self.filter(), "name": "echo_flows"}}}));
+        }
+        json!({"nftables": commands})
     }
+    pub fn flow_set(&self, tuple: super::OriginalTuple) -> &'static str {
+        if self.legacy { "flows" } else { tuple.set() }
+    }
+}
+
+fn sequence_rules(rule: Value, mark: u32) -> Vec<Value> {
+    let Some(expressions) = rule.pointer("/add/rule/expr").and_then(Value::as_array) else {
+        return vec![rule];
+    };
+    if !expressions
+        .iter()
+        .any(|expr| expr.pointer("/match/right").and_then(Value::as_str) == Some("@flows"))
+    {
+        return vec![rule];
+    }
+    let mut ordinary = rule.clone();
+    ordinary
+        .pointer_mut("/add/rule/expr")
+        .and_then(Value::as_array_mut)
+        .expect("generated rule")
+        .insert(0, relation("!=", ct("protocol"), json!(1)));
+    let mut echo = rule;
+    let original = echo
+        .pointer_mut("/add/rule/expr")
+        .and_then(Value::as_array_mut)
+        .expect("generated rule");
+    let mut checks = vec![
+        eq(ct("protocol"), json!(1)),
+        eq(
+            json!({"payload": {"protocol": "icmp", "field": "type"}}),
+            json!({"set": [0, 8]}),
+        ),
+    ];
+    let mut lookups = Vec::new();
+    let mut actions = Vec::new();
+    for mut expression in std::mem::take(original) {
+        if let Some(name) = expression
+            .pointer("/match/right")
+            .and_then(Value::as_str)
+            .filter(|name| matches!(*name, "@flows" | "@quarantine"))
+            .map(str::to_owned)
+        {
+            let tuple = expression
+                .pointer_mut("/match/left/concat")
+                .and_then(Value::as_array_mut)
+                .expect("generated tuple");
+            tuple.remove(4);
+            tuple.remove(2);
+            tuple.push(meta("mark"));
+            expression["match"]["right"] = json!(format!("@echo_{}", &name[1..]));
+            lookups.push(expression);
+        } else if expression.get("match").is_some() {
+            checks.push(expression);
+        } else if expression
+            .pointer("/mangle/key/meta/key")
+            .and_then(Value::as_str)
+            != Some("mark")
+        {
+            actions.push(expression);
+        }
+    }
+    // Pinned nft JSON lacks a 16-bit integer set type. A width-32 raw read
+    // provides a typed mark register for sequence lookup inside this rule.
+    // Reject unknown incoming mark bits; restore the owned routing bit before
+    // every successful return. A failed lookup reaches the mandatory private
+    // owner/ingress drop, so no RPDB or foreign hook observes the scratch value.
+    checks.push(eq(meta("mark"), json!({"set": [0, mark]})));
+    checks.push(json!({"mangle": {"key": meta("mark"), "value": {"payload": {"base": "th", "offset": 32, "len": 32}}}}));
+    checks.push(json!({"mangle": {"key": meta("mark"), "value": {"&": [meta("mark"), 65535]}}}));
+    checks.extend(lookups);
+    let at = actions
+        .iter()
+        .position(|action| action.get("return").is_some())
+        .unwrap_or(actions.len());
+    actions.insert(at, json!({"mangle": {"key": meta("mark"), "value": mark}}));
+    checks.extend(actions);
+    *original = checks;
+    vec![ordinary, echo]
 }

@@ -41,7 +41,7 @@ pub(super) async fn conflicts(
     };
     assert!(
         backend
-            .install(100, tuple, deadline(clock, 30_000), scope.clone())
+            .install(id(100), tuple, deadline(clock, 30_000), scope.clone())
             .await
             .is_err()
     );
@@ -65,7 +65,7 @@ pub(super) async fn conflicts(
             .success
     );
     backend
-        .install(100, tuple, deadline(clock, 30_000), scope.clone())
+        .install(id(100), tuple, deadline(clock, 30_000), scope.clone())
         .await
         .unwrap();
     assert!(
@@ -84,8 +84,10 @@ pub(super) async fn conflicts(
             .is_err()
     );
     assert_eq!(
-        backend.confirm(100).await.unwrap(),
-        CtConfirmation::ConfirmFailed { incarnation: 100 }
+        backend.confirm(id(100)).await.unwrap(),
+        CtConfirmation::ConfirmFailed {
+            incarnation: id(100)
+        }
     );
     assert_eq!(
         conntrack::lookup(&mut backend.commands, tuple)
@@ -103,7 +105,7 @@ pub(super) async fn conflicts(
             .unwrap()
             .success
     );
-    backend.retire(100).await.unwrap();
+    backend.retire(id(100)).await.unwrap();
     let revoked = OriginalTuple {
         transport: ExitTransport::Udp {
             source_port: 17101,
@@ -112,7 +114,7 @@ pub(super) async fn conflicts(
         ..tuple
     };
     backend
-        .install(101, revoked, deadline(clock, 30_000), scope.clone())
+        .install(id(101), revoked, deadline(clock, 30_000), scope.clone())
         .await
         .unwrap();
     scope.revoked.cancel();
@@ -126,7 +128,7 @@ pub(super) async fn conflicts(
     assert!(
         backend
             .renew(
-                101,
+                id(101),
                 deadline(clock, 30_000),
                 ExitScope {
                     binding: scope.binding,
@@ -136,7 +138,53 @@ pub(super) async fn conflicts(
             .await
             .is_err()
     );
+    let racing = OriginalTuple {
+        transport: ExitTransport::Udp {
+            source_port: 17110,
+            destination_port: tuple.fields().2,
+        },
+        ..tuple
+    };
+    let original = ExitScope {
+        binding: Digest::from_bytes([12; 32]),
+        revoked: CancellationToken::new(),
+    };
+    backend
+        .install(id(110), racing, deadline(clock, 30_000), original.clone())
+        .await
+        .unwrap();
+    tun.send(&udp(racing, b"renew-before-revocation"))
+        .await
+        .unwrap();
+    assert!(matches!(
+        backend.confirm(id(110)).await.unwrap(),
+        CtConfirmation::Confirmed { .. }
+    ));
+    tokio::time::timeout(Duration::from_secs(2), recv_ipv4(tun, &mut packet))
+        .await
+        .unwrap()
+        .unwrap();
+    let mut renewal = Box::pin(backend.renew(
+        id(110),
+        deadline(clock, 30_000),
+        ExitScope {
+            binding: original.binding,
+            revoked: CancellationToken::new(),
+        },
+    ));
+    assert!(futures_util::poll!(renewal.as_mut()).is_pending());
+    original.revoked.cancel();
+    assert!(renewal.await.is_err());
+    tun.send(&udp(racing, b"revoked-during-renew"))
+        .await
+        .unwrap();
+    assert!(
+        tokio::time::timeout(Duration::from_millis(150), recv_ipv4(tun, &mut packet))
+            .await
+            .is_err()
+    );
+    backend.retire(id(110)).await.unwrap();
     println!(
-        "X3_CONFLICTS=wrong-mark-install,unowned-established-drop,confirm-failed,foreign-ct-retained,revoked-renew-rejected"
+        "X3_CONFLICTS=wrong-mark-install,unowned-established-drop,confirm-failed,foreign-ct-retained,revoked-renew-rejected,revoked-during-renew-rejected"
     );
 }

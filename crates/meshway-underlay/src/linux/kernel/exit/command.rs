@@ -5,14 +5,14 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub(super) const BUDGET: Duration = Duration::from_secs(2);
+pub(in crate::linux::kernel) const BUDGET: Duration = Duration::from_secs(2);
 const LIMIT: usize = 2 * 1024 * 1024;
 // The worker owns this permit, so dropping and recreating a probe cannot bypass
 // the process limit while an abandoned blocking operation is still being reaped.
 static PROCESS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
 
 #[derive(Clone, Copy)]
-pub(super) enum Tool {
+pub(in crate::linux::kernel) enum Tool {
     Nft,
     Conntrack,
 }
@@ -27,7 +27,7 @@ impl Tool {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub(super) enum Failure {
+pub(in crate::linux::kernel) enum Failure {
     #[error("kernel tool I/O failed")]
     Io(#[from] std::io::Error),
     #[error("kernel tool exceeded its resource budget")]
@@ -36,7 +36,7 @@ pub(super) enum Failure {
     Worker,
 }
 
-pub(super) struct Output {
+pub(in crate::linux::kernel) struct Output {
     pub success: bool,
     pub stdout: Vec<u8>,
     #[cfg(test)]
@@ -46,7 +46,7 @@ pub(super) struct Output {
 }
 
 #[derive(Default)]
-pub(super) struct Commands {
+pub(in crate::linux::kernel) struct Commands {
     pending: Option<tokio::task::JoinHandle<Result<Output, Failure>>>,
     fence: Option<super::child::Fence>,
 }
@@ -79,7 +79,10 @@ impl Commands {
         if self.pending.is_some() || input.len() > LIMIT || arguments.len() > 64 {
             return Err(Failure::Limit);
         }
-        let permit = PROCESS.try_acquire().map_err(|_| Failure::Limit)?;
+        let permit = tokio::time::timeout(BUDGET / 2, PROCESS.acquire())
+            .await
+            .map_err(|_| Failure::Limit)?
+            .map_err(|_| Failure::Worker)?;
         let end = Instant::now() + BUDGET;
         let fence = self.fence.clone();
         self.pending = Some(tokio::task::spawn_blocking(move || {

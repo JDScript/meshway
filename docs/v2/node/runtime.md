@@ -58,7 +58,7 @@ daemon／CLI 共用[运行日志参数](/v2/logging)，日志位于 stderr；CLI
 | --- | --- |
 | Linux Mesh-only | TUN capture、Native TCP／Native UDP 静态端点认证邻接、协调 UDP 穿透、双栈 UDP／TCP 多跳包流、持续续租和失效清理；验收状态见[验收范围](/v2/node/validation) |
 | DNS | 已接入 loopback 服务、精确 resolver 需求、resolved／显式文件代理；所有必需组件安装成功才可 applied，后端约束见[系统 DNS 安装](/v2/node/dataplane#系统-dns-安装) |
-| Exit／本机 egress | Linux Underlay 提供前置探测与 IPv4 出口角色／精确 NAT 投影 API；正常 Node 的自动装配、applied 与完整出口包流仍待集成验收。受管 IPv4／IPv6 egress capture、没有出口角色的非 Mesh permit、未由 DNS owner 持有的 local egress 或缺少明确 no-exit DNS 执行证明仍阻断安装 |
+| Exit／本机 egress | Linux Underlay 提供 live probe、IPv4 出口角色／精确 NAT 投影、源端默认 capture／IPv6 sink 与切换 API。携带外部 permit 的中继可安装 Mesh 资源，缺少出口角色时不能取得本机出口 writer。正常 Node 的自动装配、DNS 和完整 applied／包流仍待跨组件验收 |
 | 诊断 | `meshway ping` 与 Server observation tasks 共用获准测量器，见[路径诊断](/v2/node/diagnostics) |
 | 承载 | Manager 共用获准的 stream、Native UDP 静态端点和协调 UDP 穿透；会话与交接见[邻接管理](/v2/node/transport#邻接管理)，NAT 范围见[连接获取](/v2/node/connectivity) |
 | 其他平台／入口 | 非 Linux 的 tun 返回 unsupported；userspace（见[规划](#规划-userspace-networking)）、动态插件和切网尚未实现 |
@@ -73,31 +73,58 @@ Linux `Host::exit_probe` 在打开 Host 前执行，独占本进程的 Host 预�
 
 此前置探测成功仍为 `probing`，`supportedFamilies`／`installedFamilies` 为空。探测与下面的角色安装是不同操作，不能据此前置探测发布 `ready`／`applied`。宿主管理员预配置 forwarding 和提供工具／设备不等于完整出口功能已可用。
 
+已打开的 Host 使用 `probe_exit(&mut self, instance: InstanceId, target: ConfigurationRef) -> ExitCapability`。它使用真实、处于 up 状态的外部接口，排除所属 Mesh／出口 TUN 和 DNS 锚点；临时设备的精确 index 注册到同一 monitor，创建／删除不会制造外部切网事件。探测检查实际 TUN 权限、转发／反向路径条件、完整 IPv4 nft 程序和 conntrack 读取；排除经 owner 回读确认的自有表后，无法证明兼容的宿主阻断规则／旧 iptables 表返回 `firewallConflict`，未知 mark 修改／offload 返回 `ownershipConflict`，不改写宿主规则。
+
+live probe 成功返回 `ready` 和 `supportedFamilies=[ipv4]`，`installedFamilies` 仍为空；其含义是所报后端前置条件完成，不代替角色安装或业务连通证明。失败携带具体原因。返回值保留传入 instance／target 与本次真实 `observedAt`，X4 不需自行把 `probing` 改成 `ready`。
+
 ### IPv4 出口角色与 NAT 投影
 
-Linux `Host::install_exit_role(ExitRolePlan)` 消费当前执行快照中相同的出口职责，返回 `ExitRole`。资源仍归该 Host 的唯一 Kernel owner；角色使用独立非持久 TUN，不暴露 FD。crate 根导出 `ExitRole`、`ExitScope`、`OriginalTuple`、`ExitTransport`、`ProjectionAck`、`CtConfirmation`、`ExitReplyReader` 和 `ExitReply`。
+Linux `Host::install_exit_role(ExitRolePlan)` 消费当前执行快照中相同的出口职责，返回 `ExitRole`。资源仍归该 Host 的唯一 Kernel owner；角色使用独立非持久 TUN，不暴露 FD。crate 根导出 `ExitRole`、`ExitScope`、`ExitIncarnation`、`ExitSendGuard`、`Invalidated`、`OriginalTuple`、`ExitTransport`、`ProjectionAck`、`CtConfirmation`、`ExitReplyReader` 和 `ExitReply`。
 
 | 操作 | 行为 |
 | --- | --- |
 | `install(incarnation, original_tuple, deadline, scope)` | 拒绝已有冲突 CT／tuple／incarnation；安装精确 timed set 资格并回读，返回 `ProjectionAck`，此后才允许提交首包 |
-| `send(incarnation, packet)` | 有界入队；最终 TUN 写入重新检查原执行 guard、流截止、撤回状态和原 tuple |
+| `send(incarnation, packet, guard: impl ExitSendGuard)` | 每个排队包独立持有原 guard 与入队时的投影；每次 TUN 写 future 的 poll 前同步检查该 guard，再受原截止／撤回／tuple 约束；不使用最新 Live 投影替换排队包的权限 |
 | `confirm(incarnation)` | 首包产生 CT 后，按 IPv4 original tuple＋归属 mark 检查，返回 `CtConfirmation::Confirmed`；有界等待不超过三秒及流截止，缺失或冲突时先关闭资格，再返回 `ConfirmFailed`；清理失败返回错误 |
 | `renew(incarnation, deadline, scope)` | 仅在旧资格仍活、绑定相同且已确认 CT 身份仍一致时原子续期 timed set；不创建新的 CT，不复活过期投影 |
-| `retire_flow(incarnation)` | 先关闭资格和用户态输出，再按 family／original tuple／mark 精确删除 CT 并读回；随后释放不再共用的回程规则／路由 |
+| `retire_flow(incarnation)` | 先关闭该资格和用户态输出；其它活 ICMP sequence 仍引用同一 CT 时保留共享映射，最后一个引用退役后按 family／original tuple／mark 精确删除并读回；释放不再共用的回程规则／路由 |
 | `reply_reader()` | 单次取得独立回包 reader；`recv()` 返回 incarnation 与逆 NAT 包，排队期间继续保留原 guard；业务回复仍须通过唯一 dataplane 流表与原完整路径准入 |
 | `retire()` | 停止正向 I/O，关闭全部资格、清理 CT／回程资源，join TUN owner 后移除所属 nft 表；失败保留 journal 和拒绝边界 |
 
 `ExitScope` 携带生产者提供的授权／路径 binding 与不可逆撤回 token，不签发业务权限。原 tuple 仅支持 IPv4 TCP、UDP 和 ICMP echo；角色计划不能替代精确源地址、目的、服务和活 flow。投影当前最多 128 个活项，最多保留 4096 个 incarnation／tuple 历史及已知转换 tuple 的拒绝记录；容量耗尽拒绝新增。成功退役的原 tuple 在同一角色内也不复用，恢复后的旧转换 tuple 保留隔离。
 
+incarnation 的类型为 `ExitIncarnation`：`new([u8; 32])`／`bytes() -> [u8; 32]` 原样保留全部 32 字节，不截断成 `u128`。`ExitSendGuard: Send + Sync + 'static` 由 Underlay 定义，唯一方法为 `check(&self) -> std::result::Result<(), Invalidated>`；X4 用 X2 原包的 `exit_scope()` 实现，Underlay 不依赖 dataplane。
+
+`ExitTransport::IcmpEcho { identifier, sequence }` 按两字段独立投影。同 identifier 不同 sequence 可以共存并共享内核 CT；读回包也精确匹配 sequence，退役一个不会撤销另一个的资格。ICMP 使用独立 timed set；固定 nft 版本通过规则内的 32-bit 字读取、掩码和恢复实现 sequence 检查，未知输入 mark 拒绝，成功返回前恢复专用路由 bit，临时值不交给外部 hook／RPDB。这只实现内核资源共享，不增加业务流准入规则。
+
 角色安装使用 `inet meshway_exit_<installation>` 与 `ip meshway_exit_nat_<installation>` 私有表。只有独立 TUN ingress、Mesh 源、精确活投影、NEW 状态且归属 bit 尚未设置时，FORWARD 才设置 CT mark；已归属 NEW／ESTABLISHED／RELATED 必须继续匹配投影，未归属 ESTABLISHED 不接管。NEW 重传仍受同一资格约束。PREROUTING 只准备专用路由 bit，回程要求 reply direction／原 tuple／归属 mark；最终 postrouting 再检查资格。原方向执行 masquerade，回程 RPDB 将逆 NAT 后的源节点 `/32` 导向出口 TUN。正向绕过客户端 capture 的规则同时匹配出口 iif 与资格生成的 mark。
 
 Mesh 池、loopback、链路本地、组播、保留／广播及出口本机地址不能作为外部转发目的。IPv6 出口拒绝。宿主必须提供实际可用的 TUN／NET_ADMIN、固定路径 nft／conntrack、`ip_forward=1` 和已支持的 loose/off 反向路径校验；无法证明 mark 写入或 flow offload 不冲突时停装。**不要求或修改 `nf_conntrack_acct`**，计数不用于 CT 归属证明。宿主原有防火墙仍可拒绝包。
 
-所有 nft 变更通过结构化 JSON 原子批提交；工具每次两秒预算、输入和各输出管道各 2 MiB、进程并发与请求／包队列均有界。timeout 使用秒，按原单调／墙钟截止减去命令预算保守取整，实际资格可提前到期。ACK 不延长原 guard。取消或丢失响应后 join 并读回核验，不把工具被杀视作回滚。
+所有 nft 变更通过结构化 JSON 原子批提交；工具执行每次两秒预算，全局命令槽最多等待一秒，输入和各输出管道各 2 MiB，进程并发与请求／包队列均有界。timeout 使用秒，按原单调／墙钟截止减去预算保守取整，实际资格可提前到期。续期在异步检查后再次核验旧资格，ACK 不延长原 guard。取消或丢失响应后 join 并读回核验，不把工具被杀视作回滚。
 
 私有 `underlay-exit.json` 记录 boot／namespace、基础与出口 installation、节点／网络／职责、TUN 名称与 index／MTU、mark／回程表、精确 route/rule、nft handle 与规范规则、投影截止／CT 身份／隔离 tuple，以及 pending／closing／removed。`exit-child.json` 在工具执行前记录 PID／启动时间／namespace，阻止仍存活或不可判定的旧工具与恢复竞争。同 namespace 重启先核对资源并关闭旧投影、精确清除 CT；跨 namespace 记录归档，不操作原 namespace。所有权冲突保留证据并停装。
 
+出口 journal 当前为 v2，保存完整 incarnation 与 ICMP sequence。v1 只进入精确清理路径，不恢复活投影；旧 128-bit handle 完整保留用于追溯，旧记录没有 sequence 证据时保留较宽的转换 tuple 拒绝记录，不猜测 sequence 或放行重用。
+
 撤回 ACK 证明后续穿越资格门的包被拒绝；此前已通过最终过滤、排入 TUN／网卡的包无法追回。源端默认 capture、IPv6 sink、切换、出口 DNS 与正常 daemon 的整体验收状态以[验收范围](/v2/node/validation)为准。
+
+### 源端 egress capture 与切换
+
+`Host::install_egress_capture(EgressCapturePlan) -> Result<EgressCapture>` 复用当前客户端 TUN。它可以先于执行安装建立负向边界；尚无相同有效执行目标时返回非 active handle，不据此报告 applied。`Host::install` 在所需 capture 的负向边界准备后安装 TUN，并仅在当前快照与计划精确一致时激活正向捕获。中继的外部 permit 不要求本机 `exit_role`，也不授予本机 NAT writer。
+
+| API | 行为 |
+| --- | --- |
+| `EgressCapture::switch(new_plan)` | 原子建立旧／新范围并集的负向 OUTPUT 门，暂停正向捕获，准备新 RPDB／table／路由，再切换活动 TUN selector 并回读；当前执行必须认可新计划，失败保留负向边界 |
+| `EgressCapture::is_active()` | 计划已激活且当前执行仍有效；不代表业务许可或数据面已完成安装 |
+| `EgressCapture::plan()` | 当前记录的类型化计划副本 |
+| `EgressCapture::retire()` | 显式解除所属捕获；先暂停正向表，再精确移除 RPDB 与私有 OUTPUT 表，供明确 down／解除受管范围使用 |
+
+独立的私有 egress routing table 使用 `0.0.0.0/0 → 客户端 TUN`；查表规则仅覆盖编译后的 `managedIPv4`，`directIPv4`／`unmanagedIPv4` 不借最长前缀覆盖较早规则。每个受管范围有正向表缺失时的 unreachable 回退，IPv6 受管范围为 sink，Mesh 路由保持优先。范围列表必须规范、互斥且总数不超过 4096；还受实际可用 RPDB 槽和有界 journal／命令大小约束。
+
+捕获规则只匹配本机来源和非保护 mark。Server／peer 的受保护 socket 继续使用原宿主 RPDB，普通应用连接相同 IP 不获得豁免；出口 TUN 转发也不重新进入本机 capture。`inet meshway_egress_<installation>` 的 OUTPUT 门覆盖 local-table 广播等早于捕获查表的路径，防止其从外部接口直出。本机 local／loopback 服务保留；IPv6 ND 仅允许 type 133–137、hop limit 255、本机或未指定源的链路控制，保护新邻居解析，IPv6 TCP／UDP／echo 字面量不因此放行。
+
+`underlay-egress.json` 保存 boot／namespace、随机 installation、mark／table、计划、当前门与待提交门、设备标识、nft 规范对象／handle、精确 route/rule 及 removed。自有规则／路由变化注册到同一 monitor，不制造外部切网事件。暂停、执行失效和同 namespace 重启保留负向范围；TUN 消失不会落回 main direct。恢复先关闭旧活动 selector 并清理旧正向资源，只有新的有效执行安装可以重新激活；显式 down 才解除所属负向边界。
 
 IPC v5 的公开运行状态：
 

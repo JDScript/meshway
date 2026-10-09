@@ -23,25 +23,28 @@ use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
 enum Request {
+    Audit {
+        reply: oneshot::Sender<Result<Vec<(String, String)>>>,
+    },
     Install {
-        incarnation: u128,
+        incarnation: super::ExitIncarnation,
         tuple: OriginalTuple,
         deadline: Deadline,
         scope: ExitScope,
         reply: oneshot::Sender<Result<ProjectionAck>>,
     },
     Renew {
-        incarnation: u128,
+        incarnation: super::ExitIncarnation,
         deadline: Deadline,
         scope: ExitScope,
         reply: oneshot::Sender<Result<ProjectionAck>>,
     },
     Confirm {
-        incarnation: u128,
+        incarnation: super::ExitIncarnation,
         reply: oneshot::Sender<Result<CtConfirmation>>,
     },
     Retire {
-        incarnation: u128,
+        incarnation: super::ExitIncarnation,
         reply: oneshot::Sender<Result<()>>,
     },
 }
@@ -60,9 +63,14 @@ pub struct ExitRole {
 }
 
 impl ExitRole {
+    pub(in crate::linux::kernel) async fn audit(&self) -> Result<Vec<(String, String)>> {
+        let (reply, result) = oneshot::channel();
+        self.submit(Request::Audit { reply })?;
+        result.await.map_err(|_| Error::Worker)?
+    }
     pub async fn install(
         &self,
-        incarnation: u128,
+        incarnation: super::ExitIncarnation,
         original_tuple: OriginalTuple,
         deadline: Deadline,
         scope: ExitScope,
@@ -80,7 +88,7 @@ impl ExitRole {
     }
     pub async fn renew(
         &self,
-        incarnation: u128,
+        incarnation: super::ExitIncarnation,
         deadline: Deadline,
         scope: ExitScope,
     ) -> Result<ProjectionAck> {
@@ -101,12 +109,12 @@ impl ExitRole {
         })?;
         result.await.map_err(|_| Error::Worker)?
     }
-    pub async fn confirm(&self, incarnation: u128) -> Result<CtConfirmation> {
+    pub async fn confirm(&self, incarnation: super::ExitIncarnation) -> Result<CtConfirmation> {
         let (reply, result) = oneshot::channel();
         self.submit(Request::Confirm { incarnation, reply })?;
         result.await.map_err(|_| Error::Worker)?
     }
-    pub async fn retire_flow(&self, incarnation: u128) -> Result<()> {
+    pub async fn retire_flow(&self, incarnation: super::ExitIncarnation) -> Result<()> {
         if let Some(live) = self
             .view
             .read()
@@ -119,7 +127,12 @@ impl ExitRole {
         self.submit(Request::Retire { incarnation, reply })?;
         result.await.map_err(|_| Error::Worker)?
     }
-    pub async fn send(&self, incarnation: u128, packet: Vec<u8>) -> Result<()> {
+    pub async fn send(
+        &self,
+        incarnation: super::ExitIncarnation,
+        packet: Vec<u8>,
+        packet_guard: impl super::ExitSendGuard,
+    ) -> Result<()> {
         let live = self
             .view
             .read()
@@ -132,7 +145,9 @@ impl ExitRole {
             plan: self.plan.clone(),
         }
         .validate(live.tuple, &live.deadline)?;
-        self.writer.send(incarnation, packet, guard).await
+        self.writer
+            .send(packet, guard, live, Box::new(packet_guard))
+            .await
     }
     pub fn reply_reader(&self) -> Result<ExitReplyReader> {
         self.reader
@@ -251,6 +266,7 @@ impl Authority {
 
 pub(in crate::linux) struct Owner {
     pub role: ExitRole,
+    pub(in crate::linux::kernel) interface_name: String,
     task: tokio::task::JoinHandle<()>,
 }
 impl Owner {
@@ -347,7 +363,11 @@ impl super::super::Kernel {
         getrandom::fill(&mut random).map_err(|_| Error::Worker)?;
         let installation: String = random.iter().map(|byte| format!("{byte:02x}")).collect();
         let mut commands = Commands::default();
-        super::prerequisites::check(&mut commands).await?;
+        let mut owned = Vec::new();
+        if let Some(egress) = &self.egress {
+            owned.push(("inet".into(), egress.capture.audit().await?));
+        }
+        super::prerequisites::check(&mut commands, &owned).await?;
         let mut selected = None;
         for shift in 0..32 {
             let bit = 1u32 << ((shift + u32::from(random[0])) % 32);
@@ -398,7 +418,7 @@ impl super::super::Kernel {
         self.quiesce().await?;
         let (boot, namespace_device, namespace_inode) = super::super::journal::Journal::identity()?;
         let ledger = Ledger {
-            version: 1,
+            version: 2,
             boot,
             namespace_device,
             namespace_inode,
@@ -407,6 +427,7 @@ impl super::super::Kernel {
             node,
             plan: plan.clone(),
             program: Program {
+                legacy: false,
                 installation,
                 interface: tun.if_index()?,
                 interface_name: tun.name().to_owned(),
@@ -420,7 +441,10 @@ impl super::super::Kernel {
             routes: Vec::new(),
             receipt: None,
             projections: Vec::new(),
-            quarantine: prior.map_or_else(Vec::new, |ledger| ledger.quarantine),
+            quarantine: prior
+                .as_ref()
+                .map_or_else(Vec::new, |ledger| ledger.quarantine.clone()),
+            legacy_quarantine: prior.map_or_else(Vec::new, |ledger| ledger.legacy_quarantine),
             closing: false,
             removed: false,
             pending: true,
@@ -457,6 +481,7 @@ impl super::super::Kernel {
             plan,
         };
         let conflict = self.shared.conflict.clone();
+        let interface_name = backend.ledger.tun_name.clone();
         let shutdown = self.shared.tasks.stop.clone();
         let task = tokio::spawn(async move {
             let mut tick = tokio::time::interval(Duration::from_millis(100));
@@ -479,6 +504,10 @@ impl super::super::Kernel {
                     request = receiver.recv() => {
                         let Some(request) = request else { break; };
                         match request {
+                            Request::Audit { reply } => {
+                                let result = backend.verify().await.map(|()| backend.ledger.program.tables().into_iter().map(|(family, name)| (family.to_owned(), name)).collect());
+                                let ok = result.is_ok(); let _ = reply.send(result); if !ok { break; }
+                            },
                             Request::Install { incarnation, tuple, deadline, scope, reply } => {
                                 let guard = authority.validate(tuple, &deadline);
                                 let result = match &guard {
@@ -526,6 +555,7 @@ impl super::super::Kernel {
         });
         self.exit = Some(Owner {
             role: role.clone(),
+            interface_name,
             task,
         });
         installing.0 = None;

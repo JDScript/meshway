@@ -1,12 +1,17 @@
 //! Kernel-side exit resources. These projections never issue business authority.
 mod api;
 mod backend;
-mod child;
-mod command;
+pub(super) mod child;
+pub(super) mod command;
 mod conntrack;
+mod firewall;
+mod guard;
+mod incarnation;
 mod io;
+mod legacy;
+mod live_probe;
 mod nft;
-mod objects;
+pub(super) mod objects;
 pub(in crate::linux) mod owner;
 mod prerequisites;
 mod probe;
@@ -17,6 +22,8 @@ mod storage;
 mod tuple;
 
 pub use api::{CtConfirmation, ProjectionAck};
+pub use guard::{ExitSendGuard, Invalidated};
+pub use incarnation::ExitIncarnation;
 pub use io::{ExitReply, ExitReplyReader, ExitScope};
 pub use owner::ExitRole;
 pub use probe::ExitProbe;

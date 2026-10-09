@@ -1,5 +1,6 @@
 mod anchor;
 mod capture;
+pub(crate) mod egress;
 pub(crate) mod exit;
 mod journal;
 mod monitor;
@@ -50,6 +51,8 @@ pub(super) struct Kernel {
     baseline: Vec<Vec<u8>>,
     dns_cancel: CancellationToken,
     pub(super) exit: Option<exit::owner::Owner>,
+    probe: Option<exit::ExitProbe>,
+    egress: Option<egress::Owner>,
 }
 
 impl Kernel {
@@ -64,6 +67,7 @@ impl Kernel {
                     .iter()
                     .map(|anchor| anchor.identity.name.clone()),
             )
+            .chain(self.exit.iter().map(|owner| owner.interface_name.clone()))
             .collect()
     }
 
@@ -79,6 +83,13 @@ impl Kernel {
             failed.cancel();
         })?;
         exit::recovery::recover(&handle, directory.clone(), options.max_kernel_objects).await?;
+        egress::recover(
+            &handle,
+            directory.clone(),
+            options.max_kernel_objects,
+            false,
+        )
+        .await?;
         let monitor_socket = monitor::open()?;
         let (mut store, previous) = Store::open(directory).await?;
         let rules = get_rules(&handle, options.max_kernel_objects).await?;
@@ -178,6 +189,8 @@ impl Kernel {
             baseline,
             dns_cancel: CancellationToken::new(),
             exit: None,
+            probe: None,
+            egress: None,
         })
     }
 
@@ -195,12 +208,15 @@ impl Kernel {
             anchor::verify(&self.handle, anchor, self.options.max_kernel_objects).await?;
         }
         let mut rules = get_rules(&self.handle, self.options.max_kernel_objects).await?;
-        let exit_rules = self
-            .expected
-            .lock()
-            .map_err(|_| Error::Worker)?
-            .exit_rules
-            .clone();
+        let exit_rules = {
+            let expected = self.expected.lock().map_err(|_| Error::Worker)?;
+            expected
+                .exit_rules
+                .iter()
+                .chain(&expected.egress_rules)
+                .cloned()
+                .collect::<Vec<_>>()
+        };
         rules.retain(|rule| !exit_rules.contains(&encode_rule(rule.clone())));
         verify_rules(&self.journal, &rules)?;
         let mut foreign: Vec<_> = rules
@@ -302,18 +318,15 @@ impl Kernel {
         {
             return Err(Error::Target);
         }
-        if (cfg.exit_enabled && cfg.exit_role.is_none())
-            || cfg.egress_capture.default_capture
+        if cfg.egress_capture.default_capture
             || !cfg.egress_capture.managed_ipv4.is_empty()
             || !cfg.egress_capture.sink_ipv6.is_empty()
             || cfg.egress_capture.unavailable.is_some()
-            || (cfg.exit_role.is_none()
-                && cfg.permits.values().any(|permit| {
-                    !matches!(
-                        permit.target,
-                        meshway_configuration::execution::BusinessTarget::Mesh { .. }
-                    )
-                }))
+            || self.egress.is_some()
+        {
+            self.prepare_egress(cfg.egress_capture.clone()).await?;
+        }
+        if (cfg.exit_enabled && cfg.exit_role.is_none()) || cfg.egress_capture.unavailable.is_some()
         {
             return Err(Error::Target);
         }
@@ -340,6 +353,7 @@ impl Kernel {
         let addresses = cfg.addresses.clone();
         self.verify_capture(&pools).await?;
         if self.retain_tun(&snapshot, &pools, &addresses).await? {
+            self.resume_egress().await?;
             return Ok(());
         }
         self.verify().await?;
@@ -371,7 +385,8 @@ impl Kernel {
             // an interrupted netlink operation has an uncertain outcome.
             self.drop_owned_tun();
         }
-        outcome
+        outcome?;
+        self.resume_egress().await
     }
 
     /// A Control-issued direct publication successor may retain the host IP
@@ -682,6 +697,9 @@ impl Kernel {
 
     pub async fn suspend(&mut self) -> Result<()> {
         self.shared.suspend()?;
+        if let Some(owner) = &self.egress {
+            owner.capture.pause().await?;
+        }
         if let Some(mut exit) = self.exit.take() {
             exit.shutdown().await?;
         }
@@ -746,6 +764,22 @@ impl Kernel {
 
     pub async fn down(&mut self) -> Result<()> {
         self.suspend().await?;
+        if let Some(mut owner) = self.egress.take() {
+            owner.shutdown(true).await?;
+            self.quiesce().await?;
+            self.expected
+                .lock()
+                .map_err(|_| Error::Worker)?
+                .egress_table = None;
+        } else {
+            egress::recover(
+                &self.handle,
+                self.store.directory(),
+                self.options.max_kernel_objects,
+                true,
+            )
+            .await?;
+        }
         self.ready().await?;
         // Bypass and end are removed last; protected bootstrap continues through
         // the original RPDB throughout explicit cleanup.
@@ -798,6 +832,18 @@ impl Kernel {
 
     pub async fn settle(&mut self) -> Result<()> {
         self.store.settle().await
+    }
+    async fn resume_egress(&self) -> Result<()> {
+        if let Some(owner) = &self.egress {
+            owner.capture.switch(owner.capture.plan()).await?;
+        }
+        Ok(())
+    }
+    pub async fn finish_egress(&mut self) -> Result<()> {
+        if let Some(mut owner) = self.egress.take() {
+            owner.shutdown(false).await?;
+        }
+        Ok(())
     }
 
     async fn add_rule(&mut self, spec: RuleSpec) -> Result<()> {
@@ -990,7 +1036,7 @@ fn allocate(rules: &[RuleMessage], routes: &[RouteMessage], pool_limit: usize) -
         .min()
         .unwrap_or(32766)
         .min(32766);
-    let width = pool_limit as u32 * 2 + 2;
+    let width = pool_limit as u32 * 2 + 2 + 32;
     let reserved = exit::routing::RESERVED;
     if first <= width + reserved {
         return Err(Error::Conflict);

@@ -12,11 +12,14 @@ pub(super) async fn round_trips(
         revoked: CancellationToken::new(),
     };
     let echo = OriginalTuple {
-        transport: ExitTransport::IcmpEcho { identifier: 17102 },
+        transport: ExitTransport::IcmpEcho {
+            identifier: 17102,
+            sequence: 1,
+        },
         ..tuple
     };
     backend
-        .install(102, echo, deadline(clock, 30_000), scope.clone())
+        .install(id(102), echo, deadline(clock, 30_000), scope.clone())
         .await
         .unwrap();
     let mut body = vec![8, 0, 0, 0, 0x42, 0xce, 0, 1];
@@ -25,7 +28,7 @@ pub(super) async fn round_trips(
     body[2..4].copy_from_slice(&sum.to_be_bytes());
     tun.send(&ip(echo, &body)).await.unwrap();
     assert!(matches!(
-        backend.confirm(102).await.unwrap(),
+        backend.confirm(id(102)).await.unwrap(),
         CtConfirmation::Confirmed { .. }
     ));
     let mut packet = vec![0; 1280];
@@ -35,7 +38,66 @@ pub(super) async fn round_trips(
         .unwrap();
     assert_eq!(packet[20], 0);
     assert_eq!(&packet[24..size], &body[4..]);
-    backend.retire(102).await.unwrap();
+    let shared = OriginalTuple {
+        transport: ExitTransport::IcmpEcho {
+            identifier: 17102,
+            sequence: 2,
+        },
+        ..echo
+    };
+    backend
+        .install(id(104), shared, deadline(clock, 30_000), scope.clone())
+        .await
+        .unwrap();
+    let old_ct = conntrack::lookup_owned(&mut backend.commands, echo, backend.ledger.program.mark)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut second = body.clone();
+    second[6..8].copy_from_slice(&2u16.to_be_bytes());
+    second[2..4].fill(0);
+    let sum = checksum(&second);
+    second[2..4].copy_from_slice(&sum.to_be_bytes());
+    tun.send(&ip(shared, &second)).await.unwrap();
+    assert!(
+        matches!(backend.confirm(id(104)).await.unwrap(), CtConfirmation::Confirmed { conntrack_id, .. } if conntrack_id == old_ct.id)
+    );
+    tokio::time::timeout(Duration::from_secs(2), recv_ipv4(tun, &mut packet))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(&packet[26..28], &2u16.to_be_bytes());
+    backend.retire(id(102)).await.unwrap();
+    assert_eq!(
+        conntrack::lookup_owned(&mut backend.commands, shared, backend.ledger.program.mark)
+            .await
+            .unwrap()
+            .unwrap()
+            .id,
+        old_ct.id
+    );
+    tun.send(&ip(echo, &body)).await.unwrap();
+    assert!(
+        tokio::time::timeout(Duration::from_millis(150), recv_ipv4(tun, &mut packet))
+            .await
+            .is_err()
+    );
+    tun.send(&ip(shared, &second)).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(2), recv_ipv4(tun, &mut packet))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(&packet[26..28], &2u16.to_be_bytes());
+    backend.retire(id(104)).await.unwrap();
+    assert!(
+        conntrack::lookup_owned(&mut backend.commands, shared, backend.ledger.program.mark)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    println!(
+        "X3C_ICMP=identifier-and-sequence,shared-ct-retained,retired-sequence-drops,last-retirement-clears-ct"
+    );
 
     let tcp = OriginalTuple {
         transport: ExitTransport::Tcp {
@@ -45,12 +107,12 @@ pub(super) async fn round_trips(
         ..tuple
     };
     backend
-        .install(103, tcp, deadline(clock, 30_000), scope)
+        .install(id(103), tcp, deadline(clock, 30_000), scope)
         .await
         .unwrap();
     tun.send(&segment(tcp, 1000, 0, 2, &[])).await.unwrap();
     assert!(matches!(
-        backend.confirm(103).await.unwrap(),
+        backend.confirm(id(103)).await.unwrap(),
         CtConfirmation::Confirmed { .. }
     ));
     tokio::time::timeout(Duration::from_secs(2), recv_ipv4(tun, &mut packet))
@@ -78,7 +140,7 @@ pub(super) async fn round_trips(
         response,
         format!("from={external_source}|x3-tcp").as_bytes()
     );
-    backend.retire(103).await.unwrap();
+    backend.retire(id(103)).await.unwrap();
     assert!(
         conntrack::lookup_owned(&mut backend.commands, tcp, backend.ledger.program.mark)
             .await

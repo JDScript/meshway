@@ -18,6 +18,7 @@ pub enum ExitTransport {
     },
     IcmpEcho {
         identifier: u16,
+        sequence: u16,
     },
 }
 
@@ -41,13 +42,36 @@ impl OriginalTuple {
                 source_port,
                 destination_port,
             } => (17, source_port, destination_port),
-            ExitTransport::IcmpEcho { identifier } => (1, identifier, 0x0800),
+            ExitTransport::IcmpEcho { identifier, .. } => (1, identifier, 0x0800),
         }
     }
 
     pub(super) fn key(self) -> serde_json::Value {
         let (protocol, source, destination) = self.fields();
-        serde_json::json!({"concat": [self.source.to_string(), self.destination.to_string(), protocol, source, destination]})
+        if protocol == 1 {
+            serde_json::json!({"concat": [self.source.to_string(), self.destination.to_string(), source, self.sequence()]})
+        } else {
+            serde_json::json!({"concat": [self.source.to_string(), self.destination.to_string(), protocol, source, destination]})
+        }
+    }
+    pub(super) fn set(self) -> &'static str {
+        if self.fields().0 == 1 {
+            "echo_flows"
+        } else {
+            "flows"
+        }
+    }
+
+    pub(super) fn sequence(self) -> u16 {
+        match self.transport {
+            ExitTransport::IcmpEcho { sequence, .. } => sequence,
+            _ => 0,
+        }
+    }
+    pub(super) fn same_connection(self, other: Self) -> bool {
+        self.source == other.source
+            && self.destination == other.destination
+            && self.fields() == other.fields()
     }
 
     pub(super) fn filter(self) -> Vec<String> {
@@ -101,6 +125,7 @@ impl OriginalTuple {
             packet[20] == 8
                 && packet[21] == 0
                 && u16::from_be_bytes([packet[24], packet[25]]) == source
+                && u16::from_be_bytes([packet[26], packet[27]]) == self.sequence()
         } else {
             (protocol != 6 || packet.len() >= 40)
                 && u16::from_be_bytes([packet[20], packet[21]]) == source

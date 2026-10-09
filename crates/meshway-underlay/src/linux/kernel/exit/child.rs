@@ -9,7 +9,7 @@ const FILE: &str = "exit-child.json";
 pub(super) const GATE: &str = "IFS= read -r gate && [ \"$gate\" = go ] && exec \"$@\"";
 
 #[derive(Clone)]
-pub(super) struct Fence {
+pub(in crate::linux::kernel) struct Fence {
     pub directory: Arc<Directory>,
     pub installation: String,
 }
@@ -70,7 +70,7 @@ impl Fence {
 
 /// No PID is killed during recovery. A matching still-live helper is a fence;
 /// a reused PID is not touched. A different PID namespace cannot prove absence.
-pub(super) fn settled(directory: &Directory) -> Result<()> {
+pub(in crate::linux::kernel) fn settled(directory: &Directory) -> Result<()> {
     let Some(file) = directory.file(FILE, false)? else {
         return Ok(());
     };

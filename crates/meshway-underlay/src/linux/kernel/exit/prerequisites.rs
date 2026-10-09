@@ -6,7 +6,7 @@ use std::io::Read;
 
 /// This backend cannot preserve opaque foreign mark writes or flow offload.
 /// Refusing installation preserves those rules rather than rewriting them.
-pub(super) async fn check(commands: &mut Commands) -> Result<()> {
+pub(super) async fn check(commands: &mut Commands, owned: &[(String, String)]) -> Result<()> {
     if sysctl("/proc/sys/net/ipv4/ip_forward")? != 1 {
         return Err(Error::Target);
     }
@@ -50,7 +50,25 @@ pub(super) async fn check(commands: &mut Commands) -> Result<()> {
     if rules.nftables.len() > 16384 {
         return Err(Error::Capacity);
     }
-    if rules.nftables.iter().any(conflicts) {
+    if rules
+        .nftables
+        .iter()
+        .filter(|item| {
+            !item.as_object().is_some_and(|object| {
+                object.values().any(|data| {
+                    let family = data.get("family").and_then(Value::as_str);
+                    let table = data
+                        .get("table")
+                        .or_else(|| data.get("name"))
+                        .and_then(Value::as_str);
+                    owned.iter().any(|(own_family, own_table)| {
+                        family == Some(own_family.as_str()) && table == Some(own_table.as_str())
+                    })
+                })
+            })
+        })
+        .any(conflicts)
+    {
         return Err(Error::Conflict);
     }
     if let Ok(text) = std::fs::read_to_string("/proc/net/ip_tables_names")

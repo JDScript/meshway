@@ -15,6 +15,10 @@ use std::{
 };
 use tokio_util::sync::CancellationToken;
 
+fn id(byte: u8) -> ExitIncarnation {
+    ExitIncarnation::new([byte; 32])
+}
+
 #[tokio::test]
 #[ignore = "requires isolated Linux exit/service veth namespaces and NET_ADMIN"]
 async fn exit_nat_udp_real_reply_qualification_confirm_retire_and_expiry() {
@@ -56,7 +60,7 @@ async fn exit_nat_udp_real_reply_qualification_confirm_retire_and_expiry() {
         .unwrap();
     assert!(previous.is_none());
     let ledger = storage::Ledger {
-        version: 1,
+        version: 2,
         boot,
         namespace_device,
         namespace_inode,
@@ -70,6 +74,7 @@ async fn exit_nat_udp_real_reply_qualification_confirm_retire_and_expiry() {
             nat: ExitNat::Masquerade,
         },
         program: program::Program {
+            legacy: false,
             installation: nonce.iter().map(|byte| format!("{byte:02x}")).collect(),
             interface: tun.if_index().unwrap(),
             interface_name: tun.name().to_owned(),
@@ -84,6 +89,7 @@ async fn exit_nat_udp_real_reply_qualification_confirm_retire_and_expiry() {
         receipt: None,
         projections: Vec::new(),
         quarantine: Vec::new(),
+        legacy_quarantine: Vec::new(),
         closing: false,
         removed: false,
         pending: true,
@@ -146,16 +152,16 @@ async fn exit_nat_udp_real_reply_qualification_confirm_retire_and_expiry() {
     };
     assert_eq!(
         backend
-            .install(1, tuple, initial_deadline, scope.clone())
+            .install(id(1), tuple, initial_deadline, scope.clone())
             .await
             .unwrap(),
-        ProjectionAck { incarnation: 1 }
+        ProjectionAck { incarnation: id(1) }
     );
     kernel.quiesce().await.unwrap();
     tun.send(&packet).await.unwrap();
     assert!(matches!(
-        backend.confirm(1).await.unwrap(),
-        CtConfirmation::Confirmed { incarnation: 1, .. }
+        backend.confirm(id(1)).await.unwrap(),
+        CtConfirmation::Confirmed { .. }
     ));
     println!(
         "X3_CT_CONFIRMED={}",
@@ -172,10 +178,10 @@ async fn exit_nat_udp_real_reply_qualification_confirm_retire_and_expiry() {
         format!("from={external_source}|x3-qualified").as_bytes()
     );
     backend
-        .renew(1, deadline(&clock, 30_000), scope.clone())
+        .renew(id(1), deadline(&clock, 30_000), scope.clone())
         .await
         .unwrap();
-    backend.retire(1).await.unwrap();
+    backend.retire(id(1)).await.unwrap();
     assert!(
         conntrack::lookup_owned(&mut backend.commands, tuple, mark)
             .await
@@ -192,7 +198,7 @@ async fn exit_nat_udp_real_reply_qualification_confirm_retire_and_expiry() {
     protocols::round_trips(&mut backend, &tun, tuple, &clock, &external_source).await;
     assert!(
         backend
-            .install(2, tuple, deadline(&clock, 30_000), scope.clone())
+            .install(id(2), tuple, deadline(&clock, 30_000), scope.clone())
             .await
             .is_err()
     );
@@ -204,7 +210,7 @@ async fn exit_nat_udp_real_reply_qualification_confirm_retire_and_expiry() {
         ..tuple
     };
     backend
-        .install(3, expiring, deadline(&clock, 5_000), scope)
+        .install(id(3), expiring, deadline(&clock, 5_000), scope)
         .await
         .unwrap();
     kernel.quiesce().await.unwrap();
@@ -224,7 +230,7 @@ async fn exit_nat_udp_real_reply_qualification_confirm_retire_and_expiry() {
     };
     backend
         .install(
-            4,
+            id(4),
             missing,
             deadline(&clock, 30_000),
             ExitScope {
@@ -235,8 +241,8 @@ async fn exit_nat_udp_real_reply_qualification_confirm_retire_and_expiry() {
         .await
         .unwrap();
     assert_eq!(
-        backend.confirm(4).await.unwrap(),
-        CtConfirmation::ConfirmFailed { incarnation: 4 }
+        backend.confirm(id(4)).await.unwrap(),
+        CtConfirmation::ConfirmFailed { incarnation: id(4) }
     );
     tun.send(&udp(missing, b"confirm-failed")).await.unwrap();
     assert!(
@@ -253,7 +259,7 @@ async fn exit_nat_udp_real_reply_qualification_confirm_retire_and_expiry() {
     };
     backend
         .install(
-            5,
+            id(5),
             crash,
             deadline(&clock, 30_000),
             ExitScope {
@@ -265,7 +271,7 @@ async fn exit_nat_udp_real_reply_qualification_confirm_retire_and_expiry() {
         .unwrap();
     tun.send(&udp(crash, b"crash-live")).await.unwrap();
     assert!(matches!(
-        backend.confirm(5).await.unwrap(),
+        backend.confirm(id(5)).await.unwrap(),
         CtConfirmation::Confirmed { .. }
     ));
     tokio::time::timeout(Duration::from_secs(2), recv_ipv4(&tun, &mut reply))
@@ -314,6 +320,7 @@ async fn exit_nat_udp_real_reply_qualification_confirm_retire_and_expiry() {
 
 mod adversarial;
 mod protocols;
+mod relay;
 
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -336,10 +343,17 @@ async fn exit_recovers_real_sigkill_live_ct_in_same_namespace() {
     let (store, prior) = storage::Store::open(directory.clone()).await.unwrap();
     let prior = prior.unwrap();
     assert!(!prior.removed && !prior.closing);
+    let expected = if prior.program.legacy {
+        let mut bytes = [0; 32];
+        bytes[31] = 5;
+        ExitIncarnation::new(bytes)
+    } else {
+        id(5)
+    };
     let record = prior
         .projections
         .iter()
-        .find(|flow| flow.incarnation == 5)
+        .find(|flow| flow.incarnation == expected)
         .unwrap();
     assert!(!record.retired && record.ct.is_some());
     let mut commands = command::Commands::default();

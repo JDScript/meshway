@@ -4,9 +4,10 @@ pub use traversal::{DatagramAuthorization, TraversalDatagram};
 mod dns;
 pub use datagram::{DatagramCandidate, ProtectedDatagram};
 mod kernel;
+pub use kernel::egress::EgressCapture;
 pub use kernel::exit::{
-    CtConfirmation, ExitReply, ExitReplyReader, ExitRole, ExitScope, ExitTransport, OriginalTuple,
-    ProjectionAck,
+    CtConfirmation, ExitIncarnation, ExitReply, ExitReplyReader, ExitRole, ExitScope,
+    ExitSendGuard, ExitTransport, Invalidated, OriginalTuple, ProjectionAck,
 };
 mod protection;
 mod proxy;
@@ -63,6 +64,19 @@ pub struct Host {
 }
 
 impl Host {
+    pub async fn install_egress_capture(
+        &mut self,
+        plan: meshway_configuration::execution::EgressCapturePlan,
+    ) -> Result<EgressCapture> {
+        self.kernel.install_egress_capture(plan).await
+    }
+    pub async fn probe_exit(
+        &mut self,
+        instance: meshway_model::InstanceId,
+        target: meshway_model::ConfigurationRef,
+    ) -> meshway_model::exit::ExitCapability {
+        self.kernel.probe_exit(instance, target).await
+    }
     /// Prepare the current Control-issued exit responsibility. Projection and CT
     /// confirmation are separate operations on the returned handle.
     pub async fn install_exit_role(
@@ -235,9 +249,11 @@ impl Host {
             self.kernel.down().await
         };
         let storage = self.kernel.settle().await;
+        let egress = self.kernel.finish_egress().await;
         let tasks = self.tasks.shutdown().await;
         cleanup?;
         storage?;
+        egress?;
         tasks
     }
 }

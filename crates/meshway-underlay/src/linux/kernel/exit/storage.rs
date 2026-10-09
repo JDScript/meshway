@@ -13,7 +13,7 @@ const LIMIT: usize = 2 * 1024 * 1024;
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Projection {
-    pub incarnation: u128,
+    pub incarnation: super::ExitIncarnation,
     pub slot: u32,
     pub tuple: OriginalTuple,
     pub expires_ms: u64,
@@ -41,7 +41,8 @@ pub(super) struct Ledger {
     pub receipt: Option<Receipt>,
     pub projections: Vec<Projection>,
     /// Translated tuples already emitted by a retired role. Never authority.
-    pub quarantine: Vec<super::conntrack::Tuple>,
+    pub quarantine: Vec<super::conntrack::RetiredTuple>,
+    pub legacy_quarantine: Vec<super::conntrack::Tuple>,
     pub closing: bool,
     pub removed: bool,
     pub pending: bool,
@@ -49,7 +50,7 @@ pub(super) struct Ledger {
 
 impl Ledger {
     fn validate(&self) -> Result<()> {
-        if self.version != 1
+        if self.version != 2
             || self.base_installation.len() != 32
             || self.program.installation.len() != 32
             || !self
@@ -69,12 +70,12 @@ impl Ledger {
             || self.rules.len() > 8192
             || self.routes.len() > 1024
             || self.projections.len() > super::program::HISTORY
-            || self.quarantine.len() > super::program::HISTORY
+            || self.quarantine.len() + self.legacy_quarantine.len() > super::program::HISTORY
         {
             return Err(Error::Journal);
         }
         for (index, projection) in self.projections.iter().enumerate() {
-            if projection.incarnation == 0
+            if projection.incarnation.is_zero()
                 || projection.slot == 0
                 || projection.slot as usize > super::program::HISTORY
                 || self.projections[..index].iter().any(|prior| {
@@ -122,7 +123,7 @@ impl Store {
             if bytes.len() > LIMIT {
                 return Err(Error::Journal);
             }
-            let ledger: Ledger = serde_json::from_slice(&bytes).map_err(|_| Error::Journal)?;
+            let ledger = super::legacy::decode(&bytes)?;
             let (boot, device, inode) = super::super::journal::Journal::identity()?;
             if ledger.boot != boot
                 || ledger.namespace_device != device

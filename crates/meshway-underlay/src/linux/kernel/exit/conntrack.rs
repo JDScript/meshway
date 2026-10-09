@@ -26,6 +26,29 @@ impl Tuple {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub(super) struct RetiredTuple {
+    pub tuple: Tuple,
+    pub sequence: u16,
+}
+impl RetiredTuple {
+    pub fn key(&self) -> serde_json::Value {
+        if self.tuple.protocol == 1 {
+            serde_json::json!({"concat": [self.tuple.source.to_string(), self.tuple.destination.to_string(), self.tuple.source_key, self.sequence]})
+        } else {
+            self.tuple.key()
+        }
+    }
+    pub fn set(&self) -> &'static str {
+        if self.tuple.protocol == 1 {
+            "echo_quarantine"
+        } else {
+            "quarantine"
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct Entry {
     pub id: u32,
     pub mark: u32,

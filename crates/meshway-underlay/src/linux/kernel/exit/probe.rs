@@ -9,18 +9,33 @@ use std::{io::Read, time::SystemTime};
 /// Owned probe operation. Keep this value until `finish` completes, even if the
 /// original requester is cancelled. No UID/capability bitmap stands in for I/O.
 pub struct ExitProbe {
+    pub(in crate::linux::kernel) owned_tables: Vec<(String, String)>,
     commands: Commands,
     pending_table: Option<String>,
     // Probe TUN events must not race an already running Host monitor.
-    _owner: super::super::super::HostOwner,
+    _owner: Option<super::super::super::HostOwner>,
+    monitor: Option<std::sync::Arc<std::sync::Mutex<super::super::monitor::Expected>>>,
 }
 
 impl ExitProbe {
     pub(in crate::linux) fn new(owner: super::super::super::HostOwner) -> Self {
         Self {
+            owned_tables: Vec::new(),
             commands: Commands::default(),
             pending_table: None,
-            _owner: owner,
+            _owner: Some(owner),
+            monitor: None,
+        }
+    }
+    pub(in crate::linux::kernel) fn live(
+        monitor: std::sync::Arc<std::sync::Mutex<super::super::monitor::Expected>>,
+    ) -> Self {
+        Self {
+            owned_tables: Vec::new(),
+            commands: Commands::default(),
+            pending_table: None,
+            _owner: None,
+            monitor: Some(monitor),
         }
     }
     /// Read-only host prerequisites and atomic, net-zero nft feature transaction.
@@ -37,11 +52,16 @@ impl ExitProbe {
         ExitCapability {
             instance_id,
             target,
-            supported_families: Vec::new(),
+            supported_families: if result.is_ok() && self.monitor.is_some() {
+                vec![meshway_model::exit::ExitFamily::Ipv4]
+            } else {
+                Vec::new()
+            },
             installed_families: Vec::new(),
             status: match result {
                 // Route/rule installation and precise conntrack deletion still
                 // require the Kernel owner's journaled resource transaction.
+                Ok(()) if self.monitor.is_some() => ExitStatus::Ready,
                 Ok(()) => ExitStatus::Probing,
                 Err(error) => ExitStatus::Unavailable {
                     reason: error.reason,
@@ -90,6 +110,9 @@ impl ExitProbe {
             .map_err(|_| Reason::ForwardingProbeFailed)?;
             reverse_path(all_rpf, rpf, all_mark, mark)?;
         }
+        if self.monitor.is_some() {
+            super::firewall::check(&mut self.commands, &self.owned_tables).await?;
+        }
         let _device = std::fs::OpenOptions::new()
             .read(true)
             .write(true)
@@ -97,6 +120,11 @@ impl ExitProbe {
             .map_err(|_| Reason::TunUnavailable)?;
         // Create a nonpersistent, unnumbered TUN. Success is the real NET_ADMIN
         // check; dropping the owned descriptor cannot delete an external device.
+        let mut monitor = self
+            .monitor
+            .as_ref()
+            .map(|state| state.lock().map_err(|_| Reason::OwnershipConflict))
+            .transpose()?;
         let tun = meshway_tun::Tun::create(
             meshway_tun::Options::new(1280).map_err(|_| Reason::TunUnavailable)?,
         )
@@ -106,6 +134,10 @@ impl ExitProbe {
             }
             _ => Reason::TunUnavailable,
         })?;
+        if let Some(state) = monitor.as_mut() {
+            state.probe_tun = Some(tun.if_index().map_err(|_| Reason::TunUnavailable)?);
+        }
+        drop(monitor);
         let ingress_rpf = read_sysctl(&format!("/proc/sys/net/ipv4/conf/{}/rp_filter", tun.name()))
             .map_err(|_| Reason::ForwardingProbeFailed)?;
         let ingress_mark = read_sysctl(&format!(
@@ -114,7 +146,6 @@ impl ExitProbe {
         ))
         .map_err(|_| Reason::ForwardingProbeFailed)?;
         reverse_path(all_rpf, ingress_rpf, all_mark, ingress_mark)?;
-        drop(tun);
         let mut random = [0u8; 16];
         getrandom::fill(&mut random).map_err(|_| Reason::NftUnavailable)?;
         let name = format!(
@@ -131,6 +162,31 @@ impl ExitProbe {
         // Both known failure and uncertain ACK reconcile before another tool.
         self.finish().await?;
         outcome?;
+        if self.monitor.is_some() {
+            let program = super::program::Program {
+                legacy: false,
+                installation: random.iter().map(|byte| format!("{byte:02x}")).collect(),
+                interface: tun.if_index().map_err(|_| Reason::TunUnavailable)?,
+                interface_name: tun.name().to_owned(),
+                mark: 1,
+                pools: vec![
+                    "100.96.0.0/11"
+                        .parse()
+                        .map_err(|_| Reason::NftUnavailable)?,
+                ],
+            };
+            let mut batch = program.create();
+            for (family, name) in program.tables() {
+                batch["nftables"]
+                    .as_array_mut()
+                    .expect("generated batch")
+                    .push(
+                        serde_json::json!({"delete": {"table": {"family": family, "name": name}}}),
+                    );
+            }
+            super::nft::submit(&mut self.commands, &batch).await?;
+        }
+        drop(tun);
         let output = self
             .commands
             .run(

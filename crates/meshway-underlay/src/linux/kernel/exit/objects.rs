@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct Receipt {
+pub(in crate::linux::kernel) struct Receipt {
     /// Object key includes the rule's order inside its chain.
     pub objects: BTreeMap<String, Value>,
     pub handles: BTreeMap<String, u64>,
@@ -23,7 +23,10 @@ struct Document {
     nftables: Vec<Value>,
 }
 
-pub(super) async fn mutate(commands: &mut Commands, batch: &Value) -> Result<Receipt> {
+pub(in crate::linux::kernel) async fn mutate(
+    commands: &mut Commands,
+    batch: &Value,
+) -> Result<Receipt> {
     let output = commands
         .run(
             Tool::Nft,
@@ -156,7 +159,7 @@ pub(super) async fn recover_create(commands: &mut Commands, program: &Program) -
     Ok(observed)
 }
 
-pub(super) fn decode(bytes: &[u8]) -> Result<Receipt> {
+pub(in crate::linux::kernel) fn decode(bytes: &[u8]) -> Result<Receipt> {
     let doc: Document = serde_json::from_slice(bytes).map_err(|_| Error::Journal)?;
     if doc.nftables.len() > 16384 {
         return Err(Error::Capacity);
@@ -303,6 +306,17 @@ fn normalize(value: &mut Value, program: Option<&Program>) -> Result<()> {
             }
         }
         Value::Object(values) => {
+            if values.get("payload").is_some_and(|payload| {
+                payload.get("protocol").and_then(Value::as_str) == Some("icmp")
+                    && payload.get("field").and_then(Value::as_str) == Some("gateway")
+            }) {
+                // nft delinearizes the 32-bit word at ICMP offset 4 as the
+                // union's gateway member, even when the rule admits only echo.
+                values.insert(
+                    "payload".into(),
+                    json!({"base": "th", "offset": 32, "len": 32}),
+                );
+            }
             for value in values.values_mut() {
                 normalize(value, program)?;
             }
