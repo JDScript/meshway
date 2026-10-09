@@ -45,6 +45,8 @@ auto 可用于空闲网络：Server 根据目标计算获准候选，执行端�
 
 Server 用相同的 access／topology／routing 与稳定 SubjectBindings 编译精确服务范围，然后只发布 `NodeConfiguration.diagnostics` 中的独立许可。该许可包含观察 ID、源实例、完整候选、服务范围、到期时间与认证原路回复语义；不会插入普通 `permits`、业务 `decisions` 或伪造 Node demand。source／中转／终点通过正常 Node configuration 拉取一致材料。源任务准备并不表示这些节点已安装，Node 结果仍须匹配真实实例、当前 publication 和执行 lease。
 
+netmap 链（实现中，Node 尚未切换）：Server 只在 source 当前 netmap 上用同一本地编译器判定——决定为 Permitted、服务在决定内且目标为该 Mesh 节点才接受，路径全部声明 `feature:path-observation` 为可观察，否则任务为 unsupported；Denied 与 unsupported 分开返回。创建、续租和取消都不写诊断需求、不编译、不产生 publication；续租只改订阅自身。Node `meshway ping` 的目标名在 source netmap 上解析。
+
 explicit 固定指定路径，不因故障绕过必经点。跟随某条已有业务流是另一个模式，当前不隐式加入；同源／目的可能有多条并存路径。
 
 ## 数据流

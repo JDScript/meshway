@@ -57,7 +57,8 @@ configured 的地址可以是配置中的域名加端口。interface／stun 必�
 - 排除 loopback、未指定、多播、广播、IPv4／IPv6 link-local、IPv4-mapped IPv6 及 Mesh 地址池（含自身 TUN 地址）。
 - 同 listener 地址去重后最多八个，保持确定顺序，端口来自实际 bind。
 - Server 按当前认证 instance、配置资源和报告新鲜度保存有界的临时编译投影；Server 重启后等待新 State，重复报告不续期。
-- 当前资源未变时，本机地址变化重新发布既有授权候选；安装期未采样报告不刷新旧地址期限。过期或资源／instance 变化后不再加入新的执行发布。
+- State 报告从不触发编译或执行发布：本机地址变化只更新该投影，由下一次因稳定输入（配置、库存、方案选择等）产生的执行发布并入；安装期未采样报告不刷新旧地址期限。过期或资源／instance 变化后不再加入新的执行发布。
+- netmap 链（实现中，Node 尚未切换）：同一报告写入 Server 的 peer 事实账本，经 `sync` 的 `peerFacts` 只送达当前 netmap 投影中可拨该 listener 的节点，不进入 `DialCandidate`，见[Netmap 设计](/v2/node/netmap-design#两条线)。
 - `DialCandidate.endpoints[].source` 为 `configured` 或 `local`，按这个顺序合并去重。无额外公告地址也可使用本机地址；STUN 仍走独立的 UDP 协调路径。
 
 本机接口的私网地址不保证 peer 可达。只有真实认证通道建立后，拨号方才报告 `acquisition.type=localEndpoint`；接受方仍报告 `acceptedInbound`。
