@@ -22,8 +22,7 @@ import { networkQuery } from "@/api/queries/network"
 import { nodesQuery } from "@/api/queries/nodes"
 import { CopyButton } from "@/components/chrome/copy-button"
 import { ConfirmDialog } from "@/components/chrome/glass-dialog"
-import { DangerRow, Section } from "@/components/chrome/section"
-import { Tile } from "@/components/chrome/tile"
+import { DangerRow } from "@/components/chrome/section"
 import {
   holdsDocument,
   holdsOperations,
@@ -37,6 +36,7 @@ import { attempts } from "@/state/attempts"
 import { draftOf, useConfigurationDraft } from "@/state/configuration-draft"
 
 import { algorithmLabel, purposeLabel, type KeyPurpose } from "../-labels"
+import { Card, Row, Rows } from "./-kit"
 
 /** A public key's hex, shortened for a tile; the copy button holds it whole. */
 const shortKey = (hex: string) => `${hex.slice(0, 12)}…${hex.slice(-12)}`
@@ -56,7 +56,7 @@ export function NodeManage({
   onDeleted: () => void
 }) {
   return (
-    <div className="flex flex-col gap-8">
+    <div className="flex flex-col gap-7">
       <NodeKey
         networkId={networkId}
         node={node}
@@ -139,14 +139,14 @@ function NodeKey({
   const hex = bound.publicKey.bytes
 
   return (
-    <Section
+    <Card
       title={label}
       action={
         canRevoke ? (
           <Button
             variant="ghost"
             size="sm"
-            className="-mr-3 h-8 rounded-full px-3 text-destructive hover:text-destructive"
+            className="-mr-2 rounded-full text-destructive hover:text-destructive"
             onClick={() => setConfirming(true)}
           >
             <BanIcon />
@@ -155,37 +155,32 @@ function NodeKey({
         ) : null
       }
     >
-      <div className="grid grid-cols-2 gap-2 xl:grid-cols-4">
-        <Tile label={m.nodes_key_algorithm()}>
-          {algorithmLabel[bound.publicKey.algorithm]}
-        </Tile>
-        <Tile label={m.nodes_key_generation()}>
-          <span className="tabular-nums">{bound.generation}</span>
-        </Tile>
-        <div className="col-span-2">
-          <Tile label={m.nodes_key_created_at()}>
-            {dateTime(createdAt) ?? "—"}
-          </Tile>
-        </div>
-        <div className="col-span-2">
-          <Tile
-            label={m.nodes_key_state()}
-            tone={revokedAt === null ? undefined : "warning"}
-          >
-            {revokedAt === null
-              ? m.nodes_key_valid()
-              : m.nodes_key_revoked_at({ at: dateTime(revokedAt) ?? "—" })}
-          </Tile>
-        </div>
-        <div className="col-span-2 xl:col-span-4">
-          <Tile
-            label={m.nodes_key_public()}
-            action={<CopyButton value={hex} label={m.nodes_key_public()} />}
-          >
-            <span className="font-mono font-normal">{shortKey(hex)}</span>
-          </Tile>
-        </div>
-      </div>
+      <Rows>
+        <Row
+          label={m.nodes_key_state()}
+          tone={revokedAt === null ? undefined : "warning"}
+        >
+          {revokedAt === null
+            ? m.nodes_key_valid()
+            : m.nodes_key_revoked_at({ at: dateTime(revokedAt) ?? "—" })}
+        </Row>
+        <Row
+          label={m.nodes_key_created_at()}
+          detail={m.nodes_key_kind({
+            algorithm: algorithmLabel[bound.publicKey.algorithm],
+            generation: String(bound.generation),
+          })}
+        >
+          {dateTime(createdAt) ?? "—"}
+        </Row>
+        <Row
+          label={m.nodes_key_public()}
+          mono
+          action={<CopyButton value={hex} label={m.nodes_key_public()} />}
+        >
+          {shortKey(hex)}
+        </Row>
+      </Rows>
       <ConfirmDialog
         open={confirming}
         onOpenChange={(open) => {
@@ -205,7 +200,7 @@ function NodeKey({
           m.nodes_key_revoke_effect_final(),
         ]}
       />
-    </Section>
+    </Card>
   )
 }
 
@@ -323,7 +318,7 @@ function Deletion({
   const ready = read !== undefined && !configuration.isFetching
 
   return (
-    <Section title={m.nodes_deletion()}>
+    <Card title={m.nodes_deletion()}>
       {deleting ? (
         <DangerRow
           fact={m.nodes_delete_in_draft()}
@@ -390,6 +385,6 @@ function Deletion({
           m.nodes_delete_effect_again(),
         ]}
       />
-    </Section>
+    </Card>
   )
 }

@@ -121,7 +121,7 @@ export function endpointSourceText(origin: EndpointSource): string {
 }
 
 /** An endpoint's source without its details (a coordinated attempt names only the kind). */
-const endpointKindLabel: Record<EndpointKind, () => string> = {
+export const endpointKindLabel: Record<EndpointKind, () => string> = {
   configured: () => m.state_endpoint_configured(),
   interface: () => m.state_endpoint_kind_interface(),
   stun: () => m.state_endpoint_kind_stun(),

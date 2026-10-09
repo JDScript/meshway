@@ -2,13 +2,6 @@ import type { AggregatedLink } from "@meshway/control-client"
 
 export type ConnectionStatus = "connected" | "connecting" | "failed" | "unknown"
 
-export const CONNECTION_STATUS_ORDER: readonly ConnectionStatus[] = [
-  "connected",
-  "connecting",
-  "failed",
-  "unknown",
-]
-
 type Pair = { a: string; b: string }
 export type NodePair<T> = Pair & { key: string; channels: T[] }
 

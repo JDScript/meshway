@@ -1,67 +1,98 @@
 import type { NodeInventoryView, StateView } from "@meshway/control-client"
+import type { UseQueryResult } from "@tanstack/react-query"
 
+import { failureText } from "@/api/failure"
 import { CopyButton } from "@/components/chrome/copy-button"
-import { FactList, FactRow } from "@/components/chrome/fact-list"
-import { Section } from "@/components/chrome/section"
 import { useNow } from "@/hooks/use-now"
 import { agoTime, dateTime } from "@/lib/format"
 import { fullReport, stateOf } from "@/lib/nodes/state-model"
 import { m } from "@/paraglide/messages.js"
 
-/** Registration and device facts, separate from everyday connection status. */
+import { Card, LoadingRow, Row, Rows } from "./-kit"
+
+/** Who the device belongs to, what it runs, and when it joined. */
 export function NodeDevice({
   node,
   state,
 }: {
   node: NodeInventoryView
-  state: StateView | undefined
+  state: UseQueryResult<StateView>
 }) {
-  const report = fullReport(stateOf(state, node.id))
+  const report = fullReport(stateOf(state.data, node.id))
   const now = useNow(1_000)
-  const facts = [
-    { label: m.nodes_id(), value: node.id, copy: true },
-    {
-      label:
-        node.identity.type === "tag"
-          ? m.nodes_identity_tags()
-          : m.nodes_identity_user(),
-      value:
-        node.identity.type === "tag"
-          ? node.identity.tags.join(", ")
-          : node.identity.user,
-    },
-    {
-      label: m.nodes_system_os(),
-      value: report ? `${report.system.os} · ${report.system.arch}` : null,
-    },
-    { label: m.nodes_system_agent(), value: report?.system.agentVersion },
-    { label: m.nodes_system_hostname(), value: report?.system.hostname },
-    {
-      label: m.nodes_system_selection(),
-      value: report
-        ? (report.selection.appliedProfile ?? m.nodes_system_selection_none())
-        : null,
-    },
-    {
-      label: m.nodes_registered(),
-      value: `${dateTime(node.registeredAt)} · ${agoTime(node.registeredAt, now)}`,
-    },
-  ]
+  const loading = state.data === undefined && !state.isError
+  const unreported =
+    state.data === undefined
+      ? (failureText(state.error) ?? m.nodes_state_failed())
+      : m.nodes_tile_unreported()
   return (
-    <Section title={m.nodes_facts()}>
-      <FactList>
-        {facts.map(({ label, value, copy }) => (
-          <FactRow
-            key={label}
-            label={label}
-            action={
-              copy && value ? <CopyButton label={label} value={value} /> : null
-            }
-          >
-            <span title={value ?? undefined}>{value ?? "—"}</span>
-          </FactRow>
-        ))}
-      </FactList>
-    </Section>
+    <Card title={m.nodes_facts()}>
+      <Rows>
+        <Row
+          label={
+            node.identity.type === "tag"
+              ? m.nodes_identity_tags()
+              : m.nodes_identity_user()
+          }
+        >
+          {node.identity.type === "tag"
+            ? node.identity.tags.join(", ")
+            : node.identity.user}
+        </Row>
+        {loading ? (
+          <>
+            <LoadingRow label={m.nodes_system_os()} />
+            <LoadingRow label={m.nodes_system_hostname()} />
+            <LoadingRow label={m.nodes_system_selection()} />
+          </>
+        ) : (
+          <>
+            <Row
+              label={m.nodes_system_os()}
+              tone={report ? undefined : "muted"}
+              detail={
+                report
+                  ? m.nodes_device_agent({
+                      version: report.system.agentVersion,
+                    })
+                  : undefined
+              }
+            >
+              {report
+                ? `${report.system.os} · ${report.system.arch}`
+                : unreported}
+            </Row>
+            <Row
+              label={m.nodes_system_hostname()}
+              tone={report ? undefined : "muted"}
+            >
+              {report?.system.hostname ?? unreported}
+            </Row>
+            <Row
+              label={m.nodes_system_selection()}
+              tone={report ? undefined : "muted"}
+            >
+              {report
+                ? (report.selection.appliedProfile ??
+                  m.nodes_system_selection_none())
+                : unreported}
+            </Row>
+          </>
+        )}
+        <Row
+          label={m.nodes_registered()}
+          detail={agoTime(node.registeredAt, now)}
+        >
+          {dateTime(node.registeredAt)}
+        </Row>
+        <Row
+          label={m.nodes_id()}
+          mono
+          action={<CopyButton label={m.nodes_id()} value={node.id} />}
+        >
+          {node.id}
+        </Row>
+      </Rows>
+    </Card>
   )
 }

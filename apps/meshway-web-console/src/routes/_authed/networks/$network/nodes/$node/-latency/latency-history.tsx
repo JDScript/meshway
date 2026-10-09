@@ -21,8 +21,8 @@ import { historyWindow, type WindowChoice } from "@/lib/history/window"
 import { m } from "@/paraglide/messages.js"
 
 import { ChartLegend } from "./chart-frame"
+import { EmptyChart } from "./empty-chart"
 import { LatencyChart } from "./latency-chart"
-import { ObservationPanel } from "./observation-panel"
 
 type Direction = "out" | "in"
 
@@ -38,7 +38,7 @@ const kindLabel: Record<Series["kind"], () => string> = {
  * or those sent to it, one series per peer, path, link, transport and kind.
  * It reads what the controller recorded; it never starts a measurement.
  */
-export function LatencyTab({
+export function LatencyHistory({
   networkId,
   nodeId,
 }: {
@@ -81,10 +81,8 @@ export function LatencyTab({
   const { query } = history
 
   return (
-    <div className="flex flex-col gap-6">
-      <ObservationPanel networkId={networkId} nodeId={nodeId} />
+    <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-2">
-        <h3 className="text-row font-medium">{m.history_tab()}</h3>
         <div className="flex flex-wrap items-center gap-2">
           <SegmentedControl
             size="sm"
@@ -128,9 +126,13 @@ export function LatencyTab({
           </div>
         )
       ) : series.length === 0 && history.complete ? (
-        <EmptyLine>
-          {direction === "out" ? m.history_none_out() : m.history_none_in()}
-        </EmptyLine>
+        <EmptyChart
+          title={
+            direction === "out" ? m.history_none_out() : m.history_none_in()
+          }
+        >
+          {m.history_none_hint()}
+        </EmptyChart>
       ) : (
         <div className="flex flex-col gap-8">
           {series.map((item) => (

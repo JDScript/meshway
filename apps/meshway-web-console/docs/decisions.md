@@ -605,27 +605,34 @@ states stay distinguishable by stroke and colour.
   support), and the rule it rests on with its carrier order. A globe cluster
   first lists its nodes. On phones the panel is a bottom sheet and the
   topology sits above it.
-- Node workspaces have four primary tabs: 概览 / Overview, 连接 / Connections,
-  诊断 / Diagnostics, 设置 / Settings.
-  - Overview prioritises Mesh DNS and IP addresses, network location,
-    connection summary and actionable reported problems. The header alone
-    carries node status. Configuration progress is a compact fact, not a
-    second health dashboard. Device metadata moves to Settings.
-  - Connections starts with peers, connection state and transport. How each
-    side acquired a channel and its supporting runtime details are revealed
-    on expansion.
+- Node workspaces have five tabs on one level, at the top: 概览 / Overview,
+  连接 / Connections, 诊断 / Diagnostics, 设置 / Settings, 设备与密钥 /
+  Device & keys. Earlier `?tab=` values open the tab that now holds their
+  content.
+  - Overview: four tiles summing up connections, latency, configuration and
+    place (each opens its tab), then Mesh DNS and IP addresses, network
+    location and actionable reported problems. The header alone carries
+    node status. Configuration progress is a compact fact, not a second
+    health dashboard.
+  - Connections: the direct neighbours (who, over what, since when, how
+    fast), then how other nodes reach it (its listeners and the addresses
+    they are reachable at). How each side acquired a channel, sockets and
+    candidates are revealed on expansion.
   - Diagnostics has separate entries for actual measurements (live and
     history), route checks against configuration/draft, and runtime details.
     Reported running paths are here too, never inferred by chaining links.
     A route check remains planning; a diagnostic reply proves the authorised
     Node round trip, not an application's TCP/UDP port health.
-  - Settings groups general settings, connection configuration, device
-    information and keys/deletion. Dialers and listeners are together under
-    connection configuration, described as active connection and accepting
-    connections. Protocol selection/inheritance and listener protocol/port
-    come first; listener bind overrides, TLS/WS and material editing are
-    expanded when needed. There is one owner for each editor and the existing
-    network configuration draft.
+  - Settings is what the configuration says of the node: general settings,
+    tags, Mesh addresses and connection configuration. Dialers and
+    listeners are together under connection configuration, described as
+    active connection and accepting connections. Protocol
+    selection/inheritance and listener protocol/port come first; listener
+    bind overrides, TLS/WS and material editing are expanded when needed.
+    There is one owner for each editor and the existing network
+    configuration draft.
+  - Device & keys: what the device reports of itself, its keys, and
+    deleting the node.
 - Public addresses stay visible even when there is only one. Repeated
   place/network metadata may be grouped while retaining every address;
   differing places or AS networks must remain distinguishable. An AS

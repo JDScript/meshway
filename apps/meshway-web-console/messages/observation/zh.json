@@ -1,6 +1,5 @@
 {
   "$schema": "https://inlang.com/schema/inlang-message-format",
-  "observation_title": "实时观察",
   "observation_reading": "正在读取节点",
   "observation_not_allowed": "你不能让此节点执行观察：成员只能从自己的 User 身份设备发起",
   "observation_target": "目标节点",

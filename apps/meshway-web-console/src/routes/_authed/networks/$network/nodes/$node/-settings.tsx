@@ -6,11 +6,12 @@ import type {
 } from "@meshway/control-client"
 import { cn } from "@meshway/ui/cn"
 import { useQuery } from "@tanstack/react-query"
-import { CheckIcon } from "lucide-react"
+import { CheckIcon, TagIcon } from "lucide-react"
 import type { ReactNode } from "react"
 
 import { failureText } from "@/api/failure"
 import { transportCatalogQuery } from "@/api/queries/nodes"
+import { EmptyState } from "@/components/chrome/empty-state"
 import { SwitchRow, TextField } from "@/components/chrome/form"
 import { EmptyLine, Section } from "@/components/chrome/section"
 import { SegmentedControl } from "@/components/chrome/segmented-control"
@@ -69,23 +70,25 @@ function addressExample(pool: string | undefined, family: "ipv4" | "ipv6") {
 }
 
 /**
- * The node's settings (nodes.md): hostname, remark, whether it runs and may
- * be an exit, its tags, its Mesh addresses and the dialers it uses. Edits
- * go to the configuration draft as typed operations; the commit bar
- * applies them with the rest of the draft.
+ * The node's settings (nodes.md) on one page: hostname, remark, whether it
+ * runs and may be an exit, its tags, its Mesh addresses, its listeners
+ * (`listeners`) and the dialers it uses. Edits go to the configuration
+ * draft as typed operations; the commit bar applies them with the rest of
+ * the draft.
  */
 export function NodeSettings({
   networkId,
   nodeId,
   network,
   onEditSource,
-  section,
+  listeners,
 }: {
   networkId: string
   nodeId: string
   network: NetworkSummary | null
   onEditSource: () => void
-  section: "general" | "connections"
+  /** The listeners' editor, placed before the dialers. */
+  listeners: ReactNode
 }) {
   const { state, change, discard } = useNodeConfiguration(
     networkId,
@@ -93,6 +96,10 @@ export function NodeSettings({
     network
   )
   const catalog = useQuery(transportCatalogQuery())
+  const offeredFailure =
+    catalog.isError && !catalog.data
+      ? (failureText(catalog.error) ?? m.nodes_catalog_failed())
+      : null
   const offered: DialerProtocol[] | null = catalog.data
     ? DIALER_PROTOCOLS.filter((protocol) =>
         catalog.data.items.some((item) => item.protocol === protocol)
@@ -101,7 +108,23 @@ export function NodeSettings({
 
   switch (state.kind) {
     case "loading":
-      return <Skeleton className="h-40 w-full rounded-tile" />
+      return (
+        <div
+          className="flex max-w-workspace flex-col gap-8"
+          aria-label={m.nodes_settings_basics()}
+        >
+          {[2, 1, 2].map((fields, index) => (
+            <div key={index} className="flex flex-col gap-3">
+              <Skeleton className="h-3 w-16 rounded-full" />
+              <div className="grid gap-4 sm:grid-cols-2">
+                {Array.from({ length: fields }, (_, field) => (
+                  <Skeleton key={field} className="h-10 rounded-tile" />
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )
     case "failed":
       return (
         <EmptyLine>
@@ -115,7 +138,7 @@ export function NodeSettings({
     case "member":
       return (
         <SettingsBody
-          section={section}
+          listeners={listeners}
           value={settingsBase(state.settings)}
           identity={state.settings.identity}
           tags={
@@ -128,6 +151,7 @@ export function NodeSettings({
           pools={null}
           defaults={null}
           offered={offered}
+          offeredFailure={offeredFailure}
           notes={[]}
           nodeId={nodeId}
           change={null}
@@ -153,7 +177,7 @@ export function NodeSettings({
             <EmptyLine>{m.nodes_settings_deleting()}</EmptyLine>
           ) : null}
           <SettingsBody
-            section={section}
+            listeners={listeners}
             value={value}
             identity={identity}
             tags={tagsOf(ops, base, nodeId)}
@@ -162,6 +186,7 @@ export function NodeSettings({
             pools={valueOf(ops, base, "addressPools")}
             defaults={dialerUpdate(base.defaults.dialers)}
             offered={offered}
+            offeredFailure={offeredFailure}
             notes={state.notes}
             nodeId={nodeId}
             change={state.editable && !deleted ? change : null}
@@ -175,7 +200,7 @@ export function NodeSettings({
 const identityless: AddressesValue = { ipv4: null, ipv6: null }
 
 function SettingsBody({
-  section,
+  listeners,
   value,
   identity,
   tags,
@@ -184,11 +209,12 @@ function SettingsBody({
   pools,
   defaults,
   offered,
+  offeredFailure,
   notes,
   nodeId,
   change,
 }: {
-  section: "general" | "connections"
+  listeners: ReactNode
   value: NodeSettingsValue
   identity: NodeIdentity
   /** The tags in the draft; null for a User identity no edit gives tags. */
@@ -200,6 +226,7 @@ function SettingsBody({
   /** The network's dialers; null when not readable (a member). */
   defaults: ReturnType<typeof dialerUpdate> | null
   offered: readonly DialerProtocol[] | null
+  offeredFailure: string | null
   notes: readonly Note[]
   nodeId: string
   /** null: read only. */
@@ -218,214 +245,215 @@ function SettingsBody({
 
   return (
     <div className="flex max-w-workspace flex-col gap-8">
-      {section === "general" ? (
-        <>
-          <Section title={m.nodes_settings_basics()}>
-            <div className="flex flex-col gap-4">
-              <div className="grid gap-4 sm:grid-cols-2">
+      <>
+        <Section title={m.nodes_settings_basics()}>
+          <div className="flex flex-col gap-4">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <TextField
+                id={field("hostname")}
+                name="hostname"
+                label={m.nodes_hostname()}
+                autoComplete="off"
+                autoCapitalize="none"
+                spellCheck={false}
+                maxLength={63}
+                className="font-mono"
+                placeholder="backend-1"
+                disabled={!editable}
+                invalid={refusedAt(notes, at("hostname"))}
+                value={value.hostname}
+                onChange={(event) =>
+                  setSettings({ ...value, hostname: event.target.value })
+                }
+              />
+              <TextField
+                id={field("remark")}
+                name="remark"
+                label={m.nodes_settings_remark()}
+                autoComplete="off"
+                maxLength={256}
+                placeholder={m.nodes_settings_remark_placeholder()}
+                disabled={!editable}
+                value={value.remark}
+                onChange={(event) =>
+                  setSettings({ ...value, remark: event.target.value })
+                }
+              />
+            </div>
+            <Notes notes={notesWithin(notes, at("hostname"))} />
+            <div className="grid gap-2 sm:grid-cols-2">
+              <SwitchRow
+                id={field("enabled")}
+                label={m.nodes_settings_enabled()}
+                checked={value.enabled}
+                disabled={!editable}
+                onCheckedChange={(enabled) =>
+                  setSettings({ ...value, enabled })
+                }
+              />
+              <SwitchRow
+                id={field("exit")}
+                label={m.nodes_settings_exit()}
+                checked={value.exitEnabled}
+                disabled={!editable}
+                onCheckedChange={(exitEnabled) =>
+                  setSettings({ ...value, exitEnabled })
+                }
+              />
+            </div>
+          </div>
+        </Section>
+
+        <Section
+          title={m.nodes_settings_identity()}
+          count={tags !== null ? tags.length : undefined}
+        >
+          <div className="flex flex-col gap-2">
+            {identity.type === "user" ? (
+              <Tile label={m.nodes_identity_user()}>{identity.user}</Tile>
+            ) : null}
+            {tagNames === null ? (
+              tags !== null ? (
+                <TagPills names={tags} chosen={tags} onToggle={null} />
+              ) : null
+            ) : tagNames.length === 0 ? (
+              <EmptyState
+                compact
+                icon={TagIcon}
+                title={m.nodes_add_tags_none()}
+              >
+                {m.nodes_tags_none_body()}
+              </EmptyState>
+            ) : (
+              <TagPills
+                names={[...new Set([...tagNames, ...(tags ?? [])])].sort()}
+                chosen={tags ?? []}
+                onToggle={
+                  editable
+                    ? (tag) => {
+                        const current = tags ?? []
+                        const next = current.includes(tag)
+                          ? current.filter((entry) => entry !== tag)
+                          : [...current, tag]
+                        setTags(
+                          identity.type === "user" && next.length === 0
+                            ? null
+                            : next
+                        )
+                      }
+                    : null
+                }
+              />
+            )}
+            {identity.type === "user" && tags !== null && tags.length > 0 ? (
+              <p className="text-meta text-warning">
+                {m.nodes_settings_identity_switch()}
+              </p>
+            ) : null}
+            <Notes notes={notesWithin(notes, at("identity"))} />
+          </div>
+        </Section>
+
+        <Section title={m.nodes_settings_addresses()}>
+          <div className="flex flex-col gap-2">
+            <div className="grid gap-4 sm:grid-cols-2">
+              {(["ipv4", "ipv6"] as const).map((family) => (
                 <TextField
-                  id={field("hostname")}
-                  name="hostname"
-                  label={m.nodes_hostname()}
+                  key={family}
+                  id={field(family)}
+                  name={family}
+                  label={family === "ipv4" ? "IPv4" : "IPv6"}
                   autoComplete="off"
                   autoCapitalize="none"
                   spellCheck={false}
-                  maxLength={63}
+                  maxLength={45}
                   className="font-mono"
-                  placeholder="backend-1"
+                  placeholder={addressExample(pools?.[family][0], family)}
                   disabled={!editable}
-                  invalid={refusedAt(notes, at("hostname"))}
-                  value={value.hostname}
-                  onChange={(event) =>
-                    setSettings({ ...value, hostname: event.target.value })
-                  }
-                />
-                <TextField
-                  id={field("remark")}
-                  name="remark"
-                  label={m.nodes_settings_remark()}
-                  autoComplete="off"
-                  maxLength={256}
-                  placeholder={m.nodes_settings_remark_placeholder()}
-                  disabled={!editable}
-                  value={value.remark}
-                  onChange={(event) =>
-                    setSettings({ ...value, remark: event.target.value })
-                  }
-                />
-              </div>
-              <Notes notes={notesWithin(notes, at("hostname"))} />
-              <div className="grid gap-2 sm:grid-cols-2">
-                <SwitchRow
-                  id={field("enabled")}
-                  label={m.nodes_settings_enabled()}
-                  checked={value.enabled}
-                  disabled={!editable}
-                  onCheckedChange={(enabled) =>
-                    setSettings({ ...value, enabled })
-                  }
-                />
-                <SwitchRow
-                  id={field("exit")}
-                  label={m.nodes_settings_exit()}
-                  checked={value.exitEnabled}
-                  disabled={!editable}
-                  onCheckedChange={(exitEnabled) =>
-                    setSettings({ ...value, exitEnabled })
-                  }
-                />
-              </div>
-            </div>
-          </Section>
-
-          <Section
-            title={m.nodes_settings_identity()}
-            count={tags !== null ? tags.length : undefined}
-          >
-            <div className="flex flex-col gap-2">
-              {identity.type === "user" ? (
-                <Tile label={m.nodes_identity_user()}>{identity.user}</Tile>
-              ) : null}
-              {tagNames === null ? (
-                tags !== null ? (
-                  <TagPills names={tags} chosen={tags} onToggle={null} />
-                ) : null
-              ) : tagNames.length === 0 ? (
-                <EmptyLine>{m.nodes_add_tags_none()}</EmptyLine>
-              ) : (
-                <TagPills
-                  names={[...new Set([...tagNames, ...(tags ?? [])])].sort()}
-                  chosen={tags ?? []}
-                  onToggle={
-                    editable
-                      ? (tag) => {
-                          const current = tags ?? []
-                          const next = current.includes(tag)
-                            ? current.filter((entry) => entry !== tag)
-                            : [...current, tag]
-                          setTags(
-                            identity.type === "user" && next.length === 0
-                              ? null
-                              : next
-                          )
-                        }
-                      : null
-                  }
-                />
-              )}
-              {identity.type === "user" && tags !== null && tags.length > 0 ? (
-                <p className="text-meta text-warning">
-                  {m.nodes_settings_identity_switch()}
-                </p>
-              ) : null}
-              <Notes notes={notesWithin(notes, at("identity"))} />
-            </div>
-          </Section>
-
-          <Section title={m.nodes_settings_addresses()}>
-            <div className="flex flex-col gap-2">
-              <div className="grid gap-4 sm:grid-cols-2">
-                {(["ipv4", "ipv6"] as const).map((family) => (
-                  <TextField
-                    key={family}
-                    id={field(family)}
-                    name={family}
-                    label={family === "ipv4" ? "IPv4" : "IPv6"}
-                    autoComplete="off"
-                    autoCapitalize="none"
-                    spellCheck={false}
-                    maxLength={45}
-                    className="font-mono"
-                    placeholder={addressExample(pools?.[family][0], family)}
-                    disabled={!editable}
-                    invalid={refusedAt(notes, at("addresses", family))}
-                    value={addresses[family] ?? ""}
-                    onChange={(event) => {
-                      const text = event.target.value.trim()
-                      setAddresses({
-                        ...addresses,
-                        [family]: text === "" ? null : text,
-                      })
-                    }}
-                  />
-                ))}
-              </div>
-              <p className="text-meta text-muted-foreground">
-                {pools
-                  ? m.nodes_settings_pools({
-                      pools:
-                        [...pools.ipv4, ...pools.ipv6].join(", ") ||
-                        m.nodes_settings_pools_none(),
+                  invalid={refusedAt(notes, at("addresses", family))}
+                  value={addresses[family] ?? ""}
+                  onChange={(event) => {
+                    const text = event.target.value.trim()
+                    setAddresses({
+                      ...addresses,
+                      [family]: text === "" ? null : text,
                     })
-                  : m.nodes_settings_addresses_empty()}
-              </p>
-              <Notes notes={notesWithin(notes, at("addresses"))} />
+                  }}
+                />
+              ))}
             </div>
-          </Section>
-        </>
-      ) : (
-        <Section title={m.nodes_settings_dialers()}>
-          <div className="flex flex-col gap-3">
-            {editable ? (
-              <SegmentedControl<DialerMode>
-                label={m.nodes_settings_dialers()}
-                value={mode}
-                options={[
-                  { value: "inherit", label: m.nodes_dialers_inherit() },
-                  { value: "own", label: m.nodes_dialers_own() },
-                  { value: "none", label: m.nodes_dialers_none() },
-                ]}
-                onChange={(next) =>
-                  setSettings({
-                    ...value,
-                    dialers: withDialerMode(
-                      value.dialers,
-                      next,
-                      defaults ?? {}
-                    ),
+            <p className="text-meta text-muted-foreground">
+              {pools
+                ? m.nodes_settings_pools({
+                    pools:
+                      [...pools.ipv4, ...pools.ipv6].join(", ") ||
+                      m.nodes_settings_pools_none(),
                   })
-                }
-                className="self-start"
-              />
-            ) : (
-              <Tile label={m.nodes_settings_dialers_mode()}>
-                {mode === "inherit"
-                  ? m.nodes_dialers_inherit()
-                  : mode === "own"
-                    ? m.nodes_dialers_own()
-                    : m.nodes_dialers_none()}
-              </Tile>
-            )}
-            {mode === "inherit" ? (
-              defaults ? (
-                <>
-                  <p className="text-meta text-muted-foreground">
-                    {m.nodes_dialers_inherited()}
-                  </p>
-                  <DialerSetForm
-                    id={field("inherited")}
-                    value={defaults}
-                    offered={offered}
-                    editable={false}
-                    onChange={() => undefined}
-                  />
-                </>
-              ) : null
-            ) : mode === "none" ? (
-              <EmptyLine>{m.nodes_dialers_none_fact()}</EmptyLine>
-            ) : (
-              <DialerSetForm
-                id={field("dialers")}
-                value={value.dialers ?? {}}
-                offered={offered}
-                editable={editable}
-                onChange={(dialers) => setSettings({ ...value, dialers })}
-              />
-            )}
-            <Notes notes={notesWithin(notes, at("dialers"))} />
+                : m.nodes_settings_addresses_empty()}
+            </p>
+            <Notes notes={notesWithin(notes, at("addresses"))} />
           </div>
         </Section>
-      )}
+      </>
+      {listeners}
+      <Section title={m.nodes_settings_dialers()}>
+        <div className="flex flex-col gap-3">
+          {editable ? (
+            <SegmentedControl<DialerMode>
+              label={m.nodes_settings_dialers()}
+              value={mode}
+              options={[
+                { value: "inherit", label: m.nodes_dialers_inherit() },
+                { value: "own", label: m.nodes_dialers_own() },
+                { value: "none", label: m.nodes_dialers_none() },
+              ]}
+              onChange={(next) =>
+                setSettings({
+                  ...value,
+                  dialers: withDialerMode(value.dialers, next, defaults ?? {}),
+                })
+              }
+              className="self-start"
+            />
+          ) : (
+            <Tile label={m.nodes_settings_dialers_mode()}>
+              {mode === "inherit"
+                ? m.nodes_dialers_inherit()
+                : mode === "own"
+                  ? m.nodes_dialers_own()
+                  : m.nodes_dialers_none()}
+            </Tile>
+          )}
+          {mode === "inherit" ? (
+            defaults ? (
+              <>
+                <p className="text-meta text-muted-foreground">
+                  {m.nodes_dialers_inherited()}
+                </p>
+                <DialerSetForm
+                  id={field("inherited")}
+                  value={defaults}
+                  offered={offered}
+                  editable={false}
+                  onChange={() => undefined}
+                />
+              </>
+            ) : null
+          ) : mode === "none" ? (
+            <EmptyLine>{m.nodes_dialers_none_fact()}</EmptyLine>
+          ) : (
+            <DialerSetForm
+              id={field("dialers")}
+              value={value.dialers ?? {}}
+              offered={offered}
+              offeredFailure={offeredFailure}
+              editable={editable}
+              onChange={(dialers) => setSettings({ ...value, dialers })}
+            />
+          )}
+          <Notes notes={notesWithin(notes, at("dialers"))} />
+        </div>
+      </Section>
     </div>
   )
 }

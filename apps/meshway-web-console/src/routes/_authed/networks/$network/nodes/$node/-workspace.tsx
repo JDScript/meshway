@@ -4,68 +4,55 @@ import type {
   NodeInventoryView,
   StateView,
 } from "@meshway/control-client"
+import { Button } from "@meshway/ui/button"
 import type { UseQueryResult } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
-import type { ReactNode } from "react"
+import { WaypointsIcon } from "lucide-react"
+import { useMemo, type ReactNode } from "react"
 
+import { failureText } from "@/api/failure"
+import { useAddressGeo } from "@/api/queries/ip-geo"
 import { CloseButton } from "@/components/chrome/close-button"
 import { DraftMark } from "@/components/chrome/draft-mark"
-import {
-  SegmentedControl,
-  SegmentedTabs,
-} from "@/components/chrome/segmented-control"
+import { SegmentedTabs } from "@/components/chrome/segmented-control"
 import { SurfaceHeader } from "@/components/chrome/surface-header"
 import { surfaceTitleId } from "@/components/surface/page-frame"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent } from "@/components/ui/tabs"
+import { useNow } from "@/hooks/use-now"
 import { operationsOf } from "@/lib/configuration/draft-state"
 import { pointerOf } from "@/lib/configuration/jsonc"
 import { editsNode, isDeleted } from "@/lib/configuration/node-operations"
-import { stateOf } from "@/lib/nodes/state-model"
+import { shortId } from "@/lib/format"
+import { NO_ADDRESSES, nodeAddresses } from "@/lib/geo"
+import { reportOf, stateOf } from "@/lib/nodes/state-model"
 import { lastSeen, nodeStatus } from "@/lib/nodes/status"
 import { m } from "@/paraglide/messages.js"
 import { useConfigurationDraft } from "@/state/configuration-draft"
 
 import { identityText } from "../-labels"
 import { NODE_TABS, type NodeTab } from "../-search"
+import { NodeConnections } from "./-connections"
 import { NodeDevice } from "./-device"
 import { NodeDiagnostics } from "./-diagnostics"
-import { LatencyTab } from "./-latency/latency-tab"
+import { useNodeConfiguration } from "./-draft"
+import { Card, Disclosure } from "./-kit"
+import { LatencyHistory } from "./-latency/latency-history"
+import { ObservationPanel } from "./-latency/observation-panel"
 import { LiveStatus } from "./-live-status"
 import { NodeManage } from "./-manage"
 import { NodeOverview } from "./-overview"
 import { PathTab } from "./-path/path-tab"
 import { NodeSettings } from "./-settings"
-import {
-  NodeConnectionSettings,
-  NodeTransport,
-} from "./-transport/transport-tab"
+import { ConfiguredListeners } from "./-transport/listeners"
 
 const isTab = (value: unknown): value is NodeTab =>
   NODE_TABS.some((tab) => tab === value)
 
-type Section = "overview" | "transport" | "diagnostics" | "settings"
-const sectionOf = (tab: NodeTab): Section => {
-  switch (tab) {
-    case "overview":
-    case "transport":
-      return tab
-    case "latency":
-    case "path":
-    case "diagnostics":
-      return "diagnostics"
-    default:
-      return "settings"
-  }
-}
-
 /**
- * One node in full: its status in the header; what matters about it
- * first (overview); its settings and listeners (edited into the
- * configuration draft) with what it reports about its sockets, links and
- * paths; its latency; how the configuration plans a way from it (owners
- * and admins); what its status rests on (diagnostics); its keys and
- * deletion.
+ * One node in full, in five tabs on one level: the node at a glance, how
+ * it is connected, measuring and checking it, its settings (edited into the
+ * configuration draft), and the device with its keys.
  */
 export function NodeWorkspace({
   networkId,
@@ -99,7 +86,9 @@ export function NodeWorkspace({
             <Skeleton className="h-6 w-40 flex-1 rounded-full" />
           ) : (
             <h2 id={surfaceTitleId("nodes", "workspace")} className={className}>
-              {m.nodes_not_found()}
+              {nodes.data === undefined
+                ? (failureText(nodes.error) ?? m.nodes_failed())
+                : m.nodes_not_found()}
             </h2>
           )
         }
@@ -127,7 +116,7 @@ export function NodeWorkspace({
  * the tabs hide an old panel only once its own animations finish, and the
  * scroll-driven edge fade never does.
  */
-function Pane({ value, children }: { value: Section; children: ReactNode }) {
+function Pane({ value, children }: { value: NodeTab; children: ReactNode }) {
   return (
     <TabsContent value={value} className="flex min-h-0 flex-col">
       <div className="scroll-edge min-h-0 flex-1 overflow-y-auto px-6 pt-1 pb-(--commit-space)">
@@ -166,8 +155,10 @@ function Body({
     state.data?.configurationRevision ?? network?.currentRevision
   // The path check reads the whole configuration: owners and admins.
   const planning = network?.actions.readConfiguration === true
-  const shownTab = tab === "path" && !planning ? "overview" : tab
-  const section = sectionOf(shownTab)
+  const nameOf = (id: string) =>
+    nodes?.items.find((item) => item.id === id)?.hostname ??
+    stateOf(state.data, id)?.hostname ??
+    shortId(id)
   const openSource = () =>
     void navigate({
       to: "/networks/$network/configuration/$view",
@@ -187,15 +178,37 @@ function Body({
             </span>
           </h2>
         )}
-        action={<CloseButton onClick={onClose} />}
+        action={
+          <>
+            <Button
+              size="sm"
+              variant="outline"
+              className="shrink-0 rounded-full max-md:size-8 max-md:p-0"
+              aria-label={m.nodes_in_topology()}
+              onClick={() =>
+                void navigate({
+                  to: "/networks/$network/topology",
+                  params: { network: networkId },
+                  search: { node: node.id },
+                })
+              }
+            >
+              <WaypointsIcon />
+              <span className="max-md:hidden">{m.nodes_in_topology()}</span>
+            </Button>
+            <CloseButton onClick={onClose} />
+          </>
+        }
         meta={
           <div className="flex h-5 min-w-0 items-baseline gap-3 text-row leading-5 text-muted-foreground">
-            {state.data !== undefined ? (
+            {state.data !== undefined || state.isError ? (
               <LiveStatus
                 status={nodeStatus(node, view)}
                 seen={lastSeen(view)}
               />
-            ) : null}
+            ) : (
+              <Skeleton className="h-3 w-14 shrink-0 self-center rounded-full" />
+            )}
             <span className="shrink-0 font-mono">
               {node.addresses.ipv4 ?? node.addresses.ipv6 ?? "—"}
             </span>
@@ -212,20 +225,21 @@ function Body({
       />
 
       <Tabs
-        value={section}
+        value={tab}
         onValueChange={(value) => {
-          if (isTab(value)) onTab(value === "diagnostics" ? "latency" : value)
+          if (isTab(value)) onTab(value)
         }}
         className="min-h-0 flex-1 gap-0"
       >
-        <div className="mx-6 mb-4 overflow-x-auto">
+        <div className="mx-6 mb-5 overflow-x-auto">
           <SegmentedTabs
-            value={section}
+            value={tab}
             options={[
               { value: "overview", label: m.nodes_tab_overview() },
-              { value: "transport", label: m.nodes_tab_transport() },
+              { value: "connections", label: m.nodes_tab_transport() },
               { value: "diagnostics", label: m.nodes_tab_diagnostics() },
               { value: "settings", label: m.nodes_tab_settings() },
+              { value: "device", label: m.nodes_tab_device() },
             ]}
           />
         </div>
@@ -236,101 +250,111 @@ function Body({
             node={node}
             state={state}
             currentRevision={currentRevision}
-            onTransport={() => onTab("transport")}
+            onTab={onTab}
+            nameOf={nameOf}
           />
         </Pane>
-        <Pane value="settings">
-          <div className="mb-6 overflow-x-auto">
-            <SegmentedControl<NodeTab>
-              label={m.nodes_tab_settings()}
-              size="sm"
-              value={shownTab}
-              onChange={onTab}
-              options={[
-                { value: "settings", label: m.nodes_settings_basics() },
-                {
-                  value: "connection-settings",
-                  label: m.nodes_connection_settings(),
-                },
-                { value: "device", label: m.nodes_facts() },
-                { value: "manage", label: m.nodes_tab_manage() },
-              ]}
-            />
-          </div>
-          {shownTab === "device" ? (
-            <NodeDevice node={node} state={state.data} />
-          ) : shownTab === "manage" ? (
-            <NodeManage
-              networkId={networkId}
-              node={node}
-              onDeleted={onDeleted}
-            />
-          ) : (
-            <div className="flex max-w-workspace flex-col gap-8">
-              <NodeSettings
-                networkId={networkId}
-                nodeId={node.id}
-                network={network}
-                onEditSource={openSource}
-                section={
-                  shownTab === "connection-settings" ? "connections" : "general"
-                }
-              />
-              {shownTab === "connection-settings" ? (
-                <NodeConnectionSettings
-                  networkId={networkId}
-                  nodeId={node.id}
-                  network={network}
-                  state={state}
-                />
-              ) : null}
-            </div>
-          )}
-        </Pane>
-        <Pane value="transport">
-          <NodeTransport
+        <Pane value="connections">
+          <NodeConnections
             networkId={networkId}
             nodeId={node.id}
             network={network}
             state={state}
             nodes={nodes}
+            nameOf={nameOf}
+            onTab={onTab}
           />
         </Pane>
         <Pane value="diagnostics">
-          <div className="mb-6 overflow-x-auto">
-            <SegmentedControl<NodeTab>
-              label={m.nodes_tab_diagnostics()}
-              size="sm"
-              value={shownTab}
-              onChange={onTab}
-              options={[
-                { value: "latency", label: m.nodes_measurements() },
-                ...(planning
-                  ? [{ value: "path" as const, label: m.nodes_tab_path() }]
-                  : []),
-                { value: "diagnostics", label: m.nodes_runtime() },
-              ]}
+          <div className="flex flex-col gap-7">
+            <Card title={m.nodes_measurements()}>
+              <ObservationPanel networkId={networkId} nodeId={node.id} />
+            </Card>
+            <Card title={m.history_tab()}>
+              <LatencyHistory networkId={networkId} nodeId={node.id} />
+            </Card>
+            {planning ? (
+              <Card title={m.nodes_tab_path()}>
+                <PathTab
+                  networkId={networkId}
+                  nodeId={node.id}
+                  network={network}
+                  nodes={nodes}
+                />
+              </Card>
+            ) : null}
+            <Disclosure
+              title={m.nodes_evidence()}
+              summary={m.nodes_evidence_summary()}
+            >
+              <NodeDiagnostics
+                nodeId={node.id}
+                desired={node.desiredExecution}
+                state={state}
+                currentRevision={currentRevision}
+              />
+            </Disclosure>
+          </div>
+        </Pane>
+        <Pane value="settings">
+          <NodeSettings
+            networkId={networkId}
+            nodeId={node.id}
+            network={network}
+            onEditSource={openSource}
+            listeners={
+              <SettingsListeners
+                networkId={networkId}
+                nodeId={node.id}
+                network={network}
+                state={state.data}
+              />
+            }
+          />
+        </Pane>
+        <Pane value="device">
+          <div className="flex max-w-workspace flex-col gap-7">
+            <NodeDevice node={node} state={state} />
+            <NodeManage
+              networkId={networkId}
+              node={node}
+              onDeleted={onDeleted}
             />
           </div>
-          {shownTab === "latency" ? (
-            <LatencyTab networkId={networkId} nodeId={node.id} />
-          ) : shownTab === "path" && planning ? (
-            <PathTab
-              networkId={networkId}
-              nodeId={node.id}
-              network={network}
-              nodes={nodes}
-            />
-          ) : (
-            <NodeDiagnostics
-              nodeId={node.id}
-              desired={node.desiredExecution}
-              state={state}
-              currentRevision={currentRevision}
-            />
-          )}
         </Pane>
       </Tabs>
     </div>
+  )
+}
+
+/** The listeners' editor in the settings, with what the node reports of each. */
+function SettingsListeners({
+  networkId,
+  nodeId,
+  network,
+  state,
+}: {
+  networkId: string
+  nodeId: string
+  network: NetworkSummary | null
+  state: StateView | undefined
+}) {
+  const now = useNow(1_000)
+  const configuration = useNodeConfiguration(networkId, nodeId, network)
+  const view = stateOf(state, nodeId)
+  const report = reportOf(view)
+  const addresses = useMemo(
+    () => (view ? nodeAddresses(view.derived).scopes : NO_ADDRESSES),
+    [view]
+  )
+  const geoOf = useAddressGeo(addresses)
+  return (
+    <ConfiguredListeners
+      nodeId={nodeId}
+      configuration={configuration}
+      report={report.view === "full" ? report.report : null}
+      geoOf={geoOf}
+      now={now}
+    />
   )
 }

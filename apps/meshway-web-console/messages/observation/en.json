@@ -1,6 +1,5 @@
 {
   "$schema": "https://inlang.com/schema/inlang-message-format",
-  "observation_title": "Live observation",
   "observation_reading": "Reading the node",
   "observation_not_allowed": "You cannot have this node observe: members start observations only from their own User-identity devices",
   "observation_target": "Target node",

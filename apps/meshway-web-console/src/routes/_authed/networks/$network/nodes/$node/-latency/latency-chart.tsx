@@ -47,7 +47,7 @@ export function LatencyChart({
     for (const point of run) {
       const yy = y(point.meanUs ?? 0).toFixed(2)
       d += d === "" ? `M${x(point.fromMs).toFixed(2)},${yy}` : `V${yy}`
-      d += `CHART_HEIGHT${x(point.toMs).toFixed(2)}`
+      d += `H${x(point.toMs).toFixed(2)}`
     }
     return d
   })

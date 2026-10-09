@@ -27,17 +27,11 @@ export const Route = createFileRoute("/_authed/networks/$network/nodes")({
   component: NodesPage,
 })
 
-/** The tab of a node's workspace a refused field is in. */
+/** The tab of a node's workspace a refused field is in: every node field is a setting. */
 function tabOf(pointer: string): { node: string; tab: NodeTab } | null {
-  const [section, node, part] = pointerSegments(pointer) ?? []
+  const [section, node] = pointerSegments(pointer) ?? []
   if (section !== "nodes" || node === undefined) return null
-  return {
-    node,
-    tab:
-      part === "listeners" || part === "dialers"
-        ? "connection-settings"
-        : "settings",
-  }
+  return { node, tab: "settings" }
 }
 
 /**

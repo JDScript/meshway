@@ -4,14 +4,22 @@ import type {
   ListenerView,
   NodeState,
 } from "@meshway/control-client"
+import { Button } from "@meshway/ui/button"
 import { cn } from "@meshway/ui/cn"
 import { useQuery } from "@tanstack/react-query"
-import { PencilIcon, PlusIcon, Trash2Icon, Undo2Icon } from "lucide-react"
+import {
+  PencilIcon,
+  PlusIcon,
+  RadioTowerIcon,
+  Trash2Icon,
+  Undo2Icon,
+} from "lucide-react"
 import { useState, type ReactNode } from "react"
 
 import { failureText } from "@/api/failure"
 import { transportCatalogQuery } from "@/api/queries/nodes"
 import { DraftMark } from "@/components/chrome/draft-mark"
+import { EmptyState } from "@/components/chrome/empty-state"
 import { IconAction } from "@/components/chrome/icon-action"
 import { EmptyLine, Section } from "@/components/chrome/section"
 import { Tile } from "@/components/chrome/tile"
@@ -204,7 +212,13 @@ export function ConfiguredListeners({
     return (
       <Section title={m.nodes_listeners()} count={listeners.length}>
         {listeners.length === 0 ? (
-          <EmptyLine>{m.nodes_listeners_none()}</EmptyLine>
+          <EmptyState
+            compact
+            icon={RadioTowerIcon}
+            title={m.nodes_reachable_none()}
+          >
+            {m.nodes_reachable_none_body()}
+          </EmptyState>
         ) : (
           <div className="flex flex-col gap-6">
             {listeners.map(([key, view]) => (
@@ -293,7 +307,26 @@ export function ConfiguredListeners({
     >
       <div className="flex flex-col gap-6">
         {keys.length === 0 && editing !== "" ? (
-          <EmptyLine>{m.nodes_listeners_none()}</EmptyLine>
+          <EmptyState
+            compact
+            icon={RadioTowerIcon}
+            title={m.nodes_reachable_none()}
+            action={
+              canEdit ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="rounded-full"
+                  onClick={() => setEditing("")}
+                >
+                  <PlusIcon />
+                  {m.nodes_listener_add()}
+                </Button>
+              ) : undefined
+            }
+          >
+            {m.nodes_reachable_none_body()}
+          </EmptyState>
         ) : null}
         {keys.map((key) => {
           const view =
