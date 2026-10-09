@@ -7,20 +7,20 @@
 | 时机 | 命令 | 耗时（M3，缓存热） | 内容 |
 | --- | --- | --- | --- |
 | 每次改完要看结果 | `mise run test:fast -- -p <crate>` | 依 crate 而定，见下表 | 所属 crate 的 fast profile |
-| 提交前 | `mise run check:fast` | ~2 分钟（macOS 首次另加约 2 分钟的 Linux 目标 Clippy，之后秒级） | 测试文件上限、fmt、严格 Clippy（macOS 另对 `aarch64-unknown-linux-musl` 跑一遍，覆盖只在 Linux 编译的 underlay／DNS／TUN 模块）、fast profile 全 workspace（947 个测试） |
-| 合入前 | `mise run check` | ~3.5 分钟 | T1 全量：含 fast 排除的 44 个真实时间合同测试、codegen／drift／SDK、Console、docs |
+| 提交前 | `mise run check:fast` | ~2 分钟（macOS 首次另加约 2 分钟的 Linux 目标 Clippy，之后秒级） | 测试文件上限、fmt、严格 Clippy（macOS 另对 `aarch64-unknown-linux-musl` 跑一遍，覆盖只在 Linux 编译的 underlay／DNS／TUN 模块）、fast profile 全 workspace |
+| 合入前 | `mise run check` | ~3.5 分钟 | T1 全量：含 fast 排除的慢流程与真实时间合同、codegen／drift／SDK、Console、docs |
 | 合入前（触及 connectivity／control／daemon／server 执行与 State） | `mise run validate:remote --short --rows nat/off nat+fallback/off` | 提交即返回，planck 约 4 分钟 | T2 短模式门槛，结果用 `--attach` 取回 |
 | 合入后 | Actions 自动 | — | T2 全矩阵、T3 固定口径，进状态页 |
 
-fast profile 实际排除的 44 个测试都是**真实时间合同**（lease 到期、HTTP 中断恢复、30 秒采样、换钥过期回滚等，各 5–68 s），它们不能用虚拟时间代替，但也不该挡住每次迭代；`mise run check` 必跑。本机不跑 T2 整组、不做正式性能测量。
+fast profile 按实测维护慢测试集合，不能把耗时长等同于真实时间合同。TD3 逐项复核原 45 个名称：**A 流程与 lease 交叠 17 个、B 可用同步替代固定等待 1 个、C 真实时间／节律合同 27 个**；其中一个旧名称已失效，原集合实际排除 44 个测试。两个已报告的 lease 竞态包含在 A 类计数中。真实时间合同包括 lease 到期、HTTP 中断恢复、采样间隔和换钥过期回滚；`mise run check` 必跑。本机不跑 T2 整组、不做正式性能测量。
 
-当前 fast 名单仍含健康观察测试的旧名称，因此 `healthy_adjacency_keeps_nat_observations_fresh_without_reacquisition` 仍随 fast 运行，包含跨越观察有效期的真实等待。Connectivity 的 fast 实际运行 36 个测试、排除 16 个；文件拆分保留现有精确匹配入口名称。
+TD3 已将健康观察测试的失效选择器改为当前名称，覆盖其跨越 20 秒观察有效期的真实等待。按精确名称维护排除集合；改造后实测不足 5 秒的测试回归 fast，不能仅凭无 sleep 或一次高负载耗时决定去留。
 
 ## Rust 测试：按 crate
 
-单测 = `cfg(test)` 私有模块；集成 = `tests/`；时间合同按 `profile.fast` 排除集合统计，不把调度／负载导致的慢测试归为时间合同。耗时是一次运行的观测值。全部自包含：需要 Server 的套件在进程内起 Server＋临时 SQLite＋随机端口，不依赖 8420 的开发服务。
+单测 = `cfg(test)` 私有模块；集成 = `tests/`。下表保留 TD2 的 fast 排除量快照，真实时间合同按上面的 TD3 行为分类认定，不把调度／负载导致的慢测试归为时间合同。耗时是一次运行的观测值。全部自包含：需要 Server 的套件在进程内起 Server＋临时 SQLite＋随机端口，不依赖 8420 的开发服务。
 
-| crate | 测试 | 单测／集成 | 合计耗时（TD） | 时间合同 | 验证什么 |
+| crate | 测试 | 单测／集成 | 合计耗时（TD） | fast 排除（TD2） | 验证什么 |
 | --- | ---: | --- | ---: | ---: | --- |
 | meshway-server | 232 | 185／47 | 263 s | 7 | 账户、网络、配置 CAS、执行发布、State／SSE、观察、HTTP 路由；app 私有套件与 `tests/http`／`observations`／`accounts` 起真实 Server |
 | meshway-dataplane | 125 | 80／45 | 255 s | 7 | v5 codec、Noise／AEAD／MAC 一致性、流表／replay、流水线保序与 credit；`tests/runtime` 用静态签发的许可跑 A→R→B 进程内包流、续租、撤销、诊断 |
@@ -96,7 +96,9 @@ fast profile 实际排除的 44 个测试都是**真实时间合同**（lease �
 - HTTP 层断言路由、鉴权／主体边界、序列化、错误码与 SSE 帧；CAS、lease、吊销、成员生命周期、执行发布和回执排序由 app／所属状态机套件负责。删去重复覆盖时必须指出保留的测试及其更严格的断言；共享场景不等于重复覆盖。
 - Rust 专用测试文件（含 `tests/` 下 support、`tests.rs`、`*_tests.rs`）最多 **800 行**，按行为拆为普通子模块，共享 fixture 归所属套件的 `support.rs` 或 `support/`。不得压行、扩大生产可见性或用 `include!`／`#[path]` 绕过限制。
 - `mise run check:rust`（因此也包括 `check:fast`／`check`）运行 `scripts/check_test_files.py`，同时扫描已跟踪及未忽略的新文件。`scripts/test_file_limits.json` 只记录既有超限文件的冻结上限；不能增长，降到 800 行后删除条目。Server 与 transport 不允许例外。
-- 真实时间合同测试保持真实时间，但必须有明确的到期语义注释，并自动落入 `profile.fast` 的排除名单（名单在 `.config/nextest.toml`，按实测 ≥5 s 维护）。
+- 真实时间合同测试保持真实时间，并注明到期语义；实测 ≥5 s 的测试纳入 `profile.fast` 排除名单，改造后实测 <5 s 则移出（名单在 `.config/nextest.toml`）。耗时变化不改变 A／B／C 的行为分类。
+- **测试不得假设流程总时长小于任何产品 lease**。需要跨 lease 的流程由测试主体按产品方式续租，遵守返回的 `renew_after`／续租窗口；续租引发发布时，先续租再获取上报 configuration，不能把旧输出换绑到新权限。无关准备工作在创建短期对象前完成，针对创建、重试和取消的断言靠近相应操作。
+- **等待事件用条件，不用固定 sleep**：优先 Notify、事件流或有截止的条件轮询，上界来自产品合同或实际返回的 deadline。真实到期、节律与负向观察仍使用真实时间，并在测试顶部注明所等常量与不能缩短的原因；到期前的必要准备必须在其一半预算内完成，否则重排。禁止修改产品时间常量来迁就测试。
 - 不新增依赖外部服务的测试；需要 Server 的测试在进程内起。
 
 ## 结构变更记录
