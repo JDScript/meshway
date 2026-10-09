@@ -257,6 +257,8 @@ const TEXT: Record<IssueCode, (p: Params, node: NodeNamer) => string> = {
       node: node(p.node ?? "?"),
       profile: profileText(p.profile ?? "?", node),
     }),
+  netmap_limit: (p, node) =>
+    m.configuration_issue_netmap_limit({ node: node(p.node ?? "?") }),
   shadowed_rule: (p) =>
     m.configuration_issue_shadowed_rule({ index: ordinal(p.by) }),
 }
