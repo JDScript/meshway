@@ -156,6 +156,24 @@ impl Sealer {
         context.extend_from_slice(publication.as_uuid().as_bytes());
         self.decrypt(&context, protected)
     }
+    pub(crate) fn seal_netmap(
+        &self,
+        network: NetworkId,
+        node: meshway_model::NodeId,
+        serial: meshway_model::Version,
+        plaintext: &[u8],
+    ) -> Result<ProtectedBytes, SealError> {
+        self.encrypt(&netmap_context(network, node, serial), plaintext)
+    }
+    pub(crate) fn open_netmap(
+        &self,
+        network: NetworkId,
+        node: meshway_model::NodeId,
+        serial: meshway_model::Version,
+        protected: &[u8],
+    ) -> Result<Plaintext, SealError> {
+        self.decrypt(&netmap_context(network, node, serial), protected)
+    }
     pub(crate) fn seal(
         &self,
         network: NetworkId,
@@ -247,6 +265,18 @@ fn context(network: NetworkId, revision: Revision, purpose: Purpose) -> Vec<u8> 
         Purpose::Bindings => 3,
         Purpose::Request => 4,
     });
+    bytes
+}
+
+fn netmap_context(
+    network: NetworkId,
+    node: meshway_model::NodeId,
+    serial: meshway_model::Version,
+) -> Vec<u8> {
+    let mut bytes = b"node-netmap/v1\0".to_vec();
+    bytes.extend_from_slice(network.as_uuid().as_bytes());
+    bytes.extend_from_slice(node.as_uuid().as_bytes());
+    bytes.extend_from_slice(&serial.get().to_be_bytes());
     bytes
 }
 

@@ -111,7 +111,7 @@ impl ResourceProvider for Provider {
         key: &str,
         artifact: &ArtifactSummary,
         now: DateTime<Utc>,
-    ) -> Result<(), Error> {
+    ) -> Result<Vec<crate::effect::Effect>, Error> {
         let current = self.snapshot(tx, network)?;
         if current.revision != revision {
             return Err(Error::StateConflict);
@@ -137,7 +137,7 @@ impl ResourceProvider for Provider {
         )?;
         meshway_policy::normalize_with_dependencies(input, &context)?;
         if unchanged {
-            return Ok(());
+            return Ok(Vec::new());
         }
         crate::store::execution::publish_with_rule_sets(
             tx,
@@ -147,7 +147,14 @@ impl ResourceProvider for Provider {
             now.timestamp_millis(),
             &selected,
         )?;
-        Ok(())
+        let netmap = crate::store::netmap::recompile_with_rule_sets(
+            tx,
+            &self.sealer,
+            network,
+            now.timestamp_millis(),
+            &selected,
+        )?;
+        Ok(netmap.effects())
     }
 }
 

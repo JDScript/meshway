@@ -117,12 +117,18 @@ pub(crate) fn acquire(
     publish(tx, sealer, p.network, "refresh", now)?;
     grant_lease(tx, sealer, &p, now)?;
     let result = lease(tx, sealer, &p)?;
-    Ok((
-        result,
-        vec![Effect::Progress {
-            network_id: p.network,
-        }],
-    ))
+    let mut effects = vec![Effect::Progress {
+        network_id: p.network,
+    }];
+    // Authenticated capabilities are trusted inventory: only their change,
+    // never the instance itself, reaches the netmap.
+    let old_caps = previous.map(|previous| previous.capabilities);
+    if old_caps.as_deref() != Some(caps.as_slice())
+        && (old_caps.is_some() || !request.capabilities.is_empty())
+    {
+        effects.extend(crate::store::netmap::recompile(tx, sealer, p.network, now)?.effects());
+    }
+    Ok((result, effects))
 }
 pub(crate) fn renew(
     tx: &Transaction<'_>,

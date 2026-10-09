@@ -6,7 +6,12 @@ use axum::{
     http::{HeaderMap, StatusCode},
 };
 use meshway_model::RequestId;
-use meshway_protocol::{ErrorResponse, SignedNodeChallengeRequest, execution::*, node::*};
+use meshway_protocol::{
+    ErrorResponse, SignedNodeChallengeRequest,
+    execution::*,
+    netmap::{SyncRequest, SyncResponse},
+    node::*,
+};
 
 /// Resolve an exact Mesh DNS name under the Node's current permissions.
 ///
@@ -23,6 +28,27 @@ pub(super) async fn query_dns(
     let Json(body) = body.map_err(|e| HttpError::json(id, e))?;
     service
         .query_dns(token, body, id)
+        .await
+        .map(Json)
+        .map_err(|e| HttpError::domain(id, e))
+}
+
+/// Long-poll the Node's netmap, lease and peer facts.
+///
+/// Requires a Node session; no instance is needed. The request names the netmap and peer-fact cursor the Node holds.
+/// The Server answers at once when either is behind, otherwise holds the request until the netmap or visible facts change, a newer sync of the same Node replaces it, or the hold (about 50 seconds, at most 60) ends.
+/// A held base answers `delta`, any other base `full`, the current netmap `unchanged`; every answer carries a fresh lease.
+#[utoipa::path(post,path="/agent-api/v1/sync",operation_id="syncNode",tag="execution",security(("nodeSession"=[])),request_body=SyncRequest,responses((status=200,body=SyncResponse),(status=400,body=ErrorResponse,description="invalid_request"),(status=401,body=ErrorResponse,description="invalid_credentials"),(status=409,body=ErrorResponse,description="binding_conflict"),(status=413,body=ErrorResponse,description="request_too_large"),(status=415,body=ErrorResponse,description="unsupported_media_type"),(status=503,body=ErrorResponse,description="busy, service_unavailable")))]
+pub(super) async fn sync(
+    State(service): State<crate::netmap::Netmaps>,
+    Extension(id): Extension<RequestId>,
+    headers: HeaderMap,
+    body: Result<Json<SyncRequest>, JsonRejection>,
+) -> Result<Json<SyncResponse>, HttpError> {
+    let token = node_bearer(&headers, id)?;
+    let Json(body) = body.map_err(|e| HttpError::json(id, e))?;
+    service
+        .sync(token, body)
         .await
         .map(Json)
         .map_err(|e| HttpError::domain(id, e))

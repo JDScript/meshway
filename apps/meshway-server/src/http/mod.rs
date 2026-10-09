@@ -100,12 +100,18 @@ struct HttpState {
     configurations: crate::configuration::Configurations,
     history: crate::history::History,
     execution: crate::execution::Execution,
+    netmaps: crate::netmap::Netmaps,
     connectivity: crate::connectivity::Connectivity,
     enrollment: crate::enrollment::Enrollment,
 }
 impl FromRef<HttpState> for crate::execution::Execution {
     fn from_ref(state: &HttpState) -> Self {
         state.execution.clone()
+    }
+}
+impl FromRef<HttpState> for crate::netmap::Netmaps {
+    fn from_ref(state: &HttpState) -> Self {
+        state.netmaps.clone()
     }
 }
 impl FromRef<HttpState> for crate::connectivity::Connectivity {
@@ -228,6 +234,7 @@ fn routes() -> OpenApiRouter<HttpState> {
         .routes(routes!(agent::configuration))
         .routes(routes!(agent::refresh_configuration))
         .routes(routes!(agent::query_dns))
+        .routes(routes!(agent::sync))
         .routes(routes!(connectivity::query))
         .routes(routes!(connectivity::prepare))
         .routes(routes!(connectivity::accept))
@@ -357,6 +364,7 @@ pub fn router(app: &App) -> Router {
             configurations: app.configurations(),
             history: app.history(),
             execution: app.execution(),
+            netmaps: app.netmaps(),
             connectivity: app.connectivity(),
             enrollment: app.enrollment(),
         })

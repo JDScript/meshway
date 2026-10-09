@@ -30,6 +30,7 @@ pub(crate) mod enrollment;
 pub(crate) mod execution;
 pub(crate) mod history;
 pub(crate) mod keys;
+pub(crate) mod netmap;
 pub(crate) mod networks;
 pub(crate) mod observations;
 pub(crate) mod resources;

@@ -39,6 +39,7 @@ pub trait ResourceProvider: Send + Sync + 'static {
     ) -> Result<RuleSetScope, Error>;
     /// Rechecks source definition/revision and atomically binds the immutable
     /// artifact to an execution refresh. Never changes a historical artifact.
+    /// Returns the effects of the binding (netmap wake-ups).
     fn bind_rule_set(
         &self,
         tx: &Transaction<'_>,
@@ -47,7 +48,7 @@ pub trait ResourceProvider: Send + Sync + 'static {
         key: &str,
         artifact: &ArtifactSummary,
         now: DateTime<Utc>,
-    ) -> Result<(), Error>;
+    ) -> Result<Vec<Effect>, Error>;
 }
 #[derive(Clone)]
 pub(crate) struct SystemTask {
@@ -299,15 +300,17 @@ impl<P: ResourceProvider> ResourceService<P> {
                     }
                 }
                 let mut artifact = scope.views.get(&key).and_then(|view| view.artifact.clone());
+                let mut bound = Vec::new();
                 let problem = match converted {
                     Err(problem) => Some(problem),
                     Ok(data) => {
                         store::resources::bindings::begin(tx)?;
                         let candidate = super::store_artifact(tx, network, "rule-set", &data, now)?;
                         match provider.bind_rule_set(tx, network, revision, &key, &candidate, now) {
-                            Ok(()) => {
+                            Ok(effects) => {
                                 store::resources::bindings::release(tx)?;
                                 artifact = Some(candidate);
+                                bound = effects;
                                 None
                             }
                             Err(Error::InvalidRequest | Error::InvalidConfiguration(_)) => {
@@ -329,17 +332,16 @@ impl<P: ResourceProvider> ResourceService<P> {
                 }
                 // Once admitted, the executor owns COMMIT and publication
                 // even if the HTTP waiter is cancelled during the download tail.
-                Ok((
-                    result,
-                    vec![
-                        Effect::Resource {
-                            network_id: network,
-                        },
-                        Effect::Progress {
-                            network_id: network,
-                        },
-                    ],
-                ))
+                let mut effects = vec![
+                    Effect::Resource {
+                        network_id: network,
+                    },
+                    Effect::Progress {
+                        network_id: network,
+                    },
+                ];
+                effects.extend(bound);
+                Ok((result, effects))
             })
             .await
     }

@@ -58,21 +58,20 @@ pub(crate) fn revoke_key(
             request.key_id.as_uuid().as_bytes().as_slice()
         ],
     )?;
+    let mut effects = Vec::new();
     if current {
         revoke_execution(tx, sealer, network, node, now)?;
-    }
-    let effects = if current {
-        vec![
+        let netmap = crate::store::netmap::recompile(tx, sealer, network, now)?;
+        effects.extend([
             Effect::Authorization {
                 network_id: network,
             },
             Effect::Progress {
                 network_id: network,
             },
-        ]
-    } else {
-        Vec::new()
-    };
+        ]);
+        effects.extend(netmap.effects());
+    }
     Ok((current, effects))
 }
 

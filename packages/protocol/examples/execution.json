@@ -308,5 +308,32 @@
         }
       }
     }
+  },
+  "syncNode": {
+    "request": {
+      "netmap": {
+        "revision": 7,
+        "serial": 3,
+        "digest": "abababababababababababababababababababababababababababababababab"
+      },
+      "state": null
+    },
+    "responses": {
+      "200": {
+        "lease": {
+          "netmap": {
+            "revision": 7,
+            "serial": 3,
+            "digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "issuedAt": "2026-10-09T09:00:00Z",
+          "expiresAt": "2026-10-10T09:00:00Z"
+        },
+        "netmap": {
+          "type": "unchanged"
+        },
+        "peerFacts": null
+      }
+    }
   }
 }

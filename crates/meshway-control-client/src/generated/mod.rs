@@ -4632,6 +4632,27 @@ impl crate::Client {
         }
     }
 
+    pub async fn sync_node(
+        &self,
+        body: &meshway_protocol::SyncRequest,
+        token: &str,
+    ) -> Result<meshway_protocol::SyncResponse, crate::ClientError<meshway_protocol::ErrorResponse>>
+    {
+        let response = self
+            .send(
+                reqwest::Method::POST,
+                "/agent-api/v1/sync",
+                Some(token),
+                Some(body),
+            )
+            .await?;
+        match response.status {
+            200 => response.json(),
+            400 | 401 | 409 | 413 | 415 | 503 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
     pub async fn validate_configuration(
         &self,
         path: &ValidateConfigurationPath,

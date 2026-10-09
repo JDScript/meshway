@@ -351,6 +351,7 @@ impl Committer {
                 publication_ids: Vec::new(),
                 target_node_ids: BTreeSet::new(),
                 deleted_node_ids: BTreeSet::new(),
+                netmap: Default::default(),
             });
         }
         let revision = next_revision(current.revision)?;
@@ -398,6 +399,9 @@ impl Committer {
             &prepared.document.configuration,
             store::execution::now()?,
         )?;
+        // Netmaps are part of the version: the same transaction stores every
+        // changed Node's next serial, or rejects the version.
+        let netmap = store::netmap::recompile(tx, &self.sealer, network, now)?;
         let publication_ids = vec![publication.publication];
         let target_node_ids: BTreeSet<NodeId> = publication.nodes.keys().copied().collect();
         let execution_targets = store::execution::configuration_targets(
@@ -448,6 +452,7 @@ impl Committer {
             publication_ids,
             target_node_ids,
             deleted_node_ids: prepared.deleted_node_ids,
+            netmap,
         })
     }
 }

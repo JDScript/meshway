@@ -571,8 +571,9 @@ impl crate::resources::service::ResourceProvider for CommitGate {
         key: &str,
         artifact: &ArtifactSummary,
         now: chrono::DateTime<chrono::Utc>,
-    ) -> Result<(), crate::error::Error> {
-        self.provider
+    ) -> Result<Vec<crate::effect::Effect>, crate::error::Error> {
+        let effects = self
+            .provider
             .bind_rule_set(tx, network, revision, key, artifact, now)?;
         self.entered
             .lock()
@@ -582,7 +583,7 @@ impl crate::resources::service::ResourceProvider for CommitGate {
             .send(())
             .unwrap();
         self.release.lock().unwrap().recv().unwrap();
-        Ok(())
+        Ok(effects)
     }
 }
 

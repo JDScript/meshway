@@ -49,6 +49,11 @@ pub enum Effect {
     SessionRevoked {
         session_id: SessionId,
     },
+    /// These Nodes' current netmaps changed; wakes their pending `sync`. Not journaled.
+    Netmap {
+        network_id: NetworkId,
+        node_ids: std::collections::BTreeSet<NodeId>,
+    },
 }
 
 impl Effect {
@@ -63,7 +68,7 @@ impl Effect {
             | Self::ObservationSample { network_id, .. }
             | Self::Resource { network_id } => Some(*network_id),
             Self::Configuration { notice } => Some(notice.network_id),
-            Self::SessionRevoked { .. } | Self::AcceptedState { .. } => None,
+            Self::SessionRevoked { .. } | Self::AcceptedState { .. } | Self::Netmap { .. } => None,
         }
     }
 }

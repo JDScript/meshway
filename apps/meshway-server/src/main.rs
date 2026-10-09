@@ -45,6 +45,14 @@ struct Arguments {
     /// Advertised hosted or external STUN service, KEY=HOST:PORT (IPv6 in brackets).
     #[arg(long, value_parser = meshway_server::settings::stun_server)]
     stun_server: Vec<(String, meshway_transport_spec::Endpoint)>,
+    /// Netmap lease validity in whole seconds (300 through 86400); every
+    /// sync answer renews the lease to now plus this validity.
+    #[arg(long, env = "MESHWAY_NETMAP_VALIDITY", default_value_t = 86400, value_parser = clap::value_parser!(u64).range(300..=86400))]
+    netmap_validity: u64,
+    /// Nominal hold of an unchanged sync request in whole seconds (1 through
+    /// 54), jittered by ±10%.
+    #[arg(long, env = "MESHWAY_NETMAP_SYNC_HOLD", default_value_t = 50, value_parser = clap::value_parser!(u64).range(1..=54))]
+    netmap_sync_hold: u64,
 }
 
 #[tokio::main]
@@ -81,6 +89,10 @@ async fn run(arguments: Arguments) -> Result<(), String> {
     .map_err(|error| format!("Invalid --delegation-client: {error}."))?;
     settings.public_origin = arguments.public_origin;
     settings.stun_listen = arguments.stun_listen;
+    settings.netmap = meshway_server::netmap::SyncTiming {
+        validity: Duration::from_secs(arguments.netmap_validity),
+        hold: Duration::from_secs(arguments.netmap_sync_hold),
+    };
     for (key, endpoint) in arguments.stun_server {
         if settings.stun_servers.insert(key, endpoint).is_some() {
             return Err("Duplicate STUN server key.".into());

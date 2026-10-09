@@ -57,6 +57,8 @@ mise exec -- cargo run -p meshway-server --bin meshway-server --locked -- \
 | `--console-origin`／`MESHWAY_CONSOLE_ORIGIN` | 未设置 | 浏览器访问 Console 的 origin，见下文 |
 | `--stun-listen IP:PORT` | 空 | 可重复，显式绑定独立 STUN UDP 服务；最多 4 个，端口非零，不可为多播／广播或重复地址 |
 | `--stun-server KEY=HOST:PORT` | 空 | 可重复，发布 hosted 或外部 STUN 端点；KEY 为 1–64 个 ASCII 字母、数字、`_`、`-` 且不可重复，IPv6 使用方括号；最多 4 个 |
+| `--netmap-validity`／`MESHWAY_NETMAP_VALIDITY` | `86400` | 每次 [netmap 同步](/v2/execution#netmap-同步)签发的租约时长，整秒，300–86400 |
+| `--netmap-sync-hold`／`MESHWAY_NETMAP_SYNC_HOLD` | `50` | 无变化时 `sync` 的名义挂起时长，整秒，1–54，另加 ±10% 抖动 |
 
 命令行显式参数优先于环境变量。这些是实例启动配置，不属于 NetworkConfiguration。日志参数见[运行日志](/v2/logging)；HTTP 日志只记录路由模板与请求关联信息。
 

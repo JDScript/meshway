@@ -56,6 +56,8 @@ pub(crate) struct CommitEffects {
     pub(crate) publication_ids: Vec<PublicationId>,
     pub(crate) target_node_ids: BTreeSet<NodeId>,
     pub(crate) deleted_node_ids: BTreeSet<NodeId>,
+    /// Nodes whose netmap this version changed.
+    pub(crate) netmap: crate::store::netmap::Recompiled,
 }
 
 impl CommitEffects {
@@ -82,6 +84,7 @@ impl CommitEffects {
                     node_id: *node_id,
                 }),
         );
+        changes.extend(self.netmap.effects());
         changes
     }
 }
