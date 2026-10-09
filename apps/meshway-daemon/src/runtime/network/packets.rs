@@ -76,9 +76,17 @@ pub(super) struct Packets {
     sends:
         meshway_dataplane::carrier::SendPending<(Result<(), meshway_connectivity::Error>, usize)>,
     deliveries: meshway_dataplane::carrier::TunPending<Delivered>,
+    exit_replies: VecDeque<secure::PendingFrame>,
 }
 
 impl Packets {
+    pub fn exit_reply(&mut self, frame: secure::PendingFrame) {
+        if self.exit_replies.len() < MAX_PACKETS {
+            self.exit_replies.push_back(frame);
+        } else {
+            self.drop_packet("exit_reply_capacity");
+        }
+    }
     pub fn can_read(&self, pool: &secure::pipeline::Pool) -> bool {
         pool.can_submit()
             && self.local.len() + self.incoming.len() <= MAX_PACKETS - 32
@@ -211,6 +219,7 @@ impl Packets {
         self.control.clear();
         self.sends = Default::default();
         self.deliveries = Default::default();
+        self.exit_replies.clear();
     }
     fn bytes(&self) -> usize {
         self.local
@@ -365,6 +374,7 @@ impl Packets {
         gateway: &mpsc::Sender<Request>,
         diagnostics: &mut super::diagnostics::Diagnostics,
         pool: &mut secure::pipeline::Pool,
+        mut exit: Option<&mut super::exit::Runtime>,
     ) {
         let Some(identity) = &target.identity else {
             return;
@@ -389,7 +399,18 @@ impl Packets {
         let Some(carriers) = carriers else {
             return;
         };
-        self.complete_crypto(secure, manager, snapshot, pool);
+        if let Some(exit) = exit.as_deref_mut() {
+            exit.drive(secure);
+        }
+        for _ in 0..32 {
+            let Some(frame) = self.exit_replies.pop_front() else {
+                break;
+            };
+            if frame.projection_ready().await.is_err() || manager.send(frame).await.is_err() {
+                self.drop_packet("exit_reply_send");
+            }
+        }
+        self.complete_crypto(secure, manager, snapshot, pool, exit.as_deref_mut());
         // Continue a bounded scan on the next turn, including ready suffixes
         // left after a full batch. Waiting packets are scanned only once per
         // external event, rather than creating an unbounded busy loop.
@@ -538,6 +559,14 @@ impl Packets {
                     }
                 }
                 Ok(Received::Packet(packet)) => {
+                    if packet.hop() == meshway_dataplane::Hop::Exit {
+                        if let Some(exit) = exit.as_deref_mut() {
+                            exit.packet(secure, packet);
+                        } else if let Some(flow) = packet.exit_flow() {
+                            secure.fail_exit_projection(&flow);
+                        }
+                        continue;
+                    }
                     if packet.hop() != meshway_dataplane::Hop::Deliver {
                         self.drop_packet("unsupported_exit");
                         continue;
@@ -786,7 +815,10 @@ impl Packets {
         }
         self.flush_sends(manager, &mut outgoing).await;
         pool.flush();
-        self.complete_crypto(secure, manager, snapshot, pool);
+        self.complete_crypto(secure, manager, snapshot, pool, exit.as_deref_mut());
+        if let Some(exit) = exit {
+            exit.drive(secure);
+        }
         self.scan_remaining = self
             .scan_remaining
             .saturating_sub(incoming_done + local_done)
@@ -882,6 +914,7 @@ impl Packets {
         manager: &Manager,
         snapshot: &meshway_authority::ExecutionSnapshot,
         pool: &mut secure::pipeline::Pool,
+        mut exit: Option<&mut super::exit::Runtime>,
     ) {
         let mut outgoing = Vec::new();
         let mut deliveries = Vec::new();
@@ -911,6 +944,16 @@ impl Packets {
                     }
                     deliveries.push(packet);
                     delivery_credits.push(credit);
+                }
+                Ok(Received::Packet(packet)) if packet.hop() == meshway_dataplane::Hop::Exit => {
+                    if let Some(exit) = exit.as_deref_mut() {
+                        exit.packet(secure, packet);
+                    } else if let Some(flow) = packet.exit_flow() {
+                        secure.fail_exit_projection(&flow);
+                    }
+                    // The exit FIFO has its own 128-packet bound; it retains the
+                    // original wrapper. Release this crypto reservation now.
+                    drop(credit);
                 }
                 Err(error) => self.drop_admission("crypto_admission", error, None),
                 _ => self.drop_packet("crypto_output"),

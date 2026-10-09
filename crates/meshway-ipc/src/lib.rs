@@ -256,8 +256,20 @@ meshway_serde::object! { #[derive(Clone, Debug)] pub struct Status {
     pub applied: Option<ConfigurationRef> [required = true],
     pub data_plane: DataPlane,
     pub network_mode: NetworkMode,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit: Option<ExitState>,
     #[serde(deserialize_with = "meshway_serde::required_nullable")]
     pub last_error: Option<Problem> [required = true],
     #[serde(deserialize_with = "meshway_serde::required_nullable")]
     pub retry_at: Option<DateTime<Utc>> [required = true],
+} }
+
+meshway_serde::object! {
+/// Target-bound facts from the installed exit adapter. Missing measurements
+/// remain absent, including before the first probe and after authority loss.
+#[derive(Clone, Debug)] pub struct ExitState {
+    pub capability: Option<meshway_model::exit::ExitCapability>,
+    pub installed_role: Option<meshway_model::Digest>,
+    pub active_flows: Option<u32>,
+    pub dns_unavailable: Option<meshway_model::exit::ExitUnavailableReason>,
 } }

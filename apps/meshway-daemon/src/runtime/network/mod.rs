@@ -7,6 +7,8 @@ mod diagnostics;
 mod discovery;
 #[cfg(target_os = "linux")]
 mod dns;
+#[cfg(target_os = "linux")]
+mod exit;
 mod facts;
 #[cfg(target_os = "linux")]
 mod packets;
@@ -44,6 +46,12 @@ pub(super) fn capabilities() -> std::collections::BTreeMap<String, meshway_model
     let mut capabilities = meshway_connectivity::capabilities();
     if cfg!(target_os = "linux") {
         capabilities.insert(
+            meshway_model::exit::EXIT_IPV4_FEATURE.into(),
+            meshway_model::state::Capability::Feature {
+                version: meshway_model::exit::EXIT_IPV4_VERSION,
+            },
+        );
+        capabilities.insert(
             "feature:path-observation".into(),
             meshway_model::state::Capability::Feature { version: 1 },
         );
@@ -62,6 +70,9 @@ pub(super) struct Report {
     pub observed_at: DateTime<Utc>,
     pub facts_observed_at: DateTime<Utc>,
     pub facts: Option<meshway_connectivity::Snapshot>,
+    pub exit_capability: Option<meshway_model::exit::ExitCapability>,
+    pub exit_flows: Option<u32>,
+    pub exit_dns_unavailable: bool,
     pub generation: meshway_model::Sequence,
     pub interface_epoch: u64,
     pub owned_interfaces: Vec<String>,
@@ -81,6 +92,9 @@ impl Report {
             observed_at: Utc::now(),
             facts_observed_at: Utc::now(),
             facts: None,
+            exit_capability: None,
+            exit_flows: None,
+            exit_dns_unavailable: false,
             generation: meshway_model::Sequence::MIN,
             interface_epoch: 0,
             owned_interfaces: Vec::new(),
@@ -425,19 +439,24 @@ impl Handle {
             let (completed, completions) = mpsc::channel(8);
             let (plans, dns_plans) = watch::channel(None);
             let dns = dns::Attachment::new(dns_settings, directory, reservation, gateway.clone());
-            let worker = tokio::spawn(worker::run(
-                host,
-                received,
-                targets,
-                reports,
-                gateway,
-                completed,
-                (dns, plans),
-                traversal,
-                paused,
-                plans_rx,
-                mtu,
-            ));
+            // The Host live-probe future is !Send (its monitor registration
+            // uses a synchronous guard). One joined owner thread polls it in
+            // place; the Host and all its existing async producers stay unique.
+            let worker = tokio::task::spawn_blocking(move || {
+                tokio::runtime::Handle::current().block_on(worker::run(
+                    host,
+                    received,
+                    targets,
+                    reports,
+                    gateway,
+                    completed,
+                    (dns, plans),
+                    traversal,
+                    paused,
+                    plans_rx,
+                    mtu,
+                ))
+            });
             Ok(Self {
                 observation_plans,
                 diagnostic_resume_after_refresh: Default::default(),
@@ -504,11 +523,11 @@ impl Handle {
                 None => {
                     if control.cached_target().is_some_and(|target| {
                         !target.configuration.enabled
-                            || (!requirements::dns_required(&target.configuration.dns.settings)
-                                && matches!(
-                                    target.configuration.dns.egress,
-                                    meshway_configuration::execution::DnsEgress::NoExit
-                                ))
+                            || !requirements::dns_required(&target.configuration.dns.settings)
+                            || !matches!(
+                                target.configuration.dns.egress,
+                                meshway_configuration::execution::DnsEgress::NoExit
+                            )
                     }) {
                         self.dns_intents.deactivate();
                     }

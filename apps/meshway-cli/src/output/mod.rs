@@ -54,6 +54,7 @@ pub(crate) fn display(status: &Status, json: bool) -> io::Result<()> {
             "Network mode: {:?}  Data plane: {:?}",
             status.network_mode, status.data_plane
         )?;
+        exit(&mut output, status.exit.as_ref())?;
         if let Some(applied) = &status.applied {
             writeln!(
                 output,
@@ -64,6 +65,31 @@ pub(crate) fn display(status: &Status, json: bool) -> io::Result<()> {
         if let Some(error) = status.last_error {
             writeln!(output, "Last problem: {error:?}")?;
         }
+    }
+    Ok(())
+}
+
+fn exit(output: &mut impl Write, exit: Option<&meshway_ipc::ExitState>) -> io::Result<()> {
+    let Some(exit) = exit else {
+        return writeln!(output, "Exit: not observed");
+    };
+    let capability = exit
+        .capability
+        .as_ref()
+        .map(|c| format!("{:?}", c.status))
+        .unwrap_or_else(|| "not requested".into());
+    let role = exit
+        .installed_role
+        .as_ref()
+        .map(|role| format!("{role}"))
+        .unwrap_or_else(|| "none".into());
+    let flows = exit
+        .active_flows
+        .map(|n| n.to_string())
+        .unwrap_or_else(|| "unknown".into());
+    writeln!(output, "Exit: {capability}  role={role}  flows={flows}")?;
+    if let Some(reason) = exit.dns_unavailable {
+        writeln!(output, "Exit DNS: unavailable ({reason:?})")?;
     }
     Ok(())
 }

@@ -17,13 +17,7 @@ pub(super) fn validate(
 > {
     use meshway_ipc::Problem;
     use meshway_protocol::execution::ApplyFailure;
-    if !matches!(
-        cfg.dns.egress,
-        meshway_configuration::execution::DnsEgress::NoExit
-    ) {
-        return Err((Problem::Dns, ApplyFailure::Dns));
-    }
-    if cfg.exit_enabled
+    if (cfg.exit_enabled && cfg.exit_role.is_none())
         || !owns_all(
             cfg.local_egress.iter().filter_map(|(id, permit)| {
                 // Old DNS intents cannot execute after leaving Scope. Exact,
@@ -37,12 +31,6 @@ pub(super) fn validate(
             dns_ids,
         )
         || !diagnostic_paths_valid(cfg)
-        || cfg.permits.values().any(|permit| {
-            !matches!(
-                permit.target,
-                meshway_configuration::execution::BusinessTarget::Mesh { .. }
-            )
-        })
     {
         return Err((Problem::Apply, ApplyFailure::Dataplane));
     }

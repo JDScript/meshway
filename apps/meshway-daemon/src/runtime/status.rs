@@ -139,6 +139,39 @@ impl View {
                 phase = Phase::Synchronizing;
             }
         }
+        let exit = (current
+            && network_bound
+            && desired.up
+            && !desired.shutdown
+            && (network.exit_capability.is_some() || network.exit_dns_unavailable))
+            .then(|| meshway_ipc::ExitState {
+                capability: network.exit_capability.clone().map(|mut capability| {
+                    if !network_current {
+                        capability.installed_families.clear();
+                    }
+                    capability
+                }),
+                installed_role: network_current
+                    .then(|| {
+                        network
+                            .guard
+                            .as_ref()
+                            .and_then(|g| g.configuration().ok())
+                            .and_then(|cfg| cfg.exit_role.as_ref())
+                            .filter(|_| {
+                                network
+                                    .exit_capability
+                                    .as_ref()
+                                    .is_some_and(|c| !c.installed_families.is_empty())
+                            })
+                            .map(|role| role.generation)
+                    })
+                    .flatten(),
+                active_flows: network_current.then_some(network.exit_flows).flatten(),
+                dns_unavailable: network
+                    .exit_dns_unavailable
+                    .then_some(meshway_model::exit::ExitUnavailableReason::DnsUnavailable),
+            });
         Status {
             process_id: std::process::id(),
             revision: desired.revision,
@@ -180,6 +213,7 @@ impl View {
             },
             data_plane,
             network_mode: self.network_mode,
+            exit,
             last_error: report.problem.or(if current && network_bound {
                 network.problem
             } else {

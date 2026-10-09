@@ -20,7 +20,7 @@ impl Report {
             );
         }
         let applied = current.then(|| self.applied()).flatten();
-        let saved = status.cached.filter(|saved| {
+        let saved = status.cached.clone().filter(|saved| {
             status
                 .instance
                 .as_ref()
@@ -31,7 +31,7 @@ impl Report {
             capabilities: super::capabilities(),
             configuration: ConfigurationState {
                 saved,
-                applied,
+                applied: applied.clone(),
                 progress: None,
             },
             listeners: BTreeMap::new(),
@@ -41,7 +41,22 @@ impl Report {
             selection: Default::default(),
             probes: Vec::new(),
             problems: Vec::new(),
-            exit_capability: None,
+            exit_capability: self
+                .exit_capability
+                .clone()
+                .filter(|exit| {
+                    self.bound_to(&status)
+                        && status.instance.as_ref().is_some_and(|i| {
+                            i.instance_id == exit.instance_id
+                                && i.target.as_ref() == Some(&exit.target)
+                        })
+                })
+                .map(|mut exit| {
+                    if applied.is_none() {
+                        exit.installed_families.clear();
+                    }
+                    exit
+                }),
         };
         if !current {
             return state;

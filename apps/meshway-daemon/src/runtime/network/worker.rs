@@ -14,6 +14,9 @@ struct Installed {
     secure: SecureNode,
     manager: Option<Manager>,
     live: bool,
+    exit: Option<super::exit::Runtime>,
+    capture: Option<meshway_underlay::EgressCapture>,
+    cleanup_failed: bool,
 }
 
 /// Covers the existing 128 queued packets, 32 sends and one 32-packet read
@@ -108,6 +111,9 @@ pub(super) async fn run(
             Tick,
             SampleDue,
             NetworkChanged,
+            ExitChanged,
+            ExitFailed,
+            ExitReply(Result<meshway_underlay::ExitReply, meshway_underlay::Error>),
         }
         let live = installed.as_ref().is_some_and(|state| state.live);
         let can_read = live && packets.can_read(&pool);
@@ -121,6 +127,10 @@ pub(super) async fn run(
             .filter(|state| state.live)
             .and_then(|state| packets.wake_at(&state.target));
         if let Some(at) = diagnostics.wake_at() {
+            wake_at = Some(wake_at.map_or(at, |old| old.min(at)));
+        }
+        if installed.as_ref().is_some_and(|state| state.exit.is_some()) {
+            let at = tokio::time::Instant::now() + Duration::from_millis(250);
             wake_at = Some(wake_at.map_or(at, |old| old.min(at)));
         }
         if pending_completion.is_some() {
@@ -147,16 +157,23 @@ pub(super) async fn run(
             changed = network_changes.changed() => if changed.is_ok() { Work::NetworkChanged } else { Work::Command(None) },
             _ = async { match sample_at { Some(at) => tokio::time::sleep_until(at).await, None => std::future::pending().await } } => Work::SampleDue,
             work = async {
+                let (manager, mut exit) = match installed.as_mut() {
+                    Some(state) => (state.manager.as_mut(), state.exit.as_mut()),
+                    None => (None, None),
+                };
+                let mut health = exit.as_ref().map(|exit| exit.health.clone());
                 // Packet pressure must not starve incoming handshakes or lease
                 // renewal work. Lifecycle/authority remain the outer priority.
                 tokio::select! {
+                    _ = async { match &mut health { Some(health) => { let _ = health.changed().await; }, None => std::future::pending().await } } => Work::ExitChanged,
+                    reply = async { match exit.as_mut() { Some(exit) => exit.reader.recv().await, None => std::future::pending().await } }, if live => Work::ExitReply(reply),
                     _ = packets.sent(&host), if has_outputs => Work::Tick,
                     _ = pool.ready(), if live && pool.has_pending() => Work::Tick,
                     result = async {
                          match host.tun() { Some(tun) => receive_packets(tun, &buffers).await.map_err(meshway_underlay::Error::Tun), None => std::future::pending().await }
                     }, if can_read => Work::Packet(result),
                     event = async {
-                        match installed.as_mut().and_then(|state| state.manager.as_mut()) {
+                         match manager {
                              Some(manager) => manager.recv_batch_with_data(can_read).await,
                             None => std::future::pending().await,
                         }
@@ -170,6 +187,15 @@ pub(super) async fn run(
         // target, not win the command-priority branch and return its fenced
         // predecessor. Lifecycle commands keep their existing priority.
         let work = match work {
+            Work::ExitChanged => {
+                let failed = installed
+                    .as_mut()
+                    .and_then(|state| state.exit.as_mut())
+                    .is_some_and(|exit| {
+                        exit.health.has_changed().is_err() || exit.health.borrow_and_update().failed
+                    });
+                if failed { Work::ExitFailed } else { Work::Tick }
+            }
             Work::Command(Some(Command::Sample(reply)))
                 if pending_completion.is_none() && targets.has_changed().unwrap_or(false) =>
             {
@@ -360,6 +386,7 @@ pub(super) async fn run(
                     timed_out,
                     traversal.clone(),
                     generation,
+                    &mut report,
                 )
                 .await;
                 report.dns_guard = dns.guard();
@@ -403,6 +430,12 @@ pub(super) async fn run(
                             DataPlane::Ready
                         } else {
                             DataPlane::Stopped
+                        };
+                        if let Some(capability) = &mut report.exit_capability
+                            && installed.as_ref().is_some_and(|s| s.exit.is_some())
+                        {
+                            capability.installed_families =
+                                vec![meshway_model::exit::ExitFamily::Ipv4];
                         }
                     }
                     Err((problem, failure)) => {
@@ -423,6 +456,8 @@ pub(super) async fn run(
                 reports.send_replace(report);
             }
             Work::Invalid
+            | Work::ExitFailed
+            | Work::ExitReply(Err(_))
             | Work::CarrierClosed
             | Work::Packet(Err(_))
             | Work::HardExpired
@@ -455,6 +490,9 @@ pub(super) async fn run(
                 if pause_until.is_some() {
                     if let Some(state) = &mut installed {
                         state.live = false;
+                        if let Some(exit) = state.exit.take() {
+                            state.cleanup_failed |= exit.stop(&mut state.secure).await.is_err();
+                        }
                     }
                 } else {
                     close(&mut installed).await;
@@ -488,6 +526,10 @@ pub(super) async fn run(
                 }
                 report.completion = None;
                 report.facts = None;
+                report.exit_flows = None;
+                if let Some(capability) = &mut report.exit_capability {
+                    capability.installed_families.clear();
+                }
                 reports.send_replace(report);
                 continue;
             }
@@ -499,6 +541,25 @@ pub(super) async fn run(
                             packets.drop_packet("unsupported_ip_or_local_control")
                         }
                         Err(_) => packets.drop_packet("malformed_ip"),
+                    }
+                }
+            }
+            Work::ExitReply(Ok(reply)) => {
+                if let Some(state) = &mut installed {
+                    match Packet::parse(reply.packet) {
+                        Ok(packet) => match state
+                            .secure
+                            .exit_reply(meshway_dataplane::exit::ExitReplyIngress::new(packet))
+                        {
+                            Ok(frame) => {
+                                if let Some(exit) = &mut state.exit {
+                                    exit.drive(&mut state.secure);
+                                }
+                                packets.exit_reply(frame);
+                            }
+                            Err(_) => packets.drop_packet("exit_reply_admission"),
+                        },
+                        Err(_) => packets.drop_packet("exit_reply_malformed"),
                     }
                 }
             }
@@ -524,6 +585,7 @@ pub(super) async fn run(
                 }
             }
             Work::Tick | Work::DiagnosticSent => {}
+            Work::ExitChanged => unreachable!("mapped above"),
         }
         if let Some(state) = &mut installed
             && state.live
@@ -549,7 +611,7 @@ pub(super) async fn run(
                 _ = dns.failed(), if !dns_failed => {},
                 _ = async {
                     static PROFILE: meshway_logging::profile::Metric = meshway_logging::profile::Metric::new("host.drive.poll");
-                    PROFILE.poll(packets.drive(&mut state.secure, manager, carriers.as_ref(), &host, &state.target, &gateway, &mut diagnostics, &mut pool)).await;
+                    PROFILE.poll(packets.drive(&mut state.secure, manager, carriers.as_ref(), &host, &state.target, &gateway, &mut diagnostics, &mut pool, state.exit.as_mut())).await;
                     diagnostics.drive(&mut state.secure, manager, carriers.as_ref(), &gateway);
                 } => {},
             }
@@ -592,6 +654,13 @@ async fn receive_packets(
 async fn close(installed: &mut Option<Installed>) {
     if let Some(state) = installed {
         state.live = false;
+        if let Some(exit) = state.exit.take() {
+            let result = exit.stop(&mut state.secure).await;
+            state.cleanup_failed |= result.is_err();
+            if let Err(problem) = result {
+                tracing::warn!(?problem, "Exit retirement failed");
+            }
+        }
         if let Some(mut manager) = state.manager.take() {
             let _ = manager.shutdown().await;
         }
@@ -637,6 +706,11 @@ fn sample(installed: &Option<Installed>, mut report: Report) -> Report {
     );
     meshway_logging::profile::gauge("secure.ready_circuits", None);
     report.facts = None;
+    report.exit_flows = installed
+        .as_ref()
+        .filter(|s| s.live)
+        .and_then(|s| s.exit.as_ref())
+        .map(|exit| exit.health.borrow().flows);
     report.dependencies.clear();
     report.observation_dependencies.clear();
     report.facts_observed_at = chrono::Utc::now();
@@ -695,6 +769,7 @@ async fn install(
     timed_out: bool,
     traversal: Arc<dyn meshway_connectivity::traversal::TraversalGateway>,
     generation: meshway_model::Sequence,
+    report: &mut Report,
 ) -> Result<bool, (Problem, ApplyFailure)> {
     let (dns, dns_plans) = dns;
     let Some(identity) = &target.identity else {
@@ -713,12 +788,55 @@ async fn install(
         .snapshot()
         .configuration()
         .map_err(|_| (Problem::Apply, ApplyFailure::Validation))?;
-    let needs_dns = super::requirements::dns_required(&cfg.dns.settings)
-        || !matches!(
-            cfg.dns.egress,
-            meshway_configuration::execution::DnsEgress::NoExit
-        );
-    let dns_prepared = if needs_dns {
+    let needs_dns = super::requirements::dns_required(&cfg.dns.settings);
+    let exit_dns = !matches!(
+        cfg.dns.egress,
+        meshway_configuration::execution::DnsEgress::NoExit
+    );
+    report.exit_dns_unavailable = exit_dns;
+    let capture_needed = cfg.egress_capture.default_capture
+        || !cfg.egress_capture.managed_ipv4.is_empty()
+        || !cfg.egress_capture.sink_ipv6.is_empty()
+        || cfg.egress_capture.unavailable.is_some()
+        || installed.as_ref().is_some_and(|s| s.capture.is_some());
+    // Stage the old/new negative boundary before probing or other preparations.
+    let capture = if capture_needed {
+        Some(
+            host.install_egress_capture(cfg.egress_capture.clone())
+                .await
+                .map_err(|_| (Problem::Underlay, ApplyFailure::Underlay))?,
+        )
+    } else {
+        None
+    };
+    report.exit_capability = if cfg.exit_enabled || cfg.exit_role.is_some() {
+        Some(
+            host.probe_exit(
+                target.ticket.instance().instance_id,
+                target.ticket.target().clone(),
+            )
+            .await,
+        )
+    } else {
+        None
+    };
+    let dns_prepared = if needs_dns && exit_dns {
+        // Prepare the existing DNS owner's negative system scope, but publish
+        // no query authority until X5's DNS-purpose adapter is available.
+        match dns.plan(host, &target).await {
+            Ok(_)
+            | Err(
+                meshway_dns::SystemDnsError::ExitPlan | meshway_dns::SystemDnsError::ResolverPlan,
+            ) => {}
+            Err(error) => {
+                tracing::warn!(%error, "Required negative DNS installation failed");
+                return Err((Problem::Dns, ApplyFailure::Dns));
+            }
+        }
+        dns.suspend();
+        dns_plans.send_replace(None);
+        Ok(None)
+    } else if needs_dns {
         dns.plan(host, &target).await.map(Some).map_err(|error| {
             tracing::warn!(%error, "DNS preparation failed");
             (Problem::Dns, ApplyFailure::Dns)
@@ -767,8 +885,22 @@ async fn install(
     }
     if !retained {
         close(installed).await;
+        if installed.as_ref().is_some_and(|s| s.cleanup_failed) {
+            return Err((Problem::Underlay, ApplyFailure::Underlay));
+        }
         *installed = None;
         *packets = Packets::default();
+    }
+    if let Some(state) = installed.as_mut()
+        && state
+            .exit
+            .as_ref()
+            .is_some_and(|exit| cfg.exit_role.as_ref() != Some(&exit.plan))
+        && let Some(old) = state.exit.take()
+    {
+        old.stop(&mut state.secure)
+            .await
+            .map_err(|p| (p, ApplyFailure::Underlay))?;
     }
     host.install(identity.snapshot().clone())
         .await
@@ -781,6 +913,40 @@ async fn install(
         })?;
     if host.tun().is_none() {
         return Err((Problem::Tun, ApplyFailure::Tun));
+    }
+    if let Some(capture) = &capture {
+        capture
+            .switch(cfg.egress_capture.clone())
+            .await
+            .map_err(|_| (Problem::Underlay, ApplyFailure::Underlay))?;
+        if !capture.is_active() {
+            return Err((Problem::Underlay, ApplyFailure::Underlay));
+        }
+    }
+    let mut new_role = None;
+    if let Some(plan) = &cfg.exit_role {
+        if !report
+            .exit_capability
+            .as_ref()
+            .is_some_and(|c| c.status == meshway_model::exit::ExitStatus::Ready)
+        {
+            return Err((Problem::Underlay, ApplyFailure::Underlay));
+        }
+        if installed.as_ref().is_none_or(|s| s.exit.is_none()) {
+            let role = host
+                .install_exit_role(plan.clone())
+                .await
+                .map_err(|error| {
+                    tracing::warn!(%error, "Exit role installation failed");
+                    if let Some(capability) = &mut report.exit_capability {
+                        capability.status = meshway_model::exit::ExitStatus::Unavailable {
+                            reason: meshway_model::exit::ExitUnavailableReason::OwnershipConflict,
+                        };
+                    }
+                    (Problem::Underlay, ApplyFailure::Underlay)
+                })?;
+            new_role = Some((role, plan.clone()));
+        }
     }
     // Host installation establishes the owned capture/sink first. A failed
     // required component then suspends it without leaking Mesh destinations
@@ -816,7 +982,7 @@ async fn install(
             .now_ms()
             .map_err(|_| (Problem::Apply, ApplyFailure::Validation))?,
     )?;
-    let dns_snapshot = needs_dns.then(|| identity.snapshot().clone());
+    let dns_snapshot = (needs_dns && !exit_dns).then(|| identity.snapshot().clone());
     let preserved = if physical && retained {
         installed.as_mut().and_then(|state| state.manager.take())
     } else {
@@ -854,6 +1020,7 @@ async fn install(
         state.manager = Some(manager);
         state.target = target;
         state.live = true;
+        state.capture = capture;
     } else {
         let secure = match SecureNode::new(identity.clone(), Default::default(), carriers) {
             Ok(secure) => secure,
@@ -867,6 +1034,9 @@ async fn install(
             secure,
             manager: Some(manager),
             live: true,
+            exit: None,
+            capture,
+            cleanup_failed: false,
         });
     }
     if let Some(snapshot) = dns_snapshot {
@@ -874,6 +1044,21 @@ async fn install(
             tracing::warn!(%error, "DNS scope installation failed");
             (Problem::Dns, ApplyFailure::Dns)
         })?;
+    }
+    if let Some(state) = installed {
+        state
+            .target
+            .identity
+            .as_ref()
+            .expect("installed identity")
+            .snapshot()
+            .ensure_current()
+            .map_err(|_| (Problem::Apply, ApplyFailure::Validation))?;
+        if let Some((role, plan)) = new_role {
+            state.exit = Some(
+                super::exit::Runtime::start(role, plan).map_err(|p| (p, ApplyFailure::Underlay))?,
+            );
+        }
     }
     Ok(true)
 }

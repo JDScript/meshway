@@ -9,6 +9,15 @@ use tokio::{sync::watch, time::Instant};
 pub(super) const CHANGE_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(PartialEq, Eq)]
+struct ExitKey {
+    instance: meshway_model::InstanceId,
+    target: ConfigurationRef,
+    supported: Vec<meshway_model::exit::ExitFamily>,
+    installed: Vec<meshway_model::exit::ExitFamily>,
+    status: meshway_model::exit::ExitStatus,
+}
+
+#[derive(PartialEq, Eq)]
 struct Listener {
     key: String,
     protocol: meshway_configuration::transport::TransportProtocol,
@@ -25,6 +34,8 @@ pub(super) struct Key {
     interface_epoch: u64,
     execution_live: bool,
     dns_live: bool,
+    exit: Option<ExitKey>,
+    exit_dns_unavailable: bool,
     listeners: BTreeMap<[u8; 32], Listener>,
     links: BTreeMap<[u8; 32], LinkFact>,
     sockets: Vec<meshway_connectivity::SocketFact>,
@@ -55,6 +66,14 @@ impl Key {
             interface_epoch: report.interface_epoch,
             execution_live,
             dns_live,
+            exit: report.exit_capability.as_ref().map(|exit| ExitKey {
+                instance: exit.instance_id,
+                target: exit.target.clone(),
+                supported: exit.supported_families.clone(),
+                installed: exit.installed_families.clone(),
+                status: exit.status.clone(),
+            }),
+            exit_dns_unavailable: report.exit_dns_unavailable,
             listeners: BTreeMap::new(),
             links: BTreeMap::new(),
             sockets: Vec::new(),
