@@ -16,6 +16,7 @@ pub mod history;
 pub mod live;
 pub mod management;
 mod management_rules;
+pub mod netmap;
 mod networks;
 pub mod node;
 pub mod node_observations;
@@ -67,6 +68,10 @@ pub use management::{
     MemberMutationResponse, MemberRemovedResponse, PasswordResetInspectRequest,
     PasswordResetInspection, PasswordResetRedeemRequest, RemovalImpactResponse,
     RemoveMemberRequest, RoleChangeImpactResponse,
+};
+pub use netmap::{
+    NetmapChanged, NetmapDeltaNotice, NetmapQueryRequest, NetmapQueryResponse, NodeStateDelta,
+    PeerExitFacts, PeerFacts, PeerListenerFacts,
 };
 pub use node::{
     DeleteNodeRequest, NodeChallenge, NodeChallengeRequest, NodeDnsQueryRequest,
