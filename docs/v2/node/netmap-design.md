@@ -201,7 +201,7 @@ TUN 源包 → Packet::parse → 查唯一 FlowTable（已有流直接走原路�
 netmap 覆盖全部可达 peer，若“收到候选即建连”会变成全连接。建议改为本地需要驱动：
 
 - dataplane 在首包选路或中继收到经过本节点的握手时，向 Manager 登记 `AdjacencyInterest(peer)`；Manager 只对 `edges` 中的 peer 获取连接。
-- 无 circuit 且无 interest 的邻接空闲 120 秒后关闭；configured TCP／UDP 通道可按 topology 声明保持常驻（见[未决问题](#未决问题)）。
+- 无 circuit 且无 interest 的邻接空闲 120 秒后关闭；configured TCP／UDP 通道可按 topology 声明保持常驻（见[已决产品问题](#已决产品问题)）。
 - STUN 刷新只对存在 interest 或健康 Native UDP 通道的 socket 进行，预算（每 60 秒 30＋30 次）保持。
 
 这改变 [Topology](/v2/configuration-reference/topology) 现行“Node 收到候选即建立邻接、不等首包”的描述，需用户确认。
@@ -352,7 +352,7 @@ cold（静态端点）：  T ≈ Σ每跳串行邻接获取（TCP 1 RTT；TLS �
 
 源端在 `egress.routes` 给出的有序主备出口中，选第一个能力事实新鲜且 ready 的出口建流；都不 ready 时丢弃并计数，保留负向捕获，**永不 direct**。出口端准入只看 grant 与本地已安装 role，不看自己的 State 上报。能力事实错误只会让源选错出口而被拒，不会放宽准入。
 
-这把“出口能力按需编译”收窄为“出口能力作为选择事实、零编译”，与已定决定的措辞不同，列入[未决问题](#未决问题)。
+这把“出口能力按需编译”收窄为“出口能力作为选择事实、零编译”，与已定决定的措辞不同，列入[已决产品问题](#已决产品问题)。
 
 ### DNS
 
@@ -365,7 +365,7 @@ cold（静态端点）：  T ≈ Σ每跳串行邻接获取（TCP 1 RTT；TLS �
 | 项 | 方案 |
 | --- | --- |
 | Node Control 记录 | 记录格式升为 **v5**：身份 envelope 与 netmap 缓存分离（缓存带自己的 `compilerVersion`），今后编译器升级不再改身份版本（S5）。v1–v4 沿用现有规则：校验完整性与绑定、私有归档原字节、清空缓存、保留身份 |
-| netmap 缓存用途 | 只作 delta 基准；进程重启后是否可凭未到期缓存离线运行见[未决问题](#未决问题)，默认不恢复 |
+| netmap 缓存用途 | 只作 delta 基准；进程重启后是否可凭未到期缓存离线运行见[已决产品问题](#已决产品问题)，默认不恢复 |
 | Server 数据库 | 新的当前 schema：删除 `execution_demands`、`execution_publications`、诊断编译镜像表；新增 `node_netmaps(network, node, serial, revision, digest, sealed payload, created_at)` 与有界历史；`node_execution` 去掉 `target_publication_id`／`execution_expires_at`，回执改引用 `NetmapRef`。按[存储](/v2/storage)现行规则没有迁移链：开发环境重新初始化 Server 数据目录 |
 | HTTP | 新增 `POST /agent-api/v1/netmap/query`；删除 demands、`configuration/refresh`、diagnostic 编译相关字段；`/agent-api/v1` 根不变。重生成 OpenAPI／Rust／TS SDK 并过 drift |
 | wire | v6（握手授权字段与 INIT 时刻）；全路径协调升级 |
@@ -450,7 +450,7 @@ S 类简化不在本表；N1 使 S1–S6（Server）、S1–S5（Node）、S1–
 4. 撤销 sha→nyc 的 TCP 端口：≤ 5 s 内该流停止、ICMP 仍通；撤销 sha 成员：nyc 与 lax 拒绝其全部流量。
 5. 恢复配置，记录全部 serial 与时间戳；地区名只是节点标识，不推断真实跨地域延迟。
 
-## 已决产品问题（2026-10-09）
+## 已决产品问题
 
 | 问题 | 决定 | 影响 |
 | --- | --- | --- |
