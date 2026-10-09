@@ -94,6 +94,7 @@ async fn renew_is_per_subscription_and_restart_or_node_key_revocation_cannot_res
         200,
     )
     .await;
+    assert_pre_expiry_budget(&task);
     assert_eq!(renewed.items.len(), 1);
     let renewed = &renewed.items[0];
     assert!(renewed.subscriber_expires_at > task.subscriber_expires_at);

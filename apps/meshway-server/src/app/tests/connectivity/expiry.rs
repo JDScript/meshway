@@ -298,6 +298,12 @@ async fn per_node_slots_are_bounded_across_distinct_authenticated_peer_pairs() {
             b: format!("node:{peer}"),
         })
         .collect();
+    // Every request below uses A as dialer. Passive peers need their genuine
+    // listeners, not reverse-dial candidates unrelated to the quota assertion.
+    for (peer, _, _, _) in &peers {
+        config.nodes.get_mut(peer).unwrap().dialers =
+            meshway_configuration::Input::Value(Default::default());
+    }
     app.configurations()
         .apply(
             owner.token.expose(),

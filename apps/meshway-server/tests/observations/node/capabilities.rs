@@ -85,6 +85,7 @@ async fn node_absolute_renewal_does_not_slide_on_retry_and_restart_or_revocation
         200,
     )
     .await;
+    assert_pre_expiry_budget(&created.task);
     assert_eq!(
         renewed
             .task

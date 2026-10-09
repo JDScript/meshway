@@ -416,6 +416,17 @@ pub async fn wait_until(deadline: chrono::DateTime<chrono::Utc>) {
     }
 }
 
+pub fn assert_pre_expiry_budget(task: &meshway_protocol::ObservationTask) {
+    let remaining = task.expires_at - chrono::Utc::now();
+    assert!(
+        remaining
+            >= chrono::Duration::seconds(
+                meshway_server::observations::OBSERVATION_LEASE_SECONDS / 2,
+            ),
+        "pre-expiry observation work must fit half the issued lease: {remaining} left",
+    );
+}
+
 /// Revocation is asynchronous. Bound convergence by the subscription lease,
 /// and inspect the actual projection instead of guessing a scheduler delay.
 pub async fn wait_no_diagnostics(server: &Server, node: &Node) {
