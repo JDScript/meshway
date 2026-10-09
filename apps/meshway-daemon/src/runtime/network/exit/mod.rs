@@ -47,6 +47,8 @@ impl Runtime {
     ) -> Result<Self, Problem> {
         let reader = role.reply_reader().map_err(|_| Problem::Underlay)?;
         let (sender, received) = mpsc::channel(CAPACITY);
+        #[cfg(test)]
+        testing::driver_started(sender.clone());
         let (failed, failures) = mpsc::channel(CAPACITY);
         let (status, health) = watch::channel(Health::default());
         let stop = CancellationToken::new();

@@ -6,6 +6,25 @@ use meshway_model::{NetworkId, NodeId, RequestId, state::*};
 use meshway_protocol::*;
 use std::{collections::BTreeMap, net::SocketAddr, sync::Arc};
 
+// An isolated assembly test can feed its SecureNode's real projections to the
+// existing driver. It does not create a second Host owner or synthesize ACKs.
+static DRIVER: std::sync::Mutex<
+    Option<tokio::sync::oneshot::Sender<tokio::sync::mpsc::Sender<super::Work>>>,
+> = std::sync::Mutex::new(None);
+
+pub(super) fn observe_driver()
+-> tokio::sync::oneshot::Receiver<tokio::sync::mpsc::Sender<super::Work>> {
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    assert!(DRIVER.lock().unwrap().replace(sender).is_none());
+    receiver
+}
+
+pub(super) fn driver_started(driver: tokio::sync::mpsc::Sender<super::Work>) {
+    if let Some(observer) = DRIVER.lock().unwrap().take() {
+        let _ = observer.send(driver);
+    }
+}
+
 pub(in crate::runtime::network) fn id() -> RequestId {
     super::super::packets::request_id().unwrap()
 }

@@ -4,6 +4,22 @@ use super::*;
 use crate::runtime::network::{Handle, Report};
 use std::{os::unix::fs::PermissionsExt, path::PathBuf};
 
+async fn project(
+    driver: &tokio::sync::mpsc::Sender<super::super::Work>,
+    node: &mut SecureNode,
+    packet: &PendingAction,
+) {
+    while let Some(event) = node.next_exit_projection() {
+        assert!(
+            driver
+                .send(super::super::Work::Projection(Box::new(event)))
+                .await
+                .is_ok()
+        );
+    }
+    packet.projection_ready().await.unwrap();
+}
+
 struct SlowNft {
     original: PathBuf,
     armed: PathBuf,
@@ -85,6 +101,7 @@ async fn busy_installation_skips_state_without_withdrawing_exit_then_stopped_wit
         crate::settings::Settings::new(f.directory.path().join("daemon"), &f.origin, Some("exit"))
             .unwrap();
     let (reports, _) = tokio::sync::watch::channel(Report::stopped());
+    let driver = super::super::testing::observe_driver();
     let mut handle = Handle::open(
         f.host_directory(),
         &f.origin,
@@ -96,6 +113,7 @@ async fn busy_installation_skips_state_without_withdrawing_exit_then_stopped_wit
     .unwrap();
     handle.publish(&mut f.controls[2]).await.unwrap();
     settled(&mut handle, &mut f).await;
+    let driver = driver.await.unwrap();
     assert!(
         handle
             .report_state(&mut f.controls[2], &settings, true)
@@ -116,10 +134,10 @@ async fn busy_installation_skips_state_without_withdrawing_exit_then_stopped_wit
     handle.publish(&mut f.controls[2]).await.unwrap();
     settled(&mut handle, &mut f).await;
     let mut mesh = Mesh::new(&f, demand);
-    // Keep the admitted packet and its original permit, without fabricating a
-    // Host projection ACK. This regression checks the authorization/circuit
-    // boundary; the separate driver test checks actual NAT and return traffic.
+    // Install the actual projection through this worker's existing driver and
+    // Host. An unacknowledged projection is intentionally not a retained flow.
     let packet_before = mesh.forward(packet(&f, 42000));
+    project(&driver, &mut mesh.e, &packet_before).await;
     let references: Vec<_> = f
         .controls
         .iter()
@@ -173,6 +191,7 @@ async fn busy_installation_skips_state_without_withdrawing_exit_then_stopped_wit
     assert_eq!(mesh.a.retained_flows(), 1);
     assert_eq!(mesh.e.retained_flows(), 1);
     let packet_after = mesh.forward(packet(&f, 42000));
+    project(&driver, &mut mesh.e, &packet_after).await;
     assert_eq!(
         packet_before.exit_scope().unwrap().deadline(),
         packet_after.exit_scope().unwrap().deadline()
@@ -198,6 +217,7 @@ async fn busy_installation_skips_state_without_withdrawing_exit_then_stopped_wit
     assert_ne!(state(&f).await.report_sequence, before.report_sequence);
 
     // A successful sample after actual role teardown is absence, not a timeout.
+    drop(driver);
     handle.stop(false).await.unwrap();
     assert!(
         handle
