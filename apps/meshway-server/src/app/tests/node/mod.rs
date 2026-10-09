@@ -276,6 +276,7 @@ async fn try_enroll_user_node(
 }
 
 mod demands;
+mod diagnostics;
 mod edge_transports;
 mod exit;
 

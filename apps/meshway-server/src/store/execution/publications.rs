@@ -67,7 +67,10 @@ pub(crate) fn select_profile(
             p.node.as_uuid().as_bytes().as_slice(), now
         ],
     )?;
-    let publication = publish(tx, sealer, p.network, "refresh", now)?.publication;
+    publish(tx, sealer, p.network, "refresh", now)?;
+    let publication = target_for_node(tx, sealer, p.network, p.node)?
+        .ok_or(Error::BindingConflict)?
+        .0;
     Ok((
         RoutingSelectionResponse {
             version,
@@ -382,18 +385,27 @@ pub(crate) fn publish_with_rule_sets(
             )?;
         }
     }
-    tx.execute(
-        "UPDATE networks SET publication_sequence=publication_sequence+1 WHERE id=?1",
-        [network.as_uuid().as_bytes().as_slice()],
-    )?;
-    let sequence: i64 = tx.query_row(
-        "SELECT publication_sequence FROM networks WHERE id=?1",
-        [network.as_uuid().as_bytes().as_slice()],
-        |r| r.get(0),
-    )?;
-    let payload = zeroize::Zeroizing::new(bytes(&compiled)?);
-    let sealed = sealer.seal_execution(network, publication, &payload)?;
-    tx.execute(
+    if compiled.nodes.is_empty()
+        && supersedes.is_empty()
+        && let Some(existing) = active.values().next()
+    {
+        // Every actual node slice retained its current target. Reuse a real
+        // immutable publication instead of storing a new empty delta. Callers
+        // returning a node result resolve that node's precise retained target.
+        compiled = existing.clone();
+    } else {
+        tx.execute(
+            "UPDATE networks SET publication_sequence=publication_sequence+1 WHERE id=?1",
+            [network.as_uuid().as_bytes().as_slice()],
+        )?;
+        let sequence: i64 = tx.query_row(
+            "SELECT publication_sequence FROM networks WHERE id=?1",
+            [network.as_uuid().as_bytes().as_slice()],
+            |r| r.get(0),
+        )?;
+        let payload = zeroize::Zeroizing::new(bytes(&compiled)?);
+        let sealed = sealer.seal_execution(network, publication, &payload)?;
+        tx.execute(
         "INSERT INTO execution_publications(id,network_id,sequence,revision,cause,supersedes,dependency_digest,payload,created_at,rule_set_bindings)
          VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
         params![
@@ -409,9 +421,9 @@ pub(crate) fn publish_with_rule_sets(
             bytes(rule_set_bindings)?,
         ],
     )?;
-    // All demands were compiled together; only changed slices become targets.
-    for node in compiled.nodes.keys() {
-        tx.execute(
+        // All demands were compiled together; only changed slices become targets.
+        for node in compiled.nodes.keys() {
+            tx.execute(
             "UPDATE node_execution SET target_publication_id=?1 WHERE network_id=?2 AND node_id=?3",
             params![
                 publication.as_uuid().as_bytes().as_slice(),
@@ -419,18 +431,19 @@ pub(crate) fn publish_with_rule_sets(
                 node.as_uuid().as_bytes().as_slice()
             ],
         )?;
-    }
-    for old in supersedes {
-        tx.execute(
-            "UPDATE execution_publications SET withdrawn_at=COALESCE(withdrawn_at,?1)
+        }
+        for old in supersedes {
+            tx.execute(
+                "UPDATE execution_publications SET withdrawn_at=COALESCE(withdrawn_at,?1)
              WHERE network_id=?2 AND id=?3 AND NOT EXISTS(
                  SELECT 1 FROM node_execution WHERE network_id=?2 AND target_publication_id=?3)",
-            params![
-                now,
-                network.as_uuid().as_bytes().as_slice(),
-                old.as_uuid().as_bytes().as_slice()
-            ],
-        )?;
+                params![
+                    now,
+                    network.as_uuid().as_bytes().as_slice(),
+                    old.as_uuid().as_bytes().as_slice()
+                ],
+            )?;
+        }
     }
     for (id, (source, decision)) in diagnostic_decisions {
         let (_, target) =
@@ -943,17 +956,19 @@ pub(crate) fn demand(
                 digest.as_bytes().as_slice(),bytes(&d)?,d.expires_at_ms as i64],
         )?;
     }
-    let compiled = publish(tx, sealer, p.network, "demand", now)?;
-    let decision = compiled
-        .nodes
-        .get(&p.node)
-        .and_then(|n| n.configuration.decisions.get(&request.request_id))
+    publish(tx, sealer, p.network, "demand", now)?;
+    let (publication, target) =
+        target_for_node(tx, sealer, p.network, p.node)?.ok_or(Error::BindingConflict)?;
+    let decision = target
+        .configuration
+        .decisions
+        .get(&request.request_id)
         .cloned()
         .ok_or(Error::BindingConflict)?;
     grant_lease(tx, sealer, &p, now)?;
     Ok((
         DemandResponse {
-            publication: compiled.publication,
+            publication,
             decision,
         },
         vec![Effect::Progress {
