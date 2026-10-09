@@ -32,7 +32,8 @@ fn subtract(
 }
 
 fn prefixes(
-    input: &CompilationInput<'_>,
+    cfg: &NetworkConfiguration,
+    rule_sets: &BTreeMap<String, RuleSetContent>,
     matcher: &RouteMatch,
     may_exit: bool,
 ) -> Result<Vec<IpNet>, CompileError> {
@@ -44,15 +45,14 @@ fn prefixes(
     let mut ips = matcher.ip_cidr.clone();
     let mut has_names = !matcher.domain.is_empty() || !matcher.domain_suffix.is_empty();
     for key in &matcher.rule_sets {
-        let (ip, domain, suffix) = match input.configuration.rule_sets.get(key) {
+        let (ip, domain, suffix) = match cfg.rule_sets.get(key) {
             Some(RuleSet::Inline {
                 ip_cidr,
                 domain,
                 domain_suffix,
             }) => (ip_cidr, domain, domain_suffix),
             Some(RuleSet::Remote { .. }) => {
-                let set = input
-                    .rule_sets
+                let set = rule_sets
                     .get(key)
                     .ok_or(CompileError::UnavailableDependency)?;
                 (&set.ip_cidr, &set.domain, &set.domain_suffix)
@@ -75,15 +75,15 @@ fn prefixes(
 }
 
 fn resolved<'a>(
-    input: &'a CompilationInput<'_>,
+    cfg: &'a NetworkConfiguration,
     profile: &str,
 ) -> Result<EgressProfile<'a>, CompileError> {
-    match matching::resolve_profile(input.configuration, profile)? {
+    match matching::resolve_profile(cfg, profile)? {
         EgressProfile::Auto(auto) => {
             if auto.fallback == "auto" {
                 return Err(CompileError::InvalidInput);
             }
-            matching::resolve_profile(input.configuration, &auto.fallback)
+            matching::resolve_profile(cfg, &auto.fallback)
         }
         other => Ok(other),
     }
@@ -97,7 +97,7 @@ pub fn egress_capture_plan(
     selection: u64,
 ) -> Result<EgressCapturePlan, CompileError> {
     let profile = selected_profile(input, node)?;
-    let generation = digest(&(
+    let seed = digest(&(
         input.network,
         node,
         input.revision,
@@ -105,8 +105,22 @@ pub fn egress_capture_plan(
         selection,
         &input.configuration.routing.egress,
     ))?;
+    capture(input.configuration, input.rule_sets, &profile, seed).map(|(plan, _)| plan)
+}
+
+/// One disjoint prefix of the first-match partition with its selected action.
+pub(super) type Route = (IpNet, RouteAction);
+
+/// Shared by publication capture and netmap egress. Routes are empty when the
+/// plan is unavailable; the generation binds `seed` and the resulting ranges.
+pub(super) fn capture(
+    cfg: &NetworkConfiguration,
+    rule_sets: &BTreeMap<String, RuleSetContent>,
+    profile: &str,
+    seed: meshway_model::Digest,
+) -> Result<(EgressCapturePlan, Vec<Route>), CompileError> {
     let mut plan = EgressCapturePlan {
-        generation,
+        generation: seed,
         managed_ipv4: Vec::new(),
         default_capture: false,
         direct_ipv4: Vec::new(),
@@ -114,12 +128,14 @@ pub fn egress_capture_plan(
         sink_ipv6: Vec::new(),
         unavailable: None,
     };
-    if let Err(error) = compile_ranges(input, &profile, &mut plan) {
+    let mut routes = Vec::new();
+    if let Err(error) = compile_ranges(cfg, rule_sets, profile, &mut plan, &mut routes) {
         plan.managed_ipv4 = vec!["0.0.0.0/0".into()];
         plan.default_capture = true;
         plan.direct_ipv4.clear();
         plan.unmanaged_ipv4.clear();
         plan.sink_ipv6 = vec!["::/0".into()];
+        routes.clear();
         plan.unavailable = Some(match error {
             CompileError::Budget => UnavailableReason::RoutingLimit,
             CompileError::UnavailableDependency => UnavailableReason::MissingDependency,
@@ -127,7 +143,7 @@ pub fn egress_capture_plan(
         });
     }
     plan.generation = digest(&(
-        generation,
+        seed,
         &plan.managed_ipv4,
         plan.default_capture,
         &plan.direct_ipv4,
@@ -135,11 +151,17 @@ pub fn egress_capture_plan(
         &plan.sink_ipv6,
         plan.unavailable,
     ))?;
-    Ok(plan)
+    Ok((plan, routes))
 }
 
-fn append(plan: &mut EgressCapturePlan, nets: Vec<IpNet>, action: &RouteAction) {
+fn append(
+    plan: &mut EgressCapturePlan,
+    routes: &mut Vec<Route>,
+    nets: Vec<IpNet>,
+    action: &RouteAction,
+) {
     for net in nets {
+        routes.push((net, action.clone()));
         let out = match (net, action) {
             (IpNet::V4(_), RouteAction::Exit { .. }) => &mut plan.managed_ipv4,
             (IpNet::V4(_), RouteAction::Direct) => &mut plan.direct_ipv4,
@@ -152,16 +174,15 @@ fn append(plan: &mut EgressCapturePlan, nets: Vec<IpNet>, action: &RouteAction) 
 }
 
 fn compile_ranges(
-    input: &CompilationInput<'_>,
+    cfg: &NetworkConfiguration,
+    rule_sets: &BTreeMap<String, RuleSetContent>,
     profile: &str,
     plan: &mut EgressCapturePlan,
+    routes: &mut Vec<Route>,
 ) -> Result<(), CompileError> {
-    let may_exit = !matches!(
-        matching::dns_egress(input.configuration, profile),
-        DnsEgress::NoExit
-    );
-    let mut rules: Vec<_> = input.configuration.routing.egress.rules.iter().collect();
-    let fallback = match resolved(input, profile)? {
+    let may_exit = !matches!(matching::dns_egress(cfg, profile), DnsEgress::NoExit);
+    let mut rules: Vec<_> = cfg.routing.egress.rules.iter().collect();
+    let fallback = match resolved(cfg, profile)? {
         EgressProfile::Mesh => RouteAction::Unmanaged,
         EgressProfile::Global(node) => RouteAction::Exit {
             nodes: vec![format!("node:{node}")],
@@ -183,7 +204,7 @@ fn compile_ranges(
         if remaining.is_empty() {
             break;
         }
-        for prefix in prefixes(input, &rule.matcher, may_exit)? {
+        for prefix in prefixes(cfg, rule_sets, &rule.matcher, may_exit)? {
             let mut rest = Vec::new();
             let mut hit = Vec::new();
             for net in remaining {
@@ -193,13 +214,13 @@ fn compile_ranges(
             if total + rest.len() > MAX_CAPTURE_PREFIXES {
                 return Err(CompileError::Budget);
             }
-            append(plan, hit, &rule.action.clone().into());
+            append(plan, routes, hit, &rule.action.clone().into());
             remaining = rest;
         }
     }
     plan.default_capture = matches!(fallback, RouteAction::Exit { .. })
         && remaining.iter().any(|net| net.addr().is_ipv4());
-    append(plan, remaining, &fallback);
+    append(plan, routes, remaining, &fallback);
     plan.default_capture |= !plan.managed_ipv4.is_empty()
         && plan.direct_ipv4.is_empty()
         && plan.unmanaged_ipv4.is_empty();

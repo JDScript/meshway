@@ -94,7 +94,7 @@ fn compile_service(
     {
         return unavailable(DnsEgressUnavailable::ExitPlanRequired);
     }
-    if !cfg.enabled || !external_access(input, cfg.node_id) {
+    if !cfg.enabled || !external_access(input.configuration, input.subjects, cfg.node_id) {
         return unavailable(DnsEgressUnavailable::Unauthorized);
     }
     let Some(source_instance_id) = runtime.instances.get(&cfg.node_id).copied() else {
@@ -150,10 +150,14 @@ fn compile_service(
     }))
 }
 
-fn external_access(input: &CompilationInput<'_>, source: NodeId) -> bool {
-    input.configuration.access.iter().any(|rule| {
+pub(super) fn external_access(
+    configuration: &NetworkConfiguration,
+    subjects: &SubjectContext,
+    source: NodeId,
+) -> bool {
+    configuration.access.iter().any(|rule| {
         !rule.ip.is_empty()
-            && matching::selectors(input.configuration, input.subjects, &rule.src, source)
+            && matching::selectors(configuration, subjects, &rule.src, source)
             && rule.dst.iter().any(|selector| {
                 selector == "autogroup:internet"
                     || selector.starts_with("domain:")
@@ -164,7 +168,7 @@ fn external_access(input: &CompilationInput<'_>, source: NodeId) -> bool {
 
 /// Conservatively require one identical exit and ordered via list across all
 /// effective rules/fallbacks. Auto and domain-dependent capture stay unavailable.
-fn single_exit(
+pub(super) fn single_exit(
     cfg: &NetworkConfiguration,
     profile: &str,
 ) -> Result<Option<(NodeId, Vec<NodeId>)>, CompileError> {

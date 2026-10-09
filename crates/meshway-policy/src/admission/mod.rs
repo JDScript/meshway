@@ -11,6 +11,7 @@ use meshway_configuration::{NodeAddresses, execution::*};
 use meshway_model::{BoundNodeKey, KeyAlgorithm, NodeId, RequestId};
 use meshway_transport_spec::{Listener, Port, TransportProtocol};
 use std::net::IpAddr;
+pub mod netmap;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Traffic {

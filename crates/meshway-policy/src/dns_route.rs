@@ -137,3 +137,92 @@ pub fn local_resolver_route<'a>(
     }
     Ok(permit)
 }
+
+/// Local socket decision for one configured resolver under the installed
+/// netmap. Only `Direct` and `Unmanaged` permit a local socket.
+pub fn netmap_resolver(
+    netmap: &meshway_configuration::netmap::NodeNetmap,
+    server_key: &str,
+) -> Result<meshway_configuration::netmap::ResolverAction, ResolverRouteError> {
+    if !netmap.self_.enabled || !netmap.dns.settings.servers.contains_key(server_key) {
+        return Err(ResolverRouteError::Missing);
+    }
+    netmap
+        .dns
+        .resolvers
+        .get(server_key)
+        .copied()
+        .ok_or(ResolverRouteError::Missing)
+}
+
+/// Validate a Mesh resolver service against the installed netmap at its
+/// source or resolver. The observed source/path come from authenticated ingress.
+pub fn netmap_dns_service(
+    leased: crate::admission::netmap::Leased<'_>,
+    service: &meshway_configuration::netmap::DnsService,
+    source: meshway_model::NodeId,
+    exit: meshway_model::NodeId,
+    path: &[meshway_model::NodeId],
+    transport: DnsTransport,
+    now_ms: u64,
+) -> Result<(), ResolverRouteError> {
+    use meshway_configuration::netmap::DnsPlan;
+    let netmap = leased.netmap;
+    if leased.lease.netmap.serial != netmap.serial
+        || leased.lease.netmap.revision != netmap.revision
+    {
+        return Err(ResolverRouteError::Binding);
+    }
+    if !leased.lease.valid_at(now_ms) {
+        return Err(ResolverRouteError::Expired);
+    }
+    let published = match &netmap.dns.egress {
+        DnsPlan::ViaExit { service: own } => {
+            netmap.node_id == source
+                && own.as_ref() == service
+                && netmap
+                    .egress
+                    .as_ref()
+                    .is_some_and(|plan| plan.capture.generation == service.generation)
+                && netmap.dns.profile == service.profile
+                && netmap.self_.addresses == service.source_addresses
+                && netmap.peers.get(&exit).is_some_and(|peer| {
+                    peer.addresses.ipv4.map(std::net::IpAddr::V4) == Some(service.address.0)
+                })
+        }
+        DnsPlan::ServeExitResolver { services } => {
+            netmap.node_id == exit
+                && netmap.self_.exit_enabled
+                && netmap.exit_role.as_ref() == Some(&service.role)
+                && netmap.self_.addresses.ipv4.map(std::net::IpAddr::V4) == Some(service.address.0)
+                && netmap
+                    .peers
+                    .get(&source)
+                    .is_some_and(|peer| peer.addresses == service.source_addresses)
+                && services.contains(service)
+        }
+        _ => false,
+    };
+    if !netmap.self_.enabled
+        || !published
+        || source != service.source
+        || exit != service.exit
+        || source == exit
+        || path != service.path.nodes
+        || path.first() != Some(&source)
+        || path.last() != Some(&exit)
+        || !(2..=crate::compile::MAX_HOPS).contains(&path.len())
+        || path.iter().collect::<std::collections::BTreeSet<_>>().len() != path.len()
+        || !service.address.0.is_ipv4()
+        || service.source_addresses.ipv4.is_none()
+        || !service.transports.contains(&transport)
+        || service.transports.len() > 2
+        || service.max_pending == 0
+        || service.max_pending > 128
+        || service.timeout_ms == 0
+        || service.timeout_ms > 5_000
+    {
+        return Err(ResolverRouteError::Binding);
+    }
+    Ok(())
+}

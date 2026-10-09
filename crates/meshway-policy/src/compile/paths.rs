@@ -10,6 +10,9 @@ pub(super) struct Graph<'a> {
     declarations_only: bool,
     pub transport_failures: RefCell<BTreeMap<(NodeId, NodeId), usize>>,
     pub candidates: RefCell<BTreeMap<NodeId, BTreeMap<String, DialCandidate>>>,
+    /// Pure functions of the fixed input, memoized across searches of one compilation.
+    topology: RefCell<BTreeMap<(NodeId, NodeId), bool>>,
+    carriers: RefCell<BTreeMap<(NodeId, NodeId), Vec<DialCandidate>>>,
 }
 impl<'a> Graph<'a> {
     pub fn new(input: Topology<'a>) -> Result<Self, CompileError> {
@@ -21,6 +24,8 @@ impl<'a> Graph<'a> {
             declarations_only: false,
             transport_failures: RefCell::new(BTreeMap::new()),
             candidates: RefCell::new(BTreeMap::new()),
+            topology: RefCell::new(BTreeMap::new()),
+            carriers: RefCell::new(BTreeMap::new()),
         })
     }
     /// Preview shares route search, but neither requires trusted inventory nor
@@ -71,7 +76,7 @@ impl<'a> Graph<'a> {
                 if path.contains(&b)
                     || required[1..].contains(&b)
                     || !self.available(b)
-                    || !topology_allows(self.input.configuration, self.input.subjects, a, b)
+                    || !self.topology_allows(a, b)
                 {
                     continue;
                 }
@@ -151,8 +156,29 @@ impl<'a> Graph<'a> {
                     || transports::declared(self.input.configuration, self.input.subjects, b, a),
             );
         }
-        Ok(!transports::candidates(&self.input, a, b)?.is_empty()
-            || !transports::candidates(&self.input, b, a)?.is_empty())
+        Ok(self.has_carrier(a, b)? || self.has_carrier(b, a)?)
+    }
+    fn topology_allows(&self, a: NodeId, b: NodeId) -> bool {
+        *self
+            .topology
+            .borrow_mut()
+            .entry((a, b))
+            .or_insert_with(|| topology_allows(self.input.configuration, self.input.subjects, a, b))
+    }
+    fn has_carrier(&self, a: NodeId, b: NodeId) -> Result<bool, CompileError> {
+        if let Some(cached) = self.carriers.borrow().get(&(a, b)) {
+            return Ok(!cached.is_empty());
+        }
+        Ok(!self.carriers(a, b)?.is_empty())
+    }
+    /// Dial candidates from `a` to `b`; errors are not memoized and abort the caller.
+    fn carriers(&self, a: NodeId, b: NodeId) -> Result<Vec<DialCandidate>, CompileError> {
+        if let Some(cached) = self.carriers.borrow().get(&(a, b)) {
+            return Ok(cached.clone());
+        }
+        let found = transports::candidates(&self.input, a, b)?;
+        self.carriers.borrow_mut().insert((a, b), found.clone());
+        Ok(found)
     }
     fn available(&self, node: NodeId) -> bool {
         (self.declarations_only || self.input.inventory.contains_key(&node))
@@ -173,7 +199,7 @@ impl<'a> Graph<'a> {
         }
         for pair in nodes.windows(2) {
             for (a, b) in [(pair[0], pair[1]), (pair[1], pair[0])] {
-                for c in transports::candidates(&self.input, a, b)? {
+                for c in self.carriers(a, b)? {
                     let key = format!("{b}/{}", c.listener_key);
                     keys.entry(a).or_default().push(key.clone());
                     self.candidates

@@ -8,6 +8,7 @@ pub use capture::{MAX_CAPTURE_PREFIXES, egress_capture_plan};
 pub use exit::ExitInputs;
 mod edge_constraints;
 mod matching;
+pub mod netmap;
 mod paths;
 mod plan;
 mod routing;
@@ -553,12 +554,23 @@ fn evaluate_with_local(
     ))
 }
 fn selected_profile(input: &CompilationInput<'_>, node: NodeId) -> Result<String, CompileError> {
-    match input.selected_profiles.get(&node) {
-        Some(profile)
-            if matching::profile_allowed(input.configuration, input.subjects, node, profile)? =>
-        {
+    effective_profile(
+        input.configuration,
+        input.subjects,
+        input.selected_profiles,
+        node,
+    )
+}
+fn effective_profile(
+    configuration: &NetworkConfiguration,
+    subjects: &SubjectContext,
+    selected: &BTreeMap<NodeId, String>,
+    node: NodeId,
+) -> Result<String, CompileError> {
+    match selected.get(&node) {
+        Some(profile) if matching::profile_allowed(configuration, subjects, node, profile)? => {
             Ok(profile.clone())
         }
-        _ => matching::default_profile(input.configuration, input.subjects, node),
+        _ => matching::default_profile(configuration, subjects, node),
     }
 }
