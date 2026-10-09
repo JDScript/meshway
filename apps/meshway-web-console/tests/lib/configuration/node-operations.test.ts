@@ -64,7 +64,7 @@ const VIEW: ConfigurationView = {
     [A]: node("a", "100.64.0.1", { listeners: { udp: UDP } }),
     [B]: node("b", "100.64.0.2", {
       identity: { type: "user", user: "u@example.com" },
-      dialers: { native_udp: { priority: 100 } },
+      dialers: { native_udp: {} },
     }),
   },
   routing: {},
@@ -96,7 +96,7 @@ test("settings collapse to one operation with only the changed fields", () => {
 
 test("dialers: null inherits, {} dials nothing, the same set is no change", () => {
   const b = settingsOf([], VIEW, B)!
-  assert.deepEqual(b.dialers, { native_udp: { priority: 100 } })
+  assert.deepEqual(b.dialers, { native_udp: {} })
   const inherit = withSettings([], VIEW, B, { ...b, dialers: null })
   assert.deepEqual(inherit, [
     { type: "setNodeSettings", nodeId: B, fields: { dialers: null } },
@@ -107,7 +107,7 @@ test("dialers: null inherits, {} dials nothing, the same set is no change", () =
   assert.deepEqual(
     withSettings([], VIEW, B, {
       ...b,
-      dialers: { native_udp: { priority: 100 } },
+      dialers: { native_udp: {} },
     }),
     []
   )

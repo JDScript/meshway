@@ -7,15 +7,14 @@
 <!-- schema: TrojanDialer -->
 ```json
 {
-  "remark": "Trojan 备用承载",
-  "priority": 400,
+  "remark": "启用 Trojan 拨号",
   "tls": { "trust": "managed" }
 }
 ```
 
 ## Fields
 
-复用 [Dial Fields](/v2/configuration-reference/shared/dial) 的 TCP 子集。priority 默认 400；TLS 使用[TLS 客户端选项](/v2/configuration-reference/shared/tls#dialer-structure)。外层固定 TCP。
+复用 [Dial Fields](/v2/configuration-reference/shared/dial) 的 TCP 子集。TLS 使用[TLS 客户端选项](/v2/configuration-reference/shared/tls#dialer-structure)。外层固定 TCP。
 
 ## 节点实际收到的字段
 

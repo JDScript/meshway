@@ -428,7 +428,6 @@
   "configuration_dialer_stream_tcp": "TCP",
   "configuration_dialer_stream_websocket": "WebSocket",
   "configuration_dialer_off": "已停用",
-  "configuration_dialer_priority": "优先级",
   "configuration_dialer_timeout": "超时",
   "configuration_dialer_stream": "流",
   "configuration_dialer_turn_on": "启用",
@@ -559,5 +558,6 @@
   "configuration_transport_websocket_alpn": "WebSocket 需要 HTTP/1.1 的 ALPN",
   "configuration_transport_empty_trojan_password": "Trojan 密码为空",
   "configuration_transport_material_required": "监听材料还没有准备",
-  "configuration_transport_local_address": "本地地址必须是 IP 或留空"
+  "configuration_transport_local_address": "本地地址必须是 IP 或留空",
+  "configuration_transport_repeated_transport": "同一规则中重复列出了承载"
 }

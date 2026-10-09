@@ -8,16 +8,16 @@ Topology rules decide which nodes may connect directly. The two ends have no ser
 ## How rules are evaluated
 
 1. **Any matching block rule** blocks the direct connection between the nodes.
-2. With no block, the **first matching allow rule** decides the available transports. Later allow rules are not merged.
+2. With no block, the **first matching allow rule** decides the available transports and their preference order. Later allow rules are not merged.
 3. With no matching rule, **When no rule matches** supplies the default allow or deny decision.
 
 A later allow cannot override a block. Blocking a direct connection does not necessarily prevent a path through other permitted nodes. Access still determines service permissions.
 
 ## Choosing transports
 
-An allow rule can leave transports unrestricted or select a set of Native UDP, Native TCP, VLESS, and Trojan. A selected set with no transports means the two nodes cannot connect directly. A block rule always blocks the whole direct connection; transport settings have no effect on it.
+An allow rule can leave transports unrestricted or specify an ordered list of Native UDP, Native TCP, VLESS, and Trojan. An empty list means the two nodes cannot connect directly. Repeated protocols are rejected. A block rule always blocks the whole direct connection; transport settings have no effect on it.
 
-An unrestricted rule has no edge-level protocol restriction and includes protocols added in the future. A selected set is an explicit protocol limit, not a dialing priority.
+An unrestricted rule has no edge-level protocol restriction and uses the platform's transport order. An explicit list defines both the permitted protocols and their preference order: for example, `"transports": ["vless", "native_tcp"]` prefers VLESS over Native TCP within the same endpoint source. Configured endpoints are tried before local endpoints across transports.
 
 Each connection also needs compatible settings at both ends: one end enables the relevant dialer, the other provides the relevant listener, and their protocol settings and runtime capabilities must agree. Only one dialing direction needs to work for the established channel to carry authorised traffic both ways.
 

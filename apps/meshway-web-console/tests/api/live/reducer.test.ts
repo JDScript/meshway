@@ -29,7 +29,6 @@ const REQUEST = "c0000000-0000-4000-8000-00000000000c"
 const VLESS = {
   enabled: true,
   remark: "",
-  priority: 300,
   connectTimeout: "5s",
   bindInterface: "",
   localAddress: "",
@@ -50,7 +49,7 @@ const manager: UserConfigurationView = {
     defaults: {
       access: "deny",
       topology: "allow",
-      dialers: { native_udp: { priority: 100 }, vless: VLESS, trojan: null },
+      dialers: { native_udp: {}, vless: VLESS, trojan: null },
     },
     dns: {
       domain: "a.example",

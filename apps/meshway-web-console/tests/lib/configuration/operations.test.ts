@@ -7,7 +7,6 @@ import { edits, valueOf, withValue } from "@/lib/configuration/operations"
 const VLESS = {
   enabled: true,
   remark: "",
-  priority: 300,
   connectTimeout: "5s",
   bindInterface: "",
   localAddress: "",
@@ -32,7 +31,7 @@ const VIEW: ConfigurationView = {
   defaults: {
     access: "deny",
     topology: "allow",
-    dialers: { native_udp: { priority: 100 }, vless: VLESS, trojan: null },
+    dialers: { native_udp: {}, vless: VLESS, trojan: null },
   },
   dns: {
     domain: "a.example",

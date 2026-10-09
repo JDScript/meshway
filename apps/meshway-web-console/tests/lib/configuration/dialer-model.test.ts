@@ -5,32 +5,28 @@ import {
   dialerMode,
   dialerProblems,
   dialerRows,
-  priorityOf,
   withDialerMode,
   withEntryField,
   withProtocol,
 } from "@/lib/configuration/dialer-model"
 
-test("rows are in the order tried: priority (default per protocol), then key", () => {
+test("rows follow the platform carrier order regardless of insertion order", () => {
   const rows = dialerRows({
-    vless: { priority: 50 },
+    vless: {},
     native_udp: {},
-    native_tcp: { priority: 100 },
+    native_tcp: {},
+    trojan: {},
   })
   assert.deepEqual(
-    rows.map((row) => [row.protocol, row.effectivePriority, row.priority]),
-    [
-      ["vless", 50, 50],
-      ["native_tcp", 100, 100],
-      ["native_udp", 100, null],
-    ]
+    rows.map((row) => row.protocol),
+    ["native_udp", "native_tcp", "vless", "trojan"]
   )
 })
 
 test("adding a protocol writes {}, fields keep the rest of the entry", () => {
   let set = withProtocol({}, "native_tcp", true)
   assert.deepEqual(set, { native_tcp: {} })
-  set = withEntryField(set, "native_tcp", "priority", 7)
+  set = withEntryField(set, "native_tcp", "enabled", false)
   set = withEntryField(
     { native_tcp: { ...set.native_tcp, tcp: { noDelay: false } } },
     "native_tcp",
@@ -38,18 +34,20 @@ test("adding a protocol writes {}, fields keep the rest of the entry", () => {
     "2s"
   )
   assert.deepEqual(set, {
-    native_tcp: { priority: 7, tcp: { noDelay: false }, connectTimeout: "2s" },
+    native_tcp: {
+      enabled: false,
+      tcp: { noDelay: false },
+      connectTimeout: "2s",
+    },
   })
-  set = withEntryField(set, "native_tcp", "priority", undefined)
-  assert.equal("priority" in (set.native_tcp ?? {}), false)
+  set = withEntryField(set, "native_tcp", "enabled", undefined)
+  assert.equal("enabled" in (set.native_tcp ?? {}), false)
   assert.deepEqual(withProtocol(set, "native_tcp", false), {})
   // A field on a protocol not in the set changes nothing.
-  assert.deepEqual(withEntryField({}, "vless", "priority", 1), {})
+  assert.deepEqual(withEntryField({}, "vless", "enabled", false), {})
 })
 
-test("priorities are digits only; the schema refuses bad timeouts", () => {
-  assert.equal(priorityOf(""), undefined)
-  assert.equal(priorityOf("1a2"), 12)
+test("the schema refuses bad timeouts", () => {
   assert.deepEqual(dialerProblems({ vless: { connectTimeout: "5s" } }), [])
   assert.deepEqual(
     dialerProblems({

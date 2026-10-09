@@ -6,11 +6,9 @@ import { FieldInput } from "@/components/chrome/form"
 import { Switch } from "@/components/ui/switch"
 import {
   DEFAULT_CONNECT_TIMEOUT,
-  DEFAULT_PRIORITY,
   DIALER_PROTOCOLS,
   dialerProblems,
   dialerRows,
-  priorityOf,
   withEntryField,
   withProtocol,
   type DialerProtocol,
@@ -34,8 +32,7 @@ const streamLabel: Record<DialerStream, () => string> = {
 const STREAMS: readonly DialerStream[] = ["auto", "tcp", "websocket"]
 
 /**
- * A dialer set: the protocols in it, in the order they are tried, each
- * with its priority (lower first; empty takes the protocol's default) and
+ * A dialer set: the protocols in it, displayed by key, each with its
  * connect timeout; VLESS also its stream. Protocols the controller's
  * catalog offers can be added; one in the set the catalog no longer offers
  * stays listed. Read-only, the rows say the same without controls.
@@ -82,35 +79,6 @@ export function DialerSetForm({
                 </span>
               )}
             </span>
-            <label className="flex items-center gap-1.5 text-meta text-muted-foreground">
-              {m.configuration_dialer_priority()}
-              {editable ? (
-                <FieldInput
-                  id={`${field}-priority`}
-                  name={`${field}-priority`}
-                  inputMode="numeric"
-                  autoComplete="off"
-                  maxLength={10}
-                  className="h-8 w-20 font-mono tabular-nums"
-                  placeholder={`${DEFAULT_PRIORITY[row.protocol]}`}
-                  value={row.priority === null ? "" : `${row.priority}`}
-                  onChange={(event) =>
-                    onChange(
-                      withEntryField(
-                        value,
-                        row.protocol,
-                        "priority",
-                        priorityOf(event.target.value)
-                      )
-                    )
-                  }
-                />
-              ) : (
-                <span className="font-mono text-row text-foreground tabular-nums">
-                  {row.effectivePriority}
-                </span>
-              )}
-            </label>
             <label className="flex items-center gap-1.5 text-meta text-muted-foreground">
               {m.configuration_dialer_timeout()}
               {editable ? (

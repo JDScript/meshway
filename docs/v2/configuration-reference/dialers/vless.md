@@ -8,7 +8,7 @@
 
 <!-- schema: VlessDialer -->
 ```json
-{ "priority": 300 }
+{}
 ```
 
 需要限制封装或调整客户端参数时：
@@ -17,7 +17,6 @@
 ```json
 {
   "remark": "仅使用 WS 入口",
-  "priority": 300,
   "stream": "websocket",
   "connectTimeout": "5s",
   "tls": { "trust": "managed" },
@@ -31,7 +30,6 @@
 
 | 字段 | 类型 | 默认 | 说明 |
 | --- | --- | --- | --- |
-| `priority` | integer | `300` | 协议默认优先级 |
 | `stream` | `"auto" \| "tcp" \| "websocket"` | `"auto"` | auto 使用目标 listener 的封装；显式值筛选兼容入口 |
 | `tls` | [TLS dialer](/v2/configuration-reference/shared/tls#dialer-structure) | 托管信任 | 客户端验证选项 |
 | `websocket` | [WS dialer](/v2/configuration-reference/shared/websocket#dialer-structure) | 省略 | WS 客户端选项，包含额外请求 headers |

@@ -73,7 +73,7 @@ NodeConfiguration 的候选、许可、本机 egress、诊断与需求结果字�
 
 ## 规模与编译边界 {#编译边界}
 
-当前 policy compilerVersion 为 `meshway-demand-5`（执行 endpoint 携带来源）；识别出的旧派生缓存失效与历史保留见[执行缓存版本](/v2/storage#执行缓存版本)。
+当前 policy compilerVersion 为 `meshway-demand-7`（边级承载顺序决定候选 rank，拨号选项不再携带 priority）；识别出的旧派生缓存失效与历史保留见[执行缓存版本](/v2/storage#执行缓存版本)。
 
 Server 可复用同一源版本的编译事实，只对合法需求产生有界候选／切片；节点数增加不要求预计算所有简单路径，也不要求为每次实际探测重新保存管理员配置。编译按网络合并有效需求，出口／每出口路径分别有界；TLS 不相容只排除对应候选，材料缺失不降级。独立诊断许可不产生普通业务 permit。
 

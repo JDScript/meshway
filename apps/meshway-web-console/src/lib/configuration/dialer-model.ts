@@ -6,8 +6,8 @@ import type {
 import { zDialerSetUpdate } from "@meshway/control-client/schemas"
 
 // A dialer set as the forms edit it (`defaults.dialers`, a node's
-// `dialers`): which protocols a node may dial with, their priority (lower
-// first), connect timeout and whether each is on. Keys are protocol names
+// `dialers`): which protocols a node may dial with, their connect timeout
+// and whether each is on. Keys are protocol names
 // (docs/v2/configuration-reference/dialers.md). A protocol added here is
 // `{}`: the controller fills its defaults. Fields the forms do not show
 // (bind interface, local address, socket, TCP, TLS) stay as they were.
@@ -24,20 +24,11 @@ export const DIALER_PROTOCOLS = [
 ] as const satisfies readonly TransportProtocol[]
 export type DialerProtocol = (typeof DIALER_PROTOCOLS)[number]
 
-/** The priority a protocol takes when its entry gives none. */
-export const DEFAULT_PRIORITY: Record<DialerProtocol, number> = {
-  native_udp: 100,
-  native_tcp: 200,
-  vless: 300,
-  trojan: 400,
-}
-
 /** The connect timeout an entry takes when it gives none. */
 export const DEFAULT_CONNECT_TIMEOUT = "5s"
 
 type Entry = {
   enabled?: boolean
-  priority?: number
   connectTimeout?: string
   stream?: DialerStream
 }
@@ -48,17 +39,13 @@ const entryOf = (set: DialerSetUpdate, protocol: DialerProtocol) =>
 export type DialerRow = {
   protocol: DialerProtocol
   enabled: boolean
-  /** As written; null when the protocol's default applies. */
-  priority: number | null
-  /** The priority it dials at. */
-  effectivePriority: number
   /** As written; null when the default applies. */
   connectTimeout: string | null
   /** VLESS only: as written, null for the default (auto). */
   stream: DialerStream | null
 }
 
-/** The protocols a set holds, in the order they are tried (priority, then key). */
+/** A set has no protocol order of its own; rows follow the platform carrier order. */
 export function dialerRows(set: DialerSetUpdate): DialerRow[] {
   return DIALER_PROTOCOLS.flatMap((protocol) => {
     const entry = entryOf(set, protocol)
@@ -67,17 +54,11 @@ export function dialerRows(set: DialerSetUpdate): DialerRow[] {
       {
         protocol,
         enabled: entry.enabled ?? true,
-        priority: entry.priority ?? null,
-        effectivePriority: entry.priority ?? DEFAULT_PRIORITY[protocol],
         connectTimeout: entry.connectTimeout ?? null,
         stream: protocol === "vless" ? (entry.stream ?? null) : null,
       },
     ]
-  }).sort(
-    (a, b) =>
-      a.effectivePriority - b.effectivePriority ||
-      (a.protocol < b.protocol ? -1 : 1)
-  )
+  })
 }
 
 /** The set with `protocol` in it (`{}`, the controller's defaults) or taken out. */
@@ -92,7 +73,7 @@ export function withProtocol(
   return next
 }
 
-type EntryField = "enabled" | "priority" | "connectTimeout" | "stream"
+type EntryField = "enabled" | "connectTimeout" | "stream"
 
 /**
  * The set with one field of `protocol`'s entry set; undefined leaves it to
@@ -110,12 +91,6 @@ export function withEntryField<F extends EntryField>(
   if (value === undefined) delete nextEntry[field]
   else nextEntry[field] = value
   return { ...set, [protocol]: nextEntry }
-}
-
-/** A priority as typed: digits only; "" for the default. */
-export function priorityOf(raw: string): number | undefined {
-  const digits = raw.replace(/[^0-9]/g, "")
-  return digits === "" ? undefined : Number(digits)
 }
 
 /** The protocols of a set whose fields the generated schema refuses. */

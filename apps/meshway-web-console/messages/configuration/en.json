@@ -496,7 +496,6 @@
   "configuration_dialer_stream_tcp": "TCP",
   "configuration_dialer_stream_websocket": "WebSocket",
   "configuration_dialer_off": "Off",
-  "configuration_dialer_priority": "Priority",
   "configuration_dialer_timeout": "Timeout",
   "configuration_dialer_stream": "Stream",
   "configuration_dialer_turn_on": "Turn on",
@@ -639,5 +638,6 @@
   "configuration_transport_websocket_alpn": "WebSocket needs the HTTP/1.1 ALPN",
   "configuration_transport_empty_trojan_password": "the Trojan password is empty",
   "configuration_transport_material_required": "the listener's material is not prepared yet",
-  "configuration_transport_local_address": "the local address must be an IP or empty"
+  "configuration_transport_local_address": "the local address must be an IP or empty",
+  "configuration_transport_repeated_transport": "Transport listed more than once in this rule"
 }

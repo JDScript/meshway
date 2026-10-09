@@ -21,8 +21,8 @@ Trojan DialOptions = DialFields + Trojan 出站选项
 {
   "defaults": {
     "dialers": {
-      "native_udp": { "priority": 100 },
-      "vless": { "priority": 300 }
+      "native_udp": {},
+      "vless": {}
     }
   },
   "nodes": {
@@ -47,7 +47,7 @@ Trojan DialOptions = DialFields + Trojan 出站选项
 
 上例 A 使用 UDP 与 VLESS，B 只使用 VLESS，C 不主动拨号。关闭不依赖枚举所有协议，因此以后平台增加协议也不会意外重新打开 C 的出站。
 
-选定集合后才填字段默认值，例如 VLESS priority=300、connectTimeout=5s。节点替换集合后，不再逐字段继承网络中同名协议项；这避免“整项替换”和“深层 merge”混用。
+选定集合后才填字段默认值，例如 VLESS connectTimeout=5s。节点替换集合后，不再逐字段继承网络中同名协议项；这避免“整项替换”和“深层 merge”混用。
 
 ## 显式参数与平台生成
 

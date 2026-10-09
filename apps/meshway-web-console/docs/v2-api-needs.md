@@ -136,6 +136,7 @@ console 已接入 `/api/v1` 下全部 Console 操作：
 - 绑定大规则集（8483 条）后 validate 很慢的问题，在 `70f5e95f` 改为线性覆盖计算。
 - 托管证书改 `serverName` 时重新生成证书；provided 材料仍按省略继承。
 - 规则集检查记录：来源与绑定内容都不变就跨版本延续，包括还没有成功内容的集合。console 报过的 `not_ready`／`checkedAt: null` 后端没有复现，再遇到时补充步骤。
+- 承载选择顺序移到组网规则：console 需要让 `topology[].transports` 编辑器保留并编辑顺序（第一项优先），未指定时平台顺序为 `native_udp → native_tcp → vless → trojan`；dialer 的 priority UI 已移除。validate 可能返回 `invalid_transport` 的 `repeated_transport` 原因，指向 `/topology/<i>/transports/<j>`。
 
 ### 请后端调整
 

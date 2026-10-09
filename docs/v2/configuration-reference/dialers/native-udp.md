@@ -7,15 +7,14 @@
 <!-- schema: NativeUdpDialer -->
 ```json
 {
-  "remark": "优先 UDP",
-  "priority": 100,
+  "remark": "启用 UDP 拨号",
   "connectTimeout": "5s"
 }
 ```
 
 ## Fields
 
-继承 [Dial Fields](/v2/configuration-reference/shared/dial) 的 UDP 子集。priority 缺省为 100；不接受 tcp／tls／websocket 字段。
+继承 [Dial Fields](/v2/configuration-reference/shared/dial) 的 UDP 子集；不接受 tcp／tls／websocket 字段。
 
 目标参数的配置解析见 [NodeConfiguration](/v2/configuration-reference/node-configuration)。NAT 协调必须使用同一实际 socket 的观测和认证结果；STUN 映射与已认证连接是不同状态。
 

@@ -10,9 +10,9 @@
   "access": "deny",
   "topology": "allow",
   "dialers": {
-    "native_udp": { "priority": 100 },
-    "native_tcp": { "priority": 200 },
-    "vless": { "priority": 300 }
+    "native_udp": {},
+    "native_tcp": {},
+    "vless": {}
   }
 }
 ```
@@ -47,6 +47,8 @@
 
 ## dialers
 
-节点省略 `dialers` 才继承默认集合；显式 `{}` 禁用主动建连，非空集合替换默认集合。省略 defaults.dialers 使用该配置版本固定的平台基线，显式 `{}` 表示网络默认不主动拨号。见[继承规则](/v2/configuration-reference/inheritance)。
+节点省略 `dialers` 才继承默认集合；显式 `{}` 禁用主动建连，非空集合替换默认集合。省略 defaults.dialers 使用该配置版本固定的平台基线集合：`native_udp`、`native_tcp`、`vless`；显式 `{}` 表示网络默认不主动拨号。见[继承规则](/v2/configuration-reference/inheritance)。
+
+dialers 只声明主动拨号能力与协议选项，承载偏好由 topology 定义；完整候选排序规则见 [Topology 承载交集](/v2/configuration-reference/topology#承载交集)。
 
 listener 不会因 defaults 自动打开监听端口。出口兜底保留在 routing profile 的 `fallback` 中，避免与全网 defaults 出现两处竞争的路径决定。

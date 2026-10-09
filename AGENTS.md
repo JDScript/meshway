@@ -4,7 +4,7 @@
 
 - `apps/meshway-server`：Rust Server；`apps/meshway-web-console`：pure SPA（`@meshway/web-console`）；`apps/meshway-web-site`：对外站点（landing、用户文档、API 参考；Next.js + Fumadocs 静态导出，`@meshway/web-site`）。
 - `crates/meshway-*`：当前共享模型、配置／编译、协议、生成客户端与严格序列化。
-- Mesh routing 由 Policy 按每段实际起终点递归 first-match；via 的段边界视为已满足，真实循环／重复节点拒绝。原业务 Access／身份与原路径回复不改成分段业务；compilerVersion 为 `meshway-demand-6`（出口 capture／role／精确许可与能力门控）。配置结构归 Configuration，递归可执行性归 Policy 按需编译，见 `docs/v2/configuration-reference/routing.md`。
+- Mesh routing 由 Policy 按每段实际起终点递归 first-match；via 的段边界视为已满足，真实循环／重复节点拒绝。原业务 Access／身份与原路径回复不改成分段业务；compilerVersion 为 `meshway-demand-7`（边级承载顺序；dialer 无 priority）。topology 定义 links（存在性＋承载顺序），routing 定义 paths（必经点＋出口），access 定义权限；listeners／dialers 是节点能力声明，不承载策略。配置结构归 Configuration，递归可执行性归 Policy 按需编译，见 `docs/v2/configuration-reference/routing.md`。
 - `crates/meshway-authority` 定义 `ExecutionSnapshot`／`DataPlaneIdentity`／`Clock`／`Deadline` 的类型与检查；生产唯一签发者是 `meshway-control`，`crates/` 不得出现第二个签发实现，基准／fixture 的静态签发只放 `tools/`，`meshwayd` 只装配 Control。
 - `packages/`：生成 OpenAPI／TypeScript SDK，以及 Console 与站点共享的主题和基础组件（`@meshway/ui`）；`docs/v2/`：当前唯一开发者规范与使用入口。
 - Rust 包根目录和 Cargo 包名统一 `meshway-xxx`。现行 HTTP 根仍是 `/api/v1`／`/agent-api/v1`，目录整理不自行改 wire。

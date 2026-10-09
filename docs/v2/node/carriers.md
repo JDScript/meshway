@@ -64,13 +64,13 @@ Native UDP 的 socket 在操作系统层都是已绑定、持续接收报文的 
 
 | 字段 | 位置 | 对承载的作用 |
 | --- | --- | --- |
-| `topology[].transports` | 网络配置 | 无方向边允许的承载集合；省略不限制，匹配与交集见 [Topology](/v2/configuration-reference/topology#承载交集) |
+| `topology[].transports` | 网络配置 | 无方向边允许的承载及其尝试顺序；省略用平台顺序，匹配与交集见 [Topology](/v2/configuration-reference/topology#承载交集) |
 | `nodes[id].listeners` | 节点配置 | 该节点作为监听方提供的固定端点及其协议 |
-| `nodes[id].dialers` | 节点配置 | 该节点作为拨号方允许使用的协议与优先级；省略时继承 `defaults.dialers`，`{}` 禁用主动建连 |
+| `nodes[id].dialers` | 节点配置 | 该节点主动拨号的协议能力与进阶选项，不承载策略；省略时继承 `defaults.dialers`，`{}` 禁用主动建连 |
 | 执行配置 `dialers` | NodeConfiguration | Server 已解析的具体拨号候选，key 为 `<peer>/<listener-key>`，值为 [DialCandidate](/v2/configuration-reference/node-configuration) |
 | 执行配置 path `dialCandidates` | NodeConfiguration 许可 | 每条完整路径上按实际拨号方分组的候选 key；监听方据此验证拨入的 Carrier |
 
-DialCandidate 包含 `peer`、`listenerKey`、`endpoints`、`priority` 与已解析的协议参数 `parameters`（目标 UUID／password、TLS 验证材料、WS path／Host 等）。每个执行 endpoint 包含 `host`、`port` 与 `source`（`configured`／`local`）。监听方只取得完整监听参数，拨号方不取得对端私钥。
+DialCandidate 包含 `peer`、`listenerKey`、`endpoints`、由 Server 按候选协议在边级承载顺序中的位置编译的 `priority` 与已解析的协议参数 `parameters`（目标 UUID／password、TLS 验证材料、WS path／Host 等）；排序规则见 [Topology 承载交集](/v2/configuration-reference/topology#承载交集)。每个执行 endpoint 包含 `host`、`port` 与 `source`（`configured`／`local`）。监听方只取得完整监听参数，拨号方不取得对端私钥。
 
 ## 行为
 
@@ -83,13 +83,13 @@ DialCandidate 包含 `peer`、`listenerKey`、`endpoints`、`priority` 与已解
 3. 拨号方具有该协议的 Dial 能力，监听方具有 Listen 能力；
 4. TLS 版本范围有交集（VLESS／Trojan）。
 
-两个方向都没有候选时，这条边不能进入完整路径。Node 的 Manager 只在发布的候选内选择，同一 peer 先尝试所有 `configured` 地址，再尝试 `local`；同来源按 `priority`、key 和端点顺序稳定排序。不存在于候选中的协议即使双方都已编译该 provider 也不会被使用。
+两个方向都没有候选时，这条边不能进入完整路径。Node 的 Manager 只在发布的候选内选择，端点来源与边级承载顺序的排序规则见 [Topology 承载交集](/v2/configuration-reference/topology#承载交集)。不存在于候选中的协议即使双方都已编译该 provider 也不会被使用。
 
 ### 拨号与接受
 
 Node 应用执行配置后，Manager 为执行配置 `dialers` 中出现的每个 peer 启动一个拨号 owner。拨号是**急切**的：配置生效即开始，不等待首个业务包；该 peer 已有选定通道时，拨号 owner 只做退避等待，失联后重新按候选顺序拨号。
 
-- 拨号只使用 Server 执行发布的 `endpoints`：configured 的优先级跨 listener／承载生效，避免本机 UDP 地址的超时阻挡已配置的 TCP 退路；每个 listener 最多八个本机地址。Native UDP 另保留协调穿透。候选均为空时流式承载等待后续发布。
+- 拨号只使用 Server 执行发布的 `endpoints`，按 [Topology 候选排序规则](/v2/configuration-reference/topology#承载交集) 尝试；每个 listener 最多八个本机地址。Native UDP 另保留协调穿透。候选均为空时流式承载等待后续发布。
 - 本机地址变化经既有 State 上报、Server 发布与 SSE／刷新路径更新 peer 候选；不需要管理员修改配置。State 只补充拨号地址，不创建 listener、不改变 Access／Topology／Routing 或边级承载交集。
 - 已启用的 listener 在执行配置生效时创建，接受获准 peer 拨入。监听方用本节点许可中路径的 `dialCandidates` 校验拨入的 Carrier，不在本机保存对端的拨号参数。
 - 每个 peer 同时只有一条选定通道。已有不同协议的健康通道时，新建立的通道不替换它。

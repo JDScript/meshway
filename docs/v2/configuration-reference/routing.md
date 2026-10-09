@@ -4,6 +4,8 @@
 
 ## 与 topology 的关系
 
+topology 定义哪些直接边存在及其承载顺序，routing 定义流量经过的路径与出口。直接边隔离用 topology block／默认 deny，必经节点用 routing `via`；同一意图不在两处重复表达。listeners／dialers 只声明节点能力，业务权限由 access 定义。
+
 组网规则见 [Topology](/v2/configuration-reference/topology)。routing 只能使用其允许的边，不能因更快或可达而绕过 block／必经节点。运行时已选路径见 [State.paths](/v2/state-reference#paths)。
 
 ## routing.mesh

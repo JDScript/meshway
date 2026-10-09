@@ -8,7 +8,6 @@
 {
   "enabled": true,
   "remark": "",
-  "priority": 200,
   "connectTimeout": "5s",
   "bindInterface": "",
   "localAddress": "",
@@ -28,7 +27,6 @@
 | --- | --- | --- | --- |
 | `enabled` | `boolean` | `true` | 是否主动使用本拨号器 |
 | `remark` | `string` | `""` | 描述，不是资源 key |
-| `priority` | integer | 由协议默认值提供 | 0–65535，越小越优先 |
 | `connectTimeout` | duration | `"5s"` | 建立承载的总预算，受剩余活动 lease 进一步限制 |
 | `bindInterface` | string | `""` | 当前 underlay 内的指定接口；空值由平台选择 |
 | `localAddress` | IP 字符串 | `""` | 本地出站地址；空值自动选择，不能绑定 Mesh 地址来绕过保护 |

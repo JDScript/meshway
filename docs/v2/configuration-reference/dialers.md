@@ -1,19 +1,19 @@
 # Dialers
 
-定义节点允许使用哪些出站承载及其优先级。key 是协议名，不另起名称或填写 type。
+声明节点可主动拨号的协议及其进阶选项，不承载组网、路径或访问策略。key 是协议名，不另起名称或填写 type。
 
 ## Structure
 
 <!-- schema: DialerSet -->
 ```json
 {
-  "native_udp": { "priority": 100 },
-  "native_tcp": { "priority": 200 },
-  "vless": { "priority": 300 }
+  "native_udp": {},
+  "native_tcp": {},
+  "vless": {}
 }
 ```
 
-只允许 VLESS 可以写：
+只启用 VLESS 主动拨号可以写：
 
 <!-- schema: DialerSet -->
 ```json
@@ -24,14 +24,14 @@
 
 ## Types
 
-| key | 默认 priority | 专用字段 |
-| --- | --- | --- |
-| `native_udp` | 100 | [Native UDP](/v2/configuration-reference/dialers/native-udp) |
-| `native_tcp` | 200 | [Native TCP](/v2/configuration-reference/dialers/native-tcp) |
-| `vless` | 300 | [VLESS](/v2/configuration-reference/dialers/vless) |
-| `trojan` | 400 | [Trojan](/v2/configuration-reference/dialers/trojan) |
+| key | 专用字段 |
+| --- | --- |
+| `native_udp` | [Native UDP](/v2/configuration-reference/dialers/native-udp) |
+| `native_tcp` | [Native TCP](/v2/configuration-reference/dialers/native-tcp) |
+| `vless` | [VLESS](/v2/configuration-reference/dialers/vless) |
+| `trojan` | [Trojan](/v2/configuration-reference/dialers/trojan) |
 
-普通使用只需要协议与 priority。timeout、socket、TLS 等进阶选项见[通用 Dial 字段](/v2/configuration-reference/shared/dial)。
+普通使用只需列出启用的协议；`enabled: false` 可禁用集合中的某个协议。timeout、socket、TLS 等进阶选项见[通用 Dial 字段](/v2/configuration-reference/shared/dial)。
 
 ## 配置解析
 
@@ -41,6 +41,6 @@ Server 根据 access、topology、routing 和对端 listener，生成具体出�
 
 ## Defaults
 
-继承／覆盖只定义一套规则，见[字段复用与默认继承](/v2/configuration-reference/inheritance)。相同端点来源内，priority 越小越优先，同优先级按候选 key 稳定排序；同一 peer 的 configured 地址整体先于 local 地址，不做权重负载均衡。
+继承／覆盖只定义一套规则，见[字段复用与默认继承](/v2/configuration-reference/inheritance)。承载偏好由 `topology[].transports` 定义，完整候选排序规则见 [Topology 承载交集](/v2/configuration-reference/topology#承载交集)。
 
 出站参数与实际通道状态分开。允许某种协议不表示已拨通，也不产生反向新流授权。承载交集、急切拨号与限定单条边协议的写法及限制见[承载与邻接模型](/v2/node/carriers)。

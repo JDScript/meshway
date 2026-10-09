@@ -31,7 +31,7 @@ export const RESOURCE_PROBLEM: Record<ResourceProblem, () => string> = {
 const isResourceProblem = (value: string): value is ResourceProblem =>
   Object.hasOwn(RESOURCE_PROBLEM, value)
 
-/** A listener or dialer declaration's reason (`invalid_transport.reason`). */
+/** A transport declaration's reason (`invalid_transport.reason`). */
 const TRANSPORT_REASON: Record<string, () => string> = {
   invalid_host: () => m.configuration_transport_invalid_host(),
   keep_alive_count: () => m.configuration_transport_keep_alive_count(),
@@ -48,6 +48,7 @@ const TRANSPORT_REASON: Record<string, () => string> = {
     m.configuration_transport_empty_trojan_password(),
   material_required: () => m.configuration_transport_material_required(),
   local_address: () => m.configuration_transport_local_address(),
+  repeated_transport: () => m.configuration_transport_repeated_transport(),
 }
 
 /** How an issue names nodes: a Node ID or `node:<id>` as its hostname, else as written. */
