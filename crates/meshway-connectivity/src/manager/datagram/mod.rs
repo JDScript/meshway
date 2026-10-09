@@ -80,7 +80,7 @@ struct Channel {
 }
 
 struct Owner {
-    shared: Arc<Shared>,
+    shared: Arc<EpochContext>,
     id: [u8; 32],
     local: SocketAddr,
     lifetime: Scope,
@@ -101,7 +101,7 @@ struct Owner {
 }
 
 impl Owner {
-    fn handoff(&mut self, next: Arc<Shared>) -> Result<(), Error> {
+    fn handoff(&mut self, next: Arc<EpochContext>) -> Result<(), Error> {
         next.identity
             .snapshot()
             .continuation_from(self.shared.identity.snapshot())
@@ -175,7 +175,11 @@ impl Owner {
         Ok(())
     }
 
-    fn new(shared: Arc<Shared>, endpoint: Box<dyn Datagram>, id: [u8; 32]) -> Result<Self, Error> {
+    fn new(
+        shared: Arc<EpochContext>,
+        endpoint: Box<dyn Datagram>,
+        id: [u8; 32],
+    ) -> Result<Self, Error> {
         let local = endpoint.local_addr()?;
         let lifetime = shared.scope(None, false);
         let limits = shared.limits.session;
@@ -615,7 +619,7 @@ impl Owner {
                     frame,
                     received_at,
                 };
-                if Shared::business_event(&event) {
+                if EpochContext::business_event(&event) {
                     meshway_logging::profile::event("manager.udp", "mesh_frame");
                     events.push(event);
                 } else {
@@ -1406,7 +1410,11 @@ async fn send_control(
         .await
 }
 
-pub(super) async fn listen(shared: Arc<Shared>, fact: ListenerFact, endpoint: Box<dyn Datagram>) {
+pub(super) async fn listen(
+    shared: Arc<EpochContext>,
+    fact: ListenerFact,
+    endpoint: Box<dyn Datagram>,
+) {
     let result = async {
         let mut owner = Owner::new(shared.clone(), endpoint, fact.socket_id)?;
         owner.listener = Some(fact);
@@ -1421,7 +1429,7 @@ pub(super) async fn listen(shared: Arc<Shared>, fact: ListenerFact, endpoint: Bo
 }
 
 pub(super) async fn listen_traversal(
-    shared: Arc<Shared>,
+    shared: Arc<EpochContext>,
     id: [u8; 32],
     listener: Option<ListenerFact>,
     socket: crate::TraversalSocket,
@@ -1443,7 +1451,7 @@ pub(super) async fn listen_traversal(
 }
 
 pub(super) async fn dial(
-    shared: Arc<Shared>,
+    shared: Arc<EpochContext>,
     factory: Arc<dyn SocketFactory>,
     peer: NodeId,
     key: &str,
@@ -1502,7 +1510,7 @@ pub(super) async fn dial(
 }
 
 async fn dial_endpoint(
-    shared: Arc<Shared>,
+    shared: Arc<EpochContext>,
     socket: DatagramSocket,
     peer: NodeId,
     carrier: Carrier,
@@ -1607,10 +1615,10 @@ mod tests {
     use meshway_transport_udp::UdpTransport;
     use tokio::net::UdpSocket;
 
-    fn shared(identity: DataPlaneIdentity) -> (Arc<Shared>, super::super::events::Receiver) {
+    fn shared(identity: DataPlaneIdentity) -> (Arc<EpochContext>, super::super::events::Receiver) {
         let (epochs, _) = tokio::sync::watch::channel(identity.clone());
         let (events, receiver) = super::super::events::channel(64, 8 * 1024 * 1024);
-        let shared = Arc::new(Shared {
+        let shared = Arc::new(EpochContext {
             identity,
             stop: CancellationToken::new(),
             links: Arc::new(Mutex::new(LinkTable::default())),

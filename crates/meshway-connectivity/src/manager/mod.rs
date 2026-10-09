@@ -53,7 +53,7 @@ fn diagnostic_event() -> bool {
 }
 
 fn diagnostic_link(
-    shared: &Shared,
+    shared: &EpochContext,
     fact: &LinkFact,
     scope: &Scope,
     operation: &'static str,
@@ -259,7 +259,9 @@ impl LinkTable {
     }
 }
 
-struct Shared {
+/// A fixed identity/generation view over the manager's shared resource watches.
+/// Rebinding creates a new view; existing operation scopes keep the old identity.
+struct EpochContext {
     identity: DataPlaneIdentity,
     stop: CancellationToken,
     links: Arc<Mutex<LinkTable>>,
@@ -277,7 +279,7 @@ struct Shared {
     resource_changes: tokio::sync::watch::Sender<()>,
 }
 
-impl Shared {
+impl EpochContext {
     fn scope(&self, edge: Option<(NodeId, Carrier)>, handshake: bool) -> Scope {
         let deadline: tokio::time::Instant = self.identity.snapshot().expires_at().into();
         Scope {
@@ -328,7 +330,7 @@ impl Shared {
 /// SecureNode/FlowTable for logical flow continuity.
 pub struct Manager {
     factory: Arc<dyn SocketFactory>,
-    shared: Arc<Shared>,
+    shared: Arc<EpochContext>,
     listeners: Vec<ListenerFact>,
     events: events::Receiver,
     control_events: events::Receiver,
@@ -388,7 +390,7 @@ impl Manager {
                     .checked_next()
                     .map_err(|_| Error::Capacity)?,
             );
-        let shared = Arc::new(Shared {
+        let shared = Arc::new(EpochContext {
             identity,
             stop: CancellationToken::new(),
             links: Arc::new(Mutex::new(LinkTable::default())),
@@ -1096,7 +1098,7 @@ fn preferred_existing(old: &LinkFact, new: &LinkFact) -> bool {
         || rank(old) <= rank(new)
 }
 
-fn install_ready(shared: &Shared, ready: ReadyPeer) -> Result<bool, Error> {
+fn install_ready(shared: &EpochContext, ready: ReadyPeer) -> Result<bool, Error> {
     // A same-target renewal need not revoke the old Control snapshot. It must
     // nevertheless fence old acquisition commits before handoff can collect a
     // departed peer's ABA tombstone. Hold the watch read through installation:
@@ -1199,7 +1201,7 @@ fn install_ready(shared: &Shared, ready: ReadyPeer) -> Result<bool, Error> {
     Ok(true)
 }
 
-fn retire(shared: &Shared, fact: &LinkFact) -> Result<(), Error> {
+fn retire(shared: &EpochContext, fact: &LinkFact) -> Result<(), Error> {
     let mut links = shared.links.lock().map_err(|_| Error::Worker)?;
     if links
         .get(&fact.peer)
@@ -1220,7 +1222,7 @@ fn retire(shared: &Shared, fact: &LinkFact) -> Result<(), Error> {
 }
 
 async fn connected(
-    mut shared: Arc<Shared>,
+    mut shared: Arc<EpochContext>,
     stream: Box<dyn meshway_transport::raw::Stream>,
     fact: LinkFact,
     opening: Arc<scope::Opening>,
@@ -1241,7 +1243,7 @@ async fn connected(
     .into_split();
     let sender = Arc::new(AsyncMutex::new(sender));
     shared.register_link_socket(&fact)?;
-    struct Registration(Arc<Shared>, [u8; 32]);
+    struct Registration(Arc<EpochContext>, [u8; 32]);
     impl Drop for Registration {
         fn drop(&mut self) {
             self.0.remove_socket(self.1);

@@ -77,7 +77,11 @@ pub(super) fn plans(
     Ok(plans)
 }
 
-pub(super) async fn dial(mut shared: Arc<Shared>, factory: Arc<dyn SocketFactory>, peer: NodeId) {
+pub(super) async fn dial(
+    mut shared: Arc<EpochContext>,
+    factory: Arc<dyn SocketFactory>,
+    peer: NodeId,
+) {
     let mut updates = shared.epochs.subscribe();
     loop {
         let candidates = match plans(&shared.identity, shared.limits) {
@@ -93,7 +97,7 @@ pub(super) async fn dial(mut shared: Arc<Shared>, factory: Arc<dyn SocketFactory
 }
 
 async fn dial_epoch(
-    shared: Arc<Shared>,
+    shared: Arc<EpochContext>,
     factory: Arc<dyn SocketFactory>,
     peer: NodeId,
     candidates: Arc<Vec<Candidate>>,
@@ -246,7 +250,7 @@ pub(super) fn acquisition(
 }
 
 async fn backoff(
-    shared: &Shared,
+    shared: &EpochContext,
     lifetime: &Scope,
     updates: &mut tokio::sync::watch::Receiver<DataPlaneIdentity>,
 ) -> Result<(), Error> {
@@ -264,7 +268,7 @@ async fn backoff(
 }
 
 pub(super) async fn listen(
-    mut shared: Arc<Shared>,
+    mut shared: Arc<EpochContext>,
     fact: ListenerFact,
     listener: Box<dyn ListenerSocket>,
     acceptor: Arc<provider::Acceptor>,

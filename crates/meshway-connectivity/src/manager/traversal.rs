@@ -121,7 +121,7 @@ impl QuerySchedule {
     }
 }
 
-fn needs_acquisition(shared: &Shared, pending: &BTreeMap<UdpTraversalId, Pending>) -> bool {
+fn needs_acquisition(shared: &EpochContext, pending: &BTreeMap<UdpTraversalId, Pending>) -> bool {
     let Ok(cfg) = shared.identity.snapshot().configuration() else {
         return false;
     };
@@ -183,7 +183,7 @@ fn needs_acquisition(shared: &Shared, pending: &BTreeMap<UdpTraversalId, Pending
     })
 }
 
-fn needs_observation(shared: &Shared) -> bool {
+fn needs_observation(shared: &EpochContext) -> bool {
     let Ok(cfg) = shared.identity.snapshot().configuration() else {
         return false;
     };
@@ -198,7 +198,7 @@ fn needs_observation(shared: &Shared) -> bool {
     })
 }
 
-fn observation_due(shared: &Shared, id: &[u8; 32]) -> bool {
+fn observation_due(shared: &EpochContext, id: &[u8; 32]) -> bool {
     let Ok(now) = shared.identity.snapshot().now_ms() else {
         return false;
     };
@@ -218,7 +218,7 @@ fn observation_due(shared: &Shared, id: &[u8; 32]) -> bool {
     })
 }
 
-pub(super) async fn run(mut shared: Arc<Shared>, gateway: Arc<dyn TraversalGateway>) {
+pub(super) async fn run(mut shared: Arc<EpochContext>, gateway: Arc<dyn TraversalGateway>) {
     let mut updates = shared.epochs.subscribe();
     let mut resources = shared.resource_changes.subscribe();
     let mut discover_at = Instant::now();
@@ -255,7 +255,7 @@ pub(super) async fn run(mut shared: Arc<Shared>, gateway: Arc<dyn TraversalGatew
 
 #[allow(clippy::too_many_arguments)]
 async fn run_epoch(
-    shared: Arc<Shared>,
+    shared: Arc<EpochContext>,
     gateway: &Arc<dyn TraversalGateway>,
     endpoints: &BTreeMap<[u8; 32], Endpoint>,
     updates: &mut tokio::sync::watch::Receiver<DataPlaneIdentity>,
@@ -484,7 +484,7 @@ async fn run_epoch(
     }
 }
 
-pub(super) fn matching_endpoint(shared: &Shared, offer: &ValidatedOffer) -> Option<[u8; 32]> {
+pub(super) fn matching_endpoint(shared: &EpochContext, offer: &ValidatedOffer) -> Option<[u8; 32]> {
     let sockets = shared.sockets.lock().ok()?;
     let cfg = shared.identity.snapshot().configuration().ok()?;
     sockets.iter().find_map(|(id, fact)| {
@@ -622,7 +622,7 @@ async fn accept(
 }
 
 async fn prepare(
-    shared: &Shared,
+    shared: &EpochContext,
     gateway: &Arc<dyn TraversalGateway>,
     endpoints: &BTreeMap<[u8; 32], Endpoint>,
     context: &DiscoveryContext,

@@ -44,7 +44,7 @@ impl Manager {
         &mut self,
         key: Key,
         socket: Option<[u8; 32]>,
-        build: impl FnOnce(Arc<Shared>) -> F,
+        build: impl FnOnce(Arc<EpochContext>) -> F,
     ) {
         debug_assert!(!self.owners.contains_key(&key));
         let shared = self.shared.for_owner();

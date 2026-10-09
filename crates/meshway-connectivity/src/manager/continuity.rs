@@ -4,7 +4,7 @@ use super::*;
 use meshway_authority::ExecutionSnapshot;
 use tokio::sync::watch;
 
-impl Shared {
+impl EpochContext {
     pub(super) fn register_link_socket(&self, fact: &LinkFact) -> Result<(), Error> {
         let cfg = self
             .identity
