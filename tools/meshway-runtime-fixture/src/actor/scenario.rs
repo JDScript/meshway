@@ -75,8 +75,9 @@ async fn opened(signals: &Signals) -> Result<()> {
     }
 }
 
-/// New 5-tuples and a CLI ping, decided locally on the installed netmap.
-async fn fresh(context: &Context<'_>, stage: &str) -> Result<()> {
+/// New 5-tuples, decided locally on the installed netmap, and (once per
+/// run: the CLI evidence file is per stage) a CLI ping.
+async fn fresh(context: &Context<'_>, stage: &str, ping: bool) -> Result<()> {
     let mut traffic =
         Traffic::new(&context.addresses[&Role::A], &context.addresses[&Role::B]).await?;
     traffic.first_udp().await?;
@@ -84,9 +85,12 @@ async fn fresh(context: &Context<'_>, stage: &str) -> Result<()> {
         .open_remaining_flows(&context.addresses[&Role::A])
         .await?;
     traffic.exchange().await?;
-    let path = crate::fallback::original_path(context.signals).await?;
-    let run = crate::ping_cli::run(context.cli, crate::ping::Stage::Restored, "b", &path).await?;
-    save(context.cli, &format!("scenario-{stage}-ping"), &run).await?;
+    if ping {
+        let path = crate::fallback::original_path(context.signals).await?;
+        let run =
+            crate::ping_cli::run(context.cli, crate::ping::Stage::Restored, "b", &path).await?;
+        save(context.cli, &format!("scenario-{stage}-ping"), &run).await?;
+    }
     save(
         context.cli,
         &format!("scenario-{stage}-new-flows"),
@@ -119,6 +123,7 @@ async fn offline(context: Context<'_>) -> Result<String> {
                     } else {
                         "offline-end"
                     },
+                    fresh_flows == 0,
                 )
                 .await?;
                 fresh_flows += 1;
@@ -243,7 +248,7 @@ async fn restart(mut context: Context<'_>) -> Result<String> {
     }
     if let Some(traffic) = context.traffic.as_mut() {
         traffic.restored().await?;
-        fresh(&context, "restarted").await?;
+        fresh(&context, "restarted", true).await?;
     }
     observed(signals, &format!("scenario-offline-{}", role.name()), role).await?;
     opened(signals).await?;
@@ -353,16 +358,18 @@ async fn revoke(mut context: Context<'_>) -> Result<String> {
             )
             .await?;
     } else {
+        // The restored configuration is the revision every Node runs now.
+        let (revision, _) = step(signals, "tcp-restored").await?;
         signals.ready("scenario-rotate").await?;
         if role == Role::B {
             command(cli, "rotate-key").await?;
-            let status = running(cli, context.revision).await?;
+            let status = running(cli, revision).await?;
             save(cli, "scenario-rotated-status", &status).await?;
             signals
                 .write(
                     "scenario-rotated",
                     &Signal::Step {
-                        revision: context.revision,
+                        revision,
                         at_ms: now_ms()?,
                     },
                 )
