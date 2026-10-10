@@ -7,8 +7,8 @@ use meshway_dataplane::{
         pipeline::{Job, Output, Pool},
     },
 };
-use meshway_logging::profile::{self, Metric};
 use meshway_desired_fixture::public_fixture::PublicFixture;
+use meshway_logging::profile::{self, Metric};
 use meshway_tun::{Options, Tun};
 use std::{
     collections::{BTreeMap, VecDeque},

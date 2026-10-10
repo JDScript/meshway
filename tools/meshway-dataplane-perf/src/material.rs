@@ -1,10 +1,10 @@
 //! Private seed storage belongs solely to the node's disposable namespace.
 use crate::Error;
+use meshway_desired_fixture::{NodeMaterial, public_fixture::PublicNode, random_uuid};
 use meshway_model::{
     KeyId, NodeId,
     state::{Capability, StreamKind, TransportRole},
 };
-use meshway_desired_fixture::{NodeMaterial, public_fixture::PublicNode, random_uuid};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,

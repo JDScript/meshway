@@ -6,11 +6,11 @@ use meshway_dataplane::{
         pipeline::{Credit, Job, Output, Pool},
     },
 };
-use meshway_logging::profile::{self, Metric};
 use meshway_desired_fixture::{
     Error,
     fixture::{Chain, tcp_ipv4},
 };
+use meshway_logging::profile::{self, Metric};
 use serde::Serialize;
 use std::{
     collections::BTreeMap,

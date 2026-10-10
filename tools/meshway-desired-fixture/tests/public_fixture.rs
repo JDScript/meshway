@@ -1,11 +1,11 @@
-use meshway_model::{
-    KeyId, NodeId,
-    state::{Capability, StreamKind, TransportRole},
-};
 use meshway_desired_fixture::{
     NodeMaterial,
     public_fixture::{PublicFixture, PublicNode},
     random_uuid,
+};
+use meshway_model::{
+    KeyId, NodeId,
+    state::{Capability, StreamKind, TransportRole},
 };
 use std::collections::BTreeMap;
 

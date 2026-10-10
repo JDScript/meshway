@@ -268,9 +268,9 @@ impl PendingAction {
             return Err(Error::Ingress);
         }
         self.ensure_current()?;
-        Ok(exit::ProjectionScope::new(secure::OutputBinding::from_route(
-            &self.pending,
-        )))
+        Ok(exit::ProjectionScope::new(
+            secure::OutputBinding::from_route(&self.pending),
+        ))
     }
 
     /// Opaque kernel projection identity for this exact admitted exit packet.

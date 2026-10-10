@@ -1,7 +1,6 @@
 //! One read view over the desired netmap. Every resource owner reads its
 //! inputs through this view; nothing here grants anything by itself.
 use meshway_configuration::{
-    NodeAddresses,
     execution::{DialCandidate, TrustedNode},
     netmap::NodeNetmap,
 };
@@ -68,7 +67,7 @@ impl<'a> View<'a> {
         self.0.node_id
     }
     #[cfg(target_os = "linux")]
-    pub fn addresses(self) -> &'a NodeAddresses {
+    pub fn addresses(self) -> &'a meshway_configuration::NodeAddresses {
         &self.0.self_.addresses
     }
     #[cfg(target_os = "linux")]

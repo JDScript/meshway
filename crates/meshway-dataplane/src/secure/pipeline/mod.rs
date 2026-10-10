@@ -2,8 +2,8 @@
 //! Jobs are opaque and move-only. Workers never query authority; every result
 //! retains its original guard and is checked by the owner or final I/O adapter.
 use super::{
-    Carrier, Direction, Entry, Error, OutputBinding, Hop, Packet, PacketBuffer, PendingFrame, Received,
-    SecureNode, State, View, authorization,
+    Carrier, Direction, Entry, Error, Hop, OutputBinding, Packet, PacketBuffer, PendingFrame,
+    Received, SecureNode, State, View, authorization,
     codec::{self, Frame, Kind},
     crypto,
     session::MacKey,
