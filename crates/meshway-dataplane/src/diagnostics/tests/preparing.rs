@@ -1,10 +1,10 @@
 use super::*;
-use meshway_dataplane::secure::Received;
+use crate::secure::Received;
 
 /// Deliver the actual protected wire through the final synchronous sink. This
 /// fixture has no simulated cipher, permit, handshake or alternative flow owner.
 fn deliver(
-    mut frame: meshway_dataplane::secure::PendingFrame,
+    mut frame: crate::secure::PendingFrame,
     path: &[NodeId],
     nodes: &mut [SecureNode],
     owner: &mut Owner,

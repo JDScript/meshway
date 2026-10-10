@@ -5,18 +5,14 @@
 //! decision on Engine's desired netmap, as for a first packet, with no Server
 //! round trip. The host clears this owner when Engine withdraws the content. A permitted pair without a path every Node can
 //! observe reports `Unsupported`; a denied pair does not bind.
-#![forbid(unsafe_code)]
-
 mod measurement;
 #[cfg(test)]
 mod tests;
 
+use crate::secure::{CircuitGrant, CircuitRole, CircuitState, PendingFrame, SecureNode, Target};
 use chrono::{DateTime, Utc};
 use measurement::Measurement;
 use meshway_configuration::execution::Carrier;
-use meshway_dataplane::secure::{
-    CircuitGrant, CircuitRole, CircuitState, PendingFrame, SecureNode, Target,
-};
 use meshway_engine::Desired;
 use meshway_model::observations::{MetricKind, ProbeChannel};
 use meshway_model::{Digest, EventId, InstanceId, NetmapRef, NodeId, ObservationId, Sequence};
@@ -94,7 +90,7 @@ struct Task {
 impl Task {
     fn grant(&self) -> CircuitGrant {
         CircuitGrant {
-            purpose: meshway_dataplane::Purpose::Diagnostic,
+            purpose: crate::Purpose::Diagnostic,
             target: Target::Mesh {
                 node: self.task.target_node_id,
             },
@@ -752,12 +748,11 @@ fn bind(
         ObservationPath::Auto => None,
         ObservationPath::Explicit { path } => Some(path.as_slice()),
     };
-    let paths =
-        match meshway_dataplane::secure::diagnostic_paths(desired, task.target_node_id, explicit) {
-            Ok(paths) => paths,
-            Err(meshway_dataplane::secure::Error::Unsupported) => return Ok((Vec::new(), false)),
-            Err(_) => return Err(Error::Binding),
-        };
+    let paths = match crate::secure::diagnostic_paths(desired, task.target_node_id, explicit) {
+        Ok(paths) => paths,
+        Err(crate::secure::Error::Unsupported) => return Ok((Vec::new(), false)),
+        Err(_) => return Err(Error::Binding),
+    };
     if task.path.as_ref().is_some_and(|path| !paths.contains(path)) {
         return Err(Error::Binding);
     }

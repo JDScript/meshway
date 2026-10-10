@@ -14,12 +14,13 @@
 mod admission;
 mod authority;
 mod buffer;
-mod diagnostics;
+pub mod diagnostics;
 mod engine;
 pub mod exit;
 #[cfg(test)]
 mod fixtures;
 mod flow;
+mod log_budget;
 mod netmap;
 mod packet;
 

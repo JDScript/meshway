@@ -239,7 +239,7 @@ impl FlowTable {
         self.entries.len()
     }
     pub fn clear(&mut self) {
-        if !self.entries.is_empty() && crate::diagnostics::event() {
+        if !self.entries.is_empty() && crate::log_budget::event() {
             tracing::debug!(
                 operation = "clear",
                 count = self.entries.len(),
@@ -262,7 +262,7 @@ impl FlowTable {
         self.expire_exits(now, now_ms);
         while let Some(key) = self.index.expired(now, now_ms).cloned() {
             let flow = self.remove(&key).expect("indexed flow");
-            if crate::diagnostics::event() {
+            if crate::log_budget::event() {
                 let cause = if now >= flow.cap.at {
                     "monotonic_or_idle"
                 } else {
@@ -368,7 +368,7 @@ impl FlowTable {
             }
         }
         for (key, cause) in retire {
-            if crate::diagnostics::event() {
+            if crate::log_budget::event() {
                 tracing::debug!(operation = "update", cause, grant = ?key.grant,
                     "Dataplane flow retired by content update");
             }

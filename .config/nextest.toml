@@ -57,7 +57,7 @@ default-filter = '''not (
   | test(=runtime::ping::integration::thirty_second_interval_remains_live_without_extra_samples_or_idle_timeout)
   | test(=secure::control_cancellation_publication_and_stop_fence_crypto_and_plaintext_outputs)
   | test(=tcp_recovery::tcp_recovers_cancelled_relay_and_endpoint_outputs_across_real_permit_renewals)
-  | test(=tests::timed_out_admitted_send_has_one_loss_and_a_late_reply_cannot_revise_it)
+  | test(=diagnostics::tests::timed_out_admitted_send_has_one_loss_and_a_late_reply_cannot_revise_it)
 )'''
 
 [profile.ci]
@@ -77,7 +77,7 @@ max-threads = 12
 # This explicitly bounded Server/SecureNode scheduling contract includes fsync
 # and cryptography; reserve the runner slots so unrelated fixture CPU contention
 # cannot be mistaken for an inserted preparation timer. The bounds stay fixed.
-filter = 'test(=tests::preparing::ready_channel_and_handshake_events_start_direct_and_relay_probes_without_ticks) | test(=runtime::control::tests::execution_target_notice_wakes_without_a_five_second_refresh_delay)'
+filter = 'test(=diagnostics::tests::preparing::ready_channel_and_handshake_events_start_direct_and_relay_probes_without_ticks) | test(=runtime::control::tests::execution_target_notice_wakes_without_a_five_second_refresh_delay)'
 threads-required = "num-test-threads"
 
 [[profile.default.overrides]]
@@ -87,5 +87,5 @@ priority = 100
 test-group = 'server-fixtures'
 
 [[profile.default.overrides]]
-filter = 'package(meshway-server) | package(meshway-control) | package(meshway-control-client) | package(meshway-daemon) | package(meshway-connectivity) | package(meshway-diagnostics) | (package(meshway-dataplane) & binary(runtime))'
+filter = 'package(meshway-server) | package(meshway-control) | package(meshway-control-client) | package(meshway-daemon) | package(meshway-connectivity) | (package(meshway-dataplane) & (binary(runtime) | test(/^diagnostics::tests::/)))'
 test-group = 'server-fixtures'

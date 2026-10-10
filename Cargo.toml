@@ -8,7 +8,6 @@ members = [
     "crates/meshway-configuration",
     "crates/meshway-policy",
     "crates/meshway-dataplane",
-    "crates/meshway-diagnostics",
     "crates/meshway-tun",
     "crates/meshway-underlay",
     "crates/meshway-connectivity",

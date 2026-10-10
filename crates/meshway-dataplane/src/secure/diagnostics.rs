@@ -1,5 +1,5 @@
 //! Secure adapter's bounded engine rejection labels.
-pub(super) use crate::diagnostics::event;
+pub(super) use crate::log_budget::event;
 
 pub(super) fn engine_error(error: &crate::Error) -> &'static str {
     match error {

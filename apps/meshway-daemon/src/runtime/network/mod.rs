@@ -131,7 +131,7 @@ impl Report {
 pub(super) enum Request {
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     ObservationResult {
-        output: Box<meshway_diagnostics::Output>,
+        output: Box<meshway_dataplane::diagnostics::Output>,
         reply: oneshot::Sender<Result<(), ()>>,
     },
     #[cfg(target_os = "linux")]

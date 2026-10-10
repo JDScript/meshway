@@ -6,8 +6,8 @@ use super::Request;
 use crate::runtime::PingRequest;
 use crate::runtime::ping::Progress;
 use meshway_connectivity::{LinkFact, Manager};
+use meshway_dataplane::diagnostics::{Output, Owner};
 use meshway_dataplane::secure::{PendingFrame, SecureNode};
-use meshway_diagnostics::{Output, Owner};
 use meshway_engine::Desired;
 use meshway_ipc::{PingError, PingEvent};
 use meshway_model::InstanceId;
@@ -243,8 +243,8 @@ impl Diagnostics {
             },
         };
         let now = chrono::Utc::now();
-        let budget =
-            meshway_diagnostics::SETUP_TIMEOUT + Duration::from_secs(u64::from(request.count) + 10);
+        let budget = meshway_dataplane::diagnostics::SETUP_TIMEOUT
+            + Duration::from_secs(u64::from(request.count) + 10);
         let expires_at = now + chrono::Duration::from_std(budget).unwrap_or_default();
         let task = ObservationTask {
             id: observation,
@@ -435,7 +435,8 @@ impl Diagnostics {
             }
             if self.owner.preparing(local.observation) && Instant::now() >= local.next_progress {
                 local.next_progress = Instant::now() + Duration::from_secs(1);
-                if local.preparing_since.elapsed() >= meshway_diagnostics::SETUP_TIMEOUT {
+                if local.preparing_since.elapsed() >= meshway_dataplane::diagnostics::SETUP_TIMEOUT
+                {
                     let _ = local.request.events.try_send(PingEvent::Failed {
                         code: PingError::Timeout,
                     });
@@ -462,7 +463,7 @@ impl Diagnostics {
             for action in self.owner.actions(
                 secure,
                 carriers,
-                meshway_diagnostics::MAX_TASKS.saturating_sub(self.sends.len()),
+                meshway_dataplane::diagnostics::MAX_TASKS.saturating_sub(self.sends.len()),
             ) {
                 self.send(
                     manager,
@@ -509,7 +510,7 @@ impl Diagnostics {
     }
 
     pub fn forward(&mut self, manager: &Manager, frame: PendingFrame) -> Result<(), ()> {
-        if self.sends.len() >= meshway_diagnostics::MAX_TASKS {
+        if self.sends.len() >= meshway_dataplane::diagnostics::MAX_TASKS {
             return Err(());
         }
         self.send(manager, frame, None, None, self.epoch.clone());
@@ -684,7 +685,7 @@ mod tests {
     async fn stop_cancels_and_joins_every_admitted_sender() {
         let mut diagnostics = Diagnostics::default();
         let completed = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        for _ in 0..meshway_diagnostics::MAX_TASKS {
+        for _ in 0..meshway_dataplane::diagnostics::MAX_TASKS {
             let epoch = diagnostics.epoch.clone();
             let completed = completed.clone();
             diagnostics.sends.spawn(async move {
@@ -703,7 +704,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             completed.load(std::sync::atomic::Ordering::SeqCst),
-            meshway_diagnostics::MAX_TASKS
+            meshway_dataplane::diagnostics::MAX_TASKS
         );
         assert!(!diagnostics.has_sends());
     }
