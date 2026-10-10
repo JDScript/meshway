@@ -1,6 +1,7 @@
-//! A process-local UTC high-water mark advanced by monotonic time. Rolling the
-//! wall clock back cannot revive an expired grant or lengthen a later refresh.
-use crate::{Error, now};
+//! A process-local UTC high-water mark advanced by monotonic time, for the
+//! Server deadlines Control owns (session, instance, observation and
+//! coordination). Rolling the wall clock back cannot revive an expired
+//! deadline or lengthen a later refresh. The netmap lease is Engine's.
 use std::{
     sync::{
         Arc,
@@ -8,6 +9,23 @@ use std::{
     },
     time::{Duration, Instant},
 };
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub(crate) enum Error {
+    #[error("the deadline has expired")]
+    Expired,
+    #[error("the Server deadline is not representable")]
+    Contract,
+}
+
+/// Wall-clock milliseconds. Combine with a `Clock` so that a backwards
+/// adjustment cannot revive an expired deadline.
+pub(crate) fn now() -> Result<u64, Error> {
+    chrono::Utc::now()
+        .timestamp_millis()
+        .try_into()
+        .map_err(|_| Error::Expired)
+}
 
 pub struct Clock {
     born: Instant,
@@ -95,9 +113,6 @@ impl Started {
             clock: Arc::clone(clock),
         })
     }
-    pub fn wall(&self) -> u64 {
-        self.wall
-    }
 }
 #[derive(Clone)]
 pub struct Deadline {
@@ -106,19 +121,6 @@ pub struct Deadline {
     clock: Arc<Clock>,
 }
 impl Deadline {
-    /// Restrict an existing deadline without restarting transit/queue time or
-    /// replacing the issuer's high-water clock. This is a time bound, not authority.
-    pub(crate) fn restrict(&self, instant: Instant, wall: u64) -> Result<Self, Error> {
-        let deadline = Self {
-            wall: self.wall.min(wall),
-            monotonic: self.monotonic.min(instant),
-            clock: self.clock.clone(),
-        };
-        if !deadline.valid() {
-            return Err(Error::Expired);
-        }
-        Ok(deadline)
-    }
     pub async fn ended(&self, cancelled: &tokio_util::sync::CancellationToken) {
         self.clock
             .wait_until(self.monotonic, self.wall, cancelled)
@@ -155,10 +157,6 @@ impl Deadline {
         now_ms < self.wall && instant < self.monotonic
     }
 
-    pub fn shares_clock(&self, clock: &Arc<Clock>) -> bool {
-        Arc::ptr_eq(&self.clock, clock)
-    }
-
     pub fn expires_at(&self) -> Instant {
         self.monotonic
     }
@@ -171,43 +169,6 @@ impl Deadline {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn restricted_deadline_keeps_absolute_cutoffs_and_issuer_clock() {
-        let clock = Arc::new(Clock::new().unwrap());
-        let started = Started::now(&clock).unwrap();
-        let wall = started.wall();
-        let deadline = Deadline::from_response(started, wall + 60_000).unwrap();
-        let shorter = deadline
-            .restrict(
-                deadline.expires_at() - Duration::from_secs(10),
-                wall + 30_000,
-            )
-            .unwrap();
-        assert!(shorter.shares_clock(&clock));
-        assert_eq!(shorter.expires_at_ms(), wall + 30_000);
-        assert_eq!(
-            shorter.expires_at(),
-            deadline.expires_at() - Duration::from_secs(10)
-        );
-        let wider = shorter
-            .restrict(deadline.expires_at(), wall + 90_000)
-            .unwrap();
-        assert_eq!(wider.expires_at(), shorter.expires_at());
-        assert_eq!(wider.expires_at_ms(), shorter.expires_at_ms());
-        assert!(
-            deadline
-                .restrict(Instant::now() - Duration::from_secs(1), wall + 30_000)
-                .is_err()
-        );
-        clock.observe(wall + 40_000, Instant::now()).unwrap();
-        assert!(!shorter.valid());
-        assert!(deadline.valid());
-        assert!(
-            shorter
-                .restrict(deadline.expires_at(), wall + 90_000)
-                .is_err()
-        );
-    }
     #[tokio::test]
     async fn partial_forward_clock_adjustment_shortens_an_already_waiting_deadline() {
         use std::{

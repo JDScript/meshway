@@ -3,20 +3,14 @@ name = "meshway-authority"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-description = "Execution snapshot, deadlines and packet-plane identity handed to Node components"
+description = "Registered Node packet-plane keys and the hop-proof transcript"
 
 [dependencies]
-chrono.workspace = true
 curve25519-dalek = "4.1"
 ed25519-dalek = { version = "2.2", default-features = false, features = ["std", "zeroize"] }
 meshway-configuration = { path = "../meshway-configuration" }
-meshway-logging = { path = "../meshway-logging" }
 meshway-model = { path = "../meshway-model" }
-meshway-policy = { path = "../meshway-policy" }
-meshway-protocol = { path = "../meshway-protocol" }
 thiserror.workspace = true
-tokio = { workspace = true, features = ["sync", "time"] }
-tokio-util.workspace = true
 zeroize = "1.8"
 
 [lints]

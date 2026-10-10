@@ -1,35 +1,16 @@
-//! Execution authority handed from one issuer to Node components.
+//! This Node's registered packet-plane keys and the one hop-proof transcript.
 //!
-//! The types here carry the lease deadline, invalidation and private material
-//! of one verified netmap. They do not read storage, contact a Server or
-//! decide policy. In production only `meshway-control` issues them; benchmark
-//! and fixture issuers live under `tools/` and must never be assembled into
-//! `meshwayd`. Holding or cloning a value never extends its grant.
+//! Keys are not authority: a consumer uses them only for desired netmap
+//! content whose registered public keys they match. Nothing here carries a
+//! lease, deadline or Server state; Engine owns the netmap lease.
 #![forbid(unsafe_code)]
 
-mod clock;
 mod identity;
-mod snapshot;
-mod staged;
 
-pub use clock::{Clock, Deadline, Started};
-pub use identity::{DataPlaneIdentity, DataPlaneKeys, packet_proof_message};
-pub use snapshot::{ExecutionSnapshot, NetmapIssue, NetmapReading, NetmapRenewal};
-pub use staged::StagedIssuer;
+pub use identity::{DataPlaneKeys, packet_proof_message};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
-    #[error("the execution grant has expired or was invalidated")]
-    Expired,
-    #[error("issued material does not match the execution target")]
+    #[error("the key does not match this Node's registered packet key")]
     Contract,
-}
-
-/// Wall-clock milliseconds. Callers combine it with a `Clock` so that a
-/// backwards adjustment cannot revive an expired grant.
-pub fn now() -> Result<u64, Error> {
-    chrono::Utc::now()
-        .timestamp_millis()
-        .try_into()
-        .map_err(|_| Error::Expired)
 }

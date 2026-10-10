@@ -6,6 +6,7 @@
 #![forbid(unsafe_code)]
 
 mod authority;
+mod clock;
 pub mod connectivity;
 mod runtime;
 pub use runtime::ApplicationTicket;
@@ -23,7 +24,7 @@ pub use observations::ObservationLease;
 mod session;
 mod storage;
 
-use meshway_authority::{Clock, Deadline, Started, now};
+use clock::{Clock, Deadline, Started, now};
 use meshway_control_client::{Client, ClientError};
 use meshway_model::{NetmapLease, NetmapRef, state::Capability};
 use meshway_protocol::{
@@ -98,11 +99,11 @@ pub enum Error {
     Server(#[from] ClientError<ErrorResponse>),
 }
 
-impl From<meshway_authority::Error> for Error {
-    fn from(error: meshway_authority::Error) -> Self {
+impl From<clock::Error> for Error {
+    fn from(error: clock::Error) -> Self {
         match error {
-            meshway_authority::Error::Expired => Self::Expired,
-            meshway_authority::Error::Contract => Self::Contract,
+            clock::Error::Expired => Self::Expired,
+            clock::Error::Contract => Self::Contract,
         }
     }
 }
