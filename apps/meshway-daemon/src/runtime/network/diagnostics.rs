@@ -225,9 +225,7 @@ impl Diagnostics {
             }
             Err(_) => return fail(&request, PingError::NotRunning),
         }
-        let (Some(subscription), Some(observation), Some(instance)) =
-            (random_uuid(), random_uuid(), random_uuid())
-        else {
+        let (Some(subscription), Some(observation)) = (random_uuid(), random_uuid()) else {
             return fail(&request, PingError::Failed);
         };
         let (Ok(subscription), Ok(observation)) = (
@@ -236,9 +234,12 @@ impl Diagnostics {
         ) else {
             return fail(&request, PingError::Failed);
         };
+        // A local ping is no Server task: without a current instance it is
+        // keyed by its own local task id (the observation id), never by an
+        // invented instance. Its results never leave this Node.
         let instance_id = match bound {
             Some(instance) => instance,
-            None => match InstanceId::new(instance) {
+            None => match InstanceId::new(observation.into_uuid()) {
                 Ok(id) => id,
                 Err(_) => return fail(&request, PingError::Failed),
             },

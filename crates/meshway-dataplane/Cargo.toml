@@ -35,7 +35,6 @@ uuid.workspace = true
 [dev-dependencies]
 meshway-control = { path = "../meshway-control" }
 meshway-test-server = { path = "../../tools/meshway-test-server" }
-meshway-dns = { path = "../meshway-dns" }
 serde_json.workspace = true
 hickory-proto = { version = "0.26.3", default-features = false, features = ["std"] }
 

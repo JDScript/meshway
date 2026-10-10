@@ -1923,7 +1923,6 @@ dependencies = [
  "hmac 0.13.0",
  "meshway-configuration",
  "meshway-control",
- "meshway-dns",
  "meshway-engine",
  "meshway-logging",
  "meshway-model",
