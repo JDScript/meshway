@@ -25,7 +25,7 @@ use zeroize::Zeroizing;
 /// Total budget of one sync request; above the Server's 60 s hold.
 pub const SYNC_TIMEOUT: Duration = Duration::from_secs(90);
 const BACKOFF_MIN: Duration = Duration::from_secs(1);
-const BACKOFF_MAX: Duration = Duration::from_secs(30);
+const BACKOFF_MAX: Duration = Duration::from_secs(15);
 /// Spacing after an immediate answer that changed nothing, so a Server that
 /// does not hold cannot drive a tight loop.
 const IDLE_SPACING: Duration = Duration::from_secs(1);
@@ -153,7 +153,8 @@ impl Control {
     /// Apply one reply. A reply prepared before any later installation, stop
     /// or revocation is superseded (`Error::Pending`) and changes nothing.
     /// Transport failures, timeouts, 5xx, 401 (session) and 409 keep the
-    /// published lease; only a typed identity rejection withdraws it. A
+    /// published lease; only a typed identity rejection or netmap
+    /// withdrawal ends it. A
     /// response not signed by the pinned Server key is rejected
     /// (`SignatureInvalid`, `ServerKeyMismatch`) without changing state or
     /// withdrawing the current, itself verified, lease.
@@ -229,17 +230,22 @@ impl Control {
     }
 }
 
+/// The loop ends where control itself must stop; a withdrawn netmap and
+/// every retryable failure keep polling. A response that fails verification
+/// is retried too: it never replaced the held, itself verified lease.
 fn terminal(error: &Error) -> bool {
-    matches!(
-        error,
-        Error::ReloadRequired | Error::Record | Error::Endpoint | Error::MembershipRevoked
-    ) || matches!(error, Error::Server(error) if crate::identity_rejected(error))
+    match error.recovery() {
+        crate::Recovery::Withdrawn { identity } => identity,
+        crate::Recovery::Storage => true,
+        crate::Recovery::Halt => matches!(error, Error::Endpoint),
+        crate::Recovery::Retry { .. } => false,
+    }
 }
 
 /// Drive the long poll until `stop`. The driver lock is held only to prepare
 /// and apply, never during the hold. Each successful sync publishes its
 /// verified netmap; a withdrawal publishes `None`. Session loss re-authenticates;
-/// transport failures back off from 1 s doubling to 30 s. Identity rejection,
+/// transport failures back off from 1 s doubling to 15 s. Identity rejection,
 /// storage that needs reopening and invalid configuration end the loop.
 pub async fn sync_loop(
     control: &tokio::sync::Mutex<Control>,

@@ -106,6 +106,13 @@ impl HttpError {
                     message: "Node identity is no longer eligible".into(),
                 },
             ),
+            Error::NetmapWithdrawn => simple(
+                StatusCode::FORBIDDEN,
+                Problem::NetmapWithdrawn {
+                    params: EmptyParams {},
+                    message: "The Server holds no netmap for this Node".into(),
+                },
+            ),
             Error::PermissionDenied => simple(
                 S::FORBIDDEN,
                 Problem::PermissionDenied {
@@ -430,6 +437,7 @@ pub fn problem_samples() -> Vec<ProblemSample> {
         Error::InvalidSession,
         Error::InvalidCredentials,
         Error::NodeIdentityRejected,
+        Error::NetmapWithdrawn,
         Error::PermissionDenied,
         Error::RegistrationDisabled,
         Error::NotFound,

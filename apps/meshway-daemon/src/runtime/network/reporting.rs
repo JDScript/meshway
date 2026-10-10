@@ -278,7 +278,7 @@ impl super::Handle {
                     return Ok(false);
                 }
                 Err(error) => {
-                    if matches!(error, Error::StateScopeChanged) {
+                    if matches!(error, Error::StateScopeChanged | Error::StaleReport) {
                         self.reporting.pending = None;
                     }
                     return Err(error);
@@ -359,7 +359,7 @@ impl super::Handle {
                         Ok(self.reporting.delivered(true))
                     }
                     Err(error) => {
-                        if matches!(error, Error::StateScopeChanged) {
+                        if matches!(error, Error::StateScopeChanged | Error::StaleReport) {
                             self.reporting.pending = None;
                         }
                         Err(error)
@@ -367,7 +367,7 @@ impl super::Handle {
                 }
             }
             Err(error) => {
-                if matches!(error, Error::StateScopeChanged) {
+                if matches!(error, Error::StateScopeChanged | Error::StaleReport) {
                     self.reporting.pending = None;
                 }
                 Err(error)

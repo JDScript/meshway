@@ -60,12 +60,7 @@ impl Active {
         if next.lease.netmap != next.content.reference() {
             return Err(Error::Reference);
         }
-        if latest.is_some_and(|old| {
-            next.lease.netmap.serial < old.netmap.serial
-                || (next.lease.netmap.serial == old.netmap.serial
-                    && (next.lease.netmap != old.netmap
-                        || next.lease.expires_at_ms < old.expires_at_ms))
-        }) {
+        if latest.is_some_and(|old| regresses(&next.lease, &old)) {
             return Err(Error::Reference);
         }
         let remaining = next
@@ -85,4 +80,11 @@ impl Active {
     pub fn expired(&self, clock: &mut Clock) -> bool {
         Instant::now() >= self.at || clock.now() >= self.expires_at_ms
     }
+}
+
+/// An older serial, or the same serial with other content or an earlier end.
+pub(crate) fn regresses(next: &NetmapLease, old: &NetmapLease) -> bool {
+    next.netmap.serial < old.netmap.serial
+        || (next.netmap.serial == old.netmap.serial
+            && (next.netmap != old.netmap || next.expires_at_ms < old.expires_at_ms))
 }

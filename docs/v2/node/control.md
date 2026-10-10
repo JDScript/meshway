@@ -109,12 +109,15 @@ Control 只验证、保存并发布签名 netmap；它不签发任何执行快�
 | `New { previous }` | 首次安装或更大 serial；内容先保存再发布 |
 | `Renewed` | 同内容的新租约；Engine 只延长自己的计时器，旧租约已结束时重新安装同一内容 |
 
-在 `finish_sync` 之前已有其他安装、撤回或停止的回复返回 `Pending` 且不改变任何状态。`peerFacts` 在 netmap 部分安装后并入 Control 的最后已知事实（按当前投影过滤）并原样交给 `PeerFactsSink`，不进入内容；消费者拒收时，或已发布租约结束／撤回后（最后已知事实随 netmap 结束），下一请求不带游标、取得完整事实；Server 对无游标请求不挂起，因此租约结束后的恢复不等待 hold。地址或出口就绪变化（不含仅新鲜度续期）及 netmap 变化时写 `peer-facts.json`。重启载入后，`take_facts_replay()` 一次性给出保存的事实（base 为 null 的完整替换）；宿主在不联系 Server 而发布已持有 netmap 的同一位置把它交给 sink（daemon 为每次 up 会话开始处）；首个请求仍不带游标，Server 可达时以完整事实替换。单次请求总上限 90 秒（Server 挂起上限 60 秒），连接级失败 1 秒起倍增至 30 秒退避；立即返回且无变化的回复至少间隔 1 秒。
+在 `finish_sync` 之前已有其他安装、撤回或停止的回复返回 `Pending` 且不改变任何状态。`peerFacts` 在 netmap 部分安装后并入 Control 的最后已知事实（按当前投影过滤）并原样交给 `PeerFactsSink`，不进入内容；消费者拒收时，或已发布租约结束／撤回后（最后已知事实随 netmap 结束），下一请求不带游标、取得完整事实；Server 对无游标请求不挂起，因此租约结束后的恢复不等待 hold。地址或出口就绪变化（不含仅新鲜度续期）及 netmap 变化时写 `peer-facts.json`。重启载入后，`take_facts_replay()` 一次性给出保存的事实（base 为 null 的完整替换）；宿主在不联系 Server 而发布已持有 netmap 的同一位置把它交给 sink（daemon 为每次 up 会话开始处）；首个请求仍不带游标，Server 可达时以完整事实替换。单次请求总上限 90 秒（Server 挂起上限 60 秒），连接级失败 1 秒起倍增至 15 秒退避（Server 恢复后最多一个退避周期即重新连上）；立即返回且无变化的回复至少间隔 1 秒。
 
 | 事件 | 已发布租约 |
 | --- | --- |
-| Server 不可达、超时、5xx、409、session 过期／401、instance 过期或重新取得 | 保持，直至 Engine 计时到期 |
-| 类型化身份拒绝（`membership_revoked` 等）、`stop`、开始换钥、身份记录写入、私有写入结果不确定 | 立即撤回（发布 `None`），Engine 应用空期望 |
+| Server 不可达、超时、任何无可解码 body 的状态（含 CDN／WAF 的 401／403／404／409）、5xx、400 等其他已解码拒绝、session 过期／401、instance 过期或重新取得 | 保持，直至 Engine 计时到期；按 `Recovery::Retry` 退避重试 |
+| 已解码但违背钉住契约的回答（Server 签名／key 不符、`controllerId` 或绑定不符、`receipt_target_mismatch`）、本机配置不可用 | 保持，直至 Engine 计时到期；控制停止（`blocked`），等待操作员 |
+| 已解码的 `403 node_identity_rejected`（控制停止）或 `403 netmap_withdrawn`（继续 sync，等待新 netmap）、`stop`、开始换钥、身份记录写入、私有写入结果不确定 | 立即撤回（发布 `None`），Engine 应用空期望 |
+
+数据面只在三种情况撤：租约到期（Engine）、已解码的 Server 撤回、本机私有存储状态不确定。该分类只有一份实现：`meshway_control::Error::recovery()`，`sync_loop` 与 daemon 控制循环共用；daemon 只据此决定上报的问题码与节奏。State 观测与持有的 netmap／instance 不再一致（例如旧出口能力观测、Server 以 400 拒收该报告体）归为 `StaleReport`：丢弃原报告体，下一次重新观测后再报。
 
 State、回执、协调与观察结果只为 Control 持有且租约未结束的精确内容发言（`held_netmap`）；instance 只是 State／回执绑定，不进入期望内容。
 

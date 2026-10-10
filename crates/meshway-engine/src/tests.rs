@@ -84,7 +84,40 @@ async fn renewal_changes_only_engine_timer_and_expiry_withdraws_every_component(
     let restored = input(&mut engine, renewed.content, 60_000);
     engine.reconfig(Some(&restored)).await.unwrap();
     assert!(engine.desired().is_some());
-    assert_eq!(engine.components.calls.len(), calls.len() + 8);
+    assert!(engine.components.calls.ends_with(&[
+        (Part::Host, Some(restored.content.reference())),
+        (Part::Adjacencies, Some(restored.content.reference())),
+        (Part::Packets, Some(restored.content.reference())),
+        (Part::Dns, Some(restored.content.reference())),
+    ]));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_newer_offer_that_cannot_be_admitted_ends_the_older_content() {
+    let mut engine = Engine::new(Resources::default());
+    let content = Arc::new(meshway_test_server::single_node("a", None));
+    let first = input(&mut engine, content.clone(), 60_000);
+    engine.reconfig(Some(&first)).await.unwrap();
+    // The newer serial's lease has already ended on this Engine's clock: the
+    // older content must not keep running in its place.
+    let newer = Arc::new(meshway_test_server::single_node("b", Some(&content)));
+    let now = engine.clock.now();
+    let ended = Netmap {
+        lease: NetmapLease::new(newer.reference(), now - 120_000, now - 1).unwrap(),
+        content: newer,
+    };
+    assert_eq!(engine.reconfig(Some(&ended)).await, Err(Error::Lease));
+    assert!(engine.desired().is_none() && engine.next_expiry().is_none());
+    assert!(engine.components.calls.ends_with(&[
+        (Part::Packets, None),
+        (Part::Adjacencies, None),
+        (Part::Host, None),
+        (Part::Dns, None),
+    ]));
+    // The original serial cannot come back after its successor was seen.
+    let again = input(&mut engine, content, 60_000);
+    assert_eq!(engine.reconfig(Some(&again)).await, Err(Error::Reference));
+    assert!(engine.desired().is_none());
 }
 
 #[tokio::test(start_paused = true)]

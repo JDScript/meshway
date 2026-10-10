@@ -356,7 +356,10 @@ fn close_is_an_empty_hop_authenticated_control_frame_in_either_direction() {
         let decoded = Frame::decode(&bytes, Some(&f.context)).unwrap();
         assert!(decoded.kind == Kind::Close && decoded.reply == reply);
         assert_eq!(decoded.encode().unwrap(), bytes);
-        assert!(Frame::decode(&bytes, None).is_err(), "needs the kept circuit");
+        assert!(
+            Frame::decode(&bytes, None).is_err(),
+            "needs the kept circuit"
+        );
     }
     let mut body = frame(Kind::Close);
     body.body = vec![0; 16].into();
@@ -364,5 +367,8 @@ fn close_is_an_empty_hop_authenticated_control_frame_in_either_direction() {
     let mut sequence = frame(Kind::Close);
     sequence.body = PacketBuffer::from(Vec::new());
     sequence.sequence = 1;
-    assert!(sequence.encode().is_err(), "a Close has no sequence of its own");
+    assert!(
+        sequence.encode().is_err(),
+        "a Close has no sequence of its own"
+    );
 }

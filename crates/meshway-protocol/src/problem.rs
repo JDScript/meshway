@@ -90,6 +90,8 @@ problems! {
     InvalidCredentials(EmptyParams) = "invalid_credentials",
     /// This Node's registered identity or key is no longer eligible; returns HTTP 403 and invalidates its held netmap.
     NodeIdentityRejected(EmptyParams) = "node_identity_rejected",
+    /// The Node is authenticated but the Server holds no netmap for it (for example its data-plane key was revoked); returns HTTP 403 and ends its held netmap.
+    NetmapWithdrawn(EmptyParams) = "netmap_withdrawn",
     /// The supplied current password is incorrect; returns HTTP 400.
     InvalidCurrentPassword(EmptyParams) = "invalid_current_password",
     /// The password recovery credential is invalid or no longer usable; returns HTTP 400.

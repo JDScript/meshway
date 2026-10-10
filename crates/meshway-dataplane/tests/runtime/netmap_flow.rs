@@ -621,7 +621,10 @@ async fn restarted_terminal_ends_the_relay_circuit_and_its_close_reaches_the_ori
         first(&mut f, packet)
     }
     .await;
-    assert!(f.a.set_peer_boots(BTreeMap::from([(r, [1; 16])])).is_empty());
+    assert!(
+        f.a.set_peer_boots(BTreeMap::from([(r, [1; 16])]))
+            .is_empty()
+    );
     assert!(
         f.r.set_peer_boots(BTreeMap::from([(a, [1; 16]), (b, [1; 16])]))
             .is_empty()
@@ -637,11 +640,15 @@ async fn restarted_terminal_ends_the_relay_circuit_and_its_close_reaches_the_ori
     };
     delivered(&mut f, frame);
     // B restarted: its new channel to R carries another boot.
-    let mut closes = f.r.set_peer_boots(BTreeMap::from([(a, [1; 16]), (b, [2; 16])]));
+    let mut closes =
+        f.r.set_peer_boots(BTreeMap::from([(a, [1; 16]), (b, [2; 16])]));
     assert_eq!(closes.len(), 1, "one Close toward the surviving origin");
     let close = closes.remove(0);
     assert_eq!((close.next(), close.circuit()), (a, id));
-    assert!(f.r.circuit_info(id).unwrap().is_none(), "the relay ended it");
+    assert!(
+        f.r.circuit_info(id).unwrap().is_none(),
+        "the relay ended it"
+    );
     let bytes = wire(close);
     assert!(meshway_dataplane::secure::is_control_frame(&bytes));
     // A forged copy on another carrier is not this hop's Close.
@@ -673,14 +680,18 @@ async fn restarted_origin_ends_the_terminal_circuit_without_any_frame() {
         first(&mut f, packet)
     }
     .await;
-    assert!(f.b.set_peer_boots(BTreeMap::from([(r, [1; 16])])).is_empty());
+    assert!(
+        f.b.set_peer_boots(BTreeMap::from([(r, [1; 16])]))
+            .is_empty()
+    );
     assert!(
         f.r.set_peer_boots(BTreeMap::from([(a, [1; 16]), (b, [1; 16])]))
             .is_empty()
     );
     // A restarted: R closes toward B; B also retires its own circuit when R
     // itself restarts.
-    let mut closes = f.r.set_peer_boots(BTreeMap::from([(a, [9; 16]), (b, [1; 16])]));
+    let mut closes =
+        f.r.set_peer_boots(BTreeMap::from([(a, [9; 16]), (b, [1; 16])]));
     let close = closes.remove(0);
     assert_eq!(close.next(), b);
     assert!(matches!(
@@ -699,7 +710,9 @@ async fn a_terminal_that_only_receives_answers_with_a_passive_keepalive() {
         first(&mut f, packet)
     }
     .await;
-    let due = f.b.next_keepalive().expect("received data owes a keepalive");
+    let due =
+        f.b.next_keepalive()
+            .expect("received data owes a keepalive");
     assert!(f.a.next_keepalive().is_none(), "the sender owes none");
     assert!(f.b.keepalives(32).is_empty(), "not before it is due");
     tokio::time::sleep(due.saturating_duration_since(std::time::Instant::now())).await;

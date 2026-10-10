@@ -128,7 +128,11 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
         let has_outputs = plane.packets.has_outputs();
         let mut wake_at = live.then(|| plane.packets.wake_at()).flatten();
         if let Some(at) = live
-            .then(|| plane.secure().and_then(meshway_dataplane::secure::SecureNode::next_keepalive))
+            .then(|| {
+                plane
+                    .secure()
+                    .and_then(meshway_dataplane::secure::SecureNode::next_keepalive)
+            })
             .flatten()
         {
             let at = tokio::time::Instant::from_std(at);

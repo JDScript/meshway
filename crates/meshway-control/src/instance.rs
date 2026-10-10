@@ -159,6 +159,19 @@ impl Control {
             self.report = None;
             return Err(Error::StateScopeChanged);
         }
+        // A decoded 400 rejects this body (for example an exit capability
+        // observation the Server no longer accepts as fresh). Retrying the
+        // identical body cannot succeed; the host observes again.
+        if matches!(
+            &response,
+            Err(meshway_control_client::ClientError::Http {
+                status: 400,
+                problem: Some(meshway_protocol::ErrorResponse { status: 400, .. }),
+            })
+        ) {
+            self.report = None;
+            return Err(Error::StaleReport);
+        }
         let accepted = self.registered(response)?;
         if accepted.sequence != sequence {
             self.fence();

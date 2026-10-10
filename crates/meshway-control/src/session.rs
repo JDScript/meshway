@@ -122,7 +122,8 @@ impl Control {
             || challenge.operation != ProofOperation::Session
             || challenge.request_digest != digest
         {
-            self.block_netmap_cache()?;
+            // A decoded answer for another identity stops control; only a
+            // typed withdrawal ends the held, independently signed netmap.
             self.reject_authentication();
             return Err(Error::Contract);
         }
@@ -149,7 +150,8 @@ impl Control {
             || response.node_id != binding.node_id
             || response.key_id != binding.keys.control.id
         {
-            self.block_netmap_cache()?;
+            // A decoded answer for another identity stops control; only a
+            // typed withdrawal ends the held, independently signed netmap.
             self.reject_authentication();
             return Err(Error::Contract);
         }

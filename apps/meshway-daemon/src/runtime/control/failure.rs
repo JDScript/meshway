@@ -11,6 +11,10 @@ pub(super) struct Failure {
     /// The old runtime context (session, instance) is gone and is re-acquired
     /// at once; the data plane follows netmap authority regardless.
     pub reset: bool,
+    /// The held netmap ended (decoded withdrawal) or local storage is in an
+    /// unknown state: the data plane is withdrawn. Every other failure keeps
+    /// it running on its signed lease.
+    pub withdraw: bool,
     pub retry_after: Option<Duration>,
 }
 
@@ -18,7 +22,10 @@ pub(super) fn failure(error: Error, authenticating: bool) -> Failure {
     at("open_control", error, authenticating)
 }
 
+/// Control's [`Recovery`](meshway_control::Recovery) decides retry and
+/// withdrawal; this adds only the reported problem and pacing.
 pub(super) fn at(operation: &'static str, error: Error, authenticating: bool) -> Failure {
+    use meshway_control::Recovery;
     let (kind, status, code) = details(&error);
     let server_request_id = match &error {
         Error::ReceiptRejected(rejection) => rejection.response().request_id,
@@ -29,51 +36,31 @@ pub(super) fn at(operation: &'static str, error: Error, authenticating: bool) ->
         _ => None,
     };
     let retry_after = matches!(&error, Error::ReceiptRejected(_)).then_some(Duration::from_secs(1));
-    // A received rejection remains a rejection even if its body is truncated.
-    // Runtime bearer/instance rejection first reauthenticates the held identity;
-    // rejection of that proof must stop, including unknown Controller/key/Node.
-    let authentication_conflict = operation == "authenticate"
-        && matches!(&error,
-        Error::Server(ClientError::Http { status: 409, problem: Some(body) })
-        if body.status == 409 && matches!(body.problem, meshway_protocol::Problem::RequestConflict { .. }));
-    let (problem, retry, reset) = match &error {
-        Error::MembershipRevoked => (Problem::Credentials, true, true),
-        // State report scope rotation is consumed by the report scheduler before
-        // reaching failure classification; it is not an installation problem.
-        Error::ReceiptRejected(_) => (Problem::Apply, true, false),
-        Error::Server(ClientError::Http {
-            status: 409,
-            problem: Some(body),
-        }) if body.status == 409
-            && matches!(
-                body.problem,
-                meshway_protocol::Problem::ReceiptTargetMismatch { .. }
-            ) =>
-        {
-            (Problem::Contract, false, true)
+    let recovery = error.recovery();
+    let (retry, reset, withdraw) = match recovery {
+        Recovery::Retry { reset } => (true, reset, false),
+        Recovery::Withdrawn { identity } => (!identity, true, true),
+        Recovery::Storage => (false, false, true),
+        Recovery::Halt => (false, true, false),
+    };
+    let problem = match &error {
+        Error::ReceiptRejected(_) => Problem::Apply,
+        _ if matches!(recovery, Recovery::Withdrawn { .. }) => Problem::Credentials,
+        Error::Server(_) if matches!(status, Some(401 | 403 | 404 | 409)) => Problem::Credentials,
+        Error::Server(_) if matches!(status, Some(408 | 429 | 500..=599)) => Problem::ServerBusy,
+        Error::Server(
+            ClientError::Network { .. }
+            | ClientError::Decode { .. }
+            | ClientError::BodyLimit { .. },
+        ) => Problem::Network,
+        Error::Server(ClientError::Http { .. }) => Problem::ServerBusy,
+        Error::Expired => Problem::Clock,
+        Error::Lifecycle | Error::Pending | Error::StateScopeChanged | Error::StaleReport => {
+            Problem::Apply
         }
-        Error::Server(_) if matches!(status, Some(401 | 403 | 404 | 409)) => {
-            let retry = !authenticating || authentication_conflict;
-            (Problem::Credentials, retry, retry)
-        }
-        Error::Server(_) if matches!(status, Some(408 | 429 | 500..=599)) => {
-            (Problem::ServerBusy, true, false)
-        }
-        Error::Server(ClientError::Network { .. }) => (Problem::Network, true, false),
-        // An HTML/interrupted/oversize response is never a decoded grant. Fence
-        // old runtime state and retry delivery, retaining the bound identity.
-        Error::Server(ClientError::Decode { .. } | ClientError::BodyLimit { .. }) => {
-            (Problem::Network, true, true)
-        }
-        Error::Expired => (Problem::Clock, true, true),
-        Error::Lifecycle if !authenticating => (Problem::Apply, true, true),
-        Error::Storage(_) | Error::Record | Error::ReloadRequired => {
-            (Problem::Storage, false, false)
-        }
-        Error::Endpoint => (Problem::Configuration, false, false),
-        // A successfully decoded but wrong Controller/key/target/digest remains
-        // fatal. No schema or authorization check is relaxed for recovery.
-        _ => (Problem::Contract, false, false),
+        Error::Storage(_) | Error::Record | Error::ReloadRequired => Problem::Storage,
+        Error::Endpoint => Problem::Configuration,
+        _ => Problem::Contract,
     };
     tracing::warn!(
         operation,
@@ -85,12 +72,14 @@ pub(super) fn at(operation: &'static str, error: Error, authenticating: bool) ->
         ?problem,
         retry,
         reset,
+        withdraw,
         "Node control operation failed"
     );
     Failure {
         problem,
         retry,
         reset,
+        withdraw,
         retry_after,
     }
 }
@@ -115,10 +104,10 @@ fn details(error: &Error) -> (&'static str, Option<u16>, Option<&'static str>) {
             ClientError::Request => ("client_request", None, None),
         },
         Error::Expired => ("expired", None, None),
-        Error::MembershipRevoked => ("membership_revoked", None, None),
         Error::Lifecycle => ("lifecycle", None, None),
         Error::Contract => ("contract", None, None),
         Error::StateScopeChanged => ("state_scope_changed", None, None),
+        Error::StaleReport => ("stale_report", None, None),
         Error::Storage(_) | Error::Record | Error::ReloadRequired => ("storage", None, None),
         _ => ("local", None, None),
     }
@@ -147,8 +136,16 @@ fn problem_code(problem: &meshway_protocol::Problem) -> &'static str {
 mod tests {
     use super::*;
 
+    fn body(status: u16, code: &str) -> meshway_protocol::ErrorResponse {
+        serde_json::from_value(serde_json::json!({
+            "requestId": null, "status": status,
+            "problem": {"code": code, "params": {}, "message": "ignored"}
+        }))
+        .unwrap()
+    }
+
     #[test]
-    fn receipt_conflicts_only_suspend_for_instance_or_target_binding_rejection() {
+    fn receipt_conflicts_only_halt_for_target_binding_rejection() {
         for (code, refresh) in [
             ("receipt_netmap_superseded", true),
             ("receipt_precondition", true),
@@ -158,11 +155,7 @@ mod tests {
             ("binding_conflict", false),
             ("request_id_conflict", false),
         ] {
-            let body: meshway_protocol::ErrorResponse = serde_json::from_value(serde_json::json!({
-                "requestId": null, "status": 409,
-                "problem": {"code": code, "params": {}, "message": "ignored"}
-            }))
-            .unwrap();
+            let body = body(409, code);
             // Control only exposes ReceiptRejected for validated receipt-domain
             // responses; its HTTP integration tests exercise that boundary.
             let error = if refresh {
@@ -176,6 +169,7 @@ mod tests {
             let failure = at("finish_application", error, false);
             assert_eq!(failure.retry, code != "receipt_target_mismatch", "{code}");
             assert_eq!(failure.reset, !refresh, "{code}");
+            assert!(!failure.withdraw, "{code}: the lease keeps running");
             assert_eq!(
                 failure.retry_after,
                 refresh.then_some(Duration::from_secs(1))
@@ -184,34 +178,80 @@ mod tests {
     }
 
     #[test]
-    fn stream_revocation_uses_runtime_credential_recovery_not_operator_blocking() {
-        let rejected = at("sync", Error::MembershipRevoked, false);
+    fn only_a_decoded_withdrawal_or_unknown_storage_withdraws_the_data_plane() {
+        let rejected = at(
+            "authenticate",
+            Error::Server(ClientError::Http {
+                status: 403,
+                problem: Some(body(403, "node_identity_rejected")),
+            }),
+            true,
+        );
+        assert!(rejected.withdraw && !rejected.retry);
         assert_eq!(rejected.problem, Problem::Credentials);
-        assert!(rejected.retry && rejected.reset);
-        assert!(!at("authenticate", Error::Contract, true).retry);
+        let withdrawn = at(
+            "sync",
+            Error::Server(ClientError::Http {
+                status: 403,
+                problem: Some(body(403, "netmap_withdrawn")),
+            }),
+            false,
+        );
+        assert!(
+            withdrawn.withdraw && withdrawn.retry,
+            "keeps polling for a new netmap"
+        );
+        for error in [Error::Record, Error::ReloadRequired] {
+            let failed = failure(error, false);
+            assert!(failed.withdraw && !failed.retry);
+        }
+        for error in [
+            Error::Contract,
+            Error::Endpoint,
+            Error::Cryptography,
+            Error::SignatureInvalid,
+            Error::ServerKeyMismatch,
+        ] {
+            let failed = failure(error, true);
+            assert!(!failed.retry && !failed.withdraw, "halts control only");
+        }
     }
 
     #[test]
-    fn only_a_validated_authentication_intent_conflict_can_retry_proof() {
-        for body_status in [401, 409] {
-            let body = meshway_protocol::ErrorResponse {
-                request_id: None,
-                status: body_status,
-                problem: meshway_protocol::Problem::RequestConflict {
-                    params: serde_json::from_value(serde_json::json!({})).unwrap(),
-                    message: "not used for classification".into(),
-                },
-            };
-            let result = at(
-                "authenticate",
-                Error::Server(ClientError::Http {
-                    status: 409,
-                    problem: Some(body),
-                }),
-                true,
-            );
-            assert_eq!(result.retry, body_status == 409);
-            assert_eq!(result.reset, body_status == 409);
+    fn undecoded_proxy_statuses_and_other_rejections_retry_and_keep_the_lease() {
+        for authenticating in [false, true] {
+            for status in [400, 401, 403, 404, 409, 410, 422] {
+                for error in [
+                    ClientError::Http {
+                        status,
+                        problem: None,
+                    },
+                    ClientError::Network {
+                        status: Some(status),
+                    },
+                    ClientError::Decode { status },
+                    ClientError::BodyLimit { status },
+                ] {
+                    let failed = failure(Error::Server(error), authenticating);
+                    assert!(failed.retry && !failed.withdraw, "{status}");
+                }
+            }
+            // Decoded, but neither a withdrawal nor a contract break: a stale
+            // observation's 400 or a clock-skewed proof's 401 are retried.
+            for (status, code) in [
+                (400, "invalid_request"),
+                (401, "invalid_credentials"),
+                (403, "permission_denied"),
+            ] {
+                let failed = failure(
+                    Error::Server(ClientError::Http {
+                        status,
+                        problem: Some(body(status, code)),
+                    }),
+                    authenticating,
+                );
+                assert!(failed.retry && !failed.withdraw, "{code}");
+            }
         }
     }
 
@@ -221,16 +261,15 @@ mod tests {
             408, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524, 525, 526, 530, 599,
         ] {
             for authenticating in [false, true] {
-                assert!(
-                    failure(
-                        Error::Server(ClientError::Http {
-                            status,
-                            problem: None
-                        }),
-                        authenticating
-                    )
-                    .retry
+                let failed = failure(
+                    Error::Server(ClientError::Http {
+                        status,
+                        problem: None,
+                    }),
+                    authenticating,
                 );
+                assert!(failed.retry && !failed.withdraw);
+                assert_eq!(failed.problem, Problem::ServerBusy);
             }
         }
         for error in [
@@ -241,42 +280,6 @@ mod tests {
         ] {
             let failed = failure(error, false);
             assert!(failed.retry && failed.reset);
-        }
-    }
-
-    #[test]
-    fn proof_rejections_and_semantic_contract_failures_stay_fatal() {
-        for status in [401, 403, 404, 409] {
-            for error in [
-                ClientError::Http {
-                    status,
-                    problem: None,
-                },
-                ClientError::Network {
-                    status: Some(status),
-                },
-                ClientError::Decode { status },
-                ClientError::BodyLimit { status },
-            ] {
-                assert!(!failure(Error::Server(error), true).retry);
-            }
-            let failed = failure(
-                Error::Server(ClientError::Http {
-                    status,
-                    problem: None,
-                }),
-                false,
-            );
-            assert!(failed.retry && failed.reset);
-        }
-        for error in [
-            Error::Contract,
-            Error::Record,
-            Error::ReloadRequired,
-            Error::Lifecycle,
-            Error::Cryptography,
-        ] {
-            assert!(!failure(error, true).retry);
         }
     }
 }

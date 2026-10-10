@@ -149,9 +149,7 @@ impl<C: Components> Engine<C> {
     /// and identity binding. Renewing live content changes only this owner's
     /// timer; an expired engine must first apply empty, then install anew.
     pub async fn reconfig(&mut self, netmap: Option<&Netmap>) -> Result<(), Error> {
-        let active = netmap
-            .map(|next| lease::Active::accept(next, self.latest, &mut self.clock))
-            .transpose()?;
+        // An ended lease is withdrawn before any offer is judged.
         if self
             .lease
             .as_ref()
@@ -159,36 +157,67 @@ impl<C: Components> Engine<C> {
         {
             self.withdraw().await?;
         }
-        if let (Some(current), Some(next)) = (&self.desired, netmap) {
-            let reference = next.content.reference();
-            if current.reference() == reference {
-                self.latest = Some(next.lease);
-                self.lease = active;
+        if let Some(next) = netmap {
+            // Only a regressing offer (older serial, or the same serial with
+            // other content or an earlier end) leaves the current content.
+            if self
+                .latest
+                .is_some_and(|old| lease::regresses(&next.lease, &old))
+                || self.desired.as_ref().is_some_and(|current| {
+                    current.reference().serial > next.content.reference().serial
+                })
+            {
+                return Err(Error::Reference);
+            }
+            // A newer offer that cannot be admitted (its lease already ended
+            // or its content is invalid) ends the current content too: the
+            // older, possibly wider content never outlives its successor.
+            let same = self
+                .desired
+                .as_ref()
+                .filter(|current| current.reference() == next.content.reference())
+                .cloned();
+            let accepted =
+                lease::Active::accept(next, self.latest, &mut self.clock).and_then(|active| {
+                    match &same {
+                        Some(current) => Ok((active, current.clone())),
+                        None => Desired::new(&next.content).map(|desired| (active, desired)),
+                    }
+                });
+            let (active, desired) = match accepted {
+                Ok(accepted) => accepted,
+                Err(error) => {
+                    // Its signed lease still names the newer serial: the
+                    // older content cannot return after it.
+                    if error != Error::Reference {
+                        self.latest = Some(next.lease);
+                    }
+                    self.withdraw().await?;
+                    return Err(error);
+                }
+            };
+            self.latest = Some(next.lease);
+            if same.is_some() {
+                // Renewal changes only this owner's timer; a degraded content
+                // retries its missing capabilities.
+                self.lease = Some(active);
                 if !self.degraded {
                     return Ok(());
                 }
-                // Retry the missing capabilities on the same content; the
-                // installed safety boundaries are unchanged by an apply that
-                // degrades again.
-                let desired = current.clone();
                 return self.settle(Some(desired)).await;
             }
-            if current.reference().serial >= reference.serial {
-                return Err(Error::Reference);
-            }
+            // Removing the current desired state before the first await is
+            // the engine's admission boundary. If its caller cancels, the
+            // engine stays empty; the next reconfig retries idempotent applies.
+            self.desired = None;
+            self.degraded = false;
+            self.lease = Some(active);
+            return self.settle(Some(desired)).await;
         }
-        let desired = netmap.map(|next| Desired::new(&next.content)).transpose()?;
-        // Removing the current desired state before the first await is the
-        // engine's admission boundary. If its caller cancels this operation,
-        // the engine stays empty; the next reconfig retries idempotent applies.
         self.desired = None;
         self.lease = None;
         self.degraded = false;
-        if let Some(next) = netmap {
-            self.latest = Some(next.lease);
-        }
-        self.lease = active;
-        self.settle(desired).await
+        self.settle(None).await
     }
 
     /// Apply `desired` under the current lease and record the outcome.

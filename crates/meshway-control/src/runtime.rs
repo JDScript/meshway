@@ -211,21 +211,25 @@ impl Control {
         }
         let active = self.instance.as_ref().ok_or(Error::Lifecycle)?;
         if state.capabilities != active.capabilities {
-            return Err(Error::Contract);
+            // Capabilities changed since the instance was acquired: acquire
+            // again with them; the observation itself is not wrong.
+            return Err(Error::Lifecycle);
         }
         // A fresh host observation belongs to this precise instance and the
         // held netmap, including failure before applied. Never relabel an old
         // probe; uncertain retries above keep their original body.
         let held = self.netmap_reference();
+        // An observation taken before the held netmap or instance changed is
+        // stale, not a contract break: the host observes again.
         if let Some(exit) = &state.exit_capability
             && (exit.instance_id != instance.instance_id || held != Some(exit.netmap))
         {
-            return Err(Error::Contract);
+            return Err(Error::StaleReport);
         }
         if let Some(saved) = &state.configuration.saved
             && held != Some(*saved)
         {
-            return Err(Error::Contract);
+            return Err(Error::StaleReport);
         }
         if let Some(applied) = &state.configuration.applied {
             self.held_netmap(*applied)?;

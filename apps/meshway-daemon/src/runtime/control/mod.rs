@@ -27,6 +27,9 @@ const RENEW: Duration = Duration::from_secs(20);
 const REPORT: Duration = Duration::from_secs(20);
 const TASKS: Duration = Duration::from_secs(2);
 const RELEASE: Duration = Duration::from_secs(2);
+/// Control retry backoff cap (seconds), the same as the sync loop's: after a
+/// Server outage the Node is back within one backoff period.
+const BACKOFF_MAX: u64 = 15;
 /// A sync that has not succeeded for this long is reported as reconnecting:
 /// above one Server hold plus the request budget's margin.
 pub(super) const SYNC_STALE: Duration = Duration::from_secs(100);
@@ -138,8 +141,10 @@ fn offer(control: &Control, network: Option<&network::Handle>) {
 enum Ended {
     /// The operator intent changed (or shutdown).
     Changed,
-    /// A failure that only a new operator revision can retry.
-    Blocked(Problem),
+    /// A failure that only a new operator revision can retry. `withdraw`
+    /// ends the data plane too (decoded withdrawal or unknown storage);
+    /// otherwise the held netmap keeps running to its lease end.
+    Blocked { problem: Problem, withdraw: bool },
     /// The network worker stopped.
     Worker,
 }
@@ -207,7 +212,7 @@ pub(super) async fn run(
                             Some(problem),
                             delay,
                         );
-                        backoff = (backoff * 2).min(30);
+                        backoff = (backoff * 2).min(BACKOFF_MAX);
                         wait_change(&mut desired, &plan, delay).await;
                         plan = desired.borrow_and_update().clone();
                         reset = plan.retry_enrollment;
@@ -360,11 +365,13 @@ pub(super) async fn run(
             sync_status.send_modify(|status| status.running = false);
             match ended {
                 Ended::Changed => {}
-                Ended::Blocked(problem) => {
+                Ended::Blocked { problem, withdraw } => {
                     let mut driver = shared.lock().await;
-                    stop(&mut driver, false).await;
-                    if let Some(network) = &mut network {
-                        let _ = network.stop(false).await;
+                    if withdraw {
+                        stop(&mut driver, false).await;
+                        if let Some(network) = &mut network {
+                            let _ = network.stop(false).await;
+                        }
                     }
                     publish(
                         &reported,
@@ -580,17 +587,22 @@ async fn session(
                     Err(Some(ended)) => return ended,
                     Err(None) => {
                         let delay = Duration::from_secs(backoff);
-                        backoff = (backoff * 2).min(30);
+                        backoff = (backoff * 2).min(BACKOFF_MAX);
                         delay
                     }
                 }
             }
             Ok(Online::Awaiting { .. }) => Duration::from_secs(2),
             Ok(Online::Restart) => continue,
-            Err(error) if !error.retry => return Ended::Blocked(error.problem),
+            Err(error) if !error.retry => {
+                return Ended::Blocked {
+                    problem: error.problem,
+                    withdraw: error.withdraw,
+                };
+            }
             Err(error) => {
                 let delay = error.retry_after.unwrap_or(Duration::from_secs(backoff));
-                backoff = (backoff * 2).min(30);
+                backoff = (backoff * 2).min(BACKOFF_MAX);
                 delay
             }
         };
@@ -663,7 +675,10 @@ async fn online_session(
                 let driver = shared.lock().await;
                 offer(&driver, network.as_deref());
                 if !failure.retry {
-                    break Err(Some(Ended::Blocked(failure.problem)));
+                    break Err(Some(Ended::Blocked {
+                        problem: failure.problem,
+                        withdraw: failure.withdraw,
+                    }));
                 }
                 publish(reported, plan, Some(&driver), Phase::Retrying, None, Some(failure.problem), None);
                 break Err(None);
@@ -759,8 +774,8 @@ async fn maintain(
             }
             Ok(())
         }
-        Err((operation, Error::StateScopeChanged)) => {
-            tracing::debug!(operation, "State scope rotated; resampling after sync");
+        Err((operation, error @ (Error::StateScopeChanged | Error::StaleReport))) => {
+            tracing::debug!(operation, %error, "State observation not current; resampling");
             work.retry_at = Some(now + Duration::from_secs(1));
             Ok(())
         }
@@ -768,7 +783,10 @@ async fn maintain(
             let failure = failure::at(operation, error, operation == "authenticate");
             offer(control, network.as_deref());
             if !failure.retry {
-                return Err(Ended::Blocked(failure.problem));
+                return Err(Ended::Blocked {
+                    problem: failure.problem,
+                    withdraw: failure.withdraw,
+                });
             }
             // A reset context (session or instance gone) is re-acquired at once.
             let delay = failure

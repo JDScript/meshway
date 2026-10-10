@@ -115,6 +115,7 @@ pub(super) async fn online(
                         problem,
                         retry: false,
                         reset: false,
+                        withdraw: false,
                         retry_after: None,
                     });
                 }
@@ -136,6 +137,7 @@ pub(super) async fn online(
                         problem,
                         retry: false,
                         reset: false,
+                        withdraw: false,
                         retry_after: None,
                     });
                 }

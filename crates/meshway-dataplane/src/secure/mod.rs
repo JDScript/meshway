@@ -325,10 +325,14 @@ pub enum Received {
         challenge: meshway_model::Digest,
     },
     /// An authenticated empty Data frame: the peer endpoint is alive.
-    Keepalive { circuit: [u8; 32] },
+    Keepalive {
+        circuit: [u8; 32],
+    },
     /// The circuit ended at an adjacent peer's request; a relay instead
     /// returns the Close it passes on as [`Received::Forward`].
-    Closed { circuit: [u8; 32] },
+    Closed {
+        circuit: [u8; 32],
+    },
 }
 
 /// Unauthenticated scheduling hints decoded by the bounded candidate codec.

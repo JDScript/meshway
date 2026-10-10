@@ -169,7 +169,10 @@ fn an_origin_endpoint_without_any_authenticated_reply_ends_after_the_reply_timeo
     silent
         .check_now(now + REPLY_TIMEOUT - Duration::from_millis(1), 0)
         .unwrap();
-    assert_eq!(silent.check_now(now + REPLY_TIMEOUT, 0), Err(Error::Expired));
+    assert_eq!(
+        silent.check_now(now + REPLY_TIMEOUT, 0),
+        Err(Error::Expired)
+    );
     // Any authenticated receive answers every earlier send.
     let mut answered = endpoint(true);
     answered.sent(now);

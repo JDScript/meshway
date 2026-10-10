@@ -22,6 +22,8 @@ pub enum Error {
     InvalidCredentials,
     #[error("Node identity is no longer eligible")]
     NodeIdentityRejected,
+    #[error("the Server holds no netmap for this authenticated Node")]
+    NetmapWithdrawn,
 
     // Authorization
     #[error("permission denied")]
