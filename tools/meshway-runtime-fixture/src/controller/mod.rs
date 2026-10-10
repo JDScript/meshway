@@ -284,6 +284,22 @@ pub(super) fn validate_report(
     Ok(())
 }
 
+/// Every actor recorded its own daemon at this stage's revision. The next
+/// revision is published only afterwards: an actor polling its status must
+/// never be asked for a revision its daemon has already replaced.
+async fn staged(signals: &Signals, stage: &str) -> Result<()> {
+    for role in Role::ALL {
+        match signals
+            .wait_for(&format!("{stage}-{}", role.name()), STARTUP + IO)
+            .await?
+        {
+            Signal::Status { role: claimed, .. } if claimed == role => {}
+            _ => return Err(format!("invalid {stage} status rendezvous").into()),
+        }
+    }
+    Ok(())
+}
+
 async fn source(
     client: &Client,
     network: NetworkId,
@@ -853,6 +869,7 @@ async fn coordinate(
         ("icmp-revoked", None),
     )
     .await?;
+    staged(&signals, "icmp-revoked").await?;
     let Signal::PingRun { run } = signals
         .wait_for("ping-udp-tcp-only", crate::ping::STAGE_LIMIT + IO)
         .await?
@@ -877,6 +894,7 @@ async fn coordinate(
         ("revoked", None),
     )
     .await?;
+    staged(&signals, "revoked").await?;
     if !matches!(
         signals
             .wait_for("revoked-traffic", STARTUP + crate::ping::STAGE_LIMIT)
