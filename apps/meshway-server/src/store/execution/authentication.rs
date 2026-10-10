@@ -1,7 +1,4 @@
-use super::{
-    bytes, current_configuration, id, identity_eligible, json, now, publications::revoke_execution,
-    uuid,
-};
+use super::{bytes, current_configuration, id, identity_eligible, json, now, uuid};
 use crate::effect::Effect;
 use crate::error::Error;
 use crate::execution::NodePrincipal;
@@ -577,7 +574,6 @@ pub(crate) fn rotate(
             bytes(&keys)?
         ],
     )?;
-    revoke_execution(tx, sealer, c.network_id, c.node_id, now)?;
     let netmap = crate::store::netmap::recompile(
         tx,
         sealer,

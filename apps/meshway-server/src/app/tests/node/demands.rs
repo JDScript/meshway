@@ -236,7 +236,7 @@ async fn independent_demands_keep_unrelated_publication_lease_and_progress() {
             action: TopologyAction::Allow,
             a: format!("node:{a}"),
             b: format!("node:{b}"),
- keepalive: false,
+            keepalive: false,
         })
         .collect();
     app.configurations()

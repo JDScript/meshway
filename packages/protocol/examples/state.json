@@ -14,34 +14,24 @@
         "capabilities": {
           "transport:native_tcp": {
             "kind": "transport",
-            "roles": [
-              "dial",
-              "listen"
-            ],
-            "streams": [
-              "tcp"
-            ]
+            "roles": ["dial", "listen"],
+            "streams": ["tcp"]
           },
           "transport:native_udp": {
             "kind": "transport",
-            "roles": [
-              "dial",
-              "listen"
-            ],
-            "streams": [
-              "udp"
-            ]
+            "roles": ["dial", "listen"],
+            "streams": ["udp"]
           }
         },
         "configuration": {
           "saved": {
             "revision": 7,
-            "executionPublication": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+            "serial": 1,
             "digest": "abababababababababababababababababababababababababababababababab"
           },
           "applied": {
             "revision": 7,
-            "executionPublication": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+            "serial": 1,
             "digest": "abababababababababababababababababababababababababababababababab"
           },
           "progress": null
@@ -49,9 +39,7 @@
         "listeners": {
           "mesh-udp": {
             "phase": "listening",
-            "socketIds": [
-              "udp-office-listener-1"
-            ],
+            "socketIds": ["udp-office-listener-1"],
             "loadedCertificateSha256": null,
             "problem": null,
             "configuration": null
@@ -110,9 +98,7 @@
   },
   "queryPeerState": {
     "request": {
-      "nodes": [
-        "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50"
-      ]
+      "nodes": ["e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50"]
     },
     "responses": {
       "200": {
@@ -137,34 +123,24 @@
                 "capabilities": {
                   "transport:native_tcp": {
                     "kind": "transport",
-                    "roles": [
-                      "dial",
-                      "listen"
-                    ],
-                    "streams": [
-                      "tcp"
-                    ]
+                    "roles": ["dial", "listen"],
+                    "streams": ["tcp"]
                   },
                   "transport:native_udp": {
                     "kind": "transport",
-                    "roles": [
-                      "dial",
-                      "listen"
-                    ],
-                    "streams": [
-                      "udp"
-                    ]
+                    "roles": ["dial", "listen"],
+                    "streams": ["udp"]
                   }
                 },
                 "configuration": {
                   "saved": {
                     "revision": 7,
-                    "executionPublication": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+                    "serial": 1,
                     "digest": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
                   },
                   "applied": {
                     "revision": 7,
-                    "executionPublication": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+                    "serial": 1,
                     "digest": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
                   },
                   "progress": null
@@ -191,9 +167,9 @@
                           "instanceId": "9f0a1b2c-3d4e-4f5a-8b6c-7d8e9f0a1b2c",
                           "generation": 1
                         },
-                        "configuration": {
+                        "netmap": {
                           "revision": 7,
-                          "executionPublication": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+                          "serial": 1,
                           "digest": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
                         },
                         "socketId": "udp-listener-1",
@@ -262,34 +238,24 @@
                 "capabilities": {
                   "transport:native_tcp": {
                     "kind": "transport",
-                    "roles": [
-                      "dial",
-                      "listen"
-                    ],
-                    "streams": [
-                      "tcp"
-                    ]
+                    "roles": ["dial", "listen"],
+                    "streams": ["tcp"]
                   },
                   "transport:native_udp": {
                     "kind": "transport",
-                    "roles": [
-                      "dial",
-                      "listen"
-                    ],
-                    "streams": [
-                      "udp"
-                    ]
+                    "roles": ["dial", "listen"],
+                    "streams": ["udp"]
                   }
                 },
                 "configuration": {
                   "saved": {
                     "revision": 7,
-                    "executionPublication": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+                    "serial": 1,
                     "digest": "abababababababababababababababababababababababababababababababab"
                   },
                   "applied": {
                     "revision": 7,
-                    "executionPublication": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+                    "serial": 1,
                     "digest": "abababababababababababababababababababababababababababababababab"
                   },
                   "progress": null
@@ -297,9 +263,7 @@
                 "listeners": {
                   "mesh-udp": {
                     "phase": "listening",
-                    "socketIds": [
-                      "udp-office-listener-1"
-                    ],
+                    "socketIds": ["udp-office-listener-1"],
                     "loadedCertificateSha256": null,
                     "problem": null,
                     "configuration": null
@@ -401,34 +365,24 @@
                 "capabilities": {
                   "transport:native_tcp": {
                     "kind": "transport",
-                    "roles": [
-                      "dial",
-                      "listen"
-                    ],
-                    "streams": [
-                      "tcp"
-                    ]
+                    "roles": ["dial", "listen"],
+                    "streams": ["tcp"]
                   },
                   "transport:native_udp": {
                     "kind": "transport",
-                    "roles": [
-                      "dial",
-                      "listen"
-                    ],
-                    "streams": [
-                      "udp"
-                    ]
+                    "roles": ["dial", "listen"],
+                    "streams": ["udp"]
                   }
                 },
                 "configuration": {
                   "saved": {
                     "revision": 7,
-                    "executionPublication": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+                    "serial": 1,
                     "digest": "abababababababababababababababababababababababababababababababab"
                   },
                   "applied": {
                     "revision": 7,
-                    "executionPublication": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+                    "serial": 1,
                     "digest": "abababababababababababababababababababababababababababababababab"
                   },
                   "progress": null
@@ -436,9 +390,7 @@
                 "listeners": {
                   "mesh-udp": {
                     "phase": "listening",
-                    "socketIds": [
-                      "udp-office-listener-1"
-                    ],
+                    "socketIds": ["udp-office-listener-1"],
                     "loadedCertificateSha256": null,
                     "problem": null,
                     "configuration": null
@@ -525,34 +477,24 @@
                 "capabilities": {
                   "transport:native_tcp": {
                     "kind": "transport",
-                    "roles": [
-                      "dial",
-                      "listen"
-                    ],
-                    "streams": [
-                      "tcp"
-                    ]
+                    "roles": ["dial", "listen"],
+                    "streams": ["tcp"]
                   },
                   "transport:native_udp": {
                     "kind": "transport",
-                    "roles": [
-                      "dial",
-                      "listen"
-                    ],
-                    "streams": [
-                      "udp"
-                    ]
+                    "roles": ["dial", "listen"],
+                    "streams": ["udp"]
                   }
                 },
                 "configuration": {
                   "saved": {
                     "revision": 7,
-                    "executionPublication": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+                    "serial": 1,
                     "digest": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
                   },
                   "applied": {
                     "revision": 7,
-                    "executionPublication": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+                    "serial": 1,
                     "digest": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
                   },
                   "progress": null
@@ -560,18 +502,14 @@
                 "listeners": {
                   "mesh-tcp": {
                     "phase": "listening",
-                    "socketIds": [
-                      "tcp-listener-1"
-                    ],
+                    "socketIds": ["tcp-listener-1"],
                     "loadedCertificateSha256": null,
                     "problem": null,
                     "configuration": null
                   },
                   "mesh-udp": {
                     "phase": "listening",
-                    "socketIds": [
-                      "udp-listener-1"
-                    ],
+                    "socketIds": ["udp-listener-1"],
                     "loadedCertificateSha256": null,
                     "problem": null,
                     "configuration": null

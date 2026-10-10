@@ -1,7 +1,7 @@
 //! Structural notifications schedule real samples, never measurements or grants.
 use super::Report;
 use meshway_connectivity::LinkFact;
-use meshway_model::{ConfigurationRef, NodeId, Sequence, Version};
+use meshway_model::{NetmapRef, NodeId, Sequence};
 use meshway_protocol::{InstanceRequest, execution::ApplyFailure};
 use std::{collections::BTreeMap, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{sync::watch, time::Instant};
@@ -11,7 +11,7 @@ pub(super) const CHANGE_INTERVAL: Duration = Duration::from_secs(1);
 #[derive(PartialEq, Eq)]
 struct ExitKey {
     instance: meshway_model::InstanceId,
-    target: ConfigurationRef,
+    netmap: NetmapRef,
     supported: Vec<meshway_model::exit::ExitFamily>,
     installed: Vec<meshway_model::exit::ExitFamily>,
     status: meshway_model::exit::ExitStatus,
@@ -26,7 +26,7 @@ struct Listener {
 
 #[derive(PartialEq, Eq)]
 pub(super) struct Key {
-    ticket: Option<(InstanceRequest, ConfigurationRef, Version)>,
+    netmap: Option<NetmapRef>,
     plane: meshway_ipc::DataPlane,
     problem: Option<meshway_ipc::Problem>,
     completion: Option<Result<(), ApplyFailure>>,
@@ -52,13 +52,7 @@ impl Key {
             .as_ref()
             .is_none_or(|guard| guard.has_changed().is_ok() && guard.borrow().is_none());
         let mut key = Self {
-            ticket: report.ticket.as_ref().map(|ticket| {
-                (
-                    ticket.instance().clone(),
-                    ticket.target().clone(),
-                    ticket.attempt(),
-                )
-            }),
+            netmap: report.netmap,
             plane: report.plane,
             problem: report.problem,
             completion: report.completion,
@@ -68,7 +62,7 @@ impl Key {
             dns_live,
             exit: report.exit_capability.as_ref().map(|exit| ExitKey {
                 instance: exit.instance_id,
-                target: exit.target.clone(),
+                netmap: exit.netmap,
                 supported: exit.supported_families.clone(),
                 installed: exit.installed_families.clone(),
                 status: exit.status.clone(),
@@ -205,6 +199,15 @@ impl Schedule {
             .is_none_or(|at| Instant::now() >= at + CHANGE_INTERVAL);
         ready && (routine || self.pending.is_some() || !self.handled.same(&self.latest()))
     }
+    pub fn defer(&mut self) {
+        let now = Instant::now();
+        if self
+            .last_attempt
+            .is_none_or(|at| at + CHANGE_INTERVAL <= now)
+        {
+            self.last_attempt = Some(now);
+        }
+    }
     pub fn receipt_completed(&mut self) {
         self.receipt = Arc::new(());
     }
@@ -305,25 +308,17 @@ impl super::Handle {
             // A closed worker is stopped, rather than temporarily unobserved.
             Err(super::SampleError::Closed) => None,
         };
-        // Sampling also orders a pending target installation before this
-        // report. Its completion can therefore arrive after cycle.finish();
-        // settle that exact completion before advertising applied State.
-        if sample.as_ref().is_some_and(|sample| {
-            sample.report.current(&control.status()) && sample.report.completion == Some(Ok(()))
-        }) {
-            self.finish(control).await?;
-        }
         let receipt = self.reporting.receipt.clone();
         let facts = sample
             .as_ref()
             .map_or_else(Report::stopped, |sample| sample.report.clone());
         let mut state = facts.state(control, settings);
         if let Some(guard) = &facts.guard
-            && let Ok(configuration) = guard.configuration()
+            && let Ok(netmap) = guard.netmap()
         {
             crate::runtime::local_endpoints::sample(
                 &mut state,
-                configuration,
+                &netmap.netmap,
                 &facts.owned_interfaces,
             );
         }
@@ -397,7 +392,7 @@ impl super::Handle {
         if let Some(pending) = &self.reporting.pending {
             tracing::debug!(operation = "report_runtime_state", source_instance = %pending.instance.instance_id,
                 sequence = accepted.sequence.get(), duplicate = accepted.duplicate,
-                publication = ?pending.mark.as_ref().and_then(|mark| mark.key.ticket.as_ref().map(|(_, reference, _)| reference.execution_publication)),
+                netmap_serial = ?pending.mark.as_ref().and_then(|mark| mark.key.netmap.map(|reference| reference.serial.get())),
                 candidate_count = pending.candidates.len(), "State candidate publication acknowledged");
             self.traversal_acknowledged
                 .send_replace(super::traversal::Acknowledged {
@@ -413,58 +408,6 @@ impl super::Handle {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[cfg(target_os = "linux")]
-    #[tokio::test]
-    async fn missing_sample_does_not_create_state_but_closed_worker_reports_stopped() {
-        let mut fixture = super::super::exit::testing::Fixture::open().await;
-        let mut worker = super::super::testing::Worker::new();
-        let settings = crate::settings::Settings::new(
-            fixture.directory.path().join("daemon"),
-            &fixture.origin,
-            Some("exit"),
-        )
-        .unwrap();
-        let path = meshway_control_client::GetNodeStatePath {
-            network_id: fixture.network,
-            node_id: fixture.nodes()[2],
-        };
-        // The bounded command channel remains open but its owner is busy.
-        assert!(
-            !worker
-                .handle
-                .report_state(&mut fixture.controls[2], &settings, true)
-                .await
-                .unwrap()
-        );
-        let view = fixture
-            .client
-            .get_node_state(&path, fixture.token.expose())
-            .await
-            .unwrap();
-        assert!(view.nodes[&path.node_id].report_sequence.is_none());
-        assert!(worker.handle.reporting.pending.is_none());
-
-        // Loss of the worker is definitive, and must still publish stopped.
-        let (closed, receiver) = tokio::sync::mpsc::channel(1);
-        drop(receiver);
-        worker.handle.commands = closed;
-        assert!(
-            worker
-                .handle
-                .report_state(&mut fixture.controls[2], &settings, true)
-                .await
-                .unwrap()
-        );
-        let view = fixture
-            .client
-            .get_node_state(&path, fixture.token.expose())
-            .await
-            .unwrap();
-        assert!(view.nodes[&path.node_id].report_sequence.is_some());
-        worker.close().await;
-        fixture.close().await;
-    }
 
     #[test]
     fn observation_times_do_not_notify_but_real_resource_changes_do() {
@@ -523,7 +466,7 @@ mod tests {
         schedule.pending = Some(Pending {
             instance: InstanceRequest {
                 instance_id: "00000000-0000-4000-8000-000000000001".parse().unwrap(),
-                generation: Version::MIN,
+                generation: meshway_model::Version::MIN,
             },
             mark: Some(old),
             #[cfg(target_os = "linux")]

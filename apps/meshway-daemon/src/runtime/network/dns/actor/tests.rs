@@ -25,17 +25,10 @@ impl Owner for SlowOwner {
             Ok(())
         }
     }
-    async fn hold(
-        &mut self,
-        _: &NodeConfiguration,
-    ) -> Result<Vec<meshway_dns::ResolverDemand>, SystemDnsError> {
+    async fn hold(&mut self, _: &NodeNetmap) -> Result<(), SystemDnsError> {
         unreachable!("this regression substitutes observation I/O only")
     }
-    async fn install(
-        &mut self,
-        _: ExecutionSnapshot,
-        _: &BTreeMap<ResolverSource, RequestId>,
-    ) -> Result<(), SystemDnsError> {
+    async fn install(&mut self, _: ExecutionSnapshot) -> Result<(), SystemDnsError> {
         unreachable!("this regression substitutes observation I/O only")
     }
     async fn shutdown(self, keep: bool) -> Result<(), SystemDnsError> {

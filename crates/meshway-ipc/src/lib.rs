@@ -10,8 +10,8 @@ use chrono::{DateTime, Utc};
 pub use client::{Client, ClientError, PingStream};
 pub use codec::{CodecError, read, write};
 use meshway_model::{
-    ConfigurationRef, EnrollmentRequestId, ObservationId, ObservationSubscriptionId, RequestId,
-    Sequence, Version, observations::ObservationSample,
+    EnrollmentRequestId, NetmapRef, ObservationId, ObservationSubscriptionId, RequestId, Sequence,
+    Version, observations::ObservationSample,
 };
 pub use meshway_model::{
     observations::{EndpointKind, LinkAcquisition},
@@ -25,7 +25,7 @@ pub use secret::EnrollmentKey;
 use serde::Serialize;
 use utoipa::ToSchema;
 
-pub const VERSION: u16 = 5;
+pub const VERSION: u16 = 6;
 pub const MAX_MESSAGE_BYTES: usize = 64 * 1024;
 pub const DEFAULT_SOCKET: &str = "/var/lib/meshway/control.sock";
 
@@ -149,15 +149,27 @@ pub enum ErrorCode {
 }
 }
 meshway_serde::string_enum! {
+/// The Node's `sync` long poll with the Server.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
-pub enum EventStreamState {
+pub enum SyncState {
+    /// The last sync succeeded and the next one is held by the Server.
     Connected,
+    /// The last sync failed; it is being retried with backoff.
     Reconnecting,
+    /// No sync runs (down, not enrolled, or stopped).
     #[default]
     Disconnected,
 }
 }
+
+meshway_serde::object! {
+/// The installed netmap and its lease; the data plane's only deadline.
+#[derive(Clone, Debug)] pub struct NetmapStatus {
+    pub netmap: NetmapRef,
+    pub issued_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+} }
 meshway_serde::string_enum! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -245,15 +257,18 @@ meshway_serde::object! { #[derive(Clone, Debug)] pub struct Status {
     #[serde(deserialize_with = "meshway_serde::required_nullable")]
     pub identity: Option<EnrollmentResponse> [required = true],
     pub authenticated: bool,
-    pub event_stream: EventStreamState,
+    pub sync: SyncState,
     #[serde(deserialize_with = "meshway_serde::required_nullable")]
-    pub last_event_at: Option<DateTime<Utc>> [required = true],
+    pub last_sync_at: Option<DateTime<Utc>> [required = true],
     #[serde(deserialize_with = "meshway_serde::required_nullable")]
     pub instance: Option<InstanceLease> [required = true],
+    /// Current netmap authority; null when no lease is live.
     #[serde(deserialize_with = "meshway_serde::required_nullable")]
-    pub saved: Option<ConfigurationRef> [required = true],
+    pub netmap: Option<NetmapStatus> [required = true],
     #[serde(deserialize_with = "meshway_serde::required_nullable")]
-    pub applied: Option<ConfigurationRef> [required = true],
+    pub saved: Option<NetmapRef> [required = true],
+    #[serde(deserialize_with = "meshway_serde::required_nullable")]
+    pub applied: Option<NetmapRef> [required = true],
     pub data_plane: DataPlane,
     pub network_mode: NetworkMode,
     #[serde(skip_serializing_if = "Option::is_none")]

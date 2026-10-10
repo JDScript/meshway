@@ -49,7 +49,7 @@ async fn topology_transport_validate_apply_and_execution_share_the_intersection(
         a: format!("node:{a}"),
         b: format!("node:{b}"),
         transports: Input::Value(vec![TransportProtocol::NativeTcp]),
- keepalive: false,
+        keepalive: false,
     }];
     cfg.routing.mesh = vec![MeshRoute {
         remark: String::new(),

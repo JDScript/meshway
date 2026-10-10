@@ -9,7 +9,7 @@ pub const MIN_NETMAP_VALIDITY_MS: u64 = 5 * 60 * 1000;
 pub const MAX_NETMAP_BYTES: usize = 8 * 1024 * 1024;
 
 meshway_serde::object! {
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 /// Exact per-node netmap content: revision and serial identify it, the digest verifies it.
 pub struct NetmapRef {
     /// Configuration revision whose compilation first produced this content.

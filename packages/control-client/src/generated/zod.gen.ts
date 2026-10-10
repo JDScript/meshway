@@ -108,16 +108,6 @@ export const zDigest = z.string().refine(value => [...value].length >= 64, "minL
 
 export const zTimestamp = z.string().refine(timestampMillis, "Expected nonnegative RFC 3339 exact milliseconds");
 
-export const zPublicationId = z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u"));
-
-export const zRevision = z.int().gte(1).lte(9007199254740991);
-
-export const zConfigurationRef = z.strictObject({
-  ["digest"]: zDigest,
-  ["executionPublication"]: zPublicationId,
-  ["revision"]: zRevision
-});
-
 export const zVersion = z.int().gte(1).lte(9007199254740991);
 
 export const zInstanceId = z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u"));
@@ -125,6 +115,14 @@ export const zInstanceId = z.string().refine(value => [...value].length >= 36, "
 export const zInstanceRequest = z.strictObject({
   ["generation"]: zVersion,
   ["instanceId"]: zInstanceId
+});
+
+export const zRevision = z.int().gte(1).lte(9007199254740991);
+
+export const zNetmapRef = z.strictObject({
+  ["digest"]: zDigest,
+  ["revision"]: zRevision,
+  ["serial"]: zVersion
 });
 
 export const zResourceRef = z.union([z.strictObject({
@@ -141,8 +139,8 @@ export const zResourceRef = z.union([z.strictObject({
 export const zSequence = z.int().gte(0).lte(9007199254740991);
 
 export const zSocketReference = z.strictObject({
-  ["configuration"]: zConfigurationRef,
   ["instance"]: zInstanceRequest,
+  ["netmap"]: zNetmapRef,
   ["nodeId"]: zNodeId,
   ["resource"]: zResourceRef,
   ["socketGeneration"]: zSequence,
@@ -368,9 +366,9 @@ export const zReporterRole = z.enum(["origin","relay","target","exit"]);
 export const zPathState = z.strictObject({
   ["evidence"]: zPathEvidence,
   ["expiresAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["netmap"]: zNetmapRef,
   ["nodes"]: z.array(zNodeId),
   ["observedAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
-  ["publicationId"]: zPublicationId,
   ["reporterRole"]: zReporterRole
 });
 
@@ -472,27 +470,6 @@ export const zBoundNodeKey = z.strictObject({
   ["publicKey"]: zNodePublicKey
 });
 
-export const zBusinessProtocol = z.enum(["tcp","udp","icmpEcho"]);
-
-export const zExecutionAddress = z.string();
-
-export const zBusinessTarget = z.union([z.strictObject({
-  ["node"]: zNodeId,
-  ["type"]: z.enum(["mesh"])
-}), z.strictObject({
-  ["address"]: zExecutionAddress,
-  ["type"]: z.enum(["ip"])
-}), z.strictObject({
-  ["address"]: zExecutionAddress,
-  ["name"]: z.string(),
-  ["type"]: z.enum(["domain"])
-})]);
-
-export const zCancelDemandRequest = z.strictObject({
-  ["instance"]: zInstanceRequest,
-  ["requestId"]: zRequestId
-});
-
 export const zCancelEnrollmentRequestPath = z.strictObject({
   ["enrollmentRequestId"]: zEnrollmentRequestId
 });
@@ -588,7 +565,7 @@ export const zCompareConfigurationRequest = z.strictObject({
 
 export const zPort = z.int().gte(1).lte(65535);
 
-export const zDialEndpointSource = z.enum(["configured","local"]);
+export const zDialEndpointSource = z.enum(["configured","local","stun"]);
 
 export const zDialEndpoint = z.strictObject({
   ["host"]: z.string(),
@@ -702,6 +679,8 @@ export const zDialCandidate = z.strictObject({
   ["peer"]: zNodeId,
   ["priority"]: z.int().gte(0).lte(2147483647)
 });
+
+export const zExecutionAddress = z.string();
 
 export const zLogicalPath = z.strictObject({
   ["dialCandidates"]: typedMap(z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u")), z.array(z.string()), {}),
@@ -982,6 +961,7 @@ export const zTopologyRule = z.strictObject({
   ["a"]: z.string(),
   ["action"]: zTopologyAction,
   ["b"]: z.string(),
+  ["keepalive"]: z.boolean().exactOptional(),
   ["remark"]: z.string().exactOptional(),
   ["transports"]: z.array(zTransportProtocol).exactOptional()
 });
@@ -1133,183 +1113,9 @@ export const zCompiledNetmap = z.strictObject({
   ["netmap"]: zNodeNetmap
 });
 
-export const zExitDestinationScope = z.union([z.strictObject({
-  ["type"]: z.enum(["internet"])
-}), z.strictObject({
-  ["prefix"]: z.string(),
-  ["type"]: z.enum(["cidr"])
-})]);
-
-export const zExitRolePlan = z.strictObject({
-  ["family"]: zExitFamily,
-  ["generation"]: zDigest,
-  ["instanceId"]: zInstanceId,
-  ["nat"]: zExitNat
-});
-
-export const zExitPermit = z.strictObject({
-  ["destination"]: zExitDestinationScope,
-  ["family"]: zExitFamily,
-  ["generation"]: zDigest,
-  ["roles"]: typedMap(z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u")), zExitRolePlan, {})
-});
-
-export const zReplyPolicy = z.enum(["statefulExactReversePath"]);
-
-export const zPathPermit = z.strictObject({
-  ["demandId"]: zRequestId,
-  ["exit"]: zExitPermit.nullable().exactOptional(),
-  ["expiresAt"]: zTimestamp,
-  ["paths"]: z.array(zLogicalPath),
-  ["port"]: zPort.nullable().exactOptional(),
-  ["profile"]: z.string(),
-  ["protocol"]: zBusinessProtocol,
-  ["replies"]: zReplyPolicy,
-  ["source"]: zNodeId,
-  ["sourceAddresses"]: zNodeAddresses,
-  ["target"]: zBusinessTarget
-});
-
-export const zDemandDecision = z.union([z.strictObject({
-  ["permit"]: zPathPermit,
-  ["type"]: z.enum(["permitted"])
-}), z.strictObject({
-  ["type"]: z.enum(["direct"])
-}), z.strictObject({
-  ["type"]: z.enum(["unmanaged"])
-}), z.strictObject({
-  ["reason"]: zUnavailableReason,
-  ["type"]: z.enum(["unavailable"])
-})]);
-
-export const zObservationId = z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u"));
-
-export const zDiagnosticReplyPolicy = z.enum(["authenticatedExactReversePath"]);
-
-export const zObservationServiceScope = z.union([z.strictObject({
-  ["port"]: zPort,
-  ["type"]: z.enum(["tcp"])
-}), z.strictObject({
-  ["port"]: zPort,
-  ["type"]: z.enum(["udp"])
-}), z.strictObject({
-  ["type"]: z.enum(["icmpEcho"])
-})]);
-
-export const zDiagnosticPermit = z.strictObject({
-  ["expiresAt"]: zTimestamp,
-  ["instanceId"]: zInstanceId,
-  ["observationId"]: zObservationId,
-  ["paths"]: z.array(zLogicalPath),
-  ["replies"]: zDiagnosticReplyPolicy,
-  ["service"]: zObservationServiceScope,
-  ["source"]: zNodeId,
-  ["target"]: zNodeId
-});
-
-export const zTrustedDnsAssociation = z.strictObject({
-  ["addresses"]: z.array(zExecutionAddress),
-  ["cnameChain"]: z.array(z.string()),
-  ["configurationRevision"]: zRevision,
-  ["expiresAt"]: zTimestamp,
-  ["name"]: z.string(),
-  ["networkId"]: zNetworkId,
-  ["source"]: zNodeId
-});
-
-export const zDnsServicePermit = z.strictObject({
-  ["address"]: zExecutionAddress,
-  ["exit"]: zNodeId,
-  ["expiresAt"]: zTimestamp,
-  ["generation"]: zDigest,
-  ["maxPending"]: z.int().gte(0).lte(2147483647),
-  ["path"]: zLogicalPath,
-  ["profile"]: z.string(),
-  ["role"]: zExitRolePlan,
-  ["source"]: zNodeId,
-  ["sourceAddresses"]: zNodeAddresses,
-  ["sourceInstanceId"]: zInstanceId,
-  ["timeoutMs"]: z.int().gte(0).lte(2147483647),
-  ["transports"]: z.array(zDnsTransport)
-});
-
-export const zDnsEgress = z.union([z.strictObject({
-  ["type"]: z.enum(["noExit"])
-}), z.strictObject({
-  ["exit"]: zNodeId,
-  ["generation"]: zDigest,
-  ["service"]: zDnsServicePermit,
-  ["type"]: z.enum(["viaExit"])
-}), z.strictObject({
-  ["permit"]: z.array(zDnsServicePermit),
-  ["type"]: z.enum(["serveExitResolver"])
-}), z.strictObject({
-  ["reason"]: zDnsEgressUnavailable,
-  ["type"]: z.enum(["unavailable"])
-})]);
-
-export const zDnsExecution = z.strictObject({
-  ["associations"]: z.array(zTrustedDnsAssociation),
-  ["egress"]: zDnsEgress,
-  ["meshHosts"]: typedMap(z.string(), zNodeAddresses, {}),
-  ["profile"]: z.string(),
-  ["settings"]: zDnsConfiguration
-});
-
-export const zLocalEgressAction = z.enum(["direct","unmanaged"]);
-
-export const zLocalEgressPermit = z.strictObject({
-  ["action"]: zLocalEgressAction,
-  ["demandId"]: zRequestId,
-  ["expiresAt"]: zTimestamp,
-  ["port"]: zPort.nullable().exactOptional(),
-  ["profile"]: z.string(),
-  ["protocol"]: zBusinessProtocol,
-  ["source"]: zNodeId,
-  ["target"]: zBusinessTarget
-});
-
-export const zPeerConfiguration = z.strictObject({
-  ["addresses"]: zNodeAddresses,
-  ["controlKey"]: zBoundNodeKey,
-  ["dataplaneKey"]: zBoundNodeKey,
-  ["identity"]: zNodeIdentity
-});
-
-export const zNodeConfiguration = z.strictObject({
-  ["addresses"]: zNodeAddresses,
-  ["decisions"]: typedMap(z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u")), zDemandDecision, {}),
-  ["dependencyDigest"]: zDigest,
-  ["diagnostics"]: typedMap(z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u")), zDiagnosticPermit, {}),
-  ["dialers"]: typedMap(z.string(), zDialCandidate, {}),
-  ["dns"]: zDnsExecution,
-  ["egressCapture"]: zEgressCapturePlan,
-  ["enabled"]: z.boolean(),
-  ["exitEnabled"]: z.boolean(),
-  ["exitRole"]: zExitRolePlan.nullable().exactOptional(),
-  ["hostname"]: z.string(),
-  ["identity"]: zNodeIdentity,
-  ["listeners"]: typedMap(z.string(), zPreparedListener, {}),
-  ["localEgress"]: typedMap(z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u")), zLocalEgressPermit, {}),
-  ["meshAddressPools"]: zAddressPools,
-  ["networkId"]: zNetworkId,
-  ["nodeId"]: zNodeId,
-  ["peers"]: typedMap(z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u")), zPeerConfiguration, {}),
-  ["permits"]: typedMap(z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u")), zPathPermit, {}),
-  ["publication"]: zPublicationId,
-  ["revision"]: zRevision,
-  ["selfKeys"]: zTrustedNode
-});
-
-export const zCompiledNode = z.strictObject({
-  ["configuration"]: zNodeConfiguration,
-  ["digest"]: zDigest
-});
-
 export const zConfigurationAppliedResponse = z.strictObject({
   ["deletedNodeIds"]: z.array(zNodeId),
   ["networkId"]: zNetworkId,
-  ["publicationIds"]: z.array(zPublicationId),
   ["requestId"]: zRequestId,
   ["revision"]: zRevision,
   ["targetCount"]: z.int().gte(0).lte(2147483647)
@@ -1324,7 +1130,7 @@ export const zConfigurationNodeProgress = z.strictObject({
   ["phase"]: zApplicationPhase,
   ["receivedAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time").nullable().exactOptional(),
   ["sequence"]: zSequence.nullable().exactOptional(),
-  ["target"]: zConfigurationRef
+  ["target"]: zNetmapRef
 });
 
 export const zProgressScope = z.enum(["full","partial"]);
@@ -1579,7 +1385,7 @@ export const zStateProblem = z.union([z.strictObject({
 }), z.strictObject({
   ["code"]: z.enum(["configuration_rejected"]),
   ["observedAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
-  ["target"]: zConfigurationRef
+  ["target"]: zNetmapRef
 }), z.strictObject({
   ["code"]: z.enum(["probe_failed"]),
   ["measurementId"]: zEventId,
@@ -1590,8 +1396,10 @@ export const zConfigurationProgress = z.strictObject({
   ["observedAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
   ["phase"]: zApplyPhase,
   ["problem"]: zStateProblem.nullable().exactOptional(),
-  ["target"]: zConfigurationRef
+  ["target"]: zNetmapRef
 });
+
+export const zPublicationId = z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u"));
 
 export const zConfigurationRequest = z.union([z.strictObject({
   ["expectedRevision"]: zRevision,
@@ -1606,8 +1414,8 @@ export const zConfigurationRequest = z.union([z.strictObject({
 }), z.strictObject({
   ["expectedRevision"]: zRevision,
   ["requestId"]: zRequestId,
-  ["resourcePublication"]: zPublicationId.nullable().exactOptional(),
   ["restoreFrom"]: zRevision,
+  ["ruleSetBindings"]: zPublicationId.nullable().exactOptional(),
   ["type"]: z.enum(["restore"])
 })]);
 
@@ -1686,9 +1494,9 @@ export const zConfigurationSourceResponse = z.strictObject({
 });
 
 export const zConfigurationState = z.strictObject({
-  ["applied"]: zConfigurationRef.nullable().exactOptional(),
+  ["applied"]: zNetmapRef.nullable().exactOptional(),
   ["progress"]: zConfigurationProgress.nullable().exactOptional(),
-  ["saved"]: zConfigurationRef.nullable().exactOptional()
+  ["saved"]: zNetmapRef.nullable().exactOptional()
 });
 
 export const zConfigurationValidationParams = z.strictObject({
@@ -1817,6 +1625,16 @@ export const zObservationPath = z.union([z.strictObject({
   ["path"]: z.array(zNodeId)
 })]);
 
+export const zObservationServiceScope = z.union([z.strictObject({
+  ["port"]: zPort,
+  ["type"]: z.enum(["tcp"])
+}), z.strictObject({
+  ["port"]: zPort,
+  ["type"]: z.enum(["udp"])
+}), z.strictObject({
+  ["type"]: z.enum(["icmpEcho"])
+})]);
+
 export const zNodeObservationTarget = z.union([z.strictObject({
   ["name"]: z.string().refine(value => [...value].length <= 253, "maxLength 253 Unicode code points"),
   ["type"]: z.enum(["name"])
@@ -1849,11 +1667,6 @@ export const zCreateObservationPath = z.strictObject({
   ["networkId"]: zNetworkId
 });
 
-export const zDecisionDelta = z.strictObject({
-  ["remove"]: z.array(zRequestId),
-  ["upsert"]: typedMap(z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u")), zDemandDecision, {})
-});
-
 export const zDelegatedSessionResponse = z.strictObject({
   ["client"]: z.string(),
   ["requestId"]: zRequestId,
@@ -1877,21 +1690,6 @@ export const zDeleteNodePath = z.strictObject({
 export const zDeleteNodeRequest = z.strictObject({
   ["expectedRevision"]: zRevision,
   ["requestId"]: zRequestId
-});
-
-export const zDemandRequest = z.strictObject({
-  ["durationSeconds"]: z.int().gte(0).lte(2147483647),
-  ["instance"]: zInstanceRequest,
-  ["port"]: zPort.nullable().exactOptional(),
-  ["profile"]: z.string(),
-  ["protocol"]: zBusinessProtocol,
-  ["requestId"]: zRequestId,
-  ["target"]: zBusinessTarget
-});
-
-export const zDemandResponse = z.strictObject({
-  ["decision"]: zDemandDecision,
-  ["publication"]: zPublicationId
 });
 
 export const zDenyDeviceAuthorizationPath = z.strictObject({
@@ -2007,16 +1805,6 @@ export const zEnrollmentRequestView = z.strictObject({
 export const zDeviceAuthorizationView = z.strictObject({
   ["approval"]: zEnrollmentApprovalView.nullable(),
   ["request"]: zEnrollmentRequestView
-});
-
-export const zDiagnosticDelta = z.strictObject({
-  ["remove"]: z.array(zObservationId),
-  ["upsert"]: typedMap(z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u")), zDiagnosticPermit, {})
-});
-
-export const zDialerDelta = z.strictObject({
-  ["remove"]: z.array(z.string()),
-  ["upsert"]: typedMap(z.string(), zDialCandidate, {})
 });
 
 export const zEmptyParams = z.strictObject({
@@ -2206,11 +1994,7 @@ export const zProblem = z.union([z.strictObject({
   ["message"]: z.string(),
   ["params"]: zEmptyParams
 }), z.strictObject({
-  ["code"]: z.enum(["receipt_publication_superseded"]),
-  ["message"]: z.string(),
-  ["params"]: zEmptyParams
-}), z.strictObject({
-  ["code"]: z.enum(["receipt_lease_expired"]),
+  ["code"]: z.enum(["receipt_netmap_superseded"]),
   ["message"]: z.string(),
   ["params"]: zEmptyParams
 }), z.strictObject({
@@ -2456,10 +2240,11 @@ export const zExitStatus = z.union([z.strictObject({
 export const zExitCapability = z.strictObject({
   ["installedFamilies"]: z.array(zExitFamily),
   ["instanceId"]: zInstanceId,
+  ["netmap"]: zNetmapRef,
   ["observedAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["roleGeneration"]: zDigest,
   ["status"]: zExitStatus,
-  ["supportedFamilies"]: z.array(zExitFamily),
-  ["target"]: zConfigurationRef
+  ["supportedFamilies"]: z.array(zExitFamily)
 });
 
 export const zFreshness = z.enum(["current","awaiting_report","expired","superseded","config_mismatch","revoked"]);
@@ -2488,11 +2273,6 @@ export const zGetConfigurationSourceQuery = z.strictObject({
 
 export const zGetDeviceAuthorizationPath = z.strictObject({
   ["enrollmentRequestId"]: zEnrollmentRequestId
-});
-
-export const zGetExecutionPublicationPath = z.strictObject({
-  ["networkId"]: zNetworkId,
-  ["publicationId"]: zPublicationId
 });
 
 export const zGetLeaveImpactPath = z.strictObject({
@@ -2562,6 +2342,8 @@ export const zLinkAcquisition = z.union([z.strictObject({
 }), z.strictObject({
   ["type"]: z.enum(["localEndpoint"])
 }), z.strictObject({
+  ["type"]: z.enum(["stunEndpoint"])
+}), z.strictObject({
   ["type"]: z.enum(["acceptedInbound"])
 }), z.strictObject({
   ["attemptId"]: zUdpTraversalId,
@@ -2597,9 +2379,9 @@ export const zProbeObservation = z.strictObject({
   ["kind"]: zProbeKind,
   ["linkId"]: z.string().nullable().exactOptional(),
   ["measurementId"]: zEventId,
+  ["netmap"]: zNetmapRef,
   ["outcome"]: zProbeOutcome,
   ["path"]: z.array(zNodeId),
-  ["publicationId"]: zPublicationId,
   ["startedAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
   ["transport"]: z.string().nullable().exactOptional()
 });
@@ -2638,8 +2420,8 @@ export const zObservationPayload = z.union([z.strictObject({
 })]);
 
 export const zObservationEvent = z.strictObject({
-  ["configuration"]: zConfigurationRef,
   ["eventId"]: zEventId,
+  ["netmap"]: zNetmapRef,
   ["occurredAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
   ["payload"]: zObservationPayload
 });
@@ -2663,8 +2445,8 @@ export const zHistoryBucket = z.strictObject({
   ["kind"]: zProbeKind,
   ["linkId"]: z.string().nullable().exactOptional(),
   ["meanSuccessDurationUs"]: z.preprocess(unwrapJsonNumber, z.number()).nullable().exactOptional(),
+  ["netmap"]: zNetmapRef,
   ["path"]: z.array(zNodeId),
-  ["publicationId"]: zPublicationId,
   ["sampleCount"]: z.int().gte(0).lte(2147483647),
   ["sourceNodeId"]: zNodeId,
   ["success"]: z.int().gte(0).lte(2147483647),
@@ -2740,11 +2522,9 @@ export const zHistoryReport = z.strictObject({
 });
 
 export const zInstanceLease = z.strictObject({
-  ["executionExpiresAt"]: zTimestamp.nullable(),
   ["expiresAt"]: zTimestamp,
   ["generation"]: zVersion,
-  ["instanceId"]: zInstanceId,
-  ["target"]: zConfigurationRef.nullable().exactOptional()
+  ["instanceId"]: zInstanceId
 });
 
 export const zJoinLinkActions = z.strictObject({
@@ -2814,6 +2594,8 @@ export const zKeyEnrollmentRequest = z.strictObject({
 export const zLeaveNetworkPath = z.strictObject({
   ["networkId"]: zNetworkId
 });
+
+export const zObservationId = z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u"));
 
 export const zLinkState = z.strictObject({
   ["acquisition"]: zLinkAcquisition.nullable().exactOptional(),
@@ -2901,24 +2683,14 @@ export const zListRuleSetsPath = z.strictObject({
   ["networkId"]: zNetworkId
 });
 
-export const zListenerDelta = z.strictObject({
-  ["remove"]: z.array(z.string()),
-  ["upsert"]: typedMap(z.string(), zPreparedListener, {})
-});
-
 export const zListenerPhase = z.enum(["preparing","listening","stopped","failed"]);
 
 export const zListenerState = z.strictObject({
-  ["configuration"]: zConfigurationRef.nullable().exactOptional(),
   ["loadedCertificateSha256"]: zDigest.nullable().exactOptional(),
+  ["netmap"]: zNetmapRef.nullable().exactOptional(),
   ["phase"]: zListenerPhase,
   ["problem"]: zStateProblem.nullable().exactOptional(),
   ["socketIds"]: z.array(z.string())
-});
-
-export const zLocalEgressDelta = z.strictObject({
-  ["remove"]: z.array(zRequestId),
-  ["upsert"]: typedMap(z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u")), zLocalEgressPermit, {})
 });
 
 export const zLocalEndpointSource = z.enum(["local"]);
@@ -2978,12 +2750,6 @@ export const zNativeUdpListener = z.strictObject({
   ["listenPort"]: zPort,
   ["remark"]: z.string().exactOptional(),
   ["socket"]: zSocketOptions.exactOptional()
-});
-
-export const zNetmapRef = z.strictObject({
-  ["digest"]: zDigest,
-  ["revision"]: zRevision,
-  ["serial"]: zVersion
 });
 
 export const zNetmapDialerDelta = z.strictObject({
@@ -3102,79 +2868,6 @@ export const zNodeChallengeIntent = z.strictObject({
   ["request"]: zNodeChallengeRequest
 });
 
-export const zPeerDelta = z.strictObject({
-  ["remove"]: z.array(zNodeId),
-  ["upsert"]: typedMap(z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u")), zPeerConfiguration, {})
-});
-
-export const zPermitDelta = z.strictObject({
-  ["remove"]: z.array(zRequestId),
-  ["upsert"]: typedMap(z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u")), zPathPermit, {})
-});
-
-export const zNodeConfigurationDelta = z.strictObject({
-  ["addresses"]: zNodeAddresses,
-  ["base"]: zConfigurationRef,
-  ["decisions"]: zDecisionDelta,
-  ["dependencyDigest"]: zDigest,
-  ["diagnostics"]: zDiagnosticDelta,
-  ["dialers"]: zDialerDelta,
-  ["dns"]: zDnsExecution,
-  ["egressCapture"]: zEgressCapturePlan,
-  ["enabled"]: z.boolean(),
-  ["exitEnabled"]: z.boolean(),
-  ["exitRole"]: zExitRolePlan.nullable().exactOptional(),
-  ["hostname"]: z.string(),
-  ["identity"]: zNodeIdentity,
-  ["listeners"]: zListenerDelta,
-  ["localEgress"]: zLocalEgressDelta,
-  ["meshAddressPools"]: zAddressPools,
-  ["networkId"]: zNetworkId,
-  ["nodeId"]: zNodeId,
-  ["peers"]: zPeerDelta,
-  ["permits"]: zPermitDelta,
-  ["selfKeys"]: zTrustedNode,
-  ["target"]: zConfigurationRef
-});
-
-export const zNodeConfigurationRequest = z.strictObject({
-  ["base"]: zConfigurationRef.nullable().exactOptional(),
-  ["instance"]: zInstanceRequest
-});
-
-export const zNodeConfigurationResponse = z.strictObject({
-  ["delta"]: zNodeConfigurationDelta.nullable().exactOptional(),
-  ["full"]: zCompiledNode.nullable().exactOptional(),
-  ["lease"]: zInstanceLease
-});
-
-export const zNodeConfigurationView = z.strictObject({
-  ["networkId"]: zNetworkId,
-  ["nodeId"]: zNodeId,
-  ["revision"]: zRevision,
-  ["settings"]: zNodeSettingsView,
-  ["target"]: zConfigurationRef.nullable().exactOptional()
-});
-
-export const zNodeDnsQueryRequest = z.strictObject({
-  ["name"]: z.string().refine(value => [...value].length <= 1024, "maxLength 1024 Unicode code points")
-});
-
-export const zNodeDnsRecord = z.strictObject({
-  ["addresses"]: zNodeAddresses,
-  ["name"]: z.string(),
-  ["nodeId"]: zNodeId
-});
-
-export const zNodeDnsQueryResponse = z.strictObject({
-  ["asOf"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
-  ["configurationRevision"]: zRevision,
-  ["networkId"]: zNetworkId,
-  ["record"]: zNodeDnsRecord.nullable(),
-  ["requestId"]: zRequestId,
-  ["sourceNodeId"]: zNodeId
-});
-
 export const zNodeInventoryView = z.strictObject({
   ["addresses"]: zNodeAddresses,
   ["canDelete"]: z.boolean(),
@@ -3184,18 +2877,127 @@ export const zNodeInventoryView = z.strictObject({
   ["controlKeyRevokedAt"]: zTimestamp.nullable(),
   ["dataplaneKeyCreatedAt"]: zTimestamp,
   ["dataplaneKeyRevokedAt"]: zTimestamp.nullable(),
-  ["desiredExecution"]: zConfigurationRef.nullable(),
   ["enabled"]: z.boolean(),
   ["hostname"]: z.string(),
   ["id"]: zNodeId,
   ["identity"]: zNodeIdentity,
   ["keys"]: zNodeKeyMetadata,
+  ["netmap"]: zNetmapRef.nullable(),
   ["networkId"]: zNetworkId,
   ["registeredAt"]: zTimestamp
 });
 
-export const zNodeEntitiesView = z.strictObject({
-  ["nodes"]: typedMap(z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u")), zNodeInventoryView, {})
+export const zNodeInventoryResponse = z.strictObject({
+  ["items"]: z.array(zNodeInventoryView)
+});
+
+export const zProbeWindow = z.strictObject({
+  ["pending"]: z.int().gte(0).lte(2147483647),
+  ["repliedWithinDeadline"]: z.int().gte(0).lte(2147483647),
+  ["sent"]: z.int().gte(0).lte(2147483647),
+  ["timeout"]: z.int().gte(0).lte(2147483647)
+});
+
+export const zTrafficWindow = z.strictObject({
+  ["counterGeneration"]: zSequence,
+  ["rxBytes"]: zSequence,
+  ["txBytes"]: zSequence
+});
+
+export const zObservationSample = z.strictObject({
+  ["measurementId"]: zEventId,
+  ["partial"]: z.boolean(),
+  ["probe"]: zProbeObservation.nullable().exactOptional(),
+  ["probeCounts"]: zProbeWindow.nullable().exactOptional(),
+  ["traffic"]: zTrafficWindow.nullable().exactOptional(),
+  ["version"]: zVersion,
+  ["windowEnd"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["windowStart"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time")
+});
+
+export const zObservationPhase = z.enum(["preparing","running","completed","failed","expired","cancelled","unsupported"]);
+
+export const zObservationTask = z.strictObject({
+  ["expiresAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["id"]: zObservationId,
+  ["instanceId"]: zInstanceId,
+  ["intervalMs"]: z.int().gte(0).lte(2147483647),
+  ["latest"]: zObservationSample.nullable().exactOptional(),
+  ["metrics"]: z.array(zMetricKind),
+  ["netmap"]: zNetmapRef,
+  ["path"]: z.array(zNodeId).nullable().exactOptional(),
+  ["pathSegment"]: zSequence.nullable().exactOptional(),
+  ["phase"]: zObservationPhase,
+  ["renewAfter"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["selection"]: zObservationPath,
+  ["service"]: zObservationServiceScope,
+  ["sourceNodeId"]: zNodeId,
+  ["subscriberExpiresAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time").nullable().exactOptional(),
+  ["subscriptionId"]: zObservationSubscriptionId.nullable().exactOptional(),
+  ["targetNodeId"]: zNodeId,
+  ["unsupportedMetrics"]: z.array(zMetricKind)
+});
+
+export const zNodeObservationCancelled = z.strictObject({
+  ["task"]: zObservationTask.nullable()
+});
+
+export const zNodeObservationQuery = z.strictObject({
+  ["generation"]: zVersion,
+  ["instanceId"]: zInstanceId
+});
+
+export const zNodeObservationTargetView = z.strictObject({
+  ["addresses"]: zNodeAddresses,
+  ["hostname"]: z.string(),
+  ["nodeId"]: zNodeId
+});
+
+export const zNodeObservationResponse = z.strictObject({
+  ["target"]: zNodeObservationTargetView,
+  ["task"]: zObservationTask
+});
+
+export const zNodeProof = z.strictObject({
+  ["challengeId"]: zChallengeId,
+  ["signature"]: zWireSecret
+});
+
+export const zNodeRotationIntent = z.strictObject({
+  ["controlKey"]: zNodePublicKey,
+  ["dataplaneKey"]: zNodePublicKey,
+  ["requestId"]: zRequestId
+});
+
+export const zNodeRotationRequest = z.strictObject({
+  ["intent"]: zNodeRotationIntent,
+  ["newSignature"]: zWireSecret,
+  ["oldProof"]: zNodeProof
+});
+
+export const zNodeSessionIntent = z.strictObject({
+  ["requestId"]: zRequestId
+});
+
+export const zNodeSessionRequest = z.strictObject({
+  ["intent"]: zNodeSessionIntent,
+  ["proof"]: zNodeProof
+});
+
+export const zNodeSessionResponse = z.strictObject({
+  ["expiresAt"]: zTimestamp,
+  ["keyId"]: zKeyId,
+  ["networkId"]: zNetworkId,
+  ["nodeId"]: zNodeId,
+  ["token"]: zWireSecret
+});
+
+export const zNodeSettingsResponse = z.strictObject({
+  ["networkId"]: zNetworkId,
+  ["nodeId"]: zNodeId,
+  ["requestId"]: zRequestId,
+  ["revision"]: zRevision,
+  ["settings"]: zNodeSettingsView
 });
 
 export const zSelectionState = z.strictObject({
@@ -3206,10 +3008,10 @@ export const zSocketNetwork = z.enum(["udp","tcp"]);
 
 export const zSocketState = z.strictObject({
   ["boundAddress"]: z.string(),
-  ["configuration"]: zConfigurationRef.nullable().exactOptional(),
   ["endpoints"]: z.array(zEndpointCandidate),
   ["generation"]: zSequence,
   ["localEndpoints"]: z.array(zLocalEndpoint).max(8).nullable().exactOptional(),
+  ["netmap"]: zNetmapRef.nullable().exactOptional(),
   ["network"]: zSocketNetwork,
   ["resource"]: zResourceRef
 });
@@ -3278,216 +3080,6 @@ export const zNodeStateView = z.strictObject({
   ["reportSequence"]: zSequence.nullable().exactOptional()
 });
 
-export const zStateView = z.strictObject({
-  ["asOf"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
-  ["configurationRevision"]: zRevision,
-  ["links"]: z.array(zAggregatedLink),
-  ["networkId"]: zNetworkId,
-  ["nodes"]: typedMap(z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u")), zNodeStateView, {}),
-  ["paths"]: z.array(zAggregatedPath),
-  ["sequence"]: zSequence,
-  ["stateEpoch"]: zStateEpoch
-});
-
-export const zProbeWindow = z.strictObject({
-  ["pending"]: z.int().gte(0).lte(2147483647),
-  ["repliedWithinDeadline"]: z.int().gte(0).lte(2147483647),
-  ["sent"]: z.int().gte(0).lte(2147483647),
-  ["timeout"]: z.int().gte(0).lte(2147483647)
-});
-
-export const zTrafficWindow = z.strictObject({
-  ["counterGeneration"]: zSequence,
-  ["rxBytes"]: zSequence,
-  ["txBytes"]: zSequence
-});
-
-export const zObservationSample = z.strictObject({
-  ["measurementId"]: zEventId,
-  ["partial"]: z.boolean(),
-  ["probe"]: zProbeObservation.nullable().exactOptional(),
-  ["probeCounts"]: zProbeWindow.nullable().exactOptional(),
-  ["traffic"]: zTrafficWindow.nullable().exactOptional(),
-  ["version"]: zVersion,
-  ["windowEnd"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
-  ["windowStart"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time")
-});
-
-export const zObservationPhase = z.enum(["preparing","running","completed","failed","expired","cancelled","unsupported"]);
-
-export const zObservationTask = z.strictObject({
-  ["configuration"]: zConfigurationRef,
-  ["expiresAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
-  ["id"]: zObservationId,
-  ["instanceId"]: zInstanceId,
-  ["intervalMs"]: z.int().gte(0).lte(2147483647),
-  ["latest"]: zObservationSample.nullable().exactOptional(),
-  ["metrics"]: z.array(zMetricKind),
-  ["path"]: z.array(zNodeId).nullable().exactOptional(),
-  ["pathSegment"]: zSequence.nullable().exactOptional(),
-  ["phase"]: zObservationPhase,
-  ["renewAfter"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
-  ["selection"]: zObservationPath,
-  ["service"]: zObservationServiceScope,
-  ["sourceNodeId"]: zNodeId,
-  ["subscriberExpiresAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time").nullable().exactOptional(),
-  ["subscriptionId"]: zObservationSubscriptionId.nullable().exactOptional(),
-  ["targetNodeId"]: zNodeId,
-  ["unsupportedMetrics"]: z.array(zMetricKind)
-});
-
-export const zResetReason = z.enum(["cursor_too_old","view_changed","backpressure","epoch_changed"]);
-
-export const zNodeEvent = z.union([z.strictObject({
-  ["batch"]: z.string(),
-  ["configuration"]: zNodeConfigurationView,
-  ["progress"]: zConfigurationApplyProgress.nullable().exactOptional(),
-  ["requestId"]: zRequestId,
-  ["type"]: z.enum(["config.snapshot"])
-}), z.strictObject({
-  ["batch"]: z.string(),
-  ["entities"]: zNodeEntitiesView,
-  ["type"]: z.enum(["entities.snapshot"])
-}), z.strictObject({
-  ["batch"]: z.string(),
-  ["state"]: zStateView,
-  ["type"]: z.enum(["state.snapshot"])
-}), z.strictObject({
-  ["batch"]: z.string(),
-  ["cursor"]: z.string(),
-  ["disconnectAfterMs"]: z.int().gte(0).lte(2147483647),
-  ["heartbeatIntervalMs"]: z.int().gte(0).lte(2147483647),
-  ["type"]: z.enum(["sync.ready"])
-}), z.strictObject({
-  ["asOf"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time").nullable().exactOptional(),
-  ["baseCursor"]: z.string(),
-  ["configurationRevision"]: zRevision.nullable().exactOptional(),
-  ["cursor"]: z.string(),
-  ["links"]: z.array(zAggregatedLink),
-  ["paths"]: z.array(zAggregatedPath),
-  ["removed"]: z.array(zNodeId),
-  ["sequence"]: zSequence.nullable().exactOptional(),
-  ["stateEpoch"]: zStateEpoch,
-  ["type"]: z.enum(["state.delta"]),
-  ["updated"]: typedMap(z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u")), zNodeStateView, {})
-}), z.strictObject({
-  ["baseCursor"]: z.string(),
-  ["cursor"]: z.string(),
-  ["removed"]: zEntityRemovals,
-  ["type"]: z.enum(["entities.delta"]),
-  ["updated"]: zNodeEntitiesView
-}), z.strictObject({
-  ["actor"]: zEventActor,
-  ["cause"]: zConfigurationChangeCause,
-  ["changedAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
-  ["changedPointers"]: z.array(z.string()),
-  ["changesComplete"]: z.boolean(),
-  ["networkId"]: zNetworkId,
-  ["previousRevision"]: zRevision,
-  ["requestId"]: zRequestId.nullable().exactOptional(),
-  ["revision"]: zRevision,
-  ["sourceChanged"]: z.boolean(),
-  ["type"]: z.enum(["configuration.changed"])
-}), z.strictObject({
-  ["progress"]: zConfigurationApplyProgress,
-  ["type"]: z.enum(["configuration.progress"])
-}), z.strictObject({
-  ["networkId"]: zNetworkId,
-  ["revision"]: zRevision,
-  ["type"]: z.enum(["resources.changed"])
-}), z.strictObject({
-  ["observation"]: zObservationTask,
-  ["type"]: z.enum(["observation.status"])
-}), z.strictObject({
-  ["observation"]: zObservationTask,
-  ["type"]: z.enum(["observation.sample"])
-}), z.strictObject({
-  ["subscriptionId"]: zObservationSubscriptionId,
-  ["type"]: z.enum(["observation.removed"])
-}), z.strictObject({
-  ["reason"]: zResetReason,
-  ["type"]: z.enum(["sync.reset"])
-}), z.strictObject({
-  ["reason"]: zClosedReason,
-  ["type"]: z.enum(["stream.closed"])
-})]);
-
-export const zNodeInventoryResponse = z.strictObject({
-  ["items"]: z.array(zNodeInventoryView)
-});
-
-export const zNodeObservationCancelled = z.strictObject({
-  ["task"]: zObservationTask.nullable()
-});
-
-export const zNodeObservationQuery = z.strictObject({
-  ["generation"]: zVersion,
-  ["instanceId"]: zInstanceId
-});
-
-export const zNodeObservationTargetView = z.strictObject({
-  ["addresses"]: zNodeAddresses,
-  ["hostname"]: z.string(),
-  ["nodeId"]: zNodeId
-});
-
-export const zNodeObservationResponse = z.strictObject({
-  ["target"]: zNodeObservationTargetView,
-  ["task"]: zObservationTask
-});
-
-export const zNodeProof = z.strictObject({
-  ["challengeId"]: zChallengeId,
-  ["signature"]: zWireSecret
-});
-
-export const zNodePublicationProgress = z.strictObject({
-  ["applied"]: z.boolean(),
-  ["current"]: z.boolean(),
-  ["failed"]: z.boolean(),
-  ["freshness"]: zReceiptFreshness,
-  ["lastReceivedAt"]: zTimestamp.nullable(),
-  ["saved"]: z.boolean(),
-  ["target"]: zConfigurationRef
-});
-
-export const zNodeRotationIntent = z.strictObject({
-  ["controlKey"]: zNodePublicKey,
-  ["dataplaneKey"]: zNodePublicKey,
-  ["requestId"]: zRequestId
-});
-
-export const zNodeRotationRequest = z.strictObject({
-  ["intent"]: zNodeRotationIntent,
-  ["newSignature"]: zWireSecret,
-  ["oldProof"]: zNodeProof
-});
-
-export const zNodeSessionIntent = z.strictObject({
-  ["requestId"]: zRequestId
-});
-
-export const zNodeSessionRequest = z.strictObject({
-  ["intent"]: zNodeSessionIntent,
-  ["proof"]: zNodeProof
-});
-
-export const zNodeSessionResponse = z.strictObject({
-  ["expiresAt"]: zTimestamp,
-  ["keyId"]: zKeyId,
-  ["networkId"]: zNetworkId,
-  ["nodeId"]: zNodeId,
-  ["token"]: zWireSecret
-});
-
-export const zNodeSettingsResponse = z.strictObject({
-  ["networkId"]: zNetworkId,
-  ["nodeId"]: zNodeId,
-  ["requestId"]: zRequestId,
-  ["revision"]: zRevision,
-  ["settings"]: zNodeSettingsView
-});
-
 export const zObservationList = z.strictObject({
   ["items"]: z.array(zObservationTask)
 });
@@ -3505,8 +3097,8 @@ export const zObservationUpdate = z.union([z.strictObject({
 })]);
 
 export const zObservationResult = z.strictObject({
-  ["configuration"]: zConfigurationRef,
   ["instanceId"]: zInstanceId,
+  ["netmap"]: zNetmapRef,
   ["result"]: zObservationUpdate
 });
 
@@ -3562,10 +3154,10 @@ export const zPeerFactsDelta = z.strictObject({
 
 export const zPrepareUdpTraversalRequest = z.strictObject({
   ["carrier"]: zCarrier,
-  ["configuration"]: zConfigurationRef,
   ["expiresAt"]: zTimestamp,
   ["instance"]: zInstanceRequest,
   ["localCandidate"]: zCandidateReference,
+  ["netmap"]: zNetmapRef,
   ["peerCandidate"]: zCandidateReference,
   ["peerId"]: zNodeId,
   ["requestId"]: zRequestId,
@@ -3580,14 +3172,6 @@ export const zPrepareUdpTraversalResponse = z.union([z.strictObject({
   ["status"]: z.enum(["unavailable"])
 })]);
 
-export const zPublicationProgress = z.strictObject({
-  ["nodes"]: typedMap(z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u")), zNodePublicationProgress, {}),
-  ["publication"]: zPublicationId,
-  ["revision"]: zRevision,
-  ["sequence"]: zSequence,
-  ["withdrawnAt"]: zTimestamp.nullable()
-});
-
 export const zQueryEnrollmentRequestPath = z.strictObject({
   ["enrollmentRequestId"]: zEnrollmentRequestId
 });
@@ -3597,8 +3181,8 @@ export const zQueryObservationHistoryPath = z.strictObject({
 });
 
 export const zQueryUdpTraversalRequest = z.strictObject({
-  ["configuration"]: zConfigurationRef,
-  ["instance"]: zInstanceRequest
+  ["instance"]: zInstanceRequest,
+  ["netmap"]: zNetmapRef
 });
 
 export const zUdpTraversalPhase = z.enum(["waiting","active"]);
@@ -3631,10 +3215,10 @@ export const zReceiptRequest = z.strictObject({
   ["attempt"]: zVersion,
   ["failure"]: zApplyFailure.nullable().exactOptional(),
   ["instance"]: zInstanceRequest,
+  ["netmap"]: zNetmapRef,
   ["phase"]: zReceiptPhase,
   ["reportedAt"]: zTimestamp,
-  ["sequence"]: zSequence,
-  ["target"]: zConfigurationRef
+  ["sequence"]: zSequence
 });
 
 export const zRedeemEnrollmentRequest = z.strictObject({
@@ -3689,12 +3273,6 @@ export const zRenameNetworkRequest = z.strictObject({
   ["requestId"]: zRequestId
 });
 
-export const zRenewDemandRequest = z.strictObject({
-  ["expiresAt"]: zTimestamp,
-  ["instance"]: zInstanceRequest,
-  ["requestId"]: zRequestId
-});
-
 export const zRenewNodeObservation = z.strictObject({
   ["expiresAt"]: zTimestamp,
   ["instance"]: zInstanceRequest
@@ -3712,6 +3290,8 @@ export const zRenewObservationPath = z.strictObject({
 export const zReportTaskResultPath = z.strictObject({
   ["taskId"]: zObservationId
 });
+
+export const zResetReason = z.enum(["cursor_too_old","view_changed","backpressure","epoch_changed"]);
 
 export const zResourceProblem = z.enum(["download_failed","invalid_source","too_large","conversion_failed","configuration_changed","budget_exceeded","not_ready","validation_failed"]);
 
@@ -3756,7 +3336,6 @@ export const zRoutingSelectionRequest = z.strictObject({
 
 export const zRoutingSelectionResponse = z.strictObject({
   ["profile"]: z.string(),
-  ["publication"]: zPublicationId,
   ["version"]: zVersion
 });
 
@@ -3802,6 +3381,17 @@ export const zStateReport = z.strictObject({
   ["observedAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
   ["sequence"]: zSequence,
   ["state"]: zNodeState
+});
+
+export const zStateView = z.strictObject({
+  ["asOf"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["configurationRevision"]: zRevision,
+  ["links"]: z.array(zAggregatedLink),
+  ["networkId"]: zNetworkId,
+  ["nodes"]: typedMap(z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u")), zNodeStateView, {}),
+  ["paths"]: z.array(zAggregatedPath),
+  ["sequence"]: zSequence,
+  ["stateEpoch"]: zStateEpoch
 });
 
 export const zSyncNetmap = z.union([z.strictObject({
@@ -3854,9 +3444,9 @@ export const zTrojanListener = z.strictObject({
 });
 
 export const zUdpTraversalAttemptRequest = z.strictObject({
-  ["configuration"]: zConfigurationRef,
   ["digest"]: zDigest,
   ["instance"]: zInstanceRequest,
+  ["netmap"]: zNetmapRef,
   ["stateEpoch"]: zStateEpoch,
   ["version"]: zVersion
 });

@@ -146,14 +146,6 @@ impl ResourceProvider for Provider {
             &selected,
             now.timestamp_millis(),
         )?;
-        crate::store::execution::publish_with_rule_sets(
-            tx,
-            &self.sealer,
-            network,
-            "refresh",
-            now.timestamp_millis(),
-            &selected,
-        )?;
         let netmap = crate::store::netmap::recompile_with_rule_sets(
             tx,
             &self.sealer,

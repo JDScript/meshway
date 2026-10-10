@@ -209,7 +209,7 @@ async fn complete_logical_path_visibility_does_not_disclose_nonadjacent_endpoint
             action: TopologyAction::Allow,
             a: format!("node:{a}"),
             b: format!("node:{b}"),
- keepalive: false,
+            keepalive: false,
         })
         .collect();
     cfg.routing.mesh = vec![meshway_configuration::MeshRoute {

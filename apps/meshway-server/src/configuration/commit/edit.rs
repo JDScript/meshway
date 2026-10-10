@@ -58,7 +58,7 @@ pub(super) fn author(
     }
     if let ConfigurationRequest::Restore {
         restore_from,
-        resource_publication,
+        rule_set_bindings,
         ..
     } = request
     {
@@ -66,7 +66,7 @@ pub(super) fn author(
             committer
                 .cache
                 .load(tx, current.network_id, *restore_from, &committer.sealer)?;
-        let bindings = match resource_publication {
+        let bindings = match rule_set_bindings {
             Some(publication) => crate::resources::bindings::at_publication(
                 tx,
                 current.network_id,

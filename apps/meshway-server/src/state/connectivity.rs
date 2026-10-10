@@ -30,11 +30,11 @@ impl StateHub {
         if binding.node_id != scope.report.node_id
             || binding.instance.instance_id != scope.report.instance_id
             || binding.instance.generation != scope.report.instance_generation
-            || Some(&binding.configuration) != scope.report.execution.as_ref()
+            || Some(&binding.netmap) != scope.report.execution.as_ref()
         {
             return Err(Reason::ScopeChanged.into());
         }
-        if !carrier_resources(&scope.target.configuration, carrier).contains(&binding.resource) {
+        if !carrier_resources(&scope.target.netmap, carrier).contains(&binding.resource) {
             return Err(Reason::NotAvailable.into());
         }
         let needed = if binding.node_id == carrier.dialer {
@@ -42,7 +42,7 @@ impl StateHub {
         } else {
             TransportRole::Listen
         };
-        if !matches!(scope.target.configuration.self_keys.capabilities.get("transport:native_udp"),
+        if !matches!(scope.target.netmap.self_.self_keys.capabilities.get("transport:native_udp"),
             Some(Capability::Transport { roles, streams }) if roles.contains(&needed) && streams.contains(&StreamKind::Udp)
                 && (!matches!(binding.resource, ResourceRef::Listener { .. }) || roles.contains(&TransportRole::Listen)))
         {
@@ -55,7 +55,7 @@ impl StateHub {
         if stored.report.instance_id != binding.instance.instance_id
             || stored.instance_generation != binding.instance.generation
             || stored.expires_at <= now
-            || stored.report.state.configuration.applied.as_ref() != Some(&binding.configuration)
+            || stored.report.state.configuration.applied.as_ref() != Some(&binding.netmap)
         {
             return Err(Reason::CandidateChanged.into());
         }
@@ -70,17 +70,18 @@ impl StateHub {
             || socket.resource != binding.resource
             || socket.network != SocketNetwork::Udp
             || socket
-                .configuration
+                .netmap
                 .as_ref()
                 .or(stored.report.state.configuration.applied.as_ref())
-                != Some(&binding.configuration)
+                != Some(&binding.netmap)
         {
             return Err(Reason::CandidateChanged.into());
         }
         if let ResourceRef::Listener { key } = &binding.resource {
             let declaration = scope
                 .target
-                .configuration
+                .netmap
+                .self_
                 .listeners
                 .get(key)
                 .ok_or(Reason::NotAvailable)?;
@@ -100,13 +101,13 @@ impl StateHub {
                     .is_none_or(|listener| {
                         listener.phase != meshway_model::state::ListenerPhase::Listening
                             || !listener.socket_ids.contains(&binding.socket_id)
-                            || listener.configuration.as_ref().or(stored
+                            || listener.netmap.as_ref().or(stored
                                 .report
                                 .state
                                 .configuration
                                 .applied
                                 .as_ref())
-                                != Some(&binding.configuration)
+                                != Some(&binding.netmap)
                     })
             {
                 return Err(Reason::CandidateChanged.into());
@@ -128,7 +129,7 @@ impl StateHub {
             }
             let target = eligible_address(
                 &candidate.address,
-                &scope.target.configuration.mesh_address_pools,
+                &scope.target.netmap.self_.mesh_address_pools,
             )?;
             if target.is_ipv6() != socket.bound_address.is_ipv6() {
                 return Err(Reason::NotAvailable.into());

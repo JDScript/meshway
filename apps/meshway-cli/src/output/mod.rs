@@ -19,13 +19,23 @@ pub(crate) fn display(status: &Status, json: bool) -> io::Result<()> {
         )?;
         writeln!(
             output,
-            "Event stream: {:?}  last event: {}",
-            status.event_stream,
+            "Sync: {:?}  last sync: {}",
+            status.sync,
             status
-                .last_event_at
+                .last_sync_at
                 .map(|time| time.to_rfc3339())
                 .unwrap_or_else(|| "none".into())
         )?;
+        match &status.netmap {
+            Some(netmap) => writeln!(
+                output,
+                "Netmap: revision {} serial {}  lease until {}",
+                netmap.netmap.revision,
+                netmap.netmap.serial.get(),
+                netmap.expires_at.to_rfc3339()
+            )?,
+            None => writeln!(output, "Netmap: none")?,
+        }
         if let Some(identity) = &status.identity {
             writeln!(
                 output,
@@ -47,7 +57,12 @@ pub(crate) fn display(status: &Status, json: bool) -> io::Result<()> {
             )?;
         }
         if let Some(saved) = &status.saved {
-            writeln!(output, "Saved configuration: revision {}", saved.revision)?;
+            writeln!(
+                output,
+                "Saved netmap: revision {} serial {}",
+                saved.revision,
+                saved.serial.get()
+            )?;
         }
         writeln!(
             output,
@@ -58,8 +73,9 @@ pub(crate) fn display(status: &Status, json: bool) -> io::Result<()> {
         if let Some(applied) = &status.applied {
             writeln!(
                 output,
-                "Applied configuration: revision {}",
-                applied.revision
+                "Applied netmap: revision {} serial {}",
+                applied.revision,
+                applied.serial.get()
             )?;
         }
         if let Some(error) = status.last_error {

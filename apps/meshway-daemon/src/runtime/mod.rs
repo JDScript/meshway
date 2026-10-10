@@ -20,6 +20,7 @@ use std::{io::Write, sync::Arc};
 use tokio::sync::{mpsc, watch};
 
 #[derive(Clone)]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))] // Executed by the Linux-only worker.
 pub(crate) struct PingRequest {
     pub id: meshway_model::RequestId,
     pub target: meshway_protocol::NodeObservationTarget,
@@ -28,11 +29,10 @@ pub(crate) struct PingRequest {
     pub cancellation: tokio_util::sync::CancellationToken,
 }
 
-struct PingSession {
-    request: PingRequest,
-    lease: watch::Sender<Option<meshway_control::ObservationLease>>,
-    progress: watch::Sender<ping::Progress>,
-    intent: ping::Intent,
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))] // Executed by the Linux-only worker.
+pub(crate) struct PingSession {
+    pub request: PingRequest,
+    pub progress: watch::Sender<ping::Progress>,
 }
 
 pub async fn run(
@@ -56,7 +56,7 @@ pub async fn run(
     let (desired, desired_rx) = watch::channel(initial);
     let (reported, report_rx) = watch::channel(Report::initial(store.record.revision));
     let mut completions = report_rx.clone();
-    let (event_status, event_rx) = watch::channel(control::events::EventStatus::default());
+    let (sync_status, sync_rx) = watch::channel(control::SyncStatus::default());
     let (network_reported, network_report) = watch::channel(network::Report::stopped());
     let view = View {
         desired: desired_rx.clone(),
@@ -64,7 +64,7 @@ pub async fn run(
         server: settings.server.clone(),
         network_mode: settings.network_mode,
         network: network_report,
-        events: event_rx,
+        sync: sync_rx,
     };
     let (commands, mut received) = mpsc::channel::<Mutation>(16);
     let (pings, mut ping_requests) = mpsc::channel::<PingRequest>(8);
@@ -77,7 +77,7 @@ pub async fn run(
         store.directory.clone(),
         network_reported,
         control_ping_requests,
-        event_status,
+        sync_status,
     ));
     let mut listener = tokio::spawn(ipc::serve(
         socket,
@@ -137,12 +137,13 @@ pub async fn run(
                         let client = ping.events.clone();
                         let cancellation = ping.cancellation.clone();
                         let (events, incoming) = mpsc::channel(8);
-                        let (lease, lease_rx) = watch::channel(None);
+                        // A local ping has no Server subscription lease.
+                        let (_, lease_rx) = watch::channel(None);
                         let (progress, progress_rx) = watch::channel(ping::Progress::Setup);
                         let intent = ping::Intent::capture(view.desired.clone());
                         ping.events = events;
-                        ping_forwarders.spawn(ping::forward(client, incoming, cancellation, stop_rx.clone(), lease_rx, progress_rx, intent.clone()));
-                        if let Err(error) = control_pings.try_send(PingSession { request: ping, lease, progress, intent }) {
+                        ping_forwarders.spawn(ping::forward(client, incoming, cancellation, stop_rx.clone(), lease_rx, progress_rx, intent));
+                        if let Err(error) = control_pings.try_send(PingSession { request: ping, progress }) {
                             let ping = error.into_inner().request;
                             let _ = ping.events.try_send(meshway_ipc::PingEvent::Failed { code: meshway_ipc::PingError::Busy });
                             ping.cancellation.cancel();

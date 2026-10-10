@@ -80,11 +80,7 @@ impl Manager {
         );
     }
 
-    pub(super) fn retire_resources(
-        &mut self,
-        old: &Plan,
-        new: &Plan,
-    ) -> Result<Vec<Owner>, Error> {
+    pub(super) fn retire_resources(&mut self, old: &Plan, new: &Plan) -> Result<Vec<Owner>, Error> {
         let compatible = |resource: &ResourceRef| old.netmap_compatible(new, resource);
         let dial_peers = new.dial_peers();
         let retired: Vec<_> = self

@@ -1,7 +1,7 @@
 //! Local installation resources. Their lifetime is deliberately independent of
 //! an execution lease: retained routing may reject queries, never authorize them.
 use crate::DnsFuture;
-use meshway_configuration::{DnsConfiguration, DnsTransport, execution::DnsEgress};
+use meshway_configuration::{DnsConfiguration, DnsTransport, netmap::DnsPlan};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -136,8 +136,8 @@ pub struct SystemDnsPlan {
     root: bool,
 }
 impl SystemDnsPlan {
-    pub fn new(settings: &DnsConfiguration, egress: &DnsEgress) -> Result<Self, SystemDnsError> {
-        if matches!(egress, DnsEgress::Unavailable { .. }) {
+    pub fn new(settings: &DnsConfiguration, egress: &DnsPlan) -> Result<Self, SystemDnsError> {
+        if matches!(egress, DnsPlan::Unavailable { .. }) {
             return Err(SystemDnsError::ExitPlan);
         }
         Self::required(settings, egress)
@@ -147,10 +147,7 @@ impl SystemDnsPlan {
     /// exit plan captures root negatively rather than treating it as NoExit.
     /// This plan grants no query execution; callers keep Scope=None until every
     /// real route and supported execution check has completed.
-    pub fn required(
-        settings: &DnsConfiguration,
-        egress: &DnsEgress,
-    ) -> Result<Self, SystemDnsError> {
+    pub fn required(settings: &DnsConfiguration, egress: &DnsPlan) -> Result<Self, SystemDnsError> {
         let mut domains = BTreeMap::new();
         let normalize = |s: &str| {
             meshway_configuration::normalize_dns_name(s).map_err(|_| SystemDnsError::Settings)
@@ -174,7 +171,7 @@ impl SystemDnsPlan {
         let root = settings.override_local
             || matches!(
                 egress,
-                DnsEgress::ViaExit { .. } | DnsEgress::Unavailable { .. }
+                DnsPlan::ViaExit { .. } | DnsPlan::Unavailable { .. }
             );
         if root {
             domains.insert(".".into(), true);
@@ -249,30 +246,8 @@ fn suffix_of(parent: &str, child: &str) -> bool {
             .is_some_and(|s| s.ends_with('.'))
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum ResolverSource {
-    Configured(String),
-    System {
-        snapshot: String,
-        index: usize,
-    },
-    /// Explicit TCP fallback for an OS UDP resolver. It has a distinct demand;
-    /// configured UDP resolvers never acquire this fallback implicitly.
-    SystemTcp {
-        snapshot: String,
-        index: usize,
-    },
-}
-#[derive(Clone, Debug)]
-pub struct ResolverDemand {
-    pub source: ResolverSource,
-    pub endpoint: SocketAddr,
-    pub transport: DnsTransport,
-    pub profile: String,
-}
-
 /// Only a checked system installer constructs this provenance. Its endpoints
-/// still require exact published local-egress grants before any business I/O.
+/// still require the netmap's local-egress decision before any business I/O.
 #[derive(Clone)]
 pub struct SystemResolverSnapshot {
     pub(crate) id: String,
@@ -288,36 +263,6 @@ impl SystemResolverSnapshot {
     /// The same observation, not merely equal endpoints.
     pub(crate) fn same(&self, other: &Self) -> bool {
         self.id == other.id && Arc::ptr_eq(&self.upstreams, &other.upstreams)
-    }
-    pub fn demands(&self, profile: &str) -> Vec<ResolverDemand> {
-        let mut demands: Vec<_> = self
-            .upstreams
-            .iter()
-            .enumerate()
-            .map(|(index, endpoint)| ResolverDemand {
-                source: ResolverSource::System {
-                    snapshot: self.id.clone(),
-                    index,
-                },
-                endpoint: *endpoint,
-                transport: self.primary,
-                profile: profile.to_owned(),
-            })
-            .collect();
-        if self.primary == DnsTransport::Udp {
-            demands.extend(self.upstreams.iter().enumerate().map(|(index, endpoint)| {
-                ResolverDemand {
-                    source: ResolverSource::SystemTcp {
-                        snapshot: self.id.clone(),
-                        index,
-                    },
-                    endpoint: *endpoint,
-                    transport: DnsTransport::Tcp,
-                    profile: profile.to_owned(),
-                }
-            }));
-        }
-        demands
     }
     pub(crate) fn ensure_current(&self) -> Result<(), SystemDnsError> {
         if self.invalid.is_cancelled()

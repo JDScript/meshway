@@ -1,5 +1,5 @@
-//! One revision's immutable application denominator. Later demands/refreshes
-//! never add targets or turn another publication's receipts into this result.
+//! One revision's immutable application denominator: the netmaps current
+//! after the apply. A later serial never turns into this revision's result.
 use crate::error::Error;
 use crate::store::execution::progress as store;
 use chrono::{DateTime, Utc};
@@ -82,7 +82,7 @@ pub(crate) fn freshness(
     tx: &Transaction<'_>,
     network: NetworkId,
     node: NodeId,
-    target: &ConfigurationRef,
+    target: &NetmapRef,
     instance_id: Option<InstanceId>,
     boot: InstanceId,
     now: DateTime<Utc>,
@@ -95,18 +95,9 @@ pub(crate) fn freshness(
         match context {
             None => ReceiptFreshness::AwaitingInstance,
             Some(context) => {
-                if !context.publication_matches
-                    || context.withdrawn.is_some()
-                    || context.revoked.is_some()
-                {
-                    ReceiptFreshness::Superseded
-                } else if !context.boot_matches || !context.instance_matches {
+                if !context.boot_matches || !context.instance_matches {
                     ReceiptFreshness::AwaitingInstance
-                } else if context.expires <= now.timestamp_millis()
-                    || context
-                        .execution_expires
-                        .is_some_and(|at| at <= now.timestamp_millis())
-                {
+                } else if context.expires <= now.timestamp_millis() {
                     ReceiptFreshness::Expired
                 } else {
                     ReceiptFreshness::Current

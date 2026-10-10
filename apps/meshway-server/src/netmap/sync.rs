@@ -30,13 +30,15 @@ pub trait PeerFactsSource: Send + Sync + 'static {
     /// and current netmap were checked. `changed` must be armed before the
     /// facts are read, so no change between the two is missed. A returned
     /// delta must continue `cursor` (or have a null base) and carry
-    /// `netmap.serial`.
+    /// `netmap.serial`. `held` is the netmap the request named: a cursor
+    /// continues only within the netmap that scoped it.
     fn read(
         &self,
         tx: &Transaction<'_>,
         network: NetworkId,
         node: NodeId,
         netmap: NetmapRef,
+        held: Option<NetmapRef>,
         cursor: Option<StateCursor>,
     ) -> Result<PeerFactsRead, Error>;
 }
@@ -51,6 +53,7 @@ impl PeerFactsSource for NoPeerFacts {
         _: NetworkId,
         _: NodeId,
         _: NetmapRef,
+        _: Option<NetmapRef>,
         _: Option<StateCursor>,
     ) -> Result<PeerFactsRead, Error> {
         Ok(PeerFactsRead {
@@ -106,8 +109,14 @@ pub(super) fn read(
             netmap: Box::new(store::load(tx, sealer, network, node, current.current)?),
         }
     };
-    let PeerFactsRead { delta, changed } =
-        facts.read(tx, network, node, current.current, request.state)?;
+    let PeerFactsRead { delta, changed } = facts.read(
+        tx,
+        network,
+        node,
+        current.current,
+        request.netmap,
+        request.state,
+    )?;
     let now_ms = u64::try_from(now).map_err(|_| Error::Internal("system clock before epoch"))?;
     let validity_ms = u64::try_from(issue.validity.as_millis())
         .map_err(|_| Error::Internal("netmap validity"))?;

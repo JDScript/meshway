@@ -984,107 +984,6 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
-      "BusinessProtocol": {
-        "type": "string",
-        "description": "Inner business protocol whose access scope the Server evaluates.",
-        "enum": [
-          "tcp",
-          "udp",
-          "icmpEcho"
-        ]
-      },
-      "BusinessTarget": {
-        "oneOf": [
-          {
-            "type": "object",
-            "description": "Address a registered Mesh Node.",
-            "required": [
-              "node",
-              "type"
-            ],
-            "properties": {
-              "node": {
-                "$ref": "#/components/schemas/NodeId",
-                "description": "Destination Node in the demand's network."
-              },
-              "type": {
-                "type": "string",
-                "enum": [
-                  "mesh"
-                ]
-              }
-            },
-            "additionalProperties": false
-          },
-          {
-            "type": "object",
-            "description": "Address a numeric destination, classified against the configured Mesh pools.",
-            "required": [
-              "address",
-              "type"
-            ],
-            "properties": {
-              "address": {
-                "$ref": "#/components/schemas/ExecutionAddress",
-                "description": "Exact destination IP address."
-              },
-              "type": {
-                "type": "string",
-                "enum": [
-                  "ip"
-                ]
-              }
-            },
-            "additionalProperties": false
-          },
-          {
-            "type": "object",
-            "description": "Address a domain through an IP association that must have a current trusted DNS input.",
-            "required": [
-              "name",
-              "address",
-              "type"
-            ],
-            "properties": {
-              "address": {
-                "$ref": "#/components/schemas/ExecutionAddress",
-                "description": "Destination IP that must belong to that association."
-              },
-              "name": {
-                "type": "string",
-                "description": "Domain name checked against the source's trusted DNS association."
-              },
-              "type": {
-                "type": "string",
-                "enum": [
-                  "domain"
-                ]
-              }
-            },
-            "additionalProperties": false
-          }
-        ],
-        "description": "Exact business destination submitted in a demand and bound into its compiled permit."
-      },
-      "CancelDemandRequest": {
-        "type": "object",
-        "description": "Node request to cancel an existing demand owned by its current instance.",
-        "required": [
-          "instance",
-          "requestId"
-        ],
-        "properties": {
-          "instance": {
-            "$ref": "#/components/schemas/InstanceRequest",
-            "description": "Current source instance required to cancel the demand."
-          },
-          "requestId": {
-            "$ref": "#/components/schemas/RequestId",
-            "description": "Existing demand identifier to cancel."
-          }
-        },
-        "additionalProperties": false
-      },
       "CancelUdpTraversalResponse": {
         "oneOf": [
           {
@@ -1408,25 +1307,6 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
-      "CompiledNode": {
-        "type": "object",
-        "description": "Complete Server-compiled Node target paired with the digest checked before persistence and installation.",
-        "required": [
-          "digest",
-          "configuration"
-        ],
-        "properties": {
-          "configuration": {
-            "$ref": "#/components/schemas/NodeConfiguration",
-            "description": "Immutable execution content whose digest is supplied."
-          },
-          "digest": {
-            "$ref": "#/components/schemas/Digest",
-            "description": "Digest of the complete configuration value."
-          }
-        },
-        "additionalProperties": false
-      },
       "ConfigurationAppliedResponse": {
         "type": "object",
         "description": "Committed configuration revision and its original execution targets, without asserting node installation.",
@@ -1434,7 +1314,6 @@ export const schemaDocument = {
           "requestId",
           "networkId",
           "revision",
-          "publicationIds",
           "targetCount",
           "deletedNodeIds"
         ],
@@ -1450,13 +1329,6 @@ export const schemaDocument = {
             "$ref": "#/components/schemas/NetworkId",
             "description": "Network whose configuration was committed."
           },
-          "publicationIds": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/PublicationId"
-            },
-            "description": "Execution publications containing this apply's node targets; empty when there are no targets."
-          },
           "requestId": {
             "$ref": "#/components/schemas/RequestId",
             "description": "Correlation identifier for the configuration apply request."
@@ -1468,7 +1340,7 @@ export const schemaDocument = {
           "targetCount": {
             "type": "integer",
             "format": "int32",
-            "description": "Original node targets counted once per node, independent of later demand or refresh publications.",
+            "description": "Nodes whose netmap after this apply is the revision's progress target, counted once per node.",
             "minimum": 0
           }
         },
@@ -1693,8 +1565,8 @@ export const schemaDocument = {
             ]
           },
           "target": {
-            "$ref": "#/components/schemas/ConfigurationRef",
-            "description": "Exact execution reference fixed for this node by the original configuration apply."
+            "$ref": "#/components/schemas/NetmapRef",
+            "description": "Netmap of this node current after the original configuration apply."
           }
         },
         "additionalProperties": false
@@ -2218,8 +2090,8 @@ export const schemaDocument = {
             ]
           },
           "target": {
-            "$ref": "#/components/schemas/ConfigurationRef",
-            "description": "Exact configuration and execution publication being processed."
+            "$ref": "#/components/schemas/NetmapRef",
+            "description": "Exact netmap being processed."
           }
         },
         "additionalProperties": false
@@ -2264,30 +2136,6 @@ export const schemaDocument = {
             "format": "int32",
             "description": "Counts of the original targets' last accepted phase, not online/healthy\nnodes. Inspect each node's independent freshness before presenting it as\ncurrently applied; expired/superseded results remain historical evidence.",
             "minimum": 0
-          }
-        },
-        "additionalProperties": false
-      },
-      "ConfigurationRef": {
-        "type": "object",
-        "description": "Exact Node execution target binding source revision, publication and compiled content.",
-        "required": [
-          "revision",
-          "executionPublication",
-          "digest"
-        ],
-        "properties": {
-          "digest": {
-            "$ref": "#/components/schemas/Digest",
-            "description": "Digest of this Node's complete compiled target, which may differ from other Nodes' digests."
-          },
-          "executionPublication": {
-            "$ref": "#/components/schemas/PublicationId",
-            "description": "Publication fixing the target's identity, material and execution dependencies."
-          },
-          "revision": {
-            "$ref": "#/components/schemas/Revision",
-            "description": "Source configuration revision used to compile the target."
           }
         },
         "additionalProperties": false
@@ -2377,20 +2225,20 @@ export const schemaDocument = {
                 "$ref": "#/components/schemas/RequestId",
                 "description": "Apply idempotency key; reuse with a different request body returns `request_id_conflict`."
               },
-              "resourcePublication": {
+              "restoreFrom": {
+                "$ref": "#/components/schemas/Revision",
+                "description": "Historical source revision in the same network whose configuration is restored."
+              },
+              "ruleSetBindings": {
                 "oneOf": [
                   {
                     "$ref": "#/components/schemas/PublicationId",
-                    "description": "Omitted: the source version's initial resource bindings. Otherwise\nselect this exact historical publication from the same source version."
+                    "description": "Omitted: the source version's initial rule-set bindings. Otherwise\nselect this exact historical binding from the same source version."
                   },
                   {
                     "type": "null"
                   }
                 ]
-              },
-              "restoreFrom": {
-                "$ref": "#/components/schemas/Revision",
-                "description": "Historical source revision in the same network whose configuration is restored."
               },
               "type": {
                 "type": "string",
@@ -2581,8 +2429,8 @@ export const schemaDocument = {
           "applied": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/ConfigurationRef",
-                "description": "Configuration used by the current running generation, or null if none is applied."
+                "$ref": "#/components/schemas/NetmapRef",
+                "description": "Netmap used by the current running generation, or null if none is applied."
               },
               {
                 "type": "null"
@@ -2603,8 +2451,8 @@ export const schemaDocument = {
           "saved": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/ConfigurationRef",
-                "description": "Complete validated configuration privately persisted by the Node, or null if none is reported."
+                "$ref": "#/components/schemas/NetmapRef",
+                "description": "Verified netmap privately persisted by the Node, or null if none is reported."
               },
               {
                 "type": "null"
@@ -3000,39 +2848,6 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
-      "DecisionDelta": {
-        "type": "object",
-        "description": "Server-computed keyed changes between two complete execution targets.",
-        "required": [
-          "remove",
-          "upsert"
-        ],
-        "properties": {
-          "remove": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/RequestId"
-            },
-            "description": "Keys present in the base that must be removed from the reconstructed target."
-          },
-          "upsert": {
-            "type": "object",
-            "description": "Complete values to insert or replace; keys cannot also occur in remove.",
-            "additionalProperties": {
-              "$ref": "#/components/schemas/DemandDecision"
-            },
-            "propertyNames": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Request identifier.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
-              "maxLength": 36,
-              "minLength": 36,
-              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-            }
-          }
-        },
-        "additionalProperties": false
-      },
       "Defaults": {
         "type": "object",
         "description": "Network-wide unmatched-rule behavior and inherited outbound transport selection.",
@@ -3181,156 +2996,6 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
-      "DemandDecision": {
-        "oneOf": [
-          {
-            "type": "object",
-            "description": "The demand has authorized complete Mesh paths.",
-            "required": [
-              "permit",
-              "type"
-            ],
-            "properties": {
-              "permit": {
-                "$ref": "#/components/schemas/PathPermit",
-                "description": "Exact business scope and allowed paths compiled for the demand."
-              },
-              "type": {
-                "type": "string",
-                "enum": [
-                  "permitted"
-                ]
-              }
-            },
-            "additionalProperties": false
-          },
-          {
-            "type": "object",
-            "description": "Routing selected direct local egress, whose execution requires the matching local-egress permit.",
-            "required": [
-              "type"
-            ],
-            "properties": {
-              "type": {
-                "type": "string",
-                "enum": [
-                  "direct"
-                ]
-              }
-            },
-            "additionalProperties": false
-          },
-          {
-            "type": "object",
-            "description": "Routing selected unmanaged local egress, whose execution requires the matching local-egress permit.",
-            "required": [
-              "type"
-            ],
-            "properties": {
-              "type": {
-                "type": "string",
-                "enum": [
-                  "unmanaged"
-                ]
-              }
-            },
-            "additionalProperties": false
-          },
-          {
-            "type": "object",
-            "description": "Compilation could not produce executable authority for this demand.",
-            "required": [
-              "reason",
-              "type"
-            ],
-            "properties": {
-              "reason": {
-                "$ref": "#/components/schemas/UnavailableReason",
-                "description": "Authorization or dependency condition preventing execution."
-              },
-              "type": {
-                "type": "string",
-                "enum": [
-                  "unavailable"
-                ]
-              }
-            },
-            "additionalProperties": false
-          }
-        ],
-        "description": "Server compilation result for a business demand; feedback alone does not authorize socket I/O."
-      },
-      "DemandRequest": {
-        "type": "object",
-        "description": "Node request for business execution, with the source and network supplied by its authenticated session.",
-        "required": [
-          "instance",
-          "requestId",
-          "target",
-          "protocol",
-          "profile",
-          "durationSeconds"
-        ],
-        "properties": {
-          "durationSeconds": {
-            "type": "integer",
-            "format": "int32",
-            "description": "Requested demand lifetime in seconds, from 1 through 300; creation replay does not extend it.",
-            "minimum": 0
-          },
-          "instance": {
-            "$ref": "#/components/schemas/InstanceRequest",
-            "description": "Current source runtime instance to which the demand is bound."
-          },
-          "port": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/Port",
-                "description": "TCP or UDP destination port; null or omission is required for ICMP echo."
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "profile": {
-            "type": "string",
-            "description": "Authorized routing profile matching the source's current selection."
-          },
-          "protocol": {
-            "$ref": "#/components/schemas/BusinessProtocol",
-            "description": "Inner business protocol to authorize."
-          },
-          "requestId": {
-            "$ref": "#/components/schemas/RequestId",
-            "description": "Stable demand identifier reused with identical content on creation retries."
-          },
-          "target": {
-            "$ref": "#/components/schemas/BusinessTarget",
-            "description": "Exact requested business destination."
-          }
-        },
-        "additionalProperties": false
-      },
-      "DemandResponse": {
-        "type": "object",
-        "description": "Server compilation feedback requiring configuration synchronization before execution.",
-        "required": [
-          "publication",
-          "decision"
-        ],
-        "properties": {
-          "decision": {
-            "$ref": "#/components/schemas/DemandDecision",
-            "description": "Current authorization and path result, independent of actual Node installation."
-          },
-          "publication": {
-            "$ref": "#/components/schemas/PublicationId",
-            "description": "Execution publication associated with the evaluated demand."
-          }
-        },
-        "additionalProperties": false
-      },
       "DerivedNodeState": {
         "type": "object",
         "description": "Server-derived IP metadata restricted to endpoint observations visible to the caller.",
@@ -3398,98 +3063,6 @@ export const schemaDocument = {
           }
         },
         "additionalProperties": false
-      },
-      "DiagnosticDelta": {
-        "type": "object",
-        "description": "Server-computed keyed changes between two complete execution targets.",
-        "required": [
-          "remove",
-          "upsert"
-        ],
-        "properties": {
-          "remove": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ObservationId"
-            },
-            "description": "Keys present in the base that must be removed from the reconstructed target."
-          },
-          "upsert": {
-            "type": "object",
-            "description": "Complete values to insert or replace; keys cannot also occur in remove.",
-            "additionalProperties": {
-              "$ref": "#/components/schemas/DiagnosticPermit"
-            },
-            "propertyNames": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Leased observation task identifier.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
-              "maxLength": 36,
-              "minLength": 36,
-              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-            }
-          }
-        },
-        "additionalProperties": false
-      },
-      "DiagnosticPermit": {
-        "type": "object",
-        "description": "Server-compiled short-lived measurement authority shared by all Nodes on its allowed complete paths.",
-        "required": [
-          "observationId",
-          "source",
-          "instanceId",
-          "target",
-          "service",
-          "paths",
-          "replies",
-          "expiresAt"
-        ],
-        "properties": {
-          "expiresAt": {
-            "$ref": "#/components/schemas/Timestamp",
-            "description": "Permit deadline in milliseconds since the Unix epoch, serialized as UTC RFC 3339; ordinary instance renewal does not extend it."
-          },
-          "instanceId": {
-            "$ref": "#/components/schemas/InstanceId",
-            "description": "Exact source runtime instance authorized to execute the observation."
-          },
-          "observationId": {
-            "$ref": "#/components/schemas/ObservationId",
-            "description": "Observation task authorized by this permit."
-          },
-          "paths": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/LogicalPath"
-            },
-            "description": "Complete authorized measurement paths preserving every required intermediate Node."
-          },
-          "replies": {
-            "$ref": "#/components/schemas/DiagnosticReplyPolicy",
-            "description": "Authentication and path constraint for diagnostic replies."
-          },
-          "service": {
-            "$ref": "#/components/schemas/ObservationServiceScope",
-            "description": "Exact authorized traffic counting scope; diagnostic frames are separate\nfrom TCP/UDP/ICMP business packets and create no business flow authority."
-          },
-          "source": {
-            "$ref": "#/components/schemas/NodeId",
-            "description": "Only Node authorized to originate the diagnostic requests."
-          },
-          "target": {
-            "$ref": "#/components/schemas/NodeId",
-            "description": "Terminal Node authorized to answer the diagnostic requests."
-          }
-        },
-        "additionalProperties": false
-      },
-      "DiagnosticReplyPolicy": {
-        "type": "string",
-        "description": "Reply constraint for authenticated diagnostic request and response correlation.",
-        "enum": [
-          "authenticatedExactReversePath"
-        ]
       },
       "DialCandidate": {
         "type": "object",
@@ -3559,7 +3132,8 @@ export const schemaDocument = {
         "description": "Where a dial endpoint came from; configured endpoints are tried before Node-reported ones.",
         "enum": [
           "configured",
-          "local"
+          "local",
+          "stun"
         ]
       },
       "DialParameters": {
@@ -3691,34 +3265,6 @@ export const schemaDocument = {
           }
         ],
         "description": "Protocol-specific connection inputs resolved by the Server for a selected target listener."
-      },
-      "DialerDelta": {
-        "type": "object",
-        "description": "Server-computed keyed changes between two complete execution targets.",
-        "required": [
-          "remove",
-          "upsert"
-        ],
-        "properties": {
-          "remove": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Keys present in the base that must be removed from the reconstructed target."
-          },
-          "upsert": {
-            "type": "object",
-            "description": "Complete values to insert or replace; keys cannot also occur in remove.",
-            "additionalProperties": {
-              "$ref": "#/components/schemas/DialCandidate"
-            },
-            "propertyNames": {
-              "type": "string"
-            }
-          }
-        },
-        "additionalProperties": false
       },
       "DialerSet": {
         "type": "object",
@@ -3944,103 +3490,6 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
-      "DnsEgress": {
-        "oneOf": [
-          {
-            "type": "object",
-            "description": "Compilation proved that the DNS selection has no exit possibility.",
-            "required": [
-              "type"
-            ],
-            "properties": {
-              "type": {
-                "type": "string",
-                "enum": [
-                  "noExit"
-                ]
-              }
-            },
-            "additionalProperties": false
-          },
-          {
-            "type": "object",
-            "description": "Ordinary queries use only this Mesh resolver service.",
-            "required": [
-              "exit",
-              "service",
-              "generation",
-              "type"
-            ],
-            "properties": {
-              "exit": {
-                "$ref": "#/components/schemas/NodeId",
-                "description": "Selected resolver Node."
-              },
-              "generation": {
-                "$ref": "#/components/schemas/Digest",
-                "description": "Selection identity, equal to the service and capture generations."
-              },
-              "service": {
-                "$ref": "#/components/schemas/DnsServicePermit",
-                "description": "Exact service authority shared with its path participants."
-              },
-              "type": {
-                "type": "string",
-                "enum": [
-                  "viaExit"
-                ]
-              }
-            },
-            "additionalProperties": false
-          },
-          {
-            "type": "object",
-            "description": "Serve source grants using verified system\nupstreams. This node's own DNS selection has been proved to have no exit.",
-            "required": [
-              "permit",
-              "type"
-            ],
-            "properties": {
-              "permit": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/components/schemas/DnsServicePermit"
-                },
-                "description": "Exact source grants accepted by this resolver."
-              },
-              "type": {
-                "type": "string",
-                "enum": [
-                  "serveExitResolver"
-                ]
-              }
-            },
-            "additionalProperties": false
-          },
-          {
-            "type": "object",
-            "description": "DNS egress lacks a required executable plan.",
-            "required": [
-              "reason",
-              "type"
-            ],
-            "properties": {
-              "reason": {
-                "$ref": "#/components/schemas/DnsEgressUnavailable",
-                "description": "Condition preventing DNS egress execution."
-              },
-              "type": {
-                "type": "string",
-                "enum": [
-                  "unavailable"
-                ]
-              }
-            },
-            "additionalProperties": false
-          }
-        ],
-        "description": "Server-compiled ordinary DNS selection, separate from business authorization."
-      },
       "DnsEgressUnavailable": {
         "type": "string",
         "description": "Missing execution dependency for DNS egress.",
@@ -4050,49 +3499,6 @@ export const schemaDocument = {
           "noPath",
           "unauthorized"
         ]
-      },
-      "DnsExecution": {
-        "type": "object",
-        "description": "DNS settings and trusted name bindings compiled for one Node's execution target.",
-        "required": [
-          "settings",
-          "meshHosts",
-          "associations",
-          "profile",
-          "egress"
-        ],
-        "properties": {
-          "associations": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/TrustedDnsAssociation"
-            },
-            "description": "Current trusted DNS associations included for this source's domain demands."
-          },
-          "egress": {
-            "$ref": "#/components/schemas/DnsEgress",
-            "description": "Ordinary DNS selection; live authority also requires the execution lease."
-          },
-          "meshHosts": {
-            "type": "object",
-            "description": "Configured Mesh names and addresses filtered by this Node's source Access permissions.",
-            "additionalProperties": {
-              "$ref": "#/components/schemas/NodeAddresses"
-            },
-            "propertyNames": {
-              "type": "string"
-            }
-          },
-          "profile": {
-            "type": "string",
-            "description": "Regular resolution follows this selection; explicit resolver exceptions retain useWithExit."
-          },
-          "settings": {
-            "$ref": "#/components/schemas/DnsConfiguration",
-            "description": "DNS configuration copied from the publication's source revision."
-          }
-        },
-        "additionalProperties": false
       },
       "DnsPlan": {
         "oneOf": [
@@ -4275,87 +3681,6 @@ export const schemaDocument = {
               "$ref": "#/components/schemas/DnsTransport"
             },
             "description": "Independently authorized transports."
-          }
-        },
-        "additionalProperties": false
-      },
-      "DnsServicePermit": {
-        "type": "object",
-        "description": "Internal resolver-service authority. It grants no external business traffic\nand cannot produce a TrustedDnsAssociation. Enclosing publication and lease\nremain mandatory at both endpoints and every relay.",
-        "required": [
-          "source",
-          "sourceInstanceId",
-          "sourceAddresses",
-          "exit",
-          "address",
-          "profile",
-          "generation",
-          "role",
-          "path",
-          "transports",
-          "maxPending",
-          "timeoutMs",
-          "expiresAt"
-        ],
-        "properties": {
-          "address": {
-            "$ref": "#/components/schemas/ExecutionAddress",
-            "description": "Exact IPv4 Mesh resolver endpoint; the reserved port is 53."
-          },
-          "exit": {
-            "$ref": "#/components/schemas/NodeId",
-            "description": "Only resolver Node permitted to terminate this service."
-          },
-          "expiresAt": {
-            "$ref": "#/components/schemas/Timestamp",
-            "description": "Permit deadline bounded by source instance and exit capability expiry."
-          },
-          "generation": {
-            "$ref": "#/components/schemas/Digest",
-            "description": "Same selection identity as source egress capture."
-          },
-          "maxPending": {
-            "type": "integer",
-            "format": "int32",
-            "description": "Maximum simultaneous queries from this source.",
-            "minimum": 0
-          },
-          "path": {
-            "$ref": "#/components/schemas/LogicalPath",
-            "description": "One complete ordered path, retained in reverse for replies."
-          },
-          "profile": {
-            "type": "string",
-            "description": "Source's effective routing profile."
-          },
-          "role": {
-            "$ref": "#/components/schemas/ExitRolePlan",
-            "description": "Exit instance and resource-role identity required by this service."
-          },
-          "source": {
-            "$ref": "#/components/schemas/NodeId",
-            "description": "Original authenticated querying Node."
-          },
-          "sourceAddresses": {
-            "$ref": "#/components/schemas/NodeAddresses",
-            "description": "Exact inner source addresses, never inferred from a socket peer."
-          },
-          "sourceInstanceId": {
-            "$ref": "#/components/schemas/InstanceId",
-            "description": "Source execution instance; replacement cannot inherit an old query."
-          },
-          "timeoutMs": {
-            "type": "integer",
-            "format": "int32",
-            "description": "Maximum query duration, also capped by permit and execution expiry.",
-            "minimum": 0
-          },
-          "transports": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/DnsTransport"
-            },
-            "description": "Independently authorized transports; UDP does not imply TCP."
           }
         },
         "additionalProperties": false
@@ -5815,7 +5140,8 @@ export const schemaDocument = {
         "description": "Target-bound exit capability observation, accepted before applied as well as after it.",
         "required": [
           "instanceId",
-          "target",
+          "netmap",
+          "roleGeneration",
           "supportedFamilies",
           "installedFamilies",
           "status",
@@ -5833,10 +5159,18 @@ export const schemaDocument = {
             "$ref": "#/components/schemas/InstanceId",
             "description": "Runtime incarnation which made the observation."
           },
+          "netmap": {
+            "$ref": "#/components/schemas/NetmapRef",
+            "description": "Exact netmap whose role was probed."
+          },
           "observedAt": {
             "type": "string",
             "format": "date-time",
             "description": "Original observation time, preserved on retries."
+          },
+          "roleGeneration": {
+            "$ref": "#/components/schemas/Digest",
+            "description": "Generation of that netmap's exit role."
           },
           "status": {
             "$ref": "#/components/schemas/ExitStatus",
@@ -5848,55 +5182,9 @@ export const schemaDocument = {
               "$ref": "#/components/schemas/ExitFamily"
             },
             "description": "Families supported by the running backend."
-          },
-          "target": {
-            "$ref": "#/components/schemas/ConfigurationRef",
-            "description": "Exact execution target whose role was probed."
           }
         },
         "additionalProperties": false
-      },
-      "ExitDestinationScope": {
-        "oneOf": [
-          {
-            "type": "object",
-            "description": "Exact target must also belong to Policy's public Internet set.",
-            "required": [
-              "type"
-            ],
-            "properties": {
-              "type": {
-                "type": "string",
-                "enum": [
-                  "internet"
-                ]
-              }
-            },
-            "additionalProperties": false
-          },
-          {
-            "type": "object",
-            "description": "Explicit CIDR Access covers the exact target, including authorized LAN.",
-            "required": [
-              "prefix",
-              "type"
-            ],
-            "properties": {
-              "prefix": {
-                "type": "string",
-                "description": "Administrator-authorized CIDR, not an automatically inferred LAN."
-              },
-              "type": {
-                "type": "string",
-                "enum": [
-                  "cidr"
-                ]
-              }
-            },
-            "additionalProperties": false
-          }
-        ],
-        "description": "Why an exact external destination is eligible; never widens PathPermit.target."
       },
       "ExitFamily": {
         "type": "string",
@@ -5912,46 +5200,6 @@ export const schemaDocument = {
         "enum": [
           "masquerade"
         ]
-      },
-      "ExitPermit": {
-        "type": "object",
-        "description": "Additional constraints on an external PathPermit; paths name its exit terminals.",
-        "required": [
-          "generation",
-          "family",
-          "destination",
-          "roles"
-        ],
-        "properties": {
-          "destination": {
-            "$ref": "#/components/schemas/ExitDestinationScope",
-            "description": "Destination classification checked again by packet admission."
-          },
-          "family": {
-            "$ref": "#/components/schemas/ExitFamily",
-            "description": "Source address family; initial implementation permits IPv4 only."
-          },
-          "generation": {
-            "$ref": "#/components/schemas/Digest",
-            "description": "Changes on every effective profile selection, including switching back."
-          },
-          "roles": {
-            "type": "object",
-            "description": "Every eligible terminal bound to the role generation it must install.",
-            "additionalProperties": {
-              "$ref": "#/components/schemas/ExitRolePlan"
-            },
-            "propertyNames": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Stable node identifier, independent of its addresses and keys.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
-              "maxLength": 36,
-              "minLength": 36,
-              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-            }
-          }
-        },
-        "additionalProperties": false
       },
       "ExitRole": {
         "type": "object",
@@ -5969,35 +5217,6 @@ export const schemaDocument = {
           "generation": {
             "$ref": "#/components/schemas/Digest",
             "description": "Role identity, stable while the role content is unchanged."
-          },
-          "nat": {
-            "$ref": "#/components/schemas/ExitNat",
-            "description": "Required translation mode."
-          }
-        },
-        "additionalProperties": false
-      },
-      "ExitRolePlan": {
-        "type": "object",
-        "description": "Resource preparation responsibility; never a grant to forward a packet.\nNetwork, node, publication and deadlines come from the enclosing target/lease.",
-        "required": [
-          "instanceId",
-          "generation",
-          "family",
-          "nat"
-        ],
-        "properties": {
-          "family": {
-            "$ref": "#/components/schemas/ExitFamily",
-            "description": "Inner family implemented by this role."
-          },
-          "generation": {
-            "$ref": "#/components/schemas/Digest",
-            "description": "Role identity stable across lease renewal; changes with source revision."
-          },
-          "instanceId": {
-            "$ref": "#/components/schemas/InstanceId",
-            "description": "Current instance which may install the role."
           },
           "nat": {
             "$ref": "#/components/schemas/ExitNat",
@@ -6299,7 +5518,7 @@ export const schemaDocument = {
           "timeout",
           "failed",
           "instanceId",
-          "publicationId",
+          "netmap",
           "path",
           "kind"
         ],
@@ -6338,16 +5557,16 @@ export const schemaDocument = {
             "format": "double",
             "description": "Mean available duration of successful operations in microseconds, or null without timed successes."
           },
+          "netmap": {
+            "$ref": "#/components/schemas/NetmapRef",
+            "description": "Netmap shared by the aggregated measurements."
+          },
           "path": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/NodeId"
             },
             "description": "Ordered path shared by the aggregated measurements."
-          },
-          "publicationId": {
-            "$ref": "#/components/schemas/PublicationId",
-            "description": "Execution publication shared by the aggregated measurements."
           },
           "sampleCount": {
             "type": "integer",
@@ -6792,25 +6011,13 @@ export const schemaDocument = {
       },
       "InstanceLease": {
         "type": "object",
-        "description": "Server-issued runtime qualification with separate instance and execution deadlines.",
+        "description": "Server-issued runtime qualification; it bounds State, receipts and coordination, never execution.",
         "required": [
           "instanceId",
           "generation",
-          "expiresAt",
-          "executionExpiresAt"
+          "expiresAt"
         ],
         "properties": {
-          "executionExpiresAt": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/Timestamp",
-                "description": "Execution deadline in milliseconds since the Unix epoch, serialized as UTC RFC 3339; null means no execution lease is granted."
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
           "expiresAt": {
             "$ref": "#/components/schemas/Timestamp",
             "description": "Instance deadline in milliseconds since the Unix epoch, serialized as UTC RFC 3339."
@@ -6822,17 +6029,6 @@ export const schemaDocument = {
           "instanceId": {
             "$ref": "#/components/schemas/InstanceId",
             "description": "Acquired Node runtime instance."
-          },
-          "target": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/ConfigurationRef",
-                "description": "Exact current execution target, or null when no target is available; its presence alone does not grant execution."
-              },
-              {
-                "type": "null"
-              }
-            ]
           }
         },
         "additionalProperties": false
@@ -7289,6 +6485,22 @@ export const schemaDocument = {
           },
           {
             "type": "object",
+            "description": "The UDP channel was acquired by dialing a STUN-observed mapping of the peer's listener socket.",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "stunEndpoint"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
             "description": "The channel was acquired by accepting an inbound connection.",
             "required": [
               "type"
@@ -7717,34 +6929,6 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
-      "ListenerDelta": {
-        "type": "object",
-        "description": "Server-computed keyed changes between two complete execution targets.",
-        "required": [
-          "remove",
-          "upsert"
-        ],
-        "properties": {
-          "remove": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Keys present in the base that must be removed from the reconstructed target."
-          },
-          "upsert": {
-            "type": "object",
-            "description": "Complete values to insert or replace; keys cannot also occur in remove.",
-            "additionalProperties": {
-              "$ref": "#/components/schemas/PreparedListener"
-            },
-            "propertyNames": {
-              "type": "string"
-            }
-          }
-        },
-        "additionalProperties": false
-      },
       "ListenerPhase": {
         "type": "string",
         "description": "Local listener lifecycle reported by the Node.",
@@ -7763,22 +6947,22 @@ export const schemaDocument = {
           "socketIds"
         ],
         "properties": {
-          "configuration": {
+          "loadedCertificateSha256": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/ConfigurationRef",
-                "description": "Explicit execution target; null or omission inherits the report's applied configuration."
+                "$ref": "#/components/schemas/Digest",
+                "description": "Public fingerprint of the certificate actually loaded, or null for non-TLS or unavailable results."
               },
               {
                 "type": "null"
               }
             ]
           },
-          "loadedCertificateSha256": {
+          "netmap": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/Digest",
-                "description": "Public fingerprint of the certificate actually loaded, or null for non-TLS or unavailable results."
+                "$ref": "#/components/schemas/NetmapRef",
+                "description": "Explicit netmap; null or omission inherits the report's applied netmap."
               },
               {
                 "type": "null"
@@ -8330,102 +7514,6 @@ export const schemaDocument = {
               "type": "string"
             },
             "description": "Names of extra response headers, with all values withheld."
-          }
-        },
-        "additionalProperties": false
-      },
-      "LocalEgressAction": {
-        "type": "string",
-        "description": "Local egress selection bound into a source-only execution permit.",
-        "enum": [
-          "direct",
-          "unmanaged"
-        ]
-      },
-      "LocalEgressDelta": {
-        "type": "object",
-        "description": "Server-computed keyed changes between two complete execution targets.",
-        "required": [
-          "remove",
-          "upsert"
-        ],
-        "properties": {
-          "remove": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/RequestId"
-            },
-            "description": "Keys present in the base that must be removed from the reconstructed target."
-          },
-          "upsert": {
-            "type": "object",
-            "description": "Complete values to insert or replace; keys cannot also occur in remove.",
-            "additionalProperties": {
-              "$ref": "#/components/schemas/LocalEgressPermit"
-            },
-            "propertyNames": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Request identifier.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
-              "maxLength": 36,
-              "minLength": 36,
-              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-            }
-          }
-        },
-        "additionalProperties": false
-      },
-      "LocalEgressPermit": {
-        "type": "object",
-        "description": "Server-compiled exact local egress binding published only to the business source.",
-        "required": [
-          "demandId",
-          "source",
-          "target",
-          "protocol",
-          "profile",
-          "action",
-          "expiresAt"
-        ],
-        "properties": {
-          "action": {
-            "$ref": "#/components/schemas/LocalEgressAction",
-            "description": "Selected local routing action, without Mesh relay or exit admission."
-          },
-          "demandId": {
-            "$ref": "#/components/schemas/RequestId",
-            "description": "Demand authorizing this local execution binding."
-          },
-          "expiresAt": {
-            "$ref": "#/components/schemas/Timestamp",
-            "description": "Local permit deadline in milliseconds since the Unix epoch, serialized as UTC RFC 3339 and bounded by its dependencies."
-          },
-          "port": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/Port",
-                "description": "Exact TCP or UDP destination port; null or omitted only for ICMP echo."
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "profile": {
-            "type": "string",
-            "description": "Routing profile under which the local action was selected."
-          },
-          "protocol": {
-            "$ref": "#/components/schemas/BusinessProtocol",
-            "description": "Authorized inner business protocol."
-          },
-          "source": {
-            "$ref": "#/components/schemas/NodeId",
-            "description": "Only Node allowed to consume the local binding."
-          },
-          "target": {
-            "$ref": "#/components/schemas/BusinessTarget",
-            "description": "Exact destination covered by the local route."
           }
         },
         "additionalProperties": false
@@ -10045,1039 +9133,6 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
-      "NodeConfiguration": {
-        "type": "object",
-        "description": "Complete private execution target compiled by the Server for one Node; installation also requires a matching valid lease.",
-        "required": [
-          "networkId",
-          "nodeId",
-          "revision",
-          "publication",
-          "dependencyDigest",
-          "enabled",
-          "hostname",
-          "identity",
-          "addresses",
-          "selfKeys",
-          "meshAddressPools",
-          "egressCapture",
-          "listeners",
-          "dialers",
-          "peers",
-          "permits",
-          "localEgress",
-          "diagnostics",
-          "decisions",
-          "dns",
-          "exitEnabled"
-        ],
-        "properties": {
-          "addresses": {
-            "$ref": "#/components/schemas/NodeAddresses",
-            "description": "Configured Mesh addresses used consistently by DNS and packet admission."
-          },
-          "decisions": {
-            "type": "object",
-            "description": "Server compilation results for this Node's live business demands.",
-            "additionalProperties": {
-              "$ref": "#/components/schemas/DemandDecision"
-            },
-            "propertyNames": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Request identifier.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
-              "maxLength": 36,
-              "minLength": 36,
-              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-            }
-          },
-          "dependencyDigest": {
-            "$ref": "#/components/schemas/Digest",
-            "description": "Digest of the trusted compilation inputs, including demand and identity dependencies."
-          },
-          "diagnostics": {
-            "type": "object",
-            "description": "Authenticated measurement only. Never accepted by business packet admission.",
-            "additionalProperties": {
-              "$ref": "#/components/schemas/DiagnosticPermit"
-            },
-            "propertyNames": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Leased observation task identifier.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
-              "maxLength": 36,
-              "minLength": 36,
-              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-            }
-          },
-          "dialers": {
-            "type": "object",
-            "description": "Authorized outbound candidates indexed by Server-compiled candidate key.",
-            "additionalProperties": {
-              "$ref": "#/components/schemas/DialCandidate"
-            },
-            "propertyNames": {
-              "type": "string"
-            }
-          },
-          "dns": {
-            "$ref": "#/components/schemas/DnsExecution",
-            "description": "Compiled DNS settings, visible Mesh names and trusted associations."
-          },
-          "egressCapture": {
-            "$ref": "#/components/schemas/EgressCapturePlan",
-            "description": "Disjoint external packet ownership and IPv6 negative capture boundary."
-          },
-          "enabled": {
-            "type": "boolean",
-            "description": "Whether the source configuration enables this Node's business execution."
-          },
-          "exitEnabled": {
-            "type": "boolean",
-            "description": "Configured exit eligibility gated by Node enablement, not proof of installed forwarding."
-          },
-          "exitRole": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/ExitRolePlan",
-                "description": "Exit resource responsibility, issued before capability readiness."
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "hostname": {
-            "type": "string",
-            "description": "Configured canonical hostname, independent of the reported OS hostname."
-          },
-          "identity": {
-            "$ref": "#/components/schemas/NodeIdentity",
-            "description": "Configured User or Tag identity used for authorization."
-          },
-          "listeners": {
-            "type": "object",
-            "description": "Complete local listener parameters and material indexed by configuration key.",
-            "additionalProperties": {
-              "$ref": "#/components/schemas/PreparedListener"
-            },
-            "propertyNames": {
-              "type": "string"
-            }
-          },
-          "localEgress": {
-            "type": "object",
-            "description": "Source-only, exact local execution bindings. Never Mesh/path admission.",
-            "additionalProperties": {
-              "$ref": "#/components/schemas/LocalEgressPermit"
-            },
-            "propertyNames": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Request identifier.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
-              "maxLength": 36,
-              "minLength": 36,
-              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-            }
-          },
-          "meshAddressPools": {
-            "$ref": "#/components/schemas/AddressPools",
-            "description": "Complete managed capture ranges, never peer inventory or business authority."
-          },
-          "networkId": {
-            "$ref": "#/components/schemas/NetworkId",
-            "description": "Network for which this target was compiled."
-          },
-          "nodeId": {
-            "$ref": "#/components/schemas/NodeId",
-            "description": "Only Node intended to install this target."
-          },
-          "peers": {
-            "type": "object",
-            "description": "Trusted identities and addresses of required execution peers.",
-            "additionalProperties": {
-              "$ref": "#/components/schemas/PeerConfiguration"
-            },
-            "propertyNames": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Stable node identifier, independent of its addresses and keys.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
-              "maxLength": 36,
-              "minLength": 36,
-              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-            }
-          },
-          "permits": {
-            "type": "object",
-            "description": "Includes origin, relay and receiver admission. Absence rejects a new flow.",
-            "additionalProperties": {
-              "$ref": "#/components/schemas/PathPermit"
-            },
-            "propertyNames": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Request identifier.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
-              "maxLength": 36,
-              "minLength": 36,
-              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-            }
-          },
-          "publication": {
-            "$ref": "#/components/schemas/PublicationId",
-            "description": "Execution publication that fixes this target and its dependencies."
-          },
-          "revision": {
-            "$ref": "#/components/schemas/Revision",
-            "description": "Source configuration revision fixed by this publication."
-          },
-          "selfKeys": {
-            "$ref": "#/components/schemas/TrustedNode",
-            "description": "This Node's trusted public key bindings and authenticated capabilities."
-          }
-        },
-        "additionalProperties": false
-      },
-      "NodeConfigurationDelta": {
-        "type": "object",
-        "description": "Server-computed execution delta reconstructed in a temporary complete target and verified against its digest before installation.",
-        "required": [
-          "networkId",
-          "nodeId",
-          "base",
-          "target",
-          "dependencyDigest",
-          "enabled",
-          "hostname",
-          "identity",
-          "addresses",
-          "selfKeys",
-          "exitEnabled",
-          "dns",
-          "meshAddressPools",
-          "egressCapture",
-          "listeners",
-          "dialers",
-          "peers",
-          "permits",
-          "decisions",
-          "localEgress",
-          "diagnostics"
-        ],
-        "properties": {
-          "addresses": {
-            "$ref": "#/components/schemas/NodeAddresses",
-            "description": "Target's complete configured Mesh address assignment."
-          },
-          "base": {
-            "$ref": "#/components/schemas/ConfigurationRef",
-            "description": "Exact saved configuration required as the reconstruction base."
-          },
-          "decisions": {
-            "$ref": "#/components/schemas/DecisionDelta",
-            "description": "Source demand decision removals and complete replacements."
-          },
-          "dependencyDigest": {
-            "$ref": "#/components/schemas/Digest",
-            "description": "Replacement digest of the target's trusted compilation dependencies."
-          },
-          "diagnostics": {
-            "$ref": "#/components/schemas/DiagnosticDelta",
-            "description": "Independent diagnostic permit removals and complete replacements."
-          },
-          "dialers": {
-            "$ref": "#/components/schemas/DialerDelta",
-            "description": "Outbound candidate removals and complete replacements."
-          },
-          "dns": {
-            "$ref": "#/components/schemas/DnsExecution",
-            "description": "Complete replacement DNS execution content."
-          },
-          "egressCapture": {
-            "$ref": "#/components/schemas/EgressCapturePlan",
-            "description": "Complete external packet ownership replacement."
-          },
-          "enabled": {
-            "type": "boolean",
-            "description": "Target's configured business execution enablement."
-          },
-          "exitEnabled": {
-            "type": "boolean",
-            "description": "Target's configured exit eligibility, gated by Node enablement."
-          },
-          "exitRole": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/ExitRolePlan",
-                "description": "Complete exit role replacement; absent withdraws the role."
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "hostname": {
-            "type": "string",
-            "description": "Target's configured canonical hostname."
-          },
-          "identity": {
-            "$ref": "#/components/schemas/NodeIdentity",
-            "description": "Target's complete User or Tag authorization identity."
-          },
-          "listeners": {
-            "$ref": "#/components/schemas/ListenerDelta",
-            "description": "Local listener removals and complete replacements."
-          },
-          "localEgress": {
-            "$ref": "#/components/schemas/LocalEgressDelta",
-            "description": "Source-only local egress permit removals and complete replacements."
-          },
-          "meshAddressPools": {
-            "$ref": "#/components/schemas/AddressPools",
-            "description": "Complete replacement Mesh capture pools, without granting business access."
-          },
-          "networkId": {
-            "$ref": "#/components/schemas/NetworkId",
-            "description": "Network shared by the base and target configurations."
-          },
-          "nodeId": {
-            "$ref": "#/components/schemas/NodeId",
-            "description": "Only Node to which this delta applies."
-          },
-          "peers": {
-            "$ref": "#/components/schemas/PeerDelta",
-            "description": "Trusted peer removals and complete replacements."
-          },
-          "permits": {
-            "$ref": "#/components/schemas/PermitDelta",
-            "description": "Business path permit removals and complete replacements."
-          },
-          "selfKeys": {
-            "$ref": "#/components/schemas/TrustedNode",
-            "description": "Target's trusted local public key bindings and authenticated capabilities."
-          },
-          "target": {
-            "$ref": "#/components/schemas/ConfigurationRef",
-            "description": "Exact reconstructed target reference, including the digest to verify."
-          }
-        },
-        "additionalProperties": false
-      },
-      "NodeConfigurationRequest": {
-        "type": "object",
-        "description": "Instance-bound request to synchronize a complete execution target or explicitly refresh its lease.",
-        "required": [
-          "instance"
-        ],
-        "properties": {
-          "base": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/ConfigurationRef",
-                "description": "Exact locally saved base for delta or unchanged detection; null or omission requests a full target when available."
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "instance": {
-            "$ref": "#/components/schemas/InstanceRequest",
-            "description": "Current runtime instance receiving the target."
-          }
-        },
-        "additionalProperties": false
-      },
-      "NodeConfigurationResponse": {
-        "type": "object",
-        "description": "Consistent Server snapshot of the instance lease and its full, delta or unchanged execution target.",
-        "required": [
-          "lease"
-        ],
-        "properties": {
-          "delta": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/NodeConfigurationDelta",
-                "description": "Delta from a retained matching base; null when returning a full target, an unchanged target or no target."
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "full": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/CompiledNode",
-                "description": "Full replacement or omitted when the exact acknowledged target matches.\nA stale base always receives a complete value, never an unverified patch."
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "lease": {
-            "$ref": "#/components/schemas/InstanceLease",
-            "description": "Qualification for the exact response target; only explicit renewal operations extend its deadlines."
-          }
-        },
-        "additionalProperties": false
-      },
-      "NodeConfigurationView": {
-        "type": "object",
-        "description": "A node's own desired settings and exact current execution reference, without installation materials.",
-        "required": [
-          "networkId",
-          "nodeId",
-          "revision",
-          "settings"
-        ],
-        "properties": {
-          "networkId": {
-            "$ref": "#/components/schemas/NetworkId",
-            "description": "Network to which the authenticated node belongs."
-          },
-          "nodeId": {
-            "$ref": "#/components/schemas/NodeId",
-            "description": "Node whose desired settings are projected."
-          },
-          "revision": {
-            "$ref": "#/components/schemas/Revision",
-            "description": "Revision of the desired settings below, not the installable target."
-          },
-          "settings": {
-            "$ref": "#/components/schemas/NodeSettingsView",
-            "description": "Redacted desired settings for this node."
-          },
-          "target": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/ConfigurationRef",
-                "description": "Exact current execution target. Fetch materials with configuration/query."
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "additionalProperties": false
-      },
-      "NodeDnsQueryRequest": {
-        "type": "object",
-        "description": "Exact Mesh DNS name lookup in the authenticated Node's visible configuration.",
-        "required": [
-          "name"
-        ],
-        "properties": {
-          "name": {
-            "type": "string",
-            "description": "Exact FQDN; raw UTF-8 is bounded before strict DNS/IDNA normalization.",
-            "maxLength": 1024
-          }
-        },
-        "additionalProperties": false
-      },
-      "NodeDnsQueryResponse": {
-        "type": "object",
-        "description": "Permission-filtered name lookup snapshot without an execution grant or DNS TTL.",
-        "required": [
-          "requestId",
-          "networkId",
-          "sourceNodeId",
-          "configurationRevision",
-          "asOf",
-          "record"
-        ],
-        "properties": {
-          "asOf": {
-            "type": "string",
-            "format": "date-time",
-            "description": "UTC time at which the Server evaluated the lookup."
-          },
-          "configurationRevision": {
-            "$ref": "#/components/schemas/Revision",
-            "description": "Configuration revision used to resolve and authorize the name."
-          },
-          "networkId": {
-            "$ref": "#/components/schemas/NetworkId",
-            "description": "Network determined from the authenticated Node session."
-          },
-          "record": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/NodeDnsRecord",
-                "description": "Unknown and non-visible names have the same null result. This snapshot\ncarries no execution grant, TTL, or authoritative DNS negative answer."
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "requestId": {
-            "$ref": "#/components/schemas/RequestId",
-            "description": "Server request identifier for correlation."
-          },
-          "sourceNodeId": {
-            "$ref": "#/components/schemas/NodeId",
-            "description": "Authenticated Node whose visibility was used for the lookup."
-          }
-        },
-        "additionalProperties": false
-      },
-      "NodeDnsRecord": {
-        "type": "object",
-        "description": "Visible configured Mesh name and addresses for a Node.",
-        "required": [
-          "nodeId",
-          "name",
-          "addresses"
-        ],
-        "properties": {
-          "addresses": {
-            "$ref": "#/components/schemas/NodeAddresses",
-            "description": "Configured Mesh addresses associated with this name."
-          },
-          "name": {
-            "type": "string",
-            "description": "Canonical fully qualified Mesh DNS name."
-          },
-          "nodeId": {
-            "$ref": "#/components/schemas/NodeId",
-            "description": "Visible Node identified by the queried name."
-          }
-        },
-        "additionalProperties": false
-      },
-      "NodeEntitiesView": {
-        "type": "object",
-        "description": "Node-visible inventory projected under its current authenticated scope.",
-        "required": [
-          "nodes"
-        ],
-        "properties": {
-          "nodes": {
-            "type": "object",
-            "description": "Visible node summaries keyed by node ID; presence does not grant business access.",
-            "additionalProperties": {
-              "$ref": "#/components/schemas/NodeInventoryView"
-            },
-            "propertyNames": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Stable node identifier, independent of its addresses and keys.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
-              "maxLength": 36,
-              "minLength": 36,
-              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-            }
-          }
-        },
-        "additionalProperties": false
-      },
-      "NodeEvent": {
-        "oneOf": [
-          {
-            "type": "object",
-            "description": "First frame of an initial synchronization batch, containing the visible configuration.",
-            "required": [
-              "batch",
-              "requestId",
-              "configuration",
-              "type"
-            ],
-            "properties": {
-              "batch": {
-                "type": "string",
-                "description": "Identifier shared by all snapshots and the ready frame in this batch."
-              },
-              "configuration": {
-                "$ref": "#/components/schemas/NodeConfigurationView",
-                "description": "Current configuration projected for the authenticated user or Node."
-              },
-              "progress": {
-                "oneOf": [
-                  {
-                    "$ref": "#/components/schemas/ConfigurationApplyProgress",
-                    "description": "Visible configuration application progress when available; current Server snapshots include it."
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              },
-              "requestId": {
-                "$ref": "#/components/schemas/RequestId",
-                "description": "Correlation ID of the HTTP request carrying this stream, as in a\nGET response and the `x-request-id` header."
-              },
-              "type": {
-                "type": "string",
-                "enum": [
-                  "config.snapshot"
-                ]
-              }
-            },
-            "additionalProperties": false
-          },
-          {
-            "type": "object",
-            "description": "Entity inventory frame of the initial synchronization batch.",
-            "required": [
-              "batch",
-              "entities",
-              "type"
-            ],
-            "properties": {
-              "batch": {
-                "type": "string",
-                "description": "Identifier shared with this batch's configuration, state, and ready frames."
-              },
-              "entities": {
-                "$ref": "#/components/schemas/NodeEntitiesView",
-                "description": "Complete entity inventory within the caller's authorized scope."
-              },
-              "type": {
-                "type": "string",
-                "enum": [
-                  "entities.snapshot"
-                ]
-              }
-            },
-            "additionalProperties": false
-          },
-          {
-            "type": "object",
-            "description": "State frame of the initial synchronization batch, retaining original report freshness.",
-            "required": [
-              "batch",
-              "state",
-              "type"
-            ],
-            "properties": {
-              "batch": {
-                "type": "string",
-                "description": "Identifier shared with this batch's configuration, entities, and ready frames."
-              },
-              "state": {
-                "$ref": "#/components/schemas/StateView",
-                "description": "Current permission-filtered operational state."
-              },
-              "type": {
-                "type": "string",
-                "enum": [
-                  "state.snapshot"
-                ]
-              }
-            },
-            "additionalProperties": false
-          },
-          {
-            "type": "object",
-            "description": "Commit marker allowing the client to apply a complete initial snapshot batch.",
-            "required": [
-              "batch",
-              "cursor",
-              "heartbeatIntervalMs",
-              "disconnectAfterMs",
-              "type"
-            ],
-            "properties": {
-              "batch": {
-                "type": "string",
-                "description": "Identifier of the completed snapshot batch."
-              },
-              "cursor": {
-                "type": "string",
-                "description": "Resume cursor to save only after the entire batch has been validated and applied."
-              },
-              "disconnectAfterMs": {
-                "type": "integer",
-                "format": "int32",
-                "description": "Read-idle timeout in milliseconds after which the client should reconnect.",
-                "minimum": 0
-              },
-              "heartbeatIntervalMs": {
-                "type": "integer",
-                "format": "int32",
-                "description": "Expected interval between idle heartbeat comments, in milliseconds.",
-                "minimum": 0
-              },
-              "type": {
-                "type": "string",
-                "enum": [
-                  "sync.ready"
-                ]
-              }
-            },
-            "additionalProperties": false
-          },
-          {
-            "type": "object",
-            "description": "Incremental operational state projection following the previously applied stream cursor.",
-            "required": [
-              "stateEpoch",
-              "baseCursor",
-              "cursor",
-              "updated",
-              "removed",
-              "links",
-              "paths",
-              "type"
-            ],
-            "properties": {
-              "asOf": {
-                "type": [
-                  "string",
-                  "null"
-                ],
-                "format": "date-time",
-                "description": "Projection time, not a new measurement timestamp. Current Server\nframes include these metadata fields; optionality permits consumers\nto apply previously retained deltas without inventing values."
-              },
-              "baseCursor": {
-                "type": "string",
-                "description": "Cursor of the preceding applied stream event, including non-state notices."
-              },
-              "configurationRevision": {
-                "oneOf": [
-                  {
-                    "$ref": "#/components/schemas/Revision",
-                    "description": "Configuration revision used for this projection; omitted in retained deltas lacking this metadata."
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              },
-              "cursor": {
-                "type": "string",
-                "description": "Resume cursor to save after this delta has been validated and applied."
-              },
-              "links": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/components/schemas/AggregatedLink"
-                },
-                "description": "Replacement collection of currently visible aggregated links."
-              },
-              "paths": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/components/schemas/AggregatedPath"
-                },
-                "description": "Replacement collection of currently visible aggregated paths."
-              },
-              "removed": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/components/schemas/NodeId"
-                },
-                "description": "Node identifiers to remove from the cached state view."
-              },
-              "sequence": {
-                "oneOf": [
-                  {
-                    "$ref": "#/components/schemas/Sequence",
-                    "description": "Network committed-change sequence; omitted only in retained deltas lacking this metadata."
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              },
-              "stateEpoch": {
-                "$ref": "#/components/schemas/StateEpoch",
-                "description": "Epoch identifying the state continuity domain for this update."
-              },
-              "type": {
-                "type": "string",
-                "enum": [
-                  "state.delta"
-                ]
-              },
-              "updated": {
-                "type": "object",
-                "description": "Complete replacement state for each updated visible node.",
-                "additionalProperties": {
-                  "$ref": "#/components/schemas/NodeStateView"
-                },
-                "propertyNames": {
-                  "type": "string",
-                  "format": "uuid",
-                  "description": "Stable node identifier, independent of its addresses and keys.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
-                  "maxLength": 36,
-                  "minLength": 36,
-                  "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-                }
-              }
-            },
-            "additionalProperties": false
-          },
-          {
-            "type": "object",
-            "description": "Entity replacements and explicit removals following the previously applied stream cursor.",
-            "required": [
-              "baseCursor",
-              "cursor",
-              "updated",
-              "removed",
-              "type"
-            ],
-            "properties": {
-              "baseCursor": {
-                "type": "string",
-                "description": "Cursor of the preceding applied stream event, including configuration and resource notices."
-              },
-              "cursor": {
-                "type": "string",
-                "description": "Resume cursor to save after this delta has been validated and applied."
-              },
-              "removed": {
-                "$ref": "#/components/schemas/EntityRemovals",
-                "description": "Explicit entity identifiers to remove from the cached inventory."
-              },
-              "type": {
-                "type": "string",
-                "enum": [
-                  "entities.delta"
-                ]
-              },
-              "updated": {
-                "$ref": "#/components/schemas/NodeEntitiesView",
-                "description": "Updated entity fragments that replace their corresponding cached entries."
-              }
-            },
-            "additionalProperties": false
-          },
-          {
-            "type": "object",
-            "description": "Notification of a committed configuration revision, independent of Node application progress.",
-            "required": [
-              "networkId",
-              "previousRevision",
-              "revision",
-              "changedAt",
-              "cause",
-              "actor",
-              "changedPointers",
-              "changesComplete",
-              "sourceChanged",
-              "type"
-            ],
-            "properties": {
-              "actor": {
-                "$ref": "#/components/schemas/EventActor",
-                "description": "Committing actor, redacted for users without management scope and for Nodes."
-              },
-              "cause": {
-                "$ref": "#/components/schemas/ConfigurationChangeCause",
-                "description": "Primary trigger for the configuration change."
-              },
-              "changedAt": {
-                "type": "string",
-                "format": "date-time",
-                "description": "Time at which the configuration change was committed."
-              },
-              "changedPointers": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                },
-                "description": "Visible changed JSON Pointers, provided as invalidation hints rather than a complete dependency analysis."
-              },
-              "changesComplete": {
-                "type": "boolean",
-                "description": "Whether the changed-pointer list is complete rather than redacted or truncated."
-              },
-              "networkId": {
-                "$ref": "#/components/schemas/NetworkId",
-                "description": "Network whose saved configuration changed."
-              },
-              "previousRevision": {
-                "$ref": "#/components/schemas/Revision",
-                "description": "Desired configuration revision immediately before the commit."
-              },
-              "requestId": {
-                "oneOf": [
-                  {
-                    "$ref": "#/components/schemas/RequestId",
-                    "description": "Committing request's correlation ID, or null when withheld from the subscriber."
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              },
-              "revision": {
-                "$ref": "#/components/schemas/Revision",
-                "description": "Newly committed desired configuration revision."
-              },
-              "sourceChanged": {
-                "type": "boolean",
-                "description": "Whether the original configuration source text changed."
-              },
-              "type": {
-                "type": "string",
-                "enum": [
-                  "configuration.changed"
-                ]
-              }
-            },
-            "additionalProperties": false
-          },
-          {
-            "type": "object",
-            "description": "Configuration application progress using the same projection as the progress GET operation.",
-            "required": [
-              "progress",
-              "type"
-            ],
-            "properties": {
-              "progress": {
-                "$ref": "#/components/schemas/ConfigurationApplyProgress",
-                "description": "Updated application progress for the fixed configuration submission target."
-              },
-              "type": {
-                "type": "string",
-                "enum": [
-                  "configuration.progress"
-                ]
-              }
-            },
-            "additionalProperties": false
-          },
-          {
-            "type": "object",
-            "description": "A manager must re-read the normal resource GET view in this network.\nThis notice carries no source URL, material or unscoped artifact data.",
-            "required": [
-              "networkId",
-              "revision",
-              "type"
-            ],
-            "properties": {
-              "networkId": {
-                "$ref": "#/components/schemas/NetworkId",
-                "description": "Network whose authorized resource view should be reread."
-              },
-              "revision": {
-                "$ref": "#/components/schemas/Revision",
-                "description": "Configuration revision associated with the resource change notification."
-              },
-              "type": {
-                "type": "string",
-                "enum": [
-                  "resources.changed"
-                ]
-              }
-            },
-            "additionalProperties": false
-          },
-          {
-            "type": "object",
-            "description": "Subscriber-specific observation task status update.",
-            "required": [
-              "observation",
-              "type"
-            ],
-            "properties": {
-              "observation": {
-                "$ref": "#/components/schemas/ObservationTask",
-                "description": "Observation task with this subscription's current status and execution context."
-              },
-              "type": {
-                "type": "string",
-                "enum": [
-                  "observation.status"
-                ]
-              }
-            },
-            "additionalProperties": false
-          },
-          {
-            "type": "object",
-            "description": "Subscriber-specific observation update containing actual measurement results.",
-            "required": [
-              "observation",
-              "type"
-            ],
-            "properties": {
-              "observation": {
-                "$ref": "#/components/schemas/ObservationTask",
-                "description": "Observation task with authorized samples and their original measurement context."
-              },
-              "type": {
-                "type": "string",
-                "enum": [
-                  "observation.sample"
-                ]
-              }
-            },
-            "additionalProperties": false
-          },
-          {
-            "type": "object",
-            "description": "Notification that a terminated observation subscription has left the retained view.",
-            "required": [
-              "subscriptionId",
-              "type"
-            ],
-            "properties": {
-              "subscriptionId": {
-                "$ref": "#/components/schemas/ObservationSubscriptionId",
-                "description": "Subscription whose cached observation view should be removed."
-              },
-              "type": {
-                "type": "string",
-                "enum": [
-                  "observation.removed"
-                ]
-              }
-            },
-            "additionalProperties": false
-          },
-          {
-            "type": "object",
-            "description": "Notification that incremental continuity was lost and a new full batch is required.",
-            "required": [
-              "reason",
-              "type"
-            ],
-            "properties": {
-              "reason": {
-                "$ref": "#/components/schemas/ResetReason",
-                "description": "Reason the previous cursor and cached view can no longer continue incrementally."
-              },
-              "type": {
-                "type": "string",
-                "enum": [
-                  "sync.reset"
-                ]
-              }
-            },
-            "additionalProperties": false
-          },
-          {
-            "type": "object",
-            "description": "Final stream notice before closure when an explicit reason can be delivered.",
-            "required": [
-              "reason",
-              "type"
-            ],
-            "properties": {
-              "reason": {
-                "$ref": "#/components/schemas/ClosedReason",
-                "description": "Authentication, lease, or shutdown condition that ended the stream."
-              },
-              "type": {
-                "type": "string",
-                "enum": [
-                  "stream.closed"
-                ]
-              }
-            },
-            "additionalProperties": false
-          }
-        ],
-        "description": "One SSE data frame containing a permission-filtered snapshot, update, or stream lifecycle notice."
-      },
       "NodeId": {
         "type": "string",
         "format": "uuid",
@@ -11168,7 +9223,7 @@ export const schemaDocument = {
           "controlKeyRevokedAt",
           "dataplaneKeyRevokedAt",
           "canDelete",
-          "desiredExecution",
+          "netmap",
           "canRevokeControlKey",
           "canRevokeDataplaneKey",
           "controlKeyCreatedAt",
@@ -11221,17 +9276,6 @@ export const schemaDocument = {
               }
             ]
           },
-          "desiredExecution": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/ConfigurationRef",
-                "description": "Current execution target, not a saved/applied receipt. May be a later refresh than the source apply."
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
           "enabled": {
             "type": "boolean",
             "description": "Whether configuration enables business execution; disabled Nodes may still synchronize control state."
@@ -11251,6 +9295,17 @@ export const schemaDocument = {
           "keys": {
             "$ref": "#/components/schemas/NodeKeyMetadata",
             "description": "Public metadata of the latest bound keys."
+          },
+          "netmap": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NetmapRef",
+                "description": "Current netmap of the Node, not a saved/applied receipt."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "networkId": {
             "$ref": "#/components/schemas/NetworkId",
@@ -11537,57 +9592,6 @@ export const schemaDocument = {
           "bytes": {
             "$ref": "#/components/schemas/Digest",
             "description": "Canonical lowercase hexadecimal encoding of the 32 public key bytes."
-          }
-        },
-        "additionalProperties": false
-      },
-      "NodePublicationProgress": {
-        "type": "object",
-        "description": "Server-derived receipt projection for one Node's target within a publication.",
-        "required": [
-          "target",
-          "current",
-          "saved",
-          "applied",
-          "failed",
-          "freshness",
-          "lastReceivedAt"
-        ],
-        "properties": {
-          "applied": {
-            "type": "boolean",
-            "description": "Whether freshness is current and the latest attempt and sequence report applied."
-          },
-          "current": {
-            "type": "boolean",
-            "description": "Whether this publication is still the Node's desired execution publication."
-          },
-          "failed": {
-            "type": "boolean",
-            "description": "Whether the latest receipt by attempt and sequence for the current instance reports failure."
-          },
-          "freshness": {
-            "$ref": "#/components/schemas/ReceiptFreshness",
-            "description": "Current validity of the target and instance, evaluated independently of receipt phase."
-          },
-          "lastReceivedAt": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/Timestamp",
-                "description": "Latest Server reception time among this Node's publication receipts, or null when none exist."
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "saved": {
-            "type": "boolean",
-            "description": "Whether a saved receipt exists for the current instance and generation in this publication."
-          },
-          "target": {
-            "$ref": "#/components/schemas/ConfigurationRef",
-            "description": "Exact target assigned to this Node by the publication."
           }
         },
         "additionalProperties": false
@@ -12095,18 +10099,18 @@ export const schemaDocument = {
         "description": "Real Node event retained with its original execution context and occurrence time.",
         "required": [
           "eventId",
-          "configuration",
+          "netmap",
           "occurredAt",
           "payload"
         ],
         "properties": {
-          "configuration": {
-            "$ref": "#/components/schemas/ConfigurationRef",
-            "description": "Exact execution target under which the event occurred."
-          },
           "eventId": {
             "$ref": "#/components/schemas/EventId",
             "description": "Stable event identifier used to deduplicate reports from this source Node."
+          },
+          "netmap": {
+            "$ref": "#/components/schemas/NetmapRef",
+            "description": "Exact netmap under which the event occurred."
           },
           "occurredAt": {
             "type": "string",
@@ -12409,20 +10413,20 @@ export const schemaDocument = {
       },
       "ObservationResult": {
         "type": "object",
-        "description": "Source Node result bound to the task's actual instance and execution target.",
+        "description": "Source Node result bound to the task's actual instance and netmap.",
         "required": [
           "instanceId",
-          "configuration",
+          "netmap",
           "result"
         ],
         "properties": {
-          "configuration": {
-            "$ref": "#/components/schemas/ConfigurationRef",
-            "description": "Exact execution target under which the update was produced."
-          },
           "instanceId": {
             "$ref": "#/components/schemas/InstanceId",
             "description": "Source instance that produced the update."
+          },
+          "netmap": {
+            "$ref": "#/components/schemas/NetmapRef",
+            "description": "Exact netmap under which the update was produced."
           },
           "result": {
             "$ref": "#/components/schemas/ObservationUpdate",
@@ -12580,7 +10584,7 @@ export const schemaDocument = {
           "targetNodeId",
           "service",
           "selection",
-          "configuration",
+          "netmap",
           "instanceId",
           "metrics",
           "intervalMs",
@@ -12590,10 +10594,6 @@ export const schemaDocument = {
           "renewAfter"
         ],
         "properties": {
-          "configuration": {
-            "$ref": "#/components/schemas/ConfigurationRef",
-            "description": "Exact source execution target to which results must remain bound."
-          },
           "expiresAt": {
             "type": "string",
             "format": "date-time",
@@ -12630,6 +10630,10 @@ export const schemaDocument = {
               "$ref": "#/components/schemas/MetricKind"
             },
             "description": "Measurement kinds assigned to this task."
+          },
+          "netmap": {
+            "$ref": "#/components/schemas/NetmapRef",
+            "description": "Source netmap current when the task was assigned; results name the netmap they ran under."
           },
           "path": {
             "type": [
@@ -12882,91 +10886,12 @@ export const schemaDocument = {
           "delivered"
         ]
       },
-      "PathPermit": {
-        "type": "object",
-        "description": "Server-compiled business authority shared by the source, relays and terminal of each allowed complete path.",
-        "required": [
-          "demandId",
-          "source",
-          "sourceAddresses",
-          "target",
-          "protocol",
-          "profile",
-          "paths",
-          "expiresAt",
-          "replies"
-        ],
-        "properties": {
-          "demandId": {
-            "$ref": "#/components/schemas/RequestId",
-            "description": "Business demand for which this permit was compiled."
-          },
-          "exit": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/ExitPermit",
-                "description": "Required execution constraints for an external exit; absent for Mesh services."
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "expiresAt": {
-            "$ref": "#/components/schemas/Timestamp",
-            "description": "Permit deadline in milliseconds since the Unix epoch, serialized as UTC RFC 3339 and bounded by demand and dependency deadlines."
-          },
-          "paths": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/LogicalPath"
-            },
-            "description": "Allowed complete paths; a flow retains its established path."
-          },
-          "port": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/Port",
-                "description": "Exact TCP or UDP destination port; null or omitted only for ICMP echo."
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "profile": {
-            "type": "string",
-            "description": "Source routing profile used to compile the permit."
-          },
-          "protocol": {
-            "$ref": "#/components/schemas/BusinessProtocol",
-            "description": "Authorized inner business protocol."
-          },
-          "replies": {
-            "$ref": "#/components/schemas/ReplyPolicy",
-            "description": "Always reverse the established complete path, never evaluate reverse routing for replies."
-          },
-          "source": {
-            "$ref": "#/components/schemas/NodeId",
-            "description": "Authenticated original business source, unchanged across path segments."
-          },
-          "sourceAddresses": {
-            "$ref": "#/components/schemas/NodeAddresses",
-            "description": "Configured source Mesh addresses checked during packet admission."
-          },
-          "target": {
-            "$ref": "#/components/schemas/BusinessTarget",
-            "description": "Authorized business destination after Mesh address classification."
-          }
-        },
-        "additionalProperties": false
-      },
       "PathState": {
         "type": "object",
         "description": "A participating Node's observation of a complete runtime path.",
         "required": [
           "nodes",
-          "publicationId",
+          "netmap",
           "reporterRole",
           "evidence",
           "observedAt",
@@ -12982,6 +10907,10 @@ export const schemaDocument = {
             "format": "date-time",
             "description": "UTC deadline after which this path observation is no longer current."
           },
+          "netmap": {
+            "$ref": "#/components/schemas/NetmapRef",
+            "description": "Netmap under which this path was used."
+          },
           "nodes": {
             "type": "array",
             "items": {
@@ -12993,10 +10922,6 @@ export const schemaDocument = {
             "type": "string",
             "format": "date-time",
             "description": "Original UTC observation time."
-          },
-          "publicationId": {
-            "$ref": "#/components/schemas/PublicationId",
-            "description": "Execution publication under which this path was used."
           },
           "reporterRole": {
             "$ref": "#/components/schemas/ReporterRole",
@@ -13032,68 +10957,6 @@ export const schemaDocument = {
           "source": {
             "$ref": "#/components/schemas/CandidateSource",
             "description": "Coarse provenance of the candidate."
-          }
-        },
-        "additionalProperties": false
-      },
-      "PeerConfiguration": {
-        "type": "object",
-        "description": "Trusted identity and addresses of a peer required by the compiled execution paths.",
-        "required": [
-          "identity",
-          "addresses",
-          "controlKey",
-          "dataplaneKey"
-        ],
-        "properties": {
-          "addresses": {
-            "$ref": "#/components/schemas/NodeAddresses",
-            "description": "Peer Mesh addresses used by path and packet admission."
-          },
-          "controlKey": {
-            "$ref": "#/components/schemas/BoundNodeKey",
-            "description": "Peer Ed25519 key binding used for control identity proofs."
-          },
-          "dataplaneKey": {
-            "$ref": "#/components/schemas/BoundNodeKey",
-            "description": "Peer X25519 key binding used for end-to-end protection."
-          },
-          "identity": {
-            "$ref": "#/components/schemas/NodeIdentity",
-            "description": "Peer authorization identity from the same source configuration."
-          }
-        },
-        "additionalProperties": false
-      },
-      "PeerDelta": {
-        "type": "object",
-        "description": "Server-computed keyed changes between two complete execution targets.",
-        "required": [
-          "remove",
-          "upsert"
-        ],
-        "properties": {
-          "remove": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/NodeId"
-            },
-            "description": "Keys present in the base that must be removed from the reconstructed target."
-          },
-          "upsert": {
-            "type": "object",
-            "description": "Complete values to insert or replace; keys cannot also occur in remove.",
-            "additionalProperties": {
-              "$ref": "#/components/schemas/PeerConfiguration"
-            },
-            "propertyNames": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Stable node identifier, independent of its addresses and keys.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
-              "maxLength": 36,
-              "minLength": 36,
-              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-            }
           }
         },
         "additionalProperties": false
@@ -13336,39 +11199,6 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
-      "PermitDelta": {
-        "type": "object",
-        "description": "Server-computed keyed changes between two complete execution targets.",
-        "required": [
-          "remove",
-          "upsert"
-        ],
-        "properties": {
-          "remove": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/RequestId"
-            },
-            "description": "Keys present in the base that must be removed from the reconstructed target."
-          },
-          "upsert": {
-            "type": "object",
-            "description": "Complete values to insert or replace; keys cannot also occur in remove.",
-            "additionalProperties": {
-              "$ref": "#/components/schemas/PathPermit"
-            },
-            "propertyNames": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Request identifier.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
-              "maxLength": 36,
-              "minLength": 36,
-              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-            }
-          }
-        },
-        "additionalProperties": false
-      },
       "PlannedEdge": {
         "type": "object",
         "description": "One hop of a planned path with the topology rule that allows it.",
@@ -13484,7 +11314,7 @@ export const schemaDocument = {
         "description": "Node request for an immutable short-lived offer bound to an exact authorized UDP carrier and candidate pair.",
         "required": [
           "instance",
-          "configuration",
+          "netmap",
           "stateEpoch",
           "requestId",
           "expiresAt",
@@ -13498,10 +11328,6 @@ export const schemaDocument = {
             "$ref": "#/components/schemas/Carrier",
             "description": "Exact Native UDP carrier authorized by both participants' complete-path permits."
           },
-          "configuration": {
-            "$ref": "#/components/schemas/ConfigurationRef",
-            "description": "Source's exact current execution target."
-          },
           "expiresAt": {
             "$ref": "#/components/schemas/Timestamp",
             "description": "Absolute requested deadline, unchanged on retry, never a duration."
@@ -13513,6 +11339,10 @@ export const schemaDocument = {
           "localCandidate": {
             "$ref": "#/components/schemas/CandidateReference",
             "description": "Original State-owned candidate from the preparing Node's actual socket."
+          },
+          "netmap": {
+            "$ref": "#/components/schemas/NetmapRef",
+            "description": "Source's exact current netmap."
           },
           "peerCandidate": {
             "$ref": "#/components/schemas/CandidateReference",
@@ -14019,7 +11849,7 @@ export const schemaDocument = {
           "measurementId",
           "kind",
           "path",
-          "publicationId",
+          "netmap",
           "startedAt",
           "outcome"
         ],
@@ -14069,6 +11899,10 @@ export const schemaDocument = {
             "$ref": "#/components/schemas/EventId",
             "description": "Stable measurement identifier reused when the same observation is reported again."
           },
+          "netmap": {
+            "$ref": "#/components/schemas/NetmapRef",
+            "description": "Netmap associated with the measurement."
+          },
           "outcome": {
             "$ref": "#/components/schemas/ProbeOutcome",
             "description": "Actual outcome of the measured operation."
@@ -14079,10 +11913,6 @@ export const schemaDocument = {
               "$ref": "#/components/schemas/NodeId"
             },
             "description": "Ordered Node path associated with the measured operation."
-          },
-          "publicationId": {
-            "$ref": "#/components/schemas/PublicationId",
-            "description": "Execution publication associated with the measurement."
           },
           "startedAt": {
             "type": "string",
@@ -14696,7 +12526,7 @@ export const schemaDocument = {
           },
           {
             "type": "object",
-            "description": "The receipt target is neither current nor a valid historical reference held by this Node; returns HTTP 409 and requires fencing and entering the blocked state.",
+            "description": "The receipt netmap is neither current nor a valid historical netmap of this Node; returns HTTP 409 and requires fencing and entering the blocked state.",
             "required": [
               "code",
               "params",
@@ -14722,7 +12552,7 @@ export const schemaDocument = {
           },
           {
             "type": "object",
-            "description": "The current publication's execution eligibility was withdrawn or changed; returns HTTP 409. Discard the rejected receipt, retry control refresh after one second, and create a new installation attempt on the same instance.",
+            "description": "An applied receipt names a netmap that a newer serial already replaced; returns HTTP 409. Discard the rejected receipt, synchronize, and create a new installation attempt for the current netmap.",
             "required": [
               "code",
               "params",
@@ -14732,7 +12562,7 @@ export const schemaDocument = {
               "code": {
                 "type": "string",
                 "enum": [
-                  "receipt_publication_superseded"
+                  "receipt_netmap_superseded"
                 ]
               },
               "message": {
@@ -14748,33 +12578,7 @@ export const schemaDocument = {
           },
           {
             "type": "object",
-            "description": "An applied receipt for the current enabled target lacks an unexpired execution lease; returns HTTP 409. Discard the rejected receipt, retry control refresh after one second, and create a new installation attempt without extending the old lease.",
-            "required": [
-              "code",
-              "params",
-              "message"
-            ],
-            "properties": {
-              "code": {
-                "type": "string",
-                "enum": [
-                  "receipt_lease_expired"
-                ]
-              },
-              "message": {
-                "type": "string",
-                "description": "Safe fallback text. Clients branch on code."
-              },
-              "params": {
-                "$ref": "#/components/schemas/EmptyParams",
-                "description": "Structured context defined by this problem code, or an empty object when none is exposed."
-              }
-            },
-            "additionalProperties": false
-          },
-          {
-            "type": "object",
-            "description": "The receipt observation time is out of bounds or applied lacks an earlier matching saved receipt; returns HTTP 409. Discard the rejected receipt, retry control refresh after one second, and confirm saved again in a new installation attempt.",
+            "description": "The receipt observation time is out of bounds or applied lacks an earlier matching saved receipt; returns HTTP 409. Discard the rejected receipt, synchronize, and confirm saved again in a new installation attempt.",
             "required": [
               "code",
               "params",
@@ -14800,7 +12604,7 @@ export const schemaDocument = {
           },
           {
             "type": "object",
-            "description": "A receipt reuses an instance/publication/attempt/sequence identity with different content or has incompatible phase and failure values; returns HTTP 409. Discard it without rewriting the conflicting receipt, retry control refresh after one second, and create a new installation attempt.",
+            "description": "A receipt reuses an instance/netmap/attempt/sequence identity with different content or has incompatible phase and failure values; returns HTTP 409. Discard it without rewriting the conflicting receipt and create a new installation attempt.",
             "required": [
               "code",
               "params",
@@ -15442,73 +13246,21 @@ export const schemaDocument = {
         "minLength": 36,
         "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
       },
-      "PublicationProgress": {
-        "type": "object",
-        "description": "Administrator-visible execution publication targets and Server-derived receipt progress.",
-        "required": [
-          "publication",
-          "revision",
-          "sequence",
-          "withdrawnAt",
-          "nodes"
-        ],
-        "properties": {
-          "nodes": {
-            "type": "object",
-            "description": "Per-Node targets and receipt projections for this publication.",
-            "additionalProperties": {
-              "$ref": "#/components/schemas/NodePublicationProgress"
-            },
-            "propertyNames": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Stable node identifier, independent of its addresses and keys.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
-              "maxLength": 36,
-              "minLength": 36,
-              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-            }
-          },
-          "publication": {
-            "$ref": "#/components/schemas/PublicationId",
-            "description": "Execution publication whose fixed targets are described."
-          },
-          "revision": {
-            "$ref": "#/components/schemas/Revision",
-            "description": "Source configuration revision used by the publication."
-          },
-          "sequence": {
-            "$ref": "#/components/schemas/Sequence",
-            "description": "Stored sequence of this execution publication."
-          },
-          "withdrawnAt": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/Timestamp",
-                "description": "UTC withdrawal time, or null while the publication has not been withdrawn."
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "additionalProperties": false
-      },
       "QueryUdpTraversalRequest": {
         "type": "object",
         "description": "Node query for current STUN metadata and its own valid UDP acquisition attempts without renewing them.",
         "required": [
           "instance",
-          "configuration"
+          "netmap"
         ],
         "properties": {
-          "configuration": {
-            "$ref": "#/components/schemas/ConfigurationRef",
-            "description": "Exact current execution target against which acquisition scope is checked."
-          },
           "instance": {
             "$ref": "#/components/schemas/InstanceRequest",
             "description": "Current runtime instance making the query."
+          },
+          "netmap": {
+            "$ref": "#/components/schemas/NetmapRef",
+            "description": "Exact current netmap against which acquisition scope is checked."
           }
         },
         "additionalProperties": false
@@ -15582,7 +13334,7 @@ export const schemaDocument = {
       },
       "ReceiptFreshness": {
         "type": "string",
-        "description": "Server evaluation of target retirement, instance binding and execution deadlines.",
+        "description": "Server evaluation of netmap retirement and instance binding.",
         "enum": [
           "current",
           "expired",
@@ -15592,7 +13344,7 @@ export const schemaDocument = {
       },
       "ReceiptPhase": {
         "type": "string",
-        "description": "Durable save or installation outcome reported by the Node for an exact execution target.",
+        "description": "Durable save or installation outcome reported by the Node for an exact netmap.",
         "enum": [
           "saved",
           "applied",
@@ -15601,10 +13353,10 @@ export const schemaDocument = {
       },
       "ReceiptRequest": {
         "type": "object",
-        "description": "Node-reported durable result ordered by instance, target, attempt and sequence rather than HTTP arrival.",
+        "description": "Node-reported durable result ordered by instance, netmap, attempt and sequence rather than HTTP arrival.",
         "required": [
           "instance",
-          "target",
+          "netmap",
           "phase",
           "attempt",
           "sequence",
@@ -15613,7 +13365,7 @@ export const schemaDocument = {
         "properties": {
           "attempt": {
             "$ref": "#/components/schemas/Version",
-            "description": "Increasing application attempt within this instance/target."
+            "description": "Increasing application attempt within this instance/netmap."
           },
           "failure": {
             "oneOf": [
@@ -15630,6 +13382,10 @@ export const schemaDocument = {
             "$ref": "#/components/schemas/InstanceRequest",
             "description": "Runtime instance and generation that performed this attempt."
           },
+          "netmap": {
+            "$ref": "#/components/schemas/NetmapRef",
+            "description": "Exact netmap saved or installed by the attempt."
+          },
           "phase": {
             "$ref": "#/components/schemas/ReceiptPhase",
             "description": "Actual durable save or installation result."
@@ -15641,10 +13397,6 @@ export const schemaDocument = {
           "sequence": {
             "$ref": "#/components/schemas/Sequence",
             "description": "Increasing result sequence within the attempt; delivery retries reuse it."
-          },
-          "target": {
-            "$ref": "#/components/schemas/ConfigurationRef",
-            "description": "Exact complete target saved or installed by the attempt."
           }
         },
         "additionalProperties": false
@@ -15828,30 +13580,6 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
-      "RenewDemandRequest": {
-        "type": "object",
-        "description": "Explicit renewal of a live demand without changing its original business intent.",
-        "required": [
-          "instance",
-          "requestId",
-          "expiresAt"
-        ],
-        "properties": {
-          "expiresAt": {
-            "$ref": "#/components/schemas/Timestamp",
-            "description": "Absolute desired deadline of the existing demand; replay never adds duration."
-          },
-          "instance": {
-            "$ref": "#/components/schemas/InstanceRequest",
-            "description": "Current source instance that owns the existing demand."
-          },
-          "requestId": {
-            "$ref": "#/components/schemas/RequestId",
-            "description": "Existing demand identifier, not a new renewal request identifier."
-          }
-        },
-        "additionalProperties": false
-      },
       "RenewNodeObservation": {
         "type": "object",
         "description": "Explicit renewal of the caller's existing Node observation subscription under current permissions.",
@@ -15870,13 +13598,6 @@ export const schemaDocument = {
           }
         },
         "additionalProperties": false
-      },
-      "ReplyPolicy": {
-        "type": "string",
-        "description": "Reply-path constraint attached to a compiled business permit.",
-        "enum": [
-          "statefulExactReversePath"
-        ]
       },
       "ReportRef": {
         "type": "object",
@@ -16344,27 +14065,22 @@ export const schemaDocument = {
           },
           "profile": {
             "type": "string",
-            "description": "Allowed routing profile to select for subsequent demands and DNS execution."
+            "description": "Allowed routing profile to select for subsequent flows and DNS execution."
           }
         },
         "additionalProperties": false
       },
       "RoutingSelectionResponse": {
         "type": "object",
-        "description": "Server-committed routing selection and the execution publication produced by the change.",
+        "description": "Server-committed routing selection; the Node's next netmap carries it.",
         "required": [
           "version",
-          "profile",
-          "publication"
+          "profile"
         ],
         "properties": {
           "profile": {
             "type": "string",
             "description": "Profile selected by the accepted request."
-          },
-          "publication": {
-            "$ref": "#/components/schemas/PublicationId",
-            "description": "Execution publication produced after cancelling the source's prior demands."
           },
           "version": {
             "$ref": "#/components/schemas/Version",
@@ -16840,19 +14556,19 @@ export const schemaDocument = {
         "required": [
           "nodeId",
           "instance",
-          "configuration",
+          "netmap",
           "socketId",
           "socketGeneration",
           "resource"
         ],
         "properties": {
-          "configuration": {
-            "$ref": "#/components/schemas/ConfigurationRef",
-            "description": "Exact installed execution target associated with the socket."
-          },
           "instance": {
             "$ref": "#/components/schemas/InstanceRequest",
             "description": "Owning runtime instance and its Server-issued generation."
+          },
+          "netmap": {
+            "$ref": "#/components/schemas/NetmapRef",
+            "description": "Exact installed netmap associated with the socket."
           },
           "nodeId": {
             "$ref": "#/components/schemas/NodeId",
@@ -16891,17 +14607,6 @@ export const schemaDocument = {
             "type": "string",
             "description": "Address and port actually bound by the operating system."
           },
-          "configuration": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/ConfigurationRef",
-                "description": "None inherits the report's applied configuration; installation sockets\nmust name their target even before the first configuration is applied."
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
           "endpoints": {
             "type": "array",
             "items": {
@@ -16923,6 +14628,17 @@ export const schemaDocument = {
             },
             "description": "Omitted when not sampled; empty means enumeration found no usable address.",
             "maxItems": 8
+          },
+          "netmap": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NetmapRef",
+                "description": "None inherits the report's applied netmap; installation sockets\nmust name their netmap even before the first one is applied."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "network": {
             "$ref": "#/components/schemas/SocketNetwork",
@@ -17037,8 +14753,8 @@ export const schemaDocument = {
                 "description": "UTC time at which the Node observed the rejection."
               },
               "target": {
-                "$ref": "#/components/schemas/ConfigurationRef",
-                "description": "Exact target rejected by the Node."
+                "$ref": "#/components/schemas/NetmapRef",
+                "description": "Exact netmap rejected by the Node."
               }
             },
             "additionalProperties": false
@@ -17588,6 +15304,10 @@ export const schemaDocument = {
             "type": "string",
             "description": "The other endpoint selector, with the same syntax and no directional distinction from `a`."
           },
+          "keepalive": {
+            "type": "boolean",
+            "description": "Keep an authenticated adjacency on this allowed edge resident even without traffic; defaults to false (acquired on demand, closed when idle). Ignored on block rules."
+          },
           "remark": {
             "type": "string",
             "description": "Free-form description, defaulting to an empty string; duplicate descriptions are allowed."
@@ -17804,56 +15524,6 @@ export const schemaDocument = {
           "tcp"
         ]
       },
-      "TrustedDnsAssociation": {
-        "type": "object",
-        "description": "Trusted source-scoped DNS input used by compilation to bind a domain to destination addresses.",
-        "required": [
-          "networkId",
-          "configurationRevision",
-          "source",
-          "name",
-          "cnameChain",
-          "addresses",
-          "expiresAt"
-        ],
-        "properties": {
-          "addresses": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ExecutionAddress"
-            },
-            "description": "Destination addresses supported by this resolution result."
-          },
-          "cnameChain": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "CNAME chain retained with the trusted resolution result."
-          },
-          "configurationRevision": {
-            "$ref": "#/components/schemas/Revision",
-            "description": "Exact source configuration revision under which the association was obtained."
-          },
-          "expiresAt": {
-            "$ref": "#/components/schemas/Timestamp",
-            "description": "Association deadline in milliseconds since the Unix epoch, serialized as UTC RFC 3339; dependent permits cannot outlive it."
-          },
-          "name": {
-            "type": "string",
-            "description": "Resolved domain name matched by the demand."
-          },
-          "networkId": {
-            "$ref": "#/components/schemas/NetworkId",
-            "description": "Network to which this DNS input belongs."
-          },
-          "source": {
-            "$ref": "#/components/schemas/NodeId",
-            "description": "Node whose domain demand may use the association."
-          }
-        },
-        "additionalProperties": false
-      },
       "TrustedNode": {
         "type": "object",
         "description": "Authenticated key and capability inventory supplied to Server compilation.",
@@ -17889,16 +15559,12 @@ export const schemaDocument = {
         "description": "Shared accept/cancel CAS body. attemptId is the path parameter.",
         "required": [
           "instance",
-          "configuration",
+          "netmap",
           "stateEpoch",
           "version",
           "digest"
         ],
         "properties": {
-          "configuration": {
-            "$ref": "#/components/schemas/ConfigurationRef",
-            "description": "Participant's exact current execution target, matching its offer socket binding."
-          },
           "digest": {
             "$ref": "#/components/schemas/Digest",
             "description": "Immutable offer digest required by the compare-and-swap check."
@@ -17906,6 +15572,10 @@ export const schemaDocument = {
           "instance": {
             "$ref": "#/components/schemas/InstanceRequest",
             "description": "Current participant runtime instance performing the operation."
+          },
+          "netmap": {
+            "$ref": "#/components/schemas/NetmapRef",
+            "description": "Participant's exact current netmap, matching its offer socket binding."
           },
           "stateEpoch": {
             "$ref": "#/components/schemas/StateEpoch",

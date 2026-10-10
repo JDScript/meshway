@@ -6,9 +6,7 @@
 //! paths or credentials. Converting one of these errors must never change its
 //! category: a storage failure is not an invalid session.
 
-use meshway_configuration::{
-    ConfigurationError, ConfigurationIssue, SerializationError, execution::DeltaError,
-};
+use meshway_configuration::{ConfigurationError, ConfigurationIssue, SerializationError};
 use meshway_policy::compile::CompileError;
 
 use crate::accounts::PasswordRules;
@@ -48,10 +46,8 @@ pub enum Error {
     ReceiptInstanceMismatch,
     #[error("receipt target was never held by this node")]
     ReceiptTargetMismatch,
-    #[error("receipt publication is no longer eligible")]
-    ReceiptPublicationSuperseded,
-    #[error("receipt execution lease has expired or was withdrawn")]
-    ReceiptLeaseExpired,
+    #[error("applied receipt names a superseded netmap")]
+    ReceiptNetmapSuperseded,
     #[error("receipt timing or saved prerequisite is not satisfied")]
     ReceiptPrecondition,
     #[error("receipt content conflicts with its immutable sequence")]
@@ -252,22 +248,13 @@ impl From<CompileError> for Error {
             CompileError::Material | CompileError::UnavailableDependency => {
                 Self::DependencyUnavailable
             }
-            CompileError::Serialization => Self::encode("compiled publication"),
+            CompileError::Serialization => Self::encode("compiled netmap"),
         }
     }
 }
 
 impl From<SerializationError> for Error {
     fn from(_: SerializationError) -> Self {
-        Self::encode("compiled publication")
-    }
-}
-
-impl From<DeltaError> for Error {
-    fn from(error: DeltaError) -> Self {
-        match error {
-            DeltaError::InvalidInput => Self::InvalidRequest,
-            DeltaError::Serialization(error) => error.into(),
-        }
+        Self::encode("compiled netmap")
     }
 }

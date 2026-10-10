@@ -11,7 +11,7 @@ fn constrained_route() -> NetworkConfigurationInput {
         a: "group:team".into(),
         b: "*".into(),
         transports: Input::Value(vec![TransportProtocol::NativeTcp]),
- keepalive: false,
+        keepalive: false,
     }];
     c.routing.mesh = vec![MeshRoute {
         remark: String::new(),
@@ -145,7 +145,7 @@ fn route_order_is_retained_and_topology_block_always_wins() {
             transports: Input::Omitted,
             a: "*".into(),
             b: "*".into(),
- keepalive: false,
+            keepalive: false,
         },
         TopologyRule {
             remark: "".into(),
@@ -153,7 +153,7 @@ fn route_order_is_retained_and_topology_block_always_wins() {
             transports: Input::Omitted,
             a: "*".into(),
             b: "*".into(),
- keepalive: false,
+            keepalive: false,
         },
     ];
     let (mut c, _) = normalize(c, &context()).unwrap();

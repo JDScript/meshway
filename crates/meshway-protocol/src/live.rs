@@ -3,7 +3,7 @@
 use crate::object::{wire_object, wire_tagged};
 use meshway_configuration::{ConfigurationView, NodeSettingsView};
 use meshway_model::{
-    MemberSummary, NetmapRef, MembershipId, NetworkId, NetworkSummary, NodeId, Revision,
+    MemberSummary, MembershipId, NetmapRef, NetworkId, NetworkSummary, NodeId, Revision,
 };
 use std::collections::BTreeMap;
 

@@ -328,7 +328,7 @@ async fn real_multihop_admission_separates_neighbors_paths_and_receipt_history()
             action: TopologyAction::Allow,
             a: format!("node:{a}"),
             b: format!("node:{b}"),
- keepalive: false,
+            keepalive: false,
         })
         .collect();
     config.routing.mesh = vec![MeshRoute {

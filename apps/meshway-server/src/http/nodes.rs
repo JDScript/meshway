@@ -7,8 +7,8 @@ use axum::{
     extract::{Path, State, rejection::PathRejection},
     http::HeaderMap,
 };
-use meshway_model::{NetworkId, NodeId, PublicationId, RequestId};
-use meshway_protocol::{ErrorResponse, execution::PublicationProgress, node::*};
+use meshway_model::{NetworkId, NodeId, RequestId};
+use meshway_protocol::{ErrorResponse, node::*};
 /// Read non-secret settings for a Node.
 ///
 /// Requires a user session; ordinary members may read only their current User-identity devices.
@@ -124,22 +124,4 @@ pub(super) async fn get(
         .find(|n| n.id == node)
         .map(Json)
         .ok_or_else(|| HttpError::domain(id, Error::NotFound))
-}
-/// Read an execution publication's targets and receipt progress.
-///
-/// Requires a network administrator's user session; target validity is separate from installation receipts.
-#[utoipa::path(get,path="/api/v1/networks/{networkId}/publications/{publicationId}",operation_id="getExecutionPublication",tag="execution",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("publicationId"=PublicationId,Path)),responses((status=200,body=PublicationProgress),(status=400,body=ErrorResponse,description="invalid_request"),(status=401,body=ErrorResponse,description="invalid_session"),(status=403,body=ErrorResponse,description="permission_denied"),(status=404,body=ErrorResponse,description="not_found"),(status=503,body=ErrorResponse,description="service_unavailable")))]
-pub(super) async fn progress(
-    State(service): State<Execution>,
-    Extension(id): Extension<RequestId>,
-    headers: HeaderMap,
-    path: Result<Path<(NetworkId, PublicationId)>, PathRejection>,
-) -> Result<Json<PublicationProgress>, HttpError> {
-    let token = bearer(&headers, id)?;
-    let Path((network, publication)) = path.map_err(|_| HttpError::invalid_request(id))?;
-    service
-        .progress(token, network, publication)
-        .await
-        .map(Json)
-        .map_err(|e| HttpError::domain(id, e))
 }

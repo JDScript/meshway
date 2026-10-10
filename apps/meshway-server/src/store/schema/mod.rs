@@ -1,19 +1,18 @@
-//! The current private schema: accounts, networks, configuration, execution, state and diagnostics.
+//! The current private schema: accounts, networks, configuration, execution, state and netmaps.
 //! Only this exact schema is accepted; there is no historical migration chain.
 
 use rusqlite::{Connection, TransactionBehavior};
 use thiserror::Error;
 
 const APPLICATION_ID: i64 = 0x4d534857; // MSHW: stable Meshway application identity.
-const VERSION: i64 = 1;
+// 2: netmap receipts replace execution publications, demands and receipts.
+const VERSION: i64 = 2;
 const SQL: &str = concat!(
     include_str!("current.sql"),
     "\n",
     include_str!("execution.sql"),
     "\n",
     include_str!("state.sql"),
-    "\n",
-    include_str!("diagnostics.sql"),
     "\n",
     include_str!("netmap.sql"),
 );
@@ -148,17 +147,6 @@ fn validate(connection: &Connection) -> Result<(), SchemaError> {
         |row| row.get(0),
     )?;
     if invalid_datasets {
-        return Err(SchemaError::Integrity);
-    }
-    let invalid_diagnostics: bool = connection.query_row(
-        "SELECT EXISTS(SELECT 1 FROM diagnostic_subscriptions s JOIN diagnostic_tasks t ON t.id=s.task_id WHERE s.cancelled=0 AND t.compilation IS NULL)
-         OR EXISTS(SELECT 1 FROM diagnostic_subscriptions s JOIN diagnostic_tasks t ON t.id=s.task_id
-         LEFT JOIN node_keys k ON k.id=s.control_key_id
-         LEFT JOIN node_instance_claims i ON i.network_id=s.node_network_id AND i.node_id=s.node_id AND i.instance_id=s.instance_id
-         WHERE s.principal_kind='node_instance' AND (s.node_network_id!=t.network_id OR s.node_id!=t.node_id OR s.instance_id!=t.instance_id OR s.boot_id!=t.boot_id OR k.purpose!='control' OR i.generation!=s.instance_generation))",
-        [], |row| row.get(0),
-    )?;
-    if invalid_diagnostics {
         return Err(SchemaError::Integrity);
     }
     Ok(())

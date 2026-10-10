@@ -41,17 +41,17 @@ pub fn accept(
     let mut accepted = 0;
     let mut duplicates = 0;
     for event in batch.events {
-        let context = admission.context(&event.configuration)?;
+        let context = admission.context(&event.netmap)?;
         if event.occurred_at > now + Duration::seconds(30)
             || event.occurred_at + Duration::seconds(ADMISSION_SECONDS) <= now
-            || !admission.configurations.contains(&event.configuration)
+            || !admission.configurations.contains(&event.netmap)
         {
             return Err(Error::InvalidRequest);
         }
         match &event.payload {
             ObservationPayload::ProbeCompleted { probe } => {
                 if event.event_id != probe.measurement_id
-                    || probe.publication_id != event.configuration.execution_publication
+                    || probe.netmap != event.netmap
                     || probe.completed_at != Some(event.occurred_at)
                 {
                     return Err(Error::InvalidRequest);
@@ -61,6 +61,7 @@ pub fn accept(
                     context,
                     probe,
                     now,
+                    None,
                 )?;
             }
             ObservationPayload::CollectionGap { dropped, from, to } => {
@@ -411,7 +412,7 @@ fn buckets(
             .entry(BucketKey {
                 source: event.source_node_id,
                 instance: event.instance_id,
-                publication: probe.publication_id,
+                netmap: probe.netmap,
                 path: probe.path.clone(),
                 kind: probe.kind,
                 link: probe.link_id.clone(),
@@ -430,7 +431,7 @@ fn buckets(
                         failed: 0,
                         mean_success_duration_us: None,
                         instance_id: event.instance_id,
-                        publication_id: probe.publication_id,
+                        netmap: probe.netmap,
                         path: probe.path.clone(),
                         kind: probe.kind,
                         link_id: probe.link_id.clone(),
@@ -465,7 +466,7 @@ fn buckets(
 struct BucketKey {
     source: NodeId,
     instance: InstanceId,
-    publication: meshway_model::PublicationId,
+    netmap: meshway_model::NetmapRef,
     path: Vec<NodeId>,
     kind: meshway_model::state::ProbeKind,
     link: Option<String>,

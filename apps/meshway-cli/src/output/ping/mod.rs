@@ -72,6 +72,7 @@ fn write_event(output: &mut impl Write, event: &PingEvent, json: bool) -> io::Re
                     match &channel.acquisition {
                         LinkAcquisition::PublishedEndpoint => write!(output, "publishedEndpoint")?,
                         LinkAcquisition::LocalEndpoint => write!(output, "localEndpoint")?,
+                        LinkAcquisition::StunEndpoint => write!(output, "stunEndpoint")?,
                         LinkAcquisition::AcceptedInbound => write!(output, "acceptedInbound")?,
                         LinkAcquisition::CoordinatedUdp {
                             endpoint_source, ..

@@ -1,13 +1,10 @@
-//! One enrollment/authentication/configuration/report cycle through meshway-control.
+//! Enrollment and authentication through meshway-control: everything that
+//! must happen before the `sync` long poll can run.
 use super::failure::{self, Failure};
-use crate::runtime::network;
 use crate::settings::Settings;
-use meshway_control::{Control, Error};
-use meshway_ipc::{Phase, Problem};
+use meshway_control::Control;
+use meshway_ipc::Problem;
 use meshway_protocol::enrollment::EnrollmentPhase;
-use std::time::Duration;
-
-const POLL: Duration = Duration::from_secs(20);
 
 /// Timings describe real owner work, including a dropped lifecycle future. No
 /// request bodies, credentials, or synthetic observations enter these events.
@@ -41,35 +38,21 @@ async fn stage<T, E>(
     result
 }
 
-pub(super) struct Cycle {
-    /// None requests scope refresh while preserving the published phase.
-    pub phase: Option<Phase>,
-    pub url: Option<String>,
-    pub delay: Duration,
-    pub renewed: bool,
-    pub reported: bool,
+pub(super) enum Online {
+    /// Waiting for an administrator to approve enrollment.
+    Awaiting { url: Option<String> },
+    /// A terminal enrollment was discarded; start over at once.
+    Restart,
+    /// Enrolled and authenticated: `sync` may run.
+    Ready,
 }
-impl Cycle {
-    fn scope_changed(renewed: bool) -> Self {
-        tracing::debug!("State scope rotated; refreshing before resampling");
-        Self {
-            phase: None,
-            url: None,
-            delay: Duration::from_secs(1),
-            renewed,
-            reported: false,
-        }
-    }
-}
-pub(super) async fn cycle(
+
+pub(super) async fn online(
     control: &mut Control,
     settings: &Settings,
-    renew: bool,
-    report: bool,
     reset: &mut bool,
-    mut network: Option<&mut network::Handle>,
     enrollment_key: Option<&meshway_ipc::EnrollmentKey>,
-) -> Result<Cycle, Failure> {
+) -> Result<Online, Failure> {
     if control.status().binding.is_none()
         && let Some(key) = enrollment_key
     {
@@ -108,12 +91,8 @@ pub(super) async fn cycle(
             match view.phase {
                 EnrollmentPhase::Pending => {
                     *reset = false;
-                    return Ok(Cycle {
-                        phase: Some(Phase::AwaitingApproval),
+                    return Ok(Online::Awaiting {
                         url: created.authorization_url,
-                        delay: Duration::from_secs(2),
-                        renewed: false,
-                        reported: false,
                     });
                 }
                 EnrollmentPhase::Expired
@@ -125,13 +104,7 @@ pub(super) async fn cycle(
                             .await
                             .map_err(|e| failure::at("cancel_enrollment", e, true))?;
                         *reset = false;
-                        return Ok(Cycle {
-                            phase: Some(Phase::Starting),
-                            url: None,
-                            delay: Duration::ZERO,
-                            renewed: false,
-                            reported: false,
-                        });
+                        return Ok(Online::Restart);
                     }
                     let problem = match view.phase {
                         EnrollmentPhase::Expired => Problem::EnrollmentExpired,
@@ -179,161 +152,5 @@ pub(super) async fn cycle(
     stage("authenticate", control.authenticate())
         .await
         .map_err(|e| failure::at("authenticate", e, true))?;
-    let mut renewed = false;
-    if control.status().instance.is_none() {
-        control
-            .acquire_instance(if network.is_some() {
-                network::capabilities()
-            } else {
-                Default::default()
-            })
-            .await
-            .map_err(|e| failure::at("acquire_instance", e, false))?;
-        renewed = true;
-    } else if renew && network.is_none() {
-        control
-            .renew_instance()
-            .await
-            .map_err(|e| failure::at("renew_instance", e, false))?;
-        renewed = true;
-    }
-    // A ready installation may have completed AFTER the previous cycle's
-    // nonblocking finish() drain. Settle and report that exact current ticket
-    // before a notification/poll can replace its execution snapshot again.
-    // A real scope race still goes through the ordinary atomic refresh below.
-    let settled_report = if let Some(network) = network.as_deref_mut()
-        && network.diagnostics_ready(control)
-        && !network.can_report_inline(control)
-    {
-        stage("settle_current_application", network.finish(control))
-            .await
-            .map_err(|error| failure::at("finish_application", error, false))?;
-        if network.can_report_inline(control) {
-            match stage(
-                "report_current_application",
-                network.report_state(control, settings, false),
-            )
-            .await
-            {
-                Ok(reported) => reported,
-                Err(Error::StateScopeChanged) => false,
-                Err(error) => return Err(failure::at("report_runtime_state", error, false)),
-            }
-        } else {
-            false
-        }
-    } else {
-        false
-    };
-    let before = control.status().cached;
-    if network.is_some() {
-        stage("refresh_configuration", control.refresh_configuration())
-            .await
-            .map_err(|e| failure::at("refresh_configuration", e, false))?;
-        // Refresh grants every TUN poll; reporting/renewal scheduling still
-        // records the normal renewal cadence rather than manufacturing samples.
-        renewed |= renew;
-    } else {
-        stage("sync_configuration", control.sync_configuration())
-            .await
-            .map_err(|e| failure::at("sync_configuration", e, false))?;
-    }
-    if control
-        .status()
-        .instance
-        .as_ref()
-        .is_some_and(|i| i.target.is_some())
-    {
-        stage("acknowledge_saved", control.acknowledge_saved())
-            .await
-            .map_err(|e| failure::at("acknowledge_saved", e, false))?;
-    }
-    if let Some(network) = &mut network {
-        // The atomic refresh already delivered the granted target. A remaining
-        // unavailable grant is a real installation barrier, not a reason to
-        // observe more publications in a lease/query retry dance.
-        if control
-            .status()
-            .instance
-            .as_ref()
-            .is_none_or(|instance| instance.target.is_none())
-            || (enabled_current_target(control) && control.execution_snapshot().is_err())
-        {
-            return Err(Failure {
-                problem: Problem::Apply,
-                retry: true,
-                reset: false,
-                retry_after: None,
-            });
-        }
-        // A retained historical completion may wait for HTTP retry, but cannot
-        // prevent offering a newly granted, fsynced target to the network owner.
-        stage("publish", network.publish(control))
-            .await
-            .map_err(|error| failure::at("publish", error, false))?;
-        // The bounded plan watch waits for this exact installed snapshot. Fetch
-        // during application rather than losing a full poll after each rebind.
-        network.observation_tasks(control).await;
-        stage("finish", network.finish(control))
-            .await
-            .map_err(|error| failure::at("finish_application", error, false))?;
-        stage("publish_after_finish", network.publish(control))
-            .await
-            .map_err(|error| failure::at("publish_after_finish", error, false))?;
-    }
-    let routine = report || renewed || before != control.status().cached;
-    let reported = if let Some(network) = &mut network {
-        match stage(
-            "report_state",
-            network.report_state(control, settings, routine),
-        )
-        .await
-        {
-            Ok(reported) => reported,
-            Err(Error::StateScopeChanged) => return Ok(Cycle::scope_changed(renewed)),
-            Err(error) => return Err(failure::at("report_runtime_state", error, false)),
-        }
-    } else if routine {
-        match control.report_control_state(settings.system.clone()).await {
-            Ok(_) => true,
-            Err(Error::Pending) => {
-                match control.retry_state_report().await {
-                    Ok(_) => {}
-                    Err(Error::StateScopeChanged) => return Ok(Cycle::scope_changed(renewed)),
-                    Err(error) => return Err(failure::at("retry_state_report", error, false)),
-                }
-                false
-            }
-            Err(Error::StateScopeChanged) => return Ok(Cycle::scope_changed(renewed)),
-            Err(error) => return Err(failure::at("report_control_state", error, false)),
-        }
-    } else {
-        false
-    };
-    Ok(Cycle {
-        phase: Some(Phase::ControlReady),
-        url: None,
-        delay: if network
-            .as_ref()
-            .is_some_and(|network| network.preparing_dns())
-        {
-            Duration::from_millis(100)
-        } else {
-            POLL
-        },
-        renewed,
-        reported: reported || settled_report,
-    })
-}
-
-fn enabled_current_target(control: &Control) -> bool {
-    let status = control.status();
-    control
-        .cached_target()
-        .is_some_and(|target| target.configuration.enabled)
-        && status.cached.is_some()
-        && status
-            .instance
-            .as_ref()
-            .is_some_and(|instance| instance.target == status.cached)
+    Ok(Online::Ready)
 }

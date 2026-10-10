@@ -66,7 +66,7 @@ impl Observations {
     }
 }
 fn progress_changed(old: &StoredTask, current: &StoredTask) -> bool {
-    old.task.configuration != current.task.configuration
+    old.task.netmap != current.task.netmap
         || old.task.phase != current.task.phase
         || old.task.expires_at != current.task.expires_at
         || old.subscribers.len() != current.subscribers.len()

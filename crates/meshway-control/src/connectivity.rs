@@ -204,10 +204,7 @@ fn visible(netmap: &NodeNetmap, peer: NodeId) -> bool {
 impl Control {
     /// The snapshot is this owner's current netmap and an instance is live;
     /// returns that instance.
-    fn connectivity_current(
-        &self,
-        snapshot: &ExecutionSnapshot,
-    ) -> Result<InstanceRequest, Error> {
+    fn connectivity_current(&self, snapshot: &ExecutionSnapshot) -> Result<InstanceRequest, Error> {
         self.token()?;
         snapshot.ensure_current()?;
         if !self.netmap_snapshot()?.same_netmap(snapshot) {
@@ -354,8 +351,7 @@ impl Control {
             peer.candidate.socket.node_id,
             &offer.carrier,
         )?;
-        if offer.expires_at_ms > context.snapshot().expires_at_ms()
-        {
+        if offer.expires_at_ms > context.snapshot().expires_at_ms() {
             self.fence();
             return Err(Error::Contract);
         }

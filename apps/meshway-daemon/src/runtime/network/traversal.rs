@@ -181,9 +181,9 @@ pub(super) async fn dispatch(
                     tracing::debug!(operation = name, attempt = %value.attempt_id,
                         local = %offer.local().candidate.socket.node_id,
                         peer = %offer.peer().candidate.socket.node_id,
-                        source_instance = %offer.snapshot().instance().instance_id,
-                        publication = %offer.snapshot().reference().execution_publication,
-                        peer_publication = %offer.peer().candidate.socket.configuration.execution_publication,
+                        source_instance = %offer.local().candidate.socket.instance.instance_id,
+                        netmap_serial = offer.snapshot().reference().serial.get(),
+                        peer_netmap_serial = offer.peer().candidate.socket.netmap.serial.get(),
                         expires_at_ms = value.expires_at_ms, "Traversal offer returned");
                 }
                 Reply::Accept(Outcome::Current(view)) => {
@@ -194,7 +194,7 @@ pub(super) async fn dispatch(
                     tracing::debug!(operation = name, attempt = %offer.offer().attempt_id,
                         local = %offer.local().candidate.socket.node_id,
                         peer = %offer.peer().candidate.socket.node_id,
-                        publication = %offer.snapshot().reference().execution_publication,
+                        netmap_serial = offer.snapshot().reference().serial.get(),
                         expires_at_ms = offer.expires_at_ms(), phase, "Traversal acceptance returned");
                 }
                 Reply::Prepare(Outcome::Unavailable(reason))
@@ -226,15 +226,12 @@ pub(super) fn candidates(
         .sockets
         .iter()
         .flat_map(|(id, socket)| {
-            let configuration = socket
-                .configuration
-                .as_ref()
-                .or(state.configuration.applied.as_ref());
+            let netmap = socket.netmap.or(state.configuration.applied);
             socket.endpoints.iter().filter_map(move |observation| {
                 let reference = SocketReference {
                     node_id,
                     instance: instance.clone(),
-                    configuration: configuration?.clone(),
+                    netmap: netmap?,
                     socket_id: id.clone(),
                     socket_generation: socket.generation,
                     resource: socket.resource.clone(),

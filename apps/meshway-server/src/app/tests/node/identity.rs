@@ -232,7 +232,7 @@ async fn node_only_email_reference_and_profile_selection_survive_history_restore
             network,
             meshway_protocol::configuration::ConfigurationRequest::Restore {
                 expected_revision: changed.revision,
-                resource_publication: None,
+                rule_set_bindings: None,
                 request_id: rid(),
                 restore_from: before.revision,
             },

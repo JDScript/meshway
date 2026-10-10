@@ -36,9 +36,9 @@ pub enum ConfigurationRequest {
         #[serde(rename="requestId")]request_id:RequestId,
         /// Historical source revision in the same network whose configuration is restored.
         #[serde(rename="restoreFrom")]restore_from:Revision,
-        /// Omitted: the source version's initial resource bindings. Otherwise
-        /// select this exact historical publication from the same source version.
-        #[serde(default, rename="resourcePublication")]resource_publication:Option<PublicationId>},
+        /// Omitted: the source version's initial rule-set bindings. Otherwise
+        /// select this exact historical binding from the same source version.
+        #[serde(default, rename="ruleSetBindings")]rule_set_bindings:Option<PublicationId>},
 } }
 impl ConfigurationRequest {
     pub fn expected_revision(&self) -> Revision {
@@ -219,9 +219,7 @@ pub struct ConfigurationAppliedResponse {
     pub network_id:NetworkId,
     /// Source revision resulting from the accepted apply.
     pub revision:Revision,
-    /// Execution publications containing this apply's node targets; empty when there are no targets.
-    pub publication_ids:Vec<PublicationId>,
-    /// Original node targets counted once per node, independent of later demand or refresh publications.
+    /// Nodes whose netmap after this apply is the revision's progress target, counted once per node.
     pub target_count:u32,
     /// Nodes permanently removed and revoked by this commit.
     pub deleted_node_ids:Vec<NodeId>

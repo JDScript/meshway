@@ -3,9 +3,7 @@ use hickory_proto::{
     op::Message,
     rr::{Name, RData, Record, RecordType, rdata},
 };
-use meshway_configuration::{
-    DnsServer, NodeAddresses, normalize_dns_name,
-};
+use meshway_configuration::{DnsServer, NodeAddresses, normalize_dns_name};
 use std::{collections::BTreeMap, fmt, net::IpAddr};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
@@ -183,7 +181,6 @@ impl PublishedDns {
             default: settings.default.clone(),
             override_local: settings.override_local,
             executable_exit,
-
         })
     }
 

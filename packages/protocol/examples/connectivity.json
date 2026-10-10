@@ -5,9 +5,9 @@
         "instanceId": "8f9a0b1c-2d3e-4f4a-9b5c-6d7e8f9a0b1c",
         "generation": 1
       },
-      "configuration": {
+      "netmap": {
         "revision": 7,
-        "executionPublication": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+        "serial": 1,
         "digest": "abababababababababababababababababababababababababababababababab"
       },
       "stateEpoch": "1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f",
@@ -27,9 +27,9 @@
             "instanceId": "8f9a0b1c-2d3e-4f4a-9b5c-6d7e8f9a0b1c",
             "generation": 1
           },
-          "configuration": {
+          "netmap": {
             "revision": 7,
-            "executionPublication": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+            "serial": 1,
             "digest": "abababababababababababababababababababababababababababababababab"
           },
           "socketId": "udp-paris-1",
@@ -48,9 +48,9 @@
             "instanceId": "9f0a1b2c-3d4e-4f5a-8b6c-7d8e9f0a1b2c",
             "generation": 1
           },
-          "configuration": {
+          "netmap": {
             "revision": 7,
-            "executionPublication": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+            "serial": 1,
             "digest": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
           },
           "socketId": "udp-listener-1",
@@ -88,9 +88,9 @@
                   "instanceId": "8f9a0b1c-2d3e-4f4a-9b5c-6d7e8f9a0b1c",
                   "generation": 1
                 },
-                "configuration": {
+                "netmap": {
                   "revision": 7,
-                  "executionPublication": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+                  "serial": 1,
                   "digest": "abababababababababababababababababababababababababababababababab"
                 },
                 "socketId": "udp-paris-1",
@@ -113,9 +113,9 @@
                   "instanceId": "9f0a1b2c-3d4e-4f5a-8b6c-7d8e9f0a1b2c",
                   "generation": 1
                 },
-                "configuration": {
+                "netmap": {
                   "revision": 7,
-                  "executionPublication": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+                  "serial": 1,
                   "digest": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
                 },
                 "socketId": "udp-listener-1",
@@ -141,9 +141,9 @@
         "instanceId": "8f9a0b1c-2d3e-4f4a-9b5c-6d7e8f9a0b1c",
         "generation": 1
       },
-      "configuration": {
+      "netmap": {
         "revision": 7,
-        "executionPublication": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+        "serial": 1,
         "digest": "abababababababababababababababababababababababababababababababab"
       },
       "stateEpoch": "1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f",
@@ -175,9 +175,9 @@
                   "instanceId": "8f9a0b1c-2d3e-4f4a-9b5c-6d7e8f9a0b1c",
                   "generation": 1
                 },
-                "configuration": {
+                "netmap": {
                   "revision": 7,
-                  "executionPublication": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+                  "serial": 1,
                   "digest": "abababababababababababababababababababababababababababababababab"
                 },
                 "socketId": "udp-paris-1",
@@ -200,9 +200,9 @@
                   "instanceId": "9f0a1b2c-3d4e-4f5a-8b6c-7d8e9f0a1b2c",
                   "generation": 1
                 },
-                "configuration": {
+                "netmap": {
                   "revision": 7,
-                  "executionPublication": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+                  "serial": 1,
                   "digest": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
                 },
                 "socketId": "udp-listener-1",
@@ -228,9 +228,9 @@
         "instanceId": "8f9a0b1c-2d3e-4f4a-9b5c-6d7e8f9a0b1c",
         "generation": 1
       },
-      "configuration": {
+      "netmap": {
         "revision": 7,
-        "executionPublication": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+        "serial": 1,
         "digest": "abababababababababababababababababababababababababababababababab"
       },
       "stateEpoch": "1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f",
@@ -249,9 +249,9 @@
         "instanceId": "8f9a0b1c-2d3e-4f4a-9b5c-6d7e8f9a0b1c",
         "generation": 1
       },
-      "configuration": {
+      "netmap": {
         "revision": 7,
-        "executionPublication": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+        "serial": 1,
         "digest": "abababababababababababababababababababababababababababababababab"
       }
     },
@@ -294,9 +294,9 @@
                       "instanceId": "8f9a0b1c-2d3e-4f4a-9b5c-6d7e8f9a0b1c",
                       "generation": 1
                     },
-                    "configuration": {
+                    "netmap": {
                       "revision": 7,
-                      "executionPublication": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+                      "serial": 1,
                       "digest": "abababababababababababababababababababababababababababababababab"
                     },
                     "socketId": "udp-paris-1",
@@ -319,9 +319,9 @@
                       "instanceId": "9f0a1b2c-3d4e-4f5a-8b6c-7d8e9f0a1b2c",
                       "generation": 1
                     },
-                    "configuration": {
+                    "netmap": {
                       "revision": 7,
-                      "executionPublication": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+                      "serial": 1,
                       "digest": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
                     },
                     "socketId": "udp-listener-1",

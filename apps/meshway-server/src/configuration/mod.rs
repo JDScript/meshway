@@ -18,7 +18,7 @@ use meshway_configuration::{
     ConfigurationChange, ConfigurationDocument, NetworkConfigurationInput, UserBinding,
     ValidationContext, configuration_changes,
 };
-use meshway_model::{ArtifactId, NetworkId, NodeId, PublicationId, Revision};
+use meshway_model::{ArtifactId, NetworkId, NodeId, Revision};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -53,7 +53,6 @@ pub(crate) struct CommitEffects {
     pub(crate) notice: Option<meshway_protocol::events::ConfigurationNotice>,
     pub(crate) network_id: NetworkId,
     pub(crate) revision: Revision,
-    pub(crate) publication_ids: Vec<PublicationId>,
     pub(crate) target_node_ids: BTreeSet<NodeId>,
     pub(crate) deleted_node_ids: BTreeSet<NodeId>,
     /// Nodes whose netmap this version changed.

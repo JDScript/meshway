@@ -34,6 +34,8 @@ pub struct App {
     netmap_timing: crate::netmap::SyncTiming,
     peer_facts: Arc<dyn crate::netmap::PeerFactsSource>,
     netmap_signer: Arc<crate::netmap::signing::NetmapSigningKey>,
+    /// The production stored-netmap reader shared by State, observations and coordination.
+    netmaps: Arc<crate::store::netmap::LateNetmaps>,
     shutdown_hooks: ShutdownHooks,
     console_origin: Option<Arc<crate::settings::Url>>,
     public_origin: Option<Arc<crate::settings::Url>>,
@@ -167,8 +169,11 @@ impl App {
         console_origin: Option<Arc<crate::settings::Url>>,
         delegation: Arc<crate::accounts::delegation::DelegationClients>,
     ) -> Result<Self, AppError> {
+        // The netmap reader needs the sealer opened with the database; it is
+        // bound once the executor has opened (see `netmaps` below).
+        let netmaps = Arc::new(crate::store::netmap::LateNetmaps::default());
         let state_runtime = Arc::new(std::sync::Mutex::new(
-            crate::state::service::Runtime::new().map_err(|_| AppError::Worker)?,
+            crate::state::service::Runtime::new(netmaps.clone()).map_err(|_| AppError::Worker)?,
         ));
         let effects = Arc::new(Effects {
             state: Arc::clone(&state_runtime),
@@ -188,8 +193,6 @@ impl App {
                 let transaction = connection
                     .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
                     .map_err(|_| AppError::Database)?;
-                crate::store::execution::retire_obsolete(&transaction, &sealer)
-                    .map_err(|_| AppError::StorageIntegrity)?;
                 let signer =
                     crate::netmap::signing::NetmapSigningKey::load_or_create(&transaction, &sealer)
                         .map_err(|_| AppError::StorageIntegrity)?;
@@ -217,6 +220,9 @@ impl App {
                 }
             }));
         let sealer = Arc::new(sealer);
+        netmaps.bind(crate::store::netmap::StoredNetmaps::new(Arc::clone(
+            &sealer,
+        )));
         let netmap_signer = Arc::new(netmap_signer);
         // The one owner of configuration versions and their snapshot cache.
         let committer = crate::configuration::Committer::new(Arc::clone(&sealer), Arc::default());
@@ -241,11 +247,14 @@ impl App {
             accounts,
             sealer,
             committer,
+            peer_facts: Arc::new(crate::state::facts::StateFacts::new(Arc::clone(
+                &state_runtime,
+            ))),
             state_runtime,
             effects,
             netmap_timing: crate::netmap::SyncTiming::default(),
-            peer_facts: Arc::new(crate::netmap::NoPeerFacts),
             netmap_signer,
+            netmaps,
             shutdown_hooks,
             console_origin,
             public_origin: None,
@@ -302,8 +311,8 @@ impl App {
     }
     pub fn observations(
         &self,
-    ) -> crate::observations::service::ObservationService<crate::execution::Execution> {
-        let service = self.observation_service(self.execution());
+    ) -> crate::observations::service::ObservationService<crate::execution::NetmapDiagnostics> {
+        let service = self.observation_service(self.netmap_diagnostics());
         let mut owner = self
             .observation_maintenance
             .lock()
@@ -345,24 +354,9 @@ impl App {
     pub fn peer_facts(&self) -> crate::state::facts::StateFacts {
         crate::state::facts::StateFacts::new(Arc::clone(&self.state_runtime))
     }
-    /// The netmap store owner installs its reader once; until then no Node has
-    /// a netmap, so no fact is recorded or disclosed.
-    pub fn install_netmaps(&self, netmaps: Arc<dyn crate::state::facts::NetmapReader>) {
-        self.state_runtime
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .install_netmaps(netmaps);
-    }
-    /// Netmap-chain observation authority: reads the source's netmap only.
+    /// Observation authority: reads the source's netmap only.
     pub fn netmap_diagnostics(&self) -> crate::execution::NetmapDiagnostics {
-        let netmaps = Arc::clone(
-            &self
-                .state_runtime
-                .lock()
-                .unwrap_or_else(|error| error.into_inner())
-                .netmaps,
-        );
-        crate::execution::NetmapDiagnostics::new(self.execution(), netmaps)
+        crate::execution::NetmapDiagnostics::new(self.execution(), self.netmaps.clone())
     }
     /// Shared core handles are available before constructing any HTTP provider.
     pub fn state_reader(&self) -> crate::state::service::StateReader {
@@ -443,7 +437,12 @@ impl App {
         )
     }
     pub fn execution(&self) -> crate::execution::Execution {
-        crate::execution::Execution::new(self.executor.handle(), self.sealer(), self.boot)
+        crate::execution::Execution::new(
+            self.executor.handle(),
+            self.sealer(),
+            self.boot,
+            self.netmaps.clone(),
+        )
     }
     pub fn connectivity(&self) -> crate::connectivity::Connectivity {
         crate::connectivity::Connectivity::new(

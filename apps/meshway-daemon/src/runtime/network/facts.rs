@@ -5,33 +5,20 @@ use meshway_model::state::*;
 use std::collections::BTreeMap;
 
 impl Report {
+    /// The State of this installation for the live instance. Only facts of
+    /// the installed netmap are reported; `saved` is the held netmap.
     pub fn state(&self, control: &meshway_control::Control, settings: &Settings) -> NodeState {
-        let status = control.status();
-        let current = self.current(&status);
-        if !current {
-            tracing::debug!(
-                instance_matches = self.same_instance(&status),
-                target_matches = self.bound_to(&status),
-                execution_current = self.guard.as_ref().is_none_or(|guard| guard.ensure_current().is_ok()),
-                dns_current = self.dns_guard.as_ref().is_none_or(|guard| guard.has_changed().is_ok() && guard.borrow().is_none()),
-                report_publication = ?self.ticket.as_ref().map(|ticket| ticket.target().execution_publication),
-                control_publication = ?status.instance.as_ref().and_then(|instance| instance.target.as_ref().map(|target| target.execution_publication)),
-                "Runtime State sampled outside current installation"
-            );
-        }
-        let applied = current.then(|| self.applied()).flatten();
-        let saved = status.cached.clone().filter(|saved| {
-            status
-                .instance
-                .as_ref()
-                .is_some_and(|i| i.target.as_ref() == Some(saved))
-        });
+        let current = self.current();
+        let installed = self.netmap.filter(|_| current);
+        let held = control.netmap_reference();
+        let applied = installed.and_then(|_| self.applied());
+        let instance = control.status().instance;
         let mut state = NodeState {
             system: settings.system.clone(),
             capabilities: super::capabilities(),
             configuration: ConfigurationState {
-                saved,
-                applied: applied.clone(),
+                saved: held,
+                applied,
                 progress: None,
             },
             listeners: BTreeMap::new(),
@@ -45,11 +32,10 @@ impl Report {
                 .exit_capability
                 .clone()
                 .filter(|exit| {
-                    self.bound_to(&status)
-                        && status.instance.as_ref().is_some_and(|i| {
-                            i.instance_id == exit.instance_id
-                                && i.target.as_ref() == Some(&exit.target)
-                        })
+                    installed == Some(exit.netmap)
+                        && instance
+                            .as_ref()
+                            .is_some_and(|i| i.instance_id == exit.instance_id)
                 })
                 .map(|mut exit| {
                     if applied.is_none() {
@@ -61,7 +47,7 @@ impl Report {
         if !current {
             return state;
         }
-        let Some(target) = self.ticket.as_ref().map(|ticket| ticket.target()) else {
+        let Some(target) = installed else {
             return state;
         };
         let phase = match self.completion {
@@ -73,12 +59,12 @@ impl Report {
         let problem = self
             .completion
             .is_some_and(|result| result.is_err())
-            .then(|| StateProblem::ConfigurationRejected {
-                target: target.clone(),
+            .then_some(StateProblem::ConfigurationRejected {
+                target,
                 observed_at: self.observed_at,
             });
         state.configuration.progress = Some(ConfigurationProgress {
-            target: target.clone(),
+            target,
             phase,
             observed_at: self.observed_at,
             problem,
@@ -87,7 +73,7 @@ impl Report {
             return state;
         };
         for socket in &facts.sockets {
-            if socket.reference.configuration != *target {
+            if socket.reference.netmap != target {
                 continue;
             }
             state.sockets.insert(
@@ -95,7 +81,7 @@ impl Report {
                 SocketState {
                     local_endpoints: None,
                     resource: socket.reference.resource.clone(),
-                    configuration: Some(socket.reference.configuration.clone()),
+                    netmap: Some(socket.reference.netmap),
                     generation: socket.reference.socket_generation,
                     network: socket.network,
                     bound_address: socket.bound_address,
@@ -110,7 +96,7 @@ impl Report {
                 resource: ResourceRef::Listener {
                     key: listener.key.clone(),
                 },
-                configuration: Some(target.clone()),
+                netmap: Some(target),
                 generation: self.generation,
                 network: socket_network(listener.protocol),
                 bound_address: listener.local,
@@ -123,16 +109,17 @@ impl Report {
                     socket_ids: vec![id],
                     loaded_certificate_sha256: None,
                     problem: None,
-                    configuration: Some(target.clone()),
+                    netmap: Some(target),
                 },
             );
         }
         let Some(guard) = &self.guard else {
             return state;
         };
-        let Ok(cfg) = guard.configuration() else {
+        let Ok(netmap) = guard.netmap() else {
             return state;
         };
+        let netmap = &netmap.netmap;
         let Some(expiry) = i64::try_from(guard.expires_at_ms())
             .ok()
             .and_then(chrono::DateTime::from_timestamp_millis)
@@ -142,12 +129,12 @@ impl Report {
         for link in &facts.links {
             let id = socket_key(&link.id);
             let socket_id = socket_key(&link.socket_id);
-            let resource = if link.carrier.listener == cfg.node_id {
+            let resource = if link.carrier.listener == netmap.node_id {
                 ResourceRef::Listener {
                     key: link.carrier.listener_key.clone(),
                 }
             } else {
-                let Some((key, _)) = cfg.dialers.iter().find(|(_, dial)| {
+                let Some((key, _)) = netmap.dialers.iter().find(|(_, dial)| {
                     dial.peer == link.peer && dial.listener_key == link.carrier.listener_key
                 }) else {
                     continue;
@@ -160,7 +147,7 @@ impl Report {
                 .or_insert(SocketState {
                     local_endpoints: None,
                     resource,
-                    configuration: Some(target.clone()),
+                    netmap: Some(target),
                     generation: self.generation,
                     network: socket_network(link.carrier.protocol),
                     bound_address: link.local,

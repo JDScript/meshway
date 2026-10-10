@@ -564,7 +564,7 @@ async fn coordinate(
             a: format!("node:{}", nodes[&a]),
             b: format!("node:{}", nodes[&b]),
             transports: meshway_configuration::Input::Omitted,
- keepalive: false,
+            keepalive: false,
         })
         .collect();
     input.access = vec![AccessRule {

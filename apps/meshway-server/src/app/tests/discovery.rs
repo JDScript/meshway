@@ -229,7 +229,7 @@ async fn discovery_http_uses_identity_access_and_current_atomic_configuration_wi
                     action: TopologyAction::Block,
                     a: "*".into(),
                     b: "*".into(),
- keepalive: false,
+                    keepalive: false,
                 }],
             },
         ],

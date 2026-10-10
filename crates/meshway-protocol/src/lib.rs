@@ -70,10 +70,9 @@ pub use netmap::{
     ServerSigningKey, StateCursor, SyncNetmap, SyncRequest, SyncResponse, netmap_lease_transcript,
 };
 pub use node::{
-    DeleteNodeRequest, NodeChallenge, NodeChallengeRequest, NodeDnsQueryRequest,
-    NodeDnsQueryResponse, NodeDnsRecord, NodeInventoryResponse, NodeInventoryView, NodeKeyMetadata,
-    NodeRotationRequest, NodeSessionRequest, NodeSessionResponse, NodeSettingsResponse,
-    RevokeNodeKeyRequest,
+    DeleteNodeRequest, NodeChallenge, NodeChallengeRequest, NodeInventoryResponse,
+    NodeInventoryView, NodeKeyMetadata, NodeRotationRequest, NodeSessionRequest,
+    NodeSessionResponse, NodeSettingsResponse, RevokeNodeKeyRequest,
 };
 pub use node_observations::{
     CreateNodeObservation, NodeObservationCancelled, NodeObservationQuery, NodeObservationResponse,

@@ -89,27 +89,5 @@
         "expiresAt": "2026-10-08T09:05:00Z"
       }
     }
-  },
-  "queryNodeDns": {
-    "request": {
-      "name": "paris.mesh.example.com"
-    },
-    "responses": {
-      "200": {
-        "requestId": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
-        "networkId": "0d3a2a6e-7f3b-4d0c-9a8e-1c2b3d4e5f60",
-        "sourceNodeId": "a7b6c5d4-5e6f-4a3b-8c9d-9e8f7a6b5c70",
-        "configurationRevision": 7,
-        "asOf": "2026-10-08T09:00:00Z",
-        "record": {
-          "nodeId": "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50",
-          "name": "paris.mesh.example.com",
-          "addresses": {
-            "ipv4": "100.80.0.10",
-            "ipv6": "fd42:7a65:8800::10"
-          }
-        }
-      }
-    }
   }
 }

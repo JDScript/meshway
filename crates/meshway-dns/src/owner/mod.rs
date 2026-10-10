@@ -271,10 +271,7 @@ impl Owner {
                     return Begin::Unavailable(Unavailable::MissingResolverPlan);
                 }
             };
-        let ticket = match self.state.insert_pending(
-            query.clone(),
-            deadline,
-        ) {
+        let ticket = match self.state.insert_pending(query.clone(), deadline) {
             Ok(ticket) => ticket,
             Err(reason) => return Begin::Unavailable(reason),
         };
@@ -317,10 +314,7 @@ impl Owner {
             Ok(upstreams) => upstreams,
             Err(reason) => return Begin::Unavailable(reason),
         };
-        let ticket = match self.state.insert_pending(
-            query.clone(),
-            deadline,
-        ) {
+        let ticket = match self.state.insert_pending(query.clone(), deadline) {
             Ok(ticket) => ticket,
             Err(reason) => return Begin::Unavailable(reason),
         };

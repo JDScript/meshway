@@ -26,9 +26,7 @@ pub use dispatcher::{
     DispatchError, Dispatcher, DnsFuture, GatewayError, OwnerDispatcher, ResolverExchange, Scope,
 };
 pub use exit_route::{MeshResolverRoute, ResolverRoute};
-pub use owner::{
-    Answer, Begin, Limits, Owner, OwnerError, Ticket, Unavailable, UpstreamWork,
-};
+pub use owner::{Answer, Begin, Limits, Owner, OwnerError, Ticket, Unavailable, UpstreamWork};
 pub use route::{LocalResolverRoute, RouteError};
 pub use selection::{
     ConfigurationError, ExitSelection, PublishedAnswer, PublishedDns, ResolverCandidate, Selection,
@@ -36,8 +34,8 @@ pub use selection::{
 };
 pub use service::{Service, ServiceLimits};
 pub use system::{
-    DnsLinkIdentity, OwnedDnsLink, ResolverDemand, ResolverSource, SystemDnsBackend,
-    SystemDnsError, SystemDnsOwner, SystemDnsPlan, SystemDnsSettings, SystemResolverSnapshot,
+    DnsLinkIdentity, OwnedDnsLink, SystemDnsBackend, SystemDnsError, SystemDnsOwner, SystemDnsPlan,
+    SystemDnsSettings, SystemResolverSnapshot,
 };
 pub use tcp::{PayloadCodec, TcpCodec, TcpError};
 pub use wire::{

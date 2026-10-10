@@ -110,7 +110,7 @@ pub(super) fn report(
     for (key, listener) in &state.listeners {
         let resource = ResourceRef::Listener { key: key.clone() };
         let reference = listener
-            .configuration
+            .netmap
             .as_ref()
             .or(state.configuration.applied.as_ref())
             .ok_or(Error::InvalidRequest)?;
@@ -131,10 +131,7 @@ pub(super) fn report(
         for socket in &listener.socket_ids {
             if state.sockets.get(socket).is_none_or(|s| {
                 s.resource != resource
-                    || s.configuration
-                        .as_ref()
-                        .or(state.configuration.applied.as_ref())
-                        != Some(reference)
+                    || s.netmap.as_ref().or(state.configuration.applied.as_ref()) != Some(reference)
             }) {
                 return Err(Error::InvalidRequest);
             }
@@ -152,7 +149,7 @@ pub(super) fn report(
     }
     for (socket_id, socket) in &state.sockets {
         let reference = socket
-            .configuration
+            .netmap
             .as_ref()
             .or(state.configuration.applied.as_ref())
             .ok_or(Error::InvalidRequest)?;
@@ -251,7 +248,7 @@ pub(super) fn report(
                 .get(&link.socket_id)
                 .ok_or(Error::InvalidRequest)?;
             if socket
-                .configuration
+                .netmap
                 .as_ref()
                 .or(state.configuration.applied.as_ref())
                 != Some(reference)
@@ -278,33 +275,9 @@ pub(super) fn report(
             }
         }
     }
-    for path in state.paths.values() {
-        let reference = state
-            .configuration
-            .applied
-            .as_ref()
-            .ok_or(Error::InvalidRequest)?;
-        if !admission.context(reference)?.paths.contains(&path.nodes)
-            || !path.nodes.contains(&admission.node_id)
-            || reference.execution_publication != path.publication_id
-            || !time(path.observed_at, path.expires_at, now)
-        {
-            return Err(Error::InvalidRequest);
-        }
-        let index = path
-            .nodes
-            .iter()
-            .position(|id| *id == admission.node_id)
-            .ok_or(Error::InvalidRequest)?;
-        match path.reporter_role {
-            ReporterRole::Origin if index == 0 => {}
-            ReporterRole::Target | ReporterRole::Exit if index + 1 == path.nodes.len() => {}
-            ReporterRole::Relay
-                if index > 0
-                    && index + 1 < path.nodes.len()
-                    && path.evidence != PathEvidence::Delivered => {}
-            _ => return Err(Error::InvalidRequest),
-        }
+    // Complete paths are decided locally on each netmap and are not State.
+    if !state.paths.is_empty() {
+        return Err(Error::InvalidRequest);
     }
     if let Some(profile) = &state.selection.applied_profile {
         let reference = state
@@ -329,7 +302,13 @@ pub(super) fn report(
             .as_ref()
             .or(admission.execution.as_ref())
             .ok_or(Error::InvalidRequest)?;
-        validate_probe_context(admission.node_id, admission.context(reference)?, probe, now)?;
+        validate_probe_context(
+            admission.node_id,
+            admission.context(reference)?,
+            probe,
+            now,
+            None,
+        )?;
         scope_changed |= Some(reference) != admission.execution.as_ref();
     }
     if scope_changed {
@@ -338,7 +317,7 @@ pub(super) fn report(
         Ok(())
     }
 }
-fn installation_reference(state: &NodeState, reference: &ConfigurationRef) -> bool {
+fn installation_reference(state: &NodeState, reference: &NetmapRef) -> bool {
     state.configuration.saved.as_ref() == Some(reference)
         || state
             .configuration
@@ -363,18 +342,22 @@ fn check_address(
     }
     Ok(())
 }
+/// `paths`: the complete paths an observation task may measure; path probes
+/// outside a task are not authorized.
 pub(crate) fn validate_probe(
     admission: &ReportAdmission,
     probe: &ProbeObservation,
     now: DateTime<Utc>,
+    paths: Option<&[Vec<NodeId>]>,
 ) -> Result<(), Error> {
-    validate_probe_context(admission.node_id, admission.current()?, probe, now)
+    validate_probe_context(admission.node_id, admission.current()?, probe, now, paths)
 }
 pub(crate) fn validate_probe_context(
     node_id: NodeId,
     context: &ConfigurationAdmission,
     probe: &ProbeObservation,
     now: DateTime<Utc>,
+    paths: Option<&[Vec<NodeId>]>,
 ) -> Result<(), Error> {
     if probe.kind == ProbeKind::Path && probe.path.len() > 2 && probe.transport.is_some() {
         // A source's first-hop carrier is not an end-to-end path transport.
@@ -399,11 +382,6 @@ pub(crate) fn validate_probe_context(
                     .neighbor_transports
                     .get(&channel.peer_node_id)
                     .is_some_and(|allowed| allowed.contains(channel.transport.as_str()))
-                || probe.kind == ProbeKind::Path
-                    && !context
-                        .path_transports
-                        .get(&probe.path)
-                        .is_some_and(|allowed| allowed.contains(channel.transport.as_str()))
                 || matches!(
                     channel.acquisition,
                     meshway_model::observations::LinkAcquisition::CoordinatedUdp { .. }
@@ -444,16 +422,7 @@ pub(crate) fn validate_probe_context(
         return Err(Error::InvalidRequest);
     }
     let authorized = match probe.kind {
-        ProbeKind::Path => {
-            context.paths.contains(&probe.path)
-                && context
-                    .path_deadlines
-                    .get(&probe.path)
-                    .is_some_and(|expiry| {
-                        probe.started_at < *expiry
-                            && probe.completed_at.is_none_or(|end| end <= *expiry)
-                    })
-        }
+        ProbeKind::Path => paths.is_some_and(|paths| paths.contains(&probe.path)),
         ProbeKind::Neighbor | ProbeKind::Connect => {
             probe.path.len() == 2
                 && probe.transport.as_ref().is_some_and(|transport| {
@@ -471,7 +440,7 @@ pub(crate) fn validate_probe_context(
         || probe.path.len() > 16
         || probe.path.first() != Some(&node_id)
         || !authorized
-        || context.configuration.execution_publication != probe.publication_id
+        || context.configuration != probe.netmap
         || probe.started_at > now + Duration::seconds(CLOCK_SKEW_SECONDS)
         || probe.completed_at.is_some_and(|end| {
             end < probe.started_at || end > now + Duration::seconds(CLOCK_SKEW_SECONDS)

@@ -110,12 +110,6 @@ pub struct GetDeviceAuthorizationPath {
 }
 
 #[derive(Clone)]
-pub struct GetExecutionPublicationPath {
-    pub r#network_id: meshway_protocol::NetworkId,
-    pub r#publication_id: meshway_protocol::PublicationId,
-}
-
-#[derive(Clone)]
 pub struct GetLeaveImpactPath {
     pub r#network_id: meshway_protocol::NetworkId,
 }
@@ -3464,29 +3458,6 @@ impl crate::Client {
         match response.status {
             200 => response.json(),
             400 | 401 | 404 | 413 | 415 | 503 => Err(response.problem()),
-            _ => Err(response.unexpected()),
-        }
-    }
-
-    pub async fn query_node_dns(
-        &self,
-        body: &meshway_protocol::NodeDnsQueryRequest,
-        token: &str,
-    ) -> Result<
-        meshway_protocol::NodeDnsQueryResponse,
-        crate::ClientError<meshway_protocol::ErrorResponse>,
-    > {
-        let response = self
-            .send(
-                reqwest::Method::POST,
-                "/agent-api/v1/dns/query",
-                Some(token),
-                Some(body),
-            )
-            .await?;
-        match response.status {
-            200 => response.json(),
-            400 | 401 | 413 | 415 | 503 => Err(response.problem()),
             _ => Err(response.unexpected()),
         }
     }

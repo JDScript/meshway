@@ -1,30 +1,21 @@
 use crate::error::Error;
 pub(crate) mod admission;
 mod authentication;
-mod cache;
-pub(crate) use cache::retire_obsolete;
-pub(crate) mod diagnostics;
-mod discovery;
 mod instances;
 mod inventory;
+mod lifecycle;
 pub(crate) mod progress;
-mod publications;
 use crate::configuration::ConfigurationBindings;
 use crate::{execution::NodePrincipal, secrets::Sealer};
 pub(crate) use authentication::{authorize_node, challenge, insert_keys, rotate, session};
-pub(crate) use discovery::query_dns;
-pub(crate) use instances::{
-    acquire, configuration, lease_for_node, receipt, refresh_configuration, release, renew,
+pub(crate) use instances::{acquire, lease_for_node, receipt, release, renew};
+pub(crate) use inventory::{inventory, inventory_in_transaction, revoke_key, settings};
+pub(crate) use lifecycle::{
+    CompilationContext, apply_configuration_effects, compilation_context, netmap_targets,
+    retire_node_sessions, select_profile,
 };
-pub(crate) use inventory::{inventory, inventory_in_transaction, progress, revoke_key, settings};
 use meshway_configuration::{NetworkConfiguration, NodeIdentity};
 use meshway_model::*;
-pub(crate) use publications::{
-    CompilationContext, apply_configuration_effects, cancel_demand, check_diagnostic_compilation,
-    check_publication, compilation_context, configuration_targets, demand, publish,
-    publish_with_rule_sets, receipt_history_targets, recent_targets_for_node, renew_demand,
-    retire_node_sessions, select_profile, target_for_node,
-};
 use rusqlite::{Transaction, params};
 
 pub(crate) fn now() -> Result<i64, Error> {

@@ -6,7 +6,7 @@ use crate::{
     error::Error,
     execution::{
         Execution, NodePrincipal,
-        connectivity::{Failure, ScopeRead, Witness, common_witness},
+        connectivity::{Failure, ScopeRead, netmap_udp_coordination},
     },
     state::service::Runtime,
     store::Handle,
@@ -36,7 +36,6 @@ enum Terminal {
 struct Attempt {
     request: PrepareUdpTraversalRequest,
     offer: UdpTraversalOffer,
-    witness: Witness,
     prepared_by: NodePrincipal,
     accepted: [Option<NodePrincipal>; 2],
     terminal: Option<Terminal>,
@@ -252,7 +251,7 @@ impl Connectivity {
         let health = self.stun_health.clone();
         self.run(token, move |scopes, principal, runtime| {
             let now = scopes.now();
-            let scope = match scopes.caller(principal, &request.instance, &request.configuration) {
+            let scope = match scopes.caller(principal, &request.instance, &request.netmap) {
                 Ok(scope) => scope,
                 Err(Failure::Unavailable(reason)) => {
                     return Ok(Plan::read(QueryUdpTraversalResponse::Unavailable {
@@ -447,7 +446,7 @@ fn cas<'a>(
     request: &UdpTraversalAttemptRequest,
 ) -> Result<&'a Attempt> {
     let now = scopes.now();
-    scopes.caller(principal, &request.instance, &request.configuration)?;
+    scopes.caller(principal, &request.instance, &request.netmap)?;
     if request.state_epoch != runtime.hub.epoch {
         return Err(Reason::ScopeChanged.into());
     }
@@ -466,7 +465,7 @@ fn cas<'a>(
     } else {
         &attempt.offer.peer.candidate.socket
     };
-    if socket.instance != request.instance || socket.configuration != request.configuration {
+    if socket.instance != request.instance || socket.netmap != request.netmap {
         return Err(Reason::ScopeChanged.into());
     }
     if request.version != attempt.offer.version || request.digest != attempt.offer.digest {
@@ -484,7 +483,6 @@ fn cas<'a>(
 struct Pair {
     local: crate::state::connectivity::Candidate,
     peer: crate::state::connectivity::Candidate,
-    witness: Witness,
     deadline: u64,
 }
 fn pair(
@@ -492,10 +490,9 @@ fn pair(
     runtime: &Runtime,
     principal: &NodePrincipal,
     request: &PrepareUdpTraversalRequest,
-    selected: Option<&Witness>,
 ) -> Result<Pair> {
     let now = scopes.now();
-    let local = scopes.caller(principal, &request.instance, &request.configuration)?;
+    let local = scopes.caller(principal, &request.instance, &request.netmap)?;
     if request.state_epoch != runtime.hub.epoch {
         return Err(Reason::ScopeChanged.into());
     }
@@ -507,15 +504,11 @@ fn pair(
         return Err(Reason::NotAvailable.into());
     }
     let peer = scopes.scope(principal.network_id(), request.peer_id)?;
-    let (witness, permit_deadline) = common_witness(
-        &local.target.configuration,
-        &peer.target.configuration,
-        &request.carrier,
-        now.timestamp_millis() as u64,
-        selected,
-        |witness| scopes.witness_deadline(&local.target.configuration, witness),
-    )?
-    .ok_or(Reason::NotAvailable)?;
+    // Both current netmaps admit this Native UDP adjacency; no business flow
+    // or complete path is involved. Candidates and acceptance stay bilateral.
+    if !netmap_udp_coordination(&local.target.netmap, &peer.target.netmap, &request.carrier)? {
+        return Err(Reason::NotAvailable.into());
+    }
     let a =
         runtime
             .hub
@@ -531,11 +524,11 @@ fn pair(
     // supplies distinct capture scopes. Underlay-local vetoes also run on Node.
     crate::state::connectivity::eligible_address(
         &a.address,
-        &peer.target.configuration.mesh_address_pools,
+        &peer.target.netmap.self_.mesh_address_pools,
     )?;
     crate::state::connectivity::eligible_address(
         &b.address,
-        &local.target.configuration.mesh_address_pools,
+        &local.target.netmap.self_.mesh_address_pools,
     )?;
     let deadline = [
         request.expires_at_ms,
@@ -544,7 +537,6 @@ fn pair(
         peer.deadline_ms,
         a.deadline_ms,
         b.deadline_ms,
-        permit_deadline,
     ]
     .into_iter()
     .min()
@@ -552,7 +544,6 @@ fn pair(
     Ok(Pair {
         local: a,
         peer: b,
-        witness,
         deadline,
     })
 }
@@ -582,13 +573,7 @@ fn recheck(scopes: &mut ScopeRead<'_, '_>, runtime: &Runtime, attempt: &Attempt)
         peer: b,
         deadline,
         ..
-    } = pair(
-        scopes,
-        runtime,
-        &attempt.prepared_by,
-        &attempt.request,
-        Some(&attempt.witness),
-    )?;
+    } = pair(scopes, runtime, &attempt.prepared_by, &attempt.request)?;
     if deadline < attempt.offer.expires_at_ms
         || a.address != attempt.offer.local.address
         || b.address != attempt.offer.peer.address
@@ -607,7 +592,7 @@ fn prepare(
     request: PrepareUdpTraversalRequest,
 ) -> Result<(UdpTraversalOffer, Option<Change>)> {
     let now = scopes.now();
-    scopes.caller(principal, &request.instance, &request.configuration)?;
+    scopes.caller(principal, &request.instance, &request.netmap)?;
     if request.state_epoch != runtime.hub.epoch {
         return Err(Reason::ScopeChanged.into());
     }
@@ -633,9 +618,8 @@ fn prepare(
     let Pair {
         local: a,
         peer: b,
-        witness,
         deadline,
-    } = pair(scopes, runtime, principal, &request, None)?;
+    } = pair(scopes, runtime, principal, &request)?;
     if deadline <= now_ms {
         return Err(Reason::AttemptExpired.into());
     }
@@ -705,7 +689,6 @@ fn prepare(
     let entry = Attempt {
         request,
         offer: offer.clone(),
-        witness,
         prepared_by: principal.clone(),
         accepted: [None, None],
         terminal: None,

@@ -343,8 +343,8 @@ impl Kernel {
             Some(_) => {}
         }
         if view
-                .egress_capture()
-                .is_some_and(|plan| plan.unavailable.is_some())
+            .egress_capture()
+            .is_some_and(|plan| plan.unavailable.is_some())
         {
             return Err(Error::Target);
         }

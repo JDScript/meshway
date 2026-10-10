@@ -1,4 +1,5 @@
-//! Authenticated node control and durable execution lifecycle.
+//! Authenticated node control: sessions, instances, netmap receipts, State
+//! admission and coordination. Execution authority itself is the netmap.
 pub(crate) mod connectivity;
 pub(crate) mod diagnostics;
 pub mod proof;
@@ -44,22 +45,9 @@ pub struct Execution {
     handle: Handle,
     sealer: Arc<Sealer>,
     boot: InstanceId,
+    netmaps: Arc<dyn crate::state::facts::NetmapReader>,
 }
 impl Execution {
-    /// Current identity-scoped names, read and authorized in one transaction.
-    pub async fn query_dns(
-        &self,
-        token: &str,
-        request: NodeDnsQueryRequest,
-        request_id: RequestId,
-    ) -> Result<NodeDnsQueryResponse, Error> {
-        let token = proof::token_hash(token)?;
-        let sealer = self.sealer.clone();
-        let boot = self.boot;
-        self.handle
-            .read(move |tx| store::query_dns(tx, &sealer, boot, token, request, request_id))
-            .await
-    }
     pub async fn revoke_key(
         &self,
         token: &str,
@@ -113,26 +101,17 @@ impl Execution {
             .read(move |tx| store::inventory(tx, &sealer, token, network))
             .await
     }
-    pub async fn progress(
-        &self,
-        token: &str,
-        network: NetworkId,
-        publication: PublicationId,
-    ) -> Result<PublicationProgress, Error> {
-        let token = crate::accounts::token_digest(token)?;
-        let sealer = self.sealer.clone();
-        self.handle
-            .read({
-                let boot = self.boot;
-                move |tx| store::progress(tx, &sealer, boot, token, network, publication)
-            })
-            .await
-    }
-    pub(crate) fn new(handle: Handle, sealer: Arc<Sealer>, boot: InstanceId) -> Self {
+    pub(crate) fn new(
+        handle: Handle,
+        sealer: Arc<Sealer>,
+        boot: InstanceId,
+        netmaps: Arc<dyn crate::state::facts::NetmapReader>,
+    ) -> Self {
         Self {
             handle,
             sealer,
             boot,
+            netmaps,
         }
     }
     #[cfg(test)]
@@ -227,34 +206,6 @@ impl Execution {
             })
             .await
     }
-    pub async fn configuration(
-        &self,
-        token: &str,
-        request: NodeConfigurationRequest,
-    ) -> Result<NodeConfigurationResponse, Error> {
-        let token = proof::token_hash(token)?;
-        let sealer = self.sealer.clone();
-        let boot = self.boot;
-        self.handle
-            .transact(TransactionBehavior::Immediate, move |tx| {
-                store::configuration(tx, &sealer, boot, token, request)
-            })
-            .await
-    }
-    pub async fn refresh_configuration(
-        &self,
-        token: &str,
-        request: NodeConfigurationRequest,
-    ) -> Result<NodeConfigurationResponse, Error> {
-        let token = proof::token_hash(token)?;
-        let sealer = self.sealer.clone();
-        let boot = self.boot;
-        self.handle
-            .transact(TransactionBehavior::Immediate, move |tx| {
-                store::refresh_configuration(tx, &sealer, boot, token, request)
-            })
-            .await
-    }
     pub async fn receipt(&self, token: &str, request: ReceiptRequest) -> Result<(), Error> {
         let token = proof::token_hash(token)?;
         let sealer = self.sealer.clone();
@@ -265,53 +216,11 @@ impl Execution {
                 if let Err(error) = &result {
                     tracing::info!(instance = %request.instance.instance_id,
                         generation = request.instance.generation.get(),
-                        publication = %request.target.execution_publication,
+                        netmap_serial = request.netmap.serial.get(),
                         attempt = request.attempt.get(), sequence = request.sequence.get(),
                         phase = ?request.phase, reason = %error, "Configuration receipt rejected");
                 }
                 result
-            })
-            .await
-    }
-    pub async fn demand(
-        &self,
-        token: &str,
-        request: DemandRequest,
-    ) -> Result<DemandResponse, Error> {
-        let token = proof::token_hash(token)?;
-        let sealer = self.sealer.clone();
-        let boot = self.boot;
-        self.handle
-            .transact(TransactionBehavior::Immediate, move |tx| {
-                store::demand(tx, &sealer, boot, token, request)
-            })
-            .await
-    }
-    pub async fn renew_demand(
-        &self,
-        token: &str,
-        request: RenewDemandRequest,
-    ) -> Result<DemandResponse, Error> {
-        let token = proof::token_hash(token)?;
-        let sealer = self.sealer.clone();
-        let boot = self.boot;
-        self.handle
-            .transact(TransactionBehavior::Immediate, move |tx| {
-                store::renew_demand(tx, &sealer, boot, token, request)
-            })
-            .await
-    }
-    pub async fn cancel_demand(
-        &self,
-        token: &str,
-        request: CancelDemandRequest,
-    ) -> Result<(), Error> {
-        let token = proof::token_hash(token)?;
-        let sealer = self.sealer.clone();
-        let boot = self.boot;
-        self.handle
-            .transact(TransactionBehavior::Immediate, move |tx| {
-                store::cancel_demand(tx, &sealer, boot, token, request)
             })
             .await
     }

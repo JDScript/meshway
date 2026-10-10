@@ -1,5 +1,7 @@
-//! Execution-side authorization projection for State. The root StateProvider
-//! composes these transaction-checked facts with configuration/entity projections.
+//! Execution-side authorization projection for State. What a reader may see
+//! and which resources a Node may report follow the current netmaps alone,
+//! never business flows or measurements. The root StateProvider composes
+//! these transaction-checked facts with configuration/entity projections.
 use super::Execution;
 use crate::error::Error;
 use crate::{
@@ -12,7 +14,8 @@ use crate::{
 use chrono::{DateTime, Utc};
 use meshway_configuration::{
     NodeAddresses,
-    execution::{CompiledNode, DialParameters},
+    execution::DialParameters,
+    netmap::{CompiledNetmap, NodeNetmap},
 };
 use meshway_model::state::{ResourceRef, SocketNetwork};
 use meshway_model::*;
@@ -21,9 +24,8 @@ use rusqlite::Transaction;
 use std::{
     collections::{BTreeMap, BTreeSet},
     net::{IpAddr, SocketAddr},
+    sync::Arc,
 };
-
-mod netmap;
 
 #[cfg(test)]
 thread_local! {
@@ -36,17 +38,6 @@ impl Execution {
     pub(crate) fn take_state_work() -> (usize, usize) {
         STATE_WORK.with(|counts| counts.replace((0, 0)))
     }
-    /// Reauthorize an accepted diagnostic subscription against its current
-    /// exact service permit. Only prepare_observation may create a lifetime.
-    pub fn observation_admission_in_transaction(
-        &self,
-        tx: &Transaction<'_>,
-        identity: &ReadIdentity,
-        request: &meshway_protocol::observations::CreateObservation,
-        now: DateTime<Utc>,
-    ) -> Result<crate::observations::TaskAdmission, Error> {
-        self.diagnostic_admission(tx, identity, request, now)
-    }
     /// Authenticate the real Node session and current instance in the same SQL
     /// transaction C uses to accept a report. No synthetic principal or bearer.
     pub fn report_admission_in_transaction(
@@ -58,9 +49,9 @@ impl Execution {
         self.report_with_context(tx, token, now, true)
     }
 
-    /// Task polling/results cannot use retained publications. State/history
-    /// callers explicitly retain those contexts through the public entrypoint.
-    pub(super) fn report_with_context(
+    /// Task polling/results use the current netmap only; State/history
+    /// callers also accept the delta base the Node may still report.
+    pub(crate) fn report_with_context(
         &self,
         tx: &Transaction<'_>,
         token: &str,
@@ -83,95 +74,65 @@ impl Execution {
         Ok(report)
     }
 
-    /// Visibility is a server projection of current Config identity and compiled
-    /// execution dependencies. Only self/admin gets full local socket details.
+    /// What a reader may see is the union of the current netmap projections
+    /// of its own Nodes, independent of which business flows or measurements
+    /// exist. It changes only with a netmap serial. Endpoint resources reach
+    /// a Node reader only for adjacent carriers.
     pub fn state_scope_in_transaction(
         &self,
         tx: &Transaction<'_>,
         identity: &ReadIdentity,
         now: DateTime<Utc>,
     ) -> Result<VisibilityScope, Error> {
+        let netmaps = &*self.netmaps;
         let ScopeSubject {
             network,
             full,
-            mut expires_at,
+            expires_at,
             actor,
         } = self.scope_subject(tx, identity, now)?;
         let (revision, cfg, _) = store::current_configuration(tx, &self.sealer, network)?;
-        let mut visible = full.clone();
-        let mut observation_paths = BTreeSet::new();
+        let mut owned = BTreeMap::new();
         for node in &full {
-            if let Some((publication, target)) =
-                store::target_for_node(tx, &self.sealer, network, *node)?
-            {
-                match store::check_publication(
-                    tx,
-                    &self.sealer,
-                    network,
-                    *node,
-                    publication,
-                    now.timestamp_millis(),
-                ) {
-                    Ok(()) => {}
-                    Err(Error::BindingConflict) => continue,
-                    Err(error) => return Err(error),
-                }
-                for permit in target
-                    .configuration
-                    .permits
-                    .values()
-                    .filter(|p| p.expires_at_ms > now.timestamp_millis() as u64)
-                {
-                    for path in &permit.paths {
-                        visible.extend(path.nodes.iter().copied());
-                        observation_paths.insert(path.nodes.clone());
-                    }
-                }
-                for permit in target
-                    .configuration
-                    .diagnostics
-                    .values()
-                    .filter(|p| p.expires_at_ms > now.timestamp_millis() as u64)
-                {
-                    for path in &permit.paths {
-                        visible.extend(path.nodes.iter().copied());
-                        observation_paths.insert(path.nodes.clone());
-                    }
-                }
+            if let Some(netmap) = netmaps.current(tx, network, *node)? {
+                owned.insert(*node, netmap);
             }
+        }
+        let mut visible = full.clone();
+        for netmap in owned.values() {
+            visible.extend(crate::state::facts::visible(&netmap.netmap));
         }
         visible.retain(|node| cfg.nodes.contains_key(node));
         let (current, bindings) = self.current_nodes(tx, network, &visible, now)?;
         let endpoint_resources = match identity {
-            ReadIdentity::Node { .. } => {
-                let mut resources = BTreeMap::new();
-                for local in &full {
-                    let disclosure =
-                        self.endpoint_disclosure(tx, network, *local, &visible, now)?;
-                    resources.extend(disclosure.resources);
-                    if let Some(deadline) = disclosure.expires_at {
-                        expires_at = expires_at.min(deadline);
-                    }
-                }
-                Some(resources)
-            }
+            ReadIdentity::Node { .. } => Some(
+                owned
+                    .values()
+                    .flat_map(|netmap| netmap_endpoint_resources(&netmap.netmap))
+                    .collect(),
+            ),
             ReadIdentity::UserSession { .. } => None,
         };
-        let authorization_digest = super::proof::request_digest(&(
+        let observation_paths = BTreeSet::new();
+        let references: BTreeMap<_, _> = owned
+            .iter()
+            .map(|(node, n)| (*node, n.reference()))
+            .collect();
+        let authorization_digest = crate::execution::proof::request_digest(&(
             network,
             revision,
             actor,
             &visible,
             &full,
             &bindings,
-            &observation_paths,
+            &references,
             &endpoint_resources,
         ))?;
         Ok(VisibilityScope {
             network_id: network,
             configuration_revision: revision,
             authorization_digest,
-            observation_authorization_digest: super::proof::request_digest(&(
+            observation_authorization_digest: crate::execution::proof::request_digest(&(
                 network, revision, actor, &full,
             ))?,
             hostnames: visible
@@ -248,7 +209,7 @@ impl Execution {
         })
     }
 
-    /// Current instance, execution and revocation of every visible Node.
+    /// Current instance, netmap and revocation of every visible Node.
     fn current_nodes(
         &self,
         tx: &Transaction<'_>,
@@ -268,39 +229,14 @@ impl Execution {
                 now.timestamp_millis(),
             )?;
             let lease = if live && !revoked {
-                Some(store::lease_for_node(tx, &self.sealer, network, *node)?)
+                Some(store::lease_for_node(tx, network, *node)?)
             } else {
                 None
             };
-            let configurations: Vec<_> = lease
-                .as_ref()
-                .and_then(|l| l.target.clone())
-                .into_iter()
-                .collect();
-            let execution = match &lease {
-                Some(lease)
-                    if lease
-                        .execution_expires_at_ms
-                        .is_some_and(|expiry| expiry > now.timestamp_millis() as u64) =>
-                {
-                    if let Some(target) = &lease.target {
-                        match store::check_publication(
-                            tx,
-                            &self.sealer,
-                            network,
-                            *node,
-                            target.execution_publication,
-                            now.timestamp_millis(),
-                        ) {
-                            Ok(()) => Some(target.clone()),
-                            Err(Error::BindingConflict) => None,
-                            Err(error) => return Err(error),
-                        }
-                    } else {
-                        None
-                    }
-                }
-                _ => None,
+            let netmap = if lease.is_some() {
+                crate::store::netmap::current(tx, network, *node)?.map(|c| c.current)
+            } else {
+                None
             };
             bindings.insert(
                 *node,
@@ -308,7 +244,7 @@ impl Execution {
                     revoked,
                     lease
                         .as_ref()
-                        .map(|l| (l.instance_id, l.generation, l.target.clone())),
+                        .map(|l| (l.instance_id, l.generation, netmap)),
                 ),
             );
             current.insert(
@@ -316,8 +252,8 @@ impl Execution {
                 CurrentNode {
                     instance_id: lease.as_ref().map(|l| l.instance_id),
                     instance_generation: lease.as_ref().map(|l| l.generation),
-                    execution,
-                    configurations,
+                    execution: netmap,
+                    configurations: netmap.into_iter().collect(),
                     revoked,
                     lease_expires_at: lease.as_ref().map(|l| time(l.expires_at_ms)).transpose()?,
                 },
@@ -326,9 +262,9 @@ impl Execution {
         Ok((current, bindings))
     }
 
-    /// Current transactional identity/instance/publication admission. Acquisition
-    /// and endpoint disclosure never use retained receipt/history contexts.
-    pub(super) fn current_node_admission(
+    /// Current transactional identity/instance/netmap admission. Acquisition
+    /// and endpoint disclosure never use the retained delta base.
+    pub(crate) fn current_node_admission(
         &self,
         tx: &Transaction<'_>,
         network: NetworkId,
@@ -339,15 +275,15 @@ impl Execution {
             .map(|(report, _)| report)
     }
 
-    /// Return the immutable target already read for current admission so a
-    /// transaction-local consumer does not decrypt the publication again.
-    pub(super) fn current_node_context(
+    /// Return the verified netmap already read for current admission so a
+    /// transaction-local consumer does not read it again.
+    pub(crate) fn current_node_context(
         &self,
         tx: &Transaction<'_>,
         network: NetworkId,
         node: NodeId,
         now: DateTime<Utc>,
-    ) -> Result<(ReportAdmission, Option<CompiledNode>), Error> {
+    ) -> Result<(ReportAdmission, Option<Arc<CompiledNetmap>>), Error> {
         let has_instance = store::admission::has_live_instance(
             tx,
             network,
@@ -358,54 +294,37 @@ impl Execution {
         if !has_instance {
             return Err(Error::StateConflict);
         }
-        let lease = store::lease_for_node(tx, &self.sealer, network, node)?;
+        let lease = store::lease_for_node(tx, network, node)?;
         let (_, cfg, bindings) = store::current_configuration(tx, &self.sealer, network)?;
         store::identity_eligible(tx, &cfg, &bindings, network, node)?;
+        let netmap = self.netmaps.current(tx, network, node)?;
         let mut report = ReportAdmission {
             network_id: network,
             node_id: node,
             instance_id: lease.instance_id,
             instance_generation: lease.generation,
             lease_expires_at: time(lease.expires_at_ms)?,
-            execution: None,
-            configurations: lease.target.clone().into_iter().collect(),
-            contexts: vec![],
+            execution: netmap.as_ref().map(|netmap| netmap.reference()),
+            configurations: netmap.iter().map(|netmap| netmap.reference()).collect(),
+            contexts: netmap
+                .iter()
+                .map(|netmap| configuration_admission(netmap, true))
+                .collect(),
             mesh_addresses: cfg
                 .nodes
                 .values()
                 .flat_map(|n| addresses(&n.addresses))
                 .collect(),
         };
-        let target = store::target_for_node(tx, &self.sealer, network, node)?;
-        if let Some((publication, target)) = &target {
-            let eligible = match store::check_publication(
-                tx,
-                &self.sealer,
-                network,
-                node,
-                *publication,
-                now.timestamp_millis(),
-            ) {
-                Ok(()) => true,
-                Err(Error::BindingConflict) => false,
-                Err(error) => return Err(error),
-            };
-            if eligible
-                && let Some(expiry) = lease
-                    .execution_expires_at_ms
-                    .filter(|expiry| *expiry > now.timestamp_millis() as u64)
-            {
-                report.execution = lease.target.clone();
-                report.lease_expires_at = report.lease_expires_at.min(time(expiry)?);
-            }
-            report
-                .contexts
-                .push(configuration_admission(target, eligible));
+        if netmap.is_none() {
+            report.execution = None;
         }
-        Ok((report, target.map(|(_, target)| target)))
+        Ok((report, netmap))
     }
 
-    pub(super) fn node_admission(
+    /// Current admission plus the delta base the Node may still name in late
+    /// receipts and State: history only, never installation authority.
+    pub(crate) fn node_admission(
         &self,
         tx: &Transaction<'_>,
         network: NetworkId,
@@ -418,33 +337,32 @@ impl Execution {
             counts.set((checks, history + 1));
         });
         let mut report = self.current_node_admission(tx, network, node, now)?;
-        let history = store::receipt_history_targets(
-            tx,
-            &self.sealer,
-            network,
-            node,
-            report.instance_id,
-            now.timestamp_millis(),
-        )?
-        .into_iter()
-        .chain(store::recent_targets_for_node(
-            tx,
-            &self.sealer,
-            network,
-            node,
-            now.timestamp_millis(),
-        )?);
-        for target in history {
-            if !report.configurations.contains(&target.reference) {
-                report.configurations.push(target.reference);
-                if let Some(current) = target.current {
-                    report
-                        .contexts
-                        .push(configuration_admission(&current, false));
-                }
-            }
+        if let Some(previous) =
+            crate::store::netmap::current(tx, network, node)?.and_then(|c| c.previous)
+            && !report.configurations.contains(&previous)
+        {
+            let netmap = crate::store::netmap::load(tx, &self.sealer, network, node, previous)?;
+            report.configurations.push(previous);
+            report
+                .contexts
+                .push(configuration_admission(&netmap, false));
         }
         Ok(report)
+    }
+
+    /// The current user session of an observation subscriber.
+    pub(crate) fn observation_session(
+        &self,
+        tx: &Transaction<'_>,
+        identity: &ReadIdentity,
+        now: DateTime<Utc>,
+    ) -> Result<SessionId, Error> {
+        let ReadIdentity::UserSession { digest, network } = identity else {
+            return Err(Error::PermissionDenied);
+        };
+        let session = current_session(tx, digest, now.timestamp_millis())?;
+        store::admission::membership_role(tx, *network, session.user.id)?;
+        Ok(session.session_id)
     }
 }
 
@@ -455,138 +373,61 @@ struct ScopeSubject {
     actor: Digest,
 }
 
-type NodeBindings = BTreeMap<
-    NodeId,
-    (
-        bool,
-        Option<(InstanceId, Version, Option<ConfigurationRef>)>,
-    ),
->;
+type NodeBindings = BTreeMap<NodeId, (bool, Option<(InstanceId, Version, Option<NetmapRef>)>)>;
 
+fn transport(listener: &Listener) -> (bool, SocketNetwork, &'static str) {
+    match listener {
+        Listener::NativeUdp(l) => (l.enabled, SocketNetwork::Udp, "native_udp"),
+        Listener::NativeTcp(l) => (l.enabled, SocketNetwork::Tcp, "native_tcp"),
+        Listener::Vless(l) => (l.enabled, SocketNetwork::Tcp, "vless"),
+        Listener::Trojan(l) => (l.enabled, SocketNetwork::Tcp, "trojan"),
+    }
+}
+
+/// The resources and carriers one netmap lets its Node report. A peer's
+/// carrier transports are those of its dial candidates and of this Node's
+/// enabled listeners; reports are plausibility-checked, never authorized.
 fn configuration_admission(
-    target: &CompiledNode,
+    compiled: &CompiledNetmap,
     installation_allowed: bool,
 ) -> ConfigurationAdmission {
-    let cfg = &target.configuration;
+    let netmap: &NodeNetmap = &compiled.netmap;
+    let incoming: BTreeSet<String> = netmap
+        .self_
+        .listeners
+        .values()
+        .map(|listener| transport(listener.declaration()))
+        .filter(|(enabled, _, _)| *enabled)
+        .map(|(_, _, name)| name.to_owned())
+        .collect();
+    let mut neighbor_transports: BTreeMap<NodeId, BTreeSet<String>> = BTreeMap::new();
+    for peer in netmap.projection.inventory.keys() {
+        if *peer != netmap.node_id {
+            neighbor_transports.insert(*peer, incoming.clone());
+        }
+    }
+    for dial in netmap.dialers.values() {
+        neighbor_transports
+            .entry(dial.peer)
+            .or_default()
+            .insert(dial.parameters.transport().as_str().into());
+    }
     let mut report = ConfigurationAdmission {
-        path_deadlines: BTreeMap::new(),
-        configuration: ConfigurationRef {
-            revision: cfg.revision,
-            execution_publication: cfg.publication,
-            digest: target.digest,
-        },
+        configuration: compiled.reference(),
         installation_allowed,
         resources: BTreeMap::new(),
-        peers: BTreeSet::new(),
-        paths: vec![],
-        profiles: BTreeSet::new(),
-        neighbor_transports: cfg.neighbor_transports(),
-        path_transports: BTreeMap::new(),
-        diagnostic_transports: BTreeMap::new(),
-        mesh_address_pools: cfg.mesh_address_pools.clone(),
+        peers: netmap
+            .projection
+            .inventory
+            .keys()
+            .copied()
+            .filter(|peer| *peer != netmap.node_id)
+            .collect(),
+        profiles: BTreeSet::from([netmap.dns.profile.clone()]),
+        neighbor_transports,
+        mesh_address_pools: netmap.self_.mesh_address_pools.clone(),
     };
-    report.peers = cfg.peers.keys().copied().collect();
-    report.paths = cfg
-        .permits
-        .values()
-        .flat_map(|p| p.paths.iter().map(|p| p.nodes.clone()))
-        .chain(
-            cfg.diagnostics
-                .values()
-                .flat_map(|p| p.paths.iter().map(|p| p.nodes.clone())),
-        )
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect();
-    report.profiles.insert(cfg.dns.profile.clone());
-    use meshway_configuration::execution::{Carrier, CircuitAuthorization};
-    for (authorization, paths) in cfg
-        .permits
-        .iter()
-        .map(|(id, p)| (CircuitAuthorization::Business(*id), &p.paths))
-        .chain(
-            cfg.diagnostics
-                .iter()
-                .map(|(id, p)| (CircuitAuthorization::Diagnostic(*id), &p.paths)),
-        )
-    {
-        for path in paths
-            .iter()
-            .filter(|path| path.nodes.first() == Some(&cfg.node_id))
-        {
-            let Some(peer) = path.nodes.get(1) else {
-                continue;
-            };
-            let outgoing = cfg
-                .dialers
-                .values()
-                .filter(|dial| dial.peer == *peer)
-                .map(|dial| Carrier {
-                    dialer: cfg.node_id,
-                    listener: *peer,
-                    listener_key: dial.listener_key.clone(),
-                    protocol: dial.parameters.transport(),
-                });
-            let incoming = cfg.listeners.iter().map(|(key, listener)| Carrier {
-                dialer: *peer,
-                listener: cfg.node_id,
-                listener_key: key.clone(),
-                protocol: match listener.declaration() {
-                    Listener::NativeUdp(_) => meshway_transport_spec::TransportProtocol::NativeUdp,
-                    Listener::NativeTcp(_) => meshway_transport_spec::TransportProtocol::NativeTcp,
-                    Listener::Vless(_) => meshway_transport_spec::TransportProtocol::Vless,
-                    Listener::Trojan(_) => meshway_transport_spec::TransportProtocol::Trojan,
-                },
-            });
-            for carrier in outgoing.chain(incoming) {
-                if meshway_policy::admission::admit_circuit_carrier(
-                    cfg,
-                    authorization,
-                    &path.nodes,
-                    *peer,
-                    &carrier,
-                )
-                .is_ok()
-                {
-                    report
-                        .path_transports
-                        .entry(path.nodes.clone())
-                        .or_default()
-                        .insert(carrier.protocol.as_str().into());
-                    if let CircuitAuthorization::Diagnostic(id) = authorization {
-                        report
-                            .diagnostic_transports
-                            .entry(id)
-                            .or_default()
-                            .entry(path.nodes.clone())
-                            .or_default()
-                            .insert(carrier.protocol.as_str().into());
-                    }
-                }
-            }
-        }
-    }
-    for (paths, expires) in cfg
-        .permits
-        .values()
-        .map(|p| (&p.paths, p.expires_at_ms))
-        .chain(
-            cfg.diagnostics
-                .values()
-                .map(|p| (&p.paths, p.expires_at_ms)),
-        )
-    {
-        if let Ok(expiry) = time(expires) {
-            for path in paths {
-                report
-                    .path_deadlines
-                    .entry(path.nodes.clone())
-                    .and_modify(|old| *old = (*old).max(expiry))
-                    .or_insert(expiry);
-            }
-        }
-    }
-    for (key, listener) in &cfg.listeners {
+    for (key, listener) in &netmap.self_.listeners {
         let (enabled, network, transport, endpoints) = match listener.declaration() {
             Listener::NativeUdp(l) => (l.enabled, SocketNetwork::Udp, "native_udp", &l.endpoints),
             Listener::NativeTcp(l) => (l.enabled, SocketNetwork::Tcp, "native_tcp", &l.endpoints),
@@ -607,7 +448,10 @@ fn configuration_admission(
                     .enumerate()
                     .map(|(i, endpoint)| {
                         (
-                            format!("/nodes/{}/listeners/{key_path}/endpoints/{i}", cfg.node_id),
+                            format!(
+                                "/nodes/{}/listeners/{key_path}/endpoints/{i}",
+                                netmap.node_id
+                            ),
                             endpoint_address(endpoint),
                         )
                     })
@@ -615,7 +459,7 @@ fn configuration_admission(
             },
         );
     }
-    for (key, dial) in &cfg.dialers {
+    for (key, dial) in &netmap.dialers {
         let (network, transport) = match dial.parameters {
             DialParameters::NativeUdp { .. } => (SocketNetwork::Udp, "native_udp"),
             DialParameters::NativeTcp { .. } => (SocketNetwork::Tcp, "native_tcp"),
@@ -656,90 +500,17 @@ fn time(ms: u64) -> Result<DateTime<Utc>, Error> {
         .ok_or(Error::decode("execution expiry"))
 }
 
-impl crate::observations::service::ObservationProvider for Execution {
-    fn event_driven_maintenance(&self) -> bool {
-        true
+/// Peer listeners the owner may dial: the only endpoint details it may read,
+/// the same rule as its peer facts.
+fn netmap_endpoint_resources(netmap: &NodeNetmap) -> BTreeMap<NodeId, BTreeSet<ResourceRef>> {
+    let mut resources: BTreeMap<NodeId, BTreeSet<ResourceRef>> = BTreeMap::new();
+    for dial in netmap.dialers.values() {
+        resources
+            .entry(dial.peer)
+            .or_default()
+            .insert(ResourceRef::Listener {
+                key: dial.listener_key.clone(),
+            });
     }
-    fn node_observation_identity(
-        &self,
-        tx: &Transaction<'_>,
-        token: &str,
-        instance: &meshway_protocol::InstanceRequest,
-        now: DateTime<Utc>,
-    ) -> Result<crate::observations::service::NodeObservationIdentity, Error> {
-        self.diagnostic_node_identity(tx, token, instance, now)
-    }
-    fn prepare_node_observation(
-        &self,
-        tx: &Transaction<'_>,
-        token: &str,
-        request: &meshway_protocol::node_observations::CreateNodeObservation,
-        now: DateTime<Utc>,
-    ) -> Result<crate::observations::service::NodeObservationAdmission, Error> {
-        self.prepare_node_diagnostic(tx, token, request, now)
-    }
-    fn node_observation(
-        &self,
-        tx: &Transaction<'_>,
-        subscription: ObservationSubscriptionId,
-        _: &crate::observations::service::StoredSubscription,
-        now: DateTime<Utc>,
-    ) -> Result<crate::observations::service::NodeObservationAdmission, Error> {
-        self.node_diagnostic_admission(tx, subscription, now)
-    }
-    fn prepare_observation(
-        &self,
-        tx: &Transaction<'_>,
-        identity: &ReadIdentity,
-        request: &meshway_protocol::observations::CreateObservation,
-        now: DateTime<Utc>,
-    ) -> Result<crate::observations::TaskAdmission, Error> {
-        self.prepare_diagnostic(tx, identity, request, now)
-    }
-    fn synchronize(
-        &self,
-        tx: &Transaction<'_>,
-        subscriptions: &[crate::observations::service::SubscriptionLease],
-        now: DateTime<Utc>,
-    ) -> Result<bool, Error> {
-        self.synchronize_diagnostics(tx, subscriptions, now)
-    }
-    fn scope(
-        &self,
-        tx: &Transaction<'_>,
-        identity: &ReadIdentity,
-        now: DateTime<Utc>,
-    ) -> Result<VisibilityScope, Error> {
-        self.state_scope_in_transaction(tx, identity, now)
-    }
-    fn report(
-        &self,
-        tx: &Transaction<'_>,
-        authorization: &str,
-        now: DateTime<Utc>,
-    ) -> Result<ReportAdmission, Error> {
-        self.report_with_context(tx, authorization, now, false)
-    }
-    fn observation(
-        &self,
-        tx: &Transaction<'_>,
-        identity: &ReadIdentity,
-        request: &meshway_protocol::observations::CreateObservation,
-        now: DateTime<Utc>,
-    ) -> Result<crate::observations::TaskAdmission, Error> {
-        self.observation_admission_in_transaction(tx, identity, request, now)
-    }
-    fn observation_session(
-        &self,
-        tx: &Transaction<'_>,
-        identity: &ReadIdentity,
-        now: DateTime<Utc>,
-    ) -> Result<SessionId, Error> {
-        let ReadIdentity::UserSession { digest, network } = identity else {
-            return Err(Error::PermissionDenied);
-        };
-        let session = current_session(tx, digest, now.timestamp_millis())?;
-        store::admission::membership_role(tx, *network, session.user.id)?;
-        Ok(session.session_id)
-    }
+    resources
 }

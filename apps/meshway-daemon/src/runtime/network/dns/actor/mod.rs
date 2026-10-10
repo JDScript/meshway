@@ -1,15 +1,13 @@
 //! The DNS owner is observed independently of packet I/O and TUN address DAD.
-use super::{Runtime, intents::Plan};
+use super::Runtime;
 use meshway_authority::ExecutionSnapshot;
-use meshway_configuration::execution::NodeConfiguration;
+use meshway_configuration::netmap::NodeNetmap;
 use meshway_dns::{
-    ResolverSource, SystemDnsBackend, SystemDnsError, SystemDnsOwner, SystemDnsReservation,
-    SystemDnsSettings,
+    SystemDnsBackend, SystemDnsError, SystemDnsOwner, SystemDnsReservation, SystemDnsSettings,
 };
-use meshway_model::RequestId;
 use meshway_private_storage::Directory;
 use meshway_underlay::Host;
-use std::{collections::BTreeMap, future::Future, sync::Arc, time::Duration};
+use std::{future::Future, sync::Arc, time::Duration};
 use tokio::sync::{mpsc, oneshot, watch};
 
 // A stalled observation withdraws query authority. Accepted backend writes
@@ -23,12 +21,11 @@ trait Owner: Send + 'static {
     fn observe(&mut self) -> impl Future<Output = Result<(), SystemDnsError>> + Send;
     fn hold(
         &mut self,
-        cfg: &NodeConfiguration,
-    ) -> impl Future<Output = Result<Vec<meshway_dns::ResolverDemand>, SystemDnsError>> + Send;
+        netmap: &NodeNetmap,
+    ) -> impl Future<Output = Result<(), SystemDnsError>> + Send;
     fn install(
         &mut self,
         snapshot: ExecutionSnapshot,
-        demands: &BTreeMap<ResolverSource, RequestId>,
     ) -> impl Future<Output = Result<(), SystemDnsError>> + Send;
     fn shutdown(self, keep: bool) -> impl Future<Output = Result<(), SystemDnsError>> + Send;
 }
@@ -40,19 +37,12 @@ impl Owner for Runtime {
     async fn observe(&mut self) -> Result<(), SystemDnsError> {
         Runtime::observe(self).await
     }
-    async fn hold(
-        &mut self,
-        cfg: &NodeConfiguration,
-    ) -> Result<Vec<meshway_dns::ResolverDemand>, SystemDnsError> {
-        Runtime::hold(self, cfg).await?;
-        self.demands(cfg)
+    async fn hold(&mut self, netmap: &NodeNetmap) -> Result<(), SystemDnsError> {
+        Runtime::hold(self, netmap).await?;
+        self.check(netmap)
     }
-    async fn install(
-        &mut self,
-        snapshot: ExecutionSnapshot,
-        demands: &BTreeMap<ResolverSource, RequestId>,
-    ) -> Result<(), SystemDnsError> {
-        Runtime::install(self, snapshot, demands).await
+    async fn install(&mut self, snapshot: ExecutionSnapshot) -> Result<(), SystemDnsError> {
+        Runtime::install(self, snapshot).await
     }
     async fn shutdown(self, keep: bool) -> Result<(), SystemDnsError> {
         Runtime::shutdown(self, keep).await
@@ -60,13 +50,9 @@ impl Owner for Runtime {
 }
 
 enum Command {
-    Hold(
-        Box<NodeConfiguration>,
-        oneshot::Sender<Result<Vec<meshway_dns::ResolverDemand>, SystemDnsError>>,
-    ),
+    Hold(Box<NodeNetmap>, oneshot::Sender<Result<(), SystemDnsError>>),
     Install(
         Box<ExecutionSnapshot>,
-        BTreeMap<ResolverSource, RequestId>,
         oneshot::Sender<Result<(), SystemDnsError>>,
     ),
     Shutdown(bool, oneshot::Sender<Result<(), SystemDnsError>>),
@@ -112,8 +98,8 @@ impl Actor {
                 if let Some(command) = command {
                     command_turn = false;
                     match command {
-                        Some(Command::Hold(cfg, reply)) => {
-                            let result = runtime.hold(&cfg).await;
+                        Some(Command::Hold(netmap, reply)) => {
+                            let result = runtime.hold(&netmap).await;
                             if let Err(error) = result {
                                 tracing::warn!(
                                     ?error,
@@ -124,8 +110,8 @@ impl Actor {
                             let _ = reply.send(result);
                             continue;
                         }
-                        Some(Command::Install(snapshot, demands, reply)) => {
-                            let result = runtime.install(*snapshot, &demands).await;
+                        Some(Command::Install(snapshot, reply)) => {
+                            let result = runtime.install(*snapshot).await;
                             if let Err(error) = result {
                                 tracing::warn!(
                                     ?error,
@@ -173,25 +159,18 @@ impl Actor {
     fn suspend(&self) {
         self.scopes.send_replace(None);
     }
-    async fn hold(
-        &self,
-        cfg: &NodeConfiguration,
-    ) -> Result<Vec<meshway_dns::ResolverDemand>, SystemDnsError> {
+    async fn hold(&self, netmap: &NodeNetmap) -> Result<(), SystemDnsError> {
         let (reply, result) = oneshot::channel();
         self.commands
-            .send(Command::Hold(Box::new(cfg.clone()), reply))
+            .send(Command::Hold(Box::new(netmap.clone()), reply))
             .await
             .map_err(|_| SystemDnsError::Backend)?;
         result.await.map_err(|_| SystemDnsError::Backend)?
     }
-    async fn install(
-        &self,
-        snapshot: ExecutionSnapshot,
-        ids: BTreeMap<ResolverSource, RequestId>,
-    ) -> Result<(), SystemDnsError> {
+    async fn install(&self, snapshot: ExecutionSnapshot) -> Result<(), SystemDnsError> {
         let (reply, result) = oneshot::channel();
         self.commands
-            .send(Command::Install(Box::new(snapshot), ids, reply))
+            .send(Command::Install(Box::new(snapshot), reply))
             .await
             .map_err(|_| SystemDnsError::Backend)?;
         result.await.map_err(|_| SystemDnsError::Backend)?
@@ -218,7 +197,6 @@ pub(in crate::runtime::network) struct Attachment {
     directory: Arc<Directory>,
     reservation: Option<SystemDnsReservation>,
     actor: Option<Actor>,
-    gateway: mpsc::Sender<super::super::Request>,
     recoveries: u8,
 }
 impl Attachment {
@@ -226,14 +204,12 @@ impl Attachment {
         settings: SystemDnsSettings,
         directory: Arc<Directory>,
         reservation: Option<SystemDnsReservation>,
-        gateway: mpsc::Sender<super::super::Request>,
     ) -> Self {
         Self {
             settings,
             directory,
             reservation,
             actor: None,
-            gateway,
             recoveries: 0,
         }
     }
@@ -259,11 +235,12 @@ impl Attachment {
         SystemDnsOwner::prepare_reserved(self.reservation.take().expect("reserved above"), anchor)
             .await
     }
+    /// Prepare the owner if needed and hold the netmap's negative capture.
     pub async fn plan(
         &mut self,
         host: &mut Host,
-        target: &super::super::Target,
-    ) -> Result<Plan, SystemDnsError> {
+        netmap: &NodeNetmap,
+    ) -> Result<(), SystemDnsError> {
         if self
             .actor
             .as_ref()
@@ -281,39 +258,21 @@ impl Attachment {
         }
         if self.actor.is_none() {
             let system = self.owner(host).await?;
-            let runtime = Runtime::prepare(
-                system,
-                self.settings.clone(),
-                Arc::new(super::super::discovery::Gateway::new(self.gateway.clone())),
-                Arc::new(host.sockets()),
-            )
-            .await?;
+            let runtime =
+                Runtime::prepare(system, self.settings.clone(), Arc::new(host.sockets())).await?;
             self.actor = Some(Actor::start(runtime));
         }
-        let cfg = target
-            .identity
-            .as_ref()
-            .ok_or(SystemDnsError::ResolverPlan)?
-            .snapshot()
-            .configuration()
-            .map_err(|_| SystemDnsError::ResolverPlan)?;
-        let demands = self
-            .actor
+        self.actor
             .as_ref()
             .expect("prepared above")
-            .hold(cfg)
-            .await?;
-        Ok(Plan::new(target.ticket.instance().clone(), cfg, demands))
+            .hold(netmap)
+            .await
     }
-    pub async fn install(
-        &self,
-        snapshot: ExecutionSnapshot,
-        ids: BTreeMap<ResolverSource, RequestId>,
-    ) -> Result<(), SystemDnsError> {
+    pub async fn install(&self, snapshot: ExecutionSnapshot) -> Result<(), SystemDnsError> {
         self.actor
             .as_ref()
             .ok_or(SystemDnsError::Backend)?
-            .install(snapshot, ids)
+            .install(snapshot)
             .await
     }
     pub fn suspend(&self) {

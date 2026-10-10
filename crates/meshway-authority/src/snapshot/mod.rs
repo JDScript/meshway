@@ -297,7 +297,6 @@ impl ExecutionSnapshot {
     }
 }
 
-
 /// A verified netmap and its lease. Cloning or reading the snapshot never
 /// extends it. Hosts must check immediately before admitting work or
 /// releasing an output, and select `invalidated` around blocked I/O. This is

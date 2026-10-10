@@ -340,6 +340,81 @@ pub(crate) fn current(
     }))
 }
 
+/// Upper bound of verified netmaps kept decrypted; reaching it starts over.
+const MAX_CACHED: usize = 16_384;
+
+/// The production netmap reader: each Node's current stored netmap, read in
+/// the caller's transaction and decrypted/verified once per content. A cached
+/// value is returned only while it is still the stored current reference.
+pub(crate) struct StoredNetmaps {
+    sealer: std::sync::Arc<Sealer>,
+    cache: std::sync::Mutex<BTreeMap<(NetworkId, NodeId), std::sync::Arc<CompiledNetmap>>>,
+}
+
+impl StoredNetmaps {
+    pub(crate) fn new(sealer: std::sync::Arc<Sealer>) -> Self {
+        Self {
+            sealer,
+            cache: std::sync::Mutex::default(),
+        }
+    }
+}
+
+impl crate::state::facts::NetmapReader for StoredNetmaps {
+    fn current(
+        &self,
+        tx: &Transaction<'_>,
+        network: NetworkId,
+        node: NodeId,
+    ) -> Result<Option<std::sync::Arc<CompiledNetmap>>, Error> {
+        let Some(Current {
+            current: expected, ..
+        }) = current(tx, network, node)?
+        else {
+            return Ok(None);
+        };
+        if let Ok(cache) = self.cache.lock()
+            && let Some(netmap) = cache.get(&(network, node))
+            && netmap.reference() == expected
+        {
+            return Ok(Some(std::sync::Arc::clone(netmap)));
+        }
+        let netmap = std::sync::Arc::new(load(tx, &self.sealer, network, node, expected)?);
+        if let Ok(mut cache) = self.cache.lock() {
+            if cache.len() >= MAX_CACHED {
+                cache.clear();
+            }
+            cache.insert((network, node), std::sync::Arc::clone(&netmap));
+        }
+        Ok(Some(netmap))
+    }
+}
+
+/// A [`StoredNetmaps`] bound once the database (and its sealer) is open. Until
+/// then no Node has a netmap, so nothing is recorded or disclosed.
+#[derive(Default)]
+pub(crate) struct LateNetmaps(std::sync::OnceLock<StoredNetmaps>);
+
+impl LateNetmaps {
+    pub(crate) fn bind(&self, netmaps: StoredNetmaps) {
+        let _ = self.0.set(netmaps);
+    }
+}
+
+impl crate::state::facts::NetmapReader for LateNetmaps {
+    fn current(
+        &self,
+        tx: &Transaction<'_>,
+        network: NetworkId,
+        node: NodeId,
+    ) -> Result<Option<std::sync::Arc<CompiledNetmap>>, Error> {
+        match self.0.get() {
+            Some(netmaps) => netmaps.current(tx, network, node),
+            None => Ok(None),
+        }
+    }
+}
+
 /// Decrypts and verifies one stored netmap; it must be exactly `expected`.
 pub(crate) fn load(
     tx: &Transaction<'_>,

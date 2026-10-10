@@ -323,7 +323,7 @@ fn unreachable_primary_capability_deadline_cannot_shorten_a_valid_backup_permit(
         a: format!("node:{}", node(2)),
         b: "*".into(),
         transports: Input::Omitted,
- keepalive: false,
+        keepalive: false,
     });
     runtime
         .instances

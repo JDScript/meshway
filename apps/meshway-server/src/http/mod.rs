@@ -231,19 +231,13 @@ fn routes() -> OpenApiRouter<HttpState> {
         .routes(routes!(agent::acquire))
         .routes(routes!(agent::renew))
         .routes(routes!(agent::release))
-        .routes(routes!(agent::configuration))
-        .routes(routes!(agent::refresh_configuration))
-        .routes(routes!(agent::query_dns))
         .routes(routes!(agent::sync))
         .routes(routes!(connectivity::query))
         .routes(routes!(connectivity::prepare))
         .routes(routes!(connectivity::accept))
         .routes(routes!(connectivity::cancel))
         .routes(routes!(agent::receipt))
-        .routes(routes!(agent::demand))
-        .routes(routes!(agent::renew_demand))
         .routes(routes!(agent::select_profile))
-        .routes(routes!(agent::cancel_demand))
         .routes(routes!(enrollment::create))
         .routes(routes!(enrollment::inspect))
         .routes(routes!(enrollment::approve))
@@ -258,7 +252,6 @@ fn routes() -> OpenApiRouter<HttpState> {
         .routes(routes!(nodes::settings))
         .routes(routes!(nodes::get, nodes::delete))
         .routes(routes!(nodes::revoke_key))
-        .routes(routes!(nodes::progress))
 }
 
 pub use error::{ProblemSample, problem_samples};
@@ -277,11 +270,6 @@ pub fn openapi() -> OpenApi {
         &<state::__path_user_events as utoipa::Path>::path(),
     )
     .expect("registered user stream");
-    events::declare_sse::<meshway_protocol::NodeEvent>(
-        &mut spec,
-        &<state::__path_node_events as utoipa::Path>::path(),
-    )
-    .expect("registered node stream");
     spec.info.title = "Meshway Server".into();
     spec.info.description = Some(
         "Console API under /api/v1 (user sessions) and Node API under /agent-api/v1 \

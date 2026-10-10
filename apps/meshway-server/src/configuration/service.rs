@@ -367,11 +367,6 @@ impl Configurations {
             request_id: id,
             network_id: effects.network_id,
             revision: effects.revision,
-            publication_ids: if effects.target_node_ids.is_empty() {
-                Vec::new()
-            } else {
-                effects.publication_ids
-            },
             target_count: u32::try_from(effects.target_node_ids.len())
                 .map_err(|_| Error::Internal("configuration target count overflow"))?,
             deleted_node_ids: effects.deleted_node_ids.into_iter().collect(),

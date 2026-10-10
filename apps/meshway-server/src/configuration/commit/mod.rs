@@ -348,7 +348,6 @@ impl Committer {
                 notice: None,
                 network_id: network,
                 revision: current.revision,
-                publication_ids: Vec::new(),
                 target_node_ids: BTreeSet::new(),
                 deleted_node_ids: BTreeSet::new(),
                 netmap: Default::default(),
@@ -390,7 +389,7 @@ impl Committer {
             [&source, &configuration, &bindings],
         )?;
         crate::resources::bindings::inherit_checks(tx, current, &prepared, revision)?;
-        let publication = store::execution::apply_configuration_effects(
+        store::execution::apply_configuration_effects(
             tx,
             &self.sealer,
             network,
@@ -408,26 +407,11 @@ impl Committer {
             now,
             store::netmap::Trigger::Configuration,
         )?;
-        let publication_ids = vec![publication.publication];
-        let target_node_ids: BTreeSet<NodeId> = publication.nodes.keys().copied().collect();
-        let execution_targets = store::execution::configuration_targets(
-            tx,
-            &self.sealer,
-            network,
-            revision,
-            &publication_ids,
-        )
-        .map_err(|_| Error::DependencyUnavailable)?;
-        if execution_targets.keys().copied().collect::<BTreeSet<_>>() != target_node_ids {
-            return Err(Error::DependencyUnavailable);
-        }
-        for node in &target_node_ids {
-            if !prepared.document.configuration.nodes.contains_key(node)
-                || prepared.deleted_node_ids.contains(node)
-            {
-                return Err(Error::DependencyUnavailable);
-            }
-        }
+        // The version's fixed participants: every active Node's netmap
+        // current after this apply, including offline Nodes.
+        let execution_targets =
+            store::execution::netmap_targets(tx, network, &prepared.document.configuration)?;
+        let target_node_ids: BTreeSet<NodeId> = execution_targets.keys().copied().collect();
         store::configuration::versions::record_execution_targets(
             tx,
             &version_commit,
@@ -455,7 +439,6 @@ impl Committer {
             }),
             network_id: network,
             revision,
-            publication_ids,
             target_node_ids,
             deleted_node_ids: prepared.deleted_node_ids,
             netmap,

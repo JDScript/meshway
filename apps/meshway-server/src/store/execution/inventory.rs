@@ -1,14 +1,13 @@
-use super::{current_configuration, id, now, publications::revoke_execution, user_binding};
+use super::{current_configuration, id, now, user_binding};
 use crate::effect::Effect;
 use crate::error::Error;
 use crate::secrets::Sealer;
 use meshway_model::{
-    BoundNodeKey, ConfigurationRef, Digest, InstanceId, KeyAlgorithm, MembershipRole, NetworkId,
-    NodeId, NodePublicKey, PublicationId, Revision, Sequence, Version,
+    BoundNodeKey, Digest, KeyAlgorithm, MembershipRole, NetworkId, NodeId, NodePublicKey, Revision,
+    Version,
 };
-use meshway_protocol::{execution::*, node::*};
+use meshway_protocol::node::*;
 use rusqlite::{OptionalExtension, Transaction, params};
-use std::collections::BTreeMap;
 /// Marks one key generation as permanently revoked. Returns whether the key
 /// was still current; only then does the Node lose its execution. A retired
 /// generation can still be revoked so old material can never be recovered;
@@ -60,7 +59,7 @@ pub(crate) fn revoke_key(
     )?;
     let mut effects = Vec::new();
     if current {
-        revoke_execution(tx, sealer, network, node, now)?;
+        super::retire_node_sessions(tx, network, node, now)?;
         let netmap = crate::store::netmap::recompile(
             tx,
             sealer,
@@ -102,7 +101,7 @@ pub(crate) fn inventory(
         })
         .copied()
         .collect();
-    inventory_in_transaction(tx, sealer, network, &cfg, &visible, manager)
+    inventory_in_transaction(tx, network, &cfg, &visible, manager)
 }
 
 pub(crate) fn settings(
@@ -134,14 +133,12 @@ pub(crate) fn settings(
 /// already authorized inside this transaction; this function grants no access.
 pub(crate) fn inventory_in_transaction(
     tx: &Transaction<'_>,
-    sealer: &Sealer,
     network: NetworkId,
     cfg: &meshway_configuration::NetworkConfiguration,
     visible: &std::collections::BTreeSet<NodeId>,
     manager: bool,
 ) -> Result<NodeInventoryResponse, Error> {
     let mut items = Vec::new();
-    let mut references = BTreeMap::new();
     for (node, settings) in &cfg.nodes {
         if !visible.contains(node) {
             continue;
@@ -161,7 +158,7 @@ pub(crate) fn inventory_in_transaction(
             |r| r.get(0),
         )?;
         items.push(NodeInventoryView {
-            desired_execution: desired_execution(tx, sealer, network, *node, &mut references)?,
+            netmap: crate::store::netmap::current(tx, network, *node)?.map(|c| c.current),
             id: *node,
             network_id: network,
             registered_at_ms: registered as u64,
@@ -182,60 +179,6 @@ pub(crate) fn inventory_in_transaction(
     Ok(NodeInventoryResponse { items })
 }
 
-/// Decrypt each shared publication once per inventory read; retain only public refs.
-fn desired_execution(
-    tx: &Transaction<'_>,
-    sealer: &Sealer,
-    network: NetworkId,
-    node: NodeId,
-    references: &mut BTreeMap<PublicationId, BTreeMap<NodeId, ConfigurationRef>>,
-) -> Result<Option<ConfigurationRef>, Error> {
-    let publication: Option<Vec<u8>> = tx.query_row(
-        "SELECT p.id FROM node_execution e JOIN execution_publications p ON p.network_id=e.network_id AND p.id=e.target_publication_id WHERE e.network_id=?1 AND e.node_id=?2 AND p.withdrawn_at IS NULL",
-        params![network.as_uuid().as_bytes().as_slice(), node.as_uuid().as_bytes().as_slice()], |row| row.get(0),
-    ).optional()?;
-    let Some(publication) = publication else {
-        return Ok(None);
-    };
-    let publication: PublicationId = id(publication)?;
-    if let std::collections::btree_map::Entry::Vacant(entry) = references.entry(publication) {
-        let payload: Vec<u8> = tx.query_row(
-            "SELECT payload FROM execution_publications WHERE network_id=?1 AND id=?2",
-            params![
-                network.as_uuid().as_bytes().as_slice(),
-                publication.as_uuid().as_bytes().as_slice()
-            ],
-            |row| row.get(0),
-        )?;
-        let Some(compiled) =
-            super::cache::read(tx, sealer, network, publication, &payload)?.current()
-        else {
-            super::cache::retire(tx, network, publication, now()?)?;
-            return Ok(None);
-        };
-        entry.insert(
-            compiled
-                .nodes
-                .into_iter()
-                .map(|(node, target)| {
-                    (
-                        node,
-                        ConfigurationRef {
-                            revision: compiled.revision,
-                            execution_publication: publication,
-                            digest: target.digest,
-                        },
-                    )
-                })
-                .collect(),
-        );
-    }
-    references[&publication]
-        .get(&node)
-        .cloned()
-        .map(Some)
-        .ok_or(Error::decode("execution_publications.payload"))
-}
 fn latest_key(
     tx: &Transaction<'_>,
     network: NetworkId,
@@ -273,87 +216,4 @@ fn latest_key(
             .try_into()
             .map_err(|_| Error::decode("node_keys.created_at"))?,
     ))
-}
-pub(crate) fn progress(
-    tx: &Transaction<'_>,
-    sealer: &Sealer,
-    boot: InstanceId,
-    token: [u8; 32],
-    network: NetworkId,
-    publication: PublicationId,
-) -> Result<PublicationProgress, Error> {
-    let user = super::super::authorization::current_session(tx, &token, now()?)?
-        .user
-        .id;
-    let manager:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM memberships WHERE network_id=?1 AND user_id=?2 AND role IN ('owner','admin') AND revoked_at IS NULL)",params![network.as_uuid().as_bytes().as_slice(),user.as_uuid().as_bytes().as_slice()],|r|r.get(0))?;
-    if !manager {
-        return Err(Error::PermissionDenied);
-    }
-    let (payload,sequence,mut withdrawn):(Vec<u8>,i64,Option<i64>)=tx.query_row("SELECT payload,sequence,withdrawn_at FROM execution_publications WHERE network_id=?1 AND id=?2",params![network.as_uuid().as_bytes().as_slice(),publication.as_uuid().as_bytes().as_slice()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?.ok_or(Error::NotFound)?;
-    let stored = super::cache::read(tx, sealer, network, publication, &payload)?;
-    if matches!(&stored, super::cache::Stored::Obsolete { .. }) {
-        let now = now()?;
-        super::cache::retire(tx, network, publication, now)?;
-        withdrawn = withdrawn.or(Some(now));
-    }
-    let (revision, references) = stored.references();
-    let mut nodes = BTreeMap::new();
-    for (node, reference) in references {
-        let current:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM node_execution WHERE network_id=?1 AND node_id=?2 AND target_publication_id=?3)",params![network.as_uuid().as_bytes().as_slice(),node.as_uuid().as_bytes().as_slice(),publication.as_uuid().as_bytes().as_slice()],|r|r.get(0))?;
-        let phase = |phase: &str| -> Result<bool, Error> {
-            Ok(tx.query_row("SELECT EXISTS(SELECT 1 FROM execution_receipts r JOIN node_execution e ON e.network_id=r.network_id AND e.node_id=r.node_id AND e.instance_id=r.instance_id AND e.generation=r.generation WHERE r.network_id=?1 AND r.node_id=?2 AND r.publication_id=?3 AND r.phase=?4)",params![network.as_uuid().as_bytes().as_slice(),node.as_uuid().as_bytes().as_slice(),publication.as_uuid().as_bytes().as_slice(),phase],|r|r.get(0))?)
-        };
-        let freshness = crate::state::progress::freshness(
-            tx,
-            network,
-            node,
-            &reference,
-            None,
-            boot,
-            chrono::Utc::now(),
-        )?;
-        let last_received_at_ms:Option<i64>=tx.query_row("SELECT max(received_at) FROM execution_receipts WHERE network_id=?1 AND node_id=?2 AND publication_id=?3",params![network.as_uuid().as_bytes().as_slice(),node.as_uuid().as_bytes().as_slice(),publication.as_uuid().as_bytes().as_slice()],|r|r.get(0))?;
-        // Arrival order is not application order. A new attempt (even only
-        // saved so far) supersedes an older result; late evidence stays stored.
-        let result: Option<String> = tx
-            .query_row(
-                "SELECT r.phase FROM execution_receipts r JOIN node_execution e
-             ON e.network_id=r.network_id AND e.node_id=r.node_id
-             AND e.instance_id=r.instance_id AND e.generation=r.generation
-             WHERE r.network_id=?1 AND r.node_id=?2 AND r.publication_id=?3
-             ORDER BY r.attempt DESC,r.sequence DESC LIMIT 1",
-                params![
-                    network.as_uuid().as_bytes().as_slice(),
-                    node.as_uuid().as_bytes().as_slice(),
-                    publication.as_uuid().as_bytes().as_slice()
-                ],
-                |r| r.get(0),
-            )
-            .optional()?;
-        nodes.insert(
-            node,
-            NodePublicationProgress {
-                target: reference,
-                current,
-                saved: phase("saved")?,
-                applied: freshness == ReceiptFreshness::Current
-                    && result.as_deref() == Some("applied"),
-                failed: result.as_deref() == Some("failed"),
-                freshness,
-                last_received_at_ms: last_received_at_ms.map(|v| v as u64),
-            },
-        );
-    }
-    Ok(PublicationProgress {
-        publication,
-        revision,
-        sequence: Sequence::new(
-            sequence
-                .try_into()
-                .map_err(|_| Error::decode("execution_publications.sequence"))?,
-        )
-        .map_err(|_| Error::decode("execution_publications.sequence"))?,
-        withdrawn_at_ms: withdrawn.map(|v| v as u64),
-        nodes,
-    })
 }

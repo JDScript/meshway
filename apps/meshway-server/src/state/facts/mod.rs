@@ -372,3 +372,33 @@ impl PeerFactsSource for StateFacts {
         Ok(runtime.facts.watch(viewer))
     }
 }
+
+/// The `sync` side of the same ledger: the viewer is the Node's current
+/// stored netmap, read in the sync transaction.
+impl crate::netmap::PeerFactsSource for StateFacts {
+    fn read(
+        &self,
+        tx: &Transaction<'_>,
+        network: NetworkId,
+        node: NodeId,
+        netmap: NetmapRef,
+        held: Option<NetmapRef>,
+        cursor: Option<StateCursor>,
+    ) -> Result<crate::netmap::PeerFactsRead, Error> {
+        let netmaps = {
+            let runtime = self.runtime.lock().map_err(|_| Error::RUNTIME)?;
+            Arc::clone(&runtime.netmaps)
+        };
+        let viewer = netmaps
+            .current(tx, network, node)?
+            .filter(|viewer| viewer.reference() == netmap)
+            .ok_or(Error::BindingConflict)?;
+        // Armed before reading, so no change in between is missed.
+        let mut wake = PeerFactsSource::watch(self, &viewer)?;
+        let delta = PeerFactsSource::peer_facts(self, &viewer, held, cursor)?;
+        Ok(crate::netmap::PeerFactsRead {
+            delta,
+            changed: Some(Box::pin(async move { wake.changed().await })),
+        })
+    }
+}

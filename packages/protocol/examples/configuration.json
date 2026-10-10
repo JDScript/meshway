@@ -15,12 +15,8 @@
         "revision": 7,
         "configuration": {
           "addressPools": {
-            "ipv4": [
-              "100.80.0.0/16"
-            ],
-            "ipv6": [
-              "fd42:7a65:8800::/48"
-            ]
+            "ipv4": ["100.80.0.0/16"],
+            "ipv6": ["fd42:7a65:8800::/48"]
           },
           "defaults": {
             "access": "deny",
@@ -62,58 +58,32 @@
             }
           },
           "groups": {
-            "group:team": [
-              "alice@example.com",
-              "bob@example.com"
-            ]
+            "group:team": ["alice@example.com", "bob@example.com"]
           },
           "tagsOwners": {
-            "tag:office": [
-              "alice@example.com"
-            ],
-            "tag:relay": [
-              "alice@example.com"
-            ]
+            "tag:office": ["alice@example.com"],
+            "tag:relay": ["alice@example.com"]
           },
           "access": [
             {
               "remark": "Team HTTPS and diagnostics to the office gateway",
-              "src": [
-                "group:team"
-              ],
-              "dst": [
-                "tag:office"
-              ],
-              "ip": [
-                "tcp:443",
-                "icmp:*"
-              ],
+              "src": ["group:team"],
+              "dst": ["tag:office"],
+              "ip": ["tcp:443", "icmp:*"],
               "bidirectional": false
             },
             {
               "remark": "Team devices may communicate",
-              "src": [
-                "group:team"
-              ],
-              "dst": [
-                "group:team"
-              ],
-              "ip": [
-                "*"
-              ],
+              "src": ["group:team"],
+              "dst": ["group:team"],
+              "ip": ["*"],
               "bidirectional": false
             },
             {
               "remark": "Office gateway reaches the relay hub over HTTPS",
-              "src": [
-                "tag:office"
-              ],
-              "dst": [
-                "tag:relay"
-              ],
-              "ip": [
-                "tcp:443"
-              ],
+              "src": ["tag:office"],
+              "dst": ["tag:relay"],
+              "ip": ["tcp:443"],
               "bidirectional": false
             }
           ],
@@ -123,9 +93,7 @@
               "remark": "Office gateway behind NAT",
               "identity": {
                 "type": "tag",
-                "tags": [
-                  "tag:office"
-                ]
+                "tags": ["tag:office"]
               },
               "enabled": true,
               "addresses": {
@@ -175,9 +143,7 @@
               "remark": "Public Paris relay hub",
               "identity": {
                 "type": "tag",
-                "tags": [
-                  "tag:relay"
-                ]
+                "tags": ["tag:relay"]
               },
               "enabled": true,
               "addresses": {
@@ -275,25 +241,16 @@
               "action": "allow",
               "a": "*",
               "b": "tag:relay",
-              "transports": [
-                "native_udp",
-                "native_tcp"
-              ]
+              "transports": ["native_udp", "native_tcp"]
             }
           ],
           "routing": {
             "mesh": [
               {
                 "remark": "Office traffic must traverse Paris",
-                "src": [
-                  "group:team"
-                ],
-                "dst": [
-                  "tag:office"
-                ],
-                "via": [
-                  "node:e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50"
-                ]
+                "src": ["group:team"],
+                "dst": ["tag:office"],
+                "via": ["node:e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50"]
               }
             ],
             "egress": {
@@ -305,15 +262,9 @@
           "ruleSets": {
             "office": {
               "type": "inline",
-              "ipCIDR": [
-                "10.20.0.0/16"
-              ],
-              "domainSuffix": [
-                "intranet.example.com"
-              ],
-              "domain": [
-                "login.partner.example.com"
-              ]
+              "ipCIDR": ["10.20.0.0/16"],
+              "domainSuffix": ["intranet.example.com"],
+              "domain": ["login.partner.example.com"]
             },
             "regional": {
               "type": "remote",
@@ -338,9 +289,6 @@
         "requestId": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
         "networkId": "0d3a2a6e-7f3b-4d0c-9a8e-1c2b3d4e5f60",
         "revision": 8,
-        "publicationIds": [
-          "ca1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c40"
-        ],
         "targetCount": 4,
         "deletedNodeIds": []
       }
@@ -393,9 +341,7 @@
           "profile": {
             "name": "mesh",
             "assignment": null,
-            "allowed": [
-              "mesh"
-            ],
+            "allowed": ["mesh"],
             "locked": false,
             "requested": false
           },
@@ -404,10 +350,7 @@
             "grants": [
               {
                 "rule": "/access/0",
-                "traffic": [
-                  "tcp:443",
-                  "icmp:*"
-                ],
+                "traffic": ["tcp:443", "icmp:*"],
                 "reverse": false,
                 "resolutionDependent": false
               }
@@ -418,12 +361,8 @@
             "rule": "/routing/mesh/0",
             "profile": null,
             "ruleSet": null,
-            "targets": [
-              "a7b6c5d4-5e6f-4a3b-8c9d-9e8f7a6b5c70"
-            ],
-            "via": [
-              "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50"
-            ],
+            "targets": ["a7b6c5d4-5e6f-4a3b-8c9d-9e8f7a6b5c70"],
+            "via": ["e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50"],
             "resolutionDependent": []
           },
           "targets": [
@@ -505,12 +444,8 @@
         "revision": 7,
         "configuration": {
           "addressPools": {
-            "ipv4": [
-              "100.80.0.0/16"
-            ],
-            "ipv6": [
-              "fd42:7a65:8800::/48"
-            ]
+            "ipv4": ["100.80.0.0/16"],
+            "ipv6": ["fd42:7a65:8800::/48"]
           },
           "defaults": {
             "access": "deny",
@@ -552,58 +487,32 @@
             }
           },
           "groups": {
-            "group:team": [
-              "alice@example.com",
-              "bob@example.com"
-            ]
+            "group:team": ["alice@example.com", "bob@example.com"]
           },
           "tagsOwners": {
-            "tag:office": [
-              "alice@example.com"
-            ],
-            "tag:relay": [
-              "alice@example.com"
-            ]
+            "tag:office": ["alice@example.com"],
+            "tag:relay": ["alice@example.com"]
           },
           "access": [
             {
               "remark": "Team HTTPS and diagnostics to the office gateway",
-              "src": [
-                "group:team"
-              ],
-              "dst": [
-                "tag:office"
-              ],
-              "ip": [
-                "tcp:443",
-                "icmp:*"
-              ],
+              "src": ["group:team"],
+              "dst": ["tag:office"],
+              "ip": ["tcp:443", "icmp:*"],
               "bidirectional": false
             },
             {
               "remark": "Team devices may communicate",
-              "src": [
-                "group:team"
-              ],
-              "dst": [
-                "group:team"
-              ],
-              "ip": [
-                "*"
-              ],
+              "src": ["group:team"],
+              "dst": ["group:team"],
+              "ip": ["*"],
               "bidirectional": false
             },
             {
               "remark": "Office gateway reaches the relay hub over HTTPS",
-              "src": [
-                "tag:office"
-              ],
-              "dst": [
-                "tag:relay"
-              ],
-              "ip": [
-                "tcp:443"
-              ],
+              "src": ["tag:office"],
+              "dst": ["tag:relay"],
+              "ip": ["tcp:443"],
               "bidirectional": false
             }
           ],
@@ -613,9 +522,7 @@
               "remark": "Office gateway behind NAT",
               "identity": {
                 "type": "tag",
-                "tags": [
-                  "tag:office"
-                ]
+                "tags": ["tag:office"]
               },
               "enabled": true,
               "addresses": {
@@ -665,9 +572,7 @@
               "remark": "Public Paris relay hub",
               "identity": {
                 "type": "tag",
-                "tags": [
-                  "tag:relay"
-                ]
+                "tags": ["tag:relay"]
               },
               "enabled": true,
               "addresses": {
@@ -765,25 +670,16 @@
               "action": "allow",
               "a": "*",
               "b": "tag:relay",
-              "transports": [
-                "native_udp",
-                "native_tcp"
-              ]
+              "transports": ["native_udp", "native_tcp"]
             }
           ],
           "routing": {
             "mesh": [
               {
                 "remark": "Office traffic must traverse Paris",
-                "src": [
-                  "group:team"
-                ],
-                "dst": [
-                  "tag:office"
-                ],
-                "via": [
-                  "node:e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50"
-                ]
+                "src": ["group:team"],
+                "dst": ["tag:office"],
+                "via": ["node:e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50"]
               }
             ],
             "egress": {
@@ -795,15 +691,9 @@
           "ruleSets": {
             "office": {
               "type": "inline",
-              "ipCIDR": [
-                "10.20.0.0/16"
-              ],
-              "domainSuffix": [
-                "intranet.example.com"
-              ],
-              "domain": [
-                "login.partner.example.com"
-              ]
+              "ipCIDR": ["10.20.0.0/16"],
+              "domainSuffix": ["intranet.example.com"],
+              "domain": ["login.partner.example.com"]
             },
             "regional": {
               "type": "remote",
@@ -831,9 +721,9 @@
         },
         "nodes": {
           "a7b6c5d4-5e6f-4a3b-8c9d-9e8f7a6b5c70": {
-            "target": {
+            "netmap": {
               "revision": 8,
-              "executionPublication": "ca1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c40",
+              "serial": 1,
               "digest": "7518c7f65cd5288875742e6d83b941e3d24a72dfe28613ec75c0e5d487bf2a63"
             },
             "phase": "pending",
@@ -844,9 +734,9 @@
             "freshness": "awaitingInstance"
           },
           "b8c7d6e5-4f5a-4b2c-8d9e-0f1a2b3c4d80": {
-            "target": {
+            "netmap": {
               "revision": 8,
-              "executionPublication": "ca1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c40",
+              "serial": 1,
               "digest": "8264d19ce3a15b7f4c9a62d0ef7b8135a04c28d95b6e17f39c0a45d2e7b8f613"
             },
             "phase": "pending",
@@ -857,9 +747,9 @@
             "freshness": "awaitingInstance"
           },
           "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50": {
-            "target": {
+            "netmap": {
               "revision": 8,
-              "executionPublication": "ca1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c40",
+              "serial": 1,
               "digest": "93b6e240c1d78f5a6e29b0437d8c15f9a0e6b2d48c7135f6e9a02d8c4b7f1653"
             },
             "phase": "pending",
@@ -870,9 +760,9 @@
             "freshness": "awaitingInstance"
           },
           "f6a5b4c3-6d7e-4f4a-9b8c-8d7e6f5a4b60": {
-            "target": {
+            "netmap": {
               "revision": 8,
-              "executionPublication": "ca1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c40",
+              "serial": 1,
               "digest": "a4c7f351d2e8906b7f3ac1548e9d260ab1f7c3e59d8246a7f0b13e9d5c802764"
             },
             "phase": "pending",
@@ -895,12 +785,8 @@
         "sourceJsonc": "{\n  \"addressPools\": {\n    \"ipv4\": [\n      \"100.80.0.0/16\"\n    ],\n    \"ipv6\": [\n      \"fd42:7a65:8800::/48\"\n    ]\n  },\n  \"defaults\": {\n    \"access\": \"deny\",\n    \"topology\": \"deny\",\n    \"dialers\": {\n      \"native_udp\": {\n        \"enabled\": true,\n        \"remark\": \"\",\n        \"connectTimeout\": \"5s\",\n        \"bindInterface\": \"\",\n        \"localAddress\": \"\",\n        \"socket\": {\n          \"receiveBuffer\": 0,\n          \"sendBuffer\": 0\n        }\n      },\n      \"native_tcp\": {\n        \"enabled\": true,\n        \"remark\": \"\",\n        \"connectTimeout\": \"5s\",\n        \"bindInterface\": \"\",\n        \"localAddress\": \"\",\n        \"socket\": {\n          \"receiveBuffer\": 0,\n          \"sendBuffer\": 0\n        },\n        \"tcp\": {\n          \"noDelay\": true,\n          \"keepAlive\": {\n            \"enabled\": true,\n            \"idle\": \"5m\",\n            \"interval\": \"75s\",\n            \"count\": 3\n          }\n        }\n      }\n    }\n  },\n  \"groups\": {\n    \"group:team\": [\n      \"alice@example.com\",\n      \"bob@example.com\"\n    ]\n  },\n  \"tagsOwners\": {\n    \"tag:office\": [\n      \"alice@example.com\"\n    ],\n    \"tag:relay\": [\n      \"alice@example.com\"\n    ]\n  },\n  \"access\": [\n    {\n      \"remark\": \"Team HTTPS and diagnostics to the office gateway\",\n      \"src\": [\n        \"group:team\"\n      ],\n      \"dst\": [\n        \"tag:office\"\n      ],\n      \"ip\": [\n        \"tcp:443\",\n        \"icmp:*\"\n      ],\n      \"bidirectional\": false\n    },\n    {\n      \"remark\": \"Team devices may communicate\",\n      \"src\": [\n        \"group:team\"\n      ],\n      \"dst\": [\n        \"group:team\"\n      ],\n      \"ip\": [\n        \"*\"\n      ],\n      \"bidirectional\": false\n    },\n    {\n      \"remark\": \"Office gateway reaches the relay hub over HTTPS\",\n      \"src\": [\n        \"tag:office\"\n      ],\n      \"dst\": [\n        \"tag:relay\"\n      ],\n      \"ip\": [\n        \"tcp:443\"\n      ],\n      \"bidirectional\": false\n    }\n  ],\n  \"nodes\": {\n    \"a7b6c5d4-5e6f-4a3b-8c9d-9e8f7a6b5c70\": {\n      \"hostname\": \"office-gw\",\n      \"remark\": \"Office gateway behind NAT\",\n      \"identity\": {\n        \"type\": \"tag\",\n        \"tags\": [\n          \"tag:office\"\n        ]\n      },\n      \"enabled\": true,\n      \"addresses\": {\n        \"ipv4\": \"100.80.0.12\",\n        \"ipv6\": \"fd42:7a65:8800::12\"\n      },\n      \"listeners\": {\n        \"mesh-udp\": {\n          \"type\": \"native_udp\",\n          \"enabled\": true,\n          \"remark\": \"NAT-local UDP listener\",\n          \"listen\": \"0.0.0.0\",\n          \"listenPort\": 8421,\n          \"endpoints\": [],\n          \"bindInterface\": \"\",\n          \"socket\": {\n            \"receiveBuffer\": 0,\n            \"sendBuffer\": 0\n          }\n        }\n      },\n      \"exitEnabled\": false\n    },\n    \"b8c7d6e5-4f5a-4b2c-8d9e-0f1a2b3c4d80\": {\n      \"hostname\": \"bob-phone\",\n      \"remark\": \"Bob's phone\",\n      \"identity\": {\n        \"type\": \"user\",\n        \"user\": \"bob@example.com\"\n      },\n      \"enabled\": true,\n      \"addresses\": {\n        \"ipv4\": \"100.80.0.13\",\n        \"ipv6\": \"fd42:7a65:8800::13\"\n      },\n      \"listeners\": {},\n      \"exitEnabled\": false\n    },\n    \"e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50\": {\n      \"hostname\": \"paris\",\n      \"remark\": \"Public Paris relay hub\",\n      \"identity\": {\n        \"type\": \"tag\",\n        \"tags\": [\n          \"tag:relay\"\n        ]\n      },\n      \"enabled\": true,\n      \"addresses\": {\n        \"ipv4\": \"100.80.0.10\",\n        \"ipv6\": \"fd42:7a65:8800::10\"\n      },\n      \"listeners\": {\n        \"mesh-tcp\": {\n          \"type\": \"native_tcp\",\n          \"enabled\": true,\n          \"remark\": \"Public TCP fallback\",\n          \"listen\": \"0.0.0.0\",\n          \"listenPort\": 8421,\n          \"endpoints\": [\n            {\n              \"host\": \"203.0.113.10\",\n              \"port\": 8421\n            }\n          ],\n          \"bindInterface\": \"\",\n          \"socket\": {\n            \"receiveBuffer\": 0,\n            \"sendBuffer\": 0\n          },\n          \"tcp\": {\n            \"noDelay\": true,\n            \"keepAlive\": {\n              \"enabled\": true,\n              \"idle\": \"5m\",\n              \"interval\": \"75s\",\n              \"count\": 3\n            }\n          }\n        },\n        \"mesh-udp\": {\n          \"type\": \"native_udp\",\n          \"enabled\": true,\n          \"remark\": \"Public UDP carrier\",\n          \"listen\": \"0.0.0.0\",\n          \"listenPort\": 8421,\n          \"endpoints\": [\n            {\n              \"host\": \"203.0.113.10\",\n              \"port\": 8421\n            }\n          ],\n          \"bindInterface\": \"\",\n          \"socket\": {\n            \"receiveBuffer\": 0,\n            \"sendBuffer\": 0\n          }\n        }\n      },\n      \"exitEnabled\": false\n    },\n    \"f6a5b4c3-6d7e-4f4a-9b8c-8d7e6f5a4b60\": {\n      \"hostname\": \"alice-laptop\",\n      \"remark\": \"Alice's laptop\",\n      \"identity\": {\n        \"type\": \"user\",\n        \"user\": \"alice@example.com\"\n      },\n      \"enabled\": true,\n      \"addresses\": {\n        \"ipv4\": \"100.80.0.11\",\n        \"ipv6\": \"fd42:7a65:8800::11\"\n      },\n      \"listeners\": {},\n      \"exitEnabled\": false\n    }\n  },\n  \"dns\": {\n    \"magicDNS\": true,\n    \"domain\": \"mesh.example.com\",\n    \"servers\": {},\n    \"default\": [],\n    \"routes\": {},\n    \"searchDomains\": [],\n    \"overrideLocal\": false\n  },\n  \"topology\": [\n    {\n      \"remark\": \"All devices connect through the relay hub\",\n      \"action\": \"allow\",\n      \"a\": \"*\",\n      \"b\": \"tag:relay\",\n      \"transports\": [\n        \"native_udp\",\n        \"native_tcp\"\n      ]\n    }\n  ],\n  \"routing\": {\n    \"mesh\": [\n      {\n        \"remark\": \"Office traffic must traverse Paris\",\n        \"src\": [\n          \"group:team\"\n        ],\n        \"dst\": [\n          \"tag:office\"\n        ],\n        \"via\": [\n          \"node:e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50\"\n        ]\n      }\n    ],\n    \"egress\": {\n      \"rules\": [],\n      \"profiles\": {},\n      \"assignments\": []\n    }\n  },\n  \"ruleSets\": {\n    \"office\": {\n      \"type\": \"inline\",\n      \"ipCIDR\": [\n        \"10.20.0.0/16\"\n      ],\n      \"domainSuffix\": [\n        \"intranet.example.com\"\n      ],\n      \"domain\": [\n        \"login.partner.example.com\"\n      ]\n    },\n    \"regional\": {\n      \"type\": \"remote\",\n      \"url\": \"https://rules.example.com/regional.json\",\n      \"format\": \"sing-box-source\",\n      \"updateInterval\": \"24h\"\n    }\n  }\n}\n",
         "configuration": {
           "addressPools": {
-            "ipv4": [
-              "100.80.0.0/16"
-            ],
-            "ipv6": [
-              "fd42:7a65:8800::/48"
-            ]
+            "ipv4": ["100.80.0.0/16"],
+            "ipv6": ["fd42:7a65:8800::/48"]
           },
           "defaults": {
             "access": "deny",
@@ -940,58 +826,32 @@
             }
           },
           "groups": {
-            "group:team": [
-              "alice@example.com",
-              "bob@example.com"
-            ]
+            "group:team": ["alice@example.com", "bob@example.com"]
           },
           "tagsOwners": {
-            "tag:office": [
-              "alice@example.com"
-            ],
-            "tag:relay": [
-              "alice@example.com"
-            ]
+            "tag:office": ["alice@example.com"],
+            "tag:relay": ["alice@example.com"]
           },
           "access": [
             {
               "remark": "Team HTTPS and diagnostics to the office gateway",
-              "src": [
-                "group:team"
-              ],
-              "dst": [
-                "tag:office"
-              ],
-              "ip": [
-                "tcp:443",
-                "icmp:*"
-              ],
+              "src": ["group:team"],
+              "dst": ["tag:office"],
+              "ip": ["tcp:443", "icmp:*"],
               "bidirectional": false
             },
             {
               "remark": "Team devices may communicate",
-              "src": [
-                "group:team"
-              ],
-              "dst": [
-                "group:team"
-              ],
-              "ip": [
-                "*"
-              ],
+              "src": ["group:team"],
+              "dst": ["group:team"],
+              "ip": ["*"],
               "bidirectional": false
             },
             {
               "remark": "Office gateway reaches the relay hub over HTTPS",
-              "src": [
-                "tag:office"
-              ],
-              "dst": [
-                "tag:relay"
-              ],
-              "ip": [
-                "tcp:443"
-              ],
+              "src": ["tag:office"],
+              "dst": ["tag:relay"],
+              "ip": ["tcp:443"],
               "bidirectional": false
             }
           ],
@@ -1001,9 +861,7 @@
               "remark": "Office gateway behind NAT",
               "identity": {
                 "type": "tag",
-                "tags": [
-                  "tag:office"
-                ]
+                "tags": ["tag:office"]
               },
               "enabled": true,
               "addresses": {
@@ -1047,9 +905,7 @@
               "remark": "Public Paris relay hub",
               "identity": {
                 "type": "tag",
-                "tags": [
-                  "tag:relay"
-                ]
+                "tags": ["tag:relay"]
               },
               "enabled": true,
               "addresses": {
@@ -1136,25 +992,16 @@
               "action": "allow",
               "a": "*",
               "b": "tag:relay",
-              "transports": [
-                "native_udp",
-                "native_tcp"
-              ]
+              "transports": ["native_udp", "native_tcp"]
             }
           ],
           "routing": {
             "mesh": [
               {
                 "remark": "Office traffic must traverse Paris",
-                "src": [
-                  "group:team"
-                ],
-                "dst": [
-                  "tag:office"
-                ],
-                "via": [
-                  "node:e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50"
-                ]
+                "src": ["group:team"],
+                "dst": ["tag:office"],
+                "via": ["node:e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50"]
               }
             ],
             "egress": {
@@ -1166,15 +1013,9 @@
           "ruleSets": {
             "office": {
               "type": "inline",
-              "ipCIDR": [
-                "10.20.0.0/16"
-              ],
-              "domainSuffix": [
-                "intranet.example.com"
-              ],
-              "domain": [
-                "login.partner.example.com"
-              ]
+              "ipCIDR": ["10.20.0.0/16"],
+              "domainSuffix": ["intranet.example.com"],
+              "domain": ["login.partner.example.com"]
             },
             "regional": {
               "type": "remote",
@@ -1210,12 +1051,8 @@
         "baseRevision": 7,
         "preview": {
           "addressPools": {
-            "ipv4": [
-              "100.80.0.0/16"
-            ],
-            "ipv6": [
-              "fd42:7a65:8800::/48"
-            ]
+            "ipv4": ["100.80.0.0/16"],
+            "ipv6": ["fd42:7a65:8800::/48"]
           },
           "defaults": {
             "access": "deny",
@@ -1257,58 +1094,32 @@
             }
           },
           "groups": {
-            "group:team": [
-              "alice@example.com",
-              "bob@example.com"
-            ]
+            "group:team": ["alice@example.com", "bob@example.com"]
           },
           "tagsOwners": {
-            "tag:office": [
-              "alice@example.com"
-            ],
-            "tag:relay": [
-              "alice@example.com"
-            ]
+            "tag:office": ["alice@example.com"],
+            "tag:relay": ["alice@example.com"]
           },
           "access": [
             {
               "remark": "Team HTTPS and diagnostics to the office gateway",
-              "src": [
-                "group:team"
-              ],
-              "dst": [
-                "tag:office"
-              ],
-              "ip": [
-                "tcp:443",
-                "icmp:*"
-              ],
+              "src": ["group:team"],
+              "dst": ["tag:office"],
+              "ip": ["tcp:443", "icmp:*"],
               "bidirectional": false
             },
             {
               "remark": "Team devices may communicate",
-              "src": [
-                "group:team"
-              ],
-              "dst": [
-                "group:team"
-              ],
-              "ip": [
-                "*"
-              ],
+              "src": ["group:team"],
+              "dst": ["group:team"],
+              "ip": ["*"],
               "bidirectional": false
             },
             {
               "remark": "Office gateway reaches the relay hub over HTTPS",
-              "src": [
-                "tag:office"
-              ],
-              "dst": [
-                "tag:relay"
-              ],
-              "ip": [
-                "tcp:443"
-              ],
+              "src": ["tag:office"],
+              "dst": ["tag:relay"],
+              "ip": ["tcp:443"],
               "bidirectional": false
             }
           ],
@@ -1318,9 +1129,7 @@
               "remark": "Office gateway behind NAT",
               "identity": {
                 "type": "tag",
-                "tags": [
-                  "tag:office"
-                ]
+                "tags": ["tag:office"]
               },
               "enabled": true,
               "addresses": {
@@ -1370,9 +1179,7 @@
               "remark": "Public Paris relay hub",
               "identity": {
                 "type": "tag",
-                "tags": [
-                  "tag:relay"
-                ]
+                "tags": ["tag:relay"]
               },
               "enabled": true,
               "addresses": {
@@ -1470,25 +1277,16 @@
               "action": "allow",
               "a": "*",
               "b": "tag:relay",
-              "transports": [
-                "native_udp",
-                "native_tcp"
-              ]
+              "transports": ["native_udp", "native_tcp"]
             }
           ],
           "routing": {
             "mesh": [
               {
                 "remark": "Office traffic must traverse Paris",
-                "src": [
-                  "group:team"
-                ],
-                "dst": [
-                  "tag:office"
-                ],
-                "via": [
-                  "node:e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50"
-                ]
+                "src": ["group:team"],
+                "dst": ["tag:office"],
+                "via": ["node:e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50"]
               }
             ],
             "egress": {
@@ -1500,15 +1298,9 @@
           "ruleSets": {
             "office": {
               "type": "inline",
-              "ipCIDR": [
-                "10.20.0.0/16"
-              ],
-              "domainSuffix": [
-                "intranet.example.com"
-              ],
-              "domain": [
-                "login.partner.example.com"
-              ]
+              "ipCIDR": ["10.20.0.0/16"],
+              "domainSuffix": ["intranet.example.com"],
+              "domain": ["login.partner.example.com"]
             },
             "regional": {
               "type": "remote",

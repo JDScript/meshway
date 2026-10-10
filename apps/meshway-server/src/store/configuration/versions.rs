@@ -3,7 +3,7 @@ use crate::configuration::{ConfigurationBindings, PreparedConfiguration, Snapsho
 use crate::error::Error;
 use crate::secrets::{ProtectedBytes, Purpose, Sealer};
 use meshway_configuration::ConfigurationDocument;
-use meshway_model::{ConfigurationRef, NetworkId, NodeId, RequestId, Revision, UserId};
+use meshway_model::{NetmapRef, NetworkId, NodeId, RequestId, Revision, UserId};
 use rusqlite::{OptionalExtension, Transaction, params};
 use sha2::{Digest as _, Sha256};
 use std::collections::BTreeMap;
@@ -80,7 +80,7 @@ pub(crate) fn insert_version(
 pub(crate) fn record_execution_targets(
     tx: &Transaction<'_>,
     commit: &VersionCommit,
-    execution_targets: &BTreeMap<NodeId, ConfigurationRef>,
+    execution_targets: &BTreeMap<NodeId, NetmapRef>,
 ) -> Result<(), Error> {
     let VersionCommit {
         network,

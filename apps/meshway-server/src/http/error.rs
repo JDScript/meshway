@@ -155,21 +155,11 @@ impl HttpError {
                     message: "Receipt target does not belong to this node.".into(),
                 },
             ),
-            Error::ReceiptPublicationSuperseded => simple(
+            Error::ReceiptNetmapSuperseded => simple(
                 S::CONFLICT,
-                Problem::ReceiptPublicationSuperseded {
+                Problem::ReceiptNetmapSuperseded {
                     params: empty,
-                    message: "Receipt publication is no longer eligible; refresh the target."
-                        .into(),
-                },
-            ),
-            Error::ReceiptLeaseExpired => simple(
-                S::CONFLICT,
-                Problem::ReceiptLeaseExpired {
-                    params: empty,
-                    message:
-                        "Receipt execution lease expired or was withdrawn; refresh the target."
-                            .into(),
+                    message: "Applied receipt names a superseded netmap; synchronize.".into(),
                 },
             ),
             Error::ReceiptPrecondition => simple(
@@ -442,8 +432,7 @@ pub fn problem_samples() -> Vec<ProblemSample> {
         Error::BindingConflict,
         Error::ReceiptInstanceMismatch,
         Error::ReceiptTargetMismatch,
-        Error::ReceiptPublicationSuperseded,
-        Error::ReceiptLeaseExpired,
+        Error::ReceiptNetmapSuperseded,
         Error::ReceiptPrecondition,
         Error::ReceiptContentConflict,
         Error::StateConflict,

@@ -1,22 +1,45 @@
-//! Drive the control owner with bounded retries and cancellable desired-state waits.
+//! Drive the control owner. One `Control` sits behind a mutex: the `sync`
+//! long poll (`meshway_control::sync_loop`) holds it only to prepare and apply
+//! each exchange, while this task uses it for enrollment, instance, State,
+//! receipts, observation tasks and coordination requests. Every netmap
+//! snapshot the poll publishes is installed on the network owner; a held
+//! netmap is installed at once on start, before any Server contact.
 mod cycle;
-pub(super) mod events;
 mod failure;
-mod observations;
-mod scheduling;
 
 use super::{intent::Desired, network, status::Report};
 use crate::settings::Settings;
-use cycle::cycle;
+use cycle::{Online, online};
 use failure::failure;
+use meshway_authority::ExecutionSnapshot;
 use meshway_control::{Control, Error};
 use meshway_ipc::{Phase, Problem};
+use meshway_model::{InstanceId, NetmapRef};
 use std::{sync::Arc, time::Duration};
-use tokio::{sync::watch, time::Instant};
+use tokio::{
+    sync::{Mutex, mpsc, watch},
+    time::Instant,
+};
+use tokio_util::sync::CancellationToken;
 
 const RENEW: Duration = Duration::from_secs(20);
 const REPORT: Duration = Duration::from_secs(20);
+const TASKS: Duration = Duration::from_secs(2);
 const RELEASE: Duration = Duration::from_secs(2);
+/// A sync that has not succeeded for this long is reported as reconnecting:
+/// above one Server hold plus the request budget's margin.
+pub(super) const SYNC_STALE: Duration = Duration::from_secs(100);
+
+type Shared = Arc<Mutex<Control>>;
+
+/// The `sync` long poll as seen by status: whether it runs, and when it last
+/// returned a verified netmap.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct SyncStatus {
+    pub running: bool,
+    pub last_sync_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub last_sync: Option<std::time::Instant>,
+}
 
 fn publish(
     sender: &watch::Sender<Report>,
@@ -91,28 +114,61 @@ async fn wait_change(
     }
 }
 
+/// Install the current netmap snapshot on the network owner, or end the
+/// installed one when Control holds no authority.
+fn offer(control: &Control, network: Option<&network::Handle>) {
+    let Some(network) = network else {
+        return;
+    };
+    match control.netmap_snapshot() {
+        Ok(snapshot) => match control.dataplane_identity(snapshot) {
+            Ok(identity) => network.install(identity),
+            Err(error) => {
+                tracing::warn!(%error, "Netmap snapshot not bindable to packet keys");
+                network.revoke();
+            }
+        },
+        Err(_) => network.revoke(),
+    }
+}
+
+/// End of one up session.
+enum Ended {
+    /// The operator intent changed (or shutdown).
+    Changed,
+    /// A failure that only a new operator revision can retry.
+    Blocked(Problem),
+    /// The network worker stopped.
+    Worker,
+}
+
+/// Per-session state of the periodic Control work.
+#[derive(Default)]
+struct Maintenance {
+    renewed: Option<Instant>,
+    reported: Option<Instant>,
+    tasks: Option<Instant>,
+    retry_at: Option<Instant>,
+    /// The instance and netmap whose installation outcome was receipted.
+    receipted: Option<(InstanceId, NetmapRef, bool)>,
+}
+
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn run(
     settings: Arc<Settings>,
     mut desired: watch::Receiver<Desired>,
     reported: watch::Sender<Report>,
     directory: Arc<meshway_private_storage::Directory>,
     network_reported: watch::Sender<network::Report>,
-    mut pings: tokio::sync::mpsc::Receiver<super::PingSession>,
-    event_status: watch::Sender<events::EventStatus>,
+    mut pings: mpsc::Receiver<super::PingSession>,
+    sync_status: watch::Sender<SyncStatus>,
 ) -> Result<(), &'static str> {
-    let mut control: Option<Control> = None;
+    let mut control: Option<Shared> = None;
     let mut network: Option<network::Handle> = None;
-    let mut queued = None;
     let mut plan = desired.borrow_and_update().clone();
-    let mut last_renew: Option<Instant> = None;
-    let mut last_report: Option<Instant> = None;
     let mut backoff = 1u64;
     let mut reset = plan.retry_enrollment;
     let mut shutdown_failure = None;
-    let mut pending_failure = None;
-    let mut refresh_pending = false;
-    let mut observations = observations::Subscriptions::default();
-    let mut events = events::Events::new(event_status);
     loop {
         if plan.shutdown || desired.has_changed().is_err() {
             break;
@@ -176,17 +232,19 @@ pub(super) async fn run(
                     continue;
                 }
             };
-            let settings = settings.clone();
-            let opened = tokio::task::spawn_blocking(move || {
-                Control::open(
-                    &settings.data_dir.join("identity"),
-                    &settings.server,
-                    builder,
-                )
-            })
-            .await;
+            let opened = {
+                let settings = settings.clone();
+                tokio::task::spawn_blocking(move || {
+                    Control::open(
+                        &settings.data_dir.join("identity"),
+                        &settings.server,
+                        builder,
+                    )
+                })
+                .await
+            };
             match opened {
-                Ok(Ok(value)) => control = Some(value),
+                Ok(Ok(value)) => control = Some(Arc::new(Mutex::new(value))),
                 other => {
                     let problem = match other {
                         Ok(Err(error)) => failure(error, true).problem,
@@ -214,11 +272,10 @@ pub(super) async fn run(
                 continue;
             }
         }
-        let driver = control.as_mut().expect("control opened above");
+        let shared = control.clone().expect("control opened above");
         if let Some(id) = plan.rotation {
-            events.stop().await;
-            observations.stop();
-            stop(driver, false).await;
+            let mut driver = shared.lock().await;
+            stop(&mut driver, false).await;
             if let Some(network) = &mut network {
                 let _ = network.stop(false).await;
             }
@@ -245,12 +302,13 @@ pub(super) async fn run(
             publish(
                 &reported,
                 &plan,
-                Some(driver),
+                Some(&driver),
                 Phase::Synchronizing,
                 None,
                 None,
                 None,
             );
+            drop(driver);
             reported.send_modify(|report| {
                 report.rotation = Some(super::status::RotationOutcome { id, result })
             });
@@ -258,7 +316,8 @@ pub(super) async fn run(
                 .wait_for(|next| next.shutdown || next.rotation != Some(id))
                 .await;
         } else if !plan.up {
-            stop(driver, true).await;
+            let mut driver = shared.lock().await;
+            stop(&mut driver, true).await;
             let cleanup = match &mut network {
                 Some(network) => network.stop(true).await,
                 None => Ok(()),
@@ -266,7 +325,7 @@ pub(super) async fn run(
             publish(
                 &reported,
                 &plan,
-                Some(driver),
+                Some(&driver),
                 if cleanup.is_ok() {
                     Phase::Down
                 } else {
@@ -276,248 +335,81 @@ pub(super) async fn run(
                 cleanup.err(),
                 None,
             );
+            drop(driver);
             wait_change(&mut desired, &plan, None).await;
         } else {
-            if reported.borrow().revision != plan.revision || reported.borrow().phase == Phase::Down
-            {
-                publish(
-                    &reported,
-                    &plan,
-                    Some(driver),
-                    Phase::Starting,
-                    None,
-                    None,
-                    None,
-                );
-            }
-            let outcome = tokio::select! { biased;
-                _ = desired.wait_for(|next| next.shutdown || next.revision != plan.revision) => None,
-                result = async {
-                    if let Some(error) = pending_failure.take() { return Err(error); }
-                    while let Ok(ping) = pings.try_recv() { observations.accept(ping, driver); }
-                    // A newly queued local subscription must not sit behind an
-                    // unrelated traversal/result HTTP request. Both queues keep
-                    // their bounded turns before the ordinary control cycle.
-                    if !refresh_pending {
-                        observations.advance(driver, network.as_mut()).await;
-                        refresh_pending |= observations.take_refresh();
-                    }
-                    let requests_started = Instant::now();
-                    for _ in 0..32 {
-                        // An actual target notice takes precedence over queued
-                        // work carrying the predecessor's acquisition scope.
-                        if refresh_pending { break; }
-                        let request = queued.take().or_else(|| network.as_mut().and_then(|network| network.requests.try_recv().ok()));
-                        let Some(request) = request else { break; };
-                        if let Err(error) = network::request(driver, request).await {
-                            tracing::debug!(%error, "Network control intent failed");
-                        }
-                        // Always return to renewal/report work, including under
-                        // traversal pressure. Each request has its own deadline.
-                        if requests_started.elapsed() >= Duration::from_millis(100) { break; }
-                    }
-                    let result = cycle(
-                    driver,
-                    &settings,
-                    last_renew.is_none_or(|t| t.elapsed() >= RENEW),
-                    last_report.is_none_or(|t| t.elapsed() >= REPORT),
-                    &mut reset,
-                    network.as_mut(),
-                    plan.enrollment_key.as_ref(),
-                 ).await?;
-                    refresh_pending = result.phase.is_none();
-                    Ok::<_, failure::Failure>(result)
-                } => Some(result),
-            };
-            match outcome {
-                Some(Ok(result)) => {
-                    events.advance(driver).await;
-                    tracing::debug!(
-                        renewed = result.renewed,
-                        reported = result.reported,
-                        "Node control cycle completed"
-                    );
-                    if result.renewed {
-                        last_renew = Some(Instant::now());
-                    }
-                    if result.reported {
-                        last_report = Some(Instant::now());
-                    }
-                    backoff = 1;
-                    let phase = result.phase.unwrap_or_else(|| reported.borrow().phase);
-                    if result.phase.is_some() {
-                        publish(
-                            &reported,
-                            &plan,
-                            Some(driver),
-                            phase,
-                            result.url,
-                            None,
-                            None,
-                        );
-                    } else {
-                        reported.send_modify(|report| report.control = Some(driver.snapshot()));
-                    }
-                    match wait_work(
-                        &mut desired,
-                        &plan,
-                        Some(result.delay),
-                        network.as_mut(),
-                        scheduling::reports_enabled(phase),
-                        Some(driver),
-                        &mut pings,
-                        &mut observations,
-                        &settings,
-                        &mut last_report,
-                        &mut events,
-                    )
-                    .await
-                    {
-                        Waiting::Change => {}
-                        Waiting::Failed(error) => {
-                            pending_failure = Some(error);
-                            continue;
-                        }
-                        Waiting::Request(request) => {
-                            queued = Some(request);
-                            continue;
-                        }
-                        Waiting::Ping(ping) => {
-                            observations.accept(ping, driver);
-                            continue;
-                        }
-                        Waiting::Refresh => {
-                            refresh_pending = true;
-                            continue;
-                        }
-                        Waiting::Timer => continue,
-                        Waiting::Worker => {
-                            stop(driver, false).await;
-                            publish(
-                                &reported,
-                                &plan,
-                                Some(driver),
-                                Phase::Blocked,
-                                None,
-                                Some(Problem::Worker),
-                                None,
-                            );
-                            wait_change(&mut desired, &plan, None).await;
-                        }
-                    }
-                }
-                Some(Err(error)) => {
-                    events.stop().await;
-                    let delay = error
-                        .retry
-                        .then(|| error.retry_after.unwrap_or(Duration::from_secs(backoff)));
-                    if error.stops_network() {
-                        stop(driver, false).await;
-                        if let Some(network) = &mut network {
-                            let _ = network.stop(false).await;
-                        }
-                        queued = None;
-                        last_renew = None;
-                        last_report = None;
+            let ended = session(
+                &shared,
+                network.as_mut(),
+                &settings,
+                &mut desired,
+                &plan,
+                &reported,
+                &mut pings,
+                &sync_status,
+                &mut reset,
+            )
+            .await;
+            sync_status.send_modify(|status| status.running = false);
+            match ended {
+                Ended::Changed => {}
+                Ended::Blocked(problem) => {
+                    let mut driver = shared.lock().await;
+                    stop(&mut driver, false).await;
+                    if let Some(network) = &mut network {
+                        let _ = network.stop(false).await;
                     }
                     publish(
                         &reported,
                         &plan,
-                        Some(driver),
-                        if error.retry {
-                            Phase::Retrying
-                        } else {
-                            Phase::Blocked
-                        },
+                        Some(&driver),
+                        Phase::Blocked,
                         None,
-                        Some(error.problem),
-                        delay,
+                        Some(problem),
+                        None,
                     );
-                    backoff = (backoff * 2).min(30);
-                    // A fatal identity/contract/storage failure can only be
-                    // retried by a new operator revision, never by leftover
-                    // network requests waking an otherwise infinite wait.
-                    let waiting = if error.retry {
-                        wait_work(
-                            &mut desired,
-                            &plan,
-                            delay,
-                            network.as_mut(),
-                            false,
-                            None,
-                            &mut pings,
-                            &mut observations,
-                            &settings,
-                            &mut last_report,
-                            &mut events,
-                        )
-                        .await
-                    } else {
-                        wait_change(&mut desired, &plan, None).await;
-                        Waiting::Change
-                    };
-                    match waiting {
-                        Waiting::Change => {}
-                        Waiting::Failed(error) => {
-                            pending_failure = Some(error);
-                            continue;
-                        }
-                        Waiting::Request(request) => {
-                            queued = Some(request);
-                            continue;
-                        }
-                        Waiting::Ping(ping) => {
-                            observations.accept(ping, driver);
-                            continue;
-                        }
-                        Waiting::Refresh => {
-                            refresh_pending = true;
-                            continue;
-                        }
-                        Waiting::Timer => continue,
-                        Waiting::Worker => {
-                            stop(driver, false).await;
-                            publish(
-                                &reported,
-                                &plan,
-                                Some(driver),
-                                Phase::Blocked,
-                                None,
-                                Some(Problem::Worker),
-                                None,
-                            );
-                            wait_change(&mut desired, &plan, None).await;
-                        }
-                    }
+                    drop(driver);
+                    wait_change(&mut desired, &plan, None).await;
                 }
-                None => {}
+                Ended::Worker => {
+                    let mut driver = shared.lock().await;
+                    stop(&mut driver, false).await;
+                    publish(
+                        &reported,
+                        &plan,
+                        Some(&driver),
+                        Phase::Blocked,
+                        None,
+                        Some(Problem::Worker),
+                        None,
+                    );
+                    drop(driver);
+                    wait_change(&mut desired, &plan, None).await;
+                }
             }
         }
-        stop(control.as_mut().expect("control exists"), false).await;
-        events.stop().await;
-        observations.stop();
-        pending_failure = None;
-        refresh_pending = false;
+        {
+            let mut driver = shared.lock().await;
+            stop(&mut driver, false).await;
+        }
         if let Some(network) = &mut network {
             let _ = network.stop(false).await;
         }
-        queued = None;
-        if control.as_ref().is_some_and(|c| c.status().reload_required)
-            && let Some(driver) = control.take()
-            && let Err(error) = finish_control(driver).await
-        {
-            shutdown_failure = Some(error);
-            break;
+        let reload = shared.lock().await.status().reload_required;
+        if reload {
+            drop(shared);
+            if let Some(driver) = control.take()
+                && let Err(error) = finish_control(driver).await
+            {
+                shutdown_failure = Some(error);
+                break;
+            }
         }
         plan = desired.borrow_and_update().clone();
         reset = plan.retry_enrollment;
-        last_renew = None;
-        last_report = None;
         backoff = 1;
     }
     let keep_sink = desired.borrow().up;
-    events.stop().await;
-    observations.stop();
     pings.close();
     while let Some(ping) = pings.recv().await {
         let ping = ping.request;
@@ -539,7 +431,473 @@ pub(super) async fn run(
     .await
 }
 
-async fn finish_control(mut driver: Control) -> Result<(), &'static str> {
+/// The operator intent moved on from `plan` (or shutdown).
+async fn changed(desired: &mut watch::Receiver<Desired>, plan: &Desired) {
+    let _ = desired
+        .wait_for(|next| next.shutdown || next.revision != plan.revision)
+        .await;
+}
+
+/// What woke an idle wait.
+enum Wake {
+    Changed,
+    Due,
+    Worker,
+}
+
+/// Wait up to `delay` while serving local pings and network requests; the
+/// data plane keeps running on its installed netmap meanwhile.
+async fn idle(
+    shared: &Shared,
+    mut network: Option<&mut network::Handle>,
+    desired: &mut watch::Receiver<Desired>,
+    plan: &Desired,
+    pings: &mut mpsc::Receiver<super::PingSession>,
+    delay: Duration,
+) -> Wake {
+    let deadline = Instant::now() + delay;
+    loop {
+        tokio::select! { biased;
+            _ = changed(desired, plan) => return Wake::Changed,
+            _ = tokio::time::sleep_until(deadline) => return Wake::Due,
+            ping = pings.recv() => match ping {
+                Some(ping) => accept_ping(network.as_deref(), ping),
+                None => return Wake::Changed,
+            },
+            work = async { match network.as_deref_mut() { Some(network) => network.work().await, None => std::future::pending().await } } => match work {
+                network::Work::Request(request) => {
+                    let mut driver = shared.lock().await;
+                    if let Err(error) = network::request(&mut driver, request).await {
+                        tracing::debug!(%error, "Network control intent failed");
+                    }
+                }
+                network::Work::Report => {
+                    if let Some(network) = network.as_deref_mut() {
+                        network.defer_report();
+                    }
+                }
+                network::Work::Closed => return Wake::Worker,
+            },
+        }
+    }
+}
+
+fn accept_ping(network: Option<&network::Handle>, ping: super::PingSession) {
+    match network {
+        Some(network) => network.ping(ping),
+        None => {
+            let _ = ping
+                .request
+                .events
+                .try_send(meshway_ipc::PingEvent::Failed {
+                    code: meshway_ipc::PingError::Unsupported,
+                });
+            ping.request.cancellation.cancel();
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn session(
+    shared: &Shared,
+    mut network: Option<&mut network::Handle>,
+    settings: &Settings,
+    desired: &mut watch::Receiver<Desired>,
+    plan: &Desired,
+    reported: &watch::Sender<Report>,
+    pings: &mut mpsc::Receiver<super::PingSession>,
+    sync_status: &watch::Sender<SyncStatus>,
+    reset: &mut bool,
+) -> Ended {
+    {
+        let driver = shared.lock().await;
+        if reported.borrow().revision != plan.revision || reported.borrow().phase == Phase::Down {
+            publish(
+                reported,
+                plan,
+                Some(&driver),
+                Phase::Starting,
+                None,
+                None,
+                None,
+            );
+        }
+        // A verified held netmap is authority again without Server contact.
+        offer(&driver, network.as_deref());
+    }
+    let mut backoff = 1u64;
+    loop {
+        // Enrollment and authentication.
+        let result = {
+            let mut driver = shared.lock().await;
+            let result = tokio::select! { biased;
+                _ = changed(desired, plan) => return Ended::Changed,
+                result = online(&mut driver, settings, reset, plan.enrollment_key.as_ref()) => result,
+            };
+            match &result {
+                Ok(Online::Awaiting { url }) => publish(
+                    reported,
+                    plan,
+                    Some(&driver),
+                    Phase::AwaitingApproval,
+                    url.clone(),
+                    None,
+                    None,
+                ),
+                Ok(Online::Ready) => publish(
+                    reported,
+                    plan,
+                    Some(&driver),
+                    Phase::ControlReady,
+                    None,
+                    None,
+                    None,
+                ),
+                Ok(Online::Restart) => {}
+                Err(error) => {
+                    let delay = error
+                        .retry
+                        .then(|| error.retry_after.unwrap_or(Duration::from_secs(backoff)));
+                    publish(
+                        reported,
+                        plan,
+                        Some(&driver),
+                        if error.retry {
+                            Phase::Retrying
+                        } else {
+                            Phase::Blocked
+                        },
+                        None,
+                        Some(error.problem),
+                        delay,
+                    );
+                    offer(&driver, network.as_deref());
+                }
+            }
+            result
+        };
+        let delay = match result {
+            Ok(Online::Ready) => {
+                backoff = 1;
+                match online_session(
+                    shared,
+                    network.as_deref_mut(),
+                    settings,
+                    desired,
+                    plan,
+                    reported,
+                    pings,
+                    sync_status,
+                )
+                .await
+                {
+                    Ok(()) => continue,
+                    Err(Some(ended)) => return ended,
+                    Err(None) => {
+                        let delay = Duration::from_secs(backoff);
+                        backoff = (backoff * 2).min(30);
+                        delay
+                    }
+                }
+            }
+            Ok(Online::Awaiting { .. }) => Duration::from_secs(2),
+            Ok(Online::Restart) => continue,
+            Err(error) if !error.retry => return Ended::Blocked(error.problem),
+            Err(error) => {
+                let delay = error.retry_after.unwrap_or(Duration::from_secs(backoff));
+                backoff = (backoff * 2).min(30);
+                delay
+            }
+        };
+        match idle(shared, network.as_deref_mut(), desired, plan, pings, delay).await {
+            Wake::Changed => return Ended::Changed,
+            Wake::Worker => return Ended::Worker,
+            Wake::Due => {}
+        }
+    }
+}
+
+/// The online part of a session: the sync long poll plus periodic Control
+/// work. `Ok` re-enters authentication at once; `Err(None)` after a backoff.
+#[allow(clippy::too_many_arguments)]
+async fn online_session(
+    shared: &Shared,
+    mut network: Option<&mut network::Handle>,
+    settings: &Settings,
+    desired: &mut watch::Receiver<Desired>,
+    plan: &Desired,
+    reported: &watch::Sender<Report>,
+    pings: &mut mpsc::Receiver<super::PingSession>,
+    sync_status: &watch::Sender<SyncStatus>,
+) -> Result<(), Option<Ended>> {
+    let stop = CancellationToken::new();
+    let (snapshots, mut snapshot_rx) = watch::channel::<Option<ExecutionSnapshot>>(None);
+    snapshot_rx.borrow_and_update();
+    let standalone = network::Peers::default();
+    let mut sink = match network.as_deref() {
+        Some(network) => network.peer_sink(),
+        None => standalone.sink(),
+    };
+    let mut sync = {
+        let shared = shared.clone();
+        let stop = stop.clone();
+        tokio::spawn(async move {
+            meshway_control::sync_loop(&shared, &mut sink, &snapshots, &stop).await
+        })
+    };
+    sync_status.send_modify(|status| status.running = true);
+    let mut work = Maintenance::default();
+    let mut tick = tokio::time::interval(Duration::from_secs(1));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let result = loop {
+        tokio::select! { biased;
+            _ = changed(desired, plan) => break Err(Some(Ended::Changed)),
+            joined = &mut sync => {
+                let error = match joined {
+                    Ok(Ok(())) => break Ok(()),
+                    Ok(Err(error)) => error,
+                    Err(_) => break Err(Some(Ended::Worker)),
+                };
+                let failure = failure::at("sync", error, false);
+                let driver = shared.lock().await;
+                offer(&driver, network.as_deref());
+                if !failure.retry {
+                    break Err(Some(Ended::Blocked(failure.problem)));
+                }
+                publish(reported, plan, Some(&driver), Phase::Retrying, None, Some(failure.problem), None);
+                break Err(None);
+            },
+            changed = snapshot_rx.changed() => {
+                if changed.is_err() {
+                    continue;
+                }
+                let snapshot = snapshot_rx.borrow_and_update().clone();
+                let driver = shared.lock().await;
+                if snapshot.is_some() {
+                    sync_status.send_modify(|status| {
+                        status.last_sync_at = Some(chrono::Utc::now());
+                        status.last_sync = Some(std::time::Instant::now());
+                    });
+                    // Assigned observation tasks may have woken the hold.
+                    work.tasks = None;
+                }
+                offer(&driver, network.as_deref());
+                reported.send_modify(|report| report.control = Some(driver.snapshot()));
+            },
+            ping = pings.recv() => match ping {
+                Some(ping) => accept_ping(network.as_deref(), ping),
+                None => break Err(Some(Ended::Changed)),
+            },
+            next = async { match network.as_deref_mut() { Some(network) => network.work().await, None => std::future::pending().await } } => match next {
+                network::Work::Request(request) => {
+                    let mut driver = shared.lock().await;
+                    if let Err(error) = network::request(&mut driver, request).await {
+                        tracing::debug!(%error, "Network control intent failed");
+                    }
+                },
+                network::Work::Report => {
+                    let mut driver = shared.lock().await;
+                    if let Err(ended) = maintain(&mut driver, network.as_deref_mut(), settings, &mut work, plan, reported, true).await {
+                        break Err(Some(ended));
+                    }
+                    // Pace the change schedule even when nothing was sent.
+                    if let Some(network) = network.as_deref_mut() {
+                        network.defer_report();
+                    }
+                },
+                network::Work::Closed => break Err(Some(Ended::Worker)),
+            },
+            _ = tick.tick() => {
+                let mut driver = shared.lock().await;
+                if let Err(ended) = maintain(&mut driver, network.as_deref_mut(), settings, &mut work, plan, reported, false).await {
+                    break Err(Some(ended));
+                }
+            },
+        }
+    };
+    stop.cancel();
+    if !sync.is_finished() {
+        let _ = sync.await;
+    }
+    result
+}
+
+/// Periodic instance, State, receipt and observation-task work. Transient
+/// failures are retried after a backoff and never stop the data plane;
+/// identity and binding rejections block.
+#[allow(clippy::too_many_arguments)]
+async fn maintain(
+    control: &mut Control,
+    mut network: Option<&mut network::Handle>,
+    settings: &Settings,
+    work: &mut Maintenance,
+    plan: &Desired,
+    reported: &watch::Sender<Report>,
+    changed: bool,
+) -> Result<(), Ended> {
+    let now = Instant::now();
+    if work.retry_at.is_some_and(|at| now < at) {
+        return Ok(());
+    }
+    let result = maintain_once(control, network.as_deref_mut(), settings, work, changed).await;
+    match result {
+        Ok(()) => {
+            work.retry_at = None;
+            if reported.borrow().problem.is_some() {
+                publish(
+                    reported,
+                    plan,
+                    Some(control),
+                    Phase::ControlReady,
+                    None,
+                    None,
+                    None,
+                );
+            } else {
+                reported.send_modify(|report| report.control = Some(control.snapshot()));
+            }
+            Ok(())
+        }
+        Err((operation, Error::StateScopeChanged)) => {
+            tracing::debug!(operation, "State scope rotated; resampling after sync");
+            work.retry_at = Some(now + Duration::from_secs(1));
+            Ok(())
+        }
+        Err((operation, error)) => {
+            let failure = failure::at(operation, error, false);
+            offer(control, network.as_deref());
+            if !failure.retry {
+                return Err(Ended::Blocked(failure.problem));
+            }
+            // A reset context (session or instance gone) is re-acquired at once.
+            let delay = failure
+                .retry_after
+                .unwrap_or(Duration::from_secs(if failure.reset { 1 } else { 5 }));
+            work.retry_at = Some(now + delay);
+            publish(
+                reported,
+                plan,
+                Some(control),
+                Phase::Retrying,
+                None,
+                Some(failure.problem),
+                Some(delay),
+            );
+            Ok(())
+        }
+    }
+}
+
+async fn maintain_once(
+    control: &mut Control,
+    network: Option<&mut network::Handle>,
+    settings: &Settings,
+    work: &mut Maintenance,
+    changed: bool,
+) -> Result<(), (&'static str, Error)> {
+    let now = Instant::now();
+    control
+        .authenticate()
+        .await
+        .map_err(|error| ("authenticate", error))?;
+    let mut fresh = false;
+    if control.status().instance.is_none() {
+        control
+            .acquire_instance(if network.is_some() {
+                network::capabilities()
+            } else {
+                Default::default()
+            })
+            .await
+            .map_err(|error| ("acquire_instance", error))?;
+        work.renewed = Some(now);
+        work.receipted = None;
+        fresh = true;
+        // Bind the installed snapshot to the new instance; nothing reinstalls.
+        offer(control, network.as_deref());
+    } else if work.renewed.is_none_or(|at| now >= at + RENEW) {
+        control
+            .renew_instance()
+            .await
+            .map_err(|error| ("renew_instance", error))?;
+        work.renewed = Some(now);
+    }
+    if let Some(network) = network {
+        receipt(control, network, work).await?;
+        let routine = fresh || work.reported.is_none_or(|at| now >= at + REPORT);
+        if (routine || changed)
+            && network
+                .report_state(control, settings, routine)
+                .await
+                .map_err(|error| ("report_runtime_state", error))?
+        {
+            work.reported = Some(now);
+        }
+        if work.tasks.is_none_or(|at| now >= at + TASKS)
+            && let Ok(snapshot) = control.netmap_snapshot()
+        {
+            work.tasks = Some(now);
+            let tasks = control
+                .get_observation_tasks(&snapshot)
+                .await
+                .map_err(|error| ("get_observation_tasks", error))?;
+            network.observation_tasks(snapshot, tasks.items);
+        }
+    } else if fresh || work.reported.is_none_or(|at| now >= at + REPORT) {
+        match control.report_control_state(settings.system.clone()).await {
+            Ok(_) => work.reported = Some(now),
+            Err(Error::Pending) => {
+                control
+                    .retry_state_report()
+                    .await
+                    .map_err(|error| ("retry_state_report", error))?;
+            }
+            Err(error) => return Err(("report_control_state", error)),
+        }
+    }
+    Ok(())
+}
+
+/// Receipt the installation outcome of the installed netmap once per
+/// instance: saved, then applied or failed. A new instance receipts the same,
+/// already installed netmap again as a new attempt.
+async fn receipt(
+    control: &mut Control,
+    network: &mut network::Handle,
+    work: &mut Maintenance,
+) -> Result<(), (&'static str, Error)> {
+    let report = network.report.borrow().clone();
+    let (Some(netmap), Some(completion)) = (report.netmap, report.completion) else {
+        return Ok(());
+    };
+    let Some(instance) = control.status().instance.map(|i| i.instance_id) else {
+        return Ok(());
+    };
+    if !report.current() && completion.is_ok() {
+        return Ok(());
+    }
+    let key = (instance, netmap, completion.is_ok());
+    if work.receipted == Some(key) || control.netmap_reference() != Some(netmap) {
+        return Ok(());
+    }
+    let ticket = control
+        .begin_application(netmap)
+        .await
+        .map_err(|error| ("begin_application", error))?;
+    control
+        .finish_application(&ticket, completion, report.observed_at)
+        .await
+        .map_err(|error| ("finish_application", error))?;
+    work.receipted = Some(key);
+    network.receipt_completed();
+    Ok(())
+}
+
+async fn finish_control(shared: Shared) -> Result<(), &'static str> {
+    let Ok(mutex) = Arc::try_unwrap(shared) else {
+        return Err("Control owner still shared at shutdown.");
+    };
+    let mut driver = mutex.into_inner();
     // The bounded remote release is best-effort and takes the local instance
     // before its first await. shutdown then settles accepted private writes;
     // their final errors must not be treated as remote-release failures.
@@ -551,7 +909,7 @@ async fn finish_control(mut driver: Control) -> Result<(), &'static str> {
 }
 
 async fn shutdown(
-    control: Option<Control>,
+    control: Option<Shared>,
     network: impl std::future::Future<Output = Result<(), Problem>>,
     mut failure: Option<&'static str>,
 ) -> Result<(), &'static str> {
@@ -567,269 +925,4 @@ async fn shutdown(
         failure.get_or_insert("Network shutdown failed.");
     }
     failure.map_or(Ok(()), Err)
-}
-
-#[cfg(test)]
-mod tests;
-
-enum Waiting {
-    Failed(failure::Failure),
-    Change,
-    Timer,
-    Refresh,
-    Worker,
-    Request(network::Request),
-    Ping(super::PingSession),
-}
-
-async fn settle_report(network: &mut network::Handle, control: &mut Control) -> Result<(), Error> {
-    if network.diagnostics_ready(control) && !network.can_report_inline(control) {
-        network.finish(control).await?;
-    }
-    Ok(())
-}
-#[allow(clippy::too_many_arguments)]
-async fn wait_work(
-    desired: &mut watch::Receiver<Desired>,
-    plan: &Desired,
-    delay: Option<Duration>,
-    mut network: Option<&mut network::Handle>,
-    report_changes: bool,
-    mut control: Option<&mut Control>,
-    pings: &mut tokio::sync::mpsc::Receiver<super::PingSession>,
-    observations: &mut observations::Subscriptions,
-    settings: &Settings,
-    last_report: &mut Option<Instant>,
-    events: &mut events::Events,
-) -> Waiting {
-    let mut window = scheduling::Window::new(delay);
-    let mut local_at = Instant::now() + Duration::from_secs(1);
-    let mut event_maintenance_at = Instant::now() + Duration::from_secs(1);
-    let mut event_budget = 32;
-    loop {
-        if desired.borrow().shutdown
-            || desired.borrow().revision != plan.revision
-            || desired.has_changed().is_err()
-        {
-            return Waiting::Change;
-        }
-        if event_budget == 0 {
-            tokio::task::yield_now().await;
-            event_budget = 32;
-        }
-        let waiting = tokio::select! { biased;
-            _ = tokio::time::sleep_until(event_maintenance_at), if control.is_some() => {
-                events.advance(control.as_deref().expect("event Control")).await;
-                event_maintenance_at = Instant::now() + Duration::from_secs(1);
-                continue;
-            },
-            notice = events.next(), if control.is_some() => {
-                event_budget -= 1;
-                let event_kind = notice.kind();
-                match control.as_deref_mut().expect("event Control").receive_event(notice) {
-                    // Control already excludes ordinary peer/projection changes
-                    // and hints for a target acquired by an in-flight RPC. The
-                    // one-slot event queue coalesces actual changes during work.
-                    Ok(true) => {
-                        tracing::debug!(event_kind, "Node event admitted immediate refresh");
-                        return Waiting::Refresh;
-                    },
-                    Ok(false) => {
-                        tracing::debug!(event_kind, "Node event already covered by current control scope");
-                        continue;
-                    },
-                    Err(error) => return Waiting::Failed(failure::at("watch_node", error, false)),
-                }
-            },
-            ping = pings.recv() => { if let Some(ping) = ping { return Waiting::Ping(ping); } else { return Waiting::Change; } },
-            waiting = window
-            .wait(
-                async {
-                    let _ = desired
-                        .wait_for(|next| next.shutdown || next.revision != plan.revision)
-                        .await;
-                },
-                async {
-                    match network.as_deref_mut() {
-                        Some(network) => {
-                            tokio::select! { biased;
-                                _ = tokio::time::sleep_until(local_at), if !observations.is_empty() && control.is_some() => None,
-                                work = network.work(report_changes) => Some(work),
-                            }
-                        },
-                        None => std::future::pending().await,
-                    }
-                },
-            )
-            => waiting,
-        };
-        let waiting = match waiting {
-            scheduling::Wake::Changed => Waiting::Change,
-            scheduling::Wake::Due => Waiting::Timer,
-            scheduling::Wake::Work(work) => match work {
-                Some(network::Work::Request(request)) => Waiting::Request(request),
-                Some(network::Work::Report) => {
-                    // A completed local installation is already the exact
-                    // current target. Settle its receipt in this idle window;
-                    // refreshing first needlessly consumes the short bilateral
-                    // acquisition window and can cancel newly prepared offers.
-                    if control.as_deref().zip(network.as_deref()).is_some_and(
-                        |(control, network)| {
-                            network.diagnostics_ready(control)
-                                && !network.can_report_inline(control)
-                        },
-                    ) {
-                        let settled = window
-                            .serve(
-                                async {
-                                    let _ = desired
-                                        .wait_for(|next| {
-                                            next.shutdown || next.revision != plan.revision
-                                        })
-                                        .await;
-                                },
-                                settle_report(
-                                    network.as_deref_mut().expect("current network"),
-                                    control.as_deref_mut().expect("current Control"),
-                                ),
-                            )
-                            .await;
-                        match settled {
-                            scheduling::Wake::Changed => return Waiting::Change,
-                            scheduling::Wake::Work(Err(error)) => {
-                                return Waiting::Failed(failure::at(
-                                    "finish_application",
-                                    error,
-                                    false,
-                                ));
-                            }
-                            scheduling::Wake::Work(Ok(())) => {}
-                            scheduling::Wake::Due => {
-                                unreachable!("admitted receipt retains its deadline")
-                            }
-                        }
-                    }
-                    let ready = control
-                        .as_deref()
-                        .zip(network.as_deref())
-                        .is_some_and(|(control, network)| network.can_report_inline(control));
-                    let result = window
-                        .report(
-                            ready,
-                            async {
-                                let _ = desired
-                                    .wait_for(|next| {
-                                        next.shutdown || next.revision != plan.revision
-                                    })
-                                    .await;
-                            },
-                            network
-                                .as_deref_mut()
-                                .expect("current network")
-                                .report_state(
-                                    control.as_deref_mut().expect("current Control"),
-                                    settings,
-                                    false,
-                                ),
-                        )
-                        .await;
-                    match result {
-                        scheduling::Wake::Changed => return Waiting::Change,
-                        scheduling::Wake::Work(scheduling::Report::Refresh) => {
-                            return Waiting::Timer;
-                        }
-                        scheduling::Wake::Work(scheduling::Report::Sent(Ok(fresh))) => {
-                            if fresh {
-                                *last_report = Some(Instant::now());
-                            }
-                            continue;
-                        }
-                        scheduling::Wake::Work(scheduling::Report::Sent(Err(
-                            Error::StateScopeChanged,
-                        ))) => {
-                            tracing::debug!("State scope rotated; refreshing before resampling");
-                            return if wait_change(desired, plan, Some(Duration::from_secs(1))).await
-                            {
-                                Waiting::Change
-                            } else {
-                                Waiting::Refresh
-                            };
-                        }
-                        scheduling::Wake::Work(scheduling::Report::Sent(Err(error))) => {
-                            return Waiting::Failed(failure::at(
-                                "report_runtime_state",
-                                error,
-                                false,
-                            ));
-                        }
-                        scheduling::Wake::Due => {
-                            unreachable!("admitted State report retains its deadline")
-                        }
-                    }
-                }
-                Some(network::Work::Closed) => Waiting::Worker,
-                None => {
-                    local_at = Instant::now() + Duration::from_secs(1);
-                    match window
-                        .serve(
-                            async {
-                                let _ = desired
-                                    .wait_for(|next| {
-                                        next.shutdown || next.revision != plan.revision
-                                    })
-                                    .await;
-                            },
-                            observations.advance(
-                                control.as_deref_mut().expect("maintenance has Control"),
-                                network.as_deref_mut(),
-                            ),
-                        )
-                        .await
-                    {
-                        scheduling::Wake::Changed => return Waiting::Change,
-                        scheduling::Wake::Work(true) => {
-                            return if observations.take_refresh() {
-                                Waiting::Refresh
-                            } else {
-                                Waiting::Timer
-                            };
-                        }
-                        scheduling::Wake::Work(false) => continue,
-                        scheduling::Wake::Due => {
-                            unreachable!("admitted maintenance retains its deadline")
-                        }
-                    }
-                }
-            },
-        };
-        match waiting {
-            Waiting::Request(request) if request.inline() && control.is_some() => {
-                let result = window
-                    .serve(
-                        async {
-                            let _ = desired
-                                .wait_for(|next| next.shutdown || next.revision != plan.revision)
-                                .await;
-                        },
-                        network::request(
-                            control.as_deref_mut().expect("Control owner present"),
-                            request,
-                        ),
-                    )
-                    .await;
-                let result = match result {
-                    scheduling::Wake::Changed => return Waiting::Change,
-                    scheduling::Wake::Due => {
-                        unreachable!("an admitted RPC retains its original deadline")
-                    }
-                    scheduling::Wake::Work(result) => result,
-                };
-                if let Err(error) = result {
-                    tracing::debug!(%error, "Inline control intent failed");
-                    return Waiting::Timer;
-                }
-            }
-            waiting => return waiting,
-        }
-    }
 }

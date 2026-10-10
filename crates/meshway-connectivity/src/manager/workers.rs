@@ -313,9 +313,7 @@ pub(super) fn acquisition(
         meshway_configuration::execution::DialEndpointSource::Local => {
             LinkAcquisition::LocalEndpoint
         }
-        meshway_configuration::execution::DialEndpointSource::Stun => {
-            LinkAcquisition::StunEndpoint
-        }
+        meshway_configuration::execution::DialEndpointSource::Stun => LinkAcquisition::StunEndpoint,
     }
 }
 

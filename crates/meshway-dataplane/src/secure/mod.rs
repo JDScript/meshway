@@ -987,7 +987,13 @@ impl SecureNode {
             .ok_or(Error::Policy)?
             .clone();
         let previous = crypto::verify(reading, frame, incoming, &path)?;
-        authorization::incoming(&mut self.engine.decisions, reading, &path, previous, incoming)?;
+        authorization::incoming(
+            &mut self.engine.decisions,
+            reading,
+            &path,
+            previous,
+            incoming,
+        )?;
         let admitted = authorization::admit(
             &mut self.engine.decisions,
             reading,
@@ -1412,8 +1418,7 @@ impl SecureNode {
         };
         if let Some(next) = next {
             let carrier = carriers.get(next).ok_or(Error::Unsupported)?;
-            let selected =
-                authorization::selected(context, circuit.selected.as_deref()).ok();
+            let selected = authorization::selected(context, circuit.selected.as_deref()).ok();
             authorization::outgoing(selected, *next, carrier)?;
         }
         Ok(())
@@ -1474,8 +1479,7 @@ impl SecureNode {
         };
         let snapshot = owner.identity.snapshot();
         let carrier = owner.carriers.get(&next).ok_or(Error::Unsupported)?.clone();
-        let selected =
-            authorization::selected(&frame.context, circuit.selected.as_deref()).ok();
+        let selected = authorization::selected(&frame.context, circuit.selected.as_deref()).ok();
         authorization::outgoing(selected, next, &carrier)?;
         let mut guard = circuit.guard(snapshot, matches!(frame.kind, Kind::Init | Kind::Response));
         if let Some(probe) = frame.probe {
@@ -1720,8 +1724,7 @@ impl SecureNode {
     /// may still be followed by a Control-checked update.
     fn terminate_if_expired(&mut self) {
         let snapshot = self.identity.snapshot();
-        if meshway_authority::now().is_ok_and(|now| now >= snapshot.expires_at_ms())
-        {
+        if meshway_authority::now().is_ok_and(|now| now >= snapshot.expires_at_ms()) {
             self.terminate("lease_expired");
         }
     }

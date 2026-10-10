@@ -1,6 +1,6 @@
 //! Sample interface facts for existing listening sockets. Enumeration never
 //! creates a listener, changes capture, or grants an execution permission.
-use meshway_configuration::{execution::NodeConfiguration, transport::Listener};
+use meshway_configuration::{netmap::NodeNetmap, transport::Listener};
 use meshway_model::state::{
     LocalEndpoint, LocalEndpointSource, MAX_LOCAL_ENDPOINTS, NodeState, ResourceRef,
 };
@@ -14,11 +14,8 @@ struct InterfaceAddress {
     address: IpAddr,
 }
 
-pub(super) fn sample(
-    state: &mut NodeState,
-    configuration: &NodeConfiguration,
-    owned_interfaces: &[String],
-) {
+pub(super) fn sample(state: &mut NodeState, netmap: &NodeNetmap, owned_interfaces: &[String]) {
+    let configuration = &netmap.self_;
     let Ok(interfaces) = interfaces() else {
         return;
     };

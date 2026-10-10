@@ -1,7 +1,6 @@
-//! Volatile exit prerequisite projection, fenced by instance and role revision.
-//! Only the previous publication chain reads `inputs`, and a change
-//! republishes only while no netmap store is installed. In the netmap chain
-//! readiness is a peer fact (`state::facts`), never a compiler input.
+//! Volatile exit prerequisite projection, fenced by instance and netmap. Only
+//! configuration evaluation reads `inputs`; it never compiles a netmap. Exit
+//! readiness reaches Nodes as a peer fact (`state::facts`).
 use super::{CLOCK_SKEW_SECONDS, REPORT_TTL_SECONDS, ReportAdmission};
 use crate::{error::Error, secrets::Sealer, store::execution};
 use chrono::{DateTime, Duration, Utc};
@@ -51,7 +50,7 @@ pub(super) fn replace(
         )? > 0);
     };
     if capability.instance_id != admission.instance_id
-        || !admission.configurations.contains(&capability.target)
+        || !admission.configurations.contains(&capability.netmap)
         || capability.observed_at > report.observed_at
         || capability.observed_at + Duration::seconds(REPORT_TTL_SECONDS) <= now
         || capability.supported_families.len() > 2
@@ -72,22 +71,22 @@ pub(super) fn replace(
     {
         return Err(Error::InvalidRequest);
     }
-    let Some((_, target)) =
-        execution::target_for_node(tx, sealer, admission.network_id, admission.node_id)?
-    else {
+    let Some(reference) = admission.execution else {
         return Err(Error::StateScopeChanged);
     };
-    let reference = meshway_model::ConfigurationRef {
-        revision: target.configuration.revision,
-        execution_publication: target.configuration.publication,
-        digest: target.digest,
-    };
-    if capability.target != reference {
+    if capability.netmap != reference {
         return Err(Error::StateScopeChanged);
     }
-    match &target.configuration.exit_role {
-        Some(role) if role.instance_id != capability.instance_id => {
-            return Err(Error::InvalidSession);
+    let netmap = crate::store::netmap::load(
+        tx,
+        sealer,
+        admission.network_id,
+        admission.node_id,
+        reference,
+    )?;
+    match &netmap.netmap.exit_role {
+        Some(role) if role.generation != capability.role_generation => {
+            return Err(Error::StateScopeChanged);
         }
         Some(role)
             if capability
@@ -109,8 +108,9 @@ pub(super) fn replace(
     }
     if capability.status == ExitStatus::Ready
         && (!capability.supported_families.contains(&ExitFamily::Ipv4)
-            || target
-                .configuration
+            || netmap
+                .netmap
+                .self_
                 .self_keys
                 .capabilities
                 .get(EXIT_IPV4_FEATURE)

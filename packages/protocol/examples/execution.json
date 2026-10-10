@@ -1,43 +1,13 @@
 {
-  "queryNodeConfiguration": {
-    "request": {
-      "instance": {
-        "instanceId": "8f9a0b1c-2d3e-4f4a-9b5c-6d7e8f9a0b1c",
-        "generation": 1
-      },
-      "base": {
-        "revision": 7,
-        "executionPublication": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
-        "digest": "abababababababababababababababababababababababababababababababab"
-      }
-    },
-    "responses": {
-      "200": {
-        "lease": {
-          "instanceId": "8f9a0b1c-2d3e-4f4a-9b5c-6d7e8f9a0b1c",
-          "generation": 1,
-          "expiresAt": "2026-10-08T09:02:00Z",
-          "executionExpiresAt": null,
-          "target": {
-            "revision": 7,
-            "executionPublication": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
-            "digest": "abababababababababababababababababababababababababababababababab"
-          }
-        },
-        "full": null,
-        "delta": null
-      }
-    }
-  },
   "submitNodeConfigurationReceipt": {
     "request": {
       "instance": {
         "instanceId": "8f9a0b1c-2d3e-4f4a-9b5c-6d7e8f9a0b1c",
         "generation": 1
       },
-      "target": {
+      "netmap": {
         "revision": 7,
-        "executionPublication": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+        "serial": 1,
         "digest": "abababababababababababababababababababababababababababababababab"
       },
       "phase": "applied",
@@ -47,171 +17,19 @@
       "failure": null
     }
   },
-  "refreshNodeConfiguration": {
-    "request": {
-      "instance": {
-        "instanceId": "8f9a0b1c-2d3e-4f4a-9b5c-6d7e8f9a0b1c",
-        "generation": 1
-      },
-      "base": {
-        "revision": 7,
-        "executionPublication": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
-        "digest": "abababababababababababababababababababababababababababababababab"
-      }
-    },
-    "responses": {
-      "200": {
-        "lease": {
-          "instanceId": "8f9a0b1c-2d3e-4f4a-9b5c-6d7e8f9a0b1c",
-          "generation": 1,
-          "expiresAt": "2026-10-08T09:02:00Z",
-          "executionExpiresAt": "2026-10-08T09:01:00Z",
-          "target": {
-            "revision": 7,
-            "executionPublication": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
-            "digest": "abababababababababababababababababababababababababababababababab"
-          }
-        },
-        "full": null,
-        "delta": null
-      }
-    }
-  },
-  "createNodeDemand": {
-    "request": {
-      "instance": {
-        "instanceId": "8f9a0b1c-2d3e-4f4a-9b5c-6d7e8f9a0b1c",
-        "generation": 1
-      },
-      "requestId": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
-      "target": {
-        "type": "mesh",
-        "node": "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50"
-      },
-      "protocol": "tcp",
-      "port": 443,
-      "profile": "mesh",
-      "durationSeconds": 60
-    },
-    "responses": {
-      "200": {
-        "publication": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
-        "decision": {
-          "type": "permitted",
-          "permit": {
-            "demandId": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
-            "source": "a7b6c5d4-5e6f-4a3b-8c9d-9e8f7a6b5c70",
-            "sourceAddresses": {
-              "ipv4": "100.80.0.12",
-              "ipv6": "fd42:7a65:8800::12"
-            },
-            "target": {
-              "type": "mesh",
-              "node": "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50"
-            },
-            "protocol": "tcp",
-            "port": 443,
-            "profile": "mesh",
-            "paths": [
-              {
-                "nodes": [
-                  "a7b6c5d4-5e6f-4a3b-8c9d-9e8f7a6b5c70",
-                  "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50"
-                ],
-                "dialCandidates": {
-                  "a7b6c5d4-5e6f-4a3b-8c9d-9e8f7a6b5c70": [
-                    "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50/mesh-udp"
-                  ]
-                }
-              }
-            ],
-            "expiresAt": "2026-10-08T09:01:00Z",
-            "replies": "statefulExactReversePath"
-          }
-        }
-      }
-    }
-  },
-  "cancelNodeDemand": {
-    "request": {
-      "instance": {
-        "instanceId": "8f9a0b1c-2d3e-4f4a-9b5c-6d7e8f9a0b1c",
-        "generation": 1
-      },
-      "requestId": "7c9e6679-7425-40de-944b-e07fc1f90ae7"
-    }
-  },
-  "renewNodeDemand": {
-    "request": {
-      "instance": {
-        "instanceId": "8f9a0b1c-2d3e-4f4a-9b5c-6d7e8f9a0b1c",
-        "generation": 1
-      },
-      "requestId": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
-      "expiresAt": "2026-10-08T09:02:00Z"
-    },
-    "responses": {
-      "200": {
-        "publication": "8d9e0f1a-2b3c-4d5e-8f60-718293a4b5c6",
-        "decision": {
-          "type": "permitted",
-          "permit": {
-            "demandId": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
-            "source": "a7b6c5d4-5e6f-4a3b-8c9d-9e8f7a6b5c70",
-            "sourceAddresses": {
-              "ipv4": "100.80.0.12",
-              "ipv6": "fd42:7a65:8800::12"
-            },
-            "target": {
-              "type": "mesh",
-              "node": "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50"
-            },
-            "protocol": "tcp",
-            "port": 443,
-            "profile": "mesh",
-            "paths": [
-              {
-                "nodes": [
-                  "a7b6c5d4-5e6f-4a3b-8c9d-9e8f7a6b5c70",
-                  "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50"
-                ],
-                "dialCandidates": {
-                  "a7b6c5d4-5e6f-4a3b-8c9d-9e8f7a6b5c70": [
-                    "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50/mesh-udp"
-                  ]
-                }
-              }
-            ],
-            "expiresAt": "2026-10-08T09:02:00Z",
-            "replies": "statefulExactReversePath"
-          }
-        }
-      }
-    }
-  },
   "acquireNodeInstance": {
     "request": {
       "instanceId": "8f9a0b1c-2d3e-4f4a-9b5c-6d7e8f9a0b1c",
       "capabilities": {
         "transport:native_tcp": {
           "kind": "transport",
-          "roles": [
-            "dial",
-            "listen"
-          ],
-          "streams": [
-            "tcp"
-          ]
+          "roles": ["dial", "listen"],
+          "streams": ["tcp"]
         },
         "transport:native_udp": {
           "kind": "transport",
-          "roles": [
-            "dial",
-            "listen"
-          ],
-          "streams": [
-            "udp"
-          ]
+          "roles": ["dial", "listen"],
+          "streams": ["udp"]
         }
       }
     },
@@ -219,13 +37,7 @@
       "200": {
         "instanceId": "8f9a0b1c-2d3e-4f4a-9b5c-6d7e8f9a0b1c",
         "generation": 1,
-        "expiresAt": "2026-10-08T09:02:00Z",
-        "executionExpiresAt": null,
-        "target": {
-          "revision": 7,
-          "executionPublication": "9e0f1a2b-3c4d-4e5f-8061-8293a4b5c6d7",
-          "digest": "1212121212121212121212121212121212121212121212121212121212121212"
-        }
+        "expiresAt": "2026-10-08T09:02:00Z"
       }
     }
   },
@@ -244,13 +56,7 @@
       "200": {
         "instanceId": "8f9a0b1c-2d3e-4f4a-9b5c-6d7e8f9a0b1c",
         "generation": 1,
-        "expiresAt": "2026-10-08T09:02:00Z",
-        "executionExpiresAt": "2026-10-08T09:01:00Z",
-        "target": {
-          "revision": 7,
-          "executionPublication": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
-          "digest": "abababababababababababababababababababababababababababababababab"
-        }
+        "expiresAt": "2026-10-08T09:02:00Z"
       }
     }
   },
@@ -266,46 +72,7 @@
     "responses": {
       "200": {
         "version": 1,
-        "profile": "mesh",
-        "publication": "9e0f1a2b-3c4d-4e5f-8061-8293a4b5c6d7"
-      }
-    }
-  },
-  "getExecutionPublication": {
-    "responses": {
-      "200": {
-        "publication": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
-        "revision": 7,
-        "sequence": 8,
-        "withdrawnAt": null,
-        "nodes": {
-          "a7b6c5d4-5e6f-4a3b-8c9d-9e8f7a6b5c70": {
-            "target": {
-              "revision": 7,
-              "executionPublication": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
-              "digest": "abababababababababababababababababababababababababababababababab"
-            },
-            "current": true,
-            "saved": true,
-            "applied": true,
-            "failed": false,
-            "freshness": "current",
-            "lastReceivedAt": "2026-10-08T09:00:01Z"
-          },
-          "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50": {
-            "target": {
-              "revision": 7,
-              "executionPublication": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
-              "digest": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
-            },
-            "current": true,
-            "saved": true,
-            "applied": true,
-            "failed": false,
-            "freshness": "current",
-            "lastReceivedAt": "2026-10-08T09:00:01Z"
-          }
-        }
+        "profile": "mesh"
       }
     }
   },

@@ -34,11 +34,20 @@ const IDLE_SPACING: Duration = Duration::from_secs(1);
 pub type SyncFuture<'a> =
     Pin<Box<dyn Future<Output = Result<SyncResponse, ClientError<ErrorResponse>>> + Send + 'a>>;
 
-/// One sync HTTP exchange with the Node session token. The production
-/// implementation is the generated client operation for the sync route; its
-/// client must allow at least [`SYNC_TIMEOUT`] for the total request and read.
+/// One sync HTTP exchange with the Node session token. Without an explicit
+/// transport Control uses the generated client operation for the sync route
+/// on its own protected client, with a [`SYNC_TIMEOUT`] request budget.
 pub trait SyncTransport: Send + Sync {
     fn sync<'a>(&'a self, request: &'a SyncRequest, token: &'a str) -> SyncFuture<'a>;
+}
+
+/// The generated `syncNode` operation on Control's own client.
+pub(crate) struct ClientTransport(pub(crate) meshway_control_client::Client);
+
+impl SyncTransport for ClientTransport {
+    fn sync<'a>(&'a self, request: &'a SyncRequest, token: &'a str) -> SyncFuture<'a> {
+        Box::pin(self.0.sync_node(request, token))
+    }
 }
 
 /// The facts consumer refused this delta (e.g. its bounded queue is full).
@@ -121,8 +130,14 @@ impl Control {
     /// live session only; no instance is required.
     pub fn begin_sync(&self) -> Result<SyncCall, Error> {
         let token = Zeroizing::new(self.token()?.to_owned());
+        let transport = match &self.sync_transport {
+            Some(transport) => transport.clone(),
+            None => Arc::new(ClientTransport(
+                self.client.clone().with_request_timeout(SYNC_TIMEOUT),
+            )),
+        };
         Ok(SyncCall {
-            transport: self.sync_transport.clone().ok_or(Error::Endpoint)?,
+            transport,
             token,
             request: self.sync_request(),
             started: Started::now(&self.clock)?,
@@ -147,7 +162,7 @@ impl Control {
     pub async fn finish_sync(
         &mut self,
         reply: SyncReply,
-        sink: &mut dyn PeerFactsSink,
+        sink: &mut (dyn PeerFactsSink + Send),
     ) -> Result<SyncOutcome, Error> {
         self.ready()?;
         if !Weak::ptr_eq(&reply.epoch, &Arc::downgrade(&self.netmap.epoch))
@@ -217,7 +232,10 @@ impl Control {
     }
 
     /// One complete long poll while holding the driver.
-    pub async fn sync(&mut self, sink: &mut dyn PeerFactsSink) -> Result<SyncOutcome, Error> {
+    pub async fn sync(
+        &mut self,
+        sink: &mut (dyn PeerFactsSink + Send),
+    ) -> Result<SyncOutcome, Error> {
         let call = self.begin_sync()?;
         let reply = call.send().await;
         self.finish_sync(reply, sink).await
@@ -248,7 +266,7 @@ fn terminal(error: &Error) -> bool {
 /// storage that needs reopening and invalid configuration end the loop.
 pub async fn sync_loop(
     control: &tokio::sync::Mutex<Control>,
-    sink: &mut dyn PeerFactsSink,
+    sink: &mut (dyn PeerFactsSink + Send),
     snapshots: &tokio::sync::watch::Sender<Option<ExecutionSnapshot>>,
     stop: &CancellationToken,
 ) -> Result<(), Error> {

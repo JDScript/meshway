@@ -27,12 +27,9 @@ impl Intent {
     }
 }
 
-#[cfg(test)]
-pub(in crate::runtime) mod integration;
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-pub(super) enum Progress {
+pub(crate) enum Progress {
     Setup,
     Waiting,
 }
@@ -58,47 +55,13 @@ pub(super) fn admission(status: &Status) -> Result<(), PingError> {
     Ok(())
 }
 
+/// A ping runs locally on the installed netmap: no Server contact needed.
 fn can_queue(status: &Status) -> bool {
-    if !status.desired_up || status.identity.is_none() {
-        return false;
-    }
-    match status.phase {
-        Phase::Synchronizing => {
-            status.last_error.is_none()
-                && matches!(
-                    status.data_plane,
-                    DataPlane::Ready | DataPlane::Preparing | DataPlane::Suspended
-                )
-        }
-        Phase::Running => {
-            status.data_plane == DataPlane::Ready
-                && status.authenticated
-                && status.applied.is_some()
-                && status.saved == status.applied
-                && status
-                    .instance
-                    .as_ref()
-                    .is_some_and(|instance| instance.target == status.applied)
-        }
-        _ => false,
-    }
-}
-
-/// Queue admission is not authority. Called only by the existing mutable
-/// Control driver, never with the public View's historical StatusSnapshot.
-pub(super) fn source_instance(
-    control: &meshway_control::Control,
-) -> Result<meshway_protocol::InstanceRequest, PingError> {
-    control
-        .execution_snapshot()
-        .map(|snapshot| snapshot.instance())
-        .map_err(|_| PingError::NotRunning)
-}
-
-pub(super) enum Readiness {
-    Ready,
-    Preparing,
-    Unavailable,
+    status.desired_up
+        && status.identity.is_some()
+        && status.netmap.is_some()
+        && matches!(status.data_plane, DataPlane::Ready | DataPlane::Preparing)
+        && !matches!(status.phase, Phase::Blocked | Phase::Down | Phase::Stopping)
 }
 
 #[cfg(test)]

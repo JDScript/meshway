@@ -22,7 +22,7 @@ pub(super) async fn exercise_traversal(healthy_only: bool) {
                     a: format!("node:{}", ids[0]),
                     b: format!("node:{}", ids[1]),
                     transports: meshway_configuration::Input::Omitted,
- keepalive: false,
+                    keepalive: false,
                 }];
             })
             .await;

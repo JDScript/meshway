@@ -399,7 +399,7 @@ async fn idle_observation_compiles_narrow_path_shares_tabs_and_accepts_real_sour
                 action: meshway_configuration::TopologyAction::Block,
                 a: format!("node:{}", c.id),
                 b: format!("node:{}", b.id),
- keepalive: false,
+                keepalive: false,
             });
         })
         .await;

@@ -42,7 +42,7 @@ async fn remote_https_artifacts_compile_publish_restore_and_survive_restart() {
         action: TopologyAction::Block,
         a: format!("node:{}", c.node_id),
         b: "*".into(),
- keepalive: false,
+        keepalive: false,
     });
     input.access.push(AccessRule {
         remark: String::new(),
@@ -265,7 +265,7 @@ async fn remote_https_artifacts_compile_publish_restore_and_survive_restart() {
                 expected_revision: current.revision,
                 request_id: rid(),
                 restore_from: fixed_revision,
-                resource_publication: None,
+                rule_set_bindings: None,
             }),
     )
     .await;
@@ -278,7 +278,7 @@ async fn remote_https_artifacts_compile_publish_restore_and_survive_restart() {
                 expected_revision: initial_restore.revision,
                 request_id: rid(),
                 restore_from: fixed_revision,
-                resource_publication: Some(second_publication),
+                rule_set_bindings: Some(second_publication),
             }),
     )
     .await;

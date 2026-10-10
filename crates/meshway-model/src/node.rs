@@ -49,4 +49,3 @@ pub struct BoundNodeKey {
     pub public_key: NodePublicKey,
 }
 }
-

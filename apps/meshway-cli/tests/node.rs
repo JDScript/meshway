@@ -303,22 +303,20 @@ async fn real_cli_enrollment(console_origin: Option<&str>, key_stdin: Option<boo
         String::from_utf8_lossy(&human.stdout)
             .contains("Network mode: ControlOnly  Data plane: ControlOnly")
     );
-    assert!(!String::from_utf8_lossy(&human.stdout).contains("Applied configuration:"));
+    assert!(!String::from_utf8_lossy(&human.stdout).contains("Applied netmap:"));
     assert!(!String::from_utf8_lossy(&human.stdout).contains("mwns_"));
     assert!(!String::from_utf8_lossy(&human.stdout).contains("ask its operator"));
-    assert!(String::from_utf8_lossy(&human.stdout).contains("Event stream:"));
+    assert!(String::from_utf8_lossy(&human.stdout).contains("Sync:"));
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         let state = meshway_ipc::Client::new(&socket)
             .call(meshway_ipc::Command::Status)
             .await
             .unwrap();
-        if state.event_stream == meshway_ipc::EventStreamState::Connected
-            && state.last_event_at.is_some()
-        {
+        if state.sync == meshway_ipc::SyncState::Connected && state.last_sync_at.is_some() {
             break;
         }
-        assert!(Instant::now() < deadline, "event stream did not connect");
+        assert!(Instant::now() < deadline, "sync did not connect");
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     let ready = if key_stdin == Some(false) {

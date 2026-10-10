@@ -1,9 +1,9 @@
-//! Netmap-chain observation authority: creation, renewal and reauthorization
+//! Observation authority: creation, renewal and reauthorization
 //! decide on the source's current netmap with the source's own compiler, and
 //! never persist a diagnostic demand, compile or publish.
 use super::*;
 
-/// Netmap-chain diagnostic decision on the source's current netmap: the
+/// Diagnostic decision on the source's current netmap: the
 /// result of the same local compiler the source runs before probing.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NetmapDiagnostic {
@@ -22,69 +22,20 @@ pub fn netmap_diagnostic(
     service: &meshway_configuration::execution::ObservationServiceScope,
     selection: &ObservationPath,
 ) -> Result<NetmapDiagnostic, Error> {
-    use meshway_configuration::execution::{BusinessProtocol, ObservationServiceScope};
-    use meshway_policy::compile::netmap::{LocalDecision, Target, compile_local, observable};
-    if target == source.node_id {
-        return Err(Error::PermissionDenied);
-    }
-    let addresses = &source
-        .projection
-        .configuration
-        .nodes
-        .get(&target)
-        .ok_or(Error::PermissionDenied)?
-        .addresses;
-    let destination = addresses
-        .ipv4
-        .map(std::net::IpAddr::V4)
-        .or(addresses.ipv6.map(std::net::IpAddr::V6))
-        .ok_or(Error::PermissionDenied)?;
-    let (protocol, port) = match service {
-        ObservationServiceScope::Tcp { port } => (BusinessProtocol::Tcp, Some(*port)),
-        ObservationServiceScope::Udp { port } => (BusinessProtocol::Udp, Some(*port)),
-        ObservationServiceScope::IcmpEcho => (BusinessProtocol::IcmpEcho, None),
+    let explicit = match selection {
+        ObservationPath::Auto => None,
+        ObservationPath::Explicit { path } => Some(path.as_slice()),
     };
-    let decision = match compile_local(source, source.node_id, destination, (protocol, port))
-        .map_err(|_| Error::Internal("netmap diagnostic decision"))?
-    {
-        LocalDecision::Permitted(decision) => decision,
-        _ => return Err(Error::PermissionDenied),
-    };
-    if decision.target != (Target::Mesh { node: target })
-        || !decision.services.contains(protocol, port)
-    {
-        return Err(Error::PermissionDenied);
-    }
-    let mut paths: Vec<Vec<NodeId>> = decision.paths.into_iter().map(|p| p.nodes).collect();
-    if let ObservationPath::Explicit { path } = selection {
-        if !paths.contains(path) {
-            return Err(Error::PermissionDenied);
-        }
-        paths = vec![path.clone()];
-    }
-    if paths.is_empty() {
-        return Err(Error::PermissionDenied);
-    }
-    let inventory = &source.projection.inventory;
-    let supported: Vec<_> = paths
-        .iter()
-        .filter(|path| observable(inventory, path))
-        .cloned()
-        .collect();
-    Ok(if supported.is_empty() {
-        NetmapDiagnostic {
-            paths,
-            observable: false,
-        }
-    } else {
-        NetmapDiagnostic {
-            paths: supported,
-            observable: true,
-        }
+    let decided =
+        meshway_policy::compile::netmap::observation_paths(source, target, service, explicit)
+            .map_err(|_| Error::PermissionDenied)?;
+    Ok(NetmapDiagnostic {
+        paths: decided.paths,
+        observable: decided.observable,
     })
 }
 
-/// Netmap-chain observation provider. Creation, renewal and
+/// The observation provider. Creation, renewal and
 /// reauthorization only read the source's current netmap; there is no
 /// diagnostic demand, compilation mirror or publication. A subscription's
 /// renewal changes only the subscription itself.
@@ -131,10 +82,11 @@ impl NetmapDiagnostics {
         let report = execution
             .current_node_admission(tx, network, request.source_node_id, now)
             .map_err(node_dependency_error)?;
-        // Tasks still carry the source's execution reference until the
-        // observation wire names netmaps.
-        let configuration = report.execution.clone().ok_or(Error::StateConflict)?;
-        let lease = store::lease_for_node(tx, &execution.sealer, network, request.source_node_id)
+        let netmap = source.reference();
+        if report.execution != Some(netmap) {
+            return Err(Error::StateConflict);
+        }
+        let lease = store::lease_for_node(tx, network, request.source_node_id)
             .map_err(node_dependency_error)?;
         Ok(TaskAdmission {
             observation_id: None,
@@ -147,7 +99,7 @@ impl NetmapDiagnostics {
                 })
                 .copied()
                 .collect(),
-            configuration,
+            netmap,
             paths: decision.paths,
             node_expires_at: DateTime::from_timestamp_millis(lease.expires_at_ms as i64)
                 .ok_or(Error::decode("node_execution.instance_expires_at"))?,
@@ -170,9 +122,9 @@ impl NetmapDiagnostics {
         };
         let user =
             crate::store::authorization::current_session(tx, digest, now.timestamp_millis())?;
-        let scope =
-            self.execution
-                .netmap_state_scope_in_transaction(tx, &*self.netmaps, identity, now)?;
+        let scope = self
+            .execution
+            .state_scope_in_transaction(tx, identity, now)?;
         if !scope.full.contains(&request.source_node_id)
             || request.source_node_id == request.target_node_id
         {
@@ -341,8 +293,7 @@ impl crate::observations::service::ObservationProvider for NetmapDiagnostics {
         identity: &ReadIdentity,
         now: DateTime<Utc>,
     ) -> Result<crate::state::VisibilityScope, Error> {
-        self.execution
-            .netmap_state_scope_in_transaction(tx, &*self.netmaps, identity, now)
+        self.execution.state_scope_in_transaction(tx, identity, now)
     }
     fn report(
         &self,
@@ -383,11 +334,6 @@ impl crate::observations::service::ObservationProvider for NetmapDiagnostics {
         identity: &ReadIdentity,
         now: DateTime<Utc>,
     ) -> Result<SessionId, Error> {
-        crate::observations::service::ObservationProvider::observation_session(
-            &self.execution,
-            tx,
-            identity,
-            now,
-        )
+        self.execution.observation_session(tx, identity, now)
     }
 }

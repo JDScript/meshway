@@ -4,7 +4,7 @@ use super::{ReportAdmission, service::*};
 use crate::error::Error;
 use crate::{configuration::SnapshotCache, execution::Execution, secrets::Sealer};
 use chrono::{DateTime, Utc};
-use meshway_model::{InstanceId, MembershipRole, Revision};
+use meshway_model::{InstanceId, MembershipRole, NetworkId, NodeId, Revision};
 use meshway_protocol::live::*;
 use rusqlite::Transaction;
 use std::{collections::BTreeSet, sync::Arc};
@@ -102,7 +102,6 @@ impl StateProvider for UserProvider {
         };
         let nodes = crate::store::execution::inventory_in_transaction(
             tx,
-            &self.0.sealer,
             network.id,
             cfg,
             &scope.full,
@@ -209,6 +208,23 @@ impl UserProvider {
         )
     }
 }
+/// A Node's own desired settings and current netmap reference, as the State
+/// core's per-reader configuration view. Node streams are not served; this
+/// view backs the Node's State queries only.
+#[derive(Clone, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NodeConfigurationView {
+    pub network_id: NetworkId,
+    pub node_id: NodeId,
+    pub revision: meshway_model::Revision,
+    pub settings: meshway_configuration::NodeSettingsView,
+    pub netmap: Option<meshway_model::NetmapRef>,
+}
+/// Node-visible inventory under the Node's current netmap.
+#[derive(Clone, PartialEq, serde::Serialize)]
+pub struct NodeEntitiesView {
+    pub nodes: std::collections::BTreeMap<NodeId, meshway_protocol::NodeInventoryView>,
+}
 impl StateProvider for NodeProvider {
     type Configuration = NodeConfigurationView;
     type Entities = NodeEntitiesView;
@@ -262,11 +278,10 @@ impl StateProvider for NodeProvider {
             node_id: node,
             revision: snapshot.revision,
             settings: cfg.nodes.get(&node).ok_or(Error::InvalidSession)?.into(),
-            target,
+            netmap: target,
         };
         let nodes = crate::store::execution::inventory_in_transaction(
             tx,
-            &self.0.sealer,
             scope.network_id,
             cfg,
             &scope.visible,

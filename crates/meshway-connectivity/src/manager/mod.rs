@@ -990,7 +990,10 @@ impl Manager {
     /// Bind State socket references to the instance that now qualifies this
     /// Node (a new instance after a Server outage, or the first one after an
     /// offline restart). Authority, channels and resources are unchanged.
-    fn bind_instance(&self, instance: Option<meshway_protocol::InstanceRequest>) -> Result<(), Error> {
+    fn bind_instance(
+        &self,
+        instance: Option<meshway_protocol::InstanceRequest>,
+    ) -> Result<(), Error> {
         {
             let mut current = self.shared.instance.lock().map_err(|_| Error::Worker)?;
             if *current == instance {

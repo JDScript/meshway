@@ -182,40 +182,6 @@ wire_object! {
     pub settings: meshway_configuration::NodeSettingsView,
 } }
 wire_object! {
-/// Exact Mesh DNS name lookup in the authenticated Node's visible configuration.
-#[derive(Clone,Debug,PartialEq,Eq)] pub struct NodeDnsQueryRequest {
-    /// Exact FQDN; raw UTF-8 is bounded before strict DNS/IDNA normalization.
-    pub name: String [max_length=1024],
-} }
-wire_object! {
-/// Visible configured Mesh name and addresses for a Node.
-#[derive(Clone,Debug,PartialEq,Eq)] pub struct NodeDnsRecord {
-    /// Visible Node identified by the queried name.
-    pub node_id: NodeId,
-    /// Canonical fully qualified Mesh DNS name.
-    pub name: String,
-    /// Configured Mesh addresses associated with this name.
-    pub addresses: meshway_configuration::NodeAddresses,
-} }
-wire_object! {
-/// Permission-filtered name lookup snapshot without an execution grant or DNS TTL.
-#[derive(Clone,Debug,PartialEq,Eq)] pub struct NodeDnsQueryResponse {
-    /// Server request identifier for correlation.
-    pub request_id: RequestId,
-    /// Network determined from the authenticated Node session.
-    pub network_id: NetworkId,
-    /// Authenticated Node whose visibility was used for the lookup.
-    pub source_node_id: NodeId,
-    /// Configuration revision used to resolve and authorize the name.
-    pub configuration_revision: Revision,
-    /// UTC time at which the Server evaluated the lookup.
-    pub as_of: chrono::DateTime<chrono::Utc>,
-    /// Unknown and non-visible names have the same null result. This snapshot
-    /// carries no execution grant, TTL, or authoritative DNS negative answer.
-    #[serde(deserialize_with="crate::object::required_nullable")]
-    pub record: Option<NodeDnsRecord> [required=true],
-} }
-wire_object! {
 /// Idempotent permanent Node deletion guarded by the expected configuration revision.
 #[derive(Clone,Debug,PartialEq,Eq)] pub struct DeleteNodeRequest {
     /// Request identifier binding retries to the same caller, network and deletion intent.

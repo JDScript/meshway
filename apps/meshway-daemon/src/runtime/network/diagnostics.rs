@@ -1,15 +1,22 @@
 //! Host adapter for the shared observation executor. No HTTP or cipher owner.
+//! Server tasks (Console observations) and local `meshway ping` share one
+//! executor; a ping is a local task decided on the installed netmap alone,
+//! never published, and its results go back to IPC only.
 use super::Request;
 use crate::runtime::PingRequest;
 use crate::runtime::ping::Progress;
+use meshway_authority::ExecutionSnapshot;
 use meshway_connectivity::{LinkFact, Manager};
 use meshway_dataplane::secure::{PendingFrame, SecureNode};
 use meshway_diagnostics::{Output, Owner};
 use meshway_ipc::{PingError, PingEvent};
 use meshway_model::{
-    EventId, ObservationId, ObservationSubscriptionId, observations::ProbeChannel,
+    EventId, NodeId, ObservationId, ObservationSubscriptionId, observations::ProbeChannel,
 };
-use meshway_protocol::observations::ObservationUpdate;
+use meshway_protocol::{
+    NodeObservationTarget, NodeObservationTargetView,
+    observations::{ObservationPath, ObservationPhase, ObservationTask, ObservationUpdate},
+};
 use std::{
     collections::BTreeMap,
     time::{Duration, Instant},
@@ -18,6 +25,7 @@ use tokio::sync::{mpsc, oneshot};
 
 struct Local {
     observation: ObservationId,
+    task: ObservationTask,
     request: PingRequest,
     sent: u32,
     success: u32,
@@ -26,15 +34,11 @@ struct Local {
     samples: u16,
     preparing_since: Instant,
     next_progress: Instant,
-    lease: tokio::sync::watch::Receiver<Option<meshway_control::ObservationLease>>,
     progress: tokio::sync::watch::Sender<Progress>,
 }
 impl Local {
     fn lease_ended(&self) -> bool {
-        self.lease
-            .borrow()
-            .as_ref()
-            .is_some_and(|lease| !lease.is_current())
+        chrono::Utc::now() >= self.task.expires_at
     }
 }
 struct Publication {
@@ -56,8 +60,54 @@ pub(super) struct Diagnostics {
     sends: tokio::task::JoinSet<Sent>,
     epoch: tokio_util::sync::CancellationToken,
     pending_plan: Option<super::ObservationPlan>,
+    /// Server tasks of the installed netmap.
+    server: Vec<ObservationTask>,
+    /// The snapshot and task set the executor was last synchronized with.
+    synchronized: Option<ExecutionSnapshot>,
+    dirty: bool,
     paused: std::collections::BTreeSet<ObservationId>,
     effective_pauses: std::collections::BTreeSet<ObservationId>,
+}
+
+fn random_uuid() -> Option<uuid::Uuid> {
+    let mut bytes = [0u8; 16];
+    getrandom::fill(&mut bytes).ok()?;
+    Some(uuid::Builder::from_random_bytes(bytes).into_uuid())
+}
+
+/// Resolve a ping target on the netmap: a configured hostname or Mesh FQDN
+/// listed in the netmap's MagicDNS hosts, or an exact Mesh IP of a visible Node.
+fn resolve(
+    snapshot: &ExecutionSnapshot,
+    target: &NodeObservationTarget,
+) -> Result<NodeObservationTargetView, PingError> {
+    let netmap = &snapshot.netmap().map_err(|_| PingError::NotRunning)?.netmap;
+    let configuration = &netmap.projection.configuration;
+    let domain = &configuration.dns.domain;
+    let found = configuration.nodes.iter().find(|(id, node)| {
+        **id != netmap.node_id
+            && netmap.projection.inventory.contains_key(id)
+            && match target {
+                NodeObservationTarget::Name { name } => {
+                    let name = name.trim_end_matches('.').to_ascii_lowercase();
+                    let fqdn = meshway_configuration::node_dns_name(&node.hostname, domain).ok();
+                    (name == node.hostname || fqdn.as_deref() == Some(name.as_str()))
+                        && fqdn.is_some_and(|fqdn| netmap.dns.mesh_hosts.contains_key(&fqdn))
+                }
+                NodeObservationTarget::MeshIp { address } => address
+                    .parse::<std::net::IpAddr>()
+                    .is_ok_and(|ip| match ip {
+                        std::net::IpAddr::V4(ip) => node.addresses.ipv4 == Some(ip),
+                        std::net::IpAddr::V6(ip) => node.addresses.ipv6 == Some(ip),
+                    }),
+            }
+    });
+    let (id, node) = found.ok_or(PingError::TargetNotFound)?;
+    Ok(NodeObservationTargetView {
+        node_id: *id,
+        hostname: node.hostname.clone(),
+        addresses: node.addresses.clone(),
+    })
 }
 
 impl Diagnostics {
@@ -65,49 +115,175 @@ impl Diagnostics {
         if let Some(plan) = &plan {
             for task in &plan.tasks {
                 tracing::debug!(observation = %task.id,
-                    publication = %plan.snapshot.reference().execution_publication,
+                    netmap_serial = plan.snapshot.reference().serial.get(),
                     stage = "installation_pending", "Diagnostic plan awaits matching installation");
             }
         }
         if plan.is_none() {
-            self.owner.suspend();
-            for local in self.locals.values() {
-                local
-                    .progress
-                    .send_if_modified(|progress| progress.replace(Progress::Setup));
-            }
+            self.server.clear();
+            self.dirty = true;
         }
         self.pending_plan = plan;
     }
 
-    pub fn synchronize(&mut self, installed: &meshway_authority::ExecutionSnapshot) {
-        let Some(plan) = &self.pending_plan else {
-            return;
-        };
-        if plan.snapshot.ensure_current().is_err() {
-            self.pending_plan = None;
-            return;
-        }
-        if !plan.snapshot.same_execution(installed) {
-            return;
-        }
-        let plan = self.pending_plan.take().expect("matching plan");
-        tracing::debug!(publication = %plan.snapshot.reference().execution_publication, tasks = plan.tasks.len(), "Synchronizing observation plan with installed execution");
-        if self.owner.synchronize(plan.snapshot, &plan.tasks).is_err() {
-            self.reject_tasks();
-        } else {
-            for task in &plan.tasks {
-                tracing::info!(observation = %task.id,
-                    publication = %task.configuration.execution_publication,
-                    stage = "installed", "Diagnostic preparation stage changed");
+    /// Server tasks executing toward `target` on a diagnostic circuit.
+    pub fn observations_toward(&self, target: NodeId) -> Vec<ObservationId> {
+        self.server
+            .iter()
+            .filter(|task| task.target_node_id == target)
+            .map(|task| task.id)
+            .collect()
+    }
+
+    /// Bind the executor to the installed netmap: Server tasks assigned on
+    /// this content plus every live local ping.
+    pub fn synchronize(&mut self, installed: &ExecutionSnapshot) {
+        if let Some(plan) = &self.pending_plan {
+            if plan.snapshot.ensure_current().is_err() {
+                self.pending_plan = None;
+            } else if plan.snapshot.same_netmap(installed) {
+                let plan = self.pending_plan.take().expect("matching plan");
+                self.server = plan.tasks;
+                self.dirty = true;
             }
         }
+        if !self.dirty
+            && self.synchronized.as_ref().is_some_and(|old| {
+                old.same_netmap(installed) && old.instance() == installed.instance()
+            })
+        {
+            return;
+        }
+        self.dirty = false;
+        let mut tasks = self.server.clone();
+        tasks.extend(
+            self.locals
+                .values()
+                .filter(|local| !local.request.cancellation.is_cancelled())
+                .map(|local| local.task.clone()),
+        );
+        tracing::debug!(
+            netmap_serial = installed.reference().serial.get(),
+            tasks = tasks.len(),
+            "Synchronizing observation tasks with installed netmap"
+        );
+        if self.owner.synchronize(installed.clone(), &tasks).is_err() {
+            self.reject_tasks();
+        }
+        self.synchronized = Some(installed.clone());
         self.apply_pauses();
     }
 
-    pub fn set_paused(&mut self, paused: std::collections::BTreeSet<ObservationId>) {
-        self.paused = paused;
-        self.apply_pauses();
+    /// Start a local ping on the installed netmap. Denied and unsupported
+    /// targets fail at once; otherwise preparation begins locally.
+    pub fn ping(
+        &mut self,
+        snapshot: Option<&ExecutionSnapshot>,
+        session: crate::runtime::PingSession,
+    ) {
+        let crate::runtime::PingSession {
+            request, progress, ..
+        } = session;
+        let fail = |request: &PingRequest, code| {
+            let _ = request.events.try_send(PingEvent::Failed { code });
+            request.cancellation.cancel();
+        };
+        let Some(snapshot) = snapshot.filter(|s| s.ensure_current().is_ok()) else {
+            return fail(&request, PingError::NotRunning);
+        };
+        if self.locals.len() >= 8 {
+            return fail(&request, PingError::Busy);
+        }
+        let target = match resolve(snapshot, &request.target) {
+            Ok(target) => target,
+            Err(code) => return fail(&request, code),
+        };
+        match meshway_dataplane::secure::diagnostic_paths(snapshot, target.node_id, None) {
+            Ok(_) => {}
+            Err(meshway_dataplane::secure::Error::Unsupported) => {
+                return fail(&request, PingError::Unsupported);
+            }
+            Err(meshway_dataplane::secure::Error::Policy) => {
+                return fail(&request, PingError::PermissionDenied);
+            }
+            Err(_) => return fail(&request, PingError::NotRunning),
+        }
+        let (Some(subscription), Some(observation), Some(instance)) =
+            (random_uuid(), random_uuid(), random_uuid())
+        else {
+            return fail(&request, PingError::Failed);
+        };
+        let (Ok(subscription), Ok(observation)) = (
+            ObservationSubscriptionId::new(subscription),
+            ObservationId::new(observation),
+        ) else {
+            return fail(&request, PingError::Failed);
+        };
+        let instance_id = match snapshot.instance() {
+            Some(instance) => instance.instance_id,
+            None => match meshway_model::InstanceId::new(instance) {
+                Ok(id) => id,
+                Err(_) => return fail(&request, PingError::Failed),
+            },
+        };
+        let Ok(netmap) = snapshot.netmap() else {
+            return fail(&request, PingError::NotRunning);
+        };
+        let now = chrono::Utc::now();
+        let budget =
+            meshway_diagnostics::SETUP_TIMEOUT + Duration::from_secs(u64::from(request.count) + 10);
+        let expires_at = now + chrono::Duration::from_std(budget).unwrap_or_default();
+        let task = ObservationTask {
+            id: observation,
+            source_node_id: netmap.netmap.node_id,
+            target_node_id: target.node_id,
+            service: meshway_configuration::execution::ObservationServiceScope::IcmpEcho,
+            selection: ObservationPath::Auto,
+            path: None,
+            path_segment: None,
+            netmap: snapshot.reference(),
+            instance_id,
+            metrics: vec![meshway_model::observations::MetricKind::Rtt],
+            interval_ms: 1000,
+            phase: ObservationPhase::Preparing,
+            unsupported_metrics: Vec::new(),
+            expires_at,
+            renew_after: expires_at,
+            latest: None,
+            subscriber_expires_at: None,
+            subscription_id: None,
+        };
+        tracing::info!(request = %request.id, observation = %observation, target = %target.node_id,
+            "Local ping accepted on the installed netmap");
+        if request
+            .events
+            .try_send(PingEvent::Accepted {
+                subscription_id: subscription,
+                observation_id: observation,
+                target,
+            })
+            .is_err()
+        {
+            request.cancellation.cancel();
+            return;
+        }
+        self.locals.insert(
+            subscription,
+            Local {
+                observation,
+                task,
+                request,
+                sent: 0,
+                success: 0,
+                timeout: 0,
+                failed: 0,
+                samples: 0,
+                preparing_since: Instant::now(),
+                next_progress: Instant::now(),
+                progress,
+            },
+        );
+        self.dirty = true;
     }
 
     fn pause_causes(&self) -> std::collections::BTreeSet<ObservationId> {
@@ -136,51 +312,13 @@ impl Diagnostics {
     pub fn reject_tasks(&mut self) {
         self.owner.clear();
         self.publications.clear();
+        self.server.clear();
         for local in self.locals.values() {
             let _ = local.request.events.try_send(PingEvent::Failed {
                 code: PingError::Protocol,
             });
             local.request.cancellation.cancel();
         }
-    }
-    pub fn detach(&mut self, subscription: ObservationSubscriptionId) {
-        self.locals.remove(&subscription);
-        self.apply_pauses();
-    }
-    pub fn attach(
-        &mut self,
-        subscription: ObservationSubscriptionId,
-        observation: ObservationId,
-        request: PingRequest,
-        lease: tokio::sync::watch::Receiver<Option<meshway_control::ObservationLease>>,
-        progress: tokio::sync::watch::Sender<Progress>,
-    ) {
-        if self.locals.contains_key(&subscription) {
-            return;
-        }
-        if self.locals.len() >= 8 {
-            let _ = request.events.try_send(PingEvent::Failed {
-                code: PingError::Busy,
-            });
-            request.cancellation.cancel();
-            return;
-        }
-        self.locals.insert(
-            subscription,
-            Local {
-                observation,
-                request,
-                sent: 0,
-                success: 0,
-                timeout: 0,
-                failed: 0,
-                samples: 0,
-                preparing_since: Instant::now(),
-                next_progress: Instant::now(),
-                lease,
-                progress,
-            },
-        );
     }
 
     pub async fn stop(&mut self) {
@@ -195,6 +333,9 @@ impl Diagnostics {
         }
         self.locals.clear();
         self.pending_plan = None;
+        self.server.clear();
+        self.synchronized = None;
+        self.dirty = true;
         self.paused.clear();
         self.effective_pauses.clear();
         while self.sends.join_next().await.is_some() {}
@@ -211,6 +352,8 @@ impl Diagnostics {
                 .send_if_modified(|progress| progress.replace(Progress::Setup));
         }
         self.publications.clear();
+        self.synchronized = None;
+        self.dirty = true;
     }
 
     pub fn wake_at(&self) -> Option<tokio::time::Instant> {
@@ -237,6 +380,12 @@ impl Diagnostics {
         // Packet work may have deferred this consumer without delaying wire I/O.
         while let Some(sent) = self.sends.try_join_next() {
             self.finish_send(sent);
+        }
+        let before = self.locals.len();
+        self.locals
+            .retain(|_, local| !local.request.cancellation.is_cancelled());
+        if self.locals.len() != before {
+            self.dirty = true;
         }
         // Local disconnect stops delivery immediately. Pause the shared task
         // while Control settles cancellation; its returned shared task resumes.
@@ -387,6 +536,10 @@ impl Diagnostics {
             .cloned()
             .collect();
         for output in outputs {
+            let local_task = self
+                .locals
+                .values()
+                .any(|local| local.observation == output.task.id);
             for local in self.locals.values_mut().filter(|local| {
                 local.observation == output.task.id
                     && !local.request.cancellation.is_cancelled()
@@ -433,6 +586,11 @@ impl Diagnostics {
                         local.request.cancellation.cancel();
                     }
                 }
+            }
+            if local_task {
+                // Local results go back to IPC only.
+                self.owner.acknowledge(output.task.id);
+                continue;
             }
             self.publications.insert(
                 output.task.id,
@@ -495,47 +653,6 @@ pub(super) fn channel(link: &LinkFact) -> Result<ProbeChannel, ()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn shared_task_pause_is_released_in_both_detach_resume_orders() {
-        let observation = "00000000-0000-4000-8000-000000000001".parse().unwrap();
-        let subscription = "00000000-0000-4000-8000-000000000002".parse().unwrap();
-        for resume_first in [false, true] {
-            let mut diagnostics = Diagnostics::default();
-            let (events, _received) = mpsc::channel(8);
-            let cancellation = tokio_util::sync::CancellationToken::new();
-            let (_lease, lease) = tokio::sync::watch::channel(None);
-            let (progress, _progress) = tokio::sync::watch::channel(Progress::Setup);
-            diagnostics.attach(
-                subscription,
-                observation,
-                PingRequest {
-                    id: "00000000-0000-4000-8000-000000000003".parse().unwrap(),
-                    target: meshway_protocol::NodeObservationTarget::Name {
-                        name: "target".into(),
-                    },
-                    count: 2,
-                    events,
-                    cancellation: cancellation.clone(),
-                },
-                lease,
-                progress,
-            );
-            cancellation.cancel();
-            diagnostics.set_paused([observation].into_iter().collect());
-            if resume_first {
-                diagnostics.set_paused(Default::default());
-                assert!(diagnostics.pause_causes().contains(&observation));
-                diagnostics.detach(subscription);
-            } else {
-                diagnostics.detach(subscription);
-                assert!(diagnostics.pause_causes().contains(&observation));
-                diagnostics.set_paused(Default::default());
-            }
-            assert!(diagnostics.pause_causes().is_empty());
-            assert!(diagnostics.effective_pauses.is_empty());
-        }
-    }
 
     #[tokio::test]
     async fn stop_cancels_and_joins_every_admitted_sender() {

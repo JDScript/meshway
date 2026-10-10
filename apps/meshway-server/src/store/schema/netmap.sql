@@ -20,6 +20,26 @@ WHEN EXISTS(SELECT 1 FROM node_netmaps WHERE network_id=NEW.network_id AND node_
 BEGIN SELECT RAISE(ABORT,'netmap serial must increase'); END;
 CREATE TRIGGER node_netmaps_immutable BEFORE UPDATE OF network_id,node_id,serial,revision,digest,dependency_digest,payload,created_at ON node_netmaps
 BEGIN SELECT RAISE(ABORT,'immutable netmap content'); END;
+-- Node-reported save/installation outcome of one exact netmap, ordered by
+-- instance, attempt and sequence. Rows are history: a receipt is current
+-- evidence only for the Node's current netmap and live instance.
+CREATE TABLE netmap_receipts (
+    network_id BLOB NOT NULL,
+    node_id BLOB NOT NULL,
+    serial INTEGER NOT NULL,
+    instance_id BLOB NOT NULL CHECK(length(instance_id)=16),
+    generation INTEGER NOT NULL CHECK(generation BETWEEN 1 AND 9007199254740991),
+    attempt INTEGER NOT NULL CHECK(attempt BETWEEN 1 AND 9007199254740991),
+    sequence INTEGER NOT NULL CHECK(sequence BETWEEN 0 AND 9007199254740991),
+    phase TEXT NOT NULL CHECK(phase IN ('saved','applied','failed')),
+    reported_at INTEGER NOT NULL,
+    received_at INTEGER NOT NULL,
+    failure TEXT CHECK(failure IN ('validation','storage','listeners','underlay','tun','dns','dataplane')),
+    PRIMARY KEY(network_id,node_id,serial,instance_id,attempt,sequence),
+    FOREIGN KEY(network_id,node_id,serial) REFERENCES node_netmaps(network_id,node_id,serial)
+) STRICT;
+CREATE TRIGGER netmap_receipts_immutable BEFORE UPDATE ON netmap_receipts
+BEGIN SELECT RAISE(ABORT,'immutable netmap receipt'); END;
 -- Over-limit Nodes excluded by a non-configuration recompilation: their
 -- netmap is unavailable until a later recompilation fits the bound again.
 CREATE TABLE node_netmap_unavailable (

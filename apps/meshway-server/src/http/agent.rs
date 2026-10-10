@@ -13,26 +13,6 @@ use meshway_protocol::{
     node::*,
 };
 
-/// Resolve an exact Mesh DNS name under the Node's current permissions.
-///
-/// Requires a Node session without an instance; unknown and hidden names both return a null record.
-/// Reading does not grant execution or extend a lease.
-#[utoipa::path(post,path="/agent-api/v1/dns/query",operation_id="queryNodeDns",tag="node",security(("nodeSession"=[])),request_body=NodeDnsQueryRequest,responses((status=200,body=NodeDnsQueryResponse),(status=400,body=ErrorResponse,description="invalid_request"),(status=401,body=ErrorResponse,description="invalid_credentials"),(status=413,body=ErrorResponse,description="request_too_large"),(status=415,body=ErrorResponse,description="unsupported_media_type"),(status=503,body=ErrorResponse,description="service_unavailable")))]
-pub(super) async fn query_dns(
-    State(service): State<Execution>,
-    Extension(id): Extension<RequestId>,
-    headers: HeaderMap,
-    body: Result<Json<NodeDnsQueryRequest>, JsonRejection>,
-) -> Result<Json<NodeDnsQueryResponse>, HttpError> {
-    let token = node_bearer(&headers, id)?;
-    let Json(body) = body.map_err(|e| HttpError::json(id, e))?;
-    service
-        .query_dns(token, body, id)
-        .await
-        .map(Json)
-        .map_err(|e| HttpError::domain(id, e))
-}
-
 /// Long-poll the Node's netmap, lease and peer facts.
 ///
 /// Requires a Node session; no instance is needed. The request names the netmap and peer-fact cursor the Node holds.
@@ -126,59 +106,14 @@ json_route!(
     InstanceLease
 );
 json_route!(
-    /// Renew the current Node instance and eligible execution target lease.
+    /// Renew the current Node instance.
     ///
-    /// Requires a Node session and matching instance generation; expired demands are reconciled in the same transaction.
-    /// Individual business and diagnostic permit deadlines remain independently enforced.
+    /// Requires a Node session and matching instance generation. An instance qualifies State, receipts and coordination; it never bounds the Node's netmap.
     renew,
     "/agent-api/v1/instances/renew",
     "renewNodeInstance",
     InstanceRequest,
     InstanceLease
-);
-json_route!(
-    /// Retrieve the Node's exact execution target as full content, delta or unchanged.
-    ///
-    /// Requires a Node session and current instance; the read does not extend the execution lease.
-    /// Expired-demand reconciliation may update the publication before the response is assembled.
-    configuration,
-    "/agent-api/v1/configuration/query",
-    "queryNodeConfiguration",
-    NodeConfigurationRequest,
-    NodeConfigurationResponse
-);
-json_route!(
-    /// Refresh the Node's execution lease and synchronize its matching target atomically.
-    ///
-    /// Requires a Node session and current instance; renewal and full or delta selection share one transaction.
-    /// The Node must validate and persist the target before execution, and report installation separately.
-    refresh_configuration,
-    "/agent-api/v1/configuration/refresh",
-    "refreshNodeConfiguration",
-    NodeConfigurationRequest,
-    NodeConfigurationResponse
-);
-json_route!(
-    /// Create a business demand for the authenticated source Node.
-    ///
-    /// Requires a Node session and current instance; requestId binds identical creation retries without extending the demand.
-    /// The Server compiles all live demands together and returns feedback requiring target synchronization before execution.
-    demand,
-    "/agent-api/v1/demands",
-    "createNodeDemand",
-    DemandRequest,
-    DemandResponse
-);
-json_route!(
-    /// Renew an existing live demand without changing its business intent.
-    ///
-    /// Requires the owning Node session and instance; expiresAt is bounded by the instance deadline and 300 seconds from Server time.
-    /// Repeating an equal or earlier deadline does not extend the demand.
-    renew_demand,
-    "/agent-api/v1/demands/renew",
-    "renewNodeDemand",
-    RenewDemandRequest,
-    DemandResponse
 );
 macro_rules! empty_route {
 
@@ -195,7 +130,7 @@ json_route!(
     /// Select an authorized routing profile for the current Node.
     ///
     /// Requires a Node session and current instance; expectedVersion guards the selection with CAS and a mismatch returns binding_conflict.
-    /// Acceptance cancels prior source demands and publishes the new selection.
+    /// Acceptance recompiles the Node's netmap, delivered by its next sync.
     select_profile,
     "/agent-api/v1/routing-selection",
     "selectNodeRoutingProfile",
@@ -217,27 +152,14 @@ empty_route!(
     (status=422,body=ErrorResponse,description="configuration_invalid")
 );
 empty_route!(
-    /// Record a Node's actual save or installation result for an exact target.
+    /// Record a Node's actual save or installation result for an exact netmap.
     ///
-    /// Requires a Node session; identical instance, target, attempt and sequence retries retain the original result.
-    /// Applied requires an earlier saved result in the same attempt and an eligible lease; receipt_* conflicts identify rejected bindings or preconditions.
+    /// Requires a Node session; identical instance, netmap, attempt and sequence retries retain the original result.
+    /// Applied requires an earlier saved result in the same attempt and the Node's current netmap; receipt_* conflicts identify rejected bindings or preconditions.
     receipt,
     "/agent-api/v1/configuration/receipts",
     "submitNodeConfigurationReceipt",
     ReceiptRequest,
-    "receipt_instance_mismatch, receipt_target_mismatch, receipt_publication_superseded, receipt_lease_expired, receipt_precondition, receipt_content_conflict",
+    "receipt_instance_mismatch, receipt_target_mismatch, receipt_netmap_superseded, receipt_precondition, receipt_content_conflict",
     "service_unavailable"
-);
-empty_route!(
-    /// Cancel a business demand owned by the current Node instance.
-    ///
-    /// Requires a Node session and current instance; remaining live demands are recompiled into the network's execution targets.
-    cancel_demand,
-    "/agent-api/v1/demands/cancel",
-    "cancelNodeDemand",
-    CancelDemandRequest,
-    "binding_conflict, state_conflict",
-    "busy, service_unavailable",
-    (status=404,body=ErrorResponse,description="not_found"),
-    (status=422,body=ErrorResponse,description="configuration_invalid")
 );

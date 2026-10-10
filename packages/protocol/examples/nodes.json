@@ -38,9 +38,9 @@
             "controlKeyRevokedAt": null,
             "dataplaneKeyRevokedAt": null,
             "canDelete": false,
-            "desiredExecution": {
+            "netmap": {
               "revision": 7,
-              "executionPublication": "bc0a1b2c-3d4e-4f5a-8b6c-7d8e9f0a1b20",
+              "serial": 1,
               "digest": "c6291573f40ab28d915ce376a0bf482cd319e507fb0468c912d35a0f7eac4986"
             },
             "canRevokeControlKey": false,
@@ -89,9 +89,9 @@
         "controlKeyRevokedAt": null,
         "dataplaneKeyRevokedAt": null,
         "canDelete": false,
-        "desiredExecution": {
+        "netmap": {
           "revision": 7,
-          "executionPublication": "bc0a1b2c-3d4e-4f5a-8b6c-7d8e9f0a1b20",
+          "serial": 1,
           "digest": "c6291573f40ab28d915ce376a0bf482cd319e507fb0468c912d35a0f7eac4986"
         },
         "canRevokeControlKey": false,
@@ -111,13 +111,8 @@
         "requestId": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
         "networkId": "0d3a2a6e-7f3b-4d0c-9a8e-1c2b3d4e5f60",
         "revision": 8,
-        "publicationIds": [
-          "ae5f6a7b-8c9d-4e0f-8a1b-3c4d5e6f7a80"
-        ],
         "targetCount": 3,
-        "deletedNodeIds": [
-          "b8c7d6e5-4f5a-4b2c-8d9e-0f1a2b3c4d80"
-        ]
+        "deletedNodeIds": ["b8c7d6e5-4f5a-4b2c-8d9e-0f1a2b3c4d80"]
       }
     }
   },

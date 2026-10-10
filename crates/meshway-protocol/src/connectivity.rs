@@ -11,8 +11,7 @@ use crate::{
 };
 use meshway_configuration::{execution::Carrier, transport::Endpoint};
 use meshway_model::{
-    Digest, NetmapRef, NetworkId, NodeId, RequestId, Sequence, StateEpoch, UdpTraversalId,
-    Version,
+    Digest, NetmapRef, NetworkId, NodeId, RequestId, Sequence, StateEpoch, UdpTraversalId, Version,
     observations::EndpointKind,
     state::{EndpointCandidate, ResourceRef, SocketNetwork},
 };

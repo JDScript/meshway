@@ -501,7 +501,11 @@ impl FlowTable {
             if existing.is_some_and(|flow| flow.selection != decision.selection) {
                 return Err(Error::Flow);
             }
-            (hop, matches!(target, Target::Exit { .. }), decision.selection)
+            (
+                hop,
+                matches!(target, Target::Exit { .. }),
+                decision.selection,
+            )
         };
         let mut state = match existing {
             Some(flow) => flow.state.clone(),

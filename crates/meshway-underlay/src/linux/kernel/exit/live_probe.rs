@@ -93,7 +93,9 @@ impl super::super::Kernel {
             .probe
             .get_or_insert_with(|| super::probe::ExitProbe::live(self.expected.clone()));
         probe.owned_tables = owned_tables;
-        let observation = probe.observe(instance, netmap, role_generation, &interfaces).await;
+        let observation = probe
+            .observe(instance, netmap, role_generation, &interfaces)
+            .await;
         probe.finish().await.map_err(|error| error.reason)?;
         self.quiesce()
             .await

@@ -32,8 +32,7 @@ pub fn node_router<P: StateProvider>(service: StateService<P>) -> Router {
     use super::declared_route;
     let router = declared_route::<__path_report, _, _, _>(Router::new(), report::<P>);
     let router = declared_route::<__path_peer_query, _, _, _>(router, peer_query::<P>);
-    let router = declared_route::<__path_report_history, _, _, _>(router, report_history::<P>);
-    declared_route::<__path_node_events, _, _, _>(router, node_events::<P>)
+    declared_route::<__path_report_history, _, _, _>(router, report_history::<P>)
         .layer(DefaultBodyLimit::max(crate::state::MAX_REPORT_BYTES))
         .layer(middleware::from_fn(super::context))
         .with_state(service)
@@ -214,26 +213,6 @@ async fn user_events<P: StateProvider>(
 ) -> Result<Response, HttpError> {
     events(service, user(&headers, network, id)?, headers, id).await
 }
-/// Subscribe to events visible to the authenticated Node.
-///
-/// Requires a Node session; SSE synchronization and updates include only authorized execution dependencies.
-#[utoipa::path(get, path = "/agent-api/v1/events", operation_id = "watchNode", tag = "events", security(("nodeSession"=[])), params(("Last-Event-ID"=Option<String>, Header, nullable=false)), responses((status=200, content_type="text/event-stream", body=String),(status=400, body=ErrorResponse, description="invalid_request"),(status=401, body=ErrorResponse, description="invalid_credentials"),(status=403, body=ErrorResponse, description="permission_denied"),(status=404, body=ErrorResponse, description="not_found"),(status=409, body=ErrorResponse, description="state_conflict"),(status=429, body=ErrorResponse, description="state_limit"),(status=503, body=ErrorResponse, description="service_unavailable")))]
-async fn node_events<P: StateProvider>(
-    State(service): State<StateService<P>>,
-    Extension(id): Extension<RequestId>,
-    headers: HeaderMap,
-) -> Result<Response, HttpError> {
-    events(
-        service,
-        ReadIdentity::Node {
-            authorization: node(&headers, id)?,
-        },
-        headers,
-        id,
-    )
-    .await
-}
-
 #[derive(utoipa::OpenApi)]
 #[openapi(paths(
     network_state,
@@ -242,8 +221,7 @@ async fn node_events<P: StateProvider>(
     peer_query,
     report_history,
     history,
-    user_events,
-    node_events
+    user_events
 ))]
 pub struct StateApi;
 

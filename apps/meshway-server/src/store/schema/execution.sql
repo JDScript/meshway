@@ -1,4 +1,4 @@
--- Node identity, key generations, instances, publications and receipts.
+-- Node identity, key generations and instances.
 -- Node identity is only in Configuration. These rows contain immutable admission
 -- binding, independent key generations and irreversible revocation facts.
 CREATE TABLE nodes (
@@ -105,12 +105,9 @@ CREATE TABLE node_execution (
     generation INTEGER NOT NULL DEFAULT 0 CHECK(generation BETWEEN 0 AND 9007199254740991),
     boot_id BLOB CHECK(length(boot_id)=16),
     instance_expires_at INTEGER,
-    target_publication_id BLOB,
-    execution_expires_at INTEGER,
     capabilities BLOB NOT NULL,
     PRIMARY KEY(network_id,node_id),
-    FOREIGN KEY(network_id,node_id) REFERENCES nodes(network_id,id),
-    FOREIGN KEY(network_id,target_publication_id) REFERENCES execution_publications(network_id,id)
+    FOREIGN KEY(network_id,node_id) REFERENCES nodes(network_id,id)
 ) STRICT;
 CREATE TABLE node_instance_claims (
     network_id BLOB NOT NULL,
@@ -118,51 +115,6 @@ CREATE TABLE node_instance_claims (
     instance_id BLOB NOT NULL CHECK(length(instance_id)=16),
     generation INTEGER NOT NULL CHECK(generation BETWEEN 1 AND 9007199254740991),
     PRIMARY KEY(network_id,node_id,instance_id),
-    FOREIGN KEY(network_id,node_id) REFERENCES nodes(network_id,id)
-) STRICT;
-CREATE TABLE execution_publications (
-    id BLOB NOT NULL PRIMARY KEY CHECK(length(id)=16),
-    network_id BLOB NOT NULL REFERENCES networks(id),
-    sequence INTEGER NOT NULL CHECK(sequence BETWEEN 1 AND 9007199254740991),
-    revision INTEGER NOT NULL,
-    cause TEXT NOT NULL CHECK(cause IN ('configuration','demand','refresh')),
-    supersedes BLOB NOT NULL,
-    rule_set_bindings BLOB NOT NULL,
-    dependency_digest BLOB NOT NULL CHECK(length(dependency_digest)=32),
-    payload BLOB NOT NULL CHECK(length(payload)>=61),
-    created_at INTEGER NOT NULL,
-    withdrawn_at INTEGER,
-    UNIQUE(network_id,id), UNIQUE(network_id,sequence),
-    FOREIGN KEY(network_id,revision) REFERENCES configuration_versions(network_id,revision)
-) STRICT;
-CREATE TABLE execution_receipts (
-    network_id BLOB NOT NULL,
-    publication_id BLOB NOT NULL,
-    node_id BLOB NOT NULL,
-    instance_id BLOB NOT NULL,
-    generation INTEGER NOT NULL,
-    attempt INTEGER NOT NULL CHECK(attempt BETWEEN 1 AND 9007199254740991),
-    sequence INTEGER NOT NULL CHECK(sequence BETWEEN 0 AND 9007199254740991),
-    digest BLOB NOT NULL CHECK(length(digest)=32),
-    phase TEXT NOT NULL CHECK(phase IN ('saved','applied','failed')),
-    reported_at INTEGER NOT NULL,
-    received_at INTEGER NOT NULL,
-    failure TEXT CHECK(failure IN ('validation','storage','listeners','underlay','tun','dns','dataplane')),
-    PRIMARY KEY(network_id,publication_id,node_id,instance_id,attempt,sequence),
-    FOREIGN KEY(network_id,publication_id) REFERENCES execution_publications(network_id,id),
-    FOREIGN KEY(network_id,node_id) REFERENCES nodes(network_id,id)
-) STRICT;
-CREATE TABLE execution_demands (
-    network_id BLOB NOT NULL,
-    node_id BLOB NOT NULL,
-    id BLOB NOT NULL CHECK(length(id)=16),
-    instance_id BLOB NOT NULL,
-    request_digest BLOB NOT NULL CHECK(length(request_digest)=32),
-    payload BLOB NOT NULL,
-    expires_at INTEGER NOT NULL,
-    cancelled_at INTEGER,
-    PRIMARY KEY(network_id,node_id,id),
-    UNIQUE(network_id,id),
     FOREIGN KEY(network_id,node_id) REFERENCES nodes(network_id,id)
 ) STRICT;
 CREATE TABLE routing_selections (

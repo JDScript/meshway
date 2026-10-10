@@ -1,24 +1,21 @@
 //! Daemon assembly of the one DNS query owner and the one system installer.
-//! Control demand creation/refresh happens outside this module, before install.
+//! Every resolver route is decided by the installed netmap itself.
 mod actor;
-pub(super) mod intents;
 pub(super) use actor::Attachment;
 use meshway_authority::ExecutionSnapshot;
-use meshway_configuration::execution::{DnsEgress, NodeConfiguration};
+use meshway_configuration::netmap::{DnsPlan, NodeNetmap};
 use meshway_dns::{
-    CancellationToken, DiscoveryGateway, OwnerDispatcher, ResolverDemand, ResolverExchange,
-    ResolverSource, Scope, Service, SystemDnsBackend, SystemDnsError, SystemDnsOwner,
-    SystemDnsPlan, SystemDnsSettings,
+    CancellationToken, OwnerDispatcher, ResolverExchange, Scope, Service, SystemDnsBackend,
+    SystemDnsError, SystemDnsOwner, SystemDnsPlan, SystemDnsSettings,
 };
-use meshway_model::RequestId;
-use std::{collections::BTreeMap, net::SocketAddr, sync::Arc};
+use std::sync::Arc;
 use tokio::{
     net::{TcpListener, UdpSocket},
     sync::watch,
 };
 
 /// System-upstream provenance expires after two seconds without a real owner
-/// observation. Include this timer even when there is no packet/demand work.
+/// observation. Include this timer even when there is no packet work.
 pub(super) const OBSERVE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
 
 pub(super) struct Runtime {
@@ -43,7 +40,6 @@ impl Runtime {
     pub async fn prepare(
         system: SystemDnsOwner,
         settings: SystemDnsSettings,
-        discovery: Arc<dyn DiscoveryGateway>,
         exchange: Arc<dyn ResolverExchange>,
     ) -> Result<Self, SystemDnsError> {
         settings.validate()?;
@@ -57,7 +53,6 @@ impl Runtime {
         let dispatcher = Arc::new(
             OwnerDispatcher::new(
                 received,
-                discovery,
                 exchange,
                 meshway_dns::Limits {
                     max_pending: 128,
@@ -83,12 +78,12 @@ impl Runtime {
         })
     }
 
-    /// Selection descriptors only, not permissions. Parent maps stable IDs to
-    /// exact Ip demands through the unique Control and atomic refresh path.
-    pub fn demands(&self, cfg: &NodeConfiguration) -> Result<Vec<ResolverDemand>, SystemDnsError> {
-        let plan = SystemDnsPlan::new(&cfg.dns.settings, &cfg.dns.egress)?;
-        let via_exit = matches!(cfg.dns.egress, DnsEgress::ViaExit { .. });
-        if cfg.dns.settings.servers.values().any(|server| {
+    /// Netmap DNS settings this installer can serve.
+    pub fn check(&self, netmap: &NodeNetmap) -> Result<(), SystemDnsError> {
+        let settings = &netmap.projection.configuration.dns;
+        let plan = SystemDnsPlan::new(settings, &netmap.dns.egress)?;
+        let via_exit = matches!(netmap.dns.egress, DnsPlan::ViaExit { .. });
+        if settings.servers.values().any(|server| {
             (!via_exit || server.use_with_exit)
                 && (server.server.is_loopback()
                     || matches!(server.server, std::net::IpAddr::V6(ip) if ip.is_unicast_link_local()))
@@ -98,43 +93,24 @@ impl Runtime {
             return Err(SystemDnsError::ResolverPlan);
         }
         if matches!(self.settings.backend, SystemDnsBackend::Resolved)
-            && plan.needs_system_fallback(&cfg.dns.settings)
+            && plan.needs_system_fallback(settings)
         {
             // Resolved's original link-specific routing must not be flattened.
             return Err(SystemDnsError::ResolverPlan);
         }
-        let mut demands: Vec<_> = cfg
-            .dns
-            .settings
-            .servers
-            .iter()
-            .filter(|(_, server)| !via_exit || server.use_with_exit)
-            .map(|(key, server)| ResolverDemand {
-                source: ResolverSource::Configured(key.clone()),
-                endpoint: SocketAddr::new(server.server, server.server_port.get()),
-                transport: server.transport,
-                profile: cfg.dns.profile.clone(),
-            })
-            .collect();
-        if !via_exit && let Some(system) = self.system.system_resolvers() {
-            demands.extend(system.demands(&cfg.dns.profile));
-        }
-        if demands.len() > 256 {
-            return Err(SystemDnsError::Capacity);
-        }
-        Ok(demands)
+        Ok(())
     }
 
-    /// Call before Control prewarms demands, including unsupported plans. This
-    /// retains required negative DNS capture during preparation/failure and
-    /// never publishes execution authority or an applied completion.
-    pub async fn hold(&mut self, cfg: &NodeConfiguration) -> Result<(), SystemDnsError> {
+    /// Install the required negative system capture, including for
+    /// unsupported plans. It never publishes query authority.
+    pub async fn hold(&mut self, netmap: &NodeNetmap) -> Result<(), SystemDnsError> {
         self.suspend();
         if matches!(&self.settings.backend, SystemDnsBackend::OwnedResolvConf { path } if path != std::path::Path::new("/etc/resolv.conf"))
         {
             return Err(SystemDnsError::Unsupported);
         }
-        let plan = SystemDnsPlan::required(&cfg.dns.settings, &cfg.dns.egress)?;
+        let plan =
+            SystemDnsPlan::required(&netmap.projection.configuration.dns, &netmap.dns.egress)?;
         if self.installed_plan.as_ref() == Some(&plan) {
             return self.observe().await;
         }
@@ -143,59 +119,23 @@ impl Runtime {
         Ok(())
     }
 
-    pub async fn install(
-        &mut self,
-        snapshot: ExecutionSnapshot,
-        demands: &BTreeMap<ResolverSource, RequestId>,
-    ) -> Result<(), SystemDnsError> {
-        self.suspend();
-        let cfg = snapshot
-            .configuration()
-            .map_err(|_| SystemDnsError::ResolverPlan)?;
-        // Install required negative capture before discovering a missing grant.
-        // Subsequent failure retains the stub and settings, with Scope=None.
-        self.hold(cfg).await?;
-        self.demands(cfg)?;
-        let system_resolvers = if matches!(cfg.dns.egress, DnsEgress::ViaExit { .. }) {
+    /// Publish query authority for the installed netmap. A same-content
+    /// snapshot keeps the query owner (`Scope::equivalent`).
+    pub async fn install(&mut self, snapshot: ExecutionSnapshot) -> Result<(), SystemDnsError> {
+        let netmap = snapshot
+            .netmap()
+            .map_err(|_| SystemDnsError::ResolverPlan)?
+            .netmap
+            .clone();
+        // Required negative capture first; a later failure keeps it with Scope=None.
+        self.hold(&netmap).await?;
+        self.check(&netmap)?;
+        let system_resolvers = if matches!(netmap.dns.egress, DnsPlan::ViaExit { .. }) {
             None
         } else {
             self.system.system_resolvers()
         };
-        let mut configured = BTreeMap::new();
-        let mut system_demands = BTreeMap::new();
-        let mut system_tcp_demands = BTreeMap::new();
-        for (source, id) in demands {
-            match source {
-                ResolverSource::Configured(key) => {
-                    configured.insert(key.clone(), *id);
-                }
-                ResolverSource::System { snapshot, index } => {
-                    if system_resolvers
-                        .as_ref()
-                        .is_none_or(|system| system.id() != snapshot)
-                    {
-                        return Err(SystemDnsError::ResolverPlan);
-                    }
-                    system_demands.insert(*index, *id);
-                }
-                ResolverSource::SystemTcp { snapshot, index } => {
-                    if system_resolvers
-                        .as_ref()
-                        .is_none_or(|system| system.id() != snapshot)
-                    {
-                        return Err(SystemDnsError::ResolverPlan);
-                    }
-                    system_tcp_demands.insert(*index, *id);
-                }
-            }
-        }
-        let scope = Scope {
-            snapshot,
-            resolver_demands: configured,
-            system_resolvers,
-            system_demands,
-            system_tcp_demands,
-        };
+        let scope = Scope::netmap(snapshot, system_resolvers);
         self.dispatcher
             .validate_scope(&scope)
             .map_err(|_| SystemDnsError::ResolverPlan)?;

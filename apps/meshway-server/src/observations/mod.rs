@@ -21,8 +21,8 @@ pub struct TaskAdmission {
     pub observation_id: Option<ObservationId>,
     pub unsupported_metrics: Vec<meshway_model::observations::MetricKind>,
     pub report: ReportAdmission,
-    /// Prepared compiler target; distinct from the Node's actual execution lease.
-    pub configuration: meshway_model::ConfigurationRef,
+    /// Source netmap the task was decided on.
+    pub netmap: meshway_model::NetmapRef,
     pub paths: Vec<Vec<meshway_model::NodeId>>,
     pub node_expires_at: DateTime<Utc>,
     pub(crate) principal: SubscriberPrincipal,
@@ -166,7 +166,7 @@ impl Observations {
                 let id = task.subscription_id?;
                 let subscriber = self.tasks.get(&task.id)?.subscribers.get(&id)?;
                 let mut bytes = subscriber.generation.as_bytes().to_vec();
-                bytes.extend_from_slice(task.configuration.digest.as_bytes());
+                bytes.extend_from_slice(task.netmap.digest.as_bytes());
                 Some((id, crate::resources::content_digest(&bytes)))
             })
             .collect()
@@ -209,7 +209,7 @@ impl Observations {
                                         && !node.revoked
                                         && (!active(stored.task.phase)
                                             || node.configurations.first()
-                                                == Some(&stored.task.configuration))
+                                                == Some(&stored.task.netmap))
                                 })
                     })
                     .filter_map(|(subscription, _)| subscriber_view(stored, *subscription).ok())
@@ -276,7 +276,7 @@ impl Observations {
         {
             return Err(Error::PermissionDenied);
         }
-        let configuration = admission.configuration.clone();
+        let configuration = admission.netmap;
         let expires_at = (now + Duration::seconds(OBSERVATION_LEASE_SECONDS))
             .min(admission.authorization_expires_at)
             .min(admission.node_expires_at);
@@ -338,7 +338,7 @@ impl Observations {
                     && stored.task.selection == request.selection
                     && stored.task.metrics == request.metrics
                     && stored.task.interval_ms == request.interval_ms
-                    && stored.task.configuration == configuration
+                    && stored.task.netmap == configuration
                     && stored.task.instance_id == admission.report.instance_id
                     && stored.task.expires_at > now
                     && (active(stored.task.phase)
@@ -384,7 +384,7 @@ impl Observations {
             selection: request.selection,
             path: None,
             path_segment: None,
-            configuration,
+            netmap: configuration,
             instance_id: admission.report.instance_id,
             metrics: request.metrics.clone(),
             interval_ms: request.interval_ms,
@@ -572,7 +572,7 @@ impl Observations {
                     && task.task.expires_at > now
                     && active(task.task.phase)
                     && task.subscribers.values().any(|s| s.terminal.is_none())
-                    && admission.execution.as_ref() == Some(&task.task.configuration)
+                    && admission.execution.as_ref() == Some(&task.task.netmap)
             })
             .map(|task| task.task.clone())
             .collect()
@@ -590,8 +590,8 @@ impl Observations {
             || stored.task.source_node_id != admission.node_id
             || stored.task.instance_id != admission.instance_id
             || result.instance_id != admission.instance_id
-            || result.configuration != stored.task.configuration
-            || admission.execution.as_ref() != Some(&result.configuration)
+            || result.netmap != stored.task.netmap
+            || admission.execution.as_ref() != Some(&result.netmap)
             || admission.lease_expires_at <= now
             || stored.task.expires_at <= now
             || !stored.subscribers.values().any(|s| s.terminal.is_none())
@@ -637,10 +637,7 @@ impl Observations {
         if !active(stored.task.phase) {
             return Err(Error::StateConflict);
         }
-        if !stored.paths.contains(&path)
-            || !admission.current()?.paths.contains(&path)
-            || path_segment.get() == 0
-        {
+        if !stored.paths.contains(&path) || path_segment.get() == 0 {
             return Err(Error::InvalidRequest);
         }
         if let ObservationPath::Explicit { path: selected } = &stored.task.selection
@@ -713,25 +710,17 @@ impl Observations {
             }
             if probe.measurement_id != sample.measurement_id
                 || probe.path != path
-                || probe.publication_id != result.configuration.execution_publication
+                || probe.netmap != result.netmap
             {
                 return Err(Error::InvalidRequest);
             }
-            crate::state::validation::validate_probe(admission, probe, now)?;
-            if let Some(channels) = &probe.channels {
-                let allowed = admission
-                    .current()?
-                    .diagnostic_transports
-                    .get(&id)
-                    .and_then(|paths| paths.get(&path))
-                    .ok_or(Error::InvalidRequest)?;
-                if std::iter::once(&channels.request)
-                    .chain(channels.reply.iter())
-                    .any(|channel| !allowed.contains(channel.transport.as_str()))
-                {
-                    return Err(Error::InvalidRequest);
-                }
-            }
+            // Channels are checked against the first hop's carriers.
+            crate::state::validation::validate_probe(
+                admission,
+                probe,
+                now,
+                Some(stored.paths.as_slice()),
+            )?;
         }
         if let Some(counts) = &sample.probe_counts {
             let total = u64::from(counts.replied_within_deadline)
@@ -890,12 +879,9 @@ impl Observations {
         {
             Some(Error::PermissionDenied)
         } else if task.task.instance_id != admission.report.instance_id
-            || task.task.configuration != admission.configuration
+            || task.task.netmap != admission.netmap
             || admission.node_expires_at <= now
-            || !admission
-                .report
-                .configurations
-                .contains(&task.task.configuration)
+            || !admission.report.configurations.contains(&task.task.netmap)
         {
             Some(Error::StateConflict)
         } else {

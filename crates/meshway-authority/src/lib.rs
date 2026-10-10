@@ -15,7 +15,6 @@ pub use clock::{Clock, Deadline, Started};
 pub use identity::{DataPlaneIdentity, packet_proof_message};
 pub use snapshot::{ExecutionSnapshot, NetmapIssue, NetmapReading, NetmapRenewal};
 
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
     #[error("the execution grant has expired or was invalidated")]

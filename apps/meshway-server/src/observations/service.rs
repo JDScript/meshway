@@ -516,7 +516,7 @@ impl<P: ObservationProvider> ObservationService<P> {
                     observation_id: task.id,
                 });
                 tracing::info!(subscription = ?task.subscription_id, observation = %task.id,
-                    publication = %task.configuration.execution_publication,
+                    netmap_serial = task.netmap.serial.get(),
                     queue_us = started_at.duration_since(queued_at).as_micros() as u64,
                     processing_us = started_at.elapsed().as_micros() as u64,
                     "Node observation subscription admitted");
@@ -756,7 +756,7 @@ impl<P: ObservationProvider> ObservationService<P> {
                     let occurred_at = probe.completed_at.ok_or(Error::InvalidRequest)?;
                     let event = meshway_model::observations::ObservationEvent {
                         event_id: probe.measurement_id,
-                        configuration: task.configuration.clone(),
+                        netmap: task.netmap,
                         occurred_at,
                         payload: meshway_model::observations::ObservationPayload::ProbeCompleted {
                             probe,
@@ -897,7 +897,7 @@ fn reauthorize_all<P: ObservationProvider>(
         if valid
             && let Ok(admission) = current
             && runtime.observations.tasks.get(&task).is_some_and(|stored| {
-                stored.task.configuration != admission.configuration
+                stored.task.netmap != admission.netmap
                     || stored.task.unsupported_metrics != admission.unsupported_metrics
             })
         {
@@ -905,7 +905,7 @@ fn reauthorize_all<P: ObservationProvider>(
                 .observations
                 .task_mut(task)
                 .expect("authorized observation");
-            stored.task.configuration = admission.configuration;
+            stored.task.netmap = admission.netmap;
             stored.paths = admission.paths;
             stored.task.phase = if stored
                 .task
@@ -946,7 +946,7 @@ mod tests {
         T::try_from(uuid::Uuid::from_u128(n)).unwrap()
     }
     fn task(n: u128, now: DateTime<Utc>, windows: usize) -> StoredTask {
-        let configuration = ConfigurationRef {
+        let configuration = NetmapRef {
             revision: Revision::MIN,
             execution_publication: id(100 + n),
             digest: Digest::from_bytes([7; 32]),

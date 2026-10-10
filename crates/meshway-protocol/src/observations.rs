@@ -1,9 +1,8 @@
 use crate::object::wire_object;
 use chrono::{DateTime, Utc};
 use meshway_model::{
-    InstanceId, NodeId, ObservationId, ObservationSubscriptionId, Sequence,
+    InstanceId, NetmapRef, NodeId, ObservationId, ObservationSubscriptionId, Sequence,
     observations::{MetricKind, ObservationEvent, ObservationSample},
-    NetmapRef,
 };
 
 wire_object! {

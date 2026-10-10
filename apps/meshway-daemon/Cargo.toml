@@ -38,6 +38,7 @@ serde_json.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
+uuid.workspace = true
 
 [target.'cfg(all(target_os = "linux", target_env = "musl"))'.dependencies]
 mimalloc = { version = "=0.1.52", default-features = false }
@@ -46,7 +47,6 @@ mimalloc = { version = "=0.1.52", default-features = false }
 axum.workspace = true
 meshway-server = { path = "../meshway-server" }
 tempfile.workspace = true
-uuid.workspace = true
 
 [lints]
 workspace = true

@@ -134,28 +134,6 @@ impl Sealer {
     pub(crate) fn installation_id(&self) -> KeyId {
         self.id
     }
-    pub(crate) fn seal_execution(
-        &self,
-        network: NetworkId,
-        publication: meshway_model::PublicationId,
-        plaintext: &[u8],
-    ) -> Result<ProtectedBytes, SealError> {
-        let mut context = b"execution-publication/v1\0".to_vec();
-        context.extend_from_slice(network.as_uuid().as_bytes());
-        context.extend_from_slice(publication.as_uuid().as_bytes());
-        self.encrypt(&context, plaintext)
-    }
-    pub(crate) fn open_execution(
-        &self,
-        network: NetworkId,
-        publication: meshway_model::PublicationId,
-        protected: &[u8],
-    ) -> Result<Plaintext, SealError> {
-        let mut context = b"execution-publication/v1\0".to_vec();
-        context.extend_from_slice(network.as_uuid().as_bytes());
-        context.extend_from_slice(publication.as_uuid().as_bytes());
-        self.decrypt(&context, protected)
-    }
     pub(crate) fn seal_netmap(
         &self,
         network: NetworkId,

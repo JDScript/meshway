@@ -3,10 +3,6 @@
 //! packet tuples, business admission or reverse-path routing.
 mod driver;
 mod scope;
-#[cfg(test)]
-pub(super) mod testing;
-#[cfg(test)]
-mod tests;
 
 use meshway_dataplane::{PendingAction, exit::ExitProjection, secure::SecureNode};
 use meshway_ipc::Problem;
@@ -29,7 +25,7 @@ pub(super) struct Health {
 }
 
 pub(super) struct Runtime {
-    pub plan: meshway_configuration::execution::ExitRolePlan,
+    pub plan: meshway_configuration::netmap::ExitRole,
     pub reader: ExitReplyReader,
     role: ExitRole,
     sender: mpsc::Sender<Work>,
@@ -43,12 +39,10 @@ pub(super) struct Runtime {
 impl Runtime {
     pub fn start(
         role: ExitRole,
-        plan: meshway_configuration::execution::ExitRolePlan,
+        plan: meshway_configuration::netmap::ExitRole,
     ) -> Result<Self, Problem> {
         let reader = role.reply_reader().map_err(|_| Problem::Underlay)?;
         let (sender, received) = mpsc::channel(CAPACITY);
-        #[cfg(test)]
-        testing::driver_started(sender.clone());
         let (failed, failures) = mpsc::channel(CAPACITY);
         let (status, health) = watch::channel(Health::default());
         let stop = CancellationToken::new();

@@ -277,7 +277,7 @@ async fn serial_change_replaces_only_peers_whose_carriers_changed() {
                 a: format!("node:{a_id}"),
                 b: format!("node:{c_id}"),
                 transports: meshway_configuration::Input::Omitted,
- keepalive: false,
+                keepalive: false,
             })
         })
         .await;

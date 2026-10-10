@@ -8,14 +8,10 @@ use std::time::Duration;
 pub(super) struct Failure {
     pub problem: Problem,
     pub retry: bool,
-    /// Discard the old runtime context before trying a new held-key session.
+    /// The old runtime context (session, instance) is gone and is re-acquired
+    /// at once; the data plane follows netmap authority regardless.
     pub reset: bool,
     pub retry_after: Option<Duration>,
-}
-impl Failure {
-    pub fn stops_network(&self) -> bool {
-        !self.retry || self.reset
-    }
 }
 
 pub(super) fn failure(error: Error, authenticating: bool) -> Failure {
@@ -137,10 +133,7 @@ fn problem_code(problem: &meshway_protocol::Problem) -> &'static str {
         meshway_protocol::Problem::BindingConflict { .. } => "binding_conflict",
         meshway_protocol::Problem::ReceiptInstanceMismatch { .. } => "receipt_instance_mismatch",
         meshway_protocol::Problem::ReceiptTargetMismatch { .. } => "receipt_target_mismatch",
-        meshway_protocol::Problem::ReceiptPublicationSuperseded { .. } => {
-            "receipt_publication_superseded"
-        }
-        meshway_protocol::Problem::ReceiptLeaseExpired { .. } => "receipt_lease_expired",
+        meshway_protocol::Problem::ReceiptNetmapSuperseded { .. } => "receipt_netmap_superseded",
         meshway_protocol::Problem::ReceiptPrecondition { .. } => "receipt_precondition",
         meshway_protocol::Problem::ReceiptContentConflict { .. } => "receipt_content_conflict",
         meshway_protocol::Problem::StateScopeChanged { .. } => "state_scope_changed",
@@ -157,8 +150,7 @@ mod tests {
     #[test]
     fn receipt_conflicts_only_suspend_for_instance_or_target_binding_rejection() {
         for (code, refresh) in [
-            ("receipt_publication_superseded", true),
-            ("receipt_lease_expired", true),
+            ("receipt_netmap_superseded", true),
             ("receipt_precondition", true),
             ("receipt_content_conflict", true),
             ("receipt_instance_mismatch", false),
@@ -185,11 +177,6 @@ mod tests {
             assert_eq!(failure.retry, code != "receipt_target_mismatch", "{code}");
             assert_eq!(failure.reset, !refresh, "{code}");
             assert_eq!(
-                failure.stops_network(),
-                !refresh,
-                "{code}: stop(false)/host.suspend gate"
-            );
-            assert_eq!(
                 failure.retry_after,
                 refresh.then_some(Duration::from_secs(1))
             );
@@ -198,7 +185,7 @@ mod tests {
 
     #[test]
     fn stream_revocation_uses_runtime_credential_recovery_not_operator_blocking() {
-        let rejected = at("watch_node", Error::MembershipRevoked, false);
+        let rejected = at("sync", Error::MembershipRevoked, false);
         assert_eq!(rejected.problem, Problem::Credentials);
         assert!(rejected.retry && rejected.reset);
         assert!(!at("authenticate", Error::Contract, true).retry);

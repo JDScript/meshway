@@ -38,7 +38,7 @@ pub(super) async fn setup(protocol: TransportProtocol) -> support::Fixture {
                     a: format!("node:{}", ids[index]),
                     b: format!("node:{}", ids[2]),
                     transports: meshway_configuration::Input::Omitted,
- keepalive: false,
+                    keepalive: false,
                 })
                 .collect();
             if stream {

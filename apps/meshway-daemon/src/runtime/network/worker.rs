@@ -1,5 +1,15 @@
-use super::{Command, Completion, Report, Request, Target, packets::Packets};
-use meshway_connectivity::{Event, Manager};
+//! The unique network owner. It installs each netmap snapshot Control offers:
+//! the same content renews in place, a larger serial updates every resource
+//! in place where its exact purpose is unchanged, anything else installs
+//! afresh. An ended lease terminates every flow, circuit and exit projection
+//! and keeps only the negative capture and DNS boundaries.
+use super::{
+    Command, ObservationPlan, Peers, Report, Request, dns::Attachment, packets::Packets,
+    reporting::Publisher,
+};
+use meshway_authority::DataPlaneIdentity;
+use meshway_configuration::netmap::DnsPlan;
+use meshway_connectivity::{AdjacencyInterest, Event, Manager};
 use meshway_dataplane::{
     DEFAULT_HEADROOM, DEFAULT_TAILROOM, Packet, PacketPool, secure::SecureNode,
 };
@@ -10,13 +20,25 @@ use std::{sync::Arc, time::Duration};
 use tokio::sync::{mpsc, watch};
 
 struct Installed {
-    target: Target,
-    secure: SecureNode,
+    identity: DataPlaneIdentity,
+    /// Absent for a disabled Node, which owns no packet plane.
+    secure: Option<SecureNode>,
     manager: Option<Manager>,
-    live: bool,
     exit: Option<super::exit::Runtime>,
-    capture: Option<meshway_underlay::EgressCapture>,
-    cleanup_failed: bool,
+    live: bool,
+}
+
+pub(super) struct Inputs {
+    pub host: Host,
+    pub commands: mpsc::Receiver<Command>,
+    pub targets: watch::Receiver<Option<DataPlaneIdentity>>,
+    pub reports: Publisher,
+    pub gateway: mpsc::Sender<Request>,
+    pub dns: Attachment,
+    pub traversal: Arc<dyn meshway_connectivity::traversal::TraversalGateway>,
+    pub observation_plans: watch::Receiver<Option<ObservationPlan>>,
+    pub peers: Peers,
+    pub mtu: usize,
 }
 
 /// Covers the existing 128 queued packets, 32 sends and one 32-packet read
@@ -26,26 +48,39 @@ fn packet_pool(mtu: usize) -> Result<PacketPool, Problem> {
     PacketPool::new(256, mtu, DEFAULT_HEADROOM, DEFAULT_TAILROOM).map_err(|_| Problem::Tun)
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(super) async fn run(
-    mut host: Host,
-    mut commands: mpsc::Receiver<Command>,
-    mut targets: watch::Receiver<Option<Target>>,
-    reports: super::reporting::Publisher,
-    gateway: mpsc::Sender<Request>,
-    completed: mpsc::Sender<Completion>,
-    dns: (
-        super::dns::Attachment,
-        watch::Sender<Option<super::dns::intents::Plan>>,
-    ),
-    traversal: Arc<dyn meshway_connectivity::traversal::TraversalGateway>,
-    mut diagnostic_paused: watch::Receiver<
-        std::collections::BTreeSet<meshway_model::ObservationId>,
-    >,
-    mut observation_plans: watch::Receiver<Option<super::ObservationPlan>>,
-    mtu: usize,
-) -> Result<(), Problem> {
-    let (mut dns, dns_plans) = dns;
+/// Bounded retry of a transient installation failure of the same netmap.
+#[derive(Default)]
+struct Retry {
+    failures: u8,
+    at: Option<tokio::time::Instant>,
+}
+impl Retry {
+    fn failed(&mut self, failure: ApplyFailure) {
+        self.failures = self.failures.saturating_add(1);
+        let transient = !matches!(
+            failure,
+            ApplyFailure::Dns | ApplyFailure::Validation | ApplyFailure::Dataplane
+        );
+        self.at = (transient && self.failures < 3).then(|| {
+            tokio::time::Instant::now()
+                + Duration::from_secs(if self.failures == 1 { 5 } else { 15 })
+        });
+    }
+}
+
+pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
+    let Inputs {
+        mut host,
+        mut commands,
+        mut targets,
+        reports,
+        gateway,
+        mut dns,
+        traversal,
+        mut observation_plans,
+        peers,
+        mtu,
+    } = inputs;
     let mut network_changes = host.network_changes();
     let mut installed: Option<Installed> = None;
     let mut packets = Packets::default();
@@ -59,46 +94,21 @@ pub(super) async fn run(
     let mut diagnostics = super::diagnostics::Diagnostics::default();
     let buffers = packet_pool(mtu)?;
     let mut generation = meshway_model::Sequence::MIN;
-    let mut pending_completion = None;
-    let mut last_completion: Option<meshway_control::ApplicationTicket> = None;
-    let mut last_success: Option<meshway_control::ApplicationTicket> = None;
-    let mut pause_until: Option<tokio::time::Instant> = None;
-    let mut preparing: Option<(Target, tokio::time::Instant)> = None;
+    let mut retry = Retry::default();
     let mut dns_failed = false;
     let mut sample_at = None;
-    let mut deferred_sample: Option<tokio::sync::oneshot::Sender<super::reporting::Sample>> = None;
+    // The lease end of an invalidated snapshot awaiting Control's next content.
+    let mut expires_at: Option<tokio::time::Instant> = None;
     loop {
         meshway_logging::profile::report();
-        if let Some(completion) = pending_completion.take() {
-            match completed.try_send(completion) {
-                Ok(()) => {}
-                Err(mpsc::error::TrySendError::Full(completion)) => {
-                    pending_completion = Some(completion)
-                }
-                Err(mpsc::error::TrySendError::Closed(_)) => {
-                    diagnostics.stop().await;
-                    let _ = dns.shutdown(&mut host, true).await;
-                    let closing = close(&mut installed).await;
-                    return closing.and(host.shutdown(true).await.map_err(|_| Problem::Underlay));
-                }
-            }
-        }
-        if let Some(reply) = deferred_sample.take()
-            && !reply.is_closed()
-        {
-            let report = sample_host(&host, &installed, reports.borrow().clone());
-            let _ = reply.send(reports.sample(report));
-            sample_at = None;
-        }
         enum Work {
             ObservationPlan,
             DiagnosticSent,
-            DiagnosticsPaused,
             Command(Option<Command>),
             Target,
+            Retry,
             Invalid,
-            HardExpired,
-            DnsTimeout,
+            Expired,
             DnsFailure,
             Packet(
                 Result<
@@ -120,12 +130,12 @@ pub(super) async fn run(
         let has_outputs = packets.has_outputs();
         let guard = installed
             .as_ref()
-            .and_then(|state| state.target.identity.as_ref())
-            .map(|identity| identity.snapshot().clone());
+            .filter(|state| state.live)
+            .map(|state| state.identity.snapshot().clone());
         let mut wake_at = installed
             .as_ref()
             .filter(|state| state.live)
-            .and_then(|state| packets.wake_at(&state.target));
+            .and_then(|_| packets.wake_at());
         if let Some(at) = diagnostics.wake_at() {
             wake_at = Some(wake_at.map_or(at, |old| old.min(at)));
         }
@@ -133,21 +143,22 @@ pub(super) async fn run(
             let at = tokio::time::Instant::now() + Duration::from_millis(250);
             wake_at = Some(wake_at.map_or(at, |old| old.min(at)));
         }
-        if pending_completion.is_some() {
-            let retry = tokio::time::Instant::now() + Duration::from_secs(1);
-            wake_at = Some(wake_at.map_or(retry, |at| at.min(retry)));
+        if live {
+            // Ready-exit facts expire; refresh the selection input regularly.
+            let at = tokio::time::Instant::now() + Duration::from_secs(1);
+            wake_at = Some(wake_at.map_or(at, |old| old.min(at)));
         }
+        let retry_at = retry.at.filter(|_| installed.is_none());
         let work = tokio::select! { biased;
             command = commands.recv() => Work::Command(command),
             _ = diagnostics.sent(), if diagnostics.has_sends() => Work::DiagnosticSent,
-            _ = diagnostic_paused.changed() => Work::DiagnosticsPaused,
             changed = observation_plans.changed() => if changed.is_ok() { Work::ObservationPlan } else { Work::Command(None) },
-            changed = targets.changed(), if pending_completion.is_none() => { if changed.is_err() { Work::Command(None) } else { Work::Target } },
-            _ = async { match &preparing { Some((_, at)) => tokio::time::sleep_until(*at).await, None => std::future::pending().await } } => Work::DnsTimeout,
+            changed = targets.changed() => { if changed.is_err() { Work::Command(None) } else { Work::Target } },
+            _ = async { match retry_at { Some(at) => tokio::time::sleep_until(at).await, None => std::future::pending().await } } => Work::Retry,
             _ = dns.failed(), if !dns_failed => Work::DnsFailure,
-            _ = async { match pause_until { Some(at) => tokio::time::sleep_until(at).await, None => std::future::pending().await } } => Work::HardExpired,
+            _ = async { match expires_at { Some(at) => tokio::time::sleep_until(at).await, None => std::future::pending().await } } => Work::Expired,
             _ = async {
-                if let Some(guard) = &guard && live {
+                if let Some(guard) = &guard {
                     tokio::select! {
                         _ = guard.invalidated() => {},
                         _ = host.invalidated() => {},
@@ -163,18 +174,18 @@ pub(super) async fn run(
                 };
                 let mut health = exit.as_ref().map(|exit| exit.health.clone());
                 // Packet pressure must not starve incoming handshakes or lease
-                // renewal work. Lifecycle/authority remain the outer priority.
+                // work. Lifecycle/authority remain the outer priority.
                 tokio::select! {
                     _ = async { match &mut health { Some(health) => { let _ = health.changed().await; }, None => std::future::pending().await } } => Work::ExitChanged,
                     reply = async { match exit.as_mut() { Some(exit) => exit.reader.recv().await, None => std::future::pending().await } }, if live => Work::ExitReply(reply),
                     _ = packets.sent(&host), if has_outputs => Work::Tick,
                     _ = pool.ready(), if live && pool.has_pending() => Work::Tick,
                     result = async {
-                         match host.tun() { Some(tun) => receive_packets(tun, &buffers).await.map_err(meshway_underlay::Error::Tun), None => std::future::pending().await }
+                        match host.tun() { Some(tun) => receive_packets(tun, &buffers).await.map_err(meshway_underlay::Error::Tun), None => std::future::pending().await }
                     }, if can_read => Work::Packet(result),
                     event = async {
-                         match manager {
-                             Some(manager) => manager.recv_batch_with_data(can_read).await,
+                        match manager {
+                            Some(manager) => manager.recv_batch_with_data(can_read).await,
                             None => std::future::pending().await,
                         }
                     }, if live => if event.iter().any(|event| matches!(event, Event::Closed)) { Work::CarrierClosed } else { Work::Carrier(event) },
@@ -183,9 +194,6 @@ pub(super) async fn run(
                 }
             } => work,
         };
-        // A sample queued immediately after publication must observe that
-        // target, not win the command-priority branch and return its fenced
-        // predecessor. Lifecycle commands keep their existing priority.
         let work = match work {
             Work::ExitChanged => {
                 let failed = installed
@@ -196,69 +204,39 @@ pub(super) async fn run(
                     });
                 if failed { Work::ExitFailed } else { Work::Tick }
             }
-            Work::Command(Some(Command::Sample(reply)))
-                if pending_completion.is_none() && targets.has_changed().unwrap_or(false) =>
-            {
-                deferred_sample = Some(reply);
-                Work::Target
-            }
             work => work,
         };
-        let structural = matches!(&work, Work::Target | Work::DnsTimeout)
+        let structural = matches!(&work, Work::Target | Work::Retry)
             || matches!(&work, Work::Carrier(events) if events.iter().any(|event| matches!(event, Event::Changed)));
         match work {
-            Work::Command(Some(Command::Handoff(snapshot, reply))) => {
-                let applicable = installed.as_ref().is_some_and(|state| {
-                    state.exit.as_ref().is_some_and(|exit| {
-                        snapshot
-                            .configuration()
-                            .is_ok_and(|cfg| cfg.exit_role.as_ref() == Some(&exit.plan))
-                    }) && state
-                        .target
-                        .identity
-                        .as_ref()
-                        .is_some_and(|old| snapshot.continuation_from(old.snapshot()).is_ok())
-                });
-                if applicable {
-                    let _ = install_host(&mut host, snapshot).await;
-                }
-                let _ = reply.send(());
-                continue;
-            }
             Work::NetworkChanged => {
                 network_changes.borrow_and_update();
-                let report = sample_host(&host, &installed, reports.borrow().clone());
+                let report = sample_host(&host, &installed, &diagnostics, reports.borrow().clone());
                 reports.send_replace(report);
                 continue;
             }
             Work::SampleDue => {
-                let report = sample_host(&host, &installed, reports.borrow().clone());
+                let report = sample_host(&host, &installed, &diagnostics, reports.borrow().clone());
                 reports.send_replace(report);
                 sample_at = None;
                 continue;
             }
-            Work::Command(Some(Command::DetachPing(subscription))) => {
-                diagnostics.detach(subscription)
-            }
             Work::ObservationPlan => {
-                diagnostics.plan(observation_plans.borrow_and_update().clone())
+                diagnostics.plan(observation_plans.borrow_and_update().clone());
             }
-            Work::Command(Some(Command::AttachPing {
-                subscription,
-                observation,
-                request,
-                lease,
-                progress,
-            })) => diagnostics.attach(subscription, observation, request, lease, progress),
-            Work::DiagnosticsPaused => {
-                diagnostics.set_paused(diagnostic_paused.borrow_and_update().clone())
+            Work::Command(Some(Command::Ping(request))) => {
+                let snapshot = installed
+                    .as_ref()
+                    .filter(|state| state.live && state.secure.is_some())
+                    .map(|state| state.identity.snapshot().clone());
+                diagnostics.ping(snapshot.as_ref(), request);
             }
             Work::Command(Some(Command::Builder(reply))) => {
                 let _ = reply.send(host.client_builder().map_err(|_| Problem::Underlay));
                 continue;
             }
             Work::Command(Some(Command::Sample(reply))) => {
-                let report = sample_host(&host, &installed, reports.borrow().clone());
+                let report = sample_host(&host, &installed, &diagnostics, reports.borrow().clone());
                 let _ = reply.send(reports.sample(report));
                 sample_at = None;
                 continue;
@@ -269,7 +247,7 @@ pub(super) async fn run(
                     .shutdown(&mut host, keep_sink)
                     .await
                     .map_err(|_| Problem::Dns);
-                let closing = close(&mut installed).await;
+                let closing = close(&mut installed, &peers).await;
                 let host_result = host
                     .shutdown(keep_sink)
                     .await
@@ -282,7 +260,7 @@ pub(super) async fn run(
                     .shutdown(&mut host, true)
                     .await
                     .map_err(|_| Problem::Dns);
-                let closing = close(&mut installed).await;
+                let closing = close(&mut installed, &peers).await;
                 return dns_result
                     .and(closing)
                     .and(host.shutdown(true).await.map_err(|_| Problem::Underlay));
@@ -290,12 +268,10 @@ pub(super) async fn run(
             Work::Command(Some(Command::Stop { down, reply })) => {
                 diagnostics.stop().await;
                 dns.suspend();
-                preparing = None;
-                dns_plans.send_replace(None);
-                let closing = close(&mut installed).await;
+                let closing = close(&mut installed, &peers).await;
                 installed = None;
-                pause_until = None;
-                last_success = None;
+                expires_at = None;
+                retry = Retry::default();
                 packets = Packets::default();
                 let dns_result = if down {
                     dns.down(&mut host).await.map_err(|_| Problem::Dns)
@@ -321,240 +297,218 @@ pub(super) async fn run(
                 let _ = reply.send(result);
                 continue;
             }
-            Work::Target | Work::DnsTimeout => {
-                let timed_out = matches!(work, Work::DnsTimeout);
-                let target = if timed_out {
-                    preparing.as_ref().map(|(target, _)| target.clone())
-                } else {
-                    targets.borrow_and_update().clone()
-                };
-                let Some(target) = target else {
-                    diagnostics.invalidate();
+            Work::Target | Work::Retry => {
+                if matches!(work, Work::Target) {
+                    retry = Retry::default();
+                }
+                let Some(identity) = targets.borrow_and_update().clone() else {
+                    // Control holds no authority: end the installed netmap.
+                    if installed.is_some() {
+                        diagnostics.invalidate();
+                        expire(
+                            &mut host,
+                            &mut installed,
+                            &mut packets,
+                            &dns,
+                            &peers,
+                            &reports,
+                            false,
+                        )
+                        .await;
+                    }
+                    expires_at = None;
                     continue;
                 };
-                let same_scope = target
-                    .identity
-                    .as_ref()
-                    .zip(
-                        installed
-                            .as_ref()
-                            .and_then(|state| state.target.identity.as_ref()),
-                    )
-                    .is_some_and(|(next, old)| {
-                        next.snapshot().same_execution(old.snapshot())
-                            && old.snapshot().ensure_current().is_ok()
-                    });
-                if !same_scope {
-                    diagnostics.invalidate();
+                if identity.snapshot().ensure_current().is_err() {
+                    continue;
                 }
-                let prepare_deadline = preparing
-                    .as_ref()
-                    .filter(|(_, _)| {
-                        dns_plans
-                            .borrow()
-                            .as_ref()
-                            .zip(target.identity.as_ref())
-                            .is_some_and(|(plan, identity)| {
-                                identity
-                                    .snapshot()
-                                    .configuration()
-                                    .is_ok_and(|cfg| plan.matches(target.ticket.instance(), cfg))
-                            })
-                    })
-                    .map(|(_, at)| *at)
-                    .unwrap_or_else(|| {
-                        tokio::time::Instant::now() + super::dns::intents::PREPARE_TIMEOUT
-                    });
-                pause_until = None;
-                let refreshing = last_success
-                    .as_ref()
-                    .is_some_and(|old| same_ticket(old, &target.ticket));
-                let mut report = if refreshing {
-                    reports.borrow().clone()
-                } else {
-                    Report::stopped()
-                };
-                report.plane = DataPlane::Preparing;
-                report.problem = None;
-                report.completion = None;
-                report.facts = None;
-                report.ticket = Some(target.ticket.clone());
-                report.guard = target
-                    .identity
-                    .as_ref()
-                    .map(|identity| identity.snapshot().clone());
-                // This installation counter allocates generations for new FDs.
-                // Retained sockets report their own unchanged SocketFact value.
-                let next_generation = generation.checked_next();
-                let Ok(next_generation) = next_generation else {
+                expires_at = None;
+                // Same content: a lease renewal or a new instance binding.
+                if let Some(state) = installed.as_mut()
+                    && state.identity.snapshot().same_netmap(identity.snapshot())
+                {
+                    if renew(&mut host, &dns, state, identity.clone())
+                        .await
+                        .is_err()
+                    {
+                        tracing::warn!("Same-content netmap renewal failed; reinstalling");
+                        let _ = close(&mut installed, &peers).await;
+                        installed = None;
+                    } else {
+                        continue;
+                    }
+                }
+                let reference = identity.snapshot().reference();
+                let Ok(next_generation) = generation.checked_next() else {
                     diagnostics.stop().await;
                     let _ = dns.shutdown(&mut host, true).await;
-                    let _ = close(&mut installed).await;
+                    let _ = close(&mut installed, &peers).await;
                     let _ = host.shutdown(true).await;
                     return Err(Problem::Worker);
                 };
                 generation = next_generation;
+                let continuing = installed.as_ref().is_some_and(|state| {
+                    identity
+                        .snapshot()
+                        .netmap_continuation_from(state.identity.snapshot())
+                        .is_ok()
+                });
+                let mut report = if continuing {
+                    reports.borrow().clone()
+                } else {
+                    diagnostics.invalidate();
+                    Report::stopped()
+                };
+                report.plane = DataPlane::Preparing;
+                report.problem = None;
+                report.netmap = Some(reference);
+                report.completion = None;
+                report.facts = None;
+                report.guard = Some(identity.snapshot().clone());
                 report.generation = generation;
                 reports.send_replace(report.clone());
                 let result = install(
                     &mut host,
                     &mut installed,
                     &mut packets,
-                    target.clone(),
-                    !refreshing,
-                    (&mut dns, &dns_plans),
-                    timed_out,
+                    identity,
+                    continuing,
+                    &mut dns,
                     traversal.clone(),
                     generation,
+                    &peers,
                     &mut report,
                 )
                 .await;
                 report.dns_guard = dns.guard();
-                if result == Ok(false) {
-                    reports.send_replace(report);
-                    preparing = Some((target, prepare_deadline));
-                    let closing = close(&mut installed).await;
-                    let suspended = host.suspend().await.map_err(|_| Problem::Underlay);
-                    closing.and(suspended)?;
-                    continue;
-                }
-                preparing = None;
-                let result = result.map(|_| ());
-                if !refreshing {
-                    report.observed_at = chrono::Utc::now();
-                }
-                report.completion = if refreshing && result.is_err() {
-                    None
-                } else {
-                    Some(result.map_err(|(_, failure)| failure))
-                };
-                if let Some(ticket) = &report.ticket
-                    && !refreshing
-                    && last_completion.as_ref().is_none_or(|old| {
-                        old.target() != ticket.target()
-                            || old.instance() != ticket.instance()
-                            || old.attempt() != ticket.attempt()
-                    })
-                {
-                    pending_completion = Some(Completion {
-                        ticket: ticket.clone(),
-                        result: result.map_err(|(_, failure)| failure),
-                        observed_at: report.observed_at,
-                    });
-                    last_completion = Some(ticket.clone());
-                }
+                report.observed_at = chrono::Utc::now();
+                report.completion = Some(result.map_err(|(_, failure)| failure));
                 match result {
                     Ok(()) => {
                         dns_failed = false;
-                        last_success = report.ticket.clone();
-                        report.plane = if installed.is_some() {
+                        report.plane = if installed.as_ref().is_some_and(|s| s.secure.is_some()) {
                             DataPlane::Ready
                         } else {
                             DataPlane::Stopped
                         };
-                        if let Some(capability) = &mut report.exit_capability
-                            && installed.as_ref().is_some_and(|s| s.exit.is_some())
-                        {
-                            capability.installed_families =
-                                vec![meshway_model::exit::ExitFamily::Ipv4];
-                        }
                     }
                     Err((problem, failure)) => {
-                        tracing::warn!(?problem, ?failure, refreshing,
-                            publication = %target.ticket.target().execution_publication,
-                            target_current = target.identity.as_ref().is_some_and(|identity| identity.snapshot().ensure_current().is_ok()),
-                            "Node installation did not complete");
+                        tracing::warn!(
+                            ?problem,
+                            ?failure,
+                            netmap_serial = reference.serial.get(),
+                            "Node netmap installation did not complete"
+                        );
                         dns.suspend();
-                        let closing = close(&mut installed).await;
+                        diagnostics.invalidate();
+                        let closing = close(&mut installed, &peers).await;
+                        installed = None;
+                        packets = Packets::default();
                         let suspended = host.suspend().await;
-                        if closing.is_err() || suspended.is_err() {
-                            report.problem = Some(Problem::Underlay);
+                        report.problem = Some(if closing.is_err() || suspended.is_err() {
+                            Problem::Underlay
                         } else {
-                            report.problem = Some(problem);
-                        }
+                            problem
+                        });
                         report.plane = DataPlane::Failed;
+                        retry.failed(failure);
                     }
                 }
                 reports.send_replace(report);
             }
-            Work::Invalid
-            | Work::ExitFailed
+            Work::Invalid => {
+                // New content is on its way (stop, down and revocation also
+                // arrive as commands or a cleared target): keep everything
+                // inert until it, or the lease end.
+                let lease_end = installed
+                    .as_ref()
+                    .map(|state| state.identity.snapshot().expires_at());
+                let expired = lease_end.is_none_or(|at| std::time::Instant::now() >= at);
+                if let Some(state) = &mut installed {
+                    state.live = false;
+                }
+                diagnostics.invalidate();
+                packets.clear_incoming();
+                if expired || host_invalidated(&host).await {
+                    expire(
+                        &mut host,
+                        &mut installed,
+                        &mut packets,
+                        &dns,
+                        &peers,
+                        &reports,
+                        !expired,
+                    )
+                    .await;
+                    expires_at = None;
+                } else {
+                    expires_at = lease_end.map(Into::into);
+                    let mut report = reports.borrow().clone();
+                    report.plane = DataPlane::Suspended;
+                    reports.send_replace(report);
+                }
+                continue;
+            }
+            Work::Expired => {
+                expire(
+                    &mut host,
+                    &mut installed,
+                    &mut packets,
+                    &dns,
+                    &peers,
+                    &reports,
+                    false,
+                )
+                .await;
+                expires_at = None;
+                continue;
+            }
+            Work::ExitFailed
             | Work::ExitReply(Err(_))
             | Work::CarrierClosed
             | Work::Packet(Err(_))
-            | Work::HardExpired
             | Work::DnsFailure => {
                 diagnostics.invalidate();
                 dns.suspend();
                 let dns_error = matches!(work, Work::DnsFailure);
                 if dns_error {
-                    tracing::warn!(publication = ?guard.as_ref().map(|guard| guard.reference().execution_publication),
-                        execution_current = guard.as_ref().is_some_and(|guard| guard.ensure_current().is_ok()),
-                        "Required DNS component failed; suspending packet plane");
+                    tracing::warn!("Required DNS component failed; suspending packet plane");
                 }
                 dns_failed |= dns_error;
-                if dns_error && let Some((target, _)) = preparing.take() {
-                    let observed_at = chrono::Utc::now();
-                    pending_completion = Some(Completion {
-                        ticket: target.ticket.clone(),
-                        result: Err(ApplyFailure::Dns),
-                        observed_at,
-                    });
-                    last_completion = Some(target.ticket);
-                }
-                let transition = !dns_error
-                    && !matches!(work, Work::HardExpired | Work::Packet(Err(_)))
-                    && guard
-                        .as_ref()
-                        .is_some_and(|guard| guard.ensure_current().is_err());
-                let deadline = guard.as_ref().and_then(handoff_deadline);
-                pause_until = if transition { deadline } else { None };
-                if pause_until.is_some() {
-                    if let Some(state) = &mut installed {
-                        state.live = false;
-                    }
-                } else {
-                    let _ = close(&mut installed).await;
-                }
-                packets.clear_incoming();
-                // A cancelled predecessor is never usable authority. Retain
-                // only its device/capture while all packet pumps are stopped,
-                // bounded by its original UTC and monotonic expiration.
-                let exit_failed = installed.as_ref().is_some_and(|state| state.cleanup_failed);
-                let cleanup = if pause_until.is_some() {
-                    Ok(())
-                } else {
-                    installed = None;
-                    packets = Packets::default();
-                    host.suspend().await
-                }
-                .and(if exit_failed {
-                    Err(meshway_underlay::Error::Worker)
-                } else {
-                    Ok(())
-                });
+                let closing = close(&mut installed, &peers).await;
+                installed = None;
+                packets = Packets::default();
+                let cleanup = host.suspend().await;
                 let mut report = reports.borrow().clone();
-                report.plane = if cleanup.is_ok() {
-                    DataPlane::Suspended
+                report.plane = DataPlane::Failed;
+                report.problem = Some(if closing.is_err() || cleanup.is_err() {
+                    Problem::Underlay
                 } else {
-                    DataPlane::Failed
-                };
-                report.problem = cleanup.err().map(|_| Problem::Underlay);
-                if !transition && !matches!(work, Work::HardExpired) {
-                    report.plane = DataPlane::Failed;
-                    report.problem = Some(match work {
+                    match work {
                         Work::DnsFailure => Problem::Dns,
                         Work::Packet(_) => Problem::Tun,
                         Work::CarrierClosed => Problem::Transport,
                         _ => Problem::Underlay,
-                    });
-                }
-                report.completion = None;
+                    }
+                });
+                report.completion = Some(Err(match report.problem {
+                    Some(Problem::Dns) => ApplyFailure::Dns,
+                    Some(Problem::Tun) => ApplyFailure::Tun,
+                    Some(Problem::Transport) => ApplyFailure::Listeners,
+                    _ => ApplyFailure::Underlay,
+                }));
+                report.observed_at = chrono::Utc::now();
                 report.facts = None;
                 report.exit_flows = None;
                 if let Some(capability) = &mut report.exit_capability {
                     capability.installed_families.clear();
                 }
+                retry.failed(
+                    report
+                        .completion
+                        .and_then(Result::err)
+                        .unwrap_or(ApplyFailure::Underlay),
+                );
                 reports.send_replace(report);
                 continue;
             }
@@ -570,15 +524,16 @@ pub(super) async fn run(
                 }
             }
             Work::ExitReply(Ok(reply)) => {
-                if let Some(state) = &mut installed {
+                if let Some(state) = &mut installed
+                    && let Some(secure) = &mut state.secure
+                {
                     match Packet::parse(reply.packet) {
-                        Ok(packet) => match state
-                            .secure
+                        Ok(packet) => match secure
                             .exit_reply(meshway_dataplane::exit::ExitReplyIngress::new(packet))
                         {
                             Ok(frame) => {
                                 if let Some(exit) = &mut state.exit {
-                                    exit.drive(&mut state.secure);
+                                    exit.drive(secure);
                                 }
                                 packets.exit_reply(frame);
                             }
@@ -598,13 +553,15 @@ pub(super) async fn run(
                     else {
                         continue;
                     };
-                    if let Some(state) = &installed {
+                    if let Some(state) = &installed
+                        && let Some(secure) = &state.secure
+                    {
                         packets.incoming(
                             *link,
                             frame.payload.into(),
                             received_at,
-                            &state.target,
-                            &state.secure,
+                            state.identity.snapshot(),
+                            secure,
                         );
                     }
                 }
@@ -614,47 +571,120 @@ pub(super) async fn run(
         }
         if let Some(state) = &mut installed
             && state.live
-            && let Some(manager) = &state.manager
+            && let (Some(secure), Some(manager)) = (&mut state.secure, &state.manager)
         {
             // One scheduling view per turn. It grants no I/O authority: every
             // output still captures and checks the Manager's actual channel,
-            // while SecureNode checks its own packet/circuit permit.
+            // while SecureNode checks its own packet/circuit admission.
             let carriers = manager.carriers().ok();
             if let Some(carriers) = &carriers {
-                let _ = state.secure.set_carriers(carriers.clone());
+                let _ = secure.set_carriers(carriers.clone());
             }
-            let guard = state
-                .target
-                .identity
-                .as_ref()
-                .expect("installed identity")
-                .snapshot();
-            diagnostics.synchronize(guard);
+            secure.set_ready_exits(peers.ready_exits());
+            let snapshot = state.identity.snapshot().clone();
+            diagnostics.synchronize(&snapshot);
             tokio::select! { biased;
                 _ = host.invalidated() => {},
-                _ = guard.invalidated() => {},
+                _ = snapshot.invalidated() => {},
                 _ = dns.failed(), if !dns_failed => {},
                 _ = async {
                     static PROFILE: meshway_logging::profile::Metric = meshway_logging::profile::Metric::new("host.drive.poll");
-                    PROFILE.poll(packets.drive(&mut state.secure, manager, carriers.as_ref(), &host, &state.target, &gateway, &mut diagnostics, &mut pool, state.exit.as_mut())).await;
-                    diagnostics.drive(&mut state.secure, manager, carriers.as_ref(), &gateway);
+                    PROFILE.poll(packets.drive(secure, manager, carriers.as_ref(), &host, &snapshot, &mut diagnostics, &mut pool, state.exit.as_mut())).await;
+                    diagnostics.drive(secure, manager, carriers.as_ref(), &gateway);
                 } => {},
+            }
+            let interest = manager.interest();
+            for wanted in secure.take_adjacency_interests() {
+                interest.interest(wanted.peer);
             }
         }
         if structural {
-            let report = sample_host(&host, &installed, reports.borrow().clone());
+            let report = sample_host(&host, &installed, &diagnostics, reports.borrow().clone());
             reports.send_replace(report);
             sample_at = None;
         } else {
             // Packet/diagnostic work may change circuit dependencies. Coalesce
             // their observation, not packet processing: the first dirty event
-            // sets a deadline that later traffic cannot postpone. The explicit
-            // sample command and lifecycle/carrier changes remain immediate.
+            // sets a deadline that later traffic cannot postpone.
             sample_at.get_or_insert_with(|| {
                 tokio::time::Instant::now() + super::reporting::CHANGE_INTERVAL
             });
         }
     }
+}
+
+/// Whether the Host itself (not merely the snapshot) lost authority.
+async fn host_invalidated(host: &Host) -> bool {
+    tokio::time::timeout(Duration::ZERO, host.invalidated())
+        .await
+        .is_ok()
+}
+
+/// The lease ended (or the Host lost authority): terminate every flow,
+/// circuit and exit projection; keep the negative capture and DNS boundary.
+async fn expire(
+    host: &mut Host,
+    installed: &mut Option<Installed>,
+    packets: &mut Packets,
+    dns: &Attachment,
+    peers: &Peers,
+    reports: &Publisher,
+    host_failed: bool,
+) {
+    tracing::info!(
+        host_failed,
+        "Netmap authority ended; terminating the packet plane"
+    );
+    dns.suspend();
+    let closing = close(installed, peers).await;
+    *installed = None;
+    *packets = Packets::default();
+    let cleanup = host.suspend().await;
+    let mut report = reports.borrow().clone();
+    report.plane = if closing.is_ok() && cleanup.is_ok() && !host_failed {
+        DataPlane::Suspended
+    } else {
+        DataPlane::Failed
+    };
+    report.problem = (report.plane == DataPlane::Failed).then_some(Problem::Underlay);
+    report.completion = None;
+    report.facts = None;
+    report.exit_flows = None;
+    if let Some(capability) = &mut report.exit_capability {
+        capability.installed_families.clear();
+    }
+    reports.send_replace(report);
+}
+
+/// Same netmap content: every owner swaps in the snapshot carrying the
+/// renewed lease or the new instance binding. Nothing is reinstalled.
+async fn renew(
+    host: &mut Host,
+    dns: &Attachment,
+    state: &mut Installed,
+    identity: DataPlaneIdentity,
+) -> Result<(), Problem> {
+    host.install(identity.snapshot().clone())
+        .await
+        .map_err(|_| Problem::Underlay)?;
+    if let Some(secure) = &mut state.secure {
+        secure
+            .update(identity.clone())
+            .map_err(|_| Problem::Apply)?;
+    }
+    if let Some(manager) = &mut state.manager {
+        manager
+            .reconcile(identity.clone())
+            .await
+            .map_err(|_| Problem::Transport)?;
+    }
+    if dns.guard().is_some() {
+        // An equivalent scope keeps the query owner; failures surface via guard.
+        let _ = dns.install(identity.snapshot().clone()).await;
+    }
+    state.identity = identity;
+    state.live = true;
+    Ok(())
 }
 
 /// A cancellation-safe TUN read has no read-ahead owner. After the first packet,
@@ -676,62 +706,62 @@ async fn receive_packets(
     .collect()
 }
 
-async fn close(installed: &mut Option<Installed>) -> Result<(), Problem> {
+async fn close(installed: &mut Option<Installed>, peers: &Peers) -> Result<(), Problem> {
+    let mut failed = false;
     if let Some(state) = installed {
         state.live = false;
         if let Some(exit) = state.exit.take() {
-            let result = exit.stop(&mut state.secure).await;
-            state.cleanup_failed |= result.is_err();
+            let result = match &mut state.secure {
+                Some(secure) => exit.stop(secure).await,
+                None => Err(Problem::Underlay),
+            };
             if let Err(problem) = result {
                 tracing::warn!(?problem, "Exit retirement failed");
+                failed = true;
             }
         }
         if let Some(mut manager) = state.manager.take() {
+            peers.detach();
             let _ = manager.shutdown().await;
         }
-        // Retain the unique secure owner until a direct successor can be offered.
-        // Never maintain() against an invalidated predecessor before reconcile.
-        if state.cleanup_failed {
-            return Err(Problem::Underlay);
-        }
+        state.secure = None;
     }
-    Ok(())
-}
-
-fn same_ticket(
-    a: &meshway_control::ApplicationTicket,
-    b: &meshway_control::ApplicationTicket,
-) -> bool {
-    a.target() == b.target() && a.instance() == b.instance() && a.attempt() == b.attempt()
-}
-
-fn handoff_deadline(guard: &meshway_authority::ExecutionSnapshot) -> Option<tokio::time::Instant> {
-    guard.retention_deadline().ok().map(Into::into)
+    if failed {
+        Err(Problem::Underlay)
+    } else {
+        Ok(())
+    }
 }
 
 /// An explicit measurement by the resource owner. Application observation time
 /// remains immutable; sampling current sockets is distinct from receipt replay.
-fn sample_host(host: &Host, installed: &Option<Installed>, mut report: Report) -> Report {
+fn sample_host(
+    host: &Host,
+    installed: &Option<Installed>,
+    diagnostics: &super::diagnostics::Diagnostics,
+    mut report: Report,
+) -> Report {
     report.interface_epoch = *host.network_changes().borrow();
     report.owned_interfaces = host.owned_interfaces();
-    sample(installed, report)
+    sample(installed, diagnostics, report)
 }
 
-fn sample(installed: &Option<Installed>, mut report: Report) -> Report {
+fn sample(
+    installed: &Option<Installed>,
+    diagnostics: &super::diagnostics::Diagnostics,
+    mut report: Report,
+) -> Report {
     static PROFILE: meshway_logging::profile::Metric =
         meshway_logging::profile::Metric::new("host.sample");
     let _profile = PROFILE.enter();
+    let secure = installed.as_ref().and_then(|state| state.secure.as_ref());
     meshway_logging::profile::gauge(
         "secure.retained_circuits",
-        installed
-            .as_ref()
-            .map(|state| state.secure.retained_circuits() as u64),
+        secure.map(|secure| secure.retained_circuits() as u64),
     );
     meshway_logging::profile::gauge(
         "flow.retained",
-        installed
-            .as_ref()
-            .map(|state| state.secure.retained_flows() as u64),
+        secure.map(|secure| secure.retained_flows() as u64),
     );
     meshway_logging::profile::gauge("secure.ready_circuits", None);
     report.facts = None;
@@ -745,32 +775,37 @@ fn sample(installed: &Option<Installed>, mut report: Report) -> Report {
     report.facts_observed_at = chrono::Utc::now();
     if let Some(state) = installed
         && state.live
-        && let Some(manager) = &state.manager
+        && let (Some(secure), Some(manager)) = (&state.secure, &state.manager)
     {
         report.facts = manager.snapshot().ok();
-        if let Ok(circuits) = state.secure.ready_circuits()
-            && let Some(identity) = &state.target.identity
-            && let Ok(cfg) = identity.snapshot().configuration()
+        if let Ok(circuits) = secure.ready_circuits()
+            && let Ok(netmap) = state.identity.snapshot().netmap()
         {
+            let node = netmap.netmap.node_id;
             meshway_logging::profile::gauge("secure.ready_circuits", Some(circuits.len() as u64));
             for circuit in circuits {
                 for pair in circuit.path.windows(2) {
-                    let peer = if pair[0] == cfg.node_id {
+                    let peer = if pair[0] == node {
                         Some(pair[1])
-                    } else if pair[1] == cfg.node_id {
+                    } else if pair[1] == node {
                         Some(pair[0])
                     } else {
                         None
                     };
-                    if let Some(peer) = peer {
-                        match circuit.authorization {
-                            meshway_configuration::execution::CircuitAuthorization::Business(_) => {
-                                *report.dependencies.entry(peer).or_default() += 1
-                            }
-                            meshway_configuration::execution::CircuitAuthorization::Diagnostic(
-                                id,
-                            ) => {
-                                let ids = report.observation_dependencies.entry(peer).or_default();
+                    let Some(peer) = peer else {
+                        continue;
+                    };
+                    match circuit.grant.purpose {
+                        meshway_dataplane::Purpose::Business => {
+                            *report.dependencies.entry(peer).or_default() += 1
+                        }
+                        meshway_dataplane::Purpose::Diagnostic => {
+                            let meshway_dataplane::Target::Mesh { node } = &circuit.grant.target
+                            else {
+                                continue;
+                            };
+                            let ids = report.observation_dependencies.entry(peer).or_default();
+                            for id in diagnostics.observations_toward(*node) {
                                 if !ids.contains(&id) {
                                     ids.push(id);
                                 }
@@ -789,348 +824,228 @@ async fn install(
     host: &mut Host,
     installed: &mut Option<Installed>,
     packets: &mut Packets,
-    target: Target,
-    allow_replacement: bool,
-    dns: (
-        &mut super::dns::Attachment,
-        &watch::Sender<Option<super::dns::intents::Plan>>,
-    ),
-    timed_out: bool,
+    identity: DataPlaneIdentity,
+    continuing: bool,
+    dns: &mut Attachment,
     traversal: Arc<dyn meshway_connectivity::traversal::TraversalGateway>,
     generation: meshway_model::Sequence,
+    peers: &Peers,
     report: &mut Report,
-) -> Result<bool, (Problem, ApplyFailure)> {
-    let (dns, dns_plans) = dns;
-    let Some(identity) = &target.identity else {
-        dns.suspend();
-        dns_plans.send_replace(None);
-        let closing = close(installed).await;
-        *installed = None;
-        *packets = Packets::default();
-        let suspended = host.suspend().await.map_err(|_| Problem::Underlay);
-        return closing
-            .and(suspended)
-            .map(|_| true)
-            .map_err(|p| (p, ApplyFailure::Underlay));
-    };
-    let cfg = identity
-        .snapshot()
-        .configuration()
-        .map_err(|_| (Problem::Apply, ApplyFailure::Validation))?;
-    let needs_dns = super::requirements::dns_required(&cfg.dns.settings)
-        || matches!(
-            cfg.dns.egress,
-            meshway_configuration::execution::DnsEgress::ViaExit { .. }
-                | meshway_configuration::execution::DnsEgress::Unavailable { .. }
-        );
-    let exit_dns = !matches!(
-        cfg.dns.egress,
-        meshway_configuration::execution::DnsEgress::NoExit
-    );
-    report.exit_dns_unavailable = exit_dns;
-    let exit_handoff = installed.as_ref().is_some_and(|s| s.exit.is_some());
-    if exit_handoff {
-        if let Some(state) = installed.as_mut()
-            && state
-                .exit
-                .as_ref()
-                .is_some_and(|exit| cfg.exit_role.as_ref() != Some(&exit.plan))
-            && let Some(old) = state.exit.take()
-        {
-            old.stop(&mut state.secure)
-                .await
-                .map_err(|p| (p, ApplyFailure::Underlay))?;
-        }
-        // Publish the checked successor to Host before a potentially slow live
-        // probe/DNS preparation. Its role actor must not keep observing the
-        // cancelled predecessor throughout those unrelated waits.
-        install_host(host, identity.snapshot().clone()).await?;
-    }
-    let capture_needed = cfg.egress_capture.default_capture
-        || !cfg.egress_capture.managed_ipv4.is_empty()
-        || !cfg.egress_capture.sink_ipv6.is_empty()
-        || cfg.egress_capture.unavailable.is_some()
-        || installed.as_ref().is_some_and(|s| s.capture.is_some());
-    // Stage the old/new negative boundary before probing or other preparations.
-    let capture = if capture_needed {
-        Some(
-            host.install_egress_capture(cfg.egress_capture.clone())
-                .await
-                .map_err(|_| (Problem::Underlay, ApplyFailure::Underlay))?,
-        )
-    } else {
-        None
-    };
-    report.exit_capability = if cfg.exit_enabled || cfg.exit_role.is_some() {
-        Some(
-            host.probe_exit(
-                target.ticket.instance().instance_id,
-                target.ticket.target().clone(),
-            )
-            .await,
-        )
-    } else {
-        None
-    };
-    let dns_prepared = if needs_dns && exit_dns {
-        // Prepare the existing DNS owner's negative system scope, but publish
-        // no query authority until X5's DNS-purpose adapter is available.
-        match dns.plan(host, &target).await {
-            Ok(_)
-            | Err(
-                meshway_dns::SystemDnsError::ExitPlan | meshway_dns::SystemDnsError::ResolverPlan,
-            ) => {}
-            Err(error) => {
-                tracing::warn!(%error, "Required negative DNS installation failed");
-                return Err((Problem::Dns, ApplyFailure::Dns));
-            }
-        }
-        dns.suspend();
-        dns_plans.send_replace(None);
-        Ok(None)
-    } else if needs_dns {
-        dns.plan(host, &target).await.map(Some).map_err(|error| {
-            tracing::warn!(%error, "DNS preparation failed");
-            (Problem::Dns, ApplyFailure::Dns)
-        })
-    } else {
-        dns_plans.send_replace(None);
-        dns.down(host)
-            .await
-            .map(|_| None)
-            .map_err(|_| (Problem::Dns, ApplyFailure::Dns))
-    };
-    packets.clear_incoming();
-    let physical = installed
-        .as_ref()
-        .and_then(|state| state.manager.as_ref())
-        .is_some_and(|manager| manager.can_reconcile(identity));
-    if physical {
-        if let Some(state) = installed.as_mut() {
-            state.live = false;
-        }
-    } else {
-        close(installed)
-            .await
-            .map_err(|p| (p, ApplyFailure::Underlay))?;
-    }
-    let retained =
-        installed
-            .as_mut()
-            .is_some_and(|state| match state.secure.reconcile(identity.clone()) {
-                Ok(()) => true,
-                Err(error) => {
-                    if !allow_replacement {
-                        tracing::warn!(?error,
-                        previous = %state.target.ticket.target().execution_publication,
-                        next = %target.ticket.target().execution_publication,
-                        next_current = identity.snapshot().ensure_current().is_ok(),
-                        "Secure owner rejected same-attempt execution refresh");
-                    }
-                    false
-                }
-            });
-    tracing::debug!(retained, publication = %target.ticket.target().execution_publication, "Reconciling Node packet execution");
-    if !retained && !allow_replacement {
-        // Expiry may win after Control offered the refresh. Do not silently
-        // rebuild a lost replay/flow owner under an already completed ticket;
-        // recovery must return through a new saved application attempt.
-        return Err((Problem::Apply, ApplyFailure::Dataplane));
-    }
-    if !retained {
-        close(installed)
-            .await
-            .map_err(|p| (p, ApplyFailure::Underlay))?;
-        if installed.as_ref().is_some_and(|s| s.cleanup_failed) {
-            return Err((Problem::Underlay, ApplyFailure::Underlay));
-        }
-        *installed = None;
-        *packets = Packets::default();
-    }
-    if !exit_handoff {
-        install_host(host, identity.snapshot().clone()).await?;
-    }
-    if host.tun().is_none() {
-        return Err((Problem::Tun, ApplyFailure::Tun));
-    }
-    if let Some(capture) = &capture {
-        capture
-            .switch(cfg.egress_capture.clone())
-            .await
-            .map_err(|_| (Problem::Underlay, ApplyFailure::Underlay))?;
-        if !capture.is_active() {
-            return Err((Problem::Underlay, ApplyFailure::Underlay));
-        }
-    }
-    let mut new_role = None;
-    if let Some(plan) = &cfg.exit_role {
-        if !report
-            .exit_capability
-            .as_ref()
-            .is_some_and(|c| c.status == meshway_model::exit::ExitStatus::Ready)
-        {
-            return Err((Problem::Underlay, ApplyFailure::Underlay));
-        }
-        if installed.as_ref().is_none_or(|s| s.exit.is_none()) {
-            let role = host
-                .install_exit_role(plan.clone())
-                .await
-                .map_err(|error| {
-                    tracing::warn!(%error, "Exit role installation failed");
-                    if let Some(capability) = &mut report.exit_capability {
-                        capability.status = meshway_model::exit::ExitStatus::Unavailable {
-                            reason: meshway_model::exit::ExitUnavailableReason::OwnershipConflict,
-                        };
-                    }
-                    (Problem::Underlay, ApplyFailure::Underlay)
-                })?;
-            new_role = Some((role, plan.clone()));
-        }
-    }
-    // Host installation establishes the owned capture/sink first. A failed
-    // required component then suspends it without leaking Mesh destinations
-    // back to the host default route; no packet loop runs before every gate.
-    let dns_ids = if let Some(plan) = dns_prepared? {
-        // Publish descriptors only after negative DNS and Mesh capture exist.
-        // Control may now create demands and atomically replace this snapshot.
-        dns_plans.send_replace(Some(plan.clone()));
-        if timed_out {
-            return Err((Problem::Dns, ApplyFailure::Dns));
-        }
-        if plan.empty() {
-            Default::default()
-        } else if let Some(selection) = &target.dns
-            && selection.plan == plan
-        {
-            if selection.failed {
-                return Err((Problem::Dns, ApplyFailure::Dns));
-            }
-            selection.ids.clone()
-        } else {
-            return Ok(false);
-        }
-    } else {
-        Default::default()
-    };
-    super::requirements::validate(
-        cfg,
-        &dns_ids,
-        &target.retired_dns,
-        identity
-            .snapshot()
-            .now_ms()
-            .map_err(|_| (Problem::Apply, ApplyFailure::Validation))?,
-    )?;
-    let dns_snapshot = (needs_dns && !exit_dns).then(|| identity.snapshot().clone());
-    let preserved = if physical && retained {
-        installed.as_mut().and_then(|state| state.manager.take())
-    } else {
-        None
-    };
-    let mut manager = if let Some(mut manager) = preserved {
-        if manager.reconcile(identity.clone()).await.is_err() {
-            let _ = manager.shutdown().await;
-            return Err((Problem::Transport, ApplyFailure::Listeners));
-        }
-        manager
-    } else {
-        Manager::start_with_traversal(
-            identity.clone(),
-            Arc::new(host.sockets()),
-            Default::default(),
-            traversal,
-            generation,
-        )
-        .await
-        .map_err(|_| (Problem::Transport, ApplyFailure::Listeners))?
-    };
-    let carriers = match manager.carriers() {
-        Ok(carriers) => carriers,
-        Err(_) => {
-            let _ = manager.shutdown().await;
-            return Err((Problem::Transport, ApplyFailure::Listeners));
-        }
-    };
-    if let Some(state) = installed {
-        if state.secure.set_carriers(carriers).is_err() {
-            let _ = manager.shutdown().await;
-            return Err((Problem::Apply, ApplyFailure::Dataplane));
-        }
-        state.manager = Some(manager);
-        state.target = target;
-        state.live = true;
-        state.capture = capture;
-    } else {
-        let secure = match SecureNode::new(identity.clone(), Default::default(), carriers) {
-            Ok(secure) => secure,
-            Err(_) => {
-                let _ = manager.shutdown().await;
-                return Err((Problem::Apply, ApplyFailure::Dataplane));
-            }
-        };
-        *installed = Some(Installed {
-            target,
-            secure,
-            manager: Some(manager),
-            live: true,
-            exit: None,
-            capture,
-            cleanup_failed: false,
-        });
-    }
-    if let Some(snapshot) = dns_snapshot {
-        dns.install(snapshot, dns_ids).await.map_err(|error| {
-            tracing::warn!(%error, "DNS scope installation failed");
-            (Problem::Dns, ApplyFailure::Dns)
-        })?;
-    }
-    if let Some(state) = installed {
-        state
-            .target
-            .identity
-            .as_ref()
-            .expect("installed identity")
-            .snapshot()
-            .ensure_current()
-            .map_err(|_| (Problem::Apply, ApplyFailure::Validation))?;
-        if let Some((role, plan)) = new_role {
-            state.exit = Some(
-                super::exit::Runtime::start(role, plan).map_err(|p| (p, ApplyFailure::Underlay))?,
-            );
-        }
-        if let Some(exit) = &mut state.exit {
-            exit.synchronize(&mut state.secure)
-                .await
-                .map_err(|p| (p, ApplyFailure::Underlay))?;
-        }
-        state
-            .target
-            .identity
-            .as_ref()
-            .expect("installed identity")
-            .snapshot()
-            .ensure_current()
-            .map_err(|_| (Problem::Apply, ApplyFailure::Validation))?;
-    }
-    Ok(true)
-}
-
-async fn install_host(
-    host: &mut Host,
-    snapshot: meshway_authority::ExecutionSnapshot,
 ) -> Result<(), (Problem, ApplyFailure)> {
-    host.install(snapshot).await.map_err(|error| {
+    let snapshot = identity.snapshot().clone();
+    let netmap = snapshot
+        .netmap()
+        .map_err(|_| (Problem::Apply, ApplyFailure::Validation))?
+        .netmap
+        .clone();
+    let reference = snapshot.reference();
+    if !continuing {
+        close(installed, peers)
+            .await
+            .map_err(|p| (p, ApplyFailure::Underlay))?;
+        *installed = None;
+        *packets = Packets::default();
+    }
+    if let Some(state) = installed.as_mut() {
+        state.live = false;
+    }
+    packets.clear_incoming();
+    // Capture, TUN, retained descriptors and the exit role's identity are the
+    // Host's own in-place difference between the two contents.
+    host.install(snapshot.clone()).await.map_err(|error| {
         tracing::warn!(%error, "Node capture installation failed");
         match error {
             meshway_underlay::Error::Tun(_) => (Problem::Tun, ApplyFailure::Tun),
             _ => (Problem::Underlay, ApplyFailure::Underlay),
         }
-    })
+    })?;
+    let settings = &netmap.projection.configuration.dns;
+    let exit_dns = !matches!(netmap.dns.egress, DnsPlan::NoExit);
+    let needs_dns = super::requirements::dns_required(settings) || exit_dns;
+    report.exit_dns_unavailable = exit_dns;
+    // Required negative DNS first. A Mesh resolver service (exit DNS) needs
+    // the SecureNode DNS-purpose ingress, which is not assembled: keep the
+    // negative boundary and publish no query authority.
+    if needs_dns {
+        match dns.plan(host, &netmap).await {
+            Ok(()) => {}
+            Err(
+                meshway_dns::SystemDnsError::ExitPlan | meshway_dns::SystemDnsError::ResolverPlan,
+            ) if exit_dns => {}
+            Err(error) => {
+                tracing::warn!(%error, "Required DNS installation failed");
+                return Err((Problem::Dns, ApplyFailure::Dns));
+            }
+        }
+        if exit_dns {
+            dns.suspend();
+        }
+    } else {
+        dns.down(host)
+            .await
+            .map_err(|_| (Problem::Dns, ApplyFailure::Dns))?;
+    }
+    if !netmap.self_.enabled {
+        // A disabled Node owns no packet plane; the Host keeps its negative boundary.
+        close(installed, peers)
+            .await
+            .map_err(|p| (p, ApplyFailure::Underlay))?;
+        report.exit_capability = None;
+        *installed = Some(Installed {
+            identity,
+            secure: None,
+            manager: None,
+            exit: None,
+            live: false,
+        });
+        return Ok(());
+    }
+    // Exit prerequisites, observed on behalf of the live instance only.
+    report.exit_capability = match (&netmap.exit_role, snapshot.instance()) {
+        (Some(role), Some(instance)) => Some(
+            host.probe_exit(instance.instance_id, reference, role.generation)
+                .await,
+        ),
+        _ => None,
+    };
+    let mut new_role = None;
+    if let Some(role) = &netmap.exit_role {
+        let unchanged = installed
+            .as_ref()
+            .and_then(|state| state.exit.as_ref())
+            .is_some_and(|exit| exit.plan == *role);
+        if !unchanged {
+            if report
+                .exit_capability
+                .as_ref()
+                .is_some_and(|c| c.status != meshway_model::exit::ExitStatus::Ready)
+            {
+                return Err((Problem::Underlay, ApplyFailure::Underlay));
+            }
+            if let Some(state) = installed.as_mut()
+                && let Some(old) = state.exit.take()
+                && let Some(secure) = &mut state.secure
+            {
+                old.stop(secure)
+                    .await
+                    .map_err(|p| (p, ApplyFailure::Underlay))?;
+            }
+            let installed_role = host.install_netmap_exit_role(role).await.map_err(|error| {
+                tracing::warn!(%error, "Exit role installation failed");
+                if let Some(capability) = &mut report.exit_capability {
+                    capability.status = meshway_model::exit::ExitStatus::Unavailable {
+                        reason: meshway_model::exit::ExitUnavailableReason::OwnershipConflict,
+                    };
+                }
+                (Problem::Underlay, ApplyFailure::Underlay)
+            })?;
+            new_role = Some((installed_role, role.clone()));
+        }
+    } else if let Some(state) = installed.as_mut()
+        && let Some(old) = state.exit.take()
+        && let Some(secure) = &mut state.secure
+    {
+        old.stop(secure)
+            .await
+            .map_err(|p| (p, ApplyFailure::Underlay))?;
+    }
+    if host.tun().is_none() {
+        return Err((Problem::Tun, ApplyFailure::Tun));
+    }
+    // Adjacency: unchanged resources and channels survive a continuing serial.
+    let previous = installed.as_mut().and_then(|state| state.manager.take());
+    let manager = match previous {
+        Some(mut manager) if manager.can_reconcile(&identity) => {
+            if manager.reconcile(identity.clone()).await.is_err() {
+                let _ = manager.shutdown().await;
+                peers.detach();
+                return Err((Problem::Transport, ApplyFailure::Listeners));
+            }
+            manager
+        }
+        previous => {
+            if let Some(mut manager) = previous {
+                peers.detach();
+                let _ = manager.shutdown().await;
+            }
+            Manager::start_with_traversal(
+                identity.clone(),
+                Arc::new(host.sockets()),
+                Default::default(),
+                traversal,
+                generation,
+            )
+            .await
+            .map_err(|_| (Problem::Transport, ApplyFailure::Listeners))?
+        }
+    };
+    peers.attach(manager.facts_sink(), reference);
+    let carriers = match manager.carriers() {
+        Ok(carriers) => carriers,
+        Err(_) => {
+            let mut manager = manager;
+            let _ = manager.shutdown().await;
+            peers.detach();
+            return Err((Problem::Transport, ApplyFailure::Listeners));
+        }
+    };
+    // Flows and circuits: an in-place content comparison when continuing.
+    let previous = installed.as_mut().and_then(|state| state.secure.take());
+    let secure = match previous {
+        Some(mut secure) => match secure.update(identity.clone()) {
+            Ok(update) => {
+                tracing::debug!(
+                    ?update,
+                    netmap_serial = reference.serial.get(),
+                    "SecureNode updated in place"
+                );
+                if secure.set_carriers(carriers).is_err() {
+                    return Err((Problem::Apply, ApplyFailure::Dataplane));
+                }
+                secure
+            }
+            Err(_) => SecureNode::new(identity.clone(), Default::default(), carriers)
+                .map_err(|_| (Problem::Apply, ApplyFailure::Dataplane))?,
+        },
+        None => SecureNode::new(identity.clone(), Default::default(), carriers)
+            .map_err(|_| (Problem::Apply, ApplyFailure::Dataplane))?,
+    };
+    let exit = installed.as_mut().and_then(|state| state.exit.take());
+    let state = installed.insert(Installed {
+        identity,
+        secure: Some(secure),
+        manager: Some(manager),
+        exit,
+        live: true,
+    });
+    if needs_dns && !exit_dns {
+        dns.install(snapshot.clone()).await.map_err(|error| {
+            tracing::warn!(%error, "DNS scope installation failed");
+            (Problem::Dns, ApplyFailure::Dns)
+        })?;
+    }
+    if let Some((role, plan)) = new_role {
+        state.exit =
+            Some(super::exit::Runtime::start(role, plan).map_err(|p| (p, ApplyFailure::Underlay))?);
+    }
+    let secure = state.secure.as_mut().expect("installed above");
+    if let Some(exit) = &mut state.exit {
+        exit.synchronize(secure)
+            .await
+            .map_err(|p| (p, ApplyFailure::Underlay))?;
+        if let Some(capability) = &mut report.exit_capability {
+            capability.installed_families = vec![meshway_model::exit::ExitFamily::Ipv4];
+        }
+    }
+    snapshot
+        .ensure_current()
+        .map_err(|_| (Problem::Apply, ApplyFailure::Validation))?;
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Report, packet_pool, sample};
+    use super::packet_pool;
 
     #[test]
     fn packet_pool_holds_one_full_mtu_packet() {
@@ -1139,18 +1054,5 @@ mod tests {
             assert!(pool.acquire(mtu).is_ok(), "mtu {mtu}");
             assert!(pool.acquire(mtu + 1).is_err(), "mtu {mtu}");
         }
-    }
-
-    #[test]
-    fn explicit_sample_does_not_retimestamp_application_observation() {
-        let mut report = Report::stopped();
-        report.observed_at = chrono::Utc::now() - chrono::Duration::minutes(10);
-        let application_time = report.observed_at;
-        let before = chrono::Utc::now();
-        let sampled = sample(&None, report);
-        assert_eq!(sampled.observed_at, application_time);
-        assert!(sampled.facts_observed_at >= before);
-        assert!(sampled.facts.is_none());
-        assert!(sampled.applied().is_none());
     }
 }

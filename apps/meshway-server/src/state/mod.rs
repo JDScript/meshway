@@ -3,7 +3,6 @@
 pub(crate) mod connectivity;
 pub(crate) mod exit;
 pub mod facts;
-pub(crate) mod local_endpoints;
 pub mod service;
 pub mod stream;
 pub(crate) mod validation;
@@ -13,8 +12,8 @@ use crate::error::Error;
 use crate::resources::GeoIp;
 use chrono::{DateTime, Duration, Utc};
 use meshway_model::{
-    Digest, InstanceId, NetworkId, NodeId, ObservationId, Revision, Sequence, StateEpoch, Version,
-    state::{ConfigurationRef, ResourceRef, SocketNetwork},
+    Digest, InstanceId, NetmapRef, NetworkId, NodeId, Revision, Sequence, StateEpoch, Version,
+    state::{ResourceRef, SocketNetwork},
 };
 use meshway_protocol::state::*;
 use std::collections::{BTreeMap, BTreeSet};
@@ -35,8 +34,8 @@ pub struct ReportAdmission {
     pub instance_generation: Version,
     pub lease_expires_at: DateTime<Utc>,
     /// Current execution context, distinct from saved/installation/history.
-    pub execution: Option<ConfigurationRef>,
-    pub configurations: Vec<ConfigurationRef>,
+    pub execution: Option<NetmapRef>,
+    pub configurations: Vec<NetmapRef>,
     /// Exact immutable contexts loaded by the execution owner. Historical
     /// contexts do not grant current execution or peer endpoint availability.
     pub contexts: Vec<ConfigurationAdmission>,
@@ -44,26 +43,21 @@ pub struct ReportAdmission {
 }
 #[derive(Clone, Debug)]
 pub struct ConfigurationAdmission {
-    pub path_deadlines: BTreeMap<Vec<NodeId>, DateTime<Utc>>,
-    pub configuration: ConfigurationRef,
+    /// The netmap this context is derived from.
+    pub configuration: NetmapRef,
     /// True only for the execution owner's currently allowed target/saved
     /// installation. Retained history alone must set this to false.
     pub installation_allowed: bool,
     pub resources: BTreeMap<ResourceRef, ResourceAdmission>,
     pub peers: BTreeSet<NodeId>,
-    pub paths: Vec<Vec<NodeId>>,
-    /// Authorized adjacent peers and allowed outer transports, never arbitrary
-    /// subpaths of a business permit. Also used for connect probes.
+    /// Visible peers and the outer transports this Node may report with
+    /// them. Also used for connect and first-hop probe channels.
     pub neighbor_transports: BTreeMap<NodeId, BTreeSet<String>>,
-    /// Source-side carriers authorized for each exact complete probe path.
-    pub path_transports: PathTransports,
-    pub diagnostic_transports: BTreeMap<ObservationId, PathTransports>,
     pub mesh_address_pools: meshway_configuration::AddressPools,
     pub profiles: BTreeSet<String>,
 }
-pub type PathTransports = BTreeMap<Vec<NodeId>, BTreeSet<String>>;
 impl ReportAdmission {
-    pub fn context(&self, reference: &ConfigurationRef) -> Result<&ConfigurationAdmission, Error> {
+    pub fn context(&self, reference: &NetmapRef) -> Result<&ConfigurationAdmission, Error> {
         if !self.configurations.contains(reference) {
             return Err(Error::InvalidRequest);
         }
@@ -108,8 +102,8 @@ pub struct CurrentNode {
     pub instance_id: Option<InstanceId>,
     pub instance_generation: Option<Version>,
     /// The currently usable execution, not the set retained for receipts/history.
-    pub execution: Option<ConfigurationRef>,
-    pub configurations: Vec<ConfigurationRef>,
+    pub execution: Option<NetmapRef>,
+    pub configurations: Vec<NetmapRef>,
     pub revoked: bool,
     pub lease_expires_at: Option<DateTime<Utc>>,
 }
@@ -447,13 +441,13 @@ impl StateHub {
                                 resources.get(&node_id).is_none_or(|allowed| !allowed.contains(&socket.resource))
                             }) { continue; }
                             if source.configuration.applied.is_none()
-                                || socket.configuration.as_ref().is_some_and(|reference| Some(reference) != source.configuration.applied.as_ref()) {
+                                || socket.netmap.as_ref().is_some_and(|reference| Some(reference) != source.configuration.applied.as_ref()) {
                                 continue;
                             }
                             if let ResourceRef::Listener { key } = &socket.resource
                                 && source.listeners.get(key).is_none_or(|listener| {
                                     listener.phase != meshway_model::state::ListenerPhase::Listening
-                                        || listener.configuration.as_ref().is_some_and(
+                                        || listener.netmap.as_ref().is_some_and(
                                             |reference| {
                                                 Some(reference)
                                                     != source.configuration.applied.as_ref()
@@ -468,7 +462,7 @@ impl StateHub {
                                 if candidate.expires_at <= now {
                                     continue;
                                 }
-                                let Some(configuration) = socket.configuration.as_ref().or(source.configuration.applied.as_ref()) else { continue; };
+                                let Some(configuration) = socket.netmap.as_ref().or(source.configuration.applied.as_ref()) else { continue; };
                                 let candidate_reference = meshway_protocol::CandidateReference::from_observation(
                                     meshway_protocol::SocketReference {
                                         node_id,
@@ -476,7 +470,7 @@ impl StateHub {
                                             instance_id: stored.report.instance_id,
                                             generation: stored.instance_generation,
                                         },
-                                        configuration: configuration.clone(),
+                                        netmap: *configuration,
                                         socket_id: socket_id.clone(),
                                         socket_generation: socket.generation,
                                         resource: socket.resource.clone(),
