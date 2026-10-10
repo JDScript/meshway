@@ -389,7 +389,7 @@ def execute(report, artifacts, runtime_os, platform, short, load):
         path = [projected[role]["nodeId"] for role in ("a", "r", "e")]
         if any(json.loads(after["r"]["tunReceived"]["stdout"]).values()):
             raise RuntimeError("relay TUN delivered business plaintext")
-        grant = {"src": ["node:" + path[0]], "dst": ["autogroup:internet", lan_subnet]}
+        grant = {"src": ["node:" + path[0]], "dst": sorted(["autogroup:internet", lan_subnet])}
         routes = {}
         for link in ("external", "lan"):
             target = ipaddress.ip_address(addresses[link][link])
@@ -398,7 +398,7 @@ def execute(report, artifacts, runtime_os, platform, short, load):
                 raise RuntimeError("A egress partition does not send " + link + " to E via R")
             routes[link] = matching[0]
         for role in ("a", "r", "e"):
-            rules = [{"src": rule["src"], "dst": rule["dst"]} for rule in projected[role]["projection"]["configuration"]["access"]]
+            rules = [{"src": sorted(rule["src"]), "dst": sorted(rule["dst"])} for rule in projected[role]["projection"]["configuration"]["access"]]
             if rules != [grant]:
                 raise RuntimeError("projected external Access differs on " + role)
         # Only autogroup:internet can cover the external target: it is public
