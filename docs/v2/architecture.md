@@ -89,10 +89,11 @@ Server 验证 VLESS 等配置时使用 `transport-spec`，不链接 Node 的 tra
 | 包名＝目标目录名 | 消费者 | 职责 |
 | --- | --- | --- |
 | `meshway-ipc` | daemon、CLI | 本机命令、查询、事件与客户端 |
-| `meshway-authority` | control（签发）；daemon、dataplane、connectivity、underlay、dns、diagnostics 及 `tools/` 的 static-authority、packet-fixture（消费） | `ExecutionSnapshot`、`DataPlaneIdentity`、UTC 高水位 `Clock` 与三重 `Deadline`；只定义绑定与检查，不读存储、不联系 Server |
+| `meshway-authority` | control（读取私钥）；daemon、dataplane、connectivity 及 `tools/` 的 static-authority、dataplane-perf（使用） | 本身份已登记的包平面密钥 `DataPlaneKeys` 与逐跳证明 transcript；不是授权，不含租约或期限 |
+| `meshway-engine` | daemon（唯一装配）；connectivity、dataplane、underlay、dns、diagnostics（读取 `Desired`） | 唯一期望状态 owner：`Engine::reconfig(Option<&Netmap>)`、租约计时（`next_expiry`／`expire`）、共享 `LocalCompiler` 的不可变 `Desired` |
 | `meshway-transport` | connectivity、dataplane、underlay、transport providers | 承载会话、batch／buffer 与背压接口 |
 
-`meshway-authority` 的构造入口 `ExecutionSnapshot::issue`／`DataPlaneIdentity::new` 是公开的，但**生产中唯一的签发者是 `meshway-control`**：它把当前 lease、持久私有目标、共享 validity／invalidation 和三重 deadline 绑进快照。`crates/` 内不得出现第二个签发实现；分层基准与 fixture 的静态签发只能位于 `tools/`（`meshway-static-authority`），`meshwayd` 只装配 Control。读取或克隆快照不延长任何期限；该约束由类型保持，签发来源由装配纪律保持。
+Control 只验证、保存并发布签名 netmap（内容与租约）；`meshway-engine` 是租约的唯一计时者，并按固定顺序把同一 `Desired` 应用到各组件：Host（capture／TUN／负向 DNS／exit 角色）→ 邻接 Manager → SecureNode（流／circuit／exit 投影）→ DNS 查询权限；撤回时顺序相反，每个组件都应用空期望。组件不持有租约、代际、继承物或可转让的输出权限；到期 fail closed 由空期望保证，不靠逐包检查期限。基准与 fixture 的静态内容只位于 `tools/`（`meshway-static-authority`），`meshwayd` 只装配 Control 与 Engine。
 
 `meshway-plugin`／`meshway-plugin-host` 是规划中的插件 SDK／装载边界，当前没有对应 crate 或可用动态 ABI，见[插件与能力（规划）](/v2/node/plugins)。
 
@@ -102,10 +103,10 @@ Server 验证 VLESS 等配置时使用 `transport-spec`，不链接 Node 的 tra
 
 | 实际 crate | 实现归属与边界 |
 | --- | --- |
-| `meshway-control` | [接入、执行快照、连续性、回执和报告顺序](/v2/node/control)的唯一生产 owner；使用 authority 类型签发 |
+| `meshway-control` | [接入、netmap 验证与发布、回执和报告顺序](/v2/node/control)的唯一生产 owner；不签发执行快照 |
 | `meshway-dataplane` | [共同 IP 准入、唯一流表、Noise circuit 与逐跳证明](/v2/node/dataplane)；直接消费 authority |
 | `meshway-diagnostics` | [有界 source 探测调度、单调计时、窗口与结果](/v2/node/diagnostics)；直接消费 authority，借用同一 SecureNode，不持独立连接或密码状态 |
-| `meshway-connectivity` | [Manager、stream／Native UDP 邻接、协调 UDP 穿透、签名握手与真实 link 事实](/v2/node/transport#邻接管理)；身份／快照来自 authority，穿透 scope 来自 control |
+| `meshway-connectivity` | [Manager、stream／Native UDP 邻接、协调 UDP 穿透、签名握手与真实 link 事实](/v2/node/transport#邻接管理)；期望内容来自 Engine，包平面密钥来自 authority，穿透上下文来自 control |
 | `meshway-underlay` | [Linux Host、私有 route／rule journal、capture／sink 与用途受限 socket](/v2/node/dataplane#linux-underlay)；直接消费 authority，穿透类型来自 control |
 | `meshway-transport-{udp,tcp,vless,trojan}` | 正式承载 provider；既有流／socket 上的协议封装与 I/O |
 | `meshway-tun` | Linux TUN 设备 I/O |
@@ -121,8 +122,8 @@ Node 的每项业务规则和可变状态都有唯一实现归属。多个入口
 | --- | --- | --- |
 | 上线、下线、网络切换与期望状态协调 | daemon 的运行协调器 | CLI 命令、启动恢复、运行目标变化 |
 | 规则语义、递归路段展开、路径编译与执行许可纯判定 | `meshway-policy` | Server 校验／编译／DNS 可见性、Node 包准入 |
-| 执行快照、lease 时钟与失效代际的类型与检查 | `meshway-authority` | 数据面、DNS 及宿主 I/O 等待／交付检查 |
-| 执行快照的生产签发、连续性交接与 Server 绑定 | `meshway-control` | daemon 装配；基准静态签发限于 `tools/` |
+| netmap 租约计时与期望内容（`Desired`）、组件应用顺序 | `meshway-engine` | daemon 事件循环驱动 `next_expiry`／`expire` |
+| netmap 验证、保存、发布与 Server 绑定 | `meshway-control` | daemon 装配；基准静态内容限于 `tools/` |
 | 业务准入、端到端保护、路径执行与原路径回复 | `meshway-dataplane` | TUN；规划中的 userspace IP 包入口 |
 | 获准邻接、握手、重连与真实通道状态 | `meshway-connectivity` | Native TCP／VLESS／Trojan stream、Native UDP 显式端点与协调穿透 |
 | 内核 capture／sink、资源归属与用途受限 socket | `meshway-underlay` | Server bootstrap、获准候选、daemon TUN 安装 |

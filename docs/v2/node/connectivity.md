@@ -12,7 +12,7 @@ Meshway 共用一套承载会话与受保护数据面，将显式端点建连和
 
 | 归属 | 职责 |
 | --- | --- |
-| `meshway-control` | 唯一身份、执行快照、lease、失效与 Server 请求 owner |
+| `meshway-control` | 唯一身份、netmap 验证与发布、协调上下文与 Server 请求 owner；租约计时归 `meshway-engine` |
 | `meshway-policy` | 业务、完整路径与获准连接范围的共同判定 |
 | `meshway-underlay` | 实际 socket、捕获豁免、平台资源与释放 |
 | `meshway-connectivity` | 两类连接获取、peer 认证、会话选择／重连与真实路径事实 |

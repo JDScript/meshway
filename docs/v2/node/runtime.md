@@ -52,7 +52,7 @@ daemon／CLI 共用[运行日志参数](/v2/logging)，日志位于 stderr；CLI
 
 ## 安装范围与状态
 
-当前 TUN 候选由 daemon 装配 `meshway-underlay::Host`、`meshway-connectivity::Manager` 和 `meshway-dataplane::secure::SecureNode`。TUN 源包按目标 IP、协议／端口和当前 profile 提交需求，续租复用原 demand ID；Server 将已分配 Mesh IP 规范化为 Mesh Node 目标。原路径回复查询 SecureNode 的唯一流表，不另建 daemon 反向流表。
+当前 TUN 候选由 daemon 在唯一 [Engine](#engine) 后装配 `meshway-underlay::Host`、`meshway-connectivity::Manager`、`meshway-dataplane::secure::SecureNode` 与 DNS 查询 owner。TUN 源包在期望 netmap 上本地准入，不联系 Server。原路径回复查询 SecureNode 的唯一流表，不另建 daemon 反向流表。
 
 | 范围 | 当前行为 |
 | --- | --- |
@@ -234,6 +234,29 @@ up/down 按本机期望状态 revision 执行 CAS，并保留最后一次变更�
 daemon 独占目录锁，启动时记录 socket 的文件身份；只有身份匹配且确认无监听者的旧 socket 可清理。未知文件、符号链接、活跃 socket 和损坏的状态文件都保留并报错。
 
 CLI 生命周期不承载 Node 身份或 lease，不收集账户密码、不取得浏览器会话。业务 listener／DNS／策略无本地覆盖源；获准路由方案切换仍是使用选择，具体入口待定。`down` 不等于云端永久删除。
+
+## Engine
+
+`meshway-engine::Engine` 是 Node 的唯一期望状态 owner。Control 每发布一次 netmap，daemon 的网络 owner 调用一次 `reconfig(Some(&netmap))`；撤回时调用 `reconfig(None)`。
+
+| 输入 | Engine 行为 |
+| --- | --- |
+| 新内容（更大 serial） | 构造一次不可变 `Desired`（内容与共享 `LocalCompiler`），按 Host → 邻接 → SecureNode → DNS 顺序调用各组件幂等 `apply`；任一失败时对全部组件应用空期望 |
+| 同内容、更晚租约 | 只延长自身计时器，不调用任何组件 |
+| 更早 `issuedAt` 或回退引用 | 拒绝，当前期望不变 |
+| 计时到期（`next_expiry`／`expire`） | 按 SecureNode → 邻接 → Host → DNS 顺序应用空期望；已到期内容须由新租约重新安装 |
+
+各组件 `apply`：
+
+| 组件 | 签名 | 空期望 |
+| --- | --- | --- |
+| Host | `Host::install(Desired)`；同内容为空操作，同一节点新内容保留 TUN 与用途不变的描述符 | `Host::suspend`：结束全部操作与描述符，保留负向 capture 边界；exit 角色随之撤销并精确清理 CT |
+| 邻接 | `Manager::apply(&Desired)`；保留内容仍准入、承载顺序仍领先的已选通道与资源 | `Manager::shutdown` |
+| 数据面 | `SecureNode::apply(&Desired) -> Applied`；保留授权 digest 与路径密钥不变的 circuit、决策不变的流 | 丢弃 SecureNode：取消全部 circuit、流与排队输出 |
+| DNS | `Attachment::install(Desired)`，经 `publish_scope` 发布查询范围 | `publish_scope(None)`：立即结束旧 ticket、路由与未发送回答 |
+| 诊断 | `Owner::synchronize(&Desired, instance, tasks)` | `Owner::clear` |
+
+已建立 circuit 在双向 90 秒无帧时结束；源端连续发送 30 秒未收到任何认证帧时结束并在下一个包重新握手（对端重启后有界恢复）。下一跳暂无承载时登记邻接需求，包在有界首包队列中等待承载恢复。
 
 ## 控制调度与恢复
 

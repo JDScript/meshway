@@ -8,7 +8,7 @@
 
 本稿的核心结论：
 
-1. **执行权限只来自 netmap 租约**。`ExecutionSnapshot` 绑定 netmap 内容摘要与 24 h 租约，不再绑定 publication，也不再以 session／instance／60 秒 execution lease 作为数据面截止。session 只约束 HTTP，instance 只约束 State、回执与协调请求。Server 停机 10 分钟，数据面不受影响。
+1. **执行权限只来自 netmap 租约**。Control 发布已验签的内容与 24 h 租约，Engine 是租约的唯一计时者并向组件应用不可变 `Desired`；不再有 publication、执行快照或 session／instance／60 秒 execution lease 作为数据面截止。session 只约束 HTTP，instance 只约束 State、回执与协调请求。Server 停机 10 分钟，数据面不受影响。
 2. **两条线严格分开**。稳定策略（Access ∩ topology ∩ routing ∩ 身份库存 ∩ 方案选择）只在少数提交事务中编译成 netmap；动态事实（候选端点、STUN 观测、出口就绪、实例资格、观察任务）走同一 `sync` 长轮询中独立的 `peerFacts` 部分，由各自 owner 消费，**永不触发编译或 publication**。
 3. **首包、ping、State、续租都不改变执行身份**。只有 netmap 内容变化（serial 递增）才产生一次资源差量更新；同内容续期是 O(1) 截止延长。审查列出的 29 项 remove 中 **26 项消失、3 项变形、0 项保留**（[对照表](#remove-清单对照)）。
 4. 实现按“先建、后切、再删”的顺序进行，在集成分支上完成后一次合入；开发环境不支持新旧 Server／Node 共存。
@@ -162,7 +162,7 @@ Server 挂起请求直至 netmap 或可见事实变化，或 ≤ 60 s 超时；�
 
 ### Node 侧
 
-- Control 是唯一联系 Server 的 owner，循环发 `sync`：`netmap` 部分校验、保存、签发快照 → 各组件 `update`；`peerFacts` 部分解码为 `PeerFacts { nodeId, listeners: key → { phase, network, localEndpoints, stunCandidates }, exit: { roleGeneration, status, installedFamilies }, observedAt, expiresAt }`，经有界队列交给对应 owner，不经过 `ExecutionSnapshot`。
+- Control 是唯一联系 Server 的 owner，循环发 `sync`：`netmap` 部分校验、保存、发布 → Engine `reconfig` → 各组件 `apply`；`peerFacts` 部分解码为 `PeerFacts { nodeId, listeners: key → { phase, network, localEndpoints, stunCandidates }, exit: { roleGeneration, status, installedFamilies }, observedAt, expiresAt }`，经有界队列交给对应 owner，不进入期望内容。
 - Manager 以 `update_peer_facts` 合并候选，不重建 epoch、不换 scope；已有健康通道不因候选变化断开。
 - 事实丢失（请求失败、Server 停机）时保留最近事实至其自身截止，过期后只剩 netmap 的 configured 端点。
 

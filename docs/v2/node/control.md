@@ -15,18 +15,17 @@ daemon／CLI 通过本组件完成[控制生命周期](/v2/node/runtime#启动�
 | `cancel_enrollment` | 持钥取消待完成请求，或清理已确认的取消／撤回／过期请求；已兑换身份不会被当作临时请求删除 |
 | `enroll_with_key`／`resume_key_enrollment` | 在同一私有记录中先保存接入密钥、独立 Node 密钥和 intent，再调用 `POST /agent-api/v1/enrollments`；重启复用原请求，成功后清除接入秘密 |
 | `authenticate` | 先签名申请有界 challenge，再校验固定 Server／Node／key／generation 并消费证明，取得短期 Node 会话 |
-| `refresh_authentication` | 在原会话截止前持钥取得新会话，保留同一有效实例；不会延长旧快照或 execution lease |
+| `refresh_authentication` | 在原会话截止前持钥取得新会话，保留同一有效实例；不改变已发布的 netmap 或其租约 |
 | `rotate_keys`／`rotate_keys_with_request`／`rotation_pending` | 显式发起或恢复待确认换钥；宿主请求 ID 与最后一次成功结果一并私有保存，重放不再次轮换 |
 | `acquire_instance` | 使用宿主真实能力取得实例；同一次不确定请求保持原 instance ID |
 | `renew_instance` | 更新当前实例的期限，验证返回实例与代际 |
 | `sync_configuration` | 读取完整目标或用共享库应用 delta，检查 digest／身份／实例绑定，原子保存目标 |
 | `refresh_configuration` | 显式续租并从同一 Server 事务取得精确匹配的 lease 与 full／delta；复用相同校验和持久化入口 |
 | `watch_node`／`receive_event` | 创建单条、无自动重连的类型化 Node 事件流；把同认证上下文的通知映射为既有刷新或失效动作 |
-| `execution_snapshot` | 从当前有效实例、lease 和匹配的已保存目标取得不可变执行快照；不证明 installed／applied |
-| `dataplane_identity` | 验证同执行快照（或同一 netmap 租约的快照）与已登记密钥后，取得受期限约束的 Noise 初始化及包平面签名句柄 |
-| `begin_sync`／`SyncCall::send`／`finish_sync`／`sync` | 一次 netmap 长轮询：持有 driver 准备、释放 driver 发送、再持有 driver 校验并签发；见 [Netmap 快照与续租](#netmap-快照与续租) |
-| `sync_loop` | 以 `tokio::sync::Mutex<Control>` 驱动长轮询直至停止，按结果发布快照 |
-| `netmap_snapshot`／`netmap_reference`／`netmap_lease` | 当前 netmap 快照（有有效实例时附带绑定）、持有的已验证内容引用（下一请求的基准）与当前租约 |
+| `dataplane_keys` | 本身份已登记的包平面密钥（`DataPlaneKeys`）；不是授权，组件只对公钥与内容 selfKeys 一致的期望内容使用 |
+| `begin_sync`／`SyncCall::send`／`finish_sync`／`sync` | 一次 netmap 长轮询：持有 driver 准备、释放 driver 发送、再持有 driver 校验、保存并发布；见 [Netmap 发布](#netmap-发布) |
+| `sync_loop` | 以 `tokio::sync::Mutex<Control>` 驱动长轮询直至停止，按结果发布 `Option<meshway_engine::Netmap>` |
+| `netmap`／`netmap_reference`／`netmap_lease` | 已发布的已验证内容与签名租约（租约在 Control 时钟上已结束则为空）、持有的内容引用（下一请求的基准）与当前租约 |
 | `set_sync_transport` | 安装 sync 的 HTTP 交换实现 |
 | `create_demand` | 使用当前 Node 会话提交匹配当前 instance 的类型化需求；调用方保持重试 request ID，随后同步执行目标 |
 | `renew_demand` | 以现有 demand ID 和绝对 expiresAt 请求续租；反馈不更新本机许可，须同步保存并取得新执行快照 |
@@ -55,7 +54,7 @@ daemon／CLI 通过本组件完成[控制生命周期](/v2/node/runtime#启动�
 - Ed25519 控制密钥和 X25519 数据面密钥分别生成。签名 transcript／intent digest 与 Server 共用协议实现。
 - Server origin 与已登记的 `controllerId` 固定保存；不同 origin 或不同安装身份的 challenge 不能接管既有密钥。
 - challenge 分配响应不确定时保留同一签名申请；申请已本地到期时使用新申请，session 响应不确定仍保留原 session intent。已本地到期证明遭拒允许重新证明，新鲜证明的凭据拒绝保持终止语义。
-- 短期会话、instance、lease 和上报计数不写入恢复文件；进程重启后重新认证并申请新 instance。签名的 netmap 及其租约例外，见 [Netmap 快照与续租](#netmap-快照与续租)。
+- 短期会话、instance、lease 和上报计数不写入恢复文件；进程重启后重新认证并申请新 instance。签名的 netmap 及其租约例外，见 [Netmap 发布](#netmap-发布)。
 - `stop` 停用会话的本机使用资格。仍有效的短期凭据可留在当前进程，显式 `authenticate` 后复用，以免反复启停耗尽 Server 的会话额度；它不能恢复已释放的实例。
 - 期限同时受墙上时间和单调时钟约束，延迟响应与时钟回拨不会延长已取得的期限。
 - 已接纳写入即使失去等待者也由阻塞 worker 完成，并持续持有目录锁。结果不确定时返回 `ReloadRequired`，重新打开后才能发起依赖该状态的操作。
@@ -99,59 +98,33 @@ SSE 复用受保护客户端，但不设置流的总请求截止：建立连接�
 
 daemon 先持久接纳带 CAS 的换钥操作，再由唯一 Control owner 执行；Server 结果与新绑定持久化、daemon 操作回执落盘后才同步回答 CLI。CLI 断开不撤回已接纳操作，进程重启保留原请求 ID 恢复。接入密钥只在待完成意图中私有保存，接入完成后清除原值；幂等回执保留摘要。
 
-## 执行快照
+## Netmap 发布
 
-`ExecutionSnapshot` 的类型定义于 `meshway-authority`；生产快照只由 `Control::execution_snapshot()` 签发，约束见[架构](/v2/architecture#node-内部共享的基础接口)。它绑定网络／节点、instance／generation、精确目标引用和本机失效代际，并保留原始 session、instance 与 execution 三个截止。缓存恢复、读取或 Clone 都不能延长期限。下列方法属于 authority 类型：
+Control 只验证、保存并发布签名 netmap；它不签发任何执行快照、guard 或期限句柄。租约到期由 [Engine](/v2/node/runtime#engine) 的唯一计时器负责，Control 不按消费者重复检查。
 
-配置／需求改变后，Server 可能先撤回旧 execution lease。`sync_configuration` 只取得并保存新目标，不自动续租。持续运行使用 `refresh_configuration`，通过[原子刷新](/v2/execution#原子执行刷新)同时取得完整目标／delta 和该目标的 lease，避免分开的续租／查询夹入其他发布。已保存目标与当前可运行资格仍分别检查。
-
-`authenticate` 在会话的 UTC 或单调剩余期限进入 60 秒窗口时主动更新认证。新会话必须在旧会话截止前成功验证，才能保留同一实例与连续性；过期、绑定不匹配或凭据拒绝仍停止旧上下文。认证更新不修改业务许可，也不延长已经取得的旧输出 deadline。
-
-- `configuration()`／`ensure_current()`：检查当前有效性；目标内容包含私有配置，只交给受信运行组件。
-- `now_ms()`／`expires_at()`：复用控制 owner 的 UTC 高水位和单调期限。
-- `invalidated()`／`invalidated_at(permit_deadline_ms)`：供宿主取消阻塞 I/O；没有额外后台任务，permit 截止只能进一步缩短快照寿命。
-- `same_execution()`：判断显式续租交接是否仍是相同 instance、目标和失效代际；调用组件仍须检查新旧快照有效性。
-- `continuation_from(old)`：仅接纳同一 Control owner 发出的同目标续租或直接前驱 publication；校验 instance／generation、网络／节点、identity、地址与 selfKeys 不变，且旧 UTC／单调截止仍有效。返回旧配置只用于比较，不恢复其输出权限。
-
-输出排队时保留快照，在最终 I/O 边界再次检查，并在阻塞期间选择失效通知。替换 publication 会取消旧输出 guard，但允许直接后继按不透明 lineage 比较仍未过期的旧授权。stop、取消需求、失效 barrier、跨 instance 或跳过已观察的 publication 都中断连续性；调用者不能只比较 digest 重新构造交接。旧排队输出永不取得新期限。数据面如何保留流／circuit 见[连续性](/v2/node/dataplane#包与流边界)。
-
-## Netmap 快照与续租
-
-> 组件接口已实现；Server 的 `POST /agent-api/v1/sync` 路由、生成客户端方法与 daemon 接线尚未完成，`SyncTransport` 是两者之间的接口。行为设计见 [Netmap 设计](/v2/node/netmap-design)。
-
-`ExecutionSnapshot::issue_netmap(NetmapIssue)` 绑定已验证的 `CompiledNetmap` 与其 `NetmapLease`，唯一截止是租约 `expiresAt`，在签发者 Clock 上同时受 UTC 高水位与单调时钟约束。session 与 instance 不参与有效性；instance 只作为 State／回执绑定（`instance_binding()`），可为空。生产快照只由 Control 签发。
-
-| 方法 | 行为 |
-| --- | --- |
-| `netmap()`／`netmap_reading()` | 当前内容；reading 在一次租约读取下给出内容、租约与时钟值，`leased()` 直接作为 `meshway_policy::admission::netmap` 的输入 |
-| `netmap_ref()`／`lease()`／`deadline()` | 比较数据，不是授权 |
-| `same_netmap(other)` | 同一内容签发且同一失效代际：两份快照可互换，仅实例绑定可能不同 |
-| `netmap_continuation_from(old)` | 只对 serial 增大定义：同一 lineage、旧租约仍有效、本节点 enabled／identity／地址／keys 不变；返回旧内容供消费者按内容比较，不恢复旧输出权限 |
-
-同一内容的所有快照共享一个租约单元。`NetmapRenewal`（仅签发者持有）续租时提高所有活快照的截止，不取消任何 guard、不换代，新快照与旧快照 `same_netmap`。租约已到期或 guard 已失效后续租失败：过期授权不复活，只能重新签发。新 serial 先取消全部旧 guard（本节点身份变化时同时换 lineage），保存后再签发新快照。
-
-`finish_sync` 依次执行：请求被替换检查 → `SyncResponse::check(request)` → 以钉住的 Server 钥验证 `signature`（keyId／generation 与钉住钥不符为 `ServerKeyMismatch`，其余失败为 `SignatureInvalid`；均拒绝该回复、不改变状态、不撤销现有授权，`sync_loop` 按网络错误退避）→ full 验证 digest、delta 以 `apply_netmap_delta` 重建并复核目标 digest、unchanged 匹配持有内容 → 网络／节点／keys 绑定与租约指向 → 拒绝 serial 回退 → 保存 → 签发。结果为：
+`finish_sync` 依次执行：请求被替换检查 → `SyncResponse::check(request)` → 以钉住的 Server 钥验证 `signature`（keyId／generation 与钉住钥不符为 `ServerKeyMismatch`，其余失败为 `SignatureInvalid`；均拒绝该回复、不改变状态、不撤回已发布租约，`sync_loop` 按网络错误退避）→ full 验证 digest、delta 以 `apply_netmap_delta` 重建并复核目标 digest、unchanged 匹配持有内容 → 网络／节点／keys 绑定与租约指向 → 拒绝 serial 回退与同内容更早 `issuedAt` 的租约 → 保存 → 发布。结果为：
 
 | `NetmapChange` | 含义 |
 | --- | --- |
-| `New { previous }` | 首次安装或更大 serial；旧 guard 已取消 |
-| `Renewed` | 同内容就地续租 |
-| `Reissued` | 同内容但当前没有有效授权（已到期、已撤销或重启时缓存已过期），重新签发，不与旧快照 `same_netmap` |
+| `New { previous }` | 首次安装或更大 serial；内容先保存再发布 |
+| `Renewed` | 同内容的新租约；Engine 只延长自己的计时器，旧租约已结束时重新安装同一内容 |
 
-在 `finish_sync` 之前已有其他安装、撤销或停止的回复返回 `Pending` 且不改变任何状态。`peerFacts` 在 netmap 部分安装后原样交给 `PeerFactsSink`，不进入快照；消费者拒收时下一请求不带游标、取得完整事实。单次请求总上限 90 秒（Server 挂起上限 60 秒），连接级失败 1 秒起倍增至 30 秒退避；立即返回且无变化的回复至少间隔 1 秒。
+在 `finish_sync` 之前已有其他安装、撤回或停止的回复返回 `Pending` 且不改变任何状态。`peerFacts` 在 netmap 部分安装后原样交给 `PeerFactsSink`，不进入内容；消费者拒收时下一请求不带游标、取得完整事实。单次请求总上限 90 秒（Server 挂起上限 60 秒），连接级失败 1 秒起倍增至 30 秒退避；立即返回且无变化的回复至少间隔 1 秒。
 
-| 事件 | netmap 授权 |
+| 事件 | 已发布租约 |
 | --- | --- |
-| Server 不可达、超时、5xx、409、session 过期／401、instance 过期或重新取得 | 保持至租约截止 |
-| sync 返回 403／404、`membership_revoked`、`stop`、开始换钥、身份记录写入、私有写入结果不确定 | 立即取消 |
+| Server 不可达、超时、5xx、409、session 过期／401、instance 过期或重新取得 | 保持，直至 Engine 计时到期 |
+| 类型化身份拒绝（`membership_revoked` 等）、`stop`、开始换钥、身份记录写入、私有写入结果不确定 | 立即撤回（发布 `None`），Engine 应用空期望 |
+
+State、回执、协调与观察结果只为 Control 持有且租约未结束的精确内容发言（`held_netmap`）；instance 只是 State／回执绑定，不进入期望内容。
 
 ## 安装回执与运行报告
 
 `begin_application()` 为当前已保存、instance 目标一致的配置确认 saved 后返回 `ApplicationTicket`。Ticket 绑定 Control owner、instance、target 与 attempt；Clone 不产生新尝试。同一未完成尝试重用原 saved 请求、sequence 和时间；已完成后的重装使用下一 attempt。
 
-`finish_application(ticket, result, observed_at)` 接收宿主真实 `Ok(())` 或 `ApplyFailure`，固定首次结果、sequence 和观测时间；不确定交付重试不能改结果。仍属同一 instance 的旧目标完成可进入 Server 历史，由 Server 排序避免覆盖当前目标；当前启用目标的 applied 还须具有有效执行快照。
+`finish_application(ticket, result, observed_at)` 接收宿主真实 `Ok(())` 或 `ApplyFailure`，固定首次结果、sequence 和观测时间；不确定交付重试不能改结果。仍属同一 instance 的旧目标完成可进入 Server 历史，由 Server 排序避免覆盖当前目标；当前启用目标的 applied 还须对应 Control 持有、租约未结束的精确内容。
 
-已完成的当前 ticket 在下一次目标刷新前先结清。Server 明确返回[回执域冲突](/v2/api/problems#node-配置回执冲突)时，`ReceiptRejected` 保留类型化 Problem 与 Server request ID；被拒 ticket 终止，不能改绑、重写内容或再次提交。daemon 清除对应待确认完成，刷新后以新 attempt 重新确认 saved 和安装；网络／交付不确定仍重发原 ticket。回执被拒不等于实际组件已经停止，也不授予旧执行新的期限。
+已完成的当前 ticket 在下一次目标刷新前先结清。Server 明确返回[回执域冲突](/v2/api/problems#node-配置回执冲突)时，`ReceiptRejected` 保留类型化 Problem 与 Server request ID；被拒 ticket 终止，不能改绑、重写内容或再次提交。daemon 清除对应待确认完成，刷新后以新 attempt 重新确认 saved 和安装；网络／交付不确定仍重发原 ticket。回执被拒不等于实际组件已经停止，也不延长任何租约。
 
 `report_runtime_state` 与 `report_control_state` 共用报告 sequence／重试 owner。待确认报告存在时，新事实等待，重发原观测不制造样本。保存、安装、认证通道和业务包流分别表达；报告不会授予或延长执行资格。
 

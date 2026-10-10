@@ -10,9 +10,9 @@
 
 判定检查当前 permit、业务源／目的地址、协议／端口、完整路径、实际相邻 peer 和出口资格。回复必须对应数据面已有的正向流，并沿原完整路径反向运行。规则语义分别见 [Access](/v2/configuration-reference/access) 和 [Routing](/v2/configuration-reference/routing)；NodeID 或 pure predicate 的调用不证明身份认证。
 
-`meshway-dataplane::Engine` 持有一个[执行快照](/v2/node/control#执行快照)和唯一有界流表。`Packet::parse(PacketBuffer)` 验证包并保留原始 buffer；`Packet::parse(&[u8])` 返回借用视图；兼容的 Vec 输入在边界转入带预留空间的存储。`process` 产生 `PendingAction`。宿主必须在最终同步发送／交付边界调用其 `release`，等待期间保留 wrapper 并监听 `invalidated()`。
+`meshway-dataplane::Engine` 持有 Engine 的[期望内容](/v2/node/runtime#engine)（`Desired`）和唯一有界流表。`Packet::parse(PacketBuffer)` 验证包并保留原始 buffer；`Packet::parse(&[u8])` 返回借用视图；兼容的 Vec 输入在边界转入带预留空间的存储。`process` 产生 `PendingAction`。宿主必须在最终同步发送／交付边界调用其 `release`，等待期间保留 wrapper 并监听 `ended()`。
 
-同步操作在入口取得一次 `ExecutionSnapshot::reading()`，本次 policy 判定、流时间和执行／permit／circuit 截止计算共用其中的配置、UTC 高水位与单调时间。流提交、nonce／replay 消耗、circuit 状态提交及产出前仍执行完整动态最终检查；用于最终截止检查的新读数不重新准入或延长入口确定的期限。`Reading` 只由同步内部调用借用，排队输出保存原快照和截止，跨等待的 `release`／carrier I/O 边界继续独立检查原 guard。本地重试 pacing 与 probe 令牌预算仍以实际扣除预算时的单调时间计时，避免慢操作提前补充预算；它们不延长任何授权截止。
+同步操作在入口取得一次读数（期望内容、UTC 与单调时间），本次 policy 判定、流时间和 circuit／流截止计算共用。流提交、nonce／replay 消耗、circuit 状态提交及产出前仍执行最终检查；读数不读取租约，也不延长入口确定的期限。排队输出保存自身截止与取消，跨等待的 `release`／carrier I/O 边界继续独立检查。租约到期由 Engine 的空期望保证：SecureNode 被丢弃，全部 circuit、流与排队输出随之取消。本地重试 pacing 与 probe 令牌预算仍以实际扣除预算时的单调时间计时。
 
 流表内部按双向 tuple 索引查询与冲突检查，按单调／UTC 截止索引回收；刷新和删除同步移除旧截止项，索引大小受同一流容量约束。索引只定位候选，不替代当前 permit、完整路径、协议状态和最终输出 guard 检查。读取不刷新 idle／lease，也不创建反向流。
 
@@ -27,7 +27,7 @@
 | 业务协议 | TCP、UDP、ICMP echo；检查端口、协议头及适用 checksum |
 | UDP／ICMP | 回复匹配已建立反向 tuple；echo 另绑定 identifier／sequence |
 | TCP | 三次握手、每方向 16 MiB 序号历史内的 ACK／重分段重传、前方 16 MiB 内最多 64 个已见乱序区间、FIN 与已建立 RST；支持序号回绕，状态有界。由端点 TCP 处理实际重排／SACK；不缓存包体，不支持 simultaneous-open、TFO 或握手 RST |
-| 资源 | 默认 4,096 流、60 秒空闲；最大 65,536 流、24 小时空闲设置；实际寿命仍受 permit 和执行快照约束 |
+| 资源 | 默认 4,096 流、60 秒空闲；最大 65,536 流、24 小时空闲设置；实际寿命受空闲、circuit 与 Engine 撤回约束 |
 
 同一流固定原 demand ID 与完整路径；同一节点／角色范围的活 tuple 在多个 demand ID 之间也不能被另一条路径接管。`LocalFlow` 只读查询同一 FlowTable，供本机源包／原路径回复使用，不刷新流、推进协议状态或形成第二份路由表。SecureNode 中继不创建业务流，也不因此获得本机发起资格；歧义拒绝。
 
@@ -35,9 +35,9 @@ SecureNode 的实际 forward 包通过认证与流准入后，CID 与协议状�
 
 TCP 乱序区间只记录已准入字节的序号，不制造接收确认：缺口补齐前不推进连续 ACK 边界，不能用“最高见过的序号”接受越过缺口的 ACK。空 ACK 不创建区间或推进边界；重叠重分段可以补充新后缀。FIN 的字节位置一经准入不能改变，也不能重新解释已准入的数据；RST 仍要求精确连续前沿。区间容量、窗口边界或协议检查失败不提交状态。此前丢失的包不会因此自动重发，重传和实际接收窗口仍由两端 TCP 拥有。
 
-`Engine::reconcile` 使用 Control 的[直接连续性交接](/v2/node/control#执行快照)，仅保留原授权与完整路径仍相同的活流。比较使用排除 `expiresAt` 的 `permit_authorization_digest`，同时检查路径相关身份、地址与 key 绑定。换 instance、撤回、取消、跳过 publication 或旧期限已到都不迁移状态。
+`SecureNode::apply(&Desired)` 对新内容就地比较：仅保留服务、完整路径与出口选择仍由新内容决定的活流，以及授权 digest 与路径密钥不变的 circuit；本节点身份、地址或密钥变化时全部结束。同内容为空操作。
 
-交接本身保守保留流的旧 idle／permit／快照截止，不凭读状态延长流。只有旧流仍有效时，实际获准包通过同一协议状态机才能刷新其期限；已排队输出继续受原截止与 guard 约束。拒绝包不建立或推进流状态。
+应用不延长任何流期限；只有实际获准包通过同一协议状态机才能刷新其期限。拒绝包不建立或推进流状态。
 
 ### IPv4 出口流与内核投影
 
@@ -56,7 +56,7 @@ TCP 乱序区间只记录已准入字节的序号，不制造接收确认：缺�
 
 逐层图与运行成本见[包流分层与加密讨论](/v2/discussions/packet-layers)，线上字段与规模约束见 [Packet 字节账本](/v2/discussions/packet)。本页定义当前行为；讨论中的候选方案不改变这些约束。
 
-`meshway-dataplane::secure::SecureNode` 是同一执行快照下的 circuit 和流状态 owner。`start` 发起握手，`receive` 验证承载帧，`send` 接收本机 IP 包。业务源与终点使用相同的 `Engine`／`meshway-policy`；中继仅按已建立 circuit 执行会话级转发，不解析业务 facts、不建立业务流。
+`meshway-dataplane::secure::SecureNode` 是期望内容下的 circuit 和流状态 owner。`start` 发起握手，`receive` 验证承载帧，`send` 接收本机 IP 包。业务源与终点使用相同的 `Engine`／`meshway-policy`；中继仅按已建立 circuit 执行会话级转发，不解析业务 facts、不建立业务流。
 
 | 边界 | 当前实现 |
 | --- | --- |
@@ -70,7 +70,7 @@ TCP 乱序区间只记录已准入字节的序号，不制造接收确认：缺�
 
 **隐私范围：**IP 包通过 Noise 在业务两端之间加密，外层不公开五元组、TCP／echo 状态。CID、方向、序号与密文长度仍公开。中继不解密业务 payload；终点解密后解析真实 IP 包并执行业务准入。
 
-密钥通过 `Control::dataplane_identity` 从有效执行快照取得。包平面签名有独立的 purpose／network／node／key generation transcript，不开放任意控制认证消息签名。该句柄是受信进程内接口；密钥不进入 Debug 或序列化，不能视为恶意插件的内存隔离。
+包平面密钥由 `Control::dataplane_keys` 取得（`DataPlaneKeys`），SecureNode 构造时核对其公钥与期望内容的 selfKeys。包平面签名有独立的 purpose／network／node／key generation transcript，不开放任意控制认证消息签名。该句柄是受信进程内接口；密钥不进入 Debug 或序列化，不能视为恶意插件的内存隔离。
 
 当前 wire 标识为 `MWCIR\0\0\x05`。Noise prologue 与握手证明保留原 purpose（prologue 同时绑定新的 magic），会话 KDF 与相邻 MAC 使用独立 v5 purpose；通用 `meshway/packet-proof/v2` 控制签名 transcript 保持独立。此格式仍是候选，不是稳定插件 ABI。v4／v5 帧不兼容，旧版本被拒绝，完整路径节点需要协调升级。IPC v3 和 HTTP 契约独立于该 wire 版本。
 
@@ -174,11 +174,11 @@ Manager 在提交时捕获实际 link，按冻结 ChannelScope 分组；换代�
 
 诊断使用独立的加密 challenge request／reply，同一 owner 验证原路径和请求关联；不产生业务 FlowTable 准入。实际发送／接收通道、计时、重放与取消边界见[路径诊断](/v2/node/diagnostics)。
 
-`SecureNode::reconcile` 在相同授权、原路径和有效直接交接下保留 Noise／会话 MAC keys、nonce、重放窗口与同一流表。显式授权续租可在旧 UTC／单调期限到达前延长活 circuit 的期限；已关闭／过期 circuit 不复活，握手期限也不由续租重置。已签发输出保留旧 guard；流截止按上节处理。
+保留的 circuit 继续使用其 Noise／会话 MAC keys、nonce 与重放窗口。已建立 circuit 双向 90 秒无帧时结束；源端连续发送 30 秒未收到任何认证帧时结束，下一个包重新握手。源端下一跳暂无承载时登记 `AdjacencyInterest`，包在有界首包队列中等待承载恢复或 circuit 结束。
 
-诊断中继的 request correlation 属于已提交会话状态：同一活跃 circuit 合法接续时保留 measurement、完成标记和原 UTC／单调截止，不延长探测窗口。交接后新收到的 reply 仍须通过当前完整准入、相邻认证、重放与关联检查，才产生本次输出。已经签发或排队的 request／reply 不重新绑定；源端 challenge／sample 的原 scope 约束也不因此改变。
+诊断中继的 request correlation 属于已提交会话状态：保留的 circuit 保留 measurement、完成标记和原截止，不延长探测窗口。新收到的 reply 仍须通过当前完整准入、相邻认证、重放与关联检查。
 
-执行快照在同步包处理期间被替换时，该操作及其旧输出立即拒绝；快照失效本身不等于 circuit 的永久关闭。尚在原期限内的密码状态、已提交流状态和 nonce／重放窗口仅作不可执行的待交接状态保留，仍须由上述 Control 连续性检查决定能否接续。未提交的新流丢弃，已消耗的 nonce 不回滚；实际到期、取消、关闭及握手密码处理失败保持原有终止规则。
+内容应用与包处理由网络 owner 的独占借用串行化，不存在处理中途替换内容的状态。未提交的新流丢弃，已消耗的 nonce 不回滚；到期、取消、关闭及握手密码处理失败保持原有终止规则。
 
 `carrier::send` 把完整 I/O lifetime 随已接纳工作交给正式 transport worker；即使完成等待者暂不被轮询，每次底层 write／flush 也检查同一许可期限和失效条件。`carrier::deliver` 在每次恢复 TUN 写入前检查所有限制。完成只表示本机写入完成，对端接收／应用回包另行证明。
 
@@ -217,7 +217,7 @@ journal 绑定 namespace／boot 身份，记录有界资源及待完成操作。
 
 #### Bootstrap 与普通业务隔离
 
-Server 与获准候选的 bootstrap 只开放用途受限 socket。Server HTTP 使用固定 origin 的私有 UDS relay 接入 reqwest，HTTPS 仍执行正常系统根 TLS 校验；不会为同 IP 的普通应用流量创建全局豁免。候选 handle 绑定已发布的 peer／listener／endpoint 和有效执行快照。
+Server 与获准候选的 bootstrap 只开放用途受限 socket。Server HTTP 使用固定 origin 的私有 UDS relay 接入 reqwest，HTTPS 仍执行正常系统根 TLS 校验；不会为同 IP 的普通应用流量创建全局豁免。候选 handle 绑定已发布的 peer／listener／endpoint 和 Host 已安装的期望内容。
 
 daemon 在使用受管 resolv.conf 时先恢复真实 bootstrap 上游，再依次执行 `Host::open`、`attach_control`，随后启动网络协调器；挂接失败阻断启动并 shutdown 已打开的 Host。独立 DNS anchor 仍由同一内核 owner 管理，其 suspend／down 归属与生命周期不依赖是否挂接控制代理。
 
@@ -225,23 +225,23 @@ bootstrap 名称可使用[启动参数](/v2/node/runtime#启动与接入)的显�
 
 ## DNS 查询 owner
 
-`meshway-dns` 使用 Hickory 编解码、TCP framing 和 DNS 选择规则。`Owner` 持有同一个执行快照与有限 pending 请求；宿主用唯一 Control driver 执行 `Control::query_dns`，将类型化响应交回 `complete_discovery`。
+`meshway-dns` 使用 Hickory 编解码、TCP framing 和 DNS 选择规则。`Owner` 持有一个期望内容与有限 pending 请求；其 ticket、路由与回答都是所属 scope 的子取消。
 
 Ticket 绑定 owner 代际与本次操作；DNS request ID 相同不表示同一任务。完成时检查规范名称、网络／源节点、配置 revision 和可验证的地址绑定。`asOf` 是 Server 查询时点，不以本机与 Server 时钟相等作为条件，也不据此制造 TTL。
 
 当前已发布／发现的 MagicDNS 记录均以 TTL 0 应答，没有正／负缓存，也不新增 TTL 来源。已知名称缺少对应地址族返回 NODATA；精确发现的 `record: null` 保持类型化 `NotVisible` 并编码为 REFUSED，无 AA／SOA，不制造可缓存 NXDOMAIN。部分 `mesh_hosts` 缺席先进行精确发现，不能被当作权威 NXDOMAIN。
 
-`OwnerDispatcher` 的 scope 更新、`stop` 或 owner 销毁取消旧 ticket 与尚未发送的回答；失效 Control 快照同样阻止回答交付。
+`publish_scope` 发布非等价 scope 或撤回（`None`）时立即结束旧 scope 的 ticket、路由与尚未发送的回答；`stop` 与 owner 销毁同样如此。
 
 ### Service 与 resolver 路由
 
 `Service` 消费预绑定、地址／端口相同的 loopback UDP socket 与 TCP listener，并校验客户端同为 loopback。两种传输共用一个 `OwnerDispatcher`；默认同时最多 128 查询、32 TCP 连接，查询期限 5 秒、TCP idle 30 秒、UDP payload 上限 1232 bytes。每条 TCP 连接顺序处理查询；超预算 UDP／连接丢弃，停止时取消并 join 服务任务。
 
-`OwnerDispatcher` 接受执行快照与 resolver key → demand ID 的有界映射，使用 `DiscoveryGateway` 调用宿主唯一 Control driver。普通上游仅通过 `ResolverExchange` 消费密封的 `LocalResolverRoute`：其构造重新检查同一 publication 中[精确 localEgress](/v2/configuration-reference/node-configuration#capture-与本机-egress)，绑定源、resolver endpoint、传输、profile、action 和期限。单独的 Direct／Unmanaged decision 不能构造该路由，也不是 bootstrap 豁免。
+`OwnerDispatcher` 从 scope 读取期望内容。普通上游仅通过 `ResolverExchange` 消费密封的 `LocalResolverRoute`：其构造在同一内容上检查[精确 localEgress](/v2/configuration-reference/node-configuration#capture-与本机-egress)，绑定源、resolver endpoint、传输、action 和请求期限。单独的 Direct／Unmanaged decision 不能构造该路由，也不是 bootstrap 豁免。
 
-exchange 适配器须在每次 connect／write／read poll 检查路由期限与取消，验证来源、事务及 framing；UDP 许可不隐含 TCP 重试。scope 更新（包括同目标续租）取消旧 DNS ticket／回答，不把旧查询移到延长后的 scope。服务对 dispatcher 失败给出原查询期限内的空 SERVFAIL；失效正向回答不能改装为负缓存。
+exchange 适配器须在每次 connect／write／read poll 检查路由期限与取消，验证来源、事务及 framing；UDP 许可不隐含 TCP 重试。同内容 scope 保持 owner；新内容取消旧 DNS ticket／回答，不把旧查询移到新 scope。服务对 dispatcher 失败给出原查询期限内的空 SERVFAIL；失效正向回答不能改装为负缓存。
 
-生产 `ResolverExchange` 由 Underlay 的 `SocketFactory` 实现，复用同一 socket 保护机制；UDP／TCP 每次实际 I/O 都检查原 sealed route、执行期限和取消。发送前随机化查询事务 ID，响应经实际来源、原问题及报文／帧边界校验后恢复客户端 ID。daemon 经唯一 Control owner 预先建立、续租 resolver 需求，再以原子刷新所得的快照安装 DNS scope；查询不借用 bootstrap 权限。
+生产 `ResolverExchange` 由 Underlay 的 `SocketFactory` 实现，复用同一 socket 保护机制；UDP／TCP 每次实际 I/O 都检查原 sealed route、请求期限和取消。发送前随机化查询事务 ID，响应经实际来源、原问题及报文／帧边界校验后恢复客户端 ID。DNS scope 由 Engine 的 DNS apply 发布；查询不借用 bootstrap 权限。
 
 单出口客户端 owner 消费 `DnsEgress::ViaExit`，使用独立密封 `MeshResolverRoute`，复用 ticket／dispatcher／输出取消；普通查询失败不会转成本机上游查询。`ResolverExchange::validate_mesh` 必须证明真实安装，`exchange_mesh` 只能经唯一 SecureNode 的受许可路径执行；默认 local-only 适配返回不可用。`ServeExitResolver` 的密封 Mesh ingress／出口系统上游与 listener、显式多出口 DNS plan 和可信域名关联入口仍未接线，见 [DNS](/v2/configuration-reference/dns#使用出口时)。这些范围或任何必需安装失败均阻断整体 applied。
 
