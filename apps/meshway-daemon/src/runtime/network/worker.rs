@@ -558,7 +558,27 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                     }
                 }
             }
-            Work::Tick | Work::DiagnosticSent => {}
+            Work::Tick => {
+                // The capability fact is a timed observation: refresh it well
+                // within the State report lifetime the Server enforces.
+                let stale = reports
+                    .borrow()
+                    .exit_capability
+                    .as_ref()
+                    .is_some_and(|fact| {
+                        chrono::Utc::now() - fact.observed_at
+                            >= chrono::Duration::seconds(
+                                meshway_protocol::STATE_REPORT_TTL_SECONDS / 3,
+                            )
+                    });
+                if stale && engine.desired().is_some() {
+                    let capability = engine.components_mut().exit_capability().await;
+                    let mut report = reports.borrow().clone();
+                    report.exit_capability = capability;
+                    reports.send_replace(report);
+                }
+            }
+            Work::DiagnosticSent => {}
             Work::ExitChanged => unreachable!("mapped above"),
         }
         let live = engine.desired().is_some();
