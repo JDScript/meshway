@@ -256,7 +256,7 @@ CLI 生命周期不承载 Node 身份或 lease，不收集账户密码、不取�
 | DNS | `Attachment::install(Desired)`，经 `publish_scope` 发布查询范围 | `publish_scope(None)`：立即结束旧 ticket、路由与未发送回答 |
 | 诊断 | `Owner::synchronize(&Desired, instance, tasks)` | `Owner::clear` |
 
-已建立 circuit 在双向 90 秒无帧时结束；源端连续发送 30 秒未收到任何认证帧时结束并在下一个包重新握手。Manager 的已选 channel 身份变化或消失（被替换、对端重启、通道结束）时，网络 owner 立即让 SecureNode 退役所有以该 peer 为相邻跳的 circuit（端点与中继），下一个包在当前 channel 上重新握手。中继不向上游回传关闭，多跳下游重启仍由源端的 30 秒无回复规则恢复。下一跳暂无承载时登记邻接需求，包在有界首包队列中等待承载恢复。
+已建立 circuit 在双向 90 秒无帧时结束；源端连续发送 30 秒未收到任何认证帧时结束并在下一个包重新握手。更换承载 channel（例如 UDP 失效后改用 TCP 退路）不结束 circuit：两端的 Noise 状态仍有效；对端重启丢失状态时由源端的 30 秒无回复规则恢复。下一跳暂无承载时登记邻接需求，包在有界首包队列中等待承载恢复。
 
 内容变化只丢弃已在旧内容上准入的输出；尚未准入的已接收帧（含握手帧）保留，由 SecureNode 按当前内容逐帧准入。
 
