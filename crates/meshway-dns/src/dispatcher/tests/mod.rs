@@ -95,7 +95,7 @@ async fn real_dispatcher_system_failover_keeps_ticket_authority_and_original_bud
     let mut control = server.real_control();
     server.enroll(&mut control).await;
     control
-        .sync(&mut meshway_netmap_fixture::Facts::default())
+        .sync(&mut meshway_test_server::Facts::default())
         .await
         .unwrap();
     let snapshot = meshway_engine::Desired::new(&control.netmap().unwrap().content).unwrap();

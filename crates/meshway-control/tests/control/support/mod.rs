@@ -1,26 +1,20 @@
-use meshway_control_client::Client;
-use meshway_model::{NetworkId, RequestId};
-use meshway_protocol::{CreateNetworkRequest, RegisterRequest, WireSecret};
-use meshway_server::{App, Settings};
-use std::{path::PathBuf, time::Duration};
-use tokio::{sync::oneshot, task::JoinHandle};
+use meshway_model::RequestId;
+use meshway_test_server::{Options, TestServer};
+use std::time::Duration;
 
-pub struct Server {
-    pub origin: String,
-    pub client: Client,
-    app: App,
-    temp: tempfile::TempDir,
-    stop: oneshot::Sender<()>,
-    task: JoinHandle<()>,
+pub use meshway_test_server::Owner;
+
+pub struct Server(TestServer);
+
+impl std::ops::Deref for Server {
+    type Target = TestServer;
+    fn deref(&self) -> &TestServer {
+        &self.0
+    }
 }
-pub struct Owner {
-    pub token: WireSecret,
-    pub network: NetworkId,
-}
+
 pub fn request() -> RequestId {
-    let mut bytes = [0; 16];
-    getrandom::fill(&mut bytes).unwrap();
-    RequestId::new(uuid::Builder::from_random_bytes(bytes).into_uuid()).unwrap()
+    meshway_test_server::random_id()
 }
 impl Server {
     pub async fn control(
@@ -30,133 +24,48 @@ impl Server {
         name: &str,
         capabilities: std::collections::BTreeMap<String, meshway_model::state::Capability>,
     ) -> meshway_control::Control {
-        let mut control = meshway_control::Control::open(
-            &self.path(name),
-            origin,
-            meshway_control_client::http_client_builder()
-                .unwrap()
-                .no_proxy(),
-        )
-        .unwrap();
-        self.enroll(owner, &mut control, name).await;
-        control.authenticate().await.unwrap();
-        control.acquire_instance(capabilities).await.unwrap();
+        let mut control =
+            meshway_control::Control::open(&self.path(name), origin, meshway_test_server::http())
+                .unwrap();
+        self.0
+            .connected(owner, &mut control, name, capabilities)
+            .await;
         control
     }
 
-    pub async fn enroll(
-        &self,
-        owner: &Owner,
-        control: &mut meshway_control::Control,
-        hostname: &str,
-    ) -> meshway_protocol::EnrollmentResponse {
-        let pending = control.begin_enrollment(hostname).await.unwrap();
-        self.client
-            .approve_device_authorization(
-                &meshway_control_client::ApproveDeviceAuthorizationPath {
-                    enrollment_request_id: pending.id,
-                },
-                &meshway_protocol::ApproveEnrollmentRequest {
-                    network_id: owner.network,
-                },
-                owner.token.expose(),
-            )
-            .await
-            .unwrap();
-        control.poll_enrollment().await.unwrap();
-        control.redeem_enrollment().await.unwrap()
-    }
     pub async fn start() -> Self {
-        let temp = tempfile::tempdir().unwrap();
-        let mut settings = Settings::new(temp.path().canonicalize().unwrap().join("server"));
         // An unchanged sync answers after one second instead of a full hold.
-        settings.netmap.hold = Duration::from_secs(1);
-        let app = App::open(settings).await.unwrap();
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let origin = format!("http://{}", listener.local_addr().unwrap());
-        let router = meshway_server::http::router(&app);
-        let (stop, done) = oneshot::channel();
-        let task = tokio::spawn(async move {
-            axum::serve(listener, router)
-                .with_graceful_shutdown(async {
-                    let _ = done.await;
-                })
-                .await
-                .unwrap();
-        });
-        let client = Client::new(
-            &origin,
-            meshway_control_client::http_client_builder()
-                .unwrap()
-                .no_proxy()
-                .timeout(Duration::from_secs(10)),
-            16 * 1024 * 1024,
+        Self(
+            TestServer::start_with(Options {
+                hold: Some(Duration::from_secs(1)),
+                pin: false,
+            })
+            .await,
         )
-        .unwrap();
-        Self {
-            origin,
-            client,
-            app,
-            temp,
-            stop,
-            task,
-        }
-    }
-    pub fn path(&self, name: &str) -> PathBuf {
-        self.temp.path().canonicalize().unwrap().join(name)
     }
     pub async fn owner(&self) -> Owner {
-        let session = self
-            .client
-            .register(&RegisterRequest {
-                email: "node-control@example.test".into(),
-                password: WireSecret::new("real control fixture password".into()),
-            })
-            .await
-            .unwrap();
-        let network = self
-            .client
-            .create_network(
-                &CreateNetworkRequest {
-                    request_id: request(),
-                    name: "Control fixture".into(),
-                },
-                session.token.expose(),
+        self.0
+            .owner(
+                "node-control@example.test",
+                "real control fixture password",
+                "Control fixture",
             )
             .await
-            .unwrap();
-        Owner {
-            token: session.token,
-            network: network.network.id,
-        }
     }
     pub async fn close(self) {
-        self.app.stream_shutdown()();
-        self.stop.send(()).unwrap();
-        self.task.await.unwrap();
-        self.app.shutdown().await.unwrap();
+        self.0.close().await;
     }
 }
 
 /// Peer facts are irrelevant to these Control fixtures.
-#[derive(Default)]
-pub struct NoFacts;
-impl meshway_control::PeerFactsSink for NoFacts {
-    fn apply(
-        &mut self,
-        _: meshway_model::NetmapRef,
-        _: meshway_protocol::PeerFactsDelta,
-    ) -> Result<(), meshway_control::FactsRejected> {
-        Ok(())
-    }
-}
+use meshway_test_server::Facts as NoFacts;
 
 /// One real `sync` exchange; returns the netmap Control now holds.
 pub async fn sync(
     control: &mut meshway_control::Control,
 ) -> Result<Option<meshway_model::NetmapRef>, meshway_control::Error> {
     control
-        .sync(&mut NoFacts)
+        .sync(&mut NoFacts::default())
         .await
         .map(|outcome| Some(outcome.netmap.content.reference()))
 }
@@ -178,19 +87,12 @@ pub async fn udp_control(
     origin: &str,
     name: &str,
 ) -> meshway_control::Control {
-    use meshway_model::state::{Capability, StreamKind, TransportRole};
     server
         .control(
             owner,
             origin,
             name,
-            std::collections::BTreeMap::from([(
-                "transport:native_udp".into(),
-                Capability::Transport {
-                    roles: vec![TransportRole::Dial, TransportRole::Listen],
-                    streams: vec![StreamKind::Udp],
-                },
-            )]),
+            std::collections::BTreeMap::from([meshway_test_server::configuration::native_udp()]),
         )
         .await
 }

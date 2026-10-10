@@ -1,14 +1,7 @@
 //! Shared test I/O: injected sockets and the carriers of a desired netmap.
 //! Real Server/Control identities come from [`super::netmap::support::Netmaps`].
 use meshway_engine::Desired;
-use meshway_model::RequestId;
 use std::collections::BTreeMap;
-
-pub(super) fn request() -> RequestId {
-    let mut bytes = [0; 16];
-    getrandom::fill(&mut bytes).unwrap();
-    RequestId::new(uuid::Builder::from_random_bytes(bytes).into_uuid()).unwrap()
-}
 
 /// Native UDP dial carriers of the content's own Node, by peer.
 pub(in crate::manager) fn carriers(

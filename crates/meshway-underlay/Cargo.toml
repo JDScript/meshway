@@ -38,11 +38,7 @@ hickory-net = { version = "0.26.3", default-features = false, features = ["tokio
 rtnetlink = { version = "=0.23.0", default-features = false, features = ["tokio_socket"] }
 
 [dev-dependencies]
-meshway-netmap-fixture = { path = "../../tools/meshway-netmap-fixture" }
-axum.workspace = true
-meshway-control-client = { path = "../meshway-control-client" }
-meshway-protocol = { path = "../meshway-protocol" }
-meshway-server = { path = "../../apps/meshway-server" }
+meshway-test-server = { path = "../../tools/meshway-test-server" }
 tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
 

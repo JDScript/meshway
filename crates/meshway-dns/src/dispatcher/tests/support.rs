@@ -2,67 +2,21 @@
 //! generated client and production Server/Control implementations.
 use meshway_configuration::{EgressRule, NetworkConfigurationInput, RouteMatch, RuleAction};
 use meshway_control::Control;
-use meshway_control_client::{
-    ApplyConfigurationPath, ApproveDeviceAuthorizationPath, Client, GetConfigurationSourcePath,
-    GetConfigurationSourceQuery,
+use meshway_protocol::{ConfigurationRequest, WireSecret};
+use meshway_test_server::{
+    TestServer,
+    client::{ApplyConfigurationPath, GetConfigurationSourcePath, GetConfigurationSourceQuery},
+    random_id as request_id,
 };
-use meshway_protocol::{
-    ApproveEnrollmentRequest, ConfigurationRequest, CreateNetworkRequest, RegisterRequest,
-    WireSecret,
-};
-use meshway_server::{App, Settings};
-use std::time::Duration;
-use tokio::{net::TcpListener, task::JoinSet};
-use tokio_util::sync::CancellationToken;
 
-pub(super) struct Server {
-    app: Option<App>,
-    tasks: JoinSet<()>,
-    stop: CancellationToken,
-    client: Client,
-    /// Node traffic goes through it so enrollment pins the fixture netmap key.
-    proxy: Option<meshway_netmap_fixture::PinningProxy>,
-    temporary: tempfile::TempDir,
-}
+const EMAIL: &str = "dispatcher-owner@example.test";
+const PASSWORD: &str = "isolated dispatcher fixture password";
+
+pub(super) struct Server(TestServer);
 
 impl Server {
     pub(super) async fn start() -> Self {
-        let temporary = tempfile::tempdir().unwrap();
-        let app = App::open(Settings::new(
-            temporary.path().canonicalize().unwrap().join("server"),
-        ))
-        .await
-        .unwrap();
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let origin = format!("http://{}", listener.local_addr().unwrap());
-        let client = Client::new(
-            &origin,
-            meshway_control_client::http_client_builder()
-                .unwrap()
-                .no_proxy()
-                .timeout(Duration::from_secs(10)),
-            16 * 1024 * 1024,
-        )
-        .unwrap();
-        let router = meshway_server::http::router(&app);
-        let stop = CancellationToken::new();
-        let stopped = stop.clone();
-        let mut tasks = JoinSet::new();
-        tasks.spawn(async move {
-            axum::serve(listener, router)
-                .with_graceful_shutdown(stopped.cancelled_owned())
-                .await
-                .unwrap();
-        });
-        let proxy = meshway_netmap_fixture::PinningProxy::start(&origin).await;
-        Self {
-            app: Some(app),
-            tasks,
-            stop,
-            client,
-            proxy: Some(proxy),
-            temporary,
-        }
+        Self(TestServer::start().await)
     }
 
     pub(super) fn control(&self) -> Control {
@@ -70,83 +24,37 @@ impl Server {
     }
 
     pub(super) fn control_named(&self, name: &str) -> Control {
-        Control::open(
-            &self.temporary.path().canonicalize().unwrap().join(name),
-            &self.proxy.as_ref().unwrap().origin,
-            meshway_control_client::http_client_builder()
-                .unwrap()
-                .no_proxy(),
-        )
-        .unwrap()
+        self.0.open_control(name, meshway_test_server::http())
     }
 
     pub(super) async fn enroll_peer(&self, enrolled: &Control, peer: &mut Control) {
         let owner = self
+            .0
             .client
             .login(&meshway_protocol::LoginRequest {
-                email: "dispatcher-owner@example.test".into(),
-                password: WireSecret::new("isolated dispatcher fixture password".into()),
+                email: EMAIL.into(),
+                password: WireSecret::new(PASSWORD.into()),
             })
             .await
             .unwrap();
-        let pending = peer.begin_enrollment("dispatcher-peer").await.unwrap();
-        self.client
-            .approve_device_authorization(
-                &ApproveDeviceAuthorizationPath {
-                    enrollment_request_id: pending.id,
-                },
-                &ApproveEnrollmentRequest {
-                    network_id: enrolled.status().binding.unwrap().network_id,
-                },
-                owner.token.expose(),
+        self.0
+            .enroll_into(
+                &owner.token,
+                enrolled.status().binding.unwrap().network_id,
+                peer,
+                "dispatcher-peer",
             )
-            .await
-            .unwrap();
-        peer.poll_enrollment().await.unwrap();
-        peer.redeem_enrollment().await.unwrap();
+            .await;
         peer.authenticate().await.unwrap();
     }
 
     pub(super) async fn enroll(&self, control: &mut Control) {
-        let session = meshway_netmap_fixture::register(
-            &self.client,
-            &RegisterRequest {
-                email: "dispatcher-owner@example.test".into(),
-                password: WireSecret::new("isolated dispatcher fixture password".into()),
-            },
-        )
-        .await
-        .unwrap();
-        let network = self
-            .client
-            .create_network(
-                &CreateNetworkRequest {
-                    request_id: request_id(),
-                    name: "Dispatcher regression".into(),
-                },
-                session.token.expose(),
-            )
-            .await
-            .unwrap()
-            .network
-            .id;
-        let pending = control.begin_enrollment("dispatcher-node").await.unwrap();
-        self.client
-            .approve_device_authorization(
-                &ApproveDeviceAuthorizationPath {
-                    enrollment_request_id: pending.id,
-                },
-                &ApproveEnrollmentRequest {
-                    network_id: network,
-                },
-                session.token.expose(),
-            )
-            .await
-            .unwrap();
-        control.poll_enrollment().await.unwrap();
-        control.redeem_enrollment().await.unwrap();
+        let owner = self.0.owner(EMAIL, PASSWORD, "Dispatcher regression").await;
+        let (session, network) = (&owner, owner.network);
+        self.0.enroll(&owner, control, "dispatcher-node").await;
 
         let source = self
+            .0
             .client
             .get_configuration_source(
                 &GetConfigurationSourcePath {
@@ -170,7 +78,8 @@ impl Server {
             },
             action: RuleAction::Direct,
         });
-        self.client
+        self.0
+            .client
             .apply_configuration(
                 &ApplyConfigurationPath {
                     network_id: network,
@@ -187,41 +96,12 @@ impl Server {
         control.authenticate().await.unwrap();
     }
 
-    pub(super) async fn close(mut self) {
-        self.proxy.take().unwrap().close().await;
-        self.app.as_ref().unwrap().stream_shutdown()();
-        self.stop.cancel();
-        let joined = tokio::time::timeout(Duration::from_secs(10), async {
-            while let Some(task) = self.tasks.join_next().await {
-                task?;
-            }
-            Ok::<_, tokio::task::JoinError>(())
-        })
-        .await;
-        let shutdown =
-            tokio::time::timeout(Duration::from_secs(10), self.app.take().unwrap().shutdown())
-                .await;
-        joined.expect("bounded HTTP fixture join").unwrap();
-        shutdown
-            .expect("bounded fixture application shutdown")
-            .unwrap();
+    pub(super) async fn close(self) {
+        self.0.close().await;
     }
 
     pub(super) fn real_control(&self) -> Control {
-        self.proxy.as_ref().unwrap().pass_through();
+        self.0.proxy().unwrap().pass_through();
         self.control()
     }
-}
-
-impl Drop for Server {
-    fn drop(&mut self) {
-        self.stop.cancel();
-        // JoinSet also aborts its owned task if setup or teardown itself panics.
-    }
-}
-
-fn request_id() -> meshway_model::RequestId {
-    let mut bytes = [0u8; 16];
-    getrandom::fill(&mut bytes).unwrap();
-    meshway_model::RequestId::new(uuid::Builder::from_random_bytes(bytes).into_uuid()).unwrap()
 }

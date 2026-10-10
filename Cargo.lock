@@ -1788,7 +1788,6 @@ dependencies = [
 name = "meshway-connectivity"
 version = "0.1.0"
 dependencies = [
- "axum",
  "chrono",
  "ed25519-dalek",
  "futures-util",
@@ -1796,25 +1795,21 @@ dependencies = [
  "meshway-authority",
  "meshway-configuration",
  "meshway-control",
- "meshway-control-client",
  "meshway-dataplane",
  "meshway-engine",
  "meshway-logging",
  "meshway-model",
- "meshway-netmap-fixture",
  "meshway-policy",
  "meshway-private-storage",
  "meshway-protocol",
- "meshway-server",
  "meshway-stun",
+ "meshway-test-server",
  "meshway-transport",
  "meshway-transport-spec",
  "meshway-transport-trojan",
  "meshway-transport-udp",
  "meshway-transport-vless",
  "meshway-underlay",
- "reqwest",
- "rustls",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -1846,7 +1841,7 @@ dependencies = [
  "meshway-private-storage",
  "meshway-protocol",
  "meshway-serde",
- "meshway-server",
+ "meshway-test-server",
  "reqwest",
  "serde",
  "serde_json",
@@ -1943,7 +1938,6 @@ dependencies = [
 name = "meshway-dataplane"
 version = "0.1.0"
 dependencies = [
- "axum",
  "ed25519-dalek",
  "getrandom 0.3.4",
  "hickory-proto",
@@ -1952,15 +1946,13 @@ dependencies = [
  "meshway-authority",
  "meshway-configuration",
  "meshway-control",
- "meshway-control-client",
  "meshway-dns",
  "meshway-engine",
  "meshway-logging",
  "meshway-model",
- "meshway-netmap-fixture",
  "meshway-policy",
  "meshway-protocol",
- "meshway-server",
+ "meshway-test-server",
  "meshway-transport",
  "meshway-transport-spec",
  "meshway-transport-tcp",
@@ -1971,7 +1963,6 @@ dependencies = [
  "sha2 0.11.0",
  "snow",
  "subtle",
- "tempfile",
  "thiserror",
  "tokio",
  "tokio-util",
@@ -2034,19 +2025,15 @@ dependencies = [
 name = "meshway-diagnostics"
 version = "0.1.0"
 dependencies = [
- "axum",
  "chrono",
  "getrandom 0.3.4",
  "meshway-configuration",
  "meshway-control",
- "meshway-control-client",
  "meshway-dataplane",
  "meshway-engine",
  "meshway-model",
- "meshway-netmap-fixture",
  "meshway-protocol",
- "meshway-server",
- "tempfile",
+ "meshway-test-server",
  "thiserror",
  "tokio",
  "tokio-util",
@@ -2058,23 +2045,20 @@ dependencies = [
 name = "meshway-dns"
 version = "0.1.0"
 dependencies = [
- "axum",
  "bytes",
  "getrandom 0.3.4",
  "hickory-proto",
  "ipnet",
  "meshway-configuration",
  "meshway-control",
- "meshway-control-client",
  "meshway-dataplane",
  "meshway-engine",
  "meshway-model",
- "meshway-netmap-fixture",
  "meshway-policy",
  "meshway-private-storage",
  "meshway-protocol",
  "meshway-serde",
- "meshway-server",
+ "meshway-test-server",
  "resolv-conf",
  "rustix",
  "serde",
@@ -2094,8 +2078,8 @@ version = "0.1.0"
 dependencies = [
  "meshway-configuration",
  "meshway-model",
- "meshway-netmap-fixture",
  "meshway-policy",
+ "meshway-test-server",
  "thiserror",
  "tokio",
 ]
@@ -2143,25 +2127,6 @@ dependencies = [
  "thiserror",
  "utoipa",
  "uuid",
-]
-
-[[package]]
-name = "meshway-netmap-fixture"
-version = "0.1.0"
-dependencies = [
- "axum",
- "base64",
- "chrono",
- "ed25519-dalek",
- "meshway-configuration",
- "meshway-control",
- "meshway-control-client",
- "meshway-model",
- "meshway-policy",
- "meshway-protocol",
- "reqwest",
- "serde_json",
- "tokio",
 ]
 
 [[package]]
@@ -2347,6 +2312,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "meshway-test-server"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "base64",
+ "chrono",
+ "ed25519-dalek",
+ "getrandom 0.3.4",
+ "meshway-configuration",
+ "meshway-control",
+ "meshway-control-client",
+ "meshway-model",
+ "meshway-policy",
+ "meshway-protocol",
+ "meshway-server",
+ "reqwest",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "meshway-tls"
 version = "0.1.0"
 dependencies = [
@@ -2475,7 +2463,6 @@ dependencies = [
 name = "meshway-underlay"
 version = "0.1.0"
 dependencies = [
- "axum",
  "futures-util",
  "getrandom 0.3.4",
  "hickory-net",
@@ -2484,15 +2471,12 @@ dependencies = [
  "ipnet",
  "meshway-configuration",
  "meshway-control",
- "meshway-control-client",
  "meshway-dns",
  "meshway-engine",
  "meshway-model",
- "meshway-netmap-fixture",
  "meshway-policy",
  "meshway-private-storage",
- "meshway-protocol",
- "meshway-server",
+ "meshway-test-server",
  "meshway-tls",
  "meshway-transport",
  "meshway-transport-spec",

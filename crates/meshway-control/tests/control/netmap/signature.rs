@@ -109,7 +109,7 @@ async fn unpinned_binding_accepts_no_netmap() {
     let mut control = Control::open(
         &server.path("unpinned"),
         &proxy.origin,
-        meshway_control_client::http_client_builder()
+        meshway_test_server::client::http_client_builder()
             .unwrap()
             .no_proxy(),
     )

@@ -34,14 +34,10 @@ uuid.workspace = true
 
 [dev-dependencies]
 meshway-control = { path = "../meshway-control" }
-meshway-netmap-fixture = { path = "../../tools/meshway-netmap-fixture" }
-axum.workspace = true
-meshway-control-client = { path = "../meshway-control-client" }
+meshway-test-server = { path = "../../tools/meshway-test-server" }
 meshway-protocol = { path = "../meshway-protocol" }
-meshway-server = { path = "../../apps/meshway-server" }
 meshway-dns = { path = "../meshway-dns" }
 meshway-transport-tcp = { path = "../meshway-transport-tcp" }
-tempfile.workspace = true
 serde_json.workspace = true
 hickory-proto = { version = "0.26.3", default-features = false, features = ["std"] }
 

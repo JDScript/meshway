@@ -2,57 +2,23 @@
 //! compiled here by the shared policy compiler and delivered through Control's
 //! sync path (scripted transport); each becomes the Manager's desired content.
 use super::super::*;
-use meshway_configuration::{
-    AddressPools, Input, NetworkConfiguration, NodeAddresses, NodeIdentity, NodeSettings,
-    SubjectContext, execution::TrustedNode, netmap::CompiledNetmap,
+use meshway_configuration::{NetworkConfiguration, netmap::CompiledNetmap};
+use meshway_control::Control;
+use meshway_protocol::EnrollmentResponse;
+use meshway_test_server::{
+    Facts, Script, TestServer,
+    configuration::{compile, network, tag_node, trusted_keys},
 };
-use meshway_control::{Control, SyncFuture, SyncTransport};
-use meshway_control_client::{ApproveDeviceAuthorizationPath, Client, ClientError};
-use meshway_model::Revision;
-use meshway_policy::compile::netmap::{NetmapInput, PreviousNetmap, compile_netmap};
-use meshway_protocol::{
-    ApproveEnrollmentRequest, CreateNetworkRequest, EnrollmentResponse, ErrorResponse,
-    RegisterRequest, SyncRequest, SyncResponse, WireSecret,
-};
-use meshway_server::{App, Settings};
 use meshway_transport_spec::{
     DialerSet, Endpoint, NativeTcpDialer, NativeTcpListener, NativeUdpDialer, NativeUdpListener,
     PreparedListener,
 };
-use std::{collections::VecDeque, sync::Mutex as StdMutex};
-use tokio::{net::TcpListener, sync::oneshot, task::JoinHandle};
+use tokio::net::TcpListener;
 
 const HOUR: u64 = 60 * 60 * 1000;
 
-type Reply = Result<SyncResponse, ClientError<ErrorResponse>>;
-
-#[derive(Default)]
-struct Script(StdMutex<VecDeque<Reply>>);
-impl SyncTransport for Script {
-    fn sync<'a>(&'a self, _request: &'a SyncRequest, _token: &'a str) -> SyncFuture<'a> {
-        let reply = self.0.lock().unwrap().pop_front();
-        Box::pin(async move { reply.unwrap_or(Err(ClientError::Network { status: None })) })
-    }
-}
-
-#[derive(Default)]
-struct NoFacts;
-impl meshway_control::PeerFactsSink for NoFacts {
-    fn apply(
-        &mut self,
-        _: meshway_model::NetmapRef,
-        _: meshway_protocol::PeerFactsDelta,
-    ) -> Result<(), meshway_control::FactsRejected> {
-        Ok(())
-    }
-}
-
 pub(in crate::manager) struct Netmaps {
-    app: App,
-    proxy: meshway_netmap_fixture::PinningProxy,
-    stop: oneshot::Sender<()>,
-    server: JoinHandle<()>,
-    _temp: tempfile::TempDir,
+    server: TestServer,
     controls: Vec<Control>,
     scripts: Vec<Arc<Script>>,
     bindings: Vec<EnrollmentResponse>,
@@ -105,84 +71,23 @@ impl Netmaps {
     /// makes b the only (Native TCP) listener and every Node dial TCP, so
     /// edges toward b are one-way and resident.
     pub async fn start(stream: bool, configured: bool) -> Self {
-        let temp = tempfile::tempdir().unwrap();
-        let root = temp.path().canonicalize().unwrap();
-        let app = App::open(Settings::new(root.join("server"))).await.unwrap();
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let origin = format!("http://{}", listener.local_addr().unwrap());
-        let router = meshway_server::http::router(&app);
-        let (stop, done) = oneshot::channel();
-        let server = tokio::spawn(async move {
-            axum::serve(listener, router)
-                .with_graceful_shutdown(async {
-                    let _ = done.await;
-                })
-                .await
-                .unwrap();
-        });
-        let builder = || {
-            let tls = rustls::ClientConfig::builder_with_provider(Arc::new(
-                rustls::crypto::ring::default_provider(),
-            ))
-            .with_safe_default_protocol_versions()
-            .unwrap()
-            .with_root_certificates(rustls::RootCertStore::empty())
-            .with_no_client_auth();
-            reqwest::Client::builder()
-                .tls_backend_preconfigured(tls)
-                .no_proxy()
-                .timeout(Duration::from_secs(10))
-        };
-        let client = Client::new(&origin, builder(), 16 * 1024 * 1024).unwrap();
-        let proxy = meshway_netmap_fixture::PinningProxy::start(&origin).await;
-        // Password hashing is bounded process-wide; parallel fixtures retry
-        // a busy answer instead of failing.
-        let user = loop {
-            match client
-                .register(&RegisterRequest {
-                    email: "netmap@example.test".into(),
-                    password: WireSecret::new("real netmap connectivity password".into()),
-                })
-                .await
-            {
-                Err(ClientError::Http { status: 503, .. }) => {
-                    tokio::time::sleep(Duration::from_millis(50)).await
-                }
-                result => break result.unwrap(),
-            }
-        };
-        let network = client
-            .create_network(
-                &CreateNetworkRequest {
-                    request_id: support::request(),
-                    name: "Netmap adjacency".into(),
-                },
-                user.token.expose(),
+        let server = TestServer::start().await;
+        let owner = server
+            .owner(
+                "netmap@example.test",
+                "real netmap connectivity password",
+                "Netmap adjacency",
             )
-            .await
-            .unwrap()
-            .network
-            .id;
+            .await;
         let (mut controls, mut scripts, mut bindings) = (Vec::new(), Vec::new(), Vec::new());
         for name in ["a", "b", "c"] {
-            let mut control = Control::open(&root.join(name), &proxy.origin, builder()).unwrap();
-            let pending = control.begin_enrollment(name).await.unwrap();
-            client
-                .approve_device_authorization(
-                    &ApproveDeviceAuthorizationPath {
-                        enrollment_request_id: pending.id,
-                    },
-                    &ApproveEnrollmentRequest {
-                        network_id: network,
-                    },
-                    user.token.expose(),
-                )
-                .await
-                .unwrap();
-            control.poll_enrollment().await.unwrap();
-            bindings.push(control.redeem_enrollment().await.unwrap());
+            let mut control = server.open_control(
+                name,
+                meshway_test_server::http().timeout(Duration::from_secs(10)),
+            );
+            bindings.push(server.enroll(&owner, &mut control, name).await);
             control.authenticate().await.unwrap();
-            let script = Arc::new(Script::default());
+            let script = Script::new();
             control.set_sync_transport(script.clone());
             controls.push(control);
             scripts.push(script);
@@ -193,15 +98,7 @@ impl Netmaps {
             UdpSocket::bind("127.0.0.1:0").await.unwrap(),
         ];
         let tcp = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let mut cfg = meshway_configuration::new_network(
-            AddressPools {
-                ipv4: vec!["100.64.0.0/24".into()],
-                ipv6: vec![],
-            },
-            "netmap.internal".into(),
-        )
-        .unwrap();
-        cfg.tags_owners.insert("tag:server".into(), vec![]);
+        let mut cfg = network("netmap.internal");
         cfg.defaults.dialers = DialerSet {
             native_udp: (!stream).then(|| NativeUdpDialer {
                 connect_timeout: "2s".parse().unwrap(),
@@ -233,29 +130,11 @@ impl Netmaps {
             }
             cfg.nodes.insert(
                 binding.node_id,
-                NodeSettings {
-                    hostname: ["a", "b", "c"][index].into(),
-                    remark: String::new(),
-                    identity: NodeIdentity::Tag {
-                        tags: vec!["tag:server".into()],
-                    },
-                    enabled: true,
-                    addresses: NodeAddresses {
-                        ipv4: Some(format!("100.64.0.{}", index + 1).parse().unwrap()),
-                        ipv6: None,
-                    },
-                    listeners,
-                    dialers: Input::Omitted,
-                    exit_enabled: false,
-                },
+                tag_node(["a", "b", "c"][index], index as u8 + 1, listeners, false),
             );
         }
         let mut fixture = Self {
-            app,
-            proxy,
-            stop,
             server,
-            _temp: temp,
             keys: controls
                 .iter()
                 .map(|control| control.dataplane_keys().unwrap())
@@ -341,49 +220,35 @@ impl Netmaps {
             .map(|binding| {
                 (
                     binding.node_id,
-                    TrustedNode {
-                        control_key: binding.keys.control.clone(),
-                        dataplane_key: binding.keys.dataplane.clone(),
-                        capabilities: crate::capabilities(),
-                    },
+                    trusted_keys(&binding.keys, crate::capabilities()),
                 )
             })
             .collect();
         let previous = self
             .current
             .iter()
-            .map(|netmap| (netmap.netmap.node_id, PreviousNetmap::from(netmap)))
+            .map(|netmap| (netmap.netmap.node_id, netmap))
             .collect();
-        let mut compiled = compile_netmap(NetmapInput {
-            network: self.bindings[0].network_id,
-            revision: Revision::MIN,
-            configuration: &self.cfg,
-            subjects: &SubjectContext::default(),
-            inventory: &inventory,
-            rule_sets: &BTreeMap::new(),
-            selected_profiles: &BTreeMap::new(),
-            selection_versions: &BTreeMap::new(),
-            previous: &previous,
-        })
-        .unwrap();
+        let mut compiled = compile(
+            self.bindings[0].network_id,
+            &self.cfg,
+            &inventory,
+            &previous,
+        );
         let mut changed = Vec::new();
         let mut current = Vec::new();
         for index in 0..self.bindings.len() {
-            let netmap = compiled
-                .nodes
-                .remove(&self.bindings[index].node_id)
-                .unwrap();
+            let netmap = compiled.remove(&self.bindings[index].node_id).unwrap();
             let same = self
                 .current
                 .get(index)
                 .is_some_and(|old| old.reference() == netmap.reference());
             changed.push(!same);
-            self.scripts[index]
-                .0
-                .lock()
-                .unwrap()
-                .push_back(Ok(meshway_netmap_fixture::reply(&netmap, HOUR, !same)));
-            self.controls[index].sync(&mut NoFacts).await.unwrap();
+            self.scripts[index].push(Ok(meshway_test_server::reply(&netmap, HOUR, !same)));
+            self.controls[index]
+                .sync(&mut Facts::default())
+                .await
+                .unwrap();
             let desired = self.published(index);
             if let Some(slot) = self.desired.get_mut(index) {
                 *slot = desired;
@@ -400,14 +265,7 @@ impl Netmaps {
         for control in self.controls {
             control.shutdown().await.unwrap();
         }
-        self.proxy.close().await;
-        self.app.stream_shutdown()();
-        self.stop.send(()).unwrap();
-        tokio::time::timeout(Duration::from_secs(5), self.server)
-            .await
-            .unwrap()
-            .unwrap();
-        self.app.shutdown().await.unwrap();
+        self.server.close().await;
     }
 }
 

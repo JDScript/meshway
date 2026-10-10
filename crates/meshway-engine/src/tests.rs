@@ -56,7 +56,7 @@ fn input(
 #[tokio::test(start_paused = true)]
 async fn renewal_changes_only_engine_timer_and_expiry_withdraws_every_component() {
     let mut engine = Engine::new(Resources::default());
-    let content = Arc::new(meshway_netmap_fixture::single_node("a", None));
+    let content = Arc::new(meshway_test_server::single_node("a", None));
     let first = input(&mut engine, content.clone(), 60_000);
     engine.reconfig(Some(&first)).await.unwrap();
     let compiler = engine.desired().unwrap().compiler().clone();
@@ -89,7 +89,7 @@ async fn renewal_changes_only_engine_timer_and_expiry_withdraws_every_component(
 
 #[tokio::test(start_paused = true)]
 async fn failed_or_cancelled_apply_never_exposes_old_desired_as_current() {
-    let content = Arc::new(meshway_netmap_fixture::single_node("a", None));
+    let content = Arc::new(meshway_test_server::single_node("a", None));
     for part in [Part::Packets, Part::Adjacencies, Part::Host, Part::Dns] {
         let mut engine = Engine::new(Resources {
             fail: Some(part),
@@ -110,7 +110,7 @@ async fn failed_or_cancelled_apply_never_exposes_old_desired_as_current() {
     engine.reconfig(Some(&first)).await.unwrap();
     let next = input(
         &mut engine,
-        Arc::new(meshway_netmap_fixture::single_node("b", Some(&content))),
+        Arc::new(meshway_test_server::single_node("b", Some(&content))),
         60_000,
     );
     engine.components.block = Some(Part::Host);
@@ -127,7 +127,7 @@ async fn failed_or_cancelled_apply_never_exposes_old_desired_as_current() {
 #[tokio::test(start_paused = true)]
 async fn older_signed_lease_and_regressing_content_do_not_change_live_engine() {
     let mut engine = Engine::new(Resources::default());
-    let content = Arc::new(meshway_netmap_fixture::single_node("a", None));
+    let content = Arc::new(meshway_test_server::single_node("a", None));
     let first = input(&mut engine, content, 60_000);
     engine.reconfig(Some(&first)).await.unwrap();
     let calls = engine.components.calls.clone();
@@ -189,7 +189,7 @@ async fn a_degraded_apply_keeps_content_and_the_same_content_retries_it() {
         degraded: true,
         ..Default::default()
     });
-    let content = Arc::new(meshway_netmap_fixture::single_node("a", None));
+    let content = Arc::new(meshway_test_server::single_node("a", None));
     let now = engine.clock.now();
     let first = Netmap {
         lease: NetmapLease::new(content.reference(), now, now + 60_000).unwrap(),

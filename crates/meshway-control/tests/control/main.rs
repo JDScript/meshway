@@ -10,11 +10,11 @@ mod session;
 mod support;
 
 use meshway_control::Control;
-use meshway_control_client::{
-    DeleteNodePath, GetConfigurationProgressPath, GetNetworkPath, GetNodePath, GetNodeStatePath,
-};
 use meshway_model::state::SystemState;
 use meshway_protocol::{ApproveEnrollmentRequest, DeleteNodeRequest, state::VisibleReport};
+use meshway_test_server::client::{
+    DeleteNodePath, GetConfigurationProgressPath, GetNetworkPath, GetNodePath, GetNodeStatePath,
+};
 use std::collections::BTreeMap;
 use support::Server;
 
@@ -35,7 +35,7 @@ async fn real_enrollment_authentication_saved_state_stop_and_reacquire() {
     let mut control = Control::open(
         &path,
         &server.origin,
-        meshway_control_client::http_client_builder()
+        meshway_test_server::client::http_client_builder()
             .unwrap()
             .no_proxy(),
     )
@@ -48,7 +48,7 @@ async fn real_enrollment_authentication_saved_state_stop_and_reacquire() {
     server
         .client
         .approve_device_authorization(
-            &meshway_control_client::ApproveDeviceAuthorizationPath {
+            &meshway_test_server::client::ApproveDeviceAuthorizationPath {
                 enrollment_request_id: pending.id,
             },
             &ApproveEnrollmentRequest {
@@ -127,7 +127,7 @@ async fn real_enrollment_authentication_saved_state_stop_and_reacquire() {
     let mut restored = Control::open(
         &path,
         &server.origin,
-        meshway_control_client::http_client_builder()
+        meshway_test_server::client::http_client_builder()
             .unwrap()
             .no_proxy(),
     )
@@ -195,7 +195,7 @@ async fn pending_enrollment_restarts_with_identical_keys_and_device_cancels_it()
     let mut control = Control::open(
         &path,
         &server.origin,
-        meshway_control_client::http_client_builder()
+        meshway_test_server::client::http_client_builder()
             .unwrap()
             .no_proxy(),
     )
@@ -206,7 +206,7 @@ async fn pending_enrollment_restarts_with_identical_keys_and_device_cancels_it()
     let mut control = Control::open(
         &path,
         &server.origin,
-        meshway_control_client::http_client_builder()
+        meshway_test_server::client::http_client_builder()
             .unwrap()
             .no_proxy(),
     )
@@ -223,7 +223,7 @@ async fn pending_enrollment_restarts_with_identical_keys_and_device_cancels_it()
     server
         .client
         .approve_device_authorization(
-            &meshway_control_client::ApproveDeviceAuthorizationPath {
+            &meshway_test_server::client::ApproveDeviceAuthorizationPath {
                 enrollment_request_id: second.id,
             },
             &ApproveEnrollmentRequest {
@@ -237,7 +237,7 @@ async fn pending_enrollment_restarts_with_identical_keys_and_device_cancels_it()
     server
         .client
         .deny_device_authorization(
-            &meshway_control_client::DenyDeviceAuthorizationPath {
+            &meshway_test_server::client::DenyDeviceAuthorizationPath {
                 enrollment_request_id: second.id,
             },
             owner.token.expose(),

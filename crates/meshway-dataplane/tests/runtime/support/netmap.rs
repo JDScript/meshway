@@ -3,71 +3,37 @@
 //! IPv4 exit reached via R. No demand, publication or permit exists here.
 use super::{Node, Owner, Server, secure::Link};
 use meshway_configuration::{
-    AccessRule, AddressPools, Input, MeshRoute, NetworkConfiguration, NodeAddresses, NodeIdentity,
-    NodeSettings, ProfileAssignment, RouteAction, RoutingProfile, SubjectContext,
+    AccessRule, MeshRoute, NetworkConfiguration, ProfileAssignment, RouteAction, RoutingProfile,
     execution::TrustedNode, netmap::CompiledNetmap,
 };
-use meshway_control::{FactsRejected, PeerFactsSink, SyncFuture, SyncTransport};
-use meshway_control_client::ClientError;
 use meshway_dataplane::{
     Packet,
     secure::{Applied, Carrier, CircuitGrant, PendingFrame, Received, SecureNode, Target},
 };
 use meshway_model::{
-    NetmapRef, NodeId, Revision,
+    NodeId,
     state::{Capability, StreamKind, TransportRole},
 };
-use meshway_policy::compile::netmap::{NetmapInput, PreviousNetmap, compile_netmap};
-use meshway_protocol::{ErrorResponse, PeerFactsDelta, SyncRequest, SyncResponse};
-use meshway_transport_spec::{Listener, PreparedListener, TransportProtocol};
-use std::{
-    collections::{BTreeMap, VecDeque},
-    net::IpAddr,
-    sync::{Arc, Mutex},
+use meshway_test_server::{
+    Facts, Script,
+    configuration::{network, tag_node},
 };
+use meshway_transport_spec::{PreparedListener, TransportProtocol};
+use std::{collections::BTreeMap, net::IpAddr, sync::Arc};
 use tokio::net::TcpListener;
 
 pub const DAY_MS: u64 = 86_400_000;
 /// Public IPv4 destination behind exit B.
 pub const INTERNET: &str = "93.184.216.34";
 
-type Reply = Result<SyncResponse, ClientError<ErrorResponse>>;
-
-/// Scripted sync replies; an empty script behaves like an unreachable Server.
-#[derive(Default)]
-pub struct Script {
-    replies: Mutex<VecDeque<Reply>>,
-    pub calls: Mutex<usize>,
-}
-impl SyncTransport for Script {
-    fn sync<'a>(&'a self, _: &'a SyncRequest, token: &'a str) -> SyncFuture<'a> {
-        assert!(!token.is_empty());
-        *self.calls.lock().unwrap() += 1;
-        let reply = self.replies.lock().unwrap().pop_front();
-        Box::pin(async move { reply.unwrap_or(Err(ClientError::Network { status: None })) })
-    }
-}
-
-#[derive(Default)]
-struct Facts;
-impl PeerFactsSink for Facts {
-    fn apply(&mut self, _: NetmapRef, _: PeerFactsDelta) -> Result<(), FactsRejected> {
-        Ok(())
-    }
-}
-
 fn listener(port: u16) -> PreparedListener {
-    let declaration: Listener = serde_json::from_value(serde_json::json!({
+    meshway_test_server::configuration::listener(serde_json::json!({
         "type": "native_tcp", "listen": "127.0.0.1", "listenPort": port,
         "endpoints": [{"host": "127.0.0.1", "port": port}],
     }))
-    .unwrap();
-    PreparedListener::prepare(declaration).unwrap()
 }
 
-pub fn sel(node: NodeId) -> String {
-    format!("node:{node}")
-}
+pub use meshway_test_server::configuration::sel;
 
 pub fn rule(src: NodeId, dst: &str, ip: &[&str]) -> AccessRule {
     AccessRule {
@@ -135,15 +101,7 @@ impl NetmapMesh {
         let ids = [a.id, r.id, b.id];
         let r_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let b_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let mut cfg = meshway_configuration::new_network(
-            AddressPools {
-                ipv4: vec!["100.64.0.0/24".into()],
-                ipv6: vec![],
-            },
-            "test.internal".into(),
-        )
-        .unwrap();
-        cfg.tags_owners.insert("tag:server".into(), vec![]);
+        let mut cfg = network("test.internal");
         for (index, node) in [&a, &r, &b].into_iter().enumerate() {
             let listeners = match index {
                 1 => BTreeMap::from([(
@@ -158,21 +116,12 @@ impl NetmapMesh {
             };
             cfg.nodes.insert(
                 node.id,
-                NodeSettings {
-                    hostname: ["a", "r", "b"][index].into(),
-                    remark: String::new(),
-                    identity: NodeIdentity::Tag {
-                        tags: vec!["tag:server".into()],
-                    },
-                    enabled: true,
-                    addresses: NodeAddresses {
-                        ipv4: Some(format!("100.64.0.{}", index + 1).parse().unwrap()),
-                        ipv6: None,
-                    },
+                tag_node(
+                    ["a", "r", "b"][index],
+                    index as u8 + 1,
                     listeners,
-                    dialers: Input::Omitted,
-                    exit_enabled: index == 2,
-                },
+                    index == 2,
+                ),
             );
         }
         cfg.access = vec![
@@ -215,7 +164,7 @@ impl NetmapMesh {
                 )
             })
             .collect();
-        let scripts: [Arc<Script>; 3] = Default::default();
+        let scripts: [Arc<Script>; 3] = [Script::new(), Script::new(), Script::new()];
         let mut nodes = [a, r, b];
         for (node, script) in nodes.iter_mut().zip(&scripts) {
             node.control.set_sync_transport(script.clone());
@@ -332,10 +281,7 @@ impl NetmapMesh {
 
     /// Sync calls each Control issued; first packets must not add any.
     pub fn sync_calls(&self) -> usize {
-        self.scripts
-            .iter()
-            .map(|script| *script.calls.lock().unwrap())
-            .sum()
+        self.scripts.iter().map(|script| script.calls()).sum()
     }
 
     fn secure(&mut self, index: usize) -> &mut SecureNode {
@@ -483,25 +429,9 @@ fn compile(
     ids: [NodeId; 3],
     previous: &BTreeMap<NodeId, CompiledNetmap>,
 ) -> BTreeMap<NodeId, CompiledNetmap> {
-    let previous = previous
-        .iter()
-        .map(|(id, netmap)| (*id, PreviousNetmap::from(netmap)))
-        .collect();
-    let compiled = compile_netmap(NetmapInput {
-        network,
-        revision: Revision::MIN,
-        configuration: cfg,
-        subjects: &SubjectContext::default(),
-        inventory,
-        rule_sets: &BTreeMap::new(),
-        selected_profiles: &BTreeMap::new(),
-        selection_versions: &BTreeMap::new(),
-        previous: &previous,
-    })
-    .unwrap();
-    ids.iter()
-        .map(|id| (*id, compiled.nodes[id].clone()))
-        .collect()
+    let previous = previous.iter().map(|(id, netmap)| (*id, netmap)).collect();
+    let compiled = meshway_test_server::configuration::compile(network, cfg, inventory, &previous);
+    ids.iter().map(|id| (*id, compiled[id].clone())).collect()
 }
 
 /// Install `compiled` (or renew the held content) through one sync reply.
@@ -513,15 +443,7 @@ async fn install(
     full: bool,
 ) -> meshway_engine::Desired {
     let full = full && node.control.netmap_reference() != Some(compiled.reference());
-    script
-        .replies
-        .lock()
-        .unwrap()
-        .push_back(Ok(meshway_netmap_fixture::reply(
-            compiled,
-            validity_ms,
-            full,
-        )));
-    node.control.sync(&mut Facts).await.unwrap();
+    script.push(Ok(meshway_test_server::reply(compiled, validity_ms, full)));
+    node.control.sync(&mut Facts::default()).await.unwrap();
     node.desired()
 }

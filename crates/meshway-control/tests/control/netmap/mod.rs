@@ -6,9 +6,9 @@ use super::{
     faults::{Fault, Proxy},
 };
 use meshway_control::{Error, NetmapChange, sync_loop};
-use meshway_control_client::ClientError;
 use meshway_model::{Digest, Sequence};
 use meshway_protocol::{EnrollmentResponse, PeerFactsDelta, StateCursor, SyncNetmap};
+use meshway_test_server::client::ClientError;
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use support::{Facts, Script, compiled, full, lease, signed, unchanged};
 
@@ -29,7 +29,7 @@ pub async fn enrolled(
     let mut control = Control::open(
         &server.path(name),
         &proxy.origin,
-        meshway_control_client::http_client_builder()
+        meshway_test_server::client::http_client_builder()
             .unwrap()
             .no_proxy(),
     )

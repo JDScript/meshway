@@ -5,8 +5,8 @@ use super::{
     system,
 };
 use meshway_control::{Control, Error};
-use meshway_control_client::{DeleteNodePath, GetNetworkPath};
 use meshway_protocol::DeleteNodeRequest;
+use meshway_test_server::client::{DeleteNodePath, GetNetworkPath};
 use std::time::Duration;
 
 const SESSION: &str = "/auth/session";
@@ -16,7 +16,7 @@ async fn connected(server: &Server, owner: &Owner, origin: &str, name: &str) -> 
     let mut control = Control::open(
         &server.path(name),
         origin,
-        meshway_control_client::http_client_builder()
+        meshway_test_server::client::http_client_builder()
             .unwrap()
             .no_proxy(),
     )
@@ -364,7 +364,7 @@ mod wire {
         pub async fn start(origin: &str) -> Self {
             let state = Forward {
                 origin: origin.into(),
-                http: meshway_control_client::http_client_builder()
+                http: meshway_test_server::client::http_client_builder()
                     .unwrap()
                     .no_proxy()
                     .redirect(reqwest::redirect::Policy::none())

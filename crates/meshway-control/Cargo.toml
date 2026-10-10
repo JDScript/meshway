@@ -33,7 +33,7 @@ zeroize = "1.8"
 
 [dev-dependencies]
 axum.workspace = true
-meshway-server = { path = "../../apps/meshway-server" }
+meshway-test-server = { path = "../../tools/meshway-test-server" }
 tempfile.workspace = true
 
 [lints]

@@ -48,7 +48,7 @@ async fn released(port: u16) {
 #[ignore = "requires an isolated Linux namespace, /dev/net/tun and NET_ADMIN"]
 async fn netmap_renewal_keeps_descriptors_and_a_new_serial_moves_only_changed_ones() {
     let temp = isolated();
-    let server = Server::start(temp.path()).await;
+    let server = Server::start().await;
     let (mut control, script) = server.enroll(temp.path()).await;
     let mut network = Network::new(&control, false);
     let first = network.compile(None);
@@ -98,7 +98,7 @@ async fn netmap_renewal_keeps_descriptors_and_a_new_serial_moves_only_changed_on
 #[ignore = "requires an isolated Linux namespace, /dev/net/tun and NET_ADMIN"]
 async fn withdrawal_closes_descriptors_and_keeps_the_negative_boundary() {
     let temp = isolated();
-    let server = Server::start(temp.path()).await;
+    let server = Server::start().await;
     let (mut control, script) = server.enroll(temp.path()).await;
     let network = Network::new(&control, false);
     let netmap = network.compile(None);
@@ -140,7 +140,7 @@ fn cutoff(milliseconds: u64) -> meshway_underlay::ExitCutoff {
 #[ignore = "requires an isolated Linux exit namespace (ip_forward=1, loose RPF), nft and NET_ADMIN"]
 async fn netmap_exit_role_survives_renewal_and_unchanged_serial_and_ends_on_withdrawal() {
     let temp = isolated();
-    let server = Server::start(temp.path()).await;
+    let server = Server::start().await;
     let (mut control, script) = server.enroll(temp.path()).await;
     let mut network = Network::new(&control, true);
     let first = network.compile(None);

@@ -3,12 +3,12 @@ use super::{
     support::{Server, request},
 };
 use meshway_control::Control;
-use meshway_control_client::{
-    ApplyConfigurationPath, CreateEnrollmentKeyPath, GetConfigurationSourcePath,
-    GetConfigurationSourceQuery,
-};
 use meshway_protocol::{
     ConfigurationRequest, CreateEnrollmentKeyRequest, WireSecret, enrollment::InitialNodeSettings,
+};
+use meshway_test_server::client::{
+    ApplyConfigurationPath, CreateEnrollmentKeyPath, GetConfigurationSourcePath,
+    GetConfigurationSourceQuery,
 };
 
 #[tokio::test]
@@ -75,7 +75,7 @@ async fn access_key_enrollment_recovers_lost_commit_without_browser_credentials(
     let mut control = Control::open(
         &path,
         &proxy.origin,
-        meshway_control_client::http_client_builder()
+        meshway_test_server::client::http_client_builder()
             .unwrap()
             .no_proxy(),
     )
@@ -89,7 +89,7 @@ async fn access_key_enrollment_recovers_lost_commit_without_browser_credentials(
     let mut control = Control::open(
         &path,
         &proxy.origin,
-        meshway_control_client::http_client_builder()
+        meshway_test_server::client::http_client_builder()
             .unwrap()
             .no_proxy(),
     )

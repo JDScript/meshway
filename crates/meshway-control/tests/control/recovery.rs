@@ -9,7 +9,7 @@ async fn corrupt_record_and_wrong_origin_never_regenerate_identity() {
     let mut control = Control::open(
         &path,
         &server.origin,
-        meshway_control_client::http_client_builder()
+        meshway_test_server::client::http_client_builder()
             .unwrap()
             .no_proxy(),
     )
@@ -19,7 +19,7 @@ async fn corrupt_record_and_wrong_origin_never_regenerate_identity() {
         Control::open(
             &path,
             &server.origin,
-            meshway_control_client::http_client_builder().unwrap()
+            meshway_test_server::client::http_client_builder().unwrap()
         ),
         Err(Error::Storage(meshway_private_storage::Error::InUse))
     ));
@@ -30,7 +30,7 @@ async fn corrupt_record_and_wrong_origin_never_regenerate_identity() {
         Control::open(
             &path,
             &server.origin,
-            meshway_control_client::http_client_builder().unwrap()
+            meshway_test_server::client::http_client_builder().unwrap()
         ),
         Err(Error::Record)
     ));
@@ -40,7 +40,7 @@ async fn corrupt_record_and_wrong_origin_never_regenerate_identity() {
         Control::open(
             &path,
             "https://different.example",
-            meshway_control_client::http_client_builder().unwrap()
+            meshway_test_server::client::http_client_builder().unwrap()
         ),
         Err(Error::Record)
     ));
@@ -51,7 +51,7 @@ async fn corrupt_record_and_wrong_origin_never_regenerate_identity() {
             Control::open(
                 &path,
                 &server.origin,
-                meshway_control_client::http_client_builder().unwrap()
+                meshway_test_server::client::http_client_builder().unwrap()
             ),
             Err(Error::Record)
         ));
@@ -63,7 +63,7 @@ async fn corrupt_record_and_wrong_origin_never_regenerate_identity() {
         Control::open(
             &path,
             &server.origin,
-            meshway_control_client::http_client_builder().unwrap()
+            meshway_test_server::client::http_client_builder().unwrap()
         ),
         Err(Error::Storage(
             meshway_private_storage::Error::UnsafeStorage
@@ -87,7 +87,7 @@ fn remote_plaintext_and_ambient_url_credentials_are_rejected_before_storage() {
             Control::open(
                 &path,
                 origin,
-                meshway_control_client::http_client_builder().unwrap()
+                meshway_test_server::client::http_client_builder().unwrap()
             ),
             Err(Error::Endpoint)
         ));
@@ -98,7 +98,7 @@ fn remote_plaintext_and_ambient_url_credentials_are_rejected_before_storage() {
 #[tokio::test]
 async fn committed_redemption_and_state_reports_retry_the_same_identity_after_delivery_loss() {
     use super::faults::{Fault, Proxy};
-    use meshway_control_client::{ApproveDeviceAuthorizationPath, ListNodesPath};
+    use meshway_test_server::client::{ApproveDeviceAuthorizationPath, ListNodesPath};
     let server = Server::start().await;
     let owner = server.owner().await;
     let proxy = Proxy::start(&server.origin).await;
@@ -106,7 +106,7 @@ async fn committed_redemption_and_state_reports_retry_the_same_identity_after_de
     let mut control = Control::open(
         &path,
         &proxy.origin,
-        meshway_control_client::http_client_builder()
+        meshway_test_server::client::http_client_builder()
             .unwrap()
             .no_proxy(),
     )
@@ -148,7 +148,7 @@ async fn committed_redemption_and_state_reports_retry_the_same_identity_after_de
     let mut control = Control::open(
         &path,
         &proxy.origin,
-        meshway_control_client::http_client_builder()
+        meshway_test_server::client::http_client_builder()
             .unwrap()
             .no_proxy(),
     )
@@ -222,7 +222,7 @@ async fn foreign_installation_challenge_never_receives_a_session_signature() {
     let mut control = Control::open(
         &server.path("pin"),
         &proxy.origin,
-        meshway_control_client::http_client_builder()
+        meshway_test_server::client::http_client_builder()
             .unwrap()
             .no_proxy(),
     )
@@ -231,7 +231,7 @@ async fn foreign_installation_challenge_never_receives_a_session_signature() {
     server
         .client
         .approve_device_authorization(
-            &meshway_control_client::ApproveDeviceAuthorizationPath {
+            &meshway_test_server::client::ApproveDeviceAuthorizationPath {
                 enrollment_request_id: pending.id,
             },
             &meshway_protocol::ApproveEnrollmentRequest {
@@ -263,7 +263,7 @@ async fn cancelled_http_waiter_keeps_its_durable_pending_intent() {
     let mut control = Control::open(
         &path,
         &proxy.origin,
-        meshway_control_client::http_client_builder()
+        meshway_test_server::client::http_client_builder()
             .unwrap()
             .no_proxy(),
     )
@@ -282,7 +282,7 @@ async fn cancelled_http_waiter_keeps_its_durable_pending_intent() {
     let mut restored = Control::open(
         &path,
         &proxy.origin,
-        meshway_control_client::http_client_builder()
+        meshway_test_server::client::http_client_builder()
             .unwrap()
             .no_proxy(),
     )

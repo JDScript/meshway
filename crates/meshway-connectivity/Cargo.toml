@@ -34,16 +34,11 @@ serde_json.workspace = true
 ed25519-dalek = { version = "2.2", default-features = false, features = ["std", "zeroize"] }
 
 [dev-dependencies]
-meshway-netmap-fixture = { path = "../../tools/meshway-netmap-fixture" }
+meshway-test-server = { path = "../../tools/meshway-test-server" }
 tempfile.workspace = true
-meshway-private-storage = { path = "../meshway-private-storage" }
-meshway-server = { path = "../../apps/meshway-server" }
-meshway-control-client = { path = "../meshway-control-client" }
-meshway-transport-udp = { path = "../meshway-transport-udp" }
-axum.workspace = true
-reqwest.workspace = true
-rustls.workspace = true
 uuid.workspace = true
+meshway-private-storage = { path = "../meshway-private-storage" }
+meshway-transport-udp = { path = "../meshway-transport-udp" }
 
 [lints]
 workspace = true

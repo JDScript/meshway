@@ -12,7 +12,7 @@ fn reopen(path: &Path, origin: &str) -> Control {
     Control::open(
         path,
         origin,
-        meshway_control_client::http_client_builder()
+        meshway_test_server::client::http_client_builder()
             .unwrap()
             .no_proxy(),
     )

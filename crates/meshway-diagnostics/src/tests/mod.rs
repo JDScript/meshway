@@ -2,30 +2,18 @@
 //! below test measurement ordering, not packet transport or OS installation.
 use super::*;
 use meshway_control::Control;
-use meshway_control_client::*;
 use meshway_model::{
-    state::{Capability, ProbeOutcome, StreamKind, TransportRole},
+    state::{Capability, ProbeOutcome},
     *,
 };
 use meshway_protocol::*;
+use meshway_test_server::client::*;
 mod preparing;
 
-fn id<T: TryFrom<uuid::Uuid>>() -> T
-where
-    T::Error: std::fmt::Debug,
-{
-    let mut bytes = [0; 16];
-    getrandom::fill(&mut bytes).unwrap();
-    uuid::Builder::from_random_bytes(bytes)
-        .into_uuid()
-        .try_into()
-        .unwrap()
-}
+use meshway_test_server::random_id as id;
 
 struct Fixture {
-    app: meshway_server::App,
-    server: tokio::task::JoinHandle<()>,
-    stop: tokio::sync::oneshot::Sender<()>,
+    server: meshway_test_server::TestServer,
     controls: Vec<Control>,
     owner: Owner,
     subscription: ObservationSubscriptionId,
@@ -33,7 +21,6 @@ struct Fixture {
     created_at: Instant,
     accepted_at: Instant,
     installed_at: Instant,
-    _directory: tempfile::TempDir,
 }
 fn instance_of(control: &Control) -> meshway_protocol::InstanceRequest {
     let instance = control.status().instance.unwrap();
@@ -73,50 +60,19 @@ impl Fixture {
         Self::open_route(false).await
     }
     async fn open_route(relay: bool) -> Self {
-        let directory = tempfile::tempdir().unwrap();
-        let root = directory.path().canonicalize().unwrap();
-        let app = meshway_server::App::open(meshway_server::Settings::new(root.join("server")))
-            .await
-            .unwrap();
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let origin = format!("http://{}", listener.local_addr().unwrap());
-        let router = meshway_server::http::router(&app);
-        let (stop, stopped) = tokio::sync::oneshot::channel();
-        let server = tokio::spawn(async move {
-            axum::serve(listener, router)
-                .with_graceful_shutdown(async {
-                    let _ = stopped.await;
-                })
-                .await
-                .unwrap();
-        });
-        let client = Client::new(
-            &origin,
-            meshway_control_client::http_client_builder()
-                .unwrap()
-                .no_proxy(),
-            16 * 1024 * 1024,
-        )
-        .unwrap();
-        let session = meshway_netmap_fixture::register(
-            &client,
-            &RegisterRequest {
-                email: "diagnostics@example.test".into(),
-                password: WireSecret::new("diagnostics held-key fixture password".into()),
-            },
-        )
-        .await
-        .unwrap();
-        let network = client
-            .create_network(
-                &CreateNetworkRequest {
-                    request_id: id(),
-                    name: "diagnostics".into(),
-                },
-                session.token.expose(),
+        let server = meshway_test_server::TestServer::start_with(meshway_test_server::Options {
+            hold: None,
+            pin: false,
+        })
+        .await;
+        let client = &server.client;
+        let owner = server
+            .owner(
+                "diagnostics@example.test",
+                "diagnostics held-key fixture password",
+                "diagnostics",
             )
-            .await
-            .unwrap();
+            .await;
         let mut controls = Vec::new();
         let names = if relay {
             vec!["probe-source", "probe-target", "probe-relay"]
@@ -124,55 +80,30 @@ impl Fixture {
             vec!["probe-source", "probe-target"]
         };
         for name in names {
-            let mut control = Control::open(
-                &root.join(name),
-                &origin,
-                meshway_control_client::http_client_builder()
-                    .unwrap()
-                    .no_proxy(),
-            )
-            .unwrap();
-            let pending = control.begin_enrollment(name).await.unwrap();
-            client
-                .approve_device_authorization(
-                    &ApproveDeviceAuthorizationPath {
-                        enrollment_request_id: pending.id,
-                    },
-                    &ApproveEnrollmentRequest {
-                        network_id: network.network.id,
-                    },
-                    session.token.expose(),
+            let mut control = server.open_control(name, meshway_test_server::http());
+            server
+                .connected(
+                    &owner,
+                    &mut control,
+                    name,
+                    BTreeMap::from([
+                        (
+                            "feature:path-observation".into(),
+                            Capability::Feature { version: 1 },
+                        ),
+                        meshway_test_server::configuration::native_udp(),
+                    ]),
                 )
-                .await
-                .unwrap();
-            control.poll_enrollment().await.unwrap();
-            control.redeem_enrollment().await.unwrap();
-            control.authenticate().await.unwrap();
-            control
-                .acquire_instance(BTreeMap::from([
-                    (
-                        "feature:path-observation".into(),
-                        Capability::Feature { version: 1 },
-                    ),
-                    (
-                        "transport:native_udp".into(),
-                        Capability::Transport {
-                            roles: vec![TransportRole::Dial, TransportRole::Listen],
-                            streams: vec![StreamKind::Udp],
-                        },
-                    ),
-                ]))
-                .await
-                .unwrap();
+                .await;
             controls.push(control);
         }
         let source = client
             .get_configuration_source(
                 &GetConfigurationSourcePath {
-                    network_id: network.network.id,
+                    network_id: owner.network,
                 },
                 &GetConfigurationSourceQuery::default(),
-                session.token.expose(),
+                owner.token.expose(),
             )
             .await
             .unwrap();
@@ -216,7 +147,7 @@ impl Fixture {
         client
             .apply_configuration(
                 &ApplyConfigurationPath {
-                    network_id: network.network.id,
+                    network_id: owner.network,
                 },
                 &ConfigurationRequest::Document {
                     expected_revision: source.revision,
@@ -228,13 +159,13 @@ impl Fixture {
                             .to_owned(),
                     ),
                 },
-                session.token.expose(),
+                owner.token.expose(),
             )
             .await
             .unwrap();
         for control in &mut controls {
             control
-                .sync(&mut meshway_netmap_fixture::Facts::default())
+                .sync(&mut meshway_test_server::Facts::default())
                 .await
                 .unwrap();
         }
@@ -271,9 +202,7 @@ impl Fixture {
             .unwrap();
         let installed_at = Instant::now();
         Self {
-            app,
             server,
-            stop,
             controls,
             owner,
             subscription,
@@ -281,7 +210,6 @@ impl Fixture {
             created_at,
             accepted_at,
             installed_at,
-            _directory: directory,
         }
     }
     fn measurement(&mut self, start: Instant) -> (EventId, Digest) {
@@ -314,10 +242,7 @@ impl Fixture {
         for control in self.controls {
             let _ = control.shutdown().await;
         }
-        self.app.stream_shutdown()();
-        self.stop.send(()).unwrap();
-        self.server.await.unwrap();
-        self.app.shutdown().await.unwrap();
+        self.server.close().await;
     }
 }
 

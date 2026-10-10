@@ -3,20 +3,17 @@
 //! compiler for that enrolled identity. Only resolver I/O is scripted.
 use super::*;
 use meshway_configuration::{
-    AccessRule, AddressPools, DnsServer, EgressRule, Input, NodeAddresses, NodeIdentity,
-    NodeSettings, ProfileAssignment, RouteAction, RouteMatch, RoutingProfile, RuleAction,
-    SubjectContext,
+    AccessRule, DnsServer, EgressRule, ProfileAssignment, RouteAction, RouteMatch, RoutingProfile,
+    RuleAction,
     execution::TrustedNode,
     netmap::{CompiledNetmap, DnsPlan, ResolverAction},
 };
-use meshway_control::{FactsRejected, PeerFactsSink, SyncFuture, SyncTransport};
-use meshway_control_client::ClientError;
-use meshway_model::{
-    BoundNodeKey, KeyAlgorithm, NetmapRef, NodeId, NodePublicKey, Revision, Version,
-    state::{Capability, StreamKind, TransportRole},
+use meshway_model::NodeId;
+use meshway_protocol::SyncResponse;
+use meshway_test_server::{
+    Facts, Script,
+    configuration::{network, node, sel, tag_node, trusted},
 };
-use meshway_policy::compile::netmap::{NetmapInput, PreviousNetmap, compile_netmap};
-use meshway_protocol::{PeerFactsDelta, SyncRequest, SyncResponse};
 
 const HOUR: u64 = 60 * 60 * 1000;
 
@@ -73,62 +70,6 @@ async fn netmap_query_capacity_cancellation_and_unsent_answer_deadlines_are_inde
     server.close().await;
 }
 
-#[derive(Default)]
-struct Script(StdMutex<VecDeque<SyncResponse>>);
-impl SyncTransport for Script {
-    fn sync<'a>(&'a self, _: &'a SyncRequest, _: &'a str) -> SyncFuture<'a> {
-        let reply = self.0.lock().unwrap().pop_front();
-        Box::pin(async move { reply.ok_or(ClientError::Network { status: None }) })
-    }
-}
-struct Facts;
-impl PeerFactsSink for Facts {
-    fn apply(&mut self, _: NetmapRef, _: PeerFactsDelta) -> Result<(), FactsRejected> {
-        Ok(())
-    }
-}
-
-fn node(i: u8) -> NodeId {
-    format!("00000000-0000-4000-8000-{i:012}").parse().unwrap()
-}
-fn sel(id: NodeId) -> String {
-    format!("node:{id}")
-}
-
-fn trusted(i: u8, exit: bool) -> TrustedNode {
-    let key = |offset: u8, algorithm| BoundNodeKey {
-        id: format!(
-            "00000000-0000-4002-8000-{:012}",
-            u16::from(i) + u16::from(offset)
-        )
-        .parse()
-        .unwrap(),
-        generation: Version::MIN,
-        public_key: NodePublicKey {
-            algorithm,
-            bytes: [i.wrapping_add(offset); 32].into(),
-        },
-    };
-    let mut capabilities = BTreeMap::from([(
-        "transport:native_udp".into(),
-        Capability::Transport {
-            roles: vec![TransportRole::Dial, TransportRole::Listen],
-            streams: vec![StreamKind::Udp],
-        },
-    )]);
-    if exit {
-        capabilities.insert(
-            "feature:exit-ipv4".into(),
-            Capability::Feature { version: 1 },
-        );
-    }
-    TrustedNode {
-        control_key: key(0, KeyAlgorithm::Ed25519),
-        dataplane_key: key(100, KeyAlgorithm::X25519),
-        capabilities,
-    }
-}
-
 /// Source A (100.64.0.1) may reach B; its ordinary DNS and 203.0.113/24 leave
 /// through exit E (100.64.0.3), 192.0.2/24 is direct. `enrolled` is the Node
 /// whose keys come from the real enrollment.
@@ -171,14 +112,7 @@ impl Network {
     }
 
     fn compile(&self, previous: Option<&CompiledNetmap>) -> CompiledNetmap {
-        let mut cfg = meshway_configuration::new_network(
-            AddressPools {
-                ipv4: vec!["100.64.0.0/24".into()],
-                ipv6: vec![],
-            },
-            "test.internal".into(),
-        )
-        .unwrap();
+        let mut cfg = network("test.internal");
         cfg.access = vec![
             AccessRule {
                 remark: String::new(),
@@ -195,11 +129,9 @@ impl Network {
                 bidirectional: false,
             },
         ];
-        cfg.tags_owners.insert("tag:server".into(), vec![]);
-        let listener: meshway_configuration::transport::Listener =
-            serde_json::from_str(r#"{"type":"native_udp","listenPort":12345}"#).unwrap();
-        let listener =
-            meshway_configuration::transport::PreparedListener::prepare(listener).unwrap();
+        let listener = meshway_test_server::configuration::listener(
+            serde_json::json!({"type": "native_udp", "listenPort": 12345}),
+        );
         for (id, i, hostname) in [
             (self.a, 1, self.hostname.as_str()),
             (self.b, 2, "b"),
@@ -207,21 +139,12 @@ impl Network {
         ] {
             cfg.nodes.insert(
                 id,
-                NodeSettings {
-                    hostname: hostname.into(),
-                    remark: String::new(),
-                    identity: NodeIdentity::Tag {
-                        tags: vec!["tag:server".into()],
-                    },
-                    enabled: true,
-                    addresses: NodeAddresses {
-                        ipv4: Some(format!("100.64.0.{i}").parse().unwrap()),
-                        ipv6: None,
-                    },
-                    listeners: BTreeMap::from([("udp".into(), listener.clone())]),
-                    dialers: Input::Omitted,
-                    exit_enabled: id == self.e,
-                },
+                tag_node(
+                    hostname,
+                    i,
+                    BTreeMap::from([("udp".into(), listener.clone())]),
+                    id == self.e,
+                ),
             );
         }
         cfg.routing.egress.profiles.insert(
@@ -274,27 +197,18 @@ impl Network {
         ]);
         inventory.insert(self.enrolled, self.keys.clone());
         inventory.extend(self.peer_keys.clone());
-        let previous = previous
-            .map(|old| BTreeMap::from([(self.enrolled, PreviousNetmap::from(old))]))
-            .unwrap_or_default();
-        let mut compiled = compile_netmap(NetmapInput {
-            network: self.network,
-            revision: Revision::MIN,
-            configuration: &cfg,
-            subjects: &SubjectContext::default(),
-            inventory: &inventory,
-            rule_sets: &BTreeMap::new(),
-            selected_profiles: &BTreeMap::new(),
-            selection_versions: &BTreeMap::new(),
-            previous: &previous,
-        })
-        .unwrap();
-        compiled.nodes.remove(&self.enrolled).unwrap()
+        meshway_test_server::configuration::compile_one(
+            self.network,
+            &cfg,
+            &inventory,
+            self.enrolled,
+            previous,
+        )
     }
 }
 
 fn reply(netmap: &CompiledNetmap, full: bool) -> SyncResponse {
-    meshway_netmap_fixture::reply(netmap, HOUR, full)
+    meshway_test_server::reply(netmap, HOUR, full)
 }
 
 async fn enrolled(server: &support::Server) -> (Control, Arc<Script>) {
@@ -307,8 +221,8 @@ async fn enrolled(server: &support::Server) -> (Control, Arc<Script>) {
 
 /// One sync; Control's verified netmap as Engine's desired content.
 async fn sync(control: &mut Control, script: &Script, reply: SyncResponse) -> Desired {
-    script.0.lock().unwrap().push_back(reply);
-    control.sync(&mut Facts).await.unwrap();
+    script.push(Ok(reply));
+    control.sync(&mut Facts::default()).await.unwrap();
     Desired::new(&control.netmap().unwrap().content).unwrap()
 }
 

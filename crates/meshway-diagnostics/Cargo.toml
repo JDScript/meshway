@@ -19,12 +19,8 @@ tokio-util.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-meshway-netmap-fixture = { path = "../../tools/meshway-netmap-fixture" }
+meshway-test-server = { path = "../../tools/meshway-test-server" }
 meshway-control = { path = "../meshway-control" }
-axum.workspace = true
-meshway-control-client = { path = "../meshway-control-client" }
-meshway-server = { path = "../../apps/meshway-server" }
-tempfile.workspace = true
 tokio.workspace = true
 
 [lints]

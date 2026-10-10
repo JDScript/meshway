@@ -1,9 +1,9 @@
 [package]
-name = "meshway-netmap-fixture"
+name = "meshway-test-server"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-description = "Test-only netmap signer, key-pinning enrollment proxy and scripted sync transport"
+description = "Test-only in-process Server, key-pinning enrollment proxy, signed sync replies and configuration generators"
 publish = false
 
 [dependencies]
@@ -11,15 +11,19 @@ axum.workspace = true
 base64 = "0.23"
 chrono.workspace = true
 ed25519-dalek = { version = "2.2", default-features = false, features = ["std", "zeroize"] }
+getrandom.workspace = true
 meshway-configuration = { path = "../../crates/meshway-configuration" }
 meshway-control = { path = "../../crates/meshway-control" }
 meshway-control-client = { path = "../../crates/meshway-control-client" }
 meshway-model = { path = "../../crates/meshway-model" }
 meshway-policy = { path = "../../crates/meshway-policy" }
 meshway-protocol = { path = "../../crates/meshway-protocol" }
+meshway-server = { path = "../../apps/meshway-server" }
 reqwest.workspace = true
 serde_json.workspace = true
+tempfile.workspace = true
 tokio.workspace = true
+uuid.workspace = true
 
 [lints]
 workspace = true

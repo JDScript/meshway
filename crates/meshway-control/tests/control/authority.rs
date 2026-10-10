@@ -12,7 +12,7 @@ async fn packet_keys_are_the_registered_keys_and_not_authority() {
     let mut control = Control::open(
         &server.path("packet-identity"),
         &server.origin,
-        meshway_control_client::http_client_builder()
+        meshway_test_server::client::http_client_builder()
             .unwrap()
             .no_proxy(),
     )
@@ -43,7 +43,7 @@ async fn netmap_is_published_only_with_its_signed_lease_and_never_extended_by_in
     let mut control = Control::open(
         &path,
         &server.origin,
-        meshway_control_client::http_client_builder()
+        meshway_test_server::client::http_client_builder()
             .unwrap()
             .no_proxy(),
     )
@@ -74,7 +74,7 @@ async fn netmap_is_published_only_with_its_signed_lease_and_never_extended_by_in
     let restored = Control::open(
         &path,
         &server.origin,
-        meshway_control_client::http_client_builder()
+        meshway_test_server::client::http_client_builder()
             .unwrap()
             .no_proxy(),
     )
@@ -93,7 +93,7 @@ async fn stop_withdraws_the_netmap_before_a_held_release_http_response() {
     let mut control = Control::open(
         &server.path("execution-stop"),
         &proxy.origin,
-        meshway_control_client::http_client_builder()
+        meshway_test_server::client::http_client_builder()
             .unwrap()
             .no_proxy(),
     )
@@ -128,7 +128,7 @@ async fn idle_netmap_outlives_the_http_session_without_polling_control() {
     let mut control = Control::open(
         &server.path("execution-expiry"),
         &proxy.origin,
-        meshway_control_client::http_client_builder()
+        meshway_test_server::client::http_client_builder()
             .unwrap()
             .no_proxy(),
     )

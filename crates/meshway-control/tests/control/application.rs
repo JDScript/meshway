@@ -7,16 +7,16 @@ use super::{
 use chrono::Utc;
 use meshway_configuration::NetworkConfigurationInput;
 use meshway_control::{Control, Error};
-use meshway_control_client::{
-    ApplyConfigurationPath, GetConfigurationProgressPath, GetConfigurationSourcePath,
-    GetConfigurationSourceQuery, GetNodeStatePath,
-};
 use meshway_model::{NetmapRef, NodeId, Sequence, Version};
 use meshway_protocol::{
     ConfigurationRequest, WireSecret,
     execution::ApplyFailure,
     live::{ApplicationPhase, ConfigurationNodeProgress},
     state::NodeStateView,
+};
+use meshway_test_server::client::{
+    ApplyConfigurationPath, GetConfigurationProgressPath, GetConfigurationSourcePath,
+    GetConfigurationSourceQuery, GetNodeStatePath,
 };
 use std::time::Duration;
 
@@ -113,7 +113,7 @@ async fn configure(
         )
         .await
         .unwrap_or_else(|error| match error {
-            meshway_control_client::ClientError::Http { problem, .. } => panic!("{problem:?}"),
+            meshway_test_server::client::ClientError::Http { problem, .. } => panic!("{problem:?}"),
             error => panic!("{error:?}"),
         });
 }
@@ -285,7 +285,7 @@ async fn tickets_are_bound_to_the_control_owner_and_instance_generation() {
     let mut reopened = Control::open(
         &server.path("application-owner"),
         &proxy.origin,
-        meshway_control_client::http_client_builder()
+        meshway_test_server::client::http_client_builder()
             .unwrap()
             .no_proxy(),
     )

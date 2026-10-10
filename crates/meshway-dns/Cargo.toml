@@ -31,11 +31,8 @@ zbus = { version = "=5.19.0", default-features = false, features = ["tokio"] }
 rustix = { workspace = true, features = ["fs", "process", "net"] }
 
 [dev-dependencies]
-meshway-netmap-fixture = { path = "../../tools/meshway-netmap-fixture" }
+meshway-test-server = { path = "../../tools/meshway-test-server" }
 meshway-control = { path = "../meshway-control" }
-axum.workspace = true
-meshway-control-client = { path = "../meshway-control-client" }
-meshway-server = { path = "../../apps/meshway-server" }
 tempfile.workspace = true
 uuid.workspace = true
 

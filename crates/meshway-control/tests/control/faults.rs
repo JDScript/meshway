@@ -45,7 +45,7 @@ impl Proxy {
     pub async fn start(origin: &str) -> Self {
         let state = Forward {
             origin: origin.into(),
-            http: meshway_control_client::http_client_builder()
+            http: meshway_test_server::client::http_client_builder()
                 .unwrap()
                 .no_proxy()
                 .redirect(reqwest::redirect::Policy::none())
