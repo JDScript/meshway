@@ -3,7 +3,7 @@
 //! content. Withdrawal terminates every flow, circuit and exit projection,
 //! closes adjacencies and keeps only the negative capture and DNS boundaries.
 use super::{Peers, Report, dns::Attachment, packets::Packets};
-use meshway_authority::{DataPlaneIdentity, DataPlaneKeys};
+use meshway_authority::DataPlaneKeys;
 use meshway_configuration::netmap::DnsPlan;
 use meshway_connectivity::Manager;
 use meshway_dataplane::secure::SecureNode;
@@ -15,8 +15,6 @@ use std::sync::Arc;
 
 pub(super) struct Installed {
     pub desired: Desired,
-    /// Staged migration only: the Host and DNS snapshot of `desired`.
-    pub identity: DataPlaneIdentity,
     /// Absent for a disabled Node, which owns no packet plane.
     pub secure: Option<SecureNode>,
     pub manager: Option<Manager>,
@@ -37,9 +35,6 @@ pub(super) struct Plane {
     keys: Option<DataPlaneKeys>,
     instance: Option<InstanceRequest>,
     generation: meshway_model::Sequence,
-    /// Staged migration only: snapshots for not-yet-migrated components.
-    staged: meshway_authority::StagedIssuer,
-    lease: Option<meshway_model::NetmapLease>,
 }
 
 impl Plane {
@@ -61,8 +56,6 @@ impl Plane {
             keys: None,
             instance: None,
             generation: meshway_model::Sequence::MIN,
-            staged: meshway_authority::StagedIssuer::new().map_err(|_| Problem::Clock)?,
-            lease: None,
         })
     }
 
@@ -70,51 +63,19 @@ impl Plane {
         self.keys = keys;
     }
 
-    /// Staged: the transitional snapshot follows the Engine-accepted lease.
-    pub fn stage(&mut self, lease: meshway_model::NetmapLease) {
-        self.lease = Some(lease);
-        let current = self
-            .staged
-            .current()
-            .map(|identity| identity.snapshot().reference());
-        if current == Some(lease.netmap)
-            && let Some(state) = &self.installed
-            && let Some(keys) = &self.keys
-        {
-            let content = state.desired.content().clone();
-            let _ = self
-                .staged
-                .issue(&content, lease, self.instance.clone(), keys);
-        }
-    }
-
     /// State/receipt binding only; never part of desired content.
-    pub async fn set_instance(&mut self, instance: Option<InstanceRequest>) {
+    pub fn set_instance(&mut self, instance: Option<InstanceRequest>) {
         if self.instance == instance {
             return;
         }
         self.instance = instance;
-        let Some(state) = &mut self.installed else {
-            return;
-        };
-        let (Some(lease), Some(keys)) = (self.lease, &self.keys) else {
-            return;
-        };
-        let content = state.desired.content().clone();
-        let Ok(identity) = self
-            .staged
-            .issue(&content, lease, self.instance.clone(), keys)
-        else {
-            return;
-        };
-        let _ = self.host.install(identity.snapshot().clone()).await;
-        if let Some(manager) = &state.manager {
+        if let Some(manager) = self
+            .installed
+            .as_ref()
+            .and_then(|state| state.manager.as_ref())
+        {
             let _ = manager.set_instance(self.instance.clone());
         }
-        if self.dns.guard().is_some() {
-            let _ = self.dns.install(identity.snapshot().clone()).await;
-        }
-        state.identity = identity;
     }
 
     pub fn secure(&self) -> Option<&SecureNode> {
@@ -136,20 +97,6 @@ impl Plane {
     fn fail(&mut self, problem: Problem, failure: ApplyFailure) -> Error {
         self.failure = Some((problem, failure));
         Error::Apply
-    }
-
-    fn identity_for(&mut self, desired: &Desired) -> Result<DataPlaneIdentity, Error> {
-        let issued = match (self.lease, &self.keys) {
-            (Some(lease), Some(keys)) if lease.netmap == desired.reference() => self
-                .staged
-                .issue(desired.content(), lease, self.instance.clone(), keys)
-                .ok(),
-            _ => None,
-        };
-        issued.ok_or_else(|| {
-            tracing::warn!("Netmap not bindable to packet keys");
-            self.fail(Problem::Apply, ApplyFailure::Validation)
-        })
     }
 
     async fn close(&mut self) -> Result<(), Problem> {
@@ -187,7 +134,6 @@ impl meshway_engine::Components for Plane {
         let Some(desired) = desired else {
             self.dns.suspend();
             let closing = self.close().await;
-            self.staged.withdraw();
             return closing.map_err(|problem| self.fail(problem, ApplyFailure::Underlay));
         };
         self.packets.clear_incoming();
@@ -322,7 +268,7 @@ impl meshway_engine::Components for Plane {
         Ok(())
     }
 
-    /// Capture, TUN, retained descriptors, negative DNS and the exit role.
+    /// Capture, TUN, kept descriptors, negative DNS and the exit role.
     async fn apply_host(&mut self, desired: Option<&Desired>) -> Result<(), Error> {
         let Some(desired) = desired else {
             return match self.host.suspend().await {
@@ -330,18 +276,7 @@ impl meshway_engine::Components for Plane {
                 Err(_) => Err(self.fail(Problem::Underlay, ApplyFailure::Underlay)),
             };
         };
-        let identity = self.identity_for(desired)?;
-        let continuing = self.installed.as_ref().is_some_and(|state| {
-            identity
-                .snapshot()
-                .netmap_continuation_from(state.identity.snapshot())
-                .is_ok()
-                || state.identity.snapshot().same_netmap(identity.snapshot())
-        });
-        if !continuing && let Err(problem) = self.close().await {
-            return Err(self.fail(problem, ApplyFailure::Underlay));
-        }
-        if let Err(error) = self.host.install(identity.snapshot().clone()).await {
+        if let Err(error) = self.host.install(desired.clone()).await {
             tracing::warn!(%error, "Node capture installation failed");
             return Err(match error {
                 meshway_underlay::Error::Tun(_) => self.fail(Problem::Tun, ApplyFailure::Tun),
@@ -375,7 +310,6 @@ impl meshway_engine::Components for Plane {
             self.report.exit_capability = None;
             self.installed = Some(Installed {
                 desired: desired.clone(),
-                identity,
                 secure: None,
                 manager: None,
                 exit: None,
@@ -434,14 +368,10 @@ impl meshway_engine::Components for Plane {
             return Err(self.fail(Problem::Tun, ApplyFailure::Tun));
         }
         match &mut self.installed {
-            Some(state) => {
-                state.desired = desired.clone();
-                state.identity = identity;
-            }
+            Some(state) => state.desired = desired.clone(),
             None => {
                 self.installed = Some(Installed {
                     desired: desired.clone(),
-                    identity,
                     secure: None,
                     manager: None,
                     exit: None,
@@ -457,19 +387,15 @@ impl meshway_engine::Components for Plane {
             self.dns.suspend();
             return Ok(());
         };
-        let identity = self.identity_for(desired)?;
         let netmap = desired.netmap();
         let needs_dns = super::requirements::dns_required(&netmap.projection.configuration.dns)
             || !matches!(netmap.dns.egress, DnsPlan::NoExit);
         if needs_dns
             && netmap.self_.enabled
-            && let Err(error) = self.dns.install(identity.snapshot().clone()).await
+            && let Err(error) = self.dns.install(desired.clone()).await
         {
             tracing::warn!(%error, "DNS scope installation failed");
             return Err(self.fail(Problem::Dns, ApplyFailure::Dns));
-        }
-        if identity.snapshot().ensure_current().is_err() {
-            return Err(self.fail(Problem::Apply, ApplyFailure::Validation));
         }
         Ok(())
     }

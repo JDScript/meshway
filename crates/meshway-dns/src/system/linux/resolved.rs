@@ -175,7 +175,7 @@ impl Backend {
     {
         self.verify().await?;
         let result = tokio::select! { biased;
-            _ = self.anchor.invalidated() => return Err(SystemDnsError::Conflict),
+            _ = self.anchor.ended() => return Err(SystemDnsError::Conflict),
             result = raw(&self.connection, &self.service_owner, PATH, IFACE, method, body) => result,
         };
         self.verify().await?;
@@ -276,7 +276,7 @@ impl Backend {
         self.observe().await?;
         self.conflicts(plan).await?;
         if !self.probed {
-            // Never probe by replacing an already retained forced suffix route:
+            // Never probe by replacing an already kept forced suffix route:
             // restart must keep those suffixes directed at the real stub.
             if self.record.installed.is_none() {
                 self.probe().await?;

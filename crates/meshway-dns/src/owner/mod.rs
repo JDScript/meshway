@@ -14,7 +14,7 @@ use hickory_proto::{
     op::{Message, ResponseCode},
     rr::RecordType,
 };
-use meshway_authority::ExecutionSnapshot;
+use meshway_engine::Desired;
 use std::{
     collections::{BTreeMap, VecDeque},
     fmt,
@@ -23,15 +23,14 @@ use std::{
 };
 use tokio_util::sync::CancellationToken;
 
-/// Explicit resource bounds. The timeout bounds work only; it never extends
-/// the control snapshot lifetime.
+/// Explicit resource bounds. The timeout bounds work only.
 #[derive(Clone, Copy, Debug)]
 pub struct Limits {
     pub max_pending: usize,
     pub query_timeout: Duration,
 }
 
-/// Ordinary DNS selection, read from one netmap snapshot.
+/// Ordinary DNS selection, read from one desired netmap.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Plan {
     NoExit,
@@ -41,10 +40,9 @@ pub(crate) enum Plan {
 }
 
 impl Plan {
-    pub(crate) fn of(snapshot: &ExecutionSnapshot) -> Option<Self> {
+    pub(crate) fn of(desired: &Desired) -> Self {
         use meshway_configuration::netmap::DnsPlan;
-        let netmap = snapshot.netmap().ok()?;
-        Some(match &netmap.netmap.dns.egress {
+        match &desired.netmap().dns.egress {
             DnsPlan::NoExit => Self::NoExit,
             DnsPlan::ViaExit { service } => Self::ViaExit {
                 max_pending: service.max_pending,
@@ -52,7 +50,7 @@ impl Plan {
             },
             DnsPlan::ServeExitResolver { .. } => Self::ServeExitResolver,
             DnsPlan::Unavailable { .. } => Self::Unavailable,
-        })
+        }
     }
 }
 
@@ -60,7 +58,7 @@ impl Plan {
 pub enum OwnerError {
     #[error("DNS limits require nonzero capacity and a representable nonzero timeout")]
     Limits,
-    #[error("DNS execution snapshot is not current")]
+    #[error("DNS scope is withdrawn")]
     Inactive,
     #[error(transparent)]
     Configuration(#[from] ConfigurationError),
@@ -99,13 +97,12 @@ impl Ticket {
     pub fn cancel(&self) {
         self.cancelled.cancel();
     }
-    /// Query work deadline, already capped by the original snapshot expiry.
-    /// This is not execution authority and cannot extend that snapshot.
+    /// Query work deadline. This is not execution authority.
     pub fn expires_at(&self) -> Instant {
         self.deadline
     }
 
-    /// Select this and `Owner::invalidated()` around host-driven upstream I/O.
+    /// Select this and `Owner::ended()` around host-driven upstream I/O.
     /// No task is spawned; explicit cancel/replacement wakes this waiter.
     pub async fn cancelled(&self) {
         tokio::select! { biased;
@@ -160,13 +157,11 @@ pub enum Begin {
     Unavailable(Unavailable),
 }
 
-/// An answer remains bound to the original control snapshot, owner generation,
-/// query deadline and cancellation. Check immediately before sending, and select
-/// `invalidated()` around blocked output. Encoding does not authorize later I/O.
+/// An answer remains bound to its owner's scope, query deadline and
+/// cancellation. Check immediately before sending, and select `ended()`
+/// around blocked output. Encoding does not authorize later I/O.
 pub struct Answer {
-    snapshot: Box<ExecutionSnapshot>,
     ready: Box<ReadyAnswer>,
-    scope_fence: Option<Box<crate::dispatcher::ScopeFence>>,
 }
 
 impl fmt::Debug for Answer {
@@ -175,12 +170,12 @@ impl fmt::Debug for Answer {
     }
 }
 
-/// One bounded query owner per installed snapshot. No token, HTTP client, ACL,
-/// lease renewal, background task, upstream socket or domain grant lives here.
+/// One bounded query owner per published scope. No token, HTTP client, ACL,
+/// lease, background task, upstream socket or domain grant lives here.
 /// Published records use TTL 0: no separate record TTL authority is
-/// currently supplied. Pending queries are the only retained query data.
+/// currently supplied. Pending queries are the only kept query data.
 pub struct Owner {
-    snapshot: ExecutionSnapshot,
+    desired: Desired,
     state: State,
 }
 
@@ -193,29 +188,31 @@ impl fmt::Debug for Owner {
 }
 
 impl Owner {
-    pub fn new(snapshot: ExecutionSnapshot, limits: Limits) -> Result<Self, OwnerError> {
+    /// The owner of `desired`. Its work ends with `ended`, which the scope's
+    /// publisher cancels on withdrawal or new content.
+    pub fn new(
+        desired: &Desired,
+        limits: Limits,
+        ended: &CancellationToken,
+    ) -> Result<Self, OwnerError> {
         if limits.max_pending == 0
             || limits.query_timeout.is_zero()
             || Instant::now().checked_add(limits.query_timeout).is_none()
         {
             return Err(OwnerError::Limits);
         }
-        let netmap = snapshot.netmap().map_err(|_| OwnerError::Inactive)?;
-        let state = State::from_netmap(&netmap.netmap, limits)?;
-        snapshot
-            .ensure_current()
-            .map_err(|_| OwnerError::Inactive)?;
-        Ok(Self { snapshot, state })
+        if ended.is_cancelled() {
+            return Err(OwnerError::Inactive);
+        }
+        let state = State::from_netmap(desired.netmap(), limits, ended.child_token())?;
+        Ok(Self {
+            desired: desired.clone(),
+            state,
+        })
     }
 
     pub fn begin(&mut self, query: Query, exit: ExitSelection) -> Begin {
-        if self.snapshot.ensure_current().is_err() {
-            self.state.stop();
-            return Begin::Unavailable(Unavailable::Inactive);
-        }
-        let outcome = self
-            .state
-            .begin(query, exit, Instant::now(), self.snapshot.expires_at());
+        let outcome = self.state.begin(query, exit, Instant::now());
         self.finish(outcome)
     }
 
@@ -228,9 +225,7 @@ impl Owner {
         if Instant::now() >= request_deadline {
             return Begin::Unavailable(Unavailable::Expired);
         }
-        let Some(plan) = Plan::of(&self.snapshot) else {
-            return Begin::Unavailable(Unavailable::Inactive);
-        };
+        let plan = Plan::of(&self.desired);
         let no_exit = matches!(plan, Plan::NoExit | Plan::ServeExitResolver);
         let exit = if no_exit {
             ExitSelection::NoExit
@@ -254,7 +249,7 @@ impl Owner {
         let now = Instant::now();
         let Some(deadline) = now
             .checked_add(self.state.limits.query_timeout)
-            .map(|d| d.min(self.snapshot.expires_at()).min(request_deadline))
+            .map(|d| d.min(request_deadline))
         else {
             return Begin::Unavailable(Unavailable::Expired);
         };
@@ -263,14 +258,13 @@ impl Owner {
         let Some(candidate) = candidates.first() else {
             return Begin::Unavailable(Unavailable::MissingResolverPlan);
         };
-        let mut route =
-            match LocalResolverRoute::new(self.snapshot.clone(), candidate.key, deadline) {
-                Ok(route) => route,
-                Err(crate::RouteError::Expired) => return Begin::Unavailable(Unavailable::Expired),
-                Err(crate::RouteError::Binding) => {
-                    return Begin::Unavailable(Unavailable::MissingResolverPlan);
-                }
-            };
+        let mut route = match LocalResolverRoute::new(&self.desired, candidate.key, deadline) {
+            Ok(route) => route,
+            Err(crate::RouteError::Expired) => return Begin::Unavailable(Unavailable::Expired),
+            Err(crate::RouteError::Binding) => {
+                return Begin::Unavailable(Unavailable::MissingResolverPlan);
+            }
+        };
         let ticket = match self.state.insert_pending(query.clone(), deadline) {
             Ok(ticket) => ticket,
             Err(reason) => return Begin::Unavailable(reason),
@@ -292,9 +286,7 @@ impl Owner {
         deadline: Instant,
     ) -> Begin {
         self.reap();
-        let Some(plan) = Plan::of(&self.snapshot) else {
-            return Begin::Unavailable(Unavailable::Inactive);
-        };
+        let plan = Plan::of(&self.desired);
         // A resolver Node resolves for itself as a no-exit Node does.
         let no_exit = plan == Plan::NoExit || plan == Plan::ServeExitResolver;
         if !no_exit
@@ -305,9 +297,7 @@ impl Owner {
         {
             return Begin::Unavailable(Unavailable::MissingResolverPlan);
         }
-        let deadline = deadline
-            .min(self.snapshot.expires_at())
-            .min(Instant::now() + self.state.limits.query_timeout);
+        let deadline = deadline.min(Instant::now() + self.state.limits.query_timeout);
         // Validate the entire bounded OS list before starting I/O. Missing or
         // expired authority is terminal, never a reason to skip an upstream.
         let mut upstreams = match self.system_upstreams(system, deadline) {
@@ -341,7 +331,7 @@ impl Owner {
         work: &UpstreamWork,
         response: TrustedUpstreamResponse,
     ) -> Begin {
-        if self.snapshot.ensure_current().is_err() || work.route.ensure_current().is_err() {
+        if self.state.cancelled.is_cancelled() || work.route.ensure_current().is_err() {
             self.cancel(&work.ticket);
             return Begin::Unavailable(Unavailable::Expired);
         }
@@ -372,17 +362,14 @@ impl Owner {
         self.state.cancel(ticket)
     }
 
-    /// Stop is terminal for this generation. A new snapshot can be installed
-    /// explicitly with `replace`; old tickets and answers remain invalid.
+    /// Stop is terminal for this generation; old tickets and answers remain
+    /// invalid under any later owner.
     pub fn stop(&mut self) {
         self.state.stop();
     }
 
     /// Reclaim expired pending slots without creating a task or timer owner.
     pub fn reap(&mut self) {
-        if self.snapshot.ensure_current().is_err() {
-            self.state.stop();
-        }
         self.state.reap(Instant::now());
     }
 
@@ -391,24 +378,17 @@ impl Owner {
         self.state.generation.clone()
     }
 
-    pub async fn invalidated(&self) {
-        tokio::select! { biased;
-            _ = self.snapshot.invalidated() => {},
-            _ = self.state.cancelled.cancelled() => {},
-        }
+    pub async fn ended(&self) {
+        self.state.cancelled.cancelled().await;
     }
 
     fn finish(&mut self, outcome: Outcome) -> Begin {
-        if self.snapshot.ensure_current().is_err() {
+        if self.state.cancelled.is_cancelled() {
             self.state.stop();
             return Begin::Unavailable(Unavailable::Inactive);
         }
         match outcome {
-            Outcome::Answer(ready) => Begin::Answer(Answer {
-                snapshot: Box::new(self.snapshot.clone()),
-                ready,
-                scope_fence: None,
-            }),
+            Outcome::Answer(ready) => Begin::Answer(Answer { ready }),
             Outcome::Unmanaged => Begin::Unmanaged,
             Outcome::Unavailable(reason) => Begin::Unavailable(reason),
         }
@@ -497,35 +477,24 @@ impl State {
     fn from_netmap(
         netmap: &meshway_configuration::netmap::NodeNetmap,
         limits: Limits,
+        cancelled: CancellationToken,
     ) -> Result<Self, ConfigurationError> {
         Ok(Self {
             published: PublishedDns::from_netmap(netmap)?,
             limits,
             generation: Arc::new(()),
-            cancelled: CancellationToken::new(),
+            cancelled,
             sequence: 0,
             pending: BTreeMap::new(),
         })
     }
 
-    fn begin(
-        &mut self,
-        query: Query,
-        exit: ExitSelection,
-        now: Instant,
-        expires_at: Instant,
-    ) -> Outcome {
+    fn begin(&mut self, query: Query, exit: ExitSelection, now: Instant) -> Outcome {
         self.reap(now);
         if self.cancelled.is_cancelled() {
             return Outcome::Unavailable(Unavailable::Inactive);
         }
-        if now >= expires_at {
-            return Outcome::Unavailable(Unavailable::Expired);
-        }
-        let Some(deadline) = now
-            .checked_add(self.limits.query_timeout)
-            .map(|value| value.min(expires_at))
-        else {
+        let Some(deadline) = now.checked_add(self.limits.query_timeout) else {
             return Outcome::Unavailable(Unavailable::Expired);
         };
         match self.published.select(&query, exit) {

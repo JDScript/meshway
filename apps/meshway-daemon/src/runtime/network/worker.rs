@@ -165,7 +165,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             query = dns_requests.recv() => match query { Some(query) => Work::DnsQuery(Box::new(query)), None => Work::Command(None) },
             _ = sleep_until(retry_at) => Work::Retry,
             _ = dns.failed(), if !dns_failed => Work::DnsFailure,
-            _ = host.invalidated(), if installed.is_some() => Work::HostFailed,
+            _ = host.ended(), if installed.is_some() => Work::HostFailed,
             changed = network_changes.changed() => if changed.is_ok() { Work::NetworkChanged } else { Work::Command(None) },
             _ = sleep_until(sample_at) => Work::SampleDue,
             work = async {
@@ -309,7 +309,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 }
                 let offer = offers.borrow_and_update().clone();
                 engine.components_mut().set_keys(offer.keys);
-                engine.components_mut().set_instance(offer.instance).await;
+                engine.components_mut().set_instance(offer.instance);
                 let Some(netmap) = offer.netmap else {
                     // Control withdrew the lease: end the installed netmap.
                     if engine.desired().is_some() || engine.components().installed.is_some() {
@@ -323,7 +323,6 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 let same = engine
                     .desired()
                     .is_some_and(|desired| desired.reference() == reference);
-                engine.components_mut().stage(netmap.lease);
                 if same {
                     // Same content: Engine extends its own timer only.
                     if engine.reconfig(Some(&netmap)).await.is_err() {
@@ -355,7 +354,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 plane.report = report;
                 plane.failure = None;
                 let result = engine.reconfig(Some(&netmap)).await;
-                let retained = engine.desired().is_some();
+                let kept = engine.desired().is_some();
                 let plane = engine.components_mut();
                 let mut report = std::mem::replace(&mut plane.report, Report::stopped());
                 report.dns_guard = plane.dns.guard();
@@ -372,7 +371,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                             DataPlane::Stopped
                         };
                     }
-                    Err(error) if plane.failure.is_none() && retained => {
+                    Err(error) if plane.failure.is_none() && kept => {
                         // Rejected input (regressing reference or stale lease):
                         // Engine kept its current desired content unchanged.
                         tracing::warn!(
@@ -555,16 +554,14 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 let _ = secure.set_carriers(carriers.clone());
             }
             secure.set_ready_exits(peers.ready_exits());
-            // DNS routes still bind the staged snapshot until DNS applies content.
-            let snapshot = state.identity.snapshot().clone();
             diagnostics.synchronize(&state.desired, instance);
             tokio::select! { biased;
-                _ = host.invalidated() => {},
+                _ = host.ended() => {},
                 _ = dns.failed(), if !dns_failed => {},
                 _ = async {
                     static PROFILE: meshway_logging::profile::Metric = meshway_logging::profile::Metric::new("host.drive.poll");
                     PROFILE.poll(packets.drive(secure, manager, carriers.as_ref(), host, &state.desired, &mut diagnostics, &mut dns_queries, dns.dispatcher(), &mut pool, state.exit.as_mut())).await;
-                    dns_queries.drive(secure, &snapshot, manager).await;
+                    dns_queries.drive(secure, &state.desired, manager).await;
                     diagnostics.drive(secure, manager, carriers.as_ref(), &gateway);
                 } => {},
             }
@@ -687,12 +684,12 @@ fn sample(
     let _profile = PROFILE.enter();
     let secure = installed.as_ref().and_then(|state| state.secure.as_ref());
     meshway_logging::profile::gauge(
-        "secure.retained_circuits",
-        secure.map(|secure| secure.retained_circuits() as u64),
+        "secure.circuit_count",
+        secure.map(|secure| secure.circuit_count() as u64),
     );
     meshway_logging::profile::gauge(
-        "flow.retained",
-        secure.map(|secure| secure.retained_flows() as u64),
+        "flow.count",
+        secure.map(|secure| secure.flow_count() as u64),
     );
     meshway_logging::profile::gauge("secure.ready_circuits", None);
     report.facts = None;

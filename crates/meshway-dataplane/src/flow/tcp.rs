@@ -140,8 +140,8 @@ impl Side {
             let lower = self
                 .ahead
                 .partition_point(|range| range.end.wrapping_sub(self.floor) < start);
-            let retained = self.ahead.len() - (upper - lower);
-            if retained == MAX_AHEAD_RANGES {
+            let kept = self.ahead.len() - (upper - lower);
+            if kept == MAX_AHEAD_RANGES {
                 meshway_logging::profile::event("tcp.reject", "range_capacity");
                 return Err(Error::Capacity);
             }

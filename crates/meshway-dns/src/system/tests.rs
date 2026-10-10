@@ -114,7 +114,7 @@ async fn stale_system_provenance_wakes_blocked_work_and_never_renews_itself() {
         )),
     };
     assert!(snapshot.ensure_current().is_ok());
-    tokio::time::timeout(std::time::Duration::from_secs(1), snapshot.invalidated())
+    tokio::time::timeout(std::time::Duration::from_secs(1), snapshot.ended())
         .await
         .unwrap();
     assert!(snapshot.ensure_current().is_err());

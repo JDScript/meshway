@@ -230,10 +230,7 @@ impl Schedule {
         }
     }
     fn delivered(&mut self, retried: bool) -> bool {
-        let pending = self
-            .pending
-            .take()
-            .expect("sample retained before dispatch");
+        let pending = self.pending.take().expect("sample kept before dispatch");
         self.acknowledge(pending.mark);
         !retried
     }
@@ -342,7 +339,7 @@ impl super::Handle {
                 Ok(self.reporting.delivered(false))
             }
             Err(Error::Pending) => {
-                // Defensive recovery if Control already retained an older body.
+                // Defensive recovery if Control already kept an older body.
                 // Its marker is unknown, so retry it without acknowledging ours.
                 self.reporting
                     .pending

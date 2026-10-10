@@ -4,20 +4,17 @@ use meshway_configuration::DnsTransport;
 
 impl Owner {
     pub(super) fn begin_exit(&mut self, query: Query, request_deadline: Instant) -> Begin {
-        let Some(plan) = Plan::of(&self.snapshot) else {
-            return Begin::Unavailable(Unavailable::Inactive);
-        };
         let Plan::ViaExit {
             max_pending,
             timeout_ms,
-        } = plan
+        } = Plan::of(&self.desired)
         else {
             return Begin::Unavailable(Unavailable::MissingExitPlan);
         };
         if self.state.pending.len() >= usize::from(max_pending) {
             return Begin::Unavailable(Unavailable::Capacity);
         }
-        let deadline = request_deadline.min(self.snapshot.expires_at()).min(
+        let deadline = request_deadline.min(
             Instant::now()
                 + self
                     .state
@@ -27,8 +24,8 @@ impl Owner {
         );
         let routes = (|| {
             Ok::<_, crate::RouteError>((
-                MeshResolverRoute::new(self.snapshot.clone(), DnsTransport::Udp, deadline)?,
-                MeshResolverRoute::new(self.snapshot.clone(), DnsTransport::Tcp, deadline)?,
+                MeshResolverRoute::new(&self.desired, DnsTransport::Udp, deadline)?,
+                MeshResolverRoute::new(&self.desired, DnsTransport::Tcp, deadline)?,
             ))
         })();
         let (mut route, mut tcp) = match routes {

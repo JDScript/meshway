@@ -58,7 +58,7 @@ impl Stage {
             fingerprint,
             guard,
             output: output.map(copy),
-            // Pacing begins when the original output is retained, not at an
+            // Pacing begins when the original output is kept, not at an
             // earlier operation entry (a slow handshake cannot mint a retry).
             budget: Budget::new(Instant::now()),
         })
@@ -122,7 +122,7 @@ pub(super) struct Recovery {
 impl Recovery {
     pub fn maintain(&mut self) {
         // No cached operation crosses a scope replacement, even if its circuit
-        // is legally retained. Reconcile never rebinds these original guards.
+        // is legally kept. Reconcile never rebinds these original guards.
         for stage in [&mut self.init, &mut self.response] {
             if stage
                 .as_ref()

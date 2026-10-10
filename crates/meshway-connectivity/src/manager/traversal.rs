@@ -83,7 +83,7 @@ struct Observers {
     endpoints: std::collections::BTreeSet<[u8; 32]>,
 }
 
-// Retained across content and resource changes: churn cannot reset admission.
+// Kept across content and resource changes: churn cannot reset admission.
 // Acquisition is bounded to 30 starts in any half-open minute, paced at 250 ms.
 const QUERY_INTERVAL: Duration = Duration::from_millis(250);
 // Mapping observations expire after at most 20 seconds. Their refresh budget is

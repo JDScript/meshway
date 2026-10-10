@@ -42,7 +42,7 @@ pub(super) struct Expected {
     pub egress_rules: Vec<Vec<u8>>,
     pub egress_table: Option<u32>,
     pub tun: Option<(u32, String, usize, Vec<std::net::IpAddr>)>,
-    // Observation-only tombstone, retained until the synchronous TUN close's
+    // Observation-only tombstone, kept until the synchronous TUN close's
     // notifications have drained. It grants no capture/ownership exception.
     pub retiring_tun: Option<u32>,
     pub anchor: Option<super::anchor::Record>,

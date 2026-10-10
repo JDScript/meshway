@@ -146,7 +146,7 @@ impl FlowTable {
                                 <= renew_after)))
         });
         if renew {
-            // Fence against the actual retained flow bound, not merely the
+            // Fence against the actual kept flow bound, not merely the
             // older (potentially longer) installed projection.
             let previous_deadline = prepared.previous_deadline;
             exit.renew = exit.gate.is_some();

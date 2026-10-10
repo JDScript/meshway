@@ -5,10 +5,11 @@ use crate::{
     ResponseTransport, Ticket, TrustedUpstreamResponse, Unavailable, UpstreamWork,
 };
 use bytes::Bytes;
-use meshway_authority::ExecutionSnapshot;
 use meshway_configuration::DnsTransport;
+use meshway_engine::Desired;
 use std::{future::Future, pin::Pin, sync::Arc, time::Instant};
 use tokio::sync::{Mutex, watch};
+use tokio_util::sync::CancellationToken;
 
 pub type DnsFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
@@ -43,30 +44,33 @@ pub trait ResolverExchange: Send + Sync + 'static {
     ) -> DnsFuture<'a, Result<Bytes, GatewayError>>;
 }
 
-/// The installed netmap and the system resolver observation a query owner is
+/// The desired netmap and the system resolver observation a query owner is
 /// created for. Each resolver endpoint is decided by the netmap itself
-/// (`dns_route::netmap_resolver` and the source egress partition).
+/// (`dns_route::netmap_resolver` and the source egress partition). Its
+/// publisher ends it with [`publish`]: every ticket, route and answer of
+/// its owner then ends at once.
 #[derive(Clone)]
 pub struct Scope {
-    pub snapshot: ExecutionSnapshot,
+    pub desired: Desired,
     pub system_resolvers: Option<crate::SystemResolverSnapshot>,
+    ended: CancellationToken,
 }
 
 impl Scope {
     pub fn netmap(
-        snapshot: ExecutionSnapshot,
+        desired: Desired,
         system_resolvers: Option<crate::SystemResolverSnapshot>,
     ) -> Self {
         Self {
-            snapshot,
+            desired,
             system_resolvers,
+            ended: CancellationToken::new(),
         }
     }
 
-    /// The same netmap content and the same system resolver observation:
-    /// a lease renewal or new instance binding replaces nothing.
+    /// The same content and the same system resolver observation.
     pub fn equivalent(&self, other: &Self) -> bool {
-        self.snapshot.same_netmap(&other.snapshot)
+        self.desired.reference() == other.desired.reference()
             && match (&self.system_resolvers, &other.system_resolvers) {
                 (None, None) => true,
                 (Some(a), Some(b)) => a.same(b),
@@ -79,40 +83,35 @@ impl Scope {
     /// netmap.
     pub fn validate_resolvers(&self) -> Result<(), DispatchError> {
         use crate::owner::Plan;
-        let plan = Plan::of(&self.snapshot).ok_or(DispatchError::Scope)?;
+        let plan = Plan::of(&self.desired);
         if plan == Plan::Unavailable {
             return Err(DispatchError::Unavailable(Unavailable::MissingExitPlan));
         }
         let via_exit = matches!(plan, Plan::ViaExit { .. });
         if via_exit {
             for transport in [DnsTransport::Udp, DnsTransport::Tcp] {
-                MeshResolverRoute::new(
-                    self.snapshot.clone(),
-                    transport,
-                    self.snapshot.expires_at(),
-                )
-                .map_err(|_| DispatchError::Unavailable(Unavailable::MissingExitPlan))?;
+                MeshResolverRoute::new(&self.desired, transport, Instant::now() + VALIDATION)
+                    .map_err(|_| DispatchError::Unavailable(Unavailable::MissingExitPlan))?;
             }
             if self.system_resolvers.is_some() {
                 return Err(DispatchError::Scope);
             }
         }
-        let netmap = self.snapshot.netmap().map_err(|_| DispatchError::Scope)?;
-        for (key, server) in &netmap.netmap.projection.configuration.dns.servers {
+        for (key, server) in &self.desired.netmap().projection.configuration.dns.servers {
             if via_exit && !server.use_with_exit {
                 continue;
             }
-            LocalResolverRoute::new(self.snapshot.clone(), key, self.snapshot.expires_at())
+            LocalResolverRoute::new(&self.desired, key, Instant::now() + VALIDATION)
                 .map_err(|_| DispatchError::Unavailable(Unavailable::MissingResolverPlan))?;
         }
         if let Some(system) = &self.system_resolvers {
             let route = |index, transport| {
                 LocalResolverRoute::system(
-                    self.snapshot.clone(),
+                    &self.desired,
                     system.clone(),
                     index,
                     transport,
-                    self.snapshot.expires_at(),
+                    Instant::now() + VALIDATION,
                 )
                 .map(|_| ())
                 .map_err(|_| DispatchError::Unavailable(Unavailable::MissingResolverPlan))
@@ -128,46 +127,24 @@ impl Scope {
     }
 }
 
-/// An additional cancellation fence, never a grant or a replacement lease. It
-/// ends when the published scope changes to one that is not equivalent (a new
-/// netmap serial, a readiness withdrawal or a new system resolver
-/// observation); a same-content renewal leaves it current.
-#[derive(Clone)]
-pub(crate) struct ScopeFence {
-    scopes: watch::Receiver<Option<Scope>>,
-    original: Scope,
-}
+/// Construction-only budget of a validation route; nothing is sent on it.
+const VALIDATION: std::time::Duration = std::time::Duration::from_secs(1);
 
-impl ScopeFence {
-    fn new(scopes: watch::Receiver<Option<Scope>>, original: Scope) -> Self {
-        Self { scopes, original }
-    }
-    pub(crate) fn current(&self) -> bool {
-        match self.scopes.has_changed() {
-            Ok(false) => true,
-            Ok(true) => self
-                .scopes
-                .borrow()
-                .as_ref()
-                .is_some_and(|scope| scope.equivalent(&self.original)),
-            Err(_) => false,
+/// Publish `next` (`None`: withdraw). An equivalent scope keeps the current
+/// owner; anything else ends the previous scope's work before replacing it.
+pub fn publish(scopes: &watch::Sender<Option<Scope>>, next: Option<Scope>) {
+    scopes.send_if_modified(|current| {
+        if let (Some(old), Some(new)) = (current.as_ref(), next.as_ref())
+            && old.equivalent(new)
+        {
+            return false;
         }
-    }
-    pub(crate) async fn invalidated(&self) {
-        let mut receiver = self.scopes.clone();
-        loop {
-            if !self.current() || receiver.changed().await.is_err() {
-                return;
-            }
-            if !receiver
-                .borrow_and_update()
-                .as_ref()
-                .is_some_and(|scope| scope.equivalent(&self.original))
-            {
-                return;
-            }
+        if let Some(old) = current.take() {
+            old.ended.cancel();
         }
-    }
+        *current = next;
+        true
+    });
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
@@ -233,14 +210,11 @@ impl OwnerDispatcher {
     pub fn validate_scope(&self, scope: &Scope) -> Result<(), DispatchError> {
         use crate::owner::Plan;
         scope.validate_resolvers()?;
-        if let Plan::ViaExit { .. } = Plan::of(&scope.snapshot).ok_or(DispatchError::Scope)? {
+        if let Plan::ViaExit { .. } = Plan::of(&scope.desired) {
             for transport in [DnsTransport::Udp, DnsTransport::Tcp] {
-                let route = MeshResolverRoute::new(
-                    scope.snapshot.clone(),
-                    transport,
-                    scope.snapshot.expires_at(),
-                )
-                .map_err(|_| DispatchError::Scope)?;
+                let route =
+                    MeshResolverRoute::new(&scope.desired, transport, Instant::now() + VALIDATION)
+                        .map_err(|_| DispatchError::Scope)?;
                 self.exchange
                     .validate_mesh(&route)
                     .map_err(|_| DispatchError::Gateway)?;
@@ -278,7 +252,7 @@ impl OwnerDispatcher {
 
     /// Validate/install the latest query-owner scope. This is not proof that all
     /// resolver routes or host DNS resources are installed. Queries also reconcile
-    /// automatically; notifications fence old output before this is scheduled.
+    /// automatically; `publish` ends old output before this is scheduled.
     pub async fn reconcile(&self) -> Result<(), DispatchError> {
         let mut state = self.state.lock().await;
         self.reconcile_state(&mut state).map(|_| ())
@@ -317,21 +291,19 @@ impl OwnerDispatcher {
             .as_ref()
             .is_some_and(|installed| installed.equivalent(&scope));
         if (changed && !equivalent) || state.owner.is_none() {
-            // A new netmap serial cancels old tickets. No old operation is
-            // completed under a transplanted generation. Same netmap content
-            // keeps the owner: its snapshot already carries the renewed lease.
+            // New content cancels old tickets. No old operation is completed
+            // under a transplanted generation.
             state.owner = None;
             state.installed = None;
             state.owner = Some(
-                Owner::new(scope.snapshot.clone(), self.limits)
+                Owner::new(&scope.desired, self.limits, &scope.ended)
                     .map_err(|_| DispatchError::Scope)?,
             );
             state.installed = Some(scope.clone());
         }
-        scope
-            .snapshot
-            .ensure_current()
-            .map_err(|_| DispatchError::Scope)?;
+        if scope.ended.is_cancelled() {
+            return Err(DispatchError::Scope);
+        }
         Ok(scope)
     }
 
@@ -339,7 +311,7 @@ impl OwnerDispatcher {
         if Instant::now() >= deadline {
             return Err(DispatchError::Expired);
         }
-        let (begin, fence) = {
+        let begin = {
             let mut state = self.state.lock().await;
             let scope = self.reconcile_state(&mut state)?;
             if Instant::now() >= deadline {
@@ -359,25 +331,21 @@ impl OwnerDispatcher {
                     .ok_or(DispatchError::Scope)?
                     .begin_system(query, system, deadline);
             }
-            let fence = ScopeFence::new(state.scopes.clone(), scope);
-            (begin, fence)
+            begin
         };
         match begin {
-            Begin::Answer(answer) => Ok(answer.with_scope_fence(fence)),
+            Begin::Answer(answer) => Ok(answer),
             Begin::Unavailable(reason) => Err(DispatchError::Unavailable(reason)),
             Begin::Unmanaged => Err(DispatchError::PreserveSystemResolution),
-            Begin::Upstream(work) => self.upstream(work, fence).await,
+            Begin::Upstream(work) => self.upstream(work).await,
         }
     }
 
     /// Run one admitted upstream query to completion on its sealed routes:
     /// ordered failover only to independently authorized upstreams and the
     /// UDP→TCP retry, all within the original ticket.
-    async fn upstream(
-        &self,
-        mut work: Box<UpstreamWork>,
-        fence: ScopeFence,
-    ) -> Result<Answer, DispatchError> {
+    /// The ticket is a child of the scope: its withdrawal ends this work.
+    async fn upstream(&self, mut work: Box<UpstreamWork>) -> Result<Answer, DispatchError> {
         let mut cancellation = CancelOnDrop(Some(work.ticket.clone()));
         let mut attempt_deadline =
             upstream_deadline(work.ticket.expires_at(), work.remaining.len() + 1);
@@ -387,9 +355,6 @@ impl OwnerDispatcher {
             work.route
                 .ensure_current()
                 .map_err(|_| DispatchError::Expired)?;
-            if !fence.current() {
-                return Err(DispatchError::Scope);
-            }
             let query = work
                 .query
                 .encode_upstream(self.udp_payload_limit)
@@ -397,9 +362,8 @@ impl OwnerDispatcher {
             let result = {
                 let exchange = ExchangeScope(work.route.exchange_scope(attempt_deadline));
                 tokio::select! { biased;
-                    _ = fence.invalidated() => return Err(DispatchError::Scope),
                     _ = work.ticket.cancelled() => return Err(DispatchError::Expired),
-                    _ = work.route.invalidated() => return Err(DispatchError::Expired),
+                    _ = work.route.ended() => return Err(DispatchError::Expired),
                     _ = tokio::time::sleep_until(attempt_deadline.into()) => Err(GatewayError),
                     result = async { match &exchange.0 {
                         ResolverRoute::Local(route) => self.exchange.exchange(route, query).await,
@@ -412,9 +376,6 @@ impl OwnerDispatcher {
             work.route
                 .ensure_current()
                 .map_err(|_| DispatchError::Expired)?;
-            if !fence.current() {
-                return Err(DispatchError::Scope);
-            }
             let bytes = match result {
                 Ok(bytes) => bytes,
                 Err(_) => {
@@ -467,7 +428,7 @@ impl OwnerDispatcher {
             .complete_upstream(&work, response);
         let answer = completed(result)?;
         cancellation.0 = None;
-        Ok(answer.with_scope_fence(fence))
+        Ok(answer)
     }
 }
 

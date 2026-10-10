@@ -25,7 +25,7 @@ pub(super) struct Admitted {
     pub hop: Hop,
     /// Digest the handshake binds; compared with the wire context.
     pub authorization: Digest,
-    /// The exact admitted path, retained by the circuit.
+    /// The exact admitted path, kept by the circuit.
     pub selected: Arc<LogicalPath>,
 }
 
@@ -198,10 +198,9 @@ pub(super) fn admit(
 /// The exact path a live circuit was admitted on.
 pub(super) fn selected<'a>(
     context: &Context,
-    retained: Option<&'a LogicalPath>,
+    kept: Option<&'a LogicalPath>,
 ) -> Result<&'a LogicalPath, Error> {
-    retained
-        .filter(|path| path.nodes == context.path)
+    kept.filter(|path| path.nodes == context.path)
         .ok_or(Error::Context)
 }
 

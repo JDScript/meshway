@@ -1,6 +1,5 @@
-//! One read view over the verified netmap of a snapshot. Every resource owner
-//! reads its inputs through this view; nothing here grants anything without
-//! the snapshot that carries it.
+//! One read view over the desired netmap. Every resource owner reads its
+//! inputs through this view; nothing here grants anything by itself.
 use meshway_configuration::{
     NodeAddresses, NodeIdentity,
     execution::{DialCandidate, TrustedNode},
@@ -11,7 +10,6 @@ use meshway_transport_spec::PreparedListener;
 use std::collections::BTreeMap;
 #[cfg(target_os = "linux")]
 use {
-    meshway_authority::ExecutionSnapshot,
     meshway_configuration::{
         AddressPools,
         execution::{EgressCapturePlan, ExitNat},
@@ -44,7 +42,7 @@ impl From<&meshway_configuration::netmap::ExitRole> for RoleIdentity {
     }
 }
 
-/// Everything about a peer that a retained descriptor toward it depends on.
+/// Everything about a peer that a kept descriptor toward it depends on.
 #[derive(PartialEq, Eq)]
 pub(crate) struct PeerBinding<'a> {
     identity: &'a NodeIdentity,
@@ -58,9 +56,9 @@ impl<'a> View<'a> {
     }
 
     #[cfg(target_os = "linux")]
-    /// The current netmap of a snapshot; `None` once it is not current.
-    pub fn of(snapshot: &'a ExecutionSnapshot) -> Option<Self> {
-        snapshot.netmap().ok().map(|netmap| Self(&netmap.netmap))
+    /// The desired content.
+    pub fn of(desired: &'a meshway_engine::Desired) -> Self {
+        Self(desired.netmap())
     }
 
     #[cfg(target_os = "linux")]

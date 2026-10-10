@@ -129,7 +129,7 @@ async fn assert_dns_reader_waiter_cancellation(
 async fn assert_dns_reader_drop(
     kernel: &mut Kernel,
     reservation: &meshway_dns::SystemDnsReservation,
-    retained: &dyn meshway_dns::OwnedDnsLink,
+    kept: &dyn meshway_dns::OwnedDnsLink,
     identity: &meshway_dns::DnsLinkIdentity,
 ) {
     let sockets = dns_test_socket_ids();
@@ -138,7 +138,7 @@ async fn assert_dns_reader_drop(
     assert_eq!(reader.verify().await.unwrap(), *identity);
     drop(reader);
     dns_test_wait_reader_closed(&socket).await;
-    assert_eq!(retained.verify().await.unwrap(), *identity);
+    assert_eq!(kept.verify().await.unwrap(), *identity);
 
     let sockets = dns_test_socket_ids();
     let reader = kernel.dns_anchor(reservation).await.unwrap();
@@ -146,12 +146,12 @@ async fn assert_dns_reader_drop(
     let mut pending = Box::pin(reader.verify());
     assert!(futures_util::poll!(pending.as_mut()).is_pending());
     drop(pending); // An interrupted dump must not leave a reusable reader FD.
-    tokio::time::timeout(Duration::from_secs(1), reader.invalidated())
+    tokio::time::timeout(Duration::from_secs(1), reader.ended())
         .await
         .unwrap();
     assert!(reader.verify().await.is_err());
     dns_test_wait_reader_closed(&socket).await;
-    assert_eq!(retained.verify().await.unwrap(), *identity);
+    assert_eq!(kept.verify().await.unwrap(), *identity);
     kernel.verify().await.unwrap();
 }
 
@@ -650,7 +650,7 @@ async fn negative_capture_marked_bypass_recovery_and_exact_down() {
         .collect();
     kernel.retain_negative(&pools[..1]).await.unwrap();
     kernel.retain_negative(&pools[1..]).await.unwrap();
-    assert_eq!(kernel.journal.pools, pools, "old pools retained");
+    assert_eq!(kernel.journal.pools, pools, "old pools kept");
     for peer in &peers {
         let unmarked =
             tokio::time::timeout(Duration::from_secs(3), tokio::net::TcpStream::connect(peer))

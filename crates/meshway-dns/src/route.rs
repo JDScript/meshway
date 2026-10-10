@@ -1,9 +1,10 @@
-use meshway_authority::ExecutionSnapshot;
 use meshway_configuration::{
     DnsTransport,
     execution::LocalEgressAction,
     netmap::{EgressAction, NodeNetmap, ResolverAction},
 };
+use meshway_engine::Desired;
+use meshway_model::NetmapRef;
 use std::{fmt, net::SocketAddr, time::Instant};
 use tokio_util::sync::CancellationToken;
 
@@ -15,32 +16,28 @@ pub enum RouteError {
     Expired,
 }
 
-/// The one query lifetime both resolver route kinds share: the original
-/// snapshot, a fixed permit cutoff, the request deadline and the query
-/// ticket's cancellation. An exchange can only shorten it. It carries no
-/// grant; each route kind keeps its own sealed one.
+/// The one query lifetime both resolver route kinds share: the content it
+/// was decided on, the request deadline and the query ticket's cancellation
+/// (which the scope's publisher ends on withdrawal or new content). An
+/// exchange can only shorten it. It carries no grant; each route kind keeps
+/// its own sealed one.
 #[derive(Clone)]
 pub(crate) struct QueryLifetime {
-    snapshot: ExecutionSnapshot,
-    expires_at_ms: u64,
+    netmap: NetmapRef,
     deadline: Instant,
     cancelled: CancellationToken,
 }
 
 impl QueryLifetime {
-    pub(crate) fn new(snapshot: ExecutionSnapshot, expires_at_ms: u64, deadline: Instant) -> Self {
+    pub(crate) fn new(desired: &Desired, deadline: Instant) -> Self {
         Self {
-            expires_at_ms: expires_at_ms.min(snapshot.expires_at_ms()),
-            deadline: deadline.min(snapshot.expires_at()),
-            snapshot,
+            netmap: desired.reference(),
+            deadline,
             cancelled: CancellationToken::new(),
         }
     }
-    pub(crate) fn snapshot(&self) -> &ExecutionSnapshot {
-        &self.snapshot
-    }
-    pub(crate) fn expires_at_ms(&self) -> u64 {
-        self.expires_at_ms
+    pub(crate) fn netmap(&self) -> NetmapRef {
+        self.netmap
     }
     pub(crate) fn deadline(&self) -> Instant {
         self.deadline
@@ -62,18 +59,13 @@ impl QueryLifetime {
         self.cancelled.cancel();
     }
     pub(crate) fn ensure_current(&self) -> Result<(), RouteError> {
-        let now = self.snapshot.now_ms().map_err(|_| RouteError::Expired)?;
-        if now >= self.expires_at_ms
-            || Instant::now() >= self.deadline
-            || self.cancelled.is_cancelled()
-        {
+        if Instant::now() >= self.deadline || self.cancelled.is_cancelled() {
             return Err(RouteError::Expired);
         }
         Ok(())
     }
-    pub(crate) async fn invalidated(&self) {
+    pub(crate) async fn ended(&self) {
         tokio::select! { biased;
-            _ = self.snapshot.invalidated_at(self.expires_at_ms) => {},
             _ = tokio::time::sleep_until(self.deadline.into()) => {},
             _ = self.cancelled.cancelled() => {},
         }
@@ -85,7 +77,7 @@ fn policy_error(_: meshway_policy::dns_route::ResolverRouteError) -> RouteError 
 }
 
 /// Sealed exact local-business route, never a bootstrap socket exemption.
-/// Adapters check this before every actual I/O poll and wait on `invalidated`.
+/// Adapters check this before every actual I/O poll and wait on `ended`.
 #[derive(Clone)]
 pub struct LocalResolverRoute {
     lifetime: QueryLifetime,
@@ -127,13 +119,8 @@ impl LocalResolverRoute {
     /// A configured resolver: the netmap's per-resolver decision
     /// (`dns_route::netmap_resolver`), which the source egress partition must
     /// leave to a local socket.
-    pub(crate) fn new(
-        snapshot: ExecutionSnapshot,
-        key: &str,
-        deadline: Instant,
-    ) -> Result<Self, RouteError> {
-        let reading = snapshot.netmap_reading().map_err(|_| RouteError::Expired)?;
-        let netmap = &reading.netmap.netmap;
+    pub(crate) fn new(desired: &Desired, key: &str, deadline: Instant) -> Result<Self, RouteError> {
+        let netmap = desired.netmap();
         let action =
             match meshway_policy::dns_route::netmap_resolver(netmap, key).map_err(policy_error)? {
                 ResolverAction::Direct => LocalEgressAction::Direct,
@@ -153,12 +140,11 @@ impl LocalResolverRoute {
         if netmap_local_action(netmap, endpoint)? != action {
             return Err(RouteError::Binding);
         }
-        let expires_at_ms = reading.expires_at_ms;
         let route = Self {
             endpoint,
             transport,
             action,
-            lifetime: QueryLifetime::new(snapshot, expires_at_ms, deadline),
+            lifetime: QueryLifetime::new(desired, deadline),
             system: None,
         };
         route.ensure_current()?;
@@ -167,7 +153,7 @@ impl LocalResolverRoute {
 
     /// One OS resolver upstream. UDP and its TCP fallback are separate routes.
     pub(crate) fn system(
-        snapshot: ExecutionSnapshot,
+        desired: &Desired,
         system: crate::SystemResolverSnapshot,
         index: usize,
         transport: DnsTransport,
@@ -179,8 +165,7 @@ impl LocalResolverRoute {
             return Err(RouteError::Binding);
         }
         use meshway_configuration::netmap::DnsPlan;
-        let reading = snapshot.netmap_reading().map_err(|_| RouteError::Expired)?;
-        let netmap = &reading.netmap.netmap;
+        let netmap = desired.netmap();
         // The resolver Node serves sources from its own OS resolvers too.
         if !netmap.self_.enabled
             || !matches!(
@@ -191,12 +176,11 @@ impl LocalResolverRoute {
             return Err(RouteError::Binding);
         }
         let action = netmap_local_action(netmap, endpoint)?;
-        let expires_at_ms = reading.expires_at_ms;
         let route = Self {
             endpoint,
             transport,
             action,
-            lifetime: QueryLifetime::new(snapshot, expires_at_ms, deadline),
+            lifetime: QueryLifetime::new(desired, deadline),
             system: Some(system),
         };
         route.ensure_current()?;
@@ -212,11 +196,9 @@ impl LocalResolverRoute {
     pub fn action(&self) -> LocalEgressAction {
         self.action
     }
-    pub fn snapshot(&self) -> &ExecutionSnapshot {
-        self.lifetime.snapshot()
-    }
-    pub fn expires_at_ms(&self) -> u64 {
-        self.lifetime.expires_at_ms()
+    /// The content this route was decided on; comparison data only.
+    pub fn netmap(&self) -> NetmapRef {
+        self.lifetime.netmap()
     }
     pub fn deadline(&self) -> Instant {
         self.lifetime.deadline()
@@ -244,13 +226,13 @@ impl LocalResolverRoute {
         self.lifetime.ensure_current()
     }
 
-    pub async fn invalidated(&self) {
+    pub async fn ended(&self) {
         if self.ensure_current().is_err() {
             return;
         }
         tokio::select! { biased;
-            _ = self.lifetime.invalidated() => {},
-            _ = async { match &self.system { Some(system) => system.invalidated().await, None => std::future::pending().await } } => {},
+            _ = self.lifetime.ended() => {},
+            _ = async { match &self.system { Some(system) => system.ended().await, None => std::future::pending().await } } => {},
         }
     }
 }

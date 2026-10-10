@@ -84,7 +84,7 @@ async fn send(
             let released_at = timing::start();
             let buffers = PendingFrame::release_batch(pending).map_err(|_| Error::Cancelled)?;
             for (bytes, guard) in buffers.into_iter().zip(&lifetime.packets) {
-                // Every original guard is retained by the common OutputLifetime;
+                // Every original guard is kept by the common OutputLifetime;
                 // the per-frame deadline also restricts Session's intersection.
                 let deadline = guard.expires_at().map(Into::into);
                 frames.push_back(ScopedFrame {

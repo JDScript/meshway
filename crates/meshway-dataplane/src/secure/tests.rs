@@ -88,14 +88,14 @@ async fn circuit_drop_and_table_clear_cancel_outputs_but_io_child_cancel_is_loca
     assert!(first_output.is_cancelled());
     assert!(!second_output.is_cancelled());
     let id = second.context.circuit;
-    let mut retained = BTreeMap::from([(id, second)]);
+    let mut kept = BTreeMap::from([(id, second)]);
     // receive/send temporarily remove the value while mutating the shared
     // Engine. Moving and reinserting it must not cancel already queued work.
-    let moving = retained.remove(&id).unwrap();
+    let moving = kept.remove(&id).unwrap();
     assert!(!second_output.is_cancelled());
-    retained.insert(id, moving);
+    kept.insert(id, moving);
     assert!(!second_output.is_cancelled());
-    retained.clear();
+    kept.clear();
     tokio::time::timeout(Duration::from_secs(1), second_output.cancelled())
         .await
         .unwrap();

@@ -388,7 +388,7 @@ pub struct Engine {
 impl fmt::Debug for Engine {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Engine")
-            .field("retained_flows", &self.flows.len())
+            .field("flow_count", &self.flows.len())
             .finish_non_exhaustive()
     }
 }

@@ -1,5 +1,5 @@
 //! The single protected UDP primitive, shared by Mesh endpoints and bootstrap
-//! DNS. Only snapshot-minted factory methods expose Mesh sockets publicly.
+//! DNS. Only content-scoped factory methods expose Mesh sockets publicly.
 use super::{
     protection::{ProtectionScope, io_error},
     sockets::Owned,

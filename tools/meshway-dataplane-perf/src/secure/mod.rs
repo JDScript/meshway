@@ -495,7 +495,7 @@ impl Driver<'_> {
                         eprintln!("{}", serde_json::json!({"pipelineOccupancy": {
                             "input": self.pending.len(), "creditsAvailable": pool.available(),
                             "tx": sends.occupancy(), "tun": deliveries.occupancy(),
-                            "flows": self.node.retained_flows(), "circuits": self.node.retained_circuits(),
+                            "flows": self.node.flow_count(), "circuits": self.node.circuit_count(),
                             "tasks": tokio::runtime::Handle::current().metrics().num_alive_tasks(),
                         }}));
                         profile::report_checkpoint();

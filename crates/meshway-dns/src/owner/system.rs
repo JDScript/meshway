@@ -12,17 +12,11 @@ impl Owner {
         }
         // The netmap decides each upstream from its egress partition.
         let route = |index, transport| {
-            LocalResolverRoute::system(
-                self.snapshot.clone(),
-                system.clone(),
-                index,
-                transport,
-                deadline,
-            )
-            .map_err(|error| match error {
-                crate::RouteError::Expired => Unavailable::Expired,
-                crate::RouteError::Binding => Unavailable::MissingResolverPlan,
-            })
+            LocalResolverRoute::system(&self.desired, system.clone(), index, transport, deadline)
+                .map_err(|error| match error {
+                    crate::RouteError::Expired => Unavailable::Expired,
+                    crate::RouteError::Binding => Unavailable::MissingResolverPlan,
+                })
         };
         (0..system.upstreams.len())
             .map(|index| {
@@ -50,12 +44,10 @@ impl Owner {
         deadline: Instant,
     ) -> Begin {
         self.reap();
-        if Plan::of(&self.snapshot) != Some(Plan::ServeExitResolver) {
+        if Plan::of(&self.desired) != Plan::ServeExitResolver {
             return Begin::Unavailable(Unavailable::MissingExitPlan);
         }
-        let deadline = deadline
-            .min(self.snapshot.expires_at())
-            .min(Instant::now() + self.state.limits.query_timeout);
+        let deadline = deadline.min(Instant::now() + self.state.limits.query_timeout);
         let mut upstreams = match self.system_upstreams(system, deadline) {
             Ok(upstreams) => upstreams,
             Err(reason) => return Begin::Unavailable(reason),

@@ -1,5 +1,5 @@
 //! Local installation resources. Their lifetime is deliberately independent of
-//! an execution lease: retained routing may reject queries, never authorize them.
+//! an execution lease: kept routing may reject queries, never authorize them.
 use crate::DnsFuture;
 use meshway_configuration::{DnsConfiguration, DnsTransport, netmap::DnsPlan};
 use serde::{Deserialize, Serialize};
@@ -112,7 +112,7 @@ pub enum SystemDnsError {
 /// waits. Public metadata is not a grant and cannot substitute for that adapter.
 pub trait OwnedDnsLink: Send + Sync + 'static {
     fn verify(&self) -> DnsFuture<'_, Result<DnsLinkIdentity, SystemDnsError>>;
-    fn invalidated(&self) -> DnsFuture<'_, ()>;
+    fn ended(&self) -> DnsFuture<'_, ()>;
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -277,7 +277,7 @@ impl SystemResolverSnapshot {
             Ok(())
         }
     }
-    pub(crate) async fn invalidated(&self) {
+    pub(crate) async fn ended(&self) {
         loop {
             let deadline = match self.verified_until.lock() {
                 Ok(at) => *at,

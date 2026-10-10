@@ -143,7 +143,7 @@ async fn kernel_only_host_defers_control_and_revokes_retained_factory() {
     assert!(matches!(sockets.shared.check(), Err(Error::Worker)));
     assert!(matches!(sockets.resolver().await, Err(Error::Worker)));
 
-    // A retained, revoked factory neither keeps a second owner alive nor obtains
+    // A kept, revoked factory neither keeps a second owner alive nor obtains
     // fresh authority when the private directory is opened again.
     let host = Host::open(directory, Options::default()).await.unwrap();
     assert!(matches!(sockets.shared.check(), Err(Error::Worker)));

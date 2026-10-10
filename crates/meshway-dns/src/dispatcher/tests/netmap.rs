@@ -27,7 +27,7 @@ async fn netmap_query_capacity_cancellation_and_unsent_answer_deadlines_are_inde
     let network = Network::new(&control, 'a');
     let netmap = network.compile(None);
     let snapshot = sync(&mut control, &script, reply(&netmap, true)).await;
-    let mut owner = Owner::new(snapshot.clone(), limits()).unwrap();
+    let mut owner = Owner::new(&snapshot, limits(), &CancellationToken::new()).unwrap();
     let deadline = Instant::now() + Duration::from_secs(2);
     let mut pending = Vec::new();
     for _ in 0..4 {
@@ -51,7 +51,7 @@ async fn netmap_query_capacity_cancellation_and_unsent_answer_deadlines_are_inde
     else {
         panic!("cancel returns its slot")
     };
-    let mut other = Owner::new(snapshot, limits()).unwrap();
+    let mut other = Owner::new(&snapshot, limits(), &CancellationToken::new()).unwrap();
     assert!(!other.cancel(&replacement.ticket));
     replacement.route().ensure_current().unwrap();
     let short = Instant::now() + Duration::from_millis(20);
@@ -73,34 +73,8 @@ async fn netmap_query_capacity_cancellation_and_unsent_answer_deadlines_are_inde
     server.close().await;
 }
 
-/// Scripted sync replies, and the staged issuer of this Control's snapshots.
-struct Script(
-    StdMutex<VecDeque<SyncResponse>>,
-    StdMutex<meshway_authority::StagedIssuer>,
-);
-impl Default for Script {
-    fn default() -> Self {
-        Self(
-            StdMutex::default(),
-            StdMutex::new(meshway_authority::StagedIssuer::new().unwrap()),
-        )
-    }
-}
-impl Script {
-    fn identity(&self, control: &Control) -> meshway_authority::DataPlaneIdentity {
-        let netmap = control.netmap().unwrap();
-        self.1
-            .lock()
-            .unwrap()
-            .issue(
-                &netmap.content,
-                netmap.lease,
-                None,
-                &control.dataplane_keys().unwrap(),
-            )
-            .unwrap()
-    }
-}
+#[derive(Default)]
+struct Script(StdMutex<VecDeque<SyncResponse>>);
 impl SyncTransport for Script {
     fn sync<'a>(&'a self, _: &'a SyncRequest, _: &'a str) -> SyncFuture<'a> {
         let reply = self.0.lock().unwrap().pop_front();
@@ -331,10 +305,11 @@ async fn enrolled(server: &support::Server) -> (Control, Arc<Script>) {
     (control, script)
 }
 
-async fn sync(control: &mut Control, script: &Script, reply: SyncResponse) -> ExecutionSnapshot {
+/// One sync; Control's verified netmap as Engine's desired content.
+async fn sync(control: &mut Control, script: &Script, reply: SyncResponse) -> Desired {
     script.0.lock().unwrap().push_back(reply);
     control.sync(&mut Facts).await.unwrap();
-    script.identity(control).snapshot().clone()
+    Desired::new(&control.netmap().unwrap().content).unwrap()
 }
 
 fn named(name: &str) -> Query {
@@ -365,7 +340,7 @@ async fn netmap_resolvers_follow_their_decisions_and_magic_dns_uses_mesh_hosts()
     assert_eq!(dns.resolvers["mesh"], ResolverAction::Rejected);
     assert!(matches!(dns.egress, DnsPlan::ViaExit { .. }));
     let snapshot = sync(&mut control, &script, reply(&netmap, true)).await;
-    let mut owner = Owner::new(snapshot.clone(), limits()).unwrap();
+    let mut owner = Owner::new(&snapshot, limits(), &CancellationToken::new()).unwrap();
     let deadline = Instant::now() + Duration::from_secs(2);
 
     // A direct resolver gets its exact local route without any demand ID.
@@ -424,7 +399,7 @@ async fn netmap_resolvers_follow_their_decisions_and_magic_dns_uses_mesh_hosts()
 }
 
 #[tokio::test]
-async fn netmap_renewal_keeps_owner_and_fences_while_a_new_serial_ends_them() {
+async fn same_content_keeps_owner_while_new_content_ends_its_answers() {
     let server = support::Server::start().await;
     let (mut control, script) = enrolled(&server).await;
     let mut network = Network::new(&control, 'a');
@@ -443,10 +418,10 @@ async fn netmap_renewal_keeps_owner_and_fences_while_a_new_serial_ends_them() {
         state.owner.as_ref().unwrap().generation()
     };
 
-    // Same content: the Control renews in place and the scope is equivalent.
+    // Same content: the scope is equivalent and keeps its owner.
     let renewed = sync(&mut control, &script, reply(&first, false)).await;
-    assert!(renewed.same_netmap(&snapshot));
-    sender.send_replace(Some(Scope::netmap(renewed, None)));
+    assert_eq!(renewed.reference(), snapshot.reference());
+    crate::publish_scope(&sender, Some(Scope::netmap(renewed, None)));
     answer.ensure_current().unwrap();
     dispatcher
         .dispatch(named("b.test.internal."), deadline)
@@ -465,8 +440,9 @@ async fn netmap_renewal_keeps_owner_and_fences_while_a_new_serial_ends_them() {
     let second = network.compile(Some(&first));
     assert!(second.netmap.serial > first.netmap.serial);
     let next = sync(&mut control, &script, reply(&second, true)).await;
-    assert!(answer.ensure_current().is_err());
-    sender.send_replace(Some(Scope::netmap(next, None)));
+    answer.ensure_current().unwrap();
+    // Publishing new content ends the old scope's answers at once.
+    crate::publish_scope(&sender, Some(Scope::netmap(next, None)));
     assert!(answer.ensure_current().is_err());
     dispatcher
         .dispatch(named("b.test.internal."), deadline)

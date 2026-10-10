@@ -1,10 +1,10 @@
 //! The DNS owner is observed independently of packet I/O and TUN address DAD.
 use super::Runtime;
-use meshway_authority::ExecutionSnapshot;
 use meshway_configuration::netmap::NodeNetmap;
 use meshway_dns::{
     SystemDnsBackend, SystemDnsError, SystemDnsOwner, SystemDnsReservation, SystemDnsSettings,
 };
+use meshway_engine::Desired;
 use meshway_private_storage::Directory;
 use meshway_underlay::Host;
 use std::{future::Future, sync::Arc, time::Duration};
@@ -25,7 +25,7 @@ trait Owner: Send + 'static {
     ) -> impl Future<Output = Result<(), SystemDnsError>> + Send;
     fn install(
         &mut self,
-        snapshot: ExecutionSnapshot,
+        desired: Desired,
     ) -> impl Future<Output = Result<(), SystemDnsError>> + Send;
     fn shutdown(self, keep: bool) -> impl Future<Output = Result<(), SystemDnsError>> + Send;
 }
@@ -41,8 +41,8 @@ impl Owner for Runtime {
         Runtime::hold(self, netmap).await?;
         self.check(netmap)
     }
-    async fn install(&mut self, snapshot: ExecutionSnapshot) -> Result<(), SystemDnsError> {
-        Runtime::install(self, snapshot).await
+    async fn install(&mut self, desired: Desired) -> Result<(), SystemDnsError> {
+        Runtime::install(self, desired).await
     }
     async fn shutdown(self, keep: bool) -> Result<(), SystemDnsError> {
         Runtime::shutdown(self, keep).await
@@ -51,10 +51,7 @@ impl Owner for Runtime {
 
 enum Command {
     Hold(Box<NodeNetmap>, oneshot::Sender<Result<(), SystemDnsError>>),
-    Install(
-        Box<ExecutionSnapshot>,
-        oneshot::Sender<Result<(), SystemDnsError>>,
-    ),
+    Install(Box<Desired>, oneshot::Sender<Result<(), SystemDnsError>>),
     Shutdown(bool, oneshot::Sender<Result<(), SystemDnsError>>),
 }
 
@@ -110,8 +107,8 @@ impl Actor {
                             let _ = reply.send(result);
                             continue;
                         }
-                        Some(Command::Install(snapshot, reply)) => {
-                            let result = runtime.install(*snapshot).await;
+                        Some(Command::Install(desired, reply)) => {
+                            let result = runtime.install(*desired).await;
                             if let Err(error) = result {
                                 tracing::warn!(
                                     ?error,
@@ -144,7 +141,7 @@ impl Actor {
                             "DNS owner health check failed"
                         );
                     }
-                    query_scopes.send_replace(None);
+                    meshway_dns::publish_scope(&query_scopes, None);
                     faults.send_replace(Some(error));
                 }
             }
@@ -157,7 +154,7 @@ impl Actor {
         }
     }
     fn suspend(&self) {
-        self.scopes.send_replace(None);
+        meshway_dns::publish_scope(&self.scopes, None);
     }
     async fn hold(&self, netmap: &NodeNetmap) -> Result<(), SystemDnsError> {
         let (reply, result) = oneshot::channel();
@@ -167,10 +164,10 @@ impl Actor {
             .map_err(|_| SystemDnsError::Backend)?;
         result.await.map_err(|_| SystemDnsError::Backend)?
     }
-    async fn install(&self, snapshot: ExecutionSnapshot) -> Result<(), SystemDnsError> {
+    async fn install(&self, desired: Desired) -> Result<(), SystemDnsError> {
         let (reply, result) = oneshot::channel();
         self.commands
-            .send(Command::Install(Box::new(snapshot), reply))
+            .send(Command::Install(Box::new(desired), reply))
             .await
             .map_err(|_| SystemDnsError::Backend)?;
         result.await.map_err(|_| SystemDnsError::Backend)?
@@ -283,11 +280,11 @@ impl Attachment {
             .hold(netmap)
             .await
     }
-    pub async fn install(&self, snapshot: ExecutionSnapshot) -> Result<(), SystemDnsError> {
+    pub async fn install(&self, desired: Desired) -> Result<(), SystemDnsError> {
         self.actor
             .as_ref()
             .ok_or(SystemDnsError::Backend)?
-            .install(snapshot)
+            .install(desired)
             .await
     }
     pub fn suspend(&self) {

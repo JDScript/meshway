@@ -154,7 +154,7 @@ fn decrypt(
 impl SecureNode {
     /// Send one fixed challenge on an established diagnostic circuit owned by
     /// this source instance. The deadline is capped at ten seconds and the
-    /// current circuit grant. At most 128 request correlations are retained;
+    /// current circuit grant. At most 128 request correlations are kept;
     /// each observation admits at most one new request per second across CIDs.
     pub fn probe(
         &mut self,

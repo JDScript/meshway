@@ -9,7 +9,7 @@ mod rpdb;
 mod tool;
 
 use futures_util::{TryStream, TryStreamExt};
-use meshway_authority::ExecutionSnapshot;
+use meshway_engine::Desired;
 use meshway_private_storage::Directory;
 use meshway_tun::Tun;
 use rtnetlink::{
@@ -302,14 +302,18 @@ impl Kernel {
         self.shared.check()
     }
 
-    pub async fn install(&mut self, snapshot: ExecutionSnapshot) -> Result<()> {
+    pub async fn install(&mut self, desired: Desired) -> Result<()> {
         self.ready().await?;
-        // Same netmap content: a lease renewal or a new instance binding. Every
-        // guard already sees the raised deadline; nothing is reinstalled.
-        if self.renew(&snapshot)? {
+        // The same content is already installed: nothing changes.
+        if self.tun.is_some()
+            && self
+                .shared
+                .installed()?
+                .is_some_and(|installed| installed.reference() == desired.reference())
+        {
             return Ok(());
         }
-        let view = View::of(&snapshot).ok_or(Error::Expired)?;
+        let view = View::new(desired.netmap());
         if self.exit.as_ref().is_some_and(|owner| {
             view.exit_role().as_ref() != Some(&owner.role.plan) || !view.exit_enabled()
         }) && let Some(mut owner) = self.exit.take()
@@ -370,7 +374,7 @@ impl Kernel {
         }
         let addresses = view.addresses().clone();
         self.verify_capture(&pools).await?;
-        if self.retain_tun(&snapshot, &pools, &addresses).await? {
+        if self.retain_tun(&desired, &pools, &addresses).await? {
             self.resume_egress().await?;
             return Ok(());
         }
@@ -386,11 +390,11 @@ impl Kernel {
         }
         self.retain_negative(&pools).await?;
         self.suspend().await?;
-        let outcome = self.activate(&snapshot, &pools, &addresses).await;
+        let outcome = self.activate(&desired, &pools, &addresses).await;
         if outcome.is_err() {
             if self.journal.pending.is_none() {
-                // Known creations can be rolled back without turning ordinary
-                // lease expiry during installation into a protection conflict.
+                // Known creations can be rolled back without turning a
+                // cancelled installation into a protection conflict.
                 if let Err(error) = self.suspend().await {
                     self.shared.conflict.cancel();
                     return Err(error);
@@ -407,48 +411,21 @@ impl Kernel {
         self.resume_egress().await
     }
 
-    /// Replace the installed snapshot by one of the same netmap content and
-    /// rebind every descriptor to it. No kernel object is touched.
-    fn renew(&self, snapshot: &ExecutionSnapshot) -> Result<bool> {
-        if self.tun.is_none() {
-            return Ok(false);
-        }
-        let mut active = self.shared.execution.write().map_err(|_| Error::Worker)?;
-        let Some((installed, token)) = active.as_mut() else {
-            return Ok(false);
-        };
-        if token.is_cancelled() || !installed.same_netmap(snapshot) {
-            return Ok(false);
-        }
-        snapshot.ensure_current().map_err(|_| Error::Expired)?;
-        self.shared.resources.handoff(snapshot)?;
-        *installed = snapshot.clone();
-        Ok(true)
-    }
-
-    /// A Control-issued continuation may retain the host IP interface even
-    /// though Control already invalidated the predecessor's I/O. The local
-    /// socket cancellation token is not the Control lineage proof.
+    /// New content for the same own identity and pools keeps the host IP
+    /// interface and every descriptor whose exact purpose is unchanged.
     async fn retain_tun(
         &self,
-        snapshot: &ExecutionSnapshot,
+        desired: &Desired,
         pools: &[ipnet::IpNet],
         addresses: &meshway_configuration::NodeAddresses,
     ) -> Result<bool> {
         let Some(tun) = &self.tun else {
             return Ok(false);
         };
-        let previous = self
-            .shared
-            .execution
-            .read()
-            .map_err(|_| Error::Worker)?
-            .as_ref()
-            .map(|(snapshot, _)| snapshot.clone());
-        let Some(previous) = previous else {
+        let Some(previous) = self.shared.installed()? else {
             return Ok(false);
         };
-        let Some(old) = continuation(snapshot, &previous) else {
+        let Some(old) = continuation(desired, &previous) else {
             return Ok(false);
         };
         let old_pools = plan::pools(
@@ -464,26 +441,16 @@ impl Kernel {
         self.verify_tun(tun, pools, addresses).await?;
         self.quiesce().await?;
         self.shared.check()?;
-        snapshot.ensure_current().map_err(|_| Error::Expired)?;
         let mut active = self.shared.execution.write().map_err(|_| Error::Worker)?;
-        let Some((installed, token)) = active.as_mut() else {
+        let Some(installed) = active.as_mut() else {
             return Err(Error::Expired);
         };
-        if !super::protection::same_target(installed, &previous) {
+        if installed.desired.reference() != previous.reference() {
             return Err(Error::Expired);
         }
-        // Netlink reads await: recheck both original deadlines and the
-        // continuation immediately before publishing the new execution guard.
-        if continuation(snapshot, installed).is_none() {
-            return Ok(false);
-        }
-        if !token.is_cancelled() {
-            self.shared.resources.handoff(snapshot)?;
-            *installed = snapshot.clone();
-        } else {
-            token.cancel();
-            *active = Some((snapshot.clone(), CancellationToken::new()));
-        }
+        self.shared.resources.apply(&previous, desired)?;
+        installed.content.cancel();
+        *installed = super::protection::Installed::new(desired.clone(), installed.session.clone());
         Ok(true)
     }
 
@@ -633,11 +600,10 @@ impl Kernel {
 
     async fn activate(
         &mut self,
-        snapshot: &ExecutionSnapshot,
+        desired: &Desired,
         pools: &[ipnet::IpNet],
         addresses: &meshway_configuration::NodeAddresses,
     ) -> Result<()> {
-        snapshot.ensure_current().map_err(|_| Error::Expired)?;
         self.journal.pending = Some(Pending::CreateTun);
         self.store.persist(&self.journal).await?;
         let mut options = meshway_tun::Options::new(self.options.mtu)?.with_batch_io(true);
@@ -697,17 +663,16 @@ impl Kernel {
         self.store.persist(&self.journal).await?;
         self.address_ready(index, addresses).await?;
         for route in plan::positive_routes(pools, addresses, self.journal.table, index) {
-            snapshot.ensure_current().map_err(|_| Error::Expired)?;
             self.add_route(route).await?;
         }
         self.quiesce().await?;
         self.expected.lock().map_err(|_| Error::Worker)?.changing = false;
         self.verify().await?;
         self.quiesce().await?;
-        snapshot.ensure_current().map_err(|_| Error::Expired)?;
         self.shared.check()?;
-        *self.shared.execution.write().map_err(|_| Error::Worker)? =
-            Some((snapshot.clone(), CancellationToken::new()));
+        *self.shared.execution.write().map_err(|_| Error::Worker)? = Some(
+            super::protection::Installed::new(desired.clone(), CancellationToken::new()),
+        );
         Ok(())
     }
 
@@ -965,12 +930,14 @@ fn verify_rules(journal: &Journal, rules: &[RuleMessage]) -> Result<()> {
     Ok(())
 }
 
-/// Control's continuation from the installed `previous` target to `next`, as
-/// a view of the previous content. Comparison data only.
-fn continuation<'a>(next: &ExecutionSnapshot, previous: &'a ExecutionSnapshot) -> Option<View<'a>> {
-    next.netmap_continuation_from(previous)
-        .ok()
-        .map(|old| View::new(&old.netmap))
+/// The installed `previous` content as a view, when `next` is new content
+/// for the same Node of the same network. Comparison data only.
+fn continuation<'a>(next: &Desired, previous: &'a Desired) -> Option<View<'a>> {
+    (next.reference() != previous.reference()
+        && next.netmap().network_id == previous.netmap().network_id
+        && next.netmap().node_id == previous.netmap().node_id
+        && next.local().self_keys == previous.local().self_keys)
+        .then(|| View::new(previous.netmap()))
 }
 
 fn same_pools(left: &[ipnet::IpNet], right: &[ipnet::IpNet]) -> bool {

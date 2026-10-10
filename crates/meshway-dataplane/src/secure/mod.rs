@@ -905,11 +905,11 @@ impl SecureNode {
         let reading = View::of(&desired);
         self.maintain_circuits(&reading, false)?;
         let id = codec::session_id(bytes.as_ref())?;
-        let retained = id
+        let kept = id
             .as_ref()
             .and_then(|id| self.circuits.get(id))
             .map(|circuit| &circuit.context);
-        let frame = Frame::decode_owned(bytes.into(), retained)?;
+        let frame = Frame::decode_owned(bytes.into(), kept)?;
         let id = frame.context.circuit;
         if self.dead.contains_key(&id) {
             return Err(Error::Replay);
@@ -947,7 +947,7 @@ impl SecureNode {
         })?;
         let (previous, admitted) = verified;
         if let Some(mut circuit) = self.circuits.remove(&id) {
-            // Always restore retained state on rejection. A consumed nonce or
+            // Always restore kept state on rejection. A consumed nonce or
             // handshake must never roll back as a side effect of an output error.
             let result = self.receive_known(&mut circuit, frame, previous, &reading);
             if result.is_ok() {
@@ -1660,15 +1660,15 @@ impl SecureNode {
         }
         None
     }
-    pub fn retained_circuits(&self) -> usize {
+    pub fn circuit_count(&self) -> usize {
         self.circuits.len()
     }
     /// Compact closed-CID records still inside their INIT window.
     pub fn dead_circuits(&self) -> usize {
         self.dead.len()
     }
-    pub fn retained_flows(&self) -> usize {
-        self.engine.retained_flows()
+    pub fn flow_count(&self) -> usize {
+        self.engine.flow_count()
     }
 
     /// Read original grant/path metadata from the one Engine flow table. This

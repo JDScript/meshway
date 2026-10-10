@@ -97,7 +97,7 @@ fn real_compiler_noise_mac_tcp_roundtrip_and_withdrawal() {
                 assert_eq!(route.original_path, chain.path);
             })
             .unwrap();
-        assert_eq!(nodes[1].retained_flows(), 0);
+        assert_eq!(nodes[1].flow_count(), 0);
     }
     let bytes = tcp_ipv4(
         chain.addresses[0],

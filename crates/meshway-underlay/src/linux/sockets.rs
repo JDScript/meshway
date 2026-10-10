@@ -1,5 +1,5 @@
-use meshway_authority::ExecutionSnapshot;
 use meshway_configuration::execution::{DialCandidate, DialEndpoint};
+use meshway_engine::Desired;
 use meshway_model::NodeId;
 use meshway_transport_spec::{
     DialParameters, Endpoint, Listener, PreparedListener, SocketOptions, TcpOptions,
@@ -118,44 +118,44 @@ impl SocketFactory {
             .await
     }
 
-    /// The Host's currently installed target, for consumers that address
-    /// sockets by resource only.
-    pub fn installed(&self) -> Result<ExecutionSnapshot> {
+    /// The Host's installed content, for consumers that address sockets by
+    /// resource only.
+    pub fn installed(&self) -> Result<Desired> {
         self.shared.installed()?.ok_or(Error::Expired)
     }
 
     pub async fn traversal_listener(
         &self,
-        snapshot: &ExecutionSnapshot,
+        desired: &Desired,
         key: &str,
         reference: meshway_control::connectivity::SocketReference,
     ) -> Result<super::TraversalDatagram> {
         self.validate_socket_reference(
-            snapshot,
+            desired,
             &reference,
             &meshway_model::state::ResourceRef::Listener {
                 key: key.to_owned(),
             },
         )?;
-        let endpoint = self.datagram_listener(snapshot, key).await?;
+        let endpoint = self.datagram_listener(desired, key).await?;
         super::DatagramAuthorization::attach(endpoint, self.resolver().await?.clone(), reference)
     }
 
     pub async fn bind_datagram_candidate(
         &self,
-        snapshot: &ExecutionSnapshot,
+        desired: &Desired,
         key: &str,
         ipv4: bool,
         reference: meshway_control::connectivity::SocketReference,
     ) -> Result<super::TraversalDatagram> {
         self.validate_socket_reference(
-            snapshot,
+            desired,
             &reference,
             &meshway_model::state::ResourceRef::Dial {
                 key: key.to_owned(),
             },
         )?;
-        let view = View::of(snapshot).ok_or(Error::Expired)?;
+        let view = View::of(desired);
         let candidate = view.dialers().get(key).ok_or(Error::Target)?;
         if view.peer(candidate.peer).is_none() {
             return Err(Error::Target);
@@ -176,7 +176,7 @@ impl SocketFactory {
         });
         let scope = self
             .shared
-            .data(snapshot)?
+            .data(desired.reference())?
             .for_resource(reference.resource.clone())
             .physical()?;
         let endpoint = ProtectedDatagram::bind(
@@ -190,12 +190,12 @@ impl SocketFactory {
 
     fn validate_socket_reference(
         &self,
-        snapshot: &ExecutionSnapshot,
+        desired: &Desired,
         reference: &meshway_control::connectivity::SocketReference,
         resource: &meshway_model::state::ResourceRef,
     ) -> Result<()> {
-        self.shared.data(snapshot)?;
-        if !super::traversal::references(snapshot, reference)?
+        self.shared.data(desired.reference())?;
+        if !super::traversal::references(desired, reference)?
             || &reference.resource != resource
             || reference.socket_id.len() != 64
             || !reference.socket_id.bytes().all(|b| b.is_ascii_hexdigit())
@@ -210,17 +210,16 @@ impl SocketFactory {
     /// for the candidate's resource like any other.
     pub fn candidate(
         &self,
-        snapshot: &ExecutionSnapshot,
+        desired: &Desired,
         key: &str,
         endpoint: &DialEndpoint,
     ) -> Result<CandidateHandle> {
-        let scope =
-            self.shared
-                .data(snapshot)?
-                .for_resource(meshway_model::state::ResourceRef::Dial {
-                    key: key.to_owned(),
-                });
-        let view = View::of(snapshot).ok_or(Error::Expired)?;
+        let scope = self.shared.data(desired.reference())?.for_resource(
+            meshway_model::state::ResourceRef::Dial {
+                key: key.to_owned(),
+            },
+        );
+        let view = View::of(desired);
         let candidate = view.dialers().get(key).ok_or(Error::Target)?.clone();
         validate_dial(&candidate.parameters)?;
         if view.peer(candidate.peer).is_none() {
@@ -235,14 +234,13 @@ impl SocketFactory {
         })
     }
 
-    pub fn listener(&self, snapshot: &ExecutionSnapshot, key: &str) -> Result<ListenerHandle> {
-        let scope =
-            self.shared
-                .data(snapshot)?
-                .for_resource(meshway_model::state::ResourceRef::Listener {
-                    key: key.to_owned(),
-                });
-        let view = View::of(snapshot).ok_or(Error::Expired)?;
+    pub fn listener(&self, desired: &Desired, key: &str) -> Result<ListenerHandle> {
+        let scope = self.shared.data(desired.reference())?.for_resource(
+            meshway_model::state::ResourceRef::Listener {
+                key: key.to_owned(),
+            },
+        );
+        let view = View::of(desired);
         let declaration = view.listeners().get(key).ok_or(Error::Target)?.clone();
         validate_listener(declaration.declaration())?;
         Ok(ListenerHandle {
@@ -267,7 +265,7 @@ impl SocketFactory {
         let resolver = self.resolver().await?.scoped(candidate.scope.clone())?;
         let (socket, tcp, local, timeout) = dial_options(&candidate.candidate.parameters)?;
         let addresses = tokio::select! { biased;
-            _ = candidate.scope.invalidated() => return Err(Error::Expired),
+            _ = candidate.scope.ended() => return Err(Error::Expired),
             result = resolver.resolve(&candidate.endpoint.host, candidate.endpoint.port.get()) => result?,
         };
         let timeout = timeout.min(self.timeout);
@@ -307,10 +305,10 @@ impl SocketFactory {
 
     pub async fn datagram_listener(
         &self,
-        snapshot: &ExecutionSnapshot,
+        desired: &Desired,
         key: &str,
     ) -> Result<ProtectedDatagram> {
-        let handle = self.listener(snapshot, key)?;
+        let handle = self.listener(desired, key)?;
         let Listener::NativeUdp(value) = handle.declaration.declaration() else {
             return Err(Error::Target);
         };
@@ -324,11 +322,11 @@ impl SocketFactory {
 
     pub async fn datagram_candidate(
         &self,
-        snapshot: &ExecutionSnapshot,
+        desired: &Desired,
         key: &str,
         endpoint: &DialEndpoint,
     ) -> Result<Vec<DatagramCandidate>> {
-        let handle = self.candidate(snapshot, key, endpoint)?;
+        let handle = self.candidate(desired, key, endpoint)?;
         let DialParameters::NativeUdp { options } = &handle.candidate.parameters else {
             return Err(Error::Target);
         };
@@ -341,7 +339,7 @@ impl SocketFactory {
             .map_err(|_| Error::Capacity)?;
         let resolver = self.resolver().await?.scoped(handle.scope.clone())?;
         let addresses = tokio::select! { biased;
-            _ = handle.scope.invalidated() => return Err(Error::Expired),
+            _ = handle.scope.ended() => return Err(Error::Expired),
             result = tokio::time::timeout(options.connect_timeout.as_std().min(self.timeout),
                 resolver.resolve(&handle.endpoint.host, handle.endpoint.port.get())) =>
                 result.map_err(|_| Error::Resolver)??,
@@ -552,7 +550,7 @@ pub(super) async fn connect_tcp(
     }
     scope.prepare_checked(&SockRef::from(&socket))?;
     let stream = tokio::select! { biased;
-        _ = opening.invalidated() => return Err(Error::Expired),
+        _ = opening.ended() => return Err(Error::Expired),
         result = tokio::time::timeout(timeout, socket.connect(address)) => result.map_err(|_| Error::Io(io::ErrorKind::TimedOut.into()))??,
     };
     opening.check()?;
@@ -637,7 +635,7 @@ impl<T: Send + 'static> Owned<T> {
         scope.shared.tasks.spawn(async move {
             let _clear = clear;
             tokio::select! { biased;
-                _ = lifetime.closed() => {},
+                _ = lifetime.ended() => {},
                 _ = done.cancelled() => {},
             }
         })?;
@@ -765,7 +763,7 @@ impl ProtectedListener {
             listener.poll_accept(cx)
         });
         let (stream, peer) = tokio::select! { biased;
-            _ = self.owned.scope.invalidated() => return Err(Error::Expired),
+            _ = self.owned.scope.ended() => return Err(Error::Expired),
             result = accepted => result?,
         };
         let mark = SockRef::from(&stream).mark()?;

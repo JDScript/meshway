@@ -4,8 +4,6 @@
 pub mod material;
 pub mod plain;
 pub mod secure;
-#[cfg(target_os = "linux")]
-mod staged;
 
 use clap::ValueEnum;
 use serde::Serialize;

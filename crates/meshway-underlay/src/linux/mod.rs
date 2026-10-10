@@ -17,7 +17,7 @@ mod tasks;
 #[cfg(test)]
 mod tests;
 
-use meshway_authority::ExecutionSnapshot;
+use meshway_engine::Desired;
 use meshway_private_storage::Directory;
 use std::sync::{
     Arc,
@@ -204,36 +204,29 @@ impl Host {
         if self.kernel.shared.check().is_err() {
             return None;
         }
-        let snapshot = self.kernel.shared.installed().ok()??;
-        snapshot.ensure_current().ok()?;
+        self.kernel.shared.installed().ok()??;
         self.kernel.tun.as_ref()
     }
 
-    /// Select this around the actor's TUN/packet loop in addition to the execution
-    /// snapshot's invalidation. A foreign kernel mutation stops positive I/O.
-    pub async fn invalidated(&self) {
-        // A superseded execution guard is not a broken physical owner. The
-        // packet actor waits on its snapshot separately and can hand compatible
-        // resources to the next netmap without deleting the TUN or channels.
+    /// Select this around the actor's TUN/packet loop. A foreign kernel
+    /// mutation or Host stop ends the physical owner.
+    pub async fn ended(&self) {
         tokio::select! {
             _ = self.kernel.shared.conflict.cancelled() => {},
             _ = self.kernel.shared.tasks.stop.cancelled() => {},
         }
     }
 
-    /// Install capture under fresh execution authority. Success does not claim
-    /// carrier establishment, business DNS installation, or an applied receipt.
+    /// Apply desired content to capture. Success does not claim carrier
+    /// establishment, business DNS installation, or an applied receipt.
     ///
-    /// The same netmap content (lease renewal, new instance binding) only
-    /// replaces the installed snapshot: no socket, TUN or kernel object is
-    /// touched and every guard keeps running with the raised deadline. A
-    /// Control-validated continuation (a larger serial, or a legacy direct
-    /// successor) keeps the owned TUN when the capture pools are unchanged,
-    /// keeps every descriptor and exit role whose exact purpose is unchanged
-    /// and re-stages only a changed capture plan. Calling suspend first
-    /// deliberately relinquishes that interface and prevents this handoff.
-    pub async fn install(&mut self, snapshot: ExecutionSnapshot) -> Result<()> {
-        self.kernel.install(snapshot).await
+    /// The same content changes nothing. New content for the same Node keeps
+    /// the owned TUN when the capture pools are unchanged, keeps every
+    /// descriptor and exit role whose exact purpose is unchanged and
+    /// re-stages only a changed capture plan. `suspend` (the empty apply)
+    /// ends every operation and descriptor and keeps the negative boundary.
+    pub async fn install(&mut self, desired: Desired) -> Result<()> {
+        self.kernel.install(desired).await
     }
     pub async fn suspend(&mut self) -> Result<()> {
         self.kernel.suspend().await

@@ -85,7 +85,7 @@ impl Query {
 ///
 /// Accepts one IN question, standard QUERY, no answer/authority records and at
 /// most one additional record (OPT, EDNS version 0). Transfer, signature and
-/// meta-record questions are unsupported. Unknown EDNS options are retained for
+/// meta-record questions are unsupported. Unknown EDNS options are kept for
 /// inspection; local response encoding does not echo these request options.
 pub fn decode_query(bytes: &[u8]) -> Result<Query, WireError> {
     if !(MIN_MESSAGE_SIZE..=MAX_MESSAGE_SIZE).contains(&bytes.len()) {

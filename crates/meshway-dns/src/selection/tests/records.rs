@@ -222,7 +222,7 @@ fn no_exit_override_and_exit_exceptions_are_explicit_selection_only() {
         resolver_keys(&snapshot, "api.corp.example.", ExitSelection::Exit),
         ["office"]
     );
-    // The unretained narrower route drops out; the retained parent still applies.
+    // The unretained narrower route drops out; the kept parent still applies.
     assert_eq!(
         resolver_keys(&snapshot, "api.private.corp.example.", ExitSelection::Exit),
         ["office"]

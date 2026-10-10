@@ -93,15 +93,15 @@ impl DatagramAuthorization {
         })
     }
     /// The descriptor is live and names the Host's installed netmap.
-    fn check(&self) -> Result<meshway_authority::ExecutionSnapshot> {
+    fn check(&self) -> Result<meshway_engine::Desired> {
         self.scope.owner_current()?;
-        let snapshot = self.scope.execution()?;
+        let desired = self.scope.execution()?;
         let binding = self.binding.lock().map_err(|_| Error::Worker)?;
-        if self.registry.closed.is_cancelled() || !references(&snapshot, &binding.reference)? {
+        if self.registry.closed.is_cancelled() || !references(&desired, &binding.reference)? {
             return Err(Error::Expired);
         }
-        self.scope.shared.data(&snapshot)?;
-        Ok(snapshot)
+        self.scope.shared.data(desired.reference())?;
+        Ok(desired)
     }
     fn insert(&self, address: SocketAddr, lifetime: Lifetime) -> Result<()> {
         if !lifetime.current() || address.is_ipv4() != self.local.is_ipv4() {
@@ -121,8 +121,8 @@ impl DatagramAuthorization {
         server_id: &str,
     ) -> Result<Vec<SocketAddr>> {
         context.ensure_current().map_err(|_| Error::Expired)?;
-        let snapshot = self.check()?;
-        if context.netmap() != snapshot.reference() {
+        let desired = self.check()?;
+        if context.netmap() != desired.reference() {
             return Err(Error::Expired);
         }
         let server = context
@@ -130,7 +130,9 @@ impl DatagramAuthorization {
             .iter()
             .find(|server| server.id == server_id)
             .ok_or(Error::Target)?;
-        let resolver = self.resolver.scoped(self.scope.shared.data(&snapshot)?)?;
+        let resolver = self
+            .resolver
+            .scoped(self.scope.shared.data(desired.reference())?)?;
         let addresses = tokio::select! { biased;
             _ = context.ended() => return Err(Error::Expired),
             value = resolver.resolve(&server.endpoint.host, server.endpoint.port.get()) => value?,
@@ -199,8 +201,8 @@ impl DatagramAuthorization {
     /// whose own lifetime is still live keep their recipient.
     pub fn rebind(&self, reference: &SocketReference) -> Result<()> {
         self.scope.owner_current()?;
-        let snapshot = self.scope.execution()?;
-        self.scope.shared.data(&snapshot)?;
+        let desired = self.scope.execution()?;
+        self.scope.shared.data(desired.reference())?;
         if self.registry.closed.is_cancelled() {
             return Err(Error::Expired);
         }
@@ -209,7 +211,7 @@ impl DatagramAuthorization {
             || reference.socket_id != binding.reference.socket_id
             || reference.socket_generation != binding.reference.socket_generation
             || reference.resource != binding.reference.resource
-            || !references(&snapshot, reference)?
+            || !references(&desired, reference)?
         {
             return Err(Error::Target);
         }
@@ -228,12 +230,11 @@ impl DatagramAuthorization {
     }
 }
 
-/// The reference names this snapshot's Node and netmap. Its instance is State
+/// The reference names this content's Node and netmap. Its instance is State
 /// qualification only and may be rebound while the netmap stays the same.
 pub(super) fn references(
-    snapshot: &meshway_authority::ExecutionSnapshot,
+    desired: &meshway_engine::Desired,
     reference: &SocketReference,
 ) -> Result<bool> {
-    let netmap = snapshot.netmap().map_err(|_| Error::Expired)?;
-    Ok(reference.node_id == netmap.netmap.node_id && reference.netmap == netmap.reference())
+    Ok(reference.node_id == desired.netmap().node_id && reference.netmap == desired.reference())
 }

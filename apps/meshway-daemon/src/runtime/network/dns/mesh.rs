@@ -67,7 +67,7 @@ impl ResolverExchange for Exchange {
                 response.await.map_err(|_| GatewayError)?
             };
             let bytes = tokio::select! { biased;
-                _ = route.snapshot().invalidated() => return Err(GatewayError),
+                _ = route.ended() => return Err(GatewayError),
                 _ = tokio::time::sleep_until(route.deadline().into()) => return Err(GatewayError),
                 result = operation => result?,
             };
@@ -142,13 +142,13 @@ impl Queries {
     pub async fn drive(
         &mut self,
         secure: &mut SecureNode,
-        snapshot: &meshway_authority::ExecutionSnapshot,
+        desired: &meshway_engine::Desired,
         manager: &meshway_connectivity::Manager,
     ) {
         self.pending.retain(|_, query| {
             !query.reply.is_closed()
                 && query.route.ensure_current().is_ok()
-                && query.route.snapshot().same_netmap(snapshot)
+                && query.route.netmap() == desired.reference()
         });
         for _ in 0..32 {
             let Some(served) = self.serving.try_join_next() else {

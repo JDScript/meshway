@@ -57,7 +57,7 @@ enum Backend {
 }
 
 /// Namespace-wide reservation acquired before the Kernel creates an anchor.
-/// Dropping it releases the live lock, not the retained private ownership record.
+/// Dropping it releases the live lock, not the kept private ownership record.
 pub struct SystemDnsReservation {
     directory: Arc<Directory>,
     reservation: Reservation,

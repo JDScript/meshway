@@ -598,7 +598,7 @@ impl Owner {
         }
     }
 
-    /// A retained result pauses this task until every host consumer accepts it.
+    /// A kept result pauses this task until every host consumer accepts it.
     pub fn outputs(&self) -> impl Iterator<Item = &Output> {
         self.tasks
             .values()

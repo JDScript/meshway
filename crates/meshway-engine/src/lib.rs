@@ -2,7 +2,7 @@
 //!
 //! Control verifies and persists signed netmaps. Engine owns their only expiry
 //! timer. Components accept content only: none receives a lease, generation,
-//! lineage, inherited scope or transferable output authority. Reconfiguration
+//! ancestry, inherited scope or transferable output authority. Reconfiguration
 //! is serialized with packet processing by the caller's exclusive engine borrow.
 #![forbid(unsafe_code)]
 

@@ -65,7 +65,7 @@ pub async fn send(
 }
 
 /// A channel owner can only restrict the original packet authority. Both
-/// lifetimes are retained by accepted transport work, even if its completion
+/// lifetimes are kept by accepted transport work, even if its completion
 /// waiter remains alive but is no longer polled.
 pub async fn send_scoped(
     sender: &mut Sender,
@@ -233,7 +233,7 @@ async fn send_owned(
 
 /// Ready admission/completion needs the same pre/post fences, but no allocated
 /// cancellation waiter. Pending work is polled once per outer poll; its original
-/// lifetime is then registered and retained. Accepted transport work separately
+/// lifetime is then registered and kept. Accepted transport work separately
 /// owns that lifetime, even while this caller is alive but no longer polled.
 async fn guarded<T>(
     lifetime: &Arc<OutputLifetime>,

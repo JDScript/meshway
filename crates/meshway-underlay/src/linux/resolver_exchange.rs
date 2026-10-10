@@ -27,7 +27,7 @@ impl ResolverExchange for SocketFactory {
     ) -> DnsFuture<'a, Result<Bytes, GatewayError>> {
         Box::pin(async move {
             tokio::select! { biased;
-                _ = route.invalidated() => Err(GatewayError),
+                _ = route.ended() => Err(GatewayError),
                 result = exchange(self, route, query) => result,
             }
         })
@@ -44,7 +44,7 @@ async fn exchange(
     route.ensure_current().map_err(|_| GatewayError)?;
     let scope = factory
         .shared
-        .data(route.snapshot())
+        .data(route.netmap())
         .map_err(|_| GatewayError)?;
     let input = meshway_dns::decode_query(&bytes).map_err(|_| GatewayError)?;
     let mut outgoing = bytes.to_vec();

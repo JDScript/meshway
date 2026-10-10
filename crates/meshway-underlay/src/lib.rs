@@ -96,7 +96,7 @@ pub enum Error {
     Target,
     #[error("underlay resource limit reached")]
     Capacity,
-    #[error("kernel ownership or routing protection conflict; resources retained")]
+    #[error("kernel ownership or routing protection conflict; resources kept")]
     Conflict,
     #[error("socket mark preparation or readback failed")]
     Protection,

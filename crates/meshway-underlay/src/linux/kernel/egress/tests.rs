@@ -300,7 +300,7 @@ async fn egress_capture_crash_keeps_negative_until_explicit_down() {
     exchange(None, server, b"down-releases-capture").await;
     tasks.shutdown().await.unwrap();
     println!(
-        "X3C_CAPTURE_RESTART=positive-owner-sigkill,no-positive-tun,negative-default-retained,protected-server-live,explicit-down-releases"
+        "X3C_CAPTURE_RESTART=positive-owner-sigkill,no-positive-tun,negative-default-kept,protected-server-live,explicit-down-releases"
     );
 }
 

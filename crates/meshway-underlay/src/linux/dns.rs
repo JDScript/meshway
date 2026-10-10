@@ -208,7 +208,7 @@ impl Resolver {
             let resolver = self.inner.as_ref().ok_or(Error::Resolver)?;
             let scope = self.scope.clone();
             let answer = tokio::select! { biased;
-                _ = scope.invalidated() => return Err(Error::Conflict),
+                _ = scope.ended() => return Err(Error::Conflict),
                 result = tokio::time::timeout(self.timeout, resolver.lookup_ip(host)) => result.map_err(|_| Error::Resolver)?.map_err(|_| Error::Resolver)?,
             };
             addresses.extend(answer.iter().take(16).map(|ip| SocketAddr::new(ip, port)));

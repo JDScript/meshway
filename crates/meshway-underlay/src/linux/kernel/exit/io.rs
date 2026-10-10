@@ -220,7 +220,7 @@ impl Owner {
                                 tokio::select! { biased;
                                     _ = stopping.cancelled() => Err(Error::Expired),
                                     _ = guard.ended() => Err(Error::Expired),
-                                    _ = write.authority.invalidated() => Err(Error::Expired),
+                                    _ = write.authority.ended() => Err(Error::Expired),
                                     result = super::guard::checked(write.packet_guard.as_ref(), tun.send(&write.packet)) => result.map_err(|_| Error::Expired).and_then(|result| result.map_err(Error::from)),
                                 }
                             }

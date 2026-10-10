@@ -184,6 +184,6 @@ pub(super) async fn conflicts(
     );
     backend.retire(id(110)).await.unwrap();
     println!(
-        "X3_CONFLICTS=wrong-mark-install,unowned-established-drop,confirm-failed,foreign-ct-retained,revoked-renew-rejected,revoked-during-renew-rejected"
+        "X3_CONFLICTS=wrong-mark-install,unowned-established-drop,confirm-failed,foreign-ct-kept,revoked-renew-rejected,revoked-during-renew-rejected"
     );
 }

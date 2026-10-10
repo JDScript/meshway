@@ -5,7 +5,7 @@ use meshway_model::state::ResourceRef;
 
 /// The listener declaration, or the dial candidate together with the peer's
 /// identity, addresses and keys, is unchanged between two contents. Callers
-/// still require `netmap_continuation_from` and current admission.
+/// apply only content Engine accepted, and still require current admission.
 pub fn netmap_resource_compatible(
     previous: &NodeNetmap,
     next: &NodeNetmap,

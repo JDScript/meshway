@@ -1,6 +1,6 @@
 //! Bounded DNS query ownership, wire handling and configuration selection.
 //!
-//! The control snapshot owns publication validity; the host owns socket routing.
+//! The scope publisher owns query validity; the host owns socket routing.
 //! A resolver candidate or a serialized answer grants no network access. This
 //! crate delegates approved local resolver exchanges to the host. It does not
 //! create trusted DNS associations or cache data. System DNS installation has
@@ -24,6 +24,7 @@ mod wire;
 
 pub use dispatcher::{
     DispatchError, Dispatcher, DnsFuture, GatewayError, OwnerDispatcher, ResolverExchange, Scope,
+    publish as publish_scope,
 };
 pub use exit_route::{MeshResolverRoute, ResolverRoute};
 pub use owner::{Answer, Begin, Limits, Owner, OwnerError, Ticket, Unavailable, UpstreamWork};

@@ -241,14 +241,14 @@ impl Frame {
 
     pub fn decode_owned(
         mut bytes: PacketBuffer,
-        retained: Option<&Arc<Context>>,
+        kept: Option<&Arc<Context>>,
     ) -> Result<Self, Error> {
         if bytes.get(8) != Some(&3) {
-            return Self::decode(&bytes, retained);
+            return Self::decode(&bytes, kept);
         }
         let _profile = DECODE.enter();
         let view = data::DataView::decode(&bytes)?;
-        let context = retained
+        let context = kept
             .filter(|context| &context.circuit == view.circuit)
             .ok_or(Error::State)?
             .clone();
@@ -372,9 +372,9 @@ impl Frame {
         Ok(out)
     }
 
-    pub fn decode(bytes: &[u8], retained: Option<&Arc<Context>>) -> Result<Self, Error> {
+    pub fn decode(bytes: &[u8], kept: Option<&Arc<Context>>) -> Result<Self, Error> {
         if bytes.get(8) == Some(&3) {
-            return Self::decode_owned(bytes.into(), retained);
+            return Self::decode_owned(bytes.into(), kept);
         }
         let _profile = DECODE.enter();
         if bytes.len() > MAX_FRAME {
@@ -447,7 +447,7 @@ impl Frame {
             })
         } else {
             let circuit: [u8; 32] = r.array()?;
-            let context = retained
+            let context = kept
                 .filter(|context| context.circuit == circuit)
                 .ok_or(Error::State)?;
             context.clone()

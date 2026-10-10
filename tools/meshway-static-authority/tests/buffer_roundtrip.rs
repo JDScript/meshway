@@ -76,7 +76,7 @@ fn pooled_packet_survives_three_roles_without_payload_copy_and_withdrawal_return
     else {
         panic!("relay must forward");
     };
-    assert_eq!(nodes[1].retained_flows(), 0);
+    assert_eq!(nodes[1].flow_count(), 0);
     let Received::Packet(delivery) = outgoing
         .release(|wire| {
             assert_eq!(wire.as_ptr() as usize + 54, pointer);

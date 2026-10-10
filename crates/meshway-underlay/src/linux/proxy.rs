@@ -175,13 +175,13 @@ async fn relay_current(
         Err(last)
     };
     let mut remote = tokio::select! { biased;
-        _ = scope.invalidated() => return Err(Error::Conflict),
+        _ = scope.ended() => return Err(Error::Conflict),
         result = tokio::time::timeout(timeout, establish) => result.map_err(|_| Error::Io(io::ErrorKind::TimedOut.into()))??,
     };
     // Finite pooled-connection lifetime plus fixed per-direction copy buffers.
     // Expiry closes the connection; reqwest can establish a fresh protected one.
     tokio::select! { biased;
-        _ = scope.invalidated() => Err(Error::Conflict),
+        _ = scope.ended() => Err(Error::Conflict),
         result = tokio::time::timeout(Duration::from_secs(300), tokio::io::copy_bidirectional_with_sizes(&mut local, &mut remote, 8192, 8192)) => {
             result.map_err(|_| Error::Io(io::ErrorKind::TimedOut.into()))??;
             Ok(())

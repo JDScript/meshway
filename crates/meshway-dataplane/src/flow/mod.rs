@@ -191,8 +191,8 @@ impl Prepared {
     }
 }
 
-/// Read-only facts of one retained flow for an in-place content update.
-pub(crate) struct Retained<'a> {
+/// Read-only facts of one kept flow for an in-place content update.
+pub(crate) struct Kept<'a> {
     pub grant: &'a Target,
     pub path: &'a [NodeId],
     pub forward: &'a Traffic,
@@ -341,7 +341,7 @@ impl FlowTable {
     /// retired flow is removed alone (exit flows publish their Retire). No
     /// protocol state, idle time or key changes; a cap may only shrink.
     /// Unacknowledged exit projections and closing exit flows never cross.
-    pub fn retain(&mut self, time: &FlowTime, mut keep: impl FnMut(&Retained<'_>) -> Keep) {
+    pub fn retain(&mut self, time: &FlowTime, mut keep: impl FnMut(&Kept<'_>) -> Keep) {
         let mut retire = Vec::new();
         let mut shorten = Vec::new();
         for (key, flow) in &self.entries {
@@ -354,7 +354,7 @@ impl FlowTable {
                 retire.push((key.clone(), "deadline_or_projection"));
                 continue;
             }
-            match keep(&Retained {
+            match keep(&Kept {
                 grant: &key.grant,
                 path: &key.path,
                 forward: &flow.forward,

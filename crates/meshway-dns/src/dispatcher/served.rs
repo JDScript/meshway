@@ -57,21 +57,17 @@ impl OwnerDispatcher {
         if Instant::now() >= deadline {
             return Err(DispatchError::Expired);
         }
-        let (work, fence, _slot) = {
+        let (work, _slot) = {
             let mut state = self.state.lock().await;
             let scope = self.reconcile_state(&mut state)?;
-            if scope.snapshot.reference() != request.netmap() {
+            if scope.desired.reference() != request.netmap() {
                 return Err(DispatchError::Scope);
             }
             let system = scope
                 .system_resolvers
                 .clone()
                 .ok_or(DispatchError::Unavailable(Unavailable::MissingResolverPlan))?;
-            let reading = scope
-                .snapshot
-                .netmap_reading()
-                .map_err(|_| DispatchError::Scope)?;
-            let netmap = &reading.netmap.netmap;
+            let netmap = scope.desired.netmap();
             let DnsPlan::ServeExitResolver { services } = &netmap.dns.egress else {
                 return Err(DispatchError::Unavailable(Unavailable::MissingExitPlan));
             };
@@ -94,7 +90,6 @@ impl OwnerDispatcher {
             let deadline = deadline.min(
                 Instant::now() + std::time::Duration::from_millis(u64::from(service.timeout_ms)),
             );
-            let fence = ScopeFence::new(state.scopes.clone(), scope.clone());
             let begin = state
                 .owner
                 .as_mut()
@@ -105,11 +100,11 @@ impl OwnerDispatcher {
                 Begin::Unavailable(reason) => return Err(DispatchError::Unavailable(reason)),
                 _ => return Err(DispatchError::Scope),
             };
-            (work, fence, slot)
+            (work, slot)
         };
         tokio::select! { biased;
             _ = request.ended() => Err(DispatchError::Expired),
-            answer = self.upstream(work, fence) => answer,
+            answer = self.upstream(work) => answer,
         }
     }
 }

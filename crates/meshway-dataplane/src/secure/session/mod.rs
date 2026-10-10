@@ -22,7 +22,7 @@ const KEY: &[u8] = b"meshway/circuit/directional-hop-key/v5\0";
 const MAC: &[u8] = b"meshway/circuit/hop-mac/v5";
 // HKDF and handshake hashing retain sha2 0.10, shared with Snow. Only the
 // per-packet MAC uses 0.11's runtime hardware SHA2 detection. Its zeroize
-// feature clears the retained inner/outer hash states when dropped.
+// feature clears the kept inner/outer hash states when dropped.
 type HopMac = Hmac<sha2_fast::Sha256>;
 
 struct Pending {
@@ -144,7 +144,7 @@ impl Session {
 
     pub fn establish(&mut self, keys: Keys) {
         self.keys = Some(Arc::new(keys));
-        self.pending = None; // StaticSecret zeroizes the retained ephemeral.
+        self.pending = None; // StaticSecret zeroizes the kept ephemeral.
     }
 
     /// Authenticate the adjacent hop on the owner's admitted path. The caller

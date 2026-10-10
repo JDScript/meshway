@@ -1,4 +1,4 @@
-//! A temporary real Server/Control owns every netmap snapshot. Only the
+//! A temporary real Server/Control verifies every netmap. Only the
 //! endpoint exchange is scripted; no host DNS or kernel installation is used.
 mod netmap;
 mod support;
@@ -98,18 +98,7 @@ async fn real_dispatcher_system_failover_keeps_ticket_authority_and_original_bud
         .sync(&mut meshway_netmap_fixture::Facts::default())
         .await
         .unwrap();
-    let netmap = control.netmap().unwrap();
-    let snapshot = meshway_authority::StagedIssuer::new()
-        .unwrap()
-        .issue(
-            &netmap.content,
-            netmap.lease,
-            None,
-            &control.dataplane_keys().unwrap(),
-        )
-        .unwrap()
-        .snapshot()
-        .clone();
+    let snapshot = meshway_engine::Desired::new(&control.netmap().unwrap().content).unwrap();
     let endpoints: Vec<SocketAddr> = vec![
         "192.0.2.53:53".parse().unwrap(),
         "192.0.2.54:53".parse().unwrap(),
@@ -183,7 +172,7 @@ async fn real_dispatcher_system_failover_keeps_ticket_authority_and_original_bud
         result = &mut work => panic!("blocked resolver returned {result:?}"),
         _ = exchange.entered(1) => {}
     }
-    sender.send_replace(None);
+    crate::publish_scope(&sender, None);
     assert!(
         tokio::time::timeout(Duration::from_secs(1), work)
             .await

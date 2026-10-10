@@ -105,17 +105,17 @@ pub trait SocketFactory: Send + Sync + 'static {
     }
 }
 
-/// The Host's installed target, which must be exactly `desired`.
+/// The Host's installed content, which must be exactly `desired`.
 #[cfg(target_os = "linux")]
 fn installed(
     factory: &meshway_underlay::SocketFactory,
     desired: &meshway_engine::Desired,
-) -> Result<meshway_authority::ExecutionSnapshot, Error> {
-    let snapshot = factory.installed().map_err(|_| Error::Underlay)?;
-    if snapshot.reference() != desired.reference() {
+) -> Result<meshway_engine::Desired, Error> {
+    let installed = factory.installed().map_err(|_| Error::Underlay)?;
+    if installed.reference() != desired.reference() {
         return Err(Error::Authority);
     }
-    Ok(snapshot)
+    Ok(installed)
 }
 
 #[cfg(target_os = "linux")]

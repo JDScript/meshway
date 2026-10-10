@@ -53,7 +53,7 @@ impl Budget {
     }
 }
 
-/// Retained through final TX/TUN completion or explicit cancellation/failure.
+/// Kept through final TX/TUN completion or explicit cancellation/failure.
 pub struct Credit {
     usage: Arc<Usage>,
     capacity: usize,

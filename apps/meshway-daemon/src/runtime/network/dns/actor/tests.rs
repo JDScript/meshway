@@ -28,7 +28,7 @@ impl Owner for SlowOwner {
     async fn hold(&mut self, _: &NodeNetmap) -> Result<(), SystemDnsError> {
         unreachable!("this regression substitutes observation I/O only")
     }
-    async fn install(&mut self, _: ExecutionSnapshot) -> Result<(), SystemDnsError> {
+    async fn install(&mut self, _: Desired) -> Result<(), SystemDnsError> {
         unreachable!("this regression substitutes observation I/O only")
     }
     async fn shutdown(self, keep: bool) -> Result<(), SystemDnsError> {

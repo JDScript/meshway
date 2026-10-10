@@ -1,5 +1,5 @@
 //! Lease scheduling belongs only to Engine. This module exports no deadline,
-//! guard, transferable permission, cancellation lineage or renewal handle.
+//! guard, transferable permission, cancellation ancestry or renewal handle.
 use super::*;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::Instant;

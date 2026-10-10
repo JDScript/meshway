@@ -187,14 +187,14 @@ async fn committed_redemption_and_state_reports_retry_the_same_identity_after_de
         2
     );
     let old_instance = control.status().instance.unwrap().instance_id;
-    let retained = control.snapshot();
+    let kept = control.snapshot();
     proxy.fault("/instances/release", Fault::Hold);
     let mut stop = Box::pin(control.stop());
     tokio::select! {
         result = &mut stop => panic!("unexpected delivery: {}", result.is_ok()),
         _ = proxy.committed() => {},
     }
-    assert!(!retained.status().authenticated && retained.status().instance.is_none());
+    assert!(!kept.status().authenticated && kept.status().instance.is_none());
     drop(stop);
     assert!(!control.status().authenticated && control.status().instance.is_none());
     proxy.release();

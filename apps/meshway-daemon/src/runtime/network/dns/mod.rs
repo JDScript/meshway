@@ -3,12 +3,12 @@
 mod actor;
 pub(super) mod mesh;
 pub(super) use actor::Attachment;
-use meshway_authority::ExecutionSnapshot;
 use meshway_configuration::netmap::{DnsPlan, NodeNetmap};
 use meshway_dns::{
     CancellationToken, OwnerDispatcher, ResolverExchange, Scope, Service, SystemDnsBackend,
     SystemDnsError, SystemDnsOwner, SystemDnsPlan, SystemDnsSettings,
 };
+use meshway_engine::Desired;
 use std::sync::Arc;
 use tokio::{
     net::{TcpListener, UdpSocket},
@@ -120,24 +120,18 @@ impl Runtime {
         Ok(())
     }
 
-    /// Publish query authority for the installed netmap. A same-content
-    /// snapshot keeps the query owner (`Scope::equivalent`).
-    pub async fn install(&mut self, snapshot: ExecutionSnapshot) -> Result<(), SystemDnsError> {
+    /// Publish query authority for the desired content. The same content
+    /// keeps the query owner (`Scope::equivalent`).
+    pub async fn install(&mut self, desired: Desired) -> Result<(), SystemDnsError> {
         let continuing = self
             .scopes
             .borrow()
             .as_ref()
-            .is_some_and(|scope| scope.snapshot.same_netmap(&snapshot));
+            .is_some_and(|scope| scope.desired.reference() == desired.reference());
         if continuing {
-            // The shared lease cell already renewed. Instance bindings are
-            // reporting metadata; neither event withdraws live query authority.
             return self.observe().await;
         }
-        let netmap = snapshot
-            .netmap()
-            .map_err(|_| SystemDnsError::ResolverPlan)?
-            .netmap
-            .clone();
+        let netmap = desired.netmap().as_ref().clone();
         // Required negative capture first; a later failure keeps it with Scope=None.
         self.hold(&netmap).await?;
         self.check(&netmap)?;
@@ -146,14 +140,14 @@ impl Runtime {
         } else {
             self.system.system_resolvers()
         };
-        let scope = Scope::netmap(snapshot, system_resolvers);
+        let scope = Scope::netmap(desired, system_resolvers);
         self.dispatcher
             .validate_scope(&scope)
             .map_err(|_| SystemDnsError::ResolverPlan)?;
         if self.service.is_finished() {
             return Err(SystemDnsError::Backend);
         }
-        self.scopes.send_replace(Some(scope));
+        meshway_dns::publish_scope(&self.scopes, Some(scope));
         if self.dispatcher.reconcile().await.is_err() {
             self.suspend();
             return Err(SystemDnsError::ResolverPlan);
@@ -161,7 +155,7 @@ impl Runtime {
         self.observe().await
     }
     pub fn suspend(&self) {
-        self.scopes.send_replace(None);
+        meshway_dns::publish_scope(&self.scopes, None);
     }
     /// Parent selects this regularly with the kernel/lease watcher. A failed
     /// observation withdraws query authority without removing forced suffixes.

@@ -184,9 +184,9 @@ impl PublishedDns {
         })
     }
 
-    /// MagicDNS precedes split selection. Retained split routes use the longest
+    /// MagicDNS precedes split selection. Kept split routes use the longest
     /// label suffix. In exit mode, only useWithExit references remain eligible;
-    /// empty routes drop out before longest-suffix selection. A retained default
+    /// empty routes drop out before longest-suffix selection. A kept default
     /// is usable even with overrideLocal=false, which only controls no-exit mode.
     /// Otherwise exit resolution is explicitly unavailable until a shared exit
     /// DNS plan exists. Candidate order follows each configured key list.

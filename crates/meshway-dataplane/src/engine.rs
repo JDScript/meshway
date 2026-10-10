@@ -61,8 +61,8 @@ impl Engine {
         self.flows.expire(reading.instant, reading.now_ms);
     }
 
-    /// Number of retained entries; deliberately does not refresh or expire them.
-    pub fn retained_flows(&self) -> usize {
+    /// Number of kept entries; deliberately does not refresh or expire them.
+    pub fn flow_count(&self) -> usize {
         self.flows.len()
     }
 }

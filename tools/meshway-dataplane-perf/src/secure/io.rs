@@ -109,8 +109,7 @@ impl Io {
         .await?;
         // The production factory only mints data scopes after capture has
         // been installed for this content. Never substitute a bootstrap scope.
-        host.install(crate::staged::snapshot(&desired, &keys)?)
-            .await?;
+        host.install(desired.clone()).await?;
         let manager = Manager::start(
             &desired,
             keys,

@@ -1,5 +1,4 @@
 //! Host-owned control actor and its independent bounded TUN I/O task.
-use super::super::super::protection::same_target;
 use super::io::ExitCutoff as Deadline;
 use super::{
     CtConfirmation, ExitReplyReader, ExitScope, ProjectionAck,
@@ -170,9 +169,8 @@ impl ExitRole {
             done.changed().await.map_err(|_| Error::Worker)?;
         }
     }
-    /// The resource owner is live: its installed lease has not ended and its
-    /// role was not withdrawn. Each operation and packet still requires its
-    /// own current execution guard.
+    /// The resource owner is live: its installed content still carries its
+    /// role. Each operation and packet still requires its own scope.
     pub fn is_active(&self) -> bool {
         !self.stop.is_cancelled()
     }
@@ -204,53 +202,41 @@ impl Authority {
         Self { shared, plan }
     }
 
-    /// Resource lifetime only, never an operation guard: the owner keeps its
-    /// projections and CT while the installed lease lives and, whenever the
-    /// installed target is readable, it still carries this role. Kernel::install
-    /// is the only place a replacement is accepted or a changed role shut down.
-    fn retained(&self) -> bool {
+    /// Resource lifetime: the owner keeps its projections and CT while the
+    /// installed content carries this role. Withdrawal (empty apply) or a
+    /// changed role stops it; every projection then retires with its CT.
+    fn keeps_role(&self) -> bool {
         self.shared.check().is_ok()
             && self
                 .shared
                 .installed()
                 .ok()
                 .flatten()
-                .is_some_and(|snapshot| {
-                    snapshot.deadline().valid()
-                        && View::of(&snapshot).is_none_or(|view| {
-                            view.exit_enabled() && view.exit_role().as_ref() == Some(&self.plan)
-                        })
+                .is_some_and(|desired| {
+                    let view = View::of(&desired);
+                    view.exit_enabled() && view.exit_role().as_ref() == Some(&self.plan)
                 })
     }
 
-    pub fn snapshot(&self) -> Result<meshway_authority::ExecutionSnapshot> {
+    /// The installed content, while it carries this role.
+    pub fn installed(&self) -> Result<meshway_engine::Desired> {
         self.shared.check()?;
-        let snapshot = self.shared.installed()?.ok_or(Error::Expired)?;
-        if View::of(&snapshot)
-            .ok_or(Error::Expired)?
-            .exit_role()
-            .as_ref()
-            != Some(&self.plan)
-        {
+        let desired = self.shared.installed()?.ok_or(Error::Expired)?;
+        if View::of(&desired).exit_role().as_ref() != Some(&self.plan) {
             return Err(Error::Expired);
         }
-        Ok(snapshot)
+        Ok(desired)
     }
     pub fn validate(
         &self,
         _tuple: OriginalTuple,
-        deadline: &Deadline,
+        _deadline: &Deadline,
     ) -> Result<super::super::super::protection::ProtectionScope> {
-        let snapshot = self.snapshot()?;
-        if deadline.expires_at() > snapshot.expires_at()
-            || deadline.expires_at_ms() > snapshot.expires_at_ms()
-        {
-            return Err(Error::Expired);
-        }
         // Packet/tuple Access admission belongs to SecureNode's unique flow
-        // table. The kernel owner enforces its installed role and exact
-        // projection transaction; it never builds a second policy compiler.
-        self.shared.data(&snapshot)
+        // table, which also owns each projection's cutoff. The kernel owner
+        // enforces its installed role and exact projection transaction; it
+        // never builds a second policy compiler.
+        self.shared.data(self.installed()?.reference())
     }
 }
 
@@ -314,8 +300,8 @@ impl super::super::Kernel {
             }
             return Err(Error::Conflict);
         }
-        let snapshot = self.shared.installed()?.ok_or(Error::Expired)?;
-        let cfg = View::of(&snapshot).ok_or(Error::Expired)?;
+        let desired = self.shared.installed()?.ok_or(Error::Expired)?;
+        let cfg = View::of(&desired);
         if cfg.exit_role().as_ref() != Some(&plan)
             || !cfg.exit_enabled()
             || plan.family != ExitFamily::Ipv4
@@ -453,7 +439,6 @@ impl super::super::Kernel {
         let mut backend =
             Backend::create(store, ledger, routing, view.clone(), local, stop.clone()).await?;
         self.quiesce().await?;
-        snapshot.ensure_current().map_err(|_| Error::Expired)?;
         let authority = Authority::new(self.shared.clone(), plan.clone());
         let (mut io, writer, reader) =
             io::Owner::start(tun, view.clone(), stop.clone(), authority.clone());
@@ -473,7 +458,6 @@ impl super::super::Kernel {
         let interface_name = backend.ledger.tun_name.clone();
         let shutdown = self.shared.tasks.stop.clone();
         let task = tokio::spawn(async move {
-            let mut checked: Option<meshway_authority::ExecutionSnapshot> = None;
             let mut tick = tokio::time::interval(Duration::from_millis(100));
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             let mut audit = tokio::time::interval(Duration::from_secs(1));
@@ -485,27 +469,11 @@ impl super::super::Kernel {
                     _ = shutdown.cancelled() => break,
                     _ = audit.tick() => { if backend.verify().await.is_err() { break; } },
                     _ = tick.tick() => {
-                        // Lease end, Host suspension or a withdrawn role stops the
+                        // Withdrawal, Host suspension or a withdrawn role stops the
                         // owner: every projection retires with its exact CT.
-                        if !authority.retained() { break; }
-                        // Real deadlines and explicit revocations run regardless.
+                        if !authority.keeps_role() { break; }
+                        // Projection cutoffs and explicit revocations.
                         if backend.maintain().await.is_err() { break; }
-                        // A replaced target awaiting the Host's handoff mints no
-                        // guard; nothing is retired for it until the Host accepts
-                        // or rejects the replacement.
-                        let Ok(snapshot) = authority.snapshot() else { continue; };
-                        if snapshot.ensure_current().is_err() { continue; }
-                        if checked.as_ref().is_some_and(|checked| same_target(checked, &snapshot)) { continue; }
-                        // A new target: every projection is admitted again on it.
-                        let invalid: Vec<_> = backend.live.iter().filter(|(_, live)| authority.validate(live.tuple, &live.deadline).is_err()).map(|(id, _)| *id).collect();
-                        let mut failed = false;
-                        let mut complete = true;
-                        for id in invalid {
-                            if snapshot.ensure_current().is_err() { complete = false; break; }
-                            if backend.retire(id).await.is_err() { failed = true; break; }
-                        }
-                        if failed { break; }
-                        if complete { checked = Some(snapshot); }
                     },
                     request = receiver.recv() => {
                         let Some(request) = request else { break; };
@@ -516,7 +484,7 @@ impl super::super::Kernel {
                             },
                             Request::Install { incarnation, tuple, deadline, scope, guard, reply } => {
                                 // Rejected queued work never entered the kernel
-                                // transaction and must not retire a retained flow.
+                                // transaction and must not retire a kept flow.
                                 if guard.check().is_err() {
                                     let _ = reply.send(Err(Error::Expired));
                                     continue;

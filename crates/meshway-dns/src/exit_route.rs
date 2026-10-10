@@ -2,11 +2,11 @@
 //! unique SecureNode and exact service purpose; a protected local socket is not
 //! an implementation of this route.
 use crate::{RouteError, route::QueryLifetime};
-use meshway_authority::ExecutionSnapshot;
 use meshway_configuration::{
     DnsTransport,
     netmap::{DnsPlan, DnsService},
 };
+use meshway_engine::Desired;
 use std::{fmt, net::SocketAddr, time::Instant};
 use tokio_util::sync::CancellationToken;
 
@@ -26,13 +26,11 @@ impl fmt::Debug for MeshResolverRoute {
 
 impl MeshResolverRoute {
     pub(crate) fn new(
-        snapshot: ExecutionSnapshot,
+        desired: &Desired,
         transport: DnsTransport,
         deadline: Instant,
     ) -> Result<Self, RouteError> {
-        let policy = |_| RouteError::Binding;
-        let reading = snapshot.netmap_reading().map_err(|_| RouteError::Expired)?;
-        let netmap = &reading.netmap.netmap;
+        let netmap = desired.netmap();
         let DnsPlan::ViaExit { service } = &netmap.dns.egress else {
             return Err(RouteError::Binding);
         };
@@ -44,18 +42,18 @@ impl MeshResolverRoute {
             &service.path.nodes,
             transport,
         )
-        .map_err(policy)?;
-        let (service, expires_at_ms) = (service.clone(), reading.expires_at_ms);
+        .map_err(|_| RouteError::Binding)?;
         let route = Self {
-            lifetime: QueryLifetime::new(snapshot, expires_at_ms, deadline),
-            service,
+            lifetime: QueryLifetime::new(desired, deadline),
+            service: service.clone(),
             transport,
         };
         route.ensure_current()?;
         Ok(route)
     }
-    pub fn snapshot(&self) -> &ExecutionSnapshot {
-        self.lifetime.snapshot()
+    /// The content this route was decided on; comparison data only.
+    pub fn netmap(&self) -> meshway_model::NetmapRef {
+        self.lifetime.netmap()
     }
     /// The netmap DNS service this route carries.
     pub fn service(&self) -> &DnsService {
@@ -85,11 +83,11 @@ impl MeshResolverRoute {
     pub fn ensure_current(&self) -> Result<(), RouteError> {
         self.lifetime.ensure_current()
     }
-    pub async fn invalidated(&self) {
+    pub async fn ended(&self) {
         if self.ensure_current().is_err() {
             return;
         }
-        self.lifetime.invalidated().await;
+        self.lifetime.ended().await;
     }
 }
 
@@ -113,10 +111,10 @@ impl ResolverRoute {
             Self::Mesh(r) => r.ensure_current(),
         }
     }
-    pub async fn invalidated(&self) {
+    pub async fn ended(&self) {
         match self {
-            Self::Local(r) => r.invalidated().await,
-            Self::Mesh(r) => r.invalidated().await,
+            Self::Local(r) => r.ended().await,
+            Self::Mesh(r) => r.ended().await,
         }
     }
     pub(crate) fn exchange_scope(&self, deadline: Instant) -> Self {

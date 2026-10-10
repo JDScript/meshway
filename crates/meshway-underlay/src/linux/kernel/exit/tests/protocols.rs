@@ -95,7 +95,7 @@ pub(super) async fn round_trips(
             .is_none()
     );
     println!(
-        "X3C_ICMP=identifier-and-sequence,shared-ct-retained,retired-sequence-drops,last-retirement-clears-ct"
+        "X3C_ICMP=identifier-and-sequence,shared-ct-kept,retired-sequence-drops,last-retirement-clears-ct"
     );
 
     let tcp = OriginalTuple {

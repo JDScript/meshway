@@ -23,7 +23,7 @@ impl From<&View<'_>> for FlowTime {
 
 impl Engine {
     /// The secure adapter authenticates the complete facts/path/producer first.
-    /// The View is borrowed only by this synchronous call, never retained in
+    /// The View is borrowed only by this synchronous call, never kept in
     /// the flow table or returned PendingRoute. The latter owns its live guard.
     pub(crate) fn admit_facts(
         &mut self,

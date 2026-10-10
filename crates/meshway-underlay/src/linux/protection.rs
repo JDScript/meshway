@@ -1,4 +1,4 @@
-use meshway_authority::ExecutionSnapshot;
+use meshway_engine::Desired;
 use meshway_model::state::ResourceRef;
 use serde::{Deserialize, Serialize};
 use socket2::SockRef;
@@ -50,8 +50,27 @@ pub(super) struct Shared {
     pub data_sockets: Arc<Semaphore>,
     pub attempts: Arc<Semaphore>,
     pub resolutions: Arc<Semaphore>,
-    pub execution: RwLock<Option<(ExecutionSnapshot, CancellationToken)>>,
+    pub execution: RwLock<Option<Installed>>,
     pub resources: Resources,
+}
+
+/// The desired content capture is installed for. `content` ends every
+/// operation of exactly this content (new content or withdrawal); `session`
+/// ends the registered descriptors (withdrawal, suspension).
+pub(super) struct Installed {
+    pub desired: Desired,
+    pub content: CancellationToken,
+    pub session: CancellationToken,
+}
+
+impl Installed {
+    pub fn new(desired: Desired, session: CancellationToken) -> Self {
+        Self {
+            desired,
+            content: session.child_token(),
+            session,
+        }
+    }
 }
 
 pub(super) struct Resources {
@@ -59,36 +78,11 @@ pub(super) struct Resources {
     limit: usize,
 }
 
-/// A registered descriptor and the installed target it currently follows.
+/// A registered descriptor and its exact purpose. It stays open while every
+/// applied content keeps that purpose unchanged.
 struct PhysicalResource {
-    snapshot: Mutex<ExecutionSnapshot>,
     purpose: ResourceRef,
     stop: CancellationToken,
-}
-
-impl PhysicalResource {
-    fn snapshot(&self) -> Option<ExecutionSnapshot> {
-        self.snapshot.lock().ok().map(|snapshot| snapshot.clone())
-    }
-}
-
-/// Interchangeable installed targets: the same netmap content and lease cell
-/// (any instance binding).
-pub(super) fn same_target(a: &ExecutionSnapshot, b: &ExecutionSnapshot) -> bool {
-    a.same_netmap(b)
-}
-
-/// Whether a descriptor created under `previous` may follow `next`: the same
-/// target, or a Control-validated continuation whose exact resource purpose is
-/// unchanged. Any other replacement stops it.
-fn follows(previous: &ExecutionSnapshot, next: &ExecutionSnapshot, purpose: &ResourceRef) -> bool {
-    if same_target(previous, next) {
-        return true;
-    }
-    next.netmap_continuation_from(previous).is_ok_and(|old| {
-        next.netmap()
-            .is_ok_and(|new| crate::netmap_resource_compatible(&old.netmap, &new.netmap, purpose))
-    })
 }
 
 impl Resources {
@@ -98,16 +92,21 @@ impl Resources {
             limit,
         }
     }
-    /// Rebind every compatible descriptor to `next`; stop the others. Same
-    /// content (lease renewal or instance change) rebinds everything.
-    pub fn handoff(&self, next: &ExecutionSnapshot) -> Result<()> {
+    /// New content: keep every descriptor whose exact purpose is unchanged
+    /// from `previous` to `next`; stop the others.
+    pub fn apply(&self, previous: &Desired, next: &Desired) -> Result<()> {
         let mut entries = self.entries.lock().map_err(|_| Error::Worker)?;
         entries.retain(|entry| entry.strong_count() != 0);
+        let same_self = previous.netmap().network_id == next.netmap().network_id
+            && previous.netmap().node_id == next.netmap().node_id;
         for entry in entries.iter().filter_map(Weak::upgrade) {
-            let mut previous = entry.snapshot.lock().map_err(|_| Error::Worker)?;
-            if !entry.stop.is_cancelled() && follows(&previous, next, &entry.purpose) {
-                *previous = next.clone();
-            } else {
+            if !same_self
+                || !crate::netmap_resource_compatible(
+                    previous.netmap(),
+                    next.netmap(),
+                    &entry.purpose,
+                )
+            {
                 entry.stop.cancel();
             }
         }
@@ -137,117 +136,89 @@ impl Shared {
         self.check()
     }
 
+    /// Withdrawal: every operation and registered descriptor ends now.
     pub fn suspend(&self) -> Result<()> {
-        if let Some((_, token)) = self.execution.write().map_err(|_| Error::Worker)?.take() {
-            token.cancel();
+        if let Some(installed) = self.execution.write().map_err(|_| Error::Worker)?.take() {
+            installed.session.cancel();
         }
         Ok(())
     }
 
-    /// The installed target, whether or not it is still current.
-    pub fn installed(&self) -> Result<Option<ExecutionSnapshot>> {
+    /// The installed content.
+    pub fn installed(&self) -> Result<Option<Desired>> {
         Ok(self
             .execution
             .read()
             .map_err(|_| Error::Worker)?
             .as_ref()
-            .filter(|(_, token)| !token.is_cancelled())
-            .map(|(snapshot, _)| snapshot.clone()))
+            .map(|installed| installed.desired.clone()))
     }
 
-    pub fn data(self: &Arc<Self>, snapshot: &ExecutionSnapshot) -> Result<ProtectionScope> {
+    /// An operation on exactly the content `netmap`, which must be installed.
+    pub fn data(self: &Arc<Self>, netmap: meshway_model::NetmapRef) -> Result<ProtectionScope> {
         self.check()?;
-        snapshot.ensure_current().map_err(|_| Error::Expired)?;
         let active = self.execution.read().map_err(|_| Error::Worker)?;
-        let (installed, token) = active.as_ref().ok_or(Error::Expired)?;
-        if !same_target(installed, snapshot) || token.is_cancelled() {
+        let installed = active.as_ref().ok_or(Error::Expired)?;
+        if installed.desired.reference() != netmap || installed.content.is_cancelled() {
             return Err(Error::Expired);
         }
         Ok(ProtectionScope {
             shared: self.clone(),
-            epoch: token.clone(),
-            lifetime: Lifetime::Operation(Box::new(Operation {
-                snapshot: snapshot.clone(),
-                resource: None,
-            })),
+            stop: installed.content.clone(),
+            data: true,
+            purpose: None,
+            resource: None,
         })
     }
 
     pub fn bootstrap(self: &Arc<Self>) -> ProtectionScope {
         ProtectionScope {
             shared: self.clone(),
-            epoch: self.tasks.stop.clone(),
-            lifetime: Lifetime::Bootstrap,
+            stop: self.tasks.stop.clone(),
+            data: false,
+            purpose: None,
+            resource: None,
         }
     }
 }
 
-/// What bounds a scope. Exactly one applies; there is no mixed state.
-#[derive(Clone)]
-enum Lifetime {
-    /// Server bootstrap: no execution target, Host-lifetime epoch, bootstrap
-    /// socket capacity.
-    Bootstrap,
-    /// One operation under its original snapshot. A same-content netmap
-    /// renewal keeps it current; any other replacement ends it for good.
-    Operation(Box<Operation>),
-    /// A registered descriptor. It follows compatible replacements of the
-    /// installed target and stops on incompatible ones, Host suspension, or
-    /// the end of its target's lease.
-    Resource(Arc<PhysicalResource>),
-}
-
-#[derive(Clone)]
-struct Operation {
-    snapshot: ExecutionSnapshot,
-    /// The descriptor purpose this operation may register.
-    resource: Option<ResourceRef>,
-}
-
+/// Protection of one socket operation or descriptor: its single stop token
+/// (Host lifetime for Server bootstrap, the installed content for an
+/// operation, the registration for a descriptor) and its socket capacity.
 #[derive(Clone)]
 pub(super) struct ProtectionScope {
     pub shared: Arc<Shared>,
-    epoch: CancellationToken,
-    lifetime: Lifetime,
+    stop: CancellationToken,
+    /// Data sockets use the data capacity and require installed content.
+    data: bool,
+    /// The descriptor purpose this operation may register.
+    purpose: Option<ResourceRef>,
+    /// The registration that keeps a descriptor's entry in the Host's apply.
+    resource: Option<Arc<PhysicalResource>>,
 }
 
 impl ProtectionScope {
     pub fn owner_current(&self) -> Result<()> {
         self.shared.check()?;
-        if self.epoch.is_cancelled()
-            || matches!(&self.lifetime, Lifetime::Resource(binding) if binding.stop.is_cancelled())
-        {
+        if self.stop.is_cancelled() {
             return Err(Error::Expired);
         }
         Ok(())
     }
     pub fn for_resource(mut self, purpose: ResourceRef) -> Self {
-        if let Lifetime::Operation(operation) = &mut self.lifetime {
-            operation.resource = Some(purpose);
-        }
+        self.purpose = Some(purpose);
         self
     }
+    /// Register a descriptor for its purpose. Registration is serialized with
+    /// the Host's apply, so it cannot outlive an incompatible content.
     pub fn physical(mut self) -> Result<Self> {
         self.check()?;
-        let Lifetime::Operation(operation) = &self.lifetime else {
-            return Err(Error::Target);
-        };
-        let (snapshot, purpose) = match &**operation {
-            Operation {
-                snapshot,
-                resource: Some(purpose),
-            } => (snapshot, purpose),
-            _ => return Err(Error::Target),
-        };
-        // Serialize registration with Host's execution/resource handoff. A
-        // handle minted before it cannot register an unchecked old descriptor
-        // after the per-resource cancellation pass.
+        let purpose = self.purpose.clone().ok_or(Error::Target)?;
         let active = self.shared.execution.read().map_err(|_| Error::Worker)?;
-        let (installed, _) = active.as_ref().ok_or(Error::Expired)?;
-        if !same_target(installed, snapshot) || self.epoch.is_cancelled() {
+        let installed = active.as_ref().ok_or(Error::Expired)?;
+        if self.stop.is_cancelled() {
             return Err(Error::Expired);
         }
-        snapshot.ensure_current().map_err(|_| Error::Expired)?;
         let mut entries = self
             .shared
             .resources
@@ -259,56 +230,42 @@ impl ProtectionScope {
             return Err(Error::Capacity);
         }
         let binding = Arc::new(PhysicalResource {
-            snapshot: Mutex::new(installed.clone()),
-            purpose: purpose.clone(),
-            stop: self.epoch.child_token(),
+            purpose,
+            stop: installed.session.child_token(),
         });
         entries.push(Arc::downgrade(&binding));
         drop(entries);
         drop(active);
-        self.lifetime = Lifetime::Resource(binding);
+        self.stop = binding.stop.clone();
+        self.resource = Some(binding);
         Ok(self)
     }
-    /// An operation scope fixed at the currently installed target. A later
-    /// replacement ends it even when the descriptor itself is retained.
+    /// An operation of the content now installed, ending at the next apply
+    /// even while its descriptor is kept.
     pub fn frozen(&self) -> Result<Self> {
-        let mut scope = self.clone();
-        if let Some(snapshot) = self.current()? {
-            scope.lifetime = Lifetime::Operation(Box::new(Operation {
-                snapshot,
-                resource: None,
-            }));
+        if !self.data {
+            return Ok(self.clone());
         }
+        let active = self.shared.execution.read().map_err(|_| Error::Worker)?;
+        let installed = active.as_ref().ok_or(Error::Expired)?;
+        let mut scope = self.clone();
+        scope.stop = installed.content.clone();
         Ok(scope)
     }
-    pub fn execution(&self) -> Result<ExecutionSnapshot> {
-        self.current()?.ok_or(Error::Target)
+    /// The installed content of a data scope.
+    pub fn execution(&self) -> Result<Desired> {
+        self.check()?;
+        if !self.data {
+            return Err(Error::Target);
+        }
+        self.shared.installed()?.ok_or(Error::Expired)
     }
     pub fn check(&self) -> Result<()> {
         self.owner_current()?;
-        if self.current().is_err() {
+        if self.data && self.shared.installed()?.is_none() {
             return Err(Error::Expired);
         }
         Ok(())
-    }
-
-    fn current(&self) -> Result<Option<ExecutionSnapshot>> {
-        if matches!(self.lifetime, Lifetime::Bootstrap) {
-            return Ok(None);
-        }
-        let active = self.shared.execution.read().map_err(|_| Error::Worker)?;
-        let (installed, token) = active.as_ref().ok_or(Error::Expired)?;
-        if token.is_cancelled() {
-            return Err(Error::Expired);
-        }
-        if let Lifetime::Operation(operation) = &self.lifetime
-            && (!same_target(installed, &operation.snapshot)
-                || operation.snapshot.ensure_current().is_err())
-        {
-            return Err(Error::Expired);
-        }
-        installed.ensure_current().map_err(|_| Error::Expired)?;
-        Ok(Some(installed.clone()))
     }
 
     pub fn prepare(&self, socket: &SockRef<'_>) -> io::Result<()> {
@@ -323,10 +280,10 @@ impl ProtectionScope {
 
     pub fn capacity(&self) -> Result<OwnedSemaphorePermit> {
         self.check()?;
-        let capacity = if matches!(self.lifetime, Lifetime::Bootstrap) {
-            &self.shared.sockets
-        } else {
+        let capacity = if self.data {
             &self.shared.data_sockets
+        } else {
+            &self.shared.sockets
         };
         capacity
             .clone()
@@ -334,64 +291,12 @@ impl ProtectionScope {
             .map_err(|_| Error::Capacity)
     }
 
-    async fn stopped(&self) {
+    /// This scope's protection ended: conflict, Host stop, or its own token.
+    pub async fn ended(&self) {
         tokio::select! { biased;
             _ = self.shared.conflict.cancelled() => {},
             _ = self.shared.tasks.stop.cancelled() => {},
-            _ = self.epoch.cancelled() => {},
-            _ = async { match &self.lifetime {
-                Lifetime::Resource(binding) => binding.stop.cancelled().await,
-                _ => std::future::pending().await,
-            } } => {},
-        }
-    }
-
-    /// I/O authority ended. A same-content renewal (or an explicit compatible
-    /// Host replacement for a descriptor) does not end it.
-    pub async fn invalidated(&self) {
-        loop {
-            let Ok(current) = self.current() else {
-                return;
-            };
-            if self.owner_current().is_err() {
-                return;
-            }
-            tokio::select! { biased;
-                _ = self.stopped() => return,
-                _ = async {
-                    match current {
-                        Some(snapshot) => snapshot.invalidated().await,
-                        None => std::future::pending().await,
-                    }
-                } => {},
-            }
-        }
-    }
-
-    /// Descriptor lifetime: the resource is stopped by the Host (incompatible
-    /// replacement, suspension, shutdown) or its target's lease has ended.
-    /// Between a replacement's invalidation and the Host's handoff the
-    /// descriptor stays open without I/O authority. Other scopes close with
-    /// their I/O authority.
-    pub async fn closed(&self) {
-        let Lifetime::Resource(binding) = &self.lifetime else {
-            return self.invalidated().await;
-        };
-        loop {
-            if self.owner_current().is_err() {
-                return;
-            }
-            let Some(deadline) = binding.snapshot().map(|snapshot| snapshot.deadline()) else {
-                return;
-            };
-            if !deadline.valid() {
-                return;
-            }
-            tokio::select! { biased;
-                _ = self.stopped() => return,
-                // Renewal or rebinding may have extended it; read again.
-                _ = deadline.ended(&binding.stop) => {},
-            }
+            _ = self.stop.cancelled() => {},
         }
     }
 }

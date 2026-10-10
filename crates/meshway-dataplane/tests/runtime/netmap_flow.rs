@@ -142,11 +142,7 @@ async fn dns_circuit_authenticates_the_exit_service_and_never_admits_business_pa
     let packet = f.mesh_udp(false, 42424);
     assert!(f.a.send(circuit, packet).is_err());
     assert_eq!(
-        (
-            f.a.retained_flows(),
-            f.r.retained_flows(),
-            f.b.retained_flows()
-        ),
+        (f.a.flow_count(), f.r.flow_count(), f.b.flow_count()),
         (0, 0, 0)
     );
     let request_id = meshway_model::EventId::new(super::support::request().into_uuid()).unwrap();
@@ -212,7 +208,7 @@ async fn first_packet_is_decided_and_handshaken_locally_without_any_control_call
     .unwrap();
     assert_eq!(flow.grant, f.mesh_target());
     assert_eq!(flow.path, f.path());
-    assert_eq!(f.a.retained_circuits(), 1);
+    assert_eq!(f.a.circuit_count(), 1);
     assert_eq!(
         f.sync_calls(),
         calls,
@@ -240,7 +236,7 @@ async fn missing_adjacency_registers_interest_and_queues_until_the_carrier_exist
     assert_eq!(interests[0].peer, r);
     assert!(f.a.take_adjacency_interests().is_empty());
     // Still no flow: waiting commits nothing.
-    assert_eq!(f.a.retained_flows(), 0);
+    assert_eq!(f.a.flow_count(), 0);
     assert!(f.a.flush(32).is_empty());
     f.a.set_carriers(BTreeMap::from([(r, carrier)])).unwrap();
     let mut flushed = f.a.flush(32);
@@ -287,7 +283,7 @@ async fn same_content_apply_changes_nothing_and_keeps_outputs() {
         after.expires_at_ms >= before.expires_at_ms,
         "activity, never a lease, bounds a circuit"
     );
-    assert_eq!(f.a.retained_flows(), 1);
+    assert_eq!(f.a.flow_count(), 1);
     {
         let packet = f.mesh_udp(false, 42424);
         let frame = send(&mut f, packet);
@@ -309,7 +305,7 @@ async fn port_revocation_ends_only_that_flow_and_keeps_the_circuit() {
         let frame = send(&mut f, packet);
         delivered(&mut f, frame)
     };
-    assert_eq!(f.a.retained_flows(), 2);
+    assert_eq!(f.a.flow_count(), 2);
     let updates = f
         .publish(|cfg, [a, _, b]| {
             cfg.access[0] = rule(a, &sel(b), &["udp:42424", "tcp:443"]);
@@ -324,7 +320,7 @@ async fn port_revocation_ends_only_that_flow_and_keeps_the_circuit() {
             }
         );
     }
-    assert_eq!(f.a.retained_flows(), 1);
+    assert_eq!(f.a.flow_count(), 1);
     // The surviving flow keeps its cipher and nonce windows.
     let frame = {
         let packet = f.mesh_udp(false, 42424);
@@ -414,8 +410,8 @@ async fn own_identity_change_terminates_everything() {
             retired_flows: 1,
         }
     );
-    assert_eq!(f.a.retained_circuits(), 0);
-    assert_eq!(f.a.retained_flows(), 0);
+    assert_eq!(f.a.circuit_count(), 0);
+    assert_eq!(f.a.flow_count(), 0);
     // A's address is in every path digest: peers retire the circuit too.
     assert!(matches!(
         updates[1],
@@ -451,7 +447,7 @@ async fn withdrawal_drops_every_circuit_flow_and_queued_output() {
     .unwrap();
     drop(std::mem::replace(&mut f.a, fresh));
     assert!(queued.release(|_| panic!("withdrawn output")).is_err());
-    assert_eq!(f.a.retained_flows(), 0);
+    assert_eq!(f.a.flow_count(), 0);
     f.close().await;
 }
 
@@ -505,7 +501,7 @@ async fn relay_admits_transit_only_on_its_own_content() {
         f.r.receive(&f.ar.carrier, wire(init)),
         Err(Error::Policy)
     ));
-    assert_eq!(f.r.retained_circuits(), 0);
+    assert_eq!(f.r.circuit_count(), 0);
     // A grant the relay was never part of cannot be opened through it either.
     let [a, r, b] = f.ids();
     assert!(
@@ -531,7 +527,7 @@ async fn dead_circuit_record_is_reclaimed_after_its_init_window() {
     }
     .await;
     f.r.close(id);
-    assert_eq!(f.r.retained_circuits(), 0);
+    assert_eq!(f.r.circuit_count(), 0);
     assert_eq!(f.r.dead_circuits(), 1);
     // Closing does not count against circuit capacity and is never revived.
     let frame = {
@@ -564,7 +560,7 @@ async fn relay_without_next_hop_registers_interest_and_admits_the_retried_init()
     assert_eq!(interests.len(), 1);
     assert_eq!(interests[0].peer, b);
     // Nothing was consumed: no circuit and no dead record for this CID.
-    assert_eq!(f.r.retained_circuits(), 0);
+    assert_eq!(f.r.circuit_count(), 0);
     assert_eq!(f.r.dead_circuits(), 0);
     f.r.set_carriers(BTreeMap::from([(a, ar), (b, rb)]))
         .unwrap();

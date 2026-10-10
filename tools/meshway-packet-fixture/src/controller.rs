@@ -61,7 +61,7 @@ pub async fn run(cli: &Cli) -> Result<()> {
 async fn coordinate(cli: &Cli) -> Result<()> {
     let signals = Signals::new(&cli.signals);
     let client = Client::new(ORIGIN, tls::client(cli).await?, 16 * 1024 * 1024)?;
-    // The owner credential is created and retained only in this controller actor.
+    // The owner credential is created and kept only in this controller actor.
     let session = client
         .register(&RegisterRequest {
             email: "isolated-packet-owner@example.test".into(),

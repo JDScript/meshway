@@ -61,12 +61,9 @@ async fn netmap_renewal_keeps_descriptors_and_a_new_serial_moves_only_changed_on
     let keep = sockets.datagram_listener(&snapshot, "keep").await.unwrap();
     assert!(held(41001) && held(41002));
 
-    // Same content: the lease is raised in place for every clone; the Host
-    // swaps nothing, and the old snapshot keeps minting operations.
-    let before = snapshot.expires_at_ms();
+    // Same content: the Host changes nothing.
     let renewed = sync(&mut control, &script, &first, false, HOUR).await;
-    assert!(renewed.same_netmap(&snapshot));
-    assert!(snapshot.expires_at_ms() > before);
+    assert_eq!(renewed.reference(), snapshot.reference());
     host.install(renewed.clone()).await.unwrap();
     assert_eq!(host.tun().unwrap().if_index().unwrap(), interface);
     udp.local_addr().unwrap();
@@ -77,11 +74,9 @@ async fn netmap_renewal_keeps_descriptors_and_a_new_serial_moves_only_changed_on
     network.listeners.insert("udp".into(), listener(41003));
     let second = network.compile(Some(&first));
     let next = sync(&mut control, &script, &second, true, HOUR).await;
-    assert!(snapshot.ensure_current().is_err());
-    // Until the Host accepts the replacement no descriptor has I/O authority,
-    // yet none is closed: the replacement is not a withdrawal.
-    assert!(keep.local_addr().is_err() && udp.local_addr().is_err());
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // Nothing changes until the content is applied to the Host.
+    keep.local_addr().unwrap();
+    udp.local_addr().unwrap();
     assert!(held(41001) && held(41002));
     host.install(next.clone()).await.unwrap();
     assert_eq!(host.tun().unwrap().if_index().unwrap(), interface);
@@ -96,18 +91,18 @@ async fn netmap_renewal_keeps_descriptors_and_a_new_serial_moves_only_changed_on
     let _ = control.shutdown().await;
     host.shutdown(false).await.unwrap();
     server.close().await;
-    println!("N1G_NETMAP_RESOURCES=renewal-noop,serial-diff,retained-tun");
+    println!("N1G_NETMAP_RESOURCES=renewal-noop,serial-diff,kept-tun");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires an isolated Linux namespace, /dev/net/tun and NET_ADMIN"]
-async fn netmap_lease_end_closes_descriptors_and_keeps_the_negative_boundary() {
+async fn withdrawal_closes_descriptors_and_keeps_the_negative_boundary() {
     let temp = isolated();
     let server = Server::start(temp.path()).await;
     let (mut control, script) = server.enroll(temp.path()).await;
     let network = Network::new(&control, false);
     let netmap = network.compile(None);
-    let snapshot = sync(&mut control, &script, &netmap, true, 4_000).await;
+    let snapshot = sync(&mut control, &script, &netmap, true, HOUR).await;
     let mut host = host(&temp).await;
     host.install(snapshot.clone()).await.unwrap();
     let keep = host
@@ -115,19 +110,16 @@ async fn netmap_lease_end_closes_descriptors_and_keeps_the_negative_boundary() {
         .datagram_listener(&snapshot, "keep")
         .await
         .unwrap();
-    tokio::time::sleep(Duration::from_millis(4_300)).await;
-    assert!(snapshot.ensure_current().is_err());
+    // Engine's empty apply (lease end or revocation).
+    host.suspend().await.unwrap();
     assert!(host.tun().is_none());
     assert!(keep.local_addr().is_err());
     released(41002).await;
-    // Expiry is not a suspension: the capture block is still installed and an
-    // expired grant is never revived by the same content.
-    assert!(host.install(snapshot.clone()).await.is_err());
     drop(keep);
     let _ = control.shutdown().await;
     host.shutdown(false).await.unwrap();
     server.close().await;
-    println!("N1G_NETMAP_EXPIRY=descriptors-closed,tun-inactive,no-revival");
+    println!("N1G_NETMAP_WITHDRAWAL=descriptors-closed,tun-inactive");
 }
 
 fn cutoff(milliseconds: u64) -> meshway_underlay::ExitCutoff {
@@ -146,7 +138,7 @@ fn cutoff(milliseconds: u64) -> meshway_underlay::ExitCutoff {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires an isolated Linux exit namespace (ip_forward=1, loose RPF), nft and NET_ADMIN"]
-async fn netmap_exit_role_survives_renewal_and_unchanged_serial_and_ends_with_its_lease() {
+async fn netmap_exit_role_survives_renewal_and_unchanged_serial_and_ends_on_withdrawal() {
     let temp = isolated();
     let server = Server::start(temp.path()).await;
     let (mut control, script) = server.enroll(temp.path()).await;
@@ -193,17 +185,13 @@ async fn netmap_exit_role_survives_renewal_and_unchanged_serial_and_ends_with_it
     assert!(role.is_active());
     project("100.64.0.2").await.unwrap();
 
-    // A larger serial with the same role: the replaced target mints no
-    // operation, but the role outlives three maintenance ticks until the Host
-    // accepts the continuation.
+    // A larger serial with the same role keeps it across the apply.
     network.listeners.insert("udp".into(), listener(41003));
     let second = network.compile(Some(&first));
     assert_eq!(second.netmap.exit_role, first.netmap.exit_role);
     let next = sync(&mut control, &script, &second, true, HOUR).await;
-    tokio::time::sleep(Duration::from_millis(350)).await;
-    assert!(role.is_active());
-    assert!(project("100.64.0.2").await.is_err());
     host.install(next).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(350)).await;
     assert!(role.is_active() && host.exit_role().is_some());
     project("100.64.0.2").await.unwrap();
 
@@ -216,22 +204,19 @@ async fn netmap_exit_role_survives_renewal_and_unchanged_serial_and_ends_with_it
     assert!(role.is_active());
     assert!(project("100.64.0.2").await.is_err());
 
-    // A short lease: when it ends, the owner stops and cleans up exactly.
-    network.access = true;
-    let fourth = network.compile(Some(&third));
-    let short = sync(&mut control, &script, &fourth, true, 3_000).await;
-    host.install(short).await.unwrap();
+    // Engine's empty apply: the owner stops and cleans up exactly.
+    host.suspend().await.unwrap();
     tokio::time::timeout(Duration::from_secs(6), async {
         while role.is_active() {
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
     })
     .await
-    .expect("exit role ends with its lease");
+    .expect("exit role ends on withdrawal");
     role.retire().await.unwrap();
     assert!(host.exit_role().is_none());
     let _ = control.shutdown().await;
     host.shutdown(false).await.unwrap();
     server.close().await;
-    println!("N1G_NETMAP_EXIT=renewal-noop,serial-retained,access-denied,lease-end-cleanup");
+    println!("N1G_NETMAP_EXIT=renewal-noop,serial-kept,access-denied,withdrawal-cleanup");
 }

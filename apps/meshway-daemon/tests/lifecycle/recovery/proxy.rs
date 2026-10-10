@@ -143,7 +143,7 @@ async fn forward(State(state): State<Forward>, request: Request) -> Response<Bod
     let mut bytes = response.bytes().await.unwrap().to_vec();
     if status == StatusCode::OK && path.ends_with("/auth/session") {
         let session: NodeSessionResponse = serde_json::from_slice(&bytes).unwrap();
-        // Only the expiry is retained; the actual bearer stays on its HTTP wire.
+        // Only the expiry is kept; the actual bearer stays on its HTTP wire.
         state
             .faults
             .session_expiry

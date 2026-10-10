@@ -27,10 +27,10 @@ fn magic_split_retained_default_and_exit_selection() {
         domain: "mesh.example".into(),
         servers: BTreeMap::from([
             ("local".into(), server(false)),
-            ("retained".into(), server(true)),
+            ("kept".into(), server(true)),
         ]),
         routes: BTreeMap::from([
-            ("corp.example".into(), vec!["retained".into()]),
+            ("corp.example".into(), vec!["kept".into()]),
             ("private.example".into(), vec!["local".into()]),
         ]),
         default: vec!["local".into()],
@@ -66,8 +66,8 @@ fn magic_split_retained_default_and_exit_selection() {
     let Selection::Resolvers(candidates) = dns.select(&question, ExitSelection::Exit) else {
         panic!();
     };
-    assert_eq!(candidates[0].key, "retained");
-    dns.default = vec!["retained".into()];
+    assert_eq!(candidates[0].key, "kept");
+    dns.default = vec!["kept".into()];
     assert!(matches!(
         dns.select(&query("www.example."), ExitSelection::Exit),
         Selection::Resolvers(_)

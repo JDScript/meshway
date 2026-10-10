@@ -257,9 +257,9 @@ async fn local_route_preflight_and_live_address_conflicts_preserve_foreign_resou
                 "creation_drain",
             );
             kernel.expected.lock().unwrap().changing = false;
-            let retained = kernel.retain_negative(&pools).await;
-            step(retained, &kernel, ipv6, address_conflict, "retain_negative");
-            // verify() is also used by retained-TUN handoff and explicit down.
+            let kept = kernel.retain_negative(&pools).await;
+            step(kept, &kernel, ipv6, address_conflict, "retain_negative");
+            // verify() is also used by kept-TUN handoff and explicit down.
             step(
                 kernel.verify().await,
                 &kernel,

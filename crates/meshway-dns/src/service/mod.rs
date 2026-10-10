@@ -225,13 +225,13 @@ impl Reply {
         }
     }
 
-    async fn invalidated(&self) {
+    async fn ended(&self) {
         tokio::select! { biased;
             _ = self.stop.cancelled() => {},
             _ = tokio::time::sleep_until(self.deadline.into()) => {},
             _ = async {
                 match &self.answer {
-                    Some(answer) => answer.invalidated().await,
+                    Some(answer) => answer.ended().await,
                     None => std::future::pending().await,
                 }
             } => {},
@@ -291,7 +291,7 @@ async fn send_udp(
 ) -> io::Result<()> {
     let bytes = reply.encode(ResponseTransport::Udp, limit)?;
     let sent = tokio::select! { biased;
-        _ = reply.invalidated() => return Err(io::Error::other("DNS reply invalidated")),
+        _ = reply.ended() => return Err(io::Error::other("DNS reply invalidated")),
         sent = poll_fn(|cx| {
             reply.ensure_current()?;
             socket.poll_send_to(cx, &bytes, peer)
@@ -350,7 +350,7 @@ async fn serve_tcp(
         let mut written = 0;
         while written < framed.len() {
             let count = tokio::select! { biased;
-                _ = reply.invalidated() => return Err(io::Error::other("DNS TCP reply invalidated")),
+                _ = reply.ended() => return Err(io::Error::other("DNS TCP reply invalidated")),
                 count = poll_fn(|cx| {
                     reply.ensure_current()?;
                     Pin::new(&mut stream).poll_write(cx, &framed[written..])

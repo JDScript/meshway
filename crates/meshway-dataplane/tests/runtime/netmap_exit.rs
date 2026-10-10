@@ -48,7 +48,7 @@ fn forward(f: &mut NetmapMesh, id: [u8; 32], packet: Packet) -> PendingAction {
     let Received::Forward(next) = f.r.receive(&f.ar.carrier, first).unwrap() else {
         panic!("opaque relay")
     };
-    assert_eq!(f.r.retained_flows(), 0);
+    assert_eq!(f.r.flow_count(), 0);
     let Received::Packet(packet) =
         f.b.receive(&f.rb.carrier, next.release(|bytes| bytes).unwrap())
             .unwrap()
@@ -169,7 +169,7 @@ async fn netmap_exit_confirm_failure_isolates_shared_cid_and_survivor_continues_
     let survivor = install(&mut f);
     assert_ne!(failed, survivor);
     f.b.fail_exit_projection(&failed);
-    assert_eq!(f.b.retained_flows(), 1);
+    assert_eq!(f.b.flow_count(), 1);
     assert!(failed_scope.ensure_current().is_err());
     tokio::time::timeout(Duration::from_secs(1), failed_scope.ended())
         .await
@@ -199,7 +199,7 @@ async fn netmap_exit_confirm_failure_isolates_shared_cid_and_survivor_continues_
     forward(&mut f, id, input).release(|_| ()).unwrap();
     let reply = udp(&f, true, 41001);
     deliver_reply(&mut f, id, reply);
-    assert_eq!(f.b.retained_flows(), 1);
+    assert_eq!(f.b.flow_count(), 1);
     f.close().await;
 }
 
@@ -215,13 +215,13 @@ async fn netmap_exit_confirm_failure_of_last_flow_retires_cipher_and_is_idempote
             .unwrap();
     // The source owns a different incarnation of the same tuple and CID.
     f.a.fail_exit_projection(&flow);
-    assert_eq!(f.a.retained_flows(), 1);
+    assert_eq!(f.a.flow_count(), 1);
     assert!(f.a.next_exit_projection().is_none());
     let reply = udp(&f, true, 41000);
     deliver_reply(&mut f, id, reply);
     f.b.fail_exit_projection(&flow);
     f.b.fail_exit_projection(&flow);
-    assert_eq!(f.b.retained_flows(), 0);
+    assert_eq!(f.b.flow_count(), 0);
     assert!(
         f.b.circuit_info(id)
             .unwrap()
@@ -271,7 +271,7 @@ async fn netmap_exit_pending_projection_budget_and_ack_timeout_are_fail_closed()
         panic!("retire")
     };
     ack.complete(true);
-    assert_eq!(f.b.retained_flows(), 0);
+    assert_eq!(f.b.flow_count(), 0);
     f.close().await;
 }
 
@@ -343,7 +343,7 @@ async fn netmap_exit_receive_only_flow_is_bounded_by_its_own_activity_not_a_leas
     scope.ensure_current().unwrap();
     let reply = udp(&f, true, 41000);
     deliver_reply(&mut f, id, reply);
-    assert_eq!(f.b.retained_flows(), 1);
+    assert_eq!(f.b.flow_count(), 1);
     f.close().await;
 }
 
@@ -374,7 +374,7 @@ async fn netmap_exit_ineligibility_and_withdrawal_retire_cipher_and_queued_outpu
     };
     ack.complete(true);
     assert!(f.b.circuit_info(id).unwrap().is_none());
-    assert_eq!(f.b.retained_flows(), 0);
+    assert_eq!(f.b.flow_count(), 0);
     f.close().await;
 
     // Engine's empty apply (lease end, revocation): the exit owner retires
@@ -397,7 +397,7 @@ async fn netmap_exit_ineligibility_and_withdrawal_retire_cipher_and_queued_outpu
         f.b.next_exit_projection(),
         Some(ExitProjection::Retire { .. })
     ));
-    assert_eq!(f.b.retained_flows(), 0);
+    assert_eq!(f.b.flow_count(), 0);
     f.close().await;
 }
 
@@ -427,7 +427,7 @@ async fn netmap_exit_content_update_renews_only_on_activity_within_the_pending_b
         }
     );
     assert!(f.b.next_exit_projection().is_none());
-    assert_eq!(f.b.retained_flows(), 2);
+    assert_eq!(f.b.flow_count(), 2);
     // Activity near the installed idle bound renews it; no lease is involved.
     tokio::time::sleep(Duration::from_millis(1_100)).await;
     let mut renewed = Vec::new();
@@ -449,7 +449,7 @@ async fn netmap_exit_content_update_renews_only_on_activity_within_the_pending_b
         let reply = udp(&f, true, port);
         deliver_reply(&mut f, id, reply);
     }
-    assert_eq!(f.b.retained_flows(), 2);
+    assert_eq!(f.b.flow_count(), 2);
     f.close().await;
 }
 
@@ -482,7 +482,7 @@ async fn netmap_exit_renew_ack_after_previous_gate_deadline_cannot_revive_flow()
         f.b.next_exit_projection(),
         Some(ExitProjection::Retire { .. })
     ));
-    assert_eq!(f.b.retained_flows(), 0);
+    assert_eq!(f.b.flow_count(), 0);
     f.close().await;
 }
 
@@ -540,7 +540,7 @@ async fn netmap_exit_idle_tuple_retirement_preserves_other_tuples_on_the_same_ci
     );
     let reply = udp(&f, true, 41001);
     deliver_reply(&mut f, id, reply);
-    assert_eq!(f.b.retained_flows(), 1);
+    assert_eq!(f.b.flow_count(), 1);
     f.close().await;
 }
 

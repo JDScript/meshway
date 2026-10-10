@@ -48,19 +48,8 @@ pub fn request() -> RequestId {
     .unwrap()
 }
 
-/// Scripted sync replies, and the staged issuer of this Control's snapshots.
-pub struct Script(
-    Mutex<VecDeque<SyncResponse>>,
-    Mutex<meshway_authority::StagedIssuer>,
-);
-impl Default for Script {
-    fn default() -> Self {
-        Self(
-            Mutex::default(),
-            Mutex::new(meshway_authority::StagedIssuer::new().unwrap()),
-        )
-    }
-}
+#[derive(Default)]
+pub struct Script(Mutex<VecDeque<SyncResponse>>);
 impl SyncTransport for Script {
     fn sync<'a>(&'a self, _: &'a SyncRequest, _: &'a str) -> SyncFuture<'a> {
         let reply = self.0.lock().unwrap().pop_front();
@@ -184,26 +173,14 @@ pub async fn sync(
     netmap: &CompiledNetmap,
     full: bool,
     validity_ms: u64,
-) -> meshway_authority::ExecutionSnapshot {
+) -> meshway_engine::Desired {
     script
         .0
         .lock()
         .unwrap()
         .push_back(meshway_netmap_fixture::reply(netmap, validity_ms, full));
     let netmap = control.sync(&mut Facts).await.unwrap().netmap;
-    script
-        .1
-        .lock()
-        .unwrap()
-        .issue(
-            &netmap.content,
-            netmap.lease,
-            None,
-            &control.dataplane_keys().unwrap(),
-        )
-        .unwrap()
-        .snapshot()
-        .clone()
+    meshway_engine::Desired::new(&netmap.content).unwrap()
 }
 
 pub fn node(i: u8) -> NodeId {

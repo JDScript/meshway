@@ -132,9 +132,7 @@ impl super::super::Kernel {
             .read()
             .map_err(|_| Error::Worker)?
             .as_ref()
-            .is_some_and(|(snapshot, _)| {
-                View::of(snapshot).is_some_and(|view| view.egress_capture() == Some(&plan))
-            });
+            .is_some_and(|installed| View::of(&installed.desired).egress_capture() == Some(&plan));
         if matches {
             capture.switch(plan).await?;
         }
@@ -273,11 +271,9 @@ impl super::super::Kernel {
                     _ = shared.conflict.cancelled() => break,
                     _ = tick.tick() => {
                         if backend.verify().await.is_err() { shared.conflict.cancel(); break; }
-                        // Only the end of the installed lease or a different
-                        // plan withdraws an active capture. A replaced target
-                        // awaiting the Host's handoff keeps it: the TUN path
-                        // admits nothing without the new snapshot.
-                        if state.borrow().active && !retained(&shared, &backend.ledger.plan) {
+                        // Only withdrawal or a different plan withdraws an
+                        // active capture.
+                        if state.borrow().active && !keeps(&shared, &backend.ledger.plan) {
                             state.send_modify(|state| state.active = false);
                             if backend.pause().await.is_err() { shared.conflict.cancel(); break; }
                         }
@@ -302,8 +298,8 @@ impl super::super::Kernel {
                                     let mesh = mesh(&expected)?;
                                     backend.stage(plan.clone(), mesh.clone()).await?;
                                     let scope = scope?;
-                                    let snapshot = scope.execution()?;
-                                    let source = View::of(&snapshot).ok_or(Error::Expired)?.addresses().ipv4;
+                                    let desired = scope.execution()?;
+                                    let source = View::of(&desired).addresses().ipv4;
                                     let device = if plan.managed_ipv4.is_empty() { None } else {
                                         let expected = expected.lock().map_err(|_| Error::Worker)?;
                                         let (index, name, _, _) = expected.tun.as_ref().ok_or(Error::Expired)?;
@@ -361,18 +357,19 @@ fn current(
     shared: &Arc<super::super::super::protection::Shared>,
     plan: &EgressCapturePlan,
 ) -> Result<super::super::super::protection::ProtectionScope> {
-    let snapshot = shared.installed()?.ok_or(Error::Expired)?;
-    if View::of(&snapshot).ok_or(Error::Expired)?.egress_capture() != Some(plan) {
+    let desired = shared.installed()?.ok_or(Error::Expired)?;
+    if View::of(&desired).egress_capture() != Some(plan) {
         return Err(Error::Target);
     }
-    shared.data(&snapshot)
+    shared.data(desired.reference())
 }
 
-/// The installed target's lease is live and, while readable, still selects
-/// `plan`. Resource retention only, never I/O authority.
-fn retained(shared: &super::super::super::protection::Shared, plan: &EgressCapturePlan) -> bool {
-    shared.installed().ok().flatten().is_some_and(|snapshot| {
-        snapshot.deadline().valid()
-            && View::of(&snapshot).is_none_or(|view| view.egress_capture() == Some(plan))
-    })
+/// Content is installed and still selects `plan`. Resource retention only,
+/// never I/O authority.
+fn keeps(shared: &super::super::super::protection::Shared, plan: &EgressCapturePlan) -> bool {
+    shared
+        .installed()
+        .ok()
+        .flatten()
+        .is_some_and(|desired| View::of(&desired).egress_capture() == Some(plan))
 }

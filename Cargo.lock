@@ -1724,17 +1724,11 @@ dependencies = [
 name = "meshway-authority"
 version = "0.1.0"
 dependencies = [
- "chrono",
  "curve25519-dalek",
  "ed25519-dalek",
  "meshway-configuration",
- "meshway-logging",
  "meshway-model",
- "meshway-policy",
- "meshway-protocol",
  "thiserror",
- "tokio",
- "tokio-util",
  "zeroize",
 ]
 
@@ -2049,7 +2043,6 @@ dependencies = [
  "getrandom 0.3.4",
  "hickory-proto",
  "ipnet",
- "meshway-authority",
  "meshway-configuration",
  "meshway-control",
  "meshway-control-client",
@@ -2174,7 +2167,6 @@ dependencies = [
  "getrandom 0.3.4",
  "hyper",
  "hyper-util",
- "meshway-authority",
  "meshway-configuration",
  "meshway-control",
  "meshway-control-client",
@@ -2490,11 +2482,11 @@ dependencies = [
  "hickory-proto",
  "hickory-resolver",
  "ipnet",
- "meshway-authority",
  "meshway-configuration",
  "meshway-control",
  "meshway-control-client",
  "meshway-dns",
+ "meshway-engine",
  "meshway-model",
  "meshway-netmap-fixture",
  "meshway-policy",

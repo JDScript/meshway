@@ -75,13 +75,13 @@ impl OwnedDnsLink for Guard {
             // GET execute() enqueues eagerly, so lock before invoking even the
             // first verifier helper, not inside collect(response_stream).
             let _read = tokio::select! { biased;
-                _ = self.invalidated() => return Err(SystemDnsError::Conflict),
+                _ = self.ended() => return Err(SystemDnsError::Conflict),
                 read = self.reads.lock() => read,
             };
             self.check().map_err(|_| SystemDnsError::Conflict)?;
             let mut reading = Reading(Some(self.cancelled.clone()));
             tokio::select! { biased;
-                _ = self.invalidated() => return Err(SystemDnsError::Conflict),
+                _ = self.ended() => return Err(SystemDnsError::Conflict),
                 result = verify(&self.handle, &self.record, self.limit) => result.map_err(|_| SystemDnsError::Conflict)?,
             }
             self.check().map_err(|_| SystemDnsError::Conflict)?;
@@ -89,7 +89,7 @@ impl OwnedDnsLink for Guard {
             Ok(self.record.identity.clone())
         })
     }
-    fn invalidated(&self) -> DnsFuture<'_, ()> {
+    fn ended(&self) -> DnsFuture<'_, ()> {
         Box::pin(async {
             tokio::select! {
                 _ = self.shared.conflict.cancelled() => {},
