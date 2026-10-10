@@ -223,7 +223,7 @@ async fn netmap_exit_role_survives_renewal_and_unchanged_serial_and_ends_on_with
 #[ignore = "requires an isolated Linux exit namespace (ip_forward=1, loose RPF), nft and NET_ADMIN"]
 async fn netmap_exit_projection_capacity_refuses_one_flow_and_keeps_the_role() {
     let temp = isolated();
-    let server = Server::start(temp.path()).await;
+    let server = Server::start().await;
     let (mut control, script) = server.enroll(temp.path()).await;
     let network = Network::new(&control, true);
     let netmap = network.compile(None);
