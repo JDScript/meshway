@@ -101,31 +101,38 @@ async fn endpoint_changes_wake_only_viewers_that_see_the_reporter() {
 }
 
 #[tokio::test]
-async fn expired_facts_are_withdrawn_once() {
+async fn expired_facts_stay_last_known_and_are_never_withdrawn_by_expiry() {
     let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
     let lab = lab(false).await;
     let [a, b, _] = lab.nodes;
     let na = lab.netmap(a).await;
     lab.report_endpoints(1, 1, &["10.1.0.1:23456"]).await;
-    let full = lab
-        .app
-        .peer_facts()
-        .peer_facts(&na, None, None)
-        .unwrap()
-        .unwrap();
-    let expires = full.updated[&b].expires_at;
+    let facts = lab.app.peer_facts();
+    let full = facts.peer_facts(&na, None, None).unwrap().unwrap();
+    let last = full.updated[&b].clone();
     {
         let mut runtime = lab.app.state_runtime.lock().unwrap();
+        // Past b's freshness bound: nothing is removed and nobody is woken;
+        // the stale facts stay for the reporter to refresh or withdraw.
+        let after = last.expires_at + chrono::Duration::minutes(10);
+        let wake = runtime.facts.watch(&na);
+        let stale = meshway_protocol::PeerFacts {
+            observed_at: after - chrono::Duration::minutes(2),
+            expires_at: after - chrono::Duration::minutes(1),
+            ..last.clone()
+        };
+        assert!(!runtime.facts.record(lab.network, stale, after).unwrap());
+        assert!(!wake.has_changed(), "an expired report replaces nothing");
         let later = runtime
             .facts
-            .delta(&na, Some(na.reference()), Some(full.cursor), expires)
+            .delta(&na, Some(na.reference()), Some(full.cursor))
             .unwrap()
             .unwrap();
-        assert!(later.updated.is_empty());
-        assert_eq!(later.removed, [b]);
-        let wake = runtime.facts.watch(&na);
-        assert!(!runtime.facts.remove(lab.network, b).unwrap());
-        assert!(!wake.has_changed(), "withdrawn facts change nothing again");
+        assert!(later.removed.is_empty());
+        assert_eq!(later.updated[&b], last, "freshness-only answer keeps them");
+        assert_eq!(later.cursor, full.cursor);
+        let restarted = runtime.facts.delta(&na, None, None).unwrap().unwrap();
+        assert_eq!(restarted.updated[&b], last);
     }
     lab.app.shutdown().await.unwrap();
 }

@@ -2,7 +2,7 @@
 //! expired, forged or foreign files are not.
 use super::{
     HOUR, enrolled,
-    support::{Facts, compiled, full, unchanged},
+    support::{Facts, compiled, compiled_with_peer, full, unchanged},
 };
 use crate::{Control, Server, faults::Proxy};
 use meshway_control::NetmapChange;
@@ -227,4 +227,121 @@ async fn format_1_cache_with_only_the_node_seal_is_a_delta_base_not_authority() 
     assert!(restored.netmap().is_some());
     restored.shutdown().await.unwrap();
     server.close().await;
+}
+
+/// An exact private copy of `path`; closing the fixture removes the original.
+fn keep(path: &Path, name: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+    let kept = tempfile::tempdir().unwrap();
+    let copy = kept.path().canonicalize().unwrap().join(name);
+    fs::create_dir(&copy).unwrap();
+    fs::set_permissions(&copy, fs::Permissions::from_mode(0o700)).unwrap();
+    for entry in fs::read_dir(path).unwrap() {
+        let entry = entry.unwrap();
+        let target = copy.join(entry.file_name());
+        fs::copy(entry.path(), &target).unwrap();
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    (kept, copy)
+}
+
+fn peer_facts(peer: meshway_model::NodeId, address: &str) -> meshway_protocol::PeerFacts {
+    use meshway_model::state::{ListenerPhase, LocalEndpoint, LocalEndpointSource, SocketNetwork};
+    let observed = chrono::Utc::now() - chrono::Duration::minutes(10);
+    meshway_protocol::PeerFacts {
+        node_id: peer,
+        listeners: std::collections::BTreeMap::from([(
+            "udp".to_owned(),
+            meshway_protocol::PeerListenerFacts {
+                phase: ListenerPhase::Listening,
+                network: SocketNetwork::Udp,
+                local_endpoints: vec![LocalEndpoint {
+                    address: address.parse().unwrap(),
+                    source: LocalEndpointSource::Local,
+                }],
+                stun_candidates: vec![],
+            },
+        )]),
+        exit: None,
+        observed_at: observed,
+        // Already stale: expiry is freshness, the facts stay last known.
+        expires_at: observed + chrono::Duration::seconds(60),
+    }
+}
+
+#[tokio::test]
+async fn restart_without_the_server_replays_the_last_known_peer_facts() {
+    let server = Server::start().await;
+    let proxy = Proxy::start(&server.origin).await;
+    let (mut control, binding, script) = enrolled(&server, &proxy, "facts-restart").await;
+    let (netmap, peer) = compiled_with_peer(&binding, "facts-restart");
+    let stranger = meshway_test_server::configuration::node(77);
+    let epoch = "00000000-0000-4000-8000-0000000000e2".parse().unwrap();
+    let cursor = meshway_protocol::StateCursor {
+        epoch,
+        sequence: meshway_model::Sequence::new(5).unwrap(),
+    };
+    let mut response = full(&binding, &netmap, HOUR);
+    response.peer_facts = Some(meshway_protocol::PeerFactsDelta {
+        base: None,
+        cursor,
+        netmap_serial: netmap.netmap.serial,
+        updated: [
+            (peer, peer_facts(peer, "10.9.0.9:41641")),
+            (stranger, peer_facts(stranger, "10.9.0.77:41641")),
+        ]
+        .into(),
+        removed: vec![],
+    });
+    script.push(Ok(response));
+    control.sync(&mut Facts::default()).await.unwrap();
+    control.shutdown().await.unwrap();
+    let path = server.path("facts-restart");
+    let file = path.join("peer-facts.json");
+    assert_eq!(
+        fs::metadata(&file).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    let saved: serde_json::Value = serde_json::from_slice(&fs::read(&file).unwrap()).unwrap();
+    assert_eq!(saved["format"], "meshway-peer-facts-cache/1");
+    assert_eq!(
+        saved["netmap"],
+        serde_json::to_value(netmap.reference()).unwrap()
+    );
+    assert!(
+        saved["peers"].get(stranger.to_string()).is_none(),
+        "facts outside the projection are not kept"
+    );
+    let (_kept, copy) = keep(&path, "facts-restart");
+    let origin = proxy.origin.clone();
+    proxy.close().await;
+    server.close().await;
+
+    // Server gone: the replay reaches the sink before any contact succeeds.
+    let restored = reopen(&copy, &origin);
+    assert!(restored.netmap().is_some());
+    let control = tokio::sync::Mutex::new(restored);
+    let (sender, _receiver) = tokio::sync::watch::channel(None);
+    let stop = tokio_util::sync::CancellationToken::new();
+    let mut sink = Facts::default();
+    let stopper = async {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        stop.cancel();
+    };
+    let (result, ()) = tokio::join!(
+        meshway_control::sync_loop(&control, &mut sink, &sender, &stop),
+        stopper
+    );
+    result.unwrap();
+    let (reference, replay) = &sink.applied[0];
+    assert_eq!(*reference, netmap.reference());
+    assert_eq!(replay.base, None);
+    assert_eq!(replay.updated.keys().copied().collect::<Vec<_>>(), [peer]);
+    assert_eq!(
+        replay.updated[&peer].listeners["udp"].local_endpoints[0]
+            .address
+            .to_string(),
+        "10.9.0.9:41641"
+    );
+    assert_eq!(sink.applied.len(), 1, "replayed once");
+    control.into_inner().shutdown().await.unwrap();
 }

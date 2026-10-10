@@ -6,7 +6,7 @@
 //! anything: they select among candidates the installed netmap allows.
 use crate::object::{wire_object, wire_tagged};
 use chrono::{DateTime, Utc};
-use meshway_configuration::netmap::{CompiledNetmap, NetmapDelta};
+use meshway_configuration::netmap::{CompiledNetmap, NetmapDelta, NodeNetmap};
 use meshway_model::{
     Digest, KeyId, NetmapLease, NetmapRef, NetworkId, NodeId, NodePublicKey, Sequence, StateEpoch,
     Version,
@@ -66,9 +66,81 @@ pub struct PeerFactsDelta {
     /// Complete replacement facts of each updated peer.
     #[serde(deserialize_with = "meshway_model::wire::unique_map")]
     pub updated: BTreeMap<NodeId, PeerFacts>,
-    /// Peers whose facts are no longer visible or current.
+    /// Peers whose facts are no longer visible, were withdrawn by the reporter, or whose Node retired; expiry alone never removes facts.
     pub removed: Vec<NodeId>,
 } }
+
+/// Nodes whose facts the owner of `netmap` may see: its projection, without itself.
+pub fn fact_visible_peers(netmap: &NodeNetmap) -> std::collections::BTreeSet<NodeId> {
+    netmap
+        .projection
+        .configuration
+        .nodes
+        .keys()
+        .copied()
+        .filter(|node| *node != netmap.node_id)
+        .collect()
+}
+
+impl PeerFacts {
+    /// These facts as the owner of `viewer` may see them: none when the
+    /// reporter is outside its projection, and listener details only for
+    /// listeners it may dial.
+    pub fn scoped_for(&self, viewer: &NodeNetmap) -> Option<PeerFacts> {
+        if self.node_id == viewer.node_id
+            || !viewer
+                .projection
+                .configuration
+                .nodes
+                .contains_key(&self.node_id)
+        {
+            return None;
+        }
+        let mut facts = self.clone();
+        facts.listeners.retain(|key, _| {
+            viewer
+                .dialers
+                .values()
+                .any(|dial| dial.peer == self.node_id && dial.listener_key == *key)
+        });
+        Some(facts)
+    }
+}
+
+impl PeerFactsDelta {
+    /// Apply this delta to a last-known facts ledger: a null base replaces
+    /// it, `removed` deletes, `updated` replaces per peer. Expiry deletes
+    /// nothing. Returns the peers whose facts changed, sorted.
+    pub fn apply_to(&self, peers: &mut BTreeMap<NodeId, PeerFacts>) -> Vec<NodeId> {
+        let mut changed: Vec<NodeId> = Vec::new();
+        if self.base.is_none() {
+            changed.extend(
+                peers
+                    .keys()
+                    .filter(|peer| !self.updated.contains_key(peer))
+                    .copied(),
+            );
+            peers.retain(|peer, _| self.updated.contains_key(peer));
+        }
+        for peer in &self.removed {
+            if peers.remove(peer).is_some() {
+                changed.push(*peer);
+            }
+        }
+        for (peer, facts) in &self.updated {
+            if facts.node_id != *peer {
+                continue;
+            }
+            if peers.get(peer) != Some(facts) {
+                changed.push(*peer);
+                peers.insert(*peer, facts.clone());
+            }
+        }
+        changed.sort();
+        changed.dedup();
+        changed
+    }
+}
 
 wire_object! {
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -238,7 +310,7 @@ pub struct PeerFacts {
     pub exit: Option<PeerExitFacts> [required = true],
     /// Original report time.
     pub observed_at: DateTime<Utc>,
-    /// Time after which the facts are no longer current.
+    /// Freshness bound: afterwards the facts are stale (last known) but stay until replaced or removed; STUN candidates and exit readiness are usable only before their own expiry.
     pub expires_at: DateTime<Utc>,
 } }
 

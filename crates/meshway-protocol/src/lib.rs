@@ -69,7 +69,8 @@ pub use management::{
 };
 pub use netmap::{
     NetmapSignature, NetmapSigner, PeerExitFacts, PeerFacts, PeerFactsDelta, PeerListenerFacts,
-    ServerSigningKey, StateCursor, SyncNetmap, SyncRequest, SyncResponse, netmap_lease_transcript,
+    ServerSigningKey, StateCursor, SyncNetmap, SyncRequest, SyncResponse, fact_visible_peers,
+    netmap_lease_transcript,
 };
 pub use node::{
     DeleteNodeRequest, NodeChallenge, NodeChallengeRequest, NodeInventoryResponse,

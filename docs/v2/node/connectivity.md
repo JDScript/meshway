@@ -45,6 +45,20 @@ TCP／VLESS／Trojan 会话建立后同样可双向收发。UDP 打洞解决路�
 
 Linux 的 `localEndpoints` 只从实际 listener 的地址族、bind 地址及已启用本机接口枚举。除 Mesh 地址池、loopback、未指定、多播、广播及不可用 link-local／scoped 地址外，还排除 Underlay journal 明确持有的 TUN 与独立 DNS 锚点接口上的全部地址；不按 `mwd*` 名称或 `198.18/15` 等地址前缀猜测归属。外部 link／address／route 事件唤醒现有 State 报告调度，最多每秒一次，20 秒例行报告继续作为兜底。新报告重新枚举，删除已消失的地址；待确认旧报告仍重试原内容，其成功不确认后来发生的接口变化。peer 在后续获准连接获取时使用更新后的候选，候选变化不授予新权限或延长旧 lease。
 
+### 最后已知事实与新鲜度 {#last-known-facts}
+
+Node 拨号候选的顺序为：netmap 中的 configured 端点，然后是 `peerFacts` 中该 listener 的 `localEndpoints`，最后（仅 UDP）为 `stunCandidates`；同地址只保留第一个。
+
+`PeerFacts.expiresAt` 只表示新鲜度，不表示撤回：
+
+| 事实 | 过了 `PeerFacts.expiresAt` 后 | 何时消失 |
+| --- | --- | --- |
+| `localEndpoints` | 作为最后已知地址继续拨号 | 被同一 peer 的新事实替换、出现在 `removed`、peer 不在当前投影内，或 netmap 结束（`apply(empty)`） |
+| `stunCandidates` | 各候选按自己的 `expiresAt` 停用（NAT 绑定确实会失效） | 同上，或候选自身到期 |
+| 出口就绪 `exit` | 不再作为 ready 出口的依据 | 同上 |
+
+账本唯一 owner 是 Manager 的事实存储（`manager/facts.rs`），按 peer 保存最后一份；`plan.rs::fact_endpoints` 是唯一的候选展开。Server 停机时事实不再刷新，但已安装租约内仍可用最后已知地址重建空闲关闭的邻接。Control 把同一份最后已知事实保存为 `peer-facts.json`，节点离线重启后随 netmap 载入，见[私有存储](/v2/node/control#私有存储与传输)。事实只提供尝试地址：错误或过时的地址最多导致连不上；准入仍只由 netmap 与认证握手决定。
+
 STUN 继续使用原有同 socket 观测与双边接受的协调路径，不把 UDP 映射加入 TCP／VLESS／Trojan 目标。只有本机候选而没有 configured 地址的 UDP 邻接继续保留 STUN 刷新资格；本机候选不意味着 NAT 穿透已成功。
 
 STUN 使用 RFC 8489 Binding 交换观察 socket 的外部映射；Meshway Server 负责当前主体／网络权限、获准 peer 的候选交换和有期限的尝试协调；Node 使用实际 socket 互发探测并完成认证。

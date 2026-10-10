@@ -6,9 +6,10 @@
 use crate::{Control, Error};
 use meshway_configuration::netmap::CompiledNetmap;
 use meshway_model::{NetmapLease, NetmapRef};
-use meshway_protocol::{NetmapSignature, StateCursor};
+use meshway_protocol::{NetmapSignature, PeerFactsDelta, StateCursor};
 use std::sync::Arc;
 
+mod facts;
 pub(crate) mod store;
 mod sync;
 pub use sync::{
@@ -28,6 +29,14 @@ pub(crate) struct State {
     lease: Option<NetmapLease>,
     persisted_expiry: Option<u64>,
     facts: Option<StateCursor>,
+    /// Last known peer facts of `base`: they stay until replaced, removed
+    /// or out of its projection, never by expiry. Saved in `peer-facts.json`.
+    known: Option<facts::Known>,
+    /// What `peer-facts.json` holds, as far as this owner knows.
+    saved: Option<facts::Known>,
+    /// Loaded facts not yet handed to the facts sink.
+    replay: bool,
+    facts_write: Option<tokio::task::JoinHandle<Result<(), meshway_private_storage::Error>>>,
     /// Replaced whenever base, cursor or lease changes; a sync reply prepared
     /// against another value is superseded.
     exchange: Arc<()>,
@@ -49,13 +58,100 @@ impl Control {
         else {
             return Ok(());
         };
+        let reference = netmap.reference();
+        let known = facts::load(&self.directory, &netmap.netmap, reference);
         self.netmap.base = Some(Arc::new(netmap));
         if !authority || self.record.cache_blocked {
             return Ok(());
         }
         self.netmap.persisted_expiry = Some(lease.expires_at_ms);
         self.netmap.lease = Some(lease);
+        self.netmap.replay = known.is_some();
+        self.netmap.saved.clone_from(&known);
+        self.netmap.known = known;
         Ok(())
+    }
+
+    /// The saved last known facts as one complete replacement, once after
+    /// loading: the facts sink can dial without the Server.
+    pub(crate) fn take_facts_replay(&mut self) -> Option<(NetmapRef, PeerFactsDelta)> {
+        if !std::mem::take(&mut self.netmap.replay) {
+            return None;
+        }
+        let known = self.netmap.known.as_ref()?;
+        let base = self.netmap.base.as_ref()?;
+        (known.netmap == base.reference()).then(|| {
+            (
+                known.netmap,
+                PeerFactsDelta {
+                    base: None,
+                    cursor: known.cursor,
+                    netmap_serial: known.netmap.serial,
+                    updated: known.peers.clone(),
+                    removed: Vec::new(),
+                },
+            )
+        })
+    }
+
+    /// Fold one accepted delta into the last known facts of the held netmap.
+    pub(crate) fn record_facts(&mut self, delta: &PeerFactsDelta) {
+        let Some(reference) = self.netmap_reference() else {
+            return;
+        };
+        let known = self.netmap.known.get_or_insert_with(|| facts::Known {
+            netmap: reference,
+            cursor: delta.cursor,
+            peers: Default::default(),
+        });
+        known.cursor = delta.cursor;
+        delta.apply_to(&mut known.peers);
+        self.scope_facts();
+    }
+
+    /// New content: facts of Nodes outside its projection are dropped.
+    fn scope_facts(&mut self) {
+        if let (Some(known), Some(base)) = (&mut self.netmap.known, &self.netmap.base) {
+            known.scope(&base.netmap, base.reference());
+        }
+    }
+
+    /// Save the last known facts when addresses, readiness or the netmap
+    /// changed. Facts are not authority: a failed or interrupted write leaves
+    /// the previous or the new complete file and fails nothing else.
+    pub(crate) async fn persist_facts(&mut self) {
+        let Some(known) = self.netmap.known.clone() else {
+            return;
+        };
+        if self
+            .netmap
+            .saved
+            .as_ref()
+            .is_some_and(|saved| saved.same_content(&known))
+        {
+            return;
+        }
+        let Some(binding) = self.record.binding.as_ref() else {
+            return;
+        };
+        let Ok(bytes) = facts::encode(&known, binding.network_id, binding.node_id) else {
+            return;
+        };
+        if let Some(previous) = self.netmap.facts_write.take() {
+            let _ = previous.await;
+        }
+        let directory = Arc::clone(&self.directory);
+        let write = self
+            .netmap
+            .facts_write
+            .insert(tokio::task::spawn_blocking(move || {
+                directory.replace(facts::FILE, &bytes)
+            }));
+        let result = write.await;
+        self.netmap.facts_write = None;
+        if matches!(result, Ok(Ok(()))) {
+            self.netmap.saved = Some(known);
+        }
     }
 
     /// Withdraw the published lease. Verified content stays as delta base;
@@ -136,6 +232,7 @@ impl Control {
         } else {
             self.persist_netmap(&netmap, &lease, signature).await?;
             self.netmap.base = Some(Arc::clone(&netmap));
+            self.scope_facts();
             NetmapChange::New { previous }
         };
         self.netmap.lease = Some(lease);

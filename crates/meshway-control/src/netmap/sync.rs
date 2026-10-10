@@ -194,6 +194,7 @@ impl Control {
         let mut facts = false;
         if let Some(delta) = response.peer_facts {
             let cursor = delta.cursor;
+            self.record_facts(&delta);
             if sink.apply(reference, delta).is_ok() {
                 self.netmap.facts = Some(cursor);
                 facts = true;
@@ -201,6 +202,7 @@ impl Control {
                 self.netmap.facts = None;
             }
         }
+        self.persist_facts().await;
         self.netmap.exchange = Arc::new(());
         Ok(SyncOutcome {
             netmap: self.netmap().ok_or(Error::Lifecycle)?,
@@ -247,6 +249,10 @@ pub async fn sync_loop(
                 _ = stop.cancelled() => return Ok(()),
                 driver = control.lock() => driver,
             };
+            // Saved last known facts reach the sink before any Server contact.
+            if let Some((reference, facts)) = driver.take_facts_replay() {
+                let _ = sink.apply(reference, facts);
+            }
             match driver.begin_sync() {
                 Ok(call) => Some(call),
                 Err(Error::Lifecycle | Error::Expired) => {

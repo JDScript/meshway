@@ -140,6 +140,7 @@ impl Manager {
         }
         let next = Plan::new(desired)?;
         validate_scale(&next, self.shared.limits)?;
+        self.shared.facts.retain(&next);
         if !previous.same_self(&next) {
             return self.restart(desired).await;
         }

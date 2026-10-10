@@ -70,7 +70,7 @@ State 报告、实例续租／释放／到期与观察订阅不重新投影。�
 | 任意 | 本节点 netmap 因超限不可用 | `503 service_unavailable` |
 | 任意 | 本节点无当前 netmap | `409 binding_conflict` |
 
-每个成功响应都签发新的 `lease`（`issuedAt` 为 Server 当前时刻，`expiresAt` 为其后 `--netmap-validity`），续期不写入 serial。每个响应的 `signature` 是 Server netmap 签发钥对 `netmap_lease_transcript(network, node, lease, server, keyId, keyGeneration)` 的 Ed25519 签名，覆盖认证所得的网络与节点、`NetmapRef` 与租约区间；该钥的公钥随接入响应 `serverSigningKey` 下发并由 Node 钉住。签发钥在 Server 首次启动时生成（generation 1），私钥由主密钥密封私有保存，重启沿用；当前不轮换。`peerFacts` 当前恒为 null。挂起时长为 `--netmap-sync-hold` 加 ±10% 抖动，最长不足 60 秒；同一节点的新请求使旧请求立即返回。凭据缺失、无效、属于用户或节点已吊销返回 `401 invalid_credentials`。
+每个成功响应都签发新的 `lease`（`issuedAt` 为 Server 当前时刻，`expiresAt` 为其后 `--netmap-validity`），续期不写入 serial。每个响应的 `signature` 是 Server netmap 签发钥对 `netmap_lease_transcript(network, node, lease, server, keyId, keyGeneration)` 的 Ed25519 签名，覆盖认证所得的网络与节点、`NetmapRef` 与租约区间；该钥的公钥随接入响应 `serverSigningKey` 下发并由 Node 钉住。签发钥在 Server 首次启动时生成（generation 1），私钥由主密钥密封私有保存，重启沿用；当前不轮换。`peerFacts` 是投影内 peer 的动态事实增量（按 `StateCursor` 接续，base 为 null 即全量替换）；`expiresAt`（报告后至多 60 秒，且不超过上报者实例 lease）只表示新鲜度，到期只停止刷新，不产生 `removed`；`removed` 仅在上报者无 netmap 而撤回事实或节点退休时出现；查看者 netmap 变化以全量替换体现，见[最后已知事实](/v2/node/connectivity#last-known-facts)。挂起时长为 `--netmap-sync-hold` 加 ±10% 抖动，最长不足 60 秒；同一节点的新请求使旧请求立即返回。凭据缺失、无效、属于用户或节点已吊销返回 `401 invalid_credentials`。
 
 ## 各方职责
 

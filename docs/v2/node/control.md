@@ -109,7 +109,7 @@ Control 只验证、保存并发布签名 netmap；它不签发任何执行快�
 | `New { previous }` | 首次安装或更大 serial；内容先保存再发布 |
 | `Renewed` | 同内容的新租约；Engine 只延长自己的计时器，旧租约已结束时重新安装同一内容 |
 
-在 `finish_sync` 之前已有其他安装、撤回或停止的回复返回 `Pending` 且不改变任何状态。`peerFacts` 在 netmap 部分安装后原样交给 `PeerFactsSink`，不进入内容；消费者拒收时下一请求不带游标、取得完整事实。单次请求总上限 90 秒（Server 挂起上限 60 秒），连接级失败 1 秒起倍增至 30 秒退避；立即返回且无变化的回复至少间隔 1 秒。
+在 `finish_sync` 之前已有其他安装、撤回或停止的回复返回 `Pending` 且不改变任何状态。`peerFacts` 在 netmap 部分安装后并入 Control 的最后已知事实（按当前投影过滤）并原样交给 `PeerFactsSink`，不进入内容；消费者拒收时下一请求不带游标、取得完整事实。地址或出口就绪变化（不含仅新鲜度续期）及 netmap 变化时写 `peer-facts.json`。重启载入后，`sync_loop` 在首次联系 Server 前把保存的事实作为一次完整替换（base 为 null）交给 sink；首个请求仍不带游标，Server 可达时以完整事实替换。单次请求总上限 90 秒（Server 挂起上限 60 秒），连接级失败 1 秒起倍增至 30 秒退避；立即返回且无变化的回复至少间隔 1 秒。
 
 | 事件 | 已发布租约 |
 | --- | --- |
@@ -136,9 +136,12 @@ State、回执、协调与观察结果只为 Control 持有且租约未结束的
 | --- | --- |
 | `control.json` | 身份记录：origin、密钥、待完成接入、身份绑定与换钥状态；包含秘密 |
 | `netmap.json` | `{ format: "meshway-netmap-cache/2", netmap, lease, signature, seal }` |
+| `peer-facts.json` | `{ format: "meshway-peer-facts-cache/1", networkId, nodeId, netmap: NetmapRef, cursor, peers: NodeId → PeerFacts }`；最后已知 peer 事实，无签名 |
 | `execution.json` | 旧 publication 目标缓存 `{ format: "meshway-execution-cache/1", saved }`，随旧执行链删除 |
 
 缓存文件缺失、格式未知、损坏或绑定不符时忽略，不阻断身份也不生成授权。
+
+`peer-facts.json` 不是授权：它只提供地址候选，每条承载、通道和包的准入仍由已验签 netmap 与认证握手决定，伪造或过时的地址最多连不上。因此它不带 Server 签名或本节点 seal，只要求私有目录与 `0600`。仅当 `netmap.json` 作为执行授权载入时才读取；网络／节点须与身份一致，内容按载入 netmap 的投影过滤（不在投影内的 peer 丢弃，listener 细节只保留本节点可拨的）。`netmap` 与载入内容不一致时不重放。写入失败或中断只留下旧或新的完整文件，不影响 sync。换钥清空内存中的事实；文件与 `netmap.json` 同生命周期。
 
 `signature` 是 Server 对租约的签名（`NetmapSignature`，权威），`seal` 是本节点控制钥对同一租约的签名 `{ signer: "node", keyId, keyGeneration, signature }`，只记录本身份接受了该内容。两者都签 `meshway_protocol::netmap_lease_transcript`：依次为 `meshway/netmap-lease/v1\0`、网络与节点 UUID、revision、serial、内容 digest、`issuedAt`／`expiresAt` 毫秒、signer 类型字节（0 = node，1 = server）和签名钥 key ID／generation，定长大端。digest 覆盖内容，full 与 delta 在重建后核对 digest 等于签名中的引用即被覆盖。
 

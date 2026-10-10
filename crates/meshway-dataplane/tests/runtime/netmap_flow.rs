@@ -279,8 +279,9 @@ async fn same_content_apply_changes_nothing_and_keeps_outputs() {
     delivered(&mut f, queued);
     let after = f.a.circuit_info(id).unwrap().unwrap();
     assert_eq!(after.state, CircuitState::Established);
+    // Monotonic deadlines: the UTC projection rounds and may step back 1 ms.
     assert!(
-        after.expires_at_ms >= before.expires_at_ms,
+        after.expires_at >= before.expires_at,
         "activity, never a lease, bounds a circuit"
     );
     assert_eq!(f.a.flow_count(), 1);

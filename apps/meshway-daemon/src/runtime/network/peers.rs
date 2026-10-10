@@ -88,17 +88,7 @@ pub(in crate::runtime) struct Sink(Peers);
 impl PeerFactsSink for Sink {
     fn apply(&mut self, netmap: NetmapRef, delta: PeerFactsDelta) -> Result<(), FactsRejected> {
         let mut state = self.0.0.lock().map_err(|_| FactsRejected)?;
-        if delta.base.is_none() {
-            state.peers.clear();
-        }
-        for peer in &delta.removed {
-            state.peers.remove(peer);
-        }
-        for (peer, facts) in &delta.updated {
-            if facts.node_id == *peer {
-                state.peers.insert(*peer, facts.clone());
-            }
-        }
+        delta.apply_to(&mut state.peers);
         state.cursor = Some((delta.cursor, delta.netmap_serial));
         if let Some(manager) = &mut state.manager
             && manager.apply(netmap, delta).is_err()

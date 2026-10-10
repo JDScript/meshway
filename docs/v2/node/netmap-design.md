@@ -164,7 +164,7 @@ Server 挂起请求直至 netmap 或可见事实变化，或 ≤ 60 s 超时；�
 
 - Control 是唯一联系 Server 的 owner，循环发 `sync`：`netmap` 部分校验、保存、发布 → Engine `reconfig` → 各组件 `apply`；`peerFacts` 部分解码为 `PeerFacts { nodeId, listeners: key → { phase, network, localEndpoints, stunCandidates }, exit: { roleGeneration, status, installedFamilies }, observedAt, expiresAt }`，经有界队列交给对应 owner，不进入期望内容。
 - Manager 以 `update_peer_facts` 合并候选，不重建 epoch、不换 scope；已有健康通道不因候选变化断开。
-- 事实丢失（请求失败、Server 停机）时保留最近事实至其自身截止，过期后只剩 netmap 的 configured 端点。
+- 事实丢失（请求失败、Server 停机）时保留最后已知事实：`expiresAt` 只表示新鲜度，本机端点继续可拨，STUN 映射按各自截止停用；事实只在被替换、`removed`、离开投影或 netmap 结束时消失，并随 `peer-facts.json` 跨离线重启，见[最后已知事实](/v2/node/connectivity#last-known-facts)。
 
 ## 本地准入
 

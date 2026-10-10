@@ -11052,7 +11052,7 @@ export const schemaDocument = {
           "expiresAt": {
             "type": "string",
             "format": "date-time",
-            "description": "Time after which the facts are no longer current."
+            "description": "Freshness bound: afterwards the facts are stale (last known) but stay until replaced or removed; STUN candidates and exit readiness are usable only before their own expiry."
           },
           "listeners": {
             "type": "object",
@@ -11111,7 +11111,7 @@ export const schemaDocument = {
             "items": {
               "$ref": "#/components/schemas/NodeId"
             },
-            "description": "Peers whose facts are no longer visible or current."
+            "description": "Peers whose facts are no longer visible, were withdrawn by the reporter, or whose Node retired; expiry alone never removes facts."
           },
           "updated": {
             "type": "object",

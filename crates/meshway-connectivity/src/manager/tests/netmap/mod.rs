@@ -266,6 +266,47 @@ async fn peer_facts_add_dial_endpoints_without_reconfiguring_or_touching_other_p
     fixture.close().await;
 }
 
+#[tokio::test]
+async fn stale_peer_facts_still_redial_after_idle_close() {
+    // Server unreachable: b's only endpoints are facts past their freshness.
+    let mut fixture = Netmaps::start(false, false).await;
+    let ids = fixture.ids();
+    let factory = fixture.factory();
+    let Listener::NativeUdp(listener) = fixture.cfg.nodes[&ids[1]].listeners["udp"].declaration()
+    else {
+        unreachable!()
+    };
+    let b_address = SocketAddr::new(listener.listen, listener.listen_port.get());
+    let idle = Duration::from_millis(1500);
+    let mut a = manager(&fixture, 0, &factory, limits(idle)).await;
+    let mut b = manager(&fixture, 1, &factory, limits(idle)).await;
+    let mut stale = facts(ids[1], b_address);
+    stale.observed_at -= chrono::Duration::minutes(10);
+    stale.expires_at = stale.observed_at + chrono::Duration::seconds(60);
+    let netmap = fixture.desired[0].reference();
+    a.facts_sink()
+        .apply(netmap, delta(None, 1, vec![stale]))
+        .unwrap();
+    a.interest().interest(ids[1]);
+    eventually("stale fact endpoint is dialed", || {
+        links(&a).contains_key(&ids[1])
+    })
+    .await;
+    let first = links(&a)[&ids[1]].id;
+    eventually("idle adjacency closes", || links(&a).is_empty()).await;
+    eventually("idle inbound adjacency closes", || links(&b).is_empty()).await;
+    // Renewed interest, as new packets toward b would express it.
+    eventually("the same stale endpoint is dialed again", || {
+        a.interest().interest(ids[1]);
+        links(&a).get(&ids[1]).is_some_and(|link| link.id != first)
+    })
+    .await;
+    assert_eq!(links(&a)[&ids[1]].remote, b_address);
+    a.shutdown().await.unwrap();
+    b.shutdown().await.unwrap();
+    fixture.close().await;
+}
+
 async fn apply_all(fixture: &Netmaps, managers: &mut [&mut Manager]) {
     for (index, manager) in managers.iter_mut().enumerate() {
         tokio::time::timeout(

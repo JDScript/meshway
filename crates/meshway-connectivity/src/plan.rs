@@ -330,8 +330,11 @@ impl Plan {
     }
 }
 
-/// Peer listener endpoints from the latest facts, appended after configured
-/// ones: interface endpoints, then for UDP the STUN-observed mappings. Facts
+/// Peer listener endpoints from the last known facts, appended after
+/// configured ones: interface endpoints, then for UDP the STUN-observed
+/// mappings. Interface endpoints stay usable after the facts' freshness ends
+/// (they live with the installed netmap until replaced or removed); a STUN
+/// mapping is a NAT binding and is offered only before its own expiry. Facts
 /// never admit a carrier; they only add addresses to try.
 pub(crate) fn fact_endpoints(
     facts: &meshway_protocol::PeerFacts,
@@ -339,9 +342,6 @@ pub(crate) fn fact_endpoints(
     network: meshway_model::state::SocketNetwork,
     now_ms: i64,
 ) -> Vec<DialEndpoint> {
-    if facts.expires_at.timestamp_millis() <= now_ms {
-        return Vec::new();
-    }
     let Some(listener) = facts.listeners.get(key) else {
         return Vec::new();
     };
@@ -374,4 +374,67 @@ pub(crate) fn fact_endpoints(
             })
         });
     local.chain(stun).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use meshway_model::state::{
+        EndpointCandidate, EndpointSource, ListenerPhase, LocalEndpoint, LocalEndpointSource,
+        SocketNetwork,
+    };
+    use meshway_protocol::{PeerFacts, PeerListenerFacts};
+
+    #[test]
+    fn stale_facts_keep_interface_endpoints_and_drop_only_expired_mappings() {
+        let at = |seconds| chrono::DateTime::from_timestamp(seconds, 0).unwrap();
+        let mapping = |address: &str, expires| EndpointCandidate {
+            address: address.to_owned(),
+            origin: EndpointSource::Stun {
+                observer: "stun.example:3478".to_owned(),
+            },
+            observed_at: at(0),
+            expires_at: at(expires),
+        };
+        let facts = PeerFacts {
+            node_id: "00000000-0000-4000-8000-000000000001".parse().unwrap(),
+            listeners: BTreeMap::from([(
+                "udp".to_owned(),
+                PeerListenerFacts {
+                    phase: ListenerPhase::Listening,
+                    network: SocketNetwork::Udp,
+                    local_endpoints: vec![LocalEndpoint {
+                        address: "10.0.0.2:4000".parse().unwrap(),
+                        source: LocalEndpointSource::Local,
+                    }],
+                    stun_candidates: vec![
+                        mapping("192.0.2.1:5000", 30),
+                        mapping("192.0.2.2:5000", 600),
+                    ],
+                },
+            )]),
+            exit: None,
+            observed_at: at(0),
+            expires_at: at(60),
+        };
+        let hosts = |now: i64| {
+            fact_endpoints(&facts, "udp", SocketNetwork::Udp, now * 1000)
+                .into_iter()
+                .map(|endpoint| (endpoint.host, endpoint.source))
+                .collect::<Vec<_>>()
+        };
+        let local = ("10.0.0.2".to_owned(), DialEndpointSource::Local);
+        let live = ("192.0.2.2".to_owned(), DialEndpointSource::Stun);
+        assert_eq!(
+            hosts(10),
+            [
+                local.clone(),
+                ("192.0.2.1".to_owned(), DialEndpointSource::Stun),
+                live.clone()
+            ]
+        );
+        assert_eq!(hosts(120), [local.clone(), live]);
+        assert_eq!(hosts(3600), [local]);
+        assert!(fact_endpoints(&facts, "udp", SocketNetwork::Tcp, 0).is_empty());
+    }
 }

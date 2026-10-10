@@ -34,38 +34,21 @@ impl Store {
         Ok(())
     }
 
-    /// Apply one delta; returns the peers whose facts changed.
+    /// Apply one delta; returns the peers whose facts changed. The last
+    /// facts of a peer stay until replaced, removed or the peer leaves the
+    /// projection: expiry is freshness, not withdrawal.
     fn apply(&self, delta: PeerFactsDelta) -> Vec<NodeId> {
         let Ok(mut peers) = self.peers.lock() else {
             return Vec::new();
         };
-        let mut changed: Vec<NodeId> = Vec::new();
-        if delta.base.is_none() {
-            changed.extend(
-                peers
-                    .keys()
-                    .filter(|peer| !delta.updated.contains_key(peer))
-                    .copied(),
-            );
-            peers.clear();
+        delta.apply_to(&mut peers)
+    }
+
+    /// Forget peers the new content no longer lists.
+    pub(super) fn retain(&self, plan: &crate::plan::Plan) {
+        if let Ok(mut peers) = self.peers.lock() {
+            peers.retain(|peer, _| plan.has_peer(*peer));
         }
-        for peer in delta.removed {
-            if peers.remove(&peer).is_some() {
-                changed.push(peer);
-            }
-        }
-        for (peer, facts) in delta.updated {
-            if facts.node_id != peer {
-                continue;
-            }
-            if peers.get(&peer) != Some(&facts) {
-                changed.push(peer);
-                peers.insert(peer, facts);
-            }
-        }
-        changed.sort();
-        changed.dedup();
-        changed
     }
 }
 

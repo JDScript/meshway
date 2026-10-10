@@ -63,28 +63,15 @@ pub trait PeerFactsSource: Send + Sync {
     fn watch(&self, viewer: &CompiledNetmap) -> Result<FactsWake, Error>;
 }
 
-/// Wakes a held `sync` when a visible peer's facts change or expire.
+/// Wakes a held `sync` when a visible peer's facts change. Expiry changes
+/// nothing: it only marks the facts stale.
 pub struct FactsWake {
     receiver: watch::Receiver<u64>,
-    deadline: Option<DateTime<Utc>>,
 }
 impl FactsWake {
-    pub fn deadline(&self) -> Option<DateTime<Utc>> {
-        self.deadline
-    }
     pub async fn changed(&mut self) {
-        let sleep = async {
-            match self.deadline {
-                Some(at) => {
-                    tokio::time::sleep((at - Utc::now()).to_std().unwrap_or_default()).await
-                }
-                None => std::future::pending::<()>().await,
-            }
-        };
-        tokio::select! {
-            _ = self.receiver.changed() => {}
-            _ = sleep => {}
-        }
+        // A closed sender (ledger replaced on close) ends the hold as well.
+        let _ = self.receiver.changed().await;
     }
     #[cfg(test)]
     pub(crate) fn has_changed(&self) -> bool {
@@ -134,32 +121,7 @@ pub(crate) struct FactLedger {
 
 /// Nodes visible to the netmap's owner: its projection, excluding itself.
 pub fn visible(netmap: &NodeNetmap) -> BTreeSet<NodeId> {
-    let own = netmap.node_id;
-    netmap
-        .projection
-        .configuration
-        .nodes
-        .keys()
-        .copied()
-        .filter(|node| *node != own)
-        .collect()
-}
-
-/// Endpoint details of a peer listener reach only a Node that may dial it.
-fn dialable(viewer: &CompiledNetmap, peer: NodeId, listener: &str) -> bool {
-    viewer
-        .netmap
-        .dialers
-        .values()
-        .any(|dial| dial.peer == peer && dial.listener_key == listener)
-}
-
-fn scoped(viewer: &CompiledNetmap, facts: &PeerFacts) -> PeerFacts {
-    let mut facts = facts.clone();
-    facts
-        .listeners
-        .retain(|key, _| dialable(viewer, facts.node_id, key));
-    facts
+    meshway_protocol::fact_visible_peers(netmap)
 }
 
 impl FactLedger {
@@ -194,15 +156,15 @@ impl FactLedger {
     /// Record a reporter's complete current facts. Unchanged content does not
     /// advance the cursor or wake anyone. Freshness is piggybacked on the next
     /// ordinary sync response. Returns whether semantic content advanced.
+    /// A report already past its freshness bound replaces nothing.
     pub(crate) fn record(
         &mut self,
         network: NetworkId,
         facts: PeerFacts,
         now: DateTime<Utc>,
     ) -> Result<bool, Error> {
-        self.sweep(network, now)?;
         if facts.expires_at <= now {
-            return self.remove(network, facts.node_id);
+            return Ok(false);
         }
         let node = facts.node_id;
         let state = self.networks.entry(network).or_default();
@@ -221,7 +183,8 @@ impl FactLedger {
         Ok(true)
     }
 
-    /// The Node has no current facts: withdrawn, retired or without a netmap.
+    /// The reporter withdrew its facts (it reports without a netmap) or the
+    /// Node retired. Expiry never comes here: stale facts stay last known.
     pub(crate) fn remove(&mut self, network: NetworkId, node: NodeId) -> Result<bool, Error> {
         let Some(state) = self.networks.get_mut(&network) else {
             return Ok(false);
@@ -245,30 +208,13 @@ impl FactLedger {
         Ok(true)
     }
 
-    fn sweep(&mut self, network: NetworkId, now: DateTime<Utc>) -> Result<(), Error> {
-        let expired: Vec<NodeId> = self.networks.get(&network).map_or_else(Vec::new, |state| {
-            state
-                .current
-                .iter()
-                .filter(|(_, entry)| entry.facts.expires_at <= now)
-                .map(|(node, _)| *node)
-                .collect()
-        });
-        for node in expired {
-            self.remove(network, node)?;
-        }
-        Ok(())
-    }
-
     pub(crate) fn delta(
-        &mut self,
+        &self,
         viewer: &CompiledNetmap,
         held: Option<NetmapRef>,
         cursor: Option<StateCursor>,
-        now: DateTime<Utc>,
     ) -> Result<Option<PeerFactsDelta>, Error> {
         let network = viewer.netmap.network_id;
-        self.sweep(network, now)?;
         let visible = visible(&viewer.netmap);
         let empty = NetworkFacts::default();
         let state = self.networks.get(&network).unwrap_or(&empty);
@@ -291,7 +237,7 @@ impl FactLedger {
                 visible.contains(node)
                     && (freshness_only || after.is_none_or(|after| entry.sequence > after))
             })
-            .map(|(node, entry)| (*node, scoped(viewer, &entry.facts)))
+            .filter_map(|(node, entry)| Some((*node, entry.facts.scoped_for(&viewer.netmap)?)))
             .collect();
         let removed: Vec<_> = match after {
             None => Vec::new(),
@@ -317,14 +263,6 @@ impl FactLedger {
     pub(crate) fn watch(&mut self, viewer: &CompiledNetmap) -> FactsWake {
         let network = viewer.netmap.network_id;
         let visible = visible(&viewer.netmap);
-        let deadline = self.networks.get(&network).and_then(|state| {
-            state
-                .current
-                .iter()
-                .filter(|(node, _)| visible.contains(node))
-                .map(|(_, entry)| entry.facts.expires_at)
-                .min()
-        });
         self.waiters
             .retain(|_, waiter| waiter.sender.receiver_count() > 0);
         let waiter = self
@@ -337,7 +275,6 @@ impl FactLedger {
         waiter.visible = visible;
         FactsWake {
             receiver: waiter.sender.subscribe(),
-            deadline,
         }
     }
 }
@@ -359,11 +296,11 @@ impl PeerFactsSource for StateFacts {
         held: Option<NetmapRef>,
         cursor: Option<StateCursor>,
     ) -> Result<Option<PeerFactsDelta>, Error> {
-        let mut runtime = self.runtime.lock().map_err(|_| Error::RUNTIME)?;
+        let runtime = self.runtime.lock().map_err(|_| Error::RUNTIME)?;
         if runtime.is_closed() {
             return Err(Error::CLOSED);
         }
-        runtime.facts.delta(viewer, held, cursor, Utc::now())
+        runtime.facts.delta(viewer, held, cursor)
     }
     fn watch(&self, viewer: &CompiledNetmap) -> Result<FactsWake, Error> {
         let mut runtime = self.runtime.lock().map_err(|_| Error::RUNTIME)?;

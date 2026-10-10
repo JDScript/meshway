@@ -30,10 +30,10 @@ ROWS = {
     "nat+fallback/off": ("runtime", ("--transport", "native-udp", "--traversal", "nat", "--traversal-fallback", "--dns-backend", "off")),
     "nat/resolved": ("runtime", ("--transport", "native-udp", "--traversal", "nat", "--dns-backend", "resolved")),
     "exit/off": ("runtime", ("--transport", "native-udp", "--traversal", "exit", "--dns-backend", "off")),
-    "netmap/offline": ("runtime", ("--transport", "native-udp", "--dns-backend", "off", "--netmap-scenario", "offline")),
+    "netmap/offline": ("runtime", ("--transport", "native-udp", "--dns-backend", "off", "--reported-endpoints", "--netmap-scenario", "offline")),
     "netmap/revoke": ("runtime", ("--transport", "native-tcp", "--dns-backend", "off", "--netmap-scenario", "revoke")),
     "netmap/expiry": ("runtime", ("--transport", "native-udp", "--dns-backend", "off", "--netmap-scenario", "expiry")),
-    "netmap/restart": ("runtime", ("--transport", "native-tcp", "--dns-backend", "off", "--netmap-scenario", "restart")),
+    "netmap/restart": ("runtime", ("--transport", "native-udp", "--dns-backend", "off", "--reported-endpoints", "--netmap-scenario", "restart")),
 }
 # Rows accepted only by explicit selection, with the reason shown in --list.
 PENDING_ROWS = {}
