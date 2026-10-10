@@ -119,9 +119,16 @@ impl Control {
     }
 
     /// Prepare one long poll naming the held netmap and facts cursor. Needs a
-    /// live session only; no instance is required.
-    pub fn begin_sync(&self) -> Result<SyncCall, Error> {
+    /// live session only; no instance is required. Last known facts end with
+    /// the netmap: once no lease is published (ended or withdrawn), the
+    /// cursor ends too and this request asks for complete facts, which the
+    /// Server answers without holding.
+    pub fn begin_sync(&mut self) -> Result<SyncCall, Error> {
         let token = Zeroizing::new(self.token()?.to_owned());
+        if self.netmap.facts.is_some() && self.netmap().is_none() {
+            self.netmap.facts = None;
+            self.netmap.exchange = Arc::new(());
+        }
         let transport = match &self.sync_transport {
             Some(transport) => transport.clone(),
             None => Arc::new(ClientTransport(

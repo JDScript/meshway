@@ -280,6 +280,55 @@ async fn peer_facts_follow_the_installed_netmap_and_rejection_requests_full_fact
 }
 
 #[tokio::test]
+async fn an_ended_lease_ends_the_facts_cursor_and_requests_complete_facts() {
+    let server = Server::start().await;
+    let proxy = Proxy::start(&server.origin).await;
+    let (mut control, binding, script) = enrolled(&server, &proxy, "facts-ended").await;
+    let netmap = compiled(&binding, "facts-ended", None);
+    let cursor = StateCursor {
+        epoch: "00000000-0000-4000-8000-0000000000e3".parse().unwrap(),
+        sequence: Sequence::new(3).unwrap(),
+    };
+    let mut response = full(&binding, &netmap, 300);
+    response.peer_facts = Some(PeerFactsDelta {
+        base: None,
+        cursor,
+        netmap_serial: netmap.netmap.serial,
+        updated: BTreeMap::new(),
+        removed: vec![],
+    });
+    script.push(Ok(response));
+    let mut sink = Facts::default();
+    control.sync(&mut sink).await.unwrap();
+    assert_eq!(
+        control.begin_sync().unwrap().request().state,
+        Some(cursor),
+        "a live lease keeps the cursor"
+    );
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert!(control.netmap().is_none(), "lease ended");
+    script.push(Ok(unchanged(&binding, &netmap, HOUR)));
+    assert!(
+        control
+            .sync(&mut sink)
+            .await
+            .unwrap()
+            .netmap
+            .lease
+            .expires_at_ms
+            > 0
+    );
+    let requests = script.requests();
+    assert_eq!(
+        requests.last().unwrap().state,
+        None,
+        "complete facts after the netmap ended"
+    );
+    control.shutdown().await.unwrap();
+    server.close().await;
+}
+
+#[tokio::test]
 async fn sync_loop_publishes_renewals_and_survives_transport_failure() {
     let server = Server::start().await;
     let proxy = Proxy::start(&server.origin).await;
