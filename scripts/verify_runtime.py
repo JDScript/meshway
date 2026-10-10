@@ -173,6 +173,7 @@ def main():
     parser.add_argument("--build-only", action="store_true", help="host build and source manifest only")
     parser.add_argument("--report-dir", type=Path, help="new private report directory")
     parser.add_argument("--short", action="store_true", help="30-second diagnostic traffic; not acceptance")
+    parser.add_argument("--only", choices=("main",), help="development only: controller and A/R/B; skips platform sidecars, never acceptance")
     parser.add_argument("--netmap-validity", default="60s", help="explicit Server lease used by expiry conformance")
     parser.add_argument("--runtime-image-manifest", type=Path, help="explicit locked node-lab OS image")
     parser.add_argument("--artifacts", type=Path, help="reuse a --build-only bin directory with matching source manifest")
@@ -191,6 +192,8 @@ def main():
     parser.add_argument("--traversal-image-manifest", type=Path,
                         help="immutable OS manifest built with dev/dns-fixture/build.py --lock-file dev/traversal-fixture/assets.lock.json")
     args = parser.parse_args()
+    if args.only and args.traversal == "exit":
+        parser.error("--only main is the A/R/B runtime flow, not the exit topology")
     if args.traversal == "exit" and (args.dns_backend != "off" or args.transport != "native-udp"):
         parser.error("--traversal exit requires --transport native-udp --dns-backend off")
     if args.reported_endpoints and (args.transport != "native-udp" or args.traversal != "off" or args.dns_backend != "off"):
@@ -298,7 +301,7 @@ def main():
                    "traversalOsAssets": traversal_assets,
                    "traversalScope": "outer IPv4, two port-preserving Linux SNATs; optional same-edge TCP fallback; no mapping-rotation claim" if args.traversal == "nat" else None,
                    "traversalFallback": {"status": "notRun"} if args.traversal_fallback else None,
-                  "scope": "diagnostic-short" if args.short else "acceptance",
+                  "scope": "main-only" if args.only else "diagnostic-short" if args.short else "acceptance",
                   "trafficSeconds": 30 if args.short else 125,
                 "tests": {name: {"status": "notRun", "test": test} for name, test in KERNEL_TESTS.items()},
                   "bootstrapHttpsTest": {"status": "notRun"},
@@ -310,6 +313,8 @@ def main():
 
     def create(role, arguments, address=None, address6=None, private=False, tun=False, admin=False,
                prepare=False, executable="meshway-runtime-fixture", environment=None):
+        if args.only and role not in (*ROLES, "prepare"):
+            return
         dns_actor = args.dns_backend != "off" and role in ("a", "r", "b")
         attachment = actor_networks.get(role, network) if address else "none"
         if role == "underlay-negative":
@@ -400,6 +405,8 @@ def main():
         write_json(metadata, manifest)
 
     def execute(role):
+        if args.only and role not in (*ROLES, "prepare"):
+            return {"skipped": True}
         identifier = containers[role]
         with (report / f"{role}.log").open("w") as log:
             result = subprocess.run(["docker", "start", "-a", identifier], cwd=ROOT, text=True,
@@ -414,6 +421,8 @@ def main():
         return inspected
 
     def prepare_restart():
+        if args.only:
+            return
         # Unlike each actor's private /state tmpfs, this directory must survive
         # two containers. Give the empty, run-owned bind the same root ownership;
         # final export_evidence returns it to the host after both writers join.
@@ -527,11 +536,11 @@ def main():
                             "MESHWAY_TEST_DAEMON_BINARY": "/fixtures/meshwayd"})
         result = execute("daemon-cleanup")
         passed = not any(result.values()) and "test result: ok." in (report / "daemon-cleanup.log").read_text()
-        manifest["daemonCleanupTest"] = {"passed": passed, "test": LIFECYCLE_TEST, **result}
+        manifest["daemonCleanupTest"] = {"passed": None if args.only else passed, "test": LIFECYCLE_TEST, **result}
         write_json(metadata, manifest)
-        if not passed:
+        if not passed and not args.only:
             raise RuntimeError("Linux daemon blocked-down cleanup retry failed")
-        for role, (_, binary) in PLATFORM_BINARIES.items():
+        for role, (_, binary) in (() if args.only else PLATFORM_BINARIES.items()):
             # Exit driver cases require their own NET_ADMIN/NAT/service topology
             # and are run by exit/off, not this no-capability platform check.
             create(role, ["--include-ignored", "--skip", OWNER_CONFLICT_TEST,
@@ -548,9 +557,9 @@ def main():
                environment={"MESHWAY_UNDERLAY_ISOLATED": "1"})
         result = execute("daemon-owner-conflict")
         passed = not any(result.values()) and "test result: ok. 1 passed; 0 failed; 0 ignored;" in (report / "daemon-owner-conflict.log").read_text()
-        manifest["ownerConflictTest"] = {"passed": passed, "test": OWNER_CONFLICT_TEST, **result}
+        manifest["ownerConflictTest"] = {"passed": None if args.only else passed, "test": OWNER_CONFLICT_TEST, **result}
         write_json(metadata, manifest)
-        if not passed:
+        if not passed and not args.only:
             raise RuntimeError("live TUN owner conflict retry failed")
         random = uuid.uuid4().hex
         ipv6_requested = ipaddress.ip_network(f"2001:db8:{random[:4]}:{random[4:8]}::/64")
@@ -632,7 +641,7 @@ def main():
         create("underlay-peer", ["underlay-peer", "--ipv4", addresses["underlay-peer"], "--ipv6", addresses6["underlay-peer"]],
                address=addresses["underlay-peer"], address6=addresses6["underlay-peer"])
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-            peer = executor.submit(execute, "underlay-peer")
+            peer = executor.submit(execute, "underlay-peer") if not args.only else None
             restart = None
             def kernel_result(role, result):
                 passed = (not result["attachExit"] and not result["exitCode"] and not result["oomKilled"] and not result["running"]
@@ -644,16 +653,17 @@ def main():
             try:
                 deadline = time.monotonic() + 30
                 ready = report / "signals/underlay-peer-ready.json"
-                while not ready.exists():
+                while peer is not None and not ready.exists():
                     if peer.done():
                         raise RuntimeError("remote underlay peer exited before readiness")
                     if time.monotonic() >= deadline:
                         raise TimeoutError("remote underlay peer readiness timed out")
                     time.sleep(0.1)
-                export_evidence(report, image, platform, "runtime", identity, [ready])
-                if json.loads(ready.read_text()) != {"kind": "ready"}:
+                if peer is not None:
+                    export_evidence(report, image, platform, "runtime", identity, [ready])
+                if peer is not None and json.loads(ready.read_text()) != {"kind": "ready"}:
                     raise RuntimeError("invalid remote underlay peer readiness")
-                for role, test in KERNEL_TESTS.items():
+                for role, test in (() if args.only else KERNEL_TESTS.items()):
                     environment = {"MESHWAY_UNDERLAY_ISOLATED": "1", "MESHWAY_DNS_ISOLATED": "1"}
                     if role in ("underlay-restart-a", "underlay-restart-b"):
                         environment["MESHWAY_RESTART_PHASE"] = role[-1]
@@ -682,11 +692,11 @@ def main():
             finally:
                 write_json(report / "signals/underlay-restart-stop.json", {"kind": "ready"})
                 write_json(report / "signals/underlay-peer-stop.json", {"kind": "ready"})
-                manifest["underlayPeer"] = peer.result()
+                manifest["underlayPeer"] = peer.result() if peer is not None else {"skipped": True}
                 if restart is not None:
                     restart.result()
                 write_json(metadata, manifest)
-        if any(manifest["underlayPeer"].values()):
+        if not args.only and any(manifest["underlayPeer"].values()):
             raise RuntimeError("remote underlay peer did not stop cleanly")
         for role in routers:
             start_router(role)
@@ -756,8 +766,8 @@ def main():
             if interface:
                 interface.result()
             passed = (not any(result.values()) and "test result: ok. 1 passed; 0 failed; 0 ignored;" in (report / "bootstrap.log").read_text())
-            manifest["bootstrapHttpsTest"] = {"passed": passed, **result}
-            if not passed:
+            manifest["bootstrapHttpsTest"] = {"passed": None if args.only else passed, **result}
+            if not passed and not args.only:
                 raise RuntimeError("HTTPS bootstrap did not survive explicit network down")
         if fingerprint() != source:
             raise RuntimeError("sources changed while validating candidate binaries")
