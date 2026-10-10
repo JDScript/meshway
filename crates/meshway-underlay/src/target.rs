@@ -1,7 +1,7 @@
 //! One read view over the desired netmap. Every resource owner reads its
 //! inputs through this view; nothing here grants anything by itself.
 use meshway_configuration::{
-    NodeAddresses, NodeIdentity,
+    NodeAddresses,
     execution::{DialCandidate, TrustedNode},
     netmap::NodeNetmap,
 };
@@ -42,12 +42,11 @@ impl From<&meshway_configuration::netmap::ExitRole> for RoleIdentity {
     }
 }
 
-/// Everything about a peer that a kept descriptor toward it depends on.
+/// The registered keys of a visible peer, which a kept descriptor toward it
+/// depends on.
 #[derive(PartialEq, Eq)]
 pub(crate) struct PeerBinding<'a> {
-    identity: &'a NodeIdentity,
-    addresses: &'a NodeAddresses,
-    keys: &'a TrustedNode,
+    pub keys: &'a TrustedNode,
 }
 
 impl<'a> View<'a> {
@@ -101,12 +100,8 @@ impl<'a> View<'a> {
         if peer == self.node_id() {
             return None;
         }
-        let settings = self.0.projection.configuration.nodes.get(&peer)?;
+        self.0.projection.configuration.nodes.get(&peer)?;
         let keys = self.0.projection.inventory.get(&peer)?;
-        Some(PeerBinding {
-            identity: &settings.identity,
-            addresses: &settings.addresses,
-            keys,
-        })
+        Some(PeerBinding { keys })
     }
 }

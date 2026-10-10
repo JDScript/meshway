@@ -314,31 +314,18 @@ impl Plan {
             .collect()
     }
 
-    /// Resource retention: equal declaration, client material, configured
-    /// endpoints and peer keys.
+    /// Resource retention, by the Host's single rule (see
+    /// [`meshway_underlay::netmap_resource_compatible`]).
     pub fn netmap_compatible(
         &self,
         next: &Self,
         resource: &meshway_model::state::ResourceRef,
     ) -> bool {
-        use meshway_model::state::ResourceRef;
-        match resource {
-            ResourceRef::Listener { key } => self
-                .listeners
-                .get(key)
-                .is_some_and(|old| next.listeners.get(key) == Some(old)),
-            ResourceRef::Dial { key } => self.dialers.get(key).is_some_and(|old| {
-                next.dialers.get(key).is_some_and(|new| {
-                    old.peer == new.peer
-                        && old.listener_key == new.listener_key
-                        && old.parameters == new.parameters
-                        && old.endpoints == new.endpoints
-                        && self.peers.get(&old.peer).map(|p| &p.binding)
-                            == next.peers.get(&new.peer).map(|p| &p.binding)
-                })
-            }),
-            ResourceRef::Coordination { .. } => false,
-        }
+        meshway_underlay::netmap_resource_compatible(
+            &self.projection.netmap,
+            &next.projection.netmap,
+            resource,
+        )
     }
 }
 

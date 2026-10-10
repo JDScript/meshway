@@ -4,7 +4,10 @@ use meshway_configuration::netmap::NodeNetmap;
 use meshway_model::state::ResourceRef;
 
 /// The listener declaration, or the dial candidate together with the peer's
-/// identity, addresses and keys, is unchanged between two contents. Callers
+/// registered keys, is unchanged between two contents. The peer's Mesh
+/// addresses and identity are policy inputs, not part of an outer socket's
+/// purpose. This is the single resource-retention rule: the Host's descriptor
+/// registry and the connectivity Manager both apply it. Callers
 /// apply only content Engine accepted, and still require current admission.
 pub fn netmap_resource_compatible(
     previous: &NodeNetmap,
@@ -26,7 +29,8 @@ pub(crate) fn compatible(previous: View<'_>, next: View<'_>, resource: &Resource
                     && old.listener_key == new.listener_key
                     && old.parameters == new.parameters
                     && old.endpoints == new.endpoints
-                    && previous.peer(old.peer) == next.peer(new.peer)
+                    && previous.peer(old.peer).map(|peer| peer.keys)
+                        == next.peer(new.peer).map(|peer| peer.keys)
             })
         }),
         ResourceRef::Coordination { .. } => false,
