@@ -51,10 +51,26 @@ pub(crate) fn current_configuration(
             other => other,
         },
     )?;
+    let snapshot = current_snapshot(tx, sealer, network, revision)?;
+    Ok((
+        revision,
+        snapshot.document.configuration.clone(),
+        snapshot.bindings.clone(),
+    ))
+}
+
+/// The opened version `revision` through the process's shared cache of
+/// immutable versions (ciphertext-checked), so per-request authentication
+/// does not decrypt and re-validate the whole configuration.
+pub(crate) fn current_snapshot(
+    tx: &Transaction<'_>,
+    sealer: &Sealer,
+    network: NetworkId,
+    revision: Revision,
+) -> Result<std::sync::Arc<crate::configuration::Snapshot>, Error> {
     // Execution consumes the configuration owner's canonical version reader,
     // including the same sealed source, canonical value and bindings checks.
-    let snapshot = super::configuration::versions::load(tx, network, revision)?.open(sealer)?;
-    Ok((revision, snapshot.document.configuration, snapshot.bindings))
+    crate::configuration::SnapshotCache::shared().load(tx, network, revision, sealer)
 }
 pub(crate) fn identity_eligible(
     tx: &Transaction<'_>,

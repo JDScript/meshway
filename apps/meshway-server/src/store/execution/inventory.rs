@@ -157,8 +157,12 @@ pub(crate) fn inventory_in_transaction(
             ],
             |r| r.get(0),
         )?;
+        let record = crate::netmap::records::Records::shared().get(network, *node);
         items.push(NodeInventoryView {
             netmap: crate::store::netmap::current(tx, network, *node)?.map(|c| c.current),
+            netmap_unavailable: crate::store::netmap::unavailability(tx, network, *node)?,
+            lease: record.lease,
+            last_sync_at_ms: record.synced_at_ms,
             id: *node,
             network_id: network,
             registered_at_ms: registered as u64,

@@ -115,6 +115,7 @@ impl Control {
             listeners: BTreeMap::new(),
             sockets: BTreeMap::new(),
             links: BTreeMap::new(),
+            adjacencies: Default::default(),
             paths: BTreeMap::new(),
             selection: Default::default(),
             probes: Vec::new(),

@@ -15,6 +15,23 @@ pub enum ProofOperation {
     Rotate,
 }
 }
+crate::object::wire_tagged! { tag="reason";
+/// Why a registered Node has no current netmap.
+#[derive(Clone, Debug, PartialEq, Eq)] pub enum NetmapUnavailable {
+    /// No netmap was issued yet: the Node is not part of the trusted inventory (for example it has not acquired an instance with its capabilities).
+    NotIssued,
+    /// The Node had a netmap that was withdrawn, for example because one of its keys was revoked.
+    Withdrawn,
+    /// Its netmap exceeded the safety bound and was removed from the inventory.
+    Limit {
+        /// Encoded size of the rejected netmap, when this Server process measured it.
+        #[serde(deserialize_with="crate::object::required_nullable")]
+        bytes: Option<u32> [required=true],
+        /// The bound, in bytes.
+        max_bytes: u32,
+    },
+} }
+
 wire_object! {
 /// Identity and operation binding included in a signed challenge application.
 #[derive(Clone,Debug,PartialEq,Eq)] pub struct NodeChallengeRequest {
@@ -150,6 +167,15 @@ wire_object! {
     /// Current netmap of the Node, not a saved/applied receipt.
     #[serde(deserialize_with="crate::object::required_nullable")]
     pub netmap: Option<NetmapRef> [required=true],
+    /// Why `netmap` is null; null whenever `netmap` is present.
+    #[serde(deserialize_with="crate::object::required_nullable")]
+    pub netmap_unavailable: Option<NetmapUnavailable> [required=true],
+    /// The latest netmap lease this Server signed for the Node in a sync answer; null when it issued none since the Server process started.
+    #[serde(deserialize_with="crate::object::required_nullable")]
+    pub lease: Option<NetmapLease> [required=true],
+    /// When this Server last received a sync request from the Node; null when none arrived since the Server process started.
+    #[serde(rename="lastSyncAt", with="meshway_model::timestamp::optional")]
+    pub last_sync_at_ms: Option<u64> [value_type=Option<meshway_model::timestamp::Timestamp>,required=true],
     /// Whether the current caller may revoke the displayed control key.
     pub can_revoke_control_key: bool,
     /// Whether the current caller may revoke the displayed data-plane key.

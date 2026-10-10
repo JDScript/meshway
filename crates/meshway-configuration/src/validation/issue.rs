@@ -150,6 +150,8 @@ pub enum IssueCode {
     /// A Node's netmap would exceed the distribution safety bound; params
     /// `node`, `bytes`, `maxBytes`.
     NetmapLimit,
+    /// Compiling the network's netmaps exceeds a fixed compiler budget (Node count or carrier candidates per edge); no params.
+    NetmapBudget,
     // Warnings.
     /// Every destination of this rule is matched by earlier rules; params
     /// `by` (index of the last rule that completes the cover).
@@ -229,6 +231,7 @@ impl IssueCode {
             GlobalExitRequiresInternet => "global exit requires internet access grant",
             ExitFallbackRequiresInternet => "exit fallback requires internet access grant",
             NetmapLimit => "netmap exceeds the distribution safety bound",
+            NetmapBudget => "netmap compilation exceeds a fixed compiler budget",
             ShadowedRule => "every destination of this rule is matched by earlier rules",
         }
     }

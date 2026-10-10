@@ -102,7 +102,7 @@ async fn tampered_digest_lease_signature_key_or_node_are_rejected_without_state_
 }
 
 #[tokio::test]
-async fn unpinned_binding_accepts_no_netmap() {
+async fn an_enrollment_answer_without_a_signing_key_is_no_binding() {
     let server = Server::start().await;
     let proxy = Proxy::start(&server.origin).await;
     let owner = server.owner().await;
@@ -114,21 +114,26 @@ async fn unpinned_binding_accepts_no_netmap() {
             .no_proxy(),
     )
     .unwrap();
-    // The Server always pins its key; an unpinned binding is a rewritten one.
+    // `serverSigningKey` is required: a rewritten answer without it does not
+    // decode, so no unpinned binding (one that could accept any netmap) exists.
     proxy.fault("/redeem", Fault::NoServerKey);
-    let binding = server.enroll(&owner, &mut control, "unpinned").await;
-    assert_eq!(binding.server_signing_key, None);
-    control.authenticate().await.unwrap();
-    let script = Script::new();
-    control.set_sync_transport(script.clone());
-    let netmap = compiled(&binding, "unpinned", None);
-    let response = full(&binding, &netmap, HOUR);
-    assert!(matches!(
-        rejects(&mut control, &script, response).await,
-        Error::SignatureInvalid
-    ));
-    assert!(control.netmap().is_none());
-    assert_eq!(control.netmap_reference(), None);
+    let pending = control.begin_enrollment("unpinned").await.unwrap();
+    server
+        .client
+        .approve_device_authorization(
+            &meshway_control_client::ApproveDeviceAuthorizationPath {
+                enrollment_request_id: pending.id,
+            },
+            &meshway_protocol::ApproveEnrollmentRequest {
+                network_id: owner.network,
+            },
+            owner.token.expose(),
+        )
+        .await
+        .unwrap();
+    control.poll_enrollment().await.unwrap();
+    assert!(control.redeem_enrollment().await.is_err());
+    assert!(control.status().binding.is_none());
     assert!(!server.path("unpinned").join("netmap.json").exists());
     control.shutdown().await.unwrap();
     server.close().await;

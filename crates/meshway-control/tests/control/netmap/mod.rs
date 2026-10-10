@@ -36,7 +36,7 @@ pub async fn enrolled(
     .unwrap();
     proxy.fault("/redeem", Fault::ServerKey);
     let binding = server.enroll(&owner, &mut control, name).await;
-    assert_eq!(binding.server_signing_key, Some(support::server_key().1));
+    assert_eq!(binding.server_signing_key, support::server_key().1);
     control.authenticate().await.unwrap();
     let script = Script::new();
     control.set_sync_transport(script.clone());
@@ -258,6 +258,7 @@ async fn peer_facts_follow_the_installed_netmap_and_their_cursor() {
         netmap_serial: netmap.netmap.serial,
         updated: BTreeMap::new(),
         removed: vec![],
+        refreshed: Default::default(),
     };
     let mut response = full(&binding, &netmap, HOUR);
     response.peer_facts = Some(facts(None, 3));
@@ -295,6 +296,7 @@ async fn an_ended_lease_ends_the_facts_cursor_and_requests_complete_facts() {
         netmap_serial: netmap.netmap.serial,
         updated: BTreeMap::new(),
         removed: vec![],
+        refreshed: Default::default(),
     });
     script.push(Ok(response));
     let mut sink = Facts::default();

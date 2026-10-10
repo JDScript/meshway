@@ -32,13 +32,22 @@ fn projections_are_unchanged_subsets_in_original_order() {
             subsequence(&view.access, &s.cfg.access);
             subsequence(&view.topology, &s.cfg.topology);
             subsequence(&view.routing.mesh, &s.cfg.routing.mesh);
-            assert_eq!(view.routing.egress, s.cfg.routing.egress);
+            let egress = &view.routing.egress;
+            assert_eq!(egress.rules, s.cfg.routing.egress.rules);
+            assert_eq!(egress.auto, s.cfg.routing.egress.auto);
+            subsequence(&egress.assignments, &s.cfg.routing.egress.assignments);
+            subset(&egress.profiles, &s.cfg.routing.egress.profiles);
             assert_eq!(view.defaults, DefaultsView::from(&s.cfg.defaults));
             assert_eq!(view.dns, s.cfg.dns);
-            assert_eq!(view.groups, s.cfg.groups);
-            assert_eq!(view.tags_owners, s.cfg.tags_owners);
+            // Groups and tags: a subset of names, members among visible users.
+            for (name, members) in &view.groups {
+                subsequence(members, &s.cfg.groups[name]);
+            }
+            for (tag, owners) in &view.tags_owners {
+                subsequence(owners, &s.cfg.tags_owners[tag]);
+            }
             assert_eq!(view.address_pools, s.cfg.address_pools);
-            assert_eq!(view.rule_sets, s.cfg.rule_sets);
+            subset(&view.rule_sets, &s.cfg.rule_sets);
             for (peer, settings) in &view.nodes {
                 assert_eq!(settings, &NodeSettingsView::from(&s.cfg.nodes[peer]));
                 assert!(s.inventory.contains_key(peer));
@@ -49,6 +58,30 @@ fn projections_are_unchanged_subsets_in_original_order() {
             subset(&projection.subjects.members, &s.subjects.members);
             subset(&projection.selection_versions, &s.selection_versions);
         }
+    }
+}
+
+#[test]
+fn projections_disclose_only_visible_users_and_used_profiles() {
+    let mut s = base(5);
+    s.cfg.defaults.topology = TopologyDefault::Deny;
+    s.cfg.topology.clear();
+    s.cfg.access = vec![access(&[sel(1)], &[sel(2)], &["tcp:443"], false)];
+    s.cfg.groups.insert(
+        "group:strangers".into(),
+        vec!["stranger@example.com".into()],
+    );
+    let compiled = netmaps(&s);
+    for netmap in compiled.nodes.values() {
+        let view = &netmap.netmap.projection.configuration;
+        assert!(!view.groups.contains_key("group:strangers"));
+        assert!(
+            view.groups
+                .values()
+                .flatten()
+                .chain(view.tags_owners.values().flatten())
+                .all(|email| email != "stranger@example.com")
+        );
     }
 }
 

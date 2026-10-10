@@ -312,20 +312,11 @@ pub fn query(
             {
                 return Ok(());
             }
-            if let ObservationPayload::ProbeCompleted { probe } = &event.payload
-                && (probe.path.iter().any(|node| !scope.visible.contains(node))
-                    || !scope.full.contains(&node)
-                        && !scope.observation_paths.contains(&probe.path))
-            {
-                return Ok(());
-            }
+            // Observation history of a source is disclosed to readers that see
+            // that source fully, over Nodes they can see.
             if !scope.full.contains(&node)
-                && peer.is_none_or(|peer| {
-                    !scope.observation_paths.iter().any(|path| {
-                        path.windows(2)
-                            .any(|pair| pair == [node, peer] || pair == [peer, node])
-                    })
-                })
+                || matches!(&event.payload, ObservationPayload::ProbeCompleted { probe }
+                    if probe.path.iter().any(|node| !scope.visible.contains(node)))
             {
                 return Ok(());
             }

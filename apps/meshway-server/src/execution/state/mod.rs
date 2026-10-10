@@ -103,7 +103,6 @@ impl Execution {
             ),
             ReadIdentity::UserSession { .. } => None,
         };
-        let observation_paths = BTreeSet::new();
         let references: BTreeMap<_, _> = owned
             .iter()
             .map(|(node, n)| (*node, n.reference()))
@@ -132,7 +131,6 @@ impl Execution {
             visible,
             full,
             endpoint_resources,
-            observation_paths,
             expires_at,
             current,
             mesh_addresses: cfg

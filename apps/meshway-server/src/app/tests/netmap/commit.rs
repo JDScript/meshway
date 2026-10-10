@@ -247,6 +247,18 @@ async fn member_removal_withdraws_user_nodes_and_recompiles_their_peers() {
     app.shutdown().await.unwrap();
 }
 
+/// An allow rule between all Nodes: projected to every Node with its remark.
+fn everyone(remark: String) -> meshway_configuration::TopologyRule {
+    meshway_configuration::TopologyRule {
+        remark,
+        action: meshway_configuration::TopologyAction::Allow,
+        a: "*".into(),
+        b: "*".into(),
+        transports: meshway_configuration::Input::Omitted,
+        keepalive: false,
+    }
+}
+
 #[tokio::test]
 async fn a_netmap_above_the_safety_bound_rejects_the_version() {
     let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
@@ -256,16 +268,14 @@ async fn a_netmap_above_the_safety_bound_rejects_the_version() {
         super::revision(&app, &owner, network).await,
         rows(&app, network).await,
     );
-    // Tag definitions are projected to every Node in full.
-    let tags_owners = (0..90)
-        .map(|index| (format!("tag:{index}-{}", "x".repeat(100_000)), vec![]))
-        .chain([("tag:test".to_owned(), vec![])])
-        .collect::<BTreeMap<_, _>>();
+    // A topology rule between all Nodes is projected to every Node in full.
     let error = edit(
         &app,
         &owner,
         network,
-        vec![ConfigurationOperation::ReplaceTagsOwners { tags_owners }],
+        vec![ConfigurationOperation::ReplaceTopology {
+            topology: vec![everyone("x".repeat(9_000_000))],
+        }],
     )
     .await
     .unwrap_err();
@@ -296,7 +306,6 @@ async fn a_node_triggered_netmap_above_the_bound_is_unavailable_not_a_configurat
     let (_dir, app, network, a, b, ak, bk, signer_a, signer_b) = fixture().await;
     let owner = owner(&app).await;
     let size = |netmap: CompiledNetmap| netmap.netmap.encoded_len().unwrap();
-    let base = size(load(&app, network, a).await).max(size(load(&app, network, b).await));
     let capabilities: BTreeMap<String, meshway_model::state::Capability> = (0..32)
         .map(|index| {
             (
@@ -306,20 +315,22 @@ async fn a_node_triggered_netmap_above_the_bound_is_unavailable_not_a_configurat
         })
         .collect();
     // a's netmap carries its capabilities twice (self keys and inventory), b's
-    // once. One more tag adds its name plus 6 bytes to every projection: fill
-    // both so that only a crosses the bound.
+    // once. A topology rule between all Nodes reaches every projection; its
+    // remark grows each netmap byte for byte: fill both so that only a
+    // crosses the bound.
     let margin = serde_json::to_vec(&capabilities).unwrap().len() * 3 / 2;
-    let name = format!(
-        "tag:{}",
-        "x".repeat(MAX_NETMAP_BYTES - base - margin - 6 - 4)
-    );
+    let fill = |remark: String| {
+        vec![ConfigurationOperation::ReplaceTopology {
+            topology: vec![everyone(remark)],
+        }]
+    };
+    edit(&app, &owner, network, fill("x".into())).await.unwrap();
+    let grown = size(load(&app, network, a).await).max(size(load(&app, network, b).await));
     edit(
         &app,
         &owner,
         network,
-        vec![ConfigurationOperation::ReplaceTagsOwners {
-            tags_owners: BTreeMap::from([("tag:test".into(), vec![]), (name, vec![])]),
-        }],
+        fill("x".repeat(MAX_NETMAP_BYTES - margin - grown + 1)),
     )
     .await
     .unwrap();
@@ -367,18 +378,19 @@ async fn a_node_triggered_netmap_above_the_bound_is_unavailable_not_a_configurat
             .await
             .is_ok()
     );
+    // The inventory says why a has no netmap; b shows its last lease and sync.
+    let inventory = app.execution().inventory(&owner, network).await.unwrap();
+    let view = |node| inventory.items.iter().find(|item| item.id == node).unwrap();
+    assert!(matches!(
+        view(a).netmap_unavailable,
+        Some(meshway_protocol::node::NetmapUnavailable::Limit { bytes: Some(bytes), max_bytes })
+            if bytes as usize > MAX_NETMAP_BYTES && max_bytes as usize == MAX_NETMAP_BYTES
+    ));
+    assert!(view(b).netmap_unavailable.is_none());
+    assert!(view(b).lease.is_some() && view(b).last_sync_at_ms.is_some());
 
     // A version that fits again restores both netmaps.
-    edit(
-        &app,
-        &owner,
-        network,
-        vec![ConfigurationOperation::ReplaceTagsOwners {
-            tags_owners: BTreeMap::from([("tag:test".into(), vec![])]),
-        }],
-    )
-    .await
-    .unwrap();
+    edit(&app, &owner, network, fill("x".into())).await.unwrap();
     assert!(current(&app, network, a).await.is_some());
     assert!(
         app.netmaps()

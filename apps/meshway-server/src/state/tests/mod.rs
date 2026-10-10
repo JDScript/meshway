@@ -99,6 +99,7 @@ pub(super) fn setup() -> (ReportAdmission, StateReport, VisibilityScope, DateTim
                 },
             )]),
             links: BTreeMap::new(),
+            adjacencies: Default::default(),
             paths: BTreeMap::new(),
             selection: SelectionState {
                 applied_profile: Some("mesh".into()),
@@ -116,7 +117,6 @@ pub(super) fn setup() -> (ReportAdmission, StateReport, VisibilityScope, DateTim
         hostnames: BTreeMap::from([(node, "node".into()), (peer, "peer".into())]),
         full: BTreeSet::from([node]),
         endpoint_resources: None,
-        observation_paths: BTreeSet::from([vec![node, peer]]),
         mesh_addresses: admission.mesh_addresses.clone(),
         expires_at: now + Duration::minutes(10),
         current: BTreeMap::from([(

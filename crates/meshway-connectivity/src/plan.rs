@@ -32,7 +32,7 @@ struct Projection {
     compiler: Arc<meshway_policy::compile::netmap::LocalCompiler>,
     keepalive: BTreeSet<NodeId>,
     // Lazy per-content caches, bounded by the visible Nodes of this projection.
-    one_way: Mutex<BTreeMap<NodeId, bool>>,
+    directions: Mutex<BTreeMap<NodeId, Option<(bool, bool)>>>,
     outgoing: Mutex<BTreeMap<NodeId, Arc<Vec<String>>>>,
     admitted: Mutex<BTreeMap<AdmissionKey, bool>>,
 }
@@ -112,7 +112,7 @@ impl Plan {
                 keepalive: keepalive_peers(netmap),
                 compiler: desired.compiler().clone(),
                 netmap: shared_netmap,
-                one_way: Mutex::default(),
+                directions: Mutex::default(),
                 outgoing: Mutex::default(),
                 admitted: Mutex::default(),
             },
@@ -130,12 +130,23 @@ impl Plan {
     }
 
     fn one_way(&self, peer: NodeId) -> bool {
+        self.directions(peer).is_some_and(|(out, back)| out != back)
+    }
+
+    /// Whether this Node and `peer` have an admitted carrier in some direction.
+    pub fn adjacent(&self, peer: NodeId) -> bool {
+        self.directions(peer).is_some_and(|(out, back)| out || back)
+    }
+
+    /// (this Node can dial `peer`, `peer` can dial this Node), cached per
+    /// content. A compile error is not evidence of either direction.
+    fn directions(&self, peer: NodeId) -> Option<(bool, bool)> {
         let projection = &self.projection;
         if peer == self.node || !self.peers.contains_key(&peer) {
-            return false;
+            return None;
         }
         if let Some(cached) = projection
-            .one_way
+            .directions
             .lock()
             .ok()
             .and_then(|cache| cache.get(&peer).copied())
@@ -148,15 +159,14 @@ impl Plan {
                 .carriers(a, b)
                 .map(|keys| !keys.is_empty())
         };
-        // A compile error is not evidence of a one-way edge: on demand.
-        let one_way = match (dials(self.node, peer), dials(peer, self.node)) {
-            (Ok(out), Ok(back)) => out != back,
-            _ => false,
+        let directions = match (dials(self.node, peer), dials(peer, self.node)) {
+            (Ok(out), Ok(back)) => Some((out, back)),
+            _ => None,
         };
-        if let Ok(mut cache) = projection.one_way.lock() {
-            cache.insert(peer, one_way);
+        if let Ok(mut cache) = projection.directions.lock() {
+            cache.insert(peer, directions);
         }
-        one_way
+        directions
     }
 
     pub fn peers(&self) -> impl Iterator<Item = NodeId> + '_ {

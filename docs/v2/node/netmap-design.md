@@ -79,9 +79,12 @@ Node 侧消费按需编译的入口：`apps/meshway-daemon/src/runtime/network/p
 | `nodes` | V 中节点的 `NodeSettingsView`（listener 私钥、凭据与敏感头值均已脱敏） |
 | `access` | src 命中 V 且（dst 命中 V 或 dst 含外部选择器）的规则，原顺序 |
 | `topology` | a、b 两端都命中 V 的规则，原顺序 |
-| `routing.mesh` | src、dst 都命中 V 的规则，原顺序；`routing.egress` 全量（O(规则)） |
+| `routing.mesh` | src、dst 都命中 V 的规则，原顺序 |
+| `routing.egress` | 公共 `rules` 与 `auto` 全量；`assignments` 只保留 target 命中 V 中某节点的（原顺序）；`profiles` 只保留被保留 assignment（allowed／default）、V 中节点的 `selectedProfiles` 或 `auto` 引用的 |
+| `groups`、`tagsOwners` | 名称：被保留规则（access／topology／mesh／assignment）以 `group:`／`tag:` 引用的，或含 V 中 User 节点的用户（组）／V 中节点携带的（tag）；成员与 owner 只保留 V 中 User 节点的用户邮箱 |
+| `ruleSets` 及内容 | 只保留公共 egress 规则或被保留 profile 的规则在 `match.ruleSets` 引用的 |
 | `inventory`、`subjects`、`selectedProfiles`、`selectionVersions` | 限于 V；`users`／`members` 只保留 V 中 User 节点的绑定 |
-| 其余（defaults、groups、tagsOwners、addressPools、dns、ruleSets 及内容） | 全量 |
+| 其余（defaults、addressPools、dns） | 全量 |
 
 正确性依据：节点作为端点或中继参与的每条路径都在它的连通分量里；路径搜索只为 topology 允许的边计预算，routing 每段只以段端点 first-match，被删的规则不可能匹配分量内的段、边或流，因此投影上的结果与全量配置逐项相同（[差分验证](#规模与预算)）。
 

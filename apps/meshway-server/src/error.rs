@@ -234,9 +234,8 @@ impl From<ConfigurationError> for Error {
 impl From<CompileError> for Error {
     fn from(error: CompileError) -> Self {
         match error {
-            CompileError::Budget => Self::Busy,
-            // Demand fields are part of the compiler input, so an inconsistent
-            // input may still originate from the requesting Node.
+            // A budget is deterministic; retrying cannot succeed.
+            CompileError::Budget => Self::Unavailable(crate::error::Unavailability::Netmap),
             CompileError::InvalidInput => Self::InvalidRequest,
             CompileError::EdgeTransportUnavailable { rule, a, b } => {
                 Self::InvalidConfiguration(ConfigurationError::Invalid(vec![

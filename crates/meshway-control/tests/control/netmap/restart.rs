@@ -291,6 +291,7 @@ async fn restart_without_the_server_replays_the_last_known_peer_facts() {
         ]
         .into(),
         removed: vec![],
+        refreshed: Default::default(),
     });
     script.push(Ok(response));
     control.sync(&mut Facts::default()).await.unwrap();
@@ -350,6 +351,7 @@ async fn a_restarted_servers_complete_facts_update_and_never_erase_last_known_fa
         netmap_serial: netmap.netmap.serial,
         updated: [(peer, peer_facts(peer, "10.9.0.9:41641"))].into(),
         removed: vec![],
+        refreshed: Default::default(),
     });
     script.push(Ok(response));
     let mut sink = Facts::default();
@@ -364,6 +366,7 @@ async fn a_restarted_servers_complete_facts_update_and_never_erase_last_known_fa
         netmap_serial: netmap.netmap.serial,
         updated: Default::default(),
         removed: vec![],
+        refreshed: Default::default(),
     });
     script.push(Ok(response));
     control.sync(&mut sink).await.unwrap();
@@ -381,6 +384,7 @@ async fn a_restarted_servers_complete_facts_update_and_never_erase_last_known_fa
         netmap_serial: netmap.netmap.serial,
         updated: Default::default(),
         removed: vec![peer],
+        refreshed: Default::default(),
     });
     script.push(Ok(response));
     control.sync(&mut sink).await.unwrap();

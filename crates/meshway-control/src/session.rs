@@ -381,7 +381,11 @@ mod tests {
                         public_key: keys.dataplane().unwrap(),
                     },
                 },
-                server_signing_key: None,
+                server_signing_key: meshway_protocol::netmap::ServerSigningKey {
+                    key_id: random_id().unwrap().try_into().unwrap(),
+                    key_generation: Version::MIN,
+                    public_key: keys.control().unwrap(),
+                },
             };
             // Only the Control retry state machine is under test here. Real
             // registration/signature/quota admission is covered by Server tests.

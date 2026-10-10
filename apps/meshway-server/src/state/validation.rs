@@ -51,6 +51,7 @@ pub(super) fn report(
         || state.listeners.len() > 64
         || state.sockets.len() > 256
         || state.links.len() > 256
+        || state.adjacencies.len() > 1024
         || state.paths.len() > 256
         || state.probes.len() > 64
         || state.problems.len() > 64
@@ -229,6 +230,21 @@ pub(super) fn report(
                 }
                 _ => return Err(Error::InvalidRequest),
             }
+        }
+    }
+    if !state.adjacencies.is_empty() {
+        let reference = state
+            .configuration
+            .applied
+            .as_ref()
+            .ok_or(Error::InvalidRequest)?;
+        let context = admission.context(reference)?;
+        if state.adjacencies.keys().any(|peer| {
+            *peer == admission.node_id
+                || !context.peers.contains(peer)
+                || state.links.contains_key(peer)
+        }) {
+            return Err(Error::InvalidRequest);
         }
     }
     let mut links = BTreeSet::new();

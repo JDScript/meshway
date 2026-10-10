@@ -188,3 +188,48 @@ async fn receipts_order_saved_before_applied_and_only_for_the_current_netmap() {
         .unwrap();
     lab.app.shutdown().await.unwrap();
 }
+
+#[tokio::test]
+async fn receipt_history_is_bounded_and_keeps_the_newest_attempt() {
+    let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
+    let lab = lab(false).await;
+    let execution = lab.app.execution();
+    let (token, instance, netmap) = (&lab.tokens[0], &lab.instances[0], lab.applied[0]);
+    for attempt in 1..=80 {
+        execution
+            .receipt(
+                token,
+                receipt(instance, netmap, ReceiptPhase::Saved, attempt, 0),
+            )
+            .await
+            .unwrap();
+    }
+    execution
+        .receipt(
+            token,
+            receipt(instance, netmap, ReceiptPhase::Applied, 80, 1),
+        )
+        .await
+        .unwrap();
+    let (network, node) = (lab.network, lab.nodes[0]);
+    let rows: i64 = lab
+        .app
+        .executor
+        .handle()
+        .read(move |tx| {
+            Ok(tx.query_row(
+                "SELECT count(*) FROM netmap_receipts WHERE network_id=?1 AND node_id=?2",
+                rusqlite::params![
+                    network.as_uuid().as_bytes().as_slice(),
+                    node.as_uuid().as_bytes().as_slice()
+                ],
+                |row| row.get(0),
+            )?)
+        })
+        .await
+        .unwrap();
+    assert!(rows <= 64, "{rows}");
+    let view = progress(&lab, netmap.revision).await;
+    assert_eq!(view.nodes[&lab.nodes[0]].phase, ApplicationPhase::Applied);
+    lab.app.shutdown().await.unwrap();
+}

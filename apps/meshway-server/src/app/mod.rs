@@ -225,7 +225,10 @@ impl App {
         )));
         let netmap_signer = Arc::new(netmap_signer);
         // The one owner of configuration versions and their snapshot cache.
-        let committer = crate::configuration::Committer::new(Arc::clone(&sealer), Arc::default());
+        let committer = crate::configuration::Committer::new(
+            Arc::clone(&sealer),
+            crate::configuration::SnapshotCache::shared(),
+        );
         let resource_scheduler = crate::resources::scheduler::Scheduler::start(
             executor.handle(),
             crate::resources::provider::Provider {

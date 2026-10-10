@@ -217,6 +217,20 @@ fn main() -> Result<()> {
     let mut measurements = vec![measure(&s, &base, options.samples, "revision-only")?];
     s.configuration.nodes.get_mut(&node(0)).unwrap().hostname = "renamed".into();
     measurements.push(measure(&s, &base, options.samples, "one-node-hostname")?);
+    // A Node-triggered event: one Node's own capabilities change (rolling
+    // upgrade, exit role), as `acquire` reports them.
+    s.inventory
+        .get_mut(&node(1))
+        .ok_or("node 1")?
+        .capabilities
+        .insert(
+            "transport:native_tcp".into(),
+            Capability::Transport {
+                roles: vec![TransportRole::Dial],
+                streams: vec![StreamKind::Tcp],
+            },
+        );
+    measurements.push(measure(&s, &base, options.samples, "one-node-capability")?);
     s.configuration.dns.domain = "changed.internal".into();
     measurements.push(measure(&s, &base, options.samples, "global-dns-domain")?);
     let revision = std::process::Command::new("git")

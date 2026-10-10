@@ -14,6 +14,21 @@ async fn refreshed_rule_set_bindings_are_read_without_any_publication() {
     let mut input = NetworkConfigurationInput::from(&source.configuration);
     input.tags_owners.insert("tag:test".into(), vec![]);
     input.rule_sets.insert("remote".into(), remote.definition());
+    // A rule matching on the set: only referenced sets reach a netmap.
+    input
+        .routing
+        .egress
+        .rules
+        .push(meshway_configuration::EgressRule {
+            remark: String::new(),
+            matcher: meshway_configuration::RouteMatch {
+                domain: vec![],
+                domain_suffix: vec![],
+                ip_cidr: vec![],
+                rule_sets: vec!["remote".into()],
+            },
+            action: meshway_configuration::RuleAction::Direct,
+        });
     let applied = s.apply(token, network, source.revision, &input).await;
     // The version's own binding came with the apply; a refresh with new
     // content binds a different artifact to the same version.

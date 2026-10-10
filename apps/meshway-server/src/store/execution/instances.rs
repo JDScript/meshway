@@ -205,6 +205,9 @@ fn held(tx: &Transaction<'_>, p: &NodePrincipal, netmap: &NetmapRef) -> Result<b
         |row| row.get(0),
     )?)
 }
+/// Receipts a Node keeps; older ones are deleted with each new receipt.
+const RECEIPT_HISTORY: i64 = 64;
+
 pub(crate) fn receipt(
     tx: &Transaction<'_>,
     sealer: &Sealer,
@@ -312,6 +315,19 @@ pub(crate) fn receipt(
                 failure,
                 request.attempt.get() as i64,
                 request.sequence.get() as i64
+            ],
+        )?;
+        // Bounded history: a Node keeps its newest receipts only. Progress
+        // and the saved-before-applied check read the newest attempt, which
+        // is always among them; an older replay is just history again.
+        tx.execute(
+            "DELETE FROM netmap_receipts WHERE network_id=?1 AND node_id=?2 AND rowid NOT IN (
+               SELECT rowid FROM netmap_receipts WHERE network_id=?1 AND node_id=?2
+               ORDER BY serial DESC, received_at DESC, attempt DESC, sequence DESC LIMIT ?3)",
+            params![
+                p.network.as_uuid().as_bytes().as_slice(),
+                p.node.as_uuid().as_bytes().as_slice(),
+                RECEIPT_HISTORY
             ],
         )?;
     }

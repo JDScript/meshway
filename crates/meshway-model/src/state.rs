@@ -263,6 +263,18 @@ pub enum LinkPhase {
 }
 }
 
+crate::string_enum! {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+/// An admitted adjacency of this Node that has no current channel.
+pub enum AdjacencyStatus {
+    /// Nothing needs the adjacency now: an on-demand edge closed by idleness or never needed.
+    Idle,
+    /// Something needs the adjacency (traffic, a relay or a resident edge) but no channel is established.
+    Unreachable,
+}
+}
+
 crate::object! {
 /// One endpoint's report of a physical channel and its current dependencies.
 #[derive(Clone, Debug, PartialEq, Eq)] pub struct LinkState {
@@ -453,6 +465,8 @@ crate::object! {
     #[serde(deserialize_with="crate::wire::unique_map")] pub sockets: BTreeMap<String, SocketState>,
     /// Actual channels grouped by peer, including simultaneous channels to the same peer.
     #[serde(deserialize_with="crate::wire::unique_map")] pub links: BTreeMap<NodeId, Vec<LinkState>>,
+    /// Admitted adjacencies without a current channel, by peer; peers with a channel appear in `links` instead.
+    #[serde(deserialize_with="crate::wire::unique_map")] pub adjacencies: BTreeMap<NodeId, AdjacencyStatus>,
     /// Paths observed by this Node, indexed by runtime path identifier.
     #[serde(deserialize_with="crate::wire::unique_map")] pub paths: BTreeMap<String, PathState>,
     /// Routing selection actually applied by the Node.

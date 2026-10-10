@@ -123,11 +123,14 @@ pub(crate) fn recompile_with_rule_sets(
             Ok(compiled) => break compiled,
             Err(NetmapError::Limit { node, bytes }) if trigger == Trigger::Node => {
                 tracing::warn!(network = %network, node = %node, bytes, "Netmap exceeds the safety bound; the Node's netmap is unavailable");
+                if let Ok(mut sizes) = LIMIT_BYTES.lock() {
+                    sizes.insert((network, node), u32::try_from(bytes).unwrap_or(u32::MAX));
+                }
                 if excluded.len() >= MAX_EXCLUDED || !excluded.insert(node) {
                     return Err(Error::Unavailable(crate::error::Unavailability::Netmap));
                 }
             }
-            Err(error) => return Err(netmap_error(error)),
+            Err(error) => return Err(netmap_error(error, trigger)),
         }
     };
     tx.execute(
@@ -175,8 +178,23 @@ pub(crate) fn recompile_with_rule_sets(
     })
 }
 
-fn netmap_error(error: NetmapError) -> Error {
+/// Compiler inputs are the Server's own committed data: an invalid one is an
+/// internal fault. A budget is deterministic: a configuration that exceeds it
+/// is invalid, and a Node-side change that hits it leaves netmaps unavailable
+/// rather than inviting endless retries.
+fn netmap_error(error: NetmapError, trigger: Trigger) -> Error {
     match error {
+        NetmapError::Compile(meshway_policy::compile::CompileError::InvalidInput) => {
+            Error::Internal("netmap compiler input")
+        }
+        NetmapError::Compile(meshway_policy::compile::CompileError::Budget) => match trigger {
+            Trigger::Configuration => {
+                Error::InvalidConfiguration(ConfigurationError::Invalid(vec![
+                    ConfigurationIssue::new(String::new(), IssueCode::NetmapBudget),
+                ]))
+            }
+            Trigger::Node => Error::Unavailable(crate::error::Unavailability::Netmap),
+        },
         NetmapError::Compile(error) => error.into(),
         NetmapError::Limit { node, bytes } => {
             Error::InvalidConfiguration(ConfigurationError::Invalid(vec![
@@ -311,6 +329,43 @@ pub(crate) fn unavailable(
         params![bytes(network.as_uuid()), bytes(node.as_uuid())],
         |row| row.get(0),
     )?)
+}
+
+/// Measured sizes of netmaps excluded for the bound, as this process saw
+/// them; display only (the durable fact is `node_netmap_unavailable`).
+static LIMIT_BYTES: std::sync::LazyLock<std::sync::Mutex<BTreeMap<(NetworkId, NodeId), u32>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// Why `node` has no current netmap; None when it has one.
+pub(crate) fn unavailability(
+    tx: &Transaction<'_>,
+    network: NetworkId,
+    node: NodeId,
+) -> Result<Option<meshway_protocol::node::NetmapUnavailable>, Error> {
+    use meshway_protocol::node::NetmapUnavailable;
+    if current(tx, network, node)?.is_some() {
+        return Ok(None);
+    }
+    if unavailable(tx, network, node)? {
+        let bytes = LIMIT_BYTES
+            .lock()
+            .ok()
+            .and_then(|sizes| sizes.get(&(network, node)).copied());
+        return Ok(Some(NetmapUnavailable::Limit {
+            bytes,
+            max_bytes: u32::try_from(MAX_NETMAP_BYTES).unwrap_or(u32::MAX),
+        }));
+    }
+    let issued: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM node_netmaps WHERE network_id=?1 AND node_id=?2)",
+        params![bytes(network.as_uuid()), bytes(node.as_uuid())],
+        |row| row.get(0),
+    )?;
+    Ok(Some(if issued {
+        NetmapUnavailable::Withdrawn
+    } else {
+        NetmapUnavailable::NotIssued
+    }))
 }
 
 /// Null when the Node has no current netmap (never compiled, or withdrawn).

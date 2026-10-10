@@ -303,7 +303,6 @@ fn disclosure_digest(scope: &super::VisibilityScope) -> Result<meshway_model::Di
         &scope.visible,
         &scope.full,
         &scope.endpoint_resources,
-        &scope.observation_paths,
         &scope.mesh_addresses,
         current,
     ))

@@ -146,6 +146,8 @@ pub struct Snapshot {
     pub listeners: Vec<ListenerFact>,
     pub links: Vec<LinkFact>,
     pub sockets: Vec<SocketFact>,
+    /// Admitted peers without a current channel: idle, or wanted but unreached.
+    pub adjacencies: BTreeMap<NodeId, meshway_model::state::AdjacencyStatus>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -761,7 +763,28 @@ impl Manager {
         let _profile = PROFILE.enter();
         self.check_view()?;
         let links = self.shared.links.lock().map_err(|_| Error::Worker)?;
+        let linked: std::collections::BTreeSet<NodeId> = links
+            .values()
+            .filter(|link| link.scope.check().is_ok())
+            .map(|link| link.fact.peer)
+            .collect();
+        let plan = self.shared.plan();
+        let adjacencies = plan
+            .peers()
+            .filter(|peer| plan.adjacent(*peer) && !linked.contains(peer))
+            .map(|peer| {
+                (
+                    peer,
+                    if self.shared.wanted(peer) {
+                        meshway_model::state::AdjacencyStatus::Unreachable
+                    } else {
+                        meshway_model::state::AdjacencyStatus::Idle
+                    },
+                )
+            })
+            .collect();
         Ok(Snapshot {
+            adjacencies,
             listeners: self.listeners.clone(),
             sockets: self
                 .shared

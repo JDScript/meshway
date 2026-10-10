@@ -7,6 +7,7 @@
 //! out. Every answer carries a fresh lease for the current netmap. Content is
 //! stored by `store::netmap` and only changes in stable-input transactions.
 mod hub;
+pub(crate) mod records;
 pub(crate) mod signing;
 mod sync;
 
@@ -139,6 +140,15 @@ impl Netmaps {
                 })
                 .await?
         };
+        records::Records::shared().received(
+            principal.network,
+            principal.node,
+            chrono::Utc::now().timestamp_millis().max(0) as u64,
+        );
+        let answered = |response: SyncResponse| {
+            records::Records::shared().issued(principal.network, principal.node, response.lease);
+            response
+        };
         // Register before the first read: a change committed after this point
         // wakes the waiter, one committed before it is visible to the read.
         let mut waiter = self.hub.register(principal.network, principal.node)?;
@@ -153,7 +163,7 @@ impl Netmaps {
                 .as_ref()
                 .is_some_and(|facts| facts.base.is_none() || Some(facts.cursor) != request.state)
             {
-                return Ok(response);
+                return Ok(answered(response));
             }
             let facts_changed = async move {
                 match changed {
@@ -168,7 +178,7 @@ impl Netmaps {
             }
         }
         // Woken, replaced, closing or timed out: one final answer with a fresh lease.
-        Ok(self.read(token, &request).await?.0)
+        Ok(answered(self.read(token, &request).await?.0))
     }
 
     async fn read(
