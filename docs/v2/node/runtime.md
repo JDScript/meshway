@@ -237,26 +237,28 @@ CLI 生命周期不承载 Node 身份或 lease，不收集账户密码、不取�
 
 ## Engine
 
-`meshway-engine::Engine` 是 Node 的唯一期望状态 owner。Control 每发布一次 netmap，daemon 的网络 owner 调用一次 `reconfig(Some(&netmap))`；撤回时调用 `reconfig(None)`。
+`meshway-engine::Engine` 是 Node 的唯一期望状态 owner。sync 验证并保存的 netmap 与租约经独立通道直接送达网络 owner（不经 Control 锁与维护调度），网络 owner 每收到一次调用一次 `reconfig(Some(&netmap))`；撤回时调用 `reconfig(None)`。Control 的维护 HTTP 按单个操作持锁，sync 回复最多等待一个进行中的操作。
 
 | 输入 | Engine 行为 |
 | --- | --- |
-| 新内容（更大 serial） | 构造一次不可变 `Desired`（内容与共享 `LocalCompiler`），按 Host → 邻接 → SecureNode → DNS 顺序调用各组件幂等 `apply`；任一失败时对全部组件应用空期望 |
-| 同内容、更晚租约 | 只延长自身计时器，不调用任何组件 |
-| 更早 `issuedAt` 或回退引用 | 拒绝，当前期望不变 |
-| 计时到期（`next_expiry`／`expire`） | 按 SecureNode → 邻接 → Host → DNS 顺序应用空期望；已到期内容须由新租约重新安装 |
+| 新内容（更大 serial） | 构造一次不可变 `Desired`（内容与共享 `LocalCompiler`），按 Host → 邻接 → SecureNode → DNS 顺序调用各组件幂等 `apply`。安全相关步骤（capture／TUN、负向 DNS、circuit 与流收窄、出口退役）失败时对全部组件应用空期望；只缺新增能力（listener／拨号 socket、邻接 Manager、出口角色、DNS 查询应答）时组件返回 `Degraded`：内容保持安装、对应能力缺失并上报，回执不报 applied，有界重试同内容 |
+| 同内容、不更早到期的租约 | 只延长自身计时器，不调用任何组件；当前为 `Degraded` 时重新应用同内容。Server 时钟回拨造成更早的 `issuedAt` 不算重放 |
+| 更早到期的同内容租约或回退引用 | 拒绝，当前期望不变 |
+| 计时到期（`next_expiry`／`expire`） | 按 SecureNode → 邻接 → Host → DNS 顺序应用空期望；已到期内容须由新租约重新安装。单调计时在宿主挂起期间不走，网络 owner 每秒的例行唤醒另按墙钟检查到期 |
 
 各组件 `apply`：
 
 | 组件 | 签名 | 空期望 |
 | --- | --- | --- |
-| Host | `Host::install(Desired)`；同内容为空操作，同一节点新内容保留 TUN 与用途不变的描述符 | `Host::suspend`：结束全部操作与描述符，保留负向 capture 边界；exit 角色随之撤销并精确清理 CT |
-| 邻接 | `Manager::apply(&Desired)`；保留内容仍准入、承载顺序仍领先的已选通道与资源 | `Manager::shutdown` |
+| Host | `Host::install(Desired)`；同内容为空操作，同一节点新内容保留 TUN 与用途不变的描述符（用途只含声明与 peer 登记密钥）；进行中的连接、穿透与 DNS 交换不因内容变化中止，只有其注册用途在已安装内容上改变时才结束 | `Host::suspend`：结束全部操作与描述符，保留负向 capture 边界；exit 角色随之撤销并精确清理 CT |
+| 邻接 | `Manager::apply(&Desired)`；保留 peer 密钥与承载顺序不变、仍准入且资源用途不变的已选通道与资源（含已建立的退路承载）；资源保留规则与 Host 共用同一实现 | `Manager::shutdown` |
 | 数据面 | `SecureNode::apply(&Desired) -> Applied`；保留授权 digest 与路径密钥不变的 circuit、决策不变的流 | 丢弃 SecureNode：取消全部 circuit、流与排队输出 |
 | DNS | `Attachment::install(Desired)`，经 `publish_scope` 发布查询范围 | `publish_scope(None)`：立即结束旧 ticket、路由与未发送回答 |
 | 诊断 | `Owner::synchronize(&Desired, instance, tasks)` | `Owner::clear` |
 
-已建立 circuit 在双向 90 秒无帧时结束；源端连续发送 30 秒未收到任何认证帧时结束并在下一个包重新握手（对端重启后有界恢复）。下一跳暂无承载时登记邻接需求，包在有界首包队列中等待承载恢复。
+已建立 circuit 在双向 90 秒无帧时结束；源端连续发送 30 秒未收到任何认证帧时结束并在下一个包重新握手。Manager 的已选 channel 身份变化或消失（被替换、对端重启、通道结束）时，网络 owner 立即让 SecureNode 退役所有以该 peer 为相邻跳的 circuit（端点与中继），下一个包在当前 channel 上重新握手。中继不向上游回传关闭，多跳下游重启仍由源端的 30 秒无回复规则恢复。下一跳暂无承载时登记邻接需求，包在有界首包队列中等待承载恢复。
+
+内容变化只丢弃已在旧内容上准入的输出；尚未准入的已接收帧（含握手帧）保留，由 SecureNode 按当前内容逐帧准入。
 
 ## 控制调度与恢复
 
