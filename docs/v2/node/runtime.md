@@ -79,7 +79,7 @@ live probe 成功返回 `ready` 和 `supportedFamilies=[ipv4]`，`installedFamil
 
 daemon 首次取得执行目标及每次向网络 worker 发布执行刷新时，若 `exitEnabled` 或 `exitRole` 存在，即调用 live probe。该 Future 的 monitor 预约不可跨线程移动，因此唯一网络 worker 在一个固定线程上驱动，并在停止时显式等待退出；Host、Control 和内核资源仍各只有一个 owner。探测失败也可上报 State；只有角色及其他必需组件实际完成当前目标安装后，才填充 `installedFamilies` 和 applied。
 
-Control 在保存执行目标和签发快照时检查本地 `exitRole.instanceId` 等于当前实例、出口开关仍启用，以及 permit 内引用的本地角色与目标角色一致。`NodeState.exitCapability` 是独立观测：失败可在尚未 applied 时报告，新观测必须绑定当前 instance／精确 target；错绑在发送 HTTP 前拒绝。不确定交付的重试保留原内容、序号和 `observedAt`，不把旧探测换绑到新目标。能力报告不生成应用回执，也不替代必需组件的原子 applied 边界。
+Control 在保存执行目标和签发快照时检查本地 `exitRole.instanceId` 等于当前实例、出口开关仍启用，以及 permit 内引用的本地角色与目标角色一致。`NodeState.exitCapability` 是独立观测：失败可在尚未 applied 时报告，新观测必须绑定当前 instance／精确 target；错绑在发送 HTTP 前拒绝。不确定交付的重试保留原内容、序号和 `observedAt`，不把旧探测换绑到新目标。能力报告不生成应用回执，也不替代必需组件的原子 applied 边界。出口 role 安装期间，网络 worker 在每个事件上检查该观测：超过 State 报告寿命（60 秒）的三分之一即重新真实探测，持续业务流量不推迟刷新。
 
 ### IPv4 出口角色与 NAT 投影
 
@@ -95,7 +95,7 @@ Linux `Host::install_exit_role(ExitRolePlan)` 消费当前执行快照中相同�
 | `reply_reader()` | 单次取得独立回包 reader；`recv()` 返回 incarnation 与逆 NAT 包，排队期间继续保留原 guard；业务回复仍须通过唯一 dataplane 流表与原完整路径准入 |
 | `retire()` | 停止正向 I/O，关闭全部资格、清理 CT／回程资源，join TUN owner 后移除所属 nft 表；失败保留 journal 和拒绝边界 |
 
-`ExitScope` 携带生产者提供的授权／路径 binding 与不可逆撤回 token，不签发业务权限。原 tuple 仅支持 IPv4 TCP、UDP 和 ICMP echo；角色计划不能替代精确源地址、目的、服务和活 flow。投影当前最多 128 个活项，最多保留 4096 个 incarnation／tuple 历史及已知转换 tuple 的拒绝记录；容量耗尽拒绝新增。成功退役的原 tuple 在同一角色内也不复用，恢复后的旧转换 tuple 保留隔离。
+`ExitScope` 携带生产者提供的授权／路径 binding 与不可逆撤回 token，不签发业务权限。原 tuple 仅支持 IPv4 TCP、UDP 和 ICMP echo；角色计划不能替代精确源地址、目的、服务和活 flow。投影当前最多 128 个活项，最多保留 4096 个 incarnation／tuple 历史及已知转换 tuple 的拒绝记录；容量耗尽只拒绝该新增流，已安装投影与角色不受影响。成功退役的原 tuple 在同一角色内也不复用，恢复后的旧转换 tuple 保留隔离。
 
 incarnation 的类型为 `ExitIncarnation`：`new([u8; 32])`／`bytes() -> [u8; 32]` 原样保留全部 32 字节，不截断成 `u128`。`ExitSendGuard: Send + Sync + 'static` 由 Underlay 定义，唯一方法为 `check(&self) -> std::result::Result<(), Invalidated>`；X4 用 X2 原包的 `exit_scope()` 实现，Underlay 不依赖 dataplane。
 

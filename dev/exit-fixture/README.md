@@ -1,9 +1,9 @@
 # Isolated IPv4 exit acceptance
 
 `exit/off` runs the real Server, three independent daemons/CLI instances and two
-external application services. It remains **explicit-only until two full runs
-pass**. A short run is diagnostic evidence; a component pass is not a row pass.
-Current acceptance status is defined in `docs/v2/node/validation.md`.
+external application services. It is a default matrix row. A short run is
+diagnostic evidence; a component pass is not a row pass. Current acceptance
+status is defined in `docs/v2/node/validation.md`.
 
 ```text
               Controller (forwarding=0)
@@ -46,14 +46,15 @@ is used. All local mutations are in fixture-owned namespaces.
 
 ```sh
 mise run validate:matrix --rows exit/off --short
-git push planck feat/exit-acceptance
-mise run validate:remote -- --ref feat/exit-acceptance --rows exit/off
+git push planck <branch>
+mise run validate:remote -- --ref <commit> --rows exit/off
 ```
 
 The shared runtime build includes the production underlay library and netmap
 test binaries. `components.py` runs the netmap exit-role owner (renewal,
-unchanged serial, Access independence, withdrawal cleanup), the nft
-transaction and the live exit-prerequisite probe in separate namespaces.
+unchanged serial, Access independence, withdrawal cleanup), its projection
+capacity refusal (one flow refused, role kept), the nft transaction and the
+live exit-prerequisite probe in separate namespaces.
 Their results are labelled `scope=component`; the main actors still must
 prove their own installation, NAT and traffic lifecycle.
 
@@ -63,12 +64,12 @@ prove their own installation, NAT and traffic lifecycle.
 | --- | --- | --- |
 | 1 Capability | Accepted acquire declares `feature:exit-ipv4` v1; capability instance equals live instance | `e/acquisition.json`, `e/installed-status.json` |
 | 2 Prerequisite | `ip_forward=0` gives `ipForwardDisabled`, empty installed families and no role; restore reads back 1 | `ip-forward-disabled.json`, `forwarding-restored.json` |
-| 3 Applied/DNS | Ready IPv4 role, exact saved/applied reference, real kernel resources; failed system DNS query with no plaintext query on A's physical interfaces | `installed.json`, `e/installed-status.json`, `negative-dns-query.json`, `a/*.pcap` |
-| 4 Capture/transit | A default capture routes the external IP to its actual TUN; R remains a non-exit with original external transit permits | `capture-before-admission.json`, `capture-route.json`, `original-path.json` |
+| 3 Applied/DNS | Ready IPv4 role, exact saved/applied/lease netmap reference, real kernel resources; failed system DNS query with no plaintext query on A's physical interfaces | `installed.json`, `e/installed-status.json`, `negative-dns-query.json`, `a/*.pcap` |
+| 4 Capture/transit | A default capture routes the external IP to its actual TUN; cached netmaps show A's IPv6 sink, R without and E with an exit role | `capture-before-admission.json`, `capture-route.json`, `original-path.json` |
 | 5 Projection/NAT | Original and reverse conntrack tuple/owned mark match external service log; exact ACK/first-write/confirmation ordering is checked by the production driver test | `nat-proof.json`, `first-flow.json`, `components/driver.log` |
 | 6 Renewal/failure | Persistent TCP/UDP and receive-only UDP; driver checks original cutoff, ConfirmFailed exact isolation and surviving flow | `a/traffic-*.json`, `a/receive-only-*.json`, `components/{driver,handoff}.log` |
-| 7 Reply/path | Real TCP/UDP/echo, zero R TUN delivery and no payload in R pcap; driver asserts `SecureNode::exit_reply` and original reverse path | `original-path.json`, `r/*.pcap`, `icmp-*.json`, `business-block-control.json` |
-| 8 Drain/recovery | Role withdrawal, old socket refusal, held Node HTTP through instance expiry, fresh instance recovery, SIGKILL/same-netns journal recovery, explicit down and foreign sentinel preservation | `withdrawn.json`, `expired.json`, `*crash*.json`, `down.json`, `foreign-sentinel-*.json` |
+| 7 Reply/path | Real TCP/UDP/echo, zero R TUN delivery and no payload in R pcap; A's egress partition sends both targets Exit→E via R and all three projections carry the same external Access, so only `autogroup:internet` covers the public target | `original-path.json`, `r/*.pcap`, `icmp-*.json`, `business-block-control.json` |
+| 8 Drain/lease | Role withdrawal and old socket refusal; Node HTTP closed (in-flight sync polls ended, new requests held): `lease.py` keeps a TCP echo and new UDP flows working offline until the first path lease expiry, then they end; E withdraws its role at its own expiry with exact nft/conntrack cleanup and A keeps its negative egress gate; reopened HTTP recovers a new lease and new flows without a second up; SIGKILL/same-netns journal recovery, explicit down and foreign sentinel preservation | `withdrawn.json`, `lease-window.json`, `lease-*.json`, `expired.json`, `recovered.json`, `*crash*.json`, `down.json`, `foreign-sentinel-*.json` |
 
 The source uses a 30-second short window or 125-second full window. Public and
 LAN TCP/UDP windows run concurrently, alongside independent receive-only UDP.
