@@ -72,7 +72,9 @@
 
 客户端 owner 将普通查询生成独立 `MeshResolverRoute`，出口不可达时失败，不进入客户端系统上游重试队列。UDP 截断只可使用同一个 service permit 中独立允许的 TCP；旧查询、过期回答和切换前的输出保留原 ticket／scope 截止。
 
-**运行接线限制：**当前 `ServeExitResolver { services }` 包含接受的源服务，但生产 SecureNode DNS-purpose ingress／原路径回复、受保护出口上游适配和 Mesh listener 尚未接通。`OwnerDispatcher::validate_scope` 对缺少真实适配的计划拒绝安装，不能据上述编译结果报告 applied。`exit/resolved` 与 `exit/resolv-conf` 尚需整组验收；这两个系统后端的通过状态不得相互替代。
+`ServeExitResolver { services }` 只接受唯一 SecureNode 验证的 DNS-purpose circuit 请求，源身份和完整路径来自不透明的认证请求对象。请求／回复复用 Noise 与逐跳 MAC，回复沿原路径返回；仅有匹配的源 IP／端口不能进入出口 resolver。出口上游仍由 Underlay 使用经验证的系统 resolver 快照访问。
+
+每条 DNS 消息上限为 4096 bytes，超限请求或回答失败；并发总上限 128，单查询截止不超过 5 秒和原 netmap／请求 guard。相同内容续租不延长已接纳查询的截止，内容变更取消旧查询。缺少适配、必需解析器或系统后端时阻断 applied。系统后端与出口组合的真实验收状态见 [验证范围](/v2/node/validation)，不同组合不能互相替代。
 
 Server 通信／transport／协调的 bootstrap DNS 必须使用受保护系统通路，和业务 DNS 分开。运行实现范围见 [Node](/v2/node)。
 

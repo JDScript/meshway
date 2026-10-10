@@ -93,6 +93,8 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
         meshway_dataplane::secure::pipeline::Pool::new(workers).map_err(|_| Problem::Worker)?;
     let mut diagnostics = super::diagnostics::Diagnostics::default();
     let buffers = packet_pool(mtu)?;
+    let mut dns_requests = dns.take_queries();
+    let mut dns_queries = super::dns::mesh::Queries::default();
     let mut generation = meshway_model::Sequence::MIN;
     let mut retry = Retry::default();
     let mut dns_failed = false;
@@ -102,6 +104,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
     loop {
         meshway_logging::profile::report();
         enum Work {
+            DnsQuery(Box<super::dns::mesh::Query>),
             ObservationPlan,
             DiagnosticSent,
             Command(Option<Command>),
@@ -139,6 +142,9 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
         if let Some(at) = diagnostics.wake_at() {
             wake_at = Some(wake_at.map_or(at, |old| old.min(at)));
         }
+        if let Some(at) = dns_queries.wake_at() {
+            wake_at = Some(wake_at.map_or(at, |old| old.min(at)));
+        }
         if installed.as_ref().is_some_and(|state| state.exit.is_some()) {
             let at = tokio::time::Instant::now() + Duration::from_millis(250);
             wake_at = Some(wake_at.map_or(at, |old| old.min(at)));
@@ -154,6 +160,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             _ = diagnostics.sent(), if diagnostics.has_sends() => Work::DiagnosticSent,
             changed = observation_plans.changed() => if changed.is_ok() { Work::ObservationPlan } else { Work::Command(None) },
             changed = targets.changed() => { if changed.is_err() { Work::Command(None) } else { Work::Target } },
+            query = dns_requests.recv() => match query { Some(query) => Work::DnsQuery(Box::new(query)), None => Work::Command(None) },
             _ = async { match retry_at { Some(at) => tokio::time::sleep_until(at).await, None => std::future::pending().await } } => Work::Retry,
             _ = dns.failed(), if !dns_failed => Work::DnsFailure,
             _ = async { match expires_at { Some(at) => tokio::time::sleep_until(at).await, None => std::future::pending().await } } => Work::Expired,
@@ -209,6 +216,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
         let structural = matches!(&work, Work::Target | Work::Retry)
             || matches!(&work, Work::Carrier(events) if events.iter().any(|event| matches!(event, Event::Changed)));
         match work {
+            Work::DnsQuery(query) => dns_queries.enqueue(*query),
             Work::NetworkChanged => {
                 network_changes.borrow_and_update();
                 let report = sample_host(&host, &installed, &diagnostics, reports.borrow().clone());
@@ -242,6 +250,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 continue;
             }
             Work::Command(Some(Command::Shutdown { keep_sink })) => {
+                dns_queries.stop().await;
                 diagnostics.stop().await;
                 let dns_result = dns
                     .shutdown(&mut host, keep_sink)
@@ -255,6 +264,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 return dns_result.and(closing).and(host_result);
             }
             Work::Command(None) => {
+                dns_queries.stop().await;
                 diagnostics.stop().await;
                 let dns_result = dns
                     .shutdown(&mut host, true)
@@ -266,6 +276,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                     .and(host.shutdown(true).await.map_err(|_| Problem::Underlay));
             }
             Work::Command(Some(Command::Stop { down, reply })) => {
+                dns_queries.stop().await;
                 diagnostics.stop().await;
                 dns.suspend();
                 let closing = close(&mut installed, &peers).await;
@@ -340,6 +351,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 }
                 let reference = identity.snapshot().reference();
                 let Ok(next_generation) = generation.checked_next() else {
+                    dns_queries.stop().await;
                     diagnostics.stop().await;
                     let _ = dns.shutdown(&mut host, true).await;
                     let _ = close(&mut installed, &peers).await;
@@ -589,7 +601,8 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 _ = dns.failed(), if !dns_failed => {},
                 _ = async {
                     static PROFILE: meshway_logging::profile::Metric = meshway_logging::profile::Metric::new("host.drive.poll");
-                    PROFILE.poll(packets.drive(secure, manager, carriers.as_ref(), &host, &snapshot, &mut diagnostics, &mut pool, state.exit.as_mut())).await;
+                    PROFILE.poll(packets.drive(secure, manager, carriers.as_ref(), &host, &snapshot, &mut diagnostics, &mut dns_queries, dns.dispatcher(), &mut pool, state.exit.as_mut())).await;
+                    dns_queries.drive(secure, &snapshot, manager).await;
                     diagnostics.drive(secure, manager, carriers.as_ref(), &gateway);
                 } => {},
             }
@@ -597,6 +610,8 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             for wanted in secure.take_adjacency_interests() {
                 interest.interest(wanted.peer);
             }
+        } else {
+            dns_queries.stop().await;
         }
         if structural {
             let report = sample_host(&host, &installed, &diagnostics, reports.borrow().clone());
@@ -680,7 +695,9 @@ async fn renew(
     }
     if dns.guard().is_some() {
         // An equivalent scope keeps the query owner; failures surface via guard.
-        let _ = dns.install(identity.snapshot().clone()).await;
+        dns.install(identity.snapshot().clone())
+            .await
+            .map_err(|_| Problem::Dns)?;
     }
     state.identity = identity;
     state.live = true;
@@ -796,6 +813,7 @@ fn sample(
                         continue;
                     };
                     match circuit.grant.purpose {
+                        meshway_dataplane::Purpose::Dns => {}
                         meshway_dataplane::Purpose::Business => {
                             *report.dependencies.entry(peer).or_default() += 1
                         }
@@ -862,23 +880,16 @@ async fn install(
     let settings = &netmap.projection.configuration.dns;
     let exit_dns = !matches!(netmap.dns.egress, DnsPlan::NoExit);
     let needs_dns = super::requirements::dns_required(settings) || exit_dns;
-    report.exit_dns_unavailable = exit_dns;
-    // Required negative DNS first. A Mesh resolver service (exit DNS) needs
-    // the SecureNode DNS-purpose ingress, which is not assembled: keep the
-    // negative boundary and publish no query authority.
+    report.exit_dns_unavailable = false;
+    // Required negative DNS first; query authority follows the installed
+    // SecureNode and the authenticated DNS-purpose exchange adapter below.
     if needs_dns {
         match dns.plan(host, &netmap).await {
             Ok(()) => {}
-            Err(
-                meshway_dns::SystemDnsError::ExitPlan | meshway_dns::SystemDnsError::ResolverPlan,
-            ) if exit_dns => {}
             Err(error) => {
                 tracing::warn!(%error, "Required DNS installation failed");
                 return Err((Problem::Dns, ApplyFailure::Dns));
             }
-        }
-        if exit_dns {
-            dns.suspend();
         }
     } else {
         dns.down(host)
@@ -1018,7 +1029,7 @@ async fn install(
         exit,
         live: true,
     });
-    if needs_dns && !exit_dns {
+    if needs_dns {
         dns.install(snapshot.clone()).await.map_err(|error| {
             tracing::warn!(%error, "DNS scope installation failed");
             (Problem::Dns, ApplyFailure::Dns)

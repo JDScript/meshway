@@ -299,6 +299,8 @@ impl Packets {
         host: &meshway_underlay::Host,
         snapshot: &ExecutionSnapshot,
         diagnostics: &mut super::diagnostics::Diagnostics,
+        dns_queries: &mut super::dns::mesh::Queries,
+        dns: Option<std::sync::Arc<meshway_dns::OwnerDispatcher>>,
         pool: &mut secure::pipeline::Pool,
         mut exit: Option<&mut super::exit::Runtime>,
     ) {
@@ -439,6 +441,8 @@ impl Packets {
         for (link, received_at, hint, result) in ready {
             let result = result.expect("synchronous control result");
             match result {
+                Ok(Received::DnsRequest(request)) => dns_queries.receive(request, dns.clone()),
+                Ok(Received::DnsReply(reply)) => dns_queries.reply(reply),
                 Ok(Received::Forward(frame))
                 | Ok(Received::Established {
                     response: Some(frame),

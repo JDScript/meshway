@@ -1,6 +1,7 @@
 //! Daemon assembly of the one DNS query owner and the one system installer.
 //! Every resolver route is decided by the installed netmap itself.
 mod actor;
+pub(super) mod mesh;
 pub(super) use actor::Attachment;
 use meshway_authority::ExecutionSnapshot;
 use meshway_configuration::netmap::{DnsPlan, NodeNetmap};
@@ -122,6 +123,16 @@ impl Runtime {
     /// Publish query authority for the installed netmap. A same-content
     /// snapshot keeps the query owner (`Scope::equivalent`).
     pub async fn install(&mut self, snapshot: ExecutionSnapshot) -> Result<(), SystemDnsError> {
+        let continuing = self
+            .scopes
+            .borrow()
+            .as_ref()
+            .is_some_and(|scope| scope.snapshot.same_netmap(&snapshot));
+        if continuing {
+            // The shared lease cell already renewed. Instance bindings are
+            // reporting metadata; neither event withdraws live query authority.
+            return self.observe().await;
+        }
         let netmap = snapshot
             .netmap()
             .map_err(|_| SystemDnsError::ResolverPlan)?

@@ -198,6 +198,9 @@ pub(in crate::runtime::network) struct Attachment {
     reservation: Option<SystemDnsReservation>,
     actor: Option<Actor>,
     recoveries: u8,
+    queries: mpsc::Sender<super::mesh::Query>,
+    requests: Option<mpsc::Receiver<super::mesh::Query>>,
+    dispatcher: Option<Arc<meshway_dns::OwnerDispatcher>>,
 }
 impl Attachment {
     pub fn new(
@@ -205,13 +208,23 @@ impl Attachment {
         directory: Arc<Directory>,
         reservation: Option<SystemDnsReservation>,
     ) -> Self {
+        let (queries, requests) = mpsc::channel(128);
         Self {
             settings,
             directory,
             reservation,
             actor: None,
             recoveries: 0,
+            queries,
+            requests: Some(requests),
+            dispatcher: None,
         }
+    }
+    pub fn take_queries(&mut self) -> mpsc::Receiver<super::mesh::Query> {
+        self.requests.take().expect("one DNS packet owner")
+    }
+    pub fn dispatcher(&self) -> Option<Arc<meshway_dns::OwnerDispatcher>> {
+        self.dispatcher.clone()
     }
     async fn reserve(&mut self) -> Result<(), SystemDnsError> {
         if self.reservation.is_none() {
@@ -258,8 +271,10 @@ impl Attachment {
         }
         if self.actor.is_none() {
             let system = self.owner(host).await?;
-            let runtime =
-                Runtime::prepare(system, self.settings.clone(), Arc::new(host.sockets())).await?;
+            let exchange =
+                super::mesh::Exchange::new(Arc::new(host.sockets()), self.queries.clone());
+            let runtime = Runtime::prepare(system, self.settings.clone(), exchange).await?;
+            self.dispatcher = Some(runtime.dispatcher.clone());
             self.actor = Some(Actor::start(runtime));
         }
         self.actor
@@ -295,6 +310,7 @@ impl Attachment {
     /// Restore DNS before deleting the separately journalled kernel anchor.
     pub async fn down(&mut self, host: &mut Host) -> Result<(), SystemDnsError> {
         self.suspend();
+        self.dispatcher = None;
         if self.actor.is_none()
             && self.reservation.is_none()
             && !SystemDnsOwner::has_reservation(self.directory.clone()).await?
