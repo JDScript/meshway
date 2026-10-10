@@ -25,8 +25,7 @@ pub use digest::{Digest, InvalidDigest};
 pub use ids::{
     ActivityId, ArtifactId, ChallengeId, EnrollmentKeyId, EnrollmentRequestId, EventId, InstanceId,
     InvalidId, JoinLinkId, KeyId, MembershipId, NetworkId, NodeId, ObservationId,
-    ObservationSubscriptionId, PublicationId, RequestId, SessionId, StateEpoch, UdpTraversalId,
-    UserId,
+    ObservationSubscriptionId, RequestId, SessionId, StateEpoch, UdpTraversalId, UserId,
 };
 pub use membership::MembershipRole;
 pub use netmap::{NetmapLease, NetmapRef};

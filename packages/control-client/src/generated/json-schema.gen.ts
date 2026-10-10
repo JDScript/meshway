@@ -5104,7 +5104,7 @@ export const schemaDocument = {
       },
       "ExecutionAddress": {
         "type": "string",
-        "description": "Numeric IPv4 or IPv6 business destination used in an execution binding."
+        "description": "Numeric IPv4 or IPv6 destination used in an execution binding."
       },
       "ExistingNodeBinding": {
         "type": "object",
@@ -7566,7 +7566,7 @@ export const schemaDocument = {
       },
       "LogicalPath": {
         "type": "object",
-        "description": "Complete ordered path authorized by Server compilation, including all required intermediate Nodes.",
+        "description": "Complete ordered path derived from routing, including all required intermediate Nodes.",
         "required": [
           "nodes",
           "dialCandidates"
@@ -10565,7 +10565,7 @@ export const schemaDocument = {
             "additionalProperties": false
           }
         ],
-        "description": "Exact service scope checked by Access and routing when compiling an independent diagnostic permit."
+        "description": "Exact service scope checked by Access and routing for a diagnostic operation."
       },
       "ObservationSubscriptionId": {
         "type": "string",
@@ -15719,7 +15719,7 @@ export const schemaDocument = {
       },
       "UnavailableReason": {
         "type": "string",
-        "description": "Condition preventing Server compilation from granting the requested business execution.",
+        "description": "Condition preventing requested execution.",
         "enum": [
           "exitUnavailable",
           "unsupportedFamily",

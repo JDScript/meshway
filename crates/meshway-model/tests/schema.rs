@@ -1,6 +1,6 @@
 use meshway_model::{
     ActivityId, Digest, InstanceId, JoinLinkId, KeyId, MembershipId, MembershipRole, NetworkId,
-    NodeId, PublicationId, RequestId, Revision, Sequence, SessionId, UserId, Version,
+    NodeId, RequestId, Revision, Sequence, SessionId, UserId, Version,
 };
 use serde_json::{Value, json};
 use utoipa::{OpenApi, PartialSchema, ToSchema};
@@ -19,7 +19,6 @@ fn every_id_exports_the_full_canonical_nonzero_constraint() {
         schema::<MembershipId>(),
         schema::<SessionId>(),
         schema::<RequestId>(),
-        schema::<PublicationId>(),
         schema::<InstanceId>(),
         schema::<KeyId>(),
         schema::<ActivityId>(),

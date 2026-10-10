@@ -85,7 +85,7 @@ struct Task {
     last_end: Option<DateTime<Utc>>,
     cancellation: tokio_util::sync::CancellationToken,
     sending: bool,
-    publication_invalidated: tokio_util::sync::CancellationToken,
+    output_invalidated: tokio_util::sync::CancellationToken,
     connecting: bool,
     setup_failed: bool,
     preparation_stage: Option<&'static str>,
@@ -120,7 +120,7 @@ fn preparation_stage(task: &mut Task, stage: &'static str) {
 impl Drop for Task {
     fn drop(&mut self) {
         self.cancellation.cancel();
-        self.publication_invalidated.cancel();
+        self.output_invalidated.cancel();
     }
 }
 
@@ -172,7 +172,7 @@ impl Owner {
             if let Some(old) = self.tasks.get_mut(&task.id)
                 && old.snapshot.same_netmap(&snapshot)
                 && old.snapshot.ensure_current().is_ok()
-                && !old.publication_invalidated.is_cancelled()
+                && !old.output_invalidated.is_cancelled()
                 && old.path == path
                 && old.task.service == task.service
                 && old.task.metrics == task.metrics
@@ -221,7 +221,7 @@ impl Owner {
                     last_end,
                     cancellation: tokio_util::sync::CancellationToken::new(),
                     sending: false,
-                    publication_invalidated: tokio_util::sync::CancellationToken::new(),
+                    output_invalidated: tokio_util::sync::CancellationToken::new(),
                     connecting: true,
                     setup_failed: false,
                     preparation_stage: None,
@@ -605,12 +605,12 @@ fn output(task: &Task, result: ObservationUpdate) -> Output {
             netmap: task.snapshot.reference(),
             result,
         },
-        invalidated: task.publication_invalidated.clone(),
+        invalidated: task.output_invalidated.clone(),
     }
 }
 
 fn current(task: &Task) -> bool {
-    if task.publication_invalidated.is_cancelled() {
+    if task.output_invalidated.is_cancelled() {
         return false;
     }
     // New content invalidates this snapshot; the host binds again.
@@ -711,7 +711,7 @@ fn preparing_failure(task: &mut Task, now: Instant) {
 
 fn suspend(task: &mut Task) {
     task.cancellation.cancel();
-    task.publication_invalidated.cancel();
+    task.output_invalidated.cancel();
     task.measurement = None;
     task.output = None;
     task.sending = false;

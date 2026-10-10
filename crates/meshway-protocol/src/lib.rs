@@ -92,8 +92,8 @@ pub use auth::{
 };
 pub use meshway_model::{
     ActivityId, EnrollmentKeyId, EnrollmentRequestId, InstanceId, JoinLinkId, MembershipId,
-    MembershipRole, NetworkId, NodeId, ObservationId, ObservationSubscriptionId, PublicationId,
-    Revision, SessionId, UdpTraversalId, Version,
+    MembershipRole, NetworkId, NodeId, ObservationId, ObservationSubscriptionId, Revision,
+    SessionId, UdpTraversalId, Version,
 };
 pub use networks::{
     CreateNetworkRequest, MemberActions, MemberSummary, NetworkActions, NetworkListResponse,

@@ -8,7 +8,6 @@ use super::{
     storage::{Ledger, Projection},
 };
 use crate::{Error, Result};
-use meshway_configuration::execution::ExitRolePlan;
 use meshway_model::{NetworkId, NodeId};
 use serde::Deserialize;
 use std::net::Ipv4Addr;
@@ -16,6 +15,18 @@ use std::net::Ipv4Addr;
 #[derive(Deserialize)]
 struct Version {
     version: u32,
+}
+
+/// Frozen decode-only journal shape. It is used solely to remove resources
+/// that this owner previously installed; it cannot become a live exit role.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RetiredRole {
+    #[serde(rename = "instanceId")]
+    _instance_id: meshway_model::InstanceId,
+    generation: meshway_model::Digest,
+    family: meshway_model::exit::ExitFamily,
+    nat: meshway_configuration::execution::ExitNat,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -27,7 +38,7 @@ struct V1 {
     base_installation: String,
     network: NetworkId,
     node: NodeId,
-    plan: ExitRolePlan,
+    plan: RetiredRole,
     program: Program,
     tun_name: String,
     mtu: usize,

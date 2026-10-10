@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use meshway_model::{
     ActivityId, InstanceId, InvalidId, JoinLinkId, KeyId, MembershipId, NetworkId, NodeId,
-    PublicationId, RequestId, SessionId, UserId,
+    RequestId, SessionId, UserId,
 };
 use uuid::Uuid;
 
@@ -68,7 +68,6 @@ check_id!(node_id, NodeId);
 check_id!(membership_id, MembershipId);
 check_id!(session_id, SessionId);
 check_id!(request_id, RequestId);
-check_id!(publication_id, PublicationId);
 check_id!(instance_id, InstanceId);
 check_id!(key_id, KeyId);
 check_id!(activity_id, ActivityId);
