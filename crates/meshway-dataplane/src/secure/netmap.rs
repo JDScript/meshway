@@ -498,8 +498,10 @@ impl SecureNode {
 
     /// Progress queued first packets: start handshakes whose adjacency became
     /// available and release packets whose circuit is established. Each packet
-    /// is admitted afresh; expired ones are dropped and counted.
-    pub fn flush(&mut self) -> Vec<Result<Flushed, Error>> {
+    /// is admitted afresh; expired ones are dropped and counted. At most
+    /// `budget` outputs leave the queue, allowing the caller to reserve its
+    /// bounded crypto/output capacity before any packet is committed.
+    pub fn flush(&mut self, budget: usize) -> Vec<Result<Flushed, Error>> {
         let snapshot = self.identity.snapshot().clone();
         let Ok(reading) = View::of(&snapshot) else {
             return Vec::new();
@@ -507,6 +509,10 @@ impl SecureNode {
         self.first.maintain(reading.instant);
         let mut outputs = Vec::new();
         for mut waiting in std::mem::take(&mut self.first.waiting) {
+            if outputs.len() >= budget {
+                self.first.waiting.push(waiting);
+                continue;
+            }
             let grant = CircuitGrant {
                 purpose: Purpose::Business,
                 target: waiting.target.clone(),
@@ -516,11 +522,15 @@ impl SecureNode {
                 .iter()
                 .find_map(|path| self.established(&grant, &path.nodes, &reading));
             if let Some(info) = established {
-                while let Some(packet) = waiting.packets.pop_front() {
+                while outputs.len() < budget && !waiting.packets.is_empty() {
+                    let packet = waiting.packets.pop_front().expect("nonempty queue");
                     outputs.push(
                         self.prepare_send_at(info.id, packet, &reading)
                             .map(Flushed::Send),
                     );
+                }
+                if !waiting.packets.is_empty() {
+                    self.first.waiting.push(waiting);
                 }
                 continue;
             }

@@ -610,7 +610,7 @@ impl Packets {
             }
         }
         if self.first_until.is_some_and(|until| until > now) {
-            for flushed in secure.flush() {
+            for flushed in secure.flush(pool.available().min(32)) {
                 match flushed {
                     Ok(Flushed::Send(job)) => {
                         assert!(pool.submit(secure::pipeline::Job::Send(job)).is_none());

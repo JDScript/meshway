@@ -127,7 +127,7 @@ async fn netmap_exit_first_packet_selects_the_ready_exit_locally() {
         panic!("exit circuit")
     };
     let id = f.finish_handshake(init).await;
-    let mut flushed = f.a.flush();
+    let mut flushed = f.a.flush(32);
     let Ok(meshway_dataplane::secure::Flushed::Send(job)) = flushed.remove(0) else {
         panic!("queued exit packet")
     };

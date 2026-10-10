@@ -57,7 +57,11 @@ async fn first(f: &mut NetmapMesh, packet: Packet) -> [u8; 32] {
         panic!("a new flow starts its circuit")
     };
     let id = f.finish_handshake(init).await;
-    let mut flushed = f.a.flush();
+    assert!(
+        f.a.flush(0).is_empty(),
+        "no output capacity commits no first packet"
+    );
+    let mut flushed = f.a.flush(1);
     assert_eq!(flushed.len(), 1);
     let Ok(Flushed::Send(job)) = flushed.remove(0) else {
         panic!("queued first packet")
@@ -148,14 +152,14 @@ async fn missing_adjacency_registers_interest_and_queues_until_the_carrier_exist
     assert!(f.a.take_adjacency_interests().is_empty());
     // Still no flow: waiting commits nothing.
     assert_eq!(f.a.retained_flows(), 0);
-    assert!(f.a.flush().is_empty());
+    assert!(f.a.flush(32).is_empty());
     f.a.set_carriers(BTreeMap::from([(r, carrier)])).unwrap();
-    let mut flushed = f.a.flush();
+    let mut flushed = f.a.flush(32);
     let Ok(Flushed::Init(init)) = flushed.remove(0) else {
         panic!("handshake once the adjacency exists")
     };
     let id = f.finish_handshake(init).await;
-    let mut flushed = f.a.flush();
+    let mut flushed = f.a.flush(32);
     let Ok(Flushed::Send(job)) = flushed.remove(0) else {
         panic!("queued packet")
     };
@@ -444,7 +448,7 @@ async fn relay_without_next_hop_registers_interest_and_admits_the_retried_init()
     tokio::time::sleep_until(due.into()).await;
     let retry = f.a.retry_handshake(id).unwrap().unwrap();
     assert_eq!(f.finish_handshake(retry).await, id);
-    let mut flushed = f.a.flush();
+    let mut flushed = f.a.flush(32);
     let Ok(Flushed::Send(job)) = flushed.remove(0) else {
         panic!("queued packet")
     };
