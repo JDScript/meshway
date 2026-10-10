@@ -171,6 +171,9 @@ pub(super) struct Offer {
     pub netmap: Option<meshway_engine::Netmap>,
     pub keys: Option<DataPlaneKeys>,
     pub instance: Option<meshway_protocol::InstanceRequest>,
+    /// Control's UTC high-water mark; Engine's lease clock never goes below it.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub clock_floor_ms: Option<u64>,
 }
 
 /// Sync's direct path to the Engine worker: only the verified netmap and its
@@ -450,7 +453,7 @@ pub(super) enum Work {
 
 /// Run one queued request on the Control owner.
 pub(super) async fn request(
-    control: &mut meshway_control::Control,
+    control: &tokio::sync::Mutex<meshway_control::Control>,
     request: Request,
 ) -> Result<(), meshway_control::Error> {
     match request {
@@ -462,7 +465,11 @@ pub(super) async fn request(
                 _ = reply.closed() => return Ok(()),
                 result = tokio::time::timeout(
                     std::time::Duration::from_secs(5),
-                    control.report_observation_result(&output.task, &output.result),
+                    meshway_control::shared::report_observation_result(
+                        control,
+                        &output.task,
+                        &output.result,
+                    ),
                 ) => result,
             };
             match result {

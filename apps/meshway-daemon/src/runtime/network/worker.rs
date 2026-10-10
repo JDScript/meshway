@@ -339,6 +339,9 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                     retry = Retry::default();
                 }
                 let offer = offers.borrow_and_update().clone();
+                if let Some(floor) = offer.clock_floor_ms {
+                    engine.raise_clock_floor(floor);
+                }
                 engine.components_mut().set_keys(offer.keys);
                 let rebound = engine.components_mut().set_instance(offer.instance).await;
                 let Some(netmap) = offer.netmap else {

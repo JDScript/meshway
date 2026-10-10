@@ -93,7 +93,8 @@ fn resolve(
                 NodeObservationTarget::Name { name } => {
                     let name = name.trim_end_matches('.').to_ascii_lowercase();
                     let fqdn = meshway_configuration::node_dns_name(&node.hostname, domain).ok();
-                    name == node.hostname || fqdn.as_deref() == Some(name.as_str())
+                    name == node.hostname.to_ascii_lowercase()
+                        || fqdn.is_some_and(|fqdn| fqdn.eq_ignore_ascii_case(&name))
                 }
                 NodeObservationTarget::MeshIp { address } => address
                     .parse::<std::net::IpAddr>()

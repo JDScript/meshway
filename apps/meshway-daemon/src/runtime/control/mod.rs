@@ -134,6 +134,7 @@ fn offer(control: &Control, network: Option<&network::Handle>) {
                 instance_id: instance.instance_id,
                 generation: instance.generation,
             }),
+        clock_floor_ms: control.clock_floor_ms(),
     });
 }
 
@@ -468,8 +469,7 @@ async fn idle(
             _ = tokio::time::sleep_until(deadline) => return Wake::Due,
             work = async { match network.as_deref_mut() { Some(network) => network.work().await, None => std::future::pending().await } } => match work {
                 network::Work::Request(request) => {
-                    let mut driver = shared.lock().await;
-                    if let Err(error) = network::request(&mut driver, request).await {
+                    if let Err(error) = network::request(shared, request).await {
                         tracing::debug!(%error, "Network control intent failed");
                     }
                 }
@@ -701,8 +701,7 @@ async fn online_session(
             },
             next = async { match network.as_deref_mut() { Some(network) => network.work().await, None => std::future::pending().await } } => match next {
                 network::Work::Request(request) => {
-                    let mut driver = shared.lock().await;
-                    if let Err(error) = network::request(&mut driver, request).await {
+                    if let Err(error) = network::request(shared, request).await {
                         tracing::debug!(%error, "Network control intent failed");
                     }
                 },
@@ -813,44 +812,40 @@ async fn maintain_once(
     work: &mut Maintenance,
     changed: bool,
 ) -> Result<(), (&'static str, Error)> {
+    use meshway_control::shared as control;
     let now = Instant::now();
-    shared
-        .lock()
-        .await
-        .authenticate()
+    control::authenticate(shared)
         .await
         .map_err(|error| ("authenticate", error))?;
     let mut fresh = false;
     if shared.lock().await.status().instance.is_none() {
-        let mut control = shared.lock().await;
-        control
-            .acquire_instance(if network.is_some() {
+        control::acquire_instance(
+            shared,
+            if network.is_some() {
                 network::capabilities()
             } else {
                 Default::default()
-            })
-            .await
-            .map_err(|error| ("acquire_instance", error))?;
+            },
+        )
+        .await
+        .map_err(|error| ("acquire_instance", error))?;
         work.renewed = Some(now);
         work.receipted = None;
         fresh = true;
         // State/receipt binding of the new instance; nothing reinstalls.
-        offer(&control, network.as_deref());
+        offer(&*shared.lock().await, network.as_deref());
     } else if work.renewed.is_none_or(|at| now >= at + RENEW) {
-        shared
-            .lock()
-            .await
-            .renew_instance()
+        control::renew_instance(shared)
             .await
             .map_err(|error| ("renew_instance", error))?;
         work.renewed = Some(now);
     }
     if let Some(network) = network {
-        receipt(&mut *shared.lock().await, network, work).await?;
+        receipt(shared, network, work).await?;
         let routine = fresh || work.reported.is_none_or(|at| now >= at + REPORT);
         if (routine || changed)
             && network
-                .report_state(&mut *shared.lock().await, settings, routine)
+                .report_state(shared, settings, routine)
                 .await
                 .map_err(|error| ("report_runtime_state", error))?
         {
@@ -861,21 +856,21 @@ async fn maintain_once(
             && let Some(netmap) = netmap
         {
             work.tasks = Some(now);
-            let tasks = shared
-                .lock()
-                .await
-                .get_observation_tasks(netmap)
+            let tasks = control::get_observation_tasks(shared, netmap)
                 .await
                 .map_err(|error| ("get_observation_tasks", error))?;
             network.observation_tasks(netmap, tasks.items);
         }
     } else if fresh || work.reported.is_none_or(|at| now >= at + REPORT) {
-        let mut control = shared.lock().await;
-        match control.report_control_state(settings.system.clone()).await {
+        let state = shared
+            .lock()
+            .await
+            .control_state(settings.system.clone())
+            .map_err(|error| ("report_control_state", error))?;
+        match control::report_runtime_state(shared, state, chrono::Utc::now()).await {
             Ok(_) => work.reported = Some(now),
             Err(Error::Pending) => {
-                control
-                    .retry_state_report()
+                control::retry_state_report(shared)
                     .await
                     .map_err(|error| ("retry_state_report", error))?;
             }
@@ -889,11 +884,12 @@ async fn maintain_once(
 /// instance: saved, then applied or failed. A new instance receipts the same,
 /// already installed netmap again as a new attempt.
 async fn receipt(
-    control: &mut Control,
+    shared: &Shared,
     network: &mut network::Handle,
     work: &mut Maintenance,
 ) -> Result<(), (&'static str, Error)> {
     let report = network.report.borrow().clone();
+    let control = shared.lock().await;
     let (Some(netmap), Some(completion)) = (report.netmap, report.completion) else {
         return Ok(());
     };
@@ -907,12 +903,11 @@ async fn receipt(
     if work.receipted == Some(key) || control.netmap_reference() != Some(netmap) {
         return Ok(());
     }
-    let ticket = control
-        .begin_application(netmap)
+    drop(control);
+    let ticket = meshway_control::shared::begin_application(shared, netmap)
         .await
         .map_err(|error| ("begin_application", error))?;
-    control
-        .finish_application(&ticket, completion, report.observed_at)
+    meshway_control::shared::finish_application(shared, &ticket, completion, report.observed_at)
         .await
         .map_err(|error| ("finish_application", error))?;
     work.receipted = Some(key);

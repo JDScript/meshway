@@ -237,6 +237,7 @@ impl Control {
         }
         self.publish_facts(sink);
         self.persist_facts().await;
+        self.persist_floor().await;
         self.netmap.exchange = Arc::new(());
         Ok(SyncOutcome {
             netmap: self.netmap().ok_or(Error::Lifecycle)?,
@@ -291,7 +292,17 @@ pub async fn sync_loop(
             match driver.begin_sync() {
                 Ok(call) => Some(call),
                 Err(Error::Lifecycle | Error::Expired) => {
-                    if let Err(error) = driver.authenticate().await {
+                    // Authenticate without holding the lock across its requests.
+                    drop(driver);
+                    let authenticated = tokio::select! { biased;
+                        _ = stop.cancelled() => return Ok(()),
+                        result = crate::shared::authenticate(control) => result,
+                    };
+                    if let Err(error) = authenticated {
+                        let driver = control.lock().await;
+                        if driver.netmap().is_none() {
+                            netmaps.send_if_modified(|current| current.take().is_some());
+                        }
                         if terminal(&error) {
                             return Err(error);
                         }
@@ -299,7 +310,12 @@ pub async fn sync_loop(
                     }
                     None
                 }
-                Err(error) if terminal(&error) => return Err(error),
+                Err(error) if terminal(&error) => {
+                    if driver.netmap().is_none() {
+                        netmaps.send_if_modified(|current| current.take().is_some());
+                    }
+                    return Err(error);
+                }
                 Err(_) => {
                     wait = Some(backoff);
                     None

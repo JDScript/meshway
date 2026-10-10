@@ -23,6 +23,12 @@ impl Clock {
             wall: wall(),
         }
     }
+    /// Never report a time before `floor_ms`, a UTC time observed earlier
+    /// (possibly before a restart): a clock set back cannot revive a lease.
+    pub fn raise_floor(&mut self, floor_ms: u64) {
+        let now = self.now();
+        self.wall = now.max(floor_ms);
+    }
     pub fn now(&mut self) -> u64 {
         let now = Instant::now();
         self.wall = self

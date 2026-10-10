@@ -393,3 +393,37 @@ async fn a_restarted_servers_complete_facts_update_and_never_erase_last_known_fa
     control.shutdown().await.unwrap();
     server.close().await;
 }
+
+#[tokio::test]
+async fn a_clock_set_back_across_a_restart_does_not_revive_an_ended_lease() {
+    let server = Server::start().await;
+    let proxy = Proxy::start(&server.origin).await;
+    let (mut control, binding, script) = enrolled(&server, &proxy, "floor").await;
+    let netmap = compiled(&binding, "floor", None);
+    script.push(Ok(full(&binding, &netmap, HOUR)));
+    let held = control.sync(&mut Facts::default()).await.unwrap().netmap;
+    control.shutdown().await.unwrap();
+    let path = server.path("floor");
+    let file = path.join("clock.json");
+    let saved: serde_json::Value = serde_json::from_slice(&fs::read(&file).unwrap()).unwrap();
+    assert_eq!(saved["format"], "meshway-clock-floor/1");
+    assert!(saved["highWaterMs"].as_u64().unwrap() >= held.lease.issued_at_ms);
+    // This Node already saw a time after the lease ended; the wall clock now
+    // reads earlier (as if set back). The saved high water still decides.
+    let ended = held.lease.expires_at_ms + 1;
+    fs::write(
+        &file,
+        serde_json::to_vec(&serde_json::json!({
+            "format": "meshway-clock-floor/1",
+            "highWaterMs": ended,
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let restored = reopen(&path, &proxy.origin);
+    assert!(restored.netmap().is_none());
+    assert!(restored.clock_floor_ms().unwrap() >= ended);
+    restored.shutdown().await.unwrap();
+    proxy.close().await;
+    server.close().await;
+}

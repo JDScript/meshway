@@ -252,3 +252,15 @@ async fn a_degraded_apply_keeps_content_and_the_same_content_retries_it() {
         "healthy renewal is a no-op"
     );
 }
+
+#[tokio::test(start_paused = true)]
+async fn a_raised_clock_floor_never_lets_an_ended_lease_run() {
+    let mut engine = Engine::new(Resources::default());
+    let content = Arc::new(meshway_test_server::single_node("a", None));
+    let netmap = input(&mut engine, content, 60_000);
+    // A time observed before a restart lies past the lease end although the
+    // wall clock was set back: the lease is over.
+    engine.raise_clock_floor(netmap.lease.expires_at_ms + 1);
+    assert_eq!(engine.reconfig(Some(&netmap)).await, Err(Error::Lease));
+    assert!(engine.desired().is_none());
+}

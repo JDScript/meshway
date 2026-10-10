@@ -40,6 +40,12 @@ impl Clock {
             changed: tokio::sync::Notify::new(),
         })
     }
+    /// Never report a UTC time before `floor_ms` (a time observed earlier,
+    /// possibly before a restart).
+    pub(crate) fn raise_floor(&self, floor_ms: u64) {
+        let _ = self.observe(floor_ms, Instant::now());
+    }
+
     fn observe(&self, wall: u64, monotonic: Instant) -> Result<u64, Error> {
         let elapsed: u64 = monotonic
             .duration_since(self.born)

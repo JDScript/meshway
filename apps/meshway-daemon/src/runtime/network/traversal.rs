@@ -97,7 +97,7 @@ impl TraversalGateway for Gateway {
 }
 
 pub(super) async fn dispatch(
-    control: &mut meshway_control::Control,
+    control: &tokio::sync::Mutex<meshway_control::Control>,
     request: Request,
 ) -> Result<(), meshway_control::Error> {
     let Request {
@@ -123,18 +123,23 @@ pub(super) async fn dispatch(
         remaining_ms = deadline.saturating_duration_since(started).as_millis() as u64,
         "Traversal request dispatched"
     );
+    use meshway_control::shared;
     let operation = async {
         Ok(match operation {
-            Operation::Query(netmap) => Reply::Query(control.query_udp_traversal(netmap).await?),
+            Operation::Query(netmap) => {
+                Reply::Query(shared::query_udp_traversal(control, netmap).await?)
+            }
             Operation::Peers { context, peers } => {
-                Reply::Peers(control.query_connectivity_peers(&context, &peers).await?)
+                Reply::Peers(shared::query_connectivity_peers(control, &context, &peers).await?)
             }
             Operation::Prepare { context, request } => {
-                Reply::Prepare(control.prepare_udp_traversal(&context, &request).await?)
+                Reply::Prepare(shared::prepare_udp_traversal(control, &context, &request).await?)
             }
-            Operation::Accept(offer) => Reply::Accept(control.accept_udp_traversal(&offer).await?),
+            Operation::Accept(offer) => {
+                Reply::Accept(shared::accept_udp_traversal(control, &offer).await?)
+            }
             Operation::Cancel(offer) => {
-                control.cancel_udp_traversal(&offer).await?;
+                shared::cancel_udp_traversal(control, &offer).await?;
                 Reply::Cancelled
             }
         })

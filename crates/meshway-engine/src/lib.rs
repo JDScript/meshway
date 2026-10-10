@@ -282,6 +282,12 @@ impl<C: Components> Engine<C> {
         self.apply(None).await
     }
 
+    /// Raise this Engine's lease clock to a UTC time observed earlier, for
+    /// example the high-water mark persisted before a restart.
+    pub fn raise_clock_floor(&mut self, floor_ms: u64) {
+        self.clock.raise_floor(floor_ms);
+    }
+
     /// Whether the current content lacks some capability (see
     /// [`Error::Degraded`]); a reconfig of the same content retries it.
     pub fn degraded(&self) -> bool {

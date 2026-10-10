@@ -1,6 +1,10 @@
 //! Runtime facts and ordered installation receipts use the same credential,
 //! sequence and retry owners as control-only reporting.
-use crate::{Control, Error, now};
+use crate::{
+    Control, Error,
+    exchange::{Prepared, Response},
+    now,
+};
 use meshway_model::{NetmapRef, Sequence, Version, state::NodeState};
 use meshway_protocol::{
     InstanceRequest, ReceiptRequest, StateAccepted, StateReport,
@@ -49,6 +53,12 @@ impl fmt::Debug for ApplicationTicket {
     }
 }
 
+/// A saved receipt already acknowledged, or its request.
+pub(crate) enum Receipt {
+    Done(ApplicationTicket),
+    Send(Prepared<ApplicationTicket, ()>),
+}
+
 impl Control {
     /// Confirm saved for this exact attempt of the held netmap before
     /// installation starts. An interrupted waiter retries the same saved
@@ -58,6 +68,16 @@ impl Control {
         &mut self,
         netmap: NetmapRef,
     ) -> Result<ApplicationTicket, Error> {
+        match self.prepare_begin_application(netmap)? {
+            Receipt::Done(ticket) => Ok(ticket),
+            Receipt::Send(prepared) => self.exchange(prepared, Self::apply_saved).await,
+        }
+    }
+
+    pub(crate) fn prepare_begin_application(
+        &mut self,
+        netmap: NetmapRef,
+    ) -> Result<Receipt, Error> {
         let instance = self.current_instance()?;
         if self.netmap_reference() != Some(netmap) {
             return Err(Error::Lifecycle);
@@ -107,22 +127,35 @@ impl Control {
             self.application = Some(ticket.clone());
             ticket
         };
-        if !ticket.0.saved_acknowledged.load(Ordering::Acquire) {
-            let response = self
-                .client
-                .submit_node_configuration_receipt(&ticket.0.saved, self.token()?)
-                .await;
-            if let Err(error) = self.receipt_response(response) {
-                if matches!(error, Error::ReceiptRejected(_)) {
-                    ticket.0.rejected.store(true, Ordering::Release);
-                }
-                return Err(error);
-            }
-            if self.current_instance()? != ticket.0.saved.instance {
-                return Err(Error::Lifecycle);
-            }
-            ticket.0.saved_acknowledged.store(true, Ordering::Release);
+        if ticket.0.saved_acknowledged.load(Ordering::Acquire) {
+            return Ok(Receipt::Done(ticket));
         }
+        let saved = ticket.0.saved.clone();
+        Ok(Receipt::Send(self.prepare(
+            ticket,
+            move |client, token| async move {
+                client
+                    .submit_node_configuration_receipt(&saved, &token)
+                    .await
+            },
+        )?))
+    }
+
+    pub(crate) fn apply_saved(
+        &mut self,
+        ticket: ApplicationTicket,
+        response: Response<()>,
+    ) -> Result<ApplicationTicket, Error> {
+        if let Err(error) = self.receipt_response(response) {
+            if matches!(error, Error::ReceiptRejected(_)) {
+                ticket.0.rejected.store(true, Ordering::Release);
+            }
+            return Err(error);
+        }
+        if self.current_instance()? != ticket.0.saved.instance {
+            return Err(Error::Lifecycle);
+        }
+        ticket.0.saved_acknowledged.store(true, Ordering::Release);
         Ok(ticket)
     }
 
@@ -134,6 +167,16 @@ impl Control {
         result: Result<(), ApplyFailure>,
         observed_at: chrono::DateTime<chrono::Utc>,
     ) -> Result<(), Error> {
+        let prepared = self.prepare_completion(ticket, result, observed_at)?;
+        self.exchange(prepared, Self::apply_completion).await
+    }
+
+    pub(crate) fn prepare_completion(
+        &mut self,
+        ticket: &ApplicationTicket,
+        result: Result<(), ApplyFailure>,
+        observed_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Prepared<ApplicationTicket, ()>, Error> {
         let current = self.current_instance()?;
         if ticket.0.rejected.load(Ordering::Acquire) {
             return Err(Error::Pending);
@@ -178,10 +221,18 @@ impl Control {
                 request
             }
         };
-        let response = self
-            .client
-            .submit_node_configuration_receipt(&request, self.token()?)
-            .await;
+        self.prepare(ticket.clone(), move |client, token| async move {
+            client
+                .submit_node_configuration_receipt(&request, &token)
+                .await
+        })
+    }
+
+    pub(crate) fn apply_completion(
+        &mut self,
+        ticket: ApplicationTicket,
+        response: Response<()>,
+    ) -> Result<(), Error> {
         if let Err(error) = self.receipt_response(response) {
             if matches!(error, Error::ReceiptRejected(_)) {
                 ticket.0.rejected.store(true, Ordering::Release);
@@ -199,6 +250,15 @@ impl Control {
         state: NodeState,
         observed_at: chrono::DateTime<chrono::Utc>,
     ) -> Result<StateAccepted, Error> {
+        let prepared = self.prepare_runtime_report(state, observed_at)?;
+        self.exchange(prepared, Self::apply_state_report).await
+    }
+
+    pub(crate) fn prepare_runtime_report(
+        &mut self,
+        state: NodeState,
+        observed_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Prepared<Sequence, StateAccepted>, Error> {
         let instance = self.current_instance()?;
         // A retry is the original observation, even if its target has since
         // become historical. Only Server can decide its remaining freshness.
@@ -207,7 +267,7 @@ impl Control {
             if pending.state != state {
                 return Err(Error::Pending);
             }
-            return self.retry_state_report().await;
+            return self.prepare_state_report();
         }
         let active = self.instance.as_ref().ok_or(Error::Lifecycle)?;
         if state.capabilities != active.capabilities {
@@ -244,6 +304,6 @@ impl Control {
             observed_at,
             state,
         });
-        self.retry_state_report().await
+        self.prepare_state_report()
     }
 }

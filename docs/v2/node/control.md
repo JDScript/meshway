@@ -57,6 +57,7 @@ daemon／CLI 通过本组件完成[控制生命周期](/v2/node/runtime#启动�
 - 短期会话、instance、lease 和上报计数不写入恢复文件；进程重启后重新认证并申请新 instance。签名的 netmap 及其租约例外，见 [Netmap 发布](#netmap-发布)。
 - `stop` 停用会话的本机使用资格。仍有效的短期凭据可留在当前进程，显式 `authenticate` 后复用，以免反复启停耗尽 Server 的会话额度；它不能恢复已释放的实例。
 - 期限同时受墙上时间和单调时钟约束，延迟响应与时钟回拨不会延长已取得的期限。
+- 共享 Control 的宿主经 `meshway_control::shared::*` 调用每个 Server 请求：只在准备请求与应用回答时持有 Control 锁，HTTP 往返期间不持锁，因此 sync 回答（安装、续租、撤回）不排在其他请求之后。回答应用前若 session／instance 上下文已变化（fence、stop、重新认证），该回答返回 `Pending` 不被应用。接入与换钥在 sync 会话之外以独占借用执行。
 - 已接纳写入即使失去等待者也由阻塞 worker 完成，并持续持有目录锁。结果不确定时返回 `ReloadRequired`，重新打开后才能发起依赖该状态的操作。
 - 损坏、缺字段、未知格式、错误绑定和异常文件权限都返回错误，不自动清理目录或生成替代身份。
 - 锁文件中的初始化标记先于身份写入持久化；已经初始化后丢失 `control.json` 返回错误，不能作为新安装自动生成身份。
@@ -148,7 +149,7 @@ State、回执、协调与观察结果只为 Control 持有且租约未结束的
 
 `signature` 是 Server 对租约的签名（`NetmapSignature`，权威），`seal` 是本节点控制钥对同一租约的签名 `{ signer: "node", keyId, keyGeneration, signature }`，只记录本身份接受了该内容。两者都签 `meshway_protocol::netmap_lease_transcript`：依次为 `meshway/netmap-lease/v1\0`、网络与节点 UUID、revision、serial、内容 digest、`issuedAt`／`expiresAt` 毫秒、signer 类型字节（0 = node，1 = server）和签名钥 key ID／generation，定长大端。digest 覆盖内容，full 与 delta 在重建后核对 digest 等于签名中的引用即被覆盖。
 
-Server 签名钥在接入时随 `EnrollmentResponse.serverSigningKey` 返回，与身份绑定一起保存在 `control.json` 中钉住；为 null 时节点不接受任何 netmap。重新打开时，格式 2 文件须同时满足格式、digest、网络／节点／keys 绑定、租约指向、钉住钥的 Server 签名与本节点 seal 才载入；租约未到期即恢复为执行授权（不联系 Server），已到期只作 delta 基准。格式 1 文件（只有本节点 seal）至多作为 delta 基准，从不恢复授权；首个已验签的 sync 回复把它重写为格式 2。重启依赖系统 UTC，进程间不保留时钟高水位。同内容续租在保存的截止被延后至少 1 小时时才重写文件。
+Server 签名钥在接入时随 `EnrollmentResponse.serverSigningKey`（必填）返回，与身份绑定一起保存在 `control.json` 中钉住；缺少它的接入回答不能解码，不产生绑定。重新打开时，格式 2 文件须同时满足格式、digest、网络／节点／keys 绑定、租约指向、钉住钥的 Server 签名与本节点 seal 才载入；租约未到期即恢复为执行授权（不联系 Server），已到期只作 delta 基准。格式 1 文件（只有本节点 seal）至多作为 delta 基准，从不恢复授权；首个已验签的 sync 回复把它重写为格式 2。Control 把观测到的 UTC 高水位保存在 `clock.json`（`{"format":"meshway-clock-floor/1","highWaterMs":…}`，至多每 60 秒随 sync 写一次，shutdown 时补写并 join），重新打开时 Control 时钟不低于它，也不低于缓存租约的 `issuedAt`；daemon 随 offer 把它交给 Engine，Engine 的租约时钟同样不低于它。墙钟在重启前后被调回时，已到期的租约不会复活（高水位最多落后 60 秒）。同内容续租在保存的截止被延后至少 1 小时时才重写文件。
 
 文件保护原语由 `meshway-private-storage` 提供，Server 与 Node 共用目录、祖先路径、文件类型／权限、锁和原子发布实现；文件名、记录格式和业务恢复仍归各自领域所有。
 

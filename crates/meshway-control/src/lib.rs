@@ -11,6 +11,9 @@ pub mod connectivity;
 mod runtime;
 pub use runtime::ApplicationTicket;
 mod enrollment;
+mod exchange;
+mod floor;
+pub use exchange::shared;
 mod identity;
 mod instance;
 mod netmap;
@@ -133,6 +136,8 @@ pub struct Control {
     record: Record,
     netmap: netmap::State,
     netmap_write: Option<tokio::task::JoinHandle<Result<(), meshway_private_storage::Error>>>,
+    floor_write: Option<tokio::task::JoinHandle<Result<(), meshway_private_storage::Error>>>,
+    floor_saved: Option<u64>,
     sync_transport: Option<Arc<dyn SyncTransport>>,
     write: Option<tokio::task::JoinHandle<Result<(), meshway_private_storage::Error>>>,
     dirty: bool,
@@ -189,6 +194,8 @@ impl Control {
             record,
             netmap: netmap::State::default(),
             netmap_write: None,
+            floor_write: None,
+            floor_saved: None,
             sync_transport: None,
             write: None,
             dirty: false,
@@ -204,6 +211,10 @@ impl Control {
             connectivity: connectivity::Authority::default(),
             observations: observations::Registry::default(),
         };
+        if let Some(floor) = floor::load(&control.directory) {
+            control.clock.raise_floor(floor);
+            control.floor_saved = Some(floor);
+        }
         control.load_netmap()?;
         Ok(control)
     }
@@ -404,6 +415,8 @@ impl Control {
             write.await.map_err(|_| Error::ReloadRequired)??;
         }
         self.finish_facts_write().await;
+        self.persist_floor().await;
+        self.finish_floor_write().await;
         stopped
     }
 }

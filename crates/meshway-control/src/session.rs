@@ -1,14 +1,35 @@
-use crate::{Control, Deadline, Error, Session, Started, random_id};
+use crate::{
+    Control, Deadline, Error, Session, Started,
+    exchange::{Prepared, Response},
+    random_id,
+};
 use meshway_control_client::ClientError;
 use meshway_model::{ChallengeId, RequestId};
 use meshway_protocol::{
     ErrorResponse, NodeChallengeIntent, NodeChallengeRequest, NodeSessionRequest,
     SignedNodeChallengeRequest, challenge_request_transcript,
-    node::{NodeProof, NodeSessionIntent, ProofOperation, proof_transcript, request_digest},
+    node::{
+        NodeChallenge, NodeProof, NodeSessionIntent, NodeSessionResponse, ProofOperation,
+        proof_transcript, request_digest,
+    },
 };
 use std::time::{Duration, Instant};
 
 const REFRESH_BEFORE: Duration = Duration::from_secs(60);
+
+pub(crate) struct ChallengeState {
+    binding: meshway_protocol::EnrollmentResponse,
+    intent: NodeSessionIntent,
+    digest: meshway_model::Digest,
+    challenge_intent: NodeChallengeIntent,
+    challenge_start: Started,
+}
+
+pub(crate) struct SessionState {
+    binding: meshway_protocol::EnrollmentResponse,
+    challenge_expires_at_ms: u64,
+    started: Started,
+}
 // The Server accepts at most 60 seconds from its own UTC observation. The
 // monotonic high-water projection may round ahead of wall time by a millisecond;
 // do not fill that entire signed request budget on a fast local connection.
@@ -19,6 +40,14 @@ impl Control {
     /// Reuse a live session until either its UTC high-water or monotonic
     /// remaining lifetime reaches 60 seconds, then refresh it proactively.
     pub async fn authenticate(&mut self) -> Result<(), Error> {
+        if self.authentication_current()? {
+            return Ok(());
+        }
+        self.refresh_authentication().await
+    }
+
+    /// Whether `authenticate` needs no request: the live session is reused.
+    pub(crate) fn authentication_current(&mut self) -> Result<bool, Error> {
         self.ready()?;
         if self.authentication.is_none()
             && let Some(session) = &mut self.session
@@ -36,9 +65,9 @@ impl Control {
                 .is_some_and(|remaining| remaining > REFRESH_BEFORE)
         {
             session.active = true;
-            return Ok(());
+            return Ok(true);
         }
-        self.refresh_authentication().await
+        Ok(false)
     }
 
     /// Obtain a fresh held-key session without extending instance or execution
@@ -46,6 +75,15 @@ impl Control {
     /// old snapshots retain their original deadlines after successful handoff.
     /// Cancellation and uncertain delivery retain the same session intent.
     pub async fn refresh_authentication(&mut self) -> Result<(), Error> {
+        let challenge = self.prepare_challenge()?;
+        let session = self.exchange(challenge, Self::apply_challenge).await?;
+        self.exchange(session, Self::apply_session).await
+    }
+
+    /// The challenge request of a fresh proof (no session token needed).
+    pub(crate) fn prepare_challenge(
+        &mut self,
+    ) -> Result<Prepared<ChallengeState, NodeChallenge>, Error> {
         self.ready()?;
         if self
             .session
@@ -101,13 +139,39 @@ impl Control {
             .ok_or(Error::Record)?
             .sign(&challenge_request_transcript(&challenge_intent))?;
         let challenge_start = Started::now(&self.clock)?;
-        let challenge = self
-            .client
-            .create_node_challenge(&SignedNodeChallengeRequest {
-                intent: challenge_intent.clone(),
-                signature,
-            })
-            .await;
+        let client = self.client.clone();
+        let request = SignedNodeChallengeRequest {
+            intent: challenge_intent.clone(),
+            signature,
+        };
+        Ok(self.prepare_public(
+            ChallengeState {
+                binding,
+                intent,
+                digest,
+                challenge_intent,
+                challenge_start,
+            },
+            async move { client.create_node_challenge(&request).await },
+        ))
+    }
+
+    /// Check the challenge and prepare the session request proving it.
+    pub(crate) fn apply_challenge(
+        &mut self,
+        state: ChallengeState,
+        challenge: Response<NodeChallenge>,
+    ) -> Result<Prepared<SessionState, NodeSessionResponse>, Error> {
+        let ChallengeState {
+            binding,
+            intent,
+            digest,
+            challenge_intent,
+            challenge_start,
+        } = state;
+        if self.record.binding.as_ref() != Some(&binding) {
+            return Err(Error::Pending);
+        }
         let challenge = self.proof_response(challenge, challenge_intent.expires_at_ms)?;
         // Session-response recovery requires a NEW challenge and the SAME
         // session intent; a consumed challenge is never a reusable proof.
@@ -135,17 +199,38 @@ impl Control {
             .ok_or(Error::Record)?
             .sign(&proof_transcript(&challenge))?;
         let started = Started::now(&self.clock)?;
-        let response = self
-            .client
-            .create_node_session(&NodeSessionRequest {
-                intent,
-                proof: NodeProof {
-                    challenge_id: challenge.id,
-                    signature,
-                },
-            })
-            .await;
-        let response = self.proof_response(response, challenge.expires_at_ms)?;
+        let client = self.client.clone();
+        let request = NodeSessionRequest {
+            intent,
+            proof: NodeProof {
+                challenge_id: challenge.id,
+                signature,
+            },
+        };
+        Ok(self.prepare_public(
+            SessionState {
+                binding,
+                challenge_expires_at_ms: challenge.expires_at_ms,
+                started,
+            },
+            async move { client.create_node_session(&request).await },
+        ))
+    }
+
+    pub(crate) fn apply_session(
+        &mut self,
+        state: SessionState,
+        response: Response<NodeSessionResponse>,
+    ) -> Result<(), Error> {
+        let SessionState {
+            binding,
+            challenge_expires_at_ms,
+            started,
+        } = state;
+        if self.record.binding.as_ref() != Some(&binding) {
+            return Err(Error::Pending);
+        }
+        let response = self.proof_response(response, challenge_expires_at_ms)?;
         if response.network_id != binding.network_id
             || response.node_id != binding.node_id
             || response.key_id != binding.keys.control.id
@@ -177,9 +262,9 @@ impl Control {
                 return Err(error.into());
             }
         };
-        // The exclusive Control borrow keeps identity/instance ownership fixed
-        // throughout this request. Time can still expire either old grant while
-        // HTTP is in flight; replacing a token must never revive that context.
+        // The binding is unchanged since the challenge (checked above). Time
+        // can still expire either old grant while HTTP is in flight;
+        // replacing a token must never revive that context.
         if self
             .session
             .as_ref()

@@ -1,13 +1,23 @@
 //! Runtime instance qualification and control-only State. The instance binds
 //! State, receipts, coordination and observation results; it never bounds
 //! netmap execution authority.
-use crate::{Control, Deadline, Error, Instance, Started, random_id};
+use crate::{
+    Control, Deadline, Error, Instance, Started,
+    exchange::{Prepared, Response},
+    random_id,
+};
 use meshway_model::{
-    InstanceId,
+    InstanceId, Sequence,
     state::{Capability, ConfigurationState, NodeState, SystemState},
 };
 use meshway_protocol::{AcquireInstanceRequest, InstanceLease, StateAccepted};
 use std::collections::BTreeMap;
+
+/// What acquiring an instance needs: nothing (it is held) or a request.
+pub(crate) enum Acquire {
+    Held(InstanceLease),
+    Request(Prepared<(AcquireInstanceRequest, Started), InstanceLease>),
+}
 
 impl Control {
     /// Capabilities come from the host's actual loaded implementations. The
@@ -16,13 +26,23 @@ impl Control {
         &mut self,
         capabilities: BTreeMap<String, Capability>,
     ) -> Result<InstanceLease, Error> {
+        match self.prepare_acquire(capabilities)? {
+            Acquire::Held(lease) => Ok(lease),
+            Acquire::Request(prepared) => self.exchange(prepared, Self::apply_acquire).await,
+        }
+    }
+
+    pub(crate) fn prepare_acquire(
+        &mut self,
+        capabilities: BTreeMap<String, Capability>,
+    ) -> Result<Acquire, Error> {
         self.token()?;
         if let Some(instance) = &self.instance {
             if instance.deadline.valid() {
                 if instance.capabilities != capabilities {
                     return Err(Error::Pending);
                 }
-                return Ok(instance.lease.clone());
+                return Ok(Acquire::Held(instance.lease.clone()));
             }
             self.fence();
         }
@@ -38,10 +58,18 @@ impl Control {
         }
         let request = self.acquiring.as_ref().ok_or(Error::Lifecycle)?.clone();
         let started = Started::now(&self.clock)?;
-        let response = self
-            .client
-            .acquire_node_instance(&request, self.token()?)
-            .await;
+        let sent = request.clone();
+        Ok(Acquire::Request(self.prepare(
+            (request, started),
+            move |client, token| async move { client.acquire_node_instance(&sent, &token).await },
+        )?))
+    }
+
+    pub(crate) fn apply_acquire(
+        &mut self,
+        (request, started): (AcquireInstanceRequest, Started),
+        response: Response<InstanceLease>,
+    ) -> Result<InstanceLease, Error> {
         let lease = self.registered(response)?;
         if lease.instance_id != request.instance_id {
             self.fence();
@@ -66,12 +94,23 @@ impl Control {
 
     /// Extend the current instance. A shorter or foreign lease fences it.
     pub async fn renew_instance(&mut self) -> Result<InstanceLease, Error> {
+        let prepared = self.prepare_renew()?;
+        self.exchange(prepared, Self::apply_renew).await
+    }
+
+    pub(crate) fn prepare_renew(&mut self) -> Result<Prepared<Started, InstanceLease>, Error> {
         let request = self.current_instance()?;
         let started = Started::now(&self.clock)?;
-        let response = self
-            .client
-            .renew_node_instance(&request, self.token()?)
-            .await;
+        self.prepare(started, move |client, token| async move {
+            client.renew_node_instance(&request, &token).await
+        })
+    }
+
+    pub(crate) fn apply_renew(
+        &mut self,
+        started: Started,
+        response: Response<InstanceLease>,
+    ) -> Result<InstanceLease, Error> {
         let lease = self.registered(response)?;
         let current = self.current_instance()?;
         let old = self.instance.as_ref().ok_or(Error::Lifecycle)?;
@@ -102,6 +141,12 @@ impl Control {
         &mut self,
         system: SystemState,
     ) -> Result<StateAccepted, Error> {
+        let state = self.control_state(system)?;
+        self.report_runtime_state(state, chrono::Utc::now()).await
+    }
+
+    /// The State a control-only run reports.
+    pub fn control_state(&self, system: SystemState) -> Result<NodeState, Error> {
         self.current_instance()?;
         let active = self.instance.as_ref().ok_or(Error::Lifecycle)?;
         let state = NodeState {
@@ -122,10 +167,18 @@ impl Control {
             problems: Vec::new(),
             exit_capability: None,
         };
-        self.report_runtime_state(state, chrono::Utc::now()).await
+        Ok(state)
     }
 
     pub async fn retry_state_report(&mut self) -> Result<StateAccepted, Error> {
+        let prepared = self.prepare_state_report()?;
+        self.exchange(prepared, Self::apply_state_report).await
+    }
+
+    /// The pending report, prepared for (re)delivery.
+    pub(crate) fn prepare_state_report(
+        &mut self,
+    ) -> Result<Prepared<Sequence, StateAccepted>, Error> {
         let instance = self.current_instance()?;
         let report = self.report.as_ref().ok_or(Error::Lifecycle)?;
         if report.instance_id != instance.instance_id {
@@ -141,7 +194,17 @@ impl Control {
             return Err(Error::Lifecycle);
         }
         let sequence = report.sequence;
-        let response = self.client.report_node_state(report, self.token()?).await;
+        let report = report.clone();
+        self.prepare(sequence, move |client, token| async move {
+            client.report_node_state(&report, &token).await
+        })
+    }
+
+    pub(crate) fn apply_state_report(
+        &mut self,
+        sequence: Sequence,
+        response: Response<StateAccepted>,
+    ) -> Result<StateAccepted, Error> {
         // Only this validated reporting-domain rejection is non-fencing. The
         // sample is not rewritten/reused with its sequence; a fresh observation
         // advances report_sequence after the next sync.

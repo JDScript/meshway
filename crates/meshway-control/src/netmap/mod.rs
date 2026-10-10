@@ -60,6 +60,8 @@ impl Control {
             return Ok(());
         };
         let reference = netmap.reference();
+        // The signed issue time is a trusted lower bound of the current time.
+        self.clock.raise_floor(lease.issued_at_ms);
         let known = facts::load(&self.directory, &netmap.netmap, reference);
         self.netmap.base = Some(Arc::new(netmap));
         if !authority || self.record.cache_blocked {

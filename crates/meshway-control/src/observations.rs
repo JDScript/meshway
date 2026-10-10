@@ -1,10 +1,12 @@
 //! Observation RPCs share the held-key Control session. A subscription response
 //! is feedback, never a permit: a task runs only while the source's own
 //! netmap decides it (`meshway_policy::compile::netmap::observation_paths`).
-use crate::{Control, Deadline, Error, Started};
+use crate::{
+    Control, Deadline, Error, Started,
+    exchange::{Prepared, Response},
+};
 use meshway_control_client::{ClientError, *};
 use meshway_model::{Digest, NetmapRef, ObservationSubscriptionId};
-use meshway_policy::compile::netmap::observation_paths;
 use meshway_protocol::{observations::*, *};
 use std::collections::BTreeMap;
 
@@ -192,32 +194,6 @@ impl Control {
     ) -> Result<std::sync::Arc<meshway_configuration::netmap::CompiledNetmap>, Error> {
         self.current_instance()?;
         self.held_netmap(reference)
-    }
-
-    /// Complete paths the current netmap lets this task measure. A task the
-    /// netmap does not decide is not executable here (`Expired`): the Server
-    /// assigned it on content the Node no longer holds.
-    fn observation_permit(
-        &self,
-        netmap: &meshway_configuration::netmap::CompiledNetmap,
-        task: &ObservationTask,
-    ) -> Result<Vec<Vec<meshway_model::NodeId>>, Error> {
-        let explicit = match &task.selection {
-            ObservationPath::Auto => None,
-            ObservationPath::Explicit { path } => Some(path.as_slice()),
-        };
-        let decided =
-            observation_paths(&netmap.netmap, task.target_node_id, &task.service, explicit)
-                .map_err(|_| Error::Expired)?;
-        if !decided.observable
-            || task
-                .path
-                .as_ref()
-                .is_some_and(|path| !decided.paths.contains(path))
-        {
-            return Err(Error::Expired);
-        }
-        Ok(decided.paths)
     }
 
     fn subscription_response(
@@ -461,8 +437,25 @@ impl Control {
         &mut self,
         netmap: NetmapRef,
     ) -> Result<ObservationList, Error> {
+        let prepared = self.prepare_observation_tasks(netmap)?;
+        self.exchange(prepared, Self::apply_observation_tasks).await
+    }
+
+    pub(crate) fn prepare_observation_tasks(
+        &mut self,
+        netmap: NetmapRef,
+    ) -> Result<Prepared<NetmapRef, ObservationList>, Error> {
         self.observation_netmap(netmap)?;
-        let result = self.client.get_node_tasks(self.token()?).await;
+        self.prepare(netmap, |client, token| async move {
+            client.get_node_tasks(&token).await
+        })
+    }
+
+    pub(crate) fn apply_observation_tasks(
+        &mut self,
+        netmap: NetmapRef,
+        result: Response<ObservationList>,
+    ) -> Result<ObservationList, Error> {
         let value = self.observation_response(result)?;
         self.observation_netmap(netmap)?;
         if value.items.len() > LIMIT {
@@ -485,9 +478,20 @@ impl Control {
         task: &ObservationTask,
         result: &ObservationResult,
     ) -> Result<ObservationTask, Error> {
-        let netmap = self.observation_netmap(result.netmap)?;
+        let prepared = self.prepare_observation_result(task, result)?;
+        self.exchange(prepared, Self::apply_observation_result)
+            .await
+    }
+
+    /// Structural checks only: the path was bound and measured by the
+    /// dataplane on the installed content, which decides observability.
+    pub(crate) fn prepare_observation_result(
+        &mut self,
+        task: &ObservationTask,
+        result: &ObservationResult,
+    ) -> Result<Prepared<(ObservationTask, ObservationResult), ObservationTask>, Error> {
+        self.observation_netmap(result.netmap)?;
         self.observation_task(task)?;
-        let permitted = self.observation_permit(&netmap, task)?;
         if result.instance_id != self.current_instance()?.instance_id {
             return Err(Error::Contract);
         }
@@ -502,7 +506,6 @@ impl Control {
                     *path_segment < high
                         || (*path_segment == high && task.path.as_ref() != Some(path))
                 })
-                || !permitted.contains(path)
                 || sample.partial
                 || sample.window_start >= sample.window_end
                 || sample.window_end > task.expires_at
@@ -515,14 +518,18 @@ impl Control {
         {
             return Err(Error::Contract);
         }
-        let response = self
-            .client
-            .report_task_result(
-                &ReportTaskResultPath { task_id: task.id },
-                result,
-                self.token()?,
-            )
-            .await;
+        let (path, body) = (ReportTaskResultPath { task_id: task.id }, result.clone());
+        self.prepare((task.clone(), result.clone()), move |client, token| async move {
+            client.report_task_result(&path, &body, &token).await
+        })
+    }
+
+    pub(crate) fn apply_observation_result(
+        &mut self,
+        (task, result): (ObservationTask, ObservationResult),
+        response: Response<ObservationTask>,
+    ) -> Result<ObservationTask, Error> {
+        let (task, result) = (&task, &result);
         let value = self.observation_response(response)?;
         self.observation_netmap(result.netmap)?;
         self.observation_task(&value)?;
