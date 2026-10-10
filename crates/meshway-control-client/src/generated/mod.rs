@@ -415,7 +415,7 @@ impl crate::Client {
             .await?;
         match response.status {
             200 => response.json(),
-            400 | 401 | 404 | 409 | 413 | 415 | 422 | 503 => Err(response.problem()),
+            400 | 401 | 403 | 404 | 409 | 413 | 415 | 422 | 503 => Err(response.problem()),
             _ => Err(response.unexpected()),
         }
     }
@@ -1051,7 +1051,7 @@ impl crate::Client {
             .await?;
         match response.status {
             200 => response.json(),
-            400 | 401 | 409 | 413 | 415 | 503 => Err(response.problem()),
+            400 | 401 | 403 | 409 | 413 | 415 | 503 => Err(response.problem()),
             _ => Err(response.unexpected()),
         }
     }
@@ -3729,7 +3729,7 @@ impl crate::Client {
             .await?;
         match response.status {
             204 => response.empty(),
-            400 | 401 | 404 | 409 | 413 | 415 | 422 | 503 => Err(response.problem()),
+            400 | 401 | 403 | 404 | 409 | 413 | 415 | 422 | 503 => Err(response.problem()),
             _ => Err(response.unexpected()),
         }
     }
@@ -3867,7 +3867,7 @@ impl crate::Client {
             .await?;
         match response.status {
             200 => response.json(),
-            400 | 401 | 404 | 409 | 413 | 415 | 422 | 503 => Err(response.problem()),
+            400 | 401 | 403 | 404 | 409 | 413 | 415 | 422 | 503 => Err(response.problem()),
             _ => Err(response.unexpected()),
         }
     }
@@ -4420,7 +4420,7 @@ impl crate::Client {
             .await?;
         match response.status {
             204 => response.empty(),
-            400 | 401 | 409 | 413 | 415 | 503 => Err(response.problem()),
+            400 | 401 | 403 | 409 | 413 | 415 | 503 => Err(response.problem()),
             _ => Err(response.unexpected()),
         }
     }
@@ -4441,7 +4441,7 @@ impl crate::Client {
             .await?;
         match response.status {
             200 => response.json(),
-            400 | 401 | 409 | 413 | 415 | 503 => Err(response.problem()),
+            400 | 401 | 403 | 409 | 413 | 415 | 503 => Err(response.problem()),
             _ => Err(response.unexpected()),
         }
     }

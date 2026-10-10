@@ -58,6 +58,17 @@ pub(crate) fn authorize_node(
     token: [u8; 32],
     now: i64,
 ) -> Result<NodePrincipal, Error> {
+    // A recognized, unexpired bearer can receive a precise identity rejection.
+    // Missing/expired tokens and malformed proof remain generic credentials
+    // failures, which cannot revoke a previously signed offline lease.
+    let revoked = tx.query_row(
+        "SELECT n.credentials_revoked_at IS NOT NULL OR k.revoked_at IS NOT NULL OR k.retired_at IS NOT NULL FROM node_sessions s JOIN nodes n ON n.network_id=s.network_id AND n.id=s.node_id JOIN node_keys k ON k.id=s.key_id AND k.network_id=s.network_id AND k.node_id=s.node_id WHERE s.token_hash=?1 AND s.boot_id=?2 AND s.created_at<=?3 AND s.expires_at>?3",
+        params![token.as_slice(), boot.as_uuid().as_bytes().as_slice(), now],
+        |row| row.get::<_, bool>(0),
+    ).optional()?;
+    if revoked == Some(true) {
+        return Err(Error::NodeIdentityRejected);
+    }
     let row=tx.query_row("SELECT s.network_id,s.node_id,s.key_id,s.expires_at FROM node_sessions s JOIN nodes n ON n.network_id=s.network_id AND n.id=s.node_id JOIN node_keys k ON k.id=s.key_id AND k.network_id=s.network_id AND k.node_id=s.node_id WHERE s.token_hash=?1 AND s.boot_id=?2 AND s.created_at<=?3 AND s.expires_at>?3 AND n.credentials_revoked_at IS NULL AND k.revoked_at IS NULL AND k.retired_at IS NULL AND k.purpose='control'",params![token.as_slice(),boot.as_uuid().as_bytes().as_slice(),now],|r|Ok((r.get::<_,Vec<u8>>(0)?,r.get::<_,Vec<u8>>(1)?,r.get::<_,Vec<u8>>(2)?,r.get::<_,i64>(3)?))).optional()?.ok_or(Error::InvalidCredentials)?;
     let p = NodePrincipal {
         network: id(row.0)?,
@@ -70,7 +81,12 @@ pub(crate) fn authorize_node(
             .map_err(|_| Error::decode("node_sessions.expires_at"))?,
     };
     let (_, cfg, bindings) = current_configuration(tx, sealer, p.network)?;
-    identity_eligible(tx, &cfg, &bindings, p.network, p.node)?;
+    identity_eligible(tx, &cfg, &bindings, p.network, p.node).map_err(|error| match error {
+        Error::PermissionDenied | Error::NotFound | Error::InvalidCredentials => {
+            Error::NodeIdentityRejected
+        }
+        error => error,
+    })?;
     Ok(p)
 }
 fn bound_key(
@@ -79,24 +95,40 @@ fn bound_key(
     node: NodeId,
     key: KeyId,
 ) -> Result<BoundNodeKey, Error> {
-    let (generation,key_bytes):(i64,Vec<u8>)=tx.query_row("SELECT k.generation,k.public_key FROM node_keys k JOIN nodes n ON n.network_id=k.network_id AND n.id=k.node_id WHERE k.network_id=?1 AND k.node_id=?2 AND k.id=?3 AND k.purpose='control' AND k.retired_at IS NULL AND k.revoked_at IS NULL AND n.credentials_revoked_at IS NULL",params![network.as_uuid().as_bytes().as_slice(),node.as_uuid().as_bytes().as_slice(),key.as_uuid().as_bytes().as_slice()],|r|Ok((r.get(0)?,r.get(1)?))).optional()?.ok_or(Error::InvalidCredentials)?;
-    Ok(BoundNodeKey {
-        id: key,
-        generation: Version::new(
-            generation
-                .try_into()
-                .map_err(|_| Error::decode("node_keys.generation"))?,
-        )
-        .map_err(|_| Error::decode("node_keys.generation"))?,
-        public_key: NodePublicKey {
-            algorithm: KeyAlgorithm::Ed25519,
-            bytes: Digest::from_bytes(
-                key_bytes
+    let (key, revoked) = known_key(tx, network, node, key)?;
+    if revoked {
+        return Err(Error::InvalidCredentials);
+    }
+    Ok(key)
+}
+
+fn known_key(
+    tx: &Transaction<'_>,
+    network: NetworkId,
+    node: NodeId,
+    key: KeyId,
+) -> Result<(BoundNodeKey, bool), Error> {
+    let (generation,key_bytes,revoked):(i64,Vec<u8>,bool)=tx.query_row("SELECT k.generation,k.public_key,k.retired_at IS NOT NULL OR k.revoked_at IS NOT NULL OR n.credentials_revoked_at IS NOT NULL FROM node_keys k JOIN nodes n ON n.network_id=k.network_id AND n.id=k.node_id WHERE k.network_id=?1 AND k.node_id=?2 AND k.id=?3 AND k.purpose='control'",params![network.as_uuid().as_bytes().as_slice(),node.as_uuid().as_bytes().as_slice(),key.as_uuid().as_bytes().as_slice()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?.ok_or(Error::InvalidCredentials)?;
+    Ok((
+        BoundNodeKey {
+            id: key,
+            generation: Version::new(
+                generation
                     .try_into()
-                    .map_err(|_| Error::decode("node_keys.public_key"))?,
-            ),
+                    .map_err(|_| Error::decode("node_keys.generation"))?,
+            )
+            .map_err(|_| Error::decode("node_keys.generation"))?,
+            public_key: NodePublicKey {
+                algorithm: KeyAlgorithm::Ed25519,
+                bytes: Digest::from_bytes(
+                    key_bytes
+                        .try_into()
+                        .map_err(|_| Error::decode("node_keys.public_key"))?,
+                ),
+            },
         },
-    })
+        revoked,
+    ))
 }
 pub(crate) fn challenge(
     tx: &Transaction<'_>,
@@ -126,14 +158,24 @@ fn challenge_at(
         return Err(Error::InvalidCredentials);
     }
     let request = &intent.request;
-    let key = bound_key(tx, request.network_id, request.node_id, request.key_id)?;
+    let (key, revoked) = known_key(tx, request.network_id, request.node_id, request.key_id)?;
     proof::verify_bytes(
         key.public_key.bytes.as_bytes(),
         &challenge_request_transcript(&intent),
         signed.signature.expose(),
     )?;
+    if revoked {
+        return Err(Error::NodeIdentityRejected);
+    }
     let (_, cfg, bindings) = current_configuration(tx, sealer, request.network_id)?;
-    identity_eligible(tx, &cfg, &bindings, request.network_id, request.node_id)?;
+    identity_eligible(tx, &cfg, &bindings, request.network_id, request.node_id).map_err(
+        |error| match error {
+            Error::PermissionDenied | Error::NotFound | Error::InvalidCredentials => {
+                Error::NodeIdentityRejected
+            }
+            error => error,
+        },
+    )?;
     // Authenticate even idempotent reads. A retired key or ineligible identity
     // cannot recover an old challenge. Consumed rows retain their original nonce
     // and are returned here, but consume() still rejects their proof.

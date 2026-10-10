@@ -20,6 +20,8 @@ pub enum Error {
     InvalidSession,
     #[error("invalid credentials")]
     InvalidCredentials,
+    #[error("Node identity is no longer eligible")]
+    NodeIdentityRejected,
 
     // Authorization
     #[error("permission denied")]

@@ -317,21 +317,16 @@ impl Control {
         self.context_validity = Arc::new(AtomicBool::new(true));
     }
 
-    /// 401/409 (session, instance or binding conflict) fence instance-bound
-    /// state; 403/404 also reject this identity and revoke netmap authority.
+    /// Only a decoded identity rejection invalidates signed netmap authority.
+    /// HTTP/session/resource failures can require fresh HTTP credentials only.
     fn registered<T>(
         &mut self,
         response: Result<T, ClientError<ErrorResponse>>,
     ) -> Result<T, Error> {
-        if matches!(
-            &response,
-            Err(ClientError::Http {
-                status: 403 | 404,
-                ..
-            } | ClientError::Network {
-                status: Some(403 | 404)
-            })
-        ) {
+        if response
+            .as_ref()
+            .is_err_and(|error| identity_rejected(error))
+        {
             self.block_netmap_cache()?;
         }
         if matches!(
@@ -412,6 +407,11 @@ impl Control {
         }
         stopped
     }
+}
+
+fn identity_rejected(error: &ClientError<ErrorResponse>) -> bool {
+    matches!(error, ClientError::Http { status: 403, problem: Some(body) }
+        if body.status == 403 && matches!(body.problem, meshway_protocol::Problem::NodeIdentityRejected { .. }))
 }
 
 pub fn server_origin(value: &str) -> Result<String, Error> {

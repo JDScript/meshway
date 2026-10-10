@@ -1910,6 +1910,10 @@ export const zProblem = z.union([z.strictObject({
   ["message"]: z.string(),
   ["params"]: zEmptyParams
 }), z.strictObject({
+  ["code"]: z.enum(["node_identity_rejected"]),
+  ["message"]: z.string(),
+  ["params"]: zEmptyParams
+}), z.strictObject({
   ["code"]: z.enum(["invalid_current_password"]),
   ["message"]: z.string(),
   ["params"]: zEmptyParams

@@ -9,7 +9,7 @@ export function acceptUdpTraversal(client: ControlClient, path: z.output<typeof 
 }
 
 export function acquireNodeInstance(client: ControlClient, body: z.output<typeof zAcquireInstanceRequest>, options: AuthenticatedRequestOptions) {
-  return client.request({ method: "POST", path: "/agent-api/v1/instances", authenticated: true, successStatus: 200, success: zInstanceLease, errors: [400, 401, 404, 409, 413, 415, 422, 503], problem: zErrorResponse, body: { schema: zAcquireInstanceRequest, value: body } }, options);
+  return client.request({ method: "POST", path: "/agent-api/v1/instances", authenticated: true, successStatus: 200, success: zInstanceLease, errors: [400, 401, 403, 404, 409, 413, 415, 422, 503], problem: zErrorResponse, body: { schema: zAcquireInstanceRequest, value: body } }, options);
 }
 
 export function applyConfiguration(client: ControlClient, path: z.output<typeof zApplyConfigurationPath>, body: z.output<typeof zConfigurationRequest>, options: AuthenticatedRequestOptions) {
@@ -73,7 +73,7 @@ export function createNetwork(client: ControlClient, body: z.output<typeof zCrea
 }
 
 export function createNodeChallenge(client: ControlClient, body: z.output<typeof zSignedNodeChallengeRequest>, options: RequestOptions = {}) {
-  return client.request({ method: "POST", path: "/agent-api/v1/auth/challenges", authenticated: false, successStatus: 200, success: zNodeChallenge, errors: [400, 401, 409, 413, 415, 503], problem: zErrorResponse, body: { schema: zSignedNodeChallengeRequest, value: body } }, options);
+  return client.request({ method: "POST", path: "/agent-api/v1/auth/challenges", authenticated: false, successStatus: 200, success: zNodeChallenge, errors: [400, 401, 403, 409, 413, 415, 503], problem: zErrorResponse, body: { schema: zSignedNodeChallengeRequest, value: body } }, options);
 }
 
 export function createNodeObservation(client: ControlClient, body: z.output<typeof zCreateNodeObservation>, options: AuthenticatedRequestOptions) {
@@ -305,7 +305,7 @@ export function register(client: ControlClient, body: z.output<typeof zRegisterR
 }
 
 export function releaseNodeInstance(client: ControlClient, body: z.output<typeof zInstanceRequest>, options: AuthenticatedRequestOptions) {
-  return client.request({ method: "POST", path: "/agent-api/v1/instances/release", authenticated: true, successStatus: 204, success: undefined, errors: [400, 401, 404, 409, 413, 415, 422, 503], problem: zErrorResponse, body: { schema: zInstanceRequest, value: body } }, options);
+  return client.request({ method: "POST", path: "/agent-api/v1/instances/release", authenticated: true, successStatus: 204, success: undefined, errors: [400, 401, 403, 404, 409, 413, 415, 422, 503], problem: zErrorResponse, body: { schema: zInstanceRequest, value: body } }, options);
 }
 
 export function removeMember(client: ControlClient, path: z.output<typeof zRemoveMemberPath>, body: z.output<typeof zRemoveMemberRequest>, options: AuthenticatedRequestOptions) {
@@ -317,7 +317,7 @@ export function renameNetwork(client: ControlClient, path: z.output<typeof zRena
 }
 
 export function renewNodeInstance(client: ControlClient, body: z.output<typeof zInstanceRequest>, options: AuthenticatedRequestOptions) {
-  return client.request({ method: "POST", path: "/agent-api/v1/instances/renew", authenticated: true, successStatus: 200, success: zInstanceLease, errors: [400, 401, 404, 409, 413, 415, 422, 503], problem: zErrorResponse, body: { schema: zInstanceRequest, value: body } }, options);
+  return client.request({ method: "POST", path: "/agent-api/v1/instances/renew", authenticated: true, successStatus: 200, success: zInstanceLease, errors: [400, 401, 403, 404, 409, 413, 415, 422, 503], problem: zErrorResponse, body: { schema: zInstanceRequest, value: body } }, options);
 }
 
 export function renewNodeObservation(client: ControlClient, path: z.output<typeof zRenewNodeObservationPath>, body: z.output<typeof zRenewNodeObservation>, options: AuthenticatedRequestOptions) {
@@ -373,11 +373,11 @@ export function selectNodeRoutingProfile(client: ControlClient, body: z.output<t
 }
 
 export function submitNodeConfigurationReceipt(client: ControlClient, body: z.output<typeof zReceiptRequest>, options: AuthenticatedRequestOptions) {
-  return client.request({ method: "POST", path: "/agent-api/v1/configuration/receipts", authenticated: true, successStatus: 204, success: undefined, errors: [400, 401, 409, 413, 415, 503], problem: zErrorResponse, body: { schema: zReceiptRequest, value: body } }, options);
+  return client.request({ method: "POST", path: "/agent-api/v1/configuration/receipts", authenticated: true, successStatus: 204, success: undefined, errors: [400, 401, 403, 409, 413, 415, 503], problem: zErrorResponse, body: { schema: zReceiptRequest, value: body } }, options);
 }
 
 export function syncNode(client: ControlClient, body: z.output<typeof zSyncRequest>, options: AuthenticatedRequestOptions) {
-  return client.request({ method: "POST", path: "/agent-api/v1/sync", authenticated: true, successStatus: 200, success: zSyncResponse, errors: [400, 401, 409, 413, 415, 503], problem: zErrorResponse, body: { schema: zSyncRequest, value: body } }, options);
+  return client.request({ method: "POST", path: "/agent-api/v1/sync", authenticated: true, successStatus: 200, success: zSyncResponse, errors: [400, 401, 403, 409, 413, 415, 503], problem: zErrorResponse, body: { schema: zSyncRequest, value: body } }, options);
 }
 
 export function validateConfiguration(client: ControlClient, path: z.output<typeof zValidateConfigurationPath>, body: z.output<typeof zConfigurationRequest>, options: AuthenticatedRequestOptions) {

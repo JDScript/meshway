@@ -99,6 +99,13 @@ impl HttpError {
                     message: "Invalid credentials.".into(),
                 },
             ),
+            Error::NodeIdentityRejected => simple(
+                StatusCode::FORBIDDEN,
+                Problem::NodeIdentityRejected {
+                    params: EmptyParams {},
+                    message: "Node identity is no longer eligible".into(),
+                },
+            ),
             Error::PermissionDenied => simple(
                 S::FORBIDDEN,
                 Problem::PermissionDenied {
@@ -422,6 +429,7 @@ pub fn problem_samples() -> Vec<ProblemSample> {
     let samples = [
         Error::InvalidSession,
         Error::InvalidCredentials,
+        Error::NodeIdentityRejected,
         Error::PermissionDenied,
         Error::RegistrationDisabled,
         Error::NotFound,

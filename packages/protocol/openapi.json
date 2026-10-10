@@ -99,6 +99,25 @@
               }
             }
           },
+          "403": {
+            "description": "node_identity_rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "problem": {
+                    "code": "node_identity_rejected",
+                    "message": "Node identity is no longer eligible",
+                    "params": {}
+                  },
+                  "requestId": "00000000-0000-0000-0000-000000000001",
+                  "status": 403
+                }
+              }
+            }
+          },
           "409": {
             "description": "binding_conflict",
             "content": {
@@ -571,6 +590,25 @@
                   },
                   "requestId": "00000000-0000-0000-0000-000000000001",
                   "status": 401
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "node_identity_rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "problem": {
+                    "code": "node_identity_rejected",
+                    "message": "Node identity is no longer eligible",
+                    "params": {}
+                  },
+                  "requestId": "00000000-0000-0000-0000-000000000001",
+                  "status": 403
                 }
               }
             }
@@ -2978,6 +3016,25 @@
               }
             }
           },
+          "403": {
+            "description": "node_identity_rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "problem": {
+                    "code": "node_identity_rejected",
+                    "message": "Node identity is no longer eligible",
+                    "params": {}
+                  },
+                  "requestId": "00000000-0000-0000-0000-000000000001",
+                  "status": 403
+                }
+              }
+            }
+          },
           "404": {
             "description": "not_found",
             "content": {
@@ -3161,6 +3218,25 @@
                   },
                   "requestId": "00000000-0000-0000-0000-000000000001",
                   "status": 401
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "node_identity_rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "problem": {
+                    "code": "node_identity_rejected",
+                    "message": "Node identity is no longer eligible",
+                    "params": {}
+                  },
+                  "requestId": "00000000-0000-0000-0000-000000000001",
+                  "status": 403
                 }
               }
             }
@@ -3361,6 +3437,25 @@
                   },
                   "requestId": "00000000-0000-0000-0000-000000000001",
                   "status": 401
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "node_identity_rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "problem": {
+                    "code": "node_identity_rejected",
+                    "message": "Node identity is no longer eligible",
+                    "params": {}
+                  },
+                  "requestId": "00000000-0000-0000-0000-000000000001",
+                  "status": 403
                 }
               }
             }
@@ -5528,6 +5623,25 @@
                   },
                   "requestId": "00000000-0000-0000-0000-000000000001",
                   "status": 401
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "node_identity_rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "problem": {
+                    "code": "node_identity_rejected",
+                    "message": "Node identity is no longer eligible",
+                    "params": {}
+                  },
+                  "requestId": "00000000-0000-0000-0000-000000000001",
+                  "status": 403
                 }
               }
             }
@@ -31697,6 +31811,32 @@
                 "type": "string",
                 "enum": [
                   "invalid_credentials"
+                ]
+              },
+              "message": {
+                "type": "string",
+                "description": "Safe fallback text. Clients branch on code."
+              },
+              "params": {
+                "$ref": "#/components/schemas/EmptyParams",
+                "description": "Structured context defined by this problem code, or an empty object when none is exposed."
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "This Node's registered identity or key is no longer eligible; returns HTTP 403 and invalidates its held netmap.",
+            "required": [
+              "code",
+              "params",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "node_identity_rejected"
                 ]
               },
               "message": {

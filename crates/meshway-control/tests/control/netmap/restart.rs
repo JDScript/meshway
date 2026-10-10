@@ -27,10 +27,7 @@ async fn known_identity_rejection_survives_restart_until_a_fresh_signed_sync() {
     let netmap = compiled(&binding, "rejected-cache", None);
     script.push(Ok(full(&binding, &netmap, HOUR)));
     let old = control.sync(&mut Facts::default()).await.unwrap().snapshot;
-    script.push(Err(meshway_control_client::ClientError::Http {
-        status: 403,
-        problem: None,
-    }));
+    script.push(Err(super::review::identity_rejection()));
     assert!(control.sync(&mut Facts::default()).await.is_err());
     assert!(old.ensure_current().is_err());
     control.shutdown().await.unwrap();

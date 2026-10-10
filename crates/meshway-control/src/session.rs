@@ -222,19 +222,8 @@ impl Control {
             self.reject_authentication();
             Err(Error::Expired)
         } else {
-            // This rejection is of a fresh signed identity proof, not an
-            // expired bearer. It ends the held netmap as well as HTTP scope.
-            if matches!(
-                &response,
-                Err(ClientError::Http {
-                    status: 401 | 403 | 404,
-                    ..
-                } | ClientError::Network {
-                    status: Some(401 | 403 | 404)
-                })
-            ) {
-                self.block_netmap_cache()?;
-            }
+            // Server clock skew or an intermediary may reject even a locally
+            // fresh proof. Only the typed identity problem revokes netmap.
             self.authentication_response(response)
         }
     }

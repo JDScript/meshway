@@ -205,11 +205,21 @@ impl Control {
         }
         let change = if previous == Some(reference) {
             let base = self.netmap.base.clone().ok_or(Error::Lifecycle)?;
-            let renewed = self
-                .netmap
-                .installed
-                .as_ref()
-                .is_some_and(|renewal| renewal.renew(lease, deadline.clone()).is_ok());
+            let renewed = match self.netmap.installed.as_ref() {
+                Some(renewal) => {
+                    // A signed but stale lease is not new authority, even if
+                    // the old lease has since expired. Never revive by replay.
+                    if lease.issued_at_ms < renewal.lease().issued_at_ms {
+                        return Err(Error::Contract);
+                    }
+                    match renewal.renew(lease, deadline.clone()) {
+                        Ok(()) => true,
+                        Err(meshway_authority::Error::Expired) => false,
+                        Err(error) => return Err(error.into()),
+                    }
+                }
+                None => false,
+            };
             if renewed {
                 NetmapChange::Renewed
             } else {

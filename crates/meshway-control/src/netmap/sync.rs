@@ -173,18 +173,6 @@ impl Control {
         let response = match reply.result {
             Ok(response) => response,
             Err(error) => {
-                let rejected = matches!(
-                    &error,
-                    ClientError::Http {
-                        status: 403 | 404,
-                        ..
-                    } | ClientError::Network {
-                        status: Some(403 | 404)
-                    }
-                );
-                if rejected {
-                    self.revoke_netmap();
-                }
                 // Session/legacy handling is shared with every Node request;
                 // it never touches the netmap authority.
                 return self.registered(Err(error));
@@ -246,17 +234,7 @@ fn terminal(error: &Error) -> bool {
     matches!(
         error,
         Error::ReloadRequired | Error::Record | Error::Endpoint | Error::MembershipRevoked
-    ) || matches!(
-        error,
-        Error::Server(
-            ClientError::Http {
-                status: 403 | 404,
-                ..
-            } | ClientError::Network {
-                status: Some(403 | 404)
-            }
-        )
-    )
+    ) || matches!(error, Error::Server(error) if crate::identity_rejected(error))
 }
 
 /// Drive the long poll until `stop`. The driver lock is held only to prepare

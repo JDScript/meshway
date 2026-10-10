@@ -13,6 +13,7 @@ use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use support::{Facts, Script, compiled, full, lease, signed, unchanged};
 
 mod restart;
+mod review;
 mod signature;
 pub mod support;
 
@@ -266,11 +267,8 @@ async fn superseded_replies_transport_failures_and_identity_rejection() {
     assert!(matches!(control.begin_sync(), Err(Error::Lifecycle)));
     snapshot.ensure_current().unwrap();
     control.authenticate().await.unwrap();
-    // 403 rejects this identity: authority ends at once.
-    script.push(Err(ClientError::Http {
-        status: 403,
-        problem: None,
-    }));
+    // A decoded identity rejection ends authority at once.
+    script.push(Err(review::identity_rejection()));
     assert!(control.sync(&mut Facts::default()).await.is_err());
     assert!(snapshot.ensure_current().is_err() && control.netmap_snapshot().is_err());
     assert_eq!(control.netmap_reference(), Some(netmap.reference()));

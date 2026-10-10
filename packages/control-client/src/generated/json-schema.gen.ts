@@ -12006,6 +12006,32 @@ export const schemaDocument = {
           },
           {
             "type": "object",
+            "description": "This Node's registered identity or key is no longer eligible; returns HTTP 403 and invalidates its held netmap.",
+            "required": [
+              "code",
+              "params",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "node_identity_rejected"
+                ]
+              },
+              "message": {
+                "type": "string",
+                "description": "Safe fallback text. Clients branch on code."
+              },
+              "params": {
+                "$ref": "#/components/schemas/EmptyParams",
+                "description": "Structured context defined by this problem code, or an empty object when none is exposed."
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
             "description": "The supplied current password is incorrect; returns HTTP 400.",
             "required": [
               "code",

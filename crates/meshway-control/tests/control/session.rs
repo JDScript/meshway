@@ -240,10 +240,11 @@ async fn definitive_member_credential_rejection_fences_preexisting_execution() {
         )
         .await
         .unwrap();
-    assert!(control.refresh_authentication().await.is_err());
+    let rejected = control.refresh_authentication().await;
+    assert!(rejected.is_err());
     assert!(!control.status().authenticated);
     assert!(control.status().instance.is_none());
-    assert!(old.ensure_current().is_err());
+    assert!(old.ensure_current().is_err(), "{rejected:?}");
     assert_eq!(
         proxy.count(SESSION),
         1,
