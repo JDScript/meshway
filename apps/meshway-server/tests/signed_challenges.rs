@@ -143,7 +143,9 @@ impl Fixture {
             origin,
             serving,
             client: reqwest::Client::builder()
-                .tls_backend_preconfigured(meshway_tls::platform_client_config().unwrap())
+                .tls_backend_preconfigured(
+                    meshway_transport_stream::tls::platform_client_config().unwrap(),
+                )
                 .no_proxy()
                 .build()
                 .unwrap(),

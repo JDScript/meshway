@@ -16,7 +16,7 @@ meshway-control = { path = "../../crates/meshway-control" }
 meshway-dataplane = { path = "../../crates/meshway-dataplane" }
 meshway-transport = { path = "../../crates/meshway-transport" }
 meshway-tun = { path = "../../crates/meshway-tun" }
-meshway-tls = { path = "../../crates/meshway-tls" }
+meshway-transport-stream = { path = "../../crates/meshway-transport-stream" }
 meshway-logging = { path = "../../crates/meshway-logging" }
 meshway-server = { path = "../../apps/meshway-server" }
 hyper = { version = "1", default-features = false, features = ["server", "http1"] }

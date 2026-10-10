@@ -37,7 +37,8 @@ pub(crate) fn client_builder(
     host: &str,
     addresses: &[SocketAddr],
 ) -> Result<reqwest::ClientBuilder, ResourceProblem> {
-    let tls = meshway_tls::platform_client_config().map_err(|_| ResourceProblem::DownloadFailed)?;
+    let tls = meshway_transport_stream::tls::platform_client_config()
+        .map_err(|_| ResourceProblem::DownloadFailed)?;
     Ok(reqwest::Client::builder()
         .tls_backend_preconfigured(tls)
         .https_only(true)

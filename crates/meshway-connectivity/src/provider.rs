@@ -21,19 +21,23 @@ fn service() -> Endpoint {
 
 pub(crate) enum Acceptor {
     Native,
-    Vless(meshway_transport_vless::Acceptor),
-    Trojan(meshway_transport_trojan::Acceptor),
+    Vless(meshway_transport_stream::vless::Acceptor),
+    Trojan(meshway_transport_stream::trojan::Acceptor),
 }
 impl Acceptor {
     pub fn new(listener: &PreparedListener) -> Result<Self, Error> {
         match declaration(listener) {
             (TransportProtocol::NativeTcp, true) => Ok(Self::Native),
-            (TransportProtocol::Vless, true) => meshway_transport_vless::Acceptor::new(listener)
-                .map(Self::Vless)
-                .map_err(|_| Error::Configuration),
-            (TransportProtocol::Trojan, true) => meshway_transport_trojan::Acceptor::new(listener)
-                .map(Self::Trojan)
-                .map_err(|_| Error::Configuration),
+            (TransportProtocol::Vless, true) => {
+                meshway_transport_stream::vless::Acceptor::new(listener)
+                    .map(Self::Vless)
+                    .map_err(|_| Error::Configuration)
+            }
+            (TransportProtocol::Trojan, true) => {
+                meshway_transport_stream::trojan::Acceptor::new(listener)
+                    .map(Self::Trojan)
+                    .map_err(|_| Error::Configuration)
+            }
             _ => Err(Error::Configuration),
         }
     }
@@ -58,19 +62,23 @@ impl Acceptor {
 
 pub(crate) enum Connector {
     Native,
-    Vless(meshway_transport_vless::Connector),
-    Trojan(meshway_transport_trojan::Connector),
+    Vless(meshway_transport_stream::vless::Connector),
+    Trojan(meshway_transport_stream::trojan::Connector),
 }
 impl Connector {
     pub fn new(parameters: &DialParameters) -> Result<Self, Error> {
         match parameters {
             DialParameters::NativeTcp { options } if options.enabled => Ok(Self::Native),
-            DialParameters::Vless { .. } => meshway_transport_vless::Connector::new(parameters)
-                .map(Self::Vless)
-                .map_err(|_| Error::Configuration),
-            DialParameters::Trojan { .. } => meshway_transport_trojan::Connector::new(parameters)
-                .map(Self::Trojan)
-                .map_err(|_| Error::Configuration),
+            DialParameters::Vless { .. } => {
+                meshway_transport_stream::vless::Connector::new(parameters)
+                    .map(Self::Vless)
+                    .map_err(|_| Error::Configuration)
+            }
+            DialParameters::Trojan { .. } => {
+                meshway_transport_stream::trojan::Connector::new(parameters)
+                    .map(Self::Trojan)
+                    .map_err(|_| Error::Configuration)
+            }
             _ => Err(Error::Configuration),
         }
     }

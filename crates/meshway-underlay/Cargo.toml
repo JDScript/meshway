@@ -15,7 +15,7 @@ meshway-model = { path = "../meshway-model" }
 meshway-private-storage = { path = "../meshway-private-storage" }
 meshway-transport = { path = "../meshway-transport" }
 meshway-tun = { path = "../meshway-tun" }
-meshway-tls = { path = "../meshway-tls", features = ["platform-verifier"] }
+meshway-transport-stream = { path = "../meshway-transport-stream", features = ["platform-verifier"] }
 socket2.workspace = true
 tokio = { workspace = true, features = ["fs", "io-util"] }
 tokio-util.workspace = true

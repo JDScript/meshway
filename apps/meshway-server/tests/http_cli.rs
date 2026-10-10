@@ -48,7 +48,7 @@ async fn executable_serves_and_gracefully_releases_storage_on_both_signals() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().canonicalize().unwrap().join("cli-data");
     let client = reqwest::Client::builder()
-        .tls_backend_preconfigured(meshway_tls::platform_client_config().unwrap())
+        .tls_backend_preconfigured(meshway_transport_stream::tls::platform_client_config().unwrap())
         .no_proxy()
         .timeout(Duration::from_secs(5))
         .build()
@@ -167,7 +167,7 @@ async fn executable_serves_and_gracefully_releases_storage_on_both_signals() {
 async fn open_event_streams_do_not_block_signal_shutdown_or_storage_release() {
     let temp = tempfile::tempdir().unwrap();
     let client = reqwest::Client::builder()
-        .tls_backend_preconfigured(meshway_tls::platform_client_config().unwrap())
+        .tls_backend_preconfigured(meshway_transport_stream::tls::platform_client_config().unwrap())
         .no_proxy()
         .connect_timeout(Duration::from_secs(5))
         .build()

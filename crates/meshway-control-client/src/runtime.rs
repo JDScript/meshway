@@ -50,11 +50,12 @@ impl<P> std::error::Error for ClientError<P> {}
 /// Start a caller-owned HTTP builder with Meshway's explicit ring provider and
 /// platform certificate verification. Socket protection, proxy policy and
 /// deadlines remain the caller's responsibility. For managed certificate trust,
-/// supply `meshway_tls::Client::configuration()` through
+/// supply `meshway_transport_stream::tls::Client::configuration()` through
 /// `reqwest::ClientBuilder::tls_backend_preconfigured` instead.
 pub fn http_client_builder() -> Result<reqwest::ClientBuilder, ClientError<std::convert::Infallible>>
 {
-    let config = meshway_tls::platform_client_config().map_err(|_| ClientError::Configuration)?;
+    let config = meshway_transport_stream::tls::platform_client_config()
+        .map_err(|_| ClientError::Configuration)?;
     Ok(reqwest::Client::builder().tls_backend_preconfigured(config))
 }
 

@@ -17,8 +17,7 @@ meshway-stun = { path = "../meshway-stun" }
 meshway-dataplane = { path = "../meshway-dataplane" }
 meshway-underlay = { path = "../meshway-underlay" }
 meshway-transport = { path = "../meshway-transport" }
-meshway-transport-vless = { path = "../meshway-transport-vless" }
-meshway-transport-trojan = { path = "../meshway-transport-trojan" }
+meshway-transport-stream = { path = "../meshway-transport-stream" }
 tokio = { workspace = true, features = ["io-util"] }
 tokio-util.workspace = true
 futures-util.workspace = true

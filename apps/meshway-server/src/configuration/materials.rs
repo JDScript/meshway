@@ -186,7 +186,7 @@ fn prepare_tls(tls: &mut ListenerTls, generate: bool) -> Result<(), Error> {
 /// Real WebPKI certificate-chain, DNS/IP name, current-time validation plus
 /// supported-provider SPKI/private-key consistency. No insecure verifier.
 pub(crate) fn verify_tls(tls: &ListenerTls) -> Result<Vec<u8>, Error> {
-    meshway_tls::verify_listener(tls).map_err(|_| invalid())
+    meshway_transport_stream::tls::verify_listener(tls).map_err(|_| invalid())
 }
 
 fn check_revocation(

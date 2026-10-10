@@ -112,7 +112,7 @@ impl Proxy {
     }
 
     pub fn client_builder(&self) -> Result<reqwest::ClientBuilder> {
-        let tls = meshway_tls::platform_client_config()
+        let tls = meshway_transport_stream::tls::platform_client_config()
             .map_err(|error| Error::Io(std::io::Error::other(error)))?;
         Ok(reqwest::Client::builder()
             .tls_backend_preconfigured(tls)

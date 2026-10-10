@@ -24,7 +24,7 @@ meshway-configuration = { path = "../../crates/meshway-configuration" }
 meshway-policy = { path = "../../crates/meshway-policy" }
 meshway-protocol = { path = "../../crates/meshway-protocol" }
 meshway-transport = { path = "../../crates/meshway-transport" }
-meshway-tls = { path = "../../crates/meshway-tls", features = ["platform-verifier"] }
+meshway-transport-stream = { path = "../../crates/meshway-transport-stream", features = ["platform-verifier"] }
 meshway-stun = { path = "../../crates/meshway-stun" }
 maxminddb = "0.26"
 rcgen = { version = "0.14", default-features = false, features = ["pem", "ring"] }

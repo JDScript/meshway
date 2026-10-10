@@ -294,7 +294,7 @@ async fn http_snapshot_cursor_replay_commit_cancellation_and_logout() {
             .unwrap();
     });
     let client = reqwest::Client::builder()
-        .tls_backend_preconfigured(meshway_tls::platform_client_config().unwrap())
+        .tls_backend_preconfigured(meshway_transport_stream::tls::platform_client_config().unwrap())
         .no_proxy()
         .build()
         .unwrap();

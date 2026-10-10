@@ -1791,8 +1791,7 @@ dependencies = [
  "meshway-stun",
  "meshway-test-server",
  "meshway-transport",
- "meshway-transport-trojan",
- "meshway-transport-vless",
+ "meshway-transport-stream",
  "meshway-underlay",
  "serde",
  "serde_json",
@@ -1845,8 +1844,8 @@ dependencies = [
  "futures-util",
  "meshway-protocol",
  "meshway-server",
- "meshway-tls",
  "meshway-transport",
+ "meshway-transport-stream",
  "rcgen",
  "reqwest",
  "reqwest-middleware",
@@ -2134,8 +2133,8 @@ dependencies = [
  "meshway-policy",
  "meshway-protocol",
  "meshway-server",
- "meshway-tls",
  "meshway-transport",
+ "meshway-transport-stream",
  "meshway-tun",
  "rcgen",
  "reqwest",
@@ -2236,8 +2235,8 @@ dependencies = [
  "meshway-private-storage",
  "meshway-protocol",
  "meshway-stun",
- "meshway-tls",
  "meshway-transport",
+ "meshway-transport-stream",
  "rcgen",
  "reqwest",
  "rusqlite",
@@ -2294,20 +2293,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "meshway-tls"
-version = "0.1.0"
-dependencies = [
- "meshway-transport",
- "rcgen",
- "rustls",
- "rustls-pemfile",
- "rustls-platform-verifier",
- "thiserror",
- "tokio",
- "tokio-rustls",
-]
-
-[[package]]
 name = "meshway-transport"
 version = "0.1.0"
 dependencies = [
@@ -2335,8 +2320,7 @@ dependencies = [
  "hdrhistogram",
  "meshway-model",
  "meshway-transport",
- "meshway-transport-trojan",
- "meshway-transport-vless",
+ "meshway-transport-stream",
  "rcgen",
  "serde",
  "serde_json",
@@ -2345,33 +2329,23 @@ dependencies = [
 ]
 
 [[package]]
-name = "meshway-transport-trojan"
-version = "0.1.0"
-dependencies = [
- "hex",
- "meshway-tls",
- "meshway-transport",
- "rcgen",
- "sha2 0.10.9",
- "subtle",
- "thiserror",
- "tokio",
- "zeroize",
-]
-
-[[package]]
-name = "meshway-transport-vless"
+name = "meshway-transport-stream"
 version = "0.1.0"
 dependencies = [
  "bytes",
  "futures-util",
+ "hex",
  "meshway-model",
- "meshway-tls",
  "meshway-transport",
  "rcgen",
+ "rustls",
+ "rustls-pemfile",
+ "rustls-platform-verifier",
+ "sha2 0.10.9",
  "subtle",
  "thiserror",
  "tokio",
+ "tokio-rustls",
  "tokio-tungstenite",
  "uuid",
  "zeroize",
@@ -2404,8 +2378,8 @@ dependencies = [
  "meshway-policy",
  "meshway-private-storage",
  "meshway-test-server",
- "meshway-tls",
  "meshway-transport",
+ "meshway-transport-stream",
  "meshway-tun",
  "reqwest",
  "rtnetlink",

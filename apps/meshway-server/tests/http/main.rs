@@ -64,7 +64,7 @@ impl Server {
 
 fn client() -> Client {
     Client::builder()
-        .tls_backend_preconfigured(meshway_tls::platform_client_config().unwrap())
+        .tls_backend_preconfigured(meshway_transport_stream::tls::platform_client_config().unwrap())
         .no_proxy()
         .timeout(Duration::from_secs(30))
         .build()

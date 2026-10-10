@@ -10,8 +10,7 @@ meshway-model = { path = "../../crates/meshway-model" }
 clap.workspace = true
 hdrhistogram = { version = "7", default-features = false }
 meshway-transport = { path = "../../crates/meshway-transport" }
-meshway-transport-vless = { path = "../../crates/meshway-transport-vless" }
-meshway-transport-trojan = { path = "../../crates/meshway-transport-trojan" }
+meshway-transport-stream = { path = "../../crates/meshway-transport-stream" }
 rcgen = { version = "0.14", default-features = false, features = ["pem", "ring"] }
 serde.workspace = true
 serde_json.workspace = true

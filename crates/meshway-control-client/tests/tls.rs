@@ -35,7 +35,7 @@ fn material(authority: &CertifiedIssuer<'_, KeyPair>, version: TlsVersion) -> Li
 }
 
 async fn serve(tls: &ListenerTls) -> (SocketAddr, tokio::task::JoinHandle<bool>) {
-    let server = meshway_tls::Server::new(tls).unwrap();
+    let server = meshway_transport_stream::tls::Server::new(tls).unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let task = tokio::spawn(async move {
@@ -67,7 +67,7 @@ async fn preconfigured_http_checks_name_and_exact_leaf_for_both_tls_versions() {
     for version in [TlsVersion::Tls12, TlsVersion::Tls13] {
         let expected = material(&ca, version);
         let replacement = material(&ca, version);
-        let config = meshway_tls::Client::new(&ClientTls {
+        let config = meshway_transport_stream::tls::Client::new(&ClientTls {
             server_name: NAME.into(),
             certificate_chain: expected.certificate.clone().unwrap(),
             options: DialerTls {

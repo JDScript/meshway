@@ -10,6 +10,6 @@ pub async fn client(cli: &Cli) -> Result<reqwest::ClientBuilder> {
     meshway_packet_fixture::tls_client(&cli.public, crate::IO).await
 }
 
-pub async fn server(cli: &Cli) -> Result<meshway_tls::Server> {
+pub async fn server(cli: &Cli) -> Result<meshway_transport_stream::tls::Server> {
     meshway_packet_fixture::tls_server(&cli.public, &cli.private).await
 }

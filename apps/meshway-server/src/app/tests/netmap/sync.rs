@@ -179,7 +179,7 @@ async fn http_sync_requires_a_current_node_session() {
     let router = crate::http::router(&app);
     let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     let client = reqwest::Client::builder()
-        .tls_backend_preconfigured(meshway_tls::platform_client_config().unwrap())
+        .tls_backend_preconfigured(meshway_transport_stream::tls::platform_client_config().unwrap())
         .build()
         .unwrap();
     let sync = |bearer: Option<String>, body: serde_json::Value| {

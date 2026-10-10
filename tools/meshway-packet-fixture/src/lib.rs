@@ -39,7 +39,7 @@ pub async fn prepare_tls(public: &Path, private: &Path) -> Result<(), Error> {
 
 pub async fn tls_client(public: &Path, timeout: Duration) -> Result<reqwest::ClientBuilder, Error> {
     let pem = tokio::fs::read_to_string(public.join("server.pem")).await?;
-    let tls = meshway_tls::Client::new(&ClientTls {
+    let tls = meshway_transport_stream::tls::Client::new(&ClientTls {
         server_name: CONTROLLER_NAME.into(),
         certificate_chain: SecretString::new(pem),
         options: DialerTls {
@@ -53,8 +53,11 @@ pub async fn tls_client(public: &Path, timeout: Duration) -> Result<reqwest::Cli
         .timeout(timeout))
 }
 
-pub async fn tls_server(public: &Path, private: &Path) -> Result<meshway_tls::Server, Error> {
-    Ok(meshway_tls::Server::new(&ListenerTls {
+pub async fn tls_server(
+    public: &Path,
+    private: &Path,
+) -> Result<meshway_transport_stream::tls::Server, Error> {
+    Ok(meshway_transport_stream::tls::Server::new(&ListenerTls {
         mode: TlsMode::Provided,
         server_name: CONTROLLER_NAME.into(),
         certificate: Some(SecretString::new(

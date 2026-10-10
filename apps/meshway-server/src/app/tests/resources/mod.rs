@@ -220,7 +220,7 @@ impl Connector for HttpsSource {
                 self.address.port()
             )]
         );
-        let tls = meshway_tls::Client::new(&meshway_transport::spec::ClientTls {
+        let tls = meshway_transport_stream::tls::Client::new(&meshway_transport::spec::ClientTls {
             server_name: host.into(),
             certificate_chain: meshway_transport::spec::SecretString::new(self.certificate.clone()),
             options: meshway_transport::spec::DialerTls {
@@ -267,7 +267,9 @@ impl Server {
             app,
             url,
             client: Client::builder()
-                .tls_backend_preconfigured(meshway_tls::platform_client_config().unwrap())
+                .tls_backend_preconfigured(
+                    meshway_transport_stream::tls::platform_client_config().unwrap(),
+                )
                 .no_proxy()
                 .timeout(Duration::from_secs(30))
                 .build()

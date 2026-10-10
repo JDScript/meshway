@@ -93,8 +93,8 @@ pub(super) async fn open(
                 tls: client_tls,
                 websocket: ws,
             };
-            let connector = meshway_transport_vless::Connector::new(&parameters)?;
-            let acceptor = meshway_transport_vless::Acceptor::new(&listener)?;
+            let connector = meshway_transport_stream::vless::Connector::new(&parameters)?;
+            let acceptor = meshway_transport_stream::vless::Acceptor::new(&listener)?;
             let (connected, accepted) = tokio::try_join!(
                 connector.connect(client, &destination),
                 acceptor.accept(server)
@@ -127,8 +127,8 @@ pub(super) async fn open(
                 password,
                 tls: client_tls,
             };
-            let connector = meshway_transport_trojan::Connector::new(&parameters)?;
-            let acceptor = meshway_transport_trojan::Acceptor::new(&listener)?;
+            let connector = meshway_transport_stream::trojan::Connector::new(&parameters)?;
+            let acceptor = meshway_transport_stream::trojan::Acceptor::new(&listener)?;
             let (connected, accepted) = tokio::try_join!(
                 connector.connect(client, &destination),
                 acceptor.accept(server)
