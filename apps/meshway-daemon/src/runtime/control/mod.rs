@@ -6,6 +6,8 @@
 //! netmap is installed at once on start, before any Server contact.
 mod cycle;
 mod failure;
+#[cfg(all(test, target_os = "linux"))]
+mod tests;
 
 use super::{intent::Desired, network, status::Report};
 use crate::settings::Settings;
