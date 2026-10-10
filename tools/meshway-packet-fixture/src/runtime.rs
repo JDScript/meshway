@@ -337,6 +337,8 @@ async fn pump(
                     .ok_or("missing endpoint counter")? += 1;
             }
             Received::Established { .. } => return Err("unexpected second handshake".into()),
+            Received::Keepalive { .. } => {}
+            Received::Closed { .. } => return Err("circuit closed by an adjacent peer".into()),
             Received::ProbeRequest { .. }
             | Received::ProbeReply { .. }
             | Received::DnsRequest(_)

@@ -316,23 +316,76 @@ async fn restart_without_the_server_replays_the_last_known_peer_facts() {
     proxy.close().await;
     server.close().await;
 
-    // Server gone: the replay is available once, with the held netmap.
-    let mut restored = reopen(&copy, &origin);
+    // Server gone: the saved facts are Control's last known facts again.
+    let restored = reopen(&copy, &origin);
     assert!(restored.netmap().is_some());
-    let mut sink = Facts::default();
-    while let Some((reference, facts)) = restored.take_facts_replay() {
-        meshway_control::PeerFactsSink::apply(&mut sink, reference, facts).unwrap();
-    }
-    let (reference, replay) = &sink.applied[0];
-    assert_eq!(*reference, netmap.reference());
-    assert_eq!(replay.base, None);
-    assert_eq!(replay.updated.keys().copied().collect::<Vec<_>>(), [peer]);
+    let known = restored.known_peers().expect("saved facts");
+    assert_eq!(known.netmap, netmap.reference());
+    assert_eq!(known.peers.keys().copied().collect::<Vec<_>>(), [peer]);
     assert_eq!(
-        replay.updated[&peer].listeners["udp"].local_endpoints[0]
+        known.peers[&peer].listeners["udp"].local_endpoints[0]
             .address
             .to_string(),
         "10.9.0.9:41641"
     );
-    assert_eq!(sink.applied.len(), 1, "replayed once");
     restored.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_restarted_servers_complete_facts_update_and_never_erase_last_known_facts() {
+    let server = Server::start().await;
+    let proxy = Proxy::start(&server.origin).await;
+    let (mut control, binding, script) = enrolled(&server, &proxy, "facts-full").await;
+    let (netmap, peer) = compiled_with_peer(&binding, "facts-full");
+    let cursor = |epoch: &str, sequence| meshway_protocol::StateCursor {
+        epoch: epoch.parse().unwrap(),
+        sequence: meshway_model::Sequence::new(sequence).unwrap(),
+    };
+    let first = "00000000-0000-4000-8000-0000000000e4";
+    let second = "00000000-0000-4000-8000-0000000000e5";
+    let mut response = full(&binding, &netmap, HOUR);
+    response.peer_facts = Some(meshway_protocol::PeerFactsDelta {
+        base: None,
+        cursor: cursor(first, 5),
+        netmap_serial: netmap.netmap.serial,
+        updated: [(peer, peer_facts(peer, "10.9.0.9:41641"))].into(),
+        removed: vec![],
+    });
+    script.push(Ok(response));
+    let mut sink = Facts::default();
+    control.sync(&mut sink).await.unwrap();
+    assert_eq!(sink.published.len(), 1);
+    // The Server restarted (new epoch) and knows no facts yet: its complete
+    // answer is empty, which is not a removal.
+    let mut response = unchanged(&binding, &netmap, HOUR);
+    response.peer_facts = Some(meshway_protocol::PeerFactsDelta {
+        base: None,
+        cursor: cursor(second, 1),
+        netmap_serial: netmap.netmap.serial,
+        updated: Default::default(),
+        removed: vec![],
+    });
+    script.push(Ok(response));
+    control.sync(&mut sink).await.unwrap();
+    assert!(control.known_peers().unwrap().peers.contains_key(&peer));
+    assert_eq!(
+        sink.published.len(),
+        1,
+        "nothing changed, nothing published"
+    );
+    // Only `removed` deletes.
+    let mut response = unchanged(&binding, &netmap, HOUR);
+    response.peer_facts = Some(meshway_protocol::PeerFactsDelta {
+        base: Some(cursor(second, 1)),
+        cursor: cursor(second, 2),
+        netmap_serial: netmap.netmap.serial,
+        updated: Default::default(),
+        removed: vec![peer],
+    });
+    script.push(Ok(response));
+    control.sync(&mut sink).await.unwrap();
+    assert!(control.known_peers().unwrap().peers.is_empty());
+    assert!(sink.published[1].peers.is_empty());
+    control.shutdown().await.unwrap();
+    server.close().await;
 }

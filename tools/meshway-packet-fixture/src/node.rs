@@ -41,13 +41,7 @@ async fn sync(control: &mut Control) -> Result<meshway_engine::Desired> {
 
 struct Facts;
 impl meshway_control::PeerFactsSink for Facts {
-    fn apply(
-        &mut self,
-        _: meshway_model::NetmapRef,
-        _: meshway_protocol::PeerFactsDelta,
-    ) -> std::result::Result<(), meshway_control::FactsRejected> {
-        Ok(())
-    }
+    fn publish(&mut self, _: meshway_control::KnownPeers) {}
 }
 
 async fn run_control(

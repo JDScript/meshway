@@ -3,14 +3,14 @@
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use ed25519_dalek::{Signer, SigningKey};
 use meshway_configuration::netmap::CompiledNetmap;
-use meshway_control::{FactsRejected, PeerFactsSink, SyncFuture, SyncTransport};
+use meshway_control::{KnownPeers, PeerFactsSink, SyncFuture, SyncTransport};
 use meshway_control_client::ClientError;
 use meshway_model::{
     KeyAlgorithm, NetmapLease, NetmapRef, NetworkId, NodeId, NodePublicKey, Version,
 };
 use meshway_protocol::{
-    ErrorResponse, NetmapSignature, NetmapSigner, PeerFactsDelta, ServerSigningKey, SyncNetmap,
-    SyncRequest, SyncResponse, netmap_lease_transcript,
+    ErrorResponse, NetmapSignature, NetmapSigner, ServerSigningKey, SyncNetmap, SyncRequest,
+    SyncResponse, netmap_lease_transcript,
 };
 use std::{
     collections::VecDeque,
@@ -144,19 +144,14 @@ impl SyncTransport for Script {
     }
 }
 
-/// A peer-fact sink that records accepted deltas, or refuses all of them.
+/// A peer-fact sink that records every publication of Control's facts.
 #[derive(Default)]
 pub struct Facts {
-    pub applied: Vec<(NetmapRef, PeerFactsDelta)>,
-    pub reject: bool,
+    pub published: Vec<KnownPeers>,
 }
 
 impl PeerFactsSink for Facts {
-    fn apply(&mut self, netmap: NetmapRef, facts: PeerFactsDelta) -> Result<(), FactsRejected> {
-        if self.reject {
-            return Err(FactsRejected);
-        }
-        self.applied.push((netmap, facts));
-        Ok(())
+    fn publish(&mut self, facts: KnownPeers) {
+        self.published.push(facts);
     }
 }

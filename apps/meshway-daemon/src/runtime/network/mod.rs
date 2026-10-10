@@ -12,7 +12,6 @@ mod exit;
 mod facts;
 #[cfg(target_os = "linux")]
 mod packets;
-mod peers;
 #[cfg(target_os = "linux")]
 mod plane;
 mod reporting;
@@ -28,7 +27,6 @@ use meshway_model::NetmapRef;
 use meshway_private_storage::Directory;
 use meshway_protocol::execution::ApplyFailure;
 use meshway_protocol::ipc::{DataPlane, Problem};
-pub(super) use peers::{Peers, Sink as PeerSink};
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, watch};
 
@@ -203,7 +201,8 @@ pub(super) struct Handle {
     pub requests: mpsc::Receiver<Request>,
     worker: tokio::task::JoinHandle<Result<(), Problem>>,
     reporting: reporting::Schedule,
-    peers: Peers,
+    /// Control's last known peer facts, published by Control alone.
+    peers: watch::Sender<Option<meshway_control::KnownPeers>>,
     #[cfg(target_os = "linux")]
     traversal_acknowledged: watch::Sender<traversal::Acknowledged>,
 }
@@ -268,8 +267,7 @@ impl Handle {
                 watch::channel(traversal::Acknowledged::default());
             let traversal = traversal::Gateway::new(gateway.clone(), acknowledged);
             let dns = dns::Attachment::new(dns_settings, directory, reservation);
-            let peers = Peers::default();
-            let worker_peers = peers.clone();
+            let (peers, worker_peers) = watch::channel(None);
             // The Host live-probe future is !Send (its monitor registration
             // uses a synchronous guard). One joined owner thread polls it in
             // place; the Host and all its existing async producers stay unique.
@@ -310,9 +308,9 @@ impl Handle {
         result.await.map_err(|_| Problem::Worker)?
     }
 
-    /// The facts sink for Control's sync loop.
-    pub fn peer_sink(&self) -> PeerSink {
-        self.peers.sink()
+    /// Where Control publishes its last known peer facts.
+    pub fn peer_sink(&self) -> watch::Sender<Option<meshway_control::KnownPeers>> {
+        self.peers.clone()
     }
 
     /// Delivery of sync's verified leases straight to the Engine worker.

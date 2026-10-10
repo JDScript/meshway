@@ -5,15 +5,17 @@
 //! ([`Control::finish_sync`]). The netmap part is checked against the request,
 //! verified (full), reconstructed and digest-checked (delta) or matched to the
 //! held content (unchanged), bound to this identity, saved and published to
-//! Engine. Peer facts are passed through to a [`PeerFactsSink`] afterwards;
-//! they never become netmap content.
+//! Engine. Peer facts fold into Control's last known facts, which it
+//! publishes to a [`PeerFactsSink`]; they never become netmap content.
 use super::NetmapChange as Change;
 use crate::{Control, Error};
 use meshway_configuration::netmap::{CompiledNetmap, apply_netmap_delta};
 use meshway_control_client::ClientError;
 use meshway_model::NetmapRef;
-use meshway_protocol::{ErrorResponse, PeerFactsDelta, SyncNetmap, SyncRequest, SyncResponse};
+use meshway_model::NodeId;
+use meshway_protocol::{ErrorResponse, PeerFacts, SyncNetmap, SyncRequest, SyncResponse};
 use std::{
+    collections::{BTreeMap, BTreeSet},
     future::Future,
     pin::Pin,
     sync::{Arc, Weak},
@@ -51,13 +53,43 @@ impl SyncTransport for ClientTransport {
 
 /// The facts consumer refused this delta (e.g. its bounded queue is full).
 /// Control then requests complete facts on the next sync.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct FactsRejected;
+/// Control's last known peer facts of the held netmap: one owner (Control)
+/// publishes it; consumers read the latest value and keep no copy of their
+/// own. Selection input only, never authority.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KnownPeers {
+    pub netmap: NetmapRef,
+    pub peers: Arc<BTreeMap<NodeId, PeerFacts>>,
+}
 
-/// Consumer of peer facts (the connectivity Manager in the daemon). Facts are
-/// selection input only; the netmap named here is already installed.
+impl KnownPeers {
+    /// Exits whose readiness fact is current, ready and has IPv4 installed.
+    pub fn ready_exits(&self, now: chrono::DateTime<chrono::Utc>) -> BTreeSet<NodeId> {
+        self.peers
+            .iter()
+            .filter(|(_, facts)| facts.expires_at > now)
+            .filter(|(_, facts)| {
+                facts.exit.as_ref().is_some_and(|exit| {
+                    exit.status == meshway_model::exit::ExitStatus::Ready
+                        && exit
+                            .installed_families
+                            .contains(&meshway_model::exit::ExitFamily::Ipv4)
+                })
+            })
+            .map(|(peer, _)| *peer)
+            .collect()
+    }
+}
+
+/// Where Control publishes [`KnownPeers`] after they change.
 pub trait PeerFactsSink {
-    fn apply(&mut self, netmap: NetmapRef, facts: PeerFactsDelta) -> Result<(), FactsRejected>;
+    fn publish(&mut self, facts: KnownPeers);
+}
+
+impl PeerFactsSink for tokio::sync::watch::Sender<Option<KnownPeers>> {
+    fn publish(&mut self, facts: KnownPeers) {
+        self.send_replace(Some(facts));
+    }
 }
 
 /// What a successful sync did to the held netmap.
@@ -195,21 +227,15 @@ impl Control {
         if !super::store::bound(&netmap, &response.lease, binding) {
             return Err(Error::Contract);
         }
-        let reference = netmap.reference();
         let change = self
             .install_netmap(netmap, response.lease, &response.signature)
             .await?;
-        let mut facts = false;
+        let facts = response.peer_facts.is_some();
         if let Some(delta) = response.peer_facts {
-            let cursor = delta.cursor;
+            self.netmap.facts = Some(delta.cursor);
             self.record_facts(&delta);
-            if sink.apply(reference, delta).is_ok() {
-                self.netmap.facts = Some(cursor);
-                facts = true;
-            } else {
-                self.netmap.facts = None;
-            }
         }
+        self.publish_facts(sink);
         self.persist_facts().await;
         self.netmap.exchange = Arc::new(());
         Ok(SyncOutcome {

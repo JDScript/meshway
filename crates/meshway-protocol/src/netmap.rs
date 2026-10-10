@@ -57,7 +57,7 @@ wire_object! {
 #[derive(Clone, Debug, PartialEq, Eq)]
 /// Peer facts after the request's cursor, scoped by the current netmap.
 pub struct PeerFactsDelta {
-    /// Cursor the delta applies to; null means `updated` replaces all facts.
+    /// Cursor the delta applies to; null means `updated` holds every fact the Server knows (for example after a Server restart it may know none yet). It adds and replaces facts only: a Node keeps last known facts until `removed` or its projection drops them.
     pub base: Option<StateCursor> [required = true],
     /// Cursor to send in the next request after applying this delta.
     pub cursor: StateCursor,
@@ -108,20 +108,12 @@ impl PeerFacts {
 }
 
 impl PeerFactsDelta {
-    /// Apply this delta to a last-known facts ledger: a null base replaces
-    /// it, `removed` deletes, `updated` replaces per peer. Expiry deletes
-    /// nothing. Returns the peers whose facts changed, sorted.
+    /// Apply this delta to a last-known facts ledger: `removed` deletes,
+    /// `updated` replaces per peer. A null base deletes nothing: a Server
+    /// that just restarted knows no facts yet, which is not their removal.
+    /// Expiry deletes nothing either. Returns the changed peers, sorted.
     pub fn apply_to(&self, peers: &mut BTreeMap<NodeId, PeerFacts>) -> Vec<NodeId> {
         let mut changed: Vec<NodeId> = Vec::new();
-        if self.base.is_none() {
-            changed.extend(
-                peers
-                    .keys()
-                    .filter(|peer| !self.updated.contains_key(peer))
-                    .copied(),
-            );
-            peers.retain(|peer, _| self.updated.contains_key(peer));
-        }
         for peer in &self.removed {
             if peers.remove(peer).is_some() {
                 changed.push(*peer);

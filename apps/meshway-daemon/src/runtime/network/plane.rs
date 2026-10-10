@@ -2,7 +2,7 @@
 //! Each apply diffs the actual installed resources against the desired
 //! content. Withdrawal terminates every flow, circuit and exit projection,
 //! closes adjacencies and keeps only the negative capture and DNS boundaries.
-use super::{Peers, Report, dns::Attachment, packets::Packets};
+use super::{Report, dns::Attachment, packets::Packets};
 use meshway_configuration::netmap::DnsPlan;
 use meshway_connectivity::Manager;
 use meshway_dataplane::secure::SecureNode;
@@ -24,7 +24,8 @@ pub(super) struct Installed {
 pub(super) struct Plane {
     pub host: Host,
     pub dns: Attachment,
-    pub peers: Peers,
+    /// Control's published last known peer facts (selection input only).
+    pub peers: tokio::sync::watch::Receiver<Option<meshway_control::KnownPeers>>,
     pub packets: Packets,
     pub installed: Option<Installed>,
     /// Working report fields owned by the applies; the worker publishes them.
@@ -41,7 +42,7 @@ impl Plane {
     pub fn new(
         host: Host,
         dns: Attachment,
-        peers: Peers,
+        peers: tokio::sync::watch::Receiver<Option<meshway_control::KnownPeers>>,
         traversal: Arc<dyn meshway_connectivity::traversal::TraversalGateway>,
     ) -> Result<Self, Problem> {
         Ok(Self {
@@ -137,7 +138,6 @@ impl Plane {
                 }
             }
             if let Some(mut manager) = state.manager.take() {
-                self.peers.detach();
                 let _ = manager.shutdown().await;
             }
             state.secure = None;
@@ -233,7 +233,6 @@ impl meshway_engine::Components for Plane {
             if let Some(state) = &mut self.installed
                 && let Some(mut manager) = state.manager.take()
             {
-                self.peers.detach();
                 let _ = manager.shutdown().await;
             }
             return Ok(());
@@ -242,7 +241,6 @@ impl meshway_engine::Components for Plane {
             if let Some(state) = &mut self.installed
                 && let Some(mut manager) = state.manager.take()
             {
-                self.peers.detach();
                 let _ = manager.shutdown().await;
             }
             return Ok(());
@@ -262,7 +260,7 @@ impl meshway_engine::Components for Plane {
                 {
                     tracing::warn!(?error, "Adjacency resources partially unavailable");
                     self.failure = Some((Problem::Transport, ApplyFailure::Listeners));
-                    self.peers.attach(manager.facts_sink(), desired.reference());
+                    manager.attach_facts(self.peers.clone());
                     if let Some(state) = &mut self.installed {
                         state.manager = Some(manager);
                     }
@@ -271,7 +269,6 @@ impl meshway_engine::Components for Plane {
                 Err(error) => {
                     tracing::warn!(?error, "Adjacency apply failed; restarting adjacencies");
                     let _ = manager.shutdown().await;
-                    self.peers.detach();
                     self.failure = Some((Problem::Transport, ApplyFailure::Listeners));
                     return Err(Error::Degraded);
                 }
@@ -304,7 +301,7 @@ impl meshway_engine::Components for Plane {
                 }
             }
         };
-        self.peers.attach(manager.facts_sink(), desired.reference());
+        manager.attach_facts(self.peers.clone());
         if let Some(state) = &mut self.installed {
             state.manager = Some(manager);
         }

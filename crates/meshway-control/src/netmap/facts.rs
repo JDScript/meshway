@@ -20,7 +20,7 @@ use meshway_configuration::netmap::NodeNetmap;
 use meshway_model::{NetmapRef, NetworkId, NodeId};
 use meshway_protocol::{PeerFacts, StateCursor};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::Arc};
 use zeroize::Zeroizing;
 
 pub(super) const FILE: &str = "peer-facts.json";
@@ -42,17 +42,20 @@ struct Cache {
 pub(crate) struct Known {
     pub netmap: NetmapRef,
     pub cursor: StateCursor,
-    pub peers: BTreeMap<NodeId, PeerFacts>,
+    /// Shared with the published [`super::KnownPeers`]; copied on write.
+    pub peers: Arc<BTreeMap<NodeId, PeerFacts>>,
 }
 
 impl Known {
     /// Keep only what the owner of `netmap` may see, under its reference.
     pub fn scope(&mut self, netmap: &NodeNetmap, reference: NetmapRef) {
         self.netmap = reference;
-        self.peers = std::mem::take(&mut self.peers)
-            .into_iter()
-            .filter_map(|(peer, facts)| Some((peer, facts.scoped_for(netmap)?)))
-            .collect();
+        self.peers = Arc::new(
+            self.peers
+                .iter()
+                .filter_map(|(peer, facts)| Some((*peer, facts.scoped_for(netmap)?)))
+                .collect(),
+        );
     }
 
     /// Same addresses and readiness: freshness alone is not worth a write.
@@ -78,7 +81,7 @@ pub(super) fn encode(
         node_id,
         netmap: known.netmap,
         cursor: known.cursor,
-        peers: known.peers.clone(),
+        peers: (*known.peers).clone(),
     })
 }
 
@@ -104,7 +107,7 @@ pub(super) fn load(
     let mut known = Known {
         netmap: cache.netmap,
         cursor: cache.cursor,
-        peers: cache.peers,
+        peers: Arc::new(cache.peers),
     };
     known.scope(netmap, reference);
     Some(known)

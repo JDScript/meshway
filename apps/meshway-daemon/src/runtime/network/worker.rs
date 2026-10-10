@@ -4,7 +4,7 @@
 //! between reconfigurations. An ended lease terminates every flow, circuit
 //! and exit projection and keeps only the negative capture and DNS boundaries.
 use super::{
-    Command, ObservationPlan, Offer, Peers, Report, Request, dns::Attachment, plane::Plane,
+    Command, ObservationPlan, Offer, Report, Request, dns::Attachment, plane::Plane,
     reporting::Publisher,
 };
 use meshway_connectivity::{AdjacencyInterest, Event};
@@ -25,7 +25,7 @@ pub(super) struct Inputs {
     pub dns: Attachment,
     pub traversal: Arc<dyn meshway_connectivity::traversal::TraversalGateway>,
     pub observation_plans: watch::Receiver<Option<ObservationPlan>>,
-    pub peers: Peers,
+    pub peers: watch::Receiver<Option<meshway_control::KnownPeers>>,
     pub mtu: usize,
 }
 
@@ -620,7 +620,13 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             if let Ok(boots) = manager.peer_boots() {
                 packets.closes(secure.set_peer_boots(boots));
             }
-            secure.set_ready_exits(peers.ready_exits());
+            secure.set_ready_exits(
+                peers
+                    .borrow()
+                    .as_ref()
+                    .map(|known| known.ready_exits(chrono::Utc::now()))
+                    .unwrap_or_default(),
+            );
             diagnostics.synchronize(&state.desired, instance);
             tokio::select! { biased;
                 _ = host.ended() => {},

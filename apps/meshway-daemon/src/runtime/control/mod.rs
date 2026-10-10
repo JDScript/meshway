@@ -496,7 +496,7 @@ async fn session(
     reset: &mut bool,
 ) -> Ended {
     {
-        let mut driver = shared.lock().await;
+        let driver = shared.lock().await;
         if reported.borrow().revision != plan.revision || reported.borrow().phase == Phase::Down {
             publish(
                 reported,
@@ -512,10 +512,10 @@ async fn session(
         // and its saved last known peer facts are dial addresses again.
         offer(&driver, network.as_deref());
         if let Some(network) = network.as_deref()
-            && let Some((reference, facts)) = driver.take_facts_replay()
+            && let Some(known) = driver.known_peers()
         {
             use meshway_control::PeerFactsSink as _;
-            let _ = network.peer_sink().apply(reference, facts);
+            network.peer_sink().publish(known);
         }
     }
     let mut backoff = 1u64;
@@ -629,10 +629,9 @@ async fn online_session(
     let stop = CancellationToken::new();
     let (netmaps, mut netmap_rx) = watch::channel::<Option<meshway_engine::Netmap>>(None);
     netmap_rx.borrow_and_update();
-    let standalone = network::Peers::default();
     let mut sink = match network.as_deref() {
         Some(network) => network.peer_sink(),
-        None => standalone.sink(),
+        None => watch::channel(None).0,
     };
     let mut sync = {
         let shared = shared.clone();

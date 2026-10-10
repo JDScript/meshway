@@ -33,7 +33,6 @@ mod resources;
 mod tests;
 mod traversal;
 mod workers;
-pub use facts::FactsSink;
 pub use interest::{AdjacencyInterest, Interest};
 
 // Diagnostics only: at most 64 events/second and 32768/process; contention drops
@@ -463,11 +462,6 @@ impl Manager {
     /// Handle for the packet owner to request on-demand adjacencies.
     pub fn interest(&self) -> Interest {
         Interest(self.shared.interests.clone())
-    }
-
-    /// Bounded sink for Control's peer facts; it survives Manager replacement.
-    pub fn facts_sink(&self) -> FactsSink {
-        FactsSink(self.shared.facts.clone())
     }
 
     async fn install_resources(&mut self) -> Result<(), Error> {

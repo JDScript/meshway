@@ -2,13 +2,7 @@ use super::*;
 
 struct Facts;
 impl meshway_control::PeerFactsSink for Facts {
-    fn apply(
-        &mut self,
-        _: meshway_model::NetmapRef,
-        _: meshway_protocol::PeerFactsDelta,
-    ) -> Result<(), meshway_control::FactsRejected> {
-        Ok(())
-    }
+    fn publish(&mut self, _: meshway_control::KnownPeers) {}
 }
 
 #[tokio::test]

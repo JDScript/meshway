@@ -26,7 +26,7 @@
 | IPv6 | 精确长度；最多两个顺序合法、仅含 padding 的扩展头；拒绝 routing header、全部 fragment header 和 jumbogram |
 | 业务协议 | TCP、UDP、ICMP echo；检查端口、协议头及适用 checksum |
 | UDP／ICMP | 回复匹配已建立反向 tuple；echo 另绑定 identifier／sequence |
-| TCP | 三次握手、每方向 16 MiB 序号历史内的 ACK／重分段重传、前方 16 MiB 内最多 64 个已见乱序区间、FIN 与已建立 RST；支持序号回绕，状态有界。由端点 TCP 处理实际重排／SACK；不缓存包体，不支持 simultaneous-open、TFO 或握手 RST |
+| TCP | 三次握手、每方向 16 MiB 序号历史内的 ACK／重分段重传、前方 16 MiB 内最多 64 个已见乱序区间、FIN 与已建立 RST；支持序号回绕，状态有界。空闲回收后，源方向带 ACK、无 SYN／RST 的同 tuple 段按首包重新准入（续接：forward 从该段序号、reply 从其 ACK 起算），回包仍须确认源已发出的字节；回复方向的段不能建流。由端点 TCP 处理实际重排／SACK；不缓存包体，不支持 simultaneous-open、TFO 或握手 RST |
 | 资源 | 默认 4,096 流、60 秒空闲；最大 65,536 流、24 小时空闲设置；实际寿命受空闲、circuit 与 Engine 撤回约束 |
 
 同一流固定原 demand ID 与完整路径；同一节点／角色范围的活 tuple 在多个 demand ID 之间也不能被另一条路径接管。`LocalFlow` 只读查询同一 FlowTable，供本机源包／原路径回复使用，不刷新流、推进协议状态或形成第二份路由表。SecureNode 中继不创建业务流，也不因此获得本机发起资格；歧义拒绝。

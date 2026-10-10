@@ -15,7 +15,7 @@ mod identity;
 mod instance;
 mod netmap;
 pub use netmap::{
-    FactsRejected, NetmapChange, PeerFactsSink, SYNC_TIMEOUT, SyncCall, SyncFuture, SyncOutcome,
+    KnownPeers, NetmapChange, PeerFactsSink, SYNC_TIMEOUT, SyncCall, SyncFuture, SyncOutcome,
     SyncReply, SyncTransport, sync_loop,
 };
 mod observations;
@@ -403,6 +403,7 @@ impl Control {
         if let Some(write) = self.netmap_write.take() {
             write.await.map_err(|_| Error::ReloadRequired)??;
         }
+        self.finish_facts_write().await;
         stopped
     }
 }

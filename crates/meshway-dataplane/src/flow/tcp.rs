@@ -159,7 +159,47 @@ impl Side {
 }
 
 impl TcpState {
-    pub fn new(syn: TcpSegment) -> Result<Self, Error> {
+    /// A flow's first segment: a SYN opens the association; an ACK segment
+    /// without SYN/RST resumes one whose state was reclaimed while idle. The
+    /// resumed association starts at that segment's sequence and its
+    /// acknowledgement: replies must still ACK what the origin sent and
+    /// continue from what it acknowledged. Access already admits the
+    /// origin's service either way.
+    pub fn new(first: TcpSegment) -> Result<Self, Error> {
+        if first.syn() {
+            return Self::open(first);
+        }
+        if !first.ack()
+            || first.rst()
+            || first.flags & !(0x01 | 0x08 | 0x10 | 0x20 | 0x40 | 0x80) != 0
+        {
+            return Err(Error::Flow);
+        }
+        let forward = Side {
+            floor: first.sequence,
+            next: first.sequence,
+            fin: None,
+            ahead: Vec::new(),
+        };
+        let reply = Side {
+            floor: first.acknowledgement,
+            next: first.acknowledgement,
+            fin: None,
+            ahead: Vec::new(),
+        };
+        let mut state = Self {
+            syn: first,
+            syn_ack: None,
+            established: true,
+            forward,
+            reply: Some(reply),
+        };
+        let reply = state.reply.clone().ok_or(Error::Flow)?;
+        state.forward.accept(first, &reply)?;
+        Ok(state)
+    }
+
+    fn open(syn: TcpSegment) -> Result<Self, Error> {
         if !syn.syn()
             || syn.ack()
             || syn.rst()
@@ -265,6 +305,33 @@ mod tests {
             (state.forward.floor, state.forward.next, state.forward.fin),
             (reply.floor, reply.next, reply.fin),
         ]
+    }
+
+    #[test]
+    fn an_idle_reclaimed_connection_resumes_from_its_next_ack_segment() {
+        // The origin's first segment after reclaim carries data and its ACK.
+        let mut state = TcpState::new(segment(5_000, 9_000, 0x18, 100)).unwrap();
+        assert_eq!(bounds(&state), [(5_000, 5_100, None), (9_000, 9_000, None)]);
+        // The reply must acknowledge what the origin sent and continue from
+        // what the origin acknowledged.
+        assert!(
+            state
+                .accept(Direction::Reply, segment(9_000, 6_000, 0x10, 0))
+                .is_err()
+        );
+        state
+            .accept(Direction::Reply, segment(9_000, 5_100, 0x18, 10))
+            .unwrap();
+        state
+            .accept(Direction::Forward, segment(5_100, 9_010, 0x10, 0))
+            .unwrap();
+        // Neither a reset nor a segment without ACK starts an association.
+        for flags in [0x04, 0x14, 0x08, 0x01] {
+            assert!(
+                TcpState::new(segment(1, 1, flags, 0)).is_err(),
+                "{flags:#x}"
+            );
+        }
     }
 
     #[test]

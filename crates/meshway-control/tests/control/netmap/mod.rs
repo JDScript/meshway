@@ -242,7 +242,7 @@ async fn superseded_replies_transport_failures_and_identity_rejection() {
 }
 
 #[tokio::test]
-async fn peer_facts_follow_the_installed_netmap_and_rejection_requests_full_facts() {
+async fn peer_facts_follow_the_installed_netmap_and_their_cursor() {
     let server = Server::start().await;
     let proxy = Proxy::start(&server.origin).await;
     let (mut control, binding, script) = enrolled(&server, &proxy, "facts").await;
@@ -264,17 +264,16 @@ async fn peer_facts_follow_the_installed_netmap_and_rejection_requests_full_fact
     script.push(Ok(response));
     let mut sink = Facts::default();
     assert!(control.sync(&mut sink).await.unwrap().facts);
-    assert_eq!(sink.applied[0].0, netmap.reference());
     let mut response = unchanged(&binding, &netmap, HOUR);
     response.peer_facts = Some(facts(Some(cursor(3)), 4));
     script.push(Ok(response));
-    sink.reject = true;
-    assert!(!control.sync(&mut sink).await.unwrap().facts);
+    assert!(control.sync(&mut sink).await.unwrap().facts);
     script.push(Ok(unchanged(&binding, &netmap, HOUR)));
-    control.sync(&mut sink).await.unwrap();
+    assert!(!control.sync(&mut sink).await.unwrap().facts);
     let requests = script.requests();
     assert_eq!(requests[1].state, Some(cursor(3)));
-    assert_eq!(requests[2].state, None);
+    assert_eq!(requests[2].state, Some(cursor(4)));
+    assert!(sink.published.is_empty(), "no peer facts, nothing changed");
     control.shutdown().await.unwrap();
     server.close().await;
 }
