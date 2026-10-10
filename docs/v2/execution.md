@@ -33,7 +33,7 @@ Server 在同一事务重新检查当前主体、网络、instance 和需求存�
 
 重复或更早的 expiresAt 不延长、不为本次重放写入新 publication／执行 lease／历史；同一事务仍可清理其他到期需求并因此更新发布。真正延长后按网络内**全部有效需求**重新合成完整目标，不是 last-demand-wins。响应仍为 publication 和 decision；调用方须重新同步保存目标、取得匹配执行快照后才可使用许可，HTTP 反馈本身不授予 socket 或包流执行权。
 
-Node 的本机取消与连续性门槛见 [Control](/v2/node/control#执行快照)，活流／circuit 续租规则见[数据面](/v2/node/dataplane#包与流边界)。
+Node 本机只按 Control 发布的 netmap 租约执行，见 [Control](/v2/node/control#netmap-发布)；活流／circuit 续租规则见[数据面](/v2/node/dataplane#包与流边界)。
 
 ## 原子执行刷新
 
