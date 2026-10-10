@@ -37,7 +37,6 @@ pub(super) struct Key {
     exit_dns_unavailable: bool,
     listeners: BTreeMap<[u8; 32], Listener>,
     links: BTreeMap<[u8; 32], LinkFact>,
-    adjacencies: BTreeMap<NodeId, meshway_model::state::AdjacencyStatus>,
     sockets: Vec<meshway_connectivity::SocketFact>,
     dependencies: BTreeMap<NodeId, u32>,
 }
@@ -65,7 +64,6 @@ impl Key {
             exit_dns_unavailable: report.exit_dns_unavailable,
             listeners: BTreeMap::new(),
             links: BTreeMap::new(),
-            adjacencies: BTreeMap::new(),
             sockets: Vec::new(),
             dependencies: BTreeMap::new(),
         };
@@ -94,7 +92,6 @@ impl Key {
                 .collect();
             key.dependencies = report.dependencies.clone();
             key.sockets = facts.sockets.clone();
-            key.adjacencies = facts.adjacencies.clone();
         }
         key
     }
