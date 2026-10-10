@@ -115,10 +115,13 @@ impl<C: Components> Engine<C> {
             }
         }
         let desired = netmap.map(Desired::new).transpose()?;
+        // Removing the current desired state before the first await is the
+        // engine's admission boundary. If its caller cancels this operation,
+        // the engine stays empty; the next reconfig retries idempotent applies.
+        self.desired = None;
         if let Err(error) = self.apply(desired.as_ref()).await {
             // Cleanup always attempts every owner, even when one failed. No
             // partially installed desired state becomes the current engine.
-            self.desired = None;
             let _ = self.apply(None).await;
             return Err(error);
         }
