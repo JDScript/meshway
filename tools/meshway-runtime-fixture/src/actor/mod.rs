@@ -307,9 +307,8 @@ async fn exercise(
             "same sockets and receive-only UDP subscription"
         );
         let started = Instant::now();
-        // Daemon asks for 120 seconds; Server further caps by its instance lease.
-        // 125 seconds of active traffic exceeds both initial deadlines, without
-        // relying on a rewritten status sample or assuming a renewal succeeded.
+        // The same sockets must survive 125 seconds, independently of HTTP
+        // instance renewal. The signed netmap is their execution authority.
         let regular = async {
             while started.elapsed() < cli.traffic_duration() {
                 traffic.exchange().await?;

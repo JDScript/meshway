@@ -201,6 +201,17 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 }
             } => work,
         };
+        // Resource owners enforce the same lease independently. Their EOF can
+        // win the select against the snapshot timer at expiry; it is still a
+        // normal authority end, not a transport/TUN installation failure.
+        let work = if matches!(work, Work::CarrierClosed | Work::Packet(Err(_)))
+            && installed.as_ref().is_some_and(|state| {
+                std::time::Instant::now() >= state.identity.snapshot().expires_at()
+            }) {
+            Work::Expired
+        } else {
+            work
+        };
         let work = match work {
             Work::ExitChanged => {
                 let failed = installed

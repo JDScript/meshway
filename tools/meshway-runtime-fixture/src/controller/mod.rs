@@ -721,9 +721,8 @@ async fn coordinate(
         signals.write("traversal-verified", &Signal::Ready).await?;
     }
     if cli.traversal_fallback {
-        // Three additional demand publications and the receive-only
-        // subscription warm up sequentially. Budget their aggregate rendezvous,
-        // not a longer UDP exchange, signed attempt, or application lifetime.
+        // Additional business circuits and the receive-only application
+        // subscription warm up sequentially. Budget their aggregate rendezvous.
         if !matches!(
             signals
                 .wait_for("persistent-start", Duration::from_secs(90))
@@ -733,7 +732,7 @@ async fn coordinate(
             return Err("invalid persistent traffic readiness".into());
         }
         tokio::time::sleep(cli.fallback_delay()).await;
-        // Both carriers were authorized before demand creation. Only the owned
+        // Both carriers were authorized by the initial netmap. Only the owned
         // underlay changes here; application exchanges continue concurrently.
         signals.write("enable-fallback", &Signal::Ready).await?;
         signals.ready("fallback-router-r").await?;
@@ -743,7 +742,7 @@ async fn coordinate(
     }
     tracing::info!(
         phase = "traffic",
-        "waiting for persistent UDP/TCP beyond original demand lifetime"
+        "waiting for persistent UDP/TCP on the same OS sockets"
     );
     if !matches!(
         signals.wait_for("traffic", cli.traffic_wait()).await?,

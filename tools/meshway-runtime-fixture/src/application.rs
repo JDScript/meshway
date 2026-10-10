@@ -724,8 +724,8 @@ async fn udp_receive(
 }
 
 async fn udp_exchange(socket: &UdpSocket, frame: &[u8; FRAME]) -> Result<()> {
-    // A publication may cancel an accepted old datagram. UDP does not promise
-    // delivery; prove continuity on this same socket with bounded challenges.
+    // UDP does not promise delivery; prove continuity on this same socket with
+    // bounded challenges, without counting stale echoes as current replies.
     let deadline = Instant::now() + IO;
     loop {
         socket.send(frame).await?;
