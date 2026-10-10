@@ -138,6 +138,23 @@ async fn ready_channel_and_handshake_events_start_direct_and_relay_probes_withou
             fixture.created_at.elapsed() < limit,
             "event-driven setup exceeded {limit:?}"
         );
+        // The same real protected completion crosses the generated HTTP API
+        // and the Server's history transaction. History cannot discard the
+        // task's already-approved complete path or reject every path sample.
+        let output = fixture.owner.outputs().next().unwrap().clone();
+        let snapshot = fixture.controls[0].netmap_snapshot().unwrap();
+        let accepted = fixture.controls[0]
+            .report_observation_result(&snapshot, &fixture.task, &output.result)
+            .await
+            .unwrap();
+        assert_eq!(accepted.latest.as_ref(), Some(fixture.sample()));
+        let replay = fixture.controls[0]
+            .report_observation_result(&snapshot, &fixture.task, &output.result)
+            .await
+            .unwrap();
+        assert_eq!(replay.latest, accepted.latest);
+        assert_eq!(replay.path_segment, accepted.path_segment);
+        assert_eq!(replay.phase, accepted.phase);
         fixture.owner.acknowledge(fixture.task.id);
         assert!(
             fixture

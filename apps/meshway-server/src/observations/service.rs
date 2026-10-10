@@ -736,7 +736,7 @@ impl<P: ObservationProvider> ObservationService<P> {
                             probe,
                         },
                     };
-                    super::history::accept(
+                    super::history::accept_task_result(
                         &tx,
                         &admission,
                         HistoryReport {
@@ -744,6 +744,7 @@ impl<P: ObservationProvider> ObservationService<P> {
                             events: vec![event],
                         },
                         now,
+                        std::slice::from_ref(task.path.as_ref().ok_or(Error::InvalidRequest)?),
                     )?;
                 }
                 tx.commit()?;

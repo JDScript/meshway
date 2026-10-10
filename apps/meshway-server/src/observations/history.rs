@@ -27,6 +27,29 @@ pub fn accept(
     batch: HistoryReport,
     now: DateTime<Utc>,
 ) -> Result<HistoryAccepted, Error> {
+    accept_with_paths(tx, admission, batch, now, None)
+}
+
+/// A task result already admitted by the sole ObservationService owner.
+/// Its exact approved path is retained through the same transaction; raw
+/// Node history uploads cannot manufacture this task-specific path evidence.
+pub(super) fn accept_task_result(
+    tx: &Transaction<'_>,
+    admission: &ReportAdmission,
+    batch: HistoryReport,
+    now: DateTime<Utc>,
+    paths: &[Vec<meshway_model::NodeId>],
+) -> Result<HistoryAccepted, Error> {
+    accept_with_paths(tx, admission, batch, now, Some(paths))
+}
+
+fn accept_with_paths(
+    tx: &Transaction<'_>,
+    admission: &ReportAdmission,
+    batch: HistoryReport,
+    now: DateTime<Utc>,
+    paths: Option<&[Vec<meshway_model::NodeId>]>,
+) -> Result<HistoryAccepted, Error> {
     if admission.instance_id != batch.instance_id || admission.lease_expires_at <= now {
         return Err(Error::InvalidSession);
     }
@@ -61,7 +84,7 @@ pub fn accept(
                     context,
                     probe,
                     now,
-                    None,
+                    paths,
                 )?;
             }
             ObservationPayload::CollectionGap { dropped, from, to } => {
