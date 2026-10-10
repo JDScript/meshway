@@ -212,13 +212,12 @@ impl Host {
     /// Select this around the actor's TUN/packet loop in addition to the execution
     /// snapshot's invalidation. A foreign kernel mutation stops positive I/O.
     pub async fn invalidated(&self) {
-        match self.kernel.shared.installed().ok().flatten() {
-            Some(snapshot) => {
-                if let Ok(scope) = self.kernel.shared.data(&snapshot) {
-                    scope.invalidated().await;
-                }
-            }
-            None => self.kernel.shared.bootstrap().invalidated().await,
+        // A superseded execution guard is not a broken physical owner. The
+        // packet actor waits on its snapshot separately and can hand compatible
+        // resources to the next netmap without deleting the TUN or channels.
+        tokio::select! {
+            _ = self.kernel.shared.conflict.cancelled() => {},
+            _ = self.kernel.shared.tasks.stop.cancelled() => {},
         }
     }
 

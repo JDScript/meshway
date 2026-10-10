@@ -76,7 +76,8 @@ fn random_uuid() -> Option<uuid::Uuid> {
 }
 
 /// Resolve a ping target on the netmap: a configured hostname or Mesh FQDN
-/// listed in the netmap's MagicDNS hosts, or an exact Mesh IP of a visible Node.
+/// from its visible projection, or an exact Mesh IP. MagicDNS enablement only
+/// controls system DNS handling; diagnostic admission is checked separately.
 fn resolve(
     snapshot: &ExecutionSnapshot,
     target: &NodeObservationTarget,
@@ -91,8 +92,7 @@ fn resolve(
                 NodeObservationTarget::Name { name } => {
                     let name = name.trim_end_matches('.').to_ascii_lowercase();
                     let fqdn = meshway_configuration::node_dns_name(&node.hostname, domain).ok();
-                    (name == node.hostname || fqdn.as_deref() == Some(name.as_str()))
-                        && fqdn.is_some_and(|fqdn| netmap.dns.mesh_hosts.contains_key(&fqdn))
+                    name == node.hostname || fqdn.as_deref() == Some(name.as_str())
                 }
                 NodeObservationTarget::MeshIp { address } => address
                     .parse::<std::net::IpAddr>()
