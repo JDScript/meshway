@@ -4,11 +4,13 @@
 //! select among candidates the netmap already allows; they never authorize,
 //! compile or publish anything.
 mod extract;
+#[cfg(test)]
+mod tests;
 
 pub(crate) use extract::peer_facts;
 
 use crate::error::Error;
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Utc};
 use meshway_configuration::netmap::{CompiledNetmap, NodeNetmap};
 use meshway_model::{NetmapRef, NetworkId, NodeId, Sequence, StateEpoch};
 use meshway_protocol::netmap::{PeerFacts, PeerFactsDelta, StateCursor};
@@ -190,8 +192,8 @@ impl FactLedger {
     }
 
     /// Record a reporter's complete current facts. Unchanged content does not
-    /// advance the cursor or wake anyone until half its disclosed lifetime is
-    /// left, so steady reports cost no fan-out. Returns whether it advanced.
+    /// advance the cursor or wake anyone. Freshness is piggybacked on the next
+    /// ordinary sync response. Returns whether semantic content advanced.
     pub(crate) fn record(
         &mut self,
         network: NetworkId,
@@ -204,12 +206,12 @@ impl FactLedger {
         }
         let node = facts.node_id;
         let state = self.networks.entry(network).or_default();
-        if let Some(entry) = state.current.get(&node)
+        if let Some(entry) = state.current.get_mut(&node)
             && entry.facts.listeners == facts.listeners
             && entry.facts.exit == facts.exit
             && facts.expires_at >= entry.facts.expires_at
-            && entry.facts.expires_at - now >= Duration::seconds(super::REPORT_TTL_SECONDS / 2)
         {
+            entry.facts = facts;
             return Ok(false);
         }
         let sequence = Self::next(state)?;
@@ -281,14 +283,13 @@ impl FactLedger {
                 && cursor.sequence <= state.sequence
         });
         let after = base.map(|base| base.sequence);
-        if after == Some(state.sequence) {
-            return Ok(None);
-        }
+        let freshness_only = after == Some(state.sequence);
         let updated: BTreeMap<_, _> = state
             .current
             .iter()
             .filter(|(node, entry)| {
-                visible.contains(node) && after.is_none_or(|after| entry.sequence > after)
+                visible.contains(node)
+                    && (freshness_only || after.is_none_or(|after| entry.sequence > after))
             })
             .map(|(node, entry)| (*node, scoped(viewer, &entry.facts)))
             .collect();

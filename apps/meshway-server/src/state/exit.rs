@@ -167,7 +167,7 @@ pub(super) fn replace(
 pub(crate) fn inputs(
     tx: &Transaction<'_>,
     network: NetworkId,
-    revision: Revision,
+    _revision: Revision,
     now: i64,
 ) -> Result<ExitInputs, Error> {
     initialize(tx)?;
@@ -185,12 +185,8 @@ pub(crate) fn inputs(
         inputs.instances.insert(node, execution::id(row.get(1)?)?);
     }
     drop(rows);
-    let mut statement = tx.prepare("SELECT s.node_id,s.payload,min(s.expires_at,e.instance_expires_at) FROM temp.state_exit s JOIN node_execution e ON e.network_id=s.network_id AND e.node_id=s.node_id AND e.instance_id=s.instance_id AND e.generation=s.generation WHERE s.network_id=?1 AND s.revision=?2 AND s.active=1 AND s.expires_at>?3 AND e.instance_expires_at>?3")?;
-    let mut rows = statement.query(params![
-        network.as_uuid().as_bytes(),
-        revision.get() as i64,
-        now
-    ])?;
+    let mut statement = tx.prepare("SELECT s.node_id,s.payload,min(s.expires_at,e.instance_expires_at) FROM temp.state_exit s JOIN node_execution e ON e.network_id=s.network_id AND e.node_id=s.node_id AND e.instance_id=s.instance_id AND e.generation=s.generation JOIN node_netmaps n ON n.network_id=s.network_id AND n.node_id=s.node_id AND n.revision=s.revision WHERE s.network_id=?1 AND s.active=1 AND s.expires_at>?2 AND e.instance_expires_at>?2 AND n.withdrawn_at IS NULL AND n.serial=(SELECT max(h.serial) FROM node_netmaps h WHERE h.network_id=n.network_id AND h.node_id=n.node_id)")?;
+    let mut rows = statement.query(params![network.as_uuid().as_bytes(), now])?;
     while let Some(row) = rows.next()? {
         let node: NodeId = execution::id(row.get(0)?)?;
         match execution::json::<Observation>(&row.get::<_, Vec<u8>>(1)?)?.status {

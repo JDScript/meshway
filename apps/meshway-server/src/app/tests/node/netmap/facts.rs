@@ -69,12 +69,12 @@ async fn endpoint_changes_wake_only_viewers_that_see_the_reporter() {
         .unwrap();
     assert_eq!(next.base, Some(cursor));
     assert_eq!(next.updated.keys().copied().collect::<Vec<_>>(), [b]);
-    assert!(
-        facts
-            .peer_facts(&na, Some(na.reference()), Some(next.cursor))
-            .unwrap()
-            .is_none()
-    );
+    let freshness = facts
+        .peer_facts(&na, Some(na.reference()), Some(next.cursor))
+        .unwrap()
+        .unwrap();
+    assert_eq!(freshness.cursor, next.cursor);
+    assert_eq!(freshness.updated, next.updated);
     // A cursor from another netmap, or none held, restarts complete facts.
     let restarted = facts
         .peer_facts(&na, Some(nb.reference()), Some(next.cursor))
@@ -82,17 +82,17 @@ async fn endpoint_changes_wake_only_viewers_that_see_the_reporter() {
         .unwrap();
     assert_eq!(restarted.base, None);
     assert!(restarted.updated.contains_key(&b));
-    // An identical report inside half its lifetime neither advances the
-    // cursor nor wakes anyone.
+    // An identical report renews freshness without advancing the cursor or
+    // waking anyone; the next ordinary response piggybacks its new deadline.
     let wake_a = facts.watch(&na).unwrap();
     lab.report_endpoints(1, 2, &["10.1.0.1:23456"]).await;
     assert!(!wake_a.has_changed());
-    assert!(
-        facts
-            .peer_facts(&na, Some(na.reference()), Some(next.cursor))
-            .unwrap()
-            .is_none()
-    );
+    let refreshed = facts
+        .peer_facts(&na, Some(na.reference()), Some(next.cursor))
+        .unwrap()
+        .unwrap();
+    assert_eq!(refreshed.cursor, next.cursor);
+    assert!(refreshed.updated[&b].expires_at >= next.updated[&b].expires_at);
     // b's endpoint details reach a because a may dial b's listener; a has no
     // reported facts, and b's own netmap may not dial a, so nothing leaks.
     let to_b = facts.peer_facts(&nb, None, None).unwrap().unwrap();
@@ -198,5 +198,52 @@ async fn exit_readiness_is_only_a_fact() {
     // Facts and observations never change any netmap.
     assert_eq!(lab.references().await, netmaps_before);
     assert_eq!(lab.netmap(a).await.reference(), before.reference());
+    lab.app.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn unrelated_configuration_revision_does_not_withdraw_current_exit_readiness() {
+    let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
+    let lab = lab(true).await;
+    let [_, exit, isolated] = lab.nodes;
+    let before = lab.netmap(exit).await.reference();
+    lab.report_exit(1, 1, ExitStatus::Ready).await;
+    let current = lab
+        .app
+        .configurations()
+        .read(&lab.owner, lab.network, None)
+        .await
+        .unwrap();
+    let mut config = current.document.configuration.clone();
+    config.nodes.get_mut(&isolated).unwrap().remark = "unrelated isolated node".into();
+    let applied = lab
+        .app
+        .configurations()
+        .apply(
+            &lab.owner,
+            lab.network,
+            meshway_protocol::configuration::ConfigurationRequest::Document {
+                expected_revision: current.revision,
+                request_id: rid(),
+                source_jsonc: WireSecret::new(canonical_json(&config).unwrap().expose().into()),
+            },
+            rid(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(lab.netmap(exit).await.reference(), before);
+    let network = lab.network;
+    let revision = applied.revision;
+    assert!(revision > before.revision);
+    let inputs = lab
+        .app
+        .executor
+        .handle()
+        .read(move |tx| {
+            crate::state::exit::inputs(tx, network, revision, chrono::Utc::now().timestamp_millis())
+        })
+        .await
+        .unwrap();
+    assert!(inputs.ready_until_ms.contains_key(&exit));
     lab.app.shutdown().await.unwrap();
 }

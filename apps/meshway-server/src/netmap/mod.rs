@@ -148,7 +148,10 @@ impl Netmaps {
             if !matches!(
                 response.netmap,
                 meshway_protocol::netmap::SyncNetmap::Unchanged
-            ) || response.peer_facts.is_some()
+            ) || response
+                .peer_facts
+                .as_ref()
+                .is_some_and(|facts| facts.base.is_none() || Some(facts.cursor) != request.state)
             {
                 return Ok(response);
             }
