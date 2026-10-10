@@ -1,7 +1,7 @@
 //! The Node's single desired-state owner.
 //!
-//! Control verifies and persists signed netmaps and owns their expiry timer.
-//! The engine accepts content only: no component receives a lease, generation,
+//! Control verifies and persists signed netmaps. Engine owns their only expiry
+//! timer. Components accept content only: none receives a lease, generation,
 //! lineage, inherited scope or transferable output authority. Reconfiguration
 //! is serialized with packet processing by the caller's exclusive engine borrow.
 #![forbid(unsafe_code)]
@@ -10,9 +10,14 @@ use meshway_configuration::{
     execution::DialCandidate,
     netmap::{CompiledNetmap, EgressPlan, ExitRole, NetmapDns, NetmapSelf, NodeNetmap},
 };
-use meshway_model::NetmapRef;
+use meshway_model::{NetmapLease, NetmapRef};
 use meshway_policy::compile::netmap::LocalCompiler;
 use std::{collections::BTreeMap, sync::Arc};
+
+mod lease;
+pub use lease::Netmap;
+#[cfg(test)]
+mod tests;
 
 /// Immutable desired inputs, built once for a content reference. Consumers
 /// borrow the same projection/compiler; per-flow policy results stay lazy.
@@ -71,6 +76,8 @@ pub enum Error {
     Reference,
     #[error("required Node component could not apply desired state")]
     Apply,
+    #[error("netmap lease is invalid or has expired")]
+    Lease,
 }
 
 /// Production adapters own mechanisms, not authority. Each operation is
@@ -89,6 +96,9 @@ pub trait Components {
 pub struct Engine<C> {
     components: C,
     desired: Option<Desired>,
+    lease: Option<lease::Active>,
+    latest: Option<NetmapLease>,
+    clock: lease::Clock,
 }
 
 impl<C: Components> Engine<C> {
@@ -96,37 +106,89 @@ impl<C: Components> Engine<C> {
         Self {
             components,
             desired: None,
+            lease: None,
+            latest: None,
+            clock: lease::Clock::new(),
         }
     }
     pub fn desired(&self) -> Option<&Desired> {
         self.desired.as_ref()
     }
 
-    /// Sole content transition. Same reference is a no-op: lease renewal is
-    /// entirely Control's timer responsibility and never calls components.
-    pub async fn reconfig(&mut self, netmap: Option<&CompiledNetmap>) -> Result<(), Error> {
+    /// Sole execution transition. Control has already verified the signature
+    /// and identity binding. Renewing live content changes only this owner's
+    /// timer; an expired engine must first apply empty, then install anew.
+    pub async fn reconfig(&mut self, netmap: Option<&Netmap>) -> Result<(), Error> {
+        let active = netmap
+            .map(|next| lease::Active::accept(next, self.latest, &mut self.clock))
+            .transpose()?;
+        if self
+            .lease
+            .as_ref()
+            .is_some_and(|lease| lease.expired(&mut self.clock))
+        {
+            self.withdraw().await?;
+        }
         if let (Some(current), Some(next)) = (&self.desired, netmap) {
-            let reference = next.reference();
+            let reference = next.content.reference();
             if current.reference == reference {
+                self.latest = Some(next.lease);
+                self.lease = active;
                 return Ok(());
             }
             if current.reference.serial >= reference.serial {
                 return Err(Error::Reference);
             }
         }
-        let desired = netmap.map(Desired::new).transpose()?;
+        let desired = netmap.map(|next| Desired::new(&next.content)).transpose()?;
         // Removing the current desired state before the first await is the
         // engine's admission boundary. If its caller cancels this operation,
         // the engine stays empty; the next reconfig retries idempotent applies.
         self.desired = None;
-        if let Err(error) = self.apply(desired.as_ref()).await {
+        self.lease = None;
+        let result = match &active {
+            Some(lease) => tokio::time::timeout_at(lease.at, self.apply(desired.as_ref()))
+                .await
+                .unwrap_or(Err(Error::Lease)),
+            None => self.apply(None).await,
+        };
+        if let Err(error) = result {
             // Cleanup always attempts every owner, even when one failed. No
             // partially installed desired state becomes the current engine.
             let _ = self.apply(None).await;
             return Err(error);
         }
+        if let Some(next) = netmap {
+            self.latest = Some(next.lease);
+        }
+        self.lease = active;
         self.desired = desired;
         Ok(())
+    }
+
+    /// Selected by the engine's event loop, independently of Control HTTP and
+    /// component work. This is scheduling data; components never receive it.
+    pub fn next_expiry(&self) -> Option<tokio::time::Instant> {
+        self.lease.as_ref().map(|lease| lease.at)
+    }
+
+    /// Consume the timer event. The owner also calls this on a wall-clock
+    /// change; a backward clock cannot extend its previously accepted lease.
+    pub async fn expire(&mut self) -> Result<(), Error> {
+        if self
+            .lease
+            .as_ref()
+            .is_some_and(|lease| lease.expired(&mut self.clock))
+        {
+            self.withdraw().await?;
+        }
+        Ok(())
+    }
+
+    async fn withdraw(&mut self) -> Result<(), Error> {
+        self.desired = None;
+        self.lease = None;
+        self.apply(None).await
     }
 
     async fn apply(&mut self, desired: Option<&Desired>) -> Result<(), Error> {

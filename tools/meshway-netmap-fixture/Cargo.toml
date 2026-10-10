@@ -15,6 +15,7 @@ meshway-configuration = { path = "../../crates/meshway-configuration" }
 meshway-control = { path = "../../crates/meshway-control" }
 meshway-control-client = { path = "../../crates/meshway-control-client" }
 meshway-model = { path = "../../crates/meshway-model" }
+meshway-policy = { path = "../../crates/meshway-policy" }
 meshway-protocol = { path = "../../crates/meshway-protocol" }
 reqwest.workspace = true
 serde_json.workspace = true

@@ -31,6 +31,9 @@ use std::{
 };
 use tokio::{sync::oneshot, task::JoinHandle};
 
+mod configuration;
+pub use configuration::single_node;
+
 const BODY_LIMIT: usize = 64 * 1024 * 1024;
 
 /// Register a fixture user while respecting the Server's process-wide KDF

@@ -2075,8 +2075,10 @@ version = "0.1.0"
 dependencies = [
  "meshway-configuration",
  "meshway-model",
+ "meshway-netmap-fixture",
  "meshway-policy",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]
@@ -2136,6 +2138,7 @@ dependencies = [
  "meshway-control",
  "meshway-control-client",
  "meshway-model",
+ "meshway-policy",
  "meshway-protocol",
  "reqwest",
  "serde_json",
