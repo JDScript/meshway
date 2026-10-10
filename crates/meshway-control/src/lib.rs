@@ -323,10 +323,7 @@ impl Control {
         &mut self,
         response: Result<T, ClientError<ErrorResponse>>,
     ) -> Result<T, Error> {
-        if response
-            .as_ref()
-            .is_err_and(|error| identity_rejected(error))
-        {
+        if response.as_ref().is_err_and(identity_rejected) {
             self.block_netmap_cache()?;
         }
         if matches!(
