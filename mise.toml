@@ -113,6 +113,10 @@ run = "python3 scripts/verify_packet.py"
 description = "Explicit release raw/datagram transport measurements and JSON/Markdown reports"
 run = "python3 scripts/perf/transport.py"
 
+[tasks."perf:netmap"]
+description = "Measure affected-node netmap projection against full compilation"
+run = "cargo run --release --locked -p meshway-netmap-perf --"
+
 [tasks."perf:circuit"]
 description = "Explicit release in-process protected circuit CPU measurements (L0)"
 run = "python3 scripts/perf/circuit.py"

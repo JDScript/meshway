@@ -17,6 +17,16 @@
 
 ## 运行方式与报告契约
 
+### Netmap 增量投影
+
+```sh
+mise run perf:netmap -- --nodes 1000 --group-size 10 --samples 3
+```
+
+`tools/meshway-netmap-perf` 直接调用正式 Policy 编译入口，对确定性的 1000 节点、100 个独立十节点 topology／Access 分组测量。分别比较仅 revision 变化、一个节点改名、全局 DNS domain 变化；每轮先计时增量与完整编译，再在计时外合并保留输出并核对逐字段一致性。输入指纹包含全局字段、主体绑定、地址分类与每个可见／出口依赖；先判定受影响节点，再构造完整 netmap。全局变更可以保守重编全部节点。
+
+stdout JSON 保存源码 revision、节点／分组／重复参数、每轮毫秒、中位数、实际评估节点数和一致性结果。计时包含指纹、topology 索引及投影构造，不含 SQL、签名、网络 I/O 或真实包流；这是编译器测量，不能替代 Server 事务耗时或 L5 吞吐。Server 将相同指纹与 netmap 更新放在同一事务，缺少指纹时完整编译。
+
 ### 二进制体积
 
 自 `d073668a` 起，workspace release profile 为 `lto = "fat"`、`codegen-units = 1`、`panic = "abort"`、`strip = "debuginfo"`；优化级别沿用 Cargo release 的 3。lab 与性能工具的普通 release 构建共同使用该配置。保留符号表用于函数归因，移除 DWARF 调试信息；保留 DWARF 的原生采样需要同时覆盖 debug／strip，并在报告中保留覆盖值（见 [L0 CPU 归因](#l0-cpu-归因)）。panic 会终止进程，不执行 unwind 析构；普通错误、取消和正常退出仍走既有 owner 的清理／join 路径。跨此提交的历史性能数字必须标明 profile 变化，并用相同工具重新对照。

@@ -36,6 +36,7 @@ members = [
     "tools/meshway-packet-fixture",
     "tools/meshway-runtime-fixture",
     "tools/meshway-netmap-fixture",
+    "tools/meshway-netmap-perf",
 ]
 resolver = "3"
 

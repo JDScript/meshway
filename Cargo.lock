@@ -2133,6 +2133,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "meshway-netmap-perf"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "meshway-configuration",
+ "meshway-logging",
+ "meshway-model",
+ "meshway-policy",
+ "meshway-transport-spec",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
 name = "meshway-packet-fixture"
 version = "0.1.0"
 dependencies = [

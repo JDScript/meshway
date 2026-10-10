@@ -1,0 +1,20 @@
+[package]
+name = "meshway-netmap-perf"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Explicit stable-input netmap projection measurement"
+
+[dependencies]
+meshway-configuration = { path = "../../crates/meshway-configuration" }
+meshway-policy = { path = "../../crates/meshway-policy" }
+meshway-model = { path = "../../crates/meshway-model" }
+meshway-transport-spec = { path = "../../crates/meshway-transport-spec" }
+meshway-logging = { path = "../../crates/meshway-logging" }
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true
