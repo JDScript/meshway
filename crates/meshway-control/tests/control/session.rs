@@ -24,7 +24,7 @@ async fn connected(server: &Server, owner: &Owner, origin: &str, name: &str) -> 
     server.enroll(owner, &mut control, name).await;
     control.authenticate().await.unwrap();
     control.acquire_instance(Default::default()).await.unwrap();
-    control.sync_configuration().await.unwrap();
+    crate::support::sync(&mut control).await.unwrap();
     control
 }
 
@@ -35,10 +35,12 @@ async fn explicit_refresh_preserves_instance_tickets_pending_state_and_original_
     let wire = wire::Observer::start(&server.origin).await;
     let proxy = Proxy::start(&wire.origin).await;
     let mut control = connected(&server, &owner, &proxy.origin, "session-handoff").await;
-    let ticket = control.begin_application().await.unwrap();
+    let ticket = crate::support::acknowledge_saved(&mut control)
+        .await
+        .unwrap();
     proxy.fault("/agent-api/v1/state", Fault::Lost);
     assert!(control.report_control_state(system()).await.is_err());
-    let old = control.execution_snapshot().unwrap();
+    let old = control.netmap_snapshot().unwrap();
     let deadline = old.expires_at();
     let before = control.status();
     control.authenticate().await.unwrap();
@@ -54,12 +56,11 @@ async fn explicit_refresh_preserves_instance_tickets_pending_state_and_original_
         before.instance,
         "authentication must not renew either lease"
     );
-    assert_eq!(control.status().cached, before.cached);
+    assert_eq!(control.status().held, before.held);
     assert_eq!(old.expires_at(), deadline);
     old.ensure_current().unwrap();
-    let fresh = control.execution_snapshot().unwrap();
-    assert!(fresh.same_execution(&old));
-    fresh.continuation_from(&old).unwrap();
+    let fresh = control.netmap_snapshot().unwrap();
+    assert!(fresh.same_netmap(&old));
     let accepted = control.retry_state_report().await.unwrap();
     assert!(accepted.duplicate);
     assert_eq!(accepted.sequence.get(), 1);
@@ -67,7 +68,7 @@ async fn explicit_refresh_preserves_instance_tickets_pending_state_and_original_
         .finish_application(&ticket, Ok(()), chrono::Utc::now())
         .await
         .unwrap();
-    control.sync_configuration().await.unwrap();
+    crate::support::sync(&mut control).await.unwrap();
     let sessions = wire.sessions();
     assert_eq!(sessions.len(), 2);
     assert_ne!(sessions[0].intent, sessions[1].intent);
@@ -92,7 +93,7 @@ async fn lost_and_cancelled_refresh_retry_one_intent_and_one_server_session() {
     let wire = wire::Observer::start(&server.origin).await;
     let proxy = Proxy::start(&wire.origin).await;
     let mut control = connected(&server, &owner, &proxy.origin, "session-retry").await;
-    let old = control.execution_snapshot().unwrap();
+    let old = control.netmap_snapshot().unwrap();
     let before = control.status().instance;
     proxy.fault(SESSION, Fault::Lost);
     assert!(control.refresh_authentication().await.is_err());
@@ -129,7 +130,7 @@ async fn lost_and_cancelled_refresh_retry_one_intent_and_one_server_session() {
             "an intent replay must not allocate another Server session/quota slot"
         );
     }
-    control.sync_configuration().await.unwrap();
+    crate::support::sync(&mut control).await.unwrap();
     assert_eq!(wire.last_query_token(), Some(sessions[1].token_digest));
     old.ensure_current().unwrap();
     control.shutdown().await.unwrap();
@@ -146,7 +147,7 @@ async fn authenticate_refreshes_before_expiry_without_extending_old_snapshot() {
     let proxy = Proxy::start(&server.origin).await;
     proxy.fault(SESSION, Fault::ShortSession);
     let mut control = connected(&server, &owner, &proxy.origin, "session-proactive").await;
-    let old = control.execution_snapshot().unwrap();
+    let old = control.netmap_snapshot().unwrap();
     let before = control.status().instance;
     let deadline = old.expires_at();
     control.authenticate().await.unwrap();
@@ -154,18 +155,12 @@ async fn authenticate_refreshes_before_expiry_without_extending_old_snapshot() {
     assert_eq!(control.status().instance, before);
     assert_eq!(old.expires_at(), deadline);
     old.ensure_current().unwrap();
-    let fresh = control.execution_snapshot().unwrap();
-    assert!(fresh.same_execution(&old));
-    fresh.continuation_from(&old).unwrap();
-    tokio::time::timeout(Duration::from_secs(4), old.invalidated())
-        .await
-        .unwrap();
-    assert!(old.ensure_current().is_err());
+    let fresh = control.netmap_snapshot().unwrap();
+    assert!(fresh.same_netmap(&old));
+    // Session expiry never bounds netmap authority.
+    tokio::time::sleep(Duration::from_secs(4)).await;
+    old.ensure_current().unwrap();
     fresh.ensure_current().unwrap();
-    assert!(
-        fresh.continuation_from(&old).is_err(),
-        "expired flows cannot borrow the fresh session's deadline"
-    );
     assert_eq!(control.status().instance, before);
     control.shutdown().await.unwrap();
     proxy.close().await;
@@ -173,13 +168,13 @@ async fn authenticate_refreshes_before_expiry_without_extending_old_snapshot() {
 }
 
 #[tokio::test]
-async fn old_session_expiring_during_refresh_fences_instance_before_promoting_new_token() {
+async fn old_session_expiring_during_refresh_fences_instance_but_not_the_netmap() {
     let server = Server::start().await;
     let owner = server.owner().await;
     let proxy = Proxy::start(&server.origin).await;
     proxy.fault(SESSION, Fault::ShortSession);
     let mut control = connected(&server, &owner, &proxy.origin, "session-expired").await;
-    let old = control.execution_snapshot().unwrap();
+    let old = control.netmap_snapshot().unwrap();
     let before = control.status();
     proxy.fault(SESSION, Fault::Hold);
     {
@@ -189,23 +184,24 @@ async fn old_session_expiring_during_refresh_fences_instance_before_promoting_ne
             result = &mut refresh => panic!("session response was not held: {result:?}"),
             result = tokio::time::timeout(Duration::from_secs(2), proxy.committed()) => result.unwrap(),
         }
-        tokio::time::timeout(Duration::from_secs(4), old.invalidated())
-            .await
-            .unwrap();
-        assert!(old.ensure_current().is_err());
+        tokio::time::sleep(Duration::from_secs(4)).await;
+        old.ensure_current().unwrap();
         proxy.release();
         refresh.await.unwrap();
     }
     assert!(control.status().authenticated);
     assert!(control.status().instance.is_none());
-    assert_eq!(control.status().cached, before.cached);
-    assert!(control.execution_snapshot().is_err());
+    assert_eq!(control.status().held, before.held);
+    // The data plane keeps its netmap while the instance is re-acquired.
+    control.netmap_snapshot().unwrap().ensure_current().unwrap();
     let lease = control.acquire_instance(Default::default()).await.unwrap();
     assert_ne!(lease.instance_id, before.instance.unwrap().instance_id);
-    control.sync_configuration().await.unwrap();
-    let fresh = control.execution_snapshot().unwrap();
-    assert!(!fresh.same_execution(&old));
-    assert!(fresh.continuation_from(&old).is_err());
+    crate::support::sync(&mut control).await.unwrap();
+    let fresh = control.netmap_snapshot().unwrap();
+    // The netmap outlives the session and instance; only the instance
+    // binding of State and receipts changed.
+    assert!(fresh.same_netmap(&old));
+    assert_ne!(fresh.instance(), old.instance());
     control.shutdown().await.unwrap();
     proxy.close().await;
     server.close().await;
@@ -218,7 +214,7 @@ async fn definitive_member_credential_rejection_fences_preexisting_execution() {
     let proxy = Proxy::start(&server.origin).await;
     let mut control = connected(&server, &owner, &proxy.origin, "session-deleted").await;
     let node = control.status().binding.unwrap().node_id;
-    let old = control.execution_snapshot().unwrap();
+    let old = control.netmap_snapshot().unwrap();
     let current = server
         .client
         .get_network(
@@ -268,7 +264,7 @@ async fn foreign_challenge_and_session_bindings_fence_instead_of_preserving_old_
         (CHALLENGE, Fault::WrongController),
         (SESSION, Fault::WrongDnsNetwork),
     ] {
-        let old = control.execution_snapshot().unwrap();
+        let old = control.netmap_snapshot().unwrap();
         let count = proxy.count(SESSION);
         proxy.fault(suffix, fault);
         assert!(matches!(
@@ -293,7 +289,7 @@ async fn foreign_challenge_and_session_bindings_fence_instead_of_preserving_old_
             proxy.count(SESSION)
         );
         control.acquire_instance(Default::default()).await.unwrap();
-        control.sync_configuration().await.unwrap();
+        crate::support::sync(&mut control).await.unwrap();
     }
     control.shutdown().await.unwrap();
     proxy.close().await;
@@ -306,7 +302,7 @@ async fn proven_expired_replacement_response_retires_only_its_intent_and_can_ret
     let owner = server.owner().await;
     let wire = wire::Observer::start(&server.origin).await;
     let mut control = connected(&server, &owner, &wire.origin, "session-old-reply").await;
-    let old = control.execution_snapshot().unwrap();
+    let old = control.netmap_snapshot().unwrap();
     let before = control.status().instance;
     wire.expire_next_session();
     assert!(matches!(

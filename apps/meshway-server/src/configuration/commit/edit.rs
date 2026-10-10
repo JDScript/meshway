@@ -67,13 +67,17 @@ pub(super) fn author(
                 .cache
                 .load(tx, current.network_id, *restore_from, &committer.sealer)?;
         let bindings = match rule_set_bindings {
-            Some(publication) => crate::resources::bindings::at_publication(
-                tx,
-                current.network_id,
-                *restore_from,
-                *publication,
-            )?,
-            None => snapshot.bindings.rule_sets.clone(),
+            Some(meshway_protocol::configuration::RuleSetBindingChoice::Refreshed) => {
+                crate::resources::bindings::at_revision(
+                    tx,
+                    current.network_id,
+                    *restore_from,
+                    &snapshot.bindings.rule_sets,
+                )?
+            }
+            Some(meshway_protocol::configuration::RuleSetBindingChoice::Initial) | None => {
+                snapshot.bindings.rule_sets.clone()
+            }
         };
         draft.rule_set_contents =
             crate::resources::bindings::contents(tx, current.network_id, &bindings)?;

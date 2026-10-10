@@ -1,18 +1,12 @@
 #![cfg(unix)]
 mod application;
 mod authority;
-mod cache;
-mod dns;
-mod events;
-mod exit;
 mod faults;
 mod key_enrollment;
 mod netmap;
 mod recovery;
-mod refresh;
 mod rotation;
 mod session;
-mod state_scope;
 mod support;
 
 use meshway_control::Control;
@@ -73,10 +67,14 @@ async fn real_enrollment_authentication_saved_state_stop_and_reacquire() {
         control.acquire_instance(BTreeMap::new()).await.unwrap(),
         lease
     );
-    let target = control.sync_configuration().await.unwrap().unwrap();
-    assert_eq!(target, control.status().cached.unwrap());
-    control.acknowledge_saved().await.unwrap();
-    control.acknowledge_saved().await.unwrap();
+    let target = crate::support::sync(&mut control).await.unwrap().unwrap();
+    assert_eq!(target, control.status().held.unwrap());
+    crate::support::acknowledge_saved(&mut control)
+        .await
+        .unwrap();
+    crate::support::acknowledge_saved(&mut control)
+        .await
+        .unwrap();
     control.report_control_state(system()).await.unwrap();
     let state = server
         .client
@@ -92,7 +90,7 @@ async fn real_enrollment_authentication_saved_state_stop_and_reacquire() {
     let Some(VisibleReport::Full { report }) = &state.nodes[&binding.node_id].report else {
         panic!("expected own full report")
     };
-    assert_eq!(report.configuration.saved, Some(target.clone()));
+    assert_eq!(report.configuration.saved, Some(target));
     assert_eq!(report.configuration.applied, None);
     assert!(report.capabilities.is_empty() && report.links.is_empty() && report.paths.is_empty());
     let progress = server
@@ -136,13 +134,15 @@ async fn real_enrollment_authentication_saved_state_stop_and_reacquire() {
     .unwrap();
     assert!(!restored.status().authenticated && restored.status().instance.is_none());
     assert_eq!(restored.status().binding.unwrap(), binding);
-    assert_eq!(restored.status().cached, Some(target));
+    assert_eq!(restored.status().held, Some(target));
     restored.authenticate().await.unwrap();
     let fresh = restored.acquire_instance(BTreeMap::new()).await.unwrap();
     assert_ne!(fresh.instance_id, lease.instance_id);
     assert!(fresh.generation > lease.generation);
-    restored.sync_configuration().await.unwrap();
-    restored.acknowledge_saved().await.unwrap();
+    crate::support::sync(&mut restored).await.unwrap();
+    crate::support::acknowledge_saved(&mut restored)
+        .await
+        .unwrap();
     let current = server
         .client
         .get_network(

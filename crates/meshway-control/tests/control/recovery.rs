@@ -158,11 +158,19 @@ async fn committed_redemption_and_state_reports_retry_the_same_identity_after_de
     assert_eq!(proxy.count("/redeem"), 2);
     control.authenticate().await.unwrap();
     control.acquire_instance(Default::default()).await.unwrap();
-    control.sync_configuration().await.unwrap();
+    crate::support::sync(&mut control).await.unwrap();
     proxy.fault("/configuration/receipts", Fault::Lost);
-    assert!(control.acknowledge_saved().await.is_err());
-    control.acknowledge_saved().await.unwrap();
-    control.acknowledge_saved().await.unwrap();
+    assert!(
+        crate::support::acknowledge_saved(&mut control)
+            .await
+            .is_err()
+    );
+    crate::support::acknowledge_saved(&mut control)
+        .await
+        .unwrap();
+    crate::support::acknowledge_saved(&mut control)
+        .await
+        .unwrap();
     assert_eq!(proxy.count("/configuration/receipts"), 2);
     proxy.fault("/agent-api/v1/state", Fault::Lost);
     assert!(control.report_control_state(super::system()).await.is_err());
@@ -199,15 +207,15 @@ async fn committed_redemption_and_state_reports_retry_the_same_identity_after_de
             .instance_id,
         old_instance
     );
-    control.sync_configuration().await.unwrap();
-    let saved = control.status().cached;
+    crate::support::sync(&mut control).await.unwrap();
+    let saved = control.status().held;
     proxy.fault("/configuration/query", Fault::WrongInstance);
     assert!(matches!(
-        control.sync_configuration().await,
+        crate::support::sync(&mut control).await,
         Err(Error::Contract)
     ));
     assert!(control.status().instance.is_none());
-    assert_eq!(control.status().cached, saved);
+    assert_eq!(control.status().held, saved);
     control.shutdown().await.unwrap();
     proxy.close().await;
     server.close().await;

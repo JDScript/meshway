@@ -1,6 +1,6 @@
 use crate::object::wire_object;
 use chrono::{DateTime, Utc};
-use meshway_model::{ArtifactId, Digest, PublicationId, RequestId, Revision};
+use meshway_model::{ArtifactId, Digest, RequestId, Revision};
 
 pub use meshway_model::resources::RuleSetData;
 wire_object! { #[derive(Clone, Debug)]
@@ -66,11 +66,9 @@ pub struct RuleSetView {
     pub artifact: Option<ArtifactSummary>,
     /// Last check failure or `not_ready` for missing initial remote content; null when no problem is recorded.
     pub problem: Option<ResourceProblem>,
-    /// Exact execution publication whose immutable bindings select this artifact.
-    pub publication: Option<PublicationId>,
     /// UTC time of the latest persisted check, successful or failed; null when no check record exists.
     pub checked_at: Option<DateTime<Utc>>,
-    /// Last successful download/conversion/publication check, not artifact creation.
+    /// Last successful download/conversion check, not artifact creation.
     pub last_success_at: Option<DateTime<Utc>>,
 } }
 wire_object! { #[derive(Clone, Debug)]

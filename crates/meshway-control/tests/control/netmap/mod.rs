@@ -56,9 +56,9 @@ async fn server_stop_expires_session_and_instance_while_the_netmap_snapshot_live
     let outcome = control.sync(&mut Facts::default()).await.unwrap();
     assert_eq!(outcome.change, NetmapChange::New { previous: None });
     let snapshot = outcome.snapshot;
-    assert_eq!(snapshot.netmap_ref(), Some(netmap.reference()));
+    assert_eq!(snapshot.reference(), netmap.reference());
     assert_eq!(
-        snapshot.instance_binding().unwrap().instance_id,
+        snapshot.instance().unwrap().instance_id,
         instance.instance_id
     );
     assert_eq!(script.requests()[0].netmap, None);
@@ -79,7 +79,7 @@ async fn server_stop_expires_session_and_instance_while_the_netmap_snapshot_live
     );
     let current = control.netmap_snapshot().unwrap();
     assert!(current.same_netmap(&snapshot));
-    assert_eq!(current.instance_binding(), None);
+    assert_eq!(current.instance(), None);
     assert_eq!(status.netmap.unwrap().netmap, netmap.reference());
     assert!(
         snapshot.expires_at_ms()
@@ -135,7 +135,7 @@ async fn renewal_keeps_guards_and_a_newer_serial_retires_them() {
         .unwrap()
         .unwrap();
     assert!(old.ensure_current().is_err() && renewed.snapshot.ensure_current().is_err());
-    assert_eq!(next.snapshot.netmap_ref(), Some(second.reference()));
+    assert_eq!(next.snapshot.reference(), second.reference());
     assert_eq!(
         next.snapshot
             .netmap_continuation_from(&old)

@@ -68,11 +68,10 @@ impl Server {
     }
     pub async fn start() -> Self {
         let temp = tempfile::tempdir().unwrap();
-        let app = App::open(Settings::new(
-            temp.path().canonicalize().unwrap().join("server"),
-        ))
-        .await
-        .unwrap();
+        let mut settings = Settings::new(temp.path().canonicalize().unwrap().join("server"));
+        // An unchanged sync answers after one second instead of a full hold.
+        settings.netmap.hold = Duration::from_secs(1);
+        let app = App::open(settings).await.unwrap();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let origin = format!("http://{}", listener.local_addr().unwrap());
         let router = meshway_server::http::router(&app);
@@ -137,4 +136,61 @@ impl Server {
         self.task.await.unwrap();
         self.app.shutdown().await.unwrap();
     }
+}
+
+/// Peer facts are irrelevant to these Control fixtures.
+#[derive(Default)]
+pub struct NoFacts;
+impl meshway_control::PeerFactsSink for NoFacts {
+    fn apply(
+        &mut self,
+        _: meshway_model::NetmapRef,
+        _: meshway_protocol::PeerFactsDelta,
+    ) -> Result<(), meshway_control::FactsRejected> {
+        Ok(())
+    }
+}
+
+/// One real `sync` exchange; returns the netmap Control now holds.
+pub async fn sync(
+    control: &mut meshway_control::Control,
+) -> Result<Option<meshway_model::NetmapRef>, meshway_control::Error> {
+    control
+        .sync(&mut NoFacts)
+        .await
+        .map(|outcome| Some(outcome.snapshot.reference()))
+}
+
+/// Save receipt of the held netmap for the current instance.
+pub async fn acknowledge_saved(
+    control: &mut meshway_control::Control,
+) -> Result<meshway_control::ApplicationTicket, meshway_control::Error> {
+    let netmap = control
+        .netmap_reference()
+        .ok_or(meshway_control::Error::Lifecycle)?;
+    control.begin_application(netmap).await
+}
+
+/// An enrolled, authenticated Control with a Native UDP capable instance.
+pub async fn udp_control(
+    server: &Server,
+    owner: &Owner,
+    origin: &str,
+    name: &str,
+) -> meshway_control::Control {
+    use meshway_model::state::{Capability, StreamKind, TransportRole};
+    server
+        .control(
+            owner,
+            origin,
+            name,
+            std::collections::BTreeMap::from([(
+                "transport:native_udp".into(),
+                Capability::Transport {
+                    roles: vec![TransportRole::Dial, TransportRole::Listen],
+                    streams: vec![StreamKind::Udp],
+                },
+            )]),
+        )
+        .await
 }

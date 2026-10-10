@@ -21,20 +21,21 @@ async fn packet_identity_uses_registered_keys_and_stops_with_the_execution_hando
     server.enroll(&owner, &mut control, "packet-identity").await;
     control.authenticate().await.unwrap();
     control.acquire_instance(Default::default()).await.unwrap();
-    control.sync_configuration().await.unwrap();
-    let snapshot = control.execution_snapshot().unwrap();
+    crate::support::sync(&mut control).await.unwrap();
+    let snapshot = control.netmap_snapshot().unwrap();
     let identity = control.dataplane_identity(snapshot.clone()).unwrap();
-    let cfg = snapshot.configuration().unwrap();
+    let cfg = &snapshot.netmap().unwrap().netmap;
     let digest: meshway_model::Digest = [7; 32].into();
     let signature = identity.sign_packet(digest).unwrap();
     let verifier =
-        VerifyingKey::from_bytes(cfg.self_keys.control_key.public_key.bytes.as_bytes()).unwrap();
+        VerifyingKey::from_bytes(cfg.self_.self_keys.control_key.public_key.bytes.as_bytes())
+            .unwrap();
     verifier
         .verify_strict(
             &meshway_authority::packet_proof_message(
                 cfg.network_id,
                 cfg.node_id,
-                &cfg.self_keys.control_key,
+                &cfg.self_.self_keys.control_key,
                 digest,
             ),
             &Signature::from_bytes(&signature),
@@ -47,7 +48,8 @@ async fn packet_identity_uses_registered_keys_and_stops_with_the_execution_hando
         .unwrap();
     assert_eq!(
         public.as_slice(),
-        cfg.self_keys
+        cfg.self_
+            .self_keys
             .dataplane_key
             .public_key
             .bytes
@@ -77,21 +79,20 @@ async fn execution_handoff_requires_current_saved_target_and_never_renews_old_sn
             .no_proxy(),
     )
     .unwrap();
-    assert!(control.execution_snapshot().is_err());
+    assert!(control.netmap_snapshot().is_err());
     server.enroll(&owner, &mut control, "handoff").await;
     control.authenticate().await.unwrap();
-    assert!(control.execution_snapshot().is_err());
+    assert!(control.netmap_snapshot().is_err());
     control.acquire_instance(Default::default()).await.unwrap();
-    assert!(control.execution_snapshot().is_err());
-    let target = control.sync_configuration().await.unwrap().unwrap();
-    let first = control.execution_snapshot().unwrap();
+    assert!(control.netmap_snapshot().is_err());
+    let target = crate::support::sync(&mut control).await.unwrap().unwrap();
+    let first = control.netmap_snapshot().unwrap();
     let original_deadline = first.expires_at();
     assert_eq!(first.reference(), target);
-    assert!(first.configuration().is_ok());
+    assert!(first.netmap().is_ok());
     control.renew_instance().await.unwrap();
-    let renewed = control.execution_snapshot().unwrap();
-    assert!(first.same_execution(&renewed));
-    renewed.continuation_from(&first).unwrap();
+    let renewed = control.netmap_snapshot().unwrap();
+    assert!(first.same_netmap(&renewed));
     assert_eq!(first.expires_at(), original_deadline);
     assert!(renewed.expires_at() >= original_deadline);
     control.stop().await.unwrap();
@@ -99,15 +100,15 @@ async fn execution_handoff_requires_current_saved_target_and_never_renews_old_sn
         .await
         .unwrap();
     assert!(matches!(
-        renewed.configuration(),
+        renewed.netmap(),
         Err(meshway_authority::Error::Expired)
     ));
     control.authenticate().await.unwrap();
     control.acquire_instance(Default::default()).await.unwrap();
-    control.sync_configuration().await.unwrap();
-    let fresh = control.execution_snapshot().unwrap();
-    assert!(!first.same_execution(&fresh));
-    assert!(fresh.continuation_from(&first).is_err());
+    crate::support::sync(&mut control).await.unwrap();
+    let fresh = control.netmap_snapshot().unwrap();
+    assert!(!first.same_netmap(&fresh));
+    assert!(fresh.netmap_continuation_from(&first).is_err());
     assert!(first.ensure_current().is_err());
     drop(control);
     tokio::time::timeout(Duration::from_secs(1), fresh.invalidated())
@@ -121,8 +122,8 @@ async fn execution_handoff_requires_current_saved_target_and_never_renews_old_sn
             .no_proxy(),
     )
     .unwrap();
-    assert!(restored.cached_target().is_some());
-    assert!(restored.execution_snapshot().is_err());
+    assert!(restored.netmap_reference().is_some());
+    assert!(restored.netmap_snapshot().is_err());
     restored.shutdown().await.unwrap();
     server.close().await;
 }
@@ -143,8 +144,8 @@ async fn stopped_execution_wakes_waiters_before_a_held_release_http_response() {
     server.enroll(&owner, &mut control, "execution-stop").await;
     control.authenticate().await.unwrap();
     control.acquire_instance(Default::default()).await.unwrap();
-    control.sync_configuration().await.unwrap();
-    let snapshot = control.execution_snapshot().unwrap();
+    crate::support::sync(&mut control).await.unwrap();
+    let snapshot = control.netmap_snapshot().unwrap();
     proxy.fault("/instances/release", Fault::Hold);
     {
         let stop = control.stop();
@@ -156,7 +157,7 @@ async fn stopped_execution_wakes_waiters_before_a_held_release_http_response() {
         tokio::time::timeout(Duration::from_secs(1), snapshot.invalidated())
             .await
             .unwrap();
-        assert!(snapshot.configuration().is_err());
+        assert!(snapshot.netmap().is_err());
         proxy.release();
         stop.await.unwrap();
     }
@@ -184,8 +185,8 @@ async fn idle_execution_snapshot_expires_without_polling_control_or_delaying_htt
     proxy.fault("/auth/session", Fault::ShortSession);
     control.authenticate().await.unwrap();
     control.acquire_instance(Default::default()).await.unwrap();
-    control.sync_configuration().await.unwrap();
-    let snapshot = control.execution_snapshot().unwrap();
+    crate::support::sync(&mut control).await.unwrap();
+    let snapshot = control.netmap_snapshot().unwrap();
     let before = snapshot.expires_at();
     tokio::time::timeout(Duration::from_secs(4), snapshot.invalidated())
         .await
@@ -195,7 +196,7 @@ async fn idle_execution_snapshot_expires_without_polling_control_or_delaying_htt
         Err(meshway_authority::Error::Expired)
     ));
     assert_eq!(snapshot.expires_at(), before);
-    assert!(control.execution_snapshot().is_err());
+    assert!(control.netmap_snapshot().is_err());
     drop(control);
     proxy.close().await;
     server.close().await;

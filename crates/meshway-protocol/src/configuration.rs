@@ -5,7 +5,7 @@ use crate::{
 use meshway_configuration::{
     ConfigurationChange, ConfigurationOperation, ConfigurationView, NetworkConfiguration,
 };
-use meshway_model::{NetworkId, NodeId, PublicationId, RequestId, Revision};
+use meshway_model::{NetworkId, NodeId, RequestId, Revision};
 
 wire_tagged! {
 /// Complete configuration edit or historical restore, checked against the current revision before commit.
@@ -36,10 +36,21 @@ pub enum ConfigurationRequest {
         #[serde(rename="requestId")]request_id:RequestId,
         /// Historical source revision in the same network whose configuration is restored.
         #[serde(rename="restoreFrom")]restore_from:Revision,
-        /// Omitted: the source version's initial rule-set bindings. Otherwise
-        /// select this exact historical binding from the same source version.
-        #[serde(default, rename="ruleSetBindings")]rule_set_bindings:Option<PublicationId>},
+        /// Omitted or `initial`: the source version's initial rule-set bindings;
+        /// `refreshed`: its last refreshed bindings, or the initial ones when never refreshed.
+        #[serde(default, rename="ruleSetBindings")]rule_set_bindings:Option<RuleSetBindingChoice>},
 } }
+meshway_serde::string_enum! {
+/// Which rule-set bindings of a source version a restore reuses.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum RuleSetBindingChoice {
+    /// The bindings the version was committed with.
+    Initial,
+    /// The version's last refreshed bindings.
+    Refreshed,
+}
+}
 impl ConfigurationRequest {
     pub fn expected_revision(&self) -> Revision {
         match self {

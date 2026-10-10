@@ -66,10 +66,10 @@ async fn restart_loads_a_live_sealed_netmap_without_any_server_contact() {
 
     let restored = reopen(&copy, &origin);
     let snapshot = restored.netmap_snapshot().unwrap();
-    assert_eq!(snapshot.netmap_ref(), Some(netmap.reference()));
+    assert_eq!(snapshot.reference(), netmap.reference());
     assert_eq!(snapshot.expires_at_ms(), before.expires_at_ms());
     assert!(!snapshot.same_netmap(&before) && before.ensure_current().is_err());
-    assert_eq!(snapshot.instance_binding(), None);
+    assert_eq!(snapshot.instance(), None);
     assert!(!restored.status().authenticated);
     assert_eq!(restored.status().netmap.unwrap().netmap, netmap.reference());
     restored.shutdown().await.unwrap();

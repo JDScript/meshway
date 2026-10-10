@@ -18,20 +18,13 @@ pub enum Fault {
     Hold,
     WrongController,
     WrongInstance,
-    WrongExitRoleInstance,
     WrongDnsNetwork,
-    WrongDnsSource,
-    WrongDnsName,
-    MissingDnsRecord,
     ShortSession,
     ShortInstance,
     /// The enrollment response pins the fixture's netmap signing key.
     ServerKey,
     /// The enrollment response pins no netmap signing key.
     NoServerKey,
-    UntypedConflict,
-    WrongStateScopeStatus,
-    StateScopeChanged,
     ReceiptConflict(&'static str, u16),
 }
 #[derive(Clone)]
@@ -154,33 +147,6 @@ async fn forward(State(state): State<Forward>, request: Request) -> Response<Bod
     let status = response.status();
     let mut headers = response.headers().clone();
     let bytes = response.bytes().await.unwrap();
-    if let Some(
-        fault @ (Fault::UntypedConflict | Fault::WrongStateScopeStatus | Fault::StateScopeChanged),
-    ) = fault
-    {
-        let body = if matches!(fault, Fault::UntypedConflict) {
-            b"{}".to_vec()
-        } else {
-            serde_json::to_vec(&meshway_protocol::ErrorResponse {
-                request_id: Some(super::support::request()),
-                status: if matches!(fault, Fault::WrongStateScopeStatus) {
-                    400
-                } else {
-                    409
-                },
-                problem: meshway_protocol::Problem::StateScopeChanged {
-                    params: meshway_protocol::EmptyParams {},
-                    message: "State scope changed.".into(),
-                },
-            })
-            .unwrap()
-        };
-        return Response::builder()
-            .status(StatusCode::CONFLICT)
-            .header(header::CONTENT_TYPE, "application/json")
-            .body(Body::from(body))
-            .unwrap();
-    }
     let bytes = if status.is_success() {
         match fault {
             Some(Fault::Lost) => {
@@ -200,25 +166,7 @@ async fn forward(State(state): State<Forward>, request: Request) -> Response<Bod
                 match fault {
                     Fault::WrongController => value["controllerId"] = id,
                     Fault::WrongInstance => value["lease"]["instanceId"] = id,
-                    Fault::WrongExitRoleInstance => {
-                        let mut response: meshway_protocol::NodeConfigurationResponse =
-                            serde_json::from_value(value).unwrap();
-                        let full = response.full.as_mut().expect("initial full target");
-                        full.configuration
-                            .exit_role
-                            .as_mut()
-                            .expect("exit role")
-                            .instance_id = "00000000-0000-4000-8000-000000000001".parse().unwrap();
-                        full.digest = meshway_configuration::digest(&full.configuration).unwrap();
-                        response.lease.target.as_mut().unwrap().digest = full.digest;
-                        value = serde_json::to_value(response).unwrap();
-                    }
                     Fault::WrongDnsNetwork => value["networkId"] = id,
-                    Fault::WrongDnsSource => value["sourceNodeId"] = id,
-                    Fault::WrongDnsName => value["record"]["name"] = "other.mesh.example".into(),
-                    Fault::MissingDnsRecord => {
-                        value.as_object_mut().unwrap().remove("record");
-                    }
                     Fault::ShortSession => {
                         value["expiresAt"] = (chrono::Utc::now() + chrono::Duration::seconds(2))
                             .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
@@ -228,7 +176,6 @@ async fn forward(State(state): State<Forward>, request: Request) -> Response<Bod
                         value["expiresAt"] = (chrono::Utc::now() + chrono::Duration::seconds(2))
                             .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
                             .into();
-                        value["executionExpiresAt"] = serde_json::Value::Null;
                     }
                     Fault::ServerKey => {
                         value["serverSigningKey"] =
@@ -240,9 +187,6 @@ async fn forward(State(state): State<Forward>, request: Request) -> Response<Bod
                     Fault::Lost | Fault::Hold => unreachable!("delivery fault handled above"),
                     Fault::RejectBefore => unreachable!("rejected before forwarding"),
                     Fault::ReceiptConflict(..) => unreachable!("rejected before forwarding"),
-                    Fault::UntypedConflict
-                    | Fault::WrongStateScopeStatus
-                    | Fault::StateScopeChanged => unreachable!("conflict fault handled above"),
                 }
                 serde_json::to_vec(&value).unwrap()
             }

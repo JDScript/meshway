@@ -1,4 +1,4 @@
-//! Production resource authority, exact version binding and publication adapter.
+//! Production resource authority and exact version binding.
 use super::{
     bindings,
     service::{ResourceProvider, RuleSetScope},
@@ -61,7 +61,6 @@ impl ResourceProvider for Provider {
             snapshot.revision,
             &snapshot.bindings.rule_sets,
         )?;
-        let publication = bindings::latest_publication(tx, *network, snapshot.revision)?;
         let mut views = BTreeMap::new();
         let mut check_versions = BTreeMap::new();
         for (key, definition) in &snapshot.document.configuration.rule_sets {
@@ -81,7 +80,6 @@ impl ResourceProvider for Provider {
                     configuration_revision: snapshot.revision,
                     definition: Some(definition.clone()),
                     artifact,
-                    publication: publication.filter(|_| selected.contains_key(key)),
                     problem: problem.or_else(|| {
                         matches!(definition, RuleSet::Remote { .. })
                             .then_some(ResourceProblem::NotReady)

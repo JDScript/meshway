@@ -100,9 +100,16 @@ async fn access_key_enrollment_recovers_lost_commit_without_browser_credentials(
     assert!(!control.key_enrollment_pending());
     control.authenticate().await.unwrap();
     control.acquire_instance(Default::default()).await.unwrap();
-    control.refresh_configuration().await.unwrap();
+    crate::support::sync(&mut control).await.unwrap();
     assert!(matches!(
-        control.cached_target().unwrap().configuration.identity,
+        control
+            .netmap_snapshot()
+            .unwrap()
+            .netmap()
+            .unwrap()
+            .netmap
+            .self_
+            .identity,
         meshway_configuration::NodeIdentity::Tag { .. }
     ));
     control.shutdown().await.unwrap();

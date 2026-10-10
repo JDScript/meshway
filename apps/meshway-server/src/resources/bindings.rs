@@ -94,25 +94,8 @@ pub(crate) fn inherit_checks(
     Ok(())
 }
 
-pub(crate) fn latest_publication(
-    tx: &Transaction<'_>,
-    network: NetworkId,
-    revision: Revision,
-) -> Result<Option<meshway_model::PublicationId>, Error> {
-    store::resources::bindings::latest_publication(tx, network, revision)
-}
-
-pub(crate) fn at_publication(
-    tx: &Transaction<'_>,
-    network: NetworkId,
-    revision: Revision,
-    publication: meshway_model::PublicationId,
-) -> Result<Bindings, Error> {
-    store::resources::bindings::at_publication(tx, network, revision, publication)
-}
-
 /// The version's current validated binding: the last refreshed binding
-/// recorded for it, or its own initial binding. Independent of publications.
+/// recorded for it, or its own initial binding.
 pub(crate) fn at_revision(
     tx: &Transaction<'_>,
     network: NetworkId,

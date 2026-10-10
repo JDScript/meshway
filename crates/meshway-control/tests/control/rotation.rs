@@ -1,6 +1,5 @@
 use super::{
     faults::{Fault, Proxy},
-    refresh,
     support::Server,
 };
 use meshway_control::Control;
@@ -10,7 +9,8 @@ async fn host_rotation_request_replay_after_restart_does_not_rotate_twice() {
     let server = Server::start().await;
     let owner = server.owner().await;
     let proxy = Proxy::start(&server.origin).await;
-    let mut control = refresh::control(&server, &owner, &proxy.origin, "host-rotation").await;
+    let mut control =
+        crate::support::udp_control(&server, &owner, &proxy.origin, "host-rotation").await;
     let id = super::support::request();
     proxy.fault("/auth/rotate", Fault::Lost);
     assert!(control.rotate_keys_with_request(id).await.is_err());
@@ -45,7 +45,8 @@ async fn failed_final_identity_publish_keeps_durable_pending_material_for_recove
     let owner = server.owner().await;
     let proxy = Proxy::start(&server.origin).await;
     let path = server.path("write-rotation");
-    let mut control = refresh::control(&server, &owner, &proxy.origin, "write-rotation").await;
+    let mut control =
+        crate::support::udp_control(&server, &owner, &proxy.origin, "write-rotation").await;
     let original = control.status().binding.unwrap();
     proxy.fault("/auth/rotate", Fault::Hold);
     let record = path.join("control.json");
@@ -95,7 +96,8 @@ async fn rejected_expired_rotation_rolls_back_only_after_old_key_authentication(
     let server = Server::start().await;
     let owner = server.owner().await;
     let proxy = Proxy::start(&server.origin).await;
-    let mut control = refresh::control(&server, &owner, &proxy.origin, "rollback-rotation").await;
+    let mut control =
+        crate::support::udp_control(&server, &owner, &proxy.origin, "rollback-rotation").await;
     let original = control.status().binding.unwrap();
     proxy.fault("/auth/rotate", Fault::RejectBefore);
     assert!(control.rotate_keys().await.is_err());
@@ -120,10 +122,10 @@ async fn rejected_expired_rotation_rolls_back_only_after_old_key_authentication(
 async fn rotation_retires_execution_and_atomically_restores_new_identity_after_restart() {
     let server = Server::start().await;
     let owner = server.owner().await;
-    let mut control = refresh::control(&server, &owner, &server.origin, "rotate").await;
-    control.refresh_configuration().await.unwrap();
+    let mut control = crate::support::udp_control(&server, &owner, &server.origin, "rotate").await;
+    crate::support::sync(&mut control).await.unwrap();
     let original = control.status().binding.unwrap();
-    let execution = control.execution_snapshot().unwrap();
+    let execution = control.netmap_snapshot().unwrap();
     let keys = control.rotate_keys().await.unwrap();
     assert_eq!(
         keys.control.generation,
@@ -137,7 +139,7 @@ async fn rotation_retires_execution_and_atomically_restores_new_identity_after_r
     assert!(!control.rotation_pending());
     assert!(execution.ensure_current().is_err());
     assert!(!control.status().authenticated);
-    assert!(control.status().cached.is_none());
+    assert!(control.status().held.is_none());
     control.shutdown().await.unwrap();
     let mut control = Control::open(
         &server.path("rotate"),
@@ -150,12 +152,8 @@ async fn rotation_retires_execution_and_atomically_restores_new_identity_after_r
     assert_eq!(control.status().binding.unwrap().keys, keys);
     control.authenticate().await.unwrap();
     control.acquire_instance(Default::default()).await.unwrap();
-    control.refresh_configuration().await.unwrap();
-    control
-        .execution_snapshot()
-        .unwrap()
-        .ensure_current()
-        .unwrap();
+    crate::support::sync(&mut control).await.unwrap();
+    control.netmap_snapshot().unwrap().ensure_current().unwrap();
     control.shutdown().await.unwrap();
     server.close().await;
 }
@@ -165,7 +163,8 @@ async fn lost_committed_rotation_keeps_both_keys_and_recovers_the_same_generatio
     let server = Server::start().await;
     let owner = server.owner().await;
     let proxy = Proxy::start(&server.origin).await;
-    let mut control = refresh::control(&server, &owner, &proxy.origin, "lost-rotation").await;
+    let mut control =
+        crate::support::udp_control(&server, &owner, &proxy.origin, "lost-rotation").await;
     let original = control.status().binding.unwrap();
     proxy.fault("/auth/rotate", Fault::Lost);
     assert!(control.rotate_keys().await.is_err());
@@ -199,7 +198,8 @@ async fn cancelled_committed_rotation_recovers_from_the_durable_challenge() {
     let server = Server::start().await;
     let owner = server.owner().await;
     let proxy = Proxy::start(&server.origin).await;
-    let mut control = refresh::control(&server, &owner, &proxy.origin, "cancel-rotation").await;
+    let mut control =
+        crate::support::udp_control(&server, &owner, &proxy.origin, "cancel-rotation").await;
     let original = control.status().binding.unwrap();
     proxy.fault("/auth/rotate", Fault::Hold);
     {

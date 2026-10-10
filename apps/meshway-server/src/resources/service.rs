@@ -153,7 +153,6 @@ impl<P: ResourceProvider> ResourceService<P> {
                                         configuration_revision: scope.revision,
                                         definition: None,
                                         artifact: None,
-                                        publication: None,
                                         problem: None,
                                         checked_at: None,
                                         last_success_at: None,
