@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-10T17:07:51.647702+00:00",
+  "updatedAt": "2026-10-10T17:15:58.303352+00:00",
   "runs": [
     {
       "id": 38069690473,
@@ -12,24 +12,159 @@
       "commit": "14f462113ace9101e7f510dd9778de6e2020fdb3",
       "message": "docs(agents): Exit/NAT first version is supported; exit/off is a default acceptance row",
       "createdAt": "2026-10-10T16:56:25Z",
-      "updatedAt": "2026-10-10T16:59:39Z",
-      "status": "in_progress",
-      "conclusion": null,
+      "updatedAt": "2026-10-10T17:14:48Z",
+      "status": "completed",
+      "conclusion": "failure",
       "url": "https://github.com/JDScript/meshway/actions/runs/38069690473",
       "jobs": [
         {
           "id": 114264392253,
           "name": "matrix",
           "runner": "planck",
-          "status": "in_progress",
-          "conclusion": null,
+          "status": "completed",
+          "conclusion": "failure",
           "startedAt": "2026-10-10T16:59:38Z",
-          "completedAt": null,
-          "seconds": null,
+          "completedAt": "2026-10-10T17:14:47Z",
+          "seconds": 909.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/38069690473/job/114264392253"
         }
       ],
-      "artifacts": []
+      "artifacts": [
+        {
+          "id": 11676552414,
+          "name": "validate-matrix-38069690473",
+          "bytes": 599272,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38069690473/artifacts/11676552414",
+          "jobId": 114264392253,
+          "runner": "planck",
+          "seconds": 909.0,
+          "state": "ok",
+          "error": null,
+          "reports": [],
+          "matrices": [
+            {
+              "reportId": "20261010T165946Z-9c910c47",
+              "short": false,
+              "rows": [
+                {
+                  "row": "tun",
+                  "passed": true,
+                  "reportId": "20261010T170118Z-803a30a3",
+                  "seconds": 0.711,
+                  "load": "15.32/13.49/13.14"
+                },
+                {
+                  "row": "packet",
+                  "passed": true,
+                  "reportId": "20261010T170118Z-6c91e60a",
+                  "seconds": 337.097,
+                  "load": "15.32/13.49/13.14"
+                },
+                {
+                  "row": "udp/off",
+                  "passed": true,
+                  "reportId": "20261010T170118Z-99040cb0",
+                  "seconds": 347.752,
+                  "load": "15.32/13.49/13.14"
+                },
+                {
+                  "row": "tcp/off",
+                  "passed": true,
+                  "reportId": "20261010T170118Z-bd01135e",
+                  "seconds": 336.86,
+                  "load": "15.32/13.49/13.14"
+                },
+                {
+                  "row": "vless/off",
+                  "passed": true,
+                  "reportId": "20261010T170118Z-e2389d77",
+                  "seconds": 334.639,
+                  "load": "15.32/13.49/13.14"
+                },
+                {
+                  "row": "trojan/off",
+                  "passed": true,
+                  "reportId": "20261010T170118Z-3fbd3ba3",
+                  "seconds": 337.241,
+                  "load": "15.32/13.49/13.14"
+                },
+                {
+                  "row": "udp/resolv-conf",
+                  "passed": true,
+                  "reportId": "20261010T170118Z-ce825427",
+                  "seconds": 338.169,
+                  "load": "15.32/13.49/13.14"
+                },
+                {
+                  "row": "udp/resolved",
+                  "passed": true,
+                  "reportId": "20261010T170118Z-0a3c6009",
+                  "seconds": 354.502,
+                  "load": "15.32/13.49/13.14"
+                },
+                {
+                  "row": "nat/off",
+                  "passed": true,
+                  "reportId": "20261010T170118Z-ec5cf2ae",
+                  "seconds": 340.312,
+                  "load": "15.32/13.49/13.14"
+                },
+                {
+                  "row": "nat+fallback/off",
+                  "passed": false,
+                  "reportId": "20261010T170118Z-fdda4abf",
+                  "seconds": 387.124,
+                  "load": "15.32/13.49/13.14"
+                },
+                {
+                  "row": "nat/resolved",
+                  "passed": true,
+                  "reportId": "20261010T170118Z-43bc9f6c",
+                  "seconds": 355.461,
+                  "load": "15.32/13.49/13.14"
+                },
+                {
+                  "row": "exit/off",
+                  "passed": false,
+                  "reportId": "20261010T170118Z-9c0dbee7",
+                  "seconds": 4.152,
+                  "load": "15.32/13.49/13.14"
+                },
+                {
+                  "row": "netmap/offline",
+                  "passed": true,
+                  "reportId": "20261010T170118Z-32b7593e",
+                  "seconds": 801.181,
+                  "load": "15.32/13.49/13.14"
+                },
+                {
+                  "row": "netmap/revoke",
+                  "passed": true,
+                  "reportId": "20261010T170118Z-4394e552",
+                  "seconds": 189.843,
+                  "load": "15.32/13.49/13.14"
+                },
+                {
+                  "row": "netmap/expiry",
+                  "passed": true,
+                  "reportId": "20261010T170118Z-52ea865b",
+                  "seconds": 293.25,
+                  "load": "15.32/13.49/13.14"
+                },
+                {
+                  "row": "netmap/restart",
+                  "passed": true,
+                  "reportId": "20261010T170118Z-a0ed186e",
+                  "seconds": 204.185,
+                  "load": "15.32/13.49/13.14"
+                }
+              ]
+            }
+          ],
+          "builds": []
+        }
+      ]
     },
     {
       "id": 38069690450,
