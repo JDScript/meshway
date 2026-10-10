@@ -346,20 +346,8 @@ impl Handle {
     }
 
     /// Hand a local ping to the worker; it is decided on the installed netmap.
-    pub fn ping(&self, session: crate::runtime::PingSession) {
-        if let Err(
-            mpsc::error::TrySendError::Full(Command::Ping(session))
-            | mpsc::error::TrySendError::Closed(Command::Ping(session)),
-        ) = self.commands.try_send(Command::Ping(session))
-        {
-            let _ = session
-                .request
-                .events
-                .try_send(meshway_ipc::PingEvent::Failed {
-                    code: meshway_ipc::PingError::Busy,
-                });
-            session.request.cancellation.cancel();
-        }
+    pub fn pings(&self) -> Pings {
+        Pings(self.commands.clone())
     }
 
     pub async fn stop(&mut self, down: bool) -> Result<(), Problem> {
@@ -396,6 +384,28 @@ impl Handle {
         tokio::select! { biased;
             result = self.reporting.wait() => match result { Ok(()) => Work::Report, Err(()) => Work::Closed },
             request = self.requests.recv() => match request { Some(request) => Work::Request(request), None => Work::Closed },
+        }
+    }
+}
+
+/// Local IPC connects directly to the packet owner, independently of HTTP
+/// maintenance and long-poll authentication. Admission stays with SecureNode.
+#[derive(Clone)]
+pub(crate) struct Pings(mpsc::Sender<Command>);
+impl Pings {
+    pub fn send(&self, session: crate::runtime::PingSession) {
+        if let Err(
+            mpsc::error::TrySendError::Full(Command::Ping(session))
+            | mpsc::error::TrySendError::Closed(Command::Ping(session)),
+        ) = self.0.try_send(Command::Ping(session))
+        {
+            let _ = session
+                .request
+                .events
+                .try_send(meshway_ipc::PingEvent::Failed {
+                    code: meshway_ipc::PingError::Busy,
+                });
+            session.request.cancellation.cancel();
         }
     }
 }

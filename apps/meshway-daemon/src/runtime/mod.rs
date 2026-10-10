@@ -68,7 +68,7 @@ pub async fn run(
     };
     let (commands, mut received) = mpsc::channel::<Mutation>(16);
     let (pings, mut ping_requests) = mpsc::channel::<PingRequest>(8);
-    let (control_pings, control_ping_requests) = mpsc::channel::<PingSession>(8);
+    let (packet_pings, local_pings) = watch::channel(None);
     let (stop_ipc, stop_rx) = watch::channel(false);
     let mut control = tokio::spawn(control::run(
         settings.clone(),
@@ -76,7 +76,7 @@ pub async fn run(
         reported,
         store.directory.clone(),
         network_reported,
-        control_ping_requests,
+        packet_pings,
         sync_status,
     ));
     let mut listener = tokio::spawn(ipc::serve(
@@ -137,15 +137,14 @@ pub async fn run(
                         let client = ping.events.clone();
                         let cancellation = ping.cancellation.clone();
                         let (events, incoming) = mpsc::channel(8);
-                        // A local ping has no Server subscription lease.
-                        let (_, lease_rx) = watch::channel(None);
                         let (progress, progress_rx) = watch::channel(ping::Progress::Setup);
                         let intent = ping::Intent::capture(view.desired.clone());
                         ping.events = events;
-                        ping_forwarders.spawn(ping::forward(client, incoming, cancellation, stop_rx.clone(), lease_rx, progress_rx, intent));
-                        if let Err(error) = control_pings.try_send(PingSession { request: ping, progress }) {
-                            let ping = error.into_inner().request;
-                            let _ = ping.events.try_send(meshway_ipc::PingEvent::Failed { code: meshway_ipc::PingError::Busy });
+                        ping_forwarders.spawn(ping::forward(client, incoming, cancellation, stop_rx.clone(), progress_rx, intent));
+                        if let Some(gateway) = local_pings.borrow().as_ref() {
+                            gateway.send(PingSession { request: ping, progress });
+                        } else {
+                            let _ = ping.events.try_send(meshway_ipc::PingEvent::Failed { code: meshway_ipc::PingError::NotRunning });
                             ping.cancellation.cancel();
                         }
                     }

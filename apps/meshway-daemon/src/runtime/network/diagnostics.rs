@@ -200,6 +200,9 @@ impl Diagnostics {
         let crate::runtime::PingSession {
             request, progress, ..
         } = session;
+        if request.cancellation.is_cancelled() || request.events.is_closed() {
+            return;
+        }
         let fail = |request: &PingRequest, code| {
             let _ = request.events.try_send(PingEvent::Failed { code });
             request.cancellation.cancel();

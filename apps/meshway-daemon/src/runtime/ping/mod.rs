@@ -79,14 +79,13 @@ pub(in crate::runtime) fn test_intent() -> (watch::Sender<super::intent::Desired
 
 /// One bounded forwarder per admitted local client, joined by runtime::run.
 /// Wait progress includes pacing and result backpressure, independently of a
-/// held Control RPC. Only Setup uses the 60s timer; the confirmed subscription
-/// deadline ends every kind of wait without authorizing another probe.
+/// held Control RPC. Only Setup uses the preparation timer; the packet owner
+/// enforces netmap and probe deadlines, and reports terminal outcomes here.
 pub(super) async fn forward(
     client: mpsc::Sender<PingEvent>,
     mut incoming: mpsc::Receiver<PingEvent>,
     cancellation: CancellationToken,
     mut stop: watch::Receiver<bool>,
-    mut lease: watch::Receiver<Option<meshway_control::ObservationLease>>,
     mut progress: watch::Receiver<Progress>,
     intent: Intent,
 ) {
@@ -94,7 +93,6 @@ pub(super) async fn forward(
     let started = tokio::time::Instant::now();
     let mut setup_started = (*progress.borrow_and_update() == Progress::Setup).then_some(started);
     let mut waiting_started = started;
-    let mut lease_open = true;
     let mut progress_open = true;
     let mut tick = tokio::time::interval(std::time::Duration::from_secs(1));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -105,27 +103,8 @@ pub(super) async fn forward(
             });
             break;
         }
-        let confirmed = lease.borrow_and_update().clone();
-        if let Some(lease) = &confirmed {
-            if lease.is_expired() {
-                let _ = client.try_send(PingEvent::Failed {
-                    code: PingError::Timeout,
-                });
-                break;
-            }
-            if lease.is_cancelled() && !cancellation.is_cancelled() {
-                let _ = client.try_send(PingEvent::Failed {
-                    code: PingError::Stopped,
-                });
-                break;
-            }
-        }
         let mut event = tokio::select! { biased;
             _ = intent.ended() => PingEvent::Failed { code: PingError::Stopped },
-            changed = lease.changed(), if lease_open => {
-                if changed.is_err() { lease_open = false; }
-                continue;
-            },
             changed = progress.changed(), if progress_open => {
                 if changed.is_err() { progress_open = false; }
                 else {
@@ -138,9 +117,6 @@ pub(super) async fn forward(
             },
             // A queued terminal event wins over its producer's cancellation.
             event = incoming.recv() => event.unwrap_or(PingEvent::Failed { code: PingError::Stopped }),
-            _ = async { match &confirmed { Some(lease) => lease.ended().await, None => std::future::pending().await } } => {
-                PingEvent::Failed { code: if confirmed.as_ref().is_some_and(|lease| lease.is_expired()) { PingError::Timeout } else { PingError::Stopped } }
-            },
             _ = cancellation.cancelled() => break,
             _ = client.closed() => break,
             _ = stop.wait_for(|stop| *stop) => {
@@ -149,8 +125,7 @@ pub(super) async fn forward(
             },
             _ = tick.tick() => {
                 if setup_started.is_some_and(|at| at.elapsed() >= meshway_diagnostics::SETUP_TIMEOUT) {
-                    tracing::info!(stage = "setup_timeout", elapsed_ms = setup_started.map(|at| at.elapsed().as_millis() as u64),
-                        subscription_confirmed = confirmed.is_some(), "Diagnostic preparation budget expired");
+                    tracing::info!(stage = "setup_timeout", elapsed_ms = setup_started.map(|at| at.elapsed().as_millis() as u64), "Diagnostic preparation budget expired");
                     PingEvent::Failed { code: PingError::Timeout }
                 } else {
                     let Some(elapsed_ms) = u64::try_from(waiting_started.elapsed().as_millis()).ok().and_then(|ms| meshway_model::Sequence::new(ms).ok()) else { break; };
@@ -159,17 +134,6 @@ pub(super) async fn forward(
             },
         };
         if !intent.current() {
-            event = PingEvent::Failed {
-                code: PingError::Stopped,
-            };
-        }
-        if confirmed.as_ref().is_some_and(|lease| lease.is_expired()) {
-            event = PingEvent::Failed {
-                code: PingError::Timeout,
-            };
-        } else if confirmed.as_ref().is_some_and(|lease| lease.is_cancelled())
-            && !cancellation.is_cancelled()
-        {
             event = PingEvent::Failed {
                 code: PingError::Stopped,
             };
@@ -207,7 +171,6 @@ mod tests {
         let (client, mut received) = mpsc::channel(8);
         let (events, incoming) = mpsc::channel(8);
         let (_stop, stopped) = watch::channel(false);
-        let (_lease, lease) = watch::channel(None);
         let (_progress, progress) = watch::channel(Progress::Setup);
         let cancellation = CancellationToken::new();
         let task = tokio::spawn(forward(
@@ -215,7 +178,6 @@ mod tests {
             incoming,
             cancellation.clone(),
             stopped,
-            lease,
             progress,
             intent,
         ));
@@ -256,7 +218,6 @@ mod tests {
         let (events, incoming) = mpsc::channel(8);
         let cancellation = CancellationToken::new();
         let (_stop, stopped) = watch::channel(false);
-        let (_lease, lease) = watch::channel(None);
         let (_progress, progress) = watch::channel(Progress::Setup);
         let (_desired, intent) = test_intent();
         let task = tokio::spawn(forward(
@@ -264,7 +225,6 @@ mod tests {
             incoming,
             cancellation.clone(),
             stopped,
-            lease,
             progress,
             intent,
         ));
@@ -300,7 +260,6 @@ mod tests {
         let (_events, incoming) = mpsc::channel(8);
         let cancellation = CancellationToken::new();
         let (_stop, stopped) = watch::channel(false);
-        let (_lease, lease) = watch::channel(None);
         let (_progress, progress) = watch::channel(Progress::Setup);
         let (_desired, intent) = test_intent();
         tokio::time::timeout(
@@ -310,7 +269,6 @@ mod tests {
                 incoming,
                 cancellation.clone(),
                 stopped,
-                lease,
                 progress,
                 intent,
             ),
@@ -326,7 +284,6 @@ mod tests {
         let (_events, incoming) = mpsc::channel(8);
         let cancellation = CancellationToken::new();
         let (_stop, stopped) = watch::channel(true);
-        let (_lease, lease) = watch::channel(None);
         let (_progress, progress) = watch::channel(Progress::Setup);
         let (_desired, intent) = test_intent();
         forward(
@@ -334,7 +291,6 @@ mod tests {
             incoming,
             cancellation.clone(),
             stopped,
-            lease,
             progress,
             intent,
         )

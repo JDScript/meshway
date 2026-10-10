@@ -17,7 +17,7 @@ use meshway_ipc::{Phase, Problem};
 use meshway_model::{InstanceId, NetmapRef};
 use std::{sync::Arc, time::Duration};
 use tokio::{
-    sync::{Mutex, mpsc, watch},
+    sync::{Mutex, watch},
     time::Instant,
 };
 use tokio_util::sync::CancellationToken;
@@ -160,7 +160,7 @@ pub(super) async fn run(
     reported: watch::Sender<Report>,
     directory: Arc<meshway_private_storage::Directory>,
     network_reported: watch::Sender<network::Report>,
-    mut pings: mpsc::Receiver<super::PingSession>,
+    local_pings: watch::Sender<Option<network::Pings>>,
     sync_status: watch::Sender<SyncStatus>,
 ) -> Result<(), &'static str> {
     let mut control: Option<Shared> = None;
@@ -184,7 +184,10 @@ pub(super) async fn run(
                 )
                 .await
                 {
-                    Ok(handle) => network = Some(handle),
+                    Ok(handle) => {
+                        local_pings.send_replace(Some(handle.pings()));
+                        network = Some(handle);
+                    }
                     Err(problem) => {
                         let delay =
                             (problem == Problem::Underlay).then_some(Duration::from_secs(backoff));
@@ -345,7 +348,6 @@ pub(super) async fn run(
                 &mut desired,
                 &plan,
                 &reported,
-                &mut pings,
                 &sync_status,
                 &mut reset,
             )
@@ -410,14 +412,7 @@ pub(super) async fn run(
         backoff = 1;
     }
     let keep_sink = desired.borrow().up;
-    pings.close();
-    while let Some(ping) = pings.recv().await {
-        let ping = ping.request;
-        let _ = ping.events.try_send(meshway_ipc::PingEvent::Failed {
-            code: meshway_ipc::PingError::Stopped,
-        });
-        ping.cancellation.cancel();
-    }
+    local_pings.send_replace(None);
     shutdown(
         control,
         async move {
@@ -445,14 +440,13 @@ enum Wake {
     Worker,
 }
 
-/// Wait up to `delay` while serving local pings and network requests; the
+/// Wait up to `delay` while serving network requests; the
 /// data plane keeps running on its installed netmap meanwhile.
 async fn idle(
     shared: &Shared,
     mut network: Option<&mut network::Handle>,
     desired: &mut watch::Receiver<Desired>,
     plan: &Desired,
-    pings: &mut mpsc::Receiver<super::PingSession>,
     delay: Duration,
 ) -> Wake {
     let deadline = Instant::now() + delay;
@@ -460,10 +454,6 @@ async fn idle(
         tokio::select! { biased;
             _ = changed(desired, plan) => return Wake::Changed,
             _ = tokio::time::sleep_until(deadline) => return Wake::Due,
-            ping = pings.recv() => match ping {
-                Some(ping) => accept_ping(network.as_deref(), ping),
-                None => return Wake::Changed,
-            },
             work = async { match network.as_deref_mut() { Some(network) => network.work().await, None => std::future::pending().await } } => match work {
                 network::Work::Request(request) => {
                     let mut driver = shared.lock().await;
@@ -482,21 +472,6 @@ async fn idle(
     }
 }
 
-fn accept_ping(network: Option<&network::Handle>, ping: super::PingSession) {
-    match network {
-        Some(network) => network.ping(ping),
-        None => {
-            let _ = ping
-                .request
-                .events
-                .try_send(meshway_ipc::PingEvent::Failed {
-                    code: meshway_ipc::PingError::Unsupported,
-                });
-            ping.request.cancellation.cancel();
-        }
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 async fn session(
     shared: &Shared,
@@ -505,7 +480,6 @@ async fn session(
     desired: &mut watch::Receiver<Desired>,
     plan: &Desired,
     reported: &watch::Sender<Report>,
-    pings: &mut mpsc::Receiver<super::PingSession>,
     sync_status: &watch::Sender<SyncStatus>,
     reset: &mut bool,
 ) -> Ended {
@@ -586,7 +560,6 @@ async fn session(
                     desired,
                     plan,
                     reported,
-                    pings,
                     sync_status,
                 )
                 .await
@@ -609,7 +582,7 @@ async fn session(
                 delay
             }
         };
-        match idle(shared, network.as_deref_mut(), desired, plan, pings, delay).await {
+        match idle(shared, network.as_deref_mut(), desired, plan, delay).await {
             Wake::Changed => return Ended::Changed,
             Wake::Worker => return Ended::Worker,
             Wake::Due => {}
@@ -627,7 +600,6 @@ async fn online_session(
     desired: &mut watch::Receiver<Desired>,
     plan: &Desired,
     reported: &watch::Sender<Report>,
-    pings: &mut mpsc::Receiver<super::PingSession>,
     sync_status: &watch::Sender<SyncStatus>,
 ) -> Result<(), Option<Ended>> {
     let stop = CancellationToken::new();
@@ -683,10 +655,6 @@ async fn online_session(
                 }
                 offer(&driver, network.as_deref());
                 reported.send_modify(|report| report.control = Some(driver.snapshot()));
-            },
-            ping = pings.recv() => match ping {
-                Some(ping) => accept_ping(network.as_deref(), ping),
-                None => break Err(Some(Ended::Changed)),
             },
             next = async { match network.as_deref_mut() { Some(network) => network.work().await, None => std::future::pending().await } } => match next {
                 network::Work::Request(request) => {
