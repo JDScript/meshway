@@ -45,7 +45,7 @@ TD3 已将健康观察测试的失效选择器改为当前名称，覆盖其跨�
 | meshway-runtime-fixture | 13 | 0／13 | 0.5 s | 0 | fixture 自身的信号／阶段逻辑 |
 | meshway-transport-trojan | 10 | 3／7 | 0.4 s | 0 | Trojan TCP/TLS |
 | meshway-diagnostics | 8 | 8／0 | 38 s | 1 | 有界测量调度与计时 |
-| meshway-transport-udp、-tcp、-tun、-authority、-private-storage、-static-authority、-serde、-logging、perf 工具 | 40 | — | 3.8 s | 0 | 各自原语 |
+| meshway-transport-udp、-tcp、-tun、-authority、-private-storage、desired-fixture、-serde、-logging、perf 工具 | 40 | — | 3.8 s | 0 | 各自原语 |
 | **合计** | **991** | | **TD：1,339 s 求和；nextest 并行 120.7 s；命令墙钟 128.3 s** | **44** | |
 
 专用 Rust 测试／support 文件共 271 个、70,584 物理行（含空行和注释，不含产品文件内的 inline 测试模块）；其中 Server 25,911 行、transport 1,935 行、connectivity 5,957 行、policy 5,225 行。此口径与下述文件上限检查一致，不能直接与去掉注释／空行的代码行统计比较。全部文件不超过 800 行，现有白名单例外为 0。
@@ -81,7 +81,7 @@ TD3 已将健康观察测试的失效选择器改为当前名称，覆盖其跨�
 
 | 目录 | 性质 | 被谁用 |
 | --- | --- | --- |
-| `tools/meshway-static-authority` | 测试／基准用的静态许可签发（生产唯一签发者是 Control） | dataplane `tests/runtime`、circuit-perf、dataplane-perf |
+| `tools/meshway-desired-fixture` | 测试／基准用的编译期望内容与节点密钥材料；不签发任何租约或许可 | dataplane `tests/runtime`、circuit-perf、dataplane-perf |
 | `tools/meshway-packet-fixture` | packet 整组的 A／R／B 进程、rendezvous、满 MTU 用例 | `verify_packet.py`、runtime-fixture |
 | `tools/meshway-runtime-fixture` | runtime 整组的 controller／actor 编排、信号、阶段、请求计数 | `verify_runtime.py` |
 | `tools/meshway-circuit-perf`、`-dataplane-perf`、`-transport-perf`、`-crypto-bench` | L0／L2–L4／L1／原语测量程序 | `perf:*` |

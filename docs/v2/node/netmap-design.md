@@ -135,7 +135,7 @@ N1a 实测（M3、release、单线程，私有证据 `.meshway/netmap/n1a/scale.
 | Server 触发 | 配置提交、规则集切换、成员／节点生命周期、密钥轮换与吊销、库存能力变化、方案选择、地址退出窗口 | State 报告、实例 acquire／renew／release、观察创建／续订／取消、STUN 观测 |
 | Server 动作 | 同事务重新投影受影响节点 → 新 serial → 唤醒其挂起的 `sync` | 更新 State hub，按投影可见性裁剪后唤醒挂起的 `sync` |
 | 传输 | `sync` 响应的 `netmap`（full／delta／unchanged）＋`lease` | 同一 `sync` 响应的 `peerFacts`（按 `StateCursor` 接续，base 为 null 即全量） |
-| Node 消费者 | 唯一 Control：校验、保存、签发快照 → 各组件 `update` | daemon 事件任务按类型分发：端点→Manager，出口就绪→SecureNode 出口选择，任务→诊断调度器 |
+| Node 消费者 | 唯一 Control：校验、保存、发布 → Engine 向各组件应用 `Desired` | daemon 事件任务按类型分发：端点→Manager，出口就绪→SecureNode 出口选择，任务→诊断调度器 |
 | 是否授权 | 是（唯一来源） | 否；只影响连接获取方式与在已授权集合内的选择 |
 
 **判定一项输入属于哪条线**：若缺少它就必须拒绝某个包或某个握手，它属于 netmap；若缺少它只会让某次获取失败或换一个已授权候选，它是事实。端点、STUN、出口就绪都只是选择输入：错误或过期的值最多导致连不上，不能放宽准入。
@@ -209,7 +209,7 @@ TUN 源包 → Packet::parse → 查唯一 FlowTable（已有流直接走原路�
 
 | 情况 | 行为 |
 | --- | --- |
-| 同 `NetmapRef`（只续租） | 换入新快照，所有活 circuit／flow 的截止上限提高到新租约；不扫描、不换代、不取消输出 |
+| 同 `NetmapRef`（只续租） | 不调用组件；只有 Engine 的计时延长；不扫描、不换代、不取消输出 |
 | 新 serial | 对每个 circuit 在新投影上重算决定并比较 path 授权摘要：相同则保留 Noise 状态与流，否则退役；对每条流检查其精确服务仍在新决定的 `services` 内，否则以独立流 guard 退役；出口流同时发 `Retire` |
 | 本节点身份／地址／密钥变化 | 全部退役（硬屏障） |
 
@@ -224,22 +224,9 @@ netmap 覆盖全部可达 peer，若“收到候选即建连”会变成全连�
 - 协调 UDP 穿透由任一有需求（或常驻）的一方以自己的拨号承载发起；同一 peer 对／地址族 Server 只接纳一个活动尝试，另一方读到 offer 即接受，不需要本机 interest。
 - STUN 刷新只对存在需求（interest 或常驻）且有 UDP 获准承载（任一方向）或健康 Native UDP 通道的 socket 进行，预算（每 60 秒 30＋30 次）保持。
 
-## Control 快照模型
+## 租约与期望状态
 
-### 快照
-
-```text
-ExecutionSnapshot {
-  netmap: Arc<CompiledNetmap>, lease deadline (UTC 高水位＋单调),
-  instance: Option<InstanceRef>,      // 仅用于 State／回执绑定，不参与 reading() 有效性
-  validity, invalidated, clock, lineage
-}
-```
-
-- `reading()` 有效 ⇔ validity 未撤销、invalidated 未取消、netmap 租约截止未到。session／instance 截止不再参与；`Deadline` 三重数组变为单个租约截止。
-- 签发仍只在 `meshway-control`；`crates/` 不出现第二个签发者。读取、克隆不延长租约。
-- 同内容续租签发一个新快照：新快照截止更晚，旧快照不被取消（截止较早），已排队输出保留旧 guard。由于旧租约通常仍有十余小时，这不形成旧输出被拒的抖动。
-- 本机失效（立即取消全部快照）：显式 down、stop、换钥开始、`membership_revoked`、本地记录 ReloadRequired、收到更大 serial 且本节点身份变化。
+Control 只验证、保存并发布签名 netmap（内容＋租约），不签发执行快照；`meshway-engine::Engine` 是租约的唯一计时者，并把同一 `Desired` 应用到各组件。组件不持有租约、代际、继承物或可转让的输出权限；同内容续租只延长 Engine 自己的计时，到期由空期望 fail closed。行为定义见 [Engine](/v2/node/runtime#engine)。
 
 ### lease 语义
 
@@ -261,41 +248,9 @@ instance 重新取得（同一进程因 Server 停机过期）不重装：Contro
 | 业务首包、DNS 查询、ping、Console 观察 | 不发生；无任何执行更新 |
 | State 报告、端点／STUN／出口就绪变化 | 不发生 |
 | instance 续租／重取 | 不发生 |
-| netmap 同内容续租 | 不是交接；O(1) 截止延长 |
+| netmap 同内容续租 | 不是交接；只延长 Engine 的计时 |
 | 配置 revision、成员、密钥、库存、方案选择导致的新 serial | **发生**：`SecureNode::update` 按 (origin, target)／path 比较；Manager／Host／DNS 只对实际变化的资源做差量 |
 | 本节点身份变化、down、re-enroll | 硬屏障，不交接 |
-
-### retained／handoff／fence 逐项结论
-
-| 机制（位置） | 结论 |
-| --- | --- |
-| `Issue.publication`／`predecessor`、`continuation_from` 直接后继（authority `snapshot.rs:163-196`） | **变形**：比较新旧完整内容，无前驱链 |
-| `lineage: Weak<()>`（同上） | **保留**：stop／down／re-enroll 后旧资源不可保留 |
-| `publication_pending_grant`（control `execution.rs:364`） | **消失** |
-| 三重 deadline [session, instance, execution] | **变形**：单一 netmap 租约 |
-| `retention_deadline`：失效快照等待后继（`snapshot.rs:221`） | **消失**：更新原子，没有空窗 |
-| `same_execution`／`SecureNode::refresh` | **变形**：`same_netmap(ref)` 判定同内容续租 |
-| 保存目标即 `invalidate_guards`（control `storage.rs:298`） | **变形**：只在内容变化时 |
-| 流表整表重标（dataplane `flow/mod.rs:316-380`） | **消失** |
-| circuit reconcile 大事务（`secure/mod.rs:1484-1576`） | **变形**：`update` 的 path 摘要比较；续租 O(1) |
-| 关闭 circuit 的 replay tombstone（S9） | **保留并收紧**：owner 生命周期从分钟变为进程寿命，必须分离紧凑 dead-CID 记录；v6 握手 INIT 绑定发起时刻，tombstone 保留至握手窗口（10 s）之后即可回收，不再计入 `maxCircuits` |
-| 中继 probe 关联换绑（`secure/probe/mod.rs:40-69`） | **消失** |
-| exit `project_successor` 全表投影（`flow/exit.rs:250-334`） | **消失**；活动续期 `prepare_projection`、旧期限 ACK 门、精确退役回执 **保留** |
-| exit pre-receipt Handoff（daemon `network/mod.rs:670-700`） | **消失** |
-| Manager 三表 1 ms 轮询 barrier（`continuity.rs:273-361`） | **变形**：资源 owner 只对变化资源回报安装／退休结果 |
-| `Shared`／`rebind_scoped`／latest·successor 等待（`continuity.rs`、`scope.rs`） | **变形**：`ResourceLease`（descriptor 生死）＋`OperationGuard`（单次 I/O）；无 successor 等待 |
-| selected-channel CAS／ABA tombstone、旧 epoch READY fence（K6） | **保留** |
-| 穿透查询的 publication 窗口与抢跑（`traversal.rs` S4） | **变形**：删 publication 窗口，保留双预算与公平批次 |
-| underlay `closed()` 空窗等待器、`retained_snapshot`（F01、F02） | **消失** |
-| `retain_tun` 续接（F03） | **变形**：按资源兼容性保留 TUN／capture |
-| DNS `ScopeFence`／ticket generation（F16） | **保留**：只在 netmap 或系统 resolver 就绪变化时更新 |
-| DNS Owner refresh／replace、退休 demand 白名单、续租 ACK 高水位 | **消失** |
-| ApplicationTicket attempt／sequence、回执冲突分类（K2） | **保留**；进度多层投影按 S2 收敛 |
-| `state_scope_changed` | **保留**，频率降为 serial 变化级 |
-| cycle 抢先 settle／二次 publish、40 秒反向节流（R7、R8） | **消失** |
-| 观察 `planning` 缓存、`pause/resume_after_refresh`（R5、S8） | **消失**；`retired_results` **变形**为任务 generation 判定 |
-| 诊断 setup 60 秒跨交接保持（S7） | **变形**：无交接，预算保留 |
-| 回执历史窗口、obsolete 严格校验（K3） | **保留**；obsolete 识别对象改为 `meshway-demand-*` |
 
 ## 诊断
 
@@ -376,7 +331,7 @@ cold（静态端点）：  T ≈ Σ每跳串行邻接获取（TCP 1 RTT；TLS �
 
 - 配置 resolver 与系统 resolver 的本地 socket 许可：源端用 `egress.routes` 求 resolver 端点的动作——direct／unmanaged 允许本机 socket，exit 动作必须经出口 DNS，unmanaged 范围以外的 Mesh 地址拒绝。UDP 与 TCP 仍分别判定。R1／R4／F14 的 resolver demand、ID 映射和退休白名单删除。
 - X5 `DnsServicePermit` 留在 netmap：客户端 `ViaExit`、出口 `ServeExitResolver` 列表都按 revision 编译，去掉 instance 与截止字段；出口就绪仍是事实。Mesh ingress 适配缺失时安装阻断的现状不变。
-- X6 可信域名关联是唯一保留的按需编译：Server 受控解析任务完成后，为该源签发 `DnsAssociationOverlay { netmap: NetmapRef, associations, expiresAt = min(TTL, 任务期限) }`，经同一 netmap 查询端点交付并由 Control 绑定进快照。overlay 有自己的截止，只扩大该源与相关出口的域名目的判定，不改变 netmap serial；它只影响源和所选出口两个节点。
+- X6 可信域名关联是唯一保留的按需编译：Server 受控解析任务完成后，为该源签发 `DnsAssociationOverlay { netmap: NetmapRef, associations, expiresAt = min(TTL, 任务期限) }`，经同一 netmap 查询端点交付并随期望内容应用。overlay 有自己的截止，只扩大该源与相关出口的域名目的判定，不改变 netmap serial；它只影响源和所选出口两个节点。
 
 ## 迁移
 

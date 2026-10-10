@@ -268,7 +268,7 @@ impl PendingAction {
             return Err(Error::Ingress);
         }
         self.ensure_current()?;
-        Ok(exit::ProjectionScope::new(secure::Guard::from_route(
+        Ok(exit::ProjectionScope::new(secure::OutputBinding::from_route(
             &self.pending,
         )))
     }

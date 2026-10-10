@@ -17,18 +17,18 @@ use std::{
     task::Poll,
 };
 
-impl fmt::Debug for crate::secure::Guard {
+impl fmt::Debug for crate::secure::OutputBinding {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PacketLifetime").finish_non_exhaustive()
     }
 }
 
-impl meshway_transport::SendLifetime for crate::secure::Guard {
+impl meshway_transport::SendLifetime for crate::secure::OutputBinding {
     fn is_current(&self) -> bool {
         self.ensure_current().is_ok()
     }
     fn ended(self: Arc<Self>) -> Pin<Box<dyn Future<Output = ()> + Send>> {
-        Box::pin(async move { crate::secure::Guard::ended(&self).await })
+        Box::pin(async move { crate::secure::OutputBinding::ended(&self).await })
     }
 }
 
@@ -265,13 +265,13 @@ async fn guarded<T>(
 
 #[derive(Debug)]
 struct OutputLifetime {
-    packets: Vec<crate::secure::Guard>,
+    packets: Vec<crate::secure::OutputBinding>,
     channel: Option<Arc<dyn meshway_transport::SendLifetime>>,
 }
 
 impl meshway_transport::SendLifetime for OutputLifetime {
     fn is_current(&self) -> bool {
-        crate::secure::Guard::check_batch(&self.packets).is_ok()
+        crate::secure::OutputBinding::check_batch(&self.packets).is_ok()
             && self
                 .channel
                 .as_ref()

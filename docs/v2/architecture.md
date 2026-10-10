@@ -37,7 +37,7 @@ crates/
   meshway-transport-vless/
   meshway-transport-trojan/
 tools/
-  meshway-static-authority/ # 基准／fixture 的静态执行签发（非生产）
+  meshway-desired-fixture/ # 基准／fixture 的编译期望内容与密钥材料（非生产，不签发）
   meshway-circuit-perf/     # 进程内受保护 circuit CPU 测量（L0）
   meshway-crypto-bench/     # 非生产对照密码原语基准
   meshway-transport-perf/   # 承载 raw／datagram 对照测量（L1）
@@ -89,11 +89,11 @@ Server 验证 VLESS 等配置时使用 `transport-spec`，不链接 Node 的 tra
 | 包名＝目标目录名 | 消费者 | 职责 |
 | --- | --- | --- |
 | `meshway-ipc` | daemon、CLI | 本机命令、查询、事件与客户端 |
-| `meshway-authority` | control（读取私钥）；daemon、dataplane、connectivity 及 `tools/` 的 static-authority、dataplane-perf（使用） | 本身份已登记的包平面密钥 `DataPlaneKeys` 与逐跳证明 transcript；不是授权，不含租约或期限 |
+| `meshway-authority` | control（读取私钥）；daemon、dataplane、connectivity 及 `tools/` 的 desired-fixture、dataplane-perf（使用） | 本身份已登记的包平面密钥 `DataPlaneKeys` 与逐跳证明 transcript；不是授权，不含租约或期限 |
 | `meshway-engine` | daemon（唯一装配）；connectivity、dataplane、underlay、dns、diagnostics（读取 `Desired`） | 唯一期望状态 owner：`Engine::reconfig(Option<&Netmap>)`、租约计时（`next_expiry`／`expire`）、共享 `LocalCompiler` 的不可变 `Desired` |
 | `meshway-transport` | connectivity、dataplane、underlay、transport providers | 承载会话、batch／buffer 与背压接口 |
 
-Control 只验证、保存并发布签名 netmap（内容与租约）；`meshway-engine` 是租约的唯一计时者，并按固定顺序把同一 `Desired` 应用到各组件：Host（capture／TUN／负向 DNS／exit 角色）→ 邻接 Manager → SecureNode（流／circuit／exit 投影）→ DNS 查询权限；撤回时顺序相反，每个组件都应用空期望。组件不持有租约、代际、继承物或可转让的输出权限；到期 fail closed 由空期望保证，不靠逐包检查期限。基准与 fixture 的静态内容只位于 `tools/`（`meshway-static-authority`），`meshwayd` 只装配 Control 与 Engine。
+Control 只验证、保存并发布签名 netmap（内容与租约）；`meshway-engine` 是租约的唯一计时者，并按固定顺序把同一 `Desired` 应用到各组件：Host（capture／TUN／负向 DNS／exit 角色）→ 邻接 Manager → SecureNode（流／circuit／exit 投影）→ DNS 查询权限；撤回时顺序相反，每个组件都应用空期望。组件不持有租约、代际、继承物或可转让的输出权限；到期 fail closed 由空期望保证，不靠逐包检查期限。基准与 fixture 的静态内容只位于 `tools/`（`meshway-desired-fixture`），`meshwayd` 只装配 Control 与 Engine。
 
 `meshway-plugin`／`meshway-plugin-host` 是规划中的插件 SDK／装载边界，当前没有对应 crate 或可用动态 ABI，见[插件与能力（规划）](/v2/node/plugins)。
 
@@ -165,10 +165,10 @@ meshwayd ──► authority + configuration + connectivity + control + control-
              + diagnostics + dns + ipc + model + private-storage + protocol + tun + underlay
 meshway CLI ──► ipc
 
-tools/static-authority ──► authority + configuration + model + policy
-tools/circuit-perf ──► dataplane + static-authority
+tools/desired-fixture ──► authority + configuration + model + policy
+tools/circuit-perf ──► dataplane + desired-fixture
 tools/transport-perf ──► transport + transport-spec + transport-{tcp,udp,vless,trojan}
-tools/dataplane-perf ──► authority + configuration + model + private-storage + static-authority
+tools/dataplane-perf ──► authority + configuration + model + private-storage + desired-fixture
                          + dataplane + connectivity + underlay + transport + transport-spec + transport-udp + tun
 tools/packet-fixture ──► authority + configuration + control + control-client + dataplane + model
                          + policy + protocol + Server + tls + transport + transport-spec + transport-tcp + tun

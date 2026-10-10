@@ -8,7 +8,7 @@ use meshway_dataplane::{
 };
 use meshway_engine::Desired;
 use meshway_model::NodeId;
-use meshway_static_authority::public_fixture::PublicFixture;
+use meshway_desired_fixture::public_fixture::PublicFixture;
 use meshway_transport::{ChannelScope, Frame, Limits, Receiver, Sender};
 use std::{collections::BTreeMap, net::SocketAddr, path::Path};
 use std::{future::Future, pin::Pin, sync::Arc};

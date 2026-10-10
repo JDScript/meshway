@@ -40,7 +40,7 @@ def push(container, path, text):
 
 def source_digest():
     files = [ROOT / name for name in ("Cargo.toml", "Cargo.lock", "mise.toml", "mise.lock")]
-    for directory in ("crates", "tools/meshway-dataplane-perf", "tools/meshway-static-authority", "scripts/perf", "dev/node-lab"):
+    for directory in ("crates", "tools/meshway-dataplane-perf", "tools/meshway-desired-fixture", "scripts/perf", "dev/node-lab"):
         files.extend(p for p in (ROOT / directory).rglob("*")
                      if p.is_file() and "__pycache__" not in p.parts)
     files.append(ROOT / "scripts/node_lab.py")

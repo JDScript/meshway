@@ -4,7 +4,7 @@ use meshway_dataplane::{
     Action, DEFAULT_HEADROOM, DEFAULT_TAILROOM, Packet, PacketPool,
     secure::{Received, SecureNode},
 };
-use meshway_static_authority::fixture::{Chain, tcp_ipv4};
+use meshway_desired_fixture::fixture::{Chain, tcp_ipv4};
 
 fn grant(chain: &Chain) -> meshway_dataplane::secure::CircuitGrant {
     meshway_dataplane::secure::CircuitGrant {

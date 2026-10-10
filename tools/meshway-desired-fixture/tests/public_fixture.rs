@@ -2,7 +2,7 @@ use meshway_model::{
     KeyId, NodeId,
     state::{Capability, StreamKind, TransportRole},
 };
-use meshway_static_authority::{
+use meshway_desired_fixture::{
     NodeMaterial,
     public_fixture::{PublicFixture, PublicNode},
     random_uuid,

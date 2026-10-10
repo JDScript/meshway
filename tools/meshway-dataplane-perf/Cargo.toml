@@ -22,7 +22,7 @@ meshway-authority = { path = "../../crates/meshway-authority" }
 meshway-engine = { path = "../../crates/meshway-engine" }
 meshway-configuration = { path = "../../crates/meshway-configuration" }
 meshway-model = { path = "../../crates/meshway-model" }
-meshway-static-authority = { path = "../meshway-static-authority" }
+meshway-desired-fixture = { path = "../meshway-desired-fixture" }
 meshway-logging = { path = "../../crates/meshway-logging" }
 meshway-tun = { path = "../../crates/meshway-tun" }
 meshway-transport = { path = "../../crates/meshway-transport" }

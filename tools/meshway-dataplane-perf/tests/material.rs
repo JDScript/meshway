@@ -8,7 +8,7 @@ fn node_private_file_is_exclusive_and_reconstructs_public_inventory() {
         .join("../../target")
         .join(format!(
             "material-test-{}",
-            meshway_static_authority::random_uuid().unwrap()
+            meshway_desired_fixture::random_uuid().unwrap()
         ));
     let public = material::generate(&path, "127.0.0.1:41000".parse().unwrap()).unwrap();
     assert_eq!(

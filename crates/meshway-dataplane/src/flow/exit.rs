@@ -3,7 +3,7 @@ use crate::{
     exit::{
         self, ExitProjection, ExitTuple, FlowIncarnation, Gate, ProjectionScope, RetirementAck,
     },
-    secure::Guard,
+    secure::OutputBinding,
 };
 use std::sync::{
     Arc, Mutex,
@@ -116,7 +116,7 @@ impl FlowTable {
     pub fn prepare_projection(
         &self,
         prepared: &mut Prepared,
-        guard: &Guard,
+        guard: &OutputBinding,
         now: (Instant, u64),
     ) -> Result<(), Error> {
         let Some(exit) = &mut prepared.flow.exit else {

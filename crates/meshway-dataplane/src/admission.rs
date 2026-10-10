@@ -4,7 +4,7 @@ use crate::{
     authority::{Lifetime, View},
     flow::{Entry, FlowTime, Policy},
     netmap::Outcome,
-    secure::Guard,
+    secure::OutputBinding,
 };
 use meshway_policy::{
     admission::{AdmissionError, Traffic},
@@ -40,7 +40,7 @@ impl Engine {
         facts: PacketFacts,
         reading: &View<'_>,
         circuit: [u8; 32],
-        guard: &Guard,
+        guard: &OutputBinding,
     ) -> Result<PendingRoute, Error> {
         self.admit_inner(entry, facts, reading, Some((circuit, guard)))
     }
@@ -50,7 +50,7 @@ impl Engine {
         entry: &Entry<'_>,
         facts: PacketFacts,
         reading: &View<'_>,
-        circuit: Option<([u8; 32], &Guard)>,
+        circuit: Option<([u8; 32], &OutputBinding)>,
     ) -> Result<PendingRoute, Error> {
         static PROFILE: meshway_logging::profile::Metric =
             meshway_logging::profile::Metric::new("flow.admit");

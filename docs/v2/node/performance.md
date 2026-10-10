@@ -137,7 +137,7 @@ OrbStack 独立容器已验证上述六种能力，双栈真实 TCP 8192 B 至�
 
 ### L3 实现与实测
 
-`secure-direct` 为 A→B，`secure-relay` 为 A→R→B，仅端点打开 TUN；R 无 TUN device／NET_ADMIN，只执行正式认证／重放并转发 ciphertext。每 namespace 0700 私有目录生成 0600 种子，秘密不进入 fixture／stdout／报告；公开 fixture 记录路径、demand、材料公钥、编译／到期与 publication digest。每进程用同一真实 compiler 独立编译核对摘要，静态签发仅由 `tools/meshway-static-authority` 提供，使用真实时钟，issuer drop 撤销旧快照。
+`secure-direct` 为 A→B，`secure-relay` 为 A→R→B，仅端点打开 TUN；R 无 TUN device／NET_ADMIN，只执行正式认证／重放并转发 ciphertext。每 namespace 0700 私有目录生成 0600 种子，秘密不进入 fixture／stdout／报告；公开 fixture 记录路径、demand、材料公钥、编译／到期与 publication digest。每进程用同一真实 compiler 独立编译核对摘要，进程内期望内容仅由 `tools/meshway-desired-fixture` 提供，它不签发租约。
 
 iperf TCP 控制流与 UDP 负载使用精确 5201 demand，启动前建立 Noise circuit，正式 SecureNode 独占 flow／replay／原完整路径回复。每节点 current-thread owner＋正式 Pool，guard 随输出保留至 Session／TUN 最终 poll；准备→crypto→保序 owner 提交→有界 TX／TUN。SecureNode 使用默认 limits，L3 Session 帧／操作预算与 plain 相同，字节另容 secure envelope。
 

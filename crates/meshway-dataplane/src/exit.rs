@@ -1,6 +1,6 @@
 //! Opaque, bounded kernel projections of the unique FlowTable. No kernel owner
 //! or socket lives here. The host maps these operations to its Underlay owner.
-use crate::{Error, Packet, authority::Cap, secure::Guard};
+use crate::{Error, Packet, authority::Cap, secure::OutputBinding};
 use meshway_configuration::execution::BusinessProtocol;
 use std::{
     net::Ipv4Addr,
@@ -78,7 +78,7 @@ pub struct ExitTuple {
 /// submission and I/O boundary. Remaining time must never be restarted after
 /// queueing.
 #[derive(Clone, Debug)]
-pub struct ProjectionScope(pub(crate) Guard, Option<Arc<Acknowledgement>>);
+pub struct ProjectionScope(pub(crate) OutputBinding, Option<Arc<Acknowledgement>>);
 #[derive(Debug)]
 struct Acknowledgement {
     deadline: Instant,
@@ -86,7 +86,7 @@ struct Acknowledgement {
     status: Arc<AtomicU8>,
 }
 impl ProjectionScope {
-    pub(crate) fn new(guard: Guard) -> Self {
+    pub(crate) fn new(guard: OutputBinding) -> Self {
         Self(guard, None)
     }
     pub fn ensure_current(&self) -> Result<(), Error> {

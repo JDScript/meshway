@@ -30,7 +30,7 @@ members = [
     "crates/meshway-transport-vless",
     "crates/meshway-transport-trojan",
     "tools/meshway-transport-perf",
-    "tools/meshway-static-authority",
+    "tools/meshway-desired-fixture",
     "tools/meshway-circuit-perf",
     "tools/meshway-crypto-bench",
     "tools/meshway-dataplane-perf",

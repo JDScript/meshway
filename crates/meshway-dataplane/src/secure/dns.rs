@@ -11,7 +11,7 @@ const LIFETIME: Duration = Duration::from_secs(5);
 struct Pending {
     source: NodeId,
     metadata: codec::ProbeMetadata,
-    guard: Guard,
+    guard: OutputBinding,
     question: Option<(DnsTransport, u16)>,
 }
 
@@ -44,7 +44,7 @@ pub struct DnsRequest {
     /// The desired content this request was admitted on.
     netmap: meshway_model::NetmapRef,
     metadata: codec::ProbeMetadata,
-    guard: Guard,
+    guard: OutputBinding,
     transport: DnsTransport,
     bytes: Vec<u8>,
 }
@@ -85,7 +85,7 @@ impl DnsRequest {
 /// original query guard at the consumer's final output boundary.
 pub struct DnsReply {
     id: EventId,
-    guard: Guard,
+    guard: OutputBinding,
     bytes: Vec<u8>,
 }
 impl std::fmt::Debug for DnsReply {

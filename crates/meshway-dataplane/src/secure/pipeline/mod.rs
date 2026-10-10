@@ -2,7 +2,7 @@
 //! Jobs are opaque and move-only. Workers never query authority; every result
 //! retains its original guard and is checked by the owner or final I/O adapter.
 use super::{
-    Carrier, Direction, Entry, Error, Guard, Hop, Packet, PacketBuffer, PendingFrame, Received,
+    Carrier, Direction, Entry, Error, OutputBinding, Hop, Packet, PacketBuffer, PendingFrame, Received,
     SecureNode, State, View, authorization,
     codec::{self, Frame, Kind},
     crypto,
@@ -25,7 +25,7 @@ pub struct SendJob {
     pub(super) mac: MacKey,
     pub(super) next: NodeId,
     pub(super) carrier: Carrier,
-    pub(super) guard: Guard,
+    pub(super) guard: OutputBinding,
 }
 
 impl std::fmt::Debug for SendJob {
@@ -49,7 +49,7 @@ pub struct RecvJob {
     mac: MacKey,
     target: ReceiveTarget,
     previous: NodeId,
-    guard: Guard,
+    guard: OutputBinding,
 }
 
 impl RecvJob {
@@ -76,7 +76,7 @@ pub struct Opened {
     mac: MacKey,
     previous: NodeId,
     relay: Option<(NodeId, Carrier)>,
-    guard: Guard,
+    guard: OutputBinding,
 }
 
 /// Inline worker implementation, also used by the bounded pool.

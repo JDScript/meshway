@@ -24,7 +24,7 @@ def command(*args):
 
 def source_digest():
     files = [ROOT / name for name in ("Cargo.toml", "Cargo.lock", "mise.toml", "mise.lock", "scripts/perf/circuit.py")]
-    for name in ("crates", "tools/meshway-static-authority", "tools/meshway-circuit-perf"):
+    for name in ("crates", "tools/meshway-desired-fixture", "tools/meshway-circuit-perf"):
         files.extend(path for path in (ROOT / name).rglob("*") if path.is_file())
     digest = hashlib.sha256()
     for path in sorted(files):

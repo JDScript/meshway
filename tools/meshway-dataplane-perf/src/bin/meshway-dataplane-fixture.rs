@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 use clap::{Parser, Subcommand};
 use meshway_dataplane_perf::{Error, material};
-use meshway_static_authority::public_fixture::{PublicFixture, PublicNode};
+use meshway_desired_fixture::public_fixture::{PublicFixture, PublicNode};
 use std::{net::SocketAddr, path::PathBuf};
 
 #[derive(Parser)]

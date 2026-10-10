@@ -142,12 +142,15 @@ impl Default for Limits {
     }
 }
 
+/// What one output is bound to: its circuit's and flow's cancellation, its
+/// own lifetime cap and, for an exit flow, the projection gate. It grants
+/// nothing; an output whose binding ended is never sent.
 #[derive(Clone)]
-pub(crate) struct Guard {
+pub(crate) struct OutputBinding {
     pub(crate) life: Lifetime,
     projection: Option<Arc<crate::exit::Gate>>,
 }
-impl Guard {
+impl OutputBinding {
     pub(crate) fn for_projection(&self, cap: Cap, cancellation: CancellationToken) -> Self {
         let mut guard = self.clone();
         guard.life.restrict(Some(cap));
@@ -232,7 +235,7 @@ pub struct PendingFrame {
     next: NodeId,
     carrier: Carrier,
     circuit: [u8; 32],
-    guard: Guard,
+    guard: OutputBinding,
 }
 impl fmt::Debug for PendingFrame {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -248,13 +251,13 @@ impl PendingFrame {
     }
     pub(crate) fn release_batch(frames: Vec<Self>) -> Result<Vec<PacketBuffer>, Error> {
         let guards: Vec<_> = frames.iter().map(Self::io_guard).collect();
-        Guard::check_batch(&guards)?;
+        OutputBinding::check_batch(&guards)?;
         Ok(frames.into_iter().map(|frame| frame.bytes).collect())
     }
     pub fn is_data(&self) -> bool {
         self.bytes.get(8) == Some(&3)
     }
-    pub(crate) fn io_guard(&self) -> Guard {
+    pub(crate) fn io_guard(&self) -> OutputBinding {
         self.guard.clone()
     }
     pub fn next(&self) -> NodeId {
@@ -425,12 +428,12 @@ impl Circuit {
             session: session::Session::new()?,
         })
     }
-    fn guard(&self, handshake: bool) -> Guard {
+    fn guard(&self, handshake: bool) -> OutputBinding {
         let mut life = Lifetime::new(self.cap, self.cancellation.clone());
         if handshake {
             life.restrict(Some(self.handshake));
         }
-        Guard {
+        OutputBinding {
             life,
             projection: None,
         }
@@ -1512,7 +1515,7 @@ impl SecureNode {
         hop: Hop,
         route: Option<&PendingRoute>,
         reading: &View<'_>,
-    ) -> Result<(NodeId, Carrier, Guard), Error> {
+    ) -> Result<(NodeId, Carrier, OutputBinding), Error> {
         let Hop::Forward(next) = hop else {
             return Err(Error::State);
         };

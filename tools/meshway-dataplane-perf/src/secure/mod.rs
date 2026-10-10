@@ -8,7 +8,7 @@ use meshway_dataplane::{
     },
 };
 use meshway_logging::profile::{self, Metric};
-use meshway_static_authority::public_fixture::PublicFixture;
+use meshway_desired_fixture::public_fixture::PublicFixture;
 use meshway_tun::{Options, Tun};
 use std::{
     collections::{BTreeMap, VecDeque},

@@ -147,7 +147,7 @@ def sampled(profile, symbols, budget_us):
                 owner[stack[0]] += weight
             if "memmove" in stack[0] or "memcpy" in stack[0]:
                 caller = next((name for name in stack[1:] if name.lstrip("<").startswith(
-                    ("meshway_dataplane::", "meshway_circuit_perf::", "meshway_static_authority::"))), "unresolved caller")
+                    ("meshway_dataplane::", "meshway_circuit_perf::", "meshway_desired_fixture::"))), "unresolved caller")
                 copies[caller] += weight
             group = category(stack)
             groups[group] += weight

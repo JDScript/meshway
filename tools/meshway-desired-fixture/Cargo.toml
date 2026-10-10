@@ -1,5 +1,5 @@
 [package]
-name = "meshway-static-authority"
+name = "meshway-desired-fixture"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

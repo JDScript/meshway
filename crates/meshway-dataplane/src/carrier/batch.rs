@@ -179,7 +179,7 @@ impl Delivery {
         let lifetime = Arc::new(OutputLifetime {
             packets: pending
                 .iter()
-                .map(|packet| crate::secure::Guard::from_route(&packet.pending))
+                .map(|packet| crate::secure::OutputBinding::from_route(&packet.pending))
                 .collect(),
             channel: None,
         });

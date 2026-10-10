@@ -4,7 +4,7 @@ use meshway_model::{
     KeyId, NodeId,
     state::{Capability, StreamKind, TransportRole},
 };
-use meshway_static_authority::{NodeMaterial, public_fixture::PublicNode, random_uuid};
+use meshway_desired_fixture::{NodeMaterial, public_fixture::PublicNode, random_uuid};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,

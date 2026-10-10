@@ -1738,8 +1738,8 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "meshway-dataplane",
+ "meshway-desired-fixture",
  "meshway-logging",
- "meshway-static-authority",
  "nix 0.30.1",
  "serde",
  "serde_json",
@@ -1992,11 +1992,11 @@ dependencies = [
  "meshway-configuration",
  "meshway-connectivity",
  "meshway-dataplane",
+ "meshway-desired-fixture",
  "meshway-engine",
  "meshway-logging",
  "meshway-model",
  "meshway-private-storage",
- "meshway-static-authority",
  "meshway-transport",
  "meshway-transport-spec",
  "meshway-transport-udp",
@@ -2007,6 +2007,26 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-util",
+ "zeroize",
+]
+
+[[package]]
+name = "meshway-desired-fixture"
+version = "0.1.0"
+dependencies = [
+ "curve25519-dalek",
+ "ed25519-dalek",
+ "getrandom 0.3.4",
+ "meshway-authority",
+ "meshway-configuration",
+ "meshway-dataplane",
+ "meshway-engine",
+ "meshway-model",
+ "meshway-policy",
+ "serde",
+ "serde_json",
+ "tracing",
+ "uuid",
  "zeroize",
 ]
 
@@ -2311,26 +2331,6 @@ dependencies = [
  "tracing",
  "utoipa",
  "utoipa-axum",
- "uuid",
- "zeroize",
-]
-
-[[package]]
-name = "meshway-static-authority"
-version = "0.1.0"
-dependencies = [
- "curve25519-dalek",
- "ed25519-dalek",
- "getrandom 0.3.4",
- "meshway-authority",
- "meshway-configuration",
- "meshway-dataplane",
- "meshway-engine",
- "meshway-model",
- "meshway-policy",
- "serde",
- "serde_json",
- "tracing",
  "uuid",
  "zeroize",
 ]

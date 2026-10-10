@@ -28,7 +28,7 @@ struct Rate {
 struct Association {
     metadata: ProbeMetadata,
     challenge: Option<Digest>,
-    guard: Guard,
+    guard: OutputBinding,
     completed: bool,
 }
 

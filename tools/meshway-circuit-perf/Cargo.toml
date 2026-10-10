@@ -9,7 +9,7 @@ description = "Explicit in-process protected circuit CPU measurements"
 clap.workspace = true
 meshway-dataplane = { path = "../../crates/meshway-dataplane" }
 meshway-logging = { path = "../../crates/meshway-logging" }
-meshway-static-authority = { path = "../meshway-static-authority" }
+meshway-desired-fixture = { path = "../meshway-desired-fixture" }
 nix = { version = "0.30.1", default-features = false, features = ["time"] }
 serde.workspace = true
 serde_json.workspace = true

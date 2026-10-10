@@ -7,7 +7,7 @@ use meshway_dataplane::{
     },
 };
 use meshway_logging::profile::{self, Metric};
-use meshway_static_authority::{
+use meshway_desired_fixture::{
     Error,
     fixture::{Chain, tcp_ipv4},
 };

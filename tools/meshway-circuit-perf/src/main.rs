@@ -4,7 +4,7 @@
 mod measurement;
 
 use clap::Parser;
-use meshway_static_authority::Error;
+use meshway_desired_fixture::Error;
 use std::io::Write;
 
 #[derive(Parser)]

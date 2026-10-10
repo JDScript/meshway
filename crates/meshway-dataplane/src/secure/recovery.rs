@@ -1,5 +1,5 @@
 //! Exact, scope-frozen handshake retransmission; never another Noise owner.
-use super::{Error, Guard, PendingFrame};
+use super::{Error, OutputBinding, PendingFrame};
 use std::time::{Duration, Instant};
 
 const INTERVAL: Duration = Duration::from_millis(250);
@@ -36,7 +36,7 @@ impl Budget {
 
 pub(super) struct Stage {
     pub fingerprint: [u8; 32],
-    guard: Guard,
+    guard: OutputBinding,
     output: Option<PendingFrame>,
     budget: Budget,
 }
@@ -44,7 +44,7 @@ pub(super) struct Stage {
 impl Stage {
     pub fn new(
         fingerprint: [u8; 32],
-        guard: Guard,
+        guard: OutputBinding,
         output: Option<&PendingFrame>,
     ) -> Result<Self, Error> {
         if output.is_some_and(|frame| frame.bytes.len() > MAX_BYTES) {
