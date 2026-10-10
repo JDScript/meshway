@@ -19,7 +19,6 @@ meshway-control-client = { path = "../meshway-control-client" }
 meshway-model = { path = "../meshway-model" }
 meshway-private-storage = { path = "../meshway-private-storage" }
 meshway-protocol = { path = "../meshway-protocol" }
-meshway-serde = { path = "../meshway-serde" }
 reqwest.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }

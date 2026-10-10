@@ -176,9 +176,9 @@ fn socket_key(id: &[u8; 32]) -> String {
     id.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-fn socket_network(protocol: meshway_configuration::transport::TransportProtocol) -> SocketNetwork {
+fn socket_network(protocol: meshway_model::TransportProtocol) -> SocketNetwork {
     match protocol.outer_socket() {
-        meshway_configuration::transport::OuterSocket::Udp => SocketNetwork::Udp,
-        meshway_configuration::transport::OuterSocket::Tcp => SocketNetwork::Tcp,
+        meshway_model::OuterSocket::Udp => SocketNetwork::Udp,
+        meshway_model::OuterSocket::Tcp => SocketNetwork::Tcp,
     }
 }

@@ -19,7 +19,7 @@ pub struct EgressCapturePlan {
     /// Unresolved routing requires a fail-closed boundary, not local fallback.
     pub unavailable: Option<UnavailableReason>,
 } }
-meshway_serde::string_enum! {
+meshway_model::string_enum! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 /// Translation mode allowed for an exit role.

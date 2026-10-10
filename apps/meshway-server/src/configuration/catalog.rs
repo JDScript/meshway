@@ -1,4 +1,5 @@
 use meshway_model::RequestId;
+use meshway_model::{OuterSocket, TransportProtocol};
 use meshway_protocol::configuration::{
     ConfigurationSchemaResponse, TransportCatalogEntry, TransportCatalogResponse,
 };

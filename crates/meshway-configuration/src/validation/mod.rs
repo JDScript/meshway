@@ -25,7 +25,7 @@ pub fn valid_node_hostname(name: &str) -> bool {
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
 
-meshway_serde::object! {
+meshway_model::object! {
 /// Stable user and network membership identity bound to a readable configuration reference.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UserBinding {
@@ -165,7 +165,7 @@ impl ToSchema for PreparationKind {
         MaterialRequirement::schemas(schemas);
     }
 }
-meshway_serde::object! {
+meshway_model::object! {
 /// Preparation work associated with an input configuration location.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PreparationRequirement {

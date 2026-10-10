@@ -45,7 +45,7 @@ macro_rules! object {
                 #[derive(serde::Deserialize)]
                 #[serde(rename_all = "camelCase", deny_unknown_fields)]
                 struct Fields { $($(#[$field_attribute])* $field: $ty),* }
-                let Fields { $($field),* } = Fields::deserialize($crate::MapOnly(d))?;
+                let Fields { $($field),* } = Fields::deserialize($crate::wire::MapOnly(d))?;
                 Ok(Self { $($field),* })
             }
         }
@@ -69,6 +69,9 @@ macro_rules! tagged {
         $($(#[$variant_attribute:meta])* $variant:ident $(= $wire:literal)? $({ $($(#[$field_attribute:meta])* $field:ident: $ty:ty $([$($schema:tt)*])?),* $(,)? })?),* $(,)?
     }) => {
         $(#[$attribute])*
+        // Variant payloads are the wire objects themselves; boxing would
+        // change the public type, so size differences are accepted.
+        #[allow(clippy::large_enum_variant)]
         #[derive(serde::Serialize)]
         #[serde(tag = $tag, rename_all = "camelCase", rename_all_fields = "camelCase", deny_unknown_fields)]
         pub enum $name { $($(#[$variant_attribute])* $(#[serde(rename = $wire)])? $variant $({ $($(#[$field_attribute])* $field: $ty),* })?),* }
@@ -83,10 +86,11 @@ macro_rules! tagged {
                         $($($(#[$field_attribute])* pub $field: $ty $([$($schema)*])?),*)?
                     } }
                 )*
+                #[allow(clippy::large_enum_variant)]
                 #[derive(serde::Deserialize)]
                 #[serde(tag = $tag, rename_all = "camelCase", deny_unknown_fields)]
                 enum Fields { $($(#[serde(rename = $wire)])? $variant($variant)),* }
-                Ok(match Fields::deserialize($crate::MapOnly(d))? {
+                Ok(match Fields::deserialize($crate::wire::MapOnly(d))? {
                     $(Fields::$variant($variant { $($($field),*)? }) => Self::$variant $({ $($field),* })?),*
                 })
             }

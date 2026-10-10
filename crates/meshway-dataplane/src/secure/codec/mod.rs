@@ -3,10 +3,10 @@ use crate::PacketBuffer;
 mod data;
 use super::CircuitGrant;
 use crate::netmap::Purpose;
+use meshway_model::TransportProtocol;
 use meshway_model::{Digest, EventId, KeyId, NetworkId, NodeId, Version};
 use meshway_policy::admission::Carrier;
 use meshway_policy::compile::netmap::Target;
-use meshway_transport_spec::TransportProtocol;
 use std::{str::FromStr, sync::Arc};
 
 pub(super) const MAGIC: &[u8; 8] = b"MWCIR\0\0\x06";

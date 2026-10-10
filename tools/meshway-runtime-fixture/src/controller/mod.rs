@@ -1193,12 +1193,12 @@ fn expected_carrier(
     role: Role,
     peer: Role,
     fallback: bool,
-) -> meshway_transport_spec::TransportProtocol {
+) -> meshway_model::TransportProtocol {
     if cli.traversal_fallback
         && fallback
         && matches!((role, peer), (Role::A, Role::R) | (Role::R, Role::A))
     {
-        meshway_transport_spec::TransportProtocol::NativeTcp
+        meshway_model::TransportProtocol::NativeTcp
     } else {
         cli.transport.protocol()
     }

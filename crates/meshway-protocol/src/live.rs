@@ -26,7 +26,7 @@ pub enum UserConfigurationView {
         /// Exact desired source revision represented by the node settings.
         revision: Revision,
         /// Permitted node IDs mapped to their redacted desired settings.
-        #[serde(deserialize_with="meshway_serde::unique_map")] nodes: BTreeMap<NodeId, NodeSettingsView>
+        #[serde(deserialize_with="meshway_model::wire::unique_map")] nodes: BTreeMap<NodeId, NodeSettingsView>
     },
 } }
 wire_object! { #[derive(Clone, PartialEq)]
@@ -35,12 +35,12 @@ pub struct UserEntitiesView {
     /// Network summary and currently available actions.
     pub network: NetworkSummary,
     /// Visible node inventory keyed by node ID.
-    #[serde(deserialize_with="meshway_serde::unique_map")] pub nodes: BTreeMap<NodeId, crate::NodeInventoryView>,
+    #[serde(deserialize_with="meshway_model::wire::unique_map")] pub nodes: BTreeMap<NodeId, crate::NodeInventoryView>,
     /// Visible member summaries keyed by stable network membership ID.
-    #[serde(deserialize_with="meshway_serde::unique_map")] pub members: BTreeMap<MembershipId, MemberSummary>,
+    #[serde(deserialize_with="meshway_model::wire::unique_map")] pub members: BTreeMap<MembershipId, MemberSummary>,
 } }
 
-meshway_serde::string_enum! {
+meshway_model::string_enum! {
 /// Whether progress covers the entire original apply target set or a permission-filtered subset.
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, utoipa::ToSchema,
@@ -53,7 +53,7 @@ pub enum ProgressScope {
     Partial,
 }
 }
-meshway_serde::string_enum! {
+meshway_model::string_enum! {
 /// Last accepted result for an original configuration target, independent of current freshness.
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, utoipa::ToSchema,
@@ -116,5 +116,5 @@ pub struct ConfigurationApplyProgress {
     /// Phase totals over exactly the nodes included in this projection.
     pub summary: ConfigurationProgressSummary,
     /// Original visible node targets and their last results, unaffected by later targets added by demands or refreshes.
-    #[serde(deserialize_with="meshway_serde::unique_map")] pub nodes: BTreeMap<NodeId, ConfigurationNodeProgress>,
+    #[serde(deserialize_with="meshway_model::wire::unique_map")] pub nodes: BTreeMap<NodeId, ConfigurationNodeProgress>,
 } }

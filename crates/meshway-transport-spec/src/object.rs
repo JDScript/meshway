@@ -1,8 +1,8 @@
-pub(crate) use meshway_serde::MapOnly;
+pub(crate) use meshway_model::wire::MapOnly;
 
 macro_rules! object {
     ($($declaration:tt)*) => {
-        meshway_serde::object! {
+        meshway_model::object! {
             #[derive(Clone, Debug, PartialEq, Eq)]
             $($declaration)*
         }

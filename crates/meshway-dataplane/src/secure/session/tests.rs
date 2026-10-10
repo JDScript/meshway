@@ -3,8 +3,8 @@ use crate::{
     fixtures,
     secure::codec::{HopAuth, Kind, ProbeMetadata, Proof},
 };
+use meshway_model::TransportProtocol;
 use meshway_model::{EventId, KeyId, NetworkId, Version};
-use meshway_transport_spec::TransportProtocol;
 
 fn node(n: usize) -> NodeId {
     NodeId::new(uuid::Uuid::from_u128(n as u128 + 1)).unwrap()

@@ -8,7 +8,6 @@ rust-version.workspace = true
 chrono.workspace = true
 meshway-configuration = { path = "../meshway-configuration" }
 meshway-model = { path = "../meshway-model" }
-meshway-serde = { path = "../meshway-serde" }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

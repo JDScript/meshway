@@ -385,7 +385,7 @@ pub(crate) fn validate_probe_context(
                 || matches!(
                     channel.acquisition,
                     meshway_model::observations::LinkAcquisition::CoordinatedUdp { .. }
-                ) && channel.transport != meshway_transport_spec::TransportProtocol::NativeUdp
+                ) && channel.transport != meshway_model::TransportProtocol::NativeUdp
             {
                 return Err(Error::InvalidRequest);
             }
@@ -395,7 +395,7 @@ pub(crate) fn validate_probe_context(
             for address in [
                 Some(remote),
                 (!local.ip().is_unspecified()
-                    || channel.transport != meshway_transport_spec::TransportProtocol::NativeUdp)
+                    || channel.transport != meshway_model::TransportProtocol::NativeUdp)
                     .then_some(local),
             ]
             .into_iter()

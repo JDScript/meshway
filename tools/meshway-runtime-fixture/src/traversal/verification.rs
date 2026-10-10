@@ -104,7 +104,7 @@ fn original_request(request: &PrepareUdpTraversalRequest, offer: &UdpTraversalOf
         && request.request_id == offer.request_id
         && request.peer_id == peer.node_id
         && request.carrier == offer.carrier
-        && offer.carrier.protocol == meshway_transport_spec::TransportProtocol::NativeUdp
+        && offer.carrier.protocol == meshway_model::TransportProtocol::NativeUdp
         && local.instance.instance_id != peer.instance.instance_id
         && offer.expires_at_ms <= request.expires_at_ms
 }

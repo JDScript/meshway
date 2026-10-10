@@ -1,5 +1,5 @@
 use meshway_configuration::{Input, TopologyRule};
-use meshway_transport_spec::TransportProtocol;
+use meshway_model::TransportProtocol;
 use serde_json::json;
 
 #[test]

@@ -162,12 +162,12 @@ enum CarrierMode {
 }
 
 impl CarrierMode {
-    fn protocol(self) -> meshway_transport_spec::TransportProtocol {
+    fn protocol(self) -> meshway_model::TransportProtocol {
         match self {
-            Self::NativeTcp => meshway_transport_spec::TransportProtocol::NativeTcp,
-            Self::NativeUdp => meshway_transport_spec::TransportProtocol::NativeUdp,
-            Self::Vless => meshway_transport_spec::TransportProtocol::Vless,
-            Self::Trojan => meshway_transport_spec::TransportProtocol::Trojan,
+            Self::NativeTcp => meshway_model::TransportProtocol::NativeTcp,
+            Self::NativeUdp => meshway_model::TransportProtocol::NativeUdp,
+            Self::Vless => meshway_model::TransportProtocol::Vless,
+            Self::Trojan => meshway_model::TransportProtocol::Trojan,
         }
     }
 

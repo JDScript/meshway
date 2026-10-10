@@ -3,12 +3,6 @@ use thiserror::Error;
 /// Invalid pure protocol values. Errors do not echo potentially sensitive input.
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum ValidationError {
-    #[error("unknown transport protocol key")]
-    TransportProtocol,
-    #[error("outer socket must be udp or tcp")]
-    OuterSocket,
-    #[error("VLESS stream must be tcp or websocket")]
-    VlessStream,
     #[error("TLS version must be 1.2 or 1.3")]
     TlsVersion,
     #[error("port must be in 1..=65535")]

@@ -253,7 +253,7 @@ bounded_collection!(
     MAX_UDP_TRAVERSAL_ATTEMPTS
 );
 
-meshway_serde::string_enum! {
+meshway_model::string_enum! {
 /// Expected authority/CAS races are closed outcomes, not authentication errors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -409,7 +409,7 @@ impl UdpTraversalOffer {
     }
 }
 
-meshway_serde::string_enum! {
+meshway_model::string_enum! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 /// Server-recorded bilateral acceptance phase, distinct from an authenticated channel being established.

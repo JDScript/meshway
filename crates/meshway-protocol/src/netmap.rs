@@ -64,7 +64,7 @@ pub struct PeerFactsDelta {
     /// Netmap serial whose visible Nodes scoped this projection.
     pub netmap_serial: Version,
     /// Complete replacement facts of each updated peer.
-    #[serde(deserialize_with = "meshway_serde::unique_map")]
+    #[serde(deserialize_with = "meshway_model::wire::unique_map")]
     pub updated: BTreeMap<NodeId, PeerFacts>,
     /// Peers whose facts are no longer visible or current.
     pub removed: Vec<NodeId>,
@@ -232,7 +232,7 @@ pub struct PeerFacts {
     /// Peer described by these facts.
     pub node_id: NodeId,
     /// Listener facts by listener key; endpoint details only reach adjacent Nodes.
-    #[serde(deserialize_with = "meshway_serde::unique_map")]
+    #[serde(deserialize_with = "meshway_model::wire::unique_map")]
     pub listeners: BTreeMap<String, PeerListenerFacts>,
     /// Exit readiness, or null when the peer has no exit role.
     pub exit: Option<PeerExitFacts> [required = true],

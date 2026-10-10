@@ -3,10 +3,9 @@ use crate::{
     object::{object, tagged, unique_map},
 };
 use meshway_model::NodeId;
-use meshway_serde::required_nullable as nullable;
-use meshway_transport_spec::{
-    DialerSet, Listener, Port, PositiveDuration, PreparedListener, TransportProtocol,
-};
+use meshway_model::TransportProtocol;
+use meshway_model::wire::required_nullable as nullable;
+use meshway_transport_spec::{DialerSet, Listener, Port, PositiveDuration, PreparedListener};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,

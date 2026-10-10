@@ -1,10 +1,11 @@
 use std::{collections::VecDeque, time::Duration};
 
+use meshway_model::VlessStream;
 use meshway_transport::{Frame, Limits, SendContext, SendOutcome, Session};
 use meshway_transport_spec::{
     ClientTls, DialParameters, DialerWebSocket, Endpoint, Listener, ListenerTls, ListenerWebSocket,
     Port, PreparedListener, SecretString, SocketOptions, TcpOptions, TlsMode, TlsVersion,
-    VlessDialer, VlessListener, VlessStream, WebSocketHeaders,
+    VlessDialer, VlessListener, WebSocketHeaders,
 };
 use meshway_transport_vless::{Acceptor, Connector, Error};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};

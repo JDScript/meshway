@@ -1,5 +1,5 @@
 use super::*;
-use meshway_transport_spec::TransportProtocol;
+use meshway_model::TransportProtocol;
 
 fn constrained_route() -> NetworkConfigurationInput {
     let mut c = with_nodes();

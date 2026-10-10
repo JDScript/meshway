@@ -44,10 +44,10 @@ fn encode_context(
     out.extend_from_slice(carrier.dialer.as_uuid().as_bytes());
     out.extend_from_slice(carrier.listener.as_uuid().as_bytes());
     out.push(match carrier.protocol {
-        meshway_transport_spec::TransportProtocol::NativeTcp => 1,
-        meshway_transport_spec::TransportProtocol::Vless => 2,
-        meshway_transport_spec::TransportProtocol::Trojan => 3,
-        meshway_transport_spec::TransportProtocol::NativeUdp => 4,
+        meshway_model::TransportProtocol::NativeTcp => 1,
+        meshway_model::TransportProtocol::Vless => 2,
+        meshway_model::TransportProtocol::Trojan => 3,
+        meshway_model::TransportProtocol::NativeUdp => 4,
     });
     out.push(u8::try_from(key.len()).map_err(|_| Error::Configuration)?);
     out.extend_from_slice(key);

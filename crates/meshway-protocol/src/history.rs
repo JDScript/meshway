@@ -1,9 +1,9 @@
 use crate::object::{wire_object, wire_tagged};
 use chrono::{DateTime, Utc};
+use meshway_model::wire::required_nullable as nullable;
 use meshway_model::{
     ActivityId, JoinLinkId, MembershipId, NetworkId, RequestId, Revision, SessionId, UserId,
 };
-use meshway_serde::required_nullable as nullable;
 
 wire_tagged! {
 /// Verified user or system responsible for a committed activity.

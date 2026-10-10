@@ -82,7 +82,7 @@ pub struct EnrollmentKeyResponse {
     /// Raw enrollment credential on first delivery, or null when delivery is unavailable.
     pub secret: Option<WireSecret>,
 } }
-meshway_serde::string_enum! {
+meshway_model::string_enum! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 /// Availability of a creation secret in this response.
@@ -167,7 +167,7 @@ wire_object! {
     #[serde(deserialize_with="crate::object::required_nullable")]
     pub authorization_url: Option<String> [required=true],
 } }
-meshway_serde::string_enum! {
+meshway_model::string_enum! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 /// Supported mechanism for delivering an enrollment outcome to the device.
@@ -193,7 +193,7 @@ wire_object! {
     /// Network selected by the approving user and rechecked at redemption.
     pub network_id: NetworkId,
 } }
-meshway_serde::string_enum! {
+meshway_model::string_enum! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 /// Server-evaluated lifecycle of a device enrollment request.

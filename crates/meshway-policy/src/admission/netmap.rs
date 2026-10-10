@@ -18,8 +18,9 @@ use meshway_configuration::{
     execution::{BusinessProtocol, ExitNat, LogicalPath},
     netmap::NodeNetmap,
 };
+use meshway_model::TransportProtocol;
 use meshway_model::{NodeId, exit::ExitFamily};
-use meshway_transport_spec::{Listener, Port, TransportProtocol};
+use meshway_transport_spec::{Listener, Port};
 use std::net::IpAddr;
 
 fn addresses(netmap: &NodeNetmap, node: NodeId) -> Result<&NodeAddresses, AdmissionError> {

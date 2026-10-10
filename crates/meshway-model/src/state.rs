@@ -6,7 +6,7 @@ use serde::Serialize;
 use std::{collections::BTreeMap, net::SocketAddr};
 use utoipa::ToSchema;
 
-meshway_serde::object! {
+crate::object! {
 /// Operating system and build information reported by the Node.
 #[derive(Clone, Debug, PartialEq, Eq)] pub struct SystemState {
     /// Hostname reported by the operating system, independent of the configured hostname.
@@ -19,7 +19,7 @@ meshway_serde::object! {
     pub agent_version: String,
 } }
 
-meshway_serde::string_enum! {
+crate::string_enum! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 /// Direction of transport establishment supported by the Node build.
@@ -31,7 +31,7 @@ pub enum TransportRole {
 }
 }
 
-meshway_serde::tagged! {
+crate::tagged! {
 tag = "kind";
 #[derive(Clone, Debug, PartialEq, Eq)]
 /// Implementation capability declared by the Node, without granting execution permission.
@@ -51,7 +51,7 @@ pub enum Capability {
 }
 }
 
-meshway_serde::string_enum! {
+crate::string_enum! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 /// Outer stream encapsulation supported by a transport implementation.
@@ -65,7 +65,7 @@ pub enum StreamKind {
 }
 }
 
-meshway_serde::string_enum! {
+crate::string_enum! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 /// Node-reported stage of receiving and installing an execution target.
@@ -85,7 +85,7 @@ pub enum ApplyPhase {
 }
 }
 
-meshway_serde::object! {
+crate::object! {
 /// Node-reported progress for one exact execution target.
 #[derive(Clone, Debug, PartialEq, Eq)] pub struct ConfigurationProgress {
     /// Exact netmap being processed.
@@ -98,7 +98,7 @@ meshway_serde::object! {
     pub problem: Option<StateProblem>,
 } }
 
-meshway_serde::object! {
+crate::object! {
 /// Node-reported persistence, execution and progress facts, which do not prove business connectivity.
 #[derive(Clone, Debug, Default, PartialEq, Eq)] pub struct ConfigurationState {
     /// Verified netmap privately persisted by the Node, or null if none is reported.
@@ -109,7 +109,7 @@ meshway_serde::object! {
     pub progress: Option<ConfigurationProgress>,
 } }
 
-meshway_serde::tagged! { tag="kind";
+crate::tagged! { tag="kind";
 /// Exact configured or execution resource associated with a runtime socket.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)] pub enum ResourceRef {
     /// A configured inbound listener resource.
@@ -129,7 +129,7 @@ meshway_serde::tagged! { tag="kind";
     },
 } }
 
-meshway_serde::string_enum! {
+crate::string_enum! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 /// Actual outer socket protocol, independent of the inner business protocol.
@@ -141,7 +141,7 @@ pub enum SocketNetwork {
 }
 }
 
-meshway_serde::tagged! { tag="source";
+crate::tagged! { tag="source";
 /// Origin of an endpoint candidate, without asserting peer reachability.
 #[derive(Clone, Debug, PartialEq, Eq)] pub enum EndpointSource {
     /// The endpoint was explicitly supplied in the configuration.
@@ -162,7 +162,7 @@ meshway_serde::tagged! { tag="source";
     },
 } }
 
-meshway_serde::object! {
+crate::object! {
 /// Node-reported endpoint candidate bound to its original source and validity interval.
 #[derive(Clone, Debug, PartialEq, Eq)] pub struct EndpointCandidate {
     /// Host and port; interface and STUN candidates require an IP literal with a port.
@@ -175,7 +175,7 @@ meshway_serde::object! {
     pub expires_at: DateTime<Utc>,
 } }
 
-meshway_serde::string_enum! {
+crate::string_enum! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 /// Provenance of an endpoint the Node reported for one of its own listeners.
@@ -184,7 +184,7 @@ pub enum LocalEndpointSource {
     Local,
 }
 }
-meshway_serde::object! {
+crate::object! {
 /// Dialable address the Node reported for a listener socket, derived from its own interfaces.
 #[derive(Clone, Debug, PartialEq, Eq)] pub struct LocalEndpoint {
     /// Interface address and the listener's bound port.
@@ -195,7 +195,7 @@ meshway_serde::object! {
 /// Upper bound of reported local endpoints per listener socket.
 pub const MAX_LOCAL_ENDPOINTS: usize = 8;
 
-meshway_serde::object! {
+crate::object! {
 /// Actual outer socket reported by the Node and indexed by its instance-local socket ID.
 #[derive(Clone, Debug, PartialEq, Eq)] pub struct SocketState {
     /// Exact resource owning this socket.
@@ -216,7 +216,7 @@ meshway_serde::object! {
     pub local_endpoints: Option<Vec<LocalEndpoint>> [max_items = 8],
 } }
 
-meshway_serde::string_enum! {
+crate::string_enum! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 /// Local listener lifecycle reported by the Node.
@@ -232,7 +232,7 @@ pub enum ListenerPhase {
 }
 }
 
-meshway_serde::object! {
+crate::object! {
 /// Runtime facts for a configured listener key.
 #[derive(Clone, Debug, PartialEq, Eq)] pub struct ListenerState {
     /// Local lifecycle stage observed by the Node.
@@ -247,7 +247,7 @@ meshway_serde::object! {
     pub netmap: Option<NetmapRef>,
 } }
 
-meshway_serde::string_enum! {
+crate::string_enum! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 /// Node-reported lifecycle of an actual transport channel.
@@ -263,7 +263,7 @@ pub enum LinkPhase {
 }
 }
 
-meshway_serde::object! {
+crate::object! {
 /// One endpoint's report of a physical channel and its current dependencies.
 #[derive(Clone, Debug, PartialEq, Eq)] pub struct LinkState {
     /// Non-secret channel identifier bound by the actual handshake.
@@ -289,7 +289,7 @@ meshway_serde::object! {
     pub acquisition: Option<crate::observations::LinkAcquisition>,
 } }
 
-meshway_serde::string_enum! {
+crate::string_enum! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 /// Reporting Node's role in the complete path it observed.
@@ -304,7 +304,7 @@ pub enum ReporterRole {
     Exit,
 }
 }
-meshway_serde::string_enum! {
+crate::string_enum! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 /// Stage of path use actually observable by the reporting Node.
@@ -320,7 +320,7 @@ pub enum PathEvidence {
 }
 }
 
-meshway_serde::object! {
+crate::object! {
 /// A participating Node's observation of a complete runtime path.
 #[derive(Clone, Debug, PartialEq, Eq)] pub struct PathState {
     /// Actual complete ordered Node path.
@@ -337,7 +337,7 @@ meshway_serde::object! {
     pub expires_at: DateTime<Utc>,
 } }
 
-meshway_serde::string_enum! {
+crate::string_enum! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 /// Operation measured by a probe; different kinds have different timing boundaries.
@@ -352,7 +352,7 @@ pub enum ProbeKind {
     Controller,
 }
 }
-meshway_serde::string_enum! {
+crate::string_enum! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 /// Actual outcome of a measured operation, without replacing missing timing with zero.
@@ -368,7 +368,7 @@ pub enum ProbeOutcome {
 }
 }
 
-meshway_serde::object! {
+crate::object! {
 /// Node-reported measurement with original timing and execution context.
 #[derive(Clone, Debug, PartialEq, Eq)] pub struct ProbeObservation {
     /// Stable measurement identifier reused when the same observation is reported again.
@@ -395,7 +395,7 @@ meshway_serde::object! {
     pub duration_us: Option<Sequence>,
 } }
 
-meshway_serde::tagged! {
+crate::tagged! {
 tag = "code";
 #[derive(Clone, Debug, PartialEq, Eq)]
 /// Typed Node-reported failure retaining the affected resource or measurement.
@@ -428,33 +428,33 @@ pub enum StateProblem {
 }
 }
 
-meshway_serde::object! {
+crate::object! {
 /// Node-reported routing profile currently in use.
 #[derive(Clone, Debug, Default, PartialEq, Eq)] pub struct SelectionState {
     /// Actually applied profile within configuration constraints, or null when none is reported.
     pub applied_profile: Option<String>,
 } }
 
-meshway_serde::object! {
+crate::object! {
 /// Complete snapshot of a Node's own runtime facts, without granting authority or extending leases.
 #[derive(Clone, Debug, PartialEq, Eq)] pub struct NodeState {
     /// Operating system and build facts reported by the Node.
     pub system: SystemState,
     /// Namespaced build capabilities matching the authenticated instance acquisition.
-    #[serde(deserialize_with="meshway_serde::unique_map")] pub capabilities: BTreeMap<String, Capability>,
+    #[serde(deserialize_with="crate::wire::unique_map")] pub capabilities: BTreeMap<String, Capability>,
     /// Independently reported saved target, applied target and installation progress.
     pub configuration: ConfigurationState,
     /// Target-bound exit prerequisite facts; omitted means unknown, never ready.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exit_capability: Option<crate::exit::ExitCapability>,
     /// Complete listener inventory indexed by configured listener key.
-    #[serde(deserialize_with="meshway_serde::unique_map")] pub listeners: BTreeMap<String, ListenerState>,
+    #[serde(deserialize_with="crate::wire::unique_map")] pub listeners: BTreeMap<String, ListenerState>,
     /// Complete outer socket inventory indexed by instance-local socket ID.
-    #[serde(deserialize_with="meshway_serde::unique_map")] pub sockets: BTreeMap<String, SocketState>,
+    #[serde(deserialize_with="crate::wire::unique_map")] pub sockets: BTreeMap<String, SocketState>,
     /// Actual channels grouped by peer, including simultaneous channels to the same peer.
-    #[serde(deserialize_with="meshway_serde::unique_map")] pub links: BTreeMap<NodeId, Vec<LinkState>>,
+    #[serde(deserialize_with="crate::wire::unique_map")] pub links: BTreeMap<NodeId, Vec<LinkState>>,
     /// Paths observed by this Node, indexed by runtime path identifier.
-    #[serde(deserialize_with="meshway_serde::unique_map")] pub paths: BTreeMap<String, PathState>,
+    #[serde(deserialize_with="crate::wire::unique_map")] pub paths: BTreeMap<String, PathState>,
     /// Routing selection actually applied by the Node.
     pub selection: SelectionState,
     /// Recent real measurements; repeating a snapshot does not create new samples.

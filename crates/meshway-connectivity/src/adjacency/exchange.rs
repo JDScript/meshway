@@ -79,7 +79,7 @@ impl Initiation {
         carrier: &Carrier,
         body: &[u8],
     ) -> Result<([u8; 32], Self), Error> {
-        if carrier.protocol != meshway_transport_spec::TransportProtocol::NativeUdp
+        if carrier.protocol != meshway_model::TransportProtocol::NativeUdp
             || carrier.dialer != peer
             || carrier.listener != cfg.node
             || body.len() != 160

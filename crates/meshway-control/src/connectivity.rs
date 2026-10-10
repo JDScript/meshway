@@ -344,8 +344,7 @@ impl Control {
             && local.candidate.socket.instance == *context.instance()
             && local.candidate.socket.netmap == context.netmap()
             && visible(netmap, peer.candidate.socket.node_id)
-            && offer.carrier.protocol
-                == meshway_configuration::transport::TransportProtocol::NativeUdp
+            && offer.carrier.protocol == meshway_model::TransportProtocol::NativeUdp
             && [offer.carrier.dialer, offer.carrier.listener].contains(&netmap.node_id)
             && [offer.carrier.dialer, offer.carrier.listener]
                 .contains(&peer.candidate.socket.node_id)

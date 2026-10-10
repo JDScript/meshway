@@ -3,7 +3,7 @@ use crate::{
     *,
 };
 use meshway_model::NodeId;
-use meshway_serde::required_nullable as nullable_listener;
+use meshway_model::wire::required_nullable as nullable_listener;
 use std::collections::BTreeMap;
 
 /// Address family selected for Mesh address allocation or reassignment.
@@ -239,7 +239,7 @@ pub fn apply_operations(
     Ok(())
 }
 
-meshway_serde::string_enum! {
+meshway_model::string_enum! {
 /// Structural difference at a configuration JSON Pointer.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]

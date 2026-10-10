@@ -25,8 +25,8 @@ pub async fn read<T: DeserializeOwned>(
         .await
         .map_err(|_| CodecError::Io)?;
     let mut decoder = serde_json::Deserializer::from_slice(&bytes);
-    let message =
-        T::deserialize(meshway_serde::MapOnly(&mut decoder)).map_err(|_| CodecError::Invalid)?;
+    let message = T::deserialize(meshway_model::wire::MapOnly(&mut decoder))
+        .map_err(|_| CodecError::Invalid)?;
     decoder.end().map_err(|_| CodecError::Invalid)?;
     Ok(message)
 }

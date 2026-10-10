@@ -16,7 +16,6 @@ members = [
     "crates/meshway-dns",
     "crates/meshway-control-client",
     "crates/meshway-protocol",
-    "crates/meshway-serde",
     "crates/meshway-transport-spec",
     "crates/meshway-private-storage",
     "crates/meshway-control",

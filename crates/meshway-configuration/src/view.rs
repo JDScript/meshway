@@ -3,10 +3,10 @@ use crate::{
     *,
 };
 use meshway_model::NodeId;
+use meshway_model::{TransportProtocol, VlessStream};
 use meshway_transport_spec::{
     DialerSet, DialerStream, DialerTls, Endpoint, Listener, NativeTcpDialer, NativeUdpDialer,
-    PositiveDuration, SocketOptions, TcpOptions, TlsMode, TlsVersion, TransportProtocol,
-    TrojanDialer, VlessStream, WebSocketPath,
+    PositiveDuration, SocketOptions, TcpOptions, TlsMode, TlsVersion, TrojanDialer, WebSocketPath,
 };
 use std::{collections::BTreeMap, net::IpAddr};
 

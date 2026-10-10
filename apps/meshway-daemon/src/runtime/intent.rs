@@ -102,7 +102,7 @@ impl Store {
                 return Err("Node state exceeds its limit.");
             }
             let mut decoder = serde_json::Deserializer::from_slice(&bytes);
-            let record = Record::deserialize(meshway_serde::MapOnly(&mut decoder))
+            let record = Record::deserialize(meshway_model::wire::MapOnly(&mut decoder))
                 .map_err(|_| "Invalid Node state; file preserved.")?;
             decoder
                 .end()

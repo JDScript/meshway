@@ -10,6 +10,7 @@ use meshway_dataplane::{
     Packet,
     secure::{Applied, Carrier, CircuitGrant, PendingFrame, Received, SecureNode, Target},
 };
+use meshway_model::TransportProtocol;
 use meshway_model::{
     NodeId,
     state::{Capability, StreamKind, TransportRole},
@@ -18,7 +19,7 @@ use meshway_test_server::{
     Facts, Script,
     configuration::{network, tag_node},
 };
-use meshway_transport_spec::{PreparedListener, TransportProtocol};
+use meshway_transport_spec::PreparedListener;
 use std::{collections::BTreeMap, net::IpAddr, sync::Arc};
 use tokio::net::TcpListener;
 

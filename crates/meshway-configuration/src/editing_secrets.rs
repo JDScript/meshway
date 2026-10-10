@@ -1,5 +1,6 @@
 //! Form edit inputs retain omitted secrets; document inputs remain full values.
 use crate::{object::object, *};
+use meshway_model::VlessStream;
 use meshway_transport_spec::*;
 
 object! { #[derive(Default)]
@@ -265,12 +266,14 @@ impl<'de> serde::Deserialize<'de> for ListenerUpdate {
             Vless(VlessListenerUpdate),
             Trojan(TrojanListener),
         }
-        Ok(match Fields::deserialize(meshway_serde::MapOnly(d))? {
-            Fields::NativeUdp(v) => Self::NativeUdp(v),
-            Fields::NativeTcp(v) => Self::NativeTcp(v),
-            Fields::Vless(v) => Self::Vless(v),
-            Fields::Trojan(v) => Self::Trojan(v),
-        })
+        Ok(
+            match Fields::deserialize(meshway_model::wire::MapOnly(d))? {
+                Fields::NativeUdp(v) => Self::NativeUdp(v),
+                Fields::NativeTcp(v) => Self::NativeTcp(v),
+                Fields::Vless(v) => Self::Vless(v),
+                Fields::Trojan(v) => Self::Trojan(v),
+            },
+        )
     }
 }
 impl utoipa::PartialSchema for ListenerUpdate {

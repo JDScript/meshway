@@ -1762,7 +1762,6 @@ dependencies = [
  "ipnet",
  "jsonc-parser",
  "meshway-model",
- "meshway-serde",
  "meshway-transport-spec",
  "serde",
  "serde_json",
@@ -1826,7 +1825,6 @@ dependencies = [
  "meshway-policy",
  "meshway-private-storage",
  "meshway-protocol",
- "meshway-serde",
  "meshway-test-server",
  "reqwest",
  "serde",
@@ -1902,7 +1900,6 @@ dependencies = [
  "meshway-model",
  "meshway-private-storage",
  "meshway-protocol",
- "meshway-serde",
  "meshway-server",
  "meshway-tun",
  "meshway-underlay",
@@ -2039,7 +2036,6 @@ dependencies = [
  "meshway-policy",
  "meshway-private-storage",
  "meshway-protocol",
- "meshway-serde",
  "meshway-test-server",
  "resolv-conf",
  "rustix",
@@ -2077,7 +2073,6 @@ dependencies = [
  "getrandom 0.3.4",
  "meshway-model",
  "meshway-protocol",
- "meshway-serde",
  "serde",
  "serde_json",
  "tempfile",
@@ -2105,8 +2100,6 @@ name = "meshway-model"
 version = "0.1.0"
 dependencies = [
  "chrono",
- "meshway-serde",
- "meshway-transport-spec",
  "serde",
  "serde_json",
  "thiserror",
@@ -2192,7 +2185,6 @@ dependencies = [
  "chrono",
  "meshway-configuration",
  "meshway-model",
- "meshway-serde",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -2229,15 +2221,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "meshway-serde"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "utoipa",
-]
-
-[[package]]
 name = "meshway-server"
 version = "0.1.0"
 dependencies = [
@@ -2260,7 +2243,6 @@ dependencies = [
  "meshway-policy",
  "meshway-private-storage",
  "meshway-protocol",
- "meshway-serde",
  "meshway-stun",
  "meshway-tls",
  "meshway-transport-spec",
@@ -2352,6 +2334,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "hdrhistogram",
+ "meshway-model",
  "meshway-transport",
  "meshway-transport-spec",
  "meshway-transport-tcp",
@@ -2370,7 +2353,7 @@ name = "meshway-transport-spec"
 version = "0.1.0"
 dependencies = [
  "idna",
- "meshway-serde",
+ "meshway-model",
  "serde",
  "serde_json",
  "thiserror",
@@ -2423,6 +2406,7 @@ version = "0.1.0"
 dependencies = [
  "bytes",
  "futures-util",
+ "meshway-model",
  "meshway-tls",
  "meshway-transport",
  "meshway-transport-spec",

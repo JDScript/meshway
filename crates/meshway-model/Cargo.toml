@@ -6,8 +6,6 @@ rust-version.workspace = true
 description = "Shared Meshway identity, reference, and observation value types"
 
 [dependencies]
-meshway-serde = { path = "../meshway-serde" }
-meshway-transport-spec = { path = "../meshway-transport-spec" }
 chrono.workspace = true
 serde.workspace = true
 thiserror.workspace = true

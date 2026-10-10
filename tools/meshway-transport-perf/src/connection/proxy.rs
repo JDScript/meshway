@@ -1,10 +1,10 @@
 use crate::{Error, Protocol};
+use meshway_model::VlessStream;
 use meshway_transport::raw::Stream;
 use meshway_transport_spec::{
     ClientTls, DialParameters, DialerStream, DialerTls, Endpoint, Listener, ListenerTls,
     ListenerWebSocket, Port, PreparedListener, SecretString, SocketOptions, TcpOptions, TlsMode,
     TlsVersion, TrojanDialer, TrojanListener, TrojanStream, VlessDialer, VlessListener,
-    VlessStream,
 };
 use meshway_transport_tcp::TcpTransport;
 

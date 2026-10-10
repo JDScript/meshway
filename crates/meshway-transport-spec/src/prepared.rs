@@ -1,9 +1,10 @@
 //! Transport inputs selected by configuration compilation. Their presence does
 //! not attest TLS verification, runtime support, or permission to connect.
 use crate::{
-    DialerTls, ListenerWebSocket, NativeTcpDialer, NativeUdpDialer, SecretString,
-    TransportProtocol, TrojanDialer, VlessDialer, VlessStream, object::object,
+    DialerTls, ListenerWebSocket, NativeTcpDialer, NativeUdpDialer, SecretString, TrojanDialer,
+    VlessDialer, object::object,
 };
+use meshway_model::{TransportProtocol, VlessStream};
 
 object! {
 /// Target-bound TLS verification material and client options resolved from the selected listener and dialer.
@@ -15,7 +16,7 @@ pub struct ClientTls {
     /// Selected dialer's TLS version, ALPN, trust, and handshake-budget options.
     pub options: DialerTls,
 } }
-meshway_serde::tagged! {
+meshway_model::tagged! {
     #[derive(Clone, Debug, PartialEq, Eq)]
     /// Protocol-specific connection inputs resolved by the Server for a selected target listener.
     pub enum DialParameters {

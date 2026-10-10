@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::{PartialSchema, ToSchema};
 
 use crate::{PasswordRules, object::wire_object};
-use meshway_serde::required_nullable as required_request_id;
+use meshway_model::wire::required_nullable as required_request_id;
 
 wire_object! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -12,7 +12,7 @@ pub(in crate::manager) fn carriers(
         .dialers
         .values()
         .filter(|candidate| {
-            candidate.parameters.transport() == meshway_transport_spec::TransportProtocol::NativeUdp
+            candidate.parameters.transport() == meshway_model::TransportProtocol::NativeUdp
         })
         .map(|candidate| {
             (

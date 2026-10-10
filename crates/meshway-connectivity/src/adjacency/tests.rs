@@ -1,8 +1,8 @@
 //! Private transcript fixtures, not evidence of control/daemon convergence.
 use super::*;
 use ed25519_dalek::{Signer, SigningKey};
+use meshway_model::TransportProtocol;
 use meshway_model::{KeyAlgorithm, NodePublicKey, Version};
-use meshway_transport_spec::TransportProtocol;
 
 fn node(n: u8) -> NodeId {
     format!("00000000-0000-4000-8000-{n:012}").parse().unwrap()

@@ -1,6 +1,7 @@
 //! Common JSON object rules for configuration, transport and HTTP contracts.
-//! Domain values and HTTP behavior belong to their respective crates.
-#![forbid(unsafe_code)]
+//! Domain values and HTTP behavior belong to their respective crates. The
+//! declaration macros `object!`, `tagged!` and `string_enum!` are exported at
+//! the crate root.
 
 mod declarations;
 mod strict;

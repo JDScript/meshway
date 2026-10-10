@@ -23,7 +23,7 @@ pub struct ArtifactSummary {
     /// Total normalized CIDR, suffix and exact-name entries.
     pub entries: u32,
 } }
-meshway_serde::string_enum! {
+meshway_model::string_enum! {
 /// Stable failure category for rule-set preparation or refresh.
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, utoipa::ToSchema,

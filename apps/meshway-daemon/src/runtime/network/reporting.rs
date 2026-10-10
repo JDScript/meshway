@@ -20,7 +20,7 @@ struct ExitKey {
 #[derive(PartialEq, Eq)]
 struct Listener {
     key: String,
-    protocol: meshway_configuration::transport::TransportProtocol,
+    protocol: meshway_model::TransportProtocol,
     local: SocketAddr,
 }
 
@@ -413,7 +413,7 @@ mod tests {
             listeners: vec![meshway_connectivity::ListenerFact {
                 socket_id: [1; 32],
                 key: "native".into(),
-                protocol: meshway_configuration::transport::TransportProtocol::NativeUdp,
+                protocol: meshway_model::TransportProtocol::NativeUdp,
                 local: "127.0.0.1:35000".parse().unwrap(),
             }],
             links: vec![],

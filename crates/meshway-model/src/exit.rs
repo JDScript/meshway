@@ -9,7 +9,7 @@ pub const EXIT_IPV4_FEATURE: &str = "feature:exit-ipv4";
 /// Version of that backend contract, independent of the encrypted packet wire.
 pub const EXIT_IPV4_VERSION: u16 = 1;
 
-meshway_serde::string_enum! {
+crate::string_enum! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 /// Inner address family, independent of the outer carrier.
@@ -20,7 +20,7 @@ pub enum ExitFamily {
     Ipv6,
 }
 }
-meshway_serde::string_enum! {
+crate::string_enum! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 /// Concrete prerequisite preventing exit installation or execution.
@@ -51,7 +51,7 @@ pub enum ExitUnavailableReason {
     OwnershipConflict,
 }
 }
-meshway_serde::tagged! { tag = "status";
+crate::tagged! { tag = "status";
 #[derive(Clone, Debug, PartialEq, Eq)]
 /// Observed exit lifecycle; unavailable carries a mandatory typed cause.
 pub enum ExitStatus {
@@ -68,7 +68,7 @@ pub enum ExitStatus {
     },
 }
 }
-meshway_serde::object! {
+crate::object! {
 #[derive(Clone, Debug, PartialEq, Eq)]
 /// Target-bound exit capability observation, accepted before applied as well as after it.
 pub struct ExitCapability {

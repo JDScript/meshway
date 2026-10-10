@@ -119,7 +119,7 @@ pub enum DnsPlan {
     },
 } }
 
-meshway_serde::string_enum! {
+meshway_model::string_enum! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 /// Local socket decision for one configured resolver endpoint.

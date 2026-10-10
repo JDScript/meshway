@@ -2,7 +2,7 @@ use crate::{Digest, KeyId, Version};
 use serde::Serialize;
 use utoipa::ToSchema;
 
-meshway_serde::string_enum! {
+crate::string_enum! {
 /// Control signing and dataplane encryption are deliberately different purposes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -14,7 +14,7 @@ pub enum KeyPurpose {
 }
 }
 
-meshway_serde::string_enum! {
+crate::string_enum! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
 /// Cryptographic algorithm of a public Node key, checked against its intended purpose.
@@ -26,7 +26,7 @@ pub enum KeyAlgorithm {
 }
 }
 
-meshway_serde::object! {
+crate::object! {
 /// Canonical hex key bytes. Algorithms are checked against their purpose at binding.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NodePublicKey {
@@ -37,7 +37,7 @@ pub struct NodePublicKey {
 }
 }
 
-meshway_serde::object! {
+crate::object! {
 #[derive(Clone, Debug, PartialEq, Eq)]
 /// Public key metadata bound by the Server to one Node and purpose.
 pub struct BoundNodeKey {

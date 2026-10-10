@@ -1,2 +1,3 @@
-pub(crate) use meshway_serde::required_nullable;
-pub(crate) use meshway_serde::{MapOnly, object as wire_object, tagged as wire_tagged};
+pub(crate) use meshway_model::wire::MapOnly;
+pub(crate) use meshway_model::wire::required_nullable;
+pub(crate) use meshway_model::{object as wire_object, tagged as wire_tagged};

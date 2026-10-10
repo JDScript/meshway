@@ -5,7 +5,7 @@ use meshway_model::{
     UserId, Version,
 };
 
-use meshway_serde::required_nullable as nullable;
+use meshway_model::wire::required_nullable as nullable;
 
 wire_object! {
     /// The authenticated user's account metadata.

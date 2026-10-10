@@ -4,9 +4,9 @@ use serde::Serialize;
 use utoipa::ToSchema;
 
 use crate::{WireSecret, object::wire_object};
-use meshway_serde::required_nullable as nullable;
+use meshway_model::wire::required_nullable as nullable;
 
-meshway_serde::string_enum! {
+meshway_model::string_enum! {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 /// Unit used to measure password length before UTF-8 byte limits are applied.
@@ -118,7 +118,7 @@ wire_object! {
     }
 }
 
-meshway_serde::string_enum! {
+meshway_model::string_enum! {
 /// PKCE transform of the verifier; only S256 is accepted.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 pub enum CodeChallengeMethod {

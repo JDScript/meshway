@@ -1,7 +1,7 @@
+use meshway_model::{OuterSocket, TransportProtocol, VlessStream};
 use meshway_transport_spec::{
-    OuterSocket, Port, PositiveDuration, TlsVersion, TransportProtocol, ValidationError,
-    VlessStream, WebSocketHeaderName, WebSocketHeaderValue, WebSocketHeaders, WebSocketPath,
-    validate_websocket_alpn,
+    Port, PositiveDuration, TlsVersion, ValidationError, WebSocketHeaderName, WebSocketHeaderValue,
+    WebSocketHeaders, WebSocketPath, validate_websocket_alpn,
 };
 use serde_json::json;
 

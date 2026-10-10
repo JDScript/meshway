@@ -4,7 +4,7 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 use utoipa::ToSchema;
 
-meshway_serde::string_enum! {
+meshway_model::string_enum! {
 /// Every diagnostic a configuration check can report. Clients localize by
 /// code and parameters; `message` is the English rendering of the same.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, ToSchema)]
@@ -234,7 +234,7 @@ impl IssueCode {
     }
 }
 
-meshway_serde::object! {
+meshway_model::object! {
 /// Structured configuration error, warning or retained unavailable dependency, without sensitive input values in its message.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConfigurationIssue {

@@ -1,8 +1,9 @@
 //! Pure declared fields. Acceptance here is not a compiled/runtime capability.
 use crate::{
-    Port, PositiveDuration, SecretString, TlsVersion, VlessStream, WebSocketHeaders, WebSocketPath,
+    Port, PositiveDuration, SecretString, TlsVersion, WebSocketHeaders, WebSocketPath,
     object::object,
 };
+use meshway_model::VlessStream;
 use serde::{Deserialize, Serialize};
 use std::net::{IpAddr, Ipv4Addr};
 use utoipa::ToSchema;

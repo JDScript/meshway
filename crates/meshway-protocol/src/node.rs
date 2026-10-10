@@ -4,7 +4,7 @@ use meshway_model::*;
 use serde::Serialize;
 use utoipa::ToSchema;
 
-meshway_serde::string_enum! {
+meshway_model::string_enum! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 /// Operation bound into the signed Node challenge transcript.

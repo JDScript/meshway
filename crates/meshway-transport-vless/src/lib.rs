@@ -11,10 +11,10 @@ mod websocket;
 
 use std::{fmt, io, time::Duration};
 
+use meshway_model::VlessStream;
 use meshway_transport::raw::{CheckedOutput, Stream};
 use meshway_transport_spec::{
-    DialParameters, DialerStream, Endpoint, Listener, PreparedListener, VlessStream,
-    validate_websocket_alpn,
+    DialParameters, DialerStream, Endpoint, Listener, PreparedListener, validate_websocket_alpn,
 };
 use tokio::{io::AsyncWriteExt, time::Instant};
 use zeroize::Zeroizing;

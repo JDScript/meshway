@@ -12,9 +12,9 @@ use crate::{
     store::Handle,
 };
 use chrono::Utc;
+use meshway_model::TransportProtocol;
 use meshway_model::{Digest, NodeId, UdpTraversalId, Version};
 use meshway_protocol::connectivity::*;
-use meshway_transport_spec::TransportProtocol;
 use std::{
     collections::BTreeMap,
     sync::{Arc, Mutex},

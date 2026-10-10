@@ -1,8 +1,8 @@
 use super::*;
 use crate::state::service::ReadIdentity;
 use meshway_configuration::execution::Carrier;
+use meshway_model::TransportProtocol;
 use meshway_model::state::ResourceRef;
-use meshway_transport_spec::TransportProtocol;
 use std::collections::BTreeSet;
 
 #[tokio::test]

@@ -7,9 +7,9 @@ use crate::{
 use meshway_dataplane::secure::PendingFrame;
 use meshway_engine::DataPlaneKeys;
 use meshway_engine::Desired;
+use meshway_model::TransportProtocol;
 use meshway_model::{NodeId, observations::LinkAcquisition};
 use meshway_transport::{Frame, Sender, Session};
-use meshway_transport_spec::TransportProtocol;
 use std::{
     collections::BTreeMap,
     net::SocketAddr,

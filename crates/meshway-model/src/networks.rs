@@ -2,7 +2,7 @@
 use crate::{MembershipId, MembershipRole, NetworkId, Revision, UserId, Version};
 use chrono::{DateTime, Utc};
 
-meshway_serde::object! {
+crate::object! {
 #[derive(Clone, Debug, PartialEq, Eq)]
 /// Current network operation hints; mutations independently recheck authorization.
 pub struct NetworkActions {
@@ -19,7 +19,7 @@ pub struct NetworkActions {
     pub join_link_roles: Vec<MembershipRole>,
 }
 }
-meshway_serde::object! {
+crate::object! {
 #[derive(Clone, Debug, PartialEq, Eq)]
 /// Network metadata and the requesting user's current membership and permissions.
 pub struct NetworkSummary {
@@ -39,7 +39,7 @@ pub struct NetworkSummary {
     pub actions: NetworkActions,
 }
 }
-meshway_serde::object! {
+crate::object! {
 #[derive(Clone, Debug, PartialEq, Eq)]
 /// Target-specific membership operation hints, including last-Owner protection.
 pub struct MemberActions {
@@ -51,7 +51,7 @@ pub struct MemberActions {
     pub remove: bool,
 }
 }
-meshway_serde::object! {
+crate::object! {
 #[derive(Clone, Debug, PartialEq, Eq)]
 /// Current network membership with caller-specific operation hints.
 pub struct MemberSummary {

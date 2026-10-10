@@ -9,7 +9,6 @@ description = "Typed bounded local Node control protocol"
 chrono.workspace = true
 meshway-model = { path = "../meshway-model" }
 meshway-protocol = { path = "../meshway-protocol" }
-meshway-serde = { path = "../meshway-serde" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

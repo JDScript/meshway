@@ -348,7 +348,7 @@ pub async fn verify_state(cli: &Cli, role: Role, report: &NodeState) -> Result<(
         for link in links.iter().filter(|link| {
             link.phase == LinkPhase::Authenticated
                 && link.business_dependencies > 0
-                && link.transport == meshway_transport_spec::TransportProtocol::NativeUdp.as_str()
+                && link.transport == meshway_model::TransportProtocol::NativeUdp.as_str()
         }) {
             let socket = report
                 .sockets

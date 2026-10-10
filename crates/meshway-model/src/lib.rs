@@ -20,6 +20,8 @@ pub mod observations;
 pub mod resources;
 pub mod state;
 pub mod timestamp;
+pub mod transport;
+pub mod wire;
 
 pub use digest::{Digest, InvalidDigest};
 pub use ids::{
@@ -31,3 +33,4 @@ pub use membership::MembershipRole;
 pub use netmap::{NetmapLease, NetmapRef};
 pub use numbers::{Count, InvalidNumber, MAX_SAFE_INTEGER, Revision, Sequence, Version};
 pub use socket_address::{InvalidSocketAddress, SocketAddress};
+pub use transport::{InvalidTransportKey, OuterSocket, TransportProtocol, VlessStream};

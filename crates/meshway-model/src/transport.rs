@@ -1,7 +1,18 @@
+//! Transport protocol keys and outer socket classification shared by
+//! configuration, observations and execution.
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::ValidationError;
+/// Unknown protocol key values. Errors do not echo the input.
+#[derive(Clone, Copy, Debug, thiserror::Error, PartialEq, Eq)]
+pub enum InvalidTransportKey {
+    #[error("unknown transport protocol key")]
+    TransportProtocol,
+    #[error("outer socket must be udp or tcp")]
+    OuterSocket,
+    #[error("VLESS stream must be tcp or websocket")]
+    VlessStream,
+}
 
 /// Protocol keys, not a Controller enabled catalogue or a Node support report.
 #[derive(
@@ -20,7 +31,7 @@ pub enum TransportProtocol {
 }
 
 impl TryFrom<String> for TransportProtocol {
-    type Error = ValidationError;
+    type Error = InvalidTransportKey;
 
     fn try_from(value: String) -> Result<Self, Self::Error> {
         match value.as_str() {
@@ -28,7 +39,7 @@ impl TryFrom<String> for TransportProtocol {
             "native_tcp" => Ok(Self::NativeTcp),
             "vless" => Ok(Self::Vless),
             "trojan" => Ok(Self::Trojan),
-            _ => Err(ValidationError::TransportProtocol),
+            _ => Err(InvalidTransportKey::TransportProtocol),
         }
     }
 }
@@ -77,13 +88,13 @@ pub enum OuterSocket {
 }
 
 impl TryFrom<String> for OuterSocket {
-    type Error = ValidationError;
+    type Error = InvalidTransportKey;
 
     fn try_from(value: String) -> Result<Self, Self::Error> {
         match value.as_str() {
             "udp" => Ok(Self::Udp),
             "tcp" => Ok(Self::Tcp),
-            _ => Err(ValidationError::OuterSocket),
+            _ => Err(InvalidTransportKey::OuterSocket),
         }
     }
 }
@@ -101,13 +112,13 @@ pub enum VlessStream {
 }
 
 impl TryFrom<String> for VlessStream {
-    type Error = ValidationError;
+    type Error = InvalidTransportKey;
 
     fn try_from(value: String) -> Result<Self, Self::Error> {
         match value.as_str() {
             "tcp" => Ok(Self::Tcp),
             "websocket" => Ok(Self::WebSocket),
-            _ => Err(ValidationError::VlessStream),
+            _ => Err(InvalidTransportKey::VlessStream),
         }
     }
 }

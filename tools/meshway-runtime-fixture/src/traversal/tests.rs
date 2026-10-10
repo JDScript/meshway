@@ -166,7 +166,7 @@ impl Fixture {
                     dialer: id(local),
                     listener: id(peer),
                     listener_key: "tcp".into(),
-                    protocol: meshway_transport_spec::TransportProtocol::NativeUdp,
+                    protocol: meshway_model::TransportProtocol::NativeUdp,
                 },
                 local: participants[&local].clone(),
                 peer: participants[&peer].clone(),

@@ -1,9 +1,9 @@
 use meshway_configuration::execution::{DialCandidate, DialEndpoint};
 use meshway_engine::Desired;
 use meshway_model::NodeId;
+use meshway_model::TransportProtocol;
 use meshway_transport_spec::{
     DialParameters, Endpoint, Listener, PreparedListener, SocketOptions, TcpOptions,
-    TransportProtocol,
 };
 use socket2::SockRef;
 use std::{

@@ -14,7 +14,7 @@ fn nullable<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Nested>, D:
     Deserialize::deserialize(d)
 }
 
-meshway_serde::object! {
+meshway_model::object! {
     #[derive(Debug, PartialEq)]
     pub struct Envelope {
         pub rows: Vec<Nested>,
@@ -24,7 +24,7 @@ meshway_serde::object! {
     }
 }
 
-meshway_serde::tagged! {
+meshway_model::tagged! {
     #[derive(Debug, PartialEq)]
     pub enum Edit {
         Keep,
@@ -35,7 +35,7 @@ meshway_serde::tagged! {
     }
 }
 
-meshway_serde::tagged! {
+meshway_model::tagged! {
     tag = "delivery";
     #[derive(Debug, PartialEq)]
     pub enum Delivery {
@@ -48,8 +48,8 @@ meshway_serde::tagged! {
 #[openapi(components(schemas(Envelope, Edit, Delivery)))]
 struct Api;
 
-meshway_serde::object! { pub struct DeclaredChild { pub value: String } }
-meshway_serde::object! { pub struct DeclaredParent {
+meshway_model::object! { pub struct DeclaredChild { pub value: String } }
+meshway_model::object! { pub struct DeclaredParent {
     pub child: DeclaredChild,
     pub children: Vec<DeclaredChild>,
 } }
@@ -167,7 +167,7 @@ impl<'de> Deserialize<'de> for CaseFolded {
 }
 #[derive(Deserialize)]
 struct NormalizedKeys {
-    #[serde(deserialize_with = "meshway_serde::unique_map")]
+    #[serde(deserialize_with = "meshway_model::wire::unique_map")]
     entries: BTreeMap<CaseFolded, Nested>,
 }
 
@@ -188,7 +188,7 @@ fn typed_map_keys_cannot_collide_after_normalization() {
     }
 }
 
-meshway_serde::string_enum! {
+meshway_model::string_enum! {
     #[derive(Debug, Default, PartialEq, Serialize, ToSchema)]
     #[serde(rename_all = "snake_case")]
     pub enum StringMode {
@@ -198,7 +198,7 @@ meshway_serde::string_enum! {
         Ready,
     }
 }
-meshway_serde::tagged! {
+meshway_model::tagged! {
     tag = "kind";
     #[derive(Debug, PartialEq)]
     pub enum ModeEvent {
@@ -244,7 +244,7 @@ pub enum ExternalPayload {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExternalEnvelope {
-    #[serde(deserialize_with = "meshway_serde::deserialize_strict")]
+    #[serde(deserialize_with = "meshway_model::wire::deserialize_strict")]
     pub payload: ExternalPayload,
 }
 

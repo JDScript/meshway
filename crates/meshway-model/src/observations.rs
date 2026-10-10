@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use utoipa::ToSchema;
 
-meshway_serde::string_enum! {
+crate::string_enum! {
 /// Coarse provenance only; private observer and interface details are excluded.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -20,7 +20,7 @@ pub enum EndpointKind {
 }
 }
 
-meshway_serde::tagged! {
+crate::tagged! {
 /// How the actual physical channel was acquired, not business authorization.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LinkAcquisition {
@@ -44,7 +44,7 @@ pub enum LinkAcquisition {
 }
 }
 
-meshway_serde::object! {
+crate::object! {
 /// Physical channel actually used for one side of a measured probe exchange.
 #[derive(Clone, Debug, PartialEq, Eq)] pub struct ProbeChannel {
     /// Non-secret authenticated channel identifier observed by the executor.
@@ -54,7 +54,7 @@ meshway_serde::object! {
     /// Adjacent Node authenticated on this physical channel.
     pub peer_node_id: NodeId,
     /// Actual outer transport used by the channel.
-    pub transport: meshway_transport_spec::TransportProtocol,
+    pub transport: crate::TransportProtocol,
     /// Local socket address used by this channel.
     pub local_address: SocketAddress,
     /// Remote socket address used by this channel.
@@ -63,17 +63,17 @@ meshway_serde::object! {
     pub acquisition: LinkAcquisition,
 } }
 
-meshway_serde::object! {
+crate::object! {
 /// Actual request and reply channel evidence supplied by the probe executor.
 #[derive(Clone, Debug, PartialEq, Eq)] pub struct ProbeChannels {
     /// Physical channel used to send the measured request.
     pub request: ProbeChannel,
     /// Null until a reply has actually been observed on a channel.
-    #[serde(deserialize_with = "meshway_serde::required_nullable")]
+    #[serde(deserialize_with = "crate::wire::required_nullable")]
     pub reply: Option<ProbeChannel> [required = true],
 } }
 
-meshway_serde::object! {
+crate::object! {
 /// Real Node event retained with its original execution context and occurrence time.
 #[derive(Clone, Debug, PartialEq, Eq)] pub struct ObservationEvent {
     /// Stable event identifier used to deduplicate reports from this source Node.
@@ -86,7 +86,7 @@ meshway_serde::object! {
     pub payload: ObservationPayload,
 } }
 
-meshway_serde::tagged! {
+crate::tagged! {
 tag = "kind";
 #[derive(Clone, Debug, PartialEq, Eq)]
 /// Node-reported connection, probe or collection-gap event facts.
@@ -159,7 +159,7 @@ pub enum ObservationPayload {
 }
 }
 
-meshway_serde::string_enum! {
+crate::string_enum! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 /// Node-reported reason a channel or connection attempt ended.
@@ -177,7 +177,7 @@ pub enum CloseReason {
 }
 }
 
-meshway_serde::string_enum! {
+crate::string_enum! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 /// Requested observation metric, whose availability is reported separately.
@@ -191,7 +191,7 @@ pub enum MetricKind {
 }
 }
 
-meshway_serde::object! {
+crate::object! {
 /// Source-scoped business byte counters for a real measurement window; traffic is currently unsupported.
 #[derive(Clone, Debug, PartialEq, Eq)] pub struct TrafficWindow {
     /// Mesh IP business bytes accepted at the source and submitted to the path, excluding control and probe traffic.
@@ -201,7 +201,7 @@ meshway_serde::object! {
     /// Counter generation that changes on reset so old delta baselines cannot be reused.
     pub counter_generation: Sequence,
 } }
-meshway_serde::object! {
+crate::object! {
 /// Counts of actually sent probes and their deadline outcomes within a measurement window.
 #[derive(Clone, Debug, PartialEq, Eq)] pub struct ProbeWindow {
     /// Number of probes actually sent, excluding preparation and unsent local failures.
@@ -213,7 +213,7 @@ meshway_serde::object! {
     /// Sent probes still awaiting a final deadline outcome, excluded from the unanswered-rate denominator.
     pub pending: u32,
 } }
-meshway_serde::object! {
+crate::object! {
 /// Actual measurement window; revisions replace the same window rather than adding synthetic samples.
 #[derive(Clone, Debug, PartialEq, Eq)] pub struct ObservationSample {
     /// Stable measurement-window identifier used for deduplication and replacement.

@@ -40,7 +40,7 @@ pub enum ConfigurationRequest {
         /// `refreshed`: its last refreshed bindings, or the initial ones when never refreshed.
         #[serde(default, rename="ruleSetBindings")]rule_set_bindings:Option<RuleSetBindingChoice>},
 } }
-meshway_serde::string_enum! {
+meshway_model::string_enum! {
 /// Which rule-set bindings of a source version a restore reuses.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -183,7 +183,7 @@ wire_object! {
 /// Redacted, non-executable draft comparison that reserves no revision, address or permanent material.
 pub struct ConfigurationPreviewResponse {
     /// Transient canonical content checked by validate; no artifact/version reservation.
-    #[serde(deserialize_with="meshway_serde::unique_map")]
+    #[serde(deserialize_with="meshway_model::wire::unique_map")]
     pub prepared_rule_sets: std::collections::BTreeMap<String,crate::resources::PreparedRuleSet>,
     /// Retained references whose dependencies are revoked or inactive, without restoring their execution authority.
     pub unavailable_dependencies: Vec<meshway_configuration::ConfigurationIssue>,

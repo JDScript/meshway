@@ -188,7 +188,8 @@ impl Record {
 
 pub(super) fn decode<'de, T: Deserialize<'de>>(bytes: &'de [u8]) -> Result<T, Error> {
     let mut decoder = serde_json::Deserializer::from_slice(bytes);
-    let value = T::deserialize(meshway_serde::MapOnly(&mut decoder)).map_err(|_| Error::Record)?;
+    let value =
+        T::deserialize(meshway_model::wire::MapOnly(&mut decoder)).map_err(|_| Error::Record)?;
     decoder.end().map_err(|_| Error::Record)?;
     Ok(value)
 }

@@ -1,7 +1,8 @@
 use crate::{CarrierMode, Cli, Result};
+use meshway_model::VlessStream;
 use meshway_transport_spec::{
     Endpoint, Listener, ListenerTls, SecretString, TlsMode, TlsVersion, TrojanListener,
-    VlessListener, VlessStream,
+    VlessListener,
 };
 
 pub(super) async fn listener(cli: &Cli, host: String) -> Result<Listener> {

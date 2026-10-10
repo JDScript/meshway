@@ -472,7 +472,7 @@ pub(super) fn roundtrip_run(elapsed_ms: u64) -> Run {
         link_id: [1; 32].into(),
         socket_id: [2; 32].into(),
         peer_node_id: r,
-        transport: meshway_transport_spec::TransportProtocol::NativeUdp,
+        transport: meshway_model::TransportProtocol::NativeUdp,
         local_address: "192.0.2.1:35000".parse().unwrap(),
         remote_address: "192.0.2.2:35000".parse().unwrap(),
         acquisition: meshway_ipc::LinkAcquisition::CoordinatedUdp {

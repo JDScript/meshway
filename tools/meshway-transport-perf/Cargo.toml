@@ -6,6 +6,7 @@ rust-version.workspace = true
 description = "Explicit raw versus Meshway datagram socket performance driver"
 
 [dependencies]
+meshway-model = { path = "../../crates/meshway-model" }
 clap.workspace = true
 hdrhistogram = { version = "7", default-features = false }
 meshway-transport = { path = "../../crates/meshway-transport" }

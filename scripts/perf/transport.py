@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[2]
 SOURCE_DIRS = ("crates/meshway-transport", "crates/meshway-transport-tcp",
                 "crates/meshway-transport-udp", "crates/meshway-transport-spec",
                "crates/meshway-transport-vless", "crates/meshway-transport-trojan", "crates/meshway-tls",
-               "crates/meshway-serde", "tools/meshway-transport-perf", "scripts/perf")
+               "crates/meshway-model", "tools/meshway-transport-perf", "scripts/perf")
 
 
 def command(*args):

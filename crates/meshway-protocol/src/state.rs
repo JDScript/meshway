@@ -35,7 +35,7 @@ wire_object! {
     /// Whether the same sequence and content had already been accepted.
     pub duplicate: bool,
 } }
-meshway_serde::string_enum! {
+meshway_model::string_enum! {
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, utoipa::ToSchema,
 )]
@@ -61,7 +61,7 @@ wire_object! {
 /// Server-derived IP metadata restricted to endpoint observations visible to the caller.
 #[derive(Clone, Debug, PartialEq)] pub struct DerivedNodeState {
     /// Independent GeoIP and ASN lookups indexed by canonical visible endpoint IP.
-    #[serde(deserialize_with="meshway_serde::unique_map")] pub ip_info: BTreeMap<String, IpInfo>,
+    #[serde(deserialize_with="meshway_model::wire::unique_map")] pub ip_info: BTreeMap<String, IpInfo>,
     /// Approximate location from valid eligible local underlay observations, or null when unavailable.
     pub location: Option<GeoObservation>,
     /// Reason no location can be derived, or null when location is available.
@@ -83,7 +83,7 @@ wire_object! {
     /// Exact candidate binding used by coordinated connection acquisition.
     pub candidate_reference: crate::connectivity::CandidateReference,
 } }
-meshway_serde::string_enum! {
+meshway_model::string_enum! {
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, utoipa::ToSchema,
 )]
@@ -116,7 +116,7 @@ wire_object! {
 /// Restricted peer facts needed for authorized execution dependencies.
 #[derive(Clone, Debug, PartialEq, Eq)] pub struct PeerState {
     /// Reported build capabilities, empty when the source report is not current.
-    #[serde(deserialize_with="meshway_serde::unique_map")] pub capabilities: BTreeMap<String, Capability>,
+    #[serde(deserialize_with="meshway_model::wire::unique_map")] pub capabilities: BTreeMap<String, Capability>,
     /// Peer-reported saved, applied and progress references.
     pub configuration: ConfigurationState,
     /// Currently visible connection candidates with their runtime bindings.
@@ -174,13 +174,13 @@ wire_object! {
     /// UTC time at which the Server evaluated this view.
     pub as_of: DateTime<Utc>,
     /// Visible Node reports indexed by Node identity.
-    #[serde(deserialize_with="meshway_serde::unique_map")] pub nodes: BTreeMap<NodeId, NodeStateView>,
+    #[serde(deserialize_with="meshway_model::wire::unique_map")] pub nodes: BTreeMap<NodeId, NodeStateView>,
     /// Channel evidence aggregated from visible reports.
     pub links: Vec<AggregatedLink>,
     /// Path observations retaining each original reporter's evidence.
     pub paths: Vec<AggregatedPath>,
 } }
-meshway_serde::string_enum! {
+meshway_model::string_enum! {
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, utoipa::ToSchema,
 )]

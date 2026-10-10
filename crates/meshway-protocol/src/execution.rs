@@ -48,7 +48,7 @@ wire_object! {
     #[serde(rename="expiresAt", with="meshway_model::timestamp")]
     pub expires_at_ms: u64 [value_type=meshway_model::timestamp::Timestamp],
 } }
-meshway_serde::string_enum! {
+meshway_model::string_enum! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 /// Durable save or installation outcome reported by the Node for an exact netmap.
@@ -61,7 +61,7 @@ pub enum ReceiptPhase {
     Failed,
 }
 }
-meshway_serde::string_enum! {
+meshway_model::string_enum! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 /// Node-reported step responsible for a failed configuration attempt.
@@ -101,7 +101,7 @@ wire_object! {
     /// Failed step required for the failed phase; null or omitted for saved and applied.
     pub failure: Option<ApplyFailure>,
 } }
-meshway_serde::string_enum! {
+meshway_model::string_enum! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 /// Server evaluation of netmap retirement and instance binding.

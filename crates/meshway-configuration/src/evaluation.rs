@@ -6,7 +6,7 @@
 use crate::execution::UnavailableReason;
 use crate::object::{object, tagged};
 use meshway_model::NodeId;
-use meshway_serde::required_nullable as nullable;
+use meshway_model::wire::required_nullable as nullable;
 
 tagged! {
 /// What the request's target resolved to in the evaluated configuration.
@@ -21,7 +21,7 @@ pub enum EvaluatedDestination {
     /// A public destination no rule names: only fallbacks apply.
     Internet,
 } }
-meshway_serde::string_enum! {
+meshway_model::string_enum! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 /// Which range an address that is not a node's falls into.
@@ -69,7 +69,7 @@ pub struct AccessEvaluation {
     pub grants: Vec<AccessGrantEvaluation>,
 } }
 
-meshway_serde::string_enum! {
+meshway_model::string_enum! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 /// The action a route decision takes.
@@ -133,7 +133,7 @@ pub struct PlannedPath {
     pub edges: Vec<PlannedEdge>,
 } }
 
-meshway_serde::string_enum! {
+meshway_model::string_enum! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 /// Why a target has no planned path.

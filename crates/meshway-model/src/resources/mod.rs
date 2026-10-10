@@ -6,7 +6,7 @@ use utoipa::ToSchema;
 #[cfg(test)]
 mod tests;
 
-meshway_serde::object! {
+crate::object! {
 /// Canonical immutable rule-set content, shared with configuration compilation.
 /// `domain` entries match one exact DNS name; `domain_suffix` entries match the
 /// name and every child label. Artifacts stored before `domain` existed have
@@ -29,7 +29,7 @@ pub struct RuleSetData {
 #[derive(Clone, Debug, PartialEq)]
 pub struct GeoPosition(GeoPositionFields);
 
-meshway_serde::object! {
+crate::object! {
 /// Dataset-provided approximate coordinates and optional accuracy radius.
 #[derive(Clone, Debug, PartialEq)]
 struct GeoPositionFields {
@@ -104,7 +104,7 @@ impl Serialize for GeoPosition {
     }
 }
 
-meshway_serde::object! {
+crate::object! {
 #[derive(Clone, Debug, PartialEq)]
 /// Approximate geographic metadata returned by the Server's IP dataset.
 pub struct GeoIpData {
@@ -118,7 +118,7 @@ pub struct GeoIpData {
     pub position: Option<GeoPosition>,
 }
 }
-meshway_serde::object! {
+crate::object! {
 #[derive(Clone, Debug, PartialEq, Eq)]
 /// Dataset mapping from an IP address to its autonomous system, not a live routing measurement.
 pub struct AsnData {
@@ -131,7 +131,7 @@ pub struct AsnData {
 }
 }
 
-meshway_serde::string_enum! {
+crate::string_enum! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 #[schema(as = LookupUnavailableReason)]
@@ -143,7 +143,7 @@ pub enum UnavailableReason {
     LookupFailed,
 }
 }
-meshway_serde::string_enum! {
+crate::string_enum! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 /// Reason public IP metadata lookup does not apply to an address.
@@ -201,7 +201,7 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for LookupResult<T> {
                 dataset_id: ArtifactId,
                 #[serde(rename = "lookedUpAt")]
                 looked_up_at: DateTime<Utc>,
-                #[serde(deserialize_with = "meshway_serde::deserialize_strict")]
+                #[serde(deserialize_with = "crate::wire::deserialize_strict")]
                 data: T,
             },
             NotFound {
@@ -217,7 +217,7 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for LookupResult<T> {
                 reason: NotApplicableReason,
             },
         }
-        Ok(match Fields::deserialize(meshway_serde::MapOnly(d))? {
+        Ok(match Fields::deserialize(crate::wire::MapOnly(d))? {
             Fields::Available {
                 dataset_id,
                 looked_up_at,
@@ -239,7 +239,7 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for LookupResult<T> {
         })
     }
 }
-meshway_serde::object! {
+crate::object! {
 #[derive(Clone, Debug, PartialEq)]
 /// Independent Server-derived geographic and autonomous-system lookups for one visible IP.
 pub struct IpInfo {
@@ -250,7 +250,7 @@ pub struct IpInfo {
 }
 }
 
-meshway_serde::string_enum! {
+crate::string_enum! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 /// Reason the Server cannot derive a current approximate Node location.
@@ -270,7 +270,7 @@ pub enum LocationAbsentReason {
 }
 }
 
-meshway_serde::object! {
+crate::object! {
 #[derive(Clone, Debug, PartialEq)]
 /// Server-derived approximate location retaining the selected local observation's source and deadline.
 pub struct GeoObservation {
@@ -292,7 +292,7 @@ pub struct GeoObservation {
     pub expires_at: DateTime<Utc>,
 }
 }
-meshway_serde::string_enum! {
+crate::string_enum! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 /// Eligible local endpoint observation used to derive approximate Node location.

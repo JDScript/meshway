@@ -15,7 +15,7 @@ fn frame(capacity: usize) -> Event {
                 dialer: peer,
                 listener: peer,
                 listener_key: "test".into(),
-                protocol: meshway_transport_spec::TransportProtocol::NativeUdp,
+                protocol: meshway_model::TransportProtocol::NativeUdp,
             },
             local: "127.0.0.1:1".parse().unwrap(),
             remote: "127.0.0.1:2".parse().unwrap(),

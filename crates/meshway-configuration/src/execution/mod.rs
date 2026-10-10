@@ -1,5 +1,6 @@
 //! Shared stable execution declarations and local decision vocabulary.
 use crate::object::object;
+use meshway_model::TransportProtocol;
 use meshway_model::{BoundNodeKey, NetworkId, NodeId};
 use meshway_transport_spec::*;
 pub use meshway_transport_spec::{ClientTls, DialParameters};
@@ -30,7 +31,7 @@ pub struct Carrier {
 #[schema(value_type = String)]
 pub struct ExecutionAddress(pub IpAddr);
 
-meshway_serde::string_enum! {
+meshway_model::string_enum! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 /// Inner business protocol checked by local Access admission.
@@ -69,7 +70,7 @@ pub struct RuleSetContent {
     pub domain: Vec<String>,
 } }
 
-meshway_serde::string_enum! {
+meshway_model::string_enum! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 /// Where a dial endpoint came from; configured endpoints are tried before Node-reported ones.
@@ -132,7 +133,7 @@ pub struct LogicalPath {
     pub dial_candidates: BTreeMap<NodeId, Vec<String>>,
 } }
 
-meshway_serde::string_enum! {
+meshway_model::string_enum! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 /// Local egress selection; actual I/O also requires its owner-issued guard.
@@ -143,7 +144,7 @@ pub enum LocalEgressAction {
     Unmanaged,
 }
 }
-meshway_serde::string_enum! {
+meshway_model::string_enum! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 /// Condition preventing requested execution.
@@ -174,7 +175,7 @@ pub enum UnavailableReason {
     InactiveNode,
 }
 }
-meshway_serde::string_enum! {
+meshway_model::string_enum! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 /// Missing execution dependency for DNS egress.

@@ -10,7 +10,7 @@ pub const MIN_NETMAP_VALIDITY_MS: u64 = 60 * 1000;
 /// Safety bound for one serialized netmap; exceeding it is a compiler defect.
 pub const MAX_NETMAP_BYTES: usize = 8 * 1024 * 1024;
 
-meshway_serde::object! {
+crate::object! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 /// Exact per-node netmap content: revision and serial identify it, the digest verifies it.
 pub struct NetmapRef {
@@ -23,7 +23,7 @@ pub struct NetmapRef {
 }
 }
 
-meshway_serde::object! {
+crate::object! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 /// Validity interval of one exact netmap; renewal replaces the lease, never the content.
 pub struct NetmapLease {

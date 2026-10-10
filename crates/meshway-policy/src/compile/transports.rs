@@ -1,5 +1,6 @@
 use super::*;
 use meshway_model::state::{Capability, StreamKind, TransportRole};
+use meshway_model::{TransportProtocol, VlessStream};
 use meshway_transport_spec::*;
 
 pub(super) fn candidates(

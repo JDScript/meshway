@@ -14,7 +14,6 @@ meshway-dataplane = { path = "../meshway-dataplane" }
 meshway-model = { path = "../meshway-model" }
 meshway-protocol = { path = "../meshway-protocol" }
 meshway-private-storage = { path = "../meshway-private-storage" }
-meshway-serde = { path = "../meshway-serde" }
 tokio = { workspace = true, features = ["io-util"] }
 thiserror.workspace = true
 bytes.workspace = true

@@ -22,7 +22,7 @@ fn decode_optional_record<T: serde::de::DeserializeOwned>(
     struct Record<T>(T);
     impl<'de, T: serde::Deserialize<'de>> serde::Deserialize<'de> for Record<T> {
         fn deserialize<D: serde::Deserializer<'de>>(decoder: D) -> Result<Self, D::Error> {
-            T::deserialize(meshway_serde::MapOnly(decoder)).map(Self)
+            T::deserialize(meshway_model::wire::MapOnly(decoder)).map(Self)
         }
     }
     let mut decoder = serde_json::Deserializer::from_slice(bytes);

@@ -85,7 +85,7 @@ pub enum StreamEvent<C, E, P> {
         /// Resume cursor to save after this delta has been validated and applied.
         cursor: String,
         /// Complete replacement state for each updated visible node.
-        #[serde(deserialize_with = "meshway_serde::unique_map")]
+        #[serde(deserialize_with = "meshway_model::wire::unique_map")]
         updated: BTreeMap<NodeId, NodeStateView>,
         /// Node identifiers to remove from the cached state view.
         removed: Vec<NodeId>,
@@ -239,7 +239,7 @@ pub enum EventActor {
     /// Actor identity withheld because the subscriber lacks management scope.
     Redacted,
 } }
-meshway_serde::string_enum! {
+meshway_model::string_enum! {
 #[derive(Clone, Copy, Debug, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 /// Reason a stream must replace its cached view through full synchronization.
@@ -254,7 +254,7 @@ pub enum ResetReason {
     EpochChanged,
 }
 }
-meshway_serde::string_enum! {
+meshway_model::string_enum! {
 #[derive(Clone, Copy, Debug, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 /// Explicit reason for ending an event stream before EOF.

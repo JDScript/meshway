@@ -1,3 +1,4 @@
+use meshway_model::TransportProtocol;
 use meshway_transport_spec::*;
 use serde_json::json;
 use utoipa::{PartialSchema, ToSchema};

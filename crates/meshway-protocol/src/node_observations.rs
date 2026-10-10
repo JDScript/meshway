@@ -121,6 +121,6 @@ wire_object! {
 #[derive(Clone, Debug)] pub struct NodeObservationCancelled {
     /// The source executor's still-shared task after this subscription ends;
     /// null only when no other consumer remains.
-    #[serde(deserialize_with = "meshway_serde::required_nullable")]
+    #[serde(deserialize_with = "meshway_model::wire::required_nullable")]
     pub task: Option<ObservationTask> [required = true],
 } }

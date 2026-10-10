@@ -1,6 +1,7 @@
+use meshway_model::{OuterSocket, TransportProtocol, VlessStream};
 use meshway_transport_spec::{
-    OuterSocket, Port, PositiveDuration, TlsVersion, TransportProtocol, VlessStream,
-    WebSocketHeaderName, WebSocketHeaderValue, WebSocketHeaders, WebSocketPath,
+    Port, PositiveDuration, TlsVersion, WebSocketHeaderName, WebSocketHeaderValue,
+    WebSocketHeaders, WebSocketPath,
 };
 use serde_json::{Value, json};
 use utoipa::{OpenApi, PartialSchema, ToSchema};

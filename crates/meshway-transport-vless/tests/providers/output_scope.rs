@@ -10,10 +10,10 @@ use std::{
     task::{Context, Poll},
 };
 
+use meshway_model::VlessStream;
 use meshway_transport::{
     Frame, Limits, SendContext, SendLifetime, SendOutcome, Session, raw::Stream,
 };
-use meshway_transport_spec::VlessStream;
 use meshway_transport_vless::{Acceptor, Connector};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, DuplexStream, ReadBuf};
 

@@ -1,8 +1,8 @@
 use super::*;
 use crate::{fixtures, secure::codec::Kind};
 use ed25519_dalek::{Signer, SigningKey};
+use meshway_model::TransportProtocol;
 use meshway_model::{KeyAlgorithm, KeyId, NetworkId, NodePublicKey, Version};
-use meshway_transport_spec::TransportProtocol;
 use std::collections::BTreeMap;
 
 fn keypair() -> (Zeroizing<[u8; 32]>, [u8; 32]) {

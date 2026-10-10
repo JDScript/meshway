@@ -21,7 +21,7 @@ wire_object! {
     /// Number of events already accepted with the same source, identifier and content.
     pub duplicates: u32
 } }
-meshway_serde::string_enum! {
+meshway_model::string_enum! {
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, utoipa::ToSchema,
 )]
@@ -36,7 +36,7 @@ pub enum HistoryMode {
     RecentLinks,
 }
 }
-meshway_serde::string_enum! {
+meshway_model::string_enum! {
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, utoipa::ToSchema,
 )]
@@ -173,7 +173,7 @@ crate::object::wire_tagged! {
         dropped: Sequence,
     },
 } }
-meshway_serde::string_enum! {
+meshway_model::string_enum! {
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, utoipa::ToSchema,
 )]
@@ -250,7 +250,7 @@ wire_object! {
     /// Requested sampling interval in milliseconds, from 1000 through 30000 and subject to budgets.
     pub interval_ms: u32 [minimum=1000,maximum=30000],
 } }
-meshway_serde::string_enum! {
+meshway_model::string_enum! {
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, utoipa::ToSchema,
 )]
@@ -348,7 +348,7 @@ crate::object::wire_tagged! {
         sample: Box<ObservationSample>,
     },
 } }
-meshway_serde::string_enum! {
+meshway_model::string_enum! {
 #[derive(Clone, Copy, Debug, serde::Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 /// Lifecycle phases a Node may report without supplying a measurement sample.
