@@ -223,6 +223,24 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             }
             work => work,
         };
+        // The capability fact is a timed observation: refresh it well within
+        // the State report lifetime the Server enforces. Checked on every
+        // event, not only idle ticks: continuous exit traffic never idles, and
+        // any sample taken below must not carry an expired observation.
+        let stale = reports
+            .borrow()
+            .exit_capability
+            .as_ref()
+            .is_some_and(|fact| {
+                chrono::Utc::now() - fact.observed_at
+                    >= chrono::Duration::seconds(meshway_protocol::STATE_REPORT_TTL_SECONDS / 3)
+            });
+        if stale && engine.desired().is_some() {
+            let capability = engine.components_mut().exit_capability().await;
+            let mut report = reports.borrow().clone();
+            report.exit_capability = capability;
+            reports.send_replace(report);
+        }
         let structural = matches!(&work, Work::Offer | Work::Retry)
             || matches!(&work, Work::Carrier(events) if events.iter().any(|event| matches!(event, Event::Changed)));
         match work {
@@ -558,26 +576,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                     }
                 }
             }
-            Work::Tick => {
-                // The capability fact is a timed observation: refresh it well
-                // within the State report lifetime the Server enforces.
-                let stale = reports
-                    .borrow()
-                    .exit_capability
-                    .as_ref()
-                    .is_some_and(|fact| {
-                        chrono::Utc::now() - fact.observed_at
-                            >= chrono::Duration::seconds(
-                                meshway_protocol::STATE_REPORT_TTL_SECONDS / 3,
-                            )
-                    });
-                if stale && engine.desired().is_some() {
-                    let capability = engine.components_mut().exit_capability().await;
-                    let mut report = reports.borrow().clone();
-                    report.exit_capability = capability;
-                    reports.send_replace(report);
-                }
-            }
+            Work::Tick => {}
             Work::DiagnosticSent => {}
             Work::ExitChanged => unreachable!("mapped above"),
         }
