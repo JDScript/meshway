@@ -1,10 +1,17 @@
-//! Scoped cryptographic key operations for the Node's packet plane.
-use crate::Error;
+//! This Node's registered packet-plane keys and the one hop-proof transcript.
+//!
+//! Keys are not authority: a consumer uses them only for desired netmap
+//! content whose registered public keys they match. Nothing here carries a
+//! lease, deadline or Server state; Engine owns the netmap lease.
 use ed25519_dalek::{Signer, SigningKey};
 use meshway_configuration::execution::TrustedNode;
 use meshway_model::{BoundNodeKey, Digest, KeyAlgorithm, NetworkId, NodeId, NodePublicKey};
 use std::{fmt, sync::Arc};
 use zeroize::Zeroizing;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("the key does not match this Node's registered packet key")]
+pub struct KeyMismatch;
 
 struct Material {
     signing: SigningKey,
@@ -54,9 +61,9 @@ impl DataPlaneKeys {
         node: NodeId,
         key: &BoundNodeKey,
         digest: Digest,
-    ) -> Result<[u8; 64], Error> {
+    ) -> Result<[u8; 64], KeyMismatch> {
         if key.public_key != self.control {
-            return Err(Error::Contract);
+            return Err(KeyMismatch);
         }
         let message = packet_proof_message(network, node, key, digest);
         Ok(self.material.signing.sign(&message).to_bytes())

@@ -23,7 +23,7 @@ mod traversal;
 mod worker;
 
 use chrono::{DateTime, Utc};
-use meshway_authority::DataPlaneKeys;
+use meshway_engine::DataPlaneKeys;
 use meshway_ipc::{DataPlane, Problem};
 use meshway_model::NetmapRef;
 use meshway_private_storage::Directory;

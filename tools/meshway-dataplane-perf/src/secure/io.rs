@@ -1,5 +1,4 @@
 use crate::{Error, NodeOptions, Stage};
-use meshway_authority::DataPlaneKeys;
 #[cfg(target_os = "linux")]
 use meshway_connectivity::{Event, Manager};
 use meshway_dataplane::{
@@ -7,6 +6,7 @@ use meshway_dataplane::{
     secure::{Carrier, PendingFrame},
 };
 use meshway_desired_fixture::public_fixture::PublicFixture;
+use meshway_engine::DataPlaneKeys;
 use meshway_engine::Desired;
 use meshway_model::NodeId;
 use meshway_transport::{ChannelScope, Frame, Limits, Receiver, Sender};

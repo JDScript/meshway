@@ -11,7 +11,6 @@ meshway-configuration = { path = "../meshway-configuration" }
 meshway-policy = { path = "../meshway-policy" }
 meshway-model = { path = "../meshway-model" }
 meshway-transport-spec = { path = "../meshway-transport-spec" }
-meshway-authority = { path = "../meshway-authority" }
 meshway-engine = { path = "../meshway-engine" }
 meshway-transport = { path = "../meshway-transport" }
 meshway-tun = { path = "../meshway-tun" }

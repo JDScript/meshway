@@ -14,7 +14,9 @@ use meshway_model::{NetmapLease, NetmapRef};
 use meshway_policy::compile::netmap::LocalCompiler;
 use std::{collections::BTreeMap, sync::Arc};
 
+mod keys;
 mod lease;
+pub use keys::{DataPlaneKeys, KeyMismatch, packet_proof_message};
 pub use lease::Netmap;
 #[cfg(test)]
 mod tests;

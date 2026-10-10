@@ -4,8 +4,8 @@ use crate::{
     provider,
     scope::{self, Scope},
 };
-use meshway_authority::DataPlaneKeys;
 use meshway_dataplane::secure::PendingFrame;
+use meshway_engine::DataPlaneKeys;
 use meshway_engine::Desired;
 use meshway_model::{NodeId, observations::LinkAcquisition};
 use meshway_transport::{Frame, Sender, Session};

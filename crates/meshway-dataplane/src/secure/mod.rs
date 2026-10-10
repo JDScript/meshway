@@ -36,8 +36,8 @@ use crate::{
 };
 pub use codec::is_control_frame;
 use codec::{Context, Frame, Kind};
-use meshway_authority::DataPlaneKeys;
 use meshway_configuration::execution::LogicalPath;
+use meshway_engine::DataPlaneKeys;
 use meshway_engine::Desired;
 use meshway_model::NodeId;
 pub use meshway_policy::admission::Carrier;

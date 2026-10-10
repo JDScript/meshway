@@ -3,12 +3,12 @@
 //! worker. A carrier is admitted only by the projection (topology and both
 //! sides' listener/dialer declarations) through Engine's shared compiler.
 use crate::{Carrier, Error};
-use meshway_authority::DataPlaneKeys;
 use meshway_configuration::{
     AddressPools, TopologyAction, TopologyRule,
     execution::{DialCandidate, DialEndpoint, DialEndpointSource, TrustedNode},
     netmap::NodeNetmap,
 };
+use meshway_engine::DataPlaneKeys;
 use meshway_model::{BoundNodeKey, NetworkId, NodeId};
 use meshway_transport_spec::{PreparedListener, TransportProtocol};
 use std::{

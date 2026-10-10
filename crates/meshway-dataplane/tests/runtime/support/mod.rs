@@ -30,7 +30,7 @@ impl Node {
         meshway_engine::Desired::new(&self.control.netmap().unwrap().content).unwrap()
     }
 
-    pub fn packet_keys(&self) -> meshway_authority::DataPlaneKeys {
+    pub fn packet_keys(&self) -> meshway_engine::DataPlaneKeys {
         self.control.dataplane_keys().unwrap()
     }
 }

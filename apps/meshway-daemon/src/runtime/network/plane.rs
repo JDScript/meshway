@@ -3,10 +3,10 @@
 //! content. Withdrawal terminates every flow, circuit and exit projection,
 //! closes adjacencies and keeps only the negative capture and DNS boundaries.
 use super::{Peers, Report, dns::Attachment, packets::Packets};
-use meshway_authority::DataPlaneKeys;
 use meshway_configuration::netmap::DnsPlan;
 use meshway_connectivity::Manager;
 use meshway_dataplane::secure::SecureNode;
+use meshway_engine::DataPlaneKeys;
 use meshway_engine::{Desired, Error};
 use meshway_ipc::Problem;
 use meshway_protocol::{InstanceRequest, execution::ApplyFailure};

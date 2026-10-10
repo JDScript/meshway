@@ -8,8 +8,8 @@ pub mod fixture;
 pub mod public_fixture;
 
 use ed25519_dalek::SigningKey;
-use meshway_authority::DataPlaneKeys;
 use meshway_configuration::{NetworkConfiguration, execution::TrustedNode, netmap::CompiledNetmap};
+use meshway_engine::DataPlaneKeys;
 use meshway_engine::Desired;
 use meshway_model::{state::Capability, *};
 use meshway_policy::{

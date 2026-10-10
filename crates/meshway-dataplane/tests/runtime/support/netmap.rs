@@ -226,7 +226,7 @@ impl NetmapMesh {
     pub fn content(
         &self,
         index: usize,
-    ) -> (meshway_engine::Desired, meshway_authority::DataPlaneKeys) {
+    ) -> (meshway_engine::Desired, meshway_engine::DataPlaneKeys) {
         (self.nodes[index].desired(), self.nodes[index].packet_keys())
     }
 

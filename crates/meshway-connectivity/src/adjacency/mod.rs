@@ -2,7 +2,7 @@
 use crate::plan::Plan;
 use crate::{Carrier, Error, scope::Scope};
 use ed25519_dalek::{Signature, VerifyingKey};
-use meshway_authority::{DataPlaneKeys, packet_proof_message};
+use meshway_engine::{DataPlaneKeys, packet_proof_message};
 use meshway_model::{BoundNodeKey, Digest, NetworkId, NodeId};
 use meshway_transport::raw::Stream;
 use sha2::{Digest as _, Sha256};

@@ -70,7 +70,7 @@ def category(stack):
         return "aead"
     if owned("sha2::"):
         return "sha256-other"
-    if any(owned(prefix) for prefix in ("meshway_authority::", "meshway_dataplane::secure::Guard", "meshway_dataplane::secure::Circuit::check_at",
+    if any(owned(prefix) for prefix in ("meshway_engine::keys::", "meshway_dataplane::secure::Guard", "meshway_dataplane::secure::Circuit::check_at",
                                        "tokio_util::sync::cancellation_token::")):
         return "guard"
     if owned("meshway_dataplane::packet::"):

@@ -12,7 +12,6 @@ chrono.workspace = true
 curve25519-dalek = "4.1"
 ed25519-dalek = { version = "2.2", default-features = false, features = ["std", "zeroize"] }
 getrandom.workspace = true
-meshway-authority = { path = "../meshway-authority" }
 meshway-configuration = { path = "../meshway-configuration" }
 meshway-engine = { path = "../meshway-engine" }
 meshway-policy = { path = "../meshway-policy" }

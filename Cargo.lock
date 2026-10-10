@@ -1721,18 +1721,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "meshway-authority"
-version = "0.1.0"
-dependencies = [
- "curve25519-dalek",
- "ed25519-dalek",
- "meshway-configuration",
- "meshway-model",
- "thiserror",
- "zeroize",
-]
-
-[[package]]
 name = "meshway-circuit-perf"
 version = "0.1.0"
 dependencies = [
@@ -1792,7 +1780,6 @@ dependencies = [
  "ed25519-dalek",
  "futures-util",
  "getrandom 0.3.4",
- "meshway-authority",
  "meshway-configuration",
  "meshway-control",
  "meshway-dataplane",
@@ -1831,7 +1818,6 @@ dependencies = [
  "curve25519-dalek",
  "ed25519-dalek",
  "getrandom 0.3.4",
- "meshway-authority",
  "meshway-configuration",
  "meshway-control-client",
  "meshway-engine",
@@ -1903,7 +1889,6 @@ dependencies = [
  "clap",
  "getrandom 0.3.4",
  "ipnet",
- "meshway-authority",
  "meshway-configuration",
  "meshway-connectivity",
  "meshway-control",
@@ -1943,7 +1928,6 @@ dependencies = [
  "hickory-proto",
  "hkdf",
  "hmac 0.13.0",
- "meshway-authority",
  "meshway-configuration",
  "meshway-control",
  "meshway-dns",
@@ -1979,7 +1963,6 @@ dependencies = [
  "clap",
  "futures-util",
  "getrandom 0.3.4",
- "meshway-authority",
  "meshway-configuration",
  "meshway-connectivity",
  "meshway-dataplane",
@@ -2008,7 +1991,6 @@ dependencies = [
  "curve25519-dalek",
  "ed25519-dalek",
  "getrandom 0.3.4",
- "meshway-authority",
  "meshway-configuration",
  "meshway-dataplane",
  "meshway-engine",
@@ -2076,12 +2058,15 @@ dependencies = [
 name = "meshway-engine"
 version = "0.1.0"
 dependencies = [
+ "curve25519-dalek",
+ "ed25519-dalek",
  "meshway-configuration",
  "meshway-model",
  "meshway-policy",
  "meshway-test-server",
  "thiserror",
  "tokio",
+ "zeroize",
 ]
 
 [[package]]

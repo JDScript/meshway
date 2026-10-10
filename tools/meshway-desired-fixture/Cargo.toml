@@ -9,7 +9,6 @@ description = "In-memory compiler-backed desired netmap content for benchmarks a
 curve25519-dalek = "4.1"
 ed25519-dalek = { version = "2.2", default-features = false, features = ["std", "zeroize"] }
 getrandom.workspace = true
-meshway-authority = { path = "../../crates/meshway-authority" }
 meshway-configuration = { path = "../../crates/meshway-configuration" }
 meshway-engine = { path = "../../crates/meshway-engine" }
 meshway-model = { path = "../../crates/meshway-model" }

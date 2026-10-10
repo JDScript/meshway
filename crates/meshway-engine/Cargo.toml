@@ -5,11 +5,14 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+curve25519-dalek = "4.1"
+ed25519-dalek = { version = "2.2", default-features = false, features = ["std", "zeroize"] }
 meshway-configuration = { path = "../meshway-configuration" }
 meshway-model = { path = "../meshway-model" }
 meshway-policy = { path = "../meshway-policy" }
 thiserror.workspace = true
 tokio.workspace = true
+zeroize = "1.8"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
