@@ -58,8 +58,9 @@ def save_artifact(directory, binary, source, target, platform):
 def import_artifact(directory, destination, source, target, platform, machine):
     manifest = json.loads((directory / "source-manifest.json").read_text())
     binary = directory / destination.name
-    if (manifest.get("sourceDigest") != source or manifest.get("sourceRoot") != str(ROOT.resolve())
-            or manifest.get("target") != target or manifest.get("platform") != platform
+    # sourceRoot stays recorded for provenance; the digest already covers every build input,
+    # so artifacts built from the same sources in another worktree are the same candidate.
+    if (manifest.get("sourceDigest") != source or manifest.get("target") != target or manifest.get("platform") != platform
             or manifest.get("sha256") != {binary.name: sha256(binary)}):
         raise RuntimeError("Prebuilt fixture does not match source/target/hash")
     check_elf(binary, machine)

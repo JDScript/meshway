@@ -154,7 +154,7 @@ def build(directory, target, platform, machine, source):
 
 def import_artifacts(source_dir, directory, target, platform, machine, source):
     manifest = json.loads((source_dir / "source-manifest.json").read_text())
-    if (manifest["sourceDigest"] != source or manifest["sourceRoot"] != str(ROOT.resolve()) or manifest["target"] != target
+    if (manifest["sourceDigest"] != source or manifest["target"] != target
             or manifest["platform"] != platform or set(manifest["sha256"]) != set(ARTIFACTS)
             or manifest.get("exitFixtureSources") != exit_fixture_sources()):
         raise RuntimeError("Prebuilt manifest does not match this source/target/binary set.")

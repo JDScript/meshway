@@ -18,7 +18,9 @@ DEFAULT_HOST = "zj2631@ai4ce-planck.dyn.poly.edu"
 
 # Runs as a session leader. Each run owns a fresh detached worktree, so concurrent
 # runs never replace each other's sources; only git operations on the shared clone
-# are serialized. Builds share one Cargo target guarded by the fixtures' build lock.
+# are serialized. Fixture binaries are built in one fixed-path build worktree (Cargo
+# fingerprints include the workspace path, so per-run paths would rebuild every
+# workspace crate), cached per revision and imported by digest into each run.
 WORKER = r'''
 import contextlib, fcntl, json, os, pathlib, subprocess, sys, time, traceback
 p = json.loads(sys.argv[1])
@@ -37,12 +39,42 @@ def save():
 def call(command, cwd=root):
     return subprocess.check_output(command, cwd=cwd, text=True, stderr=subprocess.STDOUT).strip()
 @contextlib.contextmanager
-def git_lock():
-    # Short: fetch / worktree add / worktree remove only, never the matrix itself.
-    with (validation / "git.lock").open("a") as lock:
+def flock(name):
+    with (validation / name).open("a") as lock:
         os.set_inheritable(lock.fileno(), False)
         fcntl.flock(lock, fcntl.LOCK_EX)
         yield
+def git_lock():
+    # Short: fetch / worktree add / worktree remove only, never the matrix itself.
+    return flock("git.lock")
+KINDS = ("runtime", "packet", "tun")
+def prebuilt(kind):
+    directory = validation / "builds" / p["revision"] / kind
+    return directory if kind == "tun" else directory / "bin"
+def build_fixtures(env):
+    # Serialized across runs: the build worktree is checked out to one revision at a time.
+    with flock("build-worktree.lock"):
+        build_root = root / ".worktree/validation-build"
+        with git_lock():
+            if not build_root.exists():
+                call(["git", "worktree", "add", "--detach", str(build_root), p["revision"]])
+            else:
+                call(["git", "-C", str(build_root), "checkout", "--detach", p["revision"]])
+        if call(["git", "status", "--porcelain"], cwd=build_root):
+            raise RuntimeError("build worktree must be clean")
+        for kind in KINDS:
+            if (prebuilt(kind) / "source-manifest.json").exists():
+                continue
+            destination = validation / "builds" / p["revision"] / kind
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            build_env = dict(env, MISE_TRUSTED_CONFIG_PATHS=str(build_root))
+            log = job / (kind + "-build.log")
+            with log.open("w") as output:
+                # The test:<kind>:linux tasks carry the zig / cargo-zigbuild tool set.
+                code = subprocess.call(["mise", "run", "test:" + kind + ":linux", "--build-only", "--report-dir", str(destination)],
+                                       cwd=build_root, env=build_env, stdout=output, stderr=subprocess.STDOUT)
+            if code:
+                raise RuntimeError(kind + " build failed; inspect " + log.name)
 save()
 created = False
 try:
@@ -63,7 +95,11 @@ try:
                MESHWAY_VALIDATION_ROOT=str(validation), MESHWAY_VALIDATION_TARGET=str(validation / "target"),
                TMPDIR=str(temporary))
     env["PATH"] = str(pathlib.Path.home() / ".local/bin") + ":" + env["PATH"]
-    result["exitCode"] = subprocess.call(["mise", "run", "validate:matrix", "--run", p["run"], *p["arguments"]],
+    build_fixtures(env)
+    result["builds"] = {kind: str(prebuilt(kind)) for kind in KINDS}
+    save()
+    imports = [option for kind in KINDS for option in ("--prebuilt-" + kind, str(prebuilt(kind)))]
+    result["exitCode"] = subprocess.call(["mise", "run", "validate:matrix", "--run", p["run"], *imports, *p["arguments"]],
                                          cwd=workspace, env=env)
     data = json.loads((matrix / "matrix.json").read_text())
     # Independently query Docker after the matrix ends, including nested packet runtime.
