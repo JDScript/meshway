@@ -221,9 +221,6 @@ fn netmap_target(
 }
 
 impl crate::observations::service::ObservationProvider for NetmapDiagnostics {
-    fn event_driven_maintenance(&self) -> bool {
-        true
-    }
     fn node_observation_identity(
         &self,
         tx: &Transaction<'_>,
@@ -278,14 +275,6 @@ impl crate::observations::service::ObservationProvider for NetmapDiagnostics {
         let mut current = self.node(tx, &stored.principal, &stored.request, now)?;
         current.admission.observation_id = Some(stored.observation);
         Ok(current)
-    }
-    fn synchronize(
-        &self,
-        _: &Transaction<'_>,
-        _: &[crate::observations::service::SubscriptionLease],
-        _: DateTime<Utc>,
-    ) -> Result<bool, Error> {
-        Ok(false)
     }
     fn scope(
         &self,

@@ -141,18 +141,6 @@ impl Observations {
             })
             .min()
     }
-    pub(crate) fn leases(&self) -> Vec<service::SubscriptionLease> {
-        self.tasks
-            .values()
-            .filter(|s| active(s.task.phase))
-            .flat_map(|s| s.subscribers.iter())
-            .filter(|(_, s)| s.terminal.is_none())
-            .map(|(id, s)| service::SubscriptionLease {
-                id: *id,
-                expires_at: s.expires_at,
-            })
-            .collect()
-    }
     /// Private lifetime tokens prevent a client reusing an old request UUID
     /// after terminal retention from reviving that lifetime's queued samples.
     pub(crate) fn active_subscriptions(

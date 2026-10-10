@@ -39,11 +39,6 @@ pub(crate) enum MaintenanceOwner {
 /// B computes the authorized full path candidates; A checks current session and
 /// source User identity ownership. A network role cannot manufacture a path.
 pub trait ObservationProvider: Send + Sync + 'static {
-    /// True only when all authorization changes publish committed wakeups;
-    /// subscriber deadlines remain an independent maintenance trigger.
-    fn event_driven_maintenance(&self) -> bool {
-        false
-    }
     fn node_observation_identity(
         &self,
         _: &Transaction<'_>,
@@ -71,17 +66,6 @@ pub trait ObservationProvider: Send + Sync + 'static {
         _: DateTime<Utc>,
     ) -> Result<NodeObservationAdmission, Error> {
         Err(Error::PermissionDenied)
-    }
-    /// Return whether synchronization may have changed task authorization
-    /// bindings, requiring a second check before exposing their current view.
-    fn synchronize(
-        &self,
-        _: &Transaction<'_>,
-        _: &[SubscriptionLease],
-        _: DateTime<Utc>,
-    ) -> Result<bool, Error> {
-        // Unknown providers conservatively require a second authorization pass.
-        Ok(true)
     }
     fn scope(
         &self,
@@ -136,12 +120,6 @@ pub struct NodeObservationAdmission {
     pub(crate) request: CreateObservation,
     pub(crate) target: NodeObservationTargetView,
 }
-#[derive(PartialEq, Eq)]
-pub struct SubscriptionLease {
-    pub id: ObservationSubscriptionId,
-    pub expires_at: DateTime<Utc>,
-}
-
 /// SQLite rollback restores only observations actually changed by this call.
 /// Keep this guard alive through SQL COMMIT: dropping it at the end of a
 /// `Handle::transact` operation would roll RAM back before the executor commits,
@@ -219,9 +197,7 @@ impl<P: ObservationProvider> ObservationService<P> {
                     tokio::time::Instant::now()
                         + (deadline - Utc::now()).to_std().unwrap_or_default()
                 });
-                let fallback = (!service.provider.event_driven_maintenance())
-                    .then(|| tokio::time::Instant::now() + coalesce);
-                let due = deadline.into_iter().chain(fallback).min();
+                let due = deadline;
                 let changed = tokio::select! {
                     biased;
                     _=stopped.changed()=>break,
@@ -260,9 +236,6 @@ impl<P: ObservationProvider> ObservationService<P> {
                     RuntimeTransaction::new(runtime.lock().map_err(|_| Error::RUNTIME)?);
                 runtime.observations.expire(now);
                 reauthorize_all(&*provider, &tx, &mut runtime, now, None);
-                if provider.synchronize(&tx, &runtime.observations.leases(), now)? {
-                    reauthorize_all(&*provider, &tx, &mut runtime, now, None);
-                }
                 tx.commit()?;
                 runtime.committed();
                 // Mark on the serialized owner, after our own effects. A later
@@ -346,7 +319,6 @@ impl<P: ObservationProvider> ObservationService<P> {
                 let task = runtime
                     .observations
                     .create(&admission, identity, request, now)?;
-                provider.synchronize(&tx, &runtime.observations.leases(), now)?;
                 tx.commit()?;
                 runtime.committed();
                 runtime.hub.publish_committed(Effect::Observation {
@@ -457,8 +429,6 @@ impl<P: ObservationProvider> ObservationService<P> {
                     items.push(task);
                 }
                 reauthorize_all(&*provider, &tx, &mut runtime, now, Some(scope.network_id));
-                provider.synchronize(&tx, &runtime.observations.leases(), now)?;
-                reauthorize_all(&*provider, &tx, &mut runtime, now, Some(scope.network_id));
                 tx.commit()?;
                 runtime.committed();
                 let items = items
@@ -517,7 +487,6 @@ impl<P: ObservationProvider> ObservationService<P> {
                     prepared.request,
                     now,
                 )?;
-                provider.synchronize(&tx, &runtime.observations.leases(), now)?;
                 tx.commit()?;
                 runtime.committed();
                 runtime.hub.publish_committed(Effect::Observation {
@@ -613,7 +582,6 @@ impl<P: ObservationProvider> ObservationService<P> {
                             .ok_or(Error::NotFound)?;
                     }
                 }
-                provider.synchronize(&tx, &runtime.observations.leases(), now)?;
                 reauthorize_all(
                     &*provider,
                     &tx,
@@ -672,8 +640,6 @@ impl<P: ObservationProvider> ObservationService<P> {
                 let network = stored.network;
                 runtime.observations.cancel_owned(id, subscription, now)?;
                 reauthorize_all(&*provider, &tx, &mut runtime, now, Some(network));
-                provider.synchronize(&tx, &runtime.observations.leases(), now)?;
-                reauthorize_all(&*provider, &tx, &mut runtime, now, Some(network));
                 // Executor view, never another subscriber's ID or lease.
                 let task = runtime
                     .observations
@@ -708,7 +674,6 @@ impl<P: ObservationProvider> ObservationService<P> {
                     now,
                     Some(admission.network_id),
                 );
-                provider.synchronize(&tx, &runtime.observations.leases(), now)?;
                 tx.commit()?;
                 runtime.committed();
                 Ok(ObservationList {
@@ -781,8 +746,6 @@ impl<P: ObservationProvider> ObservationService<P> {
                         now,
                     )?;
                 }
-                let all_leases = runtime.observations.leases();
-                provider.synchronize(&tx, &all_leases, now)?;
                 tx.commit()?;
                 runtime.committed();
                 if !duplicate {
@@ -1175,20 +1138,11 @@ mod tests {
         .expect("lifecycle boundary");
     }
 
-    struct CountMaintenance(Arc<std::sync::atomic::AtomicUsize>);
+    struct CountMaintenance {
+        calls: Arc<std::sync::atomic::AtomicUsize>,
+        admission: TaskAdmission,
+    }
     impl ObservationProvider for CountMaintenance {
-        fn event_driven_maintenance(&self) -> bool {
-            true
-        }
-        fn synchronize(
-            &self,
-            _: &Transaction<'_>,
-            _: &[SubscriptionLease],
-            _: DateTime<Utc>,
-        ) -> Result<bool, Error> {
-            self.0.fetch_add(1, Ordering::SeqCst);
-            Ok(false)
-        }
         fn scope(
             &self,
             _: &Transaction<'_>,
@@ -1212,7 +1166,8 @@ mod tests {
             _: &CreateObservation,
             _: DateTime<Utc>,
         ) -> Result<TaskAdmission, Error> {
-            Err(Error::PermissionDenied)
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(self.admission.clone())
         }
         fn observation_session(
             &self,
@@ -1233,7 +1188,40 @@ mod tests {
         .await
         .unwrap();
         let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let service = app.observation_service(CountMaintenance(calls.clone()));
+        let stored = task(1, Utc::now(), 0);
+        let subscriber = &stored.subscribers[&id(201)];
+        let admission = TaskAdmission {
+            observation_id: Some(stored.task.id),
+            unsupported_metrics: vec![],
+            report: crate::state::ReportAdmission {
+                network_id: stored.network,
+                node_id: stored.task.source_node_id,
+                instance_id: stored.task.instance_id,
+                instance_generation: Version::MIN,
+                lease_expires_at: stored.task.expires_at,
+                execution: Some(stored.task.netmap),
+                configurations: vec![stored.task.netmap],
+                contexts: vec![],
+                mesh_addresses: Default::default(),
+            },
+            netmap: stored.task.netmap,
+            paths: stored.paths.clone(),
+            node_expires_at: stored.task.expires_at,
+            principal: subscriber.principal.clone(),
+            authorization_digest: subscriber.authorization_digest,
+            authorization_expires_at: subscriber.expires_at,
+        };
+        let service = app.observation_service(CountMaintenance {
+            calls: calls.clone(),
+            admission,
+        });
+        service
+            .runtime
+            .lock()
+            .unwrap()
+            .observations
+            .tasks
+            .insert(stored.task.id, stored);
         let maintenance = service.start();
         until(|| calls.load(Ordering::SeqCst) == 1).await;
         tokio::time::sleep(std::time::Duration::from_millis(650)).await;
