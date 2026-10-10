@@ -15114,7 +15114,7 @@ export const schemaDocument = {
             "oneOf": [
               {
                 "$ref": "#/components/schemas/PeerFactsDelta",
-                "description": "Peer-fact changes; null when none occurred during the hold."
+                "description": "Peer-fact changes or freshness piggybacked on a normal hold response; a freshness-only response keeps the cursor unchanged. Null when no facts need delivery."
               },
               {
                 "type": "null"

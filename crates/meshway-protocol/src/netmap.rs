@@ -142,7 +142,7 @@ pub struct SyncResponse {
     pub signature: NetmapSignature,
     /// Full, delta or unchanged netmap.
     pub netmap: SyncNetmap,
-    /// Peer-fact changes; null when none occurred during the hold.
+    /// Peer-fact changes or freshness piggybacked on a normal hold response; a freshness-only response keeps the cursor unchanged. Null when no facts need delivery.
     pub peer_facts: Option<PeerFactsDelta> [required = true],
 } }
 
@@ -176,9 +176,22 @@ impl SyncResponse {
         if let Some(facts) = &self.peer_facts
             && (facts.netmap_serial != target.serial
                 || facts.base.is_some_and(|base| Some(base) != request.state)
+                || facts.base.is_some_and(|base| {
+                    base.epoch != facts.cursor.epoch || base.sequence > facts.cursor.sequence
+                })
                 || facts
-                    .base
-                    .is_some_and(|base| base.epoch != facts.cursor.epoch))
+                    .removed
+                    .iter()
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .len()
+                    != facts.removed.len()
+                || facts
+                    .removed
+                    .iter()
+                    .any(|node| facts.updated.contains_key(node))
+                || facts.updated.iter().any(|(node, value)| {
+                    *node != value.node_id || value.expires_at <= value.observed_at
+                }))
         {
             return Err(InconsistentSyncResponse);
         }
@@ -219,6 +232,7 @@ pub struct PeerFacts {
     /// Peer described by these facts.
     pub node_id: NodeId,
     /// Listener facts by listener key; endpoint details only reach adjacent Nodes.
+    #[serde(deserialize_with = "meshway_serde::unique_map")]
     pub listeners: BTreeMap<String, PeerListenerFacts>,
     /// Exit readiness, or null when the peer has no exit role.
     pub exit: Option<PeerExitFacts> [required = true],
@@ -343,6 +357,43 @@ mod tests {
         assert!(response.check(&request).is_err());
         response.peer_facts = Some(facts(None));
         assert_eq!(response.check(&request), Ok(()));
+        let node: NodeId = "00000000-0000-4000-8000-000000000001".parse().unwrap();
+        let mut invalid = facts(Some(cursor(4)));
+        invalid.cursor = cursor(3);
+        response.peer_facts = Some(invalid);
+        assert!(response.check(&request).is_err());
+        let mut invalid = facts(None);
+        invalid.removed = vec![node, node];
+        response.peer_facts = Some(invalid);
+        assert!(response.check(&request).is_err());
+        let now = Utc::now();
+        let mut invalid = facts(None);
+        invalid.removed = vec![node];
+        invalid.updated.insert(
+            node,
+            PeerFacts {
+                node_id: node,
+                listeners: BTreeMap::new(),
+                exit: None,
+                observed_at: now,
+                expires_at: now + chrono::Duration::seconds(60),
+            },
+        );
+        response.peer_facts = Some(invalid);
+        assert!(response.check(&request).is_err());
+    }
+
+    #[test]
+    fn listener_fact_maps_reject_duplicates_instead_of_last_wins() {
+        let text = r#"{"nodeId":"00000000-0000-4000-8000-000000000001","listeners":{"udp":{"phase":"listening","network":"udp","localEndpoints":[],"stunCandidates":[]}},"exit":null,"observedAt":"2026-10-10T00:00:00Z","expiresAt":"2026-10-10T00:01:00Z"}"#;
+        let facts: PeerFacts = serde_json::from_str(text).unwrap();
+        let entry = serde_json::to_string(&facts.listeners["udp"]).unwrap();
+        let duplicated = text.replacen(
+            "\"listeners\":{",
+            &format!("\"listeners\":{{\"udp\":{entry},"),
+            1,
+        );
+        assert!(serde_json::from_str::<PeerFacts>(&duplicated).is_err());
     }
 
     #[test]

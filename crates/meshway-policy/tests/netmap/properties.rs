@@ -228,6 +228,61 @@ fn wire_rejects_duplicate_keys_unknown_fields_and_positional_objects() {
 }
 
 #[test]
+fn netmap_resource_and_delta_maps_reject_duplicate_keys() {
+    fn reject<T>(value: &T, field: &str)
+    where
+        T: serde::Serialize + serde::de::DeserializeOwned,
+    {
+        let text = serde_json::to_string(value).unwrap();
+        serde_json::from_str::<T>(&text).unwrap_or_else(|_| panic!("invalid original {field}"));
+        let json = serde_json::to_value(value).unwrap();
+        let (key, item) = json[field].as_object().unwrap().iter().next().unwrap();
+        let prefix = format!("\"{field}\":{{");
+        let duplicated = text.replacen(
+            &prefix,
+            &format!("{prefix}{}:{},", serde_json::to_string(key).unwrap(), item),
+            1,
+        );
+        assert_ne!(text, duplicated);
+        assert!(
+            serde_json::from_str::<T>(&duplicated).is_err(),
+            "duplicate {field} accepted"
+        );
+    }
+    let compiled = netmaps(&base(3));
+    let netmap = &compiled.nodes[&node(1)].netmap;
+    let mut dns = netmap.dns.clone();
+    dns.mesh_hosts
+        .insert("fixture".into(), netmap.self_.addresses.clone());
+    dns.resolvers
+        .insert("fixture".into(), ResolverAction::Direct);
+    reject(&dns, "meshHosts");
+    reject(&dns, "resolvers");
+    reject(&netmap.self_, "listeners");
+    reject(
+        &NetmapNodeDelta {
+            remove: vec![],
+            upsert: netmap.projection.configuration.nodes.clone(),
+        },
+        "upsert",
+    );
+    reject(
+        &NetmapInventoryDelta {
+            remove: vec![],
+            upsert: netmap.projection.inventory.clone(),
+        },
+        "upsert",
+    );
+    reject(
+        &NetmapDialerDelta {
+            remove: vec![],
+            upsert: netmap.dialers.clone(),
+        },
+        "upsert",
+    );
+}
+
+#[test]
 fn oversized_netmap_rejects_the_whole_compilation() {
     let mut s = base(3);
     s.cfg.access = vec![access(&["*".into()], &["*".into()], &["*"], false)];

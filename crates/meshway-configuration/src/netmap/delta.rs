@@ -18,6 +18,7 @@ macro_rules! keyed_delta {
             /// Base keys to remove; never also upserted.
             pub remove: Vec<$key>,
             /// Complete values to insert or replace.
+            #[serde(deserialize_with = "unique_map")]
             pub upsert: BTreeMap<$key, $value>,
         } }
     };
@@ -61,10 +62,13 @@ pub struct NetmapDelta {
     /// Visible inventory changes.
     pub inventory: NetmapInventoryDelta,
     /// Complete replacement rule-set contents.
+    #[serde(deserialize_with = "unique_map")]
     pub rule_sets: BTreeMap<String, crate::execution::RuleSetContent>,
     /// Complete replacement profile selections.
+    #[serde(deserialize_with = "unique_map")]
     pub selected_profiles: BTreeMap<NodeId, String>,
     /// Complete replacement selection versions.
+    #[serde(deserialize_with = "unique_map")]
     pub selection_versions: BTreeMap<NodeId, meshway_model::Version>,
     /// Dial candidate changes.
     pub dialers: NetmapDialerDelta,

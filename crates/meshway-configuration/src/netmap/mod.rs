@@ -10,7 +10,7 @@ use crate::{
         DialCandidate, DnsEgressUnavailable, EgressCapturePlan, ExecutionAddress, ExitNat,
         LogicalPath, TrustedNode,
     },
-    object::{object, tagged},
+    object::{object, tagged, unique_map},
 };
 use meshway_model::{Digest, NetmapRef, NetworkId, NodeId, Revision, Version, exit::ExitFamily};
 use meshway_transport_spec::PreparedListener;
@@ -139,8 +139,10 @@ object! {
 /// Names and resolver decisions for one Node; settings are in the projection.
 pub struct NetmapDns {
     /// Every name this Node may discover: itself and Nodes it has Access to.
+    #[serde(deserialize_with = "unique_map")]
     pub mesh_hosts: BTreeMap<String, NodeAddresses>,
     /// Decision for each configured resolver key.
+    #[serde(deserialize_with = "unique_map")]
     pub resolvers: BTreeMap<String, ResolverAction>,
     /// Effective routing profile used for ordinary resolution.
     pub profile: String,
@@ -164,6 +166,7 @@ pub struct NetmapSelf {
     /// Complete managed Mesh pools.
     pub mesh_address_pools: AddressPools,
     /// Local listeners; empty while disabled.
+    #[serde(deserialize_with = "unique_map")]
     pub listeners: BTreeMap<String, PreparedListener>,
     /// Configured exit eligibility gated by enablement.
     pub exit_enabled: bool,
@@ -190,6 +193,7 @@ pub struct NodeNetmap {
     /// Configuration subset the shared compiler runs on.
     pub projection: ProjectedConfiguration,
     /// Dial candidates with configured endpoints and client material, from this Node to each topology-adjacent visible Node.
+    #[serde(deserialize_with = "unique_map")]
     pub dialers: BTreeMap<String, DialCandidate>,
     /// Source egress plan; null while disabled.
     pub egress: Option<EgressPlan> [required = true],
