@@ -194,28 +194,14 @@ impl ExitRole {
     }
 }
 
-/// Bound on exact netmap admission results kept per content.
-const DECISIONS: usize = 4096;
-type Decisions = (
-    Option<meshway_model::NetmapRef>,
-    BTreeMap<OriginalTuple, bool>,
-);
-
 #[derive(Clone)]
 pub(super) struct Authority {
     shared: Arc<super::super::super::protection::Shared>,
     plan: RoleIdentity,
-    /// Exact admission per original tuple under one netmap content; cleared
-    /// whenever the installed content changes.
-    decisions: Arc<Mutex<Decisions>>,
 }
 impl Authority {
     fn new(shared: Arc<super::super::super::protection::Shared>, plan: RoleIdentity) -> Self {
-        Self {
-            shared,
-            plan,
-            decisions: Arc::default(),
-        }
+        Self { shared, plan }
     }
 
     /// Resource lifetime only, never an operation guard: the owner keeps its
@@ -252,7 +238,7 @@ impl Authority {
     }
     pub fn validate(
         &self,
-        tuple: OriginalTuple,
+        _tuple: OriginalTuple,
         deadline: &Deadline,
     ) -> Result<super::super::super::protection::ProtectionScope> {
         let snapshot = self.snapshot()?;
@@ -261,56 +247,10 @@ impl Authority {
         {
             return Err(Error::Expired);
         }
-        if !self.netmap_permits(&snapshot, tuple)? {
-            return Err(Error::Target);
-        }
+        // Packet/tuple Access admission belongs to SecureNode's unique flow
+        // table. The kernel owner enforces its installed role and exact
+        // projection transaction; it never builds a second policy compiler.
         self.shared.data(&snapshot)
-    }
-
-    /// The exit's own decision for the tuple's origin on its installed netmap:
-    /// an exit target listing this Node, covering the exact service. Decisions
-    /// have no deadline; the lease bounds them through the snapshot.
-    fn netmap_permits(
-        &self,
-        snapshot: &meshway_authority::ExecutionSnapshot,
-        tuple: OriginalTuple,
-    ) -> Result<bool> {
-        use meshway_configuration::execution::BusinessProtocol;
-        use meshway_policy::compile::netmap::{LocalCompiler, LocalDecision, Target};
-        let netmap = snapshot.netmap().map_err(|_| Error::Expired)?;
-        let reference = netmap.reference();
-        let mut decisions = self.decisions.lock().map_err(|_| Error::Worker)?;
-        if decisions.0 != Some(reference) || decisions.1.len() >= DECISIONS {
-            *decisions = (Some(reference), BTreeMap::new());
-        }
-        if let Some(permitted) = decisions.1.get(&tuple) {
-            return Ok(*permitted);
-        }
-        let netmap = &netmap.netmap;
-        let (protocol, _, port) = tuple.fields();
-        let (protocol, port) = match protocol {
-            6 => (BusinessProtocol::Tcp, port.try_into().ok()),
-            17 => (BusinessProtocol::Udp, port.try_into().ok()),
-            _ => (BusinessProtocol::IcmpEcho, None),
-        };
-        let origin = netmap
-            .projection
-            .configuration
-            .nodes
-            .iter()
-            .find(|(id, node)| **id != netmap.node_id && node.addresses.ipv4 == Some(tuple.source))
-            .map(|(id, _)| *id);
-        let permitted = origin.is_some_and(|origin| {
-            matches!(
-                LocalCompiler::new(netmap).decide(origin, IpAddr::V4(tuple.destination), protocol, port),
-                Ok(LocalDecision::Permitted(decision))
-                    if decision.source == origin
-                        && decision.services.contains(protocol, port)
-                        && matches!(&decision.target, Target::Exit { nodes, .. } if nodes.contains(&netmap.node_id))
-            )
-        });
-        decisions.1.insert(tuple, permitted);
-        Ok(permitted)
     }
 }
 

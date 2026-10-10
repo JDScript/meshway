@@ -16,7 +16,7 @@ use meshway_policy::{
         netmap::{self as admission, Leased},
         path_carrier,
     },
-    compile::netmap::{Decision, LocalCompiler, Target},
+    compile::netmap::{Decision, Target},
 };
 use std::{net::IpAddr, sync::Arc};
 
@@ -137,16 +137,7 @@ pub(super) fn admit_netmap(
     let hop = if let Some(service) = &dns {
         admission::admit_dns(leased, service, path, origin, previous, reply, now_ms)
     } else if !endpoint {
-        admission::admit_transit(
-            leased,
-            &LocalCompiler::new(&netmap.netmap),
-            origin,
-            target,
-            path,
-            previous,
-            reply,
-            now_ms,
-        )
+        admission::admit_transit_paths(leased, &paths, origin, path, previous, reply, now_ms)
     } else if purpose == Purpose::Diagnostic {
         let Target::Mesh { node } = target else {
             return Err(Error::Policy);

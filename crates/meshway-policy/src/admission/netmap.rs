@@ -278,15 +278,29 @@ pub fn admit_transit(
     reply: bool,
     now_ms: u64,
 ) -> Result<Hop, AdmissionError> {
+    let paths = compiler
+        .transit(origin, target)
+        .map_err(|_| AdmissionError::Configuration)?;
+    admit_transit_paths(leased, &paths, origin, path, previous, reply, now_ms)
+}
+
+/// The same transit admission with paths already computed by the caller's
+/// content-bound local compiler cache. No second compiler or search is needed.
+pub fn admit_transit_paths(
+    leased: Leased<'_>,
+    paths: &[LogicalPath],
+    origin: NodeId,
+    path: &[NodeId],
+    previous: Option<NodeId>,
+    reply: bool,
+    now_ms: u64,
+) -> Result<Hop, AdmissionError> {
     current(leased, now_ms)?;
     let node = leased.netmap.node_id;
     if path.first() == Some(&node) || path.last() == Some(&node) {
         return Err(AdmissionError::Path);
     }
-    let paths = compiler
-        .transit(origin, target)
-        .map_err(|_| AdmissionError::Configuration)?;
-    let next = positioned(leased, &paths, path, origin, previous, reply, now_ms)?;
+    let next = positioned(leased, paths, path, origin, previous, reply, now_ms)?;
     next.map(Hop::Forward).ok_or(AdmissionError::Path)
 }
 
