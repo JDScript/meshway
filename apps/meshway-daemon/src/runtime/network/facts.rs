@@ -113,10 +113,15 @@ impl Report {
                 },
             );
         }
-        let (Some(netmap), Some(expiry)) = (&self.content, self.expires_at) else {
+        let (Some(netmap), Some(lease_end)) = (&self.content, self.expires_at) else {
             return state;
         };
         let netmap = &netmap.netmap;
+        // A link fact lasts until the lease ends, but never beyond the State
+        // fact lifetime the Server accepts.
+        let expiry = lease_end.min(
+            self.facts_observed_at + chrono::Duration::from_std(LINK_FACT_TTL).unwrap_or_default(),
+        );
         for link in &facts.links {
             let id = socket_key(&link.id);
             let socket_id = socket_key(&link.socket_id);
@@ -165,6 +170,10 @@ impl Report {
         state
     }
 }
+
+/// Longest State link fact lifetime (`expiresAt - observedAt`) the Server
+/// accepts; a 24 h lease must not be reported as a 24 h link.
+const LINK_FACT_TTL: std::time::Duration = std::time::Duration::from_secs(600);
 
 fn socket_key(id: &[u8; 32]) -> String {
     id.iter().map(|byte| format!("{byte:02x}")).collect()
