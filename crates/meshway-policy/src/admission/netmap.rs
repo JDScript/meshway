@@ -270,7 +270,7 @@ pub fn admit_reply(
 #[allow(clippy::too_many_arguments)]
 pub fn admit_transit(
     leased: Leased<'_>,
-    compiler: &LocalCompiler<'_>,
+    compiler: &LocalCompiler,
     origin: NodeId,
     target: &Target,
     path: &[NodeId],
@@ -330,7 +330,7 @@ fn listener_protocol(listener: &Listener) -> (TransportProtocol, bool) {
 /// sides' declarations must allow this carrier. Grants no packet or flow
 /// authority; the snapshot owner enforces the lease.
 pub fn admit_adjacency(
-    compiler: &LocalCompiler<'_>,
+    compiler: &LocalCompiler,
     netmap: &NodeNetmap,
     peer: NodeId,
     carrier: &Carrier,
@@ -379,7 +379,7 @@ pub fn admit_adjacency(
 /// Check an actual carrier against one selected path's hop and candidates,
 /// in addition to `admit_adjacency`. Carrier choice never bypasses a waypoint.
 pub fn admit_path_carrier(
-    compiler: &LocalCompiler<'_>,
+    compiler: &LocalCompiler,
     netmap: &NodeNetmap,
     selected: &LogicalPath,
     peer: NodeId,

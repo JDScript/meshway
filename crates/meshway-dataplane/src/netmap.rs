@@ -39,6 +39,7 @@ pub(crate) enum Outcome {
 #[derive(Default)]
 pub(crate) struct Decisions {
     content: Option<NetmapRef>,
+    compiler: Option<LocalCompiler>,
     /// Permitted decisions carry the pair's complete service set.
     permitted: BTreeMap<(NodeId, IpAddr), Arc<Decision>>,
     /// Non-permitted outcomes are exact to the service.
@@ -63,6 +64,7 @@ impl Decisions {
         if self.content != Some(reference) {
             *self = Self {
                 content: Some(reference),
+                compiler: Some(LocalCompiler::new(&netmap.netmap)),
                 ..Default::default()
             };
         }
@@ -96,7 +98,10 @@ impl Decisions {
         static PROFILE: meshway_logging::profile::Metric =
             meshway_logging::profile::Metric::new("policy.netmap_decide");
         let _profile = PROFILE.enter();
-        let decided = LocalCompiler::new(&netmap.netmap)
+        let decided = self
+            .compiler
+            .as_ref()
+            .expect("bound compiler")
             .decide(source, destination, service.0, service.1)
             .map_err(|_| {
                 crate::Error::Admission(meshway_policy::admission::AdmissionError::Configuration)
@@ -138,7 +143,9 @@ impl Decisions {
             meshway_logging::profile::Metric::new("policy.netmap_transit");
         let _profile = PROFILE.enter();
         let paths = Arc::new(
-            LocalCompiler::new(&netmap.netmap)
+            self.compiler
+                .as_ref()
+                .expect("bound compiler")
                 .transit(origin, target)
                 .map_err(|_| {
                     crate::Error::Admission(
@@ -170,7 +177,9 @@ impl Decisions {
                 .as_ref()
                 .map(|plan| plan.capture.generation)
         } else {
-            LocalCompiler::new(&netmap.netmap)
+            self.compiler
+                .as_ref()
+                .expect("bound compiler")
                 .egress(source)
                 .ok()
                 .map(|plan| plan.capture.generation)
@@ -196,7 +205,7 @@ impl Decisions {
             return *admitted;
         }
         let admitted = meshway_policy::admission::netmap::admit_adjacency(
-            &LocalCompiler::new(&netmap.netmap),
+            self.compiler.as_ref().expect("bound compiler"),
             &netmap.netmap,
             peer,
             carrier,

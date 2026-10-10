@@ -111,7 +111,7 @@ struct World<'a> {
     old: &'a CompiledPublication,
     new: &'a CompiledNetmaps,
     leases: &'a BTreeMap<NodeId, NetmapLease>,
-    compilers: &'a BTreeMap<NodeId, LocalCompiler<'a>>,
+    compilers: &'a BTreeMap<NodeId, LocalCompiler>,
 }
 
 impl World<'_> {
@@ -400,7 +400,7 @@ pub(super) fn check(seed: u64, coverage: &mut Coverage) {
         .iter()
         .map(|(id, (_, d))| (*id, matches!(d, DemandDecision::Permitted { .. })))
         .collect();
-    let compilers: BTreeMap<NodeId, LocalCompiler<'_>> = new
+    let compilers: BTreeMap<NodeId, LocalCompiler> = new
         .nodes
         .iter()
         .map(|(id, n)| (*id, LocalCompiler::new(&n.netmap)))

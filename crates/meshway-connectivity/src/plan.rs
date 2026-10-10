@@ -27,7 +27,8 @@ struct Peer {
 type AdmissionKey = (NodeId, NodeId, String, TransportProtocol);
 
 struct Projection {
-    netmap: NodeNetmap,
+    netmap: Arc<NodeNetmap>,
+    compiler: meshway_policy::compile::netmap::LocalCompiler,
     keepalive: BTreeSet<NodeId>,
     // Lazy per-epoch caches, bounded by the visible Nodes of this projection.
     outgoing: Mutex<BTreeMap<NodeId, Arc<Vec<String>>>>,
@@ -90,6 +91,7 @@ impl Plan {
                 )
             })
             .collect();
+        let shared_netmap = Arc::new(netmap.clone());
         Ok(Arc::new(Self {
             network: netmap.network_id,
             node: netmap.node_id,
@@ -101,7 +103,10 @@ impl Plan {
             peers,
             projection: Projection {
                 keepalive: keepalive_peers(netmap),
-                netmap: netmap.clone(),
+                compiler: meshway_policy::compile::netmap::LocalCompiler::from_shared(
+                    shared_netmap.clone(),
+                ),
+                netmap: shared_netmap,
                 outgoing: Mutex::default(),
                 admitted: Mutex::default(),
             },
@@ -148,7 +153,7 @@ impl Plan {
         {
             return Ok(keys.clone());
         }
-        let compiler = meshway_policy::compile::netmap::LocalCompiler::new(&projection.netmap);
+        let compiler = &projection.compiler;
         let keys = Arc::new(
             compiler
                 .carriers(self.node, peer)
@@ -204,10 +209,8 @@ impl Plan {
                 let admitted = match cached {
                     Some(admitted) => admitted,
                     None => {
-                        let compiler =
-                            meshway_policy::compile::netmap::LocalCompiler::new(&projection.netmap);
                         let admitted = meshway_policy::admission::netmap::admit_adjacency(
-                            &compiler,
+                            &projection.compiler,
                             &projection.netmap,
                             peer,
                             carrier,

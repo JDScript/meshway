@@ -252,7 +252,7 @@ pub(super) fn dns(
     Ok(services)
 }
 
-fn service(
+pub(super) fn service(
     input: &NetmapInput<'_>,
     graph: &paths::Graph,
     locals: &BTreeMap<NodeId, Local>,

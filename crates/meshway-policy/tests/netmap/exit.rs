@@ -38,6 +38,31 @@ fn setup() -> Scenario {
     s
 }
 
+#[test]
+fn owning_compilers_reconstruct_the_same_dns_service_at_source_relay_and_exit() {
+    let compiled = netmaps(&setup());
+    let DnsPlan::ViaExit { service } = &compiled.nodes[&node(1)].netmap.dns.egress else {
+        panic!("source must use its exit resolver")
+    };
+    let service = *service.clone();
+    let compilers: Vec<_> = service
+        .path
+        .nodes
+        .iter()
+        .map(|node| {
+            meshway_policy::compile::netmap::LocalCompiler::new(&compiled.nodes[node].netmap)
+        })
+        .collect();
+    drop(compiled);
+    for compiler in compilers {
+        assert_eq!(
+            compiler.dns_service(node(1)).unwrap(),
+            Some(service.clone())
+        );
+        assert_eq!(compiler.dns_service(node(2)).unwrap(), None);
+    }
+}
+
 fn tcp443(destination: &str) -> Traffic {
     Traffic {
         source: "100.64.0.1".parse().unwrap(),

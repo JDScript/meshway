@@ -4,7 +4,7 @@ use super::*;
 use crate::compile::routing::PathError;
 use meshway_configuration::execution::BusinessTarget;
 use meshway_transport_spec::Port;
-use std::net::IpAddr;
+use std::{net::IpAddr, sync::Arc};
 
 /// Business destination of a decision and the circuit unit relays check.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -43,8 +43,8 @@ pub enum LocalDecision {
 /// The projection converted once for repeated evaluation. Peer listeners and
 /// dialers are absent from this configuration; carriers come from the
 /// redacted declarations kept in the projection.
-pub struct LocalCompiler<'a> {
-    netmap: &'a NodeNetmap,
+pub struct LocalCompiler {
+    netmap: Arc<NodeNetmap>,
     configuration: NetworkConfiguration,
 }
 
@@ -110,12 +110,59 @@ fn selectors(selectors: &[String]) -> Result<Vec<NodeId>, CompileError> {
         .collect()
 }
 
-impl<'a> LocalCompiler<'a> {
-    pub fn new(netmap: &'a NodeNetmap) -> Self {
+impl LocalCompiler {
+    pub fn new(netmap: &NodeNetmap) -> Self {
+        Self::from_shared(Arc::new(netmap.clone()))
+    }
+
+    /// Own immutable content so a runtime may retain one compiler across
+    /// requests. A compiler computes decisions; it never carries authority.
+    pub fn from_shared(netmap: Arc<NodeNetmap>) -> Self {
         Self {
             configuration: rebuild(&netmap.projection.configuration),
             netmap,
         }
+    }
+
+    /// The same DNS service the Server compiled for `source`, reconstructed
+    /// on this Node's projection. Relays use it to authenticate the complete
+    /// DNS-purpose path without gaining permission to resolve the query.
+    pub fn dns_service(&self, source: NodeId) -> Result<Option<DnsService>, CompileError> {
+        if !self.configuration.nodes.contains_key(&source)
+            || !self.netmap.projection.inventory.contains_key(&source)
+        {
+            return Ok(None);
+        }
+        let projection = &self.netmap.projection;
+        let input = NetmapInput {
+            network: self.netmap.network_id,
+            revision: self.netmap.revision,
+            configuration: &self.configuration,
+            subjects: &projection.subjects,
+            inventory: &projection.inventory,
+            rule_sets: &projection.rule_sets,
+            selected_profiles: &projection.selected_profiles,
+            selection_versions: &projection.selection_versions,
+            previous: &BTreeMap::new(),
+        };
+        let source_local = local::Local::compile(&input, source)?;
+        let Some((exit, _)) =
+            super::super::dns::single_exit(&self.configuration, &source_local.dns.profile)?
+        else {
+            return Ok(None);
+        };
+        if exit == source
+            || !self.configuration.nodes.contains_key(&exit)
+            || !projection.inventory.contains_key(&exit)
+        {
+            return Ok(None);
+        }
+        let locals = BTreeMap::from([
+            (source, source_local),
+            (exit, local::Local::compile(&input, exit)?),
+        ]);
+        let graph = paths::Graph::projected(input.topology(), &projection.configuration)?;
+        Ok(local::service(&input, &graph, &locals, source)?.ok())
     }
 
     fn input(&self) -> Result<CompilationInput<'_>, CompileError> {
