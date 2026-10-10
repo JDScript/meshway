@@ -24,11 +24,13 @@ BINARIES = ("meshwayd", "meshway", "meshway-runtime-fixture")
 KERNEL_BINARY = "meshway-underlay-kernel-tests"
 BOOTSTRAP_BINARY = "meshway-underlay-bootstrap-tests"
 LIFECYCLE_BINARY = "meshway-daemon-lifecycle-tests"
+UNDERLAY_NETMAP_BINARY = "meshway-underlay-netmap-tests"
 LIFECYCLE_TEST = "cleanup::blocked_down_retries_real_dns_reservation_cleanup_without_going_online"
 OWNER_CONFLICT_TEST = "runtime::control::tests::live_tun_owner_conflict_retries_and_recovers_without_new_up"
 PLATFORM_BINARIES = {"platform-dns": ("meshway_dns", "meshway-dns-platform-tests"),
                      "platform-daemon": ("meshway_daemon", "meshway-daemon-platform-tests")}
-ARTIFACTS = (*BINARIES, KERNEL_BINARY, BOOTSTRAP_BINARY, LIFECYCLE_BINARY, *(binary for _, binary in PLATFORM_BINARIES.values()))
+ARTIFACTS = (*BINARIES, KERNEL_BINARY, BOOTSTRAP_BINARY, LIFECYCLE_BINARY, UNDERLAY_NETMAP_BINARY,
+             *(binary for _, binary in PLATFORM_BINARIES.values()))
 ROLES = ("controller", "a", "r", "b")
 KERNEL_TESTS = {
     "underlay-suspend-notification": "linux::kernel::tests::network_changes::owned_suspend_keeps_control_connection_and_reports_no_network_change",
@@ -133,6 +135,16 @@ def build(directory, target, platform, machine, source):
     shutil.copyfile(lifecycle[0], directory / LIFECYCLE_BINARY)
     (directory / LIFECYCLE_BINARY).chmod(0o500)
     hashes[LIFECYCLE_BINARY] = sha256(directory / LIFECYCLE_BINARY)
+    netmap = [Path(item["executable"]) for item in messages
+              if item.get("reason") == "compiler-artifact" and item.get("executable")
+              and item["target"]["name"] == "netmap" and item["target"]["kind"] == ["test"]
+              and "meshway-underlay" in item["package_id"] and item["profile"].get("test")]
+    if len(netmap) != 1:
+        raise RuntimeError("Expected one production underlay netmap test executable.")
+    check_elf(netmap[0], machine)
+    shutil.copyfile(netmap[0], directory / UNDERLAY_NETMAP_BINARY)
+    (directory / UNDERLAY_NETMAP_BINARY).chmod(0o500)
+    hashes[UNDERLAY_NETMAP_BINARY] = sha256(directory / UNDERLAY_NETMAP_BINARY)
     for library, name in PLATFORM_BINARIES.values():
         tests = [Path(item["executable"]) for item in messages
                  if item.get("reason") == "compiler-artifact" and item.get("executable")
