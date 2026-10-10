@@ -117,7 +117,7 @@ class MatrixTests(unittest.TestCase):
 
     def test_default_parallel_is_half_the_cpus_bounded_by_selected_rows(self):
         with patch.object(matrix.os, "sched_getaffinity", return_value=set(range(32)), create=True):
-            self.assertEqual(matrix.parse_args([]).parallel, 15)
+            self.assertEqual(matrix.parse_args([]).parallel, 16)
             self.assertEqual(matrix.parse_args(["--rows", "tun", "packet"]).parallel, 2)
             self.assertEqual(matrix.parse_args(["--parallel", "3"]).parallel, 3)
         with patch.object(matrix.os, "sched_getaffinity", return_value={0}, create=True):
@@ -133,12 +133,12 @@ class MatrixTests(unittest.TestCase):
             with support.build_lock():
                 self.assertTrue((Path(temporary) / "build.lock").exists())
 
-    def test_rows_are_fifteen_and_filter_keeps_order_without_duplicates(self):
-        self.assertEqual(len(matrix.DEFAULT_ROWS), 15)
+    def test_rows_are_sixteen_and_filter_keeps_order_without_duplicates(self):
+        self.assertEqual(len(matrix.DEFAULT_ROWS), 16)
         self.assertEqual(len(matrix.ROWS), 16)
         self.assertEqual([name for name in matrix.DEFAULT_ROWS if name.startswith("netmap/")],
                          ["netmap/offline", "netmap/revoke", "netmap/expiry", "netmap/restart"])
-        self.assertNotIn("exit/off", matrix.parse_args([]).rows)
+        self.assertIn("exit/off", matrix.parse_args([]).rows)
         self.assertEqual(matrix.parse_args(["--rows", "exit/off"]).rows, ["exit/off"])
         self.assertEqual(matrix.parse_args(["--rows", "nat/off", "nat+fallback/off", "nat/off"]).rows,
                          ["nat/off", "nat+fallback/off"])
@@ -192,7 +192,7 @@ class MatrixTests(unittest.TestCase):
                 code = matrix.main(["--parallel", "4", "--short", "--run", "run"])
             report = json.loads((root / ".meshway/validation/matrix/run/matrix.json").read_text())
             self.assertEqual(code, 1)
-            self.assertEqual(len(report["rows"]), 15)
+            self.assertEqual(len(report["rows"]), 16)
             self.assertEqual(len(builds), 3)
             self.assertTrue(all("--build-only" in command for command in builds))
             self.assertEqual(report["scope"], "diagnostic-short")
@@ -213,8 +213,9 @@ class MatrixTests(unittest.TestCase):
             self.assertFalse(result["passed"])
             self.assertEqual(result["remainingResources"]["containers"], ["owned"])
 
-    def test_unsupported_exit_cannot_become_an_acceptance_pass(self):
-        with tempfile.TemporaryDirectory() as temporary:
+    def test_unsupported_pending_row_cannot_become_an_acceptance_pass(self):
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.dict(matrix.PENDING_ROWS, {"exit/off": "explicit-only: fixture"}):
             directory = Path(temporary)
             args = matrix.parse_args(["--rows", "exit/off"])
             def invoke(command, logfile, env):

@@ -20,6 +20,9 @@ LINKS = {"ca": ("controller", "a"), "cr": ("controller", "r"),
          "external": ("e", "external"), "lan": ("e", "lan")}
 
 
+NETMAP_CONTENT = "import json; print(json.dumps(json.load(open('/state/node/identity/netmap.json'))['netmap']))"
+
+
 def write(path, value):
     temporary = path.with_suffix(".tmp")
     temporary.write_text(json.dumps(value, indent=2) + "\n")
@@ -75,10 +78,11 @@ def execute(report, artifacts, runtime_os, platform, short, load):
                            "routes6": command(role, "ip", "-6", "-j", "route", "show", "table", "all"),
                            "rules6": command(role, "ip", "-6", "-j", "rule")}
             if role in ("a", "r", "e"):
-                # Private diagnostic copy only. Do not export identity keys or
-                # infer applied from this persisted (saved) compiled document.
-                data[role]["savedExecution"] = command(role, "python3", "-c",
-                    "import json; print(json.dumps(json.load(open('/state/node/identity/control.json'))['saved']))", required=False)
+                # Private diagnostic copy of the cached signed netmap content
+                # only: no identity keys; applied comes from IPC, never this file.
+                data[role]["netmap"] = command(role, "python3", "-c", NETMAP_CONTENT, required=False)
+                data[role]["egressJournal"] = command(role, "cat", "/state/node/underlay-egress.json", required=False)
+                data[role]["nft"] = command(role, "/usr/sbin/nft", "-j", "list", "ruleset", required=False)
                 data[role]["underlayJournal"] = command(role, "cat", "/state/node/underlay.json", required=False)
                 data[role]["exitJournal"] = command(role, "cat", "/state/node/underlay-exit.json", required=False)
                 data[role]["tunCounters"] = command(role, "ip", "-j", "-s", "link")
@@ -125,6 +129,7 @@ def execute(report, artifacts, runtime_os, platform, short, load):
         (report / "exit-support").mkdir()
         shutil.copyfile(ROOT / "dev/dns-fixture/namespace.sh", report / "exit-support/namespace.sh")
         shutil.copyfile(ROOT / "dev/exit-fixture/forwarding.sh", report / "exit-support/forwarding.sh")
+        shutil.copyfile(ROOT / "dev/exit-fixture/lease.py", report / "exit-support/lease.py")
         (report / "exit-support/os-packages.tsv").write_text("".join(
             package["name"] + "\t" + package["version"] + "\t" + package["architecture"] + "\n"
             for package in runtime_os["packages"]))
@@ -264,9 +269,11 @@ def execute(report, artifacts, runtime_os, platform, short, load):
             return value
 
         def running(value):
+            # The signed netmap lease is the only data-plane authority; the
+            # instance only bounds State/receipts and is not consulted here.
             return (value.get("phase") == "running" and value.get("dataPlane") == "ready"
                     and value.get("applied") is not None and value["applied"] == value.get("saved")
-                    and (value.get("instance") or {}).get("executionExpiresAt") is not None)
+                    and (value.get("netmap") or {}).get("netmap") == value["applied"])
 
         observations = {}
 
@@ -321,7 +328,7 @@ def execute(report, artifacts, runtime_os, platform, short, load):
                     and capability.get("instanceId") == (value.get("instance") or {}).get("instanceId")
                     and capability.get("supportedFamilies") == ["ipv4"]
                     and capability.get("installedFamilies") == ["ipv4"]
-                    and capability.get("target") == value.get("applied")
+                    and capability.get("netmap") == value.get("applied")
                     and bool((value.get("exit") or {}).get("installedRole"))
                     and running(value))
             if matched: observations["installed"] = value
@@ -336,16 +343,17 @@ def execute(report, artifacts, runtime_os, platform, short, load):
             raise RuntimeError("E did not acquire the executable IPv4 exit capability v1")
         manifest["stages"]["1"] = {"status": "passed", "evidence": ["e/installed-status.json"]}
         manifest["stages"]["3"] = {"status": "observed", "evidence": ["installed.json", "negative-dns-query.json"]}
-        wait_for(lambda: all(running(status(role)) for role in ("a", "r")), "A/R running with execution lease")
+        wait_for(lambda: all(running(status(role)) for role in ("a", "r")), "A/R running with a netmap lease")
         snapshot("capture-before-admission")
-        # Actual policy/kernel readback is retained before the first application
+        # Actual netmap/kernel readback is retained before the first application
         # packet. Egress default capture and the relay's role remain distinct.
         before = json.loads((report / "capture-before-admission.json").read_text())
-        a_saved = json.loads(before["a"]["savedExecution"]["stdout"])
-        r_saved = json.loads(before["r"]["savedExecution"]["stdout"])
-        write(report / "compiled-plans.json", {"a": a_saved, "r": r_saved})
-        if not a_saved["configuration"]["egressCapture"]["defaultCapture"] or r_saved["configuration"]["exitRole"] is not None:
-            raise RuntimeError("A default capture/R non-exit role mismatch")
+        plans = {role: json.loads(before[role]["netmap"]["stdout"])["netmap"] for role in ("a", "r", "e")}
+        write(report / "compiled-plans.json", plans)
+        capture_plan = (plans["a"]["egress"] or {}).get("capture") or {}
+        if (not capture_plan.get("defaultCapture") or plans["r"]["exitRole"] is not None
+                or plans["e"]["exitRole"] is None):
+            raise RuntimeError("A default capture/R non-exit/E exit role mismatch")
         def capture_installed():
             capture_route = command("a", "ip", "-j", "route", "get", addresses["external"]["external"], required=False)
             write(report / "capture-route.json", capture_route)
@@ -358,7 +366,7 @@ def execute(report, artifacts, runtime_os, platform, short, load):
             bypass[name] = command("a", "python3", "-c", "import socket; socket.create_connection(('" + address + "'," + str(port) + "),2)", required=False)
             if bypass[name]["exitCode"] == 0: raise RuntimeError("ordinary application borrowed the protected " + name + " bypass")
         bypass["ipv6"] = command("a", "ip", "-6", "-j", "route", "get", "2001:4860:4860::8888", required=False)
-        if bypass["ipv6"]["exitCode"] == 0 or a_saved["configuration"]["egressCapture"]["sinkIpv6"] != ["::/0"]:
+        if bypass["ipv6"]["exitCode"] == 0 or capture_plan["sinkIpv6"] != ["::/0"]:
             raise RuntimeError("source exit IPv6 is not negatively captured")
         write(report / "capture-bypass.json", bypass)
         dns_name = "exit-negative-" + identity.lower() + ".fixture.test"
@@ -374,20 +382,32 @@ def execute(report, artifacts, runtime_os, platform, short, load):
         snapshot("first-flow")
         wait_for(lambda: (report / "signals/exit-window-done").exists(), "persistent TCP/UDP/receive-only", 360)
         after = snapshot("after-traffic")
-        compiled = {role: json.loads(after[role]["savedExecution"]["stdout"])["configuration"] for role in ("a", "r", "e")}
-        path = [compiled[role]["nodeId"] for role in ("a", "r", "e")]
-        permits = list(compiled["r"]["permits"].values())
-        if not permits or any(p["exit"] is None or p["source"] != path[0] or p["replies"] != "statefulExactReversePath"
-                              or any(candidate["nodes"] != path for candidate in p["paths"]) for p in permits):
-            raise RuntimeError("relay lacks the original external transit permit/path")
+        # Netmap model: no permit documents exist. Each node decides locally on
+        # its own projection; the evidence is the projected inputs plus the
+        # real packets (A–E share no link, R TUN/pcap carry no plaintext).
+        projected = {role: json.loads(after[role]["netmap"]["stdout"])["netmap"] for role in ("a", "r", "e")}
+        path = [projected[role]["nodeId"] for role in ("a", "r", "e")]
         if any(json.loads(after["r"]["tunReceived"]["stdout"]).values()):
             raise RuntimeError("relay TUN delivered business plaintext")
-        write(report / "original-path.json", {"path": path, "permits": list(permits)})
+        grant = {"src": ["node:" + path[0]], "dst": ["autogroup:internet", lan_subnet]}
+        routes = {}
         for link in ("external", "lan"):
-            matching = [p for p in permits if p["target"] == {"type": "ip", "address": addresses[link][link]}]
-            expected = {"type": "internet"} if link == "external" else {"type": "cidr", "prefix": lan_subnet}
-            if not matching or any(p["exit"]["destination"] != expected for p in matching):
-                raise RuntimeError("Internet/explicit LAN permit classification mismatch")
+            target = ipaddress.ip_address(addresses[link][link])
+            matching = [route for route in projected["a"]["egress"]["routes"] if target in ipaddress.ip_network(route["prefix"])]
+            if len(matching) != 1 or matching[0]["action"] != {"type": "exit", "nodes": [path[2]], "via": [path[1]]}:
+                raise RuntimeError("A egress partition does not send " + link + " to E via R")
+            routes[link] = matching[0]
+        for role in ("a", "r", "e"):
+            rules = [{"src": rule["src"], "dst": rule["dst"]} for rule in projected[role]["projection"]["configuration"]["access"]]
+            if rules != [grant]:
+                raise RuntimeError("projected external Access differs on " + role)
+        # Only autogroup:internet can cover the external target: it is public
+        # and outside the single explicit LAN CIDR, the LAN target is inside it.
+        external, lan = (ipaddress.ip_address(addresses[link][link]) for link in ("external", "lan"))
+        if not external.is_global or external in ipaddress.ip_network(lan_subnet) or lan not in ipaddress.ip_network(lan_subnet):
+            raise RuntimeError("Internet/explicit LAN classification mismatch")
+        write(report / "original-path.json", {"path": path, "routes": routes, "access": grant,
+                                              "exitRole": projected["e"]["exitRole"]})
         tuples = json.loads(command("a", "cat", "/evidence/original-tuples.json")["stdout"])
         proof = []
         for link, udp_local, udp_remote, tcp_local, tcp_remote in tuples:
@@ -456,33 +476,101 @@ def execute(report, artifacts, runtime_os, platform, short, load):
             echo = command("a", "ping", "-n", "-c", "3", "-W", "2", target, required=False)
             write(report / ("icmp-" + link + ".json"), echo)
             if echo["exitCode"]: raise RuntimeError("real exit ICMP echo failed")
-        before_expiry = status("e")
-        write(report / "e/before-expiry.json", before_expiry)
-        manifest["status"] = "http-expiry"
-        save()
-        (report / "signals/exit-http-close").touch()
-        wait_for(lambda: (report / "signals/exit-http-closed.json").exists(), "HTTP closed")
-        wait_for(lambda: (report / "signals/exit-http-held").exists(), "real in-flight Node HTTP held")
-        actual_deadline = max(datetime.fromisoformat(status(role)["instance"]["expiresAt"]).timestamp() for role in ("a", "r", "e"))
-        wait_for(lambda: status("e").get("applied") is None and (status("e").get("exit") or {}).get("installedRole") is None,
-                 "actual instance/execution expiry", 180)
-        wait_for(lambda: time.time() > actual_deadline, "original instance deadline", 180)
+        # HTTP outage under the netmap model: closing Node HTTP never withdraws
+        # the exit. Existing and new flows continue on the signed lease, with
+        # no Server contact, until its actual expiry, which fails closed.
+        def at(value):
+            return datetime.fromisoformat(value).timestamp()
+
+        before_outage = {role: status(role) for role in ("a", "r", "e")}
+        write(report / "before-outage-status.json", before_outage)
+        probes = {}
+        try:
+            for link in ("external", "lan"):
+                log = (report / "a" / ("lease-" + link + ".log")).open("w")
+                probes[link] = (subprocess.Popen(
+                    ["docker", "exec", containers["a"], "python3", "/dns-fixture/lease.py", addresses[link][link],
+                     "/evidence/lease-" + link + ".ready", "/evidence/lease-" + link + ".json", "400"],
+                    stdout=log, stderr=subprocess.STDOUT, close_fds=True), log)
+                wait_for(lambda: command("a", "test", "-f", "/evidence/lease-" + link + ".ready", required=False)["exitCode"] == 0
+                         or probes[link][0].poll() is not None, "lease probe first echo " + link, 60)
+                if probes[link][0].poll() is not None:
+                    raise RuntimeError("lease probe ended before the outage: " + link)
+            manifest["status"] = "http-outage"
+            save()
+            (report / "signals/exit-http-close").touch()
+            wait_for(lambda: (report / "signals/exit-http-closed.json").exists(), "HTTP closed")
+            wait_for(lambda: (report / "signals/exit-http-held").exists(), "real in-flight Node HTTP held")
+            closed_at = json.loads(command("controller", "cat", "/signals/exit-http-closed.json")["stdout"]) / 1000
+            frozen = {role: status(role) for role in ("a", "r", "e")}
+            write(report / "outage-leases.json", {"closedAt": closed_at, "status": frozen})
+            if not all(running(value) for value in frozen.values()) or not (frozen["e"].get("exit") or {}).get("installedRole"):
+                raise RuntimeError("closing Node HTTP withdrew authority before lease expiry")
+            # Every admitted request has drained: these leases can no longer be renewed.
+            last_contact = max([closed_at] + [at(value["lastSyncAt"]) for value in frozen.values() if value.get("lastSyncAt")])
+            expiries = {role: at(value["netmap"]["expiresAt"]) for role, value in frozen.items()}
+            first_expiry, last_expiry = min(expiries.values()), max(expiries.values())
+            if first_expiry <= last_contact:
+                raise RuntimeError("no offline lease window after the last Server contact")
+            if last_expiry - time.time() > 150:
+                raise RuntimeError("lease exceeds the fixture's held-request budget")
+            observed = {"eInstalledAt": None}
+
+            def e_expired():
+                value = status("e")
+                installed_role = (value.get("exit") or {}).get("installedRole")
+                if value.get("applied") is not None and installed_role:
+                    observed["eInstalledAt"] = time.time()
+                return value.get("applied") is None and value.get("netmap") is None and installed_role is None
+            wait_for(e_expired, "actual netmap lease expiry on E", last_expiry - time.time() + 60)
+            withdrawn_at = time.time()
+            if observed["eInstalledAt"] is None or observed["eInstalledAt"] < expiries["e"] - 3 or withdrawn_at > expiries["e"] + 15:
+                raise RuntimeError("E exit was not withdrawn at its own lease expiry")
+            leases = {"closedAt": closed_at, "lastContact": last_contact, "expiries": expiries,
+                      "eInstalledAt": observed["eInstalledAt"], "eWithdrawnAt": withdrawn_at, "flows": {}}
+            for link, (process, log) in probes.items():
+                code = process.wait(timeout=60)
+                log.close()
+                result = json.loads(command("a", "cat", "/evidence/lease-" + link + ".json")["stdout"])
+                write(report / ("lease-" + link + ".json"), result)
+                persistent = [item["at"] for item in result["rounds"]]
+                fresh = [item["at"] for item in result["rounds"] if item["udp"]]
+                failure = result["failure"]
+                leases["flows"][link] = {"lastPersistent": max(persistent, default=None), "lastFresh": max(fresh, default=None),
+                                         "failure": failure}
+                if code or failure is None:
+                    raise RuntimeError("exit flow outlived the netmap lease: " + link)
+                if not any(t > last_contact for t in persistent) or not any(t > last_contact for t in fresh):
+                    raise RuntimeError("no existing/new exit flow after the last Server contact: " + link)
+                if not first_expiry - 3 <= failure["at"] <= first_expiry + 6:
+                    raise RuntimeError("exit flow did not end at the first path lease expiry: " + link)
+            probes.clear()
+            write(report / "lease-window.json", leases)
+        finally:
+            for process, log in probes.values():
+                if process.poll() is None:
+                    process.kill()
+                process.wait()
+                log.close()
+        wait_for(lambda: all(status(role).get("applied") is None for role in ("a", "r")), "A/R lease expiry", 60)
         wait_for(retired, "expired role/conntrack retirement readback")
-        evidence.no_owned_exit(snapshot("expired"))
+        expired = snapshot("expired")
+        evidence.no_owned_exit(expired)
+        evidence.negative_boundary(expired["a"]["nft"])
         write(report / "e/expired-status.json", status("e"))
         (report / "signals/exit-http-open").touch()
         wait_for(lambda: (report / "signals/exit-http-opened.json").exists(), "HTTP restored")
-        wait_for(installed, "automatic instance recovery")
+        wait_for(installed, "automatic lease recovery")
         recovered = status("e")
-        if recovered["instance"]["instanceId"] == before_expiry["instance"]["instanceId"] or recovered["identity"] != before_expiry["identity"]:
-            raise RuntimeError("instance replacement/identity recovery mismatch")
+        if recovered["identity"] != before_outage["e"]["identity"] or at(recovered["netmap"]["expiresAt"]) <= expiries["e"]:
+            raise RuntimeError("lease recovery changed identity or reused the expired lease")
         write(report / "e/recovered-status.json", recovered)
         snapshot("recovered")
         wait_for(lambda: all(running(status(role)) for role in ("a", "r")), "source/relay automatic recovery")
         for link in ("external", "lan"):
             result = warm_probe("a", addresses[link][link])
             write(report / ("recovered-flow-" + link + ".json"), result)
-            if result["exitCode"]: raise RuntimeError("new flow after instance recovery failed")
+            if result["exitCode"]: raise RuntimeError("new flow after lease recovery failed")
         before_crash = snapshot("before-crash")
         (report / "signals/exit-crash-e").touch()
         wait_for(lambda: (report / "signals/exit-crashed-e").exists(), "SIGKILL joined")
@@ -510,7 +598,7 @@ def execute(report, artifacts, runtime_os, platform, short, load):
         write(report / "foreign-sentinel-after.json", after_sentinel)
         if json.loads(after_sentinel["stdout"]) != json.loads(sentinel["stdout"]):
             raise RuntimeError("foreign sentinel changed during product cleanup")
-        manifest["stages"]["8"] = {"status": "passed", "evidence": ["withdrawn.json", "a/withdrawn-old-flows.json", "expired.json", "recovered.json", "down.json", "components/role.log"]}
+        manifest["stages"]["8"] = {"status": "passed", "evidence": ["withdrawn.json", "a/withdrawn-old-flows.json", "lease-window.json", "expired.json", "recovered.json", "down.json", "components/role.log"]}
         stop_captures()
         for interface in sorted(set(interfaces["a"].values()) - {"lo"}):
             leak = command("a", "python3", "-c", "import pathlib; b=pathlib.Path('/evidence/" + interface + ".pcap').read_bytes().lower(); print(int(" + repr(dns_name.split('.')[0].encode()) + " in b))")
@@ -545,7 +633,7 @@ def execute(report, artifacts, runtime_os, platform, short, load):
                     "forwarding": command("e", "cat", "/proc/sys/net/ipv4/ip_forward", required=False),
                     "nft": command("e", "/usr/sbin/nft", "-j", "list", "ruleset", required=False),
                     "conntrack": command("e", "/usr/sbin/conntrack", "-L", "-f", "ipv4", "-o", "extended", required=False),
-                    "saved": command("e", "python3", "-c", "import json; print(json.dumps(json.load(open('/state/node/identity/control.json'))['saved']))", required=False),
+                    "netmap": command("e", "python3", "-c", NETMAP_CONTENT, required=False),
                 })
             except Exception as readback_error:
                 manifest["failureReadbackError"] = str(readback_error)

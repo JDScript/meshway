@@ -43,6 +43,20 @@ def no_owned_exit(snapshot):
             raise RuntimeError("owned conntrack survived retirement")
 
 
+def negative_boundary(record):
+    """Expired source authority keeps the owned IPv4 drop gate with no active selector."""
+    if record["exitCode"]:
+        raise RuntimeError("source nft readback failed")
+    items = json.loads(record["stdout"])["nftables"]
+    tables = [item["table"]["name"] for item in items if item.get("table", {}).get("name", "").startswith("meshway_egress_")]
+    if len(tables) != 1:
+        raise RuntimeError("source egress gate missing after lease expiry")
+    sets = {item["set"]["name"]: item["set"].get("elem", []) for item in items
+            if "set" in item and item["set"]["table"] == tables[0]}
+    if not sets.get("managed4") or sets.get("active"):
+        raise RuntimeError("source egress gate is not a negative boundary after lease expiry")
+
+
 def all_stages_passed(manifest):
     return (set(manifest["stages"]) == {str(i) for i in range(1, 9)}
             and all(stage.get("status") == "passed" for stage in manifest["stages"].values())

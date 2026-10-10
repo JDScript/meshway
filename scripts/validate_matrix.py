@@ -35,7 +35,8 @@ ROWS = {
     "netmap/expiry": ("runtime", ("--transport", "native-udp", "--dns-backend", "off", "--netmap-scenario", "expiry")),
     "netmap/restart": ("runtime", ("--transport", "native-tcp", "--dns-backend", "off", "--netmap-scenario", "restart")),
 }
-PENDING_ROWS = {"exit/off": "explicit-only: runtime State sampling withdrawal blocks acceptance; two full passes required"}
+# Rows accepted only by explicit selection, with the reason shown in --list.
+PENDING_ROWS = {}
 DEFAULT_ROWS = tuple(name for name in ROWS if name not in PENDING_ROWS)
 
 
