@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-10T14:49:34.406201+00:00",
+  "updatedAt": "2026-10-10T14:54:42.171936+00:00",
   "runs": [
     {
       "id": 38060261848,
@@ -73,24 +73,152 @@
       "commit": "8d50e87310dabbcf3d1ed72ce928383eea558c7a",
       "message": "docs(agents): netmap model is current — engine reconfig, sync long poll, wire v6, IPC v6, compiler meshway-netmap-1; cross-session handoff via labelled prompt",
       "createdAt": "2026-10-10T14:36:11Z",
-      "updatedAt": "2026-10-10T14:36:13Z",
-      "status": "in_progress",
-      "conclusion": null,
+      "updatedAt": "2026-10-10T14:52:00Z",
+      "status": "completed",
+      "conclusion": "success",
       "url": "https://github.com/JDScript/meshway/actions/runs/38060261824",
       "jobs": [
         {
           "id": 114236918431,
           "name": "matrix",
           "runner": "planck",
-          "status": "in_progress",
-          "conclusion": null,
+          "status": "completed",
+          "conclusion": "success",
           "startedAt": "2026-10-10T14:36:13Z",
-          "completedAt": null,
-          "seconds": null,
+          "completedAt": "2026-10-10T14:51:59Z",
+          "seconds": 946.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/38060261824/job/114236918431"
         }
       ],
-      "artifacts": []
+      "artifacts": [
+        {
+          "id": 11673500483,
+          "name": "validate-matrix-38060261824",
+          "bytes": 601401,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38060261824/artifacts/11673500483",
+          "jobId": 114236918431,
+          "runner": "planck",
+          "seconds": 946.0,
+          "state": "ok",
+          "error": null,
+          "reports": [],
+          "matrices": [
+            {
+              "reportId": "20261010T143623Z-c7a26f74",
+              "short": false,
+              "rows": [
+                {
+                  "row": "tun",
+                  "passed": true,
+                  "reportId": "20261010T143820Z-df133968",
+                  "seconds": 0.893,
+                  "load": "12.37/7.54/6.15"
+                },
+                {
+                  "row": "packet",
+                  "passed": true,
+                  "reportId": "20261010T143820Z-37232c37",
+                  "seconds": 342.642,
+                  "load": "12.37/7.54/6.15"
+                },
+                {
+                  "row": "udp/off",
+                  "passed": true,
+                  "reportId": "20261010T143820Z-0aed1a13",
+                  "seconds": 357.247,
+                  "load": "12.37/7.54/6.15"
+                },
+                {
+                  "row": "tcp/off",
+                  "passed": true,
+                  "reportId": "20261010T143820Z-31be2dd1",
+                  "seconds": 339.098,
+                  "load": "12.37/7.54/6.15"
+                },
+                {
+                  "row": "vless/off",
+                  "passed": true,
+                  "reportId": "20261010T143820Z-b33cd60f",
+                  "seconds": 340.948,
+                  "load": "12.37/7.54/6.15"
+                },
+                {
+                  "row": "trojan/off",
+                  "passed": true,
+                  "reportId": "20261010T143820Z-61d50f4b",
+                  "seconds": 339.717,
+                  "load": "12.37/7.54/6.15"
+                },
+                {
+                  "row": "udp/resolv-conf",
+                  "passed": true,
+                  "reportId": "20261010T143820Z-ec1cc5c7",
+                  "seconds": 339.441,
+                  "load": "12.37/7.54/6.15"
+                },
+                {
+                  "row": "udp/resolved",
+                  "passed": true,
+                  "reportId": "20261010T143820Z-cb33aeab",
+                  "seconds": 354.518,
+                  "load": "12.37/7.54/6.15"
+                },
+                {
+                  "row": "nat/off",
+                  "passed": true,
+                  "reportId": "20261010T143820Z-b852b771",
+                  "seconds": 385.738,
+                  "load": "12.37/7.54/6.15"
+                },
+                {
+                  "row": "nat+fallback/off",
+                  "passed": true,
+                  "reportId": "20261010T143820Z-83dcf4e2",
+                  "seconds": 347.045,
+                  "load": "12.37/7.54/6.15"
+                },
+                {
+                  "row": "nat/resolved",
+                  "passed": true,
+                  "reportId": "20261010T143820Z-bc071d8b",
+                  "seconds": 409.737,
+                  "load": "12.37/7.54/6.15"
+                },
+                {
+                  "row": "netmap/offline",
+                  "passed": true,
+                  "reportId": "20261010T143820Z-6b3a68fc",
+                  "seconds": 813.497,
+                  "load": "12.37/7.54/6.15"
+                },
+                {
+                  "row": "netmap/revoke",
+                  "passed": true,
+                  "reportId": "20261010T143820Z-4ddeb6aa",
+                  "seconds": 193.411,
+                  "load": "12.37/7.54/6.15"
+                },
+                {
+                  "row": "netmap/expiry",
+                  "passed": true,
+                  "reportId": "20261010T143820Z-b30ebe23",
+                  "seconds": 291.514,
+                  "load": "12.37/7.54/6.15"
+                },
+                {
+                  "row": "netmap/restart",
+                  "passed": true,
+                  "reportId": "20261010T143820Z-ce9ea556",
+                  "seconds": 204.753,
+                  "load": "12.37/7.54/6.15"
+                }
+              ]
+            }
+          ],
+          "builds": []
+        }
+      ]
     },
     {
       "id": 38060261800,
@@ -101,20 +229,20 @@
       "commit": "8d50e87310dabbcf3d1ed72ce928383eea558c7a",
       "message": "docs(agents): netmap model is current — engine reconfig, sync long poll, wire v6, IPC v6, compiler meshway-netmap-1; cross-session handoff via labelled prompt",
       "createdAt": "2026-10-10T14:36:11Z",
-      "updatedAt": "2026-10-10T14:36:11Z",
-      "status": "queued",
-      "conclusion": null,
+      "updatedAt": "2026-10-10T14:52:13Z",
+      "status": "completed",
+      "conclusion": "failure",
       "url": "https://github.com/JDScript/meshway/actions/runs/38060261800",
       "jobs": [
         {
           "id": 114236918388,
           "name": "perf",
-          "runner": null,
-          "status": "queued",
-          "conclusion": null,
-          "startedAt": "2026-10-10T14:36:12Z",
-          "completedAt": null,
-          "seconds": null,
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "failure",
+          "startedAt": "2026-10-10T14:52:00Z",
+          "completedAt": "2026-10-10T14:52:12Z",
+          "seconds": 12.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/38060261800/job/114236918388"
         },
         {
