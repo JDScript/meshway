@@ -48,6 +48,8 @@ TD3 已将健康观察测试的失效选择器改为当前名称，覆盖其跨�
 | meshway-transport-udp、-tcp、-tun、-authority、-private-storage、desired-fixture、-serde、-logging、perf 工具 | 40 | — | 3.8 s | 0 | 各自原语 |
 | **合计** | **991** | | **TD：1,339 s 求和；nextest 并行 120.7 s；命令墙钟 128.3 s** | **44** | |
 
+上表按快照时的包列出。此后 `transport-spec`／`-tcp`／`-udp` 并入 `meshway-transport`（`spec`／`tcp`／`udp`），`tls`／`transport-vless`／`transport-trojan` 并入 `meshway-transport-stream`，`ipc` 并入 `meshway-protocol`，`diagnostics` 并入 `meshway-dataplane`，`authority` 并入 `meshway-engine`，`serde` 并入 `meshway-model`；需要 Server 的 Node crate 测试经 `tools/meshway-test-server` 启动 Server。
+
 专用 Rust 测试／support 文件共 271 个、70,584 物理行（含空行和注释，不含产品文件内的 inline 测试模块）；其中 Server 25,911 行、transport 1,935 行、connectivity 5,957 行、policy 5,225 行。此口径与下述文件上限检查一致，不能直接与去掉注释／空行的代码行统计比较。全部文件不超过 800 行，现有白名单例外为 0。
 
 ### TD2 包级复核

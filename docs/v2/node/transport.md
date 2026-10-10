@@ -19,13 +19,13 @@ VLESS／Trojan 的协议实现参考 mihomo／sing-box 的握手、编解码、T
 
 | 包／入口 | 行为 |
 | --- | --- |
-| `meshway-transport-spec` | 纯声明、材料结构和已选定拨号参数；`PreparedListener` 只保证结构完整，证书验证由 Server 对精确值执行 |
-| `meshway-transport-tcp::TcpTransport::adopt` | 接收已连接的 Tokio TCP socket，应用 socket／TCP 参数；复用 `AsyncRead`／`AsyncWrite` |
-| `meshway-transport-udp::UdpTransport::adopt` | 接收已绑定、未 connect 的 Tokio UDP socket，保留源／目的地址与真实截断信息；当前支持 Linux／macOS |
-| `meshway-transport-udp::UdpTransport::adopt_batch` | Linux 探测 UDP GSO／GRO，使用安全 nix 封装；不支持时按 mmsg、逐报文回退，macOS 保留逐报文路径 |
-| `meshway-transport-vless::{Connector,Acceptor}` | 既有流上的 VLESS v0、空 flow、TCP CONNECT，支持 TLS 与 WS/TLS |
-| `meshway-transport-trojan::{Connector,Acceptor}` | 既有流上的 Trojan TCP CONNECT／TLS |
-| `meshway-tls::{Client,Server}` | 复用 Server 同一材料验证，执行精确叶证书 pin 与完整 WebPKI 验证的 TLS 握手 |
+| `meshway_transport::spec` | 纯声明、材料结构和已选定拨号参数；`PreparedListener` 只保证结构完整，证书验证由 Server 对精确值执行 |
+| `meshway_transport::tcp::TcpTransport::adopt` | 接收已连接的 Tokio TCP socket，应用 socket／TCP 参数；复用 `AsyncRead`／`AsyncWrite` |
+| `meshway_transport::udp::UdpTransport::adopt` | 接收已绑定、未 connect 的 Tokio UDP socket，保留源／目的地址与真实截断信息；当前支持 Linux／macOS |
+| `meshway_transport::udp::UdpTransport::adopt_batch` | Linux 探测 UDP GSO／GRO，使用安全 nix 封装；不支持时按 mmsg、逐报文回退，macOS 保留逐报文路径 |
+| `meshway_transport_stream::vless::{Connector,Acceptor}` | 既有流上的 VLESS v0、空 flow、TCP CONNECT，支持 TLS 与 WS/TLS |
+| `meshway_transport_stream::trojan::{Connector,Acceptor}` | 既有流上的 Trojan TCP CONNECT／TLS |
+| `meshway_transport_stream::tls::{Client,Server}` | 复用 Server 同一材料验证，执行精确叶证书 pin 与完整 WebPKI 验证的 TLS 握手 |
 | `meshway-transport::Session` | 将 stream 或 datagram I/O 适配为完整帧收发，提供 sender／receiver 和显式 shutdown／join |
 
 socket 的打开、捕获豁免和候选授权归宿主 underlay／connectivity。适配器使用调用者交付的 socket；字段应用失败会报错。TCP keepalive 在当前平台按整秒校验，不能静默截断亚秒配置。

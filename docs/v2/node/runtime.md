@@ -215,7 +215,7 @@ Linux 首版每台机器运行一个系统级 `meshwayd`，同一时间只启用
 | `meshway status` | 区分进程、控制联系、saved／applied 和实际通道状态 |
 | 切网 | 尚未实现；先停止旧网络、完成隔离清理，再运行新网络 |
 
-CLI 通过 Unix domain socket 发命令、读结果；状态由 daemon／组件的唯一 owner 持有。`meshway-ipc` 是唯一的请求／响应定义，当前版本为 5，使用 JSON 与长度前缀，单条消息上限 64 KiB。`exit` 为新增可省略字段，保留版本 5；CLI 和 daemon 仍同版本发布。每个连接处理一个请求，Ping 可返回有序的多个事件；连接数、请求等待、写入和队列均有上限。`Up` 的 `enrollmentKey` 可省略；`Up`／`Down`／`RotateKey` 的 `expectedRevision` 由 CLI 读取后提交，换钥不会绕过本机 CAS。
+CLI 通过 Unix domain socket 发命令、读结果；状态由 daemon／组件的唯一 owner 持有。`meshway_protocol::ipc` 是唯一的请求／响应定义，当前版本为 5，使用 JSON 与长度前缀，单条消息上限 64 KiB。`exit` 为新增可省略字段，保留版本 5；CLI 和 daemon 仍同版本发布。每个连接处理一个请求，Ping 可返回有序的多个事件；连接数、请求等待、写入和队列均有上限。`Up` 的 `enrollmentKey` 可省略；`Up`／`Down`／`RotateKey` 的 `expectedRevision` 由 CLI 读取后提交，换钥不会绕过本机 CAS。
 
 推荐的无交互接入与换钥用法：
 
