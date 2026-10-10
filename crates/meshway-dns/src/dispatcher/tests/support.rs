@@ -66,14 +66,45 @@ impl Server {
     }
 
     pub(super) fn control(&self) -> Control {
+        self.control_named("node")
+    }
+
+    pub(super) fn control_named(&self, name: &str) -> Control {
         Control::open(
-            &self.temporary.path().canonicalize().unwrap().join("node"),
+            &self.temporary.path().canonicalize().unwrap().join(name),
             &self.proxy.as_ref().unwrap().origin,
             meshway_control_client::http_client_builder()
                 .unwrap()
                 .no_proxy(),
         )
         .unwrap()
+    }
+
+    pub(super) async fn enroll_peer(&self, enrolled: &Control, peer: &mut Control) {
+        let owner = self
+            .client
+            .login(&meshway_protocol::LoginRequest {
+                email: "dispatcher-owner@example.test".into(),
+                password: WireSecret::new("isolated dispatcher fixture password".into()),
+            })
+            .await
+            .unwrap();
+        let pending = peer.begin_enrollment("dispatcher-peer").await.unwrap();
+        self.client
+            .approve_device_authorization(
+                &ApproveDeviceAuthorizationPath {
+                    enrollment_request_id: pending.id,
+                },
+                &ApproveEnrollmentRequest {
+                    network_id: enrolled.status().binding.unwrap().network_id,
+                },
+                owner.token.expose(),
+            )
+            .await
+            .unwrap();
+        peer.poll_enrollment().await.unwrap();
+        peer.redeem_enrollment().await.unwrap();
+        peer.authenticate().await.unwrap();
     }
 
     pub(super) async fn enroll(&self, control: &mut Control) {

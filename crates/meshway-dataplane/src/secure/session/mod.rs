@@ -301,11 +301,13 @@ fn authenticate(key: &HopMac, frame: &Frame) -> Result<[u8; 16], Error> {
     mac.update(&[u8::from(frame.reply)]);
     mac.update(&frame.sequence.to_be_bytes());
     if let Some(probe) = frame.probe {
-        mac.update(b"meshway/circuit/probe/v5");
-        mac.update(&[if frame.kind == codec::Kind::ProbeRequest {
-            4
-        } else {
-            5
+        mac.update(b"meshway/circuit/exchange/v6");
+        mac.update(&[match frame.kind {
+            codec::Kind::ProbeRequest => 4,
+            codec::Kind::ProbeReply => 5,
+            codec::Kind::DnsRequest => 6,
+            codec::Kind::DnsReply => 7,
+            _ => return Err(Error::Wire),
         }]);
         mac.update(probe.measurement_id.as_uuid().as_bytes());
         mac.update(&probe.expires_at_ms.to_be_bytes());

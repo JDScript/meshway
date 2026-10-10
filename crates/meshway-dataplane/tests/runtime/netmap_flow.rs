@@ -81,6 +81,95 @@ fn icmp(f: &NetmapMesh, reply: bool, sequence: u16) -> Packet {
 }
 
 #[tokio::test]
+async fn dns_circuit_authenticates_the_exit_service_and_never_admits_business_packets() {
+    let mut f = NetmapMesh::start().await;
+    let grant = CircuitGrant {
+        purpose: meshway_dataplane::Purpose::Dns,
+        target: f.mesh_target(),
+    };
+    let path = f.path();
+    assert!(
+        f.a.start_grant(grant.clone(), vec![path[0], path[2]], &f.ar.carrier)
+            .is_err()
+    );
+    let first = f.a.start_grant(grant, path, &f.ar.carrier).unwrap();
+    let circuit = f.finish_handshake(first).await;
+    let mut message = hickory_proto::op::Message::new(
+        123,
+        hickory_proto::op::MessageType::Query,
+        hickory_proto::op::OpCode::Query,
+    );
+    message.add_query(hickory_proto::op::Query::query(
+        hickory_proto::rr::Name::from_ascii("dns.example.").unwrap(),
+        hickory_proto::rr::RecordType::A,
+    ));
+    let query = message.to_vec().unwrap();
+    message.metadata.message_type = hickory_proto::op::MessageType::Response;
+    let response = message.to_vec().unwrap();
+    for transport in [
+        meshway_configuration::DnsTransport::Udp,
+        meshway_configuration::DnsTransport::Tcp,
+    ] {
+        let id = meshway_model::EventId::new(super::support::request().into_uuid()).unwrap();
+        let frame =
+            f.a.query_dns(
+                circuit,
+                id,
+                transport,
+                &query,
+                std::time::Instant::now() + Duration::from_secs(2),
+            )
+            .unwrap();
+        let Received::DnsRequest(request) = deliver(&mut f, frame).unwrap() else {
+            panic!("authenticated DNS request");
+        };
+        assert_eq!(request.bytes().unwrap(), query);
+        assert_eq!(request.source(), f.ids()[0]);
+        assert_eq!(request.path(), f.path());
+        assert_eq!(request.transport(), transport);
+        let reply = f.b.answer_dns(request, &response).unwrap();
+        let replay = wire(reply);
+        let Received::Forward(frame) = f.r.receive(&f.rb.carrier, replay.clone()).unwrap() else {
+            panic!("opaque DNS reply");
+        };
+        assert!(f.r.receive(&f.rb.carrier, replay).is_err());
+        let Received::DnsReply(reply) = f.a.receive(&f.ar.carrier, wire(frame)).unwrap() else {
+            panic!("correlated DNS reply");
+        };
+        assert_eq!(reply.id(), id);
+        assert_eq!(reply.release(|bytes| bytes).unwrap(), response);
+    }
+    let packet = f.mesh_udp(false, 42424);
+    assert!(f.a.send(circuit, packet).is_err());
+    assert_eq!(
+        (
+            f.a.retained_flows(),
+            f.r.retained_flows(),
+            f.b.retained_flows()
+        ),
+        (0, 0, 0)
+    );
+    let request_id = meshway_model::EventId::new(super::support::request().into_uuid()).unwrap();
+    let frame =
+        f.a.query_dns(
+            circuit,
+            request_id,
+            meshway_configuration::DnsTransport::Udp,
+            &query,
+            std::time::Instant::now() + Duration::from_secs(2),
+        )
+        .unwrap();
+    let Received::DnsRequest(pending) = deliver(&mut f, frame).unwrap() else {
+        panic!("pending query");
+    };
+    f.publish(|cfg, _| cfg.access.clear()).await;
+    assert!(pending.bytes().is_err());
+    assert!(f.b.answer_dns(pending, &response).is_err());
+    assert!(f.a.circuit_info(circuit).unwrap().is_none());
+    f.close().await;
+}
+
+#[tokio::test]
 async fn first_packet_is_decided_and_handshaken_locally_without_any_control_call() {
     let mut f = NetmapMesh::start().await;
     let calls = f.sync_calls();

@@ -290,6 +290,47 @@ pub fn admit_transit(
     next.map(Hop::Forward).ok_or(AdmissionError::Path)
 }
 
+/// Admit the exact path of a DNS service derived by the local compiler.
+/// Source and resolver additionally require their published copies to match;
+/// relays forward the authenticated circuit and gain no resolver authority.
+#[allow(clippy::too_many_arguments)]
+pub fn admit_dns(
+    leased: Leased<'_>,
+    service: &meshway_configuration::netmap::DnsService,
+    path: &[NodeId],
+    origin: NodeId,
+    previous: Option<NodeId>,
+    reply: bool,
+    now_ms: u64,
+) -> Result<Hop, AdmissionError> {
+    if origin != service.source || path != service.path.nodes || path.last() != Some(&service.exit)
+    {
+        return Err(AdmissionError::Path);
+    }
+    if leased.netmap.node_id == service.source || leased.netmap.node_id == service.exit {
+        crate::dns_route::netmap_dns_service(
+            leased,
+            service,
+            origin,
+            service.exit,
+            path,
+            *service.transports.first().ok_or(AdmissionError::Permit)?,
+            now_ms,
+        )
+        .map_err(|_| AdmissionError::Permit)?;
+    }
+    let next = positioned(
+        leased,
+        std::slice::from_ref(&service.path),
+        path,
+        origin,
+        previous,
+        reply,
+        now_ms,
+    )?;
+    Ok(next.map_or(Hop::Deliver, Hop::Forward))
+}
+
 /// Admit a diagnostic circuit: the measured service must be in the
 /// decision and every Node on the path must declare path observation;
 /// otherwise the request is unsupported, reported as `Path`.

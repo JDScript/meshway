@@ -35,7 +35,9 @@ fn deliver(
                 );
                 return;
             }
-            Received::Packet(_) => panic!("diagnostic produced business traffic"),
+            Received::Packet(_) | Received::DnsRequest(_) | Received::DnsReply(_) => {
+                panic!("diagnostic produced other traffic")
+            }
         };
     }
     panic!("protected exchange exceeded its complete path budget");

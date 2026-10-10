@@ -17,11 +17,13 @@ mod authorization;
 mod codec;
 mod crypto;
 mod diagnostics;
+mod dns;
 mod exit;
 mod maintenance;
 mod netmap;
 pub mod pipeline;
 mod probe;
+pub use dns::{DnsReply, DnsRequest, MAX_DNS_BYTES};
 mod recovery;
 mod replay;
 mod session;
@@ -319,6 +321,8 @@ impl PendingFrame {
 
 #[derive(Debug)]
 pub enum Received {
+    DnsRequest(DnsRequest),
+    DnsReply(DnsReply),
     Forward(PendingFrame),
     /// Also returned for an exact, still-authorized duplicate handshake receipt.
     /// That idempotent result does not imply a new Noise session or RTT sample.
@@ -593,6 +597,7 @@ pub struct SecureNode {
     /// Closed CID → UTC milliseconds until which its INIT is still acceptable.
     dead: BTreeMap<[u8; 32], u64>,
     probes: probe::Probes,
+    dns: dns::Exchanges,
     maintenance: maintenance::Maintenance,
     cancellation: CancellationToken,
     output_epoch: Arc<()>,
@@ -704,6 +709,7 @@ impl SecureNode {
             circuits: BTreeMap::new(),
             dead: BTreeMap::new(),
             probes: Default::default(),
+            dns: Default::default(),
             maintenance: Default::default(),
             cancellation: CancellationToken::new(),
             output_epoch: Arc::new(()),
@@ -976,11 +982,12 @@ impl SecureNode {
         // Path admission precedes signature work; the arrival direction is
         // checked after the chain names the authenticated previous hop.
         let origin = frame.context.path[0];
-        let paths = self
-            .engine
-            .decisions
-            .transit(reading.netmap(), origin, &frame.context.grant.target)
-            .map_err(|_| Error::Policy)?;
+        let paths = authorization::paths(
+            &mut self.engine.decisions,
+            reading.netmap(),
+            origin,
+            &frame.context.grant,
+        )?;
         let path = paths
             .iter()
             .find(|path| path.nodes == frame.context.path)
@@ -1209,6 +1216,9 @@ impl SecureNode {
             Kind::ProbeRequest | Kind::ProbeReply => {
                 self.receive_probe(circuit, frame, previous, reading)
             }
+            Kind::DnsRequest | Kind::DnsReply => {
+                self.receive_dns(circuit, frame, previous, reading)
+            }
         }
     }
 
@@ -1216,7 +1226,7 @@ impl SecureNode {
         let stage = match frame.kind {
             Kind::Init => &mut circuit.recovery.init,
             Kind::Response => &mut circuit.recovery.response,
-            Kind::Data | Kind::ProbeRequest | Kind::ProbeReply => return Err(Error::State),
+            _ => return Err(Error::State),
         };
         let stage = stage.as_mut().ok_or(Error::Replay)?;
         let fingerprint: [u8; 32] = Sha256::digest(frame.encode()?).into();

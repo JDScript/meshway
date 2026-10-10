@@ -60,6 +60,27 @@ fn mesh_address(netmap: &CompiledNetmap, node: NodeId) -> Option<IpAddr> {
         .and_then(|a| a.ipv4.map(IpAddr::V4).or(a.ipv6.map(IpAddr::V6)))
 }
 
+pub(super) fn paths(
+    decisions: &mut Decisions,
+    netmap: &CompiledNetmap,
+    origin: NodeId,
+    grant: &CircuitGrant,
+) -> Result<Arc<Vec<LogicalPath>>, Error> {
+    if grant.purpose == Purpose::Dns {
+        let service = decisions
+            .dns_service(netmap, origin)
+            .map_err(|_| Error::Policy)?;
+        if grant.target != (Target::Mesh { node: service.exit }) {
+            return Err(Error::Policy);
+        }
+        Ok(Arc::new(vec![service.path.clone()]))
+    } else {
+        decisions
+            .transit(netmap, origin, &grant.target)
+            .map_err(|_| Error::Policy)
+    }
+}
+
 /// Admit a frame of a netmap circuit. Endpoints use `admit_handshake` (or
 /// `admit_observation` for diagnostics), relays `admit_transit`.
 #[allow(clippy::too_many_arguments)]
@@ -77,24 +98,45 @@ pub(super) fn admit_netmap(
     let origin = *path.first().ok_or(Error::Context)?;
     let local = netmap.netmap.node_id;
     let network = netmap.netmap.network_id;
-    let paths = decisions
-        .transit(netmap, origin, target)
-        .map_err(|_| Error::Policy)?;
+    let paths = paths(
+        decisions,
+        netmap,
+        origin,
+        &CircuitGrant {
+            purpose,
+            target: target.clone(),
+        },
+    )?;
     let selected = paths
         .iter()
         .find(|candidate| candidate.nodes == path)
         .ok_or(Error::Policy)?;
-    let selection = match target {
-        Target::Exit { .. } => Some(
+    let dns = if purpose == Purpose::Dns {
+        Some(
             decisions
-                .selection(netmap, origin)
+                .dns_service(netmap, origin)
                 .map_err(|_| Error::Policy)?,
-        ),
-        Target::Mesh { .. } => None,
+        )
+    } else {
+        None
+    };
+    let selection = if let Some(service) = &dns {
+        Some(meshway_configuration::digest(service.as_ref()).map_err(|_| Error::Policy)?)
+    } else {
+        match target {
+            Target::Exit { .. } => Some(
+                decisions
+                    .selection(netmap, origin)
+                    .map_err(|_| Error::Policy)?,
+            ),
+            Target::Mesh { .. } => None,
+        }
     };
     let authorization = path_authorization(netmap, network, purpose, target, selected, selection)?;
     let endpoint = path.first() == Some(&local) || path.last() == Some(&local);
-    let hop = if !endpoint {
+    let hop = if let Some(service) = &dns {
+        admission::admit_dns(leased, service, path, origin, previous, reply, now_ms)
+    } else if !endpoint {
         admission::admit_transit(
             leased,
             &LocalCompiler::new(&netmap.netmap),

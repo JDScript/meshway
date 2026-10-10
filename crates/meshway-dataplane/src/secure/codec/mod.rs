@@ -32,7 +32,7 @@ pub(super) fn session_id(bytes: &[u8]) -> Result<Option<[u8; 32]>, Error> {
     }
     match bytes.get(8) {
         Some(1 | 2) => Ok(None),
-        Some(3..=5) => Ok(Some(
+        Some(3..=7) => Ok(Some(
             bytes
                 .get(if bytes[8] == 3 { 10..42 } else { 9..41 })
                 .ok_or(Error::Wire)?
@@ -50,6 +50,8 @@ pub(super) enum Kind {
     Data,
     ProbeRequest,
     ProbeReply,
+    DnsRequest,
+    DnsReply,
 }
 
 impl Kind {
@@ -128,6 +130,7 @@ impl Context {
         out.push(match self.grant.purpose {
             Purpose::Business => 3,
             Purpose::Diagnostic => 4,
+            Purpose::Dns => 5,
         });
         encode_target(out, &self.grant.target)?;
         id(out, self.path[0].as_uuid()); // Explicit original origin, checked against the path.
@@ -279,9 +282,11 @@ impl Frame {
         }
         let diagnostic = self.context.diagnostic();
         let probe = matches!(self.kind, Kind::ProbeRequest | Kind::ProbeReply);
-        if self.probe.is_some() != probe
+        let dns = matches!(self.kind, Kind::DnsRequest | Kind::DnsReply);
+        if self.probe.is_some() != (probe || dns)
             || (probe && !diagnostic)
-            || (self.kind == Kind::Data && diagnostic)
+            || (dns && self.context.grant.purpose != Purpose::Dns)
+            || (self.kind == Kind::Data && self.context.grant.purpose != Purpose::Business)
         {
             return Err(Error::Wire);
         }
@@ -293,6 +298,9 @@ impl Frame {
                     && (16..=MAX_PLAINTEXT + 16).contains(&self.body.len()) => {}
             (Kind::ProbeRequest, false) | (Kind::ProbeReply, true)
                 if self.sequence != u64::MAX && self.body.len() == 48 => {}
+            (Kind::DnsRequest, false) | (Kind::DnsReply, true)
+                if self.sequence != u64::MAX
+                    && (29..=super::MAX_DNS_BYTES + 17).contains(&self.body.len()) => {}
             _ => return Err(Error::Wire),
         }
         if self.proofs.len() >= self.context.path.len() {
@@ -314,6 +322,8 @@ impl Frame {
             Kind::Data => 3,
             Kind::ProbeRequest => 4,
             Kind::ProbeReply => 5,
+            Kind::DnsRequest => 6,
+            Kind::DnsReply => 7,
         });
         if self.kind == Kind::Data {
             out.push(u8::from(self.reply));
@@ -380,6 +390,8 @@ impl Frame {
             3 => Kind::Data,
             4 => Kind::ProbeRequest,
             5 => Kind::ProbeReply,
+            6 => Kind::DnsRequest,
+            7 => Kind::DnsReply,
             _ => return Err(Error::Wire),
         };
         let flags = if kind == Kind::Data {
@@ -396,6 +408,10 @@ impl Frame {
                 },
                 4 => CircuitGrant {
                     purpose: Purpose::Diagnostic,
+                    target: decode_target(&mut r)?,
+                },
+                5 => CircuitGrant {
+                    purpose: Purpose::Dns,
                     target: decode_target(&mut r)?,
                 },
                 _ => return Err(Error::Wire),
@@ -441,7 +457,10 @@ impl Frame {
             None => r.boolean()?,
         };
         let sequence = r.u64()?;
-        let probe = if matches!(kind, Kind::ProbeRequest | Kind::ProbeReply) {
+        let probe = if matches!(
+            kind,
+            Kind::ProbeRequest | Kind::ProbeReply | Kind::DnsRequest | Kind::DnsReply
+        ) {
             Some(ProbeMetadata {
                 measurement_id: r.id()?,
                 expires_at_ms: r.u64()?,
@@ -450,7 +469,10 @@ impl Frame {
             None
         };
         let length = usize::try_from(r.u32()?).map_err(|_| Error::Wire)?;
-        if length > MAX_PLAINTEXT + 16 {
+        if length > MAX_PLAINTEXT + 16
+            || (matches!(kind, Kind::DnsRequest | Kind::DnsReply)
+                && length > super::MAX_DNS_BYTES + 17)
+        {
             return Err(Error::Wire);
         }
         let body = PacketBuffer::from(r.take(length)?);

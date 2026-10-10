@@ -2048,6 +2048,7 @@ dependencies = [
  "meshway-configuration",
  "meshway-control",
  "meshway-control-client",
+ "meshway-dataplane",
  "meshway-model",
  "meshway-netmap-fixture",
  "meshway-policy",

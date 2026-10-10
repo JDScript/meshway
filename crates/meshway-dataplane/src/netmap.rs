@@ -25,6 +25,7 @@ const MAX_ENTRIES: usize = 4096;
 pub enum Purpose {
     Business,
     Diagnostic,
+    Dns,
 }
 
 /// Outcome of a local decision for one (source, destination, service).
@@ -40,6 +41,7 @@ pub(crate) enum Outcome {
 pub(crate) struct Decisions {
     content: Option<NetmapRef>,
     compiler: Option<LocalCompiler>,
+    dns: BTreeMap<NodeId, Arc<meshway_configuration::netmap::DnsService>>,
     /// Permitted decisions carry the pair's complete service set.
     permitted: BTreeMap<(NodeId, IpAddr), Arc<Decision>>,
     /// Non-permitted outcomes are exact to the service.
@@ -58,6 +60,33 @@ fn protocol(value: BusinessProtocol) -> u8 {
 }
 
 impl Decisions {
+    pub fn dns_service(
+        &mut self,
+        netmap: &CompiledNetmap,
+        source: NodeId,
+    ) -> Result<Arc<meshway_configuration::netmap::DnsService>, crate::Error> {
+        self.bind(netmap);
+        if let Some(service) = self.dns.get(&source) {
+            return Ok(service.clone());
+        }
+        let service = self
+            .compiler
+            .as_ref()
+            .expect("bound compiler")
+            .dns_service(source)
+            .map_err(|_| {
+                crate::Error::Admission(meshway_policy::admission::AdmissionError::Configuration)
+            })?
+            .ok_or(crate::Error::Admission(
+                meshway_policy::admission::AdmissionError::Permit,
+            ))?;
+        if self.dns.len() >= MAX_ENTRIES {
+            self.dns.clear();
+        }
+        let service = Arc::new(service);
+        self.dns.insert(source, service.clone());
+        Ok(service)
+    }
     /// Start over when the content changed; same-content renewal keeps everything.
     pub fn bind(&mut self, netmap: &CompiledNetmap) {
         let reference = netmap.reference();
@@ -273,6 +302,7 @@ pub(crate) fn path_authorization(
     hash.update([match purpose {
         Purpose::Business => 1,
         Purpose::Diagnostic => 2,
+        Purpose::Dns => 3,
     }]);
     encode_target(&mut hash, target);
     hash.update([path.nodes.len() as u8]);

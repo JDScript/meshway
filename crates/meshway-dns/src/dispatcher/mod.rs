@@ -233,26 +233,18 @@ impl OwnerDispatcher {
     pub fn validate_scope(&self, scope: &Scope) -> Result<(), DispatchError> {
         use crate::owner::Plan;
         scope.validate_resolvers()?;
-        match Plan::of(&scope.snapshot).ok_or(DispatchError::Scope)? {
-            Plan::ViaExit { .. } => {
-                for transport in [DnsTransport::Udp, DnsTransport::Tcp] {
-                    let route = MeshResolverRoute::new(
-                        scope.snapshot.clone(),
-                        transport,
-                        scope.snapshot.expires_at(),
-                    )
-                    .map_err(|_| DispatchError::Scope)?;
-                    self.exchange
-                        .validate_mesh(&route)
-                        .map_err(|_| DispatchError::Gateway)?;
-                }
+        if let Plan::ViaExit { .. } = Plan::of(&scope.snapshot).ok_or(DispatchError::Scope)? {
+            for transport in [DnsTransport::Udp, DnsTransport::Tcp] {
+                let route = MeshResolverRoute::new(
+                    scope.snapshot.clone(),
+                    transport,
+                    scope.snapshot.expires_at(),
+                )
+                .map_err(|_| DispatchError::Scope)?;
+                self.exchange
+                    .validate_mesh(&route)
+                    .map_err(|_| DispatchError::Gateway)?;
             }
-            // A local-loopback dispatcher cannot prove authenticated ingress;
-            // served Mesh queries need the SecureNode's DNS-purpose ingress.
-            Plan::ServeExitResolver => {
-                return Err(DispatchError::Unavailable(Unavailable::MissingExitPlan));
-            }
-            _ => {}
         }
         Ok(())
     }
@@ -486,17 +478,6 @@ impl Dispatcher for OwnerDispatcher {
         deadline: Instant,
     ) -> DnsFuture<'_, Result<Answer, DispatchError>> {
         Box::pin(self.execute(query, deadline))
-    }
-
-    fn dispatch_from(
-        &self,
-        peer: std::net::SocketAddr,
-        local: std::net::SocketAddr,
-        transport: DnsTransport,
-        query: Query,
-        deadline: Instant,
-    ) -> DnsFuture<'_, Result<Answer, DispatchError>> {
-        Box::pin(self.execute_served(peer, local, transport, query, deadline))
     }
 
     fn stop(&self) -> DnsFuture<'_, ()> {

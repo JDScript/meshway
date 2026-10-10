@@ -5,11 +5,14 @@ fn frame(kind: Kind) -> Frame {
     let a = "00000000-0000-4000-8000-000000000001".parse().unwrap();
     let b = "00000000-0000-4000-8000-000000000002".parse().unwrap();
     let diagnostic = matches!(kind, Kind::ProbeRequest | Kind::ProbeReply);
+    let dns = matches!(kind, Kind::DnsRequest | Kind::DnsReply);
     let context = Context {
         network: "00000000-0000-4000-8000-000000000003".parse().unwrap(),
         grant: CircuitGrant {
             purpose: if diagnostic {
                 crate::Purpose::Diagnostic
+            } else if dns {
+                crate::Purpose::Dns
             } else {
                 crate::Purpose::Business
             },
@@ -31,9 +34,9 @@ fn frame(kind: Kind) -> Frame {
     Frame {
         context: Arc::new(context),
         kind,
-        reply: matches!(kind, Kind::Response | Kind::ProbeReply),
+        reply: matches!(kind, Kind::Response | Kind::ProbeReply | Kind::DnsReply),
         sequence: 0,
-        probe: diagnostic.then(|| ProbeMetadata {
+        probe: (diagnostic || dns).then(|| ProbeMetadata {
             measurement_id: EventId::new(a.into_uuid()).unwrap(),
             expires_at_ms: 10_000,
         }),
@@ -77,6 +80,8 @@ fn every_kind_rejects_truncation_trailing_bytes_unknown_versions_and_missing_ses
         Kind::Data,
         Kind::ProbeRequest,
         Kind::ProbeReply,
+        Kind::DnsRequest,
+        Kind::DnsReply,
     ] {
         let f = frame(kind);
         let bytes = f.encode().unwrap();
@@ -274,6 +279,7 @@ fn v6_netmap_grants_round_trip_and_bind_their_target_purpose_and_init_time() {
                     match purpose {
                         crate::Purpose::Business => crate::Purpose::Diagnostic,
                         crate::Purpose::Diagnostic => crate::Purpose::Business,
+                        crate::Purpose::Dns => crate::Purpose::Business,
                     },
                     target.clone(),
                 ),

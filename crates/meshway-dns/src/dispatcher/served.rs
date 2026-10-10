@@ -2,18 +2,13 @@
 //! Mesh sources listed in the plan, answered only from this Node's verified OS
 //! resolvers. A failed upstream is a failed query; nothing falls back.
 //!
-//! The source and path are checked with `dns_route::netmap_dns_service`. The
-//! socket only observes the inner source address; until the SecureNode
-//! delivers queries over an authenticated DNS-purpose circuit, the observed
-//! path is the service's own path, so readiness (`validate_scope`) still
-//! refuses this plan.
+//! The source and path arrive in an opaque SecureNode-authenticated request.
+//! Socket addresses never substitute for that proof. The original request's
+//! guard bounds upstream work and the later encrypted reply.
 use super::*;
 use meshway_configuration::netmap::DnsPlan;
 use meshway_model::NodeId;
-use std::{
-    collections::BTreeMap,
-    net::{IpAddr, SocketAddr},
-};
+use std::collections::BTreeMap;
 
 /// Per-source admitted queries, bounded by each service's `maxPending`.
 #[derive(Default)]
@@ -52,20 +47,22 @@ impl Served {
 }
 
 impl OwnerDispatcher {
-    pub(super) async fn execute_served(
+    pub async fn dispatch_authenticated(
         &self,
-        peer: SocketAddr,
-        local: SocketAddr,
-        transport: DnsTransport,
-        query: Query,
-        deadline: Instant,
+        request: &meshway_dataplane::secure::DnsRequest,
     ) -> Result<Answer, DispatchError> {
+        let deadline = request.deadline();
+        let query = crate::decode_query(request.bytes().map_err(|_| DispatchError::Expired)?)
+            .map_err(|_| DispatchError::Scope)?;
         if Instant::now() >= deadline {
             return Err(DispatchError::Expired);
         }
         let (work, fence, _slot) = {
             let mut state = self.state.lock().await;
             let scope = self.reconcile_state(&mut state)?;
+            if !scope.snapshot.same_netmap(request.snapshot()) {
+                return Err(DispatchError::Scope);
+            }
             let system = scope
                 .system_resolvers
                 .clone()
@@ -81,8 +78,7 @@ impl OwnerDispatcher {
             let service = services
                 .iter()
                 .find(|service| {
-                    service.source_addresses.ipv4.map(IpAddr::V4) == Some(peer.ip())
-                        && SocketAddr::new(service.address.0, 53) == local
+                    service.source == request.source() && service.path.nodes == request.path()
                 })
                 .ok_or(DispatchError::Scope)?;
             meshway_policy::dns_route::netmap_dns_service(
@@ -90,8 +86,8 @@ impl OwnerDispatcher {
                 service,
                 service.source,
                 netmap.node_id,
-                &service.path.nodes,
-                transport,
+                request.path(),
+                request.transport(),
                 reading.now_ms,
             )
             .map_err(|_| DispatchError::Scope)?;
@@ -112,6 +108,9 @@ impl OwnerDispatcher {
             };
             (work, fence, slot)
         };
-        self.upstream(work, fence).await
+        tokio::select! { biased;
+            _ = request.invalidated() => Err(DispatchError::Expired),
+            answer = self.upstream(work, fence) => answer,
+        }
     }
 }
