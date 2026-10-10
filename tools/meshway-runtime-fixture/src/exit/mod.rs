@@ -71,6 +71,26 @@ pub async fn ready(cli: &Cli, name: &str) -> Result<()> {
     write(&cli.signals.join(name), &true).await
 }
 
+/// After SIGKILL the old socket path remains until the new daemon binds it;
+/// wait until this process answers.
+async fn restarted_ipc(cli: &Cli, daemon: &mut tokio::process::Child) -> Result<()> {
+    let process = daemon.id();
+    tokio::time::timeout(crate::remaining(crate::STARTUP)?, async {
+        loop {
+            if let Ok(status) = actor::command(cli, "status").await
+                && Some(status.process_id) == process
+            {
+                return Ok(());
+            }
+            if daemon.try_wait()?.is_some() {
+                return Err("restarted exit daemon ended before IPC ready".into());
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await?
+}
+
 pub async fn run(cli: &Cli, role: Role) -> Result<()> {
     if std::env::var("MESHWAY_EXIT_FIXTURE_OWNED").as_deref() != Ok("1") {
         return Err("exit run requires an owned fixture namespace".into());
@@ -143,6 +163,8 @@ pub async fn run(cli: &Cli, role: Role) -> Result<()> {
                 wait(cli, "exit-restart-after-crash").await?;
                 daemon = actor::spawn_named_daemon(cli, role.name(), topology.controller(role))?;
                 actor::wait_ipc(cli, &mut daemon).await?;
+                // SIGKILL leaves the old socket path behind: wait for the new process.
+                restarted_ipc(cli, &mut daemon).await?;
                 crashed = true;
                 ready(cli, "exit-crash-restarted-e").await?;
             }
