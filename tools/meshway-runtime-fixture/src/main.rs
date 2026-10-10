@@ -26,8 +26,9 @@ type Result<T> = std::result::Result<T, Error>;
 const IO: Duration = Duration::from_secs(10);
 const STARTUP: Duration = Duration::from_secs(45);
 // Bounded diagnostic admission/lifecycle checks precede the packet window
-// (125s acceptance / 30s diagnostic) and actual instance-expiry/recovery sequence.
-const DEADLINE: Duration = Duration::from_secs(1200);
+// (125s acceptance / 30s diagnostic) and actual instance-expiry/recovery
+// sequence, or a netmap scenario's (up to 10-minute) Server outage.
+const DEADLINE: Duration = Duration::from_secs(1800);
 static STARTED: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
 
 fn remaining(limit: Duration) -> Result<Duration> {
@@ -72,6 +73,10 @@ struct Cli {
     /// Diagnostic traffic window only; does not establish 125-second renewal acceptance.
     #[arg(long, global = true)]
     short: bool,
+    /// One netmap lifecycle row after the shared startup and persistent traffic,
+    /// instead of the main revocation/outage/recovery sequence.
+    #[arg(long, global = true, value_enum)]
+    netmap_scenario: Option<NetmapScenario>,
     #[command(subcommand)]
     command: Command,
 }
@@ -87,6 +92,30 @@ impl Cli {
 
     fn traffic_wait(&self) -> Duration {
         self.traffic_duration() + Duration::from_secs(125)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum NetmapScenario {
+    /// Controller unreachable well inside the lease: everything keeps working.
+    Offline,
+    /// New serials (port, key, membership) reach the data plane within 5 s.
+    Revoke,
+    /// Controller unreachable past the lease: fail closed, then recover.
+    Expiry,
+    /// Daemon restarts with the Controller unreachable: cached netmap serves.
+    Restart,
+}
+
+impl NetmapScenario {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Offline => "offline",
+            Self::Revoke => "revoke",
+            Self::Expiry => "expiry",
+            Self::Restart => "restart",
+        }
     }
 }
 
@@ -192,6 +221,12 @@ async fn main() -> std::process::ExitCode {
     }
     if cli.traversal == TraversalMode::Nat && !matches!(cli.transport, CarrierMode::NativeUdp) {
         eprintln!("--traversal nat requires --transport native-udp");
+        return std::process::ExitCode::FAILURE;
+    }
+    if cli.netmap_scenario.is_some()
+        && (cli.traversal != TraversalMode::Off || cli.dns_backend != DnsBackend::Off)
+    {
+        eprintln!("--netmap-scenario requires traversal and DNS off");
         return std::process::ExitCode::FAILURE;
     }
     if cli.logging.init().is_err() {

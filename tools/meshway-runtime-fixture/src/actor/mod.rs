@@ -1,5 +1,6 @@
 mod interface_change;
 mod reconnect;
+mod scenario;
 
 use crate::{
     Cli, Error, IO, Result, STARTUP,
@@ -402,6 +403,24 @@ async fn exercise(
     signals
         .write(&format!("traffic-ready-{}", role.name()), &Signal::Ready)
         .await?;
+    if let Some(netmap_scenario) = cli.netmap_scenario {
+        let tun = scenario::run(
+            netmap_scenario,
+            scenario::Context {
+                cli,
+                role,
+                signals,
+                daemon,
+                addresses: &addresses,
+                revision,
+                traffic: &mut traffic,
+                tun,
+                tun_index,
+            },
+        )
+        .await?;
+        return scenario::down(cli, role, signals, &tun, baseline).await;
+    }
     let Signal::Revision { revision } = signals.wait("ping-icmp-revoked").await? else {
         return Err("invalid ICMP-only revocation boundary".into());
     };

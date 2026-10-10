@@ -664,6 +664,43 @@ impl Traffic {
         }
         Ok(())
     }
+    /// Both UDP families echo on their persistent sockets.
+    pub async fn udp_only(&mut self) -> Result<()> {
+        let frame = self.frame();
+        udp_exchange(&self.udp4, &frame).await?;
+        self.counts.udp4 += 1;
+        udp_exchange(&self.udp6, &frame).await?;
+        self.counts.udp6 += 1;
+        Ok(())
+    }
+
+    /// One IPv4 UDP challenge echoed within `wait`.
+    pub async fn udp_echoes(&mut self, wait: Duration) -> Result<bool> {
+        let frame = self.frame();
+        match self.udp4.send(&frame).await {
+            Ok(FRAME) => {}
+            Ok(_) => return Err("short UDP probe write".into()),
+            Err(error) if expected_block(&error) => return Ok(false),
+            Err(error) => return Err(error.into()),
+        }
+        let echoed = udp_receive(&self.udp4, &frame, wait).await?;
+        if echoed {
+            self.counts.udp4 += 1;
+        }
+        Ok(echoed)
+    }
+
+    /// A new IPv4 TCP connection to B completes within `wait`. The probe
+    /// stream is closed; persistent streams are untouched.
+    pub async fn tcp_connects(&self, wait: Duration) -> Result<bool> {
+        match tokio::time::timeout(wait, TcpStream::connect((self.destination.ipv4, TCP))).await {
+            Ok(Ok(_)) => Ok(true),
+            Ok(Err(error)) if expected_block(&error) => Ok(false),
+            Ok(Err(error)) => Err(error.into()),
+            Err(_) => Ok(false),
+        }
+    }
+
     pub fn sockets(&self) -> Result<[SocketAddr; 4]> {
         Ok([
             self.udp4.local_addr()?,

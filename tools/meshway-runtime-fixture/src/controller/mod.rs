@@ -26,6 +26,7 @@ use tokio::{net::TcpListener, sync::watch, task::JoinSet};
 
 mod exit;
 mod interface_change;
+mod scenario;
 mod streaming;
 
 pub async fn run(cli: &Cli) -> Result<()> {
@@ -159,6 +160,42 @@ async fn run_server(cli: &Cli) -> Result<()> {
         phase = "controller-offline",
         "actual listener and Server owner stopped"
     );
+    if let Some(netmap_scenario) = cli.netmap_scenario {
+        for role in Role::ALL {
+            let Signal::Observed {
+                role: claimed,
+                at_ms,
+            } = signals
+                .wait_for(
+                    &format!("scenario-down-{}", role.name()),
+                    Duration::from_secs(90),
+                )
+                .await?
+            else {
+                return Err("invalid scenario down evidence".into());
+            };
+            if claimed != role {
+                return Err("scenario down role mismatch".into());
+            }
+            #[derive(serde::Serialize)]
+            #[serde(rename_all = "camelCase")]
+            struct Report {
+                scenario: crate::NetmapScenario,
+                role: Role,
+                down_at_ms: u64,
+            }
+            tokio::fs::write(
+                cli.evidence.join(format!("report-{}.json", role.name())),
+                serde_json::to_vec_pretty(&Report {
+                    scenario: netmap_scenario,
+                    role,
+                    down_at_ms: at_ms,
+                })?,
+            )
+            .await?;
+        }
+        return Ok(());
+    }
     for role in Role::ALL {
         let report = signals
             .wait_for(&format!("report-{}", role.name()), Duration::from_secs(90))
@@ -765,6 +802,22 @@ async fn coordinate(
         "traffic",
     )
     .await?;
+    if let Some(netmap_scenario) = cli.netmap_scenario {
+        return scenario::run(
+            netmap_scenario,
+            scenario::Context {
+                cli,
+                signals: &signals,
+                client: &client,
+                network,
+                token,
+                nodes: &nodes,
+                revision,
+                availability,
+            },
+        )
+        .await;
+    }
     let original = source(&client, network, token).await?;
     let mut allowed = NetworkConfigurationInput::from(&original.configuration);
     // Isolate ICMP revocation from the later relay address change: changing a

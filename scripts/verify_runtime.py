@@ -174,7 +174,9 @@ def main():
     parser.add_argument("--report-dir", type=Path, help="new private report directory")
     parser.add_argument("--short", action="store_true", help="30-second diagnostic traffic; not acceptance")
     parser.add_argument("--only", choices=("main",), help="development only: controller and A/R/B; skips platform sidecars, never acceptance")
-    parser.add_argument("--netmap-validity", default="60s", help="explicit Server lease used by expiry conformance")
+    parser.add_argument("--netmap-validity", default=None, help="explicit Server lease; default 60s, or 1800s for the offline/restart/revoke netmap scenarios")
+    parser.add_argument("--netmap-scenario", choices=("offline", "revoke", "expiry", "restart"),
+                        help="one netmap lifecycle row after the shared startup instead of the main sequence")
     parser.add_argument("--runtime-image-manifest", type=Path, help="explicit locked node-lab OS image")
     parser.add_argument("--artifacts", type=Path, help="reuse a --build-only bin directory with matching source manifest")
     parser.add_argument("--transport", choices=("native-tcp", "native-udp", "vless", "trojan"), default="native-tcp",
@@ -192,6 +194,10 @@ def main():
     parser.add_argument("--traversal-image-manifest", type=Path,
                         help="immutable OS manifest built with dev/dns-fixture/build.py --lock-file dev/traversal-fixture/assets.lock.json")
     args = parser.parse_args()
+    if args.netmap_validity is None:
+        args.netmap_validity = "1800s" if args.netmap_scenario in ("offline", "restart", "revoke") else "60s"
+    if args.netmap_scenario and (args.traversal != "off" or args.dns_backend != "off"):
+        parser.error("--netmap-scenario requires --traversal off --dns-backend off")
     if args.only and args.traversal == "exit":
         parser.error("--only main is the A/R/B runtime flow, not the exit topology")
     if args.traversal == "exit" and (args.dns_backend != "off" or args.transport != "native-udp"):
@@ -398,6 +404,8 @@ def main():
                 command.append("--traversal-fallback")
             if args.reported_endpoints:
                 command.append("--reported-endpoints")
+            if args.netmap_scenario:
+                command.extend(["--netmap-scenario", args.netmap_scenario])
         command.extend(arguments)
         identifier = run(*command, capture=True).strip()
         containers[role] = identifier
@@ -410,7 +418,7 @@ def main():
         identifier = containers[role]
         with (report / f"{role}.log").open("w") as log:
             result = subprocess.run(["docker", "start", "-a", identifier], cwd=ROOT, text=True,
-                                    stdout=log, stderr=subprocess.STDOUT, timeout=930, close_fds=True)
+                                    stdout=log, stderr=subprocess.STDOUT, timeout=1800 if args.netmap_scenario else 930, close_fds=True)
         state = json.loads(run("docker", "inspect", identifier, capture=True))[0]["State"]
         return {"attachExit": result.returncode, "exitCode": state["ExitCode"], "oomKilled": state["OOMKilled"], "running": state["Running"]}
 
@@ -749,7 +757,7 @@ def main():
                                     f"{item['local']}/{item['prefixlen']}", "dev", "eth0", capture=True)
                     (report / f"interface-{stage}-addresses.json").write_text(run("docker", "exec", containers["r"], "ip", "-json", "address", capture=True))
                     write_json(report / f"signals/interface-{stage}.json", {"kind": "ready"})
-            interface = executor.submit(interface_change) if args.reported_endpoints else None
+            interface = executor.submit(interface_change) if args.reported_endpoints and not args.netmap_scenario else None
             def bootstrap_check():
                 deadline = time.monotonic() + 30
                 while not (report / "signals/enroll.json").exists():
@@ -785,7 +793,7 @@ def main():
                 if {item["NetworkID"] for item in attached} != {actor_networks.get(role, network)}:
                     raise RuntimeError("Actor has an unexpected network attachment/bypass")
                 manifest["resources"].setdefault("actorInspections", {})[role] = inspected_actor
-        proof_names = ["ping-shared-user.json", "ping-permission.json"]
+        proof_names = ["ping-shared-user.json"] if args.netmap_scenario else ["ping-shared-user.json", "ping-permission.json"]
         if args.traversal == "nat":
             proof_names.extend(["ping-nat-channel-proofs.json", "traversal-channel-continuity.json"])
         manifest["pingProofs"] = {}

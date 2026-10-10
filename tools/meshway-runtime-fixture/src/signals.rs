@@ -51,6 +51,17 @@ pub enum Signal {
         revision: Revision,
     },
     Ready,
+    /// A netmap scenario step: the configuration revision it produced and
+    /// when the Controller committed it.
+    Step {
+        revision: Revision,
+        at_ms: u64,
+    },
+    /// When an actor observed a scenario step's effect.
+    Observed {
+        role: Role,
+        at_ms: u64,
+    },
     PingRun {
         run: Box<crate::ping::Run>,
     },

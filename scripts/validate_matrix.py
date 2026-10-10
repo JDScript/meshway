@@ -30,6 +30,10 @@ ROWS = {
     "nat+fallback/off": ("runtime", ("--transport", "native-udp", "--traversal", "nat", "--traversal-fallback", "--dns-backend", "off")),
     "nat/resolved": ("runtime", ("--transport", "native-udp", "--traversal", "nat", "--dns-backend", "resolved")),
     "exit/off": ("runtime", ("--transport", "native-udp", "--traversal", "exit", "--dns-backend", "off")),
+    "netmap/offline": ("runtime", ("--transport", "native-udp", "--dns-backend", "off", "--netmap-scenario", "offline")),
+    "netmap/revoke": ("runtime", ("--transport", "native-tcp", "--dns-backend", "off", "--netmap-scenario", "revoke")),
+    "netmap/expiry": ("runtime", ("--transport", "native-udp", "--dns-backend", "off", "--netmap-scenario", "expiry")),
+    "netmap/restart": ("runtime", ("--transport", "native-tcp", "--dns-backend", "off", "--netmap-scenario", "restart")),
 }
 PENDING_ROWS = {"exit/off": "explicit-only: runtime State sampling withdrawal blocks acceptance; two full passes required"}
 DEFAULT_ROWS = tuple(name for name in ROWS if name not in PENDING_ROWS)
