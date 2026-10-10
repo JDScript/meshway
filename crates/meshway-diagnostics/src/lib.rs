@@ -297,6 +297,26 @@ impl Owner {
             .min()
     }
 
+    /// First-hop acquisition interests of current, executable diagnostics.
+    /// These are hints to the same Manager that owns business adjacency; the
+    /// Manager and SecureNode still enforce their own current netmap guards.
+    pub fn adjacency_interests(&self) -> impl Iterator<Item = NodeId> + '_ {
+        self.tasks
+            .values()
+            .filter(|task| {
+                current(task)
+                    && !task.paused
+                    && !task.setup_failed
+                    && task.supported
+                    && task
+                        .task
+                        .metrics
+                        .iter()
+                        .any(|metric| matches!(metric, MetricKind::Rtt | MetricKind::ProbeLoss))
+            })
+            .filter_map(|task| task.path.get(1).copied())
+    }
+
     /// At most one action per task. The host must bound its own sending queue;
     /// `budget` reserves that capacity before any measurement is created.
     pub fn actions(

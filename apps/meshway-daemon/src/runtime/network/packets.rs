@@ -381,10 +381,8 @@ impl Packets {
                 continue;
             }
             let hint = secure.incoming_hint(&item.bytes).ok();
-            let waiting = hint.as_ref().is_some_and(|hint| {
-                let Some(position) = hint.path.iter().position(|node| *node == local) else {
-                    return false;
-                };
+            let waiting = hint.as_ref().and_then(|hint| {
+                let position = hint.path.iter().position(|node| *node == local)?;
                 let previous = if item.carrier.dialer == local {
                     item.carrier.listener
                 } else {
@@ -396,9 +394,15 @@ impl Packets {
                     } else {
                         position.checked_sub(1).and_then(|p| hint.path.get(p))
                     };
-                next.is_some_and(|node| !carriers.contains_key(node))
+                next.copied().filter(|node| !carriers.contains_key(node))
             });
-            if waiting {
+            if let Some(peer) = waiting {
+                // The authenticated incoming channel may need another allowed
+                // adjacency. This is only an acquisition hint: Manager checks
+                // that edge, and SecureNode still authenticates the full frame
+                // and original path before forwarding any payload.
+                use meshway_connectivity::AdjacencyInterest;
+                manager.interest().interest(peer);
                 if self
                     .carrier_wait_logged
                     .is_none_or(|at| at.elapsed() >= Duration::from_secs(1))

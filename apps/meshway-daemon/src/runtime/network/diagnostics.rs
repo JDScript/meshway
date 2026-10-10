@@ -405,9 +405,14 @@ impl Diagnostics {
             .retain(|_, local| !local.request.cancellation.is_cancelled());
         if self.locals.len() != before {
             self.dirty = true;
+            // Remove cancelled local tasks from the shared executor before
+            // producing outputs: disappearance from the IPC map must never
+            // reclassify a local result as a Server-owned task.
+            if let Some(snapshot) = self.synchronized.clone() {
+                self.synchronize(&snapshot);
+            }
         }
-        // Local disconnect stops delivery immediately. Pause the shared task
-        // while Control settles cancellation; its returned shared task resumes.
+        // Local disconnect stops delivery immediately.
         self.apply_pauses();
         for local in self
             .locals
@@ -452,6 +457,11 @@ impl Diagnostics {
         }
         self.apply_pauses();
         if let Some(carriers) = carriers {
+            use meshway_connectivity::AdjacencyInterest;
+            let interest = manager.interest();
+            for peer in self.owner.adjacency_interests() {
+                interest.interest(peer);
+            }
             for action in self.owner.actions(
                 secure,
                 carriers,
