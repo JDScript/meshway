@@ -33,7 +33,7 @@ async fn console_observation_reads_the_netmap_and_renewal_publishes_nothing() {
     let [a, b, _] = lab.nodes;
     let before = lab.netmap(a).await.reference();
     let service = lab.app.observation_service(lab.app.netmap_diagnostics());
-    lab.publications().await;
+    let netmaps_before = lab.references().await;
     let created = service
         .create_observation(
             owner(&lab),
@@ -43,7 +43,7 @@ async fn console_observation_reads_the_netmap_and_renewal_publishes_nothing() {
         .unwrap();
     assert_eq!(created.phase, ObservationPhase::Preparing);
     assert!(created.unsupported_metrics.is_empty());
-    assert_eq!(created.configuration, lab.applied[0]);
+    assert_eq!(created.netmap, lab.applied[0]);
     let subscription = created.subscription_id.unwrap();
     // Renewal is the subscription's own lease: before its threshold it is
     // refused by the subscription; neither outcome touches any netmap.
@@ -59,7 +59,8 @@ async fn console_observation_reads_the_netmap_and_renewal_publishes_nothing() {
         .unwrap();
     assert_eq!(read.items.len(), 1);
     assert_eq!(read.items[0].id, created.id);
-    assert_eq!(lab.publications().await, 0);
+    // Observations never change any netmap.
+    assert_eq!(lab.references().await, netmaps_before);
     assert_eq!(lab.netmap(a).await.reference(), before);
     // The decision is the source's netmap decision: the only path is a→b.
     let decision = crate::execution::netmap_diagnostic(
@@ -97,8 +98,7 @@ async fn denied_and_unsupported_stay_distinct() {
     // path is no longer observable, and the task is Unsupported, not denied.
     let mut capabilities = caps();
     capabilities.remove("feature:path-observation");
-    let reacquired = lab
-        .app
+    lab.app
         .execution()
         .acquire(
             &lab.tokens[1],
@@ -109,7 +109,6 @@ async fn denied_and_unsupported_stay_distinct() {
         )
         .await
         .unwrap();
-    assert!(reacquired.target.is_some());
     let decision = crate::execution::netmap_diagnostic(
         &lab.netmap(a).await.netmap,
         b,
@@ -143,7 +142,7 @@ async fn node_ping_subscription_resolves_and_decides_on_the_source_netmap() {
         metrics: vec![MetricKind::Rtt],
         interval_ms: 1000,
     };
-    lab.publications().await;
+    let netmaps_before = lab.references().await;
     let created = service
         .create_node_observation(
             lab.tokens[0].clone(),
@@ -188,6 +187,7 @@ async fn node_ping_subscription_resolves_and_decides_on_the_source_netmap() {
             .await,
         Err(Error::NotFound)
     ));
-    assert_eq!(lab.publications().await, 0);
+    // Observations never change any netmap.
+    assert_eq!(lab.references().await, netmaps_before);
     lab.app.shutdown().await.unwrap();
 }

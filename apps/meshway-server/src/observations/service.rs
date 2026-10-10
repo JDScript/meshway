@@ -948,7 +948,7 @@ mod tests {
     fn task(n: u128, now: DateTime<Utc>, windows: usize) -> StoredTask {
         let configuration = NetmapRef {
             revision: Revision::MIN,
-            execution_publication: id(100 + n),
+            serial: meshway_model::Version::MIN,
             digest: Digest::from_bytes([7; 32]),
         };
         StoredTask {
@@ -964,7 +964,7 @@ mod tests {
                 selection: ObservationPath::Auto,
                 path: None,
                 path_segment: None,
-                configuration,
+                netmap: configuration,
                 instance_id: id(30 + n),
                 metrics: vec![meshway_model::observations::MetricKind::Rtt],
                 interval_ms: 1000,
@@ -1014,7 +1014,7 @@ mod tests {
     #[test]
     fn rollback_journals_only_changed_tasks_and_preserves_large_unrelated_window_index() {
         let now = Utc::now();
-        let mut runtime = Runtime::new().unwrap();
+        let mut runtime = Runtime::new(std::sync::Arc::new(crate::state::facts::NoNetmaps)).unwrap();
         runtime.observations.tasks.insert(id(1), task(1, now, 1));
         runtime.observations.tasks.insert(id(2), task(2, now, 4096));
         let runtime = Mutex::new(runtime);
@@ -1050,12 +1050,12 @@ mod tests {
                     instance_id: target.instance_id,
                     instance_generation: meshway_model::Version::MIN,
                     lease_expires_at: now + chrono::Duration::minutes(2),
-                    execution: Some(target.configuration.clone()),
-                    configurations: vec![target.configuration.clone()],
+                    execution: Some(target.netmap),
+                    configurations: vec![target.netmap],
                     contexts: vec![],
                     mesh_addresses: Default::default(),
                 },
-                configuration: target.configuration.clone(),
+                netmap: target.netmap,
                 paths: vec![],
                 node_expires_at: now + chrono::Duration::minutes(2),
                 principal: super::super::SubscriberPrincipal::UserSession {
@@ -1123,7 +1123,7 @@ mod tests {
     #[test]
     fn rollback_restores_expired_removals_and_removes_only_new_insertions() {
         let now = Utc::now();
-        let mut runtime = Runtime::new().unwrap();
+        let mut runtime = Runtime::new(std::sync::Arc::new(crate::state::facts::NoNetmaps)).unwrap();
         runtime
             .observations
             .tasks
@@ -1310,7 +1310,7 @@ mod tests {
         const QUEUE_CAPACITY: usize = 4;
         settings.database_queue_capacity = QUEUE_CAPACITY;
         let app = crate::App::open(settings).await.unwrap();
-        let service = app.observation_service(app.execution());
+        let service = app.observation_service(app.netmap_diagnostics());
         let handle = service.handle.clone();
         let blocker_handle = handle.clone();
         let (entered, started) = tokio::sync::oneshot::channel();

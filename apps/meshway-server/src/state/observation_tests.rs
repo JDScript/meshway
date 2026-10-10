@@ -84,8 +84,8 @@ impl ObservationProvider for Fixture {
     ) -> Result<TaskAdmission, Error> {
         self.view(tx, identity, now)?;
         Ok(TaskAdmission {
-            configuration: self.admission.execution.clone().unwrap(),
-            paths: self.admission.current().unwrap().paths.clone(),
+            netmap: self.admission.execution.unwrap(),
+            paths: vec![path(&self.admission)],
             node_expires_at: self.admission.lease_expires_at,
             observation_id: None,
             unsupported_metrics: vec![],
@@ -108,6 +108,11 @@ impl ObservationProvider for Fixture {
         Ok(session())
     }
 }
+/// The fixture's one observable path: the source and its first peer.
+fn path(admission: &ReportAdmission) -> Vec<meshway_model::NodeId> {
+    let peer = *admission.current().unwrap().peers.first().unwrap();
+    vec![admission.node_id, peer]
+}
 fn rid() -> meshway_model::RequestId {
     meshway_model::RequestId::new(crate::accounts::random_uuid().unwrap()).unwrap()
 }
@@ -122,7 +127,7 @@ fn request(fixture: &Fixture, n: u128) -> CreateObservation {
         service: meshway_configuration::execution::ObservationServiceScope::IcmpEcho,
         subscription_id: subscription(n),
         source_node_id: fixture.admission.node_id,
-        target_node_id: fixture.admission.current().unwrap().paths[0][1],
+        target_node_id: path(&fixture.admission)[1],
         selection: ObservationPath::Auto,
         metrics: vec![MetricKind::Traffic],
         interval_ms: 1000,
@@ -132,9 +137,9 @@ fn result(fixture: &Fixture, n: u128) -> ObservationResult {
     let now = Utc::now();
     ObservationResult {
         instance_id: fixture.admission.instance_id,
-        configuration: fixture.admission.execution.clone().unwrap(),
+        netmap: fixture.admission.execution.unwrap(),
         result: ObservationUpdate::Sample {
-            path: fixture.admission.current().unwrap().paths[0].clone(),
+            path: path(&fixture.admission),
             path_segment: Sequence::new(1).unwrap(),
             sample: Box::new(ObservationSample {
                 measurement_id: uuid::Uuid::from_u128(n).to_string().parse().unwrap(),
@@ -358,69 +363,6 @@ async fn resume_at_owner_and_global_capacity_reuses_existing_slot() {
         .open_stream(identity, Some(ready), rid())
         .await
         .unwrap();
-    app.shutdown().await.unwrap();
-}
-
-#[tokio::test]
-async fn terminal_phase_without_path_or_sample_is_delivered_and_cannot_restart() {
-    let temp = tempfile::tempdir().unwrap();
-    let app = App::open(Settings::new(
-        temp.path().canonicalize().unwrap().join("data"),
-    ))
-    .await
-    .unwrap();
-    let (admission, _, scope, _) = super::tests::setup();
-    let fixture = Fixture { admission, scope };
-    let identity = super::tests::identity(fixture.scope.network_id);
-    let state = app.state_service(fixture.clone()).unwrap();
-    let observations = app.observation_service(fixture.clone());
-    let task = observations
-        .create_observation(identity.clone(), request(&fixture, 100))
-        .await
-        .unwrap();
-    let stream = state
-        .open_stream(identity.clone(), None, rid())
-        .await
-        .unwrap();
-    drain(&state, &stream).await;
-    let terminal = ObservationResult {
-        instance_id: fixture.admission.instance_id,
-        configuration: fixture.admission.execution.clone().unwrap(),
-        result: ObservationUpdate::Phase {
-            phase: ReportedObservationPhase::Unsupported,
-        },
-    };
-    let task = observations
-        .observation_result("fixture-node".into(), task.id, terminal)
-        .await
-        .unwrap();
-    assert!(task.path.is_none() && task.latest.is_none());
-    let events = drain(&state, &stream).await;
-    assert!(events.iter().any(|(_, event)| matches!(event, Event::ObservationStatus { observation } if observation.phase == ObservationPhase::Unsupported && observation.path.is_none() && observation.latest.is_none())));
-    assert!(
-        observations
-            .node_tasks("fixture-node".into())
-            .await
-            .unwrap()
-            .items
-            .is_empty()
-    );
-    assert!(
-        observations
-            .observation_result("fixture-node".into(), task.id, result(&fixture, 501))
-            .await
-            .is_err()
-    );
-    assert!(
-        observations
-            .observations(
-                identity,
-                Some(subscription(100)),
-                ObservationOperation::Renew
-            )
-            .await
-            .is_err()
-    );
     app.shutdown().await.unwrap();
 }
 

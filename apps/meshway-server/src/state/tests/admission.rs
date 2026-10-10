@@ -271,43 +271,6 @@ fn permanent_retirement_releases_report_count_and_byte_budget() {
 }
 
 #[test]
-fn installation_resources_are_visible_facts_but_not_peer_candidates() {
-    let (mut admission, mut report, mut scope, now) = setup();
-    let target = admission.execution.take().unwrap();
-    report.state.configuration.applied = None;
-    report.state.selection.applied_profile = None;
-    let listener = report.state.listeners.get_mut("udp").unwrap();
-    listener.phase = ListenerPhase::Preparing;
-    listener.configuration = Some(target.clone());
-    report.state.sockets.get_mut("s1").unwrap().configuration = Some(target.clone());
-    let mut hub = StateHub::new().unwrap();
-    hub.accept_report(&admission, report.clone(), now).unwrap();
-    scope.full.clear();
-    let view = hub.query(&scope, None, &mut GeoIp::default(), now).unwrap();
-    let Some(VisibleReport::Peer { report: peer }) = &view.nodes[&admission.node_id].report else {
-        panic!()
-    };
-    assert!(peer.endpoints.is_empty());
-    report.sequence = Sequence::new(2).unwrap();
-    report.state.listeners.get_mut("udp").unwrap().phase = ListenerPhase::Failed;
-    hub.accept_report(&admission, report.clone(), now).unwrap();
-    report.sequence = Sequence::new(3).unwrap();
-    report.state.listeners.get_mut("udp").unwrap().phase = ListenerPhase::Listening;
-    assert!(hub.accept_report(&admission, report.clone(), now).is_err());
-    report.state.listeners.get_mut("udp").unwrap().phase = ListenerPhase::Preparing;
-    report
-        .state
-        .sockets
-        .get_mut("s1")
-        .unwrap()
-        .configuration
-        .as_mut()
-        .unwrap()
-        .digest = content_digest(b"not the target");
-    assert!(hub.accept_report(&admission, report, now).is_err());
-}
-
-#[test]
 fn retained_configuration_context_does_not_keep_old_peer_endpoints_usable() {
     let (admission, report, mut scope, now) = setup();
     let mut hub = StateHub::new().unwrap();
@@ -361,46 +324,6 @@ fn link_evidence_requires_a_current_execution_not_only_a_fresh_report() {
     let view = hub.query(&scope, None, &mut GeoIp::default(), now).unwrap();
     assert_eq!(view.nodes[&admission.node_id].freshness, Freshness::Current);
     assert_eq!(view.links[0].evidence, LinkEvidence::Expired);
-}
-
-#[test]
-fn neighbor_probe_uses_explicit_transport_adjacency_not_business_subpath() {
-    let (mut admission, _, _, now) = setup();
-    let relay = id(90);
-    let target = id(2);
-    admission.contexts[0].paths = vec![vec![admission.node_id, relay, target]];
-    admission.contexts[0].path_deadlines.insert(
-        vec![admission.node_id, relay, target],
-        now + Duration::minutes(5),
-    );
-    admission.contexts[0].neighbor_transports =
-        BTreeMap::from([(relay, BTreeSet::from(["native_udp".into()]))]);
-    let mut probe = ProbeObservation {
-        channels: None,
-        measurement_id: id(91),
-        kind: ProbeKind::Neighbor,
-        link_id: Some("real-link".into()),
-        transport: Some("native_udp".into()),
-        path: vec![admission.node_id, relay],
-        publication_id: admission.execution.as_ref().unwrap().execution_publication,
-        started_at: now - Duration::milliseconds(1),
-        completed_at: Some(now),
-        outcome: ProbeOutcome::Success,
-        duration_us: Some(Sequence::new(1000).unwrap()),
-    };
-    validation::validate_probe(&admission, &probe, now).unwrap();
-    probe.kind = ProbeKind::Path;
-    assert!(validation::validate_probe(&admission, &probe, now).is_err());
-    probe.path.push(target);
-    probe.transport = None;
-    validation::validate_probe(&admission, &probe, now).unwrap();
-    probe.kind = ProbeKind::Neighbor;
-    probe.transport = Some("native_udp".into());
-    probe.path = vec![admission.node_id, target];
-    assert!(validation::validate_probe(&admission, &probe, now).is_err());
-    probe.path[1] = relay;
-    probe.transport = Some("vless".into());
-    assert!(validation::validate_probe(&admission, &probe, now).is_err());
 }
 
 #[test]

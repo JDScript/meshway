@@ -1,5 +1,4 @@
 use super::*;
-use meshway_configuration::ConfigurationOperation;
 use meshway_model::{MembershipRole, RequestId, Revision};
 use meshway_protocol::{
     CreateNetworkRequest, NetworkNameRules, NetworkResponse, configuration::*, history::*,

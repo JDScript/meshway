@@ -6,7 +6,7 @@ use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use ed25519_dalek::{Signer, SigningKey};
 use meshway_model::{state::*, *};
 use meshway_protocol::{
-    configuration::*, enrollment::*, events::StreamEvent, execution::*, live::*, node::*, state::*,
+    configuration::*, enrollment::*, events::StreamEvent, execution::*, node::*,
 };
 use meshway_server::execution::proof;
 use sha2::{Digest as _, Sha256};
@@ -207,33 +207,6 @@ impl Events {
         }
     }
 }
-fn report(lease: &InstanceLease, sequence: u64) -> StateReport {
-    StateReport {
-        instance_id: lease.instance_id,
-        sequence: Sequence::new(sequence).unwrap(),
-        observed_at: chrono::Utc::now(),
-        state: NodeState {
-            exit_capability: None,
-            system: SystemState {
-                hostname: "reported-host".into(),
-                os: "linux".into(),
-                arch: "aarch64".into(),
-                agent_version: "test-source".into(),
-            },
-            capabilities: BTreeMap::new(),
-            configuration: ConfigurationState::default(),
-            listeners: BTreeMap::new(),
-            sockets: BTreeMap::new(),
-            links: BTreeMap::new(),
-            paths: BTreeMap::new(),
-            selection: SelectionState::default(),
-            probes: vec![],
-            problems: vec![],
-        },
-    }
-}
-
-mod execution;
 
 mod reports;
 

@@ -1,5 +1,6 @@
-//! One revision's immutable application denominator: the netmaps current
-//! after the apply. A later serial never turns into this revision's result.
+//! One revision's immutable application denominator: the Nodes whose netmap
+//! the apply produced. Each Node's target is its current netmap of this
+//! revision; a later revision's serial never turns into this result.
 use crate::error::Error;
 use crate::store::execution::progress as store;
 use chrono::{DateTime, Utc};
@@ -33,6 +34,12 @@ pub(crate) fn read(
         if target.revision != revision {
             return Err(Error::decode("configuration_versions.execution_targets"));
         }
+        // Inventory changes (keys, capabilities, profile selection) give a
+        // Node a new serial of the same revision; progress follows it.
+        let target = match crate::store::netmap::current(tx, network, node)? {
+            Some(current) if current.current.revision == revision => current.current,
+            _ => target,
+        };
         let receipt = store::latest_receipt(tx, network, node, &target)?;
         let (phase, instance_id, attempt, sequence, received_at) = match receipt {
             None => (ApplicationPhase::Pending, None, None, None, None),

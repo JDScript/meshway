@@ -249,7 +249,8 @@ impl Server {
             },
         }
     }
-    pub async fn target(&self, node: &Node) -> NodeConfigurationResponse {
+    /// Renew the instance and read the Node's current netmap through `sync`.
+    pub async fn target(&self, node: &Node) -> meshway_configuration::netmap::CompiledNetmap {
         let _: InstanceLease = json(
             self.post(
                 "/agent-api/v1/instances/renew",
@@ -259,18 +260,22 @@ impl Server {
             200,
         )
         .await;
-        json(
+        let response: meshway_protocol::SyncResponse = json(
             self.post(
-                "/agent-api/v1/configuration/query",
+                "/agent-api/v1/sync",
                 node.token.expose(),
-                &NodeConfigurationRequest {
-                    instance: node.instance.clone(),
-                    base: None,
+                &meshway_protocol::SyncRequest {
+                    netmap: None,
+                    state: None,
                 },
             ),
             200,
         )
-        .await
+        .await;
+        match response.netmap {
+            meshway_protocol::SyncNetmap::Full { netmap } => *netmap,
+            _ => panic!("a sync without a base returns the full netmap"),
+        }
     }
     pub async fn configure(
         &self,
@@ -428,7 +433,7 @@ pub fn assert_pre_expiry_budget(task: &meshway_protocol::ObservationTask) {
 }
 
 /// Revocation is asynchronous. Bound convergence by the subscription lease,
-/// and inspect the actual projection instead of guessing a scheduler delay.
+/// and inspect the Node's actual task list instead of guessing a delay.
 pub async fn wait_no_diagnostics(server: &Server, node: &Node) {
     tokio::time::timeout(
         std::time::Duration::from_secs(
@@ -436,10 +441,9 @@ pub async fn wait_no_diagnostics(server: &Server, node: &Node) {
         ),
         async {
             loop {
-                if super::slice(server.target(node).await)
-                    .diagnostics
-                    .is_empty()
-                {
+                let tasks: ObservationList =
+                    json(server.get("/agent-api/v1/tasks", node.token.expose()), 200).await;
+                if tasks.items.is_empty() {
                     break;
                 }
                 tokio::task::yield_now().await;
@@ -450,39 +454,3 @@ pub async fn wait_no_diagnostics(server: &Server, node: &Node) {
     .expect("revocation projection before the original subscription lease");
 }
 
-pub struct Events {
-    response: reqwest::Response,
-    pending: Vec<u8>,
-}
-impl Events {
-    pub async fn open(server: &Server, network: NetworkId, token: &str) -> Self {
-        let response = server
-            .get(&format!("/api/v1/networks/{network}/events"), token)
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(response.status(), 200);
-        Self {
-            response,
-            pending: vec![],
-        }
-    }
-    pub async fn next(&mut self) -> UserEvent {
-        tokio::time::timeout(std::time::Duration::from_secs(5), async {
-            loop {
-                if let Some(end) = self.pending.windows(2).position(|pair| pair == b"\n\n") {
-                    let bytes: Vec<_> = self.pending.drain(..end + 2).collect();
-                    let text = String::from_utf8(bytes).unwrap();
-                    if let Some(data) = text.lines().find_map(|line| line.strip_prefix("data: ")) {
-                        return serde_json::from_str(data).unwrap();
-                    }
-                } else {
-                    self.pending
-                        .extend(self.response.chunk().await.unwrap().expect("live stream"));
-                }
-            }
-        })
-        .await
-        .expect("SSE event deadline")
-    }
-}

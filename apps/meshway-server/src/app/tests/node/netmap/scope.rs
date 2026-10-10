@@ -11,7 +11,6 @@ async fn state_visibility_is_the_netmap_projection_without_any_demand() {
     let lab = lab(false).await;
     let [a, b, c] = lab.nodes;
     let execution = lab.app.execution();
-    let netmaps = lab.netmaps.clone();
     let tokens = lab.tokens.clone();
     let owner = crate::accounts::token_digest(&lab.owner).unwrap();
     let network = lab.network;
@@ -25,7 +24,7 @@ async fn state_visibility_is_the_netmap_projection_without_any_demand() {
             };
             let scope = |identity: &ReadIdentity| {
                 execution
-                    .netmap_state_scope_in_transaction(tx, &*netmaps, identity, now)
+                    .state_scope_in_transaction(tx, identity, now)
                     .unwrap()
             };
             let of_a = scope(&node(0));
@@ -43,15 +42,6 @@ async fn state_visibility_is_the_netmap_projection_without_any_demand() {
             assert_eq!(scope(&node(1)).visible, BTreeSet::from([a, b]));
             assert_eq!(scope(&node(2)).visible, BTreeSet::from([c]));
             assert_eq!(scope(&node(2)).endpoint_resources, Some(BTreeMap::new()));
-            // The demand-derived scope of the previous chain shows nothing of
-            // b without a business demand; the netmap scope does not depend on it.
-            assert_eq!(
-                execution
-                    .state_scope_in_transaction(tx, &node(0), now)
-                    .unwrap()
-                    .visible,
-                BTreeSet::from([a])
-            );
             let manager = scope(&ReadIdentity::UserSession {
                 digest: owner,
                 network,

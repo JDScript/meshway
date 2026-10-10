@@ -8,12 +8,13 @@ async fn state_reports_record_facts_and_never_compile_or_change_netmaps() {
     let lab = lab(false).await;
     let [a, b, c] = lab.nodes;
     let before = [lab.netmap(a).await, lab.netmap(b).await];
-    lab.publications().await;
+    let netmaps_before = lab.references().await;
     for sequence in 1..=5 {
         let address = format!("10.1.0.{sequence}:23456");
         lab.report_endpoints(1, sequence, &[address.as_str()]).await;
     }
-    assert_eq!(lab.publications().await, 0);
+    // Facts and observations never change any netmap.
+    assert_eq!(lab.references().await, netmaps_before);
     assert_eq!(lab.netmap(a).await.reference(), before[0].reference());
     assert_eq!(lab.netmap(b).await.reference(), before[1].reference());
     let facts = lab.app.peer_facts();
@@ -178,7 +179,7 @@ async fn exit_readiness_is_only_a_fact() {
     let [a, b, _] = lab.nodes;
     let before = lab.netmap(a).await;
     let role = lab.netmap(b).await.netmap.exit_role.clone().unwrap();
-    lab.publications().await;
+    let netmaps_before = lab.references().await;
     lab.report_exit(1, 1, ExitStatus::Ready).await;
     let facts = lab.app.peer_facts();
     let ready = facts.peer_facts(&before, None, None).unwrap().unwrap();
@@ -194,7 +195,8 @@ async fn exit_readiness_is_only_a_fact() {
         probing.updated[&b].exit.as_ref().unwrap().status,
         ExitStatus::Probing
     );
-    assert_eq!(lab.publications().await, 0);
+    // Facts and observations never change any netmap.
+    assert_eq!(lab.references().await, netmaps_before);
     assert_eq!(lab.netmap(a).await.reference(), before.reference());
     lab.app.shutdown().await.unwrap();
 }

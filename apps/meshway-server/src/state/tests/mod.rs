@@ -1,8 +1,6 @@
 use super::*;
-use crate::observations::{Observations, TaskAdmission};
 use crate::resources::content_digest;
-use meshway_model::{PublicationId, state::*};
-use meshway_protocol::observations::*;
+use meshway_model::state::*;
 use std::net::IpAddr;
 
 fn id<T: std::str::FromStr>(n: u128) -> T
@@ -15,9 +13,9 @@ pub(super) fn setup() -> (ReportAdmission, StateReport, VisibilityScope, DateTim
     let now = Utc::now();
     let node = id(1);
     let peer = id(2);
-    let reference = ConfigurationRef {
+    let reference = NetmapRef {
         revision: Revision::MIN,
-        execution_publication: id::<PublicationId>(3),
+        serial: meshway_model::Version::MIN,
         digest: content_digest(b"node configuration"),
     };
     let resource = ResourceRef::Listener { key: "udp".into() };
@@ -27,11 +25,10 @@ pub(super) fn setup() -> (ReportAdmission, StateReport, VisibilityScope, DateTim
         instance_id: id(5),
         instance_generation: Version::MIN,
         lease_expires_at: now + Duration::minutes(5),
-        execution: Some(reference.clone()),
-        configurations: vec![reference.clone()],
+        execution: Some(reference),
+        configurations: vec![reference],
         contexts: vec![ConfigurationAdmission {
-            path_deadlines: BTreeMap::from([(vec![node, peer], now + Duration::minutes(5))]),
-            configuration: reference.clone(),
+            configuration: reference,
             installation_allowed: true,
             resources: BTreeMap::from([(
                 resource.clone(),
@@ -45,13 +42,7 @@ pub(super) fn setup() -> (ReportAdmission, StateReport, VisibilityScope, DateTim
                 },
             )]),
             peers: BTreeSet::from([peer]),
-            paths: vec![vec![node, peer]],
             neighbor_transports: BTreeMap::from([(peer, BTreeSet::from(["native_udp".into()]))]),
-            path_transports: BTreeMap::from([(
-                vec![node, peer],
-                BTreeSet::from(["native_udp".into()]),
-            )]),
-            diagnostic_transports: BTreeMap::new(),
             mesh_address_pools: meshway_configuration::AddressPools {
                 ipv4: vec!["100.64.0.0/10".into()],
                 ipv6: vec![],
@@ -74,8 +65,8 @@ pub(super) fn setup() -> (ReportAdmission, StateReport, VisibilityScope, DateTim
             },
             capabilities: BTreeMap::new(),
             configuration: ConfigurationState {
-                saved: Some(reference.clone()),
-                applied: Some(reference.clone()),
+                saved: Some(reference),
+                applied: Some(reference),
                 progress: None,
             },
             listeners: BTreeMap::from([(
@@ -85,7 +76,7 @@ pub(super) fn setup() -> (ReportAdmission, StateReport, VisibilityScope, DateTim
                     socket_ids: vec!["s1".into()],
                     loaded_certificate_sha256: None,
                     problem: None,
-                    configuration: None,
+                    netmap: None,
                 },
             )]),
             sockets: BTreeMap::from([(
@@ -93,7 +84,7 @@ pub(super) fn setup() -> (ReportAdmission, StateReport, VisibilityScope, DateTim
                 SocketState {
                     local_endpoints: None,
                     resource,
-                    configuration: None,
+                    netmap: None,
                     generation: Sequence::new(1).unwrap(),
                     network: SocketNetwork::Udp,
                     bound_address: "0.0.0.0:9999".parse().unwrap(),
@@ -133,7 +124,7 @@ pub(super) fn setup() -> (ReportAdmission, StateReport, VisibilityScope, DateTim
             CurrentNode {
                 instance_id: Some(admission.instance_id),
                 instance_generation: Some(admission.instance_generation),
-                execution: Some(reference.clone()),
+                execution: Some(reference),
                 configurations: vec![reference],
                 revoked: false,
                 lease_expires_at: Some(admission.lease_expires_at),
@@ -152,4 +143,3 @@ pub(super) fn identity(network: NetworkId) -> service::ReadIdentity {
 
 mod admission;
 
-mod observations;

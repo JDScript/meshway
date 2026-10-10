@@ -1,59 +1,16 @@
 //! Netmap chain on a real App: State reports, visibility, UDP coordination and
-//! observations read stored netmaps and never compile or publish. The netmap
-//! store is not part of this package; `StoreNetmaps` compiles the real stored
-//! configuration and inventory with the production netmap compiler and keeps
-//! serials across calls exactly as a store retaining previous content would.
+//! observations read the stored netmaps and never compile anything.
 use super::*;
 use crate::state::facts::NetmapReader;
 use meshway_configuration::netmap::CompiledNetmap;
 use meshway_model::state::*;
-use meshway_policy::compile::netmap::{NetmapInput, PreviousNetmap, compile_netmap};
 use meshway_protocol::state::StateReport;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 mod diagnostics;
 mod facts;
+mod receipts;
 mod scope;
-
-pub(super) struct StoreNetmaps {
-    sealer: Arc<crate::secrets::Sealer>,
-    previous: Mutex<BTreeMap<NodeId, PreviousNetmap>>,
-}
-
-impl NetmapReader for StoreNetmaps {
-    fn current(
-        &self,
-        tx: &rusqlite::Transaction<'_>,
-        network: NetworkId,
-        node: NodeId,
-    ) -> Result<Option<Arc<CompiledNetmap>>, Error> {
-        let (revision, cfg, bindings) =
-            store::execution::current_configuration(tx, &self.sealer, network)?;
-        let rule_sets =
-            crate::resources::bindings::at_revision(tx, network, revision, &bindings.rule_sets)?;
-        let rule_sets = crate::resources::bindings::compilation_contents(tx, network, &rule_sets)?;
-        let context = store::execution::compilation_context(tx, network, &cfg, &bindings)?;
-        let mut previous = self.previous.lock().unwrap();
-        let compiled = compile_netmap(NetmapInput {
-            network,
-            revision,
-            configuration: &cfg,
-            subjects: &context.subjects,
-            inventory: &context.inventory,
-            rule_sets: &rule_sets,
-            selected_profiles: &context.selected_profiles,
-            selection_versions: &BTreeMap::new(),
-            previous: &previous,
-        })
-        .map_err(|_| Error::Internal("test netmap compilation"))?;
-        *previous = compiled
-            .nodes
-            .iter()
-            .map(|(id, netmap)| (*id, PreviousNetmap::from(netmap)))
-            .collect();
-        Ok(compiled.nodes.get(&node).cloned().map(Arc::new))
-    }
-}
 
 pub(super) struct Lab {
     pub _dir: tempfile::TempDir,
@@ -65,9 +22,8 @@ pub(super) struct Lab {
     pub nodes: [NodeId; 3],
     pub tokens: [String; 3],
     pub instances: [InstanceRequest; 3],
-    /// Each Node's current execution target, reported as applied.
-    pub applied: [ConfigurationRef; 3],
-    pub netmaps: Arc<StoreNetmaps>,
+    /// Each Node's current netmap, reported as applied.
+    pub applied: [NetmapRef; 3],
 }
 
 pub(super) async fn lab(exit: bool) -> Lab {
@@ -163,22 +119,21 @@ pub(super) async fn lab(exit: bool) -> Lab {
             instance_id: lease.instance_id,
             generation: lease.generation,
         };
-        applied.push(
-            service
-                .renew(session.token.expose(), instance.clone())
-                .await
-                .unwrap()
-                .target
-                .unwrap(),
-        );
         tokens.push(session.token.expose().to_owned());
         instances.push(instance);
     }
-    let netmaps = Arc::new(StoreNetmaps {
-        sealer: app.sealer(),
-        previous: Mutex::default(),
-    });
-    app.install_netmaps(netmaps.clone());
+    for node in [a, b, c.node_id] {
+        let netmaps = app.netmaps.clone();
+        applied.push(
+            app.executor
+                .handle()
+                .read(move |tx| netmaps.current(tx, network, node))
+                .await
+                .unwrap()
+                .unwrap()
+                .reference(),
+        );
+    }
     Lab {
         _dir: dir,
         app,
@@ -188,13 +143,12 @@ pub(super) async fn lab(exit: bool) -> Lab {
         tokens: tokens.try_into().unwrap(),
         instances: instances.try_into().unwrap(),
         applied: applied.try_into().unwrap(),
-        netmaps,
     }
 }
 
 impl Lab {
     pub async fn netmap(&self, node: NodeId) -> Arc<CompiledNetmap> {
-        let netmaps = self.netmaps.clone();
+        let netmaps = self.app.netmaps.clone();
         let network = self.network;
         self.app
             .executor
@@ -205,19 +159,18 @@ impl Lab {
             .unwrap()
     }
 
-    /// Publications compiled on the SQLite owner since the previous call.
-    pub async fn publications(&self) -> usize {
-        self.app
-            .executor
-            .handle()
-            .read(|_| Ok(crate::execution::diagnostics::take_publications()))
-            .await
-            .unwrap()
+    /// Every Node's current stored netmap reference.
+    pub async fn references(&self) -> Vec<NetmapRef> {
+        let mut references = Vec::new();
+        for node in self.nodes {
+            references.push(self.netmap(node).await.reference());
+        }
+        references
     }
 
     /// A complete report of the `udp` listener with the given local endpoints.
     pub async fn report_endpoints(&self, index: usize, sequence: u64, addresses: &[&str]) {
-        let applied = self.applied[index].clone();
+        let applied = self.applied[index];
         let now = chrono::Utc::now();
         let report = StateReport {
             instance_id: self.instances[index].instance_id,
@@ -232,7 +185,7 @@ impl Lab {
                 },
                 capabilities: caps(),
                 configuration: ConfigurationState {
-                    saved: Some(applied.clone()),
+                    saved: Some(applied),
                     applied: Some(applied),
                     progress: None,
                 },
@@ -244,14 +197,14 @@ impl Lab {
                         socket_ids: vec!["s1".into()],
                         loaded_certificate_sha256: None,
                         problem: None,
-                        configuration: None,
+                        netmap: None,
                     },
                 )]),
                 sockets: BTreeMap::from([(
                     "s1".into(),
                     SocketState {
                         resource: ResourceRef::Listener { key: "udp".into() },
-                        configuration: None,
+                        netmap: None,
                         generation: Sequence::new(1).unwrap(),
                         network: SocketNetwork::Udp,
                         bound_address: "0.0.0.0:23456".parse().unwrap(),
@@ -306,7 +259,8 @@ impl Lab {
                 configuration: ConfigurationState::default(),
                 exit_capability: Some(ExitCapability {
                     instance_id: self.instances[index].instance_id,
-                    target: self.applied[index].clone(),
+                    netmap: self.applied[index],
+                    role_generation: meshway_model::Digest::from_bytes([0; 32]),
                     supported_families: vec![ExitFamily::Ipv4],
                     installed_families: vec![],
                     status,

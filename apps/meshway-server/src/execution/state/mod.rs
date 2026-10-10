@@ -27,17 +27,7 @@ use std::{
     sync::Arc,
 };
 
-#[cfg(test)]
-thread_local! {
-    static STATE_WORK: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
-}
-
 impl Execution {
-    /// Test accounting lives on the same isolated SQLite executor thread.
-    #[cfg(test)]
-    pub(crate) fn take_state_work() -> (usize, usize) {
-        STATE_WORK.with(|counts| counts.replace((0, 0)))
-    }
     /// Authenticate the real Node session and current instance in the same SQL
     /// transaction C uses to accept a report. No synthetic principal or bearer.
     pub fn report_admission_in_transaction(
@@ -162,11 +152,6 @@ impl Execution {
     ) -> Result<ScopeSubject, Error> {
         Ok(match identity {
             ReadIdentity::Node { authorization } => {
-                #[cfg(test)]
-                STATE_WORK.with(|counts| {
-                    let (checks, history) = counts.get();
-                    counts.set((checks + 1, history));
-                });
                 // A visibility scope uses only the current subject, instance
                 // and deadline. Retained report/history contexts grant no
                 // visibility here and must not be decrypted on every SSE frame.
@@ -331,11 +316,6 @@ impl Execution {
         node: NodeId,
         now: DateTime<Utc>,
     ) -> Result<ReportAdmission, Error> {
-        #[cfg(test)]
-        STATE_WORK.with(|counts| {
-            let (checks, history) = counts.get();
-            counts.set((checks, history + 1));
-        });
         let mut report = self.current_node_admission(tx, network, node, now)?;
         if let Some(previous) =
             crate::store::netmap::current(tx, network, node)?.and_then(|c| c.previous)

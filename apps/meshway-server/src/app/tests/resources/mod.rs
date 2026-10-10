@@ -473,29 +473,6 @@ async fn enroll(
     )
 }
 
-async fn target(s: &Server, token: &str, instance: &InstanceRequest) -> NodeConfigurationResponse {
-    json(
-        s.client
-            .post(format!("{}/agent-api/v1/configuration/query", s.url))
-            .bearer_auth(token)
-            .json(&NodeConfigurationRequest {
-                instance: instance.clone(),
-                base: None,
-            }),
-    )
-    .await
-}
-async fn publication_bindings(
-    s: &Server,
-    network: NetworkId,
-    publication: PublicationId,
-) -> BTreeMap<String, ArtifactId> {
-    s.app.executor.handle().execute(move |db| {
-        let bytes: Vec<u8> = db.query_row("SELECT rule_set_bindings FROM execution_publications WHERE network_id=?1 AND id=?2", rusqlite::params![network.as_uuid().as_bytes().as_slice(), publication.as_uuid().as_bytes().as_slice()], |row| row.get(0)).unwrap();
-        serde_json::from_slice(&bytes).unwrap()
-    }).await.unwrap()
-}
-
 async fn resource_counts(s: &Server, network: NetworkId) -> (i64, i64, i64) {
     s.app
         .executor
@@ -535,18 +512,6 @@ async fn wait_view(
     })
     .await
     .expect("resource scheduler made bounded progress")
-}
-
-async fn execution_facts(
-    s: &Server,
-    network: NetworkId,
-    node: NodeId,
-) -> (Vec<u8>, Option<i64>, i64) {
-    s.app.executor.handle().execute(move |db| db.query_row(
-        "SELECT target_publication_id,execution_expires_at,(SELECT count(*) FROM execution_receipts r WHERE r.network_id=e.network_id AND r.node_id=e.node_id AND r.publication_id=e.target_publication_id) FROM node_execution e WHERE network_id=?1 AND node_id=?2",
-        rusqlite::params![network.as_uuid().as_bytes().as_slice(), node.as_uuid().as_bytes().as_slice()],
-        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-    ).unwrap()).await.unwrap()
 }
 
 struct CommitGate {

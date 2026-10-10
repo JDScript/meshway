@@ -85,7 +85,7 @@ mod tests {
             .await
             .unwrap();
             let handle = executor.handle();
-            let runtime = Arc::new(Mutex::new(Runtime::new().unwrap()));
+            let runtime = Arc::new(Mutex::new(Runtime::new(std::sync::Arc::new(crate::state::facts::NoNetmaps)).unwrap()));
             let before = Arc::strong_count(&runtime);
             let (entered, started) = tokio::sync::oneshot::channel();
             let (release, blocked) = std::sync::mpsc::channel();
