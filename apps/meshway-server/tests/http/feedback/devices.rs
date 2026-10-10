@@ -1,6 +1,261 @@
 use super::*;
 
 #[tokio::test]
+async fn signed_device_lifecycle_own_settings_and_key_management_are_distinct() {
+    let _serial = ACCOUNT_FLOW.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let s = Server::start(&dir.path().canonicalize().unwrap().join("controller"), true).await;
+    let c = client();
+    let owner = register(&c, &s, "device-owner@example.test", "valid password").await;
+    let member = register(&c, &s, "device-member@example.test", "valid password").await;
+    let stranger = register(&c, &s, "device-stranger@example.test", "valid password").await;
+    let n = create(&c, &s, owner.token.expose(), "device views")
+        .await
+        .network
+        .id;
+    join(
+        &c,
+        &s,
+        n,
+        owner.token.expose(),
+        member.token.expose(),
+        MembershipRole::Member,
+    )
+    .await;
+    let device = Device::new(41);
+    let created = device.create(&c, &s).await;
+    assert_eq!(created.return_method, EnrollmentReturnMethod::Poll);
+    // No Console origin configured: the Server hands the device no link.
+    assert_eq!(created.authorization_url, None);
+    let inspect: DeviceAuthorizationView = value(
+        c.get(device.user_url(&s, ""))
+            .bearer_auth(stranger.token.expose()),
+    )
+    .await;
+    assert!(inspect.approval.is_none());
+    reject(
+        c.post(device.user_url(&s, "/deny"))
+            .bearer_auth(member.token.expose()),
+        StatusCode::FORBIDDEN,
+        "permission_denied",
+    )
+    .await;
+    let approved: DeviceAuthorizationView = value(
+        c.post(device.user_url(&s, "/approve"))
+            .bearer_auth(member.token.expose())
+            .json(&ApproveEnrollmentRequest { network_id: n }),
+    )
+    .await;
+    assert_eq!(approved.approval.unwrap().user_id, member.user.id);
+    let hidden: DeviceAuthorizationView = value(
+        c.get(device.user_url(&s, ""))
+            .bearer_auth(stranger.token.expose()),
+    )
+    .await;
+    assert!(hidden.approval.is_none());
+    let poll: EnrollmentPollResponse = value(
+        c.post(device.device_url(&s, "query"))
+            .json(&device.proof("poll")),
+    )
+    .await;
+    let enrolled: EnrollmentResponse = value(c.post(device.device_url(&s, "redeem")).json(
+        &RedeemEnrollmentRequest {
+            proof: device.proof("redeem"),
+            code: poll.code.unwrap(),
+        },
+    ))
+    .await;
+    reject(
+        c.post(device.user_url(&s, "/deny"))
+            .bearer_auth(member.token.expose()),
+        StatusCode::CONFLICT,
+        "state_conflict",
+    )
+    .await;
+    reject(
+        c.post(device.device_url(&s, "cancel"))
+            .json(&device.proof("cancel")),
+        StatusCode::CONFLICT,
+        "state_conflict",
+    )
+    .await;
+    let node = enrolled.node_id;
+    let settings_path = format!("nodes/{node}/settings");
+    let settings: NodeSettingsResponse = value(
+        c.get(net(&s, n, &settings_path))
+            .bearer_auth(member.token.expose()),
+    )
+    .await;
+    assert_eq!(settings.network_id, n);
+    assert_eq!(settings.node_id, node);
+    assert_eq!(settings.settings.hostname, device.intent.hostname);
+    reject(
+        c.get(net(&s, n, "configuration"))
+            .bearer_auth(member.token.expose()),
+        StatusCode::FORBIDDEN,
+        "permission_denied",
+    )
+    .await;
+    reject(
+        c.get(net(&s, n, "configuration/revisions"))
+            .bearer_auth(member.token.expose()),
+        StatusCode::FORBIDDEN,
+        "permission_denied",
+    )
+    .await;
+    let inventory: NodeInventoryView = value(
+        c.get(net(&s, n, &format!("nodes/{node}")))
+            .bearer_auth(member.token.expose()),
+    )
+    .await;
+    assert!(
+        !inventory.can_delete
+            && !inventory.can_revoke_control_key
+            && !inventory.can_revoke_dataplane_key
+    );
+    assert!(inventory.control_key_created_at_ms >= inventory.registered_at_ms);
+    let current = source(&c, &s, n, owner.token.expose()).await;
+    let applied: ConfigurationAppliedResponse = value(
+        c.post(net(&s, n, "configuration"))
+            .bearer_auth(owner.token.expose())
+            .json(&ConfigurationRequest::Operations {
+                expected_revision: current.revision,
+                request_id: request(),
+                ops: vec![
+                    meshway_configuration::ConfigurationOperation::ReplaceTagsOwners {
+                        tags_owners: [("tag:service".into(), vec![member.user.email.clone()])]
+                            .into(),
+                    },
+                    meshway_configuration::ConfigurationOperation::SetNodeSettings {
+                        node_id: node,
+                        fields: meshway_configuration::NodeSettingsPatch {
+                            remark: meshway_configuration::Input::Value("new target".into()),
+                            ..Default::default()
+                        },
+                    },
+                ],
+            }),
+    )
+    .await;
+    assert_eq!(applied.target_count, 1);
+    let tagged: ConfigurationAppliedResponse = value(
+        c.post(net(&s, n, "configuration"))
+            .bearer_auth(owner.token.expose())
+            .json(&ConfigurationRequest::Operations {
+                expected_revision: applied.revision,
+                request_id: request(),
+                ops: vec![
+                    meshway_configuration::ConfigurationOperation::SetIdentityTags {
+                        node_id: node,
+                        tags: vec!["tag:service".into()],
+                    },
+                ],
+            }),
+    )
+    .await;
+    assert!(tagged.revision > applied.revision);
+    reject(
+        c.get(net(&s, n, &settings_path))
+            .bearer_auth(member.token.expose()),
+        StatusCode::NOT_FOUND,
+        "not_found",
+    )
+    .await;
+    let revoke = |token: &str, generation| {
+        c.post(net(&s, n, &format!("nodes/{node}/keys/revoke")))
+            .bearer_auth(token)
+            .json(&RevokeNodeKeyRequest {
+                key_id: enrolled.keys.control.id,
+                expected_generation: generation,
+            })
+    };
+    error(
+        revoke(member.token.expose(), Version::MIN)
+            .send()
+            .await
+            .unwrap(),
+        StatusCode::FORBIDDEN,
+        "permission_denied",
+    )
+    .await;
+    error(
+        revoke(owner.token.expose(), Version::new(2).unwrap())
+            .send()
+            .await
+            .unwrap(),
+        StatusCode::CONFLICT,
+        "version_conflict",
+    )
+    .await;
+    revoke(owner.token.expose(), Version::MIN)
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    let inventory: NodeInventoryView = value(
+        c.get(net(&s, n, &format!("nodes/{node}")))
+            .bearer_auth(owner.token.expose()),
+    )
+    .await;
+    assert!(
+        inventory.can_delete
+            && !inventory.can_revoke_control_key
+            && inventory.can_revoke_dataplane_key
+    );
+    for (seed, withdraw) in [(42, false), (43, true)] {
+        let device = Device::new(seed);
+        device.create(&c, &s).await;
+        if withdraw {
+            let _: DeviceAuthorizationView = value(
+                c.post(device.user_url(&s, "/approve"))
+                    .bearer_auth(member.token.expose())
+                    .json(&ApproveEnrollmentRequest { network_id: n }),
+            )
+            .await;
+            c.post(device.user_url(&s, "/deny"))
+                .bearer_auth(member.token.expose())
+                .send()
+                .await
+                .unwrap()
+                .error_for_status()
+                .unwrap();
+        } else {
+            c.post(device.device_url(&s, "cancel"))
+                .json(&device.proof("cancel"))
+                .send()
+                .await
+                .unwrap()
+                .error_for_status()
+                .unwrap();
+        }
+        let poll: EnrollmentPollResponse = value(
+            c.post(device.device_url(&s, "query"))
+                .json(&device.proof("poll")),
+        )
+        .await;
+        assert_eq!(
+            poll.request.phase,
+            if withdraw {
+                EnrollmentPhase::Withdrawn
+            } else {
+                EnrollmentPhase::Cancelled
+            }
+        );
+        assert!(poll.code.is_none());
+        reject(
+            c.post(device.user_url(&s, "/approve"))
+                .bearer_auth(member.token.expose())
+                .json(&ApproveEnrollmentRequest { network_id: n }),
+            StatusCode::CONFLICT,
+            "state_conflict",
+        )
+        .await;
+    }
+    s.close().await;
+}
+
+#[tokio::test]
 async fn device_authorization_links_come_from_the_configured_console_origin() {
     let _serial = ACCOUNT_FLOW.lock().await;
     let dir = tempfile::tempdir().unwrap();

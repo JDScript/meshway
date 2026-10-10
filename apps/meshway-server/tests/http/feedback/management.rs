@@ -246,6 +246,154 @@ async fn join_link_actions_pagination_inspection_and_issuer_permission_loss() {
 }
 
 #[tokio::test]
+async fn defaults_replay_preserves_other_admin_changes_and_reports_precise_conflicts() {
+    let _serial = ACCOUNT_FLOW.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let s = Server::start(&dir.path().canonicalize().unwrap().join("controller"), true).await;
+    let c = client();
+    let owner = register(&c, &s, "defaults-owner@example.test", "valid password").await;
+    let admin = register(&c, &s, "defaults-admin@example.test", "valid password").await;
+    let n = create(&c, &s, owner.token.expose(), "partial defaults")
+        .await
+        .network
+        .id;
+    let member = join(
+        &c,
+        &s,
+        n,
+        owner.token.expose(),
+        admin.token.expose(),
+        MembershipRole::Admin,
+    )
+    .await;
+    let initial = source(&c, &s, n, owner.token.expose()).await;
+    let op: meshway_configuration::ConfigurationOperation =
+        serde_json::from_str(r#"{"type":"replaceDefaults","defaults":{"topology":"deny"}}"#)
+            .unwrap();
+    let mut concurrent =
+        meshway_configuration::NetworkConfigurationInput::from(&initial.configuration);
+    concurrent.defaults.dialers.vless.as_mut().unwrap().remark = "concurrent".into();
+    concurrent
+        .defaults
+        .dialers
+        .vless
+        .as_mut()
+        .unwrap()
+        .websocket = Some(
+        serde_json::from_str(r#"{"headers":{"Authorization":"private concurrent secret"}}"#)
+            .unwrap(),
+    );
+    let first: ConfigurationAppliedResponse = json(
+        c.post(net(&s, n, "configuration"))
+            .bearer_auth(admin.token.expose())
+            .json(&ConfigurationRequest::Document {
+                expected_revision: initial.revision,
+                request_id: request(),
+                source_jsonc: WireSecret::new(serde_json::to_string(&concurrent).unwrap()),
+            }),
+    )
+    .await;
+    assert_eq!(first.target_count, 0);
+    let rid = request();
+    let stale = ConfigurationRequest::Operations {
+        expected_revision: initial.revision,
+        request_id: rid,
+        ops: vec![op.clone()],
+    };
+    reject(
+        c.post(net(&s, n, "configuration"))
+            .bearer_auth(owner.token.expose())
+            .json(&stale),
+        StatusCode::CONFLICT,
+        "revision_conflict",
+    )
+    .await;
+    let replay = ConfigurationRequest::Operations {
+        expected_revision: first.revision,
+        request_id: rid,
+        ops: vec![op],
+    };
+    let applied: ConfigurationAppliedResponse = json(
+        c.post(net(&s, n, "configuration"))
+            .bearer_auth(owner.token.expose())
+            .json(&replay),
+    )
+    .await;
+    let saved = source(&c, &s, n, owner.token.expose()).await;
+    assert_eq!(
+        saved.configuration.defaults.dialers,
+        concurrent.defaults.dialers
+    );
+    assert_eq!(
+        saved.configuration.defaults.access,
+        initial.configuration.defaults.access
+    );
+    assert_eq!(
+        saved.configuration.defaults.topology,
+        meshway_configuration::TopologyDefault::Deny
+    );
+    let different = ConfigurationRequest::Operations {
+        expected_revision: first.revision,
+        request_id: rid,
+        ops: vec![],
+    };
+    reject(
+        c.post(net(&s, n, "configuration"))
+            .bearer_auth(owner.token.expose())
+            .json(&different),
+        StatusCode::CONFLICT,
+        "request_id_conflict",
+    )
+    .await;
+    reject(
+        c.post(net(&s, n, &format!("members/{member}/remove")))
+            .bearer_auth(owner.token.expose())
+            .json(&RemoveMemberRequest {
+                expected_version: Version::MIN,
+                expected_revision: initial.revision,
+            }),
+        StatusCode::CONFLICT,
+        "revision_conflict",
+    )
+    .await;
+    reject(
+        c.post(net(&s, n, &format!("members/{member}/remove")))
+            .bearer_auth(owner.token.expose())
+            .json(&RemoveMemberRequest {
+                expected_version: Version::new(2).unwrap(),
+                expected_revision: applied.revision,
+            }),
+        StatusCode::CONFLICT,
+        "version_conflict",
+    )
+    .await;
+    let clear: meshway_configuration::ConfigurationOperation =
+        serde_json::from_str(r#"{"type":"replaceDefaults","defaults":{"dialers":{}}}"#).unwrap();
+    c.post(net(&s, n, "configuration"))
+        .bearer_auth(owner.token.expose())
+        .json(&ConfigurationRequest::Operations {
+            expected_revision: applied.revision,
+            request_id: request(),
+            ops: vec![clear],
+        })
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    assert!(
+        source(&c, &s, n, owner.token.expose())
+            .await
+            .configuration
+            .defaults
+            .dialers
+            .vless
+            .is_none()
+    );
+    s.close().await;
+}
+
+#[tokio::test]
 async fn historical_actor_email_is_a_snapshot_after_departure_and_email_change() {
     let _serial = ACCOUNT_FLOW.lock().await;
     let dir = tempfile::tempdir().unwrap();

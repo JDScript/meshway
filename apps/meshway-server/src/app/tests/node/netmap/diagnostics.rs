@@ -191,3 +191,92 @@ async fn node_ping_subscription_resolves_and_decides_on_the_source_netmap() {
     assert_eq!(lab.references().await, netmaps_before);
     lab.app.shutdown().await.unwrap();
 }
+
+#[tokio::test]
+async fn account_revocations_end_their_observation_subscriptions_at_commit() {
+    let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
+    let lab = lab(false).await;
+    let service = lab.app.observation_service(lab.app.netmap_diagnostics());
+    let execution = lab.app.execution();
+    let token = lab.tokens[0].clone();
+    let admission = lab
+        .app
+        .executor
+        .handle()
+        .execute(move |db| {
+            let tx = db.transaction()?;
+            execution.report_admission_in_transaction(&tx, &token, chrono::Utc::now())
+        })
+        .await
+        .unwrap()
+        .unwrap();
+    let tasks = |app: &App| {
+        app.state_runtime
+            .lock()
+            .unwrap()
+            .observations
+            .node_tasks(&admission, chrono::Utc::now())
+            .len()
+    };
+    let mut password = "a sufficiently long password";
+    for operation in 0..4 {
+        let session = lab
+            .app
+            .accounts()
+            .login(
+                "owner@example.com".into(),
+                Secret::new(password.into()),
+                rid(),
+            )
+            .await
+            .unwrap();
+        let identity = ReadIdentity::user_session(session.token.expose(), lab.network).unwrap();
+        service
+            .create_observation(identity, request(&lab, ObservationServiceScope::IcmpEcho))
+            .await
+            .unwrap();
+        assert_eq!(tasks(&lab.app), 1, "{operation}");
+        let accounts = lab.app.accounts();
+        match operation {
+            0 => accounts.logout(session.token.expose(), rid()).await.unwrap(),
+            1 => accounts
+                .revoke_sessions(
+                    session.token.expose(),
+                    crate::accounts::RevokeSessions::One(session.session.session_id),
+                    rid(),
+                )
+                .await
+                .unwrap(),
+            2 => {
+                accounts
+                    .change_password(
+                        session.token.expose(),
+                        Secret::new(password.into()),
+                        Secret::new("replacement password".into()),
+                        rid(),
+                    )
+                    .await
+                    .unwrap();
+                password = "replacement password";
+            }
+            _ => {
+                let reset = accounts
+                    .issue_password_reset("owner@example.com".into(), 600, rid())
+                    .await
+                    .unwrap();
+                accounts
+                    .redeem_password_reset(
+                        reset.token.expose(),
+                        Secret::new("reset replacement password".into()),
+                        rid(),
+                    )
+                    .await
+                    .unwrap();
+            }
+        }
+        // The runtime owner itself: no later request is needed to notice.
+        assert_eq!(tasks(&lab.app), 0, "{operation}");
+        assert!(accounts.authenticate(session.token.expose()).await.is_err());
+    }
+    lab.app.shutdown().await.unwrap();
+}
