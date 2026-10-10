@@ -565,7 +565,10 @@ async fn coordinate(
             a: format!("node:{}", nodes[&a]),
             b: format!("node:{}", nodes[&b]),
             transports: meshway_configuration::Input::Omitted,
-            keepalive: false,
+            // Incoming-only R has no dialer in the reported-endpoint/NAT rows;
+            // B maintains its declared B→R carrier while A→R remains lazy.
+            keepalive: a == Role::R
+                && (cli.reported_endpoints || cli.traversal == crate::TraversalMode::Nat),
         })
         .collect();
     input.access = vec![AccessRule {

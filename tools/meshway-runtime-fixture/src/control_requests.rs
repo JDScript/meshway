@@ -2,6 +2,7 @@
 //! bodies, or an additional source of control operations.
 use crate::{Cli, Result};
 use axum::{
+    body::{Body, to_bytes},
     extract::{Request, State},
     middleware::Next,
     response::Response,
@@ -17,6 +18,7 @@ use std::{
 pub struct Audit {
     started: Instant,
     minutes: Arc<Mutex<BTreeMap<u64, BTreeMap<&'static str, u64>>>>,
+    results: Arc<Mutex<Vec<(u16, meshway_protocol::observations::ObservationResult)>>>,
 }
 
 impl Audit {
@@ -24,10 +26,14 @@ impl Audit {
         Self {
             started: Instant::now(),
             minutes: Default::default(),
+            results: Default::default(),
         }
     }
 
     pub async fn save(&self, cli: &Cli) -> Result<()> {
+        let results =
+            serde_json::to_vec_pretty(&*self.results.lock().map_err(|_| "result audit poisoned")?)?;
+        tokio::fs::write(cli.evidence.join("observation-results.json"), results).await?;
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
         struct Report {
@@ -66,6 +72,8 @@ impl Audit {
 }
 
 pub async fn observe(State(audit): State<Audit>, request: Request, next: Next) -> Response {
+    let is_result = request.uri().path().starts_with("/agent-api/v1/tasks/")
+        && request.uri().path().ends_with("/results");
     let kind = match request.uri().path() {
         "/agent-api/v1/connectivity/udp/query" => Some("udp/query"),
         "/agent-api/v1/connectivity/udp/attempts" => Some("udp/attempts"),
@@ -85,5 +93,30 @@ pub async fn observe(State(audit): State<Audit>, request: Request, next: Next) -
                 .or_default() += 1;
         }
     }
-    next.run(request).await
+    if is_result {
+        let (parts, body) = request.into_parts();
+        let Ok(bytes) = to_bytes(body, 16 * 1024 * 1024).await else {
+            return Response::builder()
+                .status(413)
+                .body(Body::empty())
+                .expect("fixed response");
+        };
+        // Typed public results only, never credential headers or arbitrary
+        // request bodies. Bounded private evidence diagnoses actual rejections.
+        let parsed =
+            serde_json::from_slice::<meshway_protocol::observations::ObservationResult>(&bytes)
+                .ok();
+        let response = next
+            .run(Request::from_parts(parts, Body::from(bytes)))
+            .await;
+        if let Some(parsed) = parsed
+            && let Ok(mut results) = audit.results.lock()
+            && results.len() < 16
+        {
+            results.push((response.status().as_u16(), parsed));
+        }
+        response
+    } else {
+        next.run(request).await
+    }
 }
