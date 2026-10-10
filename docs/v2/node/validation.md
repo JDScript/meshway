@@ -17,7 +17,7 @@
 
 可执行行 ID 来自 `scripts/validate_matrix.py` 的 `ROWS`：`tun`、`packet`、`udp/off`、`tcp/off`、`vless/off`、`trojan/off`、`udp/resolv-conf`、`udp/resolved`、`nat/off`、`nat+fallback/off`、`nat/resolved`，顺序对应下表十一个隔离入口。常驻 lab 不属于一次性矩阵。统一运行、并发预算与远程证据位置见[矩阵入口](/v2/development#validation-matrix)。
 
-默认矩阵另含 `exit/off`（真实 A→R→E IPv4 出口）与四个 `netmap/*` 生命周期行；出口详见[出口场景](#exit-scenario)。
+默认矩阵另含 `exit/off`（真实 A→R→E IPv4 出口）与四个 `netmap/*` 生命周期行（见[netmap 生命周期行](#netmap-rows)）；出口详见[出口场景](#exit-scenario)。
 
 | 入口 | 承载 | DNS | NAT | 覆盖行为 | 状态 |
 | --- | --- | --- | --- | --- | --- |
@@ -48,6 +48,14 @@
 十份 runtime 报告的构建／导入／结束源码指纹均为 `a7b5bd38d268c763badd737a52b3363467f46b7967f9bea5db9d447bd7c6ab34`，二进制 hash 集合一致。所有必需检查通过，Controller／A／R／B 成功退出；每行精确清理与远程 supervisor 的独立容器／网络复核均无遗留。通过结论包含真实 STUN State、完整路径诊断、实际包流、回执、撤销恢复和旧输出拒绝，不能仅由 saved/applied 或候选非空推导。
 
 TUN、packet 和表中 V1 的静态 UDP/resolved 证据来自 `3887256b` 生产源码与 `36a20fa3` 满 MTU fixture，使用 macOS/OrbStack ARM64 串行执行。其 packet/runtime 指纹为 `052e82e75417c17457c5e40951e2d1098147e2be56d3156f89a5cf465eb653c6`，TUN 专属输入指纹为 `477af3a17bc873c2346314c1dc27145230821df287fb91b22b6995932ce7b066`。汇总位于 `.meshway/validation/v1/20261007-main-3887256b/`；原始通过及失败 verdict 均保留。
+
+### netmap 生命周期行 {#netmap-rows}
+
+`netmap/offline` 与 `netmap/restart` 使用本机上报端点（`--reported-endpoints`，无 configured／STUN 端点），拨号候选只来自 peer 事实。`netmap/restart` 在 HTTP 关闭 90 秒后（全部事实已过新鲜度）才重启三个 daemon，新邻接只能来自 `peer-facts.json` 中的最后已知事实，见[最后已知事实](/v2/node/connectivity#last-known-facts)。对照：同一 fixture 在未修复产品（main `83c462c7`）上 `netmap/restart` 未通过（`initial IPv4 UDP flow did not produce echo`；Planck `20261010T171854Z-8af9b94d`）。持续流量使 A–R 邻接常驻，`netmap/offline` 不覆盖空闲关闭后的重拨；该路径由 `meshway-connectivity` 的 `stale_peer_facts_still_redial_after_idle_close` 与常驻 lab 离线复验覆盖。
+
+| 候选 | 行 | 结果 |
+| --- | --- | --- |
+| `cde22065`（N1z-G） | 全量 16 行，Planck 矩阵 `20261010T182959Z-04119fe8` | 15 行通过（含四个 `netmap/*`：`20261010T183501Z-a323e57f`、`-6d74eb7e`、`-df693708`、`-b2efd34c`）；`exit/off` 未通过（E 的首个 State 报告被 400 拒绝，`prerequisite`） |
 
 ### 远程矩阵证据 {#remote-matrix-evidence}
 
