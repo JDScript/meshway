@@ -337,8 +337,11 @@ async fn pump(
                     .ok_or("missing endpoint counter")? += 1;
             }
             Received::Established { .. } => return Err("unexpected second handshake".into()),
-            Received::ProbeRequest { .. } | Received::ProbeReply { .. } => {
-                return Err("diagnostic frame on the business-only fixture".into());
+            Received::ProbeRequest { .. }
+            | Received::ProbeReply { .. }
+            | Received::DnsRequest(_)
+            | Received::DnsReply(_) => {
+                return Err("service frame on the business-only fixture".into());
             }
         }
     }

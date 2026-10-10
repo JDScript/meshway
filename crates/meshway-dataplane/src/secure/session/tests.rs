@@ -113,8 +113,9 @@ fn carrier(edge: usize) -> Carrier {
 }
 
 #[test]
-fn prekeyed_hmac_matches_fixed_data_and_probe_transcripts() {
-    // Independent Python stdlib HMAC-SHA256 vectors for the v5 transcript:
+fn prekeyed_hmac_matches_fixed_data_probe_and_dns_transcripts() {
+    // Independent Python stdlib HMAC-SHA256 vectors: the data transcript is
+    // unchanged, while bounded exchanges bind their v6 domain and exact kind.
     // key=42*32, CID=01*32, sequence=2^32, body=a5*(1296 or 48),
     // probe measurement UUID=26 and deadline=10000. Truncate only after HMAC.
     let expected = [
@@ -125,28 +126,39 @@ fn prekeyed_hmac_matches_fixed_data_and_probe_transcripts() {
             166, 172, 9, 239, 186, 45, 254, 191, 188, 242, 144, 233, 67, 10, 82, 118,
         ],
         [
-            164, 125, 221, 197, 183, 12, 80, 165, 190, 241, 53, 56, 179, 235, 241, 3,
+            153, 71, 218, 144, 183, 148, 181, 165, 211, 147, 63, 225, 101, 41, 234, 187,
         ],
         [
-            33, 164, 114, 129, 12, 157, 188, 155, 184, 252, 190, 95, 246, 187, 89, 192,
+            19, 122, 100, 29, 16, 127, 35, 52, 26, 65, 144, 50, 103, 54, 201, 245,
+        ],
+        [
+            129, 71, 212, 78, 95, 177, 39, 112, 218, 98, 143, 115, 100, 200, 100, 247,
+        ],
+        [
+            139, 10, 154, 79, 165, 121, 66, 115, 242, 37, 164, 71, 105, 82, 241, 156,
         ],
     ];
     let key = HopMac::new_from_slice(&[0x42; 32]).unwrap();
     let fixture = Fixture::pending(3);
-    for probe in [false, true] {
+    for kind in 0..3 {
         for reply in [false, true] {
             let mut frame = fixture.frame(reply);
             frame.sequence = 1 << 32;
-            frame.body = vec![0xa5; if probe { 48 } else { 1296 }].into();
-            if probe {
+            frame.body = vec![0xa5; if kind == 0 { 1296 } else { 48 }].into();
+            if kind != 0 {
                 Arc::make_mut(&mut frame.context).grant = crate::secure::CircuitGrant {
-                    purpose: crate::Purpose::Diagnostic,
+                    purpose: if kind == 1 {
+                        crate::Purpose::Diagnostic
+                    } else {
+                        crate::Purpose::Dns
+                    },
                     target: crate::Target::Mesh { node: node(24) },
                 };
-                frame.kind = if reply {
-                    Kind::ProbeReply
-                } else {
-                    Kind::ProbeRequest
+                frame.kind = match (kind, reply) {
+                    (1, false) => Kind::ProbeRequest,
+                    (1, true) => Kind::ProbeReply,
+                    (_, false) => Kind::DnsRequest,
+                    (_, true) => Kind::DnsReply,
                 };
                 frame.probe = Some(ProbeMetadata {
                     measurement_id: EventId::new(node(25).into_uuid()).unwrap(),
@@ -156,7 +168,7 @@ fn prekeyed_hmac_matches_fixed_data_and_probe_transcripts() {
             for _ in 0..2 {
                 assert_eq!(
                     authenticate(&key, &frame).unwrap(),
-                    expected[usize::from(probe) * 2 + usize::from(reply)]
+                    expected[kind * 2 + usize::from(reply)]
                 );
             }
         }
