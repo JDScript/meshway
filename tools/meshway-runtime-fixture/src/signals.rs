@@ -155,7 +155,14 @@ impl Signals {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(error.into()),
         };
-        if !metadata.is_file() || metadata.len() > 512 * 1024 {
+        // A final report embeds all twelve bounded CLI streams (including the
+        // live outage stream). Other rendezvous messages retain the small cap.
+        let limit = if name.starts_with("report-") {
+            16 * 1024 * 1024
+        } else {
+            512 * 1024
+        };
+        if !metadata.is_file() || metadata.len() > limit {
             return Err("invalid rendezvous file".into());
         }
         Ok(Some(Signal::decode(name, &tokio::fs::read(path).await?)?))

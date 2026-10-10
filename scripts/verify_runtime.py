@@ -173,7 +173,7 @@ def main():
     parser.add_argument("--build-only", action="store_true", help="host build and source manifest only")
     parser.add_argument("--report-dir", type=Path, help="new private report directory")
     parser.add_argument("--short", action="store_true", help="30-second diagnostic traffic; not acceptance")
-    parser.add_argument("--netmap-validity", default="5m", help="explicit Server lease used by expiry conformance")
+    parser.add_argument("--netmap-validity", default="60s", help="explicit Server lease used by expiry conformance")
     parser.add_argument("--runtime-image-manifest", type=Path, help="explicit locked node-lab OS image")
     parser.add_argument("--artifacts", type=Path, help="reuse a --build-only bin directory with matching source manifest")
     parser.add_argument("--transport", choices=("native-tcp", "native-udp", "vless", "trojan"), default="native-tcp",

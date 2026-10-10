@@ -110,10 +110,12 @@ async fn exercise(
     };
     // The same OS sockets continue beyond the real HTTP instance deadline.
     // Only the independent signed netmap deadline may stop execution.
-    let within_until = instance_expiry.saturating_add(750);
-    if execution_expiry <= within_until.saturating_add(1_000) {
-        return Err("fixture lacks a netmap-valid window beyond instance expiry".into());
-    }
+    // A short acceptance lease may expire before the HTTP instance. Exercise
+    // its live interval, then check both independent deadlines below. The
+    // long-lease offline row proves survival beyond HTTP instance expiry.
+    let within_until = instance_expiry
+        .saturating_add(750)
+        .min(execution_expiry.saturating_sub(15_000));
     while now_ms()? < within_until {
         if let Some(traffic) = traffic.as_mut() {
             traffic.exchange().await?;
@@ -123,7 +125,7 @@ async fn exercise(
     }
     let within = command(cli, "status").await?;
     if within.phase != Phase::Running
-        || within.instance.is_some()
+        || (now_ms()? > instance_expiry && within.instance.is_some())
         || within.applied != before.applied
         || within.identity != before.identity
         || within.process_id != before.process_id
