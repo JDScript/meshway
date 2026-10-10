@@ -1,5 +1,4 @@
-//! Planning reports the same decisions compilation would make for a demand,
-//! naming the configuration element behind each one.
+//! Management planning names the configuration element behind each decision.
 use super::*;
 use meshway_configuration::evaluation::*;
 

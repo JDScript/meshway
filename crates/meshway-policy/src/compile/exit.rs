@@ -1,34 +1,13 @@
 use super::*;
-use meshway_model::{InstanceId, exit::ExitFamily};
+use meshway_model::InstanceId;
 
-/// Fresh instance-bound prerequisite facts supplied by the authenticated Server.
-/// Missing facts mean unavailable. Role preparation does not depend on readiness.
+/// Authenticated live prerequisites for management evaluation only. These
+/// observations never enter netmap projection or local path authorization.
 #[derive(Clone, Debug, Default)]
 pub struct ExitInputs {
     pub instances: BTreeMap<NodeId, InstanceId>,
-    /// Current instance deadlines used to bound internal DNS service grants.
-    pub instance_expires_at_ms: BTreeMap<NodeId, u64>,
     pub ready_until_ms: BTreeMap<NodeId, u64>,
     pub unavailable_reasons: BTreeMap<NodeId, meshway_model::exit::ExitUnavailableReason>,
-    pub selection_generations: BTreeMap<NodeId, u64>,
-}
-
-/// Exit inputs of one evaluation: per-instance runtime facts for publication
-/// compilation, or only stable selection versions for netmap compilation.
-#[derive(Clone, Copy)]
-pub(super) enum Facts<'a> {
-    Runtime(&'a ExitInputs),
-    Stable(&'a BTreeMap<NodeId, meshway_model::Version>),
-}
-
-impl Facts<'_> {
-    pub fn selection(self, node: NodeId) -> u64 {
-        match self {
-            Self::Runtime(runtime) => runtime.selection_generations.get(&node).copied(),
-            Self::Stable(versions) => versions.get(&node).map(|version| version.get()),
-        }
-        .unwrap_or(0)
-    }
 }
 
 pub(super) fn capable(topology: Topology<'_>, node: NodeId) -> bool {
@@ -41,7 +20,6 @@ pub(super) fn capable(topology: Topology<'_>, node: NodeId) -> bool {
             })
     })
 }
-
 pub(super) fn available(
     topology: Topology<'_>,
     runtime: &ExitInputs,
@@ -53,74 +31,5 @@ pub(super) fn available(
             .ready_until_ms
             .get(&node)
             .is_some_and(|expiry| *expiry > now_ms)
-        && topology.inventory.get(&node).is_some_and(|trusted| {
-            trusted
-                .capabilities
-                .get(meshway_model::exit::EXIT_IPV4_FEATURE)
-                == Some(&meshway_model::state::Capability::Feature {
-                    version: meshway_model::exit::EXIT_IPV4_VERSION,
-                })
-        })
-}
-
-pub(super) fn role(
-    input: &CompilationInput<'_>,
-    runtime: &ExitInputs,
-    node: NodeId,
-) -> Result<Option<ExitRolePlan>, CompileError> {
-    let Some(instance_id) = runtime.instances.get(&node).copied() else {
-        return Ok(None);
-    };
-    if !input
-        .configuration
-        .nodes
-        .get(&node)
-        .is_some_and(|settings| settings.enabled && settings.exit_enabled)
-    {
-        return Ok(None);
-    }
-    Ok(Some(ExitRolePlan {
-        instance_id,
-        generation: digest(&(input.network, node, input.revision, instance_id))?,
-        family: ExitFamily::Ipv4,
-        nat: ExitNat::Masquerade,
-    }))
-}
-
-pub(super) fn destination(
-    input: &CompilationInput<'_>,
-    demand: &Demand,
-) -> Option<ExitDestinationScope> {
-    let BusinessTarget::Ip { address } = demand.target else {
-        return None;
-    };
-    let traffic = crate::access::TrafficQuery::Exact {
-        protocol: demand.protocol,
-        port: demand.port,
-    };
-    input
-        .configuration
-        .access
-        .iter()
-        .filter(|rule| {
-            traffic.matches(&rule.ip)
-                && matching::selectors(
-                    input.configuration,
-                    input.subjects,
-                    &rule.src,
-                    demand.source,
-                )
-        })
-        .flat_map(|rule| &rule.dst)
-        .find_map(|selector| {
-            if selector == "autogroup:internet" && crate::is_internet_address(address.0) {
-                Some(ExitDestinationScope::Internet)
-            } else if matching::cidr(selector, address.0) {
-                Some(ExitDestinationScope::Cidr {
-                    prefix: selector.clone(),
-                })
-            } else {
-                None
-            }
-        })
+        && capable(topology, node)
 }

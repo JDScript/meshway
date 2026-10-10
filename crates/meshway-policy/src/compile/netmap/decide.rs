@@ -1,8 +1,7 @@
 //! Node-side compilation over an installed netmap's projection: the same
-//! evaluation as per-demand compilation, without dynamic exit facts.
+//! routing and Access evaluation, without dynamic exit facts or server grants.
 use super::*;
 use crate::compile::routing::PathError;
-use meshway_configuration::execution::BusinessTarget;
 use meshway_transport_spec::Port;
 use std::{net::IpAddr, sync::Arc};
 
@@ -47,10 +46,6 @@ pub struct LocalCompiler {
     netmap: Arc<NodeNetmap>,
     configuration: NetworkConfiguration,
 }
-
-// Internal identifiers of the synthetic per-flow demand; never published.
-const LOCAL_PUBLICATION: &str = "00000000-0000-4000-8000-00000000ffff";
-const LOCAL_REQUEST: &str = "00000000-0000-4000-8000-00000000fffe";
 
 fn rebuild(view: &ConfigurationView) -> NetworkConfiguration {
     NetworkConfiguration {
@@ -103,13 +98,6 @@ fn search(
     }
 }
 
-fn selectors(selectors: &[String]) -> Result<Vec<NodeId>, CompileError> {
-    selectors
-        .iter()
-        .map(|s| matching::node_selector(s))
-        .collect()
-}
-
 impl LocalCompiler {
     pub fn new(netmap: &NodeNetmap) -> Self {
         Self::from_shared(Arc::new(netmap.clone()))
@@ -157,40 +145,21 @@ impl LocalCompiler {
         {
             return Ok(None);
         }
-        let locals = BTreeMap::from([
-            (source, source_local),
-            (exit, local::Local::compile(&input, exit)?),
-        ]);
         let graph = paths::Graph::projected(input.topology(), &projection.configuration)?;
-        Ok(local::service(&input, &graph, &locals, source)?.ok())
+        Ok(local::service(&input, &graph, &source_local, source)?.ok())
     }
 
-    fn input(&self) -> Result<CompilationInput<'_>, CompileError> {
+    fn topology(&self) -> Topology<'_> {
         let projection = &self.netmap.projection;
-        static EMPTY: std::sync::OnceLock<BTreeMap<meshway_model::RequestId, Demand>> =
-            std::sync::OnceLock::new();
-        Ok(CompilationInput {
-            network: self.netmap.network_id,
-            revision: self.netmap.revision,
-            publication: LOCAL_PUBLICATION
-                .parse()
-                .map_err(|_| CompileError::InvalidInput)?,
+        Topology {
             configuration: &self.configuration,
             subjects: &projection.subjects,
             inventory: &projection.inventory,
-            demands: EMPTY.get_or_init(BTreeMap::new),
-            dns: &[],
-            rule_sets: &projection.rule_sets,
-            selected_profiles: &projection.selected_profiles,
-            now_ms: 0,
-        })
+        }
     }
 
-    fn graph<'g>(
-        &'g self,
-        input: &'g CompilationInput<'g>,
-    ) -> Result<paths::Graph<'g>, CompileError> {
-        paths::Graph::projected(input.topology(), &self.netmap.projection.configuration)
+    fn graph(&self) -> Result<paths::Graph<'_>, CompileError> {
+        paths::Graph::projected(self.topology(), &self.netmap.projection.configuration)
     }
 
     /// Egress plan of a visible source, identical to the one its own netmap carries.
@@ -226,74 +195,110 @@ impl LocalCompiler {
         if (protocol == BusinessProtocol::IcmpEcho) != port.is_none() {
             return Ok(LocalDecision::Denied(UnavailableReason::Unauthorized));
         }
-        if !self.configuration.nodes.contains_key(&source) {
+        let cfg = &self.configuration;
+        let input = self.topology();
+        if !cfg.nodes.get(&source).is_some_and(|node| node.enabled)
+            || !input.inventory.contains_key(&source)
+        {
             return Ok(LocalDecision::Denied(UnavailableReason::InactiveNode));
         }
-        let input = self.input()?;
-        let graph = self.graph(&input)?;
-        let profile = effective_profile(
-            &self.configuration,
-            input.subjects,
-            input.selected_profiles,
-            source,
-        )?;
-        let demand = Demand {
-            id: LOCAL_REQUEST
-                .parse()
-                .map_err(|_| CompileError::InvalidInput)?,
-            source,
-            target: BusinessTarget::Ip {
-                address: ExecutionAddress(destination),
-            },
-            protocol,
-            port,
-            profile,
-            expires_at_ms: u64::MAX,
-        };
-        let versions = &self.netmap.projection.selection_versions;
-        let (decision, _) =
-            evaluate_with_local(&input, &graph, &demand, exit::Facts::Stable(versions))?;
-        let permit = match decision {
-            DemandDecision::Permitted { permit } => permit,
-            DemandDecision::Direct => return Ok(LocalDecision::Direct),
-            DemandDecision::Unmanaged => return Ok(LocalDecision::Unmanaged),
-            DemandDecision::Unavailable { reason } => return Ok(LocalDecision::Denied(reason)),
-        };
-        let cfg = &self.configuration;
-        let (target, services, selection) = match permit.target {
-            BusinessTarget::Mesh { node } => (
+        let canonical = destination.to_canonical();
+        let mesh = cfg
+            .nodes
+            .iter()
+            .find(|(_, node)| {
+                node.addresses.ipv4.map(IpAddr::V4) == Some(canonical)
+                    || node.addresses.ipv6.map(IpAddr::V6) == Some(canonical)
+            })
+            .map(|(id, _)| *id);
+        let (target, services, selection) = if let Some(node) = mesh {
+            (
                 Target::Mesh { node },
                 crate::access::mesh_services(cfg, input.subjects, source, node),
                 None,
-            ),
-            _ => {
-                let normalized = Demand {
-                    target: BusinessTarget::Ip {
-                        address: ExecutionAddress(destination.to_canonical()),
-                    },
-                    ..demand
-                };
-                let RouteAction::Exit { nodes, via } =
-                    matching::egress_action(&input, &normalized)?.0
-                else {
-                    return Err(CompileError::InvalidInput);
-                };
-                (
-                    Target::Exit {
-                        nodes: selectors(&nodes)?,
-                        via: selectors(&via)?,
-                    },
-                    external_services(cfg, input.subjects, source, destination.to_canonical()),
-                    Some(self.egress(source)?.capture.generation),
-                )
+            )
+        } else {
+            if cfg
+                .address_pools
+                .ipv4
+                .iter()
+                .chain(&cfg.address_pools.ipv6)
+                .any(|pool| {
+                    pool.parse::<ipnet::IpNet>()
+                        .is_ok_and(|pool| pool.contains(&canonical))
+                })
+            {
+                return Ok(LocalDecision::Denied(UnavailableReason::NoPath));
             }
+            let plan = self.egress(source)?;
+            if let Some(reason) = plan.capture.unavailable {
+                return Ok(LocalDecision::Denied(reason));
+            }
+            let (nodes, via) = match plan.route(canonical).map(|route| &route.action) {
+                Some(EgressAction::Direct) => return Ok(LocalDecision::Direct),
+                Some(EgressAction::Unmanaged) => return Ok(LocalDecision::Unmanaged),
+                Some(EgressAction::Exit { nodes, via }) => (nodes.clone(), via.clone()),
+                None => return Ok(LocalDecision::Denied(UnavailableReason::NoPath)),
+            };
+            let services = external_services(cfg, input.subjects, source, canonical);
+            if !services.contains(protocol, port) {
+                return Ok(LocalDecision::Denied(UnavailableReason::Unauthorized));
+            }
+            if destination.is_ipv6() || cfg.nodes[&source].addresses.ipv4.is_none() {
+                return Ok(LocalDecision::Denied(UnavailableReason::UnsupportedFamily));
+            }
+            if !crate::is_exit_destination(canonical) {
+                return Ok(LocalDecision::Denied(UnavailableReason::Unauthorized));
+            }
+            (
+                Target::Exit { nodes, via },
+                services,
+                Some(plan.capture.generation),
+            )
         };
+        if !services.contains(protocol, port) {
+            return Ok(LocalDecision::Denied(UnavailableReason::Unauthorized));
+        }
+        let (targets, via) = match &target {
+            Target::Mesh { node } => (std::slice::from_ref(node), None),
+            Target::Exit { nodes, via } => (nodes.as_slice(), Some(via.as_slice())),
+        };
+        if targets.len() > MAX_EXIT_CANDIDATES {
+            return Err(CompileError::Budget);
+        }
+        let graph = self.graph()?;
+        let mut paths = Vec::new();
+        let mut reason = UnavailableReason::NoPath;
+        for target in targets {
+            if !cfg
+                .nodes
+                .get(target)
+                .is_some_and(|node| node.enabled && (via.is_none() || node.exit_enabled))
+                || (via.is_some() && *target == source)
+            {
+                continue;
+            }
+            if via.is_some() && !exit::capable(input, *target) {
+                reason = UnavailableReason::ExitUnavailable;
+                continue;
+            }
+            match graph.paths(source, *target, via, MAX_PATHS) {
+                Ok(found) => paths.extend(found),
+                Err(PathError::Cycle) => reason = UnavailableReason::RoutingCycle,
+                Err(PathError::Limit) => reason = UnavailableReason::RoutingLimit,
+                Err(PathError::Compile(CompileError::EdgeTransportUnavailable { .. })) => {}
+                Err(PathError::Compile(error)) => return Err(error),
+            }
+        }
+        if paths.is_empty() {
+            return Ok(LocalDecision::Denied(reason));
+        }
         Ok(LocalDecision::Permitted(Decision {
             source,
             destination,
             target,
             services,
-            paths: permit.paths,
+            paths,
             selection,
         }))
     }
@@ -307,13 +312,13 @@ impl LocalCompiler {
         target: &Target,
     ) -> Result<Vec<LogicalPath>, CompileError> {
         let cfg = &self.configuration;
-        let input = self.input()?;
+        let input = self.topology();
         if !cfg.nodes.get(&origin).is_some_and(|n| n.enabled)
             || !input.inventory.contains_key(&origin)
         {
             return Ok(Vec::new());
         }
-        let graph = self.graph(&input)?;
+        let graph = self.graph()?;
         match target {
             Target::Mesh { node } => {
                 if !cfg.nodes.get(node).is_some_and(|n| n.enabled)
@@ -351,7 +356,7 @@ impl LocalCompiler {
                             .nodes
                             .get(exit)
                             .is_some_and(|n| n.enabled && n.exit_enabled)
-                        || !exit::capable(input.topology(), *exit)
+                        || !exit::capable(input, *exit)
                     {
                         continue;
                     }
@@ -364,8 +369,7 @@ impl LocalCompiler {
 
     /// Listener keys of `b` that `a` may dial under this projection.
     pub fn carriers(&self, a: NodeId, b: NodeId) -> Result<Vec<String>, CompileError> {
-        let input = self.input()?;
-        let graph = self.graph(&input)?;
+        let graph = self.graph()?;
         if !graph.topology_allows(a, b) {
             return Ok(Vec::new());
         }

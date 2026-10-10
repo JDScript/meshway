@@ -3,9 +3,6 @@ use super::*;
 pub(super) fn node(i: u8) -> NodeId {
     format!("00000000-0000-4000-8000-{i:012}").parse().unwrap()
 }
-pub(super) fn request(i: u8) -> RequestId {
-    format!("00000000-0000-4001-8000-{i:012}").parse().unwrap()
-}
 pub(super) fn configuration() -> NetworkConfiguration {
     let mut c = new_network(
         AddressPools {
@@ -75,57 +72,4 @@ pub(super) fn inventory() -> BTreeMap<NodeId, TrustedNode> {
             )
         })
         .collect()
-}
-pub(super) fn demand(i: u8, source: u8, target: u8) -> Demand {
-    Demand {
-        id: request(i),
-        source: node(source),
-        target: BusinessTarget::Mesh { node: node(target) },
-        protocol: BusinessProtocol::Tcp,
-        port: Some(443.try_into().unwrap()),
-        profile: "mesh".into(),
-        expires_at_ms: 100_000,
-    }
-}
-
-pub(super) fn run(
-    c: &NetworkConfiguration,
-    inv: &BTreeMap<NodeId, TrustedNode>,
-    demands: &BTreeMap<RequestId, Demand>,
-    dns: &[TrustedDnsAssociation],
-) -> CompiledPublication {
-    run_with_subjects(c, inv, demands, dns, &SubjectContext::default())
-}
-pub(super) fn run_with_subjects(
-    c: &NetworkConfiguration,
-    inv: &BTreeMap<NodeId, TrustedNode>,
-    demands: &BTreeMap<RequestId, Demand>,
-    dns: &[TrustedDnsAssociation],
-    subjects: &SubjectContext,
-) -> CompiledPublication {
-    meshway_policy::compile::compile_with_exit(
-        CompilationInput {
-            network: "00000000-0000-4003-8000-000000000001".parse().unwrap(),
-            revision: Revision::MIN,
-            publication: "00000000-0000-4004-8000-000000000001".parse().unwrap(),
-            configuration: c,
-            subjects,
-            inventory: inv,
-            demands,
-            dns,
-            rule_sets: &BTreeMap::new(),
-            selected_profiles: &BTreeMap::new(),
-            now_ms: 1000,
-        },
-        &BTreeMap::new(),
-        &meshway_policy::compile::ExitInputs {
-            instances: inv
-                .keys()
-                .map(|node| (*node, node.to_string().parse().unwrap()))
-                .collect(),
-            ready_until_ms: inv.keys().map(|node| (*node, 100_000)).collect(),
-            ..Default::default()
-        },
-    )
-    .unwrap()
 }

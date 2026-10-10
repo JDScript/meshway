@@ -188,11 +188,12 @@ impl Local {
                 .map_or(0, |version| version.get()),
         )?;
         let enabled = cfg.nodes[&node].enabled;
-        let plan = match matching::dns_egress(cfg, &profile) {
-            DnsEgress::NoExit => DnsPlan::NoExit,
-            _ => DnsPlan::Unavailable {
+        let plan = if matching::dns_requires_exit(cfg, &profile) {
+            DnsPlan::Unavailable {
                 reason: DnsEgressUnavailable::ExitPlanRequired,
-            },
+            }
+        } else {
+            DnsPlan::NoExit
         };
         Ok(Self {
             exit_role: exit_role(input.network, cfg, input.inventory, node)?,
@@ -212,15 +213,30 @@ impl Local {
 pub(super) fn dns(
     input: &NetmapInput<'_>,
     graph: &paths::Graph,
+    members: &[NodeId],
     locals: &mut BTreeMap<NodeId, Local>,
 ) -> Result<Vec<DnsService>, CompileError> {
     let mut services = Vec::new();
-    let sources: Vec<NodeId> = locals.keys().copied().collect();
-    for source in sources {
-        if matches!(locals[&source].dns.egress, DnsPlan::NoExit) {
+    for &source in members {
+        let profile = input.profile(source)?;
+        if !matching::dns_requires_exit(input.configuration, &profile) {
             continue;
         }
-        let plan = match service(input, graph, locals, source)? {
+        if !locals.contains_key(&source)
+            && !super::super::dns::single_exit(input.configuration, &profile)?
+                .is_some_and(|(exit, _)| locals.contains_key(&exit))
+        {
+            continue;
+        }
+        let temporary;
+        let local = match locals.get(&source) {
+            Some(local) => local,
+            None => {
+                temporary = Local::compile(input, source)?;
+                &temporary
+            }
+        };
+        let plan = match service(input, graph, local, source)? {
             Ok(service) => {
                 services.push(service.clone());
                 DnsPlan::ViaExit {
@@ -229,16 +245,14 @@ pub(super) fn dns(
             }
             Err(reason) => DnsPlan::Unavailable { reason },
         };
-        locals
-            .get_mut(&source)
-            .ok_or(CompileError::InvalidInput)?
-            .dns
-            .egress = plan;
+        if let Some(local) = locals.get_mut(&source) {
+            local.dns.egress = plan;
+        }
     }
     for service in &services {
-        let exit = locals
-            .get_mut(&service.exit)
-            .ok_or(CompileError::InvalidInput)?;
+        let Some(exit) = locals.get_mut(&service.exit) else {
+            continue;
+        };
         match &mut exit.dns.egress {
             DnsPlan::NoExit => {
                 exit.dns.egress = DnsPlan::ServeExitResolver {
@@ -255,20 +269,16 @@ pub(super) fn dns(
 pub(super) fn service(
     input: &NetmapInput<'_>,
     graph: &paths::Graph,
-    locals: &BTreeMap<NodeId, Local>,
+    local: &Local,
     source: NodeId,
 ) -> Result<Result<DnsService, DnsEgressUnavailable>, CompileError> {
     let cfg = input.configuration;
-    let local = &locals[&source];
     let Some((exit, via)) = super::super::dns::single_exit(cfg, &local.dns.profile)? else {
         return Ok(Err(DnsEgressUnavailable::ExitPlanRequired));
     };
     if exit == source
         || local.egress.capture.unavailable.is_some()
-        || !matches!(
-            matching::dns_egress(cfg, &input.profile(exit)?),
-            DnsEgress::NoExit
-        )
+        || matching::dns_requires_exit(cfg, &input.profile(exit)?)
     {
         return Ok(Err(DnsEgressUnavailable::ExitPlanRequired));
     }
@@ -276,7 +286,7 @@ pub(super) fn service(
     if !settings.enabled || !super::super::dns::external_access(cfg, input.subjects, source) {
         return Ok(Err(DnsEgressUnavailable::Unauthorized));
     }
-    let Some(role) = locals.get(&exit).and_then(|l| l.exit_role.clone()) else {
+    let Some(role) = exit_role(input.network, cfg, input.inventory, exit)? else {
         return Ok(Err(DnsEgressUnavailable::ExitUnavailable));
     };
     let Some(address) = cfg.nodes.get(&exit).and_then(|n| n.addresses.ipv4) else {

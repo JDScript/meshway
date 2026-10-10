@@ -63,11 +63,9 @@ fn shared_wire_unit_enums_accept_exactly_their_published_strings() {
     string_contract::<configuration::TopologyAction>();
     string_contract::<configuration::IssueCode>();
     string_contract::<configuration::execution::BusinessProtocol>();
-    string_contract::<configuration::execution::ReplyPolicy>();
     string_contract::<configuration::execution::LocalEgressAction>();
     string_contract::<configuration::execution::UnavailableReason>();
     string_contract::<configuration::execution::DnsEgressUnavailable>();
-    string_contract::<configuration::execution::DiagnosticReplyPolicy>();
     string_contract::<protocol::PasswordLengthUnit>();
     string_contract::<protocol::NetworkNameTrim>();
     string_contract::<protocol::node::ProofOperation>();

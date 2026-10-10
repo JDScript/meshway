@@ -183,18 +183,6 @@ pub(crate) fn inputs(
     while let Some(row) = rows.next()? {
         let node = execution::id(row.get(0)?)?;
         inputs.instances.insert(node, execution::id(row.get(1)?)?);
-        inputs
-            .instance_expires_at_ms
-            .insert(node, row.get::<_, i64>(2)? as u64);
-    }
-    drop(rows);
-    let mut statement =
-        tx.prepare("SELECT node_id,version FROM routing_selections WHERE network_id=?1")?;
-    let mut rows = statement.query(params![network.as_uuid().as_bytes()])?;
-    while let Some(row) = rows.next()? {
-        inputs
-            .selection_generations
-            .insert(execution::id(row.get(0)?)?, row.get::<_, i64>(1)? as u64);
     }
     drop(rows);
     let mut statement = tx.prepare("SELECT s.node_id,s.payload,min(s.expires_at,e.instance_expires_at) FROM temp.state_exit s JOIN node_execution e ON e.network_id=s.network_id AND e.node_id=s.node_id AND e.instance_id=s.instance_id AND e.generation=s.generation WHERE s.network_id=?1 AND s.revision=?2 AND s.active=1 AND s.expires_at>?3 AND e.instance_expires_at>?3")?;

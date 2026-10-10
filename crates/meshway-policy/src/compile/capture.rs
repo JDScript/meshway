@@ -89,29 +89,10 @@ fn resolved<'a>(
     }
 }
 
-/// Compile ownership independently of Access or exit readiness. A failed
-/// dependency retains a full negative boundary and publishes no local bypass.
-pub fn egress_capture_plan(
-    input: &CompilationInput<'_>,
-    node: NodeId,
-    selection: u64,
-) -> Result<EgressCapturePlan, CompileError> {
-    let profile = selected_profile(input, node)?;
-    let seed = digest(&(
-        input.network,
-        node,
-        input.revision,
-        &profile,
-        selection,
-        &input.configuration.routing.egress,
-    ))?;
-    capture(input.configuration, input.rule_sets, &profile, seed).map(|(plan, _)| plan)
-}
-
 /// One disjoint prefix of the first-match partition with its selected action.
 pub(super) type Route = (IpNet, RouteAction);
 
-/// Shared by publication capture and netmap egress. Routes are empty when the
+/// Netmap packet ownership, independent of Access or readiness. Routes are empty when the
 /// plan is unavailable; the generation binds `seed` and the resulting ranges.
 pub(super) fn capture(
     cfg: &NetworkConfiguration,
@@ -180,7 +161,7 @@ fn compile_ranges(
     plan: &mut EgressCapturePlan,
     routes: &mut Vec<Route>,
 ) -> Result<(), CompileError> {
-    let may_exit = !matches!(matching::dns_egress(cfg, profile), DnsEgress::NoExit);
+    let may_exit = matching::dns_requires_exit(cfg, profile);
     let mut rules: Vec<_> = cfg.routing.egress.rules.iter().collect();
     let fallback = match resolved(cfg, profile)? {
         EgressProfile::Mesh => RouteAction::Unmanaged,

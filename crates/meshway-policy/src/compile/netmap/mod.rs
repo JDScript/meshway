@@ -9,10 +9,12 @@ use meshway_configuration::netmap::*;
 use meshway_model::{Digest, NetmapRef, Version, netmap::MAX_NETMAP_BYTES};
 use std::collections::BTreeSet;
 mod decide;
+mod incremental;
 mod local;
 mod observe;
 mod project;
 pub use decide::{Decision, LocalCompiler, LocalDecision, Target, compile_local, transit};
+pub use incremental::{IncrementalNetmaps, compile_incremental};
 pub use observe::{ObservationDenied, ObservationPaths, observation_paths};
 
 /// Stable inputs only. The caller loads them in the committing transaction.
@@ -146,8 +148,17 @@ pub fn project(
 }
 
 pub fn compile_netmap(input: NetmapInput<'_>) -> Result<CompiledNetmaps, NetmapError> {
+    Ok(compile_incremental(input, &BTreeMap::new())?.compiled)
+}
+
+fn compile_selected(
+    input: &NetmapInput<'_>,
+    graph: &paths::Graph<'_>,
+    index: &project::Index,
+    members: &[NodeId],
+    selected: &BTreeSet<NodeId>,
+) -> Result<CompiledNetmaps, NetmapError> {
     let cfg = input.configuration;
-    let members = validate(&input)?;
     let dependency_digest = digest(&(
         meshway_configuration::netmap::NETMAP_COMPILER_VERSION,
         input.network,
@@ -159,16 +170,14 @@ pub fn compile_netmap(input: NetmapInput<'_>) -> Result<CompiledNetmaps, NetmapE
         input.selected_profiles,
         input.selection_versions,
     ))?;
-    let graph = paths::Graph::new(input.topology())?;
-    let index = project::Index::new(&input, &graph, &members)?;
     let mut locals = BTreeMap::new();
-    for id in &members {
-        locals.insert(*id, local::Local::compile(&input, *id)?);
+    for id in selected {
+        locals.insert(*id, local::Local::compile(input, *id)?);
     }
-    local::dns(&input, &graph, &mut locals)?;
+    local::dns(input, graph, members, &mut locals)?;
     let mut nodes = BTreeMap::new();
-    for id in members {
-        let projection = project::project(&input, &index, id);
+    for &id in selected {
+        let projection = project::project(input, index, id);
         let mut dialers = BTreeMap::new();
         for peer in projection.configuration.nodes.keys() {
             if *peer == id || !graph.topology_allows(id, *peer) {
@@ -181,7 +190,7 @@ pub fn compile_netmap(input: NetmapInput<'_>) -> Result<CompiledNetmaps, NetmapE
         let local = locals.remove(&id).ok_or(CompileError::InvalidInput)?;
         nodes.insert(
             id,
-            assemble(&input, id, projection, dialers, local, dependency_digest)?,
+            assemble(input, id, projection, dialers, local, dependency_digest)?,
         );
     }
     Ok(CompiledNetmaps {

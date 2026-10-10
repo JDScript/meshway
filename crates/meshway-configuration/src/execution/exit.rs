@@ -1,5 +1,5 @@
 use super::*;
-use meshway_model::{InstanceId, exit::ExitFamily};
+use meshway_model::Digest;
 
 object! {
 /// Packet ownership only. These disjoint CIDRs grant no business Access.
@@ -28,39 +28,3 @@ pub enum ExitNat {
     Masquerade,
 }
 }
-object! {
-/// Resource preparation responsibility; never a grant to forward a packet.
-/// Network, node, publication and deadlines come from the enclosing target/lease.
-pub struct ExitRolePlan {
-    /// Current instance which may install the role.
-    pub instance_id: InstanceId,
-    /// Role identity stable across lease renewal; changes with source revision.
-    pub generation: Digest,
-    /// Inner family implemented by this role.
-    pub family: ExitFamily,
-    /// Required translation mode.
-    pub nat: ExitNat,
-} }
-tagged! {
-/// Why an exact external destination is eligible; never widens PathPermit.target.
-pub enum ExitDestinationScope {
-    /// Exact target must also belong to Policy's public Internet set.
-    Internet,
-    /// Explicit CIDR Access covers the exact target, including authorized LAN.
-    Cidr {
-        /// Administrator-authorized CIDR, not an automatically inferred LAN.
-        prefix: String
-    },
-} }
-object! {
-/// Additional constraints on an external PathPermit; paths name its exit terminals.
-pub struct ExitPermit {
-    /// Changes on every effective profile selection, including switching back.
-    pub generation: Digest,
-    /// Source address family; initial implementation permits IPv4 only.
-    pub family: ExitFamily,
-    /// Destination classification checked again by packet admission.
-    pub destination: ExitDestinationScope,
-    /// Every eligible terminal bound to the role generation it must install.
-    pub roles: BTreeMap<NodeId, ExitRolePlan>,
-} }

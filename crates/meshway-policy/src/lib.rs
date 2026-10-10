@@ -4,7 +4,6 @@
 
 mod access;
 pub mod admission;
-mod authorization;
 pub mod compile;
 pub mod dns_route;
 mod internet;
@@ -13,10 +12,6 @@ mod subjects;
 mod validation;
 
 pub use access::mesh_access_allows_any;
-pub use authorization::{
-    PermitTransition, diagnostic_authorization_digest, permit_authorization_digest,
-    permit_transition,
-};
 pub use compile::profile_allowed;
 pub use subjects::SubjectContext;
 pub use validation::*;

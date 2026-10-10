@@ -4,7 +4,6 @@ use meshway_configuration::{
     NetworkConfiguration, execution::BusinessProtocol, netmap::ServiceSet,
 };
 use meshway_model::NodeId;
-use meshway_transport_spec::Port;
 use std::ops::RangeInclusive;
 
 pub(crate) enum TrafficGrant {
@@ -63,37 +62,6 @@ impl TrafficGrant {
             Self::IcmpEcho => vec![(BusinessProtocol::IcmpEcho, None)],
         }
     }
-
-    fn allows(&self, protocol: BusinessProtocol, port: Option<Port>) -> bool {
-        match (self, protocol, port) {
-            (Self::Any | Self::IcmpEcho, BusinessProtocol::IcmpEcho, None) => true,
-            (Self::Any, BusinessProtocol::Tcp | BusinessProtocol::Udp, Some(_)) => true,
-            (Self::Tcp(range), BusinessProtocol::Tcp, Some(port))
-            | (Self::Udp(range), BusinessProtocol::Udp, Some(port)) => range.contains(&port.get()),
-            _ => false,
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-pub(crate) enum TrafficQuery {
-    Any,
-    Exact {
-        protocol: BusinessProtocol,
-        port: Option<Port>,
-    },
-}
-
-impl TrafficQuery {
-    pub(crate) fn matches(self, entries: &[String]) -> bool {
-        entries
-            .iter()
-            .filter_map(|entry| TrafficGrant::parse(entry))
-            .any(|grant| match self {
-                Self::Any => true,
-                Self::Exact { protocol, port } => grant.allows(protocol, port),
-            })
-    }
 }
 
 /// Whether current Mesh identities share at least one explicitly granted
@@ -106,37 +74,20 @@ pub fn mesh_access_allows_any(
     source: NodeId,
     target: NodeId,
 ) -> bool {
-    allows_mesh(configuration, subjects, source, target, TrafficQuery::Any)
+    mesh_grants(configuration, subjects, source, target)
+        .any(|rule| token_services(&rule.ip).next().is_some())
 }
 
-/// Union of every service any rule grants from `source` to `target`; equal
-/// to `allows_mesh` for each exact protocol/port. Rule order is irrelevant.
+/// Union of every service any rule grants from `source` to `target`.
+/// Rule order is irrelevant.
 pub(crate) fn mesh_services(
     configuration: &NetworkConfiguration,
     subjects: &SubjectContext,
     source: NodeId,
     target: NodeId,
 ) -> ServiceSet {
-    if !subjects.node_is_active(configuration, source)
-        || !subjects.node_is_active(configuration, target)
-    {
-        return ServiceSet::default();
-    }
-    let matches = |selectors: &[String], node| {
-        selectors
-            .iter()
-            .any(|selector| subjects.matches(configuration, selector, node))
-    };
     ServiceSet::from_grants(
-        configuration
-            .access
-            .iter()
-            .filter(|rule| {
-                (matches(&rule.src, source) && matches(&rule.dst, target))
-                    || (rule.bidirectional
-                        && matches(&rule.dst, source)
-                        && matches(&rule.src, target))
-            })
+        mesh_grants(configuration, subjects, source, target)
             .flat_map(|rule| token_services(&rule.ip)),
     )
 }
@@ -150,26 +101,22 @@ pub(crate) fn token_services(
         .flat_map(|grant| grant.services())
 }
 
-pub(crate) fn allows_mesh(
-    configuration: &NetworkConfiguration,
-    subjects: &SubjectContext,
+fn mesh_grants<'a>(
+    configuration: &'a NetworkConfiguration,
+    subjects: &'a SubjectContext,
     source: NodeId,
     target: NodeId,
-    traffic: TrafficQuery,
-) -> bool {
+) -> impl Iterator<Item = &'a meshway_configuration::AccessRule> {
     // Wildcard and explicit node selectors alone do not check active identity.
-    if !subjects.node_is_active(configuration, source)
-        || !subjects.node_is_active(configuration, target)
-    {
-        return false;
-    }
-    let matches = |selectors: &[String], node| {
+    let active = subjects.node_is_active(configuration, source)
+        && subjects.node_is_active(configuration, target);
+    let matches = move |selectors: &[String], node| {
         selectors
             .iter()
             .any(|selector| subjects.matches(configuration, selector, node))
     };
-    configuration.access.iter().any(|rule| {
-        traffic.matches(&rule.ip)
+    configuration.access.iter().filter(move |rule| {
+        active
             && ((matches(&rule.src, source) && matches(&rule.dst, target))
                 || (rule.bidirectional && matches(&rule.dst, source) && matches(&rule.src, target)))
     })
