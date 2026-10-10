@@ -99,33 +99,21 @@ async fn fresh(context: &Context<'_>, stage: &str, ping: bool) -> Result<()> {
     .await
 }
 
-/// Quiet part of a full offline window with reported endpoints: longer than
-/// the peer facts' freshness (60 s), the adjacency idle close (120 s) and the
-/// circuit idle retirement (90 s) together, so the lazy A→R adjacency closes
-/// and must be dialed again from stale last known facts alone.
-const OFFLINE_QUIET: Duration = Duration::from_secs(300);
-
 /// The Controller is unreachable for the whole window: the same sockets keep
 /// working, new flows and ping are admitted locally, the installed netmap and
-/// TUN never change, and HTTP recovery needs no second `up`. With reported
-/// endpoints the traffic pauses for [`OFFLINE_QUIET`] after the first new
-/// flows, then the same sockets and new flows must work again.
+/// TUN never change, and HTTP recovery needs no second `up`.
 async fn offline(context: Context<'_>) -> Result<String> {
     let Context {
         cli, role, signals, ..
     } = context;
     closed(signals).await?;
-    let quiet_until =
-        (cli.reported_endpoints && !cli.short).then(|| tokio::time::Instant::now() + OFFLINE_QUIET);
     let before = command(cli, "status").await?;
     let netmap = installed(&before).ok_or("no installed netmap before the outage")?;
     let mut checks = 0_u64;
     let mut fresh_flows = 0_u8;
     loop {
         let done = signals.read("scenario-window-end").await?.is_some();
-        let quiet = fresh_flows == 1
-            && quiet_until.is_some_and(|until| tokio::time::Instant::now() < until);
-        if let Some(traffic) = context.traffic.as_mut().filter(|_| !quiet) {
+        if let Some(traffic) = context.traffic.as_mut() {
             traffic.exchange().await?;
             if fresh_flows == 0 || (done && fresh_flows == 1) {
                 fresh(
@@ -222,6 +210,11 @@ async fn expiry(mut context: Context<'_>) -> Result<String> {
     Ok(context.tun)
 }
 
+/// With reported endpoints the restart waits until every peer fact is past
+/// its freshness bound (at most 60 s after the last report), so the restarted
+/// daemons must dial from saved, stale last known facts alone.
+const STALE_FACTS: Duration = Duration::from_secs(90);
+
 /// Every daemon restarts while the Controller is unreachable. The signed
 /// cached netmap installs at once; new flows cross all three restarted
 /// daemons without any Server contact.
@@ -230,6 +223,9 @@ async fn restart(mut context: Context<'_>) -> Result<String> {
         cli, role, signals, ..
     } = context;
     closed(signals).await?;
+    if cli.reported_endpoints {
+        tokio::time::sleep(STALE_FACTS).await;
+    }
     let before = command(cli, "status").await?;
     let netmap = installed(&before).ok_or("no installed netmap before restart")?;
     let identity = before.identity.clone();

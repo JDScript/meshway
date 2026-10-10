@@ -73,8 +73,9 @@ impl Control {
     }
 
     /// The saved last known facts as one complete replacement, once after
-    /// loading: the facts sink can dial without the Server.
-    pub(crate) fn take_facts_replay(&mut self) -> Option<(NetmapRef, PeerFactsDelta)> {
+    /// loading. The host hands it to its facts sink where it publishes the
+    /// held netmap without Server contact, so a restart dials offline.
+    pub fn take_facts_replay(&mut self) -> Option<(NetmapRef, PeerFactsDelta)> {
         if !std::mem::take(&mut self.netmap.replay) {
             return None;
         }

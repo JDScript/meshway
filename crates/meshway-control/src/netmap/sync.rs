@@ -249,10 +249,6 @@ pub async fn sync_loop(
                 _ = stop.cancelled() => return Ok(()),
                 driver = control.lock() => driver,
             };
-            // Saved last known facts reach the sink before any Server contact.
-            if let Some((reference, facts)) = driver.take_facts_replay() {
-                let _ = sink.apply(reference, facts);
-            }
             match driver.begin_sync() {
                 Ok(call) => Some(call),
                 Err(Error::Lifecycle | Error::Expired) => {

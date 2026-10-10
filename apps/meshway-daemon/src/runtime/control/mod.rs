@@ -489,7 +489,7 @@ async fn session(
     reset: &mut bool,
 ) -> Ended {
     {
-        let driver = shared.lock().await;
+        let mut driver = shared.lock().await;
         if reported.borrow().revision != plan.revision || reported.borrow().phase == Phase::Down {
             publish(
                 reported,
@@ -501,8 +501,15 @@ async fn session(
                 None,
             );
         }
-        // A verified held netmap is authority again without Server contact.
+        // A verified held netmap is authority again without Server contact,
+        // and its saved last known peer facts are dial addresses again.
         offer(&driver, network.as_deref());
+        if let Some(network) = network.as_deref()
+            && let Some((reference, facts)) = driver.take_facts_replay()
+        {
+            use meshway_control::PeerFactsSink as _;
+            let _ = network.peer_sink().apply(reference, facts);
+        }
     }
     let mut backoff = 1u64;
     loop {

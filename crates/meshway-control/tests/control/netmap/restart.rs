@@ -316,22 +316,13 @@ async fn restart_without_the_server_replays_the_last_known_peer_facts() {
     proxy.close().await;
     server.close().await;
 
-    // Server gone: the replay reaches the sink before any contact succeeds.
-    let restored = reopen(&copy, &origin);
+    // Server gone: the replay is available once, with the held netmap.
+    let mut restored = reopen(&copy, &origin);
     assert!(restored.netmap().is_some());
-    let control = tokio::sync::Mutex::new(restored);
-    let (sender, _receiver) = tokio::sync::watch::channel(None);
-    let stop = tokio_util::sync::CancellationToken::new();
     let mut sink = Facts::default();
-    let stopper = async {
-        tokio::time::sleep(Duration::from_millis(500)).await;
-        stop.cancel();
-    };
-    let (result, ()) = tokio::join!(
-        meshway_control::sync_loop(&control, &mut sink, &sender, &stop),
-        stopper
-    );
-    result.unwrap();
+    while let Some((reference, facts)) = restored.take_facts_replay() {
+        meshway_control::PeerFactsSink::apply(&mut sink, reference, facts).unwrap();
+    }
     let (reference, replay) = &sink.applied[0];
     assert_eq!(*reference, netmap.reference());
     assert_eq!(replay.base, None);
@@ -343,5 +334,5 @@ async fn restart_without_the_server_replays_the_last_known_peer_facts() {
         "10.9.0.9:41641"
     );
     assert_eq!(sink.applied.len(), 1, "replayed once");
-    control.into_inner().shutdown().await.unwrap();
+    restored.shutdown().await.unwrap();
 }
