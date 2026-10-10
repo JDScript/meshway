@@ -261,40 +261,6 @@ async fn missing_adjacency_registers_interest_and_queues_until_the_carrier_exist
 }
 
 #[tokio::test]
-async fn a_replaced_adjacent_channel_retires_its_circuits_and_the_next_packet_handshakes() {
-    let mut f = NetmapMesh::start().await;
-    let [_, r, b] = f.ids();
-    let id = {
-        let packet = f.mesh_udp(false, 42424);
-        first(&mut f, packet)
-    }
-    .await;
-    // Not adjacent at A: nothing retires.
-    assert_eq!(f.a.retire_adjacent(b), 0);
-    assert!(f.a.circuit_info(id).unwrap().is_some());
-    // The relay retires its own state when B's channel is replaced.
-    assert_eq!(f.r.retire_adjacent(b), 1);
-    // The origin retires on its next hop's replacement; the next packet
-    // starts a fresh handshake on the same carrier instead of using the CID.
-    assert_eq!(f.a.retire_adjacent(r), 1);
-    assert!(
-        f.a.circuit_info(id)
-            .unwrap()
-            .is_none_or(|info| info.state != CircuitState::Established)
-    );
-    let restarted = {
-        let packet = f.mesh_udp(false, 42424);
-        f.a.outbound(packet)
-    }
-    .unwrap();
-    assert!(
-        matches!(restarted, Outbound::Queued { init: Some(_) }),
-        "a fresh handshake, not the retired circuit"
-    );
-    f.close().await;
-}
-
-#[tokio::test]
 async fn same_content_apply_changes_nothing_and_keeps_outputs() {
     let mut f = NetmapMesh::start().await;
     let id = {

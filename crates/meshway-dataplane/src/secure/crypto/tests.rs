@@ -14,7 +14,7 @@ fn keypair() -> (Zeroizing<[u8; 32]>, [u8; 32]) {
     (private, pair.public.as_slice().try_into().unwrap())
 }
 
-pub(in crate::secure) fn handshake(prologue: &[u8]) -> (Transport, Transport) {
+fn handshake(prologue: &[u8]) -> (Transport, Transport) {
     let (a, ap) = keypair();
     let (b, bp) = keypair();
     let mut initiator = build_with_key(&a, &bp, prologue, true).unwrap();

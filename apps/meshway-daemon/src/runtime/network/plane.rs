@@ -15,8 +15,6 @@ use std::sync::Arc;
 
 pub(super) struct Installed {
     pub desired: Desired,
-    /// Selected channel identities SecureNode's circuits were last bound to.
-    pub channels: std::collections::BTreeMap<meshway_model::NodeId, [u8; 32]>,
     /// Absent for a disabled Node, which owns no packet plane.
     pub secure: Option<SecureNode>,
     pub manager: Option<Manager>,
@@ -358,7 +356,6 @@ impl meshway_engine::Components for Plane {
                 secure: None,
                 manager: None,
                 exit: None,
-                channels: Default::default(),
             });
             return Ok(());
         }
@@ -423,7 +420,6 @@ impl meshway_engine::Components for Plane {
                     secure: None,
                     manager: None,
                     exit: None,
-                    channels: Default::default(),
                 })
             }
         }
