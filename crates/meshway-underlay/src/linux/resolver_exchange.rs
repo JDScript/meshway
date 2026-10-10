@@ -42,10 +42,7 @@ async fn exchange(
     bytes: Bytes,
 ) -> Result<Bytes, GatewayError> {
     route.ensure_current().map_err(|_| GatewayError)?;
-    let scope = factory
-        .shared
-        .data(route.netmap())
-        .map_err(|_| GatewayError)?;
+    let scope = factory.shared.installed_data().map_err(|_| GatewayError)?;
     let input = meshway_dns::decode_query(&bytes).map_err(|_| GatewayError)?;
     let mut outgoing = bytes.to_vec();
     let mut id = [0u8; 2];

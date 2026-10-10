@@ -106,6 +106,17 @@ impl Manager {
             .collect())
     }
 
+    /// Stop the owners of `keys`; the caller joins them.
+    pub(super) fn retire_keys(&mut self, keys: &[Key]) -> Vec<Owner> {
+        keys.iter()
+            .filter_map(|key| {
+                let owner = self.owners.remove(key)?;
+                owner.stop();
+                Some(owner)
+            })
+            .collect()
+    }
+
     pub(super) async fn join_retired(&mut self, owners: Vec<Owner>) -> Result<(), Error> {
         for owner in owners {
             let socket = owner.socket;

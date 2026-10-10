@@ -236,7 +236,7 @@ impl Authority {
         // table, which also owns each projection's cutoff. The kernel owner
         // enforces its installed role and exact projection transaction; it
         // never builds a second policy compiler.
-        self.shared.data(self.installed()?.reference())
+        self.shared.data(&self.installed()?)
     }
 }
 

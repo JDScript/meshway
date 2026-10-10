@@ -64,17 +64,19 @@ impl Plane {
     }
 
     /// State/receipt binding only; never part of desired content.
-    pub fn set_instance(&mut self, instance: Option<InstanceRequest>) {
+    pub async fn set_instance(&mut self, instance: Option<InstanceRequest>) {
         if self.instance == instance {
             return;
         }
         self.instance = instance;
         if let Some(manager) = self
             .installed
-            .as_ref()
-            .and_then(|state| state.manager.as_ref())
+            .as_mut()
+            .and_then(|state| state.manager.as_mut())
+            && let Err(error) = manager.set_instance(self.instance.clone()).await
         {
-            let _ = manager.set_instance(self.instance.clone());
+            // Coordination sockets stay plain until the next apply rebinds.
+            tracing::warn!(?error, "Adjacency instance binding failed");
         }
     }
 
@@ -136,7 +138,7 @@ impl meshway_engine::Components for Plane {
             let closing = self.close().await;
             return closing.map_err(|problem| self.fail(problem, ApplyFailure::Underlay));
         };
-        self.packets.clear_incoming();
+        self.packets.clear_admitted();
         if !desired.local().enabled {
             return Ok(());
         }
@@ -146,10 +148,12 @@ impl meshway_engine::Components for Plane {
         let Some(state) = self.installed.as_mut() else {
             return Err(self.fail(Problem::Apply, ApplyFailure::Validation));
         };
-        let carriers = match state.manager.as_ref().map(Manager::carriers) {
-            Some(Ok(carriers)) => carriers,
-            _ => return Err(self.fail(Problem::Transport, ApplyFailure::Listeners)),
-        };
+        // No running Manager (a degraded adjacency apply) is no carrier.
+        let carriers = state
+            .manager
+            .as_ref()
+            .and_then(|manager| manager.carriers().ok())
+            .unwrap_or_default();
         let secure = match state.secure.take() {
             Some(mut secure) => match secure.apply(desired) {
                 Ok(applied) => {
@@ -226,15 +230,31 @@ impl meshway_engine::Components for Plane {
             .installed
             .as_mut()
             .and_then(|state| state.manager.take());
+        // Adjacency failures only withhold capability: SecureNode admits
+        // nothing more for a missing or partially bound Manager. A Manager is
+        // kept only while it runs on exactly this content.
         let manager = match previous {
-            Some(mut manager) => {
-                if manager.apply(desired).await.is_err() {
+            Some(mut manager) => match manager.apply(desired).await {
+                Ok(()) => manager,
+                Err(error)
+                    if manager.is_running() && manager.reference() == desired.reference() =>
+                {
+                    tracing::warn!(?error, "Adjacency resources partially unavailable");
+                    self.failure = Some((Problem::Transport, ApplyFailure::Listeners));
+                    self.peers.attach(manager.facts_sink(), desired.reference());
+                    if let Some(state) = &mut self.installed {
+                        state.manager = Some(manager);
+                    }
+                    return Err(Error::Degraded);
+                }
+                Err(error) => {
+                    tracing::warn!(?error, "Adjacency apply failed; restarting adjacencies");
                     let _ = manager.shutdown().await;
                     self.peers.detach();
-                    return Err(self.fail(Problem::Transport, ApplyFailure::Listeners));
+                    self.failure = Some((Problem::Transport, ApplyFailure::Listeners));
+                    return Err(Error::Degraded);
                 }
-                manager
-            }
+            },
             None => {
                 let Ok(generation) = self.generation.checked_next() else {
                     return Err(self.fail(Problem::Worker, ApplyFailure::Listeners));
@@ -250,14 +270,16 @@ impl meshway_engine::Components for Plane {
                     Default::default(),
                     self.traversal.clone(),
                     generation,
+                    self.instance.clone(),
                 )
                 .await
                 {
-                    Ok(manager) => {
-                        let _ = manager.set_instance(self.instance.clone());
-                        manager
+                    Ok(manager) => manager,
+                    Err(error) => {
+                        tracing::warn!(?error, "Adjacency start failed");
+                        self.failure = Some((Problem::Transport, ApplyFailure::Listeners));
+                        return Err(Error::Degraded);
                     }
-                    Err(_) => return Err(self.fail(Problem::Transport, ApplyFailure::Listeners)),
                 }
             }
         };
@@ -394,8 +416,10 @@ impl meshway_engine::Components for Plane {
             && netmap.self_.enabled
             && let Err(error) = self.dns.install(desired.clone()).await
         {
+            // Answers are capability; the negative boundary is in apply_host.
             tracing::warn!(%error, "DNS scope installation failed");
-            return Err(self.fail(Problem::Dns, ApplyFailure::Dns));
+            self.failure = Some((Problem::Dns, ApplyFailure::Dns));
+            return Err(Error::Degraded);
         }
         Ok(())
     }

@@ -155,8 +155,8 @@ impl Manager {
             return self.restart(desired).await;
         }
         let retired = self.retire_resources(&previous, &next)?;
-        while self.events.try_recv().is_ok() {}
-        while self.control_events.try_recv().is_ok() {}
+        // Queued frames stay: receive keeps only frames of a still selected
+        // channel, and SecureNode admits each on the current content.
         // Publishing first makes every later commit check the new content at
         // install_ready; the table pass below then sees the final channels.
         self.shared.plans.send_replace(next.clone());

@@ -54,22 +54,18 @@ pub(super) struct Shared {
     pub resources: Resources,
 }
 
-/// The desired content capture is installed for. `content` ends every
-/// operation of exactly this content (new content or withdrawal); `session`
-/// ends the registered descriptors (withdrawal, suspension).
+/// The desired content capture is installed for. `session` ends every data
+/// operation and registered descriptor (withdrawal, suspension); new content
+/// ends only the descriptors whose exact purpose changed, never by content
+/// generation.
 pub(super) struct Installed {
     pub desired: Desired,
-    pub content: CancellationToken,
     pub session: CancellationToken,
 }
 
 impl Installed {
     pub fn new(desired: Desired, session: CancellationToken) -> Self {
-        Self {
-            desired,
-            content: session.child_token(),
-            session,
-        }
+        Self { desired, session }
     }
 }
 
@@ -154,18 +150,25 @@ impl Shared {
             .map(|installed| installed.desired.clone()))
     }
 
-    /// An operation on exactly the content `netmap`, which must be installed.
-    pub fn data(self: &Arc<Self>, netmap: meshway_model::NetmapRef) -> Result<ProtectionScope> {
+    /// A data operation planned on `desired` while some content is installed.
+    /// It ends at withdrawal; a descriptor it registers must keep the same
+    /// purpose on the content installed at registration (see `physical`).
+    pub fn data(self: &Arc<Self>, desired: &Desired) -> Result<ProtectionScope> {
+        let mut scope = self.installed_data()?;
+        scope.planned = Some(desired.clone());
+        Ok(scope)
+    }
+
+    /// A data operation of whatever content is installed now.
+    pub fn installed_data(self: &Arc<Self>) -> Result<ProtectionScope> {
         self.check()?;
         let active = self.execution.read().map_err(|_| Error::Worker)?;
         let installed = active.as_ref().ok_or(Error::Expired)?;
-        if installed.desired.reference() != netmap || installed.content.is_cancelled() {
-            return Err(Error::Expired);
-        }
         Ok(ProtectionScope {
             shared: self.clone(),
-            stop: installed.content.clone(),
+            stop: installed.session.clone(),
             data: true,
+            planned: None,
             purpose: None,
             resource: None,
         })
@@ -176,6 +179,7 @@ impl Shared {
             shared: self.clone(),
             stop: self.tasks.stop.clone(),
             data: false,
+            planned: None,
             purpose: None,
             resource: None,
         }
@@ -183,7 +187,7 @@ impl Shared {
 }
 
 /// Protection of one socket operation or descriptor: its single stop token
-/// (Host lifetime for Server bootstrap, the installed content for an
+/// (Host lifetime for Server bootstrap, the installed session for an
 /// operation, the registration for a descriptor) and its socket capacity.
 #[derive(Clone)]
 pub(super) struct ProtectionScope {
@@ -191,6 +195,8 @@ pub(super) struct ProtectionScope {
     stop: CancellationToken,
     /// Data sockets use the data capacity and require installed content.
     data: bool,
+    /// The content the operation was planned on, if any.
+    planned: Option<Desired>,
     /// The descriptor purpose this operation may register.
     purpose: Option<ResourceRef>,
     /// The registration that keeps a descriptor's entry in the Host's apply.
@@ -219,6 +225,18 @@ impl ProtectionScope {
         if self.stop.is_cancelled() {
             return Err(Error::Expired);
         }
+        // Planned on earlier content: only a purpose the installed content
+        // keeps unchanged may register, exactly as an apply would keep it.
+        if let Some(planned) = &self.planned
+            && planned.reference() != installed.desired.reference()
+            && !crate::netmap_resource_compatible(
+                planned.netmap(),
+                installed.desired.netmap(),
+                &purpose,
+            )
+        {
+            return Err(Error::Expired);
+        }
         let mut entries = self
             .shared
             .resources
@@ -239,18 +257,6 @@ impl ProtectionScope {
         self.stop = binding.stop.clone();
         self.resource = Some(binding);
         Ok(self)
-    }
-    /// An operation of the content now installed, ending at the next apply
-    /// even while its descriptor is kept.
-    pub fn frozen(&self) -> Result<Self> {
-        if !self.data {
-            return Ok(self.clone());
-        }
-        let active = self.shared.execution.read().map_err(|_| Error::Worker)?;
-        let installed = active.as_ref().ok_or(Error::Expired)?;
-        let mut scope = self.clone();
-        scope.stop = installed.content.clone();
-        Ok(scope)
     }
     /// The installed content of a data scope.
     pub fn execution(&self) -> Result<Desired> {

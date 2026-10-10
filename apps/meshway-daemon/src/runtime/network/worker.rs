@@ -45,10 +45,7 @@ struct Retry {
 impl Retry {
     fn failed(&mut self, failure: ApplyFailure) {
         self.failures = self.failures.saturating_add(1);
-        let transient = !matches!(
-            failure,
-            ApplyFailure::Dns | ApplyFailure::Validation | ApplyFailure::Dataplane
-        );
+        let transient = !matches!(failure, ApplyFailure::Validation | ApplyFailure::Dataplane);
         self.at = (transient && self.failures < 3).then(|| {
             tokio::time::Instant::now()
                 + Duration::from_secs(if self.failures == 1 { 5 } else { 15 })
@@ -125,6 +122,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
         }
         let live = engine.desired().is_some() && engine.components().secure().is_some();
         let expiry = engine.next_expiry();
+        let engine_degraded = engine.degraded();
         let plane = engine.components_mut();
         let can_read = live && plane.packets.can_read(&pool);
         let has_outputs = plane.packets.has_outputs();
@@ -148,7 +146,9 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             let at = tokio::time::Instant::now() + Duration::from_secs(1);
             wake_at = Some(wake_at.map_or(at, |old| old.min(at)));
         }
-        let retry_at = retry.at.filter(|_| plane.installed.is_none());
+        let retry_at = retry
+            .at
+            .filter(|_| plane.installed.is_none() || engine_degraded);
         let Plane {
             host,
             dns,
@@ -198,10 +198,12 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
         // Resource owners still observe the same lease end. Their EOF can win
         // the select against the Engine timer; it is the normal expiry, not a
         // transport/TUN installation failure.
-        let work = if matches!(work, Work::CarrierClosed | Work::Packet(Err(_)))
+        let work = if (matches!(work, Work::CarrierClosed | Work::Packet(Err(_)))
             && engine
                 .next_expiry()
-                .is_some_and(|at| tokio::time::Instant::now() >= at)
+                .is_some_and(|at| tokio::time::Instant::now() >= at))
+            // A suspended host's monotonic timer missed the wall-clock end.
+            || (matches!(work, Work::Tick) && engine.lease_ended())
         {
             Work::Expired
         } else {
@@ -309,7 +311,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 }
                 let offer = offers.borrow_and_update().clone();
                 engine.components_mut().set_keys(offer.keys);
-                engine.components_mut().set_instance(offer.instance);
+                engine.components_mut().set_instance(offer.instance).await;
                 let Some(netmap) = offer.netmap else {
                     // Control withdrew the lease: end the installed netmap.
                     if engine.desired().is_some() || engine.components().installed.is_some() {
@@ -320,9 +322,12 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                     continue;
                 };
                 let reference = netmap.content.reference();
-                let same = engine
-                    .desired()
-                    .is_some_and(|desired| desired.reference() == reference);
+                // Same healthy content: Engine extends its own timer only. A
+                // degraded installation re-applies and reports below.
+                let same = !engine.degraded()
+                    && engine
+                        .desired()
+                        .is_some_and(|desired| desired.reference() == reference);
                 if same {
                     // Same content: Engine extends its own timer only.
                     if engine.reconfig(Some(&netmap)).await.is_err() {
@@ -370,6 +375,29 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                         } else {
                             DataPlane::Stopped
                         };
+                    }
+                    Err(meshway_engine::Error::Degraded) => {
+                        let (problem, failure) = plane
+                            .failure
+                            .take()
+                            .unwrap_or((Problem::Transport, ApplyFailure::Listeners));
+                        tracing::warn!(
+                            ?problem,
+                            ?failure,
+                            netmap_serial = reference.serial.get(),
+                            "Node netmap installed without some capability; retrying"
+                        );
+                        // Installed and safe, but not a complete application.
+                        report.completion = Some(Err(failure));
+                        report.problem = Some(problem);
+                        report.content = Some(netmap.content.clone());
+                        report.expires_at = lease_end(&netmap.lease);
+                        report.plane = if plane.secure().is_some() {
+                            DataPlane::Ready
+                        } else {
+                            DataPlane::Failed
+                        };
+                        retry.failed(failure);
                     }
                     Err(error) if plane.failure.is_none() && kept => {
                         // Rejected input (regressing reference or stale lease):

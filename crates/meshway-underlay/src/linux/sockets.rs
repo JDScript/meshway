@@ -176,7 +176,7 @@ impl SocketFactory {
         });
         let scope = self
             .shared
-            .data(desired.reference())?
+            .data(desired)?
             .for_resource(reference.resource.clone())
             .physical()?;
         let endpoint = ProtectedDatagram::bind(
@@ -194,7 +194,7 @@ impl SocketFactory {
         reference: &meshway_control::connectivity::SocketReference,
         resource: &meshway_model::state::ResourceRef,
     ) -> Result<()> {
-        self.shared.data(desired.reference())?;
+        self.shared.data(desired)?;
         if !super::traversal::references(desired, reference)?
             || &reference.resource != resource
             || reference.socket_id.len() != 64
@@ -214,11 +214,12 @@ impl SocketFactory {
         key: &str,
         endpoint: &DialEndpoint,
     ) -> Result<CandidateHandle> {
-        let scope = self.shared.data(desired.reference())?.for_resource(
-            meshway_model::state::ResourceRef::Dial {
-                key: key.to_owned(),
-            },
-        );
+        let scope =
+            self.shared
+                .data(desired)?
+                .for_resource(meshway_model::state::ResourceRef::Dial {
+                    key: key.to_owned(),
+                });
         let view = View::of(desired);
         let candidate = view.dialers().get(key).ok_or(Error::Target)?.clone();
         validate_dial(&candidate.parameters)?;
@@ -235,11 +236,12 @@ impl SocketFactory {
     }
 
     pub fn listener(&self, desired: &Desired, key: &str) -> Result<ListenerHandle> {
-        let scope = self.shared.data(desired.reference())?.for_resource(
-            meshway_model::state::ResourceRef::Listener {
-                key: key.to_owned(),
-            },
-        );
+        let scope =
+            self.shared
+                .data(desired)?
+                .for_resource(meshway_model::state::ResourceRef::Listener {
+                    key: key.to_owned(),
+                });
         let view = View::of(desired);
         let declaration = view.listeners().get(key).ok_or(Error::Target)?.clone();
         validate_listener(declaration.declaration())?;
@@ -539,7 +541,6 @@ pub(super) async fn connect_tcp(
     tcp: &TcpOptions,
     timeout: Duration,
 ) -> Result<ProtectedTcp> {
-    let opening = scope.frozen()?;
     let capacity = scope.capacity()?;
     let socket = tcp_socket(address)?;
     scope.prepare_checked(&SockRef::from(&socket))?;
@@ -550,10 +551,10 @@ pub(super) async fn connect_tcp(
     }
     scope.prepare_checked(&SockRef::from(&socket))?;
     let stream = tokio::select! { biased;
-        _ = opening.ended() => return Err(Error::Expired),
+        _ = scope.ended() => return Err(Error::Expired),
         result = tokio::time::timeout(timeout, socket.connect(address)) => result.map_err(|_| Error::Io(io::ErrorKind::TimedOut.into()))??,
     };
-    opening.check()?;
+    scope.check()?;
     adopt(stream, scope, capacity, options, tcp)
 }
 

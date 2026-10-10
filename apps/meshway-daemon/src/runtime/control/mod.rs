@@ -619,6 +619,23 @@ async fn online_session(
             meshway_control::sync_loop(&shared, &mut sink, &netmaps, &stop).await
         })
     };
+    // The verified lease reaches Engine without the Control lock or this
+    // session's maintenance select: no network wait lies on that path.
+    let forward = network.as_deref().map(|network| {
+        let leases = network.lease_sink();
+        let mut netmaps = netmap_rx.clone();
+        let stop = stop.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::select! { biased;
+                    _ = stop.cancelled() => return,
+                    changed = netmaps.changed() => if changed.is_err() { return },
+                }
+                let netmap = netmaps.borrow_and_update().clone();
+                leases.offer_netmap(netmap);
+            }
+        })
+    });
     sync_status.send_modify(|status| status.running = true);
     let mut work = Maintenance::default();
     let mut tick = tokio::time::interval(Duration::from_secs(1));
@@ -666,8 +683,7 @@ async fn online_session(
                     }
                 },
                 network::Work::Report => {
-                    let mut driver = shared.lock().await;
-                    if let Err(ended) = maintain(&mut driver, network.as_deref_mut(), settings, &mut work, plan, reported, true).await {
+                    if let Err(ended) = maintain(shared, network.as_deref_mut(), settings, &mut work, plan, reported, true).await {
                         break Err(Some(ended));
                     }
                     // Pace the change schedule even when nothing was sent.
@@ -678,8 +694,7 @@ async fn online_session(
                 network::Work::Closed => break Err(Some(Ended::Worker)),
             },
             _ = tick.tick() => {
-                let mut driver = shared.lock().await;
-                if let Err(ended) = maintain(&mut driver, network.as_deref_mut(), settings, &mut work, plan, reported, false).await {
+                if let Err(ended) = maintain(shared, network.as_deref_mut(), settings, &mut work, plan, reported, false).await {
                     break Err(Some(ended));
                 }
             },
@@ -689,15 +704,20 @@ async fn online_session(
     if !sync.is_finished() {
         let _ = sync.await;
     }
+    if let Some(forward) = forward {
+        let _ = forward.await;
+    }
     result
 }
 
 /// Periodic instance, State, receipt and observation-task work. Transient
 /// failures are retried after a backoff and never stop the data plane;
-/// identity and binding rejections block.
+/// identity and binding rejections block. The Control lock is taken per
+/// operation, so a sync reply waits for at most one operation, never for the
+/// whole sequence.
 #[allow(clippy::too_many_arguments)]
 async fn maintain(
-    control: &mut Control,
+    shared: &Shared,
     mut network: Option<&mut network::Handle>,
     settings: &Settings,
     work: &mut Maintenance,
@@ -709,7 +729,8 @@ async fn maintain(
     if work.retry_at.is_some_and(|at| now < at) {
         return Ok(());
     }
-    let result = maintain_once(control, network.as_deref_mut(), settings, work, changed).await;
+    let result = maintain_once(shared, network.as_deref_mut(), settings, work, changed).await;
+    let control = &*shared.lock().await;
     match result {
         Ok(()) => {
             work.retry_at = None;
@@ -759,19 +780,22 @@ async fn maintain(
 }
 
 async fn maintain_once(
-    control: &mut Control,
+    shared: &Shared,
     network: Option<&mut network::Handle>,
     settings: &Settings,
     work: &mut Maintenance,
     changed: bool,
 ) -> Result<(), (&'static str, Error)> {
     let now = Instant::now();
-    control
+    shared
+        .lock()
+        .await
         .authenticate()
         .await
         .map_err(|error| ("authenticate", error))?;
     let mut fresh = false;
-    if control.status().instance.is_none() {
+    if shared.lock().await.status().instance.is_none() {
+        let mut control = shared.lock().await;
         control
             .acquire_instance(if network.is_some() {
                 network::capabilities()
@@ -784,36 +808,42 @@ async fn maintain_once(
         work.receipted = None;
         fresh = true;
         // State/receipt binding of the new instance; nothing reinstalls.
-        offer(control, network.as_deref());
+        offer(&control, network.as_deref());
     } else if work.renewed.is_none_or(|at| now >= at + RENEW) {
-        control
+        shared
+            .lock()
+            .await
             .renew_instance()
             .await
             .map_err(|error| ("renew_instance", error))?;
         work.renewed = Some(now);
     }
     if let Some(network) = network {
-        receipt(control, network, work).await?;
+        receipt(&mut *shared.lock().await, network, work).await?;
         let routine = fresh || work.reported.is_none_or(|at| now >= at + REPORT);
         if (routine || changed)
             && network
-                .report_state(control, settings, routine)
+                .report_state(&mut *shared.lock().await, settings, routine)
                 .await
                 .map_err(|error| ("report_runtime_state", error))?
         {
             work.reported = Some(now);
         }
+        let netmap = shared.lock().await.netmap_lease().map(|lease| lease.netmap);
         if work.tasks.is_none_or(|at| now >= at + TASKS)
-            && let Some(netmap) = control.netmap_lease().map(|lease| lease.netmap)
+            && let Some(netmap) = netmap
         {
             work.tasks = Some(now);
-            let tasks = control
+            let tasks = shared
+                .lock()
+                .await
                 .get_observation_tasks(netmap)
                 .await
                 .map_err(|error| ("get_observation_tasks", error))?;
             network.observation_tasks(netmap, tasks.items);
         }
     } else if fresh || work.reported.is_none_or(|at| now >= at + REPORT) {
+        let mut control = shared.lock().await;
         match control.report_control_state(settings.system.clone()).await {
             Ok(_) => work.reported = Some(now),
             Err(Error::Pending) => {

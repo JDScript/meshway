@@ -64,7 +64,7 @@ impl Active {
             next.lease.netmap.serial < old.netmap.serial
                 || (next.lease.netmap.serial == old.netmap.serial
                     && (next.lease.netmap != old.netmap
-                        || next.lease.issued_at_ms < old.issued_at_ms))
+                        || next.lease.expires_at_ms < old.expires_at_ms))
         }) {
             return Err(Error::Reference);
         }

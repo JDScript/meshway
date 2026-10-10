@@ -175,10 +175,30 @@ pub(super) struct Offer {
     pub instance: Option<meshway_protocol::InstanceRequest>,
 }
 
+/// Sync's direct path to the Engine worker: only the verified netmap and its
+/// lease change; keys and instance stay Control's offer.
+pub(super) struct LeaseSink(Arc<watch::Sender<Offer>>);
+impl LeaseSink {
+    pub fn offer_netmap(&self, netmap: Option<meshway_engine::Netmap>) {
+        let key = |netmap: &Option<meshway_engine::Netmap>| {
+            netmap
+                .as_ref()
+                .map(|netmap| (netmap.content.reference(), netmap.lease))
+        };
+        self.0.send_if_modified(|current| {
+            if key(&current.netmap) == key(&netmap) {
+                return false;
+            }
+            current.netmap = netmap;
+            true
+        });
+    }
+}
+
 pub(super) struct Handle {
     observation_plans: watch::Sender<Option<ObservationPlan>>,
     commands: mpsc::Sender<Command>,
-    offers: watch::Sender<Offer>,
+    offers: Arc<watch::Sender<Offer>>,
     pub report: watch::Receiver<Report>,
     pub requests: mpsc::Receiver<Request>,
     worker: tokio::task::JoinHandle<Result<(), Problem>>,
@@ -270,7 +290,7 @@ impl Handle {
             Ok(Self {
                 observation_plans,
                 commands,
-                offers: offer_sender,
+                offers: Arc::new(offer_sender),
                 report,
                 requests,
                 worker,
@@ -293,6 +313,11 @@ impl Handle {
     /// The facts sink for Control's sync loop.
     pub fn peer_sink(&self) -> PeerSink {
         self.peers.sink()
+    }
+
+    /// Delivery of sync's verified leases straight to the Engine worker.
+    pub fn lease_sink(&self) -> LeaseSink {
+        LeaseSink(self.offers.clone())
     }
 
     /// Offer Control's current netmap, keys and instance. An unchanged

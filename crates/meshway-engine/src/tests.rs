@@ -136,8 +136,86 @@ async fn older_signed_lease_and_regressing_content_do_not_change_live_engine() {
         content: first.content.clone(),
         lease: first.lease,
     };
-    older.lease.issued_at_ms -= 1;
+    older.lease.expires_at_ms -= 1;
     assert_eq!(engine.reconfig(Some(&older)).await, Err(Error::Reference));
     assert_eq!(engine.next_expiry(), expires);
     assert_eq!(engine.components.calls, calls);
+    // A Server clock stepped back issues an earlier `issuedAt`; a lease that
+    // does not end earlier is still a renewal.
+    let mut stepped = Netmap {
+        content: first.content.clone(),
+        lease: first.lease,
+    };
+    stepped.lease.issued_at_ms -= 5_000;
+    stepped.lease.expires_at_ms += 1_000;
+    engine.reconfig(Some(&stepped)).await.unwrap();
+    assert!(engine.next_expiry() > expires);
+    assert_eq!(engine.components.calls, calls);
+}
+
+#[derive(Default)]
+struct Degrading {
+    calls: Vec<(Part, Option<NetmapRef>)>,
+    degraded: bool,
+}
+impl Degrading {
+    fn apply(&mut self, part: Part, desired: Option<&Desired>) -> Result<(), Error> {
+        self.calls.push((part, desired.map(Desired::reference)));
+        if desired.is_some() && part == Part::Adjacencies && self.degraded {
+            Err(Error::Degraded)
+        } else {
+            Ok(())
+        }
+    }
+}
+impl Components for Degrading {
+    async fn apply_packets(&mut self, desired: Option<&Desired>) -> Result<(), Error> {
+        self.apply(Part::Packets, desired)
+    }
+    async fn apply_adjacencies(&mut self, desired: Option<&Desired>) -> Result<(), Error> {
+        self.apply(Part::Adjacencies, desired)
+    }
+    async fn apply_host(&mut self, desired: Option<&Desired>) -> Result<(), Error> {
+        self.apply(Part::Host, desired)
+    }
+    async fn apply_dns(&mut self, desired: Option<&Desired>) -> Result<(), Error> {
+        self.apply(Part::Dns, desired)
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_degraded_apply_keeps_content_and_the_same_content_retries_it() {
+    let mut engine = Engine::new(Degrading {
+        degraded: true,
+        ..Default::default()
+    });
+    let content = Arc::new(meshway_netmap_fixture::single_node("a", None));
+    let now = engine.clock.now();
+    let first = Netmap {
+        lease: NetmapLease::new(content.reference(), now, now + 60_000).unwrap(),
+        content,
+    };
+    assert_eq!(engine.reconfig(Some(&first)).await, Err(Error::Degraded));
+    let reference = Some(first.content.reference());
+    assert!(engine.degraded() && engine.next_expiry().is_some());
+    assert_eq!(engine.desired().map(Desired::reference), reference);
+    // Every step ran on the content; nothing was withdrawn.
+    assert_eq!(
+        engine.components.calls,
+        [Part::Host, Part::Adjacencies, Part::Packets, Part::Dns].map(|part| (part, reference))
+    );
+    engine.components.calls.clear();
+    engine.components.degraded = false;
+    engine.reconfig(Some(&first)).await.unwrap();
+    assert!(!engine.degraded());
+    assert_eq!(
+        engine.components.calls,
+        [Part::Host, Part::Adjacencies, Part::Packets, Part::Dns].map(|part| (part, reference))
+    );
+    engine.components.calls.clear();
+    engine.reconfig(Some(&first)).await.unwrap();
+    assert!(
+        engine.components.calls.is_empty(),
+        "healthy renewal is a no-op"
+    );
 }

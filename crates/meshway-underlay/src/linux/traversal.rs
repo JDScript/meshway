@@ -92,16 +92,19 @@ impl DatagramAuthorization {
             },
         })
     }
-    /// The descriptor is live and names the Host's installed netmap.
-    fn check(&self) -> Result<meshway_engine::Desired> {
-        self.scope.owner_current()?;
+    /// The descriptor is live (its purpose is unchanged on the installed
+    /// content) and still names this Node. Its State reference is rebound by
+    /// the Manager's apply; the Server checks it on every coordination step.
+    fn check(&self) -> Result<SocketReference> {
+        self.scope.check()?;
         let desired = self.scope.execution()?;
         let binding = self.binding.lock().map_err(|_| Error::Worker)?;
-        if self.registry.closed.is_cancelled() || !references(&desired, &binding.reference)? {
+        if self.registry.closed.is_cancelled()
+            || binding.reference.node_id != desired.netmap().node_id
+        {
             return Err(Error::Expired);
         }
-        self.scope.shared.data(desired.reference())?;
-        Ok(desired)
+        Ok(binding.reference.clone())
     }
     fn insert(&self, address: SocketAddr, lifetime: Lifetime) -> Result<()> {
         if !lifetime.current() || address.is_ipv4() != self.local.is_ipv4() {
@@ -121,8 +124,7 @@ impl DatagramAuthorization {
         server_id: &str,
     ) -> Result<Vec<SocketAddr>> {
         context.ensure_current().map_err(|_| Error::Expired)?;
-        let desired = self.check()?;
-        if context.netmap() != desired.reference() {
+        if context.netmap() != self.check()?.netmap {
             return Err(Error::Expired);
         }
         let server = context
@@ -130,9 +132,7 @@ impl DatagramAuthorization {
             .iter()
             .find(|server| server.id == server_id)
             .ok_or(Error::Target)?;
-        let resolver = self
-            .resolver
-            .scoped(self.scope.shared.data(desired.reference())?)?;
+        let resolver = self.resolver.scoped(self.scope.shared.installed_data()?)?;
         let addresses = tokio::select! { biased;
             _ = context.ended() => return Err(Error::Expired),
             value = resolver.resolve(&server.endpoint.host, server.endpoint.port.get()) => value?,
@@ -200,9 +200,8 @@ impl DatagramAuthorization {
     /// and attempt targets of earlier content end, and only selected channels
     /// whose own lifetime is still live keep their recipient.
     pub fn rebind(&self, reference: &SocketReference) -> Result<()> {
-        self.scope.owner_current()?;
+        self.scope.check()?;
         let desired = self.scope.execution()?;
-        self.scope.shared.data(desired.reference())?;
         if self.registry.closed.is_cancelled() {
             return Err(Error::Expired);
         }

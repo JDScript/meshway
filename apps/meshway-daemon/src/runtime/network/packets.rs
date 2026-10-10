@@ -161,15 +161,13 @@ impl Packets {
             .chain(first)
             .min()
     }
-    pub fn clear_incoming(&mut self) {
-        self.dropped = self.dropped.saturating_add(
-            (self.incoming.len()
-                + self.control.len()
-                + self.sends.occupancy().0
-                + self.deliveries.occupancy().0) as u64,
-        );
-        self.incoming.clear();
-        self.control.clear();
+    /// New content: outputs admitted on earlier content end. Frames not yet
+    /// admitted stay queued; SecureNode admits each on the content current
+    /// when it is processed.
+    pub fn clear_admitted(&mut self) {
+        self.dropped = self
+            .dropped
+            .saturating_add((self.sends.occupancy().0 + self.deliveries.occupancy().0) as u64);
         self.sends = Default::default();
         self.deliveries = Default::default();
         self.exit_replies.clear();

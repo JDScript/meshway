@@ -73,13 +73,19 @@ async fn stale_signed_same_serial_lease_does_not_replace_the_published_lease() {
         .netmap
         .lease;
     let mut stale = before;
-    stale.issued_at_ms -= 1;
+    stale.expires_at_ms -= 1;
     script.push(Ok(signed(&binding, stale, SyncNetmap::Unchanged)));
     assert!(matches!(
         control.sync(&mut Facts::default()).await,
         Err(Error::Contract)
     ));
     assert_eq!(control.netmap().unwrap().lease, before);
+    // A Server clock stepped back: earlier issuedAt, no earlier expiry.
+    let mut stepped = before;
+    stepped.issued_at_ms -= 5_000;
+    script.push(Ok(signed(&binding, stepped, SyncNetmap::Unchanged)));
+    control.sync(&mut Facts::default()).await.unwrap();
+    assert_eq!(control.netmap().unwrap().lease, stepped);
     control.shutdown().await.unwrap();
     server.close().await;
 }

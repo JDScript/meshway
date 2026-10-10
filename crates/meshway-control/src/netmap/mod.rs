@@ -105,8 +105,9 @@ impl Control {
     }
 
     /// Install verified content and its lease. Same content replaces the lease
-    /// unless it was issued earlier than the published one (a stale signed
-    /// replay is not new authority). New content must have a larger serial;
+    /// unless it would end earlier than the published one: a replayed signed
+    /// lease cannot extend anything, and a Server clock stepping back (an
+    /// earlier `issuedAt`) is not a replay. New content must have a larger serial;
     /// it is saved before it is published.
     async fn install_netmap(
         &mut self,
@@ -127,7 +128,7 @@ impl Control {
             if self
                 .netmap
                 .lease
-                .is_some_and(|old| lease.issued_at_ms < old.issued_at_ms)
+                .is_some_and(|old| lease.expires_at_ms < old.expires_at_ms)
             {
                 return Err(Error::Contract);
             }

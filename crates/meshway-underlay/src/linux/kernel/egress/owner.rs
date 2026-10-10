@@ -361,7 +361,7 @@ fn current(
     if View::of(&desired).egress_capture() != Some(plan) {
         return Err(Error::Target);
     }
-    shared.data(desired.reference())
+    shared.data(&desired)
 }
 
 /// Content is installed and still selects `plan`. Resource retention only,

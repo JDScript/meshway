@@ -449,8 +449,7 @@ impl Kernel {
             return Err(Error::Expired);
         }
         self.shared.resources.apply(&previous, desired)?;
-        installed.content.cancel();
-        *installed = super::protection::Installed::new(desired.clone(), installed.session.clone());
+        installed.desired = desired.clone();
         Ok(true)
     }
 

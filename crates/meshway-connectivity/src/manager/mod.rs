@@ -341,6 +341,8 @@ impl Manager {
     }
 
     /// With coordinated UDP acquisition through the host's Control gateway.
+    /// `instance` qualifies State socket references from the first bind, so
+    /// Native UDP listeners are coordination sockets whenever one is live.
     pub async fn start_with_traversal(
         desired: &Desired,
         keys: DataPlaneKeys,
@@ -348,6 +350,7 @@ impl Manager {
         limits: Limits,
         gateway: Arc<dyn crate::traversal::TraversalGateway>,
         generation: meshway_model::Sequence,
+        instance: Option<meshway_protocol::InstanceRequest>,
     ) -> Result<Self, Error> {
         if generation.get() == 0 {
             return Err(Error::Configuration);
@@ -358,7 +361,10 @@ impl Manager {
             factory,
             limits,
             Some((gateway, generation)),
-            None,
+            Some(Carried {
+                instance,
+                ..Default::default()
+            }),
         )
         .await
     }
@@ -812,6 +818,16 @@ impl Manager {
             .collect())
     }
 
+    /// Whether this Manager's owners still run (it has not stopped).
+    pub fn is_running(&self) -> bool {
+        !self.shared.stop.is_cancelled()
+    }
+
+    /// The content this Manager currently applies.
+    pub fn reference(&self) -> meshway_model::NetmapRef {
+        self.shared.plan().reference
+    }
+
     fn check_view(&self) -> Result<(), Error> {
         if self.shared.stop.is_cancelled() {
             return Err(Error::Unavailable);
@@ -982,18 +998,22 @@ impl Manager {
 
     /// Bind State socket references to the instance that now qualifies this
     /// Node (a new instance after a Server outage, or the first one after an
-    /// offline restart). Content, channels and resources are unchanged.
-    pub fn set_instance(
-        &self,
+    /// offline restart). Content and channels are unchanged; a Native UDP
+    /// listener bound before any instance existed is rebound as a
+    /// coordination socket, since coordination needs its State reference.
+    pub async fn set_instance(
+        &mut self,
         instance: Option<meshway_protocol::InstanceRequest>,
     ) -> Result<(), Error> {
-        {
+        let first = {
             let mut current = self.shared.instance.lock().map_err(|_| Error::Worker)?;
             if *current == instance {
                 return Ok(());
             }
+            let first = current.is_none();
             current.clone_from(&instance);
-        }
+            first
+        };
         let Some(instance) = instance else {
             return Ok(());
         };
@@ -1020,7 +1040,32 @@ impl Manager {
         for fact in links {
             self.shared.register_link_socket(&fact)?;
         }
-        Ok(())
+        if !first || self.traversal.is_none() {
+            return Ok(());
+        }
+        let coordinated = self
+            .shared
+            .traversal_endpoints
+            .lock()
+            .map_err(|_| Error::Worker)?
+            .keys()
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>();
+        let plain: Vec<_> = self
+            .listeners
+            .iter()
+            .filter(|fact| {
+                fact.protocol == TransportProtocol::NativeUdp
+                    && !coordinated.contains(&fact.socket_id)
+            })
+            .map(|fact| resources::Key::Listener(fact.key.clone()))
+            .collect();
+        if plain.is_empty() {
+            return Ok(());
+        }
+        let retired = self.retire_keys(&plain);
+        self.join_retired(retired).await?;
+        self.install_resources().await
     }
 
     pub async fn shutdown(&mut self) -> Result<(), Error> {
