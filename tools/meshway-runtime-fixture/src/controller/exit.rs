@@ -48,6 +48,24 @@ pub(super) async fn observe_acquisition(
             return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response();
         }
     }
+    if request.uri().path() == "/agent-api/v1/sync" {
+        // An outage also ends sync long polls already in flight, like a real
+        // partition: no Node receives another lease after the hold begins.
+        let (hold, open) = (
+            signals.join("exit-http-hold"),
+            signals.join("exit-http-open"),
+        );
+        return tokio::select! {
+            response = next.run(request) => response,
+            () = async {
+                while !tokio::fs::try_exists(&hold).await.unwrap_or(false)
+                    || tokio::fs::try_exists(&open).await.unwrap_or(true)
+                {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+            } => axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response(),
+        };
+    }
     if request.uri().path() != "/agent-api/v1/instances" {
         return next.run(request).await;
     }
