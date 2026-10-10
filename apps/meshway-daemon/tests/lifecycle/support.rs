@@ -265,17 +265,20 @@ pub async fn status(path: &Path) -> Result<Status, ()> {
     }
 }
 pub async fn wait(path: &Path, phase: Phase) -> Status {
+    wait_matching(path, |status| status.phase == phase).await
+}
+pub async fn wait_matching(path: &Path, matches: impl Fn(&Status) -> bool) -> Status {
     let deadline = Instant::now() + Duration::from_secs(15);
     loop {
         if let Ok(status) = status(path).await {
-            if status.phase == phase {
+            if matches(&status) {
                 return status;
             }
             assert_ne!(status.phase, Phase::Blocked, "{:?}", status.last_error);
         }
         assert!(
             Instant::now() < deadline,
-            "daemon phase did not converge to {phase:?}"
+            "daemon status did not converge to the required observed state"
         );
         tokio::time::sleep(Duration::from_millis(100)).await;
     }

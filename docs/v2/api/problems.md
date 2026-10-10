@@ -37,6 +37,7 @@ Problem 的每个分支均有 code、params、message。params 由 code 决定�
 | 范围 | code 示例 | 参数与行为 |
 | --- | --- | --- |
 | 身份 | invalid_credentials、invalid_session、permission_denied | 不回显凭据或隐藏对象详情 |
+| Node 身份撤销 | node_identity_rejected | HTTP 403；已验证的 Node 身份或密钥不再有效。Node 仅以成功解码的此错误撤回已签名 netmap；裸 401／403／404、证明过期和普通资源拒绝不撤回租约 |
 | 注册 | registration_disabled、password_weak、email_taken | password_weak 携带 PasswordRules；email_taken 不返回账户详情 |
 | 并发 | request_id_conflict、revision_conflict、version_conflict | 幂等内容、配置 CAS、对象版本分别冲突 |
 | 绑定 | binding_conflict | 当前 generation／绑定不匹配；不冒充请求 ID 冲突 |

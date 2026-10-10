@@ -442,7 +442,7 @@ async fn recovery_is_scoped_to_current_key_node_intent_and_revocation() {
         })
         .await
         .err(),
-        Some(Error::InvalidCredentials)
+        Some(Error::NodeIdentityRejected)
     );
     assert!(
         s.session(signed(&pending, &intent, &signer_a))

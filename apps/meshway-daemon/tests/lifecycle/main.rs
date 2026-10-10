@@ -219,7 +219,12 @@ async fn executable_enrolls_saves_reports_renews_and_restores_up_or_down_intent(
     }
     drop(daemon);
     let mut daemon = Process::start(&directory, &server.origin);
-    let restored = wait(&daemon.socket, Phase::ControlReady).await;
+    // Cached netmap readiness and a newly acquired reporting instance are
+    // independent observations. Wait for the latter before comparing it.
+    let restored = support::wait_matching(&daemon.socket, |status| {
+        status.phase == Phase::ControlReady && status.instance.is_some()
+    })
+    .await;
     assert_eq!(restored.identity.as_ref().unwrap(), &identity);
     assert_ne!(
         restored.instance.as_ref().unwrap().instance_id,

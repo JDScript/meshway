@@ -14,6 +14,7 @@ type ProblemCode = Problem["code"]
 
 const problemMessage: Record<ProblemCode, () => string> = {
   invalid_credentials: () => m.problem_invalid_credentials(),
+  node_identity_rejected: () => m.problem_invalid_credentials(),
   invalid_session: () => m.problem_invalid_session(),
   registration_disabled: () => m.problem_registration_disabled(),
   email_taken: () => m.problem_email_taken(),

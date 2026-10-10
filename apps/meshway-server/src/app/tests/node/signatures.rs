@@ -86,7 +86,7 @@ async fn signed_authentication_replay_rotation_and_controller_restart() {
     assert_eq!(rotated.control.generation.get(), 2);
     assert!(matches!(
         service.authenticate(issued.token.expose()).await,
-        Err(Error::InvalidCredentials)
+        Err(Error::NodeIdentityRejected)
     ));
     let fresh = session(&service, network, a, &rotated, &new).await;
     let original_instance = service
