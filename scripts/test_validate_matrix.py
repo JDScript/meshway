@@ -264,9 +264,9 @@ print('')
                 # Each run waits for both to be inside the matrix: proves no run-wide lock.
                 "mise": """import json,pathlib,sys,os,time
 home = pathlib.Path.home()
-if sys.argv[1] == 'exec':
-    # verify_<kind>.py --build-only: record where it ran, leave a frozen manifest.
-    kind = sys.argv[sys.argv.index('--') + 2].split('verify_')[1].split('.py')[0]
+if sys.argv[2].startswith('test:'):
+    # mise run test:<kind>:linux --build-only: record where it ran, leave a frozen manifest.
+    kind = sys.argv[2].split(':')[1]
     destination = pathlib.Path(sys.argv[sys.argv.index('--report-dir') + 1])
     (destination / ('bin' if kind != 'tun' else '')).mkdir(parents=True, exist_ok=True)
     (destination / ('bin' if kind != 'tun' else '') / 'source-manifest.json').write_text(json.dumps(dict(cwd=os.getcwd())))

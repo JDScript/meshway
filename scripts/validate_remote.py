@@ -70,8 +70,8 @@ def build_fixtures(env):
             build_env = dict(env, MISE_TRUSTED_CONFIG_PATHS=str(build_root))
             log = job / (kind + "-build.log")
             with log.open("w") as output:
-                code = subprocess.call(["mise", "exec", "--", sys.executable, "scripts/verify_" + kind + ".py",
-                                        "--build-only", "--report-dir", str(destination)],
+                # The test:<kind>:linux tasks carry the zig / cargo-zigbuild tool set.
+                code = subprocess.call(["mise", "run", "test:" + kind + ":linux", "--build-only", "--report-dir", str(destination)],
                                        cwd=build_root, env=build_env, stdout=output, stderr=subprocess.STDOUT)
             if code:
                 raise RuntimeError(kind + " build failed; inspect " + log.name)
