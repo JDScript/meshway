@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn scope_ready_work_keeps_final_fences_and_pending_work_is_polled_once_per_turn() {
-    let fixture = support::Fixture::builder().build().await;
+    let fixture = super::netmap::support::Netmaps::start(false, true).await;
     let snapshot = fixture.identities[0].snapshot().clone();
     let scope = Scope {
         deadline: snapshot.expires_at().into(),

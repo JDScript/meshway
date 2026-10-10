@@ -132,13 +132,22 @@ impl Netmaps {
         };
         let client = Client::new(&origin, builder(), 16 * 1024 * 1024).unwrap();
         let proxy = meshway_netmap_fixture::PinningProxy::start(&origin).await;
-        let user = client
-            .register(&RegisterRequest {
-                email: "netmap@example.test".into(),
-                password: WireSecret::new("real netmap connectivity password".into()),
-            })
-            .await
-            .unwrap();
+        // Password hashing is bounded process-wide; parallel fixtures retry
+        // a busy answer instead of failing.
+        let user = loop {
+            match client
+                .register(&RegisterRequest {
+                    email: "netmap@example.test".into(),
+                    password: WireSecret::new("real netmap connectivity password".into()),
+                })
+                .await
+            {
+                Err(ClientError::Http { status: 503, .. }) => {
+                    tokio::time::sleep(Duration::from_millis(50)).await
+                }
+                result => break result.unwrap(),
+            }
+        };
         let network = client
             .create_network(
                 &CreateNetworkRequest {
@@ -253,6 +262,33 @@ impl Netmaps {
         fixture
     }
 
+    /// The reserved UDP listener socket of `index` (b: 1, c: 2), for tests
+    /// driving an owner directly instead of through a factory.
+    pub fn take_udp(&mut self, index: usize) -> UdpSocket {
+        let (udp, _) = self.sockets.as_mut().unwrap();
+        udp.remove(index - 1)
+    }
+
+    /// A content update that keeps every Node's identity, addresses, keys
+    /// and carriers (one more access rule); returns `index`'s new identity.
+    pub async fn reserial(&mut self, index: usize) -> DataPlaneIdentity {
+        let ids = self.ids();
+        let port = 1000 + self.cfg.access.len();
+        let changed = self
+            .publish(|cfg| {
+                cfg.access.push(meshway_configuration::AccessRule {
+                    remark: String::new(),
+                    src: vec![format!("node:{}", ids[0])],
+                    dst: vec![format!("node:{}", ids[1])],
+                    ip: vec![format!("tcp:{port}")],
+                    bidirectional: false,
+                })
+            })
+            .await;
+        assert!(changed[index]);
+        self.identities[index].clone()
+    }
+
     pub fn ids(&self) -> Vec<NodeId> {
         self.bindings
             .iter()
@@ -261,7 +297,7 @@ impl Netmaps {
     }
 
     /// The reserved listener sockets, for one shared test factory.
-    pub fn factory(&mut self) -> Arc<Factory> {
+    pub(in crate::manager::tests) fn factory(&mut self) -> Arc<Factory> {
         let (udp, tcp) = self.sockets.take().unwrap();
         Arc::new(Factory {
             udp: Mutex::new(

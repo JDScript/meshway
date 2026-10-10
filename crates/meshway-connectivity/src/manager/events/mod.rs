@@ -217,12 +217,4 @@ impl Receiver {
     pub fn close(&mut self) {
         self.inner.close();
     }
-    #[cfg(test)]
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-    #[cfg(test)]
-    pub fn max_capacity(&self) -> usize {
-        self.count
-    }
 }

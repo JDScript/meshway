@@ -1608,7 +1608,7 @@ impl ControlBudget {
 
 #[cfg(test)]
 mod tests {
-    use super::super::tests::support::{Fixture, carriers};
+    use super::super::tests::{netmap::support::Netmaps, support::carriers};
     use super::*;
     use meshway_transport_udp::UdpTransport;
     use tokio::net::UdpSocket;
@@ -1644,16 +1644,17 @@ mod tests {
             resource_changes: tokio::sync::watch::channel(()).0,
             interests,
             facts: Default::default(),
+            instance: Default::default(),
         });
         (shared, receiver)
     }
 
     #[tokio::test]
     async fn replay_exhaustion_rebuilds_instead_of_forgetting_nonces_and_old_ack_cannot_install() {
-        let mut fixture = Fixture::new(false, false).await;
+        let mut fixture = Netmaps::start(false, true).await;
         let ids = fixture.ids();
         let (shared, _events) = shared(fixture.identities[1].clone());
-        let socket = UdpTransport::adopt(fixture.udp.take().unwrap(), &Default::default()).unwrap();
+        let socket = UdpTransport::adopt(fixture.take_udp(1), &Default::default()).unwrap();
         let local = socket.local_addr().unwrap();
         let id = adjacency::nonce().unwrap();
         let listener = ListenerFact {
@@ -1706,10 +1707,7 @@ mod tests {
             owner.replay.insert((ids[0], adjacency::nonce().unwrap()));
         }
         let history = owner.replay.clone();
-        fixture.controls[1].renew_instance().await.unwrap();
-        let next = fixture.controls[1]
-            .dataplane_identity(fixture.controls[1].execution_snapshot().unwrap())
-            .unwrap();
+        let next = fixture.reserial(1).await;
         let mut epochs = shared.epochs.subscribe();
         shared
             .epochs
@@ -1802,9 +1800,7 @@ mod tests {
 
         // This is a new physical owner, the same path as a host reinstall. An
         // old INIT is harmless only because a fresh source challenge is required.
-        let identity = fixture.controls[1]
-            .dataplane_identity(fixture.controls[1].execution_snapshot().unwrap())
-            .unwrap();
+        let identity = fixture.identities[1].clone();
         let (restarted, _events) = self::shared(identity);
         let socket =
             UdpTransport::adopt(UdpSocket::bind(local).await.unwrap(), &Default::default())
@@ -1854,10 +1850,10 @@ mod tests {
 
     #[tokio::test]
     async fn server_source_challenge_replay_and_confirmation_use_real_registered_keys() {
-        let mut fixture = Fixture::new(false, false).await;
+        let mut fixture = Netmaps::start(false, true).await;
         let ids = fixture.ids();
         let (shared, _receiver) = shared(fixture.identities[1].clone());
-        let socket = UdpTransport::adopt(fixture.udp.take().unwrap(), &Default::default()).unwrap();
+        let socket = UdpTransport::adopt(fixture.take_udp(1), &Default::default()).unwrap();
         let local = socket.local_addr().unwrap();
         let id = adjacency::nonce().unwrap();
         let mut owner = Owner::new(shared.clone(), Box::new(socket), id).unwrap();

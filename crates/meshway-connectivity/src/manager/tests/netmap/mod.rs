@@ -8,7 +8,7 @@ use meshway_model::state::{ListenerPhase, LocalEndpoint, LocalEndpointSource, So
 use meshway_protocol::{PeerFacts, PeerFactsDelta, PeerListenerFacts, StateCursor};
 use support::{Netmaps, eventually, links};
 
-mod support;
+pub(in crate::manager) mod support;
 
 fn limits(idle: Duration) -> Limits {
     Limits {
@@ -104,11 +104,12 @@ async fn keepalive_edge_is_resident_without_interest() {
     fixture
         .publish(|cfg| {
             cfg.topology.push(TopologyRule {
-                remark: "test:keepalive".into(),
+                remark: String::new(),
                 action: TopologyAction::Allow,
                 a: format!("node:{a_id}"),
                 b: format!("node:{b_id}"),
                 transports: meshway_configuration::Input::Omitted,
+                keepalive: true,
             })
         })
         .await;
@@ -199,7 +200,7 @@ async fn peer_facts_add_dial_endpoints_without_changing_epoch_or_other_peers() {
     assert!(!links(&a).contains_key(&ids[1]), "no endpoint for b yet");
     let c_link = links(&a)[&ids[2]].clone();
     let generation = a.shared.generation;
-    let netmap = fixture.identities[0].snapshot().netmap_ref().unwrap();
+    let netmap = fixture.identities[0].snapshot().reference();
     let mut sink = a.facts_sink();
     sink.apply(netmap, delta(None, 1, vec![facts(ids[1], b_address)]))
         .unwrap();
