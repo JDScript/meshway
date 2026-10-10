@@ -179,10 +179,9 @@ impl meshway_engine::Components for Plane {
                     .and_then(|state| state.exit.as_ref())
                     .is_none_or(|exit| exit.plan != *plan) =>
             {
-                match self.host.exit_role() {
-                    Some(role) => Some((role, plan.clone())),
-                    None => return Err(self.fail(Problem::Underlay, ApplyFailure::Underlay)),
-                }
+                // No installed role (a degraded host apply): no exit runtime,
+                // so this Node forwards nothing to external destinations.
+                self.host.exit_role().map(|role| (role, plan.clone()))
             }
             _ => None,
         };
@@ -365,6 +364,9 @@ impl meshway_engine::Components for Plane {
                 return Err(self.fail(problem, ApplyFailure::Underlay));
             }
         }
+        // An exit role that cannot be installed is a missing capability, not
+        // a safety failure: the content stays installed without it.
+        let mut degraded = false;
         if let Some(role) = &netmap.exit_role
             && role_changed
         {
@@ -374,16 +376,15 @@ impl meshway_engine::Components for Plane {
                 .as_ref()
                 .is_some_and(|c| c.status != meshway_model::exit::ExitStatus::Ready)
             {
-                return Err(self.fail(Problem::Underlay, ApplyFailure::Underlay));
-            }
-            if let Err(error) = self.host.install_netmap_exit_role(role).await {
+                degraded = true;
+            } else if let Err(error) = self.host.install_netmap_exit_role(role).await {
                 tracing::warn!(%error, "Exit role installation failed");
                 if let Some(capability) = &mut self.report.exit_capability {
                     capability.status = meshway_model::exit::ExitStatus::Unavailable {
                         reason: meshway_model::exit::ExitUnavailableReason::OwnershipConflict,
                     };
                 }
-                return Err(self.fail(Problem::Underlay, ApplyFailure::Underlay));
+                degraded = true;
             }
         }
         if self.host.tun().is_none() {
@@ -399,6 +400,10 @@ impl meshway_engine::Components for Plane {
                     exit: None,
                 })
             }
+        }
+        if degraded {
+            self.failure = Some((Problem::Underlay, ApplyFailure::Underlay));
+            return Err(Error::Degraded);
         }
         Ok(())
     }

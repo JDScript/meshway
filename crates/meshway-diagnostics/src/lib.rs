@@ -336,21 +336,7 @@ impl Owner {
                     .then_some((task.circuit?, *id))
             })
             .collect();
-        let ids: Vec<_> = self.tasks.keys().copied().collect();
-        for id in &ids {
-            let leader = self.tasks.get(id).and_then(|task| {
-                let circuit = task.circuit?;
-                let leader = probing.get(&circuit).filter(|leader| *leader != id)?;
-                self.tasks
-                    .get(leader)?
-                    .measurement
-                    .as_ref()?
-                    .share(task)
-                    .ok()
-            });
-            let Some(task) = self.tasks.get_mut(id) else {
-                continue;
-            };
+        for (id, task) in &mut self.tasks {
             if !current(task) {
                 suspend(task);
                 continue;
@@ -433,15 +419,6 @@ impl Owner {
             match info {
                 Some(info) if info.state == CircuitState::Established => {
                     preparation_stage(task, "path_established");
-                    if let Some(shared) = leader {
-                        task.measurement = Some(shared);
-                        task.connecting = false;
-                        task.preparing = now;
-                        task.next = now
-                            + Duration::from_millis(u64::from(task.task.interval_ms))
-                                .max(MIN_INTERVAL);
-                        continue;
-                    }
                     let measurement = match Measurement::new(task, now) {
                         Ok(measurement) => measurement,
                         Err(_) => {
@@ -542,7 +519,49 @@ impl Owner {
                 }
             }
         }
+        self.share_probes(&probing, now);
         actions
+    }
+
+    /// An observation of a circuit that already carries another observation's
+    /// in-flight probe shares it: the circuit's one Source probe budget would
+    /// refuse a second probe, and the shared reply measures the same path.
+    /// A task waiting for that budget (or due) joins with its own sample.
+    fn share_probes(&mut self, probing: &BTreeMap<[u8; 32], ObservationId>, now: Instant) {
+        let joins: Vec<_> = self
+            .tasks
+            .iter()
+            .filter(|(_, task)| {
+                current(task)
+                    && !task.paused
+                    && !task.setup_failed
+                    && task.supported
+                    && task.output.is_none()
+                    && task.measurement.is_none()
+                    && !task.sending
+                    && (task.connecting || now >= task.next)
+            })
+            .filter_map(|(id, task)| {
+                let leader = probing.get(&task.circuit?).filter(|leader| *leader != id)?;
+                let shared = self
+                    .tasks
+                    .get(leader)?
+                    .measurement
+                    .as_ref()?
+                    .share(task)
+                    .ok()?;
+                Some((*id, shared))
+            })
+            .collect();
+        for (id, shared) in joins {
+            if let Some(task) = self.tasks.get_mut(&id) {
+                task.measurement = Some(shared);
+                task.connecting = false;
+                task.preparing = now;
+                task.next =
+                    now + Duration::from_millis(u64::from(task.task.interval_ms)).max(MIN_INTERVAL);
+            }
+        }
     }
 
     /// Completion and reply can arrive in either order. Only transport-admitted
