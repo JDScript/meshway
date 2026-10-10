@@ -464,6 +464,18 @@ impl Backend {
         self.store.persist(&self.ledger).await
     }
     pub async fn retire(&mut self, incarnation: super::ExitIncarnation) -> Result<()> {
+        // `install` persists the journal record before any kernel mutation. A
+        // projection it rejected earlier (capacity, conflict, target) owns no
+        // kernel state, so its retirement is complete and must not stop the
+        // owner of every other flow.
+        if !self
+            .ledger
+            .projections
+            .iter()
+            .any(|flow| flow.incarnation == incarnation)
+        {
+            return Ok(());
+        }
         self.close_projection(incarnation).await?;
         let record = self
             .ledger

@@ -218,3 +218,81 @@ async fn netmap_exit_role_survives_renewal_and_unchanged_serial_and_ends_on_with
     server.close().await;
     println!("N1G_NETMAP_EXIT=renewal-noop,serial-kept,access-independent,withdrawal-cleanup");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires an isolated Linux exit namespace (ip_forward=1, loose RPF), nft and NET_ADMIN"]
+async fn netmap_exit_projection_capacity_refuses_one_flow_and_keeps_the_role() {
+    let temp = isolated();
+    let server = Server::start(temp.path()).await;
+    let (mut control, script) = server.enroll(temp.path()).await;
+    let network = Network::new(&control, true);
+    let netmap = network.compile(None);
+    let role_plan = netmap.netmap.exit_role.clone().expect("exit role");
+    let snapshot = sync(&mut control, &script, &netmap, true, HOUR).await;
+    let mut host = host(&temp).await;
+    host.install(snapshot).await.unwrap();
+    let role = host.install_netmap_exit_role(&role_plan).await.unwrap();
+    let scope = ExitScope {
+        binding: meshway_model::Digest::from_bytes([73; 32]),
+        revoked: CancellationToken::new(),
+    };
+    let incarnation = |port: u16| {
+        let mut id = [0u8; 32];
+        id[..2].copy_from_slice(&port.to_be_bytes());
+        ExitIncarnation::new(id)
+    };
+    let tuple = |port: u16| OriginalTuple {
+        source: "100.64.0.2".parse().unwrap(),
+        destination: "8.8.8.8".parse().unwrap(),
+        transport: ExitTransport::Udp {
+            source_port: port,
+            destination_port: 42424,
+        },
+    };
+    // Fill the owner's live projection budget; the next flow is refused.
+    let mut port = 18_000u16;
+    let refused = loop {
+        port += 1;
+        assert!(port < 18_000 + 1024, "projection capacity is bounded");
+        match role
+            .install(
+                incarnation(port),
+                tuple(port),
+                cutoff(120_000),
+                scope.clone(),
+            )
+            .await
+        {
+            Ok(_) => {}
+            Err(error) => break error,
+        }
+    };
+    assert!(matches!(refused, meshway_underlay::Error::Capacity));
+    // SecureNode retires the refused flow. It never reached the kernel: the
+    // retirement completes and the role keeps serving every installed flow.
+    role.retire_flow(incarnation(port)).await.unwrap();
+    assert!(role.is_active());
+    role.retire_flow(incarnation(18_001)).await.unwrap();
+    role.install(
+        incarnation(port + 1),
+        tuple(port + 1),
+        cutoff(120_000),
+        scope.clone(),
+    )
+    .await
+    .unwrap();
+    assert!(role.is_active());
+    host.suspend().await.unwrap();
+    tokio::time::timeout(Duration::from_secs(6), async {
+        while role.is_active() {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("exit role ends on withdrawal");
+    role.retire().await.unwrap();
+    let _ = control.shutdown().await;
+    host.shutdown(false).await.unwrap();
+    server.close().await;
+    println!("X8_NETMAP_EXIT_CAPACITY=refused-one,role-kept,slot-reused");
+}

@@ -13,11 +13,14 @@ from validation_support import bind_access_options
 
 
 # The netmap exit role owner: renewal and unchanged-serial apply keep it, Access
-# narrowing admits no new projection, withdrawal ends it. Then the role's nft
-# transaction and the live exit-prerequisite probe, in the same build.
+# narrowing admits no new projection, withdrawal ends it; a flow refused at
+# projection capacity does not stop it. Then the role's nft transaction and the
+# live exit-prerequisite probe, in the same build.
 CASES = {
     "role": ("meshway-underlay-netmap-tests",
              "netmap_exit_role_survives_renewal_and_unchanged_serial_and_ends_on_withdrawal"),
+    "capacity": ("meshway-underlay-netmap-tests",
+                 "netmap_exit_projection_capacity_refuses_one_flow_and_keeps_the_role"),
     "nft": ("meshway-underlay-kernel-tests",
             "linux::kernel::exit::nft::tests::exit_nft_atomic_batch_readback_and_failed_transaction_leave_no_table"),
     "probe": ("meshway-underlay-kernel-tests",

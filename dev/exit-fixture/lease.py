@@ -1,5 +1,6 @@
-"""Source-side lease probe run inside A: one persistent TCP echo plus a fresh
-UDP socket (a new flow, admitted locally) per round, until the TCP flow ends.
+"""Source-side lease probe run inside A: one persistent TCP echo per round and,
+every two seconds, a fresh UDP socket (a new flow, admitted locally), until the
+TCP flow ends. The fresh-flow rate stays well inside the exit's projection budget.
 
 Wall-clock times are recorded for comparison with the actual netmap leases;
 the probe neither reads nor extends any authority.
@@ -51,7 +52,7 @@ while True:
             raise
         time.sleep(.1)
 tcp.settimeout(2)
-rounds, failure, sequence = [], None, 0
+rounds, failure, sequence, fresh_at = [], None, 0, 0.0
 deadline = time.time() + limit
 while time.time() < deadline:
     sequence += 1
@@ -62,7 +63,11 @@ while time.time() < deadline:
     except OSError as error:
         failure = {"at": at, "error": str(error) or type(error).__name__}
         break
-    rounds.append({"at": at, "tcp": True, "udp": fresh_udp(payload)})
+    fresh = None
+    if at - fresh_at >= 2:
+        fresh_at = at
+        fresh = fresh_udp(payload) or False
+    rounds.append({"at": at, "tcp": True, "udp": fresh})
     if sequence == 1:
         open(ready, "w").close()
     time.sleep(.5)

@@ -542,6 +542,8 @@ def execute(report, artifacts, runtime_os, platform, short, load):
                     raise RuntimeError("exit flow outlived the netmap lease: " + link)
                 if not any(t > last_contact for t in persistent) or not any(t > last_contact for t in fresh):
                     raise RuntimeError("no existing/new exit flow after the last Server contact: " + link)
+                if any(item["udp"] is False and item["at"] < first_expiry - 5 for item in result["rounds"]):
+                    raise RuntimeError("new exit flow refused within the lease: " + link)
                 if not first_expiry - 3 <= failure["at"] <= first_expiry + 6:
                     raise RuntimeError("exit flow did not end at the first path lease expiry: " + link)
             probes.clear()
