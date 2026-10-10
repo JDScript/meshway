@@ -259,16 +259,12 @@ struct EpochContext {
 
 impl EpochContext {
     fn scope(&self, edge: Option<(NodeId, Carrier)>, handshake: bool) -> Scope {
-        let deadline: tokio::time::Instant = self.identity.snapshot().expires_at().into();
         Scope {
             snapshot: self.identity.snapshot().clone(),
             plan: self.plan.clone(),
             cancellation: self.stop.child_token(),
-            deadline: if handshake {
-                deadline.min(tokio::time::Instant::now() + self.limits.handshake_timeout)
-            } else {
-                deadline
-            },
+            deadline: handshake
+                .then(|| tokio::time::Instant::now() + self.limits.handshake_timeout),
             edge,
             health: None,
         }

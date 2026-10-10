@@ -296,6 +296,22 @@ impl Netmaps {
             .collect()
     }
 
+    pub async fn renew(&mut self, index: usize, validity_ms: u64) {
+        self.scripts[index]
+            .0
+            .lock()
+            .unwrap()
+            .push_back(Ok(meshway_netmap_fixture::reply(
+                &self.current[index],
+                validity_ms,
+                false,
+            )));
+        let outcome = self.controls[index].sync(&mut NoFacts).await.unwrap();
+        self.identities[index] = self.controls[index]
+            .dataplane_identity(outcome.snapshot)
+            .unwrap();
+    }
+
     /// The reserved listener sockets, for one shared test factory.
     pub(in crate::manager::tests) fn factory(&mut self) -> Arc<Factory> {
         let (udp, tcp) = self.sockets.take().unwrap();

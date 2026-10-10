@@ -1005,7 +1005,7 @@ impl Owner {
             remote,
             attempt.transcript,
             attempt.capacity,
-            scope.deadline,
+            scope.deadline(),
             attempt.supersedes,
             LinkAcquisition::AcceptedInbound,
         )? {
@@ -1118,7 +1118,7 @@ impl Owner {
         let capacity = outbound.capacity.take().ok_or(Error::Worker)?;
         outbound.established = true;
         outbound.attempts.clear();
-        let deadline = outbound.scope.deadline;
+        let deadline = outbound.scope.deadline();
         let acquisition = outbound.acquisition.clone();
         if !self.promote(
             peer,
@@ -1319,7 +1319,7 @@ impl Owner {
             remote,
             recovery.transcript,
             recovery.capacity,
-            recovery.scope.deadline,
+            recovery.scope.deadline(),
             Replacement::Channel(old_id),
             acquisition,
         )?;
@@ -1388,7 +1388,7 @@ async fn send_control(
     scope.check()?;
     let cancellation = scope.cancellation.child_token();
     let _cancel = cancellation.clone().drop_guard();
-    let deadline = scope.deadline.min(Instant::now() + OUTPUT_WAIT);
+    let deadline = scope.deadline().min(Instant::now() + OUTPUT_WAIT);
     let context = SendContext {
         cancellation,
         deadline: Some(deadline),
@@ -1475,7 +1475,7 @@ pub(super) async fn dial(
     timeout: Duration,
 ) -> Result<(), Error> {
     let mut scope = shared.scope(Some((peer, carrier.clone())), true);
-    scope.deadline = scope.deadline.min(Instant::now() + timeout);
+    scope.deadline = Some(scope.deadline().min(Instant::now() + timeout));
     let endpoints = scope
         .run(factory.datagram_endpoint(shared.identity.snapshot(), key, &target.endpoint))
         .await?;

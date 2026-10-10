@@ -14,12 +14,18 @@ pub(crate) struct Scope {
     /// Adjacency input of the same epoch as `snapshot`.
     pub plan: std::sync::Arc<crate::plan::Plan>,
     pub cancellation: CancellationToken,
-    pub deadline: Instant,
+    /// Independent operation budget. A resource lifetime follows the renewable
+    /// snapshot instead of freezing the lease deadline at construction.
+    pub deadline: Option<Instant>,
     pub edge: Option<(NodeId, Carrier)>,
     pub health: Option<std::sync::Arc<std::sync::Mutex<Instant>>>,
 }
 
 impl Scope {
+    pub fn deadline(&self) -> Instant {
+        let lease = self.snapshot.expires_at().into();
+        self.deadline.map_or(lease, |deadline| deadline.min(lease))
+    }
     fn edge_deadline(&self) -> Result<u64, Error> {
         match &self.edge {
             Some((peer, carrier)) => self.plan.admit(&self.snapshot, *peer, carrier),
@@ -35,7 +41,11 @@ impl Scope {
     }
 
     fn check_current(&self) -> Result<(), Error> {
-        if self.cancellation.is_cancelled() || Instant::now() >= self.deadline {
+        if self.cancellation.is_cancelled()
+            || self
+                .deadline
+                .is_some_and(|deadline| Instant::now() >= deadline)
+        {
             return Err(Error::Cancelled);
         }
         self.snapshot
@@ -70,12 +80,15 @@ impl Scope {
     /// writes internally. Cancellation drops the operation; shared endpoint
     /// ownership stays with its driver.
     pub async fn run<T>(&self, future: impl Future<Output = Result<T, Error>>) -> Result<T, Error> {
-        let edge_deadline = self.edge_deadline()?;
+        self.edge_deadline()?;
         tokio::pin!(future);
         let result = tokio::select! { biased;
             _ = self.cancellation.cancelled() => Err(Error::Cancelled),
-            _ = self.snapshot.invalidated_at(edge_deadline) => Err(Error::Authority),
-            _ = tokio::time::sleep_until(self.deadline) => Err(Error::Cancelled),
+            _ = self.snapshot.invalidated() => Err(Error::Authority),
+            _ = async { match self.deadline {
+                Some(deadline) => tokio::time::sleep_until(deadline).await,
+                None => std::future::pending().await,
+            } } => Err(Error::Cancelled),
             _ = self.health_expired() => Err(Error::Unavailable),
             result = poll_fn(|cx| {
                 if let Err(error) = self.check() { return Poll::Ready(Err(error)); }
