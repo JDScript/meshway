@@ -287,13 +287,21 @@ pub async fn initial(
         run.validate(&path)?;
         let (local_subscription, task) = run.accepted()?;
         if run.stage != Stage::Shared
-            || task != created.id
+            || task == created.id
             || local_subscription == subscription
             || observed_instance(&run)? != created.instance_id
         {
             return Err(
-                "Console and CLI did not reuse one task with distinct subscriptions".into(),
+                "local CLI and user observation did not retain independent subscriptions".into(),
             );
+        }
+        // CLI is locally admitted under the same netmap and executor, without
+        // creating a Server subscription. It must neither borrow nor cancel
+        // the concurrently executing user's task.
+        if !matches!(client.get_observation(&GetObservationPath {
+            network_id: network, subscription_id: local_subscription,
+        }, token).await, Err(meshway_control_client::ClientError::Http { status: 404, .. })) {
+            return Err("local CLI unexpectedly created a Server observation subscription".into());
         }
         let get = GetObservationPath {
             network_id: network,

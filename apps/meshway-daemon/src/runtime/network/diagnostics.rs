@@ -262,7 +262,10 @@ impl Diagnostics {
             path_segment: None,
             netmap: snapshot.reference(),
             instance_id,
-            metrics: vec![meshway_model::observations::MetricKind::Rtt],
+            metrics: vec![
+                meshway_model::observations::MetricKind::Rtt,
+                meshway_model::observations::MetricKind::ProbeLoss,
+            ],
             interval_ms: 1000,
             phase: ObservationPhase::Preparing,
             unsupported_metrics: Vec::new(),
