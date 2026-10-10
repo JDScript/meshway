@@ -54,9 +54,10 @@ impl Audit {
         let report = Report {
             elapsed_seconds: self.started.elapsed().as_secs(),
             query_limit_per_minute: 210,
-            passed: minutes
-                .values()
-                .all(|counts| counts.get("udp/query").copied().unwrap_or(0) <= 210),
+            passed: minutes.values().all(|counts| {
+                counts.get("udp/query").copied().unwrap_or(0) <= 210
+                    && counts.get("obsolete").copied().unwrap_or(0) == 0
+            }),
             minutes,
         };
         tokio::fs::write(
@@ -74,12 +75,17 @@ impl Audit {
 pub async fn observe(State(audit): State<Audit>, request: Request, next: Next) -> Response {
     let is_result = request.uri().path().starts_with("/agent-api/v1/tasks/")
         && request.uri().path().ends_with("/results");
-    let kind = match request.uri().path() {
+    let path = request.uri().path();
+    let kind = match path {
         "/agent-api/v1/connectivity/udp/query" => Some("udp/query"),
         "/agent-api/v1/connectivity/udp/attempts" => Some("udp/attempts"),
-        "/agent-api/v1/events" => Some("events"),
-        "/agent-api/v1/configuration/refresh" => Some("refresh"),
+        "/agent-api/v1/sync" => Some("sync"),
+        "/agent-api/v1/events"
+        | "/agent-api/v1/configuration/refresh"
+        | "/agent-api/v1/configuration/query"
+        | "/agent-api/v1/dns/query" => Some("obsolete"),
         "/agent-api/v1/state" => Some("state"),
+        _ if path.starts_with("/agent-api/v1/demands") => Some("obsolete"),
         _ => None,
     };
     if let Some(kind) = kind {

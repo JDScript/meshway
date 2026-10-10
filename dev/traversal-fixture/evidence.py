@@ -327,7 +327,7 @@ def verify(report, actors, routers, *, fallback=False, short=False):
                 or after["packet"]["lastEchoSequence"] <= before["packet"]["lastEchoSequence"]):
             raise RuntimeError("Fallback lacks uninterrupted original application socket/echo evidence")
         continuity = bounded_json(report / "a/fallback-circuits.json")
-        if continuity.get("passed") is not True or len(continuity.get("tcpCircuits", [])) < 2:
+        if continuity.get("passed") is not True or len(continuity.get("circuits", [])) != 1:
             raise RuntimeError("Fallback lacks production circuit continuity evidence")
         evidence["fallback"].update(applicationBefore=before, applicationAfter=after, circuits=continuity)
     (report / "traversal-packets.json").write_text(json.dumps(evidence, indent=2) + "\n")

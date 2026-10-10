@@ -145,7 +145,7 @@ impl Echo {
 }
 
 /// One subscriber, one OS socket, one bounded task owned/joined by Echo. The
-/// separate port keeps ordinary request/echo traffic out of this demand.
+/// separate port keeps ordinary request/echo traffic out of this flow.
 async fn publish_subscription(socket: UdpSocket, stop: CancellationToken) -> Result<()> {
     let mut subscriber: Option<(SocketAddr, [u8; 16])> = None;
     let mut sequence = 0_u64;
@@ -549,12 +549,12 @@ impl Traffic {
                 return Ok(());
             }
             if Instant::now() >= deadline {
-                return Err("initial IPv4 UDP demand did not produce echo".into());
+                return Err("initial IPv4 UDP flow did not produce echo".into());
             }
         }
     }
-    pub async fn add_demands(&mut self, source: &Addresses) -> Result<()> {
-        // The same first UDP socket survives every later demand and snapshot.
+    pub async fn open_remaining_flows(&mut self, source: &Addresses) -> Result<()> {
+        // The same first UDP socket survives every later flow and snapshot.
         self.tcp4 = Some(
             tokio::time::timeout(STARTUP, TcpStream::connect((self.destination.ipv4, TCP)))
                 .await??,
@@ -575,7 +575,7 @@ impl Traffic {
                 break;
             }
             if Instant::now() >= deadline {
-                return Err("IPv6 demand did not produce echo".into());
+                return Err("IPv6 flow did not produce echo".into());
             }
         }
         self.tcp6 = Some(

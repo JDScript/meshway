@@ -91,7 +91,7 @@ pub struct Run {
 pub struct PingEvidence {
     pub runs: Vec<Run>,
     pub business_continuity: Option<BusinessContinuity>,
-    pub diagnostic_only_business_demands: Option<u64>,
+    pub diagnostic_only_business_packets: Option<u64>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -105,8 +105,8 @@ pub struct BusinessContinuity {
 
 impl PingEvidence {
     pub fn validate(&self, node: NodeId, recovery: &crate::recovery::Evidence) -> Result<()> {
-        if self.diagnostic_only_business_demands != Some(0) {
-            return Err("initial CLI diagnostics were preceded by business demand".into());
+        if self.diagnostic_only_business_packets != Some(0) {
+            return Err("initial CLI diagnostics were preceded by business packets".into());
         }
         let stages = [
             Stage::Hostname,

@@ -343,7 +343,7 @@ async fn exercise(
             // are never reconnected by Traffic::restored or counted as continuity.
             let mut fresh = Traffic::new(&addresses[&Role::A], &addresses[&Role::B]).await?;
             fresh.first_udp().await?;
-            fresh.add_demands(&addresses[&Role::A]).await?;
+            fresh.open_remaining_flows(&addresses[&Role::A]).await?;
             fresh.exchange().await?;
             Ok::<_, Error>(fresh)
         })

@@ -8,7 +8,7 @@ use crate::{
 };
 use meshway_ipc::{DataPlane, NetworkMode, Phase, Status};
 use meshway_model::Revision;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
@@ -271,22 +271,25 @@ async fn exercise(
     let mut fallback_evidence = None;
     if let Some(traffic) = &mut traffic {
         tracing::info!(
-            phase = "first-demand",
-            "IPv4 UDP creates first actual demand"
+            phase = "first-flow",
+            "IPv4 UDP is admitted locally on the installed netmap"
         );
         traffic.first_udp().await?;
-        save(cli, "first-demand-status", &command(cli, "status").await?).await?;
+        save(cli, "first-flow-status", &command(cli, "status").await?).await?;
         if cli.traversal == crate::TraversalMode::Nat {
             crate::traversal::publish_installations(cli, signals, role).await?;
             signals.write("traversal-first", &Signal::Ready).await?;
-            // Let the controller capture this first flow's exact publication
-            // before additional demands legitimately replace its execution.
+            // Record actual acquisition before starting the remaining traffic.
             signals.ready("traversal-verified").await?;
         }
-        traffic.add_demands(&addresses[&Role::A]).await?;
+        traffic.open_remaining_flows(&addresses[&Role::A]).await?;
         traffic.mtu_conformance().await?;
         let sockets = traffic.sockets()?;
         save(cli, "persistent-sockets", &sockets).await?;
+        let subscription_netmap = command(cli, "status")
+            .await?
+            .netmap
+            .ok_or("subscription has no installed netmap lease")?;
         let subscription = Subscription::start(&addresses[&Role::A], &addresses[&Role::B]).await?;
         let fallback_before = if cli.traversal_fallback {
             // Prove both TCP streams actually echo before starting the clock.
@@ -348,7 +351,7 @@ async fn exercise(
                 crate::fallback::verify(cli, signals, before, after).await?,
             ));
         }
-        let inbound = inbound_stream_evidence(cli, reception).await?;
+        let inbound = inbound_stream_evidence(cli, reception, subscription_netmap).await?;
         save(cli, "inbound-stream", &inbound).await?;
         save(cli, "persistent-traffic-counts", &traffic.counts).await?;
         save(
@@ -649,117 +652,70 @@ async fn publish_status(
         .await
 }
 
-#[derive(Deserialize)]
-#[serde(tag = "operation", rename_all = "lowercase", deny_unknown_fields)]
-pub(super) enum DemandAcknowledgement {
-    Create {
-        #[serde(rename = "message")]
-        _message: String,
-        request_id: meshway_model::RequestId,
-        protocol: String,
-        #[serde(default)]
-        port: Option<u16>,
-        expires_at_ms: u64,
-    },
-    Renew {
-        #[serde(rename = "message")]
-        _message: String,
-        request_id: meshway_model::RequestId,
-        expires_at_ms: u64,
-    },
-}
-
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct InboundStreamEvidence {
     #[serde(flatten)]
     reception: SubscriptionEvidence,
-    original_demand_id: meshway_model::RequestId,
-    initial_expiry_ms: u64,
-    later_expiry_ms: Option<u64>,
-    acknowledged_creates: u64,
-    acknowledged_renewals: u64,
+    start_netmap: meshway_ipc::NetmapStatus,
+    end_netmap: meshway_ipc::NetmapStatus,
+    circuit: String,
 }
 
 async fn inbound_stream_evidence(
     cli: &Cli,
     reception: SubscriptionEvidence,
+    start_netmap: meshway_ipc::NetmapStatus,
 ) -> Result<InboundStreamEvidence> {
-    let events = log_events(cli).await?;
-    let mut original = None;
-    let mut initial_expiry = None;
-    let mut creates = 0_u64;
-    let mut renewals = Vec::new();
-    for event in events {
-        if event.get("target").and_then(serde_json::Value::as_str)
-            != Some("meshway_daemon::runtime::network")
-            || event
-                .get("fields")
-                .and_then(|fields| fields.get("message"))
-                .and_then(serde_json::Value::as_str)
-                != Some("Demand request acknowledged")
+    let end_netmap = command(cli, "status")
+        .await?
+        .netmap
+        .ok_or("subscription lost its netmap")?;
+    let path = crate::fallback::original_path(&Signals::new(&cli.signals)).await?;
+    let mut circuits = std::collections::BTreeSet::new();
+    let mut first = None;
+    let mut last = None;
+    for event in log_events(cli).await? {
+        if let Some(packet) = crate::fallback::packet_observation(&event)?
+            && packet.observed_at_ms >= reception.start_wall_ms
+            && packet.observed_at_ms <= reception.end_wall_ms
         {
-            continue;
-        }
-        let acknowledgement: DemandAcknowledgement = serde_json::from_value(
-            event
-                .get("fields")
-                .ok_or("missing acknowledgement fields")?
-                .clone(),
-        )?;
-        match acknowledgement {
-            DemandAcknowledgement::Create {
-                request_id,
-                protocol,
-                port: Some(application::SUBSCRIPTION_PORT),
-                expires_at_ms,
-                ..
-            } => {
-                if protocol != "Udp" {
-                    return Err("subscription demand used unexpected protocol".into());
-                }
-                if original.is_some_and(|original| original != request_id) {
-                    return Err("receive-only stream created a replacement demand".into());
-                }
-                original = Some(request_id);
-                initial_expiry.get_or_insert(expires_at_ms);
-                creates += 1;
+            if serde_json::from_str::<Vec<meshway_model::NodeId>>(&packet.path_json)? != path {
+                return Err("receive-only stream bypassed its complete path".into());
             }
-            DemandAcknowledgement::Create { .. } => {}
-            DemandAcknowledgement::Renew {
-                request_id,
-                expires_at_ms,
-                ..
-            } => renewals.push((request_id, expires_at_ms)),
+            circuits.insert(packet.cid);
+            first = Some(first.map_or(packet.observed_at_ms, |old: u64| {
+                old.min(packet.observed_at_ms)
+            }));
+            last = Some(last.map_or(packet.observed_at_ms, |old: u64| {
+                old.max(packet.observed_at_ms)
+            }));
         }
-    }
-    let original = original.ok_or("subscription has no acknowledged original demand")?;
-    let initial_expiry =
-        initial_expiry.ok_or("subscription original permit expiry is unmeasured")?;
-    let extended: Vec<_> = renewals
-        .into_iter()
-        .filter(|(id, expiry)| *id == original && *expiry > initial_expiry)
-        .collect();
-    let later_expiry = extended.iter().map(|(_, expiry)| *expiry).max();
-    if !cli.short && later_expiry.is_none() {
-        return Err("original receive-only demand has no acknowledged extension".into());
     }
     if reception.sent_initial_count == 0
         || reception.post_start_sent_count != reception.sent_initial_count
         || reception.receive_only_elapsed_ms < cli.traffic_duration().as_millis()
-        || (!cli.short && reception.end_wall_ms <= initial_expiry)
         || reception.max_sequence == 0
         || reception.received_count == 0
+        || start_netmap.netmap != end_netmap.netmap
+        || circuits.len() != 1
+        || first.is_none_or(|at| at > reception.start_wall_ms.saturating_add(2_000))
+        || last.is_none_or(|at| at.saturating_add(2_000) < reception.end_wall_ms)
+        || end_netmap.expires_at.timestamp_millis() <= i64::try_from(reception.end_wall_ms)?
     {
-        return Err("receive-only stream lacks post-original-expiry evidence".into());
+        return Err(
+            "receive-only stream lacks same-socket/circuit/netmap evidence for the complete window"
+                .into(),
+        );
     }
     Ok(InboundStreamEvidence {
         reception,
-        original_demand_id: original,
-        initial_expiry_ms: initial_expiry,
-        later_expiry_ms: later_expiry,
-        acknowledged_creates: creates,
-        acknowledged_renewals: extended.len().try_into()?,
+        start_netmap,
+        end_netmap,
+        circuit: circuits
+            .into_iter()
+            .next()
+            .ok_or("missing original circuit")?,
     })
 }
 

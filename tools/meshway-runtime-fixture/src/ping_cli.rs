@@ -226,27 +226,15 @@ pub async fn initial(
         .await?;
     evidence.runs.push(run);
     signals.ready("ping-shared-verified").await?;
-    let mut business_demands = 0_u64;
+    let mut business_packets = 0_u64;
     for event in actor::log_events(cli).await? {
-        if event.get("target").and_then(serde_json::Value::as_str)
-            == Some("meshway_daemon::runtime::network")
-            && event
-                .get("fields")
-                .and_then(|fields| fields.get("message"))
-                .and_then(serde_json::Value::as_str)
-                == Some("Demand request acknowledged")
-        {
-            let fields: actor::DemandAcknowledgement = serde_json::from_value(
-                event.get("fields").ok_or("missing demand fields")?.clone(),
-            )?;
-            if matches!(fields, actor::DemandAcknowledgement::Create { .. }) {
-                business_demands += 1;
-            }
+        if crate::fallback::packet_observation(&event)?.is_some() {
+            business_packets += 1;
         }
     }
-    if business_demands != 0 {
-        return Err("business demand existed before initial CLI diagnostics completed".into());
+    if business_packets != 0 {
+        return Err("business packets existed before initial CLI diagnostics completed".into());
     }
-    evidence.diagnostic_only_business_demands = Some(business_demands);
+    evidence.diagnostic_only_business_packets = Some(business_packets);
     Ok(evidence)
 }

@@ -1,15 +1,14 @@
 //! Same-application, same-circuit evidence from the real packet owner. Missing
 //! production observations fail this optional case; none are synthesized here.
 use crate::{
-    Cli, Result,
-    actor::{self, DemandAcknowledgement},
-    application::{self, PacketEvidence, Traffic},
+    Cli, Result, actor,
+    application::{PacketEvidence, Traffic},
     signals::{Role, Signal, Signals},
 };
-use meshway_model::{NodeId, RequestId};
+use meshway_model::NodeId;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeMap,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -28,13 +27,12 @@ pub struct Evidence {
     pub before_at_ms: u64,
     pub blocked_at_ms: u64,
     pub after_at_ms: u64,
-    pub tcp_circuits: Vec<Circuit>,
+    pub circuits: Vec<Circuit>,
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Circuit {
-    demand: RequestId,
     cid: String,
     before_packets: usize,
     after_packets: usize,
@@ -57,7 +55,8 @@ pub(super) struct PacketObservation {
     #[serde(rename = "message")]
     _message: String,
     pub cid: String,
-    demand: RequestId,
+    #[serde(rename = "target")]
+    _target: String,
     pub path_json: String,
     pub observed_at_ms: u64,
 }
@@ -148,79 +147,50 @@ pub async fn verify(
         return Err("fallback transition was outside live persistent traffic".into());
     }
     let original_path = original_path(signals).await?;
-    let mut tcp_demands = BTreeSet::new();
     let mut packets = Vec::new();
     for event in actor::log_events(cli).await? {
-        let target = event.get("target").and_then(serde_json::Value::as_str);
-        let fields = event.get("fields");
-        let message = fields
-            .and_then(|fields| fields.get("message"))
-            .and_then(serde_json::Value::as_str);
-        if target == Some("meshway_daemon::runtime::network")
-            && message == Some("Demand request acknowledged")
-        {
-            if let DemandAcknowledgement::Create {
-                request_id,
-                protocol,
-                port: Some(application::TCP),
-                ..
-            } = serde_json::from_value(fields.ok_or("missing demand fields")?.clone())?
-                && protocol == "Tcp"
-            {
-                tcp_demands.insert(request_id);
-            }
-        } else if let Some(packet) = packet_observation(&event)? {
+        if let Some(packet) = packet_observation(&event)? {
             packets.push(packet);
         }
     }
-    if tcp_demands.len() != 2 {
-        return Err("expected exactly two original IPv4/IPv6 TCP demands".into());
-    }
-    let mut tcp_circuits = Vec::new();
-    for demand in tcp_demands {
-        let mut before_cids = BTreeMap::<String, usize>::new();
-        let mut after_cids = BTreeMap::<String, usize>::new();
-        for packet in packets.iter().filter(|packet| {
-            packet.demand == demand
-                && packet.observed_at_ms >= before.observed_at_ms
-                && packet.observed_at_ms <= after.observed_at_ms
-        }) {
-            let path: Vec<NodeId> = serde_json::from_str(&packet.path_json)?;
-            if path != original_path {
-                return Err("fallback changed the original complete circuit path".into());
-            }
-            let counts = if packet.observed_at_ms < blocked.blocked_at_ms {
-                &mut before_cids
-            } else {
-                &mut after_cids
-            };
-            *counts.entry(packet.cid.to_ascii_lowercase()).or_default() += 1;
+    let mut circuits = Vec::new();
+    let mut before_cids = BTreeMap::<String, usize>::new();
+    let mut after_cids = BTreeMap::<String, usize>::new();
+    for packet in packets.iter().filter(|packet| {
+        packet.observed_at_ms >= before.observed_at_ms
+            && packet.observed_at_ms <= after.observed_at_ms
+    }) {
+        let path: Vec<NodeId> = serde_json::from_str(&packet.path_json)?;
+        if path != original_path {
+            return Err("fallback changed the original complete circuit path".into());
         }
-        if before_cids.len() != 1
-            || after_cids.len() != 1
-            || before_cids.keys().ne(after_cids.keys())
-        {
-            return Err("missing or replaced real TCP circuit across fallback".into());
-        }
-        let (cid, before_packets) = before_cids
-            .into_iter()
-            .next()
-            .ok_or("missing original TCP circuit")?;
-        let after_packets = after_cids[&cid];
-        tcp_circuits.push(Circuit {
-            demand,
-            cid,
-            before_packets,
-            after_packets,
-        });
+        let counts = if packet.observed_at_ms < blocked.blocked_at_ms {
+            &mut before_cids
+        } else {
+            &mut after_cids
+        };
+        *counts.entry(packet.cid.to_ascii_lowercase()).or_default() += 1;
     }
+    if before_cids.len() != 1 || after_cids.len() != 1 || before_cids.keys().ne(after_cids.keys()) {
+        return Err("missing or replaced real TCP circuit across fallback".into());
+    }
+    let (cid, before_packets) = before_cids
+        .into_iter()
+        .next()
+        .ok_or("missing original TCP circuit")?;
+    let after_packets = after_cids[&cid];
+    circuits.push(Circuit {
+        cid,
+        before_packets,
+        after_packets,
+    });
     let evidence = Evidence {
         passed: true,
         original_path,
         before_at_ms: before.observed_at_ms,
         blocked_at_ms: blocked.blocked_at_ms,
         after_at_ms: after.observed_at_ms,
-        tcp_circuits,
+        circuits,
     };
     tokio::fs::write(
         cli.evidence.join("fallback-circuits.json"),

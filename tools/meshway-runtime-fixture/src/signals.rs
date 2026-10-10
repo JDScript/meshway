@@ -265,7 +265,7 @@ mod tests {
             ping: Some(Box::new(crate::ping::PingEvidence {
                 runs: vec![crate::ping::roundtrip_run(elapsed)],
                 business_continuity: None,
-                diagnostic_only_business_demands: None,
+                diagnostic_only_business_packets: None,
             })),
             recovery: Box::new(Evidence {
                 expired: Expired {

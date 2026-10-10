@@ -201,7 +201,7 @@ pub(super) fn validate_report(
                     traversal_fallback
                         && role == Role::A
                         && proof.passed
-                        && proof.tcp_circuits.len() == 2
+                        && proof.circuits.len() == 1
                 }
                 None => !(traversal_fallback && role == Role::A),
             }
