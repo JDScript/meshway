@@ -1,8 +1,204 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-09T22:27:27.782131+00:00",
+  "updatedAt": "2026-10-10T14:46:35.188213+00:00",
   "runs": [
+    {
+      "id": 38060261848,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "8d50e87310dabbcf3d1ed72ce928383eea558c7a",
+      "message": "docs(agents): netmap model is current — engine reconfig, sync long poll, wire v6, IPC v6, compiler meshway-netmap-1; cross-session handoff via labelled prompt",
+      "createdAt": "2026-10-10T14:36:11Z",
+      "updatedAt": "2026-10-10T14:43:56Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "url": "https://github.com/JDScript/meshway/actions/runs/38060261848",
+      "jobs": [
+        {
+          "id": 114236918496,
+          "name": "changes",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-10T14:36:14Z",
+          "completedAt": "2026-10-10T14:36:28Z",
+          "seconds": 14.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38060261848/job/114236918496"
+        },
+        {
+          "id": 114236976865,
+          "name": "cargo",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "failure",
+          "startedAt": "2026-10-10T14:36:32Z",
+          "completedAt": "2026-10-10T14:40:28Z",
+          "seconds": 236.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38060261848/job/114236976865"
+        },
+        {
+          "id": 114236976937,
+          "name": "docs-and-scripts",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-10T14:42:46Z",
+          "completedAt": "2026-10-10T14:43:55Z",
+          "seconds": 69.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38060261848/job/114236976937"
+        },
+        {
+          "id": 114236976956,
+          "name": "console",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-10T14:40:31Z",
+          "completedAt": "2026-10-10T14:42:44Z",
+          "seconds": 133.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38060261848/job/114236976956"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 38060261824,
+      "attempt": 1,
+      "workflow": "Validate",
+      "event": "push",
+      "branch": "main",
+      "commit": "8d50e87310dabbcf3d1ed72ce928383eea558c7a",
+      "message": "docs(agents): netmap model is current — engine reconfig, sync long poll, wire v6, IPC v6, compiler meshway-netmap-1; cross-session handoff via labelled prompt",
+      "createdAt": "2026-10-10T14:36:11Z",
+      "updatedAt": "2026-10-10T14:36:13Z",
+      "status": "in_progress",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/38060261824",
+      "jobs": [
+        {
+          "id": 114236918431,
+          "name": "matrix",
+          "runner": "planck",
+          "status": "in_progress",
+          "conclusion": null,
+          "startedAt": "2026-10-10T14:36:13Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38060261824/job/114236918431"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 38060261800,
+      "attempt": 1,
+      "workflow": "Perf",
+      "event": "push",
+      "branch": "main",
+      "commit": "8d50e87310dabbcf3d1ed72ce928383eea558c7a",
+      "message": "docs(agents): netmap model is current — engine reconfig, sync long poll, wire v6, IPC v6, compiler meshway-netmap-1; cross-session handoff via labelled prompt",
+      "createdAt": "2026-10-10T14:36:11Z",
+      "updatedAt": "2026-10-10T14:36:11Z",
+      "status": "queued",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/38060261800",
+      "jobs": [
+        {
+          "id": 114236918388,
+          "name": "perf",
+          "runner": null,
+          "status": "queued",
+          "conclusion": null,
+          "startedAt": "2026-10-10T14:36:12Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38060261800/job/114236918388"
+        },
+        {
+          "id": 114236918515,
+          "name": "perf-arm64",
+          "runner": "jp-tyo-arm64",
+          "status": "completed",
+          "conclusion": "failure",
+          "startedAt": "2026-10-10T14:36:14Z",
+          "completedAt": "2026-10-10T14:36:27Z",
+          "seconds": 13.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38060261800/job/114236918515"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 38060261758,
+      "attempt": 1,
+      "workflow": "Build",
+      "event": "push",
+      "branch": "main",
+      "commit": "8d50e87310dabbcf3d1ed72ce928383eea558c7a",
+      "message": "docs(agents): netmap model is current — engine reconfig, sync long poll, wire v6, IPC v6, compiler meshway-netmap-1; cross-session handoff via labelled prompt",
+      "createdAt": "2026-10-10T14:36:11Z",
+      "updatedAt": "2026-10-10T14:41:42Z",
+      "status": "in_progress",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/38060261758",
+      "jobs": [
+        {
+          "id": 114236918361,
+          "name": "node-linux (aarch64-unknown-linux-musl)",
+          "runner": "mars-epyc7543",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-10T14:36:14Z",
+          "completedAt": "2026-10-10T14:41:39Z",
+          "seconds": 325.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38060261758/job/114236918361"
+        },
+        {
+          "id": 114236918579,
+          "name": "node-linux (x86_64-unknown-linux-musl)",
+          "runner": "mars-epyc7543",
+          "status": "in_progress",
+          "conclusion": null,
+          "startedAt": "2026-10-10T14:41:42Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38060261758/job/114236918579"
+        }
+      ],
+      "artifacts": [
+        {
+          "id": 11673276210,
+          "name": "node-aarch64-unknown-linux-musl-8d50e87310dabbcf3d1ed72ce928383eea558c7a",
+          "bytes": 7931217,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38060261758/artifacts/11673276210",
+          "jobId": 114236918361,
+          "runner": "mars-epyc7543",
+          "seconds": 325.0,
+          "state": "ok",
+          "error": null,
+          "reports": [],
+          "matrices": [],
+          "builds": [
+            {
+              "target": "aarch64-unknown-linux-musl",
+              "binary": "meshwayd",
+              "bytes": 13703608,
+              "sha256": "e71f807b4af695b292e98c8a85fbc3cf947de6962457adb866b96759f9a4eadf"
+            },
+            {
+              "target": "aarch64-unknown-linux-musl",
+              "binary": "meshway",
+              "bytes": 1650408,
+              "sha256": "47c5907226b1835557890312a51d7253a8df20950a3bfd719abe611faafed68d"
+            }
+          ]
+        }
+      ]
+    },
     {
       "id": 37998031613,
       "attempt": 1,
