@@ -99,7 +99,7 @@ test("reported paths give each pair the directions traffic takes; expired report
       nodes,
       evidence: "sent",
       reporterRole: "origin",
-      publicationId: REQUEST,
+      netmap: { revision: 1, serial: 1, digest: "d".repeat(64) },
       observedAt: "2026-10-08T00:00:00Z",
       expiresAt,
     },

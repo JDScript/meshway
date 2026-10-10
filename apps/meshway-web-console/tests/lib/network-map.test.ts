@@ -55,7 +55,7 @@ const listed = (
     controlKeyRevokedAt: null,
     dataplaneKeyRevokedAt: null,
     canDelete: true,
-    desiredExecution: null,
+    netmap: null,
     canRevokeControlKey: true,
     canRevokeDataplaneKey: true,
     controlKeyCreatedAt: T,

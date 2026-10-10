@@ -142,7 +142,7 @@ export function LiveObservation({
             : m.observation_selection_explicit(),
           m.observation_every({ value: String(task.intervalMs / 1000) }),
           m.observation_revision({
-            revision: String(task.configuration.revision),
+            revision: String(task.netmap.revision),
           }),
         ].join(" · ")}
       </div>

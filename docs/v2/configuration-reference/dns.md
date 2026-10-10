@@ -46,9 +46,9 @@
 ## Behavior
 
 - MagicDNS 网络后缀优先交给本地生成的 Node 记录，并自动位于搜索域最前。
-- MagicDNS 预需求发现按请求源 Node 的 Access 权限裁剪：当前配置允许至少一种业务协议／端口访问的节点，其名称／地址可见；不要求目标在线、已有连接或已有 demand。精确名称查询见下节；当前执行发布仍只包含部分路径 peer，不能因名称缺席就给出权威 NXDOMAIN。
+- MagicDNS 的 `netmap.dns.meshHosts` 按源 Node 的 Access 权限裁剪：允许至少一种业务协议／端口访问的节点，其名称／地址可见；不要求目标在线或已有连接。Node 在租约内完全本地解析，未知与不可见名称均返回 REFUSED。
 - 停用或暂缺执行密钥不影响身份级名称可见性；永久删除／吊销 Node、失效的成员身份不再可见。通过有效 Node 认证的节点可查询自己的当前名称／地址，无需额外自访问规则。名称可见不授予业务访问或执行资格。
-- 改址时 DNS、地址准入与路由按同一发布更新；某地址族为 null 则不生成对应 A／AAAA。旧地址复用仍等待受管 DNS 与执行退出窗口，不能只更新 DNS 就宣布切换完成。
+- 改址时 DNS、地址准入与路由按同一 netmap 更新；某地址族为 null 则不生成对应 A／AAAA。旧地址复用仍等待受管 DNS 与执行退出窗口，不能只更新 DNS 就宣布切换完成。
 - `routes` 采用最长 DNS 标签后缀匹配；`corp.example` 不匹配 `evilcorp.example`。
 - 没有使用出口时，`overrideLocal: false` 只强制接管 MagicDNS／split DNS，其他查询保留系统解析。
 - 没有使用出口时，`overrideLocal: true` 使用非空 default；空 default 则拒绝配置。未知解析器引用也拒绝。
@@ -56,31 +56,15 @@
 
 ## Node 精确名称查询
 
-`POST /agent-api/v1/dns/query`（生成操作 `queryNodeDns`）使用 Node bearer。请求的 network／source 从已认证身份取得；用户管理 token 不能替代 Node 凭据。
+名称记录随 `POST /agent-api/v1/sync` 的签名 netmap 下发；查询本身不调用 Server。Node 在有效 netmap 内按 DNS 标签比较完整名称，并保留请求中的大小写。配置名称使用 IDNA 规范化；Node hostname 与网络 domain 拼接后的完整名称须满足 253 ASCII bytes 上限。
 
-<!-- schema: NodeDnsQueryRequest -->
-```json
-{"name":"node.mesh.example"}
-```
-
-名称必须是精确 FQDN，支持大小写／IDNA 规范化及一个末尾根点；原始 UTF-8 上限 1024 bytes，规范化名称上限 253 ASCII bytes。Node hostname 与网络 domain 拼接后的完整名称也须满足此上限。没有通配、搜索或批量枚举。
-
-| 响应字段 | 含义 |
-| --- | --- |
-| `requestId` | Server 请求关联 ID |
-| `networkId`／`sourceNodeId` | 本次认证所得网络与源节点 |
-| `configurationRevision`／`asOf` | 最终读取事务中的配置版本与查询时点 |
-| `record` | 必填可空；可见时包含 `nodeId`、规范化 `name`、`addresses` |
-
-未知名称和无权访问的名称都返回 HTTP 200、`record: null`；`magicDNS: false` 同样不返回记录。可见记录某个地址族为 null 时保留该 null，不与不可见记录混同。
-
-读取在同一事务中检查当前 Node 凭据、永久吊销、成员／身份、配置绑定和 Access。它不要求取得 instance，不依赖 State 或现有路径。响应是配置快照，不包含 TTL、租约、安装证明或外部域名的可信 DNS 关联；配置 revision 不代替当前主体资格检查。
+记录中的 IPv4／IPv6 分别可空：已知名称缺少所问地址族返回 NODATA，未知与不可见名称返回 REFUSED。`magicDNS: false` 时按 split／default 规则处理。名称可见性不替代业务准入；租约到期或本机 authority 撤销后，旧记录也不能回答查询。租约和撤销交付边界见 [Netmap](/v2/node/netmap-design)。
 
 ## 使用出口时
 
-单出口编译通过 `DnsEgress::ViaExit { exit, service, generation }` 指定普通查询的 Mesh resolver。只要当前方案的 fallback 或 CIDR 规则使用同一个出口及同一组有序 via，普通名称在解析前即选择该出口，不先查询客户端上游再根据答案选择路径。MagicDNS 仍按本地记录／精确发现处理；`useWithExit: true` 的解析器保留最长后缀 split／default 用途。
+单出口编译通过 `DnsPlan::ViaExit { service }` 指定普通查询的 Mesh resolver。只要当前方案的 fallback 或 CIDR 规则使用同一个出口及同一组有序 via，普通名称在解析前即选择该出口，不先查询客户端上游再根据答案选择路径。MagicDNS 仍按本地记录处理；`useWithExit: true` 的解析器保留最长后缀 split／default 用途。
 
-`DnsServicePermit` 绑定源节点／instance 及 Mesh 源地址、出口 Mesh IPv4 地址的 UDP／TCP 53、完整有序路径、源 profile／capture generation、出口 instance／role、并发／查询时间预算和到期；到期取源 instance 与出口 ready 观测期限的交集。联合编译要求出口已启用、能力观测仍 ready、路径可行且源有外部 Access 资格。缺少 ready／路径／资格分别返回 `exitUnavailable`／`noPath`／`unauthorized`；没有无环单出口方案返回 `exitPlanRequired`。
+`DnsService` 绑定源节点及 Mesh 源地址、出口 Mesh IPv4 地址的 UDP／TCP 53、完整有序路径、源 profile／capture generation、出口 role generation、并发和查询时间预算。执行截止来自 netmap 租约；instance 和 State 就绪事实不签发 DNS 权限。编译要求出口已启用并声明能力、路径可行且源有外部 Access 资格。缺少出口能力／路径／资格分别返回 `exitUnavailable`／`noPath`／`unauthorized`；没有无环单出口方案返回 `exitPlanRequired`。
 
 例外不是目的地址的全局放行；解析器流量仍须走明确、获准的网络路径。没有有效出口／解析依赖时报告不可用，不静默落回另一路公共解析器。
 
@@ -88,7 +72,7 @@
 
 客户端 owner 将普通查询生成独立 `MeshResolverRoute`，出口不可达时失败，不进入客户端系统上游重试队列。UDP 截断只可使用同一个 service permit 中独立允许的 TCP；旧查询、过期回答和切换前的输出保留原 ticket／scope 截止。
 
-**运行接线限制：**当前 `ServeExitResolver { permit }` 发布接受的源许可，但生产 SecureNode DNS-purpose ingress／原路径回复、受保护出口上游适配和 Mesh listener 尚未接通。`OwnerDispatcher::validate_scope` 对缺少真实适配的计划拒绝安装，不能据上述编译结果报告 applied。`exit/resolved` 与 `exit/resolv-conf` 尚需整组验收；这两个系统后端的通过状态不得相互替代。
+**运行接线限制：**当前 `ServeExitResolver { services }` 包含接受的源服务，但生产 SecureNode DNS-purpose ingress／原路径回复、受保护出口上游适配和 Mesh listener 尚未接通。`OwnerDispatcher::validate_scope` 对缺少真实适配的计划拒绝安装，不能据上述编译结果报告 applied。`exit/resolved` 与 `exit/resolv-conf` 尚需整组验收；这两个系统后端的通过状态不得相互替代。
 
 Server 通信／transport／协调的 bootstrap DNS 必须使用受保护系统通路，和业务 DNS 分开。运行实现范围见 [Node](/v2/node)。
 

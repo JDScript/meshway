@@ -289,7 +289,7 @@ function Body({
             >
               <NodeDiagnostics
                 nodeId={node.id}
-                desired={node.desiredExecution}
+                desired={node.netmap}
                 state={state}
                 currentRevision={currentRevision}
               />

@@ -394,7 +394,6 @@
   "configuration_ruleset_checked": "检查于 {time}",
   "configuration_ruleset_never_checked": "尚未检查",
   "configuration_ruleset_last_success": "上次成功 {time}",
-  "configuration_ruleset_publication": "发布 {id}",
   "configuration_ruleset_status_failed": "无法读取规则集状态",
   "configuration_ruleset_problem_download_failed": "下载失败",
   "configuration_ruleset_problem_invalid_source": "来源内容无效",

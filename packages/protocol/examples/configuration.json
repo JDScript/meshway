@@ -721,7 +721,7 @@
         },
         "nodes": {
           "a7b6c5d4-5e6f-4a3b-8c9d-9e8f7a6b5c70": {
-            "netmap": {
+            "target": {
               "revision": 8,
               "serial": 1,
               "digest": "7518c7f65cd5288875742e6d83b941e3d24a72dfe28613ec75c0e5d487bf2a63"
@@ -734,7 +734,7 @@
             "freshness": "awaitingInstance"
           },
           "b8c7d6e5-4f5a-4b2c-8d9e-0f1a2b3c4d80": {
-            "netmap": {
+            "target": {
               "revision": 8,
               "serial": 1,
               "digest": "8264d19ce3a15b7f4c9a62d0ef7b8135a04c28d95b6e17f39c0a45d2e7b8f613"
@@ -747,7 +747,7 @@
             "freshness": "awaitingInstance"
           },
           "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50": {
-            "netmap": {
+            "target": {
               "revision": 8,
               "serial": 1,
               "digest": "93b6e240c1d78f5a6e29b0437d8c15f9a0e6b2d48c7135f6e9a02d8c4b7f1653"
@@ -760,7 +760,7 @@
             "freshness": "awaitingInstance"
           },
           "f6a5b4c3-6d7e-4f4a-9b8c-8d7e6f5a4b60": {
-            "netmap": {
+            "target": {
               "revision": 8,
               "serial": 1,
               "digest": "a4c7f351d2e8906b7f3ac1548e9d260ab1f7c3e59d8246a7f0b13e9d5c802764"

@@ -42,7 +42,7 @@
             "socketIds": ["udp-office-listener-1"],
             "loadedCertificateSha256": null,
             "problem": null,
-            "configuration": null
+            "netmap": null
           }
         },
         "sockets": {
@@ -51,7 +51,7 @@
               "kind": "listener",
               "key": "mesh-udp"
             },
-            "configuration": null,
+            "netmap": null,
             "generation": 1,
             "network": "udp",
             "boundAddress": "0.0.0.0:8421",
@@ -62,7 +62,7 @@
               "kind": "dial",
               "key": "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50/mesh-udp"
             },
-            "configuration": null,
+            "netmap": null,
             "generation": 3,
             "network": "udp",
             "boundAddress": "0.0.0.0:41641",
@@ -266,7 +266,7 @@
                     "socketIds": ["udp-office-listener-1"],
                     "loadedCertificateSha256": null,
                     "problem": null,
-                    "configuration": null
+                    "netmap": null
                   }
                 },
                 "sockets": {
@@ -275,7 +275,7 @@
                       "kind": "listener",
                       "key": "mesh-udp"
                     },
-                    "configuration": null,
+                    "netmap": null,
                     "generation": 1,
                     "network": "udp",
                     "boundAddress": "0.0.0.0:8421",
@@ -286,7 +286,7 @@
                       "kind": "dial",
                       "key": "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50/mesh-udp"
                     },
-                    "configuration": null,
+                    "netmap": null,
                     "generation": 3,
                     "network": "udp",
                     "boundAddress": "0.0.0.0:41641",
@@ -393,7 +393,7 @@
                     "socketIds": ["udp-office-listener-1"],
                     "loadedCertificateSha256": null,
                     "problem": null,
-                    "configuration": null
+                    "netmap": null
                   }
                 },
                 "sockets": {
@@ -402,7 +402,7 @@
                       "kind": "listener",
                       "key": "mesh-udp"
                     },
-                    "configuration": null,
+                    "netmap": null,
                     "generation": 1,
                     "network": "udp",
                     "boundAddress": "0.0.0.0:8421",
@@ -413,7 +413,7 @@
                       "kind": "dial",
                       "key": "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50/mesh-udp"
                     },
-                    "configuration": null,
+                    "netmap": null,
                     "generation": 3,
                     "network": "udp",
                     "boundAddress": "0.0.0.0:41641",
@@ -505,14 +505,14 @@
                     "socketIds": ["tcp-listener-1"],
                     "loadedCertificateSha256": null,
                     "problem": null,
-                    "configuration": null
+                    "netmap": null
                   },
                   "mesh-udp": {
                     "phase": "listening",
                     "socketIds": ["udp-listener-1"],
                     "loadedCertificateSha256": null,
                     "problem": null,
-                    "configuration": null
+                    "netmap": null
                   }
                 },
                 "sockets": {
@@ -521,7 +521,7 @@
                       "kind": "listener",
                       "key": "mesh-tcp"
                     },
-                    "configuration": null,
+                    "netmap": null,
                     "generation": 1,
                     "network": "tcp",
                     "boundAddress": "0.0.0.0:8421",
@@ -532,7 +532,7 @@
                       "kind": "listener",
                       "key": "mesh-udp"
                     },
-                    "configuration": null,
+                    "netmap": null,
                     "generation": 1,
                     "network": "udp",
                     "boundAddress": "0.0.0.0:41641",

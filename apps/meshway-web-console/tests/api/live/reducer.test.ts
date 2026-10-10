@@ -100,7 +100,7 @@ const node = (id: string, hostname: string): NodeInventoryView => ({
   canDelete: true,
   canRevokeControlKey: true,
   canRevokeDataplaneKey: true,
-  desiredExecution: null,
+  netmap: null,
 })
 
 const entities = (
@@ -357,9 +357,9 @@ test("observation events carry the task or the removal and move the cursor", () 
     targetNodeId: NODE_B,
     service: { type: "icmpEcho" },
     selection: { mode: "auto" },
-    configuration: {
+    netmap: {
       revision: 3,
-      executionPublication: "40000000-0000-4000-8000-000000000005",
+      serial: 1,
       digest: "d".repeat(64),
     },
     instanceId: "40000000-0000-4000-8000-000000000006",

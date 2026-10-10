@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { randomUUID } from "node:crypto";
 import { controller } from "./support/controller.ts";
-import { zDemandDecision, zLookupResult_AsnData } from "../src/generated/zod.gen.ts";
+import { zUnavailableReason, zLookupResult_AsnData } from "../src/generated/zod.gen.ts";
 import {
   register, createNetwork, getConfiguration, applyConfiguration,
   createJoinLink, inspectJoinLink, listJoinLinks, redeemJoinLink,
@@ -12,12 +12,12 @@ import {
 
 test("generated execution and IP lookup failure schemas have independent vocabularies", () => {
   for (const reason of ["unauthorized", "noPath", "routingCycle", "routingLimit", "missingCapability", "missingDependency", "missingDns", "invalidProfile", "inactiveNode"]) {
-    assert.ok(zDemandDecision.safeParse({ type: "unavailable", reason }).success);
+    assert.ok(zUnavailableReason.safeParse(reason).success);
     assert.equal(zLookupResult_AsnData.safeParse({ status: "unavailable", reason }).success, false);
   }
   for (const reason of ["datasetUnavailable", "lookupFailed"]) {
     assert.ok(zLookupResult_AsnData.safeParse({ status: "unavailable", reason }).success);
-    assert.equal(zDemandDecision.safeParse({ type: "unavailable", reason }).success, false);
+    assert.equal(zUnavailableReason.safeParse(reason).success, false);
   }
 });
 
@@ -34,7 +34,6 @@ test("generated defaults patches preserve concurrent dialer edits and classify b
   }, user);
   assert.ok(first.ok);
   assert.equal(first.data.targetCount, 0);
-  assert.deepEqual(first.data.publicationIds, []);
   const patch: ConfigurationRequest = { type: "operations", requestId: randomUUID(), expectedRevision: first.data.revision,
     ops: [{ type: "replaceDefaults", defaults: { topology: "deny" } }],
   };

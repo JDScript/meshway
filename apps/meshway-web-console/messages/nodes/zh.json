@@ -250,7 +250,7 @@
   "nodes_key_created_at": "创建时间",
   "nodes_execution": "下发的配置",
   "nodes_execution_revision": "版本",
-  "nodes_execution_publication": "发布",
+  "nodes_execution_publication": "Netmap 序号",
   "nodes_execution_digest": "摘要",
   "nodes_execution_none": "服务端还没有给这个节点下发配置。",
   "nodes_execution_unreported": "节点还没有报告它保存或应用了什么。",

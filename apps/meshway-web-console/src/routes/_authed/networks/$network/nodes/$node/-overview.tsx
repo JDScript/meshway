@@ -61,8 +61,7 @@ export function NodeOverview({
   const stateFailure = failureText(state.error) ?? m.nodes_state_failed()
   const sync = configurationSync(report?.configuration ?? null, currentRevision)
   const targetApplied =
-    desiredAgainst(node.desiredExecution, report?.configuration ?? null) ===
-    "applied"
+    desiredAgainst(node.netmap, report?.configuration ?? null) === "applied"
   const connections = nodeConnections(state.data?.links ?? [], node.id)
   const connected = connections.filter(
     (connection) => connection.status === "connected"
@@ -94,7 +93,7 @@ export function NodeOverview({
   const syncTile = (() => {
     switch (sync.kind) {
       case "current":
-        return node.desiredExecution !== null && !targetApplied
+        return node.netmap !== null && !targetApplied
           ? {
               value: m.nodes_tile_config_syncing(),
               detail: m.nodes_sync_pending(),

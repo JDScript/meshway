@@ -35,9 +35,9 @@ export function Runtime({
         >
           {listenerPhaseLabel[state.phase]()}
         </span>
-        {state.configuration ? (
+        {state.netmap ? (
           <span className="font-mono text-meta text-muted-foreground">
-            {m.revision({ revision: state.configuration.revision })}
+            {m.revision({ revision: state.netmap.revision })}
           </span>
         ) : null}
         {state.loadedCertificateSha256 ? (

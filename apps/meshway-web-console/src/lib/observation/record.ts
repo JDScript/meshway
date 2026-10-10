@@ -39,7 +39,7 @@ export const isActive = (phase: ObservationPhase) =>
   phase === "preparing" || phase === "running"
 
 const segmentOf = (task: ObservationTask) =>
-  `${task.configuration.executionPublication}/${task.pathSegment ?? 0}`
+  `${task.netmap.serial}/${task.pathSegment ?? 0}`
 
 /**
  * Takes the controller's view of the task. Its `latest` sample joins the

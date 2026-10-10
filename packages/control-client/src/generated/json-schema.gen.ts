@@ -2232,8 +2232,8 @@ export const schemaDocument = {
               "ruleSetBindings": {
                 "oneOf": [
                   {
-                    "$ref": "#/components/schemas/PublicationId",
-                    "description": "Omitted: the source version's initial rule-set bindings. Otherwise\nselect this exact historical binding from the same source version."
+                    "$ref": "#/components/schemas/RuleSetBindingChoice",
+                    "description": "Omitted or `initial`: the source version's initial rule-set bindings;\n`refreshed`: its last refreshed bindings, or the initial ones when never refreshed."
                   },
                   {
                     "type": "null"
@@ -13238,14 +13238,6 @@ export const schemaDocument = {
           "rotate"
         ]
       },
-      "PublicationId": {
-        "type": "string",
-        "format": "uuid",
-        "description": "Execution publication identifier.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
-        "maxLength": 36,
-        "minLength": 36,
-        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-      },
       "QueryUdpTraversalRequest": {
         "type": "object",
         "description": "Node query for current STUN metadata and its own valid UDP acquisition attempts without renewing them.",
@@ -14213,6 +14205,14 @@ export const schemaDocument = {
         ],
         "description": "Destination set declared inline or downloaded and validated by the Server."
       },
+      "RuleSetBindingChoice": {
+        "type": "string",
+        "description": "Which rule-set bindings of a source version a restore reuses.",
+        "enum": [
+          "initial",
+          "refreshed"
+        ]
+      },
       "RuleSetContent": {
         "type": "object",
         "description": "Resolved rule-set artifact content supplied as a fixed Server compilation dependency.",
@@ -14353,24 +14353,13 @@ export const schemaDocument = {
               "null"
             ],
             "format": "date-time",
-            "description": "Last successful download/conversion/publication check, not artifact creation."
+            "description": "Last successful download/conversion check, not artifact creation."
           },
           "problem": {
             "oneOf": [
               {
                 "$ref": "#/components/schemas/ResourceProblem",
                 "description": "Last check failure or `not_ready` for missing initial remote content; null when no problem is recorded."
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "publication": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/PublicationId",
-                "description": "Exact execution publication whose immutable bindings select this artifact."
               },
               {
                 "type": "null"

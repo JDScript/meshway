@@ -7,7 +7,7 @@ import { challengeRequest, deviceProof, digest, publicBytes, sessionProof } from
 import {
   register, createNetwork, getNetwork, createEnrollmentRequest, approveDeviceAuthorization,
   queryEnrollmentRequest, redeemEnrollmentRequest, createNodeChallenge, createNodeSession,
-  acquireNodeInstance, renewNodeInstance, queryNodeConfiguration, applyConfiguration,
+  acquireNodeInstance, renewNodeInstance, syncNode, applyConfiguration,
   createObservation, listObservations, getObservation, renewObservation, cancelObservation,
   createNodeObservation, getNodeObservation, cancelNodeObservation,
   getNodeTasks, reportTaskResult,
@@ -76,11 +76,10 @@ test("generated observation SDK prepares isolated diagnostic permits and release
   const denied = await createObservation(client, path, { ...request, subscriptionId: randomUUID(), service: { type: "tcp", port: 80 } }, user);
   assert.ok(!denied.ok && denied.error.kind === "http" && denied.error.status === 403);
   assert.ok((await renewNodeInstance(client, source.instance, source.auth)).ok);
-  const configuration = await queryNodeConfiguration(client, { instance: source.instance, base: null }, source.auth);
-  assert.ok(configuration.ok && configuration.data.full);
-  assert.deepEqual(configuration.data.full.configuration.permits, {});
-  assert.deepEqual(configuration.data.full.configuration.decisions, {});
-  assert.equal(configuration.data.full.configuration.diagnostics[created.data.id]?.service.type, "tcp");
+   const configuration = await syncNode(client, { netmap: null, state: null }, source.auth);
+   assert.ok(configuration.ok && configuration.data.netmap.type === "full");
+   assert.equal(configuration.data.netmap.netmap.netmap.nodeId, source.id);
+   assert.deepEqual(configuration.data.lease.netmap, created.data.netmap);
   const listing = await listObservations(client, path, user);
   assert.ok(listing.ok && listing.data.items.length === 2);
   assert.ok((await getObservation(client, { ...path, subscriptionId: request.subscriptionId }, user)).ok);
@@ -93,7 +92,7 @@ test("generated observation SDK prepares isolated diagnostic permits and release
   const task = tasks.data.items[0];
   assert.ok(task);
   // Exercise terminal reporting without inventing a selected path or sample.
-  const result: ObservationResult = { instanceId: source.instance.instanceId, configuration: task.configuration, result: { type: "phase", phase: "unsupported" } };
+  const result: ObservationResult = { instanceId: source.instance.instanceId, netmap: task.netmap, result: { type: "phase", phase: "unsupported" } };
   const wrongSource = await reportTaskResult(client, { taskId: task.id }, result, target.auth);
   assert.ok(!wrongSource.ok && wrongSource.error.kind === "http" && wrongSource.error.status === 401);
   const completed = await reportTaskResult(client, { taskId: task.id }, result, source.auth);

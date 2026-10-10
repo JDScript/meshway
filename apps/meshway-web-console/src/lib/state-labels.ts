@@ -134,6 +134,8 @@ export function acquisitionText(acquisition: LinkAcquisition): string {
       return m.state_acquisition_published()
     case "localEndpoint":
       return m.state_acquisition_local()
+    case "stunEndpoint":
+      return m.state_endpoint_kind_stun()
     case "acceptedInbound":
       return m.state_acquisition_inbound()
     case "coordinatedUdp":

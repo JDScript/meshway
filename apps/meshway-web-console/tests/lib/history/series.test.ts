@@ -14,7 +14,7 @@ const A = "aaaaaaaa-0000-4000-8000-000000000001"
 const B = "bbbbbbbb-0000-4000-8000-000000000002"
 const I1 = "11111111-0000-4000-8000-000000000001"
 const I2 = "22222222-0000-4000-8000-000000000002"
-const P = "33333333-0000-4000-8000-000000000003"
+const NETMAP = { revision: 1, serial: 1, digest: "d".repeat(64) }
 
 const window = historyWindow("1h", Date.parse("2026-10-03T01:00:00Z"))
 
@@ -26,7 +26,7 @@ const bucket = (
   to: new Date(window.fromMs + (minute + 1) * 60_000).toISOString(),
   sourceNodeId: A,
   instanceId: I1,
-  publicationId: P,
+  netmap: NETMAP,
   kind: "neighbor",
   path: [A, B],
   linkId: "l1",

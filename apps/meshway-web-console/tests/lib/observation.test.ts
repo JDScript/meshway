@@ -30,8 +30,8 @@ const B = "bbbbbbbb-0000-4000-8000-000000000002"
 const C = "cccccccc-0000-4000-8000-000000000003"
 const S1 = "51515151-0000-4000-8000-000000000001"
 const S2 = "52525252-0000-4000-8000-000000000002"
-const P1 = "70707070-0000-4000-8000-000000000001"
-const P2 = "70707070-0000-4000-8000-000000000002"
+const P1 = 1
+const P2 = 2
 const T0 = Date.parse("2026-10-03T12:00:00Z")
 const iso = (ms: number) => new Date(ms).toISOString()
 const mid = (n: number) =>
@@ -44,9 +44,9 @@ const task = (patch: Partial<ObservationTask> = {}): ObservationTask => ({
   targetNodeId: B,
   service: { type: "icmpEcho" },
   selection: { mode: "auto" },
-  configuration: {
+  netmap: {
     revision: 3,
-    executionPublication: P1,
+    serial: P1,
     digest: "d".repeat(64),
   },
   instanceId: "1e1e1e1e-0000-4000-8000-000000000001",
@@ -80,7 +80,7 @@ const sample = (
       measurementId: mid(n),
       outcome,
       path: [A, B],
-      publicationId: P1,
+      netmap: { revision: 3, serial: P1, digest: "d".repeat(64) },
       startedAt: iso(start),
       completedAt: outcome === "pending" ? null : iso(start + 400),
       durationUs: outcome === "success" ? 40_000 + n : null,
@@ -123,7 +123,7 @@ test("a partial window is replaced by its later version, never by an earlier one
   assert.equal(record.samples[0]!.sample.probe?.outcome, "success")
 })
 
-test("samples keep their segment: a new publication or path segment is another", () => {
+test("samples keep their segment: a new netmap or path segment is another", () => {
   let record = foldTask(emptyRecord, running(sample(1, "success")))
   record = foldTask(
     record,
@@ -132,9 +132,9 @@ test("samples keep their segment: a new publication or path segment is another",
   record = foldTask(
     record,
     running(sample(3, "success"), {
-      configuration: {
+      netmap: {
         revision: 3,
-        executionPublication: P2,
+        serial: P2,
         digest: "e".repeat(64),
       },
     })
@@ -300,7 +300,7 @@ test("explicit paths: direct first, then reported and observed ones between the 
       expiresAt: iso(T0),
       nodes,
       observedAt: iso(T0),
-      publicationId: P1,
+      netmap: { revision: 3, serial: P1, digest: "d".repeat(64) },
       reporterRole: "origin",
     },
   })

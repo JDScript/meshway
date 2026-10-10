@@ -7,9 +7,9 @@ import { challengeRequest, digest, deviceProof, sessionProof, publicBytes } from
 import {
   register, createNetwork, getNetwork, createEnrollmentRequest, approveDeviceAuthorization,
   queryEnrollmentRequest, redeemEnrollmentRequest, createNodeChallenge, createNodeSession,
-  acquireNodeInstance, queryNodeConfiguration, releaseNodeInstance, deleteNode, getNode,
+  acquireNodeInstance, syncNode, releaseNodeInstance, deleteNode, getNode,
   reportNodeState, queryPeerState, getNodeState, getNetworkState, watchNetwork,
-  getConfigurationProgress, getNodeSettings, getConfigurationSource, queryNodeDns,
+  getConfigurationProgress, getNodeSettings, getConfigurationSource,
   type EnrollmentIntent, type NodeSessionIntent,
 } from "../src/index.ts";
 
@@ -51,18 +51,14 @@ test("generated Node SDK completes signed PKCE admission, state reporting and pe
   const source = await getConfigurationSource(client, { networkId: enrolled.data.networkId }, {}, user);
   assert.ok(source.ok);
   const ownName = `${intent.hostname}.${source.data.configuration.dns.domain}`;
-  const discovered = await queryNodeDns(client, { name: `${ownName.toUpperCase()}.` }, node);
-  assert.ok(discovered.ok);
-  assert.equal(discovered.data.networkId, enrolled.data.networkId);
-  assert.equal(discovered.data.sourceNodeId, enrolled.data.nodeId);
-  assert.equal(discovered.data.configurationRevision, source.data.revision);
-  assert.equal(discovered.data.record?.nodeId, enrolled.data.nodeId);
-  assert.equal(discovered.data.record?.name, ownName);
-  assert.match(discovered.data.asOf, /T.*Z$/);
-  const unknownName = await queryNodeDns(client, { name: `absent.${source.data.configuration.dns.domain}` }, node);
-  assert.ok(unknownName.ok);
-  assert.equal(unknownName.data.record, null);
-  const wrongCredential = await queryNodeDns(client, { name: ownName }, user);
+  const discovered = await syncNode(client, { netmap: null, state: null }, node);
+  assert.ok(discovered.ok && discovered.data.netmap.type === "full");
+  const names = discovered.data.netmap.netmap.netmap;
+  assert.equal(names.networkId, enrolled.data.networkId);
+  assert.equal(names.nodeId, enrolled.data.nodeId);
+  assert.deepEqual(names.dns.meshHosts[ownName], names.self.addresses);
+  assert.equal(names.dns.meshHosts[`absent.${source.data.configuration.dns.domain}`], undefined);
+  const wrongCredential = await syncNode(client, {}, user);
   assert.ok(!wrongCredential.ok && wrongCredential.error.kind === "http" && wrongCredential.error.status === 401);
   const beforeInstance = await getNetworkState(client, { networkId: enrolled.data.networkId }, user);
   assert.ok(beforeInstance.ok, "a registered node awaiting its first instance must have a readable state");
@@ -73,23 +69,24 @@ test("generated Node SDK completes signed PKCE admission, state reporting and pe
   assert.ok(acquired.ok);
   assert.match(acquired.data.expiresAt, /T.*Z$/);
   const instance = { instanceId: acquired.data.instanceId, generation: acquired.data.generation };
-  const configuration = await queryNodeConfiguration(client, { instance, base: null }, node);
-  assert.ok(configuration.ok && configuration.data.full);
-  assert.equal(configuration.data.full.configuration.nodeId, enrolled.data.nodeId);
+  const configuration = await syncNode(client, { netmap: null, state: null }, node);
+  assert.ok(configuration.ok && configuration.data.netmap.type === "full");
+  const full = configuration.data.netmap.netmap;
+  assert.equal(full.netmap.nodeId, enrolled.data.nodeId);
   const networkPath = { networkId: enrolled.data.networkId };
   const settings = await getNodeSettings(client, { ...networkPath, nodeId: enrolled.data.nodeId }, user);
   assert.ok(settings.ok);
   assert.equal(settings.data.networkId, enrolled.data.networkId);
   assert.equal(settings.data.nodeId, enrolled.data.nodeId);
-  assert.equal(settings.data.revision, configuration.data.full.configuration.revision);
+  assert.equal(settings.data.revision, full.netmap.revision);
   assert.equal(settings.data.settings.hostname, intent.hostname);
   const inventory = await getNode(client, { ...networkPath, nodeId: enrolled.data.nodeId }, user);
   assert.ok(inventory.ok);
   assert.equal(inventory.data.canRevokeControlKey, true);
   assert.equal(inventory.data.canRevokeDataplaneKey, true);
   assert.match(inventory.data.controlKeyCreatedAt, /T.*Z$/);
-  assert.equal(inventory.data.desiredExecution?.digest, configuration.data.full.digest);
-  const progress = await getConfigurationProgress(client, { ...networkPath, revision: configuration.data.full.configuration.revision }, user);
+  assert.equal(inventory.data.netmap?.digest, full.digest);
+  const progress = await getConfigurationProgress(client, { ...networkPath, revision: full.netmap.revision }, user);
   assert.ok(progress.ok);
   assert.equal(progress.data.scope, "full");
   assert.equal(progress.data.summary.targetCount, 1);
@@ -157,6 +154,6 @@ test("generated Node SDK completes signed PKCE admission, state reporting and pe
   await events.return(undefined);
   const denied = await acquireNodeInstance(client, { instanceId: randomUUID(), capabilities: {} }, node);
   assert.ok(!denied.ok && denied.error.kind === "http" && denied.error.status === 401);
-  const deniedDiscovery = await queryNodeDns(client, { name: ownName }, node);
+  const deniedDiscovery = await syncNode(client, {}, node);
   assert.ok(!deniedDiscovery.ok && deniedDiscovery.error.kind === "http" && deniedDiscovery.error.status === 401);
 });

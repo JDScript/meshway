@@ -41,8 +41,7 @@ const problemMessage: Record<ProblemCode, () => string> = {
   // A Node's configuration receipts; never a console's call.
   receipt_instance_mismatch: () => m.problem_state_conflict(),
   receipt_target_mismatch: () => m.problem_state_conflict(),
-  receipt_publication_superseded: () => m.problem_state_conflict(),
-  receipt_lease_expired: () => m.problem_state_conflict(),
+  receipt_netmap_superseded: () => m.problem_state_conflict(),
   receipt_precondition: () => m.problem_state_conflict(),
   receipt_content_conflict: () => m.problem_state_conflict(),
   state_limit: () => m.problem_state_limit(),

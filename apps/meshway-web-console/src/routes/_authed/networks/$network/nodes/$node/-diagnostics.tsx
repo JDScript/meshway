@@ -1,7 +1,7 @@
 import type {
-  ConfigurationRef,
   ConfigurationState,
   DerivedNodeState,
+  NetmapRef,
   NodeStateView,
   StateView,
 } from "@meshway/control-client"
@@ -78,7 +78,7 @@ export function NodeDiagnostics({
 }: {
   nodeId: string
   /** The server's assigned configuration for the node (the inventory's). */
-  desired: ConfigurationRef | null
+  desired: NetmapRef | null
   state: UseQueryResult<StateView>
   currentRevision: number | undefined
 }) {
@@ -225,7 +225,7 @@ function Assigned({
   desired,
   reported,
 }: {
-  desired: ConfigurationRef | null
+  desired: NetmapRef | null
   /** The node's own report of its configuration; null without a full report. */
   reported: ConfigurationState | null
 }) {
@@ -243,14 +243,12 @@ function Assigned({
             label={m.nodes_execution_publication()}
             action={
               <CopyButton
-                value={desired.executionPublication}
+                value={String(desired.serial)}
                 label={m.nodes_execution_publication()}
               />
             }
           >
-            <span className="font-mono font-normal">
-              {desired.executionPublication.slice(0, 8)}
-            </span>
+            <span className="font-mono font-normal">{desired.serial}</span>
           </Tile>
           <div className="col-span-2">
             <Tile

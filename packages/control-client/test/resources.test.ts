@@ -8,7 +8,7 @@ import {
   refreshRuleSet, watchNetwork,
 } from "../src/index.ts";
 
-test("generated resource SDK exposes exact artifacts, refresh events and explicit publication restore", async t => {
+test("generated resource SDK exposes exact artifacts, refresh events and explicit binding restore", async t => {
   const client = await controller(t);
   const owner = await register(client, { email: "resource-owner@example.test", password: "valid resource owner password" });
   const member = await register(client, { email: "resource-member@example.test", password: "valid resource member password" });
@@ -31,7 +31,7 @@ test("generated resource SDK exposes exact artifacts, refresh events and explici
   const resourcePath = { ...path, ruleSetKey: "routes" };
   const refresh = { requestId: randomUUID() };
   const refreshed = await refreshRuleSet(client, resourcePath, refresh, user);
-  assert.ok(refreshed.ok && refreshed.data.artifact && refreshed.data.publication);
+  assert.ok(refreshed.ok && refreshed.data.artifact);
   assert.equal(refreshed.data.problem, null);
   assert.equal(refreshed.data.artifact.entries, 1);
   assert.ok(refreshed.data.checkedAt && refreshed.data.lastSuccessAt);
@@ -62,7 +62,7 @@ test("generated resource SDK exposes exact artifacts, refresh events and explici
   assert.equal(current.data.revision, declared.data.revision, "refresh does not rewrite source revision");
   const restored = await applyConfiguration(client, path, {
     type: "restore", requestId: randomUUID(), expectedRevision: declared.data.revision,
-    restoreFrom: declared.data.revision, resourcePublication: refreshed.data.publication,
+    restoreFrom: declared.data.revision, ruleSetBindings: "refreshed",
   }, user);
   assert.ok(restored.ok);
   const after = await getRuleSet(client, resourcePath, user);

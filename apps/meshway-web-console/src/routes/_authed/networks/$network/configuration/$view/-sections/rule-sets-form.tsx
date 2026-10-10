@@ -397,12 +397,6 @@ function StatusBlock({
       facts.push(
         m.configuration_ruleset_last_success({ time: when(view.lastSuccessAt) })
       )
-    if (view.publication)
-      facts.push(
-        m.configuration_ruleset_publication({
-          id: view.publication.slice(0, 8),
-        })
-      )
   }
   // A new source has no status of its own yet.
   const shownFacts = preparation === "new" ? [] : facts

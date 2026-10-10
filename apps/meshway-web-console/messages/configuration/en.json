@@ -448,7 +448,6 @@
   "configuration_ruleset_checked": "Checked {time}",
   "configuration_ruleset_never_checked": "Not checked yet",
   "configuration_ruleset_last_success": "Last success {time}",
-  "configuration_ruleset_publication": "Publication {id}",
   "configuration_ruleset_status_failed": "Could not read the rule sets' status",
   "configuration_ruleset_problem_download_failed": "Download failed",
   "configuration_ruleset_problem_invalid_source": "The source is not valid",

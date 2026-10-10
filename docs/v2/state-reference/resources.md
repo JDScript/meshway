@@ -12,7 +12,7 @@ listener 是配置资源，socket 是运行资源，endpoint 是带来源的候�
 | `socketIds` | 指向同一报告中的实际 sockets |
 | `loadedCertificateSha256` | 实际加载证书的公开指纹；非 TLS 或没有结果时为 null |
 | `problem` | 类型化失败原因或 null |
-| `configuration` | 显式配置引用；省略／null 继承报告的 configuration.applied |
+| `netmap` | 显式 NetmapRef；省略／null 继承报告的 configuration.applied |
 
 listening 只说明本机监听成功，不证明公网可达。安装中资源须显式引用其目标，不能冒充当前 peer 可用入口。listener key 相同不代表材料、切片或运行代际相同。
 
@@ -24,7 +24,7 @@ listening 只说明本机监听成功，不证明公网可达。安装中资源�
 ```json
 {
   "resource": { "kind": "listener", "key": "mesh-udp" },
-  "configuration": null,
+  "netmap": null,
   "generation": 3,
   "network": "udp",
   "boundAddress": "0.0.0.0:8421",
@@ -42,7 +42,7 @@ listening 只说明本机监听成功，不证明公网可达。安装中资源�
 | 字段 | 含义 |
 | --- | --- |
 | `resource` | `{kind: listener | dial | coordination, key}`，关联准确资源 |
-| `configuration` | 显式目标；省略／null 继承 applied，安装阶段必须显式提供 |
+| `netmap` | 显式目标；省略／null 继承 applied，安装阶段必须显式提供 |
 | `generation` | 本资源代际，不能只按相同端口认作同一 socket |
 | `network` | 实际外层 udp／tcp，不由内层业务协议推测 |
 | `boundAddress` | 内核实际 bind 地址与端口 |

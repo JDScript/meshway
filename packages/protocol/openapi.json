@@ -4834,8 +4834,8 @@
                   "links": {},
                   "listeners": {
                     "mesh-udp": {
-                      "configuration": null,
                       "loadedCertificateSha256": null,
+                      "netmap": null,
                       "phase": "listening",
                       "problem": null,
                       "socketIds": [
@@ -4852,9 +4852,9 @@
                   "sockets": {
                     "udp-office-listener-1": {
                       "boundAddress": "0.0.0.0:8421",
-                      "configuration": null,
                       "endpoints": [],
                       "generation": 1,
+                      "netmap": null,
                       "network": "udp",
                       "resource": {
                         "key": "mesh-udp",
@@ -4863,7 +4863,6 @@
                     },
                     "udp-paris-1": {
                       "boundAddress": "0.0.0.0:41641",
-                      "configuration": null,
                       "endpoints": [
                         {
                           "address": "198.51.100.42:40001",
@@ -4876,6 +4875,7 @@
                         }
                       ],
                       "generation": 3,
+                      "netmap": null,
                       "network": "udp",
                       "resource": {
                         "key": "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50/mesh-udp",
@@ -11795,53 +11795,53 @@
                       "attempt": null,
                       "freshness": "awaitingInstance",
                       "instanceId": null,
-                      "netmap": {
+                      "phase": "pending",
+                      "receivedAt": null,
+                      "sequence": null,
+                      "target": {
                         "digest": "7518c7f65cd5288875742e6d83b941e3d24a72dfe28613ec75c0e5d487bf2a63",
                         "revision": 8,
                         "serial": 1
-                      },
-                      "phase": "pending",
-                      "receivedAt": null,
-                      "sequence": null
+                      }
                     },
                     "b8c7d6e5-4f5a-4b2c-8d9e-0f1a2b3c4d80": {
                       "attempt": null,
                       "freshness": "awaitingInstance",
                       "instanceId": null,
-                      "netmap": {
+                      "phase": "pending",
+                      "receivedAt": null,
+                      "sequence": null,
+                      "target": {
                         "digest": "8264d19ce3a15b7f4c9a62d0ef7b8135a04c28d95b6e17f39c0a45d2e7b8f613",
                         "revision": 8,
                         "serial": 1
-                      },
-                      "phase": "pending",
-                      "receivedAt": null,
-                      "sequence": null
+                      }
                     },
                     "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50": {
                       "attempt": null,
                       "freshness": "awaitingInstance",
                       "instanceId": null,
-                      "netmap": {
+                      "phase": "pending",
+                      "receivedAt": null,
+                      "sequence": null,
+                      "target": {
                         "digest": "93b6e240c1d78f5a6e29b0437d8c15f9a0e6b2d48c7135f6e9a02d8c4b7f1653",
                         "revision": 8,
                         "serial": 1
-                      },
-                      "phase": "pending",
-                      "receivedAt": null,
-                      "sequence": null
+                      }
                     },
                     "f6a5b4c3-6d7e-4f4a-9b8c-8d7e6f5a4b60": {
                       "attempt": null,
                       "freshness": "awaitingInstance",
                       "instanceId": null,
-                      "netmap": {
+                      "phase": "pending",
+                      "receivedAt": null,
+                      "sequence": null,
+                      "target": {
                         "digest": "a4c7f351d2e8906b7f3ac1548e9d260ab1f7c3e59d8246a7f0b13e9d5c802764",
                         "revision": 8,
                         "serial": 1
-                      },
-                      "phase": "pending",
-                      "receivedAt": null,
-                      "sequence": null
+                      }
                     }
                   },
                   "revision": 8,
@@ -17005,8 +17005,8 @@
                           "links": {},
                           "listeners": {
                             "mesh-udp": {
-                              "configuration": null,
                               "loadedCertificateSha256": null,
+                              "netmap": null,
                               "phase": "listening",
                               "problem": null,
                               "socketIds": [
@@ -17023,9 +17023,9 @@
                           "sockets": {
                             "udp-office-listener-1": {
                               "boundAddress": "0.0.0.0:8421",
-                              "configuration": null,
                               "endpoints": [],
                               "generation": 1,
+                              "netmap": null,
                               "network": "udp",
                               "resource": {
                                 "key": "mesh-udp",
@@ -17034,7 +17034,6 @@
                             },
                             "udp-paris-1": {
                               "boundAddress": "0.0.0.0:41641",
-                              "configuration": null,
                               "endpoints": [
                                 {
                                   "address": "198.51.100.42:40001",
@@ -17047,6 +17046,7 @@
                                 }
                               ],
                               "generation": 3,
+                              "netmap": null,
                               "network": "udp",
                               "resource": {
                                 "key": "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50/mesh-udp",
@@ -18635,8 +18635,7 @@
                       },
                       "key": "office",
                       "lastSuccessAt": null,
-                      "problem": null,
-                      "publication": null
+                      "problem": null
                     },
                     {
                       "artifact": {
@@ -18655,8 +18654,7 @@
                       },
                       "key": "regional",
                       "lastSuccessAt": "2026-10-08T09:07:00Z",
-                      "problem": null,
-                      "publication": "bc0a1b2c-3d4e-4f5a-8b6c-7d8e9f0a1b20"
+                      "problem": null
                     }
                   ]
                 }
@@ -18818,8 +18816,7 @@
                       },
                       "key": "regional",
                       "lastSuccessAt": "2026-10-08T09:07:00Z",
-                      "problem": null,
-                      "publication": "bc0a1b2c-3d4e-4f5a-8b6c-7d8e9f0a1b20"
+                      "problem": null
                     }
                   ]
                 }
@@ -18992,8 +18989,7 @@
                   },
                   "key": "regional",
                   "lastSuccessAt": "2026-10-08T09:07:00Z",
-                  "problem": null,
-                  "publication": "bc0a1b2c-3d4e-4f5a-8b6c-7d8e9f0a1b20"
+                  "problem": null
                 }
               }
             }
@@ -19271,8 +19267,8 @@
                           "links": {},
                           "listeners": {
                             "mesh-udp": {
-                              "configuration": null,
                               "loadedCertificateSha256": null,
+                              "netmap": null,
                               "phase": "listening",
                               "problem": null,
                               "socketIds": [
@@ -19289,9 +19285,9 @@
                           "sockets": {
                             "udp-office-listener-1": {
                               "boundAddress": "0.0.0.0:8421",
-                              "configuration": null,
                               "endpoints": [],
                               "generation": 1,
+                              "netmap": null,
                               "network": "udp",
                               "resource": {
                                 "key": "mesh-udp",
@@ -19300,7 +19296,6 @@
                             },
                             "udp-paris-1": {
                               "boundAddress": "0.0.0.0:41641",
-                              "configuration": null,
                               "endpoints": [
                                 {
                                   "address": "198.51.100.42:40001",
@@ -19313,6 +19308,7 @@
                                 }
                               ],
                               "generation": 3,
+                              "netmap": null,
                               "network": "udp",
                               "resource": {
                                 "key": "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50/mesh-udp",
@@ -19395,8 +19391,8 @@
                           "links": {},
                           "listeners": {
                             "mesh-tcp": {
-                              "configuration": null,
                               "loadedCertificateSha256": null,
+                              "netmap": null,
                               "phase": "listening",
                               "problem": null,
                               "socketIds": [
@@ -19404,8 +19400,8 @@
                               ]
                             },
                             "mesh-udp": {
-                              "configuration": null,
                               "loadedCertificateSha256": null,
+                              "netmap": null,
                               "phase": "listening",
                               "problem": null,
                               "socketIds": [
@@ -19422,9 +19418,9 @@
                           "sockets": {
                             "tcp-listener-1": {
                               "boundAddress": "0.0.0.0:8421",
-                              "configuration": null,
                               "endpoints": [],
                               "generation": 1,
+                              "netmap": null,
                               "network": "tcp",
                               "resource": {
                                 "key": "mesh-tcp",
@@ -19433,7 +19429,6 @@
                             },
                             "udp-listener-1": {
                               "boundAddress": "0.0.0.0:41641",
-                              "configuration": null,
                               "endpoints": [
                                 {
                                   "address": "203.0.113.10:8421",
@@ -19446,6 +19441,7 @@
                                 }
                               ],
                               "generation": 1,
+                              "netmap": null,
                               "network": "udp",
                               "resource": {
                                 "key": "mesh-udp",
@@ -21942,8 +21938,8 @@
               "ruleSetBindings": {
                 "oneOf": [
                   {
-                    "$ref": "#/components/schemas/PublicationId",
-                    "description": "Omitted: the source version's initial rule-set bindings. Otherwise\nselect this exact historical binding from the same source version."
+                    "$ref": "#/components/schemas/RuleSetBindingChoice",
+                    "description": "Omitted or `initial`: the source version's initial rule-set bindings;\n`refreshed`: its last refreshed bindings, or the initial ones when never refreshed."
                   },
                   {
                     "type": "null"
@@ -32948,14 +32944,6 @@
           "rotate"
         ]
       },
-      "PublicationId": {
-        "type": "string",
-        "format": "uuid",
-        "description": "Execution publication identifier.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
-        "maxLength": 36,
-        "minLength": 36,
-        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-      },
       "QueryUdpTraversalRequest": {
         "type": "object",
         "description": "Node query for current STUN metadata and its own valid UDP acquisition attempts without renewing them.",
@@ -33923,6 +33911,14 @@
         ],
         "description": "Destination set declared inline or downloaded and validated by the Server."
       },
+      "RuleSetBindingChoice": {
+        "type": "string",
+        "description": "Which rule-set bindings of a source version a restore reuses.",
+        "enum": [
+          "initial",
+          "refreshed"
+        ]
+      },
       "RuleSetContent": {
         "type": "object",
         "description": "Resolved rule-set artifact content supplied as a fixed Server compilation dependency.",
@@ -34063,24 +34059,13 @@
               "null"
             ],
             "format": "date-time",
-            "description": "Last successful download/conversion/publication check, not artifact creation."
+            "description": "Last successful download/conversion check, not artifact creation."
           },
           "problem": {
             "oneOf": [
               {
                 "$ref": "#/components/schemas/ResourceProblem",
                 "description": "Last check failure or `not_ready` for missing initial remote content; null when no problem is recorded."
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "publication": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/PublicationId",
-                "description": "Exact execution publication whose immutable bindings select this artifact."
               },
               {
                 "type": "null"

@@ -250,7 +250,7 @@
   "nodes_key_created_at": "Created",
   "nodes_execution": "Assigned configuration",
   "nodes_execution_revision": "Revision",
-  "nodes_execution_publication": "Publication",
+  "nodes_execution_publication": "Netmap serial",
   "nodes_execution_digest": "Digest",
   "nodes_execution_none": "The server has not assigned this node a configuration.",
   "nodes_execution_unreported": "The node has not reported what it saved or applied.",

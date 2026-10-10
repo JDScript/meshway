@@ -1399,7 +1399,7 @@ export const zConfigurationProgress = z.strictObject({
   ["target"]: zNetmapRef
 });
 
-export const zPublicationId = z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u"));
+export const zRuleSetBindingChoice = z.enum(["initial","refreshed"]);
 
 export const zConfigurationRequest = z.union([z.strictObject({
   ["expectedRevision"]: zRevision,
@@ -1415,7 +1415,7 @@ export const zConfigurationRequest = z.union([z.strictObject({
   ["expectedRevision"]: zRevision,
   ["requestId"]: zRequestId,
   ["restoreFrom"]: zRevision,
-  ["ruleSetBindings"]: zPublicationId.nullable().exactOptional(),
+  ["ruleSetBindings"]: zRuleSetBindingChoice.nullable().exactOptional(),
   ["type"]: z.enum(["restore"])
 })]);
 
@@ -3346,8 +3346,7 @@ export const zRuleSetView = z.strictObject({
   ["definition"]: zRuleSet.nullable().exactOptional(),
   ["key"]: z.string(),
   ["lastSuccessAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time").nullable().exactOptional(),
-  ["problem"]: zResourceProblem.nullable().exactOptional(),
-  ["publication"]: zPublicationId.nullable().exactOptional()
+  ["problem"]: zResourceProblem.nullable().exactOptional()
 });
 
 export const zRuleSetList = z.strictObject({

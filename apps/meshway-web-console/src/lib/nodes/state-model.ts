@@ -2,11 +2,11 @@ import type {
   AggregatedLink,
   AggregatedPath,
   ApplyPhase,
-  ConfigurationRef,
   ConfigurationState,
   EndpointCandidate,
   LinkAcquisition,
   ListenerState,
+  NetmapRef,
   NodeState,
   NodeStateView,
   PeerState,
@@ -115,11 +115,9 @@ export function configurationSync(
     : { kind: "behind", applied, current: currentRevision }
 }
 
-/** The same execution target: one publication's slice for the node, at one revision. */
-const sameTarget = (a: ConfigurationRef, b: ConfigurationRef) =>
-  a.executionPublication === b.executionPublication &&
-  a.digest === b.digest &&
-  a.revision === b.revision
+/** The same per-node netmap content. */
+const sameTarget = (a: NetmapRef, b: NetmapRef) =>
+  a.serial === b.serial && a.digest === b.digest && a.revision === b.revision
 
 /**
  * The controller's desired execution target for the node against what the
@@ -135,7 +133,7 @@ export type DesiredMatch =
   "none" | "unreported" | "applied" | "saved" | "elsewhere"
 
 export function desiredAgainst(
-  desired: ConfigurationRef | null,
+  desired: NetmapRef | null,
   configuration: ConfigurationState | null
 ): DesiredMatch {
   if (desired === null) return "none"
