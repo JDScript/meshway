@@ -104,9 +104,20 @@ const INIT_SKEW: Duration = Duration::from_secs(2);
 /// An established circuit without any frame for this long ends; below the
 /// 120 s adjacency idle bound, so it never outlives its next hop silently.
 const CIRCUIT_IDLE: Duration = Duration::from_secs(90);
+/// An endpoint that received business data and sent nothing back for this
+/// long sends one empty Data frame, so a live peer always answers within it.
+pub const KEEPALIVE: Duration = Duration::from_secs(10);
 /// An origin that sent for this long without one authenticated receive ends
-/// the circuit and re-handshakes on its next packet (a restarted peer).
-const NO_REPLY: Duration = Duration::from_secs(30);
+/// the circuit and re-handshakes on its next packet. With passive keepalive a
+/// live terminal always answers within [`KEEPALIVE`] plus one round trip.
+const REPLY_TIMEOUT: Duration = Duration::from_secs(15);
+/// How long a Close for a circuit that already ended may wait for I/O.
+const CLOSE_OUTPUT: Duration = Duration::from_secs(5);
+
+/// A peer's signed adjacency boot identity (see the connectivity Manager).
+/// A circuit binds the boot of each adjacent peer; a different boot on that
+/// peer's current channel means the peer restarted and lost the circuit.
+pub type PeerBoot = [u8; 16];
 
 /// The stable grant a circuit is admitted under: (origin = `path[0]`,
 /// target, purpose) on the installed netmap; never installed content.
@@ -313,6 +324,11 @@ pub enum Received {
         measurement_id: meshway_model::EventId,
         challenge: meshway_model::Digest,
     },
+    /// An authenticated empty Data frame: the peer endpoint is alive.
+    Keepalive { circuit: [u8; 32] },
+    /// The circuit ended at an adjacent peer's request; a relay instead
+    /// returns the Close it passes on as [`Received::Forward`].
+    Closed { circuit: [u8; 32] },
 }
 
 /// Unauthenticated scheduling hints decoded by the bounded candidate codec.
@@ -373,6 +389,11 @@ struct Circuit {
     active: Instant,
     /// The oldest send not followed by any authenticated receive.
     unanswered: Option<Instant>,
+    /// When this endpoint owes a passive keepalive: business data arrived
+    /// and nothing was sent since.
+    keepalive: Option<Instant>,
+    /// Adjacent peers on the path and the boot each had when bound.
+    adjacent: Vec<(NodeId, Option<PeerBoot>)>,
     /// This Node is the circuit's origin (`path[0]`).
     origin: bool,
     /// The exact path this owner admitted, with its dial candidates.
@@ -401,8 +422,21 @@ impl Circuit {
         timeout: Duration,
         cancellation: CancellationToken,
         selected: Option<Arc<LogicalPath>>,
+        boots: &BTreeMap<NodeId, PeerBoot>,
     ) -> Result<Self, Error> {
         let cap = None;
+        let local = reading.node();
+        let position = context
+            .path
+            .iter()
+            .position(|node| *node == local)
+            .ok_or(Error::Context)?;
+        let adjacent = [position.checked_sub(1), Some(position + 1)]
+            .into_iter()
+            .flatten()
+            .filter_map(|index| context.path.get(index))
+            .map(|peer| (*peer, boots.get(peer).copied()))
+            .collect();
         let mut handshake =
             Cap::after(reading.instant, reading.now_ms, timeout).ok_or(Error::Limits)?;
         // The INIT window also bounds a responder's handshake state.
@@ -419,6 +453,8 @@ impl Circuit {
             handshake,
             active: reading.instant,
             unanswered: None,
+            keepalive: None,
+            adjacent,
             origin,
             selected,
             send: Default::default(),
@@ -464,9 +500,9 @@ impl Circuit {
 
     /// An established circuit ends after [`CIRCUIT_IDLE`] without any frame
     /// in either direction (its adjacency idles out too), and its origin
-    /// ends it after [`NO_REPLY`] of sending without a single authenticated
-    /// receive (a restarted peer drops its frames). The origin's next packet
-    /// then acquires a fresh adjacency and handshake.
+    /// ends it after [`REPLY_TIMEOUT`] of sending without a single
+    /// authenticated receive (a peer that lost the circuit drops its frames).
+    /// The origin's next packet then acquires a fresh adjacency and handshake.
     fn activity_deadline(&self) -> Option<Instant> {
         if !self.state.established() {
             return None;
@@ -474,7 +510,7 @@ impl Circuit {
         let idle = self.active + CIRCUIT_IDLE;
         Some(match self.unanswered {
             Some(sent) if matches!(self.state, State::Endpoint(_)) && self.origin() => {
-                idle.min(sent + NO_REPLY)
+                idle.min(sent + REPLY_TIMEOUT)
             }
             _ => idle,
         })
@@ -492,6 +528,32 @@ impl Circuit {
     fn sent(&mut self, at: Instant) {
         self.active = self.active.max(at);
         self.unanswered.get_or_insert(at);
+        self.keepalive = None;
+    }
+
+    /// A keepalive answers; it expects no answer itself.
+    fn sent_keepalive(&mut self, at: Instant) {
+        self.active = self.active.max(at);
+        self.keepalive = None;
+    }
+
+    /// Business data arrived at this endpoint: answer within [`KEEPALIVE`].
+    fn owe_keepalive(&mut self, at: Instant) {
+        self.keepalive.get_or_insert(at + KEEPALIVE);
+    }
+
+    /// Whether an adjacent peer's current boot differs from the one bound;
+    /// binds peers whose boot was not known yet.
+    fn rebind_boots(&mut self, boots: &BTreeMap<NodeId, PeerBoot>) -> Option<NodeId> {
+        let mut restarted = None;
+        for (peer, bound) in &mut self.adjacent {
+            match (*bound, boots.get(peer)) {
+                (Some(old), Some(new)) if old != *new => restarted = Some(*peer),
+                (None, Some(new)) => *bound = Some(*new),
+                _ => {}
+            }
+        }
+        restarted
     }
 
     /// Bound of this circuit for scheduling.
@@ -606,6 +668,8 @@ pub struct SecureNode {
     engine: Engine,
     limits: Limits,
     carriers: BTreeMap<NodeId, Carrier>,
+    /// Signed boot identities of the current adjacent channels.
+    boots: BTreeMap<NodeId, PeerBoot>,
     // Stable allocation for the owner state: remove/restore coordinates borrows
     // without moving replay windows, recovery state and session metadata per packet.
     circuits: BTreeMap<[u8; 32], Box<Circuit>>,
@@ -711,6 +775,7 @@ impl SecureNode {
             engine,
             limits,
             carriers: BTreeMap::new(),
+            boots: BTreeMap::new(),
             circuits: BTreeMap::new(),
             dead: BTreeMap::new(),
             probes: Default::default(),
@@ -789,6 +854,7 @@ impl SecureNode {
             self.limits.handshake_timeout,
             self.cancellation.child_token(),
             Some(admitted.selected),
+            &self.boots,
         )?;
         let frame = Frame {
             context,
@@ -929,7 +995,11 @@ impl SecureNode {
             if circuit.context != frame.context {
                 return Err(Error::Context);
             }
-            circuit.receive[usize::from(frame.reply)].check(frame.sequence)?;
+            // A Close is one-shot: its CID is dead after it, so it needs no
+            // sequence of its own and shares none with the data window.
+            if frame.kind != Kind::Close {
+                circuit.receive[usize::from(frame.reply)].check(frame.sequence)?;
+            }
             let selected = authorization::selected(&circuit.context, circuit.selected.as_deref())?;
             let previous = circuit.session.verify(selected, &frame, incoming)?;
             authorization::incoming(
@@ -949,6 +1019,9 @@ impl SecureNode {
             }
         })?;
         let (previous, admitted) = verified;
+        if frame.kind == Kind::Close {
+            return self.receive_close(&frame, &reading);
+        }
         if let Some(mut circuit) = self.circuits.remove(&id) {
             // Always restore kept state on rejection. A consumed nonce or
             // handshake must never roll back as a side effect of an output error.
@@ -1057,6 +1130,7 @@ impl SecureNode {
             self.limits.handshake_timeout,
             self.cancellation.child_token(),
             Some(admitted.selected),
+            &self.boots,
         )?;
         let id = circuit.context.circuit;
         let fingerprint = Sha256::digest(frame.encode()?).into();
@@ -1216,7 +1290,7 @@ impl SecureNode {
                     _ => Err(Error::Replay),
                 }
             }
-            Kind::Data => Err(Error::State),
+            Kind::Data | Kind::Close => Err(Error::State),
             Kind::ProbeRequest | Kind::ProbeReply => {
                 self.receive_probe(circuit, frame, previous, reading)
             }
@@ -1507,6 +1581,196 @@ impl SecureNode {
         }
         guard.check_at(reading)?;
         Ok((next, carrier, guard))
+    }
+
+    /// The adjacent node of this owner on `circuit`'s path in a direction.
+    fn neighbour(circuit: &Circuit, reply: bool, local: NodeId) -> Option<NodeId> {
+        let path = &circuit.context.path;
+        let position = path.iter().position(|node| *node == local)?;
+        let index = if reply {
+            position.checked_sub(1)?
+        } else {
+            position + 1
+        };
+        path.get(index).copied()
+    }
+
+    /// A hop-authenticated Close of `circuit` toward `next`. It outlives the
+    /// circuit it ends (bounded by [`CLOSE_OUTPUT`]) and grants nothing.
+    fn close_output(
+        &self,
+        circuit: &Circuit,
+        next: NodeId,
+        reply: bool,
+        reading: &View<'_>,
+    ) -> Option<PendingFrame> {
+        let carrier = self.carriers.get(&next)?.clone();
+        let selected = authorization::selected(&circuit.context, circuit.selected.as_deref()).ok();
+        authorization::outgoing(selected, next, &carrier).ok()?;
+        let mut frame = Frame {
+            context: circuit.context.clone(),
+            kind: Kind::Close,
+            reply,
+            sequence: 0,
+            probe: None,
+            body: PacketBuffer::from(Vec::new()),
+            proofs: Vec::new(),
+            exchange: None,
+            auth: Default::default(),
+        };
+        circuit.session.append(&mut frame, carrier.clone()).ok()?;
+        let bytes = frame.encode_owned().ok()?;
+        let cap = Cap::after(reading.instant, reading.now_ms, CLOSE_OUTPUT)?;
+        Some(PendingFrame {
+            bytes,
+            next,
+            carrier,
+            circuit: circuit.context.circuit,
+            guard: OutputBinding {
+                life: Lifetime::new(Some(cap), self.cancellation.child_token()),
+                projection: None,
+            },
+        })
+    }
+
+    /// An authenticated Close from the adjacent peer: end the circuit; a
+    /// relay passes the Close on in the same direction first.
+    fn receive_close(&mut self, frame: &Frame, reading: &View<'_>) -> Result<Received, Error> {
+        let id = frame.context.circuit;
+        let circuit = self.circuits.get(&id).ok_or(Error::State)?;
+        let forward = matches!(circuit.state, State::RelayEstablished)
+            .then(|| Self::neighbour(circuit, frame.reply, reading.node()))
+            .flatten()
+            .and_then(|next| self.close_output(circuit, next, frame.reply, reading));
+        if diagnostics::event() {
+            tracing::debug!(operation = "receive", cause = "peer_close", cid = ?id,
+                grant = ?circuit.context.grant, forwarded = forward.is_some(),
+                "Dataplane circuit retired");
+        }
+        self.close(id);
+        Ok(match forward {
+            Some(output) => Received::Forward(output),
+            None => Received::Closed { circuit: id },
+        })
+    }
+
+    /// Replace the signed boot identities of the current adjacent channels.
+    /// Every circuit whose adjacent peer now has another boot ends: that
+    /// peer restarted and lost it. A relay returns a Close for each such
+    /// circuit toward its surviving neighbour so the origin re-handshakes at
+    /// once. A carrier change of the same peer state keeps every circuit.
+    pub fn set_peer_boots(&mut self, boots: BTreeMap<NodeId, PeerBoot>) -> Vec<PendingFrame> {
+        let desired = self.desired.clone();
+        let reading = View::of(&desired);
+        let restarted: Vec<_> = self
+            .circuits
+            .iter_mut()
+            .filter_map(|(id, circuit)| circuit.rebind_boots(&boots).map(|peer| (*id, peer)))
+            .collect();
+        self.boots = boots;
+        let local = reading.node();
+        let mut closes = Vec::new();
+        for (id, peer) in restarted {
+            if let Some(circuit) = self.circuits.get(&id) {
+                if matches!(circuit.state, State::RelayEstablished) {
+                    for reply in [true, false] {
+                        if let Some(other) = Self::neighbour(circuit, reply, local)
+                            && other != peer
+                        {
+                            closes.extend(self.close_output(circuit, other, reply, &reading));
+                        }
+                    }
+                }
+                if diagnostics::event() {
+                    tracing::debug!(operation = "set_peer_boots", cause = "peer_restarted",
+                        cid = ?id, %peer, grant = ?circuit.context.grant,
+                        "Dataplane circuit retired");
+                }
+            }
+            self.close(id);
+        }
+        closes
+    }
+
+    /// The earliest passive keepalive this owner owes.
+    pub fn next_keepalive(&self) -> Option<Instant> {
+        self.circuits
+            .values()
+            .filter_map(|circuit| circuit.keepalive)
+            .min()
+    }
+
+    /// Empty Data frames for at most `budget` due keepalives. Each takes a
+    /// nonce of its direction; no flow is admitted or changed.
+    pub fn keepalives(&mut self, budget: usize) -> Vec<Result<pipeline::SendJob, Error>> {
+        let desired = self.desired.clone();
+        let reading = View::of(&desired);
+        let due: Vec<_> = self
+            .circuits
+            .iter()
+            .filter(|(_, circuit)| circuit.keepalive.is_some_and(|at| at <= reading.instant))
+            .map(|(id, _)| *id)
+            .take(budget)
+            .collect();
+        let mut jobs = Vec::with_capacity(due.len());
+        for id in due {
+            let Some(circuit) = self.circuits.get_mut(&id) else {
+                continue;
+            };
+            let result = Self::keepalive_inner(
+                OutputOwner {
+                    carriers: &self.carriers,
+                },
+                circuit,
+                &reading,
+            );
+            // Owed once: a failed keepalive is not retried every turn.
+            circuit.keepalive = None;
+            jobs.push(circuit.finish_operation("keepalive", result));
+        }
+        jobs
+    }
+
+    fn keepalive_inner(
+        owner: OutputOwner<'_>,
+        circuit: &mut Circuit,
+        reading: &View<'_>,
+    ) -> Result<pipeline::SendJob, Error> {
+        circuit.context.grant.flow().ok_or(Error::Policy)?;
+        circuit.check_at(reading)?;
+        let State::Endpoint(noise) = &circuit.state else {
+            return Err(Error::State);
+        };
+        let noise = noise.clone();
+        let local = reading.node();
+        let reply = local != circuit.context.path[0];
+        Self::check_outgoing_carrier(owner.carriers, circuit, reply, reading)?;
+        let next = Self::neighbour(circuit, reply, local).ok_or(Error::Context)?;
+        let sequence = circuit.send[usize::from(reply)].take()?;
+        let frame = Frame {
+            context: circuit.context.clone(),
+            kind: Kind::Data,
+            reply,
+            sequence,
+            probe: None,
+            body: PacketBuffer::from(Vec::new()),
+            proofs: Vec::new(),
+            exchange: None,
+            auth: Default::default(),
+        };
+        let (next, carrier, guard) =
+            Self::output_scope(owner, circuit, &frame, Hop::Forward(next), None, reading)?;
+        let mac = circuit.session.prepare_append(&frame, &carrier)?;
+        guard.finish()?;
+        circuit.sent_keepalive(reading.instant);
+        Ok(pipeline::SendJob {
+            frame,
+            noise,
+            mac,
+            next,
+            carrier,
+            guard,
+        })
     }
 
     /// The next hop of an origin's established circuit when it has no

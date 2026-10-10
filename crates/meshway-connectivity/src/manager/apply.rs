@@ -203,6 +203,7 @@ impl Manager {
                 .lock()
                 .map_err(|_| Error::Worker)?
                 .clone(),
+            boot: Some(self.shared.boot),
         };
         let keys = self.shared.keys.clone();
         self.shutdown().await?;

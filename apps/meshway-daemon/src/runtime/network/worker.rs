@@ -127,6 +127,13 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
         let can_read = live && plane.packets.can_read(&pool);
         let has_outputs = plane.packets.has_outputs();
         let mut wake_at = live.then(|| plane.packets.wake_at()).flatten();
+        if let Some(at) = live
+            .then(|| plane.secure().and_then(meshway_dataplane::secure::SecureNode::next_keepalive))
+            .flatten()
+        {
+            let at = tokio::time::Instant::from_std(at);
+            wake_at = Some(wake_at.map_or(at, |old| old.min(at)));
+        }
         if let Some(at) = diagnostics.wake_at() {
             wake_at = Some(wake_at.map_or(at, |old| old.min(at)));
         }
@@ -603,6 +610,11 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             let carriers = manager.carriers().ok();
             if let Some(carriers) = &carriers {
                 let _ = secure.set_carriers(carriers.clone());
+            }
+            // A restarted adjacent peer lost its circuits: end them here and
+            // pass a Close on to the surviving side of each relayed one.
+            if let Ok(boots) = manager.peer_boots() {
+                packets.closes(secure.set_peer_boots(boots));
             }
             secure.set_ready_exits(peers.ready_exits());
             diagnostics.synchronize(&state.desired, instance);

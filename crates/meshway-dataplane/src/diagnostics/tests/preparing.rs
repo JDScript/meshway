@@ -35,7 +35,11 @@ fn deliver(
                 );
                 return;
             }
-            Received::Packet(_) | Received::DnsRequest(_) | Received::DnsReply(_) => {
+            Received::Packet(_)
+            | Received::DnsRequest(_)
+            | Received::DnsReply(_)
+            | Received::Keepalive { .. }
+            | Received::Closed { .. } => {
                 panic!("diagnostic produced other traffic")
             }
         };

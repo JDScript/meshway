@@ -59,6 +59,8 @@ pub(super) struct Packets {
         meshway_dataplane::carrier::SendPending<(Result<(), meshway_connectivity::Error>, usize)>,
     deliveries: meshway_dataplane::carrier::TunPending<Delivered>,
     exit_replies: VecDeque<secure::PendingFrame>,
+    /// Closes of circuits a restarted adjacent peer lost, bounded.
+    closes: Vec<secure::PendingFrame>,
 }
 
 impl Packets {
@@ -69,6 +71,16 @@ impl Packets {
             self.drop_packet("exit_reply_capacity");
         }
     }
+    pub fn closes(&mut self, frames: Vec<secure::PendingFrame>) {
+        for frame in frames {
+            if self.closes.len() < MAX_SENDS {
+                self.closes.push(frame);
+            } else {
+                self.drop_packet("close_capacity");
+            }
+        }
+    }
+
     pub fn can_read(&self, pool: &secure::pipeline::Pool) -> bool {
         pool.can_submit()
             && self.local.len() + self.incoming.len() <= MAX_PACKETS - 32
@@ -145,7 +157,7 @@ impl Packets {
     }
     pub fn wake_at(&self) -> Option<Instant> {
         let now = Instant::now();
-        if self.scan_remaining != 0 {
+        if self.scan_remaining != 0 || !self.closes.is_empty() {
             return Some(now);
         }
         let first = self
@@ -331,6 +343,16 @@ impl Packets {
                 std::task::Poll::Ready(Err(_)) => self.drop_packet("exit_reply_expired"),
             }
         }
+        let mut closes = std::mem::take(&mut self.closes);
+        self.flush_sends(manager, &mut closes).await;
+        for keepalive in secure.keepalives(pool.available().min(MAX_SENDS)) {
+            match keepalive {
+                Ok(job) => {
+                    assert!(pool.submit(secure::pipeline::Job::Send(job)).is_none());
+                }
+                Err(error) => self.drop_admission("keepalive", error),
+            }
+        }
         self.complete_crypto(secure, manager, pool, exit.as_deref_mut());
         // Continue a bounded scan on the next turn, including ready suffixes
         // left after a full batch. Waiting packets are scanned only once per
@@ -459,7 +481,11 @@ impl Packets {
                         self.flush_sends(manager, &mut outgoing).await;
                     }
                 }
-                Ok(Received::Established { response: None, .. }) => {}
+                Ok(
+                    Received::Established { response: None, .. }
+                    | Received::Keepalive { .. }
+                    | Received::Closed { .. },
+                ) => {}
                 Ok(Received::ProbeRequest {
                     circuit,
                     measurement_id,
@@ -725,6 +751,7 @@ impl Packets {
                     // original wrapper. Release this crypto reservation now.
                     drop(credit);
                 }
+                Ok(Received::Keepalive { .. }) => drop(credit),
                 Err(error) => self.drop_admission("crypto_admission", error),
                 _ => self.drop_packet("crypto_output"),
             }

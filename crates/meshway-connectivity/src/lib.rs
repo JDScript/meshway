@@ -10,6 +10,7 @@ mod provider;
 mod scope;
 pub mod traversal;
 
+pub use adjacency::Boot;
 pub use io::{
     AcceptedSocket, DatagramAuthorization, DatagramSocket, ListenerSocket, SocketFactory,
     TraversalSocket,

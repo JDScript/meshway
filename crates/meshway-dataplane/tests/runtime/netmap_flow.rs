@@ -611,3 +611,117 @@ async fn tcp_flow_and_its_reply_stay_on_the_original_circuit_through_renewal() {
     ));
     f.close().await;
 }
+
+#[tokio::test]
+async fn restarted_terminal_ends_the_relay_circuit_and_its_close_reaches_the_origin() {
+    let mut f = NetmapMesh::start().await;
+    let [a, r, b] = f.ids();
+    let id = {
+        let packet = f.mesh_udp(false, 42424);
+        first(&mut f, packet)
+    }
+    .await;
+    assert!(f.a.set_peer_boots(BTreeMap::from([(r, [1; 16])])).is_empty());
+    assert!(
+        f.r.set_peer_boots(BTreeMap::from([(a, [1; 16]), (b, [1; 16])]))
+            .is_empty()
+    );
+    // A carrier change of the same peer state keeps every circuit.
+    assert!(
+        f.r.set_peer_boots(BTreeMap::from([(a, [1; 16]), (b, [1; 16])]))
+            .is_empty()
+    );
+    let frame = {
+        let packet = f.mesh_udp(false, 42424);
+        send(&mut f, packet)
+    };
+    delivered(&mut f, frame);
+    // B restarted: its new channel to R carries another boot.
+    let mut closes = f.r.set_peer_boots(BTreeMap::from([(a, [1; 16]), (b, [2; 16])]));
+    assert_eq!(closes.len(), 1, "one Close toward the surviving origin");
+    let close = closes.remove(0);
+    assert_eq!((close.next(), close.circuit()), (a, id));
+    assert!(f.r.circuit_info(id).unwrap().is_none(), "the relay ended it");
+    let bytes = wire(close);
+    assert!(meshway_dataplane::secure::is_control_frame(&bytes));
+    // A forged copy on another carrier is not this hop's Close.
+    assert!(f.a.receive(&f.rb.carrier, bytes.clone()).is_err());
+    assert!(matches!(
+        f.a.receive(&f.ar.carrier, bytes.clone()).unwrap(),
+        Received::Closed { circuit } if circuit == id
+    ));
+    assert!(f.a.circuit_info(id).unwrap().is_none());
+    assert!(
+        f.a.receive(&f.ar.carrier, bytes).is_err(),
+        "a replayed Close names no live circuit"
+    );
+    // The origin's next packet of the same flow re-handshakes at once.
+    let packet = f.mesh_udp(false, 42424);
+    let Outbound::Queued { init: Some(init) } = f.a.outbound(packet).unwrap() else {
+        panic!("a fresh circuit for the unchanged path")
+    };
+    assert_ne!(init.circuit(), id);
+    f.close().await;
+}
+
+#[tokio::test]
+async fn restarted_origin_ends_the_terminal_circuit_without_any_frame() {
+    let mut f = NetmapMesh::start().await;
+    let [a, r, b] = f.ids();
+    let id = {
+        let packet = f.mesh_udp(false, 42424);
+        first(&mut f, packet)
+    }
+    .await;
+    assert!(f.b.set_peer_boots(BTreeMap::from([(r, [1; 16])])).is_empty());
+    assert!(
+        f.r.set_peer_boots(BTreeMap::from([(a, [1; 16]), (b, [1; 16])]))
+            .is_empty()
+    );
+    // A restarted: R closes toward B; B also retires its own circuit when R
+    // itself restarts.
+    let mut closes = f.r.set_peer_boots(BTreeMap::from([(a, [9; 16]), (b, [1; 16])]));
+    let close = closes.remove(0);
+    assert_eq!(close.next(), b);
+    assert!(matches!(
+        f.b.receive(&f.rb.carrier, wire(close)).unwrap(),
+        Received::Closed { circuit } if circuit == id
+    ));
+    assert!(f.b.circuit_info(id).unwrap().is_none());
+    f.close().await;
+}
+
+#[tokio::test]
+async fn a_terminal_that_only_receives_answers_with_a_passive_keepalive() {
+    let mut f = NetmapMesh::start().await;
+    let id = {
+        let packet = f.mesh_udp(false, 42424);
+        first(&mut f, packet)
+    }
+    .await;
+    let due = f.b.next_keepalive().expect("received data owes a keepalive");
+    assert!(f.a.next_keepalive().is_none(), "the sender owes none");
+    assert!(f.b.keepalives(32).is_empty(), "not before it is due");
+    tokio::time::sleep(due.saturating_duration_since(std::time::Instant::now())).await;
+    let mut jobs = f.b.keepalives(32);
+    assert_eq!(jobs.len(), 1);
+    let frame = sealed(jobs.remove(0).unwrap());
+    assert_eq!(frame.circuit(), id);
+    assert!(f.b.next_keepalive().is_none(), "owed once");
+    let Received::Forward(next) = f.r.receive(&f.rb.carrier, wire(frame)).unwrap() else {
+        panic!("relay forwards it as opaque Data")
+    };
+    assert!(matches!(
+        f.a.receive(&f.ar.carrier, wire(next)).unwrap(),
+        Received::Keepalive { circuit } if circuit == id
+    ));
+    assert!(
+        f.a.next_keepalive().is_none(),
+        "a keepalive is never answered by another"
+    );
+    assert_eq!(
+        f.a.circuit_info(id).unwrap().unwrap().state,
+        CircuitState::Established
+    );
+    f.close().await;
+}

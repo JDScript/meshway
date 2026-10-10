@@ -191,12 +191,13 @@ pub(super) async fn dial(shared: Arc<Shared>, factory: Arc<dyn SocketFactory>, p
                             return Err(Error::Configuration);
                         };
                         let stream = connector.connect(raw).await?;
-                        let (stream, id) = adjacency::dial(
+                        let (stream, id, peer_boot) = adjacency::dial(
                             &shared.keys,
                             &plan,
                             &scope,
                             stream,
                             &candidate.carrier,
+                            &shared.boot,
                         )
                         .await?;
                         Ok((
@@ -209,6 +210,7 @@ pub(super) async fn dial(shared: Arc<Shared>, factory: Arc<dyn SocketFactory>, p
                                 local: socket.local,
                                 remote: socket.peer,
                                 acquisition: target.acquisition.clone(),
+                                peer_boot,
                             },
                             opening,
                         ))
@@ -379,8 +381,9 @@ pub(super) async fn listen(
                     opening: Some(opening.clone()),
                 });
                 let stream = acceptor.accept(raw).await?;
-                let (stream, peer, carrier, id) =
-                    adjacency::accept(&shared.keys, &plan, &scope, stream, carriers).await?;
+                let (stream, peer, carrier, id, peer_boot) =
+                    adjacency::accept(&shared.keys, &plan, &scope, stream, carriers, &shared.boot)
+                        .await?;
                 Ok((
                     stream,
                     LinkFact {
@@ -391,6 +394,7 @@ pub(super) async fn listen(
                         local: socket.local,
                         remote: socket.peer,
                         acquisition: LinkAcquisition::AcceptedInbound,
+                        peer_boot,
                     },
                     opening,
                 ))

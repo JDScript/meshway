@@ -115,6 +115,27 @@ pub(crate) fn claimed_dialer(intro: &[u8]) -> Option<NodeId> {
     hex.parse().ok()
 }
 
+/// Random identity of one circuit owner lifetime (a Manager and the
+/// Managers it restarts into). Every adjacency nonce this owner signs starts
+/// with it, so a peer learns from an authenticated transcript whether a new
+/// channel comes from the same process state or from a restarted peer
+/// without any change to the message layout.
+pub type Boot = [u8; 16];
+
+pub(crate) fn boot() -> Result<Boot, Error> {
+    let mut boot = [0; 16];
+    getrandom::fill(&mut boot).map_err(|_| Error::Authentication)?;
+    Ok(boot)
+}
+
+/// A fresh nonce carrying this owner's signed boot prefix; 128 random bits
+/// keep every transcript and health challenge unique.
+pub(crate) fn boot_nonce(boot: &Boot) -> Result<[u8; 32], Error> {
+    let mut nonce = nonce()?;
+    nonce[..16].copy_from_slice(boot);
+    Ok(nonce)
+}
+
 pub(crate) fn nonce() -> Result<[u8; 32], Error> {
     let mut nonce = [0; 32];
     getrandom::fill(&mut nonce).map_err(|_| Error::Authentication)?;
@@ -166,9 +187,10 @@ pub(crate) async fn dial(
     scope: &Scope,
     mut stream: Box<dyn Stream>,
     carrier: &Carrier,
-) -> Result<(Box<dyn Stream>, [u8; 32]), Error> {
+    boot: &Boot,
+) -> Result<(Box<dyn Stream>, [u8; 32], Boot), Error> {
     scope.check()?;
-    let (initiation, intro) = Initiation::new(keys, cfg, carrier)?;
+    let (initiation, intro) = Initiation::new(keys, cfg, carrier, boot)?;
     scope.run(write(&mut stream, 1, &intro)).await?;
     let challenge = scope.run(read(&mut stream, 2)).await?;
     let transcript = initiation.challenge(cfg, carrier.listener, &challenge)?;
@@ -179,7 +201,7 @@ pub(crate) async fn dial(
             &transcript.message(keys, cfg, Kind::Ack)?,
         ))
         .await?;
-    Ok((stream, transcript.id()))
+    Ok((stream, transcript.id(), transcript.peer_boot(true)))
 }
 
 pub(crate) async fn accept(
@@ -188,7 +210,8 @@ pub(crate) async fn accept(
     scope: &Scope,
     mut stream: Box<dyn Stream>,
     carriers: impl Fn(NodeId) -> Option<Carrier>,
-) -> Result<(Box<dyn Stream>, NodeId, Carrier, [u8; 32]), Error> {
+    boot: &Boot,
+) -> Result<(Box<dyn Stream>, NodeId, Carrier, [u8; 32], Boot), Error> {
     let carriers = |intro: &[u8]| -> Result<Vec<(NodeId, Carrier)>, Error> {
         let peer = claimed_dialer(intro).ok_or(Error::Authentication)?;
         Ok(carriers(peer)
@@ -201,7 +224,7 @@ pub(crate) async fn accept(
     let mut scope = scope.clone();
     scope.edge = Some((peer, carrier.clone()));
     scope.check()?;
-    let transcript = initiation.respond()?;
+    let transcript = initiation.respond(boot)?;
     scope
         .run(write(
             &mut stream,
@@ -212,7 +235,13 @@ pub(crate) async fn accept(
     let ack = scope.run(read(&mut stream, 3)).await?;
     transcript.verify(cfg, peer, Kind::Ack, &ack)?;
     scope.check()?;
-    Ok((stream, peer, carrier, transcript.id()))
+    Ok((
+        stream,
+        peer,
+        carrier,
+        transcript.id(),
+        transcript.peer_boot(false),
+    ))
 }
 
 #[cfg(test)]

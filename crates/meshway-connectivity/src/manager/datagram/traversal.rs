@@ -163,6 +163,7 @@ impl Owner {
                     &self.shared.plan(),
                     &attempt.offer.offer().carrier,
                     Some(attempt.offer.offer().digest),
+                    &self.shared.boot,
                 )?;
                 let dialer = attempt.offer.offer().carrier.dialer
                     == attempt.offer.local().candidate.socket.node_id;
@@ -376,7 +377,7 @@ impl Owner {
                 }
                 return Ok(());
             }
-            let transcript = initiation.respond()?;
+            let transcript = initiation.respond(&self.shared.boot)?;
             attempt.output(
                 2,
                 transcript.message(&self.shared.keys, cfg, Kind::Challenge)?,
