@@ -135,8 +135,8 @@ impl SecureNode {
         circuit: [u8; 32],
         bytes: PacketBuffer,
     ) -> Result<SendJob, Error> {
-        let snapshot = self.identity.snapshot().clone();
-        let reading = View::of(&snapshot).map_err(|_| Error::Authority)?;
+        let desired = self.desired.clone();
+        let reading = View::of(&desired);
         self.prepare_send_at(
             circuit,
             Packet::parse(bytes).map_err(|_| Error::Packet)?,
@@ -153,8 +153,8 @@ impl SecureNode {
         static PROFILE: meshway_logging::profile::Metric =
             meshway_logging::profile::Metric::new("secure.prepare_receive");
         let _profile = PROFILE.enter();
-        let snapshot = self.identity.snapshot().clone();
-        let reading = View::of(&snapshot).map_err(|_| Error::Authority)?;
+        let desired = self.desired.clone();
+        let reading = View::of(&desired);
         self.maintain_circuits(&reading, false)?;
         let id = codec::session_id(&bytes)?.ok_or(Error::Wire)?;
         let circuit = self.circuits.get_mut(&id).ok_or(Error::State)?;
@@ -176,8 +176,7 @@ impl SecureNode {
             previous,
             incoming,
         )?;
-        let mut guard = circuit.guard(&snapshot, false);
-        guard.section = Some(self.output_epoch.clone());
+        let guard = circuit.guard(false);
         let target = match &circuit.state {
             State::Endpoint(noise) => ReceiveTarget::Endpoint(noise.clone()),
             State::RelayEstablished => {
@@ -211,19 +210,18 @@ impl SecureNode {
         })
     }
 
-    /// Rechecks the original scope, owner/key identity and replay window before
-    /// any endpoint flow mutation. Duplicate jobs may verify concurrently but
-    /// only the first successful owner commit can consume their sequence.
+    /// Rechecks the original circuit lifetime, owner/key identity and replay
+    /// window before any endpoint flow mutation, on the current content. A
+    /// circuit the content no longer admits was retired, which ends its jobs.
+    /// Duplicate jobs may verify concurrently but only the first successful
+    /// owner commit can consume their sequence.
     pub fn commit_receive(&mut self, opened: Opened) -> Result<Received, Error> {
         static PROFILE: meshway_logging::profile::Metric =
             meshway_logging::profile::Metric::new("secure.commit_receive");
         let _profile = PROFILE.enter();
-        let snapshot = opened.guard.snapshot.clone();
-        let reading = View::of(&snapshot).map_err(|_| Error::Authority)?;
+        let desired = self.desired.clone();
+        let reading = View::of(&desired);
         opened.guard.check_at(&reading)?;
-        if !snapshot.same_netmap(self.identity.snapshot()) {
-            return Err(Error::Authority);
-        }
         let id = opened.circuit;
         let circuit = self.circuits.get_mut(&id).ok_or(Error::State)?;
         let result = (|| {
@@ -286,8 +284,9 @@ impl SecureNode {
             };
             opened.guard.finish()?;
             circuit.receive[index].commit(sequence);
+            circuit.received(reading.instant);
             Ok(result)
         })();
-        circuit.finish_operation(self.identity.snapshot(), "receive", result)
+        circuit.finish_operation("receive", result)
     }
 }

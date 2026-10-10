@@ -34,6 +34,9 @@ pub(super) fn circuit(state: State, parent: &CancellationToken) -> Circuit {
             at: Instant::now() + Duration::from_secs(10),
             ms: u64::MAX,
         },
+        active: Instant::now(),
+        unanswered: None,
+        origin: true,
         selected: None,
         send: Default::default(),
         receive: Default::default(),
@@ -97,4 +100,51 @@ async fn circuit_drop_and_table_clear_cancel_outputs_but_io_child_cancel_is_loca
         .await
         .unwrap();
     assert!(!root.is_cancelled());
+}
+
+#[test]
+fn established_circuit_ends_when_idle_and_its_origin_ends_it_without_replies() {
+    let root = CancellationToken::new();
+    let now = Instant::now();
+    let mut idle = circuit(State::RelayEstablished, &root);
+    idle.cap = None;
+    idle.check_now(now, 0).unwrap();
+    // Frames in either direction keep a relay or endpoint alive.
+    idle.active = now - CIRCUIT_IDLE + Duration::from_secs(1);
+    idle.check_now(now, 0).unwrap();
+    idle.sent(now);
+    idle.check_now(now + CIRCUIT_IDLE - Duration::from_secs(1), 0)
+        .unwrap();
+    assert_eq!(idle.check_now(now + CIRCUIT_IDLE, 0), Err(Error::Expired));
+    // A relay never applies the origin's no-reply bound: it forwards for
+    // others and cannot re-handshake.
+    idle.active = now;
+    idle.unanswered = Some(now - NO_REPLY);
+    idle.check_now(now, 0).unwrap();
+
+    // An origin endpoint that keeps sending into a restarted peer ends the
+    // circuit after NO_REPLY; any authenticated receive answers it.
+    let endpoint = || {
+        let mut circuit = circuit(State::Closed, &root);
+        circuit.cap = None;
+        circuit.state = State::RelayEstablished;
+        circuit
+    };
+    let mut origin = endpoint();
+    origin.sent(now);
+    assert_eq!(origin.unanswered, Some(now));
+    origin.sent(now + Duration::from_secs(5));
+    assert_eq!(origin.unanswered, Some(now), "the oldest unanswered send");
+    origin.received(now + Duration::from_secs(6));
+    assert_eq!(origin.unanswered, None);
+    origin.sent(now + Duration::from_secs(7));
+    assert_eq!(
+        origin.activity_deadline(),
+        Some(now + Duration::from_secs(7) + CIRCUIT_IDLE),
+        "only an Endpoint origin applies the no-reply bound"
+    );
+    assert!(NO_REPLY < CIRCUIT_IDLE);
+    // A handshaking circuit has only its handshake bound.
+    let handshaking = circuit(State::RelayAwaiting, &root);
+    assert_eq!(handshaking.activity_deadline(), None);
 }

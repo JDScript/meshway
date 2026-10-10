@@ -7,7 +7,7 @@ use crate::{Packet, PacketBuffer};
 mod noise;
 use crate::authority::View;
 use ed25519_dalek::{Signature, VerifyingKey};
-use meshway_authority::{DataPlaneIdentity, packet_proof_message};
+use meshway_authority::{DataPlaneKeys, packet_proof_message};
 use meshway_configuration::execution::LogicalPath;
 use meshway_model::{BoundNodeKey, Digest, NodeId};
 use meshway_policy::admission::{Carrier, path_carrier};
@@ -59,7 +59,7 @@ pub(super) fn key_digest(cfg: &View<'_>, path: &[NodeId]) -> Result<Digest, Erro
 }
 
 pub(super) fn build(
-    identity: &DataPlaneIdentity,
+    own: &DataPlaneKeys,
     cfg: &View<'_>,
     context: &Context,
     initiator: bool,
@@ -71,9 +71,7 @@ pub(super) fn build(
         context.path[0]
     };
     let public = keys(cfg, remote)?.1.public_key.bytes;
-    identity
-        .with_noise_key(|private| build_with_key(private, public.as_bytes(), &prologue, initiator))
-        .map_err(|_| Error::Authority)?
+    own.with_noise_key(|private| build_with_key(private, public.as_bytes(), &prologue, initiator))
 }
 
 fn build_with_key(
@@ -189,7 +187,7 @@ fn extend(hash: &mut Sha256, proof: &Proof) -> Result<(), Error> {
 }
 
 pub(super) fn append(
-    identity: &DataPlaneIdentity,
+    keys: &DataPlaneKeys,
     cfg: &View<'_>,
     frame: &mut Frame,
     carrier: Carrier,
@@ -218,7 +216,8 @@ pub(super) fn append(
         static PROFILE: meshway_logging::profile::Metric =
             meshway_logging::profile::Metric::new("crypto.sign");
         let _profile = PROFILE.enter();
-        identity.sign_packet(digest).map_err(|_| Error::Authority)?
+        keys.sign_packet(cfg.network(), cfg.node(), key, digest)
+            .map_err(|_| Error::Authority)?
     };
     frame.proofs.push(proof);
     Ok(())

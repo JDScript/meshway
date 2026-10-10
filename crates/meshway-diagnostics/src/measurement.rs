@@ -27,17 +27,15 @@ impl Measurement {
         )
         .map_err(|_| Error::Random)?;
         let challenge: [u8; 32] = random[16..].try_into().map_err(|_| Error::Random)?;
-        let ms = i64::try_from(task.snapshot.now_ms().map_err(|_| Error::Binding)?)
-            .map_err(|_| Error::Binding)?;
+        let ms = Utc::now().timestamp_millis();
         let started_at = DateTime::from_timestamp_millis(ms)
             .ok_or(Error::Binding)?
             .max(task.last_end.unwrap_or(DateTime::<Utc>::MIN_UTC));
-        // A task is bounded by its own deadline and the lease alone.
+        // A task is bounded by its own deadline; withdrawal clears it.
         let expiry =
             u64::try_from(task.task.expires_at.timestamp_millis()).map_err(|_| Error::Binding)?;
-        let deadline = (now + DEADLINE)
-            .min(task.snapshot.expires_at())
-            .min(now + Duration::from_millis(expiry.saturating_sub(ms as u64)));
+        let deadline =
+            (now + DEADLINE).min(now + Duration::from_millis(expiry.saturating_sub(ms as u64)));
         Ok(Self {
             id,
             challenge: challenge.into(),
@@ -119,7 +117,7 @@ impl Measurement {
                 transport: None,
                 channels,
                 path: task.path.clone(),
-                netmap: task.snapshot.reference(),
+                netmap: task.netmap,
                 started_at: probe_started_at,
                 completed_at: Some(end),
                 outcome,

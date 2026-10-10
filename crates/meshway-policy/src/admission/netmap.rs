@@ -1,10 +1,11 @@
-//! Local admission over an installed netmap and its lease.
+//! Local admission over the desired netmap.
 //!
 //! Endpoints admit with a [`Decision`] they computed with `compile_local` on
 //! the same projection; relays admit with [`admit_transit`]. The caller binds
 //! the netmap to its own authenticated network and Node, verifies its digest
-//! before installation, and passes the authenticated arrival peer. `now` is
-//! used only for the lease. Replies require the caller's own forward state.
+//! before installation, and passes the authenticated arrival peer. The lease
+//! is not an input: its owner withdraws the content when it ends. Replies
+//! require the caller's own forward state.
 use super::{
     AdmissionError, Carrier, Hop, Traffic, contains, keys_valid, valid_path, valid_traffic,
 };
@@ -17,16 +18,9 @@ use meshway_configuration::{
     execution::{BusinessProtocol, ExitNat, LogicalPath},
     netmap::NodeNetmap,
 };
-use meshway_model::{NetmapLease, NodeId, exit::ExitFamily};
+use meshway_model::{NodeId, exit::ExitFamily};
 use meshway_transport_spec::{Listener, Port, TransportProtocol};
 use std::net::IpAddr;
-
-/// An installed netmap with the lease issued for exactly its content.
-#[derive(Clone, Copy)]
-pub struct Leased<'a> {
-    pub netmap: &'a NodeNetmap,
-    pub lease: &'a NetmapLease,
-}
 
 fn addresses(netmap: &NodeNetmap, node: NodeId) -> Result<&NodeAddresses, AdmissionError> {
     if node == netmap.node_id {
@@ -62,31 +56,16 @@ fn valid_self(netmap: &NodeNetmap) -> Result<(), AdmissionError> {
     Ok(())
 }
 
-fn current(leased: Leased<'_>, now_ms: u64) -> Result<(), AdmissionError> {
-    let netmap = leased.netmap;
-    if leased.lease.netmap.serial != netmap.serial
-        || leased.lease.netmap.revision != netmap.revision
-    {
-        return Err(AdmissionError::Configuration);
-    }
-    if !leased.lease.valid_at(now_ms) {
-        return Err(AdmissionError::Expired);
-    }
-    valid_self(netmap)
-}
-
 /// Exact path membership, peer keys and arrival direction shared by every entry.
 fn positioned(
-    leased: Leased<'_>,
+    netmap: &NodeNetmap,
     paths: &[LogicalPath],
     path: &[NodeId],
     origin: NodeId,
     previous: Option<NodeId>,
     reply: bool,
-    now_ms: u64,
 ) -> Result<Option<NodeId>, AdmissionError> {
-    current(leased, now_ms)?;
-    let netmap = leased.netmap;
+    valid_self(netmap)?;
     if !valid_path(path)
         || path.first() != Some(&origin)
         || paths.len() > MAX_PATHS * MAX_EXIT_CANDIDATES
@@ -124,27 +103,17 @@ fn positioned(
 /// Admit a no-application-data handshake at the source or terminal of a
 /// decision's exact path. `reply` selects travel direction only.
 pub fn admit_handshake(
-    leased: Leased<'_>,
+    netmap: &NodeNetmap,
     decision: &Decision,
     path: &[NodeId],
     origin: NodeId,
     previous: Option<NodeId>,
     reply: bool,
-    now_ms: u64,
 ) -> Result<Hop, AdmissionError> {
-    let netmap = leased.netmap;
     if decision.source != origin {
         return Err(AdmissionError::Permit);
     }
-    let next = positioned(
-        leased,
-        &decision.paths,
-        path,
-        origin,
-        previous,
-        reply,
-        now_ms,
-    )?;
+    let next = positioned(netmap, &decision.paths, path, origin, previous, reply)?;
     let terminal = *path.last().ok_or(AdmissionError::Path)?;
     if netmap.node_id != origin && netmap.node_id != terminal {
         return Err(AdmissionError::Path);
@@ -224,16 +193,15 @@ fn admitted_traffic(
 
 /// Admit a forward packet at the source or terminal; relays use `admit_transit`.
 pub fn admit_forward(
-    leased: Leased<'_>,
+    netmap: &NodeNetmap,
     decision: &Decision,
     path: &[NodeId],
     origin: NodeId,
     previous: Option<NodeId>,
     traffic: &Traffic,
-    now_ms: u64,
 ) -> Result<Hop, AdmissionError> {
-    let hop = admit_handshake(leased, decision, path, origin, previous, false, now_ms)?;
-    admitted_traffic(leased.netmap, decision, traffic)?;
+    let hop = admit_handshake(netmap, decision, path, origin, previous, false)?;
+    admitted_traffic(netmap, decision, traffic)?;
     Ok(hop)
 }
 
@@ -241,17 +209,16 @@ pub fn admit_forward(
 /// forward flow; the reply must be its exact reversed tuple.
 #[allow(clippy::too_many_arguments)]
 pub fn admit_reply(
-    leased: Leased<'_>,
+    netmap: &NodeNetmap,
     decision: &Decision,
     path: &[NodeId],
     origin: NodeId,
     previous: Option<NodeId>,
     forward: &Traffic,
     reply: &Traffic,
-    now_ms: u64,
 ) -> Result<Hop, AdmissionError> {
-    let hop = admit_handshake(leased, decision, path, origin, previous, true, now_ms)?;
-    admitted_traffic(leased.netmap, decision, forward)?;
+    let hop = admit_handshake(netmap, decision, path, origin, previous, true)?;
+    admitted_traffic(netmap, decision, forward)?;
     if !valid_traffic(reply)
         || reply.protocol != forward.protocol
         || reply.source != forward.destination
@@ -269,38 +236,36 @@ pub fn admit_reply(
 /// intermediate hop. Relays never inspect business traffic.
 #[allow(clippy::too_many_arguments)]
 pub fn admit_transit(
-    leased: Leased<'_>,
+    netmap: &NodeNetmap,
     compiler: &LocalCompiler,
     origin: NodeId,
     target: &Target,
     path: &[NodeId],
     previous: Option<NodeId>,
     reply: bool,
-    now_ms: u64,
 ) -> Result<Hop, AdmissionError> {
     let paths = compiler
         .transit(origin, target)
         .map_err(|_| AdmissionError::Configuration)?;
-    admit_transit_paths(leased, &paths, origin, path, previous, reply, now_ms)
+    admit_transit_paths(netmap, &paths, origin, path, previous, reply)
 }
 
 /// The same transit admission with paths already computed by the caller's
 /// content-bound local compiler cache. No second compiler or search is needed.
 pub fn admit_transit_paths(
-    leased: Leased<'_>,
+    netmap: &NodeNetmap,
     paths: &[LogicalPath],
     origin: NodeId,
     path: &[NodeId],
     previous: Option<NodeId>,
     reply: bool,
-    now_ms: u64,
 ) -> Result<Hop, AdmissionError> {
-    current(leased, now_ms)?;
-    let node = leased.netmap.node_id;
+    valid_self(netmap)?;
+    let node = netmap.node_id;
     if path.first() == Some(&node) || path.last() == Some(&node) {
         return Err(AdmissionError::Path);
     }
-    let next = positioned(leased, paths, path, origin, previous, reply, now_ms)?;
+    let next = positioned(netmap, paths, path, origin, previous, reply)?;
     next.map(Hop::Forward).ok_or(AdmissionError::Path)
 }
 
@@ -309,38 +274,35 @@ pub fn admit_transit_paths(
 /// relays forward the authenticated circuit and gain no resolver authority.
 #[allow(clippy::too_many_arguments)]
 pub fn admit_dns(
-    leased: Leased<'_>,
+    netmap: &NodeNetmap,
     service: &meshway_configuration::netmap::DnsService,
     path: &[NodeId],
     origin: NodeId,
     previous: Option<NodeId>,
     reply: bool,
-    now_ms: u64,
 ) -> Result<Hop, AdmissionError> {
     if origin != service.source || path != service.path.nodes || path.last() != Some(&service.exit)
     {
         return Err(AdmissionError::Path);
     }
-    if leased.netmap.node_id == service.source || leased.netmap.node_id == service.exit {
+    if netmap.node_id == service.source || netmap.node_id == service.exit {
         crate::dns_route::netmap_dns_service(
-            leased,
+            netmap,
             service,
             origin,
             service.exit,
             path,
             *service.transports.first().ok_or(AdmissionError::Permit)?,
-            now_ms,
         )
         .map_err(|_| AdmissionError::Permit)?;
     }
     let next = positioned(
-        leased,
+        netmap,
         std::slice::from_ref(&service.path),
         path,
         origin,
         previous,
         reply,
-        now_ms,
     )?;
     Ok(next.map_or(Hop::Deliver, Hop::Forward))
 }
@@ -350,23 +312,22 @@ pub fn admit_dns(
 /// otherwise the request is unsupported, reported as `Path`.
 #[allow(clippy::too_many_arguments)]
 pub fn admit_observation(
-    leased: Leased<'_>,
+    netmap: &NodeNetmap,
     decision: &Decision,
     path: &[NodeId],
     origin: NodeId,
     previous: Option<NodeId>,
     reply: bool,
     service: (BusinessProtocol, Option<Port>),
-    now_ms: u64,
 ) -> Result<Hop, AdmissionError> {
-    let hop = admit_handshake(leased, decision, path, origin, previous, reply, now_ms)?;
+    let hop = admit_handshake(netmap, decision, path, origin, previous, reply)?;
     if !matches!(decision.target, Target::Mesh { .. }) {
         return Err(AdmissionError::Permit);
     }
     if !decision.services.contains(service.0, service.1) {
         return Err(AdmissionError::Traffic);
     }
-    if !observable(&leased.netmap.projection.inventory, path) {
+    if !observable(&netmap.projection.inventory, path) {
         return Err(AdmissionError::Path);
     }
     Ok(hop)

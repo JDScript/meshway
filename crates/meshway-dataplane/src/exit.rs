@@ -1,7 +1,6 @@
 //! Opaque, bounded kernel projections of the unique FlowTable. No kernel owner
 //! or socket lives here. The host maps these operations to its Underlay owner.
 use crate::{Error, Packet, authority::Cap, secure::Guard};
-use meshway_authority::ExecutionSnapshot;
 use meshway_configuration::execution::BusinessProtocol;
 use std::{
     net::Ipv4Addr,
@@ -75,8 +74,9 @@ pub struct ExitTuple {
     pub echo: Option<(u16, u16)>,
 }
 
-/// Immutable original guard; the host must recheck at every kernel submission
-/// and I/O boundary. Remaining time must never be restarted after queueing.
+/// Immutable original lifetime; the host must recheck at every kernel
+/// submission and I/O boundary. Remaining time must never be restarted after
+/// queueing.
 #[derive(Clone, Debug)]
 pub struct ProjectionScope(pub(crate) Guard, Option<Arc<Acknowledgement>>);
 #[derive(Debug)]
@@ -109,7 +109,7 @@ impl ProjectionScope {
         }
         Ok(())
     }
-    pub async fn invalidated(&self) {
+    pub async fn ended(&self) {
         if self.ensure_current().is_err() {
             return;
         }
@@ -117,25 +117,21 @@ impl ProjectionScope {
             && ack.status.load(Ordering::Acquire) == PENDING
         {
             tokio::select! { biased;
-                _ = self.0.invalidated() => return,
-                _ = self.0.snapshot().invalidated_at(ack.deadline_ms) => {},
+                _ = self.0.ended() => return,
                 _ = tokio::time::sleep_until(ack.deadline.into()) => {},
             }
             if self.ensure_current().is_err() {
                 return;
             }
         }
-        self.0.invalidated().await;
+        self.0.ended().await;
     }
-    pub fn snapshot(&self) -> &ExecutionSnapshot {
-        self.0.snapshot()
-    }
-    /// This operation's own cutoff, or the snapshot's current one.
+    /// This operation's own cutoff; without one it has already ended.
     pub fn deadline(&self) -> Instant {
-        self.0.expiry().at
+        self.0.expiry().map_or_else(Instant::now, |cap| cap.at)
     }
     pub fn deadline_ms(&self) -> u64 {
-        self.0.expiry().ms
+        self.0.expiry().map_or(0, |cap| cap.ms)
     }
 }
 
@@ -255,7 +251,7 @@ impl Gate {
                 result => return result,
             }
             tokio::select! { biased;
-                _ = self.scope.invalidated() => return Err(Error::Expired),
+                _ = self.scope.ended() => return Err(Error::Expired),
                 _ = self.cancellation.cancelled() => return Err(Error::Expired),
                 _ = tokio::time::sleep_until(self.acknowledgement_deadline.into()) => { self.fail(); return Err(Error::Expired); },
                 _ = changed => {},

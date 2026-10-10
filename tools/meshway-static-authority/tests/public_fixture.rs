@@ -7,10 +7,10 @@ use meshway_static_authority::{
     public_fixture::{PublicFixture, PublicNode},
     random_uuid,
 };
-use std::{collections::BTreeMap, time::Duration};
+use std::collections::BTreeMap;
 
 #[test]
-fn independent_compilers_match_and_issuer_drop_revokes() {
+fn independent_compilers_match_and_pair_registered_keys() {
     for count in [2, 3] {
         let mut secrets = Vec::new();
         let mut nodes = Vec::new();
@@ -39,7 +39,7 @@ fn independent_compilers_match_and_issuer_drop_revokes() {
                 trusted: material.trusted().clone(),
             });
         }
-        let fixture = PublicFixture::iperf(nodes, Duration::from_secs(60)).unwrap();
+        let fixture = PublicFixture::iperf(nodes).unwrap();
         let bytes = serde_json::to_vec(&fixture).unwrap();
         for (id, i, signing, noise, capabilities) in secrets {
             let decoded: PublicFixture = serde_json::from_slice(&bytes).unwrap();
@@ -81,10 +81,13 @@ fn independent_compilers_match_and_issuer_drop_revokes() {
                 authority.netmap(id).unwrap().reference(),
                 fixture.netmaps[&id]
             );
-            let identity = authority.identity(id).unwrap();
-            identity.snapshot().ensure_current().unwrap();
-            drop(authority);
-            assert!(identity.snapshot().ensure_current().is_err());
+            let desired = authority.desired(id).unwrap();
+            assert!(
+                authority
+                    .keys(id)
+                    .unwrap()
+                    .matches(&desired.local().self_keys)
+            );
         }
         let mut changed: PublicFixture = serde_json::from_slice(&bytes).unwrap();
         changed.configuration.access[0].ip = vec!["tcp:5202".into()];

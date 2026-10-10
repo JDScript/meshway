@@ -412,7 +412,3 @@ pub(super) fn previous(compiled: &CompiledNetmaps) -> BTreeMap<NodeId, PreviousN
         .map(|(id, netmap)| (*id, PreviousNetmap::from(netmap)))
         .collect()
 }
-
-pub(super) fn lease(netmap: &CompiledNetmap) -> NetmapLease {
-    NetmapLease::new(netmap.reference(), 0, 1_000_000).unwrap()
-}

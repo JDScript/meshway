@@ -40,10 +40,6 @@ impl SecureNode {
         let _profile = PROFILE.enter();
         tracing::trace!(target: "meshway_dataplane::secure::authority_boundary", operation = "maintain",
             "Validating circuit authority");
-        self.identity
-            .snapshot()
-            .ensure_current()
-            .map_err(|_| Error::Authority)?;
         self.probes.maintain(reading);
         self.first.maintain(reading.instant);
         self.dead.retain(|_, until| reading.now_ms < *until);

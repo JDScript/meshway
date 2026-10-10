@@ -13,7 +13,7 @@ use crate::{Direction, Error, LocalFlow, PacketFacts, Route, Transport, authorit
 use meshway_configuration::execution::BusinessProtocol;
 use meshway_model::{Digest, NodeId};
 use meshway_policy::{
-    admission::{Hop, Traffic, netmap::Leased},
+    admission::{Hop, Traffic},
     compile::netmap::{Decision, Target},
 };
 use meshway_transport_spec::Port;
@@ -158,7 +158,7 @@ pub(crate) struct Entry<'a> {
 /// Permitted decision of the forward traffic's (origin, destination, service)
 /// on the same content, or an error.
 pub(crate) struct Policy<'a, 'd> {
-    pub leased: Leased<'a>,
+    pub netmap: &'a meshway_configuration::netmap::NodeNetmap,
     pub decide: &'d mut dyn FnMut(&Traffic) -> Result<Arc<Decision>, Error>,
 }
 
@@ -470,7 +470,10 @@ impl FlowTable {
             static PROFILE: meshway_logging::profile::Metric =
                 meshway_logging::profile::Metric::new("policy.packet");
             let _profile = PROFILE.enter();
-            let Policy { leased, decide } = policy;
+            let Policy {
+                netmap: leased,
+                decide,
+            } = policy;
             let target = &entry.grant;
             let decision = decide(&forward)?;
             if decision.target != *target || decision.source != entry.origin {
@@ -485,7 +488,6 @@ impl FlowTable {
                     entry.origin,
                     entry.previous,
                     &facts.traffic,
-                    time.now_ms,
                 )?,
                 Direction::Reply => netmap::admit_reply(
                     leased,
@@ -495,7 +497,6 @@ impl FlowTable {
                     entry.previous,
                     &forward,
                     &facts.traffic,
-                    time.now_ms,
                 )?,
             };
             if existing.is_some_and(|flow| flow.selection != decision.selection) {

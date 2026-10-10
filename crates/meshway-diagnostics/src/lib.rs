@@ -2,8 +2,8 @@
 //! has no sockets, HTTP client, flow table, keys, or background tasks.
 //!
 //! A task is bound locally: its paths are the source's own `icmpEcho`
-//! decision on the installed netmap, as for a first packet, with no Server
-//! round trip. A permitted pair without a path every Node can
+//! decision on Engine's desired netmap, as for a first packet, with no Server
+//! round trip. The host clears this owner when Engine withdraws the content. A permitted pair without a path every Node can
 //! observe reports `Unsupported`; a denied pair does not bind.
 #![forbid(unsafe_code)]
 
@@ -13,13 +13,13 @@ mod tests;
 
 use chrono::{DateTime, Utc};
 use measurement::Measurement;
-use meshway_authority::ExecutionSnapshot;
 use meshway_configuration::execution::Carrier;
 use meshway_dataplane::secure::{
     CircuitGrant, CircuitRole, CircuitState, PendingFrame, SecureNode, Target,
 };
+use meshway_engine::Desired;
 use meshway_model::observations::{MetricKind, ProbeChannel};
-use meshway_model::{Digest, EventId, NodeId, ObservationId, Sequence};
+use meshway_model::{Digest, EventId, InstanceId, NetmapRef, NodeId, ObservationId, Sequence};
 use meshway_protocol::observations::*;
 use std::{
     collections::BTreeMap,
@@ -29,13 +29,13 @@ use std::{
 pub const MAX_TASKS: usize = 128;
 pub const DEADLINE: Duration = Duration::from_secs(5);
 /// Acquisition/handshake waiting is not a measured probe. This budget never
-/// grants execution: every attempt still requires the current snapshot/permit.
+/// grants execution: every attempt is still admitted by SecureNode.
 pub const SETUP_TIMEOUT: Duration = Duration::from_secs(60);
 pub const MIN_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("observation task does not match current execution authority")]
+    #[error("observation task does not match the desired netmap")]
     Binding,
     #[error("observation capacity exhausted")]
     Capacity,
@@ -56,23 +56,21 @@ pub struct Action {
 #[derive(Clone)]
 pub struct Output {
     pub task: ObservationTask,
-    pub snapshot: ExecutionSnapshot,
+    /// The desired content this result was measured on.
+    pub netmap: NetmapRef,
     pub result: ObservationResult,
     invalidated: tokio_util::sync::CancellationToken,
 }
 impl Output {
     pub fn is_current(&self) -> bool {
         !self.invalidated.is_cancelled()
-            && self.snapshot.now_ms().is_ok_and(|now| {
-                u64::try_from(self.task.expires_at.timestamp_millis())
-                    .is_ok_and(|expiry| now < expiry)
-            })
+            && self.task.expires_at.timestamp_millis() > Utc::now().timestamp_millis()
     }
 }
 
 struct Task {
     task: ObservationTask,
-    snapshot: ExecutionSnapshot,
+    netmap: NetmapRef,
     path: Vec<NodeId>,
     segment: Sequence,
     circuit: Option<[u8; 32]>,
@@ -110,7 +108,7 @@ fn preparation_stage(task: &mut Task, stage: &'static str) {
     }
     task.preparation_stage = Some(stage);
     tracing::info!(observation = %task.task.id,
-        netmap_serial = task.snapshot.reference().serial.get(),
+        netmap_serial = task.netmap.serial.get(),
         source_instance = %task.task.instance_id, stage,
         first_hop = ?task.path.get(1), hops = task.path.len().saturating_sub(1),
         elapsed_ms = task.preparing.elapsed().as_millis() as u64,
@@ -134,15 +132,17 @@ impl Owner {
     /// terminals need no source task; SecureNode admits their current permits.
     pub fn synchronize(
         &mut self,
-        snapshot: ExecutionSnapshot,
+        desired: &Desired,
+        instance: Option<InstanceId>,
         tasks: &[ObservationTask],
     ) -> Result<(), Error> {
+        let netmap = desired.reference();
         if tasks.len() > MAX_TASKS {
             return Err(Error::Capacity);
         }
         let mut plans = Vec::with_capacity(tasks.len());
         for (index, task) in tasks.iter().enumerate() {
-            let (path, supported) = bind(&snapshot, task)?;
+            let (path, supported) = bind(desired, instance, task)?;
             if tasks[..index].iter().any(|old| old.id == task.id) {
                 return Err(Error::Binding);
             }
@@ -152,7 +152,7 @@ impl Owner {
                 _ => Sequence::new(1).map_err(|_| Error::Binding)?,
             };
             if let Some(old) = self.tasks.get(&task.id) {
-                let reset = !old.snapshot.same_netmap(&snapshot)
+                let reset = old.netmap != netmap
                     || old.path != path
                     || (old.task.phase == ObservationPhase::Running
                         && task.phase == ObservationPhase::Preparing);
@@ -164,14 +164,12 @@ impl Owner {
             }
             plans.push((task, path, segment, supported));
         }
-        snapshot.ensure_current().map_err(|_| Error::Binding)?;
         self.tasks
             .retain(|id, _| tasks.iter().any(|task| task.id == *id));
         for (task, path, segment, supported) in plans {
             let now = Instant::now();
             if let Some(old) = self.tasks.get_mut(&task.id)
-                && old.snapshot.same_netmap(&snapshot)
-                && old.snapshot.ensure_current().is_ok()
+                && old.netmap == netmap
                 && !old.output_invalidated.is_cancelled()
                 && old.path == path
                 && old.task.service == task.service
@@ -182,7 +180,6 @@ impl Owner {
             {
                 old.task = task.clone();
                 // Do not renew an in-flight measurement or its publication.
-                old.snapshot = snapshot.clone();
                 continue;
             }
             let last_end = task
@@ -208,7 +205,7 @@ impl Owner {
                 task.id,
                 Task {
                     task: task.clone(),
-                    snapshot: snapshot.clone(),
+                    netmap,
                     path,
                     segment,
                     circuit: None,
@@ -236,8 +233,8 @@ impl Owner {
         self.tasks.clear();
     }
 
-    /// Retain only bounded planning clocks across a handoff. Pending I/O and
-    /// publications are cancelled; these records cannot execute on an old grant.
+    /// Retain only bounded planning clocks until the next binding. Pending I/O
+    /// and publications are cancelled; these records execute nothing.
     pub fn suspend(&mut self) {
         for task in self.tasks.values_mut() {
             suspend(task);
@@ -299,7 +296,7 @@ impl Owner {
 
     /// First-hop acquisition interests of current, executable diagnostics.
     /// These are hints to the same Manager that owns business adjacency; the
-    /// Manager and SecureNode still enforce their own current netmap guards.
+    /// Manager and SecureNode still admit on their own desired content.
     pub fn adjacency_interests(&self) -> impl Iterator<Item = NodeId> + '_ {
         self.tasks
             .values()
@@ -620,10 +617,10 @@ impl Owner {
 fn output(task: &Task, result: ObservationUpdate) -> Output {
     Output {
         task: task.task.clone(),
-        snapshot: task.snapshot.clone(),
+        netmap: task.netmap,
         result: ObservationResult {
             instance_id: task.task.instance_id,
-            netmap: task.snapshot.reference(),
+            netmap: task.netmap,
             result,
         },
         invalidated: task.output_invalidated.clone(),
@@ -634,10 +631,8 @@ fn current(task: &Task) -> bool {
     if task.output_invalidated.is_cancelled() {
         return false;
     }
-    // New content invalidates this snapshot; the host binds again.
-    task.snapshot.now_ms().is_ok_and(|now| {
-        i64::try_from(now).is_ok_and(|now| task.task.expires_at.timestamp_millis() > now)
-    })
+    // New content is bound again by the host; withdrawal clears the owner.
+    task.task.expires_at.timestamp_millis() > Utc::now().timestamp_millis()
 }
 
 /// Task fields independent of the netmap.
@@ -670,19 +665,17 @@ fn valid_task(task: &ObservationTask, now: u64) -> Result<(), Error> {
 
 /// Bind on the source's own netmap decision.
 fn bind(
-    snapshot: &ExecutionSnapshot,
+    desired: &Desired,
+    instance: Option<InstanceId>,
     task: &ObservationTask,
 ) -> Result<(Vec<NodeId>, bool), Error> {
     use meshway_configuration::execution::ObservationServiceScope;
-    let netmap = snapshot.netmap().map_err(|_| Error::Binding)?;
-    let now = snapshot.now_ms().map_err(|_| Error::Binding)?;
+    let now = u64::try_from(Utc::now().timestamp_millis()).map_err(|_| Error::Binding)?;
     valid_task(task, now)?;
-    if task.netmap != snapshot.reference()
-        || task.source_node_id != netmap.netmap.node_id
+    if task.netmap != desired.reference()
+        || task.source_node_id != desired.netmap().node_id
         || task.target_node_id == task.source_node_id
-        || snapshot
-            .instance()
-            .is_some_and(|instance| instance.instance_id != task.instance_id)
+        || instance.is_some_and(|instance| instance != task.instance_id)
     {
         return Err(Error::Binding);
     }
@@ -694,20 +687,16 @@ fn bind(
         ObservationPath::Auto => None,
         ObservationPath::Explicit { path } => Some(path.as_slice()),
     };
-    let paths = match meshway_dataplane::secure::diagnostic_paths(
-        snapshot,
-        task.target_node_id,
-        explicit,
-    ) {
-        Ok(paths) => paths,
-        Err(meshway_dataplane::secure::Error::Unsupported) => return Ok((Vec::new(), false)),
-        Err(_) => return Err(Error::Binding),
-    };
+    let paths =
+        match meshway_dataplane::secure::diagnostic_paths(desired, task.target_node_id, explicit) {
+            Ok(paths) => paths,
+            Err(meshway_dataplane::secure::Error::Unsupported) => return Ok((Vec::new(), false)),
+            Err(_) => return Err(Error::Binding),
+        };
     if task.path.as_ref().is_some_and(|path| !paths.contains(path)) {
         return Err(Error::Binding);
     }
     let path = paths.into_iter().next().ok_or(Error::Binding)?;
-    snapshot.ensure_current().map_err(|_| Error::Binding)?;
     Ok((path, true))
 }
 
@@ -717,7 +706,7 @@ fn preparing_failure(task: &mut Task, now: Instant) {
     }
     task.setup_failed = true;
     tracing::info!(observation = %task.task.id,
-        netmap_serial = task.snapshot.reference().serial.get(),
+        netmap_serial = task.netmap.serial.get(),
         stage = task.preparation_stage, elapsed_ms = now.duration_since(task.preparing).as_millis() as u64,
         "Diagnostic preparation budget expired");
     task.cancellation.cancel();

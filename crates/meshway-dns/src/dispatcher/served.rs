@@ -60,7 +60,7 @@ impl OwnerDispatcher {
         let (work, fence, _slot) = {
             let mut state = self.state.lock().await;
             let scope = self.reconcile_state(&mut state)?;
-            if !scope.snapshot.same_netmap(request.snapshot()) {
+            if scope.snapshot.reference() != request.netmap() {
                 return Err(DispatchError::Scope);
             }
             let system = scope
@@ -82,13 +82,12 @@ impl OwnerDispatcher {
                 })
                 .ok_or(DispatchError::Scope)?;
             meshway_policy::dns_route::netmap_dns_service(
-                reading.leased(),
+                netmap,
                 service,
                 service.source,
                 netmap.node_id,
                 request.path(),
                 request.transport(),
-                reading.now_ms,
             )
             .map_err(|_| DispatchError::Scope)?;
             let slot = self.served.admit(service.source, service.max_pending)?;
@@ -109,7 +108,7 @@ impl OwnerDispatcher {
             (work, fence, slot)
         };
         tokio::select! { biased;
-            _ = request.invalidated() => Err(DispatchError::Expired),
+            _ = request.ended() => Err(DispatchError::Expired),
             answer = self.upstream(work, fence) => answer,
         }
     }

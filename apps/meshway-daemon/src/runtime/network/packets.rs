@@ -1,12 +1,12 @@
 //! Bounded scheduling of original packets. There is no second flow table:
 //! every local packet is decided by SecureNode's unique owner on the
 //! installed netmap, with no Server round trip.
-use meshway_authority::ExecutionSnapshot;
 use meshway_connectivity::{Carrier, Manager};
 use meshway_dataplane::{
     Packet, Purpose,
     secure::{self, CircuitState, Flushed, Outbound, Received, SecureNode},
 };
+use meshway_engine::Desired;
 use meshway_model::NodeId;
 use std::{
     collections::{BTreeMap, VecDeque},
@@ -33,7 +33,6 @@ struct Incoming {
     received_at: std::time::Instant,
     bytes: meshway_dataplane::PacketBuffer,
     deadline: Instant,
-    guard: ExecutionSnapshot,
 }
 struct Attempt {
     circuit: [u8; 32],
@@ -232,16 +231,13 @@ impl Packets {
         link: meshway_connectivity::LinkFact,
         bytes: meshway_dataplane::PacketBuffer,
         received_at: std::time::Instant,
-        snapshot: &ExecutionSnapshot,
+        desired: &Desired,
         secure: &SecureNode,
     ) {
         static PROFILE: meshway_logging::profile::Metric =
             meshway_logging::profile::Metric::new("host.incoming");
         let _profile = PROFILE.enter();
-        let Ok(netmap) = snapshot.netmap() else {
-            return;
-        };
-        let local = netmap.netmap.node_id;
+        let local = desired.netmap().node_id;
         // Hints only decide bounded scheduling. receive() authenticates packet
         // content, this verifier's full path prefix and the actual carrier;
         // downstream MAC columns are checked by their respective verifiers.
@@ -253,7 +249,7 @@ impl Packets {
         let known = hint.path.contains(&local);
         if hint.grant.purpose == Purpose::Diagnostic {
             tracing::debug!(grant_untrusted = ?hint.grant, %local,
-                netmap_serial = snapshot.reference().serial.get(),
+                netmap_serial = desired.reference().serial.get(),
                 known, "Diagnostic carrier frame received for scheduling");
         }
         let control = bytes.get(8) != Some(&3);
@@ -286,7 +282,6 @@ impl Packets {
             received_at,
             bytes,
             deadline: Instant::now() + Duration::from_secs(5),
-            guard: snapshot.clone(),
         });
     }
 
@@ -297,18 +292,15 @@ impl Packets {
         manager: &Manager,
         carriers: Option<&BTreeMap<NodeId, Carrier>>,
         host: &meshway_underlay::Host,
-        snapshot: &ExecutionSnapshot,
+        desired: &Desired,
         diagnostics: &mut super::diagnostics::Diagnostics,
         dns_queries: &mut super::dns::mesh::Queries,
         dns: Option<std::sync::Arc<meshway_dns::OwnerDispatcher>>,
         pool: &mut secure::pipeline::Pool,
         mut exit: Option<&mut super::exit::Runtime>,
     ) {
-        let Ok(netmap) = snapshot.netmap() else {
-            return;
-        };
-        let local = netmap.netmap.node_id;
-        let addresses = netmap.netmap.self_.addresses.clone();
+        let local = desired.netmap().node_id;
+        let addresses = desired.local().addresses.clone();
         let now = Instant::now();
         let Some(carriers) = carriers else {
             return;
@@ -376,7 +368,8 @@ impl Packets {
                 self.incoming.push_front(item);
                 break;
             }
-            if item.deadline <= Instant::now() || item.guard.ensure_current().is_err() {
+            // Queues are cleared by every apply; only their own bound remains.
+            if item.deadline <= Instant::now() {
                 self.drop_packet("cipher_deadline");
                 continue;
             }
@@ -409,7 +402,7 @@ impl Packets {
                 {
                     self.carrier_wait_logged = Some(Instant::now());
                     tracing::debug!(grant_untrusted = ?hint.as_ref().map(|hint| &hint.grant), path_untrusted = ?hint.as_ref().map(|hint| &hint.path), %local,
-                        netmap_serial = snapshot.reference().serial.get(),
+                        netmap_serial = desired.reference().serial.get(),
                         available = ?carriers.keys().collect::<Vec<_>>(), "Waiting for authenticated next-hop carrier before secure receive");
                 }
                 if item.bytes.get(8) == Some(&3) {
@@ -474,7 +467,7 @@ impl Packets {
                     measurement_id,
                     response,
                 }) => {
-                    tracing::debug!(?circuit, %measurement_id, netmap_serial = snapshot.reference().serial.get(), "Authenticated diagnostic request received");
+                    tracing::debug!(?circuit, %measurement_id, netmap_serial = desired.reference().serial.get(), "Authenticated diagnostic request received");
                     if diagnostics.forward(manager, response).is_err() {
                         self.drop_packet("probe_reply_send");
                     }
@@ -484,7 +477,7 @@ impl Packets {
                     measurement_id,
                     challenge,
                 }) => {
-                    tracing::debug!(?circuit, %measurement_id, netmap_serial = snapshot.reference().serial.get(), "Authenticated diagnostic reply received");
+                    tracing::debug!(?circuit, %measurement_id, netmap_serial = desired.reference().serial.get(), "Authenticated diagnostic reply received");
                     if let Ok(channel) = super::diagnostics::channel(&link) {
                         diagnostics.owner.reply(
                             circuit,

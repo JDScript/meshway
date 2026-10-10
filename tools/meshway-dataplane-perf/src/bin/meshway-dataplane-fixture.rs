@@ -2,7 +2,7 @@
 use clap::{Parser, Subcommand};
 use meshway_dataplane_perf::{Error, material};
 use meshway_static_authority::public_fixture::{PublicFixture, PublicNode};
-use std::{net::SocketAddr, path::PathBuf, time::Duration};
+use std::{net::SocketAddr, path::PathBuf};
 
 #[derive(Parser)]
 struct Arguments {
@@ -22,8 +22,6 @@ enum Command {
     Compile {
         #[arg(long)]
         input: PathBuf,
-        #[arg(long, default_value_t = 600)]
-        seconds: u64,
     },
 }
 fn main() -> Result<(), Error> {
@@ -34,12 +32,9 @@ fn main() -> Result<(), Error> {
             "{}",
             serde_json::to_string(&material::generate(&directory, socket)?)?
         ),
-        Command::Compile { input, seconds } => {
+        Command::Compile { input } => {
             let nodes: Vec<PublicNode> = serde_json::from_slice(&std::fs::read(input)?)?;
-            println!(
-                "{}",
-                serde_json::to_string(&PublicFixture::iperf(nodes, Duration::from_secs(seconds))?)?
-            );
+            println!("{}", serde_json::to_string(&PublicFixture::iperf(nodes)?)?);
         }
     }
     Ok(())

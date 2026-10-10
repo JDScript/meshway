@@ -5,11 +5,12 @@
 use super::Request;
 use crate::runtime::PingRequest;
 use crate::runtime::ping::Progress;
-use meshway_authority::ExecutionSnapshot;
 use meshway_connectivity::{LinkFact, Manager};
 use meshway_dataplane::secure::{PendingFrame, SecureNode};
 use meshway_diagnostics::{Output, Owner};
+use meshway_engine::Desired;
 use meshway_ipc::{PingError, PingEvent};
+use meshway_model::InstanceId;
 use meshway_model::{
     EventId, NodeId, ObservationId, ObservationSubscriptionId, observations::ProbeChannel,
 };
@@ -62,8 +63,8 @@ pub(super) struct Diagnostics {
     pending_plan: Option<super::ObservationPlan>,
     /// Server tasks of the installed netmap.
     server: Vec<ObservationTask>,
-    /// The snapshot and task set the executor was last synchronized with.
-    synchronized: Option<ExecutionSnapshot>,
+    /// The content and instance the executor was last synchronized with.
+    synchronized: Option<(Desired, Option<InstanceId>)>,
     dirty: bool,
     paused: std::collections::BTreeSet<ObservationId>,
     effective_pauses: std::collections::BTreeSet<ObservationId>,
@@ -79,10 +80,10 @@ fn random_uuid() -> Option<uuid::Uuid> {
 /// from its visible projection, or an exact Mesh IP. MagicDNS enablement only
 /// controls system DNS handling; diagnostic admission is checked separately.
 fn resolve(
-    snapshot: &ExecutionSnapshot,
+    desired: &Desired,
     target: &NodeObservationTarget,
 ) -> Result<NodeObservationTargetView, PingError> {
-    let netmap = &snapshot.netmap().map_err(|_| PingError::NotRunning)?.netmap;
+    let netmap = desired.netmap();
     let configuration = &netmap.projection.configuration;
     let domain = &configuration.dns.domain;
     let found = configuration.nodes.iter().find(|(id, node)| {
@@ -137,7 +138,7 @@ impl Diagnostics {
 
     /// Bind the executor to the installed netmap: Server tasks assigned on
     /// this content plus every live local ping.
-    pub fn synchronize(&mut self, installed: &ExecutionSnapshot) {
+    pub fn synchronize(&mut self, installed: &Desired, instance: Option<InstanceId>) {
         if let Some(plan) = &self.pending_plan {
             if plan.netmap.serial < installed.reference().serial {
                 self.pending_plan = None;
@@ -148,27 +149,23 @@ impl Diagnostics {
             }
         }
         if !self.dirty
-            && self.synchronized.as_ref().is_some_and(|old| {
-                old.same_netmap(installed) && old.instance() == installed.instance()
+            && self.synchronized.as_ref().is_some_and(|(old, bound)| {
+                old.reference() == installed.reference() && *bound == instance
             })
         {
             return;
         }
         self.dirty = false;
         let reference = installed.reference();
-        let instance = installed.instance();
         self.server.retain(|task| {
-            task.netmap == reference
-                && instance
-                    .as_ref()
-                    .is_some_and(|current| current.instance_id == task.instance_id)
+            task.netmap == reference && instance.is_some_and(|current| current == task.instance_id)
         });
         // Local measurements are re-admitted by this Node's current netmap;
         // an HTTP instance replacement does not end the IPC caller's request.
         for local in self.locals.values_mut() {
             local.task.netmap = reference;
-            if let Some(instance) = &instance {
-                local.task.instance_id = instance.instance_id;
+            if let Some(instance) = instance {
+                local.task.instance_id = instance;
             }
         }
         let mut tasks = self.server.clone();
@@ -183,10 +180,10 @@ impl Diagnostics {
             tasks = tasks.len(),
             "Synchronizing observation tasks with installed netmap"
         );
-        if self.owner.synchronize(installed.clone(), &tasks).is_err() {
+        if self.owner.synchronize(installed, instance, &tasks).is_err() {
             self.reject_tasks();
         }
-        self.synchronized = Some(installed.clone());
+        self.synchronized = Some((installed.clone(), instance));
         self.apply_pauses();
     }
 
@@ -194,7 +191,7 @@ impl Diagnostics {
     /// targets fail at once; otherwise preparation begins locally.
     pub fn ping(
         &mut self,
-        snapshot: Option<&ExecutionSnapshot>,
+        installed: Option<(&Desired, Option<InstanceId>)>,
         session: crate::runtime::PingSession,
     ) {
         let crate::runtime::PingSession {
@@ -207,17 +204,17 @@ impl Diagnostics {
             let _ = request.events.try_send(PingEvent::Failed { code });
             request.cancellation.cancel();
         };
-        let Some(snapshot) = snapshot.filter(|s| s.ensure_current().is_ok()) else {
+        let Some((desired, bound)) = installed else {
             return fail(&request, PingError::NotRunning);
         };
         if self.locals.len() >= 8 {
             return fail(&request, PingError::Busy);
         }
-        let target = match resolve(snapshot, &request.target) {
+        let target = match resolve(desired, &request.target) {
             Ok(target) => target,
             Err(code) => return fail(&request, code),
         };
-        match meshway_dataplane::secure::diagnostic_paths(snapshot, target.node_id, None) {
+        match meshway_dataplane::secure::diagnostic_paths(desired, target.node_id, None) {
             Ok(_) => {}
             Err(meshway_dataplane::secure::Error::Unsupported) => {
                 return fail(&request, PingError::Unsupported);
@@ -238,15 +235,12 @@ impl Diagnostics {
         ) else {
             return fail(&request, PingError::Failed);
         };
-        let instance_id = match snapshot.instance() {
-            Some(instance) => instance.instance_id,
-            None => match meshway_model::InstanceId::new(instance) {
+        let instance_id = match bound {
+            Some(instance) => instance,
+            None => match InstanceId::new(instance) {
                 Ok(id) => id,
                 Err(_) => return fail(&request, PingError::Failed),
             },
-        };
-        let Ok(netmap) = snapshot.netmap() else {
-            return fail(&request, PingError::NotRunning);
         };
         let now = chrono::Utc::now();
         let budget =
@@ -254,13 +248,13 @@ impl Diagnostics {
         let expires_at = now + chrono::Duration::from_std(budget).unwrap_or_default();
         let task = ObservationTask {
             id: observation,
-            source_node_id: netmap.netmap.node_id,
+            source_node_id: desired.netmap().node_id,
             target_node_id: target.node_id,
             service: meshway_configuration::execution::ObservationServiceScope::IcmpEcho,
             selection: ObservationPath::Auto,
             path: None,
             path_segment: None,
-            netmap: snapshot.reference(),
+            netmap: desired.reference(),
             instance_id,
             metrics: vec![
                 meshway_model::observations::MetricKind::Rtt,
@@ -411,8 +405,8 @@ impl Diagnostics {
             // Remove cancelled local tasks from the shared executor before
             // producing outputs: disappearance from the IPC map must never
             // reclassify a local result as a Server-owned task.
-            if let Some(snapshot) = self.synchronized.clone() {
-                self.synchronize(&snapshot);
+            if let Some((desired, instance)) = self.synchronized.clone() {
+                self.synchronize(&desired, instance);
             }
         }
         // Local disconnect stops delivery immediately.

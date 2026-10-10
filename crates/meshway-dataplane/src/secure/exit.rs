@@ -1,18 +1,20 @@
 use super::{Carrier, Error, PendingFrame, SecureNode, View};
 use crate::exit::{Counters, ExitProjection, ExitReplyIngress, FlowIncarnation, Limits};
-use meshway_authority::DataPlaneIdentity;
+use meshway_authority::DataPlaneKeys;
+use meshway_engine::Desired;
 use meshway_model::NodeId;
-use std::{collections::BTreeMap, time::Instant};
+use std::collections::BTreeMap;
 
 impl SecureNode {
     /// Explicit exit budgets; ordinary construction uses `exit::Limits::default`.
     pub fn with_exit_limits(
-        identity: DataPlaneIdentity,
+        desired: &Desired,
+        keys: DataPlaneKeys,
         limits: super::Limits,
         carriers: BTreeMap<NodeId, Carrier>,
         exit: Limits,
     ) -> Result<Self, Error> {
-        let mut node = Self::new(identity, limits, carriers)?;
+        let mut node = Self::new(desired, keys, limits, carriers)?;
         node.engine
             .flows
             .set_exit_limits(exit)
@@ -32,18 +34,8 @@ impl SecureNode {
         if !self.engine.flows.has_exit_work() {
             return;
         }
-        if let Ok(reading) = View::of(self.identity.snapshot()) {
-            self.engine.flows.expire(reading.instant, reading.now_ms);
-        } else {
-            // An ended lease retires every exit flow. A merely invalidated
-            // snapshot awaits Control's next content (`SecureNode::update`);
-            // original monotonic deadlines and failed ACKs still retire
-            // meanwhile. Never invent UTC time.
-            if Instant::now() >= self.identity.snapshot().expires_at() {
-                self.engine.flows.retire_exits();
-            }
-            self.engine.flows.expire(Instant::now(), 0);
-        }
+        let reading = View::of(&self.desired);
+        self.engine.flows.expire(reading.instant, reading.now_ms);
         for id in self.engine.flows.retired_exit_circuits() {
             // Several tuples may share one admitted cipher. The retired flow's
             // own token fences its queued outputs; do not kill other live flows.
@@ -52,8 +44,7 @@ impl SecureNode {
             }
             if let Some(mut circuit) = self.circuits.remove(&id) {
                 circuit.retire_for("exit", "flow_retired");
-                let now_ms = meshway_authority::now().unwrap_or(u64::MAX);
-                self.bury(id, &circuit, now_ms);
+                self.bury(id, &circuit, crate::authority::now_ms());
             }
         }
     }
@@ -99,8 +90,8 @@ impl SecureNode {
                 }
                 Err(error) => return Err(error),
             };
-            let snapshot = self.identity.snapshot();
-            let reading = View::of(snapshot).map_err(|_| Error::Authority)?;
+            let desired = &self.desired;
+            let reading = View::of(desired);
             let exit = matches!(route.grant, super::Target::Exit { .. });
             if route.path.last() != Some(&reading.node()) || !exit {
                 return Err(Error::Flow);

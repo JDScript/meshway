@@ -5,7 +5,7 @@ pub(super) fn engine_error(error: &crate::Error) -> &'static str {
     match error {
         crate::Error::Packet(_) => "packet",
         crate::Error::FactsMismatch => "facts_mismatch",
-        crate::Error::Authority(_) => "authority",
+        crate::Error::Authority => "authority",
         crate::Error::Admission(_) => "admission",
         crate::Error::Limits => "limits",
         crate::Error::Ingress => "ingress",

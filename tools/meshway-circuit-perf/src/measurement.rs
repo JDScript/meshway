@@ -129,14 +129,15 @@ struct Circuit {
 
 impl Circuit {
     fn open(count: usize, workers: Option<u16>) -> Result<Self, Error> {
-        let chain = Chain::new(count, Duration::from_secs(600))?;
+        let chain = Chain::new(count)?;
         let mut nodes = chain
             .path
             .iter()
             .enumerate()
             .map(|(i, id)| {
                 Ok(SecureNode::new(
-                    chain.authority.identity(*id)?,
+                    &chain.authority.desired(*id)?,
+                    chain.authority.keys(*id)?,
                     Default::default(),
                     chain.carriers_for(i)?,
                 )?)

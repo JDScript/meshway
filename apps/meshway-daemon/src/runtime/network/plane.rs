@@ -14,7 +14,8 @@ use meshway_underlay::Host;
 use std::sync::Arc;
 
 pub(super) struct Installed {
-    pub content: Arc<meshway_configuration::netmap::CompiledNetmap>,
+    pub desired: Desired,
+    /// Staged migration only: the Host and DNS snapshot of `desired`.
     pub identity: DataPlaneIdentity,
     /// Absent for a disabled Node, which owns no packet plane.
     pub secure: Option<SecureNode>,
@@ -80,7 +81,7 @@ impl Plane {
             && let Some(state) = &self.installed
             && let Some(keys) = &self.keys
         {
-            let content = state.content.clone();
+            let content = state.desired.content().clone();
             let _ = self
                 .staged
                 .issue(&content, lease, self.instance.clone(), keys);
@@ -99,7 +100,7 @@ impl Plane {
         let (Some(lease), Some(keys)) = (self.lease, &self.keys) else {
             return;
         };
-        let content = state.content.clone();
+        let content = state.desired.content().clone();
         let Ok(identity) = self
             .staged
             .issue(&content, lease, self.instance.clone(), keys)
@@ -107,9 +108,6 @@ impl Plane {
             return;
         };
         let _ = self.host.install(identity.snapshot().clone()).await;
-        if let Some(secure) = &mut state.secure {
-            let _ = secure.update(identity.clone());
-        }
         if let Some(manager) = &state.manager {
             let _ = manager.set_instance(self.instance.clone());
         }
@@ -121,6 +119,18 @@ impl Plane {
 
     pub fn secure(&self) -> Option<&SecureNode> {
         self.installed.as_ref()?.secure.as_ref()
+    }
+
+    /// The applied content and the State instance, for local diagnostics.
+    pub fn diagnostic_scope(&self) -> Option<(&Desired, Option<meshway_model::InstanceId>)> {
+        let state = self
+            .installed
+            .as_ref()
+            .filter(|state| state.secure.is_some())?;
+        Some((
+            &state.desired,
+            self.instance.as_ref().map(|instance| instance.instance_id),
+        ))
     }
 
     fn fail(&mut self, problem: Problem, failure: ApplyFailure) -> Error {
@@ -180,11 +190,13 @@ impl meshway_engine::Components for Plane {
             self.staged.withdraw();
             return closing.map_err(|problem| self.fail(problem, ApplyFailure::Underlay));
         };
-        let identity = self.identity_for(desired)?;
         self.packets.clear_incoming();
         if !desired.local().enabled {
             return Ok(());
         }
+        let Some(keys) = self.keys.clone() else {
+            return Err(self.fail(Problem::Apply, ApplyFailure::Validation));
+        };
         let Some(state) = self.installed.as_mut() else {
             return Err(self.fail(Problem::Apply, ApplyFailure::Validation));
         };
@@ -193,18 +205,18 @@ impl meshway_engine::Components for Plane {
             _ => return Err(self.fail(Problem::Transport, ApplyFailure::Listeners)),
         };
         let secure = match state.secure.take() {
-            Some(mut secure) => match secure.update(identity.clone()) {
-                Ok(update) => {
+            Some(mut secure) => match secure.apply(desired) {
+                Ok(applied) => {
                     tracing::debug!(
-                        ?update,
+                        ?applied,
                         netmap_serial = desired.reference().serial.get(),
-                        "SecureNode updated in place"
+                        "SecureNode applied desired content"
                     );
                     secure.set_carriers(carriers).map(|_| secure).ok()
                 }
-                Err(_) => SecureNode::new(identity.clone(), Default::default(), carriers).ok(),
+                Err(_) => SecureNode::new(desired, keys, Default::default(), carriers).ok(),
             },
-            None => SecureNode::new(identity.clone(), Default::default(), carriers).ok(),
+            None => SecureNode::new(desired, keys, Default::default(), carriers).ok(),
         };
         let Some(secure) = secure else {
             return Err(self.fail(Problem::Apply, ApplyFailure::Dataplane));
@@ -362,7 +374,7 @@ impl meshway_engine::Components for Plane {
             }
             self.report.exit_capability = None;
             self.installed = Some(Installed {
-                content: desired.content().clone(),
+                desired: desired.clone(),
                 identity,
                 secure: None,
                 manager: None,
@@ -423,12 +435,12 @@ impl meshway_engine::Components for Plane {
         }
         match &mut self.installed {
             Some(state) => {
-                state.content = desired.content().clone();
+                state.desired = desired.clone();
                 state.identity = identity;
             }
             None => {
                 self.installed = Some(Installed {
-                    content: desired.content().clone(),
+                    desired: desired.clone(),
                     identity,
                     secure: None,
                     manager: None,

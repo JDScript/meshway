@@ -5,7 +5,6 @@
 
 mod support;
 
-use meshway_authority::{Clock, Deadline, Started};
 use meshway_underlay::{ExitIncarnation, ExitScope, ExitTransport, Host, OriginalTuple};
 use std::{net::UdpSocket, sync::Arc, time::Duration};
 use support::{HOUR, Network, Server, listener, sync};
@@ -131,9 +130,18 @@ async fn netmap_lease_end_closes_descriptors_and_keeps_the_negative_boundary() {
     println!("N1G_NETMAP_EXPIRY=descriptors-closed,tun-inactive,no-revival");
 }
 
-fn deadline(clock: &Arc<Clock>, milliseconds: u64) -> Deadline {
-    let started = Started::now(clock).unwrap();
-    Deadline::from_response(started.clone(), started.wall() + milliseconds).unwrap()
+fn cutoff(milliseconds: u64) -> meshway_underlay::ExitCutoff {
+    let now = u64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis(),
+    )
+    .unwrap();
+    meshway_underlay::ExitCutoff {
+        at: std::time::Instant::now() + Duration::from_millis(milliseconds),
+        ms: now + milliseconds,
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -149,7 +157,6 @@ async fn netmap_exit_role_survives_renewal_and_unchanged_serial_and_ends_with_it
     let mut host = host(&temp).await;
     host.install(snapshot.clone()).await.unwrap();
     let role = host.install_netmap_exit_role(&role_plan).await.unwrap();
-    let clock = Arc::new(Clock::new().unwrap());
     let scope = ExitScope {
         binding: meshway_model::Digest::from_bytes([72; 32]),
         revoked: CancellationToken::new(),
@@ -172,7 +179,7 @@ async fn netmap_exit_role_survives_renewal_and_unchanged_serial_and_ends_with_it
         role.install(
             ExitIncarnation::new(id),
             tuple,
-            deadline(&clock, 20_000),
+            cutoff(20_000),
             scope.clone(),
         )
     };

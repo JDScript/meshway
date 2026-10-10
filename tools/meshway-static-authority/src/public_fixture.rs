@@ -9,7 +9,6 @@ use std::{
     collections::BTreeMap,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::Arc,
-    time::Duration,
 };
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -29,16 +28,13 @@ pub struct PublicFixture {
     pub path: Vec<NodeId>,
     pub sockets: BTreeMap<NodeId, SocketAddr>,
     pub carriers: Vec<Carrier>,
-    /// One lease shared by every process, in wall milliseconds.
-    pub issued_at_ms: u64,
-    pub expires_at_ms: u64,
     /// Every Node's compiled netmap, checked again by each process.
     pub netmaps: BTreeMap<NodeId, NetmapRef>,
 }
 
 impl PublicFixture {
     /// Exact A→B or A→R→B iperf3 fixture. Input nodes are in traversal order.
-    pub fn iperf(nodes: Vec<PublicNode>, lifetime: Duration) -> Result<Self, Error> {
+    pub fn iperf(nodes: Vec<PublicNode>) -> Result<Self, Error> {
         if !(2..=3).contains(&nodes.len()) {
             return Err("iperf fixture requires 2 or 3 nodes".into());
         }
@@ -108,10 +104,6 @@ impl PublicFixture {
                 .map(|id| format!("node:{id}"))
                 .collect(),
         }];
-        let issued_at_ms = meshway_authority::now()?;
-        let expires_at_ms = issued_at_ms
-            .checked_add(u64::try_from(lifetime.as_millis())?)
-            .ok_or("fixture expiry overflow")?;
         let carriers = path
             .windows(2)
             .map(|pair| Carrier {
@@ -131,8 +123,6 @@ impl PublicFixture {
             sockets: nodes.iter().map(|node| (node.id, node.socket)).collect(),
             path,
             carriers,
-            issued_at_ms,
-            expires_at_ms,
             netmaps: BTreeMap::new(),
         };
         fixture.netmaps = fixture
@@ -181,12 +171,7 @@ impl PublicFixture {
         for protocol in [BusinessProtocol::Tcp, BusinessProtocol::Udp] {
             crate::check_path(origin, self.path[0], terminal, (protocol, 5201), &self.path)?;
         }
-        StaticAuthority::issue(
-            netmaps,
-            BTreeMap::from([(node, material)]),
-            self.issued_at_ms,
-            self.expires_at_ms,
-        )
+        StaticAuthority::issue(netmaps, BTreeMap::from([(node, material)]))
     }
 
     pub fn carriers_for(&self, node: NodeId) -> Result<BTreeMap<NodeId, Carrier>, Error> {

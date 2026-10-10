@@ -11,7 +11,7 @@ use meshway_control::{FactsRejected, PeerFactsSink, SyncFuture, SyncTransport};
 use meshway_control_client::ClientError;
 use meshway_dataplane::{
     Packet,
-    secure::{Carrier, CircuitGrant, PendingFrame, Received, SecureNode, Target, Update},
+    secure::{Applied, Carrier, CircuitGrant, PendingFrame, Received, SecureNode, Target},
 };
 use meshway_model::{
     NetmapRef, NodeId, Revision,
@@ -233,9 +233,9 @@ impl NetmapMesh {
             protocol: TransportProtocol::NativeTcp,
         };
         let compiled = compile(owner.network, &cfg, &inventory, ids, &BTreeMap::new());
-        let mut identities = Vec::new();
+        let mut contents = Vec::new();
         for index in 0..3 {
-            let identity = install(
+            let desired = install(
                 &mut nodes[index],
                 &scripts[index],
                 &compiled[&ids[index]],
@@ -243,11 +243,12 @@ impl NetmapMesh {
                 true,
             )
             .await;
-            identities.push(identity);
+            contents.push((desired, nodes[index].packet_keys()));
         }
-        let mut identities = identities.into_iter();
+        let mut contents = contents.into_iter();
         let mut secure = |carriers| {
-            SecureNode::new(identities.next().unwrap(), Default::default(), carriers).unwrap()
+            let (desired, keys) = contents.next().unwrap();
+            SecureNode::new(&desired, keys, Default::default(), carriers).unwrap()
         };
         let a = secure(BTreeMap::from([(ids[1], ar_carrier.clone())]));
         let r = secure(BTreeMap::from([
@@ -272,9 +273,12 @@ impl NetmapMesh {
         }
     }
 
-    /// The current identity of one Node, for Control's published netmap.
-    pub fn identity(&mut self, index: usize) -> meshway_authority::DataPlaneIdentity {
-        self.nodes[index].identity()
+    /// One Node's desired content (Control's published netmap) and keys.
+    pub fn content(
+        &self,
+        index: usize,
+    ) -> (meshway_engine::Desired, meshway_authority::DataPlaneKeys) {
+        (self.nodes[index].desired(), self.nodes[index].packet_keys())
     }
 
     /// Replace every SecureNode with explicit limits on the same identities.
@@ -284,19 +288,19 @@ impl NetmapMesh {
         exit: meshway_dataplane::exit::Limits,
     ) {
         let [a, r, b] = self.ids();
-        let node = |identity, carriers| {
-            SecureNode::with_exit_limits(identity, limits, carriers, exit).unwrap()
+        let node = |(desired, keys): (meshway_engine::Desired, _), carriers| {
+            SecureNode::with_exit_limits(&desired, keys, limits, carriers, exit).unwrap()
         };
         self.a = node(
-            self.identity(0),
+            self.content(0),
             BTreeMap::from([(r, self.ar.carrier.clone())]),
         );
         self.r = node(
-            self.identity(1),
+            self.content(1),
             BTreeMap::from([(a, self.ar.carrier.clone()), (b, self.rb.carrier.clone())]),
         );
         self.b = node(
-            self.identity(2),
+            self.content(2),
             BTreeMap::from([(r, self.rb.carrier.clone())]),
         );
     }
@@ -342,22 +346,22 @@ impl NetmapMesh {
         }
     }
 
-    /// Recompile after `edit` and install the new content on every Node;
-    /// returns each SecureNode's update result.
+    /// Recompile after `edit` and apply the new content on every Node;
+    /// returns what each SecureNode's apply retired.
     pub async fn publish(
         &mut self,
         edit: impl FnOnce(&mut NetworkConfiguration, [NodeId; 3]),
-    ) -> [Update; 3] {
+    ) -> [Applied; 3] {
         self.recompile(edit);
         self.update_all(true).await
     }
 
-    /// Same-content lease renewal on every Node.
-    pub async fn renew(&mut self) -> [Update; 3] {
+    /// Same-content lease renewal on every Node: the content applied again.
+    pub async fn renew(&mut self) -> [Applied; 3] {
         self.update_all(false).await
     }
 
-    async fn update_all(&mut self, full: bool) -> [Update; 3] {
+    async fn update_all(&mut self, full: bool) -> [Applied; 3] {
         let mut updates = Vec::new();
         for index in 0..3 {
             updates.push(self.install_on(index, full).await);
@@ -366,10 +370,10 @@ impl NetmapMesh {
     }
 
     /// Install the current compilation (`full`) or renew the held content on
-    /// one Node only, and update its SecureNode.
-    pub async fn install_on(&mut self, index: usize, full: bool) -> Update {
+    /// one Node only, and apply it to its SecureNode.
+    pub async fn install_on(&mut self, index: usize, full: bool) -> Applied {
         let id = self.nodes[index].id;
-        let identity = install(
+        let desired = install(
             &mut self.nodes[index],
             &self.scripts[index],
             &self.compiled[&id],
@@ -377,7 +381,7 @@ impl NetmapMesh {
             full,
         )
         .await;
-        self.secure(index).update(identity).unwrap()
+        self.secure(index).apply(&desired).unwrap()
     }
 
     /// Recompile without installing.
@@ -507,7 +511,7 @@ async fn install(
     compiled: &CompiledNetmap,
     validity_ms: u64,
     full: bool,
-) -> meshway_authority::DataPlaneIdentity {
+) -> meshway_engine::Desired {
     let full = full && node.control.netmap_reference() != Some(compiled.reference());
     script
         .replies
@@ -519,5 +523,5 @@ async fn install(
             full,
         )));
     node.control.sync(&mut Facts).await.unwrap();
-    node.identity()
+    node.desired()
 }

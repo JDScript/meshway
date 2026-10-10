@@ -24,7 +24,7 @@ mod tuple;
 pub use api::{CtConfirmation, ProjectionAck};
 pub use guard::{ExitSendGuard, Invalidated};
 pub use incarnation::ExitIncarnation;
-pub use io::{ExitReply, ExitReplyReader, ExitScope};
+pub use io::{ExitCutoff, ExitReply, ExitReplyReader, ExitScope};
 pub use owner::ExitRole;
 pub use probe::ExitProbe;
 pub use tuple::{ExitTransport, OriginalTuple};

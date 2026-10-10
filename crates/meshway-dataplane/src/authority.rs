@@ -1,69 +1,51 @@
-//! One guard evaluation, and the one lifetime value shared by circuits,
-//! flows, queued routes and output guards.
+//! One reading of the desired content and the clock, and the one lifetime
+//! value shared by circuits, flows, queued routes and outputs.
 //!
-//! A netmap snapshot is bound by its lease alone. Its deadline lives in the
-//! snapshot's shared lease cell and is raised in place by a same-content
-//! renewal, so derived state never copies it: a [`Cap`] only carries this
-//! object's own shorter bound (idle, handshake or probe), and every check
-//! additionally takes a fresh [`View`].
-use meshway_authority::ExecutionSnapshot;
+//! No lease is read here. The owner applies empty content when the lease ends
+//! and, before returning, cancels every circuit, flow and queued output; a
+//! [`Cap`] carries only an object's own bound (idle, handshake or probe).
 use meshway_configuration::{
     NodeAddresses,
     execution::TrustedNode,
     netmap::{CompiledNetmap, NodeNetmap},
 };
-use meshway_model::{BoundNodeKey, KeyAlgorithm, NetmapLease, NetworkId, NodeId};
-use meshway_policy::admission::netmap::Leased;
+use meshway_engine::Desired;
+use meshway_model::{BoundNodeKey, KeyAlgorithm, NetworkId, NodeId};
 use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 
-/// Values of one complete snapshot guard evaluation. Borrowed for one
-/// synchronous section; never stored or carried across an await.
+/// Desired content and one clock reading. Borrowed for one synchronous
+/// section; never stored or carried across an await.
 #[derive(Clone, Copy)]
 pub(crate) struct View<'a> {
-    pub netmap: &'a CompiledNetmap,
-    pub lease: NetmapLease,
+    pub desired: &'a Desired,
     pub now_ms: u64,
     pub instant: Instant,
-    /// Current snapshot deadline; reporting only, never copied into a cap
-    /// (it can rise in place).
-    pub expires_at: Instant,
 }
 
 impl<'a> View<'a> {
-    pub fn of(snapshot: &'a ExecutionSnapshot) -> Result<Self, meshway_authority::Error> {
-        let reading = snapshot.netmap_reading()?;
-        Ok(Self {
-            netmap: reading.netmap,
-            lease: reading.lease,
-            now_ms: reading.now_ms,
-            instant: reading.instant,
-            expires_at: reading.expires_at,
-        })
-    }
-
-    pub fn netmap(&self) -> &'a CompiledNetmap {
-        self.netmap
-    }
-
-    /// Input of `meshway_policy::admission::netmap`, with `now_ms`.
-    pub fn leased(&self) -> Leased<'_> {
-        Leased {
-            netmap: &self.netmap.netmap,
-            lease: &self.lease,
+    pub fn of(desired: &'a Desired) -> Self {
+        Self {
+            desired,
+            now_ms: now_ms(),
+            instant: Instant::now(),
         }
     }
 
+    pub fn netmap(&self) -> &'a CompiledNetmap {
+        self.desired.content()
+    }
+
     pub fn node(&self) -> NodeId {
-        self.netmap.netmap.node_id
+        self.netmap().netmap.node_id
     }
 
     pub fn network(&self) -> NetworkId {
-        self.netmap.netmap.network_id
+        self.netmap().netmap.network_id
     }
 
     pub fn self_keys(&self) -> &'a TrustedNode {
-        &self.netmap.netmap.self_.self_keys
+        &self.netmap().netmap.self_.self_keys
     }
 
     /// Current Ed25519 control and X25519 data-plane bindings of a path Node.
@@ -71,7 +53,7 @@ impl<'a> View<'a> {
         let trusted = if node == self.node() {
             self.self_keys()
         } else {
-            self.netmap.netmap.projection.inventory.get(&node)?
+            self.netmap().netmap.projection.inventory.get(&node)?
         };
         valid(&trusted.control_key, &trusted.dataplane_key)
     }
@@ -79,6 +61,15 @@ impl<'a> View<'a> {
     pub fn now(&self) -> (Instant, u64) {
         (self.instant, self.now_ms)
     }
+}
+
+/// Wall-clock milliseconds for INIT windows and peer-supplied UTC bounds.
+pub(crate) fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|elapsed| u64::try_from(elapsed.as_millis()).ok())
+        .unwrap_or(0)
 }
 
 fn valid<'a>(
@@ -148,7 +139,7 @@ pub(crate) fn restrict(cap: Option<Cap>, other: Option<Cap>) -> Option<Cap> {
 }
 
 /// Own cap plus independent cancellation (circuit and, for outputs of one
-/// flow, that flow). It never extends the snapshot it is checked against.
+/// flow, that flow). Its owner cancels it when content no longer admits it.
 #[derive(Clone, Default)]
 pub(crate) struct Lifetime {
     pub cap: Option<Cap>,
@@ -177,19 +168,8 @@ impl Lifetime {
         !self.cancelled() && self.cap.is_none_or(|cap| cap.live_at(instant, now_ms))
     }
 
-    /// Effective expiry for reporting, against the snapshot's current deadline.
-    pub fn expiry(&self, snapshot: &ExecutionSnapshot) -> Cap {
-        let current = Cap {
-            at: snapshot.expires_at(),
-            ms: snapshot.expires_at_ms(),
-        };
-        self.cap.map_or(current, |cap| cap.min(current))
-    }
-
-    /// Wake at cancellation, the own cap or the snapshot's end (which keeps
-    /// following same-content renewals of a netmap lease).
-    pub async fn ended(&self, snapshot: &ExecutionSnapshot) {
-        let cap_ms = self.cap.map_or(u64::MAX, |cap| cap.ms);
+    /// Wake at cancellation or the own cap.
+    pub async fn ended(&self) {
         tokio::select! { biased;
             _ = self.cancellation.cancelled() => {},
             _ = async {
@@ -198,7 +178,6 @@ impl Lifetime {
                     None => std::future::pending().await,
                 }
             } => {},
-            _ = snapshot.invalidated_at(cap_ms) => {},
             _ = async {
                 match self.cap {
                     Some(cap) => tokio::time::sleep_until(cap.at.into()).await,

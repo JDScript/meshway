@@ -34,25 +34,12 @@ impl Job {
             Self::Receive(job) => job.frame.body.len() <= 128 + 16,
         }
     }
-    fn epoch(&self) -> Option<Arc<()>> {
-        match self {
-            Self::Send(job) => job.guard.section.clone(),
-            Self::Receive(job) => job.guard.section.clone(),
-        }
-    }
     fn key(&self) -> Key {
-        let (frame, guard) = match self {
-            Self::Send(job) => (&job.frame, &job.guard),
-            Self::Receive(job) => (&job.frame, &job.guard),
+        let frame = match self {
+            Self::Send(job) => &job.frame,
+            Self::Receive(job) => &job.frame,
         };
-        Key(
-            frame.context.circuit,
-            frame.reply,
-            guard
-                .section
-                .as_ref()
-                .map_or(0, |epoch| Arc::as_ptr(epoch) as usize),
-        )
+        Key(frame.context.circuit, frame.reply)
     }
     pub fn circuit(&self) -> [u8; 32] {
         match self {
@@ -77,7 +64,7 @@ enum Work {
 type Group = Vec<(Key, u64, Job, Credit)>;
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-struct Key([u8; 32], bool, usize);
+struct Key([u8; 32], bool);
 
 pub struct Ready {
     result: Result<Output, Error>,
@@ -93,14 +80,13 @@ type Completion = (Key, u64, Ready);
 
 #[derive(Default)]
 struct Lane {
-    epoch: Option<Arc<()>>,
     submitted: u64,
     released: u64,
     completed: VecDeque<Option<Ready>>,
 }
 
 /// One bounded scheduling owner. Streaming admission retains at most 32 jobs,
-/// including completed outputs and TX pending credits. Ready circuit/direction/epoch
+/// including completed outputs and TX pending credits. Ready circuit/direction
 /// prefixes are released round-robin in groups of at most 32, without waiting
 /// for the rest of an input batch or any other circuit.
 /// Zero workers executes exactly the same crypto inline, without a Tokio runtime.
@@ -237,9 +223,6 @@ impl Pool {
             .lanes
             .entry(circuit)
             .or_insert_with(|| self.free_lanes.pop().expect("one lane per credit"));
-        if lane.submitted == 0 {
-            lane.epoch = job.epoch();
-        }
         let sequence = lane.submitted;
         lane.submitted += 1;
         lane.completed.push_back(None);
@@ -341,7 +324,6 @@ impl Pool {
                 let mut lane = self.lanes.remove(&circuit).expect("completed lane");
                 lane.submitted = 0;
                 lane.released = 0;
-                lane.epoch = None;
                 self.free_lanes.push(lane);
             }
         }
@@ -377,11 +359,10 @@ mod tests {
     #[tokio::test]
     async fn delayed_prefix_does_not_block_other_circuits_or_release_out_of_order() {
         let mut pool = Pool::new(0).unwrap();
-        for id in [Key([1; 32], false, 1), Key([2; 32], false, 1)] {
+        for id in [Key([1; 32], false), Key([2; 32], false)] {
             pool.lanes.insert(
                 id,
                 Lane {
-                    epoch: None,
                     submitted: 2,
                     released: 0,
                     completed: VecDeque::from([None, None]),
@@ -391,14 +372,14 @@ mod tests {
         let mut credits: Vec<_> = (0..4).map(|_| pool.budget.reserve(1280).unwrap()).collect();
         complete(
             &mut pool,
-            Key([1; 32], false, 1),
+            Key([1; 32], false),
             1,
             Error::Proof,
             credits.pop().unwrap(),
         );
         complete(
             &mut pool,
-            Key([2; 32], false, 1),
+            Key([2; 32], false),
             0,
             Error::Wire,
             credits.pop().unwrap(),
@@ -414,7 +395,7 @@ mod tests {
         assert_eq!(pool.available(), 29);
         complete(
             &mut pool,
-            Key([1; 32], false, 1),
+            Key([1; 32], false),
             0,
             Error::Crypto,
             credits.pop().unwrap(),
@@ -434,7 +415,7 @@ mod tests {
         ));
         complete(
             &mut pool,
-            Key([2; 32], false, 1),
+            Key([2; 32], false),
             1,
             Error::Replay,
             credits.pop().unwrap(),
@@ -451,18 +432,13 @@ mod tests {
     }
 
     #[test]
-    fn directions_and_epochs_are_independent_and_tx_retains_credit() {
+    fn directions_and_circuits_are_independent_and_tx_retains_credit() {
         let mut pool = Pool::new(0).unwrap();
-        let keys = [
-            Key([1; 32], false, 1),
-            Key([1; 32], true, 1),
-            Key([1; 32], false, 2),
-        ];
+        let keys = [Key([1; 32], false), Key([1; 32], true), Key([2; 32], false)];
         for id in keys {
             pool.lanes.insert(
                 id,
                 Lane {
-                    epoch: None,
                     submitted: 1,
                     released: 0,
                     completed: VecDeque::from([None]),

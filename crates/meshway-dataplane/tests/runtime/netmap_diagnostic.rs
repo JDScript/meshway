@@ -2,7 +2,7 @@
 //! on observable paths only, never waiting for a Server round trip.
 use super::support::netmap::{NetmapMesh, rule, sel};
 use meshway_dataplane::secure::{
-    CircuitGrant, Error, PendingFrame, Received, Target, Update, diagnostic_paths,
+    Applied, CircuitGrant, Error, PendingFrame, Received, Target, diagnostic_paths,
 };
 use meshway_model::{Digest, EventId};
 use std::time::{Duration, Instant};
@@ -67,18 +67,15 @@ async fn netmap_ping_is_local_and_runs_on_the_observable_path() {
     let mut f = NetmapMesh::start().await;
     let calls = f.sync_calls();
     let [_, _, b] = f.ids();
-    let snapshot = f.nodes[0].identity().snapshot().clone();
-    assert_eq!(
-        diagnostic_paths(&snapshot, b, None).unwrap(),
-        vec![f.path()]
-    );
+    let desired = f.nodes[0].desired();
+    assert_eq!(diagnostic_paths(&desired, b, None).unwrap(), vec![f.path()]);
     let id = ping(&mut f).await;
     probe(&mut f, id).unwrap();
     // Diagnostic circuits never carry business packets.
     let packet = f.mesh_udp(false, 42424);
     assert!(f.a.send(id, packet).is_err());
     // Same-content renewal keeps the diagnostic circuit and its cipher.
-    assert_eq!(f.renew().await, [Update::Renewed; 3]);
+    assert_eq!(f.renew().await, [Applied::default(); 3]);
     tokio::time::sleep(Duration::from_millis(1_100)).await;
     probe(&mut f, id).unwrap();
     assert_eq!(
@@ -100,7 +97,7 @@ async fn netmap_ping_denied_without_icmp_and_revocation_ends_the_circuit() {
         assert!(
             matches!(
                 update,
-                Update::Updated {
+                Applied {
                     retired_circuits: 1,
                     ..
                 }
@@ -111,9 +108,9 @@ async fn netmap_ping_denied_without_icmp_and_revocation_ends_the_circuit() {
     assert!(f.a.circuit_info(id).unwrap().is_none());
     let b = f.ids()[2];
     assert!(matches!(f.a.start_diagnostic(b, None), Err(Error::Policy)));
-    let snapshot = f.nodes[0].identity().snapshot().clone();
+    let desired = f.nodes[0].desired();
     assert!(matches!(
-        diagnostic_paths(&snapshot, b, None),
+        diagnostic_paths(&desired, b, None),
         Err(Error::Policy)
     ));
     f.close().await;
@@ -134,15 +131,15 @@ async fn netmap_ping_without_observable_path_is_unsupported_not_denied() {
         f.a.start_diagnostic(b, None),
         Err(Error::Unsupported)
     ));
-    let snapshot = f.nodes[0].identity().snapshot().clone();
+    let desired = f.nodes[0].desired();
     assert!(matches!(
-        diagnostic_paths(&snapshot, b, None),
+        diagnostic_paths(&desired, b, None),
         Err(Error::Unsupported)
     ));
     // An explicit path outside the decision is denied, not unsupported.
     let [a, _, b] = f.ids();
     assert!(matches!(
-        diagnostic_paths(&snapshot, b, Some(&[a, b])),
+        diagnostic_paths(&desired, b, Some(&[a, b])),
         Err(Error::Policy)
     ));
     f.close().await;

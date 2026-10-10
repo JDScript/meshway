@@ -2,10 +2,7 @@
 //! Readiness is a dynamic fact and never an input here.
 use super::*;
 use meshway_policy::{
-    admission::{
-        AdmissionError, Hop, Traffic,
-        netmap::{Leased, admit_forward},
-    },
+    admission::{AdmissionError, Hop, Traffic, netmap::admit_forward},
     dns_route::{ResolverRouteError, netmap_dns_service, netmap_resolver},
 };
 use std::net::IpAddr;
@@ -183,11 +180,7 @@ fn exit_decision_enforces_scope_source_and_original_path() {
     assert_eq!(at_exit, decision);
     let path = &decision.paths[0].nodes;
     let exit = &compiled.nodes[&node(4)];
-    let lease = lease(exit);
-    let leased = Leased {
-        netmap: &exit.netmap,
-        lease: &lease,
-    };
+    let leased = &exit.netmap;
     let previous = Some(path[path.len() - 2]);
     assert_eq!(
         admit_forward(
@@ -197,14 +190,13 @@ fn exit_decision_enforces_scope_source_and_original_path() {
             node(1),
             previous,
             &tcp443("8.8.8.8"),
-            1
         ),
         Ok(Hop::Exit)
     );
     let mut forged = tcp443("8.8.8.8");
     forged.source = "100.64.0.3".parse().unwrap();
     assert_eq!(
-        admit_forward(leased, &at_exit, path, node(1), previous, &forged, 1),
+        admit_forward(leased, &at_exit, path, node(1), previous, &forged),
         Err(AdmissionError::Traffic)
     );
     // A decision covers exactly its destination; another one decides anew.
@@ -216,7 +208,6 @@ fn exit_decision_enforces_scope_source_and_original_path() {
             node(1),
             previous,
             &tcp443("1.1.1.1"),
-            1
         ),
         Err(AdmissionError::Traffic)
     );
@@ -412,14 +403,10 @@ fn single_exit_dns_service_is_shared_by_source_and_resolver() {
     };
     assert_eq!(services, &[service.as_ref().clone()]);
     for compiled_netmap in [source, resolver] {
-        let lease = NetmapLease::new(compiled_netmap.reference(), 0, 5000).unwrap();
-        let leased = Leased {
-            netmap: &compiled_netmap.netmap,
-            lease: &lease,
-        };
+        let netmap = &compiled_netmap.netmap;
         for transport in [DnsTransport::Udp, DnsTransport::Tcp] {
-            let check = |source, exit, path: &[NodeId], now| {
-                netmap_dns_service(leased, service, source, exit, path, transport, now)
+            let check = |source, exit, path: &[NodeId], _: u64| {
+                netmap_dns_service(netmap, service, source, exit, path, transport)
             };
             assert_eq!(check(node(1), node(4), &service.path.nodes, 1), Ok(()));
             assert_eq!(
@@ -433,10 +420,6 @@ fn single_exit_dns_service_is_shared_by_source_and_resolver() {
             assert_eq!(
                 check(node(1), node(4), &[node(1), node(4)], 1),
                 Err(ResolverRouteError::Binding)
-            );
-            assert_eq!(
-                check(node(1), node(4), &service.path.nodes, 5000),
-                Err(ResolverRouteError::Expired)
             );
         }
     }

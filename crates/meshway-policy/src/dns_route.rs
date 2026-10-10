@@ -10,7 +10,6 @@ use meshway_model::NodeId;
 pub enum ResolverRouteError {
     Missing,
     Binding,
-    Expired,
 }
 
 pub fn netmap_resolver(
@@ -37,23 +36,13 @@ pub fn netmap_resolver(
 
 /// Source/path must come from authenticated ingress, never a socket tuple.
 pub fn netmap_dns_service(
-    leased: crate::admission::netmap::Leased<'_>,
+    netmap: &meshway_configuration::netmap::NodeNetmap,
     service: &DnsService,
     source: NodeId,
     exit: NodeId,
     path: &[NodeId],
     transport: DnsTransport,
-    now_ms: u64,
 ) -> Result<(), ResolverRouteError> {
-    let netmap = leased.netmap;
-    if leased.lease.netmap.serial != netmap.serial
-        || leased.lease.netmap.revision != netmap.revision
-    {
-        return Err(ResolverRouteError::Binding);
-    }
-    if !leased.lease.valid_at(now_ms) {
-        return Err(ResolverRouteError::Expired);
-    }
     let published = match &netmap.dns.egress {
         DnsPlan::ViaExit { service: own } => {
             netmap.node_id == source

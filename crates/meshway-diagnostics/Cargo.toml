@@ -7,7 +7,7 @@ description = "Bounded authorized Mesh probe scheduling and measurement results"
 
 [dependencies]
 meshway-configuration = { path = "../meshway-configuration" }
-meshway-authority = { path = "../meshway-authority" }
+meshway-engine = { path = "../meshway-engine" }
 meshway-dataplane = { path = "../meshway-dataplane" }
 meshway-model = { path = "../meshway-model" }
 meshway-protocol = { path = "../meshway-protocol" }

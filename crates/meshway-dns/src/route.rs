@@ -80,11 +80,8 @@ impl QueryLifetime {
     }
 }
 
-fn policy_error(error: meshway_policy::dns_route::ResolverRouteError) -> RouteError {
-    match error {
-        meshway_policy::dns_route::ResolverRouteError::Expired => RouteError::Expired,
-        _ => RouteError::Binding,
-    }
+fn policy_error(_: meshway_policy::dns_route::ResolverRouteError) -> RouteError {
+    RouteError::Binding
 }
 
 /// Sealed exact local-business route, never a bootstrap socket exemption.

@@ -1,3 +1,4 @@
+use super::io::ExitCutoff as Deadline;
 use super::{
     api::{CtConfirmation, ProjectionAck},
     child::Fence,
@@ -11,7 +12,6 @@ use super::{
     tuple::OriginalTuple,
 };
 use crate::{Error, Result};
-use meshway_authority::Deadline;
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,

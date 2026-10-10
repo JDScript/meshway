@@ -1,4 +1,4 @@
-//! One entry reading for policy/flow preparation; a fresh fence at commit.
+//! One entry reading for policy/flow preparation; a fresh check at commit.
 use crate::{
     Engine, Error, PacketFacts, PendingRoute,
     authority::{Lifetime, View},
@@ -14,7 +14,6 @@ use std::sync::Arc;
 
 impl From<&View<'_>> for FlowTime {
     fn from(reading: &View<'_>) -> Self {
-        // The lease is checked at use and renews; it is never copied in.
         Self {
             instant: reading.instant,
             now_ms: reading.now_ms,
@@ -79,7 +78,7 @@ impl Engine {
                 }
             };
         let policy = Policy {
-            leased: reading.leased(),
+            netmap: &reading.netmap().netmap,
             decide: &mut decide,
         };
         let mut prepared =
@@ -95,11 +94,9 @@ impl Engine {
         }
         tracing::trace!(target: "meshway_dataplane::flow::authority_boundary", operation = "commit",
             "Validating flow admission authority");
-        // A fresh View performs the same complete dynamic guard as
-        // ensure_current; its time additionally fences the shorter
-        // flow/circuit bounds. This is a commit fence, not a policy time source.
-        let snapshot = circuit.map_or(&self.snapshot, |(_, guard)| guard.snapshot());
-        let current = View::of(snapshot)?;
+        // A fresh clock reading checks the shorter flow/circuit bounds at the
+        // commit point; it is not a policy time source.
+        let current = View::of(reading.desired);
         if let Some((_, guard)) = circuit {
             guard.check_at(&current).map_err(|_| Error::Expired)?;
         }
@@ -115,12 +112,10 @@ impl Engine {
         let mut life = Lifetime::new(Some(cap), Default::default());
         life.flow = flow_cancellation;
         Ok(PendingRoute {
-            snapshot: snapshot.clone(),
             life,
             constrained: false,
             checked,
             facts,
-            section: circuit.and_then(|(_, guard)| guard.section.clone()),
             projection,
             exit_incarnation,
         })

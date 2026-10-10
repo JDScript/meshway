@@ -74,7 +74,8 @@ async fn send(
                 deadline: lifetime
                     .packets
                     .iter()
-                    .map(|guard| guard.expires_at().into())
+                    .filter_map(|guard| guard.expires_at())
+                    .map(Into::into)
                     .min(),
                 lifetime: Some(lifetime.clone()),
             };
@@ -85,7 +86,7 @@ async fn send(
             for (bytes, guard) in buffers.into_iter().zip(&lifetime.packets) {
                 // Every original guard is retained by the common OutputLifetime;
                 // the per-frame deadline also restricts Session's intersection.
-                let deadline = Some(guard.expires_at().into());
+                let deadline = guard.expires_at().map(Into::into);
                 frames.push_back(ScopedFrame {
                     frame: Frame::owned(bytes, peer),
                     scope: scope.clone(),

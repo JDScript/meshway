@@ -7,7 +7,7 @@ use super::support::netmap::{DAY_MS, NetmapMesh, rule};
 use meshway_dataplane::{
     Packet, PendingAction,
     exit::{ExitProjection, ExitReplyIngress, Limits},
-    secure::{CircuitState, Outbound, Received, Update},
+    secure::{Applied, CircuitState, Outbound, Received},
 };
 use std::time::Duration;
 
@@ -171,7 +171,7 @@ async fn netmap_exit_confirm_failure_isolates_shared_cid_and_survivor_continues_
     f.b.fail_exit_projection(&failed);
     assert_eq!(f.b.retained_flows(), 1);
     assert!(failed_scope.ensure_current().is_err());
-    tokio::time::timeout(Duration::from_secs(1), failed_scope.invalidated())
+    tokio::time::timeout(Duration::from_secs(1), failed_scope.ended())
         .await
         .unwrap();
     assert!(failed_output.release(|_| panic!("failed tuple")).is_err());
@@ -193,7 +193,7 @@ async fn netmap_exit_confirm_failure_isolates_shared_cid_and_survivor_continues_
     );
     rejected_forward(&mut f, id, 41000);
     // Same-content renewal needs no kernel operation and keeps the survivor.
-    assert_eq!(f.renew().await, [Update::Renewed; 3]);
+    assert_eq!(f.renew().await, [Applied::default(); 3]);
     assert!(f.b.next_exit_projection().is_none());
     let input = udp(&f, false, 41001);
     forward(&mut f, id, input).release(|_| ()).unwrap();
@@ -300,8 +300,10 @@ async fn netmap_exit_flow_and_reserved_tombstone_capacity_block_new_tuples() {
     assert!(f.a.send(next, udp(&f, false, 41001)).is_err());
     // A restarted source loses its own tombstones; B still rejects both.
     let r = f.ids()[1];
+    let (desired, keys) = f.content(0);
     f.a = meshway_dataplane::secure::SecureNode::new(
-        f.identity(0),
+        &desired,
+        keys,
         Default::default(),
         std::collections::BTreeMap::from([(r, f.ar.carrier.clone())]),
     )
@@ -317,7 +319,7 @@ async fn netmap_exit_flow_and_reserved_tombstone_capacity_block_new_tuples() {
 }
 
 #[tokio::test]
-async fn netmap_exit_receive_only_flow_crosses_the_old_lease_deadline_after_renewal() {
+async fn netmap_exit_receive_only_flow_is_bounded_by_its_own_activity_not_a_lease() {
     let mut f = fixture(8_000, Default::default(), Duration::from_secs(60)).await;
     let id = handshake(&mut f).await;
     let input = udp(&f, false, 41000);
@@ -326,17 +328,18 @@ async fn netmap_exit_receive_only_flow_crosses_the_old_lease_deadline_after_rene
         panic!("install")
     };
     ack.complete(true).unwrap();
-    let old_deadline = scope.deadline();
+    let deadline = scope.deadline();
     f.validity_ms = DAY_MS;
-    assert_eq!(f.renew().await, [Update::Renewed; 3]);
-    // Renewal cancels nothing: the queued output and its kernel scope stay valid,
-    // and the scope now follows the renewed lease.
+    assert_eq!(f.renew().await, [Applied::default(); 3]);
+    // Renewal reaches no component: the queued output and its kernel scope
+    // stay valid, and the scope keeps its own activity bound.
     queued.release(|_| ()).unwrap();
-    assert!(scope.deadline() > old_deadline);
+    assert_eq!(scope.deadline(), deadline);
     assert!(f.b.next_exit_projection().is_none());
     let reply = udp(&f, true, 41000);
     deliver_reply(&mut f, id, reply);
-    tokio::time::sleep_until((old_deadline + Duration::from_millis(20)).into()).await;
+    // The original 8 s lease has ended; nothing here depends on it.
+    tokio::time::sleep(Duration::from_millis(8_020)).await;
     scope.ensure_current().unwrap();
     let reply = udp(&f, true, 41000);
     deliver_reply(&mut f, id, reply);
@@ -345,7 +348,7 @@ async fn netmap_exit_receive_only_flow_crosses_the_old_lease_deadline_after_rene
 }
 
 #[tokio::test]
-async fn netmap_exit_ineligibility_and_lease_expiry_retire_cipher_and_queued_outputs() {
+async fn netmap_exit_ineligibility_and_withdrawal_retire_cipher_and_queued_outputs() {
     let mut f = standard().await;
     let id = handshake(&mut f).await;
     let input = udp(&f, false, 41000);
@@ -359,7 +362,7 @@ async fn netmap_exit_ineligibility_and_lease_expiry_retire_cipher_and_queued_out
         .await;
     assert!(matches!(
         updates[2],
-        Update::Updated {
+        Applied {
             retired_circuits: 1,
             ..
         }
@@ -374,20 +377,22 @@ async fn netmap_exit_ineligibility_and_lease_expiry_retire_cipher_and_queued_out
     assert_eq!(f.b.retained_flows(), 0);
     f.close().await;
 
-    let mut f = fixture(5_000, Default::default(), Duration::from_secs(60)).await;
+    // Engine's empty apply (lease end, revocation): the exit owner retires
+    // every exit flow, which ends their cipher and queued outputs at once.
+    let mut f = standard().await;
     let id = handshake(&mut f).await;
     let input = udp(&f, false, 41000);
     let queued = forward(&mut f, id, input);
-    let ExitProjection::Install { scope, ack, .. } = f.b.next_exit_projection().unwrap() else {
+    let ExitProjection::Install { ack, .. } = f.b.next_exit_projection().unwrap() else {
         panic!("install")
     };
     ack.complete(true).unwrap();
     let old_cipher =
         f.b.exit_reply(ExitReplyIngress::new(udp(&f, true, 41000)))
             .unwrap();
-    tokio::time::sleep_until((scope.deadline() + Duration::from_millis(10)).into()).await;
-    assert!(queued.release(|_| panic!("expired output")).is_err());
-    assert!(old_cipher.release(|_| panic!("expired cipher")).is_err());
+    f.b.retire_exits();
+    assert!(queued.release(|_| panic!("withdrawn output")).is_err());
+    assert!(old_cipher.release(|_| panic!("withdrawn cipher")).is_err());
     assert!(matches!(
         f.b.next_exit_projection(),
         Some(ExitProjection::Retire { .. })
@@ -402,7 +407,7 @@ async fn netmap_exit_content_update_renews_only_on_activity_within_the_pending_b
         max_pending: 1,
         ..Default::default()
     };
-    let mut f = fixture(DAY_MS, limits, Duration::from_secs(60)).await;
+    let mut f = fixture(DAY_MS, limits, Duration::from_secs(2)).await;
     let id = handshake(&mut f).await;
     for port in [41000, 41001] {
         let input = udp(&f, false, port);
@@ -410,19 +415,21 @@ async fn netmap_exit_content_update_renews_only_on_activity_within_the_pending_b
         install(&mut f);
         pending.release(|_| ()).unwrap();
     }
-    // Unrelated new content keeps both flows; nothing is precomputed.
+    // Unrelated new content keeps both flows and renews nothing by itself.
     let updates = f
         .publish(|cfg, [a, _, b]| cfg.access.push(rule(a, &format!("node:{b}"), &["tcp:22"])))
         .await;
     assert_eq!(
         updates[2],
-        Update::Updated {
+        Applied {
             retired_circuits: 0,
             retired_flows: 0
         }
     );
     assert!(f.b.next_exit_projection().is_none());
     assert_eq!(f.b.retained_flows(), 2);
+    // Activity near the installed idle bound renews it; no lease is involved.
+    tokio::time::sleep(Duration::from_millis(1_100)).await;
     let mut renewed = Vec::new();
     for port in [41000, 41001] {
         let reply =
@@ -571,7 +578,7 @@ async fn netmap_exit_selection_change_ends_the_old_exit_connection() {
     for update in [updates[0], updates[2]] {
         assert_eq!(
             update,
-            Update::Updated {
+            Applied {
                 retired_circuits: 1,
                 retired_flows: 1
             }

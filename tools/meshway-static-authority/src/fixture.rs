@@ -7,7 +7,7 @@ use meshway_model::{
     *,
 };
 use meshway_policy::SubjectContext;
-use std::{collections::BTreeMap, net::Ipv4Addr, time::Duration};
+use std::{collections::BTreeMap, net::Ipv4Addr};
 
 pub const LISTENER_KEY: &str = "perfudp";
 
@@ -21,7 +21,7 @@ pub struct Chain {
 }
 
 impl Chain {
-    pub fn new(nodes: usize, lifetime: Duration) -> Result<Self, Error> {
+    pub fn new(nodes: usize) -> Result<Self, Error> {
         if !(2..=8).contains(&nodes) {
             return Err("chain requires 2..=8 nodes".into());
         }
@@ -96,7 +96,6 @@ impl Chain {
             &configuration,
             &SubjectContext::default(),
             materials,
-            lifetime,
         )?;
         crate::check_path(
             authority.netmap(path[0])?,

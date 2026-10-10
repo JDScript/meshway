@@ -4,7 +4,6 @@ pub(super) async fn round_trips(
     backend: &mut backend::Backend,
     tun: &meshway_tun::Tun,
     tuple: OriginalTuple,
-    clock: &Arc<Clock>,
     external_source: &str,
 ) {
     let scope = ExitScope {
@@ -19,7 +18,7 @@ pub(super) async fn round_trips(
         ..tuple
     };
     backend
-        .install(id(102), echo, deadline(clock, 30_000), scope.clone())
+        .install(id(102), echo, cutoff(30_000), scope.clone())
         .await
         .unwrap();
     let mut body = vec![8, 0, 0, 0, 0x42, 0xce, 0, 1];
@@ -46,7 +45,7 @@ pub(super) async fn round_trips(
         ..echo
     };
     backend
-        .install(id(104), shared, deadline(clock, 30_000), scope.clone())
+        .install(id(104), shared, cutoff(30_000), scope.clone())
         .await
         .unwrap();
     let old_ct = conntrack::lookup_owned(&mut backend.commands, echo, backend.ledger.program.mark)
@@ -107,7 +106,7 @@ pub(super) async fn round_trips(
         ..tuple
     };
     backend
-        .install(id(103), tcp, deadline(clock, 30_000), scope)
+        .install(id(103), tcp, cutoff(30_000), scope)
         .await
         .unwrap();
     tun.send(&segment(tcp, 1000, 0, 2, &[])).await.unwrap();

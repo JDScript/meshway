@@ -3,7 +3,7 @@ name = "meshway-static-authority"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-description = "In-memory compiler-backed execution issuer for benchmarks and fixtures only"
+description = "In-memory compiler-backed desired netmap content for benchmarks and fixtures only"
 
 [dependencies]
 curve25519-dalek = "4.1"
@@ -11,11 +11,11 @@ ed25519-dalek = { version = "2.2", default-features = false, features = ["std", 
 getrandom.workspace = true
 meshway-authority = { path = "../../crates/meshway-authority" }
 meshway-configuration = { path = "../../crates/meshway-configuration" }
+meshway-engine = { path = "../../crates/meshway-engine" }
 meshway-model = { path = "../../crates/meshway-model" }
 meshway-policy = { path = "../../crates/meshway-policy" }
 serde_json.workspace = true
 serde.workspace = true
-tokio-util.workspace = true
 uuid.workspace = true
 zeroize = "1.8"
 

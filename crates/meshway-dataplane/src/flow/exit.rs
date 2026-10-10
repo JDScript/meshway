@@ -129,9 +129,10 @@ impl FlowTable {
             return Ok(());
         }
         let renew_after = self.limits.idle_timeout / 2;
-        // Compare effective bounds: a netmap flow has no UTC cap of its own,
-        // its installed scope follows the snapshot's current lease.
-        let bound = guard.expiry().min(prepared.cap);
+        // Compare effective bounds of the circuit and the flow.
+        let bound = guard
+            .expiry()
+            .map_or(prepared.cap, |cap| cap.min(prepared.cap));
         let renew = exit.gate.as_ref().is_none_or(|gate| {
             gate.scope.ensure_current().is_err()
                 || (gate.ready().is_ok()

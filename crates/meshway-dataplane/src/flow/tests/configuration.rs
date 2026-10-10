@@ -4,7 +4,7 @@ use meshway_configuration::execution::*;
 use meshway_configuration::netmap::CompiledNetmap;
 use meshway_configuration::*;
 use meshway_model::state::{Capability, StreamKind, TransportRole};
-use meshway_model::{BoundNodeKey, KeyAlgorithm, NetmapLease, NodePublicKey, Revision, Version};
+use meshway_model::{BoundNodeKey, KeyAlgorithm, NodePublicKey, Revision, Version};
 use meshway_policy::{
     SubjectContext,
     compile::netmap::{NetmapInput, Target, compile_netmap},
@@ -20,7 +20,6 @@ pub(super) fn node(i: u8) -> NodeId {
 /// clock. Decisions go through the same per-netmap cache SecureNode uses.
 pub(super) struct Scene {
     pub configs: BTreeMap<NodeId, CompiledNetmap>,
-    pub leases: BTreeMap<NodeId, NetmapLease>,
     pub decisions: BTreeMap<NodeId, crate::netmap::Decisions>,
     pub tables: BTreeMap<NodeId, FlowTable>,
     pub target: Target,
@@ -163,16 +162,6 @@ impl Scene {
         let instant = Instant::now();
         let now_ms = 1000;
         Self {
-            leases: compiled
-                .nodes
-                .iter()
-                .map(|(id, netmap)| {
-                    (
-                        *id,
-                        NetmapLease::new(netmap.reference(), now_ms, now_ms + 86_400_000).unwrap(),
-                    )
-                })
-                .collect(),
             configs: compiled.nodes,
             decisions: (1..=3).map(|i| (node(i), Default::default())).collect(),
             tables: (1..=3)
@@ -273,10 +262,7 @@ impl Scene {
         let table = self.tables.get_mut(&id).unwrap();
         let prepared = table.prepare(
             Policy {
-                leased: meshway_policy::admission::netmap::Leased {
-                    netmap: &netmap.netmap,
-                    lease: &self.leases[&id],
-                },
+                netmap: &netmap.netmap,
                 decide: &mut decide,
             },
             id,

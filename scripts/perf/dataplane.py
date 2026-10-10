@@ -510,7 +510,7 @@ def sample(args, metadata, output, network, image, platform, identity, mode, bat
                 save(directory / "public-nodes.json", public_nodes)
                 push(containers["a"], "/tmp/public-nodes.json", (directory / "public-nodes.json").read_text())
                 fixture = json.loads(command("docker", "exec", containers["a"], "/fixtures/meshway-dataplane-fixture",
-                    "compile", "--input", "/tmp/public-nodes.json", "--seconds", str(2 * (args.seconds + args.omit) + 120)))
+                    "compile", "--input", "/tmp/public-nodes.json"))
                 save(directory / "fixture.json", fixture)
                 if origin != directory:
                     shutil.copy2(directory / "fixture.json", origin / "fixture.json")

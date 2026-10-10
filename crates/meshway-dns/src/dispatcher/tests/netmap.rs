@@ -557,14 +557,24 @@ async fn exit_resolver_rejects_raw_addresses_even_when_the_source_is_in_its_plan
         listener_key: "udp".into(),
         protocol: meshway_configuration::TransportProtocol::NativeUdp,
     };
+    let packet = |control: &Control| {
+        (
+            meshway_engine::Desired::new(&control.netmap().unwrap().content).unwrap(),
+            control.dataplane_keys().unwrap(),
+        )
+    };
+    let (desired, keys) = packet(&source);
     let mut origin = meshway_dataplane::secure::SecureNode::new(
-        source_script.identity(&source),
+        &desired,
+        keys,
         Default::default(),
         BTreeMap::from([(network.e, carrier.clone())]),
     )
     .unwrap();
+    let (desired, keys) = packet(&control);
     let mut exit = meshway_dataplane::secure::SecureNode::new(
-        script.identity(&control),
+        &desired,
+        keys,
         Default::default(),
         BTreeMap::from([(network.a, carrier.clone())]),
     )

@@ -30,23 +30,19 @@ impl MeshResolverRoute {
         transport: DnsTransport,
         deadline: Instant,
     ) -> Result<Self, RouteError> {
-        let policy = |error| match error {
-            meshway_policy::dns_route::ResolverRouteError::Expired => RouteError::Expired,
-            _ => RouteError::Binding,
-        };
+        let policy = |_| RouteError::Binding;
         let reading = snapshot.netmap_reading().map_err(|_| RouteError::Expired)?;
         let netmap = &reading.netmap.netmap;
         let DnsPlan::ViaExit { service } = &netmap.dns.egress else {
             return Err(RouteError::Binding);
         };
         meshway_policy::dns_route::netmap_dns_service(
-            reading.leased(),
+            netmap,
             service,
             netmap.node_id,
             service.exit,
             &service.path.nodes,
             transport,
-            reading.now_ms,
         )
         .map_err(policy)?;
         let (service, expires_at_ms) = (service.clone(), reading.expires_at_ms);

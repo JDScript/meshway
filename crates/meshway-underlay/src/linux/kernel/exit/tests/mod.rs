@@ -1,9 +1,9 @@
+use super::io::ExitCutoff as Deadline;
 use super::*;
 use crate::linux::{
     kernel::{Kernel, journal::Journal},
     tasks::Tasks,
 };
-use meshway_authority::{Clock, Deadline, Started};
 use meshway_configuration::execution::ExitNat;
 use meshway_model::{Digest, exit::ExitFamily};
 use meshway_private_storage::Directory;
@@ -143,8 +143,7 @@ async fn exit_nat_udp_real_reply_qualification_confirm_retire_and_expiry() {
             .await
             .is_err()
     );
-    let clock = Arc::new(Clock::new().unwrap());
-    let initial_deadline = deadline(&clock, 30_000);
+    let initial_deadline = cutoff(30_000);
     let scope = ExitScope {
         binding: Digest::from_bytes([2; 32]),
         revoked: CancellationToken::new(),
@@ -177,7 +176,7 @@ async fn exit_nat_udp_real_reply_qualification_confirm_retire_and_expiry() {
         format!("from={external_source}|x3-qualified").as_bytes()
     );
     backend
-        .renew(id(1), deadline(&clock, 30_000), scope.clone())
+        .renew(id(1), cutoff(30_000), scope.clone())
         .await
         .unwrap();
     backend.retire(id(1)).await.unwrap();
@@ -193,11 +192,11 @@ async fn exit_nat_udp_real_reply_qualification_confirm_retire_and_expiry() {
             .await
             .is_err()
     );
-    adversarial::conflicts(&mut backend, &tun, tuple, &clock).await;
-    protocols::round_trips(&mut backend, &tun, tuple, &clock, &external_source).await;
+    adversarial::conflicts(&mut backend, &tun, tuple).await;
+    protocols::round_trips(&mut backend, &tun, tuple, &external_source).await;
     assert!(
         backend
-            .install(id(2), tuple, deadline(&clock, 30_000), scope.clone())
+            .install(id(2), tuple, cutoff(30_000), scope.clone())
             .await
             .is_err()
     );
@@ -209,7 +208,7 @@ async fn exit_nat_udp_real_reply_qualification_confirm_retire_and_expiry() {
         ..tuple
     };
     backend
-        .install(id(3), expiring, deadline(&clock, 5_000), scope)
+        .install(id(3), expiring, cutoff(5_000), scope)
         .await
         .unwrap();
     kernel.quiesce().await.unwrap();
@@ -231,7 +230,7 @@ async fn exit_nat_udp_real_reply_qualification_confirm_retire_and_expiry() {
         .install(
             id(4),
             missing,
-            deadline(&clock, 30_000),
+            cutoff(30_000),
             ExitScope {
                 binding: Digest::from_bytes([3; 32]),
                 revoked: CancellationToken::new(),
@@ -260,7 +259,7 @@ async fn exit_nat_udp_real_reply_qualification_confirm_retire_and_expiry() {
         .install(
             id(5),
             crash,
-            deadline(&clock, 30_000),
+            cutoff(30_000),
             ExitScope {
                 binding: Digest::from_bytes([4; 32]),
                 revoked: CancellationToken::new(),
@@ -392,12 +391,15 @@ async fn exit_recovers_real_sigkill_live_ct_in_same_namespace() {
     );
 }
 
-fn deadline(clock: &Arc<Clock>, milliseconds: u64) -> Deadline {
-    Deadline::from_response(
-        Started::now(clock).unwrap(),
-        clock.now().unwrap() + milliseconds,
-    )
-    .unwrap()
+pub(super) fn cutoff(milliseconds: u64) -> Deadline {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    Deadline {
+        at: std::time::Instant::now() + std::time::Duration::from_millis(milliseconds),
+        ms: now + milliseconds,
+    }
 }
 
 async fn recv_ipv4(tun: &meshway_tun::Tun, packet: &mut [u8]) -> Result<usize, meshway_tun::Error> {

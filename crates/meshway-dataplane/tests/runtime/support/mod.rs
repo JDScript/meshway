@@ -38,30 +38,16 @@ pub struct Node {
     pub control: Control,
     /// Bindings committed by enrollment.
     pub keys: meshway_protocol::NodeKeyMetadata,
-    /// Staged migration: snapshots of Control's verified netmap.
-    pub issuer: meshway_authority::StagedIssuer,
 }
 
 impl Node {
-    /// The packet-plane identity for Control's currently published netmap.
-    pub fn identity(&mut self) -> meshway_authority::DataPlaneIdentity {
-        let netmap = self.control.netmap().unwrap();
-        let instance =
-            self.control
-                .status()
-                .instance
-                .map(|instance| meshway_protocol::InstanceRequest {
-                    instance_id: instance.instance_id,
-                    generation: instance.generation,
-                });
-        self.issuer
-            .issue(
-                &netmap.content,
-                netmap.lease,
-                instance,
-                &self.control.dataplane_keys().unwrap(),
-            )
-            .unwrap()
+    /// Control's currently published netmap as desired content.
+    pub fn desired(&self) -> meshway_engine::Desired {
+        meshway_engine::Desired::new(&self.control.netmap().unwrap().content).unwrap()
+    }
+
+    pub fn packet_keys(&self) -> meshway_authority::DataPlaneKeys {
+        self.control.dataplane_keys().unwrap()
     }
 }
 
@@ -171,7 +157,6 @@ impl Server {
             id: enrolled.node_id,
             control,
             keys: enrolled.keys,
-            issuer: meshway_authority::StagedIssuer::new().unwrap(),
         }
     }
 

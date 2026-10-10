@@ -243,13 +243,8 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 diagnostics.plan(observation_plans.borrow_and_update().clone());
             }
             Work::Command(Some(Command::Ping(request))) => {
-                let snapshot = engine
-                    .components()
-                    .installed
-                    .as_ref()
-                    .filter(|state| live && state.secure.is_some())
-                    .map(|state| state.identity.snapshot().clone());
-                diagnostics.ping(snapshot.as_ref(), request);
+                let scope = engine.components().diagnostic_scope().filter(|_| live);
+                diagnostics.ping(scope, request);
             }
             Work::Command(Some(Command::Builder(reply))) => {
                 let _ = reply.send(
@@ -526,7 +521,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                             *link,
                             frame.payload.into(),
                             received_at,
-                            state.identity.snapshot(),
+                            &state.desired,
                             secure,
                         );
                     }
@@ -536,6 +531,10 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             Work::ExitChanged => unreachable!("mapped above"),
         }
         let live = engine.desired().is_some();
+        let instance = engine
+            .components()
+            .diagnostic_scope()
+            .and_then(|(_, instance)| instance);
         let Plane {
             host,
             dns,
@@ -556,14 +555,15 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 let _ = secure.set_carriers(carriers.clone());
             }
             secure.set_ready_exits(peers.ready_exits());
+            // DNS routes still bind the staged snapshot until DNS applies content.
             let snapshot = state.identity.snapshot().clone();
-            diagnostics.synchronize(&snapshot);
+            diagnostics.synchronize(&state.desired, instance);
             tokio::select! { biased;
                 _ = host.invalidated() => {},
                 _ = dns.failed(), if !dns_failed => {},
                 _ = async {
                     static PROFILE: meshway_logging::profile::Metric = meshway_logging::profile::Metric::new("host.drive.poll");
-                    PROFILE.poll(packets.drive(secure, manager, carriers.as_ref(), host, &snapshot, &mut diagnostics, &mut dns_queries, dns.dispatcher(), &mut pool, state.exit.as_mut())).await;
+                    PROFILE.poll(packets.drive(secure, manager, carriers.as_ref(), host, &state.desired, &mut diagnostics, &mut dns_queries, dns.dispatcher(), &mut pool, state.exit.as_mut())).await;
                     dns_queries.drive(secure, &snapshot, manager).await;
                     diagnostics.drive(secure, manager, carriers.as_ref(), &gateway);
                 } => {},
@@ -707,10 +707,8 @@ fn sample(
         && let (Some(secure), Some(manager)) = (&state.secure, &state.manager)
     {
         report.facts = manager.snapshot().ok();
-        if let Ok(circuits) = secure.ready_circuits()
-            && let Ok(netmap) = state.identity.snapshot().netmap()
-        {
-            let node = netmap.netmap.node_id;
+        if let Ok(circuits) = secure.ready_circuits() {
+            let node = state.desired.netmap().node_id;
             meshway_logging::profile::gauge("secure.ready_circuits", Some(circuits.len() as u64));
             for circuit in circuits {
                 for pair in circuit.path.windows(2) {

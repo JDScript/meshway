@@ -27,8 +27,6 @@ struct Fixture {
     server: tokio::task::JoinHandle<()>,
     stop: tokio::sync::oneshot::Sender<()>,
     controls: Vec<Control>,
-    /// Staged migration: snapshots of each Control's verified netmap.
-    issuers: Vec<meshway_authority::StagedIssuer>,
     owner: Owner,
     subscription: ObservationSubscriptionId,
     task: ObservationTask,
@@ -45,24 +43,30 @@ fn instance_of(control: &Control) -> meshway_protocol::InstanceRequest {
     }
 }
 
-fn staged(
-    control: &Control,
-    issuer: &mut meshway_authority::StagedIssuer,
-) -> meshway_authority::DataPlaneIdentity {
-    let netmap = control.netmap().unwrap();
-    issuer
-        .issue(
-            &netmap.content,
-            netmap.lease,
-            Some(instance_of(control)),
-            &control.dataplane_keys().unwrap(),
-        )
-        .unwrap()
+/// Control's published netmap as Engine's desired content, and the instance.
+fn content(control: &Control) -> (meshway_engine::Desired, Option<meshway_model::InstanceId>) {
+    (
+        meshway_engine::Desired::new(&control.netmap().unwrap().content).unwrap(),
+        Some(instance_of(control).instance_id),
+    )
 }
 
 impl Fixture {
-    fn identity(&mut self, index: usize) -> meshway_authority::DataPlaneIdentity {
-        staged(&self.controls[index], &mut self.issuers[index])
+    fn content(
+        &self,
+        index: usize,
+    ) -> (meshway_engine::Desired, Option<meshway_model::InstanceId>) {
+        content(&self.controls[index])
+    }
+
+    fn secure(
+        &self,
+        index: usize,
+        carriers: BTreeMap<meshway_model::NodeId, meshway_configuration::execution::Carrier>,
+    ) -> SecureNode {
+        let (desired, _) = self.content(index);
+        let keys = self.controls[index].dataplane_keys().unwrap();
+        SecureNode::new(&desired, keys, Default::default(), carriers).unwrap()
     }
 
     async fn open() -> Self {
@@ -235,10 +239,6 @@ impl Fixture {
                 .unwrap();
         }
         let subscription = id();
-        let mut issuers: Vec<_> = controls
-            .iter()
-            .map(|_| meshway_authority::StagedIssuer::new().unwrap())
-            .collect();
         let instance = instance_of(&controls[0]);
         let created_at = Instant::now();
         let first = controls[0]
@@ -256,9 +256,9 @@ impl Fixture {
             .await
             .unwrap();
         let accepted_at = Instant::now();
-        let snapshot = staged(&controls[0], &mut issuers[0]).snapshot().clone();
+        let (desired, bound) = content(&controls[0]);
         let task = controls[0]
-            .get_observation_tasks(snapshot.reference())
+            .get_observation_tasks(desired.reference())
             .await
             .unwrap()
             .items
@@ -267,7 +267,7 @@ impl Fixture {
             .unwrap();
         let mut owner = Owner::default();
         owner
-            .synchronize(snapshot, std::slice::from_ref(&task))
+            .synchronize(&desired, bound, std::slice::from_ref(&task))
             .unwrap();
         let installed_at = Instant::now();
         Self {
@@ -275,7 +275,6 @@ impl Fixture {
             server,
             stop,
             controls,
-            issuers,
             owner,
             subscription,
             task,
@@ -325,9 +324,8 @@ impl Fixture {
 #[tokio::test]
 async fn acquisition_wait_never_creates_a_measurement_and_has_a_separate_setup_limit() {
     let mut fixture = Fixture::open().await;
-    let identity = fixture.identity(0);
-    let snapshot = identity.snapshot().clone();
-    let mut secure = SecureNode::new(identity, Default::default(), BTreeMap::new()).unwrap();
+    let (desired, bound) = fixture.content(0);
+    let mut secure = fixture.secure(0, BTreeMap::new());
     let task = fixture.owner.tasks.get_mut(&fixture.task.id).unwrap();
     task.preparing = Instant::now() - DEADLINE - Duration::from_secs(2);
     task.next = Instant::now();
@@ -344,7 +342,7 @@ async fn acquisition_wait_never_creates_a_measurement_and_has_a_separate_setup_l
     fixture.owner.suspend();
     fixture
         .owner
-        .synchronize(snapshot.clone(), std::slice::from_ref(&fixture.task))
+        .synchronize(&desired, bound, std::slice::from_ref(&fixture.task))
         .unwrap();
     assert_eq!(
         fixture.owner.tasks[&fixture.task.id].preparing, before,
@@ -367,7 +365,6 @@ async fn acquisition_wait_never_creates_a_measurement_and_has_a_separate_setup_l
         }
     ));
     assert!(fixture.owner.tasks[&fixture.task.id].measurement.is_none());
-    assert!(snapshot.ensure_current().is_ok());
     fixture.owner.acknowledge(fixture.task.id);
     assert!(
         fixture
@@ -469,31 +466,30 @@ async fn local_failure_and_late_reply_do_not_fabricate_loss_or_zero_rtt() {
 #[tokio::test]
 async fn task_binding_shared_consumers_pause_and_scope_revocation_are_exact() {
     let mut fixture = Fixture::open().await;
-    let snapshot = fixture.identity(0).snapshot().clone();
+    let (desired, bound) = fixture.content(0);
     let mut wrong = fixture.task.clone();
     wrong.instance_id = id();
     assert!(
         fixture
             .owner
-            .synchronize(snapshot.clone(), &[wrong])
+            .synchronize(&desired, bound, &[wrong])
             .is_err()
     );
-    let peer = fixture.identity(1).snapshot().clone();
+    let (peer, peer_instance) = fixture.content(1);
     assert!(
         fixture
             .owner
-            .synchronize(peer, std::slice::from_ref(&fixture.task))
+            .synchronize(&peer, peer_instance, std::slice::from_ref(&fixture.task))
             .is_err()
     );
     assert!(matches!(
         fixture
             .owner
-            .synchronize(snapshot.clone(), &vec![fixture.task.clone(); MAX_TASKS + 1]),
+            .synchronize(&desired, bound, &vec![fixture.task.clone(); MAX_TASKS + 1]),
         Err(Error::Capacity)
     ));
     assert_eq!(fixture.owner.tasks.len(), 1);
-    let identity = fixture.identity(0);
-    let mut secure = SecureNode::new(identity, Default::default(), BTreeMap::new()).unwrap();
+    let mut secure = fixture.secure(0, BTreeMap::new());
     assert!(
         fixture
             .owner
@@ -501,7 +497,7 @@ async fn task_binding_shared_consumers_pause_and_scope_revocation_are_exact() {
             .is_empty()
     );
     assert!(fixture.owner.tasks[&fixture.task.id].measurement.is_none());
-    let instance = snapshot.instance().unwrap();
+    let instance = instance_of(&fixture.controls[0]);
     let shared = fixture.controls[0]
         .create_node_observation(&CreateNodeObservation {
             instance: instance.clone(),
@@ -519,7 +515,7 @@ async fn task_binding_shared_consumers_pause_and_scope_revocation_are_exact() {
     assert_eq!(shared.task.id, fixture.task.id);
     fixture
         .owner
-        .synchronize(snapshot.clone(), std::slice::from_ref(&fixture.task))
+        .synchronize(&desired, bound, std::slice::from_ref(&fixture.task))
         .unwrap();
     assert_eq!(fixture.owner.tasks.len(), 1);
     let (mid, challenge) = fixture.measurement(Instant::now());
@@ -539,13 +535,13 @@ async fn task_binding_shared_consumers_pause_and_scope_revocation_are_exact() {
         .unwrap();
     let surviving = cancelled.task.unwrap();
     assert_eq!(surviving.id, fixture.task.id);
-    assert_eq!(surviving.netmap, snapshot.reference());
+    assert_eq!(surviving.netmap, desired.reference());
     fixture.controls[0]
         .report_observation_result(
             &fixture.task,
             &ObservationResult {
                 instance_id: instance.instance_id,
-                netmap: snapshot.reference(),
+                netmap: desired.reference(),
                 result: ObservationUpdate::Phase {
                     phase: ReportedObservationPhase::Preparing,
                 },
@@ -554,21 +550,16 @@ async fn task_binding_shared_consumers_pause_and_scope_revocation_are_exact() {
         .await
         .unwrap();
     assert!(
-        snapshot.ensure_current().is_ok(),
+        fixture.controls[0].netmap().is_some(),
         "observation cancellation does not fence business Control"
     );
     fixture.owner.set_paused(&Default::default());
     fixture.controls[0].stop().await.unwrap();
     assert!(fixture.controls[0].netmap().is_none());
-    // Control withdrew its netmap: Engine applies empty, ending every snapshot.
-    fixture.issuers[0].withdraw();
+    // Control withdrew its netmap: Engine's empty apply clears this owner.
+    fixture.owner.clear();
     assert_eq!(fixture.owner.outputs().count(), 0);
-    assert!(
-        fixture
-            .owner
-            .synchronize(snapshot, std::slice::from_ref(&fixture.task))
-            .is_err()
-    );
+    assert_eq!(fixture.owner.adjacency_interests().count(), 0);
     fixture.close().await;
 }
 
@@ -633,9 +624,9 @@ async fn local_target_denial_and_wrong_instance_do_not_fence_business_control() 
 }
 
 #[tokio::test]
-async fn preparing_high_water_replaces_same_snapshot_segment_and_cancels_old_publication() {
+async fn preparing_high_water_replaces_same_content_segment_and_cancels_old_publication() {
     let mut fixture = Fixture::open().await;
-    let snapshot = fixture.identity(0).snapshot().clone();
+    let (desired, bound) = fixture.content(0);
     let start = Instant::now();
     let (mid, challenge) = fixture.measurement(start);
     tokio::time::sleep(Duration::from_millis(10)).await;
@@ -661,7 +652,7 @@ async fn preparing_high_water_replaces_same_snapshot_segment_and_cancels_old_pub
     running.latest = Some(fixture.sample().clone());
     fixture
         .owner
-        .synchronize(snapshot.clone(), &[running.clone()])
+        .synchronize(&desired, bound, &[running.clone()])
         .unwrap();
     assert!(output.is_current());
 
@@ -671,14 +662,16 @@ async fn preparing_high_water_replaces_same_snapshot_segment_and_cancels_old_pub
     preparing.latest = None;
     fixture
         .owner
-        .synchronize(snapshot.clone(), &[preparing.clone()])
+        .synchronize(&desired, bound, &[preparing.clone()])
         .unwrap();
-    assert!(snapshot.ensure_current().is_ok());
     assert!(!output.is_current());
     assert_eq!(fixture.owner.tasks[&fixture.task.id].segment.get(), 2);
     assert_eq!(fixture.owner.tasks[&fixture.task.id].last_end, Some(end));
     assert_eq!(fixture.owner.outputs().count(), 0);
-    fixture.owner.synchronize(snapshot, &[preparing]).unwrap();
+    fixture
+        .owner
+        .synchronize(&desired, bound, &[preparing])
+        .unwrap();
     assert_eq!(
         fixture.owner.tasks[&fixture.task.id].segment.get(),
         2,

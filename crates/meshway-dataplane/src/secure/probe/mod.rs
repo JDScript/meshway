@@ -52,7 +52,7 @@ pub(super) struct Probes {
 }
 impl Probes {
     /// Correlations whose original guard ended (including by a content
-    /// update) are dropped; nothing is carried to another snapshot.
+    /// update) are dropped; nothing is carried to other content.
     pub(super) fn retain_current(&mut self) {
         self.pending
             .retain(|_, request| request.guard.ensure_current().is_ok());
@@ -164,8 +164,8 @@ impl SecureNode {
         deadline: Instant,
         carrier: &Carrier,
     ) -> Result<PendingFrame, Error> {
-        let snapshot = self.identity.snapshot().clone();
-        let reading = View::of(&snapshot).map_err(|_| Error::Authority)?;
+        let desired = self.desired.clone();
+        let reading = View::of(&desired);
         self.maintain_circuits(&reading, false)?;
         let mut owned = self.circuits.remove(&circuit).ok_or(Error::State)?;
         let result = self.probe_inner(
@@ -176,7 +176,10 @@ impl SecureNode {
             carrier,
             &reading,
         );
-        let result = owned.finish_operation(self.identity.snapshot(), "probe", result);
+        if result.is_ok() {
+            owned.sent(reading.instant);
+        }
+        let result = owned.finish_operation("probe", result);
         self.restore(circuit, owned, &reading);
         result
     }
@@ -190,7 +193,6 @@ impl SecureNode {
         carrier: &Carrier,
         reading: &View<'_>,
     ) -> Result<PendingFrame, Error> {
-        let snapshot = self.identity.snapshot().clone();
         circuit.check_at(reading)?;
         let observation = rate_key(&circuit.context)?;
         let State::Endpoint(noise) = &circuit.state else {
@@ -205,8 +207,9 @@ impl SecureNode {
         Self::check_outgoing_carrier(&self.carriers, circuit, false, reading)?;
         let now = reading.instant;
         let now_ms = reading.now_ms;
-        let mut guard = circuit.guard(&snapshot, false);
-        let at = guard.expiry().at.min(deadline).min(now + MAX_LIFETIME);
+        let mut guard = circuit.guard(false);
+        let at = deadline.min(now + MAX_LIFETIME);
+        let at = guard.expires_at().map_or(at, |cap| cap.min(at));
         let remaining = u64::try_from(at.saturating_duration_since(now).as_millis())
             .map_err(|_| Error::Limits)?;
         guard.life.restrict(Some(Cap {
@@ -216,7 +219,7 @@ impl SecureNode {
         guard.finish()?;
         let metadata = ProbeMetadata {
             measurement_id,
-            expires_at_ms: guard.expiry().ms,
+            expires_at_ms: guard.expiry().ok_or(Error::Limits)?.ms,
         };
         self.probes.admit(
             observation,
@@ -266,11 +269,13 @@ impl SecureNode {
         }
         let observation = rate_key(&circuit.context)?;
         let metadata = frame.probe.ok_or(Error::Wire)?;
-        let snapshot = self.identity.snapshot().clone();
         circuit.check_at(reading)?;
         let now_ms = reading.now_ms;
         if now_ms >= metadata.expires_at_ms
-            || metadata.expires_at_ms > circuit.guard(&snapshot, false).expiry().ms
+            || circuit
+                .guard(false)
+                .expiry()
+                .is_some_and(|cap| metadata.expires_at_ms > cap.ms)
             || metadata.expires_at_ms - now_ms > MAX_LIFETIME.as_millis() as u64
         {
             return Err(Error::Expired);
@@ -314,10 +319,10 @@ impl SecureNode {
                 .completed = true;
             result
         } else {
-            circuit.ensure_current(&snapshot)?;
+            circuit.ensure_current()?;
             self.probes
                 .admit(observation, key.0, key.1, RateRole::Remote, reading)?;
-            let mut guard = circuit.guard(&snapshot, false);
+            let mut guard = circuit.guard(false);
             guard.life.restrict(Some(Cap {
                 at: reading.instant + Duration::from_millis(metadata.expires_at_ms - now_ms),
                 ms: metadata.expires_at_ms,
@@ -370,7 +375,7 @@ impl SecureNode {
             );
             result
         };
-        circuit.ensure_current(&snapshot)?;
+        circuit.ensure_current()?;
         circuit.receive[index].commit(sequence);
         Ok(result)
     }

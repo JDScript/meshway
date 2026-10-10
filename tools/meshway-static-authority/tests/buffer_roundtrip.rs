@@ -5,7 +5,6 @@ use meshway_dataplane::{
     secure::{Received, SecureNode},
 };
 use meshway_static_authority::fixture::{Chain, tcp_ipv4};
-use std::time::Duration;
 
 fn grant(chain: &Chain) -> meshway_dataplane::secure::CircuitGrant {
     meshway_dataplane::secure::CircuitGrant {
@@ -15,15 +14,16 @@ fn grant(chain: &Chain) -> meshway_dataplane::secure::CircuitGrant {
 }
 
 #[test]
-fn pooled_packet_survives_three_roles_without_payload_copy_and_revocation_returns_it() {
-    let chain = Chain::new(3, Duration::from_secs(60)).unwrap();
+fn pooled_packet_survives_three_roles_without_payload_copy_and_withdrawal_returns_it() {
+    let chain = Chain::new(3).unwrap();
     let mut nodes: Vec<_> = chain
         .path
         .iter()
         .enumerate()
         .map(|(index, id)| {
             SecureNode::new(
-                chain.authority.identity(*id).unwrap(),
+                &chain.authority.desired(*id).unwrap(),
+                chain.authority.keys(*id).unwrap(),
                 Default::default(),
                 chain.carriers_for(index).unwrap(),
             )
@@ -100,10 +100,11 @@ fn pooled_packet_survives_three_roles_without_payload_copy_and_revocation_return
     assert!(buffer.iter().all(|byte| *byte == 0));
     buffer.copy_from_slice(&plaintext);
     let output = nodes[0].send(cid, Packet::parse(buffer).unwrap()).unwrap();
-    chain.authority.revoke(chain.path[0]).unwrap();
+    // Engine's empty apply drops the packet owner, returning the buffer.
+    drop(nodes.remove(0));
     assert!(
         output
-            .release(|_| panic!("revoked buffer released"))
+            .release(|_| panic!("withdrawn buffer released"))
             .is_err()
     );
     let buffer = pool.acquire(52).unwrap();

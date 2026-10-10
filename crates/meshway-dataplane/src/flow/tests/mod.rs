@@ -348,7 +348,7 @@ fn signed_facts_and_parsed_packets_share_protocol_state_and_rejections() {
 }
 
 #[test]
-fn capacity_rejection_is_transactional_and_flows_end_with_idle_expiry_or_the_lease() {
+fn capacity_rejection_is_transactional_and_flows_end_with_idle_expiry() {
     let mut scene = Scene::new(BusinessProtocol::Udp, false, true);
     scene.tables.get_mut(&node(1)).unwrap().limits.max_flows = 1;
     scene.tables.get_mut(&node(1)).unwrap().limits.idle_timeout = Duration::from_secs(1);
@@ -387,12 +387,4 @@ fn capacity_rejection_is_transactional_and_flows_end_with_idle_expiry_or_the_lea
     scene
         .process(1, None, 1, &[1, 2, 3], udp(1, 3, 50001, 443))
         .unwrap();
-    // The netmap lease bounds every admission; SecureNode resets the table
-    // when it ends.
-    scene.now_ms = scene.leases[&node(1)].expires_at_ms;
-    assert!(
-        scene
-            .process(1, None, 1, &[1, 2, 3], udp(1, 3, 50001, 443))
-            .is_err()
-    );
 }

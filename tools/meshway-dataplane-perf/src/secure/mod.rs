@@ -114,7 +114,8 @@ pub async fn run(
     }
     let authority = fixture.issue(local, material)?;
     let mut node = SecureNode::new(
-        authority.identity(local)?,
+        &authority.desired(local)?,
+        authority.keys(local)?,
         meshway_dataplane::secure::Limits {
             flows: meshway_dataplane::Limits {
                 idle_timeout: options.flow_idle,
@@ -139,7 +140,8 @@ pub async fn run(
         options,
         &fixture,
         local,
-        authority.identity(local)?,
+        authority.desired(local)?,
+        authority.keys(local)?,
         material_path,
     )
     .await?;

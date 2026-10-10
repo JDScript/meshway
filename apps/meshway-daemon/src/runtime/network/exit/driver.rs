@@ -62,9 +62,10 @@ pub(super) async fn run(
                     let revoked = resources
                         .get(&flow)
                         .map_or_else(|| stop.child_token(), |r| r.revoked.clone());
-                    let deadline = scope
-                        .snapshot()
-                        .deadline_at(scope.deadline(), scope.deadline_ms());
+                    let deadline = Ok::<_, ()>(meshway_underlay::ExitCutoff {
+                        at: scope.deadline(),
+                        ms: scope.deadline_ms(),
+                    });
                     let result = if stop.is_cancelled() || scope.ensure_current().is_err() {
                         false
                     } else if let (Ok(deadline), Some(tuple)) =

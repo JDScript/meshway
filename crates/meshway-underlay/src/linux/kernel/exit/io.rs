@@ -1,7 +1,6 @@
 //! The exit descriptor never leaves this bounded I/O owner.
 use super::tuple::OriginalTuple;
 use crate::{Error, Result};
-use meshway_authority::Deadline;
 use meshway_model::Digest;
 use meshway_tun::Tun;
 use std::{
@@ -11,6 +10,36 @@ use std::{
 };
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
+
+/// The absolute monotonic and UTC cutoff of one admitted projection, both
+/// exclusive. It is the packet owner's own bound, never a lease.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ExitCutoff {
+    pub at: Instant,
+    pub ms: u64,
+}
+impl ExitCutoff {
+    pub fn valid(&self) -> bool {
+        Instant::now() < self.at
+            && std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .ok()
+                .and_then(|elapsed| u64::try_from(elapsed.as_millis()).ok())
+                .is_some_and(|now| now < self.ms)
+    }
+    pub fn expires_at(&self) -> Instant {
+        self.at
+    }
+    pub fn expires_at_ms(&self) -> u64 {
+        self.ms
+    }
+    pub async fn ended(&self, cancelled: &CancellationToken) {
+        tokio::select! { biased;
+            _ = cancelled.cancelled() => {},
+            _ = tokio::time::sleep_until(self.at.into()) => {},
+        }
+    }
+}
 
 /// Opaque producer-owned authorization/path binding. Revocation is irreversible.
 /// X4 maps the admitted data-plane lifetime, never observed CT/reply state.
@@ -23,7 +52,7 @@ pub struct ExitScope {
 #[derive(Clone)]
 pub(super) struct Live {
     pub tuple: OriginalTuple,
-    pub deadline: Deadline,
+    pub deadline: ExitCutoff,
     pub scope: ExitScope,
     pub retired: CancellationToken,
     pub gate_until: Instant,
@@ -252,7 +281,6 @@ mod tests {
         protection::{Mark, Resources, Shared},
         tasks::Tasks,
     };
-    use meshway_authority::{Clock, Started};
     use std::time::Duration;
     use tokio::sync::Semaphore;
 
@@ -272,7 +300,6 @@ mod tests {
             execution: RwLock::new(None),
             resources: Resources::new(4),
         });
-        let clock = Arc::new(Clock::new().unwrap());
         let guard = Live {
             tuple: OriginalTuple {
                 source: "100.96.0.1".parse().unwrap(),
@@ -282,11 +309,7 @@ mod tests {
                     destination_port: 53,
                 },
             },
-            deadline: Deadline::from_response(
-                Started::now(&clock).unwrap(),
-                clock.now().unwrap() + 30_000,
-            )
-            .unwrap(),
+            deadline: super::super::tests::cutoff(30_000),
             scope: ExitScope {
                 binding: Digest::from_bytes([1; 32]),
                 revoked: CancellationToken::new(),

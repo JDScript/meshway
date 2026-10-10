@@ -28,7 +28,7 @@ impl meshway_transport::SendLifetime for crate::secure::Guard {
         self.ensure_current().is_ok()
     }
     fn ended(self: Arc<Self>) -> Pin<Box<dyn Future<Output = ()> + Send>> {
-        Box::pin(async move { crate::secure::Guard::invalidated(&self).await })
+        Box::pin(async move { crate::secure::Guard::ended(&self).await })
     }
 }
 
@@ -185,7 +185,7 @@ async fn send_owned(
     let _cancel_on_drop = cancellation.clone().drop_guard();
     let context = SendContext {
         cancellation: cancellation.clone(),
-        deadline: Some(guard.expires_at().into()),
+        deadline: guard.expires_at().map(Into::into),
         lifetime: Some(lifetime.clone()),
     };
     let bytes = pending
@@ -282,7 +282,7 @@ impl meshway_transport::SendLifetime for OutputLifetime {
         Box::pin(async move {
             tokio::select! { biased;
                 _ = async {
-                    let mut waits: Vec<_> = self.packets.iter().map(|packet| Box::pin(packet.invalidated())).collect();
+                    let mut waits: Vec<_> = self.packets.iter().map(|packet| Box::pin(packet.ended())).collect();
                     poll_fn(|cx| if waits.iter_mut().any(|wait| wait.as_mut().poll(cx).is_ready()) { Poll::Ready(()) } else { Poll::Pending }).await;
                 } => {},
                 _ = async {
@@ -313,7 +313,7 @@ async fn deliver_owned(tun: &meshway_tun::Tun, pending: PendingAction) -> Result
     let write = tun.send(pending.packet.as_bytes());
     tokio::pin!(write);
     tokio::select! { biased;
-        _ = pending.invalidated() => Err(Error::Cancelled),
+        _ = pending.ended() => Err(Error::Cancelled),
         result = poll_fn(|cx| {
             if pending.ensure_current().is_err() { return Poll::Ready(Err(Error::Cancelled)); }
             write.as_mut().poll(cx).map(|result| result.map_err(|_| Error::Tun))

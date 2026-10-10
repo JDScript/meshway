@@ -22,9 +22,9 @@ use std::{
 mod linux;
 #[cfg(target_os = "linux")]
 pub use linux::{
-    CtConfirmation, DatagramAuthorization, DatagramCandidate, EgressCapture, ExitIncarnation,
-    ExitReply, ExitReplyReader, ExitRole, ExitScope, ExitSendGuard, ExitTransport, Host,
-    Invalidated, OriginalTuple, ProjectionAck, ProtectedDatagram, TraversalDatagram,
+    CtConfirmation, DatagramAuthorization, DatagramCandidate, EgressCapture, ExitCutoff,
+    ExitIncarnation, ExitReply, ExitReplyReader, ExitRole, ExitScope, ExitSendGuard, ExitTransport,
+    Host, Invalidated, OriginalTuple, ProjectionAck, ProtectedDatagram, TraversalDatagram,
     sockets::{CandidateHandle, ListenerHandle, ProtectedListener, ProtectedTcp, SocketFactory},
 };
 

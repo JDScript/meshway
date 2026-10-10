@@ -6,7 +6,7 @@ pub use datagram::{DatagramCandidate, ProtectedDatagram};
 mod kernel;
 pub use kernel::egress::EgressCapture;
 pub use kernel::exit::{
-    CtConfirmation, ExitIncarnation, ExitReply, ExitReplyReader, ExitRole, ExitScope,
+    CtConfirmation, ExitCutoff, ExitIncarnation, ExitReply, ExitReplyReader, ExitRole, ExitScope,
     ExitSendGuard, ExitTransport, Invalidated, OriginalTuple, ProjectionAck,
 };
 mod protection;

@@ -1,5 +1,6 @@
 //! Host-owned control actor and its independent bounded TUN I/O task.
 use super::super::super::protection::same_target;
+use super::io::ExitCutoff as Deadline;
 use super::{
     CtConfirmation, ExitReplyReader, ExitScope, ProjectionAck,
     backend::Backend,
@@ -14,7 +15,6 @@ use crate::{
     Error, Result,
     target::{RoleIdentity, View},
 };
-use meshway_authority::Deadline;
 use meshway_model::exit::ExitFamily;
 use std::{
     collections::BTreeMap,

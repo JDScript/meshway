@@ -172,7 +172,7 @@ async fn same_content_renewal_raises_every_clone_without_cancelling_a_guard() {
     held.ensure_current().unwrap();
     let reading = held.netmap_reading().unwrap();
     assert_eq!(reading.lease, lease);
-    assert_eq!(reading.leased().netmap.serial, netmap.netmap.serial);
+    assert_eq!(reading.netmap.netmap.serial, netmap.netmap.serial);
     assert!(
         !waiter.is_finished(),
         "renewal must not end a waiting guard"

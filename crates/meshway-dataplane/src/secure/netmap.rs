@@ -1,5 +1,5 @@
-//! Netmap execution: in-place content updates, the local first-packet path
-//! and adjacency interest. No demand, publication or Server round trip.
+//! Desired netmap content: its idempotent application, the local
+//! first-packet path and adjacency interest. No Server round trip.
 use super::{
     CircuitGrant, CircuitState, Error, PendingFrame, SecureNode, State, View, authorization,
     crypto, pipeline,
@@ -10,14 +10,12 @@ use crate::{
     flow::{FlowTime, Keep},
     netmap::Outcome,
 };
-use meshway_authority::DataPlaneIdentity;
 use meshway_configuration::execution::{BusinessProtocol, LogicalPath, UnavailableReason};
 use meshway_model::NodeId;
 use meshway_policy::compile::netmap::{Target, observable};
 use std::{
     collections::{BTreeSet, VecDeque},
     net::IpAddr,
-    sync::Arc,
     time::Instant,
 };
 
@@ -28,20 +26,11 @@ const MAX_TARGETS: usize = 64;
 /// Distinct peers of outstanding adjacency interest.
 const MAX_INTERESTS: usize = 256;
 
-/// What a content update did.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Update {
-    /// Same content, renewed lease: everything continues, nothing was scanned.
-    Renewed,
-    /// New content compared in place: unchanged circuits and flows keep all
-    /// state; the counted ones were retired alone.
-    Updated {
-        retired_circuits: usize,
-        retired_flows: usize,
-    },
-    /// The own identity, addresses or keys changed, or the old lease had
-    /// ended: every circuit and flow was terminated.
-    Reset,
+/// Circuits and flows an [`SecureNode::apply`] retired; reporting only.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Applied {
+    pub retired_circuits: usize,
+    pub retired_flows: usize,
 }
 
 /// A local need for an authenticated adjacency to `peer`, from a first packet
@@ -164,18 +153,18 @@ fn observable_paths(
 }
 
 /// The complete paths a `meshway ping` / observation of `target` may measure
-/// on a netmap snapshot, decided locally like a first packet with the
+/// on the desired netmap, decided locally like a first packet with the
 /// `icmpEcho` service: no Server round trip. Denied is [`Error::Policy`];
 /// permitted but with no path every Node can observe is [`Error::Unsupported`].
 pub fn diagnostic_paths(
-    snapshot: &meshway_authority::ExecutionSnapshot,
+    desired: &meshway_engine::Desired,
     target: NodeId,
     path: Option<&[NodeId]>,
 ) -> Result<Vec<Vec<NodeId>>, Error> {
-    let reading = View::of(snapshot).map_err(|_| Error::Authority)?;
+    let reading = View::of(desired);
     let netmap = reading.netmap();
     let address = mesh_address(&reading, target).ok_or(Error::Policy)?;
-    let outcome = crate::netmap::Decisions::default()
+    let outcome = crate::netmap::Decisions::for_desired(desired)
         .decide(
             netmap,
             reading.node(),
@@ -196,33 +185,41 @@ fn mesh_address(view: &View<'_>, node: NodeId) -> Option<IpAddr> {
 }
 
 impl SecureNode {
-    /// Install a Control-issued snapshot. Same netmap content (lease renewal)
-    /// swaps the snapshot in O(1): every live circuit and flow keeps going and
-    /// follows the renewed lease, no guard is cancelled. New content is
-    /// compared in place: a circuit keeps its Noise state only while its path
-    /// authorization digest and key set are unchanged; a flow only while its
-    /// exact service, path and exit selection are still decided. Exit flows
-    /// retired here publish Retire. A changed own identity, address or key set,
-    /// or an ended old lease, terminates everything.
-    pub fn update(&mut self, identity: DataPlaneIdentity) -> Result<Update, Error> {
-        let snapshot = identity.snapshot().clone();
-        let old = self.identity.snapshot().clone();
-        if snapshot.same_netmap(&old) {
-            View::of(&snapshot).map_err(|_| Error::Authority)?;
-            self.engine.snapshot = snapshot;
-            self.identity = identity;
-            return Ok(Update::Renewed);
+    /// Apply new desired content, idempotently. The same content changes
+    /// nothing. Otherwise every circuit is compared in place: it keeps its
+    /// Noise state only while its path authorization digest and key set are
+    /// unchanged; a flow only while its exact service, path and exit selection
+    /// are still decided. Exit flows retired here publish Retire. A changed own
+    /// identity, address or key set retires everything. Retired circuits
+    /// cancel their queued outputs before this returns.
+    pub fn apply(&mut self, desired: &meshway_engine::Desired) -> Result<Applied, Error> {
+        if desired.reference() == self.desired.reference() {
+            return Ok(Applied::default());
         }
-        let reading = View::of(&snapshot).map_err(|_| Error::Authority)?;
-        if snapshot.netmap_continuation_from(&old).is_err() {
+        if !self.keys.matches(&desired.local().self_keys) {
+            return Err(Error::Authority);
+        }
+        let (old, new) = (self.desired.local(), desired.local());
+        let same_self = self.desired.netmap().network_id == desired.netmap().network_id
+            && self.desired.netmap().node_id == desired.netmap().node_id
+            && old.enabled
+            && new.enabled
+            && old.identity == new.identity
+            && old.addresses == new.addresses
+            && old.self_keys == new.self_keys;
+        self.engine.decisions = crate::netmap::Decisions::for_desired(desired);
+        let reading = View::of(desired);
+        if !same_self {
+            let applied = Applied {
+                retired_circuits: self.circuits.len(),
+                retired_flows: self.engine.flows.len(),
+            };
             self.terminate("reset");
-            self.install(identity, &reading);
-            return Ok(Update::Reset);
+            self.install(desired, &reading);
+            return Ok(applied);
         }
         let netmap = reading.netmap();
-        let leased = reading.leased();
         let decisions = &mut self.engine.decisions;
-        decisions.bind(netmap);
         let local = netmap.netmap.node_id;
         let mut retired_circuits = 0;
         for circuit in self.circuits.values_mut() {
@@ -233,8 +230,6 @@ impl SecureNode {
                 authorization::admit_netmap(
                     decisions,
                     netmap,
-                    leased,
-                    reading.now_ms,
                     *purpose,
                     target,
                     path,
@@ -253,7 +248,7 @@ impl SecureNode {
                     circuit.selected = Some(admitted.selected);
                 }
                 _ => {
-                    circuit.retire_for("update", "path_authorization_changed");
+                    circuit.retire_for("apply", "path_authorization_changed");
                     retired_circuits += 1;
                 }
             }
@@ -285,25 +280,24 @@ impl SecureNode {
             }
         });
         let retired_flows = before.saturating_sub(self.engine.flows.len());
-        self.install(identity, &reading);
-        Ok(Update::Updated {
+        self.install(desired, &reading);
+        Ok(Applied {
             retired_circuits,
             retired_flows,
         })
     }
 
-    /// Swap in an accepted snapshot: drop correlations of the old one, keep
-    /// only carriers new netmap content admits, and mint a new output section.
-    fn install(&mut self, identity: DataPlaneIdentity, reading: &View<'_>) {
+    /// Take the applied content: drop correlations of the old one and keep
+    /// only carriers the new content admits.
+    fn install(&mut self, desired: &meshway_engine::Desired, reading: &View<'_>) {
         let mut carriers = std::mem::take(&mut self.carriers);
         carriers.retain(|peer, carrier| {
             authorization::adjacency(&mut self.engine.decisions, reading, *peer, carrier)
         });
         self.carriers = carriers;
         self.probes.retain_current();
-        self.engine.snapshot = identity.snapshot().clone();
-        self.identity = identity;
-        self.output_epoch = Arc::new(());
+        self.engine.desired = desired.clone();
+        self.desired = desired.clone();
         let closed: Vec<_> = self
             .circuits
             .iter()
@@ -346,8 +340,8 @@ impl SecureNode {
         static PROFILE: meshway_logging::profile::Metric =
             meshway_logging::profile::Metric::new("secure.outbound");
         let _profile = PROFILE.enter();
-        let snapshot = self.identity.snapshot().clone();
-        let reading = View::of(&snapshot).map_err(|_| Error::Authority)?;
+        let desired = self.desired.clone();
+        let reading = View::of(&desired);
         let netmap = reading.netmap();
         self.maintain_circuits(&reading, false)?;
         let local = reading.node();
@@ -369,6 +363,19 @@ impl SecureNode {
                     .map(|info| info.id)
             });
             if let Some(id) = established {
+                if let Some(next) = self.missing_next_hop(id, local) {
+                    // A live circuit whose next hop lost its adjacency: ask for
+                    // that adjacency again and hold the packet, bounded, until
+                    // the carrier is back or the circuit itself ends.
+                    self.first.interest(next);
+                    let path = LogicalPath {
+                        nodes: flow.path.clone(),
+                        dial_candidates: Default::default(),
+                    };
+                    let until = reading.instant + self.limits.handshake_timeout;
+                    self.first.queue(target, &[path], packet, until);
+                    return Ok(Outbound::AwaitingAdjacency);
+                }
                 return self
                     .prepare_send_at(id, packet, &reading)
                     .map(Outbound::Send);
@@ -502,10 +509,8 @@ impl SecureNode {
     /// `budget` outputs leave the queue, allowing the caller to reserve its
     /// bounded crypto/output capacity before any packet is committed.
     pub fn flush(&mut self, budget: usize) -> Vec<Result<Flushed, Error>> {
-        let snapshot = self.identity.snapshot().clone();
-        let Ok(reading) = View::of(&snapshot) else {
-            return Vec::new();
-        };
+        let desired = self.desired.clone();
+        let reading = View::of(&desired);
         self.first.maintain(reading.instant);
         let mut outputs = Vec::new();
         for mut waiting in std::mem::take(&mut self.first.waiting) {
@@ -521,6 +526,14 @@ impl SecureNode {
                 .paths
                 .iter()
                 .find_map(|path| self.established(&grant, &path.nodes, &reading));
+            if let Some(next) = established
+                .as_ref()
+                .and_then(|info| self.missing_next_hop(info.id, reading.node()))
+            {
+                self.first.interest(next);
+                self.first.waiting.push(waiting);
+                continue;
+            }
             if let Some(info) = established {
                 while outputs.len() < budget && !waiting.packets.is_empty() {
                     let packet = waiting.packets.pop_front().expect("nonempty queue");
@@ -565,8 +578,8 @@ impl SecureNode {
         target: NodeId,
         path: Option<&[NodeId]>,
     ) -> Result<Option<PendingFrame>, Error> {
-        let snapshot = self.identity.snapshot().clone();
-        let reading = View::of(&snapshot).map_err(|_| Error::Authority)?;
+        let desired = self.desired.clone();
+        let reading = View::of(&desired);
         let netmap = reading.netmap();
         let address = mesh_address(&reading, target).ok_or(Error::Policy)?;
         let outcome = self
@@ -589,8 +602,7 @@ impl SecureNode {
 
     /// Established diagnostic circuit toward `target`, if any.
     pub fn diagnostic_circuit(&self, target: NodeId) -> Option<super::CircuitInfo> {
-        let snapshot = self.identity.snapshot();
-        let reading = View::of(snapshot).ok()?;
+        let reading = View::of(&self.desired);
         let grant = CircuitGrant {
             purpose: Purpose::Diagnostic,
             target: Target::Mesh { node: target },

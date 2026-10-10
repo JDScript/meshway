@@ -1,10 +1,10 @@
 //! Lazy local decisions on one installed netmap, cached per content.
 //!
-//! Every value here is derived from the netmap with the shared
+//! Every value here is derived from the netmap with Engine's shared
 //! `meshway-policy` compiler and is discarded when the content changes. A
 //! cached decision never outlives its content and is never an alternative to
-//! admission: callers still pass it through `meshway_policy::admission::netmap`
-//! with a fresh lease reading. Nothing is precomputed for absent pairs.
+//! admission: callers still pass it through `meshway_policy::admission::netmap`.
+//! Nothing is precomputed for absent pairs.
 use meshway_configuration::{
     NodeIdentity,
     execution::{BusinessProtocol, Carrier, LogicalPath, UnavailableReason},
@@ -40,7 +40,7 @@ pub(crate) enum Outcome {
 #[derive(Default)]
 pub(crate) struct Decisions {
     content: Option<NetmapRef>,
-    compiler: Option<LocalCompiler>,
+    compiler: Option<Arc<LocalCompiler>>,
     dns: BTreeMap<NodeId, Arc<meshway_configuration::netmap::DnsService>>,
     /// Permitted decisions carry the pair's complete service set.
     permitted: BTreeMap<(NodeId, IpAddr), Arc<Decision>>,
@@ -87,13 +87,23 @@ impl Decisions {
         self.dns.insert(source, service.clone());
         Ok(service)
     }
-    /// Start over when the content changed; same-content renewal keeps everything.
+    /// Empty caches over Engine's one shared compiler of `desired`.
+    pub fn for_desired(desired: &meshway_engine::Desired) -> Self {
+        Self {
+            content: Some(desired.reference()),
+            compiler: Some(desired.compiler().clone()),
+            ..Default::default()
+        }
+    }
+
+    /// Callers pass the content these caches belong to; another content
+    /// starts over on its own compiler.
     pub fn bind(&mut self, netmap: &CompiledNetmap) {
         let reference = netmap.reference();
         if self.content != Some(reference) {
             *self = Self {
                 content: Some(reference),
-                compiler: Some(LocalCompiler::from_shared(netmap.netmap.clone())),
+                compiler: Some(Arc::new(LocalCompiler::from_shared(netmap.netmap.clone()))),
                 ..Default::default()
             };
         }

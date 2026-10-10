@@ -1,8 +1,8 @@
 //! Shared L3 admission, bounded flow ownership and protected packet transport.
 //!
 //! `meshway-policy` is the only grant/path/address admission implementation;
-//! `meshway-control::ExecutionSnapshot` is the only execution authority. This
-//! The core parses endpoint packets and associates replies with previously
+//! Engine's desired netmap is the only content it admits on. The core parses
+//! endpoint packets and associates replies with previously
 //! admitted forward facts. The secure adapter authenticates and decrypts before
 //! using that same core; relays authenticate only their circuit and neighbour.
 //!
@@ -26,7 +26,7 @@ mod packet;
 use authority::{Lifetime, View};
 pub use buffer::{BufferError, DEFAULT_HEADROOM, DEFAULT_TAILROOM, PacketBuffer, PacketPool};
 use flow::{CommittedRoute, FlowTable};
-use meshway_authority::ExecutionSnapshot;
+use meshway_engine::Desired;
 use meshway_model::NodeId;
 use meshway_policy::admission::AdmissionError;
 pub use meshway_policy::admission::Hop;
@@ -35,8 +35,7 @@ pub use netmap::Purpose;
 pub use packet::{Packet, PacketError, PacketFacts, PacketInput, TcpSegment, Transport};
 use std::{fmt, time::Duration};
 
-/// Hard memory bounds; flow expiry never exceeds the immutable permit or the
-/// current control guard. The idle duration is a state retention limit, not an
+/// Hard memory bounds. The idle duration is a state retention limit, not an
 /// independent source of execution authority.
 #[derive(Clone, Copy, Debug)]
 pub struct Limits {
@@ -182,8 +181,8 @@ pub enum Error {
     Packet(#[from] PacketError),
     #[error("packet does not match the admitted facts")]
     FactsMismatch,
-    #[error("execution authority is no longer current: {0}")]
-    Authority(#[from] meshway_authority::Error),
+    #[error("execution authority is no longer current")]
+    Authority,
     #[error("packet admission rejected: {0}")]
     Admission(#[from] AdmissionError),
     #[error("invalid flow limits")]
@@ -198,14 +197,14 @@ pub enum Error {
     Capacity,
     #[error("pending packet exceeded its flow/permit lifetime")]
     Expired,
-    #[error("execution refresh does not match the current control scope")]
+    #[error("route was already bound to its circuit")]
     ExecutionScope,
     #[error("exit projection has not been acknowledged")]
     ProjectionPending,
 }
 
-/// Owns the action until the same control guard and packet lifetime are checked
-/// at delivery. A delayed queue must retain this wrapper, not a released Action.
+/// Owns the action until its packet lifetime is checked at delivery. A delayed
+/// queue must retain this wrapper, not a released Action.
 pub struct PendingAction {
     pending: PendingRoute,
     packet: Packet,
@@ -214,13 +213,11 @@ pub struct PendingAction {
 /// The same checked route and immutable lifetime for plaintext and encrypted
 /// admission. It contains no plaintext and cannot release an unchecked packet.
 pub(crate) struct PendingRoute {
-    snapshot: ExecutionSnapshot,
     /// Flow cap and cancellation; the circuit's is added by `constrain`.
     life: Lifetime,
     constrained: bool,
     checked: CommittedRoute,
     facts: PacketFacts,
-    section: Option<std::sync::Arc<()>>,
     projection: Option<std::sync::Arc<exit::Gate>>,
     exit_incarnation: Option<exit::FlowIncarnation>,
 }
@@ -245,7 +242,7 @@ impl fmt::Debug for PendingAction {
 }
 
 impl PendingAction {
-    /// Scheduling metadata only. The packet remains guarded while the host
+    /// Scheduling metadata only. The packet keeps its lifetime while the host
     /// waits for the selected sink to become writable.
     pub fn hop(&self) -> Hop {
         self.pending.hop()
@@ -284,13 +281,13 @@ impl PendingAction {
             .flatten()
     }
 
-    /// Await the Install/Renew ACK while retaining the original packet guard.
+    /// Await the Install/Renew ACK while retaining the original packet lifetime.
     /// The host drives `SecureNode::next_exit_projection` independently.
     pub async fn projection_ready(&self) -> Result<(), Error> {
         self.pending.ensure_current()?;
         if let Some(gate) = &self.pending.projection {
             tokio::select! { biased;
-                _ = self.invalidated() => return Err(Error::Expired),
+                _ = self.ended() => return Err(Error::Expired),
                 result = gate.wait() => result?,
             }
         }
@@ -300,7 +297,7 @@ impl PendingAction {
     /// Invoke the final synchronous sink immediately after validation. The sink
     /// must not queue the released action for a later write. Async I/O adapters
     /// must retain the wrapper while waiting for readiness, then release at the
-    /// write boundary; invalidation also needs to cancel their own pending I/O.
+    /// write boundary; its end also needs to cancel their own pending I/O.
     pub fn release<T>(self, sink: impl FnOnce(Action) -> T) -> Result<T, Error> {
         self.ensure_current()?;
         let route = self.pending.checked.route;
@@ -317,11 +314,9 @@ impl PendingAction {
         Ok(sink(action))
     }
 
-    /// Wait for the original guard or this packet's shorter retention deadline.
-    /// A refresh of the Engine cannot extend either deadline on this action.
-    /// Permit-clock changes use the control owner's same notification source.
-    pub async fn invalidated(&self) {
-        self.pending.invalidated().await;
+    /// Its flow/circuit was retired, or this packet's retention deadline passed.
+    pub async fn ended(&self) {
+        self.pending.ended().await;
     }
 }
 
@@ -334,17 +329,17 @@ impl PendingRoute {
         &self.checked.route
     }
 
-    pub(crate) fn snapshot(&self) -> &ExecutionSnapshot {
-        &self.snapshot
-    }
-
     pub(crate) fn ensure_current(&self) -> Result<(), Error> {
-        self.check_at(&View::of(&self.snapshot)?)
+        let (instant, now_ms) = (std::time::Instant::now(), authority::now_ms());
+        if !self.life.live_at(instant, now_ms) {
+            return Err(Error::Expired);
+        }
+        Ok(())
     }
 
     pub(crate) fn attach(self, packet: Packet) -> Result<PendingAction, Error> {
         self.facts.check_packet(&packet)?;
-        self.check_at(&View::of(&self.snapshot)?)?;
+        self.ensure_current()?;
         Ok(PendingAction {
             pending: self,
             packet,
@@ -373,18 +368,18 @@ impl PendingRoute {
         Ok(())
     }
 
-    pub(crate) async fn invalidated(&self) {
+    pub(crate) async fn ended(&self) {
         if self.ensure_current().is_err() {
             return;
         }
-        self.life.ended(&self.snapshot).await;
+        self.life.ended().await;
     }
 }
 
-/// Unique flow state owner. Only Control-authenticated direct successors may
-/// carry compatible live state into a new immutable target.
+/// Unique flow state owner on Engine's desired content. New content keeps
+/// exactly the flows it still decides; see [`secure::SecureNode::apply`].
 pub struct Engine {
-    snapshot: ExecutionSnapshot,
+    desired: Desired,
     flows: FlowTable,
     exit_counters: exit::Counters,
     decisions: netmap::Decisions,

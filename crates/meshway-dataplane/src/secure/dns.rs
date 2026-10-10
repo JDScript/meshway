@@ -41,6 +41,8 @@ impl Exchanges {
 /// private to SecureNode; callers retain this value through upstream I/O.
 pub struct DnsRequest {
     context: Arc<Context>,
+    /// The desired content this request was admitted on.
+    netmap: meshway_model::NetmapRef,
     metadata: codec::ProbeMetadata,
     guard: Guard,
     transport: DnsTransport,
@@ -64,17 +66,18 @@ impl DnsRequest {
         self.transport
     }
     pub fn deadline(&self) -> Instant {
-        self.guard.expiry().at
+        self.guard.expires_at().unwrap_or_else(Instant::now)
     }
-    pub fn snapshot(&self) -> &ExecutionSnapshot {
-        self.guard.snapshot()
+    /// The desired content this request was admitted on; comparison data.
+    pub fn netmap(&self) -> meshway_model::NetmapRef {
+        self.netmap
     }
     pub fn bytes(&self) -> Result<&[u8], Error> {
         self.guard.ensure_current()?;
         Ok(&self.bytes)
     }
-    pub async fn invalidated(&self) {
-        self.guard.invalidated().await;
+    pub async fn ended(&self) {
+        self.guard.ended().await;
     }
 }
 
@@ -153,8 +156,8 @@ impl SecureNode {
         deadline: Instant,
     ) -> Result<PendingFrame, Error> {
         let query_id = question(bytes, false)?;
-        let snapshot = self.identity.snapshot().clone();
-        let reading = View::of(&snapshot).map_err(|_| Error::Authority)?;
+        let desired = self.desired.clone();
+        let reading = View::of(&desired);
         self.maintain_circuits(&reading, false)?;
         let mut owned = self.circuits.remove(&circuit).ok_or(Error::State)?;
         let result = (|| {
@@ -176,10 +179,9 @@ impl SecureNode {
                 return Err(Error::State);
             };
             Self::check_outgoing_carrier(&self.carriers, &owned, false, &reading)?;
-            let mut guard = owned.guard(&snapshot, false);
-            let at = deadline
-                .min(reading.instant + LIFETIME)
-                .min(guard.expiry().at);
+            let mut guard = owned.guard(false);
+            let at = deadline.min(reading.instant + LIFETIME);
+            let at = guard.expires_at().map_or(at, |cap| cap.min(at));
             guard.life.restrict(Some(Cap {
                 at,
                 ms: reading
@@ -193,7 +195,7 @@ impl SecureNode {
             guard.finish()?;
             let metadata = codec::ProbeMetadata {
                 measurement_id: id,
-                expires_at_ms: guard.expiry().ms,
+                expires_at_ms: guard.expiry().ok_or(Error::Limits)?.ms,
             };
             self.dns
                 .admit((circuit, id), reading.node(), service.max_pending)?;
@@ -224,7 +226,10 @@ impl SecureNode {
             );
             Ok(output)
         })();
-        let result = owned.finish_operation(&snapshot, "dns_query", result);
+        if result.is_ok() {
+            owned.sent(reading.instant);
+        }
+        let result = owned.finish_operation("dns_query", result);
         self.restore(circuit, owned, &reading);
         result
     }
@@ -234,8 +239,8 @@ impl SecureNode {
         if question(bytes, true)? != question(&request.bytes, false)? {
             return Err(Error::Context);
         }
-        let snapshot = self.identity.snapshot().clone();
-        let reading = View::of(&snapshot).map_err(|_| Error::Authority)?;
+        let desired = self.desired.clone();
+        let reading = View::of(&desired);
         let id = request.context.circuit;
         let mut owned = self.circuits.remove(&id).ok_or(Error::State)?;
         let result = (|| {
@@ -273,7 +278,7 @@ impl SecureNode {
             self.dns.0.remove(&key);
             Ok(output)
         })();
-        let result = owned.finish_operation(&snapshot, "dns_reply", result);
+        let result = owned.finish_operation("dns_reply", result);
         self.restore(id, owned, &reading);
         result
     }
@@ -291,7 +296,6 @@ impl SecureNode {
         self.dns.maintain();
         let metadata = frame.probe.ok_or(Error::Wire)?;
         let key = (circuit.context.circuit, metadata.measurement_id);
-        let snapshot = self.identity.snapshot().clone();
         circuit.check_at(reading)?;
         if metadata.expires_at_ms <= reading.now_ms
             || metadata.expires_at_ms - reading.now_ms > LIFETIME.as_millis() as u64
@@ -340,7 +344,7 @@ impl SecureNode {
                 .dns_service(reading.netmap(), source)
                 .map_err(|_| Error::Policy)?;
             self.dns.admit(key, source, service.max_pending)?;
-            let mut guard = circuit.guard(&snapshot, false);
+            let mut guard = circuit.guard(false);
             guard.life.restrict(Some(Cap {
                 at: reading.instant
                     + Duration::from_millis(metadata.expires_at_ms - reading.now_ms),
@@ -361,6 +365,7 @@ impl SecureNode {
                     (
                         Received::DnsRequest(DnsRequest {
                             context: circuit.context.clone(),
+                            netmap: reading.desired.reference(),
                             metadata,
                             guard: guard.clone(),
                             transport,
@@ -383,7 +388,7 @@ impl SecureNode {
             );
             result
         };
-        circuit.ensure_current(&snapshot)?;
+        circuit.ensure_current()?;
         circuit.receive[index].commit(sequence);
         Ok(result)
     }

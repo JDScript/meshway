@@ -4,7 +4,6 @@ pub(super) async fn conflicts(
     backend: &mut backend::Backend,
     tun: &meshway_tun::Tun,
     tuple: OriginalTuple,
-    clock: &Arc<Clock>,
 ) {
     let tuple = OriginalTuple {
         transport: ExitTransport::Udp {
@@ -41,7 +40,7 @@ pub(super) async fn conflicts(
     };
     assert!(
         backend
-            .install(id(100), tuple, deadline(clock, 30_000), scope.clone())
+            .install(id(100), tuple, cutoff(30_000), scope.clone())
             .await
             .is_err()
     );
@@ -65,7 +64,7 @@ pub(super) async fn conflicts(
             .success
     );
     backend
-        .install(id(100), tuple, deadline(clock, 30_000), scope.clone())
+        .install(id(100), tuple, cutoff(30_000), scope.clone())
         .await
         .unwrap();
     assert!(
@@ -114,7 +113,7 @@ pub(super) async fn conflicts(
         ..tuple
     };
     backend
-        .install(id(101), revoked, deadline(clock, 30_000), scope.clone())
+        .install(id(101), revoked, cutoff(30_000), scope.clone())
         .await
         .unwrap();
     scope.revoked.cancel();
@@ -129,7 +128,7 @@ pub(super) async fn conflicts(
         backend
             .renew(
                 id(101),
-                deadline(clock, 30_000),
+                cutoff(30_000),
                 ExitScope {
                     binding: scope.binding,
                     revoked: CancellationToken::new()
@@ -150,7 +149,7 @@ pub(super) async fn conflicts(
         revoked: CancellationToken::new(),
     };
     backend
-        .install(id(110), racing, deadline(clock, 30_000), original.clone())
+        .install(id(110), racing, cutoff(30_000), original.clone())
         .await
         .unwrap();
     tun.send(&udp(racing, b"renew-before-revocation"))
@@ -166,7 +165,7 @@ pub(super) async fn conflicts(
         .unwrap();
     let mut renewal = Box::pin(backend.renew(
         id(110),
-        deadline(clock, 30_000),
+        cutoff(30_000),
         ExitScope {
             binding: original.binding,
             revoked: CancellationToken::new(),

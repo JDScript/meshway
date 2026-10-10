@@ -1,31 +1,22 @@
-//! Static, netmap-compiler-backed issuer for process-local benchmarks and
-//! fixtures. Never assemble this crate into a production Node. No storage,
-//! Server, socket, renewal or authority bypass is provided. Dropping the
-//! issuer revokes all clones.
+//! Static, netmap-compiler-backed desired content for process-local
+//! benchmarks and fixtures. Never assemble this crate into a production Node.
+//! No storage, Server, socket, lease or Engine is provided: a fixture hands
+//! components the content a real Engine would apply.
 #![forbid(unsafe_code)]
 
 pub mod fixture;
 pub mod public_fixture;
 
 use ed25519_dalek::SigningKey;
-use meshway_authority::{
-    Clock, DataPlaneIdentity, Deadline, ExecutionSnapshot, NetmapIssue, Started,
-};
+use meshway_authority::DataPlaneKeys;
 use meshway_configuration::{NetworkConfiguration, execution::TrustedNode, netmap::CompiledNetmap};
+use meshway_engine::Desired;
 use meshway_model::{state::Capability, *};
 use meshway_policy::{
     SubjectContext,
     compile::netmap::{NetmapInput, compile_netmap},
 };
-use std::{
-    collections::BTreeMap,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
-    time::Duration,
-};
-use tokio_util::sync::CancellationToken;
+use std::{collections::BTreeMap, sync::Arc};
 use zeroize::Zeroizing;
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
@@ -103,16 +94,9 @@ impl NodeMaterial {
     }
 }
 
-struct Grant {
-    identity: DataPlaneIdentity,
-    validity: Arc<AtomicBool>,
-    invalidated: CancellationToken,
-    _lineage: Arc<()>,
-}
-
 pub struct StaticAuthority {
     netmaps: BTreeMap<NodeId, Arc<CompiledNetmap>>,
-    grants: BTreeMap<NodeId, Grant>,
+    keys: BTreeMap<NodeId, DataPlaneKeys>,
 }
 
 /// Compile every Node's netmap from one immutable input with the production
@@ -143,112 +127,50 @@ pub fn compile_netmaps(
 }
 
 impl StaticAuthority {
-    /// Compile one immutable input and issue every Node's netmap with one
-    /// lease of `lifetime`, measured from the same start.
+    /// Compile one immutable input for every Node.
     pub fn compile(
         network: NetworkId,
         configuration: &NetworkConfiguration,
         subjects: &SubjectContext,
         materials: BTreeMap<NodeId, NodeMaterial>,
-        lifetime: Duration,
     ) -> Result<Self, Error> {
         let inventory = materials
             .iter()
             .map(|(id, material)| (*id, material.trusted.clone()))
             .collect();
         let netmaps = compile_netmaps(network, configuration, subjects, &inventory)?;
-        let issued = meshway_authority::now()?;
-        let expires = issued
-            .checked_add(u64::try_from(lifetime.as_millis())?)
-            .ok_or("deadline overflow")?;
-        Self::issue(netmaps, materials, issued, expires)
+        Self::issue(netmaps, materials)
     }
 
-    /// Issue `netmaps` to `materials` under one lease `[issued, expires]`
-    /// (wall milliseconds), shared by every isolated process of a fixture.
+    /// Pair compiled `netmaps` with the private keys of `materials`.
     pub(crate) fn issue(
         netmaps: BTreeMap<NodeId, Arc<CompiledNetmap>>,
         materials: BTreeMap<NodeId, NodeMaterial>,
-        issued: u64,
-        expires: u64,
     ) -> Result<Self, Error> {
-        let clock = Arc::new(Clock::new()?);
-        let deadline = Deadline::from_response(Started::now(&clock)?, expires)?;
-        let mut grants = BTreeMap::new();
+        let mut keys = BTreeMap::new();
         for (id, material) in materials {
-            let netmap = netmaps.get(&id).ok_or("missing compiled node")?.clone();
-            let validity = Arc::new(AtomicBool::new(true));
-            let invalidated = CancellationToken::new();
-            let lineage = Arc::new(());
-            let lease = NetmapLease::new(netmap.reference(), issued, expires)
-                .map_err(|_| "invalid fixture lease")?;
-            let (snapshot, _) = ExecutionSnapshot::issue_netmap(NetmapIssue {
-                netmap,
-                lease,
-                deadline: deadline.clone(),
-                instance: None,
-                validity: validity.clone(),
-                invalidated: invalidated.clone(),
-                clock: clock.clone(),
-                lineage: Arc::downgrade(&lineage),
-            })?;
-            let identity = DataPlaneIdentity::new(
-                snapshot,
-                &meshway_authority::DataPlaneKeys::new(material.signing, material.noise),
-            )?;
-            grants.insert(
-                id,
-                Grant {
-                    identity,
-                    validity,
-                    invalidated,
-                    _lineage: lineage,
-                },
-            );
+            let netmap = netmaps.get(&id).ok_or("missing compiled node")?;
+            let pair = DataPlaneKeys::new(material.signing, material.noise);
+            if !pair.matches(&netmap.netmap.self_.self_keys) {
+                return Err("private material differs from the compiled netmap".into());
+            }
+            keys.insert(id, pair);
         }
-        Ok(Self { netmaps, grants })
+        Ok(Self { netmaps, keys })
     }
 
     pub fn netmap(&self, node: NodeId) -> Result<&CompiledNetmap, Error> {
         Ok(self.netmaps.get(&node).ok_or("unknown static node")?)
     }
 
-    pub fn identity(&self, node: NodeId) -> Result<DataPlaneIdentity, Error> {
-        let grant = self.grants.get(&node).ok_or("unknown static node")?;
-        grant.identity.snapshot().ensure_current()?;
-        Ok(grant.identity.clone())
+    /// The content a real Engine would apply for `node`.
+    pub fn desired(&self, node: NodeId) -> Result<Desired, Error> {
+        let netmap = self.netmaps.get(&node).ok_or("unknown static node")?;
+        Desired::new(netmap).map_err(|_| "invalid compiled netmap".into())
     }
 
-    pub fn snapshot(&self, node: NodeId) -> Result<ExecutionSnapshot, Error> {
-        Ok(self.identity(node)?.snapshot().clone())
-    }
-
-    /// Irreversible; every previously issued clone and queued output is affected.
-    pub fn revoke(&self, node: NodeId) -> Result<(), Error> {
-        let grant = self.grants.get(&node).ok_or("unknown static node")?;
-        grant.validity.store(false, Ordering::Release);
-        grant.invalidated.cancel();
-        Ok(())
-    }
-
-    /// Block until this grant's lease ends. Does not move clocks, extend
-    /// authority or replace expiration with synthetic configuration.
-    pub fn wait_expired(&self, node: NodeId) -> Result<(), Error> {
-        let grant = self.grants.get(&node).ok_or("unknown static node")?;
-        std::thread::sleep(
-            grant
-                .identity
-                .snapshot()
-                .expires_at()
-                .saturating_duration_since(std::time::Instant::now()),
-        );
-        grant
-            .identity
-            .snapshot()
-            .ensure_current()
-            .err()
-            .ok_or("deadline remains live")?;
-        Ok(())
+    pub fn keys(&self, node: NodeId) -> Result<DataPlaneKeys, Error> {
+        Ok(self.keys.get(&node).ok_or("unknown static node")?.clone())
     }
 }
 
@@ -276,14 +198,5 @@ pub fn check_path(
             Ok(())
         }
         _ => Err("netmap did not decide the exact fixture path".into()),
-    }
-}
-
-impl Drop for StaticAuthority {
-    fn drop(&mut self) {
-        for grant in self.grants.values() {
-            grant.validity.store(false, Ordering::Release);
-            grant.invalidated.cancel();
-        }
     }
 }

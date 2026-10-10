@@ -10,7 +10,6 @@
 use crate::{Clock, Deadline, Error};
 use meshway_configuration::{execution::TrustedNode, netmap::CompiledNetmap};
 use meshway_model::{NetmapLease, NetmapRef, NetworkId, NodeId};
-use meshway_policy::admission::netmap::Leased;
 use meshway_protocol::InstanceRequest;
 use std::{
     fmt,
@@ -108,16 +107,6 @@ pub struct NetmapReading<'a> {
     pub instant: Instant,
     pub expires_at: Instant,
     pub expires_at_ms: u64,
-}
-
-impl NetmapReading<'_> {
-    /// Input of `meshway_policy::admission::netmap`; pass `now_ms` with it.
-    pub fn leased(&self) -> Leased<'_> {
-        Leased {
-            netmap: &self.netmap.netmap,
-            lease: &self.lease,
-        }
-    }
 }
 
 /// The issuer's handle for one netmap content. Not clonable: only the owner of

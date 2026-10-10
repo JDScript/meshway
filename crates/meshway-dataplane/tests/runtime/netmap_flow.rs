@@ -1,11 +1,11 @@
 //! Netmap local admission on real SecureNodes A→R→B: first packets, in-place
-//! content updates, revocation, lease expiry and relay transit admission.
+//! content updates, revocation, withdrawal and relay transit admission.
 use super::support::netmap::{NetmapMesh, rule, sel};
 use meshway_configuration::execution::UnavailableReason;
 use meshway_dataplane::{
     Packet,
     secure::{
-        CircuitGrant, CircuitState, Error, Flushed, Outbound, PendingFrame, Received, Update,
+        Applied, CircuitGrant, CircuitState, Error, Flushed, Outbound, PendingFrame, Received,
         pipeline,
     },
 };
@@ -265,7 +265,7 @@ async fn missing_adjacency_registers_interest_and_queues_until_the_carrier_exist
 }
 
 #[tokio::test]
-async fn same_content_renewal_only_extends_the_lease_and_keeps_guards() {
+async fn same_content_apply_changes_nothing_and_keeps_outputs() {
     let mut f = NetmapMesh::start().await;
     let id = {
         let packet = f.mesh_udp(false, 42424);
@@ -276,17 +276,16 @@ async fn same_content_renewal_only_extends_the_lease_and_keeps_guards() {
         let packet = f.mesh_udp(false, 42424);
         send(&mut f, packet)
     };
-    let before = f.a.circuit_info(id).unwrap().unwrap().expires_at_ms;
+    let before = f.a.circuit_info(id).unwrap().unwrap();
     tokio::time::sleep(Duration::from_millis(20)).await;
-    assert_eq!(f.renew().await, [Update::Renewed; 3]);
-    // No scan, no new epoch: queued output keeps its guard and remains valid.
+    assert_eq!(f.renew().await, [Applied::default(); 3]);
+    // Nothing is scanned or retired: the queued output remains valid.
     delivered(&mut f, queued);
     let after = f.a.circuit_info(id).unwrap().unwrap();
     assert_eq!(after.state, CircuitState::Established);
     assert!(
-        after.expires_at_ms > before,
-        "{} <= {before}",
-        after.expires_at_ms
+        after.expires_at_ms >= before.expires_at_ms,
+        "activity, never a lease, bounds a circuit"
     );
     assert_eq!(f.a.retained_flows(), 1);
     {
@@ -319,7 +318,7 @@ async fn port_revocation_ends_only_that_flow_and_keeps_the_circuit() {
     for update in [updates[0], updates[2]] {
         assert_eq!(
             update,
-            Update::Updated {
+            Applied {
                 retired_circuits: 0,
                 retired_flows: 1
             }
@@ -379,7 +378,7 @@ async fn path_change_ends_the_circuit_at_every_node() {
         assert!(
             matches!(
                 update,
-                Update::Updated {
+                Applied {
                     retired_circuits: 1,
                     ..
                 }
@@ -408,13 +407,19 @@ async fn own_identity_change_terminates_everything() {
             cfg.nodes.get_mut(&a).unwrap().addresses.ipv4 = Some("100.64.0.9".parse().unwrap());
         })
         .await;
-    assert_eq!(updates[0], Update::Reset);
+    assert_eq!(
+        updates[0],
+        Applied {
+            retired_circuits: 1,
+            retired_flows: 1,
+        }
+    );
     assert_eq!(f.a.retained_circuits(), 0);
     assert_eq!(f.a.retained_flows(), 0);
     // A's address is in every path digest: peers retire the circuit too.
     assert!(matches!(
         updates[1],
-        Update::Updated {
+        Applied {
             retired_circuits: 1,
             ..
         }
@@ -423,9 +428,9 @@ async fn own_identity_change_terminates_everything() {
 }
 
 #[tokio::test]
-async fn lease_expiry_terminates_every_circuit_flow_and_queued_output() {
-    let mut f = NetmapMesh::with(4_000, |_, _| {}).await;
-    let id = {
+async fn withdrawal_drops_every_circuit_flow_and_queued_output() {
+    let mut f = NetmapMesh::start().await;
+    {
         let packet = f.mesh_udp(false, 42424);
         first(&mut f, packet)
     }
@@ -434,19 +439,52 @@ async fn lease_expiry_terminates_every_circuit_flow_and_queued_output() {
         let packet = f.mesh_udp(false, 42424);
         send(&mut f, packet)
     };
-    let expiry = f.a.circuit_info(id).unwrap().unwrap().expires_at;
-    tokio::time::sleep_until((expiry + Duration::from_millis(20)).into()).await;
-    assert!(matches!(f.a.maintain(), Err(Error::Authority)));
-    assert_eq!(f.a.retained_circuits(), 0);
+    // Engine's empty apply drops the packet owner; no lease is read here.
+    let (desired, keys) = f.content(0);
+    let r = f.ids()[1];
+    let fresh = meshway_dataplane::secure::SecureNode::new(
+        &desired,
+        keys,
+        Default::default(),
+        BTreeMap::from([(r, f.ar.carrier.clone())]),
+    )
+    .unwrap();
+    drop(std::mem::replace(&mut f.a, fresh));
+    assert!(queued.release(|_| panic!("withdrawn output")).is_err());
     assert_eq!(f.a.retained_flows(), 0);
-    assert!(queued.release(|_| panic!("expired output")).is_err());
-    assert!(
-        {
-            let packet = f.mesh_udp(false, 42424);
-            f.a.outbound(packet)
-        }
-        .is_err()
+    f.close().await;
+}
+
+#[tokio::test]
+async fn origin_without_its_next_hop_registers_interest_and_holds_the_packet() {
+    let mut f = NetmapMesh::start().await;
+    let id = {
+        let packet = f.mesh_udp(false, 42424);
+        first(&mut f, packet)
+    }
+    .await;
+    let [_, r, _] = f.ids();
+    // The A–R adjacency idled out or failed while the circuit lives.
+    f.a.set_carriers(BTreeMap::new()).unwrap();
+    let packet = f.mesh_udp(false, 42424);
+    assert!(matches!(
+        f.a.outbound(packet).unwrap(),
+        Outbound::AwaitingAdjacency
+    ));
+    assert_eq!(
+        f.a.take_adjacency_interests(),
+        vec![meshway_dataplane::secure::AdjacencyInterest { peer: r }]
     );
+    assert!(f.a.flush(32).is_empty(), "held until the carrier is back");
+    f.a.set_carriers(BTreeMap::from([(r, f.ar.carrier.clone())]))
+        .unwrap();
+    let mut flushed = f.a.flush(32);
+    let Ok(Flushed::Send(job)) = flushed.remove(0) else {
+        panic!("held packet")
+    };
+    let frame = sealed(job);
+    assert_eq!(frame.circuit(), id);
+    delivered(&mut f, frame);
     f.close().await;
 }
 
@@ -455,10 +493,7 @@ async fn relay_admits_transit_only_on_its_own_content() {
     let mut f = NetmapMesh::start().await;
     // R learns that A has no Access to B; A and B still hold the old content.
     f.recompile(|cfg, _| cfg.access.clear());
-    assert!(matches!(
-        f.install_on(1, true).await,
-        Update::Updated { .. }
-    ));
+    assert!(matches!(f.install_on(1, true).await, Applied { .. }));
     let Outbound::Queued { init: Some(init) } = {
         let packet = f.mesh_udp(false, 42424);
         f.a.outbound(packet)
@@ -565,7 +600,7 @@ async fn tcp_flow_and_its_reply_stay_on_the_original_circuit_through_renewal() {
         f.renew()
             .await
             .iter()
-            .all(|update| *update == Update::Renewed)
+            .all(|update| *update == Applied::default())
     );
     let data = super::packet::tcp_with_payload(a, b, (50000, 443), 2, 8, 0x18, b"data");
     let frame = send(&mut f, data);

@@ -67,14 +67,7 @@ async fn ready_channel_and_handshake_events_start_direct_and_relay_probes_withou
                 .iter()
                 .position(|control| control.status().binding.unwrap().node_id == *node)
                 .unwrap();
-            nodes.push(
-                SecureNode::new(
-                    fixture.identity(index),
-                    Default::default(),
-                    carriers.clone(),
-                )
-                .unwrap(),
-            );
+            nodes.push(fixture.secure(index, carriers.clone()));
         }
         // Initial installation may precede authenticated adjacency. It neither
         // manufactures a measurement nor schedules a periodic acquisition poll.
@@ -118,10 +111,10 @@ async fn ready_channel_and_handshake_events_start_direct_and_relay_probes_withou
         // belonging to the original task's exact (CID, measurement, challenge).
         let mut idle = fixture.task.clone();
         idle.id = meshway_model::ObservationId::new(uuid::Uuid::from_u128(1)).unwrap();
-        let snapshot = fixture.identity(0).snapshot().clone();
+        let (desired, bound) = fixture.content(0);
         fixture
             .owner
-            .synchronize(snapshot, &[idle.clone(), fixture.task.clone()])
+            .synchronize(&desired, bound, &[idle.clone(), fixture.task.clone()])
             .unwrap();
         assert!(
             fixture
@@ -181,10 +174,10 @@ async fn ready_channel_and_handshake_events_start_direct_and_relay_probes_withou
         );
         let next = fixture.owner.tasks[&fixture.task.id].next;
         fixture.owner.suspend();
-        let snapshot = fixture.identity(0).snapshot().clone();
+        let (desired, bound) = fixture.content(0);
         fixture
             .owner
-            .synchronize(snapshot, std::slice::from_ref(&fixture.task))
+            .synchronize(&desired, bound, std::slice::from_ref(&fixture.task))
             .unwrap();
         assert_eq!(
             fixture.owner.tasks[&fixture.task.id].next, next,

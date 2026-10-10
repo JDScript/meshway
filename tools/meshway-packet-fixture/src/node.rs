@@ -33,15 +33,10 @@ pub async fn run(cli: &Cli, role: Role) -> Result<()> {
     Ok(())
 }
 
-/// One sync, then the staged component identity for Control's verified netmap.
-async fn sync(control: &mut Control) -> Result<meshway_authority::DataPlaneIdentity> {
+/// One sync; Control's verified netmap as desired content.
+async fn sync(control: &mut Control) -> Result<meshway_engine::Desired> {
     let netmap = control.sync(&mut Facts).await?.netmap;
-    Ok(meshway_authority::StagedIssuer::new()?.issue(
-        &netmap.content,
-        netmap.lease,
-        None,
-        &control.dataplane_keys()?,
-    )?)
+    Ok(meshway_engine::Desired::new(&netmap.content).map_err(|_| "invalid netmap")?)
 }
 
 struct Facts;
@@ -120,8 +115,8 @@ async fn run_control(
     if !matches!(signals.wait("go").await?, Signal::Go) {
         return Err("invalid configuration marker".into());
     }
-    let identity = sync(control).await?;
-    let configuration = identity.snapshot().netmap()?.netmap.clone();
+    let desired = sync(control).await?;
+    let configuration = desired.netmap().clone();
     let named = |name| {
         configuration
             .projection
@@ -168,7 +163,12 @@ async fn run_control(
             carrier,
         )?;
     }
-    let mut secure = SecureNode::new(identity, Default::default(), carriers)?;
+    let mut secure = SecureNode::new(
+        &desired,
+        control.dataplane_keys()?,
+        Default::default(),
+        carriers,
+    )?;
     let listener = wire::listen(&configuration).await?;
     let mut previous = None;
     let mut next = None;

@@ -1,11 +1,12 @@
 use crate::{Error, NodeOptions, Stage};
-use meshway_authority::DataPlaneIdentity;
+use meshway_authority::DataPlaneKeys;
 #[cfg(target_os = "linux")]
 use meshway_connectivity::{Event, Manager};
 use meshway_dataplane::{
     carrier,
     secure::{Carrier, PendingFrame},
 };
+use meshway_engine::Desired;
 use meshway_model::NodeId;
 use meshway_static_authority::public_fixture::PublicFixture;
 use meshway_transport::{ChannelScope, Frame, Limits, Receiver, Sender};
@@ -33,11 +34,12 @@ impl Io {
         options: &NodeOptions,
         fixture: &PublicFixture,
         local: NodeId,
-        identity: DataPlaneIdentity,
+        desired: Desired,
+        keys: DataPlaneKeys,
         material: &Path,
     ) -> Result<Self, Error> {
         if matches!(options.stage, Stage::Manager) {
-            return Self::manager(options, fixture, local, identity, material).await;
+            return Self::manager(options, fixture, local, desired, keys, material).await;
         }
         let socket = tokio::net::UdpSocket::bind(options.bind).await?;
         let buffer = std::env::var("MESHWAY_PERF_UDP_BUFFER")
@@ -85,7 +87,8 @@ impl Io {
         options: &NodeOptions,
         fixture: &PublicFixture,
         local: NodeId,
-        identity: DataPlaneIdentity,
+        desired: Desired,
+        keys: DataPlaneKeys,
         material: &Path,
     ) -> Result<Self, Error> {
         let directory = material
@@ -104,16 +107,13 @@ impl Io {
             },
         )
         .await?;
-        // The production factory only mints data scopes after capture and its
-        // execution epoch have been installed. Never substitute a bootstrap scope.
-        host.install(identity.snapshot().clone()).await?;
-        let desired = meshway_engine::Desired::new(&std::sync::Arc::new(
-            identity.snapshot().netmap()?.clone(),
-        ))
-        .map_err(|_| "invalid fixture netmap")?;
+        // The production factory only mints data scopes after capture has
+        // been installed for this content. Never substitute a bootstrap scope.
+        host.install(crate::staged::snapshot(&desired, &keys)?)
+            .await?;
         let manager = Manager::start(
             &desired,
-            identity.keys().clone(),
+            keys,
             std::sync::Arc::new(host.sockets()),
             Default::default(),
         )
@@ -139,7 +139,8 @@ impl Io {
         _: &NodeOptions,
         _: &PublicFixture,
         _: NodeId,
-        _: DataPlaneIdentity,
+        _: Desired,
+        _: DataPlaneKeys,
         _: &Path,
     ) -> Result<Self, Error> {
         Err("Manager measurement requires isolated Linux underlay".into())

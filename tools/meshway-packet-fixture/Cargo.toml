@@ -7,6 +7,7 @@ description = "Explicit isolated conformance driver for protected Meshway TUN pa
 
 [dependencies]
 meshway-authority = { path = "../../crates/meshway-authority" }
+meshway-engine = { path = "../../crates/meshway-engine" }
 meshway-configuration = { path = "../../crates/meshway-configuration" }
 meshway-policy = { path = "../../crates/meshway-policy" }
 meshway-model = { path = "../../crates/meshway-model" }

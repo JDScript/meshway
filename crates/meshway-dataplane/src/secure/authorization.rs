@@ -13,7 +13,7 @@ use meshway_model::{Digest, NodeId};
 use meshway_policy::{
     admission::{
         Carrier, Hop,
-        netmap::{self as admission, Leased},
+        netmap::{self as admission},
         path_carrier,
     },
     compile::netmap::{Decision, Target},
@@ -87,8 +87,6 @@ pub(super) fn paths(
 pub(super) fn admit_netmap(
     decisions: &mut Decisions,
     netmap: &CompiledNetmap,
-    leased: Leased<'_>,
-    now_ms: u64,
     purpose: Purpose,
     target: &Target,
     path: &[NodeId],
@@ -134,10 +132,11 @@ pub(super) fn admit_netmap(
     };
     let authorization = path_authorization(netmap, network, purpose, target, selected, selection)?;
     let endpoint = path.first() == Some(&local) || path.last() == Some(&local);
+    let content = &netmap.netmap;
     let hop = if let Some(service) = &dns {
-        admission::admit_dns(leased, service, path, origin, previous, reply, now_ms)
+        admission::admit_dns(content, service, path, origin, previous, reply)
     } else if !endpoint {
-        admission::admit_transit_paths(leased, &paths, origin, path, previous, reply, now_ms)
+        admission::admit_transit_paths(content, &paths, origin, path, previous, reply)
     } else if purpose == Purpose::Diagnostic {
         let Target::Mesh { node } = target else {
             return Err(Error::Policy);
@@ -150,24 +149,22 @@ pub(super) fn admit_netmap(
             return Err(Error::Policy);
         };
         admission::admit_observation(
-            leased,
+            content,
             &decision,
             path,
             origin,
             previous,
             reply,
             (BusinessProtocol::IcmpEcho, None),
-            now_ms,
         )
     } else {
         admission::admit_handshake(
-            leased,
+            content,
             &circuit_decision(netmap, origin, target, &paths, selection),
             path,
             origin,
             previous,
             reply,
-            now_ms,
         )
     }
     .map_err(|_| Error::Policy)?;
@@ -190,8 +187,6 @@ pub(super) fn admit(
     admit_netmap(
         decisions,
         view.netmap(),
-        view.leased(),
-        view.now_ms,
         grant.purpose,
         &grant.target,
         path,

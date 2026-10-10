@@ -32,8 +32,6 @@ pub enum AdmissionError {
     Configuration,
     #[error("permit is absent or inconsistent")]
     Permit,
-    #[error("permit has expired")]
-    Expired,
     #[error("complete path is not permitted")]
     Path,
     #[error("arrival peer is not permitted")]
