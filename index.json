@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-10T20:08:34.297154+00:00",
+  "updatedAt": "2026-10-10T20:11:19.515514+00:00",
   "runs": [
     {
       "id": 38082391106,
@@ -12,9 +12,9 @@
       "commit": "2a698d6869ba985fc324eb2e86d41ebb30993df0",
       "message": "docs(netmap): decision — continuous low-rate STUN observation on every UDP listener socket",
       "createdAt": "2026-10-10T20:05:48Z",
-      "updatedAt": "2026-10-10T20:06:13Z",
-      "status": "in_progress",
-      "conclusion": null,
+      "updatedAt": "2026-10-10T20:07:17Z",
+      "status": "completed",
+      "conclusion": "success",
       "url": "https://github.com/JDScript/meshway/actions/runs/38082391106",
       "jobs": [
         {
@@ -32,11 +32,11 @@
           "id": 114301872884,
           "name": "docs-and-scripts",
           "runner": "mars-epyc7543",
-          "status": "in_progress",
-          "conclusion": null,
+          "status": "completed",
+          "conclusion": "success",
           "startedAt": "2026-10-10T20:06:12Z",
-          "completedAt": null,
-          "seconds": null,
+          "completedAt": "2026-10-10T20:07:16Z",
+          "seconds": 64.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/38082391106/job/114301872884"
         },
         {
@@ -291,20 +291,20 @@
       "commit": "03492b6e18f3e3dcabf9f0356105644310509eca",
       "message": "docs(validation): exit/off rerun on the N1z-G candidate",
       "createdAt": "2026-10-10T19:51:13Z",
-      "updatedAt": "2026-10-10T19:51:13Z",
-      "status": "queued",
-      "conclusion": null,
+      "updatedAt": "2026-10-10T20:06:47Z",
+      "status": "completed",
+      "conclusion": "failure",
       "url": "https://github.com/JDScript/meshway/actions/runs/38081437422",
       "jobs": [
         {
           "id": 114298991155,
           "name": "perf",
           "runner": "planck",
-          "status": "in_progress",
-          "conclusion": null,
+          "status": "completed",
+          "conclusion": "failure",
           "startedAt": "2026-10-10T20:06:35Z",
-          "completedAt": null,
-          "seconds": null,
+          "completedAt": "2026-10-10T20:06:46Z",
+          "seconds": 11.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/38081437422/job/114298991155"
         },
         {
