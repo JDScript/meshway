@@ -10,7 +10,6 @@ use meshway_engine::Desired;
 use meshway_model::NodeId;
 use std::{
     collections::{BTreeMap, VecDeque},
-    net::IpAddr,
     time::Duration,
 };
 use tokio::time::Instant;
@@ -262,7 +261,7 @@ impl Packets {
                 netmap_serial = desired.reference().serial.get(),
                 known, "Diagnostic carrier frame received for scheduling");
         }
-        let control = bytes.get(8) != Some(&3);
+        let control = !secure::is_data_frame(&bytes);
         let full = if control {
             self.control.len() >= 32
         } else {
@@ -310,7 +309,6 @@ impl Packets {
         mut exit: Option<&mut super::exit::Runtime>,
     ) {
         let local = desired.netmap().node_id;
-        let addresses = desired.local().addresses.clone();
         let now = Instant::now();
         let Some(carriers) = carriers else {
             return;
@@ -381,7 +379,7 @@ impl Packets {
                 break;
             };
             incoming_done += 1;
-            if item.bytes.get(8) == Some(&3)
+            if secure::is_data_frame(&item.bytes)
                 && (!pool.can_submit_capacity(item.bytes.capacity())
                     || quantum.elapsed() >= Duration::from_micros(200))
             {
@@ -395,19 +393,13 @@ impl Packets {
             }
             let hint = secure.incoming_hint(&item.bytes).ok();
             let waiting = hint.as_ref().and_then(|hint| {
-                let position = hint.path.iter().position(|node| *node == local)?;
                 let previous = if item.carrier.dialer == local {
                     item.carrier.listener
                 } else {
                     item.carrier.dialer
                 };
-                let next =
-                    if position.checked_sub(1).and_then(|p| hint.path.get(p)) == Some(&previous) {
-                        hint.path.get(position + 1)
-                    } else {
-                        position.checked_sub(1).and_then(|p| hint.path.get(p))
-                    };
-                next.copied().filter(|node| !carriers.contains_key(node))
+                hint.next_hop(local, previous)
+                    .filter(|node| !carriers.contains_key(node))
             });
             if let Some(peer) = waiting {
                 // The authenticated incoming channel may need another allowed
@@ -425,7 +417,7 @@ impl Packets {
                         netmap_serial = desired.reference().serial.get(),
                         available = ?carriers.keys().collect::<Vec<_>>(), "Waiting for authenticated next-hop carrier before secure receive");
                 }
-                if item.bytes.get(8) == Some(&3) {
+                if secure::is_data_frame(&item.bytes) {
                     self.incoming.push_back(item);
                 } else {
                     self.control.push_back(item);
@@ -437,7 +429,7 @@ impl Packets {
                     meshway_logging::profile::Metric::new("queue.manager_to_secure");
                 WAIT.elapsed(item.received_at.elapsed());
             }
-            let result = if item.bytes.get(8) == Some(&3) {
+            let result = if secure::is_data_frame(&item.bytes) {
                 match secure.prepare_receive(&item.carrier, item.bytes) {
                     Ok(job) => {
                         assert!(pool.submit(secure::pipeline::Job::Receive(job)).is_none());
@@ -601,15 +593,6 @@ impl Packets {
                 static WAIT: meshway_logging::profile::Metric =
                     meshway_logging::profile::Metric::new("queue.tun_attempt_age");
                 WAIT.elapsed((item.deadline - RETENTION).elapsed());
-            }
-            let facts = item.packet.facts();
-            let source_matches = match facts.traffic.source {
-                IpAddr::V4(address) => addresses.ipv4 == Some(address),
-                IpAddr::V6(address) => addresses.ipv6 == Some(address),
-            };
-            if !source_matches {
-                self.drop_packet("local_source");
-                continue;
             }
             match secure.outbound(item.packet) {
                 Ok(Outbound::Send(job)) => {

@@ -34,8 +34,8 @@ use crate::{
     authority::{Cap, Lifetime, View},
     flow::Entry,
 };
-pub use codec::is_control_frame;
 use codec::{Context, Frame, Kind};
+pub use codec::{is_control_frame, is_data_frame};
 use meshway_configuration::execution::LogicalPath;
 use meshway_engine::DataPlaneKeys;
 use meshway_engine::Desired;
@@ -266,7 +266,7 @@ impl PendingFrame {
         Ok(frames.into_iter().map(|frame| frame.bytes).collect())
     }
     pub fn is_data(&self) -> bool {
-        self.bytes.get(8) == Some(&3)
+        codec::is_data_frame(&self.bytes)
     }
     pub(crate) fn io_guard(&self) -> OutputBinding {
         self.guard.clone()
@@ -342,6 +342,20 @@ pub enum Received {
 pub struct UntrustedIncomingHint {
     pub grant: CircuitGrant,
     pub path: Vec<NodeId>,
+}
+
+impl UntrustedIncomingHint {
+    /// The adjacent node a frame arriving from `previous` continues to on
+    /// the hinted path, if `local` relays it. Scheduling only.
+    pub fn next_hop(&self, local: NodeId, previous: NodeId) -> Option<NodeId> {
+        let position = self.path.iter().position(|node| *node == local)?;
+        let before = position.checked_sub(1).and_then(|p| self.path.get(p));
+        if before == Some(&previous) {
+            self.path.get(position + 1).copied()
+        } else {
+            before.copied()
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -959,7 +973,7 @@ impl SecureNode {
         incoming: &Carrier,
         bytes: impl AsRef<[u8]> + Into<PacketBuffer>,
     ) -> Result<Received, Error> {
-        if bytes.as_ref().get(8) == Some(&3) {
+        if codec::is_data_frame(bytes.as_ref()) {
             let job = self.prepare_receive(incoming, bytes.into())?;
             return self.commit_receive(pipeline::open(job)?);
         }

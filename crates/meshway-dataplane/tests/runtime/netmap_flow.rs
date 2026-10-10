@@ -738,3 +738,13 @@ async fn a_terminal_that_only_receives_answers_with_a_passive_keepalive() {
     );
     f.close().await;
 }
+
+#[tokio::test]
+async fn a_local_packet_with_another_source_is_never_admitted() {
+    let mut f = NetmapMesh::start().await;
+    // B's address as source, sent into A's TUN: not a packet A originates.
+    let forged = super::packet::echo(f.address(2), f.address(2), false, 7, 1, b"ping");
+    assert_eq!(f.a.outbound(forged).unwrap_err(), Error::Packet);
+    assert_eq!(f.a.flow_count(), 0);
+    f.close().await;
+}

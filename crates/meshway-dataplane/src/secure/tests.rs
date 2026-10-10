@@ -229,3 +229,19 @@ fn a_changed_adjacent_boot_marks_a_restart_and_an_unknown_one_binds() {
         Some(b)
     );
 }
+
+#[test]
+fn a_hint_names_the_hop_after_the_arrival_side() {
+    let node = |n: u8| -> NodeId { format!("00000000-0000-4000-8000-{n:012}").parse().unwrap() };
+    let hint = UntrustedIncomingHint {
+        grant: crate::secure::CircuitGrant {
+            purpose: crate::Purpose::Business,
+            target: crate::Target::Mesh { node: node(3) },
+        },
+        path: vec![node(1), node(2), node(3)],
+    };
+    assert_eq!(hint.next_hop(node(2), node(1)), Some(node(3)));
+    assert_eq!(hint.next_hop(node(2), node(3)), Some(node(1)));
+    assert_eq!(hint.next_hop(node(3), node(2)), None, "the terminal relays nothing");
+    assert_eq!(hint.next_hop(node(9), node(1)), None);
+}
