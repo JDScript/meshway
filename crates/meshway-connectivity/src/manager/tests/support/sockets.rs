@@ -106,13 +106,13 @@ fn listener_address(listener: &Listener) -> Result<SocketAddr, Error> {
 impl SocketFactory for Factory {
     fn connect_endpoint<'a>(
         &'a self,
-        snapshot: &'a ExecutionSnapshot,
+        desired: &'a meshway_engine::Desired,
         key: &'a str,
         endpoint: &'a meshway_configuration::execution::DialEndpoint,
     ) -> BoxFuture<'a, Result<AcceptedSocket, Error>> {
         Box::pin(async move {
             self.acquisitions.fetch_add(1, Ordering::SeqCst);
-            let cfg = crate::plan::Plan::new(snapshot)?;
+            let cfg = crate::plan::Plan::new(desired)?;
             if self.blocked_dialers.lock().unwrap().contains(&cfg.node) {
                 return Err(Error::Unavailable);
             }
@@ -130,13 +130,13 @@ impl SocketFactory for Factory {
     }
     fn datagram_endpoint<'a>(
         &'a self,
-        snapshot: &'a ExecutionSnapshot,
+        desired: &'a meshway_engine::Desired,
         key: &'a str,
         endpoint: &'a meshway_configuration::execution::DialEndpoint,
     ) -> BoxFuture<'a, Result<Vec<DatagramSocket>, Error>> {
         Box::pin(async move {
             self.acquisitions.fetch_add(1, Ordering::SeqCst);
-            let cfg = crate::plan::Plan::new(snapshot)?;
+            let cfg = crate::plan::Plan::new(desired)?;
             if self.blocked_dialers.lock().unwrap().contains(&cfg.node) {
                 return Err(Error::Unavailable);
             }
@@ -158,11 +158,11 @@ impl SocketFactory for Factory {
     }
     fn listen<'a>(
         &'a self,
-        snapshot: &'a ExecutionSnapshot,
+        desired: &'a meshway_engine::Desired,
         key: &'a str,
     ) -> BoxFuture<'a, Result<Box<dyn ListenerSocket>, Error>> {
         Box::pin(async move {
-            let cfg = crate::plan::Plan::new(snapshot)?;
+            let cfg = crate::plan::Plan::new(desired)?;
             let address = listener_address(cfg.listeners[key].declaration())?;
             let reserved = self.tcp.lock().unwrap().remove(&address);
             let socket = match reserved {
@@ -175,11 +175,11 @@ impl SocketFactory for Factory {
     }
     fn datagram_listener<'a>(
         &'a self,
-        snapshot: &'a ExecutionSnapshot,
+        desired: &'a meshway_engine::Desired,
         key: &'a str,
     ) -> BoxFuture<'a, Result<Box<dyn Datagram>, Error>> {
         Box::pin(async move {
-            let cfg = crate::plan::Plan::new(snapshot)?;
+            let cfg = crate::plan::Plan::new(desired)?;
             let Listener::NativeUdp(listener) = cfg.listeners[key].declaration() else {
                 return Err(Error::Configuration);
             };

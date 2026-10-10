@@ -37,21 +37,21 @@ pub(super) enum Command {
     Cancel(UdpTraversalId),
 }
 
-/// The State reference of a socket of this epoch, or `None` while no live
-/// instance qualifies the Node.
+/// The State reference of a socket on the current content, or `None` while
+/// no live instance qualifies the Node.
 pub(super) fn socket_reference(
-    shared: &EpochContext,
+    shared: &Shared,
     id: [u8; 32],
     resource: ResourceRef,
 ) -> Result<Option<SocketReference>, Error> {
     let Some(instance) = shared.instance.lock().map_err(|_| Error::Worker)?.clone() else {
         return Ok(None);
     };
-    let snapshot = shared.identity.snapshot();
+    let plan = shared.plan();
     Ok(Some(SocketReference {
-        node_id: shared.plan.node,
+        node_id: plan.node,
         instance,
-        netmap: snapshot.reference(),
+        netmap: plan.reference,
         socket_id: id.iter().map(|byte| format!("{byte:02x}")).collect(),
         socket_generation: shared.generation,
         resource,
@@ -59,17 +59,13 @@ pub(super) fn socket_reference(
 }
 
 /// Native UDP carriers with `peer` the plan admits, in either direction.
-fn udp_carrier(shared: &EpochContext, carrier: &Carrier) -> bool {
-    let peer = if carrier.dialer == shared.plan.node {
+fn udp_carrier(plan: &Plan, carrier: &Carrier) -> bool {
+    let peer = if carrier.dialer == plan.node {
         carrier.listener
     } else {
         carrier.dialer
     };
-    carrier.protocol == TransportProtocol::NativeUdp
-        && shared
-            .plan
-            .admit(shared.identity.snapshot(), peer, carrier)
-            .is_ok()
+    carrier.protocol == TransportProtocol::NativeUdp && plan.admit(peer, carrier).is_ok()
 }
 
 struct Pending {
@@ -87,7 +83,7 @@ struct Observers {
     endpoints: std::collections::BTreeSet<[u8; 32]>,
 }
 
-// Retained across epoch/resource handoffs: churn cannot reset admission.
+// Retained across content and resource changes: churn cannot reset admission.
 // Acquisition is bounded to 30 starts in any half-open minute, paced at 250 ms.
 const QUERY_INTERVAL: Duration = Duration::from_millis(250);
 // Mapping observations expire after at most 20 seconds. Their refresh budget is
@@ -135,15 +131,14 @@ impl QuerySchedule {
     }
 }
 
-fn needs_acquisition(shared: &EpochContext, pending: &BTreeMap<UdpTraversalId, Pending>) -> bool {
-    let plan = &shared.plan;
+fn needs_acquisition(shared: &Shared, pending: &BTreeMap<UdpTraversalId, Pending>) -> bool {
+    let plan = &*shared.plan();
     let Ok(links) = shared.links.lock() else {
         return false;
     };
     plan.peers().any(|peer| {
-        // The selected owner retires unhealthy channels and performs authorized
-        // handoff. A temporarily fenced scope is not a vacant physical slot:
-        // prepare() must wait for that same owner too.
+        // The selected owner retires unhealthy channels. A selected channel is
+        // not a vacant physical slot: prepare() must wait for that owner too.
         if links.contains_key(&peer) || !shared.wanted(peer) {
             return false;
         }
@@ -159,7 +154,7 @@ fn needs_acquisition(shared: &EpochContext, pending: &BTreeMap<UdpTraversalId, P
         plan.dialers.values().any(|dial| {
             dial.peer == peer
                 && udp_carrier(
-                    shared,
+                    plan,
                     &Carrier {
                         dialer: plan.node,
                         listener: peer,
@@ -171,7 +166,7 @@ fn needs_acquisition(shared: &EpochContext, pending: &BTreeMap<UdpTraversalId, P
             let (protocol, enabled) = provider::declaration(listener);
             enabled
                 && udp_carrier(
-                    shared,
+                    plan,
                     &Carrier {
                         dialer: peer,
                         listener: plan.node,
@@ -183,8 +178,8 @@ fn needs_acquisition(shared: &EpochContext, pending: &BTreeMap<UdpTraversalId, P
     })
 }
 
-fn needs_observation(shared: &EpochContext) -> bool {
-    let plan = &shared.plan;
+fn needs_observation(shared: &Shared) -> bool {
+    let plan = shared.plan();
     plan.dialers.values().any(|dial| {
         dial.parameters.transport() == TransportProtocol::NativeUdp
             && !dial.endpoints.iter().any(|endpoint| {
@@ -198,8 +193,8 @@ fn needs_observation(shared: &EpochContext) -> bool {
 
 /// A socket's mapping is refreshed only while it carries a healthy Native
 /// UDP channel or some wanted peer has a UDP carrier. The budget is unchanged.
-fn observation_wanted(shared: &EpochContext, id: &[u8; 32]) -> bool {
-    let plan = &shared.plan;
+fn observation_wanted(shared: &Shared, id: &[u8; 32]) -> bool {
+    let plan = shared.plan();
     let carrying = shared.links.lock().is_ok_and(|links| {
         links.values().any(|link| {
             link.fact.socket_id == *id
@@ -218,13 +213,11 @@ fn observation_wanted(shared: &EpochContext, id: &[u8; 32]) -> bool {
         })
 }
 
-fn observation_due(shared: &EpochContext, id: &[u8; 32]) -> bool {
+fn observation_due(shared: &Shared, id: &[u8; 32]) -> bool {
     if !observation_wanted(shared, id) {
         return false;
     }
-    let Ok(now) = shared.identity.snapshot().now_ms() else {
-        return false;
-    };
+    let now = wall_ms();
     let Ok(sockets) = shared.sockets.lock() else {
         return false;
     };
@@ -241,9 +234,13 @@ fn observation_due(shared: &EpochContext, id: &[u8; 32]) -> bool {
     })
 }
 
+fn wall_ms() -> u64 {
+    u64::try_from(chrono::Utc::now().timestamp_millis()).unwrap_or(0)
+}
+
 /// Scheduling state owned by the traversal owner for its whole life. Only
-/// these budgets and cursors cross an epoch; offers, discovery contexts and
-/// observer metadata are per epoch and keep their own short deadlines.
+/// these budgets and cursors survive new content; offers, discovery contexts
+/// and observer metadata belong to one content and keep their own deadlines.
 struct Schedule {
     queries: QuerySchedule,
     /// Earliest next STUN discovery round (paced independently of queries).
@@ -271,37 +268,37 @@ impl Schedule {
     }
 }
 
-pub(super) async fn run(mut shared: Arc<EpochContext>, gateway: Arc<dyn TraversalGateway>) {
-    let mut updates = shared.epochs.subscribe();
+pub(super) async fn run(shared: Arc<Shared>, gateway: Arc<dyn TraversalGateway>) {
+    let mut plans = shared.plans.subscribe();
     let mut resources = shared.resource_changes.subscribe();
     let mut schedule = Schedule::new();
-    loop {
+    while !shared.stop.is_cancelled() {
         let endpoints = match shared.traversal_endpoints.lock() {
             Ok(endpoints) => endpoints.clone(),
             Err(_) => return,
         };
         schedule.sockets(&endpoints);
-        run_epoch(
+        plans.borrow_and_update();
+        resources.borrow_and_update();
+        run_content(
             shared.clone(),
             &gateway,
             &endpoints,
-            &mut updates,
+            &mut plans,
             &mut resources,
             &mut schedule,
         )
         .await;
-        match shared.latest(&mut updates).await {
-            Ok(next) => shared = next,
-            Err(_) => return,
-        }
     }
 }
 
-async fn run_epoch(
-    shared: Arc<EpochContext>,
+/// One content's discovery, offers and attempts, until new content or new
+/// traversal sockets restart them.
+async fn run_content(
+    shared: Arc<Shared>,
     gateway: &Arc<dyn TraversalGateway>,
     endpoints: &BTreeMap<[u8; 32], Endpoint>,
-    updates: &mut tokio::sync::watch::Receiver<Epoch>,
+    plans: &mut tokio::sync::watch::Receiver<Arc<Plan>>,
     resources: &mut tokio::sync::watch::Receiver<()>,
     schedule: &mut Schedule,
 ) {
@@ -317,16 +314,10 @@ async fn run_epoch(
     let mut prepare_at = Instant::now();
     let mut context: Option<DiscoveryContext> = None;
     let mut observers: Option<Observers> = None;
+    let reference = shared.plan().reference;
     let work = async {
         loop {
-            if shared.epoch_changed() {
-                return Err(Error::Authority);
-            }
-            let now = shared
-                .identity
-                .snapshot()
-                .now_ms()
-                .map_err(|_| Error::Authority)?;
+            let now = wall_ms();
             retired.retain(|_, expires| *expires > now);
             pending.retain(|id, value| {
                 if value.offer.ensure_current().is_ok() {
@@ -351,9 +342,7 @@ async fn run_epoch(
             // Their original slots expire normally; they cannot keep polling a
             // healthy selected link merely because their phase is still Waiting.
             // A selected channel suppresses acquisition, not observation of its
-            // actual NAT socket. Refresh even while its physical owner hands
-            // off publication scope; the Discover command still carries only
-            // the new, independently checked authority.
+            // actual NAT socket.
             let acquisition = !endpoints.is_empty() && needs_acquisition(&shared, &pending);
             let observation = needs_observation(&shared)
                 && endpoints.keys().any(|id| {
@@ -365,8 +354,8 @@ async fn run_epoch(
             // Do not put another metadata RPC (and its control-owner queue)
             // ahead of refresh when no adjacency acquisition needs that query.
             // Renew metadata within the observation refresh horizon rather
-            // than waiting for a periodic expiry gap. Epoch/resource handoff
-            // drops this context; query admission keeps its original budget.
+            // than waiting for a periodic expiry gap. New content or sockets
+            // drop this context; query admission keeps its original budget.
             let observation_query = observation
                 && (acquisition
                     || context.as_ref().is_none_or(|context| {
@@ -374,11 +363,7 @@ async fn run_epoch(
                             || now.saturating_add(OBSERVATION_REFRESH_MS) >= context.expires_at_ms()
                     }));
             if queries.admit(Instant::now(), acquisition, observation_query) {
-                let query = gateway
-                    .request(Operation::Query(Box::new(
-                        shared.identity.snapshot().clone(),
-                    )))
-                    .await;
+                let query = gateway.request(Operation::Query(reference)).await;
                 if let Ok(Reply::Query(Outcome::Current(discovery))) = query {
                     context = Some(discovery.context);
                     observers = None;
@@ -403,8 +388,8 @@ async fn run_epoch(
                         }
                         keep
                     });
-                    // Owner slots retain their ORIGINAL offered guard. A later read
-                    // of the same offer never replaces a guard or extends a deadline.
+                    // Owner slots retain their ORIGINAL offer. A later read of the
+                    // same offer never replaces it or extends its deadline.
                     for attempt in discovery.attempts {
                         let offer = match attempt {
                             AttemptView::Waiting(offer) => offer,
@@ -445,7 +430,7 @@ async fn run_epoch(
             // Query admission is not the clock for an already issued offer or
             // discovery authority. Advance the original bounded operations
             // before their own deadlines without issuing another metadata
-            // query, replacing guards, or extending any deadline.
+            // query or extending any deadline.
             if let Some(context) = context
                 .as_ref()
                 .filter(|context| context.ensure_current().is_ok())
@@ -469,7 +454,7 @@ async fn run_epoch(
                         let due = observation_due(&shared, id);
                         for server in context.servers() {
                             let resolved = tokio::select! { biased;
-                                _ = context.invalidated() => break,
+                                _ = context.ended() => break,
                                 result = endpoint.authorization.authorize_stun(context, &server.id) => result,
                             };
                             match resolved {
@@ -519,7 +504,7 @@ async fn run_epoch(
         Ok(())
     };
     tokio::select! { biased;
-        _ = updates.changed() => {},
+        _ = plans.changed() => {},
         _ = resources.changed() => {},
         _ = scope.run(work) => {},
     }
@@ -531,11 +516,11 @@ async fn run_epoch(
     }
 }
 
-pub(super) fn matching_endpoint(shared: &EpochContext, offer: &ValidatedOffer) -> Option<[u8; 32]> {
+pub(super) fn matching_endpoint(shared: &Shared, offer: &ValidatedOffer) -> Option<[u8; 32]> {
     let sockets = shared.sockets.lock().ok()?;
     sockets.iter().find_map(|(id, fact)| {
         (fact.reference == offer.local().candidate.socket
-            && socket_compatible(&shared.plan, &offer.offer().carrier, fact)
+            && socket_compatible(&shared.plan(), &offer.offer().carrier, fact)
             && fact.endpoints.iter().any(|observation| {
                 fact.candidate(observation)
                     .is_ok_and(|candidate| candidate == offer.local().candidate)
@@ -622,7 +607,7 @@ async fn reserve(
         })
         .map_err(|_| Error::Capacity)?;
     tokio::select! { biased;
-        _ = offer.invalidated() => Err(Error::Authority),
+        _ = offer.ended() => Err(Error::Authority),
         result = tokio::time::timeout(Duration::from_secs(1), receiver) => result.map_err(|_| Error::Cancelled)?.map_err(|_| Error::Unavailable)?,
     }
 }
@@ -664,19 +649,18 @@ async fn accept(
 }
 
 async fn prepare(
-    shared: &EpochContext,
+    shared: &Shared,
     gateway: &Arc<dyn TraversalGateway>,
     endpoints: &BTreeMap<[u8; 32], Endpoint>,
     context: &DiscoveryContext,
     pending: &mut BTreeMap<UdpTraversalId, Pending>,
     after_peer: &mut Option<NodeId>,
 ) -> Result<(), Error> {
-    let plan = &shared.plan;
-    let now = shared
-        .identity
-        .snapshot()
-        .now_ms()
-        .map_err(|_| Error::Authority)?;
+    let plan = &*shared.plan();
+    if context.netmap() != plan.reference {
+        return Ok(());
+    }
+    let now = wall_ms();
     let mut carriers = BTreeMap::new();
     for peer in plan.dial_peers() {
         if !shared.wanted(peer) {
@@ -690,7 +674,7 @@ async fn prepare(
                 listener_key: dial.listener_key.clone(),
                 protocol: dial.parameters.transport(),
             };
-            if udp_carrier(shared, &carrier) {
+            if udp_carrier(plan, &carrier) {
                 carriers.entry(dial.peer).or_insert(carrier);
                 break;
             }
@@ -703,7 +687,7 @@ async fn prepare(
             let (protocol, enabled) = provider::declaration(listener);
             enabled
                 && udp_carrier(
-                    shared,
+                    plan,
                     &Carrier {
                         dialer: *peer,
                         listener: plan.node,
@@ -716,12 +700,11 @@ async fn prepare(
             && !pending
                 .values()
                 .any(|pending| pending.offer.peer().candidate.socket.node_id == *peer)
-            // Scope invalidation suspends I/O, not physical ownership. Let the
-            // selected owner finish handoff/retirement before a new acquisition.
+            // Let the selected owner finish its retirement before a new acquisition.
             && !shared.links.lock().is_ok_and(|links| links.contains_key(peer))
     });
     // Advance before the RPC, including errors/no observations. An unavailable
-    // prefix must not starve other peers; the cursor survives epoch handoff.
+    // prefix must not starve other peers; the cursor survives new content.
     let peers = peer_batch(&carriers, after_peer);
     if peers.is_empty() {
         return Ok(());
@@ -801,7 +784,7 @@ async fn prepare(
         let Some((endpoint, local, remote)) = selected else {
             tracing::debug!(%peer, remote_candidates, compatible_sockets, local_candidates,
                 visible_endpoints = report.endpoints.len(), local_sockets = sockets.len(),
-                netmap_serial = context.snapshot().reference().serial.get(),
+                netmap_serial = context.netmap().serial.get(),
                 cause = "no_acknowledged_pair", "Traversal preparation has no usable candidate");
             continue;
         };
@@ -819,7 +802,7 @@ async fn prepare(
         if let Ok(Reply::Prepare(Outcome::Current(offer))) = response {
             if reserve(endpoints, endpoint, &offer).await.is_ok() {
                 // Install before the RPC so cancellation/uncertainty always
-                // retains the exact reserved slot in this epoch's cleanup set.
+                // retains the exact reserved slot in this content's cleanup set.
                 // Accept immediately, before another peer's prepare or query
                 // consumes the short bilateral acquisition window.
                 let value = pending.entry(offer.offer().attempt_id).or_insert(Pending {
@@ -853,7 +836,7 @@ mod tests {
                 !schedule.admit(now, false, false),
                 "neither acquisition nor observation due"
             );
-            // Epoch/resource changes share this schedule, including a retry
+            // Content/resource changes share this schedule, including a retry
             // immediately after a previous request failed or was cancelled.
             queries += usize::from(schedule.admit(now, true, false));
             assert!(!schedule.admit(now, true, false));

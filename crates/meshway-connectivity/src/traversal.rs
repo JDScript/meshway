@@ -2,18 +2,18 @@
 //! library never owns an HTTP client, credential, or another State store.
 use crate::Error;
 use futures_util::future::BoxFuture;
-use meshway_authority::ExecutionSnapshot;
 use meshway_control::connectivity::{
     AttemptView, Discovery, DiscoveryContext, Outcome, ValidatedOffer,
 };
-use meshway_model::NodeId;
+use meshway_model::{NetmapRef, NodeId};
 use meshway_protocol::{
     StateView,
     connectivity::{CandidateReference, PrepareUdpTraversalRequest},
 };
 
 pub enum Operation {
-    Query(Box<ExecutionSnapshot>),
+    /// Coordination for the desired netmap the Manager currently applies.
+    Query(NetmapRef),
     Peers {
         context: DiscoveryContext,
         peers: Vec<NodeId>,

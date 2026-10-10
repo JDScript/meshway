@@ -2,7 +2,6 @@
 //! exactly one implementation, in meshway-underlay.
 use crate::Error;
 use futures_util::future::BoxFuture;
-use meshway_authority::ExecutionSnapshot;
 use meshway_transport::raw::{Datagram, Stream};
 use std::net::SocketAddr;
 
@@ -29,14 +28,11 @@ pub struct TraversalSocket {
     pub authorization: std::sync::Arc<dyn DatagramAuthorization>,
 }
 pub trait DatagramAuthorization: Send + Sync + 'static {
-    fn handoff(
+    /// New content: the descriptor now carries `reference`. Earlier discovery
+    /// and attempt targets end; selected channels keep only live lifetimes.
+    fn rebind(
         &self,
-        _snapshot: &ExecutionSnapshot,
         _reference: &meshway_control::connectivity::SocketReference,
-        _channels: &[(
-            SocketAddr,
-            std::sync::Arc<dyn meshway_transport::SendLifetime>,
-        )],
     ) -> Result<(), Error> {
         Err(Error::Underlay)
     }
@@ -59,7 +55,7 @@ pub trait DatagramAuthorization: Send + Sync + 'static {
 pub trait SocketFactory: Send + Sync + 'static {
     fn traversal_listener<'a>(
         &'a self,
-        _snapshot: &'a ExecutionSnapshot,
+        _desired: &'a meshway_engine::Desired,
         _key: &'a str,
         _reference: meshway_control::connectivity::SocketReference,
     ) -> BoxFuture<'a, Result<TraversalSocket, Error>> {
@@ -67,7 +63,7 @@ pub trait SocketFactory: Send + Sync + 'static {
     }
     fn bind_datagram_candidate<'a>(
         &'a self,
-        _snapshot: &'a ExecutionSnapshot,
+        _desired: &'a meshway_engine::Desired,
         _key: &'a str,
         _ipv4: bool,
         _reference: meshway_control::connectivity::SocketReference,
@@ -79,13 +75,13 @@ pub trait SocketFactory: Send + Sync + 'static {
     /// protects the socket for the candidate's resource.
     fn connect_endpoint<'a>(
         &'a self,
-        snapshot: &'a ExecutionSnapshot,
+        desired: &'a meshway_engine::Desired,
         key: &'a str,
         endpoint: &'a meshway_configuration::execution::DialEndpoint,
     ) -> BoxFuture<'a, Result<AcceptedSocket, Error>>;
     fn listen<'a>(
         &'a self,
-        snapshot: &'a ExecutionSnapshot,
+        desired: &'a meshway_engine::Desired,
         key: &'a str,
     ) -> BoxFuture<'a, Result<Box<dyn ListenerSocket>, Error>>;
 
@@ -93,7 +89,7 @@ pub trait SocketFactory: Send + Sync + 'static {
     /// [`Self::connect_endpoint`].
     fn datagram_endpoint<'a>(
         &'a self,
-        _snapshot: &'a ExecutionSnapshot,
+        _desired: &'a meshway_engine::Desired,
         _key: &'a str,
         _endpoint: &'a meshway_configuration::execution::DialEndpoint,
     ) -> BoxFuture<'a, Result<Vec<DatagramSocket>, Error>> {
@@ -102,22 +98,36 @@ pub trait SocketFactory: Send + Sync + 'static {
 
     fn datagram_listener<'a>(
         &'a self,
-        _snapshot: &'a ExecutionSnapshot,
+        _desired: &'a meshway_engine::Desired,
         _key: &'a str,
     ) -> BoxFuture<'a, Result<Box<dyn Datagram>, Error>> {
         Box::pin(async { Err(Error::Configuration) })
     }
 }
 
+/// The Host's installed target, which must be exactly `desired`.
+#[cfg(target_os = "linux")]
+fn installed(
+    factory: &meshway_underlay::SocketFactory,
+    desired: &meshway_engine::Desired,
+) -> Result<meshway_authority::ExecutionSnapshot, Error> {
+    let snapshot = factory.installed().map_err(|_| Error::Underlay)?;
+    if snapshot.reference() != desired.reference() {
+        return Err(Error::Authority);
+    }
+    Ok(snapshot)
+}
+
 #[cfg(target_os = "linux")]
 impl SocketFactory for meshway_underlay::SocketFactory {
     fn traversal_listener<'a>(
         &'a self,
-        snapshot: &'a ExecutionSnapshot,
+        desired: &'a meshway_engine::Desired,
         key: &'a str,
         reference: meshway_control::connectivity::SocketReference,
     ) -> BoxFuture<'a, Result<TraversalSocket, Error>> {
         Box::pin(async move {
+            let snapshot = &installed(self, desired)?;
             let socket = self
                 .traversal_listener(snapshot, key, reference)
                 .await
@@ -130,12 +140,13 @@ impl SocketFactory for meshway_underlay::SocketFactory {
     }
     fn bind_datagram_candidate<'a>(
         &'a self,
-        snapshot: &'a ExecutionSnapshot,
+        desired: &'a meshway_engine::Desired,
         key: &'a str,
         ipv4: bool,
         reference: meshway_control::connectivity::SocketReference,
     ) -> BoxFuture<'a, Result<TraversalSocket, Error>> {
         Box::pin(async move {
+            let snapshot = &installed(self, desired)?;
             let socket = self
                 .bind_datagram_candidate(snapshot, key, ipv4, reference)
                 .await
@@ -148,10 +159,11 @@ impl SocketFactory for meshway_underlay::SocketFactory {
     }
     fn datagram_listener<'a>(
         &'a self,
-        snapshot: &'a ExecutionSnapshot,
+        desired: &'a meshway_engine::Desired,
         key: &'a str,
     ) -> BoxFuture<'a, Result<Box<dyn Datagram>, Error>> {
         Box::pin(async move {
+            let snapshot = &installed(self, desired)?;
             let endpoint = self
                 .datagram_listener(snapshot, key)
                 .await
@@ -162,11 +174,12 @@ impl SocketFactory for meshway_underlay::SocketFactory {
 
     fn datagram_endpoint<'a>(
         &'a self,
-        snapshot: &'a ExecutionSnapshot,
+        desired: &'a meshway_engine::Desired,
         key: &'a str,
         endpoint: &'a meshway_configuration::execution::DialEndpoint,
     ) -> BoxFuture<'a, Result<Vec<DatagramSocket>, Error>> {
         Box::pin(async move {
+            let snapshot = &installed(self, desired)?;
             Ok(self
                 .datagram_candidate(snapshot, key, endpoint)
                 .await
@@ -181,11 +194,12 @@ impl SocketFactory for meshway_underlay::SocketFactory {
     }
     fn connect_endpoint<'a>(
         &'a self,
-        snapshot: &'a ExecutionSnapshot,
+        desired: &'a meshway_engine::Desired,
         key: &'a str,
         endpoint: &'a meshway_configuration::execution::DialEndpoint,
     ) -> BoxFuture<'a, Result<AcceptedSocket, Error>> {
         Box::pin(async move {
+            let snapshot = &installed(self, desired)?;
             let handle = self
                 .candidate(snapshot, key, endpoint)
                 .map_err(|_| Error::Underlay)?;
@@ -199,10 +213,11 @@ impl SocketFactory for meshway_underlay::SocketFactory {
     }
     fn listen<'a>(
         &'a self,
-        snapshot: &'a ExecutionSnapshot,
+        desired: &'a meshway_engine::Desired,
         key: &'a str,
     ) -> BoxFuture<'a, Result<Box<dyn ListenerSocket>, Error>> {
         Box::pin(async move {
+            let snapshot = &installed(self, desired)?;
             let handle = self.listener(snapshot, key).map_err(|_| Error::Underlay)?;
             let listener = self.listen(&handle).await.map_err(|_| Error::Underlay)?;
             Ok(Box::new(listener) as Box<dyn ListenerSocket>)
@@ -212,17 +227,11 @@ impl SocketFactory for meshway_underlay::SocketFactory {
 
 #[cfg(target_os = "linux")]
 impl DatagramAuthorization for meshway_underlay::DatagramAuthorization {
-    fn handoff(
+    fn rebind(
         &self,
-        snapshot: &ExecutionSnapshot,
         reference: &meshway_control::connectivity::SocketReference,
-        channels: &[(
-            SocketAddr,
-            std::sync::Arc<dyn meshway_transport::SendLifetime>,
-        )],
     ) -> Result<(), Error> {
-        self.handoff(snapshot, reference, channels)
-            .map_err(|_| Error::Underlay)
+        self.rebind(reference).map_err(|_| Error::Underlay)
     }
     fn authorize_stun<'a>(
         &'a self,

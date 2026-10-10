@@ -110,7 +110,7 @@ impl SendLifetime for Lifetime {
     fn is_current(&self) -> bool {
         !*self.0.borrow()
     }
-    fn invalidated(self: Arc<Self>) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+    fn ended(self: Arc<Self>) -> Pin<Box<dyn Future<Output = ()> + Send>> {
         Box::pin(async move {
             let mut state = self.0.clone();
             loop {

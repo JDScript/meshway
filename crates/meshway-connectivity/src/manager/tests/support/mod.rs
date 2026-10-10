@@ -1,6 +1,6 @@
-//! Shared test I/O: injected sockets and the carriers of a netmap snapshot.
+//! Shared test I/O: injected sockets and the carriers of a desired netmap.
 //! Real Server/Control identities come from [`super::netmap::support::Netmaps`].
-use meshway_authority::DataPlaneIdentity;
+use meshway_engine::Desired;
 use meshway_model::RequestId;
 use std::collections::BTreeMap;
 
@@ -10,19 +10,11 @@ pub(super) fn request() -> RequestId {
     RequestId::new(uuid::Builder::from_random_bytes(bytes).into_uuid()).unwrap()
 }
 
-pub(in crate::manager) fn epoch(identity: &DataPlaneIdentity, generation: u64) -> super::Epoch {
-    super::Epoch {
-        identity: identity.clone(),
-        plan: crate::plan::Plan::new(identity.snapshot()).unwrap(),
-        generation: meshway_model::Sequence::new(generation).unwrap(),
-    }
-}
-
-/// Native UDP dial carriers of the snapshot's own Node, by peer.
+/// Native UDP dial carriers of the content's own Node, by peer.
 pub(in crate::manager) fn carriers(
-    identity: &DataPlaneIdentity,
+    desired: &Desired,
 ) -> BTreeMap<meshway_model::NodeId, crate::Carrier> {
-    let netmap = &identity.snapshot().netmap().unwrap().netmap;
+    let netmap = desired.netmap();
     netmap
         .dialers
         .values()

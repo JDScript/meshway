@@ -1,6 +1,7 @@
 //! Typed provenance of an actual authenticated channel installation. It is
-//! captured once from the admitted scope, never reconstructed from later facts.
-use super::{LinkFact, Scope};
+//! captured once at installation from the applied content, never
+//! reconstructed from later facts.
+use super::{LinkFact, Shared};
 use meshway_model::{BoundNodeKey, NetmapRef, NetworkId, NodeId, observations::ProbeChannel};
 
 #[derive(serde::Serialize)]
@@ -10,7 +11,6 @@ struct Installation<'a> {
     network: NetworkId,
     instance: meshway_protocol::InstanceRequest,
     netmap: NetmapRef,
-    expires_at_ms: u64,
     observed_at_ms: u64,
     control_key: &'a BoundNodeKey,
     dataplane_key: &'a BoundNodeKey,
@@ -20,22 +20,19 @@ struct Installation<'a> {
     channel: ProbeChannel,
 }
 
-pub(super) fn installed(fact: &LinkFact, scope: &Scope) -> Option<String> {
-    let snapshot = &scope.snapshot;
-    let netmap = &snapshot.netmap().ok()?.netmap;
-    let own = &netmap.self_.self_keys;
-    let peer = netmap.projection.inventory.get(&fact.peer)?;
+pub(super) fn installed(fact: &LinkFact, shared: &Shared) -> Option<String> {
+    let plan = shared.plan();
+    let (peer_control_key, peer_dataplane_key) = plan.keys(fact.peer).ok()?;
     let installation = Installation {
-        node: netmap.node_id,
-        network: netmap.network_id,
-        instance: snapshot.instance()?,
-        netmap: snapshot.reference(),
-        expires_at_ms: snapshot.expires_at_ms(),
-        observed_at_ms: snapshot.now_ms().ok()?,
-        control_key: &own.control_key,
-        dataplane_key: &own.dataplane_key,
-        peer_control_key: &peer.control_key,
-        peer_dataplane_key: &peer.dataplane_key,
+        node: plan.node,
+        network: plan.network,
+        instance: shared.instance.lock().ok()?.clone()?,
+        netmap: plan.reference,
+        observed_at_ms: u64::try_from(chrono::Utc::now().timestamp_millis()).ok()?,
+        control_key: &plan.self_keys.control_key,
+        dataplane_key: &plan.self_keys.dataplane_key,
+        peer_control_key,
+        peer_dataplane_key,
         carrier: &fact.carrier,
         channel: ProbeChannel {
             link_id: fact.id.into(),

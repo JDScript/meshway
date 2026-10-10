@@ -21,11 +21,14 @@ enum Driver {
     Datagram,
 }
 
-/// The peer's ordered dial candidates for this epoch, built once per
-/// acquisition sweep from the plan's carrier order (never by planning every
-/// peer), plus the peer's current fact endpoints for a netmap.
-pub(super) fn candidates(shared: &EpochContext, peer: NodeId) -> Result<Vec<Candidate>, Error> {
-    let plan = &shared.plan;
+/// The peer's ordered dial candidates on `plan`, built once per acquisition
+/// sweep from its carrier order (never by planning every peer), plus the
+/// peer's current fact endpoints.
+pub(super) fn candidates(
+    shared: &Shared,
+    plan: &Plan,
+    peer: NodeId,
+) -> Result<Vec<Candidate>, Error> {
     let facts = shared.facts.get(peer);
     let now = chrono::Utc::now().timestamp_millis();
     let mut out = Vec::new();
@@ -36,9 +39,6 @@ pub(super) fn candidates(shared: &EpochContext, peer: NodeId) -> Result<Vec<Cand
             listener_key: candidate.listener_key.clone(),
             protocol: candidate.parameters.transport(),
         };
-        // Resource plans survive compatible publication handoffs, including a
-        // diagnostic-only or expired business grant gaining a live permit.
-        // Every actual acquisition below still checks its frozen peer Scope.
         // Unsupported dial candidates cannot be used; another configured stream
         // candidate may still be usable. Enabled unsupported listeners fail start.
         let (driver, timeout) = match &candidate.parameters {
@@ -97,80 +97,34 @@ pub(super) fn candidates(shared: &EpochContext, peer: NodeId) -> Result<Vec<Cand
     Ok(out)
 }
 
-pub(super) async fn dial(
-    mut shared: Arc<EpochContext>,
-    factory: Arc<dyn SocketFactory>,
-    peer: NodeId,
-) {
-    let mut updates = shared.epochs.subscribe();
-    loop {
-        dial_epoch(shared.clone(), factory.clone(), peer).await;
-        match shared.latest(&mut updates).await {
-            Ok(next) => shared = next,
-            Err(_) => return,
-        }
-    }
-}
-
-/// Wait until this peer is wanted (interest or keepalive), or the epoch ends.
-async fn wanted(
-    shared: &EpochContext,
-    lifetime: &Scope,
-    peer: NodeId,
-    updates: &mut tokio::sync::watch::Receiver<Epoch>,
-) -> Result<(), Error> {
-    let wake = shared.interests.waker(peer);
-    loop {
-        let notified = wake.notified();
-        tokio::pin!(notified);
-        notified.as_mut().enable();
-        if shared.wanted(peer) {
-            return Ok(());
-        }
-        lifetime
-            .run(async {
-                if shared.epoch_changed() {
-                    return Err(Error::Authority);
-                }
-                tokio::select! { biased;
-                    _ = updates.changed() => Err(Error::Authority),
-                    _ = &mut notified => Ok(()),
-                }
-            })
-            .await?;
-    }
-}
-
-async fn dial_epoch(shared: Arc<EpochContext>, factory: Arc<dyn SocketFactory>, peer: NodeId) {
+/// One peer's acquisition owner for the Manager's lifetime. Every sweep
+/// reads the current plan; Manager's apply stops this owner when the peer is
+/// no longer a dial peer.
+pub(super) async fn dial(shared: Arc<Shared>, factory: Arc<dyn SocketFactory>, peer: NodeId) {
     let lifetime = shared.scope(None, false);
-    let mut updates = shared.epochs.subscribe();
+    let mut plans = shared.plans.subscribe();
     'acquisition: loop {
-        if lifetime.check().is_err() || shared.epoch_changed() {
+        if lifetime.check().is_err() {
             return;
         }
-        if wanted(&shared, &lifetime, peer, &mut updates)
-            .await
-            .is_err()
-        {
+        if wanted(&shared, &lifetime, peer).await.is_err() {
             return;
         }
-        // A revoked operation scope is not a vacant physical slot. During a
-        // direct handoff its owner must first renew or retire the selected link;
-        // racing that decision with a reverse dial can replace a retained FD.
+        // A selected channel is not a vacant physical slot; only its own
+        // owner, idle retirement or Manager's apply ends it.
         let selected = shared
             .links
             .lock()
             .is_ok_and(|links| links.contains_key(&peer));
         if selected {
-            if backoff(&shared, &lifetime, peer, &mut updates)
-                .await
-                .is_err()
-            {
+            if backoff(&shared, &lifetime, peer).await.is_err() {
                 return;
             }
             continue;
         }
-        let Ok(candidates) = candidates(&shared, peer) else {
+        plans.borrow_and_update();
+        let plan = shared.plan();
+        let Ok(candidates) = candidates(&shared, &plan, peer) else {
             return;
         };
         // Provenance is the first priority across all of this peer's carriers.
@@ -200,6 +154,7 @@ async fn dial_epoch(shared: Arc<EpochContext>, factory: Arc<dyn SocketFactory>, 
                         let _ = datagram::dial(
                             shared.clone(),
                             factory.clone(),
+                            plan.clone(),
                             peer,
                             &candidate.key,
                             &candidate.carrier,
@@ -210,10 +165,7 @@ async fn dial_epoch(shared: Arc<EpochContext>, factory: Arc<dyn SocketFactory>, 
                         if lifetime.check().is_err() {
                             return;
                         }
-                        if backoff(&shared, &lifetime, peer, &mut updates)
-                            .await
-                            .is_err()
-                        {
+                        if backoff(&shared, &lifetime, peer).await.is_err() {
                             return;
                         }
                         continue;
@@ -228,11 +180,7 @@ async fn dial_epoch(shared: Arc<EpochContext>, factory: Arc<dyn SocketFactory>, 
                     let attempt = async {
                         let opening = Arc::new(scope::Opening::new(scope.clone()));
                         let socket = factory
-                            .connect_endpoint(
-                                shared.identity.snapshot(),
-                                &candidate.key,
-                                &target.endpoint,
-                            )
+                            .connect_endpoint(&plan.desired, &candidate.key, &target.endpoint)
                             .await?;
                         let raw = Box::new(scope::Stream {
                             inner: socket.stream,
@@ -243,9 +191,14 @@ async fn dial_epoch(shared: Arc<EpochContext>, factory: Arc<dyn SocketFactory>, 
                             return Err(Error::Configuration);
                         };
                         let stream = connector.connect(raw).await?;
-                        let (stream, id) =
-                            adjacency::dial(&shared.identity, &scope, stream, &candidate.carrier)
-                                .await?;
+                        let (stream, id) = adjacency::dial(
+                            &shared.keys,
+                            &plan,
+                            &scope,
+                            stream,
+                            &candidate.carrier,
+                        )
+                        .await?;
                         Ok((
                             stream,
                             LinkFact {
@@ -261,27 +214,32 @@ async fn dial_epoch(shared: Arc<EpochContext>, factory: Arc<dyn SocketFactory>, 
                         ))
                     };
                     let result = tokio::select! { biased;
-                        _ = updates.changed() => {
+                        // New content: restart the sweep on it.
+                        _ = plans.changed() => {
                             scope.cancellation.cancel();
-                            return;
+                            continue 'acquisition;
                         },
                         result = scope.run(attempt) => result,
                     };
                     let mut was_selected = false;
                     if let Ok((stream, fact, opening)) = result {
-                        let _ = connected(shared.clone(), stream, fact, opening, &mut was_selected)
-                            .await;
+                        let _ = connected(
+                            shared.clone(),
+                            stream,
+                            fact,
+                            plan.clone(),
+                            opening,
+                            &mut was_selected,
+                        )
+                        .await;
                     }
                     drop(capacity);
                     if lifetime.check().is_err() {
                         return;
                     }
                     // Every failure/rejected duplicate is paced; no immediate
-                    // failed-dial loop, including single-candidate publications.
-                    if backoff(&shared, &lifetime, peer, &mut updates)
-                        .await
-                        .is_err()
-                    {
+                    // failed-dial loop, including single-candidate contents.
+                    if backoff(&shared, &lifetime, peer).await.is_err() {
                         return;
                     }
                     if was_selected {
@@ -294,12 +252,32 @@ async fn dial_epoch(shared: Arc<EpochContext>, factory: Arc<dyn SocketFactory>, 
                 }
             }
         }
-        if backoff(&shared, &lifetime, peer, &mut updates)
-            .await
-            .is_err()
-        {
+        if backoff(&shared, &lifetime, peer).await.is_err() {
             return;
         }
+    }
+}
+
+/// Wait until this peer is wanted (interest or keepalive), or the owner stops.
+async fn wanted(shared: &Shared, lifetime: &Scope, peer: NodeId) -> Result<(), Error> {
+    let wake = shared.interests.waker(peer);
+    let mut plans = shared.plans.subscribe();
+    loop {
+        let notified = wake.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+        if shared.wanted(peer) {
+            return Ok(());
+        }
+        lifetime
+            .run(async {
+                // New content may make the peer keepalive.
+                tokio::select! { biased;
+                    result = plans.changed() => result.map_err(|_| Error::Cancelled),
+                    _ = &mut notified => Ok(()),
+                }
+            })
+            .await?;
     }
 }
 
@@ -317,25 +295,18 @@ pub(super) fn acquisition(
     }
 }
 
-/// Paced retry. New peer facts end the wait early (a changed candidate set
-/// may be dialable now); interest alone never shortens the pace.
-async fn backoff(
-    shared: &EpochContext,
-    lifetime: &Scope,
-    peer: NodeId,
-    updates: &mut tokio::sync::watch::Receiver<Epoch>,
-) -> Result<(), Error> {
+/// Paced retry. New peer facts or new content end the wait early (a changed
+/// candidate set may be dialable now); interest alone never shortens the pace.
+async fn backoff(shared: &Shared, lifetime: &Scope, peer: NodeId) -> Result<(), Error> {
     let facts = shared.facts.get(peer);
     let wake = shared.interests.waker(peer);
+    let mut plans = shared.plans.subscribe();
     let deadline = tokio::time::Instant::now() + shared.limits.retry_backoff;
     lifetime
         .run(async {
             loop {
-                if shared.epoch_changed() {
-                    return Err(Error::Authority);
-                }
                 tokio::select! { biased;
-                    _ = updates.changed() => return Err(Error::Authority),
+                    result = plans.changed() => return result.map_err(|_| Error::Cancelled),
                     _ = tokio::time::sleep_until(deadline) => return Ok(()),
                     _ = wake.notified() => {
                         if shared.facts.get(peer) != facts {
@@ -349,22 +320,17 @@ async fn backoff(
 }
 
 pub(super) async fn listen(
-    mut shared: Arc<EpochContext>,
+    shared: Arc<Shared>,
     fact: ListenerFact,
     listener: Box<dyn ListenerSocket>,
     acceptor: Arc<provider::Acceptor>,
 ) {
-    let mut updates = shared.epochs.subscribe();
     let mut children = JoinSet::new();
     loop {
         let lifetime = shared.scope(None, false);
         let socket = lifetime
             .run(async {
-                if shared.epoch_changed() {
-                    return Err(Error::Authority);
-                }
                 tokio::select! { biased;
-                    _ = updates.changed() => Err(Error::Authority),
                     result = children.join_next(), if !children.is_empty() => {
                         if result.is_some_and(|result| result.is_err()) {
                             shared.stop.cancel();
@@ -382,19 +348,6 @@ pub(super) async fn listen(
         let socket = match socket {
             Ok(Some(socket)) => socket,
             Ok(None) => continue,
-            Err(_) if shared.stop.is_cancelled() => break,
-            Err(_)
-                if shared.identity.snapshot().ensure_current().is_err()
-                    || shared.epoch_changed() =>
-            {
-                match shared.successor(&mut updates).await {
-                    Ok(next) => {
-                        shared = next;
-                        continue;
-                    }
-                    Err(_) => break,
-                }
-            }
             Err(_) => {
                 shared.stop.cancel();
                 break;
@@ -403,18 +356,21 @@ pub(super) async fn listen(
         let Ok(capacity) = shared.capacity.clone().try_acquire_owned() else {
             continue;
         };
-        // Only the claimed dialer's carrier is admitted (and cached per
-        // epoch); the full context and signature are verified against it.
-        let plan = shared.plan.clone();
-        let snapshot = shared.identity.snapshot().clone();
+        // Only the claimed dialer's carrier on the current content is
+        // admitted (and cached per content); the full context and signature
+        // are verified against it.
+        let plan = shared.plan();
         let key = fact.key.clone();
         let protocol = fact.protocol;
-        let carriers = move |peer| plan.accepting(&snapshot, peer, &key, protocol);
         let shared = shared.clone();
         let acceptor = acceptor.clone();
         children.spawn(async move {
             let _capacity = capacity;
             let scope = shared.scope(None, true);
+            let carriers = {
+                let plan = plan.clone();
+                move |peer| plan.accepting(peer, &key, protocol)
+            };
             let attempt = async {
                 let opening = Arc::new(scope::Opening::new(scope.clone()));
                 let raw = Box::new(scope::Stream {
@@ -424,7 +380,7 @@ pub(super) async fn listen(
                 });
                 let stream = acceptor.accept(raw).await?;
                 let (stream, peer, carrier, id) =
-                    adjacency::accept(&shared.identity, &scope, stream, carriers).await?;
+                    adjacency::accept(&shared.keys, &plan, &scope, stream, carriers).await?;
                 Ok((
                     stream,
                     LinkFact {
@@ -441,7 +397,7 @@ pub(super) async fn listen(
             };
             if let Ok((stream, fact, opening)) = scope.run(attempt).await {
                 let mut was_selected = false;
-                let _ = connected(shared, stream, fact, opening, &mut was_selected).await;
+                let _ = connected(shared, stream, fact, plan, opening, &mut was_selected).await;
             }
         });
     }

@@ -58,13 +58,11 @@ impl SendLifetime for Lifetime {
             && self.active.ensure_current().is_ok()
             && self.original.ensure_current().is_ok()
     }
-    fn invalidated(
-        self: Arc<Self>,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
+    fn ended(self: Arc<Self>) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
         Box::pin(async move {
             tokio::select! {
-                _ = self.active.invalidated() => {},
-                _ = self.original.invalidated() => {},
+                _ = self.active.ended() => {},
+                _ = self.original.ended() => {},
                 _ = self.scope.run(std::future::pending::<Result<(), Error>>()) => {},
             }
         })
@@ -88,7 +86,7 @@ pub(super) async fn send(
     };
     let mut frames = VecDeque::from([Frame::new(bytes, Some(remote))]);
     tokio::select! { biased;
-        _ = lifetime.clone().invalidated() => Err(Error::Authority),
+        _ = lifetime.clone().ended() => Err(Error::Authority),
         result = tokio::time::timeout_at(deadline, async {
             if !lifetime.is_current() { return Err(Error::Authority); }
             let admitted = sender.lock().await.try_send(&mut frames, context);
@@ -161,8 +159,8 @@ impl Owner {
                     return Ok(());
                 }
                 let (initiation, intro) = Initiation::new_bound(
-                    &self.shared.identity,
-                    &self.shared.plan,
+                    &self.shared.keys,
+                    &self.shared.plan(),
                     &attempt.offer.offer().carrier,
                     Some(attempt.offer.offer().digest),
                 )?;
@@ -357,7 +355,7 @@ impl Owner {
         if active.ensure_current().is_err() || attempt.offer.ensure_current().is_err() {
             return Ok(());
         }
-        let plan = self.shared.plan.clone();
+        let plan = self.shared.plan();
         let cfg = &*plan;
         let peer = attempt.offer.peer().candidate.socket.node_id;
         let carrier = attempt.offer.offer().carrier.clone();
@@ -381,7 +379,7 @@ impl Owner {
             let transcript = initiation.respond()?;
             attempt.output(
                 2,
-                transcript.message(&self.shared.identity, Kind::Challenge)?,
+                transcript.message(&self.shared.keys, cfg, Kind::Challenge)?,
             );
             attempt.transcript = Some(transcript);
             return Ok(());
@@ -398,7 +396,7 @@ impl Owner {
                 }
                 return Ok(());
             }
-            attempt.output(3, transcript.message(&self.shared.identity, Kind::Ack)?);
+            attempt.output(3, transcript.message(&self.shared.keys, cfg, Kind::Ack)?);
             attempt.transcript = Some(transcript);
             return Ok(());
         }
@@ -413,7 +411,7 @@ impl Owner {
             let ready = if dialer {
                 None
             } else {
-                Some(transcript.message(&self.shared.identity, Kind::Ready)?)
+                Some(transcript.message(&self.shared.keys, cfg, Kind::Ready)?)
             };
             active.ensure_current().map_err(|_| Error::Authority)?;
             attempt
@@ -437,6 +435,7 @@ impl Owner {
             let transcript = attempt.transcript.take().ok_or(Error::Authentication)?;
             let capacity = attempt.capacity.take().ok_or(Error::Capacity)?;
             if self.promote_scoped(
+                &plan,
                 peer,
                 carrier,
                 remote,

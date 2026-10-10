@@ -1,8 +1,12 @@
 //! Validated, revocable UDP acquisition authority. Constructors stay with the
-//! single Control owner; State observations are inputs, never grants.
+//! single Control owner; State observations are inputs, never grants. Each
+//! context is bound to the held netmap content it was issued for and to its
+//! own short Server deadline; Engine's adjacency owner drops it on new content.
 use crate::{Control, Deadline, Error, Started};
-use meshway_authority::ExecutionSnapshot;
-use meshway_configuration::{execution::Carrier, netmap::NodeNetmap};
+use meshway_configuration::{
+    execution::Carrier,
+    netmap::{CompiledNetmap, NodeNetmap},
+};
 use meshway_model::{NodeId, RequestId, StateEpoch, state::SocketNetwork};
 use meshway_policy::{admission::netmap::admit_adjacency, compile::netmap::LocalCompiler};
 pub use meshway_protocol::connectivity::SocketReference;
@@ -22,7 +26,7 @@ pub struct DiscoveryContext {
     inner: Arc<DiscoveryAuthority>,
 }
 struct DiscoveryAuthority {
-    snapshot: ExecutionSnapshot,
+    netmap: Arc<CompiledNetmap>,
     instance: InstanceRequest,
     epoch: StateEpoch,
     deadline: Deadline,
@@ -30,8 +34,12 @@ struct DiscoveryAuthority {
 }
 
 impl DiscoveryContext {
-    pub fn snapshot(&self) -> &ExecutionSnapshot {
-        &self.inner.snapshot
+    /// The held netmap this context was issued for.
+    pub fn netmap(&self) -> meshway_model::NetmapRef {
+        self.inner.netmap.reference()
+    }
+    fn content(&self) -> &NodeNetmap {
+        &self.inner.netmap.netmap
     }
     /// Instance qualification the coordination requests carry.
     pub fn instance(&self) -> &InstanceRequest {
@@ -44,29 +52,26 @@ impl DiscoveryContext {
         self.inner.servers.as_slice()
     }
     pub fn expires_at_ms(&self) -> u64 {
-        self.inner
-            .deadline
-            .expires_at_ms()
-            .min(self.snapshot().expires_at_ms())
+        self.inner.deadline.expires_at_ms()
     }
     pub fn expires_at(&self) -> Instant {
-        self.inner
-            .deadline
-            .expires_at()
-            .min(self.snapshot().expires_at())
+        self.inner.deadline.expires_at()
+    }
+    pub fn now_ms(&self) -> Result<u64, Error> {
+        self.inner.deadline.now_ms().map_err(Error::from)
     }
     pub fn ensure_current(&self) -> Result<(), Error> {
-        self.snapshot().ensure_current()?;
         if !self.inner.deadline.valid() {
             return Err(Error::Expired);
         }
         Ok(())
     }
-    pub async fn invalidated(&self) {
-        tokio::select! {
-            _ = self.snapshot().invalidated_at(self.expires_at_ms()) => {},
-            _ = tokio::time::sleep_until(self.expires_at().into()) => {},
-        }
+    /// The Server deadline of this context has passed.
+    pub async fn ended(&self) {
+        self.inner
+            .deadline
+            .ended(&tokio_util::sync::CancellationToken::new())
+            .await;
     }
 }
 
@@ -82,12 +87,23 @@ struct OfferAuthority {
     cancelled: CancellationToken,
 }
 
+impl OfferAuthority {
+    fn current(&self) -> Result<(), Error> {
+        self.context.ensure_current()?;
+        if self.cancelled.is_cancelled() || !self.deadline.valid() {
+            return Err(Error::Expired);
+        }
+        Ok(())
+    }
+}
+
 impl ValidatedOffer {
     pub fn offer(&self) -> &UdpTraversalOffer {
         &self.inner.offer
     }
-    pub fn snapshot(&self) -> &ExecutionSnapshot {
-        self.inner.context.snapshot()
+    /// The held netmap this offer was validated on.
+    pub fn netmap(&self) -> meshway_model::NetmapRef {
+        self.inner.context.netmap()
     }
     pub fn local(&self) -> &UdpTraversalParticipant {
         if self.inner.local_first {
@@ -115,26 +131,19 @@ impl ValidatedOffer {
             .expires_at_ms()
             .min(self.inner.context.expires_at_ms())
     }
+    /// Its adjacency was admitted on its immutable content at validation.
     pub fn ensure_current(&self) -> Result<(), Error> {
-        self.inner.context.ensure_current()?;
-        if self.inner.cancelled.is_cancelled() || !self.inner.deadline.valid() {
-            return Err(Error::Expired);
-        }
-        adjacency(
-            self.snapshot(),
-            self.peer().candidate.socket.node_id,
-            &self.inner.offer.carrier,
-        )?;
-        Ok(())
+        self.inner.current()
     }
     pub fn cancel(&self) {
         self.inner.cancelled.cancel();
     }
-    pub async fn invalidated(&self) {
+    /// Cancelled, or its own or its context's deadline passed.
+    pub async fn ended(&self) {
         tokio::select! {
             _ = self.inner.cancelled.cancelled() => {},
-            _ = self.snapshot().invalidated_at(self.expires_at_ms()) => {},
-            _ = tokio::time::sleep_until(self.expires_at().into()) => {},
+            _ = self.inner.deadline.ended(&self.inner.cancelled) => {},
+            _ = self.inner.context.ended() => {},
         }
     }
 }
@@ -152,8 +161,8 @@ impl AttemptScope {
     pub fn cancel(&self) {
         self.0.cancel();
     }
-    pub async fn invalidated(&self) {
-        self.0.invalidated().await;
+    pub async fn ended(&self) {
+        self.0.ended().await;
     }
 }
 
@@ -192,10 +201,10 @@ pub fn udp_recipient(address: &str) -> Result<SocketAddr, Error> {
     }
 }
 
-/// The installed netmap admits a Native UDP adjacency with `peer` on `carrier`.
-fn adjacency(snapshot: &ExecutionSnapshot, peer: NodeId, carrier: &Carrier) -> Result<(), Error> {
-    let netmap = &snapshot.netmap()?.netmap;
-    admit_adjacency(&LocalCompiler::new(netmap), netmap, peer, carrier).map_err(|_| Error::Expired)
+/// The held netmap admits a Native UDP adjacency with `peer` on `carrier`.
+fn adjacency(netmap: &Arc<CompiledNetmap>, peer: NodeId, carrier: &Carrier) -> Result<(), Error> {
+    let compiler = LocalCompiler::from_shared(netmap.netmap.clone());
+    admit_adjacency(&compiler, &netmap.netmap, peer, carrier).map_err(|_| Error::Expired)
 }
 
 fn visible(netmap: &NodeNetmap, peer: NodeId) -> bool {
@@ -203,17 +212,18 @@ fn visible(netmap: &NodeNetmap, peer: NodeId) -> bool {
 }
 
 impl Control {
-    /// The snapshot is of this owner's held, leased netmap and an instance is live;
-    /// returns that instance.
-    fn connectivity_current(&self, snapshot: &ExecutionSnapshot) -> Result<InstanceRequest, Error> {
+    /// `netmap` is this owner's held, leased content and an instance is live.
+    fn connectivity_current(
+        &self,
+        netmap: meshway_model::NetmapRef,
+    ) -> Result<(Arc<CompiledNetmap>, InstanceRequest), Error> {
         self.token()?;
-        snapshot.ensure_current()?;
-        self.held_netmap(snapshot.reference())?;
-        self.current_instance()
+        let held = self.held_netmap(netmap)?;
+        Ok((held, self.current_instance()?))
     }
 
     fn connectivity_context(&self, context: &DiscoveryContext) -> Result<(), Error> {
-        if self.connectivity_current(context.snapshot())? != *context.instance() {
+        if self.connectivity_current(context.netmap())?.1 != *context.instance() {
             return Err(Error::Expired);
         }
         context.ensure_current()
@@ -221,12 +231,12 @@ impl Control {
 
     pub async fn query_udp_traversal(
         &mut self,
-        snapshot: &ExecutionSnapshot,
+        netmap: meshway_model::NetmapRef,
     ) -> Result<Outcome<Discovery>, Error> {
-        let instance = self.connectivity_current(snapshot)?;
+        let (held, instance) = self.connectivity_current(netmap)?;
         let request = QueryUdpTraversalRequest {
             instance: instance.clone(),
-            netmap: snapshot.reference(),
+            netmap,
         };
         let started = Started::now(&self.clock)?;
         let response = self
@@ -234,7 +244,7 @@ impl Control {
             .query_udp_traversal(&request, self.token()?)
             .await;
         let response = self.registered(response)?;
-        if self.connectivity_current(snapshot)? != instance {
+        if self.connectivity_current(netmap)?.1 != instance {
             return Err(Error::Expired);
         }
         let QueryUdpTraversalResponse::Current {
@@ -271,7 +281,7 @@ impl Control {
         }
         let context = DiscoveryContext {
             inner: Arc::new(DiscoveryAuthority {
-                snapshot: snapshot.clone(),
+                netmap: held,
                 instance,
                 epoch: state_epoch,
                 deadline: Deadline::from_response(started.clone(), expires_at_ms)?,
@@ -321,7 +331,7 @@ impl Control {
         started: Started,
     ) -> Result<ValidatedOffer, Error> {
         self.connectivity_context(context)?;
-        let netmap = &context.snapshot().netmap()?.netmap;
+        let netmap = context.content();
         let local_first = offer.local.candidate.socket.node_id == netmap.node_id;
         let (local, peer) = if local_first {
             (&offer.local, &offer.peer)
@@ -332,7 +342,7 @@ impl Control {
             && offer.state_epoch == context.state_epoch()
             && local.candidate.socket.node_id == netmap.node_id
             && local.candidate.socket.instance == *context.instance()
-            && local.candidate.socket.netmap == context.snapshot().reference()
+            && local.candidate.socket.netmap == context.netmap()
             && visible(netmap, peer.candidate.socket.node_id)
             && offer.carrier.protocol
                 == meshway_configuration::transport::TransportProtocol::NativeUdp
@@ -346,11 +356,11 @@ impl Control {
             return Err(Error::Contract);
         }
         adjacency(
-            context.snapshot(),
+            &context.inner.netmap,
             peer.candidate.socket.node_id,
             &offer.carrier,
         )?;
-        if offer.expires_at_ms > context.snapshot().expires_at_ms() {
+        if offer.expires_at_ms > context.expires_at_ms() {
             self.fence();
             return Err(Error::Contract);
         }
@@ -391,7 +401,7 @@ impl Control {
         peers: &[NodeId],
     ) -> Result<StateView, Error> {
         self.connectivity_context(context)?;
-        let netmap = &context.snapshot().netmap()?.netmap;
+        let netmap = context.content();
         if peers.is_empty()
             || peers.len() > 8
             || peers
@@ -412,7 +422,7 @@ impl Control {
             .await;
         let view = self.registered(response)?;
         self.connectivity_context(context)?;
-        if view.network_id != context.snapshot().netmap()?.netmap.network_id
+        if view.network_id != context.content().network_id
             || view.nodes.keys().any(|node| !peers.contains(node))
         {
             self.fence();
@@ -450,11 +460,11 @@ impl Control {
     ) -> Result<Outcome<ValidatedOffer>, Error> {
         self.connectivity_context(context)?;
         if request.instance != *context.instance()
-            || request.netmap != context.snapshot().reference()
+            || request.netmap != context.netmap()
             || request.state_epoch != context.state_epoch()
             || request.local_candidate.socket.instance != request.instance
             || request.local_candidate.socket.netmap != request.netmap
-            || request.local_candidate.socket.node_id != context.snapshot().netmap()?.netmap.node_id
+            || request.local_candidate.socket.node_id != context.content().node_id
             || request.peer_candidate.socket.node_id != request.peer_id
             || request.expires_at_ms > context.expires_at_ms()
             || request.expires_at_ms
@@ -465,7 +475,7 @@ impl Control {
         {
             return Err(Error::Contract);
         }
-        adjacency(context.snapshot(), request.peer_id, &request.carrier)?;
+        adjacency(&context.inner.netmap, request.peer_id, &request.carrier)?;
         let started = Started::now(&self.clock)?;
         let response = self
             .client
@@ -550,7 +560,7 @@ impl Control {
 fn attempt_request(value: &ValidatedOffer) -> UdpTraversalAttemptRequest {
     UdpTraversalAttemptRequest {
         instance: value.inner.context.instance().clone(),
-        netmap: value.snapshot().reference(),
+        netmap: value.netmap(),
         state_epoch: value.offer().state_epoch,
         version: value.offer().version,
         digest: value.offer().digest,
@@ -567,12 +577,11 @@ pub fn prepare_request(
     context.ensure_current()?;
     Ok(PrepareUdpTraversalRequest {
         instance: context.instance().clone(),
-        netmap: context.snapshot().reference(),
+        netmap: context.netmap(),
         state_epoch: context.state_epoch(),
         request_id: RequestId::new(crate::random_id()?).map_err(|_| Error::Cryptography)?,
         expires_at_ms: context.expires_at_ms().min(
             context
-                .snapshot()
                 .now_ms()?
                 .saturating_add(MAX_UDP_TRAVERSAL_LIFETIME_MS),
         ),

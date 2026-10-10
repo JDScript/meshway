@@ -60,7 +60,7 @@ impl TraversalGateway for Gateway {
     {
         Box::pin(async move {
             let expires = match &operation {
-                Operation::Query(snapshot) => snapshot.expires_at(),
+                Operation::Query(_) => std::time::Instant::now() + Duration::from_secs(2),
                 Operation::Peers { context, .. } | Operation::Prepare { context, .. } => {
                     context.expires_at()
                 }
@@ -125,9 +125,7 @@ pub(super) async fn dispatch(
     );
     let operation = async {
         Ok(match operation {
-            Operation::Query(snapshot) => {
-                Reply::Query(control.query_udp_traversal(&snapshot).await?)
-            }
+            Operation::Query(netmap) => Reply::Query(control.query_udp_traversal(netmap).await?),
             Operation::Peers { context, peers } => {
                 Reply::Peers(control.query_connectivity_peers(&context, &peers).await?)
             }
@@ -182,7 +180,7 @@ pub(super) async fn dispatch(
                         local = %offer.local().candidate.socket.node_id,
                         peer = %offer.peer().candidate.socket.node_id,
                         source_instance = %offer.local().candidate.socket.instance.instance_id,
-                        netmap_serial = offer.snapshot().reference().serial.get(),
+                        netmap_serial = offer.netmap().serial.get(),
                         peer_netmap_serial = offer.peer().candidate.socket.netmap.serial.get(),
                         expires_at_ms = value.expires_at_ms, "Traversal offer returned");
                 }
@@ -194,7 +192,7 @@ pub(super) async fn dispatch(
                     tracing::debug!(operation = name, attempt = %offer.offer().attempt_id,
                         local = %offer.local().candidate.socket.node_id,
                         peer = %offer.peer().candidate.socket.node_id,
-                        netmap_serial = offer.snapshot().reference().serial.get(),
+                        netmap_serial = offer.netmap().serial.get(),
                         expires_at_ms = offer.expires_at_ms(), phase, "Traversal acceptance returned");
                 }
                 Reply::Prepare(Outcome::Unavailable(reason))

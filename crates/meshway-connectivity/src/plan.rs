@@ -1,9 +1,9 @@
-//! Adjacency input of one authority epoch: registered keys, own resources,
-//! carrier admission and order. Built once per snapshot content, never per
-//! peer worker. A netmap is admitted only by its projection (topology and
-//! both sides' listener/dialer declarations) and bounded by its lease.
+//! Adjacency input of one desired netmap: registered keys, own resources,
+//! carrier admission and order. Built once per content, never per peer
+//! worker. A carrier is admitted only by the projection (topology and both
+//! sides' listener/dialer declarations) through Engine's shared compiler.
 use crate::{Carrier, Error};
-use meshway_authority::ExecutionSnapshot;
+use meshway_authority::DataPlaneKeys;
 use meshway_configuration::{
     AddressPools, TopologyAction, TopologyRule,
     execution::{DialCandidate, DialEndpoint, DialEndpointSource, TrustedNode},
@@ -16,7 +16,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-/// Peer material compared across epochs; any change ends retained channels.
+/// Peer material compared across contents; any change ends kept channels.
 #[derive(Clone, Debug)]
 struct Peer {
     control: BoundNodeKey,
@@ -28,14 +28,17 @@ type AdmissionKey = (NodeId, NodeId, String, TransportProtocol);
 
 struct Projection {
     netmap: Arc<NodeNetmap>,
-    compiler: meshway_policy::compile::netmap::LocalCompiler,
+    compiler: Arc<meshway_policy::compile::netmap::LocalCompiler>,
     keepalive: BTreeSet<NodeId>,
-    // Lazy per-epoch caches, bounded by the visible Nodes of this projection.
+    // Lazy per-content caches, bounded by the visible Nodes of this projection.
     outgoing: Mutex<BTreeMap<NodeId, Arc<Vec<String>>>>,
     admitted: Mutex<BTreeMap<AdmissionKey, bool>>,
 }
 
 pub(crate) struct Plan {
+    /// The desired content this plan was built from.
+    pub desired: meshway_engine::Desired,
+    pub reference: meshway_model::NetmapRef,
     pub network: NetworkId,
     pub node: NodeId,
     pub self_keys: TrustedNode,
@@ -73,8 +76,8 @@ fn keepalive_peers(netmap: &NodeNetmap) -> BTreeSet<NodeId> {
 }
 
 impl Plan {
-    pub fn new(snapshot: &ExecutionSnapshot) -> Result<Arc<Self>, Error> {
-        let netmap = &snapshot.netmap().map_err(|_| Error::Authority)?.netmap;
+    pub fn new(desired: &meshway_engine::Desired) -> Result<Arc<Self>, Error> {
+        let netmap = desired.netmap();
         let peers = netmap
             .projection
             .inventory
@@ -93,6 +96,8 @@ impl Plan {
             .collect();
         let shared_netmap = netmap.clone();
         Ok(Arc::new(Self {
+            desired: desired.clone(),
+            reference: desired.reference(),
             network: netmap.network_id,
             node: netmap.node_id,
             self_keys: netmap.self_.self_keys.clone(),
@@ -103,9 +108,7 @@ impl Plan {
             peers,
             projection: Projection {
                 keepalive: keepalive_peers(netmap),
-                compiler: meshway_policy::compile::netmap::LocalCompiler::from_shared(
-                    shared_netmap.clone(),
-                ),
+                compiler: desired.compiler().clone(),
                 netmap: shared_netmap,
                 outgoing: Mutex::default(),
                 admitted: Mutex::default(),
@@ -125,6 +128,29 @@ impl Plan {
 
     pub fn has_peer(&self, peer: NodeId) -> bool {
         self.peers.contains_key(&peer)
+    }
+
+    /// Sign a packet-plane digest as this Node under its registered key.
+    pub fn sign(
+        &self,
+        keys: &DataPlaneKeys,
+        digest: meshway_model::Digest,
+    ) -> Result<[u8; 64], Error> {
+        keys.sign_packet(self.network, self.node, &self.self_keys.control_key, digest)
+            .map_err(|_| Error::Authority)
+    }
+
+    /// The same own identity, keys, addresses and pools: resources and
+    /// channels may survive between the two contents.
+    pub fn same_self(&self, next: &Self) -> bool {
+        let (old, new) = (&self.projection.netmap.self_, &next.projection.netmap.self_);
+        self.network == next.network
+            && self.node == next.node
+            && self.self_keys == next.self_keys
+            && self.mesh_address_pools == next.mesh_address_pools
+            && old.identity == new.identity
+            && old.addresses == new.addresses
+            && old.enabled == new.enabled
     }
 
     pub fn keys(&self, node: NodeId) -> Result<(&BoundNodeKey, &BoundNodeKey), Error> {
@@ -182,18 +208,11 @@ impl Plan {
         self.dialers.values().map(|dial| dial.peer).collect()
     }
 
-    /// Adjacency admission of `carrier` with `peer` under `snapshot`, which
-    /// must be this plan's own snapshot. Returns the cutoff in UTC ms.
-    pub fn admit(
-        &self,
-        snapshot: &ExecutionSnapshot,
-        peer: NodeId,
-        carrier: &Carrier,
-    ) -> Result<u64, Error> {
+    /// Adjacency admission of `carrier` with `peer` on this content.
+    pub fn admit(&self, peer: NodeId, carrier: &Carrier) -> Result<(), Error> {
         {
             {
                 let projection = &self.projection;
-                snapshot.ensure_current().map_err(|_| Error::Authority)?;
                 let key = (
                     peer,
                     carrier.dialer,
@@ -227,7 +246,7 @@ impl Plan {
                 if !admitted || (carrier.dialer != self.node && carrier.listener != self.node) {
                     return Err(Error::Authority);
                 }
-                Ok(snapshot.expires_at_ms())
+                Ok(())
             }
         }
     }
@@ -235,7 +254,6 @@ impl Plan {
     /// The carrier an inbound `peer` may use on listener `key`, if admitted.
     pub fn accepting(
         &self,
-        snapshot: &ExecutionSnapshot,
         peer: NodeId,
         key: &str,
         protocol: TransportProtocol,
@@ -246,20 +264,15 @@ impl Plan {
             listener_key: key.to_owned(),
             protocol,
         };
-        self.admit(snapshot, peer, &carrier).ok().map(|_| carrier)
+        self.admit(peer, &carrier).ok().map(|_| carrier)
     }
 
     /// Every admitted inbound carrier on listener `key` (bounded by peers).
-    pub fn incoming(
-        &self,
-        snapshot: &ExecutionSnapshot,
-        key: &str,
-        protocol: TransportProtocol,
-    ) -> Vec<(NodeId, Carrier)> {
+    pub fn incoming(&self, key: &str, protocol: TransportProtocol) -> Vec<(NodeId, Carrier)> {
         self.peers
             .keys()
             .filter_map(|peer| {
-                self.accepting(snapshot, *peer, key, protocol)
+                self.accepting(*peer, key, protocol)
                     .map(|carrier| (*peer, carrier))
             })
             .collect()

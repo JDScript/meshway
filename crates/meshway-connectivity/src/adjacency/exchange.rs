@@ -104,24 +104,22 @@ impl Initiation {
     }
 
     pub fn new(
-        identity: &DataPlaneIdentity,
+        keys: &DataPlaneKeys,
         cfg: &Plan,
         carrier: &Carrier,
     ) -> Result<(Self, Vec<u8>), Error> {
-        Self::new_bound(identity, cfg, carrier, None)
+        Self::new_bound(keys, cfg, carrier, None)
     }
 
     pub fn new_bound(
-        identity: &DataPlaneIdentity,
+        keys: &DataPlaneKeys,
         cfg: &Plan,
         carrier: &Carrier,
         binding: Option<meshway_model::Digest>,
     ) -> Result<(Self, Vec<u8>), Error> {
         let context = bound_context(cfg, carrier, binding)?;
         let client = nonce()?;
-        let signature = identity
-            .sign_packet(digest(INIT, &context, &client, &[0; 32]))
-            .map_err(|_| Error::Authority)?;
+        let signature = cfg.sign(keys, digest(INIT, &context, &client, &[0; 32]))?;
         let mut intro = context.clone();
         intro.extend_from_slice(&client);
         intro.extend_from_slice(&signature);
@@ -241,18 +239,14 @@ impl Transcript {
         .into_bytes()
     }
 
-    pub fn message(&self, identity: &DataPlaneIdentity, kind: Kind) -> Result<Vec<u8>, Error> {
+    pub fn message(&self, keys: &DataPlaneKeys, cfg: &Plan, kind: Kind) -> Result<Vec<u8>, Error> {
         if !matches!(kind, Kind::Challenge | Kind::Ack | Kind::Ready) {
             return Err(Error::Authentication);
         }
-        let proof = identity
-            .sign_packet(digest(
-                kind.domain(),
-                &self.context,
-                &self.client,
-                &self.server,
-            ))
-            .map_err(|_| Error::Authority)?;
+        let proof = cfg.sign(
+            keys,
+            digest(kind.domain(), &self.context, &self.client, &self.server),
+        )?;
         Ok(response(&self.context, &self.client, &self.server, proof))
     }
 
@@ -278,7 +272,8 @@ impl Transcript {
 
     pub fn health(
         &self,
-        identity: &DataPlaneIdentity,
+        keys: &DataPlaneKeys,
+        cfg: &Plan,
         kind: Kind,
         nonce: &[u8; 32],
     ) -> Result<Vec<u8>, Error> {
@@ -287,9 +282,7 @@ impl Transcript {
         }
         let context = self.health_context();
         let id = self.id();
-        let signature = identity
-            .sign_packet(digest(kind.domain(), &context, nonce, &id))
-            .map_err(|_| Error::Authority)?;
+        let signature = cfg.sign(keys, digest(kind.domain(), &context, nonce, &id))?;
         Ok(response(&context, nonce, &id, signature))
     }
 

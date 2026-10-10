@@ -24,12 +24,10 @@ impl meshway_transport::SendLifetime for Lifetime {
             && self.scope.check().is_ok()
             && Instant::now() < self.deadline
     }
-    fn invalidated(
-        self: Arc<Self>,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
+    fn ended(self: Arc<Self>) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
         Box::pin(async move {
             tokio::select! {
-                _ = self.context.invalidated() => {},
+                _ = self.context.ended() => {},
                 _ = tokio::time::sleep_until(self.deadline) => {},
                 _ = self.scope.run(std::future::pending::<Result<(), Error>>()) => {},
             }
@@ -46,9 +44,7 @@ impl Owner {
     ) -> Result<(), Error> {
         if context.ensure_current().is_err()
             || !context.servers().iter().any(|value| value.id == server)
-            || !context
-                .snapshot()
-                .same_netmap(self.shared.identity.snapshot())
+            || context.netmap() != self.shared.plan().reference
         {
             return Ok(());
         }
@@ -105,12 +101,7 @@ impl Owner {
             )
             .await;
         }
-        let now = self
-            .shared
-            .identity
-            .snapshot()
-            .now_ms()
-            .map_err(|_| Error::Authority)?;
+        let now = u64::try_from(chrono::Utc::now().timestamp_millis()).unwrap_or(0);
         let changed = {
             let mut sockets = self.shared.sockets.lock().map_err(|_| Error::Worker)?;
             if let Some(fact) = sockets.get_mut(&self.id) {
@@ -154,11 +145,7 @@ impl Owner {
         {
             return Ok(());
         }
-        let now = pending
-            .context
-            .snapshot()
-            .now_ms()
-            .map_err(|_| Error::Authority)?;
+        let now = pending.context.now_ms().map_err(|_| Error::Authority)?;
         let expires = now
             .saturating_add(20_000)
             .min(pending.context.expires_at_ms());

@@ -1,5 +1,5 @@
 //! Peer facts from the sync long poll: selection input only. Applying them
-//! never changes the authority epoch, scopes or other peers; a changed peer's
+//! never reconfigures content, scopes or other peers; a changed peer's
 //! worker only re-reads its dial candidates.
 use super::*;
 use meshway_control::{FactsRejected, PeerFactsSink};
@@ -82,7 +82,7 @@ impl PeerFactsSink for FactsSink {
 }
 
 /// The single consumer of queued deltas.
-pub(super) async fn run(shared: Arc<EpochContext>) {
+pub(super) async fn run(shared: Arc<Shared>) {
     loop {
         let next = shared
             .facts

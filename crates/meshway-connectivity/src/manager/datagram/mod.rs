@@ -127,11 +127,10 @@ struct Channel {
     budget: ControlBudget,
     _capacity: OwnedSemaphorePermit,
     recovery: Option<Recovery>,
-    dynamic_target: bool,
 }
 
 struct Owner {
-    shared: Arc<EpochContext>,
+    shared: Arc<Shared>,
     id: [u8; 32],
     local: SocketAddr,
     lifetime: Scope,
@@ -152,11 +151,10 @@ struct Owner {
 }
 
 impl Owner {
-    /// Adopt a continuing epoch. The Manager has already renewed or retired
-    /// every selected channel in its table; this owner drops in-flight
-    /// acquisition state and takes the table's scopes for its channels.
-    fn handoff(&mut self, next: Arc<EpochContext>) -> Result<(), Error> {
-        self.lifetime.cancellation.cancel();
+    /// New desired content. In-flight acquisition was authenticated or
+    /// admitted on the earlier content: drop it. Manager's apply has already
+    /// kept or retired every selected channel; ones it retired leave here.
+    fn reconfigured(&mut self) -> Result<(), Error> {
         for attempt in self.pending.values() {
             attempt.scope.cancellation.cancel();
         }
@@ -166,65 +164,35 @@ impl Owner {
         }
         self.traversal.clear();
         self.discovery.clear();
-        if let Some(outbound) = &mut self.outbound {
+        if let Some(outbound) = &mut self.outbound
+            && !outbound.established
+        {
             outbound.scope.cancellation.cancel();
             outbound.attempts.clear();
-            if !outbound.established {
-                return Err(Error::Unavailable);
-            }
-            outbound.scope = next.scope(Some((outbound.peer, outbound.carrier.clone())), false);
+            return Err(Error::Unavailable);
         }
-        let mut selected = Vec::new();
         let remotes: Vec<_> = self.channels.keys().copied().collect();
         for remote in remotes {
             let channel = self.channels.get_mut(&remote).ok_or(Error::Worker)?;
             if let Some(recovery) = channel.recovery.take() {
                 recovery.scope.cancellation.cancel();
             }
+            // Health is proven again under the new content at once; READY
+            // answers belong to the acquisition that was dropped above.
             channel.probe = None;
             channel.next_probe = Instant::now();
             channel.ready_until = Instant::now();
-            if let Some(scope) = next.selected_scope(&channel.fact) {
-                channel.scope = scope.clone();
-                if channel.dynamic_target {
-                    selected.push((
-                        remote,
-                        Arc::new(scope) as Arc<dyn meshway_transport::SendLifetime>,
-                    ));
-                }
-            } else {
+            if !self.selected(&self.channels[&remote]) {
                 let channel = self.channels.remove(&remote).ok_or(Error::Worker)?;
                 channel.scope.cancellation.cancel();
-                retire(&next, &channel.fact)?;
+                retire(&self.shared, &channel.fact)?;
             }
         }
-        if let Some(authorization) = &self.authorization {
-            // The Manager already rebound this socket's reference.
-            let reference = next
-                .sockets
-                .lock()
-                .map_err(|_| Error::Worker)?
-                .get(&self.id)
-                .map(|fact| fact.reference.clone());
-            if let Some(reference) = reference {
-                authorization.handoff(next.identity.snapshot(), &reference, &selected)?;
-            }
-            let (id, generation) = (self.id, next.generation);
-            next.handoffs.send_modify(|done| {
-                done.insert(id, generation);
-            });
-        }
-        self.lifetime = next.scope(None, false);
-        self.shared = next;
         self.changed();
         Ok(())
     }
 
-    fn new(
-        shared: Arc<EpochContext>,
-        endpoint: Box<dyn Datagram>,
-        id: [u8; 32],
-    ) -> Result<Self, Error> {
+    fn new(shared: Arc<Shared>, endpoint: Box<dyn Datagram>, id: [u8; 32]) -> Result<Self, Error> {
         let local = endpoint.local_addr()?;
         let lifetime = shared.scope(None, false);
         let limits = shared.limits.session;
@@ -295,6 +263,7 @@ impl Owner {
     #[allow(clippy::too_many_arguments)]
     fn promote(
         &mut self,
+        plan: &Arc<Plan>,
         peer: NodeId,
         carrier: Carrier,
         remote: SocketAddr,
@@ -305,6 +274,7 @@ impl Owner {
         acquisition: LinkAcquisition,
     ) -> Result<bool, Error> {
         self.promote_scoped(
+            plan,
             peer,
             carrier,
             remote,
@@ -320,6 +290,7 @@ impl Owner {
     #[allow(clippy::too_many_arguments)]
     fn promote_scoped(
         &mut self,
+        plan: &Arc<Plan>,
         peer: NodeId,
         carrier: Carrier,
         remote: SocketAddr,
@@ -330,7 +301,6 @@ impl Owner {
         acquisition: LinkAcquisition,
         attempt: Option<meshway_control::connectivity::AttemptScope>,
     ) -> Result<bool, Error> {
-        let dynamic_target = attempt.is_some();
         if self
             .channels
             .get(&remote)
@@ -366,6 +336,7 @@ impl Owner {
                 fact: fact.clone(),
                 sender: self.sender.clone(),
                 scope: scope.clone(),
+                plan: plan.clone(),
                 supersedes,
                 attempt,
             },
@@ -399,7 +370,6 @@ impl Owner {
                 budget: ControlBudget::with_limit(16),
                 _capacity: capacity,
                 recovery: None,
-                dynamic_target,
             },
         );
         self.changed();
@@ -407,39 +377,28 @@ impl Owner {
     }
 
     async fn run(&mut self) -> Result<(), Error> {
-        let mut updates = self.shared.epochs.subscribe();
+        let mut plans = self.shared.plans.subscribe();
         let mut tick = tokio::time::interval(Duration::from_millis(100));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             let lifetime = self.lifetime.clone();
             enum Work {
-                Handoff,
+                Reconfigured,
                 Tick,
                 Frame(Result<Vec<Frame>, ReceiveError>, std::time::Instant),
                 Command(Option<super::traversal::Command>),
             }
             let work = lifetime.run(async {
-                if self.shared.epoch_changed() {
-                    return Ok(Work::Handoff);
-                }
                 tokio::select! { biased;
-                    _ = updates.changed() => Ok(Work::Handoff),
+                    changed = plans.changed() => changed.map(|_| Work::Reconfigured).map_err(|_| Error::Cancelled),
                     _ = tick.tick() => Ok(Work::Tick),
                     command = async { match &mut self.commands { Some(commands) => commands.recv().await, None => std::future::pending().await } } => Ok(Work::Command(command)),
                     frame = self.receiver.as_mut().ok_or(Error::Unavailable)?.recv_batch() => Ok(Work::Frame(frame, std::time::Instant::now())),
                 }
             }).await;
-            if matches!(
-                work,
-                Ok(Work::Handoff) | Err(Error::Authority | Error::Cancelled)
-            ) {
-                let next = self.shared.successor(&mut updates).await?;
-                self.handoff(next)?;
-                continue;
-            }
             let operation = async {
                 match work? {
-                    Work::Handoff => unreachable!(),
+                    Work::Reconfigured => self.reconfigured()?,
                     Work::Command(Some(command)) => self.traversal_command(command)?,
                     Work::Command(None) => self.commands = None,
                     Work::Tick => self.tick().await?,
@@ -474,16 +433,7 @@ impl Owner {
                 }
                 Ok(())
             };
-            match lifetime.run(operation).await {
-                Err(Error::Authority | Error::Cancelled)
-                    if self.shared.epoch_changed()
-                        || self.lifetime.snapshot.ensure_current().is_err() =>
-                {
-                    let next = self.shared.successor(&mut updates).await?;
-                    self.handoff(next)?;
-                }
-                result => result?,
-            }
+            lifetime.run(operation).await?;
         }
     }
 
@@ -583,9 +533,12 @@ impl Owner {
             channel.next_probe = Instant::now() + PROBE_INTERVAL;
             let bytes = adjacency::encode(
                 Kind::Ping,
-                &channel
-                    .transcript
-                    .health(&self.shared.identity, Kind::Ping, &nonce)?,
+                &channel.transcript.health(
+                    &self.shared.keys,
+                    &self.shared.plan(),
+                    Kind::Ping,
+                    &nonce,
+                )?,
             )?;
             if let Err(error) = send_control(&self.sender, &channel.scope, *remote, bytes).await {
                 tracing::debug!(?error, peer = %channel.fact.peer, channel = ?channel.fact.id,
@@ -658,7 +611,7 @@ impl Owner {
                     frame,
                     received_at,
                 };
-                if EpochContext::business_event(&event) {
+                if Shared::business_event(&event) {
                     meshway_logging::profile::event("manager.udp", "mesh_frame");
                     events.push(event);
                 } else {
@@ -794,11 +747,10 @@ impl Owner {
         let Some(listener) = &self.listener else {
             return Ok(Vec::new());
         };
-        Ok(self.shared.plan.incoming(
-            self.shared.identity.snapshot(),
-            &listener.key,
-            TransportProtocol::NativeUdp,
-        ))
+        Ok(self
+            .shared
+            .plan()
+            .incoming(&listener.key, TransportProtocol::NativeUdp))
     }
 
     async fn init(&mut self, remote: SocketAddr, body: &[u8]) -> Result<(), Error> {
@@ -810,20 +762,15 @@ impl Owner {
         if self.pending.len() + self.channels.len() >= self.shared.limits.connections {
             return Ok(());
         }
-        let plan = self.shared.plan.clone();
+        let plan = self.shared.plan();
         let cfg = &*plan;
         // Only the claimed dialer's carrier is checked; its exact context and
         // signature are still verified below.
         let listener = self.listener.as_ref().ok_or(Error::Worker)?;
         let carriers: Vec<_> = adjacency::claimed_dialer(body)
             .and_then(|peer| {
-                cfg.accepting(
-                    self.shared.identity.snapshot(),
-                    peer,
-                    &listener.key,
-                    TransportProtocol::NativeUdp,
-                )
-                .map(|carrier| (peer, carrier))
+                cfg.accepting(peer, &listener.key, TransportProtocol::NativeUdp)
+                    .map(|carrier| (peer, carrier))
             })
             .into_iter()
             .collect();
@@ -924,7 +871,7 @@ impl Owner {
         let transcript = initiation.respond()?;
         let challenge = adjacency::encode(
             Kind::Challenge,
-            &transcript.message(&self.shared.identity, Kind::Challenge)?,
+            &transcript.message(&self.shared.keys, &self.shared.plan(), Kind::Challenge)?,
         )?;
         // One input produces at most one smaller response, with no autonomous
         // server retry timer before the actual source has completed a challenge.
@@ -956,7 +903,7 @@ impl Owner {
     }
 
     async fn ack(&mut self, remote: SocketAddr, body: &[u8]) -> Result<(), Error> {
-        let plan = self.shared.plan.clone();
+        let plan = self.shared.plan();
         let cfg = &*plan;
         // Match the pending fresh transcript first. An old channel on the same
         // tuple must neither swallow a fresh ACK nor authorize it by address.
@@ -982,9 +929,11 @@ impl Owner {
                 channel.last_response = Instant::now();
                 let bytes = adjacency::encode(
                     Kind::Ready,
-                    &channel
-                        .transcript
-                        .message(&self.shared.identity, Kind::Ready)?,
+                    &channel.transcript.message(
+                        &self.shared.keys,
+                        &self.shared.plan(),
+                        Kind::Ready,
+                    )?,
                 )?;
                 let _ = send_control(&self.sender, &channel.scope, remote, bytes).await;
             }
@@ -995,17 +944,18 @@ impl Owner {
             Kind::Ready,
             &attempt
                 .transcript
-                .message(&self.shared.identity, Kind::Ready)?,
+                .message(&self.shared.keys, &self.shared.plan(), Kind::Ready)?,
         )?;
         let attempt = self.pending.remove(&remote).ok_or(Error::Worker)?;
         let scope = attempt.scope;
         if self.promote(
+            &plan,
             attempt.peer,
             attempt.carrier,
             remote,
             attempt.transcript,
             attempt.capacity,
-            scope.deadline(),
+            scope.deadline_or(self.shared.limits.handshake_timeout),
             attempt.supersedes,
             LinkAcquisition::AcceptedInbound,
         )? {
@@ -1048,7 +998,7 @@ impl Owner {
         let Some(attempt) = outbound.attempts.get_mut(&remote) else {
             return Ok(());
         };
-        let plan = self.shared.plan.clone();
+        let plan = self.shared.plan();
         let cfg = &*plan;
         if kind == Kind::Challenge {
             let Ok(transcript) = attempt.initiation.challenge(cfg, outbound.peer, body) else {
@@ -1088,7 +1038,7 @@ impl Owner {
                 ClientPhase::Init { .. } => {
                     let output = adjacency::encode(
                         Kind::Ack,
-                        &transcript.message(&self.shared.identity, Kind::Ack)?,
+                        &transcript.message(&self.shared.keys, &self.shared.plan(), Kind::Ack)?,
                     )?;
                     attempt.phase = ClientPhase::Acked { transcript, output };
                     attempt.retry = Retry::due();
@@ -1118,9 +1068,12 @@ impl Owner {
         let capacity = outbound.capacity.take().ok_or(Error::Worker)?;
         outbound.established = true;
         outbound.attempts.clear();
-        let deadline = outbound.scope.deadline();
+        let deadline = outbound
+            .scope
+            .deadline_or(self.shared.limits.handshake_timeout);
         let acquisition = outbound.acquisition.clone();
         if !self.promote(
+            &plan,
             peer,
             carrier,
             remote,
@@ -1146,7 +1099,7 @@ impl Owner {
         if channel.scope.check().is_err() {
             return Ok(());
         }
-        let plan = self.shared.plan.clone();
+        let plan = self.shared.plan();
         let cfg = &*plan;
         let Ok(nonce) = channel
             .transcript
@@ -1168,9 +1121,12 @@ impl Owner {
             channel.last_response = Instant::now();
             let bytes = adjacency::encode(
                 Kind::Pong,
-                &channel
-                    .transcript
-                    .health(&self.shared.identity, Kind::Pong, &nonce)?,
+                &channel.transcript.health(
+                    &self.shared.keys,
+                    &self.shared.plan(),
+                    Kind::Pong,
+                    &nonce,
+                )?,
             )?;
             let _ = send_control(&self.sender, &channel.scope, remote, bytes).await;
         }
@@ -1187,7 +1143,7 @@ impl Owner {
         {
             return Ok(());
         }
-        let plan = self.shared.plan.clone();
+        let plan = self.shared.plan();
         let cfg = &*plan;
         for (peer, carrier) in self.incoming_carriers()? {
             let Ok((old_id, initiation)) = Initiation::from_probe(cfg, peer, &carrier, body) else {
@@ -1243,7 +1199,7 @@ impl Owner {
         if !self.selected(channel) {
             return Ok(());
         }
-        let plan = self.shared.plan.clone();
+        let plan = self.shared.plan();
         let cfg = &*plan;
         if channel.fact.carrier.dialer != cfg.node {
             return Ok(());
@@ -1276,7 +1232,7 @@ impl Owner {
             scope.check()?;
             let output = adjacency::encode(
                 Kind::Ack,
-                &transcript.message(&self.shared.identity, Kind::Ack)?,
+                &transcript.message(&self.shared.keys, &self.shared.plan(), Kind::Ack)?,
             )?;
             self.channels
                 .get_mut(&remote)
@@ -1314,12 +1270,15 @@ impl Owner {
             .take()
             .ok_or(Error::Worker)?;
         let _ = self.promote(
+            &plan,
             peer,
             carrier,
             remote,
             recovery.transcript,
             recovery.capacity,
-            recovery.scope.deadline(),
+            recovery
+                .scope
+                .deadline_or(self.shared.limits.handshake_timeout),
             Replacement::Channel(old_id),
             acquisition,
         )?;
@@ -1362,9 +1321,6 @@ impl Drop for Owner {
         if let Ok(mut sockets) = self.shared.sockets.lock() {
             sockets.remove(&self.id);
         }
-        self.shared
-            .handoffs
-            .send_if_modified(|done| done.remove(&self.id).is_some());
         for channel in self.channels.values() {
             channel.scope.cancellation.cancel();
             let _ = retire(&self.shared, &channel.fact);
@@ -1388,7 +1344,9 @@ async fn send_control(
     scope.check()?;
     let cancellation = scope.cancellation.child_token();
     let _cancel = cancellation.clone().drop_guard();
-    let deadline = scope.deadline().min(Instant::now() + OUTPUT_WAIT);
+    let deadline = scope
+        .deadline_or(OUTPUT_WAIT)
+        .min(Instant::now() + OUTPUT_WAIT);
     let context = SendContext {
         cancellation,
         deadline: Some(deadline),
@@ -1422,11 +1380,7 @@ async fn send_control(
         .await
 }
 
-pub(super) async fn listen(
-    shared: Arc<EpochContext>,
-    fact: ListenerFact,
-    endpoint: Box<dyn Datagram>,
-) {
+pub(super) async fn listen(shared: Arc<Shared>, fact: ListenerFact, endpoint: Box<dyn Datagram>) {
     let result = async {
         let mut owner = Owner::new(shared.clone(), endpoint, fact.socket_id)?;
         owner.listener = Some(fact);
@@ -1441,7 +1395,7 @@ pub(super) async fn listen(
 }
 
 pub(super) async fn listen_traversal(
-    shared: Arc<EpochContext>,
+    shared: Arc<Shared>,
     id: [u8; 32],
     listener: Option<ListenerFact>,
     socket: crate::TraversalSocket,
@@ -1452,9 +1406,6 @@ pub(super) async fn listen_traversal(
         owner.listener = listener;
         owner.commands = Some(commands);
         owner.authorization = Some(socket.authorization);
-        shared.handoffs.send_modify(|done| {
-            done.insert(id, shared.generation);
-        });
         let result = owner.run().await;
         owner.shutdown().await?;
         result
@@ -1465,9 +1416,11 @@ pub(super) async fn listen_traversal(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn dial(
-    shared: Arc<EpochContext>,
+    shared: Arc<Shared>,
     factory: Arc<dyn SocketFactory>,
+    plan: Arc<Plan>,
     peer: NodeId,
     key: &str,
     carrier: &Carrier,
@@ -1475,9 +1428,9 @@ pub(super) async fn dial(
     timeout: Duration,
 ) -> Result<(), Error> {
     let mut scope = shared.scope(Some((peer, carrier.clone())), true);
-    scope.deadline = Some(scope.deadline().min(Instant::now() + timeout));
+    scope.deadline = Some(scope.deadline_or(timeout).min(Instant::now() + timeout));
     let endpoints = scope
-        .run(factory.datagram_endpoint(shared.identity.snapshot(), key, &target.endpoint))
+        .run(factory.datagram_endpoint(&plan.desired, key, &target.endpoint))
         .await?;
     if endpoints.len() > 2 {
         return Err(Error::Capacity);
@@ -1493,6 +1446,7 @@ pub(super) async fn dial(
         };
         attempts.spawn(dial_endpoint(
             shared.clone(),
+            plan.clone(),
             socket,
             peer,
             carrier.clone(),
@@ -1514,7 +1468,8 @@ pub(super) async fn dial(
 }
 
 async fn dial_endpoint(
-    shared: Arc<EpochContext>,
+    shared: Arc<Shared>,
+    plan: Arc<Plan>,
     socket: DatagramSocket,
     peer: NodeId,
     carrier: Carrier,
@@ -1540,7 +1495,7 @@ async fn dial_endpoint(
         {
             return Err(Error::Configuration);
         }
-        let (initiation, intro) = Initiation::new(&shared.identity, &shared.plan, &carrier)?;
+        let (initiation, intro) = Initiation::new(&shared.keys, &plan, &carrier)?;
         attempts.insert(
             remote,
             ClientAttempt {
@@ -1613,20 +1568,18 @@ mod tests {
     use meshway_transport_udp::UdpTransport;
     use tokio::net::UdpSocket;
 
-    fn shared(identity: DataPlaneIdentity) -> (Arc<EpochContext>, super::super::events::Receiver) {
-        let plan = Plan::new(identity.snapshot()).unwrap();
+    fn shared(
+        desired: &Desired,
+        keys: &DataPlaneKeys,
+    ) -> (Arc<Shared>, super::super::events::Receiver) {
+        let plan = Plan::new(desired).unwrap();
         let generation = meshway_model::Sequence::MIN.checked_next().unwrap();
-        let (epochs, _) = tokio::sync::watch::channel(Epoch {
-            identity: identity.clone(),
-            plan: plan.clone(),
-            generation,
-        });
         let (events, receiver) = super::super::events::channel(64, 8 * 1024 * 1024);
         let interests = Arc::new(super::super::interest::Interests::new());
         interests.allow(&plan);
-        let shared = Arc::new(EpochContext {
-            identity,
-            plan,
+        let shared = Arc::new(Shared {
+            keys: keys.clone(),
+            plans: tokio::sync::watch::channel(plan).0,
             stop: CancellationToken::new(),
             links: Arc::new(Mutex::new(LinkTable::default())),
             events: events.clone(),
@@ -1635,10 +1588,6 @@ mod tests {
             limits: Limits::default(),
             control_budget: Arc::new(Mutex::new(ControlBudget::new())),
             sockets: Arc::new(Mutex::new(BTreeMap::new())),
-            epochs,
-            renewed: tokio::sync::watch::channel(generation).0,
-            handoffs: tokio::sync::watch::channel(BTreeMap::new()).0,
-            gates: Arc::new(Mutex::new(Vec::new())),
             generation,
             traversal_endpoints: Arc::new(Mutex::new(BTreeMap::new())),
             resource_changes: tokio::sync::watch::channel(()).0,
@@ -1653,7 +1602,7 @@ mod tests {
     async fn replay_exhaustion_rebuilds_instead_of_forgetting_nonces_and_old_ack_cannot_install() {
         let mut fixture = Netmaps::start(false, true).await;
         let ids = fixture.ids();
-        let (shared, _events) = shared(fixture.identities[1].clone());
+        let (shared, _events) = shared(&fixture.desired[1], &fixture.keys[1]);
         let socket = UdpTransport::adopt(fixture.take_udp(1), &Default::default()).unwrap();
         let local = socket.local_addr().unwrap();
         let id = adjacency::nonce().unwrap();
@@ -1675,10 +1624,10 @@ mod tests {
         owner.listener = Some(listener.clone());
         let client = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let source = client.local_addr().unwrap();
-        let carrier = carriers(&fixture.identities[0])[&ids[1]].clone();
+        let carrier = carriers(&fixture.desired[0])[&ids[1]].clone();
         let (initiation, intro) = Initiation::new(
-            &fixture.identities[0],
-            &Plan::new(fixture.identities[0].snapshot()).unwrap(),
+            &fixture.keys[0],
+            &Plan::new(&fixture.desired[0]).unwrap(),
             &carrier,
         )
         .unwrap();
@@ -1688,13 +1637,15 @@ mod tests {
         assert_eq!(from, local);
         let (_, challenge) = adjacency::decode(&bytes[..len]).unwrap();
         let old = initiation
-            .challenge(
-                &Plan::new(fixture.identities[0].snapshot()).unwrap(),
-                ids[1],
-                challenge,
+            .challenge(&Plan::new(&fixture.desired[0]).unwrap(), ids[1], challenge)
+            .unwrap();
+        let old_ack = old
+            .message(
+                &fixture.keys[0],
+                &Plan::new(&fixture.desired[0]).unwrap(),
+                Kind::Ack,
             )
             .unwrap();
-        let old_ack = old.message(&fixture.identities[0], Kind::Ack).unwrap();
         owner.ack(source, &old_ack).await.unwrap();
         let (len, _) = client.recv_from(&mut bytes).await.unwrap();
         assert_eq!(adjacency::decode(&bytes[..len]).unwrap().0, Kind::Ready);
@@ -1707,14 +1658,13 @@ mod tests {
             owner.replay.insert((ids[0], adjacency::nonce().unwrap()));
         }
         let history = owner.replay.clone();
-        let next = fixture.reserial(1).await;
-        let mut epochs = shared.epochs.subscribe();
-        shared
-            .epochs
-            .send_replace(super::super::tests::support::epoch(&next, 2));
-        let next = shared.latest(&mut epochs).await.unwrap();
-        next.renew_table(&shared.plan).unwrap();
-        owner.handoff(next).unwrap();
+        // New content keeping every identity and carrier: the Manager's apply
+        // keeps this channel; the owner only drops in-flight acquisition.
+        let next = Plan::new(&fixture.reserial(1).await).unwrap();
+        let previous = shared.plan();
+        shared.plans.send_replace(next.clone());
+        shared.retain_table(&previous, &next).unwrap();
+        owner.reconfigured().unwrap();
         let live = owner.channels[&source].scope.clone();
         assert_eq!(
             owner.replay, history,
@@ -1730,8 +1680,8 @@ mod tests {
             "invalid/replayed traffic cannot force rebuilding"
         );
         let (rebuild_init, fresh_intro) = Initiation::new(
-            &fixture.identities[0],
-            &Plan::new(fixture.identities[0].snapshot()).unwrap(),
+            &fixture.keys[0],
+            &Plan::new(&fixture.desired[0]).unwrap(),
             &carrier,
         )
         .unwrap();
@@ -1744,13 +1694,15 @@ mod tests {
         let (len, _) = client.recv_from(&mut bytes).await.unwrap();
         let (_, challenge) = adjacency::decode(&bytes[..len]).unwrap();
         let rebuild = rebuild_init
-            .challenge(
-                &Plan::new(fixture.identities[0].snapshot()).unwrap(),
-                ids[1],
-                challenge,
+            .challenge(&Plan::new(&fixture.desired[0]).unwrap(), ids[1], challenge)
+            .unwrap();
+        let expired_ack = rebuild
+            .message(
+                &fixture.keys[0],
+                &Plan::new(&fixture.desired[0]).unwrap(),
+                Kind::Ack,
             )
             .unwrap();
-        let expired_ack = rebuild.message(&fixture.identities[0], Kind::Ack).unwrap();
         owner
             .pending
             .remove(&source)
@@ -1762,11 +1714,7 @@ mod tests {
         let (len, _) = client.recv_from(&mut bytes).await.unwrap();
         let (_, challenge) = adjacency::decode(&bytes[..len]).unwrap();
         let retried = rebuild_init
-            .challenge(
-                &Plan::new(fixture.identities[0].snapshot()).unwrap(),
-                ids[1],
-                challenge,
-            )
+            .challenge(&Plan::new(&fixture.desired[0]).unwrap(), ids[1], challenge)
             .unwrap();
         assert_ne!(
             retried.id(),
@@ -1777,7 +1725,13 @@ mod tests {
         assert!(!shared.stop.is_cancelled());
         owner.ack(source, &old_ack).await.unwrap();
         assert!(!shared.stop.is_cancelled());
-        let ack = retried.message(&fixture.identities[0], Kind::Ack).unwrap();
+        let ack = retried
+            .message(
+                &fixture.keys[0],
+                &Plan::new(&fixture.desired[0]).unwrap(),
+                Kind::Ack,
+            )
+            .unwrap();
         let impostor = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         owner
             .ack(impostor.local_addr().unwrap(), &ack)
@@ -1800,8 +1754,7 @@ mod tests {
 
         // This is a new physical owner, the same path as a host reinstall. An
         // old INIT is harmless only because a fresh source challenge is required.
-        let identity = fixture.identities[1].clone();
-        let (restarted, _events) = self::shared(identity);
+        let (restarted, _events) = self::shared(&fixture.desired[1], &fixture.keys[1]);
         let socket =
             UdpTransport::adopt(UdpSocket::bind(local).await.unwrap(), &Default::default())
                 .unwrap();
@@ -1816,16 +1769,18 @@ mod tests {
         assert_eq!(from, local);
         let (_, challenge) = adjacency::decode(&bytes[..len]).unwrap();
         let fresh = initiation
-            .challenge(
-                &Plan::new(fixture.identities[0].snapshot()).unwrap(),
-                ids[1],
-                challenge,
-            )
+            .challenge(&Plan::new(&fixture.desired[0]).unwrap(), ids[1], challenge)
             .unwrap();
         assert_ne!(fresh.id(), old.id());
         owner.ack(source, &old_ack).await.unwrap();
         assert!(owner.channels.is_empty());
-        let fresh_ack = fresh.message(&fixture.identities[0], Kind::Ack).unwrap();
+        let fresh_ack = fresh
+            .message(
+                &fixture.keys[0],
+                &Plan::new(&fixture.desired[0]).unwrap(),
+                Kind::Ack,
+            )
+            .unwrap();
         let impostor = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         owner
             .ack(impostor.local_addr().unwrap(), &fresh_ack)
@@ -1834,10 +1789,12 @@ mod tests {
         assert!(owner.channels.is_empty());
         owner.ack(source, &fresh_ack).await.unwrap();
         assert_eq!(restarted.links.lock().unwrap()[&ids[0]].fact.id, fresh.id());
-        let fresh_ready = fresh.message(&restarted.identity, Kind::Ready).unwrap();
+        let fresh_ready = fresh
+            .message(&restarted.keys, &restarted.plan(), Kind::Ready)
+            .unwrap();
         assert!(
             old.verify(
-                &Plan::new(fixture.identities[0].snapshot()).unwrap(),
+                &Plan::new(&fixture.desired[0]).unwrap(),
                 ids[1],
                 Kind::Ready,
                 &fresh_ready
@@ -1852,7 +1809,7 @@ mod tests {
     async fn server_source_challenge_replay_and_confirmation_use_real_registered_keys() {
         let mut fixture = Netmaps::start(false, true).await;
         let ids = fixture.ids();
-        let (shared, _receiver) = shared(fixture.identities[1].clone());
+        let (shared, _receiver) = shared(&fixture.desired[1], &fixture.keys[1]);
         let socket = UdpTransport::adopt(fixture.take_udp(1), &Default::default()).unwrap();
         let local = socket.local_addr().unwrap();
         let id = adjacency::nonce().unwrap();
@@ -1867,10 +1824,10 @@ mod tests {
         let source = client.local_addr().unwrap();
         let impostor = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let wrong_source = impostor.local_addr().unwrap();
-        let carrier = carriers(&fixture.identities[0])[&ids[1]].clone();
+        let carrier = carriers(&fixture.desired[0])[&ids[1]].clone();
         let (initiation, intro) = Initiation::new(
-            &fixture.identities[0],
-            &Plan::new(fixture.identities[0].snapshot()).unwrap(),
+            &fixture.keys[0],
+            &Plan::new(&fixture.desired[0]).unwrap(),
             &carrier,
         )
         .unwrap();
@@ -1891,19 +1848,23 @@ mod tests {
         let (kind, body) = adjacency::decode(&bytes[..len]).unwrap();
         assert_eq!(kind, Kind::Challenge);
         let transcript = initiation
-            .challenge(
-                &Plan::new(fixture.identities[0].snapshot()).unwrap(),
-                ids[1],
-                body,
-            )
+            .challenge(&Plan::new(&fixture.desired[0]).unwrap(), ids[1], body)
             .unwrap();
         let ack = transcript
-            .message(&fixture.identities[0], Kind::Ack)
+            .message(
+                &fixture.keys[0],
+                &Plan::new(&fixture.desired[0]).unwrap(),
+                Kind::Ack,
+            )
             .unwrap();
         owner.ack(wrong_source, &ack).await.unwrap();
         assert!(owner.channels.is_empty());
         let wrong_peer = transcript
-            .message(&fixture.identities[2], Kind::Ack)
+            .message(
+                &fixture.keys[2],
+                &Plan::new(&fixture.desired[2]).unwrap(),
+                Kind::Ack,
+            )
             .unwrap();
         owner.ack(source, &wrong_peer).await.unwrap();
         assert!(owner.channels.is_empty());
@@ -1911,9 +1872,13 @@ mod tests {
         assert_eq!(owner.channels[&source].fact.id, transcript.id());
         assert_eq!(shared.links.lock().unwrap().len(), 1);
         let ready = transcript
-            .message(&fixture.identities[1], Kind::Ready)
+            .message(
+                &fixture.keys[1],
+                &Plan::new(&fixture.desired[1]).unwrap(),
+                Kind::Ready,
+            )
             .unwrap();
-        let plan = Plan::new(fixture.identities[0].snapshot()).unwrap();
+        let plan = Plan::new(&fixture.desired[0]).unwrap();
         let cfg = &*plan;
         transcript.verify(cfg, ids[1], Kind::Ready, &ready).unwrap();
         assert!(
@@ -1923,7 +1888,12 @@ mod tests {
         );
         let nonce = adjacency::nonce().unwrap();
         let pong = transcript
-            .health(&fixture.identities[1], Kind::Pong, &nonce)
+            .health(
+                &fixture.keys[1],
+                &Plan::new(&fixture.desired[1]).unwrap(),
+                Kind::Pong,
+                &nonce,
+            )
             .unwrap();
         assert_eq!(
             transcript
@@ -1938,12 +1908,21 @@ mod tests {
         );
         // A fresh challenge changes channel identity; old ACK/health proofs fail.
         let (_, _, fresh) =
-            adjacency::incoming(&shared.plan, &[(ids[0], carrier)], &intro).unwrap();
+            adjacency::incoming(&shared.plan(), &[(ids[0], carrier)], &intro).unwrap();
         let fresh = fresh.respond().unwrap();
-        assert!(fresh.verify(&shared.plan, ids[0], Kind::Ack, &ack).is_err());
+        assert!(
+            fresh
+                .verify(&shared.plan(), ids[0], Kind::Ack, &ack)
+                .is_err()
+        );
         assert!(fresh.verify_health(cfg, ids[1], Kind::Pong, &pong).is_err());
         let peer_pong = transcript
-            .health(&fixture.identities[0], Kind::Pong, &nonce)
+            .health(
+                &fixture.keys[0],
+                &Plan::new(&fixture.desired[0]).unwrap(),
+                Kind::Pong,
+                &nonce,
+            )
             .unwrap();
         let before = *owner.channels[&source].health.lock().unwrap();
         owner.health(source, Kind::Pong, &peer_pong).await.unwrap();
@@ -1967,7 +1946,12 @@ mod tests {
             let nonce = adjacency::nonce().unwrap();
             owner.channels.get_mut(&source).unwrap().probe = Some(nonce);
             let body = transcript
-                .health(&fixture.identities[0], Kind::Pong, &nonce)
+                .health(
+                    &fixture.keys[0],
+                    &Plan::new(&fixture.desired[0]).unwrap(),
+                    Kind::Pong,
+                    &nonce,
+                )
                 .unwrap();
             let mut frames = (0..31)
                 .map(|_| Frame::new(vec![7; 1200], Some(source)))

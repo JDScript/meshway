@@ -4,8 +4,9 @@ use crate::{
     provider,
     scope::{self, Scope},
 };
-use meshway_authority::DataPlaneIdentity;
+use meshway_authority::DataPlaneKeys;
 use meshway_dataplane::secure::PendingFrame;
+use meshway_engine::Desired;
 use meshway_model::{NodeId, observations::LinkAcquisition};
 use meshway_transport::{Frame, Sender, Session};
 use meshway_transport_spec::TransportProtocol;
@@ -20,8 +21,8 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
+mod apply;
 mod batch;
-mod continuity;
 mod datagram;
 mod events;
 mod evidence;
@@ -59,7 +60,7 @@ fn diagnostic_event() -> bool {
 }
 
 fn diagnostic_link(
-    shared: &EpochContext,
+    shared: &Shared,
     fact: &LinkFact,
     scope: &Scope,
     operation: &'static str,
@@ -71,12 +72,12 @@ fn diagnostic_link(
     }
     if operation == "install"
         && cause == "authenticated_ready"
-        && let Some(installation) = evidence::installed(fact, scope)
+        && let Some(installation) = evidence::installed(fact, shared)
     {
         tracing::debug!(
             operation,
             cause,
-            install_schema = 2_u64,
+            install_schema = 3_u64,
             install_json = installation,
             "Connectivity channel transition"
         );
@@ -91,7 +92,7 @@ fn diagnostic_link(
             )
         })
     });
-    let netmap = scope.snapshot.reference();
+    let netmap = shared.plan().reference;
     tracing::debug!(operation, cause, peer = %fact.peer, channel = ?fact.id,
         socket = ?fact.socket_id, dialer = %fact.carrier.dialer, listener = %fact.carrier.listener,
         listener_key = %fact.carrier.listener_key, protocol = ?fact.carrier.protocol,
@@ -100,9 +101,7 @@ fn diagnostic_link(
         attempted_remote = ?attempted.map(|value| value.0), attempt = ?attempted.map(|value| value.1),
         netmap_serial = netmap.serial.get(),
         netmap_digest = %netmap.digest,
-        lease_expires_at_ms = scope.snapshot.expires_at_ms(),
         acquisition = ?fact.acquisition,
-        epoch = %continuity::label(shared.identity.snapshot()),
         "Connectivity channel transition");
 }
 
@@ -126,8 +125,8 @@ pub struct LinkFact {
     pub carrier: Carrier,
     pub local: SocketAddr,
     pub remote: SocketAddr,
-    /// Acquisition of this authenticated channel, retained across compatible
-    /// publication handoffs and independent of subsequent candidate expiry.
+    /// Acquisition of this authenticated channel, kept across compatible
+    /// content changes and independent of subsequent candidate expiry.
     pub acquisition: LinkAcquisition,
 }
 
@@ -192,8 +191,8 @@ struct Link {
 
 /// The one selected-link owner also remembers its latest committed ID per peer.
 /// This bounded metadata prevents an empty-slot ABA during passive recovery.
-/// Handoff removes departed peers only after fencing old installation epochs;
-/// peers still in the configuration retain their tombstones even while vacant.
+/// Apply removes departed peers' entries; peers still in the content retain
+/// their tombstones even while vacant.
 #[derive(Default)]
 struct LinkTable {
     current: BTreeMap<NodeId, Link>,
@@ -221,19 +220,12 @@ impl LinkTable {
     }
 }
 
-/// One installed authority epoch: its identity, adjacency plan and sequence.
-#[derive(Clone)]
-pub(crate) struct Epoch {
-    pub(crate) identity: DataPlaneIdentity,
-    pub(crate) plan: Arc<Plan>,
-    pub(crate) generation: meshway_model::Sequence,
-}
-
-/// A fixed identity/generation view over the manager's shared resource watches.
-/// Rebinding creates a new view; existing operation scopes keep the old identity.
-struct EpochContext {
-    identity: DataPlaneIdentity,
-    plan: Arc<Plan>,
+/// Mechanism state shared by the Manager and its owners. `plans` holds the
+/// current desired content; owners read it when they act, and only the
+/// Manager's apply replaces it. Each owner has its own child `stop`.
+struct Shared {
+    keys: DataPlaneKeys,
+    plans: tokio::sync::watch::Sender<Arc<Plan>>,
     stop: CancellationToken,
     links: Arc<Mutex<LinkTable>>,
     events: events::Sender,
@@ -242,26 +234,50 @@ struct EpochContext {
     limits: Limits,
     control_budget: Arc<Mutex<datagram::ControlBudget>>,
     sockets: Arc<Mutex<BTreeMap<[u8; 32], SocketFact>>>,
-    epochs: tokio::sync::watch::Sender<Epoch>,
-    /// Generation whose selected-channel table the Manager has renewed.
-    renewed: tokio::sync::watch::Sender<meshway_model::Sequence>,
-    /// Handoff completion of owners holding socket authorization, by socket.
-    handoffs: tokio::sync::watch::Sender<BTreeMap<[u8; 32], meshway_model::Sequence>>,
-    gates: Arc<Mutex<Vec<std::sync::Weak<scope::Physical>>>>,
+    /// State socket generation of this Manager's descriptors.
     generation: meshway_model::Sequence,
     traversal_endpoints: Arc<Mutex<BTreeMap<[u8; 32], traversal::Endpoint>>>,
     resource_changes: tokio::sync::watch::Sender<()>,
     interests: Arc<interest::Interests>,
     facts: Arc<facts::Store>,
-    /// Instance qualifying State socket references; shared across epochs.
+    /// Instance qualifying State socket references.
     instance: Arc<Mutex<Option<meshway_protocol::InstanceRequest>>>,
 }
 
-impl EpochContext {
+impl Shared {
+    /// The current desired adjacency input.
+    fn plan(&self) -> Arc<Plan> {
+        self.plans.borrow().clone()
+    }
+
+    /// The same mechanism state under a child stop token of its own.
+    fn for_owner(&self) -> Arc<Self> {
+        Arc::new(Self {
+            keys: self.keys.clone(),
+            plans: self.plans.clone(),
+            stop: self.stop.child_token(),
+            links: self.links.clone(),
+            events: self.events.clone(),
+            control_events: self.control_events.clone(),
+            capacity: self.capacity.clone(),
+            limits: self.limits,
+            control_budget: self.control_budget.clone(),
+            sockets: self.sockets.clone(),
+            generation: self.generation,
+            traversal_endpoints: self.traversal_endpoints.clone(),
+            resource_changes: self.resource_changes.clone(),
+            interests: self.interests.clone(),
+            facts: self.facts.clone(),
+            instance: self.instance.clone(),
+        })
+    }
+
+    fn physical(&self) -> Result<Arc<scope::Physical>, Error> {
+        Ok(Arc::new(scope::Physical::new(self.stop.clone())))
+    }
+
     fn scope(&self, edge: Option<(NodeId, Carrier)>, handshake: bool) -> Scope {
         Scope {
-            snapshot: self.identity.snapshot().clone(),
-            plan: self.plan.clone(),
             cancellation: self.stop.child_token(),
             deadline: handshake
                 .then(|| tokio::time::Instant::now() + self.limits.handshake_timeout),
@@ -298,13 +314,12 @@ impl EpochContext {
     }
 }
 
-/// Prepared listeners and bounded physical owners. A compatible direct Control
-/// handoff replaces operation scopes while retaining authenticated channels;
-/// incompatible resources use shutdown/replacement. The host keeps its unique
-/// SecureNode/FlowTable for logical flow continuity.
+/// Prepared listeners and bounded physical owners for Engine's desired
+/// content. [`Manager::apply`] keeps every resource and selected channel the
+/// new content still admits and retires the rest; withdrawal is shutdown.
 pub struct Manager {
     factory: Arc<dyn SocketFactory>,
-    shared: Arc<EpochContext>,
+    shared: Arc<Shared>,
     listeners: Vec<ListenerFact>,
     events: events::Receiver,
     control_events: events::Receiver,
@@ -317,16 +332,18 @@ pub struct Manager {
 
 impl Manager {
     pub async fn start(
-        identity: DataPlaneIdentity,
+        desired: &Desired,
+        keys: DataPlaneKeys,
         factory: Arc<dyn SocketFactory>,
         limits: Limits,
     ) -> Result<Self, Error> {
-        Self::start_inner(identity, factory, limits, None, None).await
+        Self::start_inner(desired, keys, factory, limits, None, None).await
     }
 
     /// With coordinated UDP acquisition through the host's Control gateway.
     pub async fn start_with_traversal(
-        identity: DataPlaneIdentity,
+        desired: &Desired,
+        keys: DataPlaneKeys,
         factory: Arc<dyn SocketFactory>,
         limits: Limits,
         gateway: Arc<dyn crate::traversal::TraversalGateway>,
@@ -335,21 +352,33 @@ impl Manager {
         if generation.get() == 0 {
             return Err(Error::Configuration);
         }
-        Self::start_inner(identity, factory, limits, Some((gateway, generation)), None).await
+        Self::start_inner(
+            desired,
+            keys,
+            factory,
+            limits,
+            Some((gateway, generation)),
+            None,
+        )
+        .await
     }
 
     async fn start_inner(
-        identity: DataPlaneIdentity,
+        desired: &Desired,
+        keys: DataPlaneKeys,
         factory: Arc<dyn SocketFactory>,
         limits: Limits,
         traversal: Option<(
             Arc<dyn crate::traversal::TraversalGateway>,
             meshway_model::Sequence,
         )>,
-        carried: Option<(Arc<interest::Interests>, Arc<facts::Store>)>,
+        carried: Option<Carried>,
     ) -> Result<Self, Error> {
         limits.validate()?;
-        let plan = Plan::new(identity.snapshot())?;
+        let plan = Plan::new(desired)?;
+        if !keys.matches(&plan.self_keys) {
+            return Err(Error::Authentication);
+        }
         // More small-packet slots absorb scheduling bursts without expanding
         // the former 64-frame maximum storage exposure (8 MiB by default).
         let frame = limits.session.max_frame_bytes();
@@ -366,17 +395,15 @@ impl Manager {
                     .checked_next()
                     .map_err(|_| Error::Capacity)?,
             );
-        let (epochs, _) = tokio::sync::watch::channel(Epoch {
-            identity: identity.clone(),
-            plan: plan.clone(),
-            generation,
-        });
-        let (interests, facts) = carried.unwrap_or_default();
+        let Carried {
+            interests,
+            facts,
+            instance,
+        } = carried.unwrap_or_default();
         interests.allow(&plan);
-        let identity_instance = identity.snapshot().instance();
-        let shared = Arc::new(EpochContext {
-            identity,
-            plan,
+        let shared = Arc::new(Shared {
+            keys,
+            plans: tokio::sync::watch::channel(plan).0,
             stop: CancellationToken::new(),
             links: Arc::new(Mutex::new(LinkTable::default())),
             events: tx,
@@ -385,16 +412,12 @@ impl Manager {
             limits,
             control_budget: Arc::new(Mutex::new(datagram::ControlBudget::new())),
             sockets: Arc::new(Mutex::new(BTreeMap::new())),
-            epochs,
-            renewed: tokio::sync::watch::channel(generation).0,
-            handoffs: tokio::sync::watch::channel(BTreeMap::new()).0,
-            gates: Arc::new(Mutex::new(Vec::new())),
             generation,
             traversal_endpoints: Arc::new(Mutex::new(BTreeMap::new())),
             resource_changes: tokio::sync::watch::channel(()).0,
             interests,
             facts,
-            instance: Arc::new(Mutex::new(identity_instance)),
+            instance: Arc::new(Mutex::new(instance)),
         });
         let mut manager = Self {
             factory,
@@ -407,8 +430,13 @@ impl Manager {
         };
         manager.install_resources().await?;
         if diagnostic_event() {
-            tracing::debug!(operation = "start", publication = %continuity::label(manager.shared.identity.snapshot()),
-                listeners = manager.listeners.len(), generation = manager.shared.generation.get(), "Connectivity manager transition");
+            tracing::debug!(
+                operation = "start",
+                netmap_serial = manager.shared.plan().reference.serial.get(),
+                listeners = manager.listeners.len(),
+                generation = manager.shared.generation.get(),
+                "Connectivity manager transition"
+            );
         }
         Ok(manager)
     }
@@ -425,11 +453,10 @@ impl Manager {
 
     async fn install_resources(&mut self) -> Result<(), Error> {
         let manager = self;
-        let identity = manager.shared.identity.clone();
         let factory = manager.factory.clone();
         let limits = manager.shared.limits;
         let traversal = manager.traversal.clone();
-        let plan = manager.shared.plan.clone();
+        let plan = manager.shared.plan();
         validate_scale(&plan, limits)?;
         let mut prepared = Vec::new();
         let mut datagrams = Vec::new();
@@ -463,10 +490,12 @@ impl Manager {
                     None => None,
                 };
                 if let Some(reference) = reference {
-                    let socket = tokio::select! { biased;
-                        _ = identity.snapshot().invalidated() => return Err(Error::Authority),
-                        result = tokio::time::timeout(limits.handshake_timeout, factory.traversal_listener(identity.snapshot(), key, reference.clone())) => result.map_err(|_| Error::Cancelled)??,
-                    };
+                    let socket = tokio::time::timeout(
+                        limits.handshake_timeout,
+                        factory.traversal_listener(&plan.desired, key, reference.clone()),
+                    )
+                    .await
+                    .map_err(|_| Error::Cancelled)??;
                     let fact = ListenerFact {
                         socket_id: id,
                         key: key.clone(),
@@ -476,11 +505,12 @@ impl Manager {
                     traversal_endpoints.push((fact, reference, socket));
                     continue;
                 }
-                let endpoint = tokio::select! { biased;
-                    _ = identity.snapshot().invalidated() => return Err(Error::Authority),
-                    result = tokio::time::timeout(limits.handshake_timeout,
-                        factory.datagram_listener(identity.snapshot(), key)) => result.map_err(|_| Error::Cancelled)??,
-                };
+                let endpoint = tokio::time::timeout(
+                    limits.handshake_timeout,
+                    factory.datagram_listener(&plan.desired, key),
+                )
+                .await
+                .map_err(|_| Error::Cancelled)??;
                 let fact = ListenerFact {
                     socket_id: adjacency::nonce()?,
                     key: key.clone(),
@@ -491,10 +521,10 @@ impl Manager {
                 continue;
             }
             let acceptor = Arc::new(provider::Acceptor::new(declaration)?);
-            let listener = tokio::select! { biased;
-                _ = identity.snapshot().invalidated() => return Err(Error::Authority),
-                result = tokio::time::timeout(limits.handshake_timeout, factory.listen(identity.snapshot(), key)) => result.map_err(|_| Error::Cancelled)??,
-            };
+            let listener =
+                tokio::time::timeout(limits.handshake_timeout, factory.listen(&plan.desired, key))
+                    .await
+                    .map_err(|_| Error::Cancelled)??;
             let fact = ListenerFact {
                 socket_id: adjacency::nonce()?,
                 key: key.clone(),
@@ -505,7 +535,7 @@ impl Manager {
         }
         if traversal.is_some() {
             // Dial-only acquisition uses a real configured Native UDP socket,
-            // even when the compiler intentionally retained no published target.
+            // even when the compiler intentionally kept no published target.
             for (key, candidate) in &plan.dialers {
                 let meshway_transport_spec::DialParameters::NativeUdp { options } =
                     &candidate.parameters
@@ -571,10 +601,17 @@ impl Manager {
                     else {
                         continue;
                     };
-                    let socket = tokio::select! { biased;
-                        _ = identity.snapshot().invalidated() => return Err(Error::Authority),
-                        result = tokio::time::timeout(limits.handshake_timeout, factory.bind_datagram_candidate(identity.snapshot(), key, ipv4, reference.clone())) => result.map_err(|_| Error::Cancelled)??,
-                    };
+                    let socket = tokio::time::timeout(
+                        limits.handshake_timeout,
+                        factory.bind_datagram_candidate(
+                            &plan.desired,
+                            key,
+                            ipv4,
+                            reference.clone(),
+                        ),
+                    )
+                    .await
+                    .map_err(|_| Error::Cancelled)??;
                     bound_candidates.push((
                         resources::Key::Candidate(key.clone(), ipv4),
                         id,
@@ -584,10 +621,9 @@ impl Manager {
                 }
             }
         }
-        identity
-            .snapshot()
-            .ensure_current()
-            .map_err(|_| Error::Authority)?;
+        if manager.shared.stop.is_cancelled() {
+            return Err(Error::Cancelled);
+        }
         for (fact, listener, acceptor) in prepared {
             manager.register_listener(&fact)?;
             manager.listeners.push(fact.clone());
@@ -780,11 +816,7 @@ impl Manager {
         if self.shared.stop.is_cancelled() {
             return Err(Error::Unavailable);
         }
-        self.shared
-            .identity
-            .snapshot()
-            .ensure_current()
-            .map_err(|_| Error::Authority)
+        Ok(())
     }
 
     /// Never redirects or re-signs a PendingFrame. Exact signed carrier match is
@@ -883,14 +915,10 @@ impl Manager {
             let mut controls = Vec::new();
             let count = tokio::select! { biased;
                 _ = self.shared.stop.cancelled() => return vec![Event::Closed],
-                _ = self.shared.identity.snapshot().invalidated() => return vec![Event::Closed],
                 count = self.control_events.recv_many(&mut controls, limit) => { events = controls; count },
                 count = self.events.recv_many(&mut events, limit), if data => count,
             };
-            if count == 0
-                || self.shared.stop.is_cancelled()
-                || self.shared.identity.snapshot().ensure_current().is_err()
-            {
+            if count == 0 || self.shared.stop.is_cancelled() {
                 return vec![Event::Closed];
             }
             {
@@ -912,9 +940,7 @@ impl Manager {
                     _ => true,
                 });
             }
-            if self.shared.stop.is_cancelled()
-                || self.shared.identity.snapshot().ensure_current().is_err()
-            {
+            if self.shared.stop.is_cancelled() {
                 return vec![Event::Closed];
             }
             if !events.is_empty() {
@@ -954,53 +980,10 @@ impl Manager {
         }
     }
 
-    /// Install the next authority. Same netmap content (a lease renewal) is a
-    /// no-op; a larger serial retains every unchanged resource and channel and
-    /// replaces only what changed; anything else restarts the Manager.
-    pub async fn reconcile(&mut self, identity: DataPlaneIdentity) -> Result<(), Error> {
-        identity
-            .snapshot()
-            .ensure_current()
-            .map_err(|_| Error::Authority)?;
-        if !self.shared.stop.is_cancelled()
-            && identity
-                .snapshot()
-                .same_netmap(self.shared.identity.snapshot())
-        {
-            return self.bind_instance(identity.snapshot().instance());
-        }
-        if self.can_reconcile(&identity) {
-            return self.retain(identity).await;
-        }
-        // Fresh snapshot guards are mandatory even for otherwise identical targets.
-        let traversal = self
-            .traversal
-            .as_ref()
-            .map(|(gateway, generation)| {
-                generation
-                    .checked_next()
-                    .map(|generation| (gateway.clone(), generation))
-                    .map_err(|_| Error::Capacity)
-            })
-            .transpose()?;
-        let carried = (self.shared.interests.clone(), self.shared.facts.clone());
-        self.shutdown().await?;
-        let replacement = Self::start_inner(
-            identity,
-            self.factory.clone(),
-            self.shared.limits,
-            traversal,
-            Some(carried),
-        )
-        .await?;
-        *self = replacement;
-        Ok(())
-    }
-
     /// Bind State socket references to the instance that now qualifies this
     /// Node (a new instance after a Server outage, or the first one after an
-    /// offline restart). Authority, channels and resources are unchanged.
-    fn bind_instance(
+    /// offline restart). Content, channels and resources are unchanged.
+    pub fn set_instance(
         &self,
         instance: Option<meshway_protocol::InstanceRequest>,
     ) -> Result<(), Error> {
@@ -1042,8 +1025,12 @@ impl Manager {
 
     pub async fn shutdown(&mut self) -> Result<(), Error> {
         if diagnostic_event() {
-            tracing::debug!(operation = "shutdown", publication = %continuity::label(self.shared.identity.snapshot()),
-                listeners = self.listeners.len(), "Connectivity manager transition");
+            tracing::debug!(
+                operation = "shutdown",
+                netmap_serial = self.shared.plan().reference.serial.get(),
+                listeners = self.listeners.len(),
+                "Connectivity manager transition"
+            );
         }
         if let Ok(links) = self.shared.links.lock() {
             for link in links.values() {
@@ -1129,6 +1116,8 @@ struct ReadyPeer {
     fact: LinkFact,
     sender: Arc<AsyncMutex<Sender>>,
     scope: Scope,
+    /// The content whose keys authenticated this channel.
+    plan: Arc<Plan>,
     /// Compare-and-replace condition captured during authenticated UDP
     /// reattachment. Never inferred from an address or unsolicited READY.
     supersedes: Replacement,
@@ -1149,13 +1138,16 @@ fn preferred_existing(old: &LinkFact, new: &LinkFact) -> bool {
         || rank(old) <= rank(new)
 }
 
-fn install_ready(shared: &EpochContext, ready: ReadyPeer) -> Result<bool, Error> {
-    // A same-target renewal need not revoke the old Control snapshot. It must
-    // nevertheless fence old acquisition commits before handoff can collect a
-    // departed peer's ABA tombstone. Hold the watch read through installation:
-    // publishing an epoch and committing a channel have one definite order.
-    let epoch = shared.epochs.borrow();
-    if !continuity::same(&ready.scope.snapshot, epoch.identity.snapshot()) {
+fn install_ready(shared: &Shared, ready: ReadyPeer) -> Result<bool, Error> {
+    // An acquisition authenticated under earlier content commits only if the
+    // current content still admits its carrier with the same peer keys. Hold
+    // the content read through installation: Manager's apply and a commit
+    // therefore have one definite order.
+    let current = shared.plans.borrow();
+    if !Arc::ptr_eq(&ready.plan, &current)
+        && (!ready.plan.peer_unchanged(&current, ready.fact.peer)
+            || current.admit(ready.fact.peer, &ready.fact.carrier).is_err())
+    {
         ready.scope.cancellation.cancel();
         return Err(Error::Authority);
     }
@@ -1210,7 +1202,7 @@ fn install_ready(shared: &EpochContext, ready: ReadyPeer) -> Result<bool, Error>
         ready.scope.cancellation.cancel();
         return Ok(false);
     }
-    // A blocked lock/diagnostic must not let a cancelled handoff commit.
+    // A blocked lock/diagnostic must not let a cancelled acquisition commit.
     let fact = ready.fact.clone();
     let scope = ready.scope.clone();
     ready.scope.check()?;
@@ -1255,7 +1247,7 @@ fn install_ready(shared: &EpochContext, ready: ReadyPeer) -> Result<bool, Error>
     Ok(true)
 }
 
-fn retire(shared: &EpochContext, fact: &LinkFact) -> Result<(), Error> {
+fn retire(shared: &Shared, fact: &LinkFact) -> Result<(), Error> {
     let mut links = shared.links.lock().map_err(|_| Error::Worker)?;
     if links
         .get(&fact.peer)
@@ -1276,14 +1268,14 @@ fn retire(shared: &EpochContext, fact: &LinkFact) -> Result<(), Error> {
 }
 
 async fn connected(
-    mut shared: Arc<EpochContext>,
+    shared: Arc<Shared>,
     stream: Box<dyn meshway_transport::raw::Stream>,
     fact: LinkFact,
+    plan: Arc<Plan>,
     opening: Arc<scope::Opening>,
     was_selected: &mut bool,
 ) -> Result<(), Error> {
-    let mut updates = shared.epochs.subscribe();
-    let mut scope = shared.scope(Some((fact.peer, fact.carrier.clone())), false);
+    let scope = shared.scope(Some((fact.peer, fact.carrier.clone())), false);
     scope.check()?;
     let (sender, mut receiver) = Session::stream(
         scope::Stream {
@@ -1297,7 +1289,7 @@ async fn connected(
     .into_split();
     let sender = Arc::new(AsyncMutex::new(sender));
     shared.register_link_socket(&fact)?;
-    struct Registration(Arc<EpochContext>, [u8; 32]);
+    struct Registration(Arc<Shared>, [u8; 32]);
     impl Drop for Registration {
         fn drop(&mut self) {
             self.0.remove_socket(self.1);
@@ -1310,6 +1302,7 @@ async fn connected(
             fact: fact.clone(),
             sender: sender.clone(),
             scope: scope.clone(),
+            plan,
             supersedes: Replacement::Ranked,
             attempt: None,
         },
@@ -1330,51 +1323,32 @@ async fn connected(
         return Err(error);
     }
     *was_selected = true;
-    let result = loop {
-        let receive = async {
-            shared.event(&scope, Event::Changed).await?;
-            loop {
-                scope.check()?;
-                let frames = receiver
-                    .recv_batch()
-                    .await
-                    .map_err(|_| Error::Unavailable)?;
-                let received_at = std::time::Instant::now();
-                for frame in frames {
-                    shared
-                        .event(
-                            &scope,
-                            Event::Frame {
-                                link: Box::new(fact.clone()),
-                                frame,
-                                received_at,
-                            },
-                        )
-                        .await?;
-                }
-            }
-        };
-        let result = tokio::select! { biased;
-            _ = updates.changed() => Err(Error::Authority),
-            result = scope.run(receive) => result,
-        };
-        if shared.stop.is_cancelled() {
-            break result;
-        }
-        if scope.snapshot.ensure_current().is_err() || shared.epoch_changed() {
-            // The Manager renews or retires every selected channel itself when
-            // it installs a continuing epoch; this owner only adopts the result.
-            match shared.adopt(&mut updates, &fact).await {
-                Ok((next, next_scope)) => {
-                    shared = next;
-                    scope = next_scope;
-                    continue;
-                }
-                Err(error) => break Err(error),
+    // Runs until this channel is retired: by Manager's apply when the content
+    // no longer admits it, by replacement, idle retirement or stream EOF.
+    let receive = async {
+        shared.event(&scope, Event::Changed).await?;
+        loop {
+            scope.check()?;
+            let frames = receiver
+                .recv_batch()
+                .await
+                .map_err(|_| Error::Unavailable)?;
+            let received_at = std::time::Instant::now();
+            for frame in frames {
+                shared
+                    .event(
+                        &scope,
+                        Event::Frame {
+                            link: Box::new(fact.clone()),
+                            frame,
+                            received_at,
+                        },
+                    )
+                    .await?;
             }
         }
-        break result;
     };
+    let result = scope.run(receive).await;
     scope.cancellation.cancel();
     drop(receiver);
     retire(&shared, &fact)?;
@@ -1388,4 +1362,12 @@ async fn connected(
         .event(&shared.scope(None, false), Event::Changed)
         .await;
     result
+}
+
+/// What survives a Manager restart for new own identity or resources.
+#[derive(Default)]
+struct Carried {
+    interests: Arc<interest::Interests>,
+    facts: Arc<facts::Store>,
+    instance: Option<meshway_protocol::InstanceRequest>,
 }

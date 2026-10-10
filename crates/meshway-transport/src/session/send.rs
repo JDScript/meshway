@@ -817,7 +817,7 @@ async fn run(io: Arc<Shared>, mut queue: mpsc::Receiver<Operation>, idle: Arc<Se
             .expect("writer semaphore is never closed");
         lease._permit = Some(permit);
         let context = operation.context.clone();
-        let invalidated = context.invalidated();
+        let invalidated = context.ended();
         let stopped = io.stop.cancelled();
         tokio::pin!(invalidated, stopped);
         let mut invalid_ready = false;

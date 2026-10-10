@@ -1,6 +1,6 @@
-//! Netmap authority: on-demand adjacency, idle close, keepalive edges, peer
-//! facts without epoch change and per-peer serial differentials, over real
-//! loopback sockets and Control-issued snapshots.
+//! Desired netmap content: on-demand adjacency, idle close, keepalive edges,
+//! peer facts without reconfiguration and per-peer serial differentials, over
+//! real loopback sockets and Control-verified netmaps.
 use super::*;
 use meshway_configuration::{TopologyAction, TopologyRule};
 use meshway_control::PeerFactsSink;
@@ -23,9 +23,14 @@ async fn manager(
     factory: &Arc<Factory>,
     limits: Limits,
 ) -> Manager {
-    Manager::start(fixture.identities[index].clone(), factory.clone(), limits)
-        .await
-        .unwrap()
+    Manager::start(
+        &fixture.desired[index],
+        fixture.keys[index].clone(),
+        factory.clone(),
+        limits,
+    )
+    .await
+    .unwrap()
 }
 
 #[tokio::test]
@@ -173,7 +178,7 @@ fn delta(base: Option<u64>, cursor: u64, updated: Vec<PeerFacts>) -> PeerFactsDe
 }
 
 #[tokio::test]
-async fn peer_facts_add_dial_endpoints_without_changing_epoch_or_other_peers() {
+async fn peer_facts_add_dial_endpoints_without_reconfiguring_or_touching_other_peers() {
     // b's listener has no configured endpoint: only facts can make it dialable.
     let mut fixture = Netmaps::start(false, false).await;
     let ids = fixture.ids();
@@ -187,7 +192,7 @@ async fn peer_facts_add_dial_endpoints_without_changing_epoch_or_other_peers() {
     let mut b = manager(&fixture, 1, &factory, Default::default()).await;
     let mut c = manager(&fixture, 2, &factory, Default::default()).await;
     assert!(
-        a.shared.plan.dial_peers().contains(&ids[1]),
+        a.shared.plan().dial_peers().contains(&ids[1]),
         "an endpoint-less netmap candidate is still dialable through facts"
     );
     a.interest().interest(ids[1]);
@@ -199,8 +204,8 @@ async fn peer_facts_add_dial_endpoints_without_changing_epoch_or_other_peers() {
     tokio::time::sleep(Duration::from_millis(500)).await;
     assert!(!links(&a).contains_key(&ids[1]), "no endpoint for b yet");
     let c_link = links(&a)[&ids[2]].clone();
-    let generation = a.shared.generation;
-    let netmap = fixture.identities[0].snapshot().reference();
+    let plan = a.shared.plan();
+    let netmap = fixture.desired[0].reference();
     let mut sink = a.facts_sink();
     sink.apply(netmap, delta(None, 1, vec![facts(ids[1], b_address)]))
         .unwrap();
@@ -211,15 +216,9 @@ async fn peer_facts_add_dial_endpoints_without_changing_epoch_or_other_peers() {
     let b_link = links(&a)[&ids[1]].clone();
     assert_eq!(b_link.acquisition, LinkAcquisition::LocalEndpoint);
     assert_eq!(b_link.remote, b_address);
-    assert_eq!(
-        a.shared.generation, generation,
-        "facts never change the epoch"
-    );
     assert!(
-        a.shared
-            .identity
-            .snapshot()
-            .same_netmap(fixture.identities[0].snapshot())
+        Arc::ptr_eq(&a.shared.plan(), &plan),
+        "facts never reconfigure the Manager"
     );
     assert_eq!(links(&a)[&ids[2]], c_link, "other peers are untouched");
     // Removing the fact keeps the healthy channel; it only shrinks candidates.
@@ -235,11 +234,11 @@ async fn peer_facts_add_dial_endpoints_without_changing_epoch_or_other_peers() {
     fixture.close().await;
 }
 
-async fn reconcile_all(fixture: &Netmaps, managers: &mut [&mut Manager]) {
+async fn apply_all(fixture: &Netmaps, managers: &mut [&mut Manager]) {
     for (index, manager) in managers.iter_mut().enumerate() {
         tokio::time::timeout(
             Duration::from_secs(2),
-            manager.reconcile(fixture.identities[index].clone()),
+            manager.apply(&fixture.desired[index]),
         )
         .await
         .unwrap()
@@ -260,12 +259,12 @@ async fn serial_change_replaces_only_peers_whose_carriers_changed() {
     eventually("a links b and c", || links(&a).len() == 2).await;
     let before = links(&a);
     let acquisitions = factory.acquisitions.load(Ordering::SeqCst);
-    let generation = a.shared.generation;
+    let plan = a.shared.plan();
 
     // Same content: a lease renewal is a no-op for the Manager.
     assert_eq!(fixture.publish(|_| {}).await, vec![false; 3]);
-    reconcile_all(&fixture, &mut [&mut a, &mut b, &mut c]).await;
-    assert_eq!(a.shared.generation, generation);
+    apply_all(&fixture, &mut [&mut a, &mut b, &mut c]).await;
+    assert!(Arc::ptr_eq(&a.shared.plan(), &plan));
     assert_eq!(links(&a), before);
 
     // Block a<->c: only that carrier set changes for a.
@@ -283,20 +282,16 @@ async fn serial_change_replaces_only_peers_whose_carriers_changed() {
         })
         .await;
     assert!(changed[0] && changed[2]);
-    reconcile_all(&fixture, &mut [&mut a, &mut b, &mut c]).await;
-    assert!(a.shared.generation > generation);
+    apply_all(&fixture, &mut [&mut a, &mut b, &mut c]).await;
+    assert_eq!(a.shared.plan().reference, fixture.desired[0].reference());
     let after = links(&a);
-    assert_eq!(
-        after.get(&ids[1]),
-        before.get(&ids[1]),
-        "a-b channel retained"
-    );
+    assert_eq!(after.get(&ids[1]), before.get(&ids[1]), "a-b channel kept");
     assert!(!after.contains_key(&ids[2]), "a-c no longer admitted");
     tokio::time::sleep(Duration::from_millis(1500)).await;
     assert_eq!(
         factory.acquisitions.load(Ordering::SeqCst),
         acquisitions,
-        "no reacquisition: b retained and c not admitted despite interest"
+        "no reacquisition: b kept and c not admitted despite interest"
     );
     assert_eq!(links(&a).get(&ids[1]), before.get(&ids[1]));
     a.shutdown().await.unwrap();
@@ -327,17 +322,17 @@ async fn native_tcp_stream_survives_an_unrelated_serial_change() {
     for (index, manager) in [(0, &mut a), (1, &mut b)] {
         tokio::time::timeout(
             Duration::from_secs(2),
-            manager.reconcile(fixture.identities[index].clone()),
+            manager.apply(&fixture.desired[index]),
         )
         .await
         .unwrap()
         .unwrap();
     }
     assert!(
-        old_scope.check().is_err(),
-        "old output never borrows the new netmap"
+        old_scope.check().is_ok(),
+        "a channel the new content still admits keeps its scope"
     );
-    // The stream owner adopts the renewed scope and keeps receiving.
+    // The stream owner keeps receiving on its unchanged channel.
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(links(&a)[&ids[1]], before.0);
     assert_eq!(links(&b)[&ids[0]], before.1);

@@ -45,6 +45,27 @@ impl DataPlaneKeys {
         keys.control_key.public_key == self.control
             && keys.dataplane_key.public_key == self.dataplane
     }
+
+    /// Sign only a packet-plane digest transcript for `node` in `network`
+    /// under its registered control `key`, which must be exactly this key.
+    pub fn sign_packet(
+        &self,
+        network: NetworkId,
+        node: NodeId,
+        key: &BoundNodeKey,
+        digest: Digest,
+    ) -> Result<[u8; 64], Error> {
+        if key.public_key != self.control {
+            return Err(Error::Contract);
+        }
+        let message = packet_proof_message(network, node, key, digest);
+        Ok(self.material.signing.sign(&message).to_bytes())
+    }
+
+    /// Borrow the registered X25519 seed for the maintained Noise implementation.
+    pub fn with_noise_key<R>(&self, action: impl FnOnce(&[u8; 32]) -> R) -> R {
+        action(&self.material.noise)
+    }
 }
 
 impl fmt::Debug for DataPlaneKeys {
@@ -59,7 +80,7 @@ impl fmt::Debug for DataPlaneKeys {
 #[derive(Clone)]
 pub struct DataPlaneIdentity {
     snapshot: ExecutionSnapshot,
-    material: Arc<Material>,
+    keys: DataPlaneKeys,
 }
 
 impl DataPlaneIdentity {
@@ -70,20 +91,26 @@ impl DataPlaneIdentity {
         if !keys.matches(self_keys) {
             return Err(Error::Contract);
         }
-        let material = keys.material.clone();
         snapshot.ensure_current()?;
-        Ok(Self { snapshot, material })
+        Ok(Self {
+            snapshot,
+            keys: keys.clone(),
+        })
     }
 
     pub fn snapshot(&self) -> &ExecutionSnapshot {
         &self.snapshot
     }
 
+    pub fn keys(&self) -> &DataPlaneKeys {
+        &self.keys
+    }
+
     /// Borrow the registered X25519 seed to initialize the maintained Noise
     /// implementation. Every call is checked against the original handoff.
     pub fn with_noise_key<R>(&self, action: impl FnOnce(&[u8; 32]) -> R) -> Result<R, Error> {
         self.snapshot.ensure_current()?;
-        let output = action(&self.material.noise);
+        let output = action(&self.keys.material.noise);
         self.snapshot.ensure_current()?;
         Ok(output)
     }
@@ -94,7 +121,7 @@ impl DataPlaneIdentity {
     pub fn sign_packet(&self, digest: Digest) -> Result<[u8; 64], Error> {
         let (network, node, self_keys) = self.snapshot.self_binding()?;
         let message = packet_proof_message(network, node, &self_keys.control_key, digest);
-        let signature = self.material.signing.sign(&message).to_bytes();
+        let signature = self.keys.material.signing.sign(&message).to_bytes();
         self.snapshot.ensure_current()?;
         Ok(signature)
     }

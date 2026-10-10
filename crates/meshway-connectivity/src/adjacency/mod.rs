@@ -2,7 +2,7 @@
 use crate::plan::Plan;
 use crate::{Carrier, Error, scope::Scope};
 use ed25519_dalek::{Signature, VerifyingKey};
-use meshway_authority::{DataPlaneIdentity, packet_proof_message};
+use meshway_authority::{DataPlaneKeys, packet_proof_message};
 use meshway_model::{BoundNodeKey, Digest, NetworkId, NodeId};
 use meshway_transport::raw::Stream;
 use sha2::{Digest as _, Sha256};
@@ -161,14 +161,14 @@ fn parse_response(body: &[u8], context: &[u8], client: &[u8; 32]) -> Result<[u8;
 }
 
 pub(crate) async fn dial(
-    identity: &DataPlaneIdentity,
+    keys: &DataPlaneKeys,
+    cfg: &Plan,
     scope: &Scope,
     mut stream: Box<dyn Stream>,
     carrier: &Carrier,
 ) -> Result<(Box<dyn Stream>, [u8; 32]), Error> {
     scope.check()?;
-    let cfg = &*scope.plan;
-    let (initiation, intro) = Initiation::new(identity, cfg, carrier)?;
+    let (initiation, intro) = Initiation::new(keys, cfg, carrier)?;
     scope.run(write(&mut stream, 1, &intro)).await?;
     let challenge = scope.run(read(&mut stream, 2)).await?;
     let transcript = initiation.challenge(cfg, carrier.listener, &challenge)?;
@@ -176,14 +176,15 @@ pub(crate) async fn dial(
         .run(write(
             &mut stream,
             3,
-            &transcript.message(identity, Kind::Ack)?,
+            &transcript.message(keys, cfg, Kind::Ack)?,
         ))
         .await?;
     Ok((stream, transcript.id()))
 }
 
 pub(crate) async fn accept(
-    identity: &DataPlaneIdentity,
+    keys: &DataPlaneKeys,
+    cfg: &Plan,
     scope: &Scope,
     mut stream: Box<dyn Stream>,
     carriers: impl Fn(NodeId) -> Option<Carrier>,
@@ -196,7 +197,6 @@ pub(crate) async fn accept(
             .collect())
     };
     let intro = scope.run(read(&mut stream, 1)).await?;
-    let cfg = &*scope.plan;
     let (peer, carrier, initiation) = incoming(cfg, &carriers(&intro)?, &intro)?;
     let mut scope = scope.clone();
     scope.edge = Some((peer, carrier.clone()));
@@ -206,7 +206,7 @@ pub(crate) async fn accept(
         .run(write(
             &mut stream,
             2,
-            &transcript.message(identity, Kind::Challenge)?,
+            &transcript.message(keys, cfg, Kind::Challenge)?,
         ))
         .await?;
     let ack = scope.run(read(&mut stream, 3)).await?;

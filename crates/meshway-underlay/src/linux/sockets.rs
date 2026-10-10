@@ -118,6 +118,12 @@ impl SocketFactory {
             .await
     }
 
+    /// The Host's currently installed target, for consumers that address
+    /// sockets by resource only.
+    pub fn installed(&self) -> Result<ExecutionSnapshot> {
+        self.shared.installed()?.ok_or(Error::Expired)
+    }
+
     pub async fn traversal_listener(
         &self,
         snapshot: &ExecutionSnapshot,

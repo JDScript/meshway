@@ -46,7 +46,7 @@ impl Manager {
         &mut self,
         key: Key,
         socket: Option<[u8; 32]>,
-        build: impl FnOnce(Arc<EpochContext>) -> F,
+        build: impl FnOnce(Arc<Shared>) -> F,
     ) {
         debug_assert!(!self.owners.contains_key(&key));
         let shared = self.shared.for_owner();
@@ -89,7 +89,7 @@ impl Manager {
             .filter(|key| !match key {
                 Key::Listener(key) => compatible(&ResourceRef::Listener { key: key.clone() }),
                 Key::Candidate(key, _) => compatible(&ResourceRef::Dial { key: key.clone() }),
-                // A retained worker re-reads its peer's candidates per epoch.
+                // A kept worker re-reads its peer's candidates per sweep.
                 Key::Peer(peer) => dial_peers.contains(peer),
                 Key::Traversal => true,
                 Key::Idle | Key::Facts => true,

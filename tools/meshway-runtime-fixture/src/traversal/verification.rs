@@ -269,7 +269,6 @@ fn current_channel(
             || channel.transport != offer.carrier.protocol
             || installation.observed_at_ms < accepted_at
             || installation.observed_at_ms >= offer.expires_at_ms
-            || installation.observed_at_ms >= installation.expires_at_ms
             || i64::try_from(installation.observed_at_ms).ok()?
                 > state.observed_at?.timestamp_millis()
             || channel.socket_id.to_string() != socket.socket_id

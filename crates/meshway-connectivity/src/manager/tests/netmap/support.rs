@@ -1,8 +1,7 @@
-//! Real Server enrollment and Control-issued netmap snapshots. The netmaps are
+//! Real Server enrollment and Control-verified netmaps. The netmaps are
 //! compiled here by the shared policy compiler and delivered through Control's
-//! sync path (scripted transport) until the Server serves the route.
+//! sync path (scripted transport); each becomes the Manager's desired content.
 use super::super::*;
-use meshway_authority::DataPlaneIdentity;
 use meshway_configuration::{
     AddressPools, Input, NetworkConfiguration, NodeAddresses, NodeIdentity, NodeSettings,
     SubjectContext, execution::TrustedNode, netmap::CompiledNetmap,
@@ -55,13 +54,13 @@ pub(in crate::manager) struct Netmaps {
     server: JoinHandle<()>,
     _temp: tempfile::TempDir,
     controls: Vec<Control>,
-    /// Staged migration: snapshots of each Control's verified netmap.
-    issuers: Vec<meshway_authority::StagedIssuer>,
     scripts: Vec<Arc<Script>>,
     bindings: Vec<EnrollmentResponse>,
     pub cfg: NetworkConfiguration,
     current: Vec<CompiledNetmap>,
-    pub identities: Vec<DataPlaneIdentity>,
+    /// Each Node's desired content: Control's currently published netmap.
+    pub desired: Vec<Desired>,
+    pub keys: Vec<DataPlaneKeys>,
     sockets: Option<(Vec<UdpSocket>, Vec<TcpListener>)>,
 }
 
@@ -252,16 +251,16 @@ impl Netmaps {
             stop,
             server,
             _temp: temp,
-            issuers: controls
+            keys: controls
                 .iter()
-                .map(|_| meshway_authority::StagedIssuer::new().unwrap())
+                .map(|control| control.dataplane_keys().unwrap())
                 .collect(),
             controls,
             scripts,
             bindings,
             cfg,
             current: Vec::new(),
-            identities: Vec::new(),
+            desired: Vec::new(),
             sockets: Some((udp.into(), vec![tcp])),
         };
         fixture.publish(|_| {}).await;
@@ -276,8 +275,8 @@ impl Netmaps {
     }
 
     /// A content update that keeps every Node's identity, addresses, keys
-    /// and carriers (one more access rule); returns `index`'s new identity.
-    pub async fn reserial(&mut self, index: usize) -> DataPlaneIdentity {
+    /// and carriers (one more access rule); returns `index`'s new content.
+    pub async fn reserial(&mut self, index: usize) -> Desired {
         let ids = self.ids();
         let port = 1000 + self.cfg.access.len();
         let changed = self
@@ -292,7 +291,7 @@ impl Netmaps {
             })
             .await;
         assert!(changed[index]);
-        self.identities[index].clone()
+        self.desired[index].clone()
     }
 
     pub fn ids(&self) -> Vec<NodeId> {
@@ -302,40 +301,9 @@ impl Netmaps {
             .collect()
     }
 
-    pub async fn renew(&mut self, index: usize, validity_ms: u64) {
-        self.scripts[index]
-            .0
-            .lock()
-            .unwrap()
-            .push_back(Ok(meshway_netmap_fixture::reply(
-                &self.current[index],
-                validity_ms,
-                false,
-            )));
-        self.controls[index].sync(&mut NoFacts).await.unwrap();
-        self.identities[index] = self.identity(index);
-    }
-
-    /// The packet-plane identity for Control's currently published netmap.
-    fn identity(&mut self, index: usize) -> DataPlaneIdentity {
-        let control = &self.controls[index];
-        let netmap = control.netmap().unwrap();
-        let instance =
-            control
-                .status()
-                .instance
-                .map(|instance| meshway_protocol::InstanceRequest {
-                    instance_id: instance.instance_id,
-                    generation: instance.generation,
-                });
-        self.issuers[index]
-            .issue(
-                &netmap.content,
-                netmap.lease,
-                instance,
-                &control.dataplane_keys().unwrap(),
-            )
-            .unwrap()
+    /// Control's currently published netmap as desired content.
+    fn published(&self, index: usize) -> Desired {
+        Desired::new(&self.controls[index].netmap().unwrap().content).unwrap()
     }
 
     /// The reserved listener sockets, for one shared test factory.
@@ -411,11 +379,11 @@ impl Netmaps {
                 .unwrap()
                 .push_back(Ok(meshway_netmap_fixture::reply(&netmap, HOUR, !same)));
             self.controls[index].sync(&mut NoFacts).await.unwrap();
-            let identity = self.identity(index);
-            if let Some(slot) = self.identities.get_mut(index) {
-                *slot = identity;
+            let desired = self.published(index);
+            if let Some(slot) = self.desired.get_mut(index) {
+                *slot = desired;
             } else {
-                self.identities.push(identity);
+                self.desired.push(desired);
             }
             current.push(netmap);
         }

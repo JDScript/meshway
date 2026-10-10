@@ -218,7 +218,6 @@ impl Fixture {
                     instance: participants[&n].candidate.socket.instance.clone(),
                     netmap: cfg(101),
                     observed_at_ms: 3000,
-                    expires_at_ms: 15000,
                     control_key: keys.control,
                     dataplane_key: keys.dataplane,
                     peer_control_key: other_keys.control,
@@ -469,7 +468,7 @@ fn typed_install_fields_decode_without_interpreting_legacy_debug_fields() {
     let fields = json!({
         "message":"Connectivity channel transition","operation":"install","cause":"authenticated_ready",
         "attempt":"None","channel":"not a DTO","socket":"not a DTO","protocol":"not a DTO",
-        "install_schema":2,"install_json":serde_json::to_string(&expected).unwrap()
+        "install_schema":3,"install_json":serde_json::to_string(&expected).unwrap()
     });
     let mut event = json!({"target":"meshway_connectivity::manager","fields":fields});
     let decoded = installation::decode(&event).unwrap().unwrap();
@@ -482,6 +481,6 @@ fn typed_install_fields_decode_without_interpreting_legacy_debug_fields() {
     event["fields"]["install_json"] = json!(serde_json::to_string(&invalid).unwrap());
     assert!(installation::decode(&event).is_err());
     event["fields"]["install_json"] = json!(serde_json::to_string(&expected).unwrap());
-    event["fields"]["install_schema"] = json!(1);
+    event["fields"]["install_schema"] = json!(2);
     assert!(installation::decode(&event).is_err());
 }

@@ -12,7 +12,7 @@ async fn shutdown_releases_active_scope_while_the_session_is_still_owned() {
         fn is_current(&self) -> bool {
             !self.0.is_cancelled()
         }
-        fn invalidated(self: Arc<Self>) -> Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
+        fn ended(self: Arc<Self>) -> Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
             Box::pin(async move { self.0.cancelled().await })
         }
     }

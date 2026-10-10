@@ -1,5 +1,7 @@
+//! Per-operation cancellation, deadline and health below one Manager owner.
+//! Desired content is enforced by that owner: Manager's apply cancels every
+//! scope its new content no longer admits, so no scope carries a lease.
 use crate::{Carrier, Error};
-use meshway_authority::ExecutionSnapshot;
 use meshway_model::NodeId;
 use std::{
     future::{Future, poll_fn},
@@ -10,27 +12,18 @@ use tokio_util::sync::CancellationToken;
 
 #[derive(Clone)]
 pub(crate) struct Scope {
-    pub snapshot: ExecutionSnapshot,
-    /// Adjacency input of the same epoch as `snapshot`.
-    pub plan: std::sync::Arc<crate::plan::Plan>,
     pub cancellation: CancellationToken,
-    /// Independent operation budget. A resource lifetime follows the renewable
-    /// snapshot instead of freezing the lease deadline at construction.
+    /// Independent operation budget (handshake, acquisition), if any.
     pub deadline: Option<Instant>,
+    /// The admitted edge this operation serves; diagnostics only.
     pub edge: Option<(NodeId, Carrier)>,
     pub health: Option<std::sync::Arc<std::sync::Mutex<Instant>>>,
 }
 
 impl Scope {
-    pub fn deadline(&self) -> Instant {
-        let lease = self.snapshot.expires_at().into();
-        self.deadline.map_or(lease, |deadline| deadline.min(lease))
-    }
-    fn edge_deadline(&self) -> Result<u64, Error> {
-        match &self.edge {
-            Some((peer, carrier)) => self.plan.admit(&self.snapshot, *peer, carrier),
-            None => Ok(self.snapshot.expires_at_ms()),
-        }
+    /// This operation's own deadline, or `fallback` from now without one.
+    pub fn deadline_or(&self, fallback: std::time::Duration) -> Instant {
+        self.deadline.unwrap_or_else(|| Instant::now() + fallback)
     }
     pub fn check(&self) -> Result<(), Error> {
         let result = self.check_current();
@@ -48,10 +41,6 @@ impl Scope {
         {
             return Err(Error::Cancelled);
         }
-        self.snapshot
-            .ensure_current()
-            .map_err(|_| Error::Authority)?;
-        self.edge_deadline()?;
         if let Some(health) = &self.health
             && Instant::now() >= *health.lock().map_err(|_| Error::Worker)?
         {
@@ -80,11 +69,9 @@ impl Scope {
     /// writes internally. Cancellation drops the operation; shared endpoint
     /// ownership stays with its driver.
     pub async fn run<T>(&self, future: impl Future<Output = Result<T, Error>>) -> Result<T, Error> {
-        self.edge_deadline()?;
         tokio::pin!(future);
         let result = tokio::select! { biased;
             _ = self.cancellation.cancelled() => Err(Error::Cancelled),
-            _ = self.snapshot.invalidated() => Err(Error::Authority),
             _ = async { match self.deadline {
                 Some(deadline) => tokio::time::sleep_until(deadline).await,
                 None => std::future::pending().await,
@@ -187,9 +174,7 @@ impl meshway_transport::SendLifetime for Scope {
         self.check().is_ok()
     }
 
-    fn invalidated(
-        self: std::sync::Arc<Self>,
-    ) -> std::pin::Pin<Box<dyn Future<Output = ()> + Send>> {
+    fn ended(self: std::sync::Arc<Self>) -> std::pin::Pin<Box<dyn Future<Output = ()> + Send>> {
         Box::pin(async move {
             let _: Result<(), Error> = self.run(std::future::pending()).await;
             self.cancellation.cancel();
@@ -199,7 +184,7 @@ impl meshway_transport::SendLifetime for Scope {
 
 /// Physical poll gate below providers/Session. Opening retains a frozen guard
 /// until authentication completes; established outputs use Session's frozen
-/// per-operation SendContext. Buffered provider channels are not retained.
+/// per-operation SendContext. Buffered provider channels are not kept.
 pub(crate) struct Stream {
     pub inner: Box<dyn meshway_transport::raw::Stream>,
     pub scope: std::sync::Arc<Physical>,
@@ -275,59 +260,25 @@ impl Opening {
     }
 }
 
-/// The physical gate follows only Manager-approved epochs. It is NEVER a
-/// SendLifetime: every accepted output instead retains its frozen Scope.
+/// The physical gate of one descriptor owner. It is NEVER a SendLifetime:
+/// every accepted output instead retains its own operation Scope.
 pub(crate) struct Physical {
-    epochs: tokio::sync::watch::Receiver<crate::manager::Epoch>,
     stop: CancellationToken,
-    read: futures_util::task::AtomicWaker,
-    write: futures_util::task::AtomicWaker,
 }
 impl Physical {
-    pub fn new(
-        epochs: tokio::sync::watch::Receiver<crate::manager::Epoch>,
-        stop: CancellationToken,
-    ) -> Self {
-        Self {
-            epochs,
-            stop,
-            read: Default::default(),
-            write: Default::default(),
-        }
-    }
-    pub fn wake(&self) {
-        self.read.wake();
-        self.write.wake();
+    pub fn new(stop: CancellationToken) -> Self {
+        Self { stop }
     }
     pub fn check(&self) -> Result<(), Error> {
         if self.stop.is_cancelled() {
             return Err(Error::Cancelled);
         }
-        self.epochs
-            .borrow()
-            .identity
-            .snapshot()
-            .ensure_current()
-            .map_err(|_| Error::Authority)
+        Ok(())
     }
-    fn poll(&self, cx: &std::task::Context<'_>, read: bool) -> Poll<std::io::Result<()>> {
-        if read {
-            self.read.register(cx.waker());
-        } else {
-            self.write.register(cx.waker());
-        }
+    fn poll(&self, _: &std::task::Context<'_>, _: bool) -> Poll<std::io::Result<()>> {
         if self.stop.is_cancelled() {
             return Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into()));
         }
-        let epoch = self.epochs.borrow();
-        let identity = &epoch.identity;
-        if identity.snapshot().ensure_current().is_ok() {
-            return Poll::Ready(Ok(()));
-        }
-        // Inert until Control's next content or the lease end.
-        if std::time::Instant::now() >= identity.snapshot().expires_at() {
-            return Poll::Ready(Err(std::io::ErrorKind::PermissionDenied.into()));
-        }
-        Poll::Pending
+        Poll::Ready(Ok(()))
     }
 }

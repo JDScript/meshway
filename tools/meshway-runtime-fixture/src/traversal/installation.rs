@@ -16,7 +16,6 @@ pub struct Installation {
     pub network: NetworkId,
     pub instance: InstanceRequest,
     pub netmap: NetmapRef,
-    pub expires_at_ms: u64,
     pub observed_at_ms: u64,
     pub control_key: BoundNodeKey,
     pub dataplane_key: BoundNodeKey,
@@ -54,7 +53,7 @@ pub(super) fn decode(event: &serde_json::Value) -> Result<Option<Installation>> 
         return Ok(None);
     }
     let fields: Fields = serde_json::from_value(fields.clone())?;
-    if fields.install_schema != 2 {
+    if fields.install_schema != 3 {
         return Err("unsupported installation evidence schema".into());
     }
     Ok(Some(serde_json::from_str(&fields.install_json)?))

@@ -140,6 +140,10 @@ impl Deadline {
         }
         Ok(deadline)
     }
+    /// The issuer clock's current UTC high-water reading.
+    pub fn now_ms(&self) -> Result<u64, Error> {
+        self.clock.now()
+    }
     pub fn valid(&self) -> bool {
         self.clock
             .now_with_instant()

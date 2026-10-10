@@ -13,7 +13,7 @@ use tokio_util::sync::CancellationToken;
 /// one owned invalidation future wakes a blocked operation (not one per poll).
 pub trait SendLifetime: std::fmt::Debug + Send + Sync + 'static {
     fn is_current(&self) -> bool;
-    fn invalidated(self: Arc<Self>) -> Pin<Box<dyn Future<Output = ()> + Send>>;
+    fn ended(self: Arc<Self>) -> Pin<Box<dyn Future<Output = ()> + Send>>;
 }
 
 /// Host-supplied operation lifetime, not an authorization token. Dropping the
@@ -62,13 +62,13 @@ impl SendContext {
         }
     }
 
-    pub(crate) async fn invalidated(&self) -> CancelReason {
+    pub(crate) async fn ended(&self) -> CancelReason {
         tokio::select! {
             biased;
             _ = self.cancellation.cancelled() => CancelReason::ScopeCancelled,
             _ = async {
                 match &self.lifetime {
-                    Some(lifetime) => lifetime.clone().invalidated().await,
+                    Some(lifetime) => lifetime.clone().ended().await,
                     None => pending().await,
                 }
             } => CancelReason::ScopeCancelled,
@@ -95,7 +95,7 @@ impl SendLifetime for Intersection {
                     .is_none_or(|lifetime| lifetime.is_current())
         })
     }
-    fn invalidated(self: Arc<Self>) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+    fn ended(self: Arc<Self>) -> Pin<Box<dyn Future<Output = ()> + Send>> {
         Box::pin(async move {
             if self.0.is_empty() {
                 pending::<()>().await;
@@ -103,7 +103,7 @@ impl SendLifetime for Intersection {
             let waits: Vec<_> = self
                 .0
                 .iter()
-                .map(|context| Box::pin(context.invalidated()))
+                .map(|context| Box::pin(context.ended()))
                 .collect();
             futures_util::future::select_all(waits).await;
         })

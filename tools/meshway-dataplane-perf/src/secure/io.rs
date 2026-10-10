@@ -107,8 +107,13 @@ impl Io {
         // The production factory only mints data scopes after capture and its
         // execution epoch have been installed. Never substitute a bootstrap scope.
         host.install(identity.snapshot().clone()).await?;
+        let desired = meshway_engine::Desired::new(&std::sync::Arc::new(
+            identity.snapshot().netmap()?.clone(),
+        ))
+        .map_err(|_| "invalid fixture netmap")?;
         let manager = Manager::start(
-            identity,
+            &desired,
+            identity.keys().clone(),
             std::sync::Arc::new(host.sockets()),
             Default::default(),
         )

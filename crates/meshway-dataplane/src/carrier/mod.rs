@@ -27,7 +27,7 @@ impl meshway_transport::SendLifetime for crate::secure::Guard {
     fn is_current(&self) -> bool {
         self.ensure_current().is_ok()
     }
-    fn invalidated(self: Arc<Self>) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+    fn ended(self: Arc<Self>) -> Pin<Box<dyn Future<Output = ()> + Send>> {
         Box::pin(async move { crate::secure::Guard::invalidated(&self).await })
     }
 }
@@ -253,7 +253,7 @@ async fn guarded<T>(
                 Err(Error::Cancelled)
             });
         }
-        let wait = invalidated.get_or_insert_with(|| lifetime.clone().invalidated());
+        let wait = invalidated.get_or_insert_with(|| lifetime.clone().ended());
         if wait.as_mut().poll(cx).is_ready() {
             Poll::Ready(Err(Error::Cancelled))
         } else {
@@ -278,7 +278,7 @@ impl meshway_transport::SendLifetime for OutputLifetime {
                 .is_none_or(|channel| channel.is_current())
     }
 
-    fn invalidated(self: Arc<Self>) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+    fn ended(self: Arc<Self>) -> Pin<Box<dyn Future<Output = ()> + Send>> {
         Box::pin(async move {
             tokio::select! { biased;
                 _ = async {
@@ -287,7 +287,7 @@ impl meshway_transport::SendLifetime for OutputLifetime {
                 } => {},
                 _ = async {
                     match &self.channel {
-                        Some(channel) => channel.clone().invalidated().await,
+                        Some(channel) => channel.clone().ended().await,
                         None => std::future::pending().await,
                     }
                 } => {},

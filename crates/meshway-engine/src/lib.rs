@@ -29,7 +29,9 @@ pub struct Desired {
 }
 
 impl Desired {
-    fn new(content: &Arc<CompiledNetmap>) -> Result<Self, Error> {
+    /// Content plus its one shared compiler. Holding a `Desired` grants
+    /// nothing: components act only on what Engine applies to them.
+    pub fn new(content: &Arc<CompiledNetmap>) -> Result<Self, Error> {
         content.verify().map_err(|_| Error::Content)?;
         let compiler = Arc::new(LocalCompiler::from_shared(content.netmap.clone()));
         Ok(Self {

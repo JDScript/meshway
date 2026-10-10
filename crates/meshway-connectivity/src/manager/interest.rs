@@ -1,7 +1,6 @@
 //! On-demand adjacency for netmap authority. A peer worker acquires only while
 //! its peer is interested (or its edge is keepalive); a selected channel with
-//! no interest and no frames for `Limits::idle` is retired. Publications keep
-//! every configured peer resident.
+//! no interest and no frames for `Limits::idle` is retired.
 use super::*;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -20,8 +19,7 @@ struct Entry {
     wake: Arc<tokio::sync::Notify>,
 }
 
-/// Cross-epoch interest and wake-up table, bounded by the peers of the
-/// current plan.
+/// Interest and wake-up table, bounded by the peers of the current plan.
 pub(super) struct Interests {
     base: std::time::Instant,
     peers: Mutex<BTreeMap<NodeId, Entry>>,
@@ -142,15 +140,15 @@ impl AdjacencyInterest for Interest {
     }
 }
 
-impl EpochContext {
+impl Shared {
     /// Whether the peer worker should hold or acquire an adjacency now.
     pub(super) fn wanted(&self, peer: NodeId) -> bool {
-        self.plan.keepalive(peer) || self.interests.recent(peer, self.limits.idle)
+        self.plan().keepalive(peer) || self.interests.recent(peer, self.limits.idle)
     }
 }
 
 /// Retire selected channels that are neither keepalive, interested nor used.
-pub(super) async fn idle(shared: Arc<EpochContext>) {
+pub(super) async fn idle(shared: Arc<Shared>) {
     let period = (shared.limits.idle / 4).clamp(
         std::time::Duration::from_millis(25),
         std::time::Duration::from_secs(5),
@@ -161,7 +159,7 @@ pub(super) async fn idle(shared: Arc<EpochContext>) {
             _ = shared.stop.cancelled() => return,
             _ = tokio::time::sleep(period) => {},
         }
-        let epoch = shared.epochs.borrow().clone();
+        let plan = shared.plan();
         let now = shared.interests.now_ms();
         let Ok(mut links) = shared.links.lock() else {
             return;
@@ -169,7 +167,7 @@ pub(super) async fn idle(shared: Arc<EpochContext>) {
         let expired: Vec<_> = links
             .iter()
             .filter(|(peer, link)| {
-                !epoch.plan.keepalive(**peer)
+                !plan.keepalive(**peer)
                     && now.saturating_sub(link.activity.last().max(shared.interests.last(**peer)))
                         >= idle
             })

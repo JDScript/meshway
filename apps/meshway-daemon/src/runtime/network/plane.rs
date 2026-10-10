@@ -110,8 +110,8 @@ impl Plane {
         if let Some(secure) = &mut state.secure {
             let _ = secure.update(identity.clone());
         }
-        if let Some(manager) = &mut state.manager {
-            let _ = manager.reconcile(identity.clone()).await;
+        if let Some(manager) = &state.manager {
+            let _ = manager.set_instance(self.instance.clone());
         }
         if self.dns.guard().is_some() {
             let _ = self.dns.install(identity.snapshot().clone()).await;
@@ -255,7 +255,6 @@ impl meshway_engine::Components for Plane {
             }
             return Ok(());
         };
-        let identity = self.identity_for(desired)?;
         if !desired.local().enabled {
             if let Some(state) = &mut self.installed
                 && let Some(mut manager) = state.manager.take()
@@ -270,25 +269,25 @@ impl meshway_engine::Components for Plane {
             .as_mut()
             .and_then(|state| state.manager.take());
         let manager = match previous {
-            Some(mut manager) if manager.can_reconcile(&identity) => {
-                if manager.reconcile(identity.clone()).await.is_err() {
+            Some(mut manager) => {
+                if manager.apply(desired).await.is_err() {
                     let _ = manager.shutdown().await;
                     self.peers.detach();
                     return Err(self.fail(Problem::Transport, ApplyFailure::Listeners));
                 }
                 manager
             }
-            previous => {
-                if let Some(mut manager) = previous {
-                    self.peers.detach();
-                    let _ = manager.shutdown().await;
-                }
+            None => {
                 let Ok(generation) = self.generation.checked_next() else {
                     return Err(self.fail(Problem::Worker, ApplyFailure::Listeners));
                 };
                 self.generation = generation;
+                let Some(keys) = self.keys.clone() else {
+                    return Err(self.fail(Problem::Apply, ApplyFailure::Validation));
+                };
                 match Manager::start_with_traversal(
-                    identity.clone(),
+                    desired,
+                    keys,
                     Arc::new(self.host.sockets()),
                     Default::default(),
                     self.traversal.clone(),
@@ -296,7 +295,10 @@ impl meshway_engine::Components for Plane {
                 )
                 .await
                 {
-                    Ok(manager) => manager,
+                    Ok(manager) => {
+                        let _ = manager.set_instance(self.instance.clone());
+                        manager
+                    }
                     Err(_) => return Err(self.fail(Problem::Transport, ApplyFailure::Listeners)),
                 }
             }
