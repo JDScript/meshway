@@ -59,6 +59,9 @@ def parse_args(argv=None):
     parser.add_argument("--parallel", type=positive, help="concurrent rows; default min(rows, CPUs // 2)")
     parser.add_argument("--short", action="store_true")
     parser.add_argument("--run", default=None, help="unique run ID, also used by remote attach")
+    for kind in ("runtime", "packet", "tun"):
+        parser.add_argument(f"--prebuilt-{kind}", type=Path, metavar="DIR",
+                            help=f"frozen {kind} --build-only output to import instead of building")
     parser.add_argument("--runtime-image-manifest", type=Path)
     parser.add_argument("--dns-image-manifest", type=Path)
     parser.add_argument("--traversal-image-manifest", type=Path)
@@ -286,6 +289,11 @@ def main(argv=None):
         artifacts = {}
         for kind in ("runtime", "packet", "tun"):
             if kind not in kinds:
+                continue
+            prebuilt = getattr(args, "prebuilt_" + kind)
+            if prebuilt:
+                artifacts[kind] = prebuilt.resolve()
+                report["builds"][kind] = dict(imported=str(artifacts[kind]))
                 continue
             destination = directory / "builds" / kind / run_id()
             build_started = time.monotonic()

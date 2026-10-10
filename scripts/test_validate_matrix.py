@@ -263,8 +263,16 @@ print('')
                 "docker": "import pathlib\nprint('owned-leftover' if (pathlib.Path.home() / 'leftover').exists() else '')\n",
                 # Each run waits for both to be inside the matrix: proves no run-wide lock.
                 "mise": """import json,pathlib,sys,os,time
-run = sys.argv[sys.argv.index('--run') + 1]
 home = pathlib.Path.home()
+if sys.argv[1] == 'exec':
+    # verify_<kind>.py --build-only: record where it ran, leave a frozen manifest.
+    kind = sys.argv[sys.argv.index('--') + 2].split('verify_')[1].split('.py')[0]
+    destination = pathlib.Path(sys.argv[sys.argv.index('--report-dir') + 1])
+    (destination / ('bin' if kind != 'tun' else '')).mkdir(parents=True, exist_ok=True)
+    (destination / ('bin' if kind != 'tun' else '') / 'source-manifest.json').write_text(json.dumps(dict(cwd=os.getcwd())))
+    with (home / 'builds.jsonl').open('a') as log: log.write(json.dumps(dict(kind=kind, cwd=os.getcwd(), target=os.environ['MESHWAY_VALIDATION_TARGET'])) + '\\n')
+    sys.exit(0)
+run = sys.argv[sys.argv.index('--run') + 1]
 (home / ('started-' + run)).touch()
 deadline = time.monotonic() + 8
 while len(list(home.glob('started-*'))) < 2 and time.monotonic() < deadline:
@@ -275,6 +283,7 @@ directory = pathlib.Path(os.environ['MESHWAY_VALIDATION_ROOT']) / 'matrix' / run
 directory.mkdir(parents=True)
 data = dict(status='complete', passed=len(list(home.glob('started-*'))) == 2, sourceRoot=str(pathlib.Path.cwd()),
             target=os.environ['MESHWAY_VALIDATION_TARGET'], tmp=os.environ['TMPDIR'],
+            prebuilt={kind: sys.argv[sys.argv.index('--prebuilt-' + kind) + 1] for kind in ('runtime', 'packet', 'tun')},
             rows=[dict(row='udp/off', report='rows/udp-off/actor/report.json', reportId='actor')])
 (directory / 'matrix.json').write_text(json.dumps(data))
 (directory / 'summary.md').write_text('matrix summary')
@@ -321,10 +330,21 @@ data = dict(status='complete', passed=len(list(home.glob('started-*'))) == 2, so
                 self.assertEqual(Path(data["sourceRoot"]), workspace.resolve())
                 self.assertEqual(data["target"], str(validation / "target"))
                 self.assertEqual(data["tmp"], str(validation / "tmp" / name))
+                self.assertEqual(data["prebuilt"]["runtime"], str(validation / "builds/pushed/runtime/bin"))
+                self.assertEqual(data["prebuilt"]["tun"], str(validation / "builds/pushed/tun"))
+                self.assertEqual(result["builds"]["packet"], str(validation / "builds/pushed/packet/bin"))
                 if name in ("leftover", "other"):
                     self.assertIn("owned-leftover", result["remainingResources"]["containers"])
             calls = [json.loads(line) for line in (root / "git-calls.jsonl").read_text().splitlines()]
             self.assertFalse(any(call[0] == "checkout" for call in calls), "never switch the shared clone")
+            build_root = str(root / ".worktree/validation-build")
+            self.assertTrue(all(call[1] == build_root for call in calls if "checkout" in call), "only the build worktree is switched")
+            builds = [json.loads(line) for line in (root / "builds.jsonl").read_text().splitlines()]
+            # One revision: the three fixtures are built once, in the fixed-path worktree, against the shared target.
+            self.assertEqual(sorted(build["kind"] for build in builds), ["packet", "runtime", "tun"])
+            self.assertTrue(all(Path(build["cwd"]).resolve() == Path(build_root).resolve()
+                                and build["target"] == str(validation / "target") for build in builds))
+            self.assertTrue((root / ".worktree/validation-build").exists(), "the build worktree is the cache and stays")
             self.assertEqual(sum(call[:2] == ["worktree", "remove"] for call in calls), 4)
             self.assertFalse((validation / "remote.lock").exists())
 
