@@ -52,8 +52,8 @@ impl Shared {
     }
 
     /// Whether a selected channel survives from `previous` to `next`: exact
-    /// peer keys, unchanged physical resources, a still admitted carrier
-    /// that still leads this Node's carrier order, and live health.
+    /// peer keys and carrier order, unchanged physical resources, a still
+    /// admitted carrier, and live health.
     fn keeps(&self, previous: &Plan, next: &Plan, link: &Link) -> bool {
         let fact = &link.fact;
         if !previous.peer_unchanged(next, fact.peer)
@@ -86,24 +86,13 @@ impl Shared {
         };
         // Exact resource equality includes TLS, proxy credentials and WS
         // settings; a changed physical declaration never keeps old I/O.
+        // `peer_unchanged` includes this Node's carrier order toward the
+        // peer: an unchanged order keeps a channel on a lower-order carrier
+        // (an established fallback), while a changed order reselects.
         let compatible = |resource: &ResourceRef| previous.netmap_compatible(next, resource);
-        if !compatible(&resource)
-            || (fact.carrier.dialer == previous.node && !compatible(&dial))
-            || link.scope.check().is_err()
-        {
-            return false;
-        }
-        // A changed carrier order reselects unless this carrier still leads.
-        fact.carrier.dialer != next.node
-            || next
-                .outgoing(fact.peer)
-                .ok()
-                .and_then(|candidates| {
-                    candidates
-                        .first()
-                        .map(|(_, dial)| dial.listener_key.clone())
-                })
-                .is_some_and(|key| key == fact.carrier.listener_key)
+        compatible(&resource)
+            && (fact.carrier.dialer != previous.node || compatible(&dial))
+            && link.scope.check().is_ok()
     }
 
     /// One pass over the selected-channel table and socket references.

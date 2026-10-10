@@ -175,9 +175,9 @@ async fn netmap_exit_role_survives_renewal_and_unchanged_serial_and_ends_on_with
             scope.clone(),
         )
     };
+    // Tuple Access admission is SecureNode's flow table alone
+    // (dataplane `netmap_exit`); the role owner installs its projections.
     project("100.64.0.2").await.unwrap();
-    // Another source address is not an exit grant.
-    assert!(project("100.64.0.9").await.is_err());
 
     // Same content: nothing changes and the instance-free role is unchanged.
     let renewed = sync(&mut control, &script, &first, false, HOUR).await;
@@ -191,18 +191,16 @@ async fn netmap_exit_role_survives_renewal_and_unchanged_serial_and_ends_on_with
     assert_eq!(second.netmap.exit_role, first.netmap.exit_role);
     let next = sync(&mut control, &script, &second, true, HOUR).await;
     host.install(next).await.unwrap();
-    tokio::time::sleep(Duration::from_millis(350)).await;
     assert!(role.is_active() && host.exit_role().is_some());
     project("100.64.0.2").await.unwrap();
 
-    // Revoking the source's Access: no new projection, the role remains.
+    // Revoking the source's Access changes no exit role: the role remains.
     network.access = false;
     let third = network.compile(Some(&second));
+    assert_eq!(third.netmap.exit_role, first.netmap.exit_role);
     let revoked = sync(&mut control, &script, &third, true, HOUR).await;
     host.install(revoked).await.unwrap();
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    assert!(role.is_active());
-    assert!(project("100.64.0.2").await.is_err());
+    assert!(role.is_active() && host.exit_role().is_some());
 
     // Engine's empty apply: the owner stops and cleans up exactly.
     host.suspend().await.unwrap();
@@ -218,5 +216,5 @@ async fn netmap_exit_role_survives_renewal_and_unchanged_serial_and_ends_on_with
     let _ = control.shutdown().await;
     host.shutdown(false).await.unwrap();
     server.close().await;
-    println!("N1G_NETMAP_EXIT=renewal-noop,serial-kept,access-denied,withdrawal-cleanup");
+    println!("N1G_NETMAP_EXIT=renewal-noop,serial-kept,access-independent,withdrawal-cleanup");
 }
