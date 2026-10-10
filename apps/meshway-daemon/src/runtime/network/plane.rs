@@ -63,10 +63,11 @@ impl Plane {
         self.keys = keys;
     }
 
-    /// State/receipt binding only; never part of desired content.
-    pub async fn set_instance(&mut self, instance: Option<InstanceRequest>) {
+    /// State/receipt binding only; never part of desired content. Returns
+    /// whether the binding changed.
+    pub async fn set_instance(&mut self, instance: Option<InstanceRequest>) -> bool {
         if self.instance == instance {
-            return;
+            return false;
         }
         self.instance = instance;
         if let Some(manager) = self
@@ -78,6 +79,27 @@ impl Plane {
             // Coordination sockets stay plain until the next apply rebinds.
             tracing::warn!(?error, "Adjacency instance binding failed");
         }
+        true
+    }
+
+    /// The installed exit role's prerequisites, observed for the live
+    /// instance (an installation may precede the instance, e.g. after a
+    /// restart on the saved netmap). Facts only; nothing is reinstalled.
+    pub async fn exit_capability(&mut self) -> Option<meshway_model::exit::ExitCapability> {
+        let state = self.installed.as_ref()?;
+        let role = state.desired.exit_role()?.clone();
+        let reference = state.desired.reference();
+        let installed = state.exit.is_some();
+        let instance = self.instance.as_ref()?.instance_id;
+        let mut capability = self
+            .host
+            .probe_exit(instance, reference, role.generation)
+            .await;
+        if installed {
+            capability.installed_families = vec![meshway_model::exit::ExitFamily::Ipv4];
+        }
+        self.report.exit_capability = Some(capability.clone());
+        Some(capability)
     }
 
     pub fn secure(&self) -> Option<&SecureNode> {

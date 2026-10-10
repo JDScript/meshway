@@ -311,7 +311,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 }
                 let offer = offers.borrow_and_update().clone();
                 engine.components_mut().set_keys(offer.keys);
-                engine.components_mut().set_instance(offer.instance).await;
+                let rebound = engine.components_mut().set_instance(offer.instance).await;
                 let Some(netmap) = offer.netmap else {
                     // Control withdrew the lease: end the installed netmap.
                     if engine.desired().is_some() || engine.components().installed.is_some() {
@@ -338,6 +338,10 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                     } else {
                         let mut report = reports.borrow().clone();
                         report.expires_at = lease_end(&netmap.lease);
+                        if rebound {
+                            report.exit_capability =
+                                engine.components_mut().exit_capability().await;
+                        }
                         reports.send_replace(report);
                     }
                     continue;
