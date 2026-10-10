@@ -62,6 +62,17 @@ export function LinkLevel({
     null
   const config = scene.configuration?.configuration
   const declaration = edge?.declaration
+  const directions = config
+    ? edgeDirections(config, {
+        a,
+        b,
+        transports: declaration?.transports ?? null,
+      })
+    : null
+  // An edge only one end can dial is kept connected, whatever its rule says.
+  const dialable =
+    directions?.filter((direction) => direction.transports.length > 0).length ??
+    0
   const channels = (edge?.channels ?? []).filter(
     (channel) => channel.phase !== "closed"
   )
@@ -135,11 +146,7 @@ export function LinkLevel({
         {config ? (
           <PanelSection title={m.map_link_capability()}>
             <Facts>
-              {edgeDirections(config, {
-                a,
-                b,
-                transports: declaration?.transports ?? null,
-              }).map((direction) => (
+              {directions?.map((direction) => (
                 <Fact
                   key={direction.from}
                   stacked
@@ -182,6 +189,22 @@ export function LinkLevel({
                   {declaration.transports?.length === 0
                     ? m.map_link_no_carrier()
                     : orderText(declaration.transports ?? DIALER_PROTOCOLS)}
+                </Fact>
+              ) : null}
+              {declaration && dialable > 0 ? (
+                <Fact
+                  label={m.configuration_topology_keepalive()}
+                  detail={
+                    declaration.keepalive
+                      ? undefined
+                      : dialable === 1
+                        ? m.map_link_kept_one_way()
+                        : m.map_link_on_demand_detail()
+                  }
+                >
+                  {declaration.keepalive || dialable === 1
+                    ? m.configuration_topology_keepalive_kept()
+                    : m.configuration_topology_keepalive_demand()}
                 </Fact>
               ) : null}
             </Facts>

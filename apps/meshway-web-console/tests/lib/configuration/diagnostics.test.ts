@@ -56,6 +56,27 @@ test("an issue is worded by its code and parameters, never its English message",
   )
 })
 
+test("a node's configuration over the limit says by how much", () => {
+  const limit = (bytes: string) =>
+    issueText(
+      issue(
+        "netmap_limit",
+        { node: EDGE, bytes, maxBytes: String(8 * 1024 * 1024) },
+        `/nodes/${EDGE}`
+      ),
+      node
+    )
+  assert.equal(
+    limit(String(9.5 * 1024 * 1024)),
+    "下发给 sgp-edge 的配置有 9.5 MiB，超过 8 MiB 的上限"
+  )
+  // Just over: rounding would make them equal, so in bytes.
+  assert.match(
+    limit(String(8 * 1024 * 1024 + 3)),
+    /8.388.611 字节，超过 8.388.608 字节/
+  )
+})
+
 test("reasons are worded when known, and left out when not", () => {
   assert.equal(
     issueText(issue("invalid_transport", { reason: "websocket_alpn" }), node),

@@ -20,7 +20,7 @@
   "observation_path": "指定路径",
   "observation_measures": "节点往返耗时 · 探测未回应率",
   "observation_start": "开始观察",
-  "observation_denied": "服务端不允许这项观察：源节点、目标、服务或路径不在当前许可内",
+  "observation_denied": "服务端不允许这项观察：源节点、目标、服务或路径不在当前的权限和路由内",
   "observation_conflict": "服务端拒绝：源节点当前没有在线实例或可用的执行配置",
   "observation_limit": "观察数量已达上限（此登录或此网络）",
   "observation_not_found": "服务端找不到此网络或节点",

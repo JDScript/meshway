@@ -18,6 +18,8 @@ export type DeclaredEdge = {
   rule: number | null
   /** Null is unrestricted; [] explicitly allows no carrier. */
   transports: readonly TransportProtocol[] | null
+  /** The rule keeps the edge connected; otherwise it is connected on demand. */
+  keepalive: boolean
 }
 
 export type DeclaredTopology = {
@@ -123,6 +125,8 @@ export function configurationTopology(
             allowing === null
               ? null
               : (config.topology[allowing]?.transports ?? null),
+          keepalive:
+            allowing !== null && config.topology[allowing]?.keepalive === true,
         })
     }
   return {

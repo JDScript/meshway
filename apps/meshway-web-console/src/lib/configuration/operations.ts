@@ -105,6 +105,7 @@ function topologyRule(rule: TopologyRule): TopologyRule {
   const out: TopologyRule = { action: rule.action, a: rule.a, b: rule.b }
   if (rule.remark) out.remark = rule.remark
   if (rule.transports) out.transports = rule.transports
+  if (rule.keepalive !== undefined) out.keepalive = rule.keepalive
   return out
 }
 
@@ -113,6 +114,7 @@ const sameTopologyRule = (a: TopologyRule, b: TopologyRule) =>
   a.action === b.action &&
   a.a === b.a &&
   a.b === b.b &&
+  (a.keepalive ?? false) === (b.keepalive ?? false) &&
   (a.transports && b.transports
     ? sameList(a.transports, b.transports)
     : a.transports === b.transports)

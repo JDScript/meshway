@@ -51,13 +51,13 @@
 - **加入链接与重置链接**：兑换前可以用 `inspect` 预览，不会消费；最终兑换时重新校验。
 - **实时观察**：`auto` 模式由 Controller 计算候选、执行端选择路径；`explicit` 模式固定路径。console 只在页面可见时续租。
 
-## 接入状态（契约 `f54a7f69`）
+## 接入状态（契约 `8d50e873`）
 
 console 已接入 `/api/v1` 下全部 Console 操作：
 
 - 账户、会话和账户活动（邮箱修改显示原邮箱）；
 - 网络、成员（改角色前确认要撤销的加入链接）、加入链接（签发人、使用者）和网络活动；
-- 配置：JSONC 和全部区段表单（出口规则的动作只有出口和直连，"不接管"只用于方案兜底；目的地里 `example.com` 是后缀，`=example.com` 是精确域名 `domain`，inline 规则集相同；组网允许规则的 `transports` 是有序允许列表，前项优先，可用箭头或 Alt+↑/↓ 调整；省略使用平台顺序 UDP → TCP → VLESS → Trojan，`[]` 没有允许承载，阻断规则不设置）、validate（含规则集准备与监听器材料计划）、apply、历史、对照和恢复；顺序变化会保留为草稿修改，dialer 不再有 priority；按 `NetworkActions.readConfiguration` 决定读完整配置还是成员视图；
+- 配置：JSONC 和全部区段表单（出口规则的动作只有出口和直连，"不接管"只用于方案兜底；目的地里 `example.com` 是后缀，`=example.com` 是精确域名 `domain`，inline 规则集相同；组网允许规则的 `transports` 是有序允许列表，前项优先，可用箭头或 Alt+↑/↓ 调整；省略使用平台顺序 UDP → TCP → VLESS → Trojan，`[]` 没有允许承载；连接方式默认按需，`keepalive: true` 为常驻，只有一端能拨出的边总是常驻；阻断规则两者都不设置）、validate（含规则集准备与监听器材料计划）、apply、历史、对照和恢复；顺序变化会保留为草稿修改，dialer 不再有 priority；按 `NetworkActions.readConfiguration` 决定读完整配置还是成员视图；
 - 配置诊断：按 `IssueCode` 和 `params` 本地化（节点按主机名，传输和规则集的 `reason` 按已知取值；`edge_transport_unavailable` 说明哪条 Mesh 路由要经过哪两端之间的边，挂在 `/topology/<i>/transports` 的承载上），问题挂在 pointer 所在的规则或字段下，并标到具体的值；`warnings` 显示在应用确认、对应规则下和源文件里；应用确认使用 `affectedNodeIds`、`identityChangedNodeIds`、`changedListeners`；
 - 地点与 ASN：console 不再读服务端的 GeoIP 结果（`derived.location.data`、`datasetId`、`ipInfo` 的查询结果），只用 `derived.location` 的地址和 `derived.ipInfo` 的键（`notApplicable` 视为非公网，不发出），向 geojs.io 查询。在服务端按下面"请后端调整"改完之前，`derived.location` 只在服务端自己的 GeoIP 有结果时才出现，没有数据集的部署里节点仍然没有位置。8420 的节点通过 STUN 上报了公网映射，地球上已经有节点；三个节点共用宿主出口，同一地址的节点合成一组，没有 STUN 观测的列在「待定位」。
 - 节点、节点运行 State（对端以 State 的 hostname 命名）、节点设置（成员通过 `getNodeSettings` 读取）、监听（`ListenerUpdate` 省略 WebSocket 响应头即保留，界面按名字显示）和节点密钥；
@@ -66,13 +66,13 @@ console 已接入 `/api/v1` 下全部 Console 操作：
 - 网络 SSE，含观察事件、`stream.closed` 和增量里的 State 元数据；管理者的配置快照按 GET 响应写入缓存；续传不重发初始批次，console 以 SDK 的 `onOpen`（连接被接受）确认服务端接受了 cursor；
 - 规则集（刷新带 `requestId`：结果未知时再刷新沿用同一 ID，服务端返回当前视图、不再下载）；
 - 路径检测（`evaluateConfiguration`）：节点的“路径”标签（D6），当前版本和草稿并排，不同的部分标出；规则按 pointer 命名，当前版本的可以打开到源文件。需要 `readConfiguration`，成员看不到这个标签；
-- 节点上报的本机地址（`SocketState.localEndpoints`：省略即未采样，空数组即没有可用地址）列在传输页对应套接字下；连接按节点自己的报告显示获取方式（`LinkState.acquisition`：拨号到已发布的端点、拨号到对端上报的本机地址、接受对端拨入、UDP 打洞），没有报告时仍显示由谁发起。在 8420 上用 `meshway ping` 建立连接后核对过；
+- 节点上报的本机地址（`SocketState.localEndpoints`：省略即未采样，空数组即没有可用地址）列在传输页对应套接字下；连接按节点自己的报告显示获取方式（`LinkState.acquisition`：拨号到已发布的端点、拨号到对端上报的本机地址、拨号到 STUN 观察到的对端映射地址、接受对端拨入、UDP 打洞），没有报告时仍显示由谁发起。在 8420 上用 `meshway ping` 建立连接后核对过；
 - 每个错误响应的 `description` 列出该状态下可能的 problem code，站点的 API 参考随状态码显示；
 - 站点的委托登录（`createDelegation`）：同意页 `/authorize-site`，授权后跳回站点地址并带上 `code` 和站点的 `state`；会话列表按 `delegationClient` 标出授权给哪个站点。站点用 `exchangeDelegation` 换到 1 小时的会话，在 API 参考里试用（只放内存，写操作先确认）。8420 以 `--delegation-client docs=http://localhost:3002` 启动，在 8420 上走通了授权、读、写操作取消后不发送和确认后发送、会话列表、结束试用；委托会话改邮箱等被拒（403）没有单独验证；
 - 观测历史；
 - 主动路径观察。
 
-8420 运行 `69110045`：委托登录给 schema 加了表和列，已重新初始化（旧库在 `.meshway/backups/server-20261008T204720Z-38ebdc460d40/`），三个 Docker 节点用新身份重新接入并应用了 lab 配置。
+8420 已由后端升级到 N1 netmap（旧库在 `.meshway/backups/server-20261010T144459Z-cb2b03abb8c8/`）。console 按 `8d50e873` 的 SDK 编译和测试通过；在 N1 服务上的实际运行核对，等 8420 恢复后进行。
 
 撤销已失效的加入链接、接入密钥，以及重复吊销节点密钥时的 409 `state_conflict`，console 提示"这次没有撤销"并重读列表。
 
@@ -155,6 +155,9 @@ console 已接入 `/api/v1` 下全部 Console 操作：
 - **`edge_transport_unavailable` 一次只报一条**：同一条组网规则让几条 Mesh 路由都走不通时，validate 只返回其中一条路由和一条边（8420 上 3 条必经路由都经过 `transports: []` 的边，只报了 `/routing/mesh/1` 的 lax–nyc）。改完一条再检查才看到下一条；如果是有意合并，请在 problems.md 里写明。
 - **阻断规则带 `transports`**：服务端照收，但阻断总是阻断整条边，这个字段不起作用。建议 validate 给一条 warning 或直接拒绝；console 现在只在规则下注明"阻断规则的承载设置不起作用"，把规则改成阻断时去掉它。
 - **业务流量期间 `StateView.paths` 为空**：8420 r5 上从 lax 在 TUN 内持续 ping nyc 的 Mesh 地址（90／90 及 60／60 成功），同期 lax–nyc 的 link 为 `authenticated`／`matched`／`inUse: true`，但 `paths: []`。拓扑的流动方向只取 `paths` 的节点顺序，不从 links 推断，所以现在只能显示"承载业务"的无方向效果。请确认节点是否应上报业务 PathState，或说明 `inUse` 在 `paths` 为空时的含义。
+- **节点配置的租约与同步时间**：Server 给每份 netmap 签发的租约（`issuedAt`、`expiresAt`）和节点最近一次 `sync` 的时间只出现在 Node 用的 `SyncResponse` 和节点本机 IPC 里，用户接口（`NodeInventoryView`、State）都没有。console 因此不能说一个离线节点还能按上次的配置运行到何时，节点详情也不显示最近同步时间。请在用户接口上给出：服务端为节点签发的当前租约，和它最近一次 sync 的时间（服务端收到为准）。
+- **`netmap` 为 null 的原因**：`NodeInventoryView.netmap` 为 null 时分不清“还没有下发过”和“超出 8 MiB 后被移出可信库存”（密钥轮换、能力或方案变化可以让已存在的节点超限）；console 现在只能都说“服务端还没有给这个节点下发配置”。请给出不可用的原因（至少区分超限），超限时附 `bytes`、`maxBytes`。
+- **按需连接的空闲与失败**：组网边默认按需建立、空闲 2 分钟关闭后，State 里一条没有通道的边分不清是“空闲已关闭”还是“连不上”。console 现在对两者都显示“未连接”。如果节点能上报最近一次建立失败（或空闲关闭）的事实，请加到 link 上。
 - **按目的地逐个规划**：拓扑选中节点后，对每个其他节点各调一次 `evaluateConfiguration`（console 最多同时 4 个，按 revision 缓存）。节点多时请求数随节点数线性增长；如果服务端能一次返回"从一个来源到所有节点"的主路径，请给批量形式；没有也能用，只是大网络较慢。
 
 ### 需要真实 Node 复核
@@ -162,8 +165,8 @@ console 已接入 `/api/v1` 下全部 Console 操作：
 三节点 Docker 环境接在 8420 上。
 
 1. 节点应用配置后重新 acquire instance，原版本中是否仍被标为 `superseded`：未复核。
-2. 执行发布切换期间的状态：在 8420 的 `meshway ping` 和 Console 主动观察中见到节点在 `current`／`config_mismatch` 之间变化，links 变为 `expired`，随后随新报告恢复。短观察有成功 RTT 样本，之后任务又进入 preparing；这不能证明状态变未知期间仍在连续传包，也不能把旧上报过期直接当作物理通道已断开。诊断使用独立发布，这些记录不用于归因普通业务 demand。请后端确认并分开执行同步过渡、连接存续与当前可用性；当前相邻连接 UI 对过期证据显示未知。稳定已连接状态跨观察续租的展示仍未完成真实验收。
-3. 主动观察的创建、续租、取消是否重新生成整网执行发布；有观察时 Agent 请求（tasks、renew、receipts）的耗时：未复核。
+2. 节点配置内容变化（新的 netmap serial）期间的状态：节点在 `current`／`config_mismatch` 之间如何变化、links 是否过期，以及旧上报过期是否被误当作通道断开。N1 之后未复核。
+3. 主动观察的创建、续租、取消对节点 netmap 和 sync 的影响，以及有观察时 Agent 请求的耗时：未复核。
 4. 2026-10-09 meshway-sha 自身报告 `Blocked`、`Last problem: Contract`、数据面 `Failed`，State 中为 `expired`；lax／nyc 同期 `current`。console 如实显示为离线，原因待后端或 lab 维护方确认。
 
 ### 后端排期中
@@ -173,7 +176,7 @@ console 已接入 `/api/v1` 下全部 Console 操作：
   - 429 `observation_limit` 同时表示续租过早、预算用满、已到终态和 4096 窗口满。
   - 创建时目标没有可用路径（例如目标没有 listener）返回不带参数的 403 `permission_denied`，与"未授权"无法区分，`DemandDecision` 的原因（`noPath`、`missingCapability` 等）没有带出。
   - 订阅因源节点重新 acquire 而结束时只是被移除（404），不说明原因；样本只给 `latest`，重载或接管后看不到之前的序列。
-  - `HistoryBucket` 没有 `peerNodeId`，而且按 instance 和 publication 拆开，同一条曲线因每次重新发布被切碎，console 端做了合并。
+  - `HistoryBucket` 没有 `peerNodeId`，而且按 instance 和 netmap 拆开，同一条曲线在节点重启或配置内容变化时被切开，console 端做了合并。
   - `RecentLink` 没有 RTT 和关闭原因。
   - 一次查询最多 10000 行，计数在按 kind 或节点过滤之前做，繁忙的网络即使只查一个节点也会收到 429；窗口外的清理记录也会返回；bucket 把 `pending` 计入 `failed`。
 

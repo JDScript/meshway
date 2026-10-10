@@ -52,6 +52,8 @@
   "map_link_configuration": "配置",
   "map_link_rule": "规则",
   "map_link_rule_default": "默认允许",
+  "map_link_kept_one_way": "只有一端能拨出，总是保持连接",
+  "map_link_on_demand_detail": "有流量时建立，空闲 2 分钟后断开",
   "map_link_not_declared": "当前配置不允许这两端直接连接",
   "map_link_edit": "编辑组网规则",
   "map_planning": "正在规划路径",

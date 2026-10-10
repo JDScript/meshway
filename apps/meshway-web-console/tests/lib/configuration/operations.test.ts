@@ -134,6 +134,40 @@ test("an edge's transports are kept; any and none are two values", () => {
   })
 })
 
+test("an edge kept up stays kept up when another rule is edited", () => {
+  const kept = { action: "allow" as const, a: "*", b: "tag:relay" }
+  const base = {
+    ...VIEW,
+    topology: [
+      { ...kept, keepalive: true },
+      { ...kept, b: "tag:edge" },
+    ],
+  }
+  const [edited] = withValue([], base, "topology", [
+    { ...kept, keepalive: true },
+    { ...kept, b: "tag:edge", remark: "edge" },
+  ])
+  assert.deepEqual(edited, {
+    type: "replaceTopology",
+    topology: [
+      { ...kept, keepalive: true },
+      { ...kept, b: "tag:edge", remark: "edge" },
+    ],
+  })
+  // Turning it off is a change; an explicit false is the same as omitted.
+  assert.equal(
+    withValue([], base, "topology", [kept, { ...kept, b: "tag:edge" }]).length,
+    1
+  )
+  assert.deepEqual(
+    withValue([], base, "topology", [
+      { ...kept, keepalive: true },
+      { ...kept, b: "tag:edge", keepalive: false },
+    ]),
+    []
+  )
+})
+
 test("one operation per part, in a fixed order whatever the editing order", () => {
   let ops = withValue([], VIEW, "addressPools", {
     ipv4: ["100.80.0.0/16"],

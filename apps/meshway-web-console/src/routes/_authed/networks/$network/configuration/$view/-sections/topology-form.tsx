@@ -94,16 +94,23 @@ export function TopologyDefaultControl({
 
 /** The rule without transports: any, for an allow rule. */
 function withoutTransports(rule: TopologyRule): TopologyRule {
-  const out: TopologyRule = { action: rule.action, a: rule.a, b: rule.b }
-  if (rule.remark !== undefined) out.remark = rule.remark
+  const out = { ...rule }
+  delete out.transports
   return out
 }
 
-/** A rule with `action`: a block rule carries no transports (they would have no effect). */
+/** The rule without `keepalive`: its edge is connected when used. */
+function onDemand(rule: TopologyRule): TopologyRule {
+  const out = { ...rule }
+  delete out.keepalive
+  return out
+}
+
+/** A rule with `action`: a block rule carries no transports or keepalive (they would have no effect). */
 const withAction = (rule: TopologyRule, action: TopologyAction) =>
   action === "allow"
     ? { ...rule, action }
-    : withoutTransports({ ...rule, action })
+    : onDemand(withoutTransports({ ...rule, action }))
 
 /** `transports` with `protocol` in or out, the others in the order written. */
 const toggled = (
@@ -261,6 +268,60 @@ function RuleTransports({
 }
 
 /**
+ * Whether an allow rule's edge is kept connected (`keepalive`) or connected
+ * when traffic needs it and closed when idle (omitted). An edge only one end
+ * can dial is kept connected anyway; that is the node's, not the rule's.
+ */
+function RuleKeepalive({
+  rule,
+  editable,
+  onChange,
+}: {
+  rule: TopologyRule
+  editable: boolean
+  onChange: (rule: TopologyRule) => void
+}) {
+  const kept = rule.keepalive === true
+  if (rule.action === "block")
+    return rule.keepalive === undefined ? null : (
+      <p className="px-1.5 text-meta text-muted-foreground">
+        {m.configuration_topology_keepalive_block()}
+      </p>
+    )
+  if (!editable && !kept) return null
+  return (
+    <div className="flex min-h-7 flex-wrap items-center gap-1.5 px-1.5">
+      <span className="text-meta text-muted-foreground">
+        {m.configuration_topology_keepalive()}
+      </span>
+      {editable ? (
+        <SegmentedControl
+          size="sm"
+          label={m.configuration_topology_keepalive()}
+          value={kept ? "kept" : "demand"}
+          options={[
+            {
+              value: "demand",
+              label: m.configuration_topology_keepalive_demand(),
+            },
+            { value: "kept", label: m.configuration_topology_keepalive_kept() },
+          ]}
+          onChange={(mode) =>
+            onChange(
+              mode === "kept" ? { ...rule, keepalive: true } : onDemand(rule)
+            )
+          }
+        />
+      ) : (
+        <span className="text-meta">
+          {m.configuration_topology_keepalive_kept()}
+        </span>
+      )}
+    </div>
+  )
+}
+
+/**
  * Which pairs of nodes may connect directly: any matching block wins, then
  * the first matching allow, whose transports the edge may use (later ones
  * are not merged in), then the default.
@@ -310,22 +371,29 @@ export function TopologyForm({
                   label={m.configuration_rule_label({ index: index + 1 })}
                   notes={notesWithin(notes, pointerOf(["topology", index]))}
                   detail={
-                    <RuleTransports
-                      rule={rule}
-                      editable={editable}
-                      invalid={refusedAt(
-                        notes,
-                        pointerOf(["topology", index, "transports"])
-                      )}
-                      onChange={(transports) =>
-                        update(
-                          index,
-                          transports === undefined
-                            ? withoutTransports(rule)
-                            : { ...rule, transports }
-                        )
-                      }
-                    />
+                    <>
+                      <RuleTransports
+                        rule={rule}
+                        editable={editable}
+                        invalid={refusedAt(
+                          notes,
+                          pointerOf(["topology", index, "transports"])
+                        )}
+                        onChange={(transports) =>
+                          update(
+                            index,
+                            transports === undefined
+                              ? withoutTransports(rule)
+                              : { ...rule, transports }
+                          )
+                        }
+                      />
+                      <RuleKeepalive
+                        rule={rule}
+                        editable={editable}
+                        onChange={(next) => update(index, next)}
+                      />
+                    </>
                   }
                   end={
                     <>

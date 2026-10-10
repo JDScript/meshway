@@ -239,16 +239,8 @@ function Assigned({
               {m.revision({ revision: desired.revision })}
             </span>
           </Tile>
-          <Tile
-            label={m.nodes_execution_publication()}
-            action={
-              <CopyButton
-                value={String(desired.serial)}
-                label={m.nodes_execution_publication()}
-              />
-            }
-          >
-            <span className="font-mono font-normal">{desired.serial}</span>
+          <Tile label={m.nodes_execution_serial()}>
+            <span className="font-mono">#{desired.serial}</span>
           </Tile>
           <div className="col-span-2">
             <Tile
@@ -261,7 +253,7 @@ function Assigned({
               }
             >
               <span className="font-mono font-normal">
-                {desired.digest.slice(0, 16)}…
+                {desired.digest.slice(0, 12)}
               </span>
             </Tile>
           </div>
@@ -292,23 +284,28 @@ function Configuration({
   const facts = configurationFacts(configuration, currentRevision)
   const behind = facts.applied !== null && facts.current === false
   const progress = configuration.progress
-  const revision = (value: number | null) =>
-    value === null ? (
-      <span className="font-normal text-muted-foreground">—</span>
+  const revision = (value: NetmapRef | null | undefined) =>
+    value ? (
+      <span className="font-mono">
+        {m.revision({ revision: value.revision })}
+        <span className="font-normal text-muted-foreground">
+          {" · "}#{value.serial}
+        </span>
+      </span>
     ) : (
-      <span className="font-mono">{m.revision({ revision: value })}</span>
+      <span className="font-normal text-muted-foreground">—</span>
     )
   return (
     <Section title={m.nodes_configuration()}>
       <div className={GRID}>
         <Tile label={m.nodes_configuration_saved()}>
-          {revision(facts.saved)}
+          {revision(configuration.saved)}
         </Tile>
         <Tile
           label={m.nodes_configuration_applied()}
           tone={behind ? "warning" : undefined}
         >
-          {revision(facts.applied)}
+          {revision(configuration.applied)}
           {behind ? (
             <span className="font-normal">
               {" · "}

@@ -5,6 +5,7 @@ import type {
 } from "@meshway/control-client"
 
 import { m } from "@/paraglide/messages.js"
+import { getLocale } from "@/paraglide/runtime.js"
 
 import type { Checked } from "./draft-state"
 import { pointerSegments } from "./jsonc"
@@ -70,6 +71,22 @@ function sizeText(value: string | undefined): string {
   return bytes >= MIB
     ? `${Math.round((bytes / MIB) * 10) / 10} MiB`
     : `${Math.round((bytes / 1024) * 10) / 10} KiB`
+}
+
+/** Two sizes said so they differ: in bytes when rounding would make them equal. */
+function sizesApart(
+  value: string | undefined,
+  limit: string | undefined
+): [string, string] {
+  const [size, max] = [sizeText(value), sizeText(limit)]
+  if (size !== max) return [size, max]
+  const bytes = (text: string | undefined) => {
+    const count = Number(text)
+    return Number.isFinite(count)
+      ? m.configuration_bytes({ count: count.toLocaleString(getLocale()) })
+      : (text ?? "?")
+  }
+  return [bytes(value), bytes(limit)]
 }
 
 /** A rule or assignment index (0-based) as the forms number them. */
@@ -257,8 +274,14 @@ const TEXT: Record<IssueCode, (p: Params, node: NodeNamer) => string> = {
       node: node(p.node ?? "?"),
       profile: profileText(p.profile ?? "?", node),
     }),
-  netmap_limit: (p, node) =>
-    m.configuration_issue_netmap_limit({ node: node(p.node ?? "?") }),
+  netmap_limit: (p, node) => {
+    const [size, max] = sizesApart(p.bytes, p.maxBytes)
+    return m.configuration_issue_netmap_limit({
+      node: node(p.node ?? "?"),
+      size,
+      max,
+    })
+  },
   shadowed_rule: (p) =>
     m.configuration_issue_shadowed_rule({ index: ordinal(p.by) }),
 }

@@ -20,7 +20,7 @@
   "observation_path": "Explicit path",
   "observation_measures": "Node round trip · Probe no-reply rate",
   "observation_start": "Start observing",
-  "observation_denied": "The server does not allow this observation: the source, target, service or path is outside what is currently permitted",
+  "observation_denied": "The server does not allow this observation: the source, target, service or path is outside the current access and routing",
   "observation_conflict": "The server refused: the source node has no running instance or usable execution configuration",
   "observation_limit": "The observation limit is reached (this sign-in or this network)",
   "observation_not_found": "The server cannot find this network or node",

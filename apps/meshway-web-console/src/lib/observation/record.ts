@@ -13,7 +13,7 @@ import type {
 
 /** A sample with the path segment it was measured on. */
 export type SegmentSample = {
-  /** The publication and path segment, as one key: a line never joins two. */
+  /** The configuration the source ran (netmap serial) and path segment, as one key: a line never joins two. */
   segment: string
   path: readonly string[]
   sample: ObservationSample

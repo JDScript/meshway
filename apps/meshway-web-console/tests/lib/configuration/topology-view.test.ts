@@ -114,6 +114,25 @@ test("the first matching allow supplies the restriction; empty and unrestricted 
   ])
 })
 
+test("an edge is kept connected only by the allow rule that declares it", () => {
+  const input = config("allow")
+  input.topology = [
+    { action: "allow", a: `node:${A}`, b: "tag:relay", keepalive: true },
+    // A later allow does not add to the first matching one.
+    { action: "allow", a: "*", b: "*", keepalive: true },
+  ]
+  input.topology.splice(1, 0, { action: "allow", a: `node:${A}`, b: "*" })
+  const kept = (a: string, b: string) =>
+    configurationTopology(input).edges.find(
+      (edge) => edge.a === a && edge.b === b
+    )?.keepalive
+  assert.equal(kept(A, B), true)
+  assert.equal(kept(A, C), false)
+  assert.equal(kept(B, C), true)
+  // The default declaration is on demand.
+  assert.ok(configurationTopology(config()).edges.every((e) => !e.keepalive))
+})
+
 test("configuration edges and nodes survive absent runtime reports and missing listeners", () => {
   const input = config()
   const original = input.nodes[A]

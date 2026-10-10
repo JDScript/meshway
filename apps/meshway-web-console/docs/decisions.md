@@ -78,9 +78,13 @@ its generated client only, and only what the controller delivers:
   two ends cannot connect directly). Chosen protocols are numbered in their
   written order and move with arrows or Alt+↑/↓; order-only edits remain in
   the draft. The first matching allow decides and
-  later ones are not merged in. A block rule has none to set: making a
-  rule a block drops them, and ones the source gives a block rule are said
-  to have no effect. One
+  later ones are not merged in. An allow rule also says how its edge is
+  connected: on demand (omitted: made when traffic needs it, closed after
+  two idle minutes) or always on (`keepalive: true`); an edge only one end
+  can dial is always on whatever the rule says. A block rule has neither
+  to set: making a rule a block drops them, and ones the source gives a
+  block rule are said to have no effect. Rebuilding a rule for an
+  operation keeps every field it has. One
   draft per sign-in and network (`state/configuration-draft.ts`), kept
   across the network's pages, in memory only (the source holds secrets:
   never storage, the URL or the query cache), dropped when the sign-in
@@ -128,8 +132,7 @@ its generated client only, and only what the controller delivers:
   takes the same review. An apply's request ID is reused only to repeat
   the same proposal after an unknown outcome; `request_id_conflict` (that
   ID with other input) and `revision_conflict` are worded apart. An apply
-  with no target nodes (`targetCount: 0`, `publicationIds: []`) says no
-  deployment is needed.
+  with no target nodes (`targetCount: 0`) says no deployment is needed.
 - Nodes (`/nodes?q=`, every member: the controller lists owners and admins
   every node, a member their own User-identity devices). The list searches
   by hostname and shows each node's identity (its user's email or its
@@ -161,10 +164,11 @@ its generated client only, and only what the controller delivers:
     and start time, with the action to open the peer.
   - runtime details (`tab=diagnostics`, under Diagnostics), what the status rests on: the report's times (received,
     recorded by the node, valid until, last sign-in), instance and report
-    number; the inventory's `desiredExecution` (the configuration the
-    server assigns: revision, publication, digest), never itself saved or
-    applied, said against the report's saved and applied (applied, only
-    saved, another one, no report); saved / applied / in progress against
+    number; the inventory's `netmap` (the configuration the server sends
+    the node: revision, serial `#n`, which grows only when its content
+    changes, and a short digest), never itself saved or applied, said
+    against the report's saved and applied (applied, only saved, another
+    one, no report); saved / applied (each with its serial) / in progress against
     the current revision; what the location rests on (address, source,
     observed, valid until) and where geojs places it; reported end-to-end paths,
     when present, retain each reporter's evidence.
@@ -328,8 +332,8 @@ its generated client only, and only what the controller delivers:
   lists `preparedRuleSets` (entries, digest) as tentative, nothing saved.
   A failed preparation comes back as an issue at the set, shown there and
   under the rules naming it. The status (`listRuleSets`, Owner / Admin, key
-  `[network, "rule-sets"]`: content, checked, last success, problem,
-  publication) is for the current revision's definition; a set whose
+  `[network, "rule-sets"]`: content, checked, last success, problem) is
+  for the current revision's definition; a set whose
   source is saved as the draft has it can be refreshed (`refreshRuleSet`),
   and the controller checks it on its `updateInterval`. A set without
   content is never treated as empty. Renaming a set or a profile renames
@@ -371,7 +375,7 @@ its generated client only, and only what the controller delivers:
 - Measurements (`?tab=latency`, under Diagnostics): `buckets` of `probe_completed`, sent by the
   node (`sourceNodeId`) or to it (`peerNodeId`), in the same windows (1 min,
   5 min, 15 min, 1 h buckets). One series per source, probe kind, path, link
-  and transport; the controller's per-instance and per-publication buckets
+  and transport; the controller's per-instance and per-netmap buckets
   of one series merge into one point (the mean weighted by successes, exact
   because a success always has its duration). A step per bucket for the
   mean of successful probes, a strip for the buckets with records, warning
@@ -617,7 +621,9 @@ states stay distinguishable by stroke and colour.
   dialed by, since, traffic), the last hour of direct probes each way, what
   each end can dial the other with by the configuration (topology carriers ∩
   dialers ∩ listeners; the server still checks stream, TLS and runtime
-  support), and the rule it rests on with its carrier order. A globe cluster
+  support), and the rule it rests on with its carrier order and how the
+  edge is connected (on demand, always on, or always on because only one
+  end can dial). A globe cluster
   first lists its nodes. On phones the panel is a bottom sheet and the
   topology sits above it.
 - Node workspaces have five tabs on one level, at the top: 概览 / Overview,

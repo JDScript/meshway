@@ -52,6 +52,8 @@
   "map_link_configuration": "Configuration",
   "map_link_rule": "Rule",
   "map_link_rule_default": "Allowed by default",
+  "map_link_kept_one_way": "Only one end can dial, so it stays connected",
+  "map_link_on_demand_detail": "Connected when traffic needs it, closed after 2 idle minutes",
   "map_link_not_declared": "The configuration does not allow these two to connect directly",
   "map_link_edit": "Edit topology rules",
   "map_planning": "Planning paths",

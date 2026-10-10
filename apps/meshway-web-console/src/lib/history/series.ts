@@ -9,10 +9,10 @@ import type { HistoryWindow } from "./window"
 
 // Probe buckets from the controller, as series a chart can draw: one per
 // source, probe kind, path, link and transport. The controller also splits
-// buckets by the source's instance and execution publication; those are
-// the same measurement here and merge into one point per time bucket. A
-// time bucket the controller returns no bucket for has no point: it was not
-// measured (or not recorded), which is never drawn as zero.
+// buckets by the source's instance and the configuration it ran (netmap);
+// those are the same measurement here and merge into one point per time
+// bucket. A time bucket the controller returns no bucket for has no point:
+// it was not measured (or not recorded), which is never drawn as zero.
 
 export type SeriesPoint = {
   /** Bucket number from the window's start. */
