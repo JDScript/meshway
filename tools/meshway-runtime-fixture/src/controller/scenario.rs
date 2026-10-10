@@ -41,10 +41,11 @@ pub(super) async fn run(scenario: NetmapScenario, context: Context<'_>) -> Resul
     }
 }
 
-/// Server outage required by the offline row: 10 minutes, or 60 s in the
-/// non-acceptance short mode.
+/// Server outage required by the offline row: 3 minutes (three 60 s lease
+/// validities, so renewals and the idle adjacency close all fall inside it),
+/// or 60 s in the non-acceptance short mode.
 pub(super) fn window(cli: &Cli) -> Duration {
-    Duration::from_secs(if cli.short { 60 } else { 600 })
+    Duration::from_secs(if cli.short { 60 } else { 180 })
 }
 
 /// Close Node HTTP, keep it closed for `minimum` and until every actor has
@@ -75,7 +76,7 @@ async fn outage(context: &Context<'_>, name: &str, minimum: Duration) -> Result<
     );
     tokio::time::sleep(minimum).await;
     signals.write("scenario-window-end", &Signal::Ready).await?;
-    let budget = cli.netmap_validity.as_std() + window(cli) + Duration::from_secs(120);
+    let budget = cli.netmap_validity.as_std() + window(cli) + Duration::from_secs(240);
     for role in Role::ALL {
         match signals
             .wait_for(&format!("scenario-offline-{}", role.name()), budget)

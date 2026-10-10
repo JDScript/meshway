@@ -210,10 +210,11 @@ async fn expiry(mut context: Context<'_>) -> Result<String> {
     Ok(context.tun)
 }
 
-/// With reported endpoints the restart waits until every peer fact is past
-/// its freshness bound (at most 60 s after the last report), so the restarted
-/// daemons must dial from saved, stale last known facts alone.
-const STALE_FACTS: Duration = Duration::from_secs(90);
+/// The restart row first waits past the 120 s idle adjacency close with no
+/// traffic, which is also past every peer fact's freshness bound (at most
+/// 60 s after the last report): the redial and the restarted daemons must use
+/// saved, stale last known facts alone.
+const IDLE_CLOSE: Duration = Duration::from_secs(125);
 
 /// Every daemon restarts while the Controller is unreachable. The signed
 /// cached netmap installs at once; new flows cross all three restarted
@@ -223,8 +224,16 @@ async fn restart(mut context: Context<'_>) -> Result<String> {
         cli, role, signals, ..
     } = context;
     closed(signals).await?;
-    if cli.reported_endpoints {
-        tokio::time::sleep(STALE_FACTS).await;
+    tokio::time::sleep(IDLE_CLOSE).await;
+    // Every on-demand adjacency closed idle while the Controller is gone:
+    // one ping redials from the installed netmap and last known facts.
+    if context.traffic.is_some() {
+        fresh(&context, "idle-redial", true).await?;
+        observed(signals, "scenario-idle-redial", role).await?;
+    } else {
+        signals
+            .wait_for("scenario-idle-redial", STARTUP + Duration::from_secs(60))
+            .await?;
     }
     let before = command(cli, "status").await?;
     let netmap = installed(&before).ok_or("no installed netmap before restart")?;

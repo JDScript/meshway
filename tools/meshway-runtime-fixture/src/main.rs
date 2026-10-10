@@ -26,8 +26,13 @@ type Result<T> = std::result::Result<T, Error>;
 const IO: Duration = Duration::from_secs(10);
 const STARTUP: Duration = Duration::from_secs(45);
 // Bounded diagnostic admission/lifecycle checks precede the packet window
-// (125s acceptance / 30s diagnostic) and actual instance-expiry/recovery
-// sequence, or a netmap scenario's (up to 10-minute) Server outage.
+// (70 s acceptance / 30 s diagnostic) and actual instance-expiry/recovery
+// sequence, or a netmap scenario's (up to 3-minute) Server outage.
+/// Acceptance traffic window, anchored to netmap constants: longer than one
+/// sync renewal cycle (50 s hold plus margin) and than one 60 s lease
+/// validity (`--netmap-validity`), so the same sockets cross a renewal and
+/// the end of the lease they started under.
+const TRAFFIC_SECONDS: u64 = 70;
 const DEADLINE: Duration = Duration::from_secs(1800);
 static STARTED: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
 
@@ -70,7 +75,7 @@ struct Cli {
     /// Explicit Server lease for expiry conformance; production defaults to 24h.
     #[arg(long, global = true, default_value = "60s")]
     netmap_validity: meshway_transport::spec::PositiveDuration,
-    /// Diagnostic traffic window only; does not establish 125-second renewal acceptance.
+    /// Diagnostic traffic window only; does not establish the 70-second renewal acceptance.
     #[arg(long, global = true)]
     short: bool,
     /// One netmap lifecycle row after the shared startup and persistent traffic,
@@ -83,7 +88,7 @@ struct Cli {
 
 impl Cli {
     fn traffic_duration(&self) -> Duration {
-        Duration::from_secs(if self.short { 30 } else { 125 })
+        Duration::from_secs(if self.short { 30 } else { TRAFFIC_SECONDS })
     }
 
     fn fallback_delay(&self) -> Duration {

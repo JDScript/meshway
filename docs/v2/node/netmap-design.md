@@ -413,7 +413,7 @@ S 类简化不在本表；N1 使 S1–S6（Server）、S1–S5（Node）、S1–
 
 | 行 | 拓扑与步骤 | 通过条件 |
 | --- | --- | --- |
-| `netmap/offline` | Controller＋A／R／B（Native TCP 与 Native UDP 静态端点各一轮）；建流后停止 Controller 10 分钟 | 已有 TCP／UDP 持续；新 5-tuple 业务流、`meshway ping`、新静态邻接（预先未连接的 A–R 承载）全部成功；零 HTTP 成功请求；恢复后无第二次 up、无重装 |
+| `netmap/offline` | Controller＋A／R／B（Native TCP 与 Native UDP 静态端点各一轮）；建流后停止 Controller 3 分钟（常驻 lab 另做 10 分钟） | 已有 TCP／UDP 持续；新 5-tuple 业务流、`meshway ping`、新静态邻接（预先未连接的 A–R 承载）全部成功；零 HTTP 成功请求；恢复后无第二次 up、无重装 |
 | `netmap/revoke` | Controller 在线；撤销 A→B 端口、撤销成员、轮换 B 密钥、方案切换 | 新 serial 送达 ≤ 5 s；受影响流停止、未受影响流 cipher 不变；旧输出不复活 |
 | `netmap/expiry` | 停止 Controller 越过租约（需短租约，见未决问题） | 到期时全部 circuit 终止、capture 保持负向、DNS SERVFAIL；恢复后自动重建 |
 | 既有十一行 | 原场景 | 另断言 demand／publication 相关路由不存在、首包无控制面请求 |
