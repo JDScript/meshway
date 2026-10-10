@@ -44,6 +44,7 @@
   "password_mismatch": "两次输入的密码不一致",
   "draft_mark": "未保存",
   "revision": "r{revision}",
+  "netmap_ref": "r{revision} · #{serial}",
   "revision_draft": "草稿 · 基于 r{revision}",
   "problem_invalid_credentials": "邮箱或密码不正确。",
   "problem_invalid_session": "会话已失效，请重新登录。",

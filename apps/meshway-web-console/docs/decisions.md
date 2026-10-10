@@ -154,9 +154,14 @@ its generated client only, and only what the controller delivers:
   - overview: the saved configuration's DNS name (while readable) and
     MagicDNS setting, Mesh IPv4/IPv6, connected neighbor count, every
     observed public IP with its place and AS, compact configuration progress
-    and reported problems. Matching revision alone is not enough to say
-    current: the desired execution must match the reported applied reference,
-    and State must be current. Other reports say what was last applied.
+    and reported problems. A node is up to date when the netmap it reports
+    applied is exactly the one the server holds for it (the inventory's
+    `netmap`: revision, serial and digest), never by the network's revision:
+    a revision that leaves a node's netmap unchanged (a comment, another
+    node) does not make it behind, and new content at the same revision (a
+    key rotated) does. Online and behind, it is syncing; offline, behind.
+    Without the server's netmap (unread, or none held) it says what the node
+    last applied.
   - connections (`tab=transport`): one row per directly adjacent peer, with
     current reported transport and connection state. Multiple channel IDs
     between the same pair do not add rows or connected peers. Expansion
@@ -168,8 +173,8 @@ its generated client only, and only what the controller delivers:
     the node: revision, serial `#n`, which grows only when its content
     changes, and a short digest), never itself saved or applied, said
     against the report's saved and applied (applied, only saved, another
-    one, no report); saved / applied (each with its serial) / in progress against
-    the current revision; what the location rests on (address, source,
+    one, no report); saved / applied / in progress, each with its serial,
+    applied marked when it is not the server's; what the location rests on (address, source,
     observed, valid until) and where geojs places it; reported end-to-end paths,
     when present, retain each reporter's evidence.
   - general settings (`tab=settings`): hostname, remark, enabled, exit, tags (a User identity given

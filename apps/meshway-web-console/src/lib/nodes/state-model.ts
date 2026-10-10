@@ -54,76 +54,84 @@ export const isPast = (at: string | null | undefined, now: number) =>
 export const candidateExpired = (candidate: EndpointCandidate, now: number) =>
   isPast(candidate.expiresAt, now)
 
-/** The saved and applied revisions against the configuration's current one. */
+/** The same per-node netmap content. */
+export const sameNetmap = (a: NetmapRef, b: NetmapRef) =>
+  a.serial === b.serial && a.digest === b.digest && a.revision === b.revision
+
+/**
+ * The netmap the server holds for the node: undefined while unread, null
+ * when it holds none. A node is up to date when it applied exactly this one;
+ * the network's revision says nothing about it (a revision that leaves the
+ * node's netmap unchanged does not move it).
+ */
+export type Assigned = NetmapRef | null | undefined
+
+/** What the node reports saving, applying and working towards. */
 export type ConfigurationFacts = {
-  saved: number | null
-  applied: number | null
-  /** The revision the node is working towards, with its phase. */
-  progress: { revision: number; phase: ApplyPhase } | null
-  /** Applied the current revision (null: unknown, no current revision). */
+  saved: NetmapRef | null
+  applied: NetmapRef | null
+  /** The netmap the node is working towards, with its phase. */
+  progress: { target: NetmapRef; phase: ApplyPhase } | null
+  /** Applied the server's netmap for it (null: unknown, the server's is unread or none). */
   current: boolean | null
 }
 
 export function configurationFacts(
   configuration: ConfigurationState,
-  currentRevision: number | undefined
+  assigned: Assigned
 ): ConfigurationFacts {
-  const applied = configuration.applied?.revision ?? null
+  const applied = configuration.applied ?? null
   return {
-    saved: configuration.saved?.revision ?? null,
+    saved: configuration.saved ?? null,
     applied,
     progress: configuration.progress
       ? {
-          revision: configuration.progress.target.revision,
+          target: configuration.progress.target,
           phase: configuration.progress.phase,
         }
       : null,
-    current: currentRevision === undefined ? null : applied === currentRevision,
+    current:
+      assigned == null
+        ? null
+        : applied !== null && sameNetmap(applied, assigned),
   }
 }
 
 /**
- * Where the node's configuration stands, as one fact: a revision it
- * failed to apply or is applying, else the one it applied against the
- * current one (unknown without a full report).
+ * Where the node's configuration stands, as one fact: a netmap it failed to
+ * apply or is applying, else the one it applied against the server's for it
+ * (only the node's report, when the server's is unread or it holds none;
+ * unknown without a full report).
  */
 export type ConfigurationSync =
-  | { kind: "failed" | "applying"; revision: number }
-  | { kind: "current" | "applied"; revision: number }
-  | { kind: "behind"; applied: number; current: number }
+  | { kind: "failed" | "applying"; target: NetmapRef }
+  | { kind: "current" | "applied"; applied: NetmapRef }
+  | { kind: "behind"; applied: NetmapRef; assigned: NetmapRef }
   | { kind: "none" }
   | { kind: "unknown" }
 
 export function configurationSync(
   configuration: ConfigurationState | null,
-  currentRevision: number | undefined
+  assigned: Assigned
 ): ConfigurationSync {
   if (!configuration) return { kind: "unknown" }
-  const { applied, progress } = configurationFacts(
-    configuration,
-    currentRevision
-  )
+  const { applied, progress } = configurationFacts(configuration, assigned)
   if (progress?.phase === "failed")
-    return { kind: "failed", revision: progress.revision }
+    return { kind: "failed", target: progress.target }
   if (progress && progress.phase !== "applied")
-    return { kind: "applying", revision: progress.revision }
+    return { kind: "applying", target: progress.target }
   if (applied === null) return { kind: "none" }
-  if (currentRevision === undefined)
-    return { kind: "applied", revision: applied }
-  return applied === currentRevision
-    ? { kind: "current", revision: applied }
-    : { kind: "behind", applied, current: currentRevision }
+  if (assigned == null) return { kind: "applied", applied }
+  return sameNetmap(applied, assigned)
+    ? { kind: "current", applied }
+    : { kind: "behind", applied, assigned }
 }
 
-/** The same per-node netmap content. */
-const sameTarget = (a: NetmapRef, b: NetmapRef) =>
-  a.serial === b.serial && a.digest === b.digest && a.revision === b.revision
-
 /**
- * The controller's desired execution target for the node against what the
- * node reports saving and applying. The target is what it should run, not
- * what it runs: only the node's own report says that.
- * - `none`: the controller holds no target for the node;
+ * The server's netmap for the node against what the node reports saving
+ * and applying. It is what the node should run, not what it runs: only the
+ * node's own report says that.
+ * - `none`: the server holds no netmap for the node;
  * - `unreported`: no full report to compare with;
  * - `applied` / `saved`: the node reports applying, or only saving, it;
  * - `elsewhere`: what the node reports saved and applied is another target
@@ -138,9 +146,9 @@ export function desiredAgainst(
 ): DesiredMatch {
   if (desired === null) return "none"
   if (configuration === null) return "unreported"
-  if (configuration.applied && sameTarget(configuration.applied, desired))
+  if (configuration.applied && sameNetmap(configuration.applied, desired))
     return "applied"
-  if (configuration.saved && sameTarget(configuration.saved, desired))
+  if (configuration.saved && sameNetmap(configuration.saved, desired))
     return "saved"
   return "elsewhere"
 }

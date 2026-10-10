@@ -44,6 +44,7 @@
   "password_mismatch": "The passwords do not match",
   "draft_mark": "Unsaved",
   "revision": "r{revision}",
+  "netmap_ref": "r{revision} · #{serial}",
   "revision_draft": "Draft · from r{revision}",
   "problem_invalid_credentials": "Incorrect email or password.",
   "problem_invalid_session": "The session is no longer valid. Sign in again.",

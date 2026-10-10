@@ -16,13 +16,12 @@ import { agoTime } from "@/lib/format"
 import { asnText, geoText, NO_ADDRESSES, nodeAddresses } from "@/lib/geo"
 import { millis } from "@/lib/history/format"
 import { nodeConnections } from "@/lib/nodes/connections"
+import { configurationSync, fullReport, stateOf } from "@/lib/nodes/state-model"
 import {
-  configurationSync,
-  desiredAgainst,
-  fullReport,
-  stateOf,
-} from "@/lib/nodes/state-model"
-import { locationAbsentLabel, problemText } from "@/lib/state-labels"
+  locationAbsentLabel,
+  netmapText,
+  problemText,
+} from "@/lib/state-labels"
 import { m } from "@/paraglide/messages.js"
 
 import type { NodeTab } from "../-search"
@@ -38,7 +37,6 @@ import { useNeighborLatency } from "./-latency/neighbor-latency"
 export function NodeOverview({
   node,
   state,
-  currentRevision,
   onTab,
   networkId,
   network,
@@ -46,7 +44,6 @@ export function NodeOverview({
 }: {
   node: NodeInventoryView
   state: UseQueryResult<StateView>
-  currentRevision: number | undefined
   onTab: (tab: NodeTab) => void
   networkId: string
   network: NetworkSummary | null
@@ -59,9 +56,7 @@ export function NodeOverview({
   const stateLoading = state.data === undefined && !state.isError
   const stateFailed = state.data === undefined && state.isError
   const stateFailure = failureText(state.error) ?? m.nodes_state_failed()
-  const sync = configurationSync(report?.configuration ?? null, currentRevision)
-  const targetApplied =
-    desiredAgainst(node.netmap, report?.configuration ?? null) === "applied"
+  const sync = configurationSync(report?.configuration ?? null, node.netmap)
   const connections = nodeConnections(state.data?.links ?? [], node.id)
   const connected = connections.filter(
     (connection) => connection.status === "connected"
@@ -93,41 +88,44 @@ export function NodeOverview({
   const syncTile = (() => {
     switch (sync.kind) {
       case "current":
-        return node.netmap !== null && !targetApplied
-          ? {
-              value: m.nodes_tile_config_syncing(),
-              detail: m.nodes_sync_pending(),
-              tone: "attention" as const,
-            }
-          : {
-              value: m.nodes_tile_config_applied(),
-              detail: m.nodes_tile_config_latest({ revision: sync.revision }),
-              tone: "online" as const,
-            }
+        return {
+          value: m.nodes_tile_config_applied(),
+          detail: m.nodes_tile_config_latest({
+            netmap: netmapText(sync.applied),
+          }),
+          tone: "online" as const,
+        }
       case "applied":
         return {
           value: m.nodes_tile_config_applied(),
-          detail: m.nodes_tile_config_reported({ revision: sync.revision }),
+          detail: m.nodes_tile_config_reported({
+            netmap: netmapText(sync.applied),
+          }),
           tone: undefined,
         }
       case "applying":
         return {
           value: m.nodes_tile_config_in_progress(),
-          detail: m.nodes_tile_config_revision({ revision: sync.revision }),
+          detail: m.nodes_tile_config_revision({
+            netmap: netmapText(sync.target),
+          }),
           tone: "attention" as const,
         }
       case "failed":
         return {
           value: m.nodes_tile_config_failed(),
-          detail: m.nodes_sync_failed({ revision: sync.revision }),
+          detail: m.nodes_sync_failed({ netmap: netmapText(sync.target) }),
           tone: "offline" as const,
         }
       case "behind":
         return {
-          value: m.nodes_tile_config_behind(),
+          // Online, it takes the new one on its next sync; offline, it waits.
+          value: online
+            ? m.nodes_tile_config_syncing()
+            : m.nodes_tile_config_behind(),
           detail: m.nodes_sync_behind({
-            applied: sync.applied,
-            current: sync.current,
+            applied: netmapText(sync.applied),
+            assigned: netmapText(sync.assigned),
           }),
           tone: "attention" as const,
         }

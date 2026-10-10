@@ -7,6 +7,7 @@ import type {
   LinkPhase,
   ListenerPhase,
   LocationAbsentReason,
+  NetmapRef,
   PathEvidence,
   ReporterRole,
   ResourceRef,
@@ -61,6 +62,10 @@ export const listenerPhaseLabel: Record<ListenerPhase, () => string> = {
   stopped: () => m.state_listener_phase_stopped(),
   failed: () => m.state_listener_phase_failed(),
 }
+
+/** A node's netmap in short: the revision it comes from and its serial. */
+export const netmapText = (netmap: NetmapRef) =>
+  m.netmap_ref({ revision: netmap.revision, serial: netmap.serial })
 
 export const applyPhaseLabel: Record<ApplyPhase, () => string> = {
   receiving: () => m.state_apply_receiving(),

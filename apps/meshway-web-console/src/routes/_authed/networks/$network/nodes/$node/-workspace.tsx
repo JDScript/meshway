@@ -151,8 +151,6 @@ function Body({
   const ops = operationsOf(useConfigurationDraft(networkId).entry)
   const deleting = isDeleted(ops, node.id)
   const view = stateOf(state.data, node.id)
-  const currentRevision =
-    state.data?.configurationRevision ?? network?.currentRevision
   // The path check reads the whole configuration: owners and admins.
   const planning = network?.actions.readConfiguration === true
   const nameOf = (id: string) =>
@@ -249,7 +247,6 @@ function Body({
             network={network}
             node={node}
             state={state}
-            currentRevision={currentRevision}
             onTab={onTab}
             nameOf={nameOf}
           />
@@ -291,7 +288,6 @@ function Body({
                 nodeId={node.id}
                 desired={node.netmap}
                 state={state}
-                currentRevision={currentRevision}
               />
             </Disclosure>
           </div>

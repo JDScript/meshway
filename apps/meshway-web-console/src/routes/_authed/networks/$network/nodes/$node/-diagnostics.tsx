@@ -74,13 +74,11 @@ export function NodeDiagnostics({
   nodeId,
   desired,
   state,
-  currentRevision,
 }: {
   nodeId: string
-  /** The server's assigned configuration for the node (the inventory's). */
+  /** The server's netmap for the node (the inventory's). */
   desired: NetmapRef | null
   state: UseQueryResult<StateView>
-  currentRevision: number | undefined
 }) {
   const now = useNow(1_000)
   if (state.data === undefined)
@@ -120,7 +118,7 @@ export function NodeDiagnostics({
       {configuration ? (
         <Configuration
           configuration={configuration}
-          currentRevision={currentRevision}
+          assigned={desired}
           now={now}
         />
       ) : null}
@@ -274,17 +272,18 @@ function Assigned({
 
 function Configuration({
   configuration,
-  currentRevision,
+  assigned,
   now,
 }: {
   configuration: ConfigurationState
-  currentRevision: number | undefined
+  /** The server's netmap for the node: applied is up to date only when it is this one. */
+  assigned: NetmapRef | null
   now: number
 }) {
-  const facts = configurationFacts(configuration, currentRevision)
+  const facts = configurationFacts(configuration, assigned)
   const behind = facts.applied !== null && facts.current === false
   const progress = configuration.progress
-  const revision = (value: NetmapRef | null | undefined) =>
+  const revision = (value: NetmapRef | null) =>
     value ? (
       <span className="font-mono">
         {m.revision({ revision: value.revision })}
@@ -299,13 +298,13 @@ function Configuration({
     <Section title={m.nodes_configuration()}>
       <div className={GRID}>
         <Tile label={m.nodes_configuration_saved()}>
-          {revision(configuration.saved)}
+          {revision(facts.saved)}
         </Tile>
         <Tile
           label={m.nodes_configuration_applied()}
           tone={behind ? "warning" : undefined}
         >
-          {revision(configuration.applied)}
+          {revision(facts.applied)}
           {behind ? (
             <span className="font-normal">
               {" · "}
@@ -317,9 +316,7 @@ function Configuration({
           <Tile label={m.nodes_configuration_progress()}>
             {facts.progress ? (
               <>
-                <span className="font-mono">
-                  {m.revision({ revision: facts.progress.revision })}
-                </span>{" "}
+                {revision(facts.progress.target)}{" "}
                 {applyPhaseLabel[facts.progress.phase]()}
                 {progress ? (
                   <span className="font-normal text-muted-foreground">

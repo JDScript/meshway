@@ -116,14 +116,19 @@ test("a node's report, its view and time", () => {
   assert.equal(stateOf(STATE, C), undefined)
 })
 
-test("configuration facts against the current revision", () => {
-  assert.deepEqual(configurationFacts(REPORT.configuration, 4), {
-    saved: 4,
-    applied: 3,
+test("configuration facts against the server's netmap for the node", () => {
+  assert.deepEqual(configurationFacts(REPORT.configuration, ref(4)), {
+    saved: ref(4),
+    applied: ref(3),
     progress: null,
     current: false,
   })
   assert.equal(configurationFacts({}, undefined).current, null)
+  assert.equal(
+    configurationFacts({ applied: ref(3) }, null).current,
+    null,
+    "the server holding none says nothing either way"
+  )
 })
 
 test("where a node's configuration stands, as one fact", () => {
@@ -135,37 +140,62 @@ test("where a node's configuration stands, as one fact", () => {
     phase,
     observedAt: T1,
   })
-  assert.deepEqual(configurationSync(null, 4), { kind: "unknown" })
-  assert.deepEqual(configurationSync({}, 4), { kind: "none" })
-  assert.deepEqual(configurationSync({ applied: ref(4) }, 4), {
+  assert.deepEqual(configurationSync(null, ref(4)), { kind: "unknown" })
+  assert.deepEqual(configurationSync({}, ref(4)), { kind: "none" })
+  assert.deepEqual(configurationSync({ applied: ref(4) }, ref(4)), {
     kind: "current",
-    revision: 4,
+    applied: ref(4),
   })
-  assert.deepEqual(configurationSync({ applied: ref(3) }, 4), {
+  assert.deepEqual(configurationSync({ applied: ref(3) }, ref(4)), {
     kind: "behind",
-    applied: 3,
-    current: 4,
+    applied: ref(3),
+    assigned: ref(4),
   })
-  assert.deepEqual(configurationSync({ applied: ref(3) }, undefined), {
-    kind: "applied",
-    revision: 3,
-  })
-  // A revision on its way, or refused, says more than the one applied.
+  // Unread, or none held: only what the node reports.
+  for (const assigned of [undefined, null])
+    assert.deepEqual(configurationSync({ applied: ref(3) }, assigned), {
+      kind: "applied",
+      applied: ref(3),
+    })
+  // A netmap on its way, or refused, says more than the one applied.
   assert.deepEqual(
     configurationSync(
       { applied: ref(3), progress: progress(4, "applying") },
-      4
+      ref(4)
     ),
-    { kind: "applying", revision: 4 }
+    { kind: "applying", target: ref(4) }
   )
   assert.deepEqual(
-    configurationSync({ applied: ref(3), progress: progress(4, "failed") }, 4),
-    { kind: "failed", revision: 4 }
+    configurationSync(
+      { applied: ref(3), progress: progress(4, "failed") },
+      ref(4)
+    ),
+    { kind: "failed", target: ref(4) }
   )
   assert.deepEqual(
-    configurationSync({ applied: ref(4), progress: progress(4, "applied") }, 4),
-    { kind: "current", revision: 4 }
+    configurationSync(
+      { applied: ref(4), progress: progress(4, "applied") },
+      ref(4)
+    ),
+    { kind: "current", applied: ref(4) }
   )
+})
+
+test("up to date is the node's netmap, not the network's revision", () => {
+  // A later revision that leaves this node's netmap as it was (a comment,
+  // another node) does not make it behind: the server still holds r3 #1.
+  assert.deepEqual(configurationSync({ applied: ref(3) }, ref(3)), {
+    kind: "current",
+    applied: ref(3),
+  })
+  // Same revision, new content (a key rotated, a peer's capability changed):
+  // the serial moved, so the node is behind.
+  const next = { ...ref(3), serial: SERIAL + 1, digest: "b".repeat(64) }
+  assert.deepEqual(configurationSync({ applied: ref(3) }, next), {
+    kind: "behind",
+    applied: ref(3),
+    assigned: next,
+  })
 })
 
 test("listener runtime names its sockets; others are dial sockets", () => {
