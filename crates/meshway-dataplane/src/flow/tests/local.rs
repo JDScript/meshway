@@ -45,12 +45,9 @@ fn local_lookup_returns_original_origin_and_terminal_routes_but_never_relay_stat
 fn local_lookup_shares_initial_protocol_validation_and_exact_echo_identifiers() {
     let scene = Scene::new(BusinessProtocol::Tcp, false, true);
     assert_eq!(lookup(&scene, 1, tcp(false, 100, 0, 2, 0)).unwrap(), None);
-    // An origin ACK resumes an idle-reclaimed flow as a first packet.
-    assert_eq!(
-        lookup(&scene, 1, tcp(false, 101, 901, 0x10, 0)).unwrap(),
-        None
-    );
+    // An ACK segment is no first packet unless its stream was reclaimed idle.
     for packet in [
+        tcp(false, 101, 901, 0x10, 0),
         tcp(true, 900, 101, 0x12, 0),
         tcp(false, 100, 0, 2, 1),
         tcp(false, 100, 1, 2, 0),

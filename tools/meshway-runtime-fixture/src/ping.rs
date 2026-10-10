@@ -65,6 +65,8 @@ pub enum Stage {
     Outage,
     Expired,
     Recovered,
+    /// netmap/restart only: after every adjacency closed idle offline.
+    IdleRedial,
 }
 
 #[derive(Clone, Serialize, Deserialize)]

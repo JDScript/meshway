@@ -124,6 +124,11 @@ impl Report {
             self.facts_observed_at
                 + chrono::Duration::seconds(meshway_protocol::STATE_FACT_MAX_SECONDS),
         );
+        // Links and adjacency status describe applied content only; the
+        // Server rejects them in a report that names none.
+        if state.configuration.applied.is_none() {
+            return state;
+        }
         state.adjacencies = facts
             .adjacencies
             .iter()

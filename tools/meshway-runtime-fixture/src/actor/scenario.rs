@@ -77,7 +77,7 @@ async fn opened(signals: &Signals) -> Result<()> {
 
 /// New 5-tuples, decided locally on the installed netmap, and (once per
 /// run: the CLI evidence file is per stage) a CLI ping.
-async fn fresh(context: &Context<'_>, stage: &str, ping: bool) -> Result<()> {
+async fn fresh(context: &Context<'_>, stage: &str, ping: Option<crate::ping::Stage>) -> Result<()> {
     let mut traffic =
         Traffic::new(&context.addresses[&Role::A], &context.addresses[&Role::B]).await?;
     traffic.first_udp().await?;
@@ -85,10 +85,9 @@ async fn fresh(context: &Context<'_>, stage: &str, ping: bool) -> Result<()> {
         .open_remaining_flows(&context.addresses[&Role::A])
         .await?;
     traffic.exchange().await?;
-    if ping {
+    if let Some(ping) = ping {
         let path = crate::fallback::original_path(context.signals).await?;
-        let run =
-            crate::ping_cli::run(context.cli, crate::ping::Stage::Restored, "b", &path).await?;
+        let run = crate::ping_cli::run(context.cli, ping, "b", &path).await?;
         save(context.cli, &format!("scenario-{stage}-ping"), &run).await?;
     }
     save(
@@ -123,7 +122,7 @@ async fn offline(context: Context<'_>) -> Result<String> {
                     } else {
                         "offline-end"
                     },
-                    fresh_flows == 0,
+                    (fresh_flows == 0).then_some(crate::ping::Stage::Restored),
                 )
                 .await?;
                 fresh_flows += 1;
@@ -228,7 +227,12 @@ async fn restart(mut context: Context<'_>) -> Result<String> {
     // Every on-demand adjacency closed idle while the Controller is gone:
     // one ping redials from the installed netmap and last known facts.
     if context.traffic.is_some() {
-        fresh(&context, "idle-redial", true).await?;
+        fresh(
+            &context,
+            "idle-redial",
+            Some(crate::ping::Stage::IdleRedial),
+        )
+        .await?;
         observed(signals, "scenario-idle-redial", role).await?;
     } else {
         signals
@@ -265,7 +269,7 @@ async fn restart(mut context: Context<'_>) -> Result<String> {
     }
     if let Some(traffic) = context.traffic.as_mut() {
         traffic.restored().await?;
-        fresh(&context, "restarted", true).await?;
+        fresh(&context, "restarted", Some(crate::ping::Stage::Restored)).await?;
     }
     observed(signals, &format!("scenario-offline-{}", role.name()), role).await?;
     opened(signals).await?;

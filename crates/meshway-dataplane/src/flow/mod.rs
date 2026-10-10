@@ -94,11 +94,12 @@ enum ProtocolState {
 
 impl ProtocolState {
     /// The single initial-flow validator, shared by routing lookup and admission.
-    fn new(transport: Transport) -> Result<Self, Error> {
+    /// `resumable`: this tuple's TCP state was reclaimed while idle.
+    fn new(transport: Transport, resumable: bool) -> Result<Self, Error> {
         match transport {
             Transport::Udp => Ok(Self::Udp),
             Transport::Echo { reply: false, .. } => Ok(Self::Echo),
-            Transport::Tcp(segment) => Ok(Self::Tcp(TcpState::new(segment)?)),
+            Transport::Tcp(segment) => Ok(Self::Tcp(TcpState::new(segment, resumable)?)),
             _ => Err(Error::Flow),
         }
     }
@@ -214,6 +215,9 @@ pub(super) struct FlowTable {
     pending_projections: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     exit_count: usize,
     retired_circuits_pending: bool,
+    /// Endpoint TCP tuples whose state was reclaimed while idle, under the
+    /// current content only; at most `max_flows`.
+    idle: std::collections::BTreeSet<(NodeId, Tuple)>,
 }
 
 #[derive(Debug)]
@@ -233,6 +237,7 @@ impl FlowTable {
             pending_projections: Default::default(),
             exit_count: 0,
             retired_circuits_pending: false,
+            idle: Default::default(),
         }
     }
     pub fn len(&self) -> usize {
@@ -257,13 +262,21 @@ impl FlowTable {
         }
         self.exit_count = 0;
         self.index = Default::default();
+        self.idle.clear();
     }
     pub fn expire(&mut self, now: Instant, now_ms: u64) {
         self.expire_exits(now, now_ms);
         while let Some(key) = self.index.expired(now, now_ms).cloned() {
             let flow = self.remove(&key).expect("indexed flow");
+            let idle = now >= flow.cap.at;
+            if idle && matches!(flow.state, ProtocolState::Tcp(_)) && key.role != Role::Relay {
+                if self.idle.len() >= self.limits.max_flows {
+                    self.idle.pop_first();
+                }
+                self.idle.insert((key.node, key.tuple.clone()));
+            }
             if crate::log_budget::event() {
-                let cause = if now >= flow.cap.at {
+                let cause = if idle {
                     "monotonic_or_idle"
                 } else {
                     "deadline"
@@ -275,6 +288,7 @@ impl FlowTable {
     }
 
     fn insert(&mut self, key: Key, flow: Flow) -> Option<Flow> {
+        self.idle.remove(&(key.node, key.tuple.clone()));
         self.exit_count += usize::from(flow.exit.is_some());
         self.exit_count -=
             usize::from(self.entries.get(&key).is_some_and(|old| old.exit.is_some()));
@@ -332,7 +346,7 @@ impl FlowTable {
             });
         }
         if found.is_none() {
-            ProtocolState::new(facts.transport)?;
+            ProtocolState::new(facts.transport, self.idle.contains(&(node, tuple)))?;
         }
         Ok(found)
     }
@@ -342,6 +356,9 @@ impl FlowTable {
     /// protocol state, idle time or key changes; a cap may only shrink.
     /// Unacknowledged exit projections and closing exit flows never cross.
     pub fn retain(&mut self, time: &FlowTime, mut keep: impl FnMut(&Kept<'_>) -> Keep) {
+        // Idle resumption is valid under the content that admitted the
+        // stream only; a content change ends every reclaimed stream.
+        self.idle.clear();
         let mut retire = Vec::new();
         let mut shorten = Vec::new();
         for (key, flow) in &self.entries {
@@ -514,7 +531,11 @@ impl FlowTable {
                 if self.entries.len() == self.limits.max_flows {
                     return Err(Error::Capacity);
                 }
-                ProtocolState::new(facts.transport)?
+                ProtocolState::new(
+                    facts.transport,
+                    direction == Direction::Forward
+                        && self.idle.contains(&(key.node, key.tuple.clone())),
+                )?
             }
         };
         let remove = if existing.is_some() {

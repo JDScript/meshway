@@ -159,15 +159,18 @@ impl Side {
 }
 
 impl TcpState {
-    /// A flow's first segment: a SYN opens the association; an ACK segment
-    /// without SYN/RST resumes one whose state was reclaimed while idle. The
-    /// resumed association starts at that segment's sequence and its
-    /// acknowledgement: replies must still ACK what the origin sent and
-    /// continue from what it acknowledged. Access already admits the
-    /// origin's service either way.
-    pub fn new(first: TcpSegment) -> Result<Self, Error> {
+    /// A flow's first segment: a SYN opens the association. Only for a
+    /// tuple whose state this table reclaimed while idle (`resumable`), an
+    /// ACK segment without SYN/RST resumes it: the association starts at that
+    /// segment's sequence and its acknowledgement, so replies must still ACK
+    /// what the origin sent and continue from what it acknowledged. A stream
+    /// ended by revocation, withdrawal or lease end is never resumable.
+    pub fn new(first: TcpSegment, resumable: bool) -> Result<Self, Error> {
         if first.syn() {
             return Self::open(first);
+        }
+        if !resumable {
+            return Err(Error::Flow);
         }
         if !first.ack()
             || first.rst()
@@ -283,7 +286,7 @@ mod tests {
     }
 
     fn established(source: u32, terminal: u32) -> TcpState {
-        let mut state = TcpState::new(segment(source, 0, 2, 0)).unwrap();
+        let mut state = TcpState::new(segment(source, 0, 2, 0), false).unwrap();
         state
             .accept(
                 Direction::Reply,
@@ -310,7 +313,9 @@ mod tests {
     #[test]
     fn an_idle_reclaimed_connection_resumes_from_its_next_ack_segment() {
         // The origin's first segment after reclaim carries data and its ACK.
-        let mut state = TcpState::new(segment(5_000, 9_000, 0x18, 100)).unwrap();
+        let mut state = TcpState::new(segment(5_000, 9_000, 0x18, 100), true).unwrap();
+        // Without an idle reclaim it is no first segment.
+        assert!(TcpState::new(segment(5_000, 9_000, 0x18, 100), false).is_err());
         assert_eq!(bounds(&state), [(5_000, 5_100, None), (9_000, 9_000, None)]);
         // The reply must acknowledge what the origin sent and continue from
         // what the origin acknowledged.
@@ -328,7 +333,7 @@ mod tests {
         // Neither a reset nor a segment without ACK starts an association.
         for flags in [0x04, 0x14, 0x08, 0x01] {
             assert!(
-                TcpState::new(segment(1, 1, flags, 0)).is_err(),
+                TcpState::new(segment(1, 1, flags, 0), true).is_err(),
                 "{flags:#x}"
             );
         }
