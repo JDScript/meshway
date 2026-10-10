@@ -50,11 +50,12 @@ git push planck feat/exit-acceptance
 mise run validate:remote -- --ref feat/exit-acceptance --rows exit/off
 ```
 
-The shared runtime build includes the production daemon library test binary.
-`components.py` runs X4's real driver, handoff, role, DNS handoff and
-forwarding-disabled cases in separate namespaces against an isolated UDP echo
-service. Their results are labelled `scope=component`; the main actors still
-must prove their own installation, NAT and traffic lifecycle.
+The shared runtime build includes the production underlay library and netmap
+test binaries. `components.py` runs the netmap exit-role owner (renewal,
+unchanged serial, Access independence, withdrawal cleanup), the nft
+transaction and the live exit-prerequisite probe in separate namespaces.
+Their results are labelled `scope=component`; the main actors still must
+prove their own installation, NAT and traffic lifecycle.
 
 ## Assertion and evidence boundaries
 
