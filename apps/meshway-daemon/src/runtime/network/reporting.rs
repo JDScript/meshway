@@ -32,7 +32,6 @@ pub(super) struct Key {
     completion: Option<Result<(), ApplyFailure>>,
     generation: Sequence,
     interface_epoch: u64,
-    execution_live: bool,
     dns_live: bool,
     exit: Option<ExitKey>,
     exit_dns_unavailable: bool,
@@ -43,10 +42,6 @@ pub(super) struct Key {
 }
 impl Key {
     fn of(report: &Report) -> Self {
-        let execution_live = report
-            .guard
-            .as_ref()
-            .is_none_or(|guard| guard.ensure_current().is_ok());
         let dns_live = report
             .dns_guard
             .as_ref()
@@ -58,7 +53,6 @@ impl Key {
             completion: report.completion,
             generation: report.generation,
             interface_epoch: report.interface_epoch,
-            execution_live,
             dns_live,
             exit: report.exit_capability.as_ref().map(|exit| ExitKey {
                 instance: exit.instance_id,
@@ -73,8 +67,7 @@ impl Key {
             sockets: Vec::new(),
             dependencies: BTreeMap::new(),
         };
-        if execution_live
-            && dns_live
+        if dns_live
             && report.plane == meshway_ipc::DataPlane::Ready
             && let Some(facts) = &report.facts
         {
@@ -313,9 +306,7 @@ impl super::Handle {
             .as_ref()
             .map_or_else(Report::stopped, |sample| sample.report.clone());
         let mut state = facts.state(control, settings);
-        if let Some(guard) = &facts.guard
-            && let Ok(netmap) = guard.netmap()
-        {
+        if let Some(netmap) = &facts.content {
             crate::runtime::local_endpoints::sample(
                 &mut state,
                 &netmap.netmap,

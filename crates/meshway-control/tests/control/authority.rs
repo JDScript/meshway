@@ -6,8 +6,7 @@ use meshway_control::Control;
 use std::time::Duration;
 
 #[tokio::test]
-async fn packet_identity_uses_registered_keys_and_stops_with_the_execution_handoff() {
-    use ed25519_dalek::{Signature, VerifyingKey};
+async fn packet_keys_are_the_registered_keys_and_not_authority() {
     let server = Server::start().await;
     let owner = server.owner().await;
     let mut control = Control::open(
@@ -22,52 +21,22 @@ async fn packet_identity_uses_registered_keys_and_stops_with_the_execution_hando
     control.authenticate().await.unwrap();
     control.acquire_instance(Default::default()).await.unwrap();
     crate::support::sync(&mut control).await.unwrap();
-    let snapshot = control.netmap_snapshot().unwrap();
-    let identity = control.dataplane_identity(snapshot.clone()).unwrap();
-    let cfg = &snapshot.netmap().unwrap().netmap;
-    let digest: meshway_model::Digest = [7; 32].into();
-    let signature = identity.sign_packet(digest).unwrap();
-    let verifier =
-        VerifyingKey::from_bytes(cfg.self_.self_keys.control_key.public_key.bytes.as_bytes())
-            .unwrap();
-    verifier
-        .verify_strict(
-            &meshway_authority::packet_proof_message(
-                cfg.network_id,
-                cfg.node_id,
-                &cfg.self_.self_keys.control_key,
-                digest,
-            ),
-            &Signature::from_bytes(&signature),
-        )
-        .unwrap();
-    let public = identity
-        .with_noise_key(|key| {
-            curve25519_dalek::montgomery::MontgomeryPoint::mul_base_clamped(*key).to_bytes()
-        })
-        .unwrap();
-    assert_eq!(
-        public.as_slice(),
-        cfg.self_
-            .self_keys
-            .dataplane_key
-            .public_key
-            .bytes
-            .as_bytes()
-            .as_slice()
-    );
+    let netmap = control.netmap().unwrap();
+    let keys = control.dataplane_keys().unwrap();
+    assert!(keys.matches(&netmap.content.netmap.self_.self_keys));
+    let mut other = netmap.content.netmap.self_.self_keys.clone();
+    other.dataplane_key = other.control_key.clone();
+    assert!(!keys.matches(&other));
     control.stop().await.unwrap();
-    assert!(identity.sign_packet(digest).is_err());
-    let mut entered = false;
-    assert!(identity.with_noise_key(|_| entered = true).is_err());
-    assert!(!entered);
-    assert!(control.dataplane_identity(snapshot).is_err());
+    // Keys survive stop; only the published netmap is withdrawn.
+    assert!(control.netmap().is_none());
+    assert!(control.dataplane_keys().is_ok());
     control.shutdown().await.unwrap();
     server.close().await;
 }
 
 #[tokio::test]
-async fn execution_handoff_requires_current_saved_target_and_never_renews_old_snapshots() {
+async fn netmap_is_published_only_with_its_signed_lease_and_never_extended_by_instances() {
     let server = Server::start().await;
     let owner = server.owner().await;
     let path = server.path("execution-handoff");
@@ -79,41 +48,29 @@ async fn execution_handoff_requires_current_saved_target_and_never_renews_old_sn
             .no_proxy(),
     )
     .unwrap();
-    assert!(control.netmap_snapshot().is_err());
+    assert!(control.netmap().is_none());
     server.enroll(&owner, &mut control, "handoff").await;
     control.authenticate().await.unwrap();
-    assert!(control.netmap_snapshot().is_err());
+    assert!(control.netmap().is_none());
     control.acquire_instance(Default::default()).await.unwrap();
-    assert!(control.netmap_snapshot().is_err());
+    assert!(control.netmap().is_none());
     let target = crate::support::sync(&mut control).await.unwrap().unwrap();
-    let first = control.netmap_snapshot().unwrap();
-    let original_deadline = first.expires_at();
-    assert_eq!(first.reference(), target);
-    assert!(first.netmap().is_ok());
+    let first = control.netmap().unwrap();
+    assert_eq!(first.content.reference(), target);
+    assert_eq!(first.lease.netmap, target);
     control.renew_instance().await.unwrap();
-    let renewed = control.netmap_snapshot().unwrap();
-    assert!(first.same_netmap(&renewed));
-    assert_eq!(first.expires_at(), original_deadline);
-    assert!(renewed.expires_at() >= original_deadline);
+    let renewed = control.netmap().unwrap();
+    assert_eq!(renewed.lease, first.lease);
     control.stop().await.unwrap();
-    tokio::time::timeout(Duration::from_secs(1), first.invalidated())
-        .await
-        .unwrap();
-    assert!(matches!(
-        renewed.netmap(),
-        Err(meshway_authority::Error::Expired)
-    ));
+    assert!(control.netmap().is_none());
+    assert_eq!(control.netmap_reference(), Some(target));
     control.authenticate().await.unwrap();
     control.acquire_instance(Default::default()).await.unwrap();
     crate::support::sync(&mut control).await.unwrap();
-    let fresh = control.netmap_snapshot().unwrap();
-    assert!(!first.same_netmap(&fresh));
-    assert!(fresh.netmap_continuation_from(&first).is_err());
-    assert!(first.ensure_current().is_err());
+    let fresh = control.netmap().unwrap();
+    assert_eq!(fresh.content.reference(), target);
+    assert!(fresh.lease.issued_at_ms >= first.lease.issued_at_ms);
     drop(control);
-    tokio::time::timeout(Duration::from_secs(1), fresh.invalidated())
-        .await
-        .unwrap();
     let restored = Control::open(
         &path,
         &server.origin,
@@ -122,18 +79,14 @@ async fn execution_handoff_requires_current_saved_target_and_never_renews_old_sn
             .no_proxy(),
     )
     .unwrap();
-    assert!(restored.netmap_reference().is_some());
-    restored
-        .netmap_snapshot()
-        .unwrap()
-        .ensure_current()
-        .unwrap();
+    // The saved signed lease is published again without Server contact.
+    assert_eq!(restored.netmap().unwrap().lease.netmap, fresh.lease.netmap);
     restored.shutdown().await.unwrap();
     server.close().await;
 }
 
 #[tokio::test]
-async fn stopped_execution_wakes_waiters_before_a_held_release_http_response() {
+async fn stop_withdraws_the_netmap_before_a_held_release_http_response() {
     let server = Server::start().await;
     let owner = server.owner().await;
     let proxy = Proxy::start(&server.origin).await;
@@ -149,7 +102,7 @@ async fn stopped_execution_wakes_waiters_before_a_held_release_http_response() {
     control.authenticate().await.unwrap();
     control.acquire_instance(Default::default()).await.unwrap();
     crate::support::sync(&mut control).await.unwrap();
-    let snapshot = control.netmap_snapshot().unwrap();
+    assert!(control.netmap().is_some());
     proxy.fault("/instances/release", Fault::Hold);
     {
         let stop = control.stop();
@@ -158,13 +111,10 @@ async fn stopped_execution_wakes_waiters_before_a_held_release_http_response() {
             result = &mut stop => panic!("release completed before delivery: {result:?}"),
             result = tokio::time::timeout(Duration::from_secs(2), proxy.committed()) => { result.unwrap(); },
         }
-        tokio::time::timeout(Duration::from_secs(1), snapshot.invalidated())
-            .await
-            .unwrap();
-        assert!(snapshot.netmap().is_err());
-        proxy.release();
-        stop.await.unwrap();
+        // Cancelled while the release is held.
     }
+    assert!(control.netmap().is_none());
+    proxy.release();
     proxy.close().await;
     drop(control);
     server.close().await;
@@ -190,13 +140,11 @@ async fn idle_netmap_outlives_the_http_session_without_polling_control() {
     control.authenticate().await.unwrap();
     control.acquire_instance(Default::default()).await.unwrap();
     crate::support::sync(&mut control).await.unwrap();
-    let snapshot = control.netmap_snapshot().unwrap();
-    let before = snapshot.expires_at();
+    let before = control.netmap().unwrap().lease;
     tokio::time::sleep(Duration::from_secs(3)).await;
-    snapshot.ensure_current().unwrap();
-    assert_eq!(snapshot.expires_at(), before);
     assert!(!control.status().authenticated);
-    control.netmap_snapshot().unwrap().ensure_current().unwrap();
+    assert_eq!(control.netmap().unwrap().lease, before);
+    assert_eq!(control.netmap_lease(), Some(before));
     drop(control);
     proxy.close().await;
     server.close().await;

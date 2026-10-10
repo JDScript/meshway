@@ -315,7 +315,7 @@ async fn receipt_rejections_retire_exact_ticket_without_fencing_and_reapply_new_
         let ticket = crate::support::acknowledge_saved(&mut control)
             .await
             .unwrap();
-        let snapshot = control.netmap_snapshot().unwrap();
+        let published = control.netmap().unwrap();
         let status = control.snapshot();
         proxy.fault(RECEIPTS, Fault::ReceiptConflict(code, body_status));
         let error = control
@@ -331,7 +331,7 @@ async fn receipt_rejections_retire_exact_ticket_without_fencing_and_reapply_new_
         );
         assert_eq!(control.status().authenticated, refresh);
         assert_eq!(status.status().instance.is_some(), refresh);
-        snapshot.ensure_current().unwrap();
+        assert_eq!(control.netmap().unwrap().lease, published.lease);
         if refresh {
             assert_eq!(
                 control.status().instance.unwrap().instance_id,

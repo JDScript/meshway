@@ -115,7 +115,7 @@ impl Diagnostics {
         if let Some(plan) = &plan {
             for task in &plan.tasks {
                 tracing::debug!(observation = %task.id,
-                    netmap_serial = plan.snapshot.reference().serial.get(),
+                    netmap_serial = plan.netmap.serial.get(),
                     stage = "installation_pending", "Diagnostic plan awaits matching installation");
             }
         }
@@ -139,9 +139,9 @@ impl Diagnostics {
     /// this content plus every live local ping.
     pub fn synchronize(&mut self, installed: &ExecutionSnapshot) {
         if let Some(plan) = &self.pending_plan {
-            if plan.snapshot.ensure_current().is_err() {
+            if plan.netmap.serial < installed.reference().serial {
                 self.pending_plan = None;
-            } else if plan.snapshot.same_netmap(installed) {
+            } else if plan.netmap == installed.reference() {
                 let plan = self.pending_plan.take().expect("matching plan");
                 self.server = plan.tasks;
                 self.dirty = true;

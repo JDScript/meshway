@@ -235,7 +235,7 @@ impl NetmapMesh {
         let compiled = compile(owner.network, &cfg, &inventory, ids, &BTreeMap::new());
         let mut identities = Vec::new();
         for index in 0..3 {
-            let snapshot = install(
+            let identity = install(
                 &mut nodes[index],
                 &scripts[index],
                 &compiled[&ids[index]],
@@ -243,7 +243,7 @@ impl NetmapMesh {
                 true,
             )
             .await;
-            identities.push(nodes[index].control.dataplane_identity(snapshot).unwrap());
+            identities.push(identity);
         }
         let mut identities = identities.into_iter();
         let mut secure = |carriers| {
@@ -272,12 +272,9 @@ impl NetmapMesh {
         }
     }
 
-    /// The current Control-issued identity of one Node.
-    pub fn identity(&self, index: usize) -> meshway_authority::DataPlaneIdentity {
-        let control = &self.nodes[index].control;
-        control
-            .dataplane_identity(control.netmap_snapshot().unwrap())
-            .unwrap()
+    /// The current identity of one Node, for Control's published netmap.
+    pub fn identity(&mut self, index: usize) -> meshway_authority::DataPlaneIdentity {
+        self.nodes[index].identity()
     }
 
     /// Replace every SecureNode with explicit limits on the same identities.
@@ -372,7 +369,7 @@ impl NetmapMesh {
     /// one Node only, and update its SecureNode.
     pub async fn install_on(&mut self, index: usize, full: bool) -> Update {
         let id = self.nodes[index].id;
-        let snapshot = install(
+        let identity = install(
             &mut self.nodes[index],
             &self.scripts[index],
             &self.compiled[&id],
@@ -380,10 +377,6 @@ impl NetmapMesh {
             full,
         )
         .await;
-        let identity = self.nodes[index]
-            .control
-            .dataplane_identity(snapshot)
-            .unwrap();
         self.secure(index).update(identity).unwrap()
     }
 
@@ -514,7 +507,7 @@ async fn install(
     compiled: &CompiledNetmap,
     validity_ms: u64,
     full: bool,
-) -> meshway_authority::ExecutionSnapshot {
+) -> meshway_authority::DataPlaneIdentity {
     let full = full && node.control.netmap_reference() != Some(compiled.reference());
     script
         .replies
@@ -525,5 +518,6 @@ async fn install(
             validity_ms,
             full,
         )));
-    node.control.sync(&mut Facts).await.unwrap().snapshot
+    node.control.sync(&mut Facts).await.unwrap();
+    node.identity()
 }

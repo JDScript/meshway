@@ -44,24 +44,20 @@ pub async fn enrolled(
 }
 
 #[tokio::test]
-async fn server_stop_expires_session_and_instance_while_the_netmap_snapshot_lives() {
+async fn server_stop_expires_session_and_instance_while_the_netmap_stays_published() {
     let server = Server::start().await;
     let proxy = Proxy::start(&server.origin).await;
     let (mut control, binding, script) = enrolled(&server, &proxy, "offline").await;
     proxy.fault("/auth/session", Fault::ShortSession);
     control.refresh_authentication().await.unwrap();
     proxy.fault("/instances/acquire", Fault::ShortInstance);
-    let instance = control.acquire_instance(BTreeMap::new()).await.unwrap();
+    control.acquire_instance(BTreeMap::new()).await.unwrap();
     let netmap = compiled(&binding, "offline", None);
     script.push(Ok(full(&binding, &netmap, HOUR)));
     let outcome = control.sync(&mut Facts::default()).await.unwrap();
     assert_eq!(outcome.change, NetmapChange::New { previous: None });
-    let snapshot = outcome.snapshot;
-    assert_eq!(snapshot.reference(), netmap.reference());
-    assert_eq!(
-        snapshot.instance().unwrap().instance_id,
-        instance.instance_id
-    );
+    let published = outcome.netmap;
+    assert_eq!(published.content.reference(), netmap.reference());
     assert_eq!(script.requests()[0].netmap, None);
     proxy.close().await;
     server.close().await;
@@ -69,51 +65,32 @@ async fn server_stop_expires_session_and_instance_while_the_netmap_snapshot_live
     let status = control.status();
     assert!(!status.authenticated && status.instance.is_none());
     assert!(control.renew_instance().await.is_err());
-    snapshot.ensure_current().unwrap();
-    assert!(
-        snapshot
-            .netmap_reading()
-            .unwrap()
-            .leased()
-            .lease
-            .valid_at(0)
-    );
-    let current = control.netmap_snapshot().unwrap();
-    assert!(current.same_netmap(&snapshot));
-    assert_eq!(current.instance(), None);
+    let current = control.netmap().unwrap();
+    assert_eq!(current.lease, published.lease);
     assert_eq!(status.netmap.unwrap().netmap, netmap.reference());
     assert!(
-        snapshot.expires_at_ms()
+        current.lease.expires_at_ms
             > u64::try_from(chrono::Utc::now().timestamp_millis()).unwrap() + HOUR / 2
     );
-    // The release cannot reach the stopped Server; authority still ends locally.
+    // The release cannot reach the stopped Server; the lease is still withdrawn.
     assert!(control.shutdown().await.is_err());
-    assert!(snapshot.ensure_current().is_err());
 }
 
 #[tokio::test]
-async fn renewal_keeps_guards_and_a_newer_serial_retires_them() {
+async fn same_content_replaces_only_the_lease_and_a_newer_serial_replaces_content() {
     let server = Server::start().await;
     let proxy = Proxy::start(&server.origin).await;
     let (mut control, binding, script) = enrolled(&server, &proxy, "renewal").await;
     let first = compiled(&binding, "renewal", None);
     script.push(Ok(full(&binding, &first, 60_000)));
-    let old = control.sync(&mut Facts::default()).await.unwrap().snapshot;
-    let waiter = tokio::spawn({
-        let old = old.clone();
-        async move { old.invalidated().await }
-    });
-    let deadline = old.expires_at_ms();
+    let old = control.sync(&mut Facts::default()).await.unwrap().netmap;
     tokio::time::sleep(Duration::from_millis(5)).await;
     script.push(Ok(unchanged(&binding, &first, HOUR)));
     let renewed = control.sync(&mut Facts::default()).await.unwrap();
     assert_eq!(renewed.change, NetmapChange::Renewed);
-    assert!(renewed.snapshot.same_netmap(&old));
-    assert!(old.expires_at_ms() > deadline + HOUR / 2);
-    assert!(renewed.snapshot.netmap_continuation_from(&old).is_err());
+    assert!(Arc::ptr_eq(&renewed.netmap.content, &old.content));
+    assert!(renewed.netmap.lease.expires_at_ms > old.lease.expires_at_ms + HOUR / 2);
     assert_eq!(script.requests()[1].netmap, Some(first.reference()));
-    tokio::time::sleep(Duration::from_millis(50)).await;
-    assert!(!waiter.is_finished() && old.ensure_current().is_ok());
 
     let second = compiled(&binding, "renewal-two", Some(&first));
     let delta = meshway_configuration::netmap::netmap_delta(&first, &second).unwrap();
@@ -131,19 +108,8 @@ async fn renewal_keeps_guards_and_a_newer_serial_retires_them() {
             previous: Some(first.reference())
         }
     );
-    tokio::time::timeout(Duration::from_secs(1), waiter)
-        .await
-        .unwrap()
-        .unwrap();
-    assert!(old.ensure_current().is_err() && renewed.snapshot.ensure_current().is_err());
-    assert_eq!(next.snapshot.reference(), second.reference());
-    assert_eq!(
-        next.snapshot
-            .netmap_continuation_from(&old)
-            .unwrap()
-            .reference(),
-        first.reference()
-    );
+    assert_eq!(next.netmap.content.reference(), second.reference());
+    assert_eq!(next.netmap.lease.netmap, second.reference());
     assert_eq!(control.netmap_reference(), Some(second.reference()));
     control.shutdown().await.unwrap();
     server.close().await;
@@ -157,7 +123,7 @@ async fn serial_rollback_foreign_content_and_wrong_delta_digest_are_rejected() {
     let first = compiled(&binding, "reject", None);
     let second = compiled(&binding, "reject-two", Some(&first));
     script.push(Ok(full(&binding, &second, HOUR)));
-    let current = control.sync(&mut Facts::default()).await.unwrap().snapshot;
+    let current = control.sync(&mut Facts::default()).await.unwrap().netmap;
 
     // An older serial is never installed over a newer one.
     script.push(Ok(full(&binding, &first, HOUR)));
@@ -213,8 +179,7 @@ async fn serial_rollback_foreign_content_and_wrong_delta_digest_are_rejected() {
         control.sync(&mut Facts::default()).await,
         Err(Error::Contract)
     ));
-    current.ensure_current().unwrap();
-    assert!(control.netmap_snapshot().unwrap().same_netmap(&current));
+    assert_eq!(control.netmap().unwrap().lease, current.lease);
     assert_eq!(control.netmap_reference(), Some(second.reference()));
     control.shutdown().await.unwrap();
     server.close().await;
@@ -227,7 +192,7 @@ async fn superseded_replies_transport_failures_and_identity_rejection() {
     let (mut control, binding, script) = enrolled(&server, &proxy, "replies").await;
     let netmap = compiled(&binding, "replies", None);
     script.push(Ok(full(&binding, &netmap, HOUR)));
-    let snapshot = control.sync(&mut Facts::default()).await.unwrap().snapshot;
+    control.sync(&mut Facts::default()).await.unwrap();
 
     // Two prepared calls name the same base; once one is applied the other
     // was replaced and changes nothing, even though its body is valid.
@@ -256,7 +221,7 @@ async fn superseded_replies_transport_failures_and_identity_rejection() {
         problem: None,
     }));
     assert!(control.sync(&mut Facts::default()).await.is_err());
-    snapshot.ensure_current().unwrap();
+    assert_eq!(control.netmap_lease(), Some(renewed));
     // 401 ends only the HTTP session.
     script.push(Err(ClientError::Http {
         status: 401,
@@ -265,12 +230,12 @@ async fn superseded_replies_transport_failures_and_identity_rejection() {
     assert!(control.sync(&mut Facts::default()).await.is_err());
     assert!(!control.status().authenticated);
     assert!(matches!(control.begin_sync(), Err(Error::Lifecycle)));
-    snapshot.ensure_current().unwrap();
+    assert_eq!(control.netmap_lease(), Some(renewed));
     control.authenticate().await.unwrap();
     // A decoded identity rejection ends authority at once.
     script.push(Err(review::identity_rejection()));
     assert!(control.sync(&mut Facts::default()).await.is_err());
-    assert!(snapshot.ensure_current().is_err() && control.netmap_snapshot().is_err());
+    assert!(control.netmap().is_none() && control.netmap_lease().is_none());
     assert_eq!(control.netmap_reference(), Some(netmap.reference()));
     control.shutdown().await.unwrap();
     server.close().await;
@@ -325,17 +290,16 @@ async fn sync_loop_publishes_renewals_and_survives_transport_failure() {
     script.push(Ok(unchanged(&binding, &netmap, 2 * HOUR)));
     let control = tokio::sync::Mutex::new(control);
     let (sender, mut receiver) =
-        tokio::sync::watch::channel::<Option<meshway_authority::ExecutionSnapshot>>(None);
+        tokio::sync::watch::channel::<Option<meshway_engine::Netmap>>(None);
     let stop = tokio_util::sync::CancellationToken::new();
     let observe = async {
         receiver.changed().await.unwrap();
         let first = receiver.borrow_and_update().clone().unwrap();
-        let initial = first.expires_at_ms();
         receiver.changed().await.unwrap();
         let second = receiver.borrow_and_update().clone().unwrap();
-        // One lease cell: the first snapshot observes the renewal too.
-        assert!(second.same_netmap(&first));
-        assert!(first.expires_at_ms() > initial + HOUR / 2);
+        // Same content, later lease: Engine extends its own timer.
+        assert!(Arc::ptr_eq(&second.content, &first.content));
+        assert!(second.lease.expires_at_ms > first.lease.expires_at_ms + HOUR / 2);
         stop.cancel();
     };
     let mut sink = Facts::default();
@@ -351,25 +315,23 @@ async fn sync_loop_publishes_renewals_and_survives_transport_failure() {
 }
 
 #[tokio::test]
-async fn stop_and_key_rotation_revoke_netmap_authority() {
+async fn stop_and_key_rotation_withdraw_the_published_netmap() {
     let server = Server::start().await;
     let proxy = Proxy::start(&server.origin).await;
     let (mut control, binding, script) = enrolled(&server, &proxy, "revoke").await;
     let netmap = compiled(&binding, "revoke", None);
     script.push(Ok(full(&binding, &netmap, HOUR)));
-    let first = control.sync(&mut Facts::default()).await.unwrap().snapshot;
+    control.sync(&mut Facts::default()).await.unwrap();
     control.acquire_instance(BTreeMap::new()).await.unwrap();
     control.stop().await.unwrap();
-    assert!(first.ensure_current().is_err() && control.netmap_snapshot().is_err());
+    assert!(control.netmap().is_none());
     control.authenticate().await.unwrap();
     script.push(Ok(unchanged(&binding, &netmap, HOUR)));
     let again = control.sync(&mut Facts::default()).await.unwrap();
-    assert_eq!(again.change, NetmapChange::Reissued);
-    assert!(!again.snapshot.same_netmap(&first));
-    assert!(again.snapshot.netmap_continuation_from(&first).is_err());
+    assert_eq!(again.change, NetmapChange::Renewed);
+    assert!(control.netmap().is_some());
     control.rotate_keys().await.unwrap();
-    assert!(again.snapshot.ensure_current().is_err());
-    assert!(control.netmap_snapshot().is_err());
+    assert!(control.netmap().is_none());
     control.shutdown().await.unwrap();
     server.close().await;
 }

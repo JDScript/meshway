@@ -27,6 +27,8 @@ struct Fixture {
     server: tokio::task::JoinHandle<()>,
     stop: tokio::sync::oneshot::Sender<()>,
     controls: Vec<Control>,
+    /// Staged migration: snapshots of each Control's verified netmap.
+    issuers: Vec<meshway_authority::StagedIssuer>,
     owner: Owner,
     subscription: ObservationSubscriptionId,
     task: ObservationTask,
@@ -35,7 +37,34 @@ struct Fixture {
     installed_at: Instant,
     _directory: tempfile::TempDir,
 }
+fn instance_of(control: &Control) -> meshway_protocol::InstanceRequest {
+    let instance = control.status().instance.unwrap();
+    meshway_protocol::InstanceRequest {
+        instance_id: instance.instance_id,
+        generation: instance.generation,
+    }
+}
+
+fn staged(
+    control: &Control,
+    issuer: &mut meshway_authority::StagedIssuer,
+) -> meshway_authority::DataPlaneIdentity {
+    let netmap = control.netmap().unwrap();
+    issuer
+        .issue(
+            &netmap.content,
+            netmap.lease,
+            Some(instance_of(control)),
+            &control.dataplane_keys().unwrap(),
+        )
+        .unwrap()
+}
+
 impl Fixture {
+    fn identity(&mut self, index: usize) -> meshway_authority::DataPlaneIdentity {
+        staged(&self.controls[index], &mut self.issuers[index])
+    }
+
     async fn open() -> Self {
         Self::open_route(false).await
     }
@@ -206,7 +235,11 @@ impl Fixture {
                 .unwrap();
         }
         let subscription = id();
-        let instance = controls[0].netmap_snapshot().unwrap().instance().unwrap();
+        let mut issuers: Vec<_> = controls
+            .iter()
+            .map(|_| meshway_authority::StagedIssuer::new().unwrap())
+            .collect();
+        let instance = instance_of(&controls[0]);
         let created_at = Instant::now();
         let first = controls[0]
             .create_node_observation(&CreateNodeObservation {
@@ -223,9 +256,9 @@ impl Fixture {
             .await
             .unwrap();
         let accepted_at = Instant::now();
-        let snapshot = controls[0].netmap_snapshot().unwrap();
+        let snapshot = staged(&controls[0], &mut issuers[0]).snapshot().clone();
         let task = controls[0]
-            .get_observation_tasks(&snapshot)
+            .get_observation_tasks(snapshot.reference())
             .await
             .unwrap()
             .items
@@ -242,6 +275,7 @@ impl Fixture {
             server,
             stop,
             controls,
+            issuers,
             owner,
             subscription,
             task,
@@ -291,10 +325,8 @@ impl Fixture {
 #[tokio::test]
 async fn acquisition_wait_never_creates_a_measurement_and_has_a_separate_setup_limit() {
     let mut fixture = Fixture::open().await;
-    let snapshot = fixture.controls[0].netmap_snapshot().unwrap();
-    let identity = fixture.controls[0]
-        .dataplane_identity(snapshot.clone())
-        .unwrap();
+    let identity = fixture.identity(0);
+    let snapshot = identity.snapshot().clone();
     let mut secure = SecureNode::new(identity, Default::default(), BTreeMap::new()).unwrap();
     let task = fixture.owner.tasks.get_mut(&fixture.task.id).unwrap();
     task.preparing = Instant::now() - DEADLINE - Duration::from_secs(2);
@@ -362,11 +394,7 @@ async fn reply_before_completion_uses_captured_transport_time_and_final_window_o
         start + Duration::from_millis(4),
     );
     assert_eq!(fixture.owner.outputs().count(), 0);
-    let instance = fixture.controls[0]
-        .netmap_snapshot()
-        .unwrap()
-        .instance()
-        .unwrap();
+    let instance = instance_of(&fixture.controls[0]);
     let lease_deadline = fixture.controls[0]
         .node_observation_lease(fixture.subscription)
         .unwrap()
@@ -441,7 +469,7 @@ async fn local_failure_and_late_reply_do_not_fabricate_loss_or_zero_rtt() {
 #[tokio::test]
 async fn task_binding_shared_consumers_pause_and_scope_revocation_are_exact() {
     let mut fixture = Fixture::open().await;
-    let snapshot = fixture.controls[0].netmap_snapshot().unwrap();
+    let snapshot = fixture.identity(0).snapshot().clone();
     let mut wrong = fixture.task.clone();
     wrong.instance_id = id();
     assert!(
@@ -450,7 +478,7 @@ async fn task_binding_shared_consumers_pause_and_scope_revocation_are_exact() {
             .synchronize(snapshot.clone(), &[wrong])
             .is_err()
     );
-    let peer = fixture.controls[1].netmap_snapshot().unwrap();
+    let peer = fixture.identity(1).snapshot().clone();
     assert!(
         fixture
             .owner
@@ -464,9 +492,7 @@ async fn task_binding_shared_consumers_pause_and_scope_revocation_are_exact() {
         Err(Error::Capacity)
     ));
     assert_eq!(fixture.owner.tasks.len(), 1);
-    let identity = fixture.controls[0]
-        .dataplane_identity(snapshot.clone())
-        .unwrap();
+    let identity = fixture.identity(0);
     let mut secure = SecureNode::new(identity, Default::default(), BTreeMap::new()).unwrap();
     assert!(
         fixture
@@ -516,7 +542,6 @@ async fn task_binding_shared_consumers_pause_and_scope_revocation_are_exact() {
     assert_eq!(surviving.netmap, snapshot.reference());
     fixture.controls[0]
         .report_observation_result(
-            &snapshot,
             &fixture.task,
             &ObservationResult {
                 instance_id: instance.instance_id,
@@ -534,6 +559,9 @@ async fn task_binding_shared_consumers_pause_and_scope_revocation_are_exact() {
     );
     fixture.owner.set_paused(&Default::default());
     fixture.controls[0].stop().await.unwrap();
+    assert!(fixture.controls[0].netmap().is_none());
+    // Control withdrew its netmap: Engine applies empty, ending every snapshot.
+    fixture.issuers[0].withdraw();
     assert_eq!(fixture.owner.outputs().count(), 0);
     assert!(
         fixture
@@ -576,9 +604,8 @@ async fn timed_out_admitted_send_has_one_loss_and_a_late_reply_cannot_revise_it(
 #[tokio::test]
 async fn local_target_denial_and_wrong_instance_do_not_fence_business_control() {
     let mut fixture = Fixture::open().await;
-    let snapshot = fixture.controls[0].netmap_snapshot().unwrap();
     let mut request = CreateNodeObservation {
-        instance: snapshot.instance().unwrap(),
+        instance: instance_of(&fixture.controls[0]),
         subscription_id: id(),
         target: NodeObservationTarget::Name {
             name: "missing-node".into(),
@@ -595,20 +622,20 @@ async fn local_target_denial_and_wrong_instance_do_not_fence_business_control() 
             .is_err()
     );
     assert!(fixture.controls[0].status().authenticated);
-    assert!(snapshot.ensure_current().is_ok());
+    assert!(fixture.controls[0].netmap().is_some());
     request.instance.instance_id = id();
     assert!(matches!(
         fixture.controls[0].create_node_observation(&request).await,
         Err(meshway_control::Error::Lifecycle)
     ));
-    assert!(snapshot.ensure_current().is_ok());
+    assert!(fixture.controls[0].netmap().is_some());
     fixture.close().await;
 }
 
 #[tokio::test]
 async fn preparing_high_water_replaces_same_snapshot_segment_and_cancels_old_publication() {
     let mut fixture = Fixture::open().await;
-    let snapshot = fixture.controls[0].netmap_snapshot().unwrap();
+    let snapshot = fixture.identity(0).snapshot().clone();
     let start = Instant::now();
     let (mid, challenge) = fixture.measurement(start);
     tokio::time::sleep(Duration::from_millis(10)).await;

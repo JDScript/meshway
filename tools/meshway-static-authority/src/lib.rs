@@ -192,7 +192,10 @@ impl StaticAuthority {
                 clock: clock.clone(),
                 lineage: Arc::downgrade(&lineage),
             })?;
-            let identity = DataPlaneIdentity::new(snapshot, material.signing, material.noise)?;
+            let identity = DataPlaneIdentity::new(
+                snapshot,
+                &meshway_authority::DataPlaneKeys::new(material.signing, material.noise),
+            )?;
             grants.insert(
                 id,
                 Grant {

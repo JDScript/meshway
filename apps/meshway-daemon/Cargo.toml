@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 meshway-authority = { path = "../../crates/meshway-authority" }
+meshway-engine = { path = "../../crates/meshway-engine" }
 chrono.workspace = true
 getrandom.workspace = true
 ipnet.workspace = true

@@ -21,7 +21,7 @@ async fn intermediary_status_and_resource_rejection_preserve_signed_authority() 
     let (mut control, binding, script) = enrolled(&server, &proxy, "http-rejections").await;
     let netmap = compiled(&binding, "http-rejections", None);
     script.push(Ok(full(&binding, &netmap, HOUR)));
-    let held = control.sync(&mut Facts::default()).await.unwrap().snapshot;
+    let held = control.sync(&mut Facts::default()).await.unwrap().netmap;
     for status in [401, 403, 404] {
         for error in [
             ClientError::Network {
@@ -34,8 +34,7 @@ async fn intermediary_status_and_resource_rejection_preserve_signed_authority() 
         ] {
             script.push(Err(error));
             assert!(control.sync(&mut Facts::default()).await.is_err());
-            held.ensure_current().unwrap();
-            assert!(control.netmap_snapshot().unwrap().same_netmap(&held));
+            assert_eq!(control.netmap().unwrap().lease, held.lease);
             control.authenticate().await.unwrap();
         }
     }
@@ -51,24 +50,28 @@ async fn intermediary_status_and_resource_rejection_preserve_signed_authority() 
         }),
     }));
     assert!(control.sync(&mut Facts::default()).await.is_err());
-    held.ensure_current().unwrap();
+    assert_eq!(control.netmap().unwrap().lease, held.lease);
     control.authenticate().await.unwrap();
     script.push(Err(identity_rejection()));
     assert!(control.sync(&mut Facts::default()).await.is_err());
-    assert!(held.ensure_current().is_err());
+    assert!(control.netmap().is_none());
     control.shutdown().await.unwrap();
     server.close().await;
 }
 
 #[tokio::test]
-async fn stale_signed_same_serial_lease_does_not_reissue_or_cancel_live_guards() {
+async fn stale_signed_same_serial_lease_does_not_replace_the_published_lease() {
     let server = Server::start().await;
     let proxy = Proxy::start(&server.origin).await;
     let (mut control, binding, script) = enrolled(&server, &proxy, "stale-lease").await;
     let netmap = compiled(&binding, "stale-lease", None);
     script.push(Ok(full(&binding, &netmap, HOUR)));
-    let held = control.sync(&mut Facts::default()).await.unwrap().snapshot;
-    let before = held.lease();
+    let before = control
+        .sync(&mut Facts::default())
+        .await
+        .unwrap()
+        .netmap
+        .lease;
     let mut stale = before;
     stale.issued_at_ms -= 1;
     script.push(Ok(signed(&binding, stale, SyncNetmap::Unchanged)));
@@ -76,9 +79,7 @@ async fn stale_signed_same_serial_lease_does_not_reissue_or_cancel_live_guards()
         control.sync(&mut Facts::default()).await,
         Err(Error::Contract)
     ));
-    assert_eq!(held.lease(), before);
-    assert!(control.netmap_snapshot().unwrap().same_netmap(&held));
-    held.ensure_current().unwrap();
+    assert_eq!(control.netmap().unwrap().lease, before);
     control.shutdown().await.unwrap();
     server.close().await;
 }

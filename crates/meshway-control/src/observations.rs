@@ -1,9 +1,9 @@
 //! Observation RPCs share the held-key Control session. A subscription response
 //! is feedback, never a permit: a task runs only while the source's own
 //! netmap decides it (`meshway_policy::compile::netmap::observation_paths`).
-use crate::{Control, Deadline, Error, ExecutionSnapshot, Started};
+use crate::{Control, Deadline, Error, Started};
 use meshway_control_client::{ClientError, *};
-use meshway_model::{Digest, ObservationSubscriptionId};
+use meshway_model::{Digest, NetmapRef, ObservationSubscriptionId};
 use meshway_policy::compile::netmap::observation_paths;
 use meshway_protocol::{observations::*, *};
 use std::collections::BTreeMap;
@@ -185,13 +185,13 @@ impl Control {
         Ok(())
     }
 
-    fn observation_scope(&self, snapshot: &ExecutionSnapshot) -> Result<(), Error> {
-        snapshot.ensure_current()?;
+    /// Observation results speak for the held, leased netmap `reference`.
+    fn observation_netmap(
+        &self,
+        reference: NetmapRef,
+    ) -> Result<std::sync::Arc<meshway_configuration::netmap::CompiledNetmap>, Error> {
         self.current_instance()?;
-        if !snapshot.same_netmap(&self.netmap_snapshot()?) {
-            return Err(Error::Expired);
-        }
-        Ok(())
+        self.held_netmap(reference)
     }
 
     /// Complete paths the current netmap lets this task measure. A task the
@@ -199,20 +199,16 @@ impl Control {
     /// assigned it on content the Node no longer holds.
     fn observation_permit(
         &self,
-        snapshot: &ExecutionSnapshot,
+        netmap: &meshway_configuration::netmap::CompiledNetmap,
         task: &ObservationTask,
     ) -> Result<Vec<Vec<meshway_model::NodeId>>, Error> {
         let explicit = match &task.selection {
             ObservationPath::Auto => None,
             ObservationPath::Explicit { path } => Some(path.as_slice()),
         };
-        let decided = observation_paths(
-            &snapshot.netmap()?.netmap,
-            task.target_node_id,
-            &task.service,
-            explicit,
-        )
-        .map_err(|_| Error::Expired)?;
+        let decided =
+            observation_paths(&netmap.netmap, task.target_node_id, &task.service, explicit)
+                .map_err(|_| Error::Expired)?;
         if !decided.observable
             || task
                 .path
@@ -463,12 +459,12 @@ impl Control {
 
     pub async fn get_observation_tasks(
         &mut self,
-        snapshot: &ExecutionSnapshot,
+        netmap: NetmapRef,
     ) -> Result<ObservationList, Error> {
-        self.observation_scope(snapshot)?;
+        self.observation_netmap(netmap)?;
         let result = self.client.get_node_tasks(self.token()?).await;
         let value = self.observation_response(result)?;
-        self.observation_scope(snapshot)?;
+        self.observation_netmap(netmap)?;
         if value.items.len() > LIMIT {
             return Err(Error::Contract);
         }
@@ -486,16 +482,13 @@ impl Control {
 
     pub async fn report_observation_result(
         &mut self,
-        snapshot: &ExecutionSnapshot,
         task: &ObservationTask,
         result: &ObservationResult,
     ) -> Result<ObservationTask, Error> {
-        self.observation_scope(snapshot)?;
+        let netmap = self.observation_netmap(result.netmap)?;
         self.observation_task(task)?;
-        let permitted = self.observation_permit(snapshot, task)?;
-        if result.instance_id != self.current_instance()?.instance_id
-            || result.netmap != snapshot.reference()
-        {
+        let permitted = self.observation_permit(&netmap, task)?;
+        if result.instance_id != self.current_instance()?.instance_id {
             return Err(Error::Contract);
         }
         if let ObservationUpdate::Sample {
@@ -531,7 +524,7 @@ impl Control {
             )
             .await;
         let value = self.observation_response(response)?;
-        self.observation_scope(snapshot)?;
+        self.observation_netmap(result.netmap)?;
         self.observation_task(&value)?;
         if value.id != task.id
             || value.target_node_id != task.target_node_id

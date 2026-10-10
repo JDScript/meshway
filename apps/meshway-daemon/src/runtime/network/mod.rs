@@ -1,7 +1,7 @@
-//! Local assembly only: Control owns authority, Host owns kernel state,
-//! Manager owns adjacency, and SecureNode owns IP flows and circuit crypto.
-//! The Control task installs each netmap snapshot it receives from `sync`;
-//! packets, ping and DNS are then decided locally on that netmap.
+//! Local assembly only: Control verifies and persists the signed netmap,
+//! Engine owns its lease and the single reconfiguration, Host owns kernel
+//! state, Manager owns adjacency, and SecureNode owns IP flows and circuit
+//! crypto. Packets, ping and DNS are decided locally on the desired netmap.
 #[cfg(any(target_os = "linux", test))]
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 mod diagnostics;
@@ -13,6 +13,8 @@ mod facts;
 #[cfg(target_os = "linux")]
 mod packets;
 mod peers;
+#[cfg(target_os = "linux")]
+mod plane;
 mod reporting;
 mod requirements;
 #[cfg(target_os = "linux")]
@@ -21,7 +23,7 @@ mod traversal;
 mod worker;
 
 use chrono::{DateTime, Utc};
-use meshway_authority::{DataPlaneIdentity, ExecutionSnapshot};
+use meshway_authority::DataPlaneKeys;
 use meshway_ipc::{DataPlane, Problem};
 use meshway_model::NetmapRef;
 use meshway_private_storage::Directory;
@@ -66,8 +68,10 @@ pub(super) fn capabilities() -> std::collections::BTreeMap<String, meshway_model
 pub(super) struct Report {
     pub plane: DataPlane,
     pub problem: Option<Problem>,
-    /// Snapshot of the installed netmap.
-    pub guard: Option<ExecutionSnapshot>,
+    /// Engine's installed desired content; `None` once withdrawn.
+    pub content: Option<Arc<meshway_configuration::netmap::CompiledNetmap>>,
+    /// Lease end of `content` as accepted by Engine; reporting only.
+    pub expires_at: Option<DateTime<Utc>>,
     pub dns_guard: Option<watch::Receiver<Option<meshway_dns::SystemDnsError>>>,
     /// Netmap whose installation this report describes.
     pub netmap: Option<NetmapRef>,
@@ -90,7 +94,8 @@ impl Report {
         Self {
             plane: DataPlane::Stopped,
             problem: None,
-            guard: None,
+            content: None,
+            expires_at: None,
             dns_guard: None,
             netmap: None,
             completion: None,
@@ -107,15 +112,12 @@ impl Report {
             observation_dependencies: Default::default(),
         }
     }
-    /// The installation is live: its netmap authority and DNS owner are current.
+    /// The installation is live: Engine holds its content and DNS is healthy.
     pub fn current(&self) -> bool {
         self.dns_guard
             .as_ref()
             .is_none_or(|guard| guard.has_changed().is_ok() && guard.borrow().is_none())
-            && self
-                .guard
-                .as_ref()
-                .is_some_and(|guard| guard.ensure_current().is_ok())
+            && self.content.is_some()
     }
     /// The netmap whose every required resource is installed.
     pub fn applied(&self) -> Option<NetmapRef> {
@@ -160,14 +162,23 @@ enum SampleError {
 #[derive(Clone)]
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 struct ObservationPlan {
-    snapshot: ExecutionSnapshot,
+    netmap: NetmapRef,
     tasks: Vec<meshway_protocol::observations::ObservationTask>,
+}
+
+/// What Control offers the Engine: the verified netmap, the keys its packet
+/// plane uses and the instance binding of State/receipts (not content).
+#[derive(Clone, Default)]
+pub(super) struct Offer {
+    pub netmap: Option<meshway_engine::Netmap>,
+    pub keys: Option<DataPlaneKeys>,
+    pub instance: Option<meshway_protocol::InstanceRequest>,
 }
 
 pub(super) struct Handle {
     observation_plans: watch::Sender<Option<ObservationPlan>>,
     commands: mpsc::Sender<Command>,
-    target: watch::Sender<Option<DataPlaneIdentity>>,
+    offers: watch::Sender<Offer>,
     pub report: watch::Receiver<Report>,
     pub requests: mpsc::Receiver<Request>,
     worker: tokio::task::JoinHandle<Result<(), Problem>>,
@@ -229,7 +240,7 @@ impl Handle {
             }
             let (commands, received) = mpsc::channel(8);
             let (observation_plans, plans_rx) = watch::channel(None);
-            let (target, targets) = watch::channel(None);
+            let (offer_sender, offers) = watch::channel(Offer::default());
             let report = reports.subscribe();
             let (reports, reporting) = reporting::channel(reports);
             let (gateway, requests) = mpsc::channel(16);
@@ -246,7 +257,7 @@ impl Handle {
                 tokio::runtime::Handle::current().block_on(worker::run(worker::Inputs {
                     host,
                     commands: received,
-                    targets,
+                    offers,
                     reports,
                     gateway,
                     dns,
@@ -259,7 +270,7 @@ impl Handle {
             Ok(Self {
                 observation_plans,
                 commands,
-                target,
+                offers: offer_sender,
                 report,
                 requests,
                 worker,
@@ -284,28 +295,26 @@ impl Handle {
         self.peers.sink()
     }
 
-    /// Offer the current netmap snapshot. Same content with the same instance
-    /// binding is not resent; the worker decides renewal, in-place update or
-    /// a fresh installation from the snapshot itself.
-    pub fn install(&self, identity: DataPlaneIdentity) {
-        self.target.send_if_modified(|current| {
-            let unchanged = current.as_ref().is_some_and(|old| {
-                old.snapshot().same_netmap(identity.snapshot())
-                    && old.snapshot().instance() == identity.snapshot().instance()
-                    && old.snapshot().ensure_current().is_ok()
-            });
+    /// Offer Control's current netmap, keys and instance. An unchanged
+    /// offer is not resent; Engine alone decides renewal or reconfiguration.
+    pub fn offer(&self, offer: Offer) {
+        self.offers.send_if_modified(|current| {
+            let unchanged = current
+                .netmap
+                .as_ref()
+                .map(|netmap| (netmap.content.reference(), netmap.lease))
+                == offer
+                    .netmap
+                    .as_ref()
+                    .map(|netmap| (netmap.content.reference(), netmap.lease))
+                && current.keys.is_some() == offer.keys.is_some()
+                && current.instance == offer.instance;
             if unchanged {
                 return false;
             }
-            *current = Some(identity);
+            *current = offer;
             true
         });
-    }
-
-    /// End the installed netmap: Control holds no authority.
-    pub fn revoke(&self) {
-        self.target
-            .send_if_modified(|current| current.take().is_some());
     }
 
     /// A receipt was delivered; the next State reflects it.
@@ -321,12 +330,12 @@ impl Handle {
     /// Server-assigned tasks for the installed netmap, replacing earlier ones.
     pub fn observation_tasks(
         &self,
-        snapshot: ExecutionSnapshot,
+        netmap: NetmapRef,
         tasks: Vec<meshway_protocol::observations::ObservationTask>,
     ) {
         self.observation_plans.send_if_modified(|current| {
             let same = current.as_ref().is_some_and(|plan| {
-                plan.snapshot.same_netmap(&snapshot)
+                plan.netmap == netmap
                     && plan.tasks.len() == tasks.len()
                     && plan.tasks.iter().zip(&tasks).all(|(a, b)| {
                         a.id == b.id
@@ -340,7 +349,7 @@ impl Handle {
             if same {
                 return false;
             }
-            *current = Some(ObservationPlan { snapshot, tasks });
+            *current = Some(ObservationPlan { netmap, tasks });
             true
         });
     }
@@ -352,7 +361,7 @@ impl Handle {
 
     pub async fn stop(&mut self, down: bool) -> Result<(), Problem> {
         self.observation_plans.send_replace(None);
-        self.target.send_replace(None);
+        self.offers.send_replace(Offer::default());
         let (reply, result) = oneshot::channel();
         self.commands
             .send(Command::Stop { down, reply })
@@ -362,7 +371,7 @@ impl Handle {
     }
 
     pub async fn shutdown(self, keep_sink: bool) -> Result<(), Problem> {
-        self.target.send_replace(None);
+        self.offers.send_replace(Offer::default());
         let _ = self.commands.send(Command::Shutdown { keep_sink }).await;
         self.worker.await.map_err(|_| Problem::Worker)?
     }
@@ -430,7 +439,7 @@ pub(super) async fn request(
                 _ = reply.closed() => return Ok(()),
                 result = tokio::time::timeout(
                     std::time::Duration::from_secs(5),
-                    control.report_observation_result(&output.snapshot, &output.task, &output.result),
+                    control.report_observation_result(&output.task, &output.result),
                 ) => result,
             };
             match result {

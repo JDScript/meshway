@@ -3,7 +3,6 @@ use crate::{
     signals::{Role, Signal, Signals},
     tls, wire,
 };
-use meshway_authority::ExecutionSnapshot;
 use meshway_control::Control;
 use meshway_dataplane::secure::SecureNode;
 use meshway_model::state::{Capability, StreamKind, TransportRole};
@@ -34,8 +33,15 @@ pub async fn run(cli: &Cli, role: Role) -> Result<()> {
     Ok(())
 }
 
-async fn sync(control: &mut Control) -> Result<ExecutionSnapshot> {
-    Ok(control.sync(&mut Facts).await?.snapshot)
+/// One sync, then the staged component identity for Control's verified netmap.
+async fn sync(control: &mut Control) -> Result<meshway_authority::DataPlaneIdentity> {
+    let netmap = control.sync(&mut Facts).await?.netmap;
+    Ok(meshway_authority::StagedIssuer::new()?.issue(
+        &netmap.content,
+        netmap.lease,
+        None,
+        &control.dataplane_keys()?,
+    )?)
 }
 
 struct Facts;
@@ -114,8 +120,8 @@ async fn run_control(
     if !matches!(signals.wait("go").await?, Signal::Go) {
         return Err("invalid configuration marker".into());
     }
-    let snapshot = sync(control).await?;
-    let configuration = snapshot.netmap()?.netmap.clone();
+    let identity = sync(control).await?;
+    let configuration = identity.snapshot().netmap()?.netmap.clone();
     let named = |name| {
         configuration
             .projection
@@ -162,11 +168,7 @@ async fn run_control(
             carrier,
         )?;
     }
-    let mut secure = SecureNode::new(
-        control.dataplane_identity(snapshot)?,
-        Default::default(),
-        carriers,
-    )?;
+    let mut secure = SecureNode::new(identity, Default::default(), carriers)?;
     let listener = wire::listen(&configuration).await?;
     let mut previous = None;
     let mut next = None;

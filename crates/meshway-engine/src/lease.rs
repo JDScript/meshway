@@ -6,6 +6,7 @@ use tokio::time::Instant;
 
 /// Control's verified and durably saved input. Signature verification remains
 /// at that boundary; Engine does not repeat it or send the lease to components.
+#[derive(Clone)]
 pub struct Netmap {
     pub content: Arc<CompiledNetmap>,
     pub lease: NetmapLease,

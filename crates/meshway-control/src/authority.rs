@@ -1,26 +1,12 @@
-//! Control is the production issuer of execution authority. Snapshots are
-//! issued only by `netmap` from verified, sealed content and its lease; the
-//! packet-plane keys are bound here to exactly such a snapshot.
+//! The packet-plane keys of this identity. They are bound to a netmap only
+//! by its consumer's comparison with the netmap's registered public keys.
 use crate::{Control, Error};
-use meshway_authority::{DataPlaneIdentity, ExecutionSnapshot};
+use meshway_authority::DataPlaneKeys;
 
 impl Control {
-    /// Packet-plane keys for exactly this owner's current netmap snapshot.
-    /// The key comparison against the registered binding happens inside the
-    /// identity.
-    pub fn dataplane_identity(
-        &self,
-        snapshot: ExecutionSnapshot,
-    ) -> Result<DataPlaneIdentity, Error> {
-        snapshot.ensure_current()?;
-        if !self.netmap_snapshot()?.same_netmap(&snapshot) {
-            return Err(Error::Contract);
-        }
+    pub fn dataplane_keys(&self) -> Result<DataPlaneKeys, Error> {
+        self.ready()?;
         let keys = self.record.keys.as_ref().ok_or(Error::Lifecycle)?;
-        Ok(DataPlaneIdentity::new(
-            snapshot,
-            keys.signing_key()?,
-            keys.noise_key()?,
-        )?)
+        Ok(DataPlaneKeys::new(keys.signing_key()?, keys.noise_key()?))
     }
 }

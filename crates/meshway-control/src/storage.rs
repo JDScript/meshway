@@ -224,7 +224,7 @@ impl Control {
         Ok(())
     }
 
-    /// Identity envelope write. Stops current execution authority first.
+    /// Identity envelope write. Withdraws the published lease first.
     pub(super) async fn persist(&mut self) -> Result<(), Error> {
         self.ready()?;
         self.invalidate_status_context();
@@ -242,10 +242,9 @@ impl Control {
         bytes: Zeroizing<Vec<u8>>,
     ) -> Result<(), Error> {
         self.ready()?;
+        // A cancelled caller leaves the outcome unknown: `dirty` then keeps
+        // every netmap, State and receipt output withheld until reopening.
         self.dirty = true;
-        // A cancelled caller leaves the outcome unknown: the fuse then cancels
-        // every netmap guard, as an error does below.
-        let fuse = self.netmap.fuse();
         let directory = Arc::clone(&self.directory);
         self.write = Some(tokio::task::spawn_blocking(move || {
             ensure_marker(&directory).map_err(|_| meshway_private_storage::Error::UnsafeStorage)?;
@@ -259,12 +258,9 @@ impl Control {
             .map_err(|_| Error::ReloadRequired)?;
         self.write.take();
         if let Err(error) = result {
-            // Unknown outcome: no snapshot may outlive it.
-            drop(fuse);
             self.revoke_netmap();
             return Err(error.into());
         }
-        fuse.disarm();
         self.dirty = false;
         Ok(())
     }

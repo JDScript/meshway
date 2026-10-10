@@ -1,17 +1,13 @@
-//! Netmap execution authority: the only state from which Control issues
-//! netmap snapshots. Session and instance leases never bound it; only the
-//! netmap lease, stop/down, key rotation, explicit identity rejection, a newer
-//! content and an unknown private-write outcome end it.
-use crate::{Control, Error, Started};
-use meshway_authority::{Deadline, ExecutionSnapshot, NetmapIssue, NetmapRenewal};
+//! The verified signed netmap and its lease. Control verifies, persists and
+//! publishes it; Engine owns the only expiry timer and every component state.
+//! Session and instance leases never bound it; stop/down, key rotation,
+//! explicit identity rejection, an unknown private-write outcome and a newer
+//! content replace it.
+use crate::{Control, Error};
 use meshway_configuration::netmap::CompiledNetmap;
 use meshway_model::{NetmapLease, NetmapRef};
 use meshway_protocol::{NetmapSignature, StateCursor};
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
-use tokio_util::sync::CancellationToken;
+use std::sync::Arc;
 
 pub(crate) mod store;
 mod sync;
@@ -24,105 +20,23 @@ pub use sync::{
 /// by this much, bounding writes to about one per hour of renewals.
 const PERSIST_STEP_MS: u64 = 60 * 60 * 1000;
 
+#[derive(Default)]
 pub(crate) struct State {
-    validity: Arc<AtomicBool>,
-    invalidated: CancellationToken,
-    lineage: Arc<()>,
-    /// Verified content for this identity: the delta base, with or without authority.
+    /// Verified content for this identity: the delta base, with or without a lease.
     base: Option<Arc<CompiledNetmap>>,
-    installed: Option<NetmapRenewal>,
+    /// Signed lease of `base` this identity may publish to Engine.
+    lease: Option<NetmapLease>,
     persisted_expiry: Option<u64>,
     facts: Option<StateCursor>,
-    /// Replaced whenever base, cursor or authority changes; a sync reply
-    /// started under another epoch is superseded.
-    epoch: Arc<()>,
-}
-
-impl Default for State {
-    fn default() -> Self {
-        Self {
-            validity: Arc::new(AtomicBool::new(true)),
-            invalidated: CancellationToken::new(),
-            lineage: Arc::new(()),
-            base: None,
-            installed: None,
-            persisted_expiry: None,
-            facts: None,
-            epoch: Arc::new(()),
-        }
-    }
-}
-
-impl State {
-    fn cancel_guards(&mut self) {
-        self.validity.store(false, Ordering::Release);
-        self.invalidated.cancel();
-        self.validity = Arc::new(AtomicBool::new(true));
-        self.invalidated = CancellationToken::new();
-        self.installed = None;
-        self.epoch = Arc::new(());
-    }
-
-    /// Cancels every current netmap guard if dropped before `disarm`.
-    pub(crate) fn fuse(&self) -> Fuse {
-        Fuse {
-            validity: Arc::clone(&self.validity),
-            invalidated: self.invalidated.clone(),
-            armed: true,
-        }
-    }
-
-    pub(crate) fn shutdown(&self) {
-        self.validity.store(false, Ordering::Release);
-        self.invalidated.cancel();
-    }
-
-    fn issue(
-        &self,
-        clock: &Arc<meshway_authority::Clock>,
-        netmap: Arc<CompiledNetmap>,
-        lease: NetmapLease,
-        deadline: Deadline,
-    ) -> Result<NetmapRenewal, Error> {
-        let (_, renewal) = ExecutionSnapshot::issue_netmap(NetmapIssue {
-            netmap,
-            lease,
-            deadline,
-            instance: None,
-            validity: Arc::clone(&self.validity),
-            invalidated: self.invalidated.clone(),
-            clock: Arc::clone(clock),
-            lineage: Arc::downgrade(&self.lineage),
-        })?;
-        Ok(renewal)
-    }
-}
-
-pub(crate) struct Fuse {
-    validity: Arc<AtomicBool>,
-    invalidated: CancellationToken,
-    armed: bool,
-}
-
-impl Fuse {
-    pub(crate) fn disarm(mut self) {
-        self.armed = false;
-    }
-}
-
-impl Drop for Fuse {
-    fn drop(&mut self) {
-        if self.armed {
-            self.validity.store(false, Ordering::Release);
-            self.invalidated.cancel();
-        }
-    }
+    /// Replaced whenever base, cursor or lease changes; a sync reply prepared
+    /// against another value is superseded.
+    exchange: Arc<()>,
 }
 
 impl Control {
     /// Restart path: a verified cache of this identity becomes the delta base;
-    /// when it carries a valid pinned-Server signature and its lease is still
-    /// live it is execution authority again without any Server contact.
+    /// with a valid pinned-Server signature its lease is published again
+    /// without any Server contact. Engine rejects it if it has expired.
     pub(crate) fn load_netmap(&mut self) -> Result<(), Error> {
         let Some(binding) = self.record.binding.as_ref() else {
             return Ok(());
@@ -135,64 +49,70 @@ impl Control {
         else {
             return Ok(());
         };
-        let netmap = Arc::new(netmap);
-        self.netmap.base = Some(Arc::clone(&netmap));
+        self.netmap.base = Some(Arc::new(netmap));
         if !authority || self.record.cache_blocked {
             return Ok(());
         }
         self.netmap.persisted_expiry = Some(lease.expires_at_ms);
-        if let Ok(deadline) =
-            Deadline::from_response(Started::now(&self.clock)?, lease.expires_at_ms)
-        {
-            self.netmap.installed = self.netmap.issue(&self.clock, netmap, lease, deadline).ok();
-        }
+        self.netmap.lease = Some(lease);
         Ok(())
     }
 
-    /// Stop every current netmap guard and start a new lineage. Verified
-    /// content stays as delta base; only a new sync response re-issues authority.
+    /// Withdraw the published lease. Verified content stays as delta base;
+    /// only a new signed sync response publishes a lease again.
     pub(crate) fn revoke_netmap(&mut self) {
-        self.netmap.cancel_guards();
-        self.netmap.lineage = Arc::new(());
+        self.netmap.lease = None;
+        self.netmap.exchange = Arc::new(());
     }
 
-    /// Current netmap snapshot, bound to the current instance when one is live.
-    /// Neither an absent session nor an expired instance ends it.
-    pub fn netmap_snapshot(&self) -> Result<ExecutionSnapshot, Error> {
-        self.ready()?;
-        let renewal = self.netmap.installed.as_ref().ok_or(Error::Lifecycle)?;
-        Ok(renewal.snapshot(self.current_instance().ok())?)
+    /// The verified netmap and its signed lease for Engine, unless that lease
+    /// has already ended on Control's clock. Engine owns the expiry timer;
+    /// Control never publishes an ended lease again.
+    pub fn netmap(&self) -> Option<meshway_engine::Netmap> {
+        self.ready().ok()?;
+        let lease = self.netmap.lease?;
+        if !lease.valid_at(self.clock.now().ok()?) {
+            return None;
+        }
+        Some(meshway_engine::Netmap {
+            content: self.netmap.base.clone()?,
+            lease,
+        })
     }
 
-    /// Verified content held, with or without authority; comparison data only.
+    /// Verified content held, with or without a lease; comparison data only.
     pub(crate) fn netmap_base(&self) -> Option<&Arc<CompiledNetmap>> {
         self.netmap.base.as_ref()
     }
 
-    /// Verified content held (the next sync base), with or without authority.
+    /// Verified content held (the next sync base), with or without a lease.
     pub fn netmap_reference(&self) -> Option<NetmapRef> {
         self.netmap.base.as_ref().map(|netmap| netmap.reference())
     }
 
-    /// Current lease of the installed netmap, if any authority is installed.
+    /// Published lease, while it has not ended on Control's clock.
     pub fn netmap_lease(&self) -> Option<NetmapLease> {
-        self.netmap
-            .installed
-            .as_ref()
-            .map(NetmapRenewal::lease)
-            .filter(|_| self.netmap_snapshot().is_ok())
+        self.netmap().map(|netmap| netmap.lease)
     }
 
-    /// Install verified content and its lease. Same content renews the lease
-    /// in place when the installed authority is live, otherwise re-issues it.
-    /// New content must have a larger serial; it cancels old guards (a new
-    /// lineage if the own identity changed), is saved, and only then issued.
+    /// The held content when it is exactly `reference` and its lease is live:
+    /// State, receipts, coordination and observations speak for it only then.
+    pub(crate) fn held_netmap(&self, reference: NetmapRef) -> Result<Arc<CompiledNetmap>, Error> {
+        self.netmap_lease()
+            .filter(|lease| lease.netmap == reference)
+            .ok_or(Error::Expired)?;
+        self.netmap.base.clone().ok_or(Error::Expired)
+    }
+
+    /// Install verified content and its lease. Same content replaces the lease
+    /// unless it was issued earlier than the published one (a stale signed
+    /// replay is not new authority). New content must have a larger serial;
+    /// it is saved before it is published.
     async fn install_netmap(
         &mut self,
         netmap: Arc<CompiledNetmap>,
         lease: NetmapLease,
         signature: &NetmapSignature,
-        deadline: Deadline,
     ) -> Result<NetmapChange, Error> {
         let reference = netmap.reference();
         let previous = self.netmap_reference();
@@ -204,47 +124,20 @@ impl Control {
             self.persist().await?;
         }
         let change = if previous == Some(reference) {
-            let base = self.netmap.base.clone().ok_or(Error::Lifecycle)?;
-            let renewed = match self.netmap.installed.as_ref() {
-                Some(renewal) => {
-                    // A signed but stale lease is not new authority, even if
-                    // the old lease has since expired. Never revive by replay.
-                    if lease.issued_at_ms < renewal.lease().issued_at_ms {
-                        return Err(Error::Contract);
-                    }
-                    match renewal.renew(lease, deadline.clone()) {
-                        Ok(()) => true,
-                        Err(meshway_authority::Error::Expired) => false,
-                        Err(error) => return Err(error.into()),
-                    }
-                }
-                None => false,
-            };
-            if renewed {
-                NetmapChange::Renewed
-            } else {
-                self.netmap.cancel_guards();
-                self.netmap.installed =
-                    Some(self.netmap.issue(&self.clock, base, lease, deadline)?);
-                NetmapChange::Reissued
+            if self
+                .netmap
+                .lease
+                .is_some_and(|old| lease.issued_at_ms < old.issued_at_ms)
+            {
+                return Err(Error::Contract);
             }
+            NetmapChange::Renewed
         } else {
-            if let Some(base) = &self.netmap.base {
-                let (old, new) = (&base.netmap, &netmap.netmap);
-                if old.self_.identity != new.self_.identity
-                    || old.self_.addresses != new.self_.addresses
-                    || old.self_.self_keys != new.self_.self_keys
-                {
-                    self.revoke_netmap();
-                }
-            }
-            self.netmap.cancel_guards();
             self.persist_netmap(&netmap, &lease, signature).await?;
             self.netmap.base = Some(Arc::clone(&netmap));
-            self.netmap.installed =
-                Some(self.netmap.issue(&self.clock, netmap, lease, deadline)?);
             NetmapChange::New { previous }
         };
+        self.netmap.lease = Some(lease);
         if !matches!(change, NetmapChange::New { .. })
             && self
                 .netmap
@@ -254,7 +147,7 @@ impl Control {
             let base = self.netmap.base.clone().ok_or(Error::Lifecycle)?;
             self.persist_netmap(&base, &lease, signature).await?;
         }
-        self.netmap.epoch = Arc::new(());
+        self.netmap.exchange = Arc::new(());
         Ok(change)
     }
 

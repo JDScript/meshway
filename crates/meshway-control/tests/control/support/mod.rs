@@ -158,7 +158,7 @@ pub async fn sync(
     control
         .sync(&mut NoFacts)
         .await
-        .map(|outcome| Some(outcome.snapshot.reference()))
+        .map(|outcome| Some(outcome.netmap.content.reference()))
 }
 
 /// Save receipt of the held netmap for the current instance.

@@ -125,7 +125,7 @@ async fn rotation_retires_execution_and_atomically_restores_new_identity_after_r
     let mut control = crate::support::udp_control(&server, &owner, &server.origin, "rotate").await;
     crate::support::sync(&mut control).await.unwrap();
     let original = control.status().binding.unwrap();
-    let execution = control.netmap_snapshot().unwrap();
+    assert!(control.netmap().is_some());
     let keys = control.rotate_keys().await.unwrap();
     assert_eq!(
         keys.control.generation,
@@ -137,7 +137,7 @@ async fn rotation_retires_execution_and_atomically_restores_new_identity_after_r
         original.keys.dataplane.public_key
     );
     assert!(!control.rotation_pending());
-    assert!(execution.ensure_current().is_err());
+    assert!(control.netmap().is_none());
     assert!(!control.status().authenticated);
     assert!(control.status().held.is_none());
     control.shutdown().await.unwrap();
@@ -153,7 +153,7 @@ async fn rotation_retires_execution_and_atomically_restores_new_identity_after_r
     control.authenticate().await.unwrap();
     control.acquire_instance(Default::default()).await.unwrap();
     crate::support::sync(&mut control).await.unwrap();
-    control.netmap_snapshot().unwrap().ensure_current().unwrap();
+    assert!(control.netmap().is_some());
     control.shutdown().await.unwrap();
     server.close().await;
 }

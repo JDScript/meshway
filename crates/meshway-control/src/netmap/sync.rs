@@ -4,12 +4,11 @@
 //! without holding it ([`SyncCall::send`]) and applied under it again
 //! ([`Control::finish_sync`]). The netmap part is checked against the request,
 //! verified (full), reconstructed and digest-checked (delta) or matched to the
-//! held content (unchanged), bound to this identity, saved and issued. Peer
-//! facts are passed through to a [`PeerFactsSink`] afterwards; they never
-//! reach a snapshot.
+//! held content (unchanged), bound to this identity, saved and published to
+//! Engine. Peer facts are passed through to a [`PeerFactsSink`] afterwards;
+//! they never become netmap content.
 use super::NetmapChange as Change;
-use crate::{Control, Error, Started};
-use meshway_authority::{Deadline, ExecutionSnapshot};
+use crate::{Control, Error};
 use meshway_configuration::netmap::{CompiledNetmap, apply_netmap_delta};
 use meshway_control_client::ClientError;
 use meshway_model::NetmapRef;
@@ -61,22 +60,18 @@ pub trait PeerFactsSink {
     fn apply(&mut self, netmap: NetmapRef, facts: PeerFactsDelta) -> Result<(), FactsRejected>;
 }
 
-/// What a successful sync did to the netmap authority.
+/// What a successful sync did to the held netmap.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NetmapChange {
-    /// New content (first installation or a larger serial). Old guards were
-    /// cancelled; consumers compare contents (`netmap_continuation_from`).
+    /// New content (first installation or a larger serial).
     New { previous: Option<NetmapRef> },
-    /// Same content, lease renewed in place: every live guard continues and
-    /// the new snapshot is `same_netmap` with the previous one.
+    /// Same content with a new lease. Engine extends its timer, or installs
+    /// the content again when the previous lease had already ended.
     Renewed,
-    /// Same content, but no live authority was installed (expired, revoked or
-    /// restarted with an expired cache): a fresh issue, not `same_netmap`.
-    Reissued,
 }
 
 pub struct SyncOutcome {
-    pub snapshot: ExecutionSnapshot,
+    pub netmap: meshway_engine::Netmap,
     pub change: NetmapChange,
     /// A facts delta was accepted by the sink.
     pub facts: bool,
@@ -87,15 +82,13 @@ pub struct SyncCall {
     transport: Arc<dyn SyncTransport>,
     token: Zeroizing<String>,
     request: SyncRequest,
-    started: Started,
-    epoch: Weak<()>,
+    exchange: Weak<()>,
 }
 
 /// The transport outcome of one call, to be applied by the same Control.
 pub struct SyncReply {
     request: SyncRequest,
-    started: Started,
-    epoch: Weak<()>,
+    exchange: Weak<()>,
     result: Result<SyncResponse, ClientError<ErrorResponse>>,
 }
 
@@ -114,8 +107,7 @@ impl SyncCall {
         .unwrap_or(Err(ClientError::Network { status: None }));
         SyncReply {
             request: self.request,
-            started: self.started,
-            epoch: self.epoch,
+            exchange: self.exchange,
             result,
         }
     }
@@ -140,8 +132,7 @@ impl Control {
             transport,
             token,
             request: self.sync_request(),
-            started: Started::now(&self.clock)?,
-            epoch: Arc::downgrade(&self.netmap.epoch),
+            exchange: Arc::downgrade(&self.netmap.exchange),
         })
     }
 
@@ -155,17 +146,17 @@ impl Control {
     /// Apply one reply. A reply prepared before any later installation, stop
     /// or revocation is superseded (`Error::Pending`) and changes nothing.
     /// Transport failures, timeouts, 5xx, 401 (session) and 409 keep the
-    /// netmap authority; 403/404 reject this identity and revoke it. A response
-    /// not signed by the pinned Server key is rejected (`SignatureInvalid`,
-    /// `ServerKeyMismatch`) without changing state or revoking the current,
-    /// itself verified, authority.
+    /// published lease; only a typed identity rejection withdraws it. A
+    /// response not signed by the pinned Server key is rejected
+    /// (`SignatureInvalid`, `ServerKeyMismatch`) without changing state or
+    /// withdrawing the current, itself verified, lease.
     pub async fn finish_sync(
         &mut self,
         reply: SyncReply,
         sink: &mut (dyn PeerFactsSink + Send),
     ) -> Result<SyncOutcome, Error> {
         self.ready()?;
-        if !Weak::ptr_eq(&reply.epoch, &Arc::downgrade(&self.netmap.epoch))
+        if !Weak::ptr_eq(&reply.exchange, &Arc::downgrade(&self.netmap.exchange))
             || reply.request != self.sync_request()
         {
             return Err(Error::Pending);
@@ -174,7 +165,7 @@ impl Control {
             Ok(response) => response,
             Err(error) => {
                 // Session/legacy handling is shared with every Node request;
-                // it never touches the netmap authority.
+                // only a typed identity rejection withdraws the lease.
                 return self.registered(Err(error));
             }
         };
@@ -196,10 +187,9 @@ impl Control {
         if !super::store::bound(&netmap, &response.lease, binding) {
             return Err(Error::Contract);
         }
-        let deadline = Deadline::from_response(reply.started, response.lease.expires_at_ms)?;
         let reference = netmap.reference();
         let change = self
-            .install_netmap(netmap, response.lease, &response.signature, deadline)
+            .install_netmap(netmap, response.lease, &response.signature)
             .await?;
         let mut facts = false;
         if let Some(delta) = response.peer_facts {
@@ -211,9 +201,9 @@ impl Control {
                 self.netmap.facts = None;
             }
         }
-        self.netmap.epoch = Arc::new(());
+        self.netmap.exchange = Arc::new(());
         Ok(SyncOutcome {
-            snapshot: self.netmap_snapshot()?,
+            netmap: self.netmap().ok_or(Error::Lifecycle)?,
             change,
             facts,
         })
@@ -239,13 +229,13 @@ fn terminal(error: &Error) -> bool {
 
 /// Drive the long poll until `stop`. The driver lock is held only to prepare
 /// and apply, never during the hold. Each successful sync publishes its
-/// snapshot; a revocation publishes `None`. Session loss re-authenticates;
+/// verified netmap; a withdrawal publishes `None`. Session loss re-authenticates;
 /// transport failures back off from 1 s doubling to 30 s. Identity rejection,
 /// storage that needs reopening and invalid configuration end the loop.
 pub async fn sync_loop(
     control: &tokio::sync::Mutex<Control>,
     sink: &mut (dyn PeerFactsSink + Send),
-    snapshots: &tokio::sync::watch::Sender<Option<ExecutionSnapshot>>,
+    netmaps: &tokio::sync::watch::Sender<Option<meshway_engine::Netmap>>,
     stop: &CancellationToken,
 ) -> Result<(), Error> {
     let mut backoff = BACKOFF_MIN;
@@ -287,12 +277,12 @@ pub async fn sync_loop(
                     if outcome.change == NetmapChange::Renewed && !outcome.facts {
                         idle = true;
                     }
-                    snapshots.send_replace(Some(outcome.snapshot));
+                    netmaps.send_replace(Some(outcome.netmap));
                 }
                 Err(Error::Pending) => {}
                 Err(error) => {
-                    if driver.netmap_snapshot().is_err() {
-                        snapshots.send_if_modified(|current| current.take().is_some());
+                    if driver.netmap().is_none() {
+                        netmaps.send_if_modified(|current| current.take().is_some());
                     }
                     if terminal(&error) {
                         return Err(error);

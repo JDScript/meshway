@@ -14,6 +14,7 @@ ed25519-dalek = { version = "2.2", default-features = false, features = ["std", 
 getrandom.workspace = true
 meshway-authority = { path = "../meshway-authority" }
 meshway-configuration = { path = "../meshway-configuration" }
+meshway-engine = { path = "../meshway-engine" }
 meshway-policy = { path = "../meshway-policy" }
 meshway-control-client = { path = "../meshway-control-client" }
 meshway-model = { path = "../meshway-model" }

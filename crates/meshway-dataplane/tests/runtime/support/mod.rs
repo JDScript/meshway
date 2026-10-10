@@ -38,6 +38,31 @@ pub struct Node {
     pub control: Control,
     /// Bindings committed by enrollment.
     pub keys: meshway_protocol::NodeKeyMetadata,
+    /// Staged migration: snapshots of Control's verified netmap.
+    pub issuer: meshway_authority::StagedIssuer,
+}
+
+impl Node {
+    /// The packet-plane identity for Control's currently published netmap.
+    pub fn identity(&mut self) -> meshway_authority::DataPlaneIdentity {
+        let netmap = self.control.netmap().unwrap();
+        let instance =
+            self.control
+                .status()
+                .instance
+                .map(|instance| meshway_protocol::InstanceRequest {
+                    instance_id: instance.instance_id,
+                    generation: instance.generation,
+                });
+        self.issuer
+            .issue(
+                &netmap.content,
+                netmap.lease,
+                instance,
+                &self.control.dataplane_keys().unwrap(),
+            )
+            .unwrap()
+    }
 }
 
 impl Server {
@@ -122,7 +147,7 @@ impl Server {
                 .timeout(Duration::from_secs(10)),
         )
         .unwrap();
-        assert!(control.netmap_snapshot().is_err());
+        assert!(control.netmap().is_none());
         let pending = control.begin_enrollment(hostname).await.unwrap();
         self.client
             .approve_device_authorization(
@@ -139,13 +164,14 @@ impl Server {
         control.poll_enrollment().await.unwrap();
         let enrolled = control.redeem_enrollment().await.unwrap();
         control.authenticate().await.unwrap();
-        assert!(control.netmap_snapshot().is_err());
+        assert!(control.netmap().is_none());
         control.acquire_instance(capabilities).await.unwrap();
-        assert!(control.netmap_snapshot().is_err());
+        assert!(control.netmap().is_none());
         Node {
             id: enrolled.node_id,
             control,
             keys: enrolled.keys,
+            issuer: meshway_authority::StagedIssuer::new().unwrap(),
         }
     }
 

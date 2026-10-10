@@ -94,11 +94,22 @@ async fn real_dispatcher_system_failover_keeps_ticket_authority_and_original_bud
     let server = support::Server::start().await;
     let mut control = server.real_control();
     server.enroll(&mut control).await;
-    let snapshot = control
+    control
         .sync(&mut meshway_netmap_fixture::Facts::default())
         .await
+        .unwrap();
+    let netmap = control.netmap().unwrap();
+    let snapshot = meshway_authority::StagedIssuer::new()
         .unwrap()
-        .snapshot;
+        .issue(
+            &netmap.content,
+            netmap.lease,
+            None,
+            &control.dataplane_keys().unwrap(),
+        )
+        .unwrap()
+        .snapshot()
+        .clone();
     let endpoints: Vec<SocketAddr> = vec![
         "192.0.2.53:53".parse().unwrap(),
         "192.0.2.54:53".parse().unwrap(),

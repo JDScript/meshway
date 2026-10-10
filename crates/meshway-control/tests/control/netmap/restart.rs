@@ -26,28 +26,23 @@ async fn known_identity_rejection_survives_restart_until_a_fresh_signed_sync() {
     let (mut control, binding, script) = enrolled(&server, &proxy, "rejected-cache").await;
     let netmap = compiled(&binding, "rejected-cache", None);
     script.push(Ok(full(&binding, &netmap, HOUR)));
-    let old = control.sync(&mut Facts::default()).await.unwrap().snapshot;
+    control.sync(&mut Facts::default()).await.unwrap();
     script.push(Err(super::review::identity_rejection()));
     assert!(control.sync(&mut Facts::default()).await.is_err());
-    assert!(old.ensure_current().is_err());
+    assert!(control.netmap().is_none());
     control.shutdown().await.unwrap();
     let path = server.path("rejected-cache");
     let mut restored = reopen(&path, &proxy.origin);
     assert_eq!(restored.netmap_reference(), Some(netmap.reference()));
-    assert!(restored.netmap_snapshot().is_err());
+    assert!(restored.netmap().is_none());
     restored.authenticate().await.unwrap();
     restored.set_sync_transport(script.clone());
     script.push(Ok(unchanged(&binding, &netmap, HOUR)));
-    restored
-        .sync(&mut Facts::default())
-        .await
-        .unwrap()
-        .snapshot
-        .ensure_current()
-        .unwrap();
+    restored.sync(&mut Facts::default()).await.unwrap();
+    assert!(restored.netmap().is_some());
     restored.shutdown().await.unwrap();
     let offline = reopen(&path, &proxy.origin);
-    offline.netmap_snapshot().unwrap().ensure_current().unwrap();
+    assert!(offline.netmap().is_some());
     offline.shutdown().await.unwrap();
     proxy.close().await;
     server.close().await;
@@ -60,7 +55,7 @@ async fn restart_loads_a_live_sealed_netmap_without_any_server_contact() {
     let (mut control, binding, script) = enrolled(&server, &proxy, "restart").await;
     let netmap = compiled(&binding, "restart", None);
     script.push(Ok(full(&binding, &netmap, HOUR)));
-    let before = control.sync(&mut Facts::default()).await.unwrap().snapshot;
+    let before = control.sync(&mut Facts::default()).await.unwrap().netmap;
     control.shutdown().await.unwrap();
     let path = server.path("restart");
     let origin = proxy.origin.clone();
@@ -99,11 +94,9 @@ async fn restart_loads_a_live_sealed_netmap_without_any_server_contact() {
     server.close().await;
 
     let restored = reopen(&copy, &origin);
-    let snapshot = restored.netmap_snapshot().unwrap();
-    assert_eq!(snapshot.reference(), netmap.reference());
-    assert_eq!(snapshot.expires_at_ms(), before.expires_at_ms());
-    assert!(!snapshot.same_netmap(&before) && before.ensure_current().is_err());
-    assert_eq!(snapshot.instance(), None);
+    let published = restored.netmap().unwrap();
+    assert_eq!(published.content.reference(), netmap.reference());
+    assert_eq!(published.lease, before.lease);
     assert!(!restored.status().authenticated);
     assert_eq!(restored.status().netmap.unwrap().netmap, netmap.reference());
     restored.shutdown().await.unwrap();
@@ -120,16 +113,16 @@ async fn expired_cache_is_only_a_delta_base_until_the_server_renews_it() {
     control.shutdown().await.unwrap();
     tokio::time::sleep(Duration::from_millis(400)).await;
     let mut restored = reopen(&server.path("expired"), &proxy.origin);
-    assert!(restored.netmap_snapshot().is_err());
+    assert!(restored.netmap().is_none());
     assert_eq!(restored.status().netmap, None);
     assert_eq!(restored.netmap_reference(), Some(netmap.reference()));
     restored.authenticate().await.unwrap();
     restored.set_sync_transport(script.clone());
     script.push(Ok(unchanged(&binding, &netmap, HOUR)));
     let outcome = restored.sync(&mut Facts::default()).await.unwrap();
-    assert_eq!(outcome.change, NetmapChange::Reissued);
+    assert_eq!(outcome.change, NetmapChange::Renewed);
     assert_eq!(script.requests()[1].netmap, Some(netmap.reference()));
-    outcome.snapshot.ensure_current().unwrap();
+    assert_eq!(restored.netmap().unwrap().lease, outcome.netmap.lease);
     restored.shutdown().await.unwrap();
     server.close().await;
 }
@@ -189,7 +182,7 @@ async fn forged_extended_or_altered_netmap_files_are_not_loaded() {
     for forged in forgeries {
         fs::write(&file, serde_json::to_vec(&forged).unwrap()).unwrap();
         let restored = reopen(&path, &proxy.origin);
-        assert!(restored.netmap_snapshot().is_err());
+        assert!(restored.netmap().is_none());
         assert_eq!(restored.netmap_reference(), None);
         // A derived cache never blocks the identity.
         assert_eq!(restored.status().binding.as_ref(), Some(&binding));
@@ -197,7 +190,7 @@ async fn forged_extended_or_altered_netmap_files_are_not_loaded() {
     }
     fs::write(&file, serde_json::to_vec(&original).unwrap()).unwrap();
     let restored = reopen(&path, &proxy.origin);
-    restored.netmap_snapshot().unwrap();
+    assert!(restored.netmap().is_some());
     restored.shutdown().await.unwrap();
     server.close().await;
 }
@@ -219,19 +212,19 @@ async fn format_1_cache_with_only_the_node_seal_is_a_delta_base_not_authority() 
     cache["format"] = "meshway-netmap-cache/1".into();
     fs::write(&file, serde_json::to_vec(&cache).unwrap()).unwrap();
     let mut restored = reopen(&path, &proxy.origin);
-    assert!(restored.netmap_snapshot().is_err());
+    assert!(restored.netmap().is_none());
     assert_eq!(restored.netmap_reference(), Some(netmap.reference()));
     restored.authenticate().await.unwrap();
     restored.set_sync_transport(script.clone());
     script.push(Ok(unchanged(&binding, &netmap, HOUR)));
     let outcome = restored.sync(&mut Facts::default()).await.unwrap();
-    assert_eq!(outcome.change, NetmapChange::Reissued);
+    assert_eq!(outcome.change, NetmapChange::Renewed);
     restored.shutdown().await.unwrap();
     // The first signed renewal rewrote the file as format 2 authority.
     let cache: serde_json::Value = serde_json::from_slice(&fs::read(&file).unwrap()).unwrap();
     assert_eq!(cache["format"], "meshway-netmap-cache/2");
     let restored = reopen(&path, &proxy.origin);
-    restored.netmap_snapshot().unwrap();
+    assert!(restored.netmap().is_some());
     restored.shutdown().await.unwrap();
     server.close().await;
 }

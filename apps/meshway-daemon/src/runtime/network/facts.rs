@@ -113,19 +113,10 @@ impl Report {
                 },
             );
         }
-        let Some(guard) = &self.guard else {
-            return state;
-        };
-        let Ok(netmap) = guard.netmap() else {
+        let (Some(netmap), Some(expiry)) = (&self.content, self.expires_at) else {
             return state;
         };
         let netmap = &netmap.netmap;
-        let Some(expiry) = i64::try_from(guard.expires_at_ms())
-            .ok()
-            .and_then(chrono::DateTime::from_timestamp_millis)
-        else {
-            return state;
-        };
         for link in &facts.links {
             let id = socket_key(&link.id);
             let socket_id = socket_key(&link.socket_id);

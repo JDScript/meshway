@@ -1,6 +1,7 @@
 //! Scoped cryptographic key operations for the Node's packet plane.
 use crate::{Error, ExecutionSnapshot};
 use ed25519_dalek::{Signer, SigningKey};
+use meshway_configuration::execution::TrustedNode;
 use meshway_model::{BoundNodeKey, Digest, KeyAlgorithm, NetworkId, NodeId, NodePublicKey};
 use std::{fmt, sync::Arc};
 use zeroize::Zeroizing;
@@ -8,6 +9,48 @@ use zeroize::Zeroizing;
 struct Material {
     signing: SigningKey,
     noise: Zeroizing<[u8; 32]>,
+}
+
+/// This Node's registered private packet-plane keys and their public halves.
+/// Never serializable or printable. They are not authority: a consumer uses
+/// them only for a netmap whose own registered keys they [`match`](Self::matches).
+#[derive(Clone)]
+pub struct DataPlaneKeys {
+    material: Arc<Material>,
+    control: NodePublicKey,
+    dataplane: NodePublicKey,
+}
+
+impl DataPlaneKeys {
+    pub fn new(signing: SigningKey, noise: Zeroizing<[u8; 32]>) -> Self {
+        let control = NodePublicKey {
+            algorithm: KeyAlgorithm::Ed25519,
+            bytes: Digest::from_bytes(signing.verifying_key().to_bytes()),
+        };
+        let dataplane = NodePublicKey {
+            algorithm: KeyAlgorithm::X25519,
+            bytes: Digest::from_bytes(
+                curve25519_dalek::montgomery::MontgomeryPoint::mul_base_clamped(*noise).to_bytes(),
+            ),
+        };
+        Self {
+            material: Arc::new(Material { signing, noise }),
+            control,
+            dataplane,
+        }
+    }
+
+    /// The netmap registered exactly these public halves for this Node.
+    pub fn matches(&self, keys: &TrustedNode) -> bool {
+        keys.control_key.public_key == self.control
+            && keys.dataplane_key.public_key == self.dataplane
+    }
+}
+
+impl fmt::Debug for DataPlaneKeys {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DataPlaneKeys").finish_non_exhaustive()
+    }
 }
 
 /// Key operations tied to the exact live execution handoff. Private material is
@@ -22,28 +65,12 @@ pub struct DataPlaneIdentity {
 impl DataPlaneIdentity {
     /// Bind private keys to a snapshot whose target registered exactly their
     /// public halves. The issuer separately proves the snapshot is its current one.
-    pub fn new(
-        snapshot: ExecutionSnapshot,
-        signing: SigningKey,
-        noise: Zeroizing<[u8; 32]>,
-    ) -> Result<Self, Error> {
+    pub fn new(snapshot: ExecutionSnapshot, keys: &DataPlaneKeys) -> Result<Self, Error> {
         let (_, _, self_keys) = snapshot.self_binding()?;
-        let control = NodePublicKey {
-            algorithm: KeyAlgorithm::Ed25519,
-            bytes: Digest::from_bytes(signing.verifying_key().to_bytes()),
-        };
-        let dataplane = NodePublicKey {
-            algorithm: KeyAlgorithm::X25519,
-            bytes: Digest::from_bytes(
-                curve25519_dalek::montgomery::MontgomeryPoint::mul_base_clamped(*noise).to_bytes(),
-            ),
-        };
-        if self_keys.control_key.public_key != control
-            || self_keys.dataplane_key.public_key != dataplane
-        {
+        if !keys.matches(self_keys) {
             return Err(Error::Contract);
         }
-        let material = Arc::new(Material { signing, noise });
+        let material = keys.material.clone();
         snapshot.ensure_current()?;
         Ok(Self { snapshot, material })
     }

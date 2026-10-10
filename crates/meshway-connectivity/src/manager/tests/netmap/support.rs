@@ -55,6 +55,8 @@ pub(in crate::manager) struct Netmaps {
     server: JoinHandle<()>,
     _temp: tempfile::TempDir,
     controls: Vec<Control>,
+    /// Staged migration: snapshots of each Control's verified netmap.
+    issuers: Vec<meshway_authority::StagedIssuer>,
     scripts: Vec<Arc<Script>>,
     bindings: Vec<EnrollmentResponse>,
     pub cfg: NetworkConfiguration,
@@ -250,6 +252,10 @@ impl Netmaps {
             stop,
             server,
             _temp: temp,
+            issuers: controls
+                .iter()
+                .map(|_| meshway_authority::StagedIssuer::new().unwrap())
+                .collect(),
             controls,
             scripts,
             bindings,
@@ -306,10 +312,30 @@ impl Netmaps {
                 validity_ms,
                 false,
             )));
-        let outcome = self.controls[index].sync(&mut NoFacts).await.unwrap();
-        self.identities[index] = self.controls[index]
-            .dataplane_identity(outcome.snapshot)
-            .unwrap();
+        self.controls[index].sync(&mut NoFacts).await.unwrap();
+        self.identities[index] = self.identity(index);
+    }
+
+    /// The packet-plane identity for Control's currently published netmap.
+    fn identity(&mut self, index: usize) -> DataPlaneIdentity {
+        let control = &self.controls[index];
+        let netmap = control.netmap().unwrap();
+        let instance =
+            control
+                .status()
+                .instance
+                .map(|instance| meshway_protocol::InstanceRequest {
+                    instance_id: instance.instance_id,
+                    generation: instance.generation,
+                });
+        self.issuers[index]
+            .issue(
+                &netmap.content,
+                netmap.lease,
+                instance,
+                &control.dataplane_keys().unwrap(),
+            )
+            .unwrap()
     }
 
     /// The reserved listener sockets, for one shared test factory.
@@ -384,10 +410,8 @@ impl Netmaps {
                 .lock()
                 .unwrap()
                 .push_back(Ok(meshway_netmap_fixture::reply(&netmap, HOUR, !same)));
-            let outcome = self.controls[index].sync(&mut NoFacts).await.unwrap();
-            let identity = self.controls[index]
-                .dataplane_identity(outcome.snapshot)
-                .unwrap();
+            self.controls[index].sync(&mut NoFacts).await.unwrap();
+            let identity = self.identity(index);
             if let Some(slot) = self.identities.get_mut(index) {
                 *slot = identity;
             } else {

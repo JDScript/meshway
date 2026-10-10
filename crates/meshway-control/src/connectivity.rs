@@ -1,6 +1,7 @@
 //! Validated, revocable UDP acquisition authority. Constructors stay with the
 //! single Control owner; State observations are inputs, never grants.
-use crate::{Control, Deadline, Error, ExecutionSnapshot, Started};
+use crate::{Control, Deadline, Error, Started};
+use meshway_authority::ExecutionSnapshot;
 use meshway_configuration::{execution::Carrier, netmap::NodeNetmap};
 use meshway_model::{NodeId, RequestId, StateEpoch, state::SocketNetwork};
 use meshway_policy::{admission::netmap::admit_adjacency, compile::netmap::LocalCompiler};
@@ -202,14 +203,12 @@ fn visible(netmap: &NodeNetmap, peer: NodeId) -> bool {
 }
 
 impl Control {
-    /// The snapshot is this owner's current netmap and an instance is live;
+    /// The snapshot is of this owner's held, leased netmap and an instance is live;
     /// returns that instance.
     fn connectivity_current(&self, snapshot: &ExecutionSnapshot) -> Result<InstanceRequest, Error> {
         self.token()?;
         snapshot.ensure_current()?;
-        if !self.netmap_snapshot()?.same_netmap(snapshot) {
-            return Err(Error::Expired);
-        }
+        self.held_netmap(snapshot.reference())?;
         self.current_instance()
     }
 

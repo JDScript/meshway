@@ -73,8 +73,34 @@ async fn netmap_query_capacity_cancellation_and_unsent_answer_deadlines_are_inde
     server.close().await;
 }
 
-#[derive(Default)]
-struct Script(StdMutex<VecDeque<SyncResponse>>);
+/// Scripted sync replies, and the staged issuer of this Control's snapshots.
+struct Script(
+    StdMutex<VecDeque<SyncResponse>>,
+    StdMutex<meshway_authority::StagedIssuer>,
+);
+impl Default for Script {
+    fn default() -> Self {
+        Self(
+            StdMutex::default(),
+            StdMutex::new(meshway_authority::StagedIssuer::new().unwrap()),
+        )
+    }
+}
+impl Script {
+    fn identity(&self, control: &Control) -> meshway_authority::DataPlaneIdentity {
+        let netmap = control.netmap().unwrap();
+        self.1
+            .lock()
+            .unwrap()
+            .issue(
+                &netmap.content,
+                netmap.lease,
+                None,
+                &control.dataplane_keys().unwrap(),
+            )
+            .unwrap()
+    }
+}
 impl SyncTransport for Script {
     fn sync<'a>(&'a self, _: &'a SyncRequest, _: &'a str) -> SyncFuture<'a> {
         let reply = self.0.lock().unwrap().pop_front();
@@ -307,7 +333,8 @@ async fn enrolled(server: &support::Server) -> (Control, Arc<Script>) {
 
 async fn sync(control: &mut Control, script: &Script, reply: SyncResponse) -> ExecutionSnapshot {
     script.0.lock().unwrap().push_back(reply);
-    control.sync(&mut Facts).await.unwrap().snapshot
+    control.sync(&mut Facts).await.unwrap();
+    script.identity(control).snapshot().clone()
 }
 
 fn named(name: &str) -> Query {
@@ -520,7 +547,7 @@ async fn exit_resolver_rejects_raw_addresses_even_when_the_source_is_in_its_plan
     // The same query with actual SecureNode proof reaches only the verified
     // system resolver. Both endpoint identities are issued by real Controls.
     let source_map = source_network.compile(None);
-    let source_snapshot = sync(&mut source, &source_script, reply(&source_map, true)).await;
+    sync(&mut source, &source_script, reply(&source_map, true)).await;
     let DnsPlan::ViaExit { service } = &source_map.netmap.dns.egress else {
         panic!("source DNS service");
     };
@@ -531,13 +558,13 @@ async fn exit_resolver_rejects_raw_addresses_even_when_the_source_is_in_its_plan
         protocol: meshway_configuration::TransportProtocol::NativeUdp,
     };
     let mut origin = meshway_dataplane::secure::SecureNode::new(
-        source.dataplane_identity(source_snapshot).unwrap(),
+        source_script.identity(&source),
         Default::default(),
         BTreeMap::from([(network.e, carrier.clone())]),
     )
     .unwrap();
     let mut exit = meshway_dataplane::secure::SecureNode::new(
-        control.dataplane_identity(snapshot).unwrap(),
+        script.identity(&control),
         Default::default(),
         BTreeMap::from([(network.a, carrier.clone())]),
     )

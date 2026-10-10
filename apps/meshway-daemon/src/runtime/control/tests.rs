@@ -87,7 +87,18 @@ async fn live_tun_owner_conflict_retries_and_recovers_without_new_up() {
     control.poll_enrollment().await.unwrap();
     control.redeem_enrollment().await.unwrap();
     control.authenticate().await.unwrap();
-    let snapshot = control.sync(&mut Facts).await.unwrap().snapshot;
+    let netmap = control.sync(&mut Facts).await.unwrap().netmap;
+    let snapshot = meshway_authority::StagedIssuer::new()
+        .unwrap()
+        .issue(
+            &netmap.content,
+            netmap.lease,
+            None,
+            &control.dataplane_keys().unwrap(),
+        )
+        .unwrap()
+        .snapshot()
+        .clone();
 
     let owner_directory = Arc::new(
         meshway_private_storage::Directory::open(&root.join("owner"), "owner.lock").unwrap(),

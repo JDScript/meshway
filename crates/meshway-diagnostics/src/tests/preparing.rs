@@ -60,25 +60,22 @@ async fn ready_channel_and_handshake_events_start_direct_and_relay_probes_withou
             carriers[index].insert(edge[1], carrier.clone());
             carriers[index + 1].insert(edge[0], carrier);
         }
-        let mut nodes: Vec<_> = path
-            .iter()
-            .zip(&carriers)
-            .map(|(node, carriers)| {
-                let control = fixture
-                    .controls
-                    .iter()
-                    .find(|control| control.status().binding.unwrap().node_id == *node)
-                    .unwrap();
+        let mut nodes = Vec::new();
+        for (node, carriers) in path.iter().zip(&carriers) {
+            let index = fixture
+                .controls
+                .iter()
+                .position(|control| control.status().binding.unwrap().node_id == *node)
+                .unwrap();
+            nodes.push(
                 SecureNode::new(
-                    control
-                        .dataplane_identity(control.netmap_snapshot().unwrap())
-                        .unwrap(),
+                    fixture.identity(index),
                     Default::default(),
                     carriers.clone(),
                 )
-                .unwrap()
-            })
-            .collect();
+                .unwrap(),
+            );
+        }
         // Initial installation may precede authenticated adjacency. It neither
         // manufactures a measurement nor schedules a periodic acquisition poll.
         assert!(
@@ -121,12 +118,10 @@ async fn ready_channel_and_handshake_events_start_direct_and_relay_probes_withou
         // belonging to the original task's exact (CID, measurement, challenge).
         let mut idle = fixture.task.clone();
         idle.id = meshway_model::ObservationId::new(uuid::Uuid::from_u128(1)).unwrap();
+        let snapshot = fixture.identity(0).snapshot().clone();
         fixture
             .owner
-            .synchronize(
-                fixture.controls[0].netmap_snapshot().unwrap(),
-                &[idle.clone(), fixture.task.clone()],
-            )
+            .synchronize(snapshot, &[idle.clone(), fixture.task.clone()])
             .unwrap();
         assert!(
             fixture
@@ -164,14 +159,13 @@ async fn ready_channel_and_handshake_events_start_direct_and_relay_probes_withou
         // and the Server's history transaction. History cannot discard the
         // task's already-approved complete path or reject every path sample.
         let output = fixture.owner.outputs().next().unwrap().clone();
-        let snapshot = fixture.controls[0].netmap_snapshot().unwrap();
         let accepted = fixture.controls[0]
-            .report_observation_result(&snapshot, &fixture.task, &output.result)
+            .report_observation_result(&fixture.task, &output.result)
             .await
             .unwrap();
         assert_eq!(accepted.latest.as_ref(), Some(fixture.sample()));
         let replay = fixture.controls[0]
-            .report_observation_result(&snapshot, &fixture.task, &output.result)
+            .report_observation_result(&fixture.task, &output.result)
             .await
             .unwrap();
         assert_eq!(replay.latest, accepted.latest);
@@ -187,12 +181,10 @@ async fn ready_channel_and_handshake_events_start_direct_and_relay_probes_withou
         );
         let next = fixture.owner.tasks[&fixture.task.id].next;
         fixture.owner.suspend();
+        let snapshot = fixture.identity(0).snapshot().clone();
         fixture
             .owner
-            .synchronize(
-                fixture.controls[0].netmap_snapshot().unwrap(),
-                std::slice::from_ref(&fixture.task),
-            )
+            .synchronize(snapshot, std::slice::from_ref(&fixture.task))
             .unwrap();
         assert_eq!(
             fixture.owner.tasks[&fixture.task.id].next, next,

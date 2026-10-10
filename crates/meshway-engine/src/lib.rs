@@ -21,50 +21,52 @@ mod tests;
 
 /// Immutable desired inputs, built once for a content reference. Consumers
 /// borrow the same projection/compiler; per-flow policy results stay lazy.
+/// Cloning shares both.
+#[derive(Clone)]
 pub struct Desired {
-    reference: NetmapRef,
-    netmap: Arc<NodeNetmap>,
+    content: Arc<CompiledNetmap>,
     compiler: Arc<LocalCompiler>,
 }
 
 impl Desired {
-    fn new(netmap: &CompiledNetmap) -> Result<Self, Error> {
-        netmap.verify().map_err(|_| Error::Content)?;
-        let reference = netmap.reference();
-        let netmap = netmap.netmap.clone();
-        let compiler = Arc::new(LocalCompiler::from_shared(netmap.clone()));
+    fn new(content: &Arc<CompiledNetmap>) -> Result<Self, Error> {
+        content.verify().map_err(|_| Error::Content)?;
+        let compiler = Arc::new(LocalCompiler::from_shared(content.netmap.clone()));
         Ok(Self {
-            reference,
-            netmap,
+            content: content.clone(),
             compiler,
         })
     }
 
     pub fn reference(&self) -> NetmapRef {
-        self.reference
+        self.content.reference()
+    }
+    /// Verified content, shared with Control's cache.
+    pub fn content(&self) -> &Arc<CompiledNetmap> {
+        &self.content
     }
     pub fn netmap(&self) -> &Arc<NodeNetmap> {
-        &self.netmap
+        &self.content.netmap
     }
     pub fn compiler(&self) -> &Arc<LocalCompiler> {
         &self.compiler
     }
     pub fn local(&self) -> &NetmapSelf {
-        &self.netmap.self_
+        &self.content.netmap.self_
     }
     /// Candidate order/topology/keepalive are evaluated by the shared compiler
     /// on this projection, never inferred from observed peer availability.
     pub fn dialers(&self) -> &BTreeMap<String, DialCandidate> {
-        &self.netmap.dialers
+        &self.content.netmap.dialers
     }
     pub fn egress(&self) -> Option<&EgressPlan> {
-        self.netmap.egress.as_ref()
+        self.content.netmap.egress.as_ref()
     }
     pub fn exit_role(&self) -> Option<&ExitRole> {
-        self.netmap.exit_role.as_ref()
+        self.content.netmap.exit_role.as_ref()
     }
     pub fn dns(&self) -> &NetmapDns {
-        &self.netmap.dns
+        &self.content.netmap.dns
     }
 }
 
@@ -115,6 +117,18 @@ impl<C: Components> Engine<C> {
         self.desired.as_ref()
     }
 
+    /// Mechanisms between reconfigurations: packet, adjacency and DNS work
+    /// borrow the components exclusively, so it cannot interleave with apply.
+    pub fn components(&self) -> &C {
+        &self.components
+    }
+    pub fn components_mut(&mut self) -> &mut C {
+        &mut self.components
+    }
+    pub fn into_components(self) -> C {
+        self.components
+    }
+
     /// Sole execution transition. Control has already verified the signature
     /// and identity binding. Renewing live content changes only this owner's
     /// timer; an expired engine must first apply empty, then install anew.
@@ -131,12 +145,12 @@ impl<C: Components> Engine<C> {
         }
         if let (Some(current), Some(next)) = (&self.desired, netmap) {
             let reference = next.content.reference();
-            if current.reference == reference {
+            if current.reference() == reference {
                 self.latest = Some(next.lease);
                 self.lease = active;
                 return Ok(());
             }
-            if current.reference.serial >= reference.serial {
+            if current.reference().serial >= reference.serial {
                 return Err(Error::Reference);
             }
         }
@@ -192,21 +206,21 @@ impl<C: Components> Engine<C> {
     }
 
     async fn apply(&mut self, desired: Option<&Desired>) -> Result<(), Error> {
-        // Remove inadmissible packet state before changing physical resources.
-        // Packet processing cannot interleave with this exclusive borrow.
-        let packets = self.components.apply_packets(desired).await;
         if desired.is_some() {
-            packets?;
+            // Packet processing cannot interleave with this exclusive borrow,
+            // so physical owners come first: capture/TUN, then adjacency, then
+            // the flows/circuits narrowed to the new content, then DNS answers.
+            self.components.apply_host(desired).await?;
+            self.components.apply_adjacencies(desired).await?;
+            self.components.apply_packets(desired).await?;
+            return self.components.apply_dns(desired).await;
         }
-        let adjacencies = self.components.apply_adjacencies(desired).await;
-        if desired.is_some() {
-            adjacencies?;
-        }
-        let host = self.components.apply_host(desired).await;
-        if desired.is_some() {
-            host?;
-        }
-        let dns = self.components.apply_dns(desired).await;
+        // Withdrawal: inadmissible packet state and queued output end before
+        // physical resources change. Every owner is attempted.
+        let packets = self.components.apply_packets(None).await;
+        let adjacencies = self.components.apply_adjacencies(None).await;
+        let host = self.components.apply_host(None).await;
+        let dns = self.components.apply_dns(None).await;
         packets.and(adjacencies).and(host).and(dns)
     }
 }

@@ -8,7 +8,6 @@
 mod authority;
 pub mod connectivity;
 mod runtime;
-use meshway_authority::ExecutionSnapshot;
 pub use runtime::ApplicationTicket;
 mod enrollment;
 mod identity;
@@ -108,8 +107,7 @@ impl From<meshway_authority::Error> for Error {
     }
 }
 
-/// Public facts only. A held netmap is execution authority only while its
-/// lease is current (`netmap`).
+/// Public facts only. `netmap` is the published lease while it has not ended.
 #[derive(Clone, Debug)]
 pub struct Status {
     /// Locally durable intent ID; it may still await successful Server creation.
@@ -119,7 +117,7 @@ pub struct Status {
     pub instance: Option<InstanceLease>,
     /// Verified netmap content held (the next sync base), with or without authority.
     pub held: Option<NetmapRef>,
-    /// Lease of the installed netmap authority, if any.
+    /// Published signed lease of the held netmap, while it has not ended.
     pub netmap: Option<NetmapLease>,
     pub reload_required: bool,
 }
@@ -251,7 +249,8 @@ impl Control {
             context_validity: Arc::clone(&self.context_validity),
             session: self.session.as_ref().map(|s| s.deadline.clone()),
             instance: self.instance.as_ref().map(|i| i.deadline.clone()),
-            netmap: self.netmap_snapshot().ok(),
+            netmap: self.netmap_lease(),
+            clock: Arc::clone(&self.clock),
         }
     }
 
@@ -368,7 +367,8 @@ impl Control {
     }
 
     /// Stop local control authority before sending the release. Failure or
-    /// cancellation of that request cannot make the local instance live again.
+    /// cancellation of that request cannot make the local instance live again
+    /// or publish the withdrawn lease.
     pub async fn stop(&mut self) -> Result<(), Error> {
         let instance = self
             .instance
@@ -441,7 +441,8 @@ pub struct StatusSnapshot {
     context_validity: Arc<AtomicBool>,
     session: Option<Deadline>,
     instance: Option<Deadline>,
-    netmap: Option<ExecutionSnapshot>,
+    netmap: Option<NetmapLease>,
+    clock: Arc<Clock>,
 }
 impl StatusSnapshot {
     pub fn status(&self) -> Status {
@@ -451,18 +452,16 @@ impl StatusSnapshot {
         if !value.authenticated || !self.instance.as_ref().is_some_and(Deadline::valid) {
             value.instance = None;
         }
+        let now = self.clock.now().ok();
         value.netmap = self
             .netmap
-            .as_ref()
-            .filter(|snapshot| snapshot.ensure_current().is_ok())
-            .map(ExecutionSnapshot::lease);
+            .filter(|lease| now.is_some_and(|now| lease.valid_at(now)));
         value
     }
 }
 impl Drop for Control {
     fn drop(&mut self) {
         self.context_validity.store(false, Ordering::Release);
-        self.netmap.shutdown();
     }
 }
 

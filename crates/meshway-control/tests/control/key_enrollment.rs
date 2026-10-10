@@ -102,14 +102,7 @@ async fn access_key_enrollment_recovers_lost_commit_without_browser_credentials(
     control.acquire_instance(Default::default()).await.unwrap();
     crate::support::sync(&mut control).await.unwrap();
     assert!(matches!(
-        control
-            .netmap_snapshot()
-            .unwrap()
-            .netmap()
-            .unwrap()
-            .netmap
-            .self_
-            .identity,
+        control.netmap().unwrap().content.netmap.self_.identity,
         meshway_configuration::NodeIdentity::Tag { .. }
     ));
     control.shutdown().await.unwrap();

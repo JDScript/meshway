@@ -148,9 +148,9 @@ impl Control {
             Ok(()) => (ReceiptPhase::Applied, None),
             Err(failure) => (ReceiptPhase::Failed, Some(failure)),
         };
-        if phase == ReceiptPhase::Applied && self.netmap_snapshot()?.reference() != *ticket.netmap()
-        {
-            return Err(Error::Lifecycle);
+        if phase == ReceiptPhase::Applied {
+            self.held_netmap(*ticket.netmap())
+                .map_err(|_| Error::Lifecycle)?;
         }
         let request = {
             let mut completion = ticket.0.completion.lock().map_err(|_| Error::Lifecycle)?;
@@ -225,10 +225,8 @@ impl Control {
         {
             return Err(Error::Contract);
         }
-        if let Some(applied) = &state.configuration.applied
-            && self.netmap_snapshot()?.reference() != *applied
-        {
-            return Err(Error::Contract);
+        if let Some(applied) = &state.configuration.applied {
+            self.held_netmap(*applied)?;
         }
         self.report_sequence = self
             .report_sequence

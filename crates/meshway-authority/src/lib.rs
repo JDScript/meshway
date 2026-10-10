@@ -10,10 +10,12 @@
 mod clock;
 mod identity;
 mod snapshot;
+mod staged;
 
 pub use clock::{Clock, Deadline, Started};
-pub use identity::{DataPlaneIdentity, packet_proof_message};
+pub use identity::{DataPlaneIdentity, DataPlaneKeys, packet_proof_message};
 pub use snapshot::{ExecutionSnapshot, NetmapIssue, NetmapReading, NetmapRenewal};
+pub use staged::StagedIssuer;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum Error {

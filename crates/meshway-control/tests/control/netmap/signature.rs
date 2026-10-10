@@ -25,7 +25,7 @@ async fn tampered_digest_lease_signature_key_or_node_are_rejected_without_state_
     let (mut control, binding, script) = enrolled(&server, &proxy, "tamper").await;
     let first = compiled(&binding, "tamper", None);
     script.push(Ok(full(&binding, &first, HOUR)));
-    let current = control.sync(&mut Facts::default()).await.unwrap().snapshot;
+    let current = control.sync(&mut Facts::default()).await.unwrap().netmap;
     let held = control.netmap_lease();
     let next = compiled(&binding, "tamper-two", Some(&first));
 
@@ -91,10 +91,9 @@ async fn tampered_digest_lease_signature_key_or_node_are_rejected_without_state_
     ));
 
     // The verified authority is untouched and still renews normally.
-    current.ensure_current().unwrap();
     assert_eq!(control.netmap_lease(), held);
     assert_eq!(control.netmap_reference(), Some(first.reference()));
-    assert!(control.netmap_snapshot().unwrap().same_netmap(&current));
+    assert_eq!(control.netmap().unwrap().lease, current.lease);
     script.push(Ok(full(&binding, &next, HOUR)));
     control.sync(&mut Facts::default()).await.unwrap();
     assert_eq!(control.netmap_reference(), Some(next.reference()));
@@ -128,7 +127,7 @@ async fn unpinned_binding_accepts_no_netmap() {
         rejects(&mut control, &script, response).await,
         Error::SignatureInvalid
     ));
-    assert!(control.netmap_snapshot().is_err());
+    assert!(control.netmap().is_none());
     assert_eq!(control.netmap_reference(), None);
     assert!(!server.path("unpinned").join("netmap.json").exists());
     control.shutdown().await.unwrap();

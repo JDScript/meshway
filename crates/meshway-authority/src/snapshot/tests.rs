@@ -304,16 +304,14 @@ fn instance_binding_is_optional_and_packet_keys_bind_to_the_netmap() {
     assert!(bound.same_netmap(&snapshot));
     let identity = DataPlaneIdentity::new(
         snapshot.clone(),
-        SigningKey::from_bytes(&[4; 32]),
-        Zeroizing::new(NOISE),
+        &crate::DataPlaneKeys::new(SigningKey::from_bytes(&[4; 32]), Zeroizing::new(NOISE)),
     )
     .unwrap();
     identity.sign_packet(Digest::from_bytes([1; 32])).unwrap();
     assert!(
         DataPlaneIdentity::new(
             snapshot,
-            SigningKey::from_bytes(&[3; 32]),
-            Zeroizing::new(NOISE)
+            &crate::DataPlaneKeys::new(SigningKey::from_bytes(&[3; 32]), Zeroizing::new(NOISE)),
         )
         .is_err()
     );

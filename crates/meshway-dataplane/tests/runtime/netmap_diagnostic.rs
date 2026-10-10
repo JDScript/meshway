@@ -67,7 +67,7 @@ async fn netmap_ping_is_local_and_runs_on_the_observable_path() {
     let mut f = NetmapMesh::start().await;
     let calls = f.sync_calls();
     let [_, _, b] = f.ids();
-    let snapshot = f.nodes[0].control.netmap_snapshot().unwrap();
+    let snapshot = f.nodes[0].identity().snapshot().clone();
     assert_eq!(
         diagnostic_paths(&snapshot, b, None).unwrap(),
         vec![f.path()]
@@ -111,7 +111,7 @@ async fn netmap_ping_denied_without_icmp_and_revocation_ends_the_circuit() {
     assert!(f.a.circuit_info(id).unwrap().is_none());
     let b = f.ids()[2];
     assert!(matches!(f.a.start_diagnostic(b, None), Err(Error::Policy)));
-    let snapshot = f.nodes[0].control.netmap_snapshot().unwrap();
+    let snapshot = f.nodes[0].identity().snapshot().clone();
     assert!(matches!(
         diagnostic_paths(&snapshot, b, None),
         Err(Error::Policy)
@@ -134,7 +134,7 @@ async fn netmap_ping_without_observable_path_is_unsupported_not_denied() {
         f.a.start_diagnostic(b, None),
         Err(Error::Unsupported)
     ));
-    let snapshot = f.nodes[0].control.netmap_snapshot().unwrap();
+    let snapshot = f.nodes[0].identity().snapshot().clone();
     assert!(matches!(
         diagnostic_paths(&snapshot, b, None),
         Err(Error::Unsupported)

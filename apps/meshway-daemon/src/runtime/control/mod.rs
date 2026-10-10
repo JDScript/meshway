@@ -1,9 +1,9 @@
 //! Drive the control owner. One `Control` sits behind a mutex: the `sync`
 //! long poll (`meshway_control::sync_loop`) holds it only to prepare and apply
 //! each exchange, while this task uses it for enrollment, instance, State,
-//! receipts, observation tasks and coordination requests. Every netmap
-//! snapshot the poll publishes is installed on the network owner; a held
-//! netmap is installed at once on start, before any Server contact.
+//! receipts, observation tasks and coordination requests. Every verified
+//! netmap the poll publishes is offered to the network owner's Engine; a held
+//! signed netmap is offered at once on start, before any Server contact.
 mod cycle;
 mod failure;
 #[cfg(all(test, target_os = "linux"))]
@@ -13,7 +13,6 @@ use super::{intent::Desired, network, status::Report};
 use crate::settings::Settings;
 use cycle::{Online, online};
 use failure::failure;
-use meshway_authority::ExecutionSnapshot;
 use meshway_control::{Control, Error};
 use meshway_ipc::{Phase, Problem};
 use meshway_model::{InstanceId, NetmapRef};
@@ -116,22 +115,23 @@ async fn wait_change(
     }
 }
 
-/// Install the current netmap snapshot on the network owner, or end the
-/// installed one when Control holds no authority.
+/// Offer Control's verified netmap, packet keys and instance binding to the
+/// network owner's Engine. Without a published lease Engine withdraws.
 fn offer(control: &Control, network: Option<&network::Handle>) {
     let Some(network) = network else {
         return;
     };
-    match control.netmap_snapshot() {
-        Ok(snapshot) => match control.dataplane_identity(snapshot) {
-            Ok(identity) => network.install(identity),
-            Err(error) => {
-                tracing::warn!(%error, "Netmap snapshot not bindable to packet keys");
-                network.revoke();
-            }
-        },
-        Err(_) => network.revoke(),
-    }
+    network.offer(network::Offer {
+        netmap: control.netmap(),
+        keys: control.dataplane_keys().ok(),
+        instance: control
+            .status()
+            .instance
+            .map(|instance| meshway_protocol::InstanceRequest {
+                instance_id: instance.instance_id,
+                generation: instance.generation,
+            }),
+    });
 }
 
 /// End of one up session.
@@ -605,8 +605,8 @@ async fn online_session(
     sync_status: &watch::Sender<SyncStatus>,
 ) -> Result<(), Option<Ended>> {
     let stop = CancellationToken::new();
-    let (snapshots, mut snapshot_rx) = watch::channel::<Option<ExecutionSnapshot>>(None);
-    snapshot_rx.borrow_and_update();
+    let (netmaps, mut netmap_rx) = watch::channel::<Option<meshway_engine::Netmap>>(None);
+    netmap_rx.borrow_and_update();
     let standalone = network::Peers::default();
     let mut sink = match network.as_deref() {
         Some(network) => network.peer_sink(),
@@ -616,7 +616,7 @@ async fn online_session(
         let shared = shared.clone();
         let stop = stop.clone();
         tokio::spawn(async move {
-            meshway_control::sync_loop(&shared, &mut sink, &snapshots, &stop).await
+            meshway_control::sync_loop(&shared, &mut sink, &netmaps, &stop).await
         })
     };
     sync_status.send_modify(|status| status.running = true);
@@ -641,13 +641,13 @@ async fn online_session(
                 publish(reported, plan, Some(&driver), Phase::Retrying, None, Some(failure.problem), None);
                 break Err(None);
             },
-            changed = snapshot_rx.changed() => {
+            changed = netmap_rx.changed() => {
                 if changed.is_err() {
                     continue;
                 }
-                let snapshot = snapshot_rx.borrow_and_update().clone();
+                let synced = netmap_rx.borrow_and_update().is_some();
                 let driver = shared.lock().await;
-                if snapshot.is_some() {
+                if synced {
                     sync_status.send_modify(|status| {
                         status.last_sync_at = Some(chrono::Utc::now());
                         status.last_sync = Some(std::time::Instant::now());
@@ -783,7 +783,7 @@ async fn maintain_once(
         work.renewed = Some(now);
         work.receipted = None;
         fresh = true;
-        // Bind the installed snapshot to the new instance; nothing reinstalls.
+        // State/receipt binding of the new instance; nothing reinstalls.
         offer(control, network.as_deref());
     } else if work.renewed.is_none_or(|at| now >= at + RENEW) {
         control
@@ -804,14 +804,14 @@ async fn maintain_once(
             work.reported = Some(now);
         }
         if work.tasks.is_none_or(|at| now >= at + TASKS)
-            && let Ok(snapshot) = control.netmap_snapshot()
+            && let Some(netmap) = control.netmap_lease().map(|lease| lease.netmap)
         {
             work.tasks = Some(now);
             let tasks = control
-                .get_observation_tasks(&snapshot)
+                .get_observation_tasks(netmap)
                 .await
                 .map_err(|error| ("get_observation_tasks", error))?;
-            network.observation_tasks(snapshot, tasks.items);
+            network.observation_tasks(netmap, tasks.items);
         }
     } else if fresh || work.reported.is_none_or(|at| now >= at + REPORT) {
         match control.report_control_state(settings.system.clone()).await {
