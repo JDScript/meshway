@@ -1562,13 +1562,13 @@ impl ControlBudget {
 }
 
 #[cfg(test)]
-mod tests {
+pub(in crate::manager) mod tests {
     use super::super::tests::{netmap::support::Netmaps, support::carriers};
     use super::*;
     use meshway_transport_udp::UdpTransport;
     use tokio::net::UdpSocket;
 
-    fn shared(
+    pub(in crate::manager) fn shared(
         desired: &Desired,
         keys: &DataPlaneKeys,
     ) -> (Arc<Shared>, super::super::events::Receiver) {

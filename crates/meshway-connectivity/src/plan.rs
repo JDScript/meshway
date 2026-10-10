@@ -31,6 +31,7 @@ struct Projection {
     compiler: Arc<meshway_policy::compile::netmap::LocalCompiler>,
     keepalive: BTreeSet<NodeId>,
     // Lazy per-content caches, bounded by the visible Nodes of this projection.
+    one_way: Mutex<BTreeMap<NodeId, bool>>,
     outgoing: Mutex<BTreeMap<NodeId, Arc<Vec<String>>>>,
     admitted: Mutex<BTreeMap<AdmissionKey, bool>>,
 }
@@ -110,16 +111,51 @@ impl Plan {
                 keepalive: keepalive_peers(netmap),
                 compiler: desired.compiler().clone(),
                 netmap: shared_netmap,
+                one_way: Mutex::default(),
                 outgoing: Mutex::default(),
                 admitted: Mutex::default(),
             },
         }))
     }
 
-    /// Resident regardless of interest: peers whose topology edge asks for
-    /// keepalive. Every other adjacency is acquired on demand.
-    pub fn keepalive(&self, peer: NodeId) -> bool {
-        self.projection.keepalive.contains(&peer)
+    /// Resident regardless of interest: the topology edge asks for keepalive,
+    /// or only one of the two Nodes can dial the other. A listener-only end
+    /// has no channel through which to express a need, so the end that can
+    /// dial holds the edge and the other keeps (and coordinates) it. Both
+    /// ends evaluate the same projection. Every other adjacency is acquired
+    /// on demand.
+    pub fn resident(&self, peer: NodeId) -> bool {
+        self.projection.keepalive.contains(&peer) || self.one_way(peer)
+    }
+
+    fn one_way(&self, peer: NodeId) -> bool {
+        let projection = &self.projection;
+        if peer == self.node || !self.peers.contains_key(&peer) {
+            return false;
+        }
+        if let Some(cached) = projection
+            .one_way
+            .lock()
+            .ok()
+            .and_then(|cache| cache.get(&peer).copied())
+        {
+            return cached;
+        }
+        let dials = |a, b| {
+            projection
+                .compiler
+                .carriers(a, b)
+                .map(|keys| !keys.is_empty())
+        };
+        // A compile error is not evidence of a one-way edge: on demand.
+        let one_way = match (dials(self.node, peer), dials(peer, self.node)) {
+            (Ok(out), Ok(back)) => out != back,
+            _ => false,
+        };
+        if let Ok(mut cache) = projection.one_way.lock() {
+            cache.insert(peer, one_way);
+        }
+        one_way
     }
 
     pub fn peers(&self) -> impl Iterator<Item = NodeId> + '_ {

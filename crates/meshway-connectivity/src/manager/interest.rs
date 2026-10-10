@@ -1,6 +1,7 @@
 //! On-demand adjacency for netmap authority. A peer worker acquires only while
-//! its peer is interested (or its edge is keepalive); a selected channel with
-//! no interest and no frames for `Limits::idle` is retired.
+//! its peer is interested (or its edge is resident, see `Plan::resident`); a
+//! selected channel with no interest and no frames for `Limits::idle` is
+//! retired.
 use super::*;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -143,11 +144,11 @@ impl AdjacencyInterest for Interest {
 impl Shared {
     /// Whether the peer worker should hold or acquire an adjacency now.
     pub(super) fn wanted(&self, peer: NodeId) -> bool {
-        self.plan().keepalive(peer) || self.interests.recent(peer, self.limits.idle)
+        self.plan().resident(peer) || self.interests.recent(peer, self.limits.idle)
     }
 }
 
-/// Retire selected channels that are neither keepalive, interested nor used.
+/// Retire selected channels that are neither resident, interested nor used.
 pub(super) async fn idle(shared: Arc<Shared>) {
     let period = (shared.limits.idle / 4).clamp(
         std::time::Duration::from_millis(25),
@@ -167,7 +168,7 @@ pub(super) async fn idle(shared: Arc<Shared>) {
         let expired: Vec<_> = links
             .iter()
             .filter(|(peer, link)| {
-                !plan.keepalive(**peer)
+                !plan.resident(**peer)
                     && now.saturating_sub(link.activity.last().max(shared.interests.last(**peer)))
                         >= idle
             })

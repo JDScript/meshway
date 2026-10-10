@@ -151,30 +151,36 @@ fn needs_acquisition(shared: &Shared, pending: &BTreeMap<UdpTraversalId, Pending
         {
             return false;
         }
-        plan.dialers.values().any(|dial| {
-            dial.peer == peer
-                && udp_carrier(
-                    plan,
-                    &Carrier {
-                        dialer: plan.node,
-                        listener: peer,
-                        listener_key: dial.listener_key.clone(),
-                        protocol: dial.parameters.transport(),
-                    },
-                )
-        }) || plan.listeners.iter().any(|(key, listener)| {
-            let (protocol, enabled) = provider::declaration(listener);
-            enabled
-                && udp_carrier(
-                    plan,
-                    &Carrier {
-                        dialer: peer,
-                        listener: plan.node,
-                        listener_key: key.clone(),
-                        protocol,
-                    },
-                )
-        })
+        udp_edge(plan, peer)
+    })
+}
+
+/// Whether `plan` admits a Native UDP carrier with `peer` in either
+/// direction: this Node may initiate coordination for it or be its target.
+fn udp_edge(plan: &Plan, peer: NodeId) -> bool {
+    plan.dialers.values().any(|dial| {
+        dial.peer == peer
+            && udp_carrier(
+                plan,
+                &Carrier {
+                    dialer: plan.node,
+                    listener: peer,
+                    listener_key: dial.listener_key.clone(),
+                    protocol: dial.parameters.transport(),
+                },
+            )
+    }) || plan.listeners.iter().any(|(key, listener)| {
+        let (protocol, enabled) = provider::declaration(listener);
+        enabled
+            && udp_carrier(
+                plan,
+                &Carrier {
+                    dialer: peer,
+                    listener: plan.node,
+                    listener_key: key.clone(),
+                    protocol,
+                },
+            )
     })
 }
 
@@ -192,7 +198,8 @@ fn needs_observation(shared: &Shared) -> bool {
 }
 
 /// A socket's mapping is refreshed only while it carries a healthy Native
-/// UDP channel or some wanted peer has a UDP carrier. The budget is unchanged.
+/// UDP channel or some wanted peer has a UDP carrier in either direction.
+/// The budget is unchanged.
 fn observation_wanted(shared: &Shared, id: &[u8; 32]) -> bool {
     let plan = shared.plan();
     let carrying = shared.links.lock().is_ok_and(|links| {
@@ -202,15 +209,11 @@ fn observation_wanted(shared: &Shared, id: &[u8; 32]) -> bool {
                 && link.scope.check().is_ok()
         })
     });
+    // A coordination target publishes its mapping as well as an initiator.
     carrying
-        || plan.peers().any(|peer| {
-            shared.wanted(peer)
-                && plan.outgoing(peer).is_ok_and(|candidates| {
-                    candidates.iter().any(|(_, dial)| {
-                        dial.parameters.transport() == TransportProtocol::NativeUdp
-                    })
-                })
-        })
+        || plan
+            .peers()
+            .any(|peer| shared.wanted(peer) && udp_edge(&plan, peer))
 }
 
 fn observation_due(shared: &Shared, id: &[u8; 32]) -> bool {
@@ -680,26 +683,14 @@ async fn prepare(
             }
         }
     }
-    // One coordinator (the logical dialer) prepares a given carrier. Both Nodes
-    // can discover/accept; physical listener ownership does not change roles.
+    // Either Node with a need prepares its own dialer carrier; the peer
+    // participates on reading the offer, without a need of its own. When both
+    // prepare at once the Server admits one live attempt per pair and address
+    // family, and the other Node accepts that offer instead.
     carriers.retain(|peer, _| {
-        let reverse = plan.listeners.iter().any(|(key, listener)| {
-            let (protocol, enabled) = provider::declaration(listener);
-            enabled
-                && udp_carrier(
-                    plan,
-                    &Carrier {
-                        dialer: *peer,
-                        listener: plan.node,
-                        listener_key: key.clone(),
-                        protocol,
-                    },
-                )
-        });
-        (!reverse || plan.node < *peer)
-            && !pending
-                .values()
-                .any(|pending| pending.offer.peer().candidate.socket.node_id == *peer)
+        !pending
+            .values()
+            .any(|pending| pending.offer.peer().candidate.socket.node_id == *peer)
             // Let the selected owner finish its retirement before a new acquisition.
             && !shared.links.lock().is_ok_and(|links| links.contains_key(peer))
     });
@@ -824,6 +815,36 @@ async fn prepare(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::manager::{datagram::tests::shared, tests::netmap::support::Netmaps};
+
+    #[tokio::test]
+    async fn a_listener_only_coordination_target_participates_without_interest() {
+        let mut fixture = Netmaps::start(false, false).await;
+        let ids = fixture.ids();
+        let quiet = |index: usize| {
+            let (shared, _) = shared(&fixture.desired[index], &fixture.keys[index]);
+            !needs_acquisition(&shared, &BTreeMap::new()) && !observation_wanted(&shared, &[0; 32])
+        };
+        // Every edge is dialable both ways: nobody coordinates without a need.
+        assert!(quiet(0) && quiet(1));
+        let b = ids[1];
+        fixture
+            .publish(|cfg| {
+                cfg.nodes.get_mut(&b).unwrap().dialers =
+                    meshway_configuration::Input::Value(Default::default())
+            })
+            .await;
+        // b can dial nobody: a's edge to b is resident, so a initiates and b,
+        // the target, queries for offers and publishes its mapping.
+        for index in [0, 1] {
+            let (shared, _) = shared(&fixture.desired[index], &fixture.keys[index]);
+            let peer = ids[1 - index];
+            assert!(shared.wanted(peer));
+            assert!(needs_acquisition(&shared, &BTreeMap::new()));
+            assert!(observation_wanted(&shared, &[0; 32]));
+        }
+        fixture.close().await;
+    }
 
     #[test]
     fn unneeded_queries_are_suppressed_and_churn_cannot_reset_the_budget() {

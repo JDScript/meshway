@@ -220,10 +220,9 @@ TUN 源包 → Packet::parse → 查唯一 FlowTable（已有流直接走原路�
 netmap 覆盖全部可达 peer，若“收到候选即建连”会变成全连接。建议改为本地需要驱动：
 
 - dataplane 在首包选路或中继收到经过本节点的握手时，向 Manager 登记 `AdjacencyInterest(peer)`；Manager 只对 `admit_adjacency` 允许的可见 peer 获取连接。
-- 无 circuit 且无 interest 的邻接空闲 120 秒后关闭；configured TCP／UDP 通道可按 topology 声明保持常驻（见[已决产品问题](#已决产品问题)）。
-- STUN 刷新只对存在 interest 或健康 Native UDP 通道的 socket 进行，预算（每 60 秒 30＋30 次）保持。
-
-这改变 [Topology](/v2/configuration-reference/topology) 现行“Node 收到候选即建立邻接、不等首包”的描述，需用户确认。
+- 无 circuit 且无 interest 的邻接空闲 120 秒后关闭；`keepalive` 边与只有一方能拨出的边常驻，定义见 [Topology · 邻接的建立与常驻](/v2/configuration-reference/topology#邻接的建立与常驻)。
+- 协调 UDP 穿透由任一有需求（或常驻）的一方以自己的拨号承载发起；同一 peer 对／地址族 Server 只接纳一个活动尝试，另一方读到 offer 即接受，不需要本机 interest。
+- STUN 刷新只对存在需求（interest 或常驻）且有 UDP 获准承载（任一方向）或健康 Native UDP 通道的 socket 进行，预算（每 60 秒 30＋30 次）保持。
 
 ## Control 快照模型
 

@@ -100,8 +100,10 @@ fn tcp_listener(address: SocketAddr) -> Listener {
 }
 
 impl Netmaps {
-    /// Nodes a, b, c. b and c listen on UDP (b with or without a configured
-    /// endpoint); `stream` makes b listen on Native TCP only and dial TCP.
+    /// Nodes a, b, c. All three listen on UDP (b with or without a configured
+    /// endpoint), so every edge is dialable both ways and on demand; `stream`
+    /// makes b the only (Native TCP) listener and every Node dial TCP, so
+    /// edges toward b are one-way and resident.
     pub async fn start(stream: bool, configured: bool) -> Self {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().canonicalize().unwrap();
@@ -188,6 +190,7 @@ impl Netmaps {
         let udp = [
             UdpSocket::bind("127.0.0.1:0").await.unwrap(),
             UdpSocket::bind("127.0.0.1:0").await.unwrap(),
+            UdpSocket::bind("127.0.0.1:0").await.unwrap(),
         ];
         let tcp = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let mut cfg = meshway_configuration::new_network(
@@ -219,10 +222,12 @@ impl Netmaps {
                 let key = if stream { "tcp" } else { "udp" };
                 listeners.insert(key.to_owned(), PreparedListener::prepare(listener).unwrap());
             }
-            if index == 2 && !stream {
+            if index != 1 && !stream {
+                // c on the second socket, a on the third.
+                let socket = &udp[if index == 2 { 1 } else { 2 }];
                 listeners.insert(
                     "udp".to_owned(),
-                    PreparedListener::prepare(udp_listener(udp[1].local_addr().unwrap(), true))
+                    PreparedListener::prepare(udp_listener(socket.local_addr().unwrap(), true))
                         .unwrap(),
                 );
             }

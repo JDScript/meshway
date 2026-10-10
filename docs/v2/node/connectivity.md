@@ -76,7 +76,7 @@ Server 的 STUN 监听与发布端点由 `--stun-listen`／`--stun-server` 分�
 
 Node 先在实际 UDP owner 预留 STUN 事务，再经同一 Session sender 发送，由唯一 receiver 分流响应。候选的真实 State 上报获确认后，才参与 offer。双方 Active 后从同一 socket 发包，签名握手额外绑定 offer 的 nonce／digest；接入前再次验证原尝试与接收槽，旧尝试不能借新 channel scope 延期。获取成功后，通道由当前执行许可和认证健康检查维持，不依赖过期的 STUN 观测续命。
 
-候选协调由 Manager 按需调度：有实际 UDP endpoint，且存在当前获准 UDP 邻接缺少健康的选定通道时查询，包括原 offer 等待双边接受的阶段。健康的 Native UDP／TCP 选定通道抑制重复邻接获取；其他地址族的等待 offer 和旧候选过期不会替换健康通道。配置依赖协调端点（Native UDP listener 或拨号候选没有公告端点）时，实际 socket 的 STUN 观测继续独立刷新并经 State 发布，包含健康选链及合法物理交接期间。失联后的下一次获取重新读取候选和期限。当前事件契约没有独立的穿透查询通知，普通 State／观察事件不触发候选 HTTP。
+候选协调由 Manager 按需调度：有实际 UDP endpoint，且存在有需求（interest 或[常驻](/v2/configuration-reference/topology#邻接的建立与常驻)）、任一方向获准 Native UDP 承载却缺少健康选定通道的 peer 时查询，包括原 offer 等待双边接受的阶段。需求方以本机拨号承载 prepare；不再按节点 ID 限定由哪一方发起，两方同时发起时 Server 对同一 peer 对／地址族只接纳一个活动尝试，另一方查询到该 offer 后接受。健康的 Native UDP／TCP 选定通道抑制重复邻接获取；其他地址族的等待 offer 和旧候选过期不会替换健康通道。配置依赖协调端点（Native UDP listener 或拨号候选没有公告端点）时，实际 socket 的 STUN 观测继续独立刷新并经 State 发布，包含健康选链及合法物理交接期间。失联后的下一次获取重新读取候选和期限。当前事件契约没有独立的穿透查询通知，普通 State／观察事件不触发候选 HTTP。
 
 每个 Manager 的邻接获取查询在**任意半开 60 秒窗口最多 30 次**，发起至少相隔 250 ms，可在双方 publication 同时有效的短窗口使用已有预算。STUN 观测另保留至少相隔 **2 秒**的元数据查询重试预算（任意半开 60 秒窗口最多 30 次），与邻接获取共用同一次 `queryUdpTraversal` 时只消费一个预算；总上限为每分钟 60 次。失败、取消、publication／资源交接不重置预算，健康选链不消耗或抑制 STUN 刷新机会。轮询准入与控制周期分开，不因 SSE 重连重复执行。
 

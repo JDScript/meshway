@@ -37,7 +37,8 @@ pub struct Limits {
     pub handshake_timeout: Duration,
     pub retry_backoff: Duration,
     /// Netmap authority: a selected channel with neither interest nor frames
-    /// for this long closes, unless its topology edge is keepalive.
+    /// for this long closes, unless its edge is resident (`keepalive` or
+    /// one-way dialable).
     pub idle: Duration,
     pub session: meshway_transport::Limits,
 }

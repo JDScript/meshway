@@ -258,7 +258,7 @@ pub(super) async fn dial(shared: Arc<Shared>, factory: Arc<dyn SocketFactory>, p
     }
 }
 
-/// Wait until this peer is wanted (interest or keepalive), or the owner stops.
+/// Wait until this peer is wanted (interest or resident), or the owner stops.
 async fn wanted(shared: &Shared, lifetime: &Scope, peer: NodeId) -> Result<(), Error> {
     let wake = shared.interests.waker(peer);
     let mut plans = shared.plans.subscribe();
@@ -271,7 +271,7 @@ async fn wanted(shared: &Shared, lifetime: &Scope, peer: NodeId) -> Result<(), E
         }
         lifetime
             .run(async {
-                // New content may make the peer keepalive.
+                // New content may make the peer resident.
                 tokio::select! { biased;
                     result = plans.changed() => result.map_err(|_| Error::Cancelled),
                     _ = &mut notified => Ok(()),

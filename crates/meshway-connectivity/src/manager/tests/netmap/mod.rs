@@ -1,4 +1,4 @@
-//! Desired netmap content: on-demand adjacency, idle close, keepalive edges,
+//! Desired netmap content: on-demand adjacency, idle close, resident edges,
 //! peer facts without reconfiguration and per-peer serial differentials, over
 //! real loopback sockets and Control-verified netmaps.
 use super::*;
@@ -44,10 +44,9 @@ async fn netmap_adjacency_is_acquired_only_on_interest_for_admitted_peers() {
     tokio::time::sleep(Duration::from_millis(1500)).await;
     assert!(links(&a).is_empty() && links(&b).is_empty());
     assert_eq!(factory.acquisitions.load(Ordering::SeqCst), 0);
-    // Interest in a non-visible Node is ignored; b cannot dial a (no listener).
+    // Interest in a non-visible Node is ignored.
     let unknown: NodeId = "00000000-0000-4000-8000-0000000000aa".parse().unwrap();
     a.interest().interest(unknown);
-    b.interest().interest(ids[0]);
     tokio::time::sleep(Duration::from_millis(500)).await;
     assert_eq!(factory.acquisitions.load(Ordering::SeqCst), 0);
     a.interest().interest(ids[1]);
@@ -131,6 +130,39 @@ async fn keepalive_edge_is_resident_without_interest() {
     tokio::time::sleep(idle * 4).await;
     assert_eq!(links(&a)[&ids[1]].id, id, "keepalive is never idle-closed");
     assert!(!links(&a).contains_key(&ids[2]), "c is on demand");
+    a.shutdown().await.unwrap();
+    b.shutdown().await.unwrap();
+    c.shutdown().await.unwrap();
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn one_way_edge_is_resident_at_both_ends_without_interest() {
+    // Only b listens (TCP): a and c can dial b, b can dial neither.
+    let mut fixture = Netmaps::start(true, true).await;
+    let ids = fixture.ids();
+    let factory = fixture.factory();
+    let idle = Duration::from_millis(500);
+    let mut a = manager(&fixture, 0, &factory, limits(idle)).await;
+    let mut b = manager(&fixture, 1, &factory, limits(idle)).await;
+    let mut c = manager(&fixture, 2, &factory, limits(idle)).await;
+    for (from, to) in [(&a, ids[1]), (&c, ids[1]), (&b, ids[0]), (&b, ids[2])] {
+        eventually("one-way edge acquires without interest", || {
+            links(from).contains_key(&to)
+        })
+        .await;
+    }
+    let before = (links(&a)[&ids[1]].id, links(&b)[&ids[0]].id);
+    tokio::time::sleep(idle * 4).await;
+    assert_eq!(
+        (links(&a)[&ids[1]].id, links(&b)[&ids[0]].id),
+        before,
+        "neither the dialer nor the listener-only end idle-closes it"
+    );
+    assert!(
+        !links(&a).contains_key(&ids[2]) && !links(&c).contains_key(&ids[0]),
+        "a and c share no carrier"
+    );
     a.shutdown().await.unwrap();
     b.shutdown().await.unwrap();
     c.shutdown().await.unwrap();
