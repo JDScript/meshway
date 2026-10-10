@@ -3,6 +3,14 @@
 -- serial high-water so a Node that returns never sees its serial regress.
 -- Compact immutable references outlive the two retained payloads, so receipt
 -- history never pins an obsolete configuration body or blocks a new serial.
+CREATE TABLE node_netmap_inputs (
+    network_id BLOB NOT NULL,
+    node_id BLOB NOT NULL,
+    digest BLOB NOT NULL CHECK(length(digest)=32),
+    PRIMARY KEY(network_id,node_id),
+    FOREIGN KEY(network_id,node_id) REFERENCES nodes(network_id,id)
+) STRICT;
+
 CREATE TABLE node_netmap_history (
     network_id BLOB NOT NULL,
     node_id BLOB NOT NULL,

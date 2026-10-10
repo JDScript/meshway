@@ -18,9 +18,13 @@ use meshway_configuration::{
 use meshway_model::{
     Digest, NetmapRef, NetworkId, NodeId, Revision, Version, netmap::MAX_NETMAP_BYTES,
 };
-use meshway_policy::compile::netmap::{NetmapError, NetmapInput, PreviousNetmap, compile_netmap};
+use meshway_policy::compile::netmap::{
+    NetmapError, NetmapInput, PreviousNetmap, compile_incremental,
+};
 use rusqlite::{OptionalExtension, Transaction, params};
 use std::collections::{BTreeMap, BTreeSet};
+
+mod inputs;
 
 /// Nodes whose current netmap changed in one transaction.
 #[derive(Debug, Default)]
@@ -59,8 +63,8 @@ pub(crate) enum Trigger {
 /// it gives up and the operation itself is unavailable.
 const MAX_EXCLUDED: usize = 16;
 
-/// Recompiles every Node of `network` from the current stable inputs and the
-/// current rule-set binding.
+/// Recompiles affected Nodes from the current stable inputs and the current
+/// rule-set binding. Fingerprints and output changes share this transaction.
 pub(crate) fn recompile(
     tx: &Transaction<'_>,
     sealer: &Sealer,
@@ -93,6 +97,7 @@ pub(crate) fn recompile_with_rule_sets(
     } = compilation_context(tx, network, &cfg, &bindings)?;
     let selection_versions = selection_versions(tx, network, &cfg, &bindings)?;
     let heads = heads(tx, network)?;
+    let previous_inputs = inputs::load(tx, network)?;
     let previous: BTreeMap<NodeId, PreviousNetmap> = heads
         .iter()
         .map(|(node, head)| (*node, head.previous))
@@ -101,17 +106,20 @@ pub(crate) fn recompile_with_rule_sets(
     let compiled = loop {
         let mut trusted = inventory.clone();
         trusted.retain(|node, _| !excluded.contains(node));
-        match compile_netmap(NetmapInput {
-            network,
-            revision,
-            configuration: &cfg,
-            subjects: &subjects,
-            inventory: &trusted,
-            rule_sets: &rule_sets,
-            selected_profiles: &selected_profiles,
-            selection_versions: &selection_versions,
-            previous: &previous,
-        }) {
+        match compile_incremental(
+            NetmapInput {
+                network,
+                revision,
+                configuration: &cfg,
+                subjects: &subjects,
+                inventory: &trusted,
+                rule_sets: &rule_sets,
+                selected_profiles: &selected_profiles,
+                selection_versions: &selection_versions,
+                previous: &previous,
+            },
+            &previous_inputs,
+        ) {
             Ok(compiled) => break compiled,
             Err(NetmapError::Limit { node, bytes }) if trigger == Trigger::Node => {
                 tracing::warn!(network = %network, node = %node, bytes, "Netmap exceeds the safety bound; the Node's netmap is unavailable");
@@ -133,8 +141,7 @@ pub(crate) fn recompile_with_rule_sets(
         )?;
     }
     let mut changed = BTreeSet::new();
-    let compiled_nodes: BTreeSet<NodeId> = compiled.nodes.keys().copied().collect();
-    for (node, netmap) in compiled.nodes {
+    for (node, netmap) in compiled.compiled.nodes {
         let reference = netmap.reference();
         match heads.get(&node) {
             Some(head) if head.previous.reference == reference => {
@@ -153,7 +160,7 @@ pub(crate) fn recompile_with_rule_sets(
         }
     }
     for (node, head) in &heads {
-        if !head.withdrawn && !compiled_nodes.contains(node) {
+        if !head.withdrawn && !compiled.inputs.contains_key(node) {
             tx.execute(
                 "UPDATE node_netmaps SET withdrawn_at=?3 WHERE network_id=?1 AND node_id=?2 AND withdrawn_at IS NULL",
                 params![bytes(network.as_uuid()), bytes(node.as_uuid()), now],
@@ -161,6 +168,7 @@ pub(crate) fn recompile_with_rule_sets(
             changed.insert(*node);
         }
     }
+    inputs::save(tx, network, &previous_inputs, &compiled.inputs)?;
     Ok(Recompiled {
         network: Some(network),
         changed,
