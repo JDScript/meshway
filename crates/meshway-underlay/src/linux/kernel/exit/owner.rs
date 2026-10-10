@@ -274,6 +274,19 @@ impl Drop for Installing {
     }
 }
 
+/// A failed projection reconciliation stops the whole owner; say why.
+fn stopped(operation: &'static str, error: &Error) {
+    tracing::warn!(operation, %error, "Exit owner stopping after a failed kernel operation");
+}
+
+async fn reconcile(backend: &mut Backend, incarnation: super::ExitIncarnation) -> Result<()> {
+    let result = backend.failed(incarnation).await;
+    if let Err(error) = &result {
+        stopped("reconcile", error);
+    }
+    result
+}
+
 impl super::super::Kernel {
     /// Keep uncertain cleanup attached to its owner. A stopped request queue is
     /// not an ownership conflict, and a failed cleanup is not an absence proof.
@@ -467,20 +480,20 @@ impl super::super::Kernel {
                     _ = stop.cancelled() => break,
                     _ = conflict.cancelled() => break,
                     _ = shutdown.cancelled() => break,
-                    _ = audit.tick() => { if backend.verify().await.is_err() { break; } },
+                    _ = audit.tick() => { if let Err(error) = backend.verify().await { stopped("audit", &error); break; } },
                     _ = tick.tick() => {
                         // Withdrawal, Host suspension or a withdrawn role stops the
                         // owner: every projection retires with its exact CT.
-                        if !authority.keeps_role() { break; }
+                        if !authority.keeps_role() { tracing::debug!(operation = "role", "Exit owner stopping: role no longer installed"); break; }
                         // Projection cutoffs and explicit revocations.
-                        if backend.maintain().await.is_err() { break; }
+                        if let Err(error) = backend.maintain().await { stopped("maintain", &error); break; }
                     },
                     request = receiver.recv() => {
                         let Some(request) = request else { break; };
                         match request {
                             Request::Audit { reply } => {
                                 let result = backend.verify().await.map(|()| backend.ledger.program.tables().into_iter().map(|(family, name)| (family.to_owned(), name)).collect());
-                                let ok = result.is_ok(); let _ = reply.send(result); if !ok { break; }
+                                if let Err(error) = &result { stopped("audit", error); } let ok = result.is_ok(); let _ = reply.send(result); if !ok { break; }
                             },
                             Request::Install { incarnation, tuple, deadline, scope, guard, reply } => {
                                 // Rejected queued work never entered the kernel
@@ -490,9 +503,10 @@ impl super::super::Kernel {
                                     continue;
                                 }
                                 let result = backend.install(incarnation, tuple, deadline, scope).await;
+                                if let Err(error) = &result { tracing::debug!(operation = "install", %error, "Exit projection operation failed"); }
                                 let result = result.and_then(|ack| { guard.check()?; Ok(ack) });
-                                if result.is_err() && backend.failed(incarnation).await.is_err() { break; }
-                                if reply.send(result).is_err() && backend.failed(incarnation).await.is_err() { break; }
+                                if result.is_err() && reconcile(&mut backend, incarnation).await.is_err() { break; }
+                                if reply.send(result).is_err() && reconcile(&mut backend, incarnation).await.is_err() { break; }
                             },
                             Request::Renew { incarnation, deadline, scope, guard, reply } => {
                                 if guard.check().is_err() {
@@ -500,17 +514,20 @@ impl super::super::Kernel {
                                     continue;
                                 }
                                 let result = backend.renew(incarnation, deadline, scope).await;
+                                if let Err(error) = &result { tracing::debug!(operation = "renew", %error, "Exit projection operation failed"); }
                                 let result = result.and_then(|ack| { guard.check()?; Ok(ack) });
-                                if result.is_err() && backend.failed(incarnation).await.is_err() { break; }
-                                if reply.send(result).is_err() && backend.failed(incarnation).await.is_err() { break; }
+                                if result.is_err() && reconcile(&mut backend, incarnation).await.is_err() { break; }
+                                if reply.send(result).is_err() && reconcile(&mut backend, incarnation).await.is_err() { break; }
                             },
                             Request::Confirm { incarnation, reply } => {
                                 let result = backend.confirm(incarnation).await;
-                                if result.is_err() && backend.failed(incarnation).await.is_err() { break; }
-                                if reply.send(result).is_err() && backend.failed(incarnation).await.is_err() { break; }
+                                if let Err(error) = &result { tracing::debug!(operation = "confirm", %error, "Exit projection operation failed"); }
+                                if result.is_err() && reconcile(&mut backend, incarnation).await.is_err() { break; }
+                                if reply.send(result).is_err() && reconcile(&mut backend, incarnation).await.is_err() { break; }
                             },
                             Request::Retire { incarnation, reply } => {
                                 let result = backend.retire(incarnation).await;
+                                if let Err(error) = &result { stopped("retire", error); }
                                 let failed = result.is_err();
                                 let _ = reply.send(result);
                                 if failed { break; }
