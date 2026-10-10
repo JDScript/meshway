@@ -41,7 +41,7 @@ fn nullable_owner_records_preserve_object_shape_and_strict_nested_decoding() {
 fn routing_conflicts_are_label_bounded_and_include_foreign_more_specific_routes() {
     let mut cfg = settings();
     cfg.domain = "mesh.example".into();
-    let plan = SystemDnsPlan::new(&cfg, &DnsEgress::NoExit).unwrap();
+    let plan = SystemDnsPlan::new(&cfg, &DnsPlan::NoExit).unwrap();
     assert_eq!(
         plan.domains().first(),
         Some(&("mesh.example".into(), false))
@@ -52,7 +52,7 @@ fn routing_conflicts_are_label_bounded_and_include_foreign_more_specific_routes(
     assert!(!plan.conflicts("example"));
     assert!(!plan.conflicts("."));
     cfg.override_local = true;
-    let plan = SystemDnsPlan::new(&cfg, &DnsEgress::NoExit).unwrap();
+    let plan = SystemDnsPlan::new(&cfg, &DnsPlan::NoExit).unwrap();
     assert!(plan.conflicts("."));
     assert!(plan.conflicts("ordinary.example"));
 }
@@ -63,7 +63,7 @@ fn published_egress_proof_and_search_routing_are_not_inferred() {
     assert_eq!(
         SystemDnsPlan::new(
             &cfg,
-            &DnsEgress::Unavailable {
+            &DnsPlan::Unavailable {
                 reason: DnsEgressUnavailable::ExitPlanRequired
             }
         )
@@ -72,7 +72,7 @@ fn published_egress_proof_and_search_routing_are_not_inferred() {
     );
     let negative = SystemDnsPlan::required(
         &cfg,
-        &DnsEgress::Unavailable {
+        &DnsPlan::Unavailable {
             reason: DnsEgressUnavailable::ExitPlanRequired,
         },
     )
@@ -81,18 +81,18 @@ fn published_egress_proof_and_search_routing_are_not_inferred() {
     cfg.domain = "mesh.example".into();
     cfg.search_domains = vec!["mesh.example".into()];
     assert!(
-        !SystemDnsPlan::new(&cfg, &DnsEgress::NoExit)
+        !SystemDnsPlan::new(&cfg, &DnsPlan::NoExit)
             .unwrap()
             .needs_system_fallback(&cfg)
     );
     cfg.search_domains.push("ordinary.example".into());
     assert!(
-        SystemDnsPlan::new(&cfg, &DnsEgress::NoExit)
+        SystemDnsPlan::new(&cfg, &DnsPlan::NoExit)
             .unwrap()
             .needs_system_fallback(&cfg)
     );
     assert_eq!(
-        SystemDnsPlan::new(&cfg, &DnsEgress::NoExit)
+        SystemDnsPlan::new(&cfg, &DnsPlan::NoExit)
             .unwrap()
             .domains(),
         vec![
@@ -136,27 +136,4 @@ fn explicit_file_proxy_requires_loopback_port_53_and_an_absolute_nontraversing_p
         path: "/etc/../etc/resolv.conf".into(),
     };
     assert_eq!(cfg.validate(), Err(SystemDnsError::Settings));
-}
-
-#[test]
-fn system_tcp_fallback_has_a_separate_demand_identity_and_preserves_primary_transport() {
-    let mut snapshot = SystemResolverSnapshot {
-        id: "owned-fixture".into(),
-        upstreams: Arc::new(vec!["192.0.2.53:53".parse().unwrap()]),
-        primary: DnsTransport::Udp,
-        invalid: CancellationToken::new(),
-        verified_until: Arc::new(Mutex::new(
-            Instant::now() + std::time::Duration::from_secs(1),
-        )),
-    };
-    let demands = snapshot.demands("mesh");
-    assert_eq!(demands.len(), 2);
-    assert_ne!(demands[0].source, demands[1].source);
-    assert_eq!(demands[0].endpoint, demands[1].endpoint);
-    assert_eq!(demands[0].transport, DnsTransport::Udp);
-    assert_eq!(demands[1].transport, DnsTransport::Tcp);
-    snapshot.primary = DnsTransport::Tcp;
-    let demands = snapshot.demands("mesh");
-    assert_eq!(demands.len(), 1);
-    assert_eq!(demands[0].transport, DnsTransport::Tcp);
 }

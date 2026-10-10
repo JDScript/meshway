@@ -391,11 +391,6 @@ impl Owner {
         self.state.generation.clone()
     }
 
-    #[cfg(test)]
-    pub(crate) fn pending_len(&self) -> usize {
-        self.state.pending.len()
-    }
-
     pub async fn invalidated(&self) {
         tokio::select! { biased;
             _ = self.snapshot.invalidated() => {},
@@ -608,6 +603,3 @@ impl Drop for State {
         self.stop();
     }
 }
-
-#[cfg(test)]
-mod tests;

@@ -20,6 +20,59 @@ use meshway_protocol::{PeerFactsDelta, SyncRequest, SyncResponse};
 
 const HOUR: u64 = 60 * 60 * 1000;
 
+#[tokio::test]
+async fn netmap_query_capacity_cancellation_and_unsent_answer_deadlines_are_independent() {
+    let server = support::Server::start().await;
+    let (mut control, script) = enrolled(&server).await;
+    let network = Network::new(&control, 'a');
+    let netmap = network.compile(None);
+    let snapshot = sync(&mut control, &script, reply(&netmap, true)).await;
+    let mut owner = Owner::new(snapshot.clone(), limits()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut pending = Vec::new();
+    for _ in 0..4 {
+        let Begin::Upstream(work) =
+            owner.begin_published_until(named("x.direct.example."), deadline)
+        else {
+            panic!("exact local resolver route")
+        };
+        pending.push(work);
+    }
+    assert!(matches!(
+        owner.begin_published_until(named("x.direct.example."), deadline),
+        Begin::Unavailable(Unavailable::Capacity)
+    ));
+    assert!(owner.cancel(&pending[0].ticket));
+    assert!(!owner.cancel(&pending[0].ticket));
+    assert!(pending[0].route().ensure_current().is_err());
+    pending[1].route().ensure_current().unwrap();
+    let Begin::Upstream(replacement) =
+        owner.begin_published_until(named("x.direct.example."), deadline)
+    else {
+        panic!("cancel returns its slot")
+    };
+    let mut other = Owner::new(snapshot, limits()).unwrap();
+    assert!(!other.cancel(&replacement.ticket));
+    replacement.route().ensure_current().unwrap();
+    let short = Instant::now() + Duration::from_millis(20);
+    let Begin::Answer(answer) = owner.begin_published_until(named("b.test.internal."), short)
+    else {
+        panic!("MagicDNS is answered locally even when resolver slots are full")
+    };
+    tokio::time::sleep_until(short.into()).await;
+    assert!(answer.ensure_current().is_err());
+    owner.stop();
+    for work in pending.into_iter().skip(1).chain([replacement]) {
+        assert!(work.route().ensure_current().is_err());
+    }
+    assert!(matches!(
+        owner.begin_published_until(named("b.test.internal."), deadline),
+        Begin::Unavailable(Unavailable::Inactive)
+    ));
+    control.shutdown().await.unwrap();
+    server.close().await;
+}
+
 #[derive(Default)]
 struct Script(StdMutex<VecDeque<SyncResponse>>);
 impl SyncTransport for Script {
@@ -277,12 +330,10 @@ async fn netmap_resolvers_follow_their_decisions_and_magic_dns_uses_mesh_hosts()
     assert!(matches!(dns.egress, DnsPlan::ViaExit { .. }));
     let snapshot = sync(&mut control, &script, reply(&netmap, true)).await;
     let mut owner = Owner::new(snapshot.clone(), limits()).unwrap();
-    let none = BTreeMap::new();
     let deadline = Instant::now() + Duration::from_secs(2);
 
     // A direct resolver gets its exact local route without any demand ID.
-    let Begin::Upstream(work) =
-        owner.begin_published_until(named("x.direct.example."), &none, deadline)
+    let Begin::Upstream(work) = owner.begin_published_until(named("x.direct.example."), deadline)
     else {
         panic!("direct resolver must be routed locally")
     };
@@ -290,17 +341,15 @@ async fn netmap_resolvers_follow_their_decisions_and_magic_dns_uses_mesh_hosts()
         panic!("a configured resolver is local")
     };
     assert_eq!(route.endpoint(), "192.0.2.53:53".parse().unwrap());
-    assert_eq!(route.demand_id(), None);
     // Exit-routed and Mesh resolvers never get a local socket, nor a fallback.
     for name in ["x.routed.example.", "x.mesh.example."] {
         assert!(matches!(
-            owner.begin_published_until(named(name), &none, deadline),
+            owner.begin_published_until(named(name), deadline),
             Begin::Unavailable(Unavailable::MissingResolverPlan)
         ));
     }
     // Ordinary names use only the exit's Mesh resolver service.
-    let Begin::Upstream(work) =
-        owner.begin_published_until(named("ordinary.test."), &none, deadline)
+    let Begin::Upstream(work) = owner.begin_published_until(named("ordinary.test."), deadline)
     else {
         panic!("ordinary DNS goes through the exit service")
     };
@@ -308,17 +357,16 @@ async fn netmap_resolvers_follow_their_decisions_and_magic_dns_uses_mesh_hosts()
         panic!("the exit service is a Mesh route")
     };
     assert_eq!(route.endpoint(), "100.64.0.3:53".parse().unwrap());
-    assert_eq!(route.service().unwrap().exit, network.e);
-    assert!(route.permit().is_none());
+    assert_eq!(route.service().exit, network.e);
 
     // MagicDNS answers from meshHosts; a name outside them is REFUSED locally.
-    let answer = match owner.begin_published_until(named("b.test.internal."), &none, deadline) {
+    let answer = match owner.begin_published_until(named("b.test.internal."), deadline) {
         Begin::Answer(answer) => answer,
         other => panic!("{other:?}"),
     };
     let message = Message::from_vec(&answer.encode(ResponseTransport::Udp, 1232).unwrap()).unwrap();
     assert_eq!(message.answers.len(), 1);
-    match owner.begin_published_until(named("e.test.internal."), &none, deadline) {
+    match owner.begin_published_until(named("e.test.internal."), deadline) {
         Begin::Answer(answer) => {
             let message =
                 Message::from_vec(&answer.encode(ResponseTransport::Udp, 1232).unwrap()).unwrap();
@@ -347,14 +395,7 @@ async fn netmap_renewal_keeps_owner_and_fences_while_a_new_serial_ends_them() {
     let first = network.compile(None);
     let snapshot = sync(&mut control, &script, reply(&first, true)).await;
     let (sender, receiver) = watch::channel(Some(Scope::netmap(snapshot.clone(), None)));
-    let dispatcher = OwnerDispatcher::new(
-        receiver,
-        Arc::new(NoDiscovery),
-        Exchange::new(&[]),
-        limits(),
-        1232,
-    )
-    .unwrap();
+    let dispatcher = OwnerDispatcher::new(receiver, Exchange::new(&[]), limits(), 1232).unwrap();
     let deadline = Instant::now() + Duration::from_secs(2);
     let answer = dispatcher
         .dispatch(named("b.test.internal."), deadline)
@@ -427,14 +468,7 @@ async fn served_exit_resolver_admits_only_planned_sources_and_never_falls_back()
     let scope = Scope::netmap(snapshot, Some(system));
     let exchange = Exchange::new(&[Step::Answer, Step::Fail]);
     let (_sender, receiver) = watch::channel(Some(scope.clone()));
-    let dispatcher = OwnerDispatcher::new(
-        receiver,
-        Arc::new(NoDiscovery),
-        exchange.clone(),
-        limits(),
-        1232,
-    )
-    .unwrap();
+    let dispatcher = OwnerDispatcher::new(receiver, exchange.clone(), limits(), 1232).unwrap();
     // Readiness still requires authenticated DNS-purpose ingress.
     assert!(dispatcher.validate_scope(&scope).is_err());
     let local: SocketAddr = "100.64.0.3:53".parse().unwrap();

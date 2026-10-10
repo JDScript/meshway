@@ -19,7 +19,7 @@ fn socket() -> SocketReference {
     serde_json::from_value(json!({
         "nodeId": A,
         "instance": {"instanceId": B, "generation": 1},
-        "configuration": {"revision": 1, "executionPublication": C, "digest": "01".repeat(32)},
+        "netmap": {"revision": 1, "serial": 1, "digest": "01".repeat(32)},
         "socketId": "native-udp-outgoing:1",
         "socketGeneration": 1,
         "resource": {"kind": "dial", "key": "native-udp"}
@@ -117,11 +117,11 @@ fn traversal_wire_boundaries_are_closed_and_all_fields_are_required_nonnullable(
     let socket = socket();
     let query = QueryUdpTraversalRequest {
         instance: socket.instance.clone(),
-        configuration: socket.configuration.clone(),
+        netmap: socket.netmap,
     };
     let prepare = PrepareUdpTraversalRequest {
         instance: query.instance.clone(),
-        configuration: query.configuration.clone(),
+        netmap: query.netmap,
         state_epoch: offer.state_epoch,
         request_id: offer.request_id,
         expires_at_ms: offer.expires_at_ms,
@@ -132,7 +132,7 @@ fn traversal_wire_boundaries_are_closed_and_all_fields_are_required_nonnullable(
     };
     let cas = UdpTraversalAttemptRequest {
         instance: query.instance.clone(),
-        configuration: query.configuration.clone(),
+        netmap: query.netmap,
         state_epoch: offer.state_epoch,
         version: offer.version,
         digest: offer.digest,
@@ -356,9 +356,9 @@ fn every_socket_binding_component_changes_the_observation_identity() {
         ("/nodeId", json!(B)),
         ("/instance/instanceId", json!(C)),
         ("/instance/generation", json!(2)),
-        ("/configuration/revision", json!(2)),
-        ("/configuration/executionPublication", json!(A)),
-        ("/configuration/digest", json!("03".repeat(32))),
+        ("/netmap/revision", json!(2)),
+        ("/netmap/serial", json!(2)),
+        ("/netmap/digest", json!("03".repeat(32))),
         ("/socketId", json!("native-udp-outgoing:2")),
         ("/socketGeneration", json!(2)),
         ("/resource/kind", json!("listener")),

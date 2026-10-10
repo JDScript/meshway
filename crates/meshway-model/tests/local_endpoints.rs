@@ -5,7 +5,7 @@ use serde_json::json;
 fn local_listener_sample_distinguishes_omission_from_known_empty_and_requires_provenance() {
     let mut wire = json!({
         "resource": {"kind": "listener", "key": "udp"},
-        "configuration": null, "generation": 1, "network": "udp",
+        "netmap": null, "generation": 1, "network": "udp",
         "boundAddress": "0.0.0.0:35000", "endpoints": []
     });
     let unknown: SocketState = serde_json::from_value(wire.clone()).unwrap();

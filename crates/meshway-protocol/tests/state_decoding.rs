@@ -1,4 +1,4 @@
-use meshway_protocol::NodeEvent;
+use meshway_protocol::UserEvent;
 use serde_json::json;
 
 #[test]
@@ -21,7 +21,7 @@ fn state_snapshot_rejects_resource_shape_and_range_errors_after_multiple_tagged_
             }}
         }
     });
-    assert!(serde_json::from_value::<NodeEvent>(snapshot.clone()).is_ok());
+    assert!(serde_json::from_value::<UserEvent>(snapshot.clone()).is_ok());
     let root = format!("/state/nodes/{id}/derived/ipInfo/198.51.100.1");
     for (suffix, replacement) in [
         ("/geoip/data", json!(["US", null, null, null])),
@@ -32,7 +32,7 @@ fn state_snapshot_rejects_resource_shape_and_range_errors_after_multiple_tagged_
         let mut malformed = snapshot.clone();
         *malformed.pointer_mut(&format!("{root}{suffix}")).unwrap() = replacement;
         assert!(
-            serde_json::from_value::<NodeEvent>(malformed).is_err(),
+            serde_json::from_value::<UserEvent>(malformed).is_err(),
             "{suffix}"
         );
     }

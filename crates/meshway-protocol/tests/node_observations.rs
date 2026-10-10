@@ -145,7 +145,7 @@ fn node_response_and_cancellation_retain_the_actual_shared_task() {
     let task = json!({
         "id":ID,"sourceNodeId":ID,"targetNodeId":ID,"service":{"type":"icmpEcho"},
         "selection":{"mode":"auto"},"path":null,"pathSegment":null,
-        "configuration":{"revision":1,"executionPublication":ID,"digest":"01".repeat(32)},
+        "netmap":{"revision":1,"serial":1,"digest":"01".repeat(32)},
         "instanceId":ID,"metrics":["rtt"],"intervalMs":1000,"phase":"preparing",
         "unsupportedMetrics":[],"expiresAt":"2026-10-05T00:00:30Z",
         "renewAfter":"2026-10-05T00:00:15Z","latest":null,

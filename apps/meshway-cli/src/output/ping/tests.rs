@@ -14,7 +14,7 @@ fn sample() -> PingEvent {
             "windowEnd":"2026-10-05T00:00:01Z","partial":false,"traffic":null,"probeCounts":null,
             "probe":{
                 "measurementId":A,"kind":"path","linkId":null,"transport":null,
-                "path":[A,B],"publicationId":A,"startedAt":"2026-10-05T00:00:00Z",
+                "path":[A,B],"netmap":{"revision":1,"serial":1,"digest":"01".repeat(32)},"startedAt":"2026-10-05T00:00:00Z",
                 "completedAt":"2026-10-05T00:00:01Z","outcome":"success","durationUs":5123,
                 "channels":{"request":{
                     "linkId":"01".repeat(32),"socketId":"02".repeat(32),"peerNodeId":B,

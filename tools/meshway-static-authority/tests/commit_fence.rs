@@ -67,7 +67,9 @@ fn revoke_after_entry_before_commit_emits_no_frame_and_establishes_no_flow() {
             .unwrap()
         })
         .collect();
-    let init = nodes[0].start_grant(grant(&chain), chain.path.clone(), &chain.carriers[0]).unwrap();
+    let init = nodes[0]
+        .start_grant(grant(&chain), chain.path.clone(), &chain.carriers[0])
+        .unwrap();
     let cid = init.circuit();
     let carrier = chain.carriers[0].clone();
     let response = init

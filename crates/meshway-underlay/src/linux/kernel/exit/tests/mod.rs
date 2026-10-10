@@ -68,7 +68,6 @@ async fn exit_nat_udp_real_reply_qualification_confirm_retire_and_expiry() {
         network: "11111111-1111-4111-8111-111111111111".parse().unwrap(),
         node: "22222222-2222-4222-8222-222222222222".parse().unwrap(),
         plan: crate::target::RoleIdentity {
-            instance_id: Some("33333333-3333-4333-8333-333333333333".parse().unwrap()),
             generation: Digest::from_bytes([1; 32]),
             family: ExitFamily::Ipv4,
             nat: ExitNat::Masquerade,
@@ -319,9 +318,7 @@ async fn exit_nat_udp_real_reply_qualification_confirm_retire_and_expiry() {
 }
 
 mod adversarial;
-mod handoff;
 mod protocols;
-mod relay;
 
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]

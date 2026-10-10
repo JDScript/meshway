@@ -656,7 +656,8 @@ fn bind(
     let netmap = snapshot.netmap().map_err(|_| Error::Binding)?;
     let now = snapshot.now_ms().map_err(|_| Error::Binding)?;
     valid_task(task, now)?;
-    if task.source_node_id != netmap.netmap.node_id
+    if task.netmap != snapshot.reference()
+        || task.source_node_id != netmap.netmap.node_id
         || task.target_node_id == task.source_node_id
         || snapshot
             .instance()

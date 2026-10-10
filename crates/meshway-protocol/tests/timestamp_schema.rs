@@ -7,7 +7,7 @@ use utoipa::OpenApi;
 struct Api;
 
 #[test]
-fn timestamp_fields_reference_the_same_named_format_and_nullable_lease_stays_required() {
+fn timestamp_fields_reference_the_same_named_format_and_instance_expiry_is_required() {
     let document = serde_json::to_value(Api::openapi()).unwrap();
     let schemas = &document["components"]["schemas"];
     assert_eq!(schemas["Timestamp"]["type"], "string");
@@ -20,16 +20,11 @@ fn timestamp_fields_reference_the_same_named_format_and_nullable_lease_stays_req
         assert_eq!(field["$ref"], timestamp);
         assert!(field.get("type").is_none() && field.get("format").is_none());
     }
-    let optional = &schemas["InstanceLease"]["properties"]["executionExpiresAt"];
-    let variants = optional["oneOf"].as_array().unwrap();
-    assert_eq!(variants.len(), 2);
-    assert_eq!(variants[0]["$ref"], timestamp);
-    assert_eq!(variants[1], json!({"type":"null"}));
     assert!(
         schemas["InstanceLease"]["required"]
             .as_array()
             .unwrap()
-            .contains(&json!("executionExpiresAt"))
+            .contains(&json!("expiresAt"))
     );
     let current = schemas["QueryUdpTraversalResponse"]["oneOf"]
         .as_array()
@@ -40,12 +35,9 @@ fn timestamp_fields_reference_the_same_named_format_and_nullable_lease_stays_req
     for name in ["asOf", "expiresAt"] {
         assert_eq!(current["properties"][name]["$ref"], timestamp);
     }
-    let lease = json!({"instanceId":"00000000-0000-4000-8000-000000000001","generation":1,"expiresAt":"2026-10-04T00:00:00Z","executionExpiresAt":null,"target":null});
+    let lease = json!({"instanceId":"00000000-0000-4000-8000-000000000001","generation":1,"expiresAt":"2026-10-04T00:00:00Z"});
     assert!(serde_json::from_value::<InstanceLease>(lease.clone()).is_ok());
     let mut missing = lease;
-    missing
-        .as_object_mut()
-        .unwrap()
-        .remove("executionExpiresAt");
+    missing.as_object_mut().unwrap().remove("expiresAt");
     assert!(serde_json::from_value::<InstanceLease>(missing).is_err());
 }

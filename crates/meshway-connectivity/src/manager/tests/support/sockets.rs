@@ -163,8 +163,7 @@ impl SocketFactory for Factory {
     ) -> BoxFuture<'a, Result<Box<dyn ListenerSocket>, Error>> {
         Box::pin(async move {
             let cfg = crate::plan::Plan::new(snapshot)?;
-            let address =
-                listener_address(cfg.listeners[key].declaration())?;
+            let address = listener_address(cfg.listeners[key].declaration())?;
             let reserved = self.tcp.lock().unwrap().remove(&address);
             let socket = match reserved {
                 Some(socket) => socket,

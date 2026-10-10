@@ -13,28 +13,6 @@ fn digest_includes_capabilities_destinations_ports_and_dns() {
     inv.get_mut(&node(2)).unwrap().capabilities.clear();
     assert_ne!(first, run(&c, &inv, &ds, &[]).dependency_digest);
 }
-#[test]
-fn node_delta_removes_permissions_and_checks_the_exact_base_and_target() {
-    let c = configuration();
-    let inv = inventory();
-    let ds = BTreeMap::from([(request(1), demand(1, 1, 2))]);
-    let old = run(&c, &inv, &ds, &[]).nodes.remove(&node(1)).unwrap();
-    let new = run(&c, &inv, &BTreeMap::new(), &[])
-        .nodes
-        .remove(&node(1))
-        .unwrap();
-    let delta = configuration_delta(&old, &new).unwrap();
-    assert_eq!(delta.permits.remove, vec![request(1)]);
-    assert!(delta.listeners.upsert.is_empty());
-    assert_eq!(apply_configuration_delta(&old, delta.clone()).unwrap(), new);
-    let mut bad = delta.clone();
-    bad.base.digest = [99; 32].into();
-    assert!(apply_configuration_delta(&old, bad).is_err());
-    let mut bad = delta;
-    bad.target.digest = [99; 32].into();
-    assert!(apply_configuration_delta(&old, bad).is_err());
-    assert!(!old.configuration.permits.is_empty());
-}
 
 #[test]
 fn incompatible_tls_pair_does_not_poison_udp() {

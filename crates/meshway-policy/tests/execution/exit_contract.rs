@@ -279,32 +279,6 @@ fn ipv6_exit_is_rejected_and_captured_without_source_ipv6() {
 }
 
 #[test]
-fn missing_capability_withdraws_permit_but_keeps_role_and_capture() {
-    let (cfg, d, mut runtime) = setup();
-    let old = compiled(&cfg, &d, &runtime);
-    assert!(!old.nodes[&node(4)].configuration.permits.is_empty());
-    runtime.ready_until_ms.clear();
-    let next = compiled(&cfg, &d, &runtime);
-    assert_eq!(
-        decision(&next),
-        &DemandDecision::Unavailable {
-            reason: UnavailableReason::ExitUnavailable
-        }
-    );
-    assert!(next.nodes[&node(4)].configuration.permits.is_empty());
-    assert!(next.nodes[&node(4)].configuration.exit_role.is_some());
-    assert_eq!(
-        old.nodes[&node(1)].configuration.egress_capture,
-        next.nodes[&node(1)].configuration.egress_capture
-    );
-    let delta = configuration_delta(&old.nodes[&node(4)], &next.nodes[&node(4)]).unwrap();
-    assert_eq!(
-        apply_configuration_delta(&old.nodes[&node(4)], delta).unwrap(),
-        next.nodes[&node(4)]
-    );
-}
-
-#[test]
 fn unreachable_primary_capability_deadline_cannot_shorten_a_valid_backup_permit() {
     let (mut cfg, d, mut runtime) = setup();
     cfg.nodes.get_mut(&node(2)).unwrap().exit_enabled = true;

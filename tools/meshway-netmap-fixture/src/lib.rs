@@ -33,6 +33,28 @@ use tokio::{sync::oneshot, task::JoinHandle};
 
 const BODY_LIMIT: usize = 64 * 1024 * 1024;
 
+/// Register a fixture user while respecting the Server's process-wide KDF
+/// capacity. Only a busy response is retried, within a bounded setup budget.
+pub async fn register(
+    client: &meshway_control_client::Client,
+    request: &meshway_protocol::RegisterRequest,
+) -> Result<meshway_protocol::SessionIssuedResponse, ClientError<ErrorResponse>> {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        match client.register(request).await {
+            Err(ClientError::Http {
+                status: 503,
+                problem: Some(ref body),
+            }) if matches!(body.problem, meshway_protocol::Problem::Busy { .. })
+                && tokio::time::Instant::now() < deadline =>
+            {
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+            result => return result,
+        }
+    }
+}
+
 /// The fixed fixture signing key and its public binding.
 pub fn server_key() -> (SigningKey, ServerSigningKey) {
     let secret = SigningKey::from_bytes(&[42; 32]);

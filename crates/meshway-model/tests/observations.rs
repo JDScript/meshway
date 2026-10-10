@@ -86,7 +86,7 @@ fn missing_channel_measurement_and_explicitly_absent_reply_are_distinct() {
 
     let mut probe = json!({
         "measurementId":ID,"kind":"path","linkId":null,"transport":null,
-        "path":[ID],"publicationId":ID,"startedAt":"2026-10-05T00:00:00Z",
+        "path":[ID],"netmap":{"revision":1,"serial":1,"digest":"01".repeat(32)},"startedAt":"2026-10-05T00:00:00Z",
         "completedAt":null,"outcome":"timeout","durationUs":null
     });
     assert!(

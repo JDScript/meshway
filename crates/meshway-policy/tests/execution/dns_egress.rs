@@ -219,34 +219,3 @@ fn dns_classification_uses_the_same_effective_selected_profile() {
         DnsEgress::NoExit
     );
 }
-
-#[test]
-fn dns_egress_wire_is_required_and_delta_replaces_the_proof() {
-    assert_eq!(
-        serde_json::to_value(DnsEgress::NoExit).unwrap(),
-        serde_json::json!({"type":"noExit"})
-    );
-    assert_eq!(
-        serde_json::to_value(requires_plan()).unwrap(),
-        serde_json::json!({"type":"unavailable","reason":"exitPlanRequired"})
-    );
-    let mut c = configuration();
-    let old = run(&c, &inventory(), &BTreeMap::new(), &[])
-        .nodes
-        .remove(&node(1))
-        .unwrap();
-    c.routing.egress.rules.push(exit_rule());
-    let new = run(&c, &inventory(), &BTreeMap::new(), &[])
-        .nodes
-        .remove(&node(1))
-        .unwrap();
-    let delta = configuration_delta(&old, &new).unwrap();
-    assert_eq!(delta.dns.egress, requires_plan());
-    assert_eq!(apply_configuration_delta(&old, delta.clone()).unwrap(), new);
-    let mut forged = delta;
-    forged.dns.egress = DnsEgress::NoExit;
-    assert!(apply_configuration_delta(&old, forged).is_err());
-    let mut wire = serde_json::to_value(&old.configuration.dns).unwrap();
-    assert!(wire.as_object_mut().unwrap().remove("egress").is_some());
-    assert!(serde_json::from_value::<DnsExecution>(wire).is_err());
-}

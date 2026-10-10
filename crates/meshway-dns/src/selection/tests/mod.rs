@@ -1,7 +1,9 @@
 use super::*;
 use crate::decode_query;
 use hickory_proto::op::{MessageType, OpCode, Query as Question};
-use meshway_configuration::{DnsConfiguration, DnsTransport, execution::DnsEgress};
+use meshway_configuration::{DnsConfiguration, DnsTransport};
+
+mod records;
 
 fn query(name: &str) -> Query {
     let mut message = Message::new(1, MessageType::Query, OpCode::Query);
@@ -20,36 +22,29 @@ fn magic_split_retained_default_and_exit_selection() {
         server_port: 53.try_into().unwrap(),
         use_with_exit,
     };
-    let execution = DnsExecution {
-        settings: DnsConfiguration {
-            magic_dns: true,
-            domain: "mesh.example".into(),
-            servers: BTreeMap::from([
-                ("local".into(), server(false)),
-                ("retained".into(), server(true)),
-            ]),
-            routes: BTreeMap::from([
-                ("corp.example".into(), vec!["retained".into()]),
-                ("private.example".into(), vec!["local".into()]),
-            ]),
-            default: vec!["local".into()],
-            override_local: false,
-            search_domains: vec![],
-        },
-        mesh_hosts: BTreeMap::from([(
-            "known.mesh.example".into(),
-            NodeAddresses {
-                ipv4: Some("100.64.0.1".parse().unwrap()),
-                ipv6: None,
-            },
-        )]),
-        associations: vec![],
-        profile: "exit".into(),
-        egress: DnsEgress::NoExit,
+    let settings = DnsConfiguration {
+        magic_dns: true,
+        domain: "mesh.example".into(),
+        servers: BTreeMap::from([
+            ("local".into(), server(false)),
+            ("retained".into(), server(true)),
+        ]),
+        routes: BTreeMap::from([
+            ("corp.example".into(), vec!["retained".into()]),
+            ("private.example".into(), vec!["local".into()]),
+        ]),
+        default: vec!["local".into()],
+        override_local: false,
+        search_domains: vec![],
     };
-    let mut dns = PublishedDns::from_execution(&execution).unwrap();
-    // Selection projection only, not a fabricated execution snapshot or grant.
-    dns.executable_exit = true;
+    let hosts = BTreeMap::from([(
+        "known.mesh.example".into(),
+        NodeAddresses {
+            ipv4: Some("100.64.0.1".parse().unwrap()),
+            ipv6: None,
+        },
+    )]);
+    let mut dns = PublishedDns::from_parts(&settings, &hosts, true).unwrap();
     assert!(matches!(
         dns.select(&query("known.mesh.example."), ExitSelection::Exit),
         Selection::Published(_)

@@ -69,7 +69,7 @@ async fn ready_channel_and_handshake_events_start_direct_and_relay_probes_withou
                     .unwrap();
                 SecureNode::new(
                     control
-                        .dataplane_identity(control.execution_snapshot().unwrap())
+                        .dataplane_identity(control.netmap_snapshot().unwrap())
                         .unwrap(),
                     Default::default(),
                     carriers.clone(),
@@ -149,7 +149,7 @@ async fn ready_channel_and_handshake_events_start_direct_and_relay_probes_withou
         fixture
             .owner
             .synchronize(
-                fixture.controls[0].execution_snapshot().unwrap(),
+                fixture.controls[0].netmap_snapshot().unwrap(),
                 std::slice::from_ref(&fixture.task),
             )
             .unwrap();

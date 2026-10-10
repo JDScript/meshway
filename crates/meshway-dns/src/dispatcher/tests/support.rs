@@ -11,12 +11,7 @@ use meshway_protocol::{
     WireSecret,
 };
 use meshway_server::{App, Settings};
-use std::{
-    future::{Future, poll_fn},
-    panic::AssertUnwindSafe,
-    task::Poll,
-    time::Duration,
-};
+use std::time::Duration;
 use tokio::{net::TcpListener, task::JoinSet};
 use tokio_util::sync::CancellationToken;
 
@@ -26,7 +21,7 @@ pub(super) struct Server {
     stop: CancellationToken,
     client: Client,
     /// Node traffic goes through it so enrollment pins the fixture netmap key.
-    proxy: meshway_netmap_fixture::PinningProxy,
+    proxy: Option<meshway_netmap_fixture::PinningProxy>,
     temporary: tempfile::TempDir,
 }
 
@@ -65,7 +60,7 @@ impl Server {
             tasks,
             stop,
             client,
-            proxy,
+            proxy: Some(proxy),
             temporary,
         }
     }
@@ -73,7 +68,7 @@ impl Server {
     pub(super) fn control(&self) -> Control {
         Control::open(
             &self.temporary.path().canonicalize().unwrap().join("node"),
-            &self.proxy.origin,
+            &self.proxy.as_ref().unwrap().origin,
             meshway_control_client::http_client_builder()
                 .unwrap()
                 .no_proxy(),
@@ -82,19 +77,20 @@ impl Server {
     }
 
     pub(super) async fn enroll(&self, control: &mut Control) {
-        let session = self
-            .client
-            .register(&RegisterRequest {
+        let session = meshway_netmap_fixture::register(
+            &self.client,
+            &RegisterRequest {
                 email: "dispatcher-owner@example.test".into(),
                 password: WireSecret::new("isolated dispatcher fixture password".into()),
-            })
-            .await
-            .unwrap();
+            },
+        )
+        .await
+        .unwrap();
         let network = self
             .client
             .create_network(
                 &CreateNetworkRequest {
-                    request_id: super::request_id(),
+                    request_id: request_id(),
                     name: "Dispatcher regression".into(),
                 },
                 session.token.expose(),
@@ -150,7 +146,7 @@ impl Server {
                 },
                 &ConfigurationRequest::Document {
                     expected_revision: source.revision,
-                    request_id: super::request_id(),
+                    request_id: request_id(),
                     source_jsonc: WireSecret::new(serde_json::to_string(&input).unwrap()),
                 },
                 session.token.expose(),
@@ -161,6 +157,7 @@ impl Server {
     }
 
     pub(super) async fn close(mut self) {
+        self.proxy.take().unwrap().close().await;
         self.app.as_ref().unwrap().stream_shutdown()();
         self.stop.cancel();
         let joined = tokio::time::timeout(Duration::from_secs(10), async {
@@ -178,6 +175,11 @@ impl Server {
             .expect("bounded fixture application shutdown")
             .unwrap();
     }
+
+    pub(super) fn real_control(&self) -> Control {
+        self.proxy.as_ref().unwrap().pass_through();
+        self.control()
+    }
 }
 
 impl Drop for Server {
@@ -187,14 +189,8 @@ impl Drop for Server {
     }
 }
 
-pub(super) async fn catch(future: impl Future<Output = ()>) -> std::thread::Result<()> {
-    let mut future = Box::pin(future);
-    poll_fn(
-        |cx| match std::panic::catch_unwind(AssertUnwindSafe(|| future.as_mut().poll(cx))) {
-            Ok(Poll::Pending) => Poll::Pending,
-            Ok(Poll::Ready(())) => Poll::Ready(Ok(())),
-            Err(panic) => Poll::Ready(Err(panic)),
-        },
-    )
-    .await
+fn request_id() -> meshway_model::RequestId {
+    let mut bytes = [0u8; 16];
+    getrandom::fill(&mut bytes).unwrap();
+    meshway_model::RequestId::new(uuid::Builder::from_random_bytes(bytes).into_uuid()).unwrap()
 }

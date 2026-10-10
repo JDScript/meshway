@@ -56,7 +56,9 @@ fn drive(chain: &Chain, nodes: &mut [SecureNode], mut pending: PendingFrame) -> 
 fn real_compiler_noise_mac_tcp_roundtrip_and_revocation() {
     let chain = Chain::new(3, Duration::from_secs(60)).unwrap();
     let mut nodes = nodes(&chain);
-    let init = nodes[0].start_grant(grant(&chain), chain.path.clone(), &chain.carriers[0]).unwrap();
+    let init = nodes[0]
+        .start_grant(grant(&chain), chain.path.clone(), &chain.carriers[0])
+        .unwrap();
     let circuit = init.circuit();
     assert!(matches!(
         drive(&chain, &mut nodes, init),
@@ -131,14 +133,20 @@ fn lease_deadline_and_issuer_drop_invalidate_clones() {
     let chain = Chain::new(2, Duration::from_secs(1)).unwrap();
     let identity = chain.authority.identity(chain.path[0]).unwrap();
     let mut running = nodes(&chain);
-    let pending = running[0].start_grant(grant(&chain), chain.path.clone(), &chain.carriers[0]).unwrap();
+    let pending = running[0]
+        .start_grant(grant(&chain), chain.path.clone(), &chain.carriers[0])
+        .unwrap();
     chain.authority.wait_expired(chain.path[0]).unwrap();
     assert!(
         pending
             .release(|_| panic!("expired handshake released"))
             .is_err()
     );
-    assert!(running[0].start_grant(grant(&chain), chain.path.clone(), &chain.carriers[0]).is_err());
+    assert!(
+        running[0]
+            .start_grant(grant(&chain), chain.path.clone(), &chain.carriers[0])
+            .is_err()
+    );
     assert!(SecureNode::new(identity, Default::default(), chain.carriers_for(0).unwrap()).is_err());
     let chain = Chain::new(2, Duration::from_secs(60)).unwrap();
     let snapshot = chain.authority.snapshot(chain.path[0]).unwrap();
@@ -150,7 +158,9 @@ fn lease_deadline_and_issuer_drop_invalidate_clones() {
 fn revoked_relay_rejects_authenticated_incoming_handshake() {
     let chain = Chain::new(3, Duration::from_secs(60)).unwrap();
     let mut nodes = nodes(&chain);
-    let init = nodes[0].start_grant(grant(&chain), chain.path.clone(), &chain.carriers[0]).unwrap();
+    let init = nodes[0]
+        .start_grant(grant(&chain), chain.path.clone(), &chain.carriers[0])
+        .unwrap();
     chain.authority.revoke(chain.path[1]).unwrap();
     assert!(
         init.release(|bytes| nodes[1].receive(&chain.carriers[0], bytes))

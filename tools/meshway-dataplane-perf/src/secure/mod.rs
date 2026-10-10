@@ -221,9 +221,7 @@ impl Driver<'_> {
     }
 
     fn readiness(&mut self) -> Result<(), Error> {
-        if !self.ready
-            && (self.tun().is_none() || self.established.is_some())
-        {
+        if !self.ready && (self.tun().is_none() || self.established.is_some()) {
             self.ready = true;
             println!(
                 "{}",

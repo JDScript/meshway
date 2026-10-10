@@ -1,21 +1,31 @@
-mod support;
-
-use hickory_proto::{
-    op::Message,
-    rr::{Name, RData, RecordType},
-};
-use meshway_configuration::{
-    DnsConfiguration, DnsServer, DnsTransport, NodeAddresses, execution::DnsExecution,
-};
-use meshway_dns::{
+use crate::{
     ConfigurationError, ExitSelection, PublishedDns, ResponseTransport, Selection,
     SelectionUnavailable, decode_query, encode_response,
 };
+use hickory_proto::{
+    op::{Message, MessageType, OpCode, Query as Question},
+    rr::{Name, RData, RecordType},
+};
+use meshway_configuration::{DnsConfiguration, DnsServer, DnsTransport, NodeAddresses};
 use std::collections::BTreeMap;
-use support::query_message;
+fn query_message(name: &str, kind: RecordType) -> Message {
+    let mut message = Message::new(0x1234, MessageType::Query, OpCode::Query);
+    message.metadata.recursion_desired = true;
+    message.add_query(Question::query(Name::from_ascii(name).unwrap(), kind));
+    message
+}
 
-fn execution() -> DnsExecution {
-    DnsExecution {
+struct Names {
+    settings: DnsConfiguration,
+    mesh_hosts: BTreeMap<String, NodeAddresses>,
+}
+
+fn published(source: &Names) -> Result<PublishedDns, ConfigurationError> {
+    PublishedDns::from_parts(&source.settings, &source.mesh_hosts, false)
+}
+
+fn execution() -> Names {
+    Names {
         settings: DnsConfiguration {
             magic_dns: true,
             domain: "mesh.example".into(),
@@ -68,9 +78,6 @@ fn execution() -> DnsExecution {
                 },
             ),
         ]),
-        associations: vec![],
-        profile: "not-a-selection-fact".into(),
-        egress: meshway_configuration::execution::DnsEgress::NoExit,
     }
 }
 
@@ -84,7 +91,7 @@ fn resolver_keys(snapshot: &PublishedDns, name: &str, exit: ExitSelection) -> Ve
 
 #[test]
 fn published_records_precede_split_and_preserve_question_case_and_explicit_ttl() {
-    let snapshot = PublishedDns::from_execution(&execution()).unwrap();
+    let snapshot = published(&execution()).unwrap();
     for exit in [ExitSelection::NoExit, ExitSelection::Exit] {
         for kind in [RecordType::A, RecordType::AAAA] {
             let query =
@@ -116,7 +123,7 @@ fn published_records_precede_split_and_preserve_question_case_and_explicit_ttl()
 
 #[test]
 fn null_family_is_nodata_but_missing_name_requires_discovery() {
-    let snapshot = PublishedDns::from_execution(&execution()).unwrap();
+    let snapshot = published(&execution()).unwrap();
     let query = decode_query(
         &query_message("v4.mesh.example.", RecordType::AAAA)
             .to_vec()
@@ -156,7 +163,7 @@ fn null_family_is_nodata_but_missing_name_requires_discovery() {
 
 #[test]
 fn split_selection_is_longest_label_suffix_and_preserves_resolver_order() {
-    let snapshot = PublishedDns::from_execution(&execution()).unwrap();
+    let snapshot = published(&execution()).unwrap();
     assert_eq!(
         resolver_keys(&snapshot, "API.CORP.EXAMPLE.", ExitSelection::NoExit),
         ["office", "public"]
@@ -196,7 +203,7 @@ fn split_selection_is_longest_label_suffix_and_preserves_resolver_order() {
 #[test]
 fn no_exit_override_and_exit_exceptions_are_explicit_selection_only() {
     let mut source = execution();
-    let snapshot = PublishedDns::from_execution(&source).unwrap();
+    let snapshot = published(&source).unwrap();
     let ordinary = decode_query(
         &query_message("outside.test.", RecordType::A)
             .to_vec()
@@ -235,7 +242,7 @@ fn no_exit_override_and_exit_exceptions_are_explicit_selection_only() {
     assert!(candidates[0].server.use_with_exit);
 
     source.settings.override_local = true;
-    let snapshot = PublishedDns::from_execution(&source).unwrap();
+    let snapshot = published(&source).unwrap();
     assert_eq!(
         resolver_keys(&snapshot, "outside.test.", ExitSelection::NoExit),
         ["public"]
@@ -246,8 +253,7 @@ fn no_exit_override_and_exit_exceptions_are_explicit_selection_only() {
     ));
     source.settings.override_local = false;
     source.settings.default.push("office".into());
-    source.profile = "mesh".into();
-    let snapshot = PublishedDns::from_execution(&source).unwrap();
+    let snapshot = published(&source).unwrap();
     assert_eq!(
         resolver_keys(&snapshot, "outside.test.", ExitSelection::Exit),
         ["office"]
@@ -261,9 +267,9 @@ fn no_exit_override_and_exit_exceptions_are_explicit_selection_only() {
 #[test]
 fn magic_dns_disable_and_snapshot_replacement_are_explicit() {
     let mut source = execution();
-    let original = PublishedDns::from_execution(&source).unwrap();
+    let original = published(&source).unwrap();
     source.settings.magic_dns = false;
-    let disabled = PublishedDns::from_execution(&source).unwrap();
+    let disabled = published(&source).unwrap();
     assert_eq!(
         resolver_keys(&disabled, "node.mesh.example.", ExitSelection::NoExit),
         ["public"]
@@ -280,7 +286,7 @@ fn magic_dns_disable_and_snapshot_replacement_are_explicit() {
     ));
     source.settings.magic_dns = true;
     source.mesh_hosts.clear();
-    let replaced = PublishedDns::from_execution(&source).unwrap();
+    let replaced = published(&source).unwrap();
     assert!(matches!(
         replaced.select(&query, ExitSelection::NoExit),
         Selection::Unavailable(SelectionUnavailable::DiscoveryRequired)
@@ -294,7 +300,7 @@ fn settings_reuse_idna_normalization_and_reject_ambiguous_inputs() {
         .settings
         .routes
         .insert("BÜCHER.test.".into(), vec!["office".into()]);
-    let snapshot = PublishedDns::from_execution(&source).unwrap();
+    let snapshot = published(&source).unwrap();
     assert_eq!(
         resolver_keys(&snapshot, "api.xn--bcher-kva.test.", ExitSelection::NoExit),
         ["office"]
@@ -304,20 +310,20 @@ fn settings_reuse_idna_normalization_and_reject_ambiguous_inputs() {
         .routes
         .insert("xn--bcher-kva.test".into(), vec!["public".into()]);
     assert!(matches!(
-        PublishedDns::from_execution(&source),
+        published(&source),
         Err(ConfigurationError::DuplicateName)
     ));
     let mut source = execution();
     source.settings.default.push("unknown".into());
     assert!(matches!(
-        PublishedDns::from_execution(&source),
+        published(&source),
         Err(ConfigurationError::ResolverReference)
     ));
     let mut source = execution();
     source.settings.override_local = true;
     source.settings.default.clear();
     assert!(matches!(
-        PublishedDns::from_execution(&source),
+        published(&source),
         Err(ConfigurationError::ResolverReference)
     ));
     let mut source = execution();
@@ -329,7 +335,7 @@ fn settings_reuse_idna_normalization_and_reject_ambiguous_inputs() {
         },
     );
     assert!(matches!(
-        PublishedDns::from_execution(&source),
+        published(&source),
         Err(ConfigurationError::HostOutsideDomain)
     ));
     let mut source = execution();
@@ -341,7 +347,7 @@ fn settings_reuse_idna_normalization_and_reject_ambiguous_inputs() {
         },
     );
     assert!(matches!(
-        PublishedDns::from_execution(&source),
+        published(&source),
         Err(ConfigurationError::DuplicateName)
     ));
 }

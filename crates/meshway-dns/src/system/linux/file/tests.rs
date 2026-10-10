@@ -1,5 +1,5 @@
 use super::*;
-use meshway_configuration::{DnsConfiguration, execution::DnsEgress};
+use meshway_configuration::DnsConfiguration;
 
 /// The backend enforces production ownership on every ancestor, so the fixture
 /// must live below a chain that passes `open`: `/tmp` (world-writable) and
@@ -70,7 +70,7 @@ fn plan() -> SystemDnsPlan {
     let cfg: DnsConfiguration =
         serde_json::from_str(r#"{"domain":"mesh.example","searchDomains":["mesh.example"]}"#)
             .unwrap();
-    SystemDnsPlan::new(&cfg, &DnsEgress::NoExit).unwrap()
+    SystemDnsPlan::new(&cfg, &meshway_configuration::netmap::DnsPlan::NoExit).unwrap()
 }
 
 #[tokio::test]

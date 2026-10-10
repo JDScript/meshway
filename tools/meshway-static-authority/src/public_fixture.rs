@@ -1,12 +1,7 @@
 //! Public, serializable compiler inputs shared by isolated benchmark processes.
 //! There are no seeds here. Each process supplies only its own NodeMaterial.
 use crate::{Error, NodeMaterial, StaticAuthority, random_uuid};
-use meshway_configuration::{
-    execution::*,
-    netmap::CompiledNetmap,
-    transport::PreparedListener,
-    *,
-};
+use meshway_configuration::{execution::*, netmap::CompiledNetmap, transport::PreparedListener, *};
 use meshway_model::*;
 use meshway_policy::SubjectContext;
 use serde::{Deserialize, Serialize};

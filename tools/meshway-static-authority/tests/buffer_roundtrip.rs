@@ -30,7 +30,9 @@ fn pooled_packet_survives_three_roles_without_payload_copy_and_revocation_return
             .unwrap()
         })
         .collect();
-    let mut pending = nodes[0].start_grant(grant(&chain), chain.path.clone(), &chain.carriers[0]).unwrap();
+    let mut pending = nodes[0]
+        .start_grant(grant(&chain), chain.path.clone(), &chain.carriers[0])
+        .unwrap();
     let cid = pending.circuit();
     loop {
         let next = chain

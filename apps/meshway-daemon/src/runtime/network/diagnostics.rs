@@ -155,6 +155,22 @@ impl Diagnostics {
             return;
         }
         self.dirty = false;
+        let reference = installed.reference();
+        let instance = installed.instance();
+        self.server.retain(|task| {
+            task.netmap == reference
+                && instance
+                    .as_ref()
+                    .is_some_and(|current| current.instance_id == task.instance_id)
+        });
+        // Local measurements are re-admitted by this Node's current netmap;
+        // an HTTP instance replacement does not end the IPC caller's request.
+        for local in self.locals.values_mut() {
+            local.task.netmap = reference;
+            if let Some(instance) = &instance {
+                local.task.instance_id = instance.instance_id;
+            }
+        }
         let mut tasks = self.server.clone();
         tasks.extend(
             self.locals
