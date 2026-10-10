@@ -72,7 +72,9 @@ async fn exercise(
     let Signal::HttpAvailability {
         available: false,
         observed_at_ms: closed_at_ms,
-    } = signals.wait("http-outage").await?
+    } = signals
+        .wait_for("http-outage", Duration::from_secs(90))
+        .await?
     else {
         return Err("invalid HTTP outage boundary".into());
     };
