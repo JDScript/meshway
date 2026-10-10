@@ -3,14 +3,14 @@ use crate::{
     arguments::{Arguments, Command as CliCommand},
     output::display,
 };
-use meshway_ipc::{Client, Command, Phase, PingEvent, PingTarget};
+use meshway_protocol::ipc::{Client, Command, Phase, PingEvent, PingTarget};
 use std::time::Duration;
 use tokio::time::Instant;
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum Error {
     #[error(transparent)]
-    Ipc(#[from] meshway_ipc::ClientError),
+    Ipc(#[from] meshway_protocol::ipc::ClientError),
     #[error("Cannot write status.")]
     Output(#[from] std::io::Error),
     #[error("Another operator changed Node intent.")]
@@ -22,7 +22,7 @@ pub(crate) enum Error {
     #[error("Ping finished without a successful reply.")]
     PingUnsuccessful,
     #[error("Ping failed: {0:?}.")]
-    PingFailed(meshway_ipc::PingError),
+    PingFailed(meshway_protocol::ipc::PingError),
     #[error(
         "Cannot read enrollment key input; use a valid key, readable @file, or piped stdin (-)."
     )]
@@ -131,7 +131,9 @@ pub(crate) async fn run(arguments: Arguments) -> Result<(), Error> {
     }
 }
 
-async fn enrollment_key_input(value: String) -> Result<meshway_ipc::EnrollmentKey, Error> {
+async fn enrollment_key_input(
+    value: String,
+) -> Result<meshway_protocol::ipc::EnrollmentKey, Error> {
     use std::io::Read;
     let mut input = String::new();
     if value == "-" || value == "@-" {
@@ -173,5 +175,6 @@ async fn enrollment_key_input(value: String) -> Result<meshway_ipc::EnrollmentKe
     if input.len() > 4096 {
         return Err(Error::EnrollmentKeyInput);
     }
-    meshway_ipc::EnrollmentKey::new(input.trim().to_owned()).map_err(|_| Error::EnrollmentKeyInput)
+    meshway_protocol::ipc::EnrollmentKey::new(input.trim().to_owned())
+        .map_err(|_| Error::EnrollmentKeyInput)
 }

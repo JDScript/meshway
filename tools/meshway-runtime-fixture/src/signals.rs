@@ -1,7 +1,7 @@
 //! Run-private rendezvous contains public identities/status, never credentials.
 use crate::{Result, STARTUP};
-use meshway_ipc::Status;
 use meshway_model::Revision;
+use meshway_protocol::ipc::Status;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,

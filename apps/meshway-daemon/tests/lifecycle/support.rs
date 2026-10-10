@@ -1,6 +1,8 @@
 use meshway_control_client::Client;
-use meshway_ipc::{Command as IpcCommand, Phase, Request, Response, ResultBody, Status, VERSION};
 use meshway_model::{NetworkId, RequestId};
+use meshway_protocol::ipc::{
+    Command as IpcCommand, Phase, Request, Response, ResultBody, Status, VERSION,
+};
 use meshway_protocol::{CreateNetworkRequest, RegisterRequest, WireSecret};
 use meshway_server::{App, Settings};
 use std::{
@@ -241,7 +243,7 @@ impl Drop for Process {
 pub async fn call(path: &Path, command: IpcCommand, id: RequestId) -> Result<Response, ()> {
     tokio::time::timeout(Duration::from_secs(3), async {
         let mut stream = UnixStream::connect(path).await.map_err(|_| ())?;
-        meshway_ipc::write(
+        meshway_protocol::ipc::write(
             &mut stream,
             &Request {
                 version: VERSION,
@@ -251,7 +253,9 @@ pub async fn call(path: &Path, command: IpcCommand, id: RequestId) -> Result<Res
         )
         .await
         .map_err(|_| ())?;
-        let response: Response = meshway_ipc::read(&mut stream).await.map_err(|_| ())?;
+        let response: Response = meshway_protocol::ipc::read(&mut stream)
+            .await
+            .map_err(|_| ())?;
         assert_eq!(response.request_id, id);
         Ok(response)
     })

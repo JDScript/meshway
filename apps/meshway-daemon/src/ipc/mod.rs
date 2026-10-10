@@ -2,10 +2,10 @@
 mod socket;
 
 use crate::runtime::{Action, Mutation, PingRequest, View};
-use meshway_ipc::{
+use meshway_model::Sequence;
+use meshway_protocol::ipc::{
     Command, ErrorCode, PingError, PingEvent, Request, Response, ResultBody, VERSION,
 };
-use meshway_model::Sequence;
 pub(crate) use socket::{Socket, SocketIdentity};
 use std::time::Duration;
 use tokio::{
@@ -36,8 +36,11 @@ async fn handle(
     if !authorized(&stream) {
         return;
     }
-    let Ok(Ok(request)) =
-        tokio::time::timeout_at(deadline, meshway_ipc::read::<Request>(&mut stream)).await
+    let Ok(Ok(request)) = tokio::time::timeout_at(
+        deadline,
+        meshway_protocol::ipc::read::<Request>(&mut stream),
+    )
+    .await
     else {
         return;
     };
@@ -88,9 +91,11 @@ async fn handle_ping(
                         event: PingEvent::Failed { code },
                     },
                 };
-                let _ =
-                    tokio::time::timeout(WRITE_TIMEOUT, meshway_ipc::write(&mut stream, &response))
-                        .await;
+                let _ = tokio::time::timeout(
+                    WRITE_TIMEOUT,
+                    meshway_protocol::ipc::write(&mut stream, &response),
+                )
+                .await;
             }
         }
     }
@@ -144,7 +149,7 @@ async fn one_shot(
             Err(code) => ResultBody::Error { code },
         },
     };
-    let _ = meshway_ipc::write(stream, &response).await;
+    let _ = meshway_protocol::ipc::write(stream, &response).await;
 }
 
 async fn ping_stream(
@@ -175,7 +180,7 @@ async fn ping_stream(
         let written = tokio::select! { biased;
             _ = stop.wait_for(|stopping| *stopping) => return,
             _ = reader.read(&mut unexpected) => return,
-            written = tokio::time::timeout(WRITE_TIMEOUT, meshway_ipc::write(&mut writer, &response)) => written,
+            written = tokio::time::timeout(WRITE_TIMEOUT, meshway_protocol::ipc::write(&mut writer, &response)) => written,
         };
         if !matches!(written, Ok(Ok(()))) || terminal {
             return;

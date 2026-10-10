@@ -10,7 +10,7 @@ fn request() -> Request {
         version: VERSION,
         request_id: ID.parse::<RequestId>().unwrap(),
         command: Command::Ping {
-            target: meshway_ipc::PingTarget::Name {
+            target: meshway_protocol::ipc::PingTarget::Name {
                 name: "peer.mesh".into(),
             },
             count: 10,
@@ -62,7 +62,7 @@ async fn bridge_frames_use_one_request_and_contiguous_sequences_then_cancel() {
     .enumerate()
     {
         ping.events.send(event.clone()).await.unwrap();
-        let response: Response = meshway_ipc::read(&mut client).await.unwrap();
+        let response: Response = meshway_protocol::ipc::read(&mut client).await.unwrap();
         assert_eq!(response.request_id, ping.id);
         assert_eq!(response.version, VERSION);
         let ResultBody::Ping {
@@ -122,7 +122,7 @@ async fn full_queue_rejects_without_waiting_and_closed_owner_is_terminal() {
                 pings
                     .try_send(PingRequest {
                         id: request().request_id,
-                        target: meshway_ipc::PingTarget::Name {
+                        target: meshway_protocol::ipc::PingTarget::Name {
                             name: "occupied".into()
                         },
                         count: 1,
@@ -136,7 +136,7 @@ async fn full_queue_rejects_without_waiting_and_closed_owner_is_terminal() {
         }
         let (_stop, stopped) = watch::channel(false);
         let task = tokio::spawn(handle_ping(server, request(), pings, stopped));
-        let response: Response = meshway_ipc::read(&mut client).await.unwrap();
+        let response: Response = meshway_protocol::ipc::read(&mut client).await.unwrap();
         let ResultBody::Ping {
             sequence,
             event: PingEvent::Failed { code },
@@ -189,7 +189,7 @@ async fn lost_owner_sends_terminal_stopped() {
     let (mut client, ping, _stop, task) = bridge().await;
     let cancellation = ping.cancellation.clone();
     drop(ping);
-    let response: Response = meshway_ipc::read(&mut client).await.unwrap();
+    let response: Response = meshway_protocol::ipc::read(&mut client).await.unwrap();
     assert!(matches!(
         response.result,
         ResultBody::Ping {

@@ -3,6 +3,7 @@ name = "meshway-protocol"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+description = "Server/Node/Console HTTP contracts and the typed bounded local Node control protocol (IPC)"
 
 [dependencies]
 chrono.workspace = true
@@ -11,11 +12,18 @@ meshway-model = { path = "../meshway-model" }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["io-util"] }
 utoipa.workspace = true
 zeroize = "1.8"
 
+[target.'cfg(unix)'.dependencies]
+getrandom.workspace = true
+uuid.workspace = true
+
 [dev-dependencies]
 serde_json.workspace = true
+tempfile.workspace = true
 
 [lints]
 workspace = true

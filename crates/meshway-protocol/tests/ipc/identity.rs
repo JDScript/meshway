@@ -1,4 +1,4 @@
-use meshway_ipc::{Command, EnrollmentKey, VERSION};
+use meshway_protocol::ipc::{Command, EnrollmentKey, VERSION};
 use serde_json::json;
 
 #[test]

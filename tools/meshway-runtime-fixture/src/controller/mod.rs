@@ -1211,7 +1211,7 @@ async fn applied(
     token: &str,
     nodes: &BTreeMap<Role, NodeId>,
     revision: Revision,
-    observation: (&str, Option<&BTreeMap<Role, meshway_ipc::Status>>),
+    observation: (&str, Option<&BTreeMap<Role, meshway_protocol::ipc::Status>>),
 ) -> Result<()> {
     let (stage, expected) = observation;
     tokio::time::timeout(STARTUP, async {

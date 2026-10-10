@@ -34,7 +34,7 @@ fn keys(n: u8) -> meshway_protocol::NodeKeyMetadata {
         "dataplane":{"id":id::<meshway_model::KeyId>(n+40),"generation":1,"publicKey":{"algorithm":"x25519","bytes":Digest::from_bytes([n+1;32])}}
     })).unwrap()
 }
-fn status(n: u8) -> meshway_ipc::Status {
+fn status(n: u8) -> meshway_protocol::ipc::Status {
     serde_json::from_value(json!({
         "processId":42,"revision":1,"desiredUp":true,"phase":"running",
         "sync":"disconnected","lastSyncAt":null,

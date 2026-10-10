@@ -14,8 +14,8 @@ use crate::settings::Settings;
 use cycle::{Online, online};
 use failure::failure;
 use meshway_control::{Control, Error};
-use meshway_ipc::{Phase, Problem};
 use meshway_model::{InstanceId, NetmapRef};
+use meshway_protocol::ipc::{Phase, Problem};
 use std::{sync::Arc, time::Duration};
 use tokio::{
     sync::{Mutex, watch},
@@ -176,7 +176,8 @@ pub(super) async fn run(
             break;
         }
         if control.is_none() {
-            if settings.network_mode == meshway_ipc::NetworkMode::Tun && network.is_none() {
+            if settings.network_mode == meshway_protocol::ipc::NetworkMode::Tun && network.is_none()
+            {
                 match network::Handle::open(
                     directory.clone(),
                     &settings.server,
@@ -290,18 +291,20 @@ pub(super) async fn run(
                 .map(|_| ())
                 .map_err(|error| {
                     let local = match &error {
-                        Error::Pending => Some(meshway_ipc::ErrorCode::Pending),
-                        Error::Lifecycle => Some(meshway_ipc::ErrorCode::NotReady),
+                        Error::Pending => Some(meshway_protocol::ipc::ErrorCode::Pending),
+                        Error::Lifecycle => Some(meshway_protocol::ipc::ErrorCode::NotReady),
                         _ => None,
                     };
                     let problem = failure::at("rotate_keys", error, true).problem;
                     local.unwrap_or(match problem {
-                        Problem::Network => meshway_ipc::ErrorCode::Network,
-                        Problem::ServerBusy => meshway_ipc::ErrorCode::ServerBusy,
-                        Problem::Credentials => meshway_ipc::ErrorCode::Credentials,
-                        Problem::Storage => meshway_ipc::ErrorCode::Storage,
-                        Problem::Clock | Problem::Apply => meshway_ipc::ErrorCode::NotReady,
-                        _ => meshway_ipc::ErrorCode::Contract,
+                        Problem::Network => meshway_protocol::ipc::ErrorCode::Network,
+                        Problem::ServerBusy => meshway_protocol::ipc::ErrorCode::ServerBusy,
+                        Problem::Credentials => meshway_protocol::ipc::ErrorCode::Credentials,
+                        Problem::Storage => meshway_protocol::ipc::ErrorCode::Storage,
+                        Problem::Clock | Problem::Apply => {
+                            meshway_protocol::ipc::ErrorCode::NotReady
+                        }
+                        _ => meshway_protocol::ipc::ErrorCode::Contract,
                     })
                 });
             publish(

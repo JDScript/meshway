@@ -1,4 +1,4 @@
-use meshway_ipc::{EndpointKind, LinkAcquisition, PingEvent, ProbeOutcome};
+use meshway_protocol::ipc::{EndpointKind, LinkAcquisition, PingEvent, ProbeOutcome};
 use std::io::{self, Write};
 
 pub(crate) fn display(event: &PingEvent, json: bool) -> io::Result<()> {

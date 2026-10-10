@@ -1,7 +1,7 @@
 mod proxy;
 use super::support::{self, Process, Server, request_id};
 use meshway_control_client::{ApproveDeviceAuthorizationPath, GetNodeStatePath, RevokeNodeKeyPath};
-use meshway_ipc::{Command, Phase, Problem, Status};
+use meshway_protocol::ipc::{Command, Phase, Problem, Status};
 use meshway_protocol::{
     ApproveEnrollmentRequest, LoginRequest, RevokeNodeKeyRequest, WireSecret, state::Freshness,
 };

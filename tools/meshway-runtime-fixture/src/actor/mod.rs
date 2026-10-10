@@ -7,8 +7,8 @@ use crate::{
     application::{self, Counts, Echo, Subscription, SubscriptionEvidence, Traffic},
     signals::{self, Addresses, Role, Signal, Signals},
 };
-use meshway_ipc::{DataPlane, NetworkMode, Phase, Status};
 use meshway_model::Revision;
+use meshway_protocol::ipc::{DataPlane, NetworkMode, Phase, Status};
 use serde::Serialize;
 use std::{
     collections::BTreeMap,
@@ -675,15 +675,15 @@ async fn publish_status(
 struct InboundStreamEvidence {
     #[serde(flatten)]
     reception: SubscriptionEvidence,
-    start_netmap: meshway_ipc::NetmapStatus,
-    end_netmap: meshway_ipc::NetmapStatus,
+    start_netmap: meshway_protocol::ipc::NetmapStatus,
+    end_netmap: meshway_protocol::ipc::NetmapStatus,
     circuit: String,
 }
 
 async fn inbound_stream_evidence(
     cli: &Cli,
     reception: SubscriptionEvidence,
-    start_netmap: meshway_ipc::NetmapStatus,
+    start_netmap: meshway_protocol::ipc::NetmapStatus,
 ) -> Result<InboundStreamEvidence> {
     let end_netmap = command(cli, "status")
         .await?

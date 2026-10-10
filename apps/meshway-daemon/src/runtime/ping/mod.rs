@@ -1,4 +1,4 @@
-use meshway_ipc::{DataPlane, NetworkMode, Phase, PingError, PingEvent, Status};
+use meshway_protocol::ipc::{DataPlane, NetworkMode, Phase, PingError, PingEvent, Status};
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 

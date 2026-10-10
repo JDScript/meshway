@@ -1,8 +1,8 @@
 //! Real owner cleanup in a disposable Linux network namespace and private /run.
 use super::support::*;
 use meshway_dns::SystemDnsOwner;
-use meshway_ipc::{Command, DataPlane, Phase, Problem, ResultBody};
 use meshway_private_storage::Directory;
+use meshway_protocol::ipc::{Command, DataPlane, Phase, Problem, ResultBody};
 use std::sync::Arc;
 
 #[tokio::test]

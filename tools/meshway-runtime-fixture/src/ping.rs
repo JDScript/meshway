@@ -1,12 +1,12 @@
 //! Evidence from the production CLI's JSON-lines stream only. This module never
 //! creates probes, accesses Node credentials, or infers a channel from State.
 use crate::Result;
-use meshway_ipc::{PingError, PingEvent, Status};
 use meshway_model::{
     InstanceId, NetmapRef, NetworkId, NodeId, ObservationId, ObservationSubscriptionId, Version,
     observations::ObservationSample,
     state::{ProbeKind, ProbeOutcome},
 };
+use meshway_protocol::ipc::{PingError, PingEvent, Status};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
@@ -475,9 +475,9 @@ pub(super) fn roundtrip_run(elapsed_ms: u64) -> Run {
         transport: meshway_model::TransportProtocol::NativeUdp,
         local_address: "192.0.2.1:35000".parse().unwrap(),
         remote_address: "192.0.2.2:35000".parse().unwrap(),
-        acquisition: meshway_ipc::LinkAcquisition::CoordinatedUdp {
+        acquisition: meshway_protocol::ipc::LinkAcquisition::CoordinatedUdp {
             attempt_id: id.parse().unwrap(),
-            endpoint_source: meshway_ipc::EndpointKind::Stun,
+            endpoint_source: meshway_protocol::ipc::EndpointKind::Stun,
         },
     };
     let at = "2026-10-05T00:00:00Z".parse().unwrap();

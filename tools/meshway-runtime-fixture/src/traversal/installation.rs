@@ -29,7 +29,7 @@ pub struct Installation {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Installations {
     pub role: Role,
-    pub status: Box<meshway_ipc::Status>,
+    pub status: Box<meshway_protocol::ipc::Status>,
     pub installed: Vec<Installation>,
 }
 

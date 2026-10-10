@@ -11,8 +11,8 @@ use crate::{
     recovery::now_ms,
     signals::{self, Addresses, Role, Signal, Signals},
 };
-use meshway_ipc::{DataPlane, Phase, Status};
 use meshway_model::{NetmapRef, Revision};
+use meshway_protocol::ipc::{DataPlane, Phase, Status};
 use std::{collections::BTreeMap, path::Path, time::Duration};
 use tokio::process::Child;
 

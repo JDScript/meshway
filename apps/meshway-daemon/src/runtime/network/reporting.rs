@@ -27,8 +27,8 @@ struct Listener {
 #[derive(PartialEq, Eq)]
 pub(super) struct Key {
     netmap: Option<NetmapRef>,
-    plane: meshway_ipc::DataPlane,
-    problem: Option<meshway_ipc::Problem>,
+    plane: meshway_protocol::ipc::DataPlane,
+    problem: Option<meshway_protocol::ipc::Problem>,
     completion: Option<Result<(), ApplyFailure>>,
     generation: Sequence,
     interface_epoch: u64,
@@ -68,7 +68,7 @@ impl Key {
             dependencies: BTreeMap::new(),
         };
         if dns_live
-            && report.plane == meshway_ipc::DataPlane::Ready
+            && report.plane == meshway_protocol::ipc::DataPlane::Ready
             && let Some(facts) = &report.facts
         {
             key.listeners = facts
@@ -408,7 +408,7 @@ mod tests {
         publisher.send_replace(report.clone());
         assert!(!schedule.changes.has_changed().unwrap());
         assert!(Arc::ptr_eq(&first, &schedule.latest().key));
-        report.plane = meshway_ipc::DataPlane::Ready;
+        report.plane = meshway_protocol::ipc::DataPlane::Ready;
         report.facts = Some(meshway_connectivity::Snapshot {
             listeners: vec![meshway_connectivity::ListenerFact {
                 socket_id: [1; 32],
@@ -439,7 +439,7 @@ mod tests {
             receipt: schedule.receipt.clone(),
         };
         let mut ready = Report::stopped();
-        ready.plane = meshway_ipc::DataPlane::Ready;
+        ready.plane = meshway_protocol::ipc::DataPlane::Ready;
         publisher.send_replace(ready);
         publisher.send_replace(Report::stopped());
         schedule.acknowledge(Some(old));
@@ -461,7 +461,7 @@ mod tests {
             candidates: Vec::new(),
         });
         let mut ready = Report::stopped();
-        ready.plane = meshway_ipc::DataPlane::Ready;
+        ready.plane = meshway_protocol::ipc::DataPlane::Ready;
         publisher.send_replace(ready);
         let ready_sample = schedule.latest();
         schedule.receipt_completed();

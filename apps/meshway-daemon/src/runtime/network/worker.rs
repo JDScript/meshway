@@ -10,8 +10,8 @@ use super::{
 use meshway_connectivity::{AdjacencyInterest, Event};
 use meshway_dataplane::{DEFAULT_HEADROOM, DEFAULT_TAILROOM, Packet, PacketPool};
 use meshway_engine::Engine;
-use meshway_ipc::{DataPlane, Problem};
 use meshway_protocol::execution::ApplyFailure;
+use meshway_protocol::ipc::{DataPlane, Problem};
 use meshway_underlay::Host;
 use std::{sync::Arc, time::Duration};
 use tokio::sync::{mpsc, watch};

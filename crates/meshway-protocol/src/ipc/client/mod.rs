@@ -1,5 +1,5 @@
 //! Authenticated Unix client shared by local control consumers.
-use crate::{
+use crate::ipc::{
     CodecError, Command, ErrorCode, PingEvent, PingTarget, Request, Response, ResultBody, Status,
     VERSION,
 };
@@ -110,7 +110,7 @@ impl Client {
         {
             return Err(ClientError::Identity);
         }
-        crate::write(&mut stream, request)
+        crate::ipc::write(&mut stream, request)
             .await
             .map_err(ClientError::Write)?;
         Ok(stream)
@@ -133,7 +133,7 @@ async fn read_response(
     stream: &mut UnixStream,
     request_id: RequestId,
 ) -> Result<Response, ClientError> {
-    let response: Response = crate::read(stream).await.map_err(ClientError::Read)?;
+    let response: Response = crate::ipc::read(stream).await.map_err(ClientError::Read)?;
     if response.request_id != request_id {
         return Err(ClientError::Response);
     }

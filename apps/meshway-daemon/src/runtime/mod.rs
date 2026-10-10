@@ -15,7 +15,7 @@ use crate::{
     ipc::{self, Socket},
     settings::Settings,
 };
-use meshway_ipc::{ErrorCode, Phase};
+use meshway_protocol::ipc::{ErrorCode, Phase};
 use std::{io::Write, sync::Arc};
 use tokio::sync::{mpsc, watch};
 
@@ -25,7 +25,7 @@ pub(crate) struct PingRequest {
     pub id: meshway_model::RequestId,
     pub target: meshway_protocol::NodeObservationTarget,
     pub count: u16,
-    pub events: mpsc::Sender<meshway_ipc::PingEvent>,
+    pub events: mpsc::Sender<meshway_protocol::ipc::PingEvent>,
     pub cancellation: tokio_util::sync::CancellationToken,
 }
 
@@ -129,9 +129,9 @@ pub async fn run(
             },
             ping = ping_requests.recv() => {
                 if let Some(mut ping) = ping {
-                    let code = ping::admission(&view.status()).err().or_else(|| (ping_forwarders.len() >= 8).then_some(meshway_ipc::PingError::Busy));
+                    let code = ping::admission(&view.status()).err().or_else(|| (ping_forwarders.len() >= 8).then_some(meshway_protocol::ipc::PingError::Busy));
                     if let Some(code) = code {
-                        let _ = ping.events.try_send(meshway_ipc::PingEvent::Failed { code });
+                        let _ = ping.events.try_send(meshway_protocol::ipc::PingEvent::Failed { code });
                         ping.cancellation.cancel();
                     } else {
                         let client = ping.events.clone();
@@ -144,7 +144,7 @@ pub async fn run(
                         if let Some(gateway) = local_pings.borrow().as_ref() {
                             gateway.send(PingSession { request: ping, progress });
                         } else {
-                            let _ = ping.events.try_send(meshway_ipc::PingEvent::Failed { code: meshway_ipc::PingError::NotRunning });
+                            let _ = ping.events.try_send(meshway_protocol::ipc::PingEvent::Failed { code: meshway_protocol::ipc::PingError::NotRunning });
                             ping.cancellation.cancel();
                         }
                     }
@@ -157,9 +157,11 @@ pub async fn run(
     received.close();
     ping_requests.close();
     while let Some(ping) = ping_requests.recv().await {
-        let _ = ping.events.try_send(meshway_ipc::PingEvent::Failed {
-            code: meshway_ipc::PingError::Stopped,
-        });
+        let _ = ping
+            .events
+            .try_send(meshway_protocol::ipc::PingEvent::Failed {
+                code: meshway_protocol::ipc::PingError::Stopped,
+            });
         ping.cancellation.cancel();
     }
     while let Some(command) = received.recv().await {

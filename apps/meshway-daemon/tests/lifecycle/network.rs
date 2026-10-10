@@ -1,6 +1,6 @@
 //! Real-process mode boundary; no fake Node or fabricated execution authority.
 use super::support::*;
-use meshway_ipc::{Command, DataPlane, NetworkMode, Phase, Problem};
+use meshway_protocol::ipc::{Command, DataPlane, NetworkMode, Phase, Problem};
 
 #[tokio::test]
 async fn unsupported_tun_keeps_ipc_responsive_and_never_opens_unprotected_control() {

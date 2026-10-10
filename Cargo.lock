@@ -1742,7 +1742,6 @@ dependencies = [
  "getrandom 0.3.4",
  "meshway-control-client",
  "meshway-daemon",
- "meshway-ipc",
  "meshway-logging",
  "meshway-model",
  "meshway-protocol",
@@ -1891,7 +1890,6 @@ dependencies = [
  "meshway-dataplane",
  "meshway-dns",
  "meshway-engine",
- "meshway-ipc",
  "meshway-logging",
  "meshway-model",
  "meshway-private-storage",
@@ -2039,23 +2037,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "meshway-ipc"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "getrandom 0.3.4",
- "meshway-model",
- "meshway-protocol",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror",
- "tokio",
- "utoipa",
- "uuid",
-]
-
-[[package]]
 name = "meshway-logging"
 version = "0.1.0"
 dependencies = [
@@ -2154,12 +2135,17 @@ name = "meshway-protocol"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "getrandom 0.3.4",
  "meshway-configuration",
  "meshway-model",
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "tempfile",
+ "thiserror",
+ "tokio",
  "utoipa",
+ "uuid",
  "zeroize",
 ]
 
@@ -2176,7 +2162,6 @@ dependencies = [
  "meshway-configuration",
  "meshway-control-client",
  "meshway-dns",
- "meshway-ipc",
  "meshway-logging",
  "meshway-model",
  "meshway-packet-fixture",

@@ -1,8 +1,10 @@
 //! CLI/IPC transport fixtures. Mesh packet success is verified by Linux integration.
 #![cfg(unix)]
 
-use meshway_ipc::{Command, PingEvent, PingTarget, Request, Response, ResultBody, VERSION};
 use meshway_model::Sequence;
+use meshway_protocol::ipc::{
+    Command, PingEvent, PingTarget, Request, Response, ResultBody, VERSION,
+};
 use serde_json::json;
 use std::{
     os::unix::fs::PermissionsExt,
@@ -45,7 +47,7 @@ async fn cli(mut command: std::process::Command) -> Output {
 }
 
 async fn send(stream: &mut UnixStream, request: &Request, sequence: u64, event: PingEvent) {
-    meshway_ipc::write(
+    meshway_protocol::ipc::write(
         stream,
         &Response {
             version: VERSION,
@@ -65,7 +67,7 @@ async fn json_stream_uses_typed_target_default_count_and_success_exit_status() {
     let (directory, listener) = fixture();
     let server = tokio::spawn(async move {
         let (mut stream, _) = listener.accept().await.unwrap();
-        let request: Request = meshway_ipc::read(&mut stream).await.unwrap();
+        let request: Request = meshway_protocol::ipc::read(&mut stream).await.unwrap();
         assert!(
             matches!(&request.command, Command::Ping { target: PingTarget::Name { name }, count: 10 } if name == "peer.mesh")
         );
@@ -119,7 +121,7 @@ async fn ip_target_count_flags_timeout_and_terminal_failures_exit_unsuccessfully
         let (directory, listener) = fixture();
         let server = tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await.unwrap();
-            let request: Request = meshway_ipc::read(&mut stream).await.unwrap();
+            let request: Request = meshway_protocol::ipc::read(&mut stream).await.unwrap();
             assert!(
                 matches!(&request.command, Command::Ping { target: PingTarget::MeshIp { address }, count: 1 } if address == "fd00::2")
             );
@@ -129,7 +131,7 @@ async fn ip_target_count_flags_timeout_and_terminal_failures_exit_unsuccessfully
                     &request,
                     0,
                     PingEvent::Failed {
-                        code: meshway_ipc::PingError::PermissionDenied,
+                        code: meshway_protocol::ipc::PingError::PermissionDenied,
                     },
                 )
                 .await;
@@ -184,7 +186,7 @@ async fn ctrl_c_keeps_existing_exit_code_and_closes_subscription() {
     let child = command.spawn().unwrap();
     let pid = child.id();
     let (mut stream, _) = listener.accept().await.unwrap();
-    let request: Request = meshway_ipc::read(&mut stream).await.unwrap();
+    let request: Request = meshway_protocol::ipc::read(&mut stream).await.unwrap();
     send(&mut stream, &request, 0, accepted()).await;
     assert!(
         std::process::Command::new("/bin/kill")
@@ -211,7 +213,7 @@ async fn eof_without_terminal_is_failure() {
     let (directory, listener) = fixture();
     let server = tokio::spawn(async move {
         let (mut stream, _) = listener.accept().await.unwrap();
-        let request = meshway_ipc::read(&mut stream).await.unwrap();
+        let request = meshway_protocol::ipc::read(&mut stream).await.unwrap();
         send(&mut stream, &request, 0, accepted()).await;
     });
     let mut command = command(directory.path());

@@ -1,10 +1,11 @@
 //! Local control messages. Responses carry public status; Up may carry a
 //! one-use admission secret over the authorized private socket.
-#![forbid(unsafe_code)]
 #[cfg(unix)]
 mod client;
 mod codec;
 mod secret;
+pub use crate::NodeObservationTarget as PingTarget;
+use crate::{EnrollmentResponse, InstanceLease, NodeObservationTarget, NodeObservationTargetView};
 use chrono::{DateTime, Utc};
 #[cfg(unix)]
 pub use client::{Client, ClientError, PingStream};
@@ -16,10 +17,6 @@ use meshway_model::{
 pub use meshway_model::{
     observations::{EndpointKind, LinkAcquisition},
     state::ProbeOutcome,
-};
-pub use meshway_protocol::NodeObservationTarget as PingTarget;
-use meshway_protocol::{
-    EnrollmentResponse, InstanceLease, NodeObservationTarget, NodeObservationTargetView,
 };
 pub use secret::EnrollmentKey;
 use serde::Serialize;
@@ -76,7 +73,7 @@ meshway_model::object! { #[derive(Clone, Debug)] pub struct Response {
     pub result: ResultBody,
 } }
 meshway_model::tagged! { #[derive(Clone, Debug)] pub enum ResultBody {
-    Status { status: Box<crate::Status> },
+    Status { status: Box<crate::ipc::Status> },
     Error { code: ErrorCode },
     Ping { sequence: Sequence, event: PingEvent },
 } }

@@ -23,7 +23,6 @@ meshway-tun = { path = "../../crates/meshway-tun" }
 meshway-connectivity = { path = "../../crates/meshway-connectivity" }
 meshway-dataplane = { path = "../../crates/meshway-dataplane" }
 meshway-dns = { path = "../../crates/meshway-dns" }
-meshway-ipc = { path = "../../crates/meshway-ipc" }
 meshway-logging = { path = "../../crates/meshway-logging" }
 meshway-model = { path = "../../crates/meshway-model" }
 meshway-private-storage = { path = "../../crates/meshway-private-storage" }

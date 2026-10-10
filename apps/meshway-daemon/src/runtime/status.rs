@@ -2,14 +2,14 @@
 use super::intent::Desired;
 use chrono::{DateTime, Utc};
 use meshway_control::StatusSnapshot;
-use meshway_ipc::{DataPlane, NetworkMode, Phase, Problem, Status, SyncState};
 use meshway_model::Version;
+use meshway_protocol::ipc::{DataPlane, NetworkMode, Phase, Problem, Status, SyncState};
 use tokio::sync::watch;
 
 #[derive(Clone, Copy)]
 pub(super) struct RotationOutcome {
     pub id: meshway_model::RequestId,
-    pub result: Result<(), meshway_ipc::ErrorCode>,
+    pub result: Result<(), meshway_protocol::ipc::ErrorCode>,
 }
 
 #[derive(Clone)]
@@ -133,7 +133,7 @@ impl View {
         let exit = (active
             && network.netmap.is_some()
             && (network.exit_capability.is_some() || network.exit_dns_unavailable))
-            .then(|| meshway_ipc::ExitState {
+            .then(|| meshway_protocol::ipc::ExitState {
                 capability: network.exit_capability.clone().map(|mut capability| {
                     if !network_current {
                         capability.installed_families.clear();
@@ -181,7 +181,7 @@ impl View {
                 None
             },
             netmap: lease.filter(|_| active).and_then(|lease| {
-                Some(meshway_ipc::NetmapStatus {
+                Some(meshway_protocol::ipc::NetmapStatus {
                     netmap: lease.netmap,
                     issued_at: timestamp(lease.issued_at_ms)?,
                     expires_at: timestamp(lease.expires_at_ms)?,

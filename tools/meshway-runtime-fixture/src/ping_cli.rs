@@ -5,8 +5,8 @@ use crate::{
     ping::{Identity, OUTPUT_LIMIT, PingEvidence, RUN_LIMIT, Run, Stage, decode_stdout},
     signals::{Addresses, Role, Signal, Signals},
 };
-use meshway_ipc::PingEvent;
 use meshway_model::NodeId;
+use meshway_protocol::ipc::PingEvent;
 use std::{
     collections::BTreeMap,
     path::PathBuf,
@@ -108,7 +108,7 @@ impl Live {
                 if let Some(end) = bytes.iter().rposition(|byte| *byte == b'\n')
                     && decode_stdout(&bytes[..=end])?
                         .iter()
-                        .any(|event| matches!(event, PingEvent::Sample { sample, .. } if sample.probe.as_ref().is_some_and(|probe| probe.outcome == meshway_ipc::ProbeOutcome::Success)))
+                        .any(|event| matches!(event, PingEvent::Sample { sample, .. } if sample.probe.as_ref().is_some_and(|probe| probe.outcome == meshway_protocol::ipc::ProbeOutcome::Success)))
                 {
                     return Ok::<_, Error>(());
                 }

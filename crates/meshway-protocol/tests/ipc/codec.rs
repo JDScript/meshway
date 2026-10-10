@@ -1,4 +1,4 @@
-use meshway_ipc::{CodecError, Request};
+use meshway_protocol::ipc::{CodecError, Request};
 use tokio::io::AsyncWriteExt;
 
 async fn decode(bytes: &[u8]) -> Result<Request, CodecError> {
@@ -6,7 +6,7 @@ async fn decode(bytes: &[u8]) -> Result<Request, CodecError> {
     write.write_u32(bytes.len() as u32).await.unwrap();
     write.write_all(bytes).await.unwrap();
     drop(write);
-    meshway_ipc::read(&mut read).await
+    meshway_protocol::ipc::read(&mut read).await
 }
 #[tokio::test]
 async fn local_messages_reject_duplicate_unknown_positional_and_oversize_inputs() {
@@ -19,11 +19,11 @@ async fn local_messages_reject_duplicate_unknown_positional_and_oversize_inputs(
     ] { assert!(decode(invalid).await.is_err()); }
     let (mut write, mut read) = tokio::io::duplex(32);
     write
-        .write_u32((meshway_ipc::MAX_MESSAGE_BYTES + 1) as u32)
+        .write_u32((meshway_protocol::ipc::MAX_MESSAGE_BYTES + 1) as u32)
         .await
         .unwrap();
     assert!(matches!(
-        meshway_ipc::read::<Request>(&mut read).await,
+        meshway_protocol::ipc::read::<Request>(&mut read).await,
         Err(CodecError::Limit)
     ));
     let (mut write, mut read) = tokio::io::duplex(32);
@@ -31,7 +31,7 @@ async fn local_messages_reject_duplicate_unknown_positional_and_oversize_inputs(
     write.write_all(b"{").await.unwrap();
     drop(write);
     assert!(matches!(
-        meshway_ipc::read::<Request>(&mut read).await,
+        meshway_protocol::ipc::read::<Request>(&mut read).await,
         Err(CodecError::Io)
     ));
 }

@@ -1,5 +1,5 @@
 use super::*;
-use crate::PingError;
+use crate::ipc::PingError;
 use serde_json::json;
 use std::os::unix::fs::PermissionsExt;
 use tokio::{io::AsyncReadExt, net::UnixListener};
@@ -37,7 +37,7 @@ fn listener() -> (tempfile::TempDir, UnixListener, Client) {
 }
 
 async fn send(stream: &mut UnixStream, request: &Request, sequence: u64, event: PingEvent) {
-    crate::write(
+    crate::ipc::write(
         stream,
         &Response {
             version: VERSION,
@@ -57,7 +57,7 @@ async fn preparing_can_cover_server_admission_before_the_single_acceptance() {
     let (_directory, listener, client) = listener();
     let server = tokio::spawn(async move {
         let (mut stream, _) = listener.accept().await.unwrap();
-        let request = crate::read(&mut stream).await.unwrap();
+        let request = crate::ipc::read(&mut stream).await.unwrap();
         send(
             &mut stream,
             &request,
@@ -103,7 +103,7 @@ async fn multiple_frames_stop_at_terminal_and_dropping_cancels() {
     let (_directory, listener, client) = listener();
     let server = tokio::spawn(async move {
         let (mut stream, _) = listener.accept().await.unwrap();
-        let request: Request = crate::read(&mut stream).await.unwrap();
+        let request: Request = crate::ipc::read(&mut stream).await.unwrap();
         assert!(matches!(request.command, Command::Ping { count: 10, .. }));
         send(&mut stream, &request, 0, accepted()).await;
         send(
@@ -154,7 +154,7 @@ async fn multiple_frames_stop_at_terminal_and_dropping_cancels() {
     let (_directory, listener, client) = self::listener();
     let server = tokio::spawn(async move {
         let (mut stream, _) = listener.accept().await.unwrap();
-        let request = crate::read(&mut stream).await.unwrap();
+        let request = crate::ipc::read(&mut stream).await.unwrap();
         send(&mut stream, &request, 0, accepted()).await;
         let mut byte = [0];
         assert_eq!(stream.read(&mut byte).await.unwrap(), 0);
@@ -169,7 +169,7 @@ async fn rejects_version_request_sequence_and_illegal_event_shapes() {
         let (_directory, listener, client) = listener();
         let server = tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await.unwrap();
-            let request: Request = crate::read(&mut stream).await.unwrap();
+            let request: Request = crate::ipc::read(&mut stream).await.unwrap();
             let mut value = serde_json::to_value(Response {
                 version: VERSION,
                 request_id: request.request_id,
@@ -192,7 +192,7 @@ async fn rejects_version_request_sequence_and_illegal_event_shapes() {
                 }
                 _ => value["result"]["event"] = json!({"type":"failed","code":{"timeout":null}}),
             }
-            crate::write(&mut stream, &value).await.unwrap();
+            crate::ipc::write(&mut stream, &value).await.unwrap();
         });
         assert!(
             client.ping(target(), 1).await.is_err(),
@@ -227,7 +227,7 @@ async fn sequence_must_be_contiguous_and_accepted_cannot_repeat() {
         let (_directory, listener, client) = listener();
         let server = tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await.unwrap();
-            let request = crate::read(&mut stream).await.unwrap();
+            let request = crate::ipc::read(&mut stream).await.unwrap();
             send(&mut stream, &request, 0, accepted()).await;
             send(&mut stream, &request, sequence, event).await;
         });
@@ -245,9 +245,9 @@ async fn eof_is_not_completion_and_startup_errors_are_preserved() {
         let (_directory, listener, client) = listener();
         let server = tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await.unwrap();
-            let request: Request = crate::read(&mut stream).await.unwrap();
+            let request: Request = crate::ipc::read(&mut stream).await.unwrap();
             if startup_error {
-                crate::write(
+                crate::ipc::write(
                     &mut stream,
                     &Response {
                         version: VERSION,
@@ -282,7 +282,7 @@ async fn one_shot_rejects_ping_and_socket_must_be_private() {
     let (directory, listener, client) = listener();
     let server = tokio::spawn(async move {
         let (mut stream, _) = listener.accept().await.unwrap();
-        let request = crate::read(&mut stream).await.unwrap();
+        let request = crate::ipc::read(&mut stream).await.unwrap();
         send(
             &mut stream,
             &request,
@@ -314,7 +314,7 @@ async fn stream_has_per_frame_idle_limit_instead_of_overall_request_deadline() {
     let (_directory, listener, client) = listener();
     let server = tokio::spawn(async move {
         let (mut stream, _) = listener.accept().await.unwrap();
-        let request = crate::read(&mut stream).await.unwrap();
+        let request = crate::ipc::read(&mut stream).await.unwrap();
         send(&mut stream, &request, 0, accepted()).await;
         // This is an intentional quiet interval, with no setup inside it.
         // Progress heartbeats would hide a regression using REQUEST_TIMEOUT
@@ -349,7 +349,7 @@ async fn cancelling_next_closes_incomplete_frame_without_retry() {
     let (_directory, listener, client) = listener();
     let server = tokio::spawn(async move {
         let (mut stream, _) = listener.accept().await.unwrap();
-        let request = crate::read(&mut stream).await.unwrap();
+        let request = crate::ipc::read(&mut stream).await.unwrap();
         send(&mut stream, &request, 0, accepted()).await;
         stream.write_u32(100).await.unwrap();
         stream.write_all(b"{").await.unwrap();

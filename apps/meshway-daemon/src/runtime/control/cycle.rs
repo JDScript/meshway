@@ -3,8 +3,8 @@
 use super::failure::{self, Failure};
 use crate::settings::Settings;
 use meshway_control::Control;
-use meshway_ipc::Problem;
 use meshway_protocol::enrollment::EnrollmentPhase;
+use meshway_protocol::ipc::Problem;
 
 /// Timings describe real owner work, including a dropped lifecycle future. No
 /// request bodies, credentials, or synthetic observations enter these events.
@@ -51,7 +51,7 @@ pub(super) async fn online(
     control: &mut Control,
     settings: &Settings,
     reset: &mut bool,
-    enrollment_key: Option<&meshway_ipc::EnrollmentKey>,
+    enrollment_key: Option<&meshway_protocol::ipc::EnrollmentKey>,
 ) -> Result<Online, Failure> {
     if control.status().binding.is_none()
         && let Some(key) = enrollment_key

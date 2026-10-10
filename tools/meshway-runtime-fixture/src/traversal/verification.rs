@@ -225,8 +225,8 @@ fn current_channel(
             != Some(applied)
         || !context.installations.status.authenticated
         || !context.installations.status.desired_up
-        || context.installations.status.phase != meshway_ipc::Phase::Running
-        || context.installations.status.data_plane != meshway_ipc::DataPlane::Ready
+        || context.installations.status.phase != meshway_protocol::ipc::Phase::Running
+        || context.installations.status.data_plane != meshway_protocol::ipc::DataPlane::Ready
         || context.view.network_id != offer.network_id
         || context.view.state_epoch != offer.state_epoch
         || context.view.configuration_revision != socket.netmap.revision

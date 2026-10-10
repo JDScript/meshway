@@ -1,8 +1,8 @@
 //! Persist operator intent and idempotency receipts before publishing a new plan.
 use crate::ipc::SocketIdentity;
-use meshway_ipc::{EnrollmentKey, ErrorCode};
 use meshway_model::{RequestId, Version};
 use meshway_private_storage::Directory;
+use meshway_protocol::ipc::{EnrollmentKey, ErrorCode};
 use serde::{Deserialize, Serialize};
 use std::{io::Read, sync::Arc};
 use tokio::sync::oneshot;

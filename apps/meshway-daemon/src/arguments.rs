@@ -21,7 +21,7 @@ pub struct Arguments {
         default_value = "tun",
         value_name = "tun|control-only"
     )]
-    network_mode: meshway_ipc::NetworkMode,
+    network_mode: meshway_protocol::ipc::NetworkMode,
     /// Fixed bootstrap mapping for the Server or configured carrier names.
     #[arg(long, value_name = "NAME=IP", value_parser = bootstrap_host)]
     bootstrap_host: Vec<(String, std::net::IpAddr)>,

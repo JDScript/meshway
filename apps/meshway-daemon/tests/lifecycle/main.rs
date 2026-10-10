@@ -9,7 +9,7 @@ use meshway_control_client::{
     ApplyConfigurationPath, ApproveDeviceAuthorizationPath, GetDeviceAuthorizationPath,
     GetNetworkPath, GetNodeStatePath,
 };
-use meshway_ipc::{Command, ErrorCode, Phase, ResultBody};
+use meshway_protocol::ipc::{Command, ErrorCode, Phase, ResultBody};
 use meshway_protocol::{ApproveEnrollmentRequest, ConfigurationRequest, state::VisibleReport};
 use std::{
     fs,
@@ -81,7 +81,10 @@ async fn executable_enrolls_saves_reports_renews_and_restores_up_or_down_intent(
     let identity = ready.identity.clone().unwrap();
     let first = ready.instance.clone().unwrap();
     assert!(ready.authenticated && ready.saved.is_some() && ready.applied.is_none());
-    assert_eq!(ready.data_plane, meshway_ipc::DataPlane::ControlOnly);
+    assert_eq!(
+        ready.data_plane,
+        meshway_protocol::ipc::DataPlane::ControlOnly
+    );
     assert_eq!(
         fs::metadata(directory.join("control.sock"))
             .unwrap()

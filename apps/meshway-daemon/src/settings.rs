@@ -7,7 +7,7 @@ pub struct Settings {
     pub(crate) server: String,
     pub(crate) hostname: String,
     pub(crate) system: SystemState,
-    pub(crate) network_mode: meshway_ipc::NetworkMode,
+    pub(crate) network_mode: meshway_protocol::ipc::NetworkMode,
     pub(crate) underlay: meshway_underlay::Options,
     pub(crate) dns: meshway_dns::SystemDnsSettings,
 }
@@ -35,7 +35,7 @@ impl Settings {
             data_dir,
             server,
             hostname,
-            network_mode: meshway_ipc::NetworkMode::Tun,
+            network_mode: meshway_protocol::ipc::NetworkMode::Tun,
             underlay: meshway_underlay::Options {
                 mtu: meshway_dataplane::secure::DEFAULT_INNER_MTU,
                 ..meshway_underlay::Options::default()
@@ -52,7 +52,7 @@ impl Settings {
 
     /// Select the local packet attachment mode. This does not override any
     /// Server-owned listener, Access, routing or DNS setting.
-    pub fn with_network_mode(mut self, mode: meshway_ipc::NetworkMode) -> Self {
+    pub fn with_network_mode(mut self, mode: meshway_protocol::ipc::NetworkMode) -> Self {
         self.network_mode = mode;
         self
     }

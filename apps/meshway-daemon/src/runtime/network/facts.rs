@@ -53,7 +53,7 @@ impl Report {
         let phase = match self.completion {
             Some(Ok(())) => ApplyPhase::Applied,
             Some(Err(_)) => ApplyPhase::Failed,
-            None if self.plane == meshway_ipc::DataPlane::Failed => ApplyPhase::Failed,
+            None if self.plane == meshway_protocol::ipc::DataPlane::Failed => ApplyPhase::Failed,
             None => ApplyPhase::Applying,
         };
         let problem = self

@@ -8,7 +8,7 @@ use meshway_connectivity::Manager;
 use meshway_dataplane::secure::SecureNode;
 use meshway_engine::DataPlaneKeys;
 use meshway_engine::{Desired, Error};
-use meshway_ipc::Problem;
+use meshway_protocol::ipc::Problem;
 use meshway_protocol::{InstanceRequest, execution::ApplyFailure};
 use meshway_underlay::Host;
 use std::sync::Arc;

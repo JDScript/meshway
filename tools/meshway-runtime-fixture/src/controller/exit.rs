@@ -130,7 +130,7 @@ pub(super) async fn coordinate(
     for role in ExitRole::NODES {
         let name = format!("exit-enrollment-{}.json", role.name());
         wait(cli, &name).await?;
-        let status: meshway_ipc::Status = read(&cli.signals.join(name)).await?;
+        let status: meshway_protocol::ipc::Status = read(&cli.signals.join(name)).await?;
         let id = status
             .enrollment_request_id
             .ok_or("missing exit enrollment")?;
@@ -159,7 +159,7 @@ pub(super) async fn coordinate(
             .await?;
         let name = format!("exit-enrolled-{}.json", role.name());
         wait(cli, &name).await?;
-        let status: meshway_ipc::Status = read(&cli.signals.join(name)).await?;
+        let status: meshway_protocol::ipc::Status = read(&cli.signals.join(name)).await?;
         let identity = status.identity.ok_or("missing exit identity")?;
         if identity.network_id != network
             || identity.keys.control.public_key != actual.request.control_key

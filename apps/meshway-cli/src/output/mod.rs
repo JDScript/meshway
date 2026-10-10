@@ -1,4 +1,4 @@
-use meshway_ipc::{Phase, Status};
+use meshway_protocol::ipc::{Phase, Status};
 use std::io::{self, Write};
 
 mod ping;
@@ -85,7 +85,10 @@ pub(crate) fn display(status: &Status, json: bool) -> io::Result<()> {
     Ok(())
 }
 
-fn exit(output: &mut impl Write, exit: Option<&meshway_ipc::ExitState>) -> io::Result<()> {
+fn exit(
+    output: &mut impl Write,
+    exit: Option<&meshway_protocol::ipc::ExitState>,
+) -> io::Result<()> {
     let Some(exit) = exit else {
         return writeln!(output, "Exit: not observed");
     };

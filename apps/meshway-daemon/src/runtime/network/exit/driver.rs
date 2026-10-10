@@ -1,6 +1,6 @@
 use super::{Health, Work, scope::PacketGuard};
 use meshway_dataplane::exit::{ExitProjection, FlowIncarnation};
-use meshway_ipc::Problem;
+use meshway_protocol::ipc::Problem;
 use meshway_underlay::{CtConfirmation, ExitIncarnation, ExitRole, ExitScope};
 use std::collections::BTreeMap;
 use tokio::sync::{mpsc, watch};

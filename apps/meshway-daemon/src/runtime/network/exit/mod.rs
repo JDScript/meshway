@@ -5,7 +5,7 @@ mod driver;
 mod scope;
 
 use meshway_dataplane::{PendingAction, exit::ExitProjection, secure::SecureNode};
-use meshway_ipc::Problem;
+use meshway_protocol::ipc::Problem;
 use meshway_underlay::{ExitReplyReader, ExitRole};
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;

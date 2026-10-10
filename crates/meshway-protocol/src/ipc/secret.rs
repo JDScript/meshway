@@ -1,4 +1,4 @@
-use meshway_protocol::WireSecret;
+use crate::WireSecret;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{fmt, sync::Arc};
 use utoipa::ToSchema;

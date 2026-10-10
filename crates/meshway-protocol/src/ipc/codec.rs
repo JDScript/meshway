@@ -1,4 +1,4 @@
-use crate::MAX_MESSAGE_BYTES;
+use crate::ipc::MAX_MESSAGE_BYTES;
 use serde::{Serialize, de::DeserializeOwned};
 use std::io::Write;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};

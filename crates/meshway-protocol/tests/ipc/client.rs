@@ -1,5 +1,5 @@
 #![cfg(unix)]
-use meshway_ipc::{
+use meshway_protocol::ipc::{
     Client, ClientError, Command, ErrorCode, Request, Response, ResultBody, VERSION,
 };
 use std::{fs, os::unix::fs::PermissionsExt};
@@ -14,7 +14,7 @@ async fn client_checks_response_identity_before_exposing_remote_errors() {
     let server = tokio::spawn(async move {
         for case in 0..3 {
             let (mut stream, _) = listener.accept().await.unwrap();
-            let request: Request = meshway_ipc::read(&mut stream).await.unwrap();
+            let request: Request = meshway_protocol::ipc::read(&mut stream).await.unwrap();
             let response = Response {
                 version: if case == 0 { VERSION + 1 } else { VERSION },
                 request_id: if case == 1 {
@@ -26,7 +26,9 @@ async fn client_checks_response_identity_before_exposing_remote_errors() {
                     code: ErrorCode::Conflict,
                 },
             };
-            meshway_ipc::write(&mut stream, &response).await.unwrap();
+            meshway_protocol::ipc::write(&mut stream, &response)
+                .await
+                .unwrap();
         }
     });
     let client = Client::new(&path);

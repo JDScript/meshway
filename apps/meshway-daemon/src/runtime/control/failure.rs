@@ -2,7 +2,7 @@
 //! fresh proof, instance, configuration and receipt before exposing them.
 use meshway_control::Error;
 use meshway_control_client::ClientError;
-use meshway_ipc::Problem;
+use meshway_protocol::ipc::Problem;
 use std::time::Duration;
 
 pub(super) struct Failure {

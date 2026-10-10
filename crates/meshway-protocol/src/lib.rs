@@ -1,4 +1,5 @@
-//! Meshway HTTP and event contracts.
+//! Meshway HTTP and event contracts, and the local Node control protocol
+//! ([`ipc`]) between `meshway` and `meshwayd`.
 //!
 //! Public envelopes reference the shared model and configuration types. Route
 //! declarations live with their actual handlers in the Controller application.
@@ -13,6 +14,7 @@ pub mod enrollment;
 pub mod events;
 pub mod execution;
 pub mod history;
+pub mod ipc;
 pub mod live;
 pub mod management;
 mod management_rules;

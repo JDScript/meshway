@@ -24,10 +24,10 @@ mod worker;
 
 use chrono::{DateTime, Utc};
 use meshway_engine::DataPlaneKeys;
-use meshway_ipc::{DataPlane, Problem};
 use meshway_model::NetmapRef;
 use meshway_private_storage::Directory;
 use meshway_protocol::execution::ApplyFailure;
+use meshway_protocol::ipc::{DataPlane, Problem};
 pub(super) use peers::{Peers, Sink as PeerSink};
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, watch};
@@ -436,8 +436,8 @@ impl Pings {
             let _ = session
                 .request
                 .events
-                .try_send(meshway_ipc::PingEvent::Failed {
-                    code: meshway_ipc::PingError::Busy,
+                .try_send(meshway_protocol::ipc::PingEvent::Failed {
+                    code: meshway_protocol::ipc::PingError::Busy,
                 });
             session.request.cancellation.cancel();
         }
@@ -494,7 +494,7 @@ mod tests {
     #[test]
     fn corrupt_underlay_journal_is_storage_but_live_conflict_is_retryable_underlay() {
         use super::startup_problem;
-        use meshway_ipc::Problem;
+        use meshway_protocol::ipc::Problem;
         assert_eq!(
             startup_problem(&meshway_underlay::Error::Journal),
             Problem::Storage

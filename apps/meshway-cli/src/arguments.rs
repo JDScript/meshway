@@ -5,7 +5,7 @@ use clap::{Parser, Subcommand};
 pub(crate) struct Arguments {
     #[command(flatten)]
     pub logging: meshway_logging::Options,
-    #[arg(long, global = true, default_value = meshway_ipc::DEFAULT_SOCKET)]
+    #[arg(long, global = true, default_value = meshway_protocol::ipc::DEFAULT_SOCKET)]
     pub socket: std::path::PathBuf,
     #[arg(long, global = true)]
     pub json: bool,

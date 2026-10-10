@@ -1,4 +1,6 @@
-use meshway_ipc::{Command, PingError, PingEvent, Request, Response, ResultBody, VERSION};
+use meshway_protocol::ipc::{
+    Command, PingError, PingEvent, Request, Response, ResultBody, VERSION,
+};
 use serde_json::{Value, json};
 use tokio::io::AsyncWriteExt;
 use utoipa::PartialSchema;
@@ -54,8 +56,10 @@ async fn multiple_ping_events_use_the_existing_response_envelope_and_framing() {
     for (sequence, event) in events.iter().enumerate() {
         let encoded = json!({"version":VERSION,"requestId":ID,"result":{"type":"ping","sequence":sequence,"event":event}});
         let response: Response = serde_json::from_value(encoded.clone()).unwrap();
-        meshway_ipc::write(&mut writer, &response).await.unwrap();
-        let decoded: Response = meshway_ipc::read(&mut reader).await.unwrap();
+        meshway_protocol::ipc::write(&mut writer, &response)
+            .await
+            .unwrap();
+        let decoded: Response = meshway_protocol::ipc::read(&mut reader).await.unwrap();
         assert_eq!(serde_json::to_value(decoded).unwrap(), encoded);
     }
     let error =
@@ -143,7 +147,11 @@ async fn status_stays_object_only_through_tagged_buffering_and_nullable_fields_a
     let (mut writer, mut reader) = tokio::io::duplex(64 * 1024);
     writer.write_u32(bytes.len() as u32).await.unwrap();
     writer.write_all(&bytes).await.unwrap();
-    assert!(meshway_ipc::read::<Response>(&mut reader).await.is_err());
+    assert!(
+        meshway_protocol::ipc::read::<Response>(&mut reader)
+            .await
+            .is_err()
+    );
     for field in [
         "enrollmentRequestId",
         "enrollmentUrl",

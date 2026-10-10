@@ -10,7 +10,7 @@ use axum::{
     middleware::Next,
     response::Response,
 };
-use meshway_ipc::{Phase, Status};
+use meshway_protocol::ipc::{Phase, Status};
 use serde::{Deserialize, Serialize};
 use std::{
     sync::{Arc, Mutex},
@@ -147,7 +147,7 @@ impl Expired {
             || !self.status.desired_up
             || self.status.instance.is_some()
             || self.status.applied.is_some()
-            || self.status.data_plane != meshway_ipc::DataPlane::Suspended
+            || self.status.data_plane != meshway_protocol::ipc::DataPlane::Suspended
             || self.status.phase == Phase::Blocked
             || self.instance_expires_at_ms < lease.expires_at_ms
             || self.observed_at_ms <= self.instance_expires_at_ms
@@ -178,7 +178,7 @@ impl Expired {
             || !after.authenticated
             || after.network_mode != before.network_mode
             || after.phase != Phase::Running
-            || after.data_plane != meshway_ipc::DataPlane::Ready
+            || after.data_plane != meshway_protocol::ipc::DataPlane::Ready
             || after.applied.is_none()
             || after.applied != after.saved
             || after.instance.as_ref().is_none_or(|lease| {
@@ -275,7 +275,7 @@ pub fn now_ms() -> Result<u64> {
 pub(super) fn outage_deadlines(
     before: &meshway_protocol::InstanceLease,
     latest: Option<&meshway_protocol::InstanceLease>,
-    netmap: &meshway_ipc::NetmapStatus,
+    netmap: &meshway_protocol::ipc::NetmapStatus,
 ) -> Result<(u64, u64)> {
     if latest.is_some_and(|lease| {
         lease.instance_id != before.instance_id || lease.generation != before.generation
@@ -331,7 +331,7 @@ mod tests {
             expires_at_ms: 140_000,
             ..before.clone()
         };
-        let netmap = meshway_ipc::NetmapStatus {
+        let netmap = meshway_protocol::ipc::NetmapStatus {
             netmap: meshway_model::NetmapRef {
                 revision: meshway_model::Revision::MIN,
                 serial: meshway_model::Version::MIN,

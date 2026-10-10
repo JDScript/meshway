@@ -9,11 +9,11 @@ use meshway_connectivity::{LinkFact, Manager};
 use meshway_dataplane::diagnostics::{Output, Owner};
 use meshway_dataplane::secure::{PendingFrame, SecureNode};
 use meshway_engine::Desired;
-use meshway_ipc::{PingError, PingEvent};
 use meshway_model::InstanceId;
 use meshway_model::{
     EventId, NodeId, ObservationId, ObservationSubscriptionId, observations::ProbeChannel,
 };
+use meshway_protocol::ipc::{PingError, PingEvent};
 use meshway_protocol::{
     NodeObservationTarget, NodeObservationTargetView,
     observations::{ObservationPath, ObservationPhase, ObservationTask, ObservationUpdate},
