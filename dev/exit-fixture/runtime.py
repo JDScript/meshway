@@ -535,16 +535,16 @@ def execute(report, artifacts, runtime_os, platform, short, load):
                 write(report / ("lease-" + link + ".json"), result)
                 persistent = [item["at"] for item in result["rounds"]]
                 fresh = [item["at"] for item in result["rounds"] if item["udp"]]
-                failure = result["failure"]
+                ended = result["failure"]
                 leases["flows"][link] = {"lastPersistent": max(persistent, default=None), "lastFresh": max(fresh, default=None),
-                                         "failure": failure}
-                if code or failure is None:
+                                         "failure": ended}
+                if code or ended is None:
                     raise RuntimeError("exit flow outlived the netmap lease: " + link)
                 if not any(t > last_contact for t in persistent) or not any(t > last_contact for t in fresh):
                     raise RuntimeError("no existing/new exit flow after the last Server contact: " + link)
                 if any(item["udp"] is False and item["at"] < first_expiry - 5 for item in result["rounds"]):
                     raise RuntimeError("new exit flow refused within the lease: " + link)
-                if not first_expiry - 3 <= failure["at"] <= first_expiry + 6:
+                if not first_expiry - 3 <= ended["at"] <= first_expiry + 6:
                     raise RuntimeError("exit flow did not end at the first path lease expiry: " + link)
             probes.clear()
             write(report / "lease-window.json", leases)
