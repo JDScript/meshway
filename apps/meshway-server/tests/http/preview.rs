@@ -14,8 +14,8 @@ fn persisted(path: &Path) -> Vec<i64> {
     [
         "SELECT count(*) FROM configuration_versions",
         "SELECT count(*) FROM configuration_commits",
-        "SELECT count(*) FROM execution_publications",
-        "SELECT sum(publication_sequence) FROM networks",
+        "SELECT count(*) FROM node_netmaps",
+        "SELECT coalesce(sum(serial),0) FROM node_netmaps",
         "SELECT count(*) FROM address_retirements",
         "SELECT count(*) FROM credential_revocations",
     ]

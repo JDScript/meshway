@@ -89,7 +89,7 @@ async fn startup_scheduler_updates_backs_off_persists_and_cancels_its_tls_socket
     let counts = resource_counts(&s, network).await;
     remote.set(200, "payload:\n - 8.8.8.9/24\n - 8.8.8.0/24\n");
     let unchanged = wait_view(&s, token, network, |v| v.checked_at > updated.checked_at).await;
-    assert_eq!(unchanged.publication, updated.publication);
+    assert_eq!(unchanged.artifact, updated.artifact);
     assert_eq!(resource_counts(&s, network).await, counts);
     remote.set(503, "unavailable");
     let failed = wait_view(&s, token, network, |v| {

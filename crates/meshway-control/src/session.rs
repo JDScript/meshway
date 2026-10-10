@@ -122,6 +122,7 @@ impl Control {
             || challenge.operation != ProofOperation::Session
             || challenge.request_digest != digest
         {
+            self.revoke_netmap();
             self.reject_authentication();
             return Err(Error::Contract);
         }
@@ -148,6 +149,7 @@ impl Control {
             || response.node_id != binding.node_id
             || response.key_id != binding.keys.control.id
         {
+            self.revoke_netmap();
             self.reject_authentication();
             return Err(Error::Contract);
         }
@@ -216,12 +218,24 @@ impl Control {
             &response,
             Err(ClientError::Http { status: 401, .. } | ClientError::Network { status: Some(401) })
         ) && self.clock.now()? >= proof_expires_at_ms;
-        let result = self.authentication_response(response);
         if expired_rejection {
             self.reject_authentication();
             Err(Error::Expired)
         } else {
-            result
+            // This rejection is of a fresh signed identity proof, not an
+            // expired bearer. It ends the held netmap as well as HTTP scope.
+            if matches!(
+                &response,
+                Err(ClientError::Http {
+                    status: 401 | 403 | 404,
+                    ..
+                } | ClientError::Network {
+                    status: Some(401 | 403 | 404)
+                })
+            ) {
+                self.revoke_netmap();
+            }
+            self.authentication_response(response)
         }
     }
 

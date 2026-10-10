@@ -222,7 +222,7 @@ async fn accepted_configuration_waiter_cancellation_noop_and_rollback_preserve_j
     assert!(
         fixed
             .values()
-            .all(|reference| reference.revision == committed.revision)
+            .all(|reference| reference.revision <= committed.revision)
     );
     let after = sequence(&app);
     service
@@ -372,4 +372,3 @@ async fn email_sync_commits_all_network_notices_or_none_and_keeps_fixed_targets(
     assert_eq!(sequence(&app), before);
     app.shutdown().await.unwrap();
 }
-

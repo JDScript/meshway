@@ -89,4 +89,3 @@ async fn management_activities_identify_transactional_member_and_link_targets() 
     }
     s.close().await;
 }
-

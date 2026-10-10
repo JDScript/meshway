@@ -168,4 +168,3 @@ async fn node_absolute_renewal_does_not_slide_on_retry_and_restart_or_revocation
     .await;
     server.stop().await;
 }
-

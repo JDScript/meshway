@@ -255,6 +255,11 @@ fn insert(
         zeroize::Zeroizing::new(serde_json::to_vec(netmap).map_err(|_| Error::encode("netmap"))?);
     let sealed = sealer.seal_netmap(network, node, serial, &payload)?;
     tx.execute(
+        "INSERT INTO node_netmap_history(network_id,node_id,serial,revision,digest) VALUES(?1,?2,?3,?4,?5)",
+        params![bytes(network.as_uuid()), bytes(node.as_uuid()), serial.get() as i64,
+            netmap.netmap.revision.get() as i64, netmap.digest.as_bytes().as_slice()],
+    )?;
+    tx.execute(
         "INSERT INTO node_netmaps(network_id,node_id,serial,revision,digest,dependency_digest,payload,created_at)
          VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
         params![

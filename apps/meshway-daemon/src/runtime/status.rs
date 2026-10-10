@@ -117,6 +117,9 @@ impl View {
                 phase = Phase::Synchronizing;
             }
         }
+        if active && phase == Phase::ControlReady && lease.is_none() {
+            phase = Phase::Synchronizing;
+        }
         let sync_state = if !active || !sync.running {
             SyncState::Disconnected
         } else if sync

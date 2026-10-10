@@ -1014,7 +1014,8 @@ mod tests {
     #[test]
     fn rollback_journals_only_changed_tasks_and_preserves_large_unrelated_window_index() {
         let now = Utc::now();
-        let mut runtime = Runtime::new(std::sync::Arc::new(crate::state::facts::NoNetmaps)).unwrap();
+        let mut runtime =
+            Runtime::new(std::sync::Arc::new(crate::state::facts::NoNetmaps)).unwrap();
         runtime.observations.tasks.insert(id(1), task(1, now, 1));
         runtime.observations.tasks.insert(id(2), task(2, now, 4096));
         let runtime = Mutex::new(runtime);
@@ -1123,7 +1124,8 @@ mod tests {
     #[test]
     fn rollback_restores_expired_removals_and_removes_only_new_insertions() {
         let now = Utc::now();
-        let mut runtime = Runtime::new(std::sync::Arc::new(crate::state::facts::NoNetmaps)).unwrap();
+        let mut runtime =
+            Runtime::new(std::sync::Arc::new(crate::state::facts::NoNetmaps)).unwrap();
         runtime
             .observations
             .tasks

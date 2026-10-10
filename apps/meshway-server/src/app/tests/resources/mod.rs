@@ -489,7 +489,7 @@ async fn resource_counts(s: &Server, network: NetworkId) -> (i64, i64, i64) {
             (
                 count("dataset_artifacts"),
                 count("configuration_versions"),
-                count("execution_publications"),
+                count("node_netmaps"),
             )
         })
         .await

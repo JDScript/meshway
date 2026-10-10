@@ -170,4 +170,3 @@ async fn review_released_instance_id_cannot_be_reacquired() {
     );
     app.shutdown().await.unwrap();
 }
-

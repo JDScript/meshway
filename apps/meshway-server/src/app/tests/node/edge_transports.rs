@@ -21,4 +21,3 @@ fn configuration_schema_exposes_optional_strict_transport_protocol_array() {
         serde_json::json!(["native_udp", "native_tcp", "vless", "trojan"])
     );
 }
-

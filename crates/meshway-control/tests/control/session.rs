@@ -425,7 +425,7 @@ mod wire {
             None
         };
         let mut headers = parts.headers;
-        if parts.uri.path().ends_with("/configuration/query") {
+        if parts.uri.path().ends_with("/sync") {
             let token = headers
                 .get(header::AUTHORIZATION)
                 .unwrap()

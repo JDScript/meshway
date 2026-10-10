@@ -1,6 +1,23 @@
 -- Per-Node netmap content. A Node keeps its current serial and the one before
 -- it (the delta base). Content rows are immutable; a withdrawn head keeps the
 -- serial high-water so a Node that returns never sees its serial regress.
+-- Compact immutable references outlive the two retained payloads, so receipt
+-- history never pins an obsolete configuration body or blocks a new serial.
+CREATE TABLE node_netmap_history (
+    network_id BLOB NOT NULL,
+    node_id BLOB NOT NULL,
+    serial INTEGER NOT NULL CHECK(serial BETWEEN 1 AND 9007199254740991),
+    revision INTEGER NOT NULL CHECK(revision BETWEEN 1 AND 9007199254740991),
+    digest BLOB NOT NULL CHECK(length(digest)=32),
+    PRIMARY KEY(network_id,node_id,serial),
+    UNIQUE(network_id,node_id,serial,revision,digest),
+    FOREIGN KEY(network_id,node_id) REFERENCES nodes(network_id,id),
+    FOREIGN KEY(network_id,revision) REFERENCES configuration_versions(network_id,revision)
+) STRICT;
+CREATE TRIGGER node_netmap_history_immutable BEFORE UPDATE ON node_netmap_history
+BEGIN SELECT RAISE(ABORT,'immutable netmap reference'); END;
+CREATE TRIGGER node_netmap_history_retained BEFORE DELETE ON node_netmap_history
+BEGIN SELECT RAISE(ABORT,'netmap references are retained'); END;
 CREATE TABLE node_netmaps (
     network_id BLOB NOT NULL,
     node_id BLOB NOT NULL,
@@ -12,6 +29,7 @@ CREATE TABLE node_netmaps (
     created_at INTEGER NOT NULL CHECK(created_at>=0),
     withdrawn_at INTEGER CHECK(withdrawn_at>=created_at),
     PRIMARY KEY(network_id,node_id,serial),
+    FOREIGN KEY(network_id,node_id,serial,revision,digest) REFERENCES node_netmap_history(network_id,node_id,serial,revision,digest),
     FOREIGN KEY(network_id,node_id) REFERENCES nodes(network_id,id),
     FOREIGN KEY(network_id,revision) REFERENCES configuration_versions(network_id,revision)
 ) STRICT;
@@ -36,7 +54,7 @@ CREATE TABLE netmap_receipts (
     received_at INTEGER NOT NULL,
     failure TEXT CHECK(failure IN ('validation','storage','listeners','underlay','tun','dns','dataplane')),
     PRIMARY KEY(network_id,node_id,serial,instance_id,attempt,sequence),
-    FOREIGN KEY(network_id,node_id,serial) REFERENCES node_netmaps(network_id,node_id,serial)
+    FOREIGN KEY(network_id,node_id,serial) REFERENCES node_netmap_history(network_id,node_id,serial)
 ) STRICT;
 CREATE TRIGGER netmap_receipts_immutable BEFORE UPDATE ON netmap_receipts
 BEGIN SELECT RAISE(ABORT,'immutable netmap receipt'); END;

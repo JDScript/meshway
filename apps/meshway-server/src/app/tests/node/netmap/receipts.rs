@@ -52,8 +52,8 @@ async fn change_access(lab: &Lab) {
 }
 
 async fn progress(lab: &Lab, revision: Revision) -> ConfigurationApplyProgress {
-    let identity = crate::state::service::ReadIdentity::user_session(&lab.owner, lab.network)
-        .unwrap();
+    let identity =
+        crate::state::service::ReadIdentity::user_session(&lab.owner, lab.network).unwrap();
     let provider = std::sync::Arc::clone(&lab.app.user_state_service().unwrap().provider);
     lab.app
         .executor
@@ -103,10 +103,7 @@ async fn a_replaced_instance_cannot_receipt_and_the_new_one_starts_a_new_attempt
         .await
         .unwrap();
     let view = progress(&lab, netmap.revision).await;
-    assert_eq!(
-        view.nodes[&lab.nodes[0]].instance_id,
-        Some(new.instance_id)
-    );
+    assert_eq!(view.nodes[&lab.nodes[0]].instance_id, Some(new.instance_id));
     lab.app.shutdown().await.unwrap();
 }
 
@@ -120,7 +117,10 @@ async fn receipts_order_saved_before_applied_and_only_for_the_current_netmap() {
     // Applied needs an earlier saved in the same attempt.
     assert!(matches!(
         execution
-            .receipt(token, receipt(instance, netmap, ReceiptPhase::Applied, 1, 1))
+            .receipt(
+                token,
+                receipt(instance, netmap, ReceiptPhase::Applied, 1, 1)
+            )
             .await,
         Err(Error::ReceiptPrecondition)
     ));
@@ -167,7 +167,10 @@ async fn receipts_order_saved_before_applied_and_only_for_the_current_netmap() {
         .unwrap();
     assert!(matches!(
         execution
-            .receipt(token, receipt(instance, netmap, ReceiptPhase::Applied, 2, 1))
+            .receipt(
+                token,
+                receipt(instance, netmap, ReceiptPhase::Applied, 2, 1)
+            )
             .await,
         Err(Error::ReceiptNetmapSuperseded)
     ));

@@ -2,7 +2,6 @@ use super::*;
 
 #[tokio::test]
 async fn exact_names_in_remote_lists_bind_under_an_internet_grant() {
-    let _ = meshway_logging::Options { filter: "error".into(), format: meshway_logging::Format::Text }.init();
     let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().canonicalize().unwrap().join("data");

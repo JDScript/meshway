@@ -17,7 +17,6 @@ pub enum Fault {
     Lost,
     Hold,
     WrongController,
-    WrongInstance,
     WrongDnsNetwork,
     ShortSession,
     ShortInstance,
@@ -165,7 +164,6 @@ async fn forward(State(state): State<Forward>, request: Request) -> Response<Bod
                 let id = serde_json::to_value(super::support::request()).unwrap();
                 match fault {
                     Fault::WrongController => value["controllerId"] = id,
-                    Fault::WrongInstance => value["lease"]["instanceId"] = id,
                     Fault::WrongDnsNetwork => value["networkId"] = id,
                     Fault::ShortSession => {
                         value["expiresAt"] = (chrono::Utc::now() + chrono::Duration::seconds(2))

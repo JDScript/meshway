@@ -122,4 +122,3 @@ async fn email_maintenance_preserves_live_node_subject_and_session() {
     );
     app.shutdown().await.unwrap();
 }
-

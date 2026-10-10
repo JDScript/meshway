@@ -176,8 +176,8 @@ fn current_schema_checks_are_read_only_and_initialization_is_not_repeated() {
 fn unknown_or_incomplete_schema_is_rejected_without_repair() {
     for mutation in [
         "PRAGMA application_id = 17",
-        "PRAGMA user_version = 2",
-        "DROP TRIGGER diagnostic_user_revoked; ALTER TABLE users DROP COLUMN disabled_at",
+        "PRAGMA user_version = 999",
+        "ALTER TABLE users DROP COLUMN disabled_at",
         "DROP INDEX user_sessions_user_id",
         "CREATE TRIGGER unexpected AFTER UPDATE ON users BEGIN SELECT 1; END",
         "ALTER TABLE users ADD COLUMN owner TEXT",

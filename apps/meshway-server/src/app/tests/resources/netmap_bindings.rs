@@ -22,17 +22,18 @@ async fn refreshed_rule_set_bindings_are_read_without_any_publication() {
     assert!(refreshed.problem.is_none(), "{:?}", refreshed.problem);
     let artifact = refreshed.artifact.unwrap().id;
 
-    // Remove every publication: the current binding has its own storage.
+    // The current binding has its own storage and no execution publication table.
     let revision = applied.revision;
     let bound = s
         .app
         .executor
         .handle()
         .transact(rusqlite::TransactionBehavior::Immediate, move |tx| {
-            tx.execute(
-                "DELETE FROM execution_publications WHERE network_id=?1",
-                [network.as_uuid().as_bytes().as_slice()],
-            )?;
+            assert!(!tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE name='execution_publications')",
+                [],
+                |row| row.get::<_, bool>(0)
+            )?);
             let initial = BTreeMap::new();
             assert!(crate::store::resources::bindings::current(tx, network, revision)?.is_some());
             let bound = crate::resources::bindings::at_revision(tx, network, revision, &initial)?;

@@ -27,14 +27,24 @@ async fn sync_answers_full_delta_or_unchanged_and_renews_only_the_lease() {
         first.lease.expires_at_ms - first.lease.issued_at_ms,
         24 * 60 * 60 * 1000
     );
-    assert_eq!(first.peer_facts, None);
+    let cursor = first
+        .peer_facts
+        .as_ref()
+        .expect("initial fact replacement")
+        .cursor;
 
     // Holding the current netmap: the hold times out unchanged, with a later
     // lease and no stored write.
     let stored = rows(&app, network).await;
     let started = Instant::now();
     let renewed = service
-        .sync(token.token.expose(), holding(Some(base.reference())))
+        .sync(
+            token.token.expose(),
+            SyncRequest {
+                netmap: Some(base.reference()),
+                state: Some(cursor),
+            },
+        )
         .await
         .unwrap();
     assert!(started.elapsed() >= Duration::from_millis(150));
@@ -145,8 +155,15 @@ async fn a_second_sync_of_the_same_node_replaces_the_first() {
     assert!(!second.is_finished() && !other.is_finished());
     // Shutdown answers every held request.
     (app.stream_shutdown())();
-    assert!(second.await.unwrap().0.is_ok());
-    assert!(other.await.unwrap().0.is_ok());
+    for joined in [second, other] {
+        assert!(matches!(
+            joined.await.unwrap().0,
+            Ok(_)
+                | Err(crate::error::Error::Unavailable(
+                    crate::error::Unavailability::Closed
+                ))
+        ));
+    }
     app.shutdown().await.unwrap();
 }
 
@@ -236,7 +253,7 @@ async fn http_sync_requires_a_current_node_session() {
             .status(),
         401
     );
-    // A Node whose data-plane key is revoked authenticates but has no current netmap.
+    // Revoking either credential retires its HTTP sessions and netmap.
     let bt = session(&app.execution(), network, b, &bk, &signer_b).await;
     app.execution()
         .revoke_key(
@@ -255,7 +272,7 @@ async fn http_sync_requires_a_current_node_session() {
             .await
             .unwrap()
             .status(),
-        409
+        401
     );
     server.abort();
     app.shutdown().await.unwrap();

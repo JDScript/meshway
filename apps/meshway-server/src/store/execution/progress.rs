@@ -38,7 +38,7 @@ pub(crate) fn latest_receipt(
 ) -> Result<Option<Receipt>, Error> {
     let receipt = tx.query_row(
         "SELECT r.phase,r.instance_id,r.attempt,r.sequence,r.received_at FROM netmap_receipts r
-         JOIN node_netmaps m ON m.network_id=r.network_id AND m.node_id=r.node_id AND m.serial=r.serial
+         JOIN node_netmap_history m ON m.network_id=r.network_id AND m.node_id=r.node_id AND m.serial=r.serial
          WHERE r.network_id=?1 AND r.node_id=?2 AND r.serial=?3 AND m.digest=?4
          ORDER BY r.generation DESC,r.attempt DESC,r.sequence DESC LIMIT 1",
         params![network.as_uuid().as_bytes().as_slice(), node.as_uuid().as_bytes().as_slice(), target.serial.get() as i64, target.digest.as_bytes().as_slice()],

@@ -47,4 +47,3 @@ async fn unavailable_node_instance_never_invalidates_observer_user_session() {
     assert!(list.items.is_empty());
     server.stop().await;
 }
-

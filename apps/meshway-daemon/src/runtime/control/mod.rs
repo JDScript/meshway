@@ -764,7 +764,7 @@ async fn maintain(
             Ok(())
         }
         Err((operation, error)) => {
-            let failure = failure::at(operation, error, false);
+            let failure = failure::at(operation, error, operation == "authenticate");
             offer(control, network.as_deref());
             if !failure.retry {
                 return Err(Ended::Blocked(failure.problem));

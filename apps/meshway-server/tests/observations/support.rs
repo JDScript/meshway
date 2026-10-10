@@ -453,4 +453,3 @@ pub async fn wait_no_diagnostics(server: &Server, node: &Node) {
     .await
     .expect("revocation projection before the original subscription lease");
 }
-

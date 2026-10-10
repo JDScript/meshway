@@ -213,6 +213,8 @@ impl Control {
             ..binding
         });
         self.record.completed_rotation = Some(request_id);
+        // The old content is not even a delta base for the replacement keys.
+        self.netmap = Default::default();
         // One atomic record replacement publishes keys and binding together.
         // Failed/cancelled writes require reopen; the disk has pending or new.
         self.persist().await?;

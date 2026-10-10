@@ -176,6 +176,11 @@ fn spawn_sync(
     let service = app.netmaps();
     let token = token.token.expose().to_owned();
     tokio::spawn(async move {
+        let mut request = request;
+        if request.netmap.is_some() && request.state.is_none() {
+            let initial = service.sync(&token, holding(None)).await.unwrap();
+            request.state = initial.peer_facts.map(|facts| facts.cursor);
+        }
         let started = Instant::now();
         let response = service.sync(&token, request).await;
         (response, started.elapsed())

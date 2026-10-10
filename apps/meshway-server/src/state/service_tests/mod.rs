@@ -156,5 +156,4 @@ async fn open(client: &reqwest::Client, url: &str, token: &str, cursor: Option<&
     }
 }
 
-
 mod streams;

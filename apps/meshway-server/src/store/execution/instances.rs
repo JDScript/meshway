@@ -194,7 +194,7 @@ pub(crate) fn lease_for_node(
 /// The Node held exactly this netmap content at some serial.
 fn held(tx: &Transaction<'_>, p: &NodePrincipal, netmap: &NetmapRef) -> Result<bool, Error> {
     Ok(tx.query_row(
-        "SELECT EXISTS(SELECT 1 FROM node_netmaps WHERE network_id=?1 AND node_id=?2 AND serial=?3 AND revision=?4 AND digest=?5)",
+        "SELECT EXISTS(SELECT 1 FROM node_netmap_history WHERE network_id=?1 AND node_id=?2 AND serial=?3 AND revision=?4 AND digest=?5)",
         params![
             p.network.as_uuid().as_bytes().as_slice(),
             p.node.as_uuid().as_bytes().as_slice(),

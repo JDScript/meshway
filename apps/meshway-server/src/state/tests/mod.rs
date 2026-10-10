@@ -142,4 +142,3 @@ pub(super) fn identity(network: NetworkId) -> service::ReadIdentity {
 }
 
 mod admission;
-

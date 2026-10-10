@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 mod diagnostics;
 mod facts;
+mod lifecycle;
 mod receipts;
 mod scope;
 
@@ -260,7 +261,14 @@ impl Lab {
                 exit_capability: Some(ExitCapability {
                     instance_id: self.instances[index].instance_id,
                     netmap: self.applied[index],
-                    role_generation: meshway_model::Digest::from_bytes([0; 32]),
+                    role_generation: self
+                        .netmap(self.nodes[index])
+                        .await
+                        .netmap
+                        .exit_role
+                        .as_ref()
+                        .unwrap()
+                        .generation,
                     supported_families: vec![ExitFamily::Ipv4],
                     installed_families: vec![],
                     status,

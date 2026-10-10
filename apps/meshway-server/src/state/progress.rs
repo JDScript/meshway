@@ -31,7 +31,7 @@ pub(crate) fn read(
         if !manager && !visible.contains(&node) {
             continue;
         }
-        if target.revision != revision {
+        if target.revision > revision {
             return Err(Error::decode("configuration_versions.execution_targets"));
         }
         // Inventory changes (keys, capabilities, profile selection) give a

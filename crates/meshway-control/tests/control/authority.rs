@@ -123,7 +123,11 @@ async fn execution_handoff_requires_current_saved_target_and_never_renews_old_sn
     )
     .unwrap();
     assert!(restored.netmap_reference().is_some());
-    assert!(restored.netmap_snapshot().is_err());
+    restored
+        .netmap_snapshot()
+        .unwrap()
+        .ensure_current()
+        .unwrap();
     restored.shutdown().await.unwrap();
     server.close().await;
 }
@@ -167,7 +171,7 @@ async fn stopped_execution_wakes_waiters_before_a_held_release_http_response() {
 }
 
 #[tokio::test]
-async fn idle_execution_snapshot_expires_without_polling_control_or_delaying_http() {
+async fn idle_netmap_outlives_the_http_session_without_polling_control() {
     let server = Server::start().await;
     let owner = server.owner().await;
     let proxy = Proxy::start(&server.origin).await;
@@ -188,15 +192,11 @@ async fn idle_execution_snapshot_expires_without_polling_control_or_delaying_htt
     crate::support::sync(&mut control).await.unwrap();
     let snapshot = control.netmap_snapshot().unwrap();
     let before = snapshot.expires_at();
-    tokio::time::timeout(Duration::from_secs(4), snapshot.invalidated())
-        .await
-        .unwrap();
-    assert!(matches!(
-        snapshot.ensure_current(),
-        Err(meshway_authority::Error::Expired)
-    ));
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    snapshot.ensure_current().unwrap();
     assert_eq!(snapshot.expires_at(), before);
-    assert!(control.netmap_snapshot().is_err());
+    assert!(!control.status().authenticated);
+    control.netmap_snapshot().unwrap().ensure_current().unwrap();
     drop(control);
     proxy.close().await;
     server.close().await;

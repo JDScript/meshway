@@ -331,7 +331,7 @@ async fn receipt_rejections_retire_exact_ticket_without_fencing_and_reapply_new_
         );
         assert_eq!(control.status().authenticated, refresh);
         assert_eq!(status.status().instance.is_some(), refresh);
-        assert_eq!(snapshot.ensure_current().is_ok(), refresh);
+        snapshot.ensure_current().unwrap();
         if refresh {
             assert_eq!(
                 control.status().instance.unwrap().instance_id,

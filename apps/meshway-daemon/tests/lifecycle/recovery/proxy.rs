@@ -49,7 +49,7 @@ impl Proxy {
                 .unwrap()
                 .no_proxy()
                 .redirect(reqwest::redirect::Policy::none())
-                .timeout(std::time::Duration::from_secs(10))
+                .timeout(meshway_control::SYNC_TIMEOUT)
                 .build()
                 .unwrap(),
         };
@@ -100,7 +100,7 @@ async fn forward(State(state): State<Forward>, request: Request) -> Response<Bod
             .body(Body::from("<html>isolated gateway unavailable</html>"))
             .unwrap();
     }
-    if path.contains("/configuration/")
+    if path.ends_with("/instances/renew")
         && state
             .faults
             .invalidate_instance

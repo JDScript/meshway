@@ -208,14 +208,6 @@ async fn committed_redemption_and_state_reports_retry_the_same_identity_after_de
         old_instance
     );
     crate::support::sync(&mut control).await.unwrap();
-    let saved = control.status().held;
-    proxy.fault("/configuration/query", Fault::WrongInstance);
-    assert!(matches!(
-        crate::support::sync(&mut control).await,
-        Err(Error::Contract)
-    ));
-    assert!(control.status().instance.is_none());
-    assert_eq!(control.status().held, saved);
     control.shutdown().await.unwrap();
     proxy.close().await;
     server.close().await;

@@ -150,4 +150,3 @@ async fn member_source_ownership_role_revocation_and_tag_conversion_use_current_
     status(server.get("/agent-api/v1/tasks", a.token.expose()), 401).await;
     server.stop().await;
 }
-
