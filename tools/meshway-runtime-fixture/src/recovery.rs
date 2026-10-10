@@ -12,7 +12,10 @@ use axum::{
 };
 use meshway_ipc::{Phase, Status};
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, Mutex};
+use std::{
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 use tokio::sync::Notify;
 
 struct GateState {
@@ -51,7 +54,7 @@ impl Availability {
         // Drain admitted HTTP handlers before publishing the outage boundary.
         // Actors still sample the last delivered lease until actual expiry;
         // cancelled, accepted database work remains with the real Server owner.
-        tokio::time::timeout(crate::remaining(crate::STARTUP)?, async {
+        tokio::time::timeout(crate::remaining(Duration::from_secs(75))?, async {
             loop {
                 let changed = self.0.drained.notified();
                 tokio::pin!(changed);
@@ -125,6 +128,7 @@ pub struct Expired {
     pub status: Box<Status>,
     pub closed_at_ms: u64,
     pub instance_expires_at_ms: u64,
+    pub netmap_expires_at_ms: u64,
     pub observed_at_ms: u64,
     pub old_traffic_blocked: Option<bool>,
 }
@@ -147,9 +151,15 @@ impl Expired {
             || self.status.phase == Phase::Blocked
             || self.instance_expires_at_ms < lease.expires_at_ms
             || self.observed_at_ms <= self.instance_expires_at_ms
+            || self.observed_at_ms <= self.netmap_expires_at_ms
+            || self.before.netmap.as_ref().is_none_or(|netmap| {
+                u64::try_from(netmap.expires_at.timestamp_millis())
+                    .ok()
+                    .is_none_or(|expiry| expiry > self.netmap_expires_at_ms)
+            })
             || self.observed_at_ms <= self.closed_at_ms
         {
-            return Err("outage did not expire the unchanged daemon's actual instance".into());
+            return Err("outage did not expire both the actual instance and netmap lease".into());
         }
         Ok(())
     }

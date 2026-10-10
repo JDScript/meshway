@@ -173,6 +173,7 @@ def main():
     parser.add_argument("--build-only", action="store_true", help="host build and source manifest only")
     parser.add_argument("--report-dir", type=Path, help="new private report directory")
     parser.add_argument("--short", action="store_true", help="30-second diagnostic traffic; not acceptance")
+    parser.add_argument("--netmap-validity", default="5m", help="explicit Server lease used by expiry conformance")
     parser.add_argument("--runtime-image-manifest", type=Path, help="explicit locked node-lab OS image")
     parser.add_argument("--artifacts", type=Path, help="reuse a --build-only bin directory with matching source manifest")
     parser.add_argument("--transport", choices=("native-tcp", "native-udp", "vless", "trojan"), default="native-tcp",
@@ -387,7 +388,7 @@ def main():
             if args.short:
                 command.append("--short")
             command.extend(["--log-format", "json", "--transport", args.transport, "--dns-backend", args.dns_backend,
-                            "--traversal", args.traversal])
+                             "--traversal", args.traversal, "--netmap-validity", args.netmap_validity])
             if args.traversal_fallback:
                 command.append("--traversal-fallback")
             if args.reported_endpoints:
@@ -711,7 +712,7 @@ def main():
                             if address["family"] == "inet6" and address["scope"] == "link"]
                 original_link_addresses = None
                 for stage, address in (("changed", replacement), ("restored", addresses["r"])):
-                    deadline = time.monotonic() + 900
+                    deadline = time.monotonic() + 1200
                     while not (report / f"signals/interface-request-{stage}.json").exists():
                         if any(future.done() for future in futures) or time.monotonic() >= deadline:
                             raise RuntimeError("interface replacement rendezvous failed")

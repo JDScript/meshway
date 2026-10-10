@@ -273,6 +273,7 @@ mod tests {
                     status: Box::new(status()),
                     closed_at_ms: 1,
                     instance_expires_at_ms: 2,
+                    netmap_expires_at_ms: 2,
                     observed_at_ms: 3,
                     old_traffic_blocked: None,
                 },

@@ -39,6 +39,7 @@ async fn run_server(cli: &Cli) -> Result<()> {
     let listener = TcpListener::bind("0.0.0.0:8443").await?;
     let tls = meshway_packet_fixture::tls_server(&cli.public, &cli.private).await?;
     let mut settings = Settings::new(cli.state.join("server"));
+    settings.netmap.validity = cli.netmap_validity.as_std();
     let audit = crate::traversal::Audit::default();
     if cli.traversal == crate::TraversalMode::Nat {
         settings.stun_listen = vec!["0.0.0.0:3478".parse()?];
@@ -901,7 +902,7 @@ async fn coordinate(
         } = signals
             .wait_for(
                 &format!("instance-expired-{}", role.name()),
-                Duration::from_secs(165),
+                cli.netmap_validity.as_std() + Duration::from_secs(75),
             )
             .await?
         else {

@@ -27,7 +27,7 @@ const IO: Duration = Duration::from_secs(10);
 const STARTUP: Duration = Duration::from_secs(45);
 // Bounded diagnostic admission/lifecycle checks precede the packet window
 // (125s acceptance / 30s diagnostic) and actual instance-expiry/recovery sequence.
-const DEADLINE: Duration = Duration::from_secs(900);
+const DEADLINE: Duration = Duration::from_secs(1200);
 static STARTED: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
 
 fn remaining(limit: Duration) -> Result<Duration> {
@@ -66,6 +66,9 @@ struct Cli {
     /// UDP/off fixture with no configured endpoints and no STUN service.
     #[arg(long, global = true)]
     reported_endpoints: bool,
+    /// Explicit Server lease for expiry conformance; production defaults to 24h.
+    #[arg(long, global = true, default_value = "5m")]
+    netmap_validity: meshway_transport_spec::PositiveDuration,
     /// Diagnostic traffic window only; does not establish 125-second renewal acceptance.
     #[arg(long, global = true)]
     short: bool,

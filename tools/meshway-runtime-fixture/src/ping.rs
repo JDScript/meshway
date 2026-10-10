@@ -170,7 +170,7 @@ impl PingEvidence {
                 "ping automatic recovery reused old instance/authority or changed intent".into(),
             );
         }
-        let expiry = i64::try_from(recovery.expired.instance_expires_at_ms)?;
+        let expiry = i64::try_from(recovery.expired.netmap_expires_at_ms)?;
         for sample in old.samples() {
             let probe = sample.probe.as_ref().ok_or("old ping sample lacks probe")?;
             if (probe.outcome == ProbeOutcome::Success
@@ -183,9 +183,7 @@ impl PingEvidence {
                     .is_some_and(|counts| counts.sent > 0)
                     && probe.started_at.timestamp_millis() > expiry)
             {
-                return Err(
-                    "old ping continued sending or completing after instance expiry".into(),
-                );
+                return Err("old ping continued sending or completing after netmap expiry".into());
             }
         }
         if new.started_at_ms < recovery.reopened_at_ms

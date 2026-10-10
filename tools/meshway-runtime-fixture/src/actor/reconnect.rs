@@ -87,7 +87,7 @@ async fn exercise(
             .or(before.netmap.as_ref())
             .ok_or("missing pre-outage netmap lease")?,
     )?;
-    if instance_expiry <= closed_at_ms || instance_expiry.saturating_sub(closed_at_ms) > 130_000 {
+    if instance_expiry.saturating_sub(closed_at_ms) > 130_000 {
         return Err("unexpected actual instance deadline at HTTP outage".into());
     }
     save(cli, "lease-at-outage", &fresh).await?;
@@ -106,19 +106,49 @@ async fn exercise(
     } else {
         Vec::new()
     };
+    // The same OS sockets continue beyond the real HTTP instance deadline.
+    // Only the independent signed netmap deadline may stop execution.
+    let within_until = instance_expiry.saturating_add(750);
+    if execution_expiry <= within_until.saturating_add(1_000) {
+        return Err("fixture lacks a netmap-valid window beyond instance expiry".into());
+    }
+    while now_ms()? < within_until {
+        if let Some(traffic) = traffic.as_mut() {
+            traffic.exchange().await?;
+        }
+        echo.check()?;
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    let within = command(cli, "status").await?;
+    if within.phase != Phase::Running
+        || within.instance.is_some()
+        || within.applied != before.applied
+        || within.identity != before.identity
+        || within.process_id != before.process_id
+        || !within.desired_up
+    {
+        return Err("instance expiry interrupted still-authorized netmap execution".into());
+    }
+    save(cli, "within-netmap-lease-status", &within).await?;
+    if let Some(traffic) = traffic.as_mut() {
+        traffic.exchange().await?;
+        save(
+            cli,
+            "within-netmap-lease-traffic",
+            &traffic.evidence(Duration::from_millis(
+                now_ms()?.saturating_sub(closed_at_ms),
+            ))?,
+        )
+        .await?;
+    }
     let wait = Duration::from_millis(execution_expiry.saturating_sub(now_ms()?) + 500);
     if crate::remaining(wait)? < wait {
         return Err("execution expiry exceeds fixture deadline".into());
     }
     tokio::time::sleep(wait).await;
-    // A publication may have hidden its successor's execution deadline while
-    // retaining the instance. Observe actual suspension within the independently
-    // bounded instance horizon, rather than inventing an execution lease.
-    let suspension_budget = Duration::from_millis(
-        closed_at_ms
-            .saturating_add(130_000)
-            .saturating_sub(now_ms()?),
-    );
+    // HTTP instance expiry cannot suspend netmap authority. The actual signed
+    // netmap deadline is the independent execution boundary being observed.
+    let suspension_budget = Duration::from_secs(5);
     let suspended = wait_status_for(cli, suspension_budget, |status| {
         status.data_plane == DataPlane::Suspended && status.desired_up
     })
@@ -182,6 +212,7 @@ async fn exercise(
         status: Box::new(expired_status),
         closed_at_ms,
         instance_expires_at_ms: instance_expiry,
+        netmap_expires_at_ms: execution_expiry,
         observed_at_ms: now_ms()?,
         old_traffic_blocked,
     };
@@ -192,11 +223,11 @@ async fn exercise(
             sample.probe.as_ref().is_some_and(|probe| {
                 probe.outcome == meshway_model::state::ProbeOutcome::Success
                     && probe.completed_at.is_none_or(|at| {
-                        at.timestamp_millis() > i64::try_from(instance_expiry).unwrap_or(i64::MAX)
+                        at.timestamp_millis() > i64::try_from(execution_expiry).unwrap_or(i64::MAX)
                     })
             })
         }) {
-            return Err("old CLI emitted a successful measurement after instance expiry".into());
+            return Err("old CLI emitted a successful measurement after netmap expiry".into());
         }
         let evidence = ping.as_mut().ok_or("source ping evidence missing")?;
         evidence.runs.push(run);
