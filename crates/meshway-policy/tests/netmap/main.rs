@@ -8,6 +8,7 @@ use meshway_policy::{
 use meshway_transport_spec::*;
 use std::collections::BTreeMap;
 
+mod equivalence;
 mod exit;
 mod incremental;
 mod projection;
