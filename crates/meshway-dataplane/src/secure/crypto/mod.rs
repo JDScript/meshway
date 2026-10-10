@@ -326,4 +326,4 @@ fn verify_chain<'a>(
 }
 
 #[cfg(test)]
-mod tests;
+pub(in crate::secure) mod tests;

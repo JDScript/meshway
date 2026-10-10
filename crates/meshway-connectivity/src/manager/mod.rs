@@ -818,6 +818,19 @@ impl Manager {
             .collect())
     }
 
+    /// The identity of each peer's selected channel. A changed or missing
+    /// identity means the channel was replaced or ended: circuits through it
+    /// belong to the old channel (its peer may have restarted).
+    pub fn channels(&self) -> Result<BTreeMap<NodeId, [u8; 32]>, Error> {
+        self.check_view()?;
+        let links = self.shared.links.lock().map_err(|_| Error::Worker)?;
+        Ok(links
+            .values()
+            .filter(|link| link.scope.check().is_ok())
+            .map(|link| (link.fact.peer, link.fact.id))
+            .collect())
+    }
+
     /// Whether this Manager's owners still run (it has not stopped).
     pub fn is_running(&self) -> bool {
         !self.shared.stop.is_cancelled()

@@ -148,3 +148,33 @@ fn established_circuit_ends_when_idle_and_its_origin_ends_it_without_replies() {
     let handshaking = circuit(State::RelayAwaiting, &root);
     assert_eq!(handshaking.activity_deadline(), None);
 }
+
+#[test]
+fn an_origin_endpoint_without_any_authenticated_reply_ends_after_no_reply() {
+    let root = CancellationToken::new();
+    let now = Instant::now();
+    let endpoint = |origin: bool| {
+        let (noise, _) = crate::secure::crypto::tests::handshake(b"no-reply");
+        let mut circuit = circuit(State::Endpoint(Arc::new(noise)), &root);
+        circuit.cap = None;
+        circuit.active = now;
+        circuit.origin = origin;
+        circuit
+    };
+    let mut silent = endpoint(true);
+    silent.sent(now);
+    silent.sent(now + Duration::from_secs(10));
+    silent
+        .check_now(now + NO_REPLY - Duration::from_millis(1), 0)
+        .unwrap();
+    assert_eq!(silent.check_now(now + NO_REPLY, 0), Err(Error::Expired));
+    // Any authenticated receive answers every earlier send.
+    let mut answered = endpoint(true);
+    answered.sent(now);
+    answered.received(now + Duration::from_secs(1));
+    answered.check_now(now + NO_REPLY, 0).unwrap();
+    // The responder endpoint never applies it: only the origin re-handshakes.
+    let mut responder = endpoint(false);
+    responder.sent(now);
+    responder.check_now(now + NO_REPLY, 0).unwrap();
+}

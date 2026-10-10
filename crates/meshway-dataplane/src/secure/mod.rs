@@ -656,6 +656,36 @@ impl SecureNode {
         })
     }
 
+    /// The authenticated channel to `peer` was replaced or ended (the peer may
+    /// have restarted and lost its Noise state). Every circuit whose adjacent
+    /// hop on this Node is `peer` retires now; an origin's next packet
+    /// handshakes again on the current channel instead of sending into a
+    /// circuit the peer no longer holds. Returns how many retired.
+    pub fn retire_adjacent(&mut self, peer: NodeId) -> usize {
+        let local = self.desired.netmap().node_id;
+        let mut retired = 0;
+        for circuit in self.circuits.values_mut() {
+            let path = &circuit.context.path;
+            let Some(position) = path.iter().position(|node| *node == local) else {
+                continue;
+            };
+            let adjacent = position
+                .checked_sub(1)
+                .and_then(|i| path.get(i))
+                .into_iter()
+                .chain(path.get(position + 1))
+                .any(|node| *node == peer);
+            if adjacent && !matches!(circuit.state, State::Closed) {
+                circuit.retire_for("adjacency", "channel_replaced");
+                retired += 1;
+            }
+        }
+        if retired > 0 {
+            self.maintenance.changed();
+        }
+        retired
+    }
+
     /// Replace host-observed authenticated carrier availability without changing
     /// circuit IDs, replay windows, flows or their complete logical paths.
     /// Every carrier must be an admitted adjacency of the desired content;

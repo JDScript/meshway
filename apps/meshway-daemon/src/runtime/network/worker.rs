@@ -585,6 +585,16 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             if let Some(carriers) = &carriers {
                 let _ = secure.set_carriers(carriers.clone());
             }
+            // A replaced or ended channel takes its circuits with it: the
+            // peer may hold no Noise state for them any more.
+            if let Ok(channels) = manager.channels() {
+                for (peer, old) in &state.channels {
+                    if channels.get(peer) != Some(old) {
+                        secure.retire_adjacent(*peer);
+                    }
+                }
+                state.channels = channels;
+            }
             secure.set_ready_exits(peers.ready_exits());
             diagnostics.synchronize(&state.desired, instance);
             tokio::select! { biased;
