@@ -4,10 +4,10 @@ use super::{ReportAdmission, service::*};
 use crate::error::Error;
 use crate::{configuration::SnapshotCache, execution::Execution, secrets::Sealer};
 use chrono::{DateTime, Utc};
-use meshway_model::{InstanceId, MembershipRole, NetworkId, NodeId, Revision};
+use meshway_model::{InstanceId, MembershipRole, Revision};
 use meshway_protocol::live::*;
 use rusqlite::Transaction;
-use std::{collections::BTreeSet, sync::Arc};
+use std::sync::Arc;
 
 #[derive(Clone)]
 pub(crate) struct Projection {
@@ -36,19 +36,27 @@ impl StateProvider for UserProvider {
     type Configuration = UserConfigurationView;
     type Entities = UserEntitiesView;
     type Progress = ConfigurationApplyProgress;
-    fn configuration_refresh_required(
+    fn stream_transition(
         &self,
         previous: &ProviderView<Self>,
         current: &ProviderView<Self>,
-    ) -> bool {
-        matches!(
+    ) -> StreamTransition {
+        if previous.entities.network.membership_id != current.entities.network.membership_id
+            || previous.entities.network.role != current.entities.network.role
+        {
+            return StreamTransition::Close;
+        }
+        if matches!(
             (&previous.configuration, &current.configuration),
             (UserConfigurationView::Member { nodes: before, .. },
              UserConfigurationView::Member { nodes: after, .. }) if before != after
-        )
-    }
-    fn can_drain_configuration_changes(&self, view: &ProviderView<Self>) -> bool {
-        matches!(view.configuration, UserConfigurationView::Manager { .. })
+        ) {
+            return StreamTransition::Reset;
+        }
+        StreamTransition::Append(match current.configuration {
+            UserConfigurationView::Manager { .. } => ConfigurationDelivery::Journal,
+            UserConfigurationView::Member { .. } => ConfigurationDelivery::Snapshot,
+        })
     }
     fn replay_scope(&self, view: &ProviderView<Self>) -> Result<meshway_model::Digest, Error> {
         if matches!(view.configuration, UserConfigurationView::Manager { .. }) {
@@ -68,9 +76,18 @@ impl StateProvider for UserProvider {
             disclosure_digest(&view.scope)
         }
     }
-    fn same_authority(&self, previous: &ProviderView<Self>, current: &ProviderView<Self>) -> bool {
-        previous.entities.network.membership_id == current.entities.network.membership_id
-            && previous.entities.network.role == current.entities.network.role
+    fn state_scope(
+        &self,
+        tx: &Transaction<'_>,
+        identity: &ReadIdentity,
+        now: DateTime<Utc>,
+    ) -> Result<super::VisibilityScope, Error> {
+        if !matches!(identity, ReadIdentity::UserSession { .. }) {
+            return Err(Error::PermissionDenied);
+        }
+        self.0
+            .execution
+            .state_scope_in_transaction(tx, identity, now)
     }
     fn view(
         &self,
@@ -208,105 +225,34 @@ impl UserProvider {
         )
     }
 }
-/// A Node's own desired settings and current netmap reference, as the State
-/// core's per-reader configuration view. Node streams are not served; this
-/// view backs the Node's State queries only.
-#[derive(Clone, PartialEq, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct NodeConfigurationView {
-    pub network_id: NetworkId,
-    pub node_id: NodeId,
-    pub revision: meshway_model::Revision,
-    pub settings: meshway_configuration::NodeSettingsView,
-    pub netmap: Option<meshway_model::NetmapRef>,
-}
-/// Node-visible inventory under the Node's current netmap.
-#[derive(Clone, PartialEq, serde::Serialize)]
-pub struct NodeEntitiesView {
-    pub nodes: std::collections::BTreeMap<NodeId, meshway_protocol::NodeInventoryView>,
-}
 impl StateProvider for NodeProvider {
-    type Configuration = NodeConfigurationView;
-    type Entities = NodeEntitiesView;
-    type Progress = ConfigurationApplyProgress;
+    type Configuration = ();
+    type Entities = ();
+    type Progress = ();
     fn replay_scope(&self, view: &ProviderView<Self>) -> Result<meshway_model::Digest, Error> {
         disclosure_digest(&view.scope)
     }
-    fn same_authority(&self, previous: &ProviderView<Self>, current: &ProviderView<Self>) -> bool {
-        let node = current.configuration.node_id;
-        previous.configuration.node_id == node
-            && previous
-                .scope
-                .current
-                .get(&node)
-                .map(|node| (node.instance_id, node.instance_generation))
-                == current
-                    .scope
-                    .current
-                    .get(&node)
-                    .map(|node| (node.instance_id, node.instance_generation))
-    }
-    fn view(
+    fn state_scope(
         &self,
         tx: &Transaction<'_>,
         identity: &ReadIdentity,
         now: DateTime<Utc>,
-    ) -> Result<ProviderView<Self>, Error> {
+    ) -> Result<super::VisibilityScope, Error> {
         let ReadIdentity::Node { .. } = identity else {
             return Err(Error::PermissionDenied);
         };
-        let scope = self
-            .0
+        self.0
             .execution
-            .state_scope_in_transaction(tx, identity, now)?;
-        // Node scope construction just authenticated the real bearer, current
-        // key/membership and instance in THIS transaction. Its full scope is
-        // exactly the owning Node; do not repeat report/history admission.
-        let node = scope.full.first().copied().ok_or(Error::InvalidSession)?;
-        if scope.full.len() != 1 {
-            return Err(Error::InvalidSession);
-        }
-        let snapshot = self.0.snapshot(tx, &scope)?;
-        let cfg = &snapshot.document.configuration;
-        let target = scope
-            .current
-            .get(&node)
-            .and_then(|node| node.configurations.first())
-            .cloned();
-        let configuration = NodeConfigurationView {
-            network_id: scope.network_id,
-            node_id: node,
-            revision: snapshot.revision,
-            settings: cfg.nodes.get(&node).ok_or(Error::InvalidSession)?.into(),
-            netmap: target,
-        };
-        let nodes = crate::store::execution::inventory_in_transaction(
-            tx,
-            scope.network_id,
-            cfg,
-            &scope.visible,
-            false,
-        )?
-        .items
-        .into_iter()
-        .map(|node| (node.id, node))
-        .collect();
-        let progress = Some(super::progress::read(
-            tx,
-            scope.network_id,
-            snapshot.revision,
-            &scope.full,
-            false,
-            self.0.boot,
-            now,
-        )?);
-        Ok(ViewContext {
-            scope,
-            configuration,
-            entities: NodeEntitiesView { nodes },
-            progress,
-            member_ids: BTreeSet::new(),
-        })
+            .state_scope_in_transaction(tx, identity, now)
+    }
+    fn view(
+        &self,
+        _: &Transaction<'_>,
+        _: &ReadIdentity,
+        _: DateTime<Utc>,
+    ) -> Result<ProviderView<Self>, Error> {
+        // Node reads use state_scope; there is no Node SSE view.
+        Err(Error::PermissionDenied)
     }
     fn report(
         &self,

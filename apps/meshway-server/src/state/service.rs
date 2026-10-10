@@ -60,6 +60,17 @@ pub struct ViewContext<C, E, P> {
     /// Keys of the members in the typed entity snapshot, for explicit removals.
     pub member_ids: std::collections::BTreeSet<meshway_model::MembershipId>,
 }
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ConfigurationDelivery {
+    Snapshot,
+    Journal,
+}
+pub enum StreamTransition {
+    Close,
+    Reset,
+    Append(ConfigurationDelivery),
+}
+
 pub trait StateProvider: Send + Sync + 'static {
     type Configuration: Clone + PartialEq + Serialize + Send + Sync + 'static;
     type Entities: Clone + PartialEq + Serialize + Send + Sync + 'static;
@@ -69,24 +80,27 @@ pub trait StateProvider: Send + Sync + 'static {
     fn replay_scope(&self, view: &ProviderView<Self>) -> Result<Digest, Error> {
         Ok(view.scope.authorization_digest)
     }
-    /// Managers may replay prior non-secret network views in order before the
-    /// next notice. Restricted readers must recheck target-dependent queues.
-    fn can_drain_configuration_changes(&self, _view: &ProviderView<Self>) -> bool {
-        false
-    }
-    /// A restricted settings view has no management GET refresh. Replace its
-    /// complete batch when the authorized settings themselves change.
-    fn configuration_refresh_required(
+    /// One disclosure decision: identity loss closes, changed disclosure
+    /// resets, and a stable reader appends under its delivery mode.
+    fn stream_transition(
         &self,
-        _previous: &ProviderView<Self>,
-        _current: &ProviderView<Self>,
-    ) -> bool {
-        false
+        previous: &ProviderView<Self>,
+        current: &ProviderView<Self>,
+    ) -> StreamTransition {
+        if previous.scope.authorization_digest != current.scope.authorization_digest {
+            StreamTransition::Close
+        } else {
+            StreamTransition::Append(ConfigurationDelivery::Snapshot)
+        }
     }
-    /// Identity/role loss closes the connection. A still-authorized view change
-    /// clears replay/pending and synchronizes again instead.
-    fn same_authority(&self, previous: &ProviderView<Self>, current: &ProviderView<Self>) -> bool {
-        previous.scope.authorization_digest == current.scope.authorization_digest
+    /// State-only reads need authorization, not configuration/entities/progress.
+    fn state_scope(
+        &self,
+        tx: &Transaction<'_>,
+        identity: &ReadIdentity,
+        now: DateTime<Utc>,
+    ) -> Result<VisibilityScope, Error> {
+        Ok(self.view(tx, identity, now)?.scope)
     }
     fn filter_notice(
         &self,
@@ -298,7 +312,7 @@ impl<P: StateProvider> StateService<P> {
         self.handle
             .read(move |tx| {
                 let now = Utc::now();
-                let view = provider.view(tx, &identity, now)?;
+                let authorization = provider.state_scope(tx, &identity, now)?;
                 let scope = crate::secrets::CursorScope::ObservationHistory(identity.fingerprint());
                 let previous = match &query.cursor {
                     None => None,
@@ -319,7 +333,7 @@ impl<P: StateProvider> StateService<P> {
                     }
                 };
                 let (mut page, next) =
-                    crate::observations::history::query(tx, &view.scope, &query, previous, now)?;
+                    crate::observations::history::query(tx, &authorization, &query, previous, now)?;
                 if let Some(next) = next {
                     let bytes = serde_json::to_vec(&next)
                         .map_err(|_| Error::encode("observation history cursor"))?;
@@ -340,10 +354,10 @@ impl<P: StateProvider> StateService<P> {
         self.handle
             .read(move |tx| {
                 let now = Utc::now();
-                let view = provider.view(tx, &identity, now)?;
+                let scope = provider.state_scope(tx, &identity, now)?;
                 let mut runtime = runtime.lock().map_err(|_| Error::RUNTIME)?;
                 let Runtime { hub, geoip, .. } = &mut *runtime;
-                hub.query(&view.scope, nodes.as_deref(), geoip, now)
+                hub.query(&scope, nodes.as_deref(), geoip, now)
             })
             .await
     }
@@ -564,8 +578,9 @@ impl<P: StateProvider> StateService<P> {
                         ReadIdentity::Node { .. } => ClosedReason::NodeLeaseExpired,
                     });
                 }
+                let transition = provider.stream_transition(&sub.last, &view);
                 if sub.created_at + Duration::minutes(15) <= now
-                    || !provider.same_authority(&sub.last, &view)
+                    || matches!(transition, StreamTransition::Close)
                 {
                     return Ok(StreamPoll::Closed);
                 }
@@ -585,13 +600,16 @@ impl<P: StateProvider> StateService<P> {
                     .after(sub.journal_sequence, view.scope.network_id);
                 let journal_sequence = hub.events.sequence();
                 if sub.authorization != authorization
-                    || provider.configuration_refresh_required(&sub.last, &view)
+                    || matches!(transition, StreamTransition::Reset)
                     || journal.is_err()
                     || observation_scope_changed
                         && (!sub.pending.is_empty() || !sub.replay.is_empty())
                     || (!sub.pending.is_empty()
                         && (sub.initial_batch.is_some()
-                            || !provider.can_drain_configuration_changes(&view))
+                            || !matches!(
+                                transition,
+                                StreamTransition::Append(ConfigurationDelivery::Journal)
+                            ))
                         && (view.configuration != sub.last.configuration
                             || view.entities != sub.last.entities
                             || view.scope.configuration_revision
@@ -628,7 +646,10 @@ impl<P: StateProvider> StateService<P> {
                     for entry in journal? {
                         match entry.change {
                             Effect::Resource { network_id }
-                                if provider.can_drain_configuration_changes(&view) =>
+                                if matches!(
+                                    transition,
+                                    StreamTransition::Append(ConfigurationDelivery::Journal)
+                                ) =>
                             {
                                 enqueue::<P>(
                                     &mut sub,
