@@ -21,7 +21,7 @@ use std::collections::{BTreeMap, BTreeSet};
 pub const MAX_REPORT_BYTES: usize = 1024 * 1024;
 pub const MAX_NETWORK_REPORTS: usize = 10_000;
 pub const MAX_STATE_BYTES: usize = 128 * 1024 * 1024;
-pub const REPORT_TTL_SECONDS: i64 = 60;
+pub const REPORT_TTL_SECONDS: i64 = meshway_protocol::STATE_REPORT_TTL_SECONDS;
 pub const CLOCK_SKEW_SECONDS: i64 = 30;
 
 /// Constructed by the Node/execution owner after current transactional checks.

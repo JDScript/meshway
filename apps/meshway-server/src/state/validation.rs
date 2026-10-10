@@ -15,7 +15,7 @@ fn text(value: &str) -> bool {
 fn time(observed: DateTime<Utc>, expires: DateTime<Utc>, now: DateTime<Utc>) -> bool {
     observed <= now + Duration::seconds(CLOCK_SKEW_SECONDS)
         && expires > observed
-        && expires - observed <= Duration::minutes(10)
+        && expires - observed <= Duration::seconds(meshway_protocol::STATE_FACT_MAX_SECONDS)
 }
 pub(super) fn report(
     admission: &ReportAdmission,

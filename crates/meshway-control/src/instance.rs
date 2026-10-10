@@ -130,6 +130,15 @@ impl Control {
         if report.instance_id != instance.instance_id {
             return Err(Error::Lifecycle);
         }
+        // An identical retry past the Server's report lifetime can only be
+        // rejected; the next report is a fresh observation instead.
+        if report.observed_at
+            + chrono::Duration::seconds(meshway_protocol::STATE_REPORT_TTL_SECONDS)
+            <= chrono::Utc::now()
+        {
+            self.report = None;
+            return Err(Error::Lifecycle);
+        }
         let sequence = report.sequence;
         let response = self.client.report_node_state(report, self.token()?).await;
         // Only this validated reporting-domain rejection is non-fencing. The

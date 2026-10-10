@@ -7,6 +7,12 @@ use meshway_model::{
 };
 use std::collections::BTreeMap;
 
+/// A State report is accepted only within this many seconds of its
+/// `observedAt`; an undelivered report older than this is never retried.
+pub const STATE_REPORT_TTL_SECONDS: i64 = 60;
+/// Longest lifetime (`expiresAt - observedAt`) of one reported State fact.
+pub const STATE_FACT_MAX_SECONDS: i64 = 600;
+
 wire_object! {
 /// Complete Node snapshot authenticated and validated against the current instance.
 #[derive(Clone, Debug, PartialEq, Eq)] pub struct StateReport {

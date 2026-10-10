@@ -120,7 +120,8 @@ impl Report {
         // A link fact lasts until the lease ends, but never beyond the State
         // fact lifetime the Server accepts.
         let expiry = lease_end.min(
-            self.facts_observed_at + chrono::Duration::from_std(LINK_FACT_TTL).unwrap_or_default(),
+            self.facts_observed_at
+                + chrono::Duration::seconds(meshway_protocol::STATE_FACT_MAX_SECONDS),
         );
         for link in &facts.links {
             let id = socket_key(&link.id);
@@ -170,10 +171,6 @@ impl Report {
         state
     }
 }
-
-/// Longest State link fact lifetime (`expiresAt - observedAt`) the Server
-/// accepts; a 24 h lease must not be reported as a 24 h link.
-const LINK_FACT_TTL: std::time::Duration = std::time::Duration::from_secs(600);
 
 fn socket_key(id: &[u8; 32]) -> String {
     id.iter().map(|byte| format!("{byte:02x}")).collect()
