@@ -238,7 +238,10 @@ async fn account_revocations_end_their_observation_subscriptions_at_commit() {
         assert_eq!(tasks(&lab.app), 1, "{operation}");
         let accounts = lab.app.accounts();
         match operation {
-            0 => accounts.logout(session.token.expose(), rid()).await.unwrap(),
+            0 => accounts
+                .logout(session.token.expose(), rid())
+                .await
+                .unwrap(),
             1 => accounts
                 .revoke_sessions(
                     session.token.expose(),

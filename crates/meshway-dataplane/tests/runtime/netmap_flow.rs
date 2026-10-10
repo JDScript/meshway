@@ -748,3 +748,70 @@ async fn a_local_packet_with_another_source_is_never_admitted() {
     assert_eq!(f.a.flow_count(), 0);
     f.close().await;
 }
+
+/// SecureNode admission of a source packet on its projection equals the
+/// policy's decision for the same flow, across Access variations (the
+/// semantic differential that replaced the v5 comparison).
+#[tokio::test]
+async fn source_admission_equals_the_policy_decision_for_every_service() {
+    use meshway_configuration::execution::BusinessProtocol;
+    use meshway_policy::compile::netmap::LocalDecision;
+    let mut f = NetmapMesh::start().await;
+    let [a, _, b] = f.ids();
+    let variations: [&[&str]; 5] = [
+        &["udp:42424", "tcp:443", "icmp:*"],
+        &["udp:*"],
+        &["tcp:400-500"],
+        &["icmp:*", "udp:1-1000"],
+        &[],
+    ];
+    let mut source = 20_000u16;
+    for services in variations {
+        f.recompile(|cfg, _| {
+            cfg.access = if services.is_empty() {
+                vec![]
+            } else {
+                vec![rule(a, &sel(b), services)]
+            }
+        });
+        f.install_on(0, true).await;
+        let compiler = f.content(0).0.compiler().clone();
+        let (from, to) = (f.address(0), f.address(2));
+        for (protocol, port) in [
+            (BusinessProtocol::Udp, Some(42424)),
+            (BusinessProtocol::Udp, Some(53)),
+            (BusinessProtocol::Tcp, Some(443)),
+            (BusinessProtocol::Tcp, Some(22)),
+            (BusinessProtocol::IcmpEcho, None),
+        ] {
+            source += 1;
+            let packet = match (protocol, port) {
+                (BusinessProtocol::Udp, Some(port)) => {
+                    super::packet::udp(from, to, source, port, b"differential")
+                }
+                (BusinessProtocol::Tcp, Some(port)) => {
+                    super::packet::tcp(from, to, (source, port), 1, 0, 0x02)
+                }
+                _ => super::packet::echo(from, to, false, source, 1, b"differential"),
+            };
+            let decided = compiler
+                .decide(
+                    a,
+                    to,
+                    protocol,
+                    port.map(|port| meshway_transport::spec::Port::new(port).unwrap()),
+                )
+                .unwrap();
+            let admitted = matches!(
+                f.a.outbound(packet),
+                Ok(Outbound::Queued { .. } | Outbound::Send(_) | Outbound::AwaitingAdjacency)
+            );
+            assert_eq!(
+                admitted,
+                matches!(decided, LocalDecision::Permitted(_)),
+                "{services:?} {protocol:?} {port:?}"
+            );
+        }
+    }
+    f.close().await;
+}

@@ -4,8 +4,8 @@ use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use ed25519_dalek::{Signer, SigningKey};
 use meshway_model::*;
 use meshway_model::{MembershipRole, Version};
-use meshway_protocol::{enrollment::*, node::*};
 use meshway_protocol::{configuration::*, history::*, management::*};
+use meshway_protocol::{enrollment::*, node::*};
 use sha2::{Digest as _, Sha256};
 
 use super::json as value;

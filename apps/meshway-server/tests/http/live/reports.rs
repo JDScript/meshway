@@ -64,7 +64,6 @@ fn live_spec_closes_real_event_roots_and_resolves_every_dependency() {
     assert!(serde_json::from_str::<SystemState>(r#"["host","linux","x86","1"]"#).is_err());
 }
 
-
 #[tokio::test]
 async fn disconnected_streams_release_active_quota_and_keep_bounded_replay() {
     use meshway_server::error::Error;

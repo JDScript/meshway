@@ -406,3 +406,45 @@ async fn native_tcp_stream_survives_an_unrelated_serial_change() {
     b.shutdown().await.unwrap();
     fixture.close().await;
 }
+
+#[tokio::test]
+async fn a_pending_supersession_never_replaces_a_newer_channel_or_refills_a_retired_slot() {
+    let mut fixture = Netmaps::start(false, true).await;
+    let ids = fixture.ids();
+    let factory = fixture.factory();
+    let mut a = manager(&fixture, 0, &factory, Default::default()).await;
+    let mut b = manager(&fixture, 1, &factory, Default::default()).await;
+    a.interest().interest(ids[1]);
+    eventually("b accepts a", || links(&b).contains_key(&ids[0])).await;
+    let (current, sender) = {
+        let links = b.shared.links.lock().unwrap();
+        let link = &links[&ids[0]];
+        (link.fact.clone(), link.sender.clone())
+    };
+    // A recovery captured against an older channel id (ABA: the slot was
+    // since replaced by `current`).
+    let mut stale = current.clone();
+    stale.id = [0xab; 32];
+    let ready = |supersedes| ReadyPeer {
+        fact: stale.clone(),
+        sender: sender.clone(),
+        scope: b.shared.scope(Some((ids[0], stale.carrier.clone())), false),
+        plan: b.shared.plan(),
+        supersedes,
+        attempt: None,
+    };
+    assert!(!install_ready(&b.shared, ready(Replacement::Channel([0xcd; 32]))).unwrap());
+    assert_eq!(links(&b)[&ids[0]], current);
+    // A healthy same-carrier UDP channel is never displaced by ranking alone.
+    assert!(!install_ready(&b.shared, ready(Replacement::Ranked)).unwrap());
+    assert_eq!(links(&b)[&ids[0]], current);
+    // Once retired, the empty slot remembers its last channel: a recovery
+    // that saw it empty earlier (no last channel) cannot refill it.
+    retire(&b.shared, &current).unwrap();
+    assert!(!links(&b).contains_key(&ids[0]));
+    assert!(!install_ready(&b.shared, ready(Replacement::Vacant(None))).unwrap());
+    assert!(!links(&b).contains_key(&ids[0]));
+    a.shutdown().await.unwrap();
+    b.shutdown().await.unwrap();
+    fixture.close().await;
+}

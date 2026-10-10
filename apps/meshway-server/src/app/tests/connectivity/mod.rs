@@ -6,14 +6,9 @@ use super::{
     node::{caps, fixture, session},
 };
 use crate::{accounts::random_uuid, state::service::ReadIdentity};
-use meshway_configuration::{
-    TopologyDefault,
-    execution::Carrier,
-    netmap::CompiledNetmap,
-};
+use meshway_configuration::{TopologyDefault, execution::Carrier, netmap::CompiledNetmap};
 use meshway_model::{
-    InstanceId, NetmapRef, NetworkId, NodeId, RequestId, Sequence, StateEpoch, Version,
-    state::*,
+    InstanceId, NetmapRef, NetworkId, NodeId, RequestId, Sequence, StateEpoch, Version, state::*,
 };
 use meshway_protocol::{
     connectivity::*,
@@ -232,7 +227,11 @@ async fn owner(app: &App) -> String {
 /// traversal between the two Nodes any more.
 async fn withdraw_adjacency(app: &App, network: NetworkId) {
     let owner = owner(app).await;
-    let current = app.configurations().read(&owner, network, None).await.unwrap();
+    let current = app
+        .configurations()
+        .read(&owner, network, None)
+        .await
+        .unwrap();
     app.configurations()
         .apply(
             &owner,
@@ -245,10 +244,8 @@ async fn withdraw_adjacency(app: &App, network: NetworkId) {
                         topology: vec![],
                     },
                     meshway_configuration::ConfigurationOperation::ReplaceDefaults {
-                        defaults: serde_json::from_value(
-                            serde_json::json!({ "topology": "deny" }),
-                        )
-                        .unwrap(),
+                        defaults: serde_json::from_value(serde_json::json!({ "topology": "deny" }))
+                            .unwrap(),
                     },
                 ],
             },
