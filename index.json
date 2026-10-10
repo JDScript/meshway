@@ -1,8 +1,204 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-10T17:15:58.303352+00:00",
+  "updatedAt": "2026-10-10T20:01:54.921959+00:00",
   "runs": [
+    {
+      "id": 38081437452,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "03492b6e18f3e3dcabf9f0356105644310509eca",
+      "message": "docs(validation): exit/off rerun on the N1z-G candidate",
+      "createdAt": "2026-10-10T19:51:13Z",
+      "updatedAt": "2026-10-10T19:58:46Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "url": "https://github.com/JDScript/meshway/actions/runs/38081437452",
+      "jobs": [
+        {
+          "id": 114298991613,
+          "name": "changes",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-10T19:51:16Z",
+          "completedAt": "2026-10-10T19:51:30Z",
+          "seconds": 14.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38081437452/job/114298991613"
+        },
+        {
+          "id": 114299040590,
+          "name": "console",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-10T19:52:33Z",
+          "completedAt": "2026-10-10T19:54:20Z",
+          "seconds": 107.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38081437452/job/114299040590"
+        },
+        {
+          "id": 114299040597,
+          "name": "docs-and-scripts",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-10T19:51:32Z",
+          "completedAt": "2026-10-10T19:52:31Z",
+          "seconds": 59.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38081437452/job/114299040597"
+        },
+        {
+          "id": 114299040659,
+          "name": "cargo",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "failure",
+          "startedAt": "2026-10-10T19:54:23Z",
+          "completedAt": "2026-10-10T19:58:46Z",
+          "seconds": 263.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38081437452/job/114299040659"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 38081437433,
+      "attempt": 1,
+      "workflow": "Build",
+      "event": "push",
+      "branch": "main",
+      "commit": "03492b6e18f3e3dcabf9f0356105644310509eca",
+      "message": "docs(validation): exit/off rerun on the N1z-G candidate",
+      "createdAt": "2026-10-10T19:51:13Z",
+      "updatedAt": "2026-10-10T19:56:49Z",
+      "status": "in_progress",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/38081437433",
+      "jobs": [
+        {
+          "id": 114298991346,
+          "name": "node-linux (x86_64-unknown-linux-musl)",
+          "runner": "mars-epyc7543",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-10T19:51:16Z",
+          "completedAt": "2026-10-10T19:56:46Z",
+          "seconds": 330.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38081437433/job/114298991346"
+        },
+        {
+          "id": 114298991485,
+          "name": "node-linux (aarch64-unknown-linux-musl)",
+          "runner": "mars-epyc7543",
+          "status": "in_progress",
+          "conclusion": null,
+          "startedAt": "2026-10-10T19:56:49Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38081437433/job/114298991485"
+        }
+      ],
+      "artifacts": [
+        {
+          "id": 11680846847,
+          "name": "node-x86_64-unknown-linux-musl-03492b6e18f3e3dcabf9f0356105644310509eca",
+          "bytes": 8469205,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38081437433/artifacts/11680846847",
+          "jobId": 114298991346,
+          "runner": "mars-epyc7543",
+          "seconds": 330.0,
+          "state": "ok",
+          "error": null,
+          "reports": [],
+          "matrices": [],
+          "builds": [
+            {
+              "target": "x86_64-unknown-linux-musl",
+              "binary": "meshwayd",
+              "bytes": 16510568,
+              "sha256": "b3d8a439dc7026de71c0fdaac0b440d5da64738c15d6983e6d246d55fa05d5ab"
+            },
+            {
+              "target": "x86_64-unknown-linux-musl",
+              "binary": "meshway",
+              "bytes": 1869248,
+              "sha256": "b6c98cb33d1211cc651284ce992e7a82ec883cbcb15eb27f7e52b306e69937ef"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 38081437422,
+      "attempt": 1,
+      "workflow": "Perf",
+      "event": "push",
+      "branch": "main",
+      "commit": "03492b6e18f3e3dcabf9f0356105644310509eca",
+      "message": "docs(validation): exit/off rerun on the N1z-G candidate",
+      "createdAt": "2026-10-10T19:51:13Z",
+      "updatedAt": "2026-10-10T19:51:13Z",
+      "status": "queued",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/38081437422",
+      "jobs": [
+        {
+          "id": 114298991155,
+          "name": "perf",
+          "runner": null,
+          "status": "queued",
+          "conclusion": null,
+          "startedAt": "2026-10-10T19:51:13Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38081437422/job/114298991155"
+        },
+        {
+          "id": 114298991318,
+          "name": "perf-arm64",
+          "runner": "jp-tyo-arm64",
+          "status": "completed",
+          "conclusion": "failure",
+          "startedAt": "2026-10-10T19:51:15Z",
+          "completedAt": "2026-10-10T19:51:28Z",
+          "seconds": 13.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38081437422/job/114298991318"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 38081437415,
+      "attempt": 1,
+      "workflow": "Validate",
+      "event": "push",
+      "branch": "main",
+      "commit": "03492b6e18f3e3dcabf9f0356105644310509eca",
+      "message": "docs(validation): exit/off rerun on the N1z-G candidate",
+      "createdAt": "2026-10-10T19:51:13Z",
+      "updatedAt": "2026-10-10T19:51:15Z",
+      "status": "in_progress",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/38081437415",
+      "jobs": [
+        {
+          "id": 114298991143,
+          "name": "matrix",
+          "runner": "planck",
+          "status": "in_progress",
+          "conclusion": null,
+          "startedAt": "2026-10-10T19:51:14Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38081437415/job/114298991143"
+        }
+      ],
+      "artifacts": []
+    },
     {
       "id": 38069690473,
       "attempt": 1,
