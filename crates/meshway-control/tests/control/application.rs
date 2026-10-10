@@ -234,6 +234,27 @@ async fn lost_saved_and_cancelled_completion_keep_exact_identity_and_order_new_a
 }
 
 #[tokio::test]
+async fn an_installation_older_than_the_receipt_window_is_receipted_when_saved() {
+    let server = Server::start().await;
+    let owner = server.owner().await;
+    let proxy = Proxy::start(&server.origin).await;
+    let mut control = start_control(&server, &owner, &proxy.origin, "application-late").await;
+    let node = control.status().binding.unwrap().node_id;
+    let target = control.status().held.unwrap();
+    let ticket = crate::support::acknowledge_saved(&mut control)
+        .await
+        .unwrap();
+    // A new instance receipts an installation it inherited ten minutes ago.
+    control
+        .finish_application(&ticket, Ok(()), Utc::now() - chrono::Duration::minutes(10))
+        .await
+        .unwrap();
+    let applied = progress(&server, &owner, node, &target).await;
+    assert_eq!(applied.phase, ApplicationPhase::Applied);
+    assert_eq!(applied.attempt, Some(ticket.attempt()));
+}
+
+#[tokio::test]
 async fn tickets_are_bound_to_the_control_owner_and_instance_generation() {
     let server = Server::start().await;
     let owner = server.owner().await;

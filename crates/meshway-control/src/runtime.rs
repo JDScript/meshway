@@ -166,10 +166,12 @@ impl Control {
                     phase,
                     attempt: ticket.attempt(),
                     sequence: Sequence::MIN.checked_next().map_err(|_| Error::Lifecycle)?,
-                    reported_at_ms: observed_at
-                        .timestamp_millis()
-                        .try_into()
-                        .map_err(|_| Error::Contract)?,
+                    // This attempt's completion is observed no earlier than its
+                    // saved receipt: an installation that predates a new
+                    // instance is reported when that instance receipts it.
+                    reported_at_ms: u64::try_from(observed_at.timestamp_millis())
+                        .map_err(|_| Error::Contract)?
+                        .max(ticket.0.saved.reported_at_ms),
                     failure,
                 };
                 *completion = Some(request.clone());
