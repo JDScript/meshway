@@ -116,6 +116,28 @@ async fn ready_channel_and_handshake_events_start_direct_and_relay_probes_withou
             .pop()
             .expect("established path must immediately admit its first probe");
         let measurement = action.measurement_id.expect("first measurement");
+        // Another subscriber may reuse this diagnostic circuit without an
+        // in-flight measurement. Its earlier map key must not steal a reply
+        // belonging to the original task's exact (CID, measurement, challenge).
+        let mut idle = fixture.task.clone();
+        idle.id = meshway_model::ObservationId::new(uuid::Uuid::from_u128(1)).unwrap();
+        fixture
+            .owner
+            .synchronize(
+                fixture.controls[0].netmap_snapshot().unwrap(),
+                &[idle.clone(), fixture.task.clone()],
+            )
+            .unwrap();
+        assert!(
+            fixture
+                .owner
+                .actions(&mut nodes[0], &carriers[0], MAX_TASKS)
+                .is_empty()
+        );
+        assert_eq!(
+            fixture.owner.tasks[&idle.id].circuit,
+            Some(action.frame.circuit())
+        );
         let sent = Instant::now();
         deliver(
             action.frame,

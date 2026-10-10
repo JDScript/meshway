@@ -576,19 +576,20 @@ impl Owner {
         channel: ProbeChannel,
         received_at: Instant,
     ) {
-        let Some(task) = self
-            .tasks
-            .values_mut()
-            .find(|task| task.circuit == Some(circuit) && current(task) && !task.paused)
-        else {
+        let Some(task) = self.tasks.values_mut().find(|task| {
+            task.circuit == Some(circuit)
+                && current(task)
+                && !task.paused
+                && task.measurement.as_ref().is_some_and(|measurement| {
+                    measurement.id == measurement_id && measurement.challenge == challenge
+                })
+        }) else {
             return;
         };
         let Some(measurement) = &mut task.measurement else {
             return;
         };
-        if measurement.id != measurement_id
-            || measurement.challenge != challenge
-            || measurement.reply.is_some()
+        if measurement.reply.is_some()
             || received_at > measurement.deadline
             || task.path.get(1) != Some(&channel.peer_node_id)
         {
