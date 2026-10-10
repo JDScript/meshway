@@ -175,7 +175,6 @@ impl Expired {
                 Some(lease.instance_id) == before.instance.as_ref().map(|old| old.instance_id)
                     || lease.generation.get() <= previous.generation.get()
                     || lease.expires_at_ms <= reopened_at_ms
-                    || lease.target != after.applied
             })
         {
             return Err(
@@ -261,11 +260,12 @@ pub fn now_ms() -> Result<u64> {
         .try_into()?)
 }
 
-/// Observed deadlines only: never fills in the latest status's missing execution
-/// lease or treats a publication handoff as a new runtime instance.
+/// Observed deadlines only: the instance qualifies reports and the netmap
+/// lease bounds execution. Neither a read nor a missing status extends them.
 pub(super) fn outage_deadlines(
     before: &meshway_protocol::InstanceLease,
     latest: Option<&meshway_protocol::InstanceLease>,
+    netmap: &meshway_ipc::NetmapStatus,
 ) -> Result<(u64, u64)> {
     if latest.is_some_and(|lease| {
         lease.instance_id != before.instance_id || lease.generation != before.generation
@@ -275,15 +275,7 @@ pub(super) fn outage_deadlines(
     let instance_expiry = latest.map_or(before.expires_at_ms, |lease| {
         lease.expires_at_ms.max(before.expires_at_ms)
     });
-    let execution_expiry = std::iter::once(before)
-        .chain(latest)
-        .filter_map(|lease| {
-            lease
-                .execution_expires_at_ms
-                .map(|at| at.min(lease.expires_at_ms))
-        })
-        .max()
-        .ok_or("no observed pre-outage execution lease")?;
+    let execution_expiry = u64::try_from(netmap.expires_at.timestamp_millis())?;
     Ok((instance_expiry, execution_expiry))
 }
 
@@ -319,39 +311,38 @@ mod tests {
     };
 
     #[test]
-    fn publication_gap_retains_observed_deadlines_without_granting_execution() {
+    fn netmap_and_instance_deadlines_remain_independent_during_an_outage() {
         let before = meshway_protocol::InstanceLease {
             instance_id: meshway_model::InstanceId::new(uuid::Uuid::from_u128(1)).unwrap(),
             generation: meshway_model::Version::MIN,
             expires_at_ms: 120_000,
-            execution_expires_at_ms: Some(60_000),
-            target: None,
         };
         let latest = meshway_protocol::InstanceLease {
             expires_at_ms: 140_000,
-            execution_expires_at_ms: None,
             ..before.clone()
         };
-        assert_eq!(
-            outage_deadlines(&before, Some(&latest)).unwrap(),
-            (140_000, 60_000)
-        );
-        assert_eq!(latest.execution_expires_at_ms, None);
-        let extended = meshway_protocol::InstanceLease {
-            execution_expires_at_ms: Some(80_000),
-            ..latest.clone()
+        let netmap = meshway_ipc::NetmapStatus {
+            netmap: meshway_model::NetmapRef {
+                revision: meshway_model::Revision::MIN,
+                serial: meshway_model::Version::MIN,
+                digest: [1; 32].into(),
+            },
+            issued_at: "1970-01-01T00:00:01Z".parse().unwrap(),
+            expires_at: "1970-01-01T00:05:01Z".parse().unwrap(),
         };
         assert_eq!(
-            outage_deadlines(&before, Some(&extended)).unwrap(),
-            (140_000, 80_000)
+            outage_deadlines(&before, Some(&latest), &netmap).unwrap(),
+            (140_000, 301_000)
         );
-        assert_eq!(outage_deadlines(&before, None).unwrap(), (120_000, 60_000));
+        assert_eq!(
+            outage_deadlines(&before, None, &netmap).unwrap(),
+            (120_000, 301_000)
+        );
         let replaced = meshway_protocol::InstanceLease {
             instance_id: meshway_model::InstanceId::new(uuid::Uuid::from_u128(2)).unwrap(),
             ..latest.clone()
         };
-        assert!(outage_deadlines(&before, Some(&replaced)).is_err());
-        assert!(outage_deadlines(&latest, None).is_err());
+        assert!(outage_deadlines(&before, Some(&replaced), &netmap).is_err());
     }
 
     async fn request(address: std::net::SocketAddr, path: &str) -> String {

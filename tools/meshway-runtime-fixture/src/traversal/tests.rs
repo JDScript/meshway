@@ -5,7 +5,7 @@ use super::{
     verification::Current,
 };
 use meshway_model::{
-    ConfigurationRef, Digest, InstanceId, Sequence, Version,
+    Digest, InstanceId, NetmapRef, Sequence, Version,
     observations::{EndpointKind, LinkAcquisition, ProbeChannel},
     state::*,
 };
@@ -21,11 +21,11 @@ where
 {
     format!("00000000-0000-4000-8000-{n:012}").parse().unwrap()
 }
-fn cfg(publication: u8) -> ConfigurationRef {
-    ConfigurationRef {
+fn cfg(serial: u8) -> NetmapRef {
+    NetmapRef {
         revision: 6.try_into().unwrap(),
-        execution_publication: id(publication),
-        digest: [publication; 32].into(),
+        serial: Version::new(u64::from(serial)).unwrap(),
+        digest: [serial; 32].into(),
     }
 }
 fn keys(n: u8) -> meshway_protocol::NodeKeyMetadata {
@@ -37,11 +37,12 @@ fn keys(n: u8) -> meshway_protocol::NodeKeyMetadata {
 fn status(n: u8) -> meshway_ipc::Status {
     serde_json::from_value(json!({
         "processId":42,"revision":1,"desiredUp":true,"phase":"running",
-        "eventStream":"disconnected","lastEventAt":null,
+        "sync":"disconnected","lastSyncAt":null,
         "server":"http://127.0.0.1:8430/","observedAt":"1970-01-01T00:00:20Z",
         "enrollmentRequestId":null,"enrollmentUrl":null,
         "identity":{"controllerId":id::<meshway_model::KeyId>(99),"networkId":id::<meshway_model::NetworkId>(100),"nodeId":id::<NodeId>(n),"keys":keys(n)},
-        "authenticated":true,"instance":{"instanceId":id::<InstanceId>(n+10),"generation":1,"expiresAt":"1970-01-01T00:01:00Z","executionExpiresAt":"1970-01-01T00:01:00Z","target":cfg(102)},
+        "authenticated":true,"instance":{"instanceId":id::<InstanceId>(n+10),"generation":1,"expiresAt":"1970-01-01T00:01:00Z"},
+        "netmap":{"netmap":cfg(102),"issuedAt":"1970-01-01T00:00:00Z","expiresAt":"1970-01-01T00:05:00Z"},
         "saved":cfg(102),"applied":cfg(102),"dataPlane":"ready","networkMode":"tun","lastError":null,"retryAt":null
     })).unwrap()
 }
@@ -74,7 +75,7 @@ impl Fixture {
             let reference = SocketReference {
                 node_id: id(n),
                 instance: instance.clone(),
-                configuration: cfg(101),
+                netmap: cfg(101),
                 socket_id: socket_id.clone(),
                 socket_generation: 7.try_into().unwrap(),
                 resource: ResourceRef::Listener { key: "tcp".into() },
@@ -82,7 +83,7 @@ impl Fixture {
             let physical = SocketState {
                 local_endpoints: None,
                 resource: reference.resource.clone(),
-                configuration: Some(cfg(101)),
+                netmap: Some(cfg(101)),
                 generation: reference.socket_generation,
                 network: SocketNetwork::Udp,
                 bound_address: "0.0.0.0:35000".parse().unwrap(),
@@ -111,7 +112,7 @@ impl Fixture {
             observations.events.push(Event::Query {
                 request: QueryUdpTraversalRequest {
                     instance,
-                    configuration: cfg(101),
+                    netmap: cfg(101),
                 },
                 response: QueryUdpTraversalResponse::Current {
                     state_epoch: id(110),
@@ -130,7 +131,7 @@ impl Fixture {
                 },
             });
             let mut current_physical = physical;
-            current_physical.configuration = Some(cfg(102));
+            current_physical.netmap = Some(cfg(102));
             // A later STUN observation is not the original offer's evidence.
             current_physical.endpoints[0].observed_at = "1970-01-01T00:00:19Z".parse().unwrap();
             current_physical.endpoints[0].expires_at = "1970-01-01T00:00:39Z".parse().unwrap();
@@ -175,7 +176,7 @@ impl Fixture {
             observations.events.push(Event::Prepare {
                 request: Box::new(PrepareUdpTraversalRequest {
                     instance: offer.local.candidate.socket.instance.clone(),
-                    configuration: cfg(101),
+                    netmap: cfg(101),
                     state_epoch: offer.state_epoch,
                     request_id: offer.request_id,
                     expires_at_ms: 10000,
@@ -192,7 +193,7 @@ impl Fixture {
                 observations.events.push(Event::Accept {
                     request: Box::new(UdpTraversalAttemptRequest {
                         instance: participants[&n].candidate.socket.instance.clone(),
-                        configuration: cfg(101),
+                        netmap: cfg(101),
                         state_epoch: offer.state_epoch,
                         version: offer.version,
                         digest: offer.digest,
@@ -215,7 +216,7 @@ impl Fixture {
                     node,
                     network: offer.network_id,
                     instance: participants[&n].candidate.socket.instance.clone(),
-                    configuration: cfg(101),
+                    netmap: cfg(101),
                     observed_at_ms: 3000,
                     expires_at_ms: 15000,
                     control_key: keys.control,
@@ -323,8 +324,8 @@ fn publication_handoff_keeps_original_offer_and_installation_but_requires_curren
     assert_eq!(proofs.len(), 4);
     let encoded = serde_json::to_value(proofs).unwrap();
     assert_ne!(
-        encoded[0]["installation"]["configuration"],
-        encoded[0]["currentConfiguration"]
+        encoded[0]["installation"]["netmap"],
+        encoded[0]["currentNetmap"]
     );
 }
 
@@ -339,14 +340,7 @@ fn changed_channel_socket_owner_scope_keys_or_tuple_cannot_borrow_an_old_offer()
                     key: "replaced".into(),
                 }
             }
-            2 => {
-                f.report()
-                    .sockets
-                    .values_mut()
-                    .next()
-                    .unwrap()
-                    .configuration = Some(cfg(103))
-            }
+            2 => f.report().sockets.values_mut().next().unwrap().netmap = Some(cfg(103)),
             3 => {
                 f.report().links.values_mut().next().unwrap()[0].link_id =
                     Digest::from_bytes([9; 32]).to_string()
@@ -361,7 +355,7 @@ fn changed_channel_socket_owner_scope_keys_or_tuple_cannot_borrow_an_old_offer()
                     endpoint_source: EndpointKind::Stun,
                 }
             }
-            6 => f.installed().configuration = cfg(103),
+            6 => f.installed().netmap = cfg(103),
             7 => f.installed().instance.instance_id = id(98),
             8 => f.installed().channel.remote_address = "192.0.2.99:35000".parse().unwrap(),
             9 => f.installed().control_key.public_key.bytes = [9; 32].into(),
@@ -389,10 +383,10 @@ fn changed_channel_socket_owner_scope_keys_or_tuple_cannot_borrow_an_old_offer()
                     .unwrap()
                     .installations
                     .status
-                    .instance
+                    .netmap
                     .as_mut()
                     .unwrap()
-                    .target = Some(cfg(103))
+                    .netmap = cfg(103)
             }
             _ => unreachable!(),
         }
@@ -411,7 +405,7 @@ fn original_offer_request_candidate_and_acceptance_remain_exact() {
                     response: PrepareUdpTraversalResponse::Offer { offer },
                 } if offer.local.candidate.socket.node_id == id(1) => match mutation {
                     0 => offer.nonce = [9; 32].into(),
-                    1 => request.configuration = cfg(103),
+                    1 => request.netmap = cfg(103),
                     2 => request.state_epoch = id(98),
                     _ => {}
                 },
@@ -421,7 +415,7 @@ fn original_offer_request_candidate_and_acceptance_remain_exact() {
                     ..
                 } if request.instance.instance_id == id(11) => match mutation {
                     3 => request.digest = [9; 32].into(),
-                    4 => request.configuration = cfg(103),
+                    4 => request.netmap = cfg(103),
                     5 => *received_at_ms = 10000,
                     _ => {}
                 },
@@ -472,37 +466,22 @@ fn legacy_debug_install_log_is_not_provenance() {
 fn typed_install_fields_decode_without_interpreting_legacy_debug_fields() {
     let mut fixture = Fixture::new();
     let expected = fixture.installed().clone();
-    let LinkAcquisition::CoordinatedUdp { attempt_id, .. } = expected.channel.acquisition else {
-        panic!()
-    };
-    let mut fields = json!({
+    let fields = json!({
         "message":"Connectivity channel transition","operation":"install","cause":"authenticated_ready",
         "attempt":"None","channel":"not a DTO","socket":"not a DTO","protocol":"not a DTO",
-        "install_schema":1,"install_observed_at_ms":expected.observed_at_ms,
-        "install_node":expected.node,"install_network":expected.network,
-        "install_instance":expected.instance.instance_id,"install_instance_generation":expected.instance.generation,
-        "install_revision":expected.configuration.revision,"publication":expected.configuration.execution_publication,
-        "install_digest":expected.configuration.digest,"execution_expires_at_ms":expected.expires_at_ms,
-        "install_link":expected.channel.link_id,"install_socket":expected.channel.socket_id,"install_protocol":expected.channel.transport,
-        "install_acquisition":"coordinatedUdp","install_attempt_id":attempt_id,"install_endpoint_source":"stun"
+        "install_schema":2,"install_json":serde_json::to_string(&expected).unwrap()
     });
-    fields.as_object_mut().unwrap().extend(json!({
-        "install_control_id":expected.control_key.id,"install_control_generation":expected.control_key.generation,"install_control_bytes":expected.control_key.public_key.bytes,
-        "install_dataplane_id":expected.dataplane_key.id,"install_dataplane_generation":expected.dataplane_key.generation,"install_dataplane_bytes":expected.dataplane_key.public_key.bytes,
-        "install_peer_control_id":expected.peer_control_key.id,"install_peer_control_generation":expected.peer_control_key.generation,"install_peer_control_bytes":expected.peer_control_key.public_key.bytes,
-        "install_peer_dataplane_id":expected.peer_dataplane_key.id,"install_peer_dataplane_generation":expected.peer_dataplane_key.generation,"install_peer_dataplane_bytes":expected.peer_dataplane_key.public_key.bytes,
-        "peer":expected.channel.peer_node_id,"dialer":expected.carrier.dialer,"listener":expected.carrier.listener,
-        "listener_key":expected.carrier.listener_key,"local":expected.channel.local_address,"remote":expected.channel.remote_address
-    }).as_object().unwrap().clone());
     let mut event = json!({"target":"meshway_connectivity::manager","fields":fields});
     let decoded = installation::decode(&event).unwrap().unwrap();
     assert_eq!(
         serde_json::to_vec(&decoded).unwrap(),
         serde_json::to_vec(&expected).unwrap()
     );
-    event["fields"]["install_attempt_id"] = json!("None");
+    let mut invalid = serde_json::to_value(&expected).unwrap();
+    invalid["channel"]["acquisition"]["attemptId"] = json!("None");
+    event["fields"]["install_json"] = json!(serde_json::to_string(&invalid).unwrap());
     assert!(installation::decode(&event).is_err());
-    event["fields"]["install_attempt_id"] = json!(attempt_id);
-    event["fields"]["install_acquisition"] = json!("publishedEndpoint");
+    event["fields"]["install_json"] = json!(serde_json::to_string(&expected).unwrap());
+    event["fields"]["install_schema"] = json!(1);
     assert!(installation::decode(&event).is_err());
 }

@@ -1,12 +1,12 @@
-//! Original offer authority and present execution are separate proofs. A
-//! publication handoff never changes the immutable installation provenance.
+//! Original offer authority and present netmap are separate proofs. A
+//! content update never changes the immutable installation provenance.
 use super::{
     Event, Observations,
     installation::{Installation, Installations},
 };
 use crate::{Result, signals::Role};
 use meshway_model::{
-    ConfigurationRef, InstanceId, NodeId, Sequence, UdpTraversalId,
+    InstanceId, NetmapRef, NodeId, Sequence, UdpTraversalId,
     observations::{EndpointKind, LinkAcquisition},
     state::{ApplyPhase, EndpointSource, LinkPhase, ResourceRef, SocketNetwork},
 };
@@ -28,7 +28,7 @@ pub(super) struct Continuity {
     attempt_id: UdpTraversalId,
     installation: Installation,
     current_instance: InstanceId,
-    current_configuration: ConfigurationRef,
+    current_netmap: NetmapRef,
     current_report_sequence: Sequence,
     current_socket_generation: Sequence,
     current_resource: ResourceRef,
@@ -99,7 +99,7 @@ fn original_request(request: &PrepareUdpTraversalRequest, offer: &UdpTraversalOf
         && request.local_candidate == offer.local.candidate
         && request.peer_candidate == offer.peer.candidate
         && request.instance == local.instance
-        && request.configuration == local.configuration
+        && request.netmap == local.netmap
         && request.state_epoch == offer.state_epoch
         && request.request_id == offer.request_id
         && request.peer_id == peer.node_id
@@ -121,7 +121,7 @@ fn original_candidate(
             let Event::Publication { instance_id, applied, sockets, .. } = event else { return false; };
             let Some(published) = sockets.get(&socket.socket_id) else { return false; };
             *instance_id == socket.instance.instance_id
-                && published.configuration.as_ref().or(applied.as_ref()) == Some(&socket.configuration)
+                && published.netmap.as_ref().or(applied.as_ref()) == Some(&socket.netmap)
                 && published.generation == socket.socket_generation && published.resource == socket.resource
                 && published.network == SocketNetwork::Udp
                 && published.bound_address == "0.0.0.0:35000".parse::<std::net::SocketAddr>().expect("fixed address")
@@ -160,7 +160,7 @@ fn acceptance(
     let socket = &participant.candidate.socket;
     (accepted == offer
         && request.instance == socket.instance
-        && request.configuration == socket.configuration
+        && request.netmap == socket.netmap
         && request.state_epoch == offer.state_epoch
         && request.version == offer.version
         && request.digest == offer.digest
@@ -216,14 +216,20 @@ fn current_channel(
         || instance.generation != socket.instance.generation
         || context.installations.status.applied.as_ref() != Some(applied)
         || context.installations.status.saved.as_ref() != Some(applied)
-        || instance.target.as_ref() != Some(applied)
+        || context
+            .installations
+            .status
+            .netmap
+            .as_ref()
+            .map(|lease| &lease.netmap)
+            != Some(applied)
         || !context.installations.status.authenticated
         || !context.installations.status.desired_up
         || context.installations.status.phase != meshway_ipc::Phase::Running
         || context.installations.status.data_plane != meshway_ipc::DataPlane::Ready
         || context.view.network_id != offer.network_id
         || context.view.state_epoch != offer.state_epoch
-        || context.view.configuration_revision != socket.configuration.revision
+        || context.view.configuration_revision != socket.netmap.revision
         || state.freshness != Freshness::Current
         || state.instance_id != Some(socket.instance.instance_id)
         || state
@@ -231,7 +237,7 @@ fn current_channel(
             .is_none_or(|expiry| expiry <= context.view.as_of)
         || state.observed_at.is_none_or(|at| at > context.view.as_of)
         || report.configuration.saved.as_ref() != Some(applied)
-        || applied.revision != socket.configuration.revision
+        || applied.revision != socket.netmap.revision
         || report
             .configuration
             .progress
@@ -241,7 +247,7 @@ fn current_channel(
                     || progress.phase != ApplyPhase::Applied
                     || progress.problem.is_some()
             })
-        || physical.configuration.as_ref().or(Some(applied)) != Some(applied)
+        || physical.netmap.as_ref().or(Some(applied)) != Some(applied)
         || physical.generation != socket.socket_generation
         || physical.resource != socket.resource
         || physical.network != SocketNetwork::Udp
@@ -254,7 +260,7 @@ fn current_channel(
         if installation.node != socket.node_id
             || installation.network != offer.network_id
             || installation.instance != socket.instance
-            || installation.configuration != socket.configuration
+            || installation.netmap != socket.netmap
             || installation.control_key != identity.keys.control
             || installation.dataplane_key != identity.keys.dataplane
             || installation.peer_control_key != peer_identity.keys.control
@@ -300,7 +306,7 @@ fn current_channel(
                 attempt_id: offer.attempt_id,
                 installation: installation.clone(),
                 current_instance: socket.instance.instance_id,
-                current_configuration: applied.clone(),
+                current_netmap: *applied,
                 current_report_sequence: state.report_sequence?,
                 current_socket_generation: physical.generation,
                 current_resource: physical.resource.clone(),

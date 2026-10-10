@@ -3,8 +3,7 @@
 use crate::Result;
 use meshway_ipc::{PingError, PingEvent, Status};
 use meshway_model::{
-    ConfigurationRef, InstanceId, NetworkId, NodeId, ObservationId, ObservationSubscriptionId,
-    Version,
+    InstanceId, NetmapRef, NetworkId, NodeId, ObservationId, ObservationSubscriptionId, Version,
     observations::ObservationSample,
     state::{ProbeKind, ProbeOutcome},
 };
@@ -25,7 +24,7 @@ pub struct Identity {
     pub process_id: u32,
     pub operator_revision: Version,
     pub instance: Option<InstanceId>,
-    pub applied: Option<ConfigurationRef>,
+    pub applied: Option<NetmapRef>,
     pub desired_up: bool,
 }
 impl Identity {
@@ -507,7 +506,11 @@ pub(super) fn roundtrip_run(elapsed_ms: u64) -> Run {
                 reply: Some(channel),
             }),
             path: vec![a, r, b],
-            publication_id: id.parse().unwrap(),
+            netmap: NetmapRef {
+                revision: meshway_model::Revision::MIN,
+                serial: meshway_model::Version::MIN,
+                digest: [1; 32].into(),
+            },
             started_at: at,
             completed_at: Some(at),
             outcome: ProbeOutcome::Success,

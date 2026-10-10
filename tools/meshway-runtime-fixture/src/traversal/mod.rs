@@ -56,7 +56,7 @@ enum Event {
     Publication {
         instance_id: meshway_model::InstanceId,
         sequence: meshway_model::Sequence,
-        applied: Option<meshway_model::ConfigurationRef>,
+        applied: Option<meshway_model::NetmapRef>,
         sockets: BTreeMap<String, meshway_model::state::SocketState>,
     },
     Query {
@@ -188,7 +188,7 @@ impl Audit {
                     };
                     let matches = accepted == offer
                         && request.instance == participant.candidate.socket.instance
-                        && request.configuration == participant.candidate.socket.configuration
+                        && request.netmap == participant.candidate.socket.netmap
                         && request.version == offer.version
                         && request.digest == offer.digest
                         && request.state_epoch == offer.state_epoch

@@ -24,6 +24,7 @@ mod batch;
 mod continuity;
 mod datagram;
 mod events;
+mod evidence;
 mod facts;
 mod interest;
 mod resources;
@@ -66,6 +67,19 @@ fn diagnostic_link(
     attempted: Option<(SocketAddr, [u8; 32])>,
 ) {
     if !diagnostic_event() {
+        return;
+    }
+    if operation == "install"
+        && cause == "authenticated_ready"
+        && let Some(installation) = evidence::installed(fact, scope)
+    {
+        tracing::debug!(
+            operation,
+            cause,
+            install_schema = 2_u64,
+            install_json = installation,
+            "Connectivity channel transition"
+        );
         return;
     }
     let health = scope.health.as_ref().and_then(|health| {

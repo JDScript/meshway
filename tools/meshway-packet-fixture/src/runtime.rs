@@ -5,12 +5,12 @@ use crate::{
     signals::{Role, Signals},
     wire::{self, Link},
 };
-use meshway_configuration::execution::NodeConfiguration;
+use meshway_configuration::netmap::NodeNetmap;
 use meshway_dataplane::{
     DEFAULT_HEADROOM, DEFAULT_TAILROOM, Packet, PacketError, PacketPool,
     secure::{PendingFrame, Received, SecureNode},
 };
-use meshway_model::{NodeId, RequestId};
+use meshway_model::NodeId;
 use meshway_packet_fixture::mtu::INNER_MTU;
 use meshway_tun::{Options, Tun};
 use std::time::Duration;
@@ -30,7 +30,6 @@ async fn receive(link: &mut Link, secure: &mut SecureNode) -> Result<Received> {
 
 async fn handshake(
     role: Role,
-    demand: RequestId,
     path: &[NodeId],
     secure: &mut SecureNode,
     previous: &mut Option<Link>,
@@ -39,7 +38,16 @@ async fn handshake(
     let circuit = match role {
         Role::A => {
             let next = next.as_mut().ok_or("missing next carrier")?;
-            let initial = secure.start(demand, path.to_vec())?;
+            let initial = secure.start_grant(
+                meshway_dataplane::secure::CircuitGrant {
+                    purpose: meshway_dataplane::Purpose::Business,
+                    target: meshway_dataplane::Target::Mesh {
+                        node: *path.last().ok_or("missing terminal")?,
+                    },
+                },
+                path.to_vec(),
+                &next.carrier,
+            )?;
             let expected = initial.circuit();
             next.send(initial).await?;
             let Received::Established {
@@ -96,18 +104,14 @@ async fn handshake(
 pub async fn run(
     role: Role,
     signals: &Signals,
-    configuration: &NodeConfiguration,
-    demand: RequestId,
+    configuration: &NodeNetmap,
     path: &[NodeId],
     secure: &mut SecureNode,
     previous: &mut Option<Link>,
     next: &mut Option<Link>,
 ) -> Result<Report> {
-    let circuit = tokio::time::timeout(
-        STARTUP,
-        handshake(role, demand, path, secure, previous, next),
-    )
-    .await??;
+    let circuit =
+        tokio::time::timeout(STARTUP, handshake(role, path, secure, previous, next)).await??;
     let mut report = Report {
         forwarded: 0,
         delivered: (role != Role::R).then_some(0),
@@ -120,13 +124,15 @@ pub async fn run(
     if role != Role::R {
         let peer_id = if role == Role::A { path[2] } else { path[0] };
         let peer = configuration
-            .peers
+            .projection
+            .configuration
+            .nodes
             .get(&peer_id)
             .ok_or("missing endpoint peer")?
             .addresses
             .clone();
         let (ipv4, prefix4, ipv6, prefix6) =
-            crate::application::prefixes(&configuration.addresses, &peer)?;
+            crate::application::prefixes(&configuration.self_.addresses, &peer)?;
         let device = Tun::create(
             Options::new(INNER_MTU)?
                 .with_ipv4(ipv4, prefix4)?
@@ -135,7 +141,7 @@ pub async fn run(
         let index =
             tokio::fs::read_to_string(format!("/sys/class/net/{}/ifindex", device.name())).await?;
         tun_identity = Some((device.name().to_owned(), index));
-        let apps = Applications::bind(role, &configuration.addresses).await?;
+        let apps = Applications::bind(role, &configuration.self_.addresses).await?;
         let signals = signals.clone();
         application = Some(tokio::spawn(apps.run(role, peer, signals, stopped)));
         tracing::info!(

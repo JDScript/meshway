@@ -1,6 +1,6 @@
 //! Native TCP socket ownership; all guarded transmission uses the production sink.
 use crate::{IO, Result, STARTUP};
-use meshway_configuration::execution::NodeConfiguration;
+use meshway_configuration::netmap::NodeNetmap;
 use meshway_dataplane::secure::{Carrier, PendingFrame};
 use meshway_model::NodeId;
 use meshway_transport::{Receiver, Sender};
@@ -75,8 +75,9 @@ pub fn carriers(path: &[NodeId]) -> Result<BTreeMap<NodeId, Carrier>> {
         .collect())
 }
 
-pub async fn listen(configuration: &NodeConfiguration) -> Result<TcpListener> {
+pub async fn listen(configuration: &NodeNetmap) -> Result<TcpListener> {
     let prepared = configuration
+        .self_
         .listeners
         .get("tcp")
         .ok_or("missing TCP listener")?;
@@ -92,10 +93,11 @@ pub async fn listen(configuration: &NodeConfiguration) -> Result<TcpListener> {
 
 pub async fn accept(
     listener: &TcpListener,
-    configuration: &NodeConfiguration,
+    configuration: &NodeNetmap,
     carrier: Carrier,
 ) -> Result<Link> {
     let prepared = configuration
+        .self_
         .listeners
         .get(&carrier.listener_key)
         .ok_or("missing actual listener")?;
@@ -107,7 +109,7 @@ pub async fn accept(
     Link::adopt(stream, carrier, remote, &options.socket, &options.tcp)
 }
 
-pub async fn dial(configuration: &NodeConfiguration, carrier: Carrier) -> Result<Link> {
+pub async fn dial(configuration: &NodeNetmap, carrier: Carrier) -> Result<Link> {
     let key = format!("{}/{}", carrier.listener, carrier.listener_key);
     let candidate = configuration
         .dialers

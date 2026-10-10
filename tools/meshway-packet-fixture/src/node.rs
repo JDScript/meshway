@@ -1,14 +1,13 @@
 use crate::{
-    Cli, ORIGIN, Result, STARTUP, request, runtime,
+    Cli, ORIGIN, Result, STARTUP, runtime,
     signals::{Role, Signal, Signals},
     tls, wire,
 };
 use meshway_authority::ExecutionSnapshot;
-use meshway_configuration::execution::{BusinessProtocol, BusinessTarget, DemandDecision};
 use meshway_control::Control;
 use meshway_dataplane::secure::SecureNode;
 use meshway_model::state::{Capability, StreamKind, TransportRole};
-use meshway_protocol::{DemandRequest, InstanceRequest, enrollment::EnrollmentPhase};
+use meshway_protocol::enrollment::EnrollmentPhase;
 use std::{collections::BTreeMap, time::Duration};
 
 pub async fn run(cli: &Cli, role: Role) -> Result<()> {
@@ -36,11 +35,18 @@ pub async fn run(cli: &Cli, role: Role) -> Result<()> {
 }
 
 async fn sync(control: &mut Control) -> Result<ExecutionSnapshot> {
-    control
-        .refresh_configuration()
-        .await?
-        .ok_or("missing node configuration")?;
-    Ok(control.execution_snapshot()?)
+    Ok(control.sync(&mut Facts).await?.snapshot)
+}
+
+struct Facts;
+impl meshway_control::PeerFactsSink for Facts {
+    fn apply(
+        &mut self,
+        _: meshway_model::NetmapRef,
+        _: meshway_protocol::PeerFactsDelta,
+    ) -> std::result::Result<(), meshway_control::FactsRejected> {
+        Ok(())
+    }
 }
 
 async fn run_control(
@@ -108,61 +114,26 @@ async fn run_control(
     if !matches!(signals.wait("go").await?, Signal::Go) {
         return Err("invalid configuration marker".into());
     }
-    let initial = sync(control).await?;
-    if role == Role::A {
-        let cfg = initial.configuration()?;
-        let name = meshway_configuration::node_dns_name("b", &cfg.dns.settings.domain)?;
-        let discovered = control
-            .query_dns(&name)
-            .await?
-            .record
-            .ok_or("B not visible through real discovery")?;
-        let lease = control.status().instance.ok_or("no acquired instance")?;
-        let demand = control
-            .create_demand(&DemandRequest {
-                instance: InstanceRequest {
-                    instance_id: lease.instance_id,
-                    generation: lease.generation,
-                },
-                request_id: request()?,
-                target: BusinessTarget::Mesh {
-                    node: discovered.node_id,
-                },
-                protocol: BusinessProtocol::Udp,
-                port: Some(42424.try_into()?),
-                profile: "mesh".into(),
-                duration_seconds: 120,
-            })
-            .await?;
-        if !matches!(demand.decision, DemandDecision::Permitted { .. }) {
-            return Err("UDP demand rejected".into());
-        }
+    let snapshot = sync(control).await?;
+    let configuration = snapshot.netmap()?.netmap.clone();
+    let named = |name| {
+        configuration
+            .projection
+            .configuration
+            .nodes
+            .iter()
+            .find(|(_, settings)| settings.hostname == name)
+            .map(|(id, _)| *id)
+            .ok_or("fixture Node missing from netmap")
+    };
+    let (a, b) = (named("a")?, named("b")?);
+    let target = meshway_dataplane::Target::Mesh { node: b };
+    let compiler = meshway_policy::compile::netmap::LocalCompiler::new(&configuration);
+    let paths = compiler.transit(a, &target)?;
+    if paths.len() != 1 {
+        return Err("expected one complete netmap path".into());
     }
-    // Relay and terminal discover the demand exclusively from their own compiled
-    // execution target. Public rendezvous records carry no path or permission.
-    let snapshot = tokio::time::timeout(STARTUP, async {
-        loop {
-            let snapshot = sync(control).await?;
-            if snapshot.configuration()?.permits.len() == 1 {
-                return Ok::<_, crate::Error>(snapshot);
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-    })
-    .await??;
-    let configuration = snapshot.configuration()?.clone();
-    let permit = configuration
-        .permits
-        .values()
-        .next()
-        .ok_or("missing demand")?;
-    if permit.paths.len() != 1
-        || permit.protocol != BusinessProtocol::Udp
-        || permit.port.map(|port| port.get()) != Some(42424)
-    {
-        return Err("unexpected compiled UDP permit".into());
-    }
-    let path = permit.paths[0].nodes.clone();
+    let path = paths[0].nodes.clone();
     let index = match role {
         Role::A => 0,
         Role::R => 1,
@@ -184,10 +155,9 @@ async fn run_control(
     // These checks bind actual provider descriptors to the owned compiled plan;
     // proof verification inside SecureNode authenticates the remote identity.
     for (peer, carrier) in &carriers {
-        meshway_policy::admission::admit_carrier(
+        meshway_policy::admission::netmap::admit_adjacency(
+            &compiler,
             &configuration,
-            permit.demand_id,
-            &path,
             *peer,
             carrier,
         )?;
@@ -223,7 +193,6 @@ async fn run_control(
                 role,
                 signals,
                 &configuration,
-                permit.demand_id,
                 &path,
                 &mut secure,
                 &mut previous,

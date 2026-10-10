@@ -339,7 +339,7 @@ pub async fn initial(
                         cli_finished_at_ms = run.finished_at_ms,
                         observation = %task.id,
                         observation_phase = ?task.phase,
-                        publication = %task.configuration.execution_publication,
+                        netmap_serial = task.netmap.serial.get(),
                         segment = ?task.path_segment,
                         measurement = ?task.latest.as_ref().map(|sample| sample.measurement_id),
                         window_start_ms = ?task.latest.as_ref().map(|sample| sample.window_start.timestamp_millis()),

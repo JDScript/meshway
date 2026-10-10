@@ -78,8 +78,15 @@ async fn exercise(
     };
     let fresh = command(cli, "status").await?;
     let lease = before.instance.as_ref().ok_or("no pre-outage lease")?;
-    let (mut instance_expiry, execution_expiry) =
-        crate::recovery::outage_deadlines(lease, fresh.instance.as_ref())?;
+    let (mut instance_expiry, execution_expiry) = crate::recovery::outage_deadlines(
+        lease,
+        fresh.instance.as_ref(),
+        fresh
+            .netmap
+            .as_ref()
+            .or(before.netmap.as_ref())
+            .ok_or("missing pre-outage netmap lease")?,
+    )?;
     if instance_expiry <= closed_at_ms || instance_expiry.saturating_sub(closed_at_ms) > 130_000 {
         return Err("unexpected actual instance deadline at HTTP outage".into());
     }
@@ -89,11 +96,7 @@ async fn exercise(
         role = role.name(),
         instance_expiry,
         execution_expiry,
-        current_execution_observed = fresh
-            .instance
-            .as_ref()
-            .and_then(|lease| lease.execution_expires_at_ms)
-            .is_some(),
+        current_execution_observed = fresh.netmap.is_some(),
         "Retained observed deadlines across the HTTP boundary"
     );
     let old_sockets = traffic.as_ref().map(Traffic::sockets).transpose()?;
