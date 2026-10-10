@@ -696,3 +696,50 @@ async fn shared_cancel_keeps_a_finished_window_backpressured_until_acknowledged(
     assert_eq!(fixture.owner.outputs().count(), 0);
     fixture.close().await;
 }
+
+#[tokio::test]
+async fn observations_of_one_circuit_share_a_probe_and_each_get_a_sample() {
+    let mut fixture = Fixture::open().await;
+    let (desired, bound) = fixture.content(0);
+    let mut second = fixture.task.clone();
+    second.id = id();
+    fixture
+        .owner
+        .synchronize(&desired, bound, &[fixture.task.clone(), second.clone()])
+        .unwrap();
+    let start = Instant::now();
+    let (probe, challenge) = fixture.measurement(start);
+    let leader = fixture.owner.tasks[&fixture.task.id]
+        .measurement
+        .as_ref()
+        .unwrap()
+        .share(&fixture.owner.tasks[&second.id])
+        .unwrap();
+    let shared = leader.id;
+    assert_ne!(shared, probe, "each observation owns its sample identity");
+    let follower = fixture.owner.tasks.get_mut(&second.id).unwrap();
+    follower.circuit = Some([7; 32]);
+    follower.measurement = Some(leader);
+    let channel = fixture.channel();
+    fixture
+        .owner
+        .sent(fixture.task.id, probe, Ok((channel.clone(), start)));
+    fixture.owner.reply(
+        [7; 32],
+        probe,
+        challenge,
+        channel,
+        start + Duration::from_millis(2),
+    );
+    let samples: BTreeMap<_, _> = fixture
+        .owner
+        .outputs()
+        .map(|output| match &output.result.result {
+            ObservationUpdate::Sample { sample, .. } => (output.task.id, sample.measurement_id),
+            _ => panic!("expected samples"),
+        })
+        .collect();
+    assert_eq!(samples.len(), 2, "both observations measured by one probe");
+    assert_eq!(samples[&second.id], shared);
+    fixture.close().await;
+}

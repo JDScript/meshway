@@ -72,7 +72,7 @@ TCP 乱序区间只记录已准入字节的序号，不制造接收确认：缺�
 
 包平面密钥由 `Control::dataplane_keys` 取得（`DataPlaneKeys`），SecureNode 构造时核对其公钥与期望内容的 selfKeys。包平面签名有独立的 purpose／network／node／key generation transcript，不开放任意控制认证消息签名。该句柄是受信进程内接口；密钥不进入 Debug 或序列化，不能视为恶意插件的内存隔离。
 
-当前 wire 标识为 `MWCIR\0\0\x05`。Noise prologue 与握手证明保留原 purpose（prologue 同时绑定新的 magic），会话 KDF 与相邻 MAC 使用独立 v5 purpose；通用 `meshway/packet-proof/v2` 控制签名 transcript 保持独立。此格式仍是候选，不是稳定插件 ABI。v4／v5 帧不兼容，旧版本被拒绝，完整路径节点需要协调升级。IPC v3 和 HTTP 契约独立于该 wire 版本。
+当前 wire 标识为 `MWCIR\0\0\x06`。Noise prologue、握手证明与 key-set 使用 candidate-v6 purpose，握手绑定 path 授权摘要；会话 KDF 与相邻 MAC 沿用独立 v5 purpose；通用 `meshway/packet-proof/v2` 控制签名 transcript 保持独立。此格式仍是候选，不是稳定插件 ABI。v4／v5／v6 帧互不兼容，旧版本被拒绝，完整路径节点需要协调升级。IPC v3 和 HTTP 契约独立于该 wire 版本。
 
 握手 UUID 使用固定 16-byte 非零 UUID，数值采用大端。最多 8 个 path 节点、128 KiB 帧、65,519-byte 内层包、255-byte listener key；默认最多 1,024 个 circuit 和 10 秒握手期限。最大握手帧容纳于 4 KiB 握手重试缓存。关闭／失败 circuit 的重放 tombstone 在该 SecureNode owner 生命周期内保留并计入 maxCircuits；permit 过期或同授权重新授予都不清除，耗尽则拒绝新 circuit。重启重新握手，不能恢复旧 cipher state。
 

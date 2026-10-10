@@ -325,7 +325,32 @@ impl Owner {
         let now = Instant::now();
         let mut actions = Vec::new();
         let ready = secure.ready_circuits().unwrap_or_default();
-        for (id, task) in &mut self.tasks {
+        // In-flight probes by circuit, joinable by another observation.
+        let mut probing: BTreeMap<[u8; 32], ObservationId> = self
+            .tasks
+            .iter()
+            .filter(|(_, task)| current(task) && !task.paused)
+            .filter_map(|(id, task)| {
+                let measurement = task.measurement.as_ref()?;
+                (measurement.probe == measurement.id && now < measurement.deadline)
+                    .then_some((task.circuit?, *id))
+            })
+            .collect();
+        let ids: Vec<_> = self.tasks.keys().copied().collect();
+        for id in &ids {
+            let leader = self.tasks.get(id).and_then(|task| {
+                let circuit = task.circuit?;
+                let leader = probing.get(&circuit).filter(|leader| *leader != id)?;
+                self.tasks
+                    .get(leader)?
+                    .measurement
+                    .as_ref()?
+                    .share(task)
+                    .ok()
+            });
+            let Some(task) = self.tasks.get_mut(id) else {
+                continue;
+            };
             if !current(task) {
                 suspend(task);
                 continue;
@@ -408,6 +433,15 @@ impl Owner {
             match info {
                 Some(info) if info.state == CircuitState::Established => {
                     preparation_stage(task, "path_established");
+                    if let Some(shared) = leader {
+                        task.measurement = Some(shared);
+                        task.connecting = false;
+                        task.preparing = now;
+                        task.next = now
+                            + Duration::from_millis(u64::from(task.task.interval_ms))
+                                .max(MIN_INTERVAL);
+                        continue;
+                    }
                     let measurement = match Measurement::new(task, now) {
                         Ok(measurement) => measurement,
                         Err(_) => {
@@ -430,6 +464,7 @@ impl Owner {
                     );
                     match frame {
                         Ok(frame) => {
+                            probing.insert(info.id, *id);
                             task.measurement = Some(measurement);
                             task.connecting = false;
                             task.preparing = now;
@@ -518,36 +553,48 @@ impl Owner {
         measurement_id: EventId,
         receipt: Result<(ProbeChannel, Instant), ()>,
     ) {
-        let Some(task) = self
+        let Some(circuit) = self
             .tasks
-            .get_mut(&id)
+            .get(&id)
             .filter(|task| current(task) && !task.paused)
+            .and_then(|task| task.circuit)
         else {
             return;
         };
-        let Some(measurement) = &mut task.measurement else {
-            return;
-        };
-        if measurement.id != measurement_id || measurement.send_completed {
-            return;
-        }
-        measurement.send_completed = true;
-        match receipt {
-            Ok(receipt) if task.path.get(1) == Some(&receipt.0.peer_node_id) => {
-                task.next = task.next.max(
-                    receipt.1
-                        + Duration::from_millis(u64::from(task.task.interval_ms)).max(MIN_INTERVAL),
-                );
-                measurement.receipt = Some(receipt);
+        // The probe's owner and every observation sharing it.
+        for task in self.tasks.values_mut().filter(|task| {
+            task.circuit == Some(circuit)
+                && current(task)
+                && !task.paused
+                && task
+                    .measurement
+                    .as_ref()
+                    .is_some_and(|measurement| measurement.probe == measurement_id)
+        }) {
+            let Some(measurement) = &mut task.measurement else {
+                continue;
+            };
+            if measurement.send_completed {
+                continue;
             }
-            Ok(_) => measurement.local_failure = true,
-            Err(()) => measurement.local_failure = true,
-        }
-        if measurement.local_failure
-            || measurement.reply.is_some()
-            || Instant::now() >= measurement.deadline
-        {
-            finish(task, Instant::now());
+            measurement.send_completed = true;
+            match &receipt {
+                Ok(receipt) if task.path.get(1) == Some(&receipt.0.peer_node_id) => {
+                    task.next = task.next.max(
+                        receipt.1
+                            + Duration::from_millis(u64::from(task.task.interval_ms))
+                                .max(MIN_INTERVAL),
+                    );
+                    measurement.receipt = Some(receipt.clone());
+                }
+                Ok(_) | Err(()) => measurement.local_failure = true,
+            }
+            if measurement.local_failure
+                || measurement.reply.is_some()
+                || Instant::now() >= measurement.deadline
+            {
+                finish(task, Instant::now());
+            }
         }
     }
 
@@ -573,28 +620,27 @@ impl Owner {
         channel: ProbeChannel,
         received_at: Instant,
     ) {
-        let Some(task) = self.tasks.values_mut().find(|task| {
+        for task in self.tasks.values_mut().filter(|task| {
             task.circuit == Some(circuit)
                 && current(task)
                 && !task.paused
                 && task.measurement.as_ref().is_some_and(|measurement| {
-                    measurement.id == measurement_id && measurement.challenge == challenge
+                    measurement.probe == measurement_id && measurement.challenge == challenge
                 })
-        }) else {
-            return;
-        };
-        let Some(measurement) = &mut task.measurement else {
-            return;
-        };
-        if measurement.reply.is_some()
-            || received_at > measurement.deadline
-            || task.path.get(1) != Some(&channel.peer_node_id)
-        {
-            return;
-        }
-        measurement.reply = Some((channel, received_at));
-        if measurement.send_completed {
-            finish(task, Instant::now());
+        }) {
+            let Some(measurement) = &mut task.measurement else {
+                continue;
+            };
+            if measurement.reply.is_some()
+                || received_at > measurement.deadline
+                || task.path.get(1) != Some(&channel.peer_node_id)
+            {
+                continue;
+            }
+            measurement.reply = Some((channel.clone(), received_at));
+            if measurement.send_completed {
+                finish(task, Instant::now());
+            }
         }
     }
 

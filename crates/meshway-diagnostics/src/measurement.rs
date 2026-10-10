@@ -7,6 +7,9 @@ use meshway_model::{
 
 pub(super) struct Measurement {
     pub id: EventId,
+    /// The probe this sample measures: its own, or the in-flight probe of
+    /// another observation on the same circuit that it shares.
+    pub probe: EventId,
     pub challenge: Digest,
     pub deadline: Instant,
     started: Instant,
@@ -38,6 +41,7 @@ impl Measurement {
             (now + DEADLINE).min(now + Duration::from_millis(expiry.saturating_sub(ms as u64)));
         Ok(Self {
             id,
+            probe: id,
             challenge: challenge.into(),
             deadline,
             started: now,
@@ -46,6 +50,30 @@ impl Measurement {
             receipt: None,
             reply: None,
             local_failure: false,
+        })
+    }
+
+    /// A sample of `task` measured by this measurement's probe. Observations
+    /// of the same circuit share one Source probe budget, so a concurrent
+    /// observation shares the probe instead of being refused a sample.
+    pub fn share(&self, task: &Task) -> Result<Self, Error> {
+        let mut random = [0; 16];
+        getrandom::fill(&mut random).map_err(|_| Error::Random)?;
+        let id = EventId::new(uuid::Builder::from_random_bytes(random).into_uuid())
+            .map_err(|_| Error::Random)?;
+        Ok(Self {
+            id,
+            probe: self.probe,
+            challenge: self.challenge,
+            deadline: self.deadline,
+            started: self.started,
+            started_at: self
+                .started_at
+                .max(task.last_end.unwrap_or(DateTime::<Utc>::MIN_UTC)),
+            send_completed: self.send_completed,
+            receipt: self.receipt.clone(),
+            reply: self.reply.clone(),
+            local_failure: self.local_failure,
         })
     }
 
