@@ -442,6 +442,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 diagnostics.invalidate();
                 packets.clear_incoming();
                 if expired || host_invalidated(&host).await {
+                    diagnostics.stop().await;
                     expire(
                         &mut host,
                         &mut installed,
@@ -462,6 +463,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 continue;
             }
             Work::Expired => {
+                diagnostics.stop().await;
                 expire(
                     &mut host,
                     &mut installed,
