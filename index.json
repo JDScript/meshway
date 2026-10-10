@@ -1,8 +1,204 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-10T14:57:25.423517+00:00",
+  "updatedAt": "2026-10-10T16:13:55.387444+00:00",
   "runs": [
+    {
+      "id": 38066204920,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "83c462c7b4391731f0ca1500a76d99cee4490fcc",
+      "message": "docs: crate list, dependency graph and test boundary after consolidation",
+      "createdAt": "2026-10-10T16:05:00Z",
+      "updatedAt": "2026-10-10T16:10:45Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "url": "https://github.com/JDScript/meshway/actions/runs/38066204920",
+      "jobs": [
+        {
+          "id": 114254250577,
+          "name": "changes",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-10T16:05:03Z",
+          "completedAt": "2026-10-10T16:05:15Z",
+          "seconds": 12.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38066204920/job/114254250577"
+        },
+        {
+          "id": 114254301117,
+          "name": "cargo",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "failure",
+          "startedAt": "2026-10-10T16:05:18Z",
+          "completedAt": "2026-10-10T16:09:29Z",
+          "seconds": 251.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38066204920/job/114254301117"
+        },
+        {
+          "id": 114254301182,
+          "name": "docs-and-scripts",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-10T16:09:31Z",
+          "completedAt": "2026-10-10T16:10:44Z",
+          "seconds": 73.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38066204920/job/114254301182"
+        },
+        {
+          "id": 114254301961,
+          "name": "console",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "skipped",
+          "startedAt": "2026-10-10T16:05:16Z",
+          "completedAt": "2026-10-10T16:05:15Z",
+          "seconds": 0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38066204920/job/114254301961"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 38066204917,
+      "attempt": 1,
+      "workflow": "Perf",
+      "event": "push",
+      "branch": "main",
+      "commit": "83c462c7b4391731f0ca1500a76d99cee4490fcc",
+      "message": "docs: crate list, dependency graph and test boundary after consolidation",
+      "createdAt": "2026-10-10T16:05:00Z",
+      "updatedAt": "2026-10-10T16:05:00Z",
+      "status": "queued",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/38066204917",
+      "jobs": [
+        {
+          "id": 114254250582,
+          "name": "perf",
+          "runner": null,
+          "status": "queued",
+          "conclusion": null,
+          "startedAt": "2026-10-10T16:05:00Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38066204917/job/114254250582"
+        },
+        {
+          "id": 114254250742,
+          "name": "perf-arm64",
+          "runner": "jp-tyo-arm64",
+          "status": "completed",
+          "conclusion": "failure",
+          "startedAt": "2026-10-10T16:05:02Z",
+          "completedAt": "2026-10-10T16:05:15Z",
+          "seconds": 13.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38066204917/job/114254250742"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 38066204914,
+      "attempt": 1,
+      "workflow": "Build",
+      "event": "push",
+      "branch": "main",
+      "commit": "83c462c7b4391731f0ca1500a76d99cee4490fcc",
+      "message": "docs: crate list, dependency graph and test boundary after consolidation",
+      "createdAt": "2026-10-10T16:05:00Z",
+      "updatedAt": "2026-10-10T16:11:18Z",
+      "status": "in_progress",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/38066204914",
+      "jobs": [
+        {
+          "id": 114254250399,
+          "name": "node-linux (aarch64-unknown-linux-musl)",
+          "runner": "mars-epyc7543",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-10T16:05:02Z",
+          "completedAt": "2026-10-10T16:11:15Z",
+          "seconds": 373.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38066204914/job/114254250399"
+        },
+        {
+          "id": 114254250630,
+          "name": "node-linux (x86_64-unknown-linux-musl)",
+          "runner": "mars-epyc7543",
+          "status": "in_progress",
+          "conclusion": null,
+          "startedAt": "2026-10-10T16:11:18Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38066204914/job/114254250630"
+        }
+      ],
+      "artifacts": [
+        {
+          "id": 11675118948,
+          "name": "node-aarch64-unknown-linux-musl-83c462c7b4391731f0ca1500a76d99cee4490fcc",
+          "bytes": 7923780,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38066204914/artifacts/11675118948",
+          "jobId": 114254250399,
+          "runner": "mars-epyc7543",
+          "seconds": 373.0,
+          "state": "ok",
+          "error": null,
+          "reports": [],
+          "matrices": [],
+          "builds": [
+            {
+              "target": "aarch64-unknown-linux-musl",
+              "binary": "meshwayd",
+              "bytes": 13701944,
+              "sha256": "760708dadf66c26945875ddfd83652ce298eaebb50c83e9e52aa559ffa754cd9"
+            },
+            {
+              "target": "aarch64-unknown-linux-musl",
+              "binary": "meshway",
+              "bytes": 1650376,
+              "sha256": "fc94b15cc362b6658ba3006a1124cb82744b0da42070c2258509b2f012830212"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 38066204899,
+      "attempt": 1,
+      "workflow": "Validate",
+      "event": "push",
+      "branch": "main",
+      "commit": "83c462c7b4391731f0ca1500a76d99cee4490fcc",
+      "message": "docs: crate list, dependency graph and test boundary after consolidation",
+      "createdAt": "2026-10-10T16:05:00Z",
+      "updatedAt": "2026-10-10T16:05:02Z",
+      "status": "in_progress",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/38066204899",
+      "jobs": [
+        {
+          "id": 114254250442,
+          "name": "matrix",
+          "runner": "planck",
+          "status": "in_progress",
+          "conclusion": null,
+          "startedAt": "2026-10-10T16:05:01Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38066204899/job/114254250442"
+        }
+      ],
+      "artifacts": []
+    },
     {
       "id": 38060261848,
       "attempt": 1,
