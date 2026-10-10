@@ -211,11 +211,12 @@ impl ProofFixture {
         let frame = Frame {
             context: std::sync::Arc::new(Context {
                 network: NetworkId::new(node(10).into_uuid()).unwrap(),
-                grant: crate::secure::CircuitGrant::Legacy(
-                    meshway_configuration::execution::CircuitAuthorization::Business(
-                        "00000000-0000-4000-8000-000000000011".parse().unwrap(),
-                    ),
-                ),
+                grant: crate::secure::CircuitGrant {
+                    purpose: crate::Purpose::Business,
+                    target: crate::Target::Mesh {
+                        node: *selected.nodes.last().unwrap(),
+                    },
+                },
                 path: selected.nodes.clone(),
                 circuit: [1; 32],
                 authorization: Digest::from_bytes([2; 32]),

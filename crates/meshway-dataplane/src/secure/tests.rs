@@ -10,9 +10,12 @@ pub(super) fn circuit(state: State, parent: &CancellationToken) -> Circuit {
     Circuit {
         context: Arc::new(Context {
             network: "00000000-0000-4000-8000-000000000001".parse().unwrap(),
-            grant: CircuitGrant::Legacy(CircuitAuthorization::Business(
-                "00000000-0000-4000-8000-000000000002".parse().unwrap(),
-            )),
+            grant: crate::secure::CircuitGrant {
+                purpose: crate::Purpose::Business,
+                target: crate::Target::Mesh {
+                    node: "00000000-0000-4000-8000-000000000004".parse().unwrap(),
+                },
+            },
             path: vec![
                 "00000000-0000-4000-8000-000000000003".parse().unwrap(),
                 "00000000-0000-4000-8000-000000000004".parse().unwrap(),
@@ -31,7 +34,6 @@ pub(super) fn circuit(state: State, parent: &CancellationToken) -> Circuit {
             at: Instant::now() + Duration::from_secs(10),
             ms: u64::MAX,
         },
-        permit_expires_at_ms: u64::MAX,
         selected: None,
         send: Default::default(),
         receive: Default::default(),

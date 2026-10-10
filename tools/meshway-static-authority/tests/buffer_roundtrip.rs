@@ -7,9 +7,16 @@ use meshway_dataplane::{
 use meshway_static_authority::fixture::{Chain, tcp_ipv4};
 use std::time::Duration;
 
+fn grant(chain: &Chain) -> meshway_dataplane::secure::CircuitGrant {
+    meshway_dataplane::secure::CircuitGrant {
+        purpose: meshway_dataplane::Purpose::Business,
+        target: chain.target.clone(),
+    }
+}
+
 #[test]
 fn pooled_packet_survives_three_roles_without_payload_copy_and_revocation_returns_it() {
-    let chain = Chain::new(3, [Duration::from_secs(60); 3]).unwrap();
+    let chain = Chain::new(3, Duration::from_secs(60)).unwrap();
     let mut nodes: Vec<_> = chain
         .path
         .iter()
@@ -23,7 +30,7 @@ fn pooled_packet_survives_three_roles_without_payload_copy_and_revocation_return
             .unwrap()
         })
         .collect();
-    let mut pending = nodes[0].start(chain.demand, chain.path.clone()).unwrap();
+    let mut pending = nodes[0].start_grant(grant(&chain), chain.path.clone(), &chain.carriers[0]).unwrap();
     let cid = pending.circuit();
     loop {
         let next = chain

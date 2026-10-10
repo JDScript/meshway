@@ -1,18 +1,21 @@
-//! Static, compiler-backed issuer for process-local benchmarks and fixtures.
-//! Never assemble this crate into a production Node. No storage, Server, socket,
-//! renewal or authority bypass is provided. Dropping the issuer revokes all clones.
+//! Static, netmap-compiler-backed issuer for process-local benchmarks and
+//! fixtures. Never assemble this crate into a production Node. No storage,
+//! Server, socket, renewal or authority bypass is provided. Dropping the
+//! issuer revokes all clones.
 #![forbid(unsafe_code)]
 
 pub mod fixture;
 pub mod public_fixture;
 
 use ed25519_dalek::SigningKey;
-use meshway_authority::{Clock, DataPlaneIdentity, Deadline, ExecutionSnapshot, Issue, Started};
-use meshway_configuration::{NetworkConfiguration, execution::*};
+use meshway_authority::{
+    Clock, DataPlaneIdentity, Deadline, ExecutionSnapshot, NetmapIssue, Started,
+};
+use meshway_configuration::{NetworkConfiguration, execution::TrustedNode, netmap::CompiledNetmap};
 use meshway_model::{state::Capability, *};
 use meshway_policy::{
     SubjectContext,
-    compile::{CompilationInput, compile},
+    compile::netmap::{NetmapInput, compile_netmap},
 };
 use std::{
     collections::BTreeMap,
@@ -108,77 +111,86 @@ struct Grant {
 }
 
 pub struct StaticAuthority {
-    publication: CompiledPublication,
+    netmaps: BTreeMap<NodeId, Arc<CompiledNetmap>>,
     grants: BTreeMap<NodeId, Grant>,
 }
 
+/// Compile every Node's netmap from one immutable input with the production
+/// netmap compiler.
+pub fn compile_netmaps(
+    network: NetworkId,
+    configuration: &NetworkConfiguration,
+    subjects: &SubjectContext,
+    inventory: &BTreeMap<NodeId, TrustedNode>,
+) -> Result<BTreeMap<NodeId, Arc<CompiledNetmap>>, Error> {
+    let compiled = compile_netmap(NetmapInput {
+        network,
+        revision: Revision::MIN,
+        configuration,
+        subjects,
+        inventory,
+        rule_sets: &BTreeMap::new(),
+        selected_profiles: &BTreeMap::new(),
+        selection_versions: &BTreeMap::new(),
+        previous: &BTreeMap::new(),
+    })
+    .map_err(|error| format!("netmap compilation failed: {error:?}"))?;
+    Ok(compiled
+        .nodes
+        .into_iter()
+        .map(|(id, netmap)| (id, Arc::new(netmap)))
+        .collect())
+}
+
 impl StaticAuthority {
-    /// Compile one immutable input and issue session/instance/execution deadlines
-    /// measured from the same start. The earliest duration bounds every consumer.
+    /// Compile one immutable input and issue every Node's netmap with one
+    /// lease of `lifetime`, measured from the same start.
     pub fn compile(
         network: NetworkId,
         configuration: &NetworkConfiguration,
         subjects: &SubjectContext,
         materials: BTreeMap<NodeId, NodeMaterial>,
-        demands: &BTreeMap<RequestId, Demand>,
-        lifetimes: [Duration; 3],
+        lifetime: Duration,
     ) -> Result<Self, Error> {
-        let clock = Arc::new(Clock::new()?);
-        let started = Started::now(&clock)?;
-        let mut deadlines = Vec::new();
-        for duration in lifetimes {
-            let expiry = started
-                .wall()
-                .checked_add(u64::try_from(duration.as_millis())?)
-                .ok_or("deadline overflow")?;
-            deadlines.push(Deadline::from_response(started.clone(), expiry)?);
-        }
-        let deadlines: [Deadline; 3] = deadlines
-            .try_into()
-            .map_err(|_| "three deadlines required")?;
         let inventory = materials
             .iter()
             .map(|(id, material)| (*id, material.trusted.clone()))
             .collect();
-        let publication = compile(CompilationInput {
-            network,
-            revision: Revision::MIN,
-            publication: PublicationId::new(random_uuid()?)?,
-            configuration,
-            subjects,
-            inventory: &inventory,
-            demands,
-            dns: &[],
-            rule_sets: &BTreeMap::new(),
-            selected_profiles: &BTreeMap::new(),
-            now_ms: started.wall(),
-        })?;
-        Self::issue_publication(publication, materials, clock, deadlines)
+        let netmaps = compile_netmaps(network, configuration, subjects, &inventory)?;
+        let issued = meshway_authority::now()?;
+        let expires = issued
+            .checked_add(u64::try_from(lifetime.as_millis())?)
+            .ok_or("deadline overflow")?;
+        Self::issue(netmaps, materials, issued, expires)
     }
 
-    fn issue_publication(
-        publication: CompiledPublication,
+    /// Issue `netmaps` to `materials` under one lease `[issued, expires]`
+    /// (wall milliseconds), shared by every isolated process of a fixture.
+    pub(crate) fn issue(
+        netmaps: BTreeMap<NodeId, Arc<CompiledNetmap>>,
         materials: BTreeMap<NodeId, NodeMaterial>,
-        clock: Arc<Clock>,
-        deadlines: [Deadline; 3],
+        issued: u64,
+        expires: u64,
     ) -> Result<Self, Error> {
+        let clock = Arc::new(Clock::new()?);
+        let deadline = Deadline::from_response(Started::now(&clock)?, expires)?;
         let mut grants = BTreeMap::new();
         for (id, material) in materials {
-            let target = publication.nodes.get(&id).ok_or("missing compiled node")?;
+            let netmap = netmaps.get(&id).ok_or("missing compiled node")?.clone();
             let validity = Arc::new(AtomicBool::new(true));
             let invalidated = CancellationToken::new();
             let lineage = Arc::new(());
-            let snapshot = ExecutionSnapshot::issue(Issue {
-                target: Arc::new(target.clone()),
-                instance: InstanceId::new(random_uuid()?)?,
-                generation: Version::MIN,
+            let lease = NetmapLease::new(netmap.reference(), issued, expires)
+                .map_err(|_| "invalid fixture lease")?;
+            let (snapshot, _) = ExecutionSnapshot::issue_netmap(NetmapIssue {
+                netmap,
+                lease,
+                deadline: deadline.clone(),
+                instance: None,
                 validity: validity.clone(),
                 invalidated: invalidated.clone(),
                 clock: clock.clone(),
-                deadlines: deadlines.clone(),
                 lineage: Arc::downgrade(&lineage),
-                publication: Arc::new(()),
-                predecessor: None,
             })?;
             let identity = DataPlaneIdentity::new(snapshot, material.signing, material.noise)?;
             grants.insert(
@@ -191,14 +203,11 @@ impl StaticAuthority {
                 },
             );
         }
-        Ok(Self {
-            publication,
-            grants,
-        })
+        Ok(Self { netmaps, grants })
     }
 
-    pub fn publication(&self) -> &CompiledPublication {
-        &self.publication
+    pub fn netmap(&self, node: NodeId) -> Result<&CompiledNetmap, Error> {
+        Ok(self.netmaps.get(&node).ok_or("unknown static node")?)
     }
 
     pub fn identity(&self, node: NodeId) -> Result<DataPlaneIdentity, Error> {
@@ -219,8 +228,8 @@ impl StaticAuthority {
         Ok(())
     }
 
-    /// Block until this grant's original earliest deadline. Does not move clocks,
-    /// extend authority or replace expiration with synthetic configuration.
+    /// Block until this grant's lease ends. Does not move clocks, extend
+    /// authority or replace expiration with synthetic configuration.
     pub fn wait_expired(&self, node: NodeId) -> Result<(), Error> {
         let grant = self.grants.get(&node).ok_or("unknown static node")?;
         std::thread::sleep(
@@ -237,6 +246,33 @@ impl StaticAuthority {
             .err()
             .ok_or("deadline remains live")?;
         Ok(())
+    }
+}
+
+/// The netmap decision of a TCP/UDP service from `source` toward `target`
+/// must be exactly `path`.
+pub fn check_path(
+    netmap: &CompiledNetmap,
+    source: NodeId,
+    destination: std::net::IpAddr,
+    service: (meshway_configuration::execution::BusinessProtocol, u16),
+    path: &[NodeId],
+) -> Result<(), Error> {
+    let port = meshway_configuration::transport::Port::new(service.1)?;
+    match meshway_policy::compile::netmap::compile_local(
+        &netmap.netmap,
+        source,
+        destination,
+        (service.0, Some(port)),
+    )
+    .map_err(|_| "netmap decision failed")?
+    {
+        meshway_policy::compile::netmap::LocalDecision::Permitted(decision)
+            if decision.paths.len() == 1 && decision.paths[0].nodes == path =>
+        {
+            Ok(())
+        }
+        _ => Err("netmap did not decide the exact fixture path".into()),
     }
 }
 

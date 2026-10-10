@@ -405,7 +405,7 @@ impl NetmapMesh {
         let first = self
             .a
             .start_grant(
-                CircuitGrant::Netmap {
+                CircuitGrant {
                     purpose: meshway_dataplane::Purpose::Business,
                     target,
                 },

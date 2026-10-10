@@ -13,6 +13,13 @@ use tracing::{
     span::{Attributes, Id, Record},
 };
 
+fn grant(chain: &Chain) -> meshway_dataplane::secure::CircuitGrant {
+    meshway_dataplane::secure::CircuitGrant {
+        purpose: meshway_dataplane::Purpose::Business,
+        target: chain.target.clone(),
+    }
+}
+
 struct RevokeAtCommit {
     chain: Arc<Chain>,
     fired: Arc<AtomicBool>,
@@ -46,7 +53,7 @@ impl Subscriber for RevokeAtCommit {
 
 #[test]
 fn revoke_after_entry_before_commit_emits_no_frame_and_establishes_no_flow() {
-    let chain = Arc::new(Chain::new(2, [Duration::from_secs(60); 3]).unwrap());
+    let chain = Arc::new(Chain::new(2, Duration::from_secs(60)).unwrap());
     let mut nodes: Vec<_> = chain
         .path
         .iter()
@@ -60,7 +67,7 @@ fn revoke_after_entry_before_commit_emits_no_frame_and_establishes_no_flow() {
             .unwrap()
         })
         .collect();
-    let init = nodes[0].start(chain.demand, chain.path.clone()).unwrap();
+    let init = nodes[0].start_grant(grant(&chain), chain.path.clone(), &chain.carriers[0]).unwrap();
     let cid = init.circuit();
     let carrier = chain.carriers[0].clone();
     let response = init

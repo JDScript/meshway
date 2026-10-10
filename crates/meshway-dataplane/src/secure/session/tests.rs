@@ -1,12 +1,9 @@
 use super::*;
 use crate::{
     fixtures,
-    secure::{
-        CircuitAuthorization,
-        codec::{HopAuth, Kind, ProbeMetadata, Proof},
-    },
+    secure::codec::{HopAuth, Kind, ProbeMetadata, Proof},
 };
-use meshway_model::{EventId, KeyId, NetworkId, RequestId, Version};
+use meshway_model::{EventId, KeyId, NetworkId, Version};
 use meshway_transport_spec::TransportProtocol;
 
 fn node(n: usize) -> NodeId {
@@ -33,9 +30,10 @@ impl Fixture {
         let mut init = Frame {
             context: Arc::new(Context {
                 network: NetworkId::new(node(20).into_uuid()).unwrap(),
-                grant: crate::secure::CircuitGrant::Legacy(CircuitAuthorization::Business(
-                    RequestId::new(node(21).into_uuid()).unwrap(),
-                )),
+                grant: crate::secure::CircuitGrant {
+                    purpose: crate::Purpose::Business,
+                    target: crate::Target::Mesh { node: node(21) },
+                },
                 path: selected.nodes.clone(),
                 circuit: [1; 32],
                 authorization: [2; 32].into(),
@@ -141,10 +139,10 @@ fn prekeyed_hmac_matches_fixed_data_and_probe_transcripts() {
             frame.sequence = 1 << 32;
             frame.body = vec![0xa5; if probe { 48 } else { 1296 }].into();
             if probe {
-                Arc::make_mut(&mut frame.context).grant =
-                    crate::secure::CircuitGrant::Legacy(CircuitAuthorization::Diagnostic(
-                        meshway_model::ObservationId::new(node(24).into_uuid()).unwrap(),
-                    ));
+                Arc::make_mut(&mut frame.context).grant = crate::secure::CircuitGrant {
+                    purpose: crate::Purpose::Diagnostic,
+                    target: crate::Target::Mesh { node: node(24) },
+                };
                 frame.kind = if reply {
                     Kind::ProbeReply
                 } else {
@@ -258,9 +256,10 @@ fn session_kdf_binds_full_context_and_both_handshake_messages() {
                     NetworkId::new(node(22).into_uuid()).unwrap()
             }
             3 => {
-                Arc::make_mut(&mut f.response.context).grant = crate::secure::CircuitGrant::Legacy(
-                    CircuitAuthorization::Business(RequestId::new(node(23).into_uuid()).unwrap()),
-                )
+                Arc::make_mut(&mut f.response.context).grant = crate::secure::CircuitGrant {
+                    purpose: crate::Purpose::Business,
+                    target: crate::Target::Mesh { node: node(23) },
+                }
             }
             4 => f.response.body[0] ^= 1,
             5 => {
@@ -310,10 +309,10 @@ fn low_order_and_substituted_ephemeral_contributions_never_establish_keys() {
 #[test]
 fn diagnostic_mac_binds_measurement_deadline_kind_and_ciphertext() {
     let mut f = Fixture::pending(3);
-    Arc::make_mut(&mut f.response.context).grant =
-        crate::secure::CircuitGrant::Legacy(CircuitAuthorization::Diagnostic(
-            meshway_model::ObservationId::new(node(24).into_uuid()).unwrap(),
-        ));
+    Arc::make_mut(&mut f.response.context).grant = crate::secure::CircuitGrant {
+        purpose: crate::Purpose::Diagnostic,
+        target: crate::Target::Mesh { node: node(24) },
+    };
     f.establish();
     for reply in [false, true] {
         for tamper in 0..5 {

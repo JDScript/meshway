@@ -129,7 +129,7 @@ struct Circuit {
 
 impl Circuit {
     fn open(count: usize, workers: Option<u16>) -> Result<Self, Error> {
-        let chain = Chain::new(count, [Duration::from_secs(600); 3])?;
+        let chain = Chain::new(count, Duration::from_secs(600))?;
         let mut nodes = chain
             .path
             .iter()
@@ -142,7 +142,11 @@ impl Circuit {
                 )?)
             })
             .collect::<Result<Vec<_>, Error>>()?;
-        let mut pending = nodes[0].start(chain.demand, chain.path.clone())?;
+        let grant = meshway_dataplane::secure::CircuitGrant {
+            purpose: meshway_dataplane::Purpose::Business,
+            target: chain.target.clone(),
+        };
+        let mut pending = nodes[0].start_grant(grant, chain.path.clone(), &chain.carriers[0])?;
         let id = pending.circuit();
         let mut established = false;
         for _ in 0..2 * count {

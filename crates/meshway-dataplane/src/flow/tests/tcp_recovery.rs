@@ -9,14 +9,13 @@ fn established() -> Scene {
 }
 
 fn discard_after_relay(scene: &mut Scene, packet: Packet) {
-    let packet = unpack(
+    // The source committed its flow, but the terminal never receives it.
+    drop(unpack(
         scene.process(1, None, 1, &[1, 2, 3], packet).unwrap(),
         Some(2),
         Direction::Forward,
         &[1, 2, 3],
-    );
-    // Source and relay committed their one flow, but terminal never receives it.
-    drop(scene.process(2, Some(1), 1, &[1, 2, 3], packet).unwrap());
+    ));
 }
 
 #[test]
@@ -34,10 +33,13 @@ fn admitted_but_undelivered_data_recovers_with_delayed_ack_and_nonlatest_resegme
     reply(&mut scene, tcp(true, 901, 101, 0x10, 0));
     forward(&mut scene, tcp(false, 111, 901, 0x18, 2));
     reply(&mut scene, tcp(true, 906, 113, 0x10, 0));
-    for table in scene.tables.values() {
+    for table in [&scene.tables[&node(1)], &scene.tables[&node(3)]] {
         assert_eq!(table.len(), 1);
         let key = table.entries.keys().next().unwrap();
-        assert_eq!(key.grant, FlowGrant::Legacy(request()));
+        assert_eq!(
+            key.grant,
+            meshway_policy::compile::netmap::Target::Mesh { node: node(3) }
+        );
         assert_eq!(key.path, vec![node(1), node(2), node(3)]);
     }
 }
@@ -131,7 +133,7 @@ fn fin_resegmentation_preserves_its_original_sequence_consumption_in_both_direct
     ));
     forward(&mut scene, tcp(false, 109, 907, 0x10, 0));
     reply(&mut scene, tcp(true, 907, 109, 0x10, 0));
-    for table in scene.tables.values() {
+    for table in [&scene.tables[&node(1)], &scene.tables[&node(3)]] {
         assert_eq!(table.len(), 1);
     }
 }
@@ -164,7 +166,7 @@ fn established_reset_requires_current_sequence_and_bounded_peer_ack_in_both_dire
         } else {
             forward(&mut scene, tcp(false, sequence, ack, 0x14, 0));
         }
-        for table in scene.tables.values() {
+        for table in [&scene.tables[&node(1)], &scene.tables[&node(3)]] {
             assert_eq!(table.len(), 0);
         }
     }
@@ -193,7 +195,7 @@ fn handshake_reset_simultaneous_open_and_fast_open_remain_rejected() {
     ));
     forward(&mut scene, tcp(false, 101, 901, 0x10, 0));
     forward(&mut scene, tcp(false, 101, 901, 0x18, 7));
-    for table in scene.tables.values() {
+    for table in [&scene.tables[&node(1)], &scene.tables[&node(3)]] {
         assert_eq!(table.len(), 1);
     }
 }

@@ -514,12 +514,12 @@ def sample(args, metadata, output, network, image, platform, identity, mode, bat
                 save(directory / "fixture.json", fixture)
                 if origin != directory:
                     shutil.copy2(directory / "fixture.json", origin / "fixture.json")
-                record["publicationDigest"] = fixture["publicationDigest"]
+                record["netmaps"] = fixture["netmaps"]
                 for container in containers.values():
                     push(container, "/tmp/fixture.json", (directory / "fixture.json").read_text())
             if resumed:
                 if secure:
-                    record["publicationDigest"] = resumed["publicationDigest"]
+                    record["netmaps"] = resumed["netmaps"]
                     shutil.copy2(origin / "fixture.json", directory / "fixture.json")
                 for role in roles:
                     shutil.copy2(origin / f"{role}.stdout", directory / f"{role}.stdout")
@@ -556,8 +556,8 @@ def sample(args, metadata, output, network, image, platform, identity, mode, bat
                     record.setdefault("workers", {})[role] = readiness["workers"]
                     record.setdefault("tunBatch", {})[role] = readiness["tunBatch"]
                     record.setdefault("captureTun", {})[role] = readiness.get("captureTun")
-                if secure and readiness["publicationDigest"] != record["publicationDigest"]:
-                    raise RuntimeError("node compiled publication digest differs")
+                if secure and readiness["netmaps"] != record["netmaps"]:
+                    raise RuntimeError("node compiled netmaps differ")
                 if role == "r" and readiness["tun"] is not None:
                     raise RuntimeError("relay must not open TUN")
         destination = addresses["b"] if mode == "raw" else "100.127.0.2"
@@ -672,7 +672,7 @@ def sample(args, metadata, output, network, image, platform, identity, mode, bat
             except subprocess.TimeoutExpired:
                 record.update(status="failed", failure="plain node did not shut down")
         if keep:
-            sessions[key] = dict(nodes=nodes, directory=origin, publicationDigest=record.get("publicationDigest"))
+            sessions[key] = dict(nodes=nodes, directory=origin, netmaps=record.get("netmaps"))
         elif reusable and all(node.poll() == 0 for node in nodes):
             for container in containers.values():
                 command("docker", "exec", container, "rm", "-rf", "/tmp/private", "/tmp/fixture.json", "/tmp/public-nodes.json")

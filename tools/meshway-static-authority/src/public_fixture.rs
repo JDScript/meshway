@@ -1,22 +1,18 @@
 //! Public, serializable compiler inputs shared by isolated benchmark processes.
 //! There are no seeds here. Each process supplies only its own NodeMaterial.
 use crate::{Error, NodeMaterial, StaticAuthority, random_uuid};
-use meshway_authority::{Clock, Deadline, Started};
 use meshway_configuration::{
     execution::*,
-    transport::{Port, PreparedListener},
+    netmap::CompiledNetmap,
+    transport::PreparedListener,
     *,
 };
 use meshway_model::*;
-use meshway_policy::{
-    SubjectContext,
-    compile::{CompilationInput, compile},
-};
+use meshway_policy::SubjectContext;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest as _, Sha256};
 use std::{
     collections::BTreeMap,
-    net::{Ipv4Addr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::Arc,
     time::Duration,
 };
@@ -33,18 +29,16 @@ pub struct PublicNode {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PublicFixture {
     pub network: NetworkId,
-    pub revision: Revision,
-    pub publication: PublicationId,
     pub configuration: NetworkConfiguration,
     pub inventory: BTreeMap<NodeId, TrustedNode>,
-    pub demands: BTreeMap<RequestId, Demand>,
     pub path: Vec<NodeId>,
     pub sockets: BTreeMap<NodeId, SocketAddr>,
     pub carriers: Vec<Carrier>,
-    /// Fixed compiler clock input, not a replacement for the live authority clock.
-    pub compiled_at_ms: u64,
+    /// One lease shared by every process, in wall milliseconds.
+    pub issued_at_ms: u64,
     pub expires_at_ms: u64,
-    pub publication_digest: Digest,
+    /// Every Node's compiled netmap, checked again by each process.
+    pub netmaps: BTreeMap<NodeId, NetmapRef>,
 }
 
 impl PublicFixture {
@@ -119,26 +113,10 @@ impl PublicFixture {
                 .map(|id| format!("node:{id}"))
                 .collect(),
         }];
-        let compiled_at_ms = meshway_authority::now()?;
-        let expires_at_ms = compiled_at_ms
+        let issued_at_ms = meshway_authority::now()?;
+        let expires_at_ms = issued_at_ms
             .checked_add(u64::try_from(lifetime.as_millis())?)
             .ok_or("fixture expiry overflow")?;
-        let mut demands = BTreeMap::new();
-        for protocol in [BusinessProtocol::Tcp, BusinessProtocol::Udp] {
-            let id = RequestId::new(random_uuid()?)?;
-            demands.insert(
-                id,
-                Demand {
-                    id,
-                    source: path[0],
-                    target: BusinessTarget::Mesh { node: last },
-                    protocol,
-                    port: Some(Port::new(5201)?),
-                    profile: "mesh".into(),
-                    expires_at_ms,
-                },
-            );
-        }
         let carriers = path
             .windows(2)
             .map(|pair| Carrier {
@@ -150,77 +128,69 @@ impl PublicFixture {
             .collect();
         let mut fixture = Self {
             network: NetworkId::new(random_uuid()?)?,
-            revision: Revision::MIN,
-            publication: PublicationId::new(random_uuid()?)?,
             configuration,
             inventory: nodes
                 .iter()
                 .map(|node| (node.id, node.trusted.clone()))
                 .collect(),
             sockets: nodes.iter().map(|node| (node.id, node.socket)).collect(),
-            demands,
             path,
             carriers,
-            compiled_at_ms,
+            issued_at_ms,
             expires_at_ms,
-            publication_digest: Digest::from_bytes([0; 32]),
+            netmaps: BTreeMap::new(),
         };
-        fixture.publication_digest = Self::digest(&fixture.compile()?)?;
+        fixture.netmaps = fixture
+            .compile()?
+            .iter()
+            .map(|(id, netmap)| (*id, netmap.reference()))
+            .collect();
         Ok(fixture)
     }
 
-    /// The tagged fixture has no user subjects. Actual compiler and policy decide
-    /// every permit; no compiled node configuration is synthesized here.
-    pub fn compile(&self) -> Result<CompiledPublication, Error> {
-        let publication = compile(CompilationInput {
-            network: self.network,
-            revision: self.revision,
-            publication: self.publication,
-            configuration: &self.configuration,
-            subjects: &SubjectContext::default(),
-            inventory: &self.inventory,
-            demands: &self.demands,
-            dns: &[],
-            rule_sets: &BTreeMap::new(),
-            selected_profiles: &BTreeMap::new(),
-            now_ms: self.compiled_at_ms,
-        })?;
-        Ok(publication)
+    /// The tagged fixture has no user subjects. The production netmap
+    /// compiler decides every path; nothing is synthesized here.
+    pub fn compile(&self) -> Result<BTreeMap<NodeId, Arc<CompiledNetmap>>, Error> {
+        crate::compile_netmaps(
+            self.network,
+            &self.configuration,
+            &SubjectContext::default(),
+            &self.inventory,
+        )
     }
 
-    pub fn digest(publication: &CompiledPublication) -> Result<Digest, Error> {
-        Ok(Digest::from_bytes(
-            Sha256::digest(serde_json::to_vec(publication)?).into(),
-        ))
+    /// The terminal's Mesh IPv4 address.
+    pub fn terminal_address(&self) -> Result<Ipv4Addr, Error> {
+        let last = self.path.last().ok_or("missing terminal")?;
+        self.configuration
+            .nodes
+            .get(last)
+            .and_then(|node| node.addresses.ipv4)
+            .ok_or_else(|| "terminal has no IPv4 address".into())
     }
 
     pub fn issue(&self, node: NodeId, material: NodeMaterial) -> Result<StaticAuthority, Error> {
         if self.inventory.get(&node) != Some(material.trusted()) {
             return Err("private material differs from public fixture inventory".into());
         }
-        let publication = self.compile()?;
-        if Self::digest(&publication)? != self.publication_digest {
-            return Err("compiled publication digest differs from public fixture".into());
+        let netmaps = self.compile()?;
+        let references: BTreeMap<_, _> = netmaps
+            .iter()
+            .map(|(id, netmap)| (*id, netmap.reference()))
+            .collect();
+        if references != self.netmaps {
+            return Err("compiled netmaps differ from public fixture".into());
         }
-        for demand in self.demands.keys() {
-            for id in &self.path {
-                let permit = publication
-                    .nodes
-                    .get(id)
-                    .and_then(|node| node.configuration.permits.get(demand))
-                    .ok_or("compiler did not permit fixture demand")?;
-                if permit.paths.len() != 1 || permit.paths[0].nodes != self.path {
-                    return Err("compiler did not produce exact fixture path".into());
-                }
-            }
+        let origin = netmaps.get(&self.path[0]).ok_or("missing origin")?;
+        let terminal = IpAddr::V4(self.terminal_address()?);
+        for protocol in [BusinessProtocol::Tcp, BusinessProtocol::Udp] {
+            crate::check_path(origin, self.path[0], terminal, (protocol, 5201), &self.path)?;
         }
-        let clock = Arc::new(Clock::new()?);
-        let deadline = Deadline::from_response(Started::now(&clock)?, self.expires_at_ms)?;
-        StaticAuthority::issue_publication(
-            publication,
+        StaticAuthority::issue(
+            netmaps,
             BTreeMap::from([(node, material)]),
-            clock,
-            [deadline.clone(), deadline.clone(), deadline],
+            self.issued_at_ms,
+            self.expires_at_ms,
         )
     }
 

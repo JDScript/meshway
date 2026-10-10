@@ -19,7 +19,8 @@ fn staggered_expiry_keeps_refreshed_reverse_flows_and_reclaims_capacity_on_both_
         }
     }
     scene.advance(Duration::from_secs(1));
-    for table in scene.tables.values_mut() {
+    for id in [node(1), node(3)] {
+        let table = scene.tables.get_mut(&id).unwrap();
         table.expire(scene.instant, scene.now_ms);
         assert_eq!(table.len(), 128);
     }
@@ -33,11 +34,12 @@ fn staggered_expiry_keeps_refreshed_reverse_flows_and_reclaims_capacity_on_both_
     for port in (50001..50256).step_by(2) {
         forward(&mut scene, udp(1, 3, port, 443));
     }
-    for table in scene.tables.values_mut() {
+    for id in [node(1), node(3)] {
+        let table = scene.tables.get_mut(&id).unwrap();
         assert_eq!(table.len(), 256);
-        // UTC expiry is independent of idle/monotonic time. It must collect
-        // every tuple, even after the monotonic deadlines were refreshed.
-        table.expire(scene.instant, 100_000);
+        // Idle expiry collects every tuple once no packet refreshed it. The
+        // netmap lease bounds flows at use; it is never copied into them.
+        table.expire(scene.instant + Duration::from_secs(3), scene.now_ms + 3000);
         assert_eq!(table.len(), 0);
     }
     forward(&mut scene, udp(1, 3, 50000, 443));

@@ -41,11 +41,11 @@ fn independent_compilers_match_and_issuer_drop_revokes() {
         }
         let fixture = PublicFixture::iperf(nodes, Duration::from_secs(60)).unwrap();
         let bytes = serde_json::to_vec(&fixture).unwrap();
-        let expected = serde_json::to_vec(&fixture.compile().unwrap()).unwrap();
         for (id, i, signing, noise, capabilities) in secrets {
             let decoded: PublicFixture = serde_json::from_slice(&bytes).unwrap();
             let mut tampered = decoded.clone();
-            tampered.publication_digest = meshway_model::Digest::from_bytes([0; 32]);
+            tampered.netmaps.values_mut().next().unwrap().serial =
+                meshway_model::Version::new(9).unwrap();
             assert!(
                 tampered
                     .issue(
@@ -78,8 +78,8 @@ fn independent_compilers_match_and_issuer_drop_revokes() {
                 NodeMaterial::from_seeds([i + 1; 32], [i + 11; 32], signing, noise, capabilities);
             let authority = decoded.issue(id, material).unwrap();
             assert_eq!(
-                serde_json::to_vec(authority.publication()).unwrap(),
-                expected
+                authority.netmap(id).unwrap().reference(),
+                fixture.netmaps[&id]
             );
             let identity = authority.identity(id).unwrap();
             identity.snapshot().ensure_current().unwrap();
@@ -87,10 +87,13 @@ fn independent_compilers_match_and_issuer_drop_revokes() {
             assert!(identity.snapshot().ensure_current().is_err());
         }
         let mut changed: PublicFixture = serde_json::from_slice(&bytes).unwrap();
-        changed.publication = meshway_model::PublicationId::new(random_uuid().unwrap()).unwrap();
-        assert_ne!(
-            PublicFixture::digest(&changed.compile().unwrap()).unwrap(),
-            fixture.publication_digest
+        changed.configuration.access[0].ip = vec!["tcp:5202".into()];
+        let changed = changed.compile().unwrap();
+        assert!(
+            fixture
+                .netmaps
+                .iter()
+                .any(|(id, reference)| changed[id].reference().digest != reference.digest)
         );
     }
 }

@@ -1,34 +1,11 @@
 mod collection;
 mod configuration;
-mod continuity;
 mod local;
 mod tcp_recovery;
 
-#[test]
-fn renewed_guard_cannot_revive_a_flow_expired_by_the_old_guard_wall_clock() {
-    let mut scene = Scene::new(BusinessProtocol::Udp, false, true);
-    scene.guard_expires_at = scene.instant + Duration::from_secs(30);
-    scene.guard_expires_at_ms = scene.now_ms + 30_000;
-    scene
-        .process(1, None, 1, &[1, 2, 3], udp(1, 3, 50000, 443))
-        .unwrap();
-    // Partial forward clock adjustment, followed by a valid same-scope renewal.
-    // Monotonic time has not reached the original execution deadline.
-    scene.now_ms += 25_000;
-    scene.guard_expires_at_ms = scene.now_ms + 60_000;
-    scene.guard_expires_at = scene.instant + Duration::from_secs(60);
-    scene.advance(Duration::from_secs(6));
-    assert!(
-        scene
-            .process(1, Some(2), 3, &[1, 2, 3], udp(3, 1, 443, 50000))
-            .is_err()
-    );
-    assert_eq!(scene.tables[&node(1)].len(), 0);
-}
-
 use super::*;
 use crate::{Action, AuthenticatedPeer, Ingress, Packet, fixtures::*};
-use configuration::{Scene, node, request};
+use configuration::{Scene, node};
 use std::time::Duration;
 
 fn unpack(action: Action, next: Option<u8>, direction: Direction, path: &[u8]) -> Packet {
@@ -44,7 +21,10 @@ fn unpack(action: Action, next: Option<u8>, direction: Direction, path: &[u8]) -
     assert_eq!(actual, next.map(node));
     assert_eq!(route.direction, direction);
     assert_eq!(route.origin, node(1));
-    assert_eq!(route.demand, request());
+    assert_eq!(
+        route.grant,
+        meshway_policy::compile::netmap::Target::Mesh { node: node(3) }
+    );
     assert_eq!(
         route.original_path,
         path.iter().map(|i| node(*i)).collect::<Vec<_>>()
@@ -52,16 +32,12 @@ fn unpack(action: Action, next: Option<u8>, direction: Direction, path: &[u8]) -
     packet
 }
 
+/// Business flows are admitted at the two endpoints only; the relay
+/// forwards the circuit's session without a flow entry.
 fn forward(scene: &mut Scene, packet: Packet) {
     let packet = unpack(
         scene.process(1, None, 1, &[1, 2, 3], packet).unwrap(),
         Some(2),
-        Direction::Forward,
-        &[1, 2, 3],
-    );
-    let packet = unpack(
-        scene.process(2, Some(1), 1, &[1, 2, 3], packet).unwrap(),
-        Some(3),
         Direction::Forward,
         &[1, 2, 3],
     );
@@ -80,12 +56,6 @@ fn reply(scene: &mut Scene, packet: Packet) {
         Direction::Reply,
         &[1, 2, 3],
     );
-    let packet = unpack(
-        scene.process(2, Some(3), 3, &[1, 2, 3], packet).unwrap(),
-        Some(1),
-        Direction::Reply,
-        &[1, 2, 3],
-    );
     unpack(
         scene.process(1, Some(2), 3, &[1, 2, 3], packet).unwrap(),
         None,
@@ -95,104 +65,11 @@ fn reply(scene: &mut Scene, packet: Packet) {
 }
 
 #[test]
-fn signed_facts_and_parsed_packets_share_protocol_state_and_rejections() {
-    for (protocol, packets) in [
-        (
-            BusinessProtocol::Udp,
-            vec![
-                (false, udp(1, 3, 50000, 443)),
-                (true, udp(3, 1, 444, 50000)),
-                (true, udp(3, 1, 443, 50000)),
-            ],
-        ),
-        (
-            BusinessProtocol::IcmpEcho,
-            vec![
-                (false, echo(false, 12, 34)),
-                (true, echo(true, 12, 35)),
-                (true, echo(true, 12, 34)),
-            ],
-        ),
-        (
-            BusinessProtocol::Tcp,
-            vec![
-                (false, tcp(false, 100, 0, 2, 0)),
-                (true, tcp(true, 900, 102, 0x12, 0)),
-                (true, tcp(true, 900, 101, 0x12, 0)),
-                (false, tcp(false, 101, 901, 0x10, 0)),
-                (false, tcp(false, 101, 901, 0x18, 7)),
-                (true, tcp(true, 901, 108, 0x18, 5)),
-            ],
-        ),
-    ] {
-        let mut plaintext = Scene::new(protocol, false, true);
-        let mut encrypted = Scene::new(protocol, false, true);
-        for (reply, packet) in packets {
-            let (sender, previous) = if reply { (3, 3) } else { (1, 1) };
-            let facts = packet.facts();
-            let packet_result = plaintext.process(2, Some(previous), sender, &[1, 2, 3], packet);
-            let facts_result = encrypted.admit_facts(
-                2,
-                Ingress::Peer {
-                    demand: request(),
-                    path: vec![node(1), node(2), node(3)],
-                    identity: AuthenticatedPeer {
-                        origin: node(1),
-                        sender: node(sender),
-                        previous: node(previous),
-                    },
-                },
-                facts,
-            );
-            match (packet_result, facts_result) {
-                (Ok(Action::Forward { next, route, .. }), Ok(checked)) => {
-                    assert_eq!(checked.hop, Hop::Forward(next));
-                    assert_eq!(checked.route.direction, route.direction);
-                    assert_eq!(checked.route.original_path, route.original_path);
-                }
-                (Err(packet), Err(facts)) => assert_eq!(
-                    std::mem::discriminant(&packet),
-                    std::mem::discriminant(&facts)
-                ),
-                result => panic!("packet/facts admission diverged: {result:?}"),
-            }
-            assert_eq!(
-                plaintext.tables[&node(2)].len(),
-                encrypted.tables[&node(2)].len()
-            );
-        }
-    }
-}
-
-#[test]
-fn handshake_admission_does_not_establish_reverse_business_flow() {
-    let mut scene = Scene::new(BusinessProtocol::Udp, false, true);
-    assert_eq!(
-        meshway_policy::admission::admit_handshake(
-            &scene.configs[&node(2)],
-            request(),
-            &[node(1), node(2), node(3)],
-            node(1),
-            Some(node(3)),
-            true,
-            scene.now_ms,
-        ),
-        Ok(Hop::Forward(node(1)))
-    );
-    assert!(
-        scene
-            .process(2, Some(3), 3, &[1, 2, 3], udp(3, 1, 443, 50000))
-            .is_err()
-    );
-    assert_eq!(scene.tables[&node(2)].len(), 0);
-}
-
-#[test]
 fn compiled_three_node_udp_preserves_full_path_in_both_directions() {
     let mut scene = Scene::new(BusinessProtocol::Udp, false, true);
     forward(&mut scene, udp(1, 3, 50000, 443));
     reply(&mut scene, udp(3, 1, 443, 50000));
-    for table in scene.tables.values() {
+    for table in [&scene.tables[&node(1)], &scene.tables[&node(3)]] {
         assert_eq!(table.len(), 1);
     }
     // Arrival peer remains the adjacent relay; endpoint identity stays node 3.
@@ -225,7 +102,7 @@ fn compiled_three_node_ipv6_uses_the_same_parser_policy_and_flow_owner() {
     ))
     .unwrap();
     reply(&mut scene, packet);
-    for table in scene.tables.values() {
+    for table in [&scene.tables[&node(1)], &scene.tables[&node(3)]] {
         assert_eq!(table.len(), 1);
     }
 }
@@ -255,7 +132,7 @@ fn forged_forward_address_port_protocol_and_hop_cannot_create_entries() {
         Err(Error::Sender)
     ));
     let ingress = Ingress::Peer {
-        demand: request(),
+        target: scene.target.clone(),
         path: vec![node(1), node(2), node(3)],
         identity: AuthenticatedPeer {
             origin: node(2),
@@ -353,7 +230,7 @@ fn tcp_requires_handshake_and_observed_peer_acknowledgement() {
         Err(Error::Flow)
     ));
     forward(&mut scene, tcp(false, 108, 906, 0x14, 0)); // established reset
-    for table in scene.tables.values() {
+    for table in [&scene.tables[&node(1)], &scene.tables[&node(3)]] {
         assert_eq!(table.len(), 0);
     }
     assert!(
@@ -385,7 +262,93 @@ fn tcp_sequence_wrap_and_half_close_remain_bounded() {
 }
 
 #[test]
-fn capacity_rejection_is_transactional_and_idle_expiry_does_not_renew_permits() {
+fn signed_facts_and_parsed_packets_share_protocol_state_and_rejections() {
+    for (protocol, packets) in [
+        (
+            BusinessProtocol::Udp,
+            vec![
+                (false, udp(1, 3, 50000, 443)),
+                (true, udp(3, 1, 444, 50000)),
+                (true, udp(3, 1, 443, 50000)),
+            ],
+        ),
+        (
+            BusinessProtocol::IcmpEcho,
+            vec![
+                (false, echo(false, 12, 34)),
+                (true, echo(true, 12, 35)),
+                (true, echo(true, 12, 34)),
+            ],
+        ),
+        (
+            BusinessProtocol::Tcp,
+            vec![
+                (false, tcp(false, 100, 0, 2, 0)),
+                (true, tcp(true, 900, 102, 0x12, 0)),
+                (true, tcp(true, 900, 101, 0x12, 0)),
+                (false, tcp(false, 101, 901, 0x10, 0)),
+                (false, tcp(false, 101, 901, 0x18, 7)),
+                (true, tcp(true, 901, 108, 0x18, 5)),
+            ],
+        ),
+    ] {
+        let mut plaintext = Scene::new(protocol, false, true);
+        let mut encrypted = Scene::new(protocol, false, true);
+        for (reply, packet) in packets {
+            // The terminal admits forward packets from the relay and its own
+            // replies locally.
+            let facts = packet.facts();
+            let path = vec![node(1), node(2), node(3)];
+            let (packet_result, ingress) = if reply {
+                (
+                    plaintext.process(3, None, 3, &[1, 2, 3], packet),
+                    Ingress::Local {
+                        target: plaintext.target.clone(),
+                        path,
+                    },
+                )
+            } else {
+                (
+                    plaintext.process(3, Some(2), 1, &[1, 2, 3], packet),
+                    Ingress::Peer {
+                        target: plaintext.target.clone(),
+                        path,
+                        identity: AuthenticatedPeer {
+                            origin: node(1),
+                            sender: node(1),
+                            previous: node(2),
+                        },
+                    },
+                )
+            };
+            let facts_result = encrypted.admit_facts(3, ingress, facts);
+            match (packet_result, facts_result) {
+                (Ok(Action::Forward { next, route, .. }), Ok(checked)) => {
+                    assert_eq!(checked.hop, Hop::Forward(next));
+                    assert_eq!(checked.route.direction, route.direction);
+                    assert_eq!(checked.route.original_path, route.original_path);
+                }
+                (Ok(Action::Deliver { route, .. }), Ok(checked)) => {
+                    assert_eq!(checked.hop, Hop::Deliver);
+                    assert_eq!(checked.route.direction, route.direction);
+                    assert_eq!(checked.route.original_path, route.original_path);
+                }
+                (Err(packet), Err(facts)) => assert_eq!(
+                    std::mem::discriminant(&packet),
+                    std::mem::discriminant(&facts)
+                ),
+                result => panic!("packet/facts admission diverged: {result:?}"),
+            }
+            assert_eq!(
+                plaintext.tables[&node(3)].len(),
+                encrypted.tables[&node(3)].len()
+            );
+        }
+    }
+}
+
+#[test]
+fn capacity_rejection_is_transactional_and_flows_end_with_idle_expiry_or_the_lease() {
     let mut scene = Scene::new(BusinessProtocol::Udp, false, true);
     scene.tables.get_mut(&node(1)).unwrap().limits.max_flows = 1;
     scene.tables.get_mut(&node(1)).unwrap().limits.idle_timeout = Duration::from_secs(1);
@@ -424,228 +387,12 @@ fn capacity_rejection_is_transactional_and_idle_expiry_does_not_renew_permits() 
     scene
         .process(1, None, 1, &[1, 2, 3], udp(1, 3, 50001, 443))
         .unwrap();
-    scene.now_ms = 100_000;
+    // The netmap lease bounds every admission; SecureNode resets the table
+    // when it ends.
+    scene.now_ms = scene.leases[&node(1)].expires_at_ms;
     assert!(
         scene
             .process(1, None, 1, &[1, 2, 3], udp(1, 3, 50001, 443))
             .is_err()
     );
-    assert_eq!(scene.tables[&node(1)].len(), 0);
-    assert_eq!(
-        scene.configs[&node(1)].permits[&request()].expires_at_ms,
-        100_000
-    );
-}
-
-#[test]
-fn snapshot_bound_retention_and_explicit_revocation_remove_flow_qualification() {
-    let mut scene = Scene::new(BusinessProtocol::Udp, false, true);
-    scene.guard_expires_at = scene.instant + Duration::from_millis(5);
-    forward(&mut scene, udp(1, 3, 50000, 443));
-    for table in scene.tables.values() {
-        assert_eq!(
-            table.entries.values().next().unwrap().cap.at,
-            scene.guard_expires_at
-        );
-    }
-    scene.advance(Duration::from_millis(5));
-    for table in scene.tables.values_mut() {
-        table.expire(scene.instant, scene.now_ms);
-        assert_eq!(table.len(), 0);
-    }
-    scene.guard_expires_at = scene.instant + Duration::from_secs(60);
-    forward(&mut scene, udp(1, 3, 50000, 443));
-    for table in scene.tables.values_mut() {
-        table.clear();
-    }
-    assert!(
-        scene
-            .process(1, Some(2), 3, &[1, 2, 3], udp(3, 1, 443, 50000))
-            .is_err()
-    );
-}
-
-#[test]
-fn live_session_cannot_select_another_permitted_path() {
-    let mut scene = Scene::new(BusinessProtocol::Udp, false, false);
-    let paths = &scene.configs[&node(1)].permits[&request()].paths;
-    assert!(
-        paths
-            .iter()
-            .any(|p| p.nodes == vec![node(1), node(2), node(3)])
-    );
-    assert!(paths.iter().any(|p| p.nodes == vec![node(1), node(3)]));
-    scene
-        .process(1, None, 1, &[1, 2, 3], udp(1, 3, 50000, 443))
-        .unwrap();
-    assert!(matches!(
-        scene.process(1, None, 1, &[1, 3], udp(1, 3, 50000, 443)),
-        Err(Error::Flow)
-    ));
-    assert_eq!(scene.tables[&node(1)].len(), 1);
-}
-
-#[test]
-fn renewed_guard_preserves_old_flow_deadlines_until_valid_packet_admission() {
-    let mut scene = Scene::new(BusinessProtocol::Udp, false, true);
-    let old_deadline = scene.instant + Duration::from_secs(2);
-    scene.guard_expires_at = old_deadline;
-    for source_port in [50000, 50001] {
-        scene
-            .process(1, None, 1, &[1, 2, 3], udp(1, 3, source_port, 443))
-            .unwrap();
-    }
-    scene.advance(Duration::from_secs(1));
-    scene.guard_expires_at = scene.instant + Duration::from_secs(30);
-    // Same successful-handoff collection as Engine::refresh, without minting
-    // an opaque Control snapshot in private flow tests.
-    scene
-        .tables
-        .get_mut(&node(1))
-        .unwrap()
-        .expire(scene.instant, scene.now_ms);
-    assert_eq!(scene.tables[&node(1)].len(), 2);
-    assert!(
-        scene.tables[&node(1)]
-            .entries
-            .values()
-            .all(|flow| flow.cap.at == old_deadline)
-    );
-    // A malformed association cannot turn the new guard into refreshed state.
-    assert!(
-        scene
-            .process(1, Some(2), 3, &[1, 2, 3], udp(3, 1, 444, 50001))
-            .is_err()
-    );
-    assert!(
-        scene.tables[&node(1)]
-            .entries
-            .values()
-            .all(|flow| flow.cap.at == old_deadline)
-    );
-    scene
-        .process(1, None, 1, &[1, 2, 3], udp(1, 3, 50000, 443))
-        .unwrap();
-    assert_eq!(scene.tables[&node(1)].len(), 2);
-    scene.advance(Duration::from_secs(1));
-    unpack(
-        scene
-            .process(1, Some(2), 3, &[1, 2, 3], udp(3, 1, 443, 50000))
-            .unwrap(),
-        None,
-        Direction::Reply,
-        &[1, 2, 3],
-    );
-    // The idle flow still expires at its old deadline and cannot be revived
-    // by a reverse packet, even though the replacement guard is current.
-    assert!(
-        scene
-            .process(1, Some(2), 3, &[1, 2, 3], udp(3, 1, 443, 50001))
-            .is_err()
-    );
-    assert_eq!(scene.tables[&node(1)].len(), 1);
-    assert_eq!(
-        scene.tables[&node(1)]
-            .entries
-            .values()
-            .next()
-            .unwrap()
-            .cap
-            .at,
-        scene.guard_expires_at
-    );
-}
-
-#[test]
-fn renewed_guard_and_valid_packets_cannot_extend_the_original_permit() {
-    let mut scene = Scene::new(BusinessProtocol::Udp, false, true);
-    scene.now_ms = 99_000;
-    scene.guard_expires_at = scene.instant + Duration::from_secs(5);
-    let permit_deadline = scene.instant + Duration::from_secs(1);
-    scene
-        .process(1, None, 1, &[1, 2, 3], udp(1, 3, 50000, 443))
-        .unwrap();
-    assert_eq!(
-        scene.tables[&node(1)]
-            .entries
-            .values()
-            .next()
-            .unwrap()
-            .cap
-            .at,
-        permit_deadline
-    );
-    scene.advance(Duration::from_millis(500));
-    scene.guard_expires_at = scene.instant + Duration::from_secs(30);
-    scene
-        .tables
-        .get_mut(&node(1))
-        .unwrap()
-        .expire(scene.instant, scene.now_ms);
-    scene
-        .process(1, None, 1, &[1, 2, 3], udp(1, 3, 50000, 443))
-        .unwrap();
-    assert_eq!(
-        scene.tables[&node(1)]
-            .entries
-            .values()
-            .next()
-            .unwrap()
-            .cap
-            .at,
-        permit_deadline
-    );
-    scene.advance(Duration::from_millis(500));
-    assert!(
-        scene
-            .process(1, Some(2), 3, &[1, 2, 3], udp(3, 1, 443, 50000))
-            .is_err()
-    );
-    assert!(
-        scene
-            .process(1, None, 1, &[1, 2, 3], udp(1, 3, 50000, 443))
-            .is_err()
-    );
-    assert_eq!(scene.tables[&node(1)].len(), 0);
-    assert_eq!(
-        scene.configs[&node(1)].permits[&request()].expires_at_ms,
-        100_000
-    );
-}
-
-#[test]
-fn compiled_exit_is_exact_and_requires_the_terminal_exit_capability() {
-    let mut scene = Scene::new(BusinessProtocol::Udp, true, true);
-    let packet = || {
-        Packet::parse(datagram(
-            address(1),
-            "1.1.1.1".parse().unwrap(),
-            17,
-            udp_body(50000, 443, &[]),
-        ))
-        .unwrap()
-    };
-    assert!(scene.process(2, Some(1), 1, &[1, 2], packet()).is_err());
-    let action = scene.process(3, Some(2), 1, &[1, 2, 3], packet()).unwrap();
-    assert!(matches!(action, Action::Exit { .. }));
-    let response = Packet::parse(datagram(
-        "1.1.1.1".parse().unwrap(),
-        address(1),
-        17,
-        udp_body(443, 50000, &[]),
-    ))
-    .unwrap();
-    unpack(
-        scene.process(3, None, 3, &[1, 2, 3], response).unwrap(),
-        Some(2),
-        Direction::Reply,
-        &[1, 2, 3],
-    );
-    scene.tables.get_mut(&node(3)).unwrap().clear();
-    scene.configs.get_mut(&node(3)).unwrap().exit_enabled = false;
-    assert!(matches!(
-        scene.process(3, Some(2), 1, &[1, 2, 3], packet()),
-        Err(Error::Admission(_))
-    ));
-    assert_eq!(scene.tables[&node(3)].len(), 0);
 }

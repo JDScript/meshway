@@ -3,12 +3,11 @@ mod io;
 use meshway_dataplane::{
     DEFAULT_HEADROOM, DEFAULT_TAILROOM, Packet, PacketBuffer, PacketPool, carrier,
     secure::{
-        CircuitAuthorization, Error as SecureError, PendingFrame, Received, SecureNode,
+        CircuitGrant, Error as SecureError, PendingFrame, Received, SecureNode,
         pipeline::{Job, Output, Pool},
     },
 };
 use meshway_logging::profile::{self, Metric};
-use meshway_model::RequestId;
 use meshway_static_authority::public_fixture::PublicFixture;
 use meshway_tun::{Options, Tun};
 use std::{
@@ -66,10 +65,11 @@ struct Driver<'a> {
     tun: Option<Tun>,
     #[cfg(target_os = "linux")]
     host: Option<meshway_underlay::Host>,
-    circuits: BTreeMap<RequestId, [u8; 32]>,
-    established: BTreeMap<RequestId, [u8; 32]>,
+    /// The one business circuit of the fixture pair; it carries TCP and UDP.
+    circuit: Option<[u8; 32]>,
+    established: Option<[u8; 32]>,
     ready: bool,
-    /// Kernel housekeeping on the TUN (IGMP, ICMPv6 ND/MLD) that no demand
+    /// Kernel housekeeping on the TUN (IGMP, ICMPv6 ND/MLD) that no grant
     /// carries; counted and dropped like the daemon's capture boundary.
     unsupported: u64,
     /// Per-packet admission rejections (flow/policy/replay/wire) that the
@@ -154,8 +154,8 @@ pub async fn run(
         tun,
         #[cfg(target_os = "linux")]
         host: io.take_host(),
-        circuits: BTreeMap::new(),
-        established: BTreeMap::new(),
+        circuit: None,
+        established: None,
         ready: false,
         unsupported: 0,
         rejected: 0,
@@ -222,7 +222,7 @@ impl Driver<'_> {
 
     fn readiness(&mut self) -> Result<(), Error> {
         if !self.ready
-            && (self.tun().is_none() || self.established.len() == self.fixture.demands.len())
+            && (self.tun().is_none() || self.established.is_some())
         {
             self.ready = true;
             println!(
@@ -234,7 +234,7 @@ impl Driver<'_> {
                 "mtu":self.options.mtu, "batch":self.options.batch, "profile":profile::enabled(),
                 "workers":self.options.workers, "tunBatch":self.capture_tun().map(|tun| tun.capabilities().vnet_header),
                 "capabilities":self.io_capabilities,
-                "publicationDigest":self.fixture.publication_digest, "circuits":self.established.len()})
+                "netmaps":self.fixture.netmaps, "circuits":usize::from(self.established.is_some())})
             );
             std::io::stdout().flush()?;
         }
@@ -303,10 +303,10 @@ impl Driver<'_> {
                         .node
                         .circuit_info(circuit)?
                         .ok_or("missing established circuit")?;
-                    let CircuitAuthorization::Business(demand) = info.authorization else {
+                    if info.grant.purpose != meshway_dataplane::Purpose::Business {
                         return Err("unexpected diagnostic circuit".into());
-                    };
-                    self.established.insert(demand, circuit);
+                    }
+                    self.established = Some(circuit);
                     if let Some(frame) = response {
                         self.output(io, frame).await?;
                     }
@@ -339,19 +339,16 @@ impl Driver<'_> {
             self.unsupported += 1;
             return Ok(None);
         };
-        let protocol = packet.facts().traffic.protocol;
-        let Some(demand) = self
-            .fixture
-            .demands
-            .values()
-            .find(|demand| demand.protocol == protocol)
-        else {
+        if !matches!(
+            packet.facts().traffic.protocol,
+            meshway_configuration::execution::BusinessProtocol::Tcp
+                | meshway_configuration::execution::BusinessProtocol::Udp
+        ) {
             self.unsupported += 1;
             return Ok(None);
-        };
-        let circuit = *self
+        }
+        let circuit = self
             .established
-            .get(&demand.id)
             .ok_or("TUN read before circuit establishment")?;
         Ok(Some((circuit, packet)))
     }
@@ -359,11 +356,21 @@ impl Driver<'_> {
     async fn run(&mut self, io: &mut io::Io) -> Result<(), Error> {
         let mut pool = Pool::new(self.options.workers)?;
         if matches!(self.options.role, NodeRole::A) {
-            for demand in self.fixture.demands.keys() {
-                let pending = self.node.start(*demand, self.fixture.path.clone())?;
-                self.circuits.insert(*demand, pending.circuit());
-                self.output(io, pending).await?;
-            }
+            let terminal = *self.fixture.path.last().ok_or("missing terminal")?;
+            let carrier = io
+                .carriers(self.fixture, self.local)?
+                .remove(&self.fixture.path[1])
+                .ok_or("missing first-hop carrier")?;
+            let pending = self.node.start_grant(
+                CircuitGrant {
+                    purpose: meshway_dataplane::Purpose::Business,
+                    target: meshway_dataplane::Target::Mesh { node: terminal },
+                },
+                self.fixture.path.clone(),
+                &carrier,
+            )?;
+            self.circuit = Some(pending.circuit());
+            self.output(io, pending).await?;
         }
         self.readiness()?;
         let mut report = tokio::time::interval(Duration::from_secs(1));
@@ -473,7 +480,7 @@ impl Driver<'_> {
                     input_ready = !self.pending.is_empty();
                 }
                 _ = retry.tick(), if !self.ready && matches!(self.options.role, NodeRole::A) => {
-                    let pending_ids: Vec<_> = self.circuits.iter().filter(|(demand, _)| !self.established.contains_key(demand)).map(|(_, id)| *id).collect();
+                    let pending_ids: Vec<_> = self.circuit.filter(|_| self.established.is_none()).into_iter().collect();
                     for id in pending_ids {
                         if let Some(frame) = self.node.retry_handshake(id)? { self.output(io, frame).await?; }
                     }

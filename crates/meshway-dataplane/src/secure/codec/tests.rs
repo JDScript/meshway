@@ -7,13 +7,14 @@ fn frame(kind: Kind) -> Frame {
     let diagnostic = matches!(kind, Kind::ProbeRequest | Kind::ProbeReply);
     let context = Context {
         network: "00000000-0000-4000-8000-000000000003".parse().unwrap(),
-        grant: CircuitGrant::Legacy(if diagnostic {
-            CircuitAuthorization::Diagnostic(
-                "00000000-0000-4000-8000-000000000004".parse().unwrap(),
-            )
-        } else {
-            CircuitAuthorization::Business("00000000-0000-4000-8000-000000000004".parse().unwrap())
-        }),
+        grant: CircuitGrant {
+            purpose: if diagnostic {
+                crate::Purpose::Diagnostic
+            } else {
+                crate::Purpose::Business
+            },
+            target: crate::Target::Mesh { node: b },
+        },
         path: vec![a, b],
         circuit: [9; 32],
         authorization: [7; 32].into(),

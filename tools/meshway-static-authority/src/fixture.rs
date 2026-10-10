@@ -1,6 +1,6 @@
 //! Deterministic topology and valid IP/TCP wire inputs; keys and IDs are random.
 use crate::{Error, NodeMaterial, StaticAuthority, random_uuid};
-use meshway_configuration::transport::{Port, PreparedListener};
+use meshway_configuration::transport::PreparedListener;
 use meshway_configuration::{execution::*, *};
 use meshway_model::{
     state::{Capability, StreamKind, TransportRole},
@@ -14,13 +14,14 @@ pub const LISTENER_KEY: &str = "perfudp";
 pub struct Chain {
     pub authority: StaticAuthority,
     pub path: Vec<NodeId>,
-    pub demand: RequestId,
+    /// The (origin = path[0], target) pair every chain circuit is admitted under.
+    pub target: meshway_policy::compile::netmap::Target,
     pub carriers: Vec<Carrier>,
     pub addresses: Vec<Ipv4Addr>,
 }
 
 impl Chain {
-    pub fn new(nodes: usize, lifetimes: [Duration; 3]) -> Result<Self, Error> {
+    pub fn new(nodes: usize, lifetime: Duration) -> Result<Self, Error> {
         if !(2..=8).contains(&nodes) {
             return Err("chain requires 2..=8 nodes".into());
         }
@@ -90,46 +91,20 @@ impl Chain {
                 .map(|id| format!("node:{id}"))
                 .collect(),
         }];
-        let demand = RequestId::new(random_uuid()?)?;
-        let expires_at_ms = meshway_authority::now()?
-            .checked_add(u64::try_from(
-                lifetimes
-                    .iter()
-                    .min()
-                    .ok_or("missing lifetime")?
-                    .as_millis(),
-            )?)
-            .ok_or("demand expiry overflow")?;
-        let demands = BTreeMap::from([(
-            demand,
-            Demand {
-                id: demand,
-                source: path[0],
-                target: BusinessTarget::Mesh { node: last },
-                protocol: BusinessProtocol::Tcp,
-                port: Some(Port::new(443)?),
-                profile: "mesh".into(),
-                expires_at_ms,
-            },
-        )]);
         let authority = StaticAuthority::compile(
             NetworkId::new(random_uuid()?)?,
             &configuration,
             &SubjectContext::default(),
             materials,
-            &demands,
-            lifetimes,
+            lifetime,
         )?;
-        for id in &path {
-            let permit = authority.publication().nodes[id]
-                .configuration
-                .permits
-                .get(&demand)
-                .ok_or("compiler did not permit the fixture")?;
-            if permit.paths.len() != 1 || permit.paths[0].nodes != path {
-                return Err("compiler did not produce the exact mandatory chain".into());
-            }
-        }
+        crate::check_path(
+            authority.netmap(path[0])?,
+            path[0],
+            std::net::IpAddr::V4(addresses[nodes - 1]),
+            (BusinessProtocol::Tcp, 443),
+            &path,
+        )?;
         let carriers = path
             .windows(2)
             .map(|pair| Carrier {
@@ -142,7 +117,7 @@ impl Chain {
         Ok(Self {
             authority,
             path,
-            demand,
+            target: meshway_policy::compile::netmap::Target::Mesh { node: last },
             carriers,
             addresses,
         })

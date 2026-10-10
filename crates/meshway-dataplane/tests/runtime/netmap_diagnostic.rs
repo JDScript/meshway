@@ -23,7 +23,7 @@ async fn ping(f: &mut NetmapMesh) -> [u8; 32] {
     assert_eq!(info.id, id);
     assert_eq!(
         info.grant,
-        CircuitGrant::Netmap {
+        CircuitGrant {
             purpose: meshway_dataplane::Purpose::Diagnostic,
             target: Target::Mesh { node: b },
         }

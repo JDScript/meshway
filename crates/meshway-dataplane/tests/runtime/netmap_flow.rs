@@ -3,7 +3,7 @@
 use super::support::netmap::{NetmapMesh, rule, sel};
 use meshway_configuration::execution::UnavailableReason;
 use meshway_dataplane::{
-    FlowGrant, Packet,
+    Packet,
     secure::{
         CircuitGrant, CircuitState, Error, Flushed, Outbound, PendingFrame, Received, Update,
         pipeline,
@@ -117,7 +117,7 @@ async fn first_packet_is_decided_and_handshaken_locally_without_any_control_call
     }
     .unwrap()
     .unwrap();
-    assert_eq!(flow.grant, FlowGrant::Netmap(f.mesh_target()));
+    assert_eq!(flow.grant, f.mesh_target());
     assert_eq!(flow.path, f.path());
     assert_eq!(f.a.retained_circuits(), 1);
     assert_eq!(
@@ -382,7 +382,7 @@ async fn relay_admits_transit_only_on_its_own_content() {
     let [a, r, b] = f.ids();
     assert!(
         f.b.start_grant(
-            CircuitGrant::Netmap {
+            CircuitGrant {
                 purpose: meshway_dataplane::Purpose::Business,
                 target: meshway_dataplane::secure::Target::Mesh { node: a },
             },
@@ -449,5 +449,40 @@ async fn relay_without_next_hop_registers_interest_and_admits_the_retried_init()
         panic!("queued packet")
     };
     delivered(&mut f, sealed(job));
+    f.close().await;
+}
+
+#[tokio::test]
+async fn tcp_flow_and_its_reply_stay_on_the_original_circuit_through_renewal() {
+    let mut f = NetmapMesh::start().await;
+    let (a, b) = (f.address(0), f.address(2));
+    let syn = super::packet::tcp(a, b, (50000, 443), 1, 0, 0x02);
+    let id = first(&mut f, syn).await;
+    let Received::Packet(packet) = reply(
+        &mut f,
+        id,
+        super::packet::tcp(b, a, (443, 50000), 7, 2, 0x12),
+    )
+    .unwrap() else {
+        panic!("SYN-ACK on the original path")
+    };
+    packet.release(|_| ()).unwrap();
+    // Same-content renewal continues the flow without a new handshake.
+    assert!(
+        f.renew()
+            .await
+            .iter()
+            .all(|update| *update == Update::Renewed)
+    );
+    let data = super::packet::tcp_with_payload(a, b, (50000, 443), 2, 8, 0x18, b"data");
+    let frame = send(&mut f, data);
+    assert_eq!(frame.circuit(), id);
+    delivered(&mut f, frame);
+    // A port outside access never opens a circuit.
+    assert!(matches!(
+        f.a.outbound(super::packet::tcp(a, b, (50001, 444), 1, 0, 0x02))
+            .unwrap(),
+        Outbound::Denied(UnavailableReason::Unauthorized)
+    ));
     f.close().await;
 }

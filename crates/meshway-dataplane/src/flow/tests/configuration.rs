@@ -1,30 +1,31 @@
 use super::super::*;
 use crate::{Action, AuthenticatedPeer, Ingress, Limits, Packet};
 use meshway_configuration::execution::*;
+use meshway_configuration::netmap::CompiledNetmap;
 use meshway_configuration::*;
 use meshway_model::state::{Capability, StreamKind, TransportRole};
-use meshway_model::{BoundNodeKey, KeyAlgorithm, NodePublicKey, Revision, Version};
+use meshway_model::{BoundNodeKey, KeyAlgorithm, NetmapLease, NodePublicKey, Revision, Version};
 use meshway_policy::{
     SubjectContext,
-    compile::{CompilationInput, ExitInputs, compile_with_exit},
+    compile::netmap::{NetmapInput, Target, compile_netmap},
 };
-use meshway_transport_spec::{Listener, NativeUdpListener, PreparedListener};
+use meshway_transport_spec::{Listener, PreparedListener};
 use std::time::Duration;
 
 pub(super) fn node(i: u8) -> NodeId {
     format!("00000000-0000-4000-8000-{i:012}").parse().unwrap()
 }
-pub(super) fn request() -> RequestId {
-    "00000000-0000-4001-8000-000000000001".parse().unwrap()
-}
 
+/// Each Node's compiled netmap and lease, its flow table and a scripted
+/// clock. Decisions go through the same per-netmap cache SecureNode uses.
 pub(super) struct Scene {
-    pub configs: BTreeMap<NodeId, NodeConfiguration>,
+    pub configs: BTreeMap<NodeId, CompiledNetmap>,
+    pub leases: BTreeMap<NodeId, NetmapLease>,
+    pub decisions: BTreeMap<NodeId, crate::netmap::Decisions>,
     pub tables: BTreeMap<NodeId, FlowTable>,
+    pub target: Target,
     pub instant: Instant,
     pub now_ms: u64,
-    pub guard_expires_at: Instant,
-    pub guard_expires_at_ms: u64,
 }
 
 impl Scene {
@@ -40,15 +41,13 @@ impl Scene {
         config.tags_owners.insert("tag:node".into(), vec![]);
         let mut inventory = BTreeMap::new();
         for i in 1..=3 {
-            let listener = Listener::NativeUdp(NativeUdpListener {
-                enabled: true,
-                remark: String::new(),
-                listen: "0.0.0.0".parse().unwrap(),
-                listen_port: Port::new(12345).unwrap(),
-                endpoints: vec![],
-                bind_interface: String::new(),
-                socket: Default::default(),
-            });
+            // Published endpoints give peers dial candidates: netmap paths
+            // only use adjacencies a carrier can actually be acquired on.
+            let listener: Listener = serde_json::from_value(serde_json::json!({
+                "type": "native_udp", "listenPort": 12345,
+                "endpoints": [{"host": format!("192.0.2.{i}"), "port": 12345}],
+            }))
+            .unwrap();
             config.nodes.insert(
                 node(i),
                 NodeSettings {
@@ -149,72 +148,50 @@ impl Scene {
                 via,
             }];
         }
-        let demand = Demand {
-            id: request(),
-            source: node(1),
-            target: if external {
-                BusinessTarget::Ip {
-                    address: ExecutionAddress("1.1.1.1".parse().unwrap()),
-                }
-            } else {
-                BusinessTarget::Mesh { node: node(3) }
-            },
-            protocol,
-            port: if protocol == BusinessProtocol::IcmpEcho {
-                None
-            } else {
-                Some(Port::new(443).unwrap())
-            },
-            profile: "mesh".into(),
-            expires_at_ms: 100_000,
-        };
-        // The exit terminal's runtime capability is a compile input: without a
-        // ready instance the exit permit is withheld, which is the fail-closed
-        // default of `compile()`.
-        let runtime = if external {
-            ExitInputs {
-                instances: BTreeMap::from([(
-                    node(3),
-                    "00000000-0000-4005-8000-000000000003".parse().unwrap(),
-                )]),
-                ready_until_ms: BTreeMap::from([(node(3), 400_000)]),
-                ..Default::default()
-            }
-        } else {
-            Default::default()
-        };
-        let publication = compile_with_exit(
-            CompilationInput {
-                network: "00000000-0000-4003-8000-000000000001".parse().unwrap(),
-                revision: Revision::MIN,
-                publication: "00000000-0000-4004-8000-000000000001".parse().unwrap(),
-                configuration: &config,
-                subjects: &SubjectContext::default(),
-                inventory: &inventory,
-                demands: &BTreeMap::from([(request(), demand)]),
-                dns: &[],
-                rule_sets: &BTreeMap::new(),
-                selected_profiles: &BTreeMap::new(),
-                now_ms: 1000,
-            },
-            &BTreeMap::new(),
-            &runtime,
-        )
+        let compiled = compile_netmap(NetmapInput {
+            network: "00000000-0000-4003-8000-000000000001".parse().unwrap(),
+            revision: Revision::MIN,
+            configuration: &config,
+            subjects: &SubjectContext::default(),
+            inventory: &inventory,
+            rule_sets: &BTreeMap::new(),
+            selected_profiles: &BTreeMap::new(),
+            selection_versions: &BTreeMap::new(),
+            previous: &BTreeMap::new(),
+        })
         .unwrap();
         let instant = Instant::now();
+        let now_ms = 1000;
         Self {
-            configs: publication
+            leases: compiled
                 .nodes
-                .into_iter()
-                .map(|(id, node)| (id, node.configuration))
+                .iter()
+                .map(|(id, netmap)| {
+                    (
+                        *id,
+                        NetmapLease::new(netmap.reference(), now_ms, now_ms + 86_400_000).unwrap(),
+                    )
+                })
                 .collect(),
+            configs: compiled.nodes,
+            decisions: (1..=3).map(|i| (node(i), Default::default())).collect(),
             tables: (1..=3)
                 .map(|i| (node(i), FlowTable::new(Limits::default())))
                 .collect(),
+            target: if external {
+                Target::Exit {
+                    nodes: vec![node(3)],
+                    via: if mandatory_relay {
+                        vec![node(2)]
+                    } else {
+                        vec![]
+                    },
+                }
+            } else {
+                Target::Mesh { node: node(3) }
+            },
             instant,
-            now_ms: 1000,
-            guard_expires_at: instant + Duration::from_secs(300),
-            guard_expires_at_ms: 301_000,
+            now_ms,
         }
     }
 
@@ -222,10 +199,6 @@ impl Scene {
         FlowTime {
             instant: self.instant,
             now_ms: self.now_ms,
-            guard: Some(Cap {
-                at: self.guard_expires_at,
-                ms: self.guard_expires_at_ms,
-            }),
         }
     }
 
@@ -244,7 +217,7 @@ impl Scene {
         let path = path.iter().map(|i| node(*i)).collect();
         let ingress = match previous {
             Some(previous) => Ingress::Peer {
-                demand: request(),
+                target: self.target.clone(),
                 path,
                 identity: AuthenticatedPeer {
                     origin: node(1),
@@ -253,7 +226,7 @@ impl Scene {
                 },
             },
             None => Ingress::Local {
-                demand: request(),
+                target: self.target.clone(),
                 path,
             },
         };
@@ -280,11 +253,34 @@ impl Scene {
         facts: PacketFacts,
     ) -> Result<CommittedRoute, Error> {
         let time = self.time();
-        let table = self.tables.get_mut(&node(local)).unwrap();
+        let id = node(local);
+        let entry = ingress.entry(id)?;
+        let origin = entry.origin;
+        let netmap = &self.configs[&id];
+        let decisions = self.decisions.get_mut(&id).unwrap();
+        let mut decide = |traffic: &meshway_policy::admission::Traffic| match decisions.decide(
+            netmap,
+            origin,
+            traffic.destination,
+            (traffic.protocol, traffic.destination_port),
+        )? {
+            crate::netmap::Outcome::Permitted(decision) => Ok(decision),
+            crate::netmap::Outcome::Denied(_) => Err(Error::Admission(
+                meshway_policy::admission::AdmissionError::Traffic,
+            )),
+            _ => Err(Error::Flow),
+        };
+        let table = self.tables.get_mut(&id).unwrap();
         let prepared = table.prepare(
-            Policy::Legacy(&self.configs[&node(local)]),
-            node(local),
-            &ingress.entry(node(local))?,
+            Policy {
+                leased: meshway_policy::admission::netmap::Leased {
+                    netmap: &netmap.netmap,
+                    lease: &self.leases[&id],
+                },
+                decide: &mut decide,
+            },
+            id,
+            &entry,
             &facts,
             time,
         )?;

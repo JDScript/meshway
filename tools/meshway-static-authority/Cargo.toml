@@ -15,7 +15,6 @@ meshway-model = { path = "../../crates/meshway-model" }
 meshway-policy = { path = "../../crates/meshway-policy" }
 serde_json.workspace = true
 serde.workspace = true
-sha2.workspace = true
 tokio-util.workspace = true
 uuid.workspace = true
 zeroize = "1.8"
