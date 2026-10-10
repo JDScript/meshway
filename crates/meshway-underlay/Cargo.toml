@@ -14,9 +14,6 @@ meshway-policy = { path = "../meshway-policy" }
 meshway-model = { path = "../meshway-model" }
 meshway-private-storage = { path = "../meshway-private-storage" }
 meshway-transport = { path = "../meshway-transport" }
-meshway-transport-spec = { path = "../meshway-transport-spec" }
-meshway-transport-tcp = { path = "../meshway-transport-tcp" }
-meshway-transport-udp = { path = "../meshway-transport-udp" }
 meshway-tun = { path = "../meshway-tun" }
 meshway-tls = { path = "../meshway-tls", features = ["platform-verifier"] }
 socket2.workspace = true

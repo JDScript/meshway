@@ -1,5 +1,5 @@
 use crate::*;
-use meshway_transport_spec::SecretString;
+use meshway_transport::spec::SecretString;
 use std::collections::BTreeMap;
 
 /// Keeps editing text (including comments and secrets) separate from the

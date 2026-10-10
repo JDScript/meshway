@@ -9,7 +9,7 @@ use std::{
 use bytes::Bytes;
 use futures_util::{Sink, Stream as MessageStream};
 use meshway_transport::raw::Stream;
-use meshway_transport_spec::{
+use meshway_transport::spec::{
     DialerWebSocket, ListenerWebSocket, WebSocketHeaders, normalize_host,
 };
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};

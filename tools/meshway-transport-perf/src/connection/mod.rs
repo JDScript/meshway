@@ -7,10 +7,10 @@ mod udp;
 mod tests;
 
 use crate::{Arguments, Error, Mode, Protocol};
+use meshway_transport::spec::{SocketOptions, TcpOptions};
+use meshway_transport::tcp::TcpTransport;
+use meshway_transport::udp::UdpTransport;
 use meshway_transport::{Limits, Session, raw::Stream};
-use meshway_transport_spec::{SocketOptions, TcpOptions};
-use meshway_transport_tcp::TcpTransport;
-use meshway_transport_udp::UdpTransport;
 use std::time::Duration;
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
 

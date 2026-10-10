@@ -3,16 +3,27 @@ name = "meshway-transport"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-description = "Bounded framed transport I/O and completion ownership for Node providers"
+description = "Transport declarations, bounded framed transport I/O and the Native TCP/UDP providers"
 
 [dependencies]
-meshway-logging = { path = "../meshway-logging" }
 futures-util.workspace = true
-meshway-transport-spec = { path = "../meshway-transport-spec" }
+idna.workspace = true
+meshway-logging = { path = "../meshway-logging" }
+meshway-model = { path = "../meshway-model" }
+rustix = { workspace = true, features = ["net"] }
+serde.workspace = true
 socket2.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["io-util"] }
 tokio-util.workspace = true
+utoipa.workspace = true
+zeroize = "1.8"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+nix = { version = "0.31.3", default-features = false, features = ["net", "socket", "uio"] }
+
+[dev-dependencies]
+serde_json.workspace = true
 
 [lints]
 workspace = true

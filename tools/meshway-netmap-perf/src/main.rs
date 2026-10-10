@@ -7,7 +7,7 @@ use meshway_model::{
     *,
 };
 use meshway_policy::compile::netmap::*;
-use meshway_transport_spec::PreparedListener;
+use meshway_transport::spec::PreparedListener;
 use serde::Serialize;
 use std::{collections::BTreeMap, time::Instant};
 

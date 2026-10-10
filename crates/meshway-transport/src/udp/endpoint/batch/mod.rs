@@ -1,5 +1,5 @@
 use super::Capabilities;
-use meshway_transport::raw::{DatagramRead, DatagramSend};
+use crate::raw::{DatagramRead, DatagramSend};
 use nix::sys::socket::{
     self, ControlMessage, ControlMessageOwned, MsgFlags, MultiHeaders, SockaddrStorage, sockopt,
 };

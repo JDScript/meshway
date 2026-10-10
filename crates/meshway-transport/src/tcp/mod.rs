@@ -1,7 +1,5 @@
 //! Native TCP adoption. Opening, routing/protecting, and authorizing sockets
 //! belongs to the host underlay/connectivity layers.
-#![forbid(unsafe_code)]
-
 use std::{
     io,
     net::SocketAddr,
@@ -9,8 +7,8 @@ use std::{
     task::{Context, Poll},
 };
 
-use meshway_transport::{Limits, Session};
-use meshway_transport_spec::{SocketOptions, TcpOptions};
+use crate::spec::{SocketOptions, TcpOptions};
+use crate::{Limits, Session};
 use socket2::SockRef;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use socket2::TcpKeepalive;
@@ -35,7 +33,7 @@ impl TcpTransport {
     pub fn adopt(stream: TcpStream, socket: &SocketOptions, tcp: &TcpOptions) -> io::Result<Self> {
         stream.peer_addr()?;
         let reference = SockRef::from(&stream);
-        meshway_transport::raw::apply_socket_options(&reference, socket)?;
+        crate::raw::apply_socket_options(&reference, socket)?;
         stream.set_nodelay(tcp.no_delay)?;
         reference.set_keepalive(tcp.keep_alive.enabled)?;
         if tcp.keep_alive.enabled {

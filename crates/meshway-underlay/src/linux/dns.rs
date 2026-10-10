@@ -52,7 +52,8 @@ impl Resolver {
         }
         let mut overrides = BTreeMap::new();
         for (name, addresses) in &options.bootstrap_hosts {
-            let name = meshway_transport_spec::normalize_host(name).map_err(|_| Error::Resolver)?;
+            let name =
+                meshway_transport::spec::normalize_host(name).map_err(|_| Error::Resolver)?;
             if addresses
                 .iter()
                 .any(|ip| ip.is_unspecified() || ip.is_multicast())
@@ -173,7 +174,7 @@ impl Resolver {
             .clone()
             .try_acquire_owned()
             .map_err(|_| Error::Capacity)?;
-        let host = meshway_transport_spec::normalize_host(host).map_err(|_| Error::Resolver)?;
+        let host = meshway_transport::spec::normalize_host(host).map_err(|_| Error::Resolver)?;
         if let Ok(ip) = host.parse::<IpAddr>() {
             return Ok(vec![SocketAddr::new(ip, port)]);
         }

@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 
-use meshway_transport::{Frame, Limits, SendContext, SendOutcome, raw::Stream};
-use meshway_transport_spec::{SocketOptions, TcpOptions};
+use crate::spec::{SocketOptions, TcpOptions};
+use crate::{Frame, Limits, SendContext, SendOutcome, raw::Stream};
 use socket2::SockRef;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},

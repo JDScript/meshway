@@ -1,6 +1,6 @@
 use crate::*;
 use meshway_model::{MembershipId, NodeId, UserId};
-use meshway_transport_spec::{Listener, MaterialRequirement, PreparedListener};
+use meshway_transport::spec::{Listener, MaterialRequirement, PreparedListener};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use utoipa::{PartialSchema, ToSchema};
@@ -240,7 +240,7 @@ fn pointer(key: &str) -> String {
 }
 fn transport_issue(
     path: impl Into<String>,
-    error: &meshway_transport_spec::DeclarationError,
+    error: &meshway_transport::spec::DeclarationError,
 ) -> ConfigurationIssue {
     ConfigurationIssue::new(path, IssueCode::InvalidTransport).with("reason", error.code())
 }
@@ -554,11 +554,11 @@ impl From<&NetworkConfiguration> for NetworkConfigurationInput {
 /// Preserve omitted material only within an existing listener resource.
 /// Callers must not pass a deleted/recreated resource as `previous`.
 pub fn inherit_materials(target: &mut Listener, previous: &Listener) {
-    fn tls(t: &mut meshway_transport_spec::ListenerTls, p: &meshway_transport_spec::ListenerTls) {
+    fn tls(t: &mut meshway_transport::spec::ListenerTls, p: &meshway_transport::spec::ListenerTls) {
         // A managed certificate is issued for one server name; a different
         // name gets a new one instead of inheriting a certificate that would
         // not verify. Provided material is the author's to keep or replace.
-        let same_managed_name = t.mode != meshway_transport_spec::TlsMode::Managed
+        let same_managed_name = t.mode != meshway_transport::spec::TlsMode::Managed
             || t.server_name.eq_ignore_ascii_case(&p.server_name);
         if t.mode == p.mode && same_managed_name {
             if t.certificate.is_none() {

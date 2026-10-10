@@ -1,7 +1,7 @@
 //! Form edit inputs retain omitted secrets; document inputs remain full values.
 use crate::{object::object, *};
 use meshway_model::VlessStream;
-use meshway_transport_spec::*;
+use meshway_transport::spec::*;
 
 object! { #[derive(Default)]
 /// WebSocket request header edits that retain omitted sensitive values.

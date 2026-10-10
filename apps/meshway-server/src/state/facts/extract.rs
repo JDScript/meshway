@@ -7,7 +7,7 @@ use meshway_model::state::{
 };
 use meshway_protocol::netmap::{PeerExitFacts, PeerFacts, PeerListenerFacts};
 use meshway_protocol::state::StateReport;
-use meshway_transport_spec::Listener;
+use meshway_transport::spec::Listener;
 use std::collections::BTreeMap;
 
 /// Same bound as local endpoints: the newest few STUN mappings per listener.

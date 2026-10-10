@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use meshway_transport_spec::{PositiveDuration, TlsVersion};
+use meshway_transport::spec::{PositiveDuration, TlsVersion};
 use rustls::SupportedProtocolVersion;
 use tokio::time::Instant;
 

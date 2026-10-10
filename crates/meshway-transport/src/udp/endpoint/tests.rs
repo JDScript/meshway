@@ -6,12 +6,12 @@ use std::{
     task::{Context, Poll},
 };
 
-use meshway_transport::{
+use crate::spec::SocketOptions;
+use crate::{
     AdmissionStop, CancelReason, Frame, Limits, ReceiveError, SendContext, SendFailure,
     SendOutcome, Session,
     raw::{Datagram, DatagramRead},
 };
-use meshway_transport_spec::SocketOptions;
 use socket2::SockRef;
 
 #[cfg(target_os = "linux")]
@@ -68,7 +68,7 @@ async fn endpoint() -> UdpTransport {
 #[cfg(target_os = "linux")]
 #[tokio::test]
 async fn kernel_gso_gro_mmsg_and_single_fallback_preserve_datagrams() {
-    use meshway_transport::raw::DatagramSend;
+    use crate::raw::DatagramSend;
     use std::future::poll_fn;
     use std::time::Duration;
     for local in ["127.0.0.1:0", "[::1]:0"] {
@@ -165,7 +165,7 @@ async fn raw_endpoint_reports_real_truncation_exact_boundary_and_source() {
     let mut buffer = [0; 8];
     for size in [9, 8, 0, 1] {
         sender.send_to(&vec![7; size], destination).await.unwrap();
-        let read = meshway_transport::raw::recv_from(receiver.as_ref(), &mut buffer)
+        let read = crate::raw::recv_from(receiver.as_ref(), &mut buffer)
             .await
             .unwrap();
         assert_eq!(read.source, source);

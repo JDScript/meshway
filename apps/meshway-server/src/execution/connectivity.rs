@@ -11,7 +11,7 @@ use meshway_configuration::{
 use meshway_model::TransportProtocol;
 use meshway_model::{NetmapRef, NetworkId, NodeId, state::ResourceRef};
 use meshway_protocol::{InstanceRequest, connectivity::UdpTraversalUnavailableReason as Reason};
-use meshway_transport_spec::Listener;
+use meshway_transport::spec::Listener;
 use rusqlite::Transaction;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;

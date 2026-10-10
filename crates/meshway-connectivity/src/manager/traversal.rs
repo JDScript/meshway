@@ -192,7 +192,7 @@ fn needs_observation(shared: &Shared) -> bool {
                 endpoint.source == meshway_configuration::execution::DialEndpointSource::Configured
             })
     }) || plan.listeners.values().any(|listener| {
-        matches!(listener.declaration(), meshway_transport_spec::Listener::NativeUdp(udp)
+        matches!(listener.declaration(), meshway_transport::spec::Listener::NativeUdp(udp)
             if udp.enabled && udp.endpoints.is_empty())
     })
 }
@@ -544,7 +544,7 @@ fn socket_compatible(plan: &Plan, carrier: &Carrier, fact: &SocketFact) -> bool 
     let Some(dial) = plan.dialers.get(&key) else {
         return false;
     };
-    let meshway_transport_spec::DialParameters::NativeUdp { options } = &dial.parameters else {
+    let meshway_transport::spec::DialParameters::NativeUdp { options } = &dial.parameters else {
         return false;
     };
     match &fact.reference.resource {
@@ -560,16 +560,19 @@ fn socket_compatible(plan: &Plan, carrier: &Carrier, fact: &SocketFact) -> bool 
 }
 
 pub(super) fn listener_covers(
-    listener: &meshway_transport_spec::PreparedListener,
+    listener: &meshway_transport::spec::PreparedListener,
     local: SocketAddr,
-    options: &meshway_transport_spec::NativeUdpDialer,
+    options: &meshway_transport::spec::NativeUdpDialer,
 ) -> bool {
     dial_bind_matches(options, local)
-        && matches!(listener.declaration(), meshway_transport_spec::Listener::NativeUdp(listener)
+        && matches!(listener.declaration(), meshway_transport::spec::Listener::NativeUdp(listener)
             if listener.enabled && listener.bind_interface.is_empty() && listener.socket == options.socket)
 }
 
-fn dial_bind_matches(options: &meshway_transport_spec::NativeUdpDialer, local: SocketAddr) -> bool {
+fn dial_bind_matches(
+    options: &meshway_transport::spec::NativeUdpDialer,
+    local: SocketAddr,
+) -> bool {
     options.enabled
         && options.bind_interface.is_empty()
         && (options.local_address.is_empty()

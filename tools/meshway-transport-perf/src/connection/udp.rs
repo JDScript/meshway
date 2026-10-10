@@ -1,5 +1,5 @@
 use crate::{Arguments, Error};
-use meshway_transport_udp::UdpTransport;
+use meshway_transport::udp::UdpTransport;
 use std::{
     net::SocketAddr,
     time::{Duration, Instant},

@@ -4,7 +4,7 @@ use super::{Snapshot, commit::Draft};
 use crate::error::Error;
 use meshway_configuration::{NetworkConfigurationInput, UserBinding, ValidationContext};
 use meshway_model::{NetworkId, NodeId};
-use meshway_transport_spec::Listener;
+use meshway_transport::spec::Listener;
 use rusqlite::Transaction;
 use std::collections::{BTreeMap, BTreeSet};
 

@@ -5,7 +5,7 @@ use crate::{
 use meshway_model::NodeId;
 use meshway_model::TransportProtocol;
 use meshway_model::wire::required_nullable as nullable;
-use meshway_transport_spec::{DialerSet, Listener, Port, PositiveDuration, PreparedListener};
+use meshway_transport::spec::{DialerSet, Listener, Port, PositiveDuration, PreparedListener};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,

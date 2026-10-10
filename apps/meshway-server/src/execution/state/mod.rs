@@ -19,7 +19,7 @@ use meshway_configuration::{
 };
 use meshway_model::state::{ResourceRef, SocketNetwork};
 use meshway_model::*;
-use meshway_transport_spec::{Endpoint, Listener};
+use meshway_transport::spec::{Endpoint, Listener};
 use rusqlite::Transaction;
 use std::{
     collections::{BTreeMap, BTreeSet},

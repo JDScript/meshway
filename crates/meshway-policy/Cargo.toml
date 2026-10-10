@@ -8,7 +8,7 @@ description = "Shared Meshway Access, routing, compilation and execution-permit 
 [dependencies]
 meshway-configuration = { path = "../meshway-configuration" }
 meshway-model = { path = "../meshway-model" }
-meshway-transport-spec = { path = "../meshway-transport-spec" }
+meshway-transport = { path = "../meshway-transport" }
 ipnet.workspace = true
 serde.workspace = true
 thiserror.workspace = true

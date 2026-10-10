@@ -5,7 +5,7 @@ use meshway_configuration::{
     netmap::NodeNetmap,
 };
 use meshway_model::NodeId;
-use meshway_transport_spec::PreparedListener;
+use meshway_transport::spec::PreparedListener;
 use std::collections::BTreeMap;
 #[cfg(target_os = "linux")]
 use {

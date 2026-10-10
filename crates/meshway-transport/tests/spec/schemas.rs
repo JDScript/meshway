@@ -1,5 +1,5 @@
 use meshway_model::{OuterSocket, TransportProtocol, VlessStream};
-use meshway_transport_spec::{
+use meshway_transport::spec::{
     Port, PositiveDuration, TlsVersion, WebSocketHeaderName, WebSocketHeaderValue,
     WebSocketHeaders, WebSocketPath,
 };

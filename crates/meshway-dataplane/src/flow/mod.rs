@@ -16,7 +16,7 @@ use meshway_policy::{
     admission::{Hop, Traffic},
     compile::netmap::{Decision, Target},
 };
-use meshway_transport_spec::Port;
+use meshway_transport::spec::Port;
 use std::{
     collections::BTreeMap,
     net::IpAddr,

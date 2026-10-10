@@ -17,7 +17,6 @@ meshway-stun = { path = "../meshway-stun" }
 meshway-dataplane = { path = "../meshway-dataplane" }
 meshway-underlay = { path = "../meshway-underlay" }
 meshway-transport = { path = "../meshway-transport" }
-meshway-transport-spec = { path = "../meshway-transport-spec" }
 meshway-transport-vless = { path = "../meshway-transport-vless" }
 meshway-transport-trojan = { path = "../meshway-transport-trojan" }
 tokio = { workspace = true, features = ["io-util"] }
@@ -37,7 +36,6 @@ meshway-test-server = { path = "../../tools/meshway-test-server" }
 tempfile.workspace = true
 uuid.workspace = true
 meshway-private-storage = { path = "../meshway-private-storage" }
-meshway-transport-udp = { path = "../meshway-transport-udp" }
 
 [lints]
 workspace = true

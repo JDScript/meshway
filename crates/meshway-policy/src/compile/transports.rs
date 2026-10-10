@@ -1,7 +1,7 @@
 use super::*;
 use meshway_model::state::{Capability, StreamKind, TransportRole};
 use meshway_model::{TransportProtocol, VlessStream};
-use meshway_transport_spec::*;
+use meshway_transport::spec::*;
 
 pub(super) fn candidates(
     input: &Topology<'_>,

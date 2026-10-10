@@ -1,6 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
-use meshway_transport_spec::ListenerTls;
+use meshway_transport::spec::ListenerTls;
 use rustls::{ServerConfig, sign::SingleCertAndKey};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_rustls::{TlsAcceptor, TlsStream};

@@ -13,7 +13,7 @@ use crate::{
     object::{object, tagged, unique_map},
 };
 use meshway_model::{Digest, NetmapRef, NetworkId, NodeId, Revision, Version, exit::ExitFamily};
-use meshway_transport_spec::PreparedListener;
+use meshway_transport::spec::PreparedListener;
 use std::collections::BTreeMap;
 mod delta;
 mod projection;

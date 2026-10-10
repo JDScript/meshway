@@ -14,7 +14,7 @@ pub use crate::output::CheckedOutput;
 /// Zero retains the OS setting; this neither opens nor protects a socket.
 pub fn apply_socket_options(
     socket: &socket2::SockRef<'_>,
-    options: &meshway_transport_spec::SocketOptions,
+    options: &crate::spec::SocketOptions,
 ) -> io::Result<()> {
     if options.receive_buffer > i32::MAX as u32 || options.send_buffer > i32::MAX as u32 {
         return Err(io::Error::new(

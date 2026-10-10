@@ -1565,7 +1565,7 @@ impl ControlBudget {
 pub(in crate::manager) mod tests {
     use super::super::tests::{netmap::support::Netmaps, support::carriers};
     use super::*;
-    use meshway_transport_udp::UdpTransport;
+    use meshway_transport::udp::UdpTransport;
     use tokio::net::UdpSocket;
 
     pub(in crate::manager) fn shared(

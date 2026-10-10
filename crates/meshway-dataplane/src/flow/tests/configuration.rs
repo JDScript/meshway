@@ -9,7 +9,7 @@ use meshway_policy::{
     SubjectContext,
     compile::netmap::{NetmapInput, Target, compile_netmap},
 };
-use meshway_transport_spec::{Listener, PreparedListener};
+use meshway_transport::spec::{Listener, PreparedListener};
 use std::time::Duration;
 
 pub(super) fn node(i: u8) -> NodeId {

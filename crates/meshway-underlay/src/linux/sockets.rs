@@ -2,7 +2,7 @@ use meshway_configuration::execution::{DialCandidate, DialEndpoint};
 use meshway_engine::Desired;
 use meshway_model::NodeId;
 use meshway_model::TransportProtocol;
-use meshway_transport_spec::{
+use meshway_transport::spec::{
     DialParameters, Endpoint, Listener, PreparedListener, SocketOptions, TcpOptions,
 };
 use socket2::SockRef;
@@ -410,7 +410,7 @@ impl SocketFactory {
     }
 }
 
-fn udp_local(options: &meshway_transport_spec::NativeUdpDialer) -> Result<Option<IpAddr>> {
+fn udp_local(options: &meshway_transport::spec::NativeUdpDialer) -> Result<Option<IpAddr>> {
     if !options.enabled || !options.bind_interface.is_empty() {
         return Err(Error::Target);
     }
@@ -566,7 +566,7 @@ fn adopt(
     tcp: &TcpOptions,
 ) -> Result<ProtectedTcp> {
     scope.prepare_checked(&SockRef::from(&stream))?;
-    let stream = meshway_transport_tcp::TcpTransport::adopt(stream, options, tcp)?.into_inner();
+    let stream = meshway_transport::tcp::TcpTransport::adopt(stream, options, tcp)?.into_inner();
     let local = stream.local_addr()?;
     let peer = stream.peer_addr()?;
     Ok(ProtectedTcp {

@@ -1,7 +1,7 @@
 use crate::Error;
 use meshway_model::TransportProtocol;
 use meshway_transport::raw::Stream;
-use meshway_transport_spec::{DialParameters, Endpoint, Listener, Port, PreparedListener};
+use meshway_transport::spec::{DialParameters, Endpoint, Listener, Port, PreparedListener};
 
 pub(crate) fn declaration(listener: &PreparedListener) -> (TransportProtocol, bool) {
     match listener.declaration() {

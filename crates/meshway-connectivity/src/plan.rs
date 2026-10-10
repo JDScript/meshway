@@ -11,7 +11,7 @@ use meshway_configuration::{
 use meshway_engine::DataPlaneKeys;
 use meshway_model::TransportProtocol;
 use meshway_model::{BoundNodeKey, NetworkId, NodeId};
-use meshway_transport_spec::PreparedListener;
+use meshway_transport::spec::PreparedListener;
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::{Arc, Mutex},

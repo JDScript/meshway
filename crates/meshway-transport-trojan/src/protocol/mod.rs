@@ -1,7 +1,7 @@
 //! Wire order follows sing-box/transport/trojan/protocol.go (927770c).
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-use meshway_transport_spec::{Endpoint, Port, normalize_host};
+use meshway_transport::spec::{Endpoint, Port, normalize_host};
 use sha2::{Digest, Sha224};
 use subtle::ConstantTimeEq;
 use tokio::io::{AsyncRead, AsyncReadExt};

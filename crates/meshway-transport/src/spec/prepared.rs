@@ -1,6 +1,6 @@
 //! Transport inputs selected by configuration compilation. Their presence does
 //! not attest TLS verification, runtime support, or permission to connect.
-use crate::{
+use crate::spec::{
     DialerTls, ListenerWebSocket, NativeTcpDialer, NativeUdpDialer, SecretString, TrojanDialer,
     VlessDialer, object::object,
 };

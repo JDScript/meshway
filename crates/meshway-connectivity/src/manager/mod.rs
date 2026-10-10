@@ -543,7 +543,7 @@ impl Manager {
             // Dial-only acquisition uses a real configured Native UDP socket,
             // even when the compiler intentionally kept no published target.
             for (key, candidate) in &plan.dialers {
-                let meshway_transport_spec::DialParameters::NativeUdp { options } =
+                let meshway_transport::spec::DialParameters::NativeUdp { options } =
                     &candidate.parameters
                 else {
                     continue;

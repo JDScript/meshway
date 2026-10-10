@@ -1,5 +1,5 @@
 use crate::object::tagged;
-use meshway_transport_spec::Port;
+use meshway_transport::spec::Port;
 
 tagged! {
 /// Exact service scope checked by Access and routing for a diagnostic operation.

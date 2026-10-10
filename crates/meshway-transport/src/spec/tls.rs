@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::ValidationError;
+use crate::spec::ValidationError;
 
 /// Supported TLS protocol version bound, encoded as `1.2` or `1.3`.
 #[derive(

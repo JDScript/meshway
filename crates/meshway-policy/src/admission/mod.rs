@@ -7,7 +7,7 @@ use meshway_configuration::{
     execution::{BusinessProtocol, LogicalPath},
 };
 use meshway_model::{BoundNodeKey, KeyAlgorithm, NodeId};
-use meshway_transport_spec::Port;
+use meshway_transport::spec::Port;
 use std::net::IpAddr;
 pub mod netmap;
 

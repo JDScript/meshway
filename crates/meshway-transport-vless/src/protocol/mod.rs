@@ -2,7 +2,7 @@
 //! mihomo/transport/vless/{vless,conn}.go (88dcbf7).
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-use meshway_transport_spec::{Endpoint, Port, normalize_host, validate_vless_uuid};
+use meshway_transport::spec::{Endpoint, Port, normalize_host, validate_vless_uuid};
 use subtle::ConstantTimeEq;
 use tokio::io::{AsyncRead, AsyncReadExt};
 use zeroize::Zeroizing;

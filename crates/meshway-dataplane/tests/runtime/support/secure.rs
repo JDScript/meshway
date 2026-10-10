@@ -1,7 +1,7 @@
 //! Real Control identities and native TCP sessions; no synthetic identity adapter.
 use meshway_dataplane::secure::{Carrier, PendingFrame};
+use meshway_transport::tcp::TcpTransport;
 use meshway_transport::{Receiver, Sender};
-use meshway_transport_tcp::TcpTransport;
 use std::{net::SocketAddr, time::Duration};
 use tokio::net::{TcpListener, TcpStream};
 

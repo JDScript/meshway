@@ -1,6 +1,6 @@
 //! Canonical inner-service sets authorized by one grant.
 use crate::{execution::BusinessProtocol, object::object};
-use meshway_transport_spec::Port;
+use meshway_transport::spec::Port;
 
 object! {
 /// Inclusive destination-port interval.

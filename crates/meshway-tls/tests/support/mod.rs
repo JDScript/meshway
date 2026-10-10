@@ -8,7 +8,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use meshway_transport_spec::{
+use meshway_transport::spec::{
     ClientTls, DialerTls, ListenerTls, SecretString, TlsMode, TlsVersion,
 };
 use rcgen::{

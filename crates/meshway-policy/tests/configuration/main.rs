@@ -4,7 +4,7 @@ use meshway_policy::{
     SubjectContext, domain_suffix_matches, normalize, normalize_with_dependencies,
     plan_configuration, topology_allows,
 };
-use meshway_transport_spec::{DialerSet, Listener, MaterialRequirement};
+use meshway_transport::spec::{DialerSet, Listener, MaterialRequirement};
 use std::collections::BTreeMap;
 
 mod support;

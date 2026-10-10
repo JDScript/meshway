@@ -17,7 +17,7 @@ use meshway_protocol::{
     state::{Freshness, VisibleReport},
 };
 use meshway_server::{App, Settings};
-use meshway_transport_spec::{
+use meshway_transport::spec::{
     DialerSet, Endpoint, Listener, NativeTcpDialer, NativeTcpListener, NativeUdpDialer,
     NativeUdpListener,
 };
@@ -593,7 +593,7 @@ async fn coordinate(
             // Business still follows A-R-B over the bidirectional channels.
             // Local-endpoint conformance likewise requires A/B to redial R's
             // reported address, rather than passing through R's reverse dial.
-            Input::Value(meshway_transport_spec::DialerSet {
+            Input::Value(meshway_transport::spec::DialerSet {
                 native_udp: None,
                 native_tcp: None,
                 vless: None,

@@ -5,11 +5,11 @@ use std::{
     task::{Context, Poll, ready},
 };
 
-use meshway_transport::{
+use crate::spec::SocketOptions;
+use crate::{
     Limits, Session,
     raw::{self, Datagram, DatagramRead},
 };
-use meshway_transport_spec::SocketOptions;
 use rustix::net::{RecvAncillaryBuffer, RecvFlags, ReturnFlags, recvmsg};
 use socket2::SockRef;
 use tokio::{io::Interest, net::UdpSocket};

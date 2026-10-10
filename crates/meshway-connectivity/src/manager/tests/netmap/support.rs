@@ -9,7 +9,7 @@ use meshway_test_server::{
     Facts, Script, TestServer,
     configuration::{compile, network, tag_node, trusted_keys},
 };
-use meshway_transport_spec::{
+use meshway_transport::spec::{
     DialerSet, Endpoint, NativeTcpDialer, NativeTcpListener, NativeUdpDialer, NativeUdpListener,
     PreparedListener,
 };

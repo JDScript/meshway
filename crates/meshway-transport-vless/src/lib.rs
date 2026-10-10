@@ -13,7 +13,7 @@ use std::{fmt, io, time::Duration};
 
 use meshway_model::VlessStream;
 use meshway_transport::raw::{CheckedOutput, Stream};
-use meshway_transport_spec::{
+use meshway_transport::spec::{
     DialParameters, DialerStream, Endpoint, Listener, PreparedListener, validate_websocket_alpn,
 };
 use tokio::{io::AsyncWriteExt, time::Instant};

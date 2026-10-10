@@ -13,7 +13,7 @@ use utoipa::{
     openapi::schema::{ObjectBuilder, Type},
 };
 
-use crate::ValidationError;
+use crate::spec::ValidationError;
 
 /// Exact path, preserved without URL decoding or normalization.
 /// Unicode is permitted, but whitespace, C0/C1 controls, query and fragment

@@ -10,7 +10,6 @@ meshway-logging = { path = "../meshway-logging" }
 meshway-configuration = { path = "../meshway-configuration" }
 meshway-policy = { path = "../meshway-policy" }
 meshway-model = { path = "../meshway-model" }
-meshway-transport-spec = { path = "../meshway-transport-spec" }
 meshway-engine = { path = "../meshway-engine" }
 meshway-transport = { path = "../meshway-transport" }
 meshway-tun = { path = "../meshway-tun" }
@@ -36,7 +35,6 @@ meshway-control = { path = "../meshway-control" }
 meshway-test-server = { path = "../../tools/meshway-test-server" }
 meshway-protocol = { path = "../meshway-protocol" }
 meshway-dns = { path = "../meshway-dns" }
-meshway-transport-tcp = { path = "../meshway-transport-tcp" }
 serde_json.workspace = true
 hickory-proto = { version = "0.26.3", default-features = false, features = ["std"] }
 

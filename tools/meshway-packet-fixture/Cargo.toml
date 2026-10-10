@@ -15,8 +15,6 @@ meshway-control-client = { path = "../../crates/meshway-control-client" }
 meshway-control = { path = "../../crates/meshway-control" }
 meshway-dataplane = { path = "../../crates/meshway-dataplane" }
 meshway-transport = { path = "../../crates/meshway-transport" }
-meshway-transport-spec = { path = "../../crates/meshway-transport-spec" }
-meshway-transport-tcp = { path = "../../crates/meshway-transport-tcp" }
 meshway-tun = { path = "../../crates/meshway-tun" }
 meshway-tls = { path = "../../crates/meshway-tls" }
 meshway-logging = { path = "../../crates/meshway-logging" }

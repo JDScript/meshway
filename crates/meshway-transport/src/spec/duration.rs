@@ -6,7 +6,7 @@ use utoipa::{
     openapi::schema::{ObjectBuilder, Type},
 };
 
-use crate::{ValidationError, schema::positive_decimal_pattern};
+use crate::spec::{ValidationError, schema::positive_decimal_pattern};
 
 const UNITS: [(&str, u64); 4] = [("ms", 1), ("s", 1_000), ("m", 60_000), ("h", 3_600_000)];
 

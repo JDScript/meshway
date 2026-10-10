@@ -19,7 +19,7 @@ use meshway_test_server::{
     Facts, Script,
     configuration::{network, tag_node},
 };
-use meshway_transport_spec::PreparedListener;
+use meshway_transport::spec::PreparedListener;
 use std::{collections::BTreeMap, net::IpAddr, sync::Arc};
 use tokio::net::TcpListener;
 

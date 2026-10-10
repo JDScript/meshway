@@ -42,7 +42,7 @@ pub(super) fn candidates(
         // Unsupported dial candidates cannot be used; another configured stream
         // candidate may still be usable. Enabled unsupported listeners fail start.
         let (driver, timeout) = match &candidate.parameters {
-            meshway_transport_spec::DialParameters::NativeUdp { options } if options.enabled => (
+            meshway_transport::spec::DialParameters::NativeUdp { options } if options.enabled => (
                 Driver::Datagram,
                 options
                     .connect_timeout

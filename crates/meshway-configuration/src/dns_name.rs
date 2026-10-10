@@ -13,7 +13,7 @@ pub fn normalize_dns_name(value: &str) -> Result<String, DnsNameError> {
     if value.len() > MAX_DNS_NAME_INPUT_BYTES {
         return Err(DnsNameError);
     }
-    let normalized = meshway_transport_spec::normalize_host(value).map_err(|_| DnsNameError)?;
+    let normalized = meshway_transport::spec::normalize_host(value).map_err(|_| DnsNameError)?;
     if normalized.parse::<IpAddr>().is_ok() {
         return Err(DnsNameError);
     }

@@ -1,6 +1,6 @@
 use std::{io::Cursor, sync::Arc};
 
-use meshway_transport_spec::ListenerTls;
+use meshway_transport::spec::ListenerTls;
 use rustls::{
     RootCertStore,
     client::{WebPkiServerVerifier, danger::ServerCertVerifier},

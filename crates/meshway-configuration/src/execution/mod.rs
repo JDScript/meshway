@@ -2,8 +2,8 @@
 use crate::object::object;
 use meshway_model::TransportProtocol;
 use meshway_model::{BoundNodeKey, NetworkId, NodeId};
-use meshway_transport_spec::*;
-pub use meshway_transport_spec::{ClientTls, DialParameters};
+use meshway_transport::spec::*;
+pub use meshway_transport::spec::{ClientTls, DialParameters};
 use std::{collections::BTreeMap, net::IpAddr};
 mod diagnostics;
 mod exit;

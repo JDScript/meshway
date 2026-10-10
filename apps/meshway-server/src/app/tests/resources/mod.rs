@@ -220,10 +220,10 @@ impl Connector for HttpsSource {
                 self.address.port()
             )]
         );
-        let tls = meshway_tls::Client::new(&meshway_transport_spec::ClientTls {
+        let tls = meshway_tls::Client::new(&meshway_transport::spec::ClientTls {
             server_name: host.into(),
-            certificate_chain: meshway_transport_spec::SecretString::new(self.certificate.clone()),
-            options: meshway_transport_spec::DialerTls {
+            certificate_chain: meshway_transport::spec::SecretString::new(self.certificate.clone()),
+            options: meshway_transport::spec::DialerTls {
                 alpn: vec!["http/1.1".into()],
                 ..Default::default()
             },

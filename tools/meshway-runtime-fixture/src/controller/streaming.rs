@@ -1,6 +1,6 @@
 use crate::{CarrierMode, Cli, Result};
 use meshway_model::VlessStream;
-use meshway_transport_spec::{
+use meshway_transport::spec::{
     Endpoint, Listener, ListenerTls, SecretString, TlsMode, TlsVersion, TrojanListener,
     VlessListener,
 };

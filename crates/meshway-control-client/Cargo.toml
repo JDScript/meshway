@@ -17,7 +17,7 @@ reqwest-middleware = "0.5"
 [dev-dependencies]
 axum.workspace = true
 meshway-server = { path = "../../apps/meshway-server" }
-meshway-transport-spec = { path = "../meshway-transport-spec" }
+meshway-transport = { path = "../meshway-transport" }
 rcgen = { version = "0.14", default-features = false, features = ["pem", "ring"] }
 rustls.workspace = true
 tokio.workspace = true

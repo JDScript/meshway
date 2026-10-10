@@ -6,8 +6,8 @@ use super::{
 };
 use crate::{Error, Result};
 use meshway_transport::raw::{Datagram, DatagramRead, DatagramSend};
-use meshway_transport_spec::SocketOptions;
-use meshway_transport_udp::UdpTransport;
+use meshway_transport::spec::SocketOptions;
+use meshway_transport::udp::UdpTransport;
 use socket2::{Domain, Protocol, SockRef, Socket, Type};
 use std::{
     fmt, io,

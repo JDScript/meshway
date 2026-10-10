@@ -48,12 +48,12 @@ async fn fixed_origin_https_survives_explicit_network_down() {
         .unwrap()
         .timeout(std::time::Duration::from_secs(10));
     if let Ok(path) = std::env::var("MESHWAY_UNDERLAY_CA") {
-        let tls = meshway_tls::Client::new(&meshway_transport_spec::ClientTls {
+        let tls = meshway_tls::Client::new(&meshway_transport::spec::ClientTls {
             server_name: url.host_str().unwrap().into(),
-            certificate_chain: meshway_transport_spec::SecretString::new(
+            certificate_chain: meshway_transport::spec::SecretString::new(
                 std::fs::read_to_string(path).unwrap(),
             ),
-            options: meshway_transport_spec::DialerTls {
+            options: meshway_transport::spec::DialerTls {
                 alpn: vec!["http/1.1".into()],
                 ..Default::default()
             },

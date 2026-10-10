@@ -1,6 +1,6 @@
 use std::{fmt, sync::Arc, time::Duration};
 
-use meshway_transport_spec::{ClientTls, TlsTrust};
+use meshway_transport::spec::{ClientTls, TlsTrust};
 use rustls::{
     ClientConfig, DigitallySignedStruct, SignatureScheme,
     client::{

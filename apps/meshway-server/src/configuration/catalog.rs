@@ -3,7 +3,7 @@ use meshway_model::{OuterSocket, TransportProtocol};
 use meshway_protocol::configuration::{
     ConfigurationSchemaResponse, TransportCatalogEntry, TransportCatalogResponse,
 };
-use meshway_transport_spec::*;
+use meshway_transport::spec::*;
 use utoipa::{PartialSchema, ToSchema};
 
 pub(crate) fn schema(id: RequestId) -> Result<ConfigurationSchemaResponse, super::Error> {

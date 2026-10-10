@@ -7,7 +7,6 @@ description = "Trojan TCP CONNECT over exact-trust TLS on injected byte streams"
 
 [dependencies]
 meshway-transport = { path = "../meshway-transport" }
-meshway-transport-spec = { path = "../meshway-transport-spec" }
 meshway-tls = { path = "../meshway-tls" }
 sha2.workspace = true
 tokio = { workspace = true, features = ["io-util"] }

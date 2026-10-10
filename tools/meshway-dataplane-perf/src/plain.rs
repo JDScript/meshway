@@ -1,12 +1,12 @@
 use crate::{Error, NodeOptions};
 use futures_util::FutureExt;
 use meshway_logging::profile::{self, Metric};
+use meshway_transport::spec::SocketOptions;
+use meshway_transport::udp::UdpTransport;
 use meshway_transport::{
     BatchOutcome, ChannelScope, Frame, Limits, Receiver, ScopedFrame, SendContext, SendOutcome,
     Sender,
 };
-use meshway_transport_spec::SocketOptions;
-use meshway_transport_udp::UdpTransport;
 use meshway_tun::{Options, PacketBatch, Tun};
 use std::{collections::VecDeque, io::Write, net::SocketAddr, time::Duration};
 use tokio_util::sync::CancellationToken;
@@ -92,7 +92,7 @@ pub async fn run_with_io(
     result
 }
 
-fn capabilities(tun: &Tun, udp: meshway_transport_udp::Capabilities) -> serde_json::Value {
+fn capabilities(tun: &Tun, udp: meshway_transport::udp::Capabilities) -> serde_json::Value {
     let tun = tun.capabilities();
     serde_json::json!({"tun": {"vnetHeader": tun.vnet_header, "checksum": tun.checksum, "tso4": tun.tso4, "tso6": tun.tso6, "uso4": tun.uso4, "uso6": tun.uso6},
         "udp": {"segment": udp.udp_segment, "gro": udp.udp_gro, "sendmmsg": udp.sendmmsg, "recvmmsg": udp.recvmmsg,

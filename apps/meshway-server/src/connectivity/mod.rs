@@ -182,7 +182,7 @@ pub struct Connectivity {
     handle: Handle,
     execution: Execution,
     runtime: Arc<Mutex<Runtime>>,
-    stun_servers: Arc<BTreeMap<String, meshway_transport_spec::Endpoint>>,
+    stun_servers: Arc<BTreeMap<String, meshway_transport::spec::Endpoint>>,
     stun_health: crate::stun::Health,
 }
 impl Connectivity {
@@ -190,7 +190,7 @@ impl Connectivity {
         handle: Handle,
         execution: Execution,
         runtime: Arc<Mutex<Runtime>>,
-        stun_servers: Arc<BTreeMap<String, meshway_transport_spec::Endpoint>>,
+        stun_servers: Arc<BTreeMap<String, meshway_transport::spec::Endpoint>>,
         stun_health: crate::stun::Health,
     ) -> Self {
         Self {

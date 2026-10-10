@@ -12,7 +12,7 @@ use meshway_configuration::{
 };
 use meshway_model::{BoundNodeKey, Digest, NetmapRef, NetworkId, NodeId};
 use meshway_policy::compile::netmap::{Decision, LocalCompiler, LocalDecision, Target};
-use meshway_transport_spec::Port;
+use meshway_transport::spec::Port;
 use sha2::{Digest as _, Sha256};
 use std::{collections::BTreeMap, net::IpAddr, sync::Arc};
 

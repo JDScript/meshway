@@ -9,7 +9,7 @@ mod protocol;
 use std::{fmt, io, time::Duration};
 
 use meshway_transport::raw::{CheckedOutput, Stream};
-use meshway_transport_spec::{DialParameters, Endpoint, Listener, PreparedListener, TrojanStream};
+use meshway_transport::spec::{DialParameters, Endpoint, Listener, PreparedListener, TrojanStream};
 use tokio::{io::AsyncWriteExt, time::Instant};
 use zeroize::Zeroizing;
 

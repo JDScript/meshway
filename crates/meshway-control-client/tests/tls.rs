@@ -1,7 +1,7 @@
 use std::{net::SocketAddr, time::Duration};
 
 use meshway_control_client::http_client_builder;
-use meshway_transport_spec::{
+use meshway_transport::spec::{
     ClientTls, DialerTls, ListenerTls, SecretString, TlsMode, TlsVersion,
 };
 use rcgen::{BasicConstraints, CertificateParams, CertifiedIssuer, IsCa, KeyPair, KeyUsagePurpose};

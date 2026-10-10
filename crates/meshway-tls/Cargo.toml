@@ -9,7 +9,7 @@ description = "Shared TLS provider, certificate verification and caller-owned st
 platform-verifier = ["dep:rustls-platform-verifier"]
 
 [dependencies]
-meshway-transport-spec = { path = "../meshway-transport-spec" }
+meshway-transport = { path = "../meshway-transport" }
 rustls.workspace = true
 rustls-pemfile.workspace = true
 rustls-platform-verifier = { workspace = true, optional = true }

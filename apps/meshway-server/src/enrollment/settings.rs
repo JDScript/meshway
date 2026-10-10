@@ -19,7 +19,7 @@ pub(crate) fn normalize(
         hostname.make_ascii_lowercase();
         if !hostname.is_ascii()
             || hostname.contains('.')
-            || meshway_transport_spec::normalize_host(hostname).as_ref() != Ok(hostname)
+            || meshway_transport::spec::normalize_host(hostname).as_ref() != Ok(hostname)
         {
             return Err(invalid(ConfigurationIssue::new(
                 "/initialSettings/hostname",

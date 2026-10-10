@@ -69,7 +69,7 @@ struct Cli {
     reported_endpoints: bool,
     /// Explicit Server lease for expiry conformance; production defaults to 24h.
     #[arg(long, global = true, default_value = "60s")]
-    netmap_validity: meshway_transport_spec::PositiveDuration,
+    netmap_validity: meshway_transport::spec::PositiveDuration,
     /// Diagnostic traffic window only; does not establish 125-second renewal acceptance.
     #[arg(long, global = true)]
     short: bool,

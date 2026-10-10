@@ -1,11 +1,11 @@
 use std::{collections::VecDeque, future::poll_fn, task::Poll};
 
-use meshway_transport::{Frame, Limits, SendContext, SendOutcome, Session};
-use meshway_transport_spec::{
+use meshway_transport::spec::{
     ClientTls, DialParameters, Endpoint, Listener, ListenerTls, Port, PreparedListener,
     SecretString, SocketOptions, TcpOptions, TlsMode, TlsVersion, TrojanDialer, TrojanListener,
     TrojanStream,
 };
+use meshway_transport::{Frame, Limits, SendContext, SendOutcome, Session};
 use meshway_transport_trojan::{Acceptor, Connector, Error};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 

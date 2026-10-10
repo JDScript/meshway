@@ -4,7 +4,7 @@ use crate::{
 };
 use meshway_model::NodeId;
 use meshway_model::{TransportProtocol, VlessStream};
-use meshway_transport_spec::{
+use meshway_transport::spec::{
     DialerSet, DialerStream, DialerTls, Endpoint, Listener, NativeTcpDialer, NativeUdpDialer,
     PositiveDuration, SocketOptions, TcpOptions, TlsMode, TlsVersion, TrojanDialer, WebSocketPath,
 };
@@ -94,7 +94,7 @@ impl From<&Listener> for ListenerView {
                 }
             };
         }
-        fn tls(t: &meshway_transport_spec::ListenerTls) -> ListenerTlsView {
+        fn tls(t: &meshway_transport::spec::ListenerTls) -> ListenerTlsView {
             ListenerTlsView {
                 mode: t.mode,
                 server_name: t.server_name.clone(),

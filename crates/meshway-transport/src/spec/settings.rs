@@ -1,5 +1,5 @@
 //! Pure declared fields. Acceptance here is not a compiled/runtime capability.
-use crate::{
+use crate::spec::{
     Port, PositiveDuration, SecretString, TlsVersion, WebSocketHeaders, WebSocketPath,
     object::object,
 };
@@ -386,12 +386,14 @@ impl<'de> Deserialize<'de> for Listener {
             Vless(VlessListener),
             Trojan(TrojanListener),
         }
-        Ok(match Fields::deserialize(crate::object::MapOnly(d))? {
-            Fields::NativeUdp(v) => Self::NativeUdp(v),
-            Fields::NativeTcp(v) => Self::NativeTcp(v),
-            Fields::Vless(v) => Self::Vless(v),
-            Fields::Trojan(v) => Self::Trojan(v),
-        })
+        Ok(
+            match Fields::deserialize(crate::spec::object::MapOnly(d))? {
+                Fields::NativeUdp(v) => Self::NativeUdp(v),
+                Fields::NativeTcp(v) => Self::NativeTcp(v),
+                Fields::Vless(v) => Self::Vless(v),
+                Fields::Trojan(v) => Self::Trojan(v),
+            },
+        )
     }
 }
 

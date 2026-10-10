@@ -82,7 +82,7 @@ async fn denied_and_unsupported_stay_distinct() {
     let [a, b, c] = lab.nodes;
     let service = lab.app.observation_service(lab.app.netmap_diagnostics());
     let tcp = |port: u16| ObservationServiceScope::Tcp {
-        port: meshway_transport_spec::Port::new(port).unwrap(),
+        port: meshway_transport::spec::Port::new(port).unwrap(),
     };
     for (scope, target) in [(tcp(80), b), (ObservationServiceScope::IcmpEcho, c)] {
         let denied = CreateObservation {

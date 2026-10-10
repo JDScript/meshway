@@ -8,8 +8,6 @@
 //! Validated values are immutable and validate on deserialization as well as
 //! construction. Consumers must still enforce their resource and lease limits.
 
-#![forbid(unsafe_code)]
-
 mod duration;
 mod error;
 mod object;

@@ -9,7 +9,7 @@ description = "Explicit stable-input netmap projection measurement"
 meshway-configuration = { path = "../../crates/meshway-configuration" }
 meshway-policy = { path = "../../crates/meshway-policy" }
 meshway-model = { path = "../../crates/meshway-model" }
-meshway-transport-spec = { path = "../../crates/meshway-transport-spec" }
+meshway-transport = { path = "../../crates/meshway-transport" }
 meshway-logging = { path = "../../crates/meshway-logging" }
 clap.workspace = true
 serde.workspace = true

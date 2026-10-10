@@ -8,7 +8,7 @@ use chrono::{DateTime, Utc};
 use meshway_configuration::execution::Carrier;
 use meshway_model::state::{Capability, ResourceRef, SocketNetwork, StreamKind, TransportRole};
 use meshway_protocol::connectivity::{CandidateReference, UdpTraversalUnavailableReason as Reason};
-use meshway_transport_spec::Listener;
+use meshway_transport::spec::Listener;
 use std::net::SocketAddr;
 
 pub(crate) struct Candidate {

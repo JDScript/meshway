@@ -5,7 +5,7 @@ use std::{
 };
 
 use meshway_tls::{Client, Error, Server, verify_listener};
-use meshway_transport_spec::{SecretString, TlsMode, TlsVersion};
+use meshway_transport::spec::{SecretString, TlsMode, TlsVersion};
 use rcgen::{CertificateParams, KeyPair};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, duplex};
 

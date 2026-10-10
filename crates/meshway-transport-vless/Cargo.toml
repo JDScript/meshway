@@ -8,7 +8,6 @@ description = "VLESS TCP CONNECT over TLS and WebSocket on injected byte streams
 [dependencies]
 meshway-model = { path = "../meshway-model" }
 meshway-transport = { path = "../meshway-transport" }
-meshway-transport-spec = { path = "../meshway-transport-spec" }
 meshway-tls = { path = "../meshway-tls" }
 bytes.workspace = true
 futures-util.workspace = true

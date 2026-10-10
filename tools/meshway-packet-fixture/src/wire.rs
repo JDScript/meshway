@@ -4,9 +4,9 @@ use meshway_configuration::netmap::NodeNetmap;
 use meshway_dataplane::secure::{Carrier, PendingFrame};
 use meshway_model::NodeId;
 use meshway_model::TransportProtocol;
+use meshway_transport::spec::{DialParameters, Listener, SocketOptions, TcpOptions};
+use meshway_transport::tcp::TcpTransport;
 use meshway_transport::{Receiver, Sender};
-use meshway_transport_spec::{DialParameters, Listener, SocketOptions, TcpOptions};
-use meshway_transport_tcp::TcpTransport;
 use std::{collections::BTreeMap, net::SocketAddr};
 use tokio::net::{TcpListener, TcpStream};
 

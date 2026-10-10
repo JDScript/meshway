@@ -120,7 +120,7 @@ impl Fixture {
                     expires_at_ms: 10000,
                     stun_servers: vec![StunServer {
                         id: "fixture".into(),
-                        endpoint: meshway_transport_spec::Endpoint {
+                        endpoint: meshway_transport::spec::Endpoint {
                             host: "192.0.2.100".into(),
                             port: 3478.try_into().unwrap(),
                         },

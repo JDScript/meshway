@@ -20,7 +20,7 @@ use meshway_configuration::{
 };
 use meshway_model::TransportProtocol;
 use meshway_model::{NodeId, exit::ExitFamily};
-use meshway_transport_spec::{Listener, Port};
+use meshway_transport::spec::{Listener, Port};
 use std::net::IpAddr;
 
 fn addresses(netmap: &NodeNetmap, node: NodeId) -> Result<&NodeAddresses, AdmissionError> {

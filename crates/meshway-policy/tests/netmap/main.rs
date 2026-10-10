@@ -5,7 +5,7 @@ use meshway_policy::{
     SubjectContext,
     compile::{netmap::*, *},
 };
-use meshway_transport_spec::*;
+use meshway_transport::spec::*;
 use std::collections::BTreeMap;
 
 mod equivalence;

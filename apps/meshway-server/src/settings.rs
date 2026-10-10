@@ -1,4 +1,4 @@
-use meshway_transport_spec::Endpoint;
+use meshway_transport::spec::Endpoint;
 pub use reqwest::Url;
 use std::path::PathBuf;
 use std::time::Duration;

@@ -4,7 +4,7 @@
 pub mod mtu;
 pub mod rendezvous;
 
-use meshway_transport_spec::{
+use meshway_transport::spec::{
     ClientTls, DialerTls, ListenerTls, SecretString, TlsMode, TlsVersion,
 };
 use std::{path::Path, time::Duration};

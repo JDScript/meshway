@@ -7,7 +7,7 @@ use crate::secrets::Sealer;
 use chrono::Datelike;
 use meshway_configuration::{ConfigurationError, NetworkConfigurationInput};
 use meshway_model::{Digest, NetworkId, NodeId};
-use meshway_transport_spec::{Listener, ListenerTls, SecretString, TlsMode};
+use meshway_transport::spec::{Listener, ListenerTls, SecretString, TlsMode};
 use rusqlite::Transaction;
 use std::collections::{BTreeMap, BTreeSet};
 

@@ -1,4 +1,4 @@
-use crate::*;
+use crate::spec::*;
 use meshway_model::VlessStream;
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
@@ -119,7 +119,8 @@ pub fn validate_vless_uuid(value: &str) -> Result<(), DeclarationError> {
     Ok(())
 }
 fn tls(min: TlsVersion, max: TlsVersion, alpn: &[String]) -> Result<(), DeclarationError> {
-    crate::tls::validate_tls_versions(min, max).map_err(|_| DeclarationError::TlsVersionOrder)?;
+    crate::spec::tls::validate_tls_versions(min, max)
+        .map_err(|_| DeclarationError::TlsVersionOrder)?;
     if alpn
         .iter()
         .any(|s| s.is_empty() || s.len() > 255 || s.chars().any(char::is_control))
@@ -235,7 +236,7 @@ impl Listener {
 pub struct PreparedListener(Listener);
 impl utoipa::PartialSchema for PreparedListener {
     fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
-        crate::settings::listener_schema(true)
+        crate::spec::settings::listener_schema(true)
     }
 }
 impl ToSchema for PreparedListener {

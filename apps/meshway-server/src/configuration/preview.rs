@@ -10,7 +10,7 @@ use meshway_configuration::{
 use meshway_model::{NodeId, RequestId};
 use meshway_policy::plan_configuration;
 use meshway_protocol::configuration::{ConfigurationPreviewResponse, ListenerChange};
-use meshway_transport_spec::MaterialRequirement;
+use meshway_transport::spec::MaterialRequirement;
 use std::collections::{BTreeMap, BTreeSet};
 
 pub(super) fn build(

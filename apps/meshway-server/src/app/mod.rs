@@ -18,7 +18,7 @@ static DIRECTORY_PREPARATIONS: Semaphore =
 pub struct App {
     stun: crate::stun::Hosted,
     pub(crate) stun_servers:
-        Arc<std::collections::BTreeMap<String, meshway_transport_spec::Endpoint>>,
+        Arc<std::collections::BTreeMap<String, meshway_transport::spec::Endpoint>>,
     resource_scheduler: crate::resources::scheduler::Scheduler,
     observation_maintenance: std::sync::Mutex<crate::observations::service::MaintenanceOwner>,
     traversal_maintenance: crate::connectivity::maintenance::Maintenance,

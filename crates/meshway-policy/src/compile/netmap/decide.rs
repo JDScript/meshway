@@ -2,7 +2,7 @@
 //! routing and Access evaluation, without dynamic exit facts or server grants.
 use super::*;
 use crate::compile::routing::PathError;
-use meshway_transport_spec::Port;
+use meshway_transport::spec::Port;
 use std::{net::IpAddr, sync::Arc};
 
 /// Business destination of a decision and the circuit unit relays check.

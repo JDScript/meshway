@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::ValidationError;
+use crate::spec::ValidationError;
 
 /// A nonzero TCP/UDP port. Successful validation says nothing about availability.
 #[derive(

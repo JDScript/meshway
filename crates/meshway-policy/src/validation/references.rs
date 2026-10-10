@@ -219,7 +219,7 @@ pub(super) fn rules(
                         )
                         .with(
                             "reason",
-                            meshway_transport_spec::DeclarationError::RepeatedTransport.code(),
+                            meshway_transport::spec::DeclarationError::RepeatedTransport.code(),
                         ),
                     );
                 }

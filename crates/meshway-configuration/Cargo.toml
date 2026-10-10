@@ -9,7 +9,7 @@ description = "Meshway configuration contracts, normalization, serialization and
 ipnet.workspace = true
 jsonc-parser = { version = "=0.33.1", features = ["serde"] }
 meshway-model = { path = "../meshway-model" }
-meshway-transport-spec = { path = "../meshway-transport-spec" }
+meshway-transport = { path = "../meshway-transport" }
 serde = { workspace = true, features = ["rc"] }
 serde_json = { workspace = true, features = ["raw_value"] }
 sha2.workspace = true

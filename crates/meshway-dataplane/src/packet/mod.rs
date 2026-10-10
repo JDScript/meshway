@@ -12,7 +12,7 @@
 use crate::PacketBuffer;
 use meshway_configuration::execution::BusinessProtocol;
 use meshway_policy::admission::Traffic;
-use meshway_transport_spec::Port;
+use meshway_transport::spec::Port;
 mod storage;
 use std::{
     fmt,

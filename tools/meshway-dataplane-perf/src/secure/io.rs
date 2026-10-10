@@ -20,7 +20,7 @@ pub(super) enum Io {
         receiver: Receiver,
         incoming: BTreeMap<SocketAddr, Carrier>,
         scopes: BTreeMap<SocketAddr, ChannelScope>,
-        report: Box<dyn Fn() -> meshway_transport_udp::Capabilities + Send + Sync>,
+        report: Box<dyn Fn() -> meshway_transport::udp::Capabilities + Send + Sync>,
     },
     #[cfg(target_os = "linux")]
     Manager {
@@ -47,9 +47,9 @@ impl Io {
             .map(|value| value.parse::<u32>())
             .transpose()?
             .unwrap_or(0);
-        let endpoint = meshway_transport_udp::UdpTransport::adopt_batch(
+        let endpoint = meshway_transport::udp::UdpTransport::adopt_batch(
             socket,
-            &meshway_transport_spec::SocketOptions {
+            &meshway_transport::spec::SocketOptions {
                 receive_buffer: buffer,
                 send_buffer: buffer,
             },

@@ -1,5 +1,5 @@
 use meshway_configuration::{ListenerUpdate, inherit_materials};
-use meshway_transport_spec::Listener;
+use meshway_transport::spec::Listener;
 
 #[test]
 fn managed_certificates_are_reissued_per_server_name_and_provided_ones_are_kept() {

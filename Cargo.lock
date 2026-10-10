@@ -1762,7 +1762,7 @@ dependencies = [
  "ipnet",
  "jsonc-parser",
  "meshway-model",
- "meshway-transport-spec",
+ "meshway-transport",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -1791,9 +1791,7 @@ dependencies = [
  "meshway-stun",
  "meshway-test-server",
  "meshway-transport",
- "meshway-transport-spec",
  "meshway-transport-trojan",
- "meshway-transport-udp",
  "meshway-transport-vless",
  "meshway-underlay",
  "serde",
@@ -1848,7 +1846,7 @@ dependencies = [
  "meshway-protocol",
  "meshway-server",
  "meshway-tls",
- "meshway-transport-spec",
+ "meshway-transport",
  "rcgen",
  "reqwest",
  "reqwest-middleware",
@@ -1935,8 +1933,6 @@ dependencies = [
  "meshway-protocol",
  "meshway-test-server",
  "meshway-transport",
- "meshway-transport-spec",
- "meshway-transport-tcp",
  "meshway-tun",
  "ring",
  "serde_json",
@@ -1969,8 +1965,6 @@ dependencies = [
  "meshway-model",
  "meshway-private-storage",
  "meshway-transport",
- "meshway-transport-spec",
- "meshway-transport-udp",
  "meshway-tun",
  "meshway-underlay",
  "mimalloc",
@@ -2116,7 +2110,7 @@ dependencies = [
  "meshway-logging",
  "meshway-model",
  "meshway-policy",
- "meshway-transport-spec",
+ "meshway-transport",
  "serde",
  "serde_json",
  "uuid",
@@ -2142,8 +2136,6 @@ dependencies = [
  "meshway-server",
  "meshway-tls",
  "meshway-transport",
- "meshway-transport-spec",
- "meshway-transport-tcp",
  "meshway-tun",
  "rcgen",
  "reqwest",
@@ -2161,7 +2153,7 @@ dependencies = [
  "ipnet",
  "meshway-configuration",
  "meshway-model",
- "meshway-transport-spec",
+ "meshway-transport",
  "serde",
  "serde_json",
  "thiserror",
@@ -2211,7 +2203,7 @@ dependencies = [
  "meshway-packet-fixture",
  "meshway-protocol",
  "meshway-server",
- "meshway-transport-spec",
+ "meshway-transport",
  "serde",
  "serde_json",
  "tokio",
@@ -2245,7 +2237,7 @@ dependencies = [
  "meshway-protocol",
  "meshway-stun",
  "meshway-tls",
- "meshway-transport-spec",
+ "meshway-transport",
  "rcgen",
  "reqwest",
  "rusqlite",
@@ -2305,7 +2297,7 @@ dependencies = [
 name = "meshway-tls"
 version = "0.1.0"
 dependencies = [
- "meshway-transport-spec",
+ "meshway-transport",
  "rcgen",
  "rustls",
  "rustls-pemfile",
@@ -2320,12 +2312,19 @@ name = "meshway-transport"
 version = "0.1.0"
 dependencies = [
  "futures-util",
+ "idna",
  "meshway-logging",
- "meshway-transport-spec",
+ "meshway-model",
+ "nix 0.31.3",
+ "rustix",
+ "serde",
+ "serde_json",
  "socket2",
  "thiserror",
  "tokio",
  "tokio-util",
+ "utoipa",
+ "zeroize",
 ]
 
 [[package]]
@@ -2336,10 +2335,7 @@ dependencies = [
  "hdrhistogram",
  "meshway-model",
  "meshway-transport",
- "meshway-transport-spec",
- "meshway-transport-tcp",
  "meshway-transport-trojan",
- "meshway-transport-udp",
  "meshway-transport-vless",
  "rcgen",
  "serde",
@@ -2349,55 +2345,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "meshway-transport-spec"
-version = "0.1.0"
-dependencies = [
- "idna",
- "meshway-model",
- "serde",
- "serde_json",
- "thiserror",
- "utoipa",
- "zeroize",
-]
-
-[[package]]
-name = "meshway-transport-tcp"
-version = "0.1.0"
-dependencies = [
- "meshway-transport",
- "meshway-transport-spec",
- "socket2",
- "tokio",
-]
-
-[[package]]
 name = "meshway-transport-trojan"
 version = "0.1.0"
 dependencies = [
  "hex",
  "meshway-tls",
  "meshway-transport",
- "meshway-transport-spec",
  "rcgen",
  "sha2 0.10.9",
  "subtle",
  "thiserror",
  "tokio",
  "zeroize",
-]
-
-[[package]]
-name = "meshway-transport-udp"
-version = "0.1.0"
-dependencies = [
- "meshway-logging",
- "meshway-transport",
- "meshway-transport-spec",
- "nix 0.31.3",
- "rustix",
- "socket2",
- "tokio",
 ]
 
 [[package]]
@@ -2409,7 +2368,6 @@ dependencies = [
  "meshway-model",
  "meshway-tls",
  "meshway-transport",
- "meshway-transport-spec",
  "rcgen",
  "subtle",
  "thiserror",
@@ -2448,9 +2406,6 @@ dependencies = [
  "meshway-test-server",
  "meshway-tls",
  "meshway-transport",
- "meshway-transport-spec",
- "meshway-transport-tcp",
- "meshway-transport-udp",
  "meshway-tun",
  "reqwest",
  "rtnetlink",

@@ -697,7 +697,7 @@ fn https_authority(authority: &str) -> bool {
     } else {
         (authority, None)
     };
-    meshway_transport_spec::normalize_host(host).is_ok()
+    meshway_transport::spec::normalize_host(host).is_ok()
         && port.is_none_or(|p| p.parse::<u16>().is_ok_and(|p| p > 0))
 }
 
