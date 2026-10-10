@@ -2177,7 +2177,15 @@
                     }
                   },
                   "networkId": "0d3a2a6e-7f3b-4d0c-9a8e-1c2b3d4e5f60",
-                  "nodeId": "f6a5b4c3-6d7e-4f4a-9b8c-8d7e6f5a4b60"
+                  "nodeId": "f6a5b4c3-6d7e-4f4a-9b8c-8d7e6f5a4b60",
+                  "serverSigningKey": {
+                    "keyGeneration": 1,
+                    "keyId": "9a1b2c3d-4e5f-4a6b-8c7d-0e1f2a3b4c5d",
+                    "publicKey": {
+                      "algorithm": "ed25519",
+                      "bytes": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"
+                    }
+                  }
                 }
               }
             }
@@ -2426,7 +2434,15 @@
                     }
                   },
                   "networkId": "0d3a2a6e-7f3b-4d0c-9a8e-1c2b3d4e5f60",
-                  "nodeId": "a7b6c5d4-5e6f-4a3b-8c9d-9e8f7a6b5c70"
+                  "nodeId": "a7b6c5d4-5e6f-4a3b-8c9d-9e8f7a6b5c70",
+                  "serverSigningKey": {
+                    "keyGeneration": 1,
+                    "keyId": "9a1b2c3d-4e5f-4a6b-8c7d-0e1f2a3b4c5d",
+                    "publicKey": {
+                      "algorithm": "ed25519",
+                      "bytes": "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c"
+                    }
+                  }
                 }
               }
             }
@@ -4891,6 +4907,7 @@
                 "observedAt": "2026-10-08T09:00:00Z",
                 "sequence": 18,
                 "state": {
+                  "adjacencies": {},
                   "capabilities": {
                     "transport:native_tcp": {
                       "kind": "transport",
@@ -16173,11 +16190,14 @@
                           }
                         }
                       },
+                      "lastSyncAt": null,
+                      "lease": null,
                       "netmap": {
                         "digest": "c6291573f40ab28d915ce376a0bf482cd319e507fb0468c912d35a0f7eac4986",
                         "revision": 7,
                         "serial": 1
                       },
+                      "netmapUnavailable": null,
                       "networkId": "0d3a2a6e-7f3b-4d0c-9a8e-1c2b3d4e5f60",
                       "registeredAt": "2026-10-08T09:01:00Z"
                     }
@@ -16340,11 +16360,14 @@
                       }
                     }
                   },
+                  "lastSyncAt": null,
+                  "lease": null,
                   "netmap": {
                     "digest": "c6291573f40ab28d915ce376a0bf482cd319e507fb0468c912d35a0f7eac4986",
                     "revision": 7,
                     "serial": 1
                   },
+                  "netmapUnavailable": null,
                   "networkId": "0d3a2a6e-7f3b-4d0c-9a8e-1c2b3d4e5f60",
                   "registeredAt": "2026-10-08T09:01:00Z"
                 }
@@ -17062,6 +17085,7 @@
                       "receivedAt": "2026-10-08T09:00:01Z",
                       "report": {
                         "report": {
+                          "adjacencies": {},
                           "capabilities": {
                             "transport:native_tcp": {
                               "kind": "transport",
@@ -19324,6 +19348,7 @@
                       "receivedAt": "2026-10-08T09:00:01Z",
                       "report": {
                         "report": {
+                          "adjacencies": {},
                           "capabilities": {
                             "transport:native_tcp": {
                               "kind": "transport",
@@ -19448,6 +19473,7 @@
                       "receivedAt": "2026-10-08T09:00:01Z",
                       "report": {
                         "report": {
+                          "adjacencies": {},
                           "capabilities": {
                             "transport:native_tcp": {
                               "kind": "transport",

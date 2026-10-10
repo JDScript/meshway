@@ -36,9 +36,14 @@ impl Control {
         self.clock.now().ok()
     }
 
-    /// Save the high-water mark when it advanced by [`STEP_MS`]; the Control
-    /// lock never waits for the write (at most one in flight).
+    /// Save the high-water mark when it advanced by [`STEP_MS`]; the write is
+    /// joined before returning, so it never outlives this owner.
     pub(crate) async fn persist_floor(&mut self) {
+        // Only an identity holds leases; an empty directory stays empty (a
+        // new installation requires it).
+        if self.record.binding.is_none() {
+            return;
+        }
         let Ok(now) = self.clock.now() else {
             return;
         };
@@ -58,10 +63,16 @@ impl Control {
             let _ = previous.await;
         }
         let directory = Arc::clone(&self.directory);
-        self.floor_write = Some(tokio::task::spawn_blocking(move || {
-            directory.replace(FILE, &bytes)
-        }));
-        self.floor_saved = Some(now);
+        let write = self
+            .floor_write
+            .insert(tokio::task::spawn_blocking(move || {
+                directory.replace(FILE, &bytes)
+            }));
+        let result = write.await;
+        self.floor_write = None;
+        if matches!(result, Ok(Ok(()))) {
+            self.floor_saved = Some(now);
+        }
     }
 
     pub(crate) async fn finish_floor_write(&mut self) {

@@ -101,6 +101,9 @@ const node = (id: string, hostname: string): NodeInventoryView => ({
   canRevokeControlKey: true,
   canRevokeDataplaneKey: true,
   netmap: null,
+  netmapUnavailable: { reason: "notIssued" },
+  lease: null,
+  lastSyncAt: null,
 })
 
 const entities = (

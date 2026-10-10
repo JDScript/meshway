@@ -624,6 +624,7 @@
   "configuration_issue_exit_outside_access": "{node} has no access to {destination}, so it cannot go there through an exit",
   "configuration_issue_global_exit_requires_internet": "{node} has no access to the internet, so it cannot use {profile}",
   "configuration_issue_exit_fallback_requires_internet": "{node} has no access to the internet, so profile {profile} cannot fall back to an exit",
+  "configuration_issue_netmap_budget": "The network is larger than the configuration compiler can handle at once",
   "configuration_issue_netmap_limit": "{node} would receive more configuration than can be sent to a Node at once",
   "configuration_issue_shadowed_rule": "Earlier rules (through rule {index}) already match every destination of this rule, so it never applies",
   "configuration_transport_invalid_host": "the host is not valid",

@@ -259,6 +259,7 @@ const TEXT: Record<IssueCode, (p: Params, node: NodeNamer) => string> = {
     }),
   netmap_limit: (p, node) =>
     m.configuration_issue_netmap_limit({ node: node(p.node ?? "?") }),
+  netmap_budget: () => m.configuration_issue_netmap_budget(),
   shadowed_rule: (p) =>
     m.configuration_issue_shadowed_rule({ index: ordinal(p.by) }),
 }

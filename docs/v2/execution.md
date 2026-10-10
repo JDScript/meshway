@@ -47,7 +47,7 @@ Node execution lease 最长为 Server 当前时点后 60 秒，并受当前 inst
 
 Server 与现行按需发布并存地维护每个 Node 的 netmap（[设计](/v2/node/netmap-design)）并提供 `POST /agent-api/v1/sync`（`syncNode`）。Node 尚未消费该端点；Node 侧执行仍以上文发布为准。
 
-**存储与编译**。每个已登记、有可信 Control／数据面密钥的配置节点有一份 `CompiledNetmap`，按 (网络, 节点) 保存当前 serial 及其前一份（delta 基准），内容私有密封。下列稳定输入在其自身事务内整网重新投影，内容 digest 不变则 serial 与 revision 不变。任一节点超过 8 MiB 时：配置版本与规则集绑定以 `configuration_invalid`（问题 code `netmap_limit`）拒绝整个事务；密钥吊销／换钥、实例能力与方案选择照常提交，超限节点被移出可信库存，其 netmap 记为不可用（其他节点在不含它的库存上编译），直到后续重编不再超限：
+**存储与编译**。每个已登记、有可信 Control／数据面密钥的配置节点有一份 `CompiledNetmap`，按 (网络, 节点) 保存当前 serial 及其前一份（delta 基准），内容私有密封。下列稳定输入在其自身事务内整网重新投影，内容 digest 不变则 serial 与 revision 不变。任一节点超过 8 MiB 时：配置版本与规则集绑定以 `configuration_invalid`（问题 code `netmap_limit`）拒绝整个事务；密钥吊销／换钥、实例能力与方案选择照常提交，超限节点被移出可信库存，其 netmap 记为不可用（其他节点在不含它的库存上编译），直到后续重编不再超限；节点库存视图以 `netmapUnavailable`（`notIssued`／`withdrawn`／`limit`，后者带 `bytes`／`maxBytes`）给出无 netmap 的原因，并给出本进程最近签发的租约 `lease` 与最近收到 sync 的时间 `lastSyncAt`（进程内观测，Server 重启后为 null，不构成授权）。每节点回执只保留最新 64 条，旧回执随新回执删除：
 
 | 触发 | 事务 |
 | --- | --- |

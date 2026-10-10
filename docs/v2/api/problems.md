@@ -37,7 +37,8 @@ Problem 的每个分支均有 code、params、message。params 由 code 决定�
 | 范围 | code 示例 | 参数与行为 |
 | --- | --- | --- |
 | 身份 | invalid_credentials、invalid_session、permission_denied | 不回显凭据或隐藏对象详情 |
-| Node 身份撤销 | node_identity_rejected | HTTP 403；已验证的 Node 身份或密钥不再有效。Node 仅以成功解码的此错误撤回已签名 netmap；裸 401／403／404、证明过期和普通资源拒绝不撤回租约 |
+| Node 身份撤销 | node_identity_rejected | HTTP 403；已验证的 Node 身份或密钥不再有效。Node 仅以成功解码的此错误或 `netmap_withdrawn` 撤回已签名 netmap；裸 401／403／404、证明过期和普通资源拒绝不撤回租约 |
+| netmap 已撤回 | netmap_withdrawn | HTTP 403；Node 已认证，但 Server 不再为它持有 netmap（例如数据面钥被吊销、移出可信库存）。Node 撤回已持有的 netmap 并继续 sync，等待新的 netmap |
 | 注册 | registration_disabled、password_weak、email_taken | password_weak 携带 PasswordRules；email_taken 不返回账户详情 |
 | 并发 | request_id_conflict、revision_conflict、version_conflict | 幂等内容、配置 CAS、对象版本分别冲突 |
 | 绑定 | binding_conflict | 当前 generation／绑定不匹配；不冒充请求 ID 冲突 |
@@ -82,7 +83,7 @@ revision_conflict 不携带当前配置差异；客户端重新读取基准后�
 | `params` | 该 code 文档声明的参数，始终存在（可为空对象），值均为字符串 |
 | `message` | `code` 的英文渲染，不含参数值，不供程序判断 |
 
-参数约定：引用类问题带被引用的名字（`user`、`name`、`node`、`key`、`profile`、`value`、`address`、`hostname`）；节点级的出口授权问题（`exit_outside_access`、`global_exit_requires_internet`、`exit_fallback_requires_internet`）挂在**规则／分配／fallback** 的 pointer 上，受影响节点在 `params.node`；传输声明问题 `invalid_transport` 的 `params.reason` 是传输层声明错误码（如 `invalid_host`、`websocket_alpn`）；源文本问题 `invalid_jsonc`／`invalid_shape` 带 1 起算的 `line`、`column`，不回显文本；远程规则集问题 `rule_set_unavailable` 的 `params.reason` 是 `ResourceProblem` code。`netmap_limit` 表示该版本会使某节点的 netmap 超过 8 MiB 下发安全上界，路径为 `/nodes/<id>`，参数 `node`、`bytes`、`maxBytes`。
+参数约定：引用类问题带被引用的名字（`user`、`name`、`node`、`key`、`profile`、`value`、`address`、`hostname`）；节点级的出口授权问题（`exit_outside_access`、`global_exit_requires_internet`、`exit_fallback_requires_internet`）挂在**规则／分配／fallback** 的 pointer 上，受影响节点在 `params.node`；传输声明问题 `invalid_transport` 的 `params.reason` 是传输层声明错误码（如 `invalid_host`、`websocket_alpn`）；源文本问题 `invalid_jsonc`／`invalid_shape` 带 1 起算的 `line`、`column`，不回显文本；远程规则集问题 `rule_set_unavailable` 的 `params.reason` 是 `ResourceProblem` code。`netmap_limit` 表示该版本会使某节点的 netmap 超过 8 MiB 下发安全上界，路径为 `/nodes/<id>`，参数 `node`、`bytes`、`maxBytes`。`netmap_budget` 表示编译整网 netmap 超过固定的编译预算（节点数或每边承载候选），路径为空、无参数；它是确定性的，重试同一版本不会成功（Node 触发的同类情况不报配置错误，netmap 记为不可用）。
 
 同一类型也用于 `warnings`（接受但可能非本意的配置，如 `shadowed_rule`：该规则的全部目标已被前面的规则匹配，`params.by` 是补齐覆盖的那条规则下标）和 `unavailableDependencies`（保留但已失效的依赖）。
 

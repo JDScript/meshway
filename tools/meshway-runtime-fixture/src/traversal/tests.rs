@@ -40,7 +40,8 @@ fn status(n: u8) -> meshway_protocol::ipc::Status {
         "sync":"disconnected","lastSyncAt":null,
         "server":"http://127.0.0.1:8430/","observedAt":"1970-01-01T00:00:20Z",
         "enrollmentRequestId":null,"enrollmentUrl":null,
-        "identity":{"controllerId":id::<meshway_model::KeyId>(99),"networkId":id::<meshway_model::NetworkId>(100),"nodeId":id::<NodeId>(n),"keys":keys(n)},
+        "identity":{"controllerId":id::<meshway_model::KeyId>(99),"networkId":id::<meshway_model::NetworkId>(100),"nodeId":id::<NodeId>(n),"keys":keys(n),
+            "serverSigningKey":{"keyId":id::<meshway_model::KeyId>(98),"keyGeneration":1,"publicKey":{"algorithm":"ed25519","bytes":Digest::from_bytes([98;32])}}},
         "authenticated":true,"instance":{"instanceId":id::<InstanceId>(n+10),"generation":1,"expiresAt":"1970-01-01T00:01:00Z"},
         "netmap":{"netmap":cfg(102),"issuedAt":"1970-01-01T00:00:00Z","expiresAt":"1970-01-01T00:05:00Z"},
         "saved":cfg(102),"applied":cfg(102),"dataPlane":"ready","networkMode":"tun","lastError":null,"retryAt":null
@@ -137,7 +138,7 @@ impl Fixture {
             current_physical.endpoints[0].expires_at = "1970-01-01T00:00:39Z".parse().unwrap();
             let report = json!({ "system":{"hostname":role.name(),"os":"linux","arch":"aarch64","agentVersion":"test"},"capabilities":{},
                 "configuration":{"saved":cfg(102),"applied":cfg(102),"progress":{"target":cfg(102),"phase":"applied","observedAt":"1970-01-01T00:00:20Z","problem":null}},
-                "listeners":{},"sockets":{socket_id:current_physical},"links":{},"paths":{},"selection":{"appliedProfile":null},"probes":[],"problems":[] });
+                "listeners":{},"sockets":{socket_id:current_physical},"links":{},"adjacencies":{},"paths":{},"selection":{"appliedProfile":null},"probes":[],"problems":[] });
             let node = id::<NodeId>(n);
             let view: StateView = serde_json::from_value(json!({ "networkId":id::<meshway_model::NetworkId>(100),"stateEpoch":id::<meshway_model::StateEpoch>(110),"sequence":20,"configurationRevision":6,"asOf":"1970-01-01T00:00:20Z",
                 "nodes":{node.to_string():{"hostname":role.name(),"instanceId":id::<InstanceId>(n+10),"reportSequence":20,"observedAt":"1970-01-01T00:00:20Z","receivedAt":"1970-01-01T00:00:20Z","reportExpiresAt":"1970-01-01T00:01:00Z","lastAuthenticatedAt":"1970-01-01T00:00:20Z","freshness":"current","report":{"view":"full","report":report},"derived":{"ipInfo":{},"location":null,"locationAbsent":null}}},"links":[],"paths":[] })).unwrap();

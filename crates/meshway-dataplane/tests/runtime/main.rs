@@ -7,6 +7,7 @@
 mod netmap_diagnostic;
 mod netmap_exit;
 mod netmap_flow;
+mod netmap_lifecycle;
 mod support;
 
 use support::packet;

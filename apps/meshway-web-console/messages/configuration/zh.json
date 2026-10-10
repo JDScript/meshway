@@ -544,6 +544,7 @@
   "configuration_issue_exit_outside_access": "{node} 没有访问 {destination} 的权限，不能经出口发往这里",
   "configuration_issue_global_exit_requires_internet": "{node} 没有访问公网的权限，不能使用{profile}",
   "configuration_issue_exit_fallback_requires_internet": "{node} 没有访问公网的权限，方案 {profile} 的兜底不能经出口",
+  "configuration_issue_netmap_budget": "网络规模超过配置编译器一次能处理的上限",
   "configuration_issue_netmap_limit": "{node} 需要接收的配置超过一次下发的上限",
   "configuration_issue_shadowed_rule": "前面的规则（到第 {index} 条为止）已覆盖这条规则的全部目的地，它不会生效",
   "configuration_transport_invalid_host": "主机地址无效",

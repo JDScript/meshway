@@ -110,7 +110,7 @@ Control 只验证、保存并发布签名 netmap；它不签发任何执行快�
 | `New { previous }` | 首次安装或更大 serial；内容先保存再发布 |
 | `Renewed` | 同内容的新租约；Engine 只延长自己的计时器，旧租约已结束时重新安装同一内容 |
 
-在 `finish_sync` 之前已有其他安装、撤回或停止的回复返回 `Pending` 且不改变任何状态。peer 事实只有一份状态：Control 的最后已知事实（按当前投影过滤，不进入内容）。`peerFacts` 在 netmap 部分安装后并入它：`removed` 删除，`updated` 按 peer 替换；`base` 为 null（例如 Server 刚重启、尚不知道任何事实）只增改、不删除，到期只表示新鲜度。事实变化后 Control 以 `KnownPeers`（不可变共享快照）发布给 `PeerFactsSink`；daemon 用一个 watch 通道承载它，连接 Manager（拨号候选）与出口选择（就绪出口）只读最新快照，不另存副本。已发布租约结束／撤回后（最后已知事实随 netmap 结束），下一请求不带游标、取得完整事实；Server 对无游标请求不挂起，因此租约结束后的恢复不等待 hold。地址或出口就绪变化（不含仅新鲜度续期）及 netmap 变化时写 `peer-facts.json`，最多一个写入在途，Control 锁不等待 fsync。重启载入后 `known_peers()` 即保存的事实；宿主在不联系 Server 而发布已持有 netmap 的同一位置发布它（daemon 为每次 up 会话开始处）。单次请求总上限 90 秒（Server 挂起上限 60 秒），连接级失败 1 秒起倍增至 15 秒退避（Server 恢复后最多一个退避周期即重新连上）；立即返回且无变化的回复至少间隔 1 秒。
+在 `finish_sync` 之前已有其他安装、撤回或停止的回复返回 `Pending` 且不改变任何状态。peer 事实只有一份状态：Control 的最后已知事实（按当前投影过滤，不进入内容）。`peerFacts` 在 netmap 部分安装后并入它：`removed` 删除，`updated` 按 peer 替换；`base` 为 null（例如 Server 刚重启、尚不知道任何事实）只增改、不删除，到期只表示新鲜度。事实变化后 Control 以 `KnownPeers`（不可变共享快照）发布给 `PeerFactsSink`；daemon 用一个 watch 通道承载它，连接 Manager（拨号候选）与出口选择（就绪出口）只读最新快照，不另存副本。已发布租约结束／撤回后（最后已知事实随 netmap 结束），下一请求不带游标、取得完整事实；Server 对无游标请求不挂起，因此租约结束后的恢复不等待 hold。地址或出口就绪变化（不含仅新鲜度续期）及 netmap 变化时写 `peer-facts.json`。重启载入后 `known_peers()` 即保存的事实；宿主在不联系 Server 而发布已持有 netmap 的同一位置发布它（daemon 为每次 up 会话开始处）。单次请求总上限 90 秒（Server 挂起上限 60 秒），连接级失败 1 秒起倍增至 15 秒退避（Server 恢复后最多一个退避周期即重新连上）；立即返回且无变化的回复至少间隔 1 秒。
 
 | 事件 | 已发布租约 |
 | --- | --- |

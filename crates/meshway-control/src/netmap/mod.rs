@@ -143,17 +143,24 @@ impl Control {
         let Ok(bytes) = facts::encode(&known, binding.network_id, binding.node_id) else {
             return;
         };
-        // At most one write in flight; the Control lock never waits for the
-        // new one's fsync. Facts are not authority, so a failed write only
-        // leaves the previous complete file.
+        // Joined before returning: an accepted write never outlives this
+        // owner (a dropped Control releases its directory at once). Facts are
+        // not authority, so a failed write only leaves the previous file.
         if let Some(previous) = self.netmap.facts_write.take() {
             let _ = previous.await;
         }
         let directory = Arc::clone(&self.directory);
-        self.netmap.facts_write = Some(tokio::task::spawn_blocking(move || {
-            directory.replace(facts::FILE, &bytes)
-        }));
-        self.netmap.saved = Some(known);
+        let write = self
+            .netmap
+            .facts_write
+            .insert(tokio::task::spawn_blocking(move || {
+                directory.replace(facts::FILE, &bytes)
+            }));
+        let result = write.await;
+        self.netmap.facts_write = None;
+        if matches!(result, Ok(Ok(()))) {
+            self.netmap.saved = Some(known);
+        }
     }
 
     /// Join the facts write still in flight (shutdown).
