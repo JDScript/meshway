@@ -20,6 +20,43 @@ fn reopen(path: &Path, origin: &str) -> Control {
 }
 
 #[tokio::test]
+async fn known_identity_rejection_survives_restart_until_a_fresh_signed_sync() {
+    let server = Server::start().await;
+    let proxy = Proxy::start(&server.origin).await;
+    let (mut control, binding, script) = enrolled(&server, &proxy, "rejected-cache").await;
+    let netmap = compiled(&binding, "rejected-cache", None);
+    script.push(Ok(full(&binding, &netmap, HOUR)));
+    let old = control.sync(&mut Facts::default()).await.unwrap().snapshot;
+    script.push(Err(meshway_control_client::ClientError::Http {
+        status: 403,
+        problem: None,
+    }));
+    assert!(control.sync(&mut Facts::default()).await.is_err());
+    assert!(old.ensure_current().is_err());
+    control.shutdown().await.unwrap();
+    let path = server.path("rejected-cache");
+    let mut restored = reopen(&path, &proxy.origin);
+    assert_eq!(restored.netmap_reference(), Some(netmap.reference()));
+    assert!(restored.netmap_snapshot().is_err());
+    restored.authenticate().await.unwrap();
+    restored.set_sync_transport(script.clone());
+    script.push(Ok(unchanged(&binding, &netmap, HOUR)));
+    restored
+        .sync(&mut Facts::default())
+        .await
+        .unwrap()
+        .snapshot
+        .ensure_current()
+        .unwrap();
+    restored.shutdown().await.unwrap();
+    let offline = reopen(&path, &proxy.origin);
+    offline.netmap_snapshot().unwrap().ensure_current().unwrap();
+    offline.shutdown().await.unwrap();
+    proxy.close().await;
+    server.close().await;
+}
+
+#[tokio::test]
 async fn restart_loads_a_live_sealed_netmap_without_any_server_contact() {
     let server = Server::start().await;
     let proxy = Proxy::start(&server.origin).await;

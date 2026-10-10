@@ -122,7 +122,7 @@ impl Control {
             || challenge.operation != ProofOperation::Session
             || challenge.request_digest != digest
         {
-            self.revoke_netmap();
+            self.block_netmap_cache()?;
             self.reject_authentication();
             return Err(Error::Contract);
         }
@@ -149,7 +149,7 @@ impl Control {
             || response.node_id != binding.node_id
             || response.key_id != binding.keys.control.id
         {
-            self.revoke_netmap();
+            self.block_netmap_cache()?;
             self.reject_authentication();
             return Err(Error::Contract);
         }
@@ -233,7 +233,7 @@ impl Control {
                     status: Some(401 | 403 | 404)
                 })
             ) {
-                self.revoke_netmap();
+                self.block_netmap_cache()?;
             }
             self.authentication_response(response)
         }

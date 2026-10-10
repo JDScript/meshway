@@ -9,11 +9,8 @@ use crate::{
     Control, Error,
     identity::{self, Keys},
 };
-use meshway_configuration::execution::{CompiledNode, validate_obsolete_slice};
 use meshway_protocol::{EnrollmentIntent, EnrollmentResponse, WireSecret};
 use serde::{Deserialize, Serialize};
-use serde_json::value::RawValue;
-use sha2::{Digest as _, Sha256};
 use std::{
     io::{Read, Write},
     sync::Arc,
@@ -71,32 +68,10 @@ pub(super) struct Record {
     pub rotation: Option<crate::rotation::Rotation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub completed_rotation: Option<meshway_model::RequestId>,
-}
-
-/// Records v1–v4 carried a derived target in `saved`. It is inspected only for
-/// integrity and binding, archived with the original bytes, and dropped.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Previous<'a> {
-    version: u8,
-    origin: String,
-    #[serde(deserialize_with = "Option::deserialize")]
-    keys: Option<Keys>,
-    #[serde(deserialize_with = "Option::deserialize")]
-    enrollment: Option<Enrollment>,
-    #[serde(deserialize_with = "Option::deserialize")]
-    binding: Option<EnrollmentResponse>,
-    #[serde(borrow, deserialize_with = "Option::deserialize")]
-    saved: Option<&'a RawValue>,
+    /// A definitive identity rejection forbids offline cache activation until
+    /// a fresh signed sync succeeds. This is local identity lifecycle state.
     #[serde(default)]
-    rotation: Option<crate::rotation::Rotation>,
-    #[serde(default)]
-    completed_rotation: Option<meshway_model::RequestId>,
-}
-
-#[derive(Deserialize)]
-struct Version {
-    version: u8,
+    pub cache_blocked: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -167,52 +142,18 @@ impl Record {
                 binding: None,
                 rotation: None,
                 completed_rotation: None,
+                cache_blocked: false,
             });
         };
         file.sync_all()
             .map_err(|_| meshway_private_storage::Error::Io)?;
         directory.sync()?;
         let bytes = read(directory, RECORD)?.ok_or(Error::Record)?;
-        let Version { version } = serde_json::from_slice(&bytes).map_err(|_| Error::Record)?;
-        let record = match version {
-            VERSION => {
-                let record: Self = decode(&bytes)?;
-                if record.origin != origin {
-                    return Err(Error::Record);
-                }
-                record.validate()?;
-                record
-            }
-            1..=4 => {
-                let previous: Previous<'_> = decode(&bytes)?;
-                if previous.origin != origin || previous.version != version {
-                    return Err(Error::Record);
-                }
-                if let Some(saved) = previous.saved {
-                    validate_obsolete(
-                        saved,
-                        previous.binding.as_ref().ok_or(Error::Record)?,
-                        version,
-                    )?;
-                }
-                let record = Self {
-                    version: VERSION,
-                    origin: previous.origin,
-                    keys: previous.keys,
-                    enrollment: previous.enrollment,
-                    binding: previous.binding,
-                    rotation: previous.rotation,
-                    completed_rotation: previous.completed_rotation,
-                };
-                record.validate()?;
-                archive(directory, version, &bytes)?;
-                // The lock remains held and both writes are synchronous and
-                // durable. A failed archive never replaces the original record.
-                directory.replace(RECORD, &encode(&record)?)?;
-                record
-            }
-            _ => return Err(Error::Record),
-        };
+        let record: Self = decode(&bytes)?;
+        if record.version != VERSION || record.origin != origin {
+            return Err(Error::Record);
+        }
+        record.validate()?;
         ensure_marker(directory)?;
         Ok(record)
     }
@@ -252,71 +193,6 @@ pub(super) fn decode<'de, T: Deserialize<'de>>(bytes: &'de [u8]) -> Result<T, Er
     Ok(value)
 }
 
-/// Derived bodies of retired record versions (v1: demand-4 without pools, v2:
-/// demand-4, v3: demand-5, v4: demand-7). MapOnly recursively rejects
-/// duplicate keys, including inside fields that are not execution inputs
-/// anymore. Header values retain their original strong types.
-fn validate_obsolete(
-    raw: &RawValue,
-    binding: &EnrollmentResponse,
-    version: u8,
-) -> Result<(), Error> {
-    if version == 4 {
-        let saved: CompiledNode = decode(raw.get().as_bytes())?;
-        let cfg = &saved.configuration;
-        if cfg.network_id != binding.network_id
-            || cfg.node_id != binding.node_id
-            || cfg.self_keys.control_key != binding.keys.control
-            || cfg.self_keys.dataplane_key != binding.keys.dataplane
-            || meshway_configuration::digest(cfg).map_err(|_| Error::Record)? != saved.digest
-        {
-            return Err(Error::Record);
-        }
-        return Ok(());
-    }
-    #[derive(Deserialize)]
-    #[serde(deny_unknown_fields)]
-    struct Slice<'a> {
-        digest: meshway_model::Digest,
-        #[serde(borrow)]
-        configuration: &'a RawValue,
-    }
-    let slice: Slice<'_> = decode(raw.get().as_bytes())?;
-    let fields: std::collections::BTreeMap<String, &RawValue> =
-        decode(slice.configuration.get().as_bytes())?;
-    if fields.contains_key("meshAddressPools") != (version >= 2) {
-        return Err(Error::Record);
-    }
-    let header =
-        validate_obsolete_slice(slice.configuration, slice.digest).map_err(|_| Error::Record)?;
-    if header.network_id != binding.network_id
-        || header.node_id != binding.node_id
-        || header.self_keys.control_key != binding.keys.control
-        || header.self_keys.dataplane_key != binding.keys.dataplane
-    {
-        return Err(Error::Record);
-    }
-    Ok(())
-}
-
-fn archive(
-    directory: &meshway_private_storage::Directory,
-    version: u8,
-    bytes: &[u8],
-) -> Result<(), Error> {
-    let digest = meshway_model::Digest::from_bytes(Sha256::digest(bytes).into());
-    let name = format!("control-v{version}-{digest}.json");
-    if let Some(existing) = read(directory, &name)? {
-        if existing.as_slice() != bytes {
-            return Err(Error::Record);
-        }
-    } else {
-        directory.replace(&name, bytes)?;
-    }
-    directory.sync()?;
-    Ok(())
-}
-
 struct Buffer(Zeroizing<Vec<u8>>);
 impl Write for Buffer {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
@@ -332,6 +208,22 @@ impl Write for Buffer {
 }
 
 impl Control {
+    /// Fences immediately, then durably records a definitive identity
+    /// rejection before exposing its result. No asynchronous write can race
+    /// this exclusive owner; an uncertain outcome requires reopening.
+    pub(crate) fn block_netmap_cache(&mut self) -> Result<(), Error> {
+        self.revoke_netmap();
+        if self.record.cache_blocked {
+            return Ok(());
+        }
+        self.record.cache_blocked = true;
+        let bytes = encode(&self.record)?;
+        self.dirty = true;
+        self.directory.replace(RECORD, &bytes)?;
+        self.dirty = false;
+        Ok(())
+    }
+
     /// Identity envelope write. Stops current execution authority first.
     pub(super) async fn persist(&mut self) -> Result<(), Error> {
         self.ready()?;

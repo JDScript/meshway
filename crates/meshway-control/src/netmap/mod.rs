@@ -137,7 +137,7 @@ impl Control {
         };
         let netmap = Arc::new(netmap);
         self.netmap.base = Some(Arc::clone(&netmap));
-        if !authority {
+        if !authority || self.record.cache_blocked {
             return Ok(());
         }
         self.netmap.persisted_expiry = Some(lease.expires_at_ms);
@@ -196,6 +196,13 @@ impl Control {
     ) -> Result<NetmapChange, Error> {
         let reference = netmap.reference();
         let previous = self.netmap_reference();
+        if previous.is_some_and(|old| old != reference && reference.serial <= old.serial) {
+            return Err(Error::Contract);
+        }
+        if self.record.cache_blocked {
+            self.record.cache_blocked = false;
+            self.persist().await?;
+        }
         let change = if previous == Some(reference) {
             let base = self.netmap.base.clone().ok_or(Error::Lifecycle)?;
             let renewed = self
@@ -214,9 +221,6 @@ impl Control {
         } else {
             if let Some(base) = &self.netmap.base {
                 let (old, new) = (&base.netmap, &netmap.netmap);
-                if new.serial <= old.serial {
-                    return Err(Error::Contract);
-                }
                 if old.self_.identity != new.self_.identity
                     || old.self_.addresses != new.self_.addresses
                     || old.self_.self_keys != new.self_.self_keys

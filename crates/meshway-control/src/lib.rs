@@ -332,7 +332,7 @@ impl Control {
                 status: Some(403 | 404)
             })
         ) {
-            self.revoke_netmap();
+            self.block_netmap_cache()?;
         }
         if matches!(
             &response,
