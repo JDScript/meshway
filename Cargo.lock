@@ -2070,6 +2070,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "meshway-engine"
+version = "0.1.0"
+dependencies = [
+ "meshway-configuration",
+ "meshway-model",
+ "meshway-policy",
+ "thiserror",
+]
+
+[[package]]
 name = "meshway-ipc"
 version = "0.1.0"
 dependencies = [

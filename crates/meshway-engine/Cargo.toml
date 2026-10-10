@@ -1,0 +1,14 @@
+[package]
+name = "meshway-engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+meshway-configuration = { path = "../meshway-configuration" }
+meshway-model = { path = "../meshway-model" }
+meshway-policy = { path = "../meshway-policy" }
+thiserror.workspace = true
+
+[lints]
+workspace = true

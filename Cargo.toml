@@ -5,6 +5,7 @@ members = [
     "apps/meshway-cli",
     "crates/meshway-model",
     "crates/meshway-authority",
+    "crates/meshway-engine",
     "crates/meshway-configuration",
     "crates/meshway-policy",
     "crates/meshway-dataplane",
