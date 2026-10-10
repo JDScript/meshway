@@ -33,6 +33,31 @@ pub struct SyncTiming {
     pub hold: Duration,
 }
 
+#[cfg(test)]
+mod timing_tests {
+    use super::*;
+
+    #[test]
+    fn configured_validity_has_an_availability_floor_and_authority_ceiling() {
+        for (seconds, valid) in [
+            (59, false),
+            (60, true),
+            (300, true),
+            (86400, true),
+            (86401, false),
+        ] {
+            assert_eq!(
+                SyncTiming {
+                    validity: Duration::from_secs(seconds),
+                    ..SyncTiming::default()
+                }
+                .valid(),
+                valid
+            );
+        }
+    }
+}
+
 impl Default for SyncTiming {
     fn default() -> Self {
         Self {

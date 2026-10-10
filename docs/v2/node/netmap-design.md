@@ -42,7 +42,7 @@ Node 侧消费按需编译的入口：`apps/meshway-daemon/src/runtime/network/p
 | 类型 | 定义位置 | 要点 |
 | --- | --- | --- |
 | `NetmapRef { revision, serial, digest }` | `crates/meshway-model/src/netmap.rs` | `digest` 是内容摘要，不含租约、`revision`、`serial`、`dependencyDigest` |
-| `NetmapLease { netmap, issuedAt, expiresAt }` | 同上 | `NetmapLease::validate` 要求 `issuedAt < expiresAt ≤ issuedAt + 24 h`；`MIN_NETMAP_VALIDITY_MS`＝5 min、`MAX_NETMAP_BYTES`＝8 MiB |
+| `NetmapLease { netmap, issuedAt, expiresAt }` | 同上 | `NetmapLease::validate` 要求 `issuedAt < expiresAt ≤ issuedAt + 24 h`；配置下限 `MIN_NETMAP_VALIDITY_MS`＝60 s、`MAX_NETMAP_BYTES`＝8 MiB |
 | `NodeNetmap`、`CompiledNetmap { digest, netmap }` | `crates/meshway-configuration/src/netmap/mod.rs` | `NodeNetmap::content_digest`、`CompiledNetmap::verify`／`reference`；`NETMAP_COMPILER_VERSION`＝`meshway-netmap-1` |
 | `ProjectedConfiguration` | `crates/meshway-configuration/src/netmap/projection.rs` | 投影本体，见[内容字段](#内容字段) |
 | `NetmapDelta` 与 `netmap_delta`／`apply_netmap_delta` | `crates/meshway-configuration/src/netmap/delta.rs` | 投影的 nodes／inventory 与 dialers 按键增删，其余整块替换；重建后必须复现目标 digest，serial 必须增大 |
@@ -474,7 +474,7 @@ S 类简化不在本表；N1 使 S1–S6（Server）、S1–S5（Node）、S1–
 | 问题 | 决定 | 影响 |
 | --- | --- | --- |
 | 进程重启后凭缓存的未到期 netmap 离线运行 | **允许**：netmap 由 Server 签名并带有效期，重启后验签通过且未到期即载入；与 Tailscale 一致 | Control record 保存签名 netmap；AGENTS"缓存不复活授权"改为"签名有效期内的 netmap 是授权本身，不是缓存"；被撤销节点在分区中最多存续到到期，与运行中分区同一上界 |
-| 有效期可配置 | **Server 参数 `--netmap-validity`**，默认 24 h、最小 5 min | `netmap/expiry` 行用短有效期验收 |
+| 有效期可配置 | **Server 参数 `--netmap-validity`**，默认 24 h、最小 60 s（参数单位为秒） | 下限是防止运维误设过短导致 Server 抖动即全网 fail closed 的可用性保护，不是安全边界；更短的 validity 只会让撤销更快生效。`netmap/expiry` 用 60 s 验收 |
 | 出口就绪 | **纯动态事实，不编译**：netmap 的出口 grant 是管理员配置的有序主备；哪个出口 ready 走 State 事实线，源端本地选 | 推翻 10-08"出口能力仍按需编译"；X1 的 `ExitInputs` 退出编译输入，`ExitCapability` 保留为事实 |
 | 邻接按需 | **按需建、空闲 120 s 关**；topology 边可标 `keepalive: true` 常驻（必经中继、出口） | topology.md 更新；cold 首包多一次建邻接，lab 门槛 cold ≤ 300 ms |
 | 规模上限 | **不设协议级拒绝上限**，参照 Tailscale：首次完整 netmap，之后差量（peer 增删、轻字段 patch）＋按 netmap peers／edges 的可见性裁剪；仅保留 8 MiB 单份安全上界防异常 | 分发通道增加 `netmap.delta`；超 8 MiB 视为缺陷而非容量规划 |

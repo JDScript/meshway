@@ -57,10 +57,12 @@ mise exec -- cargo run -p meshway-server --bin meshway-server --locked -- \
 | `--console-origin`／`MESHWAY_CONSOLE_ORIGIN` | 未设置 | 浏览器访问 Console 的 origin，见下文 |
 | `--stun-listen IP:PORT` | 空 | 可重复，显式绑定独立 STUN UDP 服务；最多 4 个，端口非零，不可为多播／广播或重复地址 |
 | `--stun-server KEY=HOST:PORT` | 空 | 可重复，发布 hosted 或外部 STUN 端点；KEY 为 1–64 个 ASCII 字母、数字、`_`、`-` 且不可重复，IPv6 使用方括号；最多 4 个 |
-| `--netmap-validity`／`MESHWAY_NETMAP_VALIDITY` | `86400` | 每次 [netmap 同步](/v2/execution#netmap-同步)签发的租约时长，整秒，300–86400 |
+| `--netmap-validity`／`MESHWAY_NETMAP_VALIDITY` | `86400` | 每次 [netmap 同步](/v2/execution#netmap-同步)签发的租约时长，整秒，60–86400 |
 | `--netmap-sync-hold`／`MESHWAY_NETMAP_SYNC_HOLD` | `50` | 无变化时 `sync` 的名义挂起时长，整秒，1–54，另加 ±10% 抖动 |
 
 命令行显式参数优先于环境变量。这些是实例启动配置，不属于 NetworkConfiguration。日志参数见[运行日志](/v2/logging)；HTTP 日志只记录路由模板与请求关联信息。
+
+60 秒下限是防止运维误设过短导致 Server 抖动即全网 fail closed 的可用性保护，不是安全边界；更短的 validity 只会让撤销更快生效。接收端仍校验租约为正且不超过 24 h，不因短于配置下限扩大授权。
 
 **Console origin** 为 `https://host[:port]`，或 `http://localhost`／`http://127.0.0.1`／`http://[::1]`（可带端口）；不含路径、查询、片段或凭据。Server 据此生成交给设备的浏览器链接：设备授权 `authorizationUrl` 为 `<origin>/authorize-device/<enrollmentRequestId>`。未配置时这些字段为 null，设备得不到链接，Node 与 Console 均不自行拼接。`reset-password` 的 `--console-origin` 遵守同一规则。
 

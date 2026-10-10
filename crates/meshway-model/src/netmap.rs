@@ -3,8 +3,10 @@ use crate::{Digest, Revision, Version};
 
 /// Longest lease a Server may issue for one netmap.
 pub const MAX_NETMAP_VALIDITY_MS: u64 = 24 * 60 * 60 * 1000;
-/// Shortest configurable netmap validity.
-pub const MIN_NETMAP_VALIDITY_MS: u64 = 5 * 60 * 1000;
+/// Shortest configurable netmap validity. This availability guard prevents
+/// accidental expiry during brief Server interruptions; it is not a security
+/// boundary. Received leases may have shorter intervals (and fail closed sooner).
+pub const MIN_NETMAP_VALIDITY_MS: u64 = 60 * 1000;
 /// Safety bound for one serialized netmap; exceeding it is a compiler defect.
 pub const MAX_NETMAP_BYTES: usize = 8 * 1024 * 1024;
 
@@ -55,6 +57,8 @@ impl NetmapLease {
     }
 
     /// Received leases are checked again; the wire alone does not bound validity.
+    /// The configurable minimum is an operator guard, not a lower bound on
+    /// authority: accepting a shorter positive interval cannot extend access.
     pub fn validate(&self) -> Result<(), InvalidNetmapLease> {
         if self.expires_at_ms <= self.issued_at_ms
             || self.expires_at_ms - self.issued_at_ms > MAX_NETMAP_VALIDITY_MS
@@ -84,6 +88,9 @@ mod tests {
 
     #[test]
     fn lease_is_bounded_and_strict() {
+        assert_eq!(MIN_NETMAP_VALIDITY_MS, 60_000);
+        assert!(NetmapLease::new(reference(), 10, 11).is_ok());
+        assert!(NetmapLease::new(reference(), 10, 10 + MIN_NETMAP_VALIDITY_MS).is_ok());
         assert!(NetmapLease::new(reference(), 10, 10).is_err());
         assert!(NetmapLease::new(reference(), 10, 10 + MAX_NETMAP_VALIDITY_MS + 1).is_err());
         let lease = NetmapLease::new(reference(), 10, 10 + MAX_NETMAP_VALIDITY_MS).unwrap();

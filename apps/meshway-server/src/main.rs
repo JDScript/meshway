@@ -45,9 +45,9 @@ struct Arguments {
     /// Advertised hosted or external STUN service, KEY=HOST:PORT (IPv6 in brackets).
     #[arg(long, value_parser = meshway_server::settings::stun_server)]
     stun_server: Vec<(String, meshway_transport_spec::Endpoint)>,
-    /// Netmap lease validity in whole seconds (300 through 86400); every
+    /// Netmap lease validity in whole seconds (60 through 86400); every
     /// sync answer renews the lease to now plus this validity.
-    #[arg(long, env = "MESHWAY_NETMAP_VALIDITY", default_value_t = 86400, value_parser = clap::value_parser!(u64).range(300..=86400))]
+    #[arg(long, env = "MESHWAY_NETMAP_VALIDITY", default_value_t = 86400, value_parser = clap::value_parser!(u64).range(60..=86400))]
     netmap_validity: u64,
     /// Nominal hold of an unchanged sync request in whole seconds (1 through
     /// 54), jittered by ±10%.
