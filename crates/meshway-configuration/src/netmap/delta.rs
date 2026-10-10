@@ -173,7 +173,7 @@ pub fn apply_netmap_delta(
     if !delta.configuration.nodes.is_empty() {
         return Err(NetmapDeltaError::InvalidInput);
     }
-    let mut t = b.clone();
+    let mut t = b.as_ref().clone();
     t.revision = delta.target.revision;
     t.serial = delta.target.serial;
     t.dependency_digest = delta.dependency_digest;
@@ -201,7 +201,7 @@ pub fn apply_netmap_delta(
     apply(&mut t.dialers, delta.dialers.remove, delta.dialers.upsert)?;
     let compiled = CompiledNetmap {
         digest: t.content_digest()?,
-        netmap: t,
+        netmap: std::sync::Arc::new(t),
     };
     if compiled.digest != delta.target.digest {
         return Err(NetmapDeltaError::InvalidInput);

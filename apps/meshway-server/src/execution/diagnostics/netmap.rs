@@ -17,7 +17,7 @@ pub struct NetmapDiagnostic {
 /// an allowed pair without an observable path is `observable: false`.
 /// Nothing is compiled into a netmap, persisted or published.
 pub fn netmap_diagnostic(
-    source: &meshway_configuration::netmap::NodeNetmap,
+    source: &std::sync::Arc<meshway_configuration::netmap::NodeNetmap>,
     target: NodeId,
     service: &meshway_configuration::execution::ObservationServiceScope,
     selection: &ObservationPath,

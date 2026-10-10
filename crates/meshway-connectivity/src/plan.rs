@@ -91,7 +91,7 @@ impl Plan {
                 )
             })
             .collect();
-        let shared_netmap = Arc::new(netmap.clone());
+        let shared_netmap = netmap.clone();
         Ok(Arc::new(Self {
             network: netmap.network_id,
             node: netmap.node_id,

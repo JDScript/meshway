@@ -257,5 +257,8 @@ fn assemble(
     if bytes > MAX_NETMAP_BYTES {
         return Err(NetmapError::Limit { node: id, bytes });
     }
-    Ok(CompiledNetmap { digest, netmap })
+    Ok(CompiledNetmap {
+        digest,
+        netmap: std::sync::Arc::new(netmap),
+    })
 }

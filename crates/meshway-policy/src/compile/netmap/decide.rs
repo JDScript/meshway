@@ -99,8 +99,8 @@ fn search(
 }
 
 impl LocalCompiler {
-    pub fn new(netmap: &NodeNetmap) -> Self {
-        Self::from_shared(Arc::new(netmap.clone()))
+    pub fn new(netmap: &Arc<NodeNetmap>) -> Self {
+        Self::from_shared(netmap.clone())
     }
 
     /// Own immutable content so a runtime may retain one compiler across
@@ -447,7 +447,7 @@ fn external_overlaps(
 
 /// Decide one new flow; see [`LocalCompiler::decide`].
 pub fn compile_local(
-    netmap: &NodeNetmap,
+    netmap: &Arc<NodeNetmap>,
     source: NodeId,
     destination: IpAddr,
     service: (BusinessProtocol, Option<Port>),
@@ -457,7 +457,7 @@ pub fn compile_local(
 
 /// Relay paths of a circuit; see [`LocalCompiler::transit`].
 pub fn transit(
-    netmap: &NodeNetmap,
+    netmap: &Arc<NodeNetmap>,
     origin: NodeId,
     target: &Target,
 ) -> Result<Vec<LogicalPath>, CompileError> {

@@ -183,8 +183,8 @@ impl Execution {
 /// flows and complete paths play no part; the candidate CAS, the
 /// two-sided acceptance and short attempt deadlines still apply to the attempt.
 pub fn netmap_udp_coordination(
-    a: &NodeNetmap,
-    b: &NodeNetmap,
+    a: &std::sync::Arc<NodeNetmap>,
+    b: &std::sync::Arc<NodeNetmap>,
     carrier: &Carrier,
 ) -> std::result::Result<bool, Error> {
     if a.network_id != b.network_id

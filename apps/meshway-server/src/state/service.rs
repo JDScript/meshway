@@ -389,7 +389,7 @@ impl<P: StateProvider> StateService<P> {
                         facts: super::facts::peer_facts(
                             &admission,
                             &report,
-                            reporter.as_deref().map(|compiled| &compiled.netmap),
+                            reporter.as_deref().map(|compiled| compiled.netmap.as_ref()),
                             now,
                         )
                         .map(Box::new),

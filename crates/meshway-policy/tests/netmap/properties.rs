@@ -172,7 +172,9 @@ fn digest_round_trip_and_delta_reconstruct_exact_target() {
         assert_eq!(&decoded, compiled);
         decoded.verify().unwrap();
         let mut tampered = decoded.clone();
-        tampered.netmap.self_.exit_enabled = !tampered.netmap.self_.exit_enabled;
+        std::sync::Arc::make_mut(&mut tampered.netmap)
+            .self_
+            .exit_enabled = !decoded.netmap.self_.exit_enabled;
         assert!(tampered.verify().is_err());
     }
     s.cfg

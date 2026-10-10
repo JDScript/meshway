@@ -26,7 +26,7 @@ impl Desired {
     fn new(netmap: &CompiledNetmap) -> Result<Self, Error> {
         netmap.verify().map_err(|_| Error::Content)?;
         let reference = netmap.reference();
-        let netmap = Arc::new(netmap.netmap.clone());
+        let netmap = netmap.netmap.clone();
         let compiler = Arc::new(LocalCompiler::from_shared(netmap.clone()));
         Ok(Self {
             reference,

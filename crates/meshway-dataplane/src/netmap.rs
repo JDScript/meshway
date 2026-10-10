@@ -93,7 +93,7 @@ impl Decisions {
         if self.content != Some(reference) {
             *self = Self {
                 content: Some(reference),
-                compiler: Some(LocalCompiler::new(&netmap.netmap)),
+                compiler: Some(LocalCompiler::from_shared(netmap.netmap.clone())),
                 ..Default::default()
             };
         }

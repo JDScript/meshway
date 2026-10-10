@@ -246,7 +246,7 @@ fn issue_requires_the_exact_verified_content_and_lease_deadline() {
         Err(Error::Contract)
     );
     let mut forged = netmap.clone();
-    forged.netmap.self_.hostname = "forged".into();
+    Arc::make_mut(&mut forged.netmap).self_.hostname = "forged".into();
     let (lease, deadline) = issuer.lease(&forged, 60_000);
     assert_eq!(issue(forged, lease, deadline), Err(Error::Contract));
     let (lease, _) = issuer.lease(&netmap, 60_000);

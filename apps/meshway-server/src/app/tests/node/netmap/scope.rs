@@ -89,7 +89,11 @@ async fn udp_coordination_requires_mutual_netmaps_and_a_native_udp_carrier() {
     assert!(!allowed(&na, &na, &carrier(a, a, "udp", udp)));
     // A stale key binding in either netmap is not mutual visibility.
     let mut stale = (*nb).clone();
-    stale.netmap.self_.self_keys.dataplane_key.generation = Version::new(9).unwrap();
+    Arc::make_mut(&mut stale.netmap)
+        .self_
+        .self_keys
+        .dataplane_key
+        .generation = Version::new(9).unwrap();
     assert!(!allowed(&na, &stale, &carrier(a, b, "udp", udp)));
     lab.app.shutdown().await.unwrap();
 }

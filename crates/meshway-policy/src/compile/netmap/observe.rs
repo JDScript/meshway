@@ -24,7 +24,7 @@ pub struct ObservationDenied;
 /// explicit complete path. Denied and unobservable are distinct: an allowed
 /// pair without an observable path returns `observable: false`.
 pub fn observation_paths(
-    netmap: &NodeNetmap,
+    netmap: &std::sync::Arc<NodeNetmap>,
     target: NodeId,
     service: &ObservationServiceScope,
     explicit: Option<&[NodeId]>,

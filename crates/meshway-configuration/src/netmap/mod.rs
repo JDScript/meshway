@@ -205,7 +205,7 @@ pub struct CompiledNetmap {
     /// Canonical content digest.
     pub digest: Digest,
     /// Complete content.
-    pub netmap: NodeNetmap,
+    pub netmap: std::sync::Arc<NodeNetmap> [value_type = NodeNetmap],
 } }
 
 impl NodeNetmap {
