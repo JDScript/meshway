@@ -335,6 +335,7 @@ impl<P: ObservationProvider> ObservationService<P> {
                     return Ok(task);
                 }
                 let admission = provider.prepare_observation(&tx, &identity, &request, now)?;
+                crate::store::observations::subscribers::claim(&tx, request.subscription_id)?;
                 reauthorize_all(
                     &*provider,
                     &tx,
@@ -496,6 +497,14 @@ impl<P: ObservationProvider> ObservationService<P> {
                 runtime.observations.expire(now);
                 let prepared =
                     provider.prepare_node_observation(&tx, &authorization, &request, now)?;
+                if !runtime
+                    .observations
+                    .tasks
+                    .values()
+                    .any(|task| task.subscribers.contains_key(&request.subscription_id))
+                {
+                    crate::store::observations::subscribers::claim(&tx, request.subscription_id)?;
+                }
                 reauthorize_all(
                     &*provider,
                     &tx,

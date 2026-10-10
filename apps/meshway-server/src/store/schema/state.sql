@@ -69,6 +69,16 @@ CREATE TABLE rule_set_refreshes (
 ) STRICT;
 CREATE INDEX rule_set_refreshes_created_at ON rule_set_refreshes(created_at);
 
+-- Consumed subscriber identifiers survive volatile task loss. This is an
+-- idempotency tombstone, not a persisted task, permit or authorization cache.
+CREATE TABLE observation_subscriber_ids (
+    id BLOB NOT NULL PRIMARY KEY CHECK(length(id)=16 AND id!=zeroblob(16))
+) STRICT;
+CREATE TRIGGER observation_subscriber_ids_immutable BEFORE UPDATE ON observation_subscriber_ids
+BEGIN SELECT RAISE(ABORT,'immutable subscriber identifier'); END;
+CREATE TRIGGER observation_subscriber_ids_retained BEFORE DELETE ON observation_subscriber_ids
+BEGIN SELECT RAISE(ABORT,'subscriber identifiers are retained'); END;
+
 CREATE TABLE observation_events (
     row_id INTEGER PRIMARY KEY AUTOINCREMENT,
     network_id BLOB NOT NULL REFERENCES networks(id),
