@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-10T14:46:35.188213+00:00",
+  "updatedAt": "2026-10-10T14:49:34.406201+00:00",
   "runs": [
     {
       "id": 38060261848,
@@ -140,9 +140,9 @@
       "commit": "8d50e87310dabbcf3d1ed72ce928383eea558c7a",
       "message": "docs(agents): netmap model is current — engine reconfig, sync long poll, wire v6, IPC v6, compiler meshway-netmap-1; cross-session handoff via labelled prompt",
       "createdAt": "2026-10-10T14:36:11Z",
-      "updatedAt": "2026-10-10T14:41:42Z",
-      "status": "in_progress",
-      "conclusion": null,
+      "updatedAt": "2026-10-10T14:47:12Z",
+      "status": "completed",
+      "conclusion": "success",
       "url": "https://github.com/JDScript/meshway/actions/runs/38060261758",
       "jobs": [
         {
@@ -160,11 +160,11 @@
           "id": 114236918579,
           "name": "node-linux (x86_64-unknown-linux-musl)",
           "runner": "mars-epyc7543",
-          "status": "in_progress",
-          "conclusion": null,
+          "status": "completed",
+          "conclusion": "success",
           "startedAt": "2026-10-10T14:41:42Z",
-          "completedAt": null,
-          "seconds": null,
+          "completedAt": "2026-10-10T14:47:11Z",
+          "seconds": 329.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/38060261758/job/114236918579"
         }
       ],
@@ -194,6 +194,34 @@
               "binary": "meshway",
               "bytes": 1650408,
               "sha256": "47c5907226b1835557890312a51d7253a8df20950a3bfd719abe611faafed68d"
+            }
+          ]
+        },
+        {
+          "id": 11672619532,
+          "name": "node-x86_64-unknown-linux-musl-8d50e87310dabbcf3d1ed72ce928383eea558c7a",
+          "bytes": 8432892,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38060261758/artifacts/11672619532",
+          "jobId": 114236918579,
+          "runner": "mars-epyc7543",
+          "seconds": 329.0,
+          "state": "ok",
+          "error": null,
+          "reports": [],
+          "matrices": [],
+          "builds": [
+            {
+              "target": "x86_64-unknown-linux-musl",
+              "binary": "meshwayd",
+              "bytes": 16434792,
+              "sha256": "ce2e1b2e531febb026657962648ae50fd4c60cfd08df952c6bad917b4062fca7"
+            },
+            {
+              "target": "x86_64-unknown-linux-musl",
+              "binary": "meshway",
+              "bytes": 1869376,
+              "sha256": "983a03835c675d0c58c7c0259ce200b18ed40248212a1230c649e834921cf631"
             }
           ]
         }
