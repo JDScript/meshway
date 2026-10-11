@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-11T03:31:22.912982+00:00",
+  "updatedAt": "2026-10-11T03:33:57.095740+00:00",
   "runs": [
     {
       "id": 38108104930,
@@ -73,20 +73,20 @@
       "commit": "97bb7abdcd198ed370dfd813003fc806157e0b95",
       "message": "Merge remote-tracking branch 'planck/k1/signing-key-rotation'",
       "createdAt": "2026-10-11T03:21:15Z",
-      "updatedAt": "2026-10-11T03:21:17Z",
-      "status": "in_progress",
-      "conclusion": null,
+      "updatedAt": "2026-10-11T03:30:00Z",
+      "status": "completed",
+      "conclusion": "failure",
       "url": "https://github.com/JDScript/meshway/actions/runs/38108104924",
       "jobs": [
         {
           "id": 114377799186,
           "name": "matrix",
           "runner": "planck",
-          "status": "in_progress",
-          "conclusion": null,
+          "status": "completed",
+          "conclusion": "failure",
           "startedAt": "2026-10-11T03:21:17Z",
-          "completedAt": null,
-          "seconds": null,
+          "completedAt": "2026-10-11T03:30:00Z",
+          "seconds": 523.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/38108104924/job/114377799186"
         }
       ],
