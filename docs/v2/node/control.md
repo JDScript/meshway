@@ -136,7 +136,7 @@ Server [轮换签发钥](/v2/server#netmap-签发钥轮换)期间，sync 回复�
 
 钉住钥更新不改变身份，也不撤回已发布租约或运行上下文；此后只接受 K′ 的签名，K 单独签署的回复为 `ServerKeyMismatch`。下一请求的 `serverKeyGeneration` 报告新代际，Server 库存视图据此显示 `current`。两个文件之间崩溃时，重启后 `netmap.json` 不能在新钥下验证，只作 delta 基准（fail closed），下一次 sync 即恢复。
 
-错过窗口（窗口结束前一直未成功 sync，例如长时间离线）的节点钉住的仍是 K：之后每个回复都是 `ServerKeyMismatch`，按上表"违背钉住契约"处理——已持有租约照常运行至到期后 fail closed，控制停止（`blocked`，`lastError: contract`），Server 库存视图显示 `keyMismatch`。当前恢复方式只有以新身份重新接入；Node 侧"保留身份的重新登录"（接入意图 `existing`）尚未实现。
+错过窗口（窗口结束前一直未成功 sync，例如长时间离线）的节点钉住的仍是 K：之后每个回复都是 `ServerKeyMismatch`：回复被拒绝，已持有租约（含重启后从 `netmap.json` 离线载入的租约）照常运行至到期后 fail closed；`sync_loop` 按退避持续重试，daemon 状态为 `sync: reconnecting`，当前不带 `lastError`（sync 循环不上报失败类别）。Server 库存视图显示 `serverKey.status = keyMismatch`。当前恢复方式只有以新身份重新接入；Node 侧"保留身份的重新登录"（接入意图 `existing`）尚未实现。
 
 ## 安装回执与运行报告
 
