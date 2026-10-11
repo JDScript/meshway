@@ -1,20 +1,11 @@
 name: Validate
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "crates/**"
-      - "apps/meshway-daemon/**"
-      - "apps/meshway-cli/**"
-      - "apps/meshway-server/**"
-      - "tools/meshway-*-fixture/**"
-      - "scripts/verify_*.py"
-      - "scripts/validate_*.py"
-      - "dev/**"
-      - ".github/workflows/validate.yml"
+  # Merges to main are validated on planck before they land (mise run validate:remote);
+  # a second full matrix per push only competes with that and with the host's other
+  # tenants. The nightly run catches drift; dispatch runs on demand.
+  schedule:
+    - cron: "17 8 * * *"
   pull_request:
     paths:
       - "crates/meshway-connectivity/**"
@@ -75,8 +66,8 @@ jobs:
       - name: Gate rows for pull requests (short mode)
         if: github.event_name == 'pull_request'
         run: mise run validate:matrix -- --short --rows nat/off nat+fallback/off
-      - name: Full matrix for main
-        if: github.event_name == 'push'
+      - name: Nightly full matrix
+        if: github.event_name == 'schedule'
         run: mise run validate:matrix
       - name: Dispatched matrix
         if: github.event_name == 'workflow_dispatch'

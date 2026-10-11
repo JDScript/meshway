@@ -52,9 +52,18 @@ def positive(value):
 
 
 def default_parallel(rows):
-    # Per-container CPU limits are caps, not reservations; fixed waits dominate a row.
+    """Rows are not CPU-bound, but every row runs several debug daemons and iperf; on a
+    shared host the limit is memory. One quarter of the CPUs, and one row per ~3 GiB of
+    currently available memory, keeps a full matrix from starving other tenants."""
     cpus = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else os.cpu_count() or 1
-    return min(len(rows), max(1, cpus // 2))
+    limit = max(1, cpus // 4)
+    try:
+        with open("/proc/meminfo", encoding="ascii") as meminfo:
+            available_kib = next(int(line.split()[1]) for line in meminfo if line.startswith("MemAvailable:"))
+        limit = max(1, min(limit, available_kib // (3 * 1024 * 1024)))
+    except (OSError, StopIteration, ValueError):
+        pass
+    return max(1, min(len(rows), limit))
 
 
 def parse_args(argv=None):

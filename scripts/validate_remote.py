@@ -91,7 +91,9 @@ try:
         raise RuntimeError("validation worktree must be clean")
     temporary = validation / "tmp" / p["run"]
     temporary.mkdir(parents=True)
-    env = dict(os.environ, CARGO_INCREMENTAL="0", MISE_TRUSTED_CONFIG_PATHS=str(workspace),
+    # The remote is a shared host: cap Cargo's parallelism so a cold build cannot push it into OOM.
+    env = dict(os.environ, CARGO_INCREMENTAL="0", CARGO_BUILD_JOBS=os.environ.get("MESHWAY_REMOTE_BUILD_JOBS", "8"),
+               MISE_TRUSTED_CONFIG_PATHS=str(workspace),
                MESHWAY_VALIDATION_ROOT=str(validation), MESHWAY_VALIDATION_TARGET=str(validation / "target"),
                TMPDIR=str(temporary))
     env["PATH"] = str(pathlib.Path.home() / ".local/bin") + ":" + env["PATH"]

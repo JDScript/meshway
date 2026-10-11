@@ -172,7 +172,7 @@ mise run validate:matrix --short --rows nat/off nat+fallback/off
 
 构建阶段从可变 Cargo target 复制并冻结产物。导入阶段仍校验源码／目标／二进制摘要，同一文件系统以硬链接共享只读可执行文件，避免每行复制多 GiB 的 debug 程序；跨文件系统才复制。容器对程序目录只读挂载，可写的外来产物不作为冻结输入接受。
 
-`--parallel N` 默认是 min(所选行数, max(1, 可用 CPU 数 // 2))；32 核主机上 11 行一次全部启动。每个 runtime 行的 controller／A／R／B 各 `--cpus 2`，NAT 行另有两个轻量路由器；这是 cgroup 上限而不是预留，行的墙钟主要由 125 秒持续流、instance 到期等固定等待决定，不由 CPU 决定。矩阵不是性能测量，默认吃满主机。并发不改变 fixture 的进程内期限，不保证高负载下仍通过；高并发下的失败须按证据区分 fixture 期限与真实缺陷，不以调低并发凑通过。每行记录启动 `uptime`、1／5／15 分钟 load、耗时、报告 ID、失败阶段摘录和遗留资源；standalone 的 `verify_runtime.py`／`verify_packet.py` 只记录负载，不设空闲门槛；功能验收不以负载作为前提，矩阵用有界并发控制并发度。与历史串行数据比较时应同时读取负载和源码指纹。
+`--parallel N` 默认是 min(所选行数, 可用 CPU 数 // 4, 当前可用内存 ÷ 3 GiB)，最少 1；32 核／60 GB 主机空闲时 8 行一批，16 行两批。限制依据是内存而不是 CPU：每行运行若干 debug 守护进程与 iperf，planck 是与其他租户共享的主机，2026-10-10 一次满并发矩阵叠加 Cargo 冷构建触发了 OOM，杀掉了 runner 与宿主服务。每个 runtime 行的 controller／A／R／B 各 `--cpus 2`，NAT 行另有两个轻量路由器；这是 cgroup 上限而不是预留，行的墙钟主要由 70 秒持续流、租约到期等固定等待决定。远程 supervisor 还把构建限制为 `CARGO_BUILD_JOBS=8`（`MESHWAY_REMOTE_BUILD_JOBS` 可改）。并发不改变 fixture 的进程内期限，不保证高负载下仍通过；高并发下的失败须按证据区分 fixture 期限与真实缺陷，不以调低并发凑通过。每行记录启动 `uptime`、1／5／15 分钟 load、耗时、报告 ID、失败阶段摘录和遗留资源；standalone 的 `verify_runtime.py`／`verify_packet.py` 只记录负载，不设空闲门槛；功能验收不以负载作为前提，矩阵用有界并发控制并发度。与历史串行数据比较时应同时读取负载和源码指纹。
 
 各行、packet 内嵌 daemon、容器、bridge、挂载目录、私有 D-Bus／DNS 都有独立 run ID／namespace；固定监听端口只存在于各自 namespace，不发布宿主端口。IPv4 地址由 Docker IPAM 分配，IPv6 为每个 bridge 的随机 documentation prefix；共享 `/dev/net/tun` 不共享接口。实际并发受 CPU／内存、Docker 地址池剩余 bridge 数及 IO 影响；单个 NAT 行最多三个 bridge。失败不取消其他行，退出码表示全部选中行及清理是否通过。
 

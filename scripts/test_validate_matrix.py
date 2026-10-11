@@ -8,7 +8,7 @@ import tempfile
 import sys
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import mock_open, patch
 
 import validate_matrix as matrix
 import validate_remote as remote
@@ -115,15 +115,21 @@ class MatrixTests(unittest.TestCase):
                 self.assertEqual(verify.call_args.args[0]["imageId"], "sha256:existing")
                 self.assertEqual(json.loads(images["runtime"].read_text())["platform"], platform)
 
-    def test_default_parallel_is_half_the_cpus_bounded_by_selected_rows(self):
-        with patch.object(matrix.os, "sched_getaffinity", return_value=set(range(32)), create=True):
-            self.assertEqual(matrix.parse_args([]).parallel, 16)
+    def test_default_parallel_is_a_quarter_of_the_cpus_bounded_by_memory_and_rows(self):
+        plenty = mock_open(read_data="MemTotal: 1 kB\nMemAvailable: 62914560 kB\n")
+        with patch.object(matrix.os, "sched_getaffinity", return_value=set(range(32)), create=True), patch("builtins.open", plenty):
+            self.assertEqual(matrix.parse_args([]).parallel, 8)
             self.assertEqual(matrix.parse_args(["--rows", "tun", "packet"]).parallel, 2)
             self.assertEqual(matrix.parse_args(["--parallel", "3"]).parallel, 3)
-        with patch.object(matrix.os, "sched_getaffinity", return_value={0}, create=True):
+        with patch.object(matrix.os, "sched_getaffinity", return_value={0}, create=True), patch("builtins.open", plenty):
             self.assertEqual(matrix.parse_args([]).parallel, 1)
-        with patch.object(matrix.os, "sched_getaffinity", return_value=set(range(12)), create=True):
-            self.assertEqual(matrix.parse_args([]).parallel, 6)
+        # A shared host with 10 GiB available only gets three rows at a time.
+        scarce = mock_open(read_data="MemAvailable: 10485760 kB\n")
+        with patch.object(matrix.os, "sched_getaffinity", return_value=set(range(32)), create=True), patch("builtins.open", scarce):
+            self.assertEqual(matrix.parse_args([]).parallel, 3)
+        # Without /proc/meminfo the CPU bound stands alone.
+        with patch.object(matrix.os, "sched_getaffinity", return_value=set(range(12)), create=True), patch("builtins.open", side_effect=OSError):
+            self.assertEqual(matrix.parse_args([]).parallel, 3)
 
     def test_build_lock_lives_in_the_overridable_shared_target(self):
         with tempfile.TemporaryDirectory() as temporary:
