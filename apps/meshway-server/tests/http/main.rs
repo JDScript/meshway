@@ -463,7 +463,11 @@ fn exported_openapi_is_the_actual_router_contract() {
     );
     assert_eq!(spec["openapi"], "3.1.0");
     let paths = spec["paths"].as_object().unwrap();
-    assert_eq!(paths.len(), 90);
+    assert_eq!(paths.len(), 91);
+    assert_eq!(
+        paths["/agent-api/v1/leave"]["post"]["operationId"],
+        "leaveNode"
+    );
     for (path, method, operation, status, component) in [
         (
             "options",
