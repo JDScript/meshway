@@ -259,10 +259,34 @@ pub(super) async fn coordinate(
         bidirectional: false,
     }];
     input.routing.mesh.clear();
+    // Ordinary names go to E's resolver before resolution; MagicDNS stays
+    // local and the useWithExit split resolver keeps its own direct route.
+    let split = topology.addresses["split"]["resolver"];
+    input.dns.magic_dns = true;
+    input.dns.servers = BTreeMap::from([(
+        "split".into(),
+        meshway_configuration::DnsServer {
+            transport: meshway_configuration::DnsTransport::Udp,
+            server: split.into(),
+            server_port: 53.try_into()?,
+            use_with_exit: true,
+        },
+    )]);
+    input.dns.routes = BTreeMap::from([(
+        crate::exit::SPLIT_ZONE.trim_end_matches('.').into(),
+        vec!["split".into()],
+    )]);
     input.routing.egress.profiles.insert(
         "exit".into(),
         RoutingProfile {
-            rules: vec![],
+            rules: vec![meshway_configuration::EgressRule {
+                remark: "useWithExit split resolver".into(),
+                matcher: meshway_configuration::RouteMatch {
+                    ip_cidr: vec![format!("{split}/32")],
+                    ..Default::default()
+                },
+                action: meshway_configuration::RuleAction::Direct,
+            }],
             fallback: RouteAction::Exit {
                 nodes: vec![format!("node:{}", nodes["e"])],
                 via: vec![format!("node:{}", nodes["r"])],

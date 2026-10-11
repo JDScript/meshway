@@ -3,6 +3,8 @@ use crate::{Cli, IO, Result, actor};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{collections::BTreeMap, net::Ipv4Addr, path::Path, time::Duration};
 
+mod dns;
+pub use dns::SPLIT_ZONE;
 mod service;
 mod traffic;
 
@@ -15,6 +17,7 @@ pub enum Role {
     E,
     External,
     Lan,
+    Resolver,
 }
 impl Role {
     pub const NODES: [Self; 3] = [Self::A, Self::R, Self::E];
@@ -26,6 +29,7 @@ impl Role {
             Self::E => "e",
             Self::External => "external",
             Self::Lan => "lan",
+            Self::Resolver => "resolver",
         }
     }
 }
@@ -100,8 +104,14 @@ pub async fn run(cli: &Cli, role: Role) -> Result<()> {
     if role == Role::Controller {
         return crate::controller::run(cli).await;
     }
-    if matches!(role, Role::External | Role::Lan) {
-        return service::run(cli).await;
+    match role {
+        // E's only OS DNS upstream shares the isolated public-classified link.
+        Role::External => {
+            return tokio::try_join!(service::run(cli), dns::run(cli, role)).map(|_| ());
+        }
+        Role::Lan => return service::run(cli).await,
+        Role::Resolver => return dns::run(cli, role).await,
+        _ => {}
     }
     let topology: Topology = read(&cli.public.join("exit-topology.json")).await?;
     wait(cli, "exit-enroll").await?;

@@ -13,11 +13,13 @@ from validation_support import bind_access_options, export_evidence, mount_names
 from verification_sources import fingerprint
 
 
-ROLES = ("controller", "a", "r", "e", "external", "lan")
+ROLES = ("controller", "a", "r", "e", "external", "lan", "resolver")
 # Separate control links prevent the control bridge becoming an A-E shortcut.
+# `split` carries only A's own OS DNS upstream, which is also its useWithExit
+# split resolver; E's only OS DNS upstream is the external authority.
 LINKS = {"ca": ("controller", "a"), "cr": ("controller", "r"),
          "ce": ("controller", "e"), "ar": ("a", "r"), "re": ("r", "e"),
-         "external": ("e", "external"), "lan": ("e", "lan")}
+         "external": ("e", "external"), "lan": ("e", "lan"), "split": ("a", "resolver")}
 
 
 NETMAP_CONTENT = "import json; print(json.dumps(json.load(open('/state/node/identity/netmap.json'))['netmap']))"
@@ -40,7 +42,7 @@ def execute(report, artifacts, runtime_os, platform, short, load):
                 "traversal": "exit", "dnsBackend": "off", "runtimeOsAssets": runtime_os,
                 "loadBeforeRuntime": load, "resources": {"containers": containers, "networks": networks},
                 "productStatus": "running", "cleanup": {}, "processes": {},
-                "stages": {str(n): {"status": "notRun"} for n in range(1, 9)}}
+                "stages": {str(n): {"status": "notRun"} for n in range(1, 10)}}
     metadata = report / "report.json"
     started = time.monotonic()
     failure = None
@@ -187,11 +189,15 @@ def execute(report, artifacts, runtime_os, platform, short, load):
                         "--sysctl", "net.ipv4.ip_forward=0",
                         "--sysctl", "net.ipv4.conf.all.rp_filter=0", "--sysctl", "net.ipv4.conf.default.rp_filter=0",
                         "--env", "TMPDIR=/state", "--env", "MESHWAY_EXIT_FIXTURE_OWNED=1", *bind_access_options()]
+            if role in ("external", "resolver"):
+                creation += ["--cap-add", "NET_BIND_SERVICE"]
             if role in ("a", "r", "e"):
+                upstream = {"a": addresses["split"]["resolver"], "r": addresses["cr"]["controller"],
+                            "e": addresses["external"]["external"]}[role]
                 creation += ["--cap-add", "NET_ADMIN", "--device", "/dev/net/tun:/dev/net/tun"]
                 creation += mount_namespace_options()
                 creation += ["--tmpfs", "/run:rw,nosuid,nodev,mode=755", "--env", "MESHWAY_DNS_FIXTURE_OWNED=1",
-                             "--env", "MESHWAY_DNS_BACKEND=resolved", "--env", "MESHWAY_DNS_UPSTREAM=" + addresses["c" + role]["controller"],
+                             "--env", "MESHWAY_DNS_BACKEND=resolved", "--env", "MESHWAY_DNS_UPSTREAM=" + upstream,
                              "--env", "DBUS_SYSTEM_BUS_ADDRESS=unix:path=/run/dbus/system_bus_socket"]
                 for capability in ("SYS_ADMIN", "CHOWN", "NET_BIND_SERVICE", "NET_RAW", "SETUID", "SETGID", "SETPCAP", "DAC_OVERRIDE", "SYS_PTRACE", "FOWNER", "KILL"):
                     creation += ["--cap-add", capability]
@@ -276,6 +282,57 @@ def execute(report, artifacts, runtime_os, platform, short, load):
                     and (value.get("netmap") or {}).get("netmap") == value["applied"])
 
         observations = {}
+        # A's ordinary names are answered only through E's OS resolver; the
+        # external authority logs E as their only asker and the resolver
+        # (A's own OS upstream, answering everything) never sees them.
+        exit_zone = "exit-dns.test"
+        dns_tag = identity.lower()
+        dns_asked = []
+        lookup_program = ("import json,socket,sys\n"
+                          "family={'4':socket.AF_INET,'any':socket.AF_UNSPEC}[sys.argv[2]]\n"
+                          "try:\n"
+                          " found=socket.getaddrinfo(sys.argv[1],None,family,socket.SOCK_DGRAM)\n"
+                          " print(json.dumps({'addresses':sorted({a[4][0] for a in found})}))\n"
+                          "except socket.gaierror as error:\n"
+                          " print(json.dumps({'error':error.errno}))\n")
+
+        def lookup(name, family="4"):
+            record = command("a", "timeout", "12", "python3", "-c", lookup_program, name, family, required=False)
+            try:
+                value = json.loads(record["stdout"])
+            except ValueError:
+                value = {"error": "no result", "exitCode": record["exitCode"]}
+            dns_asked.append(name)
+            return {"name": name, "family": family, "value": value, "record": record}
+
+        def resolves(name, expected, family="4", timeout=45):
+            attempts = []
+            deadline = time.monotonic() + timeout
+            while True:
+                attempts.append(lookup(name, family))
+                if attempts[-1]["value"].get("addresses") == sorted(expected):
+                    return attempts
+                if time.monotonic() >= deadline:
+                    write(report / "dns-failure.json", attempts)
+                    raise RuntimeError("system DNS did not return the expected answer: " + name)
+                time.sleep(.5)
+
+        def fails(name):
+            result = lookup(name)
+            if "addresses" in result["value"]:
+                write(report / "dns-failure.json", result)
+                raise RuntimeError("system DNS answered where it must fail: " + name)
+            return result
+
+        def dns_queries(role):
+            record = command(role, "cat", "/evidence/dns-queries.json", required=False)
+            return json.loads(record["stdout"]) if record["exitCode"] == 0 else []
+
+        def no_source_fallback():
+            asked = {query["name"].rstrip(".") for query in dns_queries("resolver")}
+            leaked = sorted(name for name in set(dns_asked) if name.endswith(exit_zone) and name in asked)
+            if leaked:
+                raise RuntimeError("source fell back to its own OS DNS upstream: " + ", ".join(leaked))
 
         def retired():
             readback = {"e": {
@@ -342,7 +399,7 @@ def execute(report, artifacts, runtime_os, platform, short, load):
         if acquired["capabilities"].get("feature:exit-ipv4") != {"kind": "feature", "version": 1}:
             raise RuntimeError("E did not acquire the executable IPv4 exit capability v1")
         manifest["stages"]["1"] = {"status": "passed", "evidence": ["e/installed-status.json"]}
-        manifest["stages"]["3"] = {"status": "observed", "evidence": ["installed.json", "negative-dns-query.json"]}
+        manifest["stages"]["3"] = {"status": "passed", "evidence": ["installed.json", "e/installed-status.json"]}
         wait_for(lambda: all(running(status(role)) for role in ("a", "r")), "A/R running with a netmap lease")
         snapshot("capture-before-admission")
         # Actual netmap/kernel readback is retained before the first application
@@ -369,12 +426,61 @@ def execute(report, artifacts, runtime_os, platform, short, load):
         if bypass["ipv6"]["exitCode"] == 0 or capture_plan["sinkIpv6"] != ["::/0"]:
             raise RuntimeError("source exit IPv6 is not negatively captured")
         write(report / "capture-bypass.json", bypass)
-        dns_name = "exit-negative-" + identity.lower() + ".fixture.test"
-        dns_probe = command("a", "timeout", "8", "getent", "ahostsv4", dns_name, required=False)
-        write(report / "negative-dns-query.json", {"name": dns_name, "status": status("a"), "probe": dns_probe})
-        if dns_probe["exitCode"] not in (2, 124):
-            raise RuntimeError("exit/off DNS query did not fail through the system resolver")
         manifest["stages"]["4"] = {"status": "passed", "evidence": ["capture-before-admission.json", "compiled-plans.json"]}
+        manifest["status"] = "dns"
+        save()
+        # Single-exit DNS: the source's plan carries E's resolver service on
+        # the full A→R→E path; E serves exactly that source.
+        node_ids = [plans[role]["nodeId"] for role in ("a", "r", "e")]
+        a_dns, e_dns = plans["a"]["dns"], plans["e"]["dns"]
+        if (a_dns["egress"].get("type") != "viaExit" or a_dns["egress"]["service"]["path"]["nodes"] != node_ids
+                or e_dns["egress"].get("type") != "serveExitResolver"
+                or [service["source"] for service in e_dns["egress"]["services"]] != [node_ids[0]]
+                or a_dns["resolvers"] != {"split": "direct"}):
+            raise RuntimeError("compiled single-exit DNS plans mismatch")
+        own = plans["a"]["self"]["addresses"]
+        magic = [name for name, value in a_dns["meshHosts"].items() if value == own]
+        if len(magic) != 1:
+            raise RuntimeError("A's own MagicDNS name missing")
+        big = ["198.51.100." + str(i) for i in range(1, 91)]
+        dns = {"plans": {"a": a_dns, "e": e_dns}}
+        ordinary = "www-" + dns_tag + "." + exit_zone
+        dual = "dual-" + dns_tag + "." + exit_zone
+        split = "host-" + dns_tag + ".split.test"
+        absent = "absent-" + dns_tag + "." + magic[0].split(".", 1)[1].rstrip(".")
+        dns["ordinary"] = resolves(ordinary, ["198.51.100.10"])
+        # A real AAAA answer is returned as is; IPv6 traffic stays sunk (stage 4).
+        dns["dualStack"] = resolves(dual, ["198.51.100.10", "2001:db8::10"], "any")
+        # 90 A records exceed the 1232-byte UDP limit of the Mesh leg: the
+        # complete answer can only arrive over the separately permitted TCP.
+        dns["truncatedToTcp"] = resolves("big." + exit_zone, big)
+        dns["magicDns"] = resolves(magic[0].rstrip("."), [own["ipv4"]])
+        dns["magicDnsUnknown"] = fails(absent)
+        dns["useWithExitSplit"] = resolves(split, ["198.51.100.53"])
+        external, resolver = dns_queries("external"), dns_queries("resolver")
+        dns["externalQueries"], dns["resolverQueries"] = external, resolver
+        for name in (ordinary, dual, "big." + exit_zone):
+            peers = {query["peer"].rsplit(":", 1)[0] for query in external if query["name"].rstrip(".") == name}
+            if peers != {addresses["external"]["e"]}:
+                raise RuntimeError("ordinary name was not resolved by E's OS resolver: " + name)
+        split_peers = {query["peer"].rsplit(":", 1)[0] for query in resolver if query["name"].rstrip(".") == split}
+        if split_peers != {addresses["split"]["a"]} or any(query["name"].rstrip(".") == split for query in external):
+            raise RuntimeError("useWithExit split did not use its own direct resolver")
+        for name in (magic[0].rstrip("."), absent):
+            if any(query["name"].rstrip(".") == name for query in external + resolver):
+                raise RuntimeError("MagicDNS name left the source: " + name)
+        no_source_fallback()
+        # E's resolver unreachable: A's query fails and never reaches A's own
+        # live OS upstream, which would have answered it.
+        dns["block"] = command("e", "ip", "route", "add", "unreachable", addresses["external"]["external"] + "/32")
+        try:
+            dns["blocked"] = fails("blocked-" + dns_tag + "." + exit_zone)
+        finally:
+            dns["restore"] = command("e", "ip", "route", "del", "unreachable", addresses["external"]["external"] + "/32")
+        dns["unblocked"] = resolves("unblocked-" + dns_tag + "." + exit_zone, ["198.51.100.10"])
+        no_source_fallback()
+        write(report / "dns-exit.json", dns)
+
         manifest["status"] = "traffic"
         save()
         (report / "signals/exit-traffic").touch()
@@ -450,11 +556,15 @@ def execute(report, artifacts, runtime_os, platform, short, load):
                  and (s.get("exit") or {}).get("installedRole") is None, "role drain applied")
         wait_for(retired, "owned role/conntrack retirement readback")
         evidence.no_owned_exit(snapshot("withdrawn"))
+        # Role withdrawal ends the source's exit DNS plan with the role.
+        wait_for(lambda: ((status("a").get("saved") or {}).get("revision")) == withdrawn_revision, "source withdrawal netmap")
+        dns_lifecycle = {"withdrawn": fails("withdrawn-" + dns_tag + "." + exit_zone)}
         (report / "signals/exit-flow-withdraw").touch()
         wait_for(lambda: (report / "signals/exit-traffic-done").exists(), "old socket refusal")
         (report / "signals/exit-restore").touch()
         wait_for(lambda: (report / "signals/exit-restored.json").exists(), "role restoration")
         wait_for(installed, "restored applied")
+        dns_lifecycle["restored"] = resolves("restored-" + dns_tag + "." + exit_zone, ["198.51.100.10"], timeout=90)
 
         controls = {}
         for link in ("external", "lan"):
@@ -506,6 +616,8 @@ def execute(report, artifacts, runtime_os, platform, short, load):
             write(report / "outage-leases.json", {"closedAt": closed_at, "status": frozen})
             if not all(running(value) for value in frozen.values()) or not (frozen["e"].get("exit") or {}).get("installedRole"):
                 raise RuntimeError("closing Node HTTP withdrew authority before lease expiry")
+            # Within the signed lease the exit resolver serves with no Server.
+            dns_lifecycle["offline"] = resolves("offline-" + dns_tag + "." + exit_zone, ["198.51.100.10"], timeout=10)
             # Every admitted request has drained: these leases can no longer be renewed.
             last_contact = max([closed_at] + [at(value["lastSyncAt"]) for value in frozen.values() if value.get("lastSyncAt")])
             expiries = {role: at(value["netmap"]["expiresAt"]) for role, value in frozen.items()}
@@ -555,6 +667,7 @@ def execute(report, artifacts, runtime_os, platform, short, load):
                 process.wait()
                 log.close()
         wait_for(lambda: all(status(role).get("applied") is None for role in ("a", "r")), "A/R lease expiry", 60)
+        dns_lifecycle["expired"] = fails("expired-" + dns_tag + "." + exit_zone)
         wait_for(retired, "expired role/conntrack retirement readback")
         expired = snapshot("expired")
         evidence.no_owned_exit(expired)
@@ -569,6 +682,9 @@ def execute(report, artifacts, runtime_os, platform, short, load):
         write(report / "e/recovered-status.json", recovered)
         snapshot("recovered")
         wait_for(lambda: all(running(status(role)) for role in ("a", "r")), "source/relay automatic recovery")
+        dns_lifecycle["recovered"] = resolves("recovered-" + dns_tag + "." + exit_zone, ["198.51.100.10"], timeout=60)
+        no_source_fallback()
+        write(report / "dns-lifecycle.json", dns_lifecycle)
         for link in ("external", "lan"):
             result = warm_probe("a", addresses[link][link])
             write(report / ("recovered-flow-" + link + ".json"), result)
@@ -602,12 +718,17 @@ def execute(report, artifacts, runtime_os, platform, short, load):
             raise RuntimeError("foreign sentinel changed during product cleanup")
         manifest["stages"]["8"] = {"status": "passed", "evidence": ["withdrawn.json", "a/withdrawn-old-flows.json", "lease-window.json", "expired.json", "recovered.json", "down.json", "components/role.log"]}
         stop_captures()
-        for interface in sorted(set(interfaces["a"].values()) - {"lo"}):
-            leak = command("a", "python3", "-c", "import pathlib; b=pathlib.Path('/evidence/" + interface + ".pcap').read_bytes().lower(); print(int(" + repr(dns_name.split('.')[0].encode()) + " in b))")
-            if leak["stdout"].strip() != "0":
-                raise RuntimeError("exit DNS query escaped on a source physical interface")
-        manifest["dnsNoSourceFallback"] = {"passed": True, "evidence": "negative-dns-query.json"}
-        manifest["stages"]["3"]["status"] = "passed"
+        # Ordinary names cross A's and R's links only inside the protected
+        # DNS circuit; E's capture shows its OS resolver asking for them.
+        for role in ("a", "r", "e"):
+            for interface in sorted(set(interfaces[role].values()) - {"lo"}):
+                found = command(role, "python3", "-c", "import pathlib; b=pathlib.Path('/evidence/" + interface + ".pcap').read_bytes().lower(); print(int(b'exit-dns' in b))")["stdout"].strip()
+                external_link = role == "e" and interfaces["e"].get(addresses["external"]["e"]) == interface
+                if found != ("1" if external_link else "0"):
+                    raise RuntimeError("ordinary DNS name capture mismatch on " + role + "/" + interface)
+        no_source_fallback()
+        manifest["dnsNoSourceFallback"] = {"passed": True, "evidence": "dns-exit.json"}
+        manifest["stages"]["9"] = {"status": "passed", "evidence": ["dns-exit.json", "dns-lifecycle.json", "e/*.pcap", "external/dns-queries.json", "resolver/dns-queries.json"]}
         manifest["packetTuples"] = {}
         for role in ("r", "e"):
             manifest["packetTuples"][role] = {}

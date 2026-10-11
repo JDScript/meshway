@@ -58,9 +58,9 @@ def negative_boundary(record):
 
 
 def all_stages_passed(manifest):
-    return (set(manifest["stages"]) == {str(i) for i in range(1, 9)}
+    return (set(manifest["stages"]) == {str(i) for i in range(1, 10)}
             and all(stage.get("status") == "passed" for stage in manifest["stages"].values())
-            and set(manifest.get("processes", {})) == {"controller", "a", "r", "e", "external", "lan"}
+            and set(manifest.get("processes", {})) == {"controller", "a", "r", "e", "external", "lan", "resolver"}
             and manifest.get("dnsNoSourceFallback", {}).get("passed") is True
             and all(state["ExitCode"] == 0 and not state["Running"] and not state["OOMKilled"] for state in manifest["processes"].values())
             and not manifest.get("cleanupErrors"))
