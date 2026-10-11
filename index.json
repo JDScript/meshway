@@ -1,8 +1,204 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-11T08:03:05.009528+00:00",
+  "updatedAt": "2026-10-11T08:39:54.634513+00:00",
   "runs": [
+    {
+      "id": 38125033457,
+      "attempt": 1,
+      "workflow": "Perf",
+      "event": "push",
+      "branch": "main",
+      "commit": "9354519f5f8914f131b8f73d15843210eb77137f",
+      "message": "test(underlay): reverse-path classification follows the kernel's max(all, interface) rule",
+      "createdAt": "2026-10-11T08:30:23Z",
+      "updatedAt": "2026-10-11T08:33:44Z",
+      "status": "in_progress",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/38125033457",
+      "jobs": [
+        {
+          "id": 114427521091,
+          "name": "perf",
+          "runner": "planck",
+          "status": "in_progress",
+          "conclusion": null,
+          "startedAt": "2026-10-11T08:33:44Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38125033457/job/114427521091"
+        },
+        {
+          "id": 114427521261,
+          "name": "perf-arm64",
+          "runner": "jp-tyo-arm64",
+          "status": "completed",
+          "conclusion": "failure",
+          "startedAt": "2026-10-11T08:30:26Z",
+          "completedAt": "2026-10-11T08:30:38Z",
+          "seconds": 12.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38125033457/job/114427521261"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 38125033378,
+      "attempt": 1,
+      "workflow": "Build",
+      "event": "push",
+      "branch": "main",
+      "commit": "9354519f5f8914f131b8f73d15843210eb77137f",
+      "message": "test(underlay): reverse-path classification follows the kernel's max(all, interface) rule",
+      "createdAt": "2026-10-11T08:30:23Z",
+      "updatedAt": "2026-10-11T08:35:57Z",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/JDScript/meshway/actions/runs/38125033378",
+      "jobs": [
+        {
+          "id": 114427520583,
+          "name": "node-linux (x86_64-unknown-linux-musl)",
+          "runner": "mars-epyc7543",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-11T08:30:25Z",
+          "completedAt": "2026-10-11T08:35:56Z",
+          "seconds": 331.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38125033378/job/114427520583"
+        },
+        {
+          "id": 114427520712,
+          "name": "node-linux (aarch64-unknown-linux-musl)",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-11T08:30:24Z",
+          "completedAt": "2026-10-11T08:33:43Z",
+          "seconds": 199.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38125033378/job/114427520712"
+        }
+      ],
+      "artifacts": [
+        {
+          "id": 11697280674,
+          "name": "node-x86_64-unknown-linux-musl-9354519f5f8914f131b8f73d15843210eb77137f",
+          "bytes": 8592553,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38125033378/artifacts/11697280674",
+          "jobId": 114427520583,
+          "runner": "mars-epyc7543",
+          "seconds": 331.0,
+          "state": "ok",
+          "error": null,
+          "reports": [],
+          "matrices": [],
+          "builds": [
+            {
+              "target": "x86_64-unknown-linux-musl",
+              "binary": "meshwayd",
+              "bytes": 16754792,
+              "sha256": "257aa4b8d3d1a344f303aeeb1d12ad921164aff4635027627ec9a0e0386acbb7"
+            },
+            {
+              "target": "x86_64-unknown-linux-musl",
+              "binary": "meshway",
+              "bytes": 1880480,
+              "sha256": "c68bb4f71be42fe7fcbde213d0fd0af5c7bec323b5d6d6975ffcb9b1f678b887"
+            }
+          ]
+        },
+        {
+          "id": 11696911413,
+          "name": "node-aarch64-unknown-linux-musl-9354519f5f8914f131b8f73d15843210eb77137f",
+          "bytes": 8056532,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38125033378/artifacts/11696911413",
+          "jobId": 114427520712,
+          "runner": "planck",
+          "seconds": 199.0,
+          "state": "ok",
+          "error": null,
+          "reports": [],
+          "matrices": [],
+          "builds": [
+            {
+              "target": "aarch64-unknown-linux-musl",
+              "binary": "meshwayd",
+              "bytes": 13941944,
+              "sha256": "0fc1fac4f67fb5de889eba990b6f321fe8420d139062bf810b371484368a4455"
+            },
+            {
+              "target": "aarch64-unknown-linux-musl",
+              "binary": "meshway",
+              "bytes": 1659048,
+              "sha256": "811094054751bb707d7978b7c871a3081ab9e6ae02e88af210e28e1bd1554071"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 38125033364,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "9354519f5f8914f131b8f73d15843210eb77137f",
+      "message": "test(underlay): reverse-path classification follows the kernel's max(all, interface) rule",
+      "createdAt": "2026-10-11T08:30:23Z",
+      "updatedAt": "2026-10-11T08:35:59Z",
+      "status": "in_progress",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/38125033364",
+      "jobs": [
+        {
+          "id": 114427520637,
+          "name": "changes",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-11T08:30:26Z",
+          "completedAt": "2026-10-11T08:30:40Z",
+          "seconds": 14.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38125033364/job/114427520637"
+        },
+        {
+          "id": 114427573366,
+          "name": "console",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-11T08:30:42Z",
+          "completedAt": "2026-10-11T08:32:47Z",
+          "seconds": 125.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38125033364/job/114427573366"
+        },
+        {
+          "id": 114427573383,
+          "name": "cargo",
+          "runner": "mars-14900k",
+          "status": "in_progress",
+          "conclusion": null,
+          "startedAt": "2026-10-11T08:32:50Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38125033364/job/114427573383"
+        },
+        {
+          "id": 114427573412,
+          "name": "docs-and-scripts",
+          "runner": "mars-epyc7543",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-11T08:35:58Z",
+          "completedAt": "2026-10-11T08:37:08Z",
+          "seconds": 70.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38125033364/job/114427573412"
+        }
+      ],
+      "artifacts": []
+    },
     {
       "id": 38122884121,
       "attempt": 1,
