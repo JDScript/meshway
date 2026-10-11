@@ -4,7 +4,8 @@ mod socket;
 use crate::runtime::{Action, Mutation, PingRequest, View};
 use meshway_model::Sequence;
 use meshway_protocol::ipc::{
-    Command, ErrorCode, PingError, PingEvent, Request, Response, ResultBody, VERSION,
+    Command, ErrorCode, NetcheckReport, PingError, PingEvent, Request, Response, ResultBody,
+    VERSION,
 };
 pub(crate) use socket::{Socket, SocketIdentity};
 use std::time::Duration;
@@ -29,6 +30,7 @@ async fn handle(
     mut stream: UnixStream,
     commands: mpsc::Sender<Mutation>,
     pings: mpsc::Sender<PingRequest>,
+    netchecks: mpsc::Sender<oneshot::Sender<NetcheckReport>>,
     view: View,
     stop: watch::Receiver<bool>,
 ) {
@@ -51,12 +53,56 @@ async fn handle(
         handle_ping(stream, request, pings, stop).await;
         return;
     }
-    let deadline = if matches!(request.command, Command::RotateKey { .. }) {
+    if request.version == VERSION && matches!(request.command, Command::Netcheck) {
+        handle_netcheck(stream, request, netchecks).await;
+        return;
+    }
+    let deadline = if matches!(
+        request.command,
+        Command::RotateKey { .. } | Command::Logout { .. }
+    ) {
         tokio::time::Instant::now() + Duration::from_secs(65)
     } else {
         deadline
     };
     let _ = tokio::time::timeout_at(deadline, one_shot(&mut stream, commands, view, request)).await;
+}
+
+async fn handle_netcheck(
+    mut stream: UnixStream,
+    request: Request,
+    netchecks: mpsc::Sender<oneshot::Sender<NetcheckReport>>,
+) {
+    let (reply, report) = oneshot::channel();
+    let result = match netchecks.try_send(reply) {
+        Ok(()) => match tokio::time::timeout(REQUEST_TIMEOUT, report).await {
+            Ok(Ok(report)) => ResultBody::Netcheck {
+                report: Box::new(report),
+            },
+            Ok(Err(_)) => ResultBody::Error {
+                code: ErrorCode::Stopping,
+            },
+            Err(_) => ResultBody::Error {
+                code: ErrorCode::Busy,
+            },
+        },
+        Err(mpsc::error::TrySendError::Full(_)) => ResultBody::Error {
+            code: ErrorCode::Busy,
+        },
+        Err(mpsc::error::TrySendError::Closed(_)) => ResultBody::Error {
+            code: ErrorCode::Stopping,
+        },
+    };
+    let response = Response {
+        version: VERSION,
+        request_id: request.request_id,
+        result,
+    };
+    let _ = tokio::time::timeout(
+        WRITE_TIMEOUT,
+        meshway_protocol::ipc::write(&mut stream, &response),
+    )
+    .await;
 }
 
 async fn handle_ping(
@@ -130,7 +176,10 @@ async fn one_shot(
             Command::RotateKey { expected_revision } => {
                 Ok(Some((Action::RotateKey, expected_revision, None)))
             }
-            Command::Ping { .. } => return,
+            Command::Logout { expected_revision } => {
+                Ok(Some((Action::Logout, expected_revision, None)))
+            }
+            Command::Ping { .. } | Command::Netcheck => return,
         };
         match action {
             Err(code) => Err(code),
@@ -208,6 +257,7 @@ pub(crate) async fn serve(
     socket: Socket,
     commands: mpsc::Sender<Mutation>,
     pings: mpsc::Sender<PingRequest>,
+    netchecks: mpsc::Sender<oneshot::Sender<NetcheckReport>>,
     view: View,
     mut stop: watch::Receiver<bool>,
 ) -> Result<(), &'static str> {
@@ -226,10 +276,11 @@ pub(crate) async fn serve(
                 }
                 let commands = commands.clone();
                 let pings = pings.clone();
+                let netchecks = netchecks.clone();
                 let view = view.clone();
                 let stop = stop.clone();
                 clients.spawn(async move {
-                    handle(stream, commands, pings, view, stop).await;
+                    handle(stream, commands, pings, netchecks, view, stop).await;
                 });
             },
         }

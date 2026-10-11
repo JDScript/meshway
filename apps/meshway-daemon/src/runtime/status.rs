@@ -22,6 +22,7 @@ pub(super) struct Report {
     pub retry_at: Option<DateTime<Utc>>,
     pub observed_at: DateTime<Utc>,
     pub rotation: Option<RotationOutcome>,
+    pub logout: Option<RotationOutcome>,
 }
 impl Report {
     pub fn initial(revision: Version) -> Self {
@@ -34,6 +35,7 @@ impl Report {
             retry_at: None,
             observed_at: Utc::now(),
             rotation: None,
+            logout: None,
         }
     }
 }
@@ -159,6 +161,27 @@ impl View {
                 meshway_model::exit::ExitDnsStatus::Unavailable { reason } => Some(reason),
             }),
         });
+        let content = network
+            .content
+            .as_ref()
+            .filter(|_| network_current)
+            .map(|content| &content.netmap);
+        let known = network
+            .known_peers
+            .as_ref()
+            .and_then(|known| known.borrow().clone());
+        let peers = content
+            .map(|netmap| {
+                super::peers::peers(&super::peers::Inputs {
+                    netmap,
+                    facts: network.facts.as_ref(),
+                    routes: &network.routes,
+                    rtts: &network.rtts,
+                    known: known.as_ref(),
+                    now: Utc::now(),
+                })
+            })
+            .unwrap_or_default();
         Status {
             process_id: std::process::id(),
             revision: desired.revision,
@@ -198,6 +221,8 @@ impl View {
             data_plane,
             network_mode: self.network_mode,
             exit,
+            node: content.map(|netmap| super::peers::own(netmap)),
+            peers,
             last_error: report
                 .problem
                 .or(if active { network.problem } else { None }),

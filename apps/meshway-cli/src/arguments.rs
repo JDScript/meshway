@@ -7,6 +7,7 @@ pub(crate) struct Arguments {
     pub logging: meshway_logging::Options,
     #[arg(long, global = true, default_value = meshway_protocol::ipc::DEFAULT_SOCKET)]
     pub socket: std::path::PathBuf,
+    /// Print typed JSON instead of text (ping: one event per line).
     #[arg(long, global = true)]
     pub json: bool,
     #[command(subcommand)]
@@ -21,6 +22,9 @@ pub(crate) enum Command {
         target: String,
         #[arg(short = 'c', long, default_value_t = 10, value_parser = clap::value_parser!(u16).range(1..=1000))]
         count: u16,
+        /// Also print preparation progress and how each channel was acquired.
+        #[arg(short, long)]
+        verbose: bool,
     },
     /// Request online control; prints the browser URL when approval is needed.
     Up {
@@ -36,11 +40,15 @@ pub(crate) enum Command {
     RotateKey,
     /// Persist offline intent and stop the active Node instance.
     Down,
-    /// Read actual daemon, identity, lease and saved configuration state.
+    /// Delete this Node from its network on the Server, then forget its identity locally.
+    Logout,
+    /// Read actual daemon, identity, lease, saved configuration and peer state.
     Status {
         #[arg(long)]
         watch: bool,
     },
+    /// Check this Node's UDP mappings, STUN observers and Server reachability.
+    Netcheck,
     /// Print this build's version and the protocol versions it speaks; does not contact the daemon.
     Version,
 }

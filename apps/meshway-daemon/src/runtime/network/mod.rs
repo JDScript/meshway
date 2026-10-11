@@ -87,6 +87,12 @@ pub(super) struct Report {
     pub dependencies: std::collections::BTreeMap<meshway_model::NodeId, u32>,
     pub observation_dependencies:
         std::collections::BTreeMap<meshway_model::NodeId, Vec<meshway_model::ObservationId>>,
+    /// Complete path of an established circuit this Node ends, by far end.
+    pub routes: std::collections::BTreeMap<meshway_model::NodeId, Vec<meshway_model::NodeId>>,
+    /// Latest successful measured round trip toward each target.
+    pub rtts: std::collections::BTreeMap<meshway_model::NodeId, meshway_protocol::ipc::PeerRtt>,
+    /// Control's last known peer facts, as the worker reads them.
+    pub known_peers: Option<watch::Receiver<Option<meshway_control::KnownPeers>>>,
 }
 impl Report {
     pub fn stopped() -> Self {
@@ -109,6 +115,9 @@ impl Report {
             owned_interfaces: Vec::new(),
             dependencies: Default::default(),
             observation_dependencies: Default::default(),
+            routes: Default::default(),
+            rtts: Default::default(),
+            known_peers: None,
         }
     }
     /// The installation is live: Engine holds its content and DNS is healthy.
@@ -140,6 +149,7 @@ pub(super) enum Request {
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))] // Consumed by the Linux-only worker.
 enum Command {
     Ping(crate::runtime::PingSession),
+    Netcheck(oneshot::Sender<Option<meshway_connectivity::StunProbe>>),
     Builder(oneshot::Sender<Result<reqwest::ClientBuilder, Problem>>),
     Sample(oneshot::Sender<reporting::Sample>),
     Stop {
@@ -381,9 +391,9 @@ impl Handle {
         });
     }
 
-    /// Hand a local ping to the worker; it is decided on the installed netmap.
-    pub fn pings(&self) -> Pings {
-        Pings(self.commands.clone())
+    /// Local IPC diagnostics (ping, netcheck), decided on the installed netmap.
+    pub fn local(&self) -> Local {
+        Local(self.commands.clone())
     }
 
     pub async fn stop(&mut self, down: bool) -> Result<(), Problem> {
@@ -427,8 +437,19 @@ impl Handle {
 /// Local IPC connects directly to the packet owner, independently of HTTP
 /// maintenance and long-poll authentication. Admission stays with SecureNode.
 #[derive(Clone)]
-pub(crate) struct Pings(mpsc::Sender<Command>);
-impl Pings {
+pub(crate) struct Local(mpsc::Sender<Command>);
+impl Local {
+    /// Ask every traversal socket of the installed Manager to observe now;
+    /// `None` without an installed packet plane or when the worker is busy.
+    pub async fn netcheck(&self) -> Option<meshway_connectivity::StunProbe> {
+        let (reply, probe) = oneshot::channel();
+        self.0.try_send(Command::Netcheck(reply)).ok()?;
+        tokio::time::timeout(std::time::Duration::from_secs(1), probe)
+            .await
+            .ok()?
+            .ok()?
+    }
+
     pub fn send(&self, session: crate::runtime::PingSession) {
         if let Err(
             mpsc::error::TrySendError::Full(Command::Ping(session))

@@ -1,7 +1,7 @@
 //! CLI waiting and exit semantics; durable state belongs to the daemon.
 use crate::{
     arguments::{Arguments, Command as CliCommand},
-    output::display,
+    output,
 };
 use meshway_protocol::ipc::{Client, Command, Phase, PingEvent, PingTarget};
 use std::time::Duration;
@@ -11,7 +11,7 @@ use tokio::time::Instant;
 pub(crate) enum Error {
     #[error(transparent)]
     Ipc(#[from] meshway_protocol::ipc::ClientError),
-    #[error("Cannot write status.")]
+    #[error("Cannot write output.")]
     Output(#[from] std::io::Error),
     #[error("Another operator changed Node intent.")]
     IntentChanged,
@@ -32,7 +32,9 @@ pub(crate) async fn run(arguments: Arguments) -> Result<(), Error> {
         CliCommand::Up { .. } => "up",
         CliCommand::RotateKey => "rotate-key",
         CliCommand::Down => "down",
+        CliCommand::Logout => "logout",
         CliCommand::Status { .. } => "status",
+        CliCommand::Netcheck => "netcheck",
         CliCommand::Ping { .. } => "ping",
         CliCommand::Version => "version",
     };
@@ -42,16 +44,52 @@ pub(crate) async fn run(arguments: Arguments) -> Result<(), Error> {
         return Ok(());
     }
     let client = Client::new(arguments.socket);
-    if let CliCommand::Ping { target, count } = arguments.command {
+    if let CliCommand::Netcheck = arguments.command {
+        let report = client.netcheck().await?;
+        let mut stdout = std::io::stdout().lock();
+        if arguments.json {
+            output::json(&mut stdout, &report)?;
+        } else {
+            output::netcheck::write(&mut stdout, &output::Term::stdout(), &report)?;
+        }
+        return Ok(());
+    }
+    if let CliCommand::Ping {
+        target,
+        count,
+        verbose,
+    } = arguments.command
+    {
         let target = match target.parse::<std::net::IpAddr>() {
             Ok(address) => PingTarget::MeshIp {
                 address: address.to_string(),
             },
             Err(_) => PingTarget::Name { name: target },
         };
+        let term = output::Term::stdout();
+        let mut view = output::ping::Ping::new(verbose);
         let mut stream = client.ping(target, count).await?;
         while let Some(event) = stream.next().await? {
-            crate::output::ping(&event, arguments.json)?;
+            if !arguments.json && view.wants_names(&event) {
+                // Relays are named from this Node's own netmap peers; without
+                // them the line keeps the Node IDs.
+                let peers = client
+                    .call(Command::Status)
+                    .await
+                    .map(|status| status.peers)
+                    .unwrap_or_default();
+                view.names(&peers);
+            }
+            {
+                use std::io::Write;
+                let mut stdout = std::io::stdout().lock();
+                if arguments.json {
+                    output::ping::json(&mut stdout, &event)?;
+                } else {
+                    view.write(&mut stdout, &term, &event)?;
+                }
+                stdout.flush()?;
+            }
             match event {
                 PingEvent::Completed { success, .. } => {
                     return if success > 0 {
@@ -74,14 +112,23 @@ pub(crate) async fn run(arguments: Arguments) -> Result<(), Error> {
                     expected_revision: status.revision,
                 })
                 .await?;
-            display(&status, arguments.json)?;
+            output::status(&status, arguments.json, false)?;
             Ok(())
         }
-        CliCommand::Ping { .. } | CliCommand::Version => {
+        CliCommand::Logout => {
+            let after = client
+                .call(Command::Logout {
+                    expected_revision: status.revision,
+                })
+                .await?;
+            output::logout(&status, &after, arguments.json)?;
+            Ok(())
+        }
+        CliCommand::Ping { .. } | CliCommand::Netcheck | CliCommand::Version => {
             unreachable!("handled without reading or mutating Node intent")
         }
         CliCommand::Status { watch } => loop {
-            display(&status, arguments.json)?;
+            output::status(&status, arguments.json, watch)?;
             if !watch {
                 return Ok(());
             }
@@ -121,7 +168,7 @@ pub(crate) async fn run(arguments: Arguments) -> Result<(), Error> {
                     return Err(Error::IntentChanged);
                 }
             }
-            display(&status, arguments.json)?;
+            output::status(&status, arguments.json, false)?;
             if status.phase == Phase::Blocked {
                 return Err(Error::ControlProblem);
             }

@@ -87,6 +87,7 @@ fn publish(
             .map(|d| chrono::Utc::now() + d),
         observed_at: chrono::Utc::now(),
         rotation: None,
+        logout: None,
     });
 }
 
@@ -170,7 +171,8 @@ pub(super) async fn run(
     reported: watch::Sender<Report>,
     directory: Arc<meshway_private_storage::Directory>,
     network_reported: watch::Sender<network::Report>,
-    local_pings: watch::Sender<Option<network::Pings>>,
+    local_pings: watch::Sender<Option<network::Local>>,
+    server_probe: watch::Sender<Option<meshway_control::ServerProbe>>,
     sync_status: watch::Sender<SyncStatus>,
 ) -> Result<(), &'static str> {
     let mut control: Option<Shared> = None;
@@ -180,6 +182,7 @@ pub(super) async fn run(
     let mut reset = plan.retry_enrollment;
     let mut reenroll = plan.reenroll;
     let mut shutdown_failure = None;
+    let mut left = false;
     loop {
         if plan.shutdown || desired.has_changed().is_err() {
             break;
@@ -197,7 +200,7 @@ pub(super) async fn run(
                 .await
                 {
                     Ok(handle) => {
-                        local_pings.send_replace(Some(handle.pings()));
+                        local_pings.send_replace(Some(handle.local()));
                         network = Some(handle);
                     }
                     Err(problem) => {
@@ -260,7 +263,10 @@ pub(super) async fn run(
                 .await
             };
             match opened {
-                Ok(Ok(value)) => control = Some(Arc::new(Mutex::new(value))),
+                Ok(Ok(value)) => {
+                    server_probe.send_replace(Some(value.server_probe()));
+                    control = Some(Arc::new(Mutex::new(value)));
+                }
                 other => {
                     let problem = match other {
                         Ok(Err(error)) => failure(error, true).problem,
@@ -334,6 +340,54 @@ pub(super) async fn run(
             });
             let _ = desired
                 .wait_for(|next| next.shutdown || next.rotation != Some(id))
+                .await;
+        } else if let Some(id) = plan.logout {
+            let mut driver = shared.lock().await;
+            // No session work runs meanwhile; the request needs a session only.
+            stop(&mut driver, false).await;
+            publish(
+                &reported,
+                &plan,
+                Some(&driver),
+                Phase::Stopping,
+                None,
+                None,
+                None,
+            );
+            let result = match driver.authenticate().await {
+                Ok(()) => driver.leave(id).await.map(|left| {
+                    tracing::info!(network = %left.network_id, node = %left.node_id,
+                        revision = left.revision.get(), "Node left its network");
+                }),
+                Err(error) => Err(error),
+            }
+            .map_err(leave_error);
+            if result.is_ok() {
+                // The Server withdrew everything; remove every local resource.
+                if let Some(network) = &mut network {
+                    let _ = network.stop(true).await;
+                }
+                left = true;
+            }
+            publish(
+                &reported,
+                &plan,
+                Some(&driver),
+                if result.is_ok() {
+                    Phase::Down
+                } else {
+                    Phase::Starting
+                },
+                None,
+                None,
+                None,
+            );
+            drop(driver);
+            reported.send_modify(|report| {
+                report.logout = Some(super::status::RotationOutcome { id, result })
+            });
+            let _ = desired
+                .wait_for(|next| next.shutdown || next.logout != Some(id))
                 .await;
         } else if !plan.up {
             let mut driver = shared.lock().await;
@@ -421,8 +475,10 @@ pub(super) async fn run(
             let _ = network.stop(false).await;
         }
         let reload = shared.lock().await.status().reload_required;
-        if reload {
+        // A Node that left reopens its now empty identity record.
+        if reload || std::mem::take(&mut left) {
             drop(shared);
+            server_probe.send_replace(None);
             if let Some(driver) = control.take()
                 && let Err(error) = finish_control(driver).await
             {
@@ -437,6 +493,7 @@ pub(super) async fn run(
     }
     let keep_sink = desired.borrow().up;
     local_pings.send_replace(None);
+    server_probe.send_replace(None);
     shutdown(
         control,
         async move {
@@ -448,6 +505,35 @@ pub(super) async fn run(
         shutdown_failure,
     )
     .await
+}
+
+/// The local result of a failed self-deletion; nothing local changed.
+fn leave_error(error: Error) -> meshway_protocol::ipc::ErrorCode {
+    use meshway_protocol::ipc::ErrorCode;
+    let rejected = matches!(
+        &error,
+        Error::Server(meshway_control_client::ClientError::Http {
+            status: 403 | 409 | 422,
+            problem: Some(body),
+        }) if !matches!(body.problem, meshway_protocol::Problem::NodeIdentityRejected { .. })
+    );
+    let local = match &error {
+        Error::Pending => Some(ErrorCode::Pending),
+        Error::Lifecycle => Some(ErrorCode::NotReady),
+        _ => None,
+    };
+    let problem = failure::at("leave", error, false).problem;
+    if rejected {
+        return ErrorCode::Rejected;
+    }
+    local.unwrap_or(match problem {
+        Problem::Network => ErrorCode::Network,
+        Problem::ServerBusy => ErrorCode::ServerBusy,
+        Problem::Credentials => ErrorCode::Credentials,
+        Problem::Storage => ErrorCode::Storage,
+        Problem::Clock | Problem::Apply => ErrorCode::NotReady,
+        _ => ErrorCode::Contract,
+    })
 }
 
 /// The operator intent moved on from `plan` (or shutdown).

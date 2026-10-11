@@ -57,6 +57,13 @@ pub(crate) enum Intent<'a> {
     },
 }
 
+/// Who a version is recorded under, and who its notice names.
+struct Author {
+    /// The schema's user author of every version.
+    user: UserId,
+    event: meshway_protocol::events::EventActor,
+}
+
 /// The authored target of an intent, before materials and normalization.
 pub(crate) struct Draft {
     pub(crate) input: NetworkConfigurationInput,
@@ -149,13 +156,20 @@ impl Committer {
         let draft = self.author(tx, &current, &intent, Mode::Commit)?;
         let prepared = self.prepare(tx, &current, &intent, draft, Mode::Commit)?;
         scope(tx, &current, &intent, &prepared)?;
-        let event_actor = match &intent {
+        let event = match &intent {
             Intent::NodeLeave { principal } => meshway_protocol::events::EventActor::Node {
                 node_id: principal.node_id(),
             },
             _ => meshway_protocol::events::EventActor::User { user_id: actor },
         };
-        self.persist(tx, &current, prepared, actor, event_actor, request, now)
+        self.persist(
+            tx,
+            &current,
+            prepared,
+            Author { user: actor, event },
+            request,
+            now,
+        )
     }
 
     /// Runs the same authoring, material inheritance and normalization as a
@@ -337,11 +351,14 @@ impl Committer {
         tx: &Transaction<'_>,
         current: &Snapshot,
         prepared: PreparedConfiguration,
-        actor: UserId,
-        event_actor: meshway_protocol::events::EventActor,
+        author: Author,
         request: RequestId,
         now: i64,
     ) -> Result<CommitEffects, Error> {
+        let Author {
+            user: actor,
+            event: event_actor,
+        } = author;
         let network = current.network_id;
         let current_revision_matches = store::configuration::versions::current_revision_matches(
             tx,

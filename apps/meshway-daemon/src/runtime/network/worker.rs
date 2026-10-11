@@ -290,6 +290,16 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 let scope = engine.components().diagnostic_scope().filter(|_| live);
                 diagnostics.ping(scope, request);
             }
+            Work::Command(Some(Command::Netcheck(reply))) => {
+                let probe = engine
+                    .components()
+                    .installed
+                    .as_ref()
+                    .and_then(|state| state.manager.as_ref())
+                    .and_then(|manager| manager.stun_probe().ok());
+                let _ = reply.send(probe);
+                continue;
+            }
             Work::Command(Some(Command::Builder(reply))) => {
                 let _ = reply.send(
                     engine
@@ -767,6 +777,7 @@ fn sample_host(
 ) -> Report {
     report.interface_epoch = *plane.host.network_changes().borrow();
     report.owned_interfaces = plane.host.owned_interfaces();
+    report.known_peers = Some(plane.peers.clone());
     sample(&plane.installed, diagnostics, report)
 }
 
@@ -795,6 +806,8 @@ fn sample(
         .map(|exit| exit.health.borrow().flows);
     report.dependencies.clear();
     report.observation_dependencies.clear();
+    report.routes.clear();
+    report.rtts = diagnostics.rtts().clone();
     report.facts_observed_at = chrono::Utc::now();
     if let Some(state) = installed
         && let (Some(secure), Some(manager)) = (&state.secure, &state.manager)
@@ -804,6 +817,24 @@ fn sample(
             let node = state.desired.netmap().node_id;
             meshway_logging::profile::gauge("secure.ready_circuits", Some(circuits.len() as u64));
             for circuit in circuits {
+                let far = match (circuit.path.first(), circuit.path.last()) {
+                    (Some(first), Some(last)) if *first == node => Some(*last),
+                    (Some(first), Some(last)) if *last == node => Some(*first),
+                    _ => None,
+                };
+                if let Some(far) = far {
+                    let mut path = circuit.path.clone();
+                    if path.first() != Some(&node) {
+                        path.reverse();
+                    }
+                    let shorter = report
+                        .routes
+                        .get(&far)
+                        .is_none_or(|known| path.len() < known.len());
+                    if shorter {
+                        report.routes.insert(far, path);
+                    }
+                }
                 for pair in circuit.path.windows(2) {
                     let peer = if pair[0] == node {
                         Some(pair[1])

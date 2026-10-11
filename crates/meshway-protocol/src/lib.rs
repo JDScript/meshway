@@ -75,9 +75,8 @@ pub use netmap::{
 pub use node::{
     DeleteNodeRequest, NodeChallenge, NodeChallengeRequest, NodeInventoryResponse,
     NodeInventoryView, NodeKeyMetadata, NodeLeaveRequest, NodeLeaveResponse, NodeRotationRequest,
-    NodeSessionRequest,
-    NodeSessionResponse, NodeSettingsResponse, PinnedServerKeyStatus, PinnedServerKeyView,
-    RevokeNodeKeyRequest,
+    NodeSessionRequest, NodeSessionResponse, NodeSettingsResponse, PinnedServerKeyStatus,
+    PinnedServerKeyView, RevokeNodeKeyRequest,
 };
 pub use node_observations::{
     CreateNodeObservation, NodeObservationCancelled, NodeObservationQuery, NodeObservationResponse,

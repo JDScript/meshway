@@ -25,6 +25,10 @@ async fn main() -> std::process::ExitCode {
     };
     match result {
         Ok(()) => std::process::ExitCode::SUCCESS,
+        // A closed reader (`status | head`) ends the output, not the command.
+        Err(commands::Error::Output(error)) if error.kind() == std::io::ErrorKind::BrokenPipe => {
+            std::process::ExitCode::SUCCESS
+        }
         Err(error) => {
             tracing::error!(error = %error, "Local command failed");
             std::process::ExitCode::FAILURE

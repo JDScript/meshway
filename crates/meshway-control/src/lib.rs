@@ -23,6 +23,8 @@ pub use netmap::{
     SyncReply, SyncTransport, sync_loop,
 };
 mod observations;
+mod probe;
+pub use probe::ServerProbe;
 mod rotation;
 pub use observations::ObservationLease;
 mod session;

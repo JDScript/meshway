@@ -366,3 +366,56 @@ async fn cancelling_next_closes_incomplete_frame_without_retry() {
     assert!(ping.next().await.unwrap().is_none());
     server.await.unwrap();
 }
+
+fn report() -> NetcheckReport {
+    serde_json::from_value(json!({
+        "observedAt":"2026-10-11T00:00:00Z",
+        "server":{"origin":"https://server.example/","reachable":true,"rttUs":1200},
+        "unavailable":null,"ipv4":true,"ipv6":false,"udp":true,
+        "sockets":[{"resource":{"kind":"listener","key":"udp"},"boundAddress":"0.0.0.0:35000",
+            "mappings":[{"observer":"192.0.2.10:3478","mapped":"198.51.100.4:35000","rttUs":800,"fresh":true}],
+            "portMapping":"preserved","endpointMapping":"unknown"}],
+        "observers":[{"observer":"192.0.2.10:3478","rttUs":800}]
+    }))
+    .unwrap()
+}
+
+#[tokio::test]
+async fn netcheck_is_one_bounded_request_with_one_typed_report() {
+    let (_directory, listener, client) = listener();
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let request: Request = crate::ipc::read(&mut stream).await.unwrap();
+        assert!(matches!(request.command, Command::Netcheck));
+        crate::ipc::write(
+            &mut stream,
+            &Response {
+                version: VERSION,
+                request_id: request.request_id,
+                result: ResultBody::Netcheck {
+                    report: Box::new(report()),
+                },
+            },
+        )
+        .await
+        .unwrap();
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let request: Request = crate::ipc::read(&mut stream).await.unwrap();
+        crate::ipc::write(
+            &mut stream,
+            &Response {
+                version: VERSION,
+                request_id: request.request_id,
+                result: ResultBody::Ping {
+                    sequence: Sequence::MIN,
+                    event: accepted(),
+                },
+            },
+        )
+        .await
+        .unwrap();
+    });
+    assert_eq!(client.netcheck().await.unwrap(), report());
+    assert!(matches!(client.netcheck().await, Err(ClientError::Response)));
+    server.await.unwrap();
+}

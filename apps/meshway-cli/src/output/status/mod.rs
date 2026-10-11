@@ -1,0 +1,261 @@
+//! `meshway status`: this Node first, then the peers of its installed netmap.
+use super::format::{ago, left, millis, words};
+use super::table::{Cell, Table};
+use super::term::{Role, Term, pad};
+use chrono::{DateTime, Utc};
+use meshway_protocol::ipc::{DataPlane, PeerState, Phase, Status, SyncState};
+use std::io::{self, Write};
+
+fn phase_role(phase: Phase) -> Role {
+    match phase {
+        Phase::Running | Phase::ControlReady => Role::Good,
+        Phase::Blocked => Role::Bad,
+        Phase::Down => Role::Dim,
+        _ => Role::Warn,
+    }
+}
+
+fn line(output: &mut impl Write, term: &Term, label: &str, value: String) -> io::Result<()> {
+    writeln!(
+        output,
+        "  {} {value}",
+        term.paint(Role::Dim, pad(label, 10))
+    )
+}
+
+pub(crate) fn write(
+    output: &mut impl Write,
+    term: &Term,
+    status: &Status,
+    now: DateTime<Utc>,
+) -> io::Result<()> {
+    let name = status
+        .node
+        .as_ref()
+        .map(|node| node.hostname.clone())
+        .unwrap_or_else(|| {
+            if status.identity.is_some() {
+                "this node".into()
+            } else {
+                "not enrolled".into()
+            }
+        });
+    let mut title = term.paint(Role::Bold, &name);
+    if let Some(node) = &status.node {
+        for address in [
+            node.addresses.ipv4.map(|a| a.to_string()),
+            node.addresses.ipv6.map(|a| a.to_string()),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            title.push_str("  ");
+            title.push_str(&term.paint(Role::Accent, address));
+        }
+    }
+    title.push_str("  ");
+    title.push_str(&term.paint(phase_role(status.phase), words(status.phase)));
+    if !status.desired_up && status.phase != Phase::Down {
+        title.push_str(&term.paint(Role::Dim, " (desired down)"));
+    }
+    writeln!(output, "{title}")?;
+
+    line(output, term, "Server", status.server.clone())?;
+    let mut sync = match status.sync {
+        SyncState::Connected => term.paint(Role::Good, "connected"),
+        SyncState::Reconnecting => term.paint(Role::Warn, "reconnecting"),
+        SyncState::Disconnected => term.paint(Role::Dim, "disconnected"),
+    };
+    if let Some(error) = status.sync_error {
+        sync.push_str(&format!(" ({})", words(error)));
+    }
+    if let Some(at) = status.last_sync_at {
+        sync.push_str(&term.paint(Role::Dim, format!(" · last sync {}", ago(at, now))));
+    }
+    line(output, term, "Sync", sync)?;
+    let netmap = match &status.netmap {
+        Some(netmap) => {
+            let mut text = format!(
+                "revision {} · serial {} · lease {}",
+                netmap.netmap.revision,
+                netmap.netmap.serial.get(),
+                left(netmap.expires_at, now)
+            );
+            if status.applied != Some(netmap.netmap) {
+                text.push_str(&term.paint(Role::Warn, " · not applied"));
+            }
+            text
+        }
+        None => match &status.saved {
+            Some(saved) => term.paint(
+                Role::Warn,
+                format!(
+                    "no live lease (saved revision {} · serial {})",
+                    saved.revision,
+                    saved.serial.get()
+                ),
+            ),
+            None => term.paint(Role::Dim, "none"),
+        },
+    };
+    line(output, term, "Netmap", netmap)?;
+    let plane = term.paint(
+        match status.data_plane {
+            DataPlane::Ready => Role::Good,
+            DataPlane::Failed => Role::Bad,
+            DataPlane::ControlOnly | DataPlane::Stopped => Role::Dim,
+            _ => Role::Warn,
+        },
+        words(status.data_plane),
+    );
+    line(
+        output,
+        term,
+        "Data plane",
+        format!(
+            "{plane} · mode {}",
+            match status.network_mode {
+                meshway_protocol::ipc::NetworkMode::Tun => "tun",
+                meshway_protocol::ipc::NetworkMode::ControlOnly => "control-only",
+            }
+        ),
+    )?;
+    line(output, term, "Exit", exit(term, status.exit.as_ref()))?;
+    if let Some(identity) = &status.identity {
+        line(
+            output,
+            term,
+            "Identity",
+            term.paint(
+                Role::Dim,
+                format!(
+                    "node {} · network {} · key generation {}",
+                    identity.node_id,
+                    identity.network_id,
+                    identity.keys.control.generation.get()
+                ),
+            ),
+        )?;
+    }
+    if let Some(problem) = status.last_error {
+        let mut text = term.paint(Role::Bad, words(problem));
+        if let Some(at) = status.retry_at {
+            text.push_str(&format!(
+                " · retry in {}",
+                super::format::span((at - now).num_seconds())
+            ));
+        }
+        line(output, term, "Problem", text)?;
+    }
+    if let Some(url) = &status.enrollment_url {
+        writeln!(output, "\nApprove this device in your browser:\n{url}")?;
+    } else if status.phase == Phase::AwaitingApproval {
+        writeln!(
+            output,
+            "\nAwaiting approval. The Server has not configured a Console origin; ask its operator to configure --console-origin (MESHWAY_CONSOLE_ORIGIN)."
+        )?;
+    }
+    if status.node.is_some() {
+        writeln!(output)?;
+        if status.peers.is_empty() {
+            writeln!(
+                output,
+                "{}",
+                term.paint(Role::Dim, "No peers in the installed netmap.")
+            )?;
+        } else {
+            peers(output, term, status)?;
+        }
+    }
+    Ok(())
+}
+
+fn exit(term: &Term, exit: Option<&meshway_protocol::ipc::ExitState>) -> String {
+    let Some(exit) = exit else {
+        return term.paint(Role::Dim, "none");
+    };
+    use meshway_model::exit::ExitStatus;
+    let mut text = match exit
+        .capability
+        .as_ref()
+        .map(|capability| &capability.status)
+    {
+        None | Some(ExitStatus::NotRequested) => "not requested".into(),
+        Some(ExitStatus::Probing) => term.paint(Role::Warn, "probing"),
+        Some(ExitStatus::Ready) => term.paint(Role::Good, "ready"),
+        Some(ExitStatus::Unavailable { reason }) => {
+            term.paint(Role::Bad, format!("unavailable ({})", words(reason)))
+        }
+    };
+    if exit.installed_role.is_some() {
+        text.push_str(" · role installed");
+    }
+    if let Some(flows) = exit.active_flows {
+        text.push_str(&format!(" · {flows} flows"));
+    }
+    if exit.dns_unavailable.is_some() {
+        text.push_str(&term.paint(Role::Warn, " · exit DNS unavailable"));
+    }
+    text
+}
+
+fn peers(output: &mut impl Write, term: &Term, status: &Status) -> io::Result<()> {
+    let name = |id: &meshway_model::NodeId| {
+        status
+            .peers
+            .iter()
+            .find(|peer| peer.node_id == *id)
+            .map(|peer| peer.hostname.clone())
+            .unwrap_or_else(|| id.to_string())
+    };
+    let mut table = Table::new(vec![
+        "PEER",
+        "MESH IPV4",
+        "STATE",
+        "TRANSPORT",
+        "ENDPOINT",
+        "RTT",
+    ]);
+    for peer in &status.peers {
+        let (state, role) = match peer.state {
+            PeerState::Direct => ("direct", Role::Good),
+            PeerState::Relay => ("relay", Role::Accent),
+            PeerState::Idle => ("idle", Role::Dim),
+            PeerState::Unreachable => ("unreachable", Role::Warn),
+            PeerState::Offline => ("offline", Role::Bad),
+        };
+        let endpoint = match peer.state {
+            PeerState::Relay => format!(
+                "via {}",
+                peer.via.iter().map(name).collect::<Vec<_>>().join(" → ")
+            ),
+            _ => peer
+                .endpoint
+                .map(|endpoint| endpoint.to_string())
+                .unwrap_or_default(),
+        };
+        table.row(vec![
+            Cell::new(&peer.hostname),
+            Cell::styled(
+                peer.addresses
+                    .ipv4
+                    .map(|address| address.to_string())
+                    .unwrap_or_default(),
+                Role::Accent,
+            ),
+            Cell::styled(state, role),
+            Cell::new(peer.transport.map(|t| t.as_str()).unwrap_or_default()),
+            Cell::new(endpoint),
+            Cell::new(
+                peer.rtt
+                    .as_ref()
+                    .map(|rtt| millis(rtt.duration_us.get()))
+                    .unwrap_or_default(),
+            ),
+        ]);
+    }
+    table.render(output, term)
+}
+
+#[cfg(test)]
+mod tests;

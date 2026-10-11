@@ -4,6 +4,7 @@
 mod client;
 mod codec;
 mod secret;
+mod view;
 pub use crate::NodeObservationTarget as PingTarget;
 use crate::{EnrollmentResponse, InstanceLease, NodeObservationTarget, NodeObservationTargetView};
 use chrono::{DateTime, Utc};
@@ -21,8 +22,12 @@ pub use meshway_model::{
 pub use secret::EnrollmentKey;
 use serde::Serialize;
 use utoipa::ToSchema;
+pub use view::{
+    EndpointMapping, NetcheckObserver, NetcheckReport, NetcheckServer, NetcheckSocket,
+    NetcheckUnavailable, NodeSelf, PeerRtt, PeerState, PeerStatus, PortMapping, StunMapping,
+};
 
-pub const VERSION: u16 = 6;
+pub const VERSION: u16 = 7;
 pub const MAX_MESSAGE_BYTES: usize = 64 * 1024;
 pub const DEFAULT_SOCKET: &str = "/var/lib/meshway/control.sock";
 
@@ -52,6 +57,13 @@ pub enum Command {
         #[serde(rename = "expectedRevision")]
         expected_revision: Version,
     },
+    /// Ask the Server to delete this Node, then forget its identity and go down.
+    Logout {
+        #[serde(rename = "expectedRevision")]
+        expected_revision: Version,
+    },
+    /// One bounded local network diagnostic.
+    Netcheck,
     Ping {
         target: NodeObservationTarget,
         #[serde(deserialize_with = "ping_count")]
@@ -79,6 +91,7 @@ meshway_model::tagged! { #[derive(Clone, Debug)] pub enum ResultBody {
     Status { status: Box<crate::ipc::Status> },
     Error { code: ErrorCode },
     Ping { sequence: Sequence, event: PingEvent },
+    Netcheck { report: Box<crate::ipc::NetcheckReport> },
 } }
 
 meshway_model::tagged! { #[derive(Clone, Debug)] pub enum PingEvent {
@@ -146,6 +159,8 @@ pub enum ErrorCode {
     Credentials,
     #[error("The identity response did not match the expected binding.")]
     Contract,
+    #[error("Server rejected the request; the daemon log names its reason.")]
+    Rejected,
 }
 }
 meshway_model::string_enum! {
@@ -303,6 +318,11 @@ meshway_model::object! { #[derive(Clone, Debug)] pub struct Status {
     pub network_mode: NetworkMode,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exit: Option<ExitState>,
+    /// This Node in the installed netmap; null without one.
+    #[serde(deserialize_with = "meshway_model::wire::required_nullable")]
+    pub node: Option<NodeSelf> [required = true],
+    /// Visible peers of the installed netmap; empty without one.
+    pub peers: Vec<PeerStatus>,
     #[serde(deserialize_with = "meshway_model::wire::required_nullable")]
     pub last_error: Option<Problem> [required = true],
     #[serde(deserialize_with = "meshway_model::wire::required_nullable")]

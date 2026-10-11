@@ -28,8 +28,9 @@ pub(super) fn authorize(
     {
         return Ok(binding.user_id);
     }
-    store::enrollment::admitting_user(tx, current.network_id, node)?
-        .ok_or(Error::Internal("Node admission without an accountable user"))
+    store::enrollment::admitting_user(tx, current.network_id, node)?.ok_or(Error::Internal(
+        "Node admission without an accountable user",
+    ))
 }
 
 pub(super) fn author(

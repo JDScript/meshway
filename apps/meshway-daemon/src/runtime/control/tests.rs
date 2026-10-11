@@ -119,10 +119,12 @@ async fn live_tun_owner_conflict_retries_and_recovers_without_new_up() {
         enrollment_key: None,
         rotation: None,
         reenroll: false,
+        logout: None,
     });
     let (reported, mut report) = watch::channel(Report::initial(revision));
     let (network_reported, _) = watch::channel(network::Report::stopped());
     let (pings, _) = watch::channel(None);
+    let (server_probe, _) = watch::channel(None);
     let (sync, _) = watch::channel(SyncStatus::default());
     let mut settings = Settings::new(
         directory.path().to_owned(),
@@ -138,6 +140,7 @@ async fn live_tun_owner_conflict_retries_and_recovers_without_new_up() {
         directory,
         network_reported,
         pings,
+        server_probe,
         sync,
     ));
     let first = tokio::time::timeout(

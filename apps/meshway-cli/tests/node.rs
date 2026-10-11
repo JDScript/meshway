@@ -263,7 +263,11 @@ async fn real_cli_enrollment(console_origin: Option<&str>, key_stdin: Option<boo
                 assert!(human_text.contains("ask its operator to configure --console-origin"));
                 assert!(human_text.contains("MESHWAY_CONSOLE_ORIGIN"));
                 assert!(!human_text.contains("Approve this device in your browser:"));
-                assert!(!human_text.contains("http://") && !human_text.contains("https://"));
+                // The only URL is this Node's own Server origin, never a link.
+                let without_server = human_text.replace(&origin, "");
+                assert!(
+                    !without_server.contains("http://") && !without_server.contains("https://")
+                );
             }
         }
         for result in [&output, &json, &human_pending] {
@@ -300,14 +304,23 @@ async fn real_cli_enrollment(console_origin: Option<&str>, key_stdin: Option<boo
     assert!(ready.authenticated && ready.saved.is_some() && ready.applied.is_none());
     let human = cli(&socket, "status", false).await;
     assert!(human.status.success());
-    assert!(
-        String::from_utf8_lossy(&human.stdout)
-            .contains("Network mode: ControlOnly  Data plane: ControlOnly")
+    let human_text = String::from_utf8_lossy(&human.stdout);
+    assert!(human_text.contains("  Data plane control only · mode control-only\n"));
+    assert!(human_text.contains(" · not applied"));
+    assert!(!human_text.contains("mwns_") && !human_text.contains('\u{1b}'));
+    assert!(!human_text.contains("ask its operator"));
+    assert!(human_text.contains("  Sync       "));
+    // control-only has no packet plane to check; the Server answers.
+    let netcheck = cli(&socket, "netcheck", true).await;
+    assert!(netcheck.status.success());
+    let netcheck: meshway_protocol::ipc::NetcheckReport =
+        serde_json::from_slice(&netcheck.stdout).unwrap();
+    assert_eq!(
+        netcheck.unavailable,
+        Some(meshway_protocol::ipc::NetcheckUnavailable::NotRunning)
     );
-    assert!(!String::from_utf8_lossy(&human.stdout).contains("Applied netmap:"));
-    assert!(!String::from_utf8_lossy(&human.stdout).contains("mwns_"));
-    assert!(!String::from_utf8_lossy(&human.stdout).contains("ask its operator"));
-    assert!(String::from_utf8_lossy(&human.stdout).contains("Sync:"));
+    assert_eq!(netcheck.server.reachable, Some(true));
+    assert!(netcheck.server.rtt_us.is_some());
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         let state = meshway_protocol::ipc::Client::new(&socket)
@@ -346,6 +359,31 @@ async fn real_cli_enrollment(console_origin: Option<&str>, key_stdin: Option<boo
     assert_eq!(down.phase, Phase::Down);
     assert!(!down.desired_up && !down.authenticated && down.instance.is_none());
     assert_eq!(down.identity, ready.identity);
+    // Logout deletes this Node on the Server and forgets the identity.
+    let node = ready.identity.as_ref().unwrap().node_id;
+    let logout = cli(&socket, "logout", true).await;
+    assert!(
+        logout.status.success(),
+        "{}",
+        String::from_utf8_lossy(&logout.stderr)
+    );
+    let left: Status = serde_json::from_slice(&logout.stdout).unwrap();
+    assert!(left.identity.is_none() && !left.desired_up);
+    let gone = api
+        .get_node(
+            &meshway_control_client::GetNodePath {
+                network_id: network.network.id,
+                node_id: node,
+            },
+            owner.token.expose(),
+        )
+        .await;
+    assert!(gone.is_err());
+    let after = status(&socket, Phase::Down).await;
+    assert!(after.identity.is_none() && after.saved.is_none());
+    assert!(!root.join("daemon/identity/netmap.json").exists());
+    // Nothing is left to delete: a second logout fails without a Server call.
+    assert!(!cli(&socket, "logout", false).await.status.success());
     stop.send(()).unwrap();
     daemon.await.unwrap().unwrap();
     assert!(!socket.exists());

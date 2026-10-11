@@ -68,6 +68,8 @@ pub(super) struct Diagnostics {
     dirty: bool,
     paused: std::collections::BTreeSet<ObservationId>,
     effective_pauses: std::collections::BTreeSet<ObservationId>,
+    /// Latest successful round trip of any task, by target; status only.
+    rtts: BTreeMap<NodeId, meshway_protocol::ipc::PeerRtt>,
 }
 
 fn random_uuid() -> Option<uuid::Uuid> {
@@ -356,6 +358,7 @@ impl Diagnostics {
         self.dirty = true;
         self.paused.clear();
         self.effective_pauses.clear();
+        self.rtts.clear();
         while self.sends.join_next().await.is_some() {}
         self.epoch = tokio_util::sync::CancellationToken::new();
     }
@@ -372,6 +375,11 @@ impl Diagnostics {
         self.publications.clear();
         self.synchronized = None;
         self.dirty = true;
+    }
+
+    /// Latest successful measured round trip toward each target.
+    pub fn rtts(&self) -> &BTreeMap<NodeId, meshway_protocol::ipc::PeerRtt> {
+        &self.rtts
     }
 
     pub fn wake_at(&self) -> Option<tokio::time::Instant> {
@@ -565,6 +573,21 @@ impl Diagnostics {
             .cloned()
             .collect();
         for output in outputs {
+            if let ObservationUpdate::Sample { sample, .. } = &output.result.result
+                && let Some(probe) = &sample.probe
+                && probe.outcome == meshway_model::state::ProbeOutcome::Success
+                && let (Some(duration_us), Some(observed_at)) =
+                    (probe.duration_us, probe.completed_at)
+                && (self.rtts.len() < 1024 || self.rtts.contains_key(&output.task.target_node_id))
+            {
+                self.rtts.insert(
+                    output.task.target_node_id,
+                    meshway_protocol::ipc::PeerRtt {
+                        duration_us,
+                        observed_at,
+                    },
+                );
+            }
             let local_task = self
                 .locals
                 .values()

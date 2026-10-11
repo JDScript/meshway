@@ -2,7 +2,9 @@
 mod control;
 mod intent;
 mod local_endpoints;
+mod netcheck;
 mod network;
+mod peers;
 mod ping;
 mod status;
 
@@ -68,7 +70,10 @@ pub async fn run(
     };
     let (commands, mut received) = mpsc::channel::<Mutation>(16);
     let (pings, mut ping_requests) = mpsc::channel::<PingRequest>(8);
+    let (netchecks, mut netcheck_requests) =
+        mpsc::channel::<tokio::sync::oneshot::Sender<meshway_protocol::ipc::NetcheckReport>>(4);
     let (packet_pings, local_pings) = watch::channel(None);
+    let (server_probe, server_probes) = watch::channel(None);
     let (stop_ipc, stop_rx) = watch::channel(false);
     let mut control = tokio::spawn(control::run(
         settings.clone(),
@@ -77,16 +82,19 @@ pub async fn run(
         store.directory.clone(),
         network_reported,
         packet_pings,
+        server_probe,
         sync_status,
     ));
     let mut listener = tokio::spawn(ipc::serve(
         socket,
         commands,
         pings,
+        netchecks,
         view.clone(),
         stop_rx.clone(),
     ));
     let mut ping_forwarders = tokio::task::JoinSet::new();
+    let mut netcheck_runs = tokio::task::JoinSet::new();
     let mut listener_done = false;
     let mut control_done = false;
     let mut failure = None;
@@ -107,6 +115,20 @@ pub async fn run(
         tokio::select! { biased;
             _ = &mut shutdown => break,
             _ = ping_forwarders.join_next(), if !ping_forwarders.is_empty() => {},
+            _ = netcheck_runs.join_next(), if !netcheck_runs.is_empty() => {},
+            reply = netcheck_requests.recv() => {
+                if let Some(reply) = reply {
+                    // Bounded like the IPC queue: four in flight at most.
+                    if netcheck_runs.len() < 4 {
+                        let local = local_pings.borrow().clone();
+                        let server = server_probes.borrow().clone();
+                        let origin = settings.server.clone();
+                        netcheck_runs.spawn(async move {
+                            let _ = reply.send(netcheck::run(origin, local, server).await);
+                        });
+                    }
+                }
+            },
             result = &mut listener => {
                 listener_done = true;
                 failure = Some(result.ok().and_then(Result::err).unwrap_or("IPC service stopped unexpectedly."));
@@ -183,6 +205,7 @@ pub async fn run(
     }
     stop_ipc.send_replace(true);
     while ping_forwarders.join_next().await.is_some() {}
+    netcheck_runs.shutdown().await;
     if !listener_done {
         match listener.await {
             Ok(Ok(())) => {}
@@ -216,7 +239,7 @@ async fn apply(
     command: Mutation,
     rotations: &mut RotationWaiters,
 ) -> Result<(), ()> {
-    if command.action == Action::RotateKey && rotations.len() >= 16 {
+    if matches!(command.action, Action::RotateKey | Action::Logout) && rotations.len() >= 16 {
         let _ = command.reply.send(Err(ErrorCode::Busy));
         return Ok(());
     }
@@ -229,8 +252,10 @@ async fn apply(
         blocked,
         command.enrollment_key,
     );
-    if matches!(command.action, Action::RotateKey | Action::Reenroll)
-        && mutation.as_ref().is_ok_and(|record| record.is_some())
+    if matches!(
+        command.action,
+        Action::RotateKey | Action::Reenroll | Action::Logout
+    ) && mutation.as_ref().is_ok_and(|record| record.is_some())
     {
         let state = view
             .report
@@ -282,8 +307,13 @@ async fn apply(
     if let Err(code) = result {
         tracing::warn!(request_id = %command.id, error = ?code, "Node intent rejected");
     }
-    if result.is_ok() && command.action == Action::RotateKey {
-        if let Some(rotation) = &store.record.rotation
+    if result.is_ok() && matches!(command.action, Action::RotateKey | Action::Logout) {
+        let pending = if command.action == Action::RotateKey {
+            &store.record.rotation
+        } else {
+            &store.record.logout
+        };
+        if let Some(rotation) = pending
             && rotation.id == command.id
         {
             if let Some(result) = rotation.result {
@@ -320,6 +350,33 @@ async fn complete(
     {
         let mut record = store.record.clone();
         record.rotation.as_mut().expect("pending rotation").result = Some(outcome.result);
+        store.commit(record).await.map_err(|_| ())?;
+        desired.send_replace(store.record.desired(false));
+        let mut pending = Vec::new();
+        for (id, reply) in waiters.drain(..) {
+            if id == outcome.id {
+                let _ = reply.send(outcome.result);
+            } else {
+                pending.push((id, reply));
+            }
+        }
+        *waiters = pending;
+    }
+    if let Some(outcome) = report.logout
+        && store
+            .record
+            .logout
+            .as_ref()
+            .is_some_and(|logout| logout.id == outcome.id && logout.result.is_none())
+    {
+        let mut record = store.record.clone();
+        record.logout.as_mut().expect("pending logout").result = Some(outcome.result);
+        if outcome.result.is_ok() {
+            // The identity is gone: the Node stays down until a new enrollment.
+            record.desired_up = false;
+            record.enrollment_key = None;
+            record.revision = record.revision.checked_next().map_err(|_| ())?;
+        }
         store.commit(record).await.map_err(|_| ())?;
         desired.send_replace(store.record.desired(false));
         let mut pending = Vec::new();

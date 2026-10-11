@@ -18,6 +18,8 @@ pub(super) struct Desired {
     /// The operator asked to enroll the held identity again; transient,
     /// Control holds the started request durably.
     pub reenroll: bool,
+    /// A requested self-deletion awaiting its outcome.
+    pub logout: Option<RequestId>,
 }
 
 pub(crate) struct Mutation {
@@ -35,6 +37,7 @@ pub(crate) enum Action {
     Down,
     RotateKey,
     Reenroll,
+    Logout,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -66,6 +69,8 @@ pub(super) struct Record {
     pub enrollment_key: Option<EnrollmentKey>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rotation: Option<Rotation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub logout: Option<Rotation>,
 }
 impl Record {
     pub fn desired(&self, retry_enrollment: bool) -> Desired {
@@ -81,6 +86,11 @@ impl Record {
                 .filter(|rotation| rotation.result.is_none())
                 .map(|rotation| rotation.id),
             reenroll: false,
+            logout: self
+                .logout
+                .as_ref()
+                .filter(|logout| logout.result.is_none())
+                .map(|logout| logout.id),
         }
     }
 }
@@ -136,6 +146,7 @@ impl Store {
                 socket: None,
                 enrollment_key: None,
                 rotation: None,
+                logout: None,
             };
             save(&directory, &record)?;
             record
@@ -174,17 +185,23 @@ impl Store {
         if expected != self.record.revision {
             return Err(ErrorCode::Conflict);
         }
-        if self
+        let rotating = self
             .record
             .rotation
             .as_ref()
-            .is_some_and(|rotation| rotation.result.is_none())
-            && action != Action::Down
-        {
+            .is_some_and(|rotation| rotation.result.is_none());
+        let leaving = self
+            .record
+            .logout
+            .as_ref()
+            .is_some_and(|logout| logout.result.is_none());
+        if (rotating && action != Action::Down) || leaving {
             return Err(ErrorCode::Busy);
         }
-        if matches!(action, Action::RotateKey | Action::Reenroll)
-            && self.record.enrollment_key.is_some()
+        if matches!(
+            action,
+            Action::RotateKey | Action::Reenroll | Action::Logout
+        ) && self.record.enrollment_key.is_some()
         {
             return Err(ErrorCode::NotReady);
         }
@@ -192,14 +209,18 @@ impl Store {
         let desired = match action {
             Action::Up | Action::Reenroll => true,
             Action::Down => false,
-            Action::RotateKey => record.desired_up,
+            // Down only once the Server confirmed the deletion.
+            Action::RotateKey | Action::Logout => record.desired_up,
         };
         // A new operator request retries failed convergence in either direction.
         // The receipt check above still makes an uncertain request replay inert.
         if desired != record.desired_up
             || blocked
             || enrollment_key.is_some()
-            || matches!(action, Action::RotateKey | Action::Reenroll)
+            || matches!(
+                action,
+                Action::RotateKey | Action::Reenroll | Action::Logout
+            )
         {
             record.revision = Version::new(
                 record
@@ -219,6 +240,7 @@ impl Store {
             }
             Action::Down => record.enrollment_key = None,
             Action::RotateKey => record.rotation = Some(Rotation { id, result: None }),
+            Action::Logout => record.logout = Some(Rotation { id, result: None }),
             Action::Reenroll => {}
         }
         record.last_request = Some(Receipt {

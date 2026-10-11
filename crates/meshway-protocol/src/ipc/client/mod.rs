@@ -1,7 +1,7 @@
 //! Authenticated Unix client shared by local control consumers.
 use crate::ipc::{
-    CodecError, Command, ErrorCode, PingEvent, PingTarget, Request, Response, ResultBody, Status,
-    VERSION,
+    CodecError, Command, ErrorCode, NetcheckReport, PingEvent, PingTarget, Request, Response,
+    ResultBody, Status, VERSION,
 };
 use meshway_model::{ObservationId, RequestId, Sequence};
 use std::{
@@ -52,7 +52,7 @@ impl Client {
     /// Submit once. A dropped waiter or a timeout does not cancel daemon intent;
     /// callers must inspect current status before deciding whether to retry.
     pub async fn call(&self, command: Command) -> Result<Status, ClientError> {
-        let timeout = if matches!(command, Command::RotateKey { .. }) {
+        let timeout = if matches!(command, Command::RotateKey { .. } | Command::Logout { .. }) {
             Duration::from_secs(70)
         } else {
             REQUEST_TIMEOUT
@@ -86,13 +86,29 @@ impl Client {
         .map_err(|_| ClientError::Timeout)?
     }
 
+    /// Run one bounded network diagnostic; it changes no Node intent.
+    pub async fn netcheck(&self) -> Result<NetcheckReport, ClientError> {
+        let request = request(Command::Netcheck)?;
+        tokio::time::timeout(REQUEST_TIMEOUT, async {
+            let mut stream = self.connect_send(&request).await?;
+            let response = read_response(&mut stream, request.request_id).await?;
+            match response.result {
+                ResultBody::Netcheck { report } => Ok(*report),
+                ResultBody::Error { code } => Err(ClientError::Remote(code)),
+                _ => Err(ClientError::Response),
+            }
+        })
+        .await
+        .map_err(|_| ClientError::Timeout)?
+    }
+
     async fn exchange(&self, request: &Request) -> Result<Status, ClientError> {
         let mut stream = self.connect_send(request).await?;
         let response = read_response(&mut stream, request.request_id).await?;
         match response.result {
             ResultBody::Status { status } => Ok(*status),
             ResultBody::Error { code } => Err(ClientError::Remote(code)),
-            ResultBody::Ping { .. } => Err(ClientError::Response),
+            ResultBody::Ping { .. } | ResultBody::Netcheck { .. } => Err(ClientError::Response),
         }
     }
 

@@ -1,109 +1,253 @@
-use meshway_protocol::ipc::{EndpointKind, LinkAcquisition, PingEvent, ProbeOutcome};
+//! `meshway ping`: one line per probe and a summary; `--json` keeps the
+//! exact typed event stream.
+use super::format::{millis, words};
+use super::term::{Role, Term};
+use meshway_model::NodeId;
+use meshway_protocol::NodeObservationTargetView;
+use meshway_protocol::ipc::{EndpointKind, LinkAcquisition, PeerStatus, PingEvent, ProbeOutcome};
+use std::collections::BTreeMap;
 use std::io::{self, Write};
 
-pub(crate) fn display(event: &PingEvent, json: bool) -> io::Result<()> {
-    let mut output = io::stdout().lock();
-    write_event(&mut output, event, json)?;
-    output.flush()
+pub(crate) struct Ping {
+    verbose: bool,
+    target: Option<NodeObservationTargetView>,
+    /// Successful round trips in microseconds, for the summary.
+    rtts: Vec<u64>,
+    /// Hostnames of this Node's visible peers, for relays.
+    names: Option<BTreeMap<NodeId, String>>,
 }
 
-fn write_event(output: &mut impl Write, event: &PingEvent, json: bool) -> io::Result<()> {
-    if json {
-        serde_json::to_writer(&mut *output, event)?;
-        return writeln!(output);
+impl Ping {
+    pub fn new(verbose: bool) -> Self {
+        Self {
+            verbose,
+            target: None,
+            rtts: Vec::new(),
+            names: None,
+        }
     }
-    match event {
-        PingEvent::Accepted { target, .. } => {
-            write!(output, "PING {} ({})", target.hostname, target.node_id)?;
-            if let Some(address) = target.addresses.ipv4 {
-                write!(output, " {address}")?;
-            }
-            if let Some(address) = target.addresses.ipv6 {
-                write!(output, " {address}")?;
-            }
-            writeln!(output, "  service=icmp:* timeout=5s interval>=1s")
-        }
-        PingEvent::Preparing { elapsed_ms } => {
-            writeln!(output, "preparing: elapsed={elapsed_ms} ms")
-        }
-        PingEvent::Sample { sample, .. } => {
-            let Some(probe) = &sample.probe else {
-                return writeln!(output, "sample {}: no probe data", sample.measurement_id);
-            };
-            write!(output, "sample {}: ", sample.measurement_id)?;
-            match probe.outcome {
-                ProbeOutcome::Success => {
-                    write!(output, "reply RTT=")?;
-                    if let Some(duration) = probe.duration_us {
-                        // Exact microseconds -> milliseconds, without lossy float casts.
-                        write!(
-                            output,
-                            "{}.{:03} ms",
-                            duration.get() / 1000,
-                            duration.get() % 1000
-                        )?;
-                    } else {
-                        write!(output, "unavailable")?;
-                    }
+
+    /// The sample names relays this view cannot name yet.
+    pub fn wants_names(&self, event: &PingEvent) -> bool {
+        self.names.is_none()
+            && matches!(event, PingEvent::Sample { sample, .. }
+                if sample.probe.as_ref().is_some_and(|probe| probe.path.len() > 2))
+    }
+
+    pub fn names(&mut self, peers: &[PeerStatus]) {
+        self.names = Some(
+            peers
+                .iter()
+                .map(|peer| (peer.node_id, peer.hostname.clone()))
+                .collect(),
+        );
+    }
+
+    fn name(&self, id: &NodeId) -> String {
+        self.names
+            .as_ref()
+            .and_then(|names| names.get(id).cloned())
+            .unwrap_or_else(|| id.to_string())
+    }
+
+    fn peer(&self) -> String {
+        match &self.target {
+            Some(target) => {
+                let address = target
+                    .addresses
+                    .ipv4
+                    .map(|a| a.to_string())
+                    .or(target.addresses.ipv6.map(|a| a.to_string()));
+                match address {
+                    Some(address) => format!("{} ({address})", target.hostname),
+                    None => target.hostname.clone(),
                 }
-                ProbeOutcome::Timeout => write!(output, "timeout")?,
-                ProbeOutcome::Failed => write!(output, "local-failed")?,
-                ProbeOutcome::Pending => write!(output, "pending")?,
             }
-            if probe.path.len() > 2 {
-                write!(output, " via ")?;
-                for (index, node) in probe.path[1..probe.path.len() - 1].iter().enumerate() {
-                    if index > 0 {
-                        write!(output, " -> ")?;
-                    }
-                    // Only target hostname is authorized in Accepted. Intermediate
-                    // names are not part of the contract, so retain actual NodeIds.
-                    write!(output, "{node}")?;
-                }
-            } else if probe.path.len() == 2 {
-                if let Some(channels) = &probe.channels {
-                    let channel = &channels.request;
-                    write!(
+            None => "peer".into(),
+        }
+    }
+
+    pub fn write(
+        &mut self,
+        output: &mut impl Write,
+        term: &Term,
+        event: &PingEvent,
+    ) -> io::Result<()> {
+        match event {
+            PingEvent::Accepted { target, .. } => {
+                self.target = Some(target.clone());
+                if self.verbose {
+                    writeln!(
                         output,
-                        " direct remote={} transport={} acquisition=",
-                        channel.remote_address,
-                        channel.transport.as_str()
+                        "{}",
+                        term.paint(
+                            Role::Dim,
+                            format!(
+                                "PING {} node {} · icmp:* · 5 s timeout · ≥1 s interval",
+                                self.peer(),
+                                target.node_id
+                            )
+                        )
                     )?;
-                    match &channel.acquisition {
-                        LinkAcquisition::PublishedEndpoint => write!(output, "publishedEndpoint")?,
-                        LinkAcquisition::LocalEndpoint => write!(output, "localEndpoint")?,
-                        LinkAcquisition::StunEndpoint => write!(output, "stunEndpoint")?,
-                        LinkAcquisition::AcceptedInbound => write!(output, "acceptedInbound")?,
-                        LinkAcquisition::CoordinatedUdp {
-                            endpoint_source, ..
-                        } => {
-                            write!(output, "coordinatedUdp endpointSource=")?;
-                            match endpoint_source {
-                                EndpointKind::Stun => write!(output, "STUN (mapped endpoint)")?,
-                                EndpointKind::Configured => write!(output, "configured")?,
-                                EndpointKind::Interface => write!(output, "interface")?,
-                            }
-                        }
+                }
+                Ok(())
+            }
+            PingEvent::Preparing { elapsed_ms } => {
+                if self.verbose {
+                    writeln!(
+                        output,
+                        "{}",
+                        term.paint(Role::Dim, format!("preparing ({} ms)", elapsed_ms.get()))
+                    )?;
+                }
+                Ok(())
+            }
+            PingEvent::Sample { sample, .. } => {
+                let Some(probe) = &sample.probe else {
+                    return writeln!(
+                        output,
+                        "{}",
+                        term.paint(Role::Warn, "sample without probe data")
+                    );
+                };
+                let peer = self.peer();
+                match probe.outcome {
+                    ProbeOutcome::Success => {}
+                    ProbeOutcome::Timeout => {
+                        return writeln!(
+                            output,
+                            "{}",
+                            term.paint(Role::Warn, format!("no reply from {peer} within 5 s"))
+                        );
+                    }
+                    ProbeOutcome::Failed => {
+                        return writeln!(
+                            output,
+                            "{}",
+                            term.paint(Role::Bad, format!("probe to {peer} failed locally"))
+                        );
+                    }
+                    ProbeOutcome::Pending => {
+                        return writeln!(
+                            output,
+                            "{}",
+                            term.paint(Role::Dim, format!("probe to {peer} pending"))
+                        );
+                    }
+                }
+                let channel = probe.channels.as_ref().map(|channels| &channels.request);
+                let carrier = channel.map(|channel| {
+                    format!(
+                        "{} {}",
+                        term.paint(Role::Accent, channel.remote_address),
+                        channel.transport.as_str()
+                    )
+                });
+                let route = if probe.path.len() > 2 {
+                    let relays: Vec<String> = probe.path[1..probe.path.len() - 1]
+                        .iter()
+                        .map(|id| self.name(id))
+                        .collect();
+                    match &carrier {
+                        Some(carrier) => format!("via relay {} ({carrier})", relays.join(" → ")),
+                        None => format!("via relay {}", relays.join(" → ")),
                     }
                 } else {
-                    write!(output, " channel unavailable")?;
+                    match &carrier {
+                        Some(carrier) => format!("via {carrier}"),
+                        None => "via an unreported channel".into(),
+                    }
+                };
+                let rtt = match probe.duration_us {
+                    Some(duration) => {
+                        self.rtts.push(duration.get());
+                        format!("in {}", term.paint(Role::Bold, millis(duration.get())))
+                    }
+                    None => "with no measured round trip".into(),
+                };
+                write!(
+                    output,
+                    "{} from {peer} {route} {rtt}",
+                    term.paint(Role::Good, "pong")
+                )?;
+                if self.verbose
+                    && let Some(channel) = channel
+                {
+                    write!(
+                        output,
+                        "{}",
+                        term.paint(
+                            Role::Dim,
+                            format!(" [{}]", acquisition(&channel.acquisition))
+                        )
+                    )?;
                 }
-            } else {
-                write!(output, " path unavailable")?;
+                writeln!(output)
             }
-            writeln!(output)
+            PingEvent::Completed {
+                sent,
+                success,
+                timeout,
+                failed,
+            } => {
+                let loss = if *sent == 0 {
+                    0
+                } else {
+                    u64::from(*timeout) * 100 / u64::from(*sent)
+                };
+                let mut text = format!(
+                    "{}: {sent} sent, {success} replied, {loss}% loss",
+                    self.target
+                        .as_ref()
+                        .map(|target| target.hostname.clone())
+                        .unwrap_or_else(|| "ping".into())
+                );
+                if *failed > 0 {
+                    text.push_str(&format!(", {failed} failed locally"));
+                }
+                if let (Some(min), Some(max)) = (self.rtts.iter().min(), self.rtts.iter().max()) {
+                    let average = self.rtts.iter().sum::<u64>() / self.rtts.len() as u64;
+                    text.push_str(&format!(
+                        " · rtt min/avg/max {}/{}/{}",
+                        millis(*min).trim_end_matches(" ms"),
+                        millis(average).trim_end_matches(" ms"),
+                        millis(*max)
+                    ));
+                }
+                writeln!(output, "{}", term.paint(Role::Bold, text))
+            }
+            PingEvent::Failed { code } => writeln!(
+                output,
+                "{}",
+                term.paint(Role::Bad, format!("ping failed: {}", words(code)))
+            ),
         }
-        PingEvent::Completed {
-            sent,
-            success,
-            timeout,
-            failed,
-        } => writeln!(
-            output,
-            "sent={sent} replied={success} timeout={timeout} local-failed={failed}"
-        ),
-        PingEvent::Failed { code } => writeln!(output, "ping failed: {code:?}"),
     }
+}
+
+fn acquisition(acquisition: &LinkAcquisition) -> String {
+    match acquisition {
+        LinkAcquisition::PublishedEndpoint => "published endpoint".into(),
+        LinkAcquisition::LocalEndpoint => "local endpoint".into(),
+        LinkAcquisition::StunEndpoint => "STUN endpoint".into(),
+        LinkAcquisition::AcceptedInbound => "accepted inbound".into(),
+        LinkAcquisition::CoordinatedUdp {
+            endpoint_source, ..
+        } => format!(
+            "coordinated UDP, {} endpoint",
+            match endpoint_source {
+                EndpointKind::Stun => "STUN-mapped",
+                EndpointKind::Configured => "configured",
+                EndpointKind::Interface => "interface",
+            }
+        ),
+    }
+}
+
+/// NDJSON: the exact typed event.
+pub(crate) fn json(output: &mut impl Write, event: &PingEvent) -> io::Result<()> {
+    serde_json::to_writer(&mut *output, event)?;
+    writeln!(output)
 }
 
 #[cfg(test)]
