@@ -61,7 +61,7 @@ mise run node:lab status
 docker exec meshway-lax ip address show
 ```
 
-`configure` 使用生成 SDK，核对实际 CLI 身份、Server 注册材料和容器归属，再按当前 revision 一次 CAS 提交：为三节点选择 Native UDP 并配置 `lab-udp` listener（`0.0.0.0:35000`、`endpoints: []`），添加仅覆盖这三个 Node 的 `icmp:*` Access 规则。保留完整 Server DNS 配置，包括 MagicDNS、上游、路由和 search domains；bridge 地址由 Node 自动上报为 local 候选。其他业务按既有 Access／topology／routing 执行。Development 初始 Access 为 deny，TUN、地址观测或 applied 本身不授予节点间业务权限。
+`configure` 使用生成 SDK，核对实际 CLI 身份、Server 注册材料和容器归属，再按当前 revision 一次 CAS 增量提交它负责的部分：缺失或不同时设置 `lab-udp` listener（`0.0.0.0:35000`、`endpoints: []`），缺失时添加仅覆盖这三个 Node 的 `icmp:*` Access 规则、`tagsOwners` 中的 `tag:lab` 与各节点身份标签 `tag:lab`。已有的 dialers 与 topology 不改动；只有完全没有 dialers 声明的节点才得到 `native_udp` 拨号器。全部已就绪时不提交。保留完整 Server DNS 配置，包括 MagicDNS、上游、路由和 search domains；bridge 地址由 Node 自动上报为 local 候选。其他业务按既有 Access／topology／routing 执行。Development 初始 Access 为 deny，TUN、地址观测或 applied 本身不授予节点间业务权限。
 
 Ubuntu 的 resolved 后端承担实际系统 DNS 安装。Server 提供 STUN 发现服务时，同一 UDP listener 的真实映射独立上报到 State；local bridge 地址和 STUN 映射分别保留来源。本地 bridge 可达性不依赖 STUN。三个容器共用宿主出口，通常观测到相同的公网 IP 和不同的端口；不将 HTTP 代理来源地址作为映射观测。
 
@@ -77,7 +77,7 @@ TLS 使用仅限本 lab 的 provided P-256 证书／私钥，SAN 为 `meshway-la
 
 实际承载核对 State 的 `nodes[id].report.report.links[peer][]`：`phase=authenticated`、`transport=vless` 与真实 `linkId`，并核对对端及 `sockets` 的 TCP 资源；候选不能代替已建立通道。当前 daemon 的 `loadedCertificateSha256` 仍为 null，默认日志未输出成功 TLS 握手，不能据配置指纹声称已经上报加载指纹。运行程序、原路径回复和吞吐的证据范围见[L5](/v2/node/performance#l5-常驻-lab-实测)。
 
-`node:lab configure` 会恢复三节点 Native UDP 默认配置；混合承载实验需按当前 revision 核对。VLESS listener 同样可省略额外 endpoints，由 Node 上报本机地址。
+`node:lab configure` 不覆盖已有拨号器或 topology（例如 VLESS 常驻边），混合承载实验可重复运行它。VLESS listener 同样可省略额外 endpoints，由 Node 上报本机地址。
 
 容器重启／重建（新 network namespace、同 boot）不再需要人工处理：daemon 启动时把旧 journal 归档为 `underlay.json.stale-*` 并重新建立 Underlay（2026-10-08 `docker restart meshway-lax` 后 5 秒内 `running／ready／applied`，sha→nyc via lax 立即可达）。Docker 重新分配 bridge 地址不再需要人工处理：listener 的 `endpoints` 留空，节点在 State 上报本机地址，peer 按 configured→local 候选拨号。2026-10-08 实测：三容器同时重启 5 秒内全部 `running／ready`；lax 换成从未配置过的地址后重启 11 秒内可达；lax **运行中** `docker network disconnect／connect` 换接口（.4→.9，不重启进程）8 秒内 control 保持连接、State 上报新地址、sha→nyc via lax 可达。DNS 锚点与 TUN 的地址不出现在上报端点中。
 
