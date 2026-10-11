@@ -104,6 +104,7 @@ const node = (id: string, hostname: string): NodeInventoryView => ({
   netmapUnavailable: { reason: "notIssued" },
   lease: null,
   lastSyncAt: null,
+  serverKey: null,
 })
 
 const entities = (

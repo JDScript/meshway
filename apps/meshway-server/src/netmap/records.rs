@@ -1,6 +1,6 @@
 //! Process-local observations of each Node's sync, for the inventory view
 //! only. They authorize nothing and do not survive a Server restart.
-use meshway_model::{NetmapLease, NetworkId, NodeId};
+use meshway_model::{NetmapLease, NetworkId, NodeId, Version};
 use std::collections::BTreeMap;
 use std::sync::{LazyLock, Mutex};
 
@@ -13,6 +13,8 @@ pub(crate) struct Record {
     pub(crate) synced_at_ms: Option<u64>,
     /// The latest lease signed for the Node.
     pub(crate) lease: Option<NetmapLease>,
+    /// The Server key generation the latest sync request reported pinned.
+    pub(crate) pinned_key: Option<Version>,
 }
 
 #[derive(Default)]
@@ -42,8 +44,17 @@ impl Records {
         edit(entries.entry((network, node)).or_default());
     }
 
-    pub(crate) fn received(&self, network: NetworkId, node: NodeId, now_ms: u64) {
-        self.update(network, node, |record| record.synced_at_ms = Some(now_ms));
+    pub(crate) fn received(
+        &self,
+        network: NetworkId,
+        node: NodeId,
+        now_ms: u64,
+        pinned_key: Option<Version>,
+    ) {
+        self.update(network, node, |record| {
+            record.synced_at_ms = Some(now_ms);
+            record.pinned_key = pinned_key;
+        });
     }
 
     pub(crate) fn issued(&self, network: NetworkId, node: NodeId, lease: NetmapLease) {

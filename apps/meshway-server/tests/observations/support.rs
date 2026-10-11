@@ -269,6 +269,7 @@ impl Server {
                 &meshway_protocol::SyncRequest {
                     netmap: None,
                     state: None,
+                    server_key_generation: None,
                 },
             ),
             200,

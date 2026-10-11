@@ -33,7 +33,7 @@ pub struct App {
     effects: Arc<Effects>,
     netmap_timing: crate::netmap::SyncTiming,
     peer_facts: Arc<dyn crate::netmap::PeerFactsSource>,
-    netmap_signer: Arc<crate::netmap::signing::NetmapSigningKey>,
+    netmap_signer: Arc<crate::netmap::signing::NetmapSigningKeys>,
     /// The production stored-netmap reader shared by State, observations and coordination.
     netmaps: Arc<crate::store::netmap::LateNetmaps>,
     shutdown_hooks: ShutdownHooks,
@@ -181,7 +181,7 @@ impl App {
         });
         // No yield between taking the prepared directory and transferring it
         // to the SQLite worker. Dropping either future preserves lock ownership.
-        let (executor, (sealer, netmap_signer)) = Executor::open_with_effects(
+        let (executor, sealer) = Executor::open_with_effects(
             directory.database_path(),
             options,
             directory,
@@ -193,11 +193,10 @@ impl App {
                 let transaction = connection
                     .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
                     .map_err(|_| AppError::Database)?;
-                let signer =
-                    crate::netmap::signing::NetmapSigningKey::load_or_create(&transaction, &sealer)
-                        .map_err(|_| AppError::StorageIntegrity)?;
+                crate::netmap::signing::ensure(&transaction, &sealer)
+                    .map_err(|_| AppError::StorageIntegrity)?;
                 transaction.commit().map_err(|_| AppError::Database)?;
-                Ok((sealer, signer))
+                Ok(sealer)
             },
         )
         .await
@@ -223,7 +222,9 @@ impl App {
         netmaps.bind(crate::store::netmap::StoredNetmaps::new(Arc::clone(
             &sealer,
         )));
-        let netmap_signer = Arc::new(netmap_signer);
+        let netmap_signer = Arc::new(crate::netmap::signing::NetmapSigningKeys::new(Arc::clone(
+            &sealer,
+        )));
         // The one owner of configuration versions and their snapshot cache.
         let committer = crate::configuration::Committer::new(
             Arc::clone(&sealer),
@@ -438,6 +439,18 @@ impl App {
             Arc::clone(&self.netmap_signer),
             self.netmap_timing,
         )
+    }
+    /// Starts a netmap signing-key rotation window (see `netmap::signing`).
+    /// Rejected with `StateConflict` while a window is open.
+    pub async fn rotate_netmap_key(
+        &self,
+        window: std::time::Duration,
+    ) -> Result<crate::netmap::signing::RotatedSigningKey, crate::error::Error> {
+        let sealer = self.sealer();
+        self.executor
+            .handle()
+            .write(move |tx| crate::netmap::signing::rotate(tx, &sealer, window))
+            .await
     }
     pub fn execution(&self) -> crate::execution::Execution {
         crate::execution::Execution::new(

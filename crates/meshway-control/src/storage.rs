@@ -234,6 +234,13 @@ impl Control {
         self.write_private(RECORD, bytes).await
     }
 
+    /// Pinned Server key replacement. The identity is unchanged, so neither
+    /// the published lease nor the status context ends.
+    pub(super) async fn persist_binding(&mut self) -> Result<(), Error> {
+        let bytes = encode(&self.record)?;
+        self.write_private(RECORD, bytes).await
+    }
+
     /// One fenced durable write under the single driver. Until fsync is
     /// acknowledged, neither this driver nor a cancelled caller may use the new
     /// state; an unknown outcome requires reopening the storage.

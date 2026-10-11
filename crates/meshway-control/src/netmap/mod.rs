@@ -265,6 +265,27 @@ impl Control {
         Ok(change)
     }
 
+    /// Pin the endorsed successor of the Server key: `control.json` first,
+    /// then `netmap.json` with the successor's signature of the installed
+    /// lease, so the cache verifies under the new pin. From now on only the
+    /// successor's signatures verify. A crash between the two writes leaves a
+    /// cache that is not authority on restart (fail closed) until the next sync.
+    async fn pin_server_key(
+        &mut self,
+        next: meshway_protocol::ServerSigningKey,
+        lease: NetmapLease,
+        signature: &NetmapSignature,
+    ) -> Result<(), Error> {
+        self.ready()?;
+        let binding = self.record.binding.as_mut().ok_or(Error::Lifecycle)?;
+        binding.server_signing_key = next;
+        self.persist_binding().await?;
+        let base = self.netmap.base.clone().ok_or(Error::Lifecycle)?;
+        self.persist_netmap(&base, &lease, signature).await?;
+        self.netmap.exchange = Arc::new(());
+        Ok(())
+    }
+
     /// Atomic replacement of `netmap.json`. Either the old or the new sealed
     /// file survives a crash, and both are valid caches, so an unknown outcome
     /// does not require reopening: it fails this installation only.

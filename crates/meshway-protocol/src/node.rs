@@ -32,6 +32,29 @@ crate::object::wire_tagged! { tag="reason";
     },
 } }
 
+meshway_model::string_enum! {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+/// How the Server signing key a Node reported pinned relates to this Server's netmap signing keys.
+pub enum PinnedServerKeyStatus {
+    /// The current key: sync answers verify.
+    Current,
+    /// The key being replaced while its rotation window is open: the next verified sync answer moves the Node to the current key.
+    Rotating,
+    /// Any other key, for example one whose rotation window ended while the Node was offline: answers fail verification on the Node until it enrolls again; its held lease keeps running until it expires.
+    KeyMismatch,
+}
+}
+
+wire_object! {
+/// The Server signing key a Node reported pinned in its latest sync.
+#[derive(Clone,Debug,PartialEq,Eq)] pub struct PinnedServerKeyView {
+    /// Generation of the pinned key.
+    pub key_generation: Version,
+    /// Relation to this Server's current keys at the time of the read.
+    pub status: PinnedServerKeyStatus,
+} }
+
 wire_object! {
 /// Identity and operation binding included in a signed challenge application.
 #[derive(Clone,Debug,PartialEq,Eq)] pub struct NodeChallengeRequest {
@@ -176,6 +199,9 @@ wire_object! {
     /// When this Server last received a sync request from the Node; null when none arrived since the Server process started.
     #[serde(rename="lastSyncAt", with="meshway_model::timestamp::optional")]
     pub last_sync_at_ms: Option<u64> [value_type=Option<meshway_model::timestamp::Timestamp>,required=true],
+    /// The Server signing key the Node reported pinned in its latest sync; null when no sync reporting it arrived since the Server process started.
+    #[serde(deserialize_with="crate::object::required_nullable")]
+    pub server_key: Option<PinnedServerKeyView> [required=true],
     /// Whether the current caller may revoke the displayed control key.
     pub can_revoke_control_key: bool,
     /// Whether the current caller may revoke the displayed data-plane key.

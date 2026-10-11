@@ -49,7 +49,8 @@
             "dataplaneKeyCreatedAt": "2026-10-08T09:01:00Z",
             "netmapUnavailable": null,
             "lease": null,
-            "lastSyncAt": null
+            "lastSyncAt": null,
+            "serverKey": null
           }
         ]
       }
@@ -103,7 +104,8 @@
         "dataplaneKeyCreatedAt": "2026-10-08T09:01:00Z",
         "netmapUnavailable": null,
         "lease": null,
-        "lastSyncAt": null
+        "lastSyncAt": null,
+        "serverKey": null
       }
     }
   },

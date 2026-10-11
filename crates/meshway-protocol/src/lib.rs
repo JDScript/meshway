@@ -68,14 +68,15 @@ pub use management::{
     RemoveMemberRequest, RoleChangeImpactResponse,
 };
 pub use netmap::{
-    NetmapSignature, NetmapSigner, PeerExitFacts, PeerFacts, PeerFactsDelta, PeerListenerFacts,
-    ServerSigningKey, StateCursor, SyncNetmap, SyncRequest, SyncResponse, fact_visible_peers,
-    netmap_lease_transcript,
+    NetmapKeyRotation, NetmapSignature, NetmapSigner, PeerExitFacts, PeerFacts, PeerFactsDelta,
+    PeerListenerFacts, ServerSigningKey, StateCursor, SyncNetmap, SyncRequest, SyncResponse,
+    fact_visible_peers, netmap_key_rotation_transcript, netmap_lease_transcript,
 };
 pub use node::{
     DeleteNodeRequest, NodeChallenge, NodeChallengeRequest, NodeInventoryResponse,
     NodeInventoryView, NodeKeyMetadata, NodeRotationRequest, NodeSessionRequest,
-    NodeSessionResponse, NodeSettingsResponse, RevokeNodeKeyRequest,
+    NodeSessionResponse, NodeSettingsResponse, PinnedServerKeyStatus, PinnedServerKeyView,
+    RevokeNodeKeyRequest,
 };
 pub use node_observations::{
     CreateNodeObservation, NodeObservationCancelled, NodeObservationQuery, NodeObservationResponse,

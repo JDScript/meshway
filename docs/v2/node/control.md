@@ -103,7 +103,7 @@ daemon 先持久接纳带 CAS 的换钥操作，再由唯一 Control owner 执�
 
 Control 只验证、保存并发布签名 netmap；它不签发任何执行快照、guard 或期限句柄。租约到期由 [Engine](/v2/node/runtime#engine) 的唯一计时器负责，Control 不按消费者重复检查。
 
-`finish_sync` 依次执行：请求被替换检查 → `SyncResponse::check(request)` → 以钉住的 Server 钥验证 `signature`（keyId／generation 与钉住钥不符为 `ServerKeyMismatch`，其余失败为 `SignatureInvalid`；均拒绝该回复、不改变状态、不撤回已发布租约，`sync_loop` 按网络错误退避）→ full 验证 digest、delta 以 `apply_netmap_delta` 重建并复核目标 digest、unchanged 匹配持有内容 → 网络／节点／keys 绑定与租约指向 → 拒绝 serial 回退与同内容更早 `issuedAt` 的租约 → 保存 → 发布。结果为：
+`finish_sync` 依次执行：请求被替换检查 → `SyncResponse::check(request)` → 以钉住的 Server 钥验证租约签名（钉住钥即 `keyRotation.next` 时验证 `keyRotation.leaseSignature`，否则验证 `signature`；keyId／generation 与钉住钥不符为 `ServerKeyMismatch`，其余失败为 `SignatureInvalid`；均拒绝该回复、不改变状态、不撤回已发布租约，`sync_loop` 按网络错误退避），并按[签名钥轮换](#server-签名钥轮换)检查交接 → full 验证 digest、delta 以 `apply_netmap_delta` 重建并复核目标 digest、unchanged 匹配持有内容 → 网络／节点／keys 绑定与租约指向 → 拒绝 serial 回退与同内容更早 `issuedAt` 的租约 → 保存 → 发布 → 若有已验证的交接则钉住下一代钥。结果为：
 
 | `NetmapChange` | 含义 |
 | --- | --- |
@@ -122,6 +122,22 @@ Control 只验证、保存并发布签名 netmap；它不签发任何执行快�
 
 State、回执、协调与观察结果只为 Control 持有且租约未结束的精确内容发言（`held_netmap`）；instance 只是 State／回执绑定，不进入期望内容。
 
+### Server 签名钥轮换
+
+Server [轮换签发钥](/v2/server#netmap-签发钥轮换)期间，sync 回复的 `signature` 仍由被替换钥 K 签署，并携带 `keyRotation { next: K′, notBefore, endorsement, leaseSignature }`。`finish_sync` 的规则只有一份实现（`netmap::store::authority`）：
+
+| 钉住钥与回复 | 处理 |
+| --- | --- |
+| 钉住 K′（`keyRotation.next` 与钉住钥完全相同） | 只验证 `leaseSignature`；重复交接幂等 |
+| 钉住 K，`signature` 由 K 签，`notBefore` ≤ Control 时钟 | `endorsement` 须由 K 对 `netmap_key_rotation_transcript(network, K.keyId, K.generation, K′, notBefore)` 签署、K′.generation = K.generation + 1、K′.keyId ≠ K.keyId、`leaseSignature` 由 K′ 签同一租约；任一不符为 `SignatureInvalid`。通过后先安装回复，再把 K′ 写入 `control.json` 的绑定，并以 K′ 的签名原子重写 `netmap.json` |
+| 钉住 K，`notBefore` 尚未到 | 按 K 接受回复，不跟随；之后的回复再判断 |
+| 交接不是从钉住钥到其下一代（跳代、来自其他钥） | 不跟随；`signature` 不是钉住钥签的即 `ServerKeyMismatch` |
+| 无 `keyRotation`、`signature` 不是钉住钥签的（例如错过窗口后 K′ 单独签署） | `ServerKeyMismatch` |
+
+钉住钥更新不改变身份，也不撤回已发布租约或运行上下文；此后只接受 K′ 的签名，K 单独签署的回复为 `ServerKeyMismatch`。下一请求的 `serverKeyGeneration` 报告新代际，Server 库存视图据此显示 `current`。两个文件之间崩溃时，重启后 `netmap.json` 不能在新钥下验证，只作 delta 基准（fail closed），下一次 sync 即恢复。
+
+错过窗口（窗口结束前一直未成功 sync，例如长时间离线）的节点钉住的仍是 K：之后每个回复都是 `ServerKeyMismatch`：回复被拒绝，已持有租约（含重启后从 `netmap.json` 离线载入的租约）照常运行至到期后 fail closed；`sync_loop` 按退避持续重试，daemon 状态为 `sync: reconnecting`，当前不带 `lastError`（sync 循环不上报失败类别）。Server 库存视图显示 `serverKey.status = keyMismatch`。当前恢复方式只有以新身份重新接入；Node 侧"保留身份的重新登录"（接入意图 `existing`）尚未实现。
+
 ## 安装回执与运行报告
 
 `begin_application()` 为当前已保存、instance 目标一致的配置确认 saved 后返回 `ApplicationTicket`。Ticket 绑定 Control owner、instance、target 与 attempt；Clone 不产生新尝试。同一未完成尝试重用原 saved 请求、sequence 和时间；已完成后的重装使用下一 attempt。
@@ -138,7 +154,7 @@ State、回执、协调与观察结果只为 Control 持有且租约未结束的
 
 | 文件 | 内容 |
 | --- | --- |
-| `control.json` | 身份记录：origin、密钥、待完成接入、身份绑定与换钥状态；包含秘密 |
+| `control.json` | 身份记录：origin、密钥、待完成接入、身份绑定（含钉住的 Server 签名钥，随[签名钥轮换](#server-签名钥轮换)更新）与换钥状态；包含秘密 |
 | `netmap.json` | `{ format: "meshway-netmap-cache/2", netmap, lease, signature, seal }` |
 | `peer-facts.json` | `{ format: "meshway-peer-facts-cache/1", networkId, nodeId, netmap: NetmapRef, cursor, peers: NodeId → PeerFacts }`；最后已知 peer 事实，无签名 |
 | `execution.json` | 旧 publication 目标缓存 `{ format: "meshway-execution-cache/1", saved }`，随旧执行链删除 |
@@ -149,7 +165,7 @@ State、回执、协调与观察结果只为 Control 持有且租约未结束的
 
 `signature` 是 Server 对租约的签名（`NetmapSignature`，权威），`seal` 是本节点控制钥对同一租约的签名 `{ signer: "node", keyId, keyGeneration, signature }`，只记录本身份接受了该内容。两者都签 `meshway_protocol::netmap_lease_transcript`：依次为 `meshway/netmap-lease/v1\0`、网络与节点 UUID、revision、serial、内容 digest、`issuedAt`／`expiresAt` 毫秒、signer 类型字节（0 = node，1 = server）和签名钥 key ID／generation，定长大端。digest 覆盖内容，full 与 delta 在重建后核对 digest 等于签名中的引用即被覆盖。
 
-Server 签名钥在接入时随 `EnrollmentResponse.serverSigningKey`（必填）返回，与身份绑定一起保存在 `control.json` 中钉住；缺少它的接入回答不能解码，不产生绑定。重新打开时，格式 2 文件须同时满足格式、digest、网络／节点／keys 绑定、租约指向、钉住钥的 Server 签名与本节点 seal 才载入；租约未到期即恢复为执行授权（不联系 Server），已到期只作 delta 基准。格式 1 文件（只有本节点 seal）至多作为 delta 基准，从不恢复授权；首个已验签的 sync 回复把它重写为格式 2。Control 把观测到的 UTC 高水位保存在 `clock.json`（`{"format":"meshway-clock-floor/1","highWaterMs":…}`，至多每 60 秒随 sync 写一次，shutdown 时补写并 join），重新打开时 Control 时钟不低于它，也不低于缓存租约的 `issuedAt`；daemon 随 offer 把它交给 Engine，Engine 的租约时钟同样不低于它。墙钟在重启前后被调回时，已到期的租约不会复活（高水位最多落后 60 秒）。同内容续租在保存的截止被延后至少 1 小时时才重写文件。
+Server 签名钥在接入时随 `EnrollmentResponse.serverSigningKey`（必填）返回，与身份绑定一起保存在 `control.json` 中钉住，之后只经[签名钥轮换](#server-签名钥轮换)的背书交接更新；缺少它的接入回答不能解码，不产生绑定。重新打开时，格式 2 文件须同时满足格式、digest、网络／节点／keys 绑定、租约指向、钉住钥的 Server 签名与本节点 seal 才载入；租约未到期即恢复为执行授权（不联系 Server），已到期只作 delta 基准。格式 1 文件（只有本节点 seal）至多作为 delta 基准，从不恢复授权；首个已验签的 sync 回复把它重写为格式 2。Control 把观测到的 UTC 高水位保存在 `clock.json`（`{"format":"meshway-clock-floor/1","highWaterMs":…}`，至多每 60 秒随 sync 写一次，shutdown 时补写并 join），重新打开时 Control 时钟不低于它，也不低于缓存租约的 `issuedAt`；daemon 随 offer 把它交给 Engine，Engine 的租约时钟同样不低于它。墙钟在重启前后被调回时，已到期的租约不会复活（高水位最多落后 60 秒）。同内容续租在保存的截止被延后至少 1 小时时才重写文件。
 
 文件保护原语由 `meshway-private-storage` 提供，Server 与 Node 共用目录、祖先路径、文件类型／权限、锁和原子发布实现；文件名、记录格式和业务恢复仍归各自领域所有。
 

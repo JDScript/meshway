@@ -85,6 +85,7 @@ pub fn signed(
         lease,
         netmap,
         peer_facts: None,
+        key_rotation: None,
     }
 }
 

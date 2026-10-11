@@ -56,6 +56,7 @@ async fn member_removal_atomically_withdraws_user_netmap_and_preserves_tag_nodes
             meshway_protocol::SyncRequest {
                 netmap: None,
                 state: None,
+                server_key_generation: None,
             },
         )
         .await
@@ -87,6 +88,7 @@ async fn member_removal_atomically_withdraws_user_netmap_and_preserves_tag_nodes
             meshway_protocol::SyncRequest {
                 netmap: None,
                 state: None,
+                server_key_generation: None,
             },
         )
         .await
@@ -117,7 +119,8 @@ async fn member_removal_atomically_withdraws_user_netmap_and_preserves_tag_nodes
                 token.token.expose(),
                 meshway_protocol::SyncRequest {
                     netmap: None,
-                    state: None
+                    state: None,
+                    server_key_generation: None,
                 }
             )
             .await,
@@ -223,6 +226,7 @@ async fn enrollment_key_replay_and_permanent_deletion_follow_the_same_netmap_ide
             meshway_protocol::SyncRequest {
                 netmap: None,
                 state: None,
+                server_key_generation: None,
             },
         )
         .await

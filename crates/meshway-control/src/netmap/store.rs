@@ -20,7 +20,8 @@ use ed25519_dalek::{Signature, Signer as _, VerifyingKey};
 use meshway_configuration::netmap::CompiledNetmap;
 use meshway_model::{KeyAlgorithm, KeyId, NetmapLease, NodePublicKey, Version};
 use meshway_protocol::{
-    EnrollmentResponse, NetmapSignature, NetmapSigner, netmap_lease_transcript,
+    EnrollmentResponse, NetmapKeyRotation, NetmapSignature, NetmapSigner, ServerSigningKey,
+    netmap_key_rotation_transcript, netmap_lease_transcript,
 };
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
@@ -97,8 +98,16 @@ pub(super) fn verify_server(
     lease: &NetmapLease,
     signature: &NetmapSignature,
 ) -> Result<(), Error> {
-    let pin = &binding.server_signing_key;
-    if signature.key_id != pin.key_id || signature.key_generation != pin.key_generation {
+    verify_with(&binding.server_signing_key, binding, lease, signature)
+}
+
+fn verify_with(
+    key: &ServerSigningKey,
+    binding: &EnrollmentResponse,
+    lease: &NetmapLease,
+    signature: &NetmapSignature,
+) -> Result<(), Error> {
+    if signature.key_id != key.key_id || signature.key_generation != key.key_generation {
         return Err(Error::ServerKeyMismatch);
     }
     let message = netmap_lease_transcript(
@@ -106,13 +115,79 @@ pub(super) fn verify_server(
         binding.node_id,
         lease,
         NetmapSigner::Server,
-        pin.key_id,
-        pin.key_generation,
+        key.key_id,
+        key.key_generation,
     );
-    if !verify(&pin.public_key, &message, &signature.signature) {
+    if !verify(&key.public_key, &message, &signature.signature) {
         return Err(Error::SignatureInvalid);
     }
     Ok(())
+}
+
+/// What makes one sync answer authoritative for this binding.
+pub(super) struct Authority {
+    /// The answer's lease signature by the pinned key; `netmap.json` keeps it.
+    pub signature: NetmapSignature,
+    /// An endorsed successor of the pinned key and its signature of the same
+    /// lease: the key to pin from now on.
+    pub successor: Option<(ServerSigningKey, NetmapSignature)>,
+}
+
+/// Verifies an answer against the pinned key, following a rotation only
+/// from the pinned key to its next generation:
+///
+/// - pinned key is the rotation's successor: its lease signature must verify;
+/// - otherwise `signature` must verify under the pinned key (else
+///   `ServerKeyMismatch`/`SignatureInvalid`), and a rotation whose
+///   `notBefore` has passed must carry the pinned key's endorsement of the
+///   next generation and a valid successor signature (else
+///   `SignatureInvalid`); one whose `notBefore` is still ahead is not followed yet.
+///
+/// Generations are never skipped: a successor without an endorsement by the
+/// pinned key is never pinned.
+pub(super) fn authority(
+    binding: &EnrollmentResponse,
+    lease: &NetmapLease,
+    signature: &NetmapSignature,
+    rotation: Option<&NetmapKeyRotation>,
+    now_ms: u64,
+) -> Result<Authority, Error> {
+    let pin = &binding.server_signing_key;
+    if let Some(rotation) = rotation
+        && rotation.next == *pin
+    {
+        verify_with(pin, binding, lease, &rotation.lease_signature)?;
+        return Ok(Authority {
+            signature: rotation.lease_signature.clone(),
+            successor: None,
+        });
+    }
+    verify_with(pin, binding, lease, signature)?;
+    let successor = match rotation {
+        Some(rotation) if rotation.not_before_ms <= now_ms => {
+            let next = &rotation.next;
+            let endorsement = netmap_key_rotation_transcript(
+                binding.network_id,
+                pin.key_id,
+                pin.key_generation,
+                next,
+                rotation.not_before_ms,
+            );
+            if pin.key_generation.checked_next() != Ok(next.key_generation)
+                || next.key_id == pin.key_id
+                || !verify(&pin.public_key, &endorsement, &rotation.endorsement)
+            {
+                return Err(Error::SignatureInvalid);
+            }
+            verify_with(next, binding, lease, &rotation.lease_signature)?;
+            Some((next.clone(), rotation.lease_signature.clone()))
+        }
+        _ => None,
+    };
+    Ok(Authority {
+        signature: signature.clone(),
+        successor,
+    })
 }
 
 fn seal_message(binding: &EnrollmentResponse, lease: &NetmapLease) -> Vec<u8> {

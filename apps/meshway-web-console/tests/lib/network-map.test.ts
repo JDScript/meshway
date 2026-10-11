@@ -59,6 +59,7 @@ const listed = (
     netmapUnavailable: { reason: "notIssued" },
     lease: null,
     lastSyncAt: null,
+    serverKey: null,
     canRevokeControlKey: true,
     canRevokeDataplaneKey: true,
     controlKeyCreatedAt: T,

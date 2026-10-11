@@ -2,18 +2,25 @@
 
 use std::{io::Write, net::SocketAddr, path::PathBuf, process::ExitCode, time::Duration};
 
-use clap::Parser;
-use meshway_server::{App, Settings, http};
+use clap::{Parser, Subcommand};
+use meshway_server::{App, AppError, Settings, http};
 use tokio::net::TcpListener;
 
 #[derive(Parser)]
-#[command(version, about = "Meshway Server")]
+#[command(
+    version,
+    about = "Meshway Server",
+    args_conflicts_with_subcommands = true,
+    subcommand_negates_reqs = true
+)]
 struct Arguments {
     #[command(flatten)]
     logging: meshway_logging::Options,
+    #[command(subcommand)]
+    command: Option<Command>,
     /// Absolute path to this instance's private data directory.
-    #[arg(long, env = "MESHWAY_DATA_DIR")]
-    data_dir: PathBuf,
+    #[arg(long, env = "MESHWAY_DATA_DIR", required = true)]
+    data_dir: Option<PathBuf>,
     #[arg(long, env = "MESHWAY_LISTEN", default_value = "127.0.0.1:8420")]
     listen: SocketAddr,
     #[arg(long, env = "MESHWAY_REGISTRATION_ENABLED", default_value = "true", action = clap::ArgAction::Set)]
@@ -55,12 +62,62 @@ struct Arguments {
     netmap_sync_hold: u64,
 }
 
+/// Offline host-maintenance commands. They share normal storage locking and
+/// key checks: the serving process must release the data directory first.
+#[derive(Subcommand)]
+enum Command {
+    /// Start a netmap signing-key rotation: a new key of the next generation
+    /// becomes current, and for the window every sync answer carries it with
+    /// an endorsement by the replaced key. Rejected while a window is open.
+    RotateNetmapKey {
+        /// Absolute path to this instance's private data directory.
+        #[arg(long, env = "MESHWAY_DATA_DIR")]
+        data_dir: PathBuf,
+        /// Handover window, such as 48h, 90m or 120s (60 s through 30 days).
+        #[arg(long, default_value = "48h", value_parser = window)]
+        window: Duration,
+    },
+}
+
+fn window(value: &str) -> Result<Duration, String> {
+    let split = value
+        .find(|c: char| !c.is_ascii_digit())
+        .ok_or("expected a number followed by s, m, h or d")?;
+    let (number, unit) = value.split_at(split);
+    let number: u64 = number.parse().map_err(|_| "expected a whole number")?;
+    let seconds = match unit {
+        "s" => Some(number),
+        "m" => number.checked_mul(60),
+        "h" => number.checked_mul(60 * 60),
+        "d" => number.checked_mul(24 * 60 * 60),
+        _ => None,
+    }
+    .ok_or("expected a number followed by s, m, h or d")?;
+    let window = Duration::from_secs(seconds);
+    if !(meshway_server::netmap::signing::MIN_ROTATION_WINDOW
+        ..=meshway_server::netmap::signing::MAX_ROTATION_WINDOW)
+        .contains(&window)
+    {
+        return Err("the window must be between 60 seconds and 30 days".into());
+    }
+    Ok(window)
+}
+
 #[tokio::main]
 async fn main() -> ExitCode {
-    let arguments = Arguments::parse();
+    let mut arguments = Arguments::parse();
     if let Err(error) = arguments.logging.init() {
         eprintln!("{error}");
         return ExitCode::FAILURE;
+    }
+    if let Some(command) = arguments.command.take() {
+        return match maintain(command).await {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(message) => {
+                tracing::error!(error = %message, "Server maintenance command failed");
+                ExitCode::FAILURE
+            }
+        };
     }
     match run(arguments).await {
         Ok(()) => ExitCode::SUCCESS,
@@ -68,6 +125,50 @@ async fn main() -> ExitCode {
             tracing::error!(error = %message, "Server stopped with an error");
             ExitCode::FAILURE
         }
+    }
+}
+
+async fn maintain(command: Command) -> Result<(), String> {
+    let Command::RotateNetmapKey { data_dir, window } = command;
+    let app = App::open(Settings::new(data_dir))
+        .await
+        .map_err(open_failure)?;
+    let result = app
+        .rotate_netmap_key(window)
+        .await
+        .map_err(|error| match error {
+            meshway_server::error::Error::StateConflict => {
+                "A netmap signing-key rotation window is still open; wait until it ends.".to_owned()
+            }
+            error => format!("Netmap signing key was not rotated: {error}."),
+        });
+    let shutdown = app
+        .shutdown()
+        .await
+        .map_err(|_| "Server storage shutdown failed.".to_owned());
+    let rotated = result.and_then(|rotated| shutdown.map(|()| rotated))?;
+    let ends = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(
+        i64::try_from(rotated.window_ends_at_ms).unwrap_or(i64::MAX),
+    )
+    .map_or_else(|| "unknown".to_owned(), |at| at.to_rfc3339());
+    writeln!(
+        std::io::stdout().lock(),
+        "Netmap signing key rotated: generation {} ({}) is current; generation {} ({}) endorses it until {ends}.",
+        rotated.next.key_generation.get(),
+        rotated.next.key_id,
+        rotated.previous.key_generation.get(),
+        rotated.previous.key_id,
+    )
+    .map_err(|_| "Status output failed.".to_owned())
+}
+
+/// AppError is a safe category with, at most, schema object names.
+fn open_failure(error: AppError) -> String {
+    match error {
+        AppError::AlreadyRunning => {
+            "Cannot obtain private Server storage ownership. Stop the Server first.".to_owned()
+        }
+        error => format!("Server storage startup failed: {error}."),
     }
 }
 
@@ -79,7 +180,11 @@ async fn run(arguments: Arguments) -> Result<(), String> {
     #[cfg(unix)]
     let mut interrupt = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
         .map_err(|_| "Signal setup failed.".to_owned())?;
-    let mut settings = Settings::new(arguments.data_dir);
+    let mut settings = Settings::new(
+        arguments
+            .data_dir
+            .ok_or_else(|| "--data-dir is required.".to_owned())?,
+    );
     settings.registration_enabled = arguments.registration_enabled;
     settings.session_ttl = Duration::from_secs(arguments.session_ttl_seconds);
     settings.console_origin = arguments.console_origin;

@@ -83,7 +83,8 @@
         "serial": 3,
         "digest": "abababababababababababababababababababababababababababababababab"
       },
-      "state": null
+      "state": null,
+      "serverKeyGeneration": 1
     },
     "responses": {
       "200": {
@@ -104,7 +105,8 @@
         "netmap": {
           "type": "unchanged"
         },
-        "peerFacts": null
+        "peerFacts": null,
+        "keyRotation": null
       }
     }
   }

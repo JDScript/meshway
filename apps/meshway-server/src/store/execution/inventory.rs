@@ -138,6 +138,7 @@ pub(crate) fn inventory_in_transaction(
     visible: &std::collections::BTreeSet<NodeId>,
     manager: bool,
 ) -> Result<NodeInventoryResponse, Error> {
+    let now = now()?;
     let mut items = Vec::new();
     for (node, settings) in &cfg.nodes {
         if !visible.contains(node) {
@@ -163,6 +164,17 @@ pub(crate) fn inventory_in_transaction(
             netmap_unavailable: crate::store::netmap::unavailability(tx, network, *node)?,
             lease: record.lease,
             last_sync_at_ms: record.synced_at_ms,
+            server_key: record
+                .pinned_key
+                .map(|key_generation| {
+                    crate::store::netmap::pinned_status(tx, now, key_generation).map(|status| {
+                        meshway_protocol::PinnedServerKeyView {
+                            key_generation,
+                            status,
+                        }
+                    })
+                })
+                .transpose()?,
             id: *node,
             network_id: network,
             registered_at_ms: registered as u64,

@@ -2797,16 +2797,23 @@ export const zNetmapDelta = z.strictObject({
   ["target"]: zNetmapRef
 });
 
-export const zNetmapLease = z.strictObject({
-  ["expiresAt"]: zTimestamp,
-  ["issuedAt"]: zTimestamp,
-  ["netmap"]: zNetmapRef
-});
-
 export const zNetmapSignature = z.strictObject({
   ["keyGeneration"]: zVersion,
   ["keyId"]: zKeyId,
   ["signature"]: z.string()
+});
+
+export const zNetmapKeyRotation = z.strictObject({
+  ["endorsement"]: z.string(),
+  ["leaseSignature"]: zNetmapSignature,
+  ["next"]: zServerSigningKey,
+  ["notBefore"]: zTimestamp
+});
+
+export const zNetmapLease = z.strictObject({
+  ["expiresAt"]: zTimestamp,
+  ["issuedAt"]: zTimestamp,
+  ["netmap"]: zNetmapRef
 });
 
 export const zNetmapUnavailable = z.union([z.strictObject({
@@ -2888,6 +2895,13 @@ export const zNodeChallengeIntent = z.strictObject({
   ["request"]: zNodeChallengeRequest
 });
 
+export const zPinnedServerKeyStatus = z.enum(["current","rotating","keyMismatch"]);
+
+export const zPinnedServerKeyView = z.strictObject({
+  ["keyGeneration"]: zVersion,
+  ["status"]: zPinnedServerKeyStatus
+});
+
 export const zNodeInventoryView = z.strictObject({
   ["addresses"]: zNodeAddresses,
   ["canDelete"]: z.boolean(),
@@ -2907,7 +2921,8 @@ export const zNodeInventoryView = z.strictObject({
   ["netmap"]: zNetmapRef.nullable(),
   ["netmapUnavailable"]: zNetmapUnavailable.nullable(),
   ["networkId"]: zNetworkId,
-  ["registeredAt"]: zTimestamp
+  ["registeredAt"]: zTimestamp,
+  ["serverKey"]: zPinnedServerKeyView.nullable()
 });
 
 export const zNodeInventoryResponse = z.strictObject({
@@ -3430,10 +3445,12 @@ export const zSyncNetmap = z.union([z.strictObject({
 
 export const zSyncRequest = z.strictObject({
   ["netmap"]: zNetmapRef.nullable().exactOptional(),
+  ["serverKeyGeneration"]: zVersion.nullable().exactOptional(),
   ["state"]: zStateCursor.nullable().exactOptional()
 });
 
 export const zSyncResponse = z.strictObject({
+  ["keyRotation"]: zNetmapKeyRotation.nullable(),
   ["lease"]: zNetmapLease,
   ["netmap"]: zSyncNetmap,
   ["peerFacts"]: zPeerFactsDelta.nullable(),
