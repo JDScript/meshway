@@ -215,6 +215,61 @@ impl Probe {
         }
     }
 
+    /// resolved only: the actor's supervisor restarts systemd-resolved (a new
+    /// process and D-Bus owner). The Mesh name must resolve again through the
+    /// system stub within LIMIT of the new process being up, and every active
+    /// assertion then holds again without a daemon restart or `up`.
+    pub async fn resolved_restart(
+        &mut self,
+        cli: &Cli,
+        role: Role,
+        domain: &str,
+        peer: &Addresses,
+    ) -> Result<()> {
+        if cli.dns_backend != DnsBackend::Resolved {
+            return Ok(());
+        }
+        let marker = cli.evidence.join("resolved-restarted.txt");
+        if tokio::fs::try_exists(&marker).await? {
+            return Err("resolved restart marker already exists".into());
+        }
+        let started = tokio::time::Instant::now();
+        let supervisor = std::os::unix::process::parent_id().to_string();
+        let status = tokio::process::Command::new("kill")
+            .args(["-USR1", &supervisor])
+            .status()
+            .await?;
+        if !status.success() {
+            return Err("resolved restart request failed".into());
+        }
+        while !tokio::fs::try_exists(&marker).await? {
+            if started.elapsed() >= LIMIT {
+                return Err("supervisor did not restart resolved".into());
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        let restarted = tokio::time::Instant::now();
+        let name = format!("b.{}.", domain.trim_end_matches('.'));
+        let recovered = loop {
+            if stub_answers(&name).await.unwrap_or(false) {
+                break restarted.elapsed();
+            }
+            if restarted.elapsed() >= LIMIT {
+                return Err("Mesh name did not resolve again after resolved restarted".into());
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        };
+        self.evidence.samples.push(Sample {
+            stage: format!("resolved-restart-recovered-{}ms", recovered.as_millis()),
+            name,
+            addresses: Vec::new(),
+            failed: false,
+            service_rcode: None,
+        });
+        self.active(cli, role, domain, peer, "resolved-restart", true)
+            .await
+    }
+
     pub async fn expired(&mut self, cli: &Cli, role: Role, domain: &str) -> Result<()> {
         self.unavailable(cli, role, domain, "lease-expired").await
     }
@@ -270,6 +325,34 @@ async fn links() -> Result<BTreeSet<String>> {
         );
     }
     Ok(names)
+}
+
+/// One A query to resolved's own stub (no libc retry window): whether it
+/// answered NOERROR with at least one record.
+async fn stub_answers(name: &str) -> Result<bool> {
+    tokio::time::timeout(Duration::from_secs(1), async {
+        let mut entropy = [0; 2];
+        getrandom::fill(&mut entropy).map_err(|_| "DNS query entropy unavailable")?;
+        let mut query = Message::new(
+            u16::from_ne_bytes(entropy),
+            hickory_proto::op::MessageType::Query,
+            hickory_proto::op::OpCode::Query,
+        );
+        query.metadata.recursion_desired = true;
+        query.add_query(Question::query(Name::from_ascii(name)?, RecordType::A));
+        let socket = UdpSocket::bind("127.0.0.1:0").await?;
+        socket.connect("127.0.0.53:53").await?;
+        socket.send(&query.to_vec()?).await?;
+        let mut bytes = [0; 4096];
+        let size = socket.recv(&mut bytes).await?;
+        let response = Message::from_vec(&bytes[..size])?;
+        Ok::<_, Error>(
+            response.metadata.id == query.metadata.id
+                && response.metadata.response_code == ResponseCode::NoError
+                && !response.answers.is_empty(),
+        )
+    })
+    .await?
 }
 
 async fn service_rcode(cli: &Cli, name: &str) -> Result<ResponseCode> {

@@ -497,6 +497,10 @@ async fn exercise(
             true,
         )
         .await?;
+        if role == Role::A {
+            dns.resolved_restart(cli, role, &dns_domain, &addresses[&Role::B])
+                .await?;
+        }
     }
     if role == Role::R {
         let v4 = ip(&["-4", "route", "get", &addresses[&Role::B].ipv4.to_string()]).await?;

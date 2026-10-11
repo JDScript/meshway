@@ -97,11 +97,36 @@ EOF
 fi
 cat /proc/self/mountinfo > /evidence/dns-namespace-after.txt
 cp /usr/share/meshway-dns-packages.tsv /evidence/os-packages.tsv
+# The actor's SIGUSR1 asks for one resolved restart: a new process and D-Bus
+# owner with the same configuration, as `systemctl restart` does.
+restart_resolved() {
+    if [ "$MESHWAY_DNS_BACKEND" != resolved ] || [ -e /evidence/resolved-restarted.txt ]; then
+        return
+    fi
+    old=$resolved
+    kill -TERM "$old"
+    wait "$old" 2>/dev/null || true
+    /usr/lib/systemd/systemd-resolved >> /evidence/resolved.log 2>&1 &
+    resolved=$!
+    attempts=0
+    until resolvectl status > /evidence/resolved-restarted-status.txt 2>/dev/null; do
+        # No marker: the actor reports the failed restart.
+        kill -0 "$resolved" 2>/dev/null || return
+        attempts=$((attempts + 1)); [ "$attempts" -lt 100 ] || return
+        sleep .1
+    done
+    printf 'old=%s new=%s\n' "$old" "$resolved" > /evidence/resolved-restarted.txt
+}
+trap restart_resolved USR1
 "$@" &
 actor=$!
 set +e
-wait "$actor"
-status=$?
+# A trapped signal interrupts wait; keep waiting for the actor itself.
+while :; do
+    wait "$actor"
+    status=$?
+    kill -0 "$actor" 2>/dev/null || break
+done
 set -e
 actor=
 if [ "$MESHWAY_DNS_BACKEND" = resolved ]; then
