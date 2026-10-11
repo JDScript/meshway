@@ -470,13 +470,14 @@ def execute(report, artifacts, runtime_os, platform, short, load):
             if any(query["name"].rstrip(".") == name for query in external + resolver):
                 raise RuntimeError("MagicDNS name left the source: " + name)
         no_source_fallback()
-        # E's resolver unreachable: A's query fails and never reaches A's own
-        # live OS upstream, which would have answered it.
-        dns["block"] = command("e", "ip", "route", "add", "unreachable", addresses["external"]["external"] + "/32")
+        # E's OS upstream down (the authority stops answering; no route or
+        # link changes on E): A's query fails and never reaches A's own live
+        # OS upstream, which would have answered it.
+        (report / "signals/exit-dns-down").touch()
         try:
             dns["blocked"] = fails("blocked-" + dns_tag + "." + exit_zone)
         finally:
-            dns["restore"] = command("e", "ip", "route", "del", "unreachable", addresses["external"]["external"] + "/32")
+            (report / "signals/exit-dns-down").unlink()
         dns["unblocked"] = resolves("unblocked-" + dns_tag + "." + exit_zone, ["198.51.100.10"])
         no_source_fallback()
         write(report / "dns-exit.json", dns)

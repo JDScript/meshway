@@ -136,12 +136,20 @@ pub(super) async fn run(cli: &Cli, role: Role) -> Result<()> {
             tokio::select! {
                 received = udp.recv_from(&mut buffer) => {
                     let (size, peer) = received?;
+                    // The supervisor's outage: this authority is down without
+                    // any route or link change on the resolver's host.
+                    if tokio::fs::try_exists(cli.signals.join("exit-dns-down")).await? {
+                        continue;
+                    }
                     let Ok((response, bytes)) = answer(role, &buffer[..size], Some(4096)) else { continue };
                     record(&log, &buffer[..size], &response, "udp", peer)?;
                     let _ = udp.send_to(&bytes, peer).await;
                 }
                 accepted = tcp.accept(), if connections.len() < 32 => {
                     let (mut stream, peer) = accepted?;
+                    if tokio::fs::try_exists(cli.signals.join("exit-dns-down")).await? {
+                        continue;
+                    }
                     let log = log.clone();
                     connections.spawn(async move {
                         let exchange = async {
