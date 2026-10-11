@@ -43,8 +43,8 @@ Install or upgrade:
 
 Remove:
   --uninstall         Run `meshway down`, stop and remove the service, unit and binaries
-  --purge             With --uninstall, also delete /var/lib/meshway (Node identity) and
-                      /etc/meshway
+  --purge             With --uninstall, also delete /var/lib/meshway (Node identity),
+                      /etc/meshway and drop-ins in /etc/systemd/system/meshwayd.service.d
 
 Environment: MESHWAY_REPO (default JDScript/meshway), GITHUB_TOKEN for private releases.
 EOF
@@ -109,8 +109,9 @@ uninstall() {
 	if daemon_active; then die "meshwayd is still active"; fi
 	rm -rf "$RUNTIME_DIR"
 	if [ $purge = 1 ]; then
-		rm -rf "$DATA_DIR" "$CONFIG_DIR"
-		log "removed Node identity and state ($DATA_DIR) and $CONFIG_DIR"
+		rm -rf "$DATA_DIR" "$CONFIG_DIR" "$UNIT_PATH.d"
+		systemctl daemon-reload
+		log "removed Node identity and state ($DATA_DIR), $CONFIG_DIR and unit drop-ins"
 	else
 		log "kept Node identity and state in $DATA_DIR and settings in $CONFIG_DIR (--purge removes them)"
 	fi

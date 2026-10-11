@@ -52,7 +52,7 @@ meshway status --json
 - `AwaitingApproval`：等待浏览器批准。
 - `ControlReady`：控制流程就绪，还需看数据面；`control-only` 不安装网络。
 - `Running`：当前目标的数据面已就绪。
-- `Retrying`：等待重试；检查最近问题。
+- `Retrying`：等待重试；检查最近问题。`up`／`down` 在 30 秒内继续等待重试结果，期满仍在重试才以失败退出。
 - `Blocked`：需要操作员处理问题。
 
 `Saved configuration` 表示本机保存，`Applied configuration` 表示本机完成安装。事件流已连接也不等于业务连通；需要实际探测。

@@ -52,7 +52,7 @@ Distinguish these states:
 - `AwaitingApproval`: waiting for browser approval.
 - `ControlReady`: control is ready; also inspect the data plane. `control-only` installs no networking.
 - `Running`: the data plane for the current target is ready.
-- `Retrying`: waiting to retry; inspect the latest problem.
+- `Retrying`: waiting to retry; inspect the latest problem. `up` and `down` keep waiting for the retry for up to 30 seconds and fail only if it is still retrying then.
 - `Blocked`: an operator must address the problem.
 
 `Saved configuration` means local storage; `Applied configuration` means completed local installation. A connected event stream also does not establish service connectivity. Use an actual probe.

@@ -123,7 +123,7 @@ sudo sh install.sh --uninstall           # 保留身份与设置
 sudo sh install.sh --uninstall --purge   # 同时删除 /var/lib/meshway 与 /etc/meshway
 ```
 
-卸载先执行 `meshway down`：显式 down 才会移除 TUN、DNS 锚点与负向 capture 规则；仅停止服务会保留它们供下次启动。down 失败时脚本停止并保留运行中的服务。随后停止并禁用服务，删除 unit、两个二进制和 `/run/meshway`。不带 `--purge` 时保留 Node 身份（`/var/lib/meshway`）与 `/etc/meshway`，重新安装后仍是同一个 Node；`--purge` 后再次安装需要重新接入。
+卸载先执行 `meshway down`：显式 down 才会移除 TUN、DNS 锚点与负向 capture 规则；仅停止服务会保留它们供下次启动。down 失败时脚本停止并保留运行中的服务。随后停止并禁用服务，删除 unit、两个二进制和 `/run/meshway`。不带 `--purge` 时保留 Node 身份（`/var/lib/meshway`）、`/etc/meshway` 与 `systemctl edit` 建立的 drop-in；`--purge` 一并删除它们；保留身份时重新安装后仍是同一个 Node，`--purge` 后再次安装需要重新接入。
 
 ## 发布产物
 
@@ -136,18 +136,19 @@ tag `v*` 触发 `.github/workflows/release.yml`：
 
 ## 验收记录
 
-2026-10-11，OrbStack Ubuntu 24.04 machine（aarch64，systemd 255，安装 systemd-resolved 并使用其动态 stub），程序为本分支 `aarch64-unknown-linux-musl` release 构建。OrbStack 对所有服务注入关闭沙箱的 drop-in，验收时以更高优先级 drop-in 恢复本 unit 的沙箱取值，`systemctl show` 确认 `ProtectSystem=strict`、`NoNewPrivileges=yes` 与四项 capability 实际生效。machine 重启产生新的 `boot_id` 与 network namespace，但与宿主共享 OrbStack 内核，不等同物理机冷启动。节点以 Tag 接入密钥加入开发网络，对端为常驻 lab 的 `meshway-lax`。
+2026-10-11，OrbStack Ubuntu 24.04 machine（aarch64，systemd 255，安装 systemd-resolved 并使用其动态 stub），程序先为本分支本地 release 构建，后为 Release `v0.1.0-alpha.1` 的 aarch64 产物。OrbStack 对所有服务注入关闭沙箱的 drop-in，验收时以更高优先级 drop-in 恢复本 unit 的沙箱取值，`systemctl show` 确认 `ProtectSystem=strict`、`NoNewPrivileges=yes` 与四项 capability 实际生效。machine 重启产生新的 `boot_id` 与 network namespace，但与宿主共享 OrbStack 内核，不等同物理机冷启动。节点以 Tag 接入密钥加入开发网络，对端为常驻 lab 的 `meshway-lax`。
 
 | 场景 | 结果 |
 | --- | --- |
 | `install.sh --artifact` 首次安装 | 0.9 s 完成；daemon 启动到 `READY=1` 20 ms；目录 `/var/lib/meshway`、`/run/meshway` 均为 0700，socket 0600 |
+| `install.sh --version v0.1.0-alpha.1`（GitHub API＋`GITHUB_TOKEN`） | 8.6 s（含下载）；校验 `SHA256SUMS` 后升级本地构建，保留身份；`meshway version` 报 `v0.1.0-alpha.1` |
 | 重复运行／错误校验和 | 内容相同不替换、不重启（MainPID 不变）；`SHA256SUMS` 不符时拒绝安装 |
 | `meshway up --enrollment-key @file` | 约 3 s 后 `running`／`dataPlane=ready`／applied；Mesh 名称经 resolved 解析 |
-| 重启（Server 可达） | 开机到 daemon 就绪 1.4 s；首个状态读取即为 `running`（缓存 netmap 已安装），2.5 s 内 sync 连接；无需 `up`；旧 journal 以 `changed_namespace` 归档 |
+| 重启（Server 可达，三次） | 开机到 daemon 就绪 1.4–1.8 s；首个状态读取即为 `running`（缓存 netmap 已安装）；首次控制请求在网络就绪前失败并按 1 s 退避，sync 在启动后 2.5–27 s 连接；无需 `up`；旧 journal 以 `changed_namespace` 归档 |
 | 重启（Server 不可达，hosts 指向黑洞地址） | 开机到就绪 1.6 s，`running`／`ready`／applied 来自 `netmap.json`，`sync=disconnected`；Mesh 名称解析、系统解析和 `meshway ping` 均可用 |
 | `systemctl restart meshwayd` | 1.3 s 内重新 sync，DNS 归属记录跨重启保留 |
 | `systemctl restart systemd-resolved` | 系统解析不中断；Mesh 名称与 Mesh IP 立即失败且不恢复，见[当前限制](#当前限制) |
 | `systemctl stop systemd-resolved` | 系统与 Mesh 解析均失败（fail closed），数据面撤回；`start` 后不恢复，重启机器后恢复 |
-| 卸载 | 见下文命令；`down` 后无 TUN、DNS 锚点、私有路由规则，unit 与二进制删除 |
+| `--uninstall`（保留身份）／`--purge` | `down` 后停止并删除服务；无 meshwayd 进程、TUN、DNS 锚点、私有 RPDB 规则或 resolved 链路，`/run/meshway`、unit 与二进制删除，`/var/lib/meshway` 与 `/etc/meshway` 保留；`--purge` 后上述目录与 unit drop-in 均不存在 |
 
 lab 对端 `meshway-lax` 位于 OrbStack Docker bridge 后（对 machine 单向 NAT），只能由 lax 拨入；该边上 lax 每 4–9 s 换一个源端口重新建立 Native UDP 通道，`meshway ping` 与 OS ping 有 60–80% 丢包。这是连接组件在此拓扑下的行为，与安装无关，另行跟踪。原始记录位于仓库私有目录 `.meshway/node-lab/s1/`。

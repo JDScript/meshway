@@ -116,13 +116,19 @@ pub(crate) async fn run(arguments: Arguments) -> Result<(), Error> {
                 return Err(Error::IntentChanged);
             }
             let deadline = Instant::now() + Duration::from_secs(30);
+            // A bounded retry (e.g. the first request right after boot) is still
+            // converging; only its persistence past the deadline is reported.
             while matches!(
                 status.phase,
-                Phase::Starting | Phase::Synchronizing | Phase::Stopping
+                Phase::Starting | Phase::Synchronizing | Phase::Stopping | Phase::Retrying
             ) {
                 if Instant::now() >= deadline {
                     display(&status, arguments.json)?;
-                    return Err(Error::Pending);
+                    return Err(if status.phase == Phase::Retrying {
+                        Error::ControlProblem
+                    } else {
+                        Error::Pending
+                    });
                 }
                 tokio::time::sleep(Duration::from_millis(100)).await;
                 status = client.call(Command::Status).await?;
