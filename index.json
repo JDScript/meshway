@@ -1,8 +1,204 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-11T15:10:46.676132+00:00",
+  "updatedAt": "2026-10-11T20:32:55.683070+00:00",
   "runs": [
+    {
+      "id": 38171906261,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "04096d4dc5af670d003629dcda43f0ec34e6f1c9",
+      "message": "docs: exit resolver availability, overrideLocal, proxy stub prerequisite and the lease-bounded sync hold",
+      "createdAt": "2026-10-11T20:22:04Z",
+      "updatedAt": "2026-10-11T20:30:23Z",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/JDScript/meshway/actions/runs/38171906261",
+      "jobs": [
+        {
+          "id": 114566081166,
+          "name": "changes",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-11T20:22:07Z",
+          "completedAt": "2026-10-11T20:22:18Z",
+          "seconds": 11.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38171906261/job/114566081166"
+        },
+        {
+          "id": 114566130686,
+          "name": "docs-and-scripts",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-11T20:22:21Z",
+          "completedAt": "2026-10-11T20:23:23Z",
+          "seconds": 62.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38171906261/job/114566130686"
+        },
+        {
+          "id": 114566130715,
+          "name": "cargo",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-11T20:23:26Z",
+          "completedAt": "2026-10-11T20:29:40Z",
+          "seconds": 374.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38171906261/job/114566130715"
+        },
+        {
+          "id": 114566130808,
+          "name": "console",
+          "runner": "mars-epyc7543",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-11T20:27:45Z",
+          "completedAt": "2026-10-11T20:30:22Z",
+          "seconds": 157.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38171906261/job/114566130808"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 38171906250,
+      "attempt": 1,
+      "workflow": "Build",
+      "event": "push",
+      "branch": "main",
+      "commit": "04096d4dc5af670d003629dcda43f0ec34e6f1c9",
+      "message": "docs: exit resolver availability, overrideLocal, proxy stub prerequisite and the lease-bounded sync hold",
+      "createdAt": "2026-10-11T20:22:04Z",
+      "updatedAt": "2026-10-11T20:27:43Z",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/JDScript/meshway/actions/runs/38171906250",
+      "jobs": [
+        {
+          "id": 114566080872,
+          "name": "node-linux (aarch64-unknown-linux-musl)",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-11T20:22:06Z",
+          "completedAt": "2026-10-11T20:25:28Z",
+          "seconds": 202.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38171906250/job/114566080872"
+        },
+        {
+          "id": 114566081066,
+          "name": "node-linux (x86_64-unknown-linux-musl)",
+          "runner": "mars-epyc7543",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-11T20:22:07Z",
+          "completedAt": "2026-10-11T20:27:42Z",
+          "seconds": 335.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38171906250/job/114566081066"
+        }
+      ],
+      "artifacts": [
+        {
+          "id": 11714366619,
+          "name": "node-x86_64-unknown-linux-musl-04096d4dc5af670d003629dcda43f0ec34e6f1c9",
+          "bytes": 8663094,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38171906250/artifacts/11714366619",
+          "jobId": 114566081066,
+          "runner": "mars-epyc7543",
+          "seconds": 335.0,
+          "state": "ok",
+          "error": null,
+          "reports": [],
+          "matrices": [],
+          "builds": [
+            {
+              "target": "x86_64-unknown-linux-musl",
+              "binary": "meshwayd",
+              "bytes": 16904424,
+              "sha256": "cf037616c13ec6eb3c0bf0513460b68aad9968008f91f764fe7c31ad61070812"
+            },
+            {
+              "target": "x86_64-unknown-linux-musl",
+              "binary": "meshway",
+              "bytes": 1882976,
+              "sha256": "366edb80d073694512fb142c10ef741958b221da0e4c70759a7f3d337022e213"
+            }
+          ]
+        },
+        {
+          "id": 11713838981,
+          "name": "node-aarch64-unknown-linux-musl-04096d4dc5af670d003629dcda43f0ec34e6f1c9",
+          "bytes": 8120816,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38171906250/artifacts/11713838981",
+          "jobId": 114566080872,
+          "runner": "planck",
+          "seconds": 202.0,
+          "state": "ok",
+          "error": null,
+          "reports": [],
+          "matrices": [],
+          "builds": [
+            {
+              "target": "aarch64-unknown-linux-musl",
+              "binary": "meshwayd",
+              "bytes": 14066616,
+              "sha256": "1dc6263f046ce543a7a7221b1b455753c50d91f11443c9480d69e40068b6948a"
+            },
+            {
+              "target": "aarch64-unknown-linux-musl",
+              "binary": "meshway",
+              "bytes": 1661416,
+              "sha256": "0d72a2de4aa69bf71f502586d4b1ddc2279830065e4b57547e2234c907828e3e"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 38171906206,
+      "attempt": 1,
+      "workflow": "Perf",
+      "event": "push",
+      "branch": "main",
+      "commit": "04096d4dc5af670d003629dcda43f0ec34e6f1c9",
+      "message": "docs: exit resolver availability, overrideLocal, proxy stub prerequisite and the lease-bounded sync hold",
+      "createdAt": "2026-10-11T20:22:04Z",
+      "updatedAt": "2026-10-11T20:25:29Z",
+      "status": "in_progress",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/38171906206",
+      "jobs": [
+        {
+          "id": 114566080815,
+          "name": "perf-arm64",
+          "runner": "jp-tyo-arm64",
+          "status": "completed",
+          "conclusion": "failure",
+          "startedAt": "2026-10-11T20:22:07Z",
+          "completedAt": "2026-10-11T20:22:20Z",
+          "seconds": 13.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38171906206/job/114566080815"
+        },
+        {
+          "id": 114566080942,
+          "name": "perf",
+          "runner": "planck",
+          "status": "in_progress",
+          "conclusion": null,
+          "startedAt": "2026-10-11T20:25:28Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38171906206/job/114566080942"
+        }
+      ],
+      "artifacts": []
+    },
     {
       "id": 38149185669,
       "attempt": 1,
