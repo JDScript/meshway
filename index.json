@@ -1,8 +1,165 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-11T01:35:13.940677+00:00",
+  "updatedAt": "2026-10-11T03:31:22.912982+00:00",
   "runs": [
+    {
+      "id": 38108104930,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "97bb7abdcd198ed370dfd813003fc806157e0b95",
+      "message": "Merge remote-tracking branch 'planck/k1/signing-key-rotation'",
+      "createdAt": "2026-10-11T03:21:15Z",
+      "updatedAt": "2026-10-11T03:28:25Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "url": "https://github.com/JDScript/meshway/actions/runs/38108104930",
+      "jobs": [
+        {
+          "id": 114377799421,
+          "name": "changes",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-11T03:21:18Z",
+          "completedAt": "2026-10-11T03:21:30Z",
+          "seconds": 12.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38108104930/job/114377799421"
+        },
+        {
+          "id": 114377838269,
+          "name": "cargo",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "failure",
+          "startedAt": "2026-10-11T03:21:32Z",
+          "completedAt": "2026-10-11T03:25:39Z",
+          "seconds": 247.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38108104930/job/114377838269"
+        },
+        {
+          "id": 114377838287,
+          "name": "docs-and-scripts",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-11T03:25:42Z",
+          "completedAt": "2026-10-11T03:26:37Z",
+          "seconds": 55.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38108104930/job/114377838287"
+        },
+        {
+          "id": 114377838338,
+          "name": "console",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-11T03:26:40Z",
+          "completedAt": "2026-10-11T03:28:25Z",
+          "seconds": 105.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38108104930/job/114377838338"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 38108104924,
+      "attempt": 1,
+      "workflow": "Validate",
+      "event": "push",
+      "branch": "main",
+      "commit": "97bb7abdcd198ed370dfd813003fc806157e0b95",
+      "message": "Merge remote-tracking branch 'planck/k1/signing-key-rotation'",
+      "createdAt": "2026-10-11T03:21:15Z",
+      "updatedAt": "2026-10-11T03:21:17Z",
+      "status": "in_progress",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/38108104924",
+      "jobs": [
+        {
+          "id": 114377799186,
+          "name": "matrix",
+          "runner": "planck",
+          "status": "in_progress",
+          "conclusion": null,
+          "startedAt": "2026-10-11T03:21:17Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38108104924/job/114377799186"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 38108104915,
+      "attempt": 1,
+      "workflow": "Build",
+      "event": "push",
+      "branch": "main",
+      "commit": "97bb7abdcd198ed370dfd813003fc806157e0b95",
+      "message": "Merge remote-tracking branch 'planck/k1/signing-key-rotation'",
+      "createdAt": "2026-10-11T03:21:15Z",
+      "updatedAt": "2026-10-11T03:27:11Z",
+      "status": "in_progress",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/38108104915",
+      "jobs": [
+        {
+          "id": 114377799239,
+          "name": "node-linux (aarch64-unknown-linux-musl)",
+          "runner": "mars-epyc7543",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-11T03:21:18Z",
+          "completedAt": "2026-10-11T03:27:08Z",
+          "seconds": 350.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38108104915/job/114377799239"
+        },
+        {
+          "id": 114377799447,
+          "name": "node-linux (x86_64-unknown-linux-musl)",
+          "runner": "mars-epyc7543",
+          "status": "in_progress",
+          "conclusion": null,
+          "startedAt": "2026-10-11T03:27:11Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38108104915/job/114377799447"
+        }
+      ],
+      "artifacts": [
+        {
+          "id": 11691370028,
+          "name": "node-aarch64-unknown-linux-musl-97bb7abdcd198ed370dfd813003fc806157e0b95",
+          "bytes": 8030989,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38108104915/artifacts/11691370028",
+          "jobId": 114377799239,
+          "runner": "mars-epyc7543",
+          "seconds": 350.0,
+          "state": "ok",
+          "error": null,
+          "reports": [],
+          "matrices": [],
+          "builds": [
+            {
+              "target": "aarch64-unknown-linux-musl",
+              "binary": "meshwayd",
+              "bytes": 13897656,
+              "sha256": "427fad3d2dedf00abd393099cfd89abe980675f66b278c46636e6481a296f5bb"
+            },
+            {
+              "target": "aarch64-unknown-linux-musl",
+              "binary": "meshway",
+              "bytes": 1649864,
+              "sha256": "a0590f2f70ac864548683da98403b9d9b5d7d9b0e3121faa9d3c7efb30dfcb38"
+            }
+          ]
+        }
+      ]
+    },
     {
       "id": 38102154815,
       "attempt": 1,
