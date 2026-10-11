@@ -1,8 +1,339 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-10T20:34:37.422419+00:00",
+  "updatedAt": "2026-10-11T01:02:29.221270+00:00",
   "runs": [
+    {
+      "id": 38099872780,
+      "attempt": 1,
+      "workflow": "Validate",
+      "event": "push",
+      "branch": "main",
+      "commit": "e4b1fd8bf43442f7db1d2301af269652aef7447f",
+      "message": "Merge remote-tracking branch 'planck/f2/fixes'",
+      "createdAt": "2026-10-11T00:52:00Z",
+      "updatedAt": "2026-10-11T00:59:56Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "url": "https://github.com/JDScript/meshway/actions/runs/38099872780",
+      "jobs": [
+        {
+          "id": 114353407360,
+          "name": "matrix",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "failure",
+          "startedAt": "2026-10-11T00:52:02Z",
+          "completedAt": "2026-10-11T00:59:55Z",
+          "seconds": 473.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38099872780/job/114353407360"
+        }
+      ],
+      "artifacts": [
+        {
+          "id": 11687596211,
+          "name": "validate-matrix-38099872780",
+          "bytes": 579048,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38099872780/artifacts/11687596211",
+          "jobId": 114353407360,
+          "runner": "planck",
+          "seconds": 473.0,
+          "state": "ok",
+          "error": null,
+          "reports": [],
+          "matrices": [
+            {
+              "reportId": "20261011T005210Z-21ce7875",
+              "short": false,
+              "rows": [
+                {
+                  "row": "tun",
+                  "passed": true,
+                  "reportId": "20261011T005359Z-8d9f9209",
+                  "seconds": 0.916,
+                  "load": "15.33/10.37/9.67"
+                },
+                {
+                  "row": "packet",
+                  "passed": true,
+                  "reportId": "20261011T005359Z-dea0716e",
+                  "seconds": 269.111,
+                  "load": "15.33/10.37/9.67"
+                },
+                {
+                  "row": "udp/off",
+                  "passed": true,
+                  "reportId": "20261011T005359Z-c1ed3e3e",
+                  "seconds": 278.846,
+                  "load": "15.33/10.37/9.67"
+                },
+                {
+                  "row": "tcp/off",
+                  "passed": true,
+                  "reportId": "20261011T005359Z-b921d76c",
+                  "seconds": 259.615,
+                  "load": "15.33/10.37/9.67"
+                },
+                {
+                  "row": "vless/off",
+                  "passed": true,
+                  "reportId": "20261011T005359Z-6bc54398",
+                  "seconds": 266.452,
+                  "load": "15.33/10.37/9.67"
+                },
+                {
+                  "row": "trojan/off",
+                  "passed": true,
+                  "reportId": "20261011T005359Z-4a6c01e7",
+                  "seconds": 259.823,
+                  "load": "15.33/10.37/9.67"
+                },
+                {
+                  "row": "udp/resolv-conf",
+                  "passed": true,
+                  "reportId": "20261011T005359Z-291685dd",
+                  "seconds": 268.349,
+                  "load": "15.33/10.37/9.67"
+                },
+                {
+                  "row": "udp/resolved",
+                  "passed": true,
+                  "reportId": "20261011T005359Z-baf7547e",
+                  "seconds": 282.884,
+                  "load": "15.33/10.37/9.67"
+                },
+                {
+                  "row": "nat/off",
+                  "passed": true,
+                  "reportId": "20261011T005359Z-8328fc63",
+                  "seconds": 274.101,
+                  "load": "15.33/10.37/9.67"
+                },
+                {
+                  "row": "nat+fallback/off",
+                  "passed": true,
+                  "reportId": "20261011T005359Z-c56b73ec",
+                  "seconds": 270.825,
+                  "load": "15.33/10.37/9.67"
+                },
+                {
+                  "row": "nat/resolved",
+                  "passed": false,
+                  "reportId": "20261011T005359Z-4ce5ab0d",
+                  "seconds": 349.924,
+                  "load": "15.33/10.37/9.67"
+                },
+                {
+                  "row": "exit/off",
+                  "passed": false,
+                  "reportId": "20261011T005359Z-04fa3af4",
+                  "seconds": 5.152,
+                  "load": "15.33/10.37/9.67"
+                },
+                {
+                  "row": "netmap/offline",
+                  "passed": true,
+                  "reportId": "20261011T005359Z-bafc9ad6",
+                  "seconds": 334.345,
+                  "load": "15.33/10.37/9.67"
+                },
+                {
+                  "row": "netmap/revoke",
+                  "passed": true,
+                  "reportId": "20261011T005359Z-d060b1fa",
+                  "seconds": 137.208,
+                  "load": "15.33/10.37/9.67"
+                },
+                {
+                  "row": "netmap/expiry",
+                  "passed": true,
+                  "reportId": "20261011T005359Z-4615e0c5",
+                  "seconds": 226.959,
+                  "load": "15.33/10.37/9.67"
+                },
+                {
+                  "row": "netmap/restart",
+                  "passed": true,
+                  "reportId": "20261011T005359Z-e3438a90",
+                  "seconds": 277.248,
+                  "load": "15.33/10.37/9.67"
+                }
+              ]
+            }
+          ],
+          "builds": []
+        }
+      ]
+    },
+    {
+      "id": 38099872756,
+      "attempt": 1,
+      "workflow": "Perf",
+      "event": "push",
+      "branch": "main",
+      "commit": "e4b1fd8bf43442f7db1d2301af269652aef7447f",
+      "message": "Merge remote-tracking branch 'planck/f2/fixes'",
+      "createdAt": "2026-10-11T00:52:00Z",
+      "updatedAt": "2026-10-11T01:00:08Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "url": "https://github.com/JDScript/meshway/actions/runs/38099872756",
+      "jobs": [
+        {
+          "id": 114353408220,
+          "name": "perf-arm64",
+          "runner": "jp-tyo-arm64",
+          "status": "completed",
+          "conclusion": "failure",
+          "startedAt": "2026-10-11T00:52:03Z",
+          "completedAt": "2026-10-11T00:52:17Z",
+          "seconds": 14.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38099872756/job/114353408220"
+        },
+        {
+          "id": 114353408330,
+          "name": "perf",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "failure",
+          "startedAt": "2026-10-11T00:59:55Z",
+          "completedAt": "2026-10-11T01:00:08Z",
+          "seconds": 13.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38099872756/job/114353408330"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 38099872749,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "e4b1fd8bf43442f7db1d2301af269652aef7447f",
+      "message": "Merge remote-tracking branch 'planck/f2/fixes'",
+      "createdAt": "2026-10-11T00:52:00Z",
+      "updatedAt": "2026-10-11T00:59:20Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "url": "https://github.com/JDScript/meshway/actions/runs/38099872749",
+      "jobs": [
+        {
+          "id": 114353408066,
+          "name": "changes",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-11T00:52:03Z",
+          "completedAt": "2026-10-11T00:52:16Z",
+          "seconds": 13.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38099872749/job/114353408066"
+        },
+        {
+          "id": 114353454415,
+          "name": "console",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-11T00:52:19Z",
+          "completedAt": "2026-10-11T00:54:09Z",
+          "seconds": 110.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38099872749/job/114353454415"
+        },
+        {
+          "id": 114353454448,
+          "name": "docs-and-scripts",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-11T00:54:12Z",
+          "completedAt": "2026-10-11T00:55:14Z",
+          "seconds": 62.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38099872749/job/114353454448"
+        },
+        {
+          "id": 114353454498,
+          "name": "cargo",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "failure",
+          "startedAt": "2026-10-11T00:55:16Z",
+          "completedAt": "2026-10-11T00:59:20Z",
+          "seconds": 244.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38099872749/job/114353454498"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 38099872747,
+      "attempt": 1,
+      "workflow": "Build",
+      "event": "push",
+      "branch": "main",
+      "commit": "e4b1fd8bf43442f7db1d2301af269652aef7447f",
+      "message": "Merge remote-tracking branch 'planck/f2/fixes'",
+      "createdAt": "2026-10-11T00:52:00Z",
+      "updatedAt": "2026-10-11T00:57:48Z",
+      "status": "in_progress",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/38099872747",
+      "jobs": [
+        {
+          "id": 114353407403,
+          "name": "node-linux (aarch64-unknown-linux-musl)",
+          "runner": "mars-epyc7543",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-11T00:52:03Z",
+          "completedAt": "2026-10-11T00:57:45Z",
+          "seconds": 342.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38099872747/job/114353407403"
+        },
+        {
+          "id": 114353407417,
+          "name": "node-linux (x86_64-unknown-linux-musl)",
+          "runner": "mars-epyc7543",
+          "status": "in_progress",
+          "conclusion": null,
+          "startedAt": "2026-10-11T00:57:48Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38099872747/job/114353407417"
+        }
+      ],
+      "artifacts": [
+        {
+          "id": 11687975057,
+          "name": "node-aarch64-unknown-linux-musl-e4b1fd8bf43442f7db1d2301af269652aef7447f",
+          "bytes": 8027224,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38099872747/artifacts/11687975057",
+          "jobId": 114353407403,
+          "runner": "mars-epyc7543",
+          "seconds": 342.0,
+          "state": "ok",
+          "error": null,
+          "reports": [],
+          "matrices": [],
+          "builds": [
+            {
+              "target": "aarch64-unknown-linux-musl",
+              "binary": "meshwayd",
+              "bytes": 13889592,
+              "sha256": "a77480fdc6880c012e0229dcdacb4998029a6093290671a271b37d868ae7adfe"
+            },
+            {
+              "target": "aarch64-unknown-linux-musl",
+              "binary": "meshway",
+              "bytes": 1649864,
+              "sha256": "85795c42ea201d0a23bca2eb4ed0d4d6c88d4943d3386961d18038c20f10549d"
+            }
+          ]
+        }
+      ]
+    },
     {
       "id": 38083909100,
       "attempt": 1,
