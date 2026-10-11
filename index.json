@@ -1,8 +1,69 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-11T06:07:15.100166+00:00",
+  "updatedAt": "2026-10-11T06:25:24.072110+00:00",
   "runs": [
+    {
+      "id": 38117691014,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "p1/traversal-signalling",
+      "commit": "d7de0cef5e8b43c5faf15170ef3a2c204df1cc27",
+      "message": "traversal fixture: name the router and dump state when the TCP fallback conntrack proof is missing",
+      "createdAt": "2026-10-11T06:19:35Z",
+      "updatedAt": "2026-10-11T06:24:22Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "url": "https://github.com/JDScript/meshway/actions/runs/38117691014",
+      "jobs": [
+        {
+          "id": 114405790001,
+          "name": "changes",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-11T06:19:37Z",
+          "completedAt": "2026-10-11T06:19:42Z",
+          "seconds": 5.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38117691014/job/114405790001"
+        },
+        {
+          "id": 114405806048,
+          "name": "docs-and-scripts",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-11T06:19:43Z",
+          "completedAt": "2026-10-11T06:20:01Z",
+          "seconds": 18.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38117691014/job/114405806048"
+        },
+        {
+          "id": 114405806054,
+          "name": "cargo",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "failure",
+          "startedAt": "2026-10-11T06:19:45Z",
+          "completedAt": "2026-10-11T06:24:21Z",
+          "seconds": 276.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38117691014/job/114405806054"
+        },
+        {
+          "id": 114405806091,
+          "name": "console",
+          "runner": "mars-epyc7543",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-11T06:19:45Z",
+          "completedAt": "2026-10-11T06:22:28Z",
+          "seconds": 163.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38117691014/job/114405806091"
+        }
+      ],
+      "artifacts": []
+    },
     {
       "id": 38116637265,
       "attempt": 1,
