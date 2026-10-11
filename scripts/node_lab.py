@@ -390,6 +390,22 @@ def snapshot(journal=None, *, allow_stopped=False):
     return containers, statuses
 
 
+CONVERGENCE_SECONDS = 60
+
+
+def converged(status, desired_up):
+    """The restored intent is fully applied (not merely saved or retrying)."""
+    if status["desiredUp"] != desired_up:
+        return False
+    if not desired_up:
+        return status["phase"] == "down" and status["dataPlane"] in ("stopped", "controlOnly")
+    ready = status.get("authenticated") is True and status.get("lastError") is None
+    if status["networkMode"] == "tun":
+        return (ready and status["phase"] == "running" and status["dataPlane"] == "ready"
+                and status.get("applied") is not None and status["applied"] == status.get("saved"))
+    return ready and status["phase"] == "controlReady" and status["dataPlane"] == "controlOnly"
+
+
 def node_records(containers, statuses, hashes):
     nodes = {}
     for node in NODES:
@@ -651,22 +667,20 @@ def deploy(lab):
             run("docker", "exec", containers[node]["Id"], "/opt/meshway/meshway", "up", "--json", timeout=45)
             containers, statuses = snapshot(journal)
             check_snapshot(journal, containers, statuses, deployed=True)
-    containers, statuses = snapshot(journal)
-    check_snapshot(journal, containers, statuses, deployed=True)
-    pending = []
+    # A restored intent converges through transient retries (the CLI exits 0
+    # for them too); only a blocked Node or a deadline without convergence fails.
+    deadline = time.monotonic() + CONVERGENCE_SECONDS
+    while True:
+        containers, statuses = snapshot(journal)
+        check_snapshot(journal, containers, statuses, deployed=True)
+        pending = [f"meshway-{node}" for node, status in statuses.items()
+                   if not converged(status, journal["nodes"][node]["desiredUp"])]
+        blocked = any(status["phase"] == "blocked" for status in statuses.values())
+        if not pending or blocked or time.monotonic() >= deadline:
+            break
+        time.sleep(1)
     for node, status in statuses.items():
         print(json.dumps({"container": f"meshway-{node}", "status": status}), flush=True)
-        if status["desiredUp"]:
-            ready = status.get("authenticated") is True and status.get("lastError") is None
-            if status["networkMode"] == "tun":
-                ready = (ready and status["phase"] == "running" and status["dataPlane"] == "ready"
-                         and status.get("applied") is not None and status["applied"] == status.get("saved"))
-            else:
-                ready = ready and status["phase"] == "controlReady" and status["dataPlane"] == "controlOnly"
-        else:
-            ready = status["phase"] == "down" and status["dataPlane"] in ("stopped", "controlOnly")
-        if not ready or status["desiredUp"] != journal["nodes"][node]["desiredUp"]:
-            pending.append(f"meshway-{node}")
     if pending:
         raise DevError("Deploy control/install or intent restoration remains pending or failed: " + ", ".join(pending) + "; journal retained; retry the same deploy.")
     journal["phase"] = "complete"

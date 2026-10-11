@@ -15,8 +15,6 @@ pub(crate) enum Error {
     Output(#[from] std::io::Error),
     #[error("Another operator changed Node intent.")]
     IntentChanged,
-    #[error("Intent is saved; Node convergence is still pending. Use status --watch.")]
-    Pending,
     #[error("Intent is saved; inspect the reported Node problem.")]
     ControlProblem,
     #[error("Ping finished without a successful reply.")]
@@ -116,20 +114,7 @@ pub(crate) async fn run(arguments: Arguments) -> Result<(), Error> {
                 return Err(Error::IntentChanged);
             }
             let deadline = Instant::now() + Duration::from_secs(30);
-            // A bounded retry (e.g. the first request right after boot) is still
-            // converging; only its persistence past the deadline is reported.
-            while matches!(
-                status.phase,
-                Phase::Starting | Phase::Synchronizing | Phase::Stopping | Phase::Retrying
-            ) {
-                if Instant::now() >= deadline {
-                    display(&status, arguments.json)?;
-                    return Err(if status.phase == Phase::Retrying {
-                        Error::ControlProblem
-                    } else {
-                        Error::Pending
-                    });
-                }
+            while converging(status.phase) && Instant::now() < deadline {
                 tokio::time::sleep(Duration::from_millis(100)).await;
                 status = client.call(Command::Status).await?;
                 if status.desired_up != up {
@@ -137,12 +122,29 @@ pub(crate) async fn run(arguments: Arguments) -> Result<(), Error> {
                 }
             }
             display(&status, arguments.json)?;
-            if matches!(status.phase, Phase::Blocked | Phase::Retrying) {
+            if status.phase == Phase::Blocked {
                 return Err(Error::ControlProblem);
+            }
+            if converging(status.phase) {
+                tracing::warn!(
+                    phase = ?status.phase,
+                    problem = ?status.last_error,
+                    "Intent is saved; Node is converging. Use status --watch."
+                );
             }
             Ok(())
         }
     }
+}
+
+/// The saved intent is still being applied: a transient retry (network, Server
+/// busy, an ordinary first-request failure) is convergence, not failure. Only
+/// `Blocked` (identity rejection, storage, contract) needs an operator.
+fn converging(phase: Phase) -> bool {
+    matches!(
+        phase,
+        Phase::Starting | Phase::Synchronizing | Phase::Stopping | Phase::Retrying
+    )
 }
 
 async fn enrollment_key_input(
@@ -191,4 +193,30 @@ async fn enrollment_key_input(
     }
     meshway_protocol::ipc::EnrollmentKey::new(input.trim().to_owned())
         .map_err(|_| Error::EnrollmentKeyInput)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_a_blocked_node_is_an_operator_problem() {
+        for phase in [
+            Phase::Starting,
+            Phase::Synchronizing,
+            Phase::Stopping,
+            Phase::Retrying,
+        ] {
+            assert!(converging(phase), "{phase:?}");
+        }
+        for phase in [
+            Phase::Down,
+            Phase::AwaitingApproval,
+            Phase::ControlReady,
+            Phase::Running,
+            Phase::Blocked,
+        ] {
+            assert!(!converging(phase), "{phase:?}");
+        }
+    }
 }

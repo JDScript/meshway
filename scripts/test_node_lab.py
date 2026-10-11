@@ -54,6 +54,7 @@ class Deploy(unittest.TestCase):
             "sha256": "a" * 64, "release": container["binaryRelease"], "processId": status["processId"],
             "startTicks": 123, "mountNamespace": "mnt:[123]"}).start()
         patch.object(node_lab.subprocess, "run", side_effect=self.external).start()
+        patch.object(node_lab, "CONVERGENCE_SECONDS", 0).start()
         self.output = patch("builtins.print").start()
 
     def container(self, node, config_hash):
@@ -551,6 +552,46 @@ class Deploy(unittest.TestCase):
             self.deploy()
         self.assertEqual(node_lab.deploy_journal(self.lab)["phase"], "restoring")
         self.assertTrue(any('"dataPlane": "preparing"' in str(call) for call in self.output.call_args_list))
+
+    def test_restored_intent_converging_through_a_transient_retry_completes(self):
+        self.change("lax")
+        self.pending_up = True
+        retrying = dict(self.status("lax"), phase="retrying", lastError="network", applied=None)
+        polls = []
+
+        def sleep(_seconds):
+            polls.append(True)
+            self.statuses["lax"] = self.status("lax")
+        patch.object(node_lab, "CONVERGENCE_SECONDS", 60).start()
+        patch.object(node_lab.time, "sleep", side_effect=sleep).start()
+        real = node_lab.snapshot
+
+        def snapshot(*args, **kwargs):
+            containers, statuses = real(*args, **kwargs)
+            if not polls and statuses.get("lax", {}).get("desiredUp"):
+                statuses["lax"] = retrying
+            return containers, statuses
+        patch.object(node_lab, "snapshot", side_effect=snapshot).start()
+        self.deploy()
+        self.assertTrue(polls)
+        self.assertEqual(node_lab.deploy_journal(self.lab)["phase"], "complete")
+
+    def test_blocked_restoration_fails_without_waiting(self):
+        self.change("lax")
+        self.pending_up = True
+        patch.object(node_lab, "CONVERGENCE_SECONDS", 60).start()
+        sleep = patch.object(node_lab.time, "sleep").start()
+        real = node_lab.snapshot
+
+        def snapshot(*args, **kwargs):
+            containers, statuses = real(*args, **kwargs)
+            if statuses.get("lax", {}).get("desiredUp"):
+                statuses["lax"] = dict(statuses["lax"], phase="blocked", lastError="credentials")
+            return containers, statuses
+        patch.object(node_lab, "snapshot", side_effect=snapshot).start()
+        with self.assertRaisesRegex(node_lab.DevError, "pending or failed"):
+            self.deploy()
+        sleep.assert_not_called()
 
     def test_post_compose_identity_change_is_rejected_and_preserves_journal(self):
         self.change("lax")
