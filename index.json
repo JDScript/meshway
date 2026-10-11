@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-11T08:39:54.634513+00:00",
+  "updatedAt": "2026-10-11T08:42:45.078334+00:00",
   "runs": [
     {
       "id": 38125033457,
@@ -147,9 +147,9 @@
       "commit": "9354519f5f8914f131b8f73d15843210eb77137f",
       "message": "test(underlay): reverse-path classification follows the kernel's max(all, interface) rule",
       "createdAt": "2026-10-11T08:30:23Z",
-      "updatedAt": "2026-10-11T08:35:59Z",
-      "status": "in_progress",
-      "conclusion": null,
+      "updatedAt": "2026-10-11T08:40:04Z",
+      "status": "completed",
+      "conclusion": "success",
       "url": "https://github.com/JDScript/meshway/actions/runs/38125033364",
       "jobs": [
         {
@@ -178,11 +178,11 @@
           "id": 114427573383,
           "name": "cargo",
           "runner": "mars-14900k",
-          "status": "in_progress",
-          "conclusion": null,
+          "status": "completed",
+          "conclusion": "success",
           "startedAt": "2026-10-11T08:32:50Z",
-          "completedAt": null,
-          "seconds": null,
+          "completedAt": "2026-10-11T08:40:03Z",
+          "seconds": 433.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/38125033364/job/114427573383"
         },
         {
