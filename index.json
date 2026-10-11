@@ -1,8 +1,130 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-11T06:00:42.711978+00:00",
+  "updatedAt": "2026-10-11T06:04:31.911474+00:00",
   "runs": [
+    {
+      "id": 38116637265,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "p1/traversal-signalling",
+      "commit": "05dfc7f4572585f986613b53abd882f637e1262c",
+      "message": "validation: one OS image manifest shape for built and existing images",
+      "createdAt": "2026-10-11T06:00:30Z",
+      "updatedAt": "2026-10-11T06:00:54Z",
+      "status": "in_progress",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/38116637265",
+      "jobs": [
+        {
+          "id": 114402709048,
+          "name": "changes",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-11T06:00:31Z",
+          "completedAt": "2026-10-11T06:00:35Z",
+          "seconds": 4.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38116637265/job/114402709048"
+        },
+        {
+          "id": 114402726580,
+          "name": "console",
+          "runner": "mars-epyc7543",
+          "status": "in_progress",
+          "conclusion": null,
+          "startedAt": "2026-10-11T06:00:38Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38116637265/job/114402726580"
+        },
+        {
+          "id": 114402726595,
+          "name": "cargo",
+          "runner": "planck",
+          "status": "in_progress",
+          "conclusion": null,
+          "startedAt": "2026-10-11T06:00:36Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38116637265/job/114402726595"
+        },
+        {
+          "id": 114402726648,
+          "name": "docs-and-scripts",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-11T06:00:53Z",
+          "completedAt": "2026-10-11T06:01:59Z",
+          "seconds": 66.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38116637265/job/114402726648"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 38116600733,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "6ebc397086680b0823285c6c634a3a44cc618caf",
+      "message": "docs(process): epyc runner builds in tmpfs; planck runner memory/CPU limits",
+      "createdAt": "2026-10-11T05:59:58Z",
+      "updatedAt": "2026-10-11T06:00:30Z",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/JDScript/meshway/actions/runs/38116600733",
+      "jobs": [
+        {
+          "id": 114402609479,
+          "name": "changes",
+          "runner": "mars-epyc7543",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-11T06:00:00Z",
+          "completedAt": "2026-10-11T06:00:13Z",
+          "seconds": 13.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38116600733/job/114402609479"
+        },
+        {
+          "id": 114402653392,
+          "name": "docs-and-scripts",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-11T06:00:14Z",
+          "completedAt": "2026-10-11T06:00:29Z",
+          "seconds": 15.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38116600733/job/114402653392"
+        },
+        {
+          "id": 114402654100,
+          "name": "cargo",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "skipped",
+          "startedAt": "2026-10-11T06:00:13Z",
+          "completedAt": "2026-10-11T06:00:13Z",
+          "seconds": 0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38116600733/job/114402654100"
+        },
+        {
+          "id": 114402654501,
+          "name": "console",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "skipped",
+          "startedAt": "2026-10-11T06:00:14Z",
+          "completedAt": "2026-10-11T06:00:13Z",
+          "seconds": 0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38116600733/job/114402654501"
+        }
+      ],
+      "artifacts": []
+    },
     {
       "id": 38116182665,
       "attempt": 1,
