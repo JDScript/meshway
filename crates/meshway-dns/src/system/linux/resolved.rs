@@ -355,28 +355,14 @@ impl Backend {
         {
             return *listening;
         }
-        let local = format!(
-            "{:08X}:{:04X}",
-            u32::from_ne_bytes(match PROXY_STUB.ip() {
-                IpAddr::V4(ip) => ip.octets(),
-                IpAddr::V6(_) => [0; 4],
-            }),
-            PROXY_STUB.port()
-        );
         let (udp, tcp) = tokio::join!(
             tokio::fs::read_to_string("/proc/net/udp"),
             tokio::fs::read_to_string("/proc/net/tcp")
         );
-        let has = |table: std::io::Result<String>, state: &str| {
-            table.is_ok_and(|table| {
-                table.lines().skip(1).any(|line| {
-                    let mut fields = line.split_whitespace().skip(1);
-                    fields.next() == Some(local.as_str()) && fields.nth(1) == Some(state)
-                })
-            })
+        let listening = match (udp, tcp) {
+            (Ok(udp), Ok(tcp)) => proxy_stub_in(&udp, &tcp),
+            _ => false,
         };
-        // UDP sockets that are bound but unconnected are TCP_CLOSE (07).
-        let listening = has(udp, "07") && has(tcp, "0A");
         self.stub = Some((
             self.service_owner.clone(),
             std::time::Instant::now(),
@@ -535,6 +521,26 @@ impl Record {
         }
         local_settings(self.bind, domains)
     }
+}
+/// Whether `/proc/net/udp` has a bound socket (TCP_CLOSE, 07) and
+/// `/proc/net/tcp` a listening one (0A) at exactly the proxy stub. The kernel
+/// prints the IPv4 address as its in-memory u32 in hexadecimal.
+fn proxy_stub_in(udp: &str, tcp: &str) -> bool {
+    let IpAddr::V4(ip) = PROXY_STUB.ip() else {
+        return false;
+    };
+    let local = format!(
+        "{:08X}:{:04X}",
+        u32::from_ne_bytes(ip.octets()),
+        PROXY_STUB.port()
+    );
+    let has = |table: &str, state: &str| {
+        table.lines().skip(1).any(|line| {
+            let mut fields = line.split_whitespace().skip(1);
+            fields.next() == Some(local.as_str()) && fields.nth(1) == Some(state)
+        })
+    };
+    has(udp, "07") && has(tcp, "0A")
 }
 fn marker() -> Result<String, SystemDnsError> {
     let mut nonce = [0u8; 16];
@@ -755,4 +761,36 @@ async fn serve_probe(
         .await
         .map_err(|_| SystemDnsError::Backend)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn the_proxy_stub_needs_its_exact_udp_and_tcp_sockets() {
+        let header = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n";
+        let row = |address: &str, state: &str| {
+            format!(
+                "   0: {address} 00000000:0000 {state} 00000000:00000000 00:00000000 00000000   991        0 1 2 0000000000000000 0\n"
+            )
+        };
+        let stub = format!("{:08X}:0035", u32::from_ne_bytes([127, 0, 0, 54]));
+        let main = format!("{:08X}:0035", u32::from_ne_bytes([127, 0, 0, 53]));
+        let udp = format!("{header}{}{}", row(&main, "07"), row(&stub, "07"));
+        let tcp = format!("{header}{}{}", row(&main, "0A"), row(&stub, "0A"));
+        assert!(super::proxy_stub_in(&udp, &tcp));
+        // systemd < 248: only 127.0.0.53.
+        let old_udp = format!("{header}{}", row(&main, "07"));
+        let old_tcp = format!("{header}{}", row(&main, "0A"));
+        assert!(!super::proxy_stub_in(&old_udp, &old_tcp));
+        // A connected or non-listening socket at the address is not the stub.
+        assert!(!super::proxy_stub_in(
+            &udp,
+            &format!("{header}{}", row(&stub, "01"))
+        ));
+        assert!(!super::proxy_stub_in(
+            &format!("{header}{}", row(&stub, "01")),
+            &tcp
+        ));
+        assert!(!super::proxy_stub_in("", ""));
+    }
 }
