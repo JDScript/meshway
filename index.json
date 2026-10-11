@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-11T06:04:31.911474+00:00",
+  "updatedAt": "2026-10-11T06:07:15.100166+00:00",
   "runs": [
     {
       "id": 38116637265,
@@ -12,9 +12,9 @@
       "commit": "05dfc7f4572585f986613b53abd882f637e1262c",
       "message": "validation: one OS image manifest shape for built and existing images",
       "createdAt": "2026-10-11T06:00:30Z",
-      "updatedAt": "2026-10-11T06:00:54Z",
-      "status": "in_progress",
-      "conclusion": null,
+      "updatedAt": "2026-10-11T06:04:18Z",
+      "status": "completed",
+      "conclusion": "failure",
       "url": "https://github.com/JDScript/meshway/actions/runs/38116637265",
       "jobs": [
         {
@@ -32,22 +32,22 @@
           "id": 114402726580,
           "name": "console",
           "runner": "mars-epyc7543",
-          "status": "in_progress",
-          "conclusion": null,
+          "status": "completed",
+          "conclusion": "success",
           "startedAt": "2026-10-11T06:00:38Z",
-          "completedAt": null,
-          "seconds": null,
+          "completedAt": "2026-10-11T06:03:23Z",
+          "seconds": 165.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/38116637265/job/114402726580"
         },
         {
           "id": 114402726595,
           "name": "cargo",
           "runner": "planck",
-          "status": "in_progress",
-          "conclusion": null,
+          "status": "completed",
+          "conclusion": "failure",
           "startedAt": "2026-10-11T06:00:36Z",
-          "completedAt": null,
-          "seconds": null,
+          "completedAt": "2026-10-11T06:04:18Z",
+          "seconds": 222.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/38116637265/job/114402726595"
         },
         {
