@@ -1,5 +1,12 @@
 //! Per-owned-link resolve1 integration. No global settings or ambient resolver
 //! fallback are changed. A nonce UDP->TCP probe verifies local link DNS behavior.
+//!
+//! Ownership is proven by the namespace, the Kernel-owned anchor link and the
+//! exact installed link settings, which carry a random installation marker. The
+//! resolved process (its D-Bus unique name) is not part of the proof: every
+//! operation re-checks that the current name owner runs in this namespace, so
+//! a restarted resolved that kept the settings is adopted, and one that lost
+//! them leaves the link at its original settings for a fresh installation.
 use super::{DnsLinkIdentity, Namespace, OwnedDnsLink, SystemDnsError, SystemDnsPlan, storage};
 use meshway_private_storage::Directory;
 use serde::{Deserialize, Serialize};
@@ -14,6 +21,8 @@ const PATH: &str = "/org/freedesktop/resolve1";
 const IFACE: &str = "org.freedesktop.resolve1.Manager";
 const SERVICE: &str = "org.freedesktop.resolve1";
 const TIMEOUT: Duration = Duration::from_secs(5);
+const VERSION: u32 = 2;
+const MARKER_SUFFIX: &str = "meshway-installation.invalid";
 type DnsServer = (i32, Vec<u8>, u16, String);
 type GlobalDomains = Vec<(i32, String, bool)>;
 
@@ -32,7 +41,13 @@ struct LinkSettings {
 #[serde(deny_unknown_fields)]
 struct Record {
     version: u32,
-    service_owner: String,
+    /// Version 1 pinned the resolved process; read for upgrade only.
+    #[serde(default, skip_serializing)]
+    service_owner: Option<String>,
+    /// Random route-only marker domain inside every installed setting.
+    /// Absent in version 1 records until their next installation.
+    #[serde(default)]
+    installation: Option<String>,
     link: DnsLinkIdentity,
     bind: SocketAddr,
     original: LinkSettings,
@@ -74,27 +89,7 @@ impl Backend {
             .await
             .map_err(|_| SystemDnsError::Unsupported)?
             .map_err(|_| SystemDnsError::Unsupported)?;
-        let service_owner: String = raw(
-            &connection,
-            "org.freedesktop.DBus",
-            "/org/freedesktop/DBus",
-            "org.freedesktop.DBus",
-            "GetNameOwner",
-            &(SERVICE,),
-        )
-        .await?;
-        verify_owner(&connection, &service_owner, &namespace).await?;
-        verify_os_resolver(&connection, &service_owner).await?;
-        let path: OwnedObjectPath = raw(
-            &connection,
-            &service_owner,
-            PATH,
-            IFACE,
-            "GetLink",
-            &(identity.index as i32,),
-        )
-        .await?;
-        let path = path.to_string();
+        let (service_owner, path) = attach(&connection, &namespace, identity.index).await?;
         let actual = read_settings(&connection, &service_owner, &path).await?;
         if anchor.verify().await? != identity {
             return Err(SystemDnsError::Conflict);
@@ -104,30 +99,46 @@ impl Backend {
             tokio::task::spawn_blocking(move || storage::read(&dir, "resolved.json"))
                 .await
                 .map_err(|_| SystemDnsError::Storage)??;
+        let mut lost = false;
         let record = match previous {
-            Some(record) => {
+            Some(mut record) => {
                 if !record.original.dns.is_empty() || !record.original.domains.is_empty() {
                     return Err(SystemDnsError::Conflict);
                 }
                 match (&record.installed, &record.plan) {
                     (Some(installed), Some(plan)) => {
                         plan.validate()?;
-                        if *installed != local_settings(record.bind, plan.domains()) {
+                        if *installed != record.settings(plan) {
                             return Err(SystemDnsError::Conflict);
                         }
                     }
                     (None, None) => {}
                     _ => return Err(SystemDnsError::Conflict),
                 }
-                if record.version != 1
-                    || record.pending
-                    || record.link != identity
-                    || record.bind != bind
-                    || record.service_owner != service_owner
-                    || record.installed.as_ref().unwrap_or(&record.original) != &actual
-                {
+                let valid = match record.version {
+                    1 => record.service_owner.is_some() && record.installation.is_none(),
+                    VERSION => record.service_owner.is_none() && record.installation.is_some(),
+                    _ => false,
+                };
+                if !valid || record.pending || record.link != identity || record.bind != bind {
                     return Err(SystemDnsError::Conflict);
                 }
+                if record.installed.as_ref().unwrap_or(&record.original) != &actual {
+                    // Only the exact original settings mean resolved dropped
+                    // this link's runtime configuration (a restart without its
+                    // saved link state). Any other value is a foreign writer.
+                    if record.installed.is_none() || actual != record.original {
+                        return Err(SystemDnsError::Conflict);
+                    }
+                    record.installed = None;
+                    record.plan = None;
+                    lost = true;
+                }
+                if record.installation.is_none() {
+                    record.installation = Some(marker()?);
+                }
+                record.version = VERSION;
+                record.service_owner = None;
                 record
             }
             None => {
@@ -135,8 +146,9 @@ impl Backend {
                     return Err(SystemDnsError::Conflict);
                 }
                 Record {
-                    version: 1,
-                    service_owner: service_owner.clone(),
+                    version: VERSION,
+                    service_owner: None,
+                    installation: Some(marker()?),
                     link: identity,
                     bind,
                     original: actual,
@@ -157,6 +169,11 @@ impl Backend {
             writes: storage::Writes::default(),
             probed: false,
         };
+        if lost {
+            // The link is at its original settings: record exactly that, so
+            // the next install probes this resolved and installs afresh.
+            backend.persist().await?;
+        }
         backend.observe().await?;
         Ok(backend)
     }
@@ -183,6 +200,9 @@ impl Backend {
     }
     pub async fn settle(&mut self) -> Result<(), SystemDnsError> {
         self.writes.settle().await
+    }
+    pub fn anchor(&self) -> Arc<dyn OwnedDnsLink> {
+        self.anchor.clone()
     }
     async fn persist(&mut self) -> Result<(), SystemDnsError> {
         self.writes
@@ -213,6 +233,14 @@ impl Backend {
         self.settle().await?;
         if self.record.pending {
             return Err(SystemDnsError::Conflict);
+        }
+        let (owner, path) =
+            attach(&self.connection, &self.namespace, self.record.link.index).await?;
+        if owner != self.service_owner {
+            // A restarted resolved is adopted only if it kept these exact
+            // settings; the comparison below is the ownership proof.
+            self.service_owner = owner;
+            self.path = path;
         }
         self.verify().await?;
         let actual = read_settings(&self.connection, &self.service_owner, &self.path).await?;
@@ -282,12 +310,12 @@ impl Backend {
                 self.probe().await?;
             } else {
                 // The prior record proves that the same namespace/link completed
-                // the probe. A service restart is detected separately by owner
-                // identity during this process and requires re-preparation.
+                // the probe, and the current resolved still serves exactly the
+                // installed settings. Lost settings clear `installed` instead.
                 self.probed = true;
             }
         }
-        let wanted = local_settings(self.record.bind, plan.domains());
+        let wanted = self.record.settings(plan);
         if self.record.installed.as_ref() == Some(&wanted) {
             return Ok(());
         }
@@ -371,6 +399,43 @@ impl Backend {
         self.record.plan = None;
         Ok(())
     }
+}
+impl Record {
+    /// Installed link settings: the plan's domains plus the route-only marker.
+    fn settings(&self, plan: &SystemDnsPlan) -> LinkSettings {
+        let mut domains = plan.domains();
+        if let Some(marker) = &self.installation {
+            domains.push((format!("{marker}.{MARKER_SUFFIX}"), true));
+        }
+        local_settings(self.bind, domains)
+    }
+}
+fn marker() -> Result<String, SystemDnsError> {
+    let mut nonce = [0u8; 16];
+    getrandom::fill(&mut nonce).map_err(|_| SystemDnsError::Backend)?;
+    Ok(format!("i{:032x}", u128::from_be_bytes(nonce)))
+}
+/// The current resolve1 owner, proven to run in this namespace as the OS
+/// resolver, and the object path of the owned link on it.
+async fn attach(
+    connection: &zbus::Connection,
+    namespace: &Namespace,
+    index: u32,
+) -> Result<(String, String), SystemDnsError> {
+    let owner: String = raw(
+        connection,
+        "org.freedesktop.DBus",
+        "/org/freedesktop/DBus",
+        "org.freedesktop.DBus",
+        "GetNameOwner",
+        &(SERVICE,),
+    )
+    .await?;
+    verify_owner(connection, &owner, namespace).await?;
+    verify_os_resolver(connection, &owner).await?;
+    let path: OwnedObjectPath =
+        raw(connection, &owner, PATH, IFACE, "GetLink", &(index as i32,)).await?;
+    Ok((owner, path.to_string()))
 }
 fn local_settings(bind: SocketAddr, domains: Vec<(String, bool)>) -> LinkSettings {
     let (family, bytes) = match bind.ip() {

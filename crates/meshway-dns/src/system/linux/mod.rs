@@ -240,7 +240,23 @@ impl SystemDnsOwner {
         if storage::read::<Reservation>(&directory, "owner.json")?.as_ref() != Some(&reservation) {
             return Err(SystemDnsError::Conflict);
         }
-        let settings = reservation.settings.clone();
+        let (backend, snapshot, invalid) = Self::open(&directory, &reservation, anchor).await?;
+        Ok(Self {
+            backend,
+            directory,
+            reservation,
+            snapshot,
+            writes,
+            invalid,
+        })
+    }
+
+    async fn open(
+        directory: &Arc<Directory>,
+        reservation: &Reservation,
+        anchor: Option<Arc<dyn OwnedDnsLink>>,
+    ) -> Result<(Backend, Option<SystemResolverSnapshot>, CancellationToken), SystemDnsError> {
+        let settings = &reservation.settings;
         let invalid = CancellationToken::new();
         let (backend, snapshot) = match &settings.backend {
             SystemDnsBackend::OwnedResolvConf { path } => {
@@ -275,14 +291,40 @@ impl SystemDnsOwner {
                 None,
             ),
         };
-        Ok(Self {
-            backend,
-            directory,
-            reservation,
-            snapshot,
-            writes,
-            invalid,
-        })
+        Ok((backend, snapshot, invalid))
+    }
+
+    /// Re-prove ownership after a failed observation, against the backend as
+    /// it is now (for example a restarted systemd-resolved), with the same
+    /// namespace reservation and Kernel anchor. Snapshots and query provenance
+    /// of the failed observation stay fenced; success yields fresh ones and
+    /// leaves the backend either at its proven installed settings or at its
+    /// original settings, which the caller's next install replaces.
+    pub async fn recover(&mut self) -> Result<(), SystemDnsError> {
+        self.invalid.cancel();
+        self.writes.settle().await?;
+        let anchor = match &mut self.backend {
+            Backend::File(file) => {
+                file.settle().await?;
+                None
+            }
+            Backend::Resolved(resolved) => {
+                resolved.settle().await?;
+                Some(resolved.anchor())
+            }
+        };
+        if Namespace::current()? != self.reservation.namespace
+            || storage::read::<Reservation>(&self.directory, "owner.json")?.as_ref()
+                != Some(&self.reservation)
+        {
+            return Err(SystemDnsError::Conflict);
+        }
+        let (backend, snapshot, invalid) =
+            Self::open(&self.directory, &self.reservation, anchor).await?;
+        self.backend = backend;
+        self.snapshot = snapshot;
+        self.invalid = invalid;
+        Ok(())
     }
 
     pub fn system_resolvers(&self) -> Option<SystemResolverSnapshot> {

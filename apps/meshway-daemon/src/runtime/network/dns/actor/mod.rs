@@ -13,12 +13,15 @@ use tokio::sync::{mpsc, oneshot, watch};
 // A stalled observation withdraws query authority. Accepted backend writes
 // remain owned by Runtime and are settled by its normal shutdown path.
 const OBSERVE_TIMEOUT: Duration = Duration::from_secs(2);
+/// A failed owner re-proves itself at most this often until it succeeds.
+const RECOVERY_INTERVAL: Duration = Duration::from_secs(1);
 
 /// Private I/O seam for the actor loop. Runtime is the sole production owner;
 /// tests substitute observation latency, never DNS selection or installation.
 trait Owner: Send + 'static {
     fn scopes(&self) -> watch::Sender<Option<meshway_dns::Scope>>;
     fn observe(&mut self) -> impl Future<Output = Result<(), SystemDnsError>> + Send;
+    fn recover(&mut self) -> impl Future<Output = Result<(), SystemDnsError>> + Send;
     fn hold(
         &mut self,
         netmap: &NodeNetmap,
@@ -36,6 +39,9 @@ impl Owner for Runtime {
     }
     async fn observe(&mut self) -> Result<(), SystemDnsError> {
         Runtime::observe(self).await
+    }
+    async fn recover(&mut self) -> Result<(), SystemDnsError> {
+        Runtime::recover(self).await
     }
     async fn hold(&mut self, netmap: &NodeNetmap) -> Result<(), SystemDnsError> {
         Runtime::hold(self, netmap).await?;
@@ -59,18 +65,23 @@ struct Actor {
     commands: mpsc::Sender<Command>,
     scopes: watch::Sender<Option<meshway_dns::Scope>>,
     fault: watch::Receiver<Option<SystemDnsError>>,
+    /// The failed owner re-proved its installation; the fault stays until
+    /// the parent's next hold starts a new installation on it.
+    recovered: watch::Receiver<bool>,
     task: tokio::task::JoinHandle<()>,
 }
 impl Actor {
     fn start(mut runtime: impl Owner) -> Self {
         let (commands, mut received) = mpsc::channel(4);
         let (faults, fault) = watch::channel(None);
+        let (recoveries, recovered) = watch::channel(false);
         let scopes = runtime.scopes();
         let query_scopes = scopes.clone();
         let task = tokio::spawn(async move {
             let mut timer = tokio::time::interval(super::OBSERVE_INTERVAL);
             timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             let mut command_turn = true;
+            let mut recovery_at = tokio::time::Instant::now();
             loop {
                 // An overdue tick and a command alternate deterministically.
                 // At most one due observation separates already queued commands;
@@ -96,7 +107,15 @@ impl Actor {
                     command_turn = false;
                     match command {
                         Some(Command::Hold(netmap, reply)) => {
-                            let result = runtime.hold(&netmap).await;
+                            let blocked = (*faults.borrow()).filter(|_| !*recoveries.borrow());
+                            let result = match blocked {
+                                Some(error) => Err(error),
+                                None => {
+                                    faults.send_replace(None);
+                                    recoveries.send_replace(false);
+                                    runtime.hold(&netmap).await
+                                }
+                            };
                             if let Err(error) = result {
                                 tracing::warn!(
                                     ?error,
@@ -130,19 +149,41 @@ impl Actor {
                     }
                 }
                 command_turn = true;
-                let result = tokio::time::timeout(OBSERVE_TIMEOUT, runtime.observe())
-                    .await
-                    .unwrap_or(Err(SystemDnsError::Backend));
-                if let Err(error) = result {
-                    if *faults.borrow() != Some(error) {
-                        tracing::warn!(
-                            ?error,
-                            operation = "observe",
-                            "DNS owner health check failed"
-                        );
+                // A failed owner stays failed (the parent withdraws) until it
+                // re-proves its installation against the backend as it is now;
+                // then it waits for the parent's hold, observing nothing.
+                let faulted = faults.borrow().is_some();
+                if faulted && *recoveries.borrow() {
+                    continue;
+                }
+                let result = if faulted {
+                    if tokio::time::Instant::now() < recovery_at {
+                        continue;
                     }
-                    meshway_dns::publish_scope(&query_scopes, None);
-                    faults.send_replace(Some(error));
+                    recovery_at = tokio::time::Instant::now() + RECOVERY_INTERVAL;
+                    runtime.recover().await
+                } else {
+                    tokio::time::timeout(OBSERVE_TIMEOUT, runtime.observe())
+                        .await
+                        .unwrap_or(Err(SystemDnsError::Backend))
+                };
+                match result {
+                    Err(error) => {
+                        if *faults.borrow() != Some(error) {
+                            tracing::warn!(
+                                ?error,
+                                operation = if faulted { "recover" } else { "observe" },
+                                "DNS owner health check failed"
+                            );
+                        }
+                        meshway_dns::publish_scope(&query_scopes, None);
+                        faults.send_replace(Some(error));
+                    }
+                    Ok(()) if faulted => {
+                        tracing::info!("DNS owner recovered its system installation");
+                        recoveries.send_replace(true);
+                    }
+                    Ok(()) => {}
                 }
             }
         });
@@ -150,6 +191,7 @@ impl Actor {
             commands,
             scopes,
             fault,
+            recovered,
             task,
         }
     }
@@ -194,7 +236,6 @@ pub(in crate::runtime::network) struct Attachment {
     directory: Arc<Directory>,
     reservation: Option<SystemDnsReservation>,
     actor: Option<Actor>,
-    recoveries: u8,
     queries: mpsc::Sender<super::mesh::Query>,
     requests: Option<mpsc::Receiver<super::mesh::Query>>,
     dispatcher: Option<Arc<meshway_dns::OwnerDispatcher>>,
@@ -211,7 +252,6 @@ impl Attachment {
             directory,
             reservation,
             actor: None,
-            recoveries: 0,
             queries,
             requests: Some(requests),
             dispatcher: None,
@@ -251,21 +291,8 @@ impl Attachment {
         host: &mut Host,
         netmap: &NodeNetmap,
     ) -> Result<(), SystemDnsError> {
-        if self
-            .actor
-            .as_ref()
-            .is_some_and(|actor| actor.fault.borrow().is_some())
-        {
-            if self.recoveries >= 2 {
-                return Err(SystemDnsError::Backend);
-            }
-            self.recoveries += 1;
-            self.actor
-                .take()
-                .expect("failed actor")
-                .shutdown(true)
-                .await?;
-        }
+        // A failed owner recovers itself (see `recovered`); until then its
+        // hold fails with the current fault.
         if self.actor.is_none() {
             let system = self.owner(host).await?;
             let exchange =
@@ -304,6 +331,18 @@ impl Attachment {
             None => std::future::pending().await,
         }
     }
+    /// Resolves once a failed owner has re-proven its system installation.
+    pub async fn recovered(&self) {
+        match &self.actor {
+            Some(actor) => {
+                let mut recovered = actor.recovered.clone();
+                if recovered.wait_for(|recovered| *recovered).await.is_err() {
+                    std::future::pending::<()>().await;
+                }
+            }
+            None => std::future::pending().await,
+        }
+    }
     /// Restore DNS before deleting the separately journalled kernel anchor.
     pub async fn down(&mut self, host: &mut Host) -> Result<(), SystemDnsError> {
         self.suspend();
@@ -336,14 +375,12 @@ impl Attachment {
                     .release_uninstalled()
                     .await?;
                 self.reservation = None;
-                self.recoveries = 0;
                 return Ok(());
             }
         }
         host.remove_dns_anchor()
             .await
             .map_err(|_| SystemDnsError::Backend)?;
-        self.recoveries = 0;
         Ok(())
     }
     pub async fn shutdown(mut self, host: &mut Host, keep: bool) -> Result<(), SystemDnsError> {

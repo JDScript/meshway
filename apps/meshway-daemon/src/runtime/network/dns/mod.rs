@@ -44,12 +44,6 @@ impl Runtime {
         exchange: Arc<dyn ResolverExchange>,
     ) -> Result<Self, SystemDnsError> {
         settings.validate()?;
-        let udp = UdpSocket::bind(settings.bind)
-            .await
-            .map_err(|_| SystemDnsError::Backend)?;
-        let tcp = TcpListener::bind(settings.bind)
-            .await
-            .map_err(|_| SystemDnsError::Backend)?;
         let (scopes, received) = watch::channel(None);
         let dispatcher = Arc::new(
             OwnerDispatcher::new(
@@ -63,11 +57,8 @@ impl Runtime {
             )
             .map_err(|_| SystemDnsError::Settings)?,
         );
-        let service = Service::new(dispatcher.clone(), Default::default())
-            .map_err(|_| SystemDnsError::Settings)?;
         let stop = CancellationToken::new();
-        let shutdown = stop.clone();
-        let service = tokio::spawn(service.run(udp, tcp, shutdown));
+        let service = serve(&settings, &dispatcher, &stop).await?;
         Ok(Self {
             system,
             settings,
@@ -170,6 +161,21 @@ impl Runtime {
         }
         result
     }
+    /// After a failed observation: re-prove the system installation against
+    /// the backend as it is now, reinstall the held negative capture (lost
+    /// settings are installed afresh) and restart a finished query service.
+    /// Query authority stays withdrawn until the parent installs content again.
+    pub async fn recover(&mut self) -> Result<(), SystemDnsError> {
+        self.suspend();
+        if self.service.is_finished() {
+            self.service = serve(&self.settings, &self.dispatcher, &self.stop).await?;
+        }
+        self.system.recover().await?;
+        if let Some(plan) = &self.installed_plan {
+            self.system.install(plan).await?;
+        }
+        self.observe().await
+    }
     /// Explicit down restores DNS before the parent deletes the Kernel anchor.
     pub async fn shutdown(mut self, keep: bool) -> Result<(), SystemDnsError> {
         self.suspend();
@@ -187,4 +193,21 @@ impl Runtime {
             .map_err(|_| SystemDnsError::Backend)?
             .map_err(|_| SystemDnsError::Backend)
     }
+}
+
+/// Bind the real service sockets before any system-DNS mutation.
+async fn serve(
+    settings: &SystemDnsSettings,
+    dispatcher: &Arc<OwnerDispatcher>,
+    stop: &CancellationToken,
+) -> Result<tokio::task::JoinHandle<std::io::Result<()>>, SystemDnsError> {
+    let udp = UdpSocket::bind(settings.bind)
+        .await
+        .map_err(|_| SystemDnsError::Backend)?;
+    let tcp = TcpListener::bind(settings.bind)
+        .await
+        .map_err(|_| SystemDnsError::Backend)?;
+    let service = Service::new(dispatcher.clone(), Default::default())
+        .map_err(|_| SystemDnsError::Settings)?;
+    Ok(tokio::spawn(service.run(udp, tcp, stop.clone())))
 }

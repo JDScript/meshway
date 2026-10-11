@@ -105,6 +105,8 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             Expired,
             HostFailed,
             DnsFailure,
+            /// The failed DNS owner re-proved its system installation.
+            DnsRecovered,
             Packet(
                 Result<
                     Vec<Result<Packet, meshway_dataplane::PacketError>>,
@@ -176,6 +178,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             query = dns_requests.recv() => match query { Some(query) => Work::DnsQuery(Box::new(query)), None => Work::Command(None) },
             _ = sleep_until(retry_at) => Work::Retry,
             _ = dns.failed(), if !dns_failed => Work::DnsFailure,
+            _ = dns.recovered(), if dns_failed => Work::DnsRecovered,
             _ = host.ended(), if installed.is_some() => Work::HostFailed,
             changed = network_changes.changed() => if changed.is_ok() { Work::NetworkChanged } else { Work::Command(None) },
             _ = sleep_until(sample_at) => Work::SampleDue,
@@ -252,7 +255,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             report.exit_capability = capability;
             reports.send_replace(report);
         }
-        let structural = matches!(&work, Work::Offer | Work::Retry)
+        let structural = matches!(&work, Work::Offer | Work::Retry | Work::DnsRecovered)
             || matches!(&work, Work::Carrier(events) if events.iter().any(|event| matches!(event, Event::Changed)));
         match work {
             Work::DnsQuery(query) => dns_queries.enqueue(*query),
@@ -334,9 +337,15 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 let _ = reply.send(result);
                 continue;
             }
-            Work::Offer | Work::Retry => {
-                if matches!(work, Work::Offer) {
+            Work::Offer | Work::Retry | Work::DnsRecovered => {
+                // An offer and a recovered component are new inputs; a retry
+                // continues the bounded backoff of the same failure.
+                if !matches!(work, Work::Retry) {
                     retry = Retry::default();
+                }
+                if matches!(work, Work::DnsRecovered) {
+                    tracing::info!("Required DNS component recovered; reinstalling the netmap");
+                    dns_failed = false;
                 }
                 let offer = offers.borrow_and_update().clone();
                 if let Some(floor) = offer.clock_floor_ms {

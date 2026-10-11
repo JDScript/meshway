@@ -314,6 +314,9 @@ impl SystemDnsOwner {
     pub async fn observe(&mut self) -> Result<(), SystemDnsError> {
         Err(SystemDnsError::Unsupported)
     }
+    pub async fn recover(&mut self) -> Result<(), SystemDnsError> {
+        Err(SystemDnsError::Unsupported)
+    }
     pub async fn down(&mut self) -> Result<(), SystemDnsError> {
         Err(SystemDnsError::Unsupported)
     }
