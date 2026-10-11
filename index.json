@@ -1,8 +1,97 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-11T03:46:02.791933+00:00",
+  "updatedAt": "2026-10-11T05:47:28.481023+00:00",
   "runs": [
+    {
+      "id": 38115539361,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "p1/traversal-signalling",
+      "commit": "2f862f63609a4483b57beb0af8226a76e775210a",
+      "message": "protocol: syncNode example carries traversalRequests",
+      "createdAt": "2026-10-11T05:40:22Z",
+      "updatedAt": "2026-10-11T05:44:37Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "url": "https://github.com/JDScript/meshway/actions/runs/38115539361",
+      "jobs": [
+        {
+          "id": 114399585307,
+          "name": "changes",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-11T05:40:24Z",
+          "completedAt": "2026-10-11T05:40:28Z",
+          "seconds": 4.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38115539361/job/114399585307"
+        },
+        {
+          "id": 114399599466,
+          "name": "console",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-11T05:40:30Z",
+          "completedAt": "2026-10-11T05:42:41Z",
+          "seconds": 131.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38115539361/job/114399599466"
+        },
+        {
+          "id": 114399599503,
+          "name": "docs-and-scripts",
+          "runner": "mars-epyc7543",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-11T05:40:30Z",
+          "completedAt": "2026-10-11T05:41:45Z",
+          "seconds": 75.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38115539361/job/114399599503"
+        },
+        {
+          "id": 114399599530,
+          "name": "cargo",
+          "runner": "mars-epyc7543",
+          "status": "completed",
+          "conclusion": "failure",
+          "startedAt": "2026-10-11T05:41:48Z",
+          "completedAt": "2026-10-11T05:44:36Z",
+          "seconds": 168.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38115539361/job/114399599530"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 38115539153,
+      "attempt": 1,
+      "workflow": "Validate",
+      "event": "workflow_dispatch",
+      "branch": "p1/traversal-signalling",
+      "commit": "2f862f63609a4483b57beb0af8226a76e775210a",
+      "message": "protocol: syncNode example carries traversalRequests",
+      "createdAt": "2026-10-11T05:40:22Z",
+      "updatedAt": "2026-10-11T05:40:29Z",
+      "status": "in_progress",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/38115539153",
+      "jobs": [
+        {
+          "id": 114399586650,
+          "name": "matrix",
+          "runner": "planck",
+          "status": "in_progress",
+          "conclusion": null,
+          "startedAt": "2026-10-11T05:40:28Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38115539153/job/114399586650"
+        }
+      ],
+      "artifacts": []
+    },
     {
       "id": 38109005519,
       "attempt": 1,
