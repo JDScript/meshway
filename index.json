@@ -1,8 +1,204 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-11T06:43:43.731349+00:00",
+  "updatedAt": "2026-10-11T06:53:31.910120+00:00",
   "runs": [
+    {
+      "id": 38119035801,
+      "attempt": 1,
+      "workflow": "Build",
+      "event": "push",
+      "branch": "main",
+      "commit": "80abb1ea78bd5f9c04cb5ec083f42c23cf98740c",
+      "message": "Merge remote-tracking branch 'planck/p1/traversal-signalling'",
+      "createdAt": "2026-10-11T06:44:23Z",
+      "updatedAt": "2026-10-11T06:50:33Z",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/JDScript/meshway/actions/runs/38119035801",
+      "jobs": [
+        {
+          "id": 114409765108,
+          "name": "node-linux (x86_64-unknown-linux-musl)",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-11T06:44:24Z",
+          "completedAt": "2026-10-11T06:47:36Z",
+          "seconds": 192.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38119035801/job/114409765108"
+        },
+        {
+          "id": 114409765350,
+          "name": "node-linux (aarch64-unknown-linux-musl)",
+          "runner": "mars-epyc7543",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-11T06:44:42Z",
+          "completedAt": "2026-10-11T06:50:33Z",
+          "seconds": 351.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38119035801/job/114409765350"
+        }
+      ],
+      "artifacts": [
+        {
+          "id": 11694103267,
+          "name": "node-aarch64-unknown-linux-musl-80abb1ea78bd5f9c04cb5ec083f42c23cf98740c",
+          "bytes": 8058729,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38119035801/artifacts/11694103267",
+          "jobId": 114409765350,
+          "runner": "mars-epyc7543",
+          "seconds": 351.0,
+          "state": "ok",
+          "error": null,
+          "reports": [],
+          "matrices": [],
+          "builds": [
+            {
+              "target": "aarch64-unknown-linux-musl",
+              "binary": "meshwayd",
+              "bytes": 13950520,
+              "sha256": "76e9a1ee3f320ffc9064d616e15b3098fd0844c311593cd9730f10016df9cff5"
+            },
+            {
+              "target": "aarch64-unknown-linux-musl",
+              "binary": "meshway",
+              "bytes": 1654152,
+              "sha256": "4f3024012fe927e2cbd85a14db33dc57714f4727626df73d76c1e81bf9fab3de"
+            }
+          ]
+        },
+        {
+          "id": 11694034974,
+          "name": "node-x86_64-unknown-linux-musl-80abb1ea78bd5f9c04cb5ec083f42c23cf98740c",
+          "bytes": 8582433,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38119035801/artifacts/11694034974",
+          "jobId": 114409765108,
+          "runner": "planck",
+          "seconds": 192.0,
+          "state": "ok",
+          "error": null,
+          "reports": [],
+          "matrices": [],
+          "builds": [
+            {
+              "target": "x86_64-unknown-linux-musl",
+              "binary": "meshwayd",
+              "bytes": 16741992,
+              "sha256": "b2e72a71291140736dfaf7ed45177b162048cc37479434a7968e91c104c6e670"
+            },
+            {
+              "target": "x86_64-unknown-linux-musl",
+              "binary": "meshway",
+              "bytes": 1872656,
+              "sha256": "f910c1329404bd24227379f91807481f7e5f159716f3c70d44ddc8b2b7e19463"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 38119035800,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "80abb1ea78bd5f9c04cb5ec083f42c23cf98740c",
+      "message": "Merge remote-tracking branch 'planck/p1/traversal-signalling'",
+      "createdAt": "2026-10-11T06:44:23Z",
+      "updatedAt": "2026-10-11T06:48:11Z",
+      "status": "in_progress",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/38119035800",
+      "jobs": [
+        {
+          "id": 114409765081,
+          "name": "changes",
+          "runner": "mars-epyc7543",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-11T06:44:26Z",
+          "completedAt": "2026-10-11T06:44:39Z",
+          "seconds": 13.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38119035800/job/114409765081"
+        },
+        {
+          "id": 114409807191,
+          "name": "console",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-11T06:44:42Z",
+          "completedAt": "2026-10-11T06:46:46Z",
+          "seconds": 124.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38119035800/job/114409807191"
+        },
+        {
+          "id": 114409807238,
+          "name": "docs-and-scripts",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-11T06:46:49Z",
+          "completedAt": "2026-10-11T06:48:07Z",
+          "seconds": 78.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38119035800/job/114409807238"
+        },
+        {
+          "id": 114409807311,
+          "name": "cargo",
+          "runner": "mars-14900k",
+          "status": "in_progress",
+          "conclusion": null,
+          "startedAt": "2026-10-11T06:48:10Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38119035800/job/114409807311"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 38119035789,
+      "attempt": 1,
+      "workflow": "Perf",
+      "event": "push",
+      "branch": "main",
+      "commit": "80abb1ea78bd5f9c04cb5ec083f42c23cf98740c",
+      "message": "Merge remote-tracking branch 'planck/p1/traversal-signalling'",
+      "createdAt": "2026-10-11T06:44:23Z",
+      "updatedAt": "2026-10-11T06:47:37Z",
+      "status": "in_progress",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/38119035789",
+      "jobs": [
+        {
+          "id": 114409765025,
+          "name": "perf-arm64",
+          "runner": "jp-tyo-arm64",
+          "status": "completed",
+          "conclusion": "failure",
+          "startedAt": "2026-10-11T06:44:26Z",
+          "completedAt": "2026-10-11T06:44:40Z",
+          "seconds": 14.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38119035789/job/114409765025"
+        },
+        {
+          "id": 114409765112,
+          "name": "perf",
+          "runner": "planck",
+          "status": "in_progress",
+          "conclusion": null,
+          "startedAt": "2026-10-11T06:47:37Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38119035789/job/114409765112"
+        }
+      ],
+      "artifacts": []
+    },
     {
       "id": 38118618599,
       "attempt": 1,
