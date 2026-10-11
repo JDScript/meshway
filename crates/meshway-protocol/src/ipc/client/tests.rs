@@ -416,6 +416,9 @@ async fn netcheck_is_one_bounded_request_with_one_typed_report() {
         .unwrap();
     });
     assert_eq!(client.netcheck().await.unwrap(), report());
-    assert!(matches!(client.netcheck().await, Err(ClientError::Response)));
+    assert!(matches!(
+        client.netcheck().await,
+        Err(ClientError::Response)
+    ));
     server.await.unwrap();
 }

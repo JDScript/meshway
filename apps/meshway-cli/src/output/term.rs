@@ -1,4 +1,4 @@
-//! Terminal capabilities: colors and box tables only on a TTY, never with
+//! Terminal capabilities: colors and box tables only on a TTY without
 //! `NO_COLOR`; every other destination gets plain aligned text.
 use anstyle::{AnsiColor, Style};
 use std::fmt::Display;
@@ -25,9 +25,9 @@ pub(crate) struct Term {
 
 impl Term {
     pub fn stdout() -> Self {
-        let rich = std::io::stdout().is_terminal();
-        let color = rich && std::env::var_os("NO_COLOR").is_none_or(|value| value.is_empty());
-        Self { rich, color }
+        let rich = std::io::stdout().is_terminal()
+            && std::env::var_os("NO_COLOR").is_none_or(|value| value.is_empty());
+        Self { rich, color: rich }
     }
 
     #[cfg(test)]

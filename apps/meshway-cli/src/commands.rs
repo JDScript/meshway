@@ -50,7 +50,13 @@ pub(crate) async fn run(arguments: Arguments) -> Result<(), Error> {
         if arguments.json {
             output::json(&mut stdout, &report)?;
         } else {
-            output::netcheck::write(&mut stdout, &output::Term::stdout(), &report)?;
+            // Dial sockets are named after this Node's own netmap peers.
+            let peers = client
+                .call(Command::Status)
+                .await
+                .map(|status| status.peers)
+                .unwrap_or_default();
+            output::netcheck::write(&mut stdout, &output::Term::stdout(), &report, &peers)?;
         }
         return Ok(());
     }
