@@ -840,7 +840,7 @@ def parse_args(argv=None):
     parser.add_argument("--repeats", type=int)
     parser.add_argument("--seconds", type=int)
     parser.add_argument("--omit", type=int, default=2)
-    parser.add_argument("--mtu", type=int, default=1400)
+    parser.add_argument("--mtu", type=int, default=1280)
     parser.add_argument("--payload", type=int, default=1200)
     parser.add_argument("--udp-rate", default="500M")
     parser.add_argument("--tcp-streams", type=int, default=1, help="parallel iperf TCP streams (UDP remains one stream)")
@@ -866,7 +866,7 @@ def parse_args(argv=None):
     if args.workers is None:
         args.workers = 0
     if (not (1 if args.quick else 2) <= args.repeats <= 100 or not (4 if args.quick else 6) <= args.seconds <= 300 or not 1 <= args.omit <= 60
-            or not 1280 <= args.mtu <= 1472 or not 16 <= args.payload <= args.mtu-28
+            or not 1280 <= args.mtu <= 1386 or not 16 <= args.payload <= args.mtu-28
             or any(not 1 <= b <= 1024 for b in args.batch) or any(not 0 <= p <= 65536 for p in args.profile)
             or not 0 < args.cpus <= 32 or not 0 <= args.workers <= 256
             or not 1 <= args.tcp_streams <= 128 or not 0 <= args.udp_buffer <= 16 * 1024 * 1024
