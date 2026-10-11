@@ -16,6 +16,7 @@ mod floor;
 pub use exchange::shared;
 mod identity;
 mod instance;
+mod leave;
 mod netmap;
 pub use netmap::{
     KnownPeers, NetmapChange, PeerFactsSink, SYNC_TIMEOUT, SyncCall, SyncFuture, SyncOutcome,

@@ -184,6 +184,15 @@ pub(super) fn prune_stale(directory: &File, prefix: &str, keep: usize) -> Result
     Ok(())
 }
 
+pub(super) fn remove(directory: &File, name: &str) -> Result<(), Error> {
+    // Only checked owner-only regular files are removed.
+    if file(directory, name, false)?.is_none() {
+        return Ok(());
+    }
+    rustix::fs::unlinkat(directory, name, rustix::fs::AtFlags::empty()).map_err(io_error)?;
+    directory.sync_all().map_err(|_| Error::Io)
+}
+
 pub(super) fn replace(directory: &File, final_name: &str, bytes: &[u8]) -> Result<(), Error> {
     file(directory, final_name, false)?;
     let mut nonce = [0u8; 16];

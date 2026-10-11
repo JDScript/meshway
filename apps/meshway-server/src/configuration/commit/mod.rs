@@ -5,6 +5,7 @@
 mod edit;
 mod email;
 mod enrollment;
+mod leave;
 mod removal;
 
 use super::{
@@ -42,6 +43,10 @@ pub(crate) enum Intent<'a> {
         session: [u8; 32],
         membership: MembershipId,
         version: Version,
+    },
+    /// An authenticated Node deletes itself.
+    NodeLeave {
+        principal: &'a crate::execution::NodePrincipal,
     },
     /// Renames the readable references of one active membership.
     EmailSync {
@@ -144,7 +149,13 @@ impl Committer {
         let draft = self.author(tx, &current, &intent, Mode::Commit)?;
         let prepared = self.prepare(tx, &current, &intent, draft, Mode::Commit)?;
         scope(tx, &current, &intent, &prepared)?;
-        self.persist(tx, &current, prepared, actor, request, now)
+        let event_actor = match &intent {
+            Intent::NodeLeave { principal } => meshway_protocol::events::EventActor::Node {
+                node_id: principal.node_id(),
+            },
+            _ => meshway_protocol::events::EventActor::User { user_id: actor },
+        };
+        self.persist(tx, &current, prepared, actor, event_actor, request, now)
     }
 
     /// Runs the same authoring, material inheritance and normalization as a
@@ -229,6 +240,7 @@ impl Committer {
                 membership,
                 version,
             } => removal::authorize(tx, current, session, *membership, *version, now),
+            Intent::NodeLeave { principal } => leave::authorize(tx, current, principal),
             Intent::EmailSync {
                 user,
                 membership,
@@ -251,6 +263,7 @@ impl Committer {
             } => edit::author(self, tx, current, request, *resources, mode == Mode::Commit)?,
             Intent::Enrollment { admission } => enrollment::author(tx, current, admission)?,
             Intent::MemberRemoval { membership, .. } => removal::author(tx, current, *membership)?,
+            Intent::NodeLeave { principal } => leave::author(tx, current, principal)?,
             Intent::EmailSync {
                 user,
                 membership,
@@ -325,6 +338,7 @@ impl Committer {
         current: &Snapshot,
         prepared: PreparedConfiguration,
         actor: UserId,
+        event_actor: meshway_protocol::events::EventActor,
         request: RequestId,
         now: i64,
     ) -> Result<CommitEffects, Error> {
@@ -425,7 +439,7 @@ impl Committer {
                 changed_at: chrono::DateTime::from_timestamp_millis(now)
                     .ok_or(Error::Internal("commit timestamp"))?,
                 cause: prepared.cause,
-                actor: meshway_protocol::events::EventActor::User { user_id: actor },
+                actor: event_actor,
                 request_id: Some(request),
                 changed_pointers: prepared
                     .changes
@@ -509,6 +523,13 @@ fn scope(
                 store::execution::user_binding(before, &current.bindings, *id)
                     .is_none_or(|binding| binding.membership_id != *membership)
             });
+            if expected != *after {
+                return Err(Error::PermissionDenied);
+            }
+        }
+        Intent::NodeLeave { principal } => {
+            let mut expected = before.clone();
+            expected.nodes.remove(&principal.node_id());
             if expected != *after {
                 return Err(Error::PermissionDenied);
             }

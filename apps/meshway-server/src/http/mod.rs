@@ -232,6 +232,7 @@ fn routes() -> OpenApiRouter<HttpState> {
         .routes(routes!(agent::renew))
         .routes(routes!(agent::release))
         .routes(routes!(agent::sync))
+        .routes(routes!(agent::leave))
         .routes(routes!(connectivity::query))
         .routes(routes!(connectivity::prepare))
         .routes(routes!(connectivity::accept))

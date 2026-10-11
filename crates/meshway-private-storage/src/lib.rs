@@ -142,6 +142,23 @@ impl Directory {
         Ok(archive)
     }
 
+    /// Durably remove a checked owner-only regular file; an absent name is
+    /// already removed.
+    pub fn remove(&self, file_name: &str) -> Result<(), Error> {
+        name(file_name)?;
+        if file_name == self.lock_name {
+            return Err(Error::InvalidPath);
+        }
+        #[cfg(unix)]
+        {
+            unix::remove(&self.directory, file_name)
+        }
+        #[cfg(not(unix))]
+        {
+            Err(Error::UnsupportedPlatform)
+        }
+    }
+
     /// Durable atomic replacement using a unique private temporary file.
     /// An error after rename has an unknown durability outcome: reload before
     /// issuing dependent external operations. Existing corrupt files are not read

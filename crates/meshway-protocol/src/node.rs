@@ -242,6 +242,24 @@ wire_object! {
     pub expected_revision: Revision,
 } }
 wire_object! {
+/// A Node's request to permanently delete itself from its network.
+#[derive(Clone,Debug,PartialEq,Eq)] pub struct NodeLeaveRequest {
+    /// Request identifier recorded as the deletion's configuration request.
+    pub request_id: RequestId,
+    /// The authenticated Node itself; any other Node is rejected.
+    pub node_id: NodeId,
+} }
+wire_object! {
+/// The configuration revision that deleted the Node and revoked its identity.
+#[derive(Clone,Debug,PartialEq,Eq)] pub struct NodeLeaveResponse {
+    /// Network the Node left.
+    pub network_id: NetworkId,
+    /// The deleted Node.
+    pub node_id: NodeId,
+    /// Configuration revision without the Node.
+    pub revision: Revision,
+} }
+wire_object! {
 /// Permanent revocation of an exact Node key binding.
 #[derive(Clone,Debug,PartialEq,Eq)] pub struct RevokeNodeKeyRequest {
     /// Bound control or data-plane key to revoke.

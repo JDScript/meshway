@@ -7,7 +7,7 @@ use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 pub(crate) use keys::{create_key, list_keys, revoke_key};
 use meshway_model::*;
 pub(crate) use redeem::{redeem_in_transaction, redeem_key_in_transaction, verify_admission};
-pub(crate) use requests::{approve, cancel, create_request, deny, inspect, poll};
+pub(crate) use requests::{admitting_user, approve, cancel, create_request, deny, inspect, poll};
 use rusqlite::{OptionalExtension, Transaction, params};
 use sha2::{Digest as _, Sha256};
 pub(crate) struct VerifiedEnrollmentProof {

@@ -3601,6 +3601,197 @@
         ]
       }
     },
+    "/agent-api/v1/leave": {
+      "post": {
+        "tags": [
+          "node"
+        ],
+        "summary": "Permanently delete the calling Node from its network.",
+        "description": "Requires a Node session; `nodeId` must name the authenticated Node itself.\nThis is the same deletion as a manager's `deleteNode`: the Node's credentials are revoked for good, its netmap is withdrawn, it leaves the inventory and every affected Node is recompiled.\nJoining again needs a new enrollment.",
+        "operationId": "leaveNode",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NodeLeaveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NodeLeaveResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "problem": {
+                    "code": "invalid_request",
+                    "message": "Invalid request parameters.",
+                    "params": {}
+                  },
+                  "requestId": "00000000-0000-0000-0000-000000000001",
+                  "status": 400
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "invalid_credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "problem": {
+                    "code": "invalid_credentials",
+                    "message": "Invalid credentials.",
+                    "params": {}
+                  },
+                  "requestId": "00000000-0000-0000-0000-000000000001",
+                  "status": 401
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "node_identity_rejected, permission_denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "problem": {
+                    "code": "node_identity_rejected",
+                    "message": "Node identity is no longer eligible",
+                    "params": {}
+                  },
+                  "requestId": "00000000-0000-0000-0000-000000000001",
+                  "status": 403
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "revision_conflict, state_conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "problem": {
+                    "code": "revision_conflict",
+                    "message": "Configuration revision changed.",
+                    "params": {}
+                  },
+                  "requestId": "00000000-0000-0000-0000-000000000001",
+                  "status": 409
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "request_too_large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "problem": {
+                    "code": "request_too_large",
+                    "message": "Request body exceeds the allowed size.",
+                    "params": {}
+                  },
+                  "requestId": "00000000-0000-0000-0000-000000000001",
+                  "status": 413
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "unsupported_media_type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "problem": {
+                    "code": "unsupported_media_type",
+                    "message": "A JSON request body is required.",
+                    "params": {}
+                  },
+                  "requestId": "00000000-0000-0000-0000-000000000001",
+                  "status": 415
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "configuration_invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "problem": {
+                    "code": "configuration_invalid",
+                    "message": "Configuration validation failed.",
+                    "params": {
+                      "issues": [],
+                      "requirements": []
+                    }
+                  },
+                  "requestId": "00000000-0000-0000-0000-000000000001",
+                  "status": 422
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "busy, service_unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "problem": {
+                    "code": "busy",
+                    "message": "Service is busy; retry later.",
+                    "params": {}
+                  },
+                  "requestId": "00000000-0000-0000-0000-000000000001",
+                  "status": 503
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "nodeSession": []
+          }
+        ]
+      }
+    },
     "/agent-api/v1/observations": {
       "post": {
         "tags": [
@@ -29402,6 +29593,49 @@
           "dataplane": {
             "$ref": "#/components/schemas/BoundNodeKey",
             "description": "Bound X25519 data-plane key."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NodeLeaveRequest": {
+        "type": "object",
+        "description": "A Node's request to permanently delete itself from its network.",
+        "required": [
+          "requestId",
+          "nodeId"
+        ],
+        "properties": {
+          "nodeId": {
+            "$ref": "#/components/schemas/NodeId",
+            "description": "The authenticated Node itself; any other Node is rejected."
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId",
+            "description": "Request identifier recorded as the deletion's configuration request."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NodeLeaveResponse": {
+        "type": "object",
+        "description": "The configuration revision that deleted the Node and revoked its identity.",
+        "required": [
+          "networkId",
+          "nodeId",
+          "revision"
+        ],
+        "properties": {
+          "networkId": {
+            "$ref": "#/components/schemas/NetworkId",
+            "description": "Network the Node left."
+          },
+          "nodeId": {
+            "$ref": "#/components/schemas/NodeId",
+            "description": "The deleted Node."
+          },
+          "revision": {
+            "$ref": "#/components/schemas/Revision",
+            "description": "Configuration revision without the Node."
           }
         },
         "additionalProperties": false

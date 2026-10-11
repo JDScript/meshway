@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, sync::Arc};
 use zeroize::Zeroizing;
 
-pub(super) const FILE: &str = "peer-facts.json";
+pub(crate) const FILE: &str = "peer-facts.json";
 const FORMAT: &str = "meshway-peer-facts-cache/1";
 
 #[derive(Serialize, Deserialize)]

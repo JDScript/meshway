@@ -281,6 +281,8 @@ mod enrollment_http;
 
 mod identity;
 
+mod leave;
+
 mod netmap;
 
 mod signatures;

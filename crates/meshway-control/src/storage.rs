@@ -158,6 +158,20 @@ impl Record {
         Ok(record)
     }
 
+    /// The same origin with no identity: the record of a Node that left.
+    pub(super) fn unenrolled(&self) -> Self {
+        Self {
+            version: VERSION,
+            origin: self.origin.clone(),
+            keys: None,
+            enrollment: None,
+            binding: None,
+            rotation: None,
+            completed_rotation: None,
+            cache_blocked: false,
+        }
+    }
+
     fn validate(&self) -> Result<(), Error> {
         let record = self;
         if record.completed_rotation.is_some() && record.binding.is_none() {

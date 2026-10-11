@@ -2943,6 +2943,17 @@ export const zNodeInventoryResponse = z.strictObject({
   ["items"]: z.array(zNodeInventoryView)
 });
 
+export const zNodeLeaveRequest = z.strictObject({
+  ["nodeId"]: zNodeId,
+  ["requestId"]: zRequestId
+});
+
+export const zNodeLeaveResponse = z.strictObject({
+  ["networkId"]: zNetworkId,
+  ["nodeId"]: zNodeId,
+  ["revision"]: zRevision
+});
+
 export const zProbeWindow = z.strictObject({
   ["pending"]: z.int().gte(0).lte(2147483647),
   ["repliedWithinDeadline"]: z.int().gte(0).lte(2147483647),

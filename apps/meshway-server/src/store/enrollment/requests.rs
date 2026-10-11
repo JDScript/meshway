@@ -338,3 +338,35 @@ pub(crate) fn cancel(
     )?;
     Ok(())
 }
+
+/// The user who admitted the Node's current identity: the approver of its
+/// latest device authorization, or the issuer of the enrollment key that
+/// registered it. `None` when no admission of the Node is recorded.
+pub(crate) fn admitting_user(
+    tx: &Transaction<'_>,
+    network: NetworkId,
+    node: NodeId,
+) -> Result<Option<UserId>, Error> {
+    let latest = tx
+        .query_row(
+            "SELECT id,approval FROM enrollment_requests WHERE node_id=?1 ORDER BY created_at DESC LIMIT 1",
+            [node.as_uuid().as_bytes().as_slice()],
+            |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, Option<Vec<u8>>>(1)?)),
+        )
+        .optional()?;
+    let Some((request, approval)) = latest else {
+        return Ok(None);
+    };
+    if let Some(approval) = approval {
+        let approval: Approval = json(&approval)?;
+        return Ok((approval.network == network).then_some(approval.user));
+    }
+    tx.query_row(
+        "SELECT created_by FROM enrollment_keys WHERE network_id=?1 AND consumed_request_id=?2",
+        params![network.as_uuid().as_bytes().as_slice(), request],
+        |row| row.get::<_, Vec<u8>>(0),
+    )
+    .optional()?
+    .map(id)
+    .transpose()
+}

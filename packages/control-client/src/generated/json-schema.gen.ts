@@ -9561,6 +9561,49 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "NodeLeaveRequest": {
+        "type": "object",
+        "description": "A Node's request to permanently delete itself from its network.",
+        "required": [
+          "requestId",
+          "nodeId"
+        ],
+        "properties": {
+          "nodeId": {
+            "$ref": "#/components/schemas/NodeId",
+            "description": "The authenticated Node itself; any other Node is rejected."
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId",
+            "description": "Request identifier recorded as the deletion's configuration request."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NodeLeaveResponse": {
+        "type": "object",
+        "description": "The configuration revision that deleted the Node and revoked its identity.",
+        "required": [
+          "networkId",
+          "nodeId",
+          "revision"
+        ],
+        "properties": {
+          "networkId": {
+            "$ref": "#/components/schemas/NetworkId",
+            "description": "Network the Node left."
+          },
+          "nodeId": {
+            "$ref": "#/components/schemas/NodeId",
+            "description": "The deleted Node."
+          },
+          "revision": {
+            "$ref": "#/components/schemas/Revision",
+            "description": "Configuration revision without the Node."
+          }
+        },
+        "additionalProperties": false
+      },
       "NodeNetmap": {
         "type": "object",
         "description": "Complete per-node netmap content.",

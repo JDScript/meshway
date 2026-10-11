@@ -160,6 +160,41 @@ impl Execution {
             })
             .await
     }
+    /// The Node deletes itself through the one configuration commit: the
+    /// same permanent revocation, netmap withdrawal and recompilation as a
+    /// manager's deletion. Its credentials are checked in that transaction.
+    pub(crate) async fn leave(
+        &self,
+        committer: crate::configuration::Committer,
+        token: &str,
+        request: NodeLeaveRequest,
+    ) -> Result<NodeLeaveResponse, Error> {
+        let token = proof::token_hash(token)?;
+        let sealer = self.sealer.clone();
+        let boot = self.boot;
+        self.handle
+            .transact(TransactionBehavior::Immediate, move |tx| {
+                let principal = store::authorize_node(tx, &sealer, boot, token, store::now()?)?;
+                if principal.node != request.node_id {
+                    return Err(Error::PermissionDenied);
+                }
+                let effects = committer.commit(
+                    tx,
+                    principal.network,
+                    crate::configuration::Intent::NodeLeave {
+                        principal: &principal,
+                    },
+                    request.request_id,
+                )?;
+                let response = NodeLeaveResponse {
+                    network_id: principal.network,
+                    node_id: principal.node,
+                    revision: effects.revision,
+                };
+                Ok((response, effects.changes()))
+            })
+            .await
+    }
     pub async fn authenticate(&self, token: &str) -> Result<NodePrincipal, Error> {
         let token = proof::token_hash(token)?;
         let sealer = self.sealer.clone();

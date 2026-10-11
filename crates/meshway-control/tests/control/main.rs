@@ -3,6 +3,7 @@ mod application;
 mod authority;
 mod faults;
 mod key_enrollment;
+mod leave;
 mod netmap;
 mod recovery;
 mod rotation;

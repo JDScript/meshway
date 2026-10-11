@@ -2614,6 +2614,29 @@ impl crate::Client {
         }
     }
 
+    pub async fn leave_node(
+        &self,
+        body: &meshway_protocol::NodeLeaveRequest,
+        token: &str,
+    ) -> Result<
+        meshway_protocol::NodeLeaveResponse,
+        crate::ClientError<meshway_protocol::ErrorResponse>,
+    > {
+        let response = self
+            .send(
+                reqwest::Method::POST,
+                "/agent-api/v1/leave",
+                Some(token),
+                Some(body),
+            )
+            .await?;
+        match response.status {
+            200 => response.json(),
+            400 | 401 | 403 | 409 | 413 | 415 | 422 | 503 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
     pub async fn list_account_activity(
         &self,
         query: &ListAccountActivityQuery,

@@ -119,3 +119,21 @@ fn stale_archives_keep_only_the_newest() {
     }
     assert!(path.join("other.json.stale-1").exists());
 }
+
+#[test]
+fn removal_is_idempotent_and_never_touches_the_lock() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().canonicalize().unwrap().join("owner");
+    let directory = Directory::open(&path, "owner.lock").unwrap();
+    directory.replace("cache.json", b"x").unwrap();
+    directory.remove("cache.json").unwrap();
+    assert!(directory.file("cache.json", false).unwrap().is_none());
+    directory.remove("cache.json").unwrap();
+    assert!(matches!(
+        directory.remove("owner.lock"),
+        Err(Error::InvalidPath)
+    ));
+    std::os::unix::fs::symlink(path.join("owner.lock"), path.join("link")).unwrap();
+    assert!(directory.remove("link").is_err());
+    assert!(path.join("owner.lock").exists());
+}

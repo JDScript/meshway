@@ -22,6 +22,10 @@ pub use sync::{
 /// by this much, bounding writes to about one per hour of renewals.
 const PERSIST_STEP_MS: u64 = 60 * 60 * 1000;
 
+/// Private caches of the held identity, removed when the Node leaves.
+pub(crate) const CACHE_FILE: &str = store::FILE;
+pub(crate) const FACTS_FILE: &str = facts::FILE;
+
 #[derive(Default)]
 pub(crate) struct State {
     /// Verified content for this identity: the delta base, with or without a lease.

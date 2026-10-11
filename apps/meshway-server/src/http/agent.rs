@@ -35,6 +35,28 @@ pub(super) async fn sync(
         .map_err(|e| HttpError::domain(id, e))
 }
 
+/// Permanently delete the calling Node from its network.
+///
+/// Requires a Node session; `nodeId` must name the authenticated Node itself.
+/// This is the same deletion as a manager's `deleteNode`: the Node's credentials are revoked for good, its netmap is withdrawn, it leaves the inventory and every affected Node is recompiled.
+/// Joining again needs a new enrollment.
+#[utoipa::path(post,path="/agent-api/v1/leave",operation_id="leaveNode",tag="node",security(("nodeSession"=[])),request_body=NodeLeaveRequest,responses((status=200,body=NodeLeaveResponse),(status=400,body=ErrorResponse,description="invalid_request"),(status=401,body=ErrorResponse,description="invalid_credentials"),(status=403,body=ErrorResponse,description="node_identity_rejected, permission_denied"),(status=409,body=ErrorResponse,description="revision_conflict, state_conflict"),(status=413,body=ErrorResponse,description="request_too_large"),(status=415,body=ErrorResponse,description="unsupported_media_type"),(status=422,body=ErrorResponse,description="configuration_invalid"),(status=503,body=ErrorResponse,description="busy, service_unavailable")))]
+pub(super) async fn leave(
+    State(service): State<Execution>,
+    State(configurations): State<crate::configuration::Configurations>,
+    Extension(id): Extension<RequestId>,
+    headers: HeaderMap,
+    body: Result<Json<NodeLeaveRequest>, JsonRejection>,
+) -> Result<Json<NodeLeaveResponse>, HttpError> {
+    let token = node_bearer(&headers, id)?;
+    let Json(body) = body.map_err(|e| HttpError::json(id, e))?;
+    service
+        .leave(configurations.committer(), token, body)
+        .await
+        .map(Json)
+        .map_err(|e| HttpError::domain(id, e))
+}
+
 /// Allocate a one-time Node challenge from a signed control-key application.
 ///
 /// Verifies the pinned Server and current registered identity before admission.
