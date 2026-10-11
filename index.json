@@ -1,8 +1,69 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-11T03:36:54.507047+00:00",
+  "updatedAt": "2026-10-11T03:46:02.791933+00:00",
   "runs": [
+    {
+      "id": 38109005519,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "1d28f0b980761dc0b9d02aa33388ae9266d84d7e",
+      "message": "validation: memory-aware matrix concurrency, capped remote build jobs, nightly instead of per-push Validate — planck is a shared host and a full matrix plus cold build OOM-killed it",
+      "createdAt": "2026-10-11T03:37:51Z",
+      "updatedAt": "2026-10-11T03:45:01Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "url": "https://github.com/JDScript/meshway/actions/runs/38109005519",
+      "jobs": [
+        {
+          "id": 114380451611,
+          "name": "changes",
+          "runner": "mars-epyc7543",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-11T03:37:54Z",
+          "completedAt": "2026-10-11T03:38:06Z",
+          "seconds": 12.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38109005519/job/114380451611"
+        },
+        {
+          "id": 114380488765,
+          "name": "console",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-11T03:38:07Z",
+          "completedAt": "2026-10-11T03:45:01Z",
+          "seconds": 414.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38109005519/job/114380488765"
+        },
+        {
+          "id": 114380488768,
+          "name": "cargo",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "failure",
+          "startedAt": "2026-10-11T03:38:08Z",
+          "completedAt": "2026-10-11T03:42:32Z",
+          "seconds": 264.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38109005519/job/114380488768"
+        },
+        {
+          "id": 114380488848,
+          "name": "docs-and-scripts",
+          "runner": "mars-epyc7543",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-11T03:38:08Z",
+          "completedAt": "2026-10-11T03:39:20Z",
+          "seconds": 72.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38109005519/job/114380488848"
+        }
+      ],
+      "artifacts": []
+    },
     {
       "id": 38108104930,
       "attempt": 1,
