@@ -5388,7 +5388,6 @@ export const schemaDocument = {
           "tunUnavailable",
           "firewallConflict",
           "routeConflict",
-          "dnsUnavailable",
           "unsupportedFamily",
           "ownershipConflict"
         ]

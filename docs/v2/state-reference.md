@@ -52,7 +52,7 @@ Config 定义期望和许可，State 定义当前事实。上报 State 不会修
 | `status` | `{status: "notRequested"}`、`{status: "probing"}`、`{status: "ready"}` 或 `{status: "unavailable", reason: ...}` |
 | `observedAt` | 原始探测时间；重放不刷新样本 |
 
-原因枚举：`ipForwardDisabled`、`forwardingProbeFailed`、`netAdminMissing`、`nftUnavailable`、`conntrackUnavailable`、`reversePathFilterConflict`、`tunUnavailable`、`firewallConflict`、`routeConflict`、`dnsUnavailable`、`unsupportedFamily`、`ownershipConflict`。HTTP 使用同一模型的 camelCase 名称。当前 Node 不以 `dnsUnavailable` 报告出口能力：出口 resolver 不可用不否定 IPv4 出口，单独见 [exitDns](#exitdns)。
+原因枚举：`ipForwardDisabled`、`forwardingProbeFailed`、`netAdminMissing`、`nftUnavailable`、`conntrackUnavailable`、`reversePathFilterConflict`、`tunUnavailable`、`firewallConflict`、`routeConflict`、`unsupportedFamily`、`ownershipConflict`。HTTP 使用同一模型的 camelCase 名称。出口 resolver 不可用不否定 IPv4 出口，不是出口能力原因，单独见 [exitDns](#exitdns)。
 
 Server 在 applied 前接纳当前 role 的探测与失败；`ready` 还要求 acquire 声明 `feature:exit-ipv4` version 1。能力投影最多存活至原观察后 60 秒与当前 instance lease 截止的交集，绑定同一源 revision／角色；未知、过期、旧实例或旧职责不授予出口可用资格。重启不恢复为 ready。路径检测显示 `exitUnavailable` 与新鲜具体原因，业务许可到期不长于能力预算；netmap 链（实现中）中就绪只是经 `peerFacts` 下发的选择事实（`roleGeneration`／`status`／`installedFamilies`），从不是编译输入；拒绝／不可用仍保留源端 capture。职责、capture 和业务许可见[出口联合许可](/v2/configuration-reference/routing#执行捕获与精确许可)。
 

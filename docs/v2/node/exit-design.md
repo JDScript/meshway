@@ -205,7 +205,7 @@ Server／Policy 入口为 `compile_with_exit` 和 `ExitInputs`；实例、选择
 | --- | --- |
 | 配置 | 保留 `exitEnabled` 和既有 egress 规则。首版无 NAT-off／端口映射开关。显式多出口 DNS plan 另行建模，不能滥用 State 填配置 |
 | 静态能力与 State | acquire capability 声明可支持的 exit 地址族／后端版本；State `exitCapability` 用 `notRequested / probing / ready / unavailable` 类型化状态并包含 supportedFamilies、实际 installedFamilies、instance／target 绑定和观测时点；`exitUnavailableReason` 在 unavailable 必填，其他状态不适用，未知／过期不补 ready |
-| 失败原因 | 至少 netAdminUnavailable、ipForwardDisabled、forwardingProbeFailed、nftUnavailable、conntrackUnavailable、reversePathFilterConflict、firewallConflict、routeConflict、dnsUnavailable、unsupportedFamily、ownershipConflict。日志展示可映射为 `exit_unavailable: ip_forward_disabled`，HTTP 采用同一类型的规范 camelCase |
+| 失败原因 | 至少 netAdminUnavailable、ipForwardDisabled、forwardingProbeFailed、nftUnavailable、conntrackUnavailable、reversePathFilterConflict、firewallConflict、routeConflict、unsupportedFamily、ownershipConflict（出口 resolver 可用性另见 [exitDns](/v2/state-reference#exitdns)）。日志展示可映射为 `exit_unavailable: ip_forward_disabled`，HTTP 采用同一类型的规范 camelCase |
 | 出口职责 | 新类型化 role plan，绑定 network／exit／instance／publication、IPv4 masquerade、允许的 capture／return 资源语义与 deadline；安装前即允许报告失败。不能先要求 ready 才发职责、又先要求职责才探测 ready 造成循环 |
 | 业务 permit | 复用 `PathPermit` 的 demand、sourceAddresses、精确 target／service、profile、完整 paths、expiresAt、原路径回复。增加明确 exit 执行约束（地址族、NAT 模式、profile selection generation／角色绑定）；不重复复制一个更宽“出口 CIDR 许可”来替代精确业务许可 |
 | 源端捕获 | `NodeConfiguration` 增加独立 egress capture plan 和不受管例外证明；source address family 缺失时仍保留拒绝边界。delta／digest／obsolete 解码同步更新 |

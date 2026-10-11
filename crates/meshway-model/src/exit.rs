@@ -43,8 +43,6 @@ pub enum ExitUnavailableReason {
     FirewallConflict,
     /// Host routes conflict with the owned plan.
     RouteConflict,
-    /// Required resolver execution is unavailable.
-    DnsUnavailable,
     /// Requested inner address family is unsupported.
     UnsupportedFamily,
     /// Ownership of required resources cannot be proved.

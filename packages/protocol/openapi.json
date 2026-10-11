@@ -25424,7 +25424,6 @@
           "tunUnavailable",
           "firewallConflict",
           "routeConflict",
-          "dnsUnavailable",
           "unsupportedFamily",
           "ownershipConflict"
         ]

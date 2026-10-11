@@ -2188,7 +2188,7 @@ export const zRouteEvaluation = z.strictObject({
   ["via"]: z.array(zNodeId)
 });
 
-export const zExitUnavailableReason = z.enum(["ipForwardDisabled","forwardingProbeFailed","netAdminMissing","nftUnavailable","conntrackUnavailable","reversePathFilterConflict","tunUnavailable","firewallConflict","routeConflict","dnsUnavailable","unsupportedFamily","ownershipConflict"]);
+export const zExitUnavailableReason = z.enum(["ipForwardDisabled","forwardingProbeFailed","netAdminMissing","nftUnavailable","conntrackUnavailable","reversePathFilterConflict","tunUnavailable","firewallConflict","routeConflict","unsupportedFamily","ownershipConflict"]);
 
 export const zTargetProblem = z.enum(["disabled","exitDisabled","exitUnavailable","unsupportedFamily","notEnrolled","noPath","routingCycle","routingLimit"]);
 
