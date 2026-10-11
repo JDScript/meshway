@@ -115,3 +115,34 @@ fn exit(
     }
     Ok(())
 }
+
+/// Build and protocol identity; CLI and daemon of one release share it.
+pub(crate) fn version(json: bool) -> io::Result<()> {
+    let version = env!("CARGO_PKG_VERSION");
+    let git = env!("MESHWAY_BUILD_GIT");
+    let target = env!("MESHWAY_BUILD_TARGET");
+    let ipc = meshway_protocol::ipc::VERSION;
+    let wire = meshway_dataplane::secure::WIRE_VERSION;
+    let compiler = meshway_configuration::netmap::NETMAP_COMPILER_VERSION;
+    let mut output = io::stdout().lock();
+    if json {
+        serde_json::to_writer(
+            &mut output,
+            &serde_json::json!({
+                "version": version,
+                "git": git,
+                "target": target,
+                "ipc": ipc,
+                "wire": wire,
+                "compilerVersion": compiler,
+            }),
+        )?;
+        writeln!(output)
+    } else {
+        writeln!(output, "meshway {version} ({git})")?;
+        writeln!(output, "target:   {target}")?;
+        writeln!(output, "ipc:      {ipc}")?;
+        writeln!(output, "wire:     {wire}")?;
+        writeln!(output, "compiler: {compiler}")
+    }
+}

@@ -100,6 +100,8 @@ pub async fn run(
     .is_err()
     {
         failure = Some("Cannot write Node readiness.");
+    } else {
+        crate::service::notify("READY=1");
     }
     while failure.is_none() {
         tokio::select! { biased;
@@ -152,6 +154,7 @@ pub async fn run(
             },
         }
     }
+    crate::service::notify("STOPPING=1");
     // No new mutations; every already queued command still receives an owner
     // result. A broken durable store rejects further work rather than resetting.
     received.close();

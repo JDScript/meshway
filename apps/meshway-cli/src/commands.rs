@@ -36,8 +36,13 @@ pub(crate) async fn run(arguments: Arguments) -> Result<(), Error> {
         CliCommand::Down => "down",
         CliCommand::Status { .. } => "status",
         CliCommand::Ping { .. } => "ping",
+        CliCommand::Version => "version",
     };
     tracing::debug!(command, "Local command started");
+    if let CliCommand::Version = arguments.command {
+        crate::output::version(arguments.json)?;
+        return Ok(());
+    }
     let client = Client::new(arguments.socket);
     if let CliCommand::Ping { target, count } = arguments.command {
         let target = match target.parse::<std::net::IpAddr>() {
@@ -74,8 +79,8 @@ pub(crate) async fn run(arguments: Arguments) -> Result<(), Error> {
             display(&status, arguments.json)?;
             Ok(())
         }
-        CliCommand::Ping { .. } => {
-            unreachable!("ping is handled without reading or mutating Node intent")
+        CliCommand::Ping { .. } | CliCommand::Version => {
+            unreachable!("handled without reading or mutating Node intent")
         }
         CliCommand::Status { watch } => loop {
             display(&status, arguments.json)?;

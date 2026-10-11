@@ -36,6 +36,9 @@ use crate::{
 };
 use codec::{Context, Frame, Kind};
 pub use codec::{is_control_frame, is_data_frame};
+/// Circuit wire version, the last byte of the frame magic; peers on a path
+/// must share it.
+pub const WIRE_VERSION: u8 = codec::MAGIC[7];
 use meshway_configuration::execution::LogicalPath;
 use meshway_engine::DataPlaneKeys;
 use meshway_engine::Desired;

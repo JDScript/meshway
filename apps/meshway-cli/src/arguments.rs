@@ -41,4 +41,6 @@ pub(crate) enum Command {
         #[arg(long)]
         watch: bool,
     },
+    /// Print this build's version and the protocol versions it speaks; does not contact the daemon.
+    Version,
 }

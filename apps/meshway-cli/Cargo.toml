@@ -11,6 +11,8 @@ path = "src/main.rs"
 
 [dependencies]
 clap.workspace = true
+meshway-configuration = { path = "../../crates/meshway-configuration" }
+meshway-dataplane = { path = "../../crates/meshway-dataplane" }
 meshway-protocol = { path = "../../crates/meshway-protocol" }
 meshway-logging = { path = "../../crates/meshway-logging" }
 serde_json.workspace = true
