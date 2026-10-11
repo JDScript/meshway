@@ -64,6 +64,8 @@ TUN、packet 和表中 V1 的静态 UDP/resolved 证据来自 `3887256b` 生产�
 | `717631ac`（F2） | 全量 16 行，Planck 矩阵 `20261010T235445Z-d7d66054`（并行 16，墙钟 390 秒，70 秒持续窗口，`netmap/offline` 3 分钟，`netmap/restart` 含空闲关闭后的离线重拨） | 16 行全部通过（`netmap/*`：`20261011T000016Z-74949d4b`、`-e271d31c`、`-473e6cca`、`-4033c3b4`） |
 | `2f862f63`（P1） | 全量 16 行，GitHub Actions 于 Planck 运行 `20261011T054035Z-9a9dd74c`（并行 8） | 14 行通过；`exit/off` 在镜像 manifest 缺 `packages`（已修，见下一行）时立即失败；`nat+fallback/off` 证据阶段缺 TCP 退路 conntrack（runner 证据目录不可读，两次 Planck 复跑未复现，报错现已注明 router 与 dump 状态） |
 | `d7de0cef`（P1） | 全量 16 行，Planck 矩阵 `20261011T061934Z-5187b512`（并行 8，墙钟 625 秒） | 16 行全部通过；`nat/off` 中 R 只接受 A 的 A–R offer（三次获取，均在 A prepare 后约 0.25 秒接受，R 未 prepare）；`nat+fallback/off` 两侧 router 各一条 ESTABLISHED `dport=35001` |
+| `4923dff0`（F3 前段） | 全量 16 行，Planck 矩阵 `20261011T110213Z-a8b8aaf6` | 15 行通过；`nat+fallback/off`（`20261011T111342Z-b437eda9`）router-a 的 traffic 快照只有 TIME_WAIT 退路：router 每秒轮询 `traffic` 信号，controller 在信号后 0.65 秒撤销 Access，A–R TCP 退路随之按授权退役，router-a 快照晚于撤权 0.18 秒（router-r 早于撤权，为 ESTABLISHED）。P1 CI 的同一报错没有可读证据，无法单独确认，但与该时序一致 |
+| `93b01c31`（F3） | 全量 16 行，Planck 矩阵 `20261011T121416Z-82e1063a`（并行 8，墙钟 601 秒） | 16 行全部通过；controller 在撤权前等待两个 router 的 `traffic-router-*` 快照会合，`nat+fallback/off`（`20261011T122216Z-42d55dfd`）两侧 router 均为同一条 ESTABLISHED `dport=35001` 流 |
 
 ### 远程矩阵证据 {#remote-matrix-evidence}
 
