@@ -158,7 +158,7 @@ mise run validate:remote -- --ref <commit> --rows exit/off
 
 第 9 阶段（DNS）：A 的计划为 `viaExit`（路径 A→R→E），E 为 `serveExitResolver` 且只服务 A；A 的 `split` 解析器决定为 `direct`。A 的系统 `getaddrinfo` 必须得到 E 的系统 resolver（resolved，上游为 external 网段内的隔离 DNS authority）的回答：A、双栈 A＋AAAA（AAAA 原样返回）、90 条 A 记录（超出 Mesh UDP 1232 bytes，只能经 Mesh TCP 路由完成）；authority 记录的唯一提问者是 E 的 external 地址。A 自己的 MagicDNS 名称本地解析，未知 MagicDNS 名称本地拒绝，两者都不出现在任何上游；`split.test` 名称只从 A 的 split 地址到达 Resolver。A 的系统上游就是 Resolver，它对任何名称都会给出标记地址：E 的上游停止应答时 A 的查询失败，Resolver 不收到该名称。E 的出口 role 撤回与 A 的租约到期后查询失败，HTTP 中断后的租约内查询成功，撤回恢复与租约恢复后查询再次成功。抓包中 `exit-dns` 字节只出现在 E 的 external 接口，A、R 与 E 的其他接口没有。
 
-当前状态：**当前 wire 已通过（含 DNS 阶段）**。Planck 矩阵 `20261011T143117Z-9dedf85e`（候选 `94a0b680`）行 `20261011T143719Z-12d35cc0`，245.0 秒。此前不含 DNS 阶段的全长证据：Planck 单行 `20261010T160621Z-de9a2fae`、矩阵 `20261010T162437Z-4bbe5e35` 行 `20261010T162742Z-e9ed64a0`。IPv6 出口、源／Access／成员撤销逐项、切网、文件后端出口 resolver 与常驻 lab 整组仍未覆盖。
+当前状态：**当前 wire 已通过（含 DNS 阶段）**。Planck 矩阵 `20261011T143117Z-9dedf85e`（候选 `94a0b680`）行 `20261011T143719Z-12d35cc0`，245.0 秒。此前不含 DNS 阶段的全长证据：Planck 单行 `20261010T160621Z-de9a2fae`、矩阵 `20261010T162437Z-4bbe5e35` 行 `20261010T162742Z-e9ed64a0`。IPv6 出口、源／Access／成员撤销逐项、切网、文件后端出口 resolver 与常驻 lab 整组仍未覆盖。常驻 lab 局部检查（不替代整组）：2026-10-11 以 X5 候选临时配置 lax 经 Exit→nyc via sha，lax 的 `dig`／`getent` 由 nyc 的 resolved 发往其上游（nyc 抓包），lax 与 sha 的非 loopback 抓包没有该名称明文，阻断 nyc 的上游 DNS 时 lax 查询失败；配置已 CAS 恢复原内容、lab 已恢复 main 程序，私有证据 `.meshway/node-lab/x5/`。
 
 #### 穿透场景
 
