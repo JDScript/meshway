@@ -845,6 +845,13 @@ async fn coordinate(
             .ready(&format!("traffic-ready-{}", role.name()))
             .await?;
     }
+    if cli.traversal == crate::TraversalMode::Nat {
+        // Routers poll for `traffic` once a second. Their live kernel snapshot
+        // belongs to the traffic phase, so the revocation below must not
+        // retire its carriers first.
+        signals.ready("traffic-router-a").await?;
+        signals.ready("traffic-router-r").await?;
+    }
     measured_links(
         cli,
         &client,

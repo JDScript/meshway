@@ -123,6 +123,9 @@ while test ! -f /signals/routers-stop.json; do
         if test "${MESHWAY_TRAVERSAL_FALLBACK:-0}" = 1; then
             conntrack -L -p tcp -o extended > /evidence/conntrack-tcp-traffic.txt 2>/evidence/conntrack-tcp-traffic.stderr
         fi
+        # The controller revokes access only after this live snapshot exists.
+        printf '{"kind":"ready"}\n' > "/signals/.traffic-$role.tmp"
+        mv "/signals/.traffic-$role.tmp" "/signals/traffic-$role.json"
     fi
     count=$((count + 1))
     test "$count" -lt 930
