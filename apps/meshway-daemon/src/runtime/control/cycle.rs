@@ -51,8 +51,61 @@ pub(super) async fn online(
     control: &mut Control,
     settings: &Settings,
     reset: &mut bool,
+    reenroll: &mut bool,
     enrollment_key: Option<&meshway_protocol::ipc::EnrollmentKey>,
 ) -> Result<Online, Failure> {
+    // Re-enrollment of the held identity: requested once by the operator,
+    // then durable in Control until it is redeemed or ends.
+    if control.status().binding.is_some() && (*reenroll || control.reenrollment_pending()) {
+        let hostname = control
+            .pending_hostname()
+            .unwrap_or(&settings.hostname)
+            .to_owned();
+        if !control.can_redeem_enrollment() {
+            let created = control
+                .begin_reenrollment(&hostname)
+                .await
+                .map_err(|e| failure::at("begin_reenrollment", e, true))?;
+            *reenroll = false;
+            let view = control
+                .poll_enrollment()
+                .await
+                .map_err(|e| failure::at("poll_enrollment", e, true))?;
+            match view.phase {
+                EnrollmentPhase::Pending => {
+                    return Ok(Online::Awaiting {
+                        url: created.authorization_url,
+                    });
+                }
+                EnrollmentPhase::Expired
+                | EnrollmentPhase::Withdrawn
+                | EnrollmentPhase::Cancelled => {
+                    // The held identity stays; only this request ends.
+                    control
+                        .cancel_enrollment()
+                        .await
+                        .map_err(|e| failure::at("cancel_enrollment", e, true))?;
+                    return Err(Failure {
+                        problem: match view.phase {
+                            EnrollmentPhase::Expired => Problem::EnrollmentExpired,
+                            EnrollmentPhase::Withdrawn => Problem::EnrollmentWithdrawn,
+                            _ => Problem::EnrollmentCancelled,
+                        },
+                        retry: false,
+                        reset: false,
+                        withdraw: false,
+                        retry_after: None,
+                    });
+                }
+                EnrollmentPhase::Approved | EnrollmentPhase::Consumed => {}
+            }
+        }
+        control
+            .redeem_enrollment()
+            .await
+            .map_err(|e| failure::at("redeem_enrollment", e, true))?;
+        *reenroll = false;
+    }
     if control.status().binding.is_none()
         && let Some(key) = enrollment_key
     {

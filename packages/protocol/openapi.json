@@ -35167,6 +35167,10 @@
                 "type": "null"
               }
             ]
+          },
+          "traversalRequests": {
+            "$ref": "#/components/schemas/UdpTraversalRequestIds",
+            "description": "Attempt IDs of the previous answer's `traversalRequests` the Node already holds; a live request not listed here answers the hold at once. Omission: none held."
           }
         },
         "additionalProperties": false
@@ -35179,7 +35183,8 @@
           "signature",
           "netmap",
           "peerFacts",
-          "keyRotation"
+          "keyRotation",
+          "traversalRequests"
         ],
         "properties": {
           "keyRotation": {
@@ -35215,6 +35220,10 @@
           "signature": {
             "$ref": "#/components/schemas/NetmapSignature",
             "description": "Server signature over this lease for the requesting Node."
+          },
+          "traversalRequests": {
+            "$ref": "#/components/schemas/UdpTraversalRequests",
+            "description": "Live UDP traversal attempts other Nodes prepared toward this Node that it has not accepted yet; empty when none. Hints only, outside the signed lease."
           }
         },
         "additionalProperties": false
@@ -35820,6 +35829,51 @@
           "waiting",
           "active"
         ]
+      },
+      "UdpTraversalRequestIds": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Short-lived UDP traversal attempt identifier; not a credential.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+          "maxLength": 36,
+          "minLength": 36,
+          "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "maxItems": 32
+      },
+      "UdpTraversalRequests": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "description": "A live UDP traversal attempt another Node prepared with the requesting Node as its not-yet-accepted participant. A coordination hint only: it carries no candidate, grants nothing, and the Node still queries, reserves and accepts the exact offer.",
+          "required": [
+            "attemptId",
+            "peerId",
+            "carrier",
+            "expiresAt"
+          ],
+          "properties": {
+            "attemptId": {
+              "$ref": "#/components/schemas/UdpTraversalId",
+              "description": "Attempt to look up with `queryUdpTraversal`."
+            },
+            "carrier": {
+              "$ref": "#/components/schemas/Carrier",
+              "description": "Exact Native UDP adjacency of the attempt; names the listener key either side binds."
+            },
+            "expiresAt": {
+              "$ref": "#/components/schemas/Timestamp",
+              "description": "The attempt's fixed deadline; afterwards the request is void."
+            },
+            "peerId": {
+              "$ref": "#/components/schemas/NodeId",
+              "description": "Node that prepared the attempt."
+            }
+          },
+          "additionalProperties": false
+        },
+        "maxItems": 32
       },
       "UdpTraversalUnavailableReason": {
         "type": "string",

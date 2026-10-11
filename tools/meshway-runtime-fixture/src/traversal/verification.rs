@@ -39,9 +39,21 @@ pub(super) fn verify(
     current: &BTreeMap<NodeId, Current>,
     observer: &str,
     nodes: &BTreeMap<Role, NodeId>,
+    on_demand: bool,
 ) -> Result<(Vec<UdpTraversalOffer>, Vec<Continuity>)> {
     if observations.failed {
         return Err("traversal HTTP audit incomplete".into());
+    }
+    // On-demand A–R: only A has a need, so R must take part in A's offers
+    // and never prepare one of its own (it has no Native UDP dialer either).
+    if on_demand
+        && observations.events.iter().any(|event| {
+            matches!(event, Event::Prepare { request, .. }
+                if request.local_candidate.socket.node_id == nodes[&Role::R]
+                    && request.peer_id == nodes[&Role::A])
+        })
+    {
+        return Err("R prepared an A-R attempt on the on-demand edge".into());
     }
     let mut offers = Vec::new();
     let mut continuity = Vec::new();
@@ -60,6 +72,7 @@ pub(super) fn verify(
             if !((local.node_id == nodes[&left] && peer.node_id == nodes[&right])
                 || (local.node_id == nodes[&right] && peer.node_id == nodes[&left]))
                 || !original_request(request, offer)
+                || (on_demand && left == Role::A && local.node_id != nodes[&Role::A])
             {
                 continue;
             }

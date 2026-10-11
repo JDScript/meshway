@@ -43,6 +43,8 @@ pub(crate) struct SyncStatus {
     pub running: bool,
     pub last_sync_at: Option<chrono::DateTime<chrono::Utc>>,
     pub last_sync: Option<std::time::Instant>,
+    /// Class of the last failure while the long poll retries.
+    pub error: Option<meshway_protocol::ipc::SyncError>,
 }
 
 fn publish(
@@ -176,6 +178,7 @@ pub(super) async fn run(
     let mut plan = desired.borrow_and_update().clone();
     let mut backoff = 1u64;
     let mut reset = plan.retry_enrollment;
+    let mut reenroll = plan.reenroll;
     let mut shutdown_failure = None;
     loop {
         if plan.shutdown || desired.has_changed().is_err() {
@@ -217,6 +220,7 @@ pub(super) async fn run(
                         wait_change(&mut desired, &plan, delay).await;
                         plan = desired.borrow_and_update().clone();
                         reset = plan.retry_enrollment;
+                        reenroll = plan.reenroll;
                         continue;
                     }
                 }
@@ -274,6 +278,7 @@ pub(super) async fn run(
                     wait_change(&mut desired, &plan, None).await;
                     plan = desired.borrow_and_update().clone();
                     reset = plan.retry_enrollment;
+                    reenroll = plan.reenroll;
                     continue;
                 }
             }
@@ -281,6 +286,7 @@ pub(super) async fn run(
             if latest.revision != plan.revision || latest.shutdown {
                 plan = latest;
                 reset = plan.retry_enrollment;
+                reenroll = plan.reenroll;
                 continue;
             }
         }
@@ -361,9 +367,13 @@ pub(super) async fn run(
                 &reported,
                 &sync_status,
                 &mut reset,
+                &mut reenroll,
             )
             .await;
-            sync_status.send_modify(|status| status.running = false);
+            sync_status.send_modify(|status| {
+                status.running = false;
+                status.error = None;
+            });
             match ended {
                 Ended::Changed => {}
                 Ended::Blocked { problem, withdraw } => {
@@ -422,6 +432,7 @@ pub(super) async fn run(
         }
         plan = desired.borrow_and_update().clone();
         reset = plan.retry_enrollment;
+        reenroll = plan.reenroll;
         backoff = 1;
     }
     let keep_sink = desired.borrow().up;
@@ -494,6 +505,7 @@ async fn session(
     reported: &watch::Sender<Report>,
     sync_status: &watch::Sender<SyncStatus>,
     reset: &mut bool,
+    reenroll: &mut bool,
 ) -> Ended {
     {
         let driver = shared.lock().await;
@@ -525,7 +537,7 @@ async fn session(
             let mut driver = shared.lock().await;
             let result = tokio::select! { biased;
                 _ = changed(desired, plan) => return Ended::Changed,
-                result = online(&mut driver, settings, reset, plan.enrollment_key.as_ref()) => result,
+                result = online(&mut driver, settings, reset, reenroll, plan.enrollment_key.as_ref()) => result,
             };
             match &result {
                 Ok(Online::Awaiting { url }) => publish(
@@ -633,11 +645,13 @@ async fn online_session(
         Some(network) => network.peer_sink(),
         None => watch::channel(None).0,
     };
+    let (errors, mut error_rx) = watch::channel(None);
+    let mut errors_open = true;
     let mut sync = {
         let shared = shared.clone();
         let stop = stop.clone();
         tokio::spawn(async move {
-            meshway_control::sync_loop(&shared, &mut sink, &netmaps, &stop).await
+            meshway_control::sync_loop(&shared, &mut sink, &netmaps, &errors, &stop).await
         })
     };
     // The verified lease reaches Engine without the Control lock or this
@@ -681,6 +695,17 @@ async fn online_session(
                 }
                 publish(reported, plan, Some(&driver), Phase::Retrying, None, Some(failure.problem), None);
                 break Err(None);
+            },
+            changed = error_rx.changed(), if errors_open => {
+                if changed.is_err() {
+                    errors_open = false;
+                    continue;
+                }
+                let error = *error_rx.borrow_and_update();
+                if let Some(error) = error {
+                    tracing::warn!(?error, "Node sync failed; retrying");
+                }
+                sync_status.send_modify(|status| status.error = error);
             },
             changed = netmap_rx.changed() => {
                 if changed.is_err() {

@@ -87,16 +87,19 @@ pub(crate) async fn run(arguments: Arguments) -> Result<(), Error> {
         },
         CliCommand::Up { .. } | CliCommand::Down => {
             let up = matches!(arguments.command, CliCommand::Up { .. });
-            let enrollment_key = match arguments.command {
+            let (enrollment_key, reenroll) = match arguments.command {
                 CliCommand::Up {
                     enrollment_key: Some(value),
-                } => Some(enrollment_key_input(value).await?),
-                _ => None,
+                    ..
+                } => (Some(enrollment_key_input(value).await?), false),
+                CliCommand::Up { reenroll, .. } => (None, reenroll),
+                _ => (None, false),
             };
             let command = if up {
                 Command::Up {
                     expected_revision: status.revision,
                     enrollment_key,
+                    reenroll,
                 }
             } else {
                 Command::Down {

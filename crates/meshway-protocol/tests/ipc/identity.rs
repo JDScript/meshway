@@ -16,10 +16,22 @@ fn v6_identity_commands_are_typed_optional_and_secret_debug_is_redacted() {
     let command = Command::Up {
         expected_revision: 1.try_into().unwrap(),
         enrollment_key: Some(EnrollmentKey::new("private-fixture-value".into()).unwrap()),
+        reenroll: false,
     };
     assert!(!format!("{command:?}").contains("private-fixture-value"));
     let value = serde_json::to_value(command).unwrap();
     assert_eq!(value["enrollmentKey"], "private-fixture-value");
+    assert!(value.get("reenroll").is_none(), "omitted unless requested");
+    let reenroll: Command =
+        serde_json::from_value(json!({"type":"up","expectedRevision":1,"reenroll":true})).unwrap();
+    assert!(matches!(
+        reenroll,
+        Command::Up {
+            reenroll: true,
+            enrollment_key: None,
+            ..
+        }
+    ));
     assert!(
         serde_json::from_value::<Command>(json!({"type":"rotateKey","expectedRevision":1})).is_ok()
     );

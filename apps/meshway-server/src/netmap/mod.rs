@@ -3,8 +3,8 @@
 //! A sync request names the netmap and peer-fact cursor the Node holds. The
 //! Server answers at once when either is behind; otherwise it holds the
 //! request until a committed change wakes it, the peer-fact source reports a
-//! change, a newer request of the same Node replaces it, or the hold times
-//! out. Every answer carries a fresh lease for the current netmap. Content is
+//! change or a traversal attempt the Node does not hold yet, a newer request
+//! of the same Node replaces it, or the hold times out. Every answer carries a fresh lease for the current netmap. Content is
 //! stored by `store::netmap` and only changes in stable-input transactions.
 mod hub;
 pub(crate) mod records;
@@ -163,6 +163,12 @@ impl Netmaps {
                 .peer_facts
                 .as_ref()
                 .is_some_and(|facts| facts.base.is_none() || Some(facts.cursor) != request.state)
+                || response.traversal_requests.as_slice().iter().any(|asked| {
+                    !request
+                        .traversal_requests
+                        .as_slice()
+                        .contains(&asked.attempt_id)
+                })
             {
                 return Ok(answered(response));
             }

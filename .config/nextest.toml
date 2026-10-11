@@ -24,6 +24,7 @@ default-filter = '''not (
   | test(=recovery::wrong_controller_response_is_fatal_not_transient_delivery)
   | test(=rotation::rejected_expired_rotation_rolls_back_only_after_old_key_authentication)
   | test(=server_key_rotation::three_nodes_pin_the_rotated_key_within_one_hold_and_renew_after_the_window)
+  | test(=server_key_rotation::a_node_that_missed_the_window_reenrolls_its_identity_and_pins_the_current_key)
   | test(=diagnostics::tests::timed_out_admitted_send_has_one_loss_and_a_late_reply_cannot_revise_it)
 )'''
 

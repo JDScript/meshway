@@ -180,6 +180,21 @@ impl Record {
                 }
             }
             (Some(keys), None, Some(binding)) if keys.matches(binding)? => {}
+            // Re-enrollment of the held identity with its own keys.
+            (Some(keys), Some(pending), Some(binding))
+                if keys.matches(binding)?
+                    && record.rotation.is_none()
+                    && pending.access_key.is_none()
+                    && pending.intent.control_key == keys.control()?
+                    && pending.intent.dataplane_key == keys.dataplane()?
+                    && pending.intent.code_challenge == identity::challenge(&pending.verifier)
+                    && pending.code.is_some() == pending.approved_network.is_some()
+                    && pending.intent.existing.as_ref().is_some_and(|existing| {
+                        existing.network_id == binding.network_id
+                            && existing.node_id == binding.node_id
+                            && existing.key_id == binding.keys.control.id
+                            && existing.key_generation == binding.keys.control.generation
+                    }) => {}
             _ => return Err(Error::Record),
         }
         Ok(())

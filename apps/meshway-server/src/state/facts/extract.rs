@@ -63,10 +63,23 @@ pub(crate) fn peer_facts(
                     }
                 }
                 for candidate in &socket.endpoints {
-                    if stun_candidates.len() < MAX_STUN_CANDIDATES
-                        && matches!(candidate.origin, EndpointSource::Stun { .. })
-                        && candidate.expires_at > now
+                    if !matches!(candidate.origin, EndpointSource::Stun { .. })
+                        || candidate.expires_at <= now
                     {
+                        continue;
+                    }
+                    // A Node keeps the previous observation of an unchanged
+                    // mapping while its renewal is published: one fact, the
+                    // later freshness, never a second candidate.
+                    if let Some(known) = stun_candidates.iter_mut().find(
+                        |known: &&mut meshway_model::state::EndpointCandidate| {
+                            known.address == candidate.address && known.origin == candidate.origin
+                        },
+                    ) {
+                        if candidate.expires_at > known.expires_at {
+                            *known = candidate.clone();
+                        }
+                    } else if stun_candidates.len() < MAX_STUN_CANDIDATES {
                         stun_candidates.push(candidate.clone());
                     }
                 }

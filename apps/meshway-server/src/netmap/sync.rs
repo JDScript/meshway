@@ -4,6 +4,7 @@ use crate::secrets::Sealer;
 use crate::store::{execution as execution_store, netmap as store};
 use meshway_configuration::netmap::netmap_delta;
 use meshway_model::{InstanceId, NetmapLease, NetmapRef, NetworkId, NodeId};
+use meshway_protocol::UdpTraversalRequests;
 use meshway_protocol::netmap::{
     PeerFactsDelta, StateCursor, SyncNetmap, SyncRequest, SyncResponse,
 };
@@ -19,7 +20,9 @@ pub type PeerFactsChanged = Pin<Box<dyn Future<Output = ()> + Send>>;
 pub struct PeerFactsRead {
     /// Facts after the cursor scoped to the current netmap; null when nothing is new.
     pub delta: Option<PeerFactsDelta>,
-    /// Wake-up for facts changing after this read; null when facts never change.
+    /// Live traversal attempts that ask the Node to accept; see `SyncResponse`.
+    pub traversal_requests: UdpTraversalRequests,
+    /// Wake-up for facts or traversal requests changing after this read; null when they never change.
     pub changed: Option<PeerFactsChanged>,
 }
 
@@ -58,6 +61,7 @@ impl PeerFactsSource for NoPeerFacts {
     ) -> Result<PeerFactsRead, Error> {
         Ok(PeerFactsRead {
             delta: None,
+            traversal_requests: UdpTraversalRequests::default(),
             changed: None,
         })
     }
@@ -111,7 +115,11 @@ pub(super) fn read(
             netmap: Box::new(store::load(tx, sealer, network, node, current.current)?),
         }
     };
-    let PeerFactsRead { delta, changed } = facts.read(
+    let PeerFactsRead {
+        delta,
+        traversal_requests,
+        changed,
+    } = facts.read(
         tx,
         network,
         node,
@@ -131,6 +139,7 @@ pub(super) fn read(
         netmap,
         peer_facts: delta,
         key_rotation,
+        traversal_requests,
     };
     response
         .check(request)

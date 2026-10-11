@@ -86,6 +86,7 @@ pub fn signed(
         netmap,
         peer_facts: None,
         key_rotation: None,
+        traversal_requests: Default::default(),
     }
 }
 

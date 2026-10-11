@@ -454,6 +454,38 @@ pub enum Recovery {
 }
 
 impl Error {
+    /// The status class of a failed `sync`.
+    pub fn sync_error(&self) -> meshway_protocol::ipc::SyncError {
+        use meshway_protocol::ipc::SyncError;
+        match self.recovery() {
+            Recovery::Withdrawn { identity: true } => return SyncError::IdentityRejected,
+            Recovery::Withdrawn { identity: false } => return SyncError::Withdrawn,
+            Recovery::Storage => return SyncError::Storage,
+            Recovery::Retry { .. } | Recovery::Halt => {}
+        }
+        match self {
+            Self::SignatureInvalid => SyncError::SignatureInvalid,
+            Self::ServerKeyMismatch => SyncError::ServerKeyMismatch,
+            Self::Server(
+                ClientError::Http {
+                    status: 429 | 500..=599,
+                    ..
+                }
+                | ClientError::Network {
+                    status: Some(429 | 500..=599),
+                },
+            ) => SyncError::ServerBusy,
+            Self::Server(ClientError::Network { .. }) => SyncError::Network,
+            Self::Server(ClientError::Http {
+                status: 401 | 403 | 404,
+                ..
+            })
+            | Self::Expired
+            | Self::Lifecycle => SyncError::Credentials,
+            _ => SyncError::Contract,
+        }
+    }
+
     pub fn recovery(&self) -> Recovery {
         match self {
             Self::Storage(_) | Self::Record | Self::ReloadRequired => Recovery::Storage,

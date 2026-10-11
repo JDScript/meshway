@@ -43,6 +43,7 @@ install -d -m 700 .meshway
 | CLI `--socket` | 默认 `/var/lib/meshway/control.sock`，可显式选择本机 daemon |
 | CLI `--json` | 输出类型化公开状态；不包含 Node 私钥、兑换码或会话 token |
 | CLI `up --enrollment-key` | 一次性接入密钥；支持字面值、`@file`、`-`／`@-`（stdin）。优先文件或 stdin，避免秘密进入 shell 历史与进程参数 |
+| CLI `up --reenroll` | 以接入意图 `existing` 重新接入当前身份（同 Node ID 与密钥，须 Console 批准），用于错过签发钥轮换窗口后的恢复；与 `--enrollment-key` 互斥，见[保留身份的重新接入](/v2/node/control#保留身份的重新接入) |
 
 默认目录适用于 Linux 系统服务；本地开发或其他 Unix 环境可像示例一样显式指定私有目录。安装参数不构成本机业务配置覆盖源。
 
@@ -303,7 +304,16 @@ Underlay 启动时当前 namespace 的资源归属或路由保护冲突仍拒绝
 
 撤回、期限和 down 独立于挂起的 HTTP 生效。停止准入后取消并等待任务退出；显式 down 清理可证明所属的内核资源与 TUN，期望 up 时的过期／断连／退出保留负向 capture 边界。资源生命周期及 bootstrap 同 IP 隔离见 [Linux underlay](/v2/node/dataplane#linux-underlay)。
 
-崩溃恢复只处理有可验证归属的 journal，不恢复旧流。未知格式或不明归属不能作为删除宿主规则的依据。journal 记录写入时的内核 boot id 与网络 namespace（device／inode）：任一身份不同（整机、容器虚拟机重启或容器重建后挂载同一卷）即为过期记录，在分配新资源前原子改名为 `underlay.json.stale-<Unix 纳秒时间>` 并持久保留；INFO 日志记录旧 namespace 与归档名。按无 journal 在当前 namespace 重新分配，不进入旧 namespace 清理，也不把旧记录作为当前资源的归属证明。归档失败时不覆盖原文件或继续分配。同 boot、同 namespace 仍按原有逐项归属核验恢复，当前 namespace 的真实冲突使用上述有界退避。
+崩溃恢复只处理有可验证归属的 journal，不恢复旧流。未知格式或不明归属不能作为删除宿主规则的依据。
+
+journal 的 namespace 身份不只靠 inode。nsfs 的 device／inode 只在 namespace 存活期间唯一：容器 `docker stop`／`start` 后新 namespace 可能拿到同一个 inode。因此身份由两部分组成：
+
+| 部分 | 内容 | 不同即 |
+| --- | --- | --- |
+| 写入时的内核与 namespace | `/proc/sys/kernel/random/boot_id`、`/proc/self/ns/net` 的 device／inode | 过期（整机、容器虚拟机重启或容器重建后挂载同一卷） |
+| 驻留证据 | journal 记录的、只能存在于写入它的 namespace 中的对象：精确字节的 RPDB 规则（随机私有 table 与随机优先级区间）或 DNS 锚点（alias 含随机 installation） | journal 记录了对象而当前 namespace 一个也没有：inode 被新 namespace 复用，同样过期 |
+
+过期记录在分配新资源前原子改名为 `underlay.json.stale-<Unix 纳秒时间>` 并持久保留；INFO 日志记录旧 namespace、原因（`changed_namespace`／`reused_namespace_inode`）与归档名。按无 journal 在当前 namespace 重新分配，不进入旧 namespace 清理，也不把旧记录作为当前资源的归属证明。归档失败时不覆盖原文件或继续分配。身份相同且驻留证据存在时仍按原有逐项归属核验恢复：只缺部分对象、或出现不属于 journal 的同区间对象，仍是真实冲突并使用上述有界退避。没有记录任何对象的 journal 不需要驻留证据，直接按当前 namespace 重新分配。
 
 SIGTERM／SIGINT 干净退出且期望仍为 up 时，先取消和 join 运行任务，经 `suspend` 删除本进程的正向路由、关闭非持久 TUN，并清空、持久保存对应 journal 记录；负向 capture 规则及独立 DNS 锚点继续保留以供同 namespace 重启恢复。因此 `Node stopped failed=false` 不表示 journal 应整份删除。异常退出保留的可核验资源仍走恢复检查；namespace 变化使用过期归档规则。
 

@@ -37,7 +37,7 @@ fn keys(n: u8) -> meshway_protocol::NodeKeyMetadata {
 fn status(n: u8) -> meshway_protocol::ipc::Status {
     serde_json::from_value(json!({
         "processId":42,"revision":1,"desiredUp":true,"phase":"running",
-        "sync":"disconnected","lastSyncAt":null,
+        "sync":"disconnected","lastSyncAt":null,"syncError":null,
         "server":"http://127.0.0.1:8430/","observedAt":"1970-01-01T00:00:20Z",
         "enrollmentRequestId":null,"enrollmentUrl":null,
         "identity":{"controllerId":id::<meshway_model::KeyId>(99),"networkId":id::<meshway_model::NetworkId>(100),"nodeId":id::<NodeId>(n),"keys":keys(n),
@@ -275,11 +275,15 @@ impl Fixture {
         }
     }
     fn verify(&self) -> bool {
+        self.verify_with(false)
+    }
+    fn verify_with(&self, on_demand: bool) -> bool {
         verification::verify(
             &self.observations,
             &self.current,
             "192.0.2.100:3478",
             &self.nodes,
+            on_demand,
         )
         .is_ok()
     }
@@ -319,6 +323,7 @@ fn publication_handoff_keeps_original_offer_and_installation_but_requires_curren
         &fixture.current,
         "192.0.2.100:3478",
         &fixture.nodes,
+        false,
     )
     .unwrap();
     assert_eq!(proofs.len(), 4);
@@ -484,4 +489,28 @@ fn typed_install_fields_decode_without_interpreting_legacy_debug_fields() {
     event["fields"]["install_json"] = json!(serde_json::to_string(&expected).unwrap());
     event["fields"]["install_schema"] = json!(2);
     assert!(installation::decode(&event).is_err());
+}
+
+#[test]
+fn an_on_demand_edge_requires_the_needing_end_to_prepare_and_the_relay_only_to_accept() {
+    let mut fixture = Fixture::new();
+    assert!(fixture.verify_with(true), "A prepared A-R, R accepted it");
+    let Some(Event::Prepare { request, response }) = fixture
+        .observations
+        .events
+        .iter()
+        .find(|event| matches!(event, Event::Prepare { request, .. } if request.peer_id == id(2)))
+    else {
+        panic!("A-R offer")
+    };
+    let mut own = request.clone();
+    own.local_candidate.socket.node_id = id(2);
+    own.peer_id = id(1);
+    let response = response.clone();
+    fixture.observations.events.push(Event::Prepare {
+        request: own,
+        response,
+    });
+    assert!(fixture.verify(), "the base rows do not constrain who prepares");
+    assert!(!fixture.verify_with(true), "R had no need of its own");
 }

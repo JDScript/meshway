@@ -1592,6 +1592,7 @@ pub(in crate::manager) mod tests {
             limits: Limits::default(),
             control_budget: Arc::new(Mutex::new(ControlBudget::new())),
             sockets: Arc::new(Mutex::new(BTreeMap::new())),
+            stun_confirmed: Arc::default(),
             generation,
             traversal_endpoints: Arc::new(Mutex::new(BTreeMap::new())),
             resource_changes: tokio::sync::watch::channel(()).0,

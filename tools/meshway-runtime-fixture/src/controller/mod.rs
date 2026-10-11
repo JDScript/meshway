@@ -559,6 +559,21 @@ async fn coordinate(
                 },
             )])
         };
+        if cli.on_demand_nat() && role == Role::A {
+            node.listeners.insert(
+                "reverse-tcp".into(),
+                Listener::NativeTcp(NativeTcpListener {
+                    enabled: true,
+                    remark: String::new(),
+                    listen: "0.0.0.0".parse()?,
+                    listen_port: 35001.try_into()?,
+                    endpoints: vec![],
+                    bind_interface: String::new(),
+                    socket: Default::default(),
+                    tcp: Default::default(),
+                }),
+            );
+        }
         if cli.traversal_fallback && role == Role::R {
             node.listeners.insert(
                 "fallback-tcp".into(),
@@ -593,9 +608,11 @@ async fn coordinate(
             // Business still follows A-R-B over the bidirectional channels.
             // Local-endpoint conformance likewise requires A/B to redial R's
             // reported address, rather than passing through R's reverse dial.
+            // The on-demand NAT case gives R only a TCP dialer: B has no TCP
+            // listener, so R–B stays B→R, while A–R becomes dialable both ways.
             Input::Value(meshway_transport::spec::DialerSet {
                 native_udp: None,
-                native_tcp: None,
+                native_tcp: cli.on_demand_nat().then(NativeTcpDialer::default),
                 vless: None,
                 trojan: None,
             })
@@ -684,18 +701,38 @@ async fn coordinate(
                 return Err("TCP fallback must be authorized only on the A-R edge".into());
             }
         }
+        if cli.on_demand_nat() {
+            let dialers = match &node.dialers {
+                Input::Value(dialers) => dialers,
+                Input::Omitted => &committed.configuration.defaults.dialers,
+            };
+            if dialers.native_udp.is_some() != (role != Role::R)
+                || dialers.native_tcp.is_some() != (role == Role::R)
+                || dialers.vless.is_some()
+                || dialers.trojan.is_some()
+            {
+                return Err("on-demand NAT edge must let R dial A only over Native TCP".into());
+            }
+        }
         if cli.reported_endpoints && !node.listeners.values().all(|listener|
             matches!(listener.declaration(), Listener::NativeUdp(listener) if listener.endpoints.is_empty())) {
             return Err("reported-only fixture must not configure an endpoint".into());
         }
+        let extra_tcp = (cli.traversal_fallback && role == Role::R)
+            || (cli.on_demand_nat() && role == Role::A);
         if cli.traversal == crate::TraversalMode::Nat
-            && (node.listeners.len() != if cli.traversal_fallback && role == Role::R { 2 } else { 1 }
+            && (node.listeners.len() != if extra_tcp { 2 } else { 1 }
                 || !node.listeners.iter().all(|(key, listener)| {
                     matches!(listener.declaration(),
                     Listener::NativeUdp(listener) if listener.enabled
                         && listener.listen == std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)
                         && listener.listen_port.get() == 35000
                         && listener.endpoints.is_empty())
+                    || (cli.on_demand_nat() && role == Role::A && key == "reverse-tcp"
+                        && matches!(listener.declaration(), Listener::NativeTcp(listener)
+                            if listener.enabled && listener.listen_port.get() == 35001
+                                && listener.listen == std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)
+                                && listener.endpoints.is_empty()))
                     || (cli.traversal_fallback && role == Role::R && key == "fallback-tcp"
                         && matches!(listener.declaration(), Listener::NativeTcp(listener)
                             if listener.enabled && listener.listen_port.get() == 35001

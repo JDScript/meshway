@@ -19,6 +19,7 @@ async fn unsupported_tun_keeps_ipc_responsive_and_never_opens_unprotected_contro
         Command::Up {
             enrollment_key: None,
             expected_revision: blocked.revision,
+            reenroll: false,
         },
         request_id(),
     )

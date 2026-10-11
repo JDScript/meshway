@@ -57,6 +57,7 @@ async fn member_removal_atomically_withdraws_user_netmap_and_preserves_tag_nodes
                 netmap: None,
                 state: None,
                 server_key_generation: None,
+                traversal_requests: Default::default(),
             },
         )
         .await
@@ -89,6 +90,7 @@ async fn member_removal_atomically_withdraws_user_netmap_and_preserves_tag_nodes
                 netmap: None,
                 state: None,
                 server_key_generation: None,
+                traversal_requests: Default::default(),
             },
         )
         .await
@@ -121,6 +123,7 @@ async fn member_removal_atomically_withdraws_user_netmap_and_preserves_tag_nodes
                     netmap: None,
                     state: None,
                     server_key_generation: None,
+                    traversal_requests: Default::default(),
                 }
             )
             .await,
@@ -227,6 +230,7 @@ async fn enrollment_key_replay_and_permanent_deletion_follow_the_same_netmap_ide
                 netmap: None,
                 state: None,
                 server_key_generation: None,
+                traversal_requests: Default::default(),
             },
         )
         .await

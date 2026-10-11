@@ -175,6 +175,7 @@ impl View {
             authenticated: active && control.as_ref().is_some_and(|c| c.authenticated),
             sync: sync_state,
             last_sync_at: sync.last_sync_at,
+            sync_error: sync.error.filter(|_| active && sync.running),
             instance: if active {
                 control.as_ref().and_then(|c| c.instance.clone())
             } else {

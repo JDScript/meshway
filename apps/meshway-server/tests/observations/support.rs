@@ -270,6 +270,7 @@ impl Server {
                     netmap: None,
                     state: None,
                     server_key_generation: None,
+                    traversal_requests: Default::default(),
                 },
             ),
             200,

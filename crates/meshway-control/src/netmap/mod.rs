@@ -35,6 +35,9 @@ pub(crate) struct State {
     known: Option<facts::Known>,
     /// What `peer-facts.json` holds, as far as this owner knows.
     saved: Option<facts::Known>,
+    /// `traversalRequests` of the last answer: hints, echoed in the next
+    /// request and published with the facts; never saved.
+    traversal: Arc<Vec<meshway_protocol::UdpTraversalRequest>>,
     /// `known` changed since it was last published to the facts sink.
     unpublished: bool,
     facts_write: Option<tokio::task::JoinHandle<Result<(), meshway_private_storage::Error>>>,
@@ -84,6 +87,7 @@ impl Control {
         (known.netmap == base.reference()).then(|| KnownPeers {
             netmap: known.netmap,
             peers: Arc::clone(&known.peers),
+            traversal_requests: Arc::clone(&self.netmap.traversal),
         })
     }
 
@@ -94,6 +98,15 @@ impl Control {
         }
         if let Some(known) = self.known_peers() {
             sink.publish(known);
+        }
+    }
+
+    /// The traversal requests of an accepted answer replace the previous ones.
+    pub(crate) fn record_traversal(&mut self, requests: meshway_protocol::UdpTraversalRequests) {
+        let requests = requests.into_vec();
+        if *self.netmap.traversal != requests {
+            self.netmap.traversal = Arc::new(requests);
+            self.netmap.unpublished = true;
         }
     }
 

@@ -165,6 +165,7 @@ fn holding(netmap: Option<NetmapRef>) -> SyncRequest {
         netmap,
         state: None,
         server_key_generation: None,
+        traversal_requests: Default::default(),
     }
 }
 

@@ -118,6 +118,7 @@ async fn live_tun_owner_conflict_retries_and_recovers_without_new_up() {
         retry_enrollment: false,
         enrollment_key: None,
         rotation: None,
+        reenroll: false,
     });
     let (reported, mut report) = watch::channel(Report::initial(revision));
     let (network_reported, _) = watch::channel(network::Report::stopped());

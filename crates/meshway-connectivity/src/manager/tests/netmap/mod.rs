@@ -201,6 +201,7 @@ fn known(netmap: meshway_model::NetmapRef, peers: Vec<PeerFacts>) -> Option<Know
                 .map(|facts| (facts.node_id, facts))
                 .collect(),
         ),
+        traversal_requests: Default::default(),
     })
 }
 

@@ -153,6 +153,18 @@ impl FactLedger {
         }
     }
 
+    /// Wake exactly the held sync of `node` (a traversal attempt asks it to
+    /// accept); its facts and visibility are unchanged.
+    pub(crate) fn signal(&mut self, network: NetworkId, node: NodeId) {
+        if let Some(waiter) = self.waiters.get(&(network, node))
+            && waiter.sender.receiver_count() > 0
+        {
+            waiter
+                .sender
+                .send_modify(|version| *version = version.wrapping_add(1));
+        }
+    }
+
     /// Record a reporter's complete current facts. Unchanged content does not
     /// advance the cursor or wake anyone. Freshness is piggybacked on the next
     /// ordinary sync response. Returns whether semantic content advanced.
@@ -368,8 +380,17 @@ impl crate::netmap::PeerFactsSource for StateFacts {
         // Armed before reading, so no change in between is missed.
         let mut wake = PeerFactsSource::watch(self, &viewer)?;
         let delta = PeerFactsSource::peer_facts(self, &viewer, held, cursor)?;
+        let now = u64::try_from(Utc::now().timestamp_millis())
+            .map_err(|_| Error::Internal("system clock before epoch"))?;
+        let traversal_requests = {
+            let runtime = self.runtime.lock().map_err(|_| Error::RUNTIME)?;
+            runtime.traversal.requests(network, node, now)
+        }
+        .try_into()
+        .map_err(|_| Error::Internal("traversal request bound"))?;
         Ok(crate::netmap::PeerFactsRead {
             delta,
+            traversal_requests,
             changed: Some(Box::pin(async move { wake.changed().await })),
         })
     }

@@ -146,6 +146,7 @@ async fn sync_netmap(app: &App, token: &str, instance: &InstanceRequest) -> Comp
                 netmap: None,
                 state: None,
                 server_key_generation: None,
+                traversal_requests: Default::default(),
             },
         )
         .await
@@ -342,4 +343,5 @@ async fn offer(app: &App, a: &Node, request: PrepareUdpTraversalRequest) -> UdpT
 
 mod authority;
 mod expiry;
+mod signalling;
 mod transactions;
