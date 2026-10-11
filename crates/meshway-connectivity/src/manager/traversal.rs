@@ -362,17 +362,23 @@ async fn run_content(
                 .lock()
                 .map(|confirmed| confirmed.clone())
                 .unwrap_or_default();
+            let requested = shared
+                .observation_request
+                .lock()
+                .map(|requested| *requested)
+                .unwrap_or_default();
             let due: Vec<[u8; 32]> = endpoints
                 .keys()
                 .filter(|id| {
                     observers.as_ref().is_none_or(|known| {
                         Instant::now() >= known.expires || !known.unavailable.contains(*id)
-                    }) && observation_due(
+                    }) && (observation_due(
                         confirmed.get(*id).copied(),
                         rounds.get(*id).copied(),
                         cadence(id, socket_active(&shared, &pending, id)),
                         Instant::now(),
-                    )
+                    ) || requested
+                        .is_some_and(|at| rounds.get(*id).is_none_or(|round| round.sent < at)))
                 })
                 .copied()
                 .collect();

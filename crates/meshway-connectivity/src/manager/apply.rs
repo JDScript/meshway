@@ -52,6 +52,9 @@ impl Shared {
         if let Ok(mut confirmed) = self.stun_confirmed.lock() {
             confirmed.remove(&id);
         }
+        if let Ok(mut samples) = self.stun_samples.lock() {
+            samples.remove(&id);
+        }
     }
 
     /// Whether a selected channel survives from `previous` to `next`: exact

@@ -17,7 +17,7 @@ pub use io::{
 };
 pub use manager::{
     AdjacencyInterest, Event, Interest, LinkFact, ListenerFact, Manager, SendReceipt, Snapshot,
-    SocketFact,
+    SocketFact, SocketObservation, StunProbe, StunReport, StunSample,
 };
 pub use meshway_policy::admission::Carrier;
 

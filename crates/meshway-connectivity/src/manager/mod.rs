@@ -28,12 +28,14 @@ mod events;
 mod evidence;
 mod facts;
 mod interest;
+mod probe;
 mod resources;
 #[cfg(test)]
 mod tests;
 mod traversal;
 mod workers;
 pub use interest::{AdjacencyInterest, Interest};
+pub use probe::{SocketObservation, StunProbe, StunReport, StunSample};
 
 // Diagnostics only: at most 64 events/second and 32768/process; contention drops
 // a diagnostic rather than delaying an owner or changing a selection decision.
@@ -242,6 +244,10 @@ struct Shared {
     /// Last validated STUN response of each socket, whether or not it changed
     /// the reported mapping: the clock of its observation cadence.
     stun_confirmed: Arc<Mutex<BTreeMap<[u8; 32], tokio::time::Instant>>>,
+    /// Latest validated STUN answer of each socket per observer address.
+    stun_samples: Arc<Mutex<probe::StunSamples>>,
+    /// A local diagnostic asked every traversal socket to observe now.
+    observation_request: Arc<Mutex<Option<tokio::time::Instant>>>,
     /// State socket generation of this Manager's descriptors.
     generation: meshway_model::Sequence,
     traversal_endpoints: Arc<Mutex<BTreeMap<[u8; 32], traversal::Endpoint>>>,
@@ -274,6 +280,8 @@ impl Shared {
             control_budget: self.control_budget.clone(),
             sockets: self.sockets.clone(),
             stun_confirmed: self.stun_confirmed.clone(),
+            stun_samples: self.stun_samples.clone(),
+            observation_request: self.observation_request.clone(),
             generation: self.generation,
             traversal_endpoints: self.traversal_endpoints.clone(),
             resource_changes: self.resource_changes.clone(),
@@ -436,6 +444,8 @@ impl Manager {
             control_budget: Arc::new(Mutex::new(datagram::ControlBudget::new())),
             sockets: Arc::new(Mutex::new(BTreeMap::new())),
             stun_confirmed: Arc::default(),
+            stun_samples: Arc::default(),
+            observation_request: Arc::default(),
             generation,
             traversal_endpoints: Arc::new(Mutex::new(BTreeMap::new())),
             resource_changes: tokio::sync::watch::channel(()).0,

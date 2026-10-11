@@ -1593,6 +1593,8 @@ pub(in crate::manager) mod tests {
             control_budget: Arc::new(Mutex::new(ControlBudget::new())),
             sockets: Arc::new(Mutex::new(BTreeMap::new())),
             stun_confirmed: Arc::default(),
+            stun_samples: Arc::default(),
+            observation_request: Arc::default(),
             generation,
             traversal_endpoints: Arc::new(Mutex::new(BTreeMap::new())),
             resource_changes: tokio::sync::watch::channel(()).0,

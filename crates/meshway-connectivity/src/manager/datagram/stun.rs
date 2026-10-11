@@ -10,6 +10,9 @@ pub(super) struct Pending {
     output: Vec<u8>,
     deadline: Instant,
     retry: Retry,
+    /// When the transaction was last sent, and how often.
+    sent: Option<Instant>,
+    sends: u8,
 }
 
 #[derive(Debug)]
@@ -73,6 +76,8 @@ impl Owner {
                         .ok_or(Error::Limits)?
                         .min(context.expires_at().into()),
                     retry: Retry::due(),
+                    sent: None,
+                    sends: 0,
                 },
             );
         }
@@ -87,6 +92,8 @@ impl Owner {
             if !pending.retry.take(Duration::from_millis(500), MAX_SENDS) {
                 continue;
             }
+            pending.sent = Some(Instant::now());
+            pending.sends = pending.sends.saturating_add(1);
             let lifetime = Arc::new(Lifetime {
                 context: pending.context.clone(),
                 scope: self.lifetime.clone(),
@@ -172,6 +179,24 @@ impl Owner {
         drop(sockets);
         if let Ok(mut confirmed) = self.shared.stun_confirmed.lock() {
             confirmed.insert(self.id, Instant::now());
+        }
+        // A retransmitted transaction has no unambiguous round trip.
+        let rtt = pending
+            .sent
+            .filter(|_| pending.sends == 1)
+            .map(|sent| sent.elapsed());
+        if let Ok(mut samples) = self.shared.stun_samples.lock() {
+            let observers = samples.entry(self.id).or_default();
+            if observers.len() < 8 || observers.contains_key(&remote) {
+                observers.insert(
+                    remote,
+                    crate::manager::StunSample {
+                        mapped: address,
+                        rtt,
+                        at: Instant::now(),
+                    },
+                );
+            }
         }
         self.discovery.remove(&transaction);
         if changed {
