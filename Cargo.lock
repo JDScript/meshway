@@ -1722,7 +1722,7 @@ dependencies = [
 
 [[package]]
 name = "meshway-circuit-perf"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "clap",
  "meshway-dataplane",
@@ -1735,7 +1735,7 @@ dependencies = [
 
 [[package]]
 name = "meshway-cli"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "axum",
  "clap",
@@ -1758,7 +1758,7 @@ dependencies = [
 
 [[package]]
 name = "meshway-configuration"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "ipnet",
  "jsonc-parser",
@@ -1775,7 +1775,7 @@ dependencies = [
 
 [[package]]
 name = "meshway-connectivity"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "chrono",
  "ed25519-dalek",
@@ -1808,7 +1808,7 @@ dependencies = [
 
 [[package]]
 name = "meshway-control"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "axum",
  "base64",
@@ -1839,7 +1839,7 @@ dependencies = [
 
 [[package]]
 name = "meshway-control-client"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "axum",
  "bytes",
@@ -1860,7 +1860,7 @@ dependencies = [
 
 [[package]]
 name = "meshway-crypto-bench"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "blake3",
  "chacha20poly1305 0.10.1",
@@ -1879,7 +1879,7 @@ dependencies = [
 
 [[package]]
 name = "meshway-daemon"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "axum",
  "chrono",
@@ -1915,7 +1915,7 @@ dependencies = [
 
 [[package]]
 name = "meshway-dataplane"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "chrono",
  "ed25519-dalek",
@@ -1950,7 +1950,7 @@ dependencies = [
 
 [[package]]
 name = "meshway-dataplane-perf"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "clap",
  "futures-util",
@@ -1976,7 +1976,7 @@ dependencies = [
 
 [[package]]
 name = "meshway-desired-fixture"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "curve25519-dalek",
  "ed25519-dalek",
@@ -1995,7 +1995,7 @@ dependencies = [
 
 [[package]]
 name = "meshway-dns"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "bytes",
  "getrandom 0.3.4",
@@ -2025,7 +2025,7 @@ dependencies = [
 
 [[package]]
 name = "meshway-engine"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "curve25519-dalek",
  "ed25519-dalek",
@@ -2040,7 +2040,7 @@ dependencies = [
 
 [[package]]
 name = "meshway-logging"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "clap",
  "nix 0.30.1",
@@ -2053,7 +2053,7 @@ dependencies = [
 
 [[package]]
 name = "meshway-model"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "chrono",
  "serde",
@@ -2065,7 +2065,7 @@ dependencies = [
 
 [[package]]
 name = "meshway-netmap-perf"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "clap",
  "meshway-configuration",
@@ -2080,7 +2080,7 @@ dependencies = [
 
 [[package]]
 name = "meshway-packet-fixture"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "clap",
  "getrandom 0.3.4",
@@ -2110,7 +2110,7 @@ dependencies = [
 
 [[package]]
 name = "meshway-policy"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "ipnet",
  "meshway-configuration",
@@ -2123,7 +2123,7 @@ dependencies = [
 
 [[package]]
 name = "meshway-private-storage"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "getrandom 0.3.4",
  "rustix",
@@ -2134,7 +2134,7 @@ dependencies = [
 
 [[package]]
 name = "meshway-protocol"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "chrono",
  "getrandom 0.3.4",
@@ -2153,7 +2153,7 @@ dependencies = [
 
 [[package]]
 name = "meshway-runtime-fixture"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "axum",
  "clap",
@@ -2180,7 +2180,7 @@ dependencies = [
 
 [[package]]
 name = "meshway-server"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "argon2",
  "axum",
@@ -2227,7 +2227,7 @@ dependencies = [
 
 [[package]]
 name = "meshway-stun"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "crc32fast",
  "getrandom 0.3.4",
@@ -2238,7 +2238,7 @@ dependencies = [
 
 [[package]]
 name = "meshway-test-server"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "axum",
  "base64",
@@ -2261,7 +2261,7 @@ dependencies = [
 
 [[package]]
 name = "meshway-transport"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "futures-util",
  "idna",
@@ -2281,7 +2281,7 @@ dependencies = [
 
 [[package]]
 name = "meshway-transport-perf"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "clap",
  "hdrhistogram",
@@ -2297,7 +2297,7 @@ dependencies = [
 
 [[package]]
 name = "meshway-transport-stream"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "bytes",
  "futures-util",
@@ -2320,7 +2320,7 @@ dependencies = [
 
 [[package]]
 name = "meshway-tun"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "thiserror",
  "tokio",
@@ -2329,7 +2329,7 @@ dependencies = [
 
 [[package]]
 name = "meshway-underlay"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "futures-util",
  "getrandom 0.3.4",
