@@ -31,7 +31,7 @@ use crate::{Error, Options, Result};
 #[derive(Clone)]
 pub(super) struct Resolver {
     inner: Option<HickoryResolver<Provider>>,
-    hosts: Arc<Hosts>,
+    hosts: Arc<HostsFile>,
     overrides: Arc<BTreeMap<String, Vec<IpAddr>>>,
     shared: Arc<Shared>,
     scope: ProtectionScope,
@@ -42,14 +42,8 @@ pub(super) struct Resolver {
 
 impl Resolver {
     pub async fn open(shared: Arc<Shared>, options: &Options) -> Result<Self> {
-        let mut hosts = Hosts::default();
-        match read_bounded("/etc/hosts").await {
-            Ok(bytes) => hosts
-                .read_hosts_conf(&bytes[..])
-                .map_err(|_| Error::Resolver)?,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error.into()),
-        }
+        let hosts = HostsFile::new(std::path::PathBuf::from(HOSTS));
+        hosts.current().await?;
         let mut overrides = BTreeMap::new();
         for (name, addresses) in &options.bootstrap_hosts {
             let name =
@@ -133,7 +127,6 @@ impl Resolver {
             config.clone(),
             resolver_options.clone(),
             scope.clone(),
-            hosts.clone(),
             options.connect_timeout,
         )?;
         Ok(Self {
@@ -156,7 +149,6 @@ impl Resolver {
             self.config.clone(),
             self.resolver_options.clone(),
             scope.clone(),
-            self.hosts.clone(),
             self.timeout,
         )?;
         Ok(Self {
@@ -185,13 +177,14 @@ impl Resolver {
                 .collect());
         }
         let name = hickory_proto::rr::Name::from_ascii(&host).map_err(|_| Error::Resolver)?;
+        let hosts = self.hosts.current().await?;
         let mut addresses = Vec::new();
         for ty in [
             hickory_proto::rr::RecordType::A,
             hickory_proto::rr::RecordType::AAAA,
         ] {
             let query = hickory_proto::op::Query::query(name.clone(), ty);
-            if let Some(answer) = self.hosts.lookup_static_host(&query) {
+            if let Some(answer) = hosts.lookup_static_host(&query) {
                 for record in answer.answers() {
                     match &record.data {
                         hickory_proto::rr::RData::A(a) => {
@@ -227,7 +220,6 @@ fn build(
     config: Option<ResolverConfig>,
     options: ResolverOpts,
     scope: ProtectionScope,
-    hosts: Arc<Hosts>,
     timeout: Duration,
 ) -> Result<Option<HickoryResolver<Provider>>> {
     config
@@ -250,13 +242,77 @@ fn build(
             let mut builder = HickoryResolver::builder_with_config(config, provider);
             *builder.options_mut() = options;
             let mut resolver = builder.build().map_err(|_| Error::Resolver)?;
-            resolver.set_hosts(hosts);
+            // System hosts are answered above from the current file only;
+            // the upstream resolver never holds a copy that could go stale.
+            resolver.set_hosts(Arc::new(Hosts::default()));
             Ok(resolver)
         })
         .transpose()
 }
 
-async fn read_bounded(path: &str) -> io::Result<Vec<u8>> {
+const HOSTS: &str = "/etc/hosts";
+
+/// The system hosts file as it is now: every lookup compares the file's
+/// identity and change times and re-reads it when they differ, so editing
+/// `/etc/hosts` needs no service restart.
+struct HostsFile {
+    path: std::path::PathBuf,
+    current: std::sync::Mutex<(Option<HostsStamp>, Arc<Hosts>)>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct HostsStamp {
+    device: u64,
+    inode: u64,
+    size: u64,
+    modified: (i64, i64),
+    changed: (i64, i64),
+}
+
+impl HostsFile {
+    fn new(path: std::path::PathBuf) -> Self {
+        Self {
+            path,
+            current: std::sync::Mutex::new((None, Arc::new(Hosts::default()))),
+        }
+    }
+
+    async fn current(&self) -> Result<Arc<Hosts>> {
+        use std::os::unix::fs::MetadataExt;
+        let stamp = match tokio::fs::metadata(&self.path).await {
+            Ok(meta) => Some(HostsStamp {
+                device: meta.dev(),
+                inode: meta.ino(),
+                size: meta.size(),
+                modified: (meta.mtime(), meta.mtime_nsec()),
+                changed: (meta.ctime(), meta.ctime_nsec()),
+            }),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error.into()),
+        };
+        {
+            let current = self.current.lock().map_err(|_| Error::Worker)?;
+            if current.0 == stamp {
+                return Ok(current.1.clone());
+            }
+        }
+        let mut hosts = Hosts::default();
+        if stamp.is_some() {
+            match read_bounded(&self.path).await {
+                Ok(bytes) => hosts
+                    .read_hosts_conf(&bytes[..])
+                    .map_err(|_| Error::Resolver)?,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        let hosts = Arc::new(hosts);
+        *self.current.lock().map_err(|_| Error::Worker)? = (stamp, hosts.clone());
+        Ok(hosts)
+    }
+}
+
+async fn read_bounded(path: impl AsRef<std::path::Path>) -> io::Result<Vec<u8>> {
     let file = tokio::fs::File::open(path).await?;
     let mut bytes = Vec::new();
     file.take(65537).read_to_end(&mut bytes).await?;
@@ -397,5 +453,56 @@ impl futures_util::io::AsyncWrite for DnsTcp {
     }
     fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         futures_util::io::AsyncWrite::poll_close(Pin::new(&mut self.get_mut().0), cx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn addresses(hosts: &HostsFile, name: &str) -> Vec<IpAddr> {
+        let query = hickory_proto::op::Query::query(
+            hickory_proto::rr::Name::from_ascii(name).unwrap(),
+            hickory_proto::rr::RecordType::A,
+        );
+        hosts
+            .current()
+            .await
+            .unwrap()
+            .lookup_static_host(&query)
+            .map(|answer| {
+                answer
+                    .answers()
+                    .iter()
+                    .filter_map(|record| match &record.data {
+                        hickory_proto::rr::RData::A(a) => Some(IpAddr::V4(a.0)),
+                        _ => None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    #[tokio::test]
+    async fn every_lookup_sees_the_hosts_file_as_it_is_now() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("hosts");
+        let hosts = HostsFile::new(path.clone());
+        assert!(addresses(&hosts, "server.example").await.is_empty());
+        std::fs::write(&path, "192.0.2.1 server.example\n").unwrap();
+        assert_eq!(
+            addresses(&hosts, "server.example").await,
+            ["192.0.2.1".parse::<IpAddr>().unwrap()]
+        );
+        // Same size, replaced atomically: a new inode and change time.
+        let next = root.path().join("hosts.next");
+        std::fs::write(&next, "192.0.2.2 server.example\n").unwrap();
+        std::fs::rename(&next, &path).unwrap();
+        assert_eq!(
+            addresses(&hosts, "server.example").await,
+            ["192.0.2.2".parse::<IpAddr>().unwrap()]
+        );
+        std::fs::remove_file(&path).unwrap();
+        assert!(addresses(&hosts, "server.example").await.is_empty());
     }
 }
