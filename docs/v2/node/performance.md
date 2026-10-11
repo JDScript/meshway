@@ -123,7 +123,7 @@ mise run perf:dataplane -- --modes secure-relay manager-relay \
 | `--traffic tcp udp` | 默认 TCP 后 UDP；可单选；TCP 单流，`--tcp-streams 1–128` 可并行，UDP 始终一条流 |
 | `--workers 0–256` | 默认 0 inline，与正式 Pool 一致；[策略依据](#有界输出队列实测) |
 | `--cpus`／`--memory` | 每容器配额，默认 2／512m；不等于独占核 |
-| `--mtu`／`--payload` | harness MTU 1280–1472，默认 1400；UDP payload 默认 1200，IPv4/UDP 另占 28 B；TCP 应用块不等于实际分段 |
+| `--mtu`／`--payload` | harness MTU 1280–1386（外层 veth 1500 − IPv4/UDP 28 − v6 Data 开销 86），默认 1280（与 CI 一致）；UDP payload 默认 1200，IPv4/UDP 另占 28 B；TCP 应用块不等于实际分段 |
 | `--batch` | 每方向一轮立即就绪上限 1–1024，实际 secure／manager 至多 32；不等待凑批 |
 | `--udp-buffer` | 默认 0 使用正式 provider；非零仅改变 L3 双方向 socket 请求，不改 Manager／plain |
 | `--flow-idle-seconds` | fixture 默认 60；长窗口可显式提高，不能用读取延长 flow／授权，也不改 daemon 默认 |
@@ -157,7 +157,9 @@ iperf TCP 控制流与 UDP 负载使用精确 5201 demand，启动前建立 Nois
 
 ### L4 Manager 边界
 
-Manager 复用上述驱动与静态签发，经过正式 `Host::open/install`、capture／epoch 和受保护 SocketFactory；data scope 匹配真实安装，不借 bootstrap 绕过。固定 Native UDP endpoint 经真实编译，执行邻接认证、选择、健康与 scope；发送走 Manager，接收走真实事件队列，持续更新实际 carrier，旧输出不换绑。各节点使用 Host capture，R 保有 capture 但不读本机业务／交付明文（`captureTun` 有值，业务 `tun=null`）。不含 Server／Control I/O、自动 demand、DNS、安装协调，这些属于 L5。
+Manager 复用上述驱动与静态签发，经过正式 `Host::open/install`、capture 和受保护 SocketFactory；data scope 匹配真实安装，不借 bootstrap 绕过。固定 Native UDP endpoint 经真实编译，执行邻接认证、选择、健康与 scope；发送走 Manager，接收走真实事件队列，持续更新实际 carrier，旧输出不换绑。各节点使用 Host capture，R 保有 capture 但不读本机业务／交付明文（`captureTun` 有值，业务 `tun=null`）。不含 Server／Control I/O、自动 demand、DNS、安装协调，这些属于 L5。
+
+fixture 的 topology 把被测路径的每条边（A–B 或 A–R、R–B）声明为 `keepalive: true`，Manager 按[常驻规则](/v2/configuration-reference/topology#邻接的建立与常驻)在启动时建立并保持邻接；fixture 在全部邻接出现后才发起 circuit 握手。daemon 对双向可拨边的首包 interest／中继 hint 按需获取不在本层测量，邻接获取延迟不计入任何样本。
 
 ### 内核 WireGuard 参照
 
@@ -174,6 +176,7 @@ WireGuard relay 解密 IP、routing 后再加密；Meshway relay 不解密业务
 | `results.json`／`bin/` | schemaVersion、revision／dirty、源码 digest 首尾、工具链／平台／flags、二进制 SHA256、参数、不可变二进制与逐次样本 |
 | `summary.md` | 成功样本中位数，按 mode／batch／profile／traffic；L2→L3、secure−WG 同组差值；失败数量、quick 标记 |
 | `<sample>/{a,r,b}.stdout/.stderr` | readiness、日志、原始 profile；raw/WG 无 node 进程 |
+| `failure`／`nodeExitCodes`／`processLogs` | 失败样本的原因、各 node 退出码，以及每个角色 stdout／stderr 的有界尾部（至多 40 行／16 KiB，去掉 profile 快照）；仅失败样本有 `processLogs`，使只收 `results.json` 的 artifact 也保留 node 自己的错误；成功样本不附带日志 |
 | `iperf-client.json`／`iperf-server.json` | 原始应用结果，旁边 stderr 保留失败原因 |
 | `goodputMbps` | 接收端实际应用 payload，不含封装；iperf 排除 warmup 区间 |
 | `packetsPerSecond`／`lostPercent` | UDP 实交付报文/s／丢包；TCP pps 为 null，不按假定包长倒算 |
@@ -206,7 +209,7 @@ profile 开关分组，正式吞吐取 0。TCP checkpoint、UDP 停止并 join �
 
 ## 当前结论
 
-以下各表统一保留指定最终报告，不能跨运行择优拼接。环境／实现不同的行不是配对 A/B。OrbStack 为 aarch64 kernel `7.0.14-orbstack-00380-ga7e0a2dc9535`、Ubuntu24.04、iperf3 3.16、Rust1.98／Zig0.17／cargo-zigbuild0.23.4、Linux musl；Planck 为 AMD Ryzen9 9950X／kernel6.8／Docker29.8，多用户共享。L2–L4 通常每容器2 CPU／512 MiB、MTU1280、payload1200；UDP输入率和成功数另列。
+以下各表统一保留指定最终报告，不能跨运行择优拼接。环境／实现不同的行不是配对 A/B。OrbStack 为 aarch64 kernel `7.0.14-orbstack-00380-ga7e0a2dc9535`、Ubuntu24.04、iperf3 3.16、Rust1.98／Zig0.17／cargo-zigbuild0.23.4、Linux musl；Planck 为 AMD Ryzen9 9950X／kernel6.8／Docker29.8，多用户共享；CI x86_64 为 `perf.yml` 自托管 runner（AMD EPYC 7543，kernel 6.8，构建在 tmpfs），UDP 2G 输入下约 208k pps 为输入率上限而非容量。L2–L4 通常每容器2 CPU／512 MiB、MTU1280、payload1200；UDP输入率和成功数另列。
 
 ### L0 最终同步矩阵
 
@@ -240,6 +243,8 @@ OrbStack 同轮 raw 自身丢包27.39%，不能把全部 UDP 丢包归给转发�
 | L3 OrbStack 2 CPU relay | 1,653.76 | 49,612 | 500M，2/2 | `20261007t204126z-cbe7469c`，inline／mimalloc |
 | L3 Planck 2 CPU direct | 2,292 | 199,927 | 2G，2/2 | `planck-20261007t070435z-a3f07ece` |
 | L3 Planck 2 CPU relay | 2,127 | 195,072 | 2G，2/2 | 同上 |
+| L3 CI x86_64 2 CPU direct（`2254d0f9`，wire 6／netmap） | 2,705／2,705 | 208,262／208,313 | 2G，2/2，丢包 ≤0.03% | `perf-38143155889`／`20261011t133440z-e33c27b2` |
+| L3 CI x86_64 2 CPU relay（同上） | 2,637／2,590 | 208,334／208,218 | 2G，2/2，丢包 ≤0.05% | 同上 |
 
 P 两核报告10/12成功，relay与plain UDP各一次严格接收账本失败；历史relay为1,482.99 Mbps／96,874 pps（UDP仅一次成功）。direct在其窗口达到1 Gbps／100k pps，但2G有丢包，不是无损容量。P的四核完整矩阵12/12成功，direct为1,675.20 Mbps／139,511 pps、relay为1,427.12／95,674；配额增大不等于专用核。新relay使用500M输入，不能以49,612 pps解释为容量回退。
 
@@ -252,6 +257,7 @@ Planck使用旧`5a30247d`及1 worker，L3 direct／relay RTT4.3／2.9 ms、重�
 | OrbStack 2 CPU direct | 1,468.05 | 49,025 | 500M，2/2 | `20261007t112743z-6f3b2103`，历史Y |
 | OrbStack 2 CPU relay | **1,628.89** | 48,034 | 500M，2/2 | `20261007t204126z-cbe7469c`，inline／mimalloc |
 | Planck | 未测 | 未测 | 未测 | 不用L3推算 |
+| CI x86_64 2 CPU relay（`2254d0f9`，wire 6／netmap） | 2,422／2,386 | 207,690／208,242 | 2G，2/2，丢包 0.30%／0.05% | `perf-38143155889`／`20261011t133440z-e33c27b2`；同轮 L3 relay 2,637／2,590，L4/L3 TCP 逐重复 **0.918×／0.921×** |
 
 最终relay报告使用源码`a549bdba`，固定binary `ff48e9332c727ab7be5dcea93dbb5646ff35c9122717e9a70d5a7521e310dd61`，源码digest首尾一致。命令为上方正式配对参数另加 **`--batch 32 --allocator mimalloc`**；其他参数不变。8/8成功，L4/L3 TCP中位数比 **0.985×**，逐重复配对为 **0.968×／1.002×**，均达到≥0.9目标。L3／L4 TCP cgroup CPU为234.60%／257.38%，全部TCP重传0；RTT分别17.43／22.91 ms和16.47／15.69 ms，仍不构成低延迟验收。UDP丢包分别4.71%／7.74%，不是无损容量。最高节点RSS为24.45／30.82 MiB，全部OOM事件为0。
 

@@ -6,7 +6,7 @@ import tempfile
 from unittest.mock import patch
 from types import SimpleNamespace
 
-from perf.dataplane import MODES, configurations, image_for, last_profile, namespace_options, network_counters, network_delta, parse_args, profile_delta, receiver_metrics, summary, thread_delta, wireguard_transfers
+from perf.dataplane import MODES, configurations, image_for, last_profile, namespace_options, network_counters, network_delta, parse_args, process_log_tail, profile_delta, receiver_metrics, summary, thread_delta, wireguard_transfers
 
 
 class DataplaneReportTests(unittest.TestCase):
@@ -45,6 +45,18 @@ class DataplaneReportTests(unittest.TestCase):
         self.assertEqual(delta["interfaces"]["tun0"]["rxDropped"], 0)
         self.assertEqual(before["sockets"], "socket memory")
         self.assertEqual(before["udpTable"], "socket drops")
+
+    def test_icmp_types_first_seen_after_the_run_count_from_zero(self):
+        snmp_before = "IcmpMsg: InType8 OutType0\nIcmpMsg: 1 1\nUdp: InDatagrams\nUdp: 5"
+        snmp_after = "IcmpMsg: InType3 InType8 OutType0\nIcmpMsg: 4 1 1\nUdp: InDatagrams\nUdp: 9"
+        dev = "header\nheader\n eth0: 1 1 0 0 0 0 0 0 1 1 0 0 0 0 0 0"
+        with patch("perf.dataplane.command", side_effect=[snmp_before, dev, "", "", snmp_after, dev, "", ""]):
+            delta = network_delta(network_counters("owned"), network_counters("owned"))
+        self.assertEqual(delta["protocols"]["IcmpMsg"], {"InType3": 4, "InType8": 0, "OutType0": 0})
+        self.assertEqual(delta["protocols"]["Udp"]["InDatagrams"], 4)
+        after = {"protocols": {"Udp": {"InDatagrams": 1, "NewColumn": 1}}, "interfaces": {}}
+        with self.assertRaises(KeyError):
+            network_delta({"protocols": {"Udp": {"InDatagrams": 0}}, "interfaces": {}}, after)
 
     def test_misaligned_kernel_counter_headers_are_rejected(self):
         with patch("perf.dataplane.command", side_effect=["Udp: InErrors\nTcp: 1", "header\nheader"]):
@@ -110,6 +122,22 @@ class DataplaneReportTests(unittest.TestCase):
             path.write_text("\n".join(json.dumps({"fields": {"metrics_json": json.dumps(value)}})
                                       for value in ([{"calls": 10}], [{"calls": 20}])) + "\n")
             self.assertEqual(last_profile(path), [{"calls": 20}])
+
+    def test_failed_sample_log_tail_is_bounded_and_keeps_the_node_error(self):
+        with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parent) as directory:
+            path = Path(directory) / "r.stderr"
+            lines = [json.dumps({"fields": {"metrics_json": "[]"}})] + [f"event {i}" for i in range(100)]
+            path.write_text("\n".join(lines + ["Error: Elapsed(())"]) + "\n")
+            tail = process_log_tail(path)
+            self.assertEqual(len(tail), 40)
+            self.assertEqual(tail[-1], "Error: Elapsed(())")
+            self.assertEqual(tail[0], "event 61")
+            self.assertFalse(any("metrics_json" in line for line in tail))
+            path.write_text("x" * 20000 + "\nlast\n")
+            tail = process_log_tail(path, limit=100)
+            self.assertEqual(tail[-1], "last")
+            self.assertLessEqual(sum(len(line) for line in tail), 102)
+            self.assertIsNone(process_log_tail(Path(directory) / "missing.stderr"))
 
     def test_failed_delivery_is_not_a_zero_or_successful_repeat(self):
         common = dict(mode="plain", batch=32, profile=0, traffic="udp")
