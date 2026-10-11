@@ -28,8 +28,9 @@ pub(super) fn sysctl(path: impl AsRef<std::path::Path>) -> Result<u32, Failure> 
     text.trim().parse().map_err(|_| Failure::Malformed)
 }
 
-/// Reverse-path filtering for one interface against `all`: strict filtering
-/// (1) on either is a conflict; values outside the kernel's range are invalid.
+/// Reverse-path filtering for one interface: the kernel applies the maximum of
+/// `all` and the interface value, so strict (1) only wins when neither is loose
+/// (2); values outside the kernel's range are invalid.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ReversePath {
     Usable,
@@ -189,7 +190,10 @@ mod tests {
     fn reverse_path_classification() {
         assert_eq!(reverse_path(0, 2, 0, 1), ReversePath::Usable);
         assert_eq!(reverse_path(1, 0, 0, 0), ReversePath::Strict);
-        assert_eq!(reverse_path(2, 1, 0, 0), ReversePath::Strict);
+        assert_eq!(reverse_path(0, 1, 0, 0), ReversePath::Strict);
+        // The kernel takes max(all, interface): loose on either side overrides strict.
+        assert_eq!(reverse_path(2, 1, 0, 0), ReversePath::Usable);
+        assert_eq!(reverse_path(1, 2, 0, 0), ReversePath::Usable);
         assert_eq!(reverse_path(3, 0, 0, 0), ReversePath::Invalid);
         assert_eq!(reverse_path(0, 0, 2, 0), ReversePath::Invalid);
     }
