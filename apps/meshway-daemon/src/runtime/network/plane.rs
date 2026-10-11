@@ -119,7 +119,14 @@ impl Plane {
         ))
     }
 
+    #[track_caller]
     fn fail(&mut self, problem: Problem, failure: ApplyFailure) -> Error {
+        tracing::debug!(
+            ?problem,
+            ?failure,
+            at = %std::panic::Location::caller(),
+            "Component apply failed"
+        );
         self.failure = Some((problem, failure));
         Error::Apply
     }

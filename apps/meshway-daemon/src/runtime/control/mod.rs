@@ -549,15 +549,21 @@ async fn session(
                     None,
                     None,
                 ),
-                Ok(Online::Ready) => publish(
-                    reported,
-                    plan,
-                    Some(&driver),
-                    Phase::ControlReady,
-                    None,
-                    None,
-                    None,
-                ),
+                Ok(Online::Ready) => {
+                    publish(
+                        reported,
+                        plan,
+                        Some(&driver),
+                        Phase::ControlReady,
+                        None,
+                        None,
+                        None,
+                    );
+                    // The session's sync forwards verified netmaps straight to
+                    // Engine: its packet keys and instance (first known after
+                    // enrollment/authentication) must already be there.
+                    offer(&driver, network.as_deref());
+                }
                 Ok(Online::Restart) => {}
                 Err(error) => {
                     let delay = error
