@@ -3,6 +3,8 @@
 **/node_modules/
 **/out/
 **/dist/
+# Root dist/ holds the shipped systemd unit and installer, not build output.
+!/dist/
 **/.vitepress/cache/
 **/.vitepress/dist/
 **/*.tsbuildinfo

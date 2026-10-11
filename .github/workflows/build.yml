@@ -12,6 +12,8 @@ on:
       - "apps/meshway-cli/**"
       - ".github/workflows/build.yml"
   workflow_dispatch:
+  # Release reuses exactly this build for the tagged commit.
+  workflow_call:
 
 # Runners may carry a personal global mise config; the project lockfile is the only tool source.
 env:
@@ -34,6 +36,11 @@ jobs:
       CARGO_INCREMENTAL: "0"
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Tags make `meshway version` report a git description, not a bare hash.
+          fetch-depth: 0
+      - name: Record git description
+        run: echo "MESHWAY_GIT_DESCRIBE=$(git describe --tags --always --dirty --abbrev=8)" >> "$GITHUB_ENV"
       - uses: jdx/mise-action@v4
         with:
           version: 2026.8.14

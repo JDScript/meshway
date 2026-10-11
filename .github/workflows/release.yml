@@ -1,0 +1,103 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+# Runners may carry a personal global mise config; the project lockfile is the only tool source.
+env:
+  MISE_GLOBAL_CONFIG_ROOT: /nonexistent
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    # The tag must name the workspace version exactly, and the changelog must
+    # carry a section for it; nothing is built otherwise.
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 5
+    outputs:
+      prerelease: ${{ steps.check.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: check
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -eu
+          version=$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"$/\1/p' Cargo.toml)
+          test -n "$version" || { echo "no [workspace.package] version in Cargo.toml"; exit 1; }
+          test "$TAG" = "v$version" || { echo "tag $TAG does not match workspace version $version (expected v$version)"; exit 1; }
+          grep -qxF "## $TAG" docs/v2/changelog.md || { echo "docs/v2/changelog.md has no '## $TAG' section"; exit 1; }
+          case $version in *-*) echo prerelease=true ;; *) echo prerelease=false ;; esac >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: version
+    uses: ./.github/workflows/build.yml
+
+  publish:
+    needs: [version, build]
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: node-*-${{ github.sha }}
+          path: artifacts
+      - name: Package release assets
+        run: |
+          set -eu
+          mkdir -p release
+          for target in x86_64-unknown-linux-musl aarch64-unknown-linux-musl; do
+            stage=$(mktemp -d)
+            cp "artifacts/node-$target-$GITHUB_SHA/meshwayd" "artifacts/node-$target-$GITHUB_SHA/meshway" "$stage/"
+            cp dist/systemd/meshwayd.service "$stage/"
+            chmod 0755 "$stage/meshwayd" "$stage/meshway"
+            chmod 0644 "$stage/meshwayd.service"
+            tar --owner=0 --group=0 --numeric-owner --sort=name --mtime="@$(git log -1 --format=%ct)" \
+              -C "$stage" -czf "release/meshway-$target.tar.gz" meshwayd meshway meshwayd.service
+            rm -rf "$stage"
+          done
+          cp dist/install.sh release/install.sh
+          (cd release && sha256sum -- * > SHA256SUMS)
+          # The x86_64 CLI runs here: its reported version must be the tag.
+          dir=$(mktemp -d)
+          tar -xzf release/meshway-x86_64-unknown-linux-musl.tar.gz -C "$dir" meshway
+          reported=$("$dir/meshway" version | sed -n '1s/^meshway \([^ ]*\) .*/\1/p')
+          test "v$reported" = "$TAG" || { echo "built CLI reports $reported, tag is $TAG"; exit 1; }
+          "$dir/meshway" version
+          rm -rf "$dir"
+          {
+            echo "## Release assets"
+            echo '```'
+            cat release/SHA256SUMS
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Release notes from the changelog
+        run: |
+          set -eu
+          awk -v heading="## $TAG" '$0 == heading { keep = 1; next } keep && /^## / { exit } keep' docs/v2/changelog.md > release-notes.md
+          grep -q . release-notes.md || { echo "empty changelog section for $TAG"; exit 1; }
+          # Site-relative doc links point at the tagged sources on GitHub.
+          sed -i -E "s|\]\(/v2/([^)#]*)(#[^)]*)?\)|](https://github.com/$GITHUB_REPOSITORY/blob/$TAG/docs/v2/\1.md\2)|g" release-notes.md
+          printf '\nInstall: see `docs/v2/install.md`. Verify assets with `sha256sum -c SHA256SUMS`.\n' >> release-notes.md
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          body_path: release-notes.md
+          draft: false
+          prerelease: ${{ needs.version.outputs.prerelease == 'true' }}
+          fail_on_unmatched_files: true
+          files: |
+            release/meshway-x86_64-unknown-linux-musl.tar.gz
+            release/meshway-aarch64-unknown-linux-musl.tar.gz
+            release/install.sh
+            release/SHA256SUMS
