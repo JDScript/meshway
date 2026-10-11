@@ -35,7 +35,7 @@
 | [常驻三节点 lab](/v2/node/docker-lab) | Native UDP 显式端点 | resolved | — | 六向双栈系统解析／echo、路径诊断、关闭插桩的同路径 TCP 吞吐对照 | 未验收（当前整组）；2026-10-07 已有下述 L5 局部证据；共享 bridge 不构成 NAT 证明 |
 | `validate:matrix --rows exit/off` | Native UDP；声明 Native TCP 能力 | off；独立 resolved 后端 | IPv4 出口 masquerade | A→R→E；能力／安装、公网与 LAN、长流／仅接收、撤回、HTTP 中断内离线出口与租约到期全撤／恢复、journal | 当前 wire 已通过（两次全长）；Planck `20261010T160621Z-de9a2fae`、矩阵 `20261010T162437Z-4bbe5e35` 行 `20261010T162742Z-e9ed64a0`，见[出口场景](#exit-scenario) |
 
-以下范围未验收：外层 IPv6 NAT、端点相关映射、映射轮换、NAT 与 resolv-conf 的组合、VLESS WS/TLS 承载上的 daemon 包流、TLS／WS 材料轮换、多路径切换、出口 DNS／resolver、出口 IPv6、完整 TCP conntrack、动态 MTU／路径 MTU 发现及分片重组、整机重启与系统 resolver 服务停机间隙、userspace／SOCKS5。
+以下范围未验收：外层 IPv6 NAT、端点相关映射、映射轮换、NAT 与 resolv-conf 的组合、VLESS WS/TLS 承载上的 daemon 包流、TLS／WS 材料轮换、多路径切换、出口 DNS／resolver、出口 IPv6、完整 TCP conntrack、动态 MTU／路径 MTU 发现及分片重组、userspace／SOCKS5。整机重启与系统 resolver 服务间隙不属于隔离矩阵，由系统服务安装单独实测：重启（含 Server 不可达）通过，systemd-resolved 重启／停机后不恢复，见 [Linux 安装与系统服务](/v2/install#验收记录)。
 
 常驻 lab 的 L5 原始证据目录为 `.meshway/perf/l5/20261007T162418Z-main-f39ba2b6-2cpu/`。该目录的两次 TCP 接收吞吐分别约 318／364 Mbps；协调者另报告空闲宿主复测 1,367 Mbps，独立报告路径待补，不能把该数值归入前述目录或用吞吐局部证据替代整组验收。
 

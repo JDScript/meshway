@@ -1,0 +1,74 @@
+---
+title: Download and install
+description: Install a Meshway node as a systemd service on Linux, then upgrade or remove it.
+---
+
+## Requirements
+
+- Linux on x86_64 or aarch64 with systemd; root access.
+- `/dev/net/tun`.
+- The default system DNS attachment needs a running systemd-resolved with `/etc/resolv.conf` pointing at its stub (the Ubuntu default).
+- A reachable server address (HTTPS).
+
+## Download
+
+Each version is published on GitHub Releases:
+
+| File | Contents |
+| --- | --- |
+| `meshway-x86_64-unknown-linux-musl.tar.gz` | `meshwayd`, `meshway` and `meshwayd.service` for x86_64 |
+| `meshway-aarch64-unknown-linux-musl.tar.gz` | The same files for aarch64 |
+| `install.sh` | Install, upgrade and uninstall script |
+| `SHA256SUMS` | SHA-256 of the files above |
+
+The programs are statically linked and need no distribution libraries. The current version is the pre-release `v0.1.0-alpha.1`.
+
+## Install
+
+```sh
+curl -fsSLO https://github.com/JDScript/meshway/releases/download/v0.1.0-alpha.1/install.sh
+sudo sh install.sh --version v0.1.0-alpha.1 --server https://your-server
+```
+
+The script downloads the file for this machine's architecture, checks it against `SHA256SUMS`, installs the programs into `/usr/local/bin`, and installs and starts the `meshwayd` service. To install a file you already downloaded, use `--artifact ./meshway-<arch>.tar.gz`; a `SHA256SUMS` in the same directory is checked.
+
+Then join a network, see the [quickstart](/en/docs/quickstart):
+
+```sh
+sudo meshway up --enrollment-key @/root/enrollment-key
+sudo meshway status
+```
+
+The service starts at boot. A node that was up before a reboot comes back by itself, without another `up`; if the server is briefly unreachable, the node keeps working within the validity of the configuration it last received.
+
+## Check and logs
+
+```sh
+meshway version
+systemctl status meshwayd
+journalctl -u meshwayd -f
+```
+
+`meshway version` shows the program and protocol versions; nodes in one network should run the same version.
+
+## Upgrade
+
+Run the script again with the new version. It replaces the programs and restarts the service; the node's identity and up/down state are kept:
+
+```sh
+sudo sh install.sh --version v0.1.1
+```
+
+Running the same version again does not restart the service.
+
+## Uninstall
+
+```sh
+sudo sh install.sh --uninstall
+```
+
+Uninstalling first runs `meshway down` to remove the node's local network settings, then removes the service and the programs. The node identity stays in `/var/lib/meshway`, so a reinstall is the same node. `--purge` also deletes the identity and settings; the node must then join again.
+
+## Known limitation
+
+Restarting or stopping systemd-resolved stops the node's networking and it does not recover by itself; reboot the machine. Avoid restarting systemd-resolved on its own while the node is running.

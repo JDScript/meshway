@@ -47,6 +47,10 @@ install -d -m 700 .meshway
 
 默认目录适用于 Linux 系统服务；本地开发或其他 Unix 环境可像示例一样显式指定私有目录。安装参数不构成本机业务配置覆盖源。
 
+### 系统服务
+
+Linux 发行包以 systemd 服务 `meshwayd.service` 运行：`Type=notify`，daemon 在本机 IPC socket 绑定后发送 `READY=1`、开始停止时发送 `STOPPING=1`（`NOTIFY_SOCKET` 不存在时不发送，前台与容器运行不受影响）；状态目录 `/var/lib/meshway`、运行目录 `/run/meshway`（跨 daemon 重启保留），日志为 journald 中的 JSON。`meshway version` 输出程序版本、git 描述、IPC、circuit wire 与 netmap 编译契约版本，不联系 daemon。安装、unit 取值、升级、卸载与重启／resolver 间隙实测见 [Linux 安装与系统服务](/v2/install)。
+
 daemon／CLI 共用[运行日志参数](/v2/logging)，日志位于 stderr；CLI 的 `--json` 状态结果位于 stdout。
 
 本机多节点开发使用[三节点 Docker 环境](/v2/node/docker-lab)，统一投放预编译程序，并为每个 Node 保留独立状态卷。
@@ -204,7 +208,7 @@ ready／applied 只表示该目标的本机安装结果，不表示 peer 已建�
 
 ## CLI 与 IPC
 
-Linux 首版每台机器运行一个系统级 `meshwayd`，同一时间只启用一张网络。CLI 连接该服务；不为每个本机用户创建独立 daemon 或自动复制 Node 身份。当前使用 owner-only 目录与 `0600` socket，在解析请求前后核验内核提供的 peer UID，只允许 root 或 daemon 同 UID。更细的操作员授权与系统服务安装策略仍待实现。
+Linux 首版每台机器运行一个系统级 `meshwayd`，同一时间只启用一张网络。CLI 连接该服务；不为每个本机用户创建独立 daemon 或自动复制 Node 身份。当前使用 owner-only 目录与 `0600` socket，在解析请求前后核验内核提供的 peer UID，只允许 root 或 daemon 同 UID。系统服务安装见 [Linux 安装与系统服务](/v2/install)；更细的操作员授权仍待实现。
 
 | 命令／操作 | 行为／状态 |
 | --- | --- |
@@ -214,6 +218,7 @@ Linux 首版每台机器运行一个系统级 `meshwayd`，同一时间只启用
 | `meshway down` | 停止当前网络并终止相关资格；daemon 与私有身份保留 |
 | `meshway ping <target>` | 获准的端到端 Mesh 探测；参数、授权与输出见[路径诊断](/v2/node/diagnostics) |
 | `meshway status` | 区分进程、控制联系、saved／applied 和实际通道状态 |
+| `meshway version` | 程序与协议版本（`--json` 可用）；不连接 daemon |
 | 切网 | 尚未实现；先停止旧网络、完成隔离清理，再运行新网络 |
 
 CLI 通过 Unix domain socket 发命令、读结果；状态由 daemon／组件的唯一 owner 持有。`meshway_protocol::ipc` 是唯一的请求／响应定义，当前版本为 5，使用 JSON 与长度前缀，单条消息上限 64 KiB。`exit` 为新增可省略字段，保留版本 5；CLI 和 daemon 仍同版本发布。每个连接处理一个请求，Ping 可返回有序的多个事件；连接数、请求等待、写入和队列均有上限。`Up` 的 `enrollmentKey` 可省略；`Up`／`Down`／`RotateKey` 的 `expectedRevision` 由 CLI 读取后提交，换钥不会绕过本机 CAS。

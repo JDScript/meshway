@@ -7,7 +7,7 @@ description: 从接入第一台 Linux 节点，到检查两台节点之间的 Me
 
 你需要可登录的 Meshway 控制台，以及一台已准备好 `meshwayd` 守护进程和 `meshway` CLI 的 Linux 主机。检查两台设备之间的通信时，需要第二台 Linux 主机。
 
-请由主机运维准备并启动 daemon：明确指定服务端地址，使用默认的 `tun` 网络模式，并具备 TUN、路由和所需系统 DNS 资源的权限。CLI 与 daemon 应使用同一版本。当前控制台不提供二进制安装脚本。
+请由主机运维准备并启动 daemon：明确指定服务端地址，使用默认的 `tun` 网络模式，并具备 TUN、路由和所需系统 DNS 资源的权限。CLI 与 daemon 应使用同一版本。安装方法见[下载与安装](/docs/install)。
 
 以下命令连接默认 socket。使用自定义数据目录时，在命令中添加 `--socket /你的目录/control.sock`。运行 CLI 的用户须为 root 或 daemon 的同一用户。
 

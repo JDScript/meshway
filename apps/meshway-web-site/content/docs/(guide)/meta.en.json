@@ -2,5 +2,5 @@
   "title": "User guide",
   "description": "Concepts, quickstart and guides",
   "root": true,
-  "pages": ["index", "quickstart", "concepts", "console", "cli"]
+  "pages": ["index", "quickstart", "install", "concepts", "console", "cli"]
 }

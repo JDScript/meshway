@@ -2,6 +2,16 @@
 
 按合入 main 的顺序记录工作包、提交与证据 ID。规则见[工程流程](/v2/process)；性能数字的口径见[分层性能测量](/v2/node/performance)，验收状态见[验收范围](/v2/node/validation)。
 
+## v0.1.0-alpha.1
+
+首个 Linux 预发布，用于验证发布与安装流程，不承诺兼容性。
+
+- 产物：`meshway-x86_64-unknown-linux-musl.tar.gz`、`meshway-aarch64-unknown-linux-musl.tar.gz`（`meshwayd`、`meshway`、`meshwayd.service`），`install.sh`，`SHA256SUMS`。
+- 安装：`install.sh` 校验并安装为 systemd 服务（`Type=notify`、capability 限于 NET_ADMIN／NET_RAW／NET_BIND_SERVICE／SYS_PTRACE、`ProtectSystem=strict`），支持 `--version`、`--artifact`、`--uninstall [--purge]`；见 [Linux 安装与系统服务](/v2/install)。
+- 新命令 `meshway version`：程序版本、git 描述、IPC 6、circuit wire 6、`meshway-netmap-1`。
+- 范围：Linux Mesh-only TUN、Native UDP／TCP、VLESS／Trojan TCP/TLS、协调 UDP 穿透、resolved／resolv-conf 系统 DNS、`meshway ping`、签名 netmap 租约内离线运行、IPv4 出口；验收状态见[验收范围](/v2/node/validation)。
+- 已知限制：systemd-resolved 重启或停机后 DNS 归属冲突、数据面不自动恢复，需重启机器，见[当前限制](/v2/install#当前限制)。
+
 ## 2026-10-07
 
 | 工作包 | 合入提交 | 内容 | 证据 |
@@ -71,3 +81,9 @@
 | X7b `exit/off` 验收行 | `feat/exit-acceptance` 系列 | 八阶段真跑：能力／前置／安装／capture／投影 NAT CT／续期关流／原路径回程／drain 恢复；隔离公网正例 `11.77.98.3` 经 E masquerade 的 UDP／TCP 真实往返；行保持显式选择 | planck 全长 `20261009T080945Z-9fc2ac9c` **未通过**：定位到 X4 产品缺陷（安装期间 `sample()` 1 s 超时被当作 `Report::stopped` 上报，Server 撤回出口资格，三端关流）；`.meshway/exit/x7b/{receipt,x4-sampling-blocker}.md` |
 | X4b 采样超时不算 stopped | `fix/state-sample-timeout` | daemon State 采样区分 `Timeout`（跳过本轮完整上报，不改序号／observedAt／lease）与 `Closed`／真实 stopped（如实上报）；X7b 定位的"安装忙→伪 stopped→出口资格撤回→三端关流"消除 | `busy_installation_skips_state_without_withdrawing_exit_then_stopped_withdraws` 红→绿；planck X4 四项通过；`exit/off` 全长仍未通过（新阻塞：A 首流前 20 次 scope 轮换、applied 为空，归因待定）；`nat+fallback/off` 短门槛恢复后 protected relay I/O 超时（归因待定）；`.meshway/exit/x4b/` |
 | T1 边级承载顺序 | `topology/transport-order` | `topology[].transports` 为有序承载偏好（重复报 `invalid_transport/repeated_transport`），省略用平台顺序 udp→tcp→vless→trojan；dialer 删除 `priority`，只表达启用与进阶选项；`DialCandidate.priority` 由边序生成，Manager 不变；compilerVersion `meshway-demand-7`，demand-6 缓存退役 | policy `tests/execution/topology.rs`、`tests/configuration/topology.rs`；server `app::tests::cache` demand-6 |
+
+## 2026-10-11
+
+| 工作包 | 合入提交 | 内容 | 证据 |
+| --- | --- | --- | --- |
+| S1 系统服务与发布 | `s1/install-release` | systemd unit（`Type=notify`、最小 capability、沙箱）、`install.sh`（下载校验／本地产物／升级幂等／卸载）、`meshway version`、`release.yml`（tag＝workspace 版本、复用 `build.yml`、`SHA256SUMS`、changelog 段作说明）；workspace 版本 `0.1.0-alpha.1` | OrbStack Ubuntu 24.04 安装／重启（含 Server 不可达）／resolver 间隙实测，`.meshway/node-lab/s1/` |

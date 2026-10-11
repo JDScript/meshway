@@ -1,0 +1,74 @@
+---
+title: 下载与安装
+description: 在 Linux 上把 Meshway 节点安装为 systemd 服务，以及升级和卸载。
+---
+
+## 要求
+
+- Linux x86_64 或 aarch64，使用 systemd；需要 root。
+- `/dev/net/tun`。
+- 默认的系统 DNS 接入需要运行中的 systemd-resolved，且 `/etc/resolv.conf` 指向它的 stub（Ubuntu 默认如此）。
+- 可访问的服务端地址（HTTPS）。
+
+## 下载
+
+每个版本在 GitHub Releases 发布：
+
+| 文件 | 内容 |
+| --- | --- |
+| `meshway-x86_64-unknown-linux-musl.tar.gz` | x86_64 的 `meshwayd`、`meshway` 和 `meshwayd.service` |
+| `meshway-aarch64-unknown-linux-musl.tar.gz` | aarch64 的同一组文件 |
+| `install.sh` | 安装、升级与卸载脚本 |
+| `SHA256SUMS` | 以上文件的 SHA-256 |
+
+程序是静态链接的，不依赖发行版的系统库。当前版本为预发布 `v0.1.0-alpha.1`。
+
+## 安装
+
+```sh
+curl -fsSLO https://github.com/JDScript/meshway/releases/download/v0.1.0-alpha.1/install.sh
+sudo sh install.sh --version v0.1.0-alpha.1 --server https://你的服务端地址
+```
+
+脚本按本机架构下载对应文件，核对 `SHA256SUMS` 后把程序装到 `/usr/local/bin`，安装并启动 `meshwayd` 服务。已下载的文件可用 `--artifact ./meshway-<架构>.tar.gz` 安装，同目录的 `SHA256SUMS` 会被核对。
+
+安装后接入网络，见[快速开始](/docs/quickstart)：
+
+```sh
+sudo meshway up --enrollment-key @/root/enrollment-key
+sudo meshway status
+```
+
+服务开机自动启动。重启前已接入的节点开机后自动恢复，不需要再次 `up`；服务端暂时不可达时，节点在上次取得的配置有效期内继续工作。
+
+## 检查与日志
+
+```sh
+meshway version
+systemctl status meshwayd
+journalctl -u meshwayd -f
+```
+
+`meshway version` 显示程序版本和协议版本；同一网络中的节点应使用相同版本。
+
+## 升级
+
+用新版本号重新运行脚本。脚本替换程序后重启服务，节点身份和上线状态保留：
+
+```sh
+sudo sh install.sh --version v0.1.1
+```
+
+重复运行同一版本不会重启服务。
+
+## 卸载
+
+```sh
+sudo sh install.sh --uninstall
+```
+
+卸载先执行 `meshway down` 清理本机网络设置，再删除服务和程序；节点身份保留在 `/var/lib/meshway`，重新安装后仍是同一台节点。加 `--purge` 同时删除身份和设置，之后需要重新接入。
+
+## 已知限制
+
+重启或停止 systemd-resolved 后，节点会停止网络并且不会自动恢复，需要重启机器。请避免在节点运行时单独重启 systemd-resolved。
