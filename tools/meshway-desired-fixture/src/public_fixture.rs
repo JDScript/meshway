@@ -88,6 +88,21 @@ impl PublicFixture {
             );
         }
         let last = *path.last().ok_or("missing terminal")?;
+        // Every fixture node can dial every other, so each hop would otherwise
+        // be acquired on demand by the owner's first packet or a relayed
+        // handshake. The benchmark drives SecureNode directly and measures the
+        // established path, not acquisition: the measured hops are resident.
+        configuration.topology = path
+            .windows(2)
+            .map(|pair| TopologyRule {
+                remark: String::new(),
+                action: TopologyAction::Allow,
+                a: format!("node:{}", pair[0]),
+                b: format!("node:{}", pair[1]),
+                transports: Input::Omitted,
+                keepalive: true,
+            })
+            .collect();
         configuration.access = vec![AccessRule {
             remark: String::new(),
             src: vec![format!("node:{}", path[0])],

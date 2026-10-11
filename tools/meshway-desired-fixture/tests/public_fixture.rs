@@ -1,3 +1,4 @@
+use meshway_configuration::TopologyAction;
 use meshway_desired_fixture::{
     NodeMaterial,
     public_fixture::{PublicFixture, PublicNode},
@@ -40,6 +41,22 @@ fn independent_compilers_match_and_pair_registered_keys() {
             });
         }
         let fixture = PublicFixture::iperf(nodes).unwrap();
+        // Every fixture node could dial every other, so the measured hops must
+        // be declared resident or the Manager would wait for a first packet.
+        let resident: Vec<_> = fixture
+            .configuration
+            .topology
+            .iter()
+            .filter(|rule| rule.keepalive && rule.action == TopologyAction::Allow)
+            .map(|rule| (rule.a.clone(), rule.b.clone()))
+            .collect();
+        assert_eq!(resident.len(), fixture.path.len() - 1);
+        for (hop, pair) in fixture.path.windows(2).enumerate() {
+            assert_eq!(
+                resident[hop],
+                (format!("node:{}", pair[0]), format!("node:{}", pair[1]))
+            );
+        }
         let bytes = serde_json::to_vec(&fixture).unwrap();
         for (id, i, signing, noise, capabilities) in secrets {
             let decoded: PublicFixture = serde_json::from_slice(&bytes).unwrap();
