@@ -92,9 +92,23 @@ impl Kernel {
         )
         .await?;
         let monitor_socket = monitor::open()?;
-        let (mut store, previous) = Store::open(directory).await?;
+        let (mut store, mut previous) = Store::open(directory).await?;
         let rules = get_rules(&handle, options.max_kernel_objects).await?;
         let routes = get_routes(&handle, options.max_kernel_objects).await?;
+        // The same boot and nsfs inode but none of the journal's objects: a
+        // new namespace reused the inode (container stop/start). Nothing here
+        // is ours to adopt or clean up; a partial set stays a conflict below.
+        if let Some(journal) = previous
+            .as_ref()
+            .filter(|journal| !journal.rules.is_empty() || journal.anchor.is_some())
+        {
+            let observed: Vec<_> = rules.iter().cloned().map(encode_rule).collect();
+            let aliases = link_aliases(&handle, options.max_kernel_objects).await?;
+            if !journal.resident(&observed, &aliases) {
+                store.archive_foreign(journal).await?;
+                previous = None;
+            }
+        }
         let mut journal = match previous {
             Some(journal)
                 if !journal.rules.is_empty()
@@ -898,6 +912,19 @@ impl Kernel {
         .await
         .map_err(|_| Error::Conflict)?
     }
+}
+
+/// Interface aliases of this namespace.
+async fn link_aliases(handle: &Handle, limit: usize) -> Result<Vec<String>> {
+    Ok(collect(handle.link().get().execute(), limit)
+        .await?
+        .into_iter()
+        .flat_map(|link| link.attributes)
+        .filter_map(|attribute| match attribute {
+            rtnetlink::packet_route::link::LinkAttribute::IfAlias(alias) => Some(alias),
+            _ => None,
+        })
+        .collect())
 }
 
 fn verify_rules(journal: &Journal, rules: &[RuleMessage]) -> Result<()> {

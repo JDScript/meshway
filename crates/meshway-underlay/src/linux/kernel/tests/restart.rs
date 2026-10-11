@@ -25,7 +25,7 @@ async fn container_restart_archives_previous_namespace_journal() {
     let mut kernel = Kernel::open(directory.clone(), Options::default(), tasks.clone())
         .await
         .unwrap();
-    if let Some(bytes) = previous {
+    if let Some(bytes) = previous.clone() {
         let old: Journal = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(old.boot, kernel.journal.boot);
         assert_ne!(old.namespace_inode, kernel.journal.namespace_inode);
@@ -57,6 +57,54 @@ async fn container_restart_archives_previous_namespace_journal() {
     kernel.settle().await.unwrap();
     drop(kernel);
     tasks.shutdown().await.unwrap();
+    if let Some(bytes) = previous {
+        // A restarted container may receive the destroyed namespace's nsfs
+        // inode. A's journal under B's exact identity names objects B never
+        // had: it is archived, not adopted and not a conflict.
+        let mut reused: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let (_, device, inode) = Journal::identity().unwrap();
+        reused["namespace_device"] = device.into();
+        reused["namespace_inode"] = inode.into();
+        let reused = serde_json::to_vec(&reused).unwrap();
+        directory.replace("underlay.json", &reused).unwrap();
+        let tasks = Tasks::new(64);
+        let mut kernel = Kernel::open(directory.clone(), Options::default(), tasks.clone())
+            .await
+            .unwrap();
+        let old: Journal = serde_json::from_slice(&reused).unwrap();
+        assert_eq!(
+            (old.namespace_device, old.namespace_inode),
+            (
+                kernel.journal.namespace_device,
+                kernel.journal.namespace_inode
+            )
+        );
+        assert_ne!(old.installation, kernel.journal.installation);
+        assert!(kernel.journal.rules.is_empty());
+        let archived: Vec<_> = std::fs::read_dir(directory.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| {
+                path.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with("underlay.json.stale-")
+            })
+            .map(|path| std::fs::read(path).unwrap())
+            .collect();
+        assert_eq!(archived.len(), 2);
+        assert!(archived.contains(&reused));
+        // The fresh allocation installs and cleans up exactly as usual.
+        kernel
+            .retain_negative(&["100.96.0.0/16".parse().unwrap()])
+            .await
+            .unwrap();
+        kernel.suspend().await.unwrap();
+        kernel.down().await.unwrap();
+        kernel.settle().await.unwrap();
+        drop(kernel);
+        tasks.shutdown().await.unwrap();
+    }
     drop(directory);
     if phase == "a" {
         // Release every journal/task owner but pin this namespace while B is
