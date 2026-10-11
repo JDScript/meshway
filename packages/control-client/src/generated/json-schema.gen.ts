@@ -8474,6 +8474,35 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "NetmapKeyRotation": {
+        "type": "object",
+        "description": "Handover from the key that signed `signature` to its successor, present only during the Server's rotation window.",
+        "required": [
+          "next",
+          "notBefore",
+          "endorsement",
+          "leaseSignature"
+        ],
+        "properties": {
+          "endorsement": {
+            "type": "string",
+            "description": "Unpadded base64url Ed25519 signature by the key of `signature` over `netmap_key_rotation_transcript(network, signature.keyId, signature.keyGeneration, next, notBefore)`."
+          },
+          "leaseSignature": {
+            "$ref": "#/components/schemas/NetmapSignature",
+            "description": "Signature of the same lease by `next`; a Node that already pinned `next` verifies this one instead of `signature`."
+          },
+          "next": {
+            "$ref": "#/components/schemas/ServerSigningKey",
+            "description": "Successor key; its generation is exactly one above the generation of `signature`."
+          },
+          "notBefore": {
+            "$ref": "#/components/schemas/Timestamp",
+            "description": "Earliest time at which a Node may pin `next`."
+          }
+        },
+        "additionalProperties": false
+      },
       "NetmapLease": {
         "type": "object",
         "description": "Validity interval of one exact netmap; renewal replaces the lease, never the content.",
@@ -9300,6 +9329,7 @@ export const schemaDocument = {
           "netmapUnavailable",
           "lease",
           "lastSyncAt",
+          "serverKey",
           "canRevokeControlKey",
           "canRevokeDataplaneKey",
           "controlKeyCreatedAt",
@@ -9423,6 +9453,17 @@ export const schemaDocument = {
           "registeredAt": {
             "$ref": "#/components/schemas/Timestamp",
             "description": "UTC time at which the Node was registered."
+          },
+          "serverKey": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PinnedServerKeyView",
+                "description": "The Server signing key the Node reported pinned in its latest sync; null when no sync reporting it arrived since the Server process started."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false
@@ -11337,6 +11378,34 @@ export const schemaDocument = {
               "$ref": "#/components/schemas/PeerEndpoint"
             },
             "description": "Currently visible connection candidates with their runtime bindings."
+          }
+        },
+        "additionalProperties": false
+      },
+      "PinnedServerKeyStatus": {
+        "type": "string",
+        "description": "How the Server signing key a Node reported pinned relates to this Server's netmap signing keys.",
+        "enum": [
+          "current",
+          "rotating",
+          "keyMismatch"
+        ]
+      },
+      "PinnedServerKeyView": {
+        "type": "object",
+        "description": "The Server signing key a Node reported pinned in its latest sync.",
+        "required": [
+          "keyGeneration",
+          "status"
+        ],
+        "properties": {
+          "keyGeneration": {
+            "$ref": "#/components/schemas/Version",
+            "description": "Generation of the pinned key."
+          },
+          "status": {
+            "$ref": "#/components/schemas/PinnedServerKeyStatus",
+            "description": "Relation to this Server's current keys at the time of the read."
           }
         },
         "additionalProperties": false
@@ -15246,6 +15315,17 @@ export const schemaDocument = {
               }
             ]
           },
+          "serverKeyGeneration": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Version",
+                "description": "Generation of the Server signing key the Node has pinned; reported for the inventory view only (it selects and authorizes nothing). Null or omission: not reported."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "state": {
             "oneOf": [
               {
@@ -15267,9 +15347,21 @@ export const schemaDocument = {
           "lease",
           "signature",
           "netmap",
-          "peerFacts"
+          "peerFacts",
+          "keyRotation"
         ],
         "properties": {
+          "keyRotation": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NetmapKeyRotation",
+                "description": "Signing-key handover while the Server's rotation window is open; null otherwise."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "lease": {
             "$ref": "#/components/schemas/NetmapLease",
             "description": "Lease bound to the current netmap."

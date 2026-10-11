@@ -145,6 +145,7 @@ async fn sync_netmap(app: &App, token: &str, instance: &InstanceRequest) -> Comp
             SyncRequest {
                 netmap: None,
                 state: None,
+                server_key_generation: None,
             },
         )
         .await

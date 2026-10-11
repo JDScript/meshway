@@ -65,7 +65,7 @@ impl PeerFactsSource for NoPeerFacts {
 
 /// What every answer's lease is issued with.
 pub(super) struct Issue<'a> {
-    pub(super) signer: &'a super::signing::NetmapSigningKey,
+    pub(super) signer: &'a super::signing::NetmapSigningKeys,
     pub(super) validity: Duration,
 }
 
@@ -124,11 +124,13 @@ pub(super) fn read(
         .map_err(|_| Error::Internal("netmap validity"))?;
     let lease = NetmapLease::new(current.current, now_ms, now_ms.saturating_add(validity_ms))
         .map_err(|_| Error::Internal("netmap validity"))?;
+    let (signature, key_rotation) = issue.signer.issue(tx, network, node, &lease, now)?;
     let response = SyncResponse {
-        signature: issue.signer.sign(network, node, &lease),
+        signature,
         lease,
         netmap,
         peer_facts: delta,
+        key_rotation,
     };
     response
         .check(request)

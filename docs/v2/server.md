@@ -82,6 +82,31 @@ mise exec -- cargo run -p meshway-server --bin reset-password --locked -- \
 
 GeoIP／ASN 数据集由本机 `ip-datasets` binary 导入，见[数据集部署](/v2/state-reference/ip-info#datasets)。
 
+### Netmap 签发钥轮换
+
+`meshway-server rotate-netmap-key` 轮换签署 [netmap 租约](/v2/execution#netmap-同步)的 Ed25519 钥。它与上面的命令一样离线运行：须先停止占有同一 dataDir 的服务，完成后再启动；停机期间节点按已持有租约继续运行，sync 恢复后即重连。
+
+```sh
+mise exec -- cargo run -p meshway-server --bin meshway-server --locked -- \
+  rotate-netmap-key --data-dir /absolute/private/data-dir --window 48h
+```
+
+| 参数 | 默认 | 行为 |
+| --- | --- | --- |
+| `--data-dir`／`MESHWAY_DATA_DIR` | 必填 | 同服务参数 |
+| `--window` | `48h` | 交接窗口，整数加单位 `s`／`m`／`h`／`d`，60 秒–30 天；默认是最长租约的 2 倍 |
+
+命令在一个事务内生成下一代（generation + 1）钥 K′ 并使其成为当前钥，把被替换钥 K 的 `retired_at` 设为窗口结束时刻，输出两把钥的 generation／keyId 与窗口结束时间。窗口仍开时再次执行被拒绝（一次只有一个窗口）；窗口状态只存于数据库，重启后不变。
+
+| 时段 | 接入响应 `serverSigningKey` | sync 回复 `signature` | `keyRotation` |
+| --- | --- | --- | --- |
+| 窗口内 | K′ | K | `{ next: K′, notBefore, endorsement, leaseSignature }`：K 对 K′ 的背书与 K′ 对同一租约的签名 |
+| 窗口后 | K′ | K′ | null |
+
+节点如何跟随交接、错过窗口时的表现见[Netmap 发布](/v2/node/control#server-签名钥轮换)。节点库存视图的 `serverKey` 显示每个节点最近一次 sync 报告的钉住钥 generation 与 `status`：`current`、`rotating`（窗口内仍钉 K，下一回复即跟随）或 `keyMismatch`（错过窗口或其他钥；须重新接入，见下）。它是本进程内观测，Server 重启后在节点下一次 sync 前为 null。旧钥永久保留在表中供审计，不删除。
+
+错过窗口的节点保持已持有租约直至到期，之后 fail closed；恢复方式是重新接入（`meshway up` 走浏览器批准，或 `--enrollment-key`），新的接入响应即钉住当前钥。当前不做自动轮换，也不支持多 Server 实例共享钥。
+
 本工作树的开发服务（`mise run services …`）、地址、重置与恢复见[开发服务、测试与环境](/v2/development#本机服务)。源码合并或编译完成后，仍须执行服务更新并核对实际运行实例。
 
 ## 参考

@@ -8,7 +8,7 @@
 //! stored by `store::netmap` and only changes in stable-input transactions.
 mod hub;
 pub(crate) mod records;
-pub(crate) mod signing;
+pub mod signing;
 mod sync;
 
 pub(crate) use hub::Hub;
@@ -97,7 +97,7 @@ pub struct Netmaps {
     boot: InstanceId,
     hub: Arc<Hub>,
     facts: Arc<dyn PeerFactsSource>,
-    signer: Arc<signing::NetmapSigningKey>,
+    signer: Arc<signing::NetmapSigningKeys>,
     timing: SyncTiming,
 }
 
@@ -108,7 +108,7 @@ impl Netmaps {
         boot: InstanceId,
         hub: Arc<Hub>,
         facts: Arc<dyn PeerFactsSource>,
-        signer: Arc<signing::NetmapSigningKey>,
+        signer: Arc<signing::NetmapSigningKeys>,
         timing: SyncTiming,
     ) -> Self {
         Self {
@@ -144,6 +144,7 @@ impl Netmaps {
             principal.network,
             principal.node,
             chrono::Utc::now().timestamp_millis().max(0) as u64,
+            request.server_key_generation,
         );
         let answered = |response: SyncResponse| {
             records::Records::shared().issued(principal.network, principal.node, response.lease);

@@ -6,6 +6,7 @@ mod key_enrollment;
 mod netmap;
 mod recovery;
 mod rotation;
+mod server_key_rotation;
 mod session;
 mod support;
 

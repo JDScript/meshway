@@ -260,6 +260,18 @@ impl TestServer {
         binding
     }
 
+    /// Start a netmap signing-key rotation window on the running Server, as
+    /// `meshway-server rotate-netmap-key` does on stopped storage.
+    pub async fn rotate_netmap_key(
+        &self,
+        window: Duration,
+    ) -> meshway_server::netmap::signing::RotatedSigningKey {
+        self.app
+            .rotate_netmap_key(window)
+            .await
+            .expect("rotate netmap signing key")
+    }
+
     /// Bounded shutdown of the proxy, HTTP server and database owner.
     pub async fn close(self) {
         if let Some(proxy) = self.proxy {

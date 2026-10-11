@@ -14,6 +14,7 @@ use support::{Facts, Script, compiled, full, lease, signed, unchanged};
 
 mod restart;
 mod review;
+mod server_key;
 mod signature;
 pub mod support;
 

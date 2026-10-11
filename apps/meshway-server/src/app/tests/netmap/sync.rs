@@ -43,6 +43,7 @@ async fn sync_answers_full_delta_or_unchanged_and_renews_only_the_lease() {
             SyncRequest {
                 netmap: Some(base.reference()),
                 state: Some(cursor),
+                server_key_generation: None,
             },
         )
         .await

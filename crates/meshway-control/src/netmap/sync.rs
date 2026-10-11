@@ -179,6 +179,11 @@ impl Control {
         SyncRequest {
             netmap: self.netmap_reference(),
             state: self.netmap.facts,
+            server_key_generation: self
+                .record
+                .binding
+                .as_ref()
+                .map(|binding| binding.server_signing_key.key_generation),
         }
     }
 
@@ -189,7 +194,8 @@ impl Control {
     /// withdrawal ends it. A
     /// response not signed by the pinned Server key is rejected
     /// (`SignatureInvalid`, `ServerKeyMismatch`) without changing state or
-    /// withdrawing the current, itself verified, lease.
+    /// withdrawing the current, itself verified, lease. An endorsed
+    /// successor of the pinned key is pinned once the answer is installed.
     pub async fn finish_sync(
         &mut self,
         reply: SyncReply,
@@ -215,7 +221,13 @@ impl Control {
         let binding = self.record.binding.as_ref().ok_or(Error::Lifecycle)?;
         // Authority first: nothing of an unsigned or foreign-signed response
         // is decoded into content or changes any state.
-        super::store::verify_server(binding, &response.lease, &response.signature)?;
+        let authority = super::store::authority(
+            binding,
+            &response.lease,
+            &response.signature,
+            response.key_rotation.as_ref(),
+            self.clock.now()?,
+        )?;
         let netmap: Arc<CompiledNetmap> = match response.netmap {
             SyncNetmap::Full { netmap } => Arc::new(*netmap),
             SyncNetmap::Delta { delta } => {
@@ -228,8 +240,12 @@ impl Control {
             return Err(Error::Contract);
         }
         let change = self
-            .install_netmap(netmap, response.lease, &response.signature)
+            .install_netmap(netmap, response.lease, &authority.signature)
             .await?;
+        if let Some((next, signature)) = authority.successor {
+            self.pin_server_key(next, response.lease, &signature)
+                .await?;
+        }
         let facts = response.peer_facts.is_some();
         if let Some(delta) = response.peer_facts {
             self.netmap.facts = Some(delta.cursor);

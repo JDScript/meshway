@@ -33,6 +33,8 @@ pub struct SyncRequest {
     pub netmap: Option<NetmapRef>,
     /// Last applied peer-fact cursor; null or omission requests full facts.
     pub state: Option<StateCursor>,
+    /// Generation of the Server signing key the Node has pinned; reported for the inventory view only (it selects and authorizes nothing). Null or omission: not reported.
+    pub server_key_generation: Option<Version>,
 } }
 
 wire_tagged! {
@@ -212,6 +214,44 @@ pub fn netmap_lease_transcript(
     message
 }
 
+/// Canonical transcript of one signing-key handover for one network, signed
+/// by the endorsing key: domain, network, endorsing key ID and generation,
+/// successor key ID, generation and Ed25519 public key, and `notBefore`
+/// milliseconds; fixed width, big-endian.
+pub fn netmap_key_rotation_transcript(
+    network: NetworkId,
+    previous_key_id: KeyId,
+    previous_key_generation: Version,
+    next: &ServerSigningKey,
+    not_before_ms: u64,
+) -> Vec<u8> {
+    let mut message = Vec::with_capacity(160);
+    message.extend_from_slice(b"meshway/netmap-key-rotation/v1\0");
+    message.extend_from_slice(network.as_uuid().as_bytes());
+    message.extend_from_slice(previous_key_id.as_uuid().as_bytes());
+    message.extend_from_slice(&previous_key_generation.get().to_be_bytes());
+    message.extend_from_slice(next.key_id.as_uuid().as_bytes());
+    message.extend_from_slice(&next.key_generation.get().to_be_bytes());
+    message.extend_from_slice(next.public_key.bytes.as_bytes());
+    message.extend_from_slice(&not_before_ms.to_be_bytes());
+    message
+}
+
+wire_object! {
+#[derive(Clone, Debug, PartialEq, Eq)]
+/// Handover from the key that signed `signature` to its successor, present only during the Server's rotation window.
+pub struct NetmapKeyRotation {
+    /// Successor key; its generation is exactly one above the generation of `signature`.
+    pub next: ServerSigningKey,
+    /// Earliest time at which a Node may pin `next`.
+    #[serde(rename = "notBefore", with = "meshway_model::timestamp")]
+    pub not_before_ms: u64 [value_type = meshway_model::timestamp::Timestamp],
+    /// Unpadded base64url Ed25519 signature by the key of `signature` over `netmap_key_rotation_transcript(network, signature.keyId, signature.keyGeneration, next, notBefore)`.
+    pub endorsement: String,
+    /// Signature of the same lease by `next`; a Node that already pinned `next` verifies this one instead of `signature`.
+    pub lease_signature: NetmapSignature,
+} }
+
 wire_object! {
 #[derive(Clone, Debug, PartialEq, Eq)]
 /// Current netmap lease, netmap changes and peer-fact changes for the Node.
@@ -224,6 +264,8 @@ pub struct SyncResponse {
     pub netmap: SyncNetmap,
     /// Peer-fact changes or freshness piggybacked on a normal hold response; a freshness-only response keeps the cursor unchanged. Null when no facts need delivery.
     pub peer_facts: Option<PeerFactsDelta> [required = true],
+    /// Signing-key handover while the Server's rotation window is open; null otherwise.
+    pub key_rotation: Option<NetmapKeyRotation> [required = true],
 } }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -251,6 +293,14 @@ impl SyncResponse {
             SyncNetmap::Delta { .. } => return Err(InconsistentSyncResponse),
         };
         if target != self.lease.netmap {
+            return Err(InconsistentSyncResponse);
+        }
+        if let Some(rotation) = &self.key_rotation
+            && (Ok(rotation.next.key_generation) != self.signature.key_generation.checked_next()
+                || rotation.next.key_id == self.signature.key_id
+                || rotation.lease_signature.key_id != rotation.next.key_id
+                || rotation.lease_signature.key_generation != rotation.next.key_generation)
+        {
             return Err(InconsistentSyncResponse);
         }
         if let Some(facts) = &self.peer_facts
@@ -370,22 +420,106 @@ mod tests {
     }
 
     #[test]
+    fn rotation_transcript_binds_network_both_keys_and_not_before() {
+        let network: NetworkId = "00000000-0000-4000-8000-000000000001".parse().unwrap();
+        let next = ServerSigningKey {
+            key_id: "00000000-0000-4000-8000-0000000000bb".parse().unwrap(),
+            key_generation: Version::new(2).unwrap(),
+            public_key: NodePublicKey {
+                algorithm: meshway_model::KeyAlgorithm::Ed25519,
+                bytes: Digest::from_bytes([7; 32]),
+            },
+        };
+        let previous = signature().key_id;
+        let message = netmap_key_rotation_transcript(network, previous, Version::MIN, &next, 9);
+        assert!(message.starts_with(b"meshway/netmap-key-rotation/v1\0"));
+        assert_eq!(message.len(), 31 + 16 + 16 + 8 + 16 + 8 + 32 + 8);
+        assert_eq!(&message[message.len() - 8..], &9u64.to_be_bytes());
+        let other: NetworkId = "00000000-0000-4000-8000-000000000003".parse().unwrap();
+        assert_ne!(
+            message,
+            netmap_key_rotation_transcript(other, previous, Version::MIN, &next, 9)
+        );
+        assert_ne!(
+            message,
+            netmap_key_rotation_transcript(network, previous, Version::MIN, &next, 10)
+        );
+    }
+
+    #[test]
+    fn a_rotation_must_name_the_next_generation_and_sign_the_lease_with_it() {
+        let base = reference(3);
+        let request = SyncRequest {
+            netmap: Some(base),
+            state: None,
+            server_key_generation: Some(Version::MIN),
+        };
+        let next = ServerSigningKey {
+            key_id: "00000000-0000-4000-8000-0000000000bb".parse().unwrap(),
+            key_generation: Version::new(2).unwrap(),
+            public_key: NodePublicKey {
+                algorithm: meshway_model::KeyAlgorithm::Ed25519,
+                bytes: Digest::from_bytes([7; 32]),
+            },
+        };
+        let rotation = NetmapKeyRotation {
+            lease_signature: NetmapSignature {
+                key_id: next.key_id,
+                key_generation: next.key_generation,
+                signature: "B".repeat(86),
+            },
+            next,
+            not_before_ms: 1,
+            endorsement: "C".repeat(86),
+        };
+        let mut response = SyncResponse {
+            lease: NetmapLease::new(base, 0, 60_000).unwrap(),
+            signature: signature(),
+            netmap: SyncNetmap::Unchanged,
+            peer_facts: None,
+            key_rotation: Some(rotation.clone()),
+        };
+        assert_eq!(response.check(&request), Ok(()));
+        let text = serde_json::to_string(&response).unwrap();
+        assert!(text.contains(r#""keyRotation":{"next":"#) && text.contains(r#""notBefore":"#));
+        assert_eq!(
+            serde_json::from_str::<SyncResponse>(&text).unwrap(),
+            response
+        );
+        let broken: [fn(&mut NetmapKeyRotation); 4] = [
+            |r| r.next.key_generation = Version::new(3).unwrap(),
+            |r| r.next.key_id = "00000000-0000-4000-8000-0000000000aa".parse().unwrap(),
+            |r| r.lease_signature.key_id = "00000000-0000-4000-8000-0000000000cc".parse().unwrap(),
+            |r| r.lease_signature.key_generation = Version::MIN,
+        ];
+        for (index, breaks) in broken.into_iter().enumerate() {
+            let mut bad = rotation.clone();
+            breaks(&mut bad);
+            response.key_rotation = Some(bad);
+            assert!(response.check(&request).is_err(), "case {index}");
+        }
+    }
+
+    #[test]
     fn unchanged_response_must_match_the_request() {
         let base = reference(3);
         let request = SyncRequest {
             netmap: Some(base),
             state: None,
+            server_key_generation: None,
         };
         let response = SyncResponse {
             lease: NetmapLease::new(base, 0, 60_000).unwrap(),
             signature: signature(),
             netmap: SyncNetmap::Unchanged,
             peer_facts: None,
+            key_rotation: None,
         };
         assert_eq!(response.check(&request), Ok(()));
         let stale = SyncRequest {
             netmap: Some(reference(2)),
             state: None,
+            server_key_generation: None,
         };
         assert!(response.check(&stale).is_err());
         let text = serde_json::to_string(&response).unwrap();
@@ -402,7 +536,8 @@ mod tests {
             serde_json::from_str::<SyncRequest>("{}").unwrap(),
             SyncRequest {
                 netmap: None,
-                state: None
+                state: None,
+                server_key_generation: None,
             }
         );
     }
@@ -429,12 +564,14 @@ mod tests {
         let request = SyncRequest {
             netmap: Some(base),
             state: Some(cursor(4)),
+            server_key_generation: None,
         };
         let mut response = SyncResponse {
             lease: NetmapLease::new(base, 0, 60_000).unwrap(),
             signature: signature(),
             netmap: SyncNetmap::Unchanged,
             peer_facts: Some(facts(Some(cursor(4)))),
+            key_rotation: None,
         };
         assert_eq!(response.check(&request), Ok(()));
         response.peer_facts = Some(facts(Some(cursor(2))));
