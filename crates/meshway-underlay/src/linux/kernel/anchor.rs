@@ -164,106 +164,126 @@ impl Kernel {
             getrandom::fill(&mut hardware_address).map_err(|_| Error::Worker)?;
             hardware_address[0] = (hardware_address[0] & 0xfe) | 0x02;
             let mtu = 1500;
-            self.journal.pending = Some(Pending::CreateDnsAnchor);
-            self.store.persist(&self.journal).await?;
-            // rtnl_create_link validates AF_SPEC before register_netdevice;
-            // inet6_validate_link_af then rejects the not-yet-created inet6_dev
-            // with EAFNOSUPPORT. Register DOWN first, without AF_SPEC or alias.
-            // NETDEV_REGISTER creates inet6_dev; autoconfiguration waits for UP.
-            let link = LinkDummy::new(&name)
-                .address(hardware_address.clone())
-                .mtu(mtu)
-                .down()
-                .build();
-            execute(self.handle.link().add(link).execute()).await?;
-            let links = collect(
-                self.handle.link().get().match_name(name.clone()).execute(),
-                self.options.max_kernel_objects,
-            )
-            .await?;
-            if links.len() != 1 {
-                return Err(Error::Conflict);
+            // The device's own notifications are not an external network
+            // change, from its first NEWLINK (by name) until the steady-state
+            // record below owns its index.
+            self.expected
+                .lock()
+                .map_err(|_| Error::Worker)?
+                .anchor_creating = Some((name.clone(), None));
+            let created = async {
+                self.journal.pending = Some(Pending::CreateDnsAnchor);
+                self.store.persist(&self.journal).await?;
+                // rtnl_create_link validates AF_SPEC before register_netdevice;
+                // inet6_validate_link_af then rejects the not-yet-created inet6_dev
+                // with EAFNOSUPPORT. Register DOWN first, without AF_SPEC or alias.
+                // NETDEV_REGISTER creates inet6_dev; autoconfiguration waits for UP.
+                let link = LinkDummy::new(&name)
+                    .address(hardware_address.clone())
+                    .mtu(mtu)
+                    .down()
+                    .build();
+                execute(self.handle.link().add(link).execute()).await?;
+                let links = collect(
+                    self.handle.link().get().match_name(name.clone()).execute(),
+                    self.options.max_kernel_objects,
+                )
+                .await?;
+                if links.len() != 1 {
+                    return Err(Error::Conflict);
+                }
+                let index = links[0].header.index;
+                self.expected
+                    .lock()
+                    .map_err(|_| Error::Worker)?
+                    .anchor_creating = Some((name.clone(), Some(index)));
+                let record = Record {
+                    identity: DnsLinkIdentity {
+                        boot: self.journal.boot.trim().to_owned(),
+                        namespace_device: self.journal.namespace_device,
+                        namespace_inode: self.journal.namespace_inode,
+                        installation: self.journal.installation.clone(),
+                        index,
+                        name,
+                        address,
+                    },
+                    alias,
+                    hardware_address,
+                    mtu,
+                };
+                if index == 0
+                    || !device_matches(&record, &links[0])
+                    || links[0].header.flags.contains(LinkFlags::Up)
+                    || links[0]
+                        .attributes
+                        .iter()
+                        .any(|a| matches!(a, LinkAttribute::IfAlias(value) if !value.is_empty()))
+                    || get_addresses(&self.handle, self.options.max_kernel_objects)
+                        .await?
+                        .iter()
+                        .any(|address| address.header.index == index)
+                {
+                    return Err(Error::Conflict);
+                }
+                // This separate SETLINK runs against a registered, fingerprinted,
+                // still-DOWN device. Apply/read back both alias and addrgenmode
+                // before any transition that could generate an IPv6 address.
+                let configured = rtnetlink::LinkUnspec::new_with_index(index)
+                    .alias(record.alias.clone())
+                    .append_extra_attribute(LinkAttribute::AfSpecUnspec(vec![AfSpecUnspec::Inet6(
+                        vec![AfSpecInet6::AddrGenMode(In6AddrGenMode::None)],
+                    )]))
+                    .build();
+                execute(self.handle.link().set(configured).execute()).await?;
+                let configured =
+                    owned_link(&self.handle, &record, self.options.max_kernel_objects).await?;
+                if configured.header.flags.contains(LinkFlags::Up)
+                    || !installed_settings_match(&record, &configured)
+                {
+                    return Err(Error::Conflict);
+                }
+                let mut request = self.handle.address().add(index, IpAddr::V4(address), 32);
+                request.message_mut().header.scope = AddressScope::Universe;
+                execute(request.execute()).await?;
+                let configured =
+                    owned_link(&self.handle, &record, self.options.max_kernel_objects).await?;
+                if configured.header.flags.contains(LinkFlags::Up)
+                    || !installed_settings_match(&record, &configured)
+                {
+                    return Err(Error::Conflict);
+                }
+                verify_addresses(&self.handle, &record, self.options.max_kernel_objects).await?;
+                execute(
+                    self.handle
+                        .link()
+                        .set(rtnetlink::LinkUnspec::new_with_index(index).up().build())
+                        .execute(),
+                )
+                .await?;
+                verify(&self.handle, &record, self.options.max_kernel_objects).await?;
+                // Drain the creation's down/address/up notifications before arming
+                // the steady-state watcher, then close the dump/watch race by a
+                // second verification after arming it.
+                self.quiesce().await?;
+                self.journal.anchor = Some(record.clone());
+                self.expected.lock().map_err(|_| Error::Worker)?.anchor = Some(record);
+                verify(
+                    &self.handle,
+                    self.journal.anchor.as_ref().ok_or(Error::Journal)?,
+                    self.options.max_kernel_objects,
+                )
+                .await?;
+                self.journal.pending = None;
+                self.store.persist(&self.journal).await?;
+                self.quiesce().await?;
+                Ok(())
             }
-            let index = links[0].header.index;
-            let record = Record {
-                identity: DnsLinkIdentity {
-                    boot: self.journal.boot.trim().to_owned(),
-                    namespace_device: self.journal.namespace_device,
-                    namespace_inode: self.journal.namespace_inode,
-                    installation: self.journal.installation.clone(),
-                    index,
-                    name,
-                    address,
-                },
-                alias,
-                hardware_address,
-                mtu,
-            };
-            if index == 0
-                || !device_matches(&record, &links[0])
-                || links[0].header.flags.contains(LinkFlags::Up)
-                || links[0]
-                    .attributes
-                    .iter()
-                    .any(|a| matches!(a, LinkAttribute::IfAlias(value) if !value.is_empty()))
-                || get_addresses(&self.handle, self.options.max_kernel_objects)
-                    .await?
-                    .iter()
-                    .any(|address| address.header.index == index)
-            {
-                return Err(Error::Conflict);
-            }
-            // This separate SETLINK runs against a registered, fingerprinted,
-            // still-DOWN device. Apply/read back both alias and addrgenmode
-            // before any transition that could generate an IPv6 address.
-            let configured = rtnetlink::LinkUnspec::new_with_index(index)
-                .alias(record.alias.clone())
-                .append_extra_attribute(LinkAttribute::AfSpecUnspec(vec![AfSpecUnspec::Inet6(
-                    vec![AfSpecInet6::AddrGenMode(In6AddrGenMode::None)],
-                )]))
-                .build();
-            execute(self.handle.link().set(configured).execute()).await?;
-            let configured =
-                owned_link(&self.handle, &record, self.options.max_kernel_objects).await?;
-            if configured.header.flags.contains(LinkFlags::Up)
-                || !installed_settings_match(&record, &configured)
-            {
-                return Err(Error::Conflict);
-            }
-            let mut request = self.handle.address().add(index, IpAddr::V4(address), 32);
-            request.message_mut().header.scope = AddressScope::Universe;
-            execute(request.execute()).await?;
-            let configured =
-                owned_link(&self.handle, &record, self.options.max_kernel_objects).await?;
-            if configured.header.flags.contains(LinkFlags::Up)
-                || !installed_settings_match(&record, &configured)
-            {
-                return Err(Error::Conflict);
-            }
-            verify_addresses(&self.handle, &record, self.options.max_kernel_objects).await?;
-            execute(
-                self.handle
-                    .link()
-                    .set(rtnetlink::LinkUnspec::new_with_index(index).up().build())
-                    .execute(),
-            )
-            .await?;
-            verify(&self.handle, &record, self.options.max_kernel_objects).await?;
-            // Drain the creation's down/address/up notifications before arming
-            // the steady-state watcher, then close the dump/watch race by a
-            // second verification after arming it.
-            self.quiesce().await?;
-            self.journal.anchor = Some(record.clone());
-            self.expected.lock().map_err(|_| Error::Worker)?.anchor = Some(record);
-            verify(
-                &self.handle,
-                self.journal.anchor.as_ref().ok_or(Error::Journal)?,
-                self.options.max_kernel_objects,
-            )
-            .await?;
-            self.journal.pending = None;
-            self.store.persist(&self.journal).await?;
-            self.quiesce().await?;
+            .await;
+            self.expected
+                .lock()
+                .map_err(|_| Error::Worker)?
+                .anchor_creating = None;
+            created?;
             self.dns_cancel = CancellationToken::new();
         }
         let record = self.journal.anchor.clone().ok_or(Error::Journal)?;

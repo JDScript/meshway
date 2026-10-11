@@ -46,6 +46,8 @@ pub(super) struct Expected {
     // notifications have drained. It grants no capture/ownership exception.
     pub retiring_tun: Option<u32>,
     pub anchor: Option<super::anchor::Record>,
+    /// The DNS anchor being created: its name, then its index once known.
+    pub anchor_creating: Option<(String, Option<u32>)>,
     pub anchor_deleting: bool,
     pub changing: bool,
     pub wake: Arc<tokio::sync::Notify>,
@@ -558,11 +560,22 @@ fn network_changed(state: &Expected, payload: &NetlinkPayload<RouteNetlinkMessag
                 .anchor
                 .as_ref()
                 .is_none_or(|anchor| anchor.identity.index != index)
+            && state
+                .anchor_creating
+                .as_ref()
+                .is_none_or(|(_, creating)| *creating != Some(index))
     };
     match payload {
         NetlinkPayload::InnerMessage(
             RouteNetlinkMessage::NewLink(link) | RouteNetlinkMessage::DelLink(link),
-        ) => external(link.header.index),
+        ) => {
+            external(link.header.index)
+                && !state.anchor_creating.as_ref().is_some_and(|(name, _)| {
+                    link.attributes
+                        .iter()
+                        .any(|a| matches!(a, LinkAttribute::IfName(v) if v == name))
+                })
+        }
         NetlinkPayload::InnerMessage(
             RouteNetlinkMessage::NewAddress(address) | RouteNetlinkMessage::DelAddress(address),
         ) => external(address.header.index),
@@ -621,5 +634,35 @@ mod tests {
         assert!(!first.contains("unselected-"));
         facts.reject(&mut expected, "later_conflict");
         assert_eq!(expected.first_conflict.as_deref(), Some(first.as_str()));
+    }
+
+    #[test]
+    fn a_dns_anchor_being_created_is_not_an_external_network_change() {
+        use rtnetlink::packet_route::link::LinkMessage;
+        let state = Expected {
+            anchor_creating: Some(("mwd0123456789".into(), None)),
+            ..Default::default()
+        };
+        let link = |index, name: &str| {
+            let mut link = LinkMessage::default();
+            link.header.index = index;
+            link.attributes.push(LinkAttribute::IfName(name.into()));
+            NetlinkPayload::InnerMessage(RouteNetlinkMessage::NewLink(link))
+        };
+        let address = |index| {
+            let mut address = AddressMessage::default();
+            address.header.index = index;
+            NetlinkPayload::InnerMessage(RouteNetlinkMessage::NewAddress(address))
+        };
+        assert!(!network_changed(&state, &link(7, "mwd0123456789")));
+        assert!(network_changed(&state, &address(7)));
+        let state = Expected {
+            anchor_creating: Some(("mwd0123456789".into(), Some(7))),
+            ..Default::default()
+        };
+        assert!(!network_changed(&state, &address(7)));
+        assert!(!network_changed(&state, &link(7, "mwd0123456789")));
+        assert!(network_changed(&state, &link(8, "eth1")));
+        assert!(network_changed(&state, &address(8)));
     }
 }
