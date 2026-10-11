@@ -316,5 +316,6 @@ meshway_model::object! {
     pub capability: Option<meshway_model::exit::ExitCapability>,
     pub installed_role: Option<meshway_model::Digest>,
     pub active_flows: Option<u32>,
-    pub dns_unavailable: Option<meshway_model::exit::ExitUnavailableReason>,
+    /// Why this exit resolver answers its sources SERVFAIL; null while it serves or serves no source.
+    pub dns_unavailable: Option<meshway_model::exit::ExitDnsUnavailableReason>,
 } }

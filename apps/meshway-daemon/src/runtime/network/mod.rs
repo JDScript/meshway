@@ -79,7 +79,8 @@ pub(super) struct Report {
     pub facts: Option<meshway_connectivity::Snapshot>,
     pub exit_capability: Option<meshway_model::exit::ExitCapability>,
     pub exit_flows: Option<u32>,
-    pub exit_dns_unavailable: bool,
+    /// The DNS owner's exit resolver fact of the installed content.
+    pub exit_dns: Option<meshway_model::exit::ExitDns>,
     pub generation: meshway_model::Sequence,
     pub interface_epoch: u64,
     pub owned_interfaces: Vec<String>,
@@ -102,7 +103,7 @@ impl Report {
             facts: None,
             exit_capability: None,
             exit_flows: None,
-            exit_dns_unavailable: false,
+            exit_dns: None,
             generation: meshway_model::Sequence::MIN,
             interface_epoch: 0,
             owned_interfaces: Vec::new(),

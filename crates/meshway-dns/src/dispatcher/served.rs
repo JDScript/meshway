@@ -1,6 +1,7 @@
 //! The resolver Node's side of a netmap `ServeExitResolver` plan: queries from
 //! Mesh sources listed in the plan, answered only from this Node's verified OS
-//! resolvers. A failed upstream is a failed query; nothing falls back.
+//! resolvers (or, under `dns.overrideLocal`, its configured default
+//! resolvers). A failed upstream is a failed query; nothing falls back.
 //!
 //! The source and path arrive in an opaque SecureNode-authenticated request.
 //! Socket addresses never substitute for that proof. The original request's
@@ -91,10 +92,7 @@ impl OwnerDispatcher {
             if scope.desired.reference() != request.netmap() {
                 return Err(DispatchError::Scope);
             }
-            let system = scope
-                .system_resolvers
-                .clone()
-                .ok_or(DispatchError::Unavailable(Unavailable::MissingResolverPlan))?;
+            let served = scope.served_resolvers.clone();
             let netmap = scope.desired.netmap();
             let DnsPlan::ServeExitResolver { services } = &netmap.dns.egress else {
                 return Err(DispatchError::Unavailable(Unavailable::MissingExitPlan));
@@ -122,7 +120,7 @@ impl OwnerDispatcher {
                 .owner
                 .as_mut()
                 .ok_or(DispatchError::Scope)?
-                .begin_served(query, &system, deadline);
+                .begin_served(query, served.as_ref(), deadline);
             let work = match begin {
                 Begin::Upstream(work) => work,
                 Begin::Unavailable(reason) => return Err(DispatchError::Unavailable(reason)),

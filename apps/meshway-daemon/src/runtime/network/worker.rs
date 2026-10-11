@@ -89,6 +89,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
     let mut diagnostics = super::diagnostics::Diagnostics::default();
     let buffers = packet_pool(mtu)?;
     let mut dns_requests = engine.components_mut().dns.take_queries();
+    let mut exit_dns = engine.components().dns.exit_dns();
     let mut dns_queries = super::dns::mesh::Queries::default();
     let mut retry = Retry::default();
     let mut dns_failed = false;
@@ -120,6 +121,8 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             NetworkChanged,
             ExitChanged,
             ExitFailed,
+            /// The DNS owner's exit resolver fact changed.
+            ExitDns,
             ExitReply(Result<meshway_underlay::ExitReply, meshway_underlay::Error>),
         }
         let live = engine.desired().is_some() && engine.components().secure().is_some();
@@ -182,6 +185,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             _ = host.ended(), if installed.is_some() => Work::HostFailed,
             changed = network_changes.changed() => if changed.is_ok() { Work::NetworkChanged } else { Work::Command(None) },
             _ = sleep_until(sample_at) => Work::SampleDue,
+            Ok(()) = exit_dns.changed() => Work::ExitDns,
             work = async {
                 let (manager, mut exit) = match installed.as_mut() {
                     Some(state) => (state.manager.as_mut(), state.exit.as_mut()),
@@ -263,6 +267,12 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 network_changes.borrow_and_update();
                 let report =
                     sample_host(engine.components(), &diagnostics, reports.borrow().clone());
+                reports.send_replace(report);
+                continue;
+            }
+            Work::ExitDns => {
+                let mut report = reports.borrow().clone();
+                report.exit_dns = exit_dns.borrow_and_update().clone();
                 reports.send_replace(report);
                 continue;
             }
@@ -408,6 +418,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 let plane = engine.components_mut();
                 let mut report = std::mem::replace(&mut plane.report, Report::stopped());
                 report.dns_guard = plane.dns.guard();
+                report.exit_dns = exit_dns.borrow_and_update().clone();
                 report.observed_at = chrono::Utc::now();
                 match result {
                     Ok(()) => {

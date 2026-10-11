@@ -191,6 +191,7 @@ impl Lab {
                     progress: None,
                 },
                 exit_capability: None,
+                exit_dns: None,
                 listeners: BTreeMap::from([(
                     "udp".into(),
                     ListenerState {
@@ -275,6 +276,7 @@ impl Lab {
                     status,
                     observed_at: now,
                 }),
+                exit_dns: None,
                 listeners: BTreeMap::new(),
                 sockets: BTreeMap::new(),
                 links: BTreeMap::new(),
@@ -291,5 +293,45 @@ impl Lab {
             .accept_report(self.tokens[index].clone(), report)
             .await
             .unwrap();
+    }
+
+    /// A report carrying only an exit resolver fact.
+    pub async fn report_exit_dns(
+        &self,
+        index: usize,
+        sequence: u64,
+        exit_dns: meshway_model::exit::ExitDns,
+    ) -> Result<(), crate::error::Error> {
+        let report = StateReport {
+            instance_id: self.instances[index].instance_id,
+            sequence: Sequence::new(sequence).unwrap(),
+            observed_at: chrono::Utc::now(),
+            state: NodeState {
+                system: SystemState {
+                    hostname: "netmap-fixture".into(),
+                    os: "linux".into(),
+                    arch: "aarch64".into(),
+                    agent_version: "test".into(),
+                },
+                capabilities: caps(),
+                configuration: ConfigurationState::default(),
+                exit_capability: None,
+                exit_dns: Some(exit_dns),
+                listeners: BTreeMap::new(),
+                sockets: BTreeMap::new(),
+                links: BTreeMap::new(),
+                adjacencies: Default::default(),
+                paths: BTreeMap::new(),
+                selection: SelectionState::default(),
+                probes: vec![],
+                problems: vec![],
+            },
+        };
+        self.app
+            .node_state_service()
+            .unwrap()
+            .accept_report(self.tokens[index].clone(), report)
+            .await
+            .map(|_| ())
     }
 }

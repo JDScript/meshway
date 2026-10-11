@@ -2257,6 +2257,20 @@ export const zExitCapability = z.strictObject({
   ["supportedFamilies"]: z.array(zExitFamily)
 });
 
+export const zExitDnsUnavailableReason = z.enum(["unobserved","noServers","localServer","anchorServer","meshServer","exitRoutedServer","proxyStubMissing"]);
+
+export const zExitDnsStatus = z.union([z.strictObject({
+  ["status"]: z.enum(["serving"])
+}), z.strictObject({
+  ["reason"]: zExitDnsUnavailableReason,
+  ["status"]: z.enum(["unavailable"])
+})]);
+
+export const zExitDns = z.strictObject({
+  ["netmap"]: zNetmapRef,
+  ["status"]: zExitDnsStatus
+});
+
 export const zFreshness = z.enum(["current","awaiting_report","expired","superseded","config_mismatch","revoked"]);
 
 export const zGetConfigurationPath = z.strictObject({
@@ -3066,6 +3080,7 @@ export const zNodeState = z.strictObject({
   ["capabilities"]: typedMap(z.string(), zCapability, {}),
   ["configuration"]: zConfigurationState,
   ["exitCapability"]: zExitCapability.nullable().exactOptional(),
+  ["exitDns"]: zExitDns.nullable().exactOptional(),
   ["links"]: typedMap(z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u")), z.array(zLinkState), {}),
   ["listeners"]: typedMap(z.string(), zListenerState, {}),
   ["paths"]: typedMap(z.string(), zPathState, {}),

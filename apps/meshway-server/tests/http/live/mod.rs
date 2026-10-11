@@ -214,6 +214,7 @@ fn report(lease: &InstanceLease, sequence: u64) -> StateReport {
         observed_at: chrono::Utc::now(),
         state: NodeState {
             exit_capability: None,
+            exit_dns: None,
             system: SystemState {
                 hostname: "reported-host".into(),
                 os: "linux".into(),

@@ -459,6 +459,9 @@ crate::object! {
     /// Target-bound exit prerequisite facts; omitted means unknown, never ready.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exit_capability: Option<crate::exit::ExitCapability>,
+    /// Exit resolver availability of the installed netmap's `serveExitResolver` plan; omitted when that netmap serves no source or its installation is not current.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_dns: Option<crate::exit::ExitDns>,
     /// Complete listener inventory indexed by configured listener key.
     #[serde(deserialize_with="crate::wire::unique_map")] pub listeners: BTreeMap<String, ListenerState>,
     /// Complete outer socket inventory indexed by instance-local socket ID.

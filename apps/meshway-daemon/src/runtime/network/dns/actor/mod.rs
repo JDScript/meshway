@@ -239,6 +239,8 @@ pub(in crate::runtime::network) struct Attachment {
     queries: mpsc::Sender<super::mesh::Query>,
     requests: Option<mpsc::Receiver<super::mesh::Query>>,
     dispatcher: Option<Arc<meshway_dns::OwnerDispatcher>>,
+    /// The DNS owner's exit resolver fact, for the plane's report.
+    exit_dns: watch::Sender<Option<meshway_model::exit::ExitDns>>,
 }
 impl Attachment {
     pub fn new(
@@ -255,7 +257,13 @@ impl Attachment {
             queries,
             requests: Some(requests),
             dispatcher: None,
+            exit_dns: watch::channel(None).0,
         }
+    }
+    /// The exit resolver fact of the installed content; absent unless it
+    /// serves sources.
+    pub fn exit_dns(&self) -> watch::Receiver<Option<meshway_model::exit::ExitDns>> {
+        self.exit_dns.subscribe()
     }
     pub fn take_queries(&mut self) -> mpsc::Receiver<super::mesh::Query> {
         self.requests.take().expect("one DNS packet owner")
@@ -297,7 +305,13 @@ impl Attachment {
             let system = self.owner(host).await?;
             let exchange =
                 super::mesh::Exchange::new(Arc::new(host.sockets()), self.queries.clone());
-            let runtime = Runtime::prepare(system, self.settings.clone(), exchange).await?;
+            let runtime = Runtime::prepare(
+                system,
+                self.settings.clone(),
+                exchange,
+                self.exit_dns.clone(),
+            )
+            .await?;
             self.dispatcher = Some(runtime.dispatcher.clone());
             self.actor = Some(Actor::start(runtime));
         }

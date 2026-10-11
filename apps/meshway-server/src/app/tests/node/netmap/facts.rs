@@ -260,3 +260,103 @@ async fn unrelated_configuration_revision_does_not_withdraw_current_exit_readine
     assert!(inputs.ready_until_ms.contains_key(&exit));
     lab.app.shutdown().await.unwrap();
 }
+
+#[tokio::test]
+async fn exit_resolver_availability_is_a_fact_of_a_serving_netmap() {
+    use meshway_model::exit::{ExitDns, ExitDnsStatus, ExitDnsUnavailableReason};
+    let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
+    let lab = lab(true).await;
+    let [a, b, _] = lab.nodes;
+    // Only `a` uses exit `b`: `b` serves `a`'s DNS (a global exit rule would
+    // also make `b` itself require an exit).
+    let current = lab
+        .app
+        .configurations()
+        .read(&lab.owner, lab.network, None)
+        .await
+        .unwrap();
+    let mut config = current.document.configuration.clone();
+    config.routing.egress.rules.clear();
+    config.routing.egress.profiles.insert(
+        "via-b".into(),
+        meshway_configuration::RoutingProfile {
+            rules: vec![],
+            fallback: meshway_configuration::RouteAction::Exit {
+                nodes: vec![format!("node:{b}")],
+                via: vec![],
+            },
+        },
+    );
+    config
+        .routing
+        .egress
+        .assignments
+        .push(meshway_configuration::ProfileAssignment {
+            target: vec![format!("node:{a}")],
+            allowed: vec!["via-b".into()],
+            default: "via-b".into(),
+            locked: false,
+        });
+    lab.app
+        .configurations()
+        .apply(
+            &lab.owner,
+            lab.network,
+            meshway_protocol::configuration::ConfigurationRequest::Document {
+                expected_revision: current.revision,
+                request_id: rid(),
+                source_jsonc: WireSecret::new(canonical_json(&config).unwrap().expose().into()),
+            },
+            rid(),
+        )
+        .await
+        .unwrap();
+    let serving = lab.netmap(b).await;
+    assert!(
+        matches!(
+            serving.netmap.dns.egress,
+            meshway_configuration::netmap::DnsPlan::ServeExitResolver { .. }
+        ),
+        "{:?}",
+        serving.netmap.dns.egress
+    );
+    let unavailable = ExitDns {
+        netmap: serving.reference(),
+        status: ExitDnsStatus::Unavailable {
+            reason: ExitDnsUnavailableReason::MeshServer,
+        },
+    };
+    let netmaps_before = lab.references().await;
+    lab.report_exit_dns(1, 1, unavailable.clone())
+        .await
+        .unwrap();
+    // The owner sees the exact reason in the Node's report.
+    let identity =
+        crate::state::service::ReadIdentity::user_session(&lab.owner, lab.network).unwrap();
+    let view = lab
+        .app
+        .user_state_service()
+        .unwrap()
+        .query(identity, Some(vec![b]))
+        .await
+        .unwrap();
+    let Some(meshway_protocol::state::VisibleReport::Full { report }) = &view.nodes[&b].report
+    else {
+        panic!("full report for the owner")
+    };
+    assert_eq!(report.exit_dns.as_ref(), Some(&unavailable));
+    // A fact, never an input: no netmap changes.
+    assert_eq!(lab.references().await, netmaps_before);
+    // A netmap that serves no source, or another Node's netmap, is rejected.
+    let not_serving = ExitDns {
+        netmap: lab.netmap(a).await.reference(),
+        status: ExitDnsStatus::Serving,
+    };
+    assert!(
+        lab.report_exit_dns(0, 1, not_serving.clone())
+            .await
+            .is_err()
+    );
+    assert!(lab.report_exit_dns(1, 2, not_serving).await.is_err());
+    lab.app.shutdown().await.unwrap();
+}

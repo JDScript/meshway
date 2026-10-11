@@ -52,7 +52,11 @@ pub trait ResolverExchange: Send + Sync + 'static {
 #[derive(Clone)]
 pub struct Scope {
     pub desired: Desired,
+    /// This Node's own OS upstreams for its unmanaged names.
     pub system_resolvers: Option<crate::SystemResolverSnapshot>,
+    /// An exit resolver's OS upstreams for its sources
+    /// ([`crate::exit_resolvers`]); never used for this Node's own names.
+    pub served_resolvers: Option<crate::SystemResolverSnapshot>,
     ended: CancellationToken,
 }
 
@@ -64,18 +68,28 @@ impl Scope {
         Self {
             desired,
             system_resolvers,
+            served_resolvers: None,
             ended: CancellationToken::new(),
         }
     }
 
-    /// The same content and the same system resolver observation.
+    /// The same scope with an exit resolver's served upstreams.
+    pub fn serving(mut self, served: Option<crate::SystemResolverSnapshot>) -> Self {
+        self.served_resolvers = served;
+        self
+    }
+
+    /// The same content and the same system resolver observations.
     pub fn equivalent(&self, other: &Self) -> bool {
+        let same = |a: &Option<crate::SystemResolverSnapshot>,
+                    b: &Option<crate::SystemResolverSnapshot>| match (a, b) {
+            (None, None) => true,
+            (Some(a), Some(b)) => a.same(b),
+            _ => false,
+        };
         self.desired.reference() == other.desired.reference()
-            && match (&self.system_resolvers, &other.system_resolvers) {
-                (None, None) => true,
-                (Some(a), Some(b)) => a.same(b),
-                _ => false,
-            }
+            && same(&self.system_resolvers, &other.system_resolvers)
+            && same(&self.served_resolvers, &other.served_resolvers)
     }
 
     /// Installation readiness, distinct from per-query selection. Every
@@ -86,6 +100,9 @@ impl Scope {
         let plan = Plan::of(&self.desired);
         if plan == Plan::Unavailable {
             return Err(DispatchError::Unavailable(Unavailable::MissingExitPlan));
+        }
+        if self.served_resolvers.is_some() && plan != Plan::ServeExitResolver {
+            return Err(DispatchError::Scope);
         }
         let via_exit = matches!(plan, Plan::ViaExit { .. });
         if via_exit {

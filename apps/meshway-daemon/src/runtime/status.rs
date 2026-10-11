@@ -130,30 +130,35 @@ impl View {
         } else {
             SyncState::Reconnecting
         };
+        let exit_dns = network
+            .exit_dns
+            .clone()
+            .filter(|fact| network_current && network.netmap == Some(fact.netmap));
         let exit = (active
             && network.netmap.is_some()
-            && (network.exit_capability.is_some() || network.exit_dns_unavailable))
-            .then(|| meshway_protocol::ipc::ExitState {
-                capability: network.exit_capability.clone().map(|mut capability| {
-                    if !network_current {
-                        capability.installed_families.clear();
-                    }
-                    capability
-                }),
-                installed_role: network_current
-                    .then(|| {
-                        network
-                            .exit_capability
-                            .as_ref()
-                            .filter(|c| !c.installed_families.is_empty())
-                            .map(|c| c.role_generation)
-                    })
-                    .flatten(),
-                active_flows: network_current.then_some(network.exit_flows).flatten(),
-                dns_unavailable: network
-                    .exit_dns_unavailable
-                    .then_some(meshway_model::exit::ExitUnavailableReason::DnsUnavailable),
-            });
+            && (network.exit_capability.is_some() || exit_dns.is_some()))
+        .then(|| meshway_protocol::ipc::ExitState {
+            capability: network.exit_capability.clone().map(|mut capability| {
+                if !network_current {
+                    capability.installed_families.clear();
+                }
+                capability
+            }),
+            installed_role: network_current
+                .then(|| {
+                    network
+                        .exit_capability
+                        .as_ref()
+                        .filter(|c| !c.installed_families.is_empty())
+                        .map(|c| c.role_generation)
+                })
+                .flatten(),
+            active_flows: network_current.then_some(network.exit_flows).flatten(),
+            dns_unavailable: exit_dns.and_then(|fact| match fact.status {
+                meshway_model::exit::ExitDnsStatus::Serving => None,
+                meshway_model::exit::ExitDnsStatus::Unavailable { reason } => Some(reason),
+            }),
+        });
         Status {
             process_id: std::process::id(),
             revision: desired.revision,

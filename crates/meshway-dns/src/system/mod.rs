@@ -2,6 +2,7 @@
 //! an execution lease: kept routing may reject queries, never authorize them.
 use crate::DnsFuture;
 use meshway_configuration::{DnsConfiguration, DnsTransport, netmap::DnsPlan};
+pub use meshway_model::exit::ExitDnsUnavailableReason;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -327,6 +328,24 @@ impl SystemResolverSnapshot {
     }
 }
 
+/// What an exit resolver resolves its sources' queries with, decided on the
+/// installed netmap. `Ok(None)`: `dns.overrideLocal` makes the configured
+/// default resolvers the upstream, with their own netmap routes and no OS
+/// snapshot. Otherwise the observed served snapshot, while every address it
+/// may reach has a local decision; the error is why sources get SERVFAIL.
+/// The Node's own DNS installation never depends on this result.
+pub fn exit_resolvers(
+    netmap: &meshway_configuration::netmap::NodeNetmap,
+    observed: Result<SystemResolverSnapshot, ExitDnsUnavailableReason>,
+) -> Result<Option<SystemResolverSnapshot>, ExitDnsUnavailableReason> {
+    if netmap.projection.configuration.dns.override_local {
+        return Ok(None);
+    }
+    let snapshot = observed?;
+    crate::route::served_decisions(netmap, &snapshot)?;
+    Ok(Some(snapshot))
+}
+
 #[cfg(not(target_os = "linux"))]
 pub struct SystemDnsOwner;
 #[cfg(not(target_os = "linux"))]
@@ -341,8 +360,8 @@ impl SystemDnsOwner {
     pub fn system_resolvers(&self) -> Option<SystemResolverSnapshot> {
         None
     }
-    pub fn served_resolvers(&self) -> Option<SystemResolverSnapshot> {
-        None
+    pub fn served_resolvers(&self) -> Result<SystemResolverSnapshot, ExitDnsUnavailableReason> {
+        Err(ExitDnsUnavailableReason::Unobserved)
     }
     pub async fn install(&mut self, _: &SystemDnsPlan) -> Result<(), SystemDnsError> {
         Err(SystemDnsError::Unsupported)

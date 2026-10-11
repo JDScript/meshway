@@ -166,6 +166,7 @@ impl Control {
             probes: Vec::new(),
             problems: Vec::new(),
             exit_capability: None,
+            exit_dns: None,
         };
         Ok(state)
     }

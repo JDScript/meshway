@@ -57,6 +57,7 @@ pub(super) fn setup() -> (ReportAdmission, StateReport, VisibilityScope, DateTim
         observed_at: now,
         state: NodeState {
             exit_capability: None,
+            exit_dns: None,
             system: SystemState {
                 hostname: "host".into(),
                 os: "linux".into(),

@@ -25033,6 +25033,80 @@
         },
         "additionalProperties": false
       },
+      "ExitDns": {
+        "type": "object",
+        "description": "Exit resolver fact of the installed netmap's `serveExitResolver` plan.",
+        "required": [
+          "netmap",
+          "status"
+        ],
+        "properties": {
+          "netmap": {
+            "$ref": "#/components/schemas/NetmapRef",
+            "description": "Exact installed netmap whose served plan this describes."
+          },
+          "status": {
+            "$ref": "#/components/schemas/ExitDnsStatus",
+            "description": "Current availability for the plan's sources."
+          }
+        },
+        "additionalProperties": false
+      },
+      "ExitDnsStatus": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Sources' queries are resolved by the exit host's OS resolver, or by the configured default resolvers under `dns.overrideLocal`.",
+            "required": [
+              "status"
+            ],
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": [
+                  "serving"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "Sources' queries are answered SERVFAIL; the Node's own DNS is unaffected.",
+            "required": [
+              "reason",
+              "status"
+            ],
+            "properties": {
+              "reason": {
+                "$ref": "#/components/schemas/ExitDnsUnavailableReason",
+                "description": "Concrete cause."
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "unavailable"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        ],
+        "description": "Whether the exit resolver can currently serve its sources."
+      },
+      "ExitDnsUnavailableReason": {
+        "type": "string",
+        "description": "Why an exit resolver cannot currently resolve its sources' queries with the exit host's OS resolver.",
+        "enum": [
+          "unobserved",
+          "noServers",
+          "localServer",
+          "anchorServer",
+          "meshServer",
+          "exitRoutedServer",
+          "proxyStubMissing"
+        ]
+      },
       "ExitFamily": {
         "type": "string",
         "description": "Inner address family, independent of the outer carrier.",
@@ -29929,6 +30003,17 @@
               {
                 "$ref": "#/components/schemas/ExitCapability",
                 "description": "Target-bound exit prerequisite facts; omitted means unknown, never ready."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "exitDns": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ExitDns",
+                "description": "Exit resolver availability of the installed netmap's `serveExitResolver` plan; omitted when that netmap serves no source or its installation is not current."
               },
               {
                 "type": "null"

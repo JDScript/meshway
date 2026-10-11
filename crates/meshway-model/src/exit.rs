@@ -68,6 +68,50 @@ pub enum ExitStatus {
     },
 }
 }
+crate::string_enum! {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+/// Why an exit resolver cannot currently resolve its sources' queries with the exit host's OS resolver.
+pub enum ExitDnsUnavailableReason {
+    /// The OS resolver could not be observed, for example before the owned DNS link is installed.
+    Unobserved,
+    /// The OS resolver lists no server.
+    NoServers,
+    /// An OS server is a loopback, unspecified, multicast or otherwise unusable local address, which may be a stub that recurses into Meshway.
+    LocalServer,
+    /// An OS server is this Node's own DNS anchor address.
+    AnchorServer,
+    /// An OS server is inside a Mesh address pool.
+    MeshServer,
+    /// This Node's egress partition does not leave an OS server to a local socket (Direct or Unmanaged).
+    ExitRoutedServer,
+    /// systemd-resolved's proxy stub 127.0.0.54:53 (systemd ≥ 248 with `DNSStubListener=yes`) is not listening.
+    ProxyStubMissing,
+}
+}
+crate::tagged! { tag = "status";
+#[derive(Clone, Debug, PartialEq, Eq)]
+/// Whether the exit resolver can currently serve its sources.
+pub enum ExitDnsStatus {
+    /// Sources' queries are resolved by the exit host's OS resolver, or by the configured default resolvers under `dns.overrideLocal`.
+    Serving,
+    /// Sources' queries are answered SERVFAIL; the Node's own DNS is unaffected.
+    Unavailable {
+        /// Concrete cause.
+        reason: ExitDnsUnavailableReason,
+    },
+}
+}
+crate::object! {
+#[derive(Clone, Debug, PartialEq, Eq)]
+/// Exit resolver fact of the installed netmap's `serveExitResolver` plan.
+pub struct ExitDns {
+    /// Exact installed netmap whose served plan this describes.
+    pub netmap: NetmapRef,
+    /// Current availability for the plan's sources.
+    pub status: ExitDnsStatus,
+}
+}
 crate::object! {
 #[derive(Clone, Debug, PartialEq, Eq)]
 /// Target-bound exit capability observation, accepted before applied as well as after it.

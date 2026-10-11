@@ -334,7 +334,6 @@ impl meshway_engine::Components for Plane {
         let exit_dns = !matches!(netmap.dns.egress, DnsPlan::NoExit);
         let needs_dns =
             super::requirements::dns_required(&netmap.projection.configuration.dns) || exit_dns;
-        self.report.exit_dns_unavailable = false;
         // Required negative DNS first; query authority follows the packet
         // plane in apply_dns.
         let negative = if needs_dns {

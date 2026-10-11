@@ -9,6 +9,7 @@ use meshway_dns::{
     SystemDnsError, SystemDnsOwner, SystemDnsPlan, SystemDnsSettings,
 };
 use meshway_engine::Desired;
+use meshway_model::exit::{ExitDns, ExitDnsStatus, ExitDnsUnavailableReason};
 use std::sync::Arc;
 use tokio::{
     net::{TcpListener, UdpSocket},
@@ -27,6 +28,8 @@ pub(super) struct Runtime {
     stop: CancellationToken,
     service: tokio::task::JoinHandle<std::io::Result<()>>,
     installed_plan: Option<SystemDnsPlan>,
+    /// The one producer of the exit resolver fact; the plane reports it.
+    exit_dns: watch::Sender<Option<ExitDns>>,
 }
 impl Drop for Runtime {
     fn drop(&mut self) {
@@ -42,6 +45,7 @@ impl Runtime {
         system: SystemDnsOwner,
         settings: SystemDnsSettings,
         exchange: Arc<dyn ResolverExchange>,
+        exit_dns: watch::Sender<Option<ExitDns>>,
     ) -> Result<Self, SystemDnsError> {
         settings.validate()?;
         let (scopes, received) = watch::channel(None);
@@ -67,6 +71,7 @@ impl Runtime {
             stop,
             service,
             installed_plan: None,
+            exit_dns,
         })
     }
 
@@ -126,14 +131,17 @@ impl Runtime {
         // Required negative capture first; a later failure keeps it with Scope=None.
         self.hold(&netmap).await?;
         self.check(&netmap)?;
-        let scope = Scope::netmap(desired, self.resolvers(&netmap.dns.egress));
+        let (system, served) = self.resolvers(&netmap);
+        let scope = Scope::netmap(desired, system).serving(served.clone().ok().flatten());
         self.dispatcher
             .validate_scope(&scope)
             .map_err(|_| SystemDnsError::ResolverPlan)?;
         if self.service.is_finished() {
             return Err(SystemDnsError::Backend);
         }
+        let reference = scope.desired.reference();
         meshway_dns::publish_scope(&self.scopes, Some(scope));
+        self.report_exit_dns(reference, &netmap, &served);
         if self.dispatcher.reconcile().await.is_err() {
             self.suspend();
             return Err(SystemDnsError::ResolverPlan);
@@ -142,20 +150,68 @@ impl Runtime {
     }
     pub fn suspend(&self) {
         meshway_dns::publish_scope(&self.scopes, None);
+        self.exit_dns.send_if_modified(|fact| fact.take().is_some());
     }
-    /// The OS resolvers a plan may use: none for a Mesh exit client, the
-    /// served snapshot for an exit resolver, else this Node's own fallback.
-    fn resolvers(&self, plan: &DnsPlan) -> Option<meshway_dns::SystemResolverSnapshot> {
-        match plan {
+    /// This Node's own OS upstreams (none for a Mesh exit client, which
+    /// resolves through its exit) and, for an exit resolver, what it serves
+    /// its sources with or why it cannot. The two are independent: served
+    /// unavailability never fails this Node's own DNS installation.
+    #[allow(clippy::type_complexity)]
+    fn resolvers(
+        &self,
+        netmap: &NodeNetmap,
+    ) -> (
+        Option<meshway_dns::SystemResolverSnapshot>,
+        Result<Option<meshway_dns::SystemResolverSnapshot>, ExitDnsUnavailableReason>,
+    ) {
+        let system = match netmap.dns.egress {
             DnsPlan::ViaExit { .. } | DnsPlan::Unavailable { .. } => None,
-            DnsPlan::ServeExitResolver { .. } => self.system.served_resolvers(),
-            DnsPlan::NoExit => self.system.system_resolvers(),
-        }
+            DnsPlan::NoExit | DnsPlan::ServeExitResolver { .. } => self.system.system_resolvers(),
+        };
+        let served = match netmap.dns.egress {
+            DnsPlan::ServeExitResolver { .. } => {
+                meshway_dns::exit_resolvers(netmap, self.system.served_resolvers())
+            }
+            _ => Ok(None),
+        };
+        (system, served)
+    }
+    /// Publish the exit resolver fact of the content just published: absent
+    /// unless the netmap serves sources.
+    fn report_exit_dns(
+        &self,
+        reference: meshway_model::NetmapRef,
+        netmap: &NodeNetmap,
+        served: &Result<Option<meshway_dns::SystemResolverSnapshot>, ExitDnsUnavailableReason>,
+    ) {
+        let fact =
+            matches!(netmap.dns.egress, DnsPlan::ServeExitResolver { .. }).then(|| ExitDns {
+                netmap: reference,
+                status: match served {
+                    Ok(_) => ExitDnsStatus::Serving,
+                    Err(reason) => ExitDnsStatus::Unavailable { reason: *reason },
+                },
+            });
+        self.exit_dns.send_if_modified(|current| {
+            if *current == fact {
+                return false;
+            }
+            if let Some(ExitDns {
+                status: ExitDnsStatus::Unavailable { reason },
+                ..
+            }) = &fact
+            {
+                tracing::warn!(?reason, "Exit resolver cannot serve its sources");
+            }
+            *current = fact;
+            true
+        });
     }
     /// Parent selects this regularly with the kernel/lease watcher. A failed
     /// observation withdraws query authority without removing forced suffixes.
     /// An exit resolver's served snapshot follows the observed OS inventory:
-    /// a changed snapshot republishes the same content's scope.
+    /// a changed snapshot republishes the same content's scope, which ends
+    /// this Node's in-flight queries of the old scope.
     pub async fn observe(&mut self) -> Result<(), SystemDnsError> {
         let result = if self.service.is_finished() {
             Err(SystemDnsError::Backend)
@@ -173,10 +229,10 @@ impl Runtime {
                 DnsPlan::ServeExitResolver { .. }
             )
         {
-            let next = Scope::netmap(
-                scope.desired.clone(),
-                self.resolvers(&scope.desired.netmap().dns.egress),
-            );
+            let netmap = scope.desired.netmap().clone();
+            let (system, served) = self.resolvers(&netmap);
+            let next =
+                Scope::netmap(scope.desired.clone(), system).serving(served.clone().ok().flatten());
             if !scope.equivalent(&next) {
                 if self.dispatcher.validate_scope(&next).is_err() {
                     self.suspend();
@@ -184,6 +240,7 @@ impl Runtime {
                 }
                 meshway_dns::publish_scope(&self.scopes, Some(next));
             }
+            self.report_exit_dns(scope.desired.reference(), &netmap, &served);
         }
         Ok(())
     }

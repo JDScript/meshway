@@ -37,6 +37,7 @@ pub(super) fn replace(
     now: DateTime<Utc>,
 ) -> Result<bool, Error> {
     initialize(tx)?;
+    check_dns(tx, sealer, admission, report)?;
     let Some(capability) = &report.state.exit_capability else {
         // Reports are complete snapshots: unknown must withdraw a previous
         // readiness observation, rather than silently reusing it until expiry.
@@ -162,6 +163,39 @@ pub(super) fn replace(
         ON CONFLICT(network_id,node_id) DO UPDATE SET instance_id=excluded.instance_id,generation=excluded.generation,revision=excluded.revision,expires_at=excluded.expires_at,payload=excluded.payload,active=1",
         params![admission.network_id.as_uuid().as_bytes(), admission.node_id.as_uuid().as_bytes(), admission.instance_id.as_uuid().as_bytes(), admission.instance_generation.get() as i64, reference.revision.get() as i64, expires, payload])?;
     Ok(changed)
+}
+
+/// The exit resolver fact is stored with the report only: it must describe
+/// the Node's current netmap, and that netmap must serve sources.
+fn check_dns(
+    tx: &Transaction<'_>,
+    sealer: &Sealer,
+    admission: &ReportAdmission,
+    report: &StateReport,
+) -> Result<(), Error> {
+    let Some(dns) = &report.state.exit_dns else {
+        return Ok(());
+    };
+    if !admission.configurations.contains(&dns.netmap) {
+        return Err(Error::InvalidRequest);
+    }
+    if admission.execution != Some(dns.netmap) {
+        return Err(Error::StateScopeChanged);
+    }
+    let netmap = crate::store::netmap::load(
+        tx,
+        sealer,
+        admission.network_id,
+        admission.node_id,
+        dns.netmap,
+    )?;
+    if !matches!(
+        netmap.netmap.dns.egress,
+        meshway_configuration::netmap::DnsPlan::ServeExitResolver { .. }
+    ) {
+        return Err(Error::InvalidRequest);
+    }
+    Ok(())
 }
 
 pub(crate) fn inputs(

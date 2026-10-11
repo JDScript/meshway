@@ -84,6 +84,7 @@ fn report(netmap: &CompiledNetmap, instance: &InstanceRequest, address: &str) ->
         observed_at: now,
         state: NodeState {
             exit_capability: None,
+            exit_dns: None,
             system: SystemState {
                 hostname: "reported-fact".into(),
                 os: "linux".into(),

@@ -7,7 +7,10 @@
 //! operation re-checks that the current name owner runs in this namespace, so
 //! a restarted resolved that kept the settings is adopted, and one that lost
 //! them leaves the link at its original settings for a fresh installation.
-use super::{DnsLinkIdentity, Namespace, OwnedDnsLink, SystemDnsError, SystemDnsPlan, storage};
+use super::{
+    DnsLinkIdentity, ExitDnsUnavailableReason, Namespace, OwnedDnsLink, SystemDnsError,
+    SystemDnsPlan, storage,
+};
 use meshway_private_storage::Directory;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -80,6 +83,8 @@ pub(super) struct Backend {
     record: Record,
     writes: storage::Writes,
     probed: bool,
+    /// The last proxy stub check: resolved's owner, when, and its result.
+    stub: Option<(String, std::time::Instant, bool)>,
 }
 pub(super) fn has_record(directory: &Directory) -> Result<bool, SystemDnsError> {
     storage::read::<Record>(directory, "resolved.json").map(|record| record.is_some())
@@ -183,6 +188,7 @@ impl Backend {
             record,
             writes: storage::Writes::default(),
             probed: false,
+            stub: None,
         };
         if lost {
             // The link is at its original settings: record exactly that, so
@@ -273,30 +279,34 @@ impl Backend {
         }
         self.verify().await
     }
-    /// The proxy stub's routing while settings are installed, or `None` when
-    /// it cannot serve: no installed link, no OS server, or an OS server that
-    /// is a local stub (loopback or unspecified), this Node's anchor/bind, or
-    /// a multicast address. An unknown local stub may recurse into Meshway,
-    /// and no public resolver substitutes for the OS's own.
-    pub async fn proxy(&self) -> Result<Option<Proxy>, SystemDnsError> {
+    /// The proxy stub's routing while settings are installed, or why it
+    /// cannot serve: no installed link or unreadable inventory, no OS
+    /// server, an OS server that is a local stub (loopback or unspecified),
+    /// a multicast address or this Node's anchor/bind, or no proxy stub
+    /// listening. An unknown local stub may recurse into Meshway, and no
+    /// public resolver substitutes for the OS's own. The netmap's decision
+    /// on each server (Mesh, exit-routed) is [`crate::exit_resolvers`]'s.
+    pub async fn proxy(&mut self) -> Result<Proxy, ExitDnsUnavailableReason> {
         let Some(installed) = &self.record.installed else {
-            return Ok(None);
+            return Err(ExitDnsUnavailableReason::Unobserved);
         };
         let mut own_seen = false;
         let mut servers = Vec::new();
         for list in ["DNSEx", "FallbackDNSEx"] {
             let entries: GlobalServers =
-                property(&self.connection, &self.service_owner, PATH, IFACE, list).await?;
+                property(&self.connection, &self.service_owner, PATH, IFACE, list)
+                    .await
+                    .map_err(|_| ExitDnsUnavailableReason::Unobserved)?;
             if entries.len() > 256 {
-                return Err(SystemDnsError::Capacity);
+                return Err(ExitDnsUnavailableReason::Unobserved);
             }
             for (_, family, address, port, _) in entries {
                 let ip = match (family, address.as_slice()) {
-                    (2, bytes) => <[u8; 4]>::try_from(bytes).map(IpAddr::from),
-                    (10, bytes) => <[u8; 16]>::try_from(bytes).map(IpAddr::from),
-                    _ => return Ok(None),
+                    (2, bytes) => <[u8; 4]>::try_from(bytes).ok().map(IpAddr::from),
+                    (10, bytes) => <[u8; 16]>::try_from(bytes).ok().map(IpAddr::from),
+                    _ => None,
                 }
-                .map_err(|_| SystemDnsError::Backend)?
+                .ok_or(ExitDnsUnavailableReason::LocalServer)?
                 .to_canonical();
                 // resolved reports a loopback server under the loopback
                 // index, not its link's: the owned link's one server is the
@@ -307,12 +317,11 @@ impl Backend {
                     own_seen = true;
                     continue;
                 }
-                if ip.is_loopback()
-                    || ip.is_unspecified()
-                    || ip.is_multicast()
-                    || ip == IpAddr::V4(self.record.link.address)
-                {
-                    return Ok(None);
+                if ip == IpAddr::V4(self.record.link.address) {
+                    return Err(ExitDnsUnavailableReason::AnchorServer);
+                }
+                if ip.is_loopback() || ip.is_unspecified() || ip.is_multicast() {
+                    return Err(ExitDnsUnavailableReason::LocalServer);
                 }
                 if !servers.contains(&ip) {
                     servers.push(ip);
@@ -320,17 +329,60 @@ impl Backend {
             }
         }
         if servers.is_empty() {
-            return Ok(None);
+            return Err(ExitDnsUnavailableReason::NoServers);
         }
-        servers.sort();
-        let mut routes: Vec<String> = installed
+        let routes = installed
             .domains
             .iter()
             .map(|(name, _)| name.trim_end_matches('.').to_ascii_lowercase())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
             .collect();
-        routes.sort();
-        routes.dedup();
-        Ok(Some(Proxy { routes, servers }))
+        if !self.proxy_stub_listening().await {
+            return Err(ExitDnsUnavailableReason::ProxyStubMissing);
+        }
+        servers.sort();
+        Ok(Proxy { routes, servers })
+    }
+    /// Whether this namespace has a UDP socket bound and a TCP socket
+    /// listening at exactly the proxy stub, re-read at most every two
+    /// seconds and whenever resolved's owner changes. systemd < 248 and
+    /// `DNSStubListener=no` have neither.
+    async fn proxy_stub_listening(&mut self) -> bool {
+        if let Some((owner, at, listening)) = &self.stub
+            && *owner == self.service_owner
+            && at.elapsed() < Duration::from_secs(2)
+        {
+            return *listening;
+        }
+        let local = format!(
+            "{:08X}:{:04X}",
+            u32::from_ne_bytes(match PROXY_STUB.ip() {
+                IpAddr::V4(ip) => ip.octets(),
+                IpAddr::V6(_) => [0; 4],
+            }),
+            PROXY_STUB.port()
+        );
+        let (udp, tcp) = tokio::join!(
+            tokio::fs::read_to_string("/proc/net/udp"),
+            tokio::fs::read_to_string("/proc/net/tcp")
+        );
+        let has = |table: std::io::Result<String>, state: &str| {
+            table.is_ok_and(|table| {
+                table.lines().skip(1).any(|line| {
+                    let mut fields = line.split_whitespace().skip(1);
+                    fields.next() == Some(local.as_str()) && fields.nth(1) == Some(state)
+                })
+            })
+        };
+        // UDP sockets that are bound but unconnected are TCP_CLOSE (07).
+        let listening = has(udp, "07") && has(tcp, "0A");
+        self.stub = Some((
+            self.service_owner.clone(),
+            std::time::Instant::now(),
+            listening,
+        ));
+        listening
     }
     async fn settings(
         &self,

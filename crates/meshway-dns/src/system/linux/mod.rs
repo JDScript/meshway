@@ -142,9 +142,10 @@ pub struct SystemDnsOwner {
     reservation: Reservation,
     snapshot: Option<SystemResolverSnapshot>,
     /// resolved's proxy stub for an exit resolver's served queries, while
-    /// the installed link and resolved's OS server inventory permit it. Its
-    /// lapse withdraws only served queries, never the owner.
-    served: Option<SystemResolverSnapshot>,
+    /// the installed link, the stub and resolved's OS server inventory
+    /// permit it, or why not. Its lapse withdraws only served queries, never
+    /// the owner.
+    served: Result<SystemResolverSnapshot, ExitDnsUnavailableReason>,
     writes: storage::Writes,
     invalid: CancellationToken,
 }
@@ -250,7 +251,7 @@ impl SystemDnsOwner {
             directory,
             reservation,
             snapshot,
-            served: None,
+            served: Err(ExitDnsUnavailableReason::Unobserved),
             writes,
             invalid,
         })
@@ -329,7 +330,7 @@ impl SystemDnsOwner {
             Self::open(&self.directory, &self.reservation, anchor).await?;
         self.backend = backend;
         self.snapshot = snapshot;
-        self.served = None;
+        self.served = Err(ExitDnsUnavailableReason::Unobserved);
         self.invalid = invalid;
         Ok(())
     }
@@ -341,15 +342,20 @@ impl SystemDnsOwner {
     }
 
     /// OS upstreams for an exit resolver's served queries: the recorded
-    /// original nameservers, or resolved's proxy stub while it is usable.
-    pub fn served_resolvers(&self) -> Option<SystemResolverSnapshot> {
-        match &self.backend {
-            Backend::File(_) => self.snapshot.clone(),
-            Backend::Resolved(_) => self
-                .served
+    /// original nameservers, or resolved's proxy stub while it is usable;
+    /// otherwise why not. [`crate::exit_resolvers`] decides them on the netmap.
+    pub fn served_resolvers(&self) -> Result<SystemResolverSnapshot, ExitDnsUnavailableReason> {
+        let served = match &self.backend {
+            Backend::File(_) => self
+                .snapshot
                 .clone()
-                .filter(|served| served.ensure_current().is_ok()),
-        }
+                .ok_or(ExitDnsUnavailableReason::Unobserved),
+            Backend::Resolved(_) => self.served.clone(),
+        }?;
+        served
+            .ensure_current()
+            .map_err(|_| ExitDnsUnavailableReason::Unobserved)?;
+        Ok(served)
     }
 
     pub async fn install(&mut self, plan: &SystemDnsPlan) -> Result<(), SystemDnsError> {
@@ -368,11 +374,11 @@ impl SystemDnsOwner {
 
     /// Keep, replace or withdraw the resolved proxy snapshot after a
     /// successful observation. The same inventory keeps the same snapshot.
-    fn refresh_served(&mut self, proxy: Option<resolved::Proxy>) {
-        let current = self.served.as_ref().filter(|served| {
+    fn refresh_served(&mut self, proxy: Result<resolved::Proxy, ExitDnsUnavailableReason>) {
+        let current = self.served.as_ref().ok().filter(|served| {
             served.ensure_current().is_ok()
                 && match (&served.provenance, &proxy) {
-                    (Provenance::ResolvedProxy { routes, servers }, Some(proxy)) => {
+                    (Provenance::ResolvedProxy { routes, servers }, Ok(proxy)) => {
                         **routes == proxy.routes && **servers == proxy.servers
                     }
                     _ => false,
@@ -384,14 +390,21 @@ impl SystemDnsOwner {
             }
             return;
         }
-        if let Some(old) = self.served.take() {
+        if let Ok(old) = &self.served {
             old.invalid.cancel();
-            if proxy.is_none() {
-                tracing::debug!("resolved proxy withdrawn from served exit queries");
-            }
         }
-        let Some(proxy) = proxy else {
-            return;
+        let proxy = match proxy {
+            Ok(proxy) => proxy,
+            Err(reason) => {
+                if self.served.as_ref().err() != Some(&reason) {
+                    tracing::debug!(
+                        ?reason,
+                        "resolved proxy unavailable for served exit queries"
+                    );
+                }
+                self.served = Err(reason);
+                return;
+            }
         };
         tracing::debug!(
             servers = proxy.servers.len(),
@@ -400,9 +413,10 @@ impl SystemDnsOwner {
         );
         let mut nonce = [0u8; 8];
         if getrandom::fill(&mut nonce).is_err() {
+            self.served = Err(ExitDnsUnavailableReason::Unobserved);
             return;
         }
-        self.served = Some(SystemResolverSnapshot {
+        self.served = Ok(SystemResolverSnapshot {
             id: format!("resolved-proxy-{:016x}", u64::from_be_bytes(nonce)),
             upstreams: Arc::new(vec![resolved::PROXY_STUB]),
             primary: DnsTransport::Udp,
@@ -431,7 +445,7 @@ impl SystemDnsOwner {
                 Backend::Resolved(resolved) => {
                     resolved.observe().await?;
                     // An unusable inventory withdraws only served queries.
-                    Ok(Some(resolved.proxy().await.ok().flatten()))
+                    Ok(Some(resolved.proxy().await))
                 }
             }
         }
@@ -446,7 +460,7 @@ impl SystemDnsOwner {
         };
         if result.is_err() {
             self.invalid.cancel();
-            self.served = None;
+            self.served = Err(ExitDnsUnavailableReason::Unobserved);
         } else if let Some(snapshot) = &self.snapshot {
             snapshot.ensure_current()?;
             *snapshot

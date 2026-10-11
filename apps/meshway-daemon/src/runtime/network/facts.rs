@@ -44,6 +44,10 @@ impl Report {
                     }
                     exit
                 }),
+            exit_dns: self
+                .exit_dns
+                .clone()
+                .filter(|fact| installed == Some(fact.netmap)),
         };
         if !current {
             return state;
