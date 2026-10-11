@@ -64,11 +64,7 @@ impl Store {
                 ledger.namespace_inode,
             ) != (boot.as_str(), dev, ino)
             {
-                let stamp = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map_err(|_| Error::Journal)?
-                    .as_nanos();
-                source.publish_once(&format!("{FILE}.stale-{stamp}"), FILE, None)?;
+                source.archive_stale(FILE, super::super::journal::STALE_ARCHIVES)?;
                 return Ok(None);
             }
             ledger.validate()?;

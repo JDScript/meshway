@@ -88,11 +88,7 @@ pub(in crate::linux::kernel) fn settled(directory: &Directory) -> Result<()> {
     }
     let (boot, device, inode) = super::super::journal::Journal::identity()?;
     if record.boot != boot || record.net_device != device || record.net_inode != inode {
-        let stamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|_| Error::Journal)?
-            .as_nanos();
-        directory.publish_once(&format!("{FILE}.stale-{stamp}"), FILE, None)?;
+        directory.archive_stale(FILE, super::super::journal::STALE_ARCHIVES)?;
         return Ok(());
     }
     let namespace = std::fs::metadata("/proc/self/ns/pid")?;

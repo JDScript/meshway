@@ -94,3 +94,28 @@ fn continuous_replacement_is_bounded() {
     });
     assert!(directory.file("state", false).unwrap().is_some());
 }
+
+#[test]
+fn stale_archives_keep_only_the_newest() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().canonicalize().unwrap().join("owner");
+    let directory = Directory::open(&path, "owner.lock").unwrap();
+    let mut archives = Vec::new();
+    for round in 0..5u8 {
+        directory.replace("journal.json", &[round]).unwrap();
+        archives.push(directory.archive_stale("journal.json", 3).unwrap());
+        assert!(directory.file("journal.json", false).unwrap().is_none());
+    }
+    directory.replace("other.json.stale-1", b"x").unwrap();
+    let mut names: Vec<_> = std::fs::read_dir(&path)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .filter(|name| name.starts_with("journal.json.stale-"))
+        .collect();
+    names.sort();
+    assert_eq!(names, archives[2..]);
+    for (round, name) in archives[2..].iter().enumerate() {
+        assert_eq!(std::fs::read(path.join(name)).unwrap(), [round as u8 + 2]);
+    }
+    assert!(path.join("other.json.stale-1").exists());
+}

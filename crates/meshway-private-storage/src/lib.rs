@@ -120,6 +120,28 @@ impl Directory {
         }
     }
 
+    /// Durably move `source` to a new `<source>.stale-<nanoseconds>` archive,
+    /// then keep only the newest `keep` archives of `source`: older ones are
+    /// removed, so repeated archival (one per boot) stays bounded. Returns the
+    /// new archive's name.
+    pub fn archive_stale(&self, source: &str, keep: usize) -> Result<String, Error> {
+        name(source)?;
+        if source == self.lock_name || keep == 0 {
+            return Err(Error::InvalidPath);
+        }
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|_| Error::Io)?
+            .as_nanos();
+        let archive = format!("{source}.stale-{stamp}");
+        self.publish_once(&archive, source, None)?;
+        #[cfg(unix)]
+        {
+            unix::prune_stale(&self.directory, &format!("{source}.stale-"), keep)?;
+        }
+        Ok(archive)
+    }
+
     /// Durable atomic replacement using a unique private temporary file.
     /// An error after rename has an unknown durability outcome: reload before
     /// issuing dependent external operations. Existing corrupt files are not read

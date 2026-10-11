@@ -292,15 +292,14 @@ impl Store {
     }
 }
 
+/// Archives kept per journal; older ones are removed (one archive per boot
+/// or namespace change would otherwise grow without bound).
+pub(super) const STALE_ARCHIVES: usize = 3;
+
 /// Checked descriptor-relative, durable NOREPLACE rename. A failed archive
 /// never permits a fresh allocation/overwrite.
 fn archive(directory: &Directory, journal: &Journal, cause: &'static str) -> Result<()> {
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|_| Error::Journal)?
-        .as_nanos();
-    let archive = format!("{FILE}.stale-{timestamp}");
-    directory.publish_once(&archive, FILE, None)?;
+    let archive = directory.archive_stale(FILE, STALE_ARCHIVES)?;
     tracing::info!(
         old_boot = journal.boot.trim(),
         old_namespace_device = journal.namespace_device,

@@ -149,6 +149,41 @@ pub(super) fn publish_once(
     directory.sync_all().map_err(|_| Error::Io)
 }
 
+/// Remove all but the newest `keep` regular files named `<prefix><digits>`.
+pub(super) fn prune_stale(directory: &File, prefix: &str, keep: usize) -> Result<(), Error> {
+    let mut archives = Vec::new();
+    let mut entries = rustix::fs::Dir::read_from(directory).map_err(io_error)?;
+    while let Some(entry) = entries.read() {
+        let entry = entry.map_err(io_error)?;
+        let Ok(name) = entry.file_name().to_str() else {
+            continue;
+        };
+        let Some(stamp) = name
+            .strip_prefix(prefix)
+            .filter(|stamp| !stamp.is_empty() && stamp.bytes().all(|b| b.is_ascii_digit()))
+            .and_then(|stamp| stamp.parse::<u128>().ok())
+        else {
+            continue;
+        };
+        archives.push((stamp, name.to_owned()));
+        if archives.len() > 4096 {
+            return Err(Error::Io);
+        }
+    }
+    archives.sort();
+    let excess = archives.len().saturating_sub(keep);
+    for (_, name) in &archives[..excess] {
+        // Only checked owner-only regular files are removed.
+        file(directory, name, false)?;
+        rustix::fs::unlinkat(directory, name.as_str(), rustix::fs::AtFlags::empty())
+            .map_err(io_error)?;
+    }
+    if excess > 0 {
+        directory.sync_all().map_err(|_| Error::Io)?;
+    }
+    Ok(())
+}
+
 pub(super) fn replace(directory: &File, final_name: &str, bytes: &[u8]) -> Result<(), Error> {
     file(directory, final_name, false)?;
     let mut nonce = [0u8; 16];

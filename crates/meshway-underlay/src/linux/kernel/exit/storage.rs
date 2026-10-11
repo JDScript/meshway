@@ -128,11 +128,7 @@ impl Store {
                 || ledger.namespace_device != device
                 || ledger.namespace_inode != inode
             {
-                let stamp = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map_err(|_| Error::Journal)?
-                    .as_nanos();
-                reader.publish_once(&format!("{FILE}.stale-{stamp}"), FILE, None)?;
+                reader.archive_stale(FILE, super::super::journal::STALE_ARCHIVES)?;
                 return Ok(None);
             }
             ledger.validate()?;
