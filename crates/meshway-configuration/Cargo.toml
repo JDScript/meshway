@@ -13,6 +13,8 @@ meshway-transport = { path = "../meshway-transport" }
 serde = { workspace = true, features = ["rc"] }
 serde_json = { workspace = true, features = ["raw_value"] }
 sha2.workspace = true
+# Runtime hardware SHA-256 for canonical digests of whole netmaps.
+sha2-fast = { package = "sha2", version = "0.11", features = ["zeroize"] }
 thiserror.workspace = true
 utoipa.workspace = true
 zeroize = "1.8"

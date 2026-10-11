@@ -80,8 +80,15 @@ pub(crate) fn authorize_node(
             .try_into()
             .map_err(|_| Error::decode("node_sessions.expires_at"))?,
     };
-    let (_, cfg, bindings) = current_configuration(tx, sealer, p.network)?;
-    identity_eligible(tx, &cfg, &bindings, p.network, p.node).map_err(|error| match error {
+    let revision = crate::store::configuration::versions::current_revision(tx, p.network).map_err(
+        |error| match error {
+            Error::NotFound => Error::InvalidCredentials,
+            other => other,
+        },
+    )?;
+    let snapshot = super::current_snapshot(tx, sealer, p.network, revision)?;
+    let (cfg, bindings) = (&snapshot.document.configuration, &snapshot.bindings);
+    identity_eligible(tx, cfg, bindings, p.network, p.node).map_err(|error| match error {
         Error::PermissionDenied | Error::NotFound | Error::InvalidCredentials => {
             Error::NodeIdentityRejected
         }

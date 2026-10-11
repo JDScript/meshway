@@ -2,13 +2,15 @@
 //! single Control owner; State observations are inputs, never grants. Each
 //! context is bound to the held netmap content it was issued for and to its
 //! own short Server deadline; Engine's adjacency owner drops it on new content.
-use crate::{Control, Deadline, Error, Started};
+use crate::{
+    Control, Deadline, Error, Started,
+    exchange::{Prepared, Response},
+};
 use meshway_configuration::{
     execution::Carrier,
     netmap::{CompiledNetmap, NodeNetmap},
 };
 use meshway_model::{NodeId, RequestId, StateEpoch, state::SocketNetwork};
-use meshway_policy::{admission::netmap::admit_adjacency, compile::netmap::LocalCompiler};
 pub use meshway_protocol::connectivity::SocketReference;
 use meshway_protocol::{InstanceRequest, StateQuery, StateView, connectivity::*};
 use std::{net::SocketAddr, sync::Arc, time::Instant};
@@ -202,11 +204,6 @@ pub fn udp_recipient(address: &str) -> Result<SocketAddr, Error> {
 }
 
 /// The held netmap admits a Native UDP adjacency with `peer` on `carrier`.
-fn adjacency(netmap: &Arc<CompiledNetmap>, peer: NodeId, carrier: &Carrier) -> Result<(), Error> {
-    let compiler = LocalCompiler::from_shared(netmap.netmap.clone());
-    admit_adjacency(&compiler, &netmap.netmap, peer, carrier).map_err(|_| Error::Expired)
-}
-
 fn visible(netmap: &NodeNetmap, peer: NodeId) -> bool {
     peer != netmap.node_id && netmap.projection.inventory.contains_key(&peer)
 }
@@ -233,16 +230,32 @@ impl Control {
         &mut self,
         netmap: meshway_model::NetmapRef,
     ) -> Result<Outcome<Discovery>, Error> {
+        let prepared = self.prepare_query_udp_traversal(netmap)?;
+        self.exchange(prepared, Self::apply_query_udp_traversal)
+            .await
+    }
+
+    pub(crate) fn prepare_query_udp_traversal(
+        &mut self,
+        netmap: meshway_model::NetmapRef,
+    ) -> Result<Prepared<QueryState, QueryUdpTraversalResponse>, Error> {
         let (held, instance) = self.connectivity_current(netmap)?;
         let request = QueryUdpTraversalRequest {
             instance: instance.clone(),
             netmap,
         };
         let started = Started::now(&self.clock)?;
-        let response = self
-            .client
-            .query_udp_traversal(&request, self.token()?)
-            .await;
+        self.prepare(
+            (netmap, held, instance, started),
+            move |client, token| async move { client.query_udp_traversal(&request, &token).await },
+        )
+    }
+
+    pub(crate) fn apply_query_udp_traversal(
+        &mut self,
+        (netmap, held, instance, started): QueryState,
+        response: Response<QueryUdpTraversalResponse>,
+    ) -> Result<Outcome<Discovery>, Error> {
         let response = self.registered(response)?;
         if self.connectivity_current(netmap)?.1 != instance {
             return Err(Error::Expired);
@@ -354,11 +367,6 @@ impl Control {
             self.fence();
             return Err(Error::Contract);
         }
-        adjacency(
-            &context.inner.netmap,
-            peer.candidate.socket.node_id,
-            &offer.carrier,
-        )?;
         if offer.expires_at_ms > context.expires_at_ms() {
             self.fence();
             return Err(Error::Contract);
@@ -399,6 +407,16 @@ impl Control {
         context: &DiscoveryContext,
         peers: &[NodeId],
     ) -> Result<StateView, Error> {
+        let call = self.prepare_connectivity_peers(context, peers)?;
+        self.exchange(call.into_prepared(), Self::apply_connectivity_peers)
+            .await
+    }
+
+    pub(crate) fn prepare_connectivity_peers(
+        &mut self,
+        context: &DiscoveryContext,
+        peers: &[NodeId],
+    ) -> Result<PeersCall, Error> {
         self.connectivity_context(context)?;
         let netmap = context.content();
         if peers.is_empty()
@@ -410,15 +428,29 @@ impl Control {
         {
             return Err(Error::Contract);
         }
-        let response = self
-            .client
-            .query_peer_state(
-                &StateQuery {
-                    nodes: Some(peers.to_vec()),
-                },
-                self.token()?,
-            )
-            .await;
+        let query = StateQuery {
+            nodes: Some(peers.to_vec()),
+        };
+        let prepared = self.prepare((), move |client, token| async move {
+            client.query_peer_state(&query, &token).await
+        })?;
+        let context = context.clone();
+        let peers = peers.to_vec();
+        Ok(PeersCall {
+            prepared,
+            context,
+            peers,
+        })
+    }
+
+    pub(crate) fn apply_connectivity_peers(
+        &mut self,
+        call: (DiscoveryContext, Vec<NodeId>),
+        response: Response<StateView>,
+    ) -> Result<StateView, Error> {
+        let (context, peers) = call;
+        let context = &context;
+        let peers = peers.as_slice();
         let view = self.registered(response)?;
         self.connectivity_context(context)?;
         if view.network_id != context.content().network_id
@@ -457,6 +489,22 @@ impl Control {
         context: &DiscoveryContext,
         request: &PrepareUdpTraversalRequest,
     ) -> Result<Outcome<ValidatedOffer>, Error> {
+        let prepared = self.prepare_prepare_udp_traversal(context, request)?;
+        self.exchange(prepared, Self::apply_prepare_udp_traversal)
+            .await
+    }
+
+    pub(crate) fn prepare_prepare_udp_traversal(
+        &mut self,
+        context: &DiscoveryContext,
+        request: &PrepareUdpTraversalRequest,
+    ) -> Result<
+        Prepared<
+            (DiscoveryContext, PrepareUdpTraversalRequest, Started),
+            PrepareUdpTraversalResponse,
+        >,
+        Error,
+    > {
         self.connectivity_context(context)?;
         if request.instance != *context.instance()
             || request.netmap != context.netmap()
@@ -474,12 +522,20 @@ impl Control {
         {
             return Err(Error::Contract);
         }
-        adjacency(&context.inner.netmap, request.peer_id, &request.carrier)?;
         let started = Started::now(&self.clock)?;
-        let response = self
-            .client
-            .prepare_udp_traversal(request, self.token()?)
-            .await;
+        let sent = request.clone();
+        self.prepare(
+            (context.clone(), request.clone(), started),
+            move |client, token| async move { client.prepare_udp_traversal(&sent, &token).await },
+        )
+    }
+
+    pub(crate) fn apply_prepare_udp_traversal(
+        &mut self,
+        (context, request, started): (DiscoveryContext, PrepareUdpTraversalRequest, Started),
+        response: Response<PrepareUdpTraversalResponse>,
+    ) -> Result<Outcome<ValidatedOffer>, Error> {
+        let (context, request) = (&context, &request);
         let response = self.registered(response)?;
         self.connectivity_context(context)?;
         match response {
@@ -505,15 +561,32 @@ impl Control {
         &mut self,
         offered: &ValidatedOffer,
     ) -> Result<Outcome<AttemptView>, Error> {
+        let prepared = self.prepare_accept_udp_traversal(offered)?;
+        self.exchange(prepared, Self::apply_accept_udp_traversal)
+            .await
+    }
+
+    pub(crate) fn prepare_accept_udp_traversal(
+        &mut self,
+        offered: &ValidatedOffer,
+    ) -> Result<Prepared<ValidatedOffer, AcceptUdpTraversalResponse>, Error> {
         self.connectivity_context(&offered.inner.context)?;
         offered.ensure_current()?;
         let path = meshway_control_client::AcceptUdpTraversalPath {
             attempt_id: offered.offer().attempt_id,
         };
-        let response = self
-            .client
-            .accept_udp_traversal(&path, &attempt_request(offered), self.token()?)
-            .await;
+        let request = attempt_request(offered);
+        self.prepare(offered.clone(), move |client, token| async move {
+            client.accept_udp_traversal(&path, &request, &token).await
+        })
+    }
+
+    pub(crate) fn apply_accept_udp_traversal(
+        &mut self,
+        offered: ValidatedOffer,
+        response: Response<AcceptUdpTraversalResponse>,
+    ) -> Result<Outcome<AttemptView>, Error> {
+        let offered = &offered;
         let response = self.registered(response)?;
         self.connectivity_context(&offered.inner.context)?;
         offered.ensure_current()?;
@@ -540,6 +613,17 @@ impl Control {
         &mut self,
         offered: &ValidatedOffer,
     ) -> Result<CancelUdpTraversalResponse, Error> {
+        let prepared = self.prepare_cancel_udp_traversal(offered)?;
+        self.exchange(prepared, |control, (), response| {
+            control.registered(response)
+        })
+        .await
+    }
+
+    pub(crate) fn prepare_cancel_udp_traversal(
+        &mut self,
+        offered: &ValidatedOffer,
+    ) -> Result<Prepared<(), CancelUdpTraversalResponse>, Error> {
         offered.cancel();
         if let Some(issued) = self.connectivity.issued.get(&offered.offer().attempt_id) {
             issued.cancel();
@@ -548,11 +632,10 @@ impl Control {
         let path = meshway_control_client::CancelUdpTraversalPath {
             attempt_id: offered.offer().attempt_id,
         };
-        let response = self
-            .client
-            .cancel_udp_traversal(&path, &attempt_request(offered), self.token()?)
-            .await;
-        self.registered(response)
+        let request = attempt_request(offered);
+        self.prepare((), move |client, token| async move {
+            client.cancel_udp_traversal(&path, &request, &token).await
+        })
     }
 }
 
@@ -601,6 +684,26 @@ impl std::fmt::Debug for AttemptScope {
 impl std::fmt::Debug for DiscoveryContext {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DiscoveryContext").finish_non_exhaustive()
+    }
+}
+
+type QueryState = (
+    meshway_model::NetmapRef,
+    Arc<CompiledNetmap>,
+    InstanceRequest,
+    Started,
+);
+
+/// A prepared peer State query with what its answer is checked against.
+pub(crate) struct PeersCall {
+    prepared: Prepared<(), StateView>,
+    context: DiscoveryContext,
+    peers: Vec<NodeId>,
+}
+
+impl PeersCall {
+    pub(crate) fn into_prepared(self) -> Prepared<(DiscoveryContext, Vec<NodeId>), StateView> {
+        self.prepared.with_state((self.context, self.peers))
     }
 }
 

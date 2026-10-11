@@ -8,13 +8,14 @@ use meshway_configuration::netmap::CompiledNetmap;
 use meshway_model::{NetmapLease, NetmapRef};
 use meshway_protocol::{NetmapSignature, PeerFactsDelta, StateCursor};
 use std::sync::Arc;
+pub use sync::KnownPeers;
 
 mod facts;
 pub(crate) mod store;
 mod sync;
 pub use sync::{
-    FactsRejected, NetmapChange, PeerFactsSink, SYNC_TIMEOUT, SyncCall, SyncFuture, SyncOutcome,
-    SyncReply, SyncTransport, sync_loop,
+    NetmapChange, PeerFactsSink, SYNC_TIMEOUT, SyncCall, SyncFuture, SyncOutcome, SyncReply,
+    SyncTransport, sync_loop,
 };
 
 /// Same-content leases are written again once they extend the saved expiry
@@ -34,8 +35,8 @@ pub(crate) struct State {
     known: Option<facts::Known>,
     /// What `peer-facts.json` holds, as far as this owner knows.
     saved: Option<facts::Known>,
-    /// Loaded facts not yet handed to the facts sink.
-    replay: bool,
+    /// `known` changed since it was last published to the facts sink.
+    unpublished: bool,
     facts_write: Option<tokio::task::JoinHandle<Result<(), meshway_private_storage::Error>>>,
     /// Replaced whenever base, cursor or lease changes; a sync reply prepared
     /// against another value is superseded.
@@ -59,6 +60,8 @@ impl Control {
             return Ok(());
         };
         let reference = netmap.reference();
+        // The signed issue time is a trusted lower bound of the current time.
+        self.clock.raise_floor(lease.issued_at_ms);
         let known = facts::load(&self.directory, &netmap.netmap, reference);
         self.netmap.base = Some(Arc::new(netmap));
         if !authority || self.record.cache_blocked {
@@ -66,33 +69,32 @@ impl Control {
         }
         self.netmap.persisted_expiry = Some(lease.expires_at_ms);
         self.netmap.lease = Some(lease);
-        self.netmap.replay = known.is_some();
+        self.netmap.unpublished = known.is_some();
         self.netmap.saved.clone_from(&known);
         self.netmap.known = known;
         Ok(())
     }
 
-    /// The saved last known facts as one complete replacement, once after
-    /// loading. The host hands it to its facts sink where it publishes the
-    /// held netmap without Server contact, so a restart dials offline.
-    pub fn take_facts_replay(&mut self) -> Option<(NetmapRef, PeerFactsDelta)> {
-        if !std::mem::take(&mut self.netmap.replay) {
-            return None;
-        }
+    /// Control's last known facts of the held netmap, the single owner's
+    /// value. The host publishes it where it publishes the held netmap
+    /// without Server contact, so a restart dials offline.
+    pub fn known_peers(&self) -> Option<KnownPeers> {
         let known = self.netmap.known.as_ref()?;
         let base = self.netmap.base.as_ref()?;
-        (known.netmap == base.reference()).then(|| {
-            (
-                known.netmap,
-                PeerFactsDelta {
-                    base: None,
-                    cursor: known.cursor,
-                    netmap_serial: known.netmap.serial,
-                    updated: known.peers.clone(),
-                    removed: Vec::new(),
-                },
-            )
+        (known.netmap == base.reference()).then(|| KnownPeers {
+            netmap: known.netmap,
+            peers: Arc::clone(&known.peers),
         })
+    }
+
+    /// Publish [`Self::known_peers`] if it changed since the last publication.
+    pub(crate) fn publish_facts(&mut self, sink: &mut (dyn PeerFactsSink + Send)) {
+        if !std::mem::take(&mut self.netmap.unpublished) {
+            return;
+        }
+        if let Some(known) = self.known_peers() {
+            sink.publish(known);
+        }
     }
 
     /// Fold one accepted delta into the last known facts of the held netmap.
@@ -106,14 +108,17 @@ impl Control {
             peers: Default::default(),
         });
         known.cursor = delta.cursor;
-        delta.apply_to(&mut known.peers);
+        let changed = delta.apply_to(Arc::make_mut(&mut known.peers));
+        self.netmap.unpublished |= !changed.is_empty();
         self.scope_facts();
     }
 
     /// New content: facts of Nodes outside its projection are dropped.
     fn scope_facts(&mut self) {
         if let (Some(known), Some(base)) = (&mut self.netmap.known, &self.netmap.base) {
+            let before = known.clone();
             known.scope(&base.netmap, base.reference());
+            self.netmap.unpublished |= *known != before;
         }
     }
 
@@ -138,6 +143,9 @@ impl Control {
         let Ok(bytes) = facts::encode(&known, binding.network_id, binding.node_id) else {
             return;
         };
+        // Joined before returning: an accepted write never outlives this
+        // owner (a dropped Control releases its directory at once). Facts are
+        // not authority, so a failed write only leaves the previous file.
         if let Some(previous) = self.netmap.facts_write.take() {
             let _ = previous.await;
         }
@@ -152,6 +160,13 @@ impl Control {
         self.netmap.facts_write = None;
         if matches!(result, Ok(Ok(()))) {
             self.netmap.saved = Some(known);
+        }
+    }
+
+    /// Join the facts write still in flight (shutdown).
+    pub(crate) async fn finish_facts_write(&mut self) {
+        if let Some(write) = self.netmap.facts_write.take() {
+            let _ = write.await;
         }
     }
 

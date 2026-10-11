@@ -62,7 +62,7 @@ fn incremental_outputs_equal_full_compilation_across_dependency_changes() {
         let initial = generated(seed);
         let baseline = run(&initial, &BTreeMap::new(), &BTreeMap::new(), Revision::MIN);
         let previous = previous(&baseline.compiled);
-        for mutation in 0..9 {
+        for mutation in 0..15 {
             let mut s = generated(seed);
             match mutation {
                 0 => s.cfg.nodes.get_mut(&node(1)).unwrap().hostname = "renamed".into(),
@@ -91,7 +91,45 @@ fn incremental_outputs_equal_full_compilation_across_dependency_changes() {
                         .users
                         .insert("alias@example.test".into(), s.subjects.users[ALICE].clone());
                 }
-                _ => s.cfg.dns.magic_dns = !s.cfg.dns.magic_dns,
+                8 => s.cfg.dns.magic_dns = !s.cfg.dns.magic_dns,
+                // Exit setting of one Node.
+                9 => {
+                    let node = s.cfg.nodes.get_mut(&node(4)).unwrap();
+                    node.exit_enabled = !node.exit_enabled;
+                }
+                // Public egress rules.
+                10 => s
+                    .cfg
+                    .routing
+                    .egress
+                    .rules
+                    .push(egress_rule("8.8.4.0/24", RuleAction::Direct)),
+                // A profile's rules and its assignment.
+                11 => {
+                    if let Some(profile) = s.cfg.routing.egress.profiles.get_mut("exit") {
+                        profile.rules.clear();
+                    }
+                }
+                12 => {
+                    for assignment in &mut s.cfg.routing.egress.assignments {
+                        assignment.default = if assignment.default == "mesh" {
+                            "exit".into()
+                        } else {
+                            "mesh".into()
+                        };
+                    }
+                }
+                // Tag owners and group members.
+                13 => {
+                    s.cfg
+                        .tags_owners
+                        .insert("tag:server".into(), vec![BOB.into()]);
+                }
+                _ => {
+                    s.cfg
+                        .groups
+                        .insert("group:ops".into(), vec![ALICE.into(), BOB.into()]);
+                }
             }
             let revision = Revision::new(2).unwrap();
             let updated = run(&s, &previous, &baseline.inputs, revision);

@@ -44,6 +44,8 @@ socket 的打开、捕获豁免和候选授权归宿主 underlay／connectivity�
 | Challenge | 同一 context 与 client nonce、新 server nonce；监听方签名 |
 | Ack | 同一 context 和双方 nonce；发起方签名确认 |
 
+每个 nonce（含 UDP 健康 Ping nonce）的前 16 字节是签名方本次 Manager 生命周期的随机 boot 标识，后 16 字节为新随机数；消息布局不变。对端从 transcript 读出 boot（拨号方取 server nonce，监听方取 client nonce），记入 `LinkFact.peerBoot`：同 boot 的新 channel 是同一对端状态的承载更换，boot 变化表示对端重启，数据面据此结束相关 circuit（见[数据面](/v2/node/dataplane#候选受保护-circuit)）。Manager 内部重启沿用原 boot。
+
 签名验证使用当前执行发布登记的控制公钥。Carrier 包含实际拨号方、监听方、listener key 和协议；连接方向独立于业务方向。邻接握手只证明当前获准连接，不替代 [Noise 端到端保护与逐跳包证明](/v2/node/dataplane#候选受保护-circuit)。
 
 Native UDP 复用同一 context、codec 和签名实现，并增加监听方签名的 READY 确认。INIT、Challenge、Ack、READY 均有有界重传；确认绑定实际来源地址、当前 endpoint 与双方 nonce。每个绑定 endpoint 只有一个接收 owner 和一个正式发送 owner，多个 peer 共享实际 socket；退役单个 peer 不关闭其他 peer 的通道。未知来源、截断报文和旧握手不能安装或替换活动邻接。

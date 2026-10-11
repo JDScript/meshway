@@ -377,7 +377,7 @@ export function submitNodeConfigurationReceipt(client: ControlClient, body: z.ou
 }
 
 export function syncNode(client: ControlClient, body: z.output<typeof zSyncRequest>, options: AuthenticatedRequestOptions) {
-  return client.request({ method: "POST", path: "/agent-api/v1/sync", authenticated: true, successStatus: 200, success: zSyncResponse, errors: [400, 401, 403, 409, 413, 415, 503], problem: zErrorResponse, body: { schema: zSyncRequest, value: body } }, options);
+  return client.request({ method: "POST", path: "/agent-api/v1/sync", authenticated: true, successStatus: 200, success: zSyncResponse, errors: [400, 401, 403, 413, 415, 503], problem: zErrorResponse, body: { schema: zSyncRequest, value: body } }, options);
 }
 
 export function validateConfiguration(client: ControlClient, path: z.output<typeof zValidateConfigurationPath>, body: z.output<typeof zConfigurationRequest>, options: AuthenticatedRequestOptions) {

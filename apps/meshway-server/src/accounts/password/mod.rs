@@ -15,10 +15,15 @@ pub(super) const RULES: PasswordRules = PasswordRules {
     max_codepoints: 128,
     max_utf8_bytes: 512,
 };
-// Process-wide, including separate Apps. Admission is immediate (Busy), avoiding
-// an unbounded queue of passwords or spawn_blocking tasks.
+// Process-wide, including separate Apps. A burst waits briefly for a slot
+// (at most MAX_WAITERS callers, each at most KDF_WAIT) instead of failing at
+// once; beyond that it is Busy, so neither passwords nor blocking tasks queue
+// without bound.
 const MAX_KDFS: usize = 4;
 static KDFS: Semaphore = Semaphore::const_new(MAX_KDFS);
+const MAX_WAITERS: usize = 64;
+static WAITERS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+const KDF_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
 #[cfg(test)]
 pub(crate) static TEST_KDF_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 const MEMORY_KIB: u32 = 19456;
@@ -76,7 +81,28 @@ fn bounded_phc(value: &str) -> Result<PasswordHash<'_>, Error> {
 async fn blocking<T: Send + 'static>(
     work: impl FnOnce() -> Result<T, Error> + Send + 'static,
 ) -> Result<T, Error> {
-    let permit = KDFS.try_acquire().map_err(|_| Error::Busy)?;
+    let permit = match KDFS.try_acquire() {
+        Ok(permit) => permit,
+        Err(_) => {
+            use std::sync::atomic::Ordering;
+            // Released on every exit, including a cancelled caller.
+            struct Waiting;
+            impl Drop for Waiting {
+                fn drop(&mut self) {
+                    WAITERS.fetch_sub(1, Ordering::AcqRel);
+                }
+            }
+            let waiting = Waiting;
+            if WAITERS.fetch_add(1, Ordering::AcqRel) >= MAX_WAITERS {
+                return Err(Error::Busy);
+            }
+            let waited = tokio::time::timeout(KDF_WAIT, KDFS.acquire()).await;
+            drop(waiting);
+            waited
+                .map_err(|_| Error::Busy)?
+                .map_err(|_| Error::RUNTIME)?
+        }
+    };
     tokio::task::spawn_blocking(move || {
         // Cancellation of the caller never releases the actual KDF budget.
         let _permit = permit;

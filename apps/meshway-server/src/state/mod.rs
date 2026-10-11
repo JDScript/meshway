@@ -92,7 +92,6 @@ pub struct VisibilityScope {
     /// None is management projection; Node readers disclose only exact current
     /// business-adjacent resources. Visibility of a complete path is not this grant.
     pub endpoint_resources: Option<BTreeMap<NodeId, BTreeSet<ResourceRef>>>,
-    pub observation_paths: BTreeSet<Vec<NodeId>>,
     pub mesh_addresses: BTreeSet<std::net::IpAddr>,
     pub expires_at: DateTime<Utc>,
     pub current: BTreeMap<NodeId, CurrentNode>,

@@ -343,6 +343,15 @@ impl SecureNode {
         let desired = self.desired.clone();
         let reading = View::of(&desired);
         let netmap = reading.netmap();
+        // A local packet originates here: it carries this Node's own address.
+        let addresses = &desired.local().addresses;
+        let own = match packet.facts().traffic.source {
+            std::net::IpAddr::V4(address) => addresses.ipv4 == Some(address),
+            std::net::IpAddr::V6(address) => addresses.ipv6 == Some(address),
+        };
+        if !own {
+            return Err(Error::Packet);
+        }
         self.maintain_circuits(&reading, false)?;
         let local = reading.node();
         if let Some(flow) = self.local_flow_at(&packet, &reading)? {

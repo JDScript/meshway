@@ -26,6 +26,7 @@
   "listeners": {},
   "sockets": {},
   "links": {},
+  "adjacencies": {},
   "paths": {},
   "selection": {
     "appliedProfile": null
@@ -47,6 +48,7 @@
 | `listeners` | `Record<ListenerKey, ListenerState>` | 运行中的本机监听资源 |
 | `sockets` | `Record<SocketId, SocketState>` | 实际外层 socket、所属资源及 endpoint 观测 |
 | `links` | `Record<PeerNodeId, LinkState[]>` | 对各 peer 的认证通道；可有主备／更替期记录 |
+| `adjacencies` | `Record<PeerNodeId, "idle" \| "unreachable">` | 已获准但当前无通道的邻接：`idle` 为按需边因空闲关闭或尚无需求，`unreachable` 为有需求（业务、中继或常驻边）但未建立通道；有通道的 peer 只出现在 `links`；状态变化不单独触发上报，随常规上报（20 秒）更新 |
 | `paths` | 按运行路径标识索引 | 本节点观察到的选路／使用结果，非全网权威路径表 |
 | `selection.appliedProfile` | ProfileKey 或 null | 当前实际方案，必须处于 Config 允许范围 |
 | `probes` | `ProbeObservation[]` | 少量最新真实测量；重复快照引用相同事件，不制造新历史点 |

@@ -10,13 +10,14 @@ mod provider;
 mod scope;
 pub mod traversal;
 
+pub use adjacency::Boot;
 pub use io::{
     AcceptedSocket, DatagramAuthorization, DatagramSocket, ListenerSocket, SocketFactory,
     TraversalSocket,
 };
 pub use manager::{
-    AdjacencyInterest, Event, FactsSink, Interest, LinkFact, ListenerFact, Manager, SendReceipt,
-    Snapshot, SocketFact,
+    AdjacencyInterest, Event, Interest, LinkFact, ListenerFact, Manager, SendReceipt, Snapshot,
+    SocketFact,
 };
 pub use meshway_policy::admission::Carrier;
 

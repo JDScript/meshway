@@ -97,10 +97,7 @@ pub(super) fn verify_server(
     lease: &NetmapLease,
     signature: &NetmapSignature,
 ) -> Result<(), Error> {
-    let pin = binding
-        .server_signing_key
-        .as_ref()
-        .ok_or(Error::SignatureInvalid)?;
+    let pin = &binding.server_signing_key;
     if signature.key_id != pin.key_id || signature.key_generation != pin.key_generation {
         return Err(Error::ServerKeyMismatch);
     }

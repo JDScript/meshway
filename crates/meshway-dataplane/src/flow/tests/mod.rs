@@ -388,3 +388,47 @@ fn capacity_rejection_is_transactional_and_flows_end_with_idle_expiry() {
         .process(1, None, 1, &[1, 2, 3], udp(1, 3, 50001, 443))
         .unwrap();
 }
+
+#[test]
+fn idle_reclaimed_tcp_resumes_as_a_first_packet() {
+    let mut scene = Scene::new(BusinessProtocol::Tcp, false, true);
+    // Without an idle reclaim, an ACK segment never starts a flow.
+    assert!(
+        scene
+            .process(1, None, 1, &[1, 2, 3], tcp(false, 5_000, 9_000, 0x18, 0))
+            .is_err()
+    );
+    for id in [1, 2, 3] {
+        scene.tables.get_mut(&node(id)).unwrap().limits.idle_timeout = Duration::from_secs(1);
+    }
+    forward(&mut scene, tcp(false, 100, 0, 2, 0));
+    reply(&mut scene, tcp(true, 900, 101, 0x12, 0));
+    forward(&mut scene, tcp(false, 101, 901, 0x10, 0));
+    // Both endpoints reclaim the idle stream; its next origin segment of the
+    // same tuple is a first packet again, and the reply path follows.
+    scene.advance(Duration::from_secs(2));
+    for id in [1, 3] {
+        let (instant, now_ms) = (scene.instant, scene.now_ms);
+        scene
+            .tables
+            .get_mut(&node(id))
+            .unwrap()
+            .expire(instant, now_ms);
+        assert_eq!(scene.tables[&node(id)].len(), 0);
+    }
+    // A reply-direction segment still cannot start it.
+    assert!(
+        scene
+            .process(3, None, 3, &[1, 2, 3], tcp(true, 901, 101, 0x10, 0))
+            .is_err()
+    );
+    forward(&mut scene, tcp(false, 101, 901, 0x18, 0));
+    reply(&mut scene, tcp(true, 901, 101, 0x10, 0));
+    // A reset never resumes one.
+    let mut fresh = Scene::new(BusinessProtocol::Tcp, false, true);
+    assert!(
+        fresh
+            .process(1, None, 1, &[1, 2, 3], tcp(false, 5_000, 9_000, 0x14, 0))
+            .is_err()
+    );
+}

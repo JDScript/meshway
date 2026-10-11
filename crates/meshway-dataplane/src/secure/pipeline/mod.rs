@@ -253,6 +253,13 @@ impl SecureNode {
                     return Err(Error::State);
                 }
                 let grant = circuit.context.grant.flow().ok_or(Error::Policy)?;
+                if opened.bytes.is_empty() {
+                    // A passive keepalive carries no packet and admits no flow.
+                    opened.guard.finish()?;
+                    circuit.receive[index].commit(sequence);
+                    circuit.received(reading.instant);
+                    return Ok(Received::Keepalive { circuit: id });
+                }
                 Self::check_outgoing_carrier(&self.carriers, circuit, opened.reply, &reading)?;
                 let path = &circuit.context.path;
                 let entry = Entry {
@@ -285,6 +292,9 @@ impl SecureNode {
             opened.guard.finish()?;
             circuit.receive[index].commit(sequence);
             circuit.received(reading.instant);
+            if matches!(result, Received::Packet(_)) {
+                circuit.owe_keepalive(reading.instant);
+            }
             Ok(result)
         })();
         circuit.finish_operation("receive", result)

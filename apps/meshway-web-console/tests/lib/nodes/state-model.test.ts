@@ -35,6 +35,7 @@ const REPORT: NodeState = {
   capabilities: {},
   configuration: { saved: ref(4), applied: ref(3) },
   links: {},
+  adjacencies: {},
   listeners: {
     udp: { phase: "listening", socketIds: ["s1", "gone"] },
   },

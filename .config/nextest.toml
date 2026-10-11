@@ -10,53 +10,19 @@ slow-timeout = "60s"
 retries = 0
 slow-timeout = "20s"
 default-filter = '''not (
-    test(=app::tests::connectivity::expiry::per_node_slots_are_bounded_across_distinct_authenticated_peer_pairs)
-  | test(=app::tests::netmap::commit::a_netmap_above_the_safety_bound_rejects_the_version)
+    test(=app::tests::netmap::commit::a_netmap_above_the_safety_bound_rejects_the_version)
   | test(=app::tests::netmap::commit::a_node_triggered_netmap_above_the_bound_is_unavailable_not_a_configuration_error)
   | test(=app::tests::resources::lifecycle::startup_scheduler_updates_backs_off_persists_and_cancels_its_tls_socket)
   | test(=background_expiry_and_session_revocation_never_renew_diagnostic_authority)
   | test(=ipc::client::tests::stream_has_per_frame_idle_limit_instead_of_overall_request_deadline)
-  | test(=continuity::an_expired_permit_cannot_be_revived_while_the_node_execution_lease_remains_live)
-  | test(=diagnostic::diagnostic_continuation_retains_cipher_but_cancels_original_probe_and_reply)
-  | test(=diagnostic::diagnostic_remote_burst_budget_is_shared_across_cids_at_relay_and_terminal)
-  | test(=diagnostic::diagnostic_source_cadence_survives_compressed_remote_arrivals)
-  | test(=diagnostic::retained_relay_correlation_never_renews_probe_deadline_or_source_scope)
-  | test(=events::real_watch_ignores_unchanged_projection_and_refreshes_configuration_change)
   | test(=executable_enrolls_saves_reports_renews_and_restores_up_or_down_intent)
-  | test(=icmp::protected_dual_stack_echo_keeps_exact_flow_and_reply_path_through_renewal_and_revocation)
-  | test(=idle_observation_compiles_narrow_path_shares_tabs_and_accepts_real_source_events)
   | test(=ipc::tests::slow_consumer_has_bounded_queue_write_deadline_and_cancellation)
-  | test(=lifecycle::renew_is_per_subscription_and_restart_or_node_key_revocation_cannot_restore_tasks)
-  | test(=manager::tests::real_ipv6_udp_blackhole_selects_allowed_stream_without_replacing_secure_owner)
-  | test(=manager::tests::reattachment::native_tcp_session_survives_staggered_control_publications_without_reopening)
-  | test(=manager::tests::reattachment::passive_restart_challenges_dial_only_peer_without_retiring_it_until_fresh_ack_and_ready)
-  | test(=manager::tests::reattachment::staggered_three_node_managers_and_real_demand_publication_keep_original_circuit)
-  | test(=manager::tests::regression::expired_business_candidate_gains_a_worker_scope_on_direct_publication)
-  | test(=manager::tests::resources::tcp_dependency_remove_add_preserves_selected_resource_in_both_dial_directions)
-  | test(=manager::tests::resources::udp_dependency_remove_add_preserves_selected_resource_in_both_dial_directions)
-  | test(=manager::tests::simultaneous_configured_initiators_converge_on_one_logical_carrier)
-  | test(=manager::tests::traversal::empty_published_listeners_use_same_fd_stun_bilateral_punch_and_existing_noise_owner)
-  | test(=manager::tests::traversal::healthy_adjacency_keeps_nat_observations_fresh_without_reacquisition)
-  | test(=manager::tests::traversal::invalidated_original_accept_slot_cannot_activate_after_uncertain_commit)
-  | test(=manager::tests::traversal::prepare_reserve_accepts_locally_before_next_query_and_requires_bilateral_active)
-  | test(=manager::tests::traversal::restored_adjacency_uses_live_witness_after_lower_id_stale_indirect_witness)
-  | test(=manager::tests::traversal::restored_adjacency_uses_live_witness_before_higher_id_stale_indirect_witness)
-  | test(=manager::tests::traversal::revoked_then_restored_access_acquires_fresh_authenticated_channels_and_circuit)
-  | test(=manager::tests::traversal::uncertain_local_accept_retries_original_reserved_offer_without_extending_authority)
-  | test(=manager::tests::udp_and_stream_receive_timestamp_precedes_delayed_consumer_poll)
   | test(=node::capabilities::node_absolute_renewal_does_not_slide_on_retry_and_restart_or_revocation_does_not_restore_it)
-  | test(=node::selectors::node_selectors_are_current_network_scoped_and_shared_subscriptions_cancel_independently)
   | test(=recovery::gateway_html_and_stale_instance_recover_without_operator_up)
   | test(=recovery::revoked_control_key_stays_blocked_after_transport_recovers)
   | test(=recovery::server_restart_replaces_stale_session_and_instance_without_operator_up)
   | test(=recovery::wrong_controller_response_is_fatal_not_transient_delivery)
   | test(=rotation::rejected_expired_rotation_rolls_back_only_after_old_key_authentication)
-  | test(=runtime::control::observations::tests::actual_execution_expiry_rejects_pending_and_new_requests_without_create)
-  | test(=runtime::control::tests::receipt_http_conflicts_preserve_installation_until_binding_requires_suspend)
-  | test(=runtime::ping::integration::blocked_report_and_held_renew_end_at_confirmed_local_lease_with_typed_failure)
-  | test(=runtime::ping::integration::thirty_second_interval_remains_live_without_extra_samples_or_idle_timeout)
-  | test(=secure::control_cancellation_publication_and_stop_fence_crypto_and_plaintext_outputs)
-  | test(=tcp_recovery::tcp_recovers_cancelled_relay_and_endpoint_outputs_across_real_permit_renewals)
   | test(=diagnostics::tests::timed_out_admitted_send_has_one_loss_and_a_late_reply_cannot_revise_it)
 )'''
 
@@ -77,12 +43,12 @@ max-threads = 12
 # This explicitly bounded Server/SecureNode scheduling contract includes fsync
 # and cryptography; reserve the runner slots so unrelated fixture CPU contention
 # cannot be mistaken for an inserted preparation timer. The bounds stay fixed.
-filter = 'test(=diagnostics::tests::preparing::ready_channel_and_handshake_events_start_direct_and_relay_probes_without_ticks) | test(=runtime::control::tests::execution_target_notice_wakes_without_a_five_second_refresh_delay)'
+filter = 'test(=diagnostics::tests::preparing::ready_channel_and_handshake_events_start_direct_and_relay_probes_without_ticks)'
 threads-required = "num-test-threads"
 
 [[profile.default.overrides]]
 # Start wall-clock expiry contracts first so they overlap the CPU-bound suites.
-filter = 'test(rejected_expired_rotation_rolls_back_only_after_old_key_authentication) | test(background_expiry_and_session_revocation_never_renew_diagnostic_authority) | test(actual_execution_expiry_rejects_pending_and_new_requests_without_create) | test(gateway_html_and_stale_instance_recover_without_operator_up)'
+filter = 'test(rejected_expired_rotation_rolls_back_only_after_old_key_authentication) | test(background_expiry_and_session_revocation_never_renew_diagnostic_authority) | test(gateway_html_and_stale_instance_recover_without_operator_up)'
 priority = 100
 test-group = 'server-fixtures'
 

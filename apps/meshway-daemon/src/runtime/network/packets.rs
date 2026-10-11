@@ -10,7 +10,6 @@ use meshway_engine::Desired;
 use meshway_model::NodeId;
 use std::{
     collections::{BTreeMap, VecDeque},
-    net::IpAddr,
     time::Duration,
 };
 use tokio::time::Instant;
@@ -59,6 +58,8 @@ pub(super) struct Packets {
         meshway_dataplane::carrier::SendPending<(Result<(), meshway_connectivity::Error>, usize)>,
     deliveries: meshway_dataplane::carrier::TunPending<Delivered>,
     exit_replies: VecDeque<secure::PendingFrame>,
+    /// Closes of circuits a restarted adjacent peer lost, bounded.
+    closes: Vec<secure::PendingFrame>,
 }
 
 impl Packets {
@@ -69,6 +70,16 @@ impl Packets {
             self.drop_packet("exit_reply_capacity");
         }
     }
+    pub fn closes(&mut self, frames: Vec<secure::PendingFrame>) {
+        for frame in frames {
+            if self.closes.len() < MAX_SENDS {
+                self.closes.push(frame);
+            } else {
+                self.drop_packet("close_capacity");
+            }
+        }
+    }
+
     pub fn can_read(&self, pool: &secure::pipeline::Pool) -> bool {
         pool.can_submit()
             && self.local.len() + self.incoming.len() <= MAX_PACKETS - 32
@@ -145,7 +156,7 @@ impl Packets {
     }
     pub fn wake_at(&self) -> Option<Instant> {
         let now = Instant::now();
-        if self.scan_remaining != 0 {
+        if self.scan_remaining != 0 || !self.closes.is_empty() {
             return Some(now);
         }
         let first = self
@@ -250,7 +261,7 @@ impl Packets {
                 netmap_serial = desired.reference().serial.get(),
                 known, "Diagnostic carrier frame received for scheduling");
         }
-        let control = bytes.get(8) != Some(&3);
+        let control = !secure::is_data_frame(&bytes);
         let full = if control {
             self.control.len() >= 32
         } else {
@@ -298,7 +309,6 @@ impl Packets {
         mut exit: Option<&mut super::exit::Runtime>,
     ) {
         let local = desired.netmap().node_id;
-        let addresses = desired.local().addresses.clone();
         let now = Instant::now();
         let Some(carriers) = carriers else {
             return;
@@ -331,6 +341,16 @@ impl Packets {
                 std::task::Poll::Ready(Err(_)) => self.drop_packet("exit_reply_expired"),
             }
         }
+        let mut closes = std::mem::take(&mut self.closes);
+        self.flush_sends(manager, &mut closes).await;
+        for keepalive in secure.keepalives(pool.available().min(MAX_SENDS)) {
+            match keepalive {
+                Ok(job) => {
+                    assert!(pool.submit(secure::pipeline::Job::Send(job)).is_none());
+                }
+                Err(error) => self.drop_admission("keepalive", error),
+            }
+        }
         self.complete_crypto(secure, manager, pool, exit.as_deref_mut());
         // Continue a bounded scan on the next turn, including ready suffixes
         // left after a full batch. Waiting packets are scanned only once per
@@ -359,7 +379,7 @@ impl Packets {
                 break;
             };
             incoming_done += 1;
-            if item.bytes.get(8) == Some(&3)
+            if secure::is_data_frame(&item.bytes)
                 && (!pool.can_submit_capacity(item.bytes.capacity())
                     || quantum.elapsed() >= Duration::from_micros(200))
             {
@@ -373,19 +393,13 @@ impl Packets {
             }
             let hint = secure.incoming_hint(&item.bytes).ok();
             let waiting = hint.as_ref().and_then(|hint| {
-                let position = hint.path.iter().position(|node| *node == local)?;
                 let previous = if item.carrier.dialer == local {
                     item.carrier.listener
                 } else {
                     item.carrier.dialer
                 };
-                let next =
-                    if position.checked_sub(1).and_then(|p| hint.path.get(p)) == Some(&previous) {
-                        hint.path.get(position + 1)
-                    } else {
-                        position.checked_sub(1).and_then(|p| hint.path.get(p))
-                    };
-                next.copied().filter(|node| !carriers.contains_key(node))
+                hint.next_hop(local, previous)
+                    .filter(|node| !carriers.contains_key(node))
             });
             if let Some(peer) = waiting {
                 // The authenticated incoming channel may need another allowed
@@ -403,7 +417,7 @@ impl Packets {
                         netmap_serial = desired.reference().serial.get(),
                         available = ?carriers.keys().collect::<Vec<_>>(), "Waiting for authenticated next-hop carrier before secure receive");
                 }
-                if item.bytes.get(8) == Some(&3) {
+                if secure::is_data_frame(&item.bytes) {
                     self.incoming.push_back(item);
                 } else {
                     self.control.push_back(item);
@@ -415,7 +429,7 @@ impl Packets {
                     meshway_logging::profile::Metric::new("queue.manager_to_secure");
                 WAIT.elapsed(item.received_at.elapsed());
             }
-            let result = if item.bytes.get(8) == Some(&3) {
+            let result = if secure::is_data_frame(&item.bytes) {
                 match secure.prepare_receive(&item.carrier, item.bytes) {
                     Ok(job) => {
                         assert!(pool.submit(secure::pipeline::Job::Receive(job)).is_none());
@@ -459,7 +473,11 @@ impl Packets {
                         self.flush_sends(manager, &mut outgoing).await;
                     }
                 }
-                Ok(Received::Established { response: None, .. }) => {}
+                Ok(
+                    Received::Established { response: None, .. }
+                    | Received::Keepalive { .. }
+                    | Received::Closed { .. },
+                ) => {}
                 Ok(Received::ProbeRequest {
                     circuit,
                     measurement_id,
@@ -575,15 +593,6 @@ impl Packets {
                 static WAIT: meshway_logging::profile::Metric =
                     meshway_logging::profile::Metric::new("queue.tun_attempt_age");
                 WAIT.elapsed((item.deadline - RETENTION).elapsed());
-            }
-            let facts = item.packet.facts();
-            let source_matches = match facts.traffic.source {
-                IpAddr::V4(address) => addresses.ipv4 == Some(address),
-                IpAddr::V6(address) => addresses.ipv6 == Some(address),
-            };
-            if !source_matches {
-                self.drop_packet("local_source");
-                continue;
             }
             match secure.outbound(item.packet) {
                 Ok(Outbound::Send(job)) => {
@@ -725,6 +734,7 @@ impl Packets {
                     // original wrapper. Release this crypto reservation now.
                     drop(credit);
                 }
+                Ok(Received::Keepalive { .. }) => drop(credit),
                 Err(error) => self.drop_admission("crypto_admission", error),
                 _ => self.drop_packet("crypto_output"),
             }

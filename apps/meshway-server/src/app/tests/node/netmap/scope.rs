@@ -30,7 +30,6 @@ async fn state_visibility_is_the_netmap_projection_without_any_demand() {
             let of_a = scope(&node(0));
             assert_eq!(of_a.visible, BTreeSet::from([a, b]));
             assert_eq!(of_a.full, BTreeSet::from([a]));
-            assert!(of_a.observation_paths.is_empty());
             // Endpoint details only for the peer listener a may dial.
             assert_eq!(
                 of_a.endpoint_resources,

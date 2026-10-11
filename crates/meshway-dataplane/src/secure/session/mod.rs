@@ -312,6 +312,9 @@ fn authenticate(key: &HopMac, frame: &Frame) -> Result<[u8; 16], Error> {
         mac.update(probe.measurement_id.as_uuid().as_bytes());
         mac.update(&probe.expires_at_ms.to_be_bytes());
     }
+    if frame.kind == codec::Kind::Close {
+        mac.update(b"meshway/circuit/close/v6");
+    }
     mac.update(&(frame.body.len() as u32).to_be_bytes());
     mac.update(&frame.body);
     let result = mac.finalize().into_bytes();

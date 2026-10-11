@@ -308,8 +308,8 @@ async fn exercise(
             "same sockets and receive-only UDP subscription"
         );
         let started = Instant::now();
-        // The same sockets must survive 125 seconds, independently of HTTP
-        // instance renewal. The signed netmap is their execution authority.
+        // The same sockets must survive the traffic window (one renewal and
+        // one lease validity), independently of HTTP instance renewal. The signed netmap is their execution authority.
         let regular = async {
             while started.elapsed() < cli.traffic_duration() {
                 traffic.exchange().await?;

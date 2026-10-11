@@ -57,7 +57,7 @@ wire_object! {
 #[derive(Clone, Debug, PartialEq, Eq)]
 /// Peer facts after the request's cursor, scoped by the current netmap.
 pub struct PeerFactsDelta {
-    /// Cursor the delta applies to; null means `updated` replaces all facts.
+    /// Cursor the delta applies to; null means `updated` holds every fact the Server knows (for example after a Server restart it may know none yet). It adds and replaces facts only: a Node keeps last known facts until `removed` or its projection drops them.
     pub base: Option<StateCursor> [required = true],
     /// Cursor to send in the next request after applying this delta.
     pub cursor: StateCursor,
@@ -68,6 +68,9 @@ pub struct PeerFactsDelta {
     pub updated: BTreeMap<NodeId, PeerFacts>,
     /// Peers whose facts are no longer visible, were withdrawn by the reporter, or whose Node retired; expiry alone never removes facts.
     pub removed: Vec<NodeId>,
+    /// Peers whose facts are unchanged but were reported again: their new freshness bound (`expiresAt` of the facts and of their STUN candidates). Compact on purpose; changed facts appear in `updated` instead.
+    #[serde(deserialize_with = "meshway_model::wire::unique_map")]
+    pub refreshed: BTreeMap<NodeId, DateTime<Utc>>,
 } }
 
 /// Nodes whose facts the owner of `netmap` may see: its projection, without itself.
@@ -108,22 +111,27 @@ impl PeerFacts {
 }
 
 impl PeerFactsDelta {
-    /// Apply this delta to a last-known facts ledger: a null base replaces
-    /// it, `removed` deletes, `updated` replaces per peer. Expiry deletes
-    /// nothing. Returns the peers whose facts changed, sorted.
+    /// Apply this delta to a last-known facts ledger: `removed` deletes,
+    /// `updated` replaces per peer. A null base deletes nothing: a Server
+    /// that just restarted knows no facts yet, which is not their removal.
+    /// Expiry deletes nothing either. Returns the changed peers, sorted.
     pub fn apply_to(&self, peers: &mut BTreeMap<NodeId, PeerFacts>) -> Vec<NodeId> {
         let mut changed: Vec<NodeId> = Vec::new();
-        if self.base.is_none() {
-            changed.extend(
-                peers
-                    .keys()
-                    .filter(|peer| !self.updated.contains_key(peer))
-                    .copied(),
-            );
-            peers.retain(|peer, _| self.updated.contains_key(peer));
-        }
         for peer in &self.removed {
             if peers.remove(peer).is_some() {
+                changed.push(*peer);
+            }
+        }
+        for (peer, until) in &self.refreshed {
+            if let Some(facts) = peers.get_mut(peer)
+                && *until > facts.expires_at
+            {
+                facts.expires_at = *until;
+                for listener in facts.listeners.values_mut() {
+                    for candidate in &mut listener.stun_candidates {
+                        candidate.expires_at = candidate.expires_at.max(*until);
+                    }
+                }
                 changed.push(*peer);
             }
         }
@@ -257,9 +265,12 @@ impl SyncResponse {
                     .collect::<std::collections::BTreeSet<_>>()
                     .len()
                     != facts.removed.len()
+                || facts.removed.iter().any(|node| {
+                    facts.updated.contains_key(node) || facts.refreshed.contains_key(node)
+                })
                 || facts
-                    .removed
-                    .iter()
+                    .refreshed
+                    .keys()
                     .any(|node| facts.updated.contains_key(node))
                 || facts.updated.iter().any(|(node, value)| {
                     *node != value.node_id || value.expires_at <= value.observed_at
@@ -405,6 +416,7 @@ mod tests {
             sequence: Sequence::new(n).unwrap(),
         };
         let facts = |base| PeerFactsDelta {
+            refreshed: BTreeMap::new(),
             base,
             cursor: cursor(5),
             netmap_serial: base_serial(),

@@ -705,6 +705,14 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "AdjacencyStatus": {
+        "type": "string",
+        "description": "An admitted adjacency of this Node that has no current channel.",
+        "enum": [
+          "idle",
+          "unreachable"
+        ]
+      },
       "AggregatedLink": {
         "type": "object",
         "description": "Visible endpoint evidence for one channel, without asserting bidirectional business access.",
@@ -4455,7 +4463,8 @@ export const schemaDocument = {
           "controllerId",
           "networkId",
           "nodeId",
-          "keys"
+          "keys",
+          "serverSigningKey"
         ],
         "properties": {
           "controllerId": {
@@ -4475,15 +4484,8 @@ export const schemaDocument = {
             "description": "Stable registered Node identity."
           },
           "serverSigningKey": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/ServerSigningKey",
-                "description": "Server key signing netmap leases, pinned by the Node with this binding; null or omission means the Server issues no signed netmaps and the Node accepts none."
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "$ref": "#/components/schemas/ServerSigningKey",
+            "description": "Server key signing netmap leases, pinned by the Node with this binding; the Node accepts only netmaps it signs."
           }
         },
         "additionalProperties": false
@@ -6138,6 +6140,7 @@ export const schemaDocument = {
           "global_exit_requires_internet",
           "exit_fallback_requires_internet",
           "netmap_limit",
+          "netmap_budget",
           "shadowed_rule"
         ]
       },
@@ -8630,6 +8633,76 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "NetmapUnavailable": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "No netmap was issued yet: the Node is not part of the trusted inventory (for example it has not acquired an instance with its capabilities).",
+            "required": [
+              "reason"
+            ],
+            "properties": {
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "notIssued"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "The Node had a netmap that was withdrawn, for example because one of its keys was revoked.",
+            "required": [
+              "reason"
+            ],
+            "properties": {
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "withdrawn"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "Its netmap exceeded the safety bound and was removed from the inventory.",
+            "required": [
+              "bytes",
+              "maxBytes",
+              "reason"
+            ],
+            "properties": {
+              "bytes": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int32",
+                "description": "Encoded size of the rejected netmap, when this Server process measured it.",
+                "minimum": 0
+              },
+              "maxBytes": {
+                "type": "integer",
+                "format": "int32",
+                "description": "The bound, in bytes.",
+                "minimum": 0
+              },
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "limit"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        ],
+        "description": "Why a registered Node has no current netmap."
+      },
       "NetworkActions": {
         "type": "object",
         "description": "Current network operation hints; mutations independently recheck authorization.",
@@ -9224,6 +9297,9 @@ export const schemaDocument = {
           "dataplaneKeyRevokedAt",
           "canDelete",
           "netmap",
+          "netmapUnavailable",
+          "lease",
+          "lastSyncAt",
           "canRevokeControlKey",
           "canRevokeDataplaneKey",
           "controlKeyCreatedAt",
@@ -9296,11 +9372,44 @@ export const schemaDocument = {
             "$ref": "#/components/schemas/NodeKeyMetadata",
             "description": "Public metadata of the latest bound keys."
           },
+          "lastSyncAt": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp",
+                "description": "When this Server last received a sync request from the Node; null when none arrived since the Server process started."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lease": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NetmapLease",
+                "description": "The latest netmap lease this Server signed for the Node in a sync answer; null when it issued none since the Server process started."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "netmap": {
             "oneOf": [
               {
                 "$ref": "#/components/schemas/NetmapRef",
                 "description": "Current netmap of the Node, not a saved/applied receipt."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "netmapUnavailable": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NetmapUnavailable",
+                "description": "Why `netmap` is null; null whenever `netmap` is present."
               },
               {
                 "type": "null"
@@ -9893,12 +10002,28 @@ export const schemaDocument = {
           "listeners",
           "sockets",
           "links",
+          "adjacencies",
           "paths",
           "selection",
           "probes",
           "problems"
         ],
         "properties": {
+          "adjacencies": {
+            "type": "object",
+            "description": "Admitted adjacencies without a current channel, by peer; peers with a channel appear in `links` instead.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/AdjacencyStatus"
+            },
+            "propertyNames": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Stable node identifier, independent of its addresses and keys.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+              "maxLength": 36,
+              "minLength": 36,
+              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          },
           "capabilities": {
             "type": "object",
             "description": "Namespaced build capabilities matching the authenticated instance acquisition.",
@@ -11084,14 +11209,15 @@ export const schemaDocument = {
           "cursor",
           "netmapSerial",
           "updated",
-          "removed"
+          "removed",
+          "refreshed"
         ],
         "properties": {
           "base": {
             "oneOf": [
               {
                 "$ref": "#/components/schemas/StateCursor",
-                "description": "Cursor the delta applies to; null means `updated` replaces all facts."
+                "description": "Cursor the delta applies to; null means `updated` holds every fact the Server knows (for example after a Server restart it may know none yet). It adds and replaces facts only: a Node keeps last known facts until `removed` or its projection drops them."
               },
               {
                 "type": "null"
@@ -11105,6 +11231,22 @@ export const schemaDocument = {
           "netmapSerial": {
             "$ref": "#/components/schemas/Version",
             "description": "Netmap serial whose visible Nodes scoped this projection."
+          },
+          "refreshed": {
+            "type": "object",
+            "description": "Peers whose facts are unchanged but were reported again: their new freshness bound (`expiresAt` of the facts and of their STUN candidates). Compact on purpose; changed facts appear in `updated` instead.",
+            "additionalProperties": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "propertyNames": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Stable node identifier, independent of its addresses and keys.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+              "maxLength": 36,
+              "minLength": 36,
+              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
           },
           "removed": {
             "type": "array",
@@ -12017,6 +12159,32 @@ export const schemaDocument = {
                 "type": "string",
                 "enum": [
                   "node_identity_rejected"
+                ]
+              },
+              "message": {
+                "type": "string",
+                "description": "Safe fallback text. Clients branch on code."
+              },
+              "params": {
+                "$ref": "#/components/schemas/EmptyParams",
+                "description": "Structured context defined by this problem code, or an empty object when none is exposed."
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "The Node is authenticated but the Server holds no netmap for it (for example its data-plane key was revoked); returns HTTP 403 and ends its held netmap.",
+            "required": [
+              "code",
+              "params",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "netmap_withdrawn"
                 ]
               },
               "message": {

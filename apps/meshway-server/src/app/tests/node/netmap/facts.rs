@@ -74,7 +74,9 @@ async fn endpoint_changes_wake_only_viewers_that_see_the_reporter() {
         .unwrap()
         .unwrap();
     assert_eq!(freshness.cursor, next.cursor);
-    assert_eq!(freshness.updated, next.updated);
+    // Unchanged facts travel compactly: their freshness bound only.
+    assert!(freshness.updated.is_empty());
+    assert_eq!(freshness.refreshed[&b], next.updated[&b].expires_at);
     // A cursor from another netmap, or none held, restarts complete facts.
     let restarted = facts
         .peer_facts(&na, Some(nb.reference()), Some(next.cursor))
@@ -92,7 +94,8 @@ async fn endpoint_changes_wake_only_viewers_that_see_the_reporter() {
         .unwrap()
         .unwrap();
     assert_eq!(refreshed.cursor, next.cursor);
-    assert!(refreshed.updated[&b].expires_at >= next.updated[&b].expires_at);
+    assert!(refreshed.updated.is_empty());
+    assert!(refreshed.refreshed[&b] >= next.updated[&b].expires_at);
     // b's endpoint details reach a because a may dial b's listener; a has no
     // reported facts, and b's own netmap may not dial a, so nothing leaks.
     let to_b = facts.peer_facts(&nb, None, None).unwrap().unwrap();
@@ -129,7 +132,10 @@ async fn expired_facts_stay_last_known_and_are_never_withdrawn_by_expiry() {
             .unwrap()
             .unwrap();
         assert!(later.removed.is_empty());
-        assert_eq!(later.updated[&b], last, "freshness-only answer keeps them");
+        assert_eq!(
+            later.refreshed[&b], last.expires_at,
+            "a freshness-only answer keeps them"
+        );
         assert_eq!(later.cursor, full.cursor);
         let restarted = runtime.facts.delta(&na, None, None).unwrap().unwrap();
         assert_eq!(restarted.updated[&b], last);

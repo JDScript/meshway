@@ -107,8 +107,9 @@ impl Initiation {
         keys: &DataPlaneKeys,
         cfg: &Plan,
         carrier: &Carrier,
+        boot: &Boot,
     ) -> Result<(Self, Vec<u8>), Error> {
-        Self::new_bound(keys, cfg, carrier, None)
+        Self::new_bound(keys, cfg, carrier, None, boot)
     }
 
     pub fn new_bound(
@@ -116,9 +117,10 @@ impl Initiation {
         cfg: &Plan,
         carrier: &Carrier,
         binding: Option<meshway_model::Digest>,
+        boot: &Boot,
     ) -> Result<(Self, Vec<u8>), Error> {
         let context = bound_context(cfg, carrier, binding)?;
-        let client = nonce()?;
+        let client = boot_nonce(boot)?;
         let signature = cfg.sign(keys, digest(INIT, &context, &client, &[0; 32]))?;
         let mut intro = context.clone();
         intro.extend_from_slice(&client);
@@ -126,11 +128,11 @@ impl Initiation {
         Ok((Self { context, client }, intro))
     }
 
-    pub fn respond(self) -> Result<Transcript, Error> {
+    pub fn respond(self, boot: &Boot) -> Result<Transcript, Error> {
         Ok(Transcript {
             context: self.context,
             client: self.client,
-            server: nonce()?,
+            server: boot_nonce(boot)?,
         })
     }
 
@@ -227,6 +229,16 @@ impl Transcript {
             client: probe,
         }
         .challenge(cfg, peer, body)
+    }
+
+    /// The signed boot prefix of the peer's own nonce in this transcript:
+    /// the listener's server nonce for a dialer, the dialer's client nonce
+    /// (or its health probe nonce on passive recovery) for a listener.
+    pub fn peer_boot(&self, dialer: bool) -> Boot {
+        let nonce = if dialer { &self.server } else { &self.client };
+        let mut boot = [0; 16];
+        boot.copy_from_slice(&nonce[..16]);
+        boot
     }
 
     pub fn id(&self) -> [u8; 32] {

@@ -3,9 +3,9 @@
 //! real loopback sockets and Control-verified netmaps.
 use super::*;
 use meshway_configuration::{TopologyAction, TopologyRule};
-use meshway_control::PeerFactsSink;
+use meshway_control::KnownPeers;
 use meshway_model::state::{ListenerPhase, LocalEndpoint, LocalEndpointSource, SocketNetwork};
-use meshway_protocol::{PeerFacts, PeerFactsDelta, PeerListenerFacts, StateCursor};
+use meshway_protocol::{PeerFacts, PeerListenerFacts};
 use support::{Netmaps, eventually, links};
 
 pub(in crate::manager) mod support;
@@ -191,22 +191,17 @@ fn facts(peer: NodeId, address: SocketAddr) -> PeerFacts {
     }
 }
 
-fn delta(base: Option<u64>, cursor: u64, updated: Vec<PeerFacts>) -> PeerFactsDelta {
-    let epoch = "00000000-0000-4000-8000-000000000077".parse().unwrap();
-    let cursor_at = |n| StateCursor {
-        epoch,
-        sequence: meshway_model::Sequence::new(n).unwrap(),
-    };
-    PeerFactsDelta {
-        base: base.map(cursor_at),
-        cursor: cursor_at(cursor),
-        netmap_serial: meshway_model::Version::MIN,
-        updated: updated
-            .into_iter()
-            .map(|facts| (facts.node_id, facts))
-            .collect(),
-        removed: vec![],
-    }
+/// Control's publication of its last known facts.
+fn known(netmap: meshway_model::NetmapRef, peers: Vec<PeerFacts>) -> Option<KnownPeers> {
+    Some(KnownPeers {
+        netmap,
+        peers: Arc::new(
+            peers
+                .into_iter()
+                .map(|facts| (facts.node_id, facts))
+                .collect(),
+        ),
+    })
 }
 
 #[tokio::test]
@@ -238,9 +233,9 @@ async fn peer_facts_add_dial_endpoints_without_reconfiguring_or_touching_other_p
     let c_link = links(&a)[&ids[2]].clone();
     let plan = a.shared.plan();
     let netmap = fixture.desired[0].reference();
-    let mut sink = a.facts_sink();
-    sink.apply(netmap, delta(None, 1, vec![facts(ids[1], b_address)]))
-        .unwrap();
+    let (publish, source) = tokio::sync::watch::channel(None);
+    a.attach_facts(source);
+    publish.send_replace(known(netmap, vec![facts(ids[1], b_address)]));
     eventually("fact endpoint is dialed", || {
         links(&a).contains_key(&ids[1])
     })
@@ -254,10 +249,7 @@ async fn peer_facts_add_dial_endpoints_without_reconfiguring_or_touching_other_p
     );
     assert_eq!(links(&a)[&ids[2]], c_link, "other peers are untouched");
     // Removing the fact keeps the healthy channel; it only shrinks candidates.
-    sink.apply(netmap, delta(Some(1), 2, vec![])).unwrap();
-    let mut removed = delta(Some(2), 3, vec![]);
-    removed.removed.push(ids[1]);
-    sink.apply(netmap, removed).unwrap();
+    publish.send_replace(known(netmap, vec![]));
     tokio::time::sleep(Duration::from_millis(500)).await;
     assert_eq!(links(&a)[&ids[1]].id, b_link.id);
     a.shutdown().await.unwrap();
@@ -284,9 +276,9 @@ async fn stale_peer_facts_still_redial_after_idle_close() {
     stale.observed_at -= chrono::Duration::minutes(10);
     stale.expires_at = stale.observed_at + chrono::Duration::seconds(60);
     let netmap = fixture.desired[0].reference();
-    a.facts_sink()
-        .apply(netmap, delta(None, 1, vec![stale]))
-        .unwrap();
+    let (publish, source) = tokio::sync::watch::channel(None);
+    a.attach_facts(source);
+    publish.send_replace(known(netmap, vec![stale]));
     a.interest().interest(ids[1]);
     eventually("stale fact endpoint is dialed", || {
         links(&a).contains_key(&ids[1])
@@ -410,6 +402,48 @@ async fn native_tcp_stream_survives_an_unrelated_serial_change() {
     assert_eq!(links(&a)[&ids[1]], before.0);
     assert_eq!(links(&b)[&ids[0]], before.1);
     assert_eq!(factory.acquisitions.load(Ordering::SeqCst), acquisitions);
+    a.shutdown().await.unwrap();
+    b.shutdown().await.unwrap();
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn a_pending_supersession_never_replaces_a_newer_channel_or_refills_a_retired_slot() {
+    let mut fixture = Netmaps::start(false, true).await;
+    let ids = fixture.ids();
+    let factory = fixture.factory();
+    let mut a = manager(&fixture, 0, &factory, Default::default()).await;
+    let mut b = manager(&fixture, 1, &factory, Default::default()).await;
+    a.interest().interest(ids[1]);
+    eventually("b accepts a", || links(&b).contains_key(&ids[0])).await;
+    let (current, sender) = {
+        let links = b.shared.links.lock().unwrap();
+        let link = &links[&ids[0]];
+        (link.fact.clone(), link.sender.clone())
+    };
+    // A recovery captured against an older channel id (ABA: the slot was
+    // since replaced by `current`).
+    let mut stale = current.clone();
+    stale.id = [0xab; 32];
+    let ready = |supersedes| ReadyPeer {
+        fact: stale.clone(),
+        sender: sender.clone(),
+        scope: b.shared.scope(Some((ids[0], stale.carrier.clone())), false),
+        plan: b.shared.plan(),
+        supersedes,
+        attempt: None,
+    };
+    assert!(!install_ready(&b.shared, ready(Replacement::Channel([0xcd; 32]))).unwrap());
+    assert_eq!(links(&b)[&ids[0]], current);
+    // A healthy same-carrier UDP channel is never displaced by ranking alone.
+    assert!(!install_ready(&b.shared, ready(Replacement::Ranked)).unwrap());
+    assert_eq!(links(&b)[&ids[0]], current);
+    // Once retired, the empty slot remembers its last channel: a recovery
+    // that saw it empty earlier (no last channel) cannot refill it.
+    retire(&b.shared, &current).unwrap();
+    assert!(!links(&b).contains_key(&ids[0]));
+    assert!(!install_ready(&b.shared, ready(Replacement::Vacant(None))).unwrap());
+    assert!(!links(&b).contains_key(&ids[0]));
     a.shutdown().await.unwrap();
     b.shutdown().await.unwrap();
     fixture.close().await;

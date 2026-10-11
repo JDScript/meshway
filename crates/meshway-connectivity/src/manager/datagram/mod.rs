@@ -325,6 +325,7 @@ impl Owner {
             id: transcript.id(),
             socket_id: self.id,
             peer,
+            peer_boot: transcript.peer_boot(carrier.dialer == plan.node),
             carrier,
             local: self.local,
             remote,
@@ -527,7 +528,7 @@ impl Owner {
             // Received business packets and remote Ping messages do not.
             let nonce = match channel.probe {
                 Some(nonce) => nonce,
-                None => adjacency::nonce()?,
+                None => adjacency::boot_nonce(&self.shared.boot)?,
             };
             channel.probe = Some(nonce);
             channel.next_probe = Instant::now() + PROBE_INTERVAL;
@@ -868,7 +869,7 @@ impl Owner {
         // Expiring/retrying the slot generates another random server nonce, so
         // its old ACK is unusable. A copied INIT alone cannot force rebuilding:
         // the current source must finish this challenge and win normal CAS.
-        let transcript = initiation.respond()?;
+        let transcript = initiation.respond(&self.shared.boot)?;
         let challenge = adjacency::encode(
             Kind::Challenge,
             &transcript.message(&self.shared.keys, &self.shared.plan(), Kind::Challenge)?,
@@ -1008,6 +1009,7 @@ impl Owner {
                 id: transcript.id(),
                 socket_id: self.id,
                 peer: outbound.peer,
+                peer_boot: transcript.peer_boot(true),
                 carrier: outbound.carrier.clone(),
                 local: self.local,
                 remote,
@@ -1495,7 +1497,7 @@ async fn dial_endpoint(
         {
             return Err(Error::Configuration);
         }
-        let (initiation, intro) = Initiation::new(&shared.keys, &plan, &carrier)?;
+        let (initiation, intro) = Initiation::new(&shared.keys, &plan, &carrier, &shared.boot)?;
         attempts.insert(
             remote,
             ClientAttempt {
@@ -1565,6 +1567,8 @@ impl ControlBudget {
 pub(in crate::manager) mod tests {
     use super::super::tests::{netmap::support::Netmaps, support::carriers};
     use super::*;
+
+    const DIALER_BOOT: crate::Boot = [0xd1; 16];
     use meshway_transport::udp::UdpTransport;
     use tokio::net::UdpSocket;
 
@@ -1594,6 +1598,7 @@ pub(in crate::manager) mod tests {
             interests,
             facts: Default::default(),
             instance: Default::default(),
+            boot: crate::adjacency::boot().unwrap(),
         });
         (shared, receiver)
     }
@@ -1629,6 +1634,7 @@ pub(in crate::manager) mod tests {
             &fixture.keys[0],
             &Plan::new(&fixture.desired[0]).unwrap(),
             &carrier,
+            &DIALER_BOOT,
         )
         .unwrap();
         owner.init(source, &intro).await.unwrap();
@@ -1683,6 +1689,7 @@ pub(in crate::manager) mod tests {
             &fixture.keys[0],
             &Plan::new(&fixture.desired[0]).unwrap(),
             &carrier,
+            &DIALER_BOOT,
         )
         .unwrap();
         owner.init(source, &fresh_intro).await.unwrap();
@@ -1789,6 +1796,14 @@ pub(in crate::manager) mod tests {
         assert!(owner.channels.is_empty());
         owner.ack(source, &fresh_ack).await.unwrap();
         assert_eq!(restarted.links.lock().unwrap()[&ids[0]].fact.id, fresh.id());
+        // The dialer's state survived; the listener restarted. Each side
+        // reads the other's signed boot from the fresh transcript.
+        assert_eq!(
+            restarted.links.lock().unwrap()[&ids[0]].fact.peer_boot,
+            DIALER_BOOT
+        );
+        assert_eq!(fresh.peer_boot(true), restarted.boot);
+        assert_ne!(fresh.peer_boot(true), old.peer_boot(true));
         let fresh_ready = fresh
             .message(&restarted.keys, &restarted.plan(), Kind::Ready)
             .unwrap();
@@ -1829,6 +1844,7 @@ pub(in crate::manager) mod tests {
             &fixture.keys[0],
             &Plan::new(&fixture.desired[0]).unwrap(),
             &carrier,
+            &DIALER_BOOT,
         )
         .unwrap();
         let mut invalid = intro.clone();
@@ -1909,7 +1925,7 @@ pub(in crate::manager) mod tests {
         // A fresh challenge changes channel identity; old ACK/health proofs fail.
         let (_, _, fresh) =
             adjacency::incoming(&shared.plan(), &[(ids[0], carrier)], &intro).unwrap();
-        let fresh = fresh.respond().unwrap();
+        let fresh = fresh.respond(&DIALER_BOOT).unwrap();
         assert!(
             fresh
                 .verify(&shared.plan(), ids[0], Kind::Ack, &ack)

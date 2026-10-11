@@ -11,11 +11,14 @@ pub mod connectivity;
 mod runtime;
 pub use runtime::ApplicationTicket;
 mod enrollment;
+mod exchange;
+mod floor;
+pub use exchange::shared;
 mod identity;
 mod instance;
 mod netmap;
 pub use netmap::{
-    FactsRejected, NetmapChange, PeerFactsSink, SYNC_TIMEOUT, SyncCall, SyncFuture, SyncOutcome,
+    KnownPeers, NetmapChange, PeerFactsSink, SYNC_TIMEOUT, SyncCall, SyncFuture, SyncOutcome,
     SyncReply, SyncTransport, sync_loop,
 };
 mod observations;
@@ -81,6 +84,8 @@ pub enum Error {
     Pending,
     #[error("state report scope changed; synchronize and observe again")]
     StateScopeChanged,
+    #[error("state observation is not current for the held netmap or instance; observe again")]
+    StaleReport,
     #[error("netmap receipt was rejected; synchronize and apply a new attempt")]
     ReceiptRejected(Box<ReceiptRejection>),
     #[error("secure random generation or signing failed")]
@@ -93,8 +98,6 @@ pub enum Error {
     ServerKeyMismatch,
     #[error("the current session or instance has expired")]
     Expired,
-    #[error("Node membership was revoked")]
-    MembershipRevoked,
     #[error("Server operation failed: {0}")]
     Server(#[from] ClientError<ErrorResponse>),
 }
@@ -133,6 +136,8 @@ pub struct Control {
     record: Record,
     netmap: netmap::State,
     netmap_write: Option<tokio::task::JoinHandle<Result<(), meshway_private_storage::Error>>>,
+    floor_write: Option<tokio::task::JoinHandle<Result<(), meshway_private_storage::Error>>>,
+    floor_saved: Option<u64>,
     sync_transport: Option<Arc<dyn SyncTransport>>,
     write: Option<tokio::task::JoinHandle<Result<(), meshway_private_storage::Error>>>,
     dirty: bool,
@@ -189,6 +194,8 @@ impl Control {
             record,
             netmap: netmap::State::default(),
             netmap_write: None,
+            floor_write: None,
+            floor_saved: None,
             sync_transport: None,
             write: None,
             dirty: false,
@@ -204,6 +211,10 @@ impl Control {
             connectivity: connectivity::Authority::default(),
             observations: observations::Registry::default(),
         };
+        if let Some(floor) = floor::load(&control.directory) {
+            control.clock.raise_floor(floor);
+            control.floor_saved = Some(floor);
+        }
         control.load_netmap()?;
         Ok(control)
     }
@@ -323,7 +334,7 @@ impl Control {
         &mut self,
         response: Result<T, ClientError<ErrorResponse>>,
     ) -> Result<T, Error> {
-        if response.as_ref().is_err_and(identity_rejected) {
+        if response.as_ref().is_err_and(withdraws_netmap) {
             self.block_netmap_cache()?;
         }
         if matches!(
@@ -403,6 +414,9 @@ impl Control {
         if let Some(write) = self.netmap_write.take() {
             write.await.map_err(|_| Error::ReloadRequired)??;
         }
+        self.finish_facts_write().await;
+        self.persist_floor().await;
+        self.finish_floor_write().await;
         stopped
     }
 }
@@ -410,6 +424,85 @@ impl Control {
 fn identity_rejected(error: &ClientError<ErrorResponse>) -> bool {
     matches!(error, ClientError::Http { status: 403, problem: Some(body) }
         if body.status == 403 && matches!(body.problem, meshway_protocol::Problem::NodeIdentityRejected { .. }))
+}
+
+/// A decoded Server answer that this Node holds no netmap: its identity was
+/// rejected, or it is authenticated but its netmap was withdrawn.
+fn withdraws_netmap(error: &ClientError<ErrorResponse>) -> bool {
+    identity_rejected(error)
+        || matches!(error, ClientError::Http { status: 403, problem: Some(body) }
+            if body.status == 403 && matches!(body.problem, meshway_protocol::Problem::NetmapWithdrawn { .. }))
+}
+
+/// What one failure means for the held netmap and the next attempt. This is
+/// the single classification Control and every host share; the data plane
+/// ends only on lease expiry (Engine), a decoded Server withdrawal, or
+/// private storage in an unknown state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Recovery {
+    /// Retry after a backoff; `reset` re-acquires the session and instance
+    /// first. The held netmap keeps running on its signed lease.
+    Retry { reset: bool },
+    /// A decoded Server answer ended the held netmap. Identity rejection
+    /// stops control; a withdrawn netmap keeps polling for a new one.
+    Withdrawn { identity: bool },
+    /// Private storage has an unknown state: stop and withdraw.
+    Storage,
+    /// A decoded answer breaks the pinned contract, or local configuration is
+    /// unusable: control stops, the held netmap runs to its lease end.
+    Halt,
+}
+
+impl Error {
+    pub fn recovery(&self) -> Recovery {
+        match self {
+            Self::Storage(_) | Self::Record | Self::ReloadRequired => Recovery::Storage,
+            Self::Server(error) if identity_rejected(error) => {
+                Recovery::Withdrawn { identity: true }
+            }
+            Self::Server(error) if withdraws_netmap(error) => {
+                Recovery::Withdrawn { identity: false }
+            }
+            // A receipt bound to another target cannot be retried as is.
+            Self::Server(ClientError::Http {
+                status: 409,
+                problem: Some(body),
+            }) if body.status == 409
+                && matches!(
+                    body.problem,
+                    meshway_protocol::Problem::ReceiptTargetMismatch { .. }
+                ) =>
+            {
+                Recovery::Halt
+            }
+            // Undecoded statuses come from any proxy or CDN and are never an
+            // identity decision; 401/403/404/409 drop the session context.
+            Self::Server(
+                ClientError::Http {
+                    status: 401 | 403 | 404 | 409,
+                    ..
+                }
+                | ClientError::Network {
+                    status: Some(401 | 403 | 404 | 409),
+                }
+                | ClientError::Decode { .. }
+                | ClientError::BodyLimit { .. },
+            )
+            | Self::Expired
+            | Self::Lifecycle => Recovery::Retry { reset: true },
+            Self::Server(ClientError::Http { .. } | ClientError::Network { .. })
+            | Self::Pending
+            | Self::StateScopeChanged
+            | Self::StaleReport
+            | Self::ReceiptRejected(_) => Recovery::Retry { reset: false },
+            Self::Server(ClientError::Configuration | ClientError::Request)
+            | Self::Endpoint
+            | Self::Cryptography
+            | Self::Contract
+            | Self::SignatureInvalid
+            | Self::ServerKeyMismatch => Recovery::Halt,
+        }
+    }
 }
 
 pub fn server_origin(value: &str) -> Result<String, Error> {

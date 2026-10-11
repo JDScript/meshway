@@ -57,6 +57,7 @@ daemon／CLI 通过本组件完成[控制生命周期](/v2/node/runtime#启动�
 - 短期会话、instance、lease 和上报计数不写入恢复文件；进程重启后重新认证并申请新 instance。签名的 netmap 及其租约例外，见 [Netmap 发布](#netmap-发布)。
 - `stop` 停用会话的本机使用资格。仍有效的短期凭据可留在当前进程，显式 `authenticate` 后复用，以免反复启停耗尽 Server 的会话额度；它不能恢复已释放的实例。
 - 期限同时受墙上时间和单调时钟约束，延迟响应与时钟回拨不会延长已取得的期限。
+- 共享 Control 的宿主经 `meshway_control::shared::*` 调用每个 Server 请求：只在准备请求与应用回答时持有 Control 锁，HTTP 往返期间不持锁，因此 sync 回答（安装、续租、撤回）不排在其他请求之后。回答应用前若 session／instance 上下文已变化（fence、stop、重新认证），该回答返回 `Pending` 不被应用。接入与换钥在 sync 会话之外以独占借用执行。
 - 已接纳写入即使失去等待者也由阻塞 worker 完成，并持续持有目录锁。结果不确定时返回 `ReloadRequired`，重新打开后才能发起依赖该状态的操作。
 - 损坏、缺字段、未知格式、错误绑定和异常文件权限都返回错误，不自动清理目录或生成替代身份。
 - 锁文件中的初始化标记先于身份写入持久化；已经初始化后丢失 `control.json` 返回错误，不能作为新安装自动生成身份。
@@ -109,12 +110,15 @@ Control 只验证、保存并发布签名 netmap；它不签发任何执行快�
 | `New { previous }` | 首次安装或更大 serial；内容先保存再发布 |
 | `Renewed` | 同内容的新租约；Engine 只延长自己的计时器，旧租约已结束时重新安装同一内容 |
 
-在 `finish_sync` 之前已有其他安装、撤回或停止的回复返回 `Pending` 且不改变任何状态。`peerFacts` 在 netmap 部分安装后并入 Control 的最后已知事实（按当前投影过滤）并原样交给 `PeerFactsSink`，不进入内容；消费者拒收时，或已发布租约结束／撤回后（最后已知事实随 netmap 结束），下一请求不带游标、取得完整事实；Server 对无游标请求不挂起，因此租约结束后的恢复不等待 hold。地址或出口就绪变化（不含仅新鲜度续期）及 netmap 变化时写 `peer-facts.json`。重启载入后，`take_facts_replay()` 一次性给出保存的事实（base 为 null 的完整替换）；宿主在不联系 Server 而发布已持有 netmap 的同一位置把它交给 sink（daemon 为每次 up 会话开始处）；首个请求仍不带游标，Server 可达时以完整事实替换。单次请求总上限 90 秒（Server 挂起上限 60 秒），连接级失败 1 秒起倍增至 30 秒退避；立即返回且无变化的回复至少间隔 1 秒。
+在 `finish_sync` 之前已有其他安装、撤回或停止的回复返回 `Pending` 且不改变任何状态。peer 事实只有一份状态：Control 的最后已知事实（按当前投影过滤，不进入内容）。`peerFacts` 在 netmap 部分安装后并入它：`removed` 删除，`updated` 按 peer 替换；`base` 为 null（例如 Server 刚重启、尚不知道任何事实）只增改、不删除，到期只表示新鲜度。事实变化后 Control 以 `KnownPeers`（不可变共享快照）发布给 `PeerFactsSink`；daemon 用一个 watch 通道承载它，连接 Manager（拨号候选）与出口选择（就绪出口）只读最新快照，不另存副本。已发布租约结束／撤回后（最后已知事实随 netmap 结束），下一请求不带游标、取得完整事实；Server 对无游标请求不挂起，因此租约结束后的恢复不等待 hold。地址或出口就绪变化（不含仅新鲜度续期）及 netmap 变化时写 `peer-facts.json`。重启载入后 `known_peers()` 即保存的事实；宿主在不联系 Server 而发布已持有 netmap 的同一位置发布它（daemon 为每次 up 会话开始处）。单次请求总上限 90 秒（Server 挂起上限 60 秒），连接级失败 1 秒起倍增至 15 秒退避（Server 恢复后最多一个退避周期即重新连上）；立即返回且无变化的回复至少间隔 1 秒。
 
 | 事件 | 已发布租约 |
 | --- | --- |
-| Server 不可达、超时、5xx、409、session 过期／401、instance 过期或重新取得 | 保持，直至 Engine 计时到期 |
-| 类型化身份拒绝（`membership_revoked` 等）、`stop`、开始换钥、身份记录写入、私有写入结果不确定 | 立即撤回（发布 `None`），Engine 应用空期望 |
+| Server 不可达、超时、任何无可解码 body 的状态（含 CDN／WAF 的 401／403／404／409）、5xx、400 等其他已解码拒绝、session 过期／401、instance 过期或重新取得 | 保持，直至 Engine 计时到期；按 `Recovery::Retry` 退避重试 |
+| 已解码但违背钉住契约的回答（Server 签名／key 不符、`controllerId` 或绑定不符、`receipt_target_mismatch`）、本机配置不可用 | 保持，直至 Engine 计时到期；控制停止（`blocked`），等待操作员 |
+| 已解码的 `403 node_identity_rejected`（控制停止）或 `403 netmap_withdrawn`（继续 sync，等待新 netmap）、`stop`、开始换钥、身份记录写入、私有写入结果不确定 | 立即撤回（发布 `None`），Engine 应用空期望 |
+
+数据面只在三种情况撤：租约到期（Engine）、已解码的 Server 撤回、本机私有存储状态不确定。该分类只有一份实现：`meshway_control::Error::recovery()`，`sync_loop` 与 daemon 控制循环共用；daemon 只据此决定上报的问题码与节奏。State 观测与持有的 netmap／instance 不再一致（例如旧出口能力观测、Server 以 400 拒收该报告体）归为 `StaleReport`：丢弃原报告体，下一次重新观测后再报。
 
 State、回执、协调与观察结果只为 Control 持有且租约未结束的精确内容发言（`held_netmap`）；instance 只是 State／回执绑定，不进入期望内容。
 
@@ -145,7 +149,7 @@ State、回执、协调与观察结果只为 Control 持有且租约未结束的
 
 `signature` 是 Server 对租约的签名（`NetmapSignature`，权威），`seal` 是本节点控制钥对同一租约的签名 `{ signer: "node", keyId, keyGeneration, signature }`，只记录本身份接受了该内容。两者都签 `meshway_protocol::netmap_lease_transcript`：依次为 `meshway/netmap-lease/v1\0`、网络与节点 UUID、revision、serial、内容 digest、`issuedAt`／`expiresAt` 毫秒、signer 类型字节（0 = node，1 = server）和签名钥 key ID／generation，定长大端。digest 覆盖内容，full 与 delta 在重建后核对 digest 等于签名中的引用即被覆盖。
 
-Server 签名钥在接入时随 `EnrollmentResponse.serverSigningKey` 返回，与身份绑定一起保存在 `control.json` 中钉住；为 null 时节点不接受任何 netmap。重新打开时，格式 2 文件须同时满足格式、digest、网络／节点／keys 绑定、租约指向、钉住钥的 Server 签名与本节点 seal 才载入；租约未到期即恢复为执行授权（不联系 Server），已到期只作 delta 基准。格式 1 文件（只有本节点 seal）至多作为 delta 基准，从不恢复授权；首个已验签的 sync 回复把它重写为格式 2。重启依赖系统 UTC，进程间不保留时钟高水位。同内容续租在保存的截止被延后至少 1 小时时才重写文件。
+Server 签名钥在接入时随 `EnrollmentResponse.serverSigningKey`（必填）返回，与身份绑定一起保存在 `control.json` 中钉住；缺少它的接入回答不能解码，不产生绑定。重新打开时，格式 2 文件须同时满足格式、digest、网络／节点／keys 绑定、租约指向、钉住钥的 Server 签名与本节点 seal 才载入；租约未到期即恢复为执行授权（不联系 Server），已到期只作 delta 基准。格式 1 文件（只有本节点 seal）至多作为 delta 基准，从不恢复授权；首个已验签的 sync 回复把它重写为格式 2。Control 把观测到的 UTC 高水位保存在 `clock.json`（`{"format":"meshway-clock-floor/1","highWaterMs":…}`，至多每 60 秒随 sync 写一次，shutdown 时补写并 join），重新打开时 Control 时钟不低于它，也不低于缓存租约的 `issuedAt`；daemon 随 offer 把它交给 Engine，Engine 的租约时钟同样不低于它。墙钟在重启前后被调回时，已到期的租约不会复活（高水位最多落后 60 秒）。同内容续租在保存的截止被延后至少 1 小时时才重写文件。
 
 文件保护原语由 `meshway-private-storage` 提供，Server 与 Node 共用目录、祖先路径、文件类型／权限、锁和原子发布实现；文件名、记录格式和业务恢复仍归各自领域所有。
 

@@ -73,7 +73,7 @@ TD3 已将健康观察测试的失效选择器改为当前名称，覆盖其跨�
 | --- | --- | ---: | --- |
 | `test:tun:linux` | tun | 秒级 | 真实 TUN 设备、双栈包 I/O、GSO/GRO 能力 |
 | `test:packet:linux` | packet | ~9 分钟 | A→R→B 受保护包流：小包、满 MTU、MTU+1 拒绝、多 MSS TCP、原路径回复、内嵌真实 daemon 整组 |
-| `test:runtime:linux` | udp/off、tcp/off、udp/resolv-conf、udp/resolved、nat/off、nat+fallback/off、nat/resolved | 各 ~8 分钟（NAT 行失败时更短） | 真实 meshwayd／CLI＋Server：接入、续租、125 秒流、HTTP 中断恢复、Access 撤销恢复、lease 失效、离线清理；DNS 行加系统解析；NAT 行加双路由器穿透与 pcap 证据 |
+| `test:runtime:linux` | udp/off、tcp/off、udp/resolv-conf、udp/resolved、nat/off、nat+fallback/off、nat/resolved | 各 ~8 分钟（NAT 行失败时更短） | 真实 meshwayd／CLI＋Server：接入、续租、70 秒流（[锚点](/v2/node/validation#traffic-anchor)）、HTTP 中断恢复、Access 撤销恢复、lease 失效、离线清理；DNS 行加系统解析；NAT 行加双路由器穿透与 pcap 证据 |
 | `test:runtime:linux --traversal exit` | exit/off | 短模式诊断／全长验收 | 真实 Controller／A／R／E、隔离公网分类目标与私有 LAN；能力／安装、NAT tuple、完整路径、长流／仅接收、撤回／到期／journal／精确清理；内部 ACK／截止边界单独调用正式组件测试 |
 | `test:runtime:linux` | vless/off、trojan/off | 各 ~8 分钟 | 同一 daemon 共同场景；A/B 只经所选 TCP/TLS 承载拨入 R，SecureNode 包流与原路径回复；独立 TLS 材料与精确叶证书验证 |
 

@@ -169,8 +169,7 @@ impl FactLedger {
         let node = facts.node_id;
         let state = self.networks.entry(network).or_default();
         if let Some(entry) = state.current.get_mut(&node)
-            && entry.facts.listeners == facts.listeners
-            && entry.facts.exit == facts.exit
+            && same_content(&entry.facts, &facts)
             && facts.expires_at >= entry.facts.expires_at
         {
             entry.facts = facts;
@@ -229,16 +228,24 @@ impl FactLedger {
                 && cursor.sequence <= state.sequence
         });
         let after = base.map(|base| base.sequence);
-        let freshness_only = after == Some(state.sequence);
         let updated: BTreeMap<_, _> = state
             .current
             .iter()
             .filter(|(node, entry)| {
-                visible.contains(node)
-                    && (freshness_only || after.is_none_or(|after| entry.sequence > after))
+                visible.contains(node) && after.is_none_or(|after| entry.sequence > after)
             })
             .filter_map(|(node, entry)| Some((*node, entry.facts.scoped_for(&viewer.netmap)?)))
             .collect();
+        // Unchanged facts travel as their freshness bound only.
+        let refreshed: BTreeMap<_, _> = match after {
+            None => BTreeMap::new(),
+            Some(after) => state
+                .current
+                .iter()
+                .filter(|(node, entry)| visible.contains(node) && entry.sequence <= after)
+                .map(|(node, entry)| (*node, entry.facts.expires_at))
+                .collect(),
+        };
         let removed: Vec<_> = match after {
             None => Vec::new(),
             Some(after) => state
@@ -248,7 +255,7 @@ impl FactLedger {
                 .map(|(node, _)| *node)
                 .collect(),
         };
-        if base.is_some() && updated.is_empty() && removed.is_empty() {
+        if base.is_some() && updated.is_empty() && removed.is_empty() && refreshed.is_empty() {
             return Ok(None);
         }
         Ok(Some(PeerFactsDelta {
@@ -257,6 +264,7 @@ impl FactLedger {
             netmap_serial: viewer.netmap.serial,
             updated,
             removed,
+            refreshed,
         }))
     }
 
@@ -277,6 +285,32 @@ impl FactLedger {
             receiver: waiter.sender.subscribe(),
         }
     }
+}
+
+/// Same addresses, origins and exit readiness. Observation times and
+/// freshness bounds (of the facts and of each STUN candidate) are not
+/// content: they travel compactly as `refreshed`, never as a wake-up.
+fn same_content(old: &PeerFacts, new: &PeerFacts) -> bool {
+    let shape = |facts: &PeerFacts| {
+        facts
+            .listeners
+            .iter()
+            .map(|(key, listener)| {
+                (
+                    key.clone(),
+                    listener.phase,
+                    listener.network,
+                    listener.local_endpoints.clone(),
+                    listener
+                        .stun_candidates
+                        .iter()
+                        .map(|candidate| (candidate.address.clone(), candidate.origin.clone()))
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    old.exit == new.exit && shape(old) == shape(new)
 }
 
 /// Production `PeerFactsSource` over the State runtime's ledger.

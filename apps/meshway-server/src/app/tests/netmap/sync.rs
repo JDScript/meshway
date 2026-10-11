@@ -274,6 +274,18 @@ async fn http_sync_requires_a_current_node_session() {
             .status(),
         401
     );
+    // Its control key still signs in, but the Server holds no netmap for it:
+    // a decoded withdrawal, never a retryable binding conflict.
+    let fresh = session(&app.execution(), network, b, &bk, &signer_b).await;
+    let withdrawn = sync(Some(fresh.token.expose().to_owned()), serde_json::json!({}))
+        .await
+        .unwrap();
+    assert_eq!(withdrawn.status(), 403);
+    let problem: meshway_protocol::ErrorResponse = withdrawn.json().await.unwrap();
+    assert!(matches!(
+        problem.problem,
+        meshway_protocol::Problem::NetmapWithdrawn { .. }
+    ));
     server.abort();
     app.shutdown().await.unwrap();
 }

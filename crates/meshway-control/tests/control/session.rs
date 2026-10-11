@@ -255,7 +255,7 @@ async fn definitive_member_credential_rejection_fences_preexisting_execution() {
 }
 
 #[tokio::test]
-async fn foreign_challenge_and_session_bindings_fence_instead_of_preserving_old_authority() {
+async fn foreign_challenge_and_session_bindings_fence_the_session_and_keep_the_signed_netmap() {
     let server = Server::start().await;
     let owner = server.owner().await;
     let proxy = Proxy::start(&server.origin).await;
@@ -271,7 +271,8 @@ async fn foreign_challenge_and_session_bindings_fence_instead_of_preserving_old_
             control.refresh_authentication().await,
             Err(Error::Contract)
         ));
-        assert!(control.netmap().is_none());
+        // Only a decoded withdrawal ends the independently signed netmap.
+        assert!(control.netmap().is_some());
         assert!(!control.status().authenticated);
         assert!(control.status().instance.is_none());
         if suffix == CHALLENGE {

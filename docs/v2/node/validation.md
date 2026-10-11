@@ -51,12 +51,17 @@ TUN、packet 和表中 V1 的静态 UDP/resolved 证据来自 `3887256b` 生产�
 
 ### netmap 生命周期行 {#netmap-rows}
 
-`netmap/offline` 与 `netmap/restart` 使用本机上报端点（`--reported-endpoints`，无 configured／STUN 端点），拨号候选只来自 peer 事实。`netmap/restart` 在 HTTP 关闭 90 秒后（全部事实已过新鲜度）才重启三个 daemon，新邻接只能来自 `peer-facts.json` 中的最后已知事实，见[最后已知事实](/v2/node/connectivity#last-known-facts)。对照：同一 fixture 在未修复产品（main `83c462c7`）上 `netmap/restart` 未通过（`initial IPv4 UDP flow did not produce echo`；Planck `20261010T171854Z-8af9b94d`）。持续流量使 A–R 邻接常驻，`netmap/offline` 不覆盖空闲关闭后的重拨；该路径由 `meshway-connectivity` 的 `stale_peer_facts_still_redial_after_idle_close` 与常驻 lab 离线复验覆盖。
+`netmap/offline` 与 `netmap/restart` 使用本机上报端点（`--reported-endpoints`，无 configured／STUN 端点），拨号候选只来自 peer 事实。`netmap/offline` 关闭 Node HTTP 3 分钟（三个 60 秒租约有效期，期间续租与过期判断都发生）；常驻 lab 另做 10 分钟离线复验。`netmap/restart` 关闭 HTTP 后先停止业务 125 秒（越过 120 秒按需邻接空闲关闭，也越过全部事实的新鲜度），A 的一次 `meshway ping` 与新 5-tuple 必须经空闲关闭后的重拨成功（`scenario-idle-redial-*` 证据），再重启三个 daemon，新邻接只能来自 `peer-facts.json` 中的最后已知事实，见[最后已知事实](/v2/node/connectivity#last-known-facts)。对照：同一 fixture 在未修复产品（main `83c462c7`）上 `netmap/restart` 未通过（`initial IPv4 UDP flow did not produce echo`；Planck `20261010T171854Z-8af9b94d`）。
+
+#### 持续窗口锚点 {#traffic-anchor}
+
+验收持续／纯接收窗口为 70 秒，由 netmap 常量决定而非历史 permit 期限：它长于一次 sync 续租周期（Server hold 50 秒＋最多 10% 抖动＋余量），且长于一次 60 秒租约有效期（各行使用 `--netmap-validity 60s`），因此同一 socket 必然跨过一次续租，并跨过其建立时所依据的租约截止。更长的窗口不增加新的状态转移。此前的 125 秒来自已删除的 demand permit 期限（60 秒）的两倍余量；2026-10-10 前的证据仍以 125 秒标注。目标是全量矩阵墙钟不超过 6 分钟。
 
 | 候选 | 行 | 结果 |
 | --- | --- | --- |
 | `cde22065`（N1z-G） | 全量 16 行，Planck 矩阵 `20261010T182959Z-04119fe8` | 15 行通过（含四个 `netmap/*`：`20261010T183501Z-a323e57f`、`-6d74eb7e`、`-df693708`、`-b2efd34c`）；`exit/off` 未通过（E 的首个 State 报告被 400 拒绝，`prerequisite`，未复现） |
 | `64056d2f`（同产品代码） | `exit/off` 单独复跑，矩阵 `20261010T193255Z-3c6bfa50` | 通过：`20261010T193827Z-8563eae8` |
+| `717631ac`（F2） | 全量 16 行，Planck 矩阵 `20261010T235445Z-d7d66054`（并行 16，墙钟 390 秒，70 秒持续窗口，`netmap/offline` 3 分钟，`netmap/restart` 含空闲关闭后的离线重拨） | 16 行全部通过（`netmap/*`：`20261011T000016Z-74949d4b`、`-e271d31c`、`-473e6cca`、`-4033c3b4`） |
 
 ### 远程矩阵证据 {#remote-matrix-evidence}
 
@@ -115,7 +120,7 @@ mise run test:runtime:linux --artifacts /absolute/private/bin --transport native
 #### runtime 共同场景
 
 - 关闭系统 DNS 的 Mesh-only 网络，强制 A→R→B 及原路径回复。
-- 内层双栈 UDP／TCP，包含上述满 MTU／MTU+1 UDP 和 16 KiB TCP echo；同一 socket 跨需求添加；至少 125 秒持续续租；独立 UDP 流停止发包后的入站活动续租。
+- 内层双栈 UDP／TCP，包含上述满 MTU／MTU+1 UDP 和 16 KiB TCP echo；同一 socket 跨需求添加；至少一个[持续窗口](#traffic-anchor)（70 秒）的持续续租；独立 UDP 流停止发包后的入站活动续租。
 - Access 撤销／恢复；中转取消 IPv6 地址后继续转发 IPv6 密文；拒绝路由保留；离线 `down` 清理。
 - 控制中断恢复：关闭 Node HTTP 接纳直至实际 instance／execution 到期，再恢复联系；无需再次 `up`，原身份、进程和 operator revision 保持，取得新 instance、重新 applied 并上报 State，以新的 OS socket 恢复原路径包流，过期的旧 TCP／cipher 被拒绝。
 - `meshway ping`：hostname／双栈 Mesh IP 选择、direct 与有序 via、独立 ICMP 权限、用户与 Node 共享任务及独立取消、SIGINT、控制中断后的订阅终态、新 instance 下重新探测。
@@ -155,6 +160,6 @@ mise run test:runtime:linux --artifacts /absolute/private/bin --transport native
 ```
 
 - 两个独立 IPv4 端口保持型 Linux conntrack SNAT；UDP 发布端点为空，STUN、互探及认证使用实际承载 socket。
-- 内层双栈 UDP／TCP 强制沿 A→R→B，持续与纯接收业务跨越至少 125 秒及原需求期限。
+- 内层双栈 UDP／TCP 强制沿 A→R→B，持续与纯接收业务跨越一个[持续窗口](#traffic-anchor)（70 秒，含一次续租与一次 60 秒租约截止）。
 - `--traversal-fallback` 仅预授权 A→R 的 Native TCP 拨号，R→B 保持 Native UDP；TCP 入口初始不可达，业务持续 30 秒后开放该入口并阻断精确 A–R UDP 地址对；原 TCP socket、两个内层 TCP circuit 的 CID 与完整路径跨切换保留。
 - State、双方接受的固定 offer、双侧抓包、conntrack、防火墙计数和应用回包共同构成证据。拓扑与固定 OS 资产见 `dev/traversal-fixture/README.md`。

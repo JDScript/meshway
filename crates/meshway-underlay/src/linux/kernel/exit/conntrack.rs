@@ -29,6 +29,9 @@ impl Tuple {
 pub(super) struct RetiredTuple {
     pub tuple: Tuple,
     pub sequence: u16,
+    /// UTC retirement time; 0 for a record written before it was kept.
+    #[serde(default)]
+    pub retired_ms: u64,
 }
 impl RetiredTuple {
     pub fn key(&self) -> serde_json::Value {

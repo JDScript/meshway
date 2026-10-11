@@ -57,7 +57,7 @@ Node 拨号候选的顺序为：netmap 中的 configured 端点，然后是 `pee
 | `stunCandidates` | 各候选按自己的 `expiresAt` 停用（NAT 绑定确实会失效） | 同上，或候选自身到期 |
 | 出口就绪 `exit` | 不再作为 ready 出口的依据 | 同上 |
 
-账本唯一 owner 是 Manager 的事实存储（`manager/facts.rs`），按 peer 保存最后一份；`plan.rs::fact_endpoints` 是唯一的候选展开。Server 停机时事实不再刷新，但已安装租约内仍可用最后已知地址重建空闲关闭的邻接。Control 把同一份最后已知事实保存为 `peer-facts.json`，节点离线重启后随 netmap 载入，见[私有存储](/v2/node/control#私有存储与传输)。事实只提供尝试地址：错误或过时的地址最多导致连不上；准入仍只由 netmap 与认证握手决定。
+账本唯一 owner 是 Control 的最后已知事实（按 peer 保存最后一份，见 [Node 控制组件](/v2/node/control#netmap-发布)）；Manager 的 `manager/facts.rs` 只读取 Control 发布的 `KnownPeers` 快照、唤醒事实变化的 peer worker，不另存账本；`plan.rs::fact_endpoints` 是唯一的候选展开。Server 停机时事实不再刷新，但已安装租约内仍可用最后已知地址重建空闲关闭的邻接。Control 把同一份最后已知事实保存为 `peer-facts.json`，节点离线重启后随 netmap 载入，见[私有存储](/v2/node/control#私有存储与传输)。事实只提供尝试地址：错误或过时的地址最多导致连不上；准入仍只由 netmap 与认证握手决定。
 
 STUN 继续使用原有同 socket 观测与双边接受的协调路径，不把 UDP 映射加入 TCP／VLESS／Trojan 目标。只有本机候选而没有 configured 地址的 UDP 邻接继续保留 STUN 刷新资格；本机候选不意味着 NAT 穿透已成功。
 

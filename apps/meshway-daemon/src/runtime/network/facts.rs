@@ -24,6 +24,7 @@ impl Report {
             listeners: BTreeMap::new(),
             sockets: BTreeMap::new(),
             links: BTreeMap::new(),
+            adjacencies: Default::default(),
             paths: BTreeMap::new(),
             selection: Default::default(),
             probes: Vec::new(),
@@ -123,6 +124,17 @@ impl Report {
             self.facts_observed_at
                 + chrono::Duration::seconds(meshway_protocol::STATE_FACT_MAX_SECONDS),
         );
+        // Links and adjacency status describe applied content only; the
+        // Server rejects them in a report that names none.
+        if state.configuration.applied.is_none() {
+            return state;
+        }
+        state.adjacencies = facts
+            .adjacencies
+            .iter()
+            .filter(|(peer, _)| netmap.projection.configuration.nodes.contains_key(peer))
+            .map(|(peer, status)| (*peer, *status))
+            .collect();
         for link in &facts.links {
             let id = socket_key(&link.id);
             let socket_id = socket_key(&link.socket_id);

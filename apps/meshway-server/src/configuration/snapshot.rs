@@ -27,6 +27,13 @@ struct CacheEntry {
     ciphertext_digest: [u8; 32],
 }
 impl SnapshotCache {
+    /// The process's one cache: every reader of immutable versions shares it.
+    pub(crate) fn shared() -> Arc<Self> {
+        static SHARED: std::sync::LazyLock<Arc<SnapshotCache>> =
+            std::sync::LazyLock::new(Arc::default);
+        Arc::clone(&SHARED)
+    }
+
     pub(crate) fn load(
         &self,
         tx: &Transaction<'_>,

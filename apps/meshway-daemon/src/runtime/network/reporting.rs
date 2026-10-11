@@ -242,15 +242,22 @@ impl super::Handle {
     /// body and observation time; its success never acknowledges a new sample.
     pub async fn report_state(
         &mut self,
-        control: &mut meshway_control::Control,
+        shared: &tokio::sync::Mutex<meshway_control::Control>,
         settings: &crate::settings::Settings,
         routine: bool,
     ) -> Result<bool, meshway_control::Error> {
-        use meshway_control::Error;
-        let Some(instance) = control.status().instance.map(|instance| InstanceRequest {
-            instance_id: instance.instance_id,
-            generation: instance.generation,
-        }) else {
+        use meshway_control::{Error, shared as control};
+        let Some(instance) =
+            shared
+                .lock()
+                .await
+                .status()
+                .instance
+                .map(|instance| InstanceRequest {
+                    instance_id: instance.instance_id,
+                    generation: instance.generation,
+                })
+        else {
             return Ok(false);
         };
         if self
@@ -266,7 +273,7 @@ impl super::Handle {
         }
         self.reporting.last_attempt = Some(Instant::now());
         if self.reporting.pending.is_some() {
-            match control.retry_state_report().await {
+            match control::retry_state_report(shared).await {
                 Ok(accepted) => {
                     self.acknowledge_traversal(&accepted);
                     return Ok(self.reporting.delivered(true));
@@ -278,7 +285,7 @@ impl super::Handle {
                     return Ok(false);
                 }
                 Err(error) => {
-                    if matches!(error, Error::StateScopeChanged) {
+                    if matches!(error, Error::StateScopeChanged | Error::StaleReport) {
                         self.reporting.pending = None;
                     }
                     return Err(error);
@@ -302,7 +309,7 @@ impl super::Handle {
         let facts = sample
             .as_ref()
             .map_or_else(Report::stopped, |sample| sample.report.clone());
-        let mut state = facts.state(control, settings);
+        let mut state = facts.state(&*shared.lock().await, settings);
         if let Some(netmap) = &facts.content {
             crate::runtime::local_endpoints::sample(
                 &mut state,
@@ -319,7 +326,9 @@ impl super::Handle {
                 receipt,
             });
         #[cfg(target_os = "linux")]
-        let candidates = control
+        let candidates = shared
+            .lock()
+            .await
             .status()
             .binding
             .map(|binding| super::traversal::candidates(&state, binding.node_id, &instance))
@@ -330,10 +339,7 @@ impl super::Handle {
             #[cfg(target_os = "linux")]
             candidates,
         });
-        match control
-            .report_runtime_state(state, chrono::Utc::now())
-            .await
-        {
+        match control::report_runtime_state(shared, state, chrono::Utc::now()).await {
             Ok(accepted) => {
                 self.acknowledge_traversal(&accepted);
                 Ok(self.reporting.delivered(false))
@@ -353,13 +359,13 @@ impl super::Handle {
                     .expect("pending report")
                     .candidates
                     .clear();
-                match control.retry_state_report().await {
+                match control::retry_state_report(shared).await {
                     Ok(accepted) => {
                         self.acknowledge_traversal(&accepted);
                         Ok(self.reporting.delivered(true))
                     }
                     Err(error) => {
-                        if matches!(error, Error::StateScopeChanged) {
+                        if matches!(error, Error::StateScopeChanged | Error::StaleReport) {
                             self.reporting.pending = None;
                         }
                         Err(error)
@@ -367,7 +373,7 @@ impl super::Handle {
                 }
             }
             Err(error) => {
-                if matches!(error, Error::StateScopeChanged) {
+                if matches!(error, Error::StateScopeChanged | Error::StaleReport) {
                     self.reporting.pending = None;
                 }
                 Err(error)
@@ -418,6 +424,7 @@ mod tests {
             }],
             links: vec![],
             sockets: vec![],
+            adjacencies: BTreeMap::new(),
         });
         publisher.send_replace(report.clone());
         let physical = schedule.changes.borrow_and_update().clone();

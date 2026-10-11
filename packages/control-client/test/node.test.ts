@@ -107,7 +107,7 @@ test("generated Node SDK completes signed PKCE admission, state reporting and pe
     state: {
       system: { hostname: hostname(), os: platform(), arch: arch(), agentVersion: `sdk-test-${process.version}` },
       capabilities: {}, configuration: { saved: null, applied: null, progress: null },
-      listeners: {}, sockets: {}, links: {}, paths: {},
+      listeners: {}, sockets: {}, links: {}, adjacencies: {}, paths: {},
       selection: { appliedProfile: null }, probes: [], problems: [],
     },
   };

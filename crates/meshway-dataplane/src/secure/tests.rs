@@ -36,6 +36,8 @@ pub(super) fn circuit(state: State, parent: &CancellationToken) -> Circuit {
         },
         active: Instant::now(),
         unanswered: None,
+        keepalive: None,
+        adjacent: Vec::new(),
         origin: true,
         selected: None,
         send: Default::default(),
@@ -119,11 +121,11 @@ fn established_circuit_ends_when_idle_and_its_origin_ends_it_without_replies() {
     // A relay never applies the origin's no-reply bound: it forwards for
     // others and cannot re-handshake.
     idle.active = now;
-    idle.unanswered = Some(now - NO_REPLY);
+    idle.unanswered = Some(now - REPLY_TIMEOUT);
     idle.check_now(now, 0).unwrap();
 
     // An origin endpoint that keeps sending into a restarted peer ends the
-    // circuit after NO_REPLY; any authenticated receive answers it.
+    // circuit after REPLY_TIMEOUT; any authenticated receive answers it.
     let endpoint = || {
         let mut circuit = circuit(State::Closed, &root);
         circuit.cap = None;
@@ -143,14 +145,14 @@ fn established_circuit_ends_when_idle_and_its_origin_ends_it_without_replies() {
         Some(now + Duration::from_secs(7) + CIRCUIT_IDLE),
         "only an Endpoint origin applies the no-reply bound"
     );
-    assert!(NO_REPLY < CIRCUIT_IDLE);
+    assert!(REPLY_TIMEOUT < CIRCUIT_IDLE);
     // A handshaking circuit has only its handshake bound.
     let handshaking = circuit(State::RelayAwaiting, &root);
     assert_eq!(handshaking.activity_deadline(), None);
 }
 
 #[test]
-fn an_origin_endpoint_without_any_authenticated_reply_ends_after_no_reply() {
+fn an_origin_endpoint_without_any_authenticated_reply_ends_after_the_reply_timeout() {
     let root = CancellationToken::new();
     let now = Instant::now();
     let endpoint = |origin: bool| {
@@ -165,16 +167,85 @@ fn an_origin_endpoint_without_any_authenticated_reply_ends_after_no_reply() {
     silent.sent(now);
     silent.sent(now + Duration::from_secs(10));
     silent
-        .check_now(now + NO_REPLY - Duration::from_millis(1), 0)
+        .check_now(now + REPLY_TIMEOUT - Duration::from_millis(1), 0)
         .unwrap();
-    assert_eq!(silent.check_now(now + NO_REPLY, 0), Err(Error::Expired));
+    assert_eq!(
+        silent.check_now(now + REPLY_TIMEOUT, 0),
+        Err(Error::Expired)
+    );
     // Any authenticated receive answers every earlier send.
     let mut answered = endpoint(true);
     answered.sent(now);
     answered.received(now + Duration::from_secs(1));
-    answered.check_now(now + NO_REPLY, 0).unwrap();
+    answered.check_now(now + REPLY_TIMEOUT, 0).unwrap();
     // The responder endpoint never applies it: only the origin re-handshakes.
     let mut responder = endpoint(false);
     responder.sent(now);
-    responder.check_now(now + NO_REPLY, 0).unwrap();
+    responder.check_now(now + REPLY_TIMEOUT, 0).unwrap();
+}
+
+#[test]
+fn passive_keepalive_answers_data_within_the_origin_reply_timeout() {
+    let root = CancellationToken::new();
+    let now = Instant::now();
+    let mut terminal = circuit(State::RelayEstablished, &root);
+    terminal.origin = false;
+    // Data arrived: owe one keepalive, armed by the first unanswered packet.
+    terminal.owe_keepalive(now);
+    terminal.owe_keepalive(now + Duration::from_secs(3));
+    assert_eq!(terminal.keepalive, Some(now + KEEPALIVE));
+    // Any own send answers it.
+    terminal.sent(now + Duration::from_secs(1));
+    assert_eq!(terminal.keepalive, None);
+    // A keepalive answers and itself expects no answer.
+    let mut origin = circuit(State::RelayEstablished, &root);
+    origin.owe_keepalive(now);
+    origin.sent_keepalive(now + KEEPALIVE);
+    assert_eq!(origin.keepalive, None);
+    assert_eq!(origin.unanswered, None);
+    // A live terminal answers within KEEPALIVE plus a round trip, inside
+    // the origin's reply timeout.
+    const _: () = assert!(KEEPALIVE.as_secs() + 2 < REPLY_TIMEOUT.as_secs());
+}
+
+#[test]
+fn a_changed_adjacent_boot_marks_a_restart_and_an_unknown_one_binds() {
+    let root = CancellationToken::new();
+    let mut relay = circuit(State::RelayEstablished, &root);
+    let [a, b]: [NodeId; 2] = [
+        "00000000-0000-4000-8000-00000000000a".parse().unwrap(),
+        "00000000-0000-4000-8000-00000000000b".parse().unwrap(),
+    ];
+    relay.adjacent = vec![(a, Some([1; 16])), (b, None)];
+    // A missing channel and the same boot keep the circuit; unknown binds.
+    assert_eq!(relay.rebind_boots(&BTreeMap::new()), None);
+    assert_eq!(
+        relay.rebind_boots(&BTreeMap::from([(a, [1; 16]), (b, [2; 16])])),
+        None
+    );
+    assert_eq!(relay.adjacent[1], (b, Some([2; 16])));
+    assert_eq!(
+        relay.rebind_boots(&BTreeMap::from([(a, [1; 16]), (b, [3; 16])])),
+        Some(b)
+    );
+}
+
+#[test]
+fn a_hint_names_the_hop_after_the_arrival_side() {
+    let node = |n: u8| -> NodeId { format!("00000000-0000-4000-8000-{n:012}").parse().unwrap() };
+    let hint = UntrustedIncomingHint {
+        grant: crate::secure::CircuitGrant {
+            purpose: crate::Purpose::Business,
+            target: crate::Target::Mesh { node: node(3) },
+        },
+        path: vec![node(1), node(2), node(3)],
+    };
+    assert_eq!(hint.next_hop(node(2), node(1)), Some(node(3)));
+    assert_eq!(hint.next_hop(node(2), node(3)), Some(node(1)));
+    assert_eq!(
+        hint.next_hop(node(3), node(2)),
+        None,
+        "the terminal relays nothing"
+    );
+    assert_eq!(hint.next_hop(node(9), node(1)), None);
 }

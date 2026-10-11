@@ -2177,7 +2177,15 @@
                     }
                   },
                   "networkId": "0d3a2a6e-7f3b-4d0c-9a8e-1c2b3d4e5f60",
-                  "nodeId": "f6a5b4c3-6d7e-4f4a-9b8c-8d7e6f5a4b60"
+                  "nodeId": "f6a5b4c3-6d7e-4f4a-9b8c-8d7e6f5a4b60",
+                  "serverSigningKey": {
+                    "keyGeneration": 1,
+                    "keyId": "9a1b2c3d-4e5f-4a6b-8c7d-0e1f2a3b4c5d",
+                    "publicKey": {
+                      "algorithm": "ed25519",
+                      "bytes": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"
+                    }
+                  }
                 }
               }
             }
@@ -2426,7 +2434,15 @@
                     }
                   },
                   "networkId": "0d3a2a6e-7f3b-4d0c-9a8e-1c2b3d4e5f60",
-                  "nodeId": "a7b6c5d4-5e6f-4a3b-8c9d-9e8f7a6b5c70"
+                  "nodeId": "a7b6c5d4-5e6f-4a3b-8c9d-9e8f7a6b5c70",
+                  "serverSigningKey": {
+                    "keyGeneration": 1,
+                    "keyId": "9a1b2c3d-4e5f-4a6b-8c7d-0e1f2a3b4c5d",
+                    "publicKey": {
+                      "algorithm": "ed25519",
+                      "bytes": "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c"
+                    }
+                  }
                 }
               }
             }
@@ -4891,6 +4907,7 @@
                 "observedAt": "2026-10-08T09:00:00Z",
                 "sequence": 18,
                 "state": {
+                  "adjacencies": {},
                   "capabilities": {
                     "transport:native_tcp": {
                       "kind": "transport",
@@ -5628,7 +5645,7 @@
             }
           },
           "403": {
-            "description": "node_identity_rejected",
+            "description": "node_identity_rejected, netmap_withdrawn",
             "content": {
               "application/json": {
                 "schema": {
@@ -5642,25 +5659,6 @@
                   },
                   "requestId": "00000000-0000-0000-0000-000000000001",
                   "status": 403
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "binding_conflict",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                },
-                "example": {
-                  "problem": {
-                    "code": "binding_conflict",
-                    "message": "Request conflicts with the current generation or binding.",
-                    "params": {}
-                  },
-                  "requestId": "00000000-0000-0000-0000-000000000001",
-                  "status": 409
                 }
               }
             }
@@ -16192,11 +16190,14 @@
                           }
                         }
                       },
+                      "lastSyncAt": null,
+                      "lease": null,
                       "netmap": {
                         "digest": "c6291573f40ab28d915ce376a0bf482cd319e507fb0468c912d35a0f7eac4986",
                         "revision": 7,
                         "serial": 1
                       },
+                      "netmapUnavailable": null,
                       "networkId": "0d3a2a6e-7f3b-4d0c-9a8e-1c2b3d4e5f60",
                       "registeredAt": "2026-10-08T09:01:00Z"
                     }
@@ -16359,11 +16360,14 @@
                       }
                     }
                   },
+                  "lastSyncAt": null,
+                  "lease": null,
                   "netmap": {
                     "digest": "c6291573f40ab28d915ce376a0bf482cd319e507fb0468c912d35a0f7eac4986",
                     "revision": 7,
                     "serial": 1
                   },
+                  "netmapUnavailable": null,
                   "networkId": "0d3a2a6e-7f3b-4d0c-9a8e-1c2b3d4e5f60",
                   "registeredAt": "2026-10-08T09:01:00Z"
                 }
@@ -17081,6 +17085,7 @@
                       "receivedAt": "2026-10-08T09:00:01Z",
                       "report": {
                         "report": {
+                          "adjacencies": {},
                           "capabilities": {
                             "transport:native_tcp": {
                               "kind": "transport",
@@ -19343,6 +19348,7 @@
                       "receivedAt": "2026-10-08T09:00:01Z",
                       "report": {
                         "report": {
+                          "adjacencies": {},
                           "capabilities": {
                             "transport:native_tcp": {
                               "kind": "transport",
@@ -19467,6 +19473,7 @@
                       "receivedAt": "2026-10-08T09:00:01Z",
                       "report": {
                         "report": {
+                          "adjacencies": {},
                           "capabilities": {
                             "transport:native_tcp": {
                               "kind": "transport",
@@ -20524,6 +20531,14 @@
           }
         },
         "additionalProperties": false
+      },
+      "AdjacencyStatus": {
+        "type": "string",
+        "description": "An admitted adjacency of this Node that has no current channel.",
+        "enum": [
+          "idle",
+          "unreachable"
+        ]
       },
       "AggregatedLink": {
         "type": "object",
@@ -24275,7 +24290,8 @@
           "controllerId",
           "networkId",
           "nodeId",
-          "keys"
+          "keys",
+          "serverSigningKey"
         ],
         "properties": {
           "controllerId": {
@@ -24295,15 +24311,8 @@
             "description": "Stable registered Node identity."
           },
           "serverSigningKey": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/ServerSigningKey",
-                "description": "Server key signing netmap leases, pinned by the Node with this binding; null or omission means the Server issues no signed netmaps and the Node accepts none."
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "$ref": "#/components/schemas/ServerSigningKey",
+            "description": "Server key signing netmap leases, pinned by the Node with this binding; the Node accepts only netmaps it signs."
           }
         },
         "additionalProperties": false
@@ -25958,6 +25967,7 @@
           "global_exit_requires_internet",
           "exit_fallback_requires_internet",
           "netmap_limit",
+          "netmap_budget",
           "shadowed_rule"
         ]
       },
@@ -28450,6 +28460,76 @@
         },
         "additionalProperties": false
       },
+      "NetmapUnavailable": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "No netmap was issued yet: the Node is not part of the trusted inventory (for example it has not acquired an instance with its capabilities).",
+            "required": [
+              "reason"
+            ],
+            "properties": {
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "notIssued"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "The Node had a netmap that was withdrawn, for example because one of its keys was revoked.",
+            "required": [
+              "reason"
+            ],
+            "properties": {
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "withdrawn"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "Its netmap exceeded the safety bound and was removed from the inventory.",
+            "required": [
+              "bytes",
+              "maxBytes",
+              "reason"
+            ],
+            "properties": {
+              "bytes": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int32",
+                "description": "Encoded size of the rejected netmap, when this Server process measured it.",
+                "minimum": 0
+              },
+              "maxBytes": {
+                "type": "integer",
+                "format": "int32",
+                "description": "The bound, in bytes.",
+                "minimum": 0
+              },
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "limit"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        ],
+        "description": "Why a registered Node has no current netmap."
+      },
       "NetworkActions": {
         "type": "object",
         "description": "Current network operation hints; mutations independently recheck authorization.",
@@ -29044,6 +29124,9 @@
           "dataplaneKeyRevokedAt",
           "canDelete",
           "netmap",
+          "netmapUnavailable",
+          "lease",
+          "lastSyncAt",
           "canRevokeControlKey",
           "canRevokeDataplaneKey",
           "controlKeyCreatedAt",
@@ -29116,11 +29199,44 @@
             "$ref": "#/components/schemas/NodeKeyMetadata",
             "description": "Public metadata of the latest bound keys."
           },
+          "lastSyncAt": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp",
+                "description": "When this Server last received a sync request from the Node; null when none arrived since the Server process started."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lease": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NetmapLease",
+                "description": "The latest netmap lease this Server signed for the Node in a sync answer; null when it issued none since the Server process started."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "netmap": {
             "oneOf": [
               {
                 "$ref": "#/components/schemas/NetmapRef",
                 "description": "Current netmap of the Node, not a saved/applied receipt."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "netmapUnavailable": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NetmapUnavailable",
+                "description": "Why `netmap` is null; null whenever `netmap` is present."
               },
               {
                 "type": "null"
@@ -29713,12 +29829,28 @@
           "listeners",
           "sockets",
           "links",
+          "adjacencies",
           "paths",
           "selection",
           "probes",
           "problems"
         ],
         "properties": {
+          "adjacencies": {
+            "type": "object",
+            "description": "Admitted adjacencies without a current channel, by peer; peers with a channel appear in `links` instead.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/AdjacencyStatus"
+            },
+            "propertyNames": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Stable node identifier, independent of its addresses and keys.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+              "maxLength": 36,
+              "minLength": 36,
+              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          },
           "capabilities": {
             "type": "object",
             "description": "Namespaced build capabilities matching the authenticated instance acquisition.",
@@ -30904,14 +31036,15 @@
           "cursor",
           "netmapSerial",
           "updated",
-          "removed"
+          "removed",
+          "refreshed"
         ],
         "properties": {
           "base": {
             "oneOf": [
               {
                 "$ref": "#/components/schemas/StateCursor",
-                "description": "Cursor the delta applies to; null means `updated` replaces all facts."
+                "description": "Cursor the delta applies to; null means `updated` holds every fact the Server knows (for example after a Server restart it may know none yet). It adds and replaces facts only: a Node keeps last known facts until `removed` or its projection drops them."
               },
               {
                 "type": "null"
@@ -30925,6 +31058,22 @@
           "netmapSerial": {
             "$ref": "#/components/schemas/Version",
             "description": "Netmap serial whose visible Nodes scoped this projection."
+          },
+          "refreshed": {
+            "type": "object",
+            "description": "Peers whose facts are unchanged but were reported again: their new freshness bound (`expiresAt` of the facts and of their STUN candidates). Compact on purpose; changed facts appear in `updated` instead.",
+            "additionalProperties": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "propertyNames": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Stable node identifier, independent of its addresses and keys.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+              "maxLength": 36,
+              "minLength": 36,
+              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
           },
           "removed": {
             "type": "array",
@@ -31837,6 +31986,32 @@
                 "type": "string",
                 "enum": [
                   "node_identity_rejected"
+                ]
+              },
+              "message": {
+                "type": "string",
+                "description": "Safe fallback text. Clients branch on code."
+              },
+              "params": {
+                "$ref": "#/components/schemas/EmptyParams",
+                "description": "Structured context defined by this problem code, or an empty object when none is exposed."
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "The Node is authenticated but the Server holds no netmap for it (for example its data-plane key was revoked); returns HTTP 403 and ends its held netmap.",
+            "required": [
+              "code",
+              "params",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "netmap_withdrawn"
                 ]
               },
               "message": {

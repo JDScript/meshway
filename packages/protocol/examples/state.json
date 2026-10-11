@@ -85,7 +85,8 @@
           "appliedProfile": "mesh"
         },
         "probes": [],
-        "problems": []
+        "problems": [],
+        "adjacencies": {}
       }
     },
     "responses": {
@@ -309,7 +310,8 @@
                   "appliedProfile": "mesh"
                 },
                 "probes": [],
-                "problems": []
+                "problems": [],
+                "adjacencies": {}
               }
             },
             "derived": {
@@ -436,7 +438,8 @@
                   "appliedProfile": "mesh"
                 },
                 "probes": [],
-                "problems": []
+                "problems": [],
+                "adjacencies": {}
               }
             },
             "derived": {
@@ -555,7 +558,8 @@
                   "appliedProfile": "mesh"
                 },
                 "probes": [],
-                "problems": []
+                "problems": [],
+                "adjacencies": {}
               }
             },
             "derived": {

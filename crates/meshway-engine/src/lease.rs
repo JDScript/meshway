@@ -23,6 +23,12 @@ impl Clock {
             wall: wall(),
         }
     }
+    /// Never report a time before `floor_ms`, a UTC time observed earlier
+    /// (possibly before a restart): a clock set back cannot revive a lease.
+    pub fn raise_floor(&mut self, floor_ms: u64) {
+        let now = self.now();
+        self.wall = now.max(floor_ms);
+    }
     pub fn now(&mut self) -> u64 {
         let now = Instant::now();
         self.wall = self
@@ -60,12 +66,7 @@ impl Active {
         if next.lease.netmap != next.content.reference() {
             return Err(Error::Reference);
         }
-        if latest.is_some_and(|old| {
-            next.lease.netmap.serial < old.netmap.serial
-                || (next.lease.netmap.serial == old.netmap.serial
-                    && (next.lease.netmap != old.netmap
-                        || next.lease.expires_at_ms < old.expires_at_ms))
-        }) {
+        if latest.is_some_and(|old| regresses(&next.lease, &old)) {
             return Err(Error::Reference);
         }
         let remaining = next
@@ -85,4 +86,11 @@ impl Active {
     pub fn expired(&self, clock: &mut Clock) -> bool {
         Instant::now() >= self.at || clock.now() >= self.expires_at_ms
     }
+}
+
+/// An older serial, or the same serial with other content or an earlier end.
+pub(crate) fn regresses(next: &NetmapLease, old: &NetmapLease) -> bool {
+    next.netmap.serial < old.netmap.serial
+        || (next.netmap.serial == old.netmap.serial
+            && (next.netmap != old.netmap || next.expires_at_ms < old.expires_at_ms))
 }

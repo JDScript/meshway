@@ -155,17 +155,22 @@ impl Backend {
             }
             return Ok(ProjectionAck { incarnation });
         }
+        // Every projection must be retirable into the quarantine; aged
+        // quarantine entries make room first, so history never blocks a new
+        // flow beyond its revocation purpose.
+        if self.ledger.quarantine.len()
+            + self.ledger.legacy_quarantine.len()
+            + self.ledger.projections.len()
+            >= HISTORY
+        {
+            self.expire_quarantine(QUARANTINE_MIN_AGE).await?;
+        }
         if incarnation.is_zero()
             || self.ledger.projections.len() >= HISTORY
             || self.live.len() >= CAPACITY
             || self.ledger.quarantine.len()
                 + self.ledger.legacy_quarantine.len()
-                + self
-                    .ledger
-                    .projections
-                    .iter()
-                    .filter(|flow| !flow.retired)
-                    .count()
+                + self.ledger.projections.len()
                 >= HISTORY
         {
             return Err(Error::Capacity);
@@ -206,9 +211,18 @@ impl Backend {
             }
         }
         self.ledger.pending = true;
+        let slot = (1..=HISTORY as u32)
+            .find(|slot| {
+                !self
+                    .ledger
+                    .projections
+                    .iter()
+                    .any(|flow| flow.slot == *slot)
+            })
+            .ok_or(Error::Capacity)?;
         self.ledger.projections.push(Projection {
             incarnation,
-            slot: (self.ledger.projections.len() + 1) as u32,
+            slot,
             tuple,
             expires_ms: deadline.expires_at_ms(),
             retired: false,
@@ -499,6 +513,7 @@ impl Backend {
             let retired = conntrack::RetiredTuple {
                 tuple: entry.reply.clone(),
                 sequence: record.tuple.sequence(),
+                retired_ms: now_ms(),
             };
             if self.ledger.program.legacy {
                 if !self.ledger.legacy_quarantine.contains(&entry.reply) {
@@ -507,10 +522,15 @@ impl Backend {
                 self.store.persist(&self.ledger).await?;
                 objects::mutate(&mut self.commands, &json!({"nftables": [self.ledger.program.element("add", "quarantine", vec![entry.reply.key()])]})).await?;
             } else {
-                if !self.ledger.quarantine.contains(&retired) {
+                if !self
+                    .ledger
+                    .quarantine
+                    .iter()
+                    .any(|old| old.tuple == retired.tuple && old.sequence == retired.sequence)
+                {
                     if self.ledger.quarantine.len() + self.ledger.legacy_quarantine.len() >= HISTORY
                     {
-                        return Err(Error::Capacity);
+                        self.expire_quarantine(Duration::ZERO).await?;
                     }
                     self.ledger.quarantine.push(retired.clone());
                 }
@@ -550,7 +570,39 @@ impl Backend {
                 .reclaim(record.tuple, &mut self.ledger, &mut self.store)
                 .await?;
         }
-        Ok(())
+        // Conntrack is deleted, the reply tuple quarantined and routes
+        // reclaimed: the record owns nothing more and leaves the history.
+        self.ledger
+            .projections
+            .retain(|flow| flow.incarnation != incarnation);
+        self.store.persist(&self.ledger).await
+    }
+
+    /// Drop quarantined reply tuples retired at least `age` ago, oldest
+    /// first; with `Duration::ZERO`, only the oldest one. The quarantine
+    /// covers late replies of retired flows after conntrack deletion; an
+    /// entry older than [`QUARANTINE_MIN_AGE`] has outlived every kernel
+    /// timeout that could still deliver such a reply.
+    async fn expire_quarantine(&mut self, age: Duration) -> Result<()> {
+        let expired = expired_quarantine(&self.ledger.quarantine, now_ms(), age)?;
+        if expired.is_empty() {
+            return Ok(());
+        }
+        let elements: Vec<_> = ["quarantine", "echo_quarantine"]
+            .into_iter()
+            .filter_map(|name| {
+                let values: Vec<_> = expired
+                    .iter()
+                    .filter(|old| old.set() == name)
+                    .map(conntrack::RetiredTuple::key)
+                    .collect();
+                (!values.is_empty()).then(|| self.ledger.program.element("delete", name, values))
+            })
+            .collect();
+        // Kernel first: a crash before the journal write re-adds them.
+        objects::mutate(&mut self.commands, &json!({"nftables": elements})).await?;
+        self.ledger.quarantine.retain(|old| !expired.contains(old));
+        self.store.persist(&self.ledger).await
     }
     /// Reconcile a failed/cancelled admitted operation before accepting another
     /// request. A lost caller cannot leave a positive kernel qualification.
@@ -566,6 +618,11 @@ impl Backend {
         Ok(())
     }
     pub async fn maintain(&mut self) -> Result<()> {
+        if self.ledger.quarantine.first().is_some_and(|old| {
+            old.retired_ms <= now_ms().saturating_sub(QUARANTINE_AGE.as_millis() as u64)
+        }) {
+            self.expire_quarantine(QUARANTINE_AGE).await?;
+        }
         let expired: Vec<_> = self
             .live
             .iter()
@@ -657,6 +714,48 @@ impl Backend {
     }
 }
 
+/// A quarantined reply tuple is kept at least this long (above every
+/// conntrack timeout of a deleted, NATed flow's late replies).
+const QUARANTINE_MIN_AGE: Duration = Duration::from_secs(300);
+/// Housekeeping drops quarantine entries older than this.
+const QUARANTINE_AGE: Duration = Duration::from_secs(900);
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|elapsed| u64::try_from(elapsed.as_millis()).ok())
+        .unwrap_or(0)
+}
+
+/// The quarantined tuples `expire_quarantine` drops, oldest first. With
+/// `Duration::ZERO` the single oldest one, refused while it is younger than
+/// [`QUARANTINE_MIN_AGE`]: the quarantine is then genuinely full.
+fn expired_quarantine(
+    quarantine: &[conntrack::RetiredTuple],
+    now: u64,
+    age: Duration,
+) -> Result<Vec<conntrack::RetiredTuple>> {
+    let millis = |duration: Duration| u64::try_from(duration.as_millis()).unwrap_or(u64::MAX);
+    let cutoff = now.saturating_sub(millis(age));
+    let mut expired: Vec<_> = quarantine
+        .iter()
+        .filter(|old| age.is_zero() || old.retired_ms <= cutoff)
+        .cloned()
+        .collect();
+    expired.sort_by_key(|old| old.retired_ms);
+    if age.is_zero() {
+        expired.truncate(1);
+        if expired
+            .first()
+            .is_some_and(|old| old.retired_ms > now.saturating_sub(millis(QUARANTINE_MIN_AGE)))
+        {
+            return Err(Error::Capacity);
+        }
+    }
+    Ok(expired)
+}
+
 fn element_key(value: &Value) -> &Value {
     value
         .get("elem")
@@ -686,4 +785,44 @@ fn timeout(deadline: &Deadline) -> Result<u64> {
         .map(|duration| duration.as_secs())
         .filter(|seconds| *seconds > 0)
         .ok_or(Error::Expired)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn retired(port: u16, retired_ms: u64) -> conntrack::RetiredTuple {
+        conntrack::RetiredTuple {
+            tuple: conntrack::Tuple {
+                source: "192.0.2.1".parse().unwrap(),
+                destination: "198.51.100.1".parse().unwrap(),
+                protocol: 17,
+                source_key: 53,
+                destination_key: port,
+            },
+            sequence: 0,
+            retired_ms,
+        }
+    }
+
+    #[test]
+    fn quarantine_history_ages_out_and_never_evicts_a_young_entry() {
+        let min = QUARANTINE_MIN_AGE.as_millis() as u64;
+        let now = 10 * min;
+        let quarantine = vec![retired(3, now - 1), retired(1, 0), retired(2, now - min)];
+        // Housekeeping keeps only what is still inside the age.
+        let aged = expired_quarantine(&quarantine, now, QUARANTINE_MIN_AGE).unwrap();
+        assert_eq!(aged, vec![retired(1, 0), retired(2, now - min)]);
+        // A full quarantine yields its single oldest entry once it aged.
+        assert_eq!(
+            expired_quarantine(&quarantine, now, Duration::ZERO).unwrap(),
+            vec![retired(1, 0)]
+        );
+        // A quarantine filled within the minimum age stays full: revocation
+        // correctness outranks a new flow.
+        assert!(matches!(
+            expired_quarantine(&[retired(4, now - 1)], now, Duration::ZERO),
+            Err(Error::Capacity)
+        ));
+    }
 }

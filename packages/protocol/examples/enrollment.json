@@ -98,6 +98,14 @@
               "bytes": "8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a"
             }
           }
+        },
+        "serverSigningKey": {
+          "keyId": "9a1b2c3d-4e5f-4a6b-8c7d-0e1f2a3b4c5d",
+          "keyGeneration": 1,
+          "publicKey": {
+            "algorithm": "ed25519",
+            "bytes": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"
+          }
         }
       }
     }
@@ -145,6 +153,14 @@
               "algorithm": "x25519",
               "bytes": "de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f"
             }
+          }
+        },
+        "serverSigningKey": {
+          "keyId": "9a1b2c3d-4e5f-4a6b-8c7d-0e1f2a3b4c5d",
+          "keyGeneration": 1,
+          "publicKey": {
+            "algorithm": "ed25519",
+            "bytes": "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c"
           }
         }
       }
@@ -202,9 +218,7 @@
         "items": [
           {
             "id": "2b3c4d5e-6f7a-4b8c-9d0e-1f2a3b4c5d6e",
-            "tags": [
-              "tag:office"
-            ],
+            "tags": ["tag:office"],
             "createdBy": "a1f0e2d3-c4b5-4a69-8b7c-6d5e4f3a2b10",
             "initialSettings": {
               "hostname": "office-gw",
@@ -250,9 +264,7 @@
   "createEnrollmentKey": {
     "request": {
       "requestId": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
-      "tags": [
-        "tag:office"
-      ],
+      "tags": ["tag:office"],
       "initialSettings": {
         "hostname": "office-gw",
         "listeners": {
@@ -271,9 +283,7 @@
       "200": {
         "key": {
           "id": "2b3c4d5e-6f7a-4b8c-9d0e-1f2a3b4c5d6e",
-          "tags": [
-            "tag:office"
-          ],
+          "tags": ["tag:office"],
           "createdBy": "a1f0e2d3-c4b5-4a69-8b7c-6d5e4f3a2b10",
           "initialSettings": {
             "hostname": "office-gw",

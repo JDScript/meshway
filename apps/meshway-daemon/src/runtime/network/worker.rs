@@ -4,7 +4,7 @@
 //! between reconfigurations. An ended lease terminates every flow, circuit
 //! and exit projection and keeps only the negative capture and DNS boundaries.
 use super::{
-    Command, ObservationPlan, Offer, Peers, Report, Request, dns::Attachment, plane::Plane,
+    Command, ObservationPlan, Offer, Report, Request, dns::Attachment, plane::Plane,
     reporting::Publisher,
 };
 use meshway_connectivity::{AdjacencyInterest, Event};
@@ -25,7 +25,7 @@ pub(super) struct Inputs {
     pub dns: Attachment,
     pub traversal: Arc<dyn meshway_connectivity::traversal::TraversalGateway>,
     pub observation_plans: watch::Receiver<Option<ObservationPlan>>,
-    pub peers: Peers,
+    pub peers: watch::Receiver<Option<meshway_control::KnownPeers>>,
     pub mtu: usize,
 }
 
@@ -127,6 +127,17 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
         let can_read = live && plane.packets.can_read(&pool);
         let has_outputs = plane.packets.has_outputs();
         let mut wake_at = live.then(|| plane.packets.wake_at()).flatten();
+        if let Some(at) = live
+            .then(|| {
+                plane
+                    .secure()
+                    .and_then(meshway_dataplane::secure::SecureNode::next_keepalive)
+            })
+            .flatten()
+        {
+            let at = tokio::time::Instant::from_std(at);
+            wake_at = Some(wake_at.map_or(at, |old| old.min(at)));
+        }
         if let Some(at) = diagnostics.wake_at() {
             wake_at = Some(wake_at.map_or(at, |old| old.min(at)));
         }
@@ -328,6 +339,9 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                     retry = Retry::default();
                 }
                 let offer = offers.borrow_and_update().clone();
+                if let Some(floor) = offer.clock_floor_ms {
+                    engine.raise_clock_floor(floor);
+                }
                 engine.components_mut().set_keys(offer.keys);
                 let rebound = engine.components_mut().set_instance(offer.instance).await;
                 let Some(netmap) = offer.netmap else {
@@ -604,7 +618,18 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             if let Some(carriers) = &carriers {
                 let _ = secure.set_carriers(carriers.clone());
             }
-            secure.set_ready_exits(peers.ready_exits());
+            // A restarted adjacent peer lost its circuits: end them here and
+            // pass a Close on to the surviving side of each relayed one.
+            if let Ok(boots) = manager.peer_boots() {
+                packets.closes(secure.set_peer_boots(boots));
+            }
+            secure.set_ready_exits(
+                peers
+                    .borrow()
+                    .as_ref()
+                    .map(|known| known.ready_exits(chrono::Utc::now()))
+                    .unwrap_or_default(),
+            );
             diagnostics.synchronize(&state.desired, instance);
             tokio::select! { biased;
                 _ = host.ended() => {},

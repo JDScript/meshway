@@ -27,6 +27,9 @@ const RENEW: Duration = Duration::from_secs(20);
 const REPORT: Duration = Duration::from_secs(20);
 const TASKS: Duration = Duration::from_secs(2);
 const RELEASE: Duration = Duration::from_secs(2);
+/// Control retry backoff cap (seconds), the same as the sync loop's: after a
+/// Server outage the Node is back within one backoff period.
+const BACKOFF_MAX: u64 = 15;
 /// A sync that has not succeeded for this long is reported as reconnecting:
 /// above one Server hold plus the request budget's margin.
 pub(super) const SYNC_STALE: Duration = Duration::from_secs(100);
@@ -131,6 +134,7 @@ fn offer(control: &Control, network: Option<&network::Handle>) {
                 instance_id: instance.instance_id,
                 generation: instance.generation,
             }),
+        clock_floor_ms: control.clock_floor_ms(),
     });
 }
 
@@ -138,8 +142,10 @@ fn offer(control: &Control, network: Option<&network::Handle>) {
 enum Ended {
     /// The operator intent changed (or shutdown).
     Changed,
-    /// A failure that only a new operator revision can retry.
-    Blocked(Problem),
+    /// A failure that only a new operator revision can retry. `withdraw`
+    /// ends the data plane too (decoded withdrawal or unknown storage);
+    /// otherwise the held netmap keeps running to its lease end.
+    Blocked { problem: Problem, withdraw: bool },
     /// The network worker stopped.
     Worker,
 }
@@ -207,7 +213,7 @@ pub(super) async fn run(
                             Some(problem),
                             delay,
                         );
-                        backoff = (backoff * 2).min(30);
+                        backoff = (backoff * 2).min(BACKOFF_MAX);
                         wait_change(&mut desired, &plan, delay).await;
                         plan = desired.borrow_and_update().clone();
                         reset = plan.retry_enrollment;
@@ -360,11 +366,13 @@ pub(super) async fn run(
             sync_status.send_modify(|status| status.running = false);
             match ended {
                 Ended::Changed => {}
-                Ended::Blocked(problem) => {
+                Ended::Blocked { problem, withdraw } => {
                     let mut driver = shared.lock().await;
-                    stop(&mut driver, false).await;
-                    if let Some(network) = &mut network {
-                        let _ = network.stop(false).await;
+                    if withdraw {
+                        stop(&mut driver, false).await;
+                        if let Some(network) = &mut network {
+                            let _ = network.stop(false).await;
+                        }
                     }
                     publish(
                         &reported,
@@ -461,8 +469,7 @@ async fn idle(
             _ = tokio::time::sleep_until(deadline) => return Wake::Due,
             work = async { match network.as_deref_mut() { Some(network) => network.work().await, None => std::future::pending().await } } => match work {
                 network::Work::Request(request) => {
-                    let mut driver = shared.lock().await;
-                    if let Err(error) = network::request(&mut driver, request).await {
+                    if let Err(error) = network::request(shared, request).await {
                         tracing::debug!(%error, "Network control intent failed");
                     }
                 }
@@ -489,7 +496,7 @@ async fn session(
     reset: &mut bool,
 ) -> Ended {
     {
-        let mut driver = shared.lock().await;
+        let driver = shared.lock().await;
         if reported.borrow().revision != plan.revision || reported.borrow().phase == Phase::Down {
             publish(
                 reported,
@@ -505,10 +512,10 @@ async fn session(
         // and its saved last known peer facts are dial addresses again.
         offer(&driver, network.as_deref());
         if let Some(network) = network.as_deref()
-            && let Some((reference, facts)) = driver.take_facts_replay()
+            && let Some(known) = driver.known_peers()
         {
             use meshway_control::PeerFactsSink as _;
-            let _ = network.peer_sink().apply(reference, facts);
+            network.peer_sink().publish(known);
         }
     }
     let mut backoff = 1u64;
@@ -580,17 +587,22 @@ async fn session(
                     Err(Some(ended)) => return ended,
                     Err(None) => {
                         let delay = Duration::from_secs(backoff);
-                        backoff = (backoff * 2).min(30);
+                        backoff = (backoff * 2).min(BACKOFF_MAX);
                         delay
                     }
                 }
             }
             Ok(Online::Awaiting { .. }) => Duration::from_secs(2),
             Ok(Online::Restart) => continue,
-            Err(error) if !error.retry => return Ended::Blocked(error.problem),
+            Err(error) if !error.retry => {
+                return Ended::Blocked {
+                    problem: error.problem,
+                    withdraw: error.withdraw,
+                };
+            }
             Err(error) => {
                 let delay = error.retry_after.unwrap_or(Duration::from_secs(backoff));
-                backoff = (backoff * 2).min(30);
+                backoff = (backoff * 2).min(BACKOFF_MAX);
                 delay
             }
         };
@@ -617,10 +629,9 @@ async fn online_session(
     let stop = CancellationToken::new();
     let (netmaps, mut netmap_rx) = watch::channel::<Option<meshway_engine::Netmap>>(None);
     netmap_rx.borrow_and_update();
-    let standalone = network::Peers::default();
     let mut sink = match network.as_deref() {
         Some(network) => network.peer_sink(),
-        None => standalone.sink(),
+        None => watch::channel(None).0,
     };
     let mut sync = {
         let shared = shared.clone();
@@ -663,7 +674,10 @@ async fn online_session(
                 let driver = shared.lock().await;
                 offer(&driver, network.as_deref());
                 if !failure.retry {
-                    break Err(Some(Ended::Blocked(failure.problem)));
+                    break Err(Some(Ended::Blocked {
+                        problem: failure.problem,
+                        withdraw: failure.withdraw,
+                    }));
                 }
                 publish(reported, plan, Some(&driver), Phase::Retrying, None, Some(failure.problem), None);
                 break Err(None);
@@ -687,8 +701,7 @@ async fn online_session(
             },
             next = async { match network.as_deref_mut() { Some(network) => network.work().await, None => std::future::pending().await } } => match next {
                 network::Work::Request(request) => {
-                    let mut driver = shared.lock().await;
-                    if let Err(error) = network::request(&mut driver, request).await {
+                    if let Err(error) = network::request(shared, request).await {
                         tracing::debug!(%error, "Network control intent failed");
                     }
                 },
@@ -759,8 +772,8 @@ async fn maintain(
             }
             Ok(())
         }
-        Err((operation, Error::StateScopeChanged)) => {
-            tracing::debug!(operation, "State scope rotated; resampling after sync");
+        Err((operation, error @ (Error::StateScopeChanged | Error::StaleReport))) => {
+            tracing::debug!(operation, %error, "State observation not current; resampling");
             work.retry_at = Some(now + Duration::from_secs(1));
             Ok(())
         }
@@ -768,7 +781,10 @@ async fn maintain(
             let failure = failure::at(operation, error, operation == "authenticate");
             offer(control, network.as_deref());
             if !failure.retry {
-                return Err(Ended::Blocked(failure.problem));
+                return Err(Ended::Blocked {
+                    problem: failure.problem,
+                    withdraw: failure.withdraw,
+                });
             }
             // A reset context (session or instance gone) is re-acquired at once.
             let delay = failure
@@ -796,44 +812,40 @@ async fn maintain_once(
     work: &mut Maintenance,
     changed: bool,
 ) -> Result<(), (&'static str, Error)> {
+    use meshway_control::shared as control;
     let now = Instant::now();
-    shared
-        .lock()
-        .await
-        .authenticate()
+    control::authenticate(shared)
         .await
         .map_err(|error| ("authenticate", error))?;
     let mut fresh = false;
     if shared.lock().await.status().instance.is_none() {
-        let mut control = shared.lock().await;
-        control
-            .acquire_instance(if network.is_some() {
+        control::acquire_instance(
+            shared,
+            if network.is_some() {
                 network::capabilities()
             } else {
                 Default::default()
-            })
-            .await
-            .map_err(|error| ("acquire_instance", error))?;
+            },
+        )
+        .await
+        .map_err(|error| ("acquire_instance", error))?;
         work.renewed = Some(now);
         work.receipted = None;
         fresh = true;
         // State/receipt binding of the new instance; nothing reinstalls.
-        offer(&control, network.as_deref());
+        offer(&*shared.lock().await, network.as_deref());
     } else if work.renewed.is_none_or(|at| now >= at + RENEW) {
-        shared
-            .lock()
-            .await
-            .renew_instance()
+        control::renew_instance(shared)
             .await
             .map_err(|error| ("renew_instance", error))?;
         work.renewed = Some(now);
     }
     if let Some(network) = network {
-        receipt(&mut *shared.lock().await, network, work).await?;
+        receipt(shared, network, work).await?;
         let routine = fresh || work.reported.is_none_or(|at| now >= at + REPORT);
         if (routine || changed)
             && network
-                .report_state(&mut *shared.lock().await, settings, routine)
+                .report_state(shared, settings, routine)
                 .await
                 .map_err(|error| ("report_runtime_state", error))?
         {
@@ -844,21 +856,21 @@ async fn maintain_once(
             && let Some(netmap) = netmap
         {
             work.tasks = Some(now);
-            let tasks = shared
-                .lock()
-                .await
-                .get_observation_tasks(netmap)
+            let tasks = control::get_observation_tasks(shared, netmap)
                 .await
                 .map_err(|error| ("get_observation_tasks", error))?;
             network.observation_tasks(netmap, tasks.items);
         }
     } else if fresh || work.reported.is_none_or(|at| now >= at + REPORT) {
-        let mut control = shared.lock().await;
-        match control.report_control_state(settings.system.clone()).await {
+        let state = shared
+            .lock()
+            .await
+            .control_state(settings.system.clone())
+            .map_err(|error| ("report_control_state", error))?;
+        match control::report_runtime_state(shared, state, chrono::Utc::now()).await {
             Ok(_) => work.reported = Some(now),
             Err(Error::Pending) => {
-                control
-                    .retry_state_report()
+                control::retry_state_report(shared)
                     .await
                     .map_err(|error| ("retry_state_report", error))?;
             }
@@ -872,11 +884,12 @@ async fn maintain_once(
 /// instance: saved, then applied or failed. A new instance receipts the same,
 /// already installed netmap again as a new attempt.
 async fn receipt(
-    control: &mut Control,
+    shared: &Shared,
     network: &mut network::Handle,
     work: &mut Maintenance,
 ) -> Result<(), (&'static str, Error)> {
     let report = network.report.borrow().clone();
+    let control = shared.lock().await;
     let (Some(netmap), Some(completion)) = (report.netmap, report.completion) else {
         return Ok(());
     };
@@ -890,12 +903,11 @@ async fn receipt(
     if work.receipted == Some(key) || control.netmap_reference() != Some(netmap) {
         return Ok(());
     }
-    let ticket = control
-        .begin_application(netmap)
+    drop(control);
+    let ticket = meshway_control::shared::begin_application(shared, netmap)
         .await
         .map_err(|error| ("begin_application", error))?;
-    control
-        .finish_application(&ticket, completion, report.observed_at)
+    meshway_control::shared::finish_application(shared, &ticket, completion, report.observed_at)
         .await
         .map_err(|error| ("finish_application", error))?;
     work.receipted = Some(key);

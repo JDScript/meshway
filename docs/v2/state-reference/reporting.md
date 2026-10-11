@@ -19,6 +19,7 @@
     "listeners": {},
     "sockets": {},
     "links": {},
+    "adjacencies": {},
     "paths": {},
     "selection": { "appliedProfile": null },
     "probes": [],

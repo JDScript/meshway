@@ -26,7 +26,7 @@
 | IPv6 | 精确长度；最多两个顺序合法、仅含 padding 的扩展头；拒绝 routing header、全部 fragment header 和 jumbogram |
 | 业务协议 | TCP、UDP、ICMP echo；检查端口、协议头及适用 checksum |
 | UDP／ICMP | 回复匹配已建立反向 tuple；echo 另绑定 identifier／sequence |
-| TCP | 三次握手、每方向 16 MiB 序号历史内的 ACK／重分段重传、前方 16 MiB 内最多 64 个已见乱序区间、FIN 与已建立 RST；支持序号回绕，状态有界。由端点 TCP 处理实际重排／SACK；不缓存包体，不支持 simultaneous-open、TFO 或握手 RST |
+| TCP | 三次握手、每方向 16 MiB 序号历史内的 ACK／重分段重传、前方 16 MiB 内最多 64 个已见乱序区间、FIN 与已建立 RST；支持序号回绕，状态有界。端点按空闲回收的 TCP tuple 记入有界续接集合（同一内容内有效，内容更换或撤空即清空）；其后源方向带 ACK、无 SYN／RST 的同 tuple 段按首包重新准入（续接：forward 从该段序号、reply 从其 ACK 起算），回包仍须确认源已发出的字节；回复方向的段不能建流。因撤销、撤回或租约到期结束的流不可续接，旧连接只能重新握手。由端点 TCP 处理实际重排／SACK；不缓存包体，不支持 simultaneous-open、TFO 或握手 RST |
 | 资源 | 默认 4,096 流、60 秒空闲；最大 65,536 流、24 小时空闲设置；实际寿命受空闲、circuit 与 Engine 撤回约束 |
 
 同一流固定原 demand ID 与完整路径；同一节点／角色范围的活 tuple 在多个 demand ID 之间也不能被另一条路径接管。`LocalFlow` 只读查询同一 FlowTable，供本机源包／原路径回复使用，不刷新流、推进协议状态或形成第二份路由表。SecureNode 中继不创建业务流，也不因此获得本机发起资格；歧义拒绝。
@@ -174,7 +174,9 @@ Manager 在提交时捕获实际 link，按冻结 ChannelScope 分组；换代�
 
 诊断使用独立的加密 challenge request／reply，同一 owner 验证原路径和请求关联；不产生业务 FlowTable 准入。实际发送／接收通道、计时、重放与取消边界见[路径诊断](/v2/node/diagnostics)。
 
-保留的 circuit 继续使用其 Noise／会话 MAC keys、nonce 与重放窗口。已建立 circuit 双向 90 秒无帧时结束；源端连续发送 30 秒未收到任何认证帧时结束，下一个包重新握手。源端下一跳暂无承载时登记 `AdjacencyInterest`，包在有界首包队列中等待承载恢复或 circuit 结束。
+保留的 circuit 继续使用其 Noise／会话 MAC keys、nonce 与重放窗口。已建立 circuit 双向 90 秒无帧时结束；源端连续发送 15 秒未收到任何认证帧时结束，下一个包重新握手。业务 circuit 的端点收到数据后 10 秒内没有发出任何帧时发送一个空 Data 帧（被动 keepalive，中继按普通 Data 转发，接收端不回应、不准入流），因此单向流的活对端总在源端的 15 秒判定内应答。
+
+每个 circuit 绑定建立时各相邻对端的 boot 标识：连接组件在邻接 transcript 中由对端签名的 nonce 前 16 字节给出该对端本次进程状态的标识（同一 Manager 内部重启保持不变）。相邻对端的当前 channel 换成另一个 boot（对端重启）时，SecureNode 结束绑定在它上的 circuit；中继同时向另一侧相邻节点发出 `Close`（kind 8，空负载、sequence 0、相邻 MAC 鉴别，MAC 输入另含 `meshway/circuit/close/v6` 域标签），逐跳传到源端，源端下一个包立即重新握手。同一 boot 的承载更换（例如 UDP 失效改用 TCP 退路）和 channel 暂时缺失都保留 circuit。`Close` 一次性：收到后 CID 进入 dead 记录，不占用数据重放窗口；Data 帧格式和 86 B 开销不变。源端下一跳暂无承载时登记 `AdjacencyInterest`，包在有界首包队列中等待承载恢复或 circuit 结束。
 
 诊断中继的 request correlation 属于已提交会话状态：保留的 circuit 保留 measurement、完成标记和原截止，不延长探测窗口。新收到的 reply 仍须通过当前完整准入、相邻认证、重放与关联检查。
 

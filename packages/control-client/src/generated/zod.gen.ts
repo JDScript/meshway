@@ -336,6 +336,8 @@ export const zAddressPoolsInput = z.strictObject({
   ["ipv6"]: z.array(z.string()).exactOptional()
 });
 
+export const zAdjacencyStatus = z.enum(["idle","unreachable"]);
+
 export const zLinkEvidence = z.enum(["oneSided","matched","conflicting","expired"]);
 
 export const zLinkPhase = z.enum(["preparing","authenticated","closed","failed"]);
@@ -1168,7 +1170,7 @@ export const zConfigurationComparison = z.strictObject({
   ["toRevision"]: zRevision
 });
 
-export const zIssueCode = z.enum(["invalid_jsonc","invalid_shape","incomplete_version","unknown_user","invalid_group_name","invalid_tag_name","unknown_group","unknown_tag","duplicate_tag","identity_membership_missing","empty_tag_identity","unknown_node","unknown_node_selector","retained_membership_inactive","empty_selector_set","bidirectional_requires_mesh","invalid_port_set","invalid_domain_suffix","invalid_domain","noncanonical_cidr","invalid_dns_domain","invalid_node_dns_name","dns_override_requires_default","unknown_resolver","invalid_resolver","empty_resolver_set","duplicate_dns_suffix","invalid_dns_suffix","invalid_hostname","duplicate_hostname","empty_listener_key","invalid_transport","invalid_listener_materials","overlapping_pools","invalid_pool","address_outside_pool","duplicate_address","unknown_reassignment_target","no_address_available","repeated_required_node","empty_exit_set","repeated_exit","exit_not_enabled","invalid_destination_cidr","empty_route_match","unknown_rule_set","invalid_rule_source","empty_rule_set_key","empty_inline_rule_set","rule_set_budget","rule_set_unavailable","rule_set_timeout","reserved_profile_name","unknown_profile","default_not_allowed","auto_target_not_allowed","auto_target_unknown","conflicting_assignments","invalid_country_code","exit_outside_access","global_exit_requires_internet","exit_fallback_requires_internet","netmap_limit","shadowed_rule"]);
+export const zIssueCode = z.enum(["invalid_jsonc","invalid_shape","incomplete_version","unknown_user","invalid_group_name","invalid_tag_name","unknown_group","unknown_tag","duplicate_tag","identity_membership_missing","empty_tag_identity","unknown_node","unknown_node_selector","retained_membership_inactive","empty_selector_set","bidirectional_requires_mesh","invalid_port_set","invalid_domain_suffix","invalid_domain","noncanonical_cidr","invalid_dns_domain","invalid_node_dns_name","dns_override_requires_default","unknown_resolver","invalid_resolver","empty_resolver_set","duplicate_dns_suffix","invalid_dns_suffix","invalid_hostname","duplicate_hostname","empty_listener_key","invalid_transport","invalid_listener_materials","overlapping_pools","invalid_pool","address_outside_pool","duplicate_address","unknown_reassignment_target","no_address_available","repeated_required_node","empty_exit_set","repeated_exit","exit_not_enabled","invalid_destination_cidr","empty_route_match","unknown_rule_set","invalid_rule_source","empty_rule_set_key","empty_inline_rule_set","rule_set_budget","rule_set_unavailable","rule_set_timeout","reserved_profile_name","unknown_profile","default_not_allowed","auto_target_not_allowed","auto_target_unknown","conflicting_assignments","invalid_country_code","exit_outside_access","global_exit_requires_internet","exit_fallback_requires_internet","netmap_limit","netmap_budget","shadowed_rule"]);
 
 export const zConfigurationIssue = z.strictObject({
   ["code"]: zIssueCode,
@@ -1897,7 +1899,7 @@ export const zEnrollmentResponse = z.strictObject({
   ["keys"]: zNodeKeyMetadata,
   ["networkId"]: zNetworkId,
   ["nodeId"]: zNodeId,
-  ["serverSigningKey"]: zServerSigningKey.nullable().exactOptional()
+  ["serverSigningKey"]: zServerSigningKey
 });
 
 export const zEntityRemovals = z.strictObject({
@@ -1911,6 +1913,10 @@ export const zProblem = z.union([z.strictObject({
   ["params"]: zEmptyParams
 }), z.strictObject({
   ["code"]: z.enum(["node_identity_rejected"]),
+  ["message"]: z.string(),
+  ["params"]: zEmptyParams
+}), z.strictObject({
+  ["code"]: z.enum(["netmap_withdrawn"]),
   ["message"]: z.string(),
   ["params"]: zEmptyParams
 }), z.strictObject({
@@ -2803,6 +2809,16 @@ export const zNetmapSignature = z.strictObject({
   ["signature"]: z.string()
 });
 
+export const zNetmapUnavailable = z.union([z.strictObject({
+  ["reason"]: z.enum(["notIssued"])
+}), z.strictObject({
+  ["reason"]: z.enum(["withdrawn"])
+}), z.strictObject({
+  ["bytes"]: z.int().gte(0).lte(2147483647).nullable(),
+  ["maxBytes"]: z.int().gte(0).lte(2147483647),
+  ["reason"]: z.enum(["limit"])
+})]);
+
 export const zNetworkActions = z.strictObject({
   ["editConfiguration"]: z.boolean(),
   ["joinLinkRoles"]: z.array(zMembershipRole),
@@ -2886,7 +2902,10 @@ export const zNodeInventoryView = z.strictObject({
   ["id"]: zNodeId,
   ["identity"]: zNodeIdentity,
   ["keys"]: zNodeKeyMetadata,
+  ["lastSyncAt"]: zTimestamp.nullable(),
+  ["lease"]: zNetmapLease.nullable(),
   ["netmap"]: zNetmapRef.nullable(),
+  ["netmapUnavailable"]: zNetmapUnavailable.nullable(),
   ["networkId"]: zNetworkId,
   ["registeredAt"]: zTimestamp
 });
@@ -3028,6 +3047,7 @@ export const zSystemState = z.strictObject({
 });
 
 export const zNodeState = z.strictObject({
+  ["adjacencies"]: typedMap(z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u")), zAdjacencyStatus, {}),
   ["capabilities"]: typedMap(z.string(), zCapability, {}),
   ["configuration"]: zConfigurationState,
   ["exitCapability"]: zExitCapability.nullable().exactOptional(),
@@ -3152,6 +3172,7 @@ export const zPeerFactsDelta = z.strictObject({
   ["base"]: zStateCursor.nullable(),
   ["cursor"]: zStateCursor,
   ["netmapSerial"]: zVersion,
+  ["refreshed"]: typedMap(z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u")), z.string().refine(rfc3339, "Expected RFC 3339 date-time"), {}),
   ["removed"]: z.array(zNodeId),
   ["updated"]: typedMap(z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u")), zPeerFacts, {})
 });

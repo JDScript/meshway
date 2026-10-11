@@ -20,6 +20,7 @@ fn frame(capacity: usize) -> Event {
             local: "127.0.0.1:1".parse().unwrap(),
             remote: "127.0.0.1:2".parse().unwrap(),
             acquisition: LinkAcquisition::PublishedEndpoint,
+            peer_boot: [3; 16],
         }),
         frame: meshway_transport::Frame::new(bytes, None),
         received_at: std::time::Instant::now(),

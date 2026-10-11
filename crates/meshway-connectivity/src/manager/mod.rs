@@ -33,7 +33,6 @@ mod resources;
 mod tests;
 mod traversal;
 mod workers;
-pub use facts::FactsSink;
 pub use interest::{AdjacencyInterest, Interest};
 
 // Diagnostics only: at most 64 events/second and 32768/process; contention drops
@@ -128,6 +127,10 @@ pub struct LinkFact {
     /// Acquisition of this authenticated channel, kept across compatible
     /// content changes and independent of subsequent candidate expiry.
     pub acquisition: LinkAcquisition,
+    /// The peer's signed boot identity in this channel's transcript. A new
+    /// channel with the same boot is a carrier change of the same peer state;
+    /// a different boot means the peer restarted and lost its circuits.
+    pub peer_boot: crate::Boot,
 }
 
 /// The actual selected channel and transport admission boundary of a locally
@@ -143,6 +146,8 @@ pub struct Snapshot {
     pub listeners: Vec<ListenerFact>,
     pub links: Vec<LinkFact>,
     pub sockets: Vec<SocketFact>,
+    /// Admitted peers without a current channel: idle, or wanted but unreached.
+    pub adjacencies: BTreeMap<NodeId, meshway_model::state::AdjacencyStatus>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -242,6 +247,8 @@ struct Shared {
     facts: Arc<facts::Store>,
     /// Instance qualifying State socket references.
     instance: Arc<Mutex<Option<meshway_protocol::InstanceRequest>>>,
+    /// This owner's boot identity, signed into every adjacency nonce.
+    boot: crate::Boot,
 }
 
 impl Shared {
@@ -269,6 +276,7 @@ impl Shared {
             interests: self.interests.clone(),
             facts: self.facts.clone(),
             instance: self.instance.clone(),
+            boot: self.boot,
         })
     }
 
@@ -405,7 +413,12 @@ impl Manager {
             interests,
             facts,
             instance,
+            boot,
         } = carried.unwrap_or_default();
+        let boot = match boot {
+            Some(boot) => boot,
+            None => crate::adjacency::boot()?,
+        };
         interests.allow(&plan);
         let shared = Arc::new(Shared {
             keys,
@@ -424,6 +437,7 @@ impl Manager {
             interests,
             facts,
             instance: Arc::new(Mutex::new(instance)),
+            boot,
         });
         let mut manager = Self {
             factory,
@@ -450,11 +464,6 @@ impl Manager {
     /// Handle for the packet owner to request on-demand adjacencies.
     pub fn interest(&self) -> Interest {
         Interest(self.shared.interests.clone())
-    }
-
-    /// Bounded sink for Control's peer facts; it survives Manager replacement.
-    pub fn facts_sink(&self) -> FactsSink {
-        FactsSink(self.shared.facts.clone())
     }
 
     async fn install_resources(&mut self) -> Result<(), Error> {
@@ -754,7 +763,28 @@ impl Manager {
         let _profile = PROFILE.enter();
         self.check_view()?;
         let links = self.shared.links.lock().map_err(|_| Error::Worker)?;
+        let linked: std::collections::BTreeSet<NodeId> = links
+            .values()
+            .filter(|link| link.scope.check().is_ok())
+            .map(|link| link.fact.peer)
+            .collect();
+        let plan = self.shared.plan();
+        let adjacencies = plan
+            .peers()
+            .filter(|peer| plan.adjacent(*peer) && !linked.contains(peer))
+            .map(|peer| {
+                (
+                    peer,
+                    if self.shared.wanted(peer) {
+                        meshway_model::state::AdjacencyStatus::Unreachable
+                    } else {
+                        meshway_model::state::AdjacencyStatus::Idle
+                    },
+                )
+            })
+            .collect();
         Ok(Snapshot {
+            adjacencies,
             listeners: self.listeners.clone(),
             sockets: self
                 .shared
@@ -803,6 +833,18 @@ impl Manager {
                 },
             );
         Ok(())
+    }
+
+    /// The signed boot identity of each selected peer channel; the packet
+    /// owner retires circuits whose adjacent peer's boot changed.
+    pub fn peer_boots(&self) -> Result<BTreeMap<NodeId, crate::Boot>, Error> {
+        self.check_view()?;
+        let links = self.shared.links.lock().map_err(|_| Error::Worker)?;
+        Ok(links
+            .values()
+            .filter(|link| link.scope.check().is_ok())
+            .map(|link| (link.fact.peer, link.fact.peer_boot))
+            .collect())
     }
 
     pub fn carriers(&self) -> Result<BTreeMap<NodeId, Carrier>, Error> {
@@ -1415,4 +1457,6 @@ struct Carried {
     interests: Arc<interest::Interests>,
     facts: Arc<facts::Store>,
     instance: Option<meshway_protocol::InstanceRequest>,
+    /// Circuits outlive an internal restart; peers must not see a new boot.
+    boot: Option<crate::Boot>,
 }

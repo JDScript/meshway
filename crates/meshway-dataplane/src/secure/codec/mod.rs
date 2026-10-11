@@ -25,6 +25,12 @@ pub fn is_control_frame(bytes: &[u8]) -> bool {
     bytes.get(..8) == Some(MAGIC) && bytes.get(8).is_some_and(|kind| *kind != 3)
 }
 
+/// Scheduling hint: a candidate Data frame (the pipelined receive path).
+/// Never an authentication or admission decision.
+pub fn is_data_frame(bytes: &[u8]) -> bool {
+    bytes.get(..8) == Some(MAGIC) && bytes.get(8) == Some(&3)
+}
+
 /// Fixed session routing prefix only; never an authentication decision.
 pub(super) fn session_id(bytes: &[u8]) -> Result<Option<[u8; 32]>, Error> {
     if bytes.len() > MAX_FRAME || bytes.get(..8) != Some(MAGIC) {
@@ -32,7 +38,7 @@ pub(super) fn session_id(bytes: &[u8]) -> Result<Option<[u8; 32]>, Error> {
     }
     match bytes.get(8) {
         Some(1 | 2) => Ok(None),
-        Some(3..=7) => Ok(Some(
+        Some(3..=8) => Ok(Some(
             bytes
                 .get(if bytes[8] == 3 { 10..42 } else { 9..41 })
                 .ok_or(Error::Wire)?
@@ -52,6 +58,9 @@ pub(super) enum Kind {
     ProbeReply,
     DnsRequest,
     DnsReply,
+    /// Hop-authenticated end of a circuit: an adjacent peer of the sender lost
+    /// its state. Empty body, sequence 0; one per circuit, then a dead CID.
+    Close,
 }
 
 impl Kind {
@@ -301,6 +310,7 @@ impl Frame {
             (Kind::DnsRequest, false) | (Kind::DnsReply, true)
                 if self.sequence != u64::MAX
                     && (29..=super::MAX_DNS_BYTES + 17).contains(&self.body.len()) => {}
+            (Kind::Close, _) if self.sequence == 0 && self.body.is_empty() => {}
             _ => return Err(Error::Wire),
         }
         if self.proofs.len() >= self.context.path.len() {
@@ -324,6 +334,7 @@ impl Frame {
             Kind::ProbeReply => 5,
             Kind::DnsRequest => 6,
             Kind::DnsReply => 7,
+            Kind::Close => 8,
         });
         if self.kind == Kind::Data {
             out.push(u8::from(self.reply));
@@ -392,6 +403,7 @@ impl Frame {
             5 => Kind::ProbeReply,
             6 => Kind::DnsRequest,
             7 => Kind::DnsReply,
+            8 => Kind::Close,
             _ => return Err(Error::Wire),
         };
         let flags = if kind == Kind::Data {

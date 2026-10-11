@@ -86,7 +86,9 @@ pub(super) fn read(
         return Err(if store::unavailable(tx, network, node)? {
             Error::Unavailable(crate::error::Unavailability::Netmap)
         } else {
-            Error::BindingConflict
+            // Authenticated, but its netmap was withdrawn (for example its
+            // data-plane key was revoked): a decoded end of the held lease.
+            Error::NetmapWithdrawn
         });
     };
     let netmap = if request.netmap == Some(current.current) {

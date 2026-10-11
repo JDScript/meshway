@@ -630,6 +630,7 @@
   "configuration_issue_exit_fallback_requires_internet": "{node} has no access to the internet, so profile {profile} cannot fall back to an exit",
   "configuration_issue_netmap_limit": "The configuration sent to {node} would be {size}, over the {max} limit",
   "configuration_bytes": "{count} bytes",
+  "configuration_issue_netmap_budget": "The network is larger than the configuration compiler can handle at once",
   "configuration_issue_shadowed_rule": "Earlier rules (through rule {index}) already match every destination of this rule, so it never applies",
   "configuration_transport_invalid_host": "the host is not valid",
   "configuration_transport_keep_alive_count": "the keep-alive count must be above 0",

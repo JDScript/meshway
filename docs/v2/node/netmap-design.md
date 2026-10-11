@@ -79,9 +79,12 @@ Node 侧消费按需编译的入口：`apps/meshway-daemon/src/runtime/network/p
 | `nodes` | V 中节点的 `NodeSettingsView`（listener 私钥、凭据与敏感头值均已脱敏） |
 | `access` | src 命中 V 且（dst 命中 V 或 dst 含外部选择器）的规则，原顺序 |
 | `topology` | a、b 两端都命中 V 的规则，原顺序 |
-| `routing.mesh` | src、dst 都命中 V 的规则，原顺序；`routing.egress` 全量（O(规则)） |
+| `routing.mesh` | src、dst 都命中 V 的规则，原顺序 |
+| `routing.egress` | 公共 `rules` 与 `auto` 全量；`assignments` 只保留 target 命中 V 中某节点的（原顺序）；`profiles` 只保留被保留 assignment（allowed／default）、V 中节点的 `selectedProfiles` 或 `auto` 引用的 |
+| `groups`、`tagsOwners` | 名称：被保留规则（access／topology／mesh／assignment）以 `group:`／`tag:` 引用的，或含 V 中 User 节点的用户（组）／V 中节点携带的（tag）；成员与 owner 只保留 V 中 User 节点的用户邮箱 |
+| `ruleSets` 及内容 | 只保留公共 egress 规则或被保留 profile 的规则在 `match.ruleSets` 引用的 |
 | `inventory`、`subjects`、`selectedProfiles`、`selectionVersions` | 限于 V；`users`／`members` 只保留 V 中 User 节点的绑定 |
-| 其余（defaults、groups、tagsOwners、addressPools、dns、ruleSets 及内容） | 全量 |
+| 其余（defaults、addressPools、dns） | 全量 |
 
 正确性依据：节点作为端点或中继参与的每条路径都在它的连通分量里；路径搜索只为 topology 允许的边计预算，routing 每段只以段端点 first-match，被删的规则不可能匹配分量内的段、边或流，因此投影上的结果与全量配置逐项相同（[差分验证](#规模与预算)）。
 
@@ -410,7 +413,7 @@ S 类简化不在本表；N1 使 S1–S6（Server）、S1–S5（Node）、S1–
 
 | 行 | 拓扑与步骤 | 通过条件 |
 | --- | --- | --- |
-| `netmap/offline` | Controller＋A／R／B（Native TCP 与 Native UDP 静态端点各一轮）；建流后停止 Controller 10 分钟 | 已有 TCP／UDP 持续；新 5-tuple 业务流、`meshway ping`、新静态邻接（预先未连接的 A–R 承载）全部成功；零 HTTP 成功请求；恢复后无第二次 up、无重装 |
+| `netmap/offline` | Controller＋A／R／B（Native TCP 与 Native UDP 静态端点各一轮）；建流后停止 Controller 3 分钟（常驻 lab 另做 10 分钟） | 已有 TCP／UDP 持续；新 5-tuple 业务流、`meshway ping`、新静态邻接（预先未连接的 A–R 承载）全部成功；零 HTTP 成功请求；恢复后无第二次 up、无重装 |
 | `netmap/revoke` | Controller 在线；撤销 A→B 端口、撤销成员、轮换 B 密钥、方案切换 | 新 serial 送达 ≤ 5 s；受影响流停止、未受影响流 cipher 不变；旧输出不复活 |
 | `netmap/expiry` | 停止 Controller 越过租约（需短租约，见未决问题） | 到期时全部 circuit 终止、capture 保持负向、DNS SERVFAIL；恢复后自动重建 |
 | 既有十一行 | 原场景 | 另断言 demand／publication 相关路由不存在、首包无控制面请求 |

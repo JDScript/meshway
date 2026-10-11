@@ -57,7 +57,7 @@ async fn every_sync_answer_carries_the_enrolled_servers_signature() {
         [19; 32],
     )
     .await;
-    let key = c.server_signing_key.clone().unwrap();
+    let key = c.server_signing_key.clone();
     assert_eq!(key, stored_key(&app).await);
     assert_eq!(key.public_key.algorithm, KeyAlgorithm::Ed25519);
     let token = session(&app.execution(), network, a, &ak, &signer_a).await;

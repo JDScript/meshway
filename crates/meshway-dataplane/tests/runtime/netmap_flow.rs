@@ -11,19 +11,19 @@ use meshway_dataplane::{
 };
 use std::{collections::BTreeMap, time::Duration};
 
-fn wire(frame: PendingFrame) -> Vec<u8> {
+pub(super) fn wire(frame: PendingFrame) -> Vec<u8> {
     frame.release(|bytes| bytes.into_vec()).unwrap()
 }
 
 /// A's output through R to B; returns B's receive result.
-fn deliver(f: &mut NetmapMesh, frame: PendingFrame) -> Result<Received, Error> {
+pub(super) fn deliver(f: &mut NetmapMesh, frame: PendingFrame) -> Result<Received, Error> {
     let Received::Forward(next) = f.r.receive(&f.ar.carrier, wire(frame)).unwrap() else {
         panic!("relay stays opaque")
     };
     f.b.receive(&f.rb.carrier, wire(next))
 }
 
-fn delivered(f: &mut NetmapMesh, frame: PendingFrame) {
+pub(super) fn delivered(f: &mut NetmapMesh, frame: PendingFrame) {
     let Received::Packet(packet) = deliver(f, frame).unwrap() else {
         panic!("terminal delivery")
     };
@@ -31,7 +31,7 @@ fn delivered(f: &mut NetmapMesh, frame: PendingFrame) {
 }
 
 /// B's reply through R to A.
-fn reply(f: &mut NetmapMesh, id: [u8; 32], packet: Packet) -> Result<Received, Error> {
+pub(super) fn reply(f: &mut NetmapMesh, id: [u8; 32], packet: Packet) -> Result<Received, Error> {
     let frame = f.b.send(id, packet)?;
     let Received::Forward(next) = f.r.receive(&f.rb.carrier, wire(frame)).unwrap() else {
         panic!("relay stays opaque")
@@ -39,12 +39,12 @@ fn reply(f: &mut NetmapMesh, id: [u8; 32], packet: Packet) -> Result<Received, E
     f.a.receive(&f.ar.carrier, wire(next))
 }
 
-fn sealed(job: pipeline::SendJob) -> PendingFrame {
+pub(super) fn sealed(job: pipeline::SendJob) -> PendingFrame {
     pipeline::seal(job).unwrap()
 }
 
 /// Send one packet of an existing flow or established circuit.
-fn send(f: &mut NetmapMesh, packet: Packet) -> PendingFrame {
+pub(super) fn send(f: &mut NetmapMesh, packet: Packet) -> PendingFrame {
     let Outbound::Send(job) = f.a.outbound(packet).unwrap() else {
         panic!("established output")
     };
@@ -52,7 +52,7 @@ fn send(f: &mut NetmapMesh, packet: Packet) -> PendingFrame {
 }
 
 /// First packet: local decision, handshake, then the queued packet.
-async fn first(f: &mut NetmapMesh, packet: Packet) -> [u8; 32] {
+pub(super) async fn first(f: &mut NetmapMesh, packet: Packet) -> [u8; 32] {
     let Outbound::Queued { init: Some(init) } = f.a.outbound(packet).unwrap() else {
         panic!("a new flow starts its circuit")
     };
@@ -71,7 +71,7 @@ async fn first(f: &mut NetmapMesh, packet: Packet) -> [u8; 32] {
     id
 }
 
-fn icmp(f: &NetmapMesh, reply: bool, sequence: u16) -> Packet {
+pub(super) fn icmp(f: &NetmapMesh, reply: bool, sequence: u16) -> Packet {
     let (a, b) = (f.address(0), f.address(2));
     if reply {
         super::packet::echo(b, a, true, 7, sequence, b"ping")

@@ -200,7 +200,7 @@ def main():
     parser.add_argument("--traversal", choices=("off", "nat", "exit"), default="off",
                         help="real two-router IPv4 NAT acquisition with empty UDP endpoints")
     parser.add_argument("--traversal-fallback", action="store_true",
-                         help="preauthorize TCP on R, then block only A-R UDP during the same 125-second flows")
+                         help="preauthorize TCP on R, then block only A-R UDP during the same 70-second flows")
     parser.add_argument("--reported-endpoints", action="store_true",
                         help="UDP/off without configured endpoints or STUN; use actual Node interface reports")
     parser.add_argument("--traversal-image-manifest", type=Path,
@@ -320,7 +320,7 @@ def main():
                    "traversalScope": "outer IPv4, two port-preserving Linux SNATs; optional same-edge TCP fallback; no mapping-rotation claim" if args.traversal == "nat" else None,
                    "traversalFallback": {"status": "notRun"} if args.traversal_fallback else None,
                   "scope": "main-only" if args.only else "diagnostic-short" if args.short else "acceptance",
-                  "trafficSeconds": 30 if args.short else 125,
+                  "trafficSeconds": 30 if args.short else 70,
                 "tests": {name: {"status": "notRun", "test": test} for name, test in KERNEL_TESTS.items()},
                   "bootstrapHttpsTest": {"status": "notRun"},
                    "platformTests": {},

@@ -4,6 +4,7 @@
 use super::*;
 
 mod commit;
+mod connectivity;
 mod lifecycle;
 mod netmap;
 mod node;

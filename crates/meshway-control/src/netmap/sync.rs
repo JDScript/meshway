@@ -5,15 +5,17 @@
 //! ([`Control::finish_sync`]). The netmap part is checked against the request,
 //! verified (full), reconstructed and digest-checked (delta) or matched to the
 //! held content (unchanged), bound to this identity, saved and published to
-//! Engine. Peer facts are passed through to a [`PeerFactsSink`] afterwards;
-//! they never become netmap content.
+//! Engine. Peer facts fold into Control's last known facts, which it
+//! publishes to a [`PeerFactsSink`]; they never become netmap content.
 use super::NetmapChange as Change;
 use crate::{Control, Error};
 use meshway_configuration::netmap::{CompiledNetmap, apply_netmap_delta};
 use meshway_control_client::ClientError;
 use meshway_model::NetmapRef;
-use meshway_protocol::{ErrorResponse, PeerFactsDelta, SyncNetmap, SyncRequest, SyncResponse};
+use meshway_model::NodeId;
+use meshway_protocol::{ErrorResponse, PeerFacts, SyncNetmap, SyncRequest, SyncResponse};
 use std::{
+    collections::{BTreeMap, BTreeSet},
     future::Future,
     pin::Pin,
     sync::{Arc, Weak},
@@ -25,7 +27,7 @@ use zeroize::Zeroizing;
 /// Total budget of one sync request; above the Server's 60 s hold.
 pub const SYNC_TIMEOUT: Duration = Duration::from_secs(90);
 const BACKOFF_MIN: Duration = Duration::from_secs(1);
-const BACKOFF_MAX: Duration = Duration::from_secs(30);
+const BACKOFF_MAX: Duration = Duration::from_secs(15);
 /// Spacing after an immediate answer that changed nothing, so a Server that
 /// does not hold cannot drive a tight loop.
 const IDLE_SPACING: Duration = Duration::from_secs(1);
@@ -51,13 +53,43 @@ impl SyncTransport for ClientTransport {
 
 /// The facts consumer refused this delta (e.g. its bounded queue is full).
 /// Control then requests complete facts on the next sync.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct FactsRejected;
+/// Control's last known peer facts of the held netmap: one owner (Control)
+/// publishes it; consumers read the latest value and keep no copy of their
+/// own. Selection input only, never authority.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KnownPeers {
+    pub netmap: NetmapRef,
+    pub peers: Arc<BTreeMap<NodeId, PeerFacts>>,
+}
 
-/// Consumer of peer facts (the connectivity Manager in the daemon). Facts are
-/// selection input only; the netmap named here is already installed.
+impl KnownPeers {
+    /// Exits whose readiness fact is current, ready and has IPv4 installed.
+    pub fn ready_exits(&self, now: chrono::DateTime<chrono::Utc>) -> BTreeSet<NodeId> {
+        self.peers
+            .iter()
+            .filter(|(_, facts)| facts.expires_at > now)
+            .filter(|(_, facts)| {
+                facts.exit.as_ref().is_some_and(|exit| {
+                    exit.status == meshway_model::exit::ExitStatus::Ready
+                        && exit
+                            .installed_families
+                            .contains(&meshway_model::exit::ExitFamily::Ipv4)
+                })
+            })
+            .map(|(peer, _)| *peer)
+            .collect()
+    }
+}
+
+/// Where Control publishes [`KnownPeers`] after they change.
 pub trait PeerFactsSink {
-    fn apply(&mut self, netmap: NetmapRef, facts: PeerFactsDelta) -> Result<(), FactsRejected>;
+    fn publish(&mut self, facts: KnownPeers);
+}
+
+impl PeerFactsSink for tokio::sync::watch::Sender<Option<KnownPeers>> {
+    fn publish(&mut self, facts: KnownPeers) {
+        self.send_replace(Some(facts));
+    }
 }
 
 /// What a successful sync did to the held netmap.
@@ -153,7 +185,8 @@ impl Control {
     /// Apply one reply. A reply prepared before any later installation, stop
     /// or revocation is superseded (`Error::Pending`) and changes nothing.
     /// Transport failures, timeouts, 5xx, 401 (session) and 409 keep the
-    /// published lease; only a typed identity rejection withdraws it. A
+    /// published lease; only a typed identity rejection or netmap
+    /// withdrawal ends it. A
     /// response not signed by the pinned Server key is rejected
     /// (`SignatureInvalid`, `ServerKeyMismatch`) without changing state or
     /// withdrawing the current, itself verified, lease.
@@ -194,22 +227,17 @@ impl Control {
         if !super::store::bound(&netmap, &response.lease, binding) {
             return Err(Error::Contract);
         }
-        let reference = netmap.reference();
         let change = self
             .install_netmap(netmap, response.lease, &response.signature)
             .await?;
-        let mut facts = false;
+        let facts = response.peer_facts.is_some();
         if let Some(delta) = response.peer_facts {
-            let cursor = delta.cursor;
+            self.netmap.facts = Some(delta.cursor);
             self.record_facts(&delta);
-            if sink.apply(reference, delta).is_ok() {
-                self.netmap.facts = Some(cursor);
-                facts = true;
-            } else {
-                self.netmap.facts = None;
-            }
         }
+        self.publish_facts(sink);
         self.persist_facts().await;
+        self.persist_floor().await;
         self.netmap.exchange = Arc::new(());
         Ok(SyncOutcome {
             netmap: self.netmap().ok_or(Error::Lifecycle)?,
@@ -229,17 +257,22 @@ impl Control {
     }
 }
 
+/// The loop ends where control itself must stop; a withdrawn netmap and
+/// every retryable failure keep polling. A response that fails verification
+/// is retried too: it never replaced the held, itself verified lease.
 fn terminal(error: &Error) -> bool {
-    matches!(
-        error,
-        Error::ReloadRequired | Error::Record | Error::Endpoint | Error::MembershipRevoked
-    ) || matches!(error, Error::Server(error) if crate::identity_rejected(error))
+    match error.recovery() {
+        crate::Recovery::Withdrawn { identity } => identity,
+        crate::Recovery::Storage => true,
+        crate::Recovery::Halt => matches!(error, Error::Endpoint),
+        crate::Recovery::Retry { .. } => false,
+    }
 }
 
 /// Drive the long poll until `stop`. The driver lock is held only to prepare
 /// and apply, never during the hold. Each successful sync publishes its
 /// verified netmap; a withdrawal publishes `None`. Session loss re-authenticates;
-/// transport failures back off from 1 s doubling to 30 s. Identity rejection,
+/// transport failures back off from 1 s doubling to 15 s. Identity rejection,
 /// storage that needs reopening and invalid configuration end the loop.
 pub async fn sync_loop(
     control: &tokio::sync::Mutex<Control>,
@@ -259,7 +292,17 @@ pub async fn sync_loop(
             match driver.begin_sync() {
                 Ok(call) => Some(call),
                 Err(Error::Lifecycle | Error::Expired) => {
-                    if let Err(error) = driver.authenticate().await {
+                    // Authenticate without holding the lock across its requests.
+                    drop(driver);
+                    let authenticated = tokio::select! { biased;
+                        _ = stop.cancelled() => return Ok(()),
+                        result = crate::shared::authenticate(control) => result,
+                    };
+                    if let Err(error) = authenticated {
+                        let driver = control.lock().await;
+                        if driver.netmap().is_none() {
+                            netmaps.send_if_modified(|current| current.take().is_some());
+                        }
                         if terminal(&error) {
                             return Err(error);
                         }
@@ -267,7 +310,12 @@ pub async fn sync_loop(
                     }
                     None
                 }
-                Err(error) if terminal(&error) => return Err(error),
+                Err(error) if terminal(&error) => {
+                    if driver.netmap().is_none() {
+                        netmaps.send_if_modified(|current| current.take().is_some());
+                    }
+                    return Err(error);
+                }
                 Err(_) => {
                     wait = Some(backoff);
                     None

@@ -149,3 +149,48 @@ async fn idle_netmap_outlives_the_http_session_without_polling_control() {
     proxy.close().await;
     server.close().await;
 }
+
+#[tokio::test]
+async fn a_shared_control_is_not_locked_while_its_request_is_in_flight() {
+    let server = Server::start().await;
+    let owner = server.owner().await;
+    let proxy = Proxy::start(&server.origin).await;
+    let mut control = Control::open(
+        &server.path("unlocked"),
+        &proxy.origin,
+        meshway_test_server::client::http_client_builder()
+            .unwrap()
+            .no_proxy(),
+    )
+    .unwrap();
+    server.enroll(&owner, &mut control, "unlocked").await;
+    control.authenticate().await.unwrap();
+    control.acquire_instance(Default::default()).await.unwrap();
+    crate::support::sync(&mut control).await.unwrap();
+    let before = control.status().instance.unwrap();
+    let shared = std::sync::Arc::new(tokio::sync::Mutex::new(control));
+    proxy.fault("/instances/renew", Fault::Hold);
+    let renew = {
+        let shared = shared.clone();
+        tokio::spawn(async move { meshway_control::shared::renew_instance(&shared).await })
+    };
+    tokio::time::timeout(Duration::from_secs(2), proxy.committed())
+        .await
+        .unwrap();
+    // The renewal is held at the Server boundary: a sync answer (or any other
+    // operation) still takes the lock at once.
+    {
+        let control = shared.try_lock().expect("lock is free during the request");
+        assert!(control.netmap().is_some());
+    }
+    proxy.release();
+    let renewed = renew.await.unwrap().unwrap();
+    assert_eq!(renewed.instance_id, before.instance_id);
+    let control = std::sync::Arc::try_unwrap(shared)
+        .ok()
+        .unwrap()
+        .into_inner();
+    control.shutdown().await.unwrap();
+    proxy.close().await;
+    server.close().await;
+}

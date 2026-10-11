@@ -1,87 +1,84 @@
-//! Peer facts from the sync long poll: selection input only. Applying them
-//! never reconfigures content, scopes or other peers; a changed peer's
-//! worker only re-reads its dial candidates.
+//! Peer facts: selection input only. Control owns the last known facts of
+//! the held netmap and publishes them ([`KnownPeers`]); the Manager reads
+//! that published value and keeps no ledger of its own. A changed peer's
+//! worker only re-reads its dial candidates; nothing is reconfigured.
 use super::*;
-use meshway_control::{FactsRejected, PeerFactsSink};
-use meshway_model::NetmapRef;
-use meshway_protocol::{PeerFacts, PeerFactsDelta};
-use std::collections::VecDeque;
+use meshway_control::KnownPeers;
+use meshway_protocol::PeerFacts;
+use tokio::sync::watch;
 
-/// Deltas waiting for the Manager's facts owner. Full means rejection; Control
-/// then asks for complete facts on its next sync.
-const QUEUE: usize = 8;
-
+/// The published facts the Manager reads; survives Manager replacement.
 #[derive(Default)]
 pub(super) struct Store {
-    queue: Mutex<VecDeque<PeerFactsDelta>>,
-    ready: tokio::sync::Notify,
-    peers: Mutex<BTreeMap<NodeId, PeerFacts>>,
+    source: Mutex<Option<watch::Receiver<Option<KnownPeers>>>>,
+    attached: tokio::sync::Notify,
 }
 
 impl Store {
+    /// The last known facts of `peer`, as Control last published them.
     pub(super) fn get(&self, peer: NodeId) -> Option<PeerFacts> {
-        self.peers.lock().ok()?.get(&peer).cloned()
+        let source = self.source.lock().ok()?;
+        let known = source.as_ref()?.borrow();
+        known.as_ref()?.peers.get(&peer).cloned()
     }
 
-    fn push(&self, delta: PeerFactsDelta) -> Result<(), FactsRejected> {
-        let mut queue = self.queue.lock().map_err(|_| FactsRejected)?;
-        if queue.len() >= QUEUE {
-            return Err(FactsRejected);
+    fn attach(&self, source: watch::Receiver<Option<KnownPeers>>) {
+        if let Ok(mut current) = self.source.lock() {
+            *current = Some(source);
         }
-        queue.push_back(delta);
-        drop(queue);
-        self.ready.notify_one();
-        Ok(())
+        self.attached.notify_one();
     }
 
-    /// Apply one delta; returns the peers whose facts changed. The last
-    /// facts of a peer stay until replaced, removed or the peer leaves the
-    /// projection: expiry is freshness, not withdrawal.
-    fn apply(&self, delta: PeerFactsDelta) -> Vec<NodeId> {
-        let Ok(mut peers) = self.peers.lock() else {
-            return Vec::new();
-        };
-        delta.apply_to(&mut peers)
-    }
-
-    /// Forget peers the new content no longer lists.
-    pub(super) fn retain(&self, plan: &crate::plan::Plan) {
-        if let Ok(mut peers) = self.peers.lock() {
-            peers.retain(|peer, _| plan.has_peer(*peer));
-        }
+    fn source(&self) -> Option<watch::Receiver<Option<KnownPeers>>> {
+        self.source.lock().ok()?.clone()
     }
 }
 
-/// [`PeerFactsSink`] for Control's sync loop. Bounded and non-blocking.
-#[derive(Clone)]
-pub struct FactsSink(pub(super) Arc<Store>);
-
-impl PeerFactsSink for FactsSink {
-    fn apply(&mut self, _netmap: NetmapRef, facts: PeerFactsDelta) -> Result<(), FactsRejected> {
-        // Facts are scoped by the netmap Control has installed; the Manager
-        // filters every peer by its own current plan when it uses them.
-        self.0.push(facts)
+impl Manager {
+    /// Read peer facts from Control's publication.
+    pub fn attach_facts(&self, source: watch::Receiver<Option<KnownPeers>>) {
+        self.shared.facts.attach(source);
     }
 }
 
-/// The single consumer of queued deltas.
+/// Peers whose facts differ between two publications.
+fn changed(before: Option<&KnownPeers>, after: Option<&KnownPeers>) -> Vec<NodeId> {
+    let empty = BTreeMap::new();
+    let before = before.map_or(&empty, |known| &*known.peers);
+    let after = after.map_or(&empty, |known| &*known.peers);
+    before
+        .keys()
+        .chain(after.keys())
+        .filter(|peer| before.get(peer) != after.get(peer))
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+/// Wakes the workers of peers whose published facts changed.
 pub(super) async fn run(shared: Arc<Shared>) {
+    let mut previous: Option<KnownPeers> = None;
     loop {
-        let next = shared
-            .facts
-            .queue
-            .lock()
-            .ok()
-            .and_then(|mut queue| queue.pop_front());
-        let Some(delta) = next else {
+        let Some(mut source) = shared.facts.source() else {
             tokio::select! { biased;
                 _ = shared.stop.cancelled() => return,
-                _ = shared.facts.ready.notified() => {},
+                _ = shared.facts.attached.notified() => {},
             }
             continue;
         };
-        for peer in shared.facts.apply(delta) {
-            shared.interests.wake(peer);
+        loop {
+            let next = source.borrow_and_update().clone();
+            for peer in changed(previous.as_ref(), next.as_ref()) {
+                shared.interests.wake(peer);
+            }
+            previous = next;
+            tokio::select! { biased;
+                _ = shared.stop.cancelled() => return,
+                // Another source replaces this one.
+                _ = shared.facts.attached.notified() => break,
+                changed = source.changed() => if changed.is_err() { break },
+            }
         }
     }
 }
@@ -89,73 +86,61 @@ pub(super) async fn run(shared: Arc<Shared>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use meshway_model::{Sequence, Version};
-    use meshway_protocol::StateCursor;
 
     fn node(n: u8) -> NodeId {
         format!("00000000-0000-4000-8000-{n:012}").parse().unwrap()
     }
 
-    fn delta(base: Option<u64>, updated: &[u8], removed: &[u8]) -> PeerFactsDelta {
-        let epoch = "00000000-0000-4000-8000-000000000099".parse().unwrap();
-        let cursor = |n| StateCursor {
-            epoch,
-            sequence: Sequence::new(n).unwrap(),
-        };
-        let now = chrono::DateTime::from_timestamp_millis(1_000).unwrap();
-        PeerFactsDelta {
-            base: base.map(cursor),
-            cursor: cursor(base.unwrap_or(0) + 1),
-            netmap_serial: Version::MIN,
-            updated: updated
-                .iter()
-                .map(|n| {
-                    (
-                        node(*n),
-                        PeerFacts {
-                            node_id: node(*n),
-                            listeners: BTreeMap::new(),
-                            exit: None,
-                            observed_at: now,
-                            expires_at: now,
-                        },
-                    )
-                })
-                .collect(),
-            removed: removed.iter().map(|n| node(*n)).collect(),
+    fn known(peers: &[(u8, i64)]) -> KnownPeers {
+        let at = |seconds| chrono::DateTime::from_timestamp(seconds, 0).unwrap();
+        KnownPeers {
+            netmap: meshway_model::NetmapRef {
+                revision: meshway_model::Revision::MIN,
+                serial: meshway_model::Version::MIN,
+                digest: meshway_model::Digest::from_bytes([1; 32]),
+            },
+            peers: Arc::new(
+                peers
+                    .iter()
+                    .map(|(n, seconds)| {
+                        (
+                            node(*n),
+                            PeerFacts {
+                                node_id: node(*n),
+                                listeners: BTreeMap::new(),
+                                exit: None,
+                                observed_at: at(*seconds),
+                                expires_at: at(*seconds),
+                            },
+                        )
+                    })
+                    .collect(),
+            ),
         }
     }
 
     #[test]
-    fn full_queue_rejects_and_a_complete_delta_replaces_stale_peers() {
-        let store = Arc::new(Store::default());
-        let mut sink = FactsSink(store.clone());
-        let netmap = meshway_model::NetmapRef {
-            revision: meshway_model::Revision::MIN,
-            serial: Version::MIN,
-            digest: meshway_model::Digest::from_bytes([1; 32]),
-        };
-        for _ in 0..QUEUE {
-            sink.apply(netmap, delta(Some(1), &[1], &[])).unwrap();
-        }
+    fn the_store_reads_the_latest_publication_and_names_only_changed_peers() {
+        let (publish, source) = watch::channel(None);
+        let store = Store::default();
+        assert!(store.get(node(1)).is_none(), "nothing attached");
+        store.attach(source);
+        publish.send_replace(Some(known(&[(1, 1), (2, 1)])));
+        assert!(store.get(node(1)).is_some() && store.get(node(3)).is_none());
         assert_eq!(
-            sink.apply(netmap, delta(Some(1), &[2], &[])),
-            Err(FactsRejected)
-        );
-        store.queue.lock().unwrap().clear();
-        assert_eq!(
-            store.apply(delta(None, &[1, 2], &[])),
+            changed(None, Some(&known(&[(1, 1), (2, 1)]))),
             vec![node(1), node(2)]
         );
-        assert!(
-            store.apply(delta(Some(1), &[1], &[])).is_empty(),
-            "unchanged"
+        assert_eq!(
+            changed(
+                Some(&known(&[(1, 1), (2, 1)])),
+                Some(&known(&[(1, 1), (2, 5), (3, 1)]))
+            ),
+            vec![node(2), node(3)]
         );
-        assert_eq!(store.apply(delta(Some(2), &[], &[2])), vec![node(2)]);
-        // After a rejection Control sends complete facts: absent peers go.
-        sink.apply(netmap, delta(None, &[3], &[])).unwrap();
-        let full = store.queue.lock().unwrap().pop_front().unwrap();
-        assert_eq!(store.apply(full), vec![node(1), node(3)]);
-        assert!(store.get(node(1)).is_none() && store.get(node(3)).is_some());
+        assert_eq!(
+            changed(Some(&known(&[(1, 1)])), Some(&known(&[]))),
+            vec![node(1)]
+        );
     }
 }

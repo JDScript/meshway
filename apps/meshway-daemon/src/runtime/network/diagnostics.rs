@@ -93,7 +93,8 @@ fn resolve(
                 NodeObservationTarget::Name { name } => {
                     let name = name.trim_end_matches('.').to_ascii_lowercase();
                     let fqdn = meshway_configuration::node_dns_name(&node.hostname, domain).ok();
-                    name == node.hostname || fqdn.as_deref() == Some(name.as_str())
+                    name == node.hostname.to_ascii_lowercase()
+                        || fqdn.is_some_and(|fqdn| fqdn.eq_ignore_ascii_case(&name))
                 }
                 NodeObservationTarget::MeshIp { address } => address
                     .parse::<std::net::IpAddr>()
@@ -224,9 +225,7 @@ impl Diagnostics {
             }
             Err(_) => return fail(&request, PingError::NotRunning),
         }
-        let (Some(subscription), Some(observation), Some(instance)) =
-            (random_uuid(), random_uuid(), random_uuid())
-        else {
+        let (Some(subscription), Some(observation)) = (random_uuid(), random_uuid()) else {
             return fail(&request, PingError::Failed);
         };
         let (Ok(subscription), Ok(observation)) = (
@@ -235,9 +234,12 @@ impl Diagnostics {
         ) else {
             return fail(&request, PingError::Failed);
         };
+        // A local ping is no Server task: without a current instance it is
+        // keyed by its own local task id (the observation id), never by an
+        // invented instance. Its results never leave this Node.
         let instance_id = match bound {
             Some(instance) => instance,
-            None => match InstanceId::new(instance) {
+            None => match InstanceId::new(observation.into_uuid()) {
                 Ok(id) => id,
                 Err(_) => return fail(&request, PingError::Failed),
             },
