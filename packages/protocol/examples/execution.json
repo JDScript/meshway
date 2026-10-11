@@ -84,7 +84,8 @@
         "digest": "abababababababababababababababababababababababababababababababab"
       },
       "state": null,
-      "serverKeyGeneration": 1
+      "serverKeyGeneration": 1,
+      "traversalRequests": []
     },
     "responses": {
       "200": {
@@ -106,7 +107,20 @@
           "type": "unchanged"
         },
         "peerFacts": null,
-        "keyRotation": null
+        "keyRotation": null,
+        "traversalRequests": [
+          {
+            "attemptId": "6a1f0e2d-3c4b-4a59-8e7d-1c2b3a4f5e6d",
+            "peerId": "2b3c4d5e-6f70-4182-9a3b-4c5d6e7f8091",
+            "carrier": {
+              "dialer": "2b3c4d5e-6f70-4182-9a3b-4c5d6e7f8091",
+              "listener": "9d8c7b6a-5f4e-4d3c-8b2a-1f0e9d8c7b6a",
+              "listenerKey": "udp",
+              "protocol": "native_udp"
+            },
+            "expiresAt": "2026-10-09T09:00:08Z"
+          }
+        ]
       }
     }
   }
