@@ -143,7 +143,7 @@ N1a 实测（M3、release、单线程，私有证据 `.meshway/netmap/n1a/scale.
 
 **判定一项输入属于哪条线**：若缺少它就必须拒绝某个包或某个握手，它属于 netmap；若缺少它只会让某次获取失败或换一个已授权候选，它是事实。端点、STUN、出口就绪都只是选择输入：错误或过期的值最多导致连不上，不能放宽准入。
 
-### 传输：单一长轮询
+### 传输：单一长轮询 {#sync-transport}
 
 Node↔Server 只有 `POST /agent-api/v1/sync`（类型在 `crates/meshway-protocol/src/netmap.rs`）：
 
@@ -154,7 +154,9 @@ SyncResponse { lease: NetmapLease,
                peerFacts: Option<PeerFactsDelta { base, cursor, netmapSerial, updated: NodeId → PeerFacts, removed }> }
 ```
 
-Server 挂起请求直至 netmap 或可见事实变化，或 ≤ 60 s 超时；超时回 `unchanged`＋`peerFacts: null`，即内建兜底。节点收到即发下一个请求，手里的 `NetmapRef`／`StateCursor` 就是游标，没有事件流与独立重放。`SyncResponse::check(request)` 校验租约指向最终内容、delta 的 base 等于请求、事实增量接续请求游标且属于同一 netmap serial。语义上仍是两条线：netmap 部分授权，`peerFacts` 部分只供选择。
+Server 挂起请求直至 netmap 或可见事实变化，或 ≤ 60 s 超时；超时回 `unchanged`＋`peerFacts: null`，即内建兜底。
+
+挂起不越过节点持有的租约：一次 hold 的上限为 `min(名义 hold, 节点持有的租约剩余 − 15 s)`，15 s 即节点传输退避上限（`BACKOFF_MAX`），使回答即使失败节点也还有一次重试。“节点持有的租约”是本 Server 进程对该节点最近一次、未被同节点更新请求取代的回答所带租约；被取代（节点已改发新请求）的回答不计入。Server 进程尚未回答过该节点（首次请求、Server 重启后）时立即回答。余量不足时也立即回答，回答本身即续租。唯一 owner 是 Server 的 sync hold（`netmap::Hub`），Node 不另做截断。限制：回答已写出但在传输中丢失、且节点在该请求结束后才重试时，Server 认为的租约可能新于节点实际持有的，由 15 s 余量与节点退避兜底。节点收到即发下一个请求，手里的 `NetmapRef`／`StateCursor` 就是游标，没有事件流与独立重放。`SyncResponse::check(request)` 校验租约指向最终内容、delta 的 base 等于请求、事实增量接续请求游标且属于同一 netmap serial。语义上仍是两条线：netmap 部分授权，`peerFacts` 部分只供选择。
 
 ### Server 侧
 
@@ -333,7 +335,7 @@ cold（静态端点）：  T ≈ Σ每跳串行邻接获取（TCP 1 RTT；TLS �
 ### DNS
 
 - 配置 resolver 与系统 resolver 的本地 socket 许可：源端用 `egress.routes` 求 resolver 端点的动作——direct／unmanaged 允许本机 socket，exit 动作必须经出口 DNS，unmanaged 范围以外的 Mesh 地址拒绝。UDP 与 TCP 仍分别判定。R1／R4／F14 的 resolver demand、ID 映射和退休白名单删除。
-- X5 `DnsServicePermit` 留在 netmap：客户端 `ViaExit`、出口 `ServeExitResolver` 列表都按 revision 编译，去掉 instance 与截止字段；出口就绪仍是事实。Mesh ingress 适配缺失时安装阻断的现状不变。
+- X5（已交付）`DnsService` 留在 netmap：客户端 `DnsPlan::ViaExit`、出口 `DnsPlan::ServeExitResolver` 列表都按 revision 编译，没有 instance 与截止字段，截止来自租约；出口就绪与出口 resolver 可用性（`NodeState.exitDns`）都是事实。行为见[出口 resolver](/v2/node/dataplane#exit-resolver)。
 - X6 可信域名关联是唯一保留的按需编译：Server 受控解析任务完成后，为该源签发 `DnsAssociationOverlay { netmap: NetmapRef, associations, expiresAt = min(TTL, 任务期限) }`，经同一 netmap 查询端点交付并随期望内容应用。overlay 有自己的截止，只扩大该源与相关出口的域名目的判定，不改变 netmap serial；它只影响源和所选出口两个节点。
 
 ## 迁移

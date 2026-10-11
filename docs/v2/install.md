@@ -11,6 +11,7 @@
 | 权限 | 安装与 CLI 需要 root；daemon 以 root 运行，但 capability 限于下表 |
 | 设备 | `/dev/net/tun` |
 | DNS | 默认 `--dns-backend resolved`：需要运行中的 systemd-resolved，且 `/etc/resolv.conf` 指向其动态 stub（`/run/systemd/resolve/stub-resolv.conf`）；见[系统 DNS 安装](/v2/node/dataplane#系统-dns-安装) |
+| 出口 DNS | resolved 后端的出口节点为源解析普通名称需要 systemd ≥ 248 且 `DNSStubListener=yes`（默认），以提供代理 stub `127.0.0.54:53`；缺少时出口查询不可用（`exit.dnsUnavailable=proxyStubMissing`），IPv4 出口与本节点 DNS 不受影响。见[出口 resolver](/v2/node/dataplane#exit-resolver) |
 | 下载 | 在线安装需要 `curl`、`sha256sum`、`tar`；私有仓库需 `GITHUB_TOKEN`（releases 读权限） |
 | Server | 可达的 HTTPS Server origin；数字 loopback 可用 HTTP |
 

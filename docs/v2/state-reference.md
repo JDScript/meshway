@@ -52,9 +52,20 @@ Config 定义期望和许可，State 定义当前事实。上报 State 不会修
 | `status` | `{status: "notRequested"}`、`{status: "probing"}`、`{status: "ready"}` 或 `{status: "unavailable", reason: ...}` |
 | `observedAt` | 原始探测时间；重放不刷新样本 |
 
-原因枚举：`ipForwardDisabled`、`forwardingProbeFailed`、`netAdminMissing`、`nftUnavailable`、`conntrackUnavailable`、`reversePathFilterConflict`、`tunUnavailable`、`firewallConflict`、`routeConflict`、`dnsUnavailable`、`unsupportedFamily`、`ownershipConflict`。HTTP 使用同一模型的 camelCase 名称。
+原因枚举：`ipForwardDisabled`、`forwardingProbeFailed`、`netAdminMissing`、`nftUnavailable`、`conntrackUnavailable`、`reversePathFilterConflict`、`tunUnavailable`、`firewallConflict`、`routeConflict`、`dnsUnavailable`、`unsupportedFamily`、`ownershipConflict`。HTTP 使用同一模型的 camelCase 名称。当前 Node 不以 `dnsUnavailable` 报告出口能力：出口 resolver 不可用不否定 IPv4 出口，单独见 [exitDns](#exitdns)。
 
 Server 在 applied 前接纳当前 role 的探测与失败；`ready` 还要求 acquire 声明 `feature:exit-ipv4` version 1。能力投影最多存活至原观察后 60 秒与当前 instance lease 截止的交集，绑定同一源 revision／角色；未知、过期、旧实例或旧职责不授予出口可用资格。重启不恢复为 ready。路径检测显示 `exitUnavailable` 与新鲜具体原因，业务许可到期不长于能力预算；netmap 链（实现中）中就绪只是经 `peerFacts` 下发的选择事实（`roleGeneration`／`status`／`installedFamilies`），从不是编译输入；拒绝／不可用仍保留源端 capture。职责、capture 和业务许可见[出口联合许可](/v2/configuration-reference/routing#执行捕获与精确许可)。
+
+## exitDns {#exitdns}
+
+`NodeState.exitDns` 是出口 resolver 的可用性事实，仅在当前安装的 netmap 为 `serveExitResolver`（有源经本节点解析）时出现；省略为不适用或安装不是当前的。它不是编译输入，也不进入 `peerFacts`：源端不据此选择，出口不可用时源的查询收到 SERVFAIL。
+
+| 字段 | 含义 |
+| --- | --- |
+| `netmap` | 所描述的已安装 netmap；必须是该节点当前 netmap，且其 DNS 方案为 `serveExitResolver`，否则整份报告被拒 |
+| `status` | `{status: "serving"}` 或 `{status: "unavailable", reason: ...}` |
+
+原因枚举（判定见[出口 resolver](/v2/node/dataplane#exit-resolver)）：`unobserved`（系统 resolver 尚未观察到，例如锚点未安装）、`noServers`、`localServer`（loopback／未指定／组播等本地地址，可能是回指 Meshway 的 stub）、`anchorServer`（本节点 DNS 锚点）、`meshServer`（Mesh 地址池内）、`exitRoutedServer`（本节点 egress 分割不是 Direct／Unmanaged）、`proxyStubMissing`（resolved 代理 stub `127.0.0.54:53` 未监听）。`dns.overrideLocal: true` 时出口用配置的 default resolver，状态为 `serving`。同一原因也是 IPC Status 的 `exit.dnsUnavailable`（`serving` 时为 null）。
 
 ## Reference
 

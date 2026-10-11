@@ -4,11 +4,14 @@
 
 ## 未发布
 
-wire 6、IPC 6、`meshway-netmap-1` 不变。
+wire 6、IPC 6、`meshway-netmap-1` 不变；HTTP 契约新增可选 `NodeState.exitDns`。
 
 - 单出口 DNS（X5）：源节点方案使用单一出口时，普通查询在解析前经完整获准路径上的 DNS circuit 交给出口，由出口机器的系统 resolver 解析并沿原路径回答；MagicDNS 本地回答，`useWithExit` split 解析器按其本机 direct／unmanaged 路由；出口能力事实非 ready、出口上游不可用或回答失败时查询失败，从不回落到源节点本机上游。resolved 后端经其代理 stub `127.0.0.54` 保留按链路／后缀选上游，会回到本节点 DNS 的名称与含本地 stub／锚点／Mesh 地址的服务器清单使出口查询不可用；文件后端使用记录的原 nameserver。行为见 [出口 resolver](/v2/node/dataplane#exit-resolver)。
 - DNS：上游 UDP 回答带 TC 且记录被截断（resolved 代理 stub 的行为）或超出通告大小时按截断处理，只由独立 TCP 路由完成。
-- 验收：`exit/off` 增加 DNS 阶段（第 9 阶段），Planck 16 行矩阵 `20261011T143117Z-9dedf85e` 全部通过，`exit/off` 245.0 秒（此前 228–238 秒）；见[出口场景](/v2/node/validation#exit-scenario)。
+- 出口 resolver 可用性（X5b）：出口机系统 DNS 服务器为 Mesh 地址、经出口路由的地址、本地 stub 或锚点，清单为空，或 resolved 代理 stub `127.0.0.54` 未监听时，只使出口对源回 SERVFAIL，不再使整份 DNS 安装失败；原因报告为 IPC Status 的 `exit.dnsUnavailable` 与 State 新增可选字段 `NodeState.exitDns`（HTTP 契约新增，Server 只接受描述该节点当前 netmap 且其方案为 `serveExitResolver` 的事实）。`exit.dnsUnavailable` 的值类型改为 `ExitDnsUnavailableReason`（此前从不非 null，IPC 版本不变）。见 [exitDns](/v2/state-reference#exitdns)。
+- 出口 resolver 与 `dns.overrideLocal: true`：出口以配置的 default resolver 直接作上游，resolved 与文件后端一致（此前 resolved 后端因根域路由回本节点而全部 SERVFAIL，文件后端改用安装前原 nameserver）。回到出口自身 Meshway DNS 域的名称保持 SERVFAIL，出口模式下的 split 后缀须标 `useWithExit`。resolved 后端的出口查询以 systemd ≥ 248 且 `DNSStubListener=yes` 为前提，见 [Linux 安装](/v2/install)。
+- Server sync：一次 hold 不越过节点持有的租约，上限为 `min(名义 hold, 持有租约剩余 − 15 s)`；Server 进程尚未回答过的节点立即回答。60 秒租约下 hold 不再越过到期，见 [netmap 设计 · 传输](/v2/node/netmap-design#sync-transport)。
+- 验收：`exit/off` 增加 DNS 阶段（第 9 阶段），Planck 16 行矩阵 `20261011T143117Z-9dedf85e` 全部通过，`exit/off` 245.0 秒（此前 228–238 秒）；X5b 后 `exit/off` 恢复以 E 上的路由阻断其 DNS authority，16 行矩阵 `20261011T192758Z-85bc66e6`（`b5644c06`）与 `20261011T195821Z-aa2222be`（`e0449eae`）全部通过；见[出口场景](/v2/node/validation#exit-scenario)。
 
 ## v0.1.0-alpha.2
 

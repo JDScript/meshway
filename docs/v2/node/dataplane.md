@@ -255,21 +255,25 @@ exchange 适配器须在每次 connect／write／read poll 检查路由期限与
 | 源 → 出口 | dataplane | `query_dns` 在 `Purpose::Dns` circuit 上发送；circuit 的 grant 是 `(Dns, Mesh { exit })`，路径固定为 `DnsService.path`，握手摘要的 selection 是该 service 的摘要。出口能力事实不是 ready 时不建 circuit、不发查询，查询立即失败 |
 | 中继 | dataplane | `admit_dns` 在中继自己的投影上重算 `dns_service(origin)` 并只按完整路径位置与相邻承载转发密文，不解密 |
 | 出口 ingress | dataplane → `meshway-dns` | 出口收到的请求是不透明 `DnsRequest`，origin、完整路径、传输、所属内容和截止来自已认证 circuit；`OwnerDispatcher::serve_authenticated` 再用 `netmap_dns_service` 匹配 `ServeExitResolver.services` 中该源的精确 service。socket 地址不参与身份判断 |
-| 出口上游 | `meshway-dns` → Underlay | 只使用 served 系统快照，每个上游各有 UDP 与独立 TCP `LocalResolverRoute`，由出口自己的 egress 分割判定并经受保护 socket 发送 |
+| 出口上游 | `meshway-dns` → Underlay | `dns.overrideLocal: true` 时为配置的 default resolver（第一个，按其自己的 `LocalResolverRoute`，与本节点自身普通名称相同）；否则为 served 系统快照，每个上游各有 UDP 与独立 TCP `LocalResolverRoute`。两者都由出口自己的 egress 分割判定并经受保护 socket 发送 |
 | 回答 | dataplane | 按请求自身的传输编码：UDP 不超过 1232 bytes，超出时置 TC，由源改用 TCP；无法服务时回 SERVFAIL。`answer_dns` 只沿原 circuit 反向返回，旧请求的 guard 到期后不回答 |
 
-served 系统快照按后端区分：
+`dns.overrideLocal: true` 的出口不使用系统 resolver：default resolver 地址在 Mesh 池外且 egress 分割为 Direct／Unmanaged（安装时校验，不通过即 DNS 安装失败），因此不经本节点 stub、无环。两个系统后端的语义相同。
 
-| 后端 | 上游 | 不可用条件 |
+否则 served 系统快照按后端区分：
+
+| 后端 | 上游 | 后端不可用条件 |
 | --- | --- | --- |
-| resolved | resolved 的代理 stub `127.0.0.54:53`，保留 resolved 按链路、按后缀选择上游；不做本地合成、LLMNR、mDNS | 锚点尚未安装；resolved 的服务器清单（`DNSEx`、`FallbackDNSEx`，不含本节点锚点自己的 bind）为空，或含 loopback／未指定／组播地址或锚点地址；任一服务器属于 Mesh 地址池或不是出口 egress 分割里的 Direct／Unmanaged。查询名落在本节点锚点已安装的域（MagicDNS 域、split 路由、搜索域、安装标记）之下时不交给 resolved，回 SERVFAIL，避免出口用自己的记录回答 |
-| 显式文件代理 | 安装前记录的原 resolv.conf nameserver | 原文件的 nameserver 为 loopback／未指定／组播／带 scope 的链路本地地址，或带 `no-reload` |
+| resolved | resolved 的代理 stub `127.0.0.54:53`，保留 resolved 按链路、按后缀选择上游；不做本地合成、LLMNR、mDNS | 锚点尚未安装或清单读取失败（`unobserved`）；resolved 的服务器清单（`DNSEx`、`FallbackDNSEx`，不含本节点锚点自己的 bind）为空（`noServers`）、含 loopback／未指定／组播或未知族地址（`localServer`）或锚点地址（`anchorServer`）；本 namespace 内 `127.0.0.54:53` 没有已绑定的 UDP socket 与监听中的 TCP socket（`proxyStubMissing`，systemd < 248 或 `DNSStubListener=no`；每 2 秒及 resolved 换进程时重读 `/proc/net/{udp,tcp}`） |
+| 显式文件代理 | 安装前记录的原 resolv.conf nameserver（同时是本节点自身未受管名称的上游） | 没有记录（`unobserved`）或为空（`noServers`）；原 nameserver 为 loopback／未指定／组播／带 scope 的链路本地地址或带 `no-reload` 时文件后端本身无法安装 |
 
-resolved 快照随每次观察（250 ms）续期；服务器清单变化即换新快照并重新发布同内容的 scope，清单不再可用时只撤回出口查询，不使出口的其他 DNS 安装失败。代理快照只用于出口查询，出口节点自己的查询仍按 resolved 自身路由。快照不可用时出口照常安装，查询回 SERVFAIL，不选公共 DNS 补救，也没有单独的状态字段。
+快照再按出口的 netmap 判定（`meshway_dns::exit_resolvers`）：任一上游或 resolved 可能选择的服务器属于 Mesh 地址池（`meshServer`），或不是出口 egress 分割里的 Direct／Unmanaged（`exitRoutedServer`），出口查询不可用。查询名落在本节点锚点已安装的域（MagicDNS 域、split 路由、搜索域、安装标记）之下时不交给 resolved，回 SERVFAIL，避免出口用自己的记录回答；出口模式下要用 split 后缀，在源节点把该解析器标 `useWithExit`。
+
+出口查询的可用性独立于本节点自身 DNS 安装：served 快照不可用只使出口对源回 SERVFAIL，不选公共 DNS 补救，本节点的 MagicDNS 与系统 DNS 照常安装（文件后端的原 nameserver 同时是本节点自身上游，按无出口节点同样校验）。原因由 DNS owner 唯一产生，经 daemon 报告为 IPC Status 的 `exit.dnsUnavailable` 与 State 的 [`exitDns`](/v2/state-reference)。resolved 快照随每次观察（250 ms）续期；服务器清单、代理 stub 或判定结果变化即换新快照并重新发布同内容的 scope，这会结束出口节点自身在途的旧 scope 查询（源的查询按各自截止失败后重试）。代理快照只用于出口查询，出口节点自己的查询仍按 resolved 自身路由。
 
 内容变化（含出口 role 撤回、方案切换）和租约到期按 [scope 发布](#dns-查询-owner) 结束两端旧 ticket；新内容下的 DNS circuit 由 `SecureNode::update` 按 path 授权摘要判定保留或退役，旧回答不能换绑。
 
-限制：首版只解析经 IPv4 出口的普通查询；AAAA 原样返回出口 resolver 的真实回答，不伪造 NXDOMAIN，受管 IPv6 包仍由源端捕获 sink 与 permit 双重拒绝。显式多出口 DNS plan 和可信域名关联（X6）未实现。DNS 消息上限 4096 bytes，单查询不超过 5 秒。这些范围以外或任何必需安装失败均阻断整体 applied。
+限制：resolved 后端的出口查询需要 systemd ≥ 248 且 `DNSStubListener=yes`（提供代理 stub `127.0.0.54`），否则出口查询不可用（`proxyStubMissing`），见 [Linux 安装](/v2/install)。首版只解析经 IPv4 出口的普通查询；AAAA 原样返回出口 resolver 的真实回答，不伪造 NXDOMAIN，受管 IPv6 包仍由源端捕获 sink 与 permit 双重拒绝。显式多出口 DNS plan 和可信域名关联（X6）未实现。DNS 消息上限 4096 bytes，单查询不超过 5 秒。这些范围以外或任何必需安装失败均阻断整体 applied。
 
 ## 系统 DNS 安装
 
