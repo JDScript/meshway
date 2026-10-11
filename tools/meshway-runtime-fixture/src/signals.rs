@@ -248,7 +248,7 @@ mod tests {
             "server":"http://127.0.0.1:8430/","observedAt":"2026-10-05T00:00:00Z",
             "enrollmentRequestId":null,"enrollmentUrl":null,"identity":null,
             "authenticated":false,"instance":null,"saved":null,"applied":null,
-            "dataPlane":"controlOnly","networkMode":"controlOnly","lastError":null,"retryAt":null
+            "dataPlane":"controlOnly","networkMode":"controlOnly","lastError":null,"retryAt":null,"node":null,"peers":[]
         }"#,
         )
         .unwrap()
