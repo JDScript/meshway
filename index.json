@@ -1,8 +1,47 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-11T05:47:28.481023+00:00",
+  "updatedAt": "2026-10-11T05:54:56.025061+00:00",
   "runs": [
+    {
+      "id": 38116182665,
+      "attempt": 1,
+      "workflow": "Build",
+      "event": "workflow_dispatch",
+      "branch": "main",
+      "commit": "1d28f0b980761dc0b9d02aa33388ae9266d84d7e",
+      "message": "validation: memory-aware matrix concurrency, capped remote build jobs, nightly instead of per-push Validate — planck is a shared host and a full matrix plus cold build OOM-killed it",
+      "createdAt": "2026-10-11T05:52:09Z",
+      "updatedAt": "2026-10-11T05:52:13Z",
+      "status": "in_progress",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/38116182665",
+      "jobs": [
+        {
+          "id": 114401418997,
+          "name": "node-linux (aarch64-unknown-linux-musl)",
+          "runner": "planck",
+          "status": "in_progress",
+          "conclusion": null,
+          "startedAt": "2026-10-11T05:52:11Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38116182665/job/114401418997"
+        },
+        {
+          "id": 114401419110,
+          "name": "node-linux (x86_64-unknown-linux-musl)",
+          "runner": "mars-epyc7543",
+          "status": "in_progress",
+          "conclusion": null,
+          "startedAt": "2026-10-11T05:52:12Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38116182665/job/114401419110"
+        }
+      ],
+      "artifacts": []
+    },
     {
       "id": 38115539361,
       "attempt": 1,
@@ -73,24 +112,159 @@
       "commit": "2f862f63609a4483b57beb0af8226a76e775210a",
       "message": "protocol: syncNode example carries traversalRequests",
       "createdAt": "2026-10-11T05:40:22Z",
-      "updatedAt": "2026-10-11T05:40:29Z",
-      "status": "in_progress",
-      "conclusion": null,
+      "updatedAt": "2026-10-11T05:51:57Z",
+      "status": "completed",
+      "conclusion": "failure",
       "url": "https://github.com/JDScript/meshway/actions/runs/38115539153",
       "jobs": [
         {
           "id": 114399586650,
           "name": "matrix",
           "runner": "planck",
-          "status": "in_progress",
-          "conclusion": null,
+          "status": "completed",
+          "conclusion": "failure",
           "startedAt": "2026-10-11T05:40:28Z",
-          "completedAt": null,
-          "seconds": null,
+          "completedAt": "2026-10-11T05:51:57Z",
+          "seconds": 689.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/38115539153/job/114399586650"
         }
       ],
-      "artifacts": []
+      "artifacts": [
+        {
+          "id": 11693143950,
+          "name": "validate-matrix-38115539153",
+          "bytes": 601595,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38115539153/artifacts/11693143950",
+          "jobId": 114399586650,
+          "runner": "planck",
+          "seconds": 689.0,
+          "state": "ok",
+          "error": null,
+          "reports": [],
+          "matrices": [
+            {
+              "reportId": "20261011T054035Z-9a9dd74c",
+              "short": false,
+              "rows": [
+                {
+                  "row": "tun",
+                  "passed": true,
+                  "reportId": "20261011T054213Z-9f3d583d",
+                  "seconds": 0.703,
+                  "load": "11.97/14.83/20.21"
+                },
+                {
+                  "row": "packet",
+                  "passed": true,
+                  "reportId": "20261011T054213Z-10d66e44",
+                  "seconds": 262.887,
+                  "load": "11.97/14.83/20.21"
+                },
+                {
+                  "row": "udp/off",
+                  "passed": true,
+                  "reportId": "20261011T054213Z-6e7c38e1",
+                  "seconds": 275.391,
+                  "load": "11.97/14.83/20.21"
+                },
+                {
+                  "row": "tcp/off",
+                  "passed": true,
+                  "reportId": "20261011T054213Z-9d0f6bd4",
+                  "seconds": 256.717,
+                  "load": "11.97/14.83/20.21"
+                },
+                {
+                  "row": "vless/off",
+                  "passed": true,
+                  "reportId": "20261011T054213Z-26add078",
+                  "seconds": 253.381,
+                  "load": "11.97/14.83/20.21"
+                },
+                {
+                  "row": "trojan/off",
+                  "passed": true,
+                  "reportId": "20261011T054213Z-2f8df88a",
+                  "seconds": 258.732,
+                  "load": "11.97/14.83/20.21"
+                },
+                {
+                  "row": "udp/resolv-conf",
+                  "passed": true,
+                  "reportId": "20261011T054213Z-296e8a06",
+                  "seconds": 266.732,
+                  "load": "11.97/14.83/20.21"
+                },
+                {
+                  "row": "udp/resolved",
+                  "passed": true,
+                  "reportId": "20261011T054213Z-dff9bfa8",
+                  "seconds": 272.388,
+                  "load": "11.97/14.83/20.21"
+                },
+                {
+                  "row": "nat/off",
+                  "passed": true,
+                  "reportId": "20261011T054214Z-c50fdaf5",
+                  "seconds": 265.369,
+                  "load": "11.97/14.83/20.21"
+                },
+                {
+                  "row": "nat+fallback/off",
+                  "passed": false,
+                  "reportId": "20261011T054626Z-cf2d7223",
+                  "seconds": 257.463,
+                  "load": "4.48/10.39/17.26"
+                },
+                {
+                  "row": "nat/resolved",
+                  "passed": true,
+                  "reportId": "20261011T054630Z-fb1447ba",
+                  "seconds": 271.644,
+                  "load": "4.52/10.30/17.19"
+                },
+                {
+                  "row": "exit/off",
+                  "passed": false,
+                  "reportId": "20261011T054632Z-1d393047",
+                  "seconds": 2.889,
+                  "load": "4.52/10.30/17.19"
+                },
+                {
+                  "row": "netmap/offline",
+                  "passed": true,
+                  "reportId": "20261011T054635Z-490676b3",
+                  "seconds": 316.1,
+                  "load": "4.88/10.28/17.15"
+                },
+                {
+                  "row": "netmap/revoke",
+                  "passed": true,
+                  "reportId": "20261011T054636Z-73fc98af",
+                  "seconds": 120.16,
+                  "load": "4.88/10.28/17.15"
+                },
+                {
+                  "row": "netmap/expiry",
+                  "passed": true,
+                  "reportId": "20261011T054639Z-79232370",
+                  "seconds": 211.263,
+                  "load": "5.21/10.26/17.10"
+                },
+                {
+                  "row": "netmap/restart",
+                  "passed": true,
+                  "reportId": "20261011T054640Z-248956d5",
+                  "seconds": 266.423,
+                  "load": "5.21/10.26/17.10"
+                }
+              ]
+            }
+          ],
+          "builds": []
+        }
+      ]
     },
     {
       "id": 38109005519,
