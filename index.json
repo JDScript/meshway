@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-11T06:53:31.910120+00:00",
+  "updatedAt": "2026-10-11T06:56:11.146452+00:00",
   "runs": [
     {
       "id": 38119035801,
@@ -108,9 +108,9 @@
       "commit": "80abb1ea78bd5f9c04cb5ec083f42c23cf98740c",
       "message": "Merge remote-tracking branch 'planck/p1/traversal-signalling'",
       "createdAt": "2026-10-11T06:44:23Z",
-      "updatedAt": "2026-10-11T06:48:11Z",
-      "status": "in_progress",
-      "conclusion": null,
+      "updatedAt": "2026-10-11T06:52:43Z",
+      "status": "completed",
+      "conclusion": "failure",
       "url": "https://github.com/JDScript/meshway/actions/runs/38119035800",
       "jobs": [
         {
@@ -150,11 +150,11 @@
           "id": 114409807311,
           "name": "cargo",
           "runner": "mars-14900k",
-          "status": "in_progress",
-          "conclusion": null,
+          "status": "completed",
+          "conclusion": "failure",
           "startedAt": "2026-10-11T06:48:10Z",
-          "completedAt": null,
-          "seconds": null,
+          "completedAt": "2026-10-11T06:52:42Z",
+          "seconds": 272.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/38119035800/job/114409807311"
         }
       ],
