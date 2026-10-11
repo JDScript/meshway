@@ -286,10 +286,11 @@ impl OwnerDispatcher {
             state.installed = None;
             return Err(DispatchError::Scope);
         };
-        let equivalent = state
-            .installed
-            .as_ref()
-            .is_some_and(|installed| installed.equivalent(&scope));
+        // A withdrawn scope's owner never serves a republished one, even with
+        // the same content: its work ended with that scope.
+        let equivalent = state.installed.as_ref().is_some_and(|installed| {
+            installed.equivalent(&scope) && !installed.ended.is_cancelled()
+        });
         if (changed && !equivalent) || state.owner.is_none() {
             // New content cancels old tickets. No old operation is completed
             // under a transplanted generation.

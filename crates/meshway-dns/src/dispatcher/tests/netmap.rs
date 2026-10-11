@@ -335,7 +335,7 @@ async fn same_content_keeps_owner_while_new_content_ends_its_answers() {
     // Same content: the scope is equivalent and keeps its owner.
     let renewed = sync(&mut control, &script, reply(&first, false)).await;
     assert_eq!(renewed.reference(), snapshot.reference());
-    crate::publish_scope(&sender, Some(Scope::netmap(renewed, None)));
+    crate::publish_scope(&sender, Some(Scope::netmap(renewed.clone(), None)));
     answer.ensure_current().unwrap();
     dispatcher
         .dispatch(named("b.test.internal."), deadline)
@@ -348,6 +348,23 @@ async fn same_content_keeps_owner_while_new_content_ends_its_answers() {
             &generation
         ));
     }
+
+    // Withdrawn and republished with the same content before any query saw
+    // the withdrawal: the withdrawn owner never serves the new scope.
+    crate::publish_scope(&sender, None);
+    assert!(answer.ensure_current().is_err());
+    crate::publish_scope(&sender, Some(Scope::netmap(renewed, None)));
+    let answer = dispatcher
+        .dispatch(named("b.test.internal."), deadline)
+        .await
+        .unwrap();
+    answer.ensure_current().unwrap();
+    let generation = {
+        let state = dispatcher.state.lock().await;
+        let current = state.owner.as_ref().unwrap().generation();
+        assert!(!Arc::ptr_eq(&current, &generation));
+        current
+    };
 
     // A larger serial ends old answers and replaces the owner generation.
     network.hostname = "a2".into();
