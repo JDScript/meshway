@@ -116,3 +116,19 @@ mise run node:lab stop
 容器日志使用 JSON 和 Docker local driver，每个容器轮转保留最多三个 10 MiB 日志文件；字段规则见[运行日志](/v2/logging)。管理脚本核对精确资源名和所有权标签，遇到同名外部资源会停止操作。
 
 健康检查表示 daemon 的本机 IPC 可响应；实际安装要求 `networkMode=tun`、`dataPlane=ready`、`phase=running` 和非空 `applied`，同时核对容器内真实 TUN 接口及地址。STUN 候选另查 Server State 的 socket、origin 和有效期；无观测保持为空。长时包流／双 NAT 的隔离验收见[验收范围](/v2/node/validation)，这张共享 bridge 的常驻环境不构成双 NAT 证明。SOCKS5 尚未实现，三个地区名称仅作为开发节点标识，不证明真实地理部署。
+
+## 常驻 systemd 验收 VM {#systemd-vm}
+
+系统服务安装（[Linux 安装与系统服务](/v2/install)）的整机行为在一台常驻 OrbStack Ubuntu machine 上验收，不属于三节点 Compose lab，也不进入一次性矩阵。
+
+| 项 | 取值 |
+| --- | --- |
+| 名称／访问 | `meshway-vm`；`orb -m meshway-vm …`。复用同一台，不删除、不另建 |
+| 系统 | Ubuntu 24.04 aarch64，systemd 255，systemd-resolved 动态 stub |
+| 安装 | `mise run build:node:linux` 的 release 目录经 `dist/install.sh --artifact` 安装；身份在 `/var/lib/meshway` 跨升级保留 |
+| 沙箱 | OrbStack 为所有服务注入关闭沙箱的 `zzz-lxc-service.conf`；以更高优先级的 `/etc/systemd/system/meshwayd.service.d/zzzz-*.conf` 恢复本 unit 的取值，并用 `systemctl show` 核对 |
+| 接入 | Tag 接入密钥（`tag:lab`，listener `lab-udp` native_udp 35000）加入开发网络；临时 topology 规则与临时 Node 在验收结束后撤销／删除 |
+
+可在 machine 内用 network namespace 构造额外 Node（独立 `--data-dir`、私有 mount namespace 中的 `/etc`），例如经端口保持型 masquerade 只能单向拨入 machine 的 LAN Node。它们的 nft 表、namespace 与数据目录由验收脚本命名并精确清理；不修改 machine 默认 namespace 中未知归属的规则。
+
+该 machine 与 lab 容器之间的 UDP 路径不可用于承载稳定性验收：OrbStack 在容器→machine 的同一 UDP 流上从第 3 个报文起每隔一个丢弃一个（不运行 Meshway 时实测 20 个报文到达 9–11 个，每报文新 socket 时全部到达），Native UDP 健康 Pong 因而确定性丢失。该边上的通道重建与丢包是环境承载失败；单向 NAT 稳定性在 machine 内的 namespace 拓扑上验收，见[通道稳定性](/v2/node/connectivity#channel-stability)。TCP 承载不受此影响。原始记录位于私有目录 `.meshway/node-lab/s1/`、`.meshway/node-lab/f3/`。

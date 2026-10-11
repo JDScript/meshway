@@ -85,12 +85,23 @@ ReadWritePaths=/etc
 - 上一 boot 的 Underlay journal 不属于当前 namespace，按[持久与重建](/v2/node/runtime#持久与重建)归档为 `underlay.json.stale-*` 后重新分配。
 
 - 开机时 systemd-resolved 由 unit 排序先于 daemon 启动；DNS 归属记录随 `/run` 清空，按当前 resolved 实例重新安装。
+- 上一 boot 的 journal 归档只保留最新三份 `underlay.json.stale-*`（每份约 4 KiB），更早的在归档时删除。
+- daemon 被 `SIGKILL` 后留下的 `control.sock`／`underlay-bootstrap.sock` 按记录的 inode 认领回收，记录的 device 与当前状态卷不同（卷被重新挂载或重建）也不阻止回收；私有目录中没有记录的 socket 同样回收。
+
+### systemd-resolved 重启与停止
+
+resolved 后端的归属证明是同一 network namespace、Underlay 管理的 DNS 锚点接口，以及锚点链路上 daemon 写入并回读的 DNS／domain 设置（含安装标记域 `~i<id>.meshway-installation.invalid`），不依赖 resolved 进程的 D-Bus 唯一名。
+
+| 事件 | 行为 |
+| --- | --- |
+| `systemctl restart systemd-resolved`（含软件包升级触发） | daemon 在新实例上重写并回读锚点链路设置；Mesh 名称解析恢复不超过 5 秒。实测五次重启中四次在 0.27 秒采样下无失败、`phase`／`dataPlane` 保持 `running`／`ready`；一次在 resolved 尚未响应锚点检查时短暂进入 `synchronizing`／`suspended`，Mesh 名称 0.6 秒内恢复 |
+| `systemctl stop systemd-resolved` | 系统解析与 Mesh 解析均不可用；daemon 在 0.3 秒内进入 `blocked`／`dataPlane=failed`／`lastError=dns`，按"必需组件失败即全撤"撤回整个数据面（Mesh IP 也不可达） |
+| 随后 `systemctl start systemd-resolved` | 无需 `up` 或重启服务，daemon 重新安装 netmap；Mesh 名称解析恢复不超过 10 秒（实测 1.1 秒），经 `synchronizing`／`preparing` 回到 `running`／`ready` |
 
 ### 当前限制
 
-- **systemd-resolved 重启或停止后不会自动恢复。** DNS 后端把 resolved 的 D-Bus 唯一名作为归属证明；`systemctl restart systemd-resolved`（含软件包升级触发的重启）或 `stop` 后，daemon 在 1 秒内进入 `blocked`／`dataPlane=failed`／`lastError=dns`，并按"必需组件失败即全撤"撤回整个数据面（Mesh IP 也不可达）。resolved 恢复后，`systemctl restart meshwayd`、`meshway down`／`up` 仍报归属冲突；当前只有重启机器（清空 `/run/meshway`）能恢复，此时 `install.sh --uninstall` 的 `down` 也会失败。系统解析本身不受 Meshway 影响。
-- 系统 hosts 只在 Underlay 打开时读取一次：运行中修改 `/etc/hosts` 中 Server／承载名称的映射，须重启服务才生效。
-- 每次开机归档一份 `underlay.json.stale-*`（约 4 KiB），目前不自动清理。
+- 显式文件代理后端（`resolv-conf`）只在 `/etc/resolv.conf` 的 inode 与内容仍是自己安装的版本时恢复；外部改写该文件按[归属规则](/v2/node/dataplane#系统-dns-安装)报告冲突并阻断 applied，`down` 也不覆盖外部内容，需要管理员恢复文件后再 `down`／`up`。
+- 系统 hosts 在每次 bootstrap 查询时按当时内容读取：Server／承载名称映射修改后对后续解析立即生效，已建立的连接不受影响。
 
 实测结论与时间见[验收记录](#验收记录)。
 
@@ -147,8 +158,18 @@ tag `v*` 触发 `.github/workflows/release.yml`：
 | 重启（Server 可达，三次） | 开机到 daemon 就绪 1.4–1.8 s；首个状态读取即为 `running`（缓存 netmap 已安装）；首次控制请求在网络就绪前失败并按 1 s 退避，sync 在启动后 2.5–27 s 连接；无需 `up`；旧 journal 以 `changed_namespace` 归档 |
 | 重启（Server 不可达，hosts 指向黑洞地址） | 开机到就绪 1.6 s，`running`／`ready`／applied 来自 `netmap.json`，`sync=disconnected`；Mesh 名称解析、系统解析和 `meshway ping` 均可用 |
 | `systemctl restart meshwayd` | 1.3 s 内重新 sync，DNS 归属记录跨重启保留 |
-| `systemctl restart systemd-resolved` | 系统解析不中断；Mesh 名称与 Mesh IP 立即失败且不恢复，见[当前限制](#当前限制) |
-| `systemctl stop systemd-resolved` | 系统与 Mesh 解析均失败（fail closed），数据面撤回；`start` 后不恢复，重启机器后恢复 |
+| `systemctl restart systemd-resolved`（`v0.1.0-alpha.1`） | 系统解析不中断；Mesh 名称与 Mesh IP 立即失败且不恢复（D-Bus 唯一名归属，已由下一轮替代） |
+| `systemctl stop systemd-resolved`（`v0.1.0-alpha.1`） | 系统与 Mesh 解析均失败（fail closed），数据面撤回；`start` 后不恢复，重启机器后恢复 |
 | `--uninstall`（保留身份）／`--purge` | `down` 后停止并删除服务；无 meshwayd 进程、TUN、DNS 锚点、私有 RPDB 规则或 resolved 链路，`/run/meshway`、unit 与二进制删除，`/var/lib/meshway` 与 `/etc/meshway` 保留；`--purge` 后上述目录与 unit drop-in 均不存在 |
 
-lab 对端 `meshway-lax` 位于 OrbStack Docker bridge 后（对 machine 单向 NAT），只能由 lax 拨入；该边上 lax 每 4–9 s 换一个源端口重新建立 Native UDP 通道，`meshway ping` 与 OS ping 有 60–80% 丢包。这是连接组件在此拓扑下的行为，与安装无关，另行跟踪。原始记录位于仓库私有目录 `.meshway/node-lab/s1/`。
+lab 对端 `meshway-lax` 位于 OrbStack Docker bridge 后（对 machine 单向 NAT），只能由 lax 拨入；该边上 lax 每 4–9 s 换一个源端口重新建立 Native UDP 通道，`meshway ping` 与 OS ping 有 60–80% 丢包。原因是 OrbStack 的容器→machine UDP 路径本身：不运行 Meshway 时，同一 UDP 流的第 3 个起每隔一个报文在到达 machine 前被丢弃（每个报文换新 socket 则全部到达），因此监听端的健康 Pong 被确定性丢弃，通道按[健康窗口](/v2/node/transport#邻接管理)正确退役。同一单向拓扑在 machine 内用 network namespace 与端口保持型 masquerade 重建后无此现象，见[通道稳定性](/v2/node/connectivity#channel-stability)。原始记录位于仓库私有目录 `.meshway/node-lab/s1/`、`.meshway/node-lab/f3/`。
+
+2026-10-11 第二轮（F3，分支 `f3/service-fixes`，本地构建 `v0.1.0-alpha.1-14-g5b67b257`，`install.sh --artifact` 原地升级，保留身份；machine 为常驻 `meshway-vm`，见[常驻 systemd 验收 VM](/v2/node/docker-lab#systemd-vm)）：
+
+| 场景 | 结果 |
+| --- | --- |
+| `systemctl restart systemd-resolved`（五次） | 四次无失败采样；一次 Mesh 名称解析中断 0.6 秒后恢复，期间 `synchronizing`／`suspended` |
+| `systemctl stop systemd-resolved` | 0.3 秒内 `blocked`／`dataPlane=failed`／`lastError=dns`，系统与 Mesh 解析均失败 |
+| 随后 `start` | 1.1 秒后 Mesh 名称解析恢复，`running`／`ready`，无需 `up` |
+| `SIGKILL` 后改写 `daemon.json`／`underlay-bootstrap.json` 记录的 socket device | systemd 5 秒后重启，两个 stale socket 按 inode 回收并重新绑定（新 inode），`running`／`ready`，记录更新为当前 device |
+| 单向 NAT 后的第二个 Node 经 Native UDP 拨入（machine 内 namespace，dialers 关闭的监听端） | `meshway ping -c 100` 与 OS ping 各 100/100；100 个样本同一 link ID 与源端口；拨号侧 102 秒内无通道转移 |

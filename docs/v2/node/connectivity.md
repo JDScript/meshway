@@ -155,6 +155,21 @@ Manager→SecureNode owner 的 circuit 控制／诊断帧和 lifecycle 事件另
 
 发送入口同步冻结实际 link，同批只检查一次每条选定 channel；每包原 guard 在正式 `release_batch` 和 syscall 边界检查。接收批次在当前选链表下逐 channel 检查 scope／health，跨调度让出不缓存检查结果；SecureNode 继续独立验证实际 carrier、MAC、路径和准入。合法交接保留物理 socket 时仍创建新批量 scope，旧输出不能借新选择重新绑定。空闲 Session 在提交调用内推进有界发送，只有真实 Pending 才交给原后台 owner，完成仍仅表示本机 I/O。
 
+### 通道稳定性 {#channel-stability}
+
+健康的选定通道不因观测或新鲜度刷新而重建：持续 STUN 观测、peer 事实或候选过期、同一 link 的 netmap 重签与续租、业务帧和远端 Ping 都不替换它，也不改变其源端口。只有下列情况退役或替换通道：
+
+| 原因 | 结果 |
+| --- | --- |
+| 承载失败：UDP 健康窗口内没有匹配本机新鲜 nonce 的认证 Pong，或流式连接结束 | 退役；有需求时按获准候选重新获取 |
+| 对端代际变化：transcript 中的 peer boot 改变（对端重启） | 新通道替换旧通道，数据面结束相关 circuit |
+| 授权变化：执行许可、拓扑边或承载被撤回 | 退役，不等待健康窗口 |
+| 更优的新鲜认证通道获选 | 精确替换旧 channel ID |
+
+拨号方每次获取使用新的本地 socket，因此重建后的通道在监听端表现为新的源端口；源端口持续变化说明通道在反复失效，不是刷新本身引起的。
+
+实测（2026-10-11，F3，`v0.1.0-alpha.1-14-g5b67b257`）：在常驻 systemd VM 内用 network namespace 与端口保持型 masquerade 构造只能单向拨入的 Native UDP 边（监听端 dialers 关闭），100 次 `meshway ping` 与 100 次 OS ping 全部回复，100 个样本使用同一 link ID 与源端口，拨号侧 102 秒内（跨越多个 STUN 节拍与健康探测周期）没有通道转移。同一 VM 与 OrbStack Docker 容器之间的边每 6–17 秒重建，原因是该环境的 UDP 路径在同一流上每隔一个报文丢弃一个（无 Meshway 时同样存在），健康 Pong 因而确定性丢失，属于真实承载失败；该环境不能作为 Native UDP 稳定性证据，见[常驻 systemd 验收 VM](/v2/node/docker-lab#systemd-vm)。
+
 ## 路径选择
 
 普通拨号、反向拨号、协调 UDP 打洞、中继和真正直连分别报告。双方认证成功、真实双向往返与实际承载路径一起构成切换依据；STUN 返回值或已发送探测包不构成成功证明。

@@ -262,7 +262,7 @@ exchange 适配器须在每次 connect／write／read poll 检查路由期限与
 
 多个系统上游按原顺序在同一查询 ticket／总期限内重试，按剩余上游数量分配剩余时间。网络失败或子期限到达才尝试下一项；权限失效或取消立即停止。UDP→TCP 重试绑定当前选中的上游及其独立 TCP 许可，不借用另一上游的权限。
 
-显式文件代理仅安装本机 stub；没有当前执行许可时，受其接管的普通查询也返回 SERVFAIL，恢复授权后继续，显式 down 恢复原配置。resolved 分域后端未接管的普通解析继续由原系统处理。保证范围覆盖 daemon、lease 失效、进程退出后保留的本机配置和整机重启（`/run` 中的归属记录随之清空并重新安装）；systemd-resolved 重启或停机后当前不自动恢复，实测见 [Linux 安装与系统服务](/v2/install#当前限制)；应用绕过系统 DNS 的行为不在保证范围内。
+显式文件代理仅安装本机 stub；没有当前执行许可时，受其接管的普通查询也返回 SERVFAIL，恢复授权后继续，显式 down 恢复原配置。resolved 分域后端未接管的普通解析继续由原系统处理。保证范围覆盖 daemon、lease 失效、进程退出后保留的本机配置和整机重启（`/run` 中的归属记录随之清空并重新安装），以及 systemd-resolved 重启（Mesh 名称 5 秒内恢复）和停止后再启动（停止期间 fail closed，启动后 10 秒内恢复，无需 `up`）。resolved 的归属由 namespace、Underlay DNS 锚点和锚点链路上回读一致的标记设置共同证明，不绑定 resolved 进程身份；实测见 [Linux 安装与系统服务](/v2/install#systemd-resolved-重启与停止)。文件代理被外部改写后保持冲突，不自动覆盖。应用绕过系统 DNS 的行为不在保证范围内。
 
 启动参数见[本机运行](/v2/node/runtime#启动与接入)。安装未完成时阻断整体 applied。
 

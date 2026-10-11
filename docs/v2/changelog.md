@@ -2,6 +2,17 @@
 
 按合入 main 的顺序记录工作包、提交与证据 ID。规则见[工程流程](/v2/process)；性能数字的口径见[分层性能测量](/v2/node/performance)，验收状态见[验收范围](/v2/node/validation)。
 
+## v0.1.0-alpha.2
+
+Linux 系统服务修复预发布，不承诺兼容性；wire 6、IPC 6、`meshway-netmap-1` 不变。
+
+- DNS：resolved 后端的归属改由 namespace、Underlay DNS 锚点和锚点链路上回读一致的标记设置证明，不再绑定 resolved 的 D-Bus 唯一名；`systemctl restart systemd-resolved` 后 Mesh 名称 5 秒内恢复，`stop` 期间 fail closed，`start` 后 10 秒内恢复且无需 `up`，见 [systemd-resolved 重启与停止](/v2/install#systemd-resolved-重启与停止)。已撤回 scope 的查询 owner 不服务后来发布的等价 scope（此前 Mesh 名称可能在 applied 状态下持续 SERVFAIL）；锚点自身的创建不再触发网络代际变化而中断受保护控制连接。
+- 本机运行：`SIGKILL` 后的 stale IPC／bootstrap socket 按 inode 回收，状态卷重编号（device 变化）不再阻止启动；上一 boot 的 journal 归档只保留最新三份；bootstrap 查询按当时内容读取 `/etc/hosts`。
+- 首次接入：Control 就绪即向 Engine 提交 packet key、instance 与时钟下限，首次接入的 serial 1 不再在邻接启动时因校验失败而等到 serial 2 才安装。
+- CLI：`up`／`down` 在 Node 处于 `Retrying` 时按已保存意图收敛，只有 `Blocked` 报告失败。
+- 验收：`udp/resolved` 行增加 resolved 重启阶段；NAT 行的 router 在撤权前完成 traffic 阶段内核快照，`nat+fallback/off` 不再因快照晚于撤权而偶发缺少 ESTABLISHED 退路记录。
+- 已知限制：显式 `resolv-conf` 后端在 `/etc/resolv.conf` 被外部改写后保持归属冲突，需管理员恢复，见[当前限制](/v2/install#当前限制)。
+
 ## v0.1.0-alpha.1
 
 首个 Linux 预发布，用于验证发布与安装流程，不承诺兼容性。
