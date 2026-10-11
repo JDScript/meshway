@@ -13,6 +13,9 @@ use tokio::net::{UnixListener, UnixStream};
 #[derive(Clone, Copy, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct SocketIdentity {
+    /// Kept for the record format only: the same state directory may be
+    /// mounted on a renumbered device (Docker engine or host restart). The
+    /// socket must be on the state directory's current device.
     device: u64,
     inode: u64,
 }
@@ -29,9 +32,12 @@ impl Socket {
         previous: Option<SocketIdentity>,
     ) -> Result<Self, &'static str> {
         let path = directory.path().join("control.sock");
+        let device = fs::metadata(directory.path())
+            .map_err(|_| "Cannot inspect IPC directory.")?
+            .dev();
         match fs::symlink_metadata(&path) {
             Ok(meta) => {
-                let owned = previous.is_some_and(|id| matches_file(&meta, id));
+                let owned = previous.is_some_and(|id| matches_file(&meta, id, device));
                 if !owned {
                     return Err("Existing IPC path has no matching ownership record.");
                 }
@@ -42,7 +48,7 @@ impl Socket {
                     _ => return Err("Existing IPC socket is active or cannot be verified."),
                 }
                 let current = fs::symlink_metadata(&path).map_err(|_| "IPC ownership changed.")?;
-                if !matches_file(&current, previous.ok_or("Missing IPC ownership.")?) {
+                if !matches_file(&current, previous.ok_or("Missing IPC ownership.")?, device) {
                     return Err("IPC ownership changed.");
                 }
                 fs::remove_file(&path).map_err(|_| "Cannot remove owned stale IPC socket.")?;
@@ -70,16 +76,20 @@ impl Socket {
         self.identity
     }
 }
-fn matches_file(meta: &fs::Metadata, id: SocketIdentity) -> bool {
+fn matches_file(meta: &fs::Metadata, id: SocketIdentity, device: u64) -> bool {
     meta.file_type().is_socket()
         && meta.uid() == rustix::process::geteuid().as_raw()
         && meta.mode() & 0o7777 == 0o600
-        && meta.dev() == id.device
+        && meta.dev() == device
         && meta.ino() == id.inode
 }
 impl Drop for Socket {
     fn drop(&mut self) {
-        if fs::symlink_metadata(&self.path).is_ok_and(|meta| matches_file(&meta, self.identity)) {
+        let device = fs::metadata(self._directory.path()).map(|meta| meta.dev());
+        if let Ok(device) = device
+            && fs::symlink_metadata(&self.path)
+                .is_ok_and(|meta| matches_file(&meta, self.identity, device))
+        {
             let _ = fs::remove_file(&self.path);
         }
     }

@@ -20,6 +20,9 @@ use crate::{Error, Result};
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Record {
+    /// Written for the record's format only: a filesystem may be renumbered
+    /// when the same state volume is mounted again (Docker engine or host
+    /// restart). The socket must be on the state directory's current device.
     device: u64,
     inode: u64,
 }
@@ -207,14 +210,15 @@ async fn recover(directory: &Directory, path: &std::path::Path, uid: u32) -> Res
         return Err(Error::Journal);
     }
     let record: Record = serde_json::from_slice(&bytes).map_err(|_| Error::Journal)?;
-    if !matches(&metadata, &record, uid) {
+    let device = std::fs::metadata(directory.path())?.dev();
+    if !matches(&metadata, &record, uid, device) {
         return Err(Error::Conflict);
     }
     match tokio::time::timeout(Duration::from_millis(200), UnixStream::connect(path)).await {
         Ok(Err(error)) if error.kind() == io::ErrorKind::ConnectionRefused => {}
         _ => return Err(Error::Conflict),
     }
-    if !matches(&std::fs::symlink_metadata(path)?, &record, uid) {
+    if !matches(&std::fs::symlink_metadata(path)?, &record, uid, device) {
         return Err(Error::Conflict);
     }
     std::fs::remove_file(path)?;
@@ -222,9 +226,9 @@ async fn recover(directory: &Directory, path: &std::path::Path, uid: u32) -> Res
     Ok(())
 }
 
-fn matches(metadata: &std::fs::Metadata, record: &Record, uid: u32) -> bool {
+fn matches(metadata: &std::fs::Metadata, record: &Record, uid: u32, device: u64) -> bool {
     metadata.file_type().is_socket()
-        && metadata.dev() == record.device
+        && metadata.dev() == device
         && metadata.ino() == record.inode
         && metadata.uid() == uid
         && metadata.mode() & 0o7777 == 0o600
@@ -232,8 +236,10 @@ fn matches(metadata: &std::fs::Metadata, record: &Record, uid: u32) -> bool {
 
 impl Drop for Proxy {
     fn drop(&mut self) {
-        if std::fs::symlink_metadata(&self.path)
-            .is_ok_and(|metadata| matches(&metadata, &self.record, self.uid))
+        let device = std::fs::metadata(self._directory.path()).map(|meta| meta.dev());
+        if let Ok(device) = device
+            && std::fs::symlink_metadata(&self.path)
+                .is_ok_and(|metadata| matches(&metadata, &self.record, self.uid, device))
         {
             let _ = std::fs::remove_file(&self.path);
         }
