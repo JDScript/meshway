@@ -56,6 +56,22 @@ def save(path, data):
     temporary.replace(path)
 
 
+def process_log_tail(path, lines=40, limit=16384):
+    """Bounded tail of a node process stream for a failed sample's record.
+
+    The artifact keeps only results.json; without this, a readiness failure
+    leaves no evidence of why the node exited. Profile snapshots are omitted
+    so the tail is the node's own events and its final error."""
+    if not path.exists():
+        return None
+    kept = [line for line in path.read_text(errors="replace").splitlines()
+            if '"metrics_json"' not in line][-lines:]
+    text = "\n".join(kept)
+    if len(text) > limit:
+        text = "…" + text[-limit:]
+    return text.splitlines()
+
+
 def last_profile(path):
     """Reports are cumulative: retain one final snapshot, never sum snapshots."""
     result = []
@@ -158,7 +174,13 @@ def network_counters(container):
 
 
 def network_delta(before, after):
-    return {group: {name: {field: value - before[group][name][field] for field, value in counters.items()}
+    def previous(group, name, field):
+        # The kernel's IcmpMsg row lists only non-zero types, so a type first
+        # seen after the run was zero before. Every other row is fixed-width.
+        if group == "protocols" and name == "IcmpMsg":
+            return before[group][name].get(field, 0)
+        return before[group][name][field]
+    return {group: {name: {field: value - previous(group, name, field) for field, value in counters.items()}
                     for name, counters in after[group].items() if name in before[group]}
             for group in ("protocols", "interfaces")}
 
@@ -542,7 +564,7 @@ def sample(args, metadata, output, network, image, platform, identity, mode, bat
             deadline = time.monotonic() + 15
             while not all((origin / f"{role}.stdout").read_text().strip() for role in roles):
                 if any(node.poll() is not None for node in nodes) or time.monotonic() > deadline:
-                    raise RuntimeError("node failed readiness; see process logs")
+                    raise RuntimeError("node failed readiness; see processLogs")
                 time.sleep(0.05)
             if origin != directory:
                 for role in roles:
@@ -695,11 +717,16 @@ def sample(args, metadata, output, network, image, platform, identity, mode, bat
             handle.close()
         if origin != directory:
             for role in roles:
-                path = origin / f"{role}.stderr"
-                if path.exists():
-                    shutil.copy2(path, directory / f"{role}.stderr")
+                for stream in ("stdout", "stderr"):
+                    path = origin / f"{role}.{stream}"
+                    if path.exists():
+                        shutil.copy2(path, directory / f"{role}.{stream}")
     record["nodeExitCodes"] = [node.returncode for node in nodes]
     record["reusedNodeProcesses"] = bool(resumed)
+    if record["status"] != "ok" and mode.startswith(("plain-", "secure-", "manager-")):
+        record["processLogs"] = {role: {stream: process_log_tail(directory / f"{role}.{stream}")
+                                        for stream in ("stdout", "stderr")}
+                                 for role in roles}
     if mode.startswith(("plain-", "secure-", "manager-")):
         record["capabilitiesFinal"] = {}
         for role in roles:

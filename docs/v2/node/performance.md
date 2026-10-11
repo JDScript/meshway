@@ -157,7 +157,9 @@ iperf TCP 控制流与 UDP 负载使用精确 5201 demand，启动前建立 Nois
 
 ### L4 Manager 边界
 
-Manager 复用上述驱动与静态签发，经过正式 `Host::open/install`、capture／epoch 和受保护 SocketFactory；data scope 匹配真实安装，不借 bootstrap 绕过。固定 Native UDP endpoint 经真实编译，执行邻接认证、选择、健康与 scope；发送走 Manager，接收走真实事件队列，持续更新实际 carrier，旧输出不换绑。各节点使用 Host capture，R 保有 capture 但不读本机业务／交付明文（`captureTun` 有值，业务 `tun=null`）。不含 Server／Control I/O、自动 demand、DNS、安装协调，这些属于 L5。
+Manager 复用上述驱动与静态签发，经过正式 `Host::open/install`、capture 和受保护 SocketFactory；data scope 匹配真实安装，不借 bootstrap 绕过。固定 Native UDP endpoint 经真实编译，执行邻接认证、选择、健康与 scope；发送走 Manager，接收走真实事件队列，持续更新实际 carrier，旧输出不换绑。各节点使用 Host capture，R 保有 capture 但不读本机业务／交付明文（`captureTun` 有值，业务 `tun=null`）。不含 Server／Control I/O、自动 demand、DNS、安装协调，这些属于 L5。
+
+fixture 的 topology 把被测路径的每条边（A–B 或 A–R、R–B）声明为 `keepalive: true`，Manager 按[常驻规则](/v2/configuration-reference/topology#邻接的建立与常驻)在启动时建立并保持邻接；fixture 在全部邻接出现后才发起 circuit 握手。daemon 对双向可拨边的首包 interest／中继 hint 按需获取不在本层测量，邻接获取延迟不计入任何样本。
 
 ### 内核 WireGuard 参照
 
@@ -174,6 +176,7 @@ WireGuard relay 解密 IP、routing 后再加密；Meshway relay 不解密业务
 | `results.json`／`bin/` | schemaVersion、revision／dirty、源码 digest 首尾、工具链／平台／flags、二进制 SHA256、参数、不可变二进制与逐次样本 |
 | `summary.md` | 成功样本中位数，按 mode／batch／profile／traffic；L2→L3、secure−WG 同组差值；失败数量、quick 标记 |
 | `<sample>/{a,r,b}.stdout/.stderr` | readiness、日志、原始 profile；raw/WG 无 node 进程 |
+| `failure`／`nodeExitCodes`／`processLogs` | 失败样本的原因、各 node 退出码，以及每个角色 stdout／stderr 的有界尾部（至多 40 行／16 KiB，去掉 profile 快照）；仅失败样本有 `processLogs`，使只收 `results.json` 的 artifact 也保留 node 自己的错误；成功样本不附带日志 |
 | `iperf-client.json`／`iperf-server.json` | 原始应用结果，旁边 stderr 保留失败原因 |
 | `goodputMbps` | 接收端实际应用 payload，不含封装；iperf 排除 warmup 区间 |
 | `packetsPerSecond`／`lostPercent` | UDP 实交付报文/s／丢包；TCP pps 为 null，不按假定包长倒算 |
