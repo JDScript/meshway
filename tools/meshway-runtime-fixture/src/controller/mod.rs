@@ -718,8 +718,8 @@ async fn coordinate(
             matches!(listener.declaration(), Listener::NativeUdp(listener) if listener.endpoints.is_empty())) {
             return Err("reported-only fixture must not configure an endpoint".into());
         }
-        let extra_tcp = (cli.traversal_fallback && role == Role::R)
-            || (cli.on_demand_nat() && role == Role::A);
+        let extra_tcp =
+            (cli.traversal_fallback && role == Role::R) || (cli.on_demand_nat() && role == Role::A);
         if cli.traversal == crate::TraversalMode::Nat
             && (node.listeners.len() != if extra_tcp { 2 } else { 1 }
                 || !node.listeners.iter().all(|(key, listener)| {

@@ -495,11 +495,10 @@ fn typed_install_fields_decode_without_interpreting_legacy_debug_fields() {
 fn an_on_demand_edge_requires_the_needing_end_to_prepare_and_the_relay_only_to_accept() {
     let mut fixture = Fixture::new();
     assert!(fixture.verify_with(true), "A prepared A-R, R accepted it");
-    let Some(Event::Prepare { request, response }) = fixture
-        .observations
-        .events
-        .iter()
-        .find(|event| matches!(event, Event::Prepare { request, .. } if request.peer_id == id(2)))
+    let Some(Event::Prepare { request, response }) =
+        fixture.observations.events.iter().find(
+            |event| matches!(event, Event::Prepare { request, .. } if request.peer_id == id(2)),
+        )
     else {
         panic!("A-R offer")
     };
@@ -511,6 +510,9 @@ fn an_on_demand_edge_requires_the_needing_end_to_prepare_and_the_relay_only_to_a
         request: own,
         response,
     });
-    assert!(fixture.verify(), "the base rows do not constrain who prepares");
+    assert!(
+        fixture.verify(),
+        "the base rows do not constrain who prepares"
+    );
     assert!(!fixture.verify_with(true), "R had no need of its own");
 }

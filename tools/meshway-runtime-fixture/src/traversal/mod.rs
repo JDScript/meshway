@@ -308,8 +308,13 @@ impl Audit {
         }
         let (bytes, continuity) = {
             let observations = self.0.lock().map_err(|_| "traversal audit poisoned")?;
-            let (offers, continuity) =
-                verification::verify(&observations, &reports, &observer, nodes, cli.on_demand_nat())?;
+            let (offers, continuity) = verification::verify(
+                &observations,
+                &reports,
+                &observer,
+                nodes,
+                cli.on_demand_nat(),
+            )?;
             (
                 serde_json::to_vec_pretty(&offers)?,
                 serde_json::to_vec_pretty(&continuity)?,
