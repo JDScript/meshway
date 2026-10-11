@@ -91,6 +91,7 @@
   "problem_configuration_invalid": "The configuration did not pass validation.",
   "problem_state_conflict": "The state has changed. Refresh and try again.",
   "problem_node_identity_rejected": "This node's identity or key is no longer valid.",
+  "problem_netmap_withdrawn": "The server withdrew this node's configuration.",
   "problem_state_limit": "The limit has been reached.",
   "problem_observation_limit": "The observation limit has been reached.",
   "problem_invalid_current_password": "The current password is incorrect.",

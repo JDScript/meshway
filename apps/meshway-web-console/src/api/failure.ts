@@ -14,7 +14,6 @@ type ProblemCode = Problem["code"]
 
 const problemMessage: Record<ProblemCode, () => string> = {
   invalid_credentials: () => m.problem_invalid_credentials(),
-  netmap_withdrawn: () => m.problem_node_identity_rejected(),
   invalid_session: () => m.problem_invalid_session(),
   registration_disabled: () => m.problem_registration_disabled(),
   email_taken: () => m.problem_email_taken(),
@@ -41,6 +40,7 @@ const problemMessage: Record<ProblemCode, () => string> = {
   binding_conflict: () => m.problem_binding_conflict(),
   // A Node's own calls (its identity, its configuration receipts); never a console's.
   node_identity_rejected: () => m.problem_node_identity_rejected(),
+  netmap_withdrawn: () => m.problem_netmap_withdrawn(),
   receipt_instance_mismatch: () => m.problem_state_conflict(),
   receipt_target_mismatch: () => m.problem_state_conflict(),
   receipt_netmap_superseded: () => m.problem_state_conflict(),

@@ -1,4 +1,5 @@
 import type {
+  AdjacencyStatus,
   ListenerView,
   NetworkSummary,
   NodeInventoryResponse,
@@ -119,6 +120,14 @@ export function NodeConnections({
 
   const connections = nodeConnections(state.data?.links ?? [], nodeId)
   const channels = nodeLinks(state.data, nodeId)
+  // Admitted peers it has no channel with: idle on demand, or unreachable.
+  const unconnected = Object.entries(full?.adjacencies ?? {})
+    .filter(([peer]) => !connections.some((item) => item.peerId === peer))
+    .sort(
+      ([a, x], [b, y]) =>
+        Number(y === "unreachable") - Number(x === "unreachable") ||
+        nameOf(a).localeCompare(nameOf(b))
+    )
 
   return (
     <div className="flex flex-col gap-7">
@@ -132,7 +141,9 @@ export function NodeConnections({
 
       <Card
         title={m.nodes_neighbours()}
-        aside={view?.report ? connections.length : undefined}
+        aside={
+          view?.report ? connections.length + unconnected.length : undefined
+        }
       >
         {state.data === undefined && !state.isError ? (
           <Skeleton className="h-14 w-full rounded-tile" />
@@ -144,7 +155,7 @@ export function NodeConnections({
           <EmptyState icon={RadioTowerIcon} title={m.nodes_state_absent()}>
             {m.nodes_neighbours_unreported()}
           </EmptyState>
-        ) : connections.length === 0 ? (
+        ) : connections.length + unconnected.length === 0 ? (
           <EmptyState
             icon={CableIcon}
             title={m.nodes_neighbours_none()}
@@ -196,6 +207,14 @@ export function NodeConnections({
                   })
                 }
                 onTopology={() => toTopology(connection.peerId)}
+              />
+            ))}
+            {unconnected.map(([peer, status]) => (
+              <Unconnected
+                key={peer}
+                name={nameOf(peer)}
+                status={status}
+                onTopology={() => toTopology(peer)}
               />
             ))}
           </Rows>
@@ -292,6 +311,45 @@ export function NodeConnections({
         </Disclosure>
       ) : null}
     </div>
+  )
+}
+
+/** An admitted neighbour with no channel now, as the node reports it; opens the link. */
+function Unconnected({
+  name,
+  status,
+  onTopology,
+}: {
+  name: string
+  status: AdjacencyStatus
+  onTopology: () => void
+}) {
+  return (
+    <button
+      type="button"
+      title={m.nodes_link_in_topology()}
+      onClick={onTopology}
+      className="flex min-h-14 w-full items-center gap-3 px-4 py-2.5 text-left outline-none hover:bg-fill-hover focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+    >
+      <StatusDot
+        color={
+          status === "unreachable" ? STATUS_COLOR.failed : STATUS_COLOR.unknown
+        }
+        shape="hollow"
+      />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-row font-medium">{name}</span>
+        <span className="block truncate text-meta text-muted-foreground">
+          {status === "unreachable"
+            ? m.nodes_neighbour_unreachable()
+            : m.nodes_neighbour_idle()}
+        </span>
+      </span>
+      <ArrowUpRightIcon
+        aria-hidden="true"
+        className="size-4 shrink-0 text-muted-foreground"
+      />
+    </button>
   )
 }
 

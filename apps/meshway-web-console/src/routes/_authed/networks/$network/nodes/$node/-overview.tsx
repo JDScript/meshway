@@ -12,11 +12,16 @@ import { CopyButton } from "@/components/chrome/copy-button"
 import { EmptyLine } from "@/components/chrome/section"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useNow } from "@/hooks/use-now"
-import { agoTime } from "@/lib/format"
+import { agoTime, dateTime } from "@/lib/format"
 import { asnText, geoText, NO_ADDRESSES, nodeAddresses } from "@/lib/geo"
 import { millis } from "@/lib/history/format"
 import { nodeConnections } from "@/lib/nodes/connections"
-import { configurationSync, fullReport, stateOf } from "@/lib/nodes/state-model"
+import {
+  configurationSync,
+  fullReport,
+  isPast,
+  stateOf,
+} from "@/lib/nodes/state-model"
 import {
   locationAbsentLabel,
   netmapText,
@@ -84,6 +89,18 @@ export function NodeOverview({
   const configuredName = config?.nodes[node.id]?.hostname
   const dnsName =
     configuredName && config ? `${configuredName}.${config.dns.domain}` : null
+
+  // Offline, it runs what it last took until the lease the server signed ends.
+  const lease = node.lease
+  const leaseDetail =
+    view && !online && lease
+      ? (isPast(lease.expiresAt, now)
+          ? m.nodes_tile_config_lease_over
+          : m.nodes_tile_config_lease)({
+          at: dateTime(lease.expiresAt) ?? lease.expiresAt,
+          netmap: netmapText(lease.netmap),
+        })
+      : null
 
   const syncTile = (() => {
     switch (sync.kind) {
@@ -200,7 +217,7 @@ export function NodeOverview({
           loading={stateLoading}
           value={syncTile.value}
           tone={syncTile.tone}
-          detail={stateFailed ? stateFailure : syncTile.detail}
+          detail={stateFailed ? stateFailure : (leaseDetail ?? syncTile.detail)}
           onClick={() => onTab("diagnostics")}
         />
         <SummaryTile

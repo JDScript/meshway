@@ -284,11 +284,7 @@ function Body({
               title={m.nodes_evidence()}
               summary={m.nodes_evidence_summary()}
             >
-              <NodeDiagnostics
-                nodeId={node.id}
-                desired={node.netmap}
-                state={state}
-              />
+              <NodeDiagnostics node={node} state={state} />
             </Disclosure>
           </div>
         </Pane>

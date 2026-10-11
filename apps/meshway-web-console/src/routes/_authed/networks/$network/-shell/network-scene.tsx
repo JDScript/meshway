@@ -30,6 +30,8 @@ import {
   mapNodes,
   mergeRecentLinks,
   overviewScene,
+  pairAdjacencies,
+  reportedAdjacencies,
   type MapConnection,
 } from "@/lib/network-map"
 import {
@@ -180,12 +182,19 @@ function useSceneModel(networkId: string) {
   const waitingForConfiguration =
     canRead && !configured && !isDenied(configuration.error)
   /** The topology's edges: declared pairs with their runtime state. */
+  const adjacencies = useMemo(
+    () =>
+      pairAdjacencies(
+        reportedAdjacencies(stateBehind ? undefined : runtimeState)
+      ),
+    [stateBehind, runtimeState]
+  )
   const edges = useMemo(
     () =>
       waitingForConfiguration
         ? []
-        : mapConnections(links ?? [], historyLinks, declared),
-    [waitingForConfiguration, links, historyLinks, declared]
+        : mapConnections(links ?? [], historyLinks, declared, adjacencies),
+    [waitingForConfiguration, links, historyLinks, declared, adjacencies]
   )
   /** What the nodes report now: connections, with history pairs apart. */
   const connections = useMemo(
@@ -230,6 +239,7 @@ function useSceneModel(networkId: string) {
             transports: [],
             inUse: false,
             channels: [],
+            adjacency: null,
           }
       ),
     ]

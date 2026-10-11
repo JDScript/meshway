@@ -161,19 +161,27 @@ its generated client only, and only what the controller delivers:
     node) does not make it behind, and new content at the same revision (a
     key rotated) does. Online and behind, it is syncing; offline, behind.
     Without the server's netmap (unread, or none held) it says what the node
-    last applied.
+    last applied. Offline, the tile says until when the node can run the
+    netmap its last lease covers (or that the lease has ended).
   - connections (`tab=transport`): one row per directly adjacent peer, with
     current reported transport and connection state. Multiple channel IDs
     between the same pair do not add rows or connected peers. Expansion
     preserves each channel's phase, evidence, acquisition, business dependencies
-    and start time, with the action to open the peer.
+    and start time, with the action to open the peer. Admitted peers the
+    node reports no channel with (`adjacencies`) follow, unreachable first:
+    idle (on demand, nothing to carry) or unreachable (it tried and could
+    not), each opening the link.
   - runtime details (`tab=diagnostics`, under Diagnostics), what the status rests on: the report's times (received,
     recorded by the node, valid until, last sign-in), instance and report
     number; the inventory's `netmap` (the configuration the server sends
     the node: revision, serial `#n`, which grows only when its content
     changes, and a short digest), never itself saved or applied, said
     against the report's saved and applied (applied, only saved, another
-    one, no report); saved / applied / in progress, each with its serial,
+    one, no report), or why there is none (`netmapUnavailable`: not sent
+    yet, withdrawn, over the size limit with its size); the lease it runs
+    under (ends, issued, and its netmap when that is not the current one)
+    and the last sync, both as this server process saw them (none yet after
+    it restarts); saved / applied / in progress, each with its serial,
     applied marked when it is not the server's; what the location rests on (address, source,
     observed, valid until) and where geojs places it; reported end-to-end paths,
     when present, retain each reporter's evidence.
@@ -610,7 +618,11 @@ states stay distinguishable by stroke and colour.
   every edge has its caption and flow; otherwise only what is pointed at or
   selected.
 - Edges are dashed until connected and solid in the link's colour while
-  connected, with the carrier in use as a caption (or the configured
+  connected; without a channel, an edge says what its ends report
+  (`NodeState.adjacencies`): idle (on demand, nothing to carry) or
+  unreachable (degraded colour; from either end wins, and the link panel
+  names which end cannot reach the other), else 未连接. With the carrier in
+  use as a caption (or the configured
   restriction, "仅 …", when not connected); an edge on the default order has
   no caption. A link carrying traffic (`inUse`, not a byte count) glows;
   moving dots run only along directions `StateView.paths` reports, never

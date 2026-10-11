@@ -51,7 +51,7 @@
 - **加入链接与重置链接**：兑换前可以用 `inspect` 预览，不会消费；最终兑换时重新校验。
 - **实时观察**：`auto` 模式由 Controller 计算候选、执行端选择路径；`explicit` 模式固定路径。console 只在页面可见时续租。
 
-## 接入状态（契约 `8d50e873`）
+## 接入状态（契约 `e4b1fd8b`）
 
 console 已接入 `/api/v1` 下全部 Console 操作：
 
@@ -70,9 +70,10 @@ console 已接入 `/api/v1` 下全部 Console 操作：
 - 每个错误响应的 `description` 列出该状态下可能的 problem code，站点的 API 参考随状态码显示；
 - 站点的委托登录（`createDelegation`）：同意页 `/authorize-site`，授权后跳回站点地址并带上 `code` 和站点的 `state`；会话列表按 `delegationClient` 标出授权给哪个站点。站点用 `exchangeDelegation` 换到 1 小时的会话，在 API 参考里试用（只放内存，写操作先确认）。8420 以 `--delegation-client docs=http://localhost:3002` 启动，在 8420 上走通了授权、读、写操作取消后不发送和确认后发送、会话列表、结束试用；委托会话改邮箱等被拒（403）没有单独验证；
 - 观测历史；
-- 主动路径观察。
+- 主动路径观察；
+- 节点的 netmap：服务端为它保存的当前 netmap（`netmap`）与节点报告的已应用 netmap 比对（不看网络版本）；没有时按 `netmapUnavailable` 说明原因（尚未下发、已撤回、超限及大小）；租约（`lease`）与最近同步（`lastSyncAt`），离线节点据此说明可运行到何时；没有通道的组网边与邻居按 `NodeState.adjacencies` 显示空闲或连不上。
 
-8420 已由后端升级到 N1 netmap（旧库在 `.meshway/backups/server-20261010T144459Z-cb2b03abb8c8/`）。console 按 `8d50e873` 的 SDK 编译和测试通过；在 N1 服务上的实际运行核对，等 8420 恢复后进行。
+8420 运行 main `e4b1fd8b`（N1 netmap 与 F2），console 在其上核对过节点详情、拓扑和组网规则表单。
 
 撤销已失效的加入链接、接入密钥，以及重复吊销节点密钥时的 409 `state_conflict`，console 提示"这次没有撤销"并重读列表。
 
@@ -155,9 +156,6 @@ console 已接入 `/api/v1` 下全部 Console 操作：
 - **`edge_transport_unavailable` 一次只报一条**：同一条组网规则让几条 Mesh 路由都走不通时，validate 只返回其中一条路由和一条边（8420 上 3 条必经路由都经过 `transports: []` 的边，只报了 `/routing/mesh/1` 的 lax–nyc）。改完一条再检查才看到下一条；如果是有意合并，请在 problems.md 里写明。
 - **阻断规则带 `transports`**：服务端照收，但阻断总是阻断整条边，这个字段不起作用。建议 validate 给一条 warning 或直接拒绝；console 现在只在规则下注明"阻断规则的承载设置不起作用"，把规则改成阻断时去掉它。
 - **业务流量期间 `StateView.paths` 为空**：8420 r5 上从 lax 在 TUN 内持续 ping nyc 的 Mesh 地址（90／90 及 60／60 成功），同期 lax–nyc 的 link 为 `authenticated`／`matched`／`inUse: true`，但 `paths: []`。拓扑的流动方向只取 `paths` 的节点顺序，不从 links 推断，所以现在只能显示"承载业务"的无方向效果。请确认节点是否应上报业务 PathState，或说明 `inUse` 在 `paths` 为空时的含义。
-- **节点配置的租约与同步时间**：Server 给每份 netmap 签发的租约（`issuedAt`、`expiresAt`）和节点最近一次 `sync` 的时间只出现在 Node 用的 `SyncResponse` 和节点本机 IPC 里，用户接口（`NodeInventoryView`、State）都没有。console 因此不能说一个离线节点还能按上次的配置运行到何时，节点详情也不显示最近同步时间。请在用户接口上给出：服务端为节点签发的当前租约，和它最近一次 sync 的时间（服务端收到为准）。
-- **`netmap` 为 null 的原因**：`NodeInventoryView.netmap` 为 null 时分不清“还没有下发过”和“超出 8 MiB 后被移出可信库存”（密钥轮换、能力或方案变化可以让已存在的节点超限）；console 现在只能都说“服务端还没有给这个节点下发配置”。请给出不可用的原因（至少区分超限），超限时附 `bytes`、`maxBytes`。
-- **按需连接的空闲与失败**：组网边默认按需建立、空闲 2 分钟关闭后，State 里一条没有通道的边分不清是“空闲已关闭”还是“连不上”。console 现在对两者都显示“未连接”。如果节点能上报最近一次建立失败（或空闲关闭）的事实，请加到 link 上。
 - **按目的地逐个规划**：拓扑选中节点后，对每个其他节点各调一次 `evaluateConfiguration`（console 最多同时 4 个，按 revision 缓存）。节点多时请求数随节点数线性增长；如果服务端能一次返回"从一个来源到所有节点"的主路径，请给批量形式；没有也能用，只是大网络较慢。
 
 ### 需要真实 Node 复核

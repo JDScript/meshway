@@ -11,7 +11,12 @@ import {
   configurationTopology,
   TOPOLOGY_NODE_LIMIT,
 } from "@/lib/configuration/topology-view"
-import { mapConnections, mapNodes, overviewScene } from "@/lib/network-map"
+import {
+  mapConnections,
+  mapNodes,
+  overviewScene,
+  pairAdjacencies,
+} from "@/lib/network-map"
 
 const A = "11111111-1111-4111-8111-111111111111"
 const B = "22222222-2222-4222-8222-222222222222"
@@ -148,6 +153,29 @@ test("configuration edges and nodes survive absent runtime reports and missing l
     ["a", "b", "c"]
   )
   assert.equal(overviewScene(nodes, edges).nodes.length, 3)
+})
+
+test("an edge without a channel says what its ends report: idle, or unreachable from either", () => {
+  const declared = configurationTopology(config())
+  const adjacencies = pairAdjacencies([
+    [A, { [B]: "idle", [C]: "idle" }],
+    [B, { [A]: "idle", [C]: "unreachable" }],
+    [C, { [B]: "idle" }],
+  ])
+  const edges = mapConnections([], null, declared, adjacencies)
+  const of = (a: string, b: string) =>
+    edges.find((edge) => edge.a === a && edge.b === b)
+  assert.deepEqual(of(A, B)?.adjacency, { status: "idle", by: [A, B] })
+  assert.equal(of(A, B)?.look, "allowed")
+  // Unreachable from one end wins over idle from the other.
+  assert.deepEqual(of(B, C)?.adjacency, { status: "unreachable", by: [B] })
+  assert.equal(of(B, C)?.look, "failed")
+  // One end's report is enough.
+  assert.deepEqual(of(A, C)?.adjacency, { status: "idle", by: [A] })
+  assert.equal(
+    mapConnections([], null, declared, new Map())[0]?.adjacency,
+    null
+  )
 })
 
 test("runtime channels annotate declared edges and cannot reintroduce a blocked edge", () => {

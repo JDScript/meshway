@@ -47,6 +47,7 @@ const edge = (a: string, b: string): MapConnection => ({
   transports: [],
   inUse: false,
   channels: [],
+  adjacency: null,
 })
 
 test("nodes are ordered by longitude, unplaced ones after by name", () => {

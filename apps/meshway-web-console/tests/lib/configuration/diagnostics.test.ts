@@ -77,6 +77,13 @@ test("a node's configuration over the limit says by how much", () => {
   )
 })
 
+test("a network over the compile budget says what to reduce", () => {
+  assert.match(
+    issueText(issue("netmap_budget", {}, ""), node),
+    /节点太多，或某条边可用的承载组合太多/
+  )
+})
+
 test("reasons are worded when known, and left out when not", () => {
   assert.equal(
     issueText(issue("invalid_transport", { reason: "websocket_alpn" }), node),

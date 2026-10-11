@@ -4,6 +4,7 @@ import type {
   ResourceProblem,
 } from "@meshway/control-client"
 
+import { byteSize } from "@/lib/format"
 import { m } from "@/paraglide/messages.js"
 import { getLocale } from "@/paraglide/runtime.js"
 
@@ -63,28 +64,23 @@ export const nodeNamer =
     return (Object.hasOwn(nodes, id) ? nodes[id]?.hostname : undefined) ?? value
   }
 
-const MIB = 1024 * 1024
-
-function sizeText(value: string | undefined): string {
+function sizeText(value: string | number | undefined): string {
   const bytes = Number(value)
-  if (!Number.isFinite(bytes)) return value ?? "?"
-  return bytes >= MIB
-    ? `${Math.round((bytes / MIB) * 10) / 10} MiB`
-    : `${Math.round((bytes / 1024) * 10) / 10} KiB`
+  return Number.isFinite(bytes) ? byteSize(bytes) : String(value ?? "?")
 }
 
 /** Two sizes said so they differ: in bytes when rounding would make them equal. */
-function sizesApart(
-  value: string | undefined,
-  limit: string | undefined
+export function sizesApart(
+  value: string | number | undefined,
+  limit: string | number | undefined
 ): [string, string] {
   const [size, max] = [sizeText(value), sizeText(limit)]
   if (size !== max) return [size, max]
-  const bytes = (text: string | undefined) => {
+  const bytes = (text: string | number | undefined) => {
     const count = Number(text)
     return Number.isFinite(count)
       ? m.configuration_bytes({ count: count.toLocaleString(getLocale()) })
-      : (text ?? "?")
+      : String(text ?? "?")
   }
   return [bytes(value), bytes(limit)]
 }

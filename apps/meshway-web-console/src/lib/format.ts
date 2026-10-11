@@ -70,3 +70,11 @@ export function calendarDate(at: Instant): string | null {
 
 /** An ID's first eight characters, where nothing names what it identifies. */
 export const shortId = (id: string) => id.slice(0, 8)
+
+const MIB = 1024 * 1024
+
+/** A size in KiB or MiB, to one decimal. */
+export const byteSize = (bytes: number) =>
+  bytes >= MIB
+    ? `${Math.round((bytes / MIB) * 10) / 10} MiB`
+    : `${Math.round((bytes / 1024) * 10) / 10} KiB`

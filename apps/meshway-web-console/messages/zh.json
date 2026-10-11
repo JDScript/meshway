@@ -91,6 +91,7 @@
   "problem_configuration_invalid": "配置未通过校验。",
   "problem_state_conflict": "状态已变化，请刷新后再试。",
   "problem_node_identity_rejected": "这个节点的身份或密钥已经失效。",
+  "problem_netmap_withdrawn": "服务端已撤回这个节点的配置。",
   "problem_state_limit": "已达到上限。",
   "problem_observation_limit": "观察任务已达到上限。",
   "problem_invalid_current_password": "当前密码不正确。",

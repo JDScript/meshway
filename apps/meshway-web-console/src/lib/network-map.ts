@@ -1,4 +1,5 @@
 import type {
+  AdjacencyStatus,
   AggregatedLink,
   LocationAbsentReason,
   NodeInventoryView,
@@ -274,7 +275,46 @@ export type MapConnection = {
   /** The pair's current channel records, for details. */
   channels: readonly AggregatedLink[]
   declaration?: DeclaredEdge
+  /** No channel: what its ends report of the admitted adjacency; null when neither does. */
+  adjacency: PairAdjacency | null
 }
+
+/**
+ * An admitted adjacency without a channel, as its ends report it: idle (on
+ * demand, nothing to carry) or unreachable (it tried and could not), with
+ * the ends that say so. Unreachable from either end wins.
+ */
+export type PairAdjacency = { status: AdjacencyStatus; by: string[] }
+
+/** The pairs' adjacencies from what each node reports of its own. */
+export function pairAdjacencies(
+  reports: Iterable<
+    readonly [string, Readonly<Record<string, AdjacencyStatus>>]
+  >
+): Map<string, PairAdjacency> {
+  const pairs = new Map<string, PairAdjacency>()
+  for (const [id, adjacencies] of reports) {
+    for (const [peer, status] of Object.entries(adjacencies)) {
+      const key = id < peer ? `${id}|${peer}` : `${peer}|${id}`
+      const was = pairs.get(key)
+      if (!was || (status === "unreachable" && was.status === "idle"))
+        pairs.set(key, { status, by: [id] })
+      else if (was.status === status) was.by.push(id)
+    }
+  }
+  for (const pair of pairs.values()) pair.by.sort()
+  return pairs
+}
+
+/** Each node's own adjacencies, from the State's full reports (only those carry them). */
+export const reportedAdjacencies = (
+  state: Pick<StateView, "nodes"> | undefined
+) =>
+  Object.entries(state?.nodes ?? {}).flatMap(([id, view]) =>
+    view.report?.view === "full"
+      ? [[id, view.report.report.adjacencies] as const]
+      : []
+  )
 
 const inUseOf = (connection: NeighborConnection | undefined) =>
   connection?.status === "connected" &&
@@ -289,7 +329,8 @@ const inUseOf = (connection: NeighborConnection | undefined) =>
 export function mapConnections(
   links: readonly AggregatedLink[],
   history: readonly HistoryLink[] | null,
-  declared?: DeclaredTopology
+  declared?: DeclaredTopology,
+  adjacencies: ReadonlyMap<string, PairAdjacency> = new Map()
 ): MapConnection[] {
   const current = neighborConnections(links)
   if (declared) {
@@ -303,11 +344,14 @@ export function mapConnections(
       const connection = byPair.get(edge.key)
       const unavailable = edge.transports?.length === 0
       const historical = !connection ? past.get(edge.key) : undefined
+      const adjacency =
+        connection || unavailable ? null : (adjacencies.get(edge.key) ?? null)
       return {
         key: edge.key,
         a: edge.a,
         b: edge.b,
         declaration: edge,
+        adjacency,
         inUse: !unavailable && inUseOf(connection),
         channels: connection?.channels ?? [],
         status: unavailable
@@ -317,9 +361,11 @@ export function mapConnections(
           ? "closed"
           : connection
             ? connectionLook(connection)
-            : historical
-              ? "history"
-              : "allowed",
+            : adjacency?.status === "unreachable"
+              ? "failed"
+              : historical
+                ? "history"
+                : "allowed",
         transports: unavailable
           ? []
           : (connection?.transports ??
@@ -344,6 +390,7 @@ export function mapConnections(
       look: connectionLook(connection),
       inUse: inUseOf(connection),
       channels: connection.channels,
+      adjacency: null,
     })),
     ...groupNodePairs(history ?? [])
       .filter((pair) => !present.has(pair.key))
@@ -355,6 +402,7 @@ export function mapConnections(
         look: "history" as const,
         inUse: false,
         channels: [],
+        adjacency: null,
         transports: [
           ...new Set(pair.channels.map((channel) => channel.transport)),
         ].sort(),

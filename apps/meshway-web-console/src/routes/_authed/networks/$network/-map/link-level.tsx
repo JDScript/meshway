@@ -17,6 +17,7 @@ import { agoTime, dateTime } from "@/lib/format"
 import { millis } from "@/lib/history/format"
 import { bucketSeries } from "@/lib/history/series"
 import { historyWindow } from "@/lib/history/window"
+import type { PairAdjacency } from "@/lib/network-map"
 import {
   evidenceLabel,
   linkPhaseLabel,
@@ -37,6 +38,24 @@ import {
 import type { LinkEnds, MapSelection } from "./selection"
 
 const pairKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`)
+
+/** Why two ends have no channel, as they report it. */
+function adjacencyText(
+  adjacency: PairAdjacency | null,
+  a: string,
+  b: string,
+  nameOf: (id: string) => string
+): string {
+  if (adjacency === null) return m.map_link_no_channel()
+  if (adjacency.status === "idle") return m.map_link_no_channel_idle()
+  const [from] = adjacency.by
+  if (adjacency.by.length > 1 || from === undefined)
+    return m.map_link_no_channel_unreachable_both()
+  return m.map_link_no_channel_unreachable({
+    from: nameOf(from),
+    to: nameOf(from === a ? b : a),
+  })
+}
 
 /**
  * One link between two nodes: what they report about it now, how fast the
@@ -111,7 +130,7 @@ export function LinkLevel({
             </p>
           ) : channels.length === 0 ? (
             <p className="px-4 text-row text-muted-foreground">
-              {m.map_link_no_channel()}
+              {adjacencyText(edge?.adjacency ?? null, a, b, scene.nameOf)}
             </p>
           ) : (
             channels.map((channel) => (

@@ -11,7 +11,11 @@ export const orderText = (transports: readonly string[]) =>
 export function linkStateText(connection: MapConnection | null): string {
   switch (connection?.status ?? "allowed") {
     case "allowed":
-      return m.map_link_idle()
+      return connection?.adjacency?.status === "idle"
+        ? m.map_link_adjacency_idle()
+        : connection?.adjacency?.status === "unreachable"
+          ? m.map_link_adjacency_unreachable()
+          : m.map_link_idle()
     case "unavailable":
       return m.map_link_no_carrier()
     case "history":

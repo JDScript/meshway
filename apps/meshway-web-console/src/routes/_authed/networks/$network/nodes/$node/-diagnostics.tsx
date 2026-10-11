@@ -2,6 +2,8 @@ import type {
   ConfigurationState,
   DerivedNodeState,
   NetmapRef,
+  NetmapUnavailable,
+  NodeInventoryView,
   NodeStateView,
   StateView,
 } from "@meshway/control-client"
@@ -15,7 +17,8 @@ import { EmptyLine, Section } from "@/components/chrome/section"
 import { Tile } from "@/components/chrome/tile"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useNow } from "@/hooks/use-now"
-import { agoTime, dateTime, relativeTime } from "@/lib/format"
+import { sizesApart } from "@/lib/configuration/diagnostics"
+import { agoTime, byteSize, dateTime, relativeTime } from "@/lib/format"
 import {
   geoText,
   LOCATION_SOURCE,
@@ -29,12 +32,14 @@ import {
   isPast,
   nodePaths,
   reportOf,
+  sameNetmap,
   stateOf,
   type DesiredMatch,
 } from "@/lib/nodes/state-model"
 import {
   applyPhaseLabel,
   locationAbsentLabel,
+  netmapText,
   pathEvidenceLabel,
   problemText,
   reporterRoleLabel,
@@ -42,6 +47,11 @@ import {
 import { m } from "@/paraglide/messages.js"
 
 const GRID = "grid grid-cols-2 gap-2 xl:grid-cols-4"
+
+type AssignedNode = Pick<
+  NodeInventoryView,
+  "netmap" | "netmapUnavailable" | "lease" | "lastSyncAt"
+>
 
 function When({
   at,
@@ -71,15 +81,14 @@ function When({
  * applied, and what the location was derived from.
  */
 export function NodeDiagnostics({
-  nodeId,
-  desired,
+  node,
   state,
 }: {
-  nodeId: string
-  /** The server's netmap for the node (the inventory's). */
-  desired: NetmapRef | null
+  /** The inventory's node: the server's netmap for it, its lease and last sync. */
+  node: AssignedNode & { id: string }
   state: UseQueryResult<StateView>
 }) {
+  const nodeId = node.id
   const now = useNow(1_000)
   if (state.data === undefined)
     return (
@@ -100,7 +109,7 @@ export function NodeDiagnostics({
         <Section title={m.nodes_report()}>
           <EmptyLine>{m.nodes_state_absent()}</EmptyLine>
         </Section>
-        <Assigned desired={desired} reported={null} />
+        <Assigned node={node} reported={null} now={now} />
       </div>
     )
   const report = reportOf(view)
@@ -114,11 +123,11 @@ export function NodeDiagnostics({
           <EmptyLine>{m.nodes_state_peer_only()}</EmptyLine>
         ) : null}
       </Section>
-      <Assigned desired={desired} reported={configuration} />
+      <Assigned node={node} reported={configuration} now={now} />
       {configuration ? (
         <Configuration
           configuration={configuration}
-          assigned={desired}
+          assigned={node.netmap}
           now={now}
         />
       ) : null}
@@ -211,6 +220,7 @@ function Report({ view, now }: { view: NodeStateView; now: number }) {
 }
 
 const assignedText: Record<DesiredMatch, () => string> = {
+  // Said by the server's reason instead.
   none: () => m.nodes_execution_none(),
   unreported: () => m.nodes_execution_unreported(),
   applied: () => m.nodes_execution_applied(),
@@ -218,16 +228,41 @@ const assignedText: Record<DesiredMatch, () => string> = {
   elsewhere: () => m.nodes_execution_elsewhere(),
 }
 
-/** The configuration the server assigns the node, and whether the node took it. */
+/** Why the server holds no netmap for the node. */
+function unavailableText(reason: NetmapUnavailable | null): string {
+  switch (reason?.reason) {
+    case "withdrawn":
+      return m.nodes_execution_withdrawn()
+    case "limit": {
+      if (reason.bytes === null)
+        return m.nodes_execution_limit({ max: byteSize(reason.maxBytes) })
+      const [size, max] = sizesApart(reason.bytes, reason.maxBytes)
+      return m.nodes_execution_limit_size({ size, max })
+    }
+    default:
+      return m.nodes_execution_none()
+  }
+}
+
+/**
+ * The configuration the server sends the node, whether the node took it,
+ * and the lease it runs it under: signed for a time, so the node keeps
+ * running it that long without reaching the server. The lease and the last
+ * sync are what this server process saw (none yet after it restarts).
+ */
 function Assigned({
-  desired,
+  node,
   reported,
+  now,
 }: {
-  desired: NetmapRef | null
+  node: AssignedNode
   /** The node's own report of its configuration; null without a full report. */
   reported: ConfigurationState | null
+  now: number
 }) {
+  const desired = node.netmap
   const match = desiredAgainst(desired, reported)
+  const lease = node.lease
   return (
     <Section title={m.nodes_execution()}>
       {desired ? (
@@ -257,14 +292,53 @@ function Assigned({
           </div>
         </div>
       ) : null}
+      <div className={GRID}>
+        <Tile label={m.nodes_execution_lease()}>
+          {lease ? (
+            <When at={lease.expiresAt} now={now} expiry />
+          ) : (
+            <span className="font-normal text-muted-foreground">
+              {m.nodes_execution_lease_none()}
+            </span>
+          )}
+        </Tile>
+        <Tile label={m.nodes_execution_lease_issued()}>
+          {lease ? (
+            <>
+              <When at={lease.issuedAt} now={now} />
+              {desired && !sameNetmap(lease.netmap, desired) ? (
+                <span className="font-normal text-muted-foreground">
+                  {" · "}
+                  {netmapText(lease.netmap)}
+                </span>
+              ) : null}
+            </>
+          ) : (
+            <span className="font-normal text-muted-foreground">—</span>
+          )}
+        </Tile>
+        <div className="col-span-2">
+          <Tile label={m.nodes_execution_last_sync()}>
+            {node.lastSyncAt ? (
+              <When at={node.lastSyncAt} now={now} />
+            ) : (
+              <span className="font-normal text-muted-foreground">
+                {m.nodes_execution_last_sync_none()}
+              </span>
+            )}
+          </Tile>
+        </div>
+      </div>
       <p
         className={
-          match === "elsewhere"
+          match === "elsewhere" || node.netmapUnavailable?.reason === "limit"
             ? "text-row text-warning"
             : "text-row text-muted-foreground"
         }
       >
-        {assignedText[match]()}
+        {match === "none"
+          ? unavailableText(node.netmapUnavailable)
+          : assignedText[match]()}
       </p>
     </Section>
   )
