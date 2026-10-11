@@ -198,38 +198,51 @@ async fn recover(directory: &Directory, path: &std::path::Path, uid: u32) -> Res
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(error.into()),
     };
-    let file = directory
-        .file("underlay-bootstrap.json", false)?
-        .ok_or(Error::Journal)?;
-    let mut bytes = Vec::new();
-    tokio::fs::File::from_std(file)
-        .take(1025)
-        .read_to_end(&mut bytes)
-        .await?;
-    if bytes.len() > 1024 {
-        return Err(Error::Journal);
-    }
-    let record: Record = serde_json::from_slice(&bytes).map_err(|_| Error::Journal)?;
+    // Reclaiming needs a gone predecessor (connect refused) and a continuous
+    // identity (same inode). The device number is not stable across mounts
+    // and boots, so it never vetoes. Without a record, the private directory
+    // under its lock is the ownership proof.
+    let record: Option<Record> = match directory.file("underlay-bootstrap.json", false)? {
+        Some(file) => {
+            let mut bytes = Vec::new();
+            tokio::fs::File::from_std(file)
+                .take(1025)
+                .read_to_end(&mut bytes)
+                .await?;
+            if bytes.len() > 1024 {
+                return Err(Error::Journal);
+            }
+            Some(serde_json::from_slice(&bytes).map_err(|_| Error::Journal)?)
+        }
+        None => None,
+    };
     let device = std::fs::metadata(directory.path())?.dev();
-    if !matches(&metadata, &record, uid, device) {
+    if !matches(&metadata, record.as_ref(), uid, device) {
         return Err(Error::Conflict);
     }
     match tokio::time::timeout(Duration::from_millis(200), UnixStream::connect(path)).await {
         Ok(Err(error)) if error.kind() == io::ErrorKind::ConnectionRefused => {}
         _ => return Err(Error::Conflict),
     }
-    if !matches(&std::fs::symlink_metadata(path)?, &record, uid, device) {
+    let current = std::fs::symlink_metadata(path)?;
+    if !matches(&current, record.as_ref(), uid, device) || current.ino() != metadata.ino() {
         return Err(Error::Conflict);
+    }
+    if record.is_none() {
+        tracing::warn!(
+            path = %path.display(),
+            "Reclaiming an unrecorded stale bootstrap socket in the private state directory"
+        );
     }
     std::fs::remove_file(path)?;
     directory.sync()?;
     Ok(())
 }
 
-fn matches(metadata: &std::fs::Metadata, record: &Record, uid: u32, device: u64) -> bool {
+fn matches(metadata: &std::fs::Metadata, record: Option<&Record>, uid: u32, device: u64) -> bool {
     metadata.file_type().is_socket()
         && metadata.dev() == device
-        && metadata.ino() == record.inode
+        && record.is_none_or(|record| metadata.ino() == record.inode)
         && metadata.uid() == uid
         && metadata.mode() & 0o7777 == 0o600
 }
@@ -239,9 +252,61 @@ impl Drop for Proxy {
         let device = std::fs::metadata(self._directory.path()).map(|meta| meta.dev());
         if let Ok(device) = device
             && std::fs::symlink_metadata(&self.path)
-                .is_ok_and(|metadata| matches(&metadata, &self.record, self.uid, device))
+                .is_ok_and(|metadata| matches(&metadata, Some(&self.record), self.uid, device))
         {
             let _ = std::fs::remove_file(&self.path);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn directory() -> (tempfile::TempDir, Directory, PathBuf, std::fs::Metadata) {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().canonicalize().unwrap().join("state");
+        let directory = Directory::open(&path, "underlay.lock").unwrap();
+        let socket = path.join("underlay-bootstrap.sock");
+        drop(std::os::unix::net::UnixListener::bind(&socket).unwrap());
+        std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let metadata = std::fs::symlink_metadata(&socket).unwrap();
+        (root, directory, socket, metadata)
+    }
+
+    fn record(directory: &Directory, device: u64, inode: u64) {
+        let bytes = serde_json::to_vec(&Record { device, inode }).unwrap();
+        directory
+            .replace("underlay-bootstrap.json", &bytes)
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn stale_socket_on_a_renumbered_device_or_without_record_is_reclaimed() {
+        let (_root, directory, socket, metadata) = directory();
+        let uid = metadata.uid();
+        record(&directory, metadata.dev().wrapping_add(1), metadata.ino());
+        recover(&directory, &socket, uid).await.unwrap();
+        assert!(!socket.exists());
+
+        let (_root, directory, socket, metadata) = self::directory();
+        recover(&directory, &socket, metadata.uid()).await.unwrap();
+        assert!(!socket.exists());
+    }
+
+    #[tokio::test]
+    async fn a_different_inode_or_a_live_listener_is_never_reclaimed() {
+        let (_root, directory, socket, metadata) = directory();
+        let uid = metadata.uid();
+        record(&directory, metadata.dev(), metadata.ino().wrapping_add(1));
+        assert!(recover(&directory, &socket, uid).await.is_err());
+        std::fs::remove_file(&socket).unwrap();
+        let live = tokio::net::UnixListener::bind(&socket).unwrap();
+        std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let metadata = std::fs::symlink_metadata(&socket).unwrap();
+        record(&directory, metadata.dev(), metadata.ino());
+        assert!(recover(&directory, &socket, uid).await.is_err());
+        assert!(socket.exists());
+        drop(live);
     }
 }

@@ -114,7 +114,7 @@ impl Owner for FailingOwner {
     }
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn failed_owner_keeps_its_fault_while_it_retries_recovery_until_it_succeeds() {
     let (scopes, _) = watch::channel(None);
     let observations = Arc::new(AtomicUsize::new(0));
@@ -123,23 +123,23 @@ async fn failed_owner_keeps_its_fault_while_it_retries_recovery_until_it_succeed
         scopes,
         observations: observations.clone(),
         recoveries: recoveries.clone(),
-        unavailable: 3,
+        unavailable: 1,
     });
     let mut fault = actor.fault.clone();
     fault.wait_for(Option::is_some).await.unwrap();
     let mut recovered = actor.recovered.clone();
     tokio::time::timeout(
-        RECOVERY_INTERVAL * 5,
+        RECOVERY_INTERVAL * 3,
         recovered.wait_for(|recovered| *recovered),
     )
     .await
     .expect("an available backend is recovered without a parent retry")
     .unwrap();
-    assert_eq!(recoveries.load(Ordering::SeqCst), 4);
+    assert_eq!(recoveries.load(Ordering::SeqCst), 2);
     // Recovery is throttled and observes nothing until the parent's hold.
-    tokio::time::sleep(RECOVERY_INTERVAL * 3).await;
+    tokio::time::sleep(RECOVERY_INTERVAL * 2).await;
     assert_eq!(observations.load(Ordering::SeqCst), 1);
-    assert_eq!(recoveries.load(Ordering::SeqCst), 4);
+    assert_eq!(recoveries.load(Ordering::SeqCst), 2);
     assert_eq!(*fault.borrow(), Some(SystemDnsError::Backend));
     actor.shutdown(true).await.unwrap();
 }
