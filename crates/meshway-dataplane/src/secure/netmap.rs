@@ -77,7 +77,7 @@ struct Waiting {
 pub(super) struct FirstPackets {
     waiting: Vec<Waiting>,
     interests: BTreeSet<NodeId>,
-    ready_exits: BTreeSet<NodeId>,
+    pub ready_exits: BTreeSet<NodeId>,
     pub dropped: u64,
 }
 
@@ -322,7 +322,8 @@ impl SecureNode {
 
     /// Exits whose readiness fact is fresh and ready; selection input only.
     /// Exit flows go to the first ready exit of their ordered candidates and
-    /// are dropped (never sent direct) when none is ready.
+    /// are dropped (never sent direct) when none is ready; a DNS query to a
+    /// not-ready exit resolver fails.
     pub fn set_ready_exits(&mut self, exits: BTreeSet<NodeId>) {
         self.first.ready_exits = exits;
     }

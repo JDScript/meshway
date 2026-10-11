@@ -176,6 +176,17 @@ impl LocalResolverRoute {
             return Err(RouteError::Binding);
         }
         let action = netmap_local_action(netmap, endpoint)?;
+        if let crate::system::Provenance::ResolvedProxy { servers, .. } = &system.provenance {
+            // resolved forwards for this Node: only an exit resolver uses
+            // it, and every OS server it may pick needs a local decision.
+            if !matches!(netmap.dns.egress, DnsPlan::ServeExitResolver { .. })
+                || servers.iter().any(|server| {
+                    netmap_local_action(netmap, SocketAddr::new(*server, 53)).is_err()
+                })
+            {
+                return Err(RouteError::Binding);
+            }
+        }
         let route = Self {
             endpoint,
             transport,

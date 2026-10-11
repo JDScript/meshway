@@ -141,6 +141,10 @@ pub struct SystemDnsOwner {
     directory: Arc<Directory>,
     reservation: Reservation,
     snapshot: Option<SystemResolverSnapshot>,
+    /// resolved's proxy stub for an exit resolver's served queries, while
+    /// the installed link and resolved's OS server inventory permit it. Its
+    /// lapse withdraws only served queries, never the owner.
+    served: Option<SystemResolverSnapshot>,
     writes: storage::Writes,
     invalid: CancellationToken,
 }
@@ -246,6 +250,7 @@ impl SystemDnsOwner {
             directory,
             reservation,
             snapshot,
+            served: None,
             writes,
             invalid,
         })
@@ -271,6 +276,7 @@ impl SystemDnsOwner {
                     id: backend.snapshot_id()?,
                     upstreams: Arc::new(backend.upstreams()?),
                     primary: backend.transport()?,
+                    provenance: Provenance::Original,
                     invalid: invalid.clone(),
                     verified_until: Arc::new(Mutex::new(
                         Instant::now() + std::time::Duration::from_secs(2),
@@ -323,12 +329,27 @@ impl SystemDnsOwner {
             Self::open(&self.directory, &self.reservation, anchor).await?;
         self.backend = backend;
         self.snapshot = snapshot;
+        self.served = None;
         self.invalid = invalid;
         Ok(())
     }
 
+    /// OS upstreams for this Node's own unmanaged names (file backend only;
+    /// resolved routes those itself).
     pub fn system_resolvers(&self) -> Option<SystemResolverSnapshot> {
         self.snapshot.clone()
+    }
+
+    /// OS upstreams for an exit resolver's served queries: the recorded
+    /// original nameservers, or resolved's proxy stub while it is usable.
+    pub fn served_resolvers(&self) -> Option<SystemResolverSnapshot> {
+        match &self.backend {
+            Backend::File(_) => self.snapshot.clone(),
+            Backend::Resolved(_) => self
+                .served
+                .clone()
+                .filter(|served| served.ensure_current().is_ok()),
+        }
     }
 
     pub async fn install(&mut self, plan: &SystemDnsPlan) -> Result<(), SystemDnsError> {
@@ -345,6 +366,57 @@ impl SystemDnsOwner {
         self.observe().await
     }
 
+    /// Keep, replace or withdraw the resolved proxy snapshot after a
+    /// successful observation. The same inventory keeps the same snapshot.
+    fn refresh_served(&mut self, proxy: Option<resolved::Proxy>) {
+        let current = self.served.as_ref().filter(|served| {
+            served.ensure_current().is_ok()
+                && match (&served.provenance, &proxy) {
+                    (Provenance::ResolvedProxy { routes, servers }, Some(proxy)) => {
+                        **routes == proxy.routes && **servers == proxy.servers
+                    }
+                    _ => false,
+                }
+        });
+        if let Some(served) = current {
+            if let Ok(mut until) = served.verified_until.lock() {
+                *until = Instant::now() + std::time::Duration::from_secs(2);
+            }
+            return;
+        }
+        if let Some(old) = self.served.take() {
+            old.invalid.cancel();
+            if proxy.is_none() {
+                tracing::debug!("resolved proxy withdrawn from served exit queries");
+            }
+        }
+        let Some(proxy) = proxy else {
+            return;
+        };
+        tracing::debug!(
+            servers = proxy.servers.len(),
+            routes = proxy.routes.len(),
+            "resolved proxy serves exit queries"
+        );
+        let mut nonce = [0u8; 8];
+        if getrandom::fill(&mut nonce).is_err() {
+            return;
+        }
+        self.served = Some(SystemResolverSnapshot {
+            id: format!("resolved-proxy-{:016x}", u64::from_be_bytes(nonce)),
+            upstreams: Arc::new(vec![resolved::PROXY_STUB]),
+            primary: DnsTransport::Udp,
+            provenance: Provenance::ResolvedProxy {
+                routes: Arc::new(proxy.routes),
+                servers: Arc::new(proxy.servers),
+            },
+            invalid: self.invalid.child_token(),
+            verified_until: Arc::new(Mutex::new(
+                Instant::now() + std::time::Duration::from_secs(2),
+            )),
+        });
+    }
+
     pub async fn observe(&mut self) -> Result<(), SystemDnsError> {
         let result = async {
             self.writes.settle().await?;
@@ -355,13 +427,26 @@ impl SystemDnsOwner {
                 snapshot.ensure_current()?;
             }
             match &mut self.backend {
-                Backend::File(file) => file.observe().await,
-                Backend::Resolved(resolved) => resolved.observe().await,
+                Backend::File(file) => file.observe().await.map(|()| None),
+                Backend::Resolved(resolved) => {
+                    resolved.observe().await?;
+                    // An unusable inventory withdraws only served queries.
+                    Ok(Some(resolved.proxy().await.ok().flatten()))
+                }
             }
         }
         .await;
+        let result = match result {
+            Ok(Some(proxy)) => {
+                self.refresh_served(proxy);
+                Ok(())
+            }
+            Ok(None) => Ok(()),
+            Err(error) => Err(error),
+        };
         if result.is_err() {
             self.invalid.cancel();
+            self.served = None;
         } else if let Some(snapshot) = &self.snapshot {
             snapshot.ensure_current()?;
             *snapshot

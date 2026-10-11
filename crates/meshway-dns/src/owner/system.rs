@@ -47,6 +47,11 @@ impl Owner {
         if Plan::of(&self.desired) != Plan::ServeExitResolver {
             return Begin::Unavailable(Unavailable::MissingExitPlan);
         }
+        // A name the OS would route back to this Node's own DNS link would
+        // be answered by this Node's own records and routes, not the OS.
+        if system.routes_to_owner(&query.question().name().to_ascii()) {
+            return Begin::Unavailable(Unavailable::MissingResolverPlan);
+        }
         let deadline = deadline.min(Instant::now() + self.state.limits.query_timeout);
         let mut upstreams = match self.system_upstreams(system, deadline) {
             Ok(upstreams) => upstreams,

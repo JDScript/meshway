@@ -47,7 +47,35 @@ impl Served {
 }
 
 impl OwnerDispatcher {
-    pub async fn dispatch_authenticated(
+    /// The reply to one authenticated request: its answer encoded for the
+    /// request's own transport (UDP truncates within the payload limit and
+    /// the source retries on its separately permitted TCP), or SERVFAIL when
+    /// it cannot be served. `None` once the request itself has ended.
+    pub async fn serve_authenticated(
+        &self,
+        request: &meshway_dataplane::secure::DnsRequest,
+    ) -> Option<Bytes> {
+        let transport = match request.transport() {
+            meshway_configuration::DnsTransport::Udp => crate::ResponseTransport::Udp,
+            meshway_configuration::DnsTransport::Tcp => crate::ResponseTransport::Tcp,
+        };
+        let answer = self.dispatch_authenticated(request).await;
+        if let Err(error) = &answer {
+            tracing::debug!(?error, "exit resolver query not served");
+        }
+        if let Ok(answer) = &answer
+            && let Ok(bytes) = answer.encode(transport, self.udp_payload_limit)
+            && bytes.len() <= meshway_dataplane::secure::MAX_DNS_BYTES
+        {
+            return Some(bytes);
+        }
+        let query = crate::decode_query(request.bytes().ok()?).ok()?;
+        let mut message = query.response();
+        message.metadata.response_code = hickory_proto::op::ResponseCode::ServFail;
+        crate::encode_response(&query, &message, transport, self.udp_payload_limit).ok()
+    }
+
+    pub(crate) async fn dispatch_authenticated(
         &self,
         request: &meshway_dataplane::secure::DnsRequest,
     ) -> Result<Answer, DispatchError> {

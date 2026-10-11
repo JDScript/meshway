@@ -25,6 +25,21 @@ const VERSION: u32 = 2;
 const MARKER_SUFFIX: &str = "meshway-installation.invalid";
 type DnsServer = (i32, Vec<u8>, u16, String);
 type GlobalDomains = Vec<(i32, String, bool)>;
+/// resolved's manager-wide server lists: (ifindex, family, address, port, name).
+type GlobalServers = Vec<(i32, i32, Vec<u8>, u16, String)>;
+/// resolved's proxy stub (systemd ≥ 248, present with `DNSStubListener=yes`):
+/// queries are forwarded by resolved's per-link routing without local
+/// synthesis, LLMNR or mDNS. Exit resolvers serve sources through it.
+pub(super) const PROXY_STUB: SocketAddr =
+    SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 54)), 53);
+
+/// What resolved's proxy stub currently forwards to.
+pub(super) struct Proxy {
+    /// Names under these domains reach the owned link (this Node's owner).
+    pub routes: Vec<String>,
+    /// Every OS server outside the owned link, global and fallback included.
+    pub servers: Vec<IpAddr>,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -257,6 +272,65 @@ impl Backend {
             self.conflicts(plan).await?;
         }
         self.verify().await
+    }
+    /// The proxy stub's routing while settings are installed, or `None` when
+    /// it cannot serve: no installed link, no OS server, or an OS server that
+    /// is a local stub (loopback or unspecified), this Node's anchor/bind, or
+    /// a multicast address. An unknown local stub may recurse into Meshway,
+    /// and no public resolver substitutes for the OS's own.
+    pub async fn proxy(&self) -> Result<Option<Proxy>, SystemDnsError> {
+        let Some(installed) = &self.record.installed else {
+            return Ok(None);
+        };
+        let mut own_seen = false;
+        let mut servers = Vec::new();
+        for list in ["DNSEx", "FallbackDNSEx"] {
+            let entries: GlobalServers =
+                property(&self.connection, &self.service_owner, PATH, IFACE, list).await?;
+            if entries.len() > 256 {
+                return Err(SystemDnsError::Capacity);
+            }
+            for (_, family, address, port, _) in entries {
+                let ip = match (family, address.as_slice()) {
+                    (2, bytes) => <[u8; 4]>::try_from(bytes).map(IpAddr::from),
+                    (10, bytes) => <[u8; 16]>::try_from(bytes).map(IpAddr::from),
+                    _ => return Ok(None),
+                }
+                .map_err(|_| SystemDnsError::Backend)?
+                .to_canonical();
+                // resolved reports a loopback server under the loopback
+                // index, not its link's: the owned link's one server is the
+                // bind, and any second entry for it is a foreign link.
+                if SocketAddr::new(ip, if port == 0 { 53 } else { port }) == self.record.bind
+                    && !own_seen
+                {
+                    own_seen = true;
+                    continue;
+                }
+                if ip.is_loopback()
+                    || ip.is_unspecified()
+                    || ip.is_multicast()
+                    || ip == IpAddr::V4(self.record.link.address)
+                {
+                    return Ok(None);
+                }
+                if !servers.contains(&ip) {
+                    servers.push(ip);
+                }
+            }
+        }
+        if servers.is_empty() {
+            return Ok(None);
+        }
+        servers.sort();
+        let mut routes: Vec<String> = installed
+            .domains
+            .iter()
+            .map(|(name, _)| name.trim_end_matches('.').to_ascii_lowercase())
+            .collect();
+        routes.sort();
+        routes.dedup();
+        Ok(Some(Proxy { routes, servers }))
     }
     async fn settings(
         &self,

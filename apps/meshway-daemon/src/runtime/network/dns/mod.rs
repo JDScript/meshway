@@ -126,12 +126,7 @@ impl Runtime {
         // Required negative capture first; a later failure keeps it with Scope=None.
         self.hold(&netmap).await?;
         self.check(&netmap)?;
-        let system_resolvers = if matches!(netmap.dns.egress, DnsPlan::ViaExit { .. }) {
-            None
-        } else {
-            self.system.system_resolvers()
-        };
-        let scope = Scope::netmap(desired, system_resolvers);
+        let scope = Scope::netmap(desired, self.resolvers(&netmap.dns.egress));
         self.dispatcher
             .validate_scope(&scope)
             .map_err(|_| SystemDnsError::ResolverPlan)?;
@@ -148,8 +143,19 @@ impl Runtime {
     pub fn suspend(&self) {
         meshway_dns::publish_scope(&self.scopes, None);
     }
+    /// The OS resolvers a plan may use: none for a Mesh exit client, the
+    /// served snapshot for an exit resolver, else this Node's own fallback.
+    fn resolvers(&self, plan: &DnsPlan) -> Option<meshway_dns::SystemResolverSnapshot> {
+        match plan {
+            DnsPlan::ViaExit { .. } | DnsPlan::Unavailable { .. } => None,
+            DnsPlan::ServeExitResolver { .. } => self.system.served_resolvers(),
+            DnsPlan::NoExit => self.system.system_resolvers(),
+        }
+    }
     /// Parent selects this regularly with the kernel/lease watcher. A failed
     /// observation withdraws query authority without removing forced suffixes.
+    /// An exit resolver's served snapshot follows the observed OS inventory:
+    /// a changed snapshot republishes the same content's scope.
     pub async fn observe(&mut self) -> Result<(), SystemDnsError> {
         let result = if self.service.is_finished() {
             Err(SystemDnsError::Backend)
@@ -158,8 +164,28 @@ impl Runtime {
         };
         if result.is_err() {
             self.suspend();
+            return result;
         }
-        result
+        let current = self.scopes.borrow().clone();
+        if let Some(scope) = current
+            && matches!(
+                scope.desired.netmap().dns.egress,
+                DnsPlan::ServeExitResolver { .. }
+            )
+        {
+            let next = Scope::netmap(
+                scope.desired.clone(),
+                self.resolvers(&scope.desired.netmap().dns.egress),
+            );
+            if !scope.equivalent(&next) {
+                if self.dispatcher.validate_scope(&next).is_err() {
+                    self.suspend();
+                    return Err(SystemDnsError::ResolverPlan);
+                }
+                meshway_dns::publish_scope(&self.scopes, Some(next));
+            }
+        }
+        Ok(())
     }
     /// After a failed observation: re-prove the system installation against
     /// the backend as it is now, reinstall the held negative capture (lost

@@ -92,6 +92,12 @@ async fn dns_circuit_authenticates_the_exit_service_and_never_admits_business_pa
         f.a.start_grant(grant.clone(), vec![path[0], path[2]], &f.ar.carrier)
             .is_err()
     );
+    // Exit readiness is a selection fact: no resolver circuit before it.
+    assert!(
+        f.a.start_grant(grant.clone(), path.clone(), &f.ar.carrier)
+            .is_err()
+    );
+    f.a.set_ready_exits([path[2]].into());
     let first = f.a.start_grant(grant, path, &f.ar.carrier).unwrap();
     let circuit = f.finish_handshake(first).await;
     let mut message = hickory_proto::op::Message::new(
@@ -139,6 +145,20 @@ async fn dns_circuit_authenticates_the_exit_service_and_never_admits_business_pa
         assert_eq!(reply.id(), id);
         assert_eq!(reply.release(|bytes| bytes).unwrap(), response);
     }
+    // Readiness lost: an established resolver circuit sends no new query.
+    f.a.set_ready_exits(Default::default());
+    let id = meshway_model::EventId::new(super::support::request().into_uuid()).unwrap();
+    assert!(
+        f.a.query_dns(
+            circuit,
+            id,
+            meshway_configuration::DnsTransport::Udp,
+            &query,
+            std::time::Instant::now() + Duration::from_secs(2),
+        )
+        .is_err()
+    );
+    f.a.set_ready_exits([f.path()[2]].into());
     let packet = f.mesh_udp(false, 42424);
     assert!(f.a.send(circuit, packet).is_err());
     assert_eq!(

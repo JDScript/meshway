@@ -23,6 +23,7 @@ serde_json.workspace = true
 getrandom.workspace = true
 ipnet.workspace = true
 sha2.workspace = true
+tracing.workspace = true
 resolv-conf = "=0.7.6"
 
 [target.'cfg(target_os = "linux")'.dependencies]

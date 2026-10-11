@@ -289,7 +289,10 @@ impl Owner {
         let plan = Plan::of(&self.desired);
         // A resolver Node resolves for itself as a no-exit Node does.
         let no_exit = plan == Plan::NoExit || plan == Plan::ServeExitResolver;
+        // resolved routes this Node's own names itself; its proxy is only
+        // for served queries.
         if !no_exit
+            || !matches!(system.provenance, crate::system::Provenance::Original)
             || !matches!(
                 self.state.published.select(&query, ExitSelection::NoExit),
                 Selection::Unmanaged

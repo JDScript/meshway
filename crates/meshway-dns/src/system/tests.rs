@@ -108,6 +108,7 @@ async fn stale_system_provenance_wakes_blocked_work_and_never_renews_itself() {
         id: "fixture-provenance-only".into(),
         upstreams: Arc::new(vec![]),
         primary: DnsTransport::Udp,
+        provenance: crate::system::Provenance::Original,
         invalid: CancellationToken::new(),
         verified_until: Arc::new(Mutex::new(
             Instant::now() + std::time::Duration::from_millis(20),

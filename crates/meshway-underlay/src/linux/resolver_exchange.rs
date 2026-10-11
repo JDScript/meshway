@@ -83,15 +83,39 @@ async fn exchange(
                 })
                 .await
                 .map_err(|_| GatewayError)?;
-                if read.source != endpoint || read.truncated || read.copied_len > usize::from(limit)
-                {
+                if read.source != endpoint {
                     continue;
                 }
-                let data = &buffer[..read.copied_len];
-                if TrustedUpstreamResponse::decode(&query, data, ResponseTransport::Udp, limit)
-                    .is_ok()
+                let data = &buffer[..read.copied_len.min(usize::from(limit))];
+                let oversized = read.truncated || read.copied_len > usize::from(limit);
+                if !oversized
+                    && TrustedUpstreamResponse::decode(&query, data, ResponseTransport::Udp, limit)
+                        .is_ok()
                 {
                     answer = Some(data.to_vec());
+                    break;
+                }
+                // A reply to this exact query that did not fit: TC=1 (some
+                // stubs cut the records at the requested size) or larger than
+                // advertised. Its content is unusable; only the separately
+                // authorized TCP route may complete it.
+                if data.len() >= 12
+                    && data[..2] == outgoing[..2]
+                    && data[2] & 0x80 != 0
+                    && (oversized || data[2] & 0x02 != 0)
+                {
+                    let mut truncated = query.response();
+                    truncated.metadata.truncation = true;
+                    answer = Some(
+                        meshway_dns::encode_response(
+                            &query,
+                            &truncated,
+                            ResponseTransport::Udp,
+                            limit,
+                        )
+                        .map_err(|_| GatewayError)?
+                        .to_vec(),
+                    );
                     break;
                 }
                 tokio::task::yield_now().await;

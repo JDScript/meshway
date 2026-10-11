@@ -107,6 +107,7 @@ async fn real_dispatcher_system_failover_keeps_ticket_authority_and_original_bud
         id: "system-provenance".into(),
         upstreams: Arc::new(endpoints.clone()),
         primary: DnsTransport::Udp,
+        provenance: crate::system::Provenance::Original,
         invalid: CancellationToken::new(),
         verified_until: Arc::new(StdMutex::new(Instant::now() + Duration::from_secs(30))),
     };

@@ -246,6 +246,22 @@ fn suffix_of(parent: &str, child: &str) -> bool {
             .is_some_and(|s| s.ends_with('.'))
 }
 
+/// Where a system resolver snapshot's upstreams come from.
+#[derive(Clone, Debug)]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) enum Provenance {
+    /// The original OS nameservers the owner recorded before installing.
+    Original,
+    /// resolved's proxy stub. It forwards by resolved's own per-link and
+    /// per-suffix routing to `servers` (every OS server except the owned
+    /// link's), but names under `routes` reach the owned link, i.e. this
+    /// Node's own DNS owner. Only an exit resolver's served queries use it.
+    ResolvedProxy {
+        routes: Arc<Vec<String>>,
+        servers: Arc<Vec<std::net::IpAddr>>,
+    },
+}
+
 /// Only a checked system installer constructs this provenance. Its endpoints
 /// still require the netmap's local-egress decision before any business I/O.
 #[derive(Clone)]
@@ -253,12 +269,29 @@ pub struct SystemResolverSnapshot {
     pub(crate) id: String,
     pub(crate) upstreams: Arc<Vec<SocketAddr>>,
     pub(crate) primary: DnsTransport,
+    pub(crate) provenance: Provenance,
     pub(crate) invalid: CancellationToken,
     pub(crate) verified_until: Arc<Mutex<Instant>>,
 }
 impl SystemResolverSnapshot {
     pub fn id(&self) -> &str {
         &self.id
+    }
+    /// Whether resolving `name` through these upstreams would come back to
+    /// this Node's own DNS link.
+    pub(crate) fn routes_to_owner(&self, name: &str) -> bool {
+        let Provenance::ResolvedProxy { routes, .. } = &self.provenance else {
+            return false;
+        };
+        let name = name.trim_end_matches('.').to_ascii_lowercase();
+        routes.iter().any(|route| {
+            let route = route.trim_end_matches('.');
+            route.is_empty()
+                || name == route
+                || name
+                    .strip_suffix(route)
+                    .is_some_and(|rest| rest.ends_with('.'))
+        })
     }
     /// The same observation, not merely equal endpoints.
     pub(crate) fn same(&self, other: &Self) -> bool {
@@ -306,6 +339,9 @@ impl SystemDnsOwner {
         Err(SystemDnsError::Unsupported)
     }
     pub fn system_resolvers(&self) -> Option<SystemResolverSnapshot> {
+        None
+    }
+    pub fn served_resolvers(&self) -> Option<SystemResolverSnapshot> {
         None
     }
     pub async fn install(&mut self, _: &SystemDnsPlan) -> Result<(), SystemDnsError> {

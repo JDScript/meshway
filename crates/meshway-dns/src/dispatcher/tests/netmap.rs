@@ -420,6 +420,7 @@ async fn exit_resolver_rejects_raw_addresses_even_when_the_source_is_in_its_plan
         id: "served-provenance-fixture".into(),
         upstreams: Arc::new(vec!["192.0.2.53:53".parse().unwrap()]),
         primary: DnsTransport::Udp,
+        provenance: crate::system::Provenance::Original,
         invalid: CancellationToken::new(),
         verified_until: Arc::new(StdMutex::new(Instant::now() + Duration::from_secs(30))),
     };
@@ -478,6 +479,17 @@ async fn exit_resolver_rejects_raw_addresses_even_when_the_source_is_in_its_plan
         BTreeMap::from([(network.e, carrier.clone())]),
     )
     .unwrap();
+    let grant = meshway_dataplane::secure::CircuitGrant {
+        purpose: meshway_dataplane::Purpose::Dns,
+        target: meshway_dataplane::Target::Mesh { node: network.e },
+    };
+    // Readiness is a selection fact: no resolver circuit to a not-ready exit.
+    assert!(
+        origin
+            .start_grant(grant.clone(), service.path.nodes.clone(), &carrier)
+            .is_err()
+    );
+    origin.set_ready_exits([network.e].into());
     let (desired, keys) = packet(&control);
     let mut exit = meshway_dataplane::secure::SecureNode::new(
         &desired,
@@ -487,14 +499,7 @@ async fn exit_resolver_rejects_raw_addresses_even_when_the_source_is_in_its_plan
     )
     .unwrap();
     let init = origin
-        .start_grant(
-            meshway_dataplane::secure::CircuitGrant {
-                purpose: meshway_dataplane::Purpose::Dns,
-                target: meshway_dataplane::Target::Mesh { node: network.e },
-            },
-            service.path.nodes.clone(),
-            &carrier,
-        )
+        .start_grant(grant, service.path.nodes.clone(), &carrier)
         .unwrap();
     let cid = init.circuit();
     use meshway_dataplane::secure::Received;
@@ -532,28 +537,100 @@ async fn exit_resolver_rejects_raw_addresses_even_when_the_source_is_in_its_plan
         else {
             panic!("authenticated request");
         };
-        let answer = dispatcher.dispatch_authenticated(&request).await;
-        if succeeds {
-            let bytes = answer
-                .unwrap()
-                .encode(ResponseTransport::Tcp, 1232)
-                .unwrap();
-            let reply = exit.answer_dns(request, &bytes).unwrap();
-            assert!(matches!(
-                origin
-                    .receive(&carrier, reply.release(|b| b).unwrap())
-                    .unwrap(),
-                Received::DnsReply(_)
-            ));
-        } else {
-            assert!(matches!(answer, Err(DispatchError::Gateway)));
-        }
+        // A failed upstream is answered SERVFAIL on the original path; the
+        // source never tries another resolver.
+        let bytes = dispatcher.serve_authenticated(&request).await.unwrap();
+        let code = Message::from_vec(&bytes).unwrap().metadata.response_code;
+        assert_eq!(
+            code,
+            if succeeds {
+                hickory_proto::op::ResponseCode::NoError
+            } else {
+                hickory_proto::op::ResponseCode::ServFail
+            }
+        );
+        let reply = exit.answer_dns(request, &bytes).unwrap();
+        assert!(matches!(
+            origin
+                .receive(&carrier, reply.release(|b| b).unwrap())
+                .unwrap(),
+            Received::DnsReply(_)
+        ));
     }
     assert_eq!(
         exchange.endpoints(),
         [("192.0.2.53:53".parse().unwrap(), DnsTransport::Udp); 2]
     );
     source.shutdown().await.unwrap();
+    let _ = control.shutdown().await;
+    server.close().await;
+}
+
+#[tokio::test]
+async fn resolved_proxy_serves_only_names_the_os_resolves_and_only_for_sources() {
+    let server = support::Server::start().await;
+    let (mut control, script) = enrolled(&server).await;
+    let mut network = Network::new(&control, 'e');
+    network.include_mesh_resolver = false;
+    let netmap = network.compile(None);
+    assert!(matches!(
+        netmap.netmap.dns.egress,
+        DnsPlan::ServeExitResolver { .. }
+    ));
+    let snapshot = sync(&mut control, &script, reply(&netmap, true)).await;
+    let proxy = |servers: &[&str]| SystemResolverSnapshot {
+        id: "resolved-proxy-fixture".into(),
+        upstreams: Arc::new(vec!["127.0.0.54:53".parse().unwrap()]),
+        primary: DnsTransport::Udp,
+        provenance: crate::system::Provenance::ResolvedProxy {
+            routes: Arc::new(vec![
+                "i00.meshway-installation.invalid".into(),
+                "test.internal".into(),
+            ]),
+            servers: Arc::new(servers.iter().map(|s| s.parse().unwrap()).collect()),
+        },
+        invalid: CancellationToken::new(),
+        verified_until: Arc::new(StdMutex::new(Instant::now() + Duration::from_secs(30))),
+    };
+    let mut owner = Owner::new(&snapshot, limits(), &CancellationToken::new()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let system = proxy(&["192.0.2.53"]);
+    // resolved would route these to this Node's own link: its own records
+    // and routes never answer for a source.
+    for name in [
+        "b.test.internal.",
+        "TEST.Internal.",
+        "x.i00.meshway-installation.invalid.",
+    ] {
+        assert!(matches!(
+            owner.begin_served(named(name), &system, deadline),
+            Begin::Unavailable(Unavailable::MissingResolverPlan)
+        ));
+    }
+    let Begin::Upstream(work) = owner.begin_served(named("nottest.internal."), &system, deadline)
+    else {
+        panic!("a label-boundary name goes to the OS resolver")
+    };
+    let ResolverRoute::Local(route) = work.route() else {
+        panic!("served upstreams are local routes")
+    };
+    assert_eq!(route.endpoint(), "127.0.0.54:53".parse().unwrap());
+    assert!(work.fallback.is_some());
+    // Every OS server resolved may pick needs this Node's local decision:
+    // a Mesh address is never a system upstream.
+    assert!(matches!(
+        owner.begin_served(
+            named("ordinary.example."),
+            &proxy(&["100.64.0.2"]),
+            deadline
+        ),
+        Begin::Unavailable(Unavailable::MissingResolverPlan)
+    ));
+    // The proxy is for served queries only, never this Node's own names.
+    assert!(matches!(
+        owner.begin_system(named("ordinary.example."), &system, deadline),
+        Begin::Unavailable(Unavailable::MissingResolverPlan)
+    ));
     let _ = control.shutdown().await;
     server.close().await;
 }

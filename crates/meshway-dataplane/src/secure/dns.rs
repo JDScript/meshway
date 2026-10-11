@@ -172,7 +172,11 @@ impl SecureNode {
                 .decisions
                 .dns_service(reading.netmap(), reading.node())
                 .map_err(|_| Error::Policy)?;
-            if !service.transports.contains(&transport) {
+            // Readiness is a selection fact: a query to an exit that is not
+            // ready fails here and is never resolved anywhere else.
+            if !service.transports.contains(&transport)
+                || !self.first.ready_exits.contains(&service.exit)
+            {
                 return Err(Error::Policy);
             }
             let State::Endpoint(noise) = &owned.state else {

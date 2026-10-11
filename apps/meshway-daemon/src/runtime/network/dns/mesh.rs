@@ -77,7 +77,7 @@ impl ResolverExchange for Exchange {
     }
 }
 
-type Served = (DnsRequest, Result<Bytes, GatewayError>);
+type Served = (DnsRequest, Option<Bytes>);
 
 #[derive(Default)]
 pub(in crate::runtime::network) struct Queries {
@@ -105,18 +105,15 @@ impl Queries {
         self.pending.insert(id, query);
     }
 
+    /// An authenticated request at this exit resolver. Without a DNS owner
+    /// it ends unanswered at its own deadline.
     pub fn receive(&mut self, request: DnsRequest, dispatcher: Option<Arc<OwnerDispatcher>>) {
         let Some(dispatcher) = dispatcher.filter(|_| self.serving.len() < 128) else {
             return;
         };
         self.serving.spawn(async move {
-            let result = match dispatcher.dispatch_authenticated(&request).await {
-                Ok(answer) => answer
-                    .encode(meshway_dns::ResponseTransport::Tcp, 1232)
-                    .map_err(|_| GatewayError),
-                Err(_) => Err(GatewayError),
-            };
-            (request, result)
+            let reply = dispatcher.serve_authenticated(&request).await;
+            (request, reply)
         });
     }
 
@@ -154,7 +151,7 @@ impl Queries {
             let Some(served) = self.serving.try_join_next() else {
                 break;
             };
-            if let Ok((request, Ok(bytes))) = served
+            if let Ok((request, Some(bytes))) = served
                 && let Ok(frame) = secure.answer_dns(request, &bytes)
             {
                 let _ = manager.send(frame).await;
@@ -201,9 +198,17 @@ impl Queries {
                 else {
                     return;
                 };
-                if let Ok(frame) = secure.start_grant(grant, service.path.nodes.clone(), &carrier) {
-                    self.circuit = Some(frame.circuit());
-                    let _ = manager.send(frame).await;
+                match secure.start_grant(grant, service.path.nodes.clone(), &carrier) {
+                    Ok(frame) => {
+                        self.circuit = Some(frame.circuit());
+                        let _ = manager.send(frame).await;
+                    }
+                    // Not admitted now (for example the exit is not ready):
+                    // these queries fail rather than wait for a resolver.
+                    Err(error) => {
+                        tracing::debug!(%error, "exit resolver circuit not admitted");
+                        self.fail_unsent();
+                    }
                 }
                 None
             }
@@ -211,6 +216,7 @@ impl Queries {
         let Some(circuit) = ready else {
             return;
         };
+        let mut failed = Vec::new();
         for (id, query) in self
             .pending
             .iter_mut()
@@ -221,16 +227,31 @@ impl Queries {
             if query.reply.is_closed() || query.route.ensure_current().is_err() {
                 continue;
             }
-            if let Ok(frame) = secure.query_dns(
+            match secure.query_dns(
                 circuit,
                 *id,
                 query.route.transport(),
                 &bytes,
                 query.route.deadline(),
             ) {
-                let _ = manager.send(frame).await;
+                Ok(frame) => {
+                    let _ = manager.send(frame).await;
+                }
+                Err(error) => {
+                    tracing::debug!(%error, "exit resolver query not sent");
+                    failed.push(*id);
+                }
             }
         }
+        for id in failed {
+            if let Some(query) = self.pending.remove(&id) {
+                let _ = query.reply.send(Err(GatewayError));
+            }
+        }
+    }
+
+    fn fail_unsent(&mut self) {
+        self.pending.retain(|_, query| query.bytes.is_none());
     }
 
     pub async fn stop(&mut self) {
