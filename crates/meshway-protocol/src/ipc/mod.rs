@@ -40,6 +40,9 @@ pub enum Command {
         expected_revision: Version,
         #[serde(default, skip_serializing_if = "Option::is_none", rename = "enrollmentKey")]
         enrollment_key: Option<EnrollmentKey>,
+        /// Enroll the held identity again (same Node and keys, Console approval) to pin the Server's current signing key.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        reenroll: bool,
     },
     RotateKey {
         #[serde(rename = "expectedRevision")]
@@ -160,6 +163,33 @@ pub enum SyncState {
 }
 }
 
+meshway_model::string_enum! {
+/// Why the last `sync` failed while it is retried; never a withdrawal of the
+/// held lease by itself.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum SyncError {
+    /// The Server could not be reached or the request timed out.
+    Network,
+    /// The Server answered busy or unavailable (429/5xx).
+    ServerBusy,
+    /// The Node session or instance must be acquired again.
+    Credentials,
+    /// The answer's signature does not verify with the pinned Server key.
+    SignatureInvalid,
+    /// The answer is signed by another Server key than the pinned one (for example a missed rotation window).
+    ServerKeyMismatch,
+    /// The Server withdrew this Node's netmap.
+    Withdrawn,
+    /// The Server rejected this Node identity.
+    IdentityRejected,
+    /// The answer does not match the request or the protocol.
+    Contract,
+    /// Private storage of the answer failed.
+    Storage,
+}
+}
+
 meshway_model::object! {
 /// The installed netmap and its lease; the data plane's only deadline.
 #[derive(Clone, Debug)] pub struct NetmapStatus {
@@ -257,6 +287,9 @@ meshway_model::object! { #[derive(Clone, Debug)] pub struct Status {
     pub sync: SyncState,
     #[serde(deserialize_with = "meshway_model::wire::required_nullable")]
     pub last_sync_at: Option<DateTime<Utc>> [required = true],
+    /// Failure class of the last sync while the long poll retries; null after a successful sync or when no sync runs.
+    #[serde(deserialize_with = "meshway_model::wire::required_nullable")]
+    pub sync_error: Option<SyncError> [required = true],
     #[serde(deserialize_with = "meshway_model::wire::required_nullable")]
     pub instance: Option<InstanceLease> [required = true],
     /// Current netmap authority; null when no lease is live.

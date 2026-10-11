@@ -3443,18 +3443,29 @@ export const zSyncNetmap = z.union([z.strictObject({
   ["type"]: z.enum(["unchanged"])
 })]);
 
+export const zUdpTraversalRequestIds = z.array(z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u"))).max(32);
+
 export const zSyncRequest = z.strictObject({
   ["netmap"]: zNetmapRef.nullable().exactOptional(),
   ["serverKeyGeneration"]: zVersion.nullable().exactOptional(),
-  ["state"]: zStateCursor.nullable().exactOptional()
+  ["state"]: zStateCursor.nullable().exactOptional(),
+  ["traversalRequests"]: zUdpTraversalRequestIds.exactOptional()
 });
+
+export const zUdpTraversalRequests = z.array(z.strictObject({
+  ["attemptId"]: zUdpTraversalId,
+  ["carrier"]: zCarrier,
+  ["expiresAt"]: zTimestamp,
+  ["peerId"]: zNodeId
+})).max(32);
 
 export const zSyncResponse = z.strictObject({
   ["keyRotation"]: zNetmapKeyRotation.nullable(),
   ["lease"]: zNetmapLease,
   ["netmap"]: zSyncNetmap,
   ["peerFacts"]: zPeerFactsDelta.nullable(),
-  ["signature"]: zNetmapSignature
+  ["signature"]: zNetmapSignature,
+  ["traversalRequests"]: zUdpTraversalRequests
 });
 
 export const zTransportCatalogEntry = z.strictObject({

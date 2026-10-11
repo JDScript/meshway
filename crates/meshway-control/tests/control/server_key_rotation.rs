@@ -22,7 +22,14 @@ fn run(control: Control, stop: &CancellationToken) -> Running {
         let (control, stop) = (Arc::clone(&control), stop.clone());
         async move {
             let mut facts = meshway_test_server::Facts::default();
-            sync_loop(&control, &mut facts, &sender, &stop).await
+            sync_loop(
+                &control,
+                &mut facts,
+                &sender,
+                &tokio::sync::watch::channel(None).0,
+                &stop,
+            )
+            .await
         }
     });
     Running {
@@ -139,5 +146,78 @@ async fn three_nodes_pin_the_rotated_key_within_one_hold_and_renew_after_the_win
             .await
             .unwrap();
     }
+    server.close().await;
+}
+
+/// A Node that missed the whole window rejects every answer, keeps its lease
+/// and reports `serverKeyMismatch`; re-enrolling the same identity through a
+/// Console approval pins the current key without a new Node or new keys.
+#[tokio::test]
+async fn a_node_that_missed_the_window_reenrolls_its_identity_and_pins_the_current_key() {
+    let server = Server::start().await;
+    let owner = server.owner().await;
+    let mut control = server
+        .control(
+            &owner,
+            &server.node_origin,
+            "rotate-late",
+            Default::default(),
+        )
+        .await;
+    super::support::sync(&mut control).await.unwrap();
+    let before = control.status().binding.unwrap();
+    let held = control.netmap().unwrap().lease;
+    let rotated = server.rotate_netmap_key(Duration::from_secs(60)).await;
+    let now = u64::try_from(chrono::Utc::now().timestamp_millis()).unwrap();
+    tokio::time::sleep(Duration::from_millis(
+        rotated.window_ends_at_ms.saturating_sub(now) + 200,
+    ))
+    .await;
+    let error = super::support::sync(&mut control).await.unwrap_err();
+    assert!(matches!(error, meshway_control::Error::ServerKeyMismatch));
+    assert_eq!(
+        error.sync_error(),
+        meshway_protocol::ipc::SyncError::ServerKeyMismatch
+    );
+    assert_eq!(
+        control.netmap().unwrap().lease,
+        held,
+        "the held lease stays"
+    );
+
+    let pending = control.begin_reenrollment("rotate-late").await.unwrap();
+    let existing = pending.existing.clone().unwrap();
+    assert_eq!(
+        (existing.network_id, existing.node_id),
+        (before.network_id, before.node_id)
+    );
+    assert!(control.reenrollment_pending());
+    server
+        .client
+        .approve_device_authorization(
+            &meshway_test_server::client::ApproveDeviceAuthorizationPath {
+                enrollment_request_id: pending.id,
+            },
+            &meshway_protocol::ApproveEnrollmentRequest {
+                network_id: owner.network,
+            },
+            owner.token.expose(),
+        )
+        .await
+        .unwrap();
+    control.poll_enrollment().await.unwrap();
+    let after = control.redeem_enrollment().await.unwrap();
+    assert!(!control.reenrollment_pending());
+    assert_eq!(
+        (after.network_id, after.node_id),
+        (before.network_id, before.node_id)
+    );
+    assert_eq!(after.keys, before.keys, "same keys, same identity");
+    assert_eq!(after.server_signing_key.key_generation.get(), 2);
+    // As the daemon does after any redemption: a fresh session, then sync.
+    control.authenticate().await.unwrap();
+    super::support::sync(&mut control).await.unwrap();
+    assert!(control.netmap().unwrap().lease.issued_at_ms > rotated.window_ends_at_ms);
+    control.shutdown().await.unwrap();
     server.close().await;
 }

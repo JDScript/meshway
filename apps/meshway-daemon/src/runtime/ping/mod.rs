@@ -73,6 +73,7 @@ pub(in crate::runtime) fn test_intent() -> (watch::Sender<super::intent::Desired
         up: true,
         shutdown: false,
         retry_enrollment: false,
+        reenroll: false,
     });
     (desired, Intent::capture(receiver))
 }

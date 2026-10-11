@@ -13,7 +13,9 @@ use meshway_configuration::netmap::{CompiledNetmap, apply_netmap_delta};
 use meshway_control_client::ClientError;
 use meshway_model::NetmapRef;
 use meshway_model::NodeId;
-use meshway_protocol::{ErrorResponse, PeerFacts, SyncNetmap, SyncRequest, SyncResponse};
+use meshway_protocol::{
+    ErrorResponse, PeerFacts, SyncNetmap, SyncRequest, SyncResponse, ipc::SyncError,
+};
 use std::{
     collections::{BTreeMap, BTreeSet},
     future::Future,
@@ -60,6 +62,9 @@ impl SyncTransport for ClientTransport {
 pub struct KnownPeers {
     pub netmap: NetmapRef,
     pub peers: Arc<BTreeMap<NodeId, PeerFacts>>,
+    /// Live traversal attempts of the last answer that ask this Node to
+    /// accept: a prompt to coordinate with the peer, never authority.
+    pub traversal_requests: Arc<Vec<meshway_protocol::UdpTraversalRequest>>,
 }
 
 impl KnownPeers {
@@ -159,6 +164,7 @@ impl Control {
         let token = Zeroizing::new(self.token()?.to_owned());
         if self.netmap.facts.is_some() && self.netmap().is_none() {
             self.netmap.facts = None;
+            self.netmap.traversal = Arc::default();
             self.netmap.exchange = Arc::new(());
         }
         let transport = match &self.sync_transport {
@@ -184,6 +190,14 @@ impl Control {
                 .binding
                 .as_ref()
                 .map(|binding| binding.server_signing_key.key_generation),
+            traversal_requests: self
+                .netmap
+                .traversal
+                .iter()
+                .map(|request| request.attempt_id)
+                .collect::<Vec<_>>()
+                .try_into()
+                .unwrap_or_default(),
         }
     }
 
@@ -251,6 +265,7 @@ impl Control {
             self.netmap.facts = Some(delta.cursor);
             self.record_facts(&delta);
         }
+        self.record_traversal(response.traversal_requests);
         self.publish_facts(sink);
         self.persist_facts().await;
         self.persist_floor().await;
@@ -286,7 +301,8 @@ fn terminal(error: &Error) -> bool {
 }
 
 /// Drive the long poll until `stop`. The driver lock is held only to prepare
-/// and apply, never during the hold. Each successful sync publishes its
+/// and apply, never during the hold. `errors` holds the class of the last
+/// failure while it is retried and is cleared by the next successful sync. Each successful sync publishes its
 /// verified netmap; a withdrawal publishes `None`. Session loss re-authenticates;
 /// transport failures back off from 1 s doubling to 15 s. Identity rejection,
 /// storage that needs reopening and invalid configuration end the loop.
@@ -294,8 +310,14 @@ pub async fn sync_loop(
     control: &tokio::sync::Mutex<Control>,
     sink: &mut (dyn PeerFactsSink + Send),
     netmaps: &tokio::sync::watch::Sender<Option<meshway_engine::Netmap>>,
+    errors: &tokio::sync::watch::Sender<Option<SyncError>>,
     stop: &CancellationToken,
 ) -> Result<(), Error> {
+    let failed = |error: &Error| {
+        errors.send_if_modified(|current| {
+            current.replace(error.sync_error()) != Some(error.sync_error())
+        });
+    };
     let mut backoff = BACKOFF_MIN;
     loop {
         let mut wait = None;
@@ -315,6 +337,7 @@ pub async fn sync_loop(
                         result = crate::shared::authenticate(control) => result,
                     };
                     if let Err(error) = authenticated {
+                        failed(&error);
                         let driver = control.lock().await;
                         if driver.netmap().is_none() {
                             netmaps.send_if_modified(|current| current.take().is_some());
@@ -327,12 +350,14 @@ pub async fn sync_loop(
                     None
                 }
                 Err(error) if terminal(&error) => {
+                    failed(&error);
                     if driver.netmap().is_none() {
                         netmaps.send_if_modified(|current| current.take().is_some());
                     }
                     return Err(error);
                 }
-                Err(_) => {
+                Err(error) => {
+                    failed(&error);
                     wait = Some(backoff);
                     None
                 }
@@ -347,6 +372,7 @@ pub async fn sync_loop(
             match driver.finish_sync(reply, sink).await {
                 Ok(outcome) => {
                     backoff = BACKOFF_MIN;
+                    errors.send_if_modified(|current| current.take().is_some());
                     if outcome.change == NetmapChange::Renewed && !outcome.facts {
                         idle = true;
                     }
@@ -354,6 +380,7 @@ pub async fn sync_loop(
                 }
                 Err(Error::Pending) => {}
                 Err(error) => {
+                    failed(&error);
                     if driver.netmap().is_none() {
                         netmaps.send_if_modified(|current| current.take().is_some());
                     }

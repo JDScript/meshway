@@ -57,9 +57,12 @@ class DataplaneReportTests(unittest.TestCase):
         partial = dict(complete, Id="partial", Config={})
         with tempfile.TemporaryDirectory() as directory, patch("perf.dataplane.image_builder") as builder, patch("perf.dataplane.command") as command:
             builder.return_value.source_digest.return_value = "locked"
+            builder.return_value.describe.return_value = {"imageId": "complete", "packages": [{"name": "iproute2"}]}
             command.side_effect = ["partial\ncomplete", json.dumps([partial]), json.dumps([complete])]
             self.assertEqual(image_for("linux/arm64", Path(directory))["imageId"], "complete")
             self.assertIn("--all", command.call_args_list[0].args)
+            # The existing image is described in the image-build manifest shape.
+            builder.return_value.describe.assert_called_once_with("complete", "linux/arm64")
             builder.return_value.build.assert_not_called()
 
     def test_reused_process_profile_deltas_do_not_replay_previous_sample(self):

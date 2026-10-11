@@ -59,7 +59,7 @@ Node 拨号候选的顺序为：netmap 中的 configured 端点，然后是 `pee
 
 账本唯一 owner 是 Control 的最后已知事实（按 peer 保存最后一份，见 [Node 控制组件](/v2/node/control#netmap-发布)）；Manager 的 `manager/facts.rs` 只读取 Control 发布的 `KnownPeers` 快照、唤醒事实变化的 peer worker，不另存账本；`plan.rs::fact_endpoints` 是唯一的候选展开。Server 停机时事实不再刷新，但已安装租约内仍可用最后已知地址重建空闲关闭的邻接。Control 把同一份最后已知事实保存为 `peer-facts.json`，节点离线重启后随 netmap 载入，见[私有存储](/v2/node/control#私有存储与传输)。事实只提供尝试地址：错误或过时的地址最多导致连不上；准入仍只由 netmap 与认证握手决定。
 
-STUN 继续使用原有同 socket 观测与双边接受的协调路径，不把 UDP 映射加入 TCP／VLESS／Trojan 目标。只有本机候选而没有 configured 地址的 UDP 邻接继续保留 STUN 刷新资格；本机候选不意味着 NAT 穿透已成功。
+STUN 继续使用原有同 socket 观测与双边接受的协调路径，不把 UDP 映射加入 TCP／VLESS／Trojan 目标。每个 Native UDP socket 都[持续观测](#continuous-stun)自己的映射，与是否有 configured 地址或 interest 无关；本机候选或 STUN 候选都不意味着 NAT 穿透已成功。
 
 STUN 使用 RFC 8489 Binding 交换观察 socket 的外部映射；Meshway Server 负责当前主体／网络权限、获准 peer 的候选交换和有期限的尝试协调；Node 使用实际 socket 互发探测并完成认证。
 
@@ -90,15 +90,48 @@ Server 的 STUN 监听与发布端点由 `--stun-listen`／`--stun-server` 分�
 
 Node 先在实际 UDP owner 预留 STUN 事务，再经同一 Session sender 发送，由唯一 receiver 分流响应。候选的真实 State 上报获确认后，才参与 offer。双方 Active 后从同一 socket 发包，签名握手额外绑定 offer 的 nonce／digest；接入前再次验证原尝试与接收槽，旧尝试不能借新 channel scope 延期。获取成功后，通道由当前执行许可和认证健康检查维持，不依赖过期的 STUN 观测续命。
 
-候选协调由 Manager 按需调度：有实际 UDP endpoint，且存在有需求（interest 或[常驻](/v2/configuration-reference/topology#邻接的建立与常驻)）、任一方向获准 Native UDP 承载却缺少健康选定通道的 peer 时查询，包括原 offer 等待双边接受的阶段。需求方以本机拨号承载 prepare；不再按节点 ID 限定由哪一方发起，两方同时发起时 Server 对同一 peer 对／地址族只接纳一个活动尝试，另一方查询到该 offer 后接受。健康的 Native UDP／TCP 选定通道抑制重复邻接获取；其他地址族的等待 offer 和旧候选过期不会替换健康通道。配置依赖协调端点（Native UDP listener 或拨号候选没有公告端点）时，实际 socket 的 STUN 观测继续独立刷新并经 State 发布，包含健康选链及合法物理交接期间。失联后的下一次获取重新读取候选和期限。当前事件契约没有独立的穿透查询通知，普通 State／观察事件不触发候选 HTTP。
+候选协调由 Manager 按需调度：有实际 UDP endpoint，且存在有需求（interest 或[常驻](/v2/configuration-reference/topology#邻接的建立与常驻)）、任一方向获准 Native UDP 承载却缺少健康选定通道的 peer 时查询，包括原 offer 等待双边接受的阶段。需求方以本机拨号承载 prepare；不按节点 ID 限定由哪一方发起，两方同时发起时 Server 对同一 peer 对／地址族只接纳一个活动尝试，另一方经查询取得该 offer 后接受。没有需求的一方由[穿透信令](#traversal-signalling)获知并参与。健康的 Native UDP／TCP 选定通道抑制重复邻接获取；其他地址族的等待 offer 和旧候选过期不会替换健康通道。失联后的下一次获取重新读取候选和期限。
 
-每个 Manager 的邻接获取查询在**任意半开 60 秒窗口最多 30 次**，发起至少相隔 250 ms，可在双方 publication 同时有效的短窗口使用已有预算。STUN 观测另保留至少相隔 **2 秒**的元数据查询重试预算（任意半开 60 秒窗口最多 30 次），与邻接获取共用同一次 `queryUdpTraversal` 时只消费一个预算；总上限为每分钟 60 次。失败、取消、publication／资源交接不重置预算，健康选链不消耗或抑制 STUN 刷新机会。轮询准入与控制周期分开，不因 SSE 重连重复执行。
+每个 Manager 的邻接获取查询在**任意半开 60 秒窗口最多 30 次**，发起至少相隔 250 ms。只为 STUN 取元数据的查询仅在有到期 socket 且没有仍有效的 discovery context 时发起，与邻接获取共用同一次 `queryUdpTraversal`，不消耗邻接获取预算。失败、取消、publication／资源交接不重置预算，健康选链不消耗或抑制 STUN 观测。查询、prepare 和候选观测均不延长原授权。
 
-STUN 刷新以实际验证的观测时间和到期时间为依据：通常观测满 8 秒或距离到期不足 8 秒时刷新；观测最多有效 20 秒。原上下文中的失败或取消不算取得观测，实际 socket 命令按至少 2 秒间隔有界重试。查询、prepare 和候选观测均不延长原授权。
+### 穿透信令 {#traversal-signalling}
 
-仅需观测刷新且已有仍有效、距离截止超过 8 秒的 discovery context 时，STUN 刷新直接使用其中的原始授权和元数据，不先等待另一次元数据 HTTP 查询。context 进入该刷新窗口、失效、执行交接或资源变化后重新获取；复用不延长期限，也不让旧上下文绑定新 socket 或执行发布。
+NAT 后两端都能拨出时，邻接按需建立：可能只有一方有需求（例如中继 R 本身没有业务，只有 A 有经 R 的首包）。Server **只传信令、不转发流量**：
 
-按实际解析出的 STUN 地址族判断每个 socket 是否可观测；仅有 IPv4 STUN 目标时，空的 IPv6 socket 不触发持续重试，也不让已经新鲜的 IPv4 观测反复替换。这个能力判断只保留至原元数据截止，新元数据会重新解析；解析失败仍可重试，不将失败缓存为永久不支持。
+1. 需求方 prepare 成功后，Server 在同一提交之后唤醒另一参与方挂起的 `sync`。
+2. 该节点的 `SyncResponse.traversalRequests` 列出所有以它为参与方、由他方准备、它尚未接受且仍有效的尝试：
+
+   | 字段 | 含义 |
+   | --- | --- |
+   | `attemptId` | 尝试 ID；节点仍须经 `queryUdpTraversal` 取得并验证不可变 offer |
+   | `peerId` | 准备该尝试的节点 |
+   | `carrier` | 精确 Native UDP 承载（含 listener key） |
+   | `expiresAt` | 尝试的固定截止，之后请求作废 |
+
+   至多 32 项，不含候选或任何授权，也不在签名租约内。下一请求的 `traversalRequests` 回显已持有的尝试 ID；挂起只为未回显的新尝试立即回答，已持有的尝试不会让长轮询空转。
+3. Control 随 `KnownPeers` 发布请求；connectivity 对其中未到期请求的 `peerId` 登记 interest（与首包 interest 同一机制，仍只限当前投影的 peer），随后按上文查询、预留真实接收槽并接受该 offer。interest 本身不授权：offer、承载与双方投影仍由 Server 和 Node 各自复核。
+
+因此目标在一个 sync hold 内得知请求，不需要本地业务 interest；Server 不持有数据面状态，尝试记录本身仍是有期限的协调状态（至多 10 秒）。双方同时 prepare 时仍由 Server 的“同一 peer 对／地址族只接纳一个活动尝试”决胜，被拒一方经信令或查询接受对方的 offer。Server 停机期间没有信令，只有静态端点与已有通道可用。
+
+### 持续 STUN 观测 {#continuous-stun}
+
+每个 Native UDP socket（listener 与 dial）按**自己的固定节拍**观测映射，不依赖 interest：
+
+| 状态 | 节拍 |
+| --- | --- |
+| socket 承载健康的 Native UDP 选定通道或有在途尝试 | ~10 秒 |
+| 其他 | ~30 秒 |
+
+节拍带按 socket 固定的 ±10% 抖动，从最后一次经验证的响应起算；新 socket 立即观测。一轮未取得经验证响应时 2 秒后重试，连续失败倍增至 30 秒；没有可用 STUN 元数据（Server 未配置 STUN 或查询不可用）时，只为观测而发的元数据查询同样从 2 秒倍增至 30 秒。有效 discovery context 期间每轮观测只是同 socket 的 UDP 往返，不发 HTTP。
+
+观测结果的上报规则：
+
+- 观测寿命 120 秒，独立于授权该 STUN 请求的元数据期限（它是映射事实，不是授权）。
+- 同一 observer、同一映射的确认**不触发 State 上报**；剩余寿命不足 60 秒时才以新观测续期并上报，续期时保留上一观测至其自然到期，使依据上一次已确认报告准备的 offer 仍可预留。
+- 映射变化（地址或端口不同）立即替换该 observer 的观测并唤醒 State 报告调度。
+- Server 把同一 listener 中地址与来源相同的 STUN 候选合并为一个事实（取较晚的期限）：续期不改变 peer facts 内容，只经 `refreshed` 更新新鲜度，不唤醒其他节点。
+
+按实际解析出的 STUN 地址族判断每个 socket 是否可观测；仅有 IPv4 STUN 目标时，空的 IPv6 socket 不持续重试。这个能力判断只保留至原元数据截止，新元数据会重新解析；解析失败仍可重试，不缓存为永久不支持。
 
 已取得且仍有效的 discovery context 不必等待下一次元数据查询才准备候选对；缺失邻接的 prepare 至少相隔 1 秒。已经预留的同一 offer 按至少 500 ms 间隔重试双边接受，最多运行至原 offer 截止；接受成功后停止重试。context／offer 在执行交接、撤回或期限结束后立即失效，旧操作不换绑到新上下文。
 

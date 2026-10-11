@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import importlib.util
+import io
 import json
 import lzma
 import os
@@ -10,6 +11,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import tarfile
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
@@ -28,6 +30,46 @@ def source_digest():
     for path in sorted(SOURCE_FILES):
         digest.update(str(path.relative_to(ROOT)).encode() + b"\0" + path.read_bytes() + b"\0")
     return digest.hexdigest()
+
+
+PROVENANCE_BUILT = "built here from locked node-lab OS sources"
+PROVENANCE_EXISTING = "existing immutable image of locked node-lab OS sources"
+PACKAGES = "/usr/share/meshway-lab/packages.json"
+
+
+def sources():
+    return {str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest() for path in SOURCE_FILES}
+
+
+def describe(image_id, platform):
+    """The manifest of an existing image built from these sources, in the same
+    shape as build(); its package list is the one baked into the image."""
+    digest = source_digest()
+    lock = json.loads((HERE / "assets.lock.json").read_text())
+    image = json.loads(subprocess.check_output(["docker", "image", "inspect", image_id], text=True, timeout=45))[0]
+    if (image["Os"] + "/" + image["Architecture"] != platform
+            or image["Config"].get("Labels", {}).get("io.meshway.node-lab.source") != digest
+            or image["Config"].get("Entrypoint") != ["/usr/local/lib/meshway-lab/entrypoint.sh"]):
+        raise RuntimeError("Existing image does not come from the current locked OS sources.")
+    # A created, never started container: no process, network or mount runs.
+    container = subprocess.check_output(["docker", "create", "--network", "none", image["Id"]],
+                                        text=True, timeout=45).strip()
+    try:
+        archive = subprocess.check_output(["docker", "cp", container + ":" + PACKAGES, "-"], timeout=45)
+    finally:
+        subprocess.run(["docker", "rm", "-f", container], check=True, capture_output=True, timeout=45)
+    with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
+        member = tar.getmember(Path(PACKAGES).name)
+        if not member.isfile() or member.size > 1024 * 1024:
+            raise RuntimeError("Image package list is not a bounded regular file.")
+        packages = json.loads(tar.extractfile(member).read())
+    names = {item["name"] for item in packages}
+    if (not isinstance(packages, list) or not set(lock["packages"]).issubset(names)
+            or any(set(item) != {"name", "version", "architecture", "filename", "sha256"} for item in packages)):
+        raise RuntimeError("Image package list does not cover the locked packages.")
+    return {"sourceDigest": digest, "platform": platform, "base": lock["base"], "packages": packages,
+            "sources": sources(), "buildCommand": None, "provenance": PROVENANCE_EXISTING,
+            "imageId": image["Id"], "status": "built"}
 
 
 def build(output, platform):
@@ -100,8 +142,8 @@ def build(output, platform):
                "--platform", platform, "--build-arg", "BASE=" + lock["base"],
                "--build-arg", "SOURCE_DIGEST=" + before, "--iidfile", str(output / "image.id"), str(context)]
     record = {"sourceDigest": before, "platform": platform, "base": lock["base"], "packages": packages,
-              "sources": {str(path.relative_to(ROOT)): assets.digest(path.read_bytes()) for path in SOURCE_FILES},
-              "buildCommand": command, "status": "candidate"}
+              "sources": sources(), "buildCommand": command, "provenance": PROVENANCE_BUILT,
+              "status": "candidate"}
     manifest.write_text(json.dumps(record, indent=2) + "\n")
     subprocess.run(command, check=True, timeout=1800)
     if source_digest() != before:

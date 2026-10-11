@@ -169,7 +169,8 @@ def image_for(platform, output):
     manifest = output / "image-manifest.json"
     if manifest.exists():
         cached = json.loads(manifest.read_text())
-        if cached.get("status") == "built" and cached.get("sourceDigest") == digest and cached.get("platform") == platform:
+        if (cached.get("status") == "built" and cached.get("sourceDigest") == digest and cached.get("platform") == platform
+                and cached.get("packages")):
             inspected = command("docker", "image", "inspect", cached["imageId"], check=False)
             if inspected:
                 image = json.loads(inspected)[0]
@@ -183,8 +184,7 @@ def image_for(platform, output):
         image = json.loads(command("docker", "image", "inspect", identifier))[0]
         if (image["Os"] + "/" + image["Architecture"] == platform
                 and image["Config"].get("Entrypoint") == ["/usr/local/lib/meshway-lab/entrypoint.sh"]):
-            return {"imageId": image["Id"], "sourceDigest": digest,
-                    "provenance": "existing immutable image of locked node-lab OS sources"}
+            return builder.describe(image["Id"], platform)
     return builder.build(output, platform)
 
 

@@ -4,6 +4,7 @@
 //! the netmap or visible peer facts change, or until its hold timeout, and
 //! answers with a lease for the current netmap. Peer facts never authorize
 //! anything: they select among candidates the installed netmap allows.
+use crate::connectivity::{UdpTraversalRequestIds, UdpTraversalRequests};
 use crate::object::{wire_object, wire_tagged};
 use chrono::{DateTime, Utc};
 use meshway_configuration::netmap::{CompiledNetmap, NetmapDelta, NodeNetmap};
@@ -35,6 +36,9 @@ pub struct SyncRequest {
     pub state: Option<StateCursor>,
     /// Generation of the Server signing key the Node has pinned; reported for the inventory view only (it selects and authorizes nothing). Null or omission: not reported.
     pub server_key_generation: Option<Version>,
+    /// Attempt IDs of the previous answer's `traversalRequests` the Node already holds; a live request not listed here answers the hold at once. Omission: none held.
+    #[serde(default)]
+    pub traversal_requests: UdpTraversalRequestIds,
 } }
 
 wire_tagged! {
@@ -266,6 +270,8 @@ pub struct SyncResponse {
     pub peer_facts: Option<PeerFactsDelta> [required = true],
     /// Signing-key handover while the Server's rotation window is open; null otherwise.
     pub key_rotation: Option<NetmapKeyRotation> [required = true],
+    /// Live UDP traversal attempts other Nodes prepared toward this Node that it has not accepted yet; empty when none. Hints only, outside the signed lease.
+    pub traversal_requests: UdpTraversalRequests,
 } }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -293,6 +299,19 @@ impl SyncResponse {
             SyncNetmap::Delta { .. } => return Err(InconsistentSyncResponse),
         };
         if target != self.lease.netmap {
+            return Err(InconsistentSyncResponse);
+        }
+        // A Node is never asked to accept its own attempt, and each attempt appears once.
+        let requests = self.traversal_requests.as_slice();
+        if requests.iter().enumerate().any(|(index, request)| {
+            requests[..index]
+                .iter()
+                .any(|other| other.attempt_id == request.attempt_id)
+                || (request.carrier.dialer != request.peer_id
+                    && request.carrier.listener != request.peer_id)
+                || request.carrier.dialer == request.carrier.listener
+                || request.carrier.protocol != meshway_model::TransportProtocol::NativeUdp
+        }) {
             return Err(InconsistentSyncResponse);
         }
         if let Some(rotation) = &self.key_rotation
@@ -453,6 +472,7 @@ mod tests {
             netmap: Some(base),
             state: None,
             server_key_generation: Some(Version::MIN),
+            traversal_requests: Default::default(),
         };
         let next = ServerSigningKey {
             key_id: "00000000-0000-4000-8000-0000000000bb".parse().unwrap(),
@@ -478,6 +498,7 @@ mod tests {
             netmap: SyncNetmap::Unchanged,
             peer_facts: None,
             key_rotation: Some(rotation.clone()),
+            traversal_requests: Default::default(),
         };
         assert_eq!(response.check(&request), Ok(()));
         let text = serde_json::to_string(&response).unwrap();
@@ -507,6 +528,7 @@ mod tests {
             netmap: Some(base),
             state: None,
             server_key_generation: None,
+            traversal_requests: Default::default(),
         };
         let response = SyncResponse {
             lease: NetmapLease::new(base, 0, 60_000).unwrap(),
@@ -514,12 +536,14 @@ mod tests {
             netmap: SyncNetmap::Unchanged,
             peer_facts: None,
             key_rotation: None,
+            traversal_requests: Default::default(),
         };
         assert_eq!(response.check(&request), Ok(()));
         let stale = SyncRequest {
             netmap: Some(reference(2)),
             state: None,
             server_key_generation: None,
+            traversal_requests: Default::default(),
         };
         assert!(response.check(&stale).is_err());
         let text = serde_json::to_string(&response).unwrap();
@@ -538,6 +562,7 @@ mod tests {
                 netmap: None,
                 state: None,
                 server_key_generation: None,
+                traversal_requests: Default::default(),
             }
         );
     }
@@ -565,6 +590,7 @@ mod tests {
             netmap: Some(base),
             state: Some(cursor(4)),
             server_key_generation: None,
+            traversal_requests: Default::default(),
         };
         let mut response = SyncResponse {
             lease: NetmapLease::new(base, 0, 60_000).unwrap(),
@@ -572,6 +598,7 @@ mod tests {
             netmap: SyncNetmap::Unchanged,
             peer_facts: Some(facts(Some(cursor(4)))),
             key_rotation: None,
+            traversal_requests: Default::default(),
         };
         assert_eq!(response.check(&request), Ok(()));
         response.peer_facts = Some(facts(Some(cursor(2))));

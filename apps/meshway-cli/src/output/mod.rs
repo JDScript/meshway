@@ -26,6 +26,9 @@ pub(crate) fn display(status: &Status, json: bool) -> io::Result<()> {
                 .map(|time| time.to_rfc3339())
                 .unwrap_or_else(|| "none".into())
         )?;
+        if let Some(error) = status.sync_error {
+            writeln!(output, "Sync error: {error:?}  (retrying)")?;
+        }
         match &status.netmap {
             Some(netmap) => writeln!(
                 output,

@@ -27,6 +27,10 @@ pub(crate) enum Command {
         /// One-use enrollment key, @file, or - / @- for stdin. Prefer file/stdin.
         #[arg(long, value_name = "KEY|@FILE|-", allow_hyphen_values = true)]
         enrollment_key: Option<String>,
+        /// Enroll the held identity again (same Node and keys) after a missed
+        /// Server signing-key rotation; requires approval in the Console.
+        #[arg(long, conflicts_with = "enrollment_key")]
+        reenroll: bool,
     },
     /// Atomically rotate both identity keys through the daemon's durable owner.
     RotateKey,

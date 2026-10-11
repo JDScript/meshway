@@ -72,11 +72,50 @@ impl Attempts {
         self.entries
             .retain(|_, entry| entry.request.expires_at_ms > now);
     }
-    fn apply(&mut self, changes: Vec<Change>, now: u64) {
+    /// Live attempts another Node prepared with `node` as a participant that
+    /// has not accepted yet: the `traversalRequests` of its `sync` answers.
+    pub(crate) fn requests(
+        &self,
+        network: meshway_model::NetworkId,
+        node: NodeId,
+        now: u64,
+    ) -> Vec<UdpTraversalRequest> {
+        self.entries
+            .values()
+            .filter(|attempt| {
+                attempt.offer.network_id == network
+                    && attempt.live(now)
+                    && attempt.prepared_by.node_id() != node
+                    && attempt
+                        .participant(node)
+                        .is_some_and(|index| attempt.accepted[index].is_none())
+            })
+            .map(|attempt| UdpTraversalRequest {
+                attempt_id: attempt.offer.attempt_id,
+                peer_id: attempt.prepared_by.node_id(),
+                carrier: attempt.offer.carrier.clone(),
+                expires_at_ms: attempt.offer.expires_at_ms,
+            })
+            .take(MAX_UDP_TRAVERSAL_ATTEMPTS)
+            .collect()
+    }
+    /// Returns the (network, participant) pairs newly asked to accept.
+    fn apply(&mut self, changes: Vec<Change>, now: u64) -> Vec<(meshway_model::NetworkId, NodeId)> {
         self.gc(now);
+        let mut asked = Vec::new();
         for change in changes {
             match change {
                 Change::Insert(entry) => {
+                    let prepared_by = entry.prepared_by.node_id();
+                    asked.extend(
+                        [
+                            &entry.offer.local.candidate.socket.node_id,
+                            &entry.offer.peer.candidate.socket.node_id,
+                        ]
+                        .into_iter()
+                        .filter(|node| **node != prepared_by)
+                        .map(|node| (entry.offer.network_id, *node)),
+                    );
                     self.entries.insert(entry.offer.attempt_id, *entry);
                 }
                 Change::Accept(id, participant, principal) => {
@@ -91,6 +130,7 @@ impl Attempts {
                 }
             }
         }
+        asked
     }
 }
 enum Change {
@@ -236,7 +276,11 @@ impl Connectivity {
                 }
                 // No await or other executor job
                 // can intervene between the final checks and this memory mutation.
-                runtime.traversal.apply(plan.changes, final_now);
+                // The other participant's held sync answers within its hold:
+                // the Server relays the intent, never any traffic.
+                for (network, node) in runtime.traversal.apply(plan.changes, final_now) {
+                    runtime.facts.signal(network, node);
+                }
                 Ok(plan.value)
             })
             .await?

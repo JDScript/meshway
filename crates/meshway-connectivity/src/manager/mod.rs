@@ -239,6 +239,9 @@ struct Shared {
     limits: Limits,
     control_budget: Arc<Mutex<datagram::ControlBudget>>,
     sockets: Arc<Mutex<BTreeMap<[u8; 32], SocketFact>>>,
+    /// Last validated STUN response of each socket, whether or not it changed
+    /// the reported mapping: the clock of its observation cadence.
+    stun_confirmed: Arc<Mutex<BTreeMap<[u8; 32], tokio::time::Instant>>>,
     /// State socket generation of this Manager's descriptors.
     generation: meshway_model::Sequence,
     traversal_endpoints: Arc<Mutex<BTreeMap<[u8; 32], traversal::Endpoint>>>,
@@ -270,6 +273,7 @@ impl Shared {
             limits: self.limits,
             control_budget: self.control_budget.clone(),
             sockets: self.sockets.clone(),
+            stun_confirmed: self.stun_confirmed.clone(),
             generation: self.generation,
             traversal_endpoints: self.traversal_endpoints.clone(),
             resource_changes: self.resource_changes.clone(),
@@ -431,6 +435,7 @@ impl Manager {
             limits,
             control_budget: Arc::new(Mutex::new(datagram::ControlBudget::new())),
             sockets: Arc::new(Mutex::new(BTreeMap::new())),
+            stun_confirmed: Arc::default(),
             generation,
             traversal_endpoints: Arc::new(Mutex::new(BTreeMap::new())),
             resource_changes: tokio::sync::watch::channel(()).0,

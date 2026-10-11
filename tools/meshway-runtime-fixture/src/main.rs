@@ -87,6 +87,17 @@ struct Cli {
 }
 
 impl Cli {
+    /// `nat/off`: A–R is an on-demand NAT–NAT edge. R can also dial A
+    /// (Native TCP to A's unpublished TCP listener, unreachable through A's
+    /// NAT), so neither end holds the edge and only A has business toward R;
+    /// R, a relay with no need of its own, takes part through the Server's
+    /// traversal request in its sync answer.
+    fn on_demand_nat(&self) -> bool {
+        self.traversal == TraversalMode::Nat
+            && !self.traversal_fallback
+            && self.dns_backend == DnsBackend::Off
+    }
+
     fn traffic_duration(&self) -> Duration {
         Duration::from_secs(if self.short { 30 } else { TRAFFIC_SECONDS })
     }

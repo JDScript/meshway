@@ -103,9 +103,9 @@ mise exec -- cargo run -p meshway-server --bin meshway-server --locked -- \
 | 窗口内 | K′ | K | `{ next: K′, notBefore, endorsement, leaseSignature }`：K 对 K′ 的背书与 K′ 对同一租约的签名 |
 | 窗口后 | K′ | K′ | null |
 
-节点如何跟随交接、错过窗口时的表现见[Netmap 发布](/v2/node/control#server-签名钥轮换)。节点库存视图的 `serverKey` 显示每个节点最近一次 sync 报告的钉住钥 generation 与 `status`：`current`、`rotating`（窗口内仍钉 K，下一回复即跟随）或 `keyMismatch`（错过窗口或其他钥；须重新接入，见下）。它是本进程内观测，Server 重启后在节点下一次 sync 前为 null。旧钥永久保留在表中供审计，不删除。
+节点如何跟随交接、错过窗口时的表现见[Netmap 发布](/v2/node/control#server-签名钥轮换)。节点库存视图的 `serverKey` 显示每个节点最近一次 sync 报告的钉住钥 generation 与 `status`：`current`、`rotating`（窗口内仍钉 K，下一回复即跟随）或 `keyMismatch`（错过窗口或其他钥；须保留身份重新接入，见下）。它是本进程内观测，Server 重启后在节点下一次 sync 前为 null。旧钥永久保留在表中供审计，不删除。
 
-错过窗口的节点保持已持有租约直至到期，之后 fail closed；当前唯一恢复方式是以新身份重新接入：删除旧节点、移走该 Node 的私有身份目录后 `meshway up`（浏览器批准或 `--enrollment-key`），新的接入响应即钉住当前钥，旧节点 ID 上的配置引用需改到新节点。保留节点身份的重新登录（接入意图 `existing`）Server 已支持、Node 侧尚未实现。当前不做自动轮换，也不支持多 Server 实例共享钥。
+错过窗口的节点保持已持有租约直至到期，之后 fail closed；恢复方式是保留身份的重新接入 `meshway up --reenroll`（接入意图 `existing`，须 Console 批准，enrollment key 不适用），兑换响应即钉住当前钥，Node ID、密钥与配置引用不变，见[保留身份的重新接入](/v2/node/control#保留身份的重新接入)。当前不做自动轮换，也不支持多 Server 实例共享钥。
 
 本工作树的开发服务（`mise run services …`）、地址、重置与恢复见[开发服务、测试与环境](/v2/development#本机服务)。源码合并或编译完成后，仍须执行服务更新并核对实际运行实例。
 

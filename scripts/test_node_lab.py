@@ -622,7 +622,8 @@ class ImageSelection(unittest.TestCase):
         self.directory = self.lab / "images/candidate"
         self.directory.mkdir(parents=True, mode=0o700)
         self.manifest = {"status": "built", "platform": "linux/arm64", "imageId": "sha256:" + "a" * 64,
-                         "sourceDigest": "b" * 64, "base": node_lab.base_image()}
+                         "sourceDigest": "b" * 64, "base": node_lab.base_image(),
+                         "packages": [{"name": "iproute2"}], "sources": {"dev/node-lab/Dockerfile": "c" * 64}}
         self.image = {"Id": self.manifest["imageId"], "Os": "linux", "Architecture": "arm64", "Config": {
             "Labels": {"io.meshway.node-lab.image": "1", "io.meshway.node-lab.source": "b" * 64},
             "Entrypoint": ["/usr/local/lib/meshway-lab/entrypoint.sh"]}}
@@ -647,6 +648,7 @@ class ImageSelection(unittest.TestCase):
             (self.image["Config"], "Volumes", {"/state": {}}), (self.image["Config"], "User", "1000"),
             (self.image["Config"], "Entrypoint", ["/bin/sh"]),
             (self.image["Config"]["Labels"], "io.meshway.node-lab.source", "c" * 64),
+            (self.manifest, "packages", []), (self.manifest, "sources", {}),
         ]:
             with self.subTest(key=key), patch.dict(owner, {key: value}):
                 self.save_manifest()
@@ -731,3 +733,48 @@ class ImageBuildPreflight(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ImageManifestShapeTest(unittest.TestCase):
+    """An existing image and a freshly built one have the same manifest shape."""
+
+    def archive(self, packages):
+        import io, tarfile
+        data = json.dumps(packages).encode()
+        buffer = io.BytesIO()
+        with tarfile.open(fileobj=buffer, mode="w") as tar:
+            info = tarfile.TarInfo("packages.json")
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+        return buffer.getvalue()
+
+    def test_existing_image_is_described_with_its_baked_package_list(self):
+        builder = node_lab.image_builder()
+        lock = json.loads((node_lab.ROOT / "dev/node-lab/assets.lock.json").read_text())
+        packages = [{"name": name, "version": "1", "architecture": "arm64", "filename": "pool/" + name + ".deb",
+                     "sha256": "0" * 64} for name in lock["packages"]]
+        image = {"Id": "sha256:" + "a" * 64, "Os": "linux", "Architecture": "arm64",
+                 "Config": {"Labels": {"io.meshway.node-lab.source": builder.source_digest()},
+                            "Entrypoint": ["/usr/local/lib/meshway-lab/entrypoint.sh"]}}
+        outputs = iter([json.dumps([image]), "created\n", self.archive(packages)])
+        with patch.object(builder.subprocess, "check_output", side_effect=lambda *a, **k: next(outputs)) as calls, \
+                patch.object(builder.subprocess, "run") as remove:
+            manifest = builder.describe(image["Id"], "linux/arm64")
+        self.assertEqual(manifest["packages"], packages)
+        self.assertEqual(set(manifest) - {"buildCommand", "provenance"},
+                         {"sourceDigest", "platform", "base", "packages", "sources", "imageId", "status"})
+        self.assertEqual(manifest["status"], "built")
+        self.assertIn("--network", calls.call_args_list[1].args[0])
+        self.assertEqual(remove.call_args.args[0], ["docker", "rm", "-f", "created"])
+        # A package list missing a locked package is not that image's manifest.
+        outputs = iter([json.dumps([image]), "created\n", self.archive(packages[1:])])
+        with patch.object(builder.subprocess, "check_output", side_effect=lambda *a, **k: next(outputs)), \
+                patch.object(builder.subprocess, "run"):
+            with self.assertRaises(RuntimeError):
+                builder.describe(image["Id"], "linux/arm64")
+
+    def test_a_manifest_without_packages_is_not_a_verified_image(self):
+        manifest = {"status": "built", "platform": "linux/arm64", "sourceDigest": node_lab.image_builder().source_digest(),
+                    "base": node_lab.base_image(), "imageId": "sha256:" + "a" * 64}
+        with self.assertRaises(node_lab.DevError):
+            node_lab.verify_image(manifest, "linux/arm64")

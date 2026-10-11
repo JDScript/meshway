@@ -11,6 +11,7 @@ import subprocess
 import sys
 import time
 
+from dev import DevError
 from node_lab import ROOT, base_image, docker_target, image_builder, verify_image, sha256
 from perf.dataplane import image_for
 from validation_support import build_lock, run_id
@@ -127,12 +128,20 @@ def prepare_images(args, directory, platform):
                 inspection = subprocess.run(["docker", "image", "inspect", data.get("imageId", "missing")],
                                             capture_output=True, text=True)
                 if data.get("status") == "built" and data.get("platform") == platform and inspection.returncode == 0:
-                    images[kind] = manifest
-                    continue
+                    if builder:
+                        # A manifest has one shape: an earlier partial record is replaced below.
+                        try:
+                            verify_image(data, platform)
+                        except DevError:
+                            data = None
+                    if data is not None:
+                        images[kind] = manifest
+                        continue
             if builder:
                 # Reuse the existing perf lookup of complete, locked native images,
-                # including untagged images; apply the runtime's stricter verifier.
-                data = {**image_for(platform, output), "status": "built", "platform": platform, "base": base_image()}
+                # including untagged images; it returns the image-build manifest
+                # shape (packages read from the image) and the runtime verifier applies.
+                data = image_for(platform, output)
                 verify_image(data, platform)
                 output.mkdir(parents=True, exist_ok=True)
                 write_json(manifest, data)

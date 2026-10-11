@@ -226,7 +226,8 @@ async fn apply(
         blocked,
         command.enrollment_key,
     );
-    if command.action == Action::RotateKey && mutation.as_ref().is_ok_and(|record| record.is_some())
+    if matches!(command.action, Action::RotateKey | Action::Reenroll)
+        && mutation.as_ref().is_ok_and(|record| record.is_some())
     {
         let state = view
             .report
@@ -261,7 +262,11 @@ async fn apply(
                 let _ = command.reply.send(Err(ErrorCode::Storage));
                 return Err(());
             }
-            desired.send_replace(store.record.desired(command.action == Action::Up));
+            let mut next = store
+                .record
+                .desired(matches!(command.action, Action::Up | Action::Reenroll));
+            next.reenroll = command.action == Action::Reenroll;
+            desired.send_replace(next);
             tracing::info!(
                 request_id = %command.id,
                 revision = store.record.revision.get(),

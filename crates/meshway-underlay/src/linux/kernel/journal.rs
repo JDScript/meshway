@@ -84,6 +84,22 @@ impl Journal {
         Ok((boot, namespace.dev(), namespace.ino()))
     }
 
+    /// Whether this namespace still holds what the journal says it installed:
+    /// any of its recorded rules (exact bytes, in its own random table and
+    /// priority range) or its DNS anchor (alias with the random
+    /// installation). Boot ID and nsfs device/inode identify a namespace only
+    /// while it lives: a destroyed namespace's inode is reused by the next one
+    /// (a restarted container), which holds none of these objects.
+    pub fn resident(&self, rules: &[Vec<u8>], aliases: &[String]) -> bool {
+        self.rules
+            .iter()
+            .any(|record| rules.contains(&record.observed))
+            || self
+                .anchor
+                .as_ref()
+                .is_some_and(|anchor| aliases.contains(&anchor.alias))
+    }
+
     /// Resources in another kernel or network namespace cannot be adopted or
     /// cleaned up here. Preserve their evidence and allocate in this namespace.
     pub fn is_stale(&self, boot: &str, device: u64, inode: u64) -> bool {
@@ -228,22 +244,7 @@ impl Store {
             let journal: Journal = serde_json::from_slice(&bytes).map_err(|_| Error::Journal)?;
             let (boot, device, inode) = Journal::identity()?;
             if journal.is_stale(&boot, device, inode) {
-                let timestamp = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map_err(|_| Error::Journal)?
-                    .as_nanos();
-                let archive = format!("{FILE}.stale-{timestamp}");
-                // Checked descriptor-relative, durable NOREPLACE rename. A
-                // failed archive never permits a fresh allocation/overwrite.
-                worker_directory.publish_once(&archive, FILE, None)?;
-                tracing::info!(
-                    old_boot = journal.boot.trim(),
-                    old_namespace_device = journal.namespace_device,
-                    old_namespace_inode = journal.namespace_inode,
-                    namespace_inode = inode,
-                    archive,
-                    "Archived stale Underlay journal"
-                );
+                archive(&worker_directory, &journal, "changed_namespace")?;
                 return Ok(None);
             }
             journal.validate()?;
@@ -264,6 +265,17 @@ impl Store {
         self.writes.settle().await
     }
 
+    /// Preserve a journal written in another namespace that reused this
+    /// namespace's nsfs inode (see [`Journal::resident`]).
+    pub async fn archive_foreign(&mut self, journal: &Journal) -> Result<()> {
+        self.settle().await?;
+        let directory = self.directory.clone();
+        let journal = journal.clone();
+        tokio::task::spawn_blocking(move || archive(&directory, &journal, "reused_namespace_inode"))
+            .await
+            .map_err(|_| Error::Worker)?
+    }
+
     pub async fn persist(&mut self, journal: &Journal) -> Result<()> {
         self.settle().await?;
         let bytes = serde_json::to_vec(journal).map_err(|_| Error::Journal)?;
@@ -278,6 +290,26 @@ impl Store {
             })
             .await
     }
+}
+
+/// Checked descriptor-relative, durable NOREPLACE rename. A failed archive
+/// never permits a fresh allocation/overwrite.
+fn archive(directory: &Directory, journal: &Journal, cause: &'static str) -> Result<()> {
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| Error::Journal)?
+        .as_nanos();
+    let archive = format!("{FILE}.stale-{timestamp}");
+    directory.publish_once(&archive, FILE, None)?;
+    tracing::info!(
+        old_boot = journal.boot.trim(),
+        old_namespace_device = journal.namespace_device,
+        old_namespace_inode = journal.namespace_inode,
+        cause,
+        archive,
+        "Archived stale Underlay journal"
+    );
+    Ok(())
 }
 
 #[cfg(test)]
@@ -332,6 +364,32 @@ mod tests {
         assert!(journal.is_stale(&boot, device, inode + 1));
         assert!(journal.is_stale("another-boot", device, inode));
         assert!(journal.is_stale(&boot, device + 1, inode));
+    }
+
+    #[test]
+    fn namespace_identity_needs_a_resident_object_not_only_the_inode() {
+        let (boot, _, _) = Journal::identity().unwrap();
+        let mut journal: Journal = serde_json::from_slice(&journal(&boot)).unwrap();
+        journal.pending = None;
+        let rule = super::super::plan::RuleSpec {
+            kind: super::super::plan::RuleKind::End,
+            priority: journal.end(),
+            table: journal.table,
+            ipv6: false,
+        };
+        let observed = encode_rule(rule.message());
+        journal.rules.push(RuleRecord {
+            spec: rule,
+            observed: observed.clone(),
+        });
+        assert!(journal.resident(std::slice::from_ref(&observed), &[]));
+        assert!(
+            !journal.resident(&[], &[]),
+            "same inode, none of its objects"
+        );
+        assert!(!journal.resident(&[vec![1, 2, 3]], &["meshway-dns:other".into()]));
+        journal.rules.clear();
+        assert!(!journal.resident(&[observed], &[]));
     }
 
     #[tokio::test]

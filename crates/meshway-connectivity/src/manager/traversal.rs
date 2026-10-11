@@ -76,27 +76,31 @@ struct Pending {
 }
 
 // Capability knowledge from the latest bounded metadata resolution, not I/O
-// authority. A missing STUN address family cannot make healthy sockets poll
+// authority. A socket whose address family no STUN server serves cannot poll
 // forever; failures remain retryable and metadata expiry forces a fresh query.
 struct Observers {
     expires: Instant,
-    endpoints: std::collections::BTreeSet<[u8; 32]>,
+    unavailable: std::collections::BTreeSet<[u8; 32]>,
 }
 
 // Kept across content and resource changes: churn cannot reset admission.
 // Acquisition is bounded to 30 starts in any half-open minute, paced at 250 ms.
 const QUERY_INTERVAL: Duration = Duration::from_millis(250);
-// Mapping observations expire after at most 20 seconds. Their refresh budget is
-// independent of missing-adjacency acquisition, but coalesced metadata queries
-// have their own two-second retry budget even if acquisition used its minute.
-// Successful observations below still refresh at eight seconds; an unavailable
-// metadata response must not spend an eight-second successful-observation slot.
-const OBSERVATION_QUERY_INTERVAL: Duration = Duration::from_secs(2);
-const OBSERVATION_REFRESH_MS: u64 = 8_000;
+/// Every traversal socket observes its mapping on its own cadence, whether or
+/// not any peer is interested: ~30 s idle, ~10 s while it carries a Native
+/// UDP channel or an attempt, each with a fixed per-socket jitter of ±10 %.
+const STUN_IDLE: Duration = Duration::from_secs(30);
+const STUN_ACTIVE: Duration = Duration::from_secs(10);
+/// A round without a validated response retries after 2 s, doubling up to
+/// the idle cadence; a metadata query that yields no STUN context backs off
+/// the same way. Neither consumes the acquisition budget.
+const STUN_RETRY: Duration = Duration::from_secs(2);
 
 struct QuerySchedule {
     next: Instant,
     observation_at: Instant,
+    observation_last: Instant,
+    observation_backoff: Duration,
     acquisitions: std::collections::VecDeque<Instant>,
 }
 impl QuerySchedule {
@@ -104,6 +108,8 @@ impl QuerySchedule {
         Self {
             next: now,
             observation_at: now,
+            observation_last: now,
+            observation_backoff: STUN_RETRY,
             acquisitions: std::collections::VecDeque::with_capacity(30),
         }
     }
@@ -120,7 +126,8 @@ impl QuerySchedule {
             self.acquisitions.pop_front();
         }
         if observation && now >= self.observation_at {
-            self.observation_at = now + OBSERVATION_QUERY_INTERVAL;
+            self.observation_last = now;
+            self.observation_at = now + self.observation_backoff;
         } else if acquisition && self.acquisitions.len() < 30 {
             self.acquisitions.push_back(now);
         } else {
@@ -129,6 +136,54 @@ impl QuerySchedule {
         self.next = now + QUERY_INTERVAL;
         true
     }
+
+    /// Whether the last admitted observation query produced a usable STUN
+    /// context; its outcome paces the next one.
+    fn observed(&mut self, usable: bool) {
+        self.observation_backoff = if usable {
+            STUN_RETRY
+        } else {
+            (self.observation_backoff * 2).min(STUN_IDLE)
+        };
+        self.observation_at = self.observation_last + self.observation_backoff;
+    }
+}
+
+/// One socket's observation rounds: when the last one was sent and how many
+/// in a row ended without a validated response.
+#[derive(Clone, Copy)]
+struct Round {
+    sent: Instant,
+    failures: u32,
+}
+
+/// The socket's fixed cadence: idle or active base with its own jitter.
+fn cadence(id: &[u8; 32], active: bool) -> Duration {
+    let base = if active { STUN_ACTIVE } else { STUN_IDLE };
+    base.mul_f64(0.9 + 0.2 * f64::from(id[0]) / 255.0)
+}
+
+/// Due when the cadence since the last validated response elapsed (or none
+/// arrived yet), and not before the retry delay of an unanswered round.
+fn observation_due(
+    confirmed: Option<Instant>,
+    round: Option<Round>,
+    cadence: Duration,
+    now: Instant,
+) -> bool {
+    if let Some(round) = round
+        && confirmed.is_none_or(|at| at < round.sent)
+        && now < round.sent + retry(round.failures)
+    {
+        return false;
+    }
+    confirmed.is_none_or(|at| now >= at + cadence)
+}
+
+fn retry(failures: u32) -> Duration {
+    STUN_RETRY
+        .saturating_mul(1 << failures.min(4))
+        .min(STUN_IDLE)
 }
 
 fn needs_acquisition(shared: &Shared, pending: &BTreeMap<UdpTraversalId, Pending>) -> bool {
@@ -184,57 +239,20 @@ fn udp_edge(plan: &Plan, peer: NodeId) -> bool {
     })
 }
 
-fn needs_observation(shared: &Shared) -> bool {
-    let plan = shared.plan();
-    plan.dialers.values().any(|dial| {
-        dial.parameters.transport() == TransportProtocol::NativeUdp
-            && !dial.endpoints.iter().any(|endpoint| {
-                endpoint.source == meshway_configuration::execution::DialEndpointSource::Configured
+/// The socket carries a selected Native UDP channel or an attempt.
+fn socket_active(
+    shared: &Shared,
+    pending: &BTreeMap<UdpTraversalId, Pending>,
+    id: &[u8; 32],
+) -> bool {
+    pending.values().any(|value| value.endpoint == *id)
+        || shared.links.lock().is_ok_and(|links| {
+            links.values().any(|link| {
+                link.fact.socket_id == *id
+                    && link.fact.carrier.protocol == TransportProtocol::NativeUdp
+                    && link.scope.check().is_ok()
             })
-    }) || plan.listeners.values().any(|listener| {
-        matches!(listener.declaration(), meshway_transport::spec::Listener::NativeUdp(udp)
-            if udp.enabled && udp.endpoints.is_empty())
-    })
-}
-
-/// A socket's mapping is refreshed only while it carries a healthy Native
-/// UDP channel or some wanted peer has a UDP carrier in either direction.
-/// The budget is unchanged.
-fn observation_wanted(shared: &Shared, id: &[u8; 32]) -> bool {
-    let plan = shared.plan();
-    let carrying = shared.links.lock().is_ok_and(|links| {
-        links.values().any(|link| {
-            link.fact.socket_id == *id
-                && link.fact.carrier.protocol == TransportProtocol::NativeUdp
-                && link.scope.check().is_ok()
         })
-    });
-    // A coordination target publishes its mapping as well as an initiator.
-    carrying
-        || plan
-            .peers()
-            .any(|peer| shared.wanted(peer) && udp_edge(&plan, peer))
-}
-
-fn observation_due(shared: &Shared, id: &[u8; 32]) -> bool {
-    if !observation_wanted(shared, id) {
-        return false;
-    }
-    let now = wall_ms();
-    let Ok(sockets) = shared.sockets.lock() else {
-        return false;
-    };
-    sockets.get(id).is_some_and(|socket| {
-        !socket.endpoints.iter().any(|candidate| {
-            matches!(
-                candidate.origin,
-                meshway_model::state::EndpointSource::Stun { .. }
-            ) && u64::try_from(candidate.observed_at.timestamp_millis())
-                .is_ok_and(|at| now < at.saturating_add(OBSERVATION_REFRESH_MS))
-                && u64::try_from(candidate.expires_at.timestamp_millis())
-                    .is_ok_and(|at| now.saturating_add(OBSERVATION_REFRESH_MS) < at)
-        })
-    })
 }
 
 fn wall_ms() -> u64 {
@@ -246,28 +264,22 @@ fn wall_ms() -> u64 {
 /// and observer metadata belong to one content and keep their own deadlines.
 struct Schedule {
     queries: QuerySchedule,
-    /// Earliest next STUN discovery round (paced independently of queries).
-    discover_at: Instant,
+    /// Observation rounds of each current traversal socket.
+    rounds: BTreeMap<[u8; 32], Round>,
     /// Fair eight-peer batch cursor for prepare.
     after_peer: Option<NodeId>,
-    endpoints: Vec<[u8; 32]>,
 }
 impl Schedule {
     fn new() -> Self {
         Self {
             queries: QuerySchedule::new(Instant::now()),
-            discover_at: Instant::now(),
+            rounds: BTreeMap::new(),
             after_peer: None,
-            endpoints: Vec::new(),
         }
     }
-    /// A changed socket set is due for discovery immediately.
+    /// A new socket has no round and no confirmation: it is due at once.
     fn sockets(&mut self, endpoints: &BTreeMap<[u8; 32], Endpoint>) {
-        let current: Vec<_> = endpoints.keys().copied().collect();
-        if current != self.endpoints {
-            self.discover_at = Instant::now();
-            self.endpoints = current;
-        }
+        self.rounds.retain(|id, _| endpoints.contains_key(id));
     }
 }
 
@@ -307,9 +319,8 @@ async fn run_content(
 ) {
     let Schedule {
         queries,
-        discover_at,
+        rounds,
         after_peer,
-        ..
     } = schedule;
     let scope = shared.scope(None, false);
     let mut pending: BTreeMap<UdpTraversalId, Pending> = BTreeMap::new();
@@ -344,29 +355,39 @@ async fn run_content(
             // waiting offers for that peer (for example another address family).
             // Their original slots expire normally; they cannot keep polling a
             // healthy selected link merely because their phase is still Waiting.
-            // A selected channel suppresses acquisition, not observation of its
-            // actual NAT socket.
+            // A selected channel suppresses acquisition, never observation.
             let acquisition = !endpoints.is_empty() && needs_acquisition(&shared, &pending);
-            let observation = needs_observation(&shared)
-                && endpoints.keys().any(|id| {
+            let confirmed = shared
+                .stun_confirmed
+                .lock()
+                .map(|confirmed| confirmed.clone())
+                .unwrap_or_default();
+            let due: Vec<[u8; 32]> = endpoints
+                .keys()
+                .filter(|id| {
                     observers.as_ref().is_none_or(|known| {
-                        Instant::now() >= known.expires || known.endpoints.contains(id)
-                    }) && observation_due(&shared, id)
-                });
-            // A live discovery context already authorizes same-socket STUN.
-            // Do not put another metadata RPC (and its control-owner queue)
-            // ahead of refresh when no adjacency acquisition needs that query.
-            // Renew metadata within the observation refresh horizon rather
-            // than waiting for a periodic expiry gap. New content or sockets
-            // drop this context; query admission keeps its original budget.
-            let observation_query = observation
-                && (acquisition
-                    || context.as_ref().is_none_or(|context| {
-                        context.ensure_current().is_err()
-                            || now.saturating_add(OBSERVATION_REFRESH_MS) >= context.expires_at_ms()
-                    }));
+                        Instant::now() >= known.expires || !known.unavailable.contains(*id)
+                    }) && observation_due(
+                        confirmed.get(*id).copied(),
+                        rounds.get(*id).copied(),
+                        cadence(id, socket_active(&shared, &pending, id)),
+                        Instant::now(),
+                    )
+                })
+                .copied()
+                .collect();
+            // A live discovery context already authorizes same-socket STUN;
+            // metadata is queried only when none is usable. New content or
+            // sockets drop this context; query admission keeps its budget.
+            let observation_query = !due.is_empty()
+                && context
+                    .as_ref()
+                    .is_none_or(|context| context.ensure_current().is_err());
             if queries.admit(Instant::now(), acquisition, observation_query) {
                 let query = gateway.request(Operation::Query(reference)).await;
+                if observation_query {
+                    queries.observed(matches!(query, Ok(Reply::Query(Outcome::Current(_)))));
+                }
                 if let Ok(Reply::Query(Outcome::Current(discovery))) = query {
                     context = Some(discovery.context);
                     observers = None;
@@ -438,23 +459,39 @@ async fn run_content(
                 .as_ref()
                 .filter(|context| context.ensure_current().is_ok())
             {
-                if (acquisition || observation)
-                    && endpoints.keys().any(|id| observation_due(&shared, id))
-                    && Instant::now() >= *discover_at
-                {
-                    // A cancelled enqueue is not a mapping observation. Pace
-                    // retries independently, and schedule the normal refresh
-                    // from actual validated observation timestamps above.
-                    *discover_at = Instant::now() + Duration::from_secs(2);
-                    let mut available = std::collections::BTreeSet::new();
-                    for (id, endpoint) in endpoints {
+                if !due.is_empty() {
+                    for id in &due {
+                        let failures = rounds.get(id).map_or(0, |round| {
+                            if confirmed.get(id).is_none_or(|at| *at < round.sent) {
+                                round.failures.saturating_add(1)
+                            } else {
+                                0
+                            }
+                        });
+                        rounds.insert(
+                            *id,
+                            Round {
+                                sent: Instant::now(),
+                                failures,
+                            },
+                        );
+                    }
+                    let mut unavailable = observers
+                        .take()
+                        .filter(|known| Instant::now() < known.expires)
+                        .map(|known| known.unavailable)
+                        .unwrap_or_default();
+                    for id in &due {
+                        let Some(endpoint) = endpoints.get(id) else {
+                            continue;
+                        };
                         let family = shared.sockets.lock().ok().and_then(|sockets| {
                             sockets.get(id).map(|socket| socket.bound_address.is_ipv4())
                         });
                         let Some(ipv4) = family else {
                             continue;
                         };
-                        let due = observation_due(&shared, id);
+                        let mut served = false;
                         for server in context.servers() {
                             let resolved = tokio::select! { biased;
                                 _ = context.ended() => break,
@@ -467,25 +504,28 @@ async fn run_content(
                                         .filter(|target| target.is_ipv4() == ipv4)
                                         .collect();
                                     if !targets.is_empty() {
-                                        available.insert(*id);
-                                        if due {
-                                            let _ = endpoint.commands.try_send(Command::Discover {
-                                                context: context.clone(),
-                                                server: server.id.clone(),
-                                                targets,
-                                            });
-                                        }
+                                        served = true;
+                                        let _ = endpoint.commands.try_send(Command::Discover {
+                                            context: context.clone(),
+                                            server: server.id.clone(),
+                                            targets,
+                                        });
                                     }
                                 }
-                                Err(_) => {
-                                    available.insert(*id);
-                                }
+                                // A failed resolution is retryable, not a
+                                // missing address family.
+                                Err(_) => served = true,
                             }
+                        }
+                        if served {
+                            unavailable.remove(id);
+                        } else {
+                            unavailable.insert(*id);
                         }
                     }
                     observers = Some(Observers {
                         expires: context.expires_at().into(),
-                        endpoints: available,
+                        unavailable,
                     });
                 }
                 if Instant::now() >= prepare_at && pending.len() < 8 {
@@ -826,7 +866,7 @@ mod tests {
         let ids = fixture.ids();
         let quiet = |index: usize| {
             let (shared, _) = shared(&fixture.desired[index], &fixture.keys[index]);
-            !needs_acquisition(&shared, &BTreeMap::new()) && !observation_wanted(&shared, &[0; 32])
+            !needs_acquisition(&shared, &BTreeMap::new())
         };
         // Every edge is dialable both ways: nobody coordinates without a need.
         assert!(quiet(0) && quiet(1));
@@ -838,13 +878,13 @@ mod tests {
             })
             .await;
         // b can dial nobody: a's edge to b is resident, so a initiates and b,
-        // the target, queries for offers and publishes its mapping.
+        // the target, queries for offers. Both observe their mappings on
+        // every socket regardless (see the cadence test).
         for index in [0, 1] {
             let (shared, _) = shared(&fixture.desired[index], &fixture.keys[index]);
             let peer = ids[1 - index];
             assert!(shared.wanted(peer));
             assert!(needs_acquisition(&shared, &BTreeMap::new()));
-            assert!(observation_wanted(&shared, &[0; 32]));
         }
         fixture.close().await;
     }
@@ -869,7 +909,7 @@ mod tests {
     }
 
     #[test]
-    fn observation_budget_survives_saturated_acquisition_and_publication_churn() {
+    fn observation_queries_survive_saturated_acquisition_and_back_off_without_stun() {
         let start = Instant::now();
         let mut schedule = QuerySchedule::new(start);
         for tick in 0..30 {
@@ -879,8 +919,85 @@ mod tests {
         assert!(!schedule.admit(due, true, false));
         assert!(schedule.admit(due, false, true));
         assert!(!schedule.admit(due + Duration::from_secs(1), true, true));
-        assert!(schedule.admit(due + OBSERVATION_QUERY_INTERVAL, false, true));
-        assert!(schedule.admit(start + Duration::from_secs(60), true, false));
+        // A Server without STUN: 4, 8, 16, then the idle cadence.
+        let mut at = due;
+        for wait in [4, 8, 16, 30, 30] {
+            schedule.observed(false);
+            assert!(!schedule.admit(at + Duration::from_secs(wait) - QUERY_INTERVAL, false, true));
+            at += Duration::from_secs(wait);
+            assert!(schedule.admit(at, false, true));
+        }
+        schedule.observed(true);
+        assert!(schedule.admit(at + STUN_RETRY, false, true));
+        assert!(schedule.admit(start + Duration::from_secs(600), true, false));
+    }
+
+    #[test]
+    fn every_socket_observes_on_its_own_cadence_without_any_interest() {
+        let start = Instant::now();
+        let id = [128; 32];
+        let idle = cadence(&id, false);
+        let active = cadence(&id, true);
+        assert!(idle > Duration::from_secs(27) && idle < Duration::from_secs(33));
+        assert!(active > Duration::from_secs(9) && active < Duration::from_secs(11));
+        assert_ne!(
+            cadence(&[0; 32], false),
+            cadence(&[255; 32], false),
+            "jittered"
+        );
+        // A new socket is due at once; a confirmation defers it by its cadence.
+        assert!(observation_due(None, None, idle, start));
+        let sent = Round {
+            sent: start,
+            failures: 0,
+        };
+        let confirmed = start + Duration::from_millis(40);
+        assert!(!observation_due(
+            Some(confirmed),
+            Some(sent),
+            idle,
+            confirmed + idle / 2
+        ));
+        assert!(observation_due(
+            Some(confirmed),
+            Some(sent),
+            idle,
+            confirmed + idle
+        ));
+        assert!(!observation_due(
+            Some(confirmed),
+            Some(sent),
+            active,
+            confirmed + active / 2
+        ));
+        assert!(observation_due(
+            Some(confirmed),
+            Some(sent),
+            active,
+            confirmed + active
+        ));
+        // An unanswered round retries after 2 s, doubling up to the idle cadence.
+        for (failures, wait) in [(0, 2), (1, 4), (2, 8), (3, 16), (4, 30), (9, 30)] {
+            let round = Round {
+                sent: start,
+                failures,
+            };
+            let wait = Duration::from_secs(wait);
+            assert!(!observation_due(
+                None,
+                Some(round),
+                idle,
+                start + wait - QUERY_INTERVAL
+            ));
+            assert!(observation_due(None, Some(round), idle, start + wait));
+            // An older confirmation does not answer a later round.
+            assert!(!observation_due(
+                Some(start - Duration::from_secs(60)),
+                Some(round),
+                idle,
+                start + wait - QUERY_INTERVAL
+            ));
+        }
     }
 
     #[test]

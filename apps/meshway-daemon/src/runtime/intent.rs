@@ -15,6 +15,9 @@ pub(super) struct Desired {
     pub retry_enrollment: bool,
     pub enrollment_key: Option<EnrollmentKey>,
     pub rotation: Option<RequestId>,
+    /// The operator asked to enroll the held identity again; transient,
+    /// Control holds the started request durably.
+    pub reenroll: bool,
 }
 
 pub(crate) struct Mutation {
@@ -31,6 +34,7 @@ pub(crate) enum Action {
     Up,
     Down,
     RotateKey,
+    Reenroll,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -76,6 +80,7 @@ impl Record {
                 .as_ref()
                 .filter(|rotation| rotation.result.is_none())
                 .map(|rotation| rotation.id),
+            reenroll: false,
         }
     }
 }
@@ -178,12 +183,14 @@ impl Store {
         {
             return Err(ErrorCode::Busy);
         }
-        if action == Action::RotateKey && self.record.enrollment_key.is_some() {
+        if matches!(action, Action::RotateKey | Action::Reenroll)
+            && self.record.enrollment_key.is_some()
+        {
             return Err(ErrorCode::NotReady);
         }
         let mut record = self.record.clone();
         let desired = match action {
-            Action::Up => true,
+            Action::Up | Action::Reenroll => true,
             Action::Down => false,
             Action::RotateKey => record.desired_up,
         };
@@ -192,7 +199,7 @@ impl Store {
         if desired != record.desired_up
             || blocked
             || enrollment_key.is_some()
-            || action == Action::RotateKey
+            || matches!(action, Action::RotateKey | Action::Reenroll)
         {
             record.revision = Version::new(
                 record
@@ -212,6 +219,7 @@ impl Store {
             }
             Action::Down => record.enrollment_key = None,
             Action::RotateKey => record.rotation = Some(Rotation { id, result: None }),
+            Action::Reenroll => {}
         }
         record.last_request = Some(Receipt {
             id,
@@ -302,6 +310,39 @@ mod tests {
         record.rotation.as_mut().unwrap().result = Some(Ok(()));
         store.commit(record).await.unwrap();
         assert_eq!(store.record.desired(false).rotation, None);
+    }
+
+    #[tokio::test]
+    async fn reenroll_is_an_up_with_its_own_revision_and_replay_receipt() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut store = Store::open(&temp.path().canonicalize().unwrap().join("node")).unwrap();
+        let up = "00000000-0000-4000-8000-000000000001".parse().unwrap();
+        let record = store
+            .mutation(Action::Up, up, store.record.revision, false, None)
+            .unwrap()
+            .unwrap();
+        store.commit(record).await.unwrap();
+        let revision = store.record.revision;
+        let again = "00000000-0000-4000-8000-000000000002".parse().unwrap();
+        let record = store
+            .mutation(Action::Reenroll, again, revision, false, None)
+            .unwrap()
+            .unwrap();
+        assert!(record.desired_up);
+        assert_eq!(record.revision.get(), revision.get() + 1, "a new session");
+        store.commit(record).await.unwrap();
+        assert!(
+            store
+                .mutation(Action::Reenroll, again, revision, false, None)
+                .unwrap()
+                .is_none(),
+            "an identical replay is inert"
+        );
+        assert!(matches!(
+            store.mutation(Action::Up, again, revision, false, None),
+            Err(ErrorCode::RequestConflict)
+        ));
+        assert!(!store.record.desired(true).reenroll, "never durable here");
     }
 
     #[tokio::test]

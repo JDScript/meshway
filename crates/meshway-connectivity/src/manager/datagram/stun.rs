@@ -146,15 +146,15 @@ impl Owner {
             return Ok(());
         }
         let now = pending.context.now_ms().map_err(|_| Error::Authority)?;
-        let expires = now
-            .saturating_add(20_000)
-            .min(pending.context.expires_at_ms());
         let timestamp = |ms| {
             i64::try_from(ms)
                 .ok()
                 .and_then(chrono::DateTime::from_timestamp_millis)
                 .ok_or(Error::Authority)
         };
+        // A mapping observation, not authority: its lifetime is the NAT
+        // binding horizon, independent of the metadata context that
+        // authorized the request.
         let observation = EndpointCandidate {
             address: address.to_string(),
             origin: EndpointSource::Stun {
@@ -163,19 +163,152 @@ impl Owner {
                 observer: remote.to_string(),
             },
             observed_at: timestamp(now)?,
-            expires_at: timestamp(expires)?,
+            expires_at: timestamp(now.saturating_add(OBSERVATION_LIFETIME_MS))?,
         };
         let mut sockets = self.shared.sockets.lock().map_err(|_| Error::Worker)?;
-        if let Some(fact) = sockets.get_mut(&self.id) {
-            fact.endpoints
-                .retain(|old| old.origin != observation.origin);
-            if fact.endpoints.len() < 8 {
-                fact.endpoints.push(observation);
-            }
-        }
+        let changed = sockets
+            .get_mut(&self.id)
+            .is_some_and(|fact| record(&mut fact.endpoints, observation, now));
         drop(sockets);
+        if let Ok(mut confirmed) = self.shared.stun_confirmed.lock() {
+            confirmed.insert(self.id, Instant::now());
+        }
         self.discovery.remove(&transaction);
-        self.changed();
+        if changed {
+            self.changed();
+        }
         Ok(())
+    }
+}
+
+/// Reported lifetime of one STUN observation.
+pub(in crate::manager) const OBSERVATION_LIFETIME_MS: u64 = 120_000;
+/// An unchanged mapping is re-issued only once its observation has less
+/// than this left, so a confirmation is not a State report.
+const RENEW_BEFORE_MS: u64 = 60_000;
+
+/// Fold one validated observation into a socket's endpoints. A new mapping
+/// replaces this observer's observations; an unchanged one only renews near
+/// expiry and keeps its previous observation, which offers prepared from the
+/// last acknowledged report may still name, until that expires on its own.
+/// Returns whether the reported endpoints changed.
+fn record(
+    endpoints: &mut Vec<EndpointCandidate>,
+    observation: EndpointCandidate,
+    now: u64,
+) -> bool {
+    let expiry = |candidate: &EndpointCandidate| {
+        u64::try_from(candidate.expires_at.timestamp_millis()).unwrap_or(0)
+    };
+    let latest = endpoints
+        .iter()
+        .filter(|old| old.origin == observation.origin && old.address == observation.address)
+        .map(expiry)
+        .max();
+    if latest.is_some_and(|expires| expires > now.saturating_add(RENEW_BEFORE_MS)) {
+        return false;
+    }
+    endpoints.retain(|old| {
+        old.origin != observation.origin
+            || (old.address == observation.address
+                && Some(expiry(old)) == latest
+                && expiry(old) > now)
+    });
+    if endpoints.len() < 8 {
+        endpoints.push(observation);
+    }
+    true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn at(ms: u64) -> chrono::DateTime<chrono::Utc> {
+        chrono::DateTime::from_timestamp_millis(ms as i64).unwrap()
+    }
+    fn observed(address: &str, observer: &str, ms: u64) -> EndpointCandidate {
+        EndpointCandidate {
+            address: address.into(),
+            origin: EndpointSource::Stun {
+                observer: observer.into(),
+            },
+            observed_at: at(ms),
+            expires_at: at(ms + OBSERVATION_LIFETIME_MS),
+        }
+    }
+
+    #[test]
+    fn an_unchanged_mapping_is_reported_only_when_its_observation_nears_expiry() {
+        let mut endpoints = Vec::new();
+        let base = 1_000_000;
+        assert!(record(
+            &mut endpoints,
+            observed("192.0.2.1:9", "198.51.100.1:3478", base),
+            base
+        ));
+        // Confirmations at the 10 s / 30 s cadence change nothing reported.
+        for elapsed in [10_000, 30_000, 59_000] {
+            let now = base + elapsed;
+            assert!(!record(
+                &mut endpoints,
+                observed("192.0.2.1:9", "198.51.100.1:3478", now),
+                now
+            ));
+        }
+        assert_eq!(
+            endpoints,
+            vec![observed("192.0.2.1:9", "198.51.100.1:3478", base)]
+        );
+        // Renewal keeps the previous observation beside the new one.
+        let renew = base + 61_000;
+        assert!(record(
+            &mut endpoints,
+            observed("192.0.2.1:9", "198.51.100.1:3478", renew),
+            renew
+        ));
+        assert_eq!(
+            endpoints,
+            vec![
+                observed("192.0.2.1:9", "198.51.100.1:3478", base),
+                observed("192.0.2.1:9", "198.51.100.1:3478", renew)
+            ]
+        );
+        // The next renewal drops the oldest; at most two per observer.
+        let again = renew + 61_000;
+        assert!(record(
+            &mut endpoints,
+            observed("192.0.2.1:9", "198.51.100.1:3478", again),
+            again
+        ));
+        assert_eq!(
+            endpoints,
+            vec![
+                observed("192.0.2.1:9", "198.51.100.1:3478", renew),
+                observed("192.0.2.1:9", "198.51.100.1:3478", again)
+            ]
+        );
+    }
+
+    #[test]
+    fn a_changed_mapping_replaces_the_observer_at_once_and_keeps_other_observers() {
+        let base = 1_000_000;
+        let mut endpoints = vec![
+            observed("192.0.2.1:9", "198.51.100.1:3478", base),
+            observed("192.0.2.1:9", "203.0.113.1:3478", base),
+        ];
+        let now = base + 10_000;
+        assert!(record(
+            &mut endpoints,
+            observed("192.0.2.7:4000", "198.51.100.1:3478", now),
+            now
+        ));
+        assert_eq!(
+            endpoints,
+            vec![
+                observed("192.0.2.1:9", "203.0.113.1:3478", base),
+                observed("192.0.2.7:4000", "198.51.100.1:3478", now)
+            ]
+        );
     }
 }

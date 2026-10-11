@@ -313,7 +313,13 @@ def verify(report, actors, routers, *, fallback=False, short=False):
             tcp = directory / "conntrack-tcp-traffic.txt"
             if tcp.stat().st_size > LIMIT or not any("ESTABLISHED" in line and "dport=35001 " in line
                                                     for line in tcp.read_text().splitlines()):
-                raise RuntimeError("Missing live established TCP fallback conntrack entry")
+                # Name the router and what its dump held, so a failure is diagnosable from logs.
+                stderr = directory / "conntrack-tcp-traffic.stderr"
+                states = sorted({line.split()[5] for line in tcp.read_text().splitlines()[:64]
+                                 if "dport=35001 " in line and len(line.split()) > 5})
+                raise RuntimeError(f"Missing live established TCP fallback conntrack entry on {role}: "
+                                   f"35001 states {states or 'none'}, dump stderr "
+                                   f"{stderr.read_text()[:200].strip() if stderr.exists() else 'absent'!r}")
         evidence["routers"][role] = {"private": router["private"], "wan": router["wan"],
                                      "firewallCounters": counters, "fallbackCounters": fallback_counters if fallback else None,
                                      "capture": sides, "handshakes": handshakes}

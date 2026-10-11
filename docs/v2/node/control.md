@@ -110,7 +110,7 @@ Control 只验证、保存并发布签名 netmap；它不签发任何执行快�
 | `New { previous }` | 首次安装或更大 serial；内容先保存再发布 |
 | `Renewed` | 同内容的新租约；Engine 只延长自己的计时器，旧租约已结束时重新安装同一内容 |
 
-在 `finish_sync` 之前已有其他安装、撤回或停止的回复返回 `Pending` 且不改变任何状态。peer 事实只有一份状态：Control 的最后已知事实（按当前投影过滤，不进入内容）。`peerFacts` 在 netmap 部分安装后并入它：`removed` 删除，`updated` 按 peer 替换；`base` 为 null（例如 Server 刚重启、尚不知道任何事实）只增改、不删除，到期只表示新鲜度。事实变化后 Control 以 `KnownPeers`（不可变共享快照）发布给 `PeerFactsSink`；daemon 用一个 watch 通道承载它，连接 Manager（拨号候选）与出口选择（就绪出口）只读最新快照，不另存副本。已发布租约结束／撤回后（最后已知事实随 netmap 结束），下一请求不带游标、取得完整事实；Server 对无游标请求不挂起，因此租约结束后的恢复不等待 hold。地址或出口就绪变化（不含仅新鲜度续期）及 netmap 变化时写 `peer-facts.json`。重启载入后 `known_peers()` 即保存的事实；宿主在不联系 Server 而发布已持有 netmap 的同一位置发布它（daemon 为每次 up 会话开始处）。单次请求总上限 90 秒（Server 挂起上限 60 秒），连接级失败 1 秒起倍增至 15 秒退避（Server 恢复后最多一个退避周期即重新连上）；立即返回且无变化的回复至少间隔 1 秒。
+在 `finish_sync` 之前已有其他安装、撤回或停止的回复返回 `Pending` 且不改变任何状态。peer 事实只有一份状态：Control 的最后已知事实（按当前投影过滤，不进入内容）。`peerFacts` 在 netmap 部分安装后并入它：`removed` 删除，`updated` 按 peer 替换；`base` 为 null（例如 Server 刚重启、尚不知道任何事实）只增改、不删除，到期只表示新鲜度。事实变化后 Control 以 `KnownPeers`（不可变共享快照）发布给 `PeerFactsSink`；daemon 用一个 watch 通道承载它，连接 Manager（拨号候选）与出口选择（就绪出口）只读最新快照，不另存副本。已发布租约结束／撤回后（最后已知事实随 netmap 结束），下一请求不带游标、取得完整事实；Server 对无游标请求不挂起，因此租约结束后的恢复不等待 hold。地址或出口就绪变化（不含仅新鲜度续期）及 netmap 变化时写 `peer-facts.json`。回复的 `traversalRequests`（其他节点向本节点准备、待本节点接受的穿透尝试）替换上一回复的请求，随同一 `KnownPeers` 发布（`traversalRequests` 字段），不写入 `peer-facts.json`；下一请求的 `traversalRequests` 列出已持有的尝试 ID，Server 只为未列出的新尝试立即回答。其用途见[穿透信令](/v2/node/connectivity#traversal-signalling)。重启载入后 `known_peers()` 即保存的事实；宿主在不联系 Server 而发布已持有 netmap 的同一位置发布它（daemon 为每次 up 会话开始处）。单次请求总上限 90 秒（Server 挂起上限 60 秒），连接级失败 1 秒起倍增至 15 秒退避（Server 恢复后最多一个退避周期即重新连上）；立即返回且无变化的回复至少间隔 1 秒。
 
 | 事件 | 已发布租约 |
 | --- | --- |
@@ -136,7 +136,38 @@ Server [轮换签发钥](/v2/server#netmap-签发钥轮换)期间，sync 回复�
 
 钉住钥更新不改变身份，也不撤回已发布租约或运行上下文；此后只接受 K′ 的签名，K 单独签署的回复为 `ServerKeyMismatch`。下一请求的 `serverKeyGeneration` 报告新代际，Server 库存视图据此显示 `current`。两个文件之间崩溃时，重启后 `netmap.json` 不能在新钥下验证，只作 delta 基准（fail closed），下一次 sync 即恢复。
 
-错过窗口（窗口结束前一直未成功 sync，例如长时间离线）的节点钉住的仍是 K：之后每个回复都是 `ServerKeyMismatch`：回复被拒绝，已持有租约（含重启后从 `netmap.json` 离线载入的租约）照常运行至到期后 fail closed；`sync_loop` 按退避持续重试，daemon 状态为 `sync: reconnecting`，当前不带 `lastError`（sync 循环不上报失败类别）。Server 库存视图显示 `serverKey.status = keyMismatch`。当前恢复方式只有以新身份重新接入；Node 侧"保留身份的重新登录"（接入意图 `existing`）尚未实现。
+错过窗口（窗口结束前一直未成功 sync，例如长时间离线）的节点钉住的仍是 K：之后每个回复都是 `ServerKeyMismatch`：回复被拒绝，已持有租约（含重启后从 `netmap.json` 离线载入的租约）照常运行至到期后 fail closed；`sync_loop` 按退避持续重试，daemon 状态为 `sync: reconnecting`、`syncError: serverKeyMismatch`（见 [sync 失败类别](#sync-失败类别)）。Server 库存视图显示 `serverKey.status = keyMismatch`。恢复方式是[保留身份的重新接入](#保留身份的重新接入)。
+
+### 保留身份的重新接入
+
+`meshway up --reenroll` 以接入意图 `existing` 重新接入**当前持有的身份**：同一网络、同一 Node ID、同一 control／dataplane 密钥。Control 生成新的 enrollment ID 与 PKCE verifier，签名意图中 `existing` 为当前绑定（network、node、control key ID 与 generation），持久化后经与首次接入相同的创建／轮询／兑换流程完成；兑换成功只替换绑定，从而钉住兑换时 Server 的当前签发钥。
+
+| 项 | 行为 |
+| --- | --- |
+| 批准 | 必须由 Console 中有效成员批准（浏览器流程，状态 `awaitingApproval` 与 `enrollmentUrl`）。enrollment key 不能用于重新接入：`--reenroll` 与 `--enrollment-key` 互斥，IPC 中同时出现返回 `contract` |
+| 身份证明 | 意图由当前 control 私钥签名；Server 要求当前未吊销、未退休的 control／dataplane 公钥与 `existing` 完全一致，且身份仍符合当前配置 |
+| 期间 | 已持有租约不撤回，数据面照常运行至租约到期；sync 在批准前不运行 |
+| 兑换后 | Server 结束该节点原 session 与 instance；Control 丢弃本地 session／instance 并重新认证；`netmap.json` 由旧钥签署，只作 delta 基准，下一次 sync 以新钥恢复租约 |
+| 请求结束 | 过期、撤回或取消的重新接入请求只清除该请求，保留原身份与密钥（首次接入的取消才删除密钥） |
+| 持久性 | 操作员的 `--reenroll` 只触发一次；开始后的请求由 Control 私有记录保存，daemon 重启后继续 |
+
+安全边界：重新接入不授予新权限，也不能更换身份或网络；它只让持有当前私钥、且得到一次 Console 批准的设备重新钉住 Server 当前签发钥。没有 Console 批准时无法完成，因此一个劫持 Server 地址的中间人即使签出不同钥的回复，也只会持续 `serverKeyMismatch`，不会被自动跟随。
+
+### sync 失败类别
+
+本机 Status（IPC v6）的 `syncError` 是 sync 长轮询最后一次失败的类别，重试期间保持，下一次成功 sync 即为 null；sync 未运行时为 null。`meshway status` 以 `Sync error: <类别> (retrying)` 显示，`--json` 原样输出。失败本身不撤回租约（撤回与身份拒绝仍按上文，另见 `lastError`）。
+
+| `syncError` | 来源 |
+| --- | --- |
+| `network` | 网络错误、超时（无 HTTP 状态或非 Server 响应） |
+| `serverBusy` | 429／5xx |
+| `credentials` | session／instance 失效（401／403／404 未解码、本地过期），随后重新认证 |
+| `signatureInvalid` | 回复签名不能用钉住钥验证 |
+| `serverKeyMismatch` | 回复由钉住钥以外的钥签署（例如错过轮换窗口） |
+| `withdrawn` | Server 撤回本节点 netmap |
+| `identityRejected` | Server 拒绝本节点身份 |
+| `contract` | 回复与请求或协议不一致 |
+| `storage` | 私有存储失败 |
 
 ## 安装回执与运行报告
 

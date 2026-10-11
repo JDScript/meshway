@@ -11,7 +11,7 @@ use meshway_model::EnrollmentRequestId;
 use meshway_protocol::{
     CreateEnrollmentRequest, EnrollmentDeviceProof, EnrollmentIntent, EnrollmentRequestView,
     EnrollmentResponse, RedeemEnrollmentRequest, WireSecret,
-    enrollment::{EnrollmentPhase, enrollment_transcript},
+    enrollment::{EnrollmentPhase, ExistingNodeBinding, enrollment_transcript},
     node::request_digest,
 };
 
@@ -34,6 +34,73 @@ impl Control {
         let view = self.client.create_enrollment_request(&request).await?;
         self.check_enrollment(&view)?;
         Ok(view)
+    }
+
+    /// Enrollment again of the held identity: the same network, Node and
+    /// keys, declared as `existing` in a newly signed intent. The device
+    /// proves its control key; the Server still requires a Console approval
+    /// (enrollment keys cannot re-enroll) and an eligible, unrevoked
+    /// identity. Redemption replaces only the binding, which re-pins the
+    /// Server's current signing key: the recovery after a missed rotation
+    /// window. The held lease is not withdrawn meanwhile.
+    pub async fn begin_reenrollment(
+        &mut self,
+        hostname: &str,
+    ) -> Result<EnrollmentRequestView, Error> {
+        self.ready()?;
+        let binding = self.record.binding.as_ref().ok_or(Error::Lifecycle)?;
+        match &self.record.enrollment {
+            Some(pending) if pending.intent.existing.is_some() => {}
+            Some(_) => return Err(Error::Pending),
+            None => {
+                if self.record.rotation.is_some() {
+                    return Err(Error::Pending);
+                }
+                let hostname = hostname.to_ascii_lowercase();
+                if !meshway_configuration::valid_node_hostname(&hostname) {
+                    return Err(Error::Lifecycle);
+                }
+                let keys = self.record.keys.as_ref().ok_or(Error::Record)?;
+                let verifier = identity::random_secret()?;
+                let intent = EnrollmentIntent {
+                    id: EnrollmentRequestId::new(random_id()?).map_err(|_| Error::Cryptography)?,
+                    control_key: keys.control()?,
+                    dataplane_key: keys.dataplane()?,
+                    code_challenge: identity::challenge(&verifier),
+                    hostname,
+                    existing: Some(ExistingNodeBinding {
+                        network_id: binding.network_id,
+                        node_id: binding.node_id,
+                        key_id: binding.keys.control.id,
+                        key_generation: binding.keys.control.generation,
+                    }),
+                };
+                self.record.enrollment = Some(Enrollment {
+                    intent,
+                    verifier,
+                    code: None,
+                    approved_network: None,
+                    access_key: None,
+                });
+                self.persist().await?;
+            }
+        }
+        let pending = self.record.enrollment.as_ref().ok_or(Error::Lifecycle)?;
+        let request = CreateEnrollmentRequest {
+            intent: pending.intent.clone(),
+            signature: self.device_signature("create")?,
+        };
+        let view = self.client.create_enrollment_request(&request).await?;
+        self.check_enrollment(&view)?;
+        Ok(view)
+    }
+
+    /// A re-enrollment of the held identity is pending.
+    pub fn reenrollment_pending(&self) -> bool {
+        self.record
+            .enrollment
+            .as_ref()
+            .is_some_and(|pending| pending.intent.existing.is_some())
     }
 
     async fn prepare_enrollment(
@@ -176,11 +243,14 @@ impl Control {
     /// commit can be recovered by retrying this same proof/code after restart.
     pub async fn redeem_enrollment(&mut self) -> Result<EnrollmentResponse, Error> {
         self.ready()?;
-        if let Some(binding) = &self.record.binding {
+        if let Some(binding) = &self.record.binding
+            && !self.reenrollment_pending()
+        {
             return Ok(binding.clone());
         }
         let pending = self.record.enrollment.as_ref().ok_or(Error::Lifecycle)?;
         let code = pending.code.as_ref().ok_or(Error::Lifecycle)?;
+        let existing = pending.intent.existing.clone();
         let expected_network = pending.approved_network.ok_or(Error::Record)?;
         let response = self
             .client
@@ -195,6 +265,9 @@ impl Control {
             )
             .await?;
         if response.network_id != expected_network
+            || existing.as_ref().is_some_and(|existing| {
+                response.network_id != existing.network_id || response.node_id != existing.node_id
+            })
             || !self
                 .record
                 .keys
@@ -203,6 +276,13 @@ impl Control {
                 .matches(&response)?
         {
             return Err(Error::Contract);
+        }
+        // A re-enrollment replaces only the binding: the same identity and
+        // keys, with the Server signing key current at redemption pinned.
+        // The Server retired the previous session and instance.
+        if existing.is_some() {
+            self.fence();
+            self.session = None;
         }
         self.record.binding = Some(response.clone());
         self.record.enrollment = None;
@@ -230,8 +310,11 @@ impl Control {
                 )
                 .await?;
         }
+        // A cancelled re-enrollment keeps the held identity and its keys.
+        if self.record.binding.is_none() {
+            self.record.keys = None;
+        }
         self.record.enrollment = None;
-        self.record.keys = None;
         self.persist().await
     }
 

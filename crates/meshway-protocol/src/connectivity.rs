@@ -170,7 +170,7 @@ impl std::error::Error for ConnectivityLimitExceeded {}
 macro_rules! bounded_collection {
     ($name:ident, $item:ty, $max:ident) => {
         /// Bounded Server response collection whose maximum item count is enforced during decoding.
-        #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+        #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
         #[serde(transparent)]
         pub struct $name(
             /// Returned entries serialized directly as the bounded array.
@@ -247,6 +247,30 @@ macro_rules! bounded_collection {
 }
 
 bounded_collection!(StunServers, StunServer, MAX_STUN_SERVERS);
+bounded_collection!(
+    UdpTraversalRequests,
+    UdpTraversalRequest,
+    MAX_UDP_TRAVERSAL_ATTEMPTS
+);
+bounded_collection!(
+    UdpTraversalRequestIds,
+    UdpTraversalId,
+    MAX_UDP_TRAVERSAL_ATTEMPTS
+);
+
+wire_object! {
+/// A live UDP traversal attempt another Node prepared with the requesting Node as its not-yet-accepted participant. A coordination hint only: it carries no candidate, grants nothing, and the Node still queries, reserves and accepts the exact offer.
+#[derive(Clone, Debug, PartialEq, Eq)] pub struct UdpTraversalRequest {
+    /// Attempt to look up with `queryUdpTraversal`.
+    pub attempt_id: UdpTraversalId,
+    /// Node that prepared the attempt.
+    pub peer_id: NodeId,
+    /// Exact Native UDP adjacency of the attempt; names the listener key either side binds.
+    pub carrier: Carrier,
+    /// The attempt's fixed deadline; afterwards the request is void.
+    #[serde(rename = "expiresAt", with = "meshway_model::timestamp")]
+    pub expires_at_ms: u64 [value_type = meshway_model::timestamp::Timestamp],
+} }
 bounded_collection!(
     UdpTraversalAttempts,
     UdpTraversalAttempt,

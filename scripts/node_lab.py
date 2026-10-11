@@ -195,6 +195,7 @@ def verify_image(manifest, platform):
     if (manifest.get("status") != "built" or manifest.get("platform") != platform
             or manifest.get("sourceDigest") != image_builder().source_digest()
             or manifest.get("base") != base_image()
+            or not manifest.get("packages") or not manifest.get("sources")
             or not re.fullmatch(r"sha256:[0-9a-f]{64}", manifest.get("imageId", ""))):
         raise DevError("Selected OS image inputs differ; explicitly run node:lab image-build.")
     image = json.loads(run("docker", "image", "inspect", manifest["imageId"], capture=True, timeout=45))[0]

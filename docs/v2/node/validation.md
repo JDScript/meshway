@@ -62,6 +62,8 @@ TUN、packet 和表中 V1 的静态 UDP/resolved 证据来自 `3887256b` 生产�
 | `cde22065`（N1z-G） | 全量 16 行，Planck 矩阵 `20261010T182959Z-04119fe8` | 15 行通过（含四个 `netmap/*`：`20261010T183501Z-a323e57f`、`-6d74eb7e`、`-df693708`、`-b2efd34c`）；`exit/off` 未通过（E 的首个 State 报告被 400 拒绝，`prerequisite`，未复现） |
 | `64056d2f`（同产品代码） | `exit/off` 单独复跑，矩阵 `20261010T193255Z-3c6bfa50` | 通过：`20261010T193827Z-8563eae8` |
 | `717631ac`（F2） | 全量 16 行，Planck 矩阵 `20261010T235445Z-d7d66054`（并行 16，墙钟 390 秒，70 秒持续窗口，`netmap/offline` 3 分钟，`netmap/restart` 含空闲关闭后的离线重拨） | 16 行全部通过（`netmap/*`：`20261011T000016Z-74949d4b`、`-e271d31c`、`-473e6cca`、`-4033c3b4`） |
+| `2f862f63`（P1） | 全量 16 行，GitHub Actions 于 Planck 运行 `20261011T054035Z-9a9dd74c`（并行 8） | 14 行通过；`exit/off` 在镜像 manifest 缺 `packages`（已修，见下一行）时立即失败；`nat+fallback/off` 证据阶段缺 TCP 退路 conntrack（runner 证据目录不可读，两次 Planck 复跑未复现，报错现已注明 router 与 dump 状态） |
+| `d7de0cef`（P1） | 全量 16 行，Planck 矩阵 `20261011T061934Z-5187b512`（并行 8，墙钟 625 秒） | 16 行全部通过；`nat/off` 中 R 只接受 A 的 A–R offer（三次获取，均在 A prepare 后约 0.25 秒接受，R 未 prepare）；`nat+fallback/off` 两侧 router 各一条 ESTABLISHED `dport=35001` |
 
 ### 远程矩阵证据 {#remote-matrix-evidence}
 
@@ -128,7 +130,7 @@ mise run test:runtime:linux --artifacts /absolute/private/bin --transport native
 
 单独的内核测试另检查同目的地址的普通／受保护 socket、旧池拒绝边界、journal 恢复、外部同优先级规则冲突，以及 HTTPS bootstrap 在显式 down 前后的联系。
 
-容器重启边界由同一入口的两个独立 namespace（`underlay-restart-a`／`underlay-restart-b`）共享私有目录验证：A 写入真实负向 capture journal，B 在同 boot、新 netns 中归档原字节并重新建立、精确清理。`daemon-owner-conflict` 使用真实 Control 签发快照及仍活着的 TUN owner，验证启动 Conflict、非空且递增的 `retryAt`，以及 owner 释放后无新 `up` 的自动恢复。`tools/meshway-runtime-fixture/src/recovery.rs` 的 HTTP 中断阶段保持同进程／同 namespace，以独立证明旧 lease 和输出失效；容器级 namespace 变体归上述内核／daemon 隔离场景，不由 HTTP gate 模拟。新增场景的整组验收以包含这些检查的行报告为准。
+容器重启边界由同一入口的两个独立 namespace（`underlay-restart-a`／`underlay-restart-b`）共享私有目录验证：A 写入真实负向 capture journal，B 在同 boot、新 netns 中归档原字节并重新建立、精确清理；B 随后把 A 的 journal 改写为 B 自身的 boot／device／inode（模拟 `docker stop`／`start` 复用 nsfs inode），必须因缺少驻留证据而归档并重新分配，而不是 Conflict。`daemon-owner-conflict` 使用真实 Control 签发快照及仍活着的 TUN owner，验证启动 Conflict、非空且递增的 `retryAt`，以及 owner 释放后无新 `up` 的自动恢复。`tools/meshway-runtime-fixture/src/recovery.rs` 的 HTTP 中断阶段保持同进程／同 namespace，以独立证明旧 lease 和输出失效；容器级 namespace 变体归上述内核／daemon 隔离场景，不由 HTTP gate 模拟。新增场景的整组验收以包含这些检查的行报告为准。
 
 #### DNS 场景
 
@@ -161,5 +163,6 @@ mise run test:runtime:linux --artifacts /absolute/private/bin --transport native
 
 - 两个独立 IPv4 端口保持型 Linux conntrack SNAT；UDP 发布端点为空，STUN、互探及认证使用实际承载 socket。
 - 内层双栈 UDP／TCP 强制沿 A→R→B，持续与纯接收业务跨越一个[持续窗口](#traffic-anchor)（70 秒，含一次续租与一次 60 秒租约截止）。
+- `nat/off`（无退路、DNS off）中 A–R 是按需的 NAT–NAT 边：R 另有仅 Native TCP 的拨号器、A 另有不公告的 TCP listener（经 A 的 NAT 不可达），因此两端都能拨出、无一端常驻，只有 A 有经 R 的业务。R 不得 prepare 任何 A–R 尝试，只能经 `traversalRequests` 信令接受 A 的 offer，见[穿透信令](/v2/node/connectivity#traversal-signalling)；R–B 仍为 B→R 常驻边。
 - `--traversal-fallback` 仅预授权 A→R 的 Native TCP 拨号，R→B 保持 Native UDP；TCP 入口初始不可达，业务持续 30 秒后开放该入口并阻断精确 A–R UDP 地址对；原 TCP socket、两个内层 TCP circuit 的 CID 与完整路径跨切换保留。
 - State、双方接受的固定 offer、双侧抓包、conntrack、防火墙计数和应用回包共同构成证据。拓扑与固定 OS 资产见 `dev/traversal-fixture/README.md`。

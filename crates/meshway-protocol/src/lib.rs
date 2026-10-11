@@ -43,8 +43,8 @@ pub use connectivity::{
     ConnectivityLimitExceeded, PrepareUdpTraversalRequest, PrepareUdpTraversalResponse,
     QueryUdpTraversalRequest, QueryUdpTraversalResponse, SocketReference, StunServer, StunServers,
     UdpTraversalAttempt, UdpTraversalAttemptRequest, UdpTraversalAttempts, UdpTraversalOffer,
-    UdpTraversalParticipant, UdpTraversalPhase, UdpTraversalUnavailableReason,
-    candidate_observation_digest,
+    UdpTraversalParticipant, UdpTraversalPhase, UdpTraversalRequest, UdpTraversalRequestIds,
+    UdpTraversalRequests, UdpTraversalUnavailableReason, candidate_observation_digest,
 };
 pub use enrollment::{
     ApproveEnrollmentRequest, CreateEnrollmentKeyRequest, CreateEnrollmentRequest,

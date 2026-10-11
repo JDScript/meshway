@@ -111,32 +111,44 @@ async fn one_shot(
         Err(ErrorCode::Version)
     } else {
         let action = match request.command {
-            Command::Status => None,
+            Command::Status => Ok(None),
+            Command::Up {
+                expected_revision,
+                reenroll: true,
+                enrollment_key: None,
+            } => Ok(Some((Action::Reenroll, expected_revision, None))),
+            // Enrollment keys cannot re-enroll an identity (Console approval only).
+            Command::Up { reenroll: true, .. } => Err(ErrorCode::Contract),
             Command::Up {
                 expected_revision,
                 enrollment_key,
-            } => Some((Action::Up, expected_revision, enrollment_key)),
-            Command::Down { expected_revision } => Some((Action::Down, expected_revision, None)),
+                reenroll: false,
+            } => Ok(Some((Action::Up, expected_revision, enrollment_key))),
+            Command::Down { expected_revision } => {
+                Ok(Some((Action::Down, expected_revision, None)))
+            }
             Command::RotateKey { expected_revision } => {
-                Some((Action::RotateKey, expected_revision, None))
+                Ok(Some((Action::RotateKey, expected_revision, None)))
             }
             Command::Ping { .. } => return,
         };
-        if let Some((action, expected, enrollment_key)) = action {
-            let (reply, result) = oneshot::channel();
-            match commands.try_send(Mutation {
-                action,
-                expected,
-                id: request.request_id,
-                reply,
-                enrollment_key,
-            }) {
-                Ok(()) => result.await.unwrap_or(Err(ErrorCode::Stopping)),
-                Err(mpsc::error::TrySendError::Full(_)) => Err(ErrorCode::Busy),
-                Err(mpsc::error::TrySendError::Closed(_)) => Err(ErrorCode::Stopping),
+        match action {
+            Err(code) => Err(code),
+            Ok(None) => Ok(()),
+            Ok(Some((action, expected, enrollment_key))) => {
+                let (reply, result) = oneshot::channel();
+                match commands.try_send(Mutation {
+                    action,
+                    expected,
+                    id: request.request_id,
+                    reply,
+                    enrollment_key,
+                }) {
+                    Ok(()) => result.await.unwrap_or(Err(ErrorCode::Stopping)),
+                    Err(mpsc::error::TrySendError::Full(_)) => Err(ErrorCode::Busy),
+                    Err(mpsc::error::TrySendError::Closed(_)) => Err(ErrorCode::Stopping),
+                }
             }
-        } else {
-            Ok(())
         }
     };
     let response = Response {

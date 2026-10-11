@@ -49,6 +49,9 @@ impl Shared {
         if let Ok(mut sockets) = self.sockets.lock() {
             sockets.remove(&id);
         }
+        if let Ok(mut confirmed) = self.stun_confirmed.lock() {
+            confirmed.remove(&id);
+        }
     }
 
     /// Whether a selected channel survives from `previous` to `next`: exact

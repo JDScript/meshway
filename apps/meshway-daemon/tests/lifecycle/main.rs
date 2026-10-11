@@ -45,6 +45,7 @@ async fn executable_enrolls_saves_reports_renews_and_restores_up_or_down_intent(
     let up = Command::Up {
         enrollment_key: None,
         expected_revision: initial.revision,
+        reenroll: false,
     };
     call(&daemon.socket, up.clone(), up_id).await.unwrap();
     let pending = wait(&daemon.socket, Phase::AwaitingApproval).await;
@@ -255,6 +256,7 @@ async fn executable_enrolls_saves_reports_renews_and_restores_up_or_down_intent(
     let up = Command::Up {
         enrollment_key: None,
         expected_revision: down.revision,
+        reenroll: false,
     };
     call(&daemon.socket, up, request_id()).await.unwrap();
     wait(&daemon.socket, Phase::ControlReady).await;
@@ -341,6 +343,7 @@ async fn status_and_down_remain_responsive_while_server_http_is_stalled() {
         Command::Up {
             enrollment_key: None,
             expected_revision: initial.revision,
+            reenroll: false,
         },
         request_id(),
     )

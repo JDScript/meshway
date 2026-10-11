@@ -30,6 +30,7 @@ impl Fixture {
             Command::Up {
                 enrollment_key: None,
                 expected_revision: initial.revision,
+                reenroll: false,
             },
             request_id(),
         )

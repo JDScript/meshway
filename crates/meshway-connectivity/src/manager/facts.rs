@@ -56,6 +56,22 @@ fn changed(before: Option<&KnownPeers>, after: Option<&KnownPeers>) -> Vec<NodeI
         .collect()
 }
 
+/// Peers whose live traversal requests ask this Node to accept.
+fn asked(known: Option<&KnownPeers>, now_ms: u64) -> Vec<NodeId> {
+    known.map_or_else(Vec::new, |known| {
+        known
+            .traversal_requests
+            .iter()
+            .filter(|request| request.expires_at_ms > now_ms)
+            .map(|request| request.peer_id)
+            .collect()
+    })
+}
+
+fn wall_ms() -> u64 {
+    u64::try_from(chrono::Utc::now().timestamp_millis()).unwrap_or(0)
+}
+
 /// Wakes the workers of peers whose published facts changed.
 pub(super) async fn run(shared: Arc<Shared>) {
     let mut previous: Option<KnownPeers> = None;
@@ -72,6 +88,12 @@ pub(super) async fn run(shared: Arc<Shared>) {
             for peer in changed(previous.as_ref(), next.as_ref()) {
                 shared.interests.wake(peer);
             }
+            // A peer prepared an attempt toward this Node: take part as if
+            // the adjacency were needed here. Interest is still bounded by
+            // the installed plan's peers and acquires only admitted carriers.
+            for peer in asked(next.as_ref(), wall_ms()) {
+                shared.interests.touch(peer);
+            }
             previous = next;
             tokio::select! { biased;
                 _ = shared.stop.cancelled() => return,
@@ -86,6 +108,7 @@ pub(super) async fn run(shared: Arc<Shared>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::manager::{datagram::tests::shared, tests::netmap::support::Netmaps};
 
     fn node(n: u8) -> NodeId {
         format!("00000000-0000-4000-8000-{n:012}").parse().unwrap()
@@ -116,7 +139,55 @@ mod tests {
                     })
                     .collect(),
             ),
+            traversal_requests: Default::default(),
         }
+    }
+
+    #[tokio::test]
+    async fn a_traversal_request_makes_the_target_take_part_without_business_interest() {
+        let fixture = Netmaps::start(false, false).await;
+        let ids = fixture.ids();
+        let (shared, _) = shared(&fixture.desired[1], &fixture.keys[1]);
+        let (a, b) = (ids[0], ids[1]);
+        assert!(!shared.wanted(a));
+        let (publish, source) = tokio::sync::watch::channel(None);
+        shared.facts.attach(source);
+        let task = tokio::spawn(run(shared.clone()));
+        let request = |expires_at_ms| meshway_protocol::UdpTraversalRequest {
+            attempt_id: meshway_model::UdpTraversalId::new(uuid::Uuid::from_u128(7)).unwrap(),
+            peer_id: a,
+            carrier: meshway_configuration::execution::Carrier {
+                dialer: a,
+                listener: b,
+                listener_key: "udp".into(),
+                protocol: meshway_model::TransportProtocol::NativeUdp,
+            },
+            expires_at_ms,
+        };
+        let known = |requests| meshway_control::KnownPeers {
+            netmap: shared.plan().reference,
+            peers: Arc::default(),
+            traversal_requests: Arc::new(requests),
+        };
+        // An expired request is void.
+        publish.send_replace(Some(known(vec![request(wall_ms() - 1)])));
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        assert!(!shared.wanted(a));
+        publish.send_replace(Some(known(vec![request(wall_ms() + 9_000)])));
+        for _ in 0..100 {
+            if shared.wanted(a) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        // Interest is what makes the traversal owner query for the offer.
+        assert!(
+            shared.wanted(a),
+            "the target registers interest in the preparer"
+        );
+        shared.stop.cancel();
+        task.await.unwrap();
+        fixture.close().await;
     }
 
     #[test]

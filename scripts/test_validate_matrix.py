@@ -108,12 +108,34 @@ class MatrixTests(unittest.TestCase):
             for platform in ("linux/amd64", "linux/arm64"):
                 with patch.object(matrix, "ROOT", root), patch.object(matrix, "build_lock", return_value=contextlib.nullcontext()), \
                         patch.object(matrix, "image_builder", return_value=SimpleNamespace(source_digest=lambda: "locked")), \
-                        patch.object(matrix, "image_for", return_value={"imageId": "sha256:existing", "sourceDigest": "locked"}) as lookup, \
+                        patch.object(matrix, "image_for", side_effect=lambda platform, _: {"imageId": "sha256:existing", "sourceDigest": "locked", "status": "built", "platform": platform}) as lookup, \
                         patch.object(matrix, "base_image", return_value="pinned"), patch.object(matrix, "verify_image") as verify:
                     images = matrix.prepare_images(args, root, platform)
                 self.assertEqual(lookup.call_args.args[0], platform)
                 self.assertEqual(verify.call_args.args[0]["imageId"], "sha256:existing")
                 self.assertEqual(json.loads(images["runtime"].read_text())["platform"], platform)
+
+    def test_an_earlier_partial_manifest_is_replaced_by_the_full_shape(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            args = matrix.parse_args(["--rows", "udp/off"])
+            full = {"imageId": "sha256:existing", "sourceDigest": "locked", "status": "built",
+                    "platform": "linux/arm64", "packages": [{"name": "iproute2"}]}
+            def verify(data, platform):
+                if not data.get("packages"):
+                    raise matrix.DevError("partial")
+            with patch.object(matrix, "ROOT", root), patch.object(matrix, "validation_root", return_value=root), \
+                    patch.object(matrix, "build_lock", return_value=contextlib.nullcontext()), \
+                    patch.object(matrix, "image_builder", return_value=SimpleNamespace(source_digest=lambda: "locked")), \
+                    patch.object(matrix, "image_for", return_value=full) as lookup, \
+                    patch.object(matrix, "verify_image", side_effect=verify), \
+                    patch.object(matrix.subprocess, "run", return_value=SimpleNamespace(returncode=0)):
+                manifest = root / "os" / "runtime-arm64-locked" / "image-manifest.json"
+                manifest.parent.mkdir(parents=True)
+                manifest.write_text(json.dumps({"imageId": "sha256:existing", "status": "built", "platform": "linux/arm64"}))
+                images = matrix.prepare_images(args, root, "linux/arm64")
+            lookup.assert_called_once()
+            self.assertEqual(json.loads(images["runtime"].read_text())["packages"], [{"name": "iproute2"}])
 
     def test_default_parallel_is_a_quarter_of_the_cpus_bounded_by_memory_and_rows(self):
         plenty = mock_open(read_data="MemTotal: 1 kB\nMemAvailable: 62914560 kB\n")
