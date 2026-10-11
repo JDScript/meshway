@@ -160,15 +160,13 @@ sha 应用 IPv4
 
 ### 经 Mesh 的出口 resolver
 
-采用与 peerapi DoH 相同的信任形态：客户端 DNS owner 通过**完整获准 Mesh 路径**访问出口 DNS owner，Noise 在源／出口间保护；不额外建设公网 DNS HTTP 端口。建议首版使用标准 UDP DNS＋独立 TCP fallback，监听出口 Mesh 地址的保留端点；端点地址／端口由职责计划发布，尚无固定公共 API。
+**已交付（X5）。**行为定义见 [出口 resolver](/v2/node/dataplane#exit-resolver)，配置语义见 [DNS · 使用出口时](/v2/configuration-reference/dns#使用出口时)，验收见 [出口场景](/v2/node/validation#exit-scenario)。交付形态：
 
-仅监听 Mesh IP 不足以认证：同 namespace 进程可直连 socket。扩展现有 loopback Service 时，新增密封的 Mesh ingress 适配：输入由唯一 dataplane 在专用 DNS permit 下交付，携带 origin、实际完整 path、scope、流关联；回包也交同一 SecureNode。若选内核 socket 接入，则必须证明 socket 输入只可能来自相同准入入口，并保留不可伪造关联；不能用 `remoteAddr` 反查 Node 替代密码身份。daemon 只驱动适配，DNS owner 不另持 SecureNode／流表。现有 Service 仍保持 loopback 边界，真实 ingress 是待整合依赖。
-
-出口 DNS permit 是目的受限的内部用途：只能调用指定出口 resolver，不因授予 DNS 服务而开放访问该出口所有端口或转发任意 IP。真实类型是 `execution/mod.rs::DnsServicePermit`，绑定 source／sourceAddresses、exit／address、完整 path、profile／generation、出口 role、transports、maxPending／timeoutMs 和 expiresAt。客户端 `DnsEgress::ViaExit`、出口 `ServeExitResolver` 由 Policy DNS 编译发布；`meshway_policy::dns_route::dns_service_permit` 是纯绑定检查，不把调用者提交的 source/path 变为认证身份。允许域名型 LAN 访问的主体也可有相应查询资格，不能复制 Tailscale 的 Internet-only 探针。
-
-客户端 owner 使用 `meshway_dns::MeshResolverRoute` 和原有 ticket／输出取消；`ResolverExchange::validate_mesh`／`exchange_mesh` 是宿主实现接入点，默认返回不可用。适配须复用唯一 SecureNode、独立 DNS purpose、原路径回包，并为中继发布相应授权；当前缺少这些适配时安装拒绝。普通 local resolver route 与 bootstrap API 不能承接 Mesh resolver work。
-
-出口 DNS owner 调用**出口机器的系统 resolver**。优先实现可验证的 resolved 适配（保留系统按链路／后缀选上游，排除本机 Mesh stub 递归）；文件后端使用 owner 记录的真实系统上游。不能把 `/run/systemd/resolve/resolv.conf` 中的平面列表当成完整 split DNS 语义。首版仅支持已证明无环的真实上游／resolved 路线；未知本地 stub、回指 Meshway、自依赖出口 resolver 返回不可用，不选公共 DNS 补救。查询上游 I/O 有专门职责许可和 socket 保护，不借 bootstrap API；UDP→TCP 重试需要独立传输资格。
+- **Ingress**：没有 Mesh IP 上的 DNS socket。查询是唯一 SecureNode 上 `Purpose::Dns` circuit 的加密请求／回复帧；出口收到不透明 `DnsRequest`（origin、完整路径、传输、内容引用、截止均来自已认证 circuit），交 DNS owner 的 `serve_authenticated`，回答交回同一 SecureNode 沿原路径返回。daemon 只驱动有界队列，DNS owner 不持 SecureNode／流表。
+- **Purpose 与中继授权**：DNS circuit 的 grant 为 `(Dns, Mesh { exit })`，握手摘要的 selection 为 `DnsService` 摘要；中继以 `admit_dns` 在自己的投影上重算 `dns_service(origin)`，只按完整路径位置转发。服务仍按 revision 留在 netmap（`DnsPlan::ViaExit`／`ServeExitResolver`），没有 instance 或截止字段，截止来自 netmap 租约。
+- **客户端 owner**：`MeshResolverRoute` 的 UDP 与 TCP 各自一条路由，共用原 ticket；出口能力事实非 ready 时不建 circuit、查询立即失败；任何失败都不落到源节点本机上游。
+- **出口系统 resolver**：resolved 后端经 resolved 代理 stub（`127.0.0.54`），保留按链路／后缀选上游；会回到本节点锚点的名称回 SERVFAIL；resolved 服务器清单含本地 stub、锚点、Mesh 地址或经出口路由的地址时出口查询不可用。文件后端用安装前记录的原 nameserver。上游 I/O 使用仅出口查询可用的 served 快照、独立 UDP／TCP `LocalResolverRoute` 和受保护 socket。
+- **wire／IPC／netmap**：均未改变（DNS circuit 帧已属 wire v6；`compilerVersion` 仍为 `meshway-netmap-1`）。
 
 ### 哪些查询走出口
 
@@ -176,7 +174,7 @@ sha 应用 IPv4
 
 - 首版建议支持 **单一可预先确定出口的 profile**，包括固定出口 default 和指向同一出口的 IP CIDR 规则；只要该 profile 使用 exit，普通查询在解析前就选该出口（明确例外除外）。这样不会先向源端 DNS 泄漏问题，再根据答案决定出口。
 - 单纯 IP CIDR 不足以决定一个未知名称应走哪个出口，不能用“只有结果落在 exit 网段的查询才去 exit DNS”作为算法。多出口、依赖答案才能选出口、domain/IP 相互依赖的方案，须先有显式无环 DNS plan；首版不能确定时保留 `exitPlanRequired` 拒绝安装。
-- IPv4 首版的出口解析通道可解析 A；AAAA 的存在不能变成 IPv6 路由豁免。建议保留真实 DNS 回答语义，不伪造 NXDOMAIN；任何受管 IPv6 包由捕获和 permit 双重拒绝。只屏蔽 AAAA 不是防泄漏措施。
+- IPv4 首版的出口解析通道可解析 A；AAAA 的存在不能变成 IPv6 路由豁免。已实现为保留真实 DNS 回答语义（AAAA 原样返回，不伪造 NXDOMAIN）；任何受管 IPv6 包由捕获和 permit 双重拒绝。只屏蔽 AAAA 不是防泄漏措施。
 
 ### 可信关联不能只靠“走过出口 DNS”
 
@@ -197,7 +195,7 @@ Noise 证明回答来自出口，不证明出口上报的域名／地址自然�
 - X2 消费 `PathPermit.exit`、精确 target／sourceAddresses／服务／paths／expiresAt，并使用 Policy 准入与 `permit_authorization_digest`／`permit_transition`。公网边界唯一实现为 `meshway_policy::is_internet_address`。
 - X3 消费 `NodeConfiguration.egressCapture` 与 `exitRole`；职责只准许准备资源，实际 NAT 投影仍需 X2 的活 flow 与 guard。IPv6 受管范围必须 sink。
 - X4 把真实探测写入 `NodeState.exitCapability`，携带 instanceId、精确 target、supportedFamilies、installedFamilies、status 与原始 observedAt；报告失败不要求 applied。静态 IPv4 后端声明使用 acquire 的 `feature:exit-ipv4` version 1。没有观测保持省略，不补 ready。
-- X5 的 `DnsServicePermit`／`DnsEgress::ViaExit`／`ServeExitResolver` 复用 capture generation 与角色绑定处理 DNS 撤回；单出口联合编译与客户端 owner 已具备类型化路线。密封 Mesh ingress、独立 purpose 的中继授权、出口受保护系统 resolver 和真实 listener 尚待跨包接线；缺适配保持安装阻断。
+- X5（已交付）：netmap 的 `DnsService`／`DnsPlan::ViaExit`／`ServeExitResolver` 复用 capture generation 与角色绑定处理 DNS 撤回；密封 Mesh ingress、DNS purpose 的中继授权、出口受保护系统 resolver 已接线，见[经 Mesh 的出口 resolver](#经-mesh-的出口-resolver)。
 
 Server／Policy 入口为 `compile_with_exit` 和 `ExitInputs`；实例、选择版本与新鲜能力预算由 Server 当前事务提供。旧 demand-5 派生缓存经原始摘要／身份检查后退役，不解码成当前执行权限。此段冻结类型不代表 X2–X5 的运行安装或 T2 已验收。
 
@@ -239,7 +237,7 @@ Server／Policy 入口为 `compile_with_exit` 和 `ExitInputs`；实例、选择
 | X2 dataplane 出口生命期 | `crates/meshway-dataplane/src/`（lib、flow、secure、carrier 等）及所属测试 | 依赖 X1；与 X3/X4/X5 并行，先约定 opaque kernel projection／reply ingress 接口 | 真 SecureNode 进程内 A→R→E，伪源／错路径／错 CID／错 tuple、纯接收续租、到期／切换、旧输出、projection failure 和容量 |
 | X3 Underlay NAT owner | `crates/meshway-underlay/src/linux/kernel/` 新 exit 模块，journal／monitor／plan／capture；`linux/protection.rs` 和 Host 出口 API | 依赖 X1/X2 接口；与 X2/X4/X5 并行。X4 只消费 Host，不修改这些文件；新依赖交协调者 | 隔离 namespace：nft 原子批、route／mark、masquerade／逆 NAT、精确 ct 删除、严格 rp_filter 拒绝、crash/journal／外部冲突、无 NET_ADMIN／forwarding=0、timed set 到期 |
 | X4 Control／daemon 集成 | `crates/meshway-control/`、必要 `meshway-authority/` 检查；`apps/meshway-daemon/src/runtime/network/{mod,worker,requirements,facts,reporting}.rs` 与包输出队列；IPC／CLI 状态接线由本包通过协调者整合 | 依赖 X1，等待 X2/X3 可执行接口后联调；与 X5 文件分界固定，DNS 子目录归 X5 | 实际职责自动安装、完整成功才 applied、失败可上报、HTTP 挂起时撤回、方案切换原子失败边界、无第二次 up 的恢复 |
-| X5 单出口 DNS | `crates/meshway-dns/src/`；`meshway-underlay/src/linux/resolver_exchange.rs`／`linux/dns.rs` 的用途隔离适配；daemon `runtime/network/dns/` | 依赖 X1 的 DNS permit 和 X2 Mesh ingress；与 X2/X3/X4 并行，Host/kernel 改动只提接口给 X3 | 真实系统 resolver／MagicDNS／useWithExit、UDP→TCP、出口断开无本地 fallback、伪 socket 输入、过期回答、重启和 resolver 环；T2 `exit/resolved`，文件后端单独 `exit/resolv-conf` |
+| X5 单出口 DNS（**已交付**） | `crates/meshway-dns/src/`；`meshway-underlay/src/linux/resolver_exchange.rs`；dataplane DNS circuit；daemon `runtime/network/dns/` | — | 已在 `exit/off` 第 9 阶段验收 resolved 后端：真实系统解析经 E 的 resolver、MagicDNS 本地、useWithExit split、Mesh UDP→TCP、E 的 resolver 断开无本地 fallback、撤权／租约到期失效与恢复；文件后端出口组合（`exit/resolv-conf`）未验收 |
 | X6 可信域名任务（后续） | Server 新受控解析任务模块、DNS owner 新任务 producer 模块、Policy 域名关联判定；共享类型／生成链经协调者；不并发修改 X1/X5 所属文件 | X1/X5 完成后；不阻碍 IPv4 IP 版，但域名功能必须等本包 | 授权任务一次完成、错 source／revision／nonce、TTL/CNAME、DNS rebinding、私网答案、同 IP 冲突、多出口无环 plan；新增独立域名 T2 场景 |
 | X7 系统验收与 lab | `tools/meshway-runtime-fixture/`、`tools/meshway-packet-fixture/`、`scripts/verify_runtime.py`、`scripts/validate_matrix.py`、必要 `dev/` 锁定工具镜像和部署脚本；`docs/v2/node/validation.md` 证据更新 | X1 接口冻结后可准备 fixture；整组等 X2–X5；不修改产品 crate，失败回归交对应 owner | `exit/off` 为 IP 数据面门槛；DNS 行独立；nyc／sha→lax 真 lab，核对 PID/hash、完整路径、撤回与清理 |
 

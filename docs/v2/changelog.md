@@ -2,6 +2,14 @@
 
 按合入 main 的顺序记录工作包、提交与证据 ID。规则见[工程流程](/v2/process)；性能数字的口径见[分层性能测量](/v2/node/performance)，验收状态见[验收范围](/v2/node/validation)。
 
+## 未发布
+
+wire 6、IPC 6、`meshway-netmap-1` 不变。
+
+- 单出口 DNS（X5）：源节点方案使用单一出口时，普通查询在解析前经完整获准路径上的 DNS circuit 交给出口，由出口机器的系统 resolver 解析并沿原路径回答；MagicDNS 本地回答，`useWithExit` split 解析器按其本机 direct／unmanaged 路由；出口能力事实非 ready、出口上游不可用或回答失败时查询失败，从不回落到源节点本机上游。resolved 后端经其代理 stub `127.0.0.54` 保留按链路／后缀选上游，会回到本节点 DNS 的名称与含本地 stub／锚点／Mesh 地址的服务器清单使出口查询不可用；文件后端使用记录的原 nameserver。行为见 [出口 resolver](/v2/node/dataplane#exit-resolver)。
+- DNS：上游 UDP 回答带 TC 且记录被截断（resolved 代理 stub 的行为）或超出通告大小时按截断处理，只由独立 TCP 路由完成。
+- 验收：`exit/off` 增加 DNS 阶段（第 9 阶段），Planck 16 行矩阵 `20261011T143117Z-9dedf85e` 全部通过，`exit/off` 245.0 秒（此前 228–238 秒）；见[出口场景](/v2/node/validation#exit-scenario)。
+
 ## v0.1.0-alpha.2
 
 Linux 系统服务修复预发布，不承诺兼容性；wire 6、IPC 6、`meshway-netmap-1` 不变。

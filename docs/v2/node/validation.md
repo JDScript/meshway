@@ -17,7 +17,7 @@
 
 可执行行 ID 来自 `scripts/validate_matrix.py` 的 `ROWS`：`tun`、`packet`、`udp/off`、`tcp/off`、`vless/off`、`trojan/off`、`udp/resolv-conf`、`udp/resolved`、`nat/off`、`nat+fallback/off`、`nat/resolved`，顺序对应下表十一个隔离入口。常驻 lab 不属于一次性矩阵。统一运行、并发预算与远程证据位置见[矩阵入口](/v2/development#validation-matrix)。
 
-默认矩阵另含 `exit/off`（真实 A→R→E IPv4 出口）与四个 `netmap/*` 生命周期行（见[netmap 生命周期行](#netmap-rows)）；出口详见[出口场景](#exit-scenario)。
+默认矩阵另含 `exit/off`（真实 A→R→E IPv4 出口与单出口 DNS）与四个 `netmap/*` 生命周期行（见[netmap 生命周期行](#netmap-rows)）；出口详见[出口场景](#exit-scenario)。
 
 | 入口 | 承载 | DNS | NAT | 覆盖行为 | 状态 |
 | --- | --- | --- | --- | --- | --- |
@@ -33,9 +33,9 @@
 | `test:runtime:linux --transport native-udp --traversal nat --traversal-fallback` | Native UDP＋A–R Native TCP 退路 | off | 双 IPv4 端口保持型 SNAT | 共同场景＋穿透场景＋同路径 TCP 退路 | W5 短模式通过：`20261008T184559Z-c77e0683`；既有全长证据：`20261008T032749Z-4299bfde`、`20261008T050153Z-d30caa20` |
 | `test:runtime:linux --traversal nat` | Native UDP 协调穿透 | resolved | 双 IPv4 端口保持型 SNAT | 整组组合 | 当前 wire 已通过（两次）；Planck `20261008T032749Z-d13bd2a9`、`20261008T050153Z-1978b05b` |
 | [常驻三节点 lab](/v2/node/docker-lab) | Native UDP 显式端点 | resolved | — | 六向双栈系统解析／echo、路径诊断、关闭插桩的同路径 TCP 吞吐对照 | 未验收（当前整组）；2026-10-07 已有下述 L5 局部证据；共享 bridge 不构成 NAT 证明 |
-| `validate:matrix --rows exit/off` | Native UDP；声明 Native TCP 能力 | off；独立 resolved 后端 | IPv4 出口 masquerade | A→R→E；能力／安装、公网与 LAN、长流／仅接收、撤回、HTTP 中断内离线出口与租约到期全撤／恢复、journal | 当前 wire 已通过（两次全长）；Planck `20261010T160621Z-de9a2fae`、矩阵 `20261010T162437Z-4bbe5e35` 行 `20261010T162742Z-e9ed64a0`，见[出口场景](#exit-scenario) |
+| `validate:matrix --rows exit/off` | Native UDP；声明 Native TCP 能力 | 三端 resolved 后端（MagicDNS＋一个 `useWithExit` split） | IPv4 出口 masquerade | A→R→E；能力／安装、公网与 LAN、长流／仅接收、撤回、HTTP 中断内离线出口与租约到期全撤／恢复、journal；单出口 DNS（第 9 阶段） | 当前 wire 已通过（含 DNS 阶段）；Planck 矩阵 `20261011T143117Z-9dedf85e` 行 `20261011T143719Z-12d35cc0`，见[出口场景](#exit-scenario) |
 
-以下范围未验收：外层 IPv6 NAT、端点相关映射、映射轮换、NAT 与 resolv-conf 的组合、VLESS WS/TLS 承载上的 daemon 包流、TLS／WS 材料轮换、多路径切换、出口 DNS／resolver、出口 IPv6、完整 TCP conntrack、动态 MTU／路径 MTU 发现及分片重组、userspace／SOCKS5。整机重启与 resolved 停机间隙不属于隔离矩阵，由系统服务安装单独实测：重启（含 Server 不可达）通过，systemd-resolved 重启后 5 秒内、停止再启动后 10 秒内恢复 Mesh 名称解析，见 [Linux 安装与系统服务](/v2/install#验收记录)；`udp/resolved` 行另在隔离 namespace 内重启 resolved 并要求 5 秒内再次解析 Mesh 名称。
+以下范围未验收：外层 IPv6 NAT、端点相关映射、映射轮换、NAT 与 resolv-conf 的组合、VLESS WS/TLS 承载上的 daemon 包流、TLS／WS 材料轮换、多路径切换、文件后端（resolv-conf）出口 resolver、显式多出口 DNS plan、出口 IPv6、完整 TCP conntrack、动态 MTU／路径 MTU 发现及分片重组、userspace／SOCKS5。整机重启与 resolved 停机间隙不属于隔离矩阵，由系统服务安装单独实测：重启（含 Server 不可达）通过，systemd-resolved 重启后 5 秒内、停止再启动后 10 秒内恢复 Mesh 名称解析，见 [Linux 安装与系统服务](/v2/install#验收记录)；`udp/resolved` 行另在隔离 namespace 内重启 resolved 并要求 5 秒内再次解析 Mesh 名称。
 
 常驻 lab 的 L5 原始证据目录为 `.meshway/perf/l5/20261007T162418Z-main-f39ba2b6-2cpu/`。该目录的两次 TCP 接收吞吐分别约 318／364 Mbps；协调者另报告空闲宿主复测 1,367 Mbps，独立报告路径待补，不能把该数值归入前述目录或用吞吐局部证据替代整组验收。
 
@@ -66,6 +66,8 @@ TUN、packet 和表中 V1 的静态 UDP/resolved 证据来自 `3887256b` 生产�
 | `d7de0cef`（P1） | 全量 16 行，Planck 矩阵 `20261011T061934Z-5187b512`（并行 8，墙钟 625 秒） | 16 行全部通过；`nat/off` 中 R 只接受 A 的 A–R offer（三次获取，均在 A prepare 后约 0.25 秒接受，R 未 prepare）；`nat+fallback/off` 两侧 router 各一条 ESTABLISHED `dport=35001` |
 | `4923dff0`（F3 前段） | 全量 16 行，Planck 矩阵 `20261011T110213Z-a8b8aaf6` | 15 行通过；`nat+fallback/off`（`20261011T111342Z-b437eda9`）router-a 的 traffic 快照只有 TIME_WAIT 退路：router 每秒轮询 `traffic` 信号，controller 在信号后 0.65 秒撤销 Access，A–R TCP 退路随之按授权退役，router-a 快照晚于撤权 0.18 秒（router-r 早于撤权，为 ESTABLISHED）。P1 CI 的同一报错没有可读证据，无法单独确认，但与该时序一致 |
 | `93b01c31`（F3） | 全量 16 行，Planck 矩阵 `20261011T121416Z-82e1063a`（并行 8，墙钟 601 秒） | 16 行全部通过；controller 在撤权前等待两个 router 的 `traffic-router-*` 快照会合，`nat+fallback/off`（`20261011T122216Z-42d55dfd`）两侧 router 均为同一条 ESTABLISHED `dport=35001` 流 |
+| `c86321c2`（X5 前段） | 全量 16 行，Planck 矩阵 `20261011T140432Z-152583ab`（并行 8） | 15 行通过；`exit/off`（`20261011T141743Z-cf7bd61c`）DNS 阶段通过，随后 E 的租约在持续窗口内到期：DNS 阶段在 E 上增删路由模拟 resolver 断开，触发外部网络变化、控制连接重连，下一次 sync 长轮询（hold 最长约 55 秒）越过 60 秒租约。fixture 改为让 E 的上游 DNS 停止应答，不改 E 的路由 |
+| `94a0b680`（X5） | 全量 16 行，Planck 矩阵 `20261011T143117Z-9dedf85e`（并行 8，墙钟 606 秒） | 16 行全部通过；`exit/off`（`20261011T143719Z-12d35cc0`）245.0 秒，F3 两次为 228.4／238.1 秒：DNS 阶段约 12 秒（其中 E 上游停止应答时 A 的查询失败约 10 秒），撤回／离线／到期／恢复各一次查询 |
 
 ### 远程矩阵证据 {#remote-matrix-evidence}
 
@@ -150,11 +152,13 @@ mise run validate:matrix --rows exit/off --short
 mise run validate:remote -- --ref <commit> --rows exit/off
 ```
 
-`exit/off` 使用真实 Server／CLI／daemon 和独立身份的 A、R、E，仅 E 启用出口，仅 A 使用 Exit→E via R 的 profile。公网分类目标使用完全隔离 internal bridge 中的 `11.77.x.0/29`，另有显式授权的精确 RFC1918 LAN；不能把 TEST-NET 或 LAN 成功记为 Internet grant。DNS 配置关闭，独立 resolved 后端仍启动以执行所需的负向安装。Server 租约为 60 秒。
+`exit/off` 使用真实 Server／CLI／daemon 和独立身份的 A、R、E，仅 E 启用出口，仅 A 使用 Exit→E via R 的 profile。公网分类目标使用完全隔离 internal bridge 中的 `11.77.x.0/29`，另有显式授权的精确 RFC1918 LAN；不能把 TEST-NET 或 LAN 成功记为 Internet grant。三端均运行隔离的私有 D-Bus／resolved：A 的系统上游是 Resolver 容器（也是 A 的 `useWithExit` split 解析器，A 的方案对其 /32 为 direct），E 的系统上游是 external 网段内的隔离 DNS authority；配置开启 MagicDNS。Server 租约为 60 秒。
 
-入口收集能力／前置条件、saved／applied 与 netmap 租约、投影（A 的 egress 分割、三端相同的外部 Access、E 的 exit role、R 无 role）、capture、原始与 NAT tuple、nft／conntrack、服务日志、R 密文、E 阻断对照、持续／仅接收窗口、`exitEnabled` 撤回、HTTP 中断与租约到期、同 namespace journal 恢复证据。HTTP 中断同时结束在途 sync 长轮询：此后三端不再取得租约，已有 TCP 与每两秒新建的 UDP 流在离线期间继续经出口往返，直至路径上首个租约到期才结束；E 在自身租约到期时撤回 role，owned nft 表与 conntrack 精确清理，A 保留负向 egress 门（`managed4` 非空、无活动 selector）；恢复 HTTP 后无第二次 up 取得新租约并以新 circuit 建立新流。投影 ACK、projection 容量拒绝等内部边界另运行同源码的正式组件测试；组件通过不能代替独立进程行通过。所有八阶段、进程退出与精确清理通过后该次行才通过。
+入口收集能力／前置条件、saved／applied 与 netmap 租约、投影（A 的 egress 分割、三端相同的外部 Access、E 的 exit role、R 无 role）、capture、原始与 NAT tuple、nft／conntrack、服务日志、R 密文、E 阻断对照、持续／仅接收窗口、`exitEnabled` 撤回、HTTP 中断与租约到期、同 namespace journal 恢复证据。HTTP 中断同时结束在途 sync 长轮询：此后三端不再取得租约，已有 TCP 与每两秒新建的 UDP 流在离线期间继续经出口往返，直至路径上首个租约到期才结束；E 在自身租约到期时撤回 role，owned nft 表与 conntrack 精确清理，A 保留负向 egress 门（`managed4` 非空、无活动 selector）；恢复 HTTP 后无第二次 up 取得新租约并以新 circuit 建立新流。投影 ACK、projection 容量拒绝等内部边界另运行同源码的正式组件测试；组件通过不能代替独立进程行通过。所有九阶段、进程退出与精确清理通过后该次行才通过。
 
-当前状态：**当前 wire 已通过（两次全长）**。Planck 单行全长 `20261010T160621Z-de9a2fae`（rebase 前候选 `0669b8cc`）与 16 行矩阵 `20261010T162437Z-4bbe5e35`（候选 `37ef3b68`，行 `20261010T162742Z-e9ed64a0`，307.8 秒）。矩阵一行中 HTTP 关闭后离线出口持续 47 秒，持续 TCP 最后一次往返距首个租约到期 0.23 秒，结束于到期后 0.3–2.3 秒；E 的 role 在其租约到期后 0.25 秒内撤回。出口 resolver、IPv6 出口、源／Access／成员撤销逐项与切网仍未覆盖。
+第 9 阶段（DNS）：A 的计划为 `viaExit`（路径 A→R→E），E 为 `serveExitResolver` 且只服务 A；A 的 `split` 解析器决定为 `direct`。A 的系统 `getaddrinfo` 必须得到 E 的系统 resolver（resolved，上游为 external 网段内的隔离 DNS authority）的回答：A、双栈 A＋AAAA（AAAA 原样返回）、90 条 A 记录（超出 Mesh UDP 1232 bytes，只能经 Mesh TCP 路由完成）；authority 记录的唯一提问者是 E 的 external 地址。A 自己的 MagicDNS 名称本地解析，未知 MagicDNS 名称本地拒绝，两者都不出现在任何上游；`split.test` 名称只从 A 的 split 地址到达 Resolver。A 的系统上游就是 Resolver，它对任何名称都会给出标记地址：E 的上游停止应答时 A 的查询失败，Resolver 不收到该名称。E 的出口 role 撤回与 A 的租约到期后查询失败，HTTP 中断后的租约内查询成功，撤回恢复与租约恢复后查询再次成功。抓包中 `exit-dns` 字节只出现在 E 的 external 接口，A、R 与 E 的其他接口没有。
+
+当前状态：**当前 wire 已通过（含 DNS 阶段）**。Planck 矩阵 `20261011T143117Z-9dedf85e`（候选 `94a0b680`）行 `20261011T143719Z-12d35cc0`，245.0 秒。此前不含 DNS 阶段的全长证据：Planck 单行 `20261010T160621Z-de9a2fae`、矩阵 `20261010T162437Z-4bbe5e35` 行 `20261010T162742Z-e9ed64a0`。IPv6 出口、源／Access／成员撤销逐项、切网、文件后端出口 resolver 与常驻 lab 整组仍未覆盖。
 
 #### 穿透场景
 

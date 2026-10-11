@@ -64,15 +64,23 @@
 
 单出口编译通过 `DnsPlan::ViaExit { service }` 指定普通查询的 Mesh resolver。只要当前方案的 fallback 或 CIDR 规则使用同一个出口及同一组有序 via，普通名称在解析前即选择该出口，不先查询客户端上游再根据答案选择路径。MagicDNS 仍按本地记录处理；`useWithExit: true` 的解析器保留最长后缀 split／default 用途。
 
-`DnsService` 绑定源节点及 Mesh 源地址、出口 Mesh IPv4 地址的 UDP／TCP 53、完整有序路径、源 profile／capture generation、出口 role generation、并发和查询时间预算。执行截止来自 netmap 租约；instance 和 State 就绪事实不签发 DNS 权限。编译要求出口已启用并声明能力、路径可行且源有外部 Access 资格。缺少出口能力／路径／资格分别返回 `exitUnavailable`／`noPath`／`unauthorized`；没有无环单出口方案返回 `exitPlanRequired`。
+`DnsService` 绑定源节点及 Mesh 源地址、出口及其 Mesh IPv4 地址（只作绑定，出口不在该地址监听 DNS）、UDP／TCP 传输、完整有序路径、源 profile／capture generation、出口 role generation、并发和查询时间预算。执行截止来自 netmap 租约；instance 和 State 就绪事实不签发 DNS 权限。编译要求出口已启用并声明能力、路径可行且源有外部 Access 资格。缺少出口能力／路径／资格分别返回 `exitUnavailable`／`noPath`／`unauthorized`；没有无环单出口方案返回 `exitPlanRequired`。
 
 例外不是目的地址的全局放行；解析器流量仍须走明确、获准的网络路径。没有有效出口／解析依赖时报告不可用，不静默落回另一路公共解析器。
 
 存在歧义的多出口、不同 via、auto 和域名依赖方案继续要求**显式、无循环的 DNS plan**；首版单出口编译不推测这些依赖。出口自己的 egress 必须证明无出口，避免 resolver 再指回 Mesh。该显式 plan 的用户配置字段尚未实现。
 
-客户端 owner 将普通查询生成独立 `MeshResolverRoute`，出口不可达时失败，不进入客户端系统上游重试队列。UDP 截断只可使用同一个 service permit 中独立允许的 TCP；旧查询、过期回答和切换前的输出保留原 ticket／scope 截止。
+客户端 owner 将普通查询生成独立 `MeshResolverRoute`；出口能力事实不是 ready、出口不可达或出口回 SERVFAIL 时查询失败，不进入客户端系统上游重试队列。UDP 截断只可使用同一个 service 中独立允许的 TCP；旧查询、过期回答和切换前的输出保留原 ticket／scope 截止。
 
-`ServeExitResolver { services }` 只接受唯一 SecureNode 验证的 DNS-purpose circuit 请求，源身份和完整路径来自不透明的认证请求对象。请求／回复复用 Noise 与逐跳 MAC，回复沿原路径返回；仅有匹配的源 IP／端口不能进入出口 resolver。出口上游仍由 Underlay 使用经验证的系统 resolver 快照访问。
+`ServeExitResolver { services }` 只接受唯一 SecureNode 验证的 DNS-purpose circuit 请求，源身份和完整路径来自不透明的认证请求对象。请求／回复复用 Noise 与逐跳 MAC，回复沿原路径返回；仅有匹配的源 IP／端口不能进入出口 resolver。出口用**出口机器自己的系统 resolver** 解析：systemd-resolved 后端经其代理 stub 保留按链路／后缀选上游，显式文件后端使用安装前记录的原 nameserver。会回到本节点 DNS 的名称、未知本地 stub、Mesh 地址或经出口路由的系统上游都使该查询不可用，不以公共 DNS 代替。组件与不可用条件见 [出口 resolver](/v2/node/dataplane#exit-resolver)。
+
+| 查询 | 走向 |
+| --- | --- |
+| MagicDNS 域内名称 | 源节点本地回答，不离开源节点 |
+| `useWithExit: true` 解析器的 split 后缀 | 该解析器，按其地址在源节点 egress 分割中的 Direct／Unmanaged 从本机发出；地址被出口路由时 DNS 安装失败，阻断 applied |
+| 其他名称（含不带 `useWithExit` 的 split） | 经完整获准路径交给出口的系统 resolver |
+
+IPv4 首版：A 与 AAAA 都原样返回出口 resolver 的真实回答，AAAA 不伪造 NXDOMAIN；受管 IPv6 包仍被源端捕获与准入拒绝。
 
 每条 DNS 消息上限为 4096 bytes，超限请求或回答失败；并发总上限 128，单查询截止不超过 5 秒和原 netmap／请求 guard。相同内容续租不延长已接纳查询的截止，内容变更取消旧查询。缺少适配、必需解析器或系统后端时阻断 applied。系统后端与出口组合的真实验收状态见 [验证范围](/v2/node/validation)，不同组合不能互相替代。
 

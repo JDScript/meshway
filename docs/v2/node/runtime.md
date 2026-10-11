@@ -126,7 +126,7 @@ Mesh 池、loopback、链路本地、组播、保留／广播及出口本机地�
 
 客户端先通过 `install_egress_capture` 准备旧／新范围的负向边界，再安装当前快照并 `switch`；任一必需组件失败时 suspend 保留负向边界，显式 down 由同一 Host 精确清理。中继可安装外部 permit，但没有本地 role 就没有出口 writer。
 
-`DnsEgress::ViaExit`／`ServeExitResolver` 的专用 DNS-purpose 适配尚未接通。daemon 不发布这些查询的执行 Scope；配置需要系统 DNS 时，已有 DNS owner 保持负向安装。客户端 `ViaExit`／`Unavailable` 计划即使关闭 MagicDNS／overrideLocal，也须安装负向 root DNS，不能恢复本地 fallback。状态中的 `exit.dnsUnavailable=dnsUnavailable` 与 IPv4 后端能力／角色安装分别显示，缺少 resolver 适配不否定业务 IP 出口；必需的负向 DNS 系统资源安装或健康检查失败仍阻断整体 applied。`exit/off` 不测试查询，但客户端仍须提供该负向安装所需的系统后端，不能据其结果宣称出口 DNS 可用。
+`DnsPlan::ViaExit`／`ServeExitResolver` 由 daemon 的 DNS 装配驱动：源节点的 Mesh 查询进入唯一包处理 owner 的有界队列（最多 128 个），由它在 SecureNode 上建立 DNS circuit 并收发；出口收到的认证请求交给同一 DNS owner 的 `serve_authenticated`，回答再交回 SecureNode。DNS owner 不持 SecureNode 或流表，组件边界见 [出口 resolver](/v2/node/dataplane#exit-resolver)。只要计划不是 `noExit`，即使关闭 MagicDNS／overrideLocal 也启动系统 DNS 安装：源节点 `ViaExit`／`Unavailable` 安装 root 捕获，不能恢复本地 fallback；出口节点需要它的 served 系统快照。出口快照不可用只使出口查询 SERVFAIL，不否定业务 IP 出口；必需的 DNS 系统资源安装或健康检查失败仍阻断整体 applied。
 
 ### 源端 egress capture 与切换
 

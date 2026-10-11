@@ -245,7 +245,31 @@ exchange 适配器须在每次 connect／write／read poll 检查路由期限与
 
 生产 `ResolverExchange` 由 Underlay 的 `SocketFactory` 实现，复用同一 socket 保护机制；UDP／TCP 每次实际 I/O 都检查原 sealed route、请求期限和取消。发送前随机化查询事务 ID，响应经实际来源、原问题及报文／帧边界校验后恢复客户端 ID。DNS scope 由 Engine 的 DNS apply 发布；查询不借用 bootstrap 权限。
 
-单出口客户端 owner 消费 `DnsEgress::ViaExit`，使用独立密封 `MeshResolverRoute`，复用 ticket／dispatcher／输出取消；普通查询失败不会转成本机上游查询。`ResolverExchange::validate_mesh` 必须证明真实安装，`exchange_mesh` 只能经唯一 SecureNode 的受许可路径执行；默认 local-only 适配返回不可用。`ServeExitResolver` 的密封 Mesh ingress／出口系统上游与 listener、显式多出口 DNS plan 和可信域名关联入口仍未接线，见 [DNS](/v2/configuration-reference/dns#使用出口时)。这些范围或任何必需安装失败均阻断整体 applied。
+### 出口 resolver {#exit-resolver}
+
+源节点 `DnsPlan::ViaExit` 与出口 `DnsPlan::ServeExitResolver` 的语义见 [DNS · 使用出口时](/v2/configuration-reference/dns#使用出口时)。两端都只经唯一 SecureNode 交换查询，没有 Mesh IP 上的 DNS listener。
+
+| 段 | Owner | 行为 |
+| --- | --- | --- |
+| 源 owner | `meshway-dns` | 普通查询生成 UDP 与 TCP 两条独立 `MeshResolverRoute`，共用原 ticket 与输出取消；UDP 回答带 TC 时才使用 TCP 路由。失败、超时或 SERVFAIL 只结束该查询，不进入本机系统上游队列 |
+| 源 → 出口 | dataplane | `query_dns` 在 `Purpose::Dns` circuit 上发送；circuit 的 grant 是 `(Dns, Mesh { exit })`，路径固定为 `DnsService.path`，握手摘要的 selection 是该 service 的摘要。出口能力事实不是 ready 时不建 circuit、不发查询，查询立即失败 |
+| 中继 | dataplane | `admit_dns` 在中继自己的投影上重算 `dns_service(origin)` 并只按完整路径位置与相邻承载转发密文，不解密 |
+| 出口 ingress | dataplane → `meshway-dns` | 出口收到的请求是不透明 `DnsRequest`，origin、完整路径、传输、所属内容和截止来自已认证 circuit；`OwnerDispatcher::serve_authenticated` 再用 `netmap_dns_service` 匹配 `ServeExitResolver.services` 中该源的精确 service。socket 地址不参与身份判断 |
+| 出口上游 | `meshway-dns` → Underlay | 只使用 served 系统快照，每个上游各有 UDP 与独立 TCP `LocalResolverRoute`，由出口自己的 egress 分割判定并经受保护 socket 发送 |
+| 回答 | dataplane | 按请求自身的传输编码：UDP 不超过 1232 bytes，超出时置 TC，由源改用 TCP；无法服务时回 SERVFAIL。`answer_dns` 只沿原 circuit 反向返回，旧请求的 guard 到期后不回答 |
+
+served 系统快照按后端区分：
+
+| 后端 | 上游 | 不可用条件 |
+| --- | --- | --- |
+| resolved | resolved 的代理 stub `127.0.0.54:53`，保留 resolved 按链路、按后缀选择上游；不做本地合成、LLMNR、mDNS | 锚点尚未安装；resolved 的服务器清单（`DNSEx`、`FallbackDNSEx`，不含本节点锚点自己的 bind）为空，或含 loopback／未指定／组播地址或锚点地址；任一服务器属于 Mesh 地址池或不是出口 egress 分割里的 Direct／Unmanaged。查询名落在本节点锚点已安装的域（MagicDNS 域、split 路由、搜索域、安装标记）之下时不交给 resolved，回 SERVFAIL，避免出口用自己的记录回答 |
+| 显式文件代理 | 安装前记录的原 resolv.conf nameserver | 原文件的 nameserver 为 loopback／未指定／组播／带 scope 的链路本地地址，或带 `no-reload` |
+
+resolved 快照随每次观察（250 ms）续期；服务器清单变化即换新快照并重新发布同内容的 scope，清单不再可用时只撤回出口查询，不使出口的其他 DNS 安装失败。代理快照只用于出口查询，出口节点自己的查询仍按 resolved 自身路由。快照不可用时出口照常安装，查询回 SERVFAIL，不选公共 DNS 补救，也没有单独的状态字段。
+
+内容变化（含出口 role 撤回、方案切换）和租约到期按 [scope 发布](#dns-查询-owner) 结束两端旧 ticket；新内容下的 DNS circuit 由 `SecureNode::update` 按 path 授权摘要判定保留或退役，旧回答不能换绑。
+
+限制：首版只解析经 IPv4 出口的普通查询；AAAA 原样返回出口 resolver 的真实回答，不伪造 NXDOMAIN，受管 IPv6 包仍由源端捕获 sink 与 permit 双重拒绝。显式多出口 DNS plan 和可信域名关联（X6）未实现。DNS 消息上限 4096 bytes，单查询不超过 5 秒。这些范围以外或任何必需安装失败均阻断整体 applied。
 
 ## 系统 DNS 安装
 
