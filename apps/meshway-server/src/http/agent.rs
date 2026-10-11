@@ -17,6 +17,7 @@ use meshway_protocol::{
 ///
 /// Requires a Node session; no instance is needed. The request names the netmap and peer-fact cursor the Node holds.
 /// The Server answers at once when either is behind, otherwise holds the request until the netmap or visible facts change, a newer sync of the same Node replaces it, or the hold (about 50 seconds, at most 60) ends.
+/// A hold ends at least 15 seconds before the lease the Node holds, and a Node's first sync to a Server process is answered at once.
 /// A held base answers `delta`, any other base `full`, the current netmap `unchanged`; every answer carries a fresh lease.
 #[utoipa::path(post,path="/agent-api/v1/sync",operation_id="syncNode",tag="execution",security(("nodeSession"=[])),request_body=SyncRequest,responses((status=200,body=SyncResponse),(status=400,body=ErrorResponse,description="invalid_request"),(status=401,body=ErrorResponse,description="invalid_credentials"),(status=403,body=ErrorResponse,description="node_identity_rejected, netmap_withdrawn"),(status=413,body=ErrorResponse,description="request_too_large"),(status=415,body=ErrorResponse,description="unsupported_media_type"),(status=503,body=ErrorResponse,description="busy, service_unavailable")))]
 pub(super) async fn sync(

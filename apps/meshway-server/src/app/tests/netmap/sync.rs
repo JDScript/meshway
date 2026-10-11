@@ -291,3 +291,53 @@ async fn http_sync_requires_a_current_node_session() {
     server.abort();
     app.shutdown().await.unwrap();
 }
+
+#[tokio::test]
+async fn a_hold_answers_before_the_lease_the_node_holds_ends() {
+    let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
+    let (_dir, mut app, network, a, _, ak, _, signer_a, _) = fixture().await;
+    app.netmap_timing = crate::netmap::SyncTiming {
+        validity: Duration::from_secs(60),
+        hold: crate::netmap::MAX_SYNC_HOLD,
+    };
+    let token = session(&app.execution(), network, a, &ak, &signer_a).await;
+    let service = app.netmaps();
+    // A Node this Server process issued no lease to is answered at once.
+    let base = current(&app, network, a).await.unwrap().current;
+    let started = Instant::now();
+    let first = service
+        .sync(token.token.expose(), holding(Some(base)))
+        .await
+        .unwrap();
+    assert!(started.elapsed() < Duration::from_secs(2));
+    assert_eq!(first.lease.expires_at_ms - first.lease.issued_at_ms, 60_000);
+    // The Node holds a 60 s lease that ends in 17 s (its last answer, 43 s
+    // ago): a nominal 54 s hold answers 15 s before the end, with a renewal.
+    let now = chrono::Utc::now().timestamp_millis() as u64;
+    let held = app.effects.netmaps.register(network, a).unwrap();
+    held.answered(now + 17_000);
+    drop(held);
+    let cursor = first.peer_facts.map(|facts| facts.cursor);
+    let started = Instant::now();
+    let renewed = service
+        .sync(
+            token.token.expose(),
+            SyncRequest {
+                netmap: Some(base),
+                state: cursor,
+                server_key_generation: None,
+                traversal_requests: Default::default(),
+            },
+        )
+        .await
+        .unwrap();
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed >= Duration::from_millis(1_500) && elapsed < Duration::from_secs(5),
+        "{elapsed:?}"
+    );
+    assert_eq!(renewed.netmap, SyncNetmap::Unchanged);
+    assert!(renewed.lease.issued_at_ms < now + 17_000);
+    assert!(renewed.lease.expires_at_ms > now + 17_000);
+    app.shutdown().await.unwrap();
+}

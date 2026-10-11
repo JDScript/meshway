@@ -5556,7 +5556,7 @@
           "execution"
         ],
         "summary": "Long-poll the Node's netmap, lease and peer facts.",
-        "description": "Requires a Node session; no instance is needed. The request names the netmap and peer-fact cursor the Node holds.\nThe Server answers at once when either is behind, otherwise holds the request until the netmap or visible facts change, a newer sync of the same Node replaces it, or the hold (about 50 seconds, at most 60) ends.\nA held base answers `delta`, any other base `full`, the current netmap `unchanged`; every answer carries a fresh lease.",
+        "description": "Requires a Node session; no instance is needed. The request names the netmap and peer-fact cursor the Node holds.\nThe Server answers at once when either is behind, otherwise holds the request until the netmap or visible facts change, a newer sync of the same Node replaces it, or the hold (about 50 seconds, at most 60) ends.\nA hold ends at least 15 seconds before the lease the Node holds, and a Node's first sync to a Server process is answered at once.\nA held base answers `delta`, any other base `full`, the current netmap `unchanged`; every answer carries a fresh lease.",
         "operationId": "syncNode",
         "requestBody": {
           "content": {
