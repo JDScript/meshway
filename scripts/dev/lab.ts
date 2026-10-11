@@ -14,6 +14,7 @@ import { zEnrollmentResponse, zLoginRequest, zGetConfigurationPath } from "../..
 import { previousPasswords, privatePath, serverOrigin } from "./seed.ts";
 
 const exec = promisify(execFile);
+const LAB_TAG = "tag:lab";
 class LabError extends Error {}
 function object(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -67,42 +68,73 @@ async function main(args: string[]) {
   try {
     const inventory = required(await listNodes(client, path, auth()));
     const source = required(await getConfiguration(client, path, auth()));
+    // Incremental: only the lab-owned listener, ICMP rule and tag. Dialers,
+    // topology and every other node setting stay exactly as configured.
     const ops: ConfigurationOperation[] = [];
     const peers = bindings.map(binding => "node:" + binding.identity.nodeId).sort();
     const samePeers = (values: string[]) => values.length === peers.length && peers.every(peer => values.includes(peer));
-    if (!source.configuration.access.some(rule => samePeers(rule.src) && samePeers(rule.dst) && rule.ip.includes("icmp:*"))) {
-      ops.push({ type: "replaceAccess", access: [...source.configuration.access, {
+    const access = source.configuration.access ?? [];
+    if (!access.some(rule => samePeers(rule.src) && samePeers(rule.dst) && rule.ip.includes("icmp:*"))) {
+      ops.push({ type: "replaceAccess", access: [...access, {
         remark: "Development lab ICMP echo", src: peers, dst: peers, ip: ["icmp:*"], bidirectional: false,
       }] });
     }
+    const tagsOwners = source.configuration.tagsOwners ?? {};
+    if (!(LAB_TAG in tagsOwners)) ops.push({ type: "replaceTagsOwners", tagsOwners: { ...tagsOwners, [LAB_TAG]: [] } });
+    const tagged = new Set<string>();
+    const dialable = new Set<string>();
     for (const { name, identity } of bindings) {
       const nodeId = identity.nodeId;
       const node = inventory.items.find(node => node.id === nodeId);
-      const configuration = source.configuration.nodes[nodeId];
+      const configuration = source.configuration.nodes?.[nodeId];
       if (!node || node.hostname !== name || !configuration
           || JSON.stringify(node.keys) !== JSON.stringify(identity.keys)) throw new LabError("Server registration differs from the actual lab Node.");
-      if (Object.entries(configuration.listeners).some(([key, listener]) =>
+      const listeners = configuration.listeners ?? {};
+      if (Object.entries(listeners).some(([key, listener]) =>
         key !== "lab-udp" && listener.protocol === "native_udp" && listener.enabled && listener.listenPort === 35000)
-          || configuration.listeners["lab-udp"] && configuration.listeners["lab-udp"].protocol !== "native_udp") throw new LabError("Lab UDP resource is occupied by another listener.");
-      ops.push({ type: "setNodeSettings", nodeId, fields: { dialers: { native_udp: {} } } });
-      ops.push({ type: "setListener", nodeId, key: "lab-udp", listener: {
-        type: "native_udp", enabled: true, remark: "Development UDP carrier", listen: "0.0.0.0", listenPort: 35000,
-        endpoints: [],
-      } });
+          || listeners["lab-udp"] && listeners["lab-udp"].protocol !== "native_udp") throw new LabError("Lab UDP resource is occupied by another listener.");
+      // Only a Node without any dialer declaration gets the lab's Native UDP
+      // dialer; an existing set (for example VLESS) is never replaced.
+      if (configuration.dialers === undefined) {
+        ops.push({ type: "setNodeSettings", nodeId, fields: { dialers: { native_udp: {} } } });
+      }
+      if (configuration.dialers === undefined || configuration.dialers.native_udp) dialable.add(nodeId);
+      const lab = listeners["lab-udp"];
+      if (!lab || lab.protocol !== "native_udp" || !lab.enabled || lab.listen !== "0.0.0.0"
+          || lab.listenPort !== 35000 || lab.endpoints.length !== 0) {
+        ops.push({ type: "setListener", nodeId, key: "lab-udp", listener: {
+          type: "native_udp", enabled: true, remark: "Development UDP carrier", listen: "0.0.0.0", listenPort: 35000,
+          endpoints: [],
+        } });
+      }
+      const identityTags = configuration.identity.type === "tag" ? configuration.identity.tags : [];
+      if (!identityTags.includes(LAB_TAG)) {
+        ops.push({ type: "setIdentityTags", nodeId, tags: [...identityTags, LAB_TAG] });
+        tagged.add(nodeId);
+      }
+    }
+    if (!ops.length) {
+      console.log(JSON.stringify({ networkId: path.networkId, revision: source.revision, unchanged: true }, null, 2));
+      return;
     }
     const request = { type: "operations" as const, expectedRevision: source.revision, requestId: randomUUID(), ops };
     const preview = required(await validateConfiguration(client, path, request, auth()));
-    if (preview.deletedNodeIds.length || preview.identityChangedNodeIds.length) throw new LabError("Lab configuration unexpectedly changes registered identities.");
+    if (preview.deletedNodeIds.length || preview.addressChangedNodeIds.length
+        || preview.identityChangedNodeIds.some(id => !tagged.has(id))) throw new LabError("Lab configuration unexpectedly changes registered identities.");
     const applied = required(await applyConfiguration(client, path, request, auth()));
     const current = required(await getConfiguration(client, path, auth()));
     if (current.revision !== applied.revision
-        || JSON.stringify(current.configuration.dns) !== JSON.stringify(source.configuration.dns)) throw new LabError("Lab configuration DNS intent differs from the original Server plan.");
+        || JSON.stringify(current.configuration.dns) !== JSON.stringify(source.configuration.dns)
+        || JSON.stringify(current.configuration.topology) !== JSON.stringify(source.configuration.topology)) throw new LabError("Lab configuration changed DNS or topology intent.");
     for (const { identity } of bindings) {
-      const node = current.configuration.nodes[identity.nodeId];
-      const listener = node?.listeners["lab-udp"];
-      if (!listener || listener.protocol !== "native_udp" || !listener.enabled || listener.listenPort !== 35000
+      const before = source.configuration.nodes?.[identity.nodeId];
+      const node = current.configuration.nodes?.[identity.nodeId];
+      const listener = node?.listeners?.["lab-udp"];
+      if (!node || !listener || listener.protocol !== "native_udp" || !listener.enabled || listener.listenPort !== 35000
           || listener.listen !== "0.0.0.0" || listener.endpoints.length !== 0
-          || !node?.dialers?.native_udp) throw new LabError("Lab listener/dialer verification failed.");
+          || node.identity.type !== "tag" || !node.identity.tags.includes(LAB_TAG)
+          || (before?.dialers !== undefined && JSON.stringify(node.dialers) !== JSON.stringify(before.dialers))
+          || (dialable.has(identity.nodeId) && !node.dialers?.native_udp)) throw new LabError("Lab listener/dialer/tag verification failed.");
     }
     console.log(JSON.stringify({ networkId: path.networkId, revision: applied.revision,
       nodes: bindings.map(binding => ({ name: binding.name, nodeId: binding.identity.nodeId, bridgeAddress: binding.address })),
