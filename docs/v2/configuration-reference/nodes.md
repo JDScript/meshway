@@ -93,6 +93,20 @@ user 分支不接受 tags，tag 分支不接受 user。Node 数据库记录不�
 
 最小吊销和历史关联保留以拒绝旧凭据，并非回收站。重新接入使用新 Node ID／密钥。引用删除节点的规则明确不可执行，不能自动绕过必经点；管理员可再清理这些规则。
 
+### Node 自助注销 {#node-self-leave}
+
+`meshway logout` 由 Node 以自己当前的 session 调用 `leaveNode`（`POST /agent-api/v1/leave`，请求体 `requestId`、`nodeId`）。这是同一永久删除，经同一配置提交入口执行：
+
+| 项 | 行为 |
+| --- | --- |
+| 授权 | 与提交同一事务检查 Node session、凭据未吊销与身份资格；`nodeId` 必须是该 session 的 Node，否则 `403 permission_denied`。没有可指定其他 Node 的参数 |
+| 效果 | 与管理员删除相同：吊销凭据、移除配置项与库存、记录旧地址退出、撤回 netmap、重新编译受影响节点；配置版本 cause 为 `nodeDeleted` |
+| 版本作者 | 版本表要求 user 作者：User 身份设备记为其绑定用户，Tag 设备记为接入它的用户（批准者或接入密钥签发者）。配置变更通知的 `actor` 为 `node`（该 Node ID） |
+| 之后 | 该 Node 的 session 随凭据结束，再调用得 `401`；其控制密钥重新认证得 `403 node_identity_rejected`。重新加入需要新的接入 |
+| 失败 | Server 不可达或拒绝时什么都不发生；配置无法删除该 Node（例如有规则引用它）时为 `422 configuration_invalid`，与管理员删除相同 |
+
+Node 只在收到成功响应后清除本机身份记录、`netmap.json` 与 `peer-facts.json`（见[私有存储](/v2/node/control#私有存储与传输)）。响应丢失时 Server 已删除而本机仍持有身份，之后的同步与认证得到 `node_identity_rejected`（`blocked`）。
+
 Node 使用本地持久密钥身份认证。接入批准、公钥与实体绑定走[注册流程](/v2/api/authentication#node-的三层凭据)，私钥不进入这份静态配置。
 
 Tag 身份不继承 User／Group 权限，原创建用户离网后仍保留；最后一个 Tag 不能直接清空，须经设备用户登录完成身份转换。详见[有效身份](/v2/configuration-reference/identity#有效授权身份)。默认初始化不写空 dialers，以采用网络默认出站集合。

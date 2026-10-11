@@ -145,7 +145,7 @@ Mesh 池、loopback、链路本地、组播、保留／广播及出口本机地�
 
 `underlay-egress.json` 保存 boot／namespace、随机 installation、mark／table、计划、当前门与待提交门、设备标识、nft 规范对象／handle、精确 route/rule 及 removed。自有规则／路由变化注册到同一 monitor，不制造外部切网事件。暂停、执行失效和同 namespace 重启保留负向范围；TUN 消失不会落回 main direct。恢复先关闭旧活动 selector 并清理旧正向资源，只有新的有效执行安装可以重新激活；显式 down 才解除所属负向边界。
 
-IPC v5 的公开运行状态：
+IPC 7 的公开运行状态（`meshway status --json` 原样输出）：
 
 | 字段 | 含义 |
 | --- | --- |
@@ -156,9 +156,23 @@ IPC v5 的公开运行状态：
 | `saved`／`applied` | 独立的必填可空目标引用；saved 来自持久保存，applied 来自对应实例／目标的实际成功安装结果 |
 | `phase` | 完整枚举见下表；结合 dataPlane、当前资格和错误读取 |
 | `lastError`／`retryAt` | 类型化故障与重试时点；安装问题可为 unsupportedMode、underlay、tun、dns、transport、apply |
-| `eventStream` | 必填，`connected`（HTTP 已接纳）、`reconnecting`、`disconnected`；不代表 Node 授权或业务连通 |
-| `lastEventAt` | 必填可空，本进程最近一次有效事件的接收时间；未收到为 null，保活／读取 status 不改写它 |
+| `sync` | 必填，`connected`（最近一次 sync 成功、下一次由 Server 挂起）、`reconnecting`、`disconnected`；不代表 Node 授权或业务连通 |
+| `lastSyncAt`／`syncError` | 必填可空：本进程最近一次返回已验签 netmap 的 sync 时间；sync 重试期间的失败类别 |
+| `netmap` | 必填可空：当前 netmap 引用与签名租约 `issuedAt`／`expiresAt`；无有效租约为 null |
+| `node` | 必填可空：已安装 netmap 中的本节点 `hostname` 与 Mesh `addresses`；未安装（down、control-only、准备中）为 null |
+| `peers` | 必填：已安装 netmap 中可见的其他节点（与 `ping` 解析名称的集合相同），按 hostname 排序；未安装为空。字段见下表 |
 | `exit` | 可省略；包含 target-bound `capability`、已安装 role generation、`activeFlows` 和独立的 `dnsUnavailable`（出口 resolver 不能为源解析的原因，与 State [`exitDns`](/v2/state-reference#exitdns) 同源；可用或不服务时为 null）。未观测的计数保持 null，失去当前执行权限后不显示已安装角色／活流数 |
+
+`peers[]` 只投影本节点自己的事实，不生成测量或授权：
+
+| 字段 | 含义 |
+| --- | --- |
+| `nodeId`／`hostname`／`addresses` | 投影中的配置值 |
+| `state` | `direct`：有选定的认证通道；`relay`：有经其他节点的已建立 circuit（本节点为端点）；`offline`：该 peer 的最后已知事实缺失或已过 `PeerFacts.expiresAt` 且以上皆无；`unreachable`：需要邻接但无通道；`idle`：其余（含非相邻且当前无 circuit） |
+| `transport` | 必填可空：`direct` 为选定通道的承载，`relay` 为首跳通道的承载；其他为 null |
+| `endpoint` | 必填可空：`direct` 选定通道的实际远端地址；其他为 null |
+| `via` | `relay` 时按路径顺序的中转 Node ID；其他为空 |
+| `rtt` | 必填可空：到该 peer 最近一次成功 `ping`／观察任务测量的 `durationUs` 与 `observedAt`；没有测量为 null，不补零；down、撤回或租约结束时清空 |
 
 `phase` 的全部 9 个值：
 
@@ -196,7 +210,7 @@ IPC v5 的公开运行状态：
 | `transport` | 承载安装／运行失败 |
 | `apply` | 当前目标安装或回执失败，需要重新同步 |
 
-IPC 封闭对象解码拒绝未知字段；当前 v5 支持 Ping 通道的 `localEndpoint` 来源，旧版本请求返回 `ErrorCode::Version`。CLI 与 daemon 同版本发布，不将缺字段补成已连接或零时间。
+IPC 封闭对象解码拒绝未知字段；旧版本请求返回 `ErrorCode::Version`。CLI 与 daemon 同版本发布，不将缺字段补成已连接或零时间。
 
 ready／applied 只表示该目标的本机安装结果，不表示 peer 已建立认证通道或应用已收回业务包。Node State 中的 listener／link 来自组件观测；路径、RTT、丢包缺测保持空。安装与报告顺序见 [Control ApplicationTicket](/v2/node/control#安装回执与运行报告)。
 
@@ -216,12 +230,49 @@ Linux 首版每台机器运行一个系统级 `meshwayd`，同一时间只启用
 | `meshway up --enrollment-key @file` | 通过 Server 的一次性 Tag 接入密钥加入网络，不取得用户会话；既有身份不被接入密钥改绑 |
 | `meshway rotate-key` | 同步返回已完成换钥的公开身份／状态或类型化失败；随后重新取得实例和运行资格，换钥成功不等于数据面已 applied |
 | `meshway down` | 停止当前网络并终止相关资格；daemon 与私有身份保留 |
+| `meshway logout` | 请 Server 永久删除本节点（[自助注销](/v2/configuration-reference/nodes#node-self-leave)），确认后下线并清除本机身份；Server 不可达或拒绝时本机不变 |
 | `meshway ping <target>` | 获准的端到端 Mesh 探测；参数、授权与输出见[路径诊断](/v2/node/diagnostics) |
-| `meshway status` | 区分进程、控制联系、saved／applied 和实际通道状态 |
-| `meshway version` | 程序与协议版本（`--json` 可用）；不连接 daemon |
+| `meshway status [--watch]` | 本节点摘要与 peers 表；`--watch` 每秒刷新（TTY 原地重绘，否则逐份输出） |
+| `meshway netcheck` | 一次有界的本机网络诊断，见[路径诊断 · netcheck](/v2/node/diagnostics#netcheck) |
+| `meshway version` | 程序与协议版本；不连接 daemon |
 | 切网 | 尚未实现；先停止旧网络、完成隔离清理，再运行新网络 |
 
-CLI 通过 Unix domain socket 发命令、读结果；状态由 daemon／组件的唯一 owner 持有。`meshway_protocol::ipc` 是唯一的请求／响应定义，当前版本为 5，使用 JSON 与长度前缀，单条消息上限 64 KiB。`exit` 为新增可省略字段，保留版本 5；CLI 和 daemon 仍同版本发布。每个连接处理一个请求，Ping 可返回有序的多个事件；连接数、请求等待、写入和队列均有上限。`Up` 的 `enrollmentKey` 可省略；`Up`／`Down`／`RotateKey` 的 `expectedRevision` 由 CLI 读取后提交，换钥不会绕过本机 CAS。
+CLI 通过 Unix domain socket 发命令、读结果；状态由 daemon／组件的唯一 owner 持有。`meshway_protocol::ipc` 是唯一的请求／响应定义，当前版本为 7（新增 `Logout`、`Netcheck` 命令、`ResultBody::Netcheck` 与 Status 的 `node`／`peers`），使用 JSON 与长度前缀，单条消息上限 64 KiB；CLI 和 daemon 同版本发布。每个连接处理一个请求，Ping 可返回有序的多个事件，Netcheck 返回一个报告；连接数、请求等待、写入和队列均有上限。`Up` 的 `enrollmentKey` 可省略；`Up`／`Down`／`RotateKey`／`Logout` 的 `expectedRevision` 由 CLI 读取后提交，换钥与注销不会绕过本机 CAS。
+
+### CLI 输出与退出码
+
+所有命令都有 `--json`：输出一个类型化 JSON 文档（`ping` 为每行一个事件），字段即上文 IPC 类型，不含秘密。人读输出只在 stdout 为 TTY 且未设置 `NO_COLOR` 时使用颜色与表格线；管道、文件或 `NO_COLOR` 下为不含控制字符的对齐纯文本。宽度按显示宽度（含 CJK）计算。读端关闭（如 `meshway status | head`）时静默以 0 退出。
+
+```text
+meshway-sha  100.64.0.2  fd89:98a2:2060::1  running
+  Server     https://meshway-dev-api.jdscript.dev/
+  Sync       connected · last sync 24s ago
+  Netmap     revision 60 · serial 68 · lease 23h 59m left
+  Data plane ready · mode tun
+  Exit       none
+  Identity   node dbb6fcbb-… · network 8998a220-… · key generation 1
+
+PEER         MESH IPV4   STATE   TRANSPORT   ENDPOINT            RTT
+meshway-lax  100.64.0.1  direct  native_udp  192.168.97.3:52242  0.90 ms
+meshway-nyc  100.64.0.6  relay   native_udp  via meshway-lax     2.00 ms
+```
+
+`status --json` 中对应的 peer：
+
+```json
+{"nodeId":"3740cacb-68ff-4fe8-9559-2733b5b1ad76","hostname":"meshway-nyc",
+ "addresses":{"ipv4":"100.64.0.6","ipv6":"fd89:98a2:2060::5"},"state":"relay",
+ "transport":"native_udp","endpoint":null,"via":["21ee69e3-493e-40f8-b635-19ec4689fac9"],
+ "rtt":{"durationUs":2079,"observedAt":"2026-10-11T20:38:37.572291623Z"}}
+```
+
+| 命令 | 退出码 |
+| --- | --- |
+| `up`／`down` | 0：已收敛，或仍在 `starting`／`synchronizing`／`stopping`／`retrying`（意图已保存）；1：`blocked`、意图被并发改变或 IPC 错误 |
+| `logout` | 0：Server 已删除且本机已清除；1：Server 不可达或拒绝（本机不变）、本机无身份或 IPC 错误 |
+| `ping` | 0：至少一次成功回复；1：全部失败／超时或操作错误；130：Ctrl-C |
+| `status`／`netcheck`／`rotate-key`／`version` | 0：已读取并输出（netcheck 的 Server 不可达或无数据面也是 0，报告本身说明）；1：IPC 或操作错误 |
+| 参数错误 | 2 |
 
 推荐的无交互接入与换钥用法：
 
@@ -239,7 +290,7 @@ up/down 按本机期望状态 revision 执行 CAS，并保留最后一次变更�
 
 daemon 独占目录锁，启动时记录 socket 的文件身份；只有身份匹配且确认无监听者的旧 socket 可清理。未知文件、符号链接、活跃 socket 和损坏的状态文件都保留并报错。
 
-CLI 生命周期不承载 Node 身份或 lease，不收集账户密码、不取得浏览器会话。业务 listener／DNS／策略无本地覆盖源；获准路由方案切换仍是使用选择，具体入口待定。`down` 不等于云端永久删除。
+CLI 生命周期不承载 Node 身份或 lease，不收集账户密码、不取得浏览器会话。业务 listener／DNS／策略无本地覆盖源；获准路由方案切换仍是使用选择，具体入口待定。`down` 不等于云端永久删除；永久删除本节点用 `logout`。
 
 ## Engine
 

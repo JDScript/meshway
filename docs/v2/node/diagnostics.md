@@ -15,6 +15,7 @@ meshway ping fd12:3456::2 -c 3 --json
 | target | 当前网络的 hostname、本网络 FQDN 或精确分配给某节点的 Mesh IP，由 Server 在授权事务内解析 |
 | `-c`／`--count` | 1–1000，默认 10 |
 | `--json` | 每行一个类型化 `PingEvent`，保持真实事件顺序 |
+| `-v`／`--verbose` | 人读输出另显示目标 Node ID、preparing 等待与每个通道的获取来源 |
 | probe | 默认 `icmp:*` 服务授权、auto 路径选择；单个探测期限 5 秒，发送间隔至少 1 秒，每任务一个 in-flight |
 | Ctrl-C | 停止本机等待并取消本订阅，退出码 130；不修改持久 up/down 意图 |
 | 退出码 | 正常完成且存在成功回复为 0；全部失败／超时或操作错误为 1 |
@@ -31,6 +32,19 @@ meshway ping fd12:3456::2 -c 3 --json
 
 源、每个中转和终点均需声明并实现 `feature:path-observation` version 1。获准路径缺少必需能力时任务为 unsupported；没有 Access 或违反完整路径时为权限拒绝。具备能力的完整候选仍可使用，不能借缺能力跳过必经点。
 
+## 人读输出
+
+每次探测一行，最后一行汇总；preparing 只在 `-v` 下显示：
+
+```text
+pong from meshway-nyc (100.64.0.6) via 192.168.97.2:35000 native_udp in 0.10 ms
+pong from meshway-nyc (100.64.0.6) via relay meshway-lax (192.168.97.3:52242 native_udp) in 0.22 ms
+no reply from meshway-nyc (100.64.0.6) within 5 s
+meshway-nyc: 3 sent, 3 replied, 0% loss · rtt min/avg/max 0.22/1.43/2.07 ms
+```
+
+direct 显示本次 request 通道的实际远端与承载；中继按路径顺序显示中转节点名，括号内是首跳通道（不是整条路径的承载）。中转名称取自本节点已安装 netmap 的 peers（`status`），取不到时显示 Node ID。RTT 为测量值截断到 0.01 ms；没有测量时写明，不补零。loss 为 `timeout／sent`，本机发送失败单独计数。
+
 ## 输出事实
 
 - **preparing**：等待 Server 接纳、发布、安装、建连、下一次发送周期或结果上报，显示本机等待耗时。真正 setup 的独立预算为 60 秒，跨合法交接／暂停保持原截止；正常周期与结果背压不充当新的建连。尚未发送的等待不生成 measurement，也不消耗 ping 次数或计为 probe loss；setup 超限以失败 phase 结束。
@@ -45,7 +59,7 @@ meshway ping fd12:3456::2 -c 3 --json
 
 准备阶段日志不包含凭据。INFO 的 `Diagnostic preparation stage changed` 使用稳定 `stage`：`subscription_queued`（本机接纳）、`subscription_accepted`（订阅响应携带任务 phase／publication 引用，不等于已安装许可）、`installed`（任务许可与本机已安装执行匹配并通过绑定校验）、`first_hop_channel`（等待首跳认证承载）、`path_handshake`（完整路径握手）、`path_established`（握手完成）。事件携带适用的 subscription／observation／publication／instance 引用；首跳与握手阶段附带本机 setup 耗时。DEBUG 提供 `subscription_request`、`installation_pending` 与握手重发事件。`Diagnostic preparation budget expired` 记录最后等待阶段／订阅确认状态，不作为 RTT。
 
-当前 IPC v5 的 Preparing 只携带 `elapsedMs`，CLI 显示等待耗时；具体阶段由上述日志关联，不从耗时推断 STUN、安装或某段路径失败。
+IPC 的 Preparing 只携带 `elapsedMs`，`ping -v` 显示等待耗时；具体阶段由上述日志关联，不从耗时推断 STUN、安装或某段路径失败。
 
 首轮准备由安装、认证通道和握手接收事件推进，不等待额外的 1 秒首轮节拍或 100 ms 握手完成轮询。握手重发仍由 SecureNode 的原重发期限决定；后续 probe 保持至少 1 秒的真实发送间隔，合法交接不重置已有 probe 的节流截止，迟到的就绪事件不越过原 setup 截止。`first_hop_channel` 到 `path_handshake` 是邻接获取耗时，`path_handshake` 到 `path_established` 才是完整路径握手耗时。
 
@@ -59,7 +73,7 @@ source 每 observation 跨 CID 至少间隔 1 秒；relay／terminal 使用每�
 
 ## 本机与远端生命周期
 
-IPC v5 的一次 Ping 请求可返回多个 `ResultBody::Ping`，复用原 Response envelope；sequence 从 0 连续增长。Preparing 可先于唯一 Accepted，Sample 绑定 Accepted 的 ObservationId，Completed／Failed 结束流。无终态的 EOF 为错误；初始请求及每帧等待有界，取消不自动发起第二次测量。
+一次 IPC Ping 请求可返回多个 `ResultBody::Ping`，复用原 Response envelope；sequence 从 0 连续增长。Preparing 可先于唯一 Accepted，Sample 绑定 Accepted 的 ObservationId，Completed／Failed 结束流。无终态的 EOF 为错误；初始请求及每帧等待有界，取消不自动发起第二次测量。
 
 Node 订阅绑定真实 control key、instance／generation、网络和 Server boot。CLI 与用户订阅可共享同一 source task；取消一个订阅只移除它的需求，其他合法订阅继续。Node 普通续租、tasks 读取、State 和结果上报都不续活观察。
 
@@ -83,6 +97,34 @@ Control 以 RPC 开始时的时钟高水位和单调时钟固定已确认的订�
 | `cancelNodeObservation` | `POST /agent-api/v1/observations/{subscriptionId}/cancel`，当前 instance；返回源 executor 是否仍有共享 task |
 
 任务领取和结果使用既有 `getNodeTasks`／`reportTaskResult`。授权、30 秒订阅上限、10 秒续租节奏、SSE 与结果窗口的共同定义见 [Realtime Observation](/v2/state-reference/realtime)。
+
+## netcheck {#netcheck}
+
+`meshway netcheck` 让 daemon 执行一次有界诊断，复用现有观测，不在 CLI 中实现 STUN：
+
+| 部分 | 来源与含义 |
+| --- | --- |
+| UDP socket 映射 | 已安装 Manager 的每个 Native UDP traversal socket 立即按其[持续观测](/v2/node/connectivity#continuous-stun)执行一轮同 socket STUN（同一查询预算与元数据，不新建 socket），最多等待 5 秒；报告每个 observer 最近一次经验证的映射与 `fresh`（本次诊断内获得） |
+| 端口 | `preserved`：本次映射端口都等于绑定端口；`changed`：有不同端口；`unknown`：本次无映射 |
+| 映射 | `independent`：至少两个 observer 本次看到相同映射；`dependent`：不同；`unknown`：不足两个 observer 回答（只配置一个 STUN 服务器时总是 unknown） |
+| STUN RTT | 各 observer 本次最快的往返；只计单次发送即得回答的事务，重传后的往返不确定，记为 null |
+| IPv4／IPv6／UDP | 本次该地址族有映射；UDP 另在存在已认证 Native UDP 选定通道时为真 |
+| Server | Node 控制客户端（同一受保护 socket 与 origin）对只读 `getAuthOptions` 先预热一次，再计时第二次往返，5 秒上限；不使用凭据 |
+
+没有已安装数据面（down、control-only、准备中）时 `unavailable=notRunning`，只报告 Server 部分。诊断不改变 State、候选、授权或 up/down 意图；结果只返回 IPC。`--json` 输出 `NetcheckReport`；人读输出：
+
+```text
+Network check
+  Server     https://meshway-dev-api.jdscript.dev/ · reachable in 80.15 ms
+  UDP        yes
+  IPv4       yes
+  IPv6       no
+  STUN       74.125.250.129:19302 in 38.97 ms
+
+SOCKET                    BOUND          MAPPED                OBSERVER              PORT     MAPPING
+listener lab-udp          0.0.0.0:35000  104.28.152.187:36928  74.125.250.129:19302  changed  unknown
+dial meshway-sha/lab-udp  [::]:40651     —                     —                     unknown  unknown
+```
 
 ## 限制
 
