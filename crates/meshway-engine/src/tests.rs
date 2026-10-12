@@ -269,3 +269,86 @@ async fn a_raised_clock_floor_never_lets_an_ended_lease_run() {
     assert_eq!(engine.reconfig(Some(&netmap)).await, Err(Error::Lease));
     assert!(engine.desired().is_none());
 }
+
+/// A one-Node netmap whose public egress rule names a rule set, and the set.
+fn with_rule_set() -> (Arc<CompiledNetmap>, Arc<meshway_rules::RuleSet>) {
+    use meshway_test_server::configuration as fixture;
+    let set = Arc::new(
+        meshway_rules::RuleSet::from_inline(&meshway_rules::inline::Inline {
+            ip_cidr: &["9.9.9.0/24".to_owned()],
+            ..Default::default()
+        })
+        .unwrap(),
+    );
+    let node = fixture::node(1);
+    let mut cfg = fixture::network("fixture.internal");
+    cfg.nodes
+        .insert(node, fixture::tag_node("a", 1, BTreeMap::new(), false));
+    cfg.routing.egress.rules = vec![meshway_configuration::EgressRule {
+        remark: String::new(),
+        matcher: meshway_configuration::RouteMatch {
+            rule_sets: vec!["corp".into()],
+            ..Default::default()
+        },
+        action: meshway_configuration::RuleAction::Direct,
+    }];
+    let sets: meshway_policy::compile::RuleSets = [("corp".to_owned(), set.clone())].into();
+    let compiled = meshway_policy::compile::netmap::compile_netmap(
+        meshway_policy::compile::netmap::NetmapInput {
+            network: "00000000-0000-4003-8000-000000000001".parse().unwrap(),
+            revision: meshway_model::Revision::MIN,
+            configuration: &cfg,
+            subjects: &Default::default(),
+            inventory: &BTreeMap::from([(node, fixture::trusted(1, false))]),
+            rule_sets: &sets,
+            selected_profiles: &BTreeMap::new(),
+            selection_versions: &BTreeMap::new(),
+            previous: &BTreeMap::new(),
+        },
+    )
+    .unwrap();
+    (Arc::new(compiled.nodes[&node].clone()), set)
+}
+
+#[tokio::test(start_paused = true)]
+async fn content_applies_before_its_artifacts_and_again_once_they_load() {
+    let mut engine = Engine::new(Resources::default());
+    let (content, set) = with_rule_set();
+    let first = input(&mut engine, content.clone(), 60_000);
+    engine.reconfig(Some(&first)).await.unwrap();
+    let desired = engine.desired().unwrap();
+    assert_eq!(desired.missing(), [set.digest()]);
+    // Fail closed until the artifact is held: full capture, no direct route.
+    let capture = &desired.egress().unwrap().capture;
+    assert_eq!(
+        capture.unavailable,
+        Some(meshway_configuration::execution::UnavailableReason::MissingDependency)
+    );
+    assert!(capture.direct_ipv4.is_empty());
+    assert_eq!(
+        desired
+            .content()
+            .netmap
+            .egress
+            .as_ref()
+            .unwrap()
+            .capture
+            .unavailable,
+        None
+    );
+    let applied = engine.components.calls.len();
+    // The same content and lease with the artifact loaded is applied again.
+    let loaded = Netmap {
+        artifacts: Arc::new([(set.digest(), set.clone())].into()),
+        ..first.clone()
+    };
+    engine.reconfig(Some(&loaded)).await.unwrap();
+    assert!(engine.components.calls.len() > applied);
+    let desired = engine.desired().unwrap();
+    assert!(desired.missing().is_empty());
+    assert!(Arc::ptr_eq(desired.netmap(), &content.netmap));
+    // Offering it once more changes nothing.
+    let calls = engine.components.calls.len();
+    engine.reconfig(Some(&loaded)).await.unwrap();
+    assert_eq!(engine.components.calls.len(), calls);
+}
