@@ -13,8 +13,8 @@ mod transports;
 
 use crate::{SubjectContext, topology_allows};
 pub use capture::{
-    EgressPartition, MAX_CAPTURE_RANGES, MAX_CAPTURE_ROUTES, Partition, summary as capture_summary,
-    unavailable_capture,
+    EgressPartition, MAX_CAPTURE_RANGES, MAX_CAPTURE_ROUTES, MAX_WORK as MAX_CAPTURE_WORK,
+    Partition, summary as capture_summary, unavailable_capture,
 };
 pub(crate) use edge_constraints::validate_edge_transports;
 pub use exit::ExitInputs;

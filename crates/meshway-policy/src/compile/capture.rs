@@ -20,7 +20,7 @@ pub const MAX_CAPTURE_RANGES: usize = 16_384;
 /// ranges.
 pub const MAX_CAPTURE_ROUTES: usize = 32_768;
 /// Range operations of one partition computation, bounding its CPU time.
-const MAX_WORK: usize = 1 << 24;
+pub const MAX_WORK: usize = 1 << 24;
 
 trait Address: Copy + Ord {
     fn next(self) -> Option<Self>;

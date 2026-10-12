@@ -558,9 +558,14 @@ fn partition_limits(
     for name in names {
         let summary = crate::compile::capture_summary(config, &sets, name);
         let ranges = summary.managed_ipv4 as usize + summary.sink_ipv6 as usize;
-        if ranges <= crate::compile::MAX_CAPTURE_RANGES
-            && summary.routes as usize <= crate::compile::MAX_CAPTURE_ROUTES
-        {
+        let oversized = ranges > crate::compile::MAX_CAPTURE_RANGES
+            || summary.routes as usize > crate::compile::MAX_CAPTURE_ROUTES;
+        // The computation itself ran out of its budget: no counts exist, the
+        // Node fails closed all the same.
+        let exhausted = !oversized
+            && summary.unavailable
+                == Some(meshway_configuration::execution::UnavailableReason::RoutingLimit);
+        if !oversized && !exhausted {
             continue;
         }
         let path = if config.routing.egress.profiles.contains_key(name) {
@@ -568,14 +573,17 @@ fn partition_limits(
         } else {
             "/routing/egress/rules".to_owned()
         };
-        check.warn(
-            ConfigurationIssue::new(path, IssueCode::EgressPartitionLimit)
-                .with("profile", name)
+        let issue =
+            ConfigurationIssue::new(path, IssueCode::EgressPartitionLimit).with("profile", name);
+        check.warn(if exhausted {
+            issue.with("work", crate::compile::MAX_CAPTURE_WORK)
+        } else {
+            issue
                 .with("ranges", ranges)
                 .with("maxRanges", crate::compile::MAX_CAPTURE_RANGES)
                 .with("routes", summary.routes)
-                .with("maxRoutes", crate::compile::MAX_CAPTURE_ROUTES),
-        );
+                .with("maxRoutes", crate::compile::MAX_CAPTURE_ROUTES)
+        });
     }
 }
 

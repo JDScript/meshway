@@ -486,3 +486,43 @@ fn a_partition_beyond_the_node_limits_is_a_warning_with_its_counts() {
     );
     assert_eq!(over[0].params["routes"], "17000");
 }
+
+#[test]
+fn a_partition_that_exhausts_its_work_budget_is_the_same_warning_without_counts() {
+    // 12,000 managed ranges stay below the limits, but every later rule
+    // splits all the remaining ranges again until the budget runs out.
+    let spaced: Vec<String> = (0..12_000u32)
+        .map(|i| format!("{}/32", std::net::Ipv4Addr::from(0x0b00_0000 + i * 2)))
+        .collect();
+    let mut input = egress_input(&["autogroup:internet"], "8.8.8.0/24");
+    input.rule_sets.insert(
+        "many".into(),
+        RuleSet::Inline {
+            ip_cidr: spaced,
+            domain_suffix: vec![],
+            domain: vec![],
+            domain_subdomain: vec![],
+        },
+    );
+    let profile = input.routing.egress.profiles.get_mut("work").unwrap();
+    let mut first = profile.rules[0].clone();
+    first.matcher.ip_cidr.clear();
+    first.matcher.rule_sets.push("many".into());
+    let repeated = profile.rules[0].clone();
+    profile.rules = std::iter::once(first)
+        .chain(std::iter::repeat_n(repeated, 1_500))
+        .collect();
+    let limit: Vec<_> = normalize_with_dependencies(input, &context())
+        .unwrap()
+        .warnings
+        .into_iter()
+        .filter(|warning| warning.code == IssueCode::EgressPartitionLimit)
+        .collect();
+    assert_eq!(limit.len(), 1, "{limit:?}");
+    assert_eq!(limit[0].params["profile"], "work");
+    assert_eq!(
+        limit[0].params["work"],
+        meshway_policy::compile::MAX_CAPTURE_WORK.to_string()
+    );
+    assert!(!limit[0].params.contains_key("ranges"));
+}
