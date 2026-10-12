@@ -159,6 +159,9 @@ pub(crate) fn write(
             ));
         }
         line(output, term, "Problem", text)?;
+        if let Some(detail) = &status.last_error_detail {
+            line(output, term, "", term.paint(Role::Bad, detail))?;
+        }
     }
     if let Some(url) = &status.enrollment_url {
         writeln!(output, "\nApprove this device in your browser:\n{url}")?;
@@ -227,6 +230,7 @@ fn peers(output: &mut impl Write, term: &Term, status: &Status) -> io::Result<()
         "STATE",
         "TRANSPORT",
         "ENDPOINT",
+        "MTU",
         "RTT",
     ]);
     for peer in &status.peers {
@@ -259,6 +263,12 @@ fn peers(output: &mut impl Write, term: &Term, status: &Status) -> io::Result<()
             Cell::styled(state, role),
             Cell::new(peer.transport.map(|t| t.as_str()).unwrap_or_default()),
             Cell::new(endpoint),
+            // Outer path MTU / largest inner packet of a direct UDP channel.
+            Cell::new(
+                peer.mtu
+                    .map(|mtu| format!("{}/{}", mtu.path, mtu.inner))
+                    .unwrap_or_default(),
+            ),
             Cell::new(
                 peer.rtt
                     .as_ref()

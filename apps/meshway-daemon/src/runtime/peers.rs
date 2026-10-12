@@ -4,7 +4,7 @@
 use chrono::{DateTime, Utc};
 use meshway_configuration::netmap::NodeNetmap;
 use meshway_model::{NodeId, state::AdjacencyStatus};
-use meshway_protocol::ipc::{NodeSelf, PeerRtt, PeerState, PeerStatus};
+use meshway_protocol::ipc::{NodeSelf, PeerMtu, PeerRtt, PeerState, PeerStatus};
 use std::collections::BTreeMap;
 
 pub(super) struct Inputs<'a> {
@@ -45,6 +45,7 @@ pub(super) fn peers(inputs: &Inputs<'_>) -> Vec<PeerStatus> {
                 state: PeerState::Idle,
                 transport: None,
                 endpoint: None,
+                mtu: None,
                 via: Vec::new(),
                 rtt: inputs.rtts.get(id).cloned(),
             };
@@ -52,6 +53,13 @@ pub(super) fn peers(inputs: &Inputs<'_>) -> Vec<PeerStatus> {
                 peer.state = PeerState::Direct;
                 peer.transport = Some(link.carrier.protocol);
                 peer.endpoint = meshway_model::SocketAddress::try_from(link.remote).ok();
+                peer.mtu = inputs
+                    .facts
+                    .and_then(|facts| facts.mtu.get(id))
+                    .map(|mtu| PeerMtu {
+                        path: mtu.path,
+                        inner: mtu.inner,
+                    });
             } else if let Some(path) = inputs.routes.get(id).filter(|path| path.len() > 2) {
                 peer.state = PeerState::Relay;
                 peer.via = path[1..path.len() - 1].to_vec();

@@ -75,6 +75,7 @@ fn relays_are_named_from_peers_and_the_first_hop_channel_is_labelled_as_such() {
         state: meshway_protocol::ipc::PeerState::Direct,
         transport: None,
         endpoint: None,
+        mtu: None,
         via: Vec::new(),
         rtt: None,
     };

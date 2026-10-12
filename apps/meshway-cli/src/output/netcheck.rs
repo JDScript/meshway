@@ -75,19 +75,34 @@ pub(crate) fn write(
         )?;
     }
     for observer in &report.observers {
-        line(
-            output,
-            term,
-            "STUN",
-            format!(
-                "{} {}",
-                observer.observer,
-                observer
-                    .rtt_us
-                    .map(|rtt| format!("in {}", millis(rtt.get())))
-                    .unwrap_or_else(|| "(round trip ambiguous)".into())
-            ),
-        )?;
+        let mut text = format!(
+            "{} {}",
+            observer.observer,
+            observer
+                .rtt_us
+                .map(|rtt| format!("in {}", millis(rtt.get())))
+                .unwrap_or_else(|| "(round trip ambiguous)".into())
+        );
+        // A DF probe answer proves the size; no answer measures nothing.
+        if let Some(probe) = observer.size_probe {
+            text.push_str(&if probe.answered {
+                format!(
+                    " · {} B DF {}",
+                    probe.size,
+                    term.paint(Role::Good, "answered")
+                )
+            } else {
+                format!(
+                    " · {} B DF {}",
+                    probe.size,
+                    term.paint(Role::Dim, "unanswered")
+                )
+            });
+        }
+        if let Some(mtu) = observer.path_mtu {
+            text.push_str(&format!(" · route MTU {mtu}"));
+        }
+        line(output, term, "STUN", text)?;
     }
     if report.sockets.is_empty() {
         return writeln!(
@@ -168,7 +183,8 @@ mod tests {
                  "portMapping":"changed","endpointMapping":"unknown"},
                 {"resource":{"kind":"dial","key":format!("{SHA}/lab-udp")},"boundAddress":"[::]:40651",
                  "mappings":[],"portMapping":"unknown","endpointMapping":"unknown"}],
-            "observers":[{"observer":"192.0.2.10:3478","rttUs":38970}]
+            "observers":[{"observer":"192.0.2.10:3478","rttUs":38970,
+                "sizeProbe":{"size":1500,"answered":true},"pathMtu":1500}]
         }))
         .unwrap()
     }
@@ -177,7 +193,7 @@ mod tests {
     fn plain_report_names_dial_peers_and_shows_absence_as_unknown() {
         let peer: meshway_protocol::ipc::PeerStatus = serde_json::from_value(json!({
             "nodeId":SHA,"hostname":"meshway-sha","addresses":{"ipv4":null,"ipv6":null},
-            "state":"idle","transport":null,"endpoint":null,"via":[],"rtt":null
+            "state":"idle","transport":null,"endpoint":null,"mtu":null,"via":[],"rtt":null
         }))
         .unwrap();
         let mut output = Vec::new();
@@ -185,7 +201,9 @@ mod tests {
         let text = String::from_utf8(output).unwrap();
         assert!(!text.contains('\u{1b}'));
         assert!(text.contains("  Server     https://server.example/ · reachable in 80.15 ms\n"));
-        assert!(text.contains("  STUN       192.0.2.10:3478 in 38.97 ms\n"));
+        assert!(text.contains(
+            "  STUN       192.0.2.10:3478 in 38.97 ms · 1500 B DF answered · route MTU 1500\n"
+        ));
         let listener = text
             .lines()
             .find(|line| line.starts_with("listener lab-udp "))

@@ -448,6 +448,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 if change == super::transitions::Change::Content {
                     report.plane = DataPlane::Preparing;
                     report.problem = None;
+                    report.problem_detail = None;
                     report.netmap = Some(reference);
                     report.completion = None;
                     report.facts = None;
@@ -461,6 +462,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 let plane = engine.components_mut();
                 plane.report = report;
                 plane.failure = None;
+                plane.failure_detail = None;
                 let result = engine.reconfig(Some(&netmap)).await;
                 let kept = engine.desired().is_some();
                 let capture = engine
@@ -498,6 +500,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                         // Installed and safe, but not a complete application.
                         report.completion = Some(Err(failure));
                         report.problem = Some(problem);
+                        report.problem_detail = plane.failure_detail.take();
                         report.content = Some(netmap.content.clone());
                         report.capture = capture;
                         report.expires_at = lease_end(&netmap.lease);
@@ -534,6 +537,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                         diagnostics.invalidate();
                         report.completion = Some(Err(failure));
                         report.problem = Some(problem);
+                        report.problem_detail = plane.failure_detail.take();
                         report.plane = DataPlane::Failed;
                         retry.failed(failure);
                     }
@@ -581,6 +585,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 let mut report = reports.borrow().clone();
                 report.plane = DataPlane::Failed;
                 report.content = None;
+                report.problem_detail = None;
                 report.problem = Some(if cleanup.is_err() {
                     Problem::Underlay
                 } else {
@@ -791,6 +796,7 @@ fn finish_withdrawal(engine: &mut Engine<Plane>, reports: &Publisher, failed: bo
         DataPlane::Suspended
     };
     report.problem = failed.then_some(Problem::Underlay);
+    report.problem_detail = None;
     report.completion = None;
     report.content = None;
     report.expires_at = None;

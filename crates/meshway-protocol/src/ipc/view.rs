@@ -41,6 +41,15 @@ meshway_model::object! {
 } }
 
 meshway_model::object! {
+/// Size limits of one direct Native UDP channel. Outer datagrams carry DF.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)] pub struct PeerMtu {
+    /// Outer path MTU in IP bytes, as this Node's route toward the channel's remote knows it.
+    pub path: u16,
+    /// Largest inner IP packet one Data frame carries within it: path minus outer IP/UDP and the 86-byte frame overhead.
+    pub inner: u16,
+} }
+
+meshway_model::object! {
 /// One visible peer of the installed netmap.
 #[derive(Clone, Debug, PartialEq, Eq)] pub struct PeerStatus {
     pub node_id: NodeId,
@@ -54,6 +63,10 @@ meshway_model::object! {
     /// Remote address of the selected direct channel; null otherwise.
     #[serde(deserialize_with = "meshway_model::wire::required_nullable")]
     pub endpoint: Option<SocketAddress> [required = true],
+    /// Size limits of the selected direct Native UDP channel; null for
+    /// another transport, without a direct channel, or while its route MTU is unknown.
+    #[serde(deserialize_with = "meshway_model::wire::required_nullable")]
+    pub mtu: Option<PeerMtu> [required = true],
     /// Ordered intermediate Nodes of the relayed circuit; empty otherwise.
     pub via: Vec<NodeId>,
     /// Null when no successful measurement toward the peer is known.
@@ -76,15 +89,16 @@ pub enum PortMapping {
 }
 
 meshway_model::string_enum! {
-/// Whether different observers saw the same mapping of one socket.
+/// Whether observers at different IP addresses saw the same mapping of one socket.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum EndpointMapping {
-    /// At least two observers saw the same mapped address.
+    /// Observers at two or more IP addresses saw the same mapped address.
     Independent,
-    /// Observers saw different mapped addresses.
+    /// Observers at different IP addresses saw different mapped addresses
+    /// (a symmetric NAT): a peer reaches this socket from another port than any STUN observer saw.
     Dependent,
-    /// Fewer than two observers answered.
+    /// Fewer than two observers at different IP addresses answered.
     Unknown,
 }
 }
@@ -114,11 +128,28 @@ meshway_model::object! {
 } }
 
 meshway_model::object! {
+/// One DF-marked Binding request as large as the route toward the observer allows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)] pub struct NetcheckSizeProbe {
+    /// IP bytes of the probe datagram.
+    pub size: u16,
+    /// The observer answered: the path carried `size` bytes unfragmented.
+    /// False is not a measurement: an observer may also drop large requests.
+    pub answered: bool,
+} }
+
+meshway_model::object! {
 /// The fastest fresh answer of one STUN observer across sockets.
 #[derive(Clone, Debug, PartialEq, Eq)] pub struct NetcheckObserver {
     pub observer: SocketAddress,
     #[serde(deserialize_with = "meshway_model::wire::required_nullable")]
     pub rtt_us: Option<Sequence> [required = true],
+    /// This netcheck's size probe toward the observer; null when none was sent.
+    #[serde(deserialize_with = "meshway_model::wire::required_nullable")]
+    pub size_probe: Option<NetcheckSizeProbe> [required = true],
+    /// Route MTU toward the observer after the size probe: a smaller path
+    /// MTU the probe's ICMP taught the route, else the interface MTU; null when unknown.
+    #[serde(deserialize_with = "meshway_model::wire::required_nullable")]
+    pub path_mtu: Option<u16> [required = true],
 } }
 
 meshway_model::string_enum! {

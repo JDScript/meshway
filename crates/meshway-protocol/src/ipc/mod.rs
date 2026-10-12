@@ -23,11 +23,12 @@ pub use secret::EnrollmentKey;
 use serde::Serialize;
 use utoipa::ToSchema;
 pub use view::{
-    EndpointMapping, NetcheckObserver, NetcheckReport, NetcheckServer, NetcheckSocket,
-    NetcheckUnavailable, NodeSelf, PeerRtt, PeerState, PeerStatus, PortMapping, StunMapping,
+    EndpointMapping, NetcheckObserver, NetcheckReport, NetcheckServer, NetcheckSizeProbe,
+    NetcheckSocket, NetcheckUnavailable, NodeSelf, PeerMtu, PeerRtt, PeerState, PeerStatus,
+    PortMapping, StunMapping,
 };
 
-pub const VERSION: u16 = 8;
+pub const VERSION: u16 = 9;
 pub const MAX_MESSAGE_BYTES: usize = 64 * 1024;
 pub const DEFAULT_SOCKET: &str = "/var/lib/meshway/control.sock";
 
@@ -357,6 +358,10 @@ meshway_model::object! { #[derive(Clone, Debug)] pub struct Status {
     pub peers: Vec<PeerStatus>,
     #[serde(deserialize_with = "meshway_model::wire::required_nullable")]
     pub last_error: Option<Problem> [required = true],
+    /// The concrete cause of `lastError` when the failing component names one,
+    /// e.g. `listener lab-tcp cannot bind 0.0.0.0:443: Address in use (os error 98)`; null otherwise.
+    #[serde(deserialize_with = "meshway_model::wire::required_nullable")]
+    pub last_error_detail: Option<String> [required = true],
     #[serde(deserialize_with = "meshway_model::wire::required_nullable")]
     pub retry_at: Option<DateTime<Utc>> [required = true],
 } }

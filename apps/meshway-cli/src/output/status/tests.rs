@@ -12,7 +12,7 @@ fn now() -> DateTime<Utc> {
 fn status() -> Status {
     let peer = |id: &str, name: &str, ip: &str, state: &str| {
         json!({"nodeId":id,"hostname":name,"addresses":{"ipv4":ip,"ipv6":null},
-            "state":state,"transport":null,"endpoint":null,"via":[],"rtt":null})
+            "state":state,"transport":null,"endpoint":null,"mtu":null,"via":[],"rtt":null})
     };
     let mut nyc = peer(NYC, "meshway-nyc", "100.64.0.6", "relay");
     nyc["via"] = json!([SHA]);
@@ -33,7 +33,7 @@ fn status() -> Status {
         "saved":reference,"applied":reference,"dataPlane":"ready","networkMode":"tun",
         "node":{"hostname":"meshway-lax","addresses":{"ipv4":"100.64.0.4","ipv6":null}},
         "peers":[nyc, sha, peer(OLD, "meshway-old", "100.64.0.9", "offline")],
-        "lastError":null,"retryAt":null
+        "lastError":null,"lastErrorDetail":null,"retryAt":null
     }))
     .unwrap()
 }

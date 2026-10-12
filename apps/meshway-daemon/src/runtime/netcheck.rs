@@ -5,8 +5,8 @@
 use meshway_connectivity::{StunProbe, StunReport};
 use meshway_model::{Sequence, SocketAddress};
 use meshway_protocol::ipc::{
-    EndpointMapping, NetcheckObserver, NetcheckReport, NetcheckServer, NetcheckSocket,
-    NetcheckUnavailable, PortMapping, StunMapping,
+    EndpointMapping, NetcheckObserver, NetcheckReport, NetcheckServer, NetcheckSizeProbe,
+    NetcheckSocket, NetcheckUnavailable, PortMapping, StunMapping,
 };
 use std::{collections::BTreeMap, time::Duration};
 
@@ -117,13 +117,7 @@ pub(super) fn report(
             } else {
                 PortMapping::Changed
             };
-            let endpoint_mapping = if fresh.len() < 2 {
-                EndpointMapping::Unknown
-            } else if fresh.iter().all(|m| m.mapped == fresh[0].mapped) {
-                EndpointMapping::Independent
-            } else {
-                EndpointMapping::Dependent
-            };
+            let endpoint_mapping = endpoint_mapping(&fresh);
             Some(NetcheckSocket {
                 resource: socket.socket.reference.resource.clone(),
                 bound_address: bound,
@@ -133,6 +127,11 @@ pub(super) fn report(
             })
         })
         .collect();
+    for observer in stun.size_probes.keys() {
+        if let Ok(observer) = SocketAddress::try_from(*observer) {
+            observers.entry(observer).or_default();
+        }
+    }
     NetcheckReport {
         observed_at: chrono::Utc::now(),
         server,
@@ -143,7 +142,36 @@ pub(super) fn report(
         sockets,
         observers: observers
             .into_iter()
-            .map(|(observer, rtt_us)| NetcheckObserver { observer, rtt_us })
+            .map(|(observer, rtt_us)| {
+                let probe = stun.size_probes.get(&observer.get());
+                NetcheckObserver {
+                    observer,
+                    rtt_us,
+                    size_probe: probe.map(|probe| NetcheckSizeProbe {
+                        size: probe.size,
+                        answered: probe.answered,
+                    }),
+                    path_mtu: probe.and_then(|probe| probe.route_mtu),
+                }
+            })
             .collect(),
+    }
+}
+
+/// Only observers at different IP addresses can tell a mapping that depends
+/// on the destination from one that does not; observers at one IP (or a
+/// single observer) leave it unknown.
+fn endpoint_mapping(fresh: &[&StunMapping]) -> EndpointMapping {
+    let mut by_ip: BTreeMap<std::net::IpAddr, SocketAddress> = BTreeMap::new();
+    for mapping in fresh {
+        by_ip
+            .entry(mapping.observer.get().ip())
+            .or_insert(mapping.mapped);
+    }
+    let mut mapped = by_ip.values();
+    match (mapped.next(), by_ip.len()) {
+        (Some(first), 2..) if mapped.all(|other| other == first) => EndpointMapping::Independent,
+        (Some(_), 2..) => EndpointMapping::Dependent,
+        _ => EndpointMapping::Unknown,
     }
 }

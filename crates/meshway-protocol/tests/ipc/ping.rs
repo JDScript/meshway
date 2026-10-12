@@ -110,7 +110,7 @@ fn status() -> Value {
         "sync":"disconnected","lastSyncAt":null,"syncError":null,"netmap":null,
         "observedAt":"2026-10-05T00:00:00Z","enrollmentRequestId":null,"enrollmentUrl":null,
         "identity":null,"authenticated":false,"instance":null,"saved":null,"applied":null,
-        "dataPlane":"stopped","networkMode":"tun","lastError":null,"retryAt":null,
+        "dataPlane":"stopped","networkMode":"tun","lastError":null,"lastErrorDetail":null,"retryAt":null,
         "node":null,"peers":[]
     })
 }
@@ -164,6 +164,7 @@ async fn status_stays_object_only_through_tagged_buffering_and_nullable_fields_a
         "saved",
         "applied",
         "lastError",
+        "lastErrorDetail",
         "retryAt",
         "sync",
         "lastSyncAt",

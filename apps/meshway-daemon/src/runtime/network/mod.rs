@@ -68,6 +68,9 @@ pub(super) fn capabilities() -> std::collections::BTreeMap<String, meshway_model
 pub(super) struct Report {
     pub plane: DataPlane,
     pub problem: Option<Problem>,
+    /// The concrete cause of `problem` when one is known (a listener's bind
+    /// error); `None` otherwise.
+    pub problem_detail: Option<String>,
     /// Engine's installed desired content; `None` once withdrawn.
     pub content: Option<Arc<meshway_configuration::netmap::CompiledNetmap>>,
     /// Lease end of `content` as accepted by Engine; reporting only.
@@ -103,6 +106,7 @@ impl Report {
         Self {
             plane: DataPlane::Stopped,
             problem: None,
+            problem_detail: None,
             content: None,
             expires_at: None,
             capture: None,

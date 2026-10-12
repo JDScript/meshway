@@ -240,6 +240,14 @@ impl View {
             last_error: report
                 .problem
                 .or(if active { network.problem } else { None }),
+            last_error_detail: if report.problem.is_none() && active {
+                network
+                    .problem_detail
+                    .clone()
+                    .filter(|_| network.problem.is_some())
+            } else {
+                None
+            },
             retry_at: if current && desired.up {
                 report.retry_at
             } else {

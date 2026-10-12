@@ -32,6 +32,8 @@ pub(super) struct Plane {
     pub report: Report,
     /// Why the last failed apply failed.
     pub failure: Option<(Problem, ApplyFailure)>,
+    /// The concrete cause of `failure`, when the failing component names one.
+    pub failure_detail: Option<String>,
     traversal: Arc<dyn meshway_connectivity::traversal::TraversalGateway>,
     keys: Option<DataPlaneKeys>,
     instance: Option<InstanceRequest>,
@@ -53,6 +55,7 @@ impl Plane {
             installed: None,
             report: Report::stopped(),
             failure: None,
+            failure_detail: None,
             traversal,
             keys: None,
             instance: None,
@@ -270,8 +273,9 @@ impl meshway_engine::Components for Plane {
                 Err(error)
                     if manager.is_running() && manager.reference() == desired.reference() =>
                 {
-                    tracing::warn!(?error, "Adjacency resources partially unavailable");
+                    tracing::warn!(%error, "Adjacency resources partially unavailable");
                     self.failure = Some((Problem::Transport, ApplyFailure::Listeners));
+                    self.failure_detail = detail(&error);
                     manager.attach_facts(self.peers.clone());
                     if let Some(state) = &mut self.installed {
                         state.manager = Some(manager);
@@ -279,9 +283,10 @@ impl meshway_engine::Components for Plane {
                     return Err(Error::Degraded);
                 }
                 Err(error) => {
-                    tracing::warn!(?error, "Adjacency apply failed; restarting adjacencies");
+                    tracing::warn!(%error, "Adjacency apply failed; restarting adjacencies");
                     let _ = manager.shutdown().await;
                     self.failure = Some((Problem::Transport, ApplyFailure::Listeners));
+                    self.failure_detail = detail(&error);
                     return Err(Error::Degraded);
                 }
             },
@@ -306,8 +311,9 @@ impl meshway_engine::Components for Plane {
                 {
                     Ok(manager) => manager,
                     Err(error) => {
-                        tracing::warn!(?error, "Adjacency start failed");
+                        tracing::warn!(%error, "Adjacency start failed");
                         self.failure = Some((Problem::Transport, ApplyFailure::Listeners));
+                        self.failure_detail = detail(&error);
                         return Err(Error::Degraded);
                     }
                 }
@@ -458,4 +464,10 @@ impl meshway_engine::Components for Plane {
         }
         Ok(())
     }
+}
+
+/// The part of an adjacency failure an operator acts on: which listener
+/// cannot bind which address, and the system's reason.
+fn detail(error: &meshway_connectivity::Error) -> Option<String> {
+    matches!(error, meshway_connectivity::Error::Bind { .. }).then(|| error.to_string())
 }
