@@ -168,37 +168,60 @@ feature 划分：默认含规范化、builder、loader、matcher 与 inline 转�
 
 ## 发布仓库
 
-| 项 | 方案 |
+**已运行**（R2b）：[`meshway-org/meshway-rules`](https://github.com/meshway-org/meshway-rules)（公开）发布 meta-rules-dat 全部 geosite／geoip 类别；当前目录由 Actions 签发。仓库 README 是对外的格式与验证说明。
+
+| 项 | 实际形态 |
 | --- | --- |
-| 仓库 | `meshway-org/meshway-rules`（公开，`https://github.com/meshway-org/meshway-rules.git`）；`main` 放 workflow 与集合清单，orphan 分支 `dist` 放发布产物 |
-| 集合 | `meta-geosite/<category>`、`meta-geoip/<cc>`（MetaCubeX/meta-rules-dat `meta` 分支）；默认全量上游类别。sing-geosite／sing-geoip 上游只发布 `.srs`，不解析，因此不发布 |
-| 频率 | 每天 1 次 cron＋手动 dispatch；上游 commit 全未变化则不发布 |
-| 转换器 | 从 meshway 指定 tag 构建 `tools/meshway-rules-cli`（`--locked`），版本写入目录 |
+| 分支 | `main`：集合清单 `sources.toml`、流水线 `scripts/publish.py`（含单测）与 `scripts/push-dist.sh`、`.github/workflows/publish.yml`；`dist`：发布产物，每次发布是一个无父提交并强制推送，同时打 tag `catalog-<sequence>`、建 GitHub Release（`index.json`、`.sig`、`status.json` 与发布说明）供审计 |
+| 目录 URL | `https://raw.githubusercontent.com/meshway-org/meshway-rules/dist/index.json`（及 `index.json.sig`、`artifacts/sha256-<hex>.mwrs`），raw URL 不重定向 |
+| 集合 | `meta-geosite/<name>` ← `geo/geosite/classical/<name>.list`，`meta-geoip/<name>` ← `geo/geoip/classical/<name>.list`（MetaCubeX/meta-rules-dat `meta` 分支），格式 `classical`；每个上游文件一项，全量 |
+| 频率 | 每天 03:17 UTC cron＋手动 dispatch；输入（上游 commit、`sources.toml` 的 SHA-256、`meshway-rules --version`）与 `dist/status.json` 记录的完全相同则不发布 |
+| 转换器 | 本仓库 Release `cli-v<版本>` 的 `meshway-rules-x86_64-unknown-linux-musl.tar.gz`；`publish.yml` 以常量 `MESHWAY_RULES_CLI_VERSION`（tag）与 `MESHWAY_RULES_CLI_SHA256` 匿名下载并校验，不编译、不需要外部 token；版本记入目录 `converter` |
+| 签名钥 | environment `publish`（只允许 `main`）的 secret `MESHWAY_RULES_SIGNING_KEY`（64 位 hex 种子），只在签名步骤写入 0600 临时文件；公钥见下 |
 
-流水线：
+选 classical 而非 `geo/geosite/*.list`（`mihomo-domain-text`）：domain 文本由上游生成时静默丢弃 `DOMAIN-KEYWORD` 与 `DOMAIN-REGEX`，classical 保留 keyword（全量 16 条）并让 regex 逐条进入报告（394 条）；IP 类别两种编码得到相同 digest。sing-geosite／sing-geoip 上游只发布 `.srs`，不解析，因此不发布。
 
-1. 读取上游 meta-rules-dat `meta` 分支的当前 commit，按 commit SHA 拉取原文（raw URL 不重定向）。
-2. 每个集合运行 CLI：转换、构建、报告。单个集合失败时沿用上一版 artifact，并在目录中记录 `held: {since, reason}`；规范条目数比上一版减少超过 50 % 视为可疑，同样 hold 并开 issue。
-3. 生成 `index.json`（`meshway-rules index`）：`schema: 1`、`sequence`（输出路径已有目录时为其值＋1，否则 1）、`generatedAt`、`converter`、`upstreams[]`（由各集合的 repo／ref／commit 去重得出；同一 repo／ref 出现两个 commit 即拒绝）、`sets: { "<collection>/<name>": { digest, bytes, entries, format, counts, upstream, source, report } }`（`report` 为 summary）。每项 artifact 都被打开并核对 digest、字节数、计数与 major。完整报告留在 `sets/<collection>/<name>.json`。
-4. 签名得 `index.json.sig`：`{"keyId": "ed25519:<64 hex 公钥>", "signature": "<128 hex>"}`，签名对象为 `"meshway-rules catalog v1\0"` 前缀＋`index.json` 原始字节（域分隔，目录钥不会被诱导签其他内容）；验签用 `verify_strict`，`keyId` 必须是受信公钥之一。签名钥文件为 32 字节种子的 64 位小写 hex（`openssl rand -hex 32`），公钥由 `index` 输出的 `keyId` 给出。签名钥存为仓库 GitHub environment secret，环境只允许 `main` 上的该 workflow 使用；用户离线持有第二把轮换钥。Server 内置两把公钥（CI 钥与离线轮换钥），任一签名有效即接受；CI 钥泄露时用离线钥签发并发布去掉旧钥的 Server 版本。
-5. 强制推送 `dist`：`index.json`、`index.json.sig`、`artifacts/sha256-<hex>.mwrs`、`sets/<collection>/<name>.json`；保留最近 7 份目录引用的 artifact，使目录与 artifact 读取之间的更新竞态在实践中不发生。同时打 tag 并创建 GitHub Release 供人工审计。
+**转换器交付**：主仓库私有，发布仓库的 Action 不读取它。`build.yml` 与 Node 二进制一起交叉编译 `meshway-rules-cli`；`release.yml` 的 `rules-cli` job（`environment: Production`）在 tag `v*` 发版时核对 `meshway-rules --version` 等于 tag，打包 x86_64 musl 归档与 `SHA256SUMS`，以 `gh release create cli-<tag>` 推到 `meshway-org/meshway-rules`；令牌为 Production 的 secret `MESHWAY_RULES_PUSH_TOKEN`（fine-grained PAT：resource owner `meshway-org`、仅 `meshway-rules`、Contents read/write），缺失时该 job 失败。之后在 `publish.yml` 中把两个常量改为新 tag 与归档 SHA-256。首个 `cli-v0.1.0-alpha.3` 由 `4503138a` 在 planck 以 `cargo zigbuild --release --locked` 手动构建发布（SHA-256 `81d0066f…9603`）。
+
+流水线（`scripts/publish.py build`，之后由 workflow 调用 CLI）：
+
+1. `git ls-remote` 取 `meta` 当前 commit，`git fetch --depth 1 <commit>` 后只检出 `sources.toml` 中的路径。
+2. 每个上游文件运行 `meshway-rules convert --format classical`，并行；名称不合 `[a-z0-9][a-z0-9!@._+-]{0,127}` 的文件不转换（当前没有）。
+3. hold（脚本实现，CLI 不含）：对上一份目录中已有的集合，本次转换失败，或规范 `entries` 少于上一版的一半，即沿用上一版 `SetRecord` 与 artifact；首次出现的 hold 开 issue。从未发布过的集合转换失败则跳过并记入 `status.json.skipped`。上游删除的文件从目录移除。条目骤减属实时，手动 dispatch 并在输入 `accept` 列出集合名即发布新内容；转换失败的 hold 不能接受。
+4. 组 `sets/<collection>/<name>.json`（`upstream` repo／ref／commit／path＋CLI 的 ConversionRecord），把 artifact 移为 `artifacts/sha256-<hex>.mwrs`；复制上一份 `index.json` 到输出，使 `meshway-rules index` 的 sequence 接续。
+5. `meshway-rules index --sign-key`、`meshway-rules verify --public-key <CI 钥>`。
+6. 保留：`history/<sequence>.json` 存前 6 份目录原文，`artifacts/` 保留当前与这 6 份引用的全部 artifact（共 7 份目录）；更早的 artifact 仍在对应 tag。
+7. `scripts/push-dist.sh`：以 `--force-with-lease` 指向构建开始时的 `dist` commit（期间 `dist` 变化即失败）原子推送 `dist` 与 tag，再建 Release。
+
+hold 记录在 `dist/status.json`：`held: { "<collection>/<name>": { since, reason, digest } }`，`reason` 为 `conversion failed: <错误>` 或 `entries dropped from <旧> to <新>`，`since` 为首次 hold 时间。`index.json` 的 `CatalogSet` 拒绝未知字段，因此 held 不进签名目录；held 集合保留真实来源 commit，并把 `upstream.ref` 写成该 commit——目录要求同一 repo／ref 只有一个 commit，而 held 内容不属于分支当前 commit，于是 `upstreams[]` 中多一项 `ref` 等于 `commit` 的条目。
+
+| 公钥 | 用途 |
+| --- | --- |
+| `ed25519:68dfc59cf585e0320129db7f1716b0dbb3d13c462fcefee7151d4b51ae1fc45c` | CI 钥，`publish` environment secret |
+| `ed25519:9510100007025beaf427aa8bdf1ff328cb9cb69f15ff2b520ac0e52e2615928f` | 离线轮换钥，用户持有 |
+
+签名对象为 `"meshway-rules catalog v1\0"` 前缀＋`index.json` 原始字节（域分隔，目录钥不会被诱导签其他内容），`index.json.sig` 为 `{"keyId": "ed25519:<64 hex 公钥>", "signature": "<128 hex>"}`；验签用 `verify_strict`，`keyId` 必须是受信公钥之一。Server 内置两把公钥，任一签名有效即接受；CI 钥泄露时用离线钥签发并发布去掉旧钥的 Server 版本。目录签名钥只签规则目录，与 netmap 租约签发无关。
+
+**首发**：`catalog-1` 以本地流水线生成（相同脚本，macOS arm64 CLI；planck x86_64 musl CLI 对全部集合 digest 相同），CI 钥签名后推送；随后 Actions 首次运行因输入未变不发布，手动 dispatch（`accept`）签发内容相同的 `catalog-2`，打通 Actions 下载、签名、验证、推送与 Release。上游 `83c8208b`：2,177 个上游文件，目录 2,168 项；9 项只含 `DOMAIN-REGEX`（`conversion failed: No source item could be converted.`）未发布，0 项 hold；59 项有逐条跳过（`regex` 394、`invalidName` 8）；2,097 个不同 artifact 共 13,107,552 B，不含 `index.json` 的树 15,154,676 B，`index.json` 2,047,159 B；本地构建 18.7 s、Actions 9.7 s。digest 清单在私有证据 `.meshway/rules-publish/catalog-1/digests.txt`。
 
 **Server 怎样取与钉钥**：Server 从 `https://raw.githubusercontent.com/meshway-org/meshway-rules/dist/index.json` 取目录与签名，用内置公钥（源码常量，可由部署设置追加或替换，网络管理员不能改内置 provider 的信任根）验签，拒绝 `sequence` 小于该 provider 上次接受值的目录；再按 digest 取 `artifacts/sha256-<hex>.mwrs`，打开后比较 `digest()` 并以 `CatalogSet::check` 核对目录项。GitHub Release 下载会 302 重定向，而现行下载器拒绝重定向，所以不用 Release 作为 Server 来源。
 
-**`dist` 目录与 CLI**（R1 已实现；仓库与 workflow 属 R2b）：
+**`dist` 目录与 CLI**：
 
 ```text
 index.json  index.json.sig
 artifacts/sha256-<hex>.mwrs        不可变 artifact
 sets/<collection>/<name>.json      SetRecord：{ upstream, conversion }，含完整报告
+history/<sequence>.json            前 6 份目录原文（保留其 artifact）
+status.json                        流水线输入、held、skipped（不签名）
 ```
 
 集合名 `<collection>` 为 `[a-z0-9][a-z0-9-]{0,31}`，`<name>` 为 `[a-z0-9][a-z0-9!@._+-]{0,127}`。
 
 ```sh
-meshway-rules convert --format mihomo-domain-text geosite/openai.list -o openai.mwrs > conversion.json
+meshway-rules convert --format classical geo/geosite/classical/openai.list -o openai.mwrs > conversion.json
 #   stdout：ConversionRecord { digest, bytes, entries, format, counts, source, report }
-#   流水线把它与 upstream 组成 sets/meta-geosite/openai.json，并把 artifact 复制为 artifacts/sha256-<hex>.mwrs
+#   流水线把它与 upstream 组成 sets/meta-geosite/openai.json，并把 artifact 移为 artifacts/sha256-<hex>.mwrs
 meshway-rules index --sign-key ci.key dist -o dist/index.json      # 写 index.json 与 index.json.sig
 meshway-rules verify --public-key ed25519:<hex> dist/index.json dist
 meshway-rules inspect artifacts/sha256-<hex>.mwrs                  # 头、段表、计数、digest
@@ -208,6 +231,8 @@ meshway-rules match artifacts/sha256-<hex>.mwrs api.openai.com     # 或 IP
 输出均为 stdout JSON，日志在 stderr（`--log-filter`／`--log-format`）。
 
 **失败行为**：目录取不到、验签失败、sequence 回退或 artifact 校验失败都保留上一份已验证内容，`problem` 记录原因，不发布半份；目录超过 7 天未前进时 `RuleSetView` 报告 `stale`，但不使执行失败。首次没有任何可用内容时与现有 remote 相同：`not_ready`，引用它的规则不可执行。
+
+**限制**：held 只在未签名的 `status.json` 与 Release 说明中，Server 看不到；若 `RuleSetView` 需要显示 held，需在 `CatalogSet` 增加字段（R1 crate、目录 schema 变更）。“Server 用钉住公钥验通一次真实目录”属 R2a 接线后验证。
 
 ## 配置面
 

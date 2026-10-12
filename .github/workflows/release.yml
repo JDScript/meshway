@@ -101,3 +101,51 @@ jobs:
             release/meshway-aarch64-unknown-linux-musl.tar.gz
             release/install.sh
             release/SHA256SUMS
+
+  rules-cli:
+    # meshway-org/meshway-rules runs this converter from its own release
+    # `cli-<tag>` (this repository is private). The push token lives only in
+    # environment Production.
+    needs: [version, build, publish]
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 10
+    environment: Production
+    env:
+      TAG: ${{ github.ref_name }}
+      RULES_REPO: meshway-org/meshway-rules
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: node-x86_64-unknown-linux-musl-${{ github.sha }}
+          path: artifacts
+      - name: Package meshway-rules
+        run: |
+          set -eu
+          mkdir -p rules-release
+          stage=$(mktemp -d)
+          cp artifacts/meshway-rules "$stage/"
+          chmod 0755 "$stage/meshway-rules"
+          reported=$("$stage/meshway-rules" --version | sed -n '1s/^meshway-rules \([^ ]*\)$/\1/p')
+          test "v$reported" = "$TAG" || { echo "built meshway-rules reports $reported, tag is $TAG"; exit 1; }
+          tar --owner=0 --group=0 --numeric-owner --sort=name --mtime="@$(git log -1 --format=%ct)" \
+            -C "$stage" -czf rules-release/meshway-rules-x86_64-unknown-linux-musl.tar.gz meshway-rules
+          rm -rf "$stage"
+          (cd rules-release && sha256sum -- * > SHA256SUMS)
+          {
+            echo "## meshway-rules cli-$TAG"
+            echo '```'
+            cat rules-release/SHA256SUMS
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Push the converter release to meshway-rules
+        env:
+          GH_TOKEN: ${{ secrets.MESHWAY_RULES_PUSH_TOKEN }}
+          PRERELEASE: ${{ needs.version.outputs.prerelease }}
+        run: |
+          set -eu
+          test -n "$GH_TOKEN" || { echo "MESHWAY_RULES_PUSH_TOKEN is not available in environment Production"; exit 1; }
+          set -- --repo "$RULES_REPO" --target main --title "meshway-rules CLI $TAG" \
+            --notes "Converter for publish.yml: meshway-rules ${TAG#v}, x86_64-unknown-linux-musl, from the Meshway $TAG release ($GITHUB_SHA). Verify with \`sha256sum -c SHA256SUMS\`; publish.yml pins the archive's SHA-256."
+          if [ "$PRERELEASE" = true ]; then set -- "$@" --prerelease; fi
+          gh release create "cli-$TAG" "$@" rules-release/meshway-rules-x86_64-unknown-linux-musl.tar.gz rules-release/SHA256SUMS
