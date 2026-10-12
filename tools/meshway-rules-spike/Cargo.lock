@@ -1333,6 +1333,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "meshway-rules"
+version = "0.1.0-alpha.3"
+dependencies = [
+ "aho-corasick",
+ "fst",
+ "idna",
+ "serde",
+ "serde_json",
+ "serde_yaml_ng",
+ "sha2 0.10.9",
+ "thiserror",
+]
+
+[[package]]
 name = "meshway-rules-spike"
 version = "0.0.0"
 dependencies = [
@@ -1343,6 +1357,7 @@ dependencies = [
  "meshway-configuration",
  "meshway-model",
  "meshway-policy",
+ "meshway-rules",
  "meshway-server",
  "serde",
  "serde_json",

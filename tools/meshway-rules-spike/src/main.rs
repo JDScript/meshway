@@ -6,8 +6,11 @@
 //! - `bench <root> <set> <iters>`: load and match timings for one artifact.
 //! - `memory <root> <set> <handles> <heap|mmap|shared>`: resident memory of
 //!   many independently opened handles.
+//! - `r1diff <root> <random>`: production `meshway-rules` against the spike
+//!   reference on every input, writing `<root>/out-r1/*.mwrs`.
 
 mod format;
+mod r1diff;
 mod source;
 
 use format::{Backing, Canonical, Reference, RuleSet};
@@ -118,6 +121,7 @@ fn main() {
             args.get(6).map_or("mwrs", String::as_str),
         ),
         Some("acbuild") => acbuild(args[2].parse().expect("keywords")),
+        Some("r1diff") => r1diff::run(&root, SOURCES, args[3].parse().expect("random queries")),
         _ => panic!("usage: coverage|bench|memory|acbuild"),
     }
 }
