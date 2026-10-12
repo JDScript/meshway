@@ -73,6 +73,7 @@ TUN、packet 和表中 V1 的静态 UDP/resolved 证据来自 `3887256b` 生产�
 | `72144421`（R3） | 全量 16 行，Planck 矩阵 `20261012T105652Z-fcc0189b`（并行 8，墙钟 666 秒） | 16 行全部通过；`exit/off`（`20261012T110443Z-5d871fd5`，299.8 秒）A 由 7,000 区间 inline 集合计算并安装 7,002 个受管区间、7,040 条捕获表路由 |
 | `879fff10`（R3＋X6 合并） | 全量 16 行，Planck 矩阵 `20261012T113016Z-e7abeae2` | 15 行通过；`exit/off`（`20261012T114014Z-f7d10cfa`）第 10 阶段通过，撤回恢复时 A 的内核监视器通知缓冲溢出（ENOBUFS，每批 256 条路由变更超出按缓冲计费的约 200 条），保护失效、恢复后 DNS 未回答；改为每 64 条等待后 `exit/off` 单行 `20261012T114921Z-806c1c28` 通过 |
 | `c4018706`（R3＋X6） | 全量 16 行，Planck 矩阵 `20261012T115405Z-61e14403`（并行 8，墙钟 597 秒） | 16 行全部通过；`exit/off`（`20261012T115835Z-1812d1b8`，265.5 秒，含第 10 阶段） |
+| `7cf62c52`（S3） | 全量 16 行，Planck 矩阵 `20261012T220402Z-33d41c74`（并行 8，墙钟 979 秒，开始负载 8.7–20.7） | 14 行通过，含 State 业务路径检查（A／R／B 各报告 A→R→B 及自身角色）；`exit/off`（`20261012T221422Z-665d0bf9`）第 10 阶段“first named connection did not leave through E”，`netmap/expiry`（`20261012T221429Z-4ea9cc44`）R 在租约到期时 TUN 尚未删除。两行复跑 `20261012T223042Z-07dc2864` 仍失败（`exit/off` 同一阶段；`netmap/expiry` 为 daemon-cleanup 测试 status 未收敛）；同一窗口以 main `1852b477` 复跑这两行 `20261012T224249Z-0dc077d7` 同样失败（`exit/off` 第 10 阶段“associated address did not follow its name rule”、`netmap/expiry` daemon-cleanup 未收敛），主机负载 12–24（其他租户矩阵并行），未归因于 S3 |
 
 ### 远程矩阵证据 {#remote-matrix-evidence}
 
