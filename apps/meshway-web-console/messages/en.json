@@ -215,5 +215,6 @@
   "geo_pending": "Looking up the location",
   "geo_failed": "The location lookup failed",
   "geo_off": "This browser does not look up locations",
-  "password_rules_failed": "Could not read the password rules; focus to retry"
+  "password_rules_failed": "Could not read the password rules; focus to retry",
+  "problem_rule_set_catalog_not_ready": "The rule-set catalog for this provider has not been verified by the Server yet. Reference one of its sets in the configuration first."
 }
