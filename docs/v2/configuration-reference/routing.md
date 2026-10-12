@@ -144,7 +144,7 @@ A→C via B
   ∩ topology / 完整路径约束
 ```
 
-Server 为最终出口生成绑定 origin、实际目的范围、出口和完整 path 的许可。公共规则抢先指定 E 的范围，不会又从 F 的 fallback 获得准入。
+源节点在自己的投影上按首包求出这一交集（见下文 `Decision`），Server 不签发逐流许可。公共规则抢先指定 E 的范围，不会又从 F 的 fallback 获得准入。
 
 ### 执行捕获与精确许可
 
@@ -184,11 +184,11 @@ Server 为最终出口生成绑定 origin、实际目的范围、出口和完整
 
 nft 进程峰值 RSS 约 1.6 KB／区间（16,384 区间 28 MB）。带回显的大批次在 32,768 区间起被 netlink 以 ENOBUFS 拒绝，因此元素替换不回显、以读回核验；16,384 个区间使最坏情况（全为 IPv6）的批次与读回仍低于 1.6 MB，且留出暂存并集（两份方案）的空间。生产路径（release，Planck 隔离 namespace，`large_partitions_install_switch_read_back_and_retire`）在 16,077 个区间、16,034–19,240 条路由时暂存 0.30–0.45 s、提交 0.38–0.50 s、读回 0.07 s、暂停 0.37 s；路由变更每 64 条等待内核监视器观测，不使其通知缓冲（约 200 条）溢出。
 
-`PathPermit` 仍绑定精确源地址、目的 IP、协议／端口、完整路径、到期与原路径回复。外部许可另有 `exit: ExitPermit`：`family`、`generation`、`destination`（`internet` 或显式 `cidr.prefix`）和按出口索引的 `roles`。范围分类只限制精确目的，不授予范围内其他目的。`ExitRolePlan` 绑定 instance、角色 generation、IPv4 与 masquerade；network／node／publication 和执行截止由外围 target／lease 绑定。职责在能力探测前发布，职责本身不能转发包。
+节点首包判定（`LocalCompiler`）对一条源流给出 `Decision`：`source`、精确 `destination`、`target`（`mesh { node }`，或 `exit { nodes, via }`：有序主备出口及其前的有序中转）、该源对该目的可用的全部 `services`、全部允许的 `paths`（完整节点序列与按实际拨号方分组的承载候选）以及出口决定的 `selection`。范围分类只限制精确目的，不授予范围内其他目的；回复沿原完整路径返回，由数据面绑定。`selection` 即源端 `egress.generation`：不含 revision，无关配置变更不改变它，任何选择切换（含切回同名方案）都改变它；数据面握手把它绑入路径授权摘要，出口节点从自己的投影重算源端 selection 并核对。
 
-出口能力未知、过期或失败时返回 `unavailable/exitUnavailable`，保留捕获边界；路径检测的 `targets[].exitUnavailableReason` 展示新鲜的具体失败。IPv6 出口返回 `unsupportedFamily`。能力事实不能增加 Access 或绕过 topology。
+出口节点的 netmap 带 `exitRole: ExitRole { generation, family, nat }`：当前固定为 `ipv4`／`masquerade`，`generation` 是网络、节点、family 与 nat 的 digest，角色内容不变即不变（不含 revision、选择或 instance）。只有节点 `exitEnabled` 且 inventory 中有 `feature:exit-ipv4` v1 能力时才有角色；角色本身不转发包，转发仍需上述 `Decision`。
 
-capture／exit permit 的 generation 包含源 revision、有效方案和持久选择版本；切换回同名方案也获得新 generation。`meshway_policy::permit_transition` 仅在旧许可仍活且完整授权摘要一致时返回 `Renewal`，其余为 `Replacement`；Control 仍须检查实例和快照连续性。真实出口安装与包流验收范围见 [Node](/v2/node)。
+出口能力未知、过期或失败时返回 `unavailable/exitUnavailable`，保留捕获边界；路径检测的 `targets[].exitUnavailableReason` 展示新鲜的具体失败。IPv6 出口返回 `unsupportedFamily`。能力事实不能增加 Access 或绕过 topology。真实出口安装与包流验收范围见 [Node](/v2/node)。
 
 新方案分配含主体未获授权的目标时拒绝保存。后续身份／access／出口撤销必须可以执行，不能被旧方案引用阻止；受影响执行变为拒绝／不可用，不偷偷恢复 direct 或其他更宽路径。
 
