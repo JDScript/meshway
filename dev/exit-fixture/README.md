@@ -10,16 +10,18 @@ status is defined in `docs/v2/node/validation.md`.
                |ca      |cr       |ce
                A --ar-- R --re-- E
                |split            |external -- isolated public-classified service + E's DNS authority
-            Resolver             |lan ------ RFC1918 service
+            Resolver             |  \-- router --far-- the service's far address (router side MTU 1280)
+                                 |lan ------ RFC1918 service
    (A's OS DNS upstream and useWithExit split resolver)
 ```
 
 ## Configuration and isolation
 
-Eight labelled internal bridges have no published ports or Internet route.
-A/E share neither a control nor a data link. Only E attaches to the service
-networks. Six RFC1918 links use Docker IPAM; the external link uses a random
-`11.77.x.0/29` entirely inside its internal bridge. This address is eligible for
+Nine labelled internal bridges have no published ports or Internet route.
+A/E share neither a control nor a data link. Only E (and the forwarding-only
+router) attaches to the service networks. Six RFC1918 links use Docker IPAM;
+the external and far links use distinct random `11.77.x.0/29` subnets entirely
+inside their internal bridges. This address is eligible for
 Policy's Internet classification. The accepted permit must explicitly carry
 `ExitDestinationScope::Internet`; TEST-NET/RFC1918 cannot satisfy that assertion.
 Allocation conflicts fail without changing another network.
@@ -77,6 +79,7 @@ prove their own installation, NAT and traffic lifecycle.
 | 7 Reply/path | Real TCP/UDP/echo, zero R TUN delivery and no payload in R pcap; A's egress partition sends both targets Exit→E via R and all three projections carry the same external Access, so only `autogroup:internet` covers the public target | `original-path.json`, `r/*.pcap`, `icmp-*.json`, `business-block-control.json` |
 | 8 Drain/lease | Role withdrawal and old socket refusal; Node HTTP closed (in-flight sync polls ended, new requests held): `lease.py` keeps a TCP echo and new UDP flows working offline until the first path lease expiry, then they end; E withdraws its role at its own expiry with exact nft/conntrack cleanup and A keeps its negative egress gate; reopened HTTP recovers a new lease and new flows without a second up; SIGKILL/same-netns journal recovery, explicit down and foreign sentinel preservation | `withdrawn.json`, `lease-window.json`, `lease-*.json`, `expired.json`, `recovered.json`, `*crash*.json`, `down.json`, `foreign-sentinel-*.json` |
 | 10 Domain exit | Runs after phase 9's exchange checks with a temporary profile: a name rule sends `*.name.exit-dns.test` to E via R, the fallback is direct and Access grants `domain:name.exit-dns.test`. The plan captures no name-zone address; a connection to the service address without the name follows the IP rules (direct, unreachable) and the service sees nothing; the first `getaddrinfo` of a name returns the service address in one attempt (E's answer, held until the signed association applied) and a TCP echo by name reaches the service from E's address only; at least one association task completion (controller count); a second connection by name adds none; while associated the bare address follows the name rule; after the `domain:` grant is revoked the named connection fails; the original configuration is restored before phase 5 | `domain-exit.json`, `domain-exit-configured.json`, `external/access.json`, `controller/association-reports.json` |
+| 11 ICMP errors | A's `traceroute -I` shows E, the router and the far target; a 64 KiB TCP echo converges through the router's fragmentation needed (A caches `mtu 1280`, `ping -M do` 1300 fails, 1252 passes); router-injected time exceeded quoting A's live UDP flow (post-NAT) reach A within the per-flow budget, ones quoting no flow never do. E's far route is removed afterwards | `icmp-errors.json` |
 | 9 DNS | Exchange checks run after phase 4, lifecycle checks inside phase 8; the phase passes after 8. A's plan is `viaExit` on A→R→E and E serves exactly A; system `getaddrinfo` on A returns E's answers (A, AAAA, 90-record answer that only fits over the Mesh TCP route) and the external authority's only asker is E's external address; A's own MagicDNS name and an unknown one stay local; the split name reaches the Resolver from A's split address only; with E's authority route blocked A's query fails and the Resolver never sees it; DNS fails on role withdrawal and lease expiry, works offline within the lease and recovers; `exit-dns` bytes appear only in E's external capture | `dns-exit.json`, `dns-lifecycle.json`, `external/dns-queries.json`, `resolver/dns-queries.json`, `*/*.pcap` |
 
 The source uses a 30-second short window or 125-second full window. Public and
