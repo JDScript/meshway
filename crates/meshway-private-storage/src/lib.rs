@@ -214,6 +214,35 @@ impl Directory {
         }
     }
 
+    /// Durably remove an abandoned staging file of this directory's own
+    /// writes (see [`is_staging`]) in either state a crash can leave it in:
+    /// a checked owner file still 0600 while being written, or already 0400
+    /// before its read-only publication was renamed. Absent is removed;
+    /// anything else is refused.
+    pub fn remove_staging(&self, file_name: &str) -> Result<(), Error> {
+        if !is_staging(file_name) {
+            return Err(Error::InvalidPath);
+        }
+        #[cfg(unix)]
+        {
+            let present = match unix::read_only_file(&self.directory, file_name) {
+                Ok(found) => found.is_some(),
+                Err(Error::UnsafeStorage) => {
+                    unix::file(&self.directory, file_name, false)?.is_some()
+                }
+                Err(error) => return Err(error),
+            };
+            if !present {
+                return Ok(());
+            }
+            unix::unlink(&self.directory, file_name)
+        }
+        #[cfg(not(unix))]
+        {
+            Err(Error::UnsupportedPlatform)
+        }
+    }
+
     /// Durably remove a checked owner read-only file; absent is removed.
     pub fn remove_read_only(&self, file_name: &str) -> Result<(), Error> {
         name(file_name)?;

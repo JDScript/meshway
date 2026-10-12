@@ -105,10 +105,13 @@ fn load_cached(
     }
     if let Ok(names) = directory.names() {
         for name in names.iter().filter(|name| !keep.contains(name)) {
-            if meshway_private_storage::is_staging(name) {
-                let _ = directory.remove(name);
+            let removed = if meshway_private_storage::is_staging(name) {
+                directory.remove_staging(name)
             } else {
-                let _ = directory.remove_read_only(name);
+                directory.remove_read_only(name)
+            };
+            if let Err(error) = removed {
+                tracing::warn!(file = %name, %error, "Artifact cache file could not be removed");
             }
         }
     }

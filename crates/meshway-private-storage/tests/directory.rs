@@ -150,3 +150,32 @@ fn stale_archives_and_staging_files_are_recognized_by_their_exact_names() {
         "write-0123456789abcdef0123456789abcdef"
     ));
 }
+
+#[cfg(unix)]
+#[test]
+fn an_abandoned_staging_file_is_removed_in_either_publication_state() {
+    use std::os::unix::fs::PermissionsExt;
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().canonicalize().unwrap().join("private");
+    let directory = Directory::open(&path, "owner.lock").unwrap();
+    let staged = |nonce: char, mode: u32| {
+        let name = format!(".write-{}", nonce.to_string().repeat(32));
+        let file = path.join(&name);
+        fs::write(&file, b"partial").unwrap();
+        fs::set_permissions(&file, fs::Permissions::from_mode(mode)).unwrap();
+        name
+    };
+    // A crash after the read-only chmod but before the rename leaves 0400.
+    for (nonce, mode) in [('a', 0o600), ('b', 0o400)] {
+        let name = staged(nonce, mode);
+        directory.remove_staging(&name).unwrap();
+        assert!(!path.join(&name).exists(), "{mode:o}");
+        // Absent is removed.
+        directory.remove_staging(&name).unwrap();
+    }
+    // Any other state is not this directory's own staging file.
+    let foreign = staged('c', 0o644);
+    assert!(directory.remove_staging(&foreign).is_err());
+    assert!(path.join(&foreign).exists());
+    assert!(directory.remove_staging("journal.json").is_err());
+}
