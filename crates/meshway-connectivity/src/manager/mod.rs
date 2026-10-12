@@ -1106,7 +1106,8 @@ impl Manager {
     /// Node (a new instance after a Server outage, or the first one after an
     /// offline restart). Content and channels are unchanged; a Native UDP
     /// listener bound before any instance existed is rebound as a
-    /// coordination socket, since coordination needs its State reference.
+    /// coordination socket, and dial-only traversal sockets are bound now,
+    /// since coordination needs their State reference.
     pub async fn set_instance(
         &mut self,
         instance: Option<meshway_protocol::InstanceRequest>,
@@ -1166,11 +1167,10 @@ impl Manager {
             })
             .map(|fact| resources::Key::Listener(fact.key.clone()))
             .collect();
-        if plain.is_empty() {
-            return Ok(());
-        }
         let retired = self.retire_keys(&plain);
         self.join_retired(retired).await?;
+        // Also binds the dial-only traversal sockets skipped without an
+        // instance; installed resources are kept as they are.
         self.install_resources().await
     }
 

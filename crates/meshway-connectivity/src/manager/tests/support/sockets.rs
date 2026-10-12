@@ -69,6 +69,40 @@ pub(in crate::manager::tests) struct Factory {
     pub(in crate::manager::tests) faults: Arc<Faults>,
     pub(in crate::manager::tests) blocked_dialers: Mutex<BTreeSet<NodeId>>,
     pub(in crate::manager::tests) acquisitions: AtomicUsize,
+    pub(in crate::manager::tests) traversal_binds: AtomicUsize,
+}
+
+/// Coordination authority that grants no target: binding only.
+struct Unauthorized;
+impl crate::DatagramAuthorization for Unauthorized {
+    fn authorize_stun<'a>(
+        &'a self,
+        _context: &'a meshway_control::connectivity::DiscoveryContext,
+        _server: &'a str,
+    ) -> BoxFuture<'a, Result<Vec<SocketAddr>, Error>> {
+        Box::pin(async { Err(Error::Underlay) })
+    }
+    fn authorize_attempt(
+        &self,
+        _scope: &meshway_control::connectivity::AttemptScope,
+    ) -> Result<(), Error> {
+        Err(Error::Underlay)
+    }
+    fn authorize_learned(
+        &self,
+        _scope: &meshway_control::connectivity::AttemptScope,
+        _address: SocketAddr,
+    ) -> Result<(), Error> {
+        Err(Error::Underlay)
+    }
+    fn authorize_channel(
+        &self,
+        _scope: &meshway_control::connectivity::AttemptScope,
+        _lifetime: Arc<dyn meshway_transport::SendLifetime>,
+        _address: SocketAddr,
+    ) -> Result<(), Error> {
+        Err(Error::Underlay)
+    }
 }
 impl Factory {
     pub(in crate::manager::tests) fn endpoint(&self, socket: UdpSocket) -> Box<dyn Datagram> {
@@ -104,6 +138,22 @@ fn listener_address(listener: &Listener) -> Result<SocketAddr, Error> {
     Ok(SocketAddr::new(ip, port.get()))
 }
 impl SocketFactory for Factory {
+    fn bind_datagram_candidate<'a>(
+        &'a self,
+        _desired: &'a meshway_engine::Desired,
+        _key: &'a str,
+        ipv4: bool,
+        _reference: meshway_control::connectivity::SocketReference,
+    ) -> BoxFuture<'a, Result<crate::TraversalSocket, Error>> {
+        Box::pin(async move {
+            self.traversal_binds.fetch_add(1, Ordering::SeqCst);
+            let local = if ipv4 { "127.0.0.1:0" } else { "[::1]:0" };
+            Ok(crate::TraversalSocket {
+                endpoint: self.endpoint(UdpSocket::bind(local).await?),
+                authorization: Arc::new(Unauthorized),
+            })
+        })
+    }
     fn connect_endpoint<'a>(
         &'a self,
         desired: &'a meshway_engine::Desired,

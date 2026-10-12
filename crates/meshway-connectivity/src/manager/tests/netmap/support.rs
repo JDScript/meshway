@@ -211,6 +211,7 @@ impl Netmaps {
             faults: Arc::default(),
             blocked_dialers: Mutex::new(BTreeSet::new()),
             acquisitions: AtomicUsize::new(0),
+            traversal_binds: AtomicUsize::new(0),
         })
     }
 

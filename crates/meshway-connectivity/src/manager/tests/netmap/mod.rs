@@ -456,3 +456,73 @@ async fn a_pending_supersession_never_replaces_a_newer_channel_or_refills_a_reti
     b.shutdown().await.unwrap();
     fixture.close().await;
 }
+
+/// A coordination host whose Control is unreachable: nothing is coordinated.
+struct Offline;
+impl crate::traversal::TraversalGateway for Offline {
+    fn request(
+        &self,
+        _operation: crate::traversal::Operation,
+    ) -> futures_util::future::BoxFuture<'_, Result<crate::traversal::Reply, Error>> {
+        Box::pin(async { Err(Error::Unavailable) })
+    }
+    fn published(&self, _candidate: &meshway_protocol::connectivity::CandidateReference) -> bool {
+        false
+    }
+}
+
+#[tokio::test]
+async fn dial_only_traversal_sockets_bind_once_the_first_instance_arrives() {
+    let mut fixture = Netmaps::start(false, true).await;
+    let ids = fixture.ids();
+    let a = ids[0];
+    // A dial-only Node (no listener to rebind) loaded offline, before Control
+    // qualifies an instance: its traversal sockets need a State reference.
+    fixture
+        .publish(|cfg| cfg.nodes.get_mut(&a).unwrap().listeners = Default::default())
+        .await;
+    let factory = fixture.factory();
+    let mut manager = Manager::start_with_traversal(
+        &fixture.desired[0],
+        fixture.keys[0].clone(),
+        factory.clone(),
+        Default::default(),
+        Arc::new(Offline),
+        meshway_model::Sequence::MIN.checked_next().unwrap(),
+        None,
+    )
+    .await
+    .unwrap();
+    let dial_sockets = |manager: &Manager| {
+        manager
+            .snapshot()
+            .unwrap()
+            .sockets
+            .iter()
+            .filter(|socket| {
+                matches!(
+                    socket.reference.resource,
+                    meshway_model::state::ResourceRef::Dial { .. }
+                )
+            })
+            .count()
+    };
+    assert_eq!(dial_sockets(&manager), 0);
+    manager
+        .set_instance(Some(
+            serde_json::from_value(serde_json::json!({
+                "instanceId": "00000000-0000-4000-8000-0000000000c1",
+                "generation": 1
+            }))
+            .unwrap(),
+        ))
+        .await
+        .unwrap();
+    assert!(
+        dial_sockets(&manager) > 0,
+        "dial-only traversal sockets bound"
+    );
+    assert!(factory.traversal_binds.load(Ordering::SeqCst) > 0);
+    manager.shutdown().await.unwrap();
+    fixture.close().await;
+}
