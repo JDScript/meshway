@@ -7,6 +7,21 @@ pub(super) fn node_selector(s: &str) -> Result<NodeId, CompileError> {
         .parse()
         .map_err(|_| CompileError::InvalidInput)
 }
+/// The action `source` executes for `route`. An exit set naming the source
+/// itself is that source's own direct egress, wherever it stands in the set:
+/// the source is the exit, its traffic leaves this host and its `via` is an
+/// empty segment. Every executed partition, plan, DNS plan and preview of a
+/// source goes through here; Access is unaffected.
+pub(super) fn executed(route: RouteAction, source: NodeId) -> Result<RouteAction, CompileError> {
+    if let RouteAction::Exit { nodes, .. } = &route {
+        for selector in nodes {
+            if node_selector(selector)? == source {
+                return Ok(RouteAction::Direct);
+            }
+        }
+    }
+    Ok(route)
+}
 pub(super) fn selectors(
     cfg: &NetworkConfiguration,
     subjects: &SubjectContext,
@@ -118,33 +133,46 @@ pub(super) fn resolve_profile<'a>(
     }
 }
 
-fn rules_may_exit(rules: &[EgressRule]) -> bool {
+/// Whether `source` executes `route` as an exit; an unparsable set counts.
+fn may_exit(route: RouteAction, source: NodeId) -> bool {
+    executed(route, source).map_or(true, |route| matches!(route, RouteAction::Exit { .. }))
+}
+fn rules_may_exit(rules: &[EgressRule], source: NodeId) -> bool {
     rules
         .iter()
-        .any(|rule| matches!(rule.action, RuleAction::Exit { .. }))
+        .any(|rule| may_exit(rule.action.clone().into(), source))
 }
-fn non_auto_may_exit(profile: EgressProfile<'_>) -> bool {
+fn non_auto_may_exit(profile: EgressProfile<'_>, source: NodeId) -> bool {
     match profile {
         EgressProfile::Mesh => false,
-        EgressProfile::Global(_) | EgressProfile::Auto(_) => true,
+        EgressProfile::Global(node) => node != source,
+        EgressProfile::Auto(_) => true,
         EgressProfile::Custom(profile) => {
-            rules_may_exit(&profile.rules) || matches!(profile.fallback, RouteAction::Exit { .. })
+            rules_may_exit(&profile.rules, source) || may_exit(profile.fallback.clone(), source)
         }
     }
 }
 
-/// Conservative classification, including shadowed exits and unknown
-/// dependencies. Neither runtime facts nor an answer can relax it.
-pub(super) fn dns_requires_exit(config: &NetworkConfiguration, profile: &str) -> bool {
-    rules_may_exit(&config.routing.egress.rules)
+/// Conservative classification for `source`, including shadowed exits and
+/// unknown dependencies. Neither runtime facts nor an answer can relax it;
+/// an exit naming the source itself is its direct egress ([`executed`]).
+pub(super) fn dns_requires_exit(
+    config: &NetworkConfiguration,
+    profile: &str,
+    source: NodeId,
+) -> bool {
+    rules_may_exit(&config.routing.egress.rules, source)
         || match resolve_profile(config, profile) {
             Ok(EgressProfile::Auto(auto)) => auto
                 .rules
                 .iter()
                 .map(|rule| &rule.profile)
                 .chain(std::iter::once(&auto.fallback))
-                .any(|choice| resolve_profile(config, choice).map_or(true, non_auto_may_exit)),
-            Ok(profile) => non_auto_may_exit(profile),
+                .any(|choice| {
+                    resolve_profile(config, choice)
+                        .map_or(true, |profile| non_auto_may_exit(profile, source))
+                }),
+            Ok(profile) => non_auto_may_exit(profile, source),
             Err(_) => true,
         }
 }

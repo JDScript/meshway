@@ -55,11 +55,14 @@ pub(super) fn egress(
             .map(|(rule, egress)| {
                 Ok(EgressRuleRef {
                     rule: rule.clone(),
-                    action: capture::action(&egress.action.clone().into())?,
+                    action: capture::action(&matching::executed(
+                        egress.action.clone().into(),
+                        node,
+                    )?)?,
                 })
             })
             .collect::<Result<_, CompileError>>()?,
-        fallback: capture::action(&fallback)?,
+        fallback: capture::action(&matching::executed(fallback, node)?)?,
         unavailable: partition.as_ref().err().copied(),
     })
 }
@@ -173,7 +176,8 @@ impl Local {
     pub fn compile(input: &NetmapInput<'_>, node: NodeId) -> Result<Self, CompileError> {
         let cfg = input.configuration;
         let profile = input.profile(node)?;
-        let partition = capture::partition(cfg, input.rule_sets, &profile).map(std::sync::Arc::new);
+        let partition =
+            capture::partition(cfg, input.rule_sets, &profile, Some(node)).map(std::sync::Arc::new);
         let references = input
             .rule_sets
             .iter()
@@ -192,7 +196,7 @@ impl Local {
                 .map_or(0, |version| version.get()),
         )?;
         let enabled = cfg.nodes[&node].enabled;
-        let plan = if matching::dns_requires_exit(cfg, &profile) {
+        let plan = if matching::dns_requires_exit(cfg, &profile, node) {
             DnsPlan::Unavailable {
                 reason: DnsEgressUnavailable::ExitPlanRequired,
             }
@@ -223,11 +227,11 @@ pub(super) fn dns(
     let mut services = Vec::new();
     for &source in members {
         let profile = input.profile(source)?;
-        if !matching::dns_requires_exit(input.configuration, &profile) {
+        if !matching::dns_requires_exit(input.configuration, &profile, source) {
             continue;
         }
         if !locals.contains_key(&source)
-            && !super::super::dns::single_exit(input.configuration, &profile)?
+            && !super::super::dns::single_exit(input.configuration, &profile, source)?
                 .is_some_and(|(exit, _)| locals.contains_key(&exit))
         {
             continue;
@@ -277,12 +281,11 @@ pub(super) fn service(
     source: NodeId,
 ) -> Result<Result<DnsService, DnsEgressUnavailable>, CompileError> {
     let cfg = input.configuration;
-    let Some((exit, via)) = super::super::dns::single_exit(cfg, &local.dns.profile)? else {
+    let Some((exit, via)) = super::super::dns::single_exit(cfg, &local.dns.profile, source)? else {
         return Ok(Err(DnsEgressUnavailable::ExitPlanRequired));
     };
-    if exit == source
-        || local.egress.unavailable.is_some()
-        || matching::dns_requires_exit(cfg, &input.profile(exit)?)
+    if local.egress.unavailable.is_some()
+        || matching::dns_requires_exit(cfg, &input.profile(exit)?, exit)
     {
         return Ok(Err(DnsEgressUnavailable::ExitPlanRequired));
     }

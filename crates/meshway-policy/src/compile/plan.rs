@@ -74,7 +74,7 @@ fn plan_inner(
         ),
     };
     let profile = ProfileEvaluation {
-        capture: capture::summary(cfg, request.rule_sets, &name),
+        capture: capture::summary(cfg, request.rule_sets, &name, Some(source)),
         name,
         assignment: assignment
             .index
@@ -431,14 +431,16 @@ fn mesh_route(
     )
 }
 
+/// The route `source` executes for the deciding action ([`matching::executed`]).
 fn route_of(
+    source: NodeId,
     kind_action: &RouteAction,
     rule: Option<String>,
     profile: Option<String>,
     rule_set: Option<RuleSetMatch>,
     resolution_dependent: Vec<String>,
 ) -> Result<RouteEvaluation, CompileError> {
-    let (kind, targets, via) = match kind_action {
+    let (kind, targets, via) = match &matching::executed(kind_action.clone(), source)? {
         RouteAction::Exit { nodes, via } => (
             RouteKind::Exit,
             nodes
@@ -550,6 +552,7 @@ fn external_route(
         let rule = &cfg.routing.egress.rules[index];
         return Ok((
             Some(route_of(
+                request.source,
                 &rule.action.clone().into(),
                 Some(format!("/routing/egress/rules/{index}")),
                 None,
@@ -583,6 +586,7 @@ fn external_route(
         EgressProfile::Mesh => {
             return Ok((
                 Some(route_of(
+                    request.source,
                     &RouteAction::Unmanaged,
                     None,
                     Some(name),
@@ -595,6 +599,7 @@ fn external_route(
         EgressProfile::Global(node) => {
             return Ok((
                 Some(route_of(
+                    request.source,
                     &RouteAction::Exit {
                         nodes: vec![format!("node:{node}")],
                         via: vec![],
@@ -638,6 +643,7 @@ fn external_route(
     };
     Ok((
         Some(route_of(
+            request.source,
             &action,
             Some(rule),
             Some(name),

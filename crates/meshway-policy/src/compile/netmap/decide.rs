@@ -53,8 +53,10 @@ pub struct LocalCompiler {
     pub(super) rule_sets: rules::RuleSets,
     pub(super) matchers: rules::Matchers,
     /// Partition of each profile computed so far: a pure function of this
-    /// content and the loaded sets, bounded by the projection's profiles.
-    partitions: Mutex<BTreeMap<String, crate::compile::Partition>>,
+    /// content and the loaded sets, bounded by the projection's profiles. A
+    /// source its profile names as an exit executes its own partition, keyed
+    /// with that source.
+    partitions: Mutex<BTreeMap<(String, Option<NodeId>), crate::compile::Partition>>,
 }
 
 /// The egress rule that decides a destination.
@@ -181,17 +183,20 @@ impl LocalCompiler {
             &projection.selected_profiles,
             source,
         )?;
+        let named = crate::compile::capture::names_exit(&self.configuration, &profile, source)
+            .then_some(source);
+        let key = (profile, named);
         let mut partitions = self
             .partitions
             .lock()
             .map_err(|_| CompileError::InvalidInput)?;
-        if let Some(partition) = partitions.get(&profile) {
+        if let Some(partition) = partitions.get(&key) {
             return Ok(partition.clone());
         }
         let partition =
-            crate::compile::capture::partition(&self.configuration, &self.rule_sets, &profile)
+            crate::compile::capture::partition(&self.configuration, &self.rule_sets, &key.0, named)
                 .map(Arc::new);
-        partitions.insert(profile, partition.clone());
+        partitions.insert(key, partition.clone());
         Ok(partition)
     }
 
@@ -213,6 +218,7 @@ impl LocalCompiler {
             &self.configuration,
             &self.rule_sets,
             &profile,
+            Some(source),
         ))
     }
 
@@ -283,12 +289,16 @@ impl LocalCompiler {
         )?;
         let mut skipped = Vec::new();
         let public = "/routing/egress/rules";
-        let hit = |index: usize, rule_set, rules: &[EgressRule], prefix: &str| -> EgressRuleHit {
-            EgressRuleHit {
+        let hit = |index: usize,
+                   rule_set,
+                   rules: &[EgressRule],
+                   prefix: &str|
+         -> Result<EgressRuleHit, CompileError> {
+            Ok(EgressRuleHit {
                 rule: format!("{prefix}/{index}"),
                 rule_set,
-                action: rules[index].action.clone().into(),
-            }
+                action: matching::executed(rules[index].action.clone().into(), source)?,
+            })
         };
         let rules_list = &cfg.routing.egress.rules;
         if let Some((index, set)) = rules::first_match(
@@ -299,7 +309,7 @@ impl LocalCompiler {
             public,
             &mut skipped,
         )? {
-            return Ok(Some(hit(index, set, rules_list, public)));
+            return hit(index, set, rules_list, public).map(Some);
         }
         if let matching::EgressProfile::Auto(auto) = matching::resolve_profile(cfg, &profile)? {
             profile = auto.fallback.clone();
@@ -312,7 +322,7 @@ impl LocalCompiler {
             "/routing/egress/profiles/{}/rules",
             profile.replace('~', "~0").replace('/', "~1")
         );
-        Ok(rules::first_match(
+        rules::first_match(
             &custom.rules,
             self.matchers.of(Some(&profile))?,
             &self.rule_sets,
@@ -320,7 +330,8 @@ impl LocalCompiler {
             &prefix,
             &mut skipped,
         )?
-        .map(|(index, set)| hit(index, set, &custom.rules, &prefix)))
+        .map(|(index, set)| hit(index, set, &custom.rules, &prefix))
+        .transpose()
     }
 
     /// The same DNS service the Server compiled for `source`, reconstructed
@@ -346,12 +357,11 @@ impl LocalCompiler {
         };
         let source_local = local::Local::compile(&input, source)?;
         let Some((exit, _)) =
-            super::super::dns::single_exit(&self.configuration, &source_local.dns.profile)?
+            super::super::dns::single_exit(&self.configuration, &source_local.dns.profile, source)?
         else {
             return Ok(None);
         };
-        if exit == source
-            || !self.configuration.nodes.contains_key(&exit)
+        if !self.configuration.nodes.contains_key(&exit)
             || !projection.inventory.contains_key(&exit)
         {
             return Ok(None);

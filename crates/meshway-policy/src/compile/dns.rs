@@ -19,10 +19,12 @@ pub(super) fn external_access(
 }
 
 /// Require one identical exit and ordered via list across all effective
-/// rules/fallbacks. Auto and domain-dependent capture stay unavailable.
+/// rules/fallbacks `source` executes as exits; one naming the source itself
+/// is its direct egress. Auto and domain-dependent capture stay unavailable.
 pub(super) fn single_exit(
     cfg: &NetworkConfiguration,
     profile: &str,
+    source: NodeId,
 ) -> Result<Option<(NodeId, Vec<NodeId>)>, CompileError> {
     let mut actions: Vec<RouteAction> = cfg
         .routing
@@ -45,7 +47,7 @@ pub(super) fn single_exit(
     }
     let mut selected = None;
     for action in actions {
-        let RouteAction::Exit { nodes, via } = action else {
+        let RouteAction::Exit { nodes, via } = matching::executed(action, source)? else {
             continue;
         };
         if nodes.len() != 1 {
