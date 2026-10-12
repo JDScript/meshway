@@ -1796,7 +1796,6 @@ dependencies = [
  "sha2 0.11.0",
  "thiserror",
  "utoipa",
- "zeroize",
 ]
 
 [[package]]
@@ -1814,7 +1813,6 @@ dependencies = [
  "meshway-logging",
  "meshway-model",
  "meshway-policy",
- "meshway-private-storage",
  "meshway-protocol",
  "meshway-stun",
  "meshway-test-server",
@@ -1824,7 +1822,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
- "tempfile",
  "thiserror",
  "tokio",
  "tokio-util",
@@ -2018,7 +2015,6 @@ dependencies = [
  "meshway-policy",
  "serde",
  "serde_json",
- "tracing",
  "uuid",
  "zeroize",
 ]

@@ -32,9 +32,7 @@ ed25519-dalek = { version = "2.2", default-features = false, features = ["std", 
 
 [dev-dependencies]
 meshway-test-server = { path = "../../tools/meshway-test-server" }
-tempfile.workspace = true
 uuid.workspace = true
-meshway-private-storage = { path = "../meshway-private-storage" }
 
 [lints]
 workspace = true
