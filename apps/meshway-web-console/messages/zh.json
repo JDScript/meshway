@@ -215,5 +215,6 @@
   "geo_pending": "正在查询位置",
   "geo_failed": "位置查询失败",
   "geo_off": "本浏览器不查询位置",
-  "password_rules_failed": "无法读取密码规则，点这里重试"
+  "password_rules_failed": "无法读取密码规则，点这里重试",
+  "problem_rule_set_catalog_not_ready": "服务端尚未取得并验证该 provider 的规则集目录，请先在配置里引用它的一个集合。"
 }

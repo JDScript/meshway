@@ -584,6 +584,8 @@ impl crate::resources::service::ResourceProvider for CommitGate {
     }
 }
 
+mod browse;
+
 mod configuration;
 
 mod lifecycle;

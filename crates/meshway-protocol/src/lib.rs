@@ -110,5 +110,8 @@ pub use networks::{
     RenameNetworkRequest,
 };
 pub use problem::{ConfigurationValidationParams, EmptyParams, ErrorResponse, Problem};
-pub use resources::{RefreshRuleSetRequest, RuleSetList, RuleSetReport, RuleSetView};
+pub use resources::{
+    RefreshRuleSetRequest, RuleSetCatalogPage, RuleSetEntryKind, RuleSetEntryPage, RuleSetList,
+    RuleSetMatchResponse, RuleSetReport, RuleSetView,
+};
 pub use secret::WireSecret;

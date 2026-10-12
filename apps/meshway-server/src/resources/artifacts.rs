@@ -62,7 +62,14 @@ pub(crate) fn store(
     now: i64,
 ) -> Result<Result<Digest, ResourceProblem>, Error> {
     if let Some(catalog) = &prepared.catalog
-        && !sql::accept_catalog(tx, &catalog.catalog, &catalog.trust, catalog.sequence, now)?
+        && !sql::accept_catalog(
+            tx,
+            &catalog.catalog,
+            &catalog.trust,
+            catalog.sequence,
+            (&catalog.document, &catalog.signature),
+            now,
+        )?
     {
         return Ok(Err(ResourceProblem::CatalogRegressed));
     }

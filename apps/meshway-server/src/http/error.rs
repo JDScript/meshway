@@ -134,6 +134,14 @@ impl HttpError {
                     message: "Resource not found.".into(),
                 },
             ),
+            Error::CatalogNotReady => simple(
+                S::CONFLICT,
+                Problem::RuleSetCatalogNotReady {
+                    params: empty,
+                    message: "The provider's catalog has not been verified by this Server yet."
+                        .into(),
+                },
+            ),
             Error::RevisionConflict => simple(
                 S::CONFLICT,
                 Problem::RevisionConflict {
@@ -452,6 +460,7 @@ pub fn problem_samples() -> Vec<ProblemSample> {
         Error::ReceiptPrecondition,
         Error::ReceiptContentConflict,
         Error::StateConflict,
+        Error::CatalogNotReady,
         Error::StateScopeChanged,
         Error::LastOwner,
         Error::AlreadyMember,

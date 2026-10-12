@@ -1,9 +1,14 @@
 import {
   getRuleSetReport,
+  listRuleSetCatalog,
+  listRuleSetEntries,
   listRuleSets,
+  matchRuleSet,
   refreshRuleSet,
+  type RuleSetEntryKind,
 } from "@meshway/control-client"
 import {
+  infiniteQueryOptions,
   queryOptions,
   useMutation,
   useQueryClient,
@@ -43,6 +48,85 @@ export const ruleSetReportQuery = (
     queryFn: ({ signal }) =>
       authed((token) =>
         getRuleSetReport(client, { networkId, ruleSetKey }, { token, signal })
+      ),
+    staleTime: Infinity,
+  })
+
+const pageOf = (cursor: string | null) => (cursor === null ? {} : { cursor })
+
+/**
+ * One provider's sets in the newest catalog the controller verified, by
+ * name prefix (`q`), a page at a time; the picker reads one short page.
+ * 409 `rule_set_catalog_not_ready` until the controller has verified it.
+ */
+export const ruleSetCatalogQuery = (
+  networkId: string,
+  provider: string,
+  q: string,
+  limit = 100
+) =>
+  infiniteQueryOptions({
+    queryKey: [...ruleSetsKey(networkId), "catalog", provider, q, limit],
+    queryFn: ({ pageParam, signal }) =>
+      authed((token) =>
+        listRuleSetCatalog(
+          client,
+          { networkId },
+          { provider, limit, ...(q === "" ? {} : { q }), ...pageOf(pageParam) },
+          { token, signal }
+        )
+      ),
+    initialPageParam: null as string | null,
+    getNextPageParam: (last) => last.nextCursor,
+    staleTime: 60_000,
+  })
+
+/** One kind of a set's bound members (`digest`), a page at a time; the same content always lists the same. */
+export const ruleSetEntriesQuery = (
+  networkId: string,
+  ruleSetKey: string,
+  digest: string,
+  kind: RuleSetEntryKind,
+  q: string
+) =>
+  infiniteQueryOptions({
+    queryKey: [
+      ...ruleSetsKey(networkId),
+      "entries",
+      ruleSetKey,
+      digest,
+      kind,
+      q,
+    ],
+    queryFn: ({ pageParam, signal }) =>
+      authed((token) =>
+        listRuleSetEntries(
+          client,
+          { networkId, ruleSetKey },
+          { kind, ...(q === "" ? {} : { q }), ...pageOf(pageParam) },
+          { token, signal }
+        )
+      ),
+    initialPageParam: null as string | null,
+    getNextPageParam: (last) => last.nextCursor,
+    staleTime: Infinity,
+  })
+
+/** Whether a set's bound content (`digest`) holds a name or an address, and through which member. */
+export const ruleSetMatchQuery = (
+  networkId: string,
+  ruleSetKey: string,
+  digest: string,
+  query: { name: string } | { ip: string }
+) =>
+  queryOptions({
+    queryKey: [...ruleSetsKey(networkId), "match", ruleSetKey, digest, query],
+    queryFn: ({ signal }) =>
+      authed((token) =>
+        matchRuleSet(client, { networkId, ruleSetKey }, query, {
+          token,
+          signal,
+        })
       ),
     staleTime: Infinity,
   })

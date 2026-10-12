@@ -441,19 +441,35 @@ impl RuleSet {
 
     /// Every exact／suffix／subdomain member, ordered by reversed name.
     pub fn domains(&self) -> impl Iterator<Item = DomainEntry> + '_ {
-        Keys::new(self.fst()).filter_map(|(mut key, value)| {
-            let kind = match value {
-                EXACT => DomainKind::Exact,
-                SUFFIX => DomainKind::Suffix,
-                SUBDOMAIN => DomainKind::Subdomain,
-                _ => return None,
-            };
-            key.reverse();
-            Some(DomainEntry {
-                kind,
-                name: String::from_utf8(key).ok()?,
-            })
-        })
+        self.domains_ending_with("", None)
+    }
+
+    /// Members whose name ends with `suffix` byte for byte (`""` for all; a
+    /// leading `.` keeps only names below it), ordered by reversed name and
+    /// starting after the member named `after` when given. Seeks directly to
+    /// both, so a page costs its own length rather than the set's.
+    pub fn domains_ending_with(
+        &self,
+        suffix: &str,
+        after: Option<&str>,
+    ) -> impl Iterator<Item = DomainEntry> + '_ {
+        let reversed = |s: &str| s.bytes().rev().collect::<Vec<u8>>();
+        let after = after.map(reversed);
+        Keys::range(self.fst(), &reversed(suffix), after.as_deref()).filter_map(
+            |(mut key, value)| {
+                let kind = match value {
+                    EXACT => DomainKind::Exact,
+                    SUFFIX => DomainKind::Suffix,
+                    SUBDOMAIN => DomainKind::Subdomain,
+                    _ => return None,
+                };
+                key.reverse();
+                Some(DomainEntry {
+                    kind,
+                    name: String::from_utf8(key).ok()?,
+                })
+            },
+        )
     }
 }
 

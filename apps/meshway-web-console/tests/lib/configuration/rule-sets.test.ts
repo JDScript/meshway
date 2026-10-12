@@ -3,6 +3,7 @@ import type { RuleSet, RuleSetView } from "@meshway/control-client"
 import { test } from "vitest"
 
 import {
+  effectiveProviders,
   inlineOf,
   inlineValues,
   preparationOf,
@@ -123,6 +124,22 @@ test("a set's name cannot hold ':', which names a catalog set", () => {
   assert.deepEqual(
     ruleSetProblems({ "geo:cn": { type: "inline", ipCIDR: ["10.0.0.0/8"] } }),
     [{ path: "/ruleSets/geo:cn", code: "set_key" }]
+  )
+})
+
+test("the providers a reference can name: built-ins not turned off, then the configuration's", () => {
+  assert.deepEqual(effectiveProviders({}), ["geosite", "geoip"])
+  assert.deepEqual(
+    effectiveProviders({
+      geoip: null,
+      corp: {
+        catalog: "https://rules.corp.example/index.json",
+        collection: "corp",
+        publicKeys: [],
+      },
+      old: null,
+    }),
+    ["geosite", "corp"]
   )
 })
 

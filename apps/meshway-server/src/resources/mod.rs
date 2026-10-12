@@ -4,6 +4,7 @@
 //! Node reports.
 pub(crate) mod artifacts;
 pub(crate) mod bindings;
+pub(crate) mod browse;
 pub(crate) mod catalogs;
 pub mod datasets;
 pub(crate) mod download;

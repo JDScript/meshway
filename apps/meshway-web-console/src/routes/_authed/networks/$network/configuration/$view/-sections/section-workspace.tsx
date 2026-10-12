@@ -56,6 +56,7 @@ import {
   referencedSets,
   renameSetReferences,
 } from "@/lib/configuration/routing"
+import { effectiveProviders } from "@/lib/configuration/rule-sets"
 import { m } from "@/paraglide/messages.js"
 import { useConfigurationDraft } from "@/state/configuration-draft"
 
@@ -424,6 +425,10 @@ function SectionForm({
               ].filter(isProviderRef)
             ),
           ]}
+          catalog={{
+            networkId,
+            providers: effectiveProviders(base.ruleSetProviders ?? {}),
+          }}
           onChange={set("routing")}
           onOpenRuleSets={() => onOpenSection("ruleSets")}
         />
