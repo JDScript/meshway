@@ -644,8 +644,8 @@ def execute(report, artifacts, runtime_os, platform, short, load):
         manifest["stages"]["10"] = {"status": "passed", "evidence": ["domain-exit.json", "domain-exit-configured.json", "held-flow.json",
                                                                     "external/access.json", "controller/association-reports.json"]}
 
-        # Profile switch (C3): A selects another allowed profile through the
-        # real CLI; the Server commits it, A applies the netmap carrying it
+        # Profile switch (C3): A selects another allowed profile (same rules,
+        # another selection) through the real CLI; the Server commits it, A applies the netmap carrying it
         # before the command returns, and the switch ends A's exit flows of
         # the previous selection while a new flow uses the new profile.
         # `meshway exit off` then returns to Mesh only.
@@ -674,7 +674,7 @@ def execute(report, artifacts, runtime_os, platform, short, load):
 
         switch["before"] = exit_cli()
         if (switch["before"]["appliedProfile"] != "exit"
-                or [p["name"] for p in switch["before"]["profiles"]] != ["exit", "mesh", "global:" + e_node]):
+                or [p["name"] for p in switch["before"]["profiles"]] != ["exit", "exit-alt", "mesh", "global:" + e_node]):
             raise RuntimeError("A's netmap does not carry the allowed profiles")
         (report / "a" / "exit-view.txt").write_text(exit_cli(as_json=False))
         flow_program = (
@@ -709,11 +709,11 @@ def execute(report, artifacts, runtime_os, platform, short, load):
         wait_for(lambda: sum(ok for _, ok in (switch_flow() or {}).get("tcp", [])) >= 3, "exit flow before the switch", 30)
         visits = len(visits_from(e_peer))
         switch["requested"] = time.time()
-        switch["global"] = exit_cli("global:" + e_node)
+        switch["alternative"] = exit_cli("exit-alt")
         switch["switched"] = time.time()
-        if not applied_profile(switch["global"], "global:" + e_node):
+        if not applied_profile(switch["alternative"], "exit-alt"):
             raise RuntimeError("the switch did not return after A applied it")
-        if switch["global"]["local"]["version"] != switch["global"]["committed"]["version"]:
+        if switch["alternative"]["local"]["version"] != switch["alternative"]["committed"]["version"]:
             raise RuntimeError("A applied another selection than the Server committed")
         # A new connection follows the new selection through E.
         switch["newFlow"] = connect(target)
@@ -728,9 +728,9 @@ def execute(report, artifacts, runtime_os, platform, short, load):
             after = [ok for at, ok in flow[kind] if at > switch["switched"] + 1]
             if not all(before) or not after or any(after):
                 raise RuntimeError("the switch did not end the previous selection's " + kind + " flow")
-        plan = a_capture("profile-global")
+        plan = a_capture("profile-alternative")
         if not plan["defaultCapture"] or not managed(plan, ipaddress.ip_address(target)):
-            raise RuntimeError("global profile does not capture external traffic")
+            raise RuntimeError("the alternative profile does not capture external traffic")
         visits = len(visits_from(e_peer))
         switch["off"] = exit_cli("off")
         if not applied_profile(switch["off"], "mesh"):
@@ -747,7 +747,7 @@ def execute(report, artifacts, runtime_os, platform, short, load):
             raise RuntimeError("the exit profile was not restored")
         wait_for(lambda: running(status("a")), "A running after the restored profile")
         write(report / "profile-switch.json", switch)
-        manifest["stages"]["11"] = {"status": "passed", "evidence": ["profile-switch.json", "profile-global.json", "profile-mesh.json",
+        manifest["stages"]["11"] = {"status": "passed", "evidence": ["profile-switch.json", "profile-alternative.json", "profile-mesh.json",
                                                                     "a/exit-view.txt", "a/exit-off.txt"]}
 
         manifest["status"] = "traffic"

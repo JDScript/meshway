@@ -346,10 +346,19 @@ pub(super) async fn coordinate(
             },
         },
     );
+    // A second profile with the same rules: switching to it is a new
+    // selection (A's exit flows end) under the same DNS plan.
+    let alternative = input.routing.egress.profiles["exit"].clone();
+    input
+        .routing
+        .egress
+        .profiles
+        .insert("exit-alt".into(), alternative);
     input.routing.egress.assignments = vec![ProfileAssignment {
         target: vec![format!("node:{}", nodes["a"])],
         allowed: vec![
             "exit".into(),
+            "exit-alt".into(),
             "mesh".into(),
             format!("global:{}", nodes["e"]),
         ],
