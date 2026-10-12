@@ -67,7 +67,7 @@ access 约束业务目的地，不再重复定义一套“允许出口列表”�
 
 域名仍可为正常客户端分流提供上下文，以遵守有序规则。需要强制覆盖某实际地址上所有流量的路径约束，应按 IP／CIDR 定义；不能靠源端声明一个域名来证明同 IP 上实际访问的是哪个应用。
 
-执行关联须由 Server 的受控解析／受信解析结果校验后发布，绑定网络、配置发布、源范围、名称／CNAME、地址和 TTL。普通 State 不能注入新的 DNS 授权关联或增加出口接受权限。
+执行关联由 Server 校验出口 resolver 的受控解析结果后发布，绑定网络、源与出口的 netmap、源的出口 selection、名称／CNAME、公网地址和 TTL；`domain:` 授权按这些关联的名称执行，见 [Routing · 域名规则的执行](/v2/configuration-reference/routing#域名规则的执行)。普通 State 不能注入新的 DNS 授权关联或增加出口接受权限。
 
 ## Enforcement
 

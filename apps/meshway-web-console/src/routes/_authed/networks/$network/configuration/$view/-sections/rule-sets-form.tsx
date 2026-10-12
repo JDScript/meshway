@@ -1,12 +1,19 @@
 import type {
+  NullableRuleSetProvider,
   RuleSet,
+  RuleSetEntryKind,
   RuleSetFormat,
   RuleSetView,
 } from "@meshway/control-client"
 import { Button } from "@meshway/ui/button"
 import { cn } from "@meshway/ui/cn"
-import { CircleAlertIcon, CircleCheckIcon, RefreshCwIcon } from "lucide-react"
-import type { ReactNode } from "react"
+import {
+  CircleAlertIcon,
+  CircleCheckIcon,
+  ListTreeIcon,
+  RefreshCwIcon,
+} from "lucide-react"
+import { useState, type ReactNode } from "react"
 
 import { toastFailureWith } from "@/api/failure"
 import { useRefreshRuleSet } from "@/api/queries/rule-sets"
@@ -29,6 +36,7 @@ import { useNow } from "@/hooks/use-now"
 import { RESOURCE_PROBLEM } from "@/lib/configuration/diagnostics"
 import { pointerOf } from "@/lib/configuration/jsonc"
 import { withEntry, without } from "@/lib/configuration/keyed"
+import { isProviderRef } from "@/lib/configuration/routing"
 import {
   DEFAULT_INTERVAL,
   inlineOf,
@@ -45,6 +53,13 @@ import { m } from "@/paraglide/messages.js"
 
 import { AddKey, KeyInput, type KeyRule } from "./keyed-form"
 import { destinationChips } from "./route-kit"
+import { ContentsDialog } from "./rule-set-browse"
+import {
+  CatalogSetsEmpty,
+  catalogSourceText,
+  ConversionFacts,
+  ProvidersSection,
+} from "./rule-set-facts"
 
 const FORMAT: Record<RuleSetFormat, () => string> = {
   "sing-box-source": () => m.configuration_ruleset_format_sing_box(),
@@ -75,26 +90,43 @@ export function RuleSetsForm({
   saved,
   status,
   referenced,
+  providers,
   editable,
   notes,
   onChange,
   onRename,
+  onEditProviders,
 }: {
   networkId: string
   sets: RuleSetMap
   /** The sets at the controller's current revision, which its status is for. */
   saved: RuleSetMap
   status: RuleSetStatus
-  /** The keys the draft's routing names. */
+  /** The keys the draft's routing names, catalog sets (`<provider>:<name>`) among them. */
   referenced: ReadonlySet<string>
+  /** The configuration's catalog overrides (`ruleSetProviders`). */
+  providers: Readonly<Record<string, NullableRuleSetProvider>>
   editable: boolean
   notes: readonly Note[]
   onChange: (sets: RuleSetMap) => void
   /** A set renamed: its references follow. */
   onRename: (from: string, to: string) => void
+  /** The catalogs are edited in the source. */
+  onEditProviders: () => void
 }) {
   const entries = Object.entries(sets)
   const now = useNow(30_000)
+  // Catalog sets: what the routing names, and what the controller still reports.
+  const catalog = [
+    ...new Set([
+      ...[...referenced].filter(isProviderRef),
+      ...(status.kind === "read"
+        ? [...status.views.values()]
+            .filter((view) => view.implicit)
+            .map((view) => view.key)
+        : []),
+    ]),
+  ].sort()
   return (
     <div className="flex flex-col gap-4">
       <p className="text-meta text-muted-foreground">
@@ -152,6 +184,100 @@ export function RuleSetsForm({
           ) : null}
         </div>
       </Section>
+      <Section
+        title={m.configuration_ruleset_catalog_sets()}
+        count={catalog.length}
+      >
+        {catalog.length === 0 ? (
+          <CatalogSetsEmpty />
+        ) : (
+          <ul className="flex flex-col gap-3">
+            {catalog.map((key) => (
+              <li key={key}>
+                <CatalogSetCard
+                  networkId={networkId}
+                  name={key}
+                  status={status}
+                  referenced={referenced.has(key)}
+                  editable={editable}
+                  notes={notesWithin(notes, pointerOf(["ruleSets", key]))}
+                  now={now}
+                />
+              </li>
+            ))}
+          </ul>
+        )}
+      </Section>
+      <ProvidersSection
+        networkId={networkId}
+        referenced={referenced}
+        overrides={providers}
+        editable={editable}
+        onEditSource={onEditProviders}
+      />
+    </div>
+  )
+}
+
+/** A catalog set the routing names: read only; where its content stands and where it came from. */
+function CatalogSetCard({
+  networkId,
+  name,
+  status,
+  referenced,
+  editable,
+  notes,
+  now,
+}: {
+  networkId: string
+  name: string
+  status: RuleSetStatus
+  referenced: boolean
+  editable: boolean
+  notes: readonly Note[]
+  now: number
+}) {
+  const view = status.kind === "read" ? status.views.get(name) : undefined
+  const preparation: Preparation =
+    status.kind !== "read"
+      ? "unread"
+      : view === undefined
+        ? "new"
+        : view.artifact
+          ? view.problem
+            ? "failing"
+            : "ready"
+          : "missing"
+  return (
+    <div
+      role="group"
+      aria-label={name}
+      className="flex flex-col gap-3 rounded-surface border border-divider p-3"
+    >
+      <div className="flex min-h-8 items-center gap-2 px-1">
+        <span className="min-w-0 truncate font-mono text-row">{name}</span>
+        <span className="flex-1" />
+        <span className="inline-flex h-6 items-center rounded-full bg-fill-subtle px-2.5 text-meta font-medium">
+          {m.configuration_ruleset_catalog()}
+        </span>
+      </div>
+      <Notes notes={notes} className="px-1.5" />
+      <StatusBlock
+        networkId={networkId}
+        name={name}
+        preparation={preparation}
+        step={
+          preparation === "new"
+            ? m.configuration_ruleset_step_catalog_new()
+            : undefined
+        }
+        source={view ? catalogSourceText(view) : null}
+        status={status}
+        view={view}
+        referenced={referenced}
+        editable={editable}
+        now={now}
+      />
     </div>
   )
 }
@@ -363,6 +489,8 @@ function StatusBlock({
   networkId,
   name,
   preparation,
+  step,
+  source = null,
   status,
   view,
   referenced,
@@ -372,6 +500,10 @@ function StatusBlock({
   networkId: string
   name: string
   preparation: Preparation
+  /** Said instead of the preparation's own step. */
+  step?: string
+  /** Where the content came from (a catalog set). */
+  source?: string | null
   status: RuleSetStatus
   view: RuleSetView | undefined
   referenced: boolean
@@ -382,6 +514,12 @@ function StatusBlock({
   const good = preparation === "ready" || preparation === "inline"
   const Icon = good ? CircleCheckIcon : CircleAlertIcon
   // A time read after the last tick reads as now, not as ahead of it.
+  // The bound content of the current revision, which a draft's new source is not.
+  const contents =
+    view?.artifact && preparation !== "new" && preparation !== "replaced"
+      ? view.artifact
+      : null
+  const [browsing, setBrowsing] = useState(false)
   const when = (at: string) => agoTime(at, now) ?? dateTime(at) ?? at
   const facts: string[] = []
   if (view?.artifact)
@@ -417,8 +555,22 @@ function StatusBlock({
               good ? "text-success" : "text-warning"
             )}
           />
-          <span className="min-w-0 break-words">{stepOf(preparation)}</span>
+          <span className="min-w-0 break-words">
+            {step ?? stepOf(preparation)}
+          </span>
         </p>
+        {contents ? (
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            className="h-7 shrink-0 rounded-full px-3"
+            onClick={() => setBrowsing(true)}
+          >
+            <ListTreeIcon />
+            {m.configuration_ruleset_contents()}
+          </Button>
+        ) : null}
         {editable && refreshable(preparation) ? (
           <Button
             type="button"
@@ -460,11 +612,38 @@ function StatusBlock({
           {shownFacts.join(" · ")}
         </p>
       ) : null}
+      {source ? (
+        <p className="pl-5.5 text-meta break-all text-muted-foreground">
+          {source}
+        </p>
+      ) : null}
+      {view && preparation !== "new" && preparation !== "replaced" ? (
+        <ConversionFacts networkId={networkId} name={name} view={view} />
+      ) : null}
       {status.kind === "failed" && preparation !== "inline" ? (
         <p className="pl-5.5 text-meta text-muted-foreground">
           {m.configuration_ruleset_status_failed()}
         </p>
       ) : null}
+      {contents ? (
+        <ContentsDialog
+          open={browsing}
+          onOpenChange={setBrowsing}
+          networkId={networkId}
+          name={name}
+          digest={contents.digest}
+          first={firstKind(view)}
+        />
+      ) : null}
     </div>
   )
+}
+
+/** The kind of member a set's content has most of, as its conversion counted them; names when unknown. */
+function firstKind(view: RuleSetView | undefined): RuleSetEntryKind {
+  const converted = view?.conversion?.converted
+  if (!converted) return "domain"
+  const domains = converted.exact + converted.suffix + converted.subdomain
+  if (domains >= converted.keyword && domains >= converted.cidr) return "domain"
+  return converted.keyword >= converted.cidr ? "keyword" : "ipv4"
 }

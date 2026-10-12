@@ -86,7 +86,7 @@ impl OwnerDispatcher {
         if Instant::now() >= deadline {
             return Err(DispatchError::Expired);
         }
-        let (work, _slot) = {
+        let (work, _slot, desired, service) = {
             let mut state = self.state.lock().await;
             let scope = self.reconcile_state(&mut state)?;
             if scope.desired.reference() != request.netmap() {
@@ -126,11 +126,58 @@ impl OwnerDispatcher {
                 Begin::Unavailable(reason) => return Err(DispatchError::Unavailable(reason)),
                 _ => return Err(DispatchError::Scope),
             };
-            (work, slot)
+            (work, slot, scope.desired.clone(), service.clone())
         };
-        tokio::select! { biased;
+        let answer = tokio::select! { biased;
             _ = request.ended() => Err(DispatchError::Expired),
             answer = self.upstream(work) => answer,
+        }?;
+        self.report_association(&desired, &service, &answer);
+        Ok(answer)
+    }
+
+    /// Complete the served plan's association task for an answer whose name
+    /// a name rule of the source decides, unless an association covering it
+    /// keeps at least half of the life this answer would give.
+    fn report_association(
+        &self,
+        desired: &meshway_engine::Desired,
+        service: &meshway_configuration::netmap::DnsService,
+        answer: &Answer,
+    ) {
+        let Some(reports) = &self.reports else {
+            return;
+        };
+        let Some(facts) = crate::association::answered(answer.query(), answer.message()) else {
+            return;
+        };
+        if !desired
+            .compiler()
+            .egress_rule_for_name(service.source, &facts.name)
+            .is_ok_and(|hit| hit.is_some())
+        {
+            return;
+        }
+        let now = crate::association::wall_ms();
+        if desired
+            .associations()
+            .covering(
+                service.source,
+                &facts.name,
+                facts.record_type,
+                &facts.addresses,
+            )
+            .is_some_and(|known| known.expires_at_ms >= now + facts.lifetime_ms() / 2)
+        {
+            return;
+        }
+        match crate::association::report(desired.reference(), service, &facts) {
+            Ok(report) => {
+                if reports.try_send(report).is_err() {
+                    tracing::debug!("Association report queue full; completion dropped");
+                }
+            }
+            Err(_) => tracing::debug!("Association report identifier unavailable"),
         }
     }
 }

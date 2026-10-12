@@ -51,7 +51,7 @@ def execute(report, artifacts, runtime_os, platform, short, load):
                 "traversal": "exit", "dnsBackend": "off", "runtimeOsAssets": runtime_os,
                 "loadBeforeRuntime": load, "resources": {"containers": containers, "networks": networks},
                 "productStatus": "running", "cleanup": {}, "processes": {},
-                "stages": {str(n): {"status": "notRun"} for n in range(1, 10)}}
+                "stages": {str(n): {"status": "notRun"} for n in range(1, 11)}}
     metadata = report / "report.json"
     started = time.monotonic()
     failure = None
@@ -504,6 +504,94 @@ def execute(report, artifacts, runtime_os, platform, short, load):
         no_source_fallback()
         write(report / "dns-exit.json", dns)
 
+        # Domain exit (X6): a name rule sends names under the name zone through
+        # E via R, everything else of A is direct. E's served answer completes
+        # one association task; A holds the answer until the signed overlay is
+        # applied, then connects by name through E.
+        manifest["status"] = "domain-exit"
+        save()
+        named = {}
+        target = addresses["external"]["external"]
+
+        def visits_from(peer):
+            record = command("external", "cat", "/evidence/access.json", required=False)
+            values = json.loads(record["stdout"]) if record["exitCode"] == 0 else []
+            return [v for v in values if v["protocol"] == "tcp" and v["peer"].rsplit(":", 1)[0] == peer]
+
+        def accepted_reports():
+            record = command("controller", "cat", "/evidence/association-reports.json", required=False)
+            return json.loads(record["stdout"]) if record["exitCode"] == 0 else 0
+
+        def by_name(name):
+            return command("a", "python3", "-c",
+                           "import socket,sys; s=socket.create_connection((sys.argv[1],8080),3); s.settimeout(3); "
+                           "s.sendall(b'exit-name'); assert s.recv(64)==b'exit-name'", name, required=False)
+
+        def applied_revision(role, revision):
+            value = status(role)
+            return running(value) and value["applied"]["revision"] == revision
+
+        def stage_config(signal, done):
+            (report / "signals" / signal).touch()
+            wait_for(lambda: (report / "signals" / done).exists(), signal)
+            revision = json.loads(command("controller", "cat", "/signals/" + done)["stdout"])
+            wait_for(lambda: all(applied_revision(role, revision) for role in ("a", "r", "e")), signal + " applied")
+            return revision
+
+        named["configured"] = stage_config("exit-name-configure", "exit-name-configured.json")
+        # A's installed capture (its egress journal), computed by A itself.
+        def a_capture(stage):
+            return json.loads(snapshot(stage)["a"]["egressJournal"]["stdout"])["plan"]
+        plan = a_capture("domain-exit-configured")
+        if plan["defaultCapture"] or managed(plan, ipaddress.ip_address(target)):
+            raise RuntimeError("name rule must own no address before an association")
+        e_peer = addresses["external"]["e"]
+        before = len(visits_from(e_peer))
+        # Not through a name: the address follows A's IP rules (direct), and A
+        # has no direct route to the external service, so nothing reaches it.
+        named["directBefore"] = by_name(target)
+        if named["directBefore"]["exitCode"] == 0 or len(visits_from(e_peer)) != before:
+            raise RuntimeError("an address without its name was not left to A's IP rules")
+        reports = accepted_reports()
+        name = "svc-" + dns_tag + "." + exit_zone.replace("exit-dns.test", "name.exit-dns.test")
+        started = time.monotonic()
+        # The first answer is held until its association applies, then released:
+        # one lookup, no SERVFAIL retry.
+        named["firstLookup"] = lookup(name)
+        named["firstLookupSeconds"] = time.monotonic() - started
+        if named["firstLookup"]["value"].get("addresses") != [target]:
+            write(report / "dns-failure.json", named["firstLookup"])
+            raise RuntimeError("first lookup of a name-rule name did not return its answer")
+        named["first"] = by_name(name)
+        if named["first"]["exitCode"] or len(visits_from(e_peer)) != before + 1:
+            raise RuntimeError("first named connection did not leave through E")
+        if any(v["peer"].rsplit(":", 1)[0] != e_peer for v in json.loads(command("external", "cat", "/evidence/access.json")["stdout"])):
+            raise RuntimeError("external service saw a peer other than E")
+        named["reportsAfterFirst"] = accepted_reports() - reports
+        if named["reportsAfterFirst"] < 1:
+            raise RuntimeError("no association task completion for the first lookup")
+        named["status"] = status("a")
+        # The association put exactly the answered address into A's capture.
+        if not managed(a_capture("domain-exit-associated"), ipaddress.ip_address(target)):
+            raise RuntimeError("associated address is not in A's installed capture")
+        named["second"] = by_name(name)
+        named["reportsAfterSecond"] = accepted_reports() - reports
+        if named["second"]["exitCode"] or named["reportsAfterSecond"] != named["reportsAfterFirst"] or len(visits_from(e_peer)) != before + 2:
+            raise RuntimeError("second named connection needed another Server round trip or failed")
+        # Address-set semantics: while the association lives, the address
+        # itself is decided by the name rule, with or without the name.
+        named["directAssociated"] = by_name(target)
+        if named["directAssociated"]["exitCode"] or len(visits_from(e_peer)) != before + 3:
+            raise RuntimeError("associated address did not follow its name rule")
+        named["revoked"] = stage_config("exit-name-revoke", "exit-name-revoked.json")
+        named["afterRevoke"] = by_name(name)
+        if named["afterRevoke"]["exitCode"] == 0 or len(visits_from(e_peer)) != before + 3:
+            raise RuntimeError("named exit outlived its Access revocation")
+        named["restored"] = stage_config("exit-name-restore", "exit-name-restored.json")
+        write(report / "domain-exit.json", named)
+        manifest["stages"]["10"] = {"status": "passed", "evidence": ["domain-exit.json", "domain-exit-configured.json",
+                                                                    "external/access.json", "controller/association-reports.json"]}
+
         manifest["status"] = "traffic"
         save()
         (report / "signals/exit-traffic").touch()
@@ -522,13 +610,13 @@ def execute(report, artifacts, runtime_os, platform, short, load):
         routes = {}
         exit_action = {"type": "exit", "nodes": [path[2]], "via": [path[1]]}
         plan_a = projected["a"]["egress"]
-        a_capture = json.loads(after["a"]["egressJournal"]["stdout"])["plan"]
+        installed_capture = json.loads(after["a"]["egressJournal"]["stdout"])["plan"]
         actions = [rule["action"] for rule in plan_a["rules"]] + [plan_a["fallback"]]
         if any(action["type"] == "exit" and action != exit_action for action in actions):
             raise RuntimeError("A egress plan names an exit other than E via R")
         for link in ("external", "lan"):
             target = ipaddress.ip_address(addresses[link][link])
-            if not managed(a_capture, target):
+            if not managed(installed_capture, target):
                 raise RuntimeError("A egress partition does not send " + link + " to E via R")
             routes[link] = {"managed": True, "action": exit_action}
         for role in ("a", "r", "e"):

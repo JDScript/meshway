@@ -241,6 +241,9 @@ pub(in crate::runtime::network) struct Attachment {
     dispatcher: Option<Arc<meshway_dns::OwnerDispatcher>>,
     /// The DNS owner's exit resolver fact, for the plane's report.
     exit_dns: watch::Sender<Option<meshway_model::exit::ExitDns>>,
+    /// Association completions of served answers, for Control.
+    reports: mpsc::Sender<meshway_protocol::DnsAssociationReport>,
+    report_receiver: Option<mpsc::Receiver<meshway_protocol::DnsAssociationReport>>,
 }
 impl Attachment {
     pub fn new(
@@ -249,7 +252,10 @@ impl Attachment {
         reservation: Option<SystemDnsReservation>,
     ) -> Self {
         let (queries, requests) = mpsc::channel(128);
+        let (reports, report_receiver) = mpsc::channel(meshway_dns::MAX_PENDING_REPORTS);
         Self {
+            reports,
+            report_receiver: Some(report_receiver),
             settings,
             directory,
             reservation,
@@ -264,6 +270,9 @@ impl Attachment {
     /// serves sources.
     pub fn exit_dns(&self) -> watch::Receiver<Option<meshway_model::exit::ExitDns>> {
         self.exit_dns.subscribe()
+    }
+    pub fn take_reports(&mut self) -> mpsc::Receiver<meshway_protocol::DnsAssociationReport> {
+        self.report_receiver.take().expect("one DNS report owner")
     }
     pub fn take_queries(&mut self) -> mpsc::Receiver<super::mesh::Query> {
         self.requests.take().expect("one DNS packet owner")
@@ -310,6 +319,7 @@ impl Attachment {
                 self.settings.clone(),
                 exchange,
                 self.exit_dns.clone(),
+                self.reports.clone(),
             )
             .await?;
             self.dispatcher = Some(runtime.dispatcher.clone());

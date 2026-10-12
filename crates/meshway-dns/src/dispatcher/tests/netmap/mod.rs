@@ -17,6 +17,7 @@ use meshway_test_server::{
 
 const HOUR: u64 = 60 * 60 * 1000;
 
+mod associations;
 mod served;
 
 #[tokio::test]
@@ -85,6 +86,8 @@ struct Network {
     hostname: String,
     include_mesh_resolver: bool,
     override_local: bool,
+    /// `chat.example` and its subdomains exit by name ahead of every other rule.
+    name_rule: bool,
     peer_keys: BTreeMap<NodeId, TrustedNode>,
 }
 
@@ -111,6 +114,7 @@ impl Network {
             hostname: "a".into(),
             include_mesh_resolver: true,
             override_local: false,
+            name_rule: false,
             peer_keys: BTreeMap::new(),
         }
     }
@@ -168,6 +172,24 @@ impl Network {
                 },
             },
         );
+        if self.name_rule {
+            let profile = cfg.routing.egress.profiles.get_mut("exit").unwrap();
+            profile.rules.insert(
+                0,
+                EgressRule {
+                    remark: String::new(),
+                    matcher: RouteMatch {
+                        domain_suffix: vec!["chat.example".into()],
+                        ..Default::default()
+                    },
+                    action: RuleAction::Exit {
+                        nodes: vec![sel(self.e)],
+                        via: vec![],
+                    },
+                },
+            );
+            profile.fallback = RouteAction::Direct;
+        }
         cfg.routing.egress.assignments.push(ProfileAssignment {
             target: vec![sel(self.a)],
             allowed: vec!["exit".into(), "mesh".into()],

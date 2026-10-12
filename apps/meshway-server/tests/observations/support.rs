@@ -271,6 +271,7 @@ impl Server {
                     state: None,
                     server_key_generation: None,
                     traversal_requests: Default::default(),
+                    associations: None,
                 },
             ),
             200,

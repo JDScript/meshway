@@ -16,6 +16,10 @@ use tokio::{
 
 /// Ordinary names A resolves through the exit.
 pub const EXIT_ZONE: &str = "exit-dns.test.";
+/// Names a name rule sends through E: their answer is the external service.
+pub const NAME_ZONE: &str = "name.exit-dns.test.";
+/// TTL of name-zone answers, so caches and associations have a real life.
+const NAME_TTL: u32 = 60;
 /// A's `useWithExit` split suffix.
 pub const SPLIT_ZONE: &str = "split.test.";
 const EXIT_A: Ipv4Addr = Ipv4Addr::new(198, 51, 100, 10);
@@ -38,7 +42,12 @@ struct Question {
     truncated: bool,
 }
 
-fn answer(role: Role, bytes: &[u8], limit: Option<usize>) -> Result<(Message, Vec<u8>)> {
+fn answer(
+    role: Role,
+    service: Option<Ipv4Addr>,
+    bytes: &[u8],
+    limit: Option<usize>,
+) -> Result<(Message, Vec<u8>)> {
     let query = Message::from_vec(bytes)?;
     let question = query.queries.first().ok_or("DNS query without question")?;
     let name = question.name().to_ascii().to_ascii_lowercase();
@@ -53,6 +62,11 @@ fn answer(role: Role, bytes: &[u8], limit: Option<usize>) -> Result<(Message, Ve
     response.metadata.authoritative = true;
     response.add_query(question.clone());
     let owner = question.name().clone();
+    let ttl = if name.ends_with(NAME_ZONE) {
+        NAME_TTL
+    } else {
+        0
+    };
     let records: Vec<RData> = match (role, kind) {
         (Role::External, _) if !name.ends_with(EXIT_ZONE) => {
             response.metadata.response_code = ResponseCode::Refused;
@@ -61,6 +75,12 @@ fn answer(role: Role, bytes: &[u8], limit: Option<usize>) -> Result<(Message, Ve
         (Role::External, RecordType::A) if name == format!("big.{EXIT_ZONE}") => (1..=BIG_RECORDS)
             .map(|i| RData::A(rdata::A(Ipv4Addr::new(198, 51, 100, i))))
             .collect(),
+        (Role::External, RecordType::A) if name.ends_with(NAME_ZONE) => {
+            vec![RData::A(rdata::A(
+                service.ok_or("name zone without service address")?,
+            ))]
+        }
+        (Role::External, RecordType::AAAA) if name.ends_with(NAME_ZONE) => Vec::new(),
         (Role::External, RecordType::A) => vec![RData::A(rdata::A(EXIT_A))],
         (Role::External, RecordType::AAAA) if !name.starts_with("big.") => {
             vec![RData::AAAA(rdata::AAAA(EXIT_AAAA))]
@@ -74,7 +94,7 @@ fn answer(role: Role, bytes: &[u8], limit: Option<usize>) -> Result<(Message, Ve
         _ => Vec::new(),
     };
     for data in records {
-        response.add_answer(Record::from_rdata(owner.clone(), 0, data));
+        response.add_answer(Record::from_rdata(owner.clone(), ttl, data));
     }
     let mut encoded = response.to_vec()?;
     if let Some(limit) = limit {
@@ -122,6 +142,16 @@ fn record(
 }
 
 pub(super) async fn run(cli: &Cli, role: Role) -> Result<()> {
+    let service = if role == Role::External {
+        let topology: Topology = read(&cli.public.join("exit-topology.json")).await?;
+        topology
+            .addresses
+            .get("external")
+            .and_then(|link| link.get("external"))
+            .copied()
+    } else {
+        None
+    };
     let udp = UdpSocket::bind("0.0.0.0:53").await?;
     let tcp = TcpListener::bind("0.0.0.0:53").await?;
     let log = std::sync::Arc::new(std::sync::Mutex::new(Vec::<Question>::new()));
@@ -136,7 +166,7 @@ pub(super) async fn run(cli: &Cli, role: Role) -> Result<()> {
             tokio::select! {
                 received = udp.recv_from(&mut buffer) => {
                     let (size, peer) = received?;
-                    let Ok((response, bytes)) = answer(role, &buffer[..size], Some(4096)) else { continue };
+                    let Ok((response, bytes)) = answer(role, service, &buffer[..size], Some(4096)) else { continue };
                     record(&log, &buffer[..size], &response, "udp", peer)?;
                     let _ = udp.send_to(&bytes, peer).await;
                 }
@@ -151,7 +181,7 @@ pub(super) async fn run(cli: &Cli, role: Role) -> Result<()> {
                             }
                             let mut bytes = vec![0; size];
                             stream.read_exact(&mut bytes).await?;
-                            let (response, encoded) = answer(role, &bytes, None)?;
+                            let (response, encoded) = answer(role, service, &bytes, None)?;
                             record(&log, &bytes, &response, "tcp", peer)?;
                             stream.write_u16(encoded.len().try_into()?).await?;
                             stream.write_all(&encoded).await?;

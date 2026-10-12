@@ -85,7 +85,8 @@
       },
       "state": null,
       "serverKeyGeneration": 1,
-      "traversalRequests": []
+      "traversalRequests": [],
+      "associations": null
     },
     "responses": {
       "200": {
@@ -120,8 +121,30 @@
             },
             "expiresAt": "2026-10-09T09:00:08Z"
           }
-        ]
+        ],
+        "associations": null
       }
+    }
+  },
+  "reportDnsAssociation": {
+    "request": {
+      "netmap": {
+        "revision": 7,
+        "serial": 3,
+        "digest": "abababababababababababababababababababababababababababababababab"
+      },
+      "reportId": "3f1e2d3c-4b5a-4697-8a1b-2c3d4e5f6a7b",
+      "source": "2b3c4d5e-6f70-4182-9a3b-4c5d6e7f8091",
+      "generation": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "name": "api.chat.example",
+      "recordType": "a",
+      "cnames": ["edge.cdn.example"],
+      "addresses": ["104.16.0.9"],
+      "ttlSeconds": 60,
+      "resolvedAt": "2026-10-09T09:00:00Z"
+    },
+    "responses": {
+      "200": { "expiresAt": "2026-10-09T09:01:00Z" }
     }
   }
 }

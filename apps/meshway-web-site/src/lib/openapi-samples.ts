@@ -46,40 +46,54 @@ export function codeSamples(document: Document, entry: ReferenceOperation) {
   const stream = "x-meshway-sse" in operation
   const args = ["client"]
   const declarations: string[] = []
+  const sample = (parameter: (typeof resolved)[number]) => {
+    const schema = isReference(parameter.schema)
+      ? document.components?.schemas?.[
+          parameter.schema.$ref.replace("#/components/schemas/", "")
+        ]
+      : parameter.schema
+    return schema &&
+      typeof schema === "object" &&
+      !isReference(schema) &&
+      schema.enum?.[0] !== undefined
+      ? JSON.stringify(schema.enum[0])
+      : schema &&
+          typeof schema === "object" &&
+          !isReference(schema) &&
+          schema.type === "integer"
+        ? String(schema.minimum ?? 1)
+        : JSON.stringify(`<${parameter.name}>`)
+  }
   if (pathParameters.length) {
     for (const parameter of pathParameters) {
-      const schema = isReference(parameter.schema)
-        ? document.components?.schemas?.[
-            parameter.schema.$ref.replace("#/components/schemas/", "")
-          ]
-        : parameter.schema
-      const value =
-        schema &&
-        typeof schema === "object" &&
-        !isReference(schema) &&
-        schema.enum?.[0] !== undefined
-          ? JSON.stringify(schema.enum[0])
-          : schema &&
-              typeof schema === "object" &&
-              !isReference(schema) &&
-              schema.type === "integer"
-            ? String(schema.minimum ?? 1)
-            : JSON.stringify(`<${parameter.name}>`)
-      declarations.push(`const ${parameter.name} = ${value}`)
+      declarations.push(`const ${parameter.name} = ${sample(parameter)}`)
     }
     args.push(
       `{ ${pathParameters.map((parameter) => parameter.name).join(", ")} }`
     )
   }
+  const required = queryParameters.filter((parameter) => parameter.required)
   if (queryParameters.length) {
-    const required = queryParameters.filter((parameter) => parameter.required)
-    if (required.length)
-      throw new Error(`Required query needs a sample: ${operation.operationId}`)
+    const fields = required
+      .map((parameter) => `${parameter.name}: ${sample(parameter)}`)
+      .join(", ")
+    const optional =
+      required.length < queryParameters.length
+        ? " // Optional filters, limit and cursor: see parameters below."
+        : ""
     declarations.push(
-      "const query = {} // Optional filters, limit and cursor: see parameters below."
+      `const query = {${fields ? ` ${fields} ` : ""}}${optional}`
     )
     args.push("query")
   }
+  const search = required.length
+    ? `?${required
+        .map(
+          (parameter) =>
+            `${parameter.name}=${JSON.parse(sample(parameter)) as string | number}`
+        )
+        .join("&")}`
+    : ""
   if (body) {
     if (!schemaName)
       throw new Error(`Missing SDK body schema: ${operation.operationId}`)
@@ -115,7 +129,7 @@ export function codeSamples(document: Document, entry: ReferenceOperation) {
     .filter(Boolean)
     .join("\n\n")
   const curl = [
-    `curl${stream ? " --no-buffer" : ""} --request ${method.toUpperCase()} \\\n  "$MESHWAY_SERVER${path.replace(/\{([^}]+)\}/g, "<$1>")}"`,
+    `curl${stream ? " --no-buffer" : ""} --request ${method.toUpperCase()} \\\n  "$MESHWAY_SERVER${path.replace(/\{([^}]+)\}/g, "<$1>")}${search}"`,
     ...(authenticated
       ? ['  --header "Authorization: Bearer $MESHWAY_TOKEN"']
       : []),

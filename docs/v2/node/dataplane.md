@@ -275,7 +275,9 @@ exchange 适配器须在每次 connect／write／read poll 检查路由期限与
 
 内容变化（含出口 role 撤回、方案切换）和租约到期按 [scope 发布](#dns-查询-owner) 结束两端旧 ticket；新内容下的 DNS circuit 由 `SecureNode::update` 按 path 授权摘要判定保留或退役，旧回答不能换绑。
 
-限制：resolved 后端的出口查询需要 systemd ≥ 248 且 `DNSStubListener=yes`（提供代理 stub `127.0.0.54`），否则出口查询不可用（`proxyStubMissing`），见 [Linux 安装](/v2/install)。首版只解析经 IPv4 出口的普通查询；AAAA 原样返回出口 resolver 的真实回答，不伪造 NXDOMAIN，受管 IPv6 包仍由源端捕获 sink 与 permit 双重拒绝。显式多出口 DNS plan 和可信域名关联（X6）未实现。DNS 消息上限 4096 bytes，单查询不超过 5 秒。这些范围以外或任何必需安装失败均阻断整体 applied。
+可信域名关联（X6）：served 路径回答源节点名称规则决定的名称后，产生一份关联任务完成交 Control 上报（不等待、不扩大 DNS permit，队列满即丢弃）；源节点的 client 路径持有这类回答直至 Engine 应用覆盖其地址的关联（至多 2 秒，否则 SERVFAIL），TTL 截为关联剩余寿命。关联变化不结束 DNS scope 与已接纳查询，也不重判已建立的流；新流由 `Decisions` 以当前关联判定。见 [Exit 设计 · 可信域名关联](/v2/node/exit-design#trusted-dns-associations)。
+
+限制：resolved 后端的出口查询需要 systemd ≥ 248 且 `DNSStubListener=yes`（提供代理 stub `127.0.0.54`），否则出口查询不可用（`proxyStubMissing`），见 [Linux 安装](/v2/install)。首版只解析经 IPv4 出口的普通查询；AAAA 原样返回出口 resolver 的真实回答，不伪造 NXDOMAIN，受管 IPv6 包仍由源端捕获 sink 与 permit 双重拒绝。显式多出口 DNS plan 未实现。DNS 消息上限 4096 bytes，单查询不超过 5 秒。这些范围以外或任何必需安装失败均阻断整体 applied。
 
 ## 系统 DNS 安装
 

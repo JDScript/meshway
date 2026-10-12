@@ -4,6 +4,8 @@ import { test } from "vitest"
 
 import {
   badDestination,
+  catalogTerms,
+  isProviderRef,
   matchKind,
   matchOf,
   matchParts,
@@ -52,6 +54,41 @@ test("a match is one set of chips: domains, exact names, prefixes and rule sets"
   assert.equal(matchKind("="), null)
   assert.deepEqual(matchOf(["fd00::/8"]), { ipCIDR: ["fd00::/8"] })
   assert.deepEqual(matchOf([]), {})
+})
+
+test("a catalog set is <provider>:<name>; a set of the network is not", () => {
+  assert.ok(isProviderRef("geosite:openai"))
+  assert.ok(isProviderRef("geoip:cn"))
+  assert.ok(isProviderRef("geosite:category-ads-all"))
+  assert.equal(isProviderRef("office"), false)
+  assert.equal(isProviderRef("Geosite:openai"), false)
+  assert.equal(isProviderRef("geosite:"), false)
+  // As a match it is a rule set like any other.
+  assert.deepEqual(matchOf(["set:geosite:openai", "example.com"]), {
+    domainSuffix: ["example.com"],
+    ruleSets: ["geosite:openai"],
+  })
+  assert.equal(matchKind(".cdn.example"), "subdomain")
+})
+
+test("a typed destination searches the catalogs it names", () => {
+  const providers = ["geosite", "geoip"]
+  assert.deepEqual(catalogTerms("geosite:Open", providers), [
+    { provider: "geosite", q: "open", explicit: true },
+  ])
+  assert.deepEqual(catalogTerms("set:geoip:", providers), [
+    { provider: "geoip", q: "", explicit: true },
+  ])
+  assert.deepEqual(catalogTerms("cn", providers), [
+    { provider: "geosite", q: "cn", explicit: false },
+    { provider: "geoip", q: "cn", explicit: false },
+  ])
+  // A provider the network does not have, a domain, a prefix, one letter: none.
+  assert.deepEqual(catalogTerms("corp:office", providers), [])
+  assert.deepEqual(catalogTerms("openai.com", providers), [])
+  assert.deepEqual(catalogTerms("10.0.0.0/8", providers), [])
+  assert.deepEqual(catalogTerms("x", providers), [])
+  assert.deepEqual(catalogTerms("set:office", providers), [])
 })
 
 test("destinations are checked as the controller reads them", () => {

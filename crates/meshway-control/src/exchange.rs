@@ -227,6 +227,19 @@ pub mod shared {
         .await
     }
 
+    /// Complete one DNS association task of the held netmap (exit resolver).
+    pub async fn report_dns_association(
+        control: &Mutex<Control>,
+        report: &meshway_protocol::DnsAssociationReport,
+    ) -> Result<meshway_protocol::DnsAssociationAccepted, Error> {
+        unlocked(
+            control,
+            |control| control.prepare_dns_association(report),
+            Control::apply_dns_association,
+        )
+        .await
+    }
+
     pub async fn query_udp_traversal(
         control: &Mutex<Control>,
         netmap: NetmapRef,

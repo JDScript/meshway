@@ -410,6 +410,8 @@ export const zArtifactSummary = z.strictObject({
   ["format"]: z.int().gte(0).lte(2147483647)
 });
 
+export const zAssociationRecordType = z.enum(["a","aaaa"]);
+
 export const zNetworkNameTrim = z.enum(["unicodeWhiteSpace"]);
 
 export const zNetworkNameRules = z.strictObject({
@@ -1825,6 +1827,50 @@ export const zDeviceAuthorizationView = z.strictObject({
   ["request"]: zEnrollmentRequestView
 });
 
+export const zDnsAssociation = z.strictObject({
+  ["addresses"]: z.array(zExecutionAddress),
+  ["cnames"]: z.array(z.string()),
+  ["expiresAt"]: zTimestamp,
+  ["generation"]: zDigest,
+  ["name"]: z.string(),
+  ["recordType"]: zAssociationRecordType,
+  ["source"]: zNodeId
+});
+
+export const zDnsAssociationAccepted = z.strictObject({
+  ["expiresAt"]: zTimestamp
+});
+
+export const zDnsAssociationOverlay = z.strictObject({
+  ["associations"]: z.array(zDnsAssociation),
+  ["netmap"]: zNetmapRef
+});
+
+export const zDnsAssociationReport = z.strictObject({
+  ["addresses"]: z.array(zExecutionAddress),
+  ["cnames"]: z.array(z.string()),
+  ["generation"]: zDigest,
+  ["name"]: z.string(),
+  ["netmap"]: zNetmapRef,
+  ["recordType"]: zAssociationRecordType,
+  ["reportId"]: zRequestId,
+  ["resolvedAt"]: zTimestamp,
+  ["source"]: zNodeId,
+  ["ttlSeconds"]: z.int().gte(0).lte(2147483647)
+});
+
+export const zNetmapSignature = z.strictObject({
+  ["keyGeneration"]: zVersion,
+  ["keyId"]: zKeyId,
+  ["signature"]: z.string()
+});
+
+export const zDnsAssociationsUpdate = z.strictObject({
+  ["overlay"]: zDnsAssociationOverlay,
+  ["rotationSignature"]: zNetmapSignature.nullable(),
+  ["signature"]: zNetmapSignature
+});
+
 export const zEmptyParams = z.strictObject({
 
 });
@@ -2085,6 +2131,10 @@ export const zProblem = z.union([z.strictObject({
   ["params"]: zConfigurationValidationParams
 }), z.strictObject({
   ["code"]: z.enum(["state_conflict"]),
+  ["message"]: z.string(),
+  ["params"]: zEmptyParams
+}), z.strictObject({
+  ["code"]: z.enum(["rule_set_catalog_not_ready"]),
   ["message"]: z.string(),
   ["params"]: zEmptyParams
 }), z.strictObject({
@@ -2729,6 +2779,31 @@ export const zListObservationsPath = z.strictObject({
   ["networkId"]: zNetworkId
 });
 
+export const zListRuleSetCatalogPath = z.strictObject({
+  ["networkId"]: zNetworkId
+});
+
+export const zListRuleSetCatalogQuery = z.strictObject({
+  ["cursor"]: z.string().refine(value => [...value].length <= 4096, "maxLength 4096 Unicode code points").exactOptional(),
+  ["limit"]: z.int().gte(1).lte(200).exactOptional(),
+  ["provider"]: z.string().refine(value => [...value].length >= 1, "minLength 1 Unicode code points").refine(value => [...value].length <= 32, "maxLength 32 Unicode code points"),
+  ["q"]: z.string().refine(value => [...value].length <= 128, "maxLength 128 Unicode code points").exactOptional()
+});
+
+export const zListRuleSetEntriesPath = z.strictObject({
+  ["networkId"]: zNetworkId,
+  ["ruleSetKey"]: z.string()
+});
+
+export const zRuleSetEntryKind = z.enum(["domain","keyword","ipv4","ipv6"]);
+
+export const zListRuleSetEntriesQuery = z.strictObject({
+  ["cursor"]: z.string().refine(value => [...value].length <= 4096, "maxLength 4096 Unicode code points").exactOptional(),
+  ["kind"]: zRuleSetEntryKind,
+  ["limit"]: z.int().gte(1).lte(200).exactOptional(),
+  ["q"]: z.string().refine(value => [...value].length <= 253, "maxLength 253 Unicode code points").exactOptional()
+});
+
 export const zListRuleSetsPath = z.strictObject({
   ["networkId"]: zNetworkId
 });
@@ -2753,6 +2828,16 @@ export const zLocalEndpoint = z.strictObject({
 export const zLoginRequest = z.strictObject({
   ["email"]: z.string(),
   ["password"]: zWireSecret
+});
+
+export const zMatchRuleSetPath = z.strictObject({
+  ["networkId"]: zNetworkId,
+  ["ruleSetKey"]: z.string()
+});
+
+export const zMatchRuleSetQuery = z.strictObject({
+  ["ip"]: z.string().refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").exactOptional(),
+  ["name"]: z.string().refine(value => [...value].length <= 254, "maxLength 254 Unicode code points").exactOptional()
 });
 
 export const zMemberActions = z.strictObject({
@@ -2835,12 +2920,6 @@ export const zNetmapDelta = z.strictObject({
   ["self"]: zNetmapSelf,
   ["subjects"]: zSubjectContext,
   ["target"]: zNetmapRef
-});
-
-export const zNetmapSignature = z.strictObject({
-  ["keyGeneration"]: zVersion,
-  ["keyId"]: zKeyId,
-  ["signature"]: z.string()
 });
 
 export const zNetmapKeyRotation = z.strictObject({
@@ -3431,6 +3510,45 @@ export const zRoutingSelectionResponse = z.strictObject({
   ["version"]: zVersion
 });
 
+export const zRuleSetHeld = z.strictObject({
+  ["reason"]: z.string(),
+  ["since"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time")
+});
+
+export const zRuleSetUpstream = z.strictObject({
+  ["commit"]: z.string(),
+  ["path"]: z.string(),
+  ["ref"]: z.string(),
+  ["repo"]: z.string()
+});
+
+export const zRuleSetCatalogSet = z.strictObject({
+  ["bytes"]: z.int().gte(0).lte(2147483647),
+  ["digest"]: z.string().regex(new RegExp("^sha256:[0-9a-f]{64}$", "u")),
+  ["entries"]: z.int().gte(0).lte(2147483647),
+  ["held"]: zRuleSetHeld.nullable(),
+  ["name"]: z.string(),
+  ["reference"]: z.string(),
+  ["set"]: z.string(),
+  ["upstream"]: zRuleSetUpstream
+});
+
+export const zRuleSetCatalogProvider = z.strictObject({
+  ["catalog"]: z.string(),
+  ["collection"]: z.string(),
+  ["generatedAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["name"]: z.string(),
+  ["sequence"]: z.int().gte(0).lte(2147483647),
+  ["verifiedAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time")
+});
+
+export const zRuleSetCatalogPage = z.strictObject({
+  ["items"]: z.array(zRuleSetCatalogSet),
+  ["nextCursor"]: z.string().nullable(),
+  ["provider"]: zRuleSetCatalogProvider,
+  ["total"]: z.int().gte(0).lte(2147483647)
+});
+
 export const zRuleSetConverted = z.strictObject({
   ["cidr"]: z.int().gte(0).lte(2147483647),
   ["exact"]: z.int().gte(0).lte(2147483647),
@@ -3445,9 +3563,40 @@ export const zRuleSetConversion = z.strictObject({
   ["unconverted"]: typedMap(z.string(), z.int().gte(0).lte(2147483647), {})
 });
 
-export const zRuleSetHeld = z.strictObject({
-  ["reason"]: z.string(),
-  ["since"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time")
+export const zRuleSetMemberCounts = z.strictObject({
+  ["exact"]: z.int().gte(0).lte(2147483647),
+  ["ipv4"]: z.int().gte(0).lte(2147483647),
+  ["ipv6"]: z.int().gte(0).lte(2147483647),
+  ["keyword"]: z.int().gte(0).lte(2147483647),
+  ["subdomain"]: z.int().gte(0).lte(2147483647),
+  ["suffix"]: z.int().gte(0).lte(2147483647)
+});
+
+export const zRuleSetMember = z.union([z.strictObject({
+  ["kind"]: z.enum(["exact"]),
+  ["name"]: z.string()
+}), z.strictObject({
+  ["kind"]: z.enum(["suffix"]),
+  ["name"]: z.string()
+}), z.strictObject({
+  ["kind"]: z.enum(["subdomain"]),
+  ["name"]: z.string()
+}), z.strictObject({
+  ["keyword"]: z.string(),
+  ["kind"]: z.enum(["keyword"])
+}), z.strictObject({
+  ["first"]: z.string(),
+  ["kind"]: z.enum(["ipRange"]),
+  ["last"]: z.string()
+})]);
+
+export const zRuleSetEntryPage = z.strictObject({
+  ["counts"]: zRuleSetMemberCounts,
+  ["digest"]: z.string().regex(new RegExp("^sha256:[0-9a-f]{64}$", "u")),
+  ["items"]: z.array(zRuleSetMember),
+  ["key"]: z.string(),
+  ["kind"]: zRuleSetEntryKind,
+  ["nextCursor"]: z.string().nullable()
 });
 
 export const zRuleSetProviderView = z.strictObject({
@@ -3482,6 +3631,13 @@ export const zRuleSetView = z.strictObject({
 
 export const zRuleSetList = z.strictObject({
   ["items"]: z.array(zRuleSetView)
+});
+
+export const zRuleSetMatchResponse = z.strictObject({
+  ["digest"]: z.string().regex(new RegExp("^sha256:[0-9a-f]{64}$", "u")),
+  ["key"]: z.string(),
+  ["member"]: zRuleSetMember.nullable(),
+  ["query"]: z.string()
 });
 
 export const zRuleSetSkippedEntry = z.strictObject({
@@ -3550,6 +3706,7 @@ export const zSyncNetmap = z.union([z.strictObject({
 export const zUdpTraversalRequestIds = z.array(z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u"))).max(32);
 
 export const zSyncRequest = z.strictObject({
+  ["associations"]: zDigest.nullable().exactOptional(),
   ["netmap"]: zNetmapRef.nullable().exactOptional(),
   ["serverKeyGeneration"]: zVersion.nullable().exactOptional(),
   ["state"]: zStateCursor.nullable().exactOptional(),
@@ -3564,6 +3721,7 @@ export const zUdpTraversalRequests = z.array(z.strictObject({
 })).max(32);
 
 export const zSyncResponse = z.strictObject({
+  ["associations"]: zDnsAssociationsUpdate.nullable(),
   ["keyRotation"]: zNetmapKeyRotation.nullable(),
   ["lease"]: zNetmapLease,
   ["netmap"]: zSyncNetmap,

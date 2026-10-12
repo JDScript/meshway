@@ -175,6 +175,209 @@ pub struct RuleSetReport {
     pub items: Vec<RuleSetSkippedEntry>,
 } }
 
+/// Query of `listRuleSetCatalog`: URI fields, not a JSON body.
+#[derive(Debug, serde::Deserialize, utoipa::IntoParams)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[into_params(parameter_in = Query)]
+pub struct RuleSetCatalogQuery {
+    /// Provider name effective in this network: a built-in provider or a `ruleSetProviders` key.
+    #[param(min_length = 1, max_length = 32)]
+    pub provider: String,
+    /// Case-insensitive prefix of the set name (`open` finds `openai`); omission or empty lists every set.
+    #[param(max_length = 128)]
+    pub q: Option<String>,
+    /// Maximum number of sets to return, from 1 through 200; default 100.
+    #[serde(default, deserialize_with = "crate::networks::optional_limit")]
+    #[param(minimum = 1, maximum = 200)]
+    pub limit: Option<u16>,
+    /// Opaque continuation cursor from the preceding page with the same `provider` and `q`, limited to 4096 characters.
+    #[serde(default, deserialize_with = "crate::networks::optional_cursor")]
+    #[param(max_length = 4096)]
+    pub cursor: Option<String>,
+}
+wire_object! { #[derive(Clone, Debug, PartialEq, Eq)]
+/// The verified catalog a provider's sets are listed from.
+pub struct RuleSetCatalogProvider {
+    /// Provider name, the part of a reference before `:`.
+    pub name: String,
+    /// Catalog `index.json` URL.
+    pub catalog: String,
+    /// Catalog collection of the provider.
+    pub collection: String,
+    /// Sequence of the newest catalog this Server accepted.
+    pub sequence: u32,
+    /// When the publisher generated that catalog.
+    pub generated_at: DateTime<Utc>,
+    /// When this Server last verified it.
+    pub verified_at: DateTime<Utc>,
+} }
+wire_object! { #[derive(Clone, Debug, PartialEq, Eq)]
+/// Upstream file a catalog set was converted from.
+pub struct RuleSetUpstream {
+    pub repo: String,
+    #[serde(rename = "ref")] pub reference: String,
+    pub commit: String,
+    /// File path in the upstream repository.
+    pub path: String,
+} }
+wire_object! { #[derive(Clone, Debug, PartialEq, Eq)]
+/// One set of a provider's verified catalog.
+pub struct RuleSetCatalogSet {
+    /// What routing rules write in `match.ruleSets`: `<provider>:<name>`.
+    pub reference: String,
+    /// Set name within the provider.
+    pub name: String,
+    /// Catalog set `<collection>/<name>`.
+    pub set: String,
+    /// Artifact the catalog publishes for this set.
+    pub digest: String [pattern = "^sha256:[0-9a-f]{64}$"],
+    /// Artifact length in bytes.
+    pub bytes: u32,
+    /// Canonical members: names, keywords and merged address ranges.
+    pub entries: u32,
+    pub upstream: RuleSetUpstream,
+    /// The catalog still publishes an older artifact for this set; null otherwise.
+    #[serde(deserialize_with = "crate::object::required_nullable")] pub held: Option<RuleSetHeld> [required = true],
+} }
+wire_object! { #[derive(Clone, Debug)]
+/// A page of one provider's catalog sets, ordered by name.
+pub struct RuleSetCatalogPage {
+    pub provider: RuleSetCatalogProvider,
+    pub items: Vec<RuleSetCatalogSet>,
+    /// Sets matching `q` in this catalog.
+    pub total: u32,
+    /// Opaque continuation cursor, or null when no further page is available.
+    #[serde(deserialize_with = "crate::object::required_nullable")] pub next_cursor: Option<String> [required = true],
+} }
+meshway_model::string_enum! {
+/// Member kind a rule-set entry page lists.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum RuleSetEntryKind {
+    /// Exact, suffix and subdomain names.
+    Domain,
+    Keyword,
+    /// Merged IPv4 ranges.
+    Ipv4,
+    /// Merged IPv6 ranges.
+    Ipv6,
+}
+}
+/// Query of `listRuleSetEntries`: URI fields, not a JSON body.
+#[derive(Debug, serde::Deserialize, utoipa::IntoParams)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[into_params(parameter_in = Query)]
+pub struct RuleSetEntriesQuery {
+    /// Member kind to list.
+    pub kind: RuleSetEntryKind,
+    /// `domain`: names ending with `q` (`openai.com` lists it and every name below it; `.openai.com` only the names below), compared after lowercasing and removing one trailing dot. `keyword`: keywords starting with `q`. `ipv4`／`ipv6`: an address; the page starts at the range containing it or the first range after it. Omission or empty lists from the start.
+    #[param(max_length = 253)]
+    pub q: Option<String>,
+    /// Maximum number of members to return, from 1 through 200; default 100.
+    #[serde(default, deserialize_with = "crate::networks::optional_limit")]
+    #[param(minimum = 1, maximum = 200)]
+    pub limit: Option<u16>,
+    /// Opaque continuation cursor from the preceding page with the same `kind` and `q`, limited to 4096 characters.
+    #[serde(default, deserialize_with = "crate::networks::optional_cursor")]
+    #[param(max_length = 4096)]
+    pub cursor: Option<String>,
+}
+crate::object::wire_tagged! { tag="kind"; #[derive(Clone, Debug, PartialEq, Eq)]
+/// One canonical member of a rule set.
+pub enum RuleSetMember {
+    /// Matches exactly this name.
+    Exact { name: String },
+    /// Matches the name and every name below it.
+    Suffix { name: String },
+    /// Matches only names below it.
+    Subdomain { name: String },
+    /// Matches every name containing it.
+    Keyword { keyword: String },
+    /// Matches every address from `first` through `last`, both included; adjacent and overlapping source CIDRs are merged.
+    IpRange { first: String, last: String },
+}
+}
+wire_object! { #[derive(Clone, Debug, PartialEq, Eq)]
+/// Members of the bound content by kind; address ranges are merged.
+pub struct RuleSetMemberCounts {
+    pub exact: u32,
+    pub suffix: u32,
+    pub subdomain: u32,
+    pub keyword: u32,
+    pub ipv4: u32,
+    pub ipv6: u32,
+} }
+wire_object! { #[derive(Clone, Debug)]
+/// A page of one kind of members of a rule set's bound content.
+pub struct RuleSetEntryPage {
+    pub key: String,
+    /// The bound artifact the page is read from; a cursor stays valid only while this binding is current.
+    pub digest: String [pattern = "^sha256:[0-9a-f]{64}$"],
+    pub kind: RuleSetEntryKind,
+    /// Members of every kind in the bound content.
+    pub counts: RuleSetMemberCounts,
+    /// `domain`: ordered by reversed name (names sharing a suffix are adjacent); `keyword`: sorted; addresses: ascending.
+    pub items: Vec<RuleSetMember>,
+    /// Opaque continuation cursor, or null when no further page is available.
+    #[serde(deserialize_with = "crate::object::required_nullable")] pub next_cursor: Option<String> [required = true],
+} }
+/// Query of `matchRuleSet`: exactly one of `name` and `ip`.
+#[derive(Debug, serde::Deserialize, utoipa::IntoParams)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[into_params(parameter_in = Query)]
+pub struct RuleSetMatchQuery {
+    /// DNS query name, judged as routing does: ASCII lowercase without one trailing dot, `_` allowed.
+    #[param(max_length = 254)]
+    pub name: Option<String>,
+    /// IPv4 or IPv6 address.
+    #[param(max_length = 64)]
+    pub ip: Option<String>,
+}
+wire_object! { #[derive(Clone, Debug)]
+/// Whether a rule set's bound content contains a name or address.
+pub struct RuleSetMatchResponse {
+    pub key: String,
+    /// The bound artifact that was judged.
+    pub digest: String [pattern = "^sha256:[0-9a-f]{64}$"],
+    /// The query as judged: the normalized name or the address.
+    pub query: String,
+    /// The member that matched, or null when the set does not contain the query. Names try suffix and subdomain members from the shortest, then exact, then keywords.
+    #[serde(deserialize_with = "crate::object::required_nullable")] pub member: Option<RuleSetMember> [required = true],
+} }
+
+impl From<meshway_rules::Counts> for RuleSetMemberCounts {
+    fn from(c: meshway_rules::Counts) -> Self {
+        Self {
+            exact: c.exact,
+            suffix: c.suffix,
+            subdomain: c.subdomain,
+            keyword: c.keyword,
+            ipv4: c.ipv4,
+            ipv6: c.ipv6,
+        }
+    }
+}
+
+impl From<meshway_rules::DomainEntry> for RuleSetMember {
+    fn from(entry: meshway_rules::DomainEntry) -> Self {
+        let name = entry.name;
+        match entry.kind {
+            meshway_rules::DomainKind::Exact => Self::Exact { name },
+            meshway_rules::DomainKind::Suffix => Self::Suffix { name },
+            meshway_rules::DomainKind::Subdomain => Self::Subdomain { name },
+        }
+    }
+}
+
+impl<A: std::fmt::Display> From<std::ops::RangeInclusive<A>> for RuleSetMember {
+    fn from(range: std::ops::RangeInclusive<A>) -> Self {
+        Self::IpRange {
+            first: range.start().to_string(),
+            last: range.end().to_string(),
+        }
+    }
+}
+
 impl From<&meshway_rules::Summary> for RuleSetConversion {
     fn from(summary: &meshway_rules::Summary) -> Self {
         let c = &summary.converted;

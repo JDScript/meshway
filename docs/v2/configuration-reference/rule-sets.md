@@ -120,7 +120,7 @@ Server 只用 `meshway-rules` 一份转换器，与发布仓库相同。每个�
 - 配置保存定义、来源和更新策略；`<provider>:<name>` 只保存引用本身。
 - artifact 全局内容寻址，跨网络只存一份、永久保留；每个配置版本按 key 绑定 digest。inline 内容在配置提交时转换并同样绑定 digest。
 - 每个 (来源, digest) 保存一份不可变溯源记录：源格式、上游 repo／ref／commit／path（provider 集合）、目录 sequence、`held` 与转换报告。
-- provider 目录按 (目录 URL, 信任钥集合) 持久保存已接受的最大 `sequence`；`sequence` 更小的目录（即使签名有效）为 `catalog_regressed`，不使用其内容。验签失败为 `signature_invalid`，artifact 与目录条目不符为 `integrity_failed`，目录中没有该集合为 `unknown_rule_set`。
+- provider 目录按 (目录 URL, 信任钥集合) 持久保存已接受的最大 `sequence` 及验签通过的 `index.json`／`index.json.sig` 原始字节（供[目录搜索](#浏览与命中查询)读取）；`sequence` 更小的目录（即使签名有效）为 `catalog_regressed`，不使用其内容。验签失败为 `signature_invalid`，artifact 与目录条目不符为 `integrity_failed`，目录中没有该集合为 `unknown_rule_set`。
 - 更新失败保留最后一份已验证内容并记录 `problem`，不发布半份内容；首次没有可用内容为 `not_ready`，引用它的规则不可执行。
 - 回滚使用历史版本绑定的 digest；artifact 永久保留，因此历史内容总可用。
 
@@ -138,6 +138,9 @@ validate 走相同准备与授权校验，但不存储 artifact、不预留版�
 | `GET /rule-sets/{ruleSetKey}` | `RuleSetList`，仅指定集合 |
 | `GET /rule-sets/{ruleSetKey}/report` | `RuleSetReport`：绑定内容的转换计数与前 1,000 条跳过条目；未绑定为 404 |
 | `POST /rule-sets/{ruleSetKey}/refresh` | 请求体 `RefreshRuleSetRequest { requestId }`；`RuleSetView`，下载、验签、转换、权限重验与绑定后的结果 |
+| `GET /rule-set-catalog?provider=&q=&cursor=&limit=` | `RuleSetCatalogPage`：本网络有效 provider 的已验签目录中的集合，见[浏览与命中查询](#浏览与命中查询) |
+| `GET /rule-sets/{ruleSetKey}/entries?kind=&q=&cursor=&limit=` | `RuleSetEntryPage`：绑定内容中一类成员的一页；未绑定为 404 |
+| `GET /rule-sets/{ruleSetKey}/match?name=` 或 `?ip=` | `RuleSetMatchResponse`：绑定内容是否包含该名称／地址及决定它的成员；未绑定为 404 |
 
 这些资源视图限本网络 Owner／Admin；节点只经 netmap 收到 digest 引用。下载保留 HTTPS 证书／主机名校验，拒绝重定向及非公网解析结果，并固定已验证地址。
 
@@ -161,6 +164,34 @@ validate 走相同准备与授权校验，但不存储 artifact、不预留版�
 手动刷新按 `requestId` 幂等：同一用户在同一网络用同一 `requestId` 重试同一 key 返回当前视图，不再下载；同一 `requestId` 用于另一 key 返回 409 `request_id_conflict`。请求 ID 保留 24 小时。周期检查没有请求 ID。
 
 刷新在同一配置 revision 下改变绑定，受影响节点的 netmap 只改变一个 digest 引用（新 serial、重签租约）。变更通过 `resources.changed` 通知有权管理该网络的 SSE 客户端。
+
+### 浏览与命中查询
+
+三个接口只读 Server 已验签、已绑定的内容，从不下载；权限与其他资源视图相同（本网络 Owner／Admin；成员 403，节点凭据 401）。分页沿用通用约定：`limit` 1–200、默认 100；`nextCursor` 不透明，只对同一用户、网络与相同查询参数有效 15 分钟，目录 `sequence` 或集合绑定的 digest 改变后旧游标失效；无效游标为 400 `invalid_cursor`，其他参数错误为 400 `invalid_request`。
+
+**目录搜索** `GET /rule-set-catalog`：
+
+- `provider` 必填，为本网络有效的 provider（内置项按 `ruleSetProviders` 替换或禁用后），否则 404；`q` 可省略，为集合名（`<name>`）的前缀，大小写不敏感，最长 128 字符。
+- 读取该 provider 的 (目录 URL, 信任钥集合) 最新接受的目录，只列其 `collection` 下的集合，按名称升序。目录在 Server 首次为任一网络准备该 provider 的集合（配置提交、手动刷新或周期检查）时验签保存；此前为 409 `rule_set_catalog_not_ready`（不是空列表）。从未被引用过的 provider（包括新部署上的内置 `geosite`／`geoip`）因此要先在配置中引用其一个集合。
+- `RuleSetCatalogPage`：`provider` 为 `{name, catalog, collection, sequence, generatedAt, verifiedAt}`；`items` 每项为 `{reference, name, set, digest, bytes, entries, upstream: {repo, ref, commit, path}, held}`，`reference` 即 `match.ruleSets` 的写法（`geosite:openai`），`set` 为目录键（`meta-geosite/openai`）；`total` 为匹配 `q` 的集合数。列出的 digest 是目录当前发布的内容，可能与某网络已绑定的不同。
+
+**成员列表** `GET /rule-sets/{ruleSetKey}/entries`：
+
+- 读取该 key（声明集合或 `<provider>:<name>` 隐式集合）当前绑定的 artifact；`kind` 必填，一次只列一类：
+
+| `kind` | 成员 | 顺序 | `q` |
+| --- | --- | --- | --- |
+| `domain` | `{kind: exact\|suffix\|subdomain, name}` | 按反转名称（共享后缀的名称相邻） | 名称以 `q` 结尾（按字节；`openai.com` 列出它本身与其下所有名称，`.openai.com` 只列其下名称），`q` 先小写、去结尾点 |
+| `keyword` | `{kind: keyword, keyword}` | 升序 | keyword 以 `q` 开头（小写后） |
+| `ipv4`／`ipv6` | `{kind: ipRange, first, last}` | 升序 | 一个该族地址：从包含它的区间或其后第一个区间开始 |
+
+- IP 成员按 artifact 原样以闭区间列出：相邻或重叠的源 CIDR 已合并，一个区间可对应多个 CIDR。`counts` 给出各类成员总数（`exact`／`suffix`／`subdomain`／`keyword`／`ipv4`／`ipv6`，后两项为区间数）。
+
+**命中查询** `GET /rule-sets/{ruleSetKey}/match`：
+
+- `name` 与 `ip` 恰给一个。名称按路由的查询名口径规范化（ASCII 小写、去一个结尾点，不做 DNS 名称校验，含 `_` 的名称照常判定），规范化后为空或超过 253 字节为 400；`ip` 为 IPv4 或 IPv6 地址。
+- 判定与节点相同（`meshway-rules` matcher）：名称先从最短的后缀／只子名称成员试起，再精确名称，最后 keyword；`member` 为决定命中的成员（`suffix`／`subdomain` 的 `name` 是被命中的成员名，`keyword` 为该 keyword，地址为所在区间），未命中为 null。`query` 为实际判定的规范值。
+- 只回答集合本身是否包含查询；该集合在路由中是否决定流量还取决于规则顺序与 profile，用[路径检测](/v2/configuration-reference/routing)判断。
 
 ## 下发
 

@@ -1,6 +1,6 @@
 # 规则集引擎设计草案
 
-> **R1 已实现格式与 crate；R2a 已接线 Server／Policy／Control。** `crates/meshway-rules` 与 `tools/meshway-rules-cli` 见 [R1 实测](#r1-实测)；R2a 的实际接口与验收见 [R2a 接线](#r2a-接线)，R3 见 [R3 节点侧出口分割](#r3-节点侧出口分割)。可用行为、字段与 HTTP 契约的唯一定义是 [Rule Sets](/v2/configuration-reference/rule-sets)、[Routing](/v2/configuration-reference/routing) 与 [Netmap 设计](/v2/node/netmap-design#rule-set-artifacts)；本页其余部分是设计记录，不加入文档导航。出口分割已移到节点（R3）；X6 尚未实现。
+> **R1 已实现格式与 crate；R2a 已接线 Server／Policy／Control。** `crates/meshway-rules` 与 `tools/meshway-rules-cli` 见 [R1 实测](#r1-实测)；R2a 的实际接口与验收见 [R2a 接线](#r2a-接线)，R3 见 [R3 节点侧出口分割](#r3-节点侧出口分割)。可用行为、字段与 HTTP 契约的唯一定义是 [Rule Sets](/v2/configuration-reference/rule-sets)、[Routing](/v2/configuration-reference/routing) 与 [Netmap 设计](/v2/node/netmap-design#rule-set-artifacts)；本页其余部分是设计记录，不加入文档导航。出口分割已移到节点（R3）；X6 可信域名关联已接线，见 [Exit 设计 · 可信域名关联](/v2/node/exit-design#trusted-dns-associations)。
 
 ## 目标与结论
 
@@ -354,7 +354,7 @@ Control 把 artifact 写入私有目录 `artifacts/sha256-<hex>.mwrs`（0400、�
 | 配置校验 | `shadowed_rule`、`exit_outside_access` 通过 matcher 迭代器读取 artifact 名称 | 诊断 |
 
 - `match_domain(name) -> Option<rule index>` 的“rule index”属于 Policy；`meshway-rules` 只回答集合成员关系与命中项。
-- 同一 IP 被多个名称解析且对应不相容动作时，沿用 [Exit 设计 · DNS 路径与可信域名上下文](/v2/node/exit-design#dns-路径与可信域名上下文) 与 [Routing](/v2/configuration-reference/routing#direct-unmanaged) 的既有决定：拒绝／不可执行，不选更宽路径；域名授权仍是解析地址集合。本稿不改变 X6 的可信关联生产者要求，域名型规则在 X6 前仍不可执行。
+- 同一 IP 被多个名称解析且对应不相容动作时，沿用 [Exit 设计 · DNS 路径与可信域名上下文](/v2/node/exit-design#dns-路径与可信域名上下文) 与 [Routing](/v2/configuration-reference/routing#direct-unmanaged) 的既有决定：拒绝／不可执行，不选更宽路径；域名授权仍是解析地址集合。名称规则只对可信关联的地址生效（X6 已交付）：出口 served 路径与 Server 校验都调用 `egress_rule_for_name`，节点判定以 `decide_with` 对“地址或其关联名称”first-match。
 - 出口分割：IP 规则集不展开为字符串 CIDR。节点用 Policy 从投影规则与 artifact 的合并区间（`ipv4_ranges()`／`ipv6_ranges()`）做 first-match 区间分割并安装为 nftables interval 集合，netmap 只带有序“规则→动作”（R3，[R3 节点侧出口分割](#r3-节点侧出口分割)）。
 
 ## R1 实测
@@ -526,7 +526,7 @@ meta `geosite/cn`（816,448 B），每个句柄打开后各执行 1,151 次查�
 | R2a Server＋Policy＋Control 接线（**已接线**，见 [R2a 接线](#r2a-接线)） | Server `resources/`（转换改用 R1、全局内容寻址存储、provider 目录与验签、`ruleSetProviders`、隐式展开、`RuleSetView` 新字段、`artifacts/{digest}` 路由与引用索引）；`meshway-configuration` netmap 类型（`RuleSetRef`、`meshway-netmap-2`）与配置类型；`meshway-policy` 的 `plan_match`／`capture`／validation 改用 matcher；`meshway-control` artifact 获取与缓存；OpenAPI／SDK 重生成 | R1 | 投影等价测试含规则集变异；缺 artifact fail closed；撤销不被下载阻塞；离线重启载入；1,000 节点引用同一 artifact 的 perf（Server 存储、刷新耗时、请求授权）；drift 与 Rust／TS 消费者 |
 | R2b 发布仓库 | `meshway-org/meshway-rules` 仓库、workflow、签名 secret、`dist` 分支 | R1 CLI；与 R2a 并行 | 上游未变不发布；单集合失败 hold；sequence 单调；Server 用钉住公钥验通一次真实目录 |
 | R3 出口分割物化（**已实现**，见 [R3 节点侧出口分割](#r3-节点侧出口分割)） | Policy 区间分割；Engine desired；Underlay nft interval 集合与私有捕获表 | R2a | 已完成：7,000 个 direct 区间的 `exit/off` 与全量 16 行矩阵；artifact 缺失保持全范围捕获 |
-| X6 可信域名 | 按 [Exit 设计](/v2/node/exit-design#工作包与依赖) 的 X6 边界；DNS owner 查询时调用 Policy `egress_rule_for_name` | R2a | 同 IP 多名称冲突、TTL、跨 profile 不复用；域名规则仅在可信关联存在时可执行 |
+| X6 可信域名（**已交付**） | 按 [Exit 设计](/v2/node/exit-design#工作包与依赖) 的 X6 边界；DNS owner 查询时调用 Policy `egress_rule_for_name` | R2a | 已验：同 IP 多名称冲突、TTL、跨 selection 不复用、域名规则仅在可信关联存在时可执行（`exit/off` 第 10 阶段） |
 
 ## 需用户决定
 
@@ -539,7 +539,7 @@ R0 列出的七项已由用户决定并写入相应章节：regex v1 逐条跳�
 | 配置 | `meshway-configuration`：`RuleSet::Inline.domainSubdomain`；`RuleSetFormat` 增 `mihomo-domain-text`／`mihomo-ipcidr-text`／`classical`；`ruleSetProviders: key → RuleSetProvider \| null`；内置 provider 表与 `<provider>:<name>` 解析（`providers`）；校验码 `invalid_rule_set_key`、`unknown_rule_set_provider`、`invalid_rule_set_provider`（R2a 的警告 `rule_set_partition_limit` 已由 R3 的 `egress_partition_limit` 取代） |
 | netmap | `projection.ruleSets: key → RuleSetRef { digest, format, bytes, entries }`，投影不含任何集合定义；`compilerVersion` `meshway-netmap-2` |
 | Policy | `compile::rules`：规则自身列表经 `RuleSet::from_inline`、引用集合经已加载句柄，逐规则 `match_domain`／`match_ip`；路径检测、出口分割（R3 起为区间分割，见下节）、节点 `LocalCompiler::{egress_rule_for_ip, egress_rule_for_name, effective, missing}` 与配置校验（`shadowed_rule`／`exit_outside_access` 读 artifact 迭代器）共用；缺句柄即 `UnavailableDependency` |
-| Server | `resources/rulesets`（来源与转换适配）、`catalogs`（目录验签，一次准备内共用目录）、`artifacts`（全局内容寻址 `rule_set_artifacts`、每 (来源, digest) 溯源 `rule_set_records`、每进程每 digest 一个 `Arc<RuleSet>`）、`rule_set_catalogs`（持久 sequence 单调）、`node_netmap_artifacts`（netmap 写入同事务的引用索引）；`GET /rule-sets` 含隐式项，`GET /rule-sets/{key}/report`，`GET /agent-api/v1/artifacts/{digest}`；schema 版本 3 |
+| Server | `resources/rulesets`（来源与转换适配）、`catalogs`（目录验签，一次准备内共用目录）、`artifacts`（全局内容寻址 `rule_set_artifacts`、每 (来源, digest) 溯源 `rule_set_records`、每进程每 digest 一个 `Arc<RuleSet>`）、`rule_set_catalogs`（持久 sequence 单调，保存验签通过的目录原文）、`browse`（目录搜索、成员列表与命中查询，只读）、`node_netmap_artifacts`（netmap 写入同事务的引用索引）；`GET /rule-sets` 含隐式项，`GET /rule-sets/{key}/report`、`/entries`、`/match`，`GET /rule-set-catalog`，`GET /agent-api/v1/artifacts/{digest}`；schema 版本 4 |
 | Node | `meshway-control::netmap::artifacts`（取、校验、0400 原子落盘、按引用 GC、离线载入，sync 后顺序取回）；`meshway_engine::Netmap.artifacts` 与 `Desired::{missing, same}`；组件以 `Desired::same` 判断期望状态是否变化；IPC 8 `NetmapStatus.{missingArtifacts, artifactProblem}` |
 | 生成链 | 生成器支持 `application/vnd.meshway.*` 二进制 GET（Rust 返回 `Vec<u8>`，TS 客户端不生成该 Node 专用操作） |
 
@@ -564,7 +564,6 @@ R0 列出的七项已由用户决定并写入相应章节：regex v1 逐条跳�
 - 减少 50 % hold、保留 7 份目录与 issue 由 R2b workflow 实现；CLI 的 `SetRecord.held` 已可写入，workflow 尚未写入目录。
 - 打开耗时与 FST 节点数线性相关（3.66 MB 约 42 ms）；若需更快，可只在 Server 入库时做 FST 证明、节点以 digest 信任，但那会让“任意字节不 panic”依赖 digest 来源，需另行决定。
 - R3 的导向用私有捕获表路由而不是设计稿的 nft fwmark：fwmark 重路由不改源地址，需源端 SNAT 并在严格 rp_filter 下失去回复路径；是否仍要求 fwmark 方案待用户决定。
-- X6 可信关联生产者仍不存在；本设计让 DNS 查询时匹配变快，但不让域名型出口规则变为可执行。
 - 我们的规范化会拒绝 sing-box／mihomo 接受的部分名称（例如 `xn--wcvs22d1m.hk`、含 `_` 的名称），这些条目被报告并跳过，与上游语义存在差距（[规范化](#规范化与-digest)）。
 - 目录超过 7 天未前进时的 `stale` 视图字段未实现。
 - 1,000 节点共享一个 artifact 的 Server perf（存储、刷新耗时、授权查询）未测。

@@ -5,7 +5,12 @@ import type {
 } from "@meshway/control-client"
 
 import { pointerOf } from "./jsonc"
-import { badDestination, EXACT_PREFIX, matchKind } from "./routing"
+import {
+  badDestination,
+  EXACT_PREFIX,
+  matchKind,
+  SUBDOMAIN_PREFIX,
+} from "./routing"
 
 // Rule sets as the form edits them (rule-sets.md): inline prefixes, domain
 // suffixes and exact names (written as a route's match is), or a remote HTTPS source the controller downloads and
@@ -18,7 +23,33 @@ export const RULE_SET_FORMATS: readonly RuleSetFormat[] = [
   "sing-box-source",
   "mihomo-domain",
   "mihomo-ipcidr",
+  "mihomo-domain-text",
+  "mihomo-ipcidr-text",
+  "classical",
 ]
+
+/**
+ * The catalogs the controller has built in (rule-sets.md, `ruleSetProviders`):
+ * `geosite:<name>` and `geoip:<code>` read from meshway-org/meshway-rules
+ * unless the configuration replaces or turns one off.
+ */
+export const BUILTIN_PROVIDERS: readonly string[] = ["geosite", "geoip"]
+
+/** The providers a reference can name: the built-in ones not turned off, and the configuration's own. */
+export function effectiveProviders(
+  overrides: Readonly<Record<string, unknown>>
+): string[] {
+  return [
+    ...BUILTIN_PROVIDERS.filter((name) => overrides[name] !== null),
+    ...Object.entries(overrides)
+      .filter(
+        ([name, provider]) =>
+          provider !== null && !BUILTIN_PROVIDERS.includes(name)
+      )
+      .map(([name]) => name)
+      .sort(),
+  ]
+}
 
 /** The update interval the controller keeps when none is written. */
 export const DEFAULT_INTERVAL = "24h"
@@ -65,6 +96,7 @@ function comparable(set: RuleSet) {
         type: "inline",
         domainSuffix: sorted(set.domainSuffix),
         domain: sorted(set.domain),
+        domainSubdomain: sorted(set.domainSubdomain),
         ipCIDR: sorted(set.ipCIDR),
       }
     : {
@@ -90,10 +122,11 @@ export function sameRuleSets(a: RuleSetMap, b: RuleSetMap): boolean {
 
 type Inline = Extract<RuleSet, { type: "inline" }>
 
-/** An inline set's values as chips: domain suffixes, exact names, then prefixes. */
+/** An inline set's values as chips: domain suffixes, exact names, names below (`.`), then prefixes. */
 export const inlineValues = (set: Inline) => [
   ...(set.domainSuffix ?? []),
   ...(set.domain ?? []).map((name) => EXACT_PREFIX + name),
+  ...(set.domainSubdomain ?? []).map((name) => SUBDOMAIN_PREFIX + name),
   ...(set.ipCIDR ?? []),
 ]
 
@@ -102,6 +135,7 @@ export const inlineParts = (set: Inline) =>
   [
     ["domainSuffix", set.domainSuffix?.length ?? 0],
     ["domain", set.domain?.length ?? 0],
+    ["domainSubdomain", set.domainSubdomain?.length ?? 0],
     ["ipCIDR", set.ipCIDR?.length ?? 0],
   ] as const
 
@@ -109,16 +143,20 @@ export const inlineParts = (set: Inline) =>
 export function inlineOf(values: readonly string[]): RuleSet {
   const domainSuffix: string[] = []
   const domain: string[] = []
+  const domainSubdomain: string[] = []
   const ipCIDR: string[] = []
   for (const value of values) {
     const kind = matchKind(value)
     if (kind === "exact") domain.push(value.slice(EXACT_PREFIX.length))
+    else if (kind === "subdomain")
+      domainSubdomain.push(value.slice(SUBDOMAIN_PREFIX.length))
     else if (kind === "cidr") ipCIDR.push(value)
     else domainSuffix.push(value)
   }
   const out: RuleSet = { type: "inline" }
   if (domainSuffix.length > 0) out.domainSuffix = domainSuffix
   if (domain.length > 0) out.domain = domain
+  if (domainSubdomain.length > 0) out.domainSubdomain = domainSubdomain
   if (ipCIDR.length > 0) out.ipCIDR = ipCIDR
   return out
 }
@@ -135,10 +173,11 @@ export function writtenRuleSet(set: RuleSet): RuleSet {
   return out
 }
 
-/** A key a set may have: a name, no white space (a set is named in a match as `set:<key>`). */
-const isSetKey = (key: string) => key !== "" && !/\s/.test(key)
+/** A key a set may have: a name, no white space (a set is named in a match as `set:<key>`), no `:` (it names a catalog set). */
+const isSetKey = (key: string) => key !== "" && !/[\s:]/.test(key)
 
-export type RuleSetCode = "empty" | "destination" | "url" | "duration" | "key"
+export type RuleSetCode =
+  "empty" | "destination" | "url" | "duration" | "set_key"
 
 export type RuleSetProblem = { path: string; code: RuleSetCode }
 
@@ -147,7 +186,7 @@ export function ruleSetProblems(sets: RuleSetMap): RuleSetProblem[] {
   for (const [key, set] of Object.entries(sets)) {
     const at = (field?: string) =>
       pointerOf(field ? ["ruleSets", key, field] : ["ruleSets", key])
-    if (!isSetKey(key)) out.push({ path: at(), code: "key" })
+    if (!isSetKey(key)) out.push({ path: at(), code: "set_key" })
     if (set.type === "inline") {
       const values = inlineValues(set)
       if (values.length === 0) out.push({ path: at(), code: "empty" })

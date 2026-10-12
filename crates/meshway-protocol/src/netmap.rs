@@ -7,7 +7,12 @@
 use crate::connectivity::{UdpTraversalRequestIds, UdpTraversalRequests};
 use crate::object::{wire_object, wire_tagged};
 use chrono::{DateTime, Utc};
-use meshway_configuration::netmap::{CompiledNetmap, NetmapDelta, NodeNetmap};
+use meshway_configuration::{
+    execution::ExecutionAddress,
+    netmap::{
+        AssociationRecordType, CompiledNetmap, DnsAssociationOverlay, NetmapDelta, NodeNetmap,
+    },
+};
 use meshway_model::{
     Digest, KeyId, NetmapLease, NetmapRef, NetworkId, NodeId, NodePublicKey, Sequence, StateEpoch,
     Version,
@@ -39,6 +44,9 @@ pub struct SyncRequest {
     /// Attempt IDs of the previous answer's `traversalRequests` the Node already holds; a live request not listed here answers the hold at once. Omission: none held.
     #[serde(default)]
     pub traversal_requests: UdpTraversalRequestIds,
+    /// Digest of the DNS association overlay the Node holds for `netmap`; null or omission: none.
+    #[serde(default)]
+    pub associations: Option<Digest>,
 } }
 
 wire_tagged! {
@@ -272,6 +280,81 @@ pub struct SyncResponse {
     pub key_rotation: Option<NetmapKeyRotation> [required = true],
     /// Live UDP traversal attempts other Nodes prepared toward this Node that it has not accepted yet; empty when none. Hints only, outside the signed lease.
     pub traversal_requests: UdpTraversalRequests,
+    /// The Node's current DNS association overlay when it differs from the one the request named (an empty `associations` list clears it); null when unchanged.
+    pub associations: Option<DnsAssociationsUpdate> [required = true],
+} }
+
+wire_object! {
+#[derive(Clone, Debug, PartialEq, Eq)]
+/// A signed DNS association overlay for the requesting Node.
+pub struct DnsAssociationsUpdate {
+    /// Complete overlay for the netmap of this answer's lease.
+    pub overlay: DnsAssociationOverlay,
+    /// Signature over `dns_associations_transcript` by the key of the answer's `signature`.
+    pub signature: NetmapSignature,
+    /// Signature of the same overlay by the successor key while `keyRotation` is present; null otherwise.
+    pub rotation_signature: Option<NetmapSignature> [required = true],
+} }
+
+/// Canonical transcript of one DNS association overlay for one Node and
+/// signer key: domain, network, Node, the overlay's netmap reference, its
+/// digest, signer kind, key ID and generation; fixed width, big-endian.
+pub fn dns_associations_transcript(
+    network: NetworkId,
+    node: NodeId,
+    netmap: &NetmapRef,
+    digest: &Digest,
+    key_id: KeyId,
+    key_generation: Version,
+) -> Vec<u8> {
+    let mut message = Vec::with_capacity(176);
+    message.extend_from_slice(b"meshway/dns-associations/v1\0");
+    message.extend_from_slice(network.as_uuid().as_bytes());
+    message.extend_from_slice(node.as_uuid().as_bytes());
+    message.extend_from_slice(&netmap.revision.get().to_be_bytes());
+    message.extend_from_slice(&netmap.serial.get().to_be_bytes());
+    message.extend_from_slice(netmap.digest.as_bytes());
+    message.extend_from_slice(digest.as_bytes());
+    message.push(NetmapSigner::Server as u8);
+    message.extend_from_slice(key_id.as_uuid().as_bytes());
+    message.extend_from_slice(&key_generation.get().to_be_bytes());
+    message
+}
+
+wire_object! {
+#[derive(Clone, Debug, PartialEq, Eq)]
+/// `POST /agent-api/v1/dns-associations`: an exit resolver's answer to one query of a source it serves, whose name a name rule of that source decides.
+pub struct DnsAssociationReport {
+    /// Netmap the reporting exit held when it served the query.
+    pub netmap: NetmapRef,
+    /// Single-use identifier of this completion.
+    pub report_id: meshway_model::RequestId,
+    /// Source whose authenticated query was answered.
+    pub source: NodeId,
+    /// Source egress selection identity from the served DNS service.
+    pub generation: Digest,
+    /// Queried name, ASCII lowercase without a trailing dot.
+    pub name: String,
+    /// Record type of the query.
+    pub record_type: AssociationRecordType,
+    /// CNAME chain of the answer in order from `name`; at most 8.
+    pub cnames: Vec<String>,
+    /// Public addresses of the answer for `recordType`, sorted and unique; 1 to 16.
+    pub addresses: Vec<ExecutionAddress>,
+    /// Shortest TTL of the chain and address records, in seconds.
+    pub ttl_seconds: u32,
+    /// When the exit's resolver answered.
+    #[serde(rename = "resolvedAt", with = "meshway_model::timestamp")]
+    pub resolved_at_ms: u64 [value_type = meshway_model::timestamp::Timestamp],
+} }
+
+wire_object! {
+#[derive(Clone, Debug, PartialEq, Eq)]
+/// An accepted association; the source receives it in its next sync answer.
+pub struct DnsAssociationAccepted {
+    /// End of the accepted association.
+    #[serde(rename = "expiresAt", with = "meshway_model::timestamp")]
+    pub expires_at_ms: u64 [value_type = meshway_model::timestamp::Timestamp],
 } }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -299,6 +382,22 @@ impl SyncResponse {
             SyncNetmap::Delta { .. } => return Err(InconsistentSyncResponse),
         };
         if target != self.lease.netmap {
+            return Err(InconsistentSyncResponse);
+        }
+        if let Some(update) = &self.associations
+            && (update.overlay.netmap != target
+                || update.overlay.validate().is_err()
+                || update.signature.key_id != self.signature.key_id
+                || update.signature.key_generation != self.signature.key_generation
+                || update
+                    .rotation_signature
+                    .as_ref()
+                    .map(|s| (s.key_id, s.key_generation))
+                    != self
+                        .key_rotation
+                        .as_ref()
+                        .map(|r| (r.lease_signature.key_id, r.lease_signature.key_generation)))
+        {
             return Err(InconsistentSyncResponse);
         }
         // A Node is never asked to accept its own attempt, and each attempt appears once.
@@ -473,6 +572,7 @@ mod tests {
             state: None,
             server_key_generation: Some(Version::MIN),
             traversal_requests: Default::default(),
+            associations: None,
         };
         let next = ServerSigningKey {
             key_id: "00000000-0000-4000-8000-0000000000bb".parse().unwrap(),
@@ -499,6 +599,7 @@ mod tests {
             peer_facts: None,
             key_rotation: Some(rotation.clone()),
             traversal_requests: Default::default(),
+            associations: None,
         };
         assert_eq!(response.check(&request), Ok(()));
         let text = serde_json::to_string(&response).unwrap();
@@ -529,6 +630,7 @@ mod tests {
             state: None,
             server_key_generation: None,
             traversal_requests: Default::default(),
+            associations: None,
         };
         let response = SyncResponse {
             lease: NetmapLease::new(base, 0, 60_000).unwrap(),
@@ -537,6 +639,7 @@ mod tests {
             peer_facts: None,
             key_rotation: None,
             traversal_requests: Default::default(),
+            associations: None,
         };
         assert_eq!(response.check(&request), Ok(()));
         let stale = SyncRequest {
@@ -544,6 +647,7 @@ mod tests {
             state: None,
             server_key_generation: None,
             traversal_requests: Default::default(),
+            associations: None,
         };
         assert!(response.check(&stale).is_err());
         let text = serde_json::to_string(&response).unwrap();
@@ -563,6 +667,7 @@ mod tests {
                 state: None,
                 server_key_generation: None,
                 traversal_requests: Default::default(),
+                associations: None,
             }
         );
     }
@@ -591,6 +696,7 @@ mod tests {
             state: Some(cursor(4)),
             server_key_generation: None,
             traversal_requests: Default::default(),
+            associations: None,
         };
         let mut response = SyncResponse {
             lease: NetmapLease::new(base, 0, 60_000).unwrap(),
@@ -599,6 +705,7 @@ mod tests {
             peer_facts: Some(facts(Some(cursor(4)))),
             key_rotation: None,
             traversal_requests: Default::default(),
+            associations: None,
         };
         assert_eq!(response.check(&request), Ok(()));
         response.peer_facts = Some(facts(Some(cursor(2))));

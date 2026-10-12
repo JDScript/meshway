@@ -13,6 +13,8 @@ pub(crate) enum CursorScope {
     NetworkActivity { user: UserId, network: NetworkId },
     Revisions { user: UserId, network: NetworkId },
     ObservationHistory(meshway_model::Digest),
+    RuleSetCatalog { user: UserId, network: NetworkId },
+    RuleSetEntries { user: UserId, network: NetworkId },
 }
 
 impl CursorScope {
@@ -52,6 +54,16 @@ impl CursorScope {
             }
             Self::NetworkActivity { user, network } => {
                 bytes.push(5);
+                bytes.extend_from_slice(user.as_uuid().as_bytes());
+                bytes.extend_from_slice(network.as_uuid().as_bytes());
+            }
+            Self::RuleSetCatalog { user, network } => {
+                bytes.push(10);
+                bytes.extend_from_slice(user.as_uuid().as_bytes());
+                bytes.extend_from_slice(network.as_uuid().as_bytes());
+            }
+            Self::RuleSetEntries { user, network } => {
+                bytes.push(11);
                 bytes.extend_from_slice(user.as_uuid().as_bytes());
                 bytes.extend_from_slice(network.as_uuid().as_bytes());
             }

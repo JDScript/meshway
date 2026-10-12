@@ -141,6 +141,45 @@ impl NetmapSigningKeys {
     }
 }
 
+impl NetmapSigningKeys {
+    /// Signatures of one DNS association overlay for one Node by the same
+    /// keys as its lease: the answer's key and, while a window is open, the
+    /// successor (`rotationSignature`).
+    pub(crate) fn sign_associations(
+        &self,
+        tx: &Transaction<'_>,
+        network: NetworkId,
+        node: NodeId,
+        overlay: &meshway_configuration::netmap::DnsAssociationOverlay,
+        now: i64,
+    ) -> Result<(NetmapSignature, Option<NetmapSignature>), Error> {
+        let digest = overlay
+            .digest()
+            .map_err(|_| Error::Internal("association digest"))?;
+        let keys = store::signing_keys(tx, now)?;
+        let one = |row: &store::SigningKeyRow| -> Result<NetmapSignature, Error> {
+            let key = self.key(row)?;
+            let message = meshway_protocol::dns_associations_transcript(
+                network,
+                node,
+                &overlay.netmap,
+                &digest,
+                row.public.key_id,
+                row.public.key_generation,
+            );
+            Ok(NetmapSignature {
+                key_id: row.public.key_id,
+                key_generation: row.public.key_generation,
+                signature: URL_SAFE_NO_PAD.encode(key.sign(&message).to_bytes()),
+            })
+        };
+        match &keys.rotating {
+            None => Ok((one(&keys.current)?, None)),
+            Some((rotating, _)) => Ok((one(rotating)?, Some(one(&keys.current)?))),
+        }
+    }
+}
+
 fn sign(
     key: &SigningKey,
     public: &ServerSigningKey,

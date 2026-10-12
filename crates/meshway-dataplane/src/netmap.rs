@@ -11,7 +11,9 @@ use meshway_configuration::{
     netmap::CompiledNetmap,
 };
 use meshway_model::{BoundNodeKey, Digest, NetmapRef, NetworkId, NodeId};
-use meshway_policy::compile::netmap::{Decision, LocalCompiler, LocalDecision, Target};
+use meshway_policy::compile::netmap::{
+    Associations, Decision, LocalCompiler, LocalDecision, Target,
+};
 use meshway_transport::spec::Port;
 use sha2::{Digest as _, Sha256};
 use std::{collections::BTreeMap, net::IpAddr, sync::Arc};
@@ -41,6 +43,8 @@ pub(crate) enum Outcome {
 pub(crate) struct Decisions {
     content: Option<NetmapRef>,
     compiler: Option<Arc<LocalCompiler>>,
+    /// Trusted DNS associations of the desired state; empty for other content.
+    associations: Arc<Associations>,
     dns: BTreeMap<NodeId, Arc<meshway_configuration::netmap::DnsService>>,
     /// Permitted decisions carry the pair's complete service set.
     permitted: BTreeMap<(NodeId, IpAddr), Arc<Decision>>,
@@ -92,6 +96,7 @@ impl Decisions {
         Self {
             content: Some(desired.reference()),
             compiler: Some(desired.compiler().clone()),
+            associations: desired.associations().clone(),
             ..Default::default()
         }
     }
@@ -146,7 +151,13 @@ impl Decisions {
             .compiler
             .as_ref()
             .expect("bound compiler")
-            .decide(source, destination, service.0, service.1)
+            .decide_with(
+                source,
+                destination,
+                service.0,
+                service.1,
+                &self.associations,
+            )
             .map_err(|_| {
                 crate::Error::Admission(meshway_policy::admission::AdmissionError::Configuration)
             })?;

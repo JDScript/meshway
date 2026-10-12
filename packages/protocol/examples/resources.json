@@ -224,6 +224,99 @@
       }
     }
   },
+  "listRuleSetCatalog": {
+    "responses": {
+      "200": {
+        "provider": {
+          "name": "geosite",
+          "catalog": "https://raw.githubusercontent.com/meshway-org/meshway-rules/dist/index.json",
+          "collection": "meta-geosite",
+          "sequence": 2,
+          "generatedAt": "2026-10-08T04:48:51Z",
+          "verifiedAt": "2026-10-08T09:07:00Z"
+        },
+        "items": [
+          {
+            "reference": "geosite:openai",
+            "name": "openai",
+            "set": "meta-geosite/openai",
+            "digest": "sha256:44ab0c1a4c37ef326a172e57f7ef86113ebb7d511450eff4606c870823a55fbe",
+            "bytes": 592,
+            "entries": 22,
+            "upstream": {
+              "repo": "MetaCubeX/meta-rules-dat",
+              "ref": "meta",
+              "commit": "83c8208bdfae92b1caaa29745f51f233b6f1847e",
+              "path": "geo/geosite/classical/openai.list"
+            },
+            "held": null
+          },
+          {
+            "reference": "geosite:openai@ads",
+            "name": "openai@ads",
+            "set": "meta-geosite/openai@ads",
+            "digest": "sha256:b22858aaa68f4b5c3956f733222508d3729f8c1ed1075e6d5b5e46de005b0552",
+            "bytes": 288,
+            "entries": 3,
+            "upstream": {
+              "repo": "MetaCubeX/meta-rules-dat",
+              "ref": "meta",
+              "commit": "83c8208bdfae92b1caaa29745f51f233b6f1847e",
+              "path": "geo/geosite/classical/openai@ads.list"
+            },
+            "held": null
+          }
+        ],
+        "total": 13,
+        "nextCursor": "bXdzYwHk3Q8n6rJ0Yh2uVf1sPq9cLx4aTz7oWm5eKb3gNd8iRy"
+      }
+    }
+  },
+  "listRuleSetEntries": {
+    "responses": {
+      "200": {
+        "key": "geosite:openai",
+        "digest": "sha256:44ab0c1a4c37ef326a172e57f7ef86113ebb7d511450eff4606c870823a55fbe",
+        "kind": "domain",
+        "counts": {
+          "exact": 9,
+          "suffix": 13,
+          "subdomain": 0,
+          "keyword": 0,
+          "ipv4": 0,
+          "ipv6": 0
+        },
+        "items": [
+          {
+            "kind": "suffix",
+            "name": "turn.livekit.cloud"
+          },
+          {
+            "kind": "suffix",
+            "name": "chatgpt.livekit.cloud"
+          },
+          {
+            "kind": "suffix",
+            "name": "host.livekit.cloud"
+          }
+        ],
+        "nextCursor": null
+      }
+    }
+  },
+  "matchRuleSet": {
+    "responses": {
+      "200": {
+        "key": "geosite:openai",
+        "digest": "sha256:44ab0c1a4c37ef326a172e57f7ef86113ebb7d511450eff4606c870823a55fbe",
+        "query": "api.openai.com",
+        "member": {
+          "kind": "suffix",
+          "name": "openai.com"
+        }
+      }
+    }
+  },
   "refreshRuleSet": {
     "request": {
       "requestId": "7c9e6679-7425-40de-944b-e07fc1f90ae7"

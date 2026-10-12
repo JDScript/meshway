@@ -119,9 +119,7 @@ function NodesPage() {
             <AddNode
               networkId={networkId}
               network={network}
-              nodes={nodes.data}
               onClose={nav.closeWorkspace}
-              onOpenNode={(nodeId) => nav.openNode(nodeId)}
             />
           ) : null
         }

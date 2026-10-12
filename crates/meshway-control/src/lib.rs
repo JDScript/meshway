@@ -5,6 +5,7 @@
 //! verified netmap and retry identities. It never reports a netmap as applied.
 #![forbid(unsafe_code)]
 
+mod associations;
 mod authority;
 mod clock;
 pub mod connectivity;

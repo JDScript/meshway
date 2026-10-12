@@ -903,6 +903,14 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "AssociationRecordType": {
+        "type": "string",
+        "description": "Address record type of an answered query.",
+        "enum": [
+          "a",
+          "aaaa"
+        ]
+      },
       "AuthOptionsResponse": {
         "type": "object",
         "description": "Public registration settings and input validation rules.",
@@ -3500,6 +3508,190 @@ export const schemaDocument = {
         "maxLength": 64,
         "minLength": 64,
         "pattern": "^[0-9a-f]{64}$"
+      },
+      "DnsAssociation": {
+        "type": "object",
+        "description": "One name a source's exit resolver answered, for that source only.",
+        "required": [
+          "source",
+          "generation",
+          "name",
+          "recordType",
+          "cnames",
+          "addresses",
+          "expiresAt"
+        ],
+        "properties": {
+          "addresses": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExecutionAddress"
+            },
+            "description": "Public addresses of the answer for `recordType`, sorted and unique; 1 to 16."
+          },
+          "cnames": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "CNAME chain in answer order, from `name` to the owner of `addresses`; at most 8."
+          },
+          "expiresAt": {
+            "$ref": "#/components/schemas/Timestamp",
+            "description": "End of the association: the answer's shortest TTL (30 s to 1 h) after resolution."
+          },
+          "generation": {
+            "$ref": "#/components/schemas/Digest",
+            "description": "Source egress selection identity the answer belongs to; another selection never reuses it."
+          },
+          "name": {
+            "type": "string",
+            "description": "Queried name: ASCII lowercase without a trailing dot."
+          },
+          "recordType": {
+            "$ref": "#/components/schemas/AssociationRecordType",
+            "description": "Record type of the answered query."
+          },
+          "source": {
+            "$ref": "#/components/schemas/NodeId",
+            "description": "Source Node whose query produced the answer."
+          }
+        },
+        "additionalProperties": false
+      },
+      "DnsAssociationAccepted": {
+        "type": "object",
+        "description": "An accepted association; the source receives it in its next sync answer.",
+        "required": [
+          "expiresAt"
+        ],
+        "properties": {
+          "expiresAt": {
+            "$ref": "#/components/schemas/Timestamp",
+            "description": "End of the accepted association."
+          }
+        },
+        "additionalProperties": false
+      },
+      "DnsAssociationOverlay": {
+        "type": "object",
+        "description": "Every association the receiving Node may use: those of its own queries and, at an exit resolver, those of the sources it serves.",
+        "required": [
+          "netmap",
+          "associations"
+        ],
+        "properties": {
+          "associations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DnsAssociation"
+            },
+            "description": "Associations sorted by source, name and record type, at most one per triple."
+          },
+          "netmap": {
+            "$ref": "#/components/schemas/NetmapRef",
+            "description": "Exact netmap of the receiving Node; any other netmap makes the overlay unusable."
+          }
+        },
+        "additionalProperties": false
+      },
+      "DnsAssociationReport": {
+        "type": "object",
+        "description": "`POST /agent-api/v1/dns-associations`: an exit resolver's answer to one query of a source it serves, whose name a name rule of that source decides.",
+        "required": [
+          "netmap",
+          "reportId",
+          "source",
+          "generation",
+          "name",
+          "recordType",
+          "cnames",
+          "addresses",
+          "ttlSeconds",
+          "resolvedAt"
+        ],
+        "properties": {
+          "addresses": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExecutionAddress"
+            },
+            "description": "Public addresses of the answer for `recordType`, sorted and unique; 1 to 16."
+          },
+          "cnames": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "CNAME chain of the answer in order from `name`; at most 8."
+          },
+          "generation": {
+            "$ref": "#/components/schemas/Digest",
+            "description": "Source egress selection identity from the served DNS service."
+          },
+          "name": {
+            "type": "string",
+            "description": "Queried name, ASCII lowercase without a trailing dot."
+          },
+          "netmap": {
+            "$ref": "#/components/schemas/NetmapRef",
+            "description": "Netmap the reporting exit held when it served the query."
+          },
+          "recordType": {
+            "$ref": "#/components/schemas/AssociationRecordType",
+            "description": "Record type of the query."
+          },
+          "reportId": {
+            "$ref": "#/components/schemas/RequestId",
+            "description": "Single-use identifier of this completion."
+          },
+          "resolvedAt": {
+            "$ref": "#/components/schemas/Timestamp",
+            "description": "When the exit's resolver answered."
+          },
+          "source": {
+            "$ref": "#/components/schemas/NodeId",
+            "description": "Source whose authenticated query was answered."
+          },
+          "ttlSeconds": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Shortest TTL of the chain and address records, in seconds.",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "DnsAssociationsUpdate": {
+        "type": "object",
+        "description": "A signed DNS association overlay for the requesting Node.",
+        "required": [
+          "overlay",
+          "signature",
+          "rotationSignature"
+        ],
+        "properties": {
+          "overlay": {
+            "$ref": "#/components/schemas/DnsAssociationOverlay",
+            "description": "Complete overlay for the netmap of this answer's lease."
+          },
+          "rotationSignature": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NetmapSignature",
+                "description": "Signature of the same overlay by the successor key while `keyRotation` is present; null otherwise."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "signature": {
+            "$ref": "#/components/schemas/NetmapSignature",
+            "description": "Signature over `dns_associations_transcript` by the key of the answer's `signature`."
+          }
+        },
+        "additionalProperties": false
       },
       "DnsConfiguration": {
         "type": "object",
@@ -13455,6 +13647,32 @@ export const schemaDocument = {
           },
           {
             "type": "object",
+            "description": "The Server has not yet verified the provider's catalog: it does so the first time it prepares one of the provider's sets (a configuration change, a refresh or a periodic check) for any network; returns HTTP 409.",
+            "required": [
+              "code",
+              "params",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "rule_set_catalog_not_ready"
+                ]
+              },
+              "message": {
+                "type": "string",
+                "description": "Safe fallback text. Clients branch on code."
+              },
+              "params": {
+                "$ref": "#/components/schemas/EmptyParams",
+                "description": "Structured context defined by this problem code, or an empty object when none is exposed."
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
             "description": "The State report's execution scope changed; returns HTTP 409, so refresh the scope and observe again.",
             "required": [
               "code",
@@ -14691,6 +14909,144 @@ export const schemaDocument = {
           "refreshed"
         ]
       },
+      "RuleSetCatalogPage": {
+        "type": "object",
+        "description": "A page of one provider's catalog sets, ordered by name.",
+        "required": [
+          "provider",
+          "items",
+          "total",
+          "nextCursor"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RuleSetCatalogSet"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Opaque continuation cursor, or null when no further page is available."
+          },
+          "provider": {
+            "$ref": "#/components/schemas/RuleSetCatalogProvider"
+          },
+          "total": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Sets matching `q` in this catalog.",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "RuleSetCatalogProvider": {
+        "type": "object",
+        "description": "The verified catalog a provider's sets are listed from.",
+        "required": [
+          "name",
+          "catalog",
+          "collection",
+          "sequence",
+          "generatedAt",
+          "verifiedAt"
+        ],
+        "properties": {
+          "catalog": {
+            "type": "string",
+            "description": "Catalog `index.json` URL."
+          },
+          "collection": {
+            "type": "string",
+            "description": "Catalog collection of the provider."
+          },
+          "generatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the publisher generated that catalog."
+          },
+          "name": {
+            "type": "string",
+            "description": "Provider name, the part of a reference before `:`."
+          },
+          "sequence": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Sequence of the newest catalog this Server accepted.",
+            "minimum": 0
+          },
+          "verifiedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When this Server last verified it."
+          }
+        },
+        "additionalProperties": false
+      },
+      "RuleSetCatalogSet": {
+        "type": "object",
+        "description": "One set of a provider's verified catalog.",
+        "required": [
+          "reference",
+          "name",
+          "set",
+          "digest",
+          "bytes",
+          "entries",
+          "upstream",
+          "held"
+        ],
+        "properties": {
+          "bytes": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Artifact length in bytes.",
+            "minimum": 0
+          },
+          "digest": {
+            "type": "string",
+            "description": "Artifact the catalog publishes for this set.",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "entries": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Canonical members: names, keywords and merged address ranges.",
+            "minimum": 0
+          },
+          "held": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RuleSetHeld",
+                "description": "The catalog still publishes an older artifact for this set; null otherwise."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "type": "string",
+            "description": "Set name within the provider."
+          },
+          "reference": {
+            "type": "string",
+            "description": "What routing rules write in `match.ruleSets`: `<provider>:<name>`."
+          },
+          "set": {
+            "type": "string",
+            "description": "Catalog set `<collection>/<name>`."
+          },
+          "upstream": {
+            "$ref": "#/components/schemas/RuleSetUpstream"
+          }
+        },
+        "additionalProperties": false
+      },
       "RuleSetConversion": {
         "type": "object",
         "description": "How the bound content was converted from its source.",
@@ -14764,6 +15120,60 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "RuleSetEntryKind": {
+        "type": "string",
+        "description": "Member kind a rule-set entry page lists.",
+        "enum": [
+          "domain",
+          "keyword",
+          "ipv4",
+          "ipv6"
+        ]
+      },
+      "RuleSetEntryPage": {
+        "type": "object",
+        "description": "A page of one kind of members of a rule set's bound content.",
+        "required": [
+          "key",
+          "digest",
+          "kind",
+          "counts",
+          "items",
+          "nextCursor"
+        ],
+        "properties": {
+          "counts": {
+            "$ref": "#/components/schemas/RuleSetMemberCounts",
+            "description": "Members of every kind in the bound content."
+          },
+          "digest": {
+            "type": "string",
+            "description": "The bound artifact the page is read from; a cursor stays valid only while this binding is current.",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RuleSetMember"
+            },
+            "description": "`domain`: ordered by reversed name (names sharing a suffix are adjacent); `keyword`: sorted; addresses: ascending."
+          },
+          "key": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/RuleSetEntryKind"
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Opaque continuation cursor, or null when no further page is available."
+          }
+        },
+        "additionalProperties": false
+      },
       "RuleSetFormat": {
         "type": "string",
         "description": "Remote source format whose supported subset converts exactly to IP and DNS destination sets.",
@@ -14828,6 +15238,196 @@ export const schemaDocument = {
           "key": {
             "type": "string",
             "description": "Rule set key as referenced by the rule's `ruleSets`."
+          }
+        },
+        "additionalProperties": false
+      },
+      "RuleSetMatchResponse": {
+        "type": "object",
+        "description": "Whether a rule set's bound content contains a name or address.",
+        "required": [
+          "key",
+          "digest",
+          "query",
+          "member"
+        ],
+        "properties": {
+          "digest": {
+            "type": "string",
+            "description": "The bound artifact that was judged.",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "key": {
+            "type": "string"
+          },
+          "member": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RuleSetMember",
+                "description": "The member that matched, or null when the set does not contain the query. Names try suffix and subdomain members from the shortest, then exact, then keywords."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "query": {
+            "type": "string",
+            "description": "The query as judged: the normalized name or the address."
+          }
+        },
+        "additionalProperties": false
+      },
+      "RuleSetMember": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Matches exactly this name.",
+            "required": [
+              "name",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "exact"
+                ]
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "Matches the name and every name below it.",
+            "required": [
+              "name",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "suffix"
+                ]
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "Matches only names below it.",
+            "required": [
+              "name",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "subdomain"
+                ]
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "Matches every name containing it.",
+            "required": [
+              "keyword",
+              "kind"
+            ],
+            "properties": {
+              "keyword": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "keyword"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "Matches every address from `first` through `last`, both included; adjacent and overlapping source CIDRs are merged.",
+            "required": [
+              "first",
+              "last",
+              "kind"
+            ],
+            "properties": {
+              "first": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "ipRange"
+                ]
+              },
+              "last": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        ],
+        "description": "One canonical member of a rule set."
+      },
+      "RuleSetMemberCounts": {
+        "type": "object",
+        "description": "Members of the bound content by kind; address ranges are merged.",
+        "required": [
+          "exact",
+          "suffix",
+          "subdomain",
+          "keyword",
+          "ipv4",
+          "ipv6"
+        ],
+        "properties": {
+          "exact": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "ipv4": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "ipv6": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "keyword": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "subdomain": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "suffix": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
           }
         },
         "additionalProperties": false
@@ -15030,6 +15630,32 @@ export const schemaDocument = {
               "null"
             ],
             "description": "Upstream repository of a catalog set; null for a remote URL or inline set."
+          }
+        },
+        "additionalProperties": false
+      },
+      "RuleSetUpstream": {
+        "type": "object",
+        "description": "Upstream file a catalog set was converted from.",
+        "required": [
+          "repo",
+          "ref",
+          "commit",
+          "path"
+        ],
+        "properties": {
+          "commit": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string",
+            "description": "File path in the upstream repository."
+          },
+          "ref": {
+            "type": "string"
+          },
+          "repo": {
+            "type": "string"
           }
         },
         "additionalProperties": false
@@ -15827,6 +16453,17 @@ export const schemaDocument = {
         "type": "object",
         "description": "`POST /agent-api/v1/sync`: what the Node currently holds.",
         "properties": {
+          "associations": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Digest",
+                "description": "Digest of the DNS association overlay the Node holds for `netmap`; null or omission: none."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "netmap": {
             "oneOf": [
               {
@@ -15876,9 +16513,21 @@ export const schemaDocument = {
           "netmap",
           "peerFacts",
           "keyRotation",
-          "traversalRequests"
+          "traversalRequests",
+          "associations"
         ],
         "properties": {
+          "associations": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DnsAssociationsUpdate",
+                "description": "The Node's current DNS association overlay when it differs from the one the request named (an empty `associations` list clears it); null when unchanged."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "keyRotation": {
             "oneOf": [
               {

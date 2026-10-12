@@ -2,6 +2,15 @@
 use super::*;
 
 impl Answer {
+    pub(crate) fn message(&self) -> &hickory_proto::op::Message {
+        &self.ready.message
+    }
+    pub(crate) fn message_mut(&mut self) -> &mut hickory_proto::op::Message {
+        &mut self.ready.message
+    }
+    pub(crate) fn query(&self) -> &Query {
+        &self.ready.query
+    }
     pub(crate) fn answers(&self, query: &Query) -> bool {
         self.ready.query == *query
     }

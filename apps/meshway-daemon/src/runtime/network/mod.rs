@@ -147,6 +147,9 @@ pub(super) enum Request {
     },
     #[cfg(target_os = "linux")]
     Traversal(traversal::Request),
+    /// Complete one trusted DNS association task (exit resolver).
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    DnsAssociation(Box<meshway_protocol::DnsAssociationReport>),
 }
 
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))] // Consumed by the Linux-only worker.
@@ -522,6 +525,29 @@ pub(super) async fn request(
         }
         #[cfg(target_os = "linux")]
         Request::Traversal(request) => traversal::dispatch(control, request).await,
+        Request::DnsAssociation(report) => {
+            // Not retried: the source's next query of the name completes again.
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                meshway_control::shared::report_dns_association(control, &report),
+            )
+            .await
+            {
+                Ok(Ok(accepted)) => tracing::debug!(
+                    name = %report.name,
+                    expires_at_ms = accepted.expires_at_ms,
+                    "DNS association accepted"
+                ),
+                Ok(Err(error)) => {
+                    tracing::warn!(operation = "report_dns_association", %error, "DNS association rejected")
+                }
+                Err(_) => tracing::warn!(
+                    operation = "report_dns_association",
+                    "DNS association report timed out"
+                ),
+            }
+            Ok(())
+        }
     }
 }
 

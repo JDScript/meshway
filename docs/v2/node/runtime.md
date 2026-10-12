@@ -139,11 +139,11 @@ Mesh 池、loopback、链路本地、组播、保留／广播及出口本机地�
 | `EgressCapture::plan()` | 当前记录的类型化计划副本 |
 | `EgressCapture::retire()` | 显式解除所属捕获；先暂停正向表，再精确移除 RPDB 与私有 OUTPUT 表，供明确 down／解除受管范围使用 |
 
-独立的私有 egress routing table 使用 `0.0.0.0/0 → 客户端 TUN`；查表规则仅覆盖编译后的 `managedIPv4`，`directIPv4`／`unmanagedIPv4` 不借最长前缀覆盖较早规则。每个受管范围有正向表缺失时的 unreachable 回退，IPv6 受管范围为 sink，Mesh 路由保持优先。范围列表必须规范、互斥且总数不超过 4096；还受实际可用 RPDB 槽和有界 journal／命令大小约束。
+计划由本节点从 netmap 规则与 artifact 计算（`Desired::capture`）：受管 IPv4 与 sink IPv6 为有序、互斥、不相邻的区间，作为 OUTPUT 门 `managed4`／`managed6` 的 interval 元素；未经活动客户端 TUN 的受管目的立即拒绝（TCP reset／ICMP admin-prohibited），IPv6 受管目的恒拒绝，Mesh 路由保持优先。一条 IPv4 RPDB 选择器查独立的私有 egress routing table，活动时表中为受管区间的最小 CIDR 覆盖 `→ 客户端 TUN src Mesh 地址`，暂停时为空。上限 16,384 个区间、32,768 条路由，见 [Routing · 节点侧上限](/v2/configuration-reference/routing#capture-limits)。
 
 捕获规则只匹配本机来源和非保护 mark。Server／peer 的受保护 socket 继续使用原宿主 RPDB，普通应用连接相同 IP 不获得豁免；出口 TUN 转发也不重新进入本机 capture。`inet meshway_egress_<installation>` 的 OUTPUT 门覆盖 local-table 广播等早于捕获查表的路径，防止其从外部接口直出。本机 local／loopback 服务保留；IPv6 ND 仅允许 type 133–137、hop limit 255、本机或未指定源的链路控制，保护新邻居解析，IPv6 TCP／UDP／echo 字面量不因此放行。
 
-`underlay-egress.json` 保存 boot／namespace、随机 installation、mark／table、计划、当前门与待提交门、设备标识、nft 规范对象／handle、精确 route/rule 及 removed。自有规则／路由变化注册到同一 monitor，不制造外部切网事件。暂停、执行失效和同 namespace 重启保留负向范围；TUN 消失不会落回 main direct。恢复先关闭旧活动 selector 并清理旧正向资源，只有新的有效执行安装可以重新激活；显式 down 才解除所属负向边界。
+`underlay-egress.json`（v2）保存 boot／namespace、随机 installation、mark／table、计划、当前门与待提交门（区间与设备）、nft 规范对象／handle、选择器规则及 removed；捕获表路由由门推出，恢复时与表内实际路由精确对账。自有规则／路由变化注册到同一 monitor（路由每 256 条等待其观测，不使通知缓冲溢出），不制造外部切网事件。暂停、执行失效和同 namespace 重启保留负向范围；TUN 消失不会落回 main direct。恢复先关闭旧活动 selector 并清理旧正向资源，只有新的有效执行安装可以重新激活；显式 down 才解除所属负向边界。
 
 IPC 8 的公开运行状态（`meshway status --json` 原样输出）：
 

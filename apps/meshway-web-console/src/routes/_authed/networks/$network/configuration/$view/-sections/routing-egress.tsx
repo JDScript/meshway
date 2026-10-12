@@ -12,6 +12,7 @@ import {
 } from "@/components/configuration/form-kit"
 import { pointerOf, type JsonPath } from "@/lib/configuration/jsonc"
 import {
+  isProviderRef,
   matchOf,
   matchParts,
   matchValues,
@@ -34,8 +35,9 @@ function setNotes(
   path: string,
   ruleSets: readonly string[]
 ): Note[] {
+  // A catalog set is the controller's to find (`unknown_rule_set`).
   return (rule.match.ruleSets ?? [])
-    .filter((key) => !ruleSets.includes(key))
+    .filter((key) => !ruleSets.includes(key) && !isProviderRef(key))
     .map((key) => ({
       path,
       message: m.configuration_routing_set_note_unknown({ key }),
@@ -54,6 +56,7 @@ export function EgressRules({
   notes,
   exits,
   ruleSets,
+  catalog,
   onChange,
 }: Common & {
   path: JsonPath
@@ -62,7 +65,7 @@ export function EgressRules({
   onChange: (rules: EgressRule[]) => void
 }) {
   const rows = useRowKeys(rules.length)
-  const destinations = destinationChips(ruleSets, true)
+  const destinations = destinationChips(ruleSets, true, catalog)
   const update = (index: number, next: EgressRule) =>
     onChange(replaceAt(rules, index, next))
 

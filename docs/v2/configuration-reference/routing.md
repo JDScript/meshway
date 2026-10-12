@@ -111,7 +111,7 @@ A→C via B
 | `ipCIDR` | `string[]` | 目的网段 |
 | `ruleSets` | `string[]` | [规则集](/v2/configuration-reference/rule-sets)：本网络 `ruleSets` key，或 provider 目录集合 `<provider>:<name>`（如 `geosite:openai`、`geoip:cn`） |
 
-目的条件取并集，至少一项非空；规则从上到下 first-match。本规则自身列表与每个引用集合都经同一 matcher（`meshway-rules`）判定；引用集合的内容按 digest 下发，节点尚未取得时该规则不可用，first-match 在此停止、不跳到后续规则、不 direct，见[规则集 · 下发](/v2/configuration-reference/rule-sets#下发)。域名匹配需要可信域名上下文，不能从普通 IP 包直接推断。名称按 DNS 规范化比较（小写、ASCII／IDNA、忽略结尾点）；`domain: ["example.org"]` 不匹配 `a.example.org`，`domainSuffix: ["example.org"]` 两者都匹配。前面规则已完全覆盖的规则（含被后缀覆盖的精确名称）报告 `shadowed_rule` 警告。
+目的条件取并集，至少一项非空；规则从上到下 first-match。本规则自身列表与每个引用集合都经同一 matcher（`meshway-rules`）判定；引用集合的内容按 digest 下发，节点尚未取得时该规则不可用，first-match 在此停止、不跳到后续规则、不 direct，见[规则集 · 下发](/v2/configuration-reference/rule-sets#下发)。域名匹配需要可信域名上下文，不能从普通 IP 包直接推断，见下文[域名规则的执行](#域名规则的执行)。名称按 DNS 规范化比较（小写、ASCII／IDNA、忽略结尾点）；`domain: ["example.org"]` 不匹配 `a.example.org`，`domainSuffix: ["example.org"]` 两者都匹配。前面规则已完全覆盖的规则（含被后缀覆盖的精确名称）报告 `shadowed_rule` 警告。
 
 ### Action
 
@@ -122,6 +122,18 @@ A→C via B
 | `{ "type": "unmanaged" }` | 不接管 |
 
 出口必须启用 `nodes[id].exitEnabled`，目的访问必须获 access 允许：IP 目的地须在源节点的 CIDR／`autogroup:internet` 授权内；域名目的地（`domain`、`domainSuffix` 与规则集内容，规则集的 subdomain 成员按其后缀判断，keyword 成员只有 `autogroup:internet` 能覆盖）须被 `domain:` 后缀授权或 `autogroup:internet` 覆盖，不满足时报告 `exit_outside_access`（`params.node`、`params.destination`）。域名授权按解析地址集合执行，见 [Access](/v2/configuration-reference/access#domains)。没有可用获准路径时拒绝，不能回退到后续规则或偷偷 direct。
+
+### 域名规则的执行
+
+名称成员（`domain`、`domainSuffix` 与规则集的名称成员）不拥有任何地址：出口分割只由 IP 成员切分，没有可信上下文时名称规则不匹配任何包。名称规则**现在生效**的条件与范围：
+
+- 源节点的方案使用单一出口，普通查询经该出口 resolver 解析（[DNS · 使用出口时](/v2/configuration-reference/dns#使用出口时)）。MagicDNS、`useWithExit` split 与不涉及出口的方案（`noExit`）不产生上下文，其中的名称规则不匹配任何地址。
+- 出口回答该源的查询后，Server 受控校验并签发**可信关联**（名称 → 公网地址集合，寿命为回答的最短 TTL，取 30 秒到 1 小时），源节点据此判定这些地址：规则顺序 first-match，命中条件为“匹配地址或匹配其关联名称”。私网、Mesh 与其他非公网回答不进入关联。
+- 源节点把该名称的回答交给本机客户端前等待关联生效，至多 2 秒，未生效则回 SERVFAIL；回答的 TTL 截为关联剩余寿命。关联生效期间对这些地址的连接（不经名称也一样）都按名称规则判定；未经出口 resolver 得到的地址只按 IP 成员判定。
+- 同一地址关联了多个名称且它们的首个命中规则动作不同时，该地址不可执行（`egressConflict`），不选更宽路径。
+- 撤销 `domain:` 授权、停用出口、切换方案或删除名称规则后关联随新 netmap 失效。
+
+任务、overlay、往返与界限见 [Exit 设计 · 可信域名关联](/v2/node/exit-design#trusted-dns-associations)。
 
 ## 出口联合许可
 
@@ -147,7 +159,7 @@ Server 为最终出口生成绑定 origin、实际目的范围、出口和完整
 
 分割语义：按顺序从尚未命中的 IPv4／IPv6 地址中扣除每条规则自己的 CIDR 与所引用集合的合并区间（first-match），余下归 fallback。结果是覆盖两族全部地址的有序、互斥区间，相邻区间动作不同。节点安装的捕获边界只有受管部分：出口动作的 IPv4 区间（受管，进本节点 TUN）与出口动作的 IPv6 区间（`sinkIpv6`，拒绝；已授权 Mesh IPv6 仍走 Mesh 路由，源端没有 IPv6 地址也不省略），direct／unmanaged 是其补集，交宿主路由。fallback 为出口且还剩 IPv4 时为默认捕获。
 
-规则引用的集合未持有（artifact 缺失）时该规则 `missingDependency`，分割不可用；涉及出口且需要域名上下文的规则返回 `egressConflict`。不可用时安装全范围 IPv4 捕获与全范围 IPv6 sink，没有 direct／unmanaged 例外，新流拒绝；不能把 DNS 查询猜成普通 IP 包的业务身份。
+规则引用的集合未持有（artifact 缺失）时该规则 `missingDependency`，分割不可用。名称成员不参与分割；源节点在自己的分割之上加入其可信关联地址（见[域名规则的执行](#域名规则的执行)）：名称规则决定为出口（或名称间冲突）的地址并入受管区间（IPv6 并入 sink），决定为 direct／unmanaged 的移出；关联到期即由 Engine 以新的 `Desired` 移除。加入后超出节点侧上限时全范围捕获、`routingLimit`。不可用时安装全范围 IPv4 捕获与全范围 IPv6 sink，没有 direct／unmanaged 例外，新流拒绝；不能把 DNS 查询猜成普通 IP 包的业务身份。
 
 #### 节点侧上限 {#capture-limits}
 

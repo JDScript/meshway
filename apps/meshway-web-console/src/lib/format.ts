@@ -78,3 +78,6 @@ export const byteSize = (bytes: number) =>
   bytes >= MIB
     ? `${Math.round((bytes / MIB) * 10) / 10} MiB`
     : `${Math.round((bytes / 1024) * 10) / 10} KiB`
+
+/** A count with the locale's grouping ("111,595"). */
+export const countText = (value: number) => value.toLocaleString(getLocale())

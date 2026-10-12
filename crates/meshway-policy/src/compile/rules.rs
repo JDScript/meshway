@@ -226,16 +226,14 @@ pub(super) fn first_match(
 }
 
 /// Address ranges a rule partitions: its own CIDRs and every referenced
-/// set's merged ranges, and whether it also names domains.
+/// set's merged ranges. Its names own no address.
 pub(super) struct Ranges {
     pub v4: Vec<(u32, u32)>,
     pub v6: Vec<(u128, u128)>,
-    pub names: bool,
 }
 
 pub(super) fn ranges(matcher: &RouteMatch, sets: &RuleSets) -> Result<Ranges, CompileError> {
     let (mut v4, mut v6) = (Vec::new(), Vec::new());
-    let mut names = !matcher.domain.is_empty() || !matcher.domain_suffix.is_empty();
     for text in &matcher.ip_cidr {
         match text.parse().map_err(|_| CompileError::InvalidInput)? {
             ipnet::IpNet::V4(net) => {
@@ -248,7 +246,6 @@ pub(super) fn ranges(matcher: &RouteMatch, sets: &RuleSets) -> Result<Ranges, Co
     }
     for key in &matcher.rule_sets {
         let set = sets.get(key).ok_or(CompileError::UnavailableDependency)?;
-        names |= has_names(set);
         v4.extend(
             set.ipv4_ranges()
                 .map(|r| (u32::from(*r.start()), u32::from(*r.end()))),
@@ -258,7 +255,7 @@ pub(super) fn ranges(matcher: &RouteMatch, sets: &RuleSets) -> Result<Ranges, Co
                 .map(|r| (u128::from(*r.start()), u128::from(*r.end()))),
         );
     }
-    Ok(Ranges { v4, v6, names })
+    Ok(Ranges { v4, v6 })
 }
 
 /// The canonical spelling a query name is judged in: ASCII lowercase without

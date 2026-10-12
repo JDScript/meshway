@@ -21,6 +21,7 @@ async fn hold(
                 state,
                 server_key_generation: None,
                 traversal_requests: UdpTraversalRequestIds::try_from(held).unwrap(),
+                associations: None,
             },
         )
         .await

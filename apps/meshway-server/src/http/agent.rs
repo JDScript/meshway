@@ -7,7 +7,7 @@ use axum::{
 };
 use meshway_model::RequestId;
 use meshway_protocol::{
-    ErrorResponse, SignedNodeChallengeRequest,
+    DnsAssociationAccepted, DnsAssociationReport, ErrorResponse, SignedNodeChallengeRequest,
     execution::*,
     netmap::{SyncRequest, SyncResponse},
     node::*,
@@ -30,6 +30,27 @@ pub(super) async fn sync(
     let Json(body) = body.map_err(|e| HttpError::json(id, e))?;
     service
         .sync(token, body)
+        .await
+        .map(Json)
+        .map_err(|e| HttpError::domain(id, e))
+}
+
+/// Complete a trusted DNS association task as the exit resolver of a source.
+///
+/// Requires a Node session of an exit whose current netmap (`netmap` must name it) serves `source` with the DNS service the source's current netmap resolves through, under the same selection `generation`.
+/// The name must be one a name rule of the source decides; addresses must be public, of `recordType`, sorted and unique; `resolvedAt` at most 30 seconds old; `reportId` is single-use.
+/// The association lasts the TTL (at least 30 seconds, at most one hour) from resolution and reaches the source and the exit in their next sync answers.
+#[utoipa::path(post,path="/agent-api/v1/dns-associations",operation_id="reportDnsAssociation",tag="execution",security(("nodeSession"=[])),request_body=DnsAssociationReport,responses((status=200,body=DnsAssociationAccepted),(status=400,body=ErrorResponse,description="invalid_request"),(status=401,body=ErrorResponse,description="invalid_credentials"),(status=403,body=ErrorResponse,description="node_identity_rejected, permission_denied"),(status=409,body=ErrorResponse,description="request_id_conflict, state_scope_changed"),(status=413,body=ErrorResponse,description="request_too_large"),(status=415,body=ErrorResponse,description="unsupported_media_type"),(status=429,body=ErrorResponse,description="state_limit"),(status=503,body=ErrorResponse,description="busy, service_unavailable")))]
+pub(super) async fn dns_association(
+    State(service): State<crate::netmap::Netmaps>,
+    Extension(id): Extension<RequestId>,
+    headers: HeaderMap,
+    body: Result<Json<DnsAssociationReport>, JsonRejection>,
+) -> Result<Json<DnsAssociationAccepted>, HttpError> {
+    let token = node_bearer(&headers, id)?;
+    let Json(body) = body.map_err(|e| HttpError::json(id, e))?;
+    service
+        .report_association(token, body)
         .await
         .map(Json)
         .map_err(|e| HttpError::domain(id, e))

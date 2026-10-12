@@ -1,4 +1,5 @@
 import { cn } from "@meshway/ui/cn"
+import { useQueries, type UseQueryOptions } from "@tanstack/react-query"
 import { CheckIcon, PlusIcon, XIcon, type LucideIcon } from "lucide-react"
 import {
   useId,
@@ -8,12 +9,14 @@ import {
   type ReactNode,
 } from "react"
 
+import { failureText } from "@/api/failure"
 import { FieldInput } from "@/components/chrome/form"
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover"
+import { useSettled } from "@/hooks/use-settled"
 import { m } from "@/paraglide/messages.js"
 
 // Values as chips: a set (an access rule's sources, a group's members, a
@@ -72,10 +75,17 @@ function ChipContent({ shown }: { shown: Shown }) {
   )
 }
 
+/** What a search found for the typed value: values to offer, and a line to say (why nothing could be). */
+export type ChipFound = { options: readonly ChipOption[]; note: string | null }
+
 export type ChipKind = {
   options: readonly ChipOption[]
+  /** The controller's searches for the typed value (settled, lowercase), offered after `options`. */
+  search?: (typed: string) => readonly UseQueryOptions<ChipFound>[]
   /** A typed value is taken when it is in the field's form. */
   accepts: (value: string) => boolean
+  /** The value a typed one is kept as (a short form written out); as typed when omitted. */
+  typedValue?: (value: string) => string
   show: (value: string) => Shown
   /** The typed form, as an example. */
   placeholder: string
@@ -131,7 +141,39 @@ function Picker({
     }
     return [...out.entries()]
   }, [matches])
-  const ordered = groups.flatMap(([, list]) => list)
+  const settled = useSettled(typed.toLowerCase())
+  const searches = useQueries({
+    queries: open && kind.search ? kind.search(settled) : [],
+  })
+  const local = new Set(matches.map((option) => option.value))
+  const found = searches
+    .flatMap((search) => search.data?.options ?? [])
+    .filter((option) => !local.has(option.value))
+  const foundGroups = new Map<string, ChipOption[]>()
+  for (const option of found) {
+    const list = foundGroups.get(option.group)
+    if (list) list.push(option)
+    else foundGroups.set(option.group, [option])
+  }
+  const allGroups = [...groups, ...foundGroups.entries()]
+  const ordered = allGroups.flatMap(([, list]) => list)
+  const searching =
+    settled !== typed.toLowerCase() ||
+    searches.some((search) => search.isPending)
+  const notes = [
+    ...new Set(
+      searches.flatMap((search) =>
+        search.data?.note
+          ? [search.data.note]
+          : search.error
+            ? [
+                failureText(search.error) ??
+                  m.configuration_picker_search_failed(),
+              ]
+            : []
+      )
+    ),
+  ]
 
   const close = () => {
     setOpen(false)
@@ -154,7 +196,8 @@ function Picker({
     } else if (event.key === "Enter") {
       event.preventDefault()
       const highlighted = ordered[active]
-      if (typed !== "" && kind.accepts(typed) && !moved) pick(typed)
+      if (typed !== "" && kind.accepts(typed) && !moved)
+        pick(kind.typedValue?.(typed) ?? typed)
       else if (highlighted) pick(highlighted.value)
       else setRefused(true)
     }
@@ -213,10 +256,12 @@ function Picker({
                 ? m.configuration_picker_enter({ value: typed })
                 : typed === "" && kind.options.length === 0
                   ? m.configuration_picker_type()
-                  : m.configuration_picker_none()}
+                  : searching && searches.length > 0
+                    ? m.configuration_picker_searching()
+                    : m.configuration_picker_none()}
             </li>
           ) : null}
-          {groups.map(([group, list]) => (
+          {allGroups.map(([group, list]) => (
             <li key={group} role="presentation">
               <div className="px-2.5 pt-2 pb-1 text-meta text-muted-foreground">
                 {group}
@@ -260,6 +305,14 @@ function Picker({
                   )
                 })}
               </ul>
+            </li>
+          ))}
+          {notes.map((note) => (
+            <li
+              key={note}
+              className="px-2.5 py-2 text-meta text-muted-foreground"
+            >
+              {note}
             </li>
           ))}
         </ul>

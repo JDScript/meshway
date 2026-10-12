@@ -12,6 +12,7 @@ pub use bytes::{Bytes, BytesMut};
 pub use system::SystemDnsReservation;
 pub use tokio_util::sync::CancellationToken;
 
+mod association;
 mod dispatcher;
 mod exit_route;
 mod owner;
@@ -22,6 +23,7 @@ mod system;
 mod tcp;
 mod wire;
 
+pub use association::{ASSOCIATION_WAIT, MAX_PENDING_REPORTS};
 pub use dispatcher::{
     DispatchError, Dispatcher, DnsFuture, GatewayError, OwnerDispatcher, ResolverExchange, Scope,
     publish as publish_scope,

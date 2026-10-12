@@ -43,20 +43,65 @@ export function moved<T>(
 
 // A match's destinations are edited as one set of chips: a domain suffix
 // as typed (the name and every name under it), an exact name after `=`
-// (that name alone), a CIDR prefix, or a rule set as `set:<key>`.
+// (that name alone), a CIDR prefix, or a rule set as `set:<key>` (a
+// catalog set as `set:<provider>:<name>`). An inline rule set also takes
+// names that match only below them, after `.` (as sing-box and mihomo
+// write them); a route's match has no such list.
 
 export const SET_PREFIX = "set:"
 export const EXACT_PREFIX = "="
+export const SUBDOMAIN_PREFIX = "."
 
-export type MatchKind = "domain" | "exact" | "cidr" | "set"
+export type MatchKind = "domain" | "exact" | "subdomain" | "cidr" | "set"
 
 export function matchKind(value: string): MatchKind | null {
   if (value.startsWith(SET_PREFIX))
     return value.length > SET_PREFIX.length ? "set" : null
   if (value.startsWith(EXACT_PREFIX))
     return isDomain(value.slice(EXACT_PREFIX.length)) ? "exact" : null
+  if (value.startsWith(SUBDOMAIN_PREFIX))
+    return isDomain(value.slice(SUBDOMAIN_PREFIX.length)) ? "subdomain" : null
   if (cidrFamily(value) !== null) return "cidr"
   return isDomain(value) ? "domain" : null
+}
+
+const PROVIDER_REF = /^[a-z][a-z0-9-]{0,31}:[a-z0-9][a-z0-9!@._+-]{0,127}$/
+
+/** `<provider>:<name>`: a set of a signed catalog (`geosite:openai`), not one this network declares. */
+export const isProviderRef = (key: string) => PROVIDER_REF.test(key)
+
+/** A catalog search a typed destination asks for: a provider's sets by name prefix. */
+export type CatalogTerm = {
+  provider: string
+  q: string
+  /** Typed with its provider (`geosite:open`), not a bare word. */
+  explicit: boolean
+}
+
+const PROVIDER_TYPED = /^([a-z][a-z0-9-]{0,31}):([a-z0-9!@._+-]*)$/
+const WORD = /^[a-z0-9][a-z0-9!@_+-]+$/
+
+/**
+ * The catalog searches a typed destination asks for: `geosite:open` (or
+ * `set:geosite:open`) that provider's sets starting with `open`, a bare
+ * word of two or more (no dot: a name with one is a domain) every
+ * provider's; anything else none.
+ */
+export function catalogTerms(
+  typed: string,
+  providers: readonly string[]
+): CatalogTerm[] {
+  const value = typed.trim().toLowerCase()
+  const bare = value.startsWith(SET_PREFIX)
+    ? value.slice(SET_PREFIX.length)
+    : value
+  const found = PROVIDER_TYPED.exec(bare)
+  if (found) {
+    const [, provider = "", q = ""] = found
+    return providers.includes(provider) ? [{ provider, q, explicit: true }] : []
+  }
+  if (bare !== value || !WORD.test(bare)) return []
+  return providers.map((provider) => ({ provider, q: bare, explicit: false }))
 }
 
 /** A match as chips: domain suffixes, exact names, prefixes, then rule sets. */

@@ -233,6 +233,58 @@ impl EgressPartition {
     }
 }
 
+fn assign_range<T: Address>(ranges: &mut Vec<(T, T)>, address: T, captured: bool) {
+    let mut work = 0;
+    let (_, rest) = split(ranges, &[(address, address)], &mut work).expect("one host");
+    let mut next = rest;
+    if captured {
+        next.push((address, address));
+    }
+    *ranges = normalize(next);
+}
+
+/// `plan` with `address` captured (managed IPv4, sunk IPv6) or released to
+/// the host. Used for the addresses of trusted DNS associations.
+pub fn assign(plan: &mut EgressCapturePlan, address: IpAddr, captured: bool) {
+    match address.to_canonical() {
+        IpAddr::V4(a) => {
+            let mut ranges: Vec<(u32, u32)> = plan
+                .managed_ipv4
+                .iter()
+                .map(|(s, e)| (u32::from(*s), u32::from(*e)))
+                .collect();
+            assign_range(&mut ranges, u32::from(a), captured);
+            plan.managed_ipv4 = ranges
+                .into_iter()
+                .map(|(s, e)| (Ipv4Addr::from(s), Ipv4Addr::from(e)))
+                .collect();
+        }
+        IpAddr::V6(a) => {
+            let mut ranges: Vec<(u128, u128)> = plan
+                .sink_ipv6
+                .iter()
+                .map(|(s, e)| (u128::from(*s), u128::from(*e)))
+                .collect();
+            assign_range(&mut ranges, u128::from(a), captured);
+            plan.sink_ipv6 = ranges
+                .into_iter()
+                .map(|(s, e)| (Ipv6Addr::from(s), Ipv6Addr::from(e)))
+                .collect();
+        }
+    }
+}
+
+/// Whether a capture plan fits what a Node installs.
+pub fn installable(plan: &EgressCapturePlan) -> bool {
+    let routes: usize = plan
+        .managed_ipv4
+        .iter()
+        .map(|(s, e)| cover(u32::from(*s), u32::from(*e)))
+        .sum();
+    plan.managed_ipv4.len() + plan.sink_ipv6.len() <= MAX_CAPTURE_RANGES
+        && routes <= MAX_CAPTURE_ROUTES
+}
+
 /// The fail-closed boundary of an unavailable partition: full IPv4 capture,
 /// full IPv6 sink, no direct or unmanaged exception.
 pub fn unavailable_capture(generation: Digest, reason: UnavailableReason) -> EgressCapturePlan {
@@ -335,8 +387,6 @@ pub fn compute(
     profile: &str,
 ) -> Result<EgressPartition, UnavailableReason> {
     let Selection { rules, fallback } = selection(cfg, profile).map_err(unavailable)?;
-    // An address-only partition cannot represent the identity of a queried name.
-    let may_exit = matching::dns_requires_exit(cfg, profile);
     let mut actions = Vec::new();
     let mut remaining4 = vec![(0u32, u32::MAX)];
     let mut remaining6 = vec![(0u128, u128::MAX)];
@@ -346,11 +396,9 @@ pub fn compute(
         if remaining4.is_empty() && remaining6.is_empty() {
             break;
         }
-        let rules::Ranges { v4, v6, names } =
-            rules::ranges(&rule.matcher, sets).map_err(unavailable)?;
-        if names && may_exit {
-            return Err(UnavailableReason::EgressConflict);
-        }
+        // A rule's names own no address: they decide only the addresses of
+        // a trusted association (`netmap::Associations`).
+        let rules::Ranges { v4, v6 } = rules::ranges(&rule.matcher, sets).map_err(unavailable)?;
         let id = index(
             &mut actions,
             action(&rule.action.clone().into()).map_err(unavailable)?,

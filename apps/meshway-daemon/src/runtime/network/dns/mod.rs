@@ -46,6 +46,7 @@ impl Runtime {
         settings: SystemDnsSettings,
         exchange: Arc<dyn ResolverExchange>,
         exit_dns: watch::Sender<Option<ExitDns>>,
+        reports: tokio::sync::mpsc::Sender<meshway_protocol::DnsAssociationReport>,
     ) -> Result<Self, SystemDnsError> {
         settings.validate()?;
         let (scopes, received) = watch::channel(None);
@@ -59,7 +60,8 @@ impl Runtime {
                 },
                 1232,
             )
-            .map_err(|_| SystemDnsError::Settings)?,
+            .map_err(|_| SystemDnsError::Settings)?
+            .with_association_reports(reports),
         );
         let stop = CancellationToken::new();
         let service = serve(&settings, &dispatcher, &stop).await?;
@@ -101,7 +103,20 @@ impl Runtime {
     /// Install the required negative system capture, including for
     /// unsupported plans. It never publishes query authority.
     pub async fn hold(&mut self, netmap: &NodeNetmap) -> Result<(), SystemDnsError> {
-        self.suspend();
+        // The same content with other trusted associations changes nothing
+        // DNS installs or answers with: its published scope and in-flight
+        // queries (some waiting for exactly these associations) continue.
+        let continuing = self.scopes.borrow().as_ref().is_some_and(|scope| {
+            let held = scope.desired.netmap();
+            held.network_id == netmap.network_id
+                && held.node_id == netmap.node_id
+                && held.serial == netmap.serial
+                && held.dns == netmap.dns
+                && held.projection.configuration.dns == netmap.projection.configuration.dns
+        });
+        if !continuing {
+            self.suspend();
+        }
         if matches!(&self.settings.backend, SystemDnsBackend::OwnedResolvConf { path } if path != std::path::Path::new("/etc/resolv.conf"))
         {
             return Err(SystemDnsError::Unsupported);
@@ -119,12 +134,17 @@ impl Runtime {
     /// Publish query authority for the desired content. The same content
     /// keeps the query owner (`Scope::equivalent`).
     pub async fn install(&mut self, desired: Desired) -> Result<(), SystemDnsError> {
-        let continuing = self
-            .scopes
-            .borrow()
-            .as_ref()
-            .is_some_and(|scope| scope.desired.same(&desired));
-        if continuing {
+        let current = self.scopes.borrow().clone();
+        if let Some(scope) = current
+            && scope.desired.same_content(&desired)
+        {
+            // Only trusted associations changed: the same scope, its
+            // tickets and system installation stay; answers see them now.
+            if !scope.desired.same(&desired) {
+                let mut next = scope;
+                next.desired = desired;
+                meshway_dns::publish_scope(&self.scopes, Some(next));
+            }
             return self.observe().await;
         }
         let netmap = desired.netmap().as_ref().clone();

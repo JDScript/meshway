@@ -196,6 +196,14 @@ impl SecureNode {
         if desired.same(&self.desired) {
             return Ok(Applied::default());
         }
+        if desired.same_content(&self.desired) {
+            // Only the trusted DNS associations changed: they decide new
+            // flows; established flows and circuits keep their decisions.
+            self.engine.decisions = crate::netmap::Decisions::for_desired(desired);
+            self.engine.desired = desired.clone();
+            self.desired = desired.clone();
+            return Ok(Applied::default());
+        }
         if !self.keys.matches(&desired.local().self_keys) {
             return Err(Error::Authority);
         }

@@ -121,6 +121,41 @@ mod tests {
     }
 
     #[test]
+    fn domains_page_by_reversed_name_suffix() {
+        // Exact names: a suffix member would make the names below it redundant.
+        let suffix = strings(&["example.org"]);
+        let exact = strings(&["openai.com", "ai.com", "api.openai.com", "chat.openai.com"]);
+        let set = RuleSet::from_inline(&Inline {
+            domain: &exact,
+            domain_suffix: &suffix,
+            ..Inline::default()
+        })
+        .unwrap();
+        let names = |suffix: &str, after: Option<&str>| -> Vec<String> {
+            set.domains_ending_with(suffix, after)
+                .map(|entry| entry.name)
+                .collect()
+        };
+        assert_eq!(
+            names("openai.com", None),
+            ["openai.com", "api.openai.com", "chat.openai.com"]
+        );
+        assert_eq!(
+            names(".openai.com", None),
+            ["api.openai.com", "chat.openai.com"]
+        );
+        assert_eq!(names("ai.com", None).len(), 4);
+        assert_eq!(
+            names("openai.com", Some("api.openai.com")),
+            ["chat.openai.com"]
+        );
+        // The order is by reversed name: every `.org` name sorts before `.com`.
+        assert_eq!(names("com", Some("zzz.org")).len(), 4);
+        assert_eq!(names("org", Some("x.com")), Vec::<String>::new());
+        assert_eq!(set.domains().count(), 5);
+    }
+
+    #[test]
     fn inline_rejects_any_invalid_item_and_empty_lists() {
         let (good, bad) = (strings(&["ok.example"]), strings(&["10.0.0.0"]));
         let err = RuleSet::from_inline(&Inline {

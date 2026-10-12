@@ -51,6 +51,7 @@ fn input(
         lease: NetmapLease::new(content.reference(), now, now + milliseconds).unwrap(),
         content,
         artifacts: Default::default(),
+        associations: None,
     }
 }
 
@@ -107,6 +108,7 @@ async fn a_newer_offer_that_cannot_be_admitted_ends_the_older_content() {
         lease: NetmapLease::new(newer.reference(), now - 120_000, now - 1).unwrap(),
         content: newer,
         artifacts: Default::default(),
+        associations: None,
     };
     assert_eq!(engine.reconfig(Some(&ended)).await, Err(Error::Lease));
     assert!(engine.desired().is_none() && engine.next_expiry().is_none());
@@ -171,6 +173,7 @@ async fn older_signed_lease_and_regressing_content_do_not_change_live_engine() {
         content: first.content.clone(),
         lease: first.lease,
         artifacts: Default::default(),
+        associations: None,
     };
     older.lease.expires_at_ms -= 1;
     assert_eq!(engine.reconfig(Some(&older)).await, Err(Error::Reference));
@@ -182,6 +185,7 @@ async fn older_signed_lease_and_regressing_content_do_not_change_live_engine() {
         content: first.content.clone(),
         lease: first.lease,
         artifacts: Default::default(),
+        associations: None,
     };
     stepped.lease.issued_at_ms -= 5_000;
     stepped.lease.expires_at_ms += 1_000;
@@ -232,6 +236,7 @@ async fn a_degraded_apply_keeps_content_and_the_same_content_retries_it() {
         lease: NetmapLease::new(content.reference(), now, now + 60_000).unwrap(),
         content,
         artifacts: Default::default(),
+        associations: None,
     };
     assert_eq!(engine.reconfig(Some(&first)).await, Err(Error::Degraded));
     let reference = Some(first.content.reference());
@@ -340,6 +345,7 @@ async fn content_applies_before_its_artifacts_and_again_once_they_load() {
     // The same content and lease with the artifact loaded is applied again.
     let loaded = Netmap {
         artifacts: Arc::new([(set.digest(), set.clone())].into()),
+        associations: None,
         ..first.clone()
     };
     engine.reconfig(Some(&loaded)).await.unwrap();
@@ -358,4 +364,117 @@ async fn content_applies_before_its_artifacts_and_again_once_they_load() {
     let calls = engine.components.calls.len();
     engine.reconfig(Some(&loaded)).await.unwrap();
     assert_eq!(engine.components.calls.len(), calls);
+}
+
+/// One-Node netmap whose public rule sends `chat.example` to an exit (the rest
+/// unmanaged), and an overlay associating one public address with it.
+fn with_association(
+    expires_at_ms: u64,
+) -> (
+    Arc<CompiledNetmap>,
+    Arc<meshway_configuration::netmap::DnsAssociationOverlay>,
+) {
+    use meshway_configuration::netmap::{
+        AssociationRecordType, DnsAssociation, DnsAssociationOverlay,
+    };
+    use meshway_test_server::configuration as fixture;
+    let node = fixture::node(1);
+    let mut cfg = fixture::network("fixture.internal");
+    cfg.nodes
+        .insert(node, fixture::tag_node("a", 1, BTreeMap::new(), false));
+    cfg.routing.egress.rules = vec![meshway_configuration::EgressRule {
+        remark: String::new(),
+        matcher: meshway_configuration::RouteMatch {
+            domain: vec!["chat.example".into()],
+            ..Default::default()
+        },
+        action: meshway_configuration::RuleAction::Exit {
+            nodes: vec![format!("node:{}", fixture::node(2))],
+            via: vec![],
+        },
+    }];
+    let compiled = meshway_policy::compile::netmap::compile_netmap(
+        meshway_policy::compile::netmap::NetmapInput {
+            network: "00000000-0000-4003-8000-000000000001".parse().unwrap(),
+            revision: meshway_model::Revision::MIN,
+            configuration: &cfg,
+            subjects: &Default::default(),
+            inventory: &BTreeMap::from([(node, fixture::trusted(1, false))]),
+            rule_sets: &Default::default(),
+            selected_profiles: &BTreeMap::new(),
+            selection_versions: &BTreeMap::new(),
+            previous: &BTreeMap::new(),
+        },
+    )
+    .unwrap();
+    let content = Arc::new(compiled.nodes[&node].clone());
+    let overlay = DnsAssociationOverlay {
+        netmap: content.reference(),
+        associations: vec![DnsAssociation {
+            source: node,
+            generation: content.netmap.egress.as_ref().unwrap().generation,
+            name: "chat.example".into(),
+            record_type: AssociationRecordType::A,
+            cnames: vec![],
+            addresses: vec![meshway_configuration::execution::ExecutionAddress(
+                "203.0.113.9".parse().unwrap(),
+            )],
+            expires_at_ms,
+        }],
+    };
+    (content, Arc::new(overlay))
+}
+
+#[tokio::test(start_paused = true)]
+async fn associations_apply_without_new_content_and_end_on_their_own_deadline() {
+    let mut engine = Engine::new(Resources::default());
+    let now = engine.clock.now();
+    let (content, overlay) = with_association(now + 30_000);
+    let plain = input(&mut engine, content.clone(), 3_600_000);
+    engine.reconfig(Some(&plain)).await.unwrap();
+    let before = engine.desired().unwrap().clone();
+    assert!(before.associations().is_empty());
+    let applied = engine.components.calls.len();
+    let associated = Netmap {
+        associations: Some(overlay.clone()),
+        ..plain.clone()
+    };
+    engine.reconfig(Some(&associated)).await.unwrap();
+    let desired = engine.desired().unwrap().clone();
+    assert!(desired.same_content(&before) && !desired.same(&before));
+    assert_eq!(desired.associations().entries().len(), 1);
+    assert!(
+        engine.components.calls.len() > applied,
+        "every component sees it"
+    );
+    let host: std::net::Ipv4Addr = "203.0.113.9".parse().unwrap();
+    let managed = |desired: &Desired| {
+        desired
+            .capture()
+            .unwrap()
+            .managed_ipv4
+            .iter()
+            .any(|(start, end)| *start <= host && host <= *end)
+    };
+    // The name exits: its associated address joins the capture.
+    assert!(!managed(&before) && managed(&desired));
+    // The signed content itself is unchanged.
+    assert!(Arc::ptr_eq(desired.netmap(), before.netmap()));
+    // An overlay of other content is ignored.
+    let mut foreign = (*overlay).clone();
+    foreign.netmap.serial = foreign.netmap.serial.checked_next().unwrap();
+    let ignored = desired
+        .with_associations(Some(&Arc::new(foreign)), now)
+        .unwrap();
+    assert!(ignored.associations().is_empty());
+    // The association deadline is scheduled before the lease's.
+    let at = engine.next_expiry().unwrap();
+    assert!(at <= tokio::time::Instant::now() + Duration::from_secs(31));
+    tokio::time::advance(Duration::from_secs(31)).await;
+    let calls = engine.components.calls.len();
+    engine.expire().await.unwrap();
+    let pruned = engine.desired().unwrap();
+    assert!(pruned.associations().is_empty() && pruned.same_content(&desired));
+    assert!(engine.components.calls.len() > calls);
+    assert!(!managed(pruned));
 }

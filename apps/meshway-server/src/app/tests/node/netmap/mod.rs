@@ -7,6 +7,7 @@ use meshway_model::state::*;
 use meshway_protocol::state::StateReport;
 use std::sync::Arc;
 
+mod associations;
 mod diagnostics;
 mod facts;
 mod lifecycle;

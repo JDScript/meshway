@@ -46,12 +46,12 @@ pub enum LocalDecision {
 /// dialers are absent from this configuration; carriers come from the
 /// redacted declarations kept in the projection.
 pub struct LocalCompiler {
-    netmap: Arc<NodeNetmap>,
-    configuration: NetworkConfiguration,
+    pub(super) netmap: Arc<NodeNetmap>,
+    pub(super) configuration: NetworkConfiguration,
     /// Referenced sets whose artifact this Node holds; a missing one is an
     /// unavailable dependency of every rule naming it.
-    rule_sets: rules::RuleSets,
-    matchers: rules::Matchers,
+    pub(super) rule_sets: rules::RuleSets,
+    pub(super) matchers: rules::Matchers,
     /// Partition of each profile computed so far: a pure function of this
     /// content and the loaded sets, bounded by the projection's profiles.
     partitions: Mutex<BTreeMap<String, crate::compile::Partition>>,
@@ -402,13 +402,35 @@ impl LocalCompiler {
         )
     }
 
-    /// Decide one new flow of `source` toward `destination`.
+    /// Decide one new flow of `source` toward `destination` without DNS context.
     pub fn decide(
         &self,
         source: NodeId,
         destination: IpAddr,
         protocol: BusinessProtocol,
         port: Option<Port>,
+    ) -> Result<LocalDecision, CompileError> {
+        self.decide_with(
+            source,
+            destination,
+            protocol,
+            port,
+            &Associations::default(),
+        )
+    }
+
+    /// Decide one new flow of `source` toward `destination`. An address the
+    /// source's trusted associations name is decided by first match over the
+    /// address and those names (all names must agree, else `egressConflict`),
+    /// with `domain:` grants of the names; any other address by the IP
+    /// partition alone.
+    pub fn decide_with(
+        &self,
+        source: NodeId,
+        destination: IpAddr,
+        protocol: BusinessProtocol,
+        port: Option<Port>,
+        associations: &Associations,
     ) -> Result<LocalDecision, CompileError> {
         if (protocol == BusinessProtocol::IcmpEcho) != port.is_none() {
             return Ok(LocalDecision::Denied(UnavailableReason::Unauthorized));
@@ -452,12 +474,28 @@ impl LocalCompiler {
                 Ok(partition) => partition,
                 Err(reason) => return Ok(LocalDecision::Denied(reason)),
             };
-            let (nodes, via) = match partition.action(canonical) {
+            let generation = self.egress(source)?.generation;
+            let names = associations.names(source, generation, canonical);
+            let associated;
+            let action = if names.is_empty() {
+                partition.action(canonical)
+            } else {
+                associated = match self.associated_action(source, canonical, &names)? {
+                    Some(action) => crate::compile::capture::action(&action)?,
+                    None => return Ok(LocalDecision::Denied(UnavailableReason::EgressConflict)),
+                };
+                &associated
+            };
+            let (nodes, via) = match action {
                 EgressAction::Direct => return Ok(LocalDecision::Direct),
                 EgressAction::Unmanaged => return Ok(LocalDecision::Unmanaged),
                 EgressAction::Exit { nodes, via } => (nodes.clone(), via.clone()),
             };
-            let services = external_services(cfg, input.subjects, source, canonical);
+            let services = if names.is_empty() {
+                external_services(cfg, input.subjects, source, canonical)
+            } else {
+                self.associated_services(source, canonical, &names)
+            };
             if !services.contains(protocol, port) {
                 return Ok(LocalDecision::Denied(UnavailableReason::Unauthorized));
             }
@@ -467,11 +505,7 @@ impl LocalCompiler {
             if !crate::is_exit_destination(canonical) {
                 return Ok(LocalDecision::Denied(UnavailableReason::Unauthorized));
             }
-            (
-                Target::Exit { nodes, via },
-                services,
-                Some(self.egress(source)?.generation),
-            )
+            (Target::Exit { nodes, via }, services, Some(generation))
         };
         if !services.contains(protocol, port) {
             return Ok(LocalDecision::Denied(UnavailableReason::Unauthorized));
@@ -558,6 +592,7 @@ impl LocalCompiler {
                         matches!(action, EgressAction::Exit { nodes: n, via: v } if n == nodes && v == via)
                     })
                     .any(|(range, _)| external_overlaps(cfg, input.subjects, origin, &range))
+                    && !self.name_exit(origin, nodes, via)?
                 {
                     return Ok(Vec::new());
                 }

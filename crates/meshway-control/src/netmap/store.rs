@@ -190,6 +190,34 @@ pub(super) fn authority(
     })
 }
 
+/// The pinned key's signature of a DNS association overlay: whichever of
+/// the update's signatures names the pinned key must verify.
+pub(super) fn verify_associations(
+    binding: &EnrollmentResponse,
+    update: &meshway_protocol::DnsAssociationsUpdate,
+) -> Result<meshway_model::Digest, Error> {
+    let pin = &binding.server_signing_key;
+    let signature = std::iter::once(&update.signature)
+        .chain(update.rotation_signature.as_ref())
+        .find(|signature| {
+            signature.key_id == pin.key_id && signature.key_generation == pin.key_generation
+        })
+        .ok_or(Error::ServerKeyMismatch)?;
+    let digest = update.overlay.digest().map_err(|_| Error::Contract)?;
+    let message = meshway_protocol::dns_associations_transcript(
+        binding.network_id,
+        binding.node_id,
+        &update.overlay.netmap,
+        &digest,
+        pin.key_id,
+        pin.key_generation,
+    );
+    if !verify(&pin.public_key, &message, &signature.signature) {
+        return Err(Error::SignatureInvalid);
+    }
+    Ok(digest)
+}
+
 fn seal_message(binding: &EnrollmentResponse, lease: &NetmapLease) -> Vec<u8> {
     netmap_lease_transcript(
         binding.network_id,
