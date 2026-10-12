@@ -21,6 +21,8 @@ from verification_sources import fingerprint as source_fingerprint
 from validation_support import build_lock, cargo_target, report_directory, bind_access_options, export_evidence, mount_namespace_options, link_artifact
 
 BINARIES = ("meshwayd", "meshway", "meshway-runtime-fixture")
+# Built with --all-targets: dev-dependencies are part of the candidate too.
+PACKAGES = ("meshway-daemon", "meshway-cli", "meshway-runtime-fixture", "meshway-underlay", "meshway-dns")
 KERNEL_BINARY = "meshway-underlay-kernel-tests"
 BOOTSTRAP_BINARY = "meshway-underlay-bootstrap-tests"
 LIFECYCLE_BINARY = "meshway-daemon-lifecycle-tests"
@@ -83,8 +85,8 @@ def build(directory, target, platform, machine, source):
     env = dict(os.environ, CARGO_INCREMENTAL="0", CARGO_TARGET_DIR=str(cargo_target()))
     run("rustup", "target", "add", target, env=env)
     command = ["cargo", "zigbuild", "--target", target, "--locked",
-                "--all-features", "-p", "meshway-daemon", "-p", "meshway-cli",
-                "-p", "meshway-runtime-fixture", "-p", "meshway-underlay", "-p", "meshway-dns", "--all-targets", "--message-format=json"]
+                "--all-features", *(flag for package in PACKAGES for flag in ("-p", package)),
+                "--all-targets", "--message-format=json"]
     try:
         output = run(*command, capture=True, env=env)
     except subprocess.CalledProcessError as error:

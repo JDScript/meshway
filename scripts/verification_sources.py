@@ -10,7 +10,7 @@ from pathlib import Path
 
 TREES = (
     "crates", "apps/meshway-server", "apps/meshway-daemon", "apps/meshway-cli",
-    "tools/meshway-packet-fixture", "tools/meshway-runtime-fixture",
+    "tools/meshway-packet-fixture", "tools/meshway-runtime-fixture", "tools/meshway-test-server",
     "dev/dns-fixture", "dev/traversal-fixture", "dev/node-lab",
 )
 FILES = (
