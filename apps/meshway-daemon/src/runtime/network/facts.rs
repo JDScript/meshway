@@ -184,6 +184,30 @@ impl Report {
                 since: None,
             });
         }
+        // A ready circuit: the endpoints completed the end-to-end handshake;
+        // a relay forwarded it both ways.
+        for (id, (nodes, role)) in &self.circuits {
+            if nodes.iter().any(|node| {
+                *node != netmap.node_id && !netmap.projection.configuration.nodes.contains_key(node)
+            }) {
+                continue;
+            }
+            state.paths.insert(
+                socket_key(id),
+                PathState {
+                    nodes: nodes.clone(),
+                    netmap: target,
+                    reporter_role: *role,
+                    evidence: if *role == ReporterRole::Relay {
+                        PathEvidence::Sent
+                    } else {
+                        PathEvidence::PeerConfirmed
+                    },
+                    observed_at: self.facts_observed_at,
+                    expires_at: expiry,
+                },
+            );
+        }
         state
     }
 }
