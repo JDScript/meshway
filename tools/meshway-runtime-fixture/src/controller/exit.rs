@@ -276,17 +276,40 @@ pub(super) async fn coordinate(
         crate::exit::SPLIT_ZONE.trim_end_matches('.').into(),
         vec!["split".into()],
     )]);
+    // The exit LAN is routed by a rule naming a rule set: A's egress
+    // partition and every A decision use its artifact, fetched by digest. A
+    // missing artifact would fail every exit flow closed (this rule precedes
+    // the fallback), so the row's exit traffic proves the artifact is held.
+    input.rule_sets.insert(
+        "exit-lan".into(),
+        serde_json::from_value(serde_json::json!({
+            "type": "inline", "ipCIDR": [topology.lan_cidr.clone()]
+        }))?,
+    );
     input.routing.egress.profiles.insert(
         "exit".into(),
         RoutingProfile {
-            rules: vec![meshway_configuration::EgressRule {
-                remark: "useWithExit split resolver".into(),
-                matcher: meshway_configuration::RouteMatch {
-                    ip_cidr: vec![format!("{split}/32")],
-                    ..Default::default()
+            rules: vec![
+                meshway_configuration::EgressRule {
+                    remark: "useWithExit split resolver".into(),
+                    matcher: meshway_configuration::RouteMatch {
+                        ip_cidr: vec![format!("{split}/32")],
+                        ..Default::default()
+                    },
+                    action: meshway_configuration::RuleAction::Direct,
                 },
-                action: meshway_configuration::RuleAction::Direct,
-            }],
+                meshway_configuration::EgressRule {
+                    remark: "exit LAN through a rule set".into(),
+                    matcher: meshway_configuration::RouteMatch {
+                        rule_sets: vec!["exit-lan".into()],
+                        ..Default::default()
+                    },
+                    action: meshway_configuration::RuleAction::Exit {
+                        nodes: vec![format!("node:{}", nodes["e"])],
+                        via: vec![format!("node:{}", nodes["r"])],
+                    },
+                },
+            ],
             fallback: RouteAction::Exit {
                 nodes: vec![format!("node:{}", nodes["e"])],
                 via: vec![format!("node:{}", nodes["r"])],

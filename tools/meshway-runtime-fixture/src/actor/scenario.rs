@@ -30,12 +30,51 @@ pub(super) struct Context<'a> {
 
 /// Run `scenario`; returns the TUN that the final `down` must remove.
 pub(super) async fn run(scenario: NetmapScenario, context: Context<'_>) -> Result<String> {
+    artifact_held(context.cli, "initial").await?;
     match scenario {
         NetmapScenario::Offline => offline(context).await,
         NetmapScenario::Expiry => expiry(context).await,
         NetmapScenario::Restart => restart(context).await,
         NetmapScenario::Revoke => revoke(context).await,
     }
+}
+
+/// Every netmap row's netmap references one inline rule-set artifact: the
+/// daemon holds it and its Control cache has exactly that one read-only file,
+/// named by digest. After the restart row's offline restart it is the cache
+/// alone that supplies it.
+async fn artifact_held(cli: &Cli, stage: &str) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let status = wait_status(cli, |status| {
+        status
+            .netmap
+            .as_ref()
+            .is_some_and(|netmap| netmap.missing_artifacts.is_empty())
+    })
+    .await?;
+    let directory = cli.state.join("node").join("identity").join("artifacts");
+    let mut files = Vec::new();
+    let mut entries = tokio::fs::read_dir(&directory).await?;
+    while let Some(entry) = entries.next_entry().await? {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name == "artifacts.lock" {
+            continue;
+        }
+        let mode = entry.metadata().await?.permissions().mode() & 0o7777;
+        if !(name.starts_with("sha256-") && name.ends_with(".mwrs")) || mode != 0o400 {
+            return Err(format!("unexpected artifact cache entry {name} ({mode:o})").into());
+        }
+        files.push(name);
+    }
+    if files.len() != 1 {
+        return Err(format!("expected one cached artifact, found {files:?}").into());
+    }
+    save(
+        cli,
+        &format!("scenario-{stage}-artifact"),
+        &serde_json::json!({ "files": files, "netmap": status.netmap }),
+    )
+    .await
 }
 
 async fn observed(signals: &Signals, name: &str, role: Role) -> Result<()> {
@@ -255,6 +294,7 @@ async fn restart(mut context: Context<'_>) -> Result<String> {
         return Err("restart changed identity or status came from another process".into());
     }
     save(cli, "scenario-restarted-status", &status).await?;
+    artifact_held(cli, "restarted").await?;
     context.tun = owned_tun().await?;
     observed(
         signals,

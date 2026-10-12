@@ -664,6 +664,25 @@ async fn coordinate(
         dst: vec![format!("node:{}", nodes[&Role::B])],
         via: vec![format!("node:{}", nodes[&Role::R])],
     }];
+    if cli.netmap_scenario.is_some() {
+        // Every Node's netmap references one inline rule-set artifact by
+        // digest (a public direct rule for a documentation prefix that no
+        // traffic uses); the lifecycle rows check it is fetched and cached.
+        input.rule_sets.insert(
+            "fixture-direct".into(),
+            serde_json::from_value(serde_json::json!({
+                "type": "inline", "ipCIDR": ["198.51.100.0/24"]
+            }))?,
+        );
+        input.routing.egress.rules = vec![meshway_configuration::EgressRule {
+            remark: "rule-set artifact by digest".into(),
+            matcher: meshway_configuration::RouteMatch {
+                rule_sets: vec!["fixture-direct".into()],
+                ..Default::default()
+            },
+            action: meshway_configuration::RuleAction::Direct,
+        }];
+    }
     let revision = apply(&client, network, token, original.revision, &input).await?;
     let committed = source(&client, network, token).await?;
     let mut addresses = BTreeMap::new();
