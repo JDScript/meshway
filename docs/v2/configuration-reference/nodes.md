@@ -116,6 +116,10 @@ user 分支不接受 tags，tag 分支不接受 user。Node 数据库记录不�
 
 意图存在期间 `up`、`up --reenroll`、`rotate-key` 返回 `ErrorCode::Leaving`；`logout` 继续同一意图（沿用已保存的 requestId）；`down` 只改变期望上线，不取消注销。只有带新接入密钥的 `up --enrollment-key` 覆盖意图：本机放弃旧身份（Server 未回答时其记录留待管理员删除）并以新密钥接入。
 
+## 路由方案选择
+
+节点使用哪个出口方案是使用状态，不是 `nodes[id]` 字段：管理员以 `routing.egress.assignments` 给出 allowed／default／locked，选择由节点（`meshway exit`）或用户（`setNodeRoutingSelection`）提交，Server 持有。库存的 `routing` 字段给出列表摘要，读取与切换见 [Routing · 选择的入口](/v2/configuration-reference/routing#选择的入口)。
+
 Node 使用本地持久密钥身份认证。接入批准、公钥与实体绑定走[注册流程](/v2/api/authentication#node-的三层凭据)，私钥不进入这份静态配置。
 
 Tag 身份不继承 User／Group 权限，原创建用户离网后仍保留；最后一个 Tag 不能直接清空，须经设备用户登录完成身份转换。详见[有效身份](/v2/configuration-reference/identity#有效授权身份)。默认初始化不写空 dialers，以采用网络默认出站集合。

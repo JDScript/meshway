@@ -4,7 +4,19 @@
 
 ## 未发布
 
-wire 6、IPC 8、`compilerVersion` 不变；Server schema 版本 5（新增 `rule_set_record_heads`；开发环境重新初始化数据目录）。HTTP 契约：`SyncRequest` 新增可省略的 `lease`。alpha.4 代码审阅修复（F4a）：
+出口方案切换（C3）：IPC 升为 9，Server schema 版本 6（`activity_events` 新增 Node actor 与路由方案目标；开发环境重新初始化数据目录）；wire 6、`compilerVersion` 不变。
+
+- `meshway exit [profile|off]`：无参数显示本机 netmap 中的方案选择（生效／请求的方案、默认与锁定、`auto` 解析、每个允许方案的摘要）；带方案时请 Server 切换并等待本机应用带新版本的 netmap，`off` 即 `mesh`。人读输出、`--json` 与退出码见 [出口方案](/v2/node/runtime#exit-profile)。
+- IPC 9：命令 `SelectProfile`、结果 `Selection`、`NetmapStatus.routing`，错误码 `profileNotAllowed`／`profileLocked`／`selectionConflict`；`meshway status` 新增 Profile 行。
+- Control 调用 `selectNodeRoutingProfile`，CAS 基准为持有 netmap 中自身的选择版本；方案被拒或版本过期不结束 session／instance。本机只缓存 netmap，不保存选择。
+- HTTP：`selectNodeRoutingProfile` 的回答改为 `{selection: RoutingSelectionState}`，版本不一致改为 `409 version_conflict`、方案不可选为 `422 routing_profile_unavailable`（带允许的方案）；新增 `getNodeRoutingSelection`、`setNodeRoutingSelection`（`/api/v1/networks/{networkId}/nodes/{nodeId}/routing-selection`，成员限自己的 User 设备，Owner／Admin 任意节点，`requestId` 幂等）；`NodeInventoryView.routing` 摘要；活动 `routing.select`（actor `node`／`user`，target `routingSelection`）。三个入口共用同一提交，选择版本跨身份单调递增，过期身份的选择不作为 CAS 基准。
+- `RoutingSelectionState` 由 `meshway-policy` 唯一计算，Server 与节点对同一配置给出同一值；`auto` 没有可信地区输入，总是采用 fallback（`basis: noTrustedRegion`）。
+- Console 仅补齐新增枚举的映射。
+- `exit/off` 第 11 阶段：真实 CLI 切换后旧选择的 TCP／UDP 流结束、新流经出口，`exit off` 后无外部捕获。
+
+验证：Planck 16 行矩阵 `20261012T224334Z-469128d0` 全部通过；证据 `.meshway/validation/c3/`。已知：切到 `global:<exit>` 与 `useWithExit` split resolver 组合时节点 DNS 安装拒绝新 netmap，见[验收范围 · 剩余边界](/v2/node/validation#remaining-boundaries)。
+
+此前：wire 6、IPC 8、`compilerVersion` 不变；Server schema 版本 5（新增 `rule_set_record_heads`；开发环境重新初始化数据目录）。HTTP 契约：`SyncRequest` 新增可省略的 `lease`。alpha.4 代码审阅修复（F4a）：
 
 - A1 `POST /agent-api/v1/dns-associations` 接纳前对条目执行与 overlay 相同的校验（`DnsAssociation::validate`：名称／CNAME 为 1–253 B ASCII 小写等），非法条目 400 `invalid_request`，不再让源与出口的 `sync` 持续内部错误。
 - A2 出口 overlay 容量在接纳时对源与出口统一预算：任一方未到期条目将超过 4,096 即 429 `state_limit`；交付时不再截断单方副本；源换出口时唤醒原出口。

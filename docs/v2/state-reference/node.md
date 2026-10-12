@@ -70,7 +70,7 @@ GeoIP／ASN 作为 Server 的 ipInfo 派生信息返回；节点位置的近似�
 
 用户方案选择跨重启保存；恢复时仍在 allowed 且未被锁定才继续使用，否则采用当前管理员默认。它不进入管理员配置回滚历史，切换不能带走旧出口流／NAT 资格。
 
-请求选择由 Server 的持久 RoutingSelection 与当前配置确定，读取时投影；Node 只上报实际 appliedProfile。提交选择使用受控操作，不通过普通 State 报告覆盖选择。
+请求选择由 Server 的持久 RoutingSelection 与当前配置确定，读取时投影（[Routing · 当前选择的状态](/v2/configuration-reference/routing#selection-state)）；`selection.appliedProfile` 只能报告实际应用的方案，当前 Node 不填写（null）。提交选择使用受控操作，不通过普通 State 报告覆盖选择。
 
 ## 标识与时间
 
