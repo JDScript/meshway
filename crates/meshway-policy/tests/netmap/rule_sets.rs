@@ -1,6 +1,7 @@
 //! Rule sets reach Nodes by digest: the same content decides the same way
 //! wherever it is loaded, and a missing artifact fails closed.
 use super::*;
+use meshway_configuration::evaluation::EvaluationOutcome;
 use std::{net::IpAddr, sync::Arc};
 
 fn set(domain_suffix: &[&str], ip_cidr: &[&str]) -> Arc<meshway_rules::RuleSet> {
@@ -234,4 +235,62 @@ fn query_names_are_matched_without_dns_name_validation() {
     // An address is judged by its value only: names never match it.
     let address: IpAddr = "9.9.9.9".parse().unwrap();
     assert_eq!(compiler.egress_rule_for_ip(node(1), address).unwrap(), None);
+}
+
+#[test]
+fn the_preview_fails_closed_where_the_node_has_no_partition() {
+    let s = scenario();
+    // More direct ranges than a Node installs: no partition, full capture.
+    let cidrs: Vec<String> = (0..20_000u32)
+        .map(|i| format!("{}/32", std::net::Ipv4Addr::from(0x0900_0000 + 2 * i)))
+        .collect();
+    let refs: Vec<&str> = cidrs.iter().map(String::as_str).collect();
+    let corp = set(&[], &refs);
+    let sets: RuleSets = [("corp".to_owned(), corp.clone())].into();
+    let compiled = compile(&s, &sets);
+    let artifacts: Artifacts = [(corp.digest(), corp)].into();
+    let compiler = LocalCompiler::new(&compiled.nodes[&node(1)].netmap, &artifacts);
+    assert_eq!(
+        decide(&compiler, "8.8.8.8"),
+        LocalDecision::Denied(UnavailableReason::RoutingLimit)
+    );
+    let preview = |destination| {
+        meshway_policy::compile::plan(meshway_policy::compile::PlanRequest {
+            topology: meshway_policy::compile::Topology {
+                configuration: &s.cfg,
+                subjects: &s.subjects,
+                inventory: &s.inventory,
+            },
+            rule_sets: &sets,
+            selected_profiles: &BTreeMap::new(),
+            source: node(1),
+            destination,
+            profile: None,
+        })
+        .unwrap()
+    };
+    for address in ["8.8.8.8", "9.0.0.0"] {
+        let evaluation = preview(meshway_policy::compile::PlanDestination::Address(
+            address.parse().unwrap(),
+        ));
+        assert_eq!(
+            evaluation.profile.capture.unavailable,
+            Some(UnavailableReason::RoutingLimit)
+        );
+        assert_eq!(
+            evaluation.outcome,
+            EvaluationOutcome::Unavailable {
+                reason: UnavailableReason::RoutingLimit
+            },
+            "{address}"
+        );
+    }
+    // Mesh destinations do not depend on the egress partition.
+    let mesh = preview(meshway_policy::compile::PlanDestination::Node(node(2)));
+    assert_ne!(
+        mesh.outcome,
+        EvaluationOutcome::Unavailable {
+            reason: UnavailableReason::RoutingLimit
+        }
+    );
 }

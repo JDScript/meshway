@@ -98,7 +98,18 @@ fn plan_inner(
                 reason: UnavailableReason::NoPath,
             }),
         ),
-        _ => external_route(&request, &destination, &profile.name)?,
+        _ => {
+            let (route, outcome) = external_route(&request, &destination, &profile.name)?;
+            // A source without its partition (its Node installs the full
+            // fail-closed capture instead) fails every external destination
+            // closed, as `LocalCompiler::decide` does.
+            let unavailable = profile
+                .capture
+                .unavailable
+                .filter(|_| source_active)
+                .map(|reason| EvaluationOutcome::Unavailable { reason });
+            (route, unavailable.or(outcome))
+        }
     };
 
     let mut targets = Vec::new();
