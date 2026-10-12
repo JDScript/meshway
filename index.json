@@ -1,8 +1,69 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-12T10:38:56.236342+00:00",
+  "updatedAt": "2026-10-12T10:46:52.879132+00:00",
   "runs": [
+    {
+      "id": 38238127463,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "5a79b6531116553667d9c5b545120bd806643b77",
+      "message": "feat(console): search catalogs, browse and check a set's contents",
+      "createdAt": "2026-10-12T10:43:38Z",
+      "updatedAt": "2026-10-12T10:45:48Z",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/JDScript/meshway/actions/runs/38238127463",
+      "jobs": [
+        {
+          "id": 114773756488,
+          "name": "changes",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-12T10:43:40Z",
+          "completedAt": "2026-10-12T10:43:43Z",
+          "seconds": 3.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38238127463/job/114773756488"
+        },
+        {
+          "id": 114773782788,
+          "name": "console",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-12T10:43:46Z",
+          "completedAt": "2026-10-12T10:45:47Z",
+          "seconds": 121.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38238127463/job/114773782788"
+        },
+        {
+          "id": 114773784140,
+          "name": "cargo",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "skipped",
+          "startedAt": "2026-10-12T10:43:44Z",
+          "completedAt": "2026-10-12T10:43:43Z",
+          "seconds": 0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38238127463/job/114773784140"
+        },
+        {
+          "id": 114773784174,
+          "name": "docs-and-scripts",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "skipped",
+          "startedAt": "2026-10-12T10:43:44Z",
+          "completedAt": "2026-10-12T10:43:43Z",
+          "seconds": 0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38238127463/job/114773784174"
+        }
+      ],
+      "artifacts": []
+    },
     {
       "id": 38236271075,
       "attempt": 1,
