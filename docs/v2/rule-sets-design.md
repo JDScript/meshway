@@ -4,7 +4,7 @@
 
 ## 目标与结论
 
-已定方向（用户决定）：自有二进制规则集格式；发布仓库自动把 sing-box（sing-geosite／sing-geoip）与 mihomo（meta-rules-dat）来源转换后签名发布；Server 内置 provider 指向它，`geosite:openai`／`geoip:cn` 可直接引用，网络配置可覆盖 provider；inline 与自定义 remote 仍支持，且与发布仓库**共用同一个转换器**。匹配引擎进入 Policy：域名在 DNS 查询时匹配（X6），IP 在首包匹配；支持 exact／suffix／keyword 与 IPv4／IPv6 CIDR，regex 逐条报告并跳过；不做端口／进程匹配。netmap 只带 digest 引用，节点经认证端点按 digest 取一次并缓存。
+已定方向（用户决定）：自有二进制规则集格式；**对齐 mihomo**：发布仓库自动把 mihomo meta-rules-dat（domain-list-community／geoip 派生）来源转换后签名发布；sing-box source 转换保留为可选输入格式（自定义 remote 用），不是默认源，不解析 `.srs`；Server 内置 provider 指向它，`geosite:openai`／`geoip:cn` 可直接引用，网络配置可覆盖 provider；inline 与自定义 remote 仍支持，且与发布仓库**共用同一个转换器**。匹配引擎进入 Policy：域名在 DNS 查询时匹配（X6），IP 在首包匹配；支持 exact／suffix／keyword 与 IPv4／IPv6 CIDR，regex 逐条报告并跳过；不做端口／进程匹配。netmap 只带 digest 引用，节点经认证端点按 digest 取一次并缓存。
 
 本稿结论：
 
@@ -110,7 +110,7 @@ builder 的输入是转换器产出的条目，输出唯一确定：
 | ipv4／ipv6 | 目的地址落在区间内 | `ip_cidr`、mihomo ipcidr、classical `IP-CIDR`／`IP-CIDR6` |
 
 - 集合内所有条目取并集；一条 sing-box 规则内名称与 IP 字段为 AND，不能表达，整条报告为 `mixedRule`。
-- regex 逐条报告并跳过；仅当正则恰好等价于 `^literal$`、`(^|\.)literal$` 或无锚点字面量时降为 exact／suffix／keyword（真实数据中 160 条一条都不满足）。跳过意味着本集合是上游语义的子集，`RuleSetView` 必须显示 `unconverted.regex` 计数。
+- regex（用户决定）：v1 逐条报告并跳过，不做字面量降级（真实数据中 160 条可降级的为 0）；后续若支持只能按[兼容策略](#兼容策略)作为新的 required 段。跳过意味着本集合是上游语义的子集，`RuleSetView` 必须显示 `unconverted.regex` 计数。
 - 匹配输入必须是规范名称；DNS owner 每次查询规范化一次（`meshway_rules::Name::parse`），不在 matcher 内重复。
 - `match_domain` 返回 `Option<DomainHit>`：`Exact`、`Suffix { len }`（命中项是查询名的尾部 `len` 字节）、`Subdomain { len }`、`Keyword { index }`。由此可在不额外存储的情况下给出评估结果的 `RuleSetMatch.entry`。`match_ip` 返回 `Option<IpHit { range }>`。
 
@@ -127,7 +127,7 @@ builder 的输入是转换器产出的条目，输出唯一确定：
 
 feature 划分：默认只含 matcher、loader 与内存 builder（Policy、Engine 用）；`convert` 含来源解析与报告（Server、CLI 用）；`mapped` 含 mmap 后端（Server、Control 用）。
 
-**mmap 与 `unsafe`**：`memmap2::Mmap::map` 是 `unsafe`（文件被截断或改写即未定义行为／SIGBUS），与“业务代码 forbid unsafe”冲突。建议放在 `meshway-rules::mapped` 一个隔离并审计的模块中，前提条件是：只映射 Control／Server 私有目录中以 digest 命名、0400、经原子 rename 写入且此后不改写的文件；进程首次打开每个 digest 时整份校验 SHA-256（planck 816 KB 0.32 ms）。loader 接受任意 `AsRef<[u8]>` 后端，堆读取（`std::fs::read`）是同一 API 的另一后端（planck 816 KB 打开 16.5 µs），因此 mmap 例外是否批准不影响其他设计（见[需用户决定](#需用户决定)）。
+**mmap 与 `unsafe`**（用户已批准例外）：`memmap2::Mmap::map` 是 `unsafe`（文件被截断或改写即未定义行为／SIGBUS），与“业务代码 forbid unsafe”冲突。它隔离在 `meshway-rules::mapped` 一个审计模块中（模块级 `#![allow(unsafe_code)]`、每处 `// SAFETY:`，crate 其余部分 deny unsafe），前提条件是：只映射 Control／Server 私有目录中以 digest 命名、0400、经原子 rename 写入且此后不改写的文件；进程首次打开每个 digest 时整份校验 SHA-256（planck 816 KB 0.32 ms）。loader 接受任意 `AsRef<[u8]>` 后端，堆读取（`std::fs::read`）是同一 API 的另一后端（planck 816 KB 打开 16.5 µs）。
 
 **每进程每 digest 一个句柄**：Server 计算所有节点的路径检测时共享同一 `Arc<RuleSet>`；1,000 个句柄共享一份映射只增加 0.8 MB，1,000 份堆副本增加 786 MB（[内存](#内存-1-000-个句柄)）。
 
@@ -136,7 +136,6 @@ feature 划分：默认只含 matcher、loader 与内存 builder（Policy、Engi
 | `format` | 输入 |
 | --- | --- |
 | `sing-box-source` | sing-box rule-set source JSON v1–v3；字段可为字符串或数组（sing-box listable，`sing-box rule-set decompile` 对单元素输出字符串） |
-| `sing-box-binary` | `.srs` v1–v3（sing-geosite／sing-geoip 上游只发布此格式） |
 | `mihomo-domain`／`mihomo-ipcidr` | mihomo YAML `payload`（现有） |
 | `mihomo-domain-text`／`mihomo-ipcidr-text` | meta-rules-dat `.list`，每行一项 |
 | `classical` | `TYPE,value[,...]` 文本 |
@@ -148,20 +147,20 @@ feature 划分：默认只含 matcher、loader 与内存 builder（Policy、Engi
 
 | 项 | 方案 |
 | --- | --- |
-| 仓库 | `JDScript/meshway-rules`（公开）；`main` 放 workflow 与集合清单，orphan 分支 `dist` 放发布产物 |
-| 集合 | `sing-geosite/<category>`、`sing-geoip/<cc>`、`meta-geosite/<category>`、`meta-geoip/<cc>`；默认全量上游类别 |
+| 仓库 | `meshway-org/meshway-rules`（公开，`https://github.com/meshway-org/meshway-rules.git`）；`main` 放 workflow 与集合清单，orphan 分支 `dist` 放发布产物 |
+| 集合 | `meta-geosite/<category>`、`meta-geoip/<cc>`（MetaCubeX/meta-rules-dat `meta` 分支）；默认全量上游类别。sing-geosite／sing-geoip 上游只发布 `.srs`，不解析，因此不发布 |
 | 频率 | 每天 1 次 cron＋手动 dispatch；上游 commit 全未变化则不发布 |
 | 转换器 | 从 meshway 指定 tag 构建 `tools/meshway-rules-cli`（`--locked`），版本写入目录 |
 
 流水线：
 
-1. 读取上游 `rule-set`（sing-geosite、sing-geoip）与 `meta`（meta-rules-dat）分支的当前 commit，按 commit SHA 拉取原文（raw URL 不重定向）。
+1. 读取上游 meta-rules-dat `meta` 分支的当前 commit，按 commit SHA 拉取原文（raw URL 不重定向）。
 2. 每个集合运行 CLI：转换、构建、报告。单个集合失败时沿用上一版 artifact，并在目录中记录 `held: {since, reason}`；规范条目数比上一版减少超过 50 % 视为可疑，同样 hold 并开 issue。
 3. 生成 `index.json`：`schema: 1`、单调递增的 `sequence`、`generatedAt`、`converter`、`upstreams[]`（repo／ref／commit）、`sets: { "<collection>/<name>": { digest, bytes, entries, format, source, report } }`；完整报告另存 `reports/<digest>.json`。
-4. 用 ed25519 签名 `index.json` 原始字节得 `index.json.sig`（含 key ID）。私钥存为仓库 environment secret，环境只允许 `main` 上的该 workflow 使用。
+4. 用 ed25519 签名 `index.json` 原始字节得 `index.json.sig`（含 key ID）。签名钥存为仓库 GitHub environment secret，环境只允许 `main` 上的该 workflow 使用；用户离线持有第二把轮换钥。Server 内置两把公钥（CI 钥与离线轮换钥），任一签名有效即接受；CI 钥泄露时用离线钥签发并发布去掉旧钥的 Server 版本。
 5. 强制推送 `dist`：`index.json`、`index.json.sig`、`artifacts/<digest>.mwrs`、`reports/`；保留最近 7 份目录引用的 artifact，使目录与 artifact 读取之间的更新竞态在实践中不发生。同时打 tag 并创建 GitHub Release 供人工审计。
 
-**Server 怎样取与钉钥**：Server 从 `https://raw.githubusercontent.com/JDScript/meshway-rules/dist/index.json` 取目录与签名，用内置公钥（源码常量，可由部署设置追加或替换，网络管理员不能改内置 provider 的信任根）验签，拒绝 `sequence` 小于该 provider 上次接受值的目录；再按 digest 取 `artifacts/<digest>.mwrs` 并校验 SHA-256。GitHub Release 下载会 302 重定向，而现行下载器拒绝重定向，所以不用 Release 作为 Server 来源。
+**Server 怎样取与钉钥**：Server 从 `https://raw.githubusercontent.com/meshway-org/meshway-rules/dist/index.json` 取目录与签名，用内置公钥（源码常量，可由部署设置追加或替换，网络管理员不能改内置 provider 的信任根）验签，拒绝 `sequence` 小于该 provider 上次接受值的目录；再按 digest 取 `artifacts/<digest>.mwrs` 并校验 SHA-256。GitHub Release 下载会 302 重定向，而现行下载器拒绝重定向，所以不用 Release 作为 Server 来源。
 
 **失败行为**：目录取不到、验签失败、sequence 回退或 artifact 校验失败都保留上一份已验证内容，`problem` 记录原因，不发布半份；目录超过 7 天未前进时 `RuleSetView` 报告 `stale`，但不使执行失败。首次没有任何可用内容时与现有 remote 相同：`not_ready`，引用它的规则不可执行。
 
@@ -174,8 +173,8 @@ feature 划分：默认只含 matcher、loader 与内存 builder（Policy、Engi
 {
   "ruleSetProviders": {
     "geosite": {
-      "catalog": "https://raw.githubusercontent.com/JDScript/meshway-rules/dist/index.json",
-      "collection": "sing-geosite",
+      "catalog": "https://raw.githubusercontent.com/meshway-org/meshway-rules/dist/index.json",
+      "collection": "meta-geosite",
       "publicKeys": ["ed25519:<base64>"],
       "updateInterval": "24h"
     },
@@ -184,7 +183,7 @@ feature 划分：默认只含 matcher、loader 与内存 builder（Policy、Engi
       "collection": "corp",
       "publicKeys": ["ed25519:<base64>"]
     },
-    "meta-geoip": null
+    "geoip": null
   }
 }
 ```
@@ -198,7 +197,7 @@ feature 划分：默认只含 matcher、loader 与内存 builder（Policy、Engi
 | `updateInterval` | 默认 `24h`，调度、下界与退避同现有 remote |
 | 值为 `null` | 禁用同名内置 provider |
 
-- 内置 provider：`geosite`→`sing-geosite`、`geoip`→`sing-geoip`、`meta-geosite`、`meta-geoip`（默认指向哪组仍待用户决定）。网络配置中出现同名 key 时**整体替换**内置定义，不逐字段合并。
+- 内置 provider（用户决定对齐 mihomo）：`geosite`→ `meta-geosite`、`geoip`→ `meta-geoip`，目录均为 `https://raw.githubusercontent.com/meshway-org/meshway-rules/dist/index.json`；不内置 sing-box 系 provider。网络配置中出现同名 key 时**整体替换**内置定义，不逐字段合并。
 - 引用：`match.ruleSets` 中含 `:` 的项是 `provider:name`（第一个 `:` 前为 provider）；不含 `:` 的项仍是本网络 `ruleSets` 的 key。本网络 key 从此不得含 `:`。
 - 展开：`geosite:openai` 等价于一个隐式 remote `{ type: "remote", provider: "geosite", name: "openai", format: "meshway" }`，URL 由目录解析；它不写回配置原文与规范值，只出现在资源视图与 netmap 引用中。
 - 配置校验：未知 provider、目录中不存在的 name 分别报 `unknown_rule_set_provider`／`unknown_rule_set`；目录尚未取得时与远端准备相同，进入 `PreparationKind::RuleSetContent`。
@@ -216,6 +215,7 @@ feature 划分：默认只含 matcher、loader 与内存 builder（Policy、Engi
 
 ### 与 inline／remote 的关系
 
+- inline 字段（用户决定暴露 subdomain）：现有 `domain`（exact）、`domainSuffix`（suffix）、`ipCIDR` 之外新增 `domainSubdomain`（只匹配子名称，不含本身；对应 sing-box／mihomo 的 `.example.com`），默认 `[]`，规范化同其他名称字段；四项不能都为空。R2a 接入配置类型。
 - inline：配置原文不变；Server 用同一 builder 生成 artifact，与 remote 一样按 digest 进入 netmap，节点不再在投影中收到 inline 列表。
 - remote：`format` 增加上表新格式；转换、刷新、幂等、回滚语义不变，只把产物从 JSON 改为 `MWRS`。
 - routing 规则自身的 `match.domain`／`domainSuffix`／`ipCIDR` 仍在投影中；Policy 以 `RuleSet::from_inline` 构建内存句柄并按 netmap serial 缓存，与规则集走同一 matcher。
@@ -286,7 +286,7 @@ Control 把 artifact 写入私有目录 `artifacts/sha256-<hex>.mwrs`（0400、�
 
 - `match_domain(name) -> Option<rule index>` 的“rule index”属于 Policy；`meshway-rules` 只回答集合成员关系与命中项。
 - 同一 IP 被多个名称解析且对应不相容动作时，沿用 [Exit 设计 · DNS 路径与可信域名上下文](/v2/node/exit-design#dns-路径与可信域名上下文) 与 [Routing](/v2/configuration-reference/routing#direct-unmanaged) 的既有决定：拒绝／不可执行，不选更宽路径；域名授权仍是解析地址集合。本稿不改变 X6 的可信关联生产者要求，域名型规则在 X6 前仍不可执行。
-- 出口分割：IP 规则集不再展开为字符串 CIDR，Policy 用区间数组做 first-match 分割。分割结果若仍由 Server 计算并写入 `egress.routes`，geoip-cn 需要约 6,000 个 v4 前缀，远超现 4,096；推荐把分割改为在节点上由 Engine 用 artifact 区间物化（nftables interval set＋fwmark），netmap 只带有序“规则→动作”。这涉及 Underlay owner，列入[未解决](#未解决)。
+- 出口分割：IP 规则集不再展开为字符串 CIDR，Policy 用区间数组做 first-match 分割。分割结果若仍由 Server 计算并写入 `egress.routes`，geoip-cn 需要约 6,000 个 v4 前缀，远超现 4,096；用户已决定：分割移到节点，由 Engine 用 artifact 区间物化（nftables interval set＋fwmark），netmap 只带有序“规则→动作”（R3，不在 R1）。`meshway-rules` 的 `ipv4_ranges()`／`ipv6_ranges()` 直接给出合并后的有序闭区间，即 interval set 的输入。这涉及 Underlay owner，列入[未解决](#未解决)。
 
 ## spike 实测
 
@@ -331,7 +331,7 @@ tools/meshway-rules-spike/target/release/meshway-rules-spike acbuild 4096
 | bm7 `Advertising` | 9,436,179 | 格式不支持 | 287,021 | 16,440 | 269,814 | 0 | 278 | 0 | 489 | 0 |
 
 - 受支持格式的 8 份中现转换器**整次失败 4 份**：三份 sing-geosite 都含 `domain_regex`（`deny_unknown_fields`），另有 `.`前缀名称；meta `geolocation-!cn` 因 `xn--wcvs22d1m.hk`、`xn--wcvs22d1m.xn--j6w193g` 未通过 IDNA 校验。新转换器对同样输入只跳过 regex 与 2 个非法名称。
-- 上游 sing-geosite／sing-geoip 只发布 `.srs`；JSON 由 `sing-box rule-set decompile` 得到，因此 `sing-box-binary` 是必需格式。
+- 上游 sing-geosite／sing-geoip 只发布 `.srs`；spike 的 JSON 由 `sing-box rule-set decompile` 得到。用户决定不解析 `.srs`，这些集合只作 sing-box source 转换的测试样本。
 - 160 条 regex 中可无损降级的为 0。
 - sing-geosite `cn`（9,304）与 meta `cn`（111,595）内容不同，二者不能共用 `geosite:cn` 这个名字而不说明来源。
 
@@ -417,24 +417,17 @@ meta `geosite/cn`（816,448 B），每个句柄打开后各执行 1,151 次查�
 | --- | --- | --- | --- |
 | R1 格式＋crate | 新 `crates/meshway-rules`（format、build、load、match、convert、mapped）；`tools/meshway-rules-cli`；本稿格式定稿为 `docs/v2/` 下的格式参考页。manifest／lock 交协调者 | 无；不改 Server／Policy | 与本 spike 的参考实现做差分测试；`.srs` 解析与 `sing-box rule-set decompile` 差分；loader 对任意字节不 panic（fuzz）；跨架构 digest 一致；`mise run check` |
 | R2a Server＋Policy＋Control 接线 | Server `resources/`（转换改用 R1、全局内容寻址存储、provider 目录与验签、`ruleSetProviders`、隐式展开、`RuleSetView` 新字段、`artifacts/{digest}` 路由与引用索引）；`meshway-configuration` netmap 类型（`RuleSetRef`、`meshway-netmap-2`）与配置类型；`meshway-policy` 的 `plan_match`／`capture`／validation 改用 matcher；`meshway-control` artifact 获取与缓存；OpenAPI／SDK 重生成 | R1 | 投影等价测试含规则集变异；缺 artifact fail closed；撤销不被下载阻塞；离线重启载入；1,000 节点引用同一 artifact 的 perf（Server 存储、刷新耗时、请求授权）；drift 与 Rust／TS 消费者 |
-| R2b 发布仓库 | `JDScript/meshway-rules` 仓库、workflow、签名 secret、`dist` 分支 | R1 CLI；与 R2a 并行 | 上游未变不发布；单集合失败 hold；sequence 单调；Server 用钉住公钥验通一次真实目录 |
+| R2b 发布仓库 | `meshway-org/meshway-rules` 仓库、workflow、签名 secret、`dist` 分支 | R1 CLI；与 R2a 并行 | 上游未变不发布；单集合失败 hold；sequence 单调；Server 用钉住公钥验通一次真实目录 |
 | R3 出口分割物化（建议） | Policy 区间分割；Engine desired；Underlay nft interval set 与 fwmark | R2a；与 X3 owner 协调 | geoip-cn 规模的 direct 例外不进 TUN；artifact 缺失保持全范围捕获；`exit/off` 行不回退 |
 | X6 可信域名 | 按 [Exit 设计](/v2/node/exit-design#工作包与依赖) 的 X6 边界；DNS owner 查询时调用 Policy `egress_rule_for_name` | R2a | 同 IP 多名称冲突、TTL、跨 profile 不复用；域名规则仅在可信关联存在时可执行 |
 
 ## 需用户决定
 
-1. **regex**：v1 逐条跳过。是否后续支持（候选：regex-automata 稠密 DFA 可序列化并零拷贝加载，作为新的 required 段）？真实影响：sing-geosite `cn` 8 条、`geolocation-!cn` 151 条、`openai` 1 条。
-2. **内置 provider 默认来源**：`geosite:`／`geoip:` 指向 sing-geosite／sing-geoip（v2fly 系，`cn` 9,304 条）还是 meta-rules-dat（`cn` 111,595 条）；另一组是否以 `meta-geosite:`／`meta-geoip:` 内置。
-3. **签名密钥归属**：GitHub environment secret（可每日自动发布）、离线钥＋人工发布，或 sigstore keyless（Server 需验证 Fulcio／Rekor）。以及谁持有轮换用的第二把钥。
-4. **发布仓库名与归属**：建议 `JDScript/meshway-rules`。
-5. **mmap 的 `unsafe` 例外**：是否批准在 `meshway-rules::mapped` 内隔离审计（不批准则节点与 Server 用堆读取，同一 API，打开 816 KB 约 16.5 µs，每进程每 digest 一份私有内存）。
-6. **subdomain 语义**：真实数据有 115 条 `.example.com`（只匹配子域）。格式与转换器建议支持；inline 配置面是否也暴露对应字段（例如 `domainSubdomain`）。
-7. **出口分割位置**：Server 继续计算并把前缀写进 netmap（需把 4,096 上限至少提到约 16,384，内容又回到每份 netmap），还是按 R3 移到节点物化。
+R0 列出的七项已由用户决定并写入相应章节：regex v1 逐条跳过（[匹配语义](#匹配语义)）；内置 provider 对齐 mihomo、指向 meta-rules-dat（[配置面](#配置面)）；签名钥为 GitHub environment secret＋用户离线轮换钥（[发布仓库](#发布仓库)）；仓库 `meshway-org/meshway-rules`；批准 `mapped` 的 `unsafe` 隔离例外（[crate 与 owner](#crate-与-owner)）；subdomain 在格式、转换器与 inline（`domainSubdomain`）支持；出口分割移到节点（R3，[Policy 接口与 X6](#policy-接口与-x6)）。
 
 ## 未解决
 
 - R3 未经 Underlay owner 评审；nftables interval set 在 6,000＋区间下的提交时延、原子替换与 conntrack 交互未测。
-- spike 没有实现 `.srs` 解析，靠 sing-box CLI 解码；R1 需自行实现并做差分。
 - X6 可信关联生产者仍不存在；本设计让 DNS 查询时匹配变快，但不让域名型出口规则变为可执行。
 - 我们的规范化会拒绝 sing-box／mihomo 接受的部分名称（例如 `xn--wcvs22d1m.hk`），这些条目被报告并跳过，与上游语义存在差距。
 - 现 Policy 路径检测在大规则集上每次查询 0.5–54 ms（实测），在 R2a 前已是可观测的性能问题。
