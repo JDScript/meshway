@@ -377,7 +377,8 @@ pub(super) async fn coordinate(
     profile.fallback = RouteAction::Direct;
     let mut revoked = named.clone();
     for rule in &mut revoked.access {
-        rule.dst.retain(|destination| !destination.starts_with("domain:"));
+        rule.dst
+            .retain(|destination| !destination.starts_with("domain:"));
     }
     let mut name_stage = 0;
     let mut outage = false;
@@ -405,9 +406,19 @@ pub(super) async fn coordinate(
             .await?;
         }
         for (step, signal, done, target) in [
-            (0, "exit-name-configure", "exit-name-configured.json", &named),
+            (
+                0,
+                "exit-name-configure",
+                "exit-name-configured.json",
+                &named,
+            ),
             (1, "exit-name-revoke", "exit-name-revoked.json", &revoked),
-            (2, "exit-name-restore", "exit-name-restored.json", &original_input),
+            (
+                2,
+                "exit-name-restore",
+                "exit-name-restored.json",
+                &original_input,
+            ),
         ] {
             if name_stage == step && tokio::fs::try_exists(cli.signals.join(signal)).await? {
                 let current = source(&client, network, token).await?;

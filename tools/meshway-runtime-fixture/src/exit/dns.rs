@@ -62,7 +62,11 @@ fn answer(
     response.metadata.authoritative = true;
     response.add_query(question.clone());
     let owner = question.name().clone();
-    let ttl = if name.ends_with(NAME_ZONE) { NAME_TTL } else { 0 };
+    let ttl = if name.ends_with(NAME_ZONE) {
+        NAME_TTL
+    } else {
+        0
+    };
     let records: Vec<RData> = match (role, kind) {
         (Role::External, _) if !name.ends_with(EXIT_ZONE) => {
             response.metadata.response_code = ResponseCode::Refused;
@@ -72,7 +76,9 @@ fn answer(
             .map(|i| RData::A(rdata::A(Ipv4Addr::new(198, 51, 100, i))))
             .collect(),
         (Role::External, RecordType::A) if name.ends_with(NAME_ZONE) => {
-            vec![RData::A(rdata::A(service.ok_or("name zone without service address")?))]
+            vec![RData::A(rdata::A(
+                service.ok_or("name zone without service address")?,
+            ))]
         }
         (Role::External, RecordType::AAAA) if name.ends_with(NAME_ZONE) => Vec::new(),
         (Role::External, RecordType::A) => vec![RData::A(rdata::A(EXIT_A))],
