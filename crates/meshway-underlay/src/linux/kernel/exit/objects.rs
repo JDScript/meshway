@@ -551,12 +551,17 @@ mod tests {
         let mut commands = Commands::default();
         let receipt = mutate(&mut commands, &program.create()).await.unwrap();
         let result = verify(&mut commands, &program, &receipt).await;
+        // The intended program is exactly what nft installed and lists.
+        let recovered = recover_create(&mut commands, &program).await;
         mutate(&mut commands, &json!({"nftables": program.tables().into_iter().map(|(family, name)| json!({"delete": {"table": {"family": family, "name": name}}})).collect::<Vec<_>>()})).await.unwrap();
         assert_eq!(present(&mut commands, &program).await.unwrap(), 0);
         assert!(
             result.is_ok(),
             "high-bit mark must survive actual NFT readback: {result:?}"
         );
+        let recovered = recovered.unwrap();
+        assert_eq!(recovered.objects, receipt.objects);
+        assert_eq!(recovered.handles, receipt.handles);
     }
 
     fn rule(expression: Value) -> Value {

@@ -92,6 +92,10 @@ impl Backend {
             .routing
             .forward(&mut backend.ledger, &mut backend.store)
             .await?;
+        backend
+            .routing
+            .related(&mut backend.ledger, &mut backend.store)
+            .await?;
         backend.ledger.pending = false;
         backend.store.persist(&backend.ledger).await?;
         Ok(backend)

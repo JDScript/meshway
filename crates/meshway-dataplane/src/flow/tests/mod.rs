@@ -457,3 +457,118 @@ fn idle_reclaimed_tcp_resumes_as_a_first_packet() {
             .is_err()
     );
 }
+
+/// An ICMP error is the RELATED packet of exactly one live flow: it quotes
+/// that flow's forward packet and rides its reply direction (terminal →
+/// origin) on the original path, within a per-flow, per-second budget. It
+/// never creates, refreshes or advances a flow.
+#[test]
+fn icmp_errors_ride_only_the_reply_direction_of_the_flow_they_quote() {
+    let mut scene = Scene::new(BusinessProtocol::Udp, false, true);
+    let original = udp(1, 3, 50000, 443);
+    let quoted = original.as_bytes().to_vec();
+    forward(&mut scene, original);
+    // The terminal's own port unreachable reaches the origin.
+    reply(
+        &mut scene,
+        icmp_error(address(3), address(1), 3, 3, &quoted),
+    );
+    let at_origin = |scene: &mut Scene, packet| scene.process(1, Some(2), 3, &[1, 2, 3], packet);
+    // A quote naming no flow of this path, from either endpoint.
+    let other = udp(1, 3, 50001, 443).as_bytes().to_vec();
+    assert!(matches!(
+        at_origin(
+            &mut scene,
+            icmp_error(address(3), address(1), 11, 0, &other)
+        ),
+        Err(Error::Flow)
+    ));
+    assert!(matches!(
+        scene.process(
+            3,
+            None,
+            3,
+            &[1, 2, 3],
+            icmp_error(address(3), address(1), 3, 3, &other)
+        ),
+        Err(Error::Flow)
+    ));
+    // A Mesh flow's errors come only from its terminal.
+    assert!(matches!(
+        at_origin(
+            &mut scene,
+            icmp_error(address(2), address(1), 11, 0, &quoted)
+        ),
+        Err(Error::Admission(_))
+    ));
+    assert!(matches!(
+        at_origin(
+            &mut scene,
+            icmp_error("198.51.100.1".parse().unwrap(), address(1), 11, 0, &quoted)
+        ),
+        Err(Error::Admission(_))
+    ));
+    // Never the forward direction, never from the relay's position.
+    assert!(
+        scene
+            .process(
+                3,
+                Some(2),
+                1,
+                &[1, 2, 3],
+                icmp_error(address(3), address(1), 3, 3, &quoted)
+            )
+            .is_err()
+    );
+    // The budget: ten per flow and second at each endpoint, then refused.
+    for _ in 1..RELATED_PER_SECOND {
+        reply(
+            &mut scene,
+            icmp_error(address(3), address(1), 3, 3, &quoted),
+        );
+    }
+    assert!(matches!(
+        scene.process(
+            3,
+            None,
+            3,
+            &[1, 2, 3],
+            icmp_error(address(3), address(1), 3, 3, &quoted)
+        ),
+        Err(Error::Capacity)
+    ));
+    scene.advance(Duration::from_secs(1));
+    reply(
+        &mut scene,
+        icmp_error(address(3), address(1), 3, 3, &quoted),
+    );
+    // The flow itself is unchanged: its real reply still passes, and no
+    // error ever became a flow.
+    reply(&mut scene, udp(3, 1, 443, 50000));
+    for table in [&scene.tables[&node(1)], &scene.tables[&node(3)]] {
+        assert_eq!(table.len(), 1);
+    }
+}
+
+#[test]
+fn icmp_errors_of_an_echo_flow_name_its_exact_sequence() {
+    let mut scene = Scene::new(BusinessProtocol::IcmpEcho, false, true);
+    let request = echo(false, 7, 1);
+    let quoted = request.as_bytes().to_vec();
+    forward(&mut scene, request);
+    reply(
+        &mut scene,
+        icmp_error(address(3), address(1), 11, 0, &quoted),
+    );
+    let other = echo(false, 7, 2).as_bytes().to_vec();
+    assert!(matches!(
+        scene.process(
+            1,
+            Some(2),
+            3,
+            &[1, 2, 3],
+            icmp_error(address(3), address(1), 11, 0, &other)
+        ),
+        Err(Error::Flow)
+    ));
+}

@@ -108,9 +108,30 @@ impl OriginalTuple {
 
     /// Ownership framing only. Full packet/service admission remains upstream.
     pub(super) fn matches(self, packet: &[u8]) -> bool {
+        self.header(packet)
+            && usize::from(u16::from_be_bytes([packet[2], packet[3]])) == packet.len()
+            && (self.fields().0 != 6 || packet.len() >= 40)
+    }
+
+    /// Whether `packet` is an ICMPv4 destination-unreachable or time-exceeded
+    /// error addressed to this projection's source, quoting its forward packet
+    /// (the quote is truncated; its sender may be any router). Framing only:
+    /// the data-plane flow owner admits it.
+    pub(super) fn related(self, packet: &[u8]) -> bool {
+        packet.len() >= 20 + 8 + 28
+            && packet[0] == 0x45
+            && usize::from(u16::from_be_bytes([packet[2], packet[3]])) == packet.len()
+            && u16::from_be_bytes([packet[6], packet[7]]) & 0x3fff == 0
+            && packet[9] == 1
+            && packet[16..20] == self.source.octets()
+            && matches!(packet[20], 3 | 11)
+            && self.header(&packet[28..])
+    }
+
+    /// The forward packet's header and ports (echo: identifier/sequence).
+    fn header(self, packet: &[u8]) -> bool {
         if packet.len() < 28
             || packet[0] != 0x45
-            || usize::from(u16::from_be_bytes([packet[2], packet[3]])) != packet.len()
             || u16::from_be_bytes([packet[6], packet[7]]) & 0x3fff != 0
             || packet[12..16] != self.source.octets()
             || packet[16..20] != self.destination.octets()
@@ -127,8 +148,7 @@ impl OriginalTuple {
                 && u16::from_be_bytes([packet[24], packet[25]]) == source
                 && u16::from_be_bytes([packet[26], packet[27]]) == self.sequence()
         } else {
-            (protocol != 6 || packet.len() >= 40)
-                && u16::from_be_bytes([packet[20], packet[21]]) == source
+            u16::from_be_bytes([packet[20], packet[21]]) == source
                 && u16::from_be_bytes([packet[22], packet[23]]) == destination
         }
     }
@@ -159,6 +179,59 @@ fn forbidden(ip: Ipv4Addr) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn ipv4(source: Ipv4Addr, destination: Ipv4Addr, protocol: u8, body: &[u8]) -> Vec<u8> {
+        let mut packet = vec![0x45, 0, 0, 0, 0, 0, 0x40, 0, 64, protocol, 0, 0];
+        packet.extend(source.octets());
+        packet.extend(destination.octets());
+        packet.extend(body);
+        let length = u16::try_from(packet.len()).unwrap().to_be_bytes();
+        packet[2..4].copy_from_slice(&length);
+        packet
+    }
+
+    #[test]
+    fn related_errors_quote_the_exact_forward_packet_to_its_source() {
+        let source: Ipv4Addr = "100.96.0.1".parse().unwrap();
+        let destination: Ipv4Addr = "198.51.100.7".parse().unwrap();
+        let router: Ipv4Addr = "203.0.113.1".parse().unwrap();
+        let udp = OriginalTuple {
+            source,
+            destination,
+            transport: ExitTransport::Udp {
+                source_port: 3456,
+                destination_port: 443,
+            },
+        };
+        let forward = ipv4(source, destination, 17, &[13, 128, 1, 187, 0, 8, 0, 0]);
+        assert!(udp.matches(&forward));
+        let error = |kind: u8, to: Ipv4Addr, quoted: &[u8]| {
+            let mut body = vec![kind, 0, 0, 0, 0, 0, 0, 0];
+            body.extend(quoted);
+            ipv4(router, to, 1, &body)
+        };
+        assert!(udp.related(&error(11, source, &forward)));
+        assert!(udp.related(&error(3, source, &forward)));
+        assert!(!udp.related(&error(5, source, &forward)));
+        assert!(!udp.related(&error(11, destination, &forward)));
+        let other = ipv4(source, destination, 17, &[13, 129, 1, 187, 0, 8, 0, 0]);
+        assert!(!udp.related(&error(11, source, &other)));
+        assert!(!udp.related(&error(11, source, &forward[..27])));
+        let echo = OriginalTuple {
+            source,
+            destination,
+            transport: ExitTransport::IcmpEcho {
+                identifier: 7,
+                sequence: 9,
+            },
+        };
+        let request = ipv4(source, destination, 1, &[8, 0, 0, 0, 0, 7, 0, 9]);
+        assert!(echo.related(&error(11, source, &request)));
+        let later = ipv4(source, destination, 1, &[8, 0, 0, 0, 0, 7, 0, 10]);
+        assert!(!echo.related(&error(11, source, &later)));
+        // An error is never mistaken for the exact reply.
+        assert!(!udp.matches(&error(11, source, &forward)));
+    }
 
     #[test]
     fn projection_is_exact_and_cannot_target_owned_or_special_addresses() {

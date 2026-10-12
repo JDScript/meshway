@@ -56,6 +56,27 @@ impl Routing {
         self.add_rule(rule, ledger, store).await
     }
 
+    /// ICMP errors about owned flows come from routers beyond this exit or
+    /// from this host, never from the flow's remote address: one marked ICMP
+    /// lookup of the return table after every pair rule. The table holds only
+    /// the projected sources' routes, so other destinations fall through.
+    pub async fn related(&self, ledger: &mut Ledger, store: &mut Store) -> Result<()> {
+        let mut rule = RuleMessage::default();
+        rule.header.family = AddressFamily::Inet;
+        rule.header.action = RuleAction::ToTable;
+        rule.attributes = vec![
+            RuleAttribute::Priority(
+                self.start - RESERVED + 1 + 2 * super::program::CAPACITY as u32,
+            ),
+            RuleAttribute::Table(ledger.route_table),
+            RuleAttribute::Protocol(PROTOCOL.into()),
+            RuleAttribute::FwMark(ledger.program.mark),
+            RuleAttribute::FwMask(ledger.program.mark),
+            RuleAttribute::IpProtocol(rtnetlink::packet_route::IpProtocol::Icmp),
+        ];
+        self.add_rule(rule, ledger, store).await
+    }
+
     pub async fn source(
         &self,
         source: Ipv4Addr,

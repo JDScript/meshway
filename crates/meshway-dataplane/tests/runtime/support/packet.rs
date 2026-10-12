@@ -49,6 +49,22 @@ pub fn echo(
     datagram(source, destination, protocol, body, 2)
 }
 
+/// An ICMPv4 error quoting `quoted`'s header and first 64 bytes, as a router
+/// beyond an exit sends it after the exit's reverse NAT.
+pub fn icmp_error(
+    source: IpAddr,
+    destination: IpAddr,
+    kind: u8,
+    code: u8,
+    next_hop_mtu: u16,
+    quoted: &[u8],
+) -> Packet {
+    let mut body = vec![kind, code, 0, 0, 0, 0];
+    body.extend(next_hop_mtu.to_be_bytes());
+    body.extend(&quoted[..quoted.len().min(20 + 64)]);
+    datagram(source, destination, 1, body, 2)
+}
+
 pub fn tcp(
     source: IpAddr,
     destination: IpAddr,

@@ -33,7 +33,9 @@ use meshway_policy::admission::AdmissionError;
 pub use meshway_policy::admission::Hop;
 pub use meshway_policy::compile::netmap::Target;
 pub use netmap::Purpose;
-pub use packet::{Packet, PacketError, PacketFacts, PacketInput, TcpSegment, Transport};
+pub use packet::{
+    IcmpError, Packet, PacketError, PacketFacts, PacketInput, Quoted, TcpSegment, Transport,
+};
 use std::{fmt, time::Duration};
 
 /// Hard memory bounds. The idle duration is a state retention limit, not an
@@ -383,7 +385,19 @@ pub struct Engine {
     desired: Desired,
     flows: FlowTable,
     exit_counters: exit::Counters,
+    related_counters: RelatedCounters,
     decisions: netmap::Decisions,
+}
+
+/// ICMP errors judged by the endpoint admission of their flow's reply
+/// direction (sending at the terminal, receiving at the origin).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RelatedCounters {
+    pub admitted: u64,
+    /// No live flow of this circuit and path, or a Policy mismatch.
+    pub rejected: u64,
+    /// Over the flow's per-second budget.
+    pub limited: u64,
 }
 
 impl fmt::Debug for Engine {

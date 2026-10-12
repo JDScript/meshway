@@ -18,11 +18,14 @@ class ExitEvidenceTests(unittest.TestCase):
                 evidence.nat_tuple(invalid, "udp", "100.64.0.1:40000", "11.77.2.3:8080", "11.77.2.2")
 
     def test_component_or_partial_pass_cannot_promote_row(self):
-        report = {"stages": {str(i): {"status": "passed"} for i in range(1, 11)},
+        report = {"stages": {str(i): {"status": "passed"} for i in range(1, 12)},
                   "dnsNoSourceFallback": {"passed": True},
                   "processes": {role: {"ExitCode": 0, "Running": False, "OOMKilled": False}
-                                for role in ("controller", "a", "r", "e", "external", "lan", "resolver")}}
+                                for role in ("controller", "a", "r", "e", "external", "lan", "resolver", "router")}}
         self.assertTrue(evidence.all_stages_passed(report))
+        del report["stages"]["11"]
+        self.assertFalse(evidence.all_stages_passed(report))
+        report["stages"]["11"] = {"status": "passed"}
         report["stages"]["9"]["status"] = "notRun"
         self.assertFalse(evidence.all_stages_passed(report))
         del report["stages"]["10"]
