@@ -2,8 +2,10 @@ import type { RouteAction, RuleAction } from "@meshway/control-client"
 import { cn } from "@meshway/ui/cn"
 import {
   AtSignIcon,
+  CornerDownRightIcon,
   EqualIcon,
   GlobeIcon,
+  LibraryIcon,
   ListIcon,
   NetworkIcon,
   RouteIcon,
@@ -32,9 +34,11 @@ import {
   EXACT_PREFIX,
   isCountry,
   isNodeSelector,
+  isProviderRef,
   matchKind,
   profileKind,
   SET_PREFIX,
+  SUBDOMAIN_PREFIX,
   type ProfileChoice,
 } from "@/lib/configuration/routing"
 import { m } from "@/paraglide/messages.js"
@@ -87,37 +91,56 @@ export function nodeChips(
   }
 }
 
-/** Destinations: domain suffixes, exact names (`=<name>`) and prefixes typed, rule sets (`set:<key>`) picked or typed. */
+/**
+ * Destinations: domain suffixes, exact names (`=<name>`) and prefixes typed,
+ * rule sets (`set:<key>`) picked or typed, and in a route catalog sets
+ * typed as `<provider>:<name>` (`geosite:openai`; the controller says
+ * whether the catalog has it). An inline set (no sets) also takes names
+ * below a name (`.<name>`).
+ */
 export function destinationChips(
   ruleSets: readonly string[],
   withSets: boolean
 ): ChipKind {
+  const catalog = (value: string) =>
+    withSets &&
+    isProviderRef(
+      value.startsWith(SET_PREFIX) ? value.slice(SET_PREFIX.length) : value
+    )
   return {
     options: withSets
       ? ruleSets.map((key) => ({
           value: SET_PREFIX + key,
           label: key,
-          group: m.configuration_section_ruleSets(),
+          group: isProviderRef(key)
+            ? m.configuration_ruleset_catalog_sets()
+            : m.configuration_section_ruleSets(),
         }))
       : [],
     accepts: (value) => {
+      if (catalog(value)) return true
       const kind = matchKind(value)
       if (kind === "set")
         return withSets && ruleSets.includes(value.slice(SET_PREFIX.length))
+      if (kind === "subdomain") return !withSets
       // A set's name typed picks the set (offered first), not a domain suffix of that name.
       if (withSets && ruleSets.includes(value)) return false
       return kind !== null
     },
+    typedValue: (value) =>
+      catalog(value) && !value.startsWith(SET_PREFIX)
+        ? SET_PREFIX + value
+        : value,
     show: (value): Shown => {
       const found = matchKind(value)
       const kind = found === "set" && !withSets ? null : found
       if (kind === "set") {
         const key = value.slice(SET_PREFIX.length)
         return {
-          icon: ListIcon,
+          icon: isProviderRef(key) ? LibraryIcon : ListIcon,
           label: key,
-          mono: false,
-          known: ruleSets.includes(key),
+          mono: isProviderRef(key),
+          known: ruleSets.includes(key) || isProviderRef(key),
         }
       }
       if (kind === "exact")
@@ -126,6 +149,13 @@ export function destinationChips(
           label: value.slice(EXACT_PREFIX.length),
           mono: true,
           known: true,
+        }
+      if (kind === "subdomain")
+        return {
+          icon: CornerDownRightIcon,
+          label: value.slice(SUBDOMAIN_PREFIX.length),
+          mono: true,
+          known: !withSets,
         }
       return {
         icon: kind === "cidr" ? NetworkIcon : AtSignIcon,

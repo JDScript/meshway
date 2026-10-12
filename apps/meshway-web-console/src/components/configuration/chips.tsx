@@ -76,6 +76,8 @@ export type ChipKind = {
   options: readonly ChipOption[]
   /** A typed value is taken when it is in the field's form. */
   accepts: (value: string) => boolean
+  /** The value a typed one is kept as (a short form written out); as typed when omitted. */
+  typedValue?: (value: string) => string
   show: (value: string) => Shown
   /** The typed form, as an example. */
   placeholder: string
@@ -154,7 +156,8 @@ function Picker({
     } else if (event.key === "Enter") {
       event.preventDefault()
       const highlighted = ordered[active]
-      if (typed !== "" && kind.accepts(typed) && !moved) pick(typed)
+      if (typed !== "" && kind.accepts(typed) && !moved)
+        pick(kind.typedValue?.(typed) ?? typed)
       else if (highlighted) pick(highlighted.value)
       else setRefused(true)
     }

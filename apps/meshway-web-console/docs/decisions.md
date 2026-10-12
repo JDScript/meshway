@@ -347,11 +347,17 @@ its generated client only, and only what the controller delivers:
   configuration's own. A match is one chip set: domain suffixes as typed
   (`example.com`: the name and the names under it, as in access's
   `domain:`), exact names after `=` (`=login.example.com`: that name alone,
-  the chip marked `=`), prefixes and rule sets (`set:<key>`); a rule every
-  destination of which earlier rules already match is a warning under it.
-  Rule sets: inline content (the same suffixes, exact names and prefixes),
-  or a remote HTTPS source
-  with its format and interval. A remote set that is new or has a new
+  the chip marked `=`), prefixes and rule sets (`set:<key>`), catalog sets
+  among them: typed as `geosite:openai` / `geoip:cn` (`<provider>:<name>`,
+  kept as `set:<provider>:<name>`), offered again once named; whether the
+  catalog has the name is the controller's to say (`unknown_rule_set`), so
+  no local note marks it. A rule every destination of which earlier rules
+  already match is a warning under it.
+  Rule sets: inline content (the same suffixes, exact names and prefixes,
+  and names matched only below one written `.cdn.example`, the
+  `domainSubdomain` list), or a remote HTTPS source with its format
+  (sing-box source, mihomo YAML or text domain / IP lists, classical) and
+  interval; a set's name cannot hold `:`. A remote set that is new or has a new
   source (URL or format; the interval alone is not) is downloaded and
   converted by the controller when the draft is checked and again when it
   is applied, so one apply adds a set and the rules naming it; the review
@@ -363,7 +369,18 @@ its generated client only, and only what the controller delivers:
   source is saved as the draft has it can be refreshed (`refreshRuleSet`),
   and the controller checks it on its `updateInterval`. A set without
   content is never treated as empty. Renaming a set or a profile renames
-  its references.
+  its references. Each set with bound content says what it holds by kind
+  (suffix, exact, subdomain-only, keyword, prefix) and how many source
+  entries it skipped; those open the controller's report
+  (`getRuleSetReport`, keyed by digest: the first 1,000 entries with
+  their reason and place, the counts by reason). A catalog that holds a
+  set back (`held`) says why and since when. Below, the catalog sets the
+  routing names (`implicit` views, and ones only the draft names): where
+  their content stands, the catalog and collection, the upstream
+  repository, ref, commit and file, refreshable like the others. Then the
+  catalogs: the built-in `geosite` and `geoip` and what
+  `ruleSetProviders` replaces, turns off or adds, read only (catalog URL,
+  collection, keys, interval), edited in the source.
 - Overview (`getNetworkState`, `listNodes` for names,
   `queryObservationHistory`): the globe places nodes where geojs places
   the address the server rests their location on (`derived.location`).

@@ -360,7 +360,7 @@ const LOCAL: Record<LocalCode, () => string> = {
   profileName: () => m.configuration_local_profile_name(),
   url: () => m.configuration_local_url(),
   duration: () => m.configuration_local_duration(),
-  key: () => m.configuration_local_key(),
+  set_key: () => m.configuration_local_set_key(),
   dialer: () => m.configuration_local_dialer(),
   hostname: () => m.configuration_local_hostname(),
   hostname_taken: () => m.configuration_local_hostname_taken(),
