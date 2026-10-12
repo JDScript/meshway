@@ -266,14 +266,14 @@ its generated client only, and only what the controller delivers:
   `VITE_MESHWAY_RELEASE`, `VITE_MESHWAY_RELEASE_REPO` defaulting to
   `JDScript/meshway`); without them the commands keep `<SERVER_URL>` /
   `<RELEASE>` and say so (the installer takes no unpinned pre-release).
-  Below, the keys (`listEnrollmentKeys`, newest first, a page at a time
-  with the controller's total): each key's tags, the initial hostname
-  (else the device's) and listeners (the non-secret view), who created it
-  (by email while the members are readable, else the user ID), and its
-  state from its fields: used (with when, and the node it became, opened
-  from there while listed), else revoked, else expired, else unused.
-  Revoking is offered where `actions.revoke`; the controller answers a key
-  used or expired first alike, so the list read again says which.
+  Below, the keys that can still enrol a device (`listEnrollmentKeys`,
+  newest first, read through up to ten pages; not used, revoked or
+  expired): each key's tags, the initial hostname (else the device's) and
+  listeners (the non-secret view), who created it (by email while the
+  members are readable, else the user ID) and until when, each revocable
+  where `actions.revoke`; the controller answers a key used or expired
+  first alike, so the list read again drops it. Used and past keys are not
+  listed (the activity has them); with none usable the block is not shown.
 - `/authorize-device/<enrollmentRequestId>` approves a device's enrolment
   request (`getDeviceAuthorization`, `approveDeviceAuthorization`,
   `denyDeviceAuthorization`). The path is the console's: neither the

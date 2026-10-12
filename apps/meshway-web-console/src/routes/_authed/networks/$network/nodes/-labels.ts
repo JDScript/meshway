@@ -6,7 +6,7 @@ import type {
 
 import { agoTime } from "@/lib/format"
 import type { Preset } from "@/lib/nodes/listener-model"
-import type { EnrollmentKeyState, KeyExpiry } from "@/lib/nodes/model"
+import type { KeyExpiry } from "@/lib/nodes/model"
 import type { NodeStatus } from "@/lib/nodes/status"
 import { statusLabel } from "@/lib/state-labels"
 import { m } from "@/paraglide/messages.js"
@@ -54,13 +54,6 @@ export type KeyPurpose = "control" | "dataplane"
 export const purposeLabel: Record<KeyPurpose, () => string> = {
   control: () => m.nodes_key_control(),
   dataplane: () => m.nodes_key_dataplane(),
-}
-
-export const keyStateLabel: Record<EnrollmentKeyState, () => string> = {
-  pending: () => m.nodes_enrollment_pending(),
-  consumed: () => m.nodes_enrollment_consumed(),
-  revoked: () => m.nodes_enrollment_revoked(),
-  expired: () => m.nodes_enrollment_expired(),
 }
 
 export const expiryLabel: Record<KeyExpiry, () => string> = {
