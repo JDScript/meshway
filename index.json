@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-12T17:24:05.333246+00:00",
+  "updatedAt": "2026-10-12T17:25:37.208351+00:00",
   "runs": [
     {
       "id": 38283365381,
@@ -12,20 +12,20 @@
       "commit": "b1d1fcef60c615d8aff35fc25c7b3bfa6bdb1f2d",
       "message": "protocol: evaluation example carries the capture summary",
       "createdAt": "2026-10-12T17:18:49Z",
-      "updatedAt": "2026-10-12T17:19:03Z",
-      "status": "in_progress",
-      "conclusion": null,
+      "updatedAt": "2026-10-12T17:24:32Z",
+      "status": "completed",
+      "conclusion": "success",
       "url": "https://github.com/JDScript/meshway/actions/runs/38283365381",
       "jobs": [
         {
           "id": 114925750738,
           "name": "node-linux (x86_64-unknown-linux-musl)",
           "runner": "mars-epyc7543",
-          "status": "in_progress",
-          "conclusion": null,
+          "status": "completed",
+          "conclusion": "success",
           "startedAt": "2026-10-12T17:18:53Z",
-          "completedAt": null,
-          "seconds": null,
+          "completedAt": "2026-10-12T17:24:31Z",
+          "seconds": 338.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/38283365381/job/114925750738"
         },
         {
@@ -66,6 +66,34 @@
               "binary": "meshway",
               "bytes": 1792824,
               "sha256": "95a0f8617c4f26b79a5ea34df00cd750eaa1862bd9ecbb86532e03316f9f035f"
+            }
+          ]
+        },
+        {
+          "id": 11762212671,
+          "name": "node-x86_64-unknown-linux-musl-b1d1fcef60c615d8aff35fc25c7b3bfa6bdb1f2d",
+          "bytes": 10474674,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38283365381/artifacts/11762212671",
+          "jobId": 114925750738,
+          "runner": "mars-epyc7543",
+          "seconds": 338.0,
+          "state": "ok",
+          "error": null,
+          "reports": [],
+          "matrices": [],
+          "builds": [
+            {
+              "target": "x86_64-unknown-linux-musl",
+              "binary": "meshwayd",
+              "bytes": 17893096,
+              "sha256": "5e9d5aaa3f53998a0dc03c743f24ed7fb577a13f250e34531413f309d2881508"
+            },
+            {
+              "target": "x86_64-unknown-linux-musl",
+              "binary": "meshway",
+              "bytes": 2035584,
+              "sha256": "c4050c0f7c80b5a59e0f44e508ffb63cbef738df2606d2f7f7f997cf553ad570"
             }
           ]
         }
