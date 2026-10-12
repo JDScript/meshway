@@ -109,9 +109,9 @@ A→C via B
 | `domain` | `string[]` | 精确 DNS 名称，只匹配该名称本身；为空时规范输出省略 |
 | `domainSuffix` | `string[]` | DNS 标签边界后缀，匹配该名称及其所有子名称 |
 | `ipCIDR` | `string[]` | 目的网段 |
-| `ruleSets` | `string[]` | [规则集](/v2/configuration-reference/rule-sets) key |
+| `ruleSets` | `string[]` | [规则集](/v2/configuration-reference/rule-sets)：本网络 `ruleSets` key，或 provider 目录集合 `<provider>:<name>`（如 `geosite:openai`、`geoip:cn`） |
 
-目的条件取并集，至少一项非空；规则从上到下 first-match。域名匹配需要可信域名上下文，不能从普通 IP 包直接推断。名称按 DNS 规范化比较（小写、ASCII／IDNA、忽略结尾点）；`domain: ["example.org"]` 不匹配 `a.example.org`，`domainSuffix: ["example.org"]` 两者都匹配。前面规则已完全覆盖的规则（含被后缀覆盖的精确名称）报告 `shadowed_rule` 警告。
+目的条件取并集，至少一项非空；规则从上到下 first-match。本规则自身列表与每个引用集合都经同一 matcher（`meshway-rules`）判定；引用集合的内容按 digest 下发，节点尚未取得时该规则不可用，first-match 在此停止、不跳到后续规则、不 direct，见[规则集 · 下发](/v2/configuration-reference/rule-sets#下发)。域名匹配需要可信域名上下文，不能从普通 IP 包直接推断。名称按 DNS 规范化比较（小写、ASCII／IDNA、忽略结尾点）；`domain: ["example.org"]` 不匹配 `a.example.org`，`domainSuffix: ["example.org"]` 两者都匹配。前面规则已完全覆盖的规则（含被后缀覆盖的精确名称）报告 `shadowed_rule` 警告。
 
 ### Action
 
@@ -121,7 +121,7 @@ A→C via B
 | `{ "type": "direct" }` | 匹配流量从源节点本地网络直接发出 |
 | `{ "type": "unmanaged" }` | 不接管 |
 
-出口必须启用 `nodes[id].exitEnabled`，目的访问必须获 access 允许：IP 目的地须在源节点的 CIDR／`autogroup:internet` 授权内；域名目的地（`domain`、`domainSuffix` 与规则集内容）须被 `domain:` 后缀授权或 `autogroup:internet` 覆盖，不满足时报告 `exit_outside_access`（`params.node`、`params.destination`）。域名授权按解析地址集合执行，见 [Access](/v2/configuration-reference/access#domains)。没有可用获准路径时拒绝，不能回退到后续规则或偷偷 direct。
+出口必须启用 `nodes[id].exitEnabled`，目的访问必须获 access 允许：IP 目的地须在源节点的 CIDR／`autogroup:internet` 授权内；域名目的地（`domain`、`domainSuffix` 与规则集内容，规则集的 subdomain 成员按其后缀判断，keyword 成员只有 `autogroup:internet` 能覆盖）须被 `domain:` 后缀授权或 `autogroup:internet` 覆盖，不满足时报告 `exit_outside_access`（`params.node`、`params.destination`）。域名授权按解析地址集合执行，见 [Access](/v2/configuration-reference/access#domains)。没有可用获准路径时拒绝，不能回退到后续规则或偷偷 direct。
 
 ## 出口联合许可
 

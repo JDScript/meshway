@@ -43,7 +43,7 @@ Node 侧消费按需编译的入口：`apps/meshway-daemon/src/runtime/network/p
 | --- | --- | --- |
 | `NetmapRef { revision, serial, digest }` | `crates/meshway-model/src/netmap.rs` | `digest` 是内容摘要，不含租约、`revision`、`serial`、`dependencyDigest` |
 | `NetmapLease { netmap, issuedAt, expiresAt }` | 同上 | `NetmapLease::validate` 要求 `issuedAt < expiresAt ≤ issuedAt + 24 h`；配置下限 `MIN_NETMAP_VALIDITY_MS`＝60 s、`MAX_NETMAP_BYTES`＝8 MiB |
-| `NodeNetmap`、`CompiledNetmap { digest, netmap }` | `crates/meshway-configuration/src/netmap/mod.rs` | `NodeNetmap::content_digest`、`CompiledNetmap::verify`／`reference`；`NETMAP_COMPILER_VERSION`＝`meshway-netmap-1` |
+| `NodeNetmap`、`CompiledNetmap { digest, netmap }` | `crates/meshway-configuration/src/netmap/mod.rs` | `NodeNetmap::content_digest`、`CompiledNetmap::verify`／`reference`；`NETMAP_COMPILER_VERSION`＝`meshway-netmap-2` |
 | `ProjectedConfiguration` | `crates/meshway-configuration/src/netmap/projection.rs` | 投影本体，见[内容字段](#内容字段) |
 | `NetmapDelta` 与 `netmap_delta`／`apply_netmap_delta` | `crates/meshway-configuration/src/netmap/delta.rs` | 投影的 nodes／inventory 与 dialers 按键增删，其余整块替换；重建后必须复现目标 digest，serial 必须增大 |
 
@@ -53,7 +53,7 @@ Node 侧消费按需编译的入口：`apps/meshway-daemon/src/runtime/network/p
 | `serial` | 每节点单调递增的内容序号；内容 digest 不变则不递增 |
 | `digest` | 规范序列化内容摘要；Node 校验后保存 |
 | `dependencyDigest` | 产生该 serial 的整网投影输入摘要（配置、主体、库存密钥／能力、方案选择及版本、规则集）；与 `revision` 一样随 serial 保留，不进入 `digest` |
-| `compilerVersion` | **`meshway-netmap-1`**。语义不再是“需求编译”，换新族名而非 `meshway-demand-8`；`meshway-demand-1..7` 全部视为过时派生缓存 |
+| `compilerVersion` | **`meshway-netmap-2`**：投影的 `ruleSets` 为 digest 引用（`meshway-netmap-1` 内联规则集内容，节点缓存按现有规则作废重取）。`meshway-demand-1..7` 全部视为过时派生缓存 |
 | `issuedAt`／`expiresAt` | 租约，不进入 `digest`；Server 每次成功查询签发 `min(now + 24 h, 依赖截止)` |
 
 “依赖截止”目前只有可信 DNS 关联（X6）的 TTL；它作为独立 overlay 携带自己的截止，见[出口与 DNS](#出口与-dns)，不缩短整份 netmap。
@@ -65,7 +65,7 @@ Node 侧消费按需编译的入口：`apps/meshway-daemon/src/runtime/network/p
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | `self` | `NetmapSelf` | enabled、hostname、identity、addresses、selfKeys、meshAddressPools、本节点完整 listeners（禁用时为空）、exitEnabled |
-| `projection` | `ProjectedConfiguration { configuration: ConfigurationView, subjects: SubjectContext, inventory, ruleSets, selectedProfiles, selectionVersions }` | 全量配置的单调子集，复用现有 `ConfigurationView`／`NodeSettingsView`（已脱敏的 listener／dialer 声明）、`AccessRule`／`TopologyRule`／`MeshRoute`、`TrustedNode`、`SubjectContext`（移入 configuration crate） |
+| `projection` | `ProjectedConfiguration { configuration: ConfigurationView, subjects: SubjectContext, inventory, ruleSets, selectedProfiles, selectionVersions }` | 全量配置的单调子集，复用现有 `ConfigurationView`／`NodeSettingsView`（已脱敏的 listener／dialer 声明）、`AccessRule`／`TopologyRule`／`MeshRoute`、`TrustedNode`、`SubjectContext`（移入 configuration crate）；`ruleSets` 为 `key → RuleSetRef { digest, format, bytes, entries }`，见[规则集 artifact](#rule-set-artifacts) |
 | `dialers` | `CandidateKey → DialCandidate` | 本节点到每个 topology 相邻可见节点的拨号候选与客户端材料；只含 configured 端点，local 端点走事实线 |
 | `egress` | `Option<EgressPlan { capture, routes }>` | 禁用节点为 null；`routes` 是 IPv4＋IPv6 的完整互斥分割，每段 `EgressAction::{Exit { nodes, via }, Direct, Unmanaged}`；capture 不可用时 `routes` 为空 |
 | `exitRole` | `Option<ExitRole { generation, family, nat }>` | enabled ∧ exitEnabled ∧ `feature:exit-ipv4` v1 时下发 |
@@ -82,7 +82,7 @@ Node 侧消费按需编译的入口：`apps/meshway-daemon/src/runtime/network/p
 | `routing.mesh` | src、dst 都命中 V 的规则，原顺序 |
 | `routing.egress` | 公共 `rules` 与 `auto` 全量；`assignments` 只保留 target 命中 V 中某节点的（原顺序）；`profiles` 只保留被保留 assignment（allowed／default）、V 中节点的 `selectedProfiles` 或 `auto` 引用的 |
 | `groups`、`tagsOwners` | 名称：被保留规则（access／topology／mesh／assignment）以 `group:`／`tag:` 引用的，或含 V 中 User 节点的用户（组）／V 中节点携带的（tag）；成员与 owner 只保留 V 中 User 节点的用户邮箱 |
-| `ruleSets` 及内容 | 只保留公共 egress 规则或被保留 profile 的规则在 `match.ruleSets` 引用的 |
+| `ruleSets` 引用 | 只保留公共 egress 规则或被保留 profile 的规则在 `match.ruleSets` 引用的 key（含 `<provider>:<name>`）；`configuration.ruleSets` 与 `configuration.ruleSetProviders` 的定义（URL、目录、inline 列表）一律不投影 |
 | `inventory`、`subjects`、`selectedProfiles`、`selectionVersions` | 限于 V；`users`／`members` 只保留 V 中 User 节点的绑定 |
 | 其余（defaults、addressPools、dns） | 全量 |
 
@@ -94,7 +94,22 @@ Node 侧消费按需编译的入口：`apps/meshway-daemon/src/runtime/network/p
 - `meshHosts` 与精确发现同一谓词：本节点自身及 `mesh_access_allows_any(self, T)` 的已登记活动节点；`magicDNS` 关闭时为空。
 - `egress.capture.generation`（即决定的 `selection`）＝digest(网络、节点、有效方案、持久选择版本、routing.egress、分割结果)。**不含 revision**：无关配置变更不改变它，也不结束出口连接；任何选择切换（含切回）都会改变选择版本。出口节点从自己的投影重算源端 selection。`ExitRole.generation` 同样不含 revision。
 
-### 与现有类型的关系
+### 规则集 artifact {#rule-set-artifacts}
+
+规则集内容不进入 netmap。`projection.ruleSets` 的每个引用是 `{digest: "sha256:<hex>", format: 1, bytes, entries}`，进入 netmap content digest；规则集刷新只改变受影响节点 netmap 中的引用（新 serial、重签租约），不需要重新投影其余内容。`dependencyDigest` 覆盖每个 key 的 digest。
+
+| 项 | 行为 |
+| --- | --- |
+| 端点 | `GET /agent-api/v1/artifacts/{digest}`，节点会话认证（用户会话为 401） |
+| 授权 | digest 必须被 Server 为该节点存储的某个 serial 引用，且该 serial 仍可能在租约内：当前 serial，或被替换（或撤回）不足一个租约有效期的 serial；否则 404，不区分不存在与无权。Server 在写入每份 netmap 的同一事务里写 `node_netmap_artifacts(network, node, serial, digest, superseded_at)` 引用索引，请求只做一次索引查询，不解密 netmap |
+| 响应 | `200 application/vnd.meshway.rules.v1` 原始字节；`ETag: "sha256:<hex>"`；`Cache-Control: private, max-age=31536000, immutable` |
+| 节点校验 | 长度等于 `bytes`、SHA-256 等于 digest、`MWRS` 结构完整且成员数等于 `entries`；任一失败丢弃并退避重试（5 秒起，上限 5 分钟） |
+| 缓存 | Control 私有目录 `identity/artifacts/sha256-<hex>.mwrs`，0400、原子 rename 写入、此后不改写，进程每 digest 映射一次；只保留当前 netmap 引用的文件；重启时与 `netmap.json` 一起离线加载并校验 |
+| 并发与预算 | 每节点同时最多 2 个下载；当前 netmap 引用合计超过 64 MiB 时不下载 |
+
+新 netmap 立即生效，不等待 artifact。Engine 的 `Desired` 由 netmap 与已加载 artifact 共同算出：全部引用都已加载时即签名内容本身；有缺失时，同一 `LocalCompiler` 在投影上重算本节点出口方案——命名缺失集合的规则是 `UnavailableDependency`，first-match 在该规则停止，结果为全范围 IPv4 捕获、IPv6 sink、无 direct／unmanaged 例外；resolver socket 随之一律拒绝，绑定签名方案的 Mesh DNS 服务不可用。artifact 到达后 Control 以同一 netmap、更多 artifact 再发布，Engine 视为新的期望状态重新 apply（组件以 `Desired::same` 比较）；中继、出口在自己的投影上重算源端 selection 时同样需要该 artifact，缺失即拒绝。
+
+
 
 | 现有类型／字段 | N1 去向 |
 | --- | --- |
