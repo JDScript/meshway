@@ -56,6 +56,7 @@ export function EgressRules({
   notes,
   exits,
   ruleSets,
+  catalog,
   onChange,
 }: Common & {
   path: JsonPath
@@ -64,7 +65,7 @@ export function EgressRules({
   onChange: (rules: EgressRule[]) => void
 }) {
   const rows = useRowKeys(rules.length)
-  const destinations = destinationChips(ruleSets, true)
+  const destinations = destinationChips(ruleSets, true, catalog)
   const update = (index: number, next: EgressRule) =>
     onChange(replaceAt(rules, index, next))
 

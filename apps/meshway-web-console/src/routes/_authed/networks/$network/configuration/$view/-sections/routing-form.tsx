@@ -15,7 +15,7 @@ import { pointerSegments } from "@/lib/configuration/jsonc"
 import { profileChoices } from "@/lib/configuration/routing"
 import { m } from "@/paraglide/messages.js"
 
-import { Hint } from "./route-kit"
+import { Hint, type CatalogSearch } from "./route-kit"
 import { EgressRules } from "./routing-egress"
 import { MeshRoutes } from "./routing-mesh"
 import { Assignments, Auto, Profiles } from "./routing-profiles"
@@ -28,6 +28,7 @@ export function RoutingForm({
   notes,
   exits,
   ruleSets,
+  catalog,
   onChange,
   onOpenRuleSets,
 }: {
@@ -39,13 +40,15 @@ export function RoutingForm({
   exits: ReadonlySet<string>
   /** The draft's rule set keys. */
   ruleSets: readonly string[]
+  /** Where destinations search the catalogs; none when this account cannot. */
+  catalog: CatalogSearch | null
   onChange: (routing: RoutingConfiguration) => void
   onOpenRuleSets: () => void
 }) {
   const egress = routing.egress ?? {}
   const setEgress = (next: EgressRouting) =>
     onChange({ ...routing, egress: next })
-  const common = { editable, names, notes, exits, ruleSets }
+  const common = { editable, names, notes, exits, ruleSets, catalog }
   // A rule set's content, checked with the rules that name it.
   const outside = notes
     .filter(

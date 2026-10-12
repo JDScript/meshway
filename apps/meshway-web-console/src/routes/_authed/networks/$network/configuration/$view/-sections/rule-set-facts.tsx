@@ -5,7 +5,7 @@ import type {
 } from "@meshway/control-client"
 import { Button } from "@meshway/ui/button"
 import { useQuery } from "@tanstack/react-query"
-import { CodeIcon, LibraryIcon } from "lucide-react"
+import { CodeIcon, LibraryIcon, SearchIcon } from "lucide-react"
 import { useState } from "react"
 
 import { failureText } from "@/api/failure"
@@ -15,11 +15,10 @@ import { ListPlaceholders } from "@/components/chrome/list"
 import { EmptyLine, Section } from "@/components/chrome/section"
 import { NoneLine } from "@/components/configuration/form-kit"
 import { BUILTIN_PROVIDERS } from "@/lib/configuration/rule-sets"
-import { dateTime } from "@/lib/format"
+import { countText, dateTime } from "@/lib/format"
 import { m } from "@/paraglide/messages.js"
-import { getLocale } from "@/paraglide/runtime.js"
 
-const count = (value: number) => value.toLocaleString(getLocale())
+import { CatalogDialog } from "./rule-set-browse"
 
 /** A skip reason as people read it (rule-sets.md, 转换); one not known as written. */
 export function reasonText(reason: string): string {
@@ -54,15 +53,19 @@ export function reasonText(reason: string): string {
 function convertedText(conversion: RuleSetConversion): string {
   const { exact, suffix, subdomain, keyword, cidr } = conversion.converted
   return [
-    suffix ? m.configuration_ruleset_kind_suffix({ count: count(suffix) }) : "",
-    exact ? m.configuration_ruleset_kind_exact({ count: count(exact) }) : "",
+    suffix
+      ? m.configuration_ruleset_kind_suffix({ count: countText(suffix) })
+      : "",
+    exact
+      ? m.configuration_ruleset_kind_exact({ count: countText(exact) })
+      : "",
     subdomain
-      ? m.configuration_ruleset_kind_subdomain({ count: count(subdomain) })
+      ? m.configuration_ruleset_kind_subdomain({ count: countText(subdomain) })
       : "",
     keyword
-      ? m.configuration_ruleset_kind_keyword({ count: count(keyword) })
+      ? m.configuration_ruleset_kind_keyword({ count: countText(keyword) })
       : "",
-    cidr ? m.configuration_ruleset_kind_cidr({ count: count(cidr) }) : "",
+    cidr ? m.configuration_ruleset_kind_cidr({ count: countText(cidr) }) : "",
   ]
     .filter(Boolean)
     .join(" · ")
@@ -101,7 +104,7 @@ export function ConversionFacts({
                 onClick={() => setOpen(true)}
                 className="rounded-sm font-medium text-warning underline-offset-4 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
               >
-                {m.configuration_ruleset_skipped({ count: count(skipped) })}
+                {m.configuration_ruleset_skipped({ count: countText(skipped) })}
               </button>
             </>
           ) : null}
@@ -172,7 +175,7 @@ function SkippedDialog({
           >
             {reasonText(reason)}
             <span className="text-muted-foreground tabular-nums">
-              {count(n)}
+              {countText(n)}
             </span>
           </li>
         ))}
@@ -213,8 +216,8 @@ function SkippedDialog({
           {items.length < total ? (
             <p className="text-meta text-muted-foreground">
               {m.configuration_ruleset_skipped_first({
-                shown: count(items.length),
-                total: count(total),
+                shown: countText(items.length),
+                total: countText(total),
               })}
             </p>
           ) : null}
@@ -259,14 +262,21 @@ type ProviderRow = {
  * the configuration replaces, turns off or adds. Edited in the source.
  */
 export function ProvidersSection({
+  networkId,
+  referenced,
   overrides,
   editable,
   onEditSource,
 }: {
+  networkId: string
+  /** The keys the draft's routing names, marked in a catalog browsed. */
+  referenced: ReadonlySet<string>
   overrides: Readonly<Record<string, NullableRuleSetProvider>>
   editable: boolean
   onEditSource: () => void
 }) {
+  const [browsing, setBrowsing] = useState(false)
+  const [browsed, setBrowsed] = useState("")
   const rows: ProviderRow[] = [
     ...BUILTIN_PROVIDERS.map((name): ProviderRow => {
       if (!Object.hasOwn(overrides, name))
@@ -343,12 +353,34 @@ export function ProvidersSection({
                     : null}
               </span>
             </span>
-            <span className="shrink-0 text-meta text-muted-foreground">
+            <span className="flex h-5 shrink-0 items-center text-meta text-muted-foreground">
               {label[row.kind]()}
             </span>
+            {row.kind !== "disabled" ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="-my-1 h-7 shrink-0 rounded-full px-3"
+                onClick={() => {
+                  setBrowsed(row.name)
+                  setBrowsing(true)
+                }}
+              >
+                <SearchIcon />
+                {m.configuration_ruleset_browse()}
+              </Button>
+            ) : null}
           </li>
         ))}
       </ul>
+      <CatalogDialog
+        open={browsing}
+        onOpenChange={setBrowsing}
+        networkId={networkId}
+        provider={browsed}
+        referenced={referenced}
+      />
     </Section>
   )
 }

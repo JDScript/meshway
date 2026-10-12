@@ -85,8 +85,6 @@ console 已接入 `/api/v1` 下全部 Console 操作：
 - 节点的版本兼容状态 `versionStatus`（current、outdated、unsupported），由服务端按兼容门槛判定。
 - `reassignAddresses`、`rotateMaterial`（editing.md 已不再列出，需要时重新定义）。
 - 可信 DNS 的数据输入，以及基于它和 GeoIP 的自动方案。
-- 目录集合的搜索：路由规则引用 `geosite:名称`／`geoip:国家代码` 现在只能手输（内置目录有 2,168 个集合），名称是否存在要等检查草稿才知道。请给一个按 provider 列出或搜索目录集合的接口（名称、条目数、上游路径，分页或前缀搜索），服务端已持有验签后的目录，console 据此做可搜索的选择器。
-- 规则集内容的查看：现在只能看到转换计数和跳过的条目，看不到集合实际包含什么。请给一个读取已绑定内容成员的接口（按 digest，分页或按名称／前缀搜索），并最好能判断“某个域名或地址是否命中这个集合”，方便排查路由。
 - 节点访问服务端的地址与服务端对应的 Node 版本：添加节点页的安装命令需要 `--server` 和 `--version`，用户接口里两者都没有。现在由 console 构建时的 `VITE_MESHWAY_SERVER_URL`、`VITE_MESHWAY_RELEASE` 提供，没设置时命令里留占位并说明；如果服务端能给出（例如在 `getAuthOptions` 或单独的服务信息接口里），console 改为读取它。
 - **API 参考需要的契约内容**（站点从 `openapi.json` 生成参考页）：
   - ~~示例~~：已提供。fixture 在 `packages/protocol/examples/<tag>.json`，按 operationId 给 `request` 和 `responses.<status>`；Server 导出契约时写进 `requestBody.content[...].example` 和 `responses[...].content[...].example`，所以 `openapi.json` 直接带示例。SDK 测试（`packages/control-client/test/examples.test.ts`）用生成的 zod schema 校验每个示例，并要求所有 JSON 请求体和 2xx 响应都有示例；错误响应不用手写，Server 用该响应首个 problem code 的真实 `ErrorResponse` 作为示例（`password_weak` 带真实 PasswordRules，`configuration_invalid` 在 validate 上有手写的 `invalid_domain` 例子）。所有示例描述同一个 `lab` 网络（paris 中继、NAT 后的 office-gw、alice-laptop、bob-phone），ID／时间在各操作间一致。注意示例对象的键按字母序输出（Rust 侧 `serde_json::Value` 不保序）。

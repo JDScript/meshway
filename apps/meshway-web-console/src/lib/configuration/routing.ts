@@ -70,6 +70,40 @@ const PROVIDER_REF = /^[a-z][a-z0-9-]{0,31}:[a-z0-9][a-z0-9!@._+-]{0,127}$/
 /** `<provider>:<name>`: a set of a signed catalog (`geosite:openai`), not one this network declares. */
 export const isProviderRef = (key: string) => PROVIDER_REF.test(key)
 
+/** A catalog search a typed destination asks for: a provider's sets by name prefix. */
+export type CatalogTerm = {
+  provider: string
+  q: string
+  /** Typed with its provider (`geosite:open`), not a bare word. */
+  explicit: boolean
+}
+
+const PROVIDER_TYPED = /^([a-z][a-z0-9-]{0,31}):([a-z0-9!@._+-]*)$/
+const WORD = /^[a-z0-9][a-z0-9!@_+-]+$/
+
+/**
+ * The catalog searches a typed destination asks for: `geosite:open` (or
+ * `set:geosite:open`) that provider's sets starting with `open`, a bare
+ * word of two or more (no dot: a name with one is a domain) every
+ * provider's; anything else none.
+ */
+export function catalogTerms(
+  typed: string,
+  providers: readonly string[]
+): CatalogTerm[] {
+  const value = typed.trim().toLowerCase()
+  const bare = value.startsWith(SET_PREFIX)
+    ? value.slice(SET_PREFIX.length)
+    : value
+  const found = PROVIDER_TYPED.exec(bare)
+  if (found) {
+    const [, provider = "", q = ""] = found
+    return providers.includes(provider) ? [{ provider, q, explicit: true }] : []
+  }
+  if (bare !== value || !WORD.test(bare)) return []
+  return providers.map((provider) => ({ provider, q: bare, explicit: false }))
+}
+
 /** A match as chips: domain suffixes, exact names, prefixes, then rule sets. */
 export const matchValues = (match: RouteMatch): string[] => [
   ...(match.domainSuffix ?? []),

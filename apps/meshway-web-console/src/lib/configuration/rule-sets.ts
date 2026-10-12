@@ -35,6 +35,22 @@ export const RULE_SET_FORMATS: readonly RuleSetFormat[] = [
  */
 export const BUILTIN_PROVIDERS: readonly string[] = ["geosite", "geoip"]
 
+/** The providers a reference can name: the built-in ones not turned off, and the configuration's own. */
+export function effectiveProviders(
+  overrides: Readonly<Record<string, unknown>>
+): string[] {
+  return [
+    ...BUILTIN_PROVIDERS.filter((name) => overrides[name] !== null),
+    ...Object.entries(overrides)
+      .filter(
+        ([name, provider]) =>
+          provider !== null && !BUILTIN_PROVIDERS.includes(name)
+      )
+      .map(([name]) => name)
+      .sort(),
+  ]
+}
+
 /** The update interval the controller keeps when none is written. */
 export const DEFAULT_INTERVAL = "24h"
 

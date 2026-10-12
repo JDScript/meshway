@@ -1,5 +1,10 @@
-import type { RouteAction, RuleAction } from "@meshway/control-client"
+import {
+  listRuleSetCatalog,
+  type RouteAction,
+  type RuleAction,
+} from "@meshway/control-client"
 import { cn } from "@meshway/ui/cn"
+import { queryOptions, type QueryKey } from "@tanstack/react-query"
 import {
   AtSignIcon,
   CornerDownRightIcon,
@@ -15,9 +20,12 @@ import {
 } from "lucide-react"
 import { type ReactNode } from "react"
 
+import { authed, client, codeOf } from "@/api/client"
+import { ruleSetsKey } from "@/api/queries/rule-sets"
 import { SegmentedControl } from "@/components/chrome/segmented-control"
 import {
   ChipSetField,
+  type ChipFound,
   type ChipKind,
   type Shown,
 } from "@/components/configuration/chips"
@@ -31,6 +39,7 @@ import {
 import { profileText } from "@/lib/configuration/diagnostics"
 import { pointerOf, type JsonPath } from "@/lib/configuration/jsonc"
 import {
+  catalogTerms,
   EXACT_PREFIX,
   isCountry,
   isNodeSelector,
@@ -39,8 +48,10 @@ import {
   profileKind,
   SET_PREFIX,
   SUBDOMAIN_PREFIX,
+  type CatalogTerm,
   type ProfileChoice,
 } from "@/lib/configuration/routing"
+import { countText } from "@/lib/format"
 import { m } from "@/paraglide/messages.js"
 
 import { MoveButtons } from "./ordered"
@@ -91,6 +102,71 @@ export function nodeChips(
   }
 }
 
+/** Where a route's destinations search the catalogs: the network and the providers it can name. */
+export type CatalogSearch = { networkId: string; providers: readonly string[] }
+
+/** A catalog's sets for a typed term, as options; one not verified yet, or none found, said when typed with its provider. */
+const catalogFound = (networkId: string, term: CatalogTerm) =>
+  queryOptions<ChipFound, Error, ChipFound, QueryKey>({
+    queryKey: [
+      ...ruleSetsKey(networkId),
+      "catalog-found",
+      term.provider,
+      term.q,
+      term.explicit,
+    ],
+    queryFn: async ({ signal }): Promise<ChipFound> => {
+      try {
+        const page = await authed((token) =>
+          listRuleSetCatalog(
+            client,
+            { networkId },
+            {
+              provider: term.provider,
+              limit: term.explicit ? 20 : 5,
+              ...(term.q === "" ? {} : { q: term.q }),
+            },
+            { token, signal }
+          )
+        )
+        return {
+          options: page.items.map((item) => ({
+            value: SET_PREFIX + item.reference,
+            label: item.reference,
+            detail: m.configuration_ruleset_catalog_entries({
+              count: countText(item.entries),
+            }),
+            group: m.configuration_ruleset_catalog_group({
+              provider: term.provider,
+            }),
+          })),
+          note:
+            page.items.length === 0 && term.explicit
+              ? m.configuration_ruleset_catalog_found_none({
+                  provider: term.provider,
+                })
+              : null,
+        }
+      } catch (error) {
+        const code = codeOf(error)
+        if (code === "rule_set_catalog_not_ready")
+          return {
+            options: [],
+            note: term.explicit
+              ? m.configuration_ruleset_catalog_unverified({
+                  provider: term.provider,
+                })
+              : null,
+          }
+        // Not a provider of this network, or not this account's to read: nothing to offer.
+        if (code === "not_found" || code === "permission_denied")
+          return { options: [], note: null }
+        throw error
+      }
+    },
+    staleTime: 60_000,
+  })
+
 /**
  * Destinations: domain suffixes, exact names (`=<name>`) and prefixes typed,
  * rule sets (`set:<key>`) picked or typed, and in a route catalog sets
@@ -100,9 +176,10 @@ export function nodeChips(
  */
 export function destinationChips(
   ruleSets: readonly string[],
-  withSets: boolean
+  withSets: boolean,
+  catalog: CatalogSearch | null = null
 ): ChipKind {
-  const catalog = (value: string) =>
+  const isCatalog = (value: string) =>
     withSets &&
     isProviderRef(
       value.startsWith(SET_PREFIX) ? value.slice(SET_PREFIX.length) : value
@@ -118,7 +195,7 @@ export function destinationChips(
         }))
       : [],
     accepts: (value) => {
-      if (catalog(value)) return true
+      if (isCatalog(value)) return true
       const kind = matchKind(value)
       if (kind === "set")
         return withSets && ruleSets.includes(value.slice(SET_PREFIX.length))
@@ -127,8 +204,15 @@ export function destinationChips(
       if (withSets && ruleSets.includes(value)) return false
       return kind !== null
     },
+    search:
+      withSets && catalog
+        ? (typed) =>
+            catalogTerms(typed, catalog.providers).map((term) =>
+              catalogFound(catalog.networkId, term)
+            )
+        : undefined,
     typedValue: (value) =>
-      catalog(value) && !value.startsWith(SET_PREFIX)
+      isCatalog(value) && !value.startsWith(SET_PREFIX)
         ? SET_PREFIX + value
         : value,
     show: (value): Shown => {
@@ -422,4 +506,6 @@ export type Common = {
   notes: readonly Note[]
   exits: ReadonlySet<string>
   ruleSets: readonly string[]
+  /** Where destinations search the catalogs; none when this account cannot. */
+  catalog: CatalogSearch | null
 }

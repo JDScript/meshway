@@ -349,9 +349,15 @@ its generated client only, and only what the controller delivers:
   `domain:`), exact names after `=` (`=login.example.com`: that name alone,
   the chip marked `=`), prefixes and rule sets (`set:<key>`), catalog sets
   among them: typed as `geosite:openai` / `geoip:cn` (`<provider>:<name>`,
-  kept as `set:<provider>:<name>`), offered again once named; whether the
-  catalog has the name is the controller's to say (`unknown_rule_set`), so
-  no local note marks it. A rule every destination of which earlier rules
+  kept as `set:<provider>:<name>`), offered again once named. What is
+  typed searches the catalogs (`listRuleSetCatalog`, settled 250 ms):
+  `geosite:open` that provider's names starting with `open` (20), a bare
+  word without a dot every effective provider's (5 each, built-ins not
+  turned off and the configuration's own); a catalog the controller has
+  not verified yet (`rule_set_catalog_not_ready`) or nothing found is said
+  only when typed with its provider. Whether the catalog has a typed name
+  is still the controller's to say (`unknown_rule_set`), so no local note
+  marks it. A rule every destination of which earlier rules
   already match is a warning under it.
   Rule sets: inline content (the same suffixes, exact names and prefixes,
   and names matched only below one written `.cdn.example`, the
@@ -374,13 +380,21 @@ its generated client only, and only what the controller delivers:
   entries it skipped; those open the controller's report
   (`getRuleSetReport`, keyed by digest: the first 1,000 entries with
   their reason and place, the counts by reason). A catalog that holds a
-  set back (`held`) says why and since when. Below, the catalog sets the
+  set back (`held`) says why and since when. A set with content bound at
+  the current revision opens its contents: whether it holds a typed name
+  or address (`matchRuleSet`, judged as nodes judge it, with the member
+  that decides it), and its members one kind at a time (names, keywords,
+  IPv4, IPv6 with the counts of each; `listRuleSetEntries`, searched the
+  controller's way: names ending with, keywords starting with, ranges from
+  an address; a range that is one prefix written as it), read by digest. Below, the catalog sets the
   routing names (`implicit` views, and ones only the draft names): where
   their content stands, the catalog and collection, the upstream
   repository, ref, commit and file, refreshable like the others. Then the
   catalogs: the built-in `geosite` and `geoip` and what
   `ruleSetProviders` replaces, turns off or adds, read only (catalog URL,
-  collection, keys, interval), edited in the source.
+  collection, keys, interval), edited in the source; each not turned off
+  can be browsed (the verified catalog's sets by name prefix, with size,
+  upstream file, `held`, and whether the routing names it).
 - Overview (`getNetworkState`, `listNodes` for names,
   `queryObservationHistory`): the globe places nodes where geojs places
   the address the server rests their location on (`derived.location`).

@@ -1,13 +1,19 @@
 import type {
   NullableRuleSetProvider,
   RuleSet,
+  RuleSetEntryKind,
   RuleSetFormat,
   RuleSetView,
 } from "@meshway/control-client"
 import { Button } from "@meshway/ui/button"
 import { cn } from "@meshway/ui/cn"
-import { CircleAlertIcon, CircleCheckIcon, RefreshCwIcon } from "lucide-react"
-import type { ReactNode } from "react"
+import {
+  CircleAlertIcon,
+  CircleCheckIcon,
+  ListTreeIcon,
+  RefreshCwIcon,
+} from "lucide-react"
+import { useState, type ReactNode } from "react"
 
 import { toastFailureWith } from "@/api/failure"
 import { useRefreshRuleSet } from "@/api/queries/rule-sets"
@@ -47,6 +53,7 @@ import { m } from "@/paraglide/messages.js"
 
 import { AddKey, KeyInput, type KeyRule } from "./keyed-form"
 import { destinationChips } from "./route-kit"
+import { ContentsDialog } from "./rule-set-browse"
 import {
   CatalogSetsEmpty,
   catalogSourceText,
@@ -202,6 +209,8 @@ export function RuleSetsForm({
         )}
       </Section>
       <ProvidersSection
+        networkId={networkId}
+        referenced={referenced}
         overrides={providers}
         editable={editable}
         onEditSource={onEditProviders}
@@ -505,6 +514,12 @@ function StatusBlock({
   const good = preparation === "ready" || preparation === "inline"
   const Icon = good ? CircleCheckIcon : CircleAlertIcon
   // A time read after the last tick reads as now, not as ahead of it.
+  // The bound content of the current revision, which a draft's new source is not.
+  const contents =
+    view?.artifact && preparation !== "new" && preparation !== "replaced"
+      ? view.artifact
+      : null
+  const [browsing, setBrowsing] = useState(false)
   const when = (at: string) => agoTime(at, now) ?? dateTime(at) ?? at
   const facts: string[] = []
   if (view?.artifact)
@@ -544,6 +559,18 @@ function StatusBlock({
             {step ?? stepOf(preparation)}
           </span>
         </p>
+        {contents ? (
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            className="h-7 shrink-0 rounded-full px-3"
+            onClick={() => setBrowsing(true)}
+          >
+            <ListTreeIcon />
+            {m.configuration_ruleset_contents()}
+          </Button>
+        ) : null}
         {editable && refreshable(preparation) ? (
           <Button
             type="button"
@@ -598,6 +625,25 @@ function StatusBlock({
           {m.configuration_ruleset_status_failed()}
         </p>
       ) : null}
+      {contents ? (
+        <ContentsDialog
+          open={browsing}
+          onOpenChange={setBrowsing}
+          networkId={networkId}
+          name={name}
+          digest={contents.digest}
+          first={firstKind(view)}
+        />
+      ) : null}
     </div>
   )
+}
+
+/** The kind of member a set's content has most of, as its conversion counted them; names when unknown. */
+function firstKind(view: RuleSetView | undefined): RuleSetEntryKind {
+  const converted = view?.conversion?.converted
+  if (!converted) return "domain"
+  const domains = converted.exact + converted.suffix + converted.subdomain
+  if (domains >= converted.keyword && domains >= converted.cidr) return "domain"
+  return converted.keyword >= converted.cidr ? "keyword" : "ipv4"
 }

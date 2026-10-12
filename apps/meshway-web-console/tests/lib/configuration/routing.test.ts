@@ -4,6 +4,7 @@ import { test } from "vitest"
 
 import {
   badDestination,
+  catalogTerms,
   isProviderRef,
   matchKind,
   matchOf,
@@ -68,6 +69,26 @@ test("a catalog set is <provider>:<name>; a set of the network is not", () => {
     ruleSets: ["geosite:openai"],
   })
   assert.equal(matchKind(".cdn.example"), "subdomain")
+})
+
+test("a typed destination searches the catalogs it names", () => {
+  const providers = ["geosite", "geoip"]
+  assert.deepEqual(catalogTerms("geosite:Open", providers), [
+    { provider: "geosite", q: "open", explicit: true },
+  ])
+  assert.deepEqual(catalogTerms("set:geoip:", providers), [
+    { provider: "geoip", q: "", explicit: true },
+  ])
+  assert.deepEqual(catalogTerms("cn", providers), [
+    { provider: "geosite", q: "cn", explicit: false },
+    { provider: "geoip", q: "cn", explicit: false },
+  ])
+  // A provider the network does not have, a domain, a prefix, one letter: none.
+  assert.deepEqual(catalogTerms("corp:office", providers), [])
+  assert.deepEqual(catalogTerms("openai.com", providers), [])
+  assert.deepEqual(catalogTerms("10.0.0.0/8", providers), [])
+  assert.deepEqual(catalogTerms("x", providers), [])
+  assert.deepEqual(catalogTerms("set:office", providers), [])
 })
 
 test("destinations are checked as the controller reads them", () => {
