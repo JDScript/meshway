@@ -20,6 +20,7 @@ members = [
     "crates/meshway-logging",
     "crates/meshway-transport",
     "crates/meshway-transport-stream",
+    "crates/meshway-rules",
     "tools/meshway-transport-perf",
     "tools/meshway-desired-fixture",
     "tools/meshway-circuit-perf",
