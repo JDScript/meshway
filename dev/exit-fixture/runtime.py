@@ -51,7 +51,7 @@ def execute(report, artifacts, runtime_os, platform, short, load):
                 "traversal": "exit", "dnsBackend": "off", "runtimeOsAssets": runtime_os,
                 "loadBeforeRuntime": load, "resources": {"containers": containers, "networks": networks},
                 "productStatus": "running", "cleanup": {}, "processes": {},
-                "stages": {str(n): {"status": "notRun"} for n in range(1, 11)}}
+                "stages": {str(n): {"status": "notRun"} for n in range(1, 12)}}
     metadata = report / "report.json"
     started = time.monotonic()
     failure = None
@@ -67,11 +67,11 @@ def execute(report, artifacts, runtime_os, platform, short, load):
             raise RuntimeError("exit fixture ownership changed")
         return data
 
-    def command(role, *arguments, required=True):
+    def command(role, *arguments, required=True, timeout=15):
         owned("container", containers[role])
         started_at = time.time_ns()
         result = subprocess.run(["docker", "exec", containers[role], *arguments],
-                                text=True, capture_output=True, timeout=15, close_fds=True)
+                                text=True, capture_output=True, timeout=timeout, close_fds=True)
         record = {"command": list(arguments), "exitCode": result.returncode,
                   "stdout": result.stdout, "stderr": result.stderr,
                   "startedAtUnixNs": started_at, "finishedAtUnixNs": time.time_ns()}
@@ -643,6 +643,112 @@ def execute(report, artifacts, runtime_os, platform, short, load):
         write(report / "domain-exit.json", named)
         manifest["stages"]["10"] = {"status": "passed", "evidence": ["domain-exit.json", "domain-exit-configured.json", "held-flow.json",
                                                                     "external/access.json", "controller/association-reports.json"]}
+
+        # Profile switch (C3): A selects another allowed profile through the
+        # real CLI; the Server commits it, A applies the netmap carrying it
+        # before the command returns, and the switch ends A's exit flows of
+        # the previous selection while a new flow uses the new profile.
+        # `meshway exit off` then returns to Mesh only.
+        manifest["status"] = "profile-switch"
+        save()
+        switch = {}
+        target = addresses["external"]["external"]
+        e_node = plans["e"]["nodeId"]
+
+        def exit_cli(*arguments, as_json=True):
+            record = command("a", "/fixtures/meshway", "--socket", "/state/node/control.sock",
+                             *(["--json"] if as_json else []), "exit", *arguments, required=False, timeout=45)
+            if record["exitCode"]:
+                write(report / "a" / "exit-failure.json", record)
+                raise RuntimeError("meshway exit failed: " + " ".join(arguments))
+            return json.loads(record["stdout"]) if as_json else record["stdout"]
+
+        def connect(address):
+            return command("a", "python3", "-c",
+                           "import socket,sys; s=socket.create_connection((sys.argv[1],8080),3); s.settimeout(3); "
+                           "s.sendall(b'exit-profile'); assert s.recv(64)==b'exit-profile'", address, required=False)
+
+        def applied_profile(value, profile):
+            local = value.get("local") or {}
+            return value.get("applied") is True and local.get("appliedProfile") == profile
+
+        switch["before"] = exit_cli()
+        if (switch["before"]["appliedProfile"] != "exit"
+                or [p["name"] for p in switch["before"]["profiles"]] != ["exit", "mesh", "global:" + e_node]):
+            raise RuntimeError("A's netmap does not carry the allowed profiles")
+        (report / "a" / "exit-view.txt").write_text(exit_cli(as_json=False))
+        flow_program = (
+            "import json,os,socket,sys,time\n"
+            "address,duration=(sys.argv[1],8080),float(sys.argv[2])\n"
+            "t=socket.create_connection(address,3); t.settimeout(3)\n"
+            "u=socket.socket(socket.AF_INET,socket.SOCK_DGRAM); u.connect(address); u.settimeout(3)\n"
+            "result={'tcp':[],'udp':[],'done':False}\n"
+            "def save():\n"
+            " open('/evidence/switch-flow.tmp','w').write(json.dumps(result)); os.replace('/evidence/switch-flow.tmp','/evidence/switch-flow.json')\n"
+            "def tcp(m):\n"
+            " t.sendall(m); return t.recv(64)==m\n"
+            "def udp(m):\n"
+            " u.send(m); return u.recv(64)==m\n"
+            "start=time.monotonic(); i=0\n"
+            "while time.monotonic()-start<duration:\n"
+            " m=b'switch-%d'%i\n"
+            " for kind,probe in (('tcp',tcp),('udp',udp)):\n"
+            "  at=time.time()\n"
+            "  try: ok=probe(m)\n"
+            "  except OSError: ok=False\n"
+            "  result[kind].append([at,ok])\n"
+            " save(); i+=1; time.sleep(1)\n"
+            "result['done']=True; save()\n")
+        owned("container", containers["a"])
+        subprocess.run(["docker", "exec", "-d", containers["a"], "python3", "-c", flow_program, target, "40"],
+                       check=True, timeout=15, close_fds=True)
+
+        def switch_flow():
+            record = command("a", "cat", "/evidence/switch-flow.json", required=False)
+            return json.loads(record["stdout"]) if record["exitCode"] == 0 else None
+        wait_for(lambda: sum(ok for _, ok in (switch_flow() or {}).get("tcp", [])) >= 3, "exit flow before the switch", 30)
+        visits = len(visits_from(e_peer))
+        switch["requested"] = time.time()
+        switch["global"] = exit_cli("global:" + e_node)
+        switch["switched"] = time.time()
+        if not applied_profile(switch["global"], "global:" + e_node):
+            raise RuntimeError("the switch did not return after A applied it")
+        if switch["global"]["local"]["version"] != switch["global"]["committed"]["version"]:
+            raise RuntimeError("A applied another selection than the Server committed")
+        # A new connection follows the new selection through E.
+        switch["newFlow"] = connect(target)
+        if switch["newFlow"]["exitCode"] or len(visits_from(e_peer)) <= visits:
+            raise RuntimeError("a new flow did not leave through E after the switch")
+        wait_for(lambda: (switch_flow() or {}).get("done"), "flow across the switch", 60)
+        flow = switch_flow()
+        switch["flow"] = flow
+        for kind in ("tcp", "udp"):
+            # A probe in flight while the switch commits may go either way.
+            before = [ok for at, ok in flow[kind] if at < switch["requested"] - 1]
+            after = [ok for at, ok in flow[kind] if at > switch["switched"] + 1]
+            if not all(before) or not after or any(after):
+                raise RuntimeError("the switch did not end the previous selection's " + kind + " flow")
+        plan = a_capture("profile-global")
+        if not plan["defaultCapture"] or not managed(plan, ipaddress.ip_address(target)):
+            raise RuntimeError("global profile does not capture external traffic")
+        visits = len(visits_from(e_peer))
+        switch["off"] = exit_cli("off")
+        if not applied_profile(switch["off"], "mesh"):
+            raise RuntimeError("meshway exit off did not apply mesh")
+        plan = a_capture("profile-mesh")
+        if plan["defaultCapture"] or plan["managedIpv4"]:
+            raise RuntimeError("mesh profile still captures external traffic")
+        switch["meshFlow"] = connect(target)
+        if switch["meshFlow"]["exitCode"] == 0 or len(visits_from(e_peer)) != visits:
+            raise RuntimeError("an external flow left through E under mesh")
+        (report / "a" / "exit-off.txt").write_text(exit_cli(as_json=False))
+        switch["restored"] = exit_cli("exit")
+        if not applied_profile(switch["restored"], "exit"):
+            raise RuntimeError("the exit profile was not restored")
+        wait_for(lambda: running(status("a")), "A running after the restored profile")
+        write(report / "profile-switch.json", switch)
+        manifest["stages"]["11"] = {"status": "passed", "evidence": ["profile-switch.json", "profile-global.json", "profile-mesh.json",
+                                                                    "a/exit-view.txt", "a/exit-off.txt"]}
 
         manifest["status"] = "traffic"
         save()

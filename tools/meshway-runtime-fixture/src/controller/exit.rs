@@ -348,7 +348,11 @@ pub(super) async fn coordinate(
     );
     input.routing.egress.assignments = vec![ProfileAssignment {
         target: vec![format!("node:{}", nodes["a"])],
-        allowed: vec!["exit".into(), "mesh".into()],
+        allowed: vec![
+            "exit".into(),
+            "mesh".into(),
+            format!("global:{}", nodes["e"]),
+        ],
         default: "exit".into(),
         locked: false,
     }];
