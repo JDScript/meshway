@@ -1,4 +1,8 @@
-import { listRuleSets, refreshRuleSet } from "@meshway/control-client"
+import {
+  getRuleSetReport,
+  listRuleSets,
+  refreshRuleSet,
+} from "@meshway/control-client"
 import {
   queryOptions,
   useMutation,
@@ -23,6 +27,24 @@ export const ruleSetsQuery = (networkId: string) =>
     queryFn: ({ signal }) =>
       authed((token) => listRuleSets(client, { networkId }, { token, signal })),
     staleTime: 10_000,
+  })
+
+/**
+ * The entries a set's bound content skipped, by the digest it is for: the
+ * same content always has the same report, so it is read once.
+ */
+export const ruleSetReportQuery = (
+  networkId: string,
+  ruleSetKey: string,
+  digest: string
+) =>
+  queryOptions({
+    queryKey: [...ruleSetsKey(networkId), "report", ruleSetKey, digest],
+    queryFn: ({ signal }) =>
+      authed((token) =>
+        getRuleSetReport(client, { networkId, ruleSetKey }, { token, signal })
+      ),
+    staleTime: Infinity,
   })
 
 /** By network and set: a refresh whose outcome is unknown is sent again with its ID. */

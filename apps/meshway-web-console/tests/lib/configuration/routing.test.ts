@@ -4,6 +4,7 @@ import { test } from "vitest"
 
 import {
   badDestination,
+  isProviderRef,
   matchKind,
   matchOf,
   matchParts,
@@ -52,6 +53,21 @@ test("a match is one set of chips: domains, exact names, prefixes and rule sets"
   assert.equal(matchKind("="), null)
   assert.deepEqual(matchOf(["fd00::/8"]), { ipCIDR: ["fd00::/8"] })
   assert.deepEqual(matchOf([]), {})
+})
+
+test("a catalog set is <provider>:<name>; a set of the network is not", () => {
+  assert.ok(isProviderRef("geosite:openai"))
+  assert.ok(isProviderRef("geoip:cn"))
+  assert.ok(isProviderRef("geosite:category-ads-all"))
+  assert.equal(isProviderRef("office"), false)
+  assert.equal(isProviderRef("Geosite:openai"), false)
+  assert.equal(isProviderRef("geosite:"), false)
+  // As a match it is a rule set like any other.
+  assert.deepEqual(matchOf(["set:geosite:openai", "example.com"]), {
+    domainSuffix: ["example.com"],
+    ruleSets: ["geosite:openai"],
+  })
+  assert.equal(matchKind(".cdn.example"), "subdomain")
 })
 
 test("destinations are checked as the controller reads them", () => {

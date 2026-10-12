@@ -4,6 +4,7 @@ import { test } from "vitest"
 
 import {
   inlineOf,
+  inlineValues,
   preparationOf,
   refreshable,
   ruleSetProblems,
@@ -99,6 +100,29 @@ test("the default interval and the order of inline values make no change", () =>
       { o: { type: "inline", domain: ["a.example"] } }
     ),
     false
+  )
+})
+
+test("names matched only below a name are kept, written with a leading dot", () => {
+  const set: RuleSet = {
+    type: "inline",
+    domainSuffix: ["corp.example"],
+    domainSubdomain: ["cdn.example"],
+  }
+  assert.ok(set.type === "inline")
+  assert.deepEqual(inlineValues(set), ["corp.example", ".cdn.example"])
+  assert.deepEqual(inlineOf(inlineValues(set)), set)
+  assert.deepEqual(writtenRuleSet(set), set)
+  assert.equal(
+    sameRuleSets({ a: set }, { a: { ...set, domainSubdomain: [] } }),
+    false
+  )
+})
+
+test("a set's name cannot hold ':', which names a catalog set", () => {
+  assert.deepEqual(
+    ruleSetProblems({ "geo:cn": { type: "inline", ipCIDR: ["10.0.0.0/8"] } }),
+    [{ path: "/ruleSets/geo:cn", code: "set_key" }]
   )
 })
 

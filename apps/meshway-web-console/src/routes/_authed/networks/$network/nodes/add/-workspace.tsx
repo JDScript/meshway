@@ -3,7 +3,6 @@ import {
   type CreateEnrollmentKeyRequest,
   type EnrollmentKeyResponse,
   type NetworkSummary,
-  type NodeInventoryResponse,
 } from "@meshway/control-client"
 import { Button } from "@meshway/ui/button"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
@@ -64,22 +63,18 @@ const enrollmentKeys = attempts<Body>("enrollment-key")
 
 /**
  * Adding a node: an enrolment key for one Tag-identity device, with an
- * optional hostname and one optional listener, then the network's keys.
- * The key is shown once, in a dialog that drops it when it closes; this
- * controller provides no Agent install, and the page says so.
+ * optional hostname and one optional listener, how to install the Node and
+ * join with it, then the keys still usable. The key is shown once, in a
+ * dialog that drops it when it closes.
  */
 export function AddNode({
   networkId,
   network,
-  nodes,
   onClose,
-  onOpenNode,
 }: {
   networkId: string
   network: NetworkSummary | null
-  nodes: NodeInventoryResponse | undefined
   onClose: () => void
-  onOpenNode: (nodeId: string) => void
 }) {
   const queryClient = useQueryClient()
   const configuration = useQuery(configurationQuery(networkId))
@@ -355,12 +350,7 @@ export function AddNode({
               <InstallSteps />
             </Section>
 
-            <EnrollmentKeys
-              networkId={networkId}
-              network={network}
-              nodes={nodes}
-              onOpenNode={onOpenNode}
-            />
+            <EnrollmentKeys networkId={networkId} network={network} />
           </div>
         </div>
         <footer className="flex h-16 shrink-0 items-center gap-3 border-t border-divider px-6">

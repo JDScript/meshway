@@ -43,21 +43,32 @@ export function moved<T>(
 
 // A match's destinations are edited as one set of chips: a domain suffix
 // as typed (the name and every name under it), an exact name after `=`
-// (that name alone), a CIDR prefix, or a rule set as `set:<key>`.
+// (that name alone), a CIDR prefix, or a rule set as `set:<key>` (a
+// catalog set as `set:<provider>:<name>`). An inline rule set also takes
+// names that match only below them, after `.` (as sing-box and mihomo
+// write them); a route's match has no such list.
 
 export const SET_PREFIX = "set:"
 export const EXACT_PREFIX = "="
+export const SUBDOMAIN_PREFIX = "."
 
-export type MatchKind = "domain" | "exact" | "cidr" | "set"
+export type MatchKind = "domain" | "exact" | "subdomain" | "cidr" | "set"
 
 export function matchKind(value: string): MatchKind | null {
   if (value.startsWith(SET_PREFIX))
     return value.length > SET_PREFIX.length ? "set" : null
   if (value.startsWith(EXACT_PREFIX))
     return isDomain(value.slice(EXACT_PREFIX.length)) ? "exact" : null
+  if (value.startsWith(SUBDOMAIN_PREFIX))
+    return isDomain(value.slice(SUBDOMAIN_PREFIX.length)) ? "subdomain" : null
   if (cidrFamily(value) !== null) return "cidr"
   return isDomain(value) ? "domain" : null
 }
+
+const PROVIDER_REF = /^[a-z][a-z0-9-]{0,31}:[a-z0-9][a-z0-9!@._+-]{0,127}$/
+
+/** `<provider>:<name>`: a set of a signed catalog (`geosite:openai`), not one this network declares. */
+export const isProviderRef = (key: string) => PROVIDER_REF.test(key)
 
 /** A match as chips: domain suffixes, exact names, prefixes, then rule sets. */
 export const matchValues = (match: RouteMatch): string[] => [

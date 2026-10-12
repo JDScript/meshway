@@ -52,6 +52,7 @@ import {
   type FormValues,
 } from "@/lib/configuration/operations"
 import {
+  isProviderRef,
   referencedSets,
   renameSetReferences,
 } from "@/lib/configuration/routing"
@@ -188,6 +189,7 @@ export function SectionWorkspace({
               notes={notesFor(form, entry, base)}
               onChange={draft.editForm}
               onOpenSection={onOpenSection}
+              onEditSource={onEditSource}
             />
           </div>
         )}
@@ -289,6 +291,7 @@ function SectionForm({
   notes,
   onChange,
   onOpenSection,
+  onEditSource,
 }: {
   networkId: string
   section: FormSection
@@ -304,6 +307,8 @@ function SectionForm({
     value: FormValues[P]
   ) => void
   onOpenSection: (section: SectionKey) => void
+  /** Opens the source at a JSON pointer. */
+  onEditSource: (at: string) => void
 }) {
   const draft = useConfigurationDraft(networkId)
   const ops = operationsOf(draft.entry)
@@ -409,7 +414,16 @@ function SectionForm({
                 .map(([id]) => id)
             )
           }
-          ruleSets={Object.keys(ruleSets)}
+          ruleSets={[
+            ...Object.keys(ruleSets),
+            // Catalog sets already named, offered again (any other is typed).
+            ...new Set(
+              [
+                ...referencedSets(base.routing),
+                ...referencedSets(routing),
+              ].filter(isProviderRef)
+            ),
+          ]}
           onChange={set("routing")}
           onOpenRuleSets={() => onOpenSection("ruleSets")}
         />
@@ -424,9 +438,11 @@ function SectionForm({
           saved={view.configuration.ruleSets}
           status={status}
           referenced={new Set(referencedSets(routing))}
+          providers={base.ruleSetProviders ?? {}}
           editable={editable}
           notes={notes}
           onChange={set("ruleSets")}
+          onEditProviders={() => onEditSource(pointerOf(["ruleSetProviders"]))}
           onRename={(from, to) => {
             onChange(view, "ruleSets", renamed(ruleSets, from, to))
             onChange(view, "routing", renameSetReferences(routing, from, to))
