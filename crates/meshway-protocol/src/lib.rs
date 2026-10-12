@@ -90,8 +90,8 @@ pub use observations::{
     ObservationResult, ObservationTask,
 };
 pub use state::{
-    STATE_FACT_MAX_SECONDS, STATE_REPORT_TTL_SECONDS, StateAccepted, StateQuery, StateReport,
-    StateView,
+    STATE_FACT_MAX_SECONDS, STATE_MAX_PATHS, STATE_REPORT_TTL_SECONDS, StateAccepted, StateQuery,
+    StateReport, StateView,
 };
 
 pub use auth::{

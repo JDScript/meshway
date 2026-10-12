@@ -87,6 +87,8 @@ const KEY = {
 const node = (id: string, hostname: string): NodeInventoryView => ({
   id,
   hostname,
+  dnsName: `${hostname}.mesh.example`,
+  magicDNS: true,
   networkId: NETWORK,
   registeredAt: "2026-10-03T00:00:00Z",
   enabled: true,
@@ -139,6 +141,7 @@ const state: StateView = {
   asOf: "2026-10-03T00:00:00Z",
   configurationRevision: 3,
   links: [],
+  adjacencies: [],
   networkId: NETWORK,
   nodes: {},
   paths: [],
@@ -216,6 +219,7 @@ test("a delta applies only on top of the last applied cursor", () => {
     updated: {},
     removed: [],
     links: [],
+    adjacencies: [],
     paths: [],
   }
   const applied = run([[delta, "c2"]], ready)

@@ -171,6 +171,11 @@ wire_object! {
     pub registered_at_ms: u64 [value_type=meshway_model::timestamp::Timestamp],
     /// Canonical hostname from the current configuration, not the reported OS hostname.
     pub hostname: String,
+    /// Canonical Mesh DNS name, the hostname under the network `dns.domain`, from the same configuration; a configured name, not proof that any resolver serves it.
+    pub dns_name: String,
+    /// Whether the same configuration enables MagicDNS, under which Nodes resolve `dnsName`.
+    #[serde(rename="magicDNS")]
+    pub magic_dns: bool,
     /// Whether configuration enables business execution; disabled Nodes may still synchronize control state.
     pub enabled: bool,
     /// Current configured User or Tag authorization identity.

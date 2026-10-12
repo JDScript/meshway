@@ -2,7 +2,7 @@ use crate::object::wire_object;
 use chrono::{DateTime, Utc};
 use meshway_model::{
     InstanceId, NetworkId, NodeId, Revision, Sequence, StateEpoch,
-    resources::{GeoObservation, IpInfo, LocationAbsentReason},
+    resources::{AddressScope, LocationAbsentReason, LocationObservation},
     state::{Capability, ConfigurationState, NodeState, ResourceRef, SocketNetwork},
 };
 use std::collections::BTreeMap;
@@ -12,6 +12,8 @@ use std::collections::BTreeMap;
 pub const STATE_REPORT_TTL_SECONDS: i64 = 60;
 /// Longest lifetime (`expiresAt - observedAt`) of one reported State fact.
 pub const STATE_FACT_MAX_SECONDS: i64 = 600;
+/// Most path observations one State report carries.
+pub const STATE_MAX_PATHS: usize = 64;
 
 wire_object! {
 /// Complete Node snapshot authenticated and validated against the current instance.
@@ -58,13 +60,13 @@ pub enum Freshness {
 }
 
 wire_object! {
-/// Server-derived IP metadata restricted to endpoint observations visible to the caller.
+/// Server-derived address facts restricted to endpoint observations visible to the caller.
 #[derive(Clone, Debug, PartialEq)] pub struct DerivedNodeState {
-    /// Independent GeoIP and ASN lookups indexed by canonical visible endpoint IP.
-    #[serde(deserialize_with="meshway_model::wire::unique_map")] pub ip_info: BTreeMap<String, IpInfo>,
-    /// Approximate location from valid eligible local underlay observations, or null when unavailable.
-    pub location: Option<GeoObservation>,
-    /// Reason no location can be derived, or null when location is available.
+    /// Address class of every canonical visible endpoint IP.
+    #[serde(deserialize_with="meshway_model::wire::unique_map")] pub address_scope: BTreeMap<String, AddressScope>,
+    /// The current local public observation a location can be derived from, or null when none is selected.
+    pub location: Option<LocationObservation>,
+    /// Reason no location address is selected, or null when location is present.
     pub location_absent: Option<LocationAbsentReason>,
 } }
 wire_object! {
@@ -157,7 +159,7 @@ wire_object! {
     pub freshness: Freshness,
     /// Permission-filtered accepted report, or null before any report.
     pub report: Option<VisibleReport>,
-    /// IP metadata and approximate location derived by the Server from visible observations.
+    /// Address classes and the location address derived by the Server from visible observations.
     pub derived: DerivedNodeState,
 } }
 wire_object! {
@@ -177,6 +179,8 @@ wire_object! {
     #[serde(deserialize_with="meshway_model::wire::unique_map")] pub nodes: BTreeMap<NodeId, NodeStateView>,
     /// Channel evidence aggregated from visible reports.
     pub links: Vec<AggregatedLink>,
+    /// One connection conclusion per visible Node pair, independent of report trimming.
+    pub adjacencies: Vec<AggregatedAdjacency>,
     /// Path observations retaining each original reporter's evidence.
     pub paths: Vec<AggregatedPath>,
 } }
@@ -230,6 +234,33 @@ wire_object! {
     pub in_use: Option<bool>,
     /// Known UTC start of the channel state, or null when evidence is insufficient.
     pub since: Option<DateTime<Utc>>,
+} }
+meshway_model::string_enum! {
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, utoipa::ToSchema,
+)]
+#[serde(rename_all = "camelCase")]
+/// Server conclusion about the adjacency of one Node pair from both endpoints' current reports.
+pub enum AdjacencyConnection {
+    /// A current report of either endpoint names an authenticated channel that the other does not contradict.
+    Connected,
+    /// No channel; a current report says the adjacency is permitted but nothing needs it.
+    Idle,
+    /// No channel; a current report says something needs the adjacency but no channel is established.
+    Unreachable,
+    /// No current report decides the adjacency, or the endpoints' channel reports conflict.
+    Unknown,
+}
+}
+wire_object! {
+/// Connection conclusion for one Node pair, the same for every caller who sees the pair.
+#[derive(Clone, Debug, PartialEq, Eq)] pub struct AggregatedAdjacency {
+    /// Lower Node ID of the pair.
+    pub a: NodeId,
+    /// Higher Node ID of the pair.
+    pub b: NodeId,
+    /// Conclusion derived from both endpoints' current reports, including reports the caller cannot read.
+    pub status: AdjacencyConnection,
 } }
 wire_object! {
 /// One visible path observation with its original reporter and execution context.
