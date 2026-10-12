@@ -395,6 +395,36 @@ async fn catalog_sets_members_and_matches_are_read_from_verified_content() {
     let newer: RuleSetCatalogPage = json(get("rule-set-catalog?provider=corp", token)).await;
     assert_eq!(newer.provider.sequence, 2);
 
+    // A cursor names the catalog's identity, not only its sequence: the same
+    // provider name and sequence under another key set ends it.
+    let page: RuleSetCatalogPage = json(get(
+        "rule-set-catalog?provider=corp&q=OPENAI&limit=1",
+        token,
+    ))
+    .await;
+    let sequence_cursor = page.next_cursor.unwrap();
+    let other = catalog::signing_key(&"44".repeat(32)).unwrap();
+    let current = s.source(token, network).await;
+    let mut rekeyed = referencing.clone();
+    rekeyed
+        .rule_set_providers
+        .get_mut("corp")
+        .unwrap()
+        .as_mut()
+        .unwrap()
+        .public_keys
+        .push(catalog::public_key(&other).to_string());
+    s.apply(token, network, current.revision, &rekeyed).await;
+    let same: RuleSetCatalogPage = json(get("rule-set-catalog?provider=corp", token)).await;
+    assert_eq!(same.provider.sequence, 2);
+    let (code, body) = status(get(
+        &format!("rule-set-catalog?provider=corp&q=OPENAI&limit=1&cursor={sequence_cursor}"),
+        token,
+    ))
+    .await;
+    assert_eq!(code, StatusCode::BAD_REQUEST, "{body}");
+    assert!(body.contains("invalid_cursor"), "{body}");
+
     // Members and Nodes cannot read resource content.
     let link: JoinLinkCreated = json(
         s.client

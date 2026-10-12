@@ -245,3 +245,36 @@ fn cursor_scope_is_independent_of_configuration_and_binds_user_and_network() {
         );
     }
 }
+
+#[test]
+fn listing_cursors_live_fifteen_minutes_from_the_listing_start_in_one_scope() {
+    let sealer = sealer();
+    let user: meshway_model::UserId = "00000000-0000-4000-8000-000000000001".parse().unwrap();
+    let scope = CursorScope::Networks(user);
+    let now = 1_000_000_000_000;
+    // A later page keeps the first page's start.
+    let started = now - 14 * 60 * 1000;
+    let text = crate::cursor::seal(&sealer, scope, "after", started).unwrap();
+    let (body, issued): (String, i64) = crate::cursor::open(&sealer, scope, &text, now).unwrap();
+    assert_eq!((body.as_str(), issued), ("after", started));
+    let at = |issued: i64| crate::cursor::seal(&sealer, scope, "x", issued).unwrap();
+    for (text, at_now) in [
+        (at(now - 15 * 60 * 1000), now),
+        (at(now + 1), now),
+        (at(now), now + 15 * 60 * 1000),
+    ] {
+        assert_eq!(
+            crate::cursor::open::<String>(&sealer, scope, &text, at_now).map(|_| ()),
+            Err(crate::error::Error::InvalidCursor)
+        );
+    }
+    let other = CursorScope::AccountSessions(user);
+    assert_eq!(
+        crate::cursor::open::<String>(&sealer, other, &at(now), now).map(|_| ()),
+        Err(crate::error::Error::InvalidCursor)
+    );
+    assert_eq!(
+        crate::cursor::open::<String>(&sealer, scope, &"A".repeat(2049), now).map(|_| ()),
+        Err(crate::error::Error::InvalidCursor)
+    );
+}

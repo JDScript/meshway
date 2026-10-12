@@ -5,7 +5,6 @@
 use super::service::RuleSetScope;
 use crate::error::Error;
 use crate::secrets::CursorScope;
-use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use meshway_policy::compile::rules::query_name;
 use meshway_protocol::resources::{
     RuleSetCatalogPage, RuleSetCatalogProvider, RuleSetCatalogQuery, RuleSetCatalogSet,
@@ -24,20 +23,20 @@ use std::{
 const DEFAULT_LIMIT: u16 = 100;
 const MAX_CATALOG_QUERY: usize = 128;
 const MAX_NAME: usize = 253;
-const CURSOR_TTL_MS: i64 = 15 * 60 * 1000;
 
-/// Continuation of one listing: valid only for the same query over the same
-/// content (catalog sequence or bound digest) and for 15 minutes.
+/// Continuation of one listing (see `crate::cursor`): valid only for the
+/// same query over the same content (the catalog's URL, keys, collection,
+/// sequence and document digest, or the bound artifact digest).
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Cursor {
     query: String,
     content: String,
     after: String,
-    expires: i64,
 }
 
 impl Cursor {
+    /// Where the listing continues and when it began (`now` for a first page).
     fn open(
         scope: &RuleSetScope,
         kind: CursorScope,
@@ -45,27 +44,15 @@ impl Cursor {
         query: &str,
         content: &str,
         now: i64,
-    ) -> Result<Option<String>, Error> {
+    ) -> Result<(Option<String>, i64), Error> {
         let Some(cursor) = cursor else {
-            return Ok(None);
+            return Ok((None, now));
         };
-        let bytes = URL_SAFE_NO_PAD
-            .decode(cursor)
-            .map_err(|_| Error::InvalidCursor)?;
-        let plain = scope
-            .sealer
-            .open_cursor(kind, &bytes)
-            .map_err(|_| Error::InvalidCursor)?;
-        let value: Self =
-            serde_json::from_slice(plain.as_bytes()).map_err(|_| Error::InvalidCursor)?;
-        if value.query != query
-            || value.content != content
-            || value.expires <= now
-            || value.expires > now.saturating_add(CURSOR_TTL_MS)
-        {
+        let (value, issued): (Self, i64) = crate::cursor::open(&scope.sealer, kind, cursor, now)?;
+        if value.query != query || value.content != content {
             return Err(Error::InvalidCursor);
         }
-        Ok(Some(value.after))
+        Ok((Some(value.after), issued))
     }
 
     fn seal(
@@ -74,17 +61,14 @@ impl Cursor {
         query: &str,
         content: &str,
         after: String,
-        now: i64,
+        issued: i64,
     ) -> Result<String, Error> {
         let value = Self {
             query: query.to_owned(),
             content: content.to_owned(),
             after,
-            expires: now.saturating_add(CURSOR_TTL_MS),
         };
-        let bytes = serde_json::to_vec(&value).map_err(|_| Error::encode("rule-set cursor"))?;
-        let sealed = scope.sealer.seal_cursor(kind, &bytes)?;
-        Ok(URL_SAFE_NO_PAD.encode(sealed.as_bytes()))
+        crate::cursor::seal(&scope.sealer, kind, value, issued)
     }
 }
 
@@ -114,8 +98,15 @@ pub(crate) fn catalog(
     let accepted = super::catalogs::accepted(tx, provider)?.ok_or(Error::CatalogNotReady)?;
     let catalog = &accepted.catalog;
     let binding = format!("{}\n{q}", query.provider);
-    let content = catalog.sequence.to_string();
-    let after = Cursor::open(
+    let content = format!(
+        "{}\n{}\n{}\n{}\n{}",
+        provider.catalog,
+        super::rulesets::trust(&provider.public_keys),
+        provider.collection,
+        catalog.sequence,
+        accepted.digest,
+    );
+    let (after, issued) = Cursor::open(
         scope,
         cursor_scope,
         query.cursor.as_deref(),
@@ -152,7 +143,7 @@ pub(crate) fn catalog(
                 &binding,
                 &content,
                 last,
-                now,
+                issued,
             )?);
             break;
         }
@@ -241,7 +232,7 @@ pub(crate) fn entries(
     };
     let binding = format!("{key}\n{kind}\n{q}");
     let content = digest.to_string();
-    let after = Cursor::open(
+    let (after, issued) = Cursor::open(
         scope,
         cursor_scope,
         query.cursor.as_deref(),
@@ -317,7 +308,7 @@ pub(crate) fn entries(
             &binding,
             &content,
             after,
-            now,
+            issued,
         )?)
     } else {
         None

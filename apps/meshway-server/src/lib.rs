@@ -12,6 +12,7 @@ pub mod accounts;
 mod app;
 pub(crate) mod configuration;
 pub mod connectivity;
+mod cursor;
 mod directory;
 pub mod effect;
 pub mod enrollment;

@@ -167,7 +167,7 @@ validate 走相同准备与授权校验，但不存储 artifact、不预留版�
 
 ### 浏览与命中查询
 
-三个接口只读 Server 已验签、已绑定的内容，从不下载；权限与其他资源视图相同（本网络 Owner／Admin；成员 403，节点凭据 401）。分页沿用通用约定：`limit` 1–200、默认 100；`nextCursor` 不透明，只对同一用户、网络与相同查询参数有效 15 分钟，目录 `sequence` 或集合绑定的 digest 改变后旧游标失效；无效游标为 400 `invalid_cursor`，其他参数错误为 400 `invalid_request`。
+三个接口只读 Server 已验签、已绑定的内容，从不下载；权限与其他资源视图相同（本网络 Owner／Admin；成员 403，节点凭据 401）。分页沿用通用约定：`limit` 1–200、默认 100；`nextCursor` 不透明，只对同一用户、网络与相同查询参数有效，期限为该次列表首页起 15 分钟（与其他分页接口同一游标封装与期限，后续页不续期）；目录身份（URL、可信钥集合、collection、`sequence` 与已验签目录原文的 digest）或集合绑定的 digest 改变后旧游标失效；无效游标为 400 `invalid_cursor`，其他参数错误为 400 `invalid_request`。
 
 **目录搜索** `GET /rule-set-catalog`：
 

@@ -186,12 +186,14 @@ impl Catalogs {
 pub(crate) struct Accepted {
     pub catalog: Arc<Catalog>,
     pub verified_at: DateTime<Utc>,
+    /// SHA-256 of the verified `index.json` bytes: the catalog's content identity.
+    pub digest: meshway_rules::Digest,
 }
 
 /// Parsed accepted catalogs by (catalog URL, trust), with the stored row's
 /// (sequence, verification time): every acceptance rewrites both, so an
 /// entry is replaced whenever the stored document may have changed.
-type Parsed = BTreeMap<(String, String), ((u64, i64), Arc<Catalog>)>;
+type Parsed = BTreeMap<(String, String), ((u64, i64), Arc<Catalog>, meshway_rules::Digest)>;
 static ACCEPTED: LazyLock<Mutex<Parsed>> = LazyLock::new(Mutex::default);
 const MAX_PARSED: usize = 16;
 
@@ -210,12 +212,13 @@ pub(crate) fn accepted(
     };
     let verified_at = DateTime::from_timestamp_millis(at)
         .ok_or(Error::decode("rule_set_catalogs.verified_at"))?;
-    if let Some((parsed, catalog)) = ACCEPTED.lock().map_err(|_| Error::RUNTIME)?.get(&key)
+    if let Some((parsed, catalog, digest)) = ACCEPTED.lock().map_err(|_| Error::RUNTIME)?.get(&key)
         && *parsed == (sequence, at)
     {
         return Ok(Some(Accepted {
             catalog: Arc::clone(catalog),
             verified_at,
+            digest: *digest,
         }));
     }
     let (document, signature) =
@@ -235,9 +238,11 @@ pub(crate) fn accepted(
     if parsed.len() >= MAX_PARSED && !parsed.contains_key(&key) {
         parsed.clear();
     }
-    parsed.insert(key, ((sequence, at), Arc::clone(&catalog)));
+    let digest = meshway_rules::Digest::of(&document);
+    parsed.insert(key, ((sequence, at), Arc::clone(&catalog), digest));
     Ok(Some(Accepted {
         catalog,
         verified_at,
+        digest,
     }))
 }
