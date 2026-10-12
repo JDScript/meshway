@@ -9,8 +9,6 @@ description = "Meshway rule-set format (MWRS): builder, verified loader, matcher
 default = []
 # Source parsers for sing-box source and mihomo/classical payloads.
 convert = ["dep:serde_json", "dep:serde_yaml_ng"]
-# Read-only memory-mapped artifacts; the only module allowed to use `unsafe`.
-mapped = ["dep:memmap2"]
 # Signed provider catalog (`index.json`) types, signing and verification.
 catalog = ["convert", "dep:ed25519-dalek", "dep:chrono"]
 
@@ -24,7 +22,6 @@ sha2.workspace = true
 thiserror.workspace = true
 chrono = { workspace = true, optional = true }
 ed25519-dalek = { version = "2.2", default-features = false, features = ["std", "zeroize"], optional = true }
-memmap2 = { version = "0.9", optional = true }
 serde_json = { workspace = true, optional = true }
 serde_yaml_ng = { version = "0.10", optional = true }
 
@@ -34,7 +31,5 @@ proptest = { version = "1", default-features = false, features = ["std"] }
 serde_json.workspace = true
 tempfile.workspace = true
 
-# The workspace forbids unsafe code; `forbid` cannot be relaxed per module, so
-# this crate denies it and only `mapped` carries an audited module-level allow.
-[lints.rust]
-unsafe_code = "deny"
+[lints]
+workspace = true

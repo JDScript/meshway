@@ -4,10 +4,9 @@
 //! - [`Builder`] turns normalized [`Entry`] values into a deterministic
 //!   artifact: equal entry sets give equal bytes and therefore equal
 //!   [`Digest`]s.
-//! - [`RuleSet`] is the verified, zero-deserialization loader and matcher. A
-//!   heap buffer ([`RuleSet::from_vec`]) and a read-only mapping
-//!   (`mapped::open`, feature `mapped`) share the same API. Any byte string is
-//!   either rejected or yields a set whose queries cannot panic.
+//! - [`RuleSet`] is the verified, zero-deserialization loader and matcher
+//!   over a heap buffer ([`RuleSet::from_vec`]). Any byte
+//!   string is either rejected or yields a set whose queries cannot panic.
 //! - [`inline`] converts configuration lists; `convert` (feature `convert`)
 //!   converts sing-box source, mihomo and classical payloads, always with a
 //!   per-entry [`Report`].
@@ -28,8 +27,6 @@ mod set;
 pub mod catalog;
 #[cfg(feature = "convert")]
 pub mod convert;
-#[cfg(feature = "mapped")]
-pub mod mapped;
 
 pub use build::{Artifact, BuildError, Builder, Limit};
 pub use digest::{Digest, InvalidDigest};

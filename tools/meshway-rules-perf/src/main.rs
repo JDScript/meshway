@@ -5,7 +5,7 @@
 #![forbid(unsafe_code)]
 
 use clap::Parser;
-use meshway_rules::{Digest, DomainKind, RuleSet, mapped};
+use meshway_rules::{Digest, DomainKind, RuleSet};
 use serde::Serialize;
 use std::{
     collections::HashMap,
@@ -52,8 +52,6 @@ struct SetReport {
     keywords: u32,
     /// p50 µs per round: read + open (validation + digest) from the heap.
     read_open_heap_us: Vec<f64>,
-    /// p50 µs per round: `mapped::open` (map + validation + digest).
-    open_mapped_us: Vec<f64>,
     /// p50 µs per round: SHA-256 of the bytes alone (part of every open).
     digest_us: Vec<f64>,
     /// ns per query per round; null without members of that class.
@@ -176,12 +174,6 @@ fn measure(o: &Options, path: &PathBuf) -> SetReport {
     let bytes = std::fs::read(path).expect("artifact");
     let set = RuleSet::from_vec(bytes.clone()).expect("valid artifact");
     let naive = Naive::new(&set);
-    let dir = tempfile::tempdir().expect("tempdir");
-    let mapped_path = dir.path().join(set.digest().file_name());
-    std::fs::write(&mapped_path, &bytes).expect("copy");
-    let mut perms = std::fs::metadata(&mapped_path).expect("meta").permissions();
-    perms.set_readonly(true);
-    std::fs::set_permissions(&mapped_path, perms).expect("read-only");
 
     let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
     let domains: Vec<(String, DomainKind)> =
@@ -287,20 +279,16 @@ fn measure(o: &Options, path: &PathBuf) -> SetReport {
             .count();
 
     for _ in 0..o.samples {
-        let (mut heap, mut map, mut sha) = (vec![], vec![], vec![]);
+        let (mut heap, mut sha) = (vec![], vec![]);
         for _ in 0..o.opens {
             let t = Instant::now();
             black_box(RuleSet::from_vec(std::fs::read(path).expect("read")).expect("open"));
             heap.push(us(t));
             let t = Instant::now();
-            black_box(mapped::open(&mapped_path).expect("mapped"));
-            map.push(us(t));
-            let t = Instant::now();
             black_box(Digest::of(black_box(&bytes)));
             sha.push(us(t));
         }
         report.read_open_heap_us.push(p50(heap));
-        report.open_mapped_us.push(p50(map));
         report.digest_us.push(p50(sha));
         report.domain_hit_ns.push(time_domain(&set, &hits));
         report.domain_miss_ns.push(time_domain(&set, &misses));

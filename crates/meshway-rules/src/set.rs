@@ -14,27 +14,11 @@ use std::{
     ops::{Range, RangeInclusive},
 };
 
-pub(crate) enum Backing {
-    Heap(Vec<u8>),
-    #[cfg(feature = "mapped")]
-    Mapped(memmap2::Mmap),
-}
-
-impl Backing {
-    fn bytes(&self) -> &[u8] {
-        match self {
-            Self::Heap(v) => v,
-            #[cfg(feature = "mapped")]
-            Self::Mapped(m) => m,
-        }
-    }
-}
-
 /// A verified artifact. Opening checks the header, section table, every
 /// section's structure and computes the digest; afterwards matching reads the
 /// bytes in place. Share one handle per digest per process (`Arc<RuleSet>`).
 pub struct RuleSet {
-    backing: Backing,
+    bytes: Vec<u8>,
     digest: Digest,
     minor: u16,
     counts: Counts,
@@ -109,13 +93,9 @@ pub struct SectionInfo {
 }
 
 impl RuleSet {
-    /// Heap backend: reads the artifact from an owned buffer.
-    pub fn from_vec(bytes: Vec<u8>) -> Result<Self, LoadError> {
-        Self::open(Backing::Heap(bytes))
-    }
-
-    pub(crate) fn open(backing: Backing) -> Result<Self, LoadError> {
-        let bytes = backing.bytes();
+    /// Verify an artifact held in an owned buffer.
+    pub fn from_vec(owned: Vec<u8>) -> Result<Self, LoadError> {
+        let bytes = owned.as_slice();
         if bytes.len() > MAX_ARTIFACT_BYTES {
             return Err(LoadError::TooLarge);
         }
@@ -166,7 +146,7 @@ impl RuleSet {
         Self::ranges::<16>(&bytes[v6.clone()], counts.ipv6)?;
         let digest = Digest::of(bytes);
         Ok(Self {
-            backing,
+            bytes: owned,
             digest,
             minor,
             counts,
@@ -294,7 +274,7 @@ impl RuleSet {
     }
 
     fn bytes(&self) -> &[u8] {
-        self.backing.bytes()
+        &self.bytes
     }
     pub fn as_bytes(&self) -> &[u8] {
         self.bytes()

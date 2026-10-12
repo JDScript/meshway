@@ -57,7 +57,7 @@
 
 四个 kind 必须各出现一次且标为 required；未知 kind 若标 required 则拒绝，否则忽略。v1 builder 按 1–4 的顺序写四段（空段也写）。
 
-**loader 校验**（`RuleSet::from_vec`／`mapped::open` 同一路径，任意字节要么拒绝要么得到查询不会 panic 的句柄）：大小 ≤ 16 MiB；magic、major、保留字节与 `totalLength`；段表在界内、对齐、互不重叠、填充为 0；头 `counts` 不超上限且与各段一致；keyword 表与 IP 区间的排序／不相交／不相邻；整份 SHA-256。`fst` crate 的读取端假定输入可信（畸形字节可 panic），所以 `domains` 由 `meshway-rules` 自己的有界读取器解码，加载时证明：节点从 root 向下首尾相接铺满段（builder 的写出方式）、每个转移指向更低的铺块地址（遍历必终止）、输入为严格升序的名称字节、256 B 输入索引与转移一致、每个 key 的值恰为一个 kind 位、key 总数等于头计数、最长 key ≤ 253 B。该证明对每个节点一次线性遍历，是打开耗时的主要部分（见 [R1 实测](#r1-实测)）。
+**loader 校验**（唯一入口 `RuleSet::from_vec`，任意字节要么拒绝要么得到查询不会 panic 的句柄）：大小 ≤ 16 MiB；magic、major、保留字节与 `totalLength`；段表在界内、对齐、互不重叠、填充为 0；头 `counts` 不超上限且与各段一致；keyword 表与 IP 区间的排序／不相交／不相邻；整份 SHA-256。`fst` crate 的读取端假定输入可信（畸形字节可 panic），所以 `domains` 由 `meshway-rules` 自己的有界读取器解码，加载时证明：节点从 root 向下首尾相接铺满段（builder 的写出方式）、每个转移指向更低的铺块地址（遍历必终止）、输入为严格升序的名称字节、256 B 输入索引与转移一致、每个 key 的值恰为一个 kind 位、key 总数等于头计数、最长 key ≤ 253 B。该证明对每个节点一次线性遍历，是打开耗时的主要部分（见 [R1 实测](#r1-实测)）。
 
 **IP 为区间而非前缀**：区间二分查找与前缀长度无关；同一数组也是 nftables interval set 的直接输入。需要展示命中条目时，在冷路径把所在区间按规范最小 CIDR 分解给出包含该地址的那一块。
 
@@ -146,13 +146,13 @@ builder 的输入是转换器产出的条目，输出唯一确定：
 | `meshway-engine` | 把已加载的 `RuleSet` 句柄连同 netmap 交给 Policy／组件 | 持有第二份授权状态 |
 | 发布流水线 CLI（`tools/meshway-rules-cli`，bin `meshway-rules`） | 文件 I/O 与参数，调用 `meshway-rules` 转换、组装与签名目录 | 自带转换、校验或签名逻辑 |
 
-feature 划分：默认含规范化、builder、loader、matcher 与 inline 转换（Policy、Engine 用）；`convert` 含来源解析（`serde_json`、`serde_yaml_ng`；Server、CLI 用）；`mapped` 含 mmap 后端（`memmap2`；Server、Control 用）；`catalog` 含 `index.json` 类型、组装、签名与验签（`ed25519-dalek`、`chrono`；Server、CLI 用，蕴含 `convert`）。目录签名钥只签规则目录，与 netmap 租约签发无关，不构成第二份授权状态。
+feature 划分：默认含规范化、builder、loader、matcher 与 inline 转换（Policy、Engine 用）；`convert` 含来源解析（`serde_json`、`serde_yaml_ng`；Server、CLI 用）；`catalog` 含 `index.json` 类型、组装、签名与验签（`ed25519-dalek`、`chrono`；Server、CLI 用，蕴含 `convert`）。目录签名钥只签规则目录，与 netmap 租约签发无关，不构成第二份授权状态。
 
 `inline` 模块：`Inline { domain, domain_suffix, domain_subdomain, ip_cidr }`（`&[String]`）。`inline::convert` 返回带报告的 `Conversion`（位置 `/<字段>/<序号>`）；`RuleSet::from_inline` 要求零跳过且非空，否则返回首个问题。
 
-**mmap 与 `unsafe`**（用户已批准例外）：`memmap2::Mmap::map` 是 `unsafe`（文件被截断或改写即未定义行为／SIGBUS），与“业务代码 forbid unsafe”冲突。它隔离在 `meshway-rules::mapped` 一个审计模块中（模块级 `#![allow(unsafe_code)]`、每处 `// SAFETY:`，crate 其余部分 deny unsafe），前提条件是：只映射 Control／Server 私有目录中以 digest 命名、0400、经原子 rename 写入且此后不改写的文件；进程首次打开每个 digest 时整份校验 SHA-256（planck 816 KB 0.32 ms）。`mapped::open(path)` 检查普通文件、无任何写权限位、≤ 16 MiB，再走与堆读取（`RuleSet::from_vec`）完全相同的校验与 digest；调用方比较 `digest()` 与期望值。
+**只有堆读取，零 `unsafe`**：artifact 一律读入堆缓冲再经 `RuleSet::from_vec` 校验；整个 workspace 不含 `unsafe`。曾评估的 mmap 后端（`memmap2::Mmap::map` 是 `unsafe`，文件被截断或改写即未定义行为／SIGBUS，安全 API 无法让调用者证明该前提）已删除：R1 实测打开 4 ms 几乎全是结构校验与 digest，映射省下的读取可以忽略。Control 从私有目录按 digest 打开 0400 文件、有界读取（≤ 16 MiB）后与网络下载走同一校验；调用方比较 `digest()` 与期望值。
 
-**每进程每 digest 一个句柄**：Server 计算所有节点的路径检测时共享同一 `Arc<RuleSet>`；1,000 个句柄共享一份映射只增加 0.8 MB，1,000 份堆副本增加 786 MB（[内存](#内存-1-000-个句柄)）。
+**每进程每 digest 一个句柄**：Server 计算所有节点的路径检测时共享同一 `Arc<RuleSet>`，每个 digest 只有一份堆副本（[内存](#内存-1-000-个句柄)中的 mmap 列为 R1 评估数据，现已不用）。
 
 ### 转换器
 
@@ -335,7 +335,7 @@ Control 把 artifact 写入私有目录 `artifacts/sha256-<hex>.mwrs`（0400、�
 | Server 存储 | 每份 netmap 1,636,052 B，1,000 份约 1.64 GB | 一份 816,448 B（全局内容寻址，跨网络去重） |
 | netmap 每份增量 | 1.64 MB，计入 8 MiB 上限 | 约 120 B |
 | 内容变化时传输 | 1,000 × 1.64 MB 的 netmap 块 | 1,000 × 816 KB 一次（gzip 后 594 KB）；netmap 只变引用 |
-| 节点内存 | 解析后的字符串列表 | 一份 816 KB 映射 |
+| 节点内存 | 解析后的字符串列表 | 一份 816 KB 堆副本 |
 | Server 内存 | 每份投影各一份 | 每 digest 一个句柄 |
 
 授权检查需要“节点当前租约内 netmap 是否引用该 digest”的索引：Server 在提交 netmap 时同事务写 `(network, node, serial) → digest` 引用表，artifact 请求只做一次索引查询，不解密 netmap。
@@ -530,7 +530,7 @@ meta `geosite/cn`（816,448 B），每个句柄打开后各执行 1,151 次查�
 
 ## 需用户决定
 
-R0 列出的七项已由用户决定并写入相应章节：regex v1 逐条跳过（[匹配语义](#匹配语义)）；内置 provider 对齐 mihomo、指向 meta-rules-dat（[配置面](#配置面)）；签名钥为单把 GitHub environment secret，轮换即发布钉入新公钥的 Server 版本（[发布仓库](#发布仓库)）；仓库 `meshway-org/meshway-rules`；批准 `mapped` 的 `unsafe` 隔离例外（[crate 与 owner](#crate-与-owner)）；subdomain 在格式、转换器与 inline（`domainSubdomain`）支持；出口分割移到节点（R3，[Policy 接口与 X6](#policy-接口与-x6)）。
+R0 列出的七项已由用户决定并写入相应章节：regex v1 逐条跳过（[匹配语义](#匹配语义)）；内置 provider 对齐 mihomo、指向 meta-rules-dat（[配置面](#配置面)）；签名钥为单把 GitHub environment secret，轮换即发布钉入新公钥的 Server 版本（[发布仓库](#发布仓库)）；仓库 `meshway-org/meshway-rules`；`mapped` 的 `unsafe` 例外后经 alpha.4 审阅撤回，改为只用堆读取（[crate 与 owner](#crate-与-owner)）；subdomain 在格式、转换器与 inline（`domainSubdomain`）支持；出口分割移到节点（R3，[Policy 接口与 X6](#policy-接口与-x6)）。
 
 ## R2a 接线
 

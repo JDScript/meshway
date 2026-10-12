@@ -2,7 +2,7 @@
 //! once from `GET /agent-api/v1/artifacts/{digest}`, checked (length, SHA-256,
 //! full `MWRS` structure) and kept as an owner read-only file
 //! `artifacts/sha256-<hex>.mwrs` beside `netmap.json`, published by atomic
-//! rename and mapped once per process. Files the held netmap no longer
+//! rename and read (and verified again) once per process. Files the held netmap no longer
 //! references are removed. Artifacts are content, never authority: a missing
 //! one leaves the rules naming it unavailable (Policy), it grants nothing.
 use crate::{Control, Error};
@@ -126,15 +126,20 @@ pub(crate) fn forget(control_directory: &Directory) -> Result<(), meshway_privat
     Ok(())
 }
 
-/// The cached file of `reference`, mapped and checked; `None` when absent.
+/// The cached file of `reference`, read and checked; `None` when absent.
 fn open_cached(directory: &Directory, reference: &RuleSetRef) -> Result<Option<RuleSet>, ()> {
+    use std::io::Read;
     let Some(file) = directory
         .read_only_file(&reference.digest.file_name())
         .map_err(|_| ())?
     else {
         return Ok(None);
     };
-    let set = meshway_rules::mapped::open_file(file).map_err(|_| ())?;
+    let mut bytes = Vec::new();
+    file.take(meshway_rules::MAX_ARTIFACT_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| ())?;
+    let set = RuleSet::from_vec(bytes).map_err(|_| ())?;
     (set.digest() == reference.digest
         && set.as_bytes().len() as u64 == u64::from(reference.bytes)
         && set.counts().entries() == u64::from(reference.entries))
