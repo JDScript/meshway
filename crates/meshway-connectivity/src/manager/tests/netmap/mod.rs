@@ -122,8 +122,15 @@ async fn keepalive_edge_is_resident_without_interest() {
     let mut a = manager(&fixture, 0, &factory, limits(idle)).await;
     let mut b = manager(&fixture, 1, &factory, limits(idle)).await;
     let mut c = manager(&fixture, 2, &factory, limits(idle)).await;
-    eventually("keepalive edge acquires", || {
-        links(&a).contains_key(&ids[1])
+    // Both ends dial a resident edge; each keeps the channel dialed by the
+    // lower Node ID (`rank`), so an earlier inbound channel may be replaced
+    // once. Wait for that converged channel, held by both ends.
+    let preferred = a_id.min(b_id);
+    eventually("keepalive edge converges on one channel", || {
+        let (a, b) = (links(&a), links(&b));
+        a.get(&b_id).is_some_and(|link| {
+            link.carrier.dialer == preferred && b.get(&a_id).is_some_and(|l| l.id == link.id)
+        })
     })
     .await;
     let id = links(&a)[&ids[1]].id;
