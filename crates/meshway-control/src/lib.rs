@@ -30,6 +30,7 @@ mod probe;
 pub use probe::ServerProbe;
 mod rotation;
 pub use observations::ObservationLease;
+mod selection;
 mod session;
 mod storage;
 
@@ -135,6 +136,8 @@ pub struct Status {
     pub artifact_problem: Option<ArtifactProblem>,
     /// The durable leave intent awaiting the Server's confirmation.
     pub leaving: Option<meshway_model::RequestId>,
+    /// This Node's routing profile selection as the held netmap decides it.
+    pub routing: Option<meshway_configuration::selection::RoutingSelectionState>,
     pub reload_required: bool,
 }
 
@@ -269,6 +272,11 @@ impl Control {
             missing_artifacts: self.missing_artifacts(),
             artifact_problem: self.artifact_problem(),
             leaving: if self.dirty { None } else { self.record.leave },
+            routing: if self.dirty {
+                None
+            } else {
+                self.routing_selection().cloned()
+            },
             reload_required: self.dirty,
         };
         StatusSnapshot {

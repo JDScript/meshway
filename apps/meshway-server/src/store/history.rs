@@ -1,6 +1,6 @@
 //! SQL behind configuration version history and activity listings.
 use crate::error::Error;
-use meshway_model::{ActivityId, NetworkId, RequestId, Revision, UserId};
+use meshway_model::{ActivityId, NetworkId, NodeId, RequestId, Revision, UserId};
 use meshway_protocol::history::{
     ActivityAction, ActivityActor, ActivityEvent, ActivityTarget, ConfigurationChangeCause,
     ConfigurationRevisionSummary,
@@ -113,7 +113,7 @@ fn revision_value(value: i64) -> rusqlite::Result<Revision> {
     Revision::new(u64::try_from(value).map_err(|_| rusqlite::Error::InvalidQuery)?)
         .map_err(|_| rusqlite::Error::InvalidQuery)
 }
-const SELECT: &str = "SELECT sequence,id,at,actor_kind,actor_user_id,action,target_user_id,target_session_id,network_id,target_membership_id,target_join_link_id,before_revision,after_revision,request_id,actor_email,previous_email FROM activity_events";
+const SELECT: &str = "SELECT sequence,id,at,actor_kind,actor_user_id,action,target_user_id,target_session_id,network_id,target_membership_id,target_join_link_id,before_revision,after_revision,request_id,actor_email,previous_email,actor_node_id,target_node_id,target_profile FROM activity_events";
 fn read(r: &rusqlite::Row<'_>) -> rusqlite::Result<(i64, ActivityEvent)> {
     let actor = match r.get::<_, String>(3)?.as_str() {
         "user" => ActivityActor::User {
@@ -121,6 +121,9 @@ fn read(r: &rusqlite::Row<'_>) -> rusqlite::Result<(i64, ActivityEvent)> {
             email: r.get(14)?,
         },
         "system" => ActivityActor::System {},
+        "node" => ActivityActor::Node {
+            node_id: uuid(r, 16, NodeId::new)?,
+        },
         _ => return Err(rusqlite::Error::InvalidQuery),
     };
     let before_revision = r
@@ -133,7 +136,12 @@ fn read(r: &rusqlite::Row<'_>) -> rusqlite::Result<(i64, ActivityEvent)> {
         .map(revision_value)
         .transpose()
         .map_err(|_| rusqlite::Error::InvalidQuery)?;
-    let target = if r.get::<_, Option<Vec<u8>>>(7)?.is_some() {
+    let target = if r.get::<_, Option<Vec<u8>>>(17)?.is_some() {
+        ActivityTarget::RoutingSelection {
+            node_id: uuid(r, 17, NodeId::new)?,
+            profile: r.get(18)?,
+        }
+    } else if r.get::<_, Option<Vec<u8>>>(7)?.is_some() {
         ActivityTarget::Session {
             session_id: uuid(r, 7, meshway_model::SessionId::new)?,
         }

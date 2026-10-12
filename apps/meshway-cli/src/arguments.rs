@@ -49,6 +49,14 @@ pub(crate) enum Command {
     },
     /// Check this Node's UDP mappings, STUN observers and Server reachability.
     Netcheck,
+    /// Show this Node's routing (exit) profile and the allowed ones, or select one.
+    ///
+    /// Selecting waits until the Server committed it and this Node applied the
+    /// new netmap; flows through the previous exit end. `off` selects `mesh`.
+    Exit {
+        /// Allowed profile: `off`/`mesh`, `auto`, `global:<node-id>` or a configured profile.
+        profile: Option<String>,
+    },
     /// Print this build's version and the protocol versions it speaks; does not contact the daemon.
     Version,
 }

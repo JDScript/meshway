@@ -19,7 +19,7 @@ async fn cli(socket: &Path, command: &str, json: bool) -> Output {
     tokio::task::spawn_blocking(move || {
         let mut process = std::process::Command::new(env!("CARGO_BIN_EXE_meshway"));
         process.args(["--log-format", "json", "--log-filter", "debug"]);
-        process.arg("--socket").arg(socket).arg(command);
+        process.arg("--socket").arg(socket).args(command.split(' '));
         if json {
             process.arg("--json");
         }
@@ -334,6 +334,9 @@ async fn real_cli_enrollment(console_origin: Option<&str>, key_stdin: Option<boo
         assert!(Instant::now() < deadline, "sync did not connect");
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
+    if console_origin.is_some() {
+        exit_profiles(&api, network.network.id, owner.token.expose(), &socket).await;
+    }
     let ready = if key_stdin == Some(false) {
         let rotated = cli(&socket, "rotate-key", true).await;
         assert!(
@@ -391,6 +394,128 @@ async fn real_cli_enrollment(console_origin: Option<&str>, key_stdin: Option<boo
     server_stop.send(()).unwrap();
     server_task.await.unwrap();
     server.shutdown().await.unwrap();
+}
+
+async fn assign(api: &Client, network: meshway_model::NetworkId, token: &str, locked: bool) {
+    use meshway_control_client::{
+        ApplyConfigurationPath, GetConfigurationSourcePath, GetConfigurationSourceQuery,
+    };
+    let source = api
+        .get_configuration_source(
+            &GetConfigurationSourcePath {
+                network_id: network,
+            },
+            &GetConfigurationSourceQuery::default(),
+            token,
+        )
+        .await
+        .unwrap();
+    let mut input = source.configuration.clone();
+    input.routing.egress = serde_json::from_value(serde_json::json!({
+        "profiles": {"local": {"rules": [{"match": {"ipCIDR": ["192.0.2.0/24"]}, "action": {"type": "direct"}}],
+            "fallback": {"type": "unmanaged"}}},
+        "assignments": [{"target": ["*"], "allowed": ["mesh", "local"], "default": "mesh", "locked": locked}]
+    }))
+    .unwrap();
+    api.apply_configuration(
+        &ApplyConfigurationPath {
+            network_id: network,
+        },
+        &meshway_protocol::ConfigurationRequest::Document {
+            expected_revision: source.revision,
+            request_id: id(),
+            source_jsonc: WireSecret::new(serde_json::to_string(&input).unwrap()),
+        },
+        token,
+    )
+    .await
+    .unwrap();
+}
+
+/// The netmap's selection once it allows `local`.
+async fn selection(socket: &Path, locked: bool) -> serde_json::Value {
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        let output = cli(socket, "exit", true).await;
+        if output.status.success() {
+            let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+            if value["profiles"].as_array().unwrap().len() == 2 && value["locked"] == locked {
+                return value;
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "netmap did not carry the assignment"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+/// `meshway exit`: the netmap's selection, a Server-committed switch the
+/// Node applies before the command returns, refusals that name the allowed
+/// profiles or the lock, and `off`.
+async fn exit_profiles(
+    api: &Client,
+    network: meshway_model::NetworkId,
+    token: &str,
+    socket: &Path,
+) {
+    assign(api, network, token, false).await;
+    let initial = selection(socket, false).await;
+    assert_eq!(initial["appliedProfile"], "mesh");
+    assert_eq!(initial["requestedProfile"], serde_json::Value::Null);
+    let text = cli(socket, "exit", false).await;
+    assert!(text.status.success());
+    let text = String::from_utf8(text.stdout).unwrap();
+    assert!(text.starts_with("Exit profile mesh\n"), "{text}");
+    assert!(
+        text.contains("PROFILE  KIND    STATE             SUMMARY\n"),
+        "{text}"
+    );
+    assert!(
+        text.contains("local    custom                    1 rule · otherwise unmanaged\n"),
+        "{text}"
+    );
+
+    let switched = cli(socket, "exit local", true).await;
+    assert!(
+        switched.status.success(),
+        "{}",
+        String::from_utf8_lossy(&switched.stderr)
+    );
+    let switched: serde_json::Value = serde_json::from_slice(&switched.stdout).unwrap();
+    assert_eq!(switched["applied"], true);
+    assert_eq!(switched["committed"]["version"], 1);
+    assert_eq!(switched["local"]["appliedProfile"], "local");
+    assert_eq!(switched["local"]["version"], 1);
+
+    let refused = cli(socket, "exit global:x", false).await;
+    assert!(!refused.status.success());
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        stderr.contains("not allowed for this Node; allowed: mesh, local."),
+        "{stderr}"
+    );
+
+    let off = cli(socket, "exit off", false).await;
+    assert!(
+        off.status.success(),
+        "{}",
+        String::from_utf8_lossy(&off.stderr)
+    );
+    let off = String::from_utf8(off.stdout).unwrap();
+    assert!(off.starts_with("Exit profile mesh\n"), "{off}");
+    assert!(off.contains("  Requested  mesh · version 2\n"), "{off}");
+
+    assign(api, network, token, true).await;
+    selection(socket, true).await;
+    let locked = cli(socket, "exit local", false).await;
+    assert!(!locked.status.success());
+    let stderr = String::from_utf8_lossy(&locked.stderr);
+    assert!(
+        stderr.contains("locked this Node's profile to `mesh`"),
+        "{stderr}"
+    );
 }
 
 async fn key_enrollment(

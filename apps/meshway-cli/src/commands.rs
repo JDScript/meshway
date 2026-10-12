@@ -3,7 +3,10 @@ use crate::{
     arguments::{Arguments, Command as CliCommand},
     output,
 };
-use meshway_protocol::ipc::{Client, Command, Phase, PingEvent, PingTarget};
+use meshway_configuration::selection::RoutingSelectionState;
+use meshway_protocol::ipc::{
+    Client, Command, ErrorCode, NetworkMode, Phase, PingEvent, PingTarget, Status,
+};
 use std::time::Duration;
 use tokio::time::Instant;
 
@@ -25,6 +28,12 @@ pub(crate) enum Error {
         "Cannot read enrollment key input; use a valid key, readable @file, or piped stdin (-)."
     )]
     EnrollmentKeyInput,
+    #[error("This Node holds no netmap yet; run `meshway up` and check `meshway status`.")]
+    NoNetmap,
+    #[error("Profile `{profile}` is not allowed for this Node; allowed: {allowed}.")]
+    ProfileNotAllowed { profile: String, allowed: String },
+    #[error("An administrator locked this Node's profile to `{default}`.")]
+    ProfileLocked { default: String },
 }
 
 pub(crate) async fn run(arguments: Arguments) -> Result<(), Error> {
@@ -36,6 +45,7 @@ pub(crate) async fn run(arguments: Arguments) -> Result<(), Error> {
         CliCommand::Status { .. } => "status",
         CliCommand::Netcheck => "netcheck",
         CliCommand::Ping { .. } => "ping",
+        CliCommand::Exit { .. } => "exit",
         CliCommand::Version => "version",
     };
     tracing::debug!(command, "Local command started");
@@ -110,6 +120,9 @@ pub(crate) async fn run(arguments: Arguments) -> Result<(), Error> {
         }
         return Err(Error::PingUnsuccessful);
     }
+    if let CliCommand::Exit { profile } = arguments.command {
+        return exit(&client, profile, arguments.json).await;
+    }
     let mut status = client.call(Command::Status).await?;
     match arguments.command {
         CliCommand::RotateKey => {
@@ -130,7 +143,10 @@ pub(crate) async fn run(arguments: Arguments) -> Result<(), Error> {
             output::logout(&status, &after, arguments.json)?;
             Ok(())
         }
-        CliCommand::Ping { .. } | CliCommand::Netcheck | CliCommand::Version => {
+        CliCommand::Ping { .. }
+        | CliCommand::Netcheck
+        | CliCommand::Exit { .. }
+        | CliCommand::Version => {
             unreachable!("handled without reading or mutating Node intent")
         }
         CliCommand::Status { watch } => loop {
@@ -188,6 +204,78 @@ pub(crate) async fn run(arguments: Arguments) -> Result<(), Error> {
             Ok(())
         }
     }
+}
+
+/// The selection this Node's netmap carries; the Server owns it.
+fn routing(status: &Status) -> Option<&RoutingSelectionState> {
+    status.netmap.as_ref()?.routing.as_ref()
+}
+
+/// Whether the Node runs the netmap carrying `selection` (or a later one).
+fn applied(status: &Status, selection: &RoutingSelectionState) -> bool {
+    let Some(netmap) = &status.netmap else {
+        return false;
+    };
+    let carried = routing(status)
+        .is_some_and(|local| local.version.map(|v| v.get()) >= selection.version.map(|v| v.get()));
+    // Control-only Nodes install nothing: holding the netmap is applying it.
+    carried
+        && (status.network_mode == NetworkMode::ControlOnly
+            || status.applied == Some(netmap.netmap))
+}
+
+/// `meshway exit [profile]`: show the selection, or have the Server select a
+/// profile and wait until this Node applied the netmap carrying it.
+async fn exit(client: &Client, profile: Option<String>, json: bool) -> Result<(), Error> {
+    let mut status = client.call(Command::Status).await?;
+    let Some(profile) = profile else {
+        let selection = routing(&status).ok_or(Error::NoNetmap)?;
+        return Ok(output::exit_view(&status, selection, json)?);
+    };
+    let profile = if profile == "off" {
+        "mesh".into()
+    } else {
+        profile
+    };
+    let selection = match client.select_profile(profile.clone()).await {
+        Ok(selection) => selection,
+        Err(meshway_protocol::ipc::ClientError::Remote(ErrorCode::ProfileNotAllowed)) => {
+            let allowed = routing(&status)
+                .map(|local| {
+                    local
+                        .profiles
+                        .iter()
+                        .map(|p| p.name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .unwrap_or_default();
+            return Err(Error::ProfileNotAllowed { profile, allowed });
+        }
+        Err(meshway_protocol::ipc::ClientError::Remote(ErrorCode::ProfileLocked)) => {
+            return Err(Error::ProfileLocked {
+                default: routing(&status)
+                    .map(|local| local.default_profile.clone())
+                    .unwrap_or_default(),
+            });
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !applied(&status, &selection) && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        status = client.call(Command::Status).await?;
+    }
+    let done = applied(&status, &selection);
+    output::exit_selected(&status, &selection, done, json)?;
+    if !done {
+        tracing::warn!(
+            phase = ?status.phase,
+            problem = ?status.last_error,
+            "The Server saved the selection; this Node has not applied it yet. Use status --watch."
+        );
+    }
+    Ok(())
 }
 
 /// The saved intent is still being applied: a transient retry (network, Server

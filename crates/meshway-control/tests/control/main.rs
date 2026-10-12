@@ -8,6 +8,7 @@ mod leave;
 mod netmap;
 mod recovery;
 mod rotation;
+mod selection;
 mod server_key_rotation;
 mod session;
 mod support;

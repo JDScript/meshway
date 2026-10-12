@@ -11,6 +11,8 @@ import { m } from "@/paraglide/messages.js"
 
 export type ActorWords = {
   system: () => string
+  /** A Node acting for itself, by the start of its ID. */
+  node: (id: string) => string
   /** A user without an email snapshot, by the start of their ID. */
   user: (id: string) => string
   /** This account, under the name it had then. */
@@ -23,6 +25,7 @@ export function actorText(
   words: ActorWords
 ): string {
   if (actor.type === "system") return words.system()
+  if (actor.type === "node") return words.node(shortId(actor.nodeId))
   const name = actor.email ?? words.user(shortId(actor.userId))
   return actor.userId === selfId ? words.self(name) : name
 }
@@ -34,6 +37,7 @@ export const actorId = (actor: ActivityActor) =>
 /** The words for an actor, the same in every activity list. */
 export const ACTOR_WORDS: ActorWords = {
   system: () => m.actor_system(),
+  node: (id) => m.actor_node({ id }),
   user: (id) => m.actor_user({ id }),
   self: (name) => m.actor_self({ name }),
 }
@@ -59,4 +63,5 @@ export const activityActionLabel: Record<ActivityAction, () => string> = {
   "membership.remove": () => m.activity_membership_remove(),
   "joinLink.create": () => m.activity_join_link_create(),
   "joinLink.revoke": () => m.activity_join_link_revoke(),
+  "routing.select": () => m.activity_routing_select(),
 }

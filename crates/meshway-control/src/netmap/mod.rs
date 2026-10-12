@@ -58,6 +58,8 @@ pub(crate) struct State {
         meshway_model::Digest,
         Arc<meshway_configuration::netmap::DnsAssociationOverlay>,
     )>,
+    /// This Node's routing selection as `base` decides it, computed once per content.
+    routing: Option<meshway_configuration::selection::RoutingSelectionState>,
 }
 
 impl Control {
@@ -80,7 +82,7 @@ impl Control {
         // The signed issue time is a trusted lower bound of the current time.
         self.clock.raise_floor(lease.issued_at_ms);
         let known = facts::load(&self.directory, &netmap.netmap, reference);
-        self.netmap.base = Some(Arc::new(netmap));
+        self.hold(Arc::new(netmap));
         self.load_artifacts_blocking();
         if !authority || self.record.cache_blocked {
             return Ok(());
@@ -91,6 +93,21 @@ impl Control {
         self.netmap.saved.clone_from(&known);
         self.netmap.known = known;
         Ok(())
+    }
+
+    /// `netmap` becomes the held content.
+    fn hold(&mut self, netmap: Arc<CompiledNetmap>) {
+        self.netmap.routing =
+            meshway_policy::compile::netmap::routing_selection(&netmap.netmap).ok();
+        self.netmap.base = Some(netmap);
+    }
+
+    /// This Node's routing profile selection as the held netmap decides it.
+    pub fn routing_selection(
+        &self,
+    ) -> Option<&meshway_configuration::selection::RoutingSelectionState> {
+        self.netmap.base.as_ref()?;
+        self.netmap.routing.as_ref()
     }
 
     /// Control's last known facts of the held netmap, the single owner's
@@ -315,7 +332,7 @@ impl Control {
             NetmapChange::Renewed
         } else {
             self.persist_netmap(&netmap, &lease, signature).await?;
-            self.netmap.base = Some(Arc::clone(&netmap));
+            self.hold(Arc::clone(&netmap));
             self.scope_facts();
             // Published at once with what is cached; the rest is fetched.
             self.load_artifacts().await;

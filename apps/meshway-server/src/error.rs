@@ -86,6 +86,8 @@ pub enum Error {
     InvalidCursor,
     #[error("configuration input is invalid")]
     InvalidConfiguration(ConfigurationError),
+    #[error("routing profile is not selectable for the Node")]
+    RoutingProfileUnavailable(meshway_protocol::RoutingProfileUnavailableParams),
 
     // Password recovery credential lifecycle
     #[error("invalid or consumed recovery credential")]

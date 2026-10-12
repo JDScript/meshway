@@ -182,28 +182,39 @@ CREATE TABLE activity_events (
     account_user_id BLOB REFERENCES users(id) ON DELETE RESTRICT CHECK (length(account_user_id) = 16 AND account_user_id != zeroblob(16)),
     network_id BLOB REFERENCES networks(id) ON DELETE RESTRICT CHECK (length(network_id) = 16 AND network_id != zeroblob(16)),
     at INTEGER NOT NULL CHECK (at >= 0),
-    actor_kind TEXT NOT NULL DEFAULT 'user' CHECK(actor_kind IN ('user','system')),
+    actor_kind TEXT NOT NULL DEFAULT 'user' CHECK(actor_kind IN ('user','system','node')),
     actor_user_id BLOB REFERENCES users(id) ON DELETE RESTRICT CHECK (length(actor_user_id) = 16 AND actor_user_id != zeroblob(16)),
+    actor_node_id BLOB CHECK (length(actor_node_id) = 16 AND actor_node_id != zeroblob(16)),
     actor_email TEXT,
-    action TEXT NOT NULL CHECK (action IN ('account.register', 'session.login', 'session.logout', 'session.revoke', 'session.revokeOthers', 'session.revokeAll', 'session.delegate', 'account.password', 'account.passwordReset', 'account.resetIssued', 'account.email', 'network.create', 'network.rename', 'configuration.apply','membership.role','membership.join','membership.remove','joinLink.create','joinLink.revoke')),
+    action TEXT NOT NULL CHECK (action IN ('account.register', 'session.login', 'session.logout', 'session.revoke', 'session.revokeOthers', 'session.revokeAll', 'session.delegate', 'account.password', 'account.passwordReset', 'account.resetIssued', 'account.email', 'network.create', 'network.rename', 'configuration.apply','membership.role','membership.join','membership.remove','joinLink.create','joinLink.revoke','routing.select')),
     target_user_id BLOB REFERENCES users(id) ON DELETE RESTRICT,
     target_session_id BLOB CHECK (length(target_session_id) = 16 AND target_session_id != zeroblob(16)),
     target_membership_id BLOB,
     target_join_link_id BLOB REFERENCES join_links(id),
+    target_node_id BLOB CHECK (length(target_node_id) = 16 AND target_node_id != zeroblob(16)),
+    target_profile TEXT,
     before_revision INTEGER,
     after_revision INTEGER,
     request_id BLOB NOT NULL CHECK (length(request_id) = 16 AND request_id != zeroblob(16)),
     previous_email TEXT CHECK (previous_email IS NULL OR action = 'account.email'),
-    CHECK ((actor_kind='user' AND actor_user_id IS NOT NULL) OR (actor_kind='system' AND actor_user_id IS NULL)),
+    CHECK ((actor_kind='user' AND actor_user_id IS NOT NULL AND actor_node_id IS NULL) OR (actor_kind='system' AND actor_user_id IS NULL AND actor_node_id IS NULL)
+        OR (actor_kind='node' AND actor_user_id IS NULL AND actor_node_id IS NOT NULL AND action='routing.select')),
+    CHECK ((action = 'routing.select') = (target_node_id IS NOT NULL AND target_profile IS NOT NULL)),
     CHECK ((scope = 'account' AND account_user_id IS NOT NULL AND network_id IS NULL AND (actor_user_id = account_user_id OR (actor_kind='system' AND action='account.resetIssued')) AND
         ((action IN ('account.register', 'session.revokeOthers', 'session.revokeAll', 'account.password', 'account.passwordReset', 'account.resetIssued', 'account.email') AND target_user_id IS NOT NULL AND target_user_id = account_user_id AND target_session_id IS NULL)
         OR (action IN ('session.login', 'session.logout', 'session.revoke', 'session.delegate') AND target_user_id IS NULL AND target_session_id IS NOT NULL)))
-        OR (scope = 'network' AND network_id IS NOT NULL AND account_user_id IS NULL AND action IN ('network.create', 'network.rename','configuration.apply','membership.role','membership.join','membership.remove','joinLink.create','joinLink.revoke') AND target_user_id IS NULL AND target_session_id IS NULL)),
+        OR (scope = 'network' AND network_id IS NOT NULL AND account_user_id IS NULL AND action IN ('network.create', 'network.rename','configuration.apply','membership.role','membership.join','membership.remove','joinLink.create','joinLink.revoke','routing.select') AND target_user_id IS NULL AND target_session_id IS NULL)),
     FOREIGN KEY (target_session_id, account_user_id) REFERENCES user_sessions(id, user_id) ON DELETE RESTRICT,
     FOREIGN KEY (network_id,target_membership_id) REFERENCES memberships(network_id,id),
+    FOREIGN KEY (network_id,target_node_id) REFERENCES nodes(network_id,id),
+    FOREIGN KEY (network_id,actor_node_id) REFERENCES nodes(network_id,id),
     FOREIGN KEY (network_id,before_revision) REFERENCES configuration_versions(network_id,revision),
     FOREIGN KEY (network_id,after_revision) REFERENCES configuration_versions(network_id,revision)
 ) STRICT;
 
 CREATE INDEX activity_events_account_sequence ON activity_events(account_user_id, sequence);
 CREATE INDEX activity_events_network_sequence ON activity_events(network_id, sequence);
+-- A user's routing selection is idempotent per (network, user, request ID):
+-- its activity row is the retry record.
+CREATE UNIQUE INDEX activity_events_routing_request ON activity_events(network_id, actor_user_id, request_id)
+    WHERE action = 'routing.select' AND actor_kind = 'user';

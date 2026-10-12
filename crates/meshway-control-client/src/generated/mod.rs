@@ -160,6 +160,12 @@ pub struct GetNodeObservationQuery {
 }
 
 #[derive(Clone)]
+pub struct GetNodeRoutingSelectionPath {
+    pub r#network_id: meshway_protocol::NetworkId,
+    pub r#node_id: meshway_protocol::NodeId,
+}
+
+#[derive(Clone)]
 pub struct GetNodeSettingsPath {
     pub r#network_id: meshway_protocol::NetworkId,
     pub r#node_id: meshway_protocol::NodeId,
@@ -385,6 +391,12 @@ pub struct RevokeJoinLinkPath {
 
 #[derive(Clone)]
 pub struct RevokeNodeKeyPath {
+    pub r#network_id: meshway_protocol::NetworkId,
+    pub r#node_id: meshway_protocol::NodeId,
+}
+
+#[derive(Clone)]
+pub struct SetNodeRoutingSelectionPath {
     pub r#network_id: meshway_protocol::NetworkId,
     pub r#node_id: meshway_protocol::NodeId,
 }
@@ -2261,6 +2273,76 @@ impl crate::Client {
         match response.status {
             200 => response.json(),
             400 | 401 | 403 | 404 | 409 | 422 | 503 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
+    pub async fn get_node_routing_selection(
+        &self,
+        path: &GetNodeRoutingSelectionPath,
+        token: &str,
+    ) -> Result<
+        meshway_protocol::NodeRoutingSelectionResponse,
+        crate::ClientError<meshway_protocol::ErrorResponse>,
+    > {
+        let path_values = [
+            ("networkId", {
+                let value = serde_json::from_slice::<String>(
+                    &serde_json::to_vec(&path.r#network_id)
+                        .map_err(|_| crate::ClientError::Request)?,
+                )
+                .map_err(|_| crate::ClientError::Request)?;
+                if !(value.len() == 36
+                    && value != "00000000-0000-0000-0000-000000000000"
+                    && value.bytes().enumerate().all(|(index, byte)| {
+                        if matches!(index, 8 | 13 | 18 | 23) {
+                            byte == b'-'
+                        } else {
+                            byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
+                        }
+                    }))
+                    || value.chars().count() < 36
+                    || value.chars().count() > 36
+                {
+                    return Err(crate::ClientError::Request);
+                }
+                value.to_string()
+            }),
+            ("nodeId", {
+                let value = serde_json::from_slice::<String>(
+                    &serde_json::to_vec(&path.r#node_id)
+                        .map_err(|_| crate::ClientError::Request)?,
+                )
+                .map_err(|_| crate::ClientError::Request)?;
+                if !(value.len() == 36
+                    && value != "00000000-0000-0000-0000-000000000000"
+                    && value.bytes().enumerate().all(|(index, byte)| {
+                        if matches!(index, 8 | 13 | 18 | 23) {
+                            byte == b'-'
+                        } else {
+                            byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
+                        }
+                    }))
+                    || value.chars().count() < 36
+                    || value.chars().count() > 36
+                {
+                    return Err(crate::ClientError::Request);
+                }
+                value.to_string()
+            }),
+        ];
+        let query_values = [];
+        let url = self.parameter_url(
+            "/api/v1/networks/{networkId}/nodes/{nodeId}/routing-selection",
+            &path_values,
+            &query_values,
+        )?;
+        let response = self
+            .send_url(reqwest::Method::GET, url, Some(token), None::<&()>)
+            .await?;
+        match response.status {
+            200 => response.json(),
+            400 | 401 | 404 | 503 => Err(response.problem()),
             _ => Err(response.unexpected()),
         }
     }
@@ -4919,7 +5001,78 @@ impl crate::Client {
             .await?;
         match response.status {
             200 => response.json(),
-            400 | 401 | 403 | 404 | 409 | 413 | 415 | 422 | 503 => Err(response.problem()),
+            400 | 401 | 403 | 409 | 413 | 415 | 422 | 503 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
+    pub async fn set_node_routing_selection(
+        &self,
+        path: &SetNodeRoutingSelectionPath,
+        body: &meshway_protocol::SelectNodeRoutingProfileRequest,
+        token: &str,
+    ) -> Result<
+        meshway_protocol::NodeRoutingSelectionResponse,
+        crate::ClientError<meshway_protocol::ErrorResponse>,
+    > {
+        let path_values = [
+            ("networkId", {
+                let value = serde_json::from_slice::<String>(
+                    &serde_json::to_vec(&path.r#network_id)
+                        .map_err(|_| crate::ClientError::Request)?,
+                )
+                .map_err(|_| crate::ClientError::Request)?;
+                if !(value.len() == 36
+                    && value != "00000000-0000-0000-0000-000000000000"
+                    && value.bytes().enumerate().all(|(index, byte)| {
+                        if matches!(index, 8 | 13 | 18 | 23) {
+                            byte == b'-'
+                        } else {
+                            byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
+                        }
+                    }))
+                    || value.chars().count() < 36
+                    || value.chars().count() > 36
+                {
+                    return Err(crate::ClientError::Request);
+                }
+                value.to_string()
+            }),
+            ("nodeId", {
+                let value = serde_json::from_slice::<String>(
+                    &serde_json::to_vec(&path.r#node_id)
+                        .map_err(|_| crate::ClientError::Request)?,
+                )
+                .map_err(|_| crate::ClientError::Request)?;
+                if !(value.len() == 36
+                    && value != "00000000-0000-0000-0000-000000000000"
+                    && value.bytes().enumerate().all(|(index, byte)| {
+                        if matches!(index, 8 | 13 | 18 | 23) {
+                            byte == b'-'
+                        } else {
+                            byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
+                        }
+                    }))
+                    || value.chars().count() < 36
+                    || value.chars().count() > 36
+                {
+                    return Err(crate::ClientError::Request);
+                }
+                value.to_string()
+            }),
+        ];
+        let query_values = [];
+        let url = self.parameter_url(
+            "/api/v1/networks/{networkId}/nodes/{nodeId}/routing-selection",
+            &path_values,
+            &query_values,
+        )?;
+        let response = self
+            .send_url(reqwest::Method::POST, url, Some(token), Some(body))
+            .await?;
+        match response.status {
+            200 => response.json(),
+            400 | 401 | 404 | 409 | 413 | 415 | 422 | 503 => Err(response.problem()),
             _ => Err(response.unexpected()),
         }
     }

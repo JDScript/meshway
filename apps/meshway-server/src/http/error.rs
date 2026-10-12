@@ -283,6 +283,13 @@ impl HttpError {
                 },
             ),
             Error::InvalidConfiguration(error) => Self::configuration(id, error),
+            Error::RoutingProfileUnavailable(params) => simple(
+                S::UNPROCESSABLE_ENTITY,
+                Problem::RoutingProfileUnavailable {
+                    params,
+                    message: "The routing profile is not selectable for this Node.".into(),
+                },
+            ),
             Error::InvalidReset => simple(
                 S::BAD_REQUEST,
                 Problem::InvalidPasswordReset {
@@ -479,6 +486,10 @@ pub fn problem_samples() -> Vec<ProblemSample> {
         Error::InvalidConfiguration(meshway_configuration::ConfigurationError::Invalid(
             Vec::new(),
         )),
+        Error::RoutingProfileUnavailable(meshway_protocol::RoutingProfileUnavailableParams {
+            reason: meshway_configuration::selection::SelectionUnavailable::NotAllowed,
+            allowed: vec!["mesh".into(), "work".into()],
+        }),
         Error::InvalidReset,
         Error::InvalidDelegation,
         Error::ResetUsed,

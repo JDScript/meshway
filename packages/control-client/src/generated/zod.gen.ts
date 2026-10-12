@@ -264,7 +264,7 @@ export const zAcquireInstanceRequest = z.strictObject({
   ["instanceId"]: zInstanceId
 });
 
-export const zActivityAction = z.enum(["account.register","session.login","session.logout","session.revoke","session.revokeOthers","session.revokeAll","session.delegate","account.password","account.passwordReset","account.resetIssued","account.email","network.create","network.rename","configuration.apply","membership.role","membership.join","membership.remove","joinLink.create","joinLink.revoke"]);
+export const zActivityAction = z.enum(["account.register","session.login","session.logout","session.revoke","session.revokeOthers","session.revokeAll","session.delegate","account.password","account.passwordReset","account.resetIssued","account.email","network.create","network.rename","configuration.apply","membership.role","membership.join","membership.remove","joinLink.create","joinLink.revoke","routing.select"]);
 
 export const zActivityActor = z.union([z.strictObject({
   ["email"]: z.string().nullable(),
@@ -272,6 +272,9 @@ export const zActivityActor = z.union([z.strictObject({
   ["userId"]: zUserId
 }), z.strictObject({
   ["type"]: z.enum(["system"])
+}), z.strictObject({
+  ["nodeId"]: zNodeId,
+  ["type"]: z.enum(["node"])
 })]);
 
 export const zActivityId = z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u"));
@@ -299,6 +302,10 @@ export const zActivityTarget = z.union([z.strictObject({
 }), z.strictObject({
   ["revision"]: zRevision,
   ["type"]: z.enum(["configuration"])
+}), z.strictObject({
+  ["nodeId"]: zNodeId,
+  ["profile"]: z.string(),
+  ["type"]: z.enum(["routingSelection"])
 })]);
 
 export const zActivityEvent = z.strictObject({
@@ -450,6 +457,8 @@ export const zAuthSessionResponse = z.strictObject({
   ["user"]: zUserView
 });
 
+export const zAutoBasis = z.enum(["noTrustedRegion"]);
+
 export const zCountryProfile = z.strictObject({
   ["countries"]: z.array(z.string()),
   ["profile"]: z.string()
@@ -458,6 +467,11 @@ export const zCountryProfile = z.strictObject({
 export const zAutoProfile = z.strictObject({
   ["fallback"]: z.string(),
   ["rules"]: z.array(zCountryProfile)
+});
+
+export const zAutoResolution = z.strictObject({
+  ["basis"]: zAutoBasis,
+  ["profile"]: z.string()
 });
 
 export const zKeyId = z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u"));
@@ -1969,6 +1983,13 @@ export const zEntityRemovals = z.strictObject({
   ["nodes"]: z.array(zNodeId)
 });
 
+export const zSelectionUnavailable = z.enum(["notAllowed","locked"]);
+
+export const zRoutingProfileUnavailableParams = z.strictObject({
+  ["allowed"]: z.array(z.string()),
+  ["reason"]: zSelectionUnavailable
+});
+
 export const zProblem = z.union([z.strictObject({
   ["code"]: z.enum(["invalid_credentials"]),
   ["message"]: z.string(),
@@ -2129,6 +2150,10 @@ export const zProblem = z.union([z.strictObject({
   ["code"]: z.enum(["configuration_invalid"]),
   ["message"]: z.string(),
   ["params"]: zConfigurationValidationParams
+}), z.strictObject({
+  ["code"]: z.enum(["routing_profile_unavailable"]),
+  ["message"]: z.string(),
+  ["params"]: zRoutingProfileUnavailableParams
 }), z.strictObject({
   ["code"]: z.enum(["state_conflict"]),
   ["message"]: z.string(),
@@ -2404,6 +2429,11 @@ export const zGetNodeObservationQuery = z.strictObject({
 });
 
 export const zGetNodePath = z.strictObject({
+  ["networkId"]: zNetworkId,
+  ["nodeId"]: zNodeId
+});
+
+export const zGetNodeRoutingSelectionPath = z.strictObject({
   ["networkId"]: zNetworkId,
   ["nodeId"]: zNodeId
 });
@@ -3014,6 +3044,13 @@ export const zNodeChallengeIntent = z.strictObject({
   ["request"]: zNodeChallengeRequest
 });
 
+export const zNodeRoutingSummary = z.strictObject({
+  ["appliedProfile"]: z.string(),
+  ["canSelect"]: z.boolean(),
+  ["locked"]: z.boolean(),
+  ["requestedProfile"]: z.string().nullable()
+});
+
 export const zPinnedServerKeyStatus = z.enum(["current","rotating","keyMismatch"]);
 
 export const zPinnedServerKeyView = z.strictObject({
@@ -3041,6 +3078,7 @@ export const zNodeInventoryView = z.strictObject({
   ["netmapUnavailable"]: zNetmapUnavailable.nullable(),
   ["networkId"]: zNetworkId,
   ["registeredAt"]: zTimestamp,
+  ["routing"]: zNodeRoutingSummary,
   ["serverKey"]: zPinnedServerKeyView.nullable()
 });
 
@@ -3141,6 +3179,35 @@ export const zNodeRotationRequest = z.strictObject({
   ["intent"]: zNodeRotationIntent,
   ["newSignature"]: zWireSecret,
   ["oldProof"]: zNodeProof
+});
+
+export const zProfileKind = z.enum(["mesh","global","auto","custom"]);
+
+export const zProfileSummary = z.strictObject({
+  ["exits"]: z.array(zNodeId),
+  ["fallback"]: zRouteAction.nullable(),
+  ["kind"]: zProfileKind,
+  ["name"]: z.string(),
+  ["rules"]: z.int().gte(0).lte(2147483647)
+});
+
+export const zRoutingSelectionState = z.strictObject({
+  ["appliedProfile"]: z.string(),
+  ["auto"]: zAutoResolution.nullable(),
+  ["defaultProfile"]: z.string(),
+  ["locked"]: z.boolean(),
+  ["profiles"]: z.array(zProfileSummary),
+  ["requestedProfile"]: z.string().nullable(),
+  ["requestedUnavailable"]: zSelectionUnavailable.nullable(),
+  ["version"]: zVersion.nullable()
+});
+
+export const zNodeRoutingSelectionResponse = z.strictObject({
+  ["canSelect"]: z.boolean(),
+  ["networkId"]: zNetworkId,
+  ["nodeId"]: zNodeId,
+  ["requestId"]: zRequestId,
+  ["selection"]: zRoutingSelectionState
 });
 
 export const zNodeSessionIntent = z.strictObject({
@@ -3506,8 +3573,7 @@ export const zRoutingSelectionRequest = z.strictObject({
 });
 
 export const zRoutingSelectionResponse = z.strictObject({
-  ["profile"]: z.string(),
-  ["version"]: zVersion
+  ["selection"]: zRoutingSelectionState
 });
 
 export const zRuleSetHeld = z.strictObject({
@@ -3653,11 +3719,21 @@ export const zRuleSetReport = z.strictObject({
   ["key"]: z.string()
 });
 
+export const zSelectNodeRoutingProfileRequest = z.strictObject({
+  ["profile"]: z.string(),
+  ["requestId"]: zRequestId
+});
+
 export const zSessionIssuedResponse = z.strictObject({
   ["requestId"]: zRequestId,
   ["session"]: zSessionMetadata,
   ["token"]: zWireSecret,
   ["user"]: zUserView
+});
+
+export const zSetNodeRoutingSelectionPath = z.strictObject({
+  ["networkId"]: zNetworkId,
+  ["nodeId"]: zNodeId
 });
 
 export const zSignedNodeChallengeRequest = z.strictObject({

@@ -212,6 +212,21 @@ wire_object! {
     /// UTC creation time of the displayed data-plane key binding.
     #[serde(rename="dataplaneKeyCreatedAt", with="meshway_model::timestamp")]
     pub dataplane_key_created_at_ms: u64 [value_type=meshway_model::timestamp::Timestamp],
+    /// The Node's routing profile selection for list display; `getNodeRoutingSelection` has the allowed profiles.
+    pub routing: NodeRoutingSummary,
+} }
+wire_object! {
+/// Short routing profile selection state of one Node.
+#[derive(Clone,Debug,PartialEq,Eq)] pub struct NodeRoutingSummary {
+    /// Persistently selected profile under the Node's current identity; null when it has none.
+    #[serde(deserialize_with="crate::object::required_nullable")]
+    pub requested_profile: Option<String> [required=true],
+    /// Profile in effect under the current configuration.
+    pub applied_profile: String,
+    /// The Node's assignment pins its default profile.
+    pub locked: bool,
+    /// Whether the current caller may select another profile for this Node.
+    pub can_select: bool,
 } }
 wire_object! {
 /// Registered Nodes visible under the caller's current network permissions.
@@ -232,6 +247,28 @@ wire_object! {
     pub revision: Revision,
     /// Non-secret configured settings visible to the authorized caller.
     pub settings: meshway_configuration::NodeSettingsView,
+} }
+wire_object! {
+/// A Node's routing profile selection as the current configuration decides it.
+#[derive(Clone,Debug,PartialEq,Eq)] pub struct NodeRoutingSelectionResponse {
+    /// Server request identifier for correlation.
+    pub request_id: RequestId,
+    /// Network containing the Node.
+    pub network_id: NetworkId,
+    /// Node whose selection is returned.
+    pub node_id: NodeId,
+    /// Requested and applied profile, the allowed profiles, the lock and how `auto` resolves.
+    pub selection: meshway_configuration::selection::RoutingSelectionState,
+    /// Whether the current caller may select another profile for this Node.
+    pub can_select: bool,
+} }
+wire_object! {
+/// Idempotent selection of a Node's routing profile by a user.
+#[derive(Clone,Debug,PartialEq,Eq)] pub struct SelectNodeRoutingProfileRequest {
+    /// Request identifier binding retries to the same caller, Node and profile.
+    pub request_id: RequestId,
+    /// Allowed profile to use: `mesh`, `auto`, `global:<exitNodeId>` or a configured profile key.
+    pub profile: String,
 } }
 wire_object! {
 /// Idempotent permanent Node deletion guarded by the expected configuration revision.

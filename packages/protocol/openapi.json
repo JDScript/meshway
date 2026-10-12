@@ -5198,7 +5198,7 @@
           "execution"
         ],
         "summary": "Select an authorized routing profile for the current Node.",
-        "description": "Requires a Node session and current instance; expectedVersion guards the selection with CAS and a mismatch returns binding_conflict.\nAcceptance recompiles the Node's netmap, delivered by its next sync.",
+        "description": "Requires a Node session and current instance. `expectedVersion` is the Node's current selection version (its netmap's `selectionVersions` entry, null without a selection); a mismatch returns version_conflict.\nA profile outside the Node's allowed profiles, or other than the default of a locked assignment, returns routing_profile_unavailable with the allowed profiles.\nAcceptance records a `routing.select` activity with the Node as actor and recompiles the Node's netmap, delivered by its next sync; the answer is the committed selection.",
         "operationId": "selectNodeRoutingProfile",
         "requestBody": {
           "content": {
@@ -5212,7 +5212,7 @@
                   "generation": 1,
                   "instanceId": "8f9a0b1c-2d3e-4f4a-9b5c-6d7e8f9a0b1c"
                 },
-                "profile": "mesh"
+                "profile": "global:e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50"
               }
             }
           },
@@ -5226,8 +5226,41 @@
                   "$ref": "#/components/schemas/RoutingSelectionResponse"
                 },
                 "example": {
-                  "profile": "mesh",
-                  "version": 1
+                  "selection": {
+                    "appliedProfile": "global:e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50",
+                    "auto": null,
+                    "defaultProfile": "mesh",
+                    "locked": false,
+                    "profiles": [
+                      {
+                        "exits": [],
+                        "fallback": {
+                          "type": "unmanaged"
+                        },
+                        "kind": "mesh",
+                        "name": "mesh",
+                        "rules": 0
+                      },
+                      {
+                        "exits": [
+                          "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50"
+                        ],
+                        "fallback": {
+                          "nodes": [
+                            "node:e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50"
+                          ],
+                          "type": "exit",
+                          "via": []
+                        },
+                        "kind": "global",
+                        "name": "global:e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50",
+                        "rules": 0
+                      }
+                    ],
+                    "requestedProfile": "global:e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50",
+                    "requestedUnavailable": null,
+                    "version": 1
+                  }
                 }
               }
             }
@@ -5271,7 +5304,7 @@
             }
           },
           "403": {
-            "description": "permission_denied",
+            "description": "node_identity_rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -5279,8 +5312,8 @@
                 },
                 "example": {
                   "problem": {
-                    "code": "permission_denied",
-                    "message": "This operation is not permitted for the current principal.",
+                    "code": "node_identity_rejected",
+                    "message": "Node identity is no longer eligible",
                     "params": {}
                   },
                   "requestId": "00000000-0000-0000-0000-000000000001",
@@ -5289,27 +5322,8 @@
               }
             }
           },
-          "404": {
-            "description": "not_found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                },
-                "example": {
-                  "problem": {
-                    "code": "not_found",
-                    "message": "Resource not found.",
-                    "params": {}
-                  },
-                  "requestId": "00000000-0000-0000-0000-000000000001",
-                  "status": 404
-                }
-              }
-            }
-          },
           "409": {
-            "description": "binding_conflict, state_conflict",
+            "description": "version_conflict, binding_conflict, state_conflict",
             "content": {
               "application/json": {
                 "schema": {
@@ -5317,8 +5331,8 @@
                 },
                 "example": {
                   "problem": {
-                    "code": "binding_conflict",
-                    "message": "Request conflicts with the current generation or binding.",
+                    "code": "version_conflict",
+                    "message": "Resource changed; reload before retrying.",
                     "params": {}
                   },
                   "requestId": "00000000-0000-0000-0000-000000000001",
@@ -5366,7 +5380,7 @@
             }
           },
           "422": {
-            "description": "configuration_invalid",
+            "description": "routing_profile_unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -5374,11 +5388,14 @@
                 },
                 "example": {
                   "problem": {
-                    "code": "configuration_invalid",
-                    "message": "Configuration validation failed.",
+                    "code": "routing_profile_unavailable",
+                    "message": "The routing profile is not selectable for this Node.",
                     "params": {
-                      "issues": [],
-                      "requirements": []
+                      "allowed": [
+                        "mesh",
+                        "work"
+                      ],
+                      "reason": "notAllowed"
                     }
                   },
                   "requestId": "00000000-0000-0000-0000-000000000001",
@@ -16795,6 +16812,12 @@
                       "netmapUnavailable": null,
                       "networkId": "0d3a2a6e-7f3b-4d0c-9a8e-1c2b3d4e5f60",
                       "registeredAt": "2026-10-08T09:01:00Z",
+                      "routing": {
+                        "appliedProfile": "mesh",
+                        "canSelect": true,
+                        "locked": false,
+                        "requestedProfile": null
+                      },
                       "serverKey": null
                     }
                   ]
@@ -16966,6 +16989,12 @@
                   "netmapUnavailable": null,
                   "networkId": "0d3a2a6e-7f3b-4d0c-9a8e-1c2b3d4e5f60",
                   "registeredAt": "2026-10-08T09:01:00Z",
+                  "routing": {
+                    "appliedProfile": "mesh",
+                    "canSelect": true,
+                    "locked": false,
+                    "requestedProfile": null
+                  },
                   "serverKey": null
                 }
               }
@@ -17461,6 +17490,422 @@
                   "problem": {
                     "code": "service_unavailable",
                     "message": "Service is unavailable.",
+                    "params": {}
+                  },
+                  "requestId": "00000000-0000-0000-0000-000000000001",
+                  "status": 503
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "userSession": []
+          }
+        ]
+      }
+    },
+    "/api/v1/networks/{networkId}/nodes/{nodeId}/routing-selection": {
+      "get": {
+        "tags": [
+          "nodes"
+        ],
+        "summary": "Read a Node's routing profile selection.",
+        "description": "Requires a user session. Owners and Admins may read any Node; a member only their own User-identity devices, every other Node returns 404.\nThe answer is the requested and applied profile, the allowed profiles with a summary of each, the assignment's lock, how `auto` resolves, and whether the caller may select.",
+        "operationId": "getNodeRoutingSelection",
+        "parameters": [
+          {
+            "name": "networkId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/NetworkId"
+            }
+          },
+          {
+            "name": "nodeId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/NodeId"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NodeRoutingSelectionResponse"
+                },
+                "example": {
+                  "canSelect": true,
+                  "networkId": "0d3a2a6e-7f3b-4d0c-9a8e-1c2b3d4e5f60",
+                  "nodeId": "b8c7d6e5-4f5a-4b2c-8d9e-0f1a2b3c4d80",
+                  "requestId": "7c1f0e2d-3b4a-4c5d-8e6f-9a0b1c2d3e4f",
+                  "selection": {
+                    "appliedProfile": "mesh",
+                    "auto": null,
+                    "defaultProfile": "mesh",
+                    "locked": false,
+                    "profiles": [
+                      {
+                        "exits": [],
+                        "fallback": {
+                          "type": "unmanaged"
+                        },
+                        "kind": "mesh",
+                        "name": "mesh",
+                        "rules": 0
+                      },
+                      {
+                        "exits": [
+                          "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50"
+                        ],
+                        "fallback": {
+                          "nodes": [
+                            "node:e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50"
+                          ],
+                          "type": "exit",
+                          "via": []
+                        },
+                        "kind": "global",
+                        "name": "global:e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50",
+                        "rules": 0
+                      }
+                    ],
+                    "requestedProfile": null,
+                    "requestedUnavailable": null,
+                    "version": null
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "problem": {
+                    "code": "invalid_request",
+                    "message": "Invalid request parameters.",
+                    "params": {}
+                  },
+                  "requestId": "00000000-0000-0000-0000-000000000001",
+                  "status": 400
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "invalid_session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "problem": {
+                    "code": "invalid_session",
+                    "message": "Invalid or expired session.",
+                    "params": {}
+                  },
+                  "requestId": "00000000-0000-0000-0000-000000000001",
+                  "status": 401
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not_found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "problem": {
+                    "code": "not_found",
+                    "message": "Resource not found.",
+                    "params": {}
+                  },
+                  "requestId": "00000000-0000-0000-0000-000000000001",
+                  "status": 404
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "service_unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "problem": {
+                    "code": "service_unavailable",
+                    "message": "Service is unavailable.",
+                    "params": {}
+                  },
+                  "requestId": "00000000-0000-0000-0000-000000000001",
+                  "status": 503
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "userSession": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "nodes"
+        ],
+        "summary": "Select a Node's routing profile.",
+        "description": "Requires a user session with the same visibility as `getNodeRoutingSelection`: a member selects for their own User-identity devices, Owners and Admins for any Node, Tag Nodes included; the activity records the acting user.\nThe profile must be allowed for the Node and, while its assignment is locked, be the default; otherwise routing_profile_unavailable lists the allowed profiles.\nThe request identifier makes retries of the same selection return the current selection without a second change; reuse with another Node or profile returns request_id_conflict.\nAcceptance persists the selection as the Node's usage state, recompiles its netmap (ending flows through the previous exit) and records a `routing.select` activity.",
+        "operationId": "setNodeRoutingSelection",
+        "parameters": [
+          {
+            "name": "networkId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/NetworkId"
+            }
+          },
+          {
+            "name": "nodeId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/NodeId"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SelectNodeRoutingProfileRequest"
+              },
+              "example": {
+                "profile": "global:e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50",
+                "requestId": "3e4f5a6b-7c8d-4e9f-8a0b-1c2d3e4f5a6b"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NodeRoutingSelectionResponse"
+                },
+                "example": {
+                  "canSelect": true,
+                  "networkId": "0d3a2a6e-7f3b-4d0c-9a8e-1c2b3d4e5f60",
+                  "nodeId": "b8c7d6e5-4f5a-4b2c-8d9e-0f1a2b3c4d80",
+                  "requestId": "9d8c7b6a-5f4e-4d3c-8b2a-1f0e9d8c7b6a",
+                  "selection": {
+                    "appliedProfile": "global:e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50",
+                    "auto": null,
+                    "defaultProfile": "mesh",
+                    "locked": false,
+                    "profiles": [
+                      {
+                        "exits": [],
+                        "fallback": {
+                          "type": "unmanaged"
+                        },
+                        "kind": "mesh",
+                        "name": "mesh",
+                        "rules": 0
+                      },
+                      {
+                        "exits": [
+                          "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50"
+                        ],
+                        "fallback": {
+                          "nodes": [
+                            "node:e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50"
+                          ],
+                          "type": "exit",
+                          "via": []
+                        },
+                        "kind": "global",
+                        "name": "global:e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50",
+                        "rules": 0
+                      }
+                    ],
+                    "requestedProfile": "global:e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50",
+                    "requestedUnavailable": null,
+                    "version": 1
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "problem": {
+                    "code": "invalid_request",
+                    "message": "Invalid request parameters.",
+                    "params": {}
+                  },
+                  "requestId": "00000000-0000-0000-0000-000000000001",
+                  "status": 400
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "invalid_session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "problem": {
+                    "code": "invalid_session",
+                    "message": "Invalid or expired session.",
+                    "params": {}
+                  },
+                  "requestId": "00000000-0000-0000-0000-000000000001",
+                  "status": 401
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not_found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "problem": {
+                    "code": "not_found",
+                    "message": "Resource not found.",
+                    "params": {}
+                  },
+                  "requestId": "00000000-0000-0000-0000-000000000001",
+                  "status": 404
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "request_id_conflict, state_conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "problem": {
+                    "code": "request_id_conflict",
+                    "message": "Request ID was already used with different input.",
+                    "params": {}
+                  },
+                  "requestId": "00000000-0000-0000-0000-000000000001",
+                  "status": 409
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "request_too_large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "problem": {
+                    "code": "request_too_large",
+                    "message": "Request body exceeds the allowed size.",
+                    "params": {}
+                  },
+                  "requestId": "00000000-0000-0000-0000-000000000001",
+                  "status": 413
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "unsupported_media_type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "problem": {
+                    "code": "unsupported_media_type",
+                    "message": "A JSON request body is required.",
+                    "params": {}
+                  },
+                  "requestId": "00000000-0000-0000-0000-000000000001",
+                  "status": 415
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "routing_profile_unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "problem": {
+                    "code": "routing_profile_unavailable",
+                    "message": "The routing profile is not selectable for this Node.",
+                    "params": {
+                      "allowed": [
+                        "mesh",
+                        "work"
+                      ],
+                      "reason": "notAllowed"
+                    }
+                  },
+                  "requestId": "00000000-0000-0000-0000-000000000001",
+                  "status": 422
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "busy, service_unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "problem": {
+                    "code": "busy",
+                    "message": "Service is busy; retry later.",
                     "params": {}
                   },
                   "requestId": "00000000-0000-0000-0000-000000000001",
@@ -21658,7 +22103,7 @@
       },
       "ActivityAction": {
         "type": "string",
-        "description": "`account.register`: Records completed account registration with an account target carrying userId and null previousEmail.\n`session.login`: Records successful sign-in with a session target carrying the newly created sessionId.\n`session.logout`: Records completed sign-out with a session target carrying the revoked sessionId.\n`session.revoke`: Records explicit revocation of one session with a session target carrying its sessionId.\n`session.revokeOthers`: Records revocation of the user's other sessions with an account target carrying userId and null previousEmail.\n`session.revokeAll`: Records revocation of all the user's sessions with an account target carrying userId and null previousEmail.\n`session.delegate`: A signed-in user authorized a delegation client; the target is the authorizing session.\n`account.password`: Records a password change authenticated by the current password with an account target carrying userId and null previousEmail.\n`account.passwordReset`: Records password replacement using a recovery credential with an account target carrying userId and null previousEmail.\n`account.resetIssued`: Records issuance of a password recovery credential by a system actor with an account target carrying userId and null previousEmail.\n`account.email`: Records an email change with an account target carrying userId and previousEmail set to the address before the change.\n`network.create`: Records completed network creation with a network target carrying networkId.\n`network.rename`: Records a network name change with a network target carrying networkId.\n`configuration.apply`: Records a committed configuration apply with a configuration target carrying the saved revision, independently of Node application results.\n`membership.role`: Records a member's role change with a membership target carrying membershipId.\n`membership.join`: Records a completed network join with a membership target carrying the new membershipId.\n`membership.remove`: Records a completed membership removal with a membership target carrying membershipId.\n`joinLink.create`: Records creation of a join link with a joinLink target carrying linkId.\n`joinLink.revoke`: Records revocation of a join link with a joinLink target carrying linkId.",
+        "description": "`account.register`: Records completed account registration with an account target carrying userId and null previousEmail.\n`session.login`: Records successful sign-in with a session target carrying the newly created sessionId.\n`session.logout`: Records completed sign-out with a session target carrying the revoked sessionId.\n`session.revoke`: Records explicit revocation of one session with a session target carrying its sessionId.\n`session.revokeOthers`: Records revocation of the user's other sessions with an account target carrying userId and null previousEmail.\n`session.revokeAll`: Records revocation of all the user's sessions with an account target carrying userId and null previousEmail.\n`session.delegate`: A signed-in user authorized a delegation client; the target is the authorizing session.\n`account.password`: Records a password change authenticated by the current password with an account target carrying userId and null previousEmail.\n`account.passwordReset`: Records password replacement using a recovery credential with an account target carrying userId and null previousEmail.\n`account.resetIssued`: Records issuance of a password recovery credential by a system actor with an account target carrying userId and null previousEmail.\n`account.email`: Records an email change with an account target carrying userId and previousEmail set to the address before the change.\n`network.create`: Records completed network creation with a network target carrying networkId.\n`network.rename`: Records a network name change with a network target carrying networkId.\n`configuration.apply`: Records a committed configuration apply with a configuration target carrying the saved revision, independently of Node application results.\n`membership.role`: Records a member's role change with a membership target carrying membershipId.\n`membership.join`: Records a completed network join with a membership target carrying the new membershipId.\n`membership.remove`: Records a completed membership removal with a membership target carrying membershipId.\n`joinLink.create`: Records creation of a join link with a joinLink target carrying linkId.\n`joinLink.revoke`: Records revocation of a join link with a joinLink target carrying linkId.\n`routing.select`: Records a committed routing profile selection by the Node itself or a user, with a routingSelection target carrying nodeId and the selected profile.",
         "enum": [
           "account.register",
           "session.login",
@@ -21678,7 +22123,8 @@
           "membership.join",
           "membership.remove",
           "joinLink.create",
-          "joinLink.revoke"
+          "joinLink.revoke",
+          "routing.select"
         ]
       },
       "ActivityActor": {
@@ -21727,9 +22173,30 @@
               }
             },
             "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "Authenticated Node acting for itself, such as `meshway exit` on the device.",
+            "required": [
+              "nodeId",
+              "type"
+            ],
+            "properties": {
+              "nodeId": {
+                "$ref": "#/components/schemas/NodeId",
+                "description": "Stable identifier of the Node that performed the action."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "node"
+                ]
+              }
+            },
+            "additionalProperties": false
           }
         ],
-        "description": "Verified user or system responsible for a committed activity."
+        "description": "Verified user, Node or system responsible for a committed activity."
       },
       "ActivityEvent": {
         "type": "object",
@@ -21751,7 +22218,7 @@
           },
           "actor": {
             "$ref": "#/components/schemas/ActivityActor",
-            "description": "Verified user or system that performed the action."
+            "description": "Verified user, Node or system that performed the action."
           },
           "afterRevision": {
             "oneOf": [
@@ -21989,6 +22456,32 @@
                 "type": "string",
                 "enum": [
                   "configuration"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "A Node's persistent routing profile selection.",
+            "required": [
+              "nodeId",
+              "profile",
+              "type"
+            ],
+            "properties": {
+              "nodeId": {
+                "$ref": "#/components/schemas/NodeId",
+                "description": "Node whose selection changed."
+              },
+              "profile": {
+                "type": "string",
+                "description": "Profile the selection names after the action."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "routingSelection"
                 ]
               }
             },
@@ -22311,6 +22804,13 @@
         },
         "additionalProperties": false
       },
+      "AutoBasis": {
+        "type": "string",
+        "description": "What decided `auto`'s profile.",
+        "enum": [
+          "noTrustedRegion"
+        ]
+      },
       "AutoProfile": {
         "type": "object",
         "description": "Ordered region-to-profile selection with an explicit fallback.",
@@ -22329,6 +22829,24 @@
               "$ref": "#/components/schemas/CountryProfile"
             },
             "description": "Country mappings evaluated in first-match order."
+          }
+        },
+        "additionalProperties": false
+      },
+      "AutoResolution": {
+        "type": "object",
+        "description": "The concrete profile `auto` applies and why.",
+        "required": [
+          "profile",
+          "basis"
+        ],
+        "properties": {
+          "basis": {
+            "$ref": "#/components/schemas/AutoBasis"
+          },
+          "profile": {
+            "type": "string",
+            "description": "Allowed non-`auto` profile in effect."
           }
         },
         "additionalProperties": false
@@ -30998,7 +31516,8 @@
           "canRevokeControlKey",
           "canRevokeDataplaneKey",
           "controlKeyCreatedAt",
-          "dataplaneKeyCreatedAt"
+          "dataplaneKeyCreatedAt",
+          "routing"
         ],
         "properties": {
           "addresses": {
@@ -31118,6 +31637,10 @@
           "registeredAt": {
             "$ref": "#/components/schemas/Timestamp",
             "description": "UTC time at which the Node was registered."
+          },
+          "routing": {
+            "$ref": "#/components/schemas/NodeRoutingSummary",
+            "description": "The Node's routing profile selection for list display; `getNodeRoutingSelection` has the allowed profiles."
           },
           "serverKey": {
             "oneOf": [
@@ -31498,6 +32021,72 @@
           "oldProof": {
             "$ref": "#/components/schemas/NodeProof",
             "description": "Existing control key's signature over the rotation challenge."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NodeRoutingSelectionResponse": {
+        "type": "object",
+        "description": "A Node's routing profile selection as the current configuration decides it.",
+        "required": [
+          "requestId",
+          "networkId",
+          "nodeId",
+          "selection",
+          "canSelect"
+        ],
+        "properties": {
+          "canSelect": {
+            "type": "boolean",
+            "description": "Whether the current caller may select another profile for this Node."
+          },
+          "networkId": {
+            "$ref": "#/components/schemas/NetworkId",
+            "description": "Network containing the Node."
+          },
+          "nodeId": {
+            "$ref": "#/components/schemas/NodeId",
+            "description": "Node whose selection is returned."
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId",
+            "description": "Server request identifier for correlation."
+          },
+          "selection": {
+            "$ref": "#/components/schemas/RoutingSelectionState",
+            "description": "Requested and applied profile, the allowed profiles, the lock and how `auto` resolves."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NodeRoutingSummary": {
+        "type": "object",
+        "description": "Short routing profile selection state of one Node.",
+        "required": [
+          "requestedProfile",
+          "appliedProfile",
+          "locked",
+          "canSelect"
+        ],
+        "properties": {
+          "appliedProfile": {
+            "type": "string",
+            "description": "Profile in effect under the current configuration."
+          },
+          "canSelect": {
+            "type": "boolean",
+            "description": "Whether the current caller may select another profile for this Node."
+          },
+          "locked": {
+            "type": "boolean",
+            "description": "The Node's assignment pins its default profile."
+          },
+          "requestedProfile": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Persistently selected profile under the Node's current identity; null when it has none."
           }
         },
         "additionalProperties": false
@@ -34968,6 +35557,32 @@
           },
           {
             "type": "object",
+            "description": "The requested routing profile is not allowed for the Node or its assignment is locked to another one; returns HTTP 422 with the allowed profiles.",
+            "required": [
+              "code",
+              "params",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "routing_profile_unavailable"
+                ]
+              },
+              "message": {
+                "type": "string",
+                "description": "Safe fallback text. Clients branch on code."
+              },
+              "params": {
+                "$ref": "#/components/schemas/RoutingProfileUnavailableParams",
+                "description": "Structured context defined by this problem code, or an empty object when none is exposed."
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
             "description": "The current lifecycle state or sequence does not permit the operation; returns HTTP 409.",
             "required": [
               "code",
@@ -35171,6 +35786,61 @@
           "requested": {
             "type": "boolean",
             "description": "Whether the request named this profile (true) or it is the source's\ncurrent selection / default (false)."
+          }
+        },
+        "additionalProperties": false
+      },
+      "ProfileKind": {
+        "type": "string",
+        "description": "Built-in or configured kind of a routing profile.",
+        "enum": [
+          "mesh",
+          "global",
+          "auto",
+          "custom"
+        ]
+      },
+      "ProfileSummary": {
+        "type": "object",
+        "description": "What one allowed profile does with external traffic, after the public rules.",
+        "required": [
+          "name",
+          "kind",
+          "rules",
+          "exits",
+          "fallback"
+        ],
+        "properties": {
+          "exits": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NodeId"
+            },
+            "description": "Exit Nodes the profile's rules and fallback name, in first-reference order."
+          },
+          "fallback": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RouteAction",
+                "description": "Action for traffic no rule matches; null for `auto`, whose resolution decides."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ProfileKind"
+          },
+          "name": {
+            "type": "string",
+            "description": "Profile name: `mesh`, `auto`, `global:<nodeId>` or a configured profile key."
+          },
+          "rules": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The profile's own rules (public rules excluded); zero for built-ins.",
+            "minimum": 0
           }
         },
         "additionalProperties": false
@@ -36068,6 +36738,28 @@
         },
         "additionalProperties": false
       },
+      "RoutingProfileUnavailableParams": {
+        "type": "object",
+        "description": "Why a requested routing profile cannot be selected for the Node, with its current choices.",
+        "required": [
+          "reason",
+          "allowed"
+        ],
+        "properties": {
+          "allowed": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The Node's allowed profiles in assignment order; while locked only the default is selectable."
+          },
+          "reason": {
+            "$ref": "#/components/schemas/SelectionUnavailable",
+            "description": "The profile is outside the Node's allowed profiles, or the assignment is locked to another one."
+          }
+        },
+        "additionalProperties": false
+      },
       "RoutingSelectionRequest": {
         "type": "object",
         "description": "Node request to select an authorized routing profile using compare-and-swap against its current selection.",
@@ -36080,7 +36772,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/Version",
-                "description": "Existing selection version to replace; null or omission requires that no selection record exists."
+                "description": "Current selection version (the netmap's `selectionVersions` entry of this Node); null or omission requires that the Node has no selection under its current identity."
               },
               {
                 "type": "null"
@@ -36102,17 +36794,88 @@
         "type": "object",
         "description": "Server-committed routing selection; the Node's next netmap carries it.",
         "required": [
-          "version",
-          "profile"
+          "selection"
         ],
         "properties": {
-          "profile": {
+          "selection": {
+            "$ref": "#/components/schemas/RoutingSelectionState",
+            "description": "The Node's selection after the commit: the new version, the requested and applied profile and its choices."
+          }
+        },
+        "additionalProperties": false
+      },
+      "RoutingSelectionState": {
+        "type": "object",
+        "description": "Routing profile selection of one Node under the current configuration.",
+        "required": [
+          "requestedProfile",
+          "version",
+          "appliedProfile",
+          "requestedUnavailable",
+          "defaultProfile",
+          "locked",
+          "profiles",
+          "auto"
+        ],
+        "properties": {
+          "appliedProfile": {
             "type": "string",
-            "description": "Profile selected by the accepted request."
+            "description": "Profile in effect: the requested one while it is allowed and not locked out, otherwise the default."
+          },
+          "auto": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AutoResolution",
+                "description": "How `auto` resolves while it is the applied profile; null otherwise."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "defaultProfile": {
+            "type": "string",
+            "description": "Assignment default, in effect without a usable selection."
+          },
+          "locked": {
+            "type": "boolean",
+            "description": "The assignment pins the default: no other profile can be selected."
+          },
+          "profiles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProfileSummary"
+            },
+            "description": "Allowed profiles in assignment order, each with a summary of what it does."
+          },
+          "requestedProfile": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Profile the Node's persistent selection names under its current identity; null when it has none."
+          },
+          "requestedUnavailable": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SelectionUnavailable",
+                "description": "Why the requested profile is not in effect; null when nothing is requested or it applies."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "version": {
-            "$ref": "#/components/schemas/Version",
-            "description": "New selection version required by the next compare-and-swap update."
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Version",
+                "description": "Persistent selection version, the base of the next compare-and-swap; null when there is no selection."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false
@@ -37140,6 +37903,25 @@
         "type": "string",
         "description": "Serialization is secret-bearing and requires protected storage."
       },
+      "SelectNodeRoutingProfileRequest": {
+        "type": "object",
+        "description": "Idempotent selection of a Node's routing profile by a user.",
+        "required": [
+          "requestId",
+          "profile"
+        ],
+        "properties": {
+          "profile": {
+            "type": "string",
+            "description": "Allowed profile to use: `mesh`, `auto`, `global:<exitNodeId>` or a configured profile key."
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId",
+            "description": "Request identifier binding retries to the same caller, Node and profile."
+          }
+        },
+        "additionalProperties": false
+      },
       "SelectionState": {
         "type": "object",
         "description": "Node-reported routing profile currently in use.",
@@ -37153,6 +37935,14 @@
           }
         },
         "additionalProperties": false
+      },
+      "SelectionUnavailable": {
+        "type": "string",
+        "description": "Why a selected profile is not the one in effect.",
+        "enum": [
+          "notAllowed",
+          "locked"
+        ]
       },
       "Sequence": {
         "type": "integer",

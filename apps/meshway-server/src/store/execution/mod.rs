@@ -5,6 +5,7 @@ mod instances;
 mod inventory;
 mod lifecycle;
 pub(crate) mod progress;
+mod selection;
 use crate::configuration::ConfigurationBindings;
 use crate::{execution::NodePrincipal, secrets::Sealer};
 pub(crate) use authentication::{authorize_node, challenge, insert_keys, rotate, session};
@@ -12,11 +13,12 @@ pub(crate) use instances::{acquire, lease_for_node, receipt, release, renew};
 pub(crate) use inventory::{inventory, inventory_in_transaction, revoke_key, settings};
 pub(crate) use lifecycle::{
     CompilationContext, apply_configuration_effects, compilation_context, netmap_targets,
-    retire_node_sessions, select_profile,
+    retire_node_sessions,
 };
 use meshway_configuration::{NetworkConfiguration, NodeIdentity};
 use meshway_model::*;
 use rusqlite::{Transaction, params};
+pub(crate) use selection::{can_select, select_profile, select_user_profile, user_selection};
 
 pub(crate) fn now() -> Result<i64, Error> {
     let now = chrono::Utc::now().timestamp_millis();

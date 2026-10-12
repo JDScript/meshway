@@ -101,7 +101,7 @@ pub(crate) fn inventory(
         })
         .copied()
         .collect();
-    inventory_in_transaction(tx, network, &cfg, &visible, manager)
+    inventory_in_transaction(tx, network, &cfg, &bindings, &visible, manager)
 }
 
 pub(crate) fn settings(
@@ -135,10 +135,12 @@ pub(crate) fn inventory_in_transaction(
     tx: &Transaction<'_>,
     network: NetworkId,
     cfg: &meshway_configuration::NetworkConfiguration,
+    bindings: &crate::configuration::ConfigurationBindings,
     visible: &std::collections::BTreeSet<NodeId>,
     manager: bool,
 ) -> Result<NodeInventoryResponse, Error> {
     let now = now()?;
+    let subjects = super::subjects(tx, network, bindings)?;
     let mut items = Vec::new();
     for (node, settings) in &cfg.nodes {
         if !visible.contains(node) {
@@ -159,7 +161,14 @@ pub(crate) fn inventory_in_transaction(
             |r| r.get(0),
         )?;
         let record = crate::netmap::records::Records::shared().get(network, *node);
+        let selection = super::selection::state(tx, network, cfg, bindings, &subjects, *node)?;
         items.push(NodeInventoryView {
+            routing: meshway_protocol::NodeRoutingSummary {
+                can_select: super::selection::can_select(&selection),
+                requested_profile: selection.requested_profile,
+                applied_profile: selection.applied_profile,
+                locked: selection.locked,
+            },
             netmap: crate::store::netmap::current(tx, network, *node)?.map(|c| c.current),
             netmap_unavailable: crate::store::netmap::unavailability(tx, network, *node)?,
             lease: record.lease,

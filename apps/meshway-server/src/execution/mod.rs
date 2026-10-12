@@ -64,9 +64,12 @@ impl Execution {
             })
             .await
     }
+    /// The Node selects its own profile; `id` is the HTTP correlation ID the
+    /// activity record carries.
     pub async fn select_profile(
         &self,
         token: &str,
+        id: RequestId,
         request: RoutingSelectionRequest,
     ) -> Result<RoutingSelectionResponse, Error> {
         let token = proof::token_hash(token)?;
@@ -74,7 +77,43 @@ impl Execution {
         let boot = self.boot;
         self.handle
             .transact(TransactionBehavior::Immediate, move |tx| {
-                store::select_profile(tx, &sealer, boot, token, request)
+                store::select_profile(tx, &sealer, boot, token, id, request)
+            })
+            .await
+    }
+    pub async fn routing_selection(
+        &self,
+        token: &str,
+        network: NetworkId,
+        node: NodeId,
+    ) -> Result<meshway_configuration::selection::RoutingSelectionState, Error> {
+        let token = crate::accounts::token_digest(token)?;
+        let sealer = self.sealer.clone();
+        self.handle
+            .read(move |tx| store::user_selection(tx, &sealer, token, network, node))
+            .await
+    }
+    /// A user selects a Node's profile through the same commit as the Node.
+    pub async fn select_user_profile(
+        &self,
+        token: &str,
+        network: NetworkId,
+        node: NodeId,
+        request: SelectNodeRoutingProfileRequest,
+    ) -> Result<meshway_configuration::selection::RoutingSelectionState, Error> {
+        let token = crate::accounts::token_digest(token)?;
+        let sealer = self.sealer.clone();
+        self.handle
+            .transact(TransactionBehavior::Immediate, move |tx| {
+                store::select_user_profile(
+                    tx,
+                    &sealer,
+                    token,
+                    network,
+                    node,
+                    request.request_id,
+                    request.profile,
+                )
             })
             .await
     }
