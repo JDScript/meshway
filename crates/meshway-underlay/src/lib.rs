@@ -10,6 +10,32 @@ mod resource;
 mod target;
 pub use resource::netmap_resource_compatible;
 
+/// Names of this crate's private files in the directory given to `Host::open`.
+mod files {
+    pub(crate) const LOCK: &str = "underlay.lock";
+    pub(crate) const JOURNAL: &str = "underlay.json";
+    pub(crate) const EGRESS: &str = "underlay-egress.json";
+    pub(crate) const EXIT: &str = "underlay-exit.json";
+    pub(crate) const EXIT_CHILD: &str = "exit-child.json";
+    pub(crate) const BOOTSTRAP_RECORD: &str = "underlay-bootstrap.json";
+    pub(crate) const BOOTSTRAP_SOCKET: &str = "underlay-bootstrap.sock";
+    /// Every journal that is archived with [`meshway_private_storage::Directory::archive_stale`].
+    pub(crate) const ARCHIVED: [&str; 4] = [JOURNAL, EGRESS, EXIT, EXIT_CHILD];
+}
+
+/// Whether `name` is a file this crate keeps in the Node's state directory:
+/// its lock, its resource journals with their bounded stale archives, and the
+/// bootstrap proxy record and socket. The daemon that assembles the directory
+/// uses this to tell its own leftovers from storage of unknown ownership.
+pub fn owns_file(name: &str) -> bool {
+    name == files::LOCK
+        || name == files::BOOTSTRAP_RECORD
+        || name == files::BOOTSTRAP_SOCKET
+        || files::ARCHIVED.iter().any(|source| {
+            name == *source || meshway_private_storage::stale_stamp(name, source).is_some()
+        })
+}
+
 #[cfg(not(target_os = "linux"))]
 use std::sync::Arc;
 use std::{
@@ -131,5 +157,39 @@ impl Host {
     ) -> Result<Self> {
         options.validate()?;
         Err(Error::Unsupported)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn owned_files_are_the_lock_journals_their_archives_and_the_bootstrap_proxy() {
+        for name in [
+            "underlay.lock",
+            "underlay.json",
+            "underlay.json.stale-1760200000000000000",
+            "underlay-egress.json",
+            "underlay-egress.json.stale-1",
+            "underlay-exit.json",
+            "underlay-exit.json.stale-2",
+            "exit-child.json",
+            "exit-child.json.stale-3",
+            "underlay-bootstrap.json",
+            "underlay-bootstrap.sock",
+        ] {
+            assert!(super::owns_file(name), "{name}");
+        }
+        for name in [
+            "daemon.json",
+            "daemon.lock",
+            "identity",
+            "underlay.json.stale-",
+            "underlay.json.stale-1x",
+            "underlay.json.bak",
+            "underlay.json.stale-1.bak",
+            "notes.txt",
+        ] {
+            assert!(!super::owns_file(name), "{name}");
+        }
     }
 }

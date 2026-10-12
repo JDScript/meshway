@@ -7,7 +7,7 @@ use meshway_protocol::ipc::{
     Command, ErrorCode, NetcheckReport, PingError, PingEvent, Request, Response, ResultBody,
     VERSION,
 };
-pub(crate) use socket::{Socket, SocketIdentity};
+pub(crate) use socket::{FILE as SOCKET_FILE, Socket, SocketIdentity};
 use std::time::Duration;
 use tokio::{
     io::AsyncReadExt,

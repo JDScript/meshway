@@ -6,7 +6,7 @@ use meshway_private_storage::Directory;
 use serde::{Deserialize, Serialize};
 use std::{io::Read, sync::Arc};
 
-const FILE: &str = "underlay-exit.json";
+const FILE: &str = crate::files::EXIT;
 const LIMIT: usize = 2 * 1024 * 1024;
 
 #[derive(Clone, Serialize, Deserialize)]

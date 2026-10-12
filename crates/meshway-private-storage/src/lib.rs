@@ -133,11 +133,11 @@ impl Directory {
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|_| Error::Io)?
             .as_nanos();
-        let archive = format!("{source}.stale-{stamp}");
+        let archive = format!("{source}{STALE}{stamp}");
         self.publish_once(&archive, source, None)?;
         #[cfg(unix)]
         {
-            unix::prune_stale(&self.directory, &format!("{source}.stale-"), keep)?;
+            unix::prune_stale(&self.directory, source, keep)?;
         }
         Ok(archive)
     }
@@ -178,6 +178,26 @@ impl Directory {
             Err(Error::UnsupportedPlatform)
         }
     }
+}
+
+const STALE: &str = ".stale-";
+const STAGING: &str = ".write-";
+
+/// The Unix nanosecond stamp of an archive that [`Directory::archive_stale`]
+/// made of `source`, or `None` when `name` is not one.
+pub fn stale_stamp(name: &str, source: &str) -> Option<u128> {
+    let stamp = name.strip_prefix(source)?.strip_prefix(STALE)?;
+    if stamp.is_empty() || !stamp.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    stamp.parse().ok()
+}
+
+/// Whether `name` is the unpublished staging file of an interrupted
+/// [`Directory::replace`]. It is never read; the published name is authoritative.
+pub fn is_staging(name: &str) -> bool {
+    name.strip_prefix(STAGING)
+        .is_some_and(|nonce| nonce.len() == 32 && nonce.bytes().all(|b| b.is_ascii_hexdigit()))
 }
 
 fn name(value: &str) -> Result<(), Error> {

@@ -9,7 +9,7 @@ use super::{
 };
 use crate::{Error, Result};
 
-const FILE: &str = "underlay.json";
+const FILE: &str = crate::files::JOURNAL;
 const LIMIT: usize = 2 * 1024 * 1024;
 
 #[derive(Clone, Serialize, Deserialize)]

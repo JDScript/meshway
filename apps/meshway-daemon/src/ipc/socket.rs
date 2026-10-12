@@ -10,6 +10,9 @@ use std::{
 };
 use tokio::net::{UnixListener, UnixStream};
 
+/// The local IPC socket in the daemon's private state directory.
+pub(crate) const FILE: &str = "control.sock";
+
 #[derive(Clone, Copy, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct SocketIdentity {
@@ -31,7 +34,7 @@ impl Socket {
         directory: Arc<Directory>,
         previous: Option<SocketIdentity>,
     ) -> Result<Self, &'static str> {
-        let path = directory.path().join("control.sock");
+        let path = directory.path().join(FILE);
         let device = fs::metadata(directory.path())
             .map_err(|_| "Cannot inspect IPC directory.")?
             .dev();
