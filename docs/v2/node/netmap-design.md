@@ -54,9 +54,9 @@ Node 侧消费按需编译的入口：`apps/meshway-daemon/src/runtime/network/p
 | `digest` | 规范序列化内容摘要；Node 校验后保存 |
 | `dependencyDigest` | 产生该 serial 的整网投影输入摘要（配置、主体、库存密钥／能力、方案选择及版本、规则集）；与 `revision` 一样随 serial 保留，不进入 `digest` |
 | `compilerVersion` | **`meshway-netmap-2`**：投影的 `ruleSets` 为 digest 引用（`meshway-netmap-1` 内联规则集内容，节点缓存按现有规则作废重取）。`meshway-demand-1..7` 全部视为过时派生缓存 |
-| `issuedAt`／`expiresAt` | 租约，不进入 `digest`；Server 每次成功查询签发 `min(now + 24 h, 依赖截止)` |
+| `issuedAt`／`expiresAt` | 租约，不进入 `digest`；Server 每次成功查询签发 `now + 有效期`（默认 24 h） |
 
-“依赖截止”目前只有可信 DNS 关联（X6）的 TTL；它作为独立 overlay 携带自己的截止，见[出口与 DNS](#出口与-dns)，不缩短整份 netmap。
+没有“依赖截止”缩短整份 netmap：可信 DNS 关联（X6）作为独立 overlay 按条目携带自己的截止，见[出口与 DNS](#出口与-dns)。
 
 ### 内容字段
 
@@ -126,7 +126,7 @@ Node 侧消费按需编译的入口：`apps/meshway-daemon/src/runtime/network/p
 | `EgressCapturePlan` | 保留并扩展为 `EgressPlan` |
 | `ExitRolePlan` | 变形为 `ExitRole`；去掉 `instanceId`，generation = digest(network, node, family, nat) |
 | `DnsExecution`、`DnsEgress`、`DnsServicePermit` | 变形为 `NetmapDns`、`DnsPlan`、`DnsService`；去掉 `sourceInstanceId`、`role.instanceId`、`expiresAt` 与 `associations` |
-| `TrustedDnsAssociation` | 不进入 netmap；X6 时作为每源 overlay，见下文 |
+| `TrustedDnsAssociation` | 不进入 netmap；X6 作为按接收节点签发的 `DnsAssociationOverlay`，见下文 |
 | `InstanceLease.target`／`executionExpiresAt` | 消失；instance lease 只剩 instance 资格；数据面截止来自 `NetmapLease` |
 | `CircuitAuthorization::{Business(RequestId), Diagnostic(ObservationId)}` | 变形为 `{ origin, target: Target, purpose: Business \| Diagnostic }` |
 | `permit_authorization_digest`／`permit_transition` | 变形为每 (origin, target) 每路径的 `path_authorization_digest`，不含服务集合 |
@@ -163,13 +163,15 @@ N1a 实测（M3、release、单线程，私有证据 `.meshway/netmap/n1a/scale.
 Node↔Server 只有 `POST /agent-api/v1/sync`（类型在 `crates/meshway-protocol/src/netmap.rs`）：
 
 ```text
-SyncRequest  { netmap: Option<NetmapRef>, state: Option<StateCursor { epoch, sequence }> }
+SyncRequest  { netmap: Option<NetmapRef>, state: Option<StateCursor { epoch, sequence }>,
+               associations: Option<Digest> }
 SyncResponse { lease: NetmapLease,
                netmap: SyncNetmap::{ full { netmap } | delta { delta } | unchanged },
-               peerFacts: Option<PeerFactsDelta { base, cursor, netmapSerial, updated: NodeId → PeerFacts, removed }> }
+               peerFacts: Option<PeerFactsDelta { base, cursor, netmapSerial, updated: NodeId → PeerFacts, removed }>,
+               associations: Option<DnsAssociationsUpdate { overlay, signature, rotationSignature }> }
 ```
 
-Server 挂起请求直至 netmap 或可见事实变化，或 ≤ 60 s 超时；超时回 `unchanged`＋`peerFacts: null`，即内建兜底。
+Server 挂起请求直至 netmap、可见事实或本节点的 DNS 关联 overlay 变化，或 ≤ 60 s 超时；超时回 `unchanged`＋`peerFacts: null`，即内建兜底。
 
 挂起不越过节点持有的租约：一次 hold 的上限为 `min(名义 hold, 节点持有的租约剩余 − 15 s)`，15 s 即节点传输退避上限（`BACKOFF_MAX`），使回答即使失败节点也还有一次重试。“节点持有的租约”是本 Server 进程对该节点最近一次、未被同节点更新请求取代的回答所带租约；被取代（节点已改发新请求）的回答不计入。Server 进程尚未回答过该节点（首次请求、Server 重启后）时立即回答。余量不足时也立即回答，回答本身即续租。唯一 owner 是 Server 的 sync hold（`netmap::Hub`），Node 不另做截断。限制：回答已写出但在传输中丢失、且节点在该请求结束后才重试时，Server 认为的租约可能新于节点实际持有的，由 15 s 余量与节点退避兜底。节点收到即发下一个请求，手里的 `NetmapRef`／`StateCursor` 就是游标，没有事件流与独立重放。`SyncResponse::check(request)` 校验租约指向最终内容、delta 的 base 等于请求、事实增量接续请求游标且属于同一 netmap serial。语义上仍是两条线：netmap 部分授权，`peerFacts` 部分只供选择。
 
@@ -351,7 +353,7 @@ cold（静态端点）：  T ≈ Σ每跳串行邻接获取（TCP 1 RTT；TLS �
 
 - 配置 resolver 与系统 resolver 的本地 socket 许可：源端用 `egress.routes` 求 resolver 端点的动作——direct／unmanaged 允许本机 socket，exit 动作必须经出口 DNS，unmanaged 范围以外的 Mesh 地址拒绝。UDP 与 TCP 仍分别判定。R1／R4／F14 的 resolver demand、ID 映射和退休白名单删除。
 - X5（已交付）`DnsService` 留在 netmap：客户端 `DnsPlan::ViaExit`、出口 `DnsPlan::ServeExitResolver` 列表都按 revision 编译，没有 instance 与截止字段，截止来自租约；出口就绪与出口 resolver 可用性（`NodeState.exitDns`）都是事实。行为见[出口 resolver](/v2/node/dataplane#exit-resolver)。
-- X6 可信域名关联是唯一保留的按需编译：Server 受控解析任务完成后，为该源签发 `DnsAssociationOverlay { netmap: NetmapRef, associations, expiresAt = min(TTL, 任务期限) }`，经同一 netmap 查询端点交付并随期望内容应用。overlay 有自己的截止，只扩大该源与相关出口的域名目的判定，不改变 netmap serial；它只影响源和所选出口两个节点。
+- X6 可信域名关联是唯一保留的按需编译（**已交付**）：出口 netmap 的 `ServeExitResolver` service 即 Server 预签的常驻任务；出口在回答名称规则决定的查询后以 `POST /agent-api/v1/dns-associations` 完成一次，Server 校验后为源与出口各签一份 `DnsAssociationOverlay { netmap: NetmapRef（接收者）, associations }`（每条 `expiresAt = resolvedAt + clamp(TTL, 30 s, 1 h)`），经同一 `sync` 交付（请求以 `associations` 指明持有的 digest，未变回答 `null`），随期望内容应用；不改变 netmap serial、不持久化，任一方 netmap 变化后 Server 先重验再交付。往返、等待、界限与失效见 [Exit 设计 · 可信域名关联](/v2/node/exit-design#trusted-dns-associations)。
 
 ## 迁移
 

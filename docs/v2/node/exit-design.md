@@ -166,7 +166,7 @@ sha 应用 IPv4
 - **Purpose 与中继授权**：DNS circuit 的 grant 为 `(Dns, Mesh { exit })`，握手摘要的 selection 为 `DnsService` 摘要；中继以 `admit_dns` 在自己的投影上重算 `dns_service(origin)`，只按完整路径位置转发。服务仍按 revision 留在 netmap（`DnsPlan::ViaExit`／`ServeExitResolver`），没有 instance 或截止字段，截止来自 netmap 租约。
 - **客户端 owner**：`MeshResolverRoute` 的 UDP 与 TCP 各自一条路由，共用原 ticket；出口能力事实非 ready 时不建 circuit、查询立即失败；任何失败都不落到源节点本机上游。
 - **出口系统 resolver**：resolved 后端经 resolved 代理 stub（`127.0.0.54`），保留按链路／后缀选上游；会回到本节点锚点的名称回 SERVFAIL；resolved 服务器清单含本地 stub、锚点、Mesh 地址或经出口路由的地址时出口查询不可用。文件后端用安装前记录的原 nameserver。上游 I/O 使用仅出口查询可用的 served 快照、独立 UDP／TCP `LocalResolverRoute` 和受保护 socket。
-- **wire／IPC／netmap**：均未改变（DNS circuit 帧已属 wire v6；`compilerVersion` 仍为 `meshway-netmap-1`）。
+- **wire／IPC／netmap**：均未改变（DNS circuit 帧已属 wire v6；`compilerVersion` 当时为 `meshway-netmap-1`）。
 
 ### 哪些查询走出口
 
@@ -176,15 +176,48 @@ sha 应用 IPv4
 - 单纯 IP CIDR 不足以决定一个未知名称应走哪个出口，不能用“只有结果落在 exit 网段的查询才去 exit DNS”作为算法。多出口、依赖答案才能选出口、domain/IP 相互依赖的方案，须先有显式无环 DNS plan；首版不能确定时保留 `exitPlanRequired` 拒绝安装。
 - IPv4 首版的出口解析通道可解析 A；AAAA 的存在不能变成 IPv6 路由豁免。已实现为保留真实 DNS 回答语义（AAAA 原样返回，不伪造 NXDOMAIN）；任何受管 IPv6 包由捕获和 permit 双重拒绝。只屏蔽 AAAA 不是防泄漏措施。
 
-### 可信关联不能只靠“走过出口 DNS”
+### 可信域名关联 {#trusted-dns-associations}
 
-Noise 证明回答来自出口，不证明出口上报的域名／地址自然有权扩大另一正常出口的准入。现行 [Access 域名合同](/v2/configuration-reference/access#domains)要求 **Server 受控解析／受信结果校验后发布**；普通 State 或源端自报 hostname 都不能创建 `TrustedDnsAssociation`。
+**已交付（X6）。**Noise 证明回答来自出口，不证明出口上报的域名／地址自然有权扩大准入；普通 State 或源端自报 hostname 都不能创建关联。关联只由下面的受控解析任务产生，配置语义见 [Routing · Rule match](/v2/configuration-reference/routing#rule-match) 与 [Access · 域名授权](/v2/configuration-reference/access#domains)。
 
-完整域名实现建议增加独立受控解析任务：Server 为 origin／name／DNS plan／出口 resolver／revision／nonce／deadline 签发任务；指定出口 DNS owner 返回绑定的名称、完整受限 CNAME 链、A／AAAA、原 TTL 和解析来源。Server 检查任务只能完成一次、当前成员／实例／职责、配置和 scope、地址分类与 TTL 上界，并明确把管理员指定 resolver 的受控输出作为信任输入，再发布 source-scoped association 和精确业务 permit。任意未经委派的节点报告一律拒绝。TTL 取 CNAME／RR 最短寿命与任务／执行期限交集；截断、循环、不一致响应和过期 completion 不发布。
+**任务**由 Server 预先签发且常驻：出口 E 的已签 netmap 中 `ServeExitResolver { services }` 的每个 `DnsService` 就是一份任务，绑定 origin（`service.source`）、DNS plan（整份 service，含完整路径、源 selection `generation` 与出口 role）、出口 resolver（E）、revision 与内容（E 与源各自的 `NetmapRef`）以及期限（netmap 租约）。名称与 nonce 由每次完成填入：
 
-客户端正常 DNS 分流还需有界 association→IP 上下文，多个名称同 IP 的不相容动作拒绝／不可执行；不能把最近一次 DNS 查询当全机任意包的可信业务名。跨 source、profile、publication 或切换出口不复用缓存。即使如此域名授权仍是地址集合，不保证同 IP 的应用身份隔离。
+| 步骤 | owner | 内容 |
+| --- | --- | --- |
+| 1 | 源 A 的 DNS owner | 普通查询照 X5 经 `Purpose::Dns` circuit 送 E（不改 wire、不另发请求） |
+| 2 | E 的 DNS owner（served 路径） | 用出口系统 resolver 解析，回答**立即**沿原路径回 A；若 E 在自己的投影上 `egress_rule_for_name(A, name)` 命中（名称由某条规则的名称成员决定），且回答是 NOERROR 的 A／AAAA 并含公网地址，且 E 持有的关联里没有覆盖这些地址并剩余 ≥ 本次寿命一半的同名条目，就产生一份完成 |
+| 3 | E 的 Control | `POST /agent-api/v1/dns-associations`（`DnsAssociationReport`：E 的 `netmap`、单次使用 `reportId`、`source`、`generation`、`name`、`recordType`、≤ 8 个 CNAME 链、1–16 个已排序公网地址、链与地址记录中最短 TTL、`resolvedAt`）；队列有界（256），满则丢弃该完成 |
+| 4 | Server（`netmap::associations`） | 校验见下表；通过即在内存保存并唤醒 A 与 E 挂起的 `sync` |
+| 5 | A／E 的 Control | `sync` 回答带 `associations: DnsAssociationsUpdate`（overlay＋签名），验签、绑定当前 netmap 后与 netmap 一起发布给 Engine |
+| 6 | A 的 DNS owner | 第 1 步的回答在 overlay 已应用（Engine `Desired` 含覆盖其公网地址的同名关联、剩余 ≥ 5 s）后才交给本机客户端，TTL 截为关联剩余寿命减 2 s；至多等 2 s（`ASSOCIATION_WAIT`），未到则回 SERVFAIL，客户端不会拿到名称规则无法判定的地址 |
 
-**首版交付范围建议：**IPv4 IP／CIDR／Internet 许可＋单出口普通 DNS＋MagicDNS／明确 useWithExit 例外；域名型 Access／egress 必须等可信 producer 与上下文冲突处理一并完成才解锁，不能因 resolver 已通提前宣称支持。X6 可在该 IP 版之后交付，不阻碍 `exit/off`，但完整用户使用的单出口 DNS 属于首版 X5。
+Server 的完成校验（任一失败即拒绝，不部分接受）：
+
+| 检查 | 失败 |
+| --- | --- |
+| 调用者 E 的当前 netmap 等于 `netmap`；`generation` 等于源当前 `DnsService.generation` | 409 `state_scope_changed` |
+| 源当前 netmap 为 `ViaExit { service }`，`service.exit` 是调用者，且 E 当前 netmap 的 `ServeExitResolver` 含同一 service | 403 `permission_denied` |
+| 源投影上（含全部 artifact）`egress_rule_for_name(source, name)` 命中 | 403 `permission_denied` |
+| 名称为查询规范形式（ASCII 小写、无结尾点）；CNAME ≤ 8；地址 1–16、已排序去重、与记录类型一致、全部 `is_internet_address`（私网、Mesh、链路本地等永不进入关联，防 DNS rebinding 借名称规则进入 LAN）；`resolvedAt` 不早于 30 s、不晚于 Server 时间 5 s | 400 `invalid_request` |
+| `reportId` 未用过（进程内保留至其窗口结束） | 409 `request_id_conflict` |
+| 加入后源的执行捕获（下文）仍在 4,096 前缀内 | 429 `state_limit` |
+
+**Overlay**（`meshway_configuration::netmap::DnsAssociationOverlay { netmap, associations }`）按**接收节点**签发：A 收到自己作为源的条目，E 收到它服务的各源的条目；`netmap` 是接收者当前 `NetmapRef`。每条 `DnsAssociation { source, generation, name, recordType, cnames, addresses, expiresAt }`，`expiresAt = resolvedAt + clamp(TTL, 30 s, 1 h)`；overlay 本身没有总截止，只在它绑定的 netmap 及其租约内可用。签名为 `dns_associations_transcript(network, node, overlay.netmap, overlay digest, keyId, keyGeneration)`，复用 netmap 签钥；轮换窗口内另附后继钥签名 `rotationSignature`，节点只验它钉住的那把钥。`sync` 请求以 `associations` 指明持有的 overlay digest：相同则回答 `null`（不唤醒、不重发），不同则回答完整 overlay（空 `associations` 即清除）。overlay 不改变 netmap serial，不写入 `netmap.json`：节点重启、Server 重启都从空开始（Server 重启后的第一次回答清除节点持有的 overlay）。
+
+**界限**：每源 128 条（超出先逐出最早到期者）、每 overlay 4,096 条、每源每 (名称, 记录类型) 一条（新完成替换旧条目）；Server 最多记 65,536 个源。
+
+**失效**：Server 在任一方 netmap 变化（新 serial）后、下一次交付前用新内容重验每条关联：service／generation／名称规则不再成立即删除——撤权（`domain:` 授权由节点每次准入检查）、出口停用、方案切换（selection 变化）、名称规则删除都在同一次 `sync` 回答中随新 netmap 生效；跨 source、profile、出口和 netmap 不复用。条目到期由 Engine 计时：`Engine::next_expiry` 取租约与最早关联到期的较早者，到期后以同一内容、更少关联重新应用。
+
+**节点侧执行**：
+
+- 判定：`LocalCompiler::decide_with(source, dst, …, &Associations)`。dst 有该源在当前 selection 下的关联名称时，按有效规则顺序 first-match，规则命中条件为“匹配该地址**或**匹配其任一名称”；各名称得到的动作必须相同，否则 `egressConflict`（同 IP 多名称动作不相容即不可执行）。服务为覆盖该地址的 CIDR／`autogroup:internet` 授权与覆盖其任一名称的 `domain:` 授权之并。没有关联的地址只按 IP 分割决定：名称成员不拥有任何地址（`capture` 分割不再因名称规则整体 `egressConflict`）。
+- 捕获：Engine 的执行内容在签名分割之上加入本源的关联主机——出口（及冲突）地址进入 `managedIpv4`／`sinkIpv6`，direct／unmanaged 地址从受管范围切出；`routes` 与 selection identity 不变。超出 4,096 前缀时整体按分割的 fail closed 形态（全范围捕获、IPv6 sink、`routingLimit`）。
+- 中继与出口握手：`transit` 对 `(nodes, via)` 也接受“有名称成员且动作完全相同的规则＋源有 `domain:` 或 Internet 授权”，中继不需要关联；出口逐包在自己的投影上以同一 overlay 重算源的判定。
+- 关联变化只影响新流：同一内容、不同关联时 `SecureNode` 只换判定缓存，已建立的流和 circuit 不重判；DNS owner 保留 scope 与已接纳查询。netmap 内容变化时照常以当时的关联重判全部流。
+
+**往返与等待**：首次解析到可用 ＝ 一次 Mesh DNS 往返（含出口解析）＋ E→Server 一次 HTTP 往返＋ Server→A 挂起 `sync` 的回答（半个往返）＋ A 应用；A 的回答至多为此再等 2 s。之后在关联寿命内：本机缓存命中（TTL 已截短）零往返；缓存未命中的再次查询仍经 E 解析，但 E 见到仍剩余 ≥ 一半寿命的覆盖条目即不再完成任务，A 见到覆盖条目即刻放行，零额外 Server 往返；同名第二次连接直接按已应用关联建流。
+
+**限制**：域名授权仍是解析地址集合，关联期间对该地址的任何连接（不经名称也一样）都按名称规则判定，不保证同 IP 的应用身份隔离；未经该源 Mesh DNS 得到的地址（硬编码 IP、DoH、其他 resolver、忽略 TTL 的应用缓存）只按 IP 规则判定。只有经出口 resolver 的普通查询产生关联：MagicDNS、`useWithExit` split 与 `DnsPlan::NoExit` 的方案不产生，其名称规则只是不匹配任何地址。AAAA 真实回答也产生关联，但受管 IPv6 包仍由捕获 sink 与准入双重拒绝。多出口／依赖答案选出口的显式 DNS plan 仍未实现。
 
 ## 协议与模型建议
 
@@ -209,7 +242,7 @@ Server／Policy 入口为 `compile_with_exit` 和 `ExitInputs`；实例、选择
 | 出口职责 | 新类型化 role plan，绑定 network／exit／instance／publication、IPv4 masquerade、允许的 capture／return 资源语义与 deadline；安装前即允许报告失败。不能先要求 ready 才发职责、又先要求职责才探测 ready 造成循环 |
 | 业务 permit | 复用 `PathPermit` 的 demand、sourceAddresses、精确 target／service、profile、完整 paths、expiresAt、原路径回复。增加明确 exit 执行约束（地址族、NAT 模式、profile selection generation／角色绑定）；不重复复制一个更宽“出口 CIDR 许可”来替代精确业务许可 |
 | 源端捕获 | `NodeConfiguration` 增加独立 egress capture plan 和不受管例外证明；source address family 缺失时仍保留拒绝边界。delta／digest／obsolete 解码同步更新 |
-| DNS | `DnsEgress` 增加可执行单出口计划；内部 DNS service permit、系统 resolver 职责、查询 scope 与来源；可信解析任务／完成契约由 X6 再扩展。保留 noExit 的明确证明 |
+| DNS | `DnsEgress` 增加可执行单出口计划；内部 DNS service permit、系统 resolver 职责、查询 scope 与来源；可信解析任务／完成契约由 X6 交付（[可信域名关联](#trusted-dns-associations)）。保留 noExit 的明确证明 |
 | 安装／State 顺序 | 扩展 ApplyFailure 以传递实际 exit 原因；Control 接纳当前角色的失败事实，无需伪造 applied。Server 能据新鲜能力事实将需求判为不可用，但不能由 ready 自行增加授权；收到撤销或旧 lease 到期由本地即时失效 |
 | 版本／生成链 | 编译产物语义与捕获／DNS 权限变化，建议从 `meshway-demand-5` 升至 **`meshway-demand-6`**（合入时由协调者分配，避免并行占号）；旧节点不能把不认识字段忽略后继续 applied。重生成 OpenAPI、Rust／TS 客户端、运行时 schema、文档契约，运行 drift 与消费者验证 |
 
@@ -238,7 +271,7 @@ Server／Policy 入口为 `compile_with_exit` 和 `ExitInputs`；实例、选择
 | X3 Underlay NAT owner | `crates/meshway-underlay/src/linux/kernel/` 新 exit 模块，journal／monitor／plan／capture；`linux/protection.rs` 和 Host 出口 API | 依赖 X1/X2 接口；与 X2/X4/X5 并行。X4 只消费 Host，不修改这些文件；新依赖交协调者 | 隔离 namespace：nft 原子批、route／mark、masquerade／逆 NAT、精确 ct 删除、严格 rp_filter 拒绝、crash/journal／外部冲突、无 NET_ADMIN／forwarding=0、timed set 到期 |
 | X4 Control／daemon 集成 | `crates/meshway-control/`、必要 `meshway-authority/` 检查；`apps/meshway-daemon/src/runtime/network/{mod,worker,requirements,facts,reporting}.rs` 与包输出队列；IPC／CLI 状态接线由本包通过协调者整合 | 依赖 X1，等待 X2/X3 可执行接口后联调；与 X5 文件分界固定，DNS 子目录归 X5 | 实际职责自动安装、完整成功才 applied、失败可上报、HTTP 挂起时撤回、方案切换原子失败边界、无第二次 up 的恢复 |
 | X5 单出口 DNS（**已交付**） | `crates/meshway-dns/src/`；`meshway-underlay/src/linux/resolver_exchange.rs`；dataplane DNS circuit；daemon `runtime/network/dns/` | — | 已在 `exit/off` 第 9 阶段验收 resolved 后端：真实系统解析经 E 的 resolver、MagicDNS 本地、useWithExit split、Mesh UDP→TCP、E 的 resolver 断开无本地 fallback、撤权／租约到期失效与恢复；文件后端出口组合（`exit/resolv-conf`）未验收 |
-| X6 可信域名任务（后续） | Server 新受控解析任务模块、DNS owner 新任务 producer 模块、Policy 域名关联判定；共享类型／生成链经协调者；不并发修改 X1/X5 所属文件 | X1/X5 完成后；不阻碍 IPv4 IP 版，但域名功能必须等本包 | 授权任务一次完成、错 source／revision／nonce、TTL/CNAME、DNS rebinding、私网答案、同 IP 冲突、多出口无环 plan；新增独立域名 T2 场景 |
+| X6 可信域名任务（**已交付**） | Server `netmap/associations.rs`；DNS owner `association.rs` 与 served／client 路径；Policy `compile/netmap/associations.rs`；Engine 关联输入；Control overlay 验签与完成上报 | — | 已在 `exit/off` 第 10 阶段验收，见[可信域名关联](#trusted-dns-associations)；多出口无环 plan 未实现 |
 | X7 系统验收与 lab | `tools/meshway-runtime-fixture/`、`tools/meshway-packet-fixture/`、`scripts/verify_runtime.py`、`scripts/validate_matrix.py`、必要 `dev/` 锁定工具镜像和部署脚本；`docs/v2/node/validation.md` 证据更新 | X1 接口冻结后可准备 fixture；整组等 X2–X5；不修改产品 crate，失败回归交对应 owner | `exit/off` 为 IP 数据面门槛；DNS 行独立；nyc／sha→lax 真 lab，核对 PID/hash、完整路径、撤回与清理 |
 
 X1 的 manifest／lock／生成物不能由其他工作包同时改写。Console 的 exit 能力／原因展示由用户转达给 Console 工作流，消费生成字段；X0 不联系或修改 Console 会话。
@@ -270,4 +303,4 @@ X1 的 manifest／lock／生成物不能由其他工作包同时改写。Console
 
 当前 **没有阻塞 IPv4 IP/CIDR 首版的用户决策**；已有原则足够推进 X1–X5。需实现阶段证明的 conntrack 删除竞态、nft/路由联动、rp_filter 与 resolver 无环性是工程门槛，不转交用户重新决定安全原则。
 
-多出口的显式 DNS plan 配置交互、域名型授权解锁时点随 X6 单独提交产品方案；在其定版前沿用“缺少可信依赖不可执行”的既定边界，不提前发明可用字段。
+多出口的显式 DNS plan 配置交互仍需单独提交产品方案；在其定版前沿用“缺少可信依赖不可执行”的既定边界，不提前发明可用字段。域名型出口规则已随 X6 在单出口 DNS 方案下生效。

@@ -90,4 +90,4 @@ Node 的 TTL 0 MagicDNS、REFUSED／NODATA、loopback Service、路由证据及�
 
 ## 域名执行关联
 
-经出口 resolver 的回答只用于客户端解析，不自动创建 `TrustedDnsAssociation`，也不授予解析地址的业务访问。关联 producer 属于后续 X6：受控解析／验证流程须绑定发布、源范围、名称、地址和 TTL；节点原始 State 不能自行扩大出口接受范围。同 IP 域名不具有严格服务隔离保证，见 [Access](/v2/configuration-reference/access#domains)。
+经出口 resolver 的回答本身不授予解析地址的业务访问。源节点的名称规则（[Routing · 域名规则的执行](/v2/configuration-reference/routing#域名规则的执行)）决定的名称，由出口在回答后向 Server 完成一次受控解析任务；Server 校验当前 netmap、DNS service、名称规则、公网地址与 TTL 后为源节点和出口签发可信关联，经同一 `sync` 下发。源节点在关联生效前不把该回答交给本机客户端（至多 2 秒，否则 SERVFAIL），并把回答 TTL 截为关联剩余寿命。节点原始 State 不能自行创建关联或扩大出口接受范围。同 IP 域名不具有严格服务隔离保证，见 [Access](/v2/configuration-reference/access#domains)；任务与 overlay 见 [Exit 设计 · 可信域名关联](/v2/node/exit-design#trusted-dns-associations)。
