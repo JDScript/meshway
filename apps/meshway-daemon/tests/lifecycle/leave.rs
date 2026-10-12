@@ -179,7 +179,7 @@ async fn logout_converges_after_a_lost_answer_and_survives_an_unreachable_server
     // A lost answer: the Server deleted the Node; the retried request's
     // identity rejection completes the leave without operator action.
     let lost = root.join("lost");
-    let daemon = Process::start(&lost, &proxy.origin);
+    let mut daemon = Process::start(&lost, &proxy.origin);
     let ready = enrolled(&server, &user, network, &daemon.socket).await;
     let node = ready.identity.as_ref().unwrap().node_id;
     proxy.set(Mode::LoseLeave);
@@ -198,6 +198,15 @@ async fn logout_converges_after_a_lost_answer_and_survives_an_unreachable_server
     let gone = wait_matching(&daemon.socket, left).await;
     assert!(gone.saved.is_none());
     assert!(!lost.join("identity/netmap.json").exists());
+
+    // The left directory is an ordinary unenrolled installation: a restart
+    // stays down with no identity and resumes no leave.
+    daemon.exit("-TERM").await;
+    let daemon = Process::start(&lost, &proxy.origin);
+    let restarted = wait_matching(&daemon.socket, left).await;
+    assert_eq!(restarted.revision, gone.revision);
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert!(left(&support::status(&daemon.socket).await.unwrap()));
     drop(daemon);
 
     // No Server answer: the intent stays, `up` cannot rejoin, and a restart
