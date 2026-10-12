@@ -20,7 +20,7 @@ pub struct NetworkPageQuery {
     pub cursor: Option<String>,
 }
 
-fn optional_limit<'de, D: serde::Deserializer<'de>>(
+pub(crate) fn optional_limit<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<u16>, D::Error> {
     let value = <Option<u16> as serde::Deserialize>::deserialize(deserializer)?;
@@ -30,7 +30,7 @@ fn optional_limit<'de, D: serde::Deserializer<'de>>(
     Ok(value)
 }
 
-fn optional_cursor<'de, D: serde::Deserializer<'de>>(
+pub(crate) fn optional_cursor<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<String>, D::Error> {
     let value = <Option<String> as serde::Deserialize>::deserialize(deserializer)?;

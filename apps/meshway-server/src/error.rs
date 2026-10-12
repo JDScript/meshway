@@ -58,6 +58,8 @@ pub enum Error {
     ReceiptContentConflict,
     #[error("lifecycle state does not allow this operation")]
     StateConflict,
+    #[error("the provider's catalog has not been verified by this Server yet")]
+    CatalogNotReady,
     #[error("state report execution scope changed")]
     StateScopeChanged,
     #[error("the last Owner cannot be removed or demoted")]

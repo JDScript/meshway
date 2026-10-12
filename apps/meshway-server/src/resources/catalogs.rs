@@ -6,6 +6,8 @@ use super::{
     download::{Connector, download},
     rulesets::{CatalogAcceptance, Prepared, Record, trust},
 };
+use crate::error::Error;
+use chrono::{DateTime, Utc};
 use meshway_configuration::{RuleSetProvider, providers::catalog_set_name};
 use meshway_protocol::resources::ResourceProblem;
 use meshway_rules::{
@@ -13,9 +15,10 @@ use meshway_rules::{
     catalog::{self, Catalog, CatalogError, PublicKey, SetRecord},
     convert::Format,
 };
+use rusqlite::Transaction;
 use std::{
     collections::BTreeMap,
-    sync::{Arc, Mutex},
+    sync::{Arc, LazyLock, Mutex},
 };
 
 /// Largest accepted `index.json`.
@@ -35,7 +38,15 @@ fn sibling(catalog: &str, name: &str) -> Result<String, ResourceProblem> {
 /// Catalogs verified for one preparation: the sets of one edit share one
 /// download of each catalog; every refresh starts with an empty memo.
 /// Verified catalogs by (catalog URL, trusted key set).
-type Verified = BTreeMap<(String, String), Arc<Catalog>>;
+type Verified = BTreeMap<(String, String), VerifiedCatalog>;
+
+/// One verified catalog with the exact bytes that verified.
+#[derive(Clone)]
+struct VerifiedCatalog {
+    catalog: Arc<Catalog>,
+    document: Arc<[u8]>,
+    signature: Arc<[u8]>,
+}
 
 #[derive(Clone, Default)]
 pub(crate) struct Catalogs {
@@ -56,15 +67,15 @@ impl Catalogs {
         &self,
         provider: &RuleSetProvider,
         connector: &dyn Connector,
-    ) -> Result<Arc<Catalog>, ResourceProblem> {
+    ) -> Result<VerifiedCatalog, ResourceProblem> {
         let key = (provider.catalog.clone(), trust(&provider.public_keys));
-        if let Some(catalog) = self
+        if let Some(verified) = self
             .verified
             .lock()
             .map_err(|_| ResourceProblem::BudgetExceeded)?
             .get(&key)
         {
-            return Ok(Arc::clone(catalog));
+            return Ok(verified.clone());
         }
         let keys = provider
             .public_keys
@@ -79,12 +90,16 @@ impl Catalogs {
             MAX_SIGNATURE_BYTES,
         )
         .await?;
-        let catalog = Arc::new(catalog::verify(&index, &signature, &keys).map_err(verify_error)?);
+        let verified = VerifiedCatalog {
+            catalog: Arc::new(catalog::verify(&index, &signature, &keys).map_err(verify_error)?),
+            document: index.into(),
+            signature: signature.into(),
+        };
         self.verified
             .lock()
             .map_err(|_| ResourceProblem::BudgetExceeded)?
-            .insert(key, Arc::clone(&catalog));
-        Ok(catalog)
+            .insert(key, verified.clone());
+        Ok(verified)
     }
 
     /// The artifact of `<collection>/<name>` from a verified catalog, checked
@@ -95,7 +110,8 @@ impl Catalogs {
         name: &str,
         connector: &dyn Connector,
     ) -> Result<Prepared, ResourceProblem> {
-        let catalog = self.catalog(provider, connector).await?;
+        let verified = self.catalog(provider, connector).await?;
+        let catalog = &verified.catalog;
         let set_name = catalog_set_name(provider, name);
         let entry = catalog
             .sets
@@ -158,7 +174,69 @@ impl Catalogs {
                 catalog: provider.catalog.clone(),
                 trust: trust(&provider.public_keys),
                 sequence: catalog.sequence,
+                document: Arc::clone(&verified.document),
+                signature: Arc::clone(&verified.signature),
             }),
         })
     }
+}
+
+/// A catalog this Server accepted, as stored: the newest verified sequence.
+pub(crate) struct Accepted {
+    pub catalog: Arc<Catalog>,
+    pub verified_at: DateTime<Utc>,
+}
+
+/// Parsed accepted catalogs by (catalog URL, trust), with the stored row's
+/// (sequence, verification time): every acceptance rewrites both, so an
+/// entry is replaced whenever the stored document may have changed.
+type Parsed = BTreeMap<(String, String), ((u64, i64), Arc<Catalog>)>;
+static ACCEPTED: LazyLock<Mutex<Parsed>> = LazyLock::new(Mutex::default);
+const MAX_PARSED: usize = 16;
+
+/// The provider's accepted catalog, verified again against the provider's
+/// keys when first parsed in this process; `None` before this Server ever
+/// verified it. Never downloads.
+pub(crate) fn accepted(
+    tx: &Transaction<'_>,
+    provider: &RuleSetProvider,
+) -> Result<Option<Accepted>, Error> {
+    let key = (provider.catalog.clone(), trust(&provider.public_keys));
+    let Some((sequence, at)) =
+        crate::store::resources::artifacts::catalog_head(tx, &key.0, &key.1)?
+    else {
+        return Ok(None);
+    };
+    let verified_at = DateTime::from_timestamp_millis(at)
+        .ok_or(Error::decode("rule_set_catalogs.verified_at"))?;
+    if let Some((parsed, catalog)) = ACCEPTED.lock().map_err(|_| Error::RUNTIME)?.get(&key)
+        && *parsed == (sequence, at)
+    {
+        return Ok(Some(Accepted {
+            catalog: Arc::clone(catalog),
+            verified_at,
+        }));
+    }
+    let (document, signature) =
+        crate::store::resources::artifacts::catalog_document(tx, &key.0, &key.1)?;
+    let keys = provider
+        .public_keys
+        .iter()
+        .map(|key| key.parse::<PublicKey>())
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| Error::decode("rule_set_catalogs.trust"))?;
+    let catalog = catalog::verify(&document, &signature, &keys)
+        .ok()
+        .filter(|catalog| catalog.sequence == sequence)
+        .map(Arc::new)
+        .ok_or(Error::decode("rule_set_catalogs.document"))?;
+    let mut parsed = ACCEPTED.lock().map_err(|_| Error::RUNTIME)?;
+    if parsed.len() >= MAX_PARSED && !parsed.contains_key(&key) {
+        parsed.clear();
+    }
+    parsed.insert(key, ((sequence, at), Arc::clone(&catalog)));
+    Ok(Some(Accepted {
+        catalog,
+        verified_at,
+    }))
 }

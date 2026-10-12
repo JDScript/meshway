@@ -38,6 +38,7 @@ const problemMessage: Record<ProblemCode, () => string> = {
   state_conflict: () => m.problem_state_conflict(),
   state_scope_changed: () => m.problem_state_conflict(),
   binding_conflict: () => m.problem_binding_conflict(),
+  rule_set_catalog_not_ready: () => m.problem_rule_set_catalog_not_ready(),
   // A Node's own calls (its identity, its configuration receipts); never a console's.
   node_identity_rejected: () => m.problem_node_identity_rejected(),
   netmap_withdrawn: () => m.problem_netmap_withdrawn(),

@@ -5,7 +5,11 @@ use crate::state::service::ReadIdentity;
 use crate::store;
 use chrono::{DateTime, Utc};
 use meshway_model::{NetworkId, RequestId, Revision, UserId};
-use meshway_protocol::resources::{ResourceProblem, RuleSetList, RuleSetReport, RuleSetView};
+use meshway_protocol::resources::{
+    ResourceProblem, RuleSetCatalogPage, RuleSetCatalogQuery, RuleSetEntriesQuery,
+    RuleSetEntryPage, RuleSetList, RuleSetMatchQuery, RuleSetMatchResponse, RuleSetReport,
+    RuleSetView,
+};
 use meshway_rules::Digest;
 use rusqlite::{Transaction, TransactionBehavior};
 use std::collections::BTreeMap;
@@ -18,6 +22,10 @@ pub struct RuleSetScope {
     pub user: Option<UserId>,
     pub can_refresh: bool,
     pub(crate) definitions: BTreeMap<String, Source>,
+    /// Catalog providers effective in the current configuration.
+    pub(crate) providers: BTreeMap<String, meshway_configuration::RuleSetProvider>,
+    /// Seals the pagination cursors of resource views.
+    pub(crate) sealer: Arc<crate::secrets::Sealer>,
     pub views: BTreeMap<String, RuleSetView>,
     /// Durable attempt CAS, independent of timestamp precision and artifact equality.
     pub check_versions: BTreeMap<String, i64>,
@@ -198,6 +206,52 @@ impl<P: ResourceProvider> ResourceService<P> {
                     conversion: record.conversion(),
                     items: record.report.items.iter().map(Into::into).collect(),
                 })
+            })
+            .await
+    }
+    /// One page of the sets of a provider's accepted catalog.
+    pub async fn rule_set_catalog(
+        &self,
+        identity: ReadIdentity,
+        query: RuleSetCatalogQuery,
+    ) -> Result<RuleSetCatalogPage, Error> {
+        let provider = self.provider.clone();
+        self.handle
+            .read(move |tx| {
+                let now = Utc::now();
+                let scope = provider.rule_sets(tx, &identity, now)?;
+                super::browse::catalog(tx, &scope, &query, now.timestamp_millis())
+            })
+            .await
+    }
+    /// One page of one kind of members of a key's bound content.
+    pub async fn rule_set_entries(
+        &self,
+        identity: ReadIdentity,
+        key: String,
+        query: RuleSetEntriesQuery,
+    ) -> Result<RuleSetEntryPage, Error> {
+        let provider = self.provider.clone();
+        self.handle
+            .read(move |tx| {
+                let now = Utc::now();
+                let scope = provider.rule_sets(tx, &identity, now)?;
+                super::browse::entries(tx, &scope, &key, &query, now.timestamp_millis())
+            })
+            .await
+    }
+    /// Whether a key's bound content contains a name or address.
+    pub async fn rule_set_match(
+        &self,
+        identity: ReadIdentity,
+        key: String,
+        query: RuleSetMatchQuery,
+    ) -> Result<RuleSetMatchResponse, Error> {
+        let provider = self.provider.clone();
+        self.handle
+            .read(move |tx| {
+                let scope = provider.rule_sets(tx, &identity, Utc::now())?;
+                super::browse::matches(tx, &scope, &key, &query)
             })
             .await
     }

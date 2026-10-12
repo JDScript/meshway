@@ -90,13 +90,15 @@ pub(crate) fn load_record(
         .optional()?)
 }
 
-/// Accept `sequence` of a catalog verified under `trust`. A lower sequence
-/// than the accepted one is a regression and changes nothing.
+/// Accept `sequence` of a catalog verified under `trust`, keeping the
+/// verified bytes. A lower sequence than the accepted one is a regression
+/// and changes nothing.
 pub(crate) fn accept_catalog(
     tx: &Transaction<'_>,
     catalog: &str,
     trust: &str,
     sequence: u64,
+    (document, signature): (&[u8], &[u8]),
     now: i64,
 ) -> Result<bool, Error> {
     let accepted: Option<i64> = tx
@@ -111,11 +113,49 @@ pub(crate) fn accept_catalog(
         return Ok(false);
     }
     tx.execute(
-        "INSERT INTO rule_set_catalogs(catalog,trust,sequence,verified_at) VALUES(?1,?2,?3,?4)
-         ON CONFLICT(catalog,trust) DO UPDATE SET sequence=excluded.sequence,verified_at=excluded.verified_at",
-        params![catalog, trust, sequence, now],
+        "INSERT INTO rule_set_catalogs(catalog,trust,sequence,verified_at,document,signature)
+         VALUES(?1,?2,?3,?4,?5,?6)
+         ON CONFLICT(catalog,trust) DO UPDATE SET sequence=excluded.sequence,
+         verified_at=excluded.verified_at,document=excluded.document,signature=excluded.signature",
+        params![catalog, trust, sequence, now, document, signature],
     )?;
     Ok(true)
+}
+
+/// Accepted `sequence` and verification time of (`catalog`, `trust`), if
+/// this Server ever verified that catalog.
+pub(crate) fn catalog_head(
+    tx: &Transaction<'_>,
+    catalog: &str,
+    trust: &str,
+) -> Result<Option<(u64, i64)>, Error> {
+    tx.query_row(
+        "SELECT sequence,verified_at FROM rule_set_catalogs WHERE catalog=?1 AND trust=?2",
+        params![catalog, trust],
+        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+    )
+    .optional()?
+    .map(|(sequence, at)| {
+        u64::try_from(sequence)
+            .map(|sequence| (sequence, at))
+            .map_err(|_| Error::decode("rule_set_catalogs.sequence"))
+    })
+    .transpose()
+}
+
+/// The accepted `index.json` and `index.json.sig` bytes.
+pub(crate) fn catalog_document(
+    tx: &Transaction<'_>,
+    catalog: &str,
+    trust: &str,
+) -> Result<(Vec<u8>, Vec<u8>), Error> {
+    tx.query_row(
+        "SELECT document,signature FROM rule_set_catalogs WHERE catalog=?1 AND trust=?2",
+        params![catalog, trust],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )
+    .optional()?
+    .ok_or(Error::NotFound)
 }
 
 /// Records that `serial` of a Node's netmap references `digests`, and that

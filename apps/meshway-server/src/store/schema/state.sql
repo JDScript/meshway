@@ -56,12 +56,15 @@ CREATE TRIGGER rule_set_records_immutable BEFORE UPDATE ON rule_set_records
 BEGIN SELECT RAISE(ABORT, 'rule-set records are immutable'); END;
 
 -- Highest accepted `sequence` of each signed catalog under one trusted key
--- set. A catalog whose sequence is lower is never used again.
+-- set, with the exact `index.json` and `index.json.sig` bytes verified for
+-- it. A catalog whose sequence is lower is never used again.
 CREATE TABLE rule_set_catalogs (
     catalog TEXT NOT NULL,
     trust TEXT NOT NULL,
     sequence INTEGER NOT NULL CHECK(sequence BETWEEN 0 AND 9007199254740991),
     verified_at INTEGER NOT NULL CHECK(verified_at>=0),
+    document BLOB NOT NULL CHECK(length(document) BETWEEN 1 AND 33554432),
+    signature BLOB NOT NULL CHECK(length(signature) BETWEEN 1 AND 4096),
     PRIMARY KEY(catalog, trust)
 ) STRICT;
 CREATE TRIGGER rule_set_catalogs_monotonic BEFORE UPDATE ON rule_set_catalogs

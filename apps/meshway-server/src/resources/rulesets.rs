@@ -13,7 +13,7 @@ use meshway_rules::{
     catalog::{Held, Location},
     convert::Format,
 };
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::Arc};
 
 /// The source of one rule-set key.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -240,6 +240,9 @@ pub(crate) struct CatalogAcceptance {
     pub catalog: String,
     pub trust: String,
     pub sequence: u64,
+    /// The exact `index.json` and `index.json.sig` bytes that verified.
+    pub document: Arc<[u8]>,
+    pub signature: Arc<[u8]>,
 }
 
 fn problem(error: ConvertError) -> ResourceProblem {

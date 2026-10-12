@@ -278,8 +278,44 @@ pub struct ListObservationsPath {
 }
 
 #[derive(Clone)]
+pub struct ListRuleSetCatalogPath {
+    pub r#network_id: meshway_protocol::NetworkId,
+}
+#[derive(Clone)]
+pub struct ListRuleSetCatalogQuery {
+    pub r#cursor: Option<String>,
+    pub r#limit: Option<i32>,
+    pub r#provider: String,
+    pub r#q: Option<String>,
+}
+
+#[derive(Clone)]
+pub struct ListRuleSetEntriesPath {
+    pub r#network_id: meshway_protocol::NetworkId,
+    pub r#rule_set_key: String,
+}
+#[derive(Clone)]
+pub struct ListRuleSetEntriesQuery {
+    pub r#cursor: Option<String>,
+    pub r#kind: meshway_protocol::RuleSetEntryKind,
+    pub r#limit: Option<i32>,
+    pub r#q: Option<String>,
+}
+
+#[derive(Clone)]
 pub struct ListRuleSetsPath {
     pub r#network_id: meshway_protocol::NetworkId,
+}
+
+#[derive(Clone)]
+pub struct MatchRuleSetPath {
+    pub r#network_id: meshway_protocol::NetworkId,
+    pub r#rule_set_key: String,
+}
+#[derive(Clone, Default)]
+pub struct MatchRuleSetQuery {
+    pub r#ip: Option<String>,
+    pub r#name: Option<String>,
 }
 
 #[derive(Clone)]
@@ -3429,6 +3465,251 @@ impl crate::Client {
         }
     }
 
+    pub async fn list_rule_set_catalog(
+        &self,
+        path: &ListRuleSetCatalogPath,
+        query: &ListRuleSetCatalogQuery,
+        token: &str,
+    ) -> Result<
+        meshway_protocol::RuleSetCatalogPage,
+        crate::ClientError<meshway_protocol::ErrorResponse>,
+    > {
+        let path_values = [("networkId", {
+            let value = serde_json::from_slice::<String>(
+                &serde_json::to_vec(&path.r#network_id).map_err(|_| crate::ClientError::Request)?,
+            )
+            .map_err(|_| crate::ClientError::Request)?;
+            if !(value.len() == 36
+                && value != "00000000-0000-0000-0000-000000000000"
+                && value.bytes().enumerate().all(|(index, byte)| {
+                    if matches!(index, 8 | 13 | 18 | 23) {
+                        byte == b'-'
+                    } else {
+                        byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
+                    }
+                }))
+                || value.chars().count() < 36
+                || value.chars().count() > 36
+            {
+                return Err(crate::ClientError::Request);
+            }
+            value.to_string()
+        })];
+        let query_values = [
+            (
+                "cursor",
+                query
+                    .r#cursor
+                    .as_ref()
+                    .map(|value| {
+                        Ok::<_, crate::ClientError<meshway_protocol::ErrorResponse>>({
+                            let value = {
+                                let input = value;
+                                input.to_owned()
+                            };
+                            if value.chars().count() > 4096 {
+                                return Err(crate::ClientError::Request);
+                            }
+                            value.to_string()
+                        })
+                    })
+                    .transpose()?,
+            ),
+            (
+                "limit",
+                query
+                    .r#limit
+                    .as_ref()
+                    .map(|value| {
+                        Ok::<_, crate::ClientError<meshway_protocol::ErrorResponse>>({
+                            let value = {
+                                let input = value;
+                                input.to_owned()
+                            };
+                            if !(1..=200).contains(&value) {
+                                return Err(crate::ClientError::Request);
+                            }
+                            value.to_string()
+                        })
+                    })
+                    .transpose()?,
+            ),
+            (
+                "provider",
+                Some({
+                    let value = {
+                        let input = &query.r#provider;
+                        input.to_owned()
+                    };
+                    if value.chars().count() < 1 || value.chars().count() > 32 {
+                        return Err(crate::ClientError::Request);
+                    }
+                    value.to_string()
+                }),
+            ),
+            (
+                "q",
+                query
+                    .r#q
+                    .as_ref()
+                    .map(|value| {
+                        Ok::<_, crate::ClientError<meshway_protocol::ErrorResponse>>({
+                            let value = {
+                                let input = value;
+                                input.to_owned()
+                            };
+                            if value.chars().count() > 128 {
+                                return Err(crate::ClientError::Request);
+                            }
+                            value.to_string()
+                        })
+                    })
+                    .transpose()?,
+            ),
+        ];
+        let url = self.parameter_url(
+            "/api/v1/networks/{networkId}/rule-set-catalog",
+            &path_values,
+            &query_values,
+        )?;
+        let response = self
+            .send_url(reqwest::Method::GET, url, Some(token), None::<&()>)
+            .await?;
+        match response.status {
+            200 => response.json(),
+            400 | 401 | 403 | 404 | 409 | 503 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
+    pub async fn list_rule_set_entries(
+        &self,
+        path: &ListRuleSetEntriesPath,
+        query: &ListRuleSetEntriesQuery,
+        token: &str,
+    ) -> Result<
+        meshway_protocol::RuleSetEntryPage,
+        crate::ClientError<meshway_protocol::ErrorResponse>,
+    > {
+        let path_values = [
+            ("networkId", {
+                let value = serde_json::from_slice::<String>(
+                    &serde_json::to_vec(&path.r#network_id)
+                        .map_err(|_| crate::ClientError::Request)?,
+                )
+                .map_err(|_| crate::ClientError::Request)?;
+                if !(value.len() == 36
+                    && value != "00000000-0000-0000-0000-000000000000"
+                    && value.bytes().enumerate().all(|(index, byte)| {
+                        if matches!(index, 8 | 13 | 18 | 23) {
+                            byte == b'-'
+                        } else {
+                            byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
+                        }
+                    }))
+                    || value.chars().count() < 36
+                    || value.chars().count() > 36
+                {
+                    return Err(crate::ClientError::Request);
+                }
+                value.to_string()
+            }),
+            ("ruleSetKey", {
+                let value = {
+                    let input = &path.r#rule_set_key;
+                    input.to_owned()
+                };
+                value.to_string()
+            }),
+        ];
+        let query_values = [
+            (
+                "cursor",
+                query
+                    .r#cursor
+                    .as_ref()
+                    .map(|value| {
+                        Ok::<_, crate::ClientError<meshway_protocol::ErrorResponse>>({
+                            let value = {
+                                let input = value;
+                                input.to_owned()
+                            };
+                            if value.chars().count() > 4096 {
+                                return Err(crate::ClientError::Request);
+                            }
+                            value.to_string()
+                        })
+                    })
+                    .transpose()?,
+            ),
+            (
+                "kind",
+                Some({
+                    let value = serde_json::from_slice::<String>(
+                        &serde_json::to_vec(&query.r#kind)
+                            .map_err(|_| crate::ClientError::Request)?,
+                    )
+                    .map_err(|_| crate::ClientError::Request)?;
+                    if !["domain", "keyword", "ipv4", "ipv6"].contains(&value.as_str()) {
+                        return Err(crate::ClientError::Request);
+                    }
+                    value.to_string()
+                }),
+            ),
+            (
+                "limit",
+                query
+                    .r#limit
+                    .as_ref()
+                    .map(|value| {
+                        Ok::<_, crate::ClientError<meshway_protocol::ErrorResponse>>({
+                            let value = {
+                                let input = value;
+                                input.to_owned()
+                            };
+                            if !(1..=200).contains(&value) {
+                                return Err(crate::ClientError::Request);
+                            }
+                            value.to_string()
+                        })
+                    })
+                    .transpose()?,
+            ),
+            (
+                "q",
+                query
+                    .r#q
+                    .as_ref()
+                    .map(|value| {
+                        Ok::<_, crate::ClientError<meshway_protocol::ErrorResponse>>({
+                            let value = {
+                                let input = value;
+                                input.to_owned()
+                            };
+                            if value.chars().count() > 253 {
+                                return Err(crate::ClientError::Request);
+                            }
+                            value.to_string()
+                        })
+                    })
+                    .transpose()?,
+            ),
+        ];
+        let url = self.parameter_url(
+            "/api/v1/networks/{networkId}/rule-sets/{ruleSetKey}/entries",
+            &path_values,
+            &query_values,
+        )?;
+        let response = self
+            .send_url(reqwest::Method::GET, url, Some(token), None::<&()>)
+            .await?;
+        match response.status {
+            200 => response.json(),
+            400 | 401 | 403 | 404 | 503 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
     pub async fn list_rule_sets(
         &self,
         path: &ListRuleSetsPath,
@@ -3509,6 +3790,101 @@ impl crate::Client {
         match response.status {
             204 => response.empty(),
             401 | 503 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
+    pub async fn match_rule_set(
+        &self,
+        path: &MatchRuleSetPath,
+        query: &MatchRuleSetQuery,
+        token: &str,
+    ) -> Result<
+        meshway_protocol::RuleSetMatchResponse,
+        crate::ClientError<meshway_protocol::ErrorResponse>,
+    > {
+        let path_values = [
+            ("networkId", {
+                let value = serde_json::from_slice::<String>(
+                    &serde_json::to_vec(&path.r#network_id)
+                        .map_err(|_| crate::ClientError::Request)?,
+                )
+                .map_err(|_| crate::ClientError::Request)?;
+                if !(value.len() == 36
+                    && value != "00000000-0000-0000-0000-000000000000"
+                    && value.bytes().enumerate().all(|(index, byte)| {
+                        if matches!(index, 8 | 13 | 18 | 23) {
+                            byte == b'-'
+                        } else {
+                            byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
+                        }
+                    }))
+                    || value.chars().count() < 36
+                    || value.chars().count() > 36
+                {
+                    return Err(crate::ClientError::Request);
+                }
+                value.to_string()
+            }),
+            ("ruleSetKey", {
+                let value = {
+                    let input = &path.r#rule_set_key;
+                    input.to_owned()
+                };
+                value.to_string()
+            }),
+        ];
+        let query_values = [
+            (
+                "ip",
+                query
+                    .r#ip
+                    .as_ref()
+                    .map(|value| {
+                        Ok::<_, crate::ClientError<meshway_protocol::ErrorResponse>>({
+                            let value = {
+                                let input = value;
+                                input.to_owned()
+                            };
+                            if value.chars().count() > 64 {
+                                return Err(crate::ClientError::Request);
+                            }
+                            value.to_string()
+                        })
+                    })
+                    .transpose()?,
+            ),
+            (
+                "name",
+                query
+                    .r#name
+                    .as_ref()
+                    .map(|value| {
+                        Ok::<_, crate::ClientError<meshway_protocol::ErrorResponse>>({
+                            let value = {
+                                let input = value;
+                                input.to_owned()
+                            };
+                            if value.chars().count() > 254 {
+                                return Err(crate::ClientError::Request);
+                            }
+                            value.to_string()
+                        })
+                    })
+                    .transpose()?,
+            ),
+        ];
+        let url = self.parameter_url(
+            "/api/v1/networks/{networkId}/rule-sets/{ruleSetKey}/match",
+            &path_values,
+            &query_values,
+        )?;
+        let response = self
+            .send_url(reqwest::Method::GET, url, Some(token), None::<&()>)
+            .await?;
+        match response.status {
+            200 => response.json(),
+            400 | 401 | 403 | 404 | 503 => Err(response.problem()),
             _ => Err(response.unexpected()),
         }
     }

@@ -124,6 +124,10 @@ impl ResourceProvider for Provider {
             user: None,
             can_refresh: true,
             definitions,
+            providers: meshway_configuration::providers::effective_rule_set_providers(
+                &snapshot.document.configuration.rule_set_providers,
+            ),
+            sealer: Arc::clone(&self.sealer),
             views,
             check_versions,
         })
