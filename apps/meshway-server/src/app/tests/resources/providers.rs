@@ -11,6 +11,10 @@ struct Published {
 }
 
 fn publish(source: &str, previous: Option<&Catalog>) -> (Catalog, Published) {
+    publish_at(source, previous, "0123456789abcdef0123456789abcdef01234567")
+}
+
+fn publish_at(source: &str, previous: Option<&Catalog>, commit: &str) -> (Catalog, Published) {
     let conversion = meshway_rules::convert::convert(
         source.as_bytes(),
         meshway_rules::convert::Format::MihomoDomainText,
@@ -21,7 +25,7 @@ fn publish(source: &str, previous: Option<&Catalog>) -> (Catalog, Published) {
         upstream: Location {
             repo: "corp/rules".into(),
             reference: "main".into(),
-            commit: "0123456789abcdef0123456789abcdef01234567".into(),
+            commit: commit.into(),
             path: "openai.list".into(),
         },
         conversion: ConversionRecord::new(
@@ -251,7 +255,7 @@ async fn provider_sets_are_verified_bound_by_digest_and_served_only_to_referenci
 
     // A newer sequence with new content rebinds; the old digest stays
     // fetchable only while a lease of the superseded netmap can be live.
-    let (_, third) = publish("+.openai.com\n", Some(&second));
+    let (third_catalog, third) = publish("+.openai.com\n", Some(&second));
     serve(&remote, &third, &key);
     let rebound = refresh(&s, token, network).await;
     assert_eq!(rebound.problem, None);
@@ -287,5 +291,25 @@ async fn provider_sets_are_verified_bound_by_digest_and_served_only_to_referenci
         .await
         .unwrap();
     assert!(during && !after && current);
+
+    // A newer sequence with the same content (one digest) from another
+    // upstream commit: the binding stays, its current record follows.
+    let (_, fourth) = publish_at(
+        "+.openai.com\n",
+        Some(&third_catalog),
+        "fedcba9876543210fedcba9876543210fedcba98",
+    );
+    assert_eq!(fourth.digest, third.digest);
+    serve(&remote, &fourth, &key);
+    let refreshed = refresh(&s, token, network).await;
+    assert_eq!(refreshed.problem, None);
+    assert_eq!(refreshed.provider.unwrap().sequence, Some(4));
+    assert_eq!(
+        refreshed.source.unwrap().commit.as_deref(),
+        Some("fedcba9876543210fedcba9876543210fedcba98")
+    );
+    let view = implicit(&s, token, network).await;
+    assert_eq!(view.provider.unwrap().sequence, Some(4));
+    assert_eq!(view.artifact.unwrap().digest, third.digest.to_string());
     s.close().await;
 }

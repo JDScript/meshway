@@ -81,8 +81,9 @@ pub(crate) fn store(
     Ok(Ok(artifact.digest()))
 }
 
-/// Provenance of `digest` as bound for `source`; inline content is described
-/// by converting its declaration again.
+/// The current record of `digest` as bound for `source` (the latest
+/// preparation that produced it); inline content is described by converting
+/// its declaration again.
 pub(crate) fn record(
     tx: &Transaction<'_>,
     source: &Source,
@@ -96,7 +97,7 @@ pub(crate) fn record(
     }
     sql::load_record(tx, &source.identity(), digest)?
         .map(|text| {
-            serde_json::from_str(&text).map_err(|_| Error::decode("rule_set_records.record"))
+            serde_json::from_str(&text).map_err(|_| Error::decode("rule_set_record_heads.record"))
         })
         .transpose()
 }

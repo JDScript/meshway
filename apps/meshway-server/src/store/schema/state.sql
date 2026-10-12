@@ -55,6 +55,17 @@ CREATE TABLE rule_set_records (
 CREATE TRIGGER rule_set_records_immutable BEFORE UPDATE ON rule_set_records
 BEGIN SELECT RAISE(ABORT, 'rule-set records are immutable'); END;
 
+-- The record the latest successful preparation of one source gave `digest`
+-- (catalog sequence, upstream, held set and report): a refresh that yields
+-- the same digest replaces it, while rule_set_records keeps the first one.
+CREATE TABLE rule_set_record_heads (
+    source TEXT NOT NULL,
+    digest BLOB NOT NULL REFERENCES rule_set_artifacts(digest),
+    record TEXT NOT NULL CHECK(json_valid(record) AND json_type(record)='object'),
+    updated_at INTEGER NOT NULL CHECK(updated_at>=0),
+    PRIMARY KEY(source, digest)
+) STRICT;
+
 -- Highest accepted `sequence` of each signed catalog under one trusted key
 -- set, with the exact `index.json` and `index.json.sig` bytes verified for
 -- it. A catalog whose sequence is lower is never used again.

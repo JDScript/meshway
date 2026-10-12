@@ -8,7 +8,8 @@ const APPLICATION_ID: i64 = 0x4d534857; // MSHW: stable Meshway application iden
 // 2: netmap receipts replace execution publications, demands and receipts.
 // 3: rule-set artifacts are global `MWRS` content referenced by digest.
 // 4: accepted rule-set catalogs keep their verified document.
-const VERSION: i64 = 4;
+// 5: rule-set record heads beside immutable provenance.
+const VERSION: i64 = 5;
 const SQL: &str = concat!(
     include_str!("current.sql"),
     "\n",

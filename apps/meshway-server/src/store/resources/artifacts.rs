@@ -59,8 +59,8 @@ pub(crate) fn created_at(tx: &Transaction<'_>, digest: &Digest) -> Result<DateTi
     DateTime::from_timestamp_millis(at).ok_or(Error::decode("rule_set_artifacts.created_at"))
 }
 
-/// Records provenance of `digest` for `source` once; an existing record of
-/// the same pair is kept.
+/// Records `record` for `digest` of `source`: the first one as immutable
+/// provenance, and every one as the pair's current head.
 pub(crate) fn record(
     tx: &Transaction<'_>,
     source: &str,
@@ -73,9 +73,15 @@ pub(crate) fn record(
          ON CONFLICT(source,digest) DO NOTHING",
         params![source, digest.as_bytes().as_slice(), record, now],
     )?;
+    tx.execute(
+        "INSERT INTO rule_set_record_heads(source,digest,record,updated_at) VALUES(?1,?2,?3,?4)
+         ON CONFLICT(source,digest) DO UPDATE SET record=excluded.record,updated_at=excluded.updated_at",
+        params![source, digest.as_bytes().as_slice(), record, now],
+    )?;
     Ok(())
 }
 
+/// The current record of (`source`, `digest`): the latest preparation's.
 pub(crate) fn load_record(
     tx: &Transaction<'_>,
     source: &str,
@@ -83,7 +89,7 @@ pub(crate) fn load_record(
 ) -> Result<Option<String>, Error> {
     Ok(tx
         .query_row(
-            "SELECT record FROM rule_set_records WHERE source=?1 AND digest=?2",
+            "SELECT record FROM rule_set_record_heads WHERE source=?1 AND digest=?2",
             params![source, digest.as_bytes().as_slice()],
             |row| row.get(0),
         )
