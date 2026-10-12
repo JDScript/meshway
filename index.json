@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-12T08:21:44.232701+00:00",
+  "updatedAt": "2026-10-12T08:24:42.690636+00:00",
   "runs": [
     {
       "id": 38222036067,
@@ -304,9 +304,9 @@
       "commit": "53a59459547594b7a49762ef0de2a98ebc594690",
       "message": "Merge branch 'r2a/rules-wiring'",
       "createdAt": "2026-10-12T08:11:08Z",
-      "updatedAt": "2026-10-12T08:19:28Z",
-      "status": "in_progress",
-      "conclusion": null,
+      "updatedAt": "2026-10-12T08:21:35Z",
+      "status": "completed",
+      "conclusion": "success",
       "url": "https://github.com/JDScript/meshway/actions/runs/38222035939",
       "jobs": [
         {
@@ -335,11 +335,11 @@
           "id": 114720378780,
           "name": "console",
           "runner": "mars-14900k",
-          "status": "in_progress",
-          "conclusion": null,
+          "status": "completed",
+          "conclusion": "success",
           "startedAt": "2026-10-12T08:19:27Z",
-          "completedAt": null,
-          "seconds": null,
+          "completedAt": "2026-10-12T08:21:34Z",
+          "seconds": 127.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/38222035939/job/114720378780"
         },
         {
