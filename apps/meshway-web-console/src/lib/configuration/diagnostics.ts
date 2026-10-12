@@ -28,6 +28,11 @@ export const RESOURCE_PROBLEM: Record<ResourceProblem, () => string> = {
   budget_exceeded: () => m.configuration_ruleset_problem_budget_exceeded(),
   not_ready: () => m.configuration_ruleset_problem_not_ready(),
   validation_failed: () => m.configuration_ruleset_problem_validation_failed(),
+  unknown_rule_set: () => m.configuration_ruleset_problem_unknown_rule_set(),
+  rule_set_budget: () => m.configuration_ruleset_problem_rule_set_budget(),
+  signature_invalid: () => m.configuration_ruleset_problem_signature_invalid(),
+  catalog_regressed: () => m.configuration_ruleset_problem_catalog_regressed(),
+  integrity_failed: () => m.configuration_ruleset_problem_integrity_failed(),
 }
 
 const isResourceProblem = (value: string): value is ResourceProblem =>
@@ -204,6 +209,20 @@ const TEXT: Record<IssueCode, (p: Params, node: NodeNamer) => string> = {
     m.configuration_issue_unknown_rule_set({ key: p.key ?? "?" }),
   invalid_rule_source: () => m.configuration_issue_invalid_rule_source(),
   empty_rule_set_key: () => m.configuration_issue_empty_rule_set_key(),
+  invalid_rule_set_key: (p) =>
+    m.configuration_issue_invalid_rule_set_key({ key: p.key ?? "?" }),
+  unknown_rule_set_provider: (p) =>
+    m.configuration_issue_unknown_rule_set_provider({
+      provider: p.provider ?? "?",
+    }),
+  invalid_rule_set_provider: (p) =>
+    m.configuration_issue_invalid_rule_set_provider({ field: p.field ?? "?" }),
+  rule_set_partition_limit: (p) =>
+    m.configuration_issue_rule_set_partition_limit({
+      key: p.key ?? "?",
+      prefixes: p.prefixes ?? "?",
+      max: p.maxPrefixes ?? "?",
+    }),
   empty_inline_rule_set: () => m.configuration_issue_empty_inline_rule_set(),
   rule_set_budget: (p) => {
     if (p.maxSets !== undefined)

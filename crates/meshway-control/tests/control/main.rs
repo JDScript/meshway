@@ -1,5 +1,6 @@
 #![cfg(unix)]
 mod application;
+mod artifacts;
 mod authority;
 mod faults;
 mod key_enrollment;

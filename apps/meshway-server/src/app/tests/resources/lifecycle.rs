@@ -76,14 +76,14 @@ async fn startup_scheduler_updates_backs_off_persists_and_cancels_its_tls_socket
     input.rule_sets.insert("remote".into(), definition);
     s.apply(token, network, current.revision, &input).await;
     let initial = s.view(token, network).await;
-    let first = initial.artifact.unwrap().id;
+    let first = initial.artifact.unwrap().digest;
     s.close().await;
     remote.set(200, "payload:\n - 8.8.8.0/24\n");
     // No explicit refresh or retained administrator session is passed to the
     // worker: ordinary App startup resumes from persisted check deadlines.
     let s = Server::open(&path, remote.clone()).await;
     let updated = wait_view(&s, token, network, |v| {
-        v.artifact.as_ref().is_some_and(|a| a.id != first)
+        v.artifact.as_ref().is_some_and(|a| a.digest != first)
     })
     .await;
     let counts = resource_counts(&s, network).await;
@@ -195,7 +195,7 @@ async fn download_races_recheck_source_role_and_scope_and_do_not_hold_sqlite() {
     let mut input = source.configuration.clone();
     input.rule_sets.insert("remote".into(), remote.definition());
     s.apply(token, network, source.revision, &input).await;
-    let first = s.refresh(token, network).await.artifact.unwrap().id;
+    let first = s.refresh(token, network).await.artifact.unwrap().digest;
     // Concurrent callers join one real TLS transfer; only the first final
     // checker can update freshness, the stale waiter cannot overwrite it.
     remote.pause();
@@ -255,9 +255,12 @@ async fn download_races_recheck_source_role_and_scope_and_do_not_hold_sqlite() {
     );
     let pending = s.view(token, network).await;
     assert_eq!(pending.configuration_revision, changed.revision);
-    assert_eq!(pending.artifact.unwrap().id, first);
+    assert_eq!(pending.artifact.unwrap().digest, first);
     assert!(pending.problem.is_none());
-    assert_eq!(s.refresh(token, network).await.artifact.unwrap().id, first);
+    assert_eq!(
+        s.refresh(token, network).await.artifact.unwrap().digest,
+        first
+    );
 
     remote.pause();
     let refresh = tokio::spawn(
@@ -311,12 +314,15 @@ async fn download_races_recheck_source_role_and_scope_and_do_not_hold_sqlite() {
         Some(ResourceProblem::InvalidSource)
     );
     remote.private_dns.store(false, Ordering::SeqCst);
-    remote.set(200, &"x".repeat(crate::resources::MAX_DATASET_BYTES + 1));
+    remote.set(
+        200,
+        &"x".repeat(meshway_rules::convert::MAX_SOURCE_BYTES + 1),
+    );
     assert_eq!(
         s.refresh(token, network).await.problem,
         Some(ResourceProblem::TooLarge)
     );
-    assert_eq!(s.view(token, network).await.artifact.unwrap().id, first);
+    assert_eq!(s.view(token, network).await.artifact.unwrap().digest, first);
     // The production transaction is accepted before cancelling its awaiting
     // task. Its publication and resource journal must still commit together.
     remote.set(200, "payload:\n - 8.8.8.0/24\n");
@@ -346,7 +352,7 @@ async fn download_races_recheck_source_role_and_scope_and_do_not_hold_sqlite() {
     release.send(()).unwrap();
     let committed = s.view(token, network).await;
     assert!(committed.problem.is_none());
-    let committed_id = committed.artifact.unwrap().id;
+    let committed_id = committed.artifact.unwrap().digest;
     assert_ne!(committed_id, first);
     assert!(
         s.app
@@ -372,7 +378,7 @@ async fn download_races_recheck_source_role_and_scope_and_do_not_hold_sqlite() {
         Some(ResourceProblem::DownloadFailed)
     );
     assert_eq!(
-        s.view(token, network).await.artifact.unwrap().id,
+        s.view(token, network).await.artifact.unwrap().digest,
         committed_id
     );
     // An unrelated edit keeps the failed check with the unchanged binding:
@@ -386,6 +392,6 @@ async fn download_races_recheck_source_role_and_scope_and_do_not_hold_sqlite() {
     assert_eq!(carried.problem, Some(ResourceProblem::DownloadFailed));
     assert_eq!(carried.checked_at, failed.checked_at);
     assert_eq!(carried.last_success_at, failed.last_success_at);
-    assert_eq!(carried.artifact.unwrap().id, committed_id);
+    assert_eq!(carried.artifact.unwrap().digest, committed_id);
     s.close().await;
 }

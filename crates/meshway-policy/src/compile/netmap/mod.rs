@@ -24,7 +24,9 @@ pub struct NetmapInput<'a> {
     pub configuration: &'a NetworkConfiguration,
     pub subjects: &'a SubjectContext,
     pub inventory: &'a BTreeMap<NodeId, TrustedNode>,
-    pub rule_sets: &'a BTreeMap<String, RuleSetContent>,
+    /// Loaded sets of every key a rule references (network keys and
+    /// `<provider>:<name>`), inline sets included.
+    pub rule_sets: &'a super::rules::RuleSets,
     pub selected_profiles: &'a BTreeMap<NodeId, String>,
     /// Persisted selection versions; every profile switch increments one.
     pub selection_versions: &'a BTreeMap<NodeId, meshway_model::Version>,
@@ -112,12 +114,6 @@ fn validate(input: &NetmapInput<'_>) -> Result<Vec<NodeId>, NetmapError> {
     if cfg.nodes.len() > 10_000 || input.inventory.len() > 10_000 {
         return Err(CompileError::Budget.into());
     }
-    if input.rule_sets.values().any(|r| {
-        r.network_id != input.network
-            || r.ip_cidr.iter().any(|s| s.parse::<ipnet::IpNet>().is_err())
-    }) {
-        return Err(CompileError::InvalidInput.into());
-    }
     let members: Vec<NodeId> = input
         .inventory
         .keys()
@@ -166,7 +162,7 @@ fn compile_selected(
         cfg,
         input.subjects,
         input.inventory,
-        input.rule_sets,
+        references(input.rule_sets),
         input.selected_profiles,
         input.selection_versions,
     ))?;
@@ -261,4 +257,11 @@ fn assemble(
         digest,
         netmap: std::sync::Arc::new(netmap),
     })
+}
+
+/// The content identity of loaded sets, for digests over compiler inputs.
+fn references(sets: &super::rules::RuleSets) -> BTreeMap<&str, meshway_rules::Digest> {
+    sets.iter()
+        .map(|(key, set)| (key.as_str(), set.digest()))
+        .collect()
 }

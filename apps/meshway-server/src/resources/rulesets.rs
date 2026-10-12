@@ -1,245 +1,374 @@
-use super::{MAX_DATASET_BYTES, MAX_RULE_ENTRIES};
-use meshway_configuration::RuleSetFormat;
-use meshway_protocol::resources::{ResourceProblem, RuleSetData};
-use serde::Deserialize;
-use std::{collections::BTreeSet, net::IpAddr};
+//! What each rule-set key of a configuration is made from, and its
+//! conversion into an `MWRS` artifact through `meshway-rules` (the only
+//! converter). Provenance and conversion reports stay outside the artifact.
+use meshway_configuration::{
+    RoutingConfiguration, RuleSet, RuleSetFormat, RuleSetProvider,
+    providers::{effective_rule_set_providers, rule_set_reference},
+};
+use meshway_protocol::resources::{
+    ResourceProblem, RuleSetConversion, RuleSetHeld, RuleSetSourceView,
+};
+use meshway_rules::{
+    Artifact, ConvertError, Report,
+    catalog::{Held, Location},
+    convert::Format,
+};
+use std::collections::BTreeMap;
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct SingBoxSource {
-    version: u8,
-    rules: Vec<SingBoxRule>,
-}
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct SingBoxRule {
-    #[serde(default)]
-    domain: Vec<String>,
-    #[serde(default)]
-    domain_suffix: Vec<String>,
-    #[serde(default)]
-    ip_cidr: Vec<String>,
-}
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct MihomoSource {
-    payload: Vec<String>,
+/// The source of one rule-set key.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Source {
+    /// A `ruleSets` inline declaration: converted from the configuration.
+    Inline(RuleSet),
+    /// A `ruleSets` remote declaration.
+    Remote(RuleSet),
+    /// A `<provider>:<name>` reference: the set `<collection>/<name>` of the
+    /// provider's signed catalog.
+    Provider {
+        provider: String,
+        name: String,
+        definition: RuleSetProvider,
+    },
 }
 
-pub fn convert(bytes: &[u8], format: &RuleSetFormat) -> Result<RuleSetData, ResourceProblem> {
-    if bytes.len() > MAX_DATASET_BYTES {
-        return Err(ResourceProblem::TooLarge);
-    }
-    let data = match format {
-        RuleSetFormat::SingBoxSource => {
-            let input: SingBoxSource =
-                serde_json::from_slice(bytes).map_err(|_| ResourceProblem::ConversionFailed)?;
-            if !(1..=3).contains(&input.version) {
-                return Err(ResourceProblem::ConversionFailed);
+impl Source {
+    /// The same content source: what is fetched and how it is converted. The
+    /// refresh interval is not part of it.
+    pub(crate) fn same_content(&self, other: &Source) -> bool {
+        match (self, other) {
+            (
+                Self::Remote(RuleSet::Remote {
+                    url: a, format: af, ..
+                }),
+                Self::Remote(RuleSet::Remote {
+                    url: b, format: bf, ..
+                }),
+            ) => a == b && af == bf,
+            (
+                Self::Provider {
+                    provider: ap,
+                    name: an,
+                    definition: a,
+                },
+                Self::Provider {
+                    provider: bp,
+                    name: bn,
+                    definition: b,
+                },
+            ) => {
+                ap == bp
+                    && an == bn
+                    && a.catalog == b.catalog
+                    && a.collection == b.collection
+                    && trust(&a.public_keys) == trust(&b.public_keys)
             }
-            let mut data = RuleSetData {
-                ip_cidr: vec![],
-                domain_suffix: vec![],
-                domain: vec![],
+            _ => self == other,
+        }
+    }
+
+    pub(crate) fn needs_download(&self) -> bool {
+        !matches!(self, Self::Inline(_))
+    }
+
+    /// Scheduled refresh period; `None` for inline content.
+    pub(crate) fn interval_ms(&self) -> Option<u64> {
+        match self {
+            Self::Inline(_) => None,
+            Self::Remote(RuleSet::Remote {
+                update_interval, ..
+            }) => Some(update_interval.as_millis()),
+            Self::Remote(_) => None,
+            Self::Provider { definition, .. } => Some(definition.update_interval.as_millis()),
+        }
+    }
+
+    /// Identity of the content source for provenance records and download
+    /// coalescing.
+    pub(crate) fn identity(&self) -> String {
+        match self {
+            Self::Inline(_) => "inline".into(),
+            Self::Remote(RuleSet::Remote { url, format, .. }) => {
+                serde_json::json!({"remote": url, "format": format.as_str()}).to_string()
+            }
+            Self::Remote(_) => "inline".into(),
+            Self::Provider {
+                name, definition, ..
+            } => serde_json::json!({
+                "catalog": definition.catalog,
+                "set": meshway_configuration::providers::catalog_set_name(definition, name),
+                "trust": trust(&definition.public_keys),
+            })
+            .to_string(),
+        }
+    }
+
+    /// The declaration shown in resource views; implicit sets have none.
+    pub(crate) fn definition(&self) -> Option<&RuleSet> {
+        match self {
+            Self::Inline(set) | Self::Remote(set) => Some(set),
+            Self::Provider { .. } => None,
+        }
+    }
+}
+
+/// Canonical spelling of a trusted key set.
+pub(crate) fn trust(keys: &[String]) -> String {
+    let mut keys = keys.to_vec();
+    keys.sort();
+    keys.dedup();
+    keys.join(",")
+}
+
+/// Every rule-set key a configuration's egress rules can reference, with its
+/// source: declared keys and every well-formed `<provider>:<name>` reference
+/// of an enabled provider. Validation reports the others.
+pub(crate) fn sources(
+    rule_sets: &BTreeMap<String, RuleSet>,
+    providers: &BTreeMap<String, Option<RuleSetProvider>>,
+    routing: &RoutingConfiguration,
+) -> BTreeMap<String, Source> {
+    let mut out: BTreeMap<String, Source> = rule_sets
+        .iter()
+        .map(|(key, set)| {
+            let source = match set {
+                RuleSet::Inline { .. } => Source::Inline(set.clone()),
+                RuleSet::Remote { .. } => Source::Remote(set.clone()),
             };
-            for rule in input.rules {
-                // sing-box combines different match categories with AND. Our
-                // union-only set cannot preserve a mixed rule, so reject it.
-                // Exact and suffix names are both name categories: a rule
-                // listing both matches a name that is either, a union.
-                if (!rule.domain_suffix.is_empty() || !rule.domain.is_empty())
-                    && !rule.ip_cidr.is_empty()
-                {
-                    return Err(ResourceProblem::ConversionFailed);
-                }
-                if rule.domain_suffix.is_empty()
-                    && rule.domain.is_empty()
-                    && rule.ip_cidr.is_empty()
-                {
-                    return Err(ResourceProblem::ConversionFailed);
-                }
-                data.domain.extend(rule.domain);
-                data.domain_suffix.extend(rule.domain_suffix);
-                data.ip_cidr.extend(rule.ip_cidr);
-            }
-            data
-        }
-        RuleSetFormat::MihomoDomain => {
-            let input: MihomoSource =
-                serde_yaml_ng::from_slice(bytes).map_err(|_| ResourceProblem::ConversionFailed)?;
-            let mut suffixes = vec![];
-            let mut exact = vec![];
-            for entry in input.payload {
-                // +. is the name and its children; a bare name is exact. The
-                // *. form (one wildcard label, apex excluded) and any other
-                // wildcard have no equivalent and fail the conversion.
-                if let Some(suffix) = entry.strip_prefix("+.") {
-                    suffixes.push(suffix.to_owned());
-                } else if entry.contains(['*', '+']) || entry.starts_with('.') {
-                    return Err(ResourceProblem::ConversionFailed);
-                } else {
-                    exact.push(entry);
-                }
-            }
-            RuleSetData {
-                ip_cidr: vec![],
-                domain_suffix: suffixes,
-                domain: exact,
-            }
-        }
-        RuleSetFormat::MihomoIpcidr => {
-            let input: MihomoSource =
-                serde_yaml_ng::from_slice(bytes).map_err(|_| ResourceProblem::ConversionFailed)?;
-            RuleSetData {
-                ip_cidr: input.payload,
-                domain_suffix: vec![],
-                domain: vec![],
-            }
-        }
-    };
-    normalize(data)
-}
-pub fn entries(data: &RuleSetData) -> usize {
-    data.ip_cidr.len() + data.domain_suffix.len() + data.domain.len()
-}
-pub fn normalize(data: RuleSetData) -> Result<RuleSetData, ResourceProblem> {
-    if entries(&data) > MAX_RULE_ENTRIES || entries(&data) == 0 {
-        return Err(ResourceProblem::ConversionFailed);
-    }
-    let mut prefixes = BTreeSet::new();
-    for prefix in data.ip_cidr {
-        let (address, bits) = prefix
-            .split_once('/')
-            .ok_or(ResourceProblem::ConversionFailed)?;
-        let address: IpAddr = address
-            .parse()
-            .map_err(|_| ResourceProblem::ConversionFailed)?;
-        let bits: u8 = bits
-            .parse()
-            .map_err(|_| ResourceProblem::ConversionFailed)?;
-        let canonical = match address {
-            IpAddr::V4(ip) if bits <= 32 => {
-                let mask = u32::MAX.checked_shl(u32::from(32 - bits)).unwrap_or(0);
-                format!(
-                    "{}/{}",
-                    std::net::Ipv4Addr::from(u32::from(ip) & mask),
-                    bits
-                )
-            }
-            IpAddr::V6(ip) if bits <= 128 => {
-                let mask = u128::MAX.checked_shl(u32::from(128 - bits)).unwrap_or(0);
-                format!(
-                    "{}/{}",
-                    std::net::Ipv6Addr::from(u128::from(ip) & mask),
-                    bits
-                )
-            }
-            _ => return Err(ResourceProblem::ConversionFailed),
+            (key.clone(), source)
+        })
+        .collect();
+    let providers = effective_rule_set_providers(providers);
+    let references = routing
+        .egress
+        .rules
+        .iter()
+        .chain(routing.egress.profiles.values().flat_map(|p| &p.rules))
+        .flat_map(|rule| &rule.matcher.rule_sets);
+    for key in references {
+        let Some((provider, name)) = rule_set_reference(key) else {
+            continue;
         };
-        prefixes.insert(canonical);
+        if let Some(definition) = providers.get(provider)
+            && meshway_configuration::providers::valid_set_name(name)
+        {
+            out.entry(key.clone()).or_insert_with(|| Source::Provider {
+                provider: provider.to_owned(),
+                name: name.to_owned(),
+                definition: definition.clone(),
+            });
+        }
     }
-    let names = |names: Vec<String>| -> Result<Vec<String>, ResourceProblem> {
-        names
-            .into_iter()
-            .map(|name| canonical_domain(&name))
-            .collect::<Result<BTreeSet<_>, _>>()
-            .map(|set| set.into_iter().collect())
+    out
+}
+
+/// JSON Pointer of a key's declaration, or of its first reference for an
+/// implicit key: where its preparation problems are reported.
+pub(crate) fn pointer(routing: &RoutingConfiguration, key: &str) -> String {
+    let escape = |s: &str| s.replace('~', "~0").replace('/', "~1");
+    if rule_set_reference(key).is_none() {
+        return format!("/ruleSets/{}", escape(key));
+    }
+    let find = |rules: &[meshway_configuration::EgressRule], prefix: &str| {
+        rules.iter().enumerate().find_map(|(i, rule)| {
+            rule.matcher
+                .rule_sets
+                .iter()
+                .position(|k| k == key)
+                .map(|j| format!("{prefix}/{i}/match/ruleSets/{j}"))
+        })
     };
-    Ok(RuleSetData {
-        ip_cidr: prefixes.into_iter().collect(),
-        domain_suffix: names(data.domain_suffix)?,
-        domain: names(data.domain)?,
+    find(&routing.egress.rules, "/routing/egress/rules")
+        .or_else(|| {
+            routing.egress.profiles.iter().find_map(|(name, profile)| {
+                find(
+                    &profile.rules,
+                    &format!("/routing/egress/profiles/{}/rules", escape(name)),
+                )
+            })
+        })
+        .unwrap_or_default()
+}
+
+/// Provenance of bound content, stored per (source, digest).
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct Record {
+    /// Source format, or `inline`.
+    pub format: String,
+    pub upstream: Option<Location>,
+    /// Sequence of the verified catalog the artifact was taken from.
+    pub sequence: Option<u64>,
+    pub held: Option<Held>,
+    /// Complete for remote and inline sources; a catalog set carries its
+    /// published report when it could be read, else its summary only.
+    pub report: Report,
+}
+
+impl Record {
+    pub(crate) fn conversion(&self) -> RuleSetConversion {
+        (&self.report.summary).into()
+    }
+    pub(crate) fn source(&self) -> RuleSetSourceView {
+        let upstream = self.upstream.as_ref();
+        RuleSetSourceView {
+            format: self.format.clone(),
+            repo: upstream.map(|u| u.repo.clone()),
+            reference: upstream.map(|u| u.reference.clone()),
+            commit: upstream.map(|u| u.commit.clone()),
+            path: upstream.map(|u| u.path.clone()),
+        }
+    }
+    pub(crate) fn held(&self) -> Option<RuleSetHeld> {
+        self.held.as_ref().map(|held| RuleSetHeld {
+            since: held.since,
+            reason: held.reason.clone(),
+        })
+    }
+}
+
+/// Content ready to bind: the artifact, its record and, for a catalog set,
+/// the catalog sequence to accept in the binding transaction.
+#[derive(Clone, Debug)]
+pub(crate) struct Prepared {
+    pub artifact: Artifact,
+    pub record: Record,
+    pub catalog: Option<CatalogAcceptance>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CatalogAcceptance {
+    pub catalog: String,
+    pub trust: String,
+    pub sequence: u64,
+}
+
+fn problem(error: ConvertError) -> ResourceProblem {
+    match error {
+        ConvertError::TooLarge => ResourceProblem::TooLarge,
+        ConvertError::InvalidSource(_) => ResourceProblem::InvalidSource,
+        ConvertError::Budget(_) => ResourceProblem::RuleSetBudget,
+        ConvertError::Empty => ResourceProblem::ConversionFailed,
+    }
+}
+
+pub(crate) fn format(format: &RuleSetFormat) -> Format {
+    match format {
+        RuleSetFormat::SingBoxSource => Format::SingBoxSource,
+        RuleSetFormat::MihomoDomain => Format::MihomoDomain,
+        RuleSetFormat::MihomoIpcidr => Format::MihomoIpcidr,
+        RuleSetFormat::MihomoDomainText => Format::MihomoDomainText,
+        RuleSetFormat::MihomoIpcidrText => Format::MihomoIpcidrText,
+        RuleSetFormat::Classical => Format::Classical,
+    }
+}
+
+/// Converts downloaded source bytes; single entries never fail it.
+pub(crate) fn convert(bytes: &[u8], source: &RuleSetFormat) -> Result<Prepared, ResourceProblem> {
+    let conversion = meshway_rules::convert::convert(bytes, format(source)).map_err(problem)?;
+    Ok(Prepared {
+        artifact: conversion.artifact,
+        record: Record {
+            format: source.as_str().into(),
+            upstream: None,
+            sequence: None,
+            held: None,
+            report: conversion.report,
+        },
+        catalog: None,
     })
 }
-fn canonical_domain(name: &str) -> Result<String, ResourceProblem> {
-    let name = idna::domain_to_ascii(name.trim_end_matches('.'))
-        .map_err(|_| ResourceProblem::ConversionFailed)?
-        .to_ascii_lowercase();
-    if name.is_empty()
-        || name.len() > 253
-        || name.split('.').any(|label| {
-            label.is_empty()
-                || label.len() > 63
-                || label.starts_with('-')
-                || label.ends_with('-')
-                || !label
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b == b'-')
-        })
-    {
+
+/// Converts an inline declaration. Validation rejects every invalid entry,
+/// so a skipped entry here means the declaration cannot be bound.
+pub(crate) fn inline(set: &RuleSet) -> Result<Prepared, ResourceProblem> {
+    let RuleSet::Inline {
+        ip_cidr,
+        domain_suffix,
+        domain,
+        domain_subdomain,
+    } = set
+    else {
+        return Err(ResourceProblem::InvalidSource);
+    };
+    let conversion = meshway_rules::inline::convert(&meshway_rules::inline::Inline {
+        domain,
+        domain_suffix,
+        domain_subdomain,
+        ip_cidr,
+    })
+    .map_err(problem)?;
+    if !conversion.report.items.is_empty() {
         return Err(ResourceProblem::ConversionFailed);
     }
-    Ok(name)
+    Ok(Prepared {
+        artifact: conversion.artifact,
+        record: Record {
+            format: "inline".into(),
+            upstream: None,
+            sequence: None,
+            held: None,
+            report: conversion.report,
+        },
+        catalog: None,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
-    fn rejects_semantic_widening_and_unknown_fields() {
-        assert!(
-            convert(
-                br#"{"version":1,"rules":[{"domain_keyword":["example"]}]}"#,
-                &RuleSetFormat::SingBoxSource
-            )
-            .is_err()
-        );
-        assert!(convert(br#"{"version":1,"rules":[{"domain_suffix":["example.com"],"ip_cidr":["10.0.0.0/8"]}]}"#, &RuleSetFormat::SingBoxSource).is_err());
-        assert!(
-            convert(
-                b"payload:\n  - '*.example.com'",
-                &RuleSetFormat::MihomoDomain
-            )
-            .is_err()
-        );
-        assert!(
-            convert(
-                b"payload:\n  - '.example.com'",
-                &RuleSetFormat::MihomoDomain
-            )
-            .is_err()
-        );
-        let parsed = convert(
-            b"payload:\n  - '+.Example.com'",
+    fn converter_reports_entries_and_keeps_exact_names() {
+        let prepared = convert(
+            b"payload:\n  - 'google.com'\n  - '+.google.com'\n  - '*.x.com'\n  - '.cdn.example'",
             &RuleSetFormat::MihomoDomain,
         )
         .unwrap();
-        assert_eq!(parsed.domain_suffix, vec!["example.com"]);
-        assert!(parsed.domain.is_empty());
-    }
-    #[test]
-    fn exact_names_stay_exact() {
-        // MetaCubeX geosite lists mix `+.` suffixes with bare exact names.
-        let parsed = convert(
-            b"payload:\n  - 'google.com'\n  - '+.google.com'\n  - 'Github.com.'\n  - 'github.com'",
-            &RuleSetFormat::MihomoDomain,
-        )
-        .unwrap();
-        assert_eq!(parsed.domain_suffix, vec!["google.com"]);
-        assert_eq!(parsed.domain, vec!["github.com", "google.com"]);
-        let parsed = convert(
-            br#"{"version":2,"rules":[{"domain":["a.example.com"],"domain_suffix":["b.example.com"]},{"ip_cidr":["10.0.0.0/8"]}]}"#,
-            &RuleSetFormat::SingBoxSource,
-        )
-        .unwrap();
-        assert_eq!(parsed.domain, vec!["a.example.com"]);
-        assert_eq!(parsed.domain_suffix, vec!["b.example.com"]);
-        assert_eq!(parsed.ip_cidr, vec!["10.0.0.0/8"]);
-        assert!(
-            convert(
-                br#"{"version":2,"rules":[{"domain":["a.example.com"],"ip_cidr":["10.0.0.0/8"]}]}"#,
-                &RuleSetFormat::SingBoxSource,
-            )
-            .is_err()
+        let set = prepared.artifact.clone().open().unwrap();
+        assert!(set.match_domain("a.google.com").is_some());
+        assert!(set.match_domain("a.cdn.example").is_some());
+        assert!(set.match_domain("cdn.example").is_none());
+        assert_eq!(prepared.record.report.summary.skipped(), 1);
+        assert_eq!(
+            convert(b"payload: [", &RuleSetFormat::MihomoDomain).unwrap_err(),
+            ResourceProblem::InvalidSource
         );
-    }
-    #[test]
-    fn canonical_prefixes_and_duplicate_entries() {
-        let parsed = convert(
-            b"payload:\n  - 10.4.3.2/8\n  - 10.0.0.0/8",
-            &RuleSetFormat::MihomoIpcidr,
+        assert_eq!(
+            convert(b"payload:\n  - '*.x.com'", &RuleSetFormat::MihomoDomain).unwrap_err(),
+            ResourceProblem::ConversionFailed
+        );
+        let classical = convert(
+            b"DOMAIN-SUFFIX,openai.com\nDOMAIN-KEYWORD,openai\nIP-ASN,1\n",
+            &RuleSetFormat::Classical,
         )
         .unwrap();
-        assert_eq!(parsed.ip_cidr, vec!["10.0.0.0/8"]);
+        assert_eq!(classical.record.report.summary.skipped(), 1);
+    }
+
+    #[test]
+    fn sources_expand_provider_references_and_honor_overrides() {
+        let routing: RoutingConfiguration = serde_json::from_value(serde_json::json!({
+            "egress": { "rules": [
+                { "match": { "ruleSets": ["geosite:openai", "office", "geoip:cn", "nope:x"] },
+                  "action": { "type": "direct" } }
+            ] }
+        }))
+        .unwrap();
+        let mut providers = BTreeMap::new();
+        providers.insert("geoip".to_owned(), None);
+        let sets = sources(&BTreeMap::new(), &providers, &routing);
+        assert_eq!(sets.keys().collect::<Vec<_>>(), ["geosite:openai"]);
+        let Source::Provider { definition, .. } = &sets["geosite:openai"] else {
+            panic!()
+        };
+        assert_eq!(definition.collection, "meta-geosite");
+        assert_eq!(
+            meshway_configuration::providers::catalog_set_name(definition, "openai"),
+            "meta-geosite/openai"
+        );
+        assert_eq!(
+            pointer(&routing, "geosite:openai"),
+            "/routing/egress/rules/0/match/ruleSets/0"
+        );
     }
 }

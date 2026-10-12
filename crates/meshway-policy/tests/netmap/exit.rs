@@ -47,7 +47,10 @@ fn owning_compilers_reconstruct_the_same_dns_service_at_source_relay_and_exit() 
         .nodes
         .iter()
         .map(|node| {
-            meshway_policy::compile::netmap::LocalCompiler::new(&compiled.nodes[node].netmap)
+            meshway_policy::compile::netmap::LocalCompiler::new(
+                &compiled.nodes[node].netmap,
+                &Default::default(),
+            )
         })
         .collect();
     drop(compiled);
@@ -74,6 +77,7 @@ fn tcp443(destination: &str) -> Traffic {
 fn decide_at(compiled: &CompiledNetmaps, at: u8, destination: &str) -> LocalDecision {
     compile_local(
         &compiled.nodes[&node(at)].netmap,
+        &Default::default(),
         node(1),
         destination.parse().unwrap(),
         (BusinessProtocol::Tcp, port(443)),

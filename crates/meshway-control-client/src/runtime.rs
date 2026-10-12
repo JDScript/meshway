@@ -230,6 +230,26 @@ impl Client {
         Response::read(response, self.limit).await
     }
 
+    /// A body-less request whose success body is raw bytes of `media`.
+    /// Error responses still carry the JSON problem envelope.
+    pub(crate) async fn send_binary_url<P>(
+        &self,
+        method: Method,
+        url: Url,
+        token: Option<&str>,
+        media: &'static str,
+    ) -> Result<Response, ClientError<P>> {
+        let mut request = self.request_builder(method, url, token, media)?;
+        if let Some(timeout) = self.request_timeout {
+            request = request.timeout(timeout);
+        }
+        let response = request
+            .send()
+            .await
+            .map_err(|_| ClientError::Network { status: None })?;
+        Response::read_media(response, self.limit, Some(media)).await
+    }
+
     fn request_builder<P>(
         &self,
         method: Method,
@@ -324,6 +344,14 @@ fn media_type(response: &reqwest::Response, expected: &str) -> bool {
 
 impl Response {
     async fn read<P>(response: reqwest::Response, limit: usize) -> Result<Self, ClientError<P>> {
+        Self::read_media(response, limit, None).await
+    }
+
+    async fn read_media<P>(
+        response: reqwest::Response,
+        limit: usize,
+        binary: Option<&'static str>,
+    ) -> Result<Self, ClientError<P>> {
         let status = response.status().as_u16();
         // Redirects are never followed by the underlying client. Reject their
         // response immediately too, even if its body never reaches EOF.
@@ -334,14 +362,17 @@ impl Response {
             });
         }
         let json = media_type(&response, "application/json");
+        let raw = response.status().is_success()
+            && binary.is_some_and(|media| media_type(&response, media));
         if status == 204 {
             return Ok(Response {
                 status,
                 bytes: Vec::new(),
                 json: false,
+                raw: false,
             });
         }
-        if !json {
+        if !json && !raw {
             return Err(if response.status().is_success() {
                 ClientError::Decode { status }
             } else {
@@ -372,6 +403,7 @@ impl Response {
             status,
             bytes,
             json,
+            raw,
         })
     }
 }
@@ -411,8 +443,18 @@ pub(crate) struct Response {
     pub status: u16,
     bytes: Vec<u8>,
     json: bool,
+    /// A success body of the operation's declared binary media type.
+    raw: bool,
 }
 impl Response {
+    pub(crate) fn bytes<P>(self) -> Result<Vec<u8>, ClientError<P>> {
+        if !self.raw {
+            return Err(ClientError::Decode {
+                status: self.status,
+            });
+        }
+        Ok(self.bytes)
+    }
     pub(crate) fn json<T: DeserializeOwned, P>(self) -> Result<T, ClientError<P>> {
         if !self.json {
             return Err(ClientError::Decode {

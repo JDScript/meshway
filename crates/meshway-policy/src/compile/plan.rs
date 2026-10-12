@@ -19,7 +19,7 @@ pub enum PlanDestination {
 
 pub struct PlanRequest<'a> {
     pub topology: Topology<'a>,
-    pub rule_sets: &'a BTreeMap<String, RuleSetContent>,
+    pub rule_sets: &'a rules::RuleSets,
     pub selected_profiles: &'a BTreeMap<NodeId, String>,
     pub source: NodeId,
     pub destination: PlanDestination,
@@ -419,104 +419,6 @@ fn mesh_route(
     )
 }
 
-enum Match {
-    Yes(Option<RuleSetMatch>),
-    ResolutionDependent,
-    No,
-}
-
-/// Whether a route matcher selects the planned destination. Rule-set content
-/// is the bound artifact for remote sets; its absence is not a non-match.
-fn plan_match(
-    request: &PlanRequest<'_>,
-    matcher: &RouteMatch,
-    destination: &EvaluatedDestination,
-) -> Result<Match, CompileError> {
-    let cfg = request.topology.configuration;
-    // The matcher's own entries first, then each referenced set's.
-    struct Entries<'a> {
-        key: Option<&'a str>,
-        ips: &'a [String],
-        suffixes: &'a [String],
-        exact: &'a [String],
-    }
-    let mut sets = vec![Entries {
-        key: None,
-        ips: &matcher.ip_cidr,
-        suffixes: &matcher.domain_suffix,
-        exact: &matcher.domain,
-    }];
-    for key in &matcher.rule_sets {
-        match cfg.rule_sets.get(key) {
-            Some(RuleSet::Inline {
-                ip_cidr,
-                domain_suffix,
-                domain,
-            }) => sets.push(Entries {
-                key: Some(key),
-                ips: ip_cidr,
-                suffixes: domain_suffix,
-                exact: domain,
-            }),
-            Some(RuleSet::Remote { .. }) => {
-                let content = request
-                    .rule_sets
-                    .get(key)
-                    .ok_or(CompileError::UnavailableDependency)?;
-                sets.push(Entries {
-                    key: Some(key),
-                    ips: &content.ip_cidr,
-                    suffixes: &content.domain_suffix,
-                    exact: &content.domain,
-                });
-            }
-            None => return Err(CompileError::UnavailableDependency),
-        }
-    }
-    let found = |key: Option<&str>, entry: &str| {
-        Match::Yes(key.map(|key| RuleSetMatch {
-            key: key.to_owned(),
-            entry: entry.to_owned(),
-        }))
-    };
-    let mut other_kind = false;
-    match destination {
-        EvaluatedDestination::Address { address, .. } => {
-            let address: IpAddr = address.parse().map_err(|_| CompileError::InvalidInput)?;
-            for set in &sets {
-                if let Some(entry) = set.ips.iter().find(|s| matching::cidr(s, address)) {
-                    return Ok(found(set.key, entry));
-                }
-                other_kind |= !set.suffixes.is_empty() || !set.exact.is_empty();
-            }
-        }
-        EvaluatedDestination::Domain { name } => {
-            for set in &sets {
-                if let Some(entry) = set
-                    .exact
-                    .iter()
-                    .find(|d| crate::domain_name_matches(name, d))
-                    .or_else(|| {
-                        set.suffixes
-                            .iter()
-                            .find(|s| crate::domain_suffix_matches(name, s))
-                    })
-                {
-                    return Ok(found(set.key, entry));
-                }
-                other_kind |= !set.ips.is_empty();
-            }
-        }
-        // Defined as the destination no rule names.
-        EvaluatedDestination::Internet | EvaluatedDestination::Node { .. } => {}
-    }
-    Ok(if other_kind {
-        Match::ResolutionDependent
-    } else {
-        Match::No
-    })
-}
-
 fn route_of(
     kind_action: &RouteAction,
     rule: Option<String>,
@@ -558,23 +460,53 @@ fn missing_dependency() -> (Option<RouteEvaluation>, Option<EvaluationOutcome>) 
     )
 }
 
+/// The planned destination as egress rules judge it; `None` for destinations
+/// no rule names.
+fn judged(
+    destination: &EvaluatedDestination,
+) -> Result<Option<rules::Destination<'_>>, CompileError> {
+    Ok(match destination {
+        EvaluatedDestination::Address { address, .. } => Some(rules::Destination::Address(
+            address.parse().map_err(|_| CompileError::InvalidInput)?,
+        )),
+        EvaluatedDestination::Domain { name } => Some(rules::Destination::Name(name)),
+        EvaluatedDestination::Internet | EvaluatedDestination::Node { .. } => None,
+    })
+}
+
 /// The first rule selecting the destination, with rules skipped for the other
 /// destination kind appended to `skipped` as pointers under `prefix`.
 fn first_match(
     request: &PlanRequest<'_>,
+    matchers: &rules::Matchers,
+    profile: Option<&str>,
     destination: &EvaluatedDestination,
-    rules: &[EgressRule],
+    rules_list: &[EgressRule],
     prefix: &str,
     skipped: &mut Vec<String>,
 ) -> Result<Option<(usize, Option<RuleSetMatch>)>, CompileError> {
-    for (index, rule) in rules.iter().enumerate() {
-        match plan_match(request, &rule.matcher, destination)? {
-            Match::Yes(rule_set) => return Ok(Some((index, rule_set))),
-            Match::ResolutionDependent => skipped.push(format!("{prefix}/{index}")),
-            Match::No => {}
+    let Some(destination) = judged(destination)? else {
+        // Rule-set references are still dependencies of the decision.
+        for rule in rules_list {
+            if rule
+                .matcher
+                .rule_sets
+                .iter()
+                .any(|key| !request.rule_sets.contains_key(key))
+            {
+                return Err(CompileError::UnavailableDependency);
+            }
         }
-    }
-    Ok(None)
+        return Ok(None);
+    };
+    rules::first_match(
+        rules_list,
+        matchers.of(profile)?,
+        request.rule_sets,
+        destination,
+        prefix,
+        skipped,
+    )
 }
 
 fn escape(key: &str) -> String {
@@ -587,9 +519,12 @@ fn external_route(
     profile: &str,
 ) -> Result<(Option<RouteEvaluation>, Option<EvaluationOutcome>), CompileError> {
     let cfg = request.topology.configuration;
+    let matchers = rules::Matchers::new(cfg)?;
     let mut skipped = Vec::new();
     let public = match first_match(
         request,
+        &matchers,
+        None,
         destination,
         &cfg.routing.egress.rules,
         "/routing/egress/rules",
@@ -664,7 +599,15 @@ fn external_route(
         EgressProfile::Auto(_) => return Err(CompileError::InvalidInput),
     };
     let prefix = format!("/routing/egress/profiles/{}/rules", escape(&name));
-    let matched = match first_match(request, destination, &custom.rules, &prefix, &mut skipped) {
+    let matched = match first_match(
+        request,
+        &matchers,
+        Some(&name),
+        destination,
+        &custom.rules,
+        &prefix,
+        &mut skipped,
+    ) {
         Ok(result) => result,
         Err(CompileError::UnavailableDependency) => return Ok(missing_dependency()),
         Err(error) => return Err(error),

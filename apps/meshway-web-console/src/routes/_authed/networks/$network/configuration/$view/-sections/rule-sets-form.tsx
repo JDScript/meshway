@@ -50,6 +50,11 @@ const FORMAT: Record<RuleSetFormat, () => string> = {
   "sing-box-source": () => m.configuration_ruleset_format_sing_box(),
   "mihomo-domain": () => m.configuration_ruleset_format_mihomo_domain(),
   "mihomo-ipcidr": () => m.configuration_ruleset_format_mihomo_ipcidr(),
+  "mihomo-domain-text": () =>
+    m.configuration_ruleset_format_mihomo_domain_text(),
+  "mihomo-ipcidr-text": () =>
+    m.configuration_ruleset_format_mihomo_ipcidr_text(),
+  classical: () => m.configuration_ruleset_format_classical(),
 }
 
 const setKey = (): KeyRule => ({

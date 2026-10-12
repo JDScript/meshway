@@ -32,8 +32,7 @@ fn subtract(
 }
 
 fn prefixes(
-    cfg: &NetworkConfiguration,
-    rule_sets: &BTreeMap<String, RuleSetContent>,
+    sets: &rules::RuleSets,
     matcher: &RouteMatch,
     may_exit: bool,
 ) -> Result<Vec<IpNet>, CompileError> {
@@ -42,36 +41,12 @@ fn prefixes(
     {
         return Err(CompileError::Budget);
     }
-    let mut ips = matcher.ip_cidr.clone();
-    let mut has_names = !matcher.domain.is_empty() || !matcher.domain_suffix.is_empty();
-    for key in &matcher.rule_sets {
-        let (ip, domain, suffix) = match cfg.rule_sets.get(key) {
-            Some(RuleSet::Inline {
-                ip_cidr,
-                domain,
-                domain_suffix,
-            }) => (ip_cidr, domain, domain_suffix),
-            Some(RuleSet::Remote { .. }) => {
-                let set = rule_sets
-                    .get(key)
-                    .ok_or(CompileError::UnavailableDependency)?;
-                (&set.ip_cidr, &set.domain, &set.domain_suffix)
-            }
-            None => return Err(CompileError::UnavailableDependency),
-        };
-        if ips.len() + ip.len() > MAX_CAPTURE_PREFIXES {
-            return Err(CompileError::Budget);
-        }
-        ips.extend(ip.iter().cloned());
-        has_names |= !domain.is_empty() || !suffix.is_empty();
-    }
+    let (nets, names) = rules::prefixes(matcher, sets, MAX_CAPTURE_PREFIXES)?;
     // An IP-only route table cannot represent the identity of a queried name.
-    if has_names && may_exit {
+    if names && may_exit {
         return Err(CompileError::InvalidInput);
     }
-    ips.iter()
-        .map(|ip| ip.parse().map_err(|_| CompileError::InvalidInput))
-        .collect()
+    Ok(nets)
 }
 
 fn resolved<'a>(
@@ -96,7 +71,7 @@ pub(super) type Route = (IpNet, RouteAction);
 /// plan is unavailable; the generation binds `seed` and the resulting ranges.
 pub(super) fn capture(
     cfg: &NetworkConfiguration,
-    rule_sets: &BTreeMap<String, RuleSetContent>,
+    rule_sets: &rules::RuleSets,
     profile: &str,
     seed: meshway_model::Digest,
 ) -> Result<(EgressCapturePlan, Vec<Route>), CompileError> {
@@ -156,7 +131,7 @@ fn append(
 
 fn compile_ranges(
     cfg: &NetworkConfiguration,
-    rule_sets: &BTreeMap<String, RuleSetContent>,
+    rule_sets: &rules::RuleSets,
     profile: &str,
     plan: &mut EgressCapturePlan,
     routes: &mut Vec<Route>,
@@ -185,7 +160,7 @@ fn compile_ranges(
         if remaining.is_empty() {
             break;
         }
-        for prefix in prefixes(cfg, rule_sets, &rule.matcher, may_exit)? {
+        for prefix in prefixes(rule_sets, &rule.matcher, may_exit)? {
             let mut rest = Vec::new();
             let mut hit = Vec::new();
             for net in remaining {

@@ -268,6 +268,8 @@ pub struct ConfigurationView {
     pub routing: RoutingConfiguration,
     /// Named destination-set declarations; downloaded content and check status are exposed by resource views.
     #[serde(deserialize_with="unique_map")] pub rule_sets: BTreeMap<String,RuleSet>,
+    /// Catalog provider overrides; null entries disable a built-in provider.
+    #[serde(default, deserialize_with="unique_map", skip_serializing_if = "BTreeMap::is_empty")] pub rule_set_providers: BTreeMap<String,Option<RuleSetProvider>> [value_type = BTreeMap<String, NullableRuleSetProvider>],
 } }
 impl From<&NetworkConfiguration> for ConfigurationView {
     fn from(c: &NetworkConfiguration) -> Self {
@@ -286,6 +288,7 @@ impl From<&NetworkConfiguration> for ConfigurationView {
             topology: c.topology.clone(),
             routing: c.routing.clone(),
             rule_sets: c.rule_sets.clone(),
+            rule_set_providers: c.rule_set_providers.clone(),
         }
     }
 }

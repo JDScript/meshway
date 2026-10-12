@@ -88,8 +88,7 @@ pub(crate) fn recompile_with_rule_sets(
     trigger: Trigger,
 ) -> Result<Recompiled, Error> {
     let (revision, cfg, bindings) = current_configuration(tx, sealer, network)?;
-    let rule_sets =
-        crate::resources::bindings::compilation_contents(tx, network, rule_set_bindings)?;
+    let rule_sets = crate::resources::bindings::contents(tx, rule_set_bindings)?;
     let CompilationContext {
         subjects,
         inventory,
@@ -153,6 +152,12 @@ pub(crate) fn recompile_with_rule_sets(
                         "UPDATE node_netmaps SET withdrawn_at=NULL WHERE network_id=?1 AND node_id=?2",
                         params![bytes(network.as_uuid()), bytes(node.as_uuid())],
                     )?;
+                    super::resources::artifacts::restore(
+                        tx,
+                        bytes(network.as_uuid()),
+                        bytes(node.as_uuid()),
+                        reference.serial.get() as i64,
+                    )?;
                     changed.insert(node);
                 }
             }
@@ -167,6 +172,12 @@ pub(crate) fn recompile_with_rule_sets(
             tx.execute(
                 "UPDATE node_netmaps SET withdrawn_at=?3 WHERE network_id=?1 AND node_id=?2 AND withdrawn_at IS NULL",
                 params![bytes(network.as_uuid()), bytes(node.as_uuid()), now],
+            )?;
+            super::resources::artifacts::withdraw(
+                tx,
+                bytes(network.as_uuid()),
+                bytes(node.as_uuid()),
+                now,
             )?;
             changed.insert(*node);
         }
@@ -298,6 +309,21 @@ fn insert(
             sealed.as_bytes(),
             now,
         ],
+    )?;
+    // The artifact endpoint authorizes exactly the digests of this Node's
+    // netmaps that can still be under a lease.
+    super::resources::artifacts::reference(
+        tx,
+        bytes(network.as_uuid()),
+        bytes(node.as_uuid()),
+        serial.get() as i64,
+        netmap
+            .netmap
+            .projection
+            .rule_sets
+            .values()
+            .map(|reference| reference.digest),
+        now,
     )?;
     // Keep the new head and the one delta base before it.
     tx.execute(

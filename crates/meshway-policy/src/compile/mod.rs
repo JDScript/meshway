@@ -8,6 +8,7 @@ pub mod netmap;
 mod paths;
 mod plan;
 mod routing;
+pub mod rules;
 mod transports;
 
 use crate::{SubjectContext, topology_allows};
@@ -18,6 +19,7 @@ pub use matching::profile_allowed;
 use meshway_configuration::{execution::*, *};
 use meshway_model::{NetworkId, NodeId, Revision};
 pub use plan::{PlanDestination, PlanRequest, plan, plan_with_exit};
+pub use rules::{Artifacts, RuleSets};
 use std::collections::BTreeMap;
 
 pub const MAX_PATHS: usize = 4;

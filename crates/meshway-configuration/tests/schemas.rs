@@ -30,7 +30,11 @@ fn schemas_register_complete_node_protocols_and_exact_nullable_boundaries() {
             .as_object()
             .unwrap()
             .len(),
-        10
+        11
+    );
+    assert_eq!(
+        schemas["NetworkConfiguration"]["properties"]["ruleSetProviders"]["additionalProperties"]["$ref"],
+        "#/components/schemas/NullableRuleSetProvider"
     );
     assert_eq!(
         schemas["NodeSettings"]["properties"]["listeners"]["additionalProperties"]["$ref"],

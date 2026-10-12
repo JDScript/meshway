@@ -131,7 +131,8 @@ impl Control {
         let directory = Arc::clone(&self.directory);
         tokio::task::spawn_blocking(move || {
             directory.remove(netmap::CACHE_FILE)?;
-            directory.remove(netmap::FACTS_FILE)
+            directory.remove(netmap::FACTS_FILE)?;
+            netmap::artifacts::forget(&directory)
         })
         .await
         .map_err(|_| Error::ReloadRequired)??;

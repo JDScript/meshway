@@ -49,7 +49,14 @@ pub fn observation_paths(
         ObservationServiceScope::Udp { port } => (BusinessProtocol::Udp, Some(*port)),
         ObservationServiceScope::IcmpEcho => (BusinessProtocol::IcmpEcho, None),
     };
-    let decision = match compile_local(netmap, netmap.node_id, destination, (protocol, port)) {
+    // A Mesh destination is decided without egress rules or their rule sets.
+    let decision = match compile_local(
+        netmap,
+        &Default::default(),
+        netmap.node_id,
+        destination,
+        (protocol, port),
+    ) {
         Ok(LocalDecision::Permitted(decision)) => decision,
         _ => return Err(ObservationDenied),
     };

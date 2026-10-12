@@ -22,7 +22,7 @@ enum ApplyStage {
     Complete(ConfigurationAppliedResponse),
     Download {
         request: ConfigurationRequest,
-        resources: resources::Preparation,
+        resources: Box<resources::Preparation>,
         permit: tokio::sync::SemaphorePermit<'static>,
     },
 }
@@ -188,9 +188,7 @@ impl Configurations {
                             current.revision,
                             &current.bindings.rule_sets,
                         )?;
-                        let rule_sets = crate::resources::bindings::compilation_contents(
-                            tx, network, &selected,
-                        )?;
+                        let rule_sets = crate::resources::bindings::contents(tx, &selected)?;
                         (
                             current.revision,
                             current.document.configuration.clone(),
@@ -212,18 +210,8 @@ impl Configurations {
                         let rule_sets = evaluation
                             .rule_set_contents
                             .into_iter()
-                            .filter_map(|(key, data)| {
-                                let artifact = *evaluation.prepared.bindings.rule_sets.get(&key)?;
-                                Some((
-                                    key,
-                                    meshway_configuration::execution::RuleSetContent {
-                                        network_id: network,
-                                        artifact,
-                                        ip_cidr: data.ip_cidr,
-                                        domain_suffix: data.domain_suffix,
-                                        domain: data.domain,
-                                    },
-                                ))
+                            .filter(|(key, _)| {
+                                evaluation.prepared.bindings.rule_sets.contains_key(key)
                             })
                             .collect();
                         (
@@ -290,22 +278,24 @@ impl Configurations {
             .handle
             .transact(TransactionBehavior::Immediate, move |tx| {
                 let resources = service.stage_resources(tx, digest, network, &request, true)?;
-                if let Some(resources) = resources.filter(|r| r.needs_download()) {
-                    Ok((
+                match resources {
+                    Some(resources) if resources.needs_download() => Ok((
                         ApplyStage::Download {
                             request,
-                            resources,
+                            resources: Box::new(resources),
                             permit,
                         },
                         Vec::new(),
-                    ))
-                } else {
-                    // No network preparation: retain the original single accepted
-                    // write-job cancellation semantics for ordinary configuration.
-                    let _permit = permit;
-                    service
-                        .apply_request(tx, digest, network, request, id, None)
-                        .map(|(result, effects)| (ApplyStage::Complete(result), effects))
+                    )),
+                    // No network preparation (inline content is converted
+                    // already): retain the original single accepted write-job
+                    // cancellation semantics for ordinary configuration.
+                    resources => {
+                        let _permit = permit;
+                        service
+                            .apply_request(tx, digest, network, request, id, resources.as_ref())
+                            .map(|(result, effects)| (ApplyStage::Complete(result), effects))
+                    }
                 }
             })
             .await?;

@@ -1,4 +1,5 @@
 //! Production resource authority and exact version binding.
+use super::rulesets::Source;
 use super::{
     bindings,
     service::{ResourceProvider, RuleSetScope},
@@ -11,9 +12,10 @@ use crate::{
     state::service::ReadIdentity,
 };
 use chrono::{DateTime, Utc};
-use meshway_configuration::{NetworkConfigurationInput, RuleSet};
+use meshway_configuration::NetworkConfigurationInput;
 use meshway_model::{NetworkId, Revision};
-use meshway_protocol::resources::{ArtifactSummary, ResourceProblem, RuleSetView};
+use meshway_protocol::resources::{ResourceProblem, RuleSetProviderView, RuleSetView};
+use meshway_rules::Digest;
 use rusqlite::Transaction;
 use std::{collections::BTreeMap, sync::Arc};
 
@@ -61,13 +63,18 @@ impl ResourceProvider for Provider {
             snapshot.revision,
             &snapshot.bindings.rule_sets,
         )?;
+        let definitions = super::bindings::configuration_sources(&snapshot.document.configuration);
         let mut views = BTreeMap::new();
         let mut check_versions = BTreeMap::new();
-        for (key, definition) in &snapshot.document.configuration.rule_sets {
-            let artifact = selected
-                .get(key)
-                .map(|id| summary(tx, *network, *id))
+        for (key, source) in &definitions {
+            let digest = selected.get(key);
+            let artifact = digest
+                .map(|digest| super::artifacts::summary(tx, digest))
                 .transpose()?;
+            let record = digest
+                .map(|digest| super::artifacts::record(tx, source, digest))
+                .transpose()?
+                .flatten();
             let check = store::resources::checks::load(tx, *network, snapshot.revision, key)?;
             check_versions.insert(key.clone(), check.as_ref().map_or(0, |check| check.version));
             let problem = check.as_ref().and_then(|check| check.problem);
@@ -78,10 +85,31 @@ impl ResourceProvider for Provider {
                 RuleSetView {
                     key: key.clone(),
                     configuration_revision: snapshot.revision,
-                    definition: Some(definition.clone()),
+                    implicit: matches!(source, Source::Provider { .. }),
+                    definition: source.definition().cloned(),
+                    provider: match source {
+                        Source::Provider {
+                            provider,
+                            definition,
+                            ..
+                        } => Some(RuleSetProviderView {
+                            name: provider.clone(),
+                            catalog: definition.catalog.clone(),
+                            collection: definition.collection.clone(),
+                            sequence: record
+                                .as_ref()
+                                .and_then(|r| r.sequence)
+                                .map(|s| u32::try_from(s).unwrap_or(u32::MAX)),
+                        }),
+                        _ => None,
+                    },
                     artifact,
+                    source: record.as_ref().map(super::rulesets::Record::source),
+                    conversion: record.as_ref().map(super::rulesets::Record::conversion),
+                    held: record.as_ref().and_then(super::rulesets::Record::held),
                     problem: problem.or_else(|| {
-                        matches!(definition, RuleSet::Remote { .. })
+                        source
+                            .needs_download()
                             .then_some(ResourceProblem::NotReady)
                             .filter(|_| !selected.contains_key(key))
                     }),
@@ -95,7 +123,7 @@ impl ResourceProvider for Provider {
             revision: snapshot.revision,
             user: None,
             can_refresh: true,
-            definitions: snapshot.document.configuration.rule_sets.clone(),
+            definitions,
             views,
             check_versions,
         })
@@ -107,31 +135,28 @@ impl ResourceProvider for Provider {
         network: NetworkId,
         revision: Revision,
         key: &str,
-        artifact: &ArtifactSummary,
+        artifact: &Digest,
         now: DateTime<Utc>,
     ) -> Result<Vec<crate::effect::Effect>, Error> {
         let current = self.snapshot(tx, network)?;
         if current.revision != revision {
             return Err(Error::StateConflict);
         }
-        current
-            .document
-            .configuration
-            .rule_sets
-            .get(key)
-            .ok_or(Error::NotFound)?;
-        if summary(tx, network, artifact.id)? != *artifact {
+        if !bindings::configuration_sources(&current.document.configuration).contains_key(key) {
+            return Err(Error::NotFound);
+        }
+        if !crate::store::resources::artifacts::exists(tx, artifact)? {
             return Err(Error::InvalidRequest);
         }
         let input = NetworkConfigurationInput::from(&current.document.configuration);
         let mut selected =
             bindings::at_revision(tx, network, revision, &current.bindings.rule_sets)?;
-        let unchanged = selected.get(key) == Some(&artifact.id);
-        selected.insert(key.into(), artifact.id);
+        let unchanged = selected.get(key) == Some(artifact);
+        selected.insert(key.into(), *artifact);
         let context = crate::configuration::context::for_current(
             tx,
             &current,
-            bindings::contents(tx, network, &selected)?,
+            bindings::contents(tx, &selected)?,
         )?;
         meshway_policy::normalize_with_dependencies(input, &context)?;
         if unchanged {
@@ -154,19 +179,4 @@ impl ResourceProvider for Provider {
         )?;
         Ok(netmap.effects())
     }
-}
-
-fn summary(
-    tx: &Transaction<'_>,
-    network: NetworkId,
-    id: meshway_model::ArtifactId,
-) -> Result<ArtifactSummary, Error> {
-    let data = super::load_artifact(tx, network, id)?;
-    let (digest, created_at) = store::resources::artifacts::metadata(tx, network, id)?;
-    Ok(ArtifactSummary {
-        id,
-        digest,
-        created_at,
-        entries: super::entries(&data) as u32,
-    })
 }

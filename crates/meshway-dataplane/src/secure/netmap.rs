@@ -193,7 +193,7 @@ impl SecureNode {
     /// identity, address or key set retires everything. Retired circuits
     /// cancel their queued outputs before this returns.
     pub fn apply(&mut self, desired: &meshway_engine::Desired) -> Result<Applied, Error> {
-        if desired.reference() == self.desired.reference() {
+        if desired.same(&self.desired) {
             return Ok(Applied::default());
         }
         if !self.keys.matches(&desired.local().self_keys) {

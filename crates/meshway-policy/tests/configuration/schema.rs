@@ -262,6 +262,7 @@ fn persisted_snapshots_cannot_silently_reapply_defaults() {
             ip_cidr: vec!["10.20.0.0/16".into()],
             domain_suffix: vec![],
             domain: vec![],
+            domain_subdomain: vec![],
         },
     );
     dated.routing = serde_json::from_value(serde_json::json!({ "egress": { "rules": [

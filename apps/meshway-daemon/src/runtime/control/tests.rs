@@ -82,7 +82,7 @@ async fn live_tun_owner_conflict_retries_and_recovers_without_new_up() {
     control.redeem_enrollment().await.unwrap();
     control.authenticate().await.unwrap();
     let netmap = control.sync(&mut Facts).await.unwrap().netmap;
-    let snapshot = meshway_engine::Desired::new(&netmap.content).unwrap();
+    let snapshot = meshway_engine::Desired::new(&netmap.content, &Default::default()).unwrap();
 
     let owner_directory = Arc::new(
         meshway_private_storage::Directory::open(&root.join("owner"), "owner.lock").unwrap(),

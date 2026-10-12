@@ -73,3 +73,49 @@ pub(super) fn inventory() -> BTreeMap<NodeId, TrustedNode> {
         })
         .collect()
 }
+
+/// One in-memory set, as the Server stores inline and converted content.
+pub(super) fn set(
+    domain: &[&str],
+    suffix: &[&str],
+    cidr: &[&str],
+) -> std::sync::Arc<meshway_rules::RuleSet> {
+    let own = |items: &[&str]| items.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+    let (domain, suffix, cidr) = (own(domain), own(suffix), own(cidr));
+    std::sync::Arc::new(
+        meshway_rules::RuleSet::from_inline(&meshway_rules::inline::Inline {
+            domain: &domain,
+            domain_suffix: &suffix,
+            domain_subdomain: &[],
+            ip_cidr: &cidr,
+        })
+        .unwrap(),
+    )
+}
+
+/// Loaded sets of the configuration's inline definitions.
+pub(super) fn inline_sets(c: &NetworkConfiguration) -> RuleSets {
+    c.rule_sets
+        .iter()
+        .filter_map(|(key, definition)| match definition {
+            RuleSet::Inline {
+                ip_cidr,
+                domain_suffix,
+                domain,
+                domain_subdomain,
+            } => Some((
+                key.clone(),
+                std::sync::Arc::new(
+                    meshway_rules::RuleSet::from_inline(&meshway_rules::inline::Inline {
+                        domain,
+                        domain_suffix,
+                        domain_subdomain,
+                        ip_cidr,
+                    })
+                    .unwrap(),
+                ),
+            )),
+            RuleSet::Remote { .. } => None,
+        })
+        .collect()
+}

@@ -1,7 +1,7 @@
 CREATE TABLE dataset_artifacts (
     id TEXT PRIMARY KEY NOT NULL,
     network_id BLOB REFERENCES networks(id),
-    kind TEXT NOT NULL CHECK(kind IN ('ruleSet', 'geoip', 'asn')),
+    kind TEXT NOT NULL CHECK(kind IN ('geoip', 'asn')),
     source TEXT NOT NULL,
     format TEXT NOT NULL,
     data BLOB NOT NULL,
@@ -29,6 +29,44 @@ WHEN NEW.kind!=OLD.kind OR NOT EXISTS(SELECT 1 FROM dataset_artifacts WHERE id=N
 BEGIN SELECT RAISE(ABORT, 'invalid IP dataset head'); END;
 CREATE TRIGGER ip_dataset_heads_no_delete BEFORE DELETE ON ip_dataset_heads
 BEGIN SELECT RAISE(ABORT, 'IP dataset heads require a replacement'); END;
+
+-- Rule-set artifacts (`MWRS`), content addressed and shared by every network:
+-- the SHA-256 of `data` is `digest`. Rows are immutable and retained.
+CREATE TABLE rule_set_artifacts (
+    digest BLOB PRIMARY KEY NOT NULL CHECK(length(digest)=32),
+    data BLOB NOT NULL CHECK(length(data) BETWEEN 64 AND 16777216),
+    created_at INTEGER NOT NULL CHECK(created_at>=0)
+) STRICT;
+CREATE TRIGGER rule_set_artifacts_immutable BEFORE UPDATE ON rule_set_artifacts
+BEGIN SELECT RAISE(ABORT, 'rule-set artifacts are immutable'); END;
+CREATE TRIGGER rule_set_artifacts_retained BEFORE DELETE ON rule_set_artifacts
+BEGIN SELECT RAISE(ABORT, 'rule-set artifacts are retained'); END;
+
+-- Where an artifact came from for one source (a remote URL and format, or a
+-- catalog set): provenance and the conversion report stay out of the
+-- artifact, so equal content keeps one digest. Immutable once written.
+CREATE TABLE rule_set_records (
+    source TEXT NOT NULL,
+    digest BLOB NOT NULL REFERENCES rule_set_artifacts(digest),
+    record TEXT NOT NULL CHECK(json_valid(record) AND json_type(record)='object'),
+    created_at INTEGER NOT NULL CHECK(created_at>=0),
+    PRIMARY KEY(source, digest)
+) STRICT;
+CREATE TRIGGER rule_set_records_immutable BEFORE UPDATE ON rule_set_records
+BEGIN SELECT RAISE(ABORT, 'rule-set records are immutable'); END;
+
+-- Highest accepted `sequence` of each signed catalog under one trusted key
+-- set. A catalog whose sequence is lower is never used again.
+CREATE TABLE rule_set_catalogs (
+    catalog TEXT NOT NULL,
+    trust TEXT NOT NULL,
+    sequence INTEGER NOT NULL CHECK(sequence BETWEEN 0 AND 9007199254740991),
+    verified_at INTEGER NOT NULL CHECK(verified_at>=0),
+    PRIMARY KEY(catalog, trust)
+) STRICT;
+CREATE TRIGGER rule_set_catalogs_monotonic BEFORE UPDATE ON rule_set_catalogs
+WHEN NEW.sequence < OLD.sequence OR NEW.catalog != OLD.catalog OR NEW.trust != OLD.trust
+BEGIN SELECT RAISE(ABORT, 'catalog sequence must not decrease'); END;
 
 -- Current check outcome is separate from immutable configuration and publication
 -- bindings. A failed refresh retains the last successfully published artifact.

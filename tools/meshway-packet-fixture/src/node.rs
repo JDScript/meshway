@@ -36,7 +36,10 @@ pub async fn run(cli: &Cli, role: Role) -> Result<()> {
 /// One sync; Control's verified netmap as desired content.
 async fn sync(control: &mut Control) -> Result<meshway_engine::Desired> {
     let netmap = control.sync(&mut Facts).await?.netmap;
-    Ok(meshway_engine::Desired::new(&netmap.content).map_err(|_| "invalid netmap")?)
+    Ok(
+        meshway_engine::Desired::new(&netmap.content, &Default::default())
+            .map_err(|_| "invalid netmap")?,
+    )
 }
 
 struct Facts;
@@ -123,7 +126,8 @@ async fn run_control(
     };
     let (a, b) = (named("a")?, named("b")?);
     let target = meshway_dataplane::Target::Mesh { node: b };
-    let compiler = meshway_policy::compile::netmap::LocalCompiler::new(&configuration);
+    let compiler =
+        meshway_policy::compile::netmap::LocalCompiler::new(&configuration, &Default::default());
     let paths = compiler.transit(a, &target)?;
     if paths.len() != 1 {
         return Err("expected one complete netmap path".into());

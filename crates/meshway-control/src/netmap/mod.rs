@@ -10,9 +10,11 @@ use meshway_protocol::{NetmapSignature, PeerFactsDelta, StateCursor};
 use std::sync::Arc;
 pub use sync::KnownPeers;
 
+pub(crate) mod artifacts;
 mod facts;
 pub(crate) mod store;
 mod sync;
+pub use artifacts::{ArtifactCall, ArtifactProblem, ArtifactReply, fetch_artifacts};
 pub use sync::{
     NetmapChange, PeerFactsSink, SYNC_TIMEOUT, SyncCall, SyncFuture, SyncOutcome, SyncReply,
     SyncTransport, sync_loop,
@@ -48,6 +50,8 @@ pub(crate) struct State {
     /// Replaced whenever base, cursor or lease changes; a sync reply prepared
     /// against another value is superseded.
     exchange: Arc<()>,
+    /// Rule-set artifacts `base` references.
+    artifacts: artifacts::State,
 }
 
 impl Control {
@@ -71,6 +75,7 @@ impl Control {
         self.clock.raise_floor(lease.issued_at_ms);
         let known = facts::load(&self.directory, &netmap.netmap, reference);
         self.netmap.base = Some(Arc::new(netmap));
+        self.load_artifacts_blocking();
         if !authority || self.record.cache_blocked {
             return Ok(());
         }
@@ -206,6 +211,7 @@ impl Control {
         Some(meshway_engine::Netmap {
             content: self.netmap.base.clone()?,
             lease,
+            artifacts: self.published_artifacts(),
         })
     }
 
@@ -266,6 +272,8 @@ impl Control {
             self.persist_netmap(&netmap, &lease, signature).await?;
             self.netmap.base = Some(Arc::clone(&netmap));
             self.scope_facts();
+            // Published at once with what is cached; the rest is fetched.
+            self.load_artifacts().await;
             NetmapChange::New { previous }
         };
         self.netmap.lease = Some(lease);

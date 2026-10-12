@@ -229,7 +229,7 @@ pub struct RouteMatch {
     #[serde(default)] pub domain_suffix: Vec<String>,
     /// Canonical destination IPv4 or IPv6 CIDRs; defaults to an empty list.
     #[serde(default, rename = "ipCIDR")] pub ip_cidr: Vec<String>,
-    /// Referenced rule-set keys whose destinations join this match; defaults to an empty list.
+    /// Referenced rule sets whose destinations join this match: a network `ruleSets` key, or `<provider>:<name>` for a catalog set; defaults to an empty list.
     #[serde(default)] pub rule_sets: Vec<String>,
 } }
 // What a matched egress rule does with the traffic.
@@ -347,16 +347,40 @@ pub enum RuleSetFormat {
     MihomoDomain,
     /// mihomo IP CIDR payload.
     MihomoIpcidr,
+    /// mihomo domain list in `format: text`, one entry per line.
+    MihomoDomainText,
+    /// mihomo IP CIDR list in `format: text`, one entry per line.
+    MihomoIpcidrText,
+    /// mihomo/Clash classical `TYPE,value[,option]` lines.
+    Classical,
+}
+impl RuleSetFormat {
+    /// The configuration spelling, which is also the converter's format name.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::SingBoxSource => "sing-box-source",
+            Self::MihomoDomain => "mihomo-domain",
+            Self::MihomoIpcidr => "mihomo-ipcidr",
+            Self::MihomoDomainText => "mihomo-domain-text",
+            Self::MihomoIpcidrText => "mihomo-ipcidr-text",
+            Self::Classical => "classical",
+        }
+    }
 }
 impl TryFrom<String> for RuleSetFormat {
     type Error = &'static str;
     fn try_from(v: String) -> Result<Self, Self::Error> {
-        match v.as_str() {
-            "sing-box-source" => Ok(Self::SingBoxSource),
-            "mihomo-domain" => Ok(Self::MihomoDomain),
-            "mihomo-ipcidr" => Ok(Self::MihomoIpcidr),
-            _ => Err("unsupported rule set format"),
-        }
+        [
+            Self::SingBoxSource,
+            Self::MihomoDomain,
+            Self::MihomoIpcidr,
+            Self::MihomoDomainText,
+            Self::MihomoIpcidrText,
+            Self::Classical,
+        ]
+        .into_iter()
+        .find(|format| format.as_str() == v)
+        .ok_or("unsupported rule set format")
     }
 }
 fn day() -> PositiveDuration {
@@ -372,18 +396,63 @@ pub enum RuleSet {
         /// DNS label-boundary suffixes matching the name itself and its subdomains; defaults to an empty list.
         #[serde(default, rename = "domainSuffix")] domain_suffix: Vec<String>,
         /// Exact DNS names without subdomains; defaults to empty and is omitted from canonical output when empty.
-        #[serde(default, skip_serializing_if = "Vec::is_empty")] domain: Vec<String>
+        #[serde(default, skip_serializing_if = "Vec::is_empty")] domain: Vec<String>,
+        /// DNS names matching only their subdomains, not the name itself; defaults to empty and is omitted from canonical output when empty.
+        #[serde(default, rename = "domainSubdomain", skip_serializing_if = "Vec::is_empty")] domain_subdomain: Vec<String>
     },
     /// Fetch a supported source and bind its immutable normalized content to execution publications.
     Remote {
         /// HTTPS source URL without userinfo or fragment; downloads reject redirects and nonpublic resolved addresses.
         url: String,
-        /// Source format to convert without dropping unsupported entries.
+        /// Source format; entries without an equivalent are skipped and reported by the resource view.
         format: RuleSetFormat,
         /// Positive integer duration with `ms`, `s`, `m` or `h`; defaults to `24h`, with scheduling bounded below by one second.
         #[serde(default = "day", rename = "updateInterval")] update_interval: PositiveDuration
     },
 } }
+
+object! {
+/// Signed rule-set catalog referenced as `<provider>:<name>` from routing rules.
+pub struct RuleSetProvider {
+    /// HTTPS URL of the catalog `index.json`; its signature is `index.json.sig` and artifacts are under `artifacts/` beside it.
+    pub catalog: String,
+    /// Catalog collection holding this provider's sets; `<provider>:<name>` selects `<collection>/<name>`.
+    pub collection: String,
+    /// One to four trusted `ed25519:<64 lowercase hex>` catalog keys; any one valid signature is accepted.
+    pub public_keys: Vec<String>,
+    /// Positive integer duration with `ms`, `s`, `m` or `h`; defaults to `24h`, with scheduling bounded below by one second.
+    #[serde(default = "day")] pub update_interval: PositiveDuration,
+} }
+
+/// Schema of one `ruleSetProviders` value: a provider, or null to disable the
+/// built-in provider of the same name. Not a Rust value type.
+pub struct NullableRuleSetProvider;
+impl utoipa::PartialSchema for NullableRuleSetProvider {
+    fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+        use utoipa::openapi::schema::{ObjectBuilder, OneOfBuilder, Ref, Type};
+        OneOfBuilder::new()
+            .description(Some(
+                "A catalog provider, or null to disable the built-in provider of this name.",
+            ))
+            .item(Ref::from_schema_name("RuleSetProvider"))
+            .item(ObjectBuilder::new().schema_type(Type::Null))
+            .into()
+    }
+}
+impl ToSchema for NullableRuleSetProvider {
+    fn schemas(
+        schemas: &mut Vec<(
+            String,
+            utoipa::openapi::RefOr<utoipa::openapi::schema::Schema>,
+        )>,
+    ) {
+        schemas.push((
+            "RuleSetProvider".into(),
+            <RuleSetProvider as utoipa::PartialSchema>::schema(),
+        ));
+        <RuleSetProvider as ToSchema>::schemas(schemas);
+    }
+}
 
 object! {
 /// Complete canonical network configuration with fixed defaults, addresses and prepared materials.
@@ -408,6 +477,8 @@ pub struct NetworkConfiguration {
     #[serde(default)] pub routing: RoutingConfiguration,
     /// Named inline or remote destination sets referenced by routing rules; defaults to an empty map.
     #[serde(default, deserialize_with = "unique_map")] pub rule_sets: BTreeMap<String, RuleSet>,
+    /// Catalog providers keyed by name, replacing a built-in provider of the same name; null disables it. Defaults to an empty map and is omitted from canonical output when empty.
+    #[serde(default, deserialize_with = "unique_map", skip_serializing_if = "BTreeMap::is_empty")] pub rule_set_providers: BTreeMap<String, Option<RuleSetProvider>> [value_type = BTreeMap<String, NullableRuleSetProvider>],
 } }
 object! {
 /// Complete editable network document before canonicalization and dependency preparation.
@@ -432,4 +503,6 @@ pub struct NetworkConfigurationInput {
     #[serde(default)] pub routing: RoutingConfiguration,
     /// Named inline or remote destination sets; defaults to an empty map, with referenced remote contents prepared before apply.
     #[serde(default, deserialize_with = "unique_map")] pub rule_sets: BTreeMap<String, RuleSet>,
+    /// Catalog providers keyed by name, replacing a built-in provider of the same name; null disables it. Defaults to an empty map.
+    #[serde(default, deserialize_with = "unique_map", skip_serializing_if = "BTreeMap::is_empty")] pub rule_set_providers: BTreeMap<String, Option<RuleSetProvider>> [value_type = BTreeMap<String, NullableRuleSetProvider>],
 } }

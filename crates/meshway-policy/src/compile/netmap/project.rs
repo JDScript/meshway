@@ -425,12 +425,10 @@ pub fn project(input: &NetmapInput<'_>, index: &Index, node: NodeId) -> Projecte
                     auto: egress.auto.clone(),
                 },
             },
-            rule_sets: cfg
-                .rule_sets
-                .iter()
-                .filter(|(key, _)| used_sets.contains(key.as_str()))
-                .map(|(key, set)| (key.clone(), set.clone()))
-                .collect(),
+            // Nodes judge sets by content, fetched by digest: definitions
+            // (source URLs, catalogs, inline lists) stay on the Server.
+            rule_sets: BTreeMap::new(),
+            rule_set_providers: BTreeMap::new(),
         },
         subjects,
         inventory: pick(input.inventory)
@@ -441,7 +439,7 @@ pub fn project(input: &NetmapInput<'_>, index: &Index, node: NodeId) -> Projecte
             .rule_sets
             .iter()
             .filter(|(key, _)| used_sets.contains(key.as_str()))
-            .map(|(key, content)| (key.clone(), content.clone()))
+            .map(|(key, set)| (key.clone(), super::super::rules::reference(set)))
             .collect(),
         selected_profiles: visible
             .iter()

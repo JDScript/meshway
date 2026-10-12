@@ -231,9 +231,11 @@ pub fn netmap_udp_coordination(
     if !dialable || !listening {
         return Ok(false);
     }
-    let admitted = meshway_policy::compile::netmap::LocalCompiler::new(listener)
-        .carriers(dialer.node_id, listener.node_id)
-        .map_err(|_| Error::Internal("netmap carrier evaluation"))?;
+    // Carriers depend on topology only, never on rule sets.
+    let admitted =
+        meshway_policy::compile::netmap::LocalCompiler::new(listener, &Default::default())
+            .carriers(dialer.node_id, listener.node_id)
+            .map_err(|_| Error::Internal("netmap carrier evaluation"))?;
     Ok(admitted.contains(&carrier.listener_key))
 }
 

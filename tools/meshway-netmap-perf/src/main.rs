@@ -32,7 +32,7 @@ struct Scenario {
     previous: BTreeMap<NodeId, PreviousNetmap>,
     selected: BTreeMap<NodeId, String>,
     versions: BTreeMap<NodeId, Version>,
-    rule_sets: BTreeMap<String, execution::RuleSetContent>,
+    rule_sets: meshway_policy::compile::RuleSets,
 }
 
 fn node(n: u16) -> NodeId {

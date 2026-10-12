@@ -1,7 +1,7 @@
 //! Shared stable execution declarations and local decision vocabulary.
 use crate::object::object;
 use meshway_model::TransportProtocol;
-use meshway_model::{BoundNodeKey, NetworkId, NodeId};
+use meshway_model::{BoundNodeKey, NodeId};
 use meshway_transport::spec::*;
 pub use meshway_transport::spec::{ClientTls, DialParameters};
 use std::{collections::BTreeMap, net::IpAddr};
@@ -55,21 +55,6 @@ pub struct TrustedNode {
     /// Authenticated acquire declaration; reported State never overrides it.
     pub capabilities: BTreeMap<String, meshway_model::state::Capability>,
 } }
-object! {
-/// Resolved rule-set artifact content supplied as a fixed Server compilation dependency.
-pub struct RuleSetContent {
-    /// Network owning this resolved rule-set input.
-    pub network_id: NetworkId,
-    /// Exact artifact version whose content is supplied.
-    pub artifact: meshway_model::ArtifactId,
-    /// IP CIDR ranges used by rule-set matching.
-    #[serde(rename = "ipCIDR")] pub ip_cidr: Vec<String>,
-    /// Domain suffixes used by rule-set matching.
-    pub domain_suffix: Vec<String>,
-    /// Exact domain names used by rule-set matching.
-    pub domain: Vec<String>,
-} }
-
 meshway_model::string_enum! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]

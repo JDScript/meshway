@@ -76,6 +76,17 @@ export function operationModel(document) {
           if (response.content !== undefined) throw new Error("204 cannot declare content");
           return { status: Number(status), type: undefined };
         }
+        // Raw immutable bytes of one declared media type (rule-set artifacts).
+        const media = Object.keys(response.content ?? {});
+        if (Number(status) < 300 && media.length === 1 && media[0] !== "application/json") {
+          if (!/^application\/vnd\.meshway\.[a-z0-9.+-]+$/.test(media[0])) throw new Error(`Unsupported binary media type: ${media[0]}`);
+          if (method !== "get" || op.requestBody !== undefined || eventType) throw new Error("Binary responses require a body-less GET");
+          const body = response.content[media[0]];
+          keys(body, ["schema"], "binary media");
+          keys(body.schema, ["type", "format"], "binary schema");
+          if (body.schema.type !== "string" || body.schema.format !== "binary") throw new Error("Binary response must describe string binary bytes");
+          return { status: Number(status), type: undefined, binary: media[0] };
+        }
         return { status: Number(status), type: component(response.content) };
       }).sort((a, b) => a.status - b.status);
       const successes = responses.filter(response => response.status < 300);
@@ -93,7 +104,9 @@ const banner = "// Generated from Controller OpenAPI. Do not edit.\n";
 export function typescriptOperations(model) {
   const schemas = new Set();
   const optionTypes = new Set();
-  const functions = model.map(op => {
+  // Binary operations serve Node agents (Rust); the browser client has no
+  // byte transport, so they are not emitted here.
+  const functions = model.filter(op => !op.success.binary).map(op => {
     for (const name of [op.body, op.success.type, op.errorType]) if (name) schemas.add(name);
     const options = `${op.authenticated ? "Authenticated" : ""}${op.stream ? "Stream" : "Request"}Options`;
     optionTypes.add(options);
@@ -119,6 +132,9 @@ export function rustOperations(model) {
     if (op.stream) {
       const contract = op.errorType ? `crate::StreamResponse::json(${op.success.status}, &[${op.errors.map(error => error.status).join(", ")}])` : `crate::StreamResponse::untyped(${op.success.status})`;
       return `    pub async fn ${op.rustName}(&self${args}${op.authenticated ? ", token: &str" : ""}, options: &crate::StreamOptions<'_>) -> Result<crate::EventStream<${success}, ${error}>, crate::ClientError<${error}>> {\n${setup || `        let url = self.parameter_url(${JSON.stringify(op.path)}, &[], &[])?;\n`}        self.stream(url, ${op.authenticated ? "Some(token)" : "None"}, options, ${contract}).await\n    }`;
+    }
+    if (op.success.binary) {
+      return `    pub async fn ${op.rustName}(&self${args}${op.authenticated ? ", token: &str" : ""}) -> Result<Vec<u8>, crate::ClientError<${error}>> {\n${setup || `        let url = self.parameter_url(${JSON.stringify(op.path)}, &[], &[])?;\n`}        let response = self.send_binary_url(reqwest::Method::${op.method}, url, ${op.authenticated ? "Some(token)" : "None"}, ${JSON.stringify(op.success.binary)}).await?;\n        match response.status {\n            ${op.success.status} => response.bytes(),\n            ${op.errors.length ? op.errors.map(error => error.status).join(" | ") + " => Err(response.problem()),\n            " : ""}_ => Err(response.unexpected()),\n        }\n    }`;
     }
     return `    pub async fn ${op.rustName}(&self${args}${op.body ? `, body: &meshway_protocol::${op.body}` : ""}${op.authenticated ? ", token: &str" : ""}) -> Result<${success}, crate::ClientError<${error}>> {\n${setup}        let response = self.${hasParameters ? "send_url" : "send"}(reqwest::Method::${op.method}, ${hasParameters ? "url" : JSON.stringify(op.path)}, ${op.authenticated ? "Some(token)" : "None"}, ${op.body ? "Some(body)" : "None::<&()>"}).await?;\n        match response.status {\n            ${op.success.status} => ${op.success.type ? "response.json()" : "response.empty()"},\n            ${op.errors.length ? op.errors.map(error => error.status).join(" | ") + " => Err(response.problem()),\n            " : ""}_ => Err(response.unexpected()),\n        }\n    }`;
   });

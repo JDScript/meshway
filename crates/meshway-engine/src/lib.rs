@@ -11,6 +11,7 @@ use meshway_configuration::{
     netmap::{CompiledNetmap, EgressPlan, ExitRole, NetmapDns, NetmapSelf, NodeNetmap},
 };
 use meshway_model::{NetmapLease, NetmapRef};
+pub use meshway_policy::compile::Artifacts;
 use meshway_policy::compile::netmap::LocalCompiler;
 use std::{collections::BTreeMap, sync::Arc};
 
@@ -28,18 +29,49 @@ mod tests;
 pub struct Desired {
     content: Arc<CompiledNetmap>,
     compiler: Arc<LocalCompiler>,
+    /// The content as executed with the loaded artifacts (see
+    /// `LocalCompiler::effective`); the signed content when none is missing.
+    effective: Arc<NodeNetmap>,
+    missing: Vec<meshway_rules::Digest>,
 }
 
 impl Desired {
-    /// Content plus its one shared compiler. Holding a `Desired` grants
-    /// nothing: components act only on what Engine applies to them.
-    pub fn new(content: &Arc<CompiledNetmap>) -> Result<Self, Error> {
+    /// Content plus its one shared compiler over the loaded artifacts.
+    /// Holding a `Desired` grants nothing: components act only on what
+    /// Engine applies to them.
+    pub fn new(content: &Arc<CompiledNetmap>, artifacts: &Artifacts) -> Result<Self, Error> {
         content.verify().map_err(|_| Error::Content)?;
-        let compiler = Arc::new(LocalCompiler::from_shared(content.netmap.clone()));
+        let compiler = Arc::new(LocalCompiler::from_shared(
+            content.netmap.clone(),
+            artifacts,
+        ));
+        let effective = compiler.effective().map_err(|_| Error::Content)?;
         Ok(Self {
+            missing: compiler.missing(),
             content: content.clone(),
             compiler,
+            effective,
         })
+    }
+
+    /// Referenced rule-set artifacts this desired state is computed without.
+    pub fn missing(&self) -> &[meshway_rules::Digest] {
+        &self.missing
+    }
+
+    /// Whether `artifacts` would leave the same set missing.
+    pub fn same_artifacts(&self, artifacts: &Artifacts) -> bool {
+        !self
+            .missing
+            .iter()
+            .any(|digest| artifacts.contains_key(digest))
+    }
+
+    /// The same executed content: the same signed reference computed with the
+    /// same missing artifacts. Components compare desired states with this,
+    /// so content whose artifacts arrived later is applied again.
+    pub fn same(&self, other: &Desired) -> bool {
+        self.reference() == other.reference() && self.missing == other.missing
     }
 
     pub fn reference(&self) -> NetmapRef {
@@ -49,28 +81,30 @@ impl Desired {
     pub fn content(&self) -> &Arc<CompiledNetmap> {
         &self.content
     }
+    /// The content components execute: the signed netmap, or its
+    /// fail-closed form while referenced artifacts are missing.
     pub fn netmap(&self) -> &Arc<NodeNetmap> {
-        &self.content.netmap
+        &self.effective
     }
     pub fn compiler(&self) -> &Arc<LocalCompiler> {
         &self.compiler
     }
     pub fn local(&self) -> &NetmapSelf {
-        &self.content.netmap.self_
+        &self.effective.self_
     }
     /// Candidate order/topology/keepalive are evaluated by the shared compiler
     /// on this projection, never inferred from observed peer availability.
     pub fn dialers(&self) -> &BTreeMap<String, DialCandidate> {
-        &self.content.netmap.dialers
+        &self.effective.dialers
     }
     pub fn egress(&self) -> Option<&EgressPlan> {
-        self.content.netmap.egress.as_ref()
+        self.effective.egress.as_ref()
     }
     pub fn exit_role(&self) -> Option<&ExitRole> {
-        self.content.netmap.exit_role.as_ref()
+        self.effective.exit_role.as_ref()
     }
     pub fn dns(&self) -> &NetmapDns {
-        &self.content.netmap.dns
+        &self.effective.dns
     }
 }
 
@@ -172,16 +206,21 @@ impl<C: Components> Engine<C> {
             // A newer offer that cannot be admitted (its lease already ended
             // or its content is invalid) ends the current content too: the
             // older, possibly wider content never outlives its successor.
+            // Same content with newly loaded artifacts is a new desired state.
             let same = self
                 .desired
                 .as_ref()
-                .filter(|current| current.reference() == next.content.reference())
+                .filter(|current| {
+                    current.reference() == next.content.reference()
+                        && current.same_artifacts(&next.artifacts)
+                })
                 .cloned();
             let accepted =
                 lease::Active::accept(next, self.latest, &mut self.clock).and_then(|active| {
                     match &same {
                         Some(current) => Ok((active, current.clone())),
-                        None => Desired::new(&next.content).map(|desired| (active, desired)),
+                        None => Desired::new(&next.content, &next.artifacts)
+                            .map(|desired| (active, desired)),
                     }
                 });
             let (active, desired) = match accepted {

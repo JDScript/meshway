@@ -1,11 +1,12 @@
+use super::rulesets::Source;
 use crate::effect::Effect;
 use crate::error::Error;
 use crate::state::service::ReadIdentity;
 use crate::store;
 use chrono::{DateTime, Utc};
-use meshway_configuration::RuleSet;
 use meshway_model::{NetworkId, RequestId, Revision, UserId};
-use meshway_protocol::resources::{ArtifactSummary, ResourceProblem, RuleSetList, RuleSetView};
+use meshway_protocol::resources::{ResourceProblem, RuleSetList, RuleSetReport, RuleSetView};
+use meshway_rules::Digest;
 use rusqlite::{Transaction, TransactionBehavior};
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -16,7 +17,7 @@ pub struct RuleSetScope {
     /// The session user behind a user view; system views have none.
     pub user: Option<UserId>,
     pub can_refresh: bool,
-    pub definitions: BTreeMap<String, RuleSet>,
+    pub(crate) definitions: BTreeMap<String, Source>,
     pub views: BTreeMap<String, RuleSetView>,
     /// Durable attempt CAS, independent of timestamp precision and artifact equality.
     pub check_versions: BTreeMap<String, i64>,
@@ -46,7 +47,7 @@ pub trait ResourceProvider: Send + Sync + 'static {
         network: NetworkId,
         revision: Revision,
         key: &str,
-        artifact: &ArtifactSummary,
+        artifact: &Digest,
         now: DateTime<Utc>,
     ) -> Result<Vec<Effect>, Error>;
 }
@@ -55,8 +56,8 @@ pub(crate) struct SystemTask {
     pub network: NetworkId,
     pub revision: Revision,
     pub key: String,
-    pub definition: RuleSet,
-    pub artifact: Option<meshway_model::ArtifactId>,
+    pub definition: Source,
+    pub artifact: Option<Digest>,
     pub checked_at: Option<DateTime<Utc>>,
     pub check_version: i64,
 }
@@ -66,17 +67,12 @@ enum Authority {
     User(ReadIdentity),
     System(NetworkId),
 }
+/// What a refresh checked before downloading: network, revision, source,
+/// bound digest and check version.
+type Checked = (NetworkId, Revision, Source, Option<String>, i64);
 enum Refresh {
-    Replayed(RuleSetView),
-    Perform(
-        (
-            NetworkId,
-            Revision,
-            RuleSet,
-            Option<meshway_model::ArtifactId>,
-            i64,
-        ),
-    ),
+    Replayed(Box<RuleSetView>),
+    Perform(Checked),
 }
 impl Authority {
     fn scope<P: ResourceProvider>(
@@ -151,17 +147,56 @@ impl<P: ResourceProvider> ResourceService<P> {
                                     .unwrap_or_else(|| RuleSetView {
                                         key: key.clone(),
                                         configuration_revision: scope.revision,
+                                        implicit: matches!(
+                                            scope.definitions[key],
+                                            Source::Provider { .. }
+                                        ),
                                         definition: None,
+                                        provider: None,
                                         artifact: None,
+                                        source: None,
+                                        conversion: None,
+                                        held: None,
                                         problem: None,
                                         checked_at: None,
                                         last_success_at: None,
                                     });
-                            view.definition =
-                                scope.can_refresh.then(|| scope.definitions[key].clone());
+                            if !scope.can_refresh {
+                                view.definition = None;
+                            }
                             view
                         })
                         .collect(),
+                })
+            })
+            .await
+    }
+    /// The complete conversion report of one key's bound content.
+    pub async fn rule_set_report(
+        &self,
+        identity: ReadIdentity,
+        key: String,
+    ) -> Result<RuleSetReport, Error> {
+        let provider = self.provider.clone();
+        self.handle
+            .read(move |tx| {
+                let scope = provider.rule_sets(tx, &identity, Utc::now())?;
+                let source = scope.definitions.get(&key).ok_or(Error::NotFound)?;
+                let digest: Digest = scope
+                    .views
+                    .get(&key)
+                    .and_then(|view| view.artifact.as_ref())
+                    .ok_or(Error::NotFound)?
+                    .digest
+                    .parse()
+                    .map_err(|_| Error::Internal("bound digest"))?;
+                let record =
+                    super::artifacts::record(tx, source, &digest)?.ok_or(Error::NotFound)?;
+                Ok(RuleSetReport {
+                    key,
+                    digest: digest.to_string(),
+                    conversion: record.conversion(),
+                    items: record.report.items.iter().map(Into::into).collect(),
                 })
             })
             .await
@@ -216,7 +251,7 @@ impl<P: ResourceProvider> ResourceService<P> {
                     )? {
                         Some(earlier) if earlier == check_key => {
                             let view = scope.views.remove(&check_key).ok_or(Error::NotFound)?;
-                            return Ok(Refresh::Replayed(view));
+                            return Ok(Refresh::Replayed(Box::new(view)));
                         }
                         Some(_) => return Err(Error::RequestConflict),
                         None => {}
@@ -231,12 +266,12 @@ impl<P: ResourceProvider> ResourceService<P> {
                     .views
                     .get(&check_key)
                     .and_then(|view| view.artifact.as_ref())
-                    .map(|artifact| artifact.id);
+                    .map(|artifact| artifact.digest.clone());
                 let check_version = *scope.check_versions.get(&check_key).unwrap_or(&0);
                 if expected.is_some_and(|task| {
                     task.revision != scope.revision
                         || task.definition != definition
-                        || task.artifact != artifact
+                        || task.artifact.map(|d| d.to_string()) != artifact
                         || task.check_version != check_version
                 }) {
                     return Err(Error::StateConflict);
@@ -251,10 +286,10 @@ impl<P: ResourceProvider> ResourceService<P> {
             })
             .await?
         {
-            Refresh::Replayed(view) => return Ok(view),
+            Refresh::Replayed(view) => return Ok(*view),
             Refresh::Perform(checked) => checked,
         };
-        let converted = match self.downloads.fetch(&definition).await {
+        let converted = match self.downloads.fetch(&definition, &Default::default()).await {
             Ok(data) => Ok(data),
             Err(super::downloads::FetchError::Resource(problem)) => Err(problem),
             Err(super::downloads::FetchError::Cancelled) => return Err(Error::CLOSED),
@@ -272,7 +307,7 @@ impl<P: ResourceProvider> ResourceService<P> {
                     .views
                     .get(&key)
                     .and_then(|view| view.artifact.as_ref())
-                    .map(|artifact| artifact.id);
+                    .map(|artifact| artifact.digest.clone());
                 if scope.network != network
                     || scope.revision != revision
                     || scope.definitions.get(&key) != Some(&definition)
@@ -302,21 +337,33 @@ impl<P: ResourceProvider> ResourceService<P> {
                 let mut bound = Vec::new();
                 let problem = match converted {
                     Err(problem) => Some(problem),
-                    Ok(data) => {
+                    Ok(prepared) => {
                         store::resources::bindings::begin(tx)?;
-                        let candidate = super::store_artifact(tx, network, "rule-set", &data, now)?;
-                        match provider.bind_rule_set(tx, network, revision, &key, &candidate, now) {
-                            Ok(effects) => {
-                                store::resources::bindings::release(tx)?;
-                                artifact = Some(candidate);
-                                bound = effects;
-                                None
-                            }
-                            Err(Error::InvalidRequest | Error::InvalidConfiguration(_)) => {
+                        match super::artifacts::store(
+                            tx,
+                            &definition,
+                            &prepared,
+                            now.timestamp_millis(),
+                        )? {
+                            Err(problem) => {
                                 store::resources::bindings::rollback(tx)?;
-                                Some(ResourceProblem::ValidationFailed)
+                                Some(problem)
                             }
-                            Err(error) => return Err(error),
+                            Ok(candidate) => match provider
+                                .bind_rule_set(tx, network, revision, &key, &candidate, now)
+                            {
+                                Ok(effects) => {
+                                    store::resources::bindings::release(tx)?;
+                                    artifact = Some(super::artifacts::summary(tx, &candidate)?);
+                                    bound = effects;
+                                    None
+                                }
+                                Err(Error::InvalidRequest | Error::InvalidConfiguration(_)) => {
+                                    store::resources::bindings::rollback(tx)?;
+                                    Some(ResourceProblem::ValidationFailed)
+                                }
+                                Err(error) => return Err(error),
+                            },
                         }
                     }
                 };
@@ -326,7 +373,10 @@ impl<P: ResourceProvider> ResourceService<P> {
                     .views
                     .remove(&key)
                     .ok_or(Error::Internal("bound rule set view missing"))?;
-                if result.artifact != artifact || result.problem != problem {
+                if result.artifact.as_ref().map(|a| &a.digest)
+                    != artifact.as_ref().map(|a| &a.digest)
+                    || result.problem != problem
+                {
                     return Err(Error::Internal("bound rule set view mismatch"));
                 }
                 // Once admitted, the executor owns COMMIT and publication

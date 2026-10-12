@@ -6,7 +6,8 @@ use thiserror::Error;
 
 const APPLICATION_ID: i64 = 0x4d534857; // MSHW: stable Meshway application identity.
 // 2: netmap receipts replace execution publications, demands and receipts.
-const VERSION: i64 = 2;
+// 3: rule-set artifacts are global `MWRS` content referenced by digest.
+const VERSION: i64 = 3;
 const SQL: &str = concat!(
     include_str!("current.sql"),
     "\n",

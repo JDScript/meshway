@@ -12,7 +12,7 @@ fn exit(nodes: &[NodeId], via: &[NodeId]) -> RuleAction {
 fn evaluate(
     c: &NetworkConfiguration,
     inv: &BTreeMap<NodeId, TrustedNode>,
-    rule_sets: &BTreeMap<String, RuleSetContent>,
+    rule_sets: &RuleSets,
     destination: PlanDestination,
     profile: Option<&str>,
 ) -> Evaluation {
@@ -78,6 +78,7 @@ fn routed() -> NetworkConfiguration {
             ip_cidr: vec!["9.9.9.0/24".into()],
             domain_suffix: vec!["example.org".into()],
             domain: vec![],
+            domain_subdomain: vec![],
         },
     );
     c.rule_sets.insert(
@@ -128,17 +129,11 @@ fn routed() -> NetworkConfiguration {
     c
 }
 
-fn remote_content() -> BTreeMap<String, RuleSetContent> {
-    BTreeMap::from([(
-        "remote".to_owned(),
-        RuleSetContent {
-            network_id: "00000000-0000-4003-8000-000000000001".parse().unwrap(),
-            artifact: "00000000-0000-4005-8000-000000000001".parse().unwrap(),
-            ip_cidr: vec![],
-            domain_suffix: vec!["telegram.org".into()],
-            domain: vec!["t.me".into()],
-        },
-    )])
+/// The inline sets plus the bound content of `remote`.
+fn remote_content() -> RuleSets {
+    let mut sets = inline_sets(&routed());
+    sets.insert("remote".to_owned(), set(&["t.me"], &["telegram.org"], &[]));
+    sets
 }
 
 #[test]

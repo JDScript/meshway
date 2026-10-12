@@ -10,6 +10,10 @@ use tokio::time::Instant;
 pub struct Netmap {
     pub content: Arc<CompiledNetmap>,
     pub lease: NetmapLease,
+    /// Verified rule-set artifacts Control holds for this content. A
+    /// referenced artifact not yet here leaves its rules unavailable; the
+    /// content still applies at once.
+    pub artifacts: Arc<Artifacts>,
 }
 
 pub(super) struct Clock {

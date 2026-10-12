@@ -10,12 +10,13 @@ use axum::{
 use meshway_model::{NetworkId, RequestId};
 use meshway_protocol::{
     ErrorResponse,
-    resources::{RefreshRuleSetRequest, RuleSetList, RuleSetView},
+    resources::{RefreshRuleSetRequest, RuleSetList, RuleSetReport, RuleSetView},
 };
 pub fn router<P: ResourceProvider>(service: ResourceService<P>) -> Router {
     use super::declared_route;
     let router = declared_route::<__path_list, _, _, _>(Router::new(), list::<P>);
     let router = declared_route::<__path_detail, _, _, _>(router, detail::<P>);
+    let router = declared_route::<__path_report, _, _, _>(router, report::<P>);
     declared_route::<__path_refresh, _, _, _>(router, refresh::<P>)
         .layer(middleware::from_fn(super::context))
         .with_state(service)
@@ -54,7 +55,24 @@ async fn detail<P: ResourceProvider>(
             .map_err(|e| HttpError::domain(id, e))?,
     ))
 }
-/// Refresh a remote rule set and publish validated content changes.
+/// Read the complete conversion report of one rule set's bound content.
+///
+/// Requires current Owner or Admin membership. The report lists the first 1,000 skipped source entries with position, reason and text; a catalog set whose published report could not be read lists none and keeps its counts. A key without bound content returns 404.
+#[utoipa::path(get,path="/api/v1/networks/{networkId}/rule-sets/{ruleSetKey}/report",operation_id="getRuleSetReport",tag="resources",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("ruleSetKey"=String,Path)),responses((status=200,body=RuleSetReport),(status=400,body=ErrorResponse,description="invalid_request"),(status=401,body=ErrorResponse,description="invalid_session"),(status=403,body=ErrorResponse,description="permission_denied"),(status=404,body=ErrorResponse,description="not_found"),(status=503,body=ErrorResponse,description="service_unavailable")))]
+async fn report<P: ResourceProvider>(
+    State(service): State<ResourceService<P>>,
+    Extension(id): Extension<RequestId>,
+    Path((network, key)): Path<(NetworkId, String)>,
+    headers: HeaderMap,
+) -> Result<Json<RuleSetReport>, HttpError> {
+    Ok(Json(
+        service
+            .rule_set_report(user(&headers, network, id)?, key)
+            .await
+            .map_err(|e| HttpError::domain(id, e))?,
+    ))
+}
+/// Refresh a remote or catalog rule set and publish validated content changes.
 ///
 /// Requires current Owner or Admin membership, rechecked before binding the downloaded content.
 /// For 24 hours, same-user and same-network `requestId` retries for this key return its current view; reuse for another key returns 409.
@@ -76,5 +94,5 @@ async fn refresh<P: ResourceProvider>(
     ))
 }
 #[derive(utoipa::OpenApi)]
-#[openapi(paths(list, detail, refresh))]
+#[openapi(paths(list, detail, report, refresh))]
 pub struct ResourceApi;

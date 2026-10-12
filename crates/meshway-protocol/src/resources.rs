@@ -1,27 +1,31 @@
 use crate::object::wire_object;
 use chrono::{DateTime, Utc};
-use meshway_model::{ArtifactId, Digest, RequestId, Revision};
+use meshway_model::{RequestId, Revision};
+use std::collections::BTreeMap;
 
-pub use meshway_model::resources::RuleSetData;
 wire_object! { #[derive(Clone, Debug)]
-/// Transient validated rule-set content summary produced by a noncommitting configuration preview.
+/// Transient validated rule-set content produced by a noncommitting configuration preview.
 pub struct PreparedRuleSet {
-    /// Digest of the complete normalized destination content, without reserving an artifact ID.
-    pub digest: Digest,
-    /// Total normalized CIDR, suffix and exact-name entries.
+    /// `sha256:` and the lowercase hex SHA-256 of the complete artifact; content addressed, no ID is reserved.
+    pub digest: String [pattern = "^sha256:[0-9a-f]{64}$"],
+    /// Artifact length in bytes.
+    pub bytes: u32,
+    /// Canonical members: names, keywords and merged address ranges.
     pub entries: u32,
 } }
 wire_object! { #[derive(Clone, Debug, PartialEq, Eq)]
-/// Immutable, validated rule-set artifact selected by a resource binding.
+/// Immutable rule-set artifact selected by a resource binding. Artifacts are content addressed and shared by every network.
 pub struct ArtifactSummary {
-    /// Immutable artifact identity used to bind exact historical content.
-    pub id: ArtifactId,
-    /// Digest of the complete normalized destination content.
-    pub digest: Digest,
-    /// UTC time the immutable artifact was created, distinct from later refresh checks.
-    pub created_at: DateTime<Utc>,
-    /// Total normalized CIDR, suffix and exact-name entries.
+    /// `sha256:` and the lowercase hex SHA-256 of the complete artifact; Nodes fetch it by this digest.
+    pub digest: String [pattern = "^sha256:[0-9a-f]{64}$"],
+    /// `MWRS` major format version.
+    pub format: u16,
+    /// Artifact length in bytes.
+    pub bytes: u32,
+    /// Canonical members: names, keywords and merged address ranges.
     pub entries: u32,
+    /// UTC time the Server first stored this content, distinct from later refresh checks.
+    pub created_at: DateTime<Utc>,
 } }
 meshway_model::string_enum! {
 /// Stable failure category for rule-set preparation or refresh.
@@ -32,38 +36,111 @@ meshway_model::string_enum! {
 pub enum ResourceProblem {
     /// DNS resolution, HTTPS transfer or its deadline failed to provide the source.
     DownloadFailed,
-    /// The URL or resolved destination violates the allowed HTTPS public-source constraints.
+    /// The URL or resolved destination violates the allowed HTTPS public-source constraints, or the document is not valid in its declared format.
     InvalidSource,
     /// Source content exceeds the bounded download size.
     TooLarge,
-    /// The source cannot be fully converted without dropping unsupported or invalid entries.
+    /// No entry of the source could be converted.
     ConversionFailed,
     ConfigurationChanged,
     /// The process-wide download or preparation capacity is exhausted.
     BudgetExceeded,
-    /// A remote rule set has no validated content bound for use yet.
+    /// A remote or catalog rule set has no validated content bound for use yet.
     NotReady,
     /// Prepared contents fail validation against the complete current configuration and its permissions.
     ValidationFailed,
+    /// The converted set exceeds an artifact limit (names, keywords, ranges or 16 MiB).
+    RuleSetBudget,
+    /// The catalog signature is missing, malformed, by an untrusted key or does not verify.
+    SignatureInvalid,
+    /// The catalog's sequence is lower than one this Server already accepted.
+    CatalogRegressed,
+    /// The catalog has no set of this name.
+    UnknownRuleSet,
+    /// An artifact differs from its catalog entry or is not a valid artifact.
+    IntegrityFailed,
 }
 }
 wire_object! {
-/// Idempotent manual refresh of one remote rule set.
+/// Idempotent manual refresh of one remote or catalog rule set.
 pub struct RefreshRuleSetRequest {
     /// Key retained for 24 hours per user and network; same-key retries return the current view, while reuse for another key conflicts.
     pub request_id: RequestId
 } }
+wire_object! { #[derive(Clone, Debug, PartialEq, Eq)]
+/// Accepted source entries by the member kind they became, counted before duplicates and covered members are dropped.
+pub struct RuleSetConverted {
+    pub exact: u32,
+    pub suffix: u32,
+    pub subdomain: u32,
+    pub keyword: u32,
+    pub cidr: u32,
+} }
+wire_object! { #[derive(Clone, Debug, PartialEq, Eq)]
+/// How the bound content was converted from its source.
+pub struct RuleSetConversion {
+    /// Accepted entries by kind.
+    pub converted: RuleSetConverted,
+    /// Accepted names and keywords dropped as duplicates or covered by another member.
+    pub redundant: u32,
+    /// Skipped entries by reason (`regex`, `invalidName`, `classical:<TYPE>`, `unsupportedField:<name>`, ...); the content is a subset of the source's semantics whenever this is not empty.
+    pub unconverted: BTreeMap<String, u32>,
+} }
+wire_object! { #[derive(Clone, Debug, PartialEq, Eq)]
+/// The catalog a provider-referenced set came from.
+pub struct RuleSetProviderView {
+    /// Provider name, the part of the key before `:`.
+    pub name: String,
+    /// Catalog `index.json` URL.
+    pub catalog: String,
+    /// Catalog collection of the provider.
+    pub collection: String,
+    /// Sequence of the verified catalog the bound artifact was taken from; null before any content is bound.
+    #[serde(deserialize_with = "crate::object::required_nullable")] pub sequence: Option<u32> [required = true],
+} }
+wire_object! { #[derive(Clone, Debug, PartialEq, Eq)]
+/// Where the bound content's source came from.
+pub struct RuleSetSourceView {
+    /// Source format the content was converted from.
+    pub format: String,
+    /// Upstream repository of a catalog set; null for a remote URL or inline set.
+    #[serde(deserialize_with = "crate::object::required_nullable")] pub repo: Option<String> [required = true],
+    /// Upstream branch or tag; null when not from a catalog.
+    #[serde(deserialize_with = "crate::object::required_nullable")] #[serde(rename = "ref")] pub reference: Option<String> [required = true],
+    /// Upstream commit; null when not from a catalog.
+    #[serde(deserialize_with = "crate::object::required_nullable")] pub commit: Option<String> [required = true],
+    /// Upstream file path; null when not from a catalog.
+    #[serde(deserialize_with = "crate::object::required_nullable")] pub path: Option<String> [required = true],
+} }
+wire_object! { #[derive(Clone, Debug, PartialEq, Eq)]
+/// The catalog still publishes an older artifact for this set.
+pub struct RuleSetHeld {
+    /// UTC time since which the catalog holds the previous artifact.
+    pub since: DateTime<Utc>,
+    /// The publisher's reason.
+    pub reason: String,
+} }
 wire_object! { #[derive(Clone, Debug)]
 /// Current rule-set declaration, selected immutable artifact and actual check status.
 pub struct RuleSetView {
-    /// Rule-set key in the network configuration.
+    /// Rule-set key as routing rules reference it: a network `ruleSets` key, or `<provider>:<name>`.
     pub key: String,
     /// Current source revision owning this definition and resource view.
     pub configuration_revision: Revision,
-    /// Source declaration when included in the authorized resource scope; null when the scope does not expose it.
+    /// Whether the set comes from a `<provider>:<name>` reference rather than a `ruleSets` declaration.
+    pub implicit: bool,
+    /// Source declaration when included in the authorized resource scope; null for implicit sets or when the scope does not expose it.
     pub definition: Option<meshway_configuration::RuleSet>,
-    /// Selected validated artifact, retained after failed refreshes; null when no artifact is bound, including inline definitions.
+    /// Catalog of an implicit set; null for declared sets.
+    #[serde(deserialize_with = "crate::object::required_nullable")] pub provider: Option<RuleSetProviderView> [required = true],
+    /// Selected validated artifact, retained after failed refreshes; null when no content is bound.
     pub artifact: Option<ArtifactSummary>,
+    /// Provenance of the bound content; null when none is bound.
+    #[serde(deserialize_with = "crate::object::required_nullable")] pub source: Option<RuleSetSourceView> [required = true],
+    /// Conversion summary of the bound content; null when none is bound. The full skipped-entry list is `GET .../rule-sets/{ruleSetKey}/report`.
+    #[serde(deserialize_with = "crate::object::required_nullable")] pub conversion: Option<RuleSetConversion> [required = true],
+    /// The catalog holds an older artifact for this set; null otherwise.
+    #[serde(deserialize_with = "crate::object::required_nullable")] pub held: Option<RuleSetHeld> [required = true],
     /// Last check failure or `not_ready` for missing initial remote content; null when no problem is recorded.
     pub problem: Option<ResourceProblem>,
     /// UTC time of the latest persisted check, successful or failed; null when no check record exists.
@@ -77,3 +154,59 @@ pub struct RuleSetList {
     /// Current definitions and check results, restricted to the selected key for a detail request.
     pub items: Vec<RuleSetView>
 } }
+wire_object! { #[derive(Clone, Debug, PartialEq, Eq)]
+/// One source entry that did not become a member.
+pub struct RuleSetSkippedEntry {
+    /// Position in the source: `/rules/3/domain_regex/0`, `/payload/7`, `line 12` or `/domainSuffix/2`.
+    pub at: String,
+    /// Skip reason, as in `RuleSetConversion.unconverted`.
+    pub reason: String,
+    /// The entry text, truncated to 256 characters.
+    pub entry: String,
+} }
+wire_object! { #[derive(Clone, Debug)]
+/// Complete conversion report of the bound content.
+pub struct RuleSetReport {
+    pub key: String,
+    /// The bound artifact the report describes.
+    pub digest: String [pattern = "^sha256:[0-9a-f]{64}$"],
+    pub conversion: RuleSetConversion,
+    /// The first 1,000 skipped entries; the rest are only counted in `conversion`. Empty when the provider published only a summary.
+    pub items: Vec<RuleSetSkippedEntry>,
+} }
+
+impl From<&meshway_rules::Summary> for RuleSetConversion {
+    fn from(summary: &meshway_rules::Summary) -> Self {
+        let c = &summary.converted;
+        Self {
+            converted: RuleSetConverted {
+                exact: count(c.exact),
+                suffix: count(c.suffix),
+                subdomain: count(c.subdomain),
+                keyword: count(c.keyword),
+                cidr: count(c.cidr),
+            },
+            redundant: count(summary.redundant),
+            unconverted: summary
+                .unconverted
+                .iter()
+                .map(|(reason, n)| (reason.to_string(), count(*n)))
+                .collect(),
+        }
+    }
+}
+
+impl From<&meshway_rules::Skipped> for RuleSetSkippedEntry {
+    fn from(item: &meshway_rules::Skipped) -> Self {
+        Self {
+            at: item.at.clone(),
+            reason: item.reason.to_string(),
+            entry: item.entry.clone(),
+        }
+    }
+}
+
+/// Counts are bounded by the 32 MiB source limit; saturate defensively.
+pub fn count(value: u64) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
+}

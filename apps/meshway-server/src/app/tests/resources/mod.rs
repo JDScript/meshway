@@ -25,6 +25,8 @@ fn rid() -> RequestId {
     RequestId::new(crate::accounts::random_uuid().unwrap()).unwrap()
 }
 
+type Routes = Arc<Mutex<BTreeMap<String, (u16, Vec<u8>)>>>;
+
 struct HttpsSource {
     requests: Arc<AtomicUsize>,
     request_times: Arc<Mutex<Vec<chrono::DateTime<chrono::Utc>>>>,
@@ -34,6 +36,8 @@ struct HttpsSource {
     address: SocketAddr,
     certificate: String,
     body: Arc<Mutex<(u16, String)>>,
+    /// Exact-path answers (raw bytes) before the default body.
+    routes: Routes,
     stopped: Arc<AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
     pause: AtomicBool,
@@ -70,6 +74,8 @@ impl HttpsSource {
         )));
         let stopped = Arc::new(AtomicBool::new(false));
         let server_body = body.clone();
+        let routes: Routes = Arc::default();
+        let server_routes = routes.clone();
         let requests = Arc::new(AtomicUsize::new(0));
         let server_requests = requests.clone();
         let request_times = Arc::new(Mutex::new(Vec::new()));
@@ -142,14 +148,27 @@ impl HttpsSource {
                         continue;
                     }
                 }
-                let (status, body) = server_body.lock().unwrap().clone();
+                let path = String::from_utf8_lossy(&input)
+                    .split_whitespace()
+                    .nth(1)
+                    .unwrap_or_default()
+                    .to_owned();
+                let (status, body) = server_routes
+                    .lock()
+                    .unwrap()
+                    .get(&path)
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        let (status, body) = server_body.lock().unwrap().clone();
+                        (status, body.into_bytes())
+                    });
                 let header = format!(
                     "HTTP/1.1 {status} Fixture\r\nContent-Length: {}\r\nLocation: https://127.0.0.1/forbidden\r\nConnection: close\r\n\r\n",
                     body.len()
                 );
                 let _ = tls
                     .write_all(header.as_bytes())
-                    .and_then(|_| tls.write_all(body.as_bytes()))
+                    .and_then(|_| tls.write_all(&body))
                     .and_then(|_| tls.flush());
             }
         });
@@ -162,6 +181,7 @@ impl HttpsSource {
             address,
             certificate,
             body,
+            routes,
             stopped,
             thread: Some(thread),
             pause: AtomicBool::new(false),
@@ -172,6 +192,12 @@ impl HttpsSource {
     }
     fn set(&self, status: u16, body: &str) {
         *self.body.lock().unwrap() = (status, body.into());
+    }
+    fn route(&self, path: &str, status: u16, body: &[u8]) {
+        self.routes
+            .lock()
+            .unwrap()
+            .insert(path.into(), (status, body.to_vec()));
     }
     fn pause(&self) {
         self.pause.store(true, Ordering::SeqCst);
@@ -489,7 +515,11 @@ async fn resource_counts(s: &Server, network: NetworkId) -> (i64, i64, i64) {
                 .unwrap()
             };
             (
-                count("dataset_artifacts"),
+                // Artifacts are global and content addressed.
+                db.query_row("SELECT count(*) FROM rule_set_artifacts", [], |row| {
+                    row.get(0)
+                })
+                .unwrap(),
                 count("configuration_versions"),
                 count("node_netmaps"),
             )
@@ -536,7 +566,7 @@ impl crate::resources::service::ResourceProvider for CommitGate {
         network: NetworkId,
         revision: Revision,
         key: &str,
-        artifact: &ArtifactSummary,
+        artifact: &meshway_rules::Digest,
         now: chrono::DateTime<chrono::Utc>,
     ) -> Result<Vec<crate::effect::Effect>, crate::error::Error> {
         let effects = self
@@ -561,3 +591,5 @@ mod lifecycle;
 mod netmap_bindings;
 
 mod publication;
+
+mod providers;

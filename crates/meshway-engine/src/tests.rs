@@ -50,6 +50,7 @@ fn input(
     Netmap {
         lease: NetmapLease::new(content.reference(), now, now + milliseconds).unwrap(),
         content,
+        artifacts: Default::default(),
     }
 }
 
@@ -105,6 +106,7 @@ async fn a_newer_offer_that_cannot_be_admitted_ends_the_older_content() {
     let ended = Netmap {
         lease: NetmapLease::new(newer.reference(), now - 120_000, now - 1).unwrap(),
         content: newer,
+        artifacts: Default::default(),
     };
     assert_eq!(engine.reconfig(Some(&ended)).await, Err(Error::Lease));
     assert!(engine.desired().is_none() && engine.next_expiry().is_none());
@@ -168,6 +170,7 @@ async fn older_signed_lease_and_regressing_content_do_not_change_live_engine() {
     let mut older = Netmap {
         content: first.content.clone(),
         lease: first.lease,
+        artifacts: Default::default(),
     };
     older.lease.expires_at_ms -= 1;
     assert_eq!(engine.reconfig(Some(&older)).await, Err(Error::Reference));
@@ -178,6 +181,7 @@ async fn older_signed_lease_and_regressing_content_do_not_change_live_engine() {
     let mut stepped = Netmap {
         content: first.content.clone(),
         lease: first.lease,
+        artifacts: Default::default(),
     };
     stepped.lease.issued_at_ms -= 5_000;
     stepped.lease.expires_at_ms += 1_000;
@@ -227,6 +231,7 @@ async fn a_degraded_apply_keeps_content_and_the_same_content_retries_it() {
     let first = Netmap {
         lease: NetmapLease::new(content.reference(), now, now + 60_000).unwrap(),
         content,
+        artifacts: Default::default(),
     };
     assert_eq!(engine.reconfig(Some(&first)).await, Err(Error::Degraded));
     let reference = Some(first.content.reference());

@@ -116,9 +116,17 @@ pub enum IssueCode {
     InvalidRuleSource,
     /// A rule-set declaration has an empty key; params are empty.
     EmptyRuleSetKey,
+    /// A network rule-set key contains `:`, which is reserved for `<provider>:<name>` references; params `key`.
+    InvalidRuleSetKey,
+    /// A `<provider>:<name>` reference names no enabled built-in or configured provider; params `provider`.
+    UnknownRuleSetProvider,
+    /// A rule-set provider declaration is invalid: its name, catalog URL, collection, public keys or the absence of keys; params `field`.
+    InvalidRuleSetProvider,
+    /// Warning: an egress rule's referenced IP set needs more source-side partition prefixes than a netmap carries, so the source's egress is unavailable; params `key`, `prefixes`, `maxPrefixes`.
+    RuleSetPartitionLimit,
     /// An inline rule set contains no CIDRs, suffixes or exact names; params are empty.
     EmptyInlineRuleSet,
-    /// Rule-set preparation or bound execution content exceeds its budget; params include the applicable `maxSets`, `maxBytes` or `maxEntries` limits.
+    /// Rule-set preparation or bound execution content exceeds its budget; params include the applicable `maxSets`, `maxBytes`, `maxEntries`, `maxNames`, `maxKeywords` or `maxRanges` limits.
     RuleSetBudget,
     /// Remote rule set content could not be prepared; params `reason` is the
     /// resource problem code.
@@ -216,6 +224,12 @@ impl IssueCode {
             UnknownRuleSet => "unknown rule set",
             InvalidRuleSource => "rule source must be HTTPS without credentials or fragment",
             EmptyRuleSetKey => "empty rule set key",
+            InvalidRuleSetKey => "rule set keys cannot contain `:`",
+            UnknownRuleSetProvider => "unknown or disabled rule set provider",
+            InvalidRuleSetProvider => "invalid rule set provider declaration",
+            RuleSetPartitionLimit => {
+                "rule set needs more egress partition prefixes than a netmap carries"
+            }
             EmptyInlineRuleSet => "empty inline rule set",
             RuleSetBudget => "execution rule set content exceeds the network budget",
             RuleSetUnavailable => "remote rule set preparation failed",

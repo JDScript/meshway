@@ -35,7 +35,7 @@ fn action(route: &RouteAction) -> Result<EgressAction, CompileError> {
 pub(super) fn egress(
     network: NetworkId,
     cfg: &NetworkConfiguration,
-    rule_sets: &BTreeMap<String, RuleSetContent>,
+    rule_sets: &super::super::rules::RuleSets,
     node: NodeId,
     profile: &str,
     selection: u64,
@@ -142,7 +142,7 @@ fn mesh_address(cfg: &NetworkConfiguration, address: IpAddr) -> bool {
 }
 
 /// The route of a configured resolver decides its local socket permission.
-fn resolvers(
+pub(super) fn resolvers(
     cfg: &NetworkConfiguration,
     enabled: bool,
     plan: &EgressPlan,

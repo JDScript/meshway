@@ -6,23 +6,6 @@ use utoipa::ToSchema;
 #[cfg(test)]
 mod tests;
 
-crate::object! {
-/// Canonical immutable rule-set content, shared with configuration compilation.
-/// `domain` entries match one exact DNS name; `domain_suffix` entries match the
-/// name and every child label. Artifacts stored before `domain` existed have
-/// none; omitting an empty list keeps their content digests unchanged.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RuleSetData {
-    /// IP prefixes matched by this immutable rule set.
-    pub ip_cidr: Vec<String>,
-    /// DNS suffixes matching both the named domain and its child labels.
-    pub domain_suffix: Vec<String>,
-    /// Exact DNS names matched without including child labels.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub domain: Vec<String>,
-}
-}
-
 /// Finite geographic coordinates with a nonnegative optional accuracy radius.
 /// Private fields keep validated construction intact; the wire fields and
 /// schema remain latitude, longitude and accuracyRadiusKm.

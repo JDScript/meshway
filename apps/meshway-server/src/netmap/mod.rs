@@ -230,6 +230,35 @@ impl Netmaps {
         Ok(answered(&waiter, response))
     }
 
+    /// Bytes of a rule-set artifact some netmap of the calling Node
+    /// references while it can still be under a lease. Anything else, and an
+    /// unknown digest, is `NotFound`.
+    pub async fn artifact(&self, token: &str, digest: String) -> Result<Vec<u8>, Error> {
+        let token = proof::token_hash(token)?;
+        let digest: meshway_rules::Digest = digest.parse().map_err(|_| Error::NotFound)?;
+        let (sealer, boot) = (self.sealer.clone(), self.boot);
+        let validity = i64::try_from(self.timing.validity.as_millis())
+            .map_err(|_| Error::Internal("netmap validity"))?;
+        self.handle
+            .read(move |tx| {
+                let now = crate::store::execution::now()?;
+                let principal =
+                    crate::store::execution::authorize_node(tx, &sealer, boot, token, now)?;
+                if !crate::store::resources::artifacts::referenced(
+                    tx,
+                    principal.network.as_uuid().as_bytes(),
+                    principal.node.as_uuid().as_bytes(),
+                    &digest,
+                    now,
+                    validity,
+                )? {
+                    return Err(Error::NotFound);
+                }
+                crate::store::resources::artifacts::load(tx, &digest)
+            })
+            .await
+    }
+
     async fn read(
         &self,
         token: [u8; 32],

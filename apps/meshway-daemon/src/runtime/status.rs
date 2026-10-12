@@ -217,6 +217,16 @@ impl View {
                     netmap: lease.netmap,
                     issued_at: timestamp(lease.issued_at_ms)?,
                     expires_at: timestamp(lease.expires_at_ms)?,
+                    missing_artifacts: control
+                        .as_ref()
+                        .map(|c| {
+                            c.missing_artifacts
+                                .iter()
+                                .map(ToString::to_string)
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                    artifact_problem: control.as_ref().and_then(|c| c.artifact_problem),
                 })
             }),
             saved: control.and_then(|c| c.held),

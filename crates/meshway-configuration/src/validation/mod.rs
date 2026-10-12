@@ -55,9 +55,10 @@ pub struct ValidationContext<'a> {
     pub verified_listeners: BTreeMap<(NodeId, String), Listener>,
     /// Resources explicitly deleted then recreated in this edit batch.
     pub recreated_listeners: BTreeSet<(NodeId, String)>,
-    /// Immutable contents selected by the Controller in this transaction.
-    pub rule_sets: BTreeMap<String, meshway_model::resources::RuleSetData>,
-    pub previous_rule_sets: BTreeMap<String, meshway_model::resources::RuleSetData>,
+    /// Loaded artifacts selected by the Controller in this transaction, keyed
+    /// as routing rules reference them (network keys and `<provider>:<name>`).
+    pub rule_sets: BTreeMap<String, std::sync::Arc<meshway_rules::RuleSet>>,
+    pub previous_rule_sets: BTreeMap<String, std::sync::Arc<meshway_rules::RuleSet>>,
 }
 
 /// Dependency that must be prepared or verified before a declaration can become executable.
@@ -475,6 +476,7 @@ fn normalize_inner(
         topology: input.topology,
         routing: input.routing,
         rule_sets: input.rule_sets,
+        rule_set_providers: input.rule_set_providers,
     };
     addresses::nodes(&config, &mut check);
     semantics.access_and_topology(&mut config, context, &mut check);
@@ -547,6 +549,7 @@ impl From<&NetworkConfiguration> for NetworkConfigurationInput {
             topology: c.topology.clone(),
             routing: c.routing.clone(),
             rule_sets: c.rule_sets.clone(),
+            rule_set_providers: c.rule_set_providers.clone(),
         }
     }
 }

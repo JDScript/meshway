@@ -1,5 +1,4 @@
 use super::*;
-use ipnet::IpNet;
 use std::net::IpAddr;
 
 pub(super) fn node_selector(s: &str) -> Result<NodeId, CompileError> {
@@ -17,9 +16,6 @@ pub(super) fn selectors(
     selectors
         .iter()
         .any(|selector| subjects.matches(cfg, selector, id))
-}
-pub(super) fn cidr(s: &str, address: IpAddr) -> bool {
-    s.parse::<IpNet>().is_ok_and(|n| n.contains(&address))
 }
 pub(super) fn internet(address: IpAddr) -> bool {
     crate::is_internet_address(address)
