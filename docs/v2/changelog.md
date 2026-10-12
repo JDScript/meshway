@@ -4,7 +4,19 @@
 
 ## 未发布
 
-wire 6、IPC 8、`compilerVersion` 不变；Server schema 版本 5（新增 `rule_set_record_heads`；开发环境重新初始化数据目录）。HTTP 契约：`SyncRequest` 新增可省略的 `lease`。alpha.4 代码审阅修复（F4a）：
+wire 6、IPC 8、`compilerVersion` 不变；Server schema 版本 6（F4a 新增 `rule_set_record_heads`，R2d 新增 `rule_set_catalog_checks` 并允许回收 artifact；开发环境重新初始化数据目录）。HTTP 契约：`SyncRequest` 新增可省略的 `lease`；`listRuleSetCatalog` 描述更新（无字段变化）。
+
+规则集收尾（R2d）：
+
+- Server 启动后及按 provider 间隔自己取回并验签每个网络生效的 provider 目录（内置与覆盖；同一目录 URL 与信任钥只取一次，共用下载预算，退避持久保存，失败与 sequence 回退保留上一份），`GET /rule-set-catalog` 不再需要先引用集合；`rule_set_catalog_not_ready` 只表示首次取回尚未完成或从未成功。见[规则集 · 目录更新](/v2/configuration-reference/rule-sets#catalog-refresh)。
+- 无引用 artifact 回收：未删除网络任一版本的初始或刷新绑定引用的 artifact 保留；被刷新替换或只属于已删除网络的 artifact，在可能仍处于租约内（24 小时）的 netmap 都不再引用后连同记录删除，启动时及每小时一次。见[规则集 · artifact 保留](/v2/configuration-reference/rule-sets#artifact-retention)。
+- 发布仓库 `meshway-org/meshway-rules`（`379bdb4`）把 hold 写入签名目录 `CatalogSet.held`，`since` 从上一份目录读取，`status.json` 只是副本；README 写明 held 集合 `upstream.ref` 为其 commit 的上游一致规则。
+- runtime fixture：`netmap/expiry` 在 Status 去掉租约后 2 秒内要求 TUN 删除并记录延迟，不再与 daemon 的撤回竞争；根因见[租约到期撤回](/v2/node/validation#lease-expiry-withdrawal)。
+- `validation.md` 补齐 R2a、X6、R3、F4a 的矩阵行与证据位置。
+
+验证：Planck 16 行矩阵 `20261012T212926Z-abd9b9c8` 全部通过；证据 `.meshway/validation/r2d/`。
+
+alpha.4 代码审阅修复（F4a）：
 
 - A1 `POST /agent-api/v1/dns-associations` 接纳前对条目执行与 overlay 相同的校验（`DnsAssociation::validate`：名称／CNAME 为 1–253 B ASCII 小写等），非法条目 400 `invalid_request`，不再让源与出口的 `sync` 持续内部错误。
 - A2 出口 overlay 容量在接纳时对源与出口统一预算：任一方未到期条目将超过 4,096 即 429 `state_limit`；交付时不再截断单方副本；源换出口时唤醒原出口。
