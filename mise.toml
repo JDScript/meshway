@@ -121,6 +121,10 @@ run = "cargo run --release --locked -p meshway-netmap-perf --"
 description = "Measure MWRS open and match costs on given artifacts (release)"
 run = "cargo run --release --locked -p meshway-rules-perf --"
 
+[tasks."perf:capture"]
+description = "Explicit nft interval-set and capture-table route costs in a disposable netns (run as root on Linux)"
+run = "python3 scripts/perf/capture_sets.py"
+
 [tasks."perf:circuit"]
 description = "Explicit release in-process protected circuit CPU measurements (L0)"
 run = "python3 scripts/perf/circuit.py"

@@ -24,6 +24,15 @@ LINKS = {"ca": ("controller", "a"), "cr": ("controller", "r"),
 
 NETMAP_CONTENT = "import json; print(json.dumps(json.load(open('/state/node/identity/netmap.json'))['netmap']))"
 
+# Direct ranges of A's split-resolver rule set (tools/meshway-runtime-fixture
+# controller/exit.rs): a country-IP-set scale.
+DIRECT_RANGES = 7000
+
+
+def managed(plan, address):
+    """Whether a Node's installed capture plan sends `address` to its exit."""
+    return any(ipaddress.ip_address(start) <= address <= ipaddress.ip_address(end)
+               for start, end in plan["managedIpv4"])
 
 def write(path, value):
     temporary = path.with_suffix(".tmp")
@@ -407,10 +416,24 @@ def execute(report, artifacts, runtime_os, platform, short, load):
         before = json.loads((report / "capture-before-admission.json").read_text())
         plans = {role: json.loads(before[role]["netmap"]["stdout"])["netmap"] for role in ("a", "r", "e")}
         write(report / "compiled-plans.json", plans)
-        capture_plan = (plans["a"]["egress"] or {}).get("capture") or {}
+        # A computes its partition from the netmap rules and the held
+        # artifacts; the installed boundary is its own journal and nft sets.
+        capture_plan = json.loads(before["a"]["egressJournal"]["stdout"])["plan"]
+        a_status = status("a")
+        summary = (a_status.get("netmap") or {}).get("capture") or {}
+        a_sets = {item["set"]["name"]: item["set"].get("elem", [])
+                  for item in json.loads(before["a"]["nft"]["stdout"])["nftables"]
+                  if "set" in item and item["set"]["table"].startswith("meshway_egress_")}
+        split_address = ipaddress.ip_address(addresses["split"]["resolver"])
         if (not capture_plan.get("defaultCapture") or plans["r"]["exitRole"] is not None
                 or plans["e"]["exitRole"] is None):
             raise RuntimeError("A default capture/R non-exit/E exit role mismatch")
+        if (summary.get("unavailable") is not None or summary.get("managedIpv4") != len(capture_plan["managedIpv4"])
+                or len(capture_plan["managedIpv4"]) < DIRECT_RANGES or len(a_sets.get("managed4", [])) != summary["managedIpv4"]
+                or managed(capture_plan, split_address)):
+            raise RuntimeError("A's installed partition does not hold the 7,000 direct ranges")
+        write(report / "capture-partition.json", {"summary": summary, "nftManaged4": len(a_sets["managed4"]),
+                                                  "journalManaged4": len(capture_plan["managedIpv4"])})
         def capture_installed():
             capture_route = command("a", "ip", "-j", "route", "get", addresses["external"]["external"], required=False)
             write(report / "capture-route.json", capture_route)
@@ -423,7 +446,7 @@ def execute(report, artifacts, runtime_os, platform, short, load):
             bypass[name] = command("a", "python3", "-c", "import socket; socket.create_connection(('" + address + "'," + str(port) + "),2)", required=False)
             if bypass[name]["exitCode"] == 0: raise RuntimeError("ordinary application borrowed the protected " + name + " bypass")
         bypass["ipv6"] = command("a", "ip", "-6", "-j", "route", "get", "2001:4860:4860::8888", required=False)
-        if bypass["ipv6"]["exitCode"] == 0 or capture_plan["sinkIpv6"] != ["::/0"]:
+        if bypass["ipv6"]["exitCode"] == 0 or capture_plan["sinkIpv6"] != [["::", "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff"]]:
             raise RuntimeError("source exit IPv6 is not negatively captured")
         write(report / "capture-bypass.json", bypass)
         manifest["stages"]["4"] = {"status": "passed", "evidence": ["capture-before-admission.json", "compiled-plans.json"]}
@@ -497,12 +520,17 @@ def execute(report, artifacts, runtime_os, platform, short, load):
             raise RuntimeError("relay TUN delivered business plaintext")
         grant = {"src": ["node:" + path[0]], "dst": sorted(["autogroup:internet", lan_subnet])}
         routes = {}
+        exit_action = {"type": "exit", "nodes": [path[2]], "via": [path[1]]}
+        plan_a = projected["a"]["egress"]
+        a_capture = json.loads(after["a"]["egressJournal"]["stdout"])["plan"]
+        actions = [rule["action"] for rule in plan_a["rules"]] + [plan_a["fallback"]]
+        if any(action["type"] == "exit" and action != exit_action for action in actions):
+            raise RuntimeError("A egress plan names an exit other than E via R")
         for link in ("external", "lan"):
             target = ipaddress.ip_address(addresses[link][link])
-            matching = [route for route in projected["a"]["egress"]["routes"] if target in ipaddress.ip_network(route["prefix"])]
-            if len(matching) != 1 or matching[0]["action"] != {"type": "exit", "nodes": [path[2]], "via": [path[1]]}:
+            if not managed(a_capture, target):
                 raise RuntimeError("A egress partition does not send " + link + " to E via R")
-            routes[link] = matching[0]
+            routes[link] = {"managed": True, "action": exit_action}
         for role in ("a", "r", "e"):
             rules = [{"src": sorted(rule["src"]), "dst": sorted(rule["dst"])} for rule in projected[role]["projection"]["configuration"]["access"]]
             if rules != [grant]:

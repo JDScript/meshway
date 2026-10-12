@@ -3,6 +3,9 @@ use super::*;
 use crate::exit::{Role as ExitRole, Topology, read, ready, wait, write};
 use meshway_configuration::{ProfileAssignment, RouteAction, RoutingProfile};
 
+/// Direct ranges of the split resolver's rule set: a country-IP-set scale.
+const DIRECT_RANGES: u32 = 7_000;
+
 pub(super) async fn observe_acquisition(
     axum::extract::State((evidence, signals)): axum::extract::State<(
         std::path::PathBuf,
@@ -276,6 +279,17 @@ pub(super) async fn coordinate(
         crate::exit::SPLIT_ZONE.trim_end_matches('.').into(),
         vec!["split".into()],
     )]);
+    // The split resolver is direct through a rule set of ~7,000 ranges (a
+    // country-IP-set scale, built offline): A computes and installs the whole
+    // partition from the artifact, 7,000 direct holes in the exit capture.
+    let mut direct: Vec<String> = (0..DIRECT_RANGES)
+        .map(|i| format!("{}/20", std::net::Ipv4Addr::from(0x0c00_0000 + i * 0x2000)))
+        .collect();
+    direct.push(format!("{split}/32"));
+    input.rule_sets.insert(
+        "exit-direct".into(),
+        serde_json::from_value(serde_json::json!({"type": "inline", "ipCIDR": direct}))?,
+    );
     // The exit LAN is routed by a rule naming a rule set: A's egress
     // partition and every A decision use its artifact, fetched by digest. A
     // missing artifact would fail every exit flow closed (this rule precedes
@@ -291,9 +305,9 @@ pub(super) async fn coordinate(
         RoutingProfile {
             rules: vec![
                 meshway_configuration::EgressRule {
-                    remark: "useWithExit split resolver".into(),
+                    remark: "useWithExit split resolver among 7,000 direct ranges".into(),
                     matcher: meshway_configuration::RouteMatch {
-                        ip_cidr: vec![format!("{split}/32")],
+                        rule_sets: vec!["exit-direct".into()],
                         ..Default::default()
                     },
                     action: meshway_configuration::RuleAction::Direct,
