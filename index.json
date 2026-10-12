@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-12T01:39:17.614143+00:00",
+  "updatedAt": "2026-10-12T01:42:38.696678+00:00",
   "runs": [
     {
       "id": 38192267632,
@@ -12,9 +12,9 @@
       "commit": "a68086c6154ff91cd092be173f50e70b1ac62760",
       "message": "daemon: start unenrolled when only own files remain without the state record",
       "createdAt": "2026-10-12T01:32:11Z",
-      "updatedAt": "2026-10-12T01:33:46Z",
-      "status": "in_progress",
-      "conclusion": null,
+      "updatedAt": "2026-10-12T01:39:55Z",
+      "status": "completed",
+      "conclusion": "success",
       "url": "https://github.com/JDScript/meshway/actions/runs/38192267632",
       "jobs": [
         {
@@ -32,11 +32,11 @@
           "id": 114627401643,
           "name": "cargo",
           "runner": "mars-14900k",
-          "status": "in_progress",
-          "conclusion": null,
+          "status": "completed",
+          "conclusion": "success",
           "startedAt": "2026-10-12T01:33:45Z",
-          "completedAt": null,
-          "seconds": null,
+          "completedAt": "2026-10-12T01:39:54Z",
+          "seconds": 369.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/38192267632/job/114627401643"
         },
         {
