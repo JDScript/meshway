@@ -1,8 +1,176 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-12T11:32:05.351711+00:00",
+  "updatedAt": "2026-10-12T17:24:05.333246+00:00",
   "runs": [
+    {
+      "id": 38283365381,
+      "attempt": 1,
+      "workflow": "Build",
+      "event": "push",
+      "branch": "main",
+      "commit": "b1d1fcef60c615d8aff35fc25c7b3bfa6bdb1f2d",
+      "message": "protocol: evaluation example carries the capture summary",
+      "createdAt": "2026-10-12T17:18:49Z",
+      "updatedAt": "2026-10-12T17:19:03Z",
+      "status": "in_progress",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/38283365381",
+      "jobs": [
+        {
+          "id": 114925750738,
+          "name": "node-linux (x86_64-unknown-linux-musl)",
+          "runner": "mars-epyc7543",
+          "status": "in_progress",
+          "conclusion": null,
+          "startedAt": "2026-10-12T17:18:53Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38283365381/job/114925750738"
+        },
+        {
+          "id": 114925751061,
+          "name": "node-linux (aarch64-unknown-linux-musl)",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-12T17:19:02Z",
+          "completedAt": "2026-10-12T17:22:47Z",
+          "seconds": 225.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38283365381/job/114925751061"
+        }
+      ],
+      "artifacts": [
+        {
+          "id": 11763045092,
+          "name": "node-aarch64-unknown-linux-musl-b1d1fcef60c615d8aff35fc25c7b3bfa6bdb1f2d",
+          "bytes": 9784212,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38283365381/artifacts/11763045092",
+          "jobId": 114925751061,
+          "runner": "planck",
+          "seconds": 225.0,
+          "state": "ok",
+          "error": null,
+          "reports": [],
+          "matrices": [],
+          "builds": [
+            {
+              "target": "aarch64-unknown-linux-musl",
+              "binary": "meshwayd",
+              "bytes": 14795320,
+              "sha256": "8bd2add7939c78617e2c1ff0106b5cc82b2480081417e0a318923cddeb25953a"
+            },
+            {
+              "target": "aarch64-unknown-linux-musl",
+              "binary": "meshway",
+              "bytes": 1792824,
+              "sha256": "95a0f8617c4f26b79a5ea34df00cd750eaa1862bd9ecbb86532e03316f9f035f"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 38283365259,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "b1d1fcef60c615d8aff35fc25c7b3bfa6bdb1f2d",
+      "message": "protocol: evaluation example carries the capture summary",
+      "createdAt": "2026-10-12T17:18:49Z",
+      "updatedAt": "2026-10-12T17:22:16Z",
+      "status": "in_progress",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/38283365259",
+      "jobs": [
+        {
+          "id": 114925749632,
+          "name": "changes",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-12T17:18:52Z",
+          "completedAt": "2026-10-12T17:19:04Z",
+          "seconds": 12.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38283365259/job/114925749632"
+        },
+        {
+          "id": 114925840130,
+          "name": "console",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-12T17:20:08Z",
+          "completedAt": "2026-10-12T17:22:12Z",
+          "seconds": 124.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38283365259/job/114925840130"
+        },
+        {
+          "id": 114925840163,
+          "name": "docs-and-scripts",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-12T17:19:18Z",
+          "completedAt": "2026-10-12T17:20:05Z",
+          "seconds": 47.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38283365259/job/114925840163"
+        },
+        {
+          "id": 114925840273,
+          "name": "cargo",
+          "runner": "mars-14900k",
+          "status": "in_progress",
+          "conclusion": null,
+          "startedAt": "2026-10-12T17:22:15Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38283365259/job/114925840273"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 38283365118,
+      "attempt": 1,
+      "workflow": "Perf",
+      "event": "push",
+      "branch": "main",
+      "commit": "b1d1fcef60c615d8aff35fc25c7b3bfa6bdb1f2d",
+      "message": "protocol: evaluation example carries the capture summary",
+      "createdAt": "2026-10-12T17:18:49Z",
+      "updatedAt": "2026-10-12T17:19:05Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "url": "https://github.com/JDScript/meshway/actions/runs/38283365118",
+      "jobs": [
+        {
+          "id": 114925748752,
+          "name": "perf",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "failure",
+          "startedAt": "2026-10-12T17:18:51Z",
+          "completedAt": "2026-10-12T17:19:01Z",
+          "seconds": 10.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38283365118/job/114925748752"
+        },
+        {
+          "id": 114925749053,
+          "name": "perf-arm64",
+          "runner": "jp-tyo-arm64",
+          "status": "completed",
+          "conclusion": "failure",
+          "startedAt": "2026-10-12T17:18:52Z",
+          "completedAt": "2026-10-12T17:19:05Z",
+          "seconds": 13.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38283365118/job/114925749053"
+        }
+      ],
+      "artifacts": []
+    },
     {
       "id": 38241671463,
       "attempt": 1,
