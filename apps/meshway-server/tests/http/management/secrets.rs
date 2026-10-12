@@ -4,7 +4,6 @@
 use super::*;
 use meshway_configuration::transport::{Listener, ListenerSecret};
 use meshway_configuration::{ConfigurationOperation, NetworkConfigurationInput};
-use meshway_protocol::configuration::*;
 
 const UUID: &str = "11111111-1111-4111-8111-111111111111";
 
