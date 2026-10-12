@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-12T02:28:41.321924+00:00",
+  "updatedAt": "2026-10-12T02:31:22.580718+00:00",
   "runs": [
     {
       "id": 38194883284,
@@ -169,9 +169,9 @@
       "commit": "9617eb4a467e7a8e788f3e6fdefd27fd7c5431e0",
       "message": "release: workspace version 0.1.0-alpha.3",
       "createdAt": "2026-10-12T02:12:33Z",
-      "updatedAt": "2026-10-12T02:25:03Z",
-      "status": "in_progress",
-      "conclusion": null,
+      "updatedAt": "2026-10-12T02:27:39Z",
+      "status": "completed",
+      "conclusion": "success",
       "url": "https://github.com/JDScript/meshway/actions/runs/38194883174",
       "jobs": [
         {
@@ -189,11 +189,11 @@
           "id": 114635938194,
           "name": "console",
           "runner": "mars-epyc7543",
-          "status": "in_progress",
-          "conclusion": null,
+          "status": "completed",
+          "conclusion": "success",
           "startedAt": "2026-10-12T02:24:58Z",
-          "completedAt": null,
-          "seconds": null,
+          "completedAt": "2026-10-12T02:27:38Z",
+          "seconds": 160.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/38194883174/job/114635938194"
         },
         {
