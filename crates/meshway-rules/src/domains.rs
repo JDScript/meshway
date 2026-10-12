@@ -62,7 +62,7 @@ enum Kind {
     },
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Transition {
     pub(crate) input: u8,
     pub(crate) output: u64,
@@ -384,9 +384,11 @@ pub(crate) fn validate(fst: &Fst<'_>) -> Option<()> {
             }
             previous = Some(t.input);
             // Sorted unique inputs make the linear search agree with
-            // iteration; an input index must be checked entry by entry.
+            // iteration; an input index must be checked entry by entry, and
+            // on the whole transition: two entries sharing a target may
+            // still differ in input and output.
             if matches!(node.kind, Kind::Any { index: true, .. })
-                && fst.find(&node, t.input).map(|f| f.target) != Some(t.target)
+                && fst.find(&node, t.input) != Some(t)
             {
                 return None;
             }
@@ -612,6 +614,37 @@ mod tests {
             let ours = Fst::parse(&bytes).unwrap();
             assert_eq!(lookup(&ours, &[b, b'x']), Some(2), "byte {b}");
         }
+    }
+
+    #[test]
+    fn an_index_that_swaps_entries_with_one_target_is_rejected() {
+        // Over 32 transitions: the root carries a 256-byte input index. Every
+        // key ends at the same (empty) target; `a` and `b` differ in output.
+        let keys: std::collections::BTreeMap<Vec<u8>, u64> = (b'a'..=b'z')
+            .chain(b'0'..=b'9')
+            .map(|byte| (vec![byte], if byte == b'b' { 2 } else { 1 }))
+            .collect();
+        let mut bytes = build(&keys);
+        let fst = Fst::parse(&bytes).unwrap();
+        assert!(validate(&fst).is_some());
+        let root = fst.root().unwrap();
+        let Kind::Any {
+            index: true,
+            inputs_end,
+            ..
+        } = root.kind
+        else {
+            panic!("expected an indexed root")
+        };
+        let (a, b) = (inputs_end + usize::from(b'a'), inputs_end + usize::from(b'b'));
+        let a_slot = fst.find(&root, b'a').unwrap();
+        let b_slot = fst.find(&root, b'b').unwrap();
+        assert_eq!((a_slot.target, a_slot == b_slot), (b_slot.target, false));
+        bytes.swap(a, b);
+        let swapped = Fst::parse(&bytes).unwrap();
+        // The swap would make `a` read `b`'s output: exact as suffix.
+        assert_eq!(lookup(&swapped, b"a"), Some(2));
+        assert!(validate(&swapped).is_none());
     }
 
     #[test]
