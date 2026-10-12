@@ -354,6 +354,16 @@ fn partition_limit_or_unknown_domain_fails_closed_without_routes() {
         )]
     );
     assert_eq!(boundary.sink_ipv6, sink_all());
+    // The Node's diagnostic reports the counts that exceed its limits.
+    let summary = meshway_policy::compile::netmap::LocalCompiler::new(
+        &limited.nodes[&node(1)].netmap,
+        &Default::default(),
+    )
+    .capture_summary(node(1))
+    .unwrap();
+    assert_eq!(summary.unavailable, Some(UnavailableReason::RoutingLimit));
+    assert_eq!(summary.managed_ipv4, 20_001);
+    assert!(summary.routes > 20_000);
     assert_eq!(
         select(&limited, "8.8.8.8"),
         LocalDecision::Denied(UnavailableReason::RoutingLimit)

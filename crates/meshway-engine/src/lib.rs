@@ -122,16 +122,10 @@ impl Desired {
     /// interval elements and capture-table routes, or why only the full
     /// fail-closed boundary is installed. `None` for a disabled Node.
     pub fn capture_summary(&self) -> Option<meshway_configuration::evaluation::CaptureSummary> {
-        let (partition, capture) = self.egress.as_ref()?;
-        Some(match partition {
-            Ok(partition) => partition.summary(),
-            Err(reason) => meshway_configuration::evaluation::CaptureSummary {
-                managed_ipv4: u32::try_from(capture.managed_ipv4.len()).unwrap_or(u32::MAX),
-                sink_ipv6: u32::try_from(capture.sink_ipv6.len()).unwrap_or(u32::MAX),
-                routes: 1,
-                unavailable: Some(*reason),
-            },
-        })
+        self.egress.as_ref()?;
+        self.compiler
+            .capture_summary(self.content.netmap.node_id)
+            .ok()
     }
     /// Own egress partition; `None` while disabled or unavailable (then
     /// [`Self::capture`] is the full fail-closed boundary).

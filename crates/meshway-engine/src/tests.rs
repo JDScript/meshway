@@ -350,6 +350,10 @@ async fn content_applies_before_its_artifacts_and_again_once_they_load() {
     // The partition now holds the set's direct exception.
     assert!(desired.capture().unwrap().unavailable.is_none());
     assert!(desired.partition().is_some());
+    assert_eq!(
+        desired.capture_summary().unwrap(),
+        desired.partition().unwrap().summary()
+    );
     // Offering it once more changes nothing.
     let calls = engine.components.calls.len();
     engine.reconfig(Some(&loaded)).await.unwrap();

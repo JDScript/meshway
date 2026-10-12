@@ -195,6 +195,27 @@ impl LocalCompiler {
         Ok(partition)
     }
 
+    /// What `source` installs for its egress capture: the partition's counts,
+    /// over the limits included, or the fail-closed boundary's with its reason.
+    /// The Server previews the same numbers (`ProfileEvaluation.capture`).
+    pub fn capture_summary(
+        &self,
+        source: NodeId,
+    ) -> Result<meshway_configuration::evaluation::CaptureSummary, CompileError> {
+        let projection = &self.netmap.projection;
+        let profile = effective_profile(
+            &self.configuration,
+            &projection.subjects,
+            &projection.selected_profiles,
+            source,
+        )?;
+        Ok(crate::compile::capture_summary(
+            &self.configuration,
+            &self.rule_sets,
+            &profile,
+        ))
+    }
+
     /// The capture boundary this Node installs for its own egress plan.
     pub fn capture(&self) -> Result<Option<EgressCapturePlan>, CompileError> {
         let node = self.netmap.node_id;
