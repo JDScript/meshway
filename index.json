@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-12T23:22:24.654308+00:00",
+  "updatedAt": "2026-10-12T23:23:31.955434+00:00",
   "runs": [
     {
       "id": 38320985611,
@@ -80,9 +80,9 @@
       "commit": "7e07313e34ea82e42831ba982c96f7d05096e83d",
       "message": "docs: S3 matrix result",
       "createdAt": "2026-10-12T23:13:25Z",
-      "updatedAt": "2026-10-12T23:16:03Z",
-      "status": "in_progress",
-      "conclusion": null,
+      "updatedAt": "2026-10-12T23:21:47Z",
+      "status": "completed",
+      "conclusion": "success",
       "url": "https://github.com/JDScript/meshway/actions/runs/38320985607",
       "jobs": [
         {
@@ -111,11 +111,11 @@
           "id": 115048826986,
           "name": "cargo",
           "runner": "mars-14900k",
-          "status": "in_progress",
-          "conclusion": null,
+          "status": "completed",
+          "conclusion": "success",
           "startedAt": "2026-10-12T23:16:02Z",
-          "completedAt": null,
-          "seconds": null,
+          "completedAt": "2026-10-12T23:21:47Z",
+          "seconds": 345.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/38320985607/job/115048826986"
         }
       ],
