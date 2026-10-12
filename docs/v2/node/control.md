@@ -1,6 +1,6 @@
 # Server 接入组件
 
-`meshway-control` 提供由宿主驱动的 Node 控制生命周期，HTTP 操作全部使用生成的 `meshway-control-client`。当前包含浏览器批准与接入密钥的持钥接入、认证与换钥、实例／lease、需求与续租、目标保存、安装回执、运行状态上报、SSE 变化通知、UDP 穿透协调与 Node 观察订阅。
+`meshway-control` 提供由宿主驱动的 Node 控制生命周期，HTTP 操作全部使用生成的 `meshway-control-client`。当前包含浏览器批准与接入密钥的持钥接入、认证与换钥、实例续租、netmap 长轮询（验签、保存与发布）、安装回执、运行状态上报、UDP 穿透协调与 Node 观察订阅。
 
 daemon／CLI 通过本组件完成[控制生命周期](/v2/node/runtime#启动与接入)。自动调度和 Linux 网络安装由 daemon 协调；组件校验并传递宿主实际能力与安装结果，不自行证明 applied。
 
@@ -19,19 +19,11 @@ daemon／CLI 通过本组件完成[控制生命周期](/v2/node/runtime#启动�
 | `rotate_keys`／`rotate_keys_with_request`／`rotation_pending` | 显式发起或恢复待确认换钥；宿主请求 ID 与最后一次成功结果一并私有保存，重放不再次轮换 |
 | `acquire_instance` | 使用宿主真实能力取得实例；同一次不确定请求保持原 instance ID |
 | `renew_instance` | 更新当前实例的期限，验证返回实例与代际 |
-| `sync_configuration` | 读取完整目标或用共享库应用 delta，检查 digest／身份／实例绑定，原子保存目标 |
-| `refresh_configuration` | 显式续租并从同一 Server 事务取得精确匹配的 lease 与 full／delta；复用相同校验和持久化入口 |
-| `watch_node`／`receive_event` | 创建单条、无自动重连的类型化 Node 事件流；把同认证上下文的通知映射为既有刷新或失效动作 |
 | `dataplane_keys` | 本身份已登记的包平面密钥（`DataPlaneKeys`）；不是授权，组件只对公钥与内容 selfKeys 一致的期望内容使用 |
 | `begin_sync`／`SyncCall::send`／`finish_sync`／`sync` | 一次 netmap 长轮询：持有 driver 准备、释放 driver 发送、再持有 driver 校验、保存并发布；见 [Netmap 发布](#netmap-发布) |
 | `sync_loop` | 以 `tokio::sync::Mutex<Control>` 驱动长轮询直至停止，按结果发布 `Option<meshway_engine::Netmap>` |
 | `netmap`／`netmap_reference`／`netmap_lease` | 已发布的已验证内容与签名租约（租约在 Control 时钟上已结束则为空）、持有的内容引用（下一请求的基准）与当前租约 |
 | `set_sync_transport` | 安装 sync 的 HTTP 交换实现 |
-| `create_demand` | 使用当前 Node 会话提交匹配当前 instance 的类型化需求；调用方保持重试 request ID，随后同步执行目标 |
-| `renew_demand` | 以现有 demand ID 和绝对 expiresAt 请求续租；反馈不更新本机许可，须同步保存并取得新执行快照 |
-| `cancel_demand` | 在 HTTP 发送前使旧快照及连续性失效并清空本机 execution deadline；不确定响应也不复活旧许可 |
-| `query_dns` | 按当前 Node 身份[精确查询名称](/v2/configuration-reference/dns#node-精确名称查询)，无需 instance，不延长任何 lease |
-| `acknowledge_saved` | 对已持久保存且仍属当前执行目标的配置发送 saved 回执；重试保持 attempt／sequence／时间 |
 | `begin_application`／`finish_application` | 使用同一 ApplicationTicket 先确认 saved，再提交真实 applied／failed 结果 |
 | `report_control_state` | 上报宿主提供的系统信息、当前能力和已保存配置；applied、通道、包流和测量保持空值 |
 | `report_runtime_state` | 校验宿主真实 NodeState 的能力／saved／applied 绑定，复用同一 instance sequence 和重试 owner |
@@ -43,9 +35,9 @@ daemon／CLI 通过本组件完成[控制生命周期](/v2/node/runtime#启动�
 
 接入时，宿主展示 Server 返回的 `EnrollmentRequestView.authorizationUrl` 作为浏览器批准入口；null 语义见 [Console origin](/v2/server#运行参数)，宿主如实提示而不自行拼接链接。Node 组件不持有浏览器用户会话，也不自行批准设备。
 
-首次连接的调用顺序为 `open` → `begin_enrollment` → `poll_enrollment` → `redeem_enrollment` → `authenticate` → `acquire_instance` → `sync_configuration` → `acknowledge_saved`。之后由宿主按期限驱动续租、同步、报告与重试。
+首次连接的调用顺序为 `open` → `begin_enrollment` → `poll_enrollment` → `redeem_enrollment` → `authenticate` → `acquire_instance` → `sync_loop`（netmap 长轮询）→ `begin_application`／`finish_application`。之后由宿主按期限驱动续租、报告与重试。
 
-所有异步操作由同一个可变 driver 协调。组件没有后台重连循环；宿主负责重试退避、取消挂起操作及按有效期限停止运行。普通 HTTP 操作总超时为 20 秒，SSE 使用下述建立／初始同步和读空闲预算；等待 HTTP 不延长实例或执行期限。
+所有异步操作由同一个可变 driver 协调。除 `sync_loop` 外组件没有后台循环；宿主负责其余操作的重试退避、取消挂起操作及按有效期限停止运行。普通 HTTP 操作总超时为 20 秒，sync 单次请求上限见 [Netmap 发布](#netmap-发布)；等待 HTTP 不延长实例或执行期限。
 
 ## 状态与恢复
 
@@ -62,27 +54,7 @@ daemon／CLI 通过本组件完成[控制生命周期](/v2/node/runtime#启动�
 - 损坏、缺字段、未知格式、错误绑定和异常文件权限都返回错误，不自动清理目录或生成替代身份。
 - 锁文件中的初始化标记先于身份写入持久化；已经初始化后丢失 `control.json` 返回错误，不能作为新安装自动生成身份。
 
-宿主可使用 `snapshot()` 在 HTTP 请求进行期间读取状态。会话／实例上下文与执行输出使用独立失效标记：publication 交接仅使旧执行截止不可用，保留仍有效的 authenticated／instance 事实。停止、身份上下文失效或销毁 driver 后，旧快照不再宣称具有有效实例。读取快照不产生报告或延长 lease；实际字段投影见[运行状态](/v2/node/runtime#安装范围与状态)。
-
-## 事件通知与刷新
-
-`watch_node()` 仅在已有有效会话和实例时创建 `NodeEvents`。它复用同一生成客户端和宿主保护的 HTTP socket pool，逐帧使用 `NodeEvent` 解码；没有独立解析器、后台重连或凭据 URL。daemon 持有唯一消费任务、容量为 1 的通知队列和 1–30 秒有界重连退避，停止时取消并 join。重复刷新提示合并为一个待处理提示，终止通知不丢弃；不把旧事件积压转换为逐条刷新。认证更新、实例失效或 down 后，已排队的旧上下文通知不再生效。
-
-| 事件 | 本机动作 |
-| --- | --- |
-| `config.snapshot`、`entities.snapshot`／`entities.delta` | 本节点目标、可见密钥绑定或成员集合改变时唤醒既有控制周期；peer 的 publication／观察投影变化不冒充本节点目标变化 |
-| `state.snapshot`／`state.delta` | 本节点实例改变或删除时重新同步；普通报告与样本不触发完整刷新 |
-| `configuration.changed`、`resources.changed` | 新配置 revision 或资源变化通知触发既有刷新 |
-| `sync.reset` | 断档、背压、epoch 改变触发刷新；`view_changed` 按随后完整投影的本节点目标判断，避免 peer／观察范围变化造成刷新反馈 |
-| `sync.ready`、其他初始 snapshot、配置进度与观察事件 | 不安装其投影视图，不把报告或测量当作执行许可；观察领取／更新仍由既有观察调度驱动 |
-| `stream.closed: session_expired` | 清除旧会话与实例上下文，按现有到期恢复路径重新持钥认证 |
-| `stream.closed: membership_revoked` | 撤回旧上下文，复用 HTTP 运行凭据拒绝的退避再认证路径；事件本身不把 daemon 永久置为 blocked |
-| `stream.closed: node_lease_expired` | 按既有 lease 失效路径重新取得资格 |
-| `stream.closed: server_shutdown`、EOF、网络／解码失败 | 只重连事件流；不撤销或延长独立取得的本机 lease |
-
-此消费者仅使用通知唤醒普通 HTTP 同步，不维护 SSE 配置缓存，也不保存或发送 `Last-Event-ID`；每次重连取得完整批次，相同目标、revision、可见密钥集合和本节点实例不重复刷新。初始批次的变化提示合并至 `sync.ready`；不完整批次不触发刷新。实际目标变化的即时唤醒、重复提示合并及定时兜底见[控制调度与恢复](/v2/node/runtime#控制调度与恢复)，权限关闭事件独立处理。
-
-SSE 复用受保护客户端，但不设置流的总请求截止：建立连接／取得响应头最多 20 秒，随后取得完整初始批次最多 20 秒，持续读取的空闲超时为 30 秒（Server 每 10 秒保活）。保活字节重置读空闲等待，不延长初始批次预算。EOF／超时由独立的宿主维护定时器推进重连，无需完整控制周期；连接成功本身不是 `sync.reset`。事件接收、保活和重连都不产生授权。
+宿主可使用 `snapshot()` 在 HTTP 请求进行期间读取状态。会话／实例上下文与持有的 netmap 租约相互独立：netmap 更换不清除仍有效的 authenticated／instance 事实。停止、身份上下文失效或销毁 driver 后，旧快照不再宣称具有有效实例。读取快照不产生报告或延长 lease；实际字段投影见[运行状态](/v2/node/runtime#安装范围与状态)。
 
 ## 换钥与恢复
 
@@ -155,7 +127,7 @@ Server [轮换签发钥](/v2/server#netmap-签发钥轮换)期间，sync 回复�
 
 ### sync 失败类别
 
-本机 Status（IPC v6）的 `syncError` 是 sync 长轮询最后一次失败的类别，重试期间保持，下一次成功 sync 即为 null；sync 未运行时为 null。`meshway status` 以 `Sync error: <类别> (retrying)` 显示，`--json` 原样输出。失败本身不撤回租约（撤回与身份拒绝仍按上文，另见 `lastError`）。
+本机 Status（IPC 8）的 `syncError` 是 sync 长轮询最后一次失败的类别，重试期间保持，下一次成功 sync 即为 null；sync 未运行时为 null。`meshway status` 以 `Sync error: <类别> (retrying)` 显示，`--json` 原样输出。失败本身不撤回租约（撤回与身份拒绝仍按上文，另见 `lastError`）。
 
 | `syncError` | 来源 |
 | --- | --- |
@@ -188,7 +160,7 @@ Server [轮换签发钥](/v2/server#netmap-签发钥轮换)期间，sync 回复�
 | `control.json` | 身份记录：origin、密钥、待完成接入、身份绑定（含钉住的 Server 签名钥，随[签名钥轮换](#server-签名钥轮换)更新）、换钥状态与待完成的注销意图（`leave` requestId）；包含秘密 |
 | `netmap.json` | `{ format: "meshway-netmap-cache/2", netmap, lease, signature, seal }` |
 | `peer-facts.json` | `{ format: "meshway-peer-facts-cache/1", networkId, nodeId, netmap: NetmapRef, cursor, peers: NodeId → PeerFacts }`；最后已知 peer 事实，无签名 |
-| `execution.json` | 旧 publication 目标缓存 `{ format: "meshway-execution-cache/1", saved }`，随旧执行链删除 |
+| `execution.json` | 旧版本遗留的目标缓存；当前既不读取也不删除 |
 
 缓存文件缺失、格式未知、损坏或绑定不符时忽略，不阻断身份也不生成授权。
 

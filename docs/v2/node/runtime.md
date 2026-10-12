@@ -63,7 +63,7 @@ daemon／CLI 共用[运行日志参数](/v2/logging)，日志位于 stderr；CLI
 | --- | --- |
 | Linux Mesh-only | TUN capture、Native TCP／Native UDP 静态端点认证邻接、协调 UDP 穿透、双栈 UDP／TCP 多跳包流、持续续租和失效清理；验收状态见[验收范围](/v2/node/validation) |
 | DNS | 已接入 loopback 服务、精确 resolver 需求、resolved／显式文件代理；所有必需组件安装成功才可 applied，后端约束见[系统 DNS 安装](/v2/node/dataplane#系统-dns-安装) |
-| Exit／本机 egress | daemon 按当前执行目标探测并安装 IPv4 出口角色、精确 NAT 投影和源端 capture／IPv6 sink；回包由同一 SecureNode 按原完整路径返回。角色、capture、承载及必需的负向 DNS 资源共同进入本机 applied 边界。出口 resolver 适配仍不可用，单独报告；完整多进程验收范围见[验收范围](/v2/node/validation) |
+| Exit／本机 egress | daemon 按当前执行目标探测并安装 IPv4 出口角色、精确 NAT 投影和源端 capture／IPv6 sink；回包由同一 SecureNode 按原完整路径返回。角色、capture、承载及必需的负向 DNS 资源共同进入本机 applied 边界。源节点 DNS 经出口 resolver 解析（[出口 resolver](/v2/node/dataplane#exit-resolver)），出口 resolver 不可用只对源 SERVFAIL 并单独报告 `exit.dnsUnavailable`；完整多进程验收范围见[验收范围](/v2/node/validation) |
 | 诊断 | `meshway ping` 与 Server observation tasks 共用获准测量器，见[路径诊断](/v2/node/diagnostics) |
 | 承载 | Manager 共用获准的 stream、Native UDP 静态端点和协调 UDP 穿透；会话与交接见[邻接管理](/v2/node/transport#邻接管理)，NAT 范围见[连接获取](/v2/node/connectivity) |
 | 其他平台／入口 | 非 Linux 的 tun 返回 unsupported；userspace（见[规划](#规划-userspace-networking)）、动态插件和切网尚未实现 |
@@ -150,15 +150,14 @@ IPC 8 的公开运行状态（`meshway status --json` 原样输出）：
 | 字段 | 含义 |
 | --- | --- |
 | `networkMode` | `tun`／`controlOnly`，本机选择 |
-| `dataPlane` | `controlOnly`、`stopped`、`preparing`、`ready`、`suspended`、`failed`；同一有效实例内来自组件实际安装状态，publication 刷新不自行投影为 suspended。ready 不代替当前执行许可 |
-| `authenticated`／`instance` | 当前有效会话与仍持有的有效实例；目标 guard 失效不清空它们。停止、fencing、身份失效、原 session／instance 截止仍使旧快照失效 |
-| `instance.executionExpiresAt` | 当前快照执行截止；目标刷新导致旧 guard 失效时为 null，直到新的状态快照发布；不因此隐藏 instance 或延长旧输出许可 |
+| `dataPlane` | `controlOnly`、`stopped`、`preparing`、`ready`、`suspended`、`failed`；来自组件实际安装状态，netmap 刷新不自行投影为 suspended。ready 不代替当前执行许可 |
+| `authenticated`／`instance` | 当前有效会话与仍持有的有效实例（`instanceId`／`generation`／`expiresAt`）；instance 只绑定 State 与回执，不是数据面期限（数据面只受 `netmap.expiresAt` 约束）。停止、fencing、身份失效、session／instance 截止使其失效 |
 | `saved`／`applied` | 独立的必填可空目标引用；saved 来自持久保存，applied 来自对应实例／目标的实际成功安装结果 |
 | `phase` | 完整枚举见下表；结合 dataPlane、当前资格和错误读取 |
 | `lastError`／`retryAt` | 类型化故障与重试时点；安装问题可为 unsupportedMode、underlay、tun、dns、transport、apply |
 | `sync` | 必填，`connected`（最近一次 sync 成功、下一次由 Server 挂起）、`reconnecting`、`disconnected`；不代表 Node 授权或业务连通 |
 | `lastSyncAt`／`syncError` | 必填可空：本进程最近一次返回已验签 netmap 的 sync 时间；sync 重试期间的失败类别 |
-| `netmap` | 必填可空：当前 netmap 引用与签名租约 `issuedAt`／`expiresAt`，以及 `missingArtifacts`（引用但尚未持有的规则集 digest；命名它们的规则不可用，见[规则集 · 下发](/v2/configuration-reference/rule-sets#下发)）与 `artifactProblem`（缺失时最后一次的 `download`／`integrity`／`storage`／`budget`，否则 null）；无有效租约为 null |
+| `netmap` | 必填可空：当前 netmap 引用与签名租约 `issuedAt`／`expiresAt`，以及 `missingArtifacts`（引用但尚未持有的规则集 digest；命名它们的规则不可用，见[规则集 · 下发](/v2/configuration-reference/rule-sets#下发)）、`artifactProblem`（缺失时最后一次的 `download`／`integrity`／`storage`／`budget`，否则 null）与 `capture`（本节点从 netmap 与 artifact 计算并安装的出口捕获：`managedIpv4`／`sinkIpv6` 区间数、捕获表 `routes` 数，以及未安装分割而改为完整捕获时的 `unavailable` 原因，否则 null；本节点无出口捕获时整项为 null，计算见 [Routing · 节点侧上限](/v2/configuration-reference/routing#capture-limits)）；无有效租约为 null |
 | `node` | 必填可空：已安装 netmap 中的本节点 `hostname` 与 Mesh `addresses`；未安装（down、control-only、准备中）为 null |
 | `peers` | 必填：已安装 netmap 中可见的其他节点（与 `ping` 解析名称的集合相同），按 hostname 排序；未安装为空。字段见下表 |
 | `exit` | 可省略；包含 target-bound `capability`、已安装 role generation、`activeFlows` 和独立的 `dnsUnavailable`（出口 resolver 不能为源解析的原因，与 State [`exitDns`](/v2/state-reference#exitdns) 同源；可用或不服务时为 null）。未观测的计数保持 null，失去当前执行权限后不显示已安装角色／活流数 |
@@ -238,7 +237,7 @@ Linux 首版每台机器运行一个系统级 `meshwayd`，同一时间只启用
 | `meshway version` | 程序与协议版本；不连接 daemon |
 | 切网 | 尚未实现；先停止旧网络、完成隔离清理，再运行新网络 |
 
-CLI 通过 Unix domain socket 发命令、读结果；状态由 daemon／组件的唯一 owner 持有。`meshway_protocol::ipc` 是唯一的请求／响应定义，当前版本为 7（新增 `Logout`、`Netcheck` 命令、`ResultBody::Netcheck`、Status 的 `node`／`peers`、`Phase::Leaving` 与 `ErrorCode::Leaving`），使用 JSON 与长度前缀，单条消息上限 64 KiB；CLI 和 daemon 同版本发布。每个连接处理一个请求，Ping 可返回有序的多个事件，Netcheck 返回一个报告；连接数、请求等待、写入和队列均有上限。`Up` 的 `enrollmentKey` 可省略；`Up`／`Down`／`RotateKey`／`Logout` 的 `expectedRevision` 由 CLI 读取后提交，换钥与注销不会绕过本机 CAS。
+CLI 通过 Unix domain socket 发命令、读结果；状态由 daemon／组件的唯一 owner 持有。`meshway_protocol::ipc` 是唯一的请求／响应定义，当前版本为 8，使用 JSON 与长度前缀，单条消息上限 64 KiB；CLI 和 daemon 同版本发布。每个连接处理一个请求，Ping 可返回有序的多个事件，Netcheck 返回一个报告；连接数、请求等待、写入和队列均有上限。`Up` 的 `enrollmentKey` 可省略；`Up`／`Down`／`RotateKey`／`Logout` 的 `expectedRevision` 由 CLI 读取后提交，换钥与注销不会绕过本机 CAS。
 
 ### CLI 输出与退出码
 
@@ -320,11 +319,11 @@ CLI 生命周期不承载 Node 身份或 lease，不收集账户密码、不取�
 
 ## 控制调度与恢复
 
-Server HTTP 等待与本机命令处理独立。配置查询定时兜底、实例续租与控制报告通常每 20 秒；本节点实际执行目标／资格变化的事件立即唤醒既有控制周期，周期进行中的重复提示由单槽队列合并，已由 RPC 取得的同一配置快照提示不再触发刷新。真实安装完成、socket／邻接或业务依赖变化还会触发合并后的报告，最多每秒一次。仅观测时间变化不触发新事件，旧报告重试保留原序号／内容／时间，也不确认后来出现的新状态。故障采用有界退避，期限由控制组件独立校验。down 先持久保存本机下线意图，再停止当前资格并尽力释放远端实例；离线时也不能把旧 lease 展示为有效。当前 IPC 不承载业务包。
+Server HTTP 等待与本机命令处理独立。netmap 与 peer 事实只经 Control 的 `sync_loop` 取得：单一长轮询 `POST /agent-api/v1/sync` 由 Server 挂起至有变化，超时回 unchanged 即兜底刷新，挂起不越过节点持有的租约（至少余 15 秒）；每份验签通过的 netmap 交给网络 owner 的 [Engine](#engine)，撤回发布空 netmap。退避与撤回分类见 [Netmap 发布](/v2/node/control#netmap-发布)。`sync_loop` 只在准备与应用回答时持有 Control 锁；本节其余维护（实例续租与控制报告通常每 20 秒，观察任务领取每 2 秒）在同一 Control 上另行调度，sync 回答不排在它们之后。真实安装完成、socket／邻接或业务依赖变化还会触发合并后的报告，最多每秒一次。仅观测时间变化不触发新事件，旧报告重试保留原序号／内容／时间，也不确认后来出现的新状态。故障采用有界退避，期限由控制组件独立校验。down 先持久保存本机下线意图，再停止当前资格并尽力释放远端实例；离线时也不能把旧 lease 展示为有效。当前 IPC 不承载业务包。
 
-daemon 同时持有一条受保护的 Node SSE 消费任务。本节点目标、revision、实例、可见密钥或成员集合变化及需要重新同步的 reset 唤醒上述既有控制周期，重复提示合并；普通 peer State、观察投影和重连成功不触发 apply。定时刷新作为断线与通知遗漏的兜底。事件消费者不直接安装配置、续期或授权；关闭原因、重连预算与旧事件范围检查见[事件通知与刷新](/v2/node/control#事件通知与刷新)。已有待确认换钥／接入密钥记录在认证前由同一 Control owner 恢复，发起入口限制见[换钥与恢复](/v2/node/control#换钥与恢复)。
+Node 不消费 SSE 事件流（用户 SSE 保留给 Console）。已有待确认换钥／接入密钥记录在认证前由同一 Control owner 恢复，发起入口限制见[换钥与恢复](/v2/node/control#换钥与恢复)。
 
-已知目标变更的通知、报告 scope 轮换或刚确认的新诊断目标优先执行刷新，排在旧 scope 的 traversal／结果网关请求之前；刷新成功后恢复有界网关调度。通知本身不赋予新目标权限。
+报告 scope 轮换或刚确认的新诊断目标优先执行刷新，排在旧 scope 的 traversal／结果网关请求之前；刷新成功后恢复有界网关调度。刷新本身不赋予新目标权限。
 
 期望上线时，网络失败、HTTP 408／429／5xx、无可解码 body 的任何状态及 400 等其他已解码拒绝按 1–15 秒有界退避自动重试，签名租约内数据面持续运行。不可解码或超限响应会撤回旧运行上下文后重新取得资格；运行中的 session／instance 拒绝、lease 到期或实例更换会重新持钥认证、取得有效 instance 并上报 State，不要求再次执行 `up`。已解码的身份拒绝、Server（`controllerId`）／key／目标绑定错误进入 `blocked`：前者同时撤回数据面，后者让已持有的 netmap 运行到租约到期；本机记录损坏或写入结果不确定进入 `blocked` 并撤回数据面。分类定义见 [Node 控制组件](/v2/node/control#netmap-发布)；后台残留请求不能绕过该停止状态。
 
@@ -334,7 +333,7 @@ Underlay 启动时当前 namespace 的资源归属或路由保护冲突仍拒绝
 
 控制失败日志包含实际 operation、错误类别、HTTP status、已解码的 problem code、Server request ID 和恢复决策；不记录响应原文或凭据。显式 `down` 的清理若失败，在外部冲突解决后重新执行 `down` 会触发新的清理尝试，同请求重放仍保持幂等。
 
-`state_scope_changed` 表示报告在交付期间遇到正常 scope 轮换：丢弃当前报告，1 秒后刷新并重新采样，不进入 `retrying`、不设置 `lastError=apply`，保持当前 phase 与 SSE 消费任务。publication、execution lease、saved 前置条件或回执内容冲突按[回执分类](/v2/api/problems#node-配置回执冲突)退役精确回执，1 秒后刷新并重新 apply 当前目标。两者均不 reset instance 或主动 suspend／删除 TUN。实际执行截止、撤回和连续性交接检查独立生效；旧回执、输出与报告不换绑新目标。
+`state_scope_changed` 表示报告在交付期间遇到正常 scope 轮换：丢弃当前报告，1 秒后刷新并重新采样，不进入 `retrying`、不设置 `lastError=apply`，保持当前 phase，不影响 sync 长轮询。netmap 引用、saved 前置条件或回执内容冲突按[回执分类](/v2/api/problems#node-配置回执冲突)退役精确回执，1 秒后刷新并重新 apply 当前目标。两者均不 reset instance 或主动 suspend／删除 TUN。实际执行截止、撤回和连续性交接检查独立生效；旧回执、输出与报告不换绑新目标。
 
 自有负向规则、私有表路由以及 TUN 的创建／退役不会作为外部网络变化通知。TUN 关闭产生的延后地址／链路事件保留精确接口索引至事件排空，仅用于抑制自触发通知，不形成额外的资源归属或捕获豁免。suspended 期间的 Mesh `EHOSTUNREACH`／`ENETUNREACH` 是负向边界的实际结果，不触发控制连接重建或端点重枚举。
 
