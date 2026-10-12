@@ -98,6 +98,16 @@ struct Section {
     range: Range<usize>,
 }
 
+/// One section-table entry as stored, including ignored optional sections.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SectionInfo {
+    pub kind: u32,
+    pub required: bool,
+    pub offset: u64,
+    pub length: u64,
+}
+
 impl RuleSet {
     /// Heap backend: reads the artifact from an owned buffer.
     pub fn from_vec(bytes: Vec<u8>) -> Result<Self, LoadError> {
@@ -134,7 +144,7 @@ impl RuleSet {
         {
             return Err(invalid("counts exceed limits"));
         }
-        let sections = Self::sections(bytes)?;
+        let sections = Self::section_table(bytes)?;
         let find = |kind| -> Result<Range<usize>, LoadError> {
             let mut found = sections.iter().filter(|s| s.kind == kind);
             match (found.next(), found.next()) {
@@ -170,7 +180,7 @@ impl RuleSet {
 
     /// Section table: aligned, in bounds, non-overlapping, gaps zero; unknown
     /// optional sections are ignored and unknown required ones rejected.
-    fn sections(bytes: &[u8]) -> Result<Vec<Section>, LoadError> {
+    fn section_table(bytes: &[u8]) -> Result<Vec<Section>, LoadError> {
         let count = u32_at(bytes, 16).ok_or(invalid("header"))? as usize;
         let table_end = count
             .checked_mul(SECTION)
@@ -297,6 +307,22 @@ impl RuleSet {
     }
     pub fn counts(&self) -> Counts {
         self.counts
+    }
+    /// The section table in stored order.
+    pub fn sections(&self) -> Vec<SectionInfo> {
+        let b = self.bytes();
+        let count = u32_at(b, 16).unwrap_or(0) as usize;
+        (0..count)
+            .filter_map(|i| {
+                let at = HEADER + i * SECTION;
+                Some(SectionInfo {
+                    kind: u32_at(b, at)?,
+                    required: u32_at(b, at + 4)? & REQUIRED != 0,
+                    offset: u64_at(b, at + 8)?,
+                    length: u64_at(b, at + 16)?,
+                })
+            })
+            .collect()
     }
     fn fst(&self) -> Fst<'_> {
         Fst::parse(&self.bytes()[self.domains.clone()]).expect("validated at open")

@@ -2197,6 +2197,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "meshway-rules-cli"
+version = "0.1.0-alpha.3"
+dependencies = [
+ "chrono",
+ "clap",
+ "meshway-logging",
+ "meshway-rules",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tracing",
+]
+
+[[package]]
 name = "meshway-runtime-fixture"
 version = "0.1.0-alpha.3"
 dependencies = [

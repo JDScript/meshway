@@ -38,4 +38,4 @@ pub use format::{
 };
 pub use name::{Cidr, Entry, InvalidCidr, InvalidKeyword, InvalidName, Keyword, Name};
 pub use report::{Conversion, ConvertError, Converted, Reason, Report, Skipped, Summary};
-pub use set::{DomainEntry, DomainHit, DomainKind, LoadError, RuleSet};
+pub use set::{DomainEntry, DomainHit, DomainKind, LoadError, RuleSet, SectionInfo};
