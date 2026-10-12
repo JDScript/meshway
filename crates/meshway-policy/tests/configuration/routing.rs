@@ -447,3 +447,42 @@ fn unmanaged_is_only_a_fallback_by_type() {
         serde_json::from_str(r#"{"rules":[],"fallback":{"type":"unmanaged"}}"#).unwrap();
     assert_eq!(profile.fallback, RouteAction::Unmanaged);
 }
+
+#[test]
+fn a_partition_beyond_the_node_limits_is_a_warning_with_its_counts() {
+    let spaced = |count: u32| -> Vec<String> {
+        (0..count)
+            .map(|i| format!("{}/32", std::net::Ipv4Addr::from(0x0b00_0000 + i * 2)))
+            .collect()
+    };
+    let warnings = |count: u32| {
+        let mut input = egress_input(&["autogroup:internet"], "8.8.8.0/24");
+        input.rule_sets.insert(
+            "many".into(),
+            RuleSet::Inline {
+                ip_cidr: spaced(count),
+                domain_suffix: vec![],
+                domain: vec![],
+                domain_subdomain: vec![],
+            },
+        );
+        let rule = &mut input.routing.egress.profiles.get_mut("work").unwrap().rules[0];
+        rule.matcher.ip_cidr.clear();
+        rule.matcher.rule_sets.push("many".into());
+        normalize_with_dependencies(input, &context())
+            .unwrap()
+            .warnings
+    };
+    assert!(warnings(12_000).is_empty());
+    let over = warnings(17_000);
+    assert_eq!(over.len(), 1, "{over:?}");
+    assert_eq!(over[0].code, IssueCode::EgressPartitionLimit);
+    assert_eq!(over[0].path, "/routing/egress/profiles/work");
+    assert_eq!(over[0].params["profile"], "work");
+    assert_eq!(over[0].params["ranges"], "17000");
+    assert_eq!(
+        over[0].params["maxRanges"],
+        meshway_policy::compile::MAX_CAPTURE_RANGES.to_string()
+    );
+    assert_eq!(over[0].params["routes"], "17000");
+}

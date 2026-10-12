@@ -21647,6 +21647,48 @@
         ],
         "description": "Implementation capability declared by the Node, without granting execution permission."
       },
+      "CaptureSummary": {
+        "type": "object",
+        "description": "Size of a source's egress partition as a Node installs it: nftables\ninterval elements and routes of its private capture table. A Node computes\nthe same numbers from its netmap and artifacts.",
+        "required": [
+          "managedIpv4",
+          "sinkIpv6",
+          "routes",
+          "unavailable"
+        ],
+        "properties": {
+          "managedIpv4": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Managed IPv4 ranges (interval elements).",
+            "minimum": 0
+          },
+          "routes": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Capture-table routes: the CIDR cover of the managed IPv4 ranges.",
+            "minimum": 0
+          },
+          "sinkIpv6": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Sunk IPv6 ranges (interval elements).",
+            "minimum": 0
+          },
+          "unavailable": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/UnavailableReason",
+                "description": "Why no partition is installed (full capture instead); null otherwise."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
       "Carrier": {
         "type": "object",
         "description": "Actual socket establishment orientation, independent of business direction.",
@@ -24305,105 +24347,41 @@
         ],
         "description": "Source-local action for one managed destination prefix."
       },
-      "EgressCapturePlan": {
+      "EgressPlan": {
         "type": "object",
-        "description": "Packet ownership only. These disjoint CIDRs grant no business Access.",
+        "description": "Source egress selection: the rules in effect and the fallback. The Node\ncomputes the address partition from these rules and the rule-set artifacts\nit holds; no prefix list is distributed.",
         "required": [
           "generation",
-          "managedIpv4",
-          "defaultCapture",
-          "directIpv4",
-          "unmanagedIpv4",
-          "sinkIpv6"
+          "rules",
+          "fallback",
+          "unavailable"
         ],
         "properties": {
-          "defaultCapture": {
-            "type": "boolean",
-            "description": "True for default IPv4 capture, including a first-match exit covering all IPv4."
-          },
-          "directIpv4": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Explicit direct IPv4 exceptions after first-match subtraction."
+          "fallback": {
+            "$ref": "#/components/schemas/EgressAction",
+            "description": "Action for destinations no rule matches."
           },
           "generation": {
             "$ref": "#/components/schemas/Digest",
-            "description": "Identity of the effective selection and its routing inputs."
+            "description": "Selection identity: network, Node, effective profile, selection\nversion, `routing.egress` and the digests of the sets those rules use."
           },
-          "managedIpv4": {
+          "rules": {
             "type": "array",
             "items": {
-              "type": "string"
+              "$ref": "#/components/schemas/EgressRuleRef"
             },
-            "description": "Disjoint IPv4 ranges handed to the unique data-plane owner."
-          },
-          "sinkIpv6": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "IPv6 exit ranges that must be sunk; Mesh routes take precedence."
+            "description": "Public rules, then the effective profile's rules."
           },
           "unavailable": {
             "oneOf": [
               {
                 "$ref": "#/components/schemas/UnavailableReason",
-                "description": "Unresolved routing requires a fail-closed boundary, not local fallback."
+                "description": "Why the partition is unavailable with every referenced artifact\nloaded; null when it is computable. Capture is then the full range."
               },
               {
                 "type": "null"
               }
             ]
-          },
-          "unmanagedIpv4": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Explicit unmanaged IPv4 exceptions after first-match subtraction."
-          }
-        },
-        "additionalProperties": false
-      },
-      "EgressPlan": {
-        "type": "object",
-        "description": "Source egress ownership with the action of every partition prefix.",
-        "required": [
-          "capture",
-          "routes"
-        ],
-        "properties": {
-          "capture": {
-            "$ref": "#/components/schemas/EgressCapturePlan",
-            "description": "Capture boundary handed to the packet owner; `generation` is the selection identity."
-          },
-          "routes": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/EgressRoute"
-            },
-            "description": "Complete disjoint partition of IPv4 and IPv6; empty when capture is unavailable."
-          }
-        },
-        "additionalProperties": false
-      },
-      "EgressRoute": {
-        "type": "object",
-        "description": "One prefix of the source's first-match egress partition.",
-        "required": [
-          "prefix",
-          "action"
-        ],
-        "properties": {
-          "action": {
-            "$ref": "#/components/schemas/EgressAction",
-            "description": "Action selected by the first matching rule or the profile fallback."
-          },
-          "prefix": {
-            "type": "string",
-            "description": "IPv4 or IPv6 prefix, disjoint from every other route."
           }
         },
         "additionalProperties": false
@@ -24462,6 +24440,25 @@
           "remark": {
             "type": "string",
             "description": "Free-form description, defaulting to an empty string; duplicate descriptions are allowed."
+          }
+        },
+        "additionalProperties": false
+      },
+      "EgressRuleRef": {
+        "type": "object",
+        "description": "One egress rule in effect for the source, in first-match order. Its\nmatch lists and rule-set references are the projection's rule at `rule`.",
+        "required": [
+          "rule",
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/EgressAction",
+            "description": "Action the rule selects."
+          },
+          "rule": {
+            "type": "string",
+            "description": "JSON Pointer of the rule in the configuration."
           }
         },
         "additionalProperties": false
@@ -26736,7 +26733,7 @@
           "invalid_rule_set_key",
           "unknown_rule_set_provider",
           "invalid_rule_set_provider",
-          "rule_set_partition_limit",
+          "egress_partition_limit",
           "empty_inline_rule_set",
           "rule_set_budget",
           "rule_set_unavailable",
@@ -34093,7 +34090,8 @@
           "assignment",
           "allowed",
           "locked",
-          "requested"
+          "requested",
+          "capture"
         ],
         "properties": {
           "allowed": {
@@ -34108,6 +34106,10 @@
               "null"
             ],
             "description": "The assignment whose default applies, or null for the built-in `mesh`."
+          },
+          "capture": {
+            "$ref": "#/components/schemas/CaptureSummary",
+            "description": "The source's egress partition under this profile, as its Node\ninstalls it."
           },
           "locked": {
             "type": "boolean"

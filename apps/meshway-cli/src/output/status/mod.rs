@@ -99,6 +99,19 @@ pub(crate) fn write(
         },
     };
     line(output, term, "Netmap", netmap)?;
+    if let Some(capture) = status.netmap.as_ref().and_then(|n| n.capture.as_ref()) {
+        let text = match capture.unavailable {
+            None => format!(
+                "{} IPv4 · {} IPv6 sink ranges · {} routes",
+                capture.managed_ipv4, capture.sink_ipv6, capture.routes
+            ),
+            Some(reason) => term.paint(
+                Role::Warn,
+                format!("unavailable ({}) · full capture", words(reason)),
+            ),
+        };
+        line(output, term, "Egress", text)?;
+    }
     let plane = term.paint(
         match status.data_plane {
             DataPlane::Ready => Role::Good,

@@ -167,14 +167,10 @@ impl super::super::Kernel {
         self.verify().await?;
         let start = self.journal.end() + 1;
         let rules = super::super::get_rules(&self.handle, self.options.max_kernel_objects).await?;
-        let ranges = plan::parse(&plan)?;
-        let needed = u32::try_from(
-            (ranges.v4.len() + ranges.v6.len()) * 2 + if ranges.v6.is_empty() { 0 } else { 2 },
-        )
-        .map_err(|_| Error::Capacity)?;
+        // One selector rule at `start`.
         if rules
             .iter()
-            .any(|rule| (start..start + needed).contains(&super::super::priority(rule)))
+            .any(|rule| super::super::priority(rule) == start)
         {
             return Err(Error::Conflict);
         }
@@ -203,7 +199,7 @@ impl super::super::Kernel {
             let (boot, namespace_device, namespace_inode) =
                 super::super::journal::Journal::identity()?;
             Ledger {
-                version: 1,
+                version: 2,
                 boot,
                 namespace_device,
                 namespace_inode,
@@ -220,7 +216,6 @@ impl super::super::Kernel {
                 },
                 pending_gate: None,
                 receipt: None,
-                routes: Vec::new(),
                 rules: Vec::new(),
                 removed: false,
             }
@@ -338,20 +333,7 @@ impl super::super::Kernel {
 }
 fn mesh(expected: &Mutex<Expected>) -> Result<Ranges> {
     let expected = expected.lock().map_err(|_| Error::Worker)?;
-    Ok(Ranges {
-        v4: expected
-            .pools
-            .iter()
-            .copied()
-            .filter(|net| net.addr().is_ipv4())
-            .collect(),
-        v6: expected
-            .pools
-            .iter()
-            .copied()
-            .filter(|net| net.addr().is_ipv6())
-            .collect(),
-    })
+    Ok(Ranges::of(expected.pools.iter().copied()))
 }
 fn current(
     shared: &Arc<super::super::super::protection::Shared>,

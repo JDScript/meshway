@@ -3,7 +3,10 @@
 use super::*;
 use crate::compile::{routing::PathError, rules};
 use meshway_transport::spec::Port;
-use std::{net::IpAddr, sync::Arc};
+use std::{
+    net::IpAddr,
+    sync::{Arc, Mutex},
+};
 
 /// Business destination of a decision and the circuit unit relays check.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -49,6 +52,9 @@ pub struct LocalCompiler {
     /// unavailable dependency of every rule naming it.
     rule_sets: rules::RuleSets,
     matchers: rules::Matchers,
+    /// Partition of each profile computed so far: a pure function of this
+    /// content and the loaded sets, bounded by the projection's profiles.
+    partitions: Mutex<BTreeMap<String, crate::compile::Partition>>,
 }
 
 /// The egress rule that decides a destination.
@@ -133,6 +139,7 @@ impl LocalCompiler {
             matchers,
             configuration,
             netmap,
+            partitions: Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -149,7 +156,8 @@ impl LocalCompiler {
         let mut netmap = (*self.netmap).clone();
         if netmap.egress.is_some() {
             let plan = self.egress(netmap.node_id)?;
-            netmap.dns.resolvers = local::resolvers(&self.configuration, true, &plan);
+            netmap.dns.resolvers =
+                local::resolvers(&self.configuration, true, &self.partition(netmap.node_id)?);
             if netmap.egress.as_ref() != Some(&plan)
                 && matches!(netmap.dns.egress, DnsPlan::ViaExit { .. })
             {
@@ -161,6 +169,43 @@ impl LocalCompiler {
             netmap.egress = Some(plan);
         }
         Ok(Arc::new(netmap))
+    }
+
+    /// The partition of `source`'s effective profile with the sets this Node
+    /// holds; `Err` is why none exists (capture is then the full range).
+    pub fn partition(&self, source: NodeId) -> Result<crate::compile::Partition, CompileError> {
+        let projection = &self.netmap.projection;
+        let profile = effective_profile(
+            &self.configuration,
+            &projection.subjects,
+            &projection.selected_profiles,
+            source,
+        )?;
+        let mut partitions = self
+            .partitions
+            .lock()
+            .map_err(|_| CompileError::InvalidInput)?;
+        if let Some(partition) = partitions.get(&profile) {
+            return Ok(partition.clone());
+        }
+        let partition =
+            crate::compile::capture::partition(&self.configuration, &self.rule_sets, &profile)
+                .map(Arc::new);
+        partitions.insert(profile, partition.clone());
+        Ok(partition)
+    }
+
+    /// The capture boundary this Node installs for its own egress plan.
+    pub fn capture(&self) -> Result<Option<EgressCapturePlan>, CompileError> {
+        let node = self.netmap.node_id;
+        if self.netmap.egress.is_none() {
+            return Ok(None);
+        }
+        let generation = self.egress(node)?.generation;
+        Ok(Some(match self.partition(node)? {
+            Ok(partition) => partition.capture(generation),
+            Err(reason) => crate::compile::unavailable_capture(generation, reason),
+        }))
     }
 
     /// Referenced artifacts this compiler does not hold.
@@ -307,7 +352,8 @@ impl LocalCompiler {
         paths::Graph::projected(self.topology(), &self.netmap.projection.configuration)
     }
 
-    /// Egress plan of a visible source, identical to the one its own netmap carries.
+    /// Egress plan of a visible source, identical to the one its own netmap
+    /// carries when this Node holds every artifact the source's rules use.
     pub fn egress(&self, source: NodeId) -> Result<EgressPlan, CompileError> {
         let projection = &self.netmap.projection;
         let profile = effective_profile(
@@ -316,10 +362,16 @@ impl LocalCompiler {
             &projection.selected_profiles,
             source,
         )?;
+        let references = projection
+            .rule_sets
+            .iter()
+            .map(|(key, reference)| (key.clone(), reference.digest))
+            .collect();
         local::egress(
             self.netmap.network_id,
             &self.configuration,
-            &self.rule_sets,
+            &references,
+            &self.partition(source)?,
             source,
             &profile,
             projection
@@ -375,15 +427,14 @@ impl LocalCompiler {
             {
                 return Ok(LocalDecision::Denied(UnavailableReason::NoPath));
             }
-            let plan = self.egress(source)?;
-            if let Some(reason) = plan.capture.unavailable {
-                return Ok(LocalDecision::Denied(reason));
-            }
-            let (nodes, via) = match plan.route(canonical).map(|route| &route.action) {
-                Some(EgressAction::Direct) => return Ok(LocalDecision::Direct),
-                Some(EgressAction::Unmanaged) => return Ok(LocalDecision::Unmanaged),
-                Some(EgressAction::Exit { nodes, via }) => (nodes.clone(), via.clone()),
-                None => return Ok(LocalDecision::Denied(UnavailableReason::NoPath)),
+            let partition = match self.partition(source)? {
+                Ok(partition) => partition,
+                Err(reason) => return Ok(LocalDecision::Denied(reason)),
+            };
+            let (nodes, via) = match partition.action(canonical) {
+                EgressAction::Direct => return Ok(LocalDecision::Direct),
+                EgressAction::Unmanaged => return Ok(LocalDecision::Unmanaged),
+                EgressAction::Exit { nodes, via } => (nodes.clone(), via.clone()),
             };
             let services = external_services(cfg, input.subjects, source, canonical);
             if !services.contains(protocol, port) {
@@ -398,7 +449,7 @@ impl LocalCompiler {
             (
                 Target::Exit { nodes, via },
                 services,
-                Some(plan.capture.generation),
+                Some(self.egress(source)?.generation),
             )
         };
         if !services.contains(protocol, port) {
@@ -477,20 +528,15 @@ impl LocalCompiler {
                 if cfg.nodes[&origin].addresses.ipv4.is_none() {
                     return Ok(Vec::new());
                 }
-                let plan = self.egress(origin)?;
-                let routes: Vec<ipnet::IpNet> = plan
-                    .routes
-                    .iter()
-                    .filter(|route| {
-                        matches!(&route.action, EgressAction::Exit { nodes: n, via: v } if n == nodes && v == via)
+                let Ok(partition) = self.partition(origin)? else {
+                    return Ok(Vec::new());
+                };
+                if !partition
+                    .ipv4()
+                    .filter(|(_, action)| {
+                        matches!(action, EgressAction::Exit { nodes: n, via: v } if n == nodes && v == via)
                     })
-                    .filter_map(|route| route.prefix.parse().ok())
-                    .filter(|net: &ipnet::IpNet| net.addr().is_ipv4())
-                    .collect();
-                if plan.capture.unavailable.is_some()
-                    || !routes
-                        .iter()
-                        .any(|route| external_overlaps(cfg, input.subjects, origin, route))
+                    .any(|(range, _)| external_overlaps(cfg, input.subjects, origin, &range))
                 {
                     return Ok(Vec::new());
                 }
@@ -576,9 +622,12 @@ fn external_overlaps(
     cfg: &NetworkConfiguration,
     subjects: &SubjectContext,
     source: NodeId,
-    route: &ipnet::IpNet,
+    range: &std::ops::RangeInclusive<std::net::Ipv4Addr>,
 ) -> bool {
-    let overlap = |net: &ipnet::IpNet| net.contains(route) || route.contains(net);
+    let overlap = |net: &ipnet::IpNet| match net {
+        ipnet::IpNet::V4(net) => net.network() <= *range.end() && *range.start() <= net.broadcast(),
+        ipnet::IpNet::V6(_) => false,
+    };
     external_rules(cfg, subjects, source).any(|(rule, scope)| {
         !crate::access::token_services(&rule.ip)
             .collect::<Vec<_>>()

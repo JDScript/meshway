@@ -1,24 +1,26 @@
 use super::*;
 use meshway_model::Digest;
+use std::net::{Ipv4Addr, Ipv6Addr};
 
-object! {
-/// Packet ownership only. These disjoint CIDRs grant no business Access.
+/// Packet ownership only; grants no business Access. A Node computes it from
+/// its own netmap and the rule-set artifacts it holds (`meshway-policy`); it
+/// is never signed or distributed. Ranges are inclusive, ordered, disjoint
+/// and non-adjacent, so each is one element of an nftables interval set.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct EgressCapturePlan {
-    /// Identity of the effective selection and its routing inputs.
+    /// Selection identity of the source egress plan it was computed for.
     pub generation: Digest,
-    /// Disjoint IPv4 ranges handed to the unique data-plane owner.
-    pub managed_ipv4: Vec<String>,
+    /// IPv4 ranges handed to the unique data-plane owner.
+    pub managed_ipv4: Vec<(Ipv4Addr, Ipv4Addr)>,
     /// True for default IPv4 capture, including a first-match exit covering all IPv4.
     pub default_capture: bool,
-    /// Explicit direct IPv4 exceptions after first-match subtraction.
-    pub direct_ipv4: Vec<String>,
-    /// Explicit unmanaged IPv4 exceptions after first-match subtraction.
-    pub unmanaged_ipv4: Vec<String>,
     /// IPv6 exit ranges that must be sunk; Mesh routes take precedence.
-    pub sink_ipv6: Vec<String>,
+    pub sink_ipv6: Vec<(Ipv6Addr, Ipv6Addr)>,
     /// Unresolved routing requires a fail-closed boundary, not local fallback.
     pub unavailable: Option<UnavailableReason>,
-} }
+}
+
 meshway_model::string_enum! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]

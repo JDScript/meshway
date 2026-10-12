@@ -319,12 +319,13 @@ async fn content_applies_before_its_artifacts_and_again_once_they_load() {
     let desired = engine.desired().unwrap();
     assert_eq!(desired.missing(), [set.digest()]);
     // Fail closed until the artifact is held: full capture, no direct route.
-    let capture = &desired.egress().unwrap().capture;
+    let capture = desired.capture().unwrap();
     assert_eq!(
         capture.unavailable,
         Some(meshway_configuration::execution::UnavailableReason::MissingDependency)
     );
-    assert!(capture.direct_ipv4.is_empty());
+    assert_eq!(capture.managed_ipv4.len(), 1);
+    assert!(desired.partition().is_none());
     assert_eq!(
         desired
             .content()
@@ -332,7 +333,6 @@ async fn content_applies_before_its_artifacts_and_again_once_they_load() {
             .egress
             .as_ref()
             .unwrap()
-            .capture
             .unavailable,
         None
     );
@@ -347,6 +347,9 @@ async fn content_applies_before_its_artifacts_and_again_once_they_load() {
     let desired = engine.desired().unwrap();
     assert!(desired.missing().is_empty());
     assert!(Arc::ptr_eq(desired.netmap(), &content.netmap));
+    // The partition now holds the set's direct exception.
+    assert!(desired.capture().unwrap().unavailable.is_none());
+    assert!(desired.partition().is_some());
     // Offering it once more changes nothing.
     let calls = engine.components.calls.len();
     engine.reconfig(Some(&loaded)).await.unwrap();

@@ -108,6 +108,24 @@ fn plan(compiled: &CompiledNetmaps) -> &EgressPlan {
     compiled.nodes[&node(1)].netmap.egress.as_ref().unwrap()
 }
 
+/// The capture boundary source 1 installs from its own netmap.
+fn capture(compiled: &CompiledNetmaps) -> EgressCapturePlan {
+    meshway_policy::compile::netmap::LocalCompiler::new(
+        &compiled.nodes[&node(1)].netmap,
+        &Default::default(),
+    )
+    .capture()
+    .unwrap()
+    .unwrap()
+}
+
+fn sink_all() -> Vec<(std::net::Ipv6Addr, std::net::Ipv6Addr)> {
+    vec![(
+        std::net::Ipv6Addr::UNSPECIFIED,
+        std::net::Ipv6Addr::from(u128::MAX),
+    )]
+}
+
 #[test]
 fn routes_partition_is_disjoint_and_follows_rule_order() {
     let mut s = setup();
@@ -123,16 +141,26 @@ fn routes_partition_is_disjoint_and_follows_rule_order() {
         }
         s.cfg.routing.egress.rules = rules.clone();
         let compiled = netmaps(&s);
-        let plan = plan(&compiled);
-        let nets: Vec<ipnet::IpNet> = plan
-            .routes
-            .iter()
-            .map(|r| r.prefix.parse().unwrap())
-            .collect();
-        for (i, a) in nets.iter().enumerate() {
-            for b in &nets[i + 1..] {
-                assert!(!a.contains(b) && !b.contains(a));
-            }
+        let compiler = meshway_policy::compile::netmap::LocalCompiler::new(
+            &compiled.nodes[&node(1)].netmap,
+            &Default::default(),
+        );
+        let partition = compiler.partition(node(1)).unwrap().unwrap();
+        let ranges: Vec<_> = partition.ipv4().collect();
+        assert_eq!(
+            ranges.first().unwrap().0.start(),
+            &std::net::Ipv4Addr::UNSPECIFIED
+        );
+        assert_eq!(
+            ranges.last().unwrap().0.end(),
+            &std::net::Ipv4Addr::BROADCAST
+        );
+        for pair in ranges.windows(2) {
+            assert_eq!(
+                u32::from(*pair[0].0.end()) + 1,
+                u32::from(*pair[1].0.start())
+            );
+            assert_ne!(pair[0].1, pair[1].1, "adjacent ranges share an action");
         }
         for a in [0u8, 8, 10, 11, 127] {
             for b in [0u8, 8, 20, 21, 255] {
@@ -146,15 +174,15 @@ fn routes_partition_is_disjoint_and_follows_rule_order() {
                             .contains(&ip)
                     })
                     .is_none_or(|rule| matches!(rule.action, RuleAction::Exit { .. }));
-                let route = plan.route(ip).unwrap();
                 assert_eq!(
-                    matches!(route.action, EgressAction::Exit { .. }),
+                    matches!(partition.action(ip), EgressAction::Exit { .. }),
                     expected_exit,
                     "{ip} reverse={reverse}"
                 );
             }
         }
-        assert_eq!(plan.capture.sink_ipv6, ["::/0"]);
+        assert_eq!(capture(&compiled).sink_ipv6, sink_all());
+        assert!(plan(&compiled).unavailable.is_none());
     }
 }
 
@@ -249,7 +277,7 @@ fn ipv6_and_mesh_pool_destinations_never_leave_through_an_exit() {
         select(&compiled, "127.0.0.1"),
         LocalDecision::Denied(UnavailableReason::Unauthorized)
     );
-    assert_eq!(plan(&compiled).capture.sink_ipv6, ["::/0"]);
+    assert_eq!(capture(&compiled).sink_ipv6, sink_all());
 }
 
 #[test]
@@ -302,31 +330,56 @@ fn ordered_backup_exits_and_unreachable_ones() {
 }
 
 #[test]
-fn capture_budget_or_unknown_domain_fails_closed_without_routes() {
+fn partition_limit_or_unknown_domain_fails_closed_without_routes() {
     let mut s = setup();
+    // 20,000 separate /32 direct exceptions inside the exit fallback: more
+    // managed ranges than a Node installs.
     let mut fragmented = egress_rule("8.8.8.8/32", RuleAction::Direct);
-    fragmented.matcher.ip_cidr = (0..1024)
-        .map(|i| format!("8.{}.{}.1/32", i / 256, i % 256))
+    fragmented.matcher.ip_cidr = (0..20_000u32)
+        .map(|i| format!("{}/32", std::net::Ipv4Addr::from(0x0b00_0000 + i * 2)))
         .collect();
     s.cfg.routing.egress.rules.push(fragmented);
     let limited = netmaps(&s);
     assert_eq!(
-        plan(&limited).capture.unavailable,
+        plan(&limited).unavailable,
         Some(UnavailableReason::RoutingLimit)
     );
-    assert!(plan(&limited).routes.is_empty());
-    assert_eq!(plan(&limited).capture.managed_ipv4, ["0.0.0.0/0"]);
+    let boundary = capture(&limited);
+    assert_eq!(boundary.unavailable, Some(UnavailableReason::RoutingLimit));
+    assert_eq!(
+        boundary.managed_ipv4,
+        [(
+            std::net::Ipv4Addr::UNSPECIFIED,
+            std::net::Ipv4Addr::BROADCAST
+        )]
+    );
+    assert_eq!(boundary.sink_ipv6, sink_all());
     assert_eq!(
         select(&limited, "8.8.8.8"),
         LocalDecision::Denied(UnavailableReason::RoutingLimit)
     );
+    // The same number of exceptions stays within the limit as ranges once
+    // they are contiguous.
+    s.cfg
+        .routing
+        .egress
+        .rules
+        .last_mut()
+        .unwrap()
+        .matcher
+        .ip_cidr = (0..20_000u32)
+        .map(|i| format!("{}/32", std::net::Ipv4Addr::from(0x0b00_0000 + i)))
+        .collect();
+    let merged = netmaps(&s);
+    assert!(plan(&merged).unavailable.is_none());
+    assert_eq!(capture(&merged).managed_ipv4.len(), 2);
     s.cfg.routing.egress.rules.clear();
     let mut unknown = egress_rule("8.8.0.0/16", RuleAction::Direct);
     unknown.matcher.domain.push("example.com".into());
     s.cfg.routing.egress.rules.push(unknown);
     let conflict = netmaps(&s);
     assert_eq!(
-        plan(&conflict).capture.unavailable,
+        plan(&conflict).unavailable,
         Some(UnavailableReason::EgressConflict)
     );
     assert!(matches!(
@@ -340,7 +393,7 @@ fn selection_identity_changes_on_switch_and_survives_unrelated_revisions() {
     let mut s = setup();
     let first = netmaps(&s);
     let selection = |c: &CompiledNetmaps| permitted(c, "8.8.8.8").selection.unwrap();
-    assert_eq!(selection(&first), plan(&first).capture.generation);
+    assert_eq!(selection(&first), plan(&first).generation);
     let renewed = compile_with(&s, &previous(&first), Revision::new(7).unwrap());
     assert_eq!(selection(&first), selection(&renewed));
     assert_eq!(first.nodes, renewed.nodes);
@@ -399,7 +452,7 @@ fn single_exit_dns_service_is_shared_by_source_and_resolver() {
     let DnsPlan::ViaExit { service } = &source.netmap.dns.egress else {
         panic!("{:?}", source.netmap.dns.egress);
     };
-    assert_eq!(service.generation, plan(&compiled).capture.generation);
+    assert_eq!(service.generation, plan(&compiled).generation);
     assert!(service.path.nodes.contains(&node(3)));
     let resolver = &compiled.nodes[&node(4)];
     let DnsPlan::ServeExitResolver { services } = &resolver.netmap.dns.egress else {

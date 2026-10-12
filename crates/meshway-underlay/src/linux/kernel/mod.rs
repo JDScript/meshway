@@ -178,7 +178,8 @@ impl Kernel {
             shared.prepare(&socket2::SockRef::from(&socket))?;
         }
         if let Some(anchor) = &journal.anchor {
-            anchor::verify(&handle, anchor, options.max_kernel_objects).await?;
+            // Recovery above left no route in a source-capture table.
+            anchor::verify(&handle, anchor, None, options.max_kernel_objects).await?;
         }
         let expected = Arc::new(Mutex::new(Expected {
             anchor: journal.anchor.clone(),
@@ -220,7 +221,18 @@ impl Kernel {
 
     async fn verify(&self) -> Result<()> {
         if let Some(anchor) = &self.journal.anchor {
-            anchor::verify(&self.handle, anchor, self.options.max_kernel_objects).await?;
+            let capture = self
+                .expected
+                .lock()
+                .map_err(|_| Error::Worker)?
+                .egress_table;
+            anchor::verify(
+                &self.handle,
+                anchor,
+                capture,
+                self.options.max_kernel_objects,
+            )
+            .await?;
         }
         let mut rules = get_rules(&self.handle, self.options.max_kernel_objects).await?;
         let exit_rules = {
@@ -327,7 +339,7 @@ impl Kernel {
         {
             return Ok(());
         }
-        let view = View::new(desired.netmap());
+        let view = View::of(&desired);
         if self.exit.as_ref().is_some_and(|owner| {
             view.exit_role().as_ref() != Some(&owner.role.plan) || !view.exit_enabled()
         }) && let Some(mut owner) = self.exit.take()
@@ -963,7 +975,7 @@ fn continuation<'a>(next: &Desired, previous: &'a Desired) -> Option<View<'a>> {
         && next.netmap().network_id == previous.netmap().network_id
         && next.netmap().node_id == previous.netmap().node_id
         && next.local().self_keys == previous.local().self_keys)
-        .then(|| View::new(previous.netmap()))
+        .then(|| View::of(previous))
 }
 
 fn same_pools(left: &[ipnet::IpNet], right: &[ipnet::IpNet]) -> bool {

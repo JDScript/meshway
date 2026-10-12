@@ -501,6 +501,15 @@ export const zCancelUdpTraversalResponse = z.union([z.strictObject({
 
 export const zCandidateSource = z.enum(["configured","interface","stun"]);
 
+export const zUnavailableReason = z.enum(["exitUnavailable","unsupportedFamily","egressConflict","unauthorized","noPath","routingCycle","routingLimit","missingCapability","missingDependency","missingDns","invalidProfile","inactiveNode"]);
+
+export const zCaptureSummary = z.strictObject({
+  ["managedIpv4"]: z.int().gte(0).lte(2147483647),
+  ["routes"]: z.int().gte(0).lte(2147483647),
+  ["sinkIpv6"]: z.int().gte(0).lte(2147483647),
+  ["unavailable"]: zUnavailableReason.nullable()
+});
+
 export const zChallengeId = z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u"));
 
 export const zWireSecret = z.string();
@@ -745,18 +754,6 @@ export const zNetmapDns = z.strictObject({
   ["resolvers"]: typedMap(z.string(), zResolverAction, {})
 });
 
-export const zUnavailableReason = z.enum(["exitUnavailable","unsupportedFamily","egressConflict","unauthorized","noPath","routingCycle","routingLimit","missingCapability","missingDependency","missingDns","invalidProfile","inactiveNode"]);
-
-export const zEgressCapturePlan = z.strictObject({
-  ["defaultCapture"]: z.boolean(),
-  ["directIpv4"]: z.array(z.string()),
-  ["generation"]: zDigest,
-  ["managedIpv4"]: z.array(z.string()),
-  ["sinkIpv6"]: z.array(z.string()),
-  ["unavailable"]: zUnavailableReason.nullable().exactOptional(),
-  ["unmanagedIpv4"]: z.array(z.string())
-});
-
 export const zEgressAction = z.union([z.strictObject({
   ["nodes"]: z.array(zNodeId),
   ["type"]: z.enum(["exit"]),
@@ -767,14 +764,16 @@ export const zEgressAction = z.union([z.strictObject({
   ["type"]: z.enum(["unmanaged"])
 })]);
 
-export const zEgressRoute = z.strictObject({
+export const zEgressRuleRef = z.strictObject({
   ["action"]: zEgressAction,
-  ["prefix"]: z.string()
+  ["rule"]: z.string()
 });
 
 export const zEgressPlan = z.strictObject({
-  ["capture"]: zEgressCapturePlan,
-  ["routes"]: z.array(zEgressRoute)
+  ["fallback"]: zEgressAction,
+  ["generation"]: zDigest,
+  ["rules"]: z.array(zEgressRuleRef),
+  ["unavailable"]: zUnavailableReason.nullable()
 });
 
 export const zVlessDialerView = z.strictObject({
@@ -1181,7 +1180,7 @@ export const zConfigurationComparison = z.strictObject({
   ["toRevision"]: zRevision
 });
 
-export const zIssueCode = z.enum(["invalid_jsonc","invalid_shape","incomplete_version","unknown_user","invalid_group_name","invalid_tag_name","unknown_group","unknown_tag","duplicate_tag","identity_membership_missing","empty_tag_identity","unknown_node","unknown_node_selector","retained_membership_inactive","empty_selector_set","bidirectional_requires_mesh","invalid_port_set","invalid_domain_suffix","invalid_domain","noncanonical_cidr","invalid_dns_domain","invalid_node_dns_name","dns_override_requires_default","unknown_resolver","invalid_resolver","empty_resolver_set","duplicate_dns_suffix","invalid_dns_suffix","invalid_hostname","duplicate_hostname","empty_listener_key","invalid_transport","invalid_listener_materials","overlapping_pools","invalid_pool","address_outside_pool","duplicate_address","unknown_reassignment_target","no_address_available","repeated_required_node","empty_exit_set","repeated_exit","exit_not_enabled","invalid_destination_cidr","empty_route_match","unknown_rule_set","invalid_rule_source","empty_rule_set_key","invalid_rule_set_key","unknown_rule_set_provider","invalid_rule_set_provider","rule_set_partition_limit","empty_inline_rule_set","rule_set_budget","rule_set_unavailable","rule_set_timeout","reserved_profile_name","unknown_profile","default_not_allowed","auto_target_not_allowed","auto_target_unknown","conflicting_assignments","invalid_country_code","exit_outside_access","global_exit_requires_internet","exit_fallback_requires_internet","netmap_limit","netmap_budget","shadowed_rule"]);
+export const zIssueCode = z.enum(["invalid_jsonc","invalid_shape","incomplete_version","unknown_user","invalid_group_name","invalid_tag_name","unknown_group","unknown_tag","duplicate_tag","identity_membership_missing","empty_tag_identity","unknown_node","unknown_node_selector","retained_membership_inactive","empty_selector_set","bidirectional_requires_mesh","invalid_port_set","invalid_domain_suffix","invalid_domain","noncanonical_cidr","invalid_dns_domain","invalid_node_dns_name","dns_override_requires_default","unknown_resolver","invalid_resolver","empty_resolver_set","duplicate_dns_suffix","invalid_dns_suffix","invalid_hostname","duplicate_hostname","empty_listener_key","invalid_transport","invalid_listener_materials","overlapping_pools","invalid_pool","address_outside_pool","duplicate_address","unknown_reassignment_target","no_address_available","repeated_required_node","empty_exit_set","repeated_exit","exit_not_enabled","invalid_destination_cidr","empty_route_match","unknown_rule_set","invalid_rule_source","empty_rule_set_key","invalid_rule_set_key","unknown_rule_set_provider","invalid_rule_set_provider","egress_partition_limit","empty_inline_rule_set","rule_set_budget","rule_set_unavailable","rule_set_timeout","reserved_profile_name","unknown_profile","default_not_allowed","auto_target_not_allowed","auto_target_unknown","conflicting_assignments","invalid_country_code","exit_outside_access","global_exit_requires_internet","exit_fallback_requires_internet","netmap_limit","netmap_budget","shadowed_rule"]);
 
 export const zConfigurationIssue = z.strictObject({
   ["code"]: zIssueCode,
@@ -2183,6 +2182,7 @@ export const zPlannedPath = z.strictObject({
 export const zProfileEvaluation = z.strictObject({
   ["allowed"]: z.array(z.string()),
   ["assignment"]: z.string().nullable(),
+  ["capture"]: zCaptureSummary,
   ["locked"]: z.boolean(),
   ["name"]: z.string(),
   ["requested"]: z.boolean()

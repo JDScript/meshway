@@ -581,5 +581,5 @@
   "configuration_issue_invalid_rule_set_key": "规则集名称不能包含“:”（{key}）",
   "configuration_issue_unknown_rule_set_provider": "未知或已禁用的规则集 provider {provider}",
   "configuration_issue_invalid_rule_set_provider": "规则集 provider 声明无效（{field}）",
-  "configuration_issue_rule_set_partition_limit": "{key} 需要 {prefixes} 个地址前缀，超过出口方案可携带的 {max} 个；该源的出口不可用"
+  "configuration_issue_egress_partition_limit": "方案 {profile} 需要 {ranges} 个捕获区间、{routes} 条捕获路由，超过节点可安装的 {maxRanges} 个区间和 {maxRoutes} 条路由；其源节点的出口不可用"
 }

@@ -227,6 +227,7 @@ impl View {
                         })
                         .unwrap_or_default(),
                     artifact_problem: control.as_ref().and_then(|c| c.artifact_problem),
+                    capture: network.capture.clone().filter(|_| network_current),
                 })
             }),
             saved: control.and_then(|c| c.held),

@@ -131,7 +131,7 @@ impl Runtime {
         // Required negative capture first; a later failure keeps it with Scope=None.
         self.hold(&netmap).await?;
         self.check(&netmap)?;
-        let (system, served) = self.resolvers(&netmap);
+        let (system, served) = self.resolvers(&desired);
         let scope = Scope::netmap(desired, system).serving(served.clone().ok().flatten());
         self.dispatcher
             .validate_scope(&scope)
@@ -159,18 +159,18 @@ impl Runtime {
     #[allow(clippy::type_complexity)]
     fn resolvers(
         &self,
-        netmap: &NodeNetmap,
+        desired: &Desired,
     ) -> (
         Option<meshway_dns::SystemResolverSnapshot>,
         Result<Option<meshway_dns::SystemResolverSnapshot>, ExitDnsUnavailableReason>,
     ) {
-        let system = match netmap.dns.egress {
+        let system = match desired.netmap().dns.egress {
             DnsPlan::ViaExit { .. } | DnsPlan::Unavailable { .. } => None,
             DnsPlan::NoExit | DnsPlan::ServeExitResolver { .. } => self.system.system_resolvers(),
         };
-        let served = match netmap.dns.egress {
+        let served = match desired.netmap().dns.egress {
             DnsPlan::ServeExitResolver { .. } => {
-                meshway_dns::exit_resolvers(netmap, self.system.served_resolvers())
+                meshway_dns::exit_resolvers(desired, self.system.served_resolvers())
             }
             _ => Ok(None),
         };
@@ -229,8 +229,7 @@ impl Runtime {
                 DnsPlan::ServeExitResolver { .. }
             )
         {
-            let netmap = scope.desired.netmap().clone();
-            let (system, served) = self.resolvers(&netmap);
+            let (system, served) = self.resolvers(&scope.desired);
             let next =
                 Scope::netmap(scope.desired.clone(), system).serving(served.clone().ok().flatten());
             if !scope.equivalent(&next) {
@@ -240,7 +239,7 @@ impl Runtime {
                 }
                 meshway_dns::publish_scope(&self.scopes, Some(next));
             }
-            self.report_exit_dns(scope.desired.reference(), &netmap, &served);
+            self.report_exit_dns(scope.desired.reference(), scope.desired.netmap(), &served);
         }
         Ok(())
     }

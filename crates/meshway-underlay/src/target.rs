@@ -17,7 +17,10 @@ use {
 };
 
 #[derive(Clone, Copy)]
-pub(crate) struct View<'a>(&'a NodeNetmap);
+pub(crate) struct View<'a>(
+    &'a NodeNetmap,
+    #[cfg(target_os = "linux")] Option<&'a EgressCapturePlan>,
+);
 
 /// Exit responsibility identity. It has no instance: re-acquiring an
 /// instance never changes it.
@@ -49,14 +52,19 @@ pub(crate) struct PeerBinding<'a> {
 }
 
 impl<'a> View<'a> {
+    /// The content alone: listener and dialer comparisons, no capture.
     pub fn new(netmap: &'a NodeNetmap) -> Self {
-        Self(netmap)
+        Self(
+            netmap,
+            #[cfg(target_os = "linux")]
+            None,
+        )
     }
 
+    /// The desired content and its Node-computed capture boundary.
     #[cfg(target_os = "linux")]
-    /// The desired content.
     pub fn of(desired: &'a meshway_engine::Desired) -> Self {
-        Self(desired.netmap())
+        Self(desired.netmap(), desired.capture())
     }
 
     #[cfg(target_os = "linux")]
@@ -91,7 +99,7 @@ impl<'a> View<'a> {
     #[cfg(target_os = "linux")]
     /// Source capture; `None` for a disabled Node, which owns none.
     pub fn egress_capture(self) -> Option<&'a EgressCapturePlan> {
-        self.0.egress.as_ref().map(|plan| &plan.capture)
+        self.1
     }
 
     /// A known peer other than this Node.

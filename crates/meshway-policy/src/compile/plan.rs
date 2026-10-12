@@ -74,6 +74,7 @@ fn plan_inner(
         ),
     };
     let profile = ProfileEvaluation {
+        capture: capture::summary(cfg, request.rule_sets, &name),
         name,
         assignment: assignment
             .index

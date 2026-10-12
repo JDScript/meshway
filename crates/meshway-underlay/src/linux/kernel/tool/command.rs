@@ -6,7 +6,8 @@ use std::{
 };
 
 pub(in crate::linux::kernel) const BUDGET: Duration = Duration::from_secs(2);
-const LIMIT: usize = 2 * 1024 * 1024;
+// A staged capture union (2 × 16,384 ranges) and its readback fit.
+const LIMIT: usize = 8 * 1024 * 1024;
 // The worker owns this permit, so dropping and recreating a probe cannot bypass
 // the process limit while an abandoned blocking operation is still being reaped.
 static PROCESS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);

@@ -7,12 +7,12 @@
 #![forbid(unsafe_code)]
 
 use meshway_configuration::{
-    execution::DialCandidate,
+    execution::{DialCandidate, EgressCapturePlan},
     netmap::{CompiledNetmap, EgressPlan, ExitRole, NetmapDns, NetmapSelf, NodeNetmap},
 };
 use meshway_model::{NetmapLease, NetmapRef};
-pub use meshway_policy::compile::Artifacts;
 use meshway_policy::compile::netmap::LocalCompiler;
+pub use meshway_policy::compile::{Artifacts, EgressPartition};
 use std::{collections::BTreeMap, sync::Arc};
 
 mod keys;
@@ -33,6 +33,9 @@ pub struct Desired {
     /// `LocalCompiler::effective`); the signed content when none is missing.
     effective: Arc<NodeNetmap>,
     missing: Vec<meshway_rules::Digest>,
+    /// Own egress partition with the loaded artifacts and its capture
+    /// boundary; `None` for a disabled Node.
+    egress: Option<(meshway_policy::compile::Partition, Arc<EgressCapturePlan>)>,
 }
 
 impl Desired {
@@ -46,7 +49,17 @@ impl Desired {
             artifacts,
         ));
         let effective = compiler.effective().map_err(|_| Error::Content)?;
+        let egress = match compiler.capture().map_err(|_| Error::Content)? {
+            Some(capture) => Some((
+                compiler
+                    .partition(content.netmap.node_id)
+                    .map_err(|_| Error::Content)?,
+                Arc::new(capture),
+            )),
+            None => None,
+        };
         Ok(Self {
+            egress,
             missing: compiler.missing(),
             content: content.clone(),
             compiler,
@@ -99,6 +112,33 @@ impl Desired {
     }
     pub fn egress(&self) -> Option<&EgressPlan> {
         self.effective.egress.as_ref()
+    }
+    /// Own capture boundary, computed here from the netmap rules and the
+    /// loaded artifacts; never distributed.
+    pub fn capture(&self) -> Option<&EgressCapturePlan> {
+        self.egress.as_ref().map(|(_, capture)| capture.as_ref())
+    }
+    /// What this Node installs for its egress capture, for diagnostics:
+    /// interval elements and capture-table routes, or why only the full
+    /// fail-closed boundary is installed. `None` for a disabled Node.
+    pub fn capture_summary(&self) -> Option<meshway_configuration::evaluation::CaptureSummary> {
+        let (partition, capture) = self.egress.as_ref()?;
+        Some(match partition {
+            Ok(partition) => partition.summary(),
+            Err(reason) => meshway_configuration::evaluation::CaptureSummary {
+                managed_ipv4: u32::try_from(capture.managed_ipv4.len()).unwrap_or(u32::MAX),
+                sink_ipv6: u32::try_from(capture.sink_ipv6.len()).unwrap_or(u32::MAX),
+                routes: 1,
+                unavailable: Some(*reason),
+            },
+        })
+    }
+    /// Own egress partition; `None` while disabled or unavailable (then
+    /// [`Self::capture`] is the full fail-closed boundary).
+    pub fn partition(&self) -> Option<&EgressPartition> {
+        self.egress
+            .as_ref()
+            .and_then(|(partition, _)| partition.as_deref().ok())
     }
     pub fn exit_role(&self) -> Option<&ExitRole> {
         self.effective.exit_role.as_ref()

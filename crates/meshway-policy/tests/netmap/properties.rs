@@ -85,15 +85,8 @@ fn selection_switch_and_key_rotation_change_only_dependent_netmaps() {
         keepalive: false,
     });
     let first = netmaps(&s);
-    let selection = |c: &CompiledNetmaps| {
-        c.nodes[&node(1)]
-            .netmap
-            .egress
-            .as_ref()
-            .unwrap()
-            .capture
-            .generation
-    };
+    let selection =
+        |c: &CompiledNetmaps| c.nodes[&node(1)].netmap.egress.as_ref().unwrap().generation;
     // Switching away and back is a new selection version: a new selection identity.
     s.selection_versions
         .insert(node(1), meshway_model::Version::new(2).unwrap());

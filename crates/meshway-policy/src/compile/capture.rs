@@ -1,184 +1,446 @@
-//! First-match packet ownership expressed as disjoint longest-prefix routes.
+//! First-match packet ownership as ordered, disjoint address ranges: the one
+//! partition the Server validates and previews and every Node installs.
+//!
+//! Each rule takes from the not yet matched addresses the ranges its own
+//! CIDRs and referenced sets cover; the fallback takes the rest. The result
+//! covers IPv4 and IPv6 completely; adjacent ranges never share an action.
 use super::{matching::EgressProfile, *};
-use ipnet::IpNet;
+use meshway_configuration::{evaluation::CaptureSummary, netmap::EgressAction};
+use meshway_model::Digest;
+use std::{
+    net::{IpAddr, Ipv4Addr, Ipv6Addr},
+    ops::RangeInclusive,
+};
 
-pub const MAX_CAPTURE_PREFIXES: usize = 4096;
-const MAX_CAPTURE_WORK: usize = 131_072;
+/// Interval elements of the capture sets (managed IPv4 plus sunk IPv6) a Node
+/// installs. One nft batch and its readback stay below 1.6 MB and 0.07 s
+/// (measured, see Routing · node-side limits).
+pub const MAX_CAPTURE_RANGES: usize = 16_384;
+/// Routes of the private capture table: the CIDR cover of the managed IPv4
+/// ranges.
+pub const MAX_CAPTURE_ROUTES: usize = 32_768;
+/// Range operations of one partition computation, bounding its CPU time.
+const MAX_WORK: usize = 1 << 24;
 
-fn subtract(
-    net: IpNet,
-    cut: IpNet,
-    rest: &mut Vec<IpNet>,
-    hit: &mut Vec<IpNet>,
-    work: &mut usize,
-) -> Result<(), CompileError> {
-    *work += 1;
-    if *work > MAX_CAPTURE_WORK || rest.len() + hit.len() > MAX_CAPTURE_PREFIXES {
-        return Err(CompileError::Budget);
+trait Address: Copy + Ord {
+    fn next(self) -> Option<Self>;
+    fn previous(self) -> Option<Self>;
+}
+impl Address for u32 {
+    fn next(self) -> Option<Self> {
+        self.checked_add(1)
     }
-    if cut.contains(&net) {
-        hit.push(net);
-    } else if net.contains(&cut) {
-        for child in net
-            .subnets(net.prefix_len() + 1)
-            .map_err(|_| CompileError::InvalidInput)?
-        {
-            subtract(child, cut, rest, hit, work)?;
+    fn previous(self) -> Option<Self> {
+        self.checked_sub(1)
+    }
+}
+impl Address for u128 {
+    fn next(self) -> Option<Self> {
+        self.checked_add(1)
+    }
+    fn previous(self) -> Option<Self> {
+        self.checked_sub(1)
+    }
+}
+
+/// Sorted, merged ranges; touching ranges become one.
+fn normalize<T: Address>(mut ranges: Vec<(T, T)>) -> Vec<(T, T)> {
+    ranges.sort_unstable();
+    let mut out: Vec<(T, T)> = Vec::with_capacity(ranges.len());
+    for (start, end) in ranges {
+        match out.last_mut() {
+            Some(last) if last.1.next().is_none_or(|after| start <= after) => {
+                last.1 = last.1.max(end);
+            }
+            _ => out.push((start, end)),
         }
-    } else {
-        rest.push(net);
     }
-    Ok(())
+    out
 }
 
-fn prefixes(
-    sets: &rules::RuleSets,
-    matcher: &RouteMatch,
-    may_exit: bool,
-) -> Result<Vec<IpNet>, CompileError> {
-    if matcher.ip_cidr.len() > MAX_CAPTURE_PREFIXES
-        || matcher.rule_sets.len() > MAX_CAPTURE_PREFIXES
-    {
-        return Err(CompileError::Budget);
+type Spans<T> = Vec<(T, T)>;
+
+/// Split normalized `remaining` by normalized `cut` into (inside, outside).
+fn split<T: Address>(
+    remaining: &[(T, T)],
+    cut: &[(T, T)],
+    work: &mut usize,
+) -> Result<(Spans<T>, Spans<T>), UnavailableReason> {
+    *work += remaining.len() + cut.len();
+    if *work > MAX_WORK {
+        return Err(UnavailableReason::RoutingLimit);
     }
-    let (nets, names) = rules::prefixes(matcher, sets, MAX_CAPTURE_PREFIXES)?;
-    // An IP-only route table cannot represent the identity of a queried name.
-    if names && may_exit {
-        return Err(CompileError::InvalidInput);
+    let (mut hit, mut rest) = (Vec::new(), Vec::new());
+    let mut cuts = cut.iter().peekable();
+    for &(start, end) in remaining {
+        let mut at = Some(start);
+        while let Some(position) = at.filter(|p| *p <= end) {
+            while cuts.next_if(|c| c.1 < position).is_some() {}
+            match cuts.peek() {
+                Some(&&(cs, ce)) if cs <= end => {
+                    if cs > position {
+                        rest.push((position, cs.previous().expect("cs > position")));
+                    }
+                    let to = ce.min(end);
+                    hit.push((position.max(cs), to));
+                    at = to.next();
+                }
+                _ => {
+                    rest.push((position, end));
+                    at = None;
+                }
+            }
+        }
     }
-    Ok(nets)
+    Ok((hit, rest))
 }
 
-fn resolved<'a>(
+/// Number of CIDR prefixes covering `[start, end]`.
+fn cover(start: u32, end: u32) -> usize {
+    let (mut at, end) = (u64::from(start), u64::from(end));
+    let mut count = 0;
+    while at <= end {
+        let mut size = if at == 0 {
+            1 << 32
+        } else {
+            1u64 << at.trailing_zeros()
+        };
+        while at + size - 1 > end {
+            size >>= 1;
+        }
+        at += size;
+        count += 1;
+    }
+    count
+}
+
+/// A source's partition, or why there is none.
+pub type Partition = Result<std::sync::Arc<EgressPartition>, UnavailableReason>;
+
+/// One source's complete egress partition. It decides ownership only; Access
+/// still authorizes every flow.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EgressPartition {
+    ipv4: Vec<(u32, u32, usize)>,
+    ipv6: Vec<(u128, u128, usize)>,
+    actions: Vec<EgressAction>,
+    /// The fallback is an exit and keeps some IPv4 range.
+    default_capture: bool,
+}
+
+fn index(actions: &mut Vec<EgressAction>, action: EgressAction) -> usize {
+    actions
+        .iter()
+        .position(|a| *a == action)
+        .unwrap_or_else(|| {
+            actions.push(action);
+            actions.len() - 1
+        })
+}
+
+fn assemble<T: Address>(mut pieces: Vec<(T, T, usize)>) -> Vec<(T, T, usize)> {
+    pieces.sort_unstable();
+    let mut out: Vec<(T, T, usize)> = Vec::with_capacity(pieces.len());
+    for piece in pieces {
+        match out.last_mut() {
+            Some(last) if last.2 == piece.2 && last.1.next() == Some(piece.0) => last.1 = piece.1,
+            _ => out.push(piece),
+        }
+    }
+    out
+}
+
+fn find<T: Address>(ranges: &[(T, T, usize)], address: T) -> Option<usize> {
+    let i = ranges.partition_point(|r| r.0 <= address);
+    ranges
+        .get(i.checked_sub(1)?)
+        .filter(|r| r.1 >= address)
+        .map(|r| r.2)
+}
+
+impl EgressPartition {
+    /// The action of the unique range holding `address`.
+    pub fn action(&self, address: IpAddr) -> &EgressAction {
+        let index = match address.to_canonical() {
+            IpAddr::V4(a) => find(&self.ipv4, u32::from(a)),
+            IpAddr::V6(a) => find(&self.ipv6, u128::from(a)),
+        };
+        // Both families are covered completely.
+        &self.actions[index.expect("complete partition")]
+    }
+
+    pub fn ipv4(&self) -> impl Iterator<Item = (RangeInclusive<Ipv4Addr>, &EgressAction)> {
+        self.ipv4
+            .iter()
+            .map(|(s, e, a)| (Ipv4Addr::from(*s)..=Ipv4Addr::from(*e), &self.actions[*a]))
+    }
+
+    pub fn ipv6(&self) -> impl Iterator<Item = (RangeInclusive<Ipv6Addr>, &EgressAction)> {
+        self.ipv6
+            .iter()
+            .map(|(s, e, a)| (Ipv6Addr::from(*s)..=Ipv6Addr::from(*e), &self.actions[*a]))
+    }
+
+    /// Exit-owned ranges of one family, adjacent ones merged.
+    fn managed<T: Address>(&self, ranges: &[(T, T, usize)]) -> Vec<(T, T)> {
+        normalize(
+            ranges
+                .iter()
+                .filter(|r| matches!(self.actions[r.2], EgressAction::Exit { .. }))
+                .map(|r| (r.0, r.1))
+                .collect(),
+        )
+    }
+
+    /// What a Node installs for this partition, as counted against the
+    /// node-side limits.
+    pub fn summary(&self) -> CaptureSummary {
+        let managed = self.managed(&self.ipv4);
+        let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+        CaptureSummary {
+            managed_ipv4: count(managed.len()),
+            sink_ipv6: count(self.managed(&self.ipv6).len()),
+            routes: count(managed.iter().map(|(s, e)| cover(*s, *e)).sum()),
+            unavailable: None,
+        }
+    }
+
+    fn within_limits(&self) -> bool {
+        let summary = self.summary();
+        (summary.managed_ipv4 as usize + summary.sink_ipv6 as usize) <= MAX_CAPTURE_RANGES
+            && summary.routes as usize <= MAX_CAPTURE_ROUTES
+    }
+
+    /// The capture boundary of this partition.
+    pub fn capture(&self, generation: Digest) -> EgressCapturePlan {
+        let managed_ipv4: Vec<_> = self
+            .managed(&self.ipv4)
+            .into_iter()
+            .map(|(s, e)| (Ipv4Addr::from(s), Ipv4Addr::from(e)))
+            .collect();
+        EgressCapturePlan {
+            generation,
+            default_capture: self.default_capture
+                || managed_ipv4 == [(Ipv4Addr::UNSPECIFIED, Ipv4Addr::BROADCAST)],
+            managed_ipv4,
+            sink_ipv6: self
+                .managed(&self.ipv6)
+                .into_iter()
+                .map(|(s, e)| (Ipv6Addr::from(s), Ipv6Addr::from(e)))
+                .collect(),
+            unavailable: None,
+        }
+    }
+}
+
+/// The fail-closed boundary of an unavailable partition: full IPv4 capture,
+/// full IPv6 sink, no direct or unmanaged exception.
+pub fn unavailable_capture(generation: Digest, reason: UnavailableReason) -> EgressCapturePlan {
+    EgressCapturePlan {
+        generation,
+        managed_ipv4: vec![(Ipv4Addr::UNSPECIFIED, Ipv4Addr::BROADCAST)],
+        default_capture: true,
+        sink_ipv6: vec![(Ipv6Addr::UNSPECIFIED, Ipv6Addr::from(u128::MAX))],
+        unavailable: Some(reason),
+    }
+}
+
+/// The ordered rules in effect for a profile (public first) with their JSON
+/// Pointers, and the fallback.
+pub(super) struct Selection<'a> {
+    pub rules: Vec<(String, &'a EgressRule)>,
+    pub fallback: RouteAction,
+}
+
+pub(super) fn selection<'a>(
     cfg: &'a NetworkConfiguration,
     profile: &str,
-) -> Result<EgressProfile<'a>, CompileError> {
-    match matching::resolve_profile(cfg, profile)? {
+) -> Result<Selection<'a>, CompileError> {
+    let resolved = match matching::resolve_profile(cfg, profile)? {
         EgressProfile::Auto(auto) => {
             if auto.fallback == "auto" {
                 return Err(CompileError::InvalidInput);
             }
-            matching::resolve_profile(cfg, &auto.fallback)
+            (
+                matching::resolve_profile(cfg, &auto.fallback)?,
+                auto.fallback.as_str(),
+            )
         }
-        other => Ok(other),
-    }
-}
-
-/// One disjoint prefix of the first-match partition with its selected action.
-pub(super) type Route = (IpNet, RouteAction);
-
-/// Netmap packet ownership, independent of Access or readiness. Routes are empty when the
-/// plan is unavailable; the generation binds `seed` and the resulting ranges.
-pub(super) fn capture(
-    cfg: &NetworkConfiguration,
-    rule_sets: &rules::RuleSets,
-    profile: &str,
-    seed: meshway_model::Digest,
-) -> Result<(EgressCapturePlan, Vec<Route>), CompileError> {
-    let mut plan = EgressCapturePlan {
-        generation: seed,
-        managed_ipv4: Vec::new(),
-        default_capture: false,
-        direct_ipv4: Vec::new(),
-        unmanaged_ipv4: Vec::new(),
-        sink_ipv6: Vec::new(),
-        unavailable: None,
+        other => (other, profile),
     };
-    let mut routes = Vec::new();
-    if let Err(error) = compile_ranges(cfg, rule_sets, profile, &mut plan, &mut routes) {
-        plan.managed_ipv4 = vec!["0.0.0.0/0".into()];
-        plan.default_capture = true;
-        plan.direct_ipv4.clear();
-        plan.unmanaged_ipv4.clear();
-        plan.sink_ipv6 = vec!["::/0".into()];
-        routes.clear();
-        plan.unavailable = Some(match error {
-            CompileError::Budget => UnavailableReason::RoutingLimit,
-            CompileError::UnavailableDependency => UnavailableReason::MissingDependency,
-            _ => UnavailableReason::EgressConflict,
-        });
-    }
-    plan.generation = digest(&(
-        seed,
-        &plan.managed_ipv4,
-        plan.default_capture,
-        &plan.direct_ipv4,
-        &plan.unmanaged_ipv4,
-        &plan.sink_ipv6,
-        plan.unavailable,
-    ))?;
-    Ok((plan, routes))
-}
-
-fn append(
-    plan: &mut EgressCapturePlan,
-    routes: &mut Vec<Route>,
-    nets: Vec<IpNet>,
-    action: &RouteAction,
-) {
-    for net in nets {
-        routes.push((net, action.clone()));
-        let out = match (net, action) {
-            (IpNet::V4(_), RouteAction::Exit { .. }) => &mut plan.managed_ipv4,
-            (IpNet::V4(_), RouteAction::Direct) => &mut plan.direct_ipv4,
-            (IpNet::V4(_), RouteAction::Unmanaged) => &mut plan.unmanaged_ipv4,
-            (IpNet::V6(_), RouteAction::Exit { .. }) => &mut plan.sink_ipv6,
-            _ => continue,
-        };
-        out.push(net.to_string());
-    }
-}
-
-fn compile_ranges(
-    cfg: &NetworkConfiguration,
-    rule_sets: &rules::RuleSets,
-    profile: &str,
-    plan: &mut EgressCapturePlan,
-    routes: &mut Vec<Route>,
-) -> Result<(), CompileError> {
-    let may_exit = matching::dns_requires_exit(cfg, profile);
-    let mut rules: Vec<_> = cfg.routing.egress.rules.iter().collect();
-    let fallback = match resolved(cfg, profile)? {
-        EgressProfile::Mesh => RouteAction::Unmanaged,
-        EgressProfile::Global(node) => RouteAction::Exit {
+    let mut rules: Vec<_> = cfg
+        .routing
+        .egress
+        .rules
+        .iter()
+        .enumerate()
+        .map(|(i, rule)| (format!("/routing/egress/rules/{i}"), rule))
+        .collect();
+    let fallback = match resolved {
+        (EgressProfile::Mesh, _) => RouteAction::Unmanaged,
+        (EgressProfile::Global(node), _) => RouteAction::Exit {
             nodes: vec![format!("node:{node}")],
             via: vec![],
         },
-        EgressProfile::Custom(profile) => {
-            rules.extend(&profile.rules);
-            profile.fallback.clone()
+        (EgressProfile::Custom(custom), name) => {
+            let prefix = format!(
+                "/routing/egress/profiles/{}/rules",
+                name.replace('~', "~0").replace('/', "~1")
+            );
+            rules.extend(
+                custom
+                    .rules
+                    .iter()
+                    .enumerate()
+                    .map(|(i, rule)| (format!("{prefix}/{i}"), rule)),
+            );
+            custom.fallback.clone()
         }
-        EgressProfile::Auto(_) => return Err(CompileError::InvalidInput),
+        (EgressProfile::Auto(_), _) => return Err(CompileError::InvalidInput),
     };
-    let mut remaining: Vec<IpNet> = ["0.0.0.0/0", "::/0"]
-        .iter()
-        .map(|ip| ip.parse().expect("constant prefix"))
-        .collect();
+    Ok(Selection { rules, fallback })
+}
+
+pub(super) fn action(route: &RouteAction) -> Result<EgressAction, CompileError> {
+    let nodes = |selectors: &[String]| {
+        selectors
+            .iter()
+            .map(|s| matching::node_selector(s))
+            .collect::<Result<Vec<_>, _>>()
+    };
+    Ok(match route {
+        RouteAction::Exit { nodes: exits, via } => EgressAction::Exit {
+            nodes: nodes(exits)?,
+            via: nodes(via)?,
+        },
+        RouteAction::Direct => EgressAction::Direct,
+        RouteAction::Unmanaged => EgressAction::Unmanaged,
+    })
+}
+
+fn unavailable(error: CompileError) -> UnavailableReason {
+    match error {
+        CompileError::Budget => UnavailableReason::RoutingLimit,
+        CompileError::UnavailableDependency => UnavailableReason::MissingDependency,
+        _ => UnavailableReason::EgressConflict,
+    }
+}
+
+/// The partition of `profile` without the node-side limits; `Err` names why
+/// no partition exists. A rule referencing a set not in `sets` is a missing
+/// dependency, never an empty set.
+pub fn compute(
+    cfg: &NetworkConfiguration,
+    sets: &rules::RuleSets,
+    profile: &str,
+) -> Result<EgressPartition, UnavailableReason> {
+    let Selection { rules, fallback } = selection(cfg, profile).map_err(unavailable)?;
+    // An address-only partition cannot represent the identity of a queried name.
+    let may_exit = matching::dns_requires_exit(cfg, profile);
+    let mut actions = Vec::new();
+    let mut remaining4 = vec![(0u32, u32::MAX)];
+    let mut remaining6 = vec![(0u128, u128::MAX)];
+    let (mut out4, mut out6) = (Vec::new(), Vec::new());
     let mut work = 0;
-    let mut total = 0;
-    for rule in rules {
-        if remaining.is_empty() {
+    for (_, rule) in rules {
+        if remaining4.is_empty() && remaining6.is_empty() {
             break;
         }
-        for prefix in prefixes(rule_sets, &rule.matcher, may_exit)? {
-            let mut rest = Vec::new();
-            let mut hit = Vec::new();
-            for net in remaining {
-                subtract(net, prefix, &mut rest, &mut hit, &mut work)?;
-            }
-            total += hit.len();
-            if total + rest.len() > MAX_CAPTURE_PREFIXES {
-                return Err(CompileError::Budget);
-            }
-            append(plan, routes, hit, &rule.action.clone().into());
-            remaining = rest;
+        let rules::Ranges { v4, v6, names } =
+            rules::ranges(&rule.matcher, sets).map_err(unavailable)?;
+        if names && may_exit {
+            return Err(UnavailableReason::EgressConflict);
         }
+        let id = index(
+            &mut actions,
+            action(&rule.action.clone().into()).map_err(unavailable)?,
+        );
+        let (hit, rest) = split(&remaining4, &normalize(v4), &mut work)?;
+        out4.extend(hit.into_iter().map(|(s, e)| (s, e, id)));
+        remaining4 = rest;
+        let (hit, rest) = split(&remaining6, &normalize(v6), &mut work)?;
+        out6.extend(hit.into_iter().map(|(s, e)| (s, e, id)));
+        remaining6 = rest;
     }
-    plan.default_capture = matches!(fallback, RouteAction::Exit { .. })
-        && remaining.iter().any(|net| net.addr().is_ipv4());
-    append(plan, routes, remaining, &fallback);
-    plan.default_capture |= !plan.managed_ipv4.is_empty()
-        && plan.direct_ipv4.is_empty()
-        && plan.unmanaged_ipv4.is_empty();
-    Ok(())
+    let default_capture = matches!(fallback, RouteAction::Exit { .. }) && !remaining4.is_empty();
+    let id = index(&mut actions, action(&fallback).map_err(unavailable)?);
+    out4.extend(remaining4.into_iter().map(|(s, e)| (s, e, id)));
+    out6.extend(remaining6.into_iter().map(|(s, e)| (s, e, id)));
+    Ok(EgressPartition {
+        ipv4: assemble(out4),
+        ipv6: assemble(out6),
+        actions,
+        default_capture,
+    })
+}
+
+/// The partition a Node installs: [`compute`] within the node-side limits.
+pub fn partition(
+    cfg: &NetworkConfiguration,
+    sets: &rules::RuleSets,
+    profile: &str,
+) -> Result<EgressPartition, UnavailableReason> {
+    let partition = compute(cfg, sets, profile)?;
+    if !partition.within_limits() {
+        return Err(UnavailableReason::RoutingLimit);
+    }
+    Ok(partition)
+}
+
+/// What a Node would install for `profile`: the partition's counts, or the
+/// fail-closed boundary's with its reason.
+pub fn summary(
+    cfg: &NetworkConfiguration,
+    sets: &rules::RuleSets,
+    profile: &str,
+) -> CaptureSummary {
+    match compute(cfg, sets, profile) {
+        Ok(partition) => {
+            let summary = partition.summary();
+            if partition.within_limits() {
+                summary
+            } else {
+                CaptureSummary {
+                    unavailable: Some(UnavailableReason::RoutingLimit),
+                    ..summary
+                }
+            }
+        }
+        Err(reason) => CaptureSummary {
+            managed_ipv4: 1,
+            sink_ipv6: 1,
+            routes: 1,
+            unavailable: Some(reason),
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn split_and_cover() {
+        let mut work = 0;
+        let (hit, rest) =
+            split(&[(0u32, 100)], &[(10, 20), (30, 30), (90, 200)], &mut work).unwrap();
+        assert_eq!(hit, [(10, 20), (30, 30), (90, 100)]);
+        assert_eq!(rest, [(0, 9), (21, 29), (31, 89)]);
+        let (hit, rest) = split(&[(0u32, u32::MAX)], &[(0, u32::MAX)], &mut work).unwrap();
+        assert_eq!((hit, rest), (vec![(0, u32::MAX)], vec![]));
+        let (hit, rest) = split(&[(5u32, 9), (20, 30)], &[(0, 4), (31, 40)], &mut work).unwrap();
+        assert_eq!((hit, rest), (vec![], vec![(5, 9), (20, 30)]));
+        assert_eq!(
+            normalize(vec![(5u32, 9), (0, 4), (11, 12)]),
+            [(0, 9), (11, 12)]
+        );
+        assert_eq!(
+            normalize(vec![(0u128, u128::MAX), (3, 4)]),
+            [(0, u128::MAX)]
+        );
+        assert_eq!(cover(0, u32::MAX), 1);
+        assert_eq!(cover(1, u32::MAX), 32);
+        assert_eq!(cover(10, 10), 1);
+        assert_eq!(cover(0, 2), 2);
+    }
 }

@@ -426,6 +426,9 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 plane.failure = None;
                 let result = engine.reconfig(Some(&netmap)).await;
                 let kept = engine.desired().is_some();
+                let capture = engine
+                    .desired()
+                    .and_then(|desired| desired.capture_summary());
                 let plane = engine.components_mut();
                 let mut report = std::mem::replace(&mut plane.report, Report::stopped());
                 report.dns_guard = plane.dns.guard();
@@ -436,6 +439,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                         dns_failed = false;
                         report.completion = Some(Ok(()));
                         report.content = Some(netmap.content.clone());
+                        report.capture = capture;
                         report.expires_at = lease_end(&netmap.lease);
                         report.plane = if plane.secure().is_some() {
                             DataPlane::Ready
@@ -458,6 +462,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                         report.completion = Some(Err(failure));
                         report.problem = Some(problem);
                         report.content = Some(netmap.content.clone());
+                        report.capture = capture;
                         report.expires_at = lease_end(&netmap.lease);
                         report.plane = if plane.secure().is_some() {
                             DataPlane::Ready

@@ -661,5 +661,5 @@
   "configuration_issue_invalid_rule_set_key": "Rule set names cannot contain “:” ({key})",
   "configuration_issue_unknown_rule_set_provider": "Unknown or disabled rule set provider {provider}",
   "configuration_issue_invalid_rule_set_provider": "Invalid rule set provider ({field})",
-  "configuration_issue_rule_set_partition_limit": "{key} needs {prefixes} address prefixes, more than the {max} a source's egress plan carries; that source's egress is unavailable"
+  "configuration_issue_egress_partition_limit": "Profile {profile} needs {ranges} capture ranges and {routes} capture routes; a Node installs at most {maxRanges} and {maxRoutes}, so egress of its sources is unavailable"
 }

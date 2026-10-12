@@ -62,6 +62,8 @@ pub struct Options {
     /// Total protected TCP/UDP descriptors; a bounded share is reserved for
     /// Server bootstrap so data connections cannot starve lease renewal.
     pub max_sockets: usize,
+    /// Entries one netlink dump may return; the source-capture table alone
+    /// holds up to `MAX_CAPTURE_ROUTES` routes.
     pub max_kernel_objects: usize,
     pub connect_timeout: Duration,
     pub bootstrap_nameservers: Option<Vec<SocketAddr>>,
@@ -74,7 +76,7 @@ impl Default for Options {
             mtu: 1280,
             max_pools: 64,
             max_sockets: 128,
-            max_kernel_objects: 16_384,
+            max_kernel_objects: 65_536,
             connect_timeout: Duration::from_secs(10),
             bootstrap_nameservers: None,
             bootstrap_hosts: BTreeMap::new(),

@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::{io::Read, sync::Arc};
 
 const FILE: &str = crate::files::EGRESS;
-const LIMIT: usize = 8 * 1024 * 1024;
+const LIMIT: usize = 16 * 1024 * 1024;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -15,6 +15,9 @@ pub(super) struct Device {
     pub name: String,
     pub source: std::net::Ipv4Addr,
 }
+/// The capture sets and, with a device, the routes of the capture table:
+/// the CIDR cover of `ranges.v4` through the device. No other route is ever
+/// in that table.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Gate {
@@ -35,7 +38,7 @@ pub(super) struct Ledger {
     pub gate: Gate,
     pub pending_gate: Option<Gate>,
     pub receipt: Option<super::super::exit::objects::Receipt>,
-    pub routes: Vec<Vec<u8>>,
+    /// Owned RPDB rules: the capture-table selector.
     pub rules: Vec<Vec<u8>>,
     pub removed: bool,
 }
@@ -101,7 +104,7 @@ impl Store {
 }
 impl Ledger {
     fn validate(&self) -> Result<()> {
-        if self.version != 1
+        if self.version != 2
             || self.program.installation.len() != 32
             || !self
                 .program
@@ -110,13 +113,17 @@ impl Ledger {
                 .all(|b| b.is_ascii_hexdigit())
             || !self.program.mark.is_power_of_two()
             || self.table < 10000
-            || self.rules.len() > super::plan::RESERVED as usize
-            || self.routes.len() > 2
+            || self.rules.len() > 1
         {
             return Err(Error::Journal);
         }
         for gate in std::iter::once(&self.gate).chain(self.pending_gate.iter()) {
-            if gate.ranges.v4.len() + gate.ranges.v6.len() > super::plan::LIMIT * 2
+            // A staged gate is the union of two plans; routes exist only
+            // for one plan's ranges.
+            if !gate.ranges.canonical()
+                || gate.ranges.v4.len() + gate.ranges.v6.len() > super::plan::UNION_RANGES
+                || (gate.device.is_some() && !gate.ranges.within_limits())
+                || !gate.mesh.canonical()
                 || gate.mesh.v4.len() + gate.mesh.v6.len() > 128
                 || gate.device.as_ref().is_some_and(|device| {
                     device.index == 0 || device.name.is_empty() || device.name.len() > 15
@@ -127,13 +134,6 @@ impl Ledger {
         }
         for rule in &self.rules {
             if super::super::plan::encode_rule(super::super::plan::decode_rule(rule)?) != *rule {
-                return Err(Error::Journal);
-            }
-        }
-        for route in &self.routes {
-            if super::super::plan::route_table(&super::super::plan::decode_route(route)?)
-                != self.table
-            {
                 return Err(Error::Journal);
             }
         }

@@ -18,23 +18,18 @@ use std::{
 use storage::{Device, Gate, Ledger, Store};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-#[tokio::test]
-#[ignore = "requires isolated dual-stack Linux client/service namespaces and NET_ADMIN"]
-async fn default_capture_protected_endpoints_ipv6_sink_and_switch_without_direct_window() {
-    assert_eq!(
-        std::env::var("MESHWAY_UNDERLAY_ISOLATED").as_deref(),
-        Ok("1")
-    );
-    let server: SocketAddr = std::env::var("MESHWAY_X3C_SERVER")
-        .unwrap()
-        .parse()
-        .unwrap();
-    let peer: SocketAddr = std::env::var("MESHWAY_X3C_PEER").unwrap().parse().unwrap();
-    let ipv6: SocketAddr = std::env::var("MESHWAY_X3C_IPV6").unwrap().parse().unwrap();
-    let direct: SocketAddr = std::env::var("MESHWAY_X3C_DIRECT")
-        .unwrap()
-        .parse()
-        .unwrap();
+struct Setup {
+    _temp: tempfile::TempDir,
+    tasks: Tasks,
+    kernel: Kernel,
+    backend: Backend,
+    device: Device,
+    mesh: Ranges,
+    changed: tokio::sync::watch::Receiver<u64>,
+}
+
+/// A Kernel with an owned client TUN and an initialized capture backend.
+async fn setup() -> Setup {
     let temp = tempfile::tempdir().unwrap();
     let directory = Arc::new(
         meshway_private_storage::Directory::open(&temp.path().join("private"), "test.lock")
@@ -44,9 +39,6 @@ async fn default_capture_protected_endpoints_ipv6_sink_and_switch_without_direct
     let mut kernel = Kernel::open(directory.clone(), Default::default(), tasks.clone())
         .await
         .unwrap();
-    // First prove IPv6 has a working underlay route, so a later failure cannot
-    // be credited to a namespace that never had external IPv6 connectivity.
-    exchange(None, ipv6, b"before-v6").await;
     let pools = vec![
         "100.96.0.0/11".parse().unwrap(),
         "fd42::/64".parse().unwrap(),
@@ -103,15 +95,11 @@ async fn default_capture_protected_endpoints_ipv6_sink_and_switch_without_direct
     let (store, old) = Store::open(directory).await.unwrap();
     assert!(old.is_none());
     let (boot, namespace_device, namespace_inode) = Journal::identity().unwrap();
-    let full = full();
     let mut random = [0; 16];
     getrandom::fill(&mut random).unwrap();
-    let mesh = Ranges {
-        v4: vec![pools[0]],
-        v6: vec![pools[1]],
-    };
+    let mesh = Ranges::of(pools.iter().copied());
     let ledger = Ledger {
-        version: 1,
+        version: 2,
         boot,
         namespace_device,
         namespace_inode,
@@ -120,7 +108,7 @@ async fn default_capture_protected_endpoints_ipv6_sink_and_switch_without_direct
             mark: kernel.journal.mark.mask,
         },
         table: 24000,
-        plan: full.clone(),
+        plan: full(),
         gate: Gate {
             ranges: Ranges::default(),
             mesh: Ranges::default(),
@@ -128,11 +116,9 @@ async fn default_capture_protected_endpoints_ipv6_sink_and_switch_without_direct
         },
         pending_gate: None,
         receipt: None,
-        routes: Vec::new(),
         rules: Vec::new(),
         removed: false,
     };
-    println!("X3C_EGRESS_NFT={}", ledger.program.create());
     let commands =
         super::super::tool::command::Commands::recorded(super::super::tool::child::Fence {
             directory: store.directory.clone(),
@@ -144,17 +130,61 @@ async fn default_capture_protected_endpoints_ipv6_sink_and_switch_without_direct
         commands,
         handle: kernel.handle.clone(),
         expected: kernel.expected.clone(),
-        limit: 16384,
+        limit: 65_536,
         start: kernel.journal.end() + 1,
         monitored: true,
     };
     backend.initialize().await.unwrap();
+    Setup {
+        _temp: temp,
+        tasks,
+        kernel,
+        backend,
+        device,
+        mesh,
+        changed,
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires isolated dual-stack Linux client/service namespaces and NET_ADMIN"]
+async fn default_capture_protected_endpoints_ipv6_sink_and_switch_without_direct_window() {
+    assert_eq!(
+        std::env::var("MESHWAY_UNDERLAY_ISOLATED").as_deref(),
+        Ok("1")
+    );
+    let server: SocketAddr = std::env::var("MESHWAY_X3C_SERVER")
+        .unwrap()
+        .parse()
+        .unwrap();
+    let peer: SocketAddr = std::env::var("MESHWAY_X3C_PEER").unwrap().parse().unwrap();
+    let ipv6: SocketAddr = std::env::var("MESHWAY_X3C_IPV6").unwrap().parse().unwrap();
+    let direct: SocketAddr = std::env::var("MESHWAY_X3C_DIRECT")
+        .unwrap()
+        .parse()
+        .unwrap();
+    // First prove IPv6 has a working underlay route, so a later failure cannot
+    // be credited to a namespace that never had external IPv6 connectivity.
+    exchange(None, ipv6, b"before-v6").await;
+    let Setup {
+        _temp: temp,
+        tasks,
+        mut kernel,
+        mut backend,
+        device,
+        mesh,
+        changed,
+    } = setup().await;
+    let full = full();
+    println!("X3C_EGRESS_NFT={}", backend.ledger.program.create());
     backend.stage(full.clone(), mesh.clone()).await.unwrap();
     backend
         .commit_staged(full.clone(), mesh.clone(), Some(device.clone()), || Ok(()))
         .await
         .unwrap();
     kernel.quiesce().await.unwrap();
+    let conflict = kernel.expected.lock().unwrap().first_conflict.clone();
+    assert!(conflict.is_none(), "{conflict:?}");
     kernel.verify().await.unwrap();
     assert!(
         !changed.has_changed().unwrap(),
@@ -253,6 +283,159 @@ async fn default_capture_protected_endpoints_ipv6_sink_and_switch_without_direct
     );
 }
 
+/// `count` disjoint, non-adjacent public IPv4 ranges (about two prefixes each)
+/// plus `count / 4` IPv6 ones, avoiding the fixture's own networks; `seed`
+/// shifts them so that two plans differ everywhere.
+fn scaled(count: u32, seed: u32, server: std::net::Ipv4Addr) -> EgressCapturePlan {
+    let mut v4 = vec![(server, server)];
+    let step = (0xdf00_0000u32 - 0x0100_0000) / count;
+    for i in 0..count {
+        // /24-aligned: one or two prefixes each, like a merged country set.
+        let start = (0x0100_0000 + i * step) & !0xff | (((seed % 7) + 1) << 8);
+        let end = start + 256 * (1 + i % 2) - 1;
+        let first = std::net::Ipv4Addr::from(start);
+        if [0x64u8, 0x7f, 0xc6].contains(&first.octets()[0]) {
+            continue;
+        }
+        v4.push((first, std::net::Ipv4Addr::from(end)));
+    }
+    v4.sort();
+    let v6 = (0..count / 4)
+        .map(|i| {
+            let start = (0x2400u128 << 112) | (u128::from(i) << 80) | (u128::from(seed) << 64);
+            (
+                std::net::Ipv6Addr::from(start),
+                std::net::Ipv6Addr::from(start | 0xffff),
+            )
+        })
+        .collect();
+    let mut plan = full();
+    plan.generation = Digest::from_bytes([seed as u8; 32]);
+    plan.default_capture = false;
+    plan.managed_ipv4 = v4;
+    plan.sink_ipv6 = v6;
+    plan
+}
+
+#[tokio::test]
+#[ignore = "requires isolated dual-stack Linux client/service namespaces and NET_ADMIN"]
+async fn large_partitions_install_switch_read_back_and_retire() {
+    assert_eq!(
+        std::env::var("MESHWAY_UNDERLAY_ISOLATED").as_deref(),
+        Ok("1")
+    );
+    let server: SocketAddr = std::env::var("MESHWAY_X3C_SERVER")
+        .unwrap()
+        .parse()
+        .unwrap();
+    let direct: SocketAddr = std::env::var("MESHWAY_X3C_DIRECT")
+        .unwrap()
+        .parse()
+        .unwrap();
+    let IpAddr::V4(managed) = server.ip() else {
+        panic!("IPv4 fixture server");
+    };
+    // The namespace's own IPv6 addresses have settled: no address completes
+    // duplicate detection later, during the measurement.
+    for _ in 0..100 {
+        let tentative = std::process::Command::new("/usr/sbin/ip")
+            .args(["-6", "addr", "show", "dev", "eth0", "tentative"])
+            .output()
+            .unwrap();
+        if tentative.stdout.is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let Setup {
+        _temp,
+        tasks,
+        mut kernel,
+        mut backend,
+        device,
+        mesh,
+        changed,
+    } = setup().await;
+    let sizes: Vec<u32> = std::env::var("MESHWAY_R3_SIZES")
+        .unwrap_or_else(|_| "1000,6000,10000,13000".into())
+        .split(',')
+        .map(|size| size.parse().unwrap())
+        .collect();
+    let elapsed = |start: std::time::Instant| start.elapsed().as_secs_f64();
+    for (round, size) in sizes.iter().enumerate() {
+        let mut timings = Vec::new();
+        for seed in [1u32, 2] {
+            let plan = scaled(*size, seed + round as u32 * 2, managed);
+            let ranges = plan.managed_ipv4.len() + plan.sink_ipv6.len();
+            let routes = plan::parse(&plan).unwrap().routes().count();
+            let start = std::time::Instant::now();
+            backend.stage(plan.clone(), mesh.clone()).await.unwrap();
+            let staged = elapsed(start);
+            let start = std::time::Instant::now();
+            backend
+                .commit_staged(plan.clone(), mesh.clone(), Some(device.clone()), || Ok(()))
+                .await
+                .unwrap();
+            let committed = elapsed(start);
+            let start = std::time::Instant::now();
+            backend.verify().await.unwrap();
+            let verified = elapsed(start);
+            let table = super::super::get_routes(&kernel.handle, 65_536)
+                .await
+                .unwrap()
+                .into_iter()
+                .filter(|route| super::super::route_table(route) == backend.ledger.table)
+                .count();
+            assert_eq!(table, routes);
+            kernel.quiesce().await.unwrap();
+            kernel.verify().await.unwrap();
+            assert!(!changed.has_changed().unwrap());
+            // The managed server goes to the TUN, a destination outside every
+            // range stays on the host route.
+            captured(kernel.tun.as_ref().unwrap(), server).await;
+            exchange(None, direct, b"outside-the-partition").await;
+            timings.push(serde_json::json!({
+                "seed": seed, "ranges": ranges, "routes": routes,
+                "stageSeconds": staged, "commitSeconds": committed, "readbackSeconds": verified,
+            }));
+        }
+        let start = std::time::Instant::now();
+        backend.pause().await.unwrap();
+        let paused = elapsed(start);
+        assert!(
+            tokio::time::timeout(
+                Duration::from_secs(1),
+                tokio::net::TcpStream::connect(server)
+            )
+            .await
+            .is_ok_and(|result| result.is_err()),
+            "a paused managed destination is rejected at once"
+        );
+        println!(
+            "R3_SCALE={}",
+            serde_json::json!({"size": size, "switches": timings, "pauseSeconds": paused})
+        );
+    }
+    let start = std::time::Instant::now();
+    backend.retire().await.unwrap();
+    let retired = start.elapsed().as_secs_f64();
+    assert!(
+        super::super::get_routes(&kernel.handle, 65_536)
+            .await
+            .unwrap()
+            .iter()
+            .all(|route| super::super::route_table(route) != backend.ledger.table)
+    );
+    kernel.quiesce().await.unwrap();
+    exchange(None, server, b"after-retire").await;
+    kernel.down().await.unwrap();
+    tasks.shutdown().await.unwrap();
+    println!(
+        "R3_SCALE_RETIRE={}",
+        serde_json::json!({"retireSeconds": retired})
+    );
+}
+
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CrashPoint {
@@ -284,8 +467,13 @@ async fn egress_capture_crash_keeps_negative_until_explicit_down() {
     let (store, ledger) = Store::open(directory).await.unwrap();
     let ledger = ledger.unwrap();
     assert!(!ledger.removed && ledger.gate.device.is_none());
-    assert_eq!(ledger.gate.ranges.v4, vec!["0.0.0.0/0".parse().unwrap()]);
-    assert!(ledger.routes.is_empty());
+    assert_eq!(
+        ledger.gate.ranges.v4,
+        [(
+            std::net::Ipv4Addr::UNSPECIFIED,
+            std::net::Ipv4Addr::BROADCAST
+        )]
+    );
     drop(store);
     if let Ok(Ok(_)) = tokio::time::timeout(
         Duration::from_millis(250),
@@ -311,11 +499,11 @@ async fn exchange(kernel: Option<&Kernel>, remote: SocketAddr, body: &[u8]) {
         tokio::net::TcpSocket::new_v6()
     }
     .unwrap();
-    if let Some(kernel) = kernel {
-        kernel
-            .shared
-            .prepare(&socket2::SockRef::from(&socket))
-            .unwrap();
+    if let Some(kernel) = kernel
+        && let Err(error) = kernel.shared.prepare(&socket2::SockRef::from(&socket))
+    {
+        let conflict = kernel.expected.lock().unwrap().first_conflict.clone();
+        panic!("{error:?}: {conflict:?}");
     }
     tokio::time::timeout(Duration::from_secs(2), async {
         let mut stream = socket.connect(remote).await.unwrap();
@@ -345,30 +533,25 @@ async fn captured(tun: &meshway_tun::Tun, remote: SocketAddr) {
 fn full() -> EgressCapturePlan {
     EgressCapturePlan {
         generation: Digest::from_bytes([31; 32]),
-        managed_ipv4: vec!["0.0.0.0/0".into()],
+        managed_ipv4: vec![(
+            std::net::Ipv4Addr::UNSPECIFIED,
+            std::net::Ipv4Addr::BROADCAST,
+        )],
         default_capture: true,
-        direct_ipv4: Vec::new(),
-        unmanaged_ipv4: Vec::new(),
-        sink_ipv6: vec!["::/0".into()],
+        sink_ipv6: vec![(
+            std::net::Ipv6Addr::UNSPECIFIED,
+            std::net::Ipv6Addr::from(u128::MAX),
+        )],
         unavailable: None,
     }
 }
 fn narrow(managed: IpAddr, direct: IpAddr) -> EgressCapturePlan {
-    let (IpAddr::V4(managed), IpAddr::V4(direct)) = (managed, direct) else {
+    let (IpAddr::V4(managed), IpAddr::V4(_)) = (managed, direct) else {
         panic!("fixture IPv4 endpoints");
     };
     let mut plan = full();
     plan.generation = Digest::from_bytes([32; 32]);
     plan.default_capture = false;
-    plan.managed_ipv4 = vec![format!("{managed}/32")];
-    plan.direct_ipv4 = vec![format!("{direct}/32")];
-    let mut remaining = vec!["0.0.0.0/0".parse::<ipnet::Ipv4Net>().unwrap()];
-    while let Some(net) = remaining.pop() {
-        if !net.contains(&managed) && !net.contains(&direct) {
-            plan.unmanaged_ipv4.push(net.to_string());
-        } else if net.prefix_len() < 32 {
-            remaining.extend(net.subnets(net.prefix_len() + 1).unwrap());
-        }
-    }
+    plan.managed_ipv4 = vec![(managed, managed)];
     plan
 }

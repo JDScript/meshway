@@ -50,7 +50,7 @@ pub fn netmap_dns_service(
                 && netmap
                     .egress
                     .as_ref()
-                    .is_some_and(|plan| plan.capture.generation == service.generation)
+                    .is_some_and(|plan| plan.generation == service.generation)
                 && netmap.dns.profile == service.profile
                 && netmap.self_.addresses == service.source_addresses
                 && netmap

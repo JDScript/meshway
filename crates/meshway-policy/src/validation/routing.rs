@@ -346,24 +346,6 @@ fn rules(
                     Some(_) => {}
                 },
             }
-            if let Some(set) = sets.loaded.get(key) {
-                let prefixes: usize = set
-                    .ipv4_ranges()
-                    .map(|r| meshway_rules::Cidr::cover_v4(r).len())
-                    .chain(
-                        set.ipv6_ranges()
-                            .map(|r| meshway_rules::Cidr::cover_v6(r).len()),
-                    )
-                    .sum();
-                if prefixes > crate::compile::MAX_CAPTURE_PREFIXES {
-                    check.warn(
-                        ConfigurationIssue::new(&at, IssueCode::RuleSetPartitionLimit)
-                            .with("key", key)
-                            .with("prefixes", prefixes)
-                            .with("maxPrefixes", crate::compile::MAX_CAPTURE_PREFIXES),
-                    );
-                }
-            }
         }
         action(
             &rule.action.clone().into(),
@@ -540,6 +522,63 @@ pub(super) fn validate(
 }
 
 /// HTTPS without credentials or fragment, as a download source.
+/// Every assignable profile's egress partition must fit what a Node
+/// installs; otherwise that profile's sources have no egress.
+fn partition_limits(
+    config: &NetworkConfiguration,
+    loaded: &BTreeMap<String, Arc<meshway_rules::RuleSet>>,
+    check: &mut Check,
+) {
+    let mut names: BTreeSet<&str> = BTreeSet::from(["mesh"]);
+    for assignment in &config.routing.egress.assignments {
+        names.extend(assignment.allowed.iter().map(String::as_str));
+        names.insert(&assignment.default);
+    }
+    names.extend(config.routing.egress.profiles.keys().map(String::as_str));
+    // Inline definitions judge as the artifacts they become.
+    let mut sets = loaded.clone();
+    for (key, set) in &config.rule_sets {
+        if let RuleSet::Inline {
+            ip_cidr,
+            domain_suffix,
+            domain,
+            domain_subdomain,
+        } = set
+            && !sets.contains_key(key)
+            && let Ok(built) = meshway_rules::RuleSet::from_inline(&meshway_rules::inline::Inline {
+                domain,
+                domain_suffix,
+                domain_subdomain,
+                ip_cidr,
+            })
+        {
+            sets.insert(key.clone(), Arc::new(built));
+        }
+    }
+    for name in names {
+        let summary = crate::compile::capture_summary(config, &sets, name);
+        let ranges = summary.managed_ipv4 as usize + summary.sink_ipv6 as usize;
+        if ranges <= crate::compile::MAX_CAPTURE_RANGES
+            && summary.routes as usize <= crate::compile::MAX_CAPTURE_ROUTES
+        {
+            continue;
+        }
+        let path = if config.routing.egress.profiles.contains_key(name) {
+            format!("/routing/egress/profiles/{}", pointer(name))
+        } else {
+            "/routing/egress/rules".to_owned()
+        };
+        check.warn(
+            ConfigurationIssue::new(path, IssueCode::EgressPartitionLimit)
+                .with("profile", name)
+                .with("ranges", ranges)
+                .with("maxRanges", crate::compile::MAX_CAPTURE_RANGES)
+                .with("routes", summary.routes)
+                .with("maxRoutes", crate::compile::MAX_CAPTURE_ROUTES),
+        );
+    }
+}
+
 fn https_source(url: &str) -> bool {
     let authority = url
         .strip_prefix("https://")
@@ -671,6 +710,7 @@ fn validate_resolved(
         );
     }
     config.routing.egress.profiles = profiles;
+    partition_limits(config, &context.rule_sets, check);
     let assignments = &config.routing.egress.assignments;
     for (i, assignment) in assignments.iter().enumerate() {
         let path = format!("/routing/egress/assignments/{i}");

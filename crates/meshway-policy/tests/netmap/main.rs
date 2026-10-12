@@ -11,6 +11,7 @@ use std::collections::BTreeMap;
 mod equivalence;
 mod exit;
 mod incremental;
+mod partition;
 mod projection;
 mod properties;
 mod rule_sets;

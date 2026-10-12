@@ -225,40 +225,40 @@ pub(super) fn first_match(
     Ok(None)
 }
 
-/// IP prefixes a rule partitions: its own CIDRs and every referenced set's
-/// merged ranges as their minimal CIDR cover. `None` when it names domains.
-pub(super) fn prefixes(
-    matcher: &RouteMatch,
-    sets: &RuleSets,
-    limit: usize,
-) -> Result<(Vec<ipnet::IpNet>, bool), CompileError> {
-    let mut nets = Vec::new();
+/// Address ranges a rule partitions: its own CIDRs and every referenced
+/// set's merged ranges, and whether it also names domains.
+pub(super) struct Ranges {
+    pub v4: Vec<(u32, u32)>,
+    pub v6: Vec<(u128, u128)>,
+    pub names: bool,
+}
+
+pub(super) fn ranges(matcher: &RouteMatch, sets: &RuleSets) -> Result<Ranges, CompileError> {
+    let (mut v4, mut v6) = (Vec::new(), Vec::new());
     let mut names = !matcher.domain.is_empty() || !matcher.domain_suffix.is_empty();
     for text in &matcher.ip_cidr {
-        nets.push(text.parse().map_err(|_| CompileError::InvalidInput)?);
+        match text.parse().map_err(|_| CompileError::InvalidInput)? {
+            ipnet::IpNet::V4(net) => {
+                v4.push((u32::from(net.network()), u32::from(net.broadcast())))
+            }
+            ipnet::IpNet::V6(net) => {
+                v6.push((u128::from(net.network()), u128::from(net.broadcast())))
+            }
+        }
     }
     for key in &matcher.rule_sets {
         let set = sets.get(key).ok_or(CompileError::UnavailableDependency)?;
         names |= has_names(set);
-        if set.ipv4_ranges().len() + set.ipv6_ranges().len() > limit {
-            return Err(CompileError::Budget);
-        }
-        let covers = set
-            .ipv4_ranges()
-            .flat_map(Cidr::cover_v4)
-            .chain(set.ipv6_ranges().flat_map(Cidr::cover_v6));
-        for cidr in covers {
-            if nets.len() >= limit {
-                return Err(CompileError::Budget);
-            }
-            nets.push(
-                cidr.to_string()
-                    .parse()
-                    .map_err(|_| CompileError::InvalidInput)?,
-            );
-        }
+        v4.extend(
+            set.ipv4_ranges()
+                .map(|r| (u32::from(*r.start()), u32::from(*r.end()))),
+        );
+        v6.extend(
+            set.ipv6_ranges()
+                .map(|r| (u128::from(*r.start()), u128::from(*r.end()))),
+        );
     }
-    Ok((nets, names))
+    Ok(Ranges { v4, v6, names })
 }
 
 /// The canonical spelling a query name is judged in: ASCII lowercase without

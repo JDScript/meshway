@@ -136,15 +136,35 @@ fn artifact_content_decides_like_the_server_and_a_missing_artifact_fails_closed(
         Err(CompileError::UnavailableDependency)
     );
     let effective = missing.effective().unwrap();
-    let capture = &effective.egress.as_ref().unwrap().capture;
+    assert_eq!(
+        effective.egress.as_ref().unwrap().unavailable,
+        Some(UnavailableReason::MissingDependency)
+    );
+    let capture = missing.capture().unwrap().unwrap();
     assert_eq!(
         capture.unavailable,
         Some(UnavailableReason::MissingDependency)
     );
-    assert_eq!(capture.managed_ipv4, ["0.0.0.0/0"]);
-    assert_eq!(capture.sink_ipv6, ["::/0"]);
-    assert!(capture.direct_ipv4.is_empty() && capture.unmanaged_ipv4.is_empty());
-    assert!(effective.egress.as_ref().unwrap().routes.is_empty());
+    assert_eq!(
+        capture.managed_ipv4,
+        [(
+            std::net::Ipv4Addr::UNSPECIFIED,
+            std::net::Ipv4Addr::BROADCAST
+        )]
+    );
+    assert_eq!(
+        capture.sink_ipv6,
+        [(
+            std::net::Ipv6Addr::UNSPECIFIED,
+            std::net::Ipv6Addr::from(u128::MAX)
+        )]
+    );
+    assert!(missing.partition(node(1)).unwrap().is_err());
+    // The selection identity does not depend on the artifacts a Node holds.
+    assert_eq!(
+        effective.egress.as_ref().unwrap().generation,
+        netmap.egress.as_ref().unwrap().generation
+    );
     assert_ne!(effective.egress, netmap.egress);
     assert!(
         effective

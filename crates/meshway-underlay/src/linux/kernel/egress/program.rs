@@ -1,5 +1,9 @@
 use super::plan::Ranges;
 use serde::{Deserialize, Serialize};
+
+/// Interval elements each capture set holds (the kernel counts intervals):
+/// a staged union of two plans.
+const SET_SIZE: usize = super::plan::UNION_RANGES;
 use serde_json::{Value, json};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -23,7 +27,7 @@ impl Program {
             ("mesh4", "ipv4_addr"),
             ("mesh6", "ipv6_addr"),
         ] {
-            items.push(json!({"add": {"set": {"family": "inet", "table": table, "name": name, "type": kind, "flags": ["interval"], "size": 8192}}}));
+            items.push(json!({"add": {"set": {"family": "inet", "table": table, "name": name, "type": kind, "flags": ["interval"], "size": SET_SIZE}}}));
         }
         items.push(json!({"add": {"set": {"family": "inet", "table": table, "name": "active", "type": "ifname", "size": 1}}}));
         items.push(json!({"add": {"chain": {"family": "inet", "table": table, "name": "output", "type": "filter", "hook": "output", "prio": 300, "policy": "accept"}}}));
@@ -89,9 +93,21 @@ impl Program {
                     json!({"return": null}),
                 ]);
             }
+            // Rejected locally: a paused or sunk managed destination fails
+            // at once, as an unreachable route would, and nothing is sent. A
+            // TCP reset ends a connect immediately in both families.
+            rules.push(vec![
+                compare(
+                    "==",
+                    destination.clone(),
+                    json!(format!("@managed{family}")),
+                ),
+                compare("==", json!({"meta": {"key": "l4proto"}}), json!(6)),
+                json!({"reject": {"type": "tcp reset"}}),
+            ]);
             rules.push(vec![
                 compare("==", destination, json!(format!("@managed{family}"))),
-                json!({"drop": null}),
+                json!({"reject": {"type": "icmpx", "expr": "admin-prohibited"}}),
             ]);
         }
         for expr in rules {
@@ -117,14 +133,18 @@ impl Program {
         mesh: &Ranges,
         active: Option<&str>,
     ) -> Vec<(&'static str, Vec<Value>)> {
-        let nets = |values: &[ipnet::IpNet]| {
-            values.iter().map(|net| json!({"prefix": {"addr": net.network().to_string(), "len": net.prefix_len()}})).collect()
-        };
+        fn range<T: std::fmt::Display + PartialEq>((start, end): &(T, T)) -> Value {
+            if start == end {
+                json!(start.to_string())
+            } else {
+                json!({"range": [start.to_string(), end.to_string()]})
+            }
+        }
         vec![
-            ("managed4", nets(&ranges.v4)),
-            ("managed6", nets(&ranges.v6)),
-            ("mesh4", nets(&mesh.v4)),
-            ("mesh6", nets(&mesh.v6)),
+            ("managed4", ranges.v4.iter().map(range).collect()),
+            ("managed6", ranges.v6.iter().map(range).collect()),
+            ("mesh4", mesh.v4.iter().map(range).collect()),
+            ("mesh6", mesh.v6.iter().map(range).collect()),
             (
                 "active",
                 active.map(|name| vec![json!(name)]).unwrap_or_default(),

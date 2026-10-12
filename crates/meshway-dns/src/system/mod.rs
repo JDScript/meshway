@@ -335,14 +335,14 @@ impl SystemResolverSnapshot {
 /// may reach has a local decision; the error is why sources get SERVFAIL.
 /// The Node's own DNS installation never depends on this result.
 pub fn exit_resolvers(
-    netmap: &meshway_configuration::netmap::NodeNetmap,
+    desired: &meshway_engine::Desired,
     observed: Result<SystemResolverSnapshot, ExitDnsUnavailableReason>,
 ) -> Result<Option<SystemResolverSnapshot>, ExitDnsUnavailableReason> {
-    if netmap.projection.configuration.dns.override_local {
+    if desired.netmap().projection.configuration.dns.override_local {
         return Ok(None);
     }
     let snapshot = observed?;
-    crate::route::served_decisions(netmap, &snapshot)?;
+    crate::route::served_decisions(desired, &snapshot)?;
     Ok(Some(snapshot))
 }
 

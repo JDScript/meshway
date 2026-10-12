@@ -12,59 +12,56 @@ pub(super) struct Local {
     pub dns: NetmapDns,
 }
 
-fn action(route: &RouteAction) -> Result<EgressAction, CompileError> {
-    let nodes = |selectors: &[String]| {
-        selectors
-            .iter()
-            .map(|s| matching::node_selector(s))
-            .collect::<Result<Vec<_>, _>>()
-    };
-    Ok(match route {
-        RouteAction::Exit { nodes: exits, via } => EgressAction::Exit {
-            nodes: nodes(exits)?,
-            via: nodes(via)?,
-        },
-        RouteAction::Direct => EgressAction::Direct,
-        RouteAction::Unmanaged => EgressAction::Unmanaged,
-    })
-}
-
 /// The selection identity excludes the revision: an unrelated configuration
-/// change keeps it, while any selection switch or routing change replaces it.
+/// change keeps it, while any selection switch, routing change or new content
+/// of a set the rules use replaces it. It does not depend on which artifacts
+/// a Node holds, so every Node computes the same identity for a source.
 /// Shared by the Server and by Nodes recomputing a visible source's selection.
 pub(super) fn egress(
     network: NetworkId,
     cfg: &NetworkConfiguration,
-    rule_sets: &super::super::rules::RuleSets,
+    references: &BTreeMap<String, meshway_rules::Digest>,
+    partition: &capture::Partition,
     node: NodeId,
     profile: &str,
     selection: u64,
 ) -> Result<EgressPlan, CompileError> {
-    let seed = digest(&(
+    let capture::Selection { rules, fallback } = match capture::selection(cfg, profile) {
+        Ok(selected) => selected,
+        Err(CompileError::Serialization) => return Err(CompileError::Serialization),
+        Err(_) => capture::Selection {
+            rules: Vec::new(),
+            fallback: RouteAction::Unmanaged,
+        },
+    };
+    let used: BTreeMap<&str, meshway_rules::Digest> = rules
+        .iter()
+        .flat_map(|(_, rule)| &rule.matcher.rule_sets)
+        .filter_map(|key| references.get(key).map(|digest| (key.as_str(), *digest)))
+        .collect();
+    let generation = digest(&(
         "meshway-netmap-egress",
         network,
         node,
         profile,
         selection,
         &cfg.routing.egress,
+        used,
     ))?;
-    let (mut capture, partition) = capture::capture(cfg, rule_sets, profile, seed)?;
-    let mut routes = partition
-        .into_iter()
-        .map(|(prefix, route)| {
-            Ok((
-                prefix,
-                EgressRoute {
-                    prefix: prefix.to_string(),
-                    action: action(&route)?,
-                },
-            ))
-        })
-        .collect::<Result<Vec<(IpNet, EgressRoute)>, CompileError>>()?;
-    routes.sort_by_key(|(prefix, _)| *prefix);
-    let routes: Vec<EgressRoute> = routes.into_iter().map(|(_, route)| route).collect();
-    capture.generation = digest(&(capture.generation, &routes))?;
-    Ok(EgressPlan { capture, routes })
+    Ok(EgressPlan {
+        generation,
+        rules: rules
+            .iter()
+            .map(|(rule, egress)| {
+                Ok(EgressRuleRef {
+                    rule: rule.clone(),
+                    action: capture::action(&egress.action.clone().into())?,
+                })
+            })
+            .collect::<Result<_, CompileError>>()?,
+        fallback: capture::action(&fallback)?,
+        unavailable: partition.as_ref().err().copied(),
+    })
 }
 
 pub(super) fn exit_role(
@@ -145,27 +142,27 @@ fn mesh_address(cfg: &NetworkConfiguration, address: IpAddr) -> bool {
 pub(super) fn resolvers(
     cfg: &NetworkConfiguration,
     enabled: bool,
-    plan: &EgressPlan,
+    partition: &capture::Partition,
 ) -> BTreeMap<String, ResolverAction> {
     cfg.dns
         .servers
         .iter()
         .map(|(key, server)| {
             let address = server.server.to_canonical();
-            let action = if !enabled
-                || plan.capture.unavailable.is_some()
-                || address.is_unspecified()
-                || address.is_multicast()
-                || mesh_address(cfg, address)
-            {
-                ResolverAction::Rejected
-            } else {
-                match plan.route(address).map(|route| &route.action) {
-                    Some(EgressAction::Direct) => ResolverAction::Direct,
-                    Some(EgressAction::Unmanaged) => ResolverAction::Unmanaged,
-                    Some(EgressAction::Exit { .. }) => ResolverAction::Exit,
-                    None => ResolverAction::Rejected,
+            let action = match partition {
+                Ok(partition)
+                    if enabled
+                        && !address.is_unspecified()
+                        && !address.is_multicast()
+                        && !mesh_address(cfg, address) =>
+                {
+                    match partition.action(address) {
+                        EgressAction::Direct => ResolverAction::Direct,
+                        EgressAction::Unmanaged => ResolverAction::Unmanaged,
+                        EgressAction::Exit { .. } => ResolverAction::Exit,
+                    }
                 }
+                _ => ResolverAction::Rejected,
             };
             (key.clone(), action)
         })
@@ -176,10 +173,17 @@ impl Local {
     pub fn compile(input: &NetmapInput<'_>, node: NodeId) -> Result<Self, CompileError> {
         let cfg = input.configuration;
         let profile = input.profile(node)?;
+        let partition = capture::partition(cfg, input.rule_sets, &profile).map(std::sync::Arc::new);
+        let references = input
+            .rule_sets
+            .iter()
+            .map(|(key, set)| (key.clone(), set.digest()))
+            .collect();
         let egress = egress(
             input.network,
             cfg,
-            input.rule_sets,
+            &references,
+            &partition,
             node,
             &profile,
             input
@@ -199,7 +203,7 @@ impl Local {
             exit_role: exit_role(input.network, cfg, input.inventory, node)?,
             dns: NetmapDns {
                 mesh_hosts: mesh_hosts(input, node)?,
-                resolvers: resolvers(cfg, enabled, &egress),
+                resolvers: resolvers(cfg, enabled, &partition),
                 profile,
                 egress: plan,
             },
@@ -277,7 +281,7 @@ pub(super) fn service(
         return Ok(Err(DnsEgressUnavailable::ExitPlanRequired));
     };
     if exit == source
-        || local.egress.capture.unavailable.is_some()
+        || local.egress.unavailable.is_some()
         || matching::dns_requires_exit(cfg, &input.profile(exit)?)
     {
         return Ok(Err(DnsEgressUnavailable::ExitPlanRequired));
@@ -309,7 +313,7 @@ pub(super) fn service(
         exit,
         address: ExecutionAddress(address.into()),
         profile: local.dns.profile.clone(),
-        generation: local.egress.capture.generation,
+        generation: local.egress.generation,
         role,
         path,
         transports: vec![DnsTransport::Udp, DnsTransport::Tcp],

@@ -17,6 +17,14 @@ pub(in crate::linux::kernel) struct Receipt {
     pub elements: BTreeMap<String, Vec<Value>>,
 }
 
+/// Elements of one decoded set: the exit's projection history or a staged
+/// source-capture union, whichever is larger.
+const ELEMENTS: usize = if super::program::HISTORY > super::super::egress::plan::UNION_RANGES {
+    super::program::HISTORY
+} else {
+    super::super::egress::plan::UNION_RANGES
+};
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Document {
@@ -55,6 +63,26 @@ pub(in crate::linux::kernel) async fn mutate(
         );
     }
     decoded
+}
+
+/// A batch that creates no object (element replacement): no echo, whose
+/// netlink buffer does not hold tens of thousands of elements. The caller
+/// proves the outcome by readback.
+pub(in crate::linux::kernel) async fn apply(commands: &mut Commands, batch: &Value) -> Result<()> {
+    let output = commands
+        .run(
+            Tool::Nft,
+            vec!["-j".into(), "-f".into(), "-".into()],
+            serde_json::to_vec(batch).map_err(|_| Error::Journal)?,
+        )
+        .await
+        .map_err(|_| Error::Netlink)?;
+    if !output.success {
+        #[cfg(test)]
+        eprintln!("nft batch: {}", String::from_utf8_lossy(&output.stderr));
+        return Err(Error::Netlink);
+    }
+    Ok(())
 }
 
 pub(super) async fn dump(commands: &mut Commands, program: &Program) -> Result<Receipt> {
@@ -256,7 +284,7 @@ pub(in crate::linux::kernel) fn decode(bytes: &[u8]) -> Result<Receipt> {
             {
                 let elements = elements
                     .as_array()
-                    .filter(|elements| elements.len() <= super::program::HISTORY)
+                    .filter(|elements| elements.len() <= ELEMENTS)
                     .ok_or(Error::Capacity)?
                     .clone();
                 result.elements.insert(key.clone(), elements);
@@ -308,6 +336,13 @@ fn normalize(value: &mut Value, program: Option<&Program>) -> Result<()> {
             {
                 ct.insert("key".into(), json!(format!("ip {key}")));
                 ct.remove("family");
+            }
+            // `-nnn` lists the icmpx reject code as its number.
+            if let Some(reject) = values.get_mut("reject").and_then(Value::as_object_mut)
+                && reject.get("type").and_then(Value::as_str) == Some("icmpx")
+                && reject.get("expr").and_then(Value::as_str) == Some("admin-prohibited")
+            {
+                reject.insert("expr".into(), json!(3));
             }
             if let Some(compare) = values.get_mut("match").and_then(Value::as_object_mut) {
                 normalize_mark_prefix(compare)?;

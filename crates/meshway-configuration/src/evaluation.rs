@@ -46,6 +46,24 @@ pub struct ProfileEvaluation {
     /// Whether the request named this profile (true) or it is the source's
     /// current selection / default (false).
     pub requested: bool,
+    /// The source's egress partition under this profile, as its Node
+    /// installs it.
+    pub capture: CaptureSummary,
+} }
+
+object! {
+/// Size of a source's egress partition as a Node installs it: nftables
+/// interval elements and routes of its private capture table. A Node computes
+/// the same numbers from its netmap and artifacts.
+pub struct CaptureSummary {
+    /// Managed IPv4 ranges (interval elements).
+    pub managed_ipv4: u32,
+    /// Sunk IPv6 ranges (interval elements).
+    pub sink_ipv6: u32,
+    /// Capture-table routes: the CIDR cover of the managed IPv4 ranges.
+    pub routes: u32,
+    /// Why no partition is installed (full capture instead); null otherwise.
+    #[serde(deserialize_with = "nullable")] pub unavailable: Option<UnavailableReason> [required = true],
 } }
 
 object! {

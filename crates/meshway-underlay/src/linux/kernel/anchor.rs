@@ -37,6 +37,8 @@ struct Guard {
     handle: Handle,
     reads: tokio::sync::Mutex<()>,
     shared: Arc<super::super::protection::Shared>,
+    /// For the source-capture table, which the collision check exempts.
+    expected: Arc<std::sync::Mutex<super::monitor::Expected>>,
     record: Record,
     limit: usize,
     cancelled: CancellationToken,
@@ -80,9 +82,14 @@ impl OwnedDnsLink for Guard {
             };
             self.check().map_err(|_| SystemDnsError::Conflict)?;
             let mut reading = Reading(Some(self.cancelled.clone()));
+            let capture = self
+                .expected
+                .lock()
+                .map_err(|_| SystemDnsError::Conflict)?
+                .egress_table;
             tokio::select! { biased;
                 _ = self.ended() => return Err(SystemDnsError::Conflict),
-                result = verify(&self.handle, &self.record, self.limit) => result.map_err(|_| SystemDnsError::Conflict)?,
+                result = verify(&self.handle, &self.record, capture, self.limit) => result.map_err(|_| SystemDnsError::Conflict)?,
             }
             self.check().map_err(|_| SystemDnsError::Conflict)?;
             reading.0 = None;
@@ -156,7 +163,19 @@ impl Kernel {
             }) {
                 return Err(Error::Conflict);
             }
-            collision(&self.handle, address, None, self.options.max_kernel_objects).await?;
+            let capture = self
+                .expected
+                .lock()
+                .map_err(|_| Error::Worker)?
+                .egress_table;
+            collision(
+                &self.handle,
+                address,
+                None,
+                capture,
+                self.options.max_kernel_objects,
+            )
+            .await?;
             // IFLA_IFALIAS is not installed by the generic dummy NEWLINK path.
             // Give creation its own known fingerprint so the subsequent SETLINK
             // never adopts a same-name device with an unknown identity.
@@ -260,7 +279,18 @@ impl Kernel {
                         .execute(),
                 )
                 .await?;
-                verify(&self.handle, &record, self.options.max_kernel_objects).await?;
+                let capture = self
+                    .expected
+                    .lock()
+                    .map_err(|_| Error::Worker)?
+                    .egress_table;
+                verify(
+                    &self.handle,
+                    &record,
+                    capture,
+                    self.options.max_kernel_objects,
+                )
+                .await?;
                 // Drain the creation's down/address/up notifications before arming
                 // the steady-state watcher, then close the dump/watch race by a
                 // second verification after arming it.
@@ -270,6 +300,7 @@ impl Kernel {
                 verify(
                     &self.handle,
                     self.journal.anchor.as_ref().ok_or(Error::Journal)?,
+                    capture,
                     self.options.max_kernel_objects,
                 )
                 .await?;
@@ -306,6 +337,7 @@ impl Kernel {
             handle,
             reads: tokio::sync::Mutex::new(()),
             shared: self.shared.clone(),
+            expected: self.expected.clone(),
             record,
             limit: self.options.max_kernel_objects,
             cancelled,
@@ -443,10 +475,13 @@ pub(super) fn route_conflicts(address: Ipv4Addr, owned: Option<u32>, route: &Rou
                 .any(|a| matches!(a, RouteAttribute::Oif(i) if *i == index))
         }))
 }
+/// `capture` is the source-capture table: only the capture selector looks it
+/// up, after the local table, so its routes never steer the anchor address.
 async fn collision(
     handle: &Handle,
     address: Ipv4Addr,
     owned: Option<u32>,
+    capture: Option<u32>,
     limit: usize,
 ) -> Result<()> {
     let addresses = get_addresses(handle, limit).await?;
@@ -454,13 +489,19 @@ async fn collision(
     if get_routes(handle, limit)
         .await?
         .iter()
+        .filter(|route| capture != Some(super::route_table(route)))
         .any(|route| route_conflicts(address, owned, route))
     {
         return Err(Error::Conflict);
     }
     Ok(())
 }
-pub(super) async fn verify(handle: &Handle, record: &Record, limit: usize) -> Result<()> {
+pub(super) async fn verify(
+    handle: &Handle,
+    record: &Record,
+    capture: Option<u32>,
+    limit: usize,
+) -> Result<()> {
     let identity = super::journal::Journal::identity()?;
     if identity.0.trim() != record.identity.boot
         || identity.1 != record.identity.namespace_device
@@ -477,6 +518,7 @@ pub(super) async fn verify(handle: &Handle, record: &Record, limit: usize) -> Re
         handle,
         record.identity.address,
         Some(record.identity.index),
+        capture,
         limit,
     )
     .await

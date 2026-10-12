@@ -122,8 +122,8 @@ pub enum IssueCode {
     UnknownRuleSetProvider,
     /// A rule-set provider declaration is invalid: its name, catalog URL, collection, public keys or the absence of keys; params `field`.
     InvalidRuleSetProvider,
-    /// Warning: an egress rule's referenced IP set needs more source-side partition prefixes than a netmap carries, so the source's egress is unavailable; params `key`, `prefixes`, `maxPrefixes`.
-    RuleSetPartitionLimit,
+    /// Warning: a profile's egress partition needs more capture ranges or capture-table routes than a Node installs, so egress of its sources is unavailable; params `profile`, `ranges`, `maxRanges`, `routes`, `maxRoutes`.
+    EgressPartitionLimit,
     /// An inline rule set contains no CIDRs, suffixes or exact names; params are empty.
     EmptyInlineRuleSet,
     /// Rule-set preparation or bound execution content exceeds its budget; params include the applicable `maxSets`, `maxBytes`, `maxEntries`, `maxNames`, `maxKeywords` or `maxRanges` limits.
@@ -227,8 +227,8 @@ impl IssueCode {
             InvalidRuleSetKey => "rule set keys cannot contain `:`",
             UnknownRuleSetProvider => "unknown or disabled rule set provider",
             InvalidRuleSetProvider => "invalid rule set provider declaration",
-            RuleSetPartitionLimit => {
-                "rule set needs more egress partition prefixes than a netmap carries"
+            EgressPartitionLimit => {
+                "egress partition needs more capture ranges or routes than a Node installs"
             }
             EmptyInlineRuleSet => "empty inline rule set",
             RuleSetBudget => "execution rule set content exceeds the network budget",

@@ -217,11 +217,13 @@ const TEXT: Record<IssueCode, (p: Params, node: NodeNamer) => string> = {
     }),
   invalid_rule_set_provider: (p) =>
     m.configuration_issue_invalid_rule_set_provider({ field: p.field ?? "?" }),
-  rule_set_partition_limit: (p) =>
-    m.configuration_issue_rule_set_partition_limit({
-      key: p.key ?? "?",
-      prefixes: p.prefixes ?? "?",
-      max: p.maxPrefixes ?? "?",
+  egress_partition_limit: (p) =>
+    m.configuration_issue_egress_partition_limit({
+      profile: p.profile ?? "?",
+      ranges: p.ranges ?? "?",
+      maxRanges: p.maxRanges ?? "?",
+      routes: p.routes ?? "?",
+      maxRoutes: p.maxRoutes ?? "?",
     }),
   empty_inline_rule_set: () => m.configuration_issue_empty_inline_rule_set(),
   rule_set_budget: (p) => {

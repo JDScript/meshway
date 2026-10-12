@@ -219,6 +219,11 @@ meshway_model::object! {
     /// Last fetch or storage failure while an artifact is missing; null otherwise.
     #[serde(deserialize_with = "meshway_model::wire::required_nullable")]
     pub artifact_problem: Option<ArtifactProblem> [required = true],
+    /// Egress capture this Node computed from the netmap and its artifacts
+    /// and installed: interval elements, capture-table routes, or why only
+    /// the full boundary is installed; null for a disabled Node.
+    #[serde(deserialize_with = "meshway_model::wire::required_nullable")]
+    pub capture: Option<meshway_configuration::evaluation::CaptureSummary> [required = true],
 } }
 meshway_model::string_enum! {
 /// Why a referenced rule-set artifact is not held.

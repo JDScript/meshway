@@ -102,9 +102,9 @@ async fn unusable_served_upstreams_withdraw_only_served_queries() {
         DnsPlan::ServeExitResolver { .. }
     ));
     let snapshot = sync(&mut control, &script, reply(&compiled, true)).await;
-    let netmap = snapshot.netmap().clone();
-    let decide = |netmap: &meshway_configuration::netmap::NodeNetmap, observed| {
-        crate::exit_resolvers(netmap, observed).map(|served| served.map(|s| s.id().to_owned()))
+    let netmap = snapshot.clone();
+    let decide = |desired: &Desired, observed| {
+        crate::exit_resolvers(desired, observed).map(|served| served.map(|s| s.id().to_owned()))
     };
     // Usable: the original nameserver, or resolved's stub with OS servers
     // this Node leaves to a local socket.
@@ -134,18 +134,10 @@ async fn unusable_served_upstreams_withdraw_only_served_queries() {
         ),
         Err(Reason::MeshServer)
     );
-    // An OS upstream this Node's egress partition sends through an exit.
-    let mut routed = (*netmap).clone();
-    routed.egress.as_mut().unwrap().routes.insert(
-        0,
-        meshway_configuration::netmap::EgressRoute {
-            prefix: "203.0.113.53/32".into(),
-            action: meshway_configuration::netmap::EgressAction::Exit {
-                nodes: vec![network.b],
-                via: vec![],
-            },
-        },
-    );
+    // An OS upstream the Node's egress partition sends through an exit: A's
+    // partition (192.0.2/24 direct, the rest through E).
+    let source = Network::new(&control, 'a');
+    let routed = Desired::new(&Arc::new(source.compile(None)), &Default::default()).unwrap();
     assert_eq!(
         decide(&routed, Ok(served_snapshot("203.0.113.53:53", None))),
         Err(Reason::ExitRoutedServer)
@@ -156,6 +148,10 @@ async fn unusable_served_upstreams_withdraw_only_served_queries() {
             Ok(served_snapshot("127.0.0.54:53", Some(&["203.0.113.53"])))
         ),
         Err(Reason::ExitRoutedServer)
+    );
+    assert_eq!(
+        decide(&routed, Ok(served_snapshot("192.0.2.53:53", None))),
+        Ok(Some("served-192.0.2.53:53".into()))
     );
     // The backend's own reason is kept.
     assert_eq!(
@@ -216,7 +212,7 @@ async fn override_local_serves_sources_from_the_configured_default_resolver() {
         Ok(served_snapshot("192.0.2.53:53", None)),
     ] {
         assert!(matches!(
-            crate::exit_resolvers(snapshot.netmap(), observed),
+            crate::exit_resolvers(&snapshot, observed),
             Ok(None)
         ));
     }

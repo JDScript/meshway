@@ -215,18 +215,14 @@ impl Decisions {
             return Ok(*selection);
         }
         let selection = if source == netmap.netmap.node_id {
-            netmap
-                .netmap
-                .egress
-                .as_ref()
-                .map(|plan| plan.capture.generation)
+            netmap.netmap.egress.as_ref().map(|plan| plan.generation)
         } else {
             self.compiler
                 .as_ref()
                 .expect("bound compiler")
                 .egress(source)
                 .ok()
-                .map(|plan| plan.capture.generation)
+                .map(|plan| plan.generation)
         }
         .ok_or(crate::Error::Admission(
             meshway_policy::admission::AdmissionError::Permit,

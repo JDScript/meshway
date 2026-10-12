@@ -14,15 +14,20 @@ use rtnetlink::{
     Handle, RouteMessageBuilder,
     packet_route::{
         AddressFamily,
-        route::{RouteScope, RouteType},
+        route::{RouteMessage, RouteScope, RouteType},
         rule::{RuleAction, RuleAttribute, RuleMessage},
     },
 };
 use serde_json::json;
 use std::{
-    net::Ipv4Addr,
+    collections::BTreeSet,
+    net::{IpAddr, Ipv4Addr},
     sync::{Arc, Mutex},
 };
+
+/// Route mutations between two waits for the kernel monitor: their
+/// notifications fit its socket buffer with a wide margin.
+const ROUTE_BATCH: usize = 256;
 
 pub(super) struct Backend {
     pub store: Store,
@@ -34,6 +39,33 @@ pub(super) struct Backend {
     pub start: u32,
     pub monitored: bool,
 }
+
+/// Exact routes of the capture table for `gate`: the CIDR cover of its IPv4
+/// ranges through its device, and none without one.
+fn routes(table: u32, gate: &Gate) -> Vec<RouteMessage> {
+    let Some(device) = &gate.device else {
+        return Vec::new();
+    };
+    gate.ranges
+        .routes()
+        .map(|net| {
+            let mut builder = RouteMessageBuilder::<Ipv4Addr>::new();
+            if net.prefix_len() != 0 {
+                builder = builder.destination_prefix(net.network(), net.prefix_len());
+            }
+            builder
+                .output_interface(device.index)
+                .pref_source(device.source)
+                .table_id(table)
+                .priority(100)
+                .protocol(PROTOCOL.into())
+                .scope(RouteScope::Link)
+                .kind(RouteType::Unicast)
+                .build()
+        })
+        .collect()
+}
+
 impl Backend {
     pub async fn initialize(&mut self) -> Result<()> {
         self.store.persist(&self.ledger).await?;
@@ -141,23 +173,13 @@ impl Backend {
             }
             return Err(Error::Conflict);
         }
-        for (name, wanted) in self.ledger.program.elements(
-            &gate.ranges,
-            &gate.mesh,
-            gate.device.as_ref().map(|device| device.name.as_str()),
-        ) {
-            let key = format!("inet/{}/set/{name}", self.ledger.program.table());
-            let actual = observed.elements.get(&key).cloned().unwrap_or_default();
-            #[cfg(test)]
-            if canonical(actual.clone()) != canonical(wanted.clone()) {
-                eprintln!("egress set {name} expected={wanted:?} actual={actual:?}");
-            }
-            if canonical(actual) != canonical(wanted) {
-                return Err(Error::Conflict);
-            }
+        if !self.elements_match(&observed, &gate) {
+            return Err(Error::Conflict);
         }
         Ok(())
     }
+    /// Every set holds exactly the gate's elements; the readback count is
+    /// part of the comparison.
     fn elements_match(&self, observed: &Receipt, gate: &Gate) -> bool {
         self.ledger
             .program
@@ -169,10 +191,29 @@ impl Backend {
             .into_iter()
             .all(|(name, expected)| {
                 let key = format!("inet/{}/set/{name}", self.ledger.program.table());
-                canonical(observed.elements.get(&key).cloned().unwrap_or_default())
-                    == canonical(expected)
+                let actual = observed.elements.get(&key).cloned().unwrap_or_default();
+                let same =
+                    actual.len() == expected.len() && canonical(actual) == canonical(expected);
+                #[cfg(test)]
+                if !same {
+                    eprintln!("egress set {name} differs");
+                }
+                same
             })
     }
+    /// Route bytes the capture table may hold now: the current and pending gates'.
+    fn owned_routes(&self) -> BTreeSet<Vec<u8>> {
+        std::iter::once(&self.ledger.gate)
+            .chain(self.ledger.pending_gate.iter())
+            .flat_map(|gate| routes(self.ledger.table, gate))
+            .map(encode_route)
+            .collect()
+    }
+    /// The one transition of the capture sets and the capture table: the new
+    /// gate is recorded first, then the sets are replaced in one batch and
+    /// read back, then the table is brought to exactly the gate's routes. A
+    /// managed destination not routed to the active device is rejected
+    /// throughout, so either order of the two steps is closed.
     async fn gate(&mut self, gate: Gate) -> Result<()> {
         let observed = self.dump().await?;
         let receipt = self.ledger.receipt.as_ref().ok_or(Error::Journal)?;
@@ -186,11 +227,101 @@ impl Backend {
             &gate.mesh,
             gate.device.as_ref().map(|device| device.name.as_str()),
         );
-        let _outcome = objects::mutate(&mut self.commands, &batch).await;
+        let _outcome = objects::apply(&mut self.commands, &batch).await;
         self.verify_gate(gate.clone()).await?;
+        self.reconcile_routes(&gate).await?;
         self.ledger.gate = gate;
         self.ledger.pending_gate = None;
         self.store.persist(&self.ledger).await
+    }
+    /// Delete every owned route `gate` lacks and add every one it needs, then
+    /// prove the table holds exactly its routes. Any other route in the table
+    /// is foreign.
+    async fn reconcile_routes(&mut self, gate: &Gate) -> Result<()> {
+        let owned = self.owned_routes();
+        let wanted = routes(self.ledger.table, gate);
+        let wanted_bytes: BTreeSet<_> = wanted.iter().cloned().map(encode_route).collect();
+        let actual: Vec<_> = self.table_routes().await?;
+        for route in &actual {
+            if !owned.contains(&encode_route(route.clone())) {
+                return Err(Error::Conflict);
+            }
+        }
+        let present: BTreeSet<_> = actual.iter().cloned().map(encode_route).collect();
+        let mut issued = 0;
+        for route in actual {
+            let bytes = encode_route(route.clone());
+            if !wanted_bytes.contains(&bytes) {
+                self.expect_route(true, bytes)?;
+                super::super::execute(self.handle.route().del(route).execute()).await?;
+                issued += 1;
+                if issued % ROUTE_BATCH == 0 {
+                    self.observed().await?;
+                }
+            }
+        }
+        for route in wanted {
+            let bytes = encode_route(route.clone());
+            if !present.contains(&bytes) {
+                self.expect_route(false, bytes)?;
+                super::super::execute(self.handle.route().add(route).execute()).await?;
+                issued += 1;
+                if issued % ROUTE_BATCH == 0 {
+                    self.observed().await?;
+                }
+            }
+        }
+        self.observed().await?;
+        let after: BTreeSet<_> = self
+            .table_routes()
+            .await?
+            .into_iter()
+            .map(encode_route)
+            .collect();
+        if after != wanted_bytes {
+            return Err(Error::Conflict);
+        }
+        Ok(())
+    }
+    /// Wait until the kernel monitor has seen every route event owed so far.
+    /// Pacing mutations this way keeps its notification socket from
+    /// overflowing, which would end the monitor.
+    async fn observed(&self) -> Result<()> {
+        if !self.monitored {
+            return Ok(());
+        }
+        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            loop {
+                if self
+                    .expected
+                    .lock()
+                    .map_err(|_| Error::Worker)?
+                    .egress_events
+                    .is_empty()
+                {
+                    return Ok(());
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .map_err(|_| Error::Conflict)?
+    }
+    fn expect_route(&self, deleted: bool, bytes: Vec<u8>) -> Result<()> {
+        if self.monitored {
+            self.expected
+                .lock()
+                .map_err(|_| Error::Worker)?
+                .expect_egress(deleted, bytes);
+        }
+        Ok(())
+    }
+    async fn table_routes(&self) -> Result<Vec<RouteMessage>> {
+        Ok(super::super::get_routes(&self.handle, self.limit)
+            .await?
+            .into_iter()
+            .filter(|route| route_table(route) == self.ledger.table)
+            .collect())
     }
     /// Commit after the caller staged the negative union and resolved authority.
     pub async fn commit_staged(
@@ -201,11 +332,6 @@ impl Backend {
         check: impl Fn() -> Result<()>,
     ) -> Result<()> {
         let next = plan::parse(&plan)?;
-        self.remove_rules().await?;
-        self.install_rules(&next).await?;
-        if let Some(device) = &device {
-            self.route(device).await?;
-        }
         check()?;
         if plan.unavailable.is_some() {
             return Err(Error::Target);
@@ -229,17 +355,15 @@ impl Backend {
         if let Some(pending) = &self.ledger.pending_gate {
             union = plan::union(&union, &pending.ranges);
         }
-        // First close old/new union atomically, including OUTPUT paths that
+        // Close the old/new union atomically, including OUTPUT paths that
         // would otherwise hit the host local/broadcast table before the RPDB.
         self.gate(Gate {
-            ranges: union.clone(),
+            ranges: union,
             mesh,
             device: None,
         })
         .await?;
-        self.remove_routes().await?;
-        self.remove_rules().await?;
-        self.install_rules(&union).await?;
+        self.install_selector().await?;
         self.ledger.plan = plan;
         self.store.persist(&self.ledger).await
     }
@@ -249,8 +373,7 @@ impl Backend {
             gate.ranges = plan::union(&gate.ranges, &pending.ranges);
         }
         gate.device = None;
-        self.gate(gate).await?;
-        self.remove_routes().await
+        self.gate(gate).await
     }
     pub async fn retire(&mut self) -> Result<()> {
         self.pause().await?;
@@ -263,77 +386,28 @@ impl Backend {
         self.ledger.removed = true;
         self.store.persist(&self.ledger).await
     }
-    async fn install_rules(&mut self, ranges: &Ranges) -> Result<()> {
-        let mut slot = 0;
-        if !ranges.v6.is_empty() {
-            let end = self.start
-                + u32::try_from((ranges.v4.len() + ranges.v6.len()) * 2)
-                    .map_err(|_| Error::Capacity)?
-                + 1;
-            let mut rule = RuleMessage::default();
-            rule.header.family = AddressFamily::Inet6;
-            rule.header.action = RuleAction::Nop;
-            rule.attributes = vec![
-                RuleAttribute::Priority(end),
-                RuleAttribute::Table(self.ledger.table),
-                RuleAttribute::Protocol(PROTOCOL.into()),
-            ];
-            self.add_rule(rule).await?;
-            let mut nd = RuleMessage::default();
-            nd.header.family = AddressFamily::Inet6;
-            nd.header.action = RuleAction::Goto;
-            nd.attributes = vec![
-                RuleAttribute::Priority(self.start),
-                RuleAttribute::Table(self.ledger.table),
-                RuleAttribute::Protocol(PROTOCOL.into()),
-                RuleAttribute::Iifname("lo".into()),
-                RuleAttribute::IpProtocol(58.into()),
-                RuleAttribute::FwMask(self.ledger.program.mark),
-                RuleAttribute::Goto(end),
-            ];
-            // NFT still sinks IPv6 business traffic. Its exact ND checks allow
-            // only on-link control packets through the original host RPDB.
-            self.add_rule(nd).await?;
-            slot = 1;
+    /// The single IPv4 selector: local-origin traffic without the protected
+    /// mark looks up the capture table; a miss continues in the host RPDB.
+    fn selector(&self) -> RuleMessage {
+        let mut rule = RuleMessage::default();
+        rule.header.family = AddressFamily::Inet;
+        rule.header.action = RuleAction::ToTable;
+        rule.attributes = vec![
+            RuleAttribute::Priority(self.start),
+            RuleAttribute::Table(self.ledger.table),
+            RuleAttribute::Protocol(PROTOCOL.into()),
+            RuleAttribute::Iifname("lo".into()),
+            RuleAttribute::FwMask(self.ledger.program.mark),
+        ];
+        rule
+    }
+    async fn install_selector(&mut self) -> Result<()> {
+        let selector = encode_rule(self.selector());
+        if self.ledger.rules == [selector.clone()] {
+            return Ok(());
         }
-        for net in ranges.v4.iter().chain(&ranges.v6) {
-            for action in [
-                Some(RuleAction::Unreachable),
-                net.addr().is_ipv4().then_some(RuleAction::ToTable),
-            ]
-            .into_iter()
-            .flatten()
-            {
-                // Lookup is immediately ahead of its permanent unreachable
-                // fallback. Both are local-origin and exclude protected marks.
-                let offset = if action == RuleAction::ToTable { 0 } else { 1 };
-                let mut rule = RuleMessage::default();
-                rule.header.family = if net.addr().is_ipv4() {
-                    AddressFamily::Inet
-                } else {
-                    AddressFamily::Inet6
-                };
-                rule.header.action = action;
-                rule.header.dst_len = net.prefix_len();
-                rule.attributes = vec![
-                    RuleAttribute::Priority(self.start + slot + offset),
-                    RuleAttribute::Table(self.ledger.table),
-                    RuleAttribute::Protocol(PROTOCOL.into()),
-                    RuleAttribute::Iifname("lo".into()),
-                    RuleAttribute::FwMask(self.ledger.program.mark),
-                ];
-                if net.prefix_len() != 0 {
-                    rule.attributes
-                        .push(RuleAttribute::Destination(net.network()));
-                }
-                self.add_rule(rule).await?;
-            }
-            slot += 2;
-            if slot >= plan::RESERVED {
-                return Err(Error::Capacity);
-            }
-        }
-        Ok(())
+        self.remove_rules().await?;
+        self.add_rule(self.selector()).await
     }
     async fn add_rule(&mut self, rule: RuleMessage) -> Result<()> {
         let bytes = encode_rule(rule.clone());
@@ -353,43 +427,6 @@ impl Backend {
                 .push(bytes);
         }
         self.objects().add_rule(rule).await
-    }
-    async fn route(&mut self, device: &Device) -> Result<()> {
-        let route = RouteMessageBuilder::<Ipv4Addr>::new()
-            .output_interface(device.index)
-            .pref_source(device.source)
-            .table_id(self.ledger.table)
-            .priority(100)
-            .protocol(PROTOCOL.into())
-            .scope(RouteScope::Link)
-            .kind(RouteType::Unicast)
-            .build();
-        let bytes = encode_route(route.clone());
-        if super::super::get_routes(&self.handle, self.limit)
-            .await?
-            .iter()
-            .any(|route| route_table(route) == self.ledger.table)
-        {
-            return Err(Error::Conflict);
-        }
-        self.ledger.routes.push(bytes);
-        self.store.persist(&self.ledger).await?;
-        self.objects().add_route(route).await
-    }
-    pub async fn remove_routes(&mut self) -> Result<()> {
-        let actual = super::super::get_routes(&self.handle, self.limit).await?;
-        if actual.iter().any(|route| {
-            route_table(route) == self.ledger.table
-                && !self.ledger.routes.contains(&encode_route(route.clone()))
-        }) {
-            return Err(Error::Conflict);
-        }
-        for bytes in self.ledger.routes.clone() {
-            self.objects().remove_route(&bytes, &actual).await?;
-            self.ledger.routes.retain(|route| *route != bytes);
-            self.store.persist(&self.ledger).await?;
-        }
-        Ok(())
     }
     pub async fn remove_rules(&mut self) -> Result<()> {
         for bytes in self.ledger.rules.clone().into_iter().rev() {
@@ -415,21 +452,30 @@ impl Backend {
         }
     }
 }
+
+/// nft lists an interval as a single address, a prefix or a range; compare
+/// the closed ranges they denote.
 fn canonical(values: Vec<serde_json::Value>) -> Vec<String> {
+    fn address(value: &serde_json::Value) -> Option<IpAddr> {
+        value.as_str()?.parse().ok()
+    }
     let mut values: Vec<_> = values
         .into_iter()
         .map(|value| {
-            if let Some(prefix) = value.get("prefix") {
-                return format!(
-                    "{}/{}",
-                    prefix["addr"].as_str().unwrap_or(""),
-                    prefix["len"]
-                );
-            }
-            if let Some(text) = value.as_str()
-                && let Ok(ip) = text.parse::<std::net::IpAddr>()
+            if let Some(prefix) = value.get("prefix")
+                && let (Some(start), Some(len)) = (address(&prefix["addr"]), prefix["len"].as_u64())
+                && let Ok(net) = ipnet::IpNet::new(start, len as u8)
             {
-                return format!("{ip}/{}", if ip.is_ipv4() { 32 } else { 128 });
+                return format!("{}-{}", net.network(), net.broadcast());
+            }
+            if let Some(range) = value.get("range").and_then(|r| r.as_array())
+                && let [start, end] = range.as_slice()
+                && let (Some(start), Some(end)) = (address(start), address(end))
+            {
+                return format!("{start}-{end}");
+            }
+            if let Some(ip) = address(&value) {
+                return format!("{ip}-{ip}");
             }
             value.to_string()
         })

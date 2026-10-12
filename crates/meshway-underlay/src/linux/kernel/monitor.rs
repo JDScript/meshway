@@ -11,7 +11,7 @@ use rtnetlink::{
     sys::{Socket, SocketAddr, protocols::NETLINK_ROUTE},
 };
 use std::{
-    collections::VecDeque,
+    collections::{BTreeMap, VecDeque},
     sync::{Arc, Mutex},
 };
 use tokio::io::unix::AsyncFd;
@@ -41,6 +41,9 @@ pub(super) struct Expected {
     pub probe_tun: Option<u32>,
     pub egress_rules: Vec<Vec<u8>>,
     pub egress_table: Option<u32>,
+    /// Route events the source-capture owner's own mutations of its table
+    /// still owe, by (deleted, route): one per add or delete it issued.
+    pub egress_events: BTreeMap<(bool, Vec<u8>), usize>,
     pub tun: Option<(u32, String, usize, Vec<std::net::IpAddr>)>,
     // Observation-only tombstone, kept until the synchronous TUN close's
     // notifications have drained. It grants no capture/ownership exception.
@@ -213,6 +216,23 @@ impl Expected {
         Ok(())
     }
 
+    /// Count one owed egress-table route event; nothing else is consumed.
+    pub fn expect_egress(&mut self, deleted: bool, route: Vec<u8>) {
+        *self.egress_events.entry((deleted, route)).or_default() += 1;
+    }
+
+    fn egress_event(&mut self, deleted: bool, route: Vec<u8>) -> bool {
+        let key = (deleted, route);
+        match self.egress_events.get_mut(&key) {
+            Some(count) if *count > 1 => *count -= 1,
+            Some(_) => {
+                self.egress_events.remove(&key);
+            }
+            None => return false,
+        }
+        true
+    }
+
     fn consume(&mut self, event: Event) -> Result<()> {
         let position = self
             .events
@@ -373,7 +393,7 @@ async fn monitor(
                         NetlinkPayload::InnerMessage(RouteNetlinkMessage::NewAddress(address))
                             if address.header.index != anchor.identity.index && address.attributes.iter().any(|a| matches!(a, AddressAttribute::Address(std::net::IpAddr::V4(ip)) | AddressAttribute::Local(std::net::IpAddr::V4(ip)) if *ip == anchor.identity.address)) => conflict!("anchor_address_collision"),
                         NetlinkPayload::InnerMessage(RouteNetlinkMessage::DelRoute(route))
-                            if !state.anchor_deleting && super::anchor::route_conflicts(anchor.identity.address, None, route) => conflict!("anchor_route_deleted"),
+                            if !state.anchor_deleting && state.egress_table != Some(route_table(route)) && super::anchor::route_conflicts(anchor.identity.address, None, route) => conflict!("anchor_route_deleted"),
                         NetlinkPayload::InnerMessage(RouteNetlinkMessage::NewLink(link))
                             if link.header.index == anchor.identity.index
                                 && !(super::anchor::link_matches(anchor, link)
@@ -428,6 +448,9 @@ async fn monitor(
                         }
                     }
                     NetlinkPayload::InnerMessage(RouteNetlinkMessage::NewRoute(route))
+                        if state.egress_table == Some(route_table(&route))
+                            && state.egress_event(false, encode_route(route.clone())) => {}
+                    NetlinkPayload::InnerMessage(RouteNetlinkMessage::NewRoute(route))
                         if route_table(&route) == table
                             || state.egress_table == Some(route_table(&route))
                             || state.exit_tables.contains(&route_table(&route)) =>
@@ -443,6 +466,9 @@ async fn monitor(
                             conflict!("unexpected_new_route");
                         }
                     }
+                    NetlinkPayload::InnerMessage(RouteNetlinkMessage::DelRoute(route))
+                        if state.egress_table == Some(route_table(&route))
+                            && state.egress_event(true, encode_route(route.clone())) => {}
                     NetlinkPayload::InnerMessage(RouteNetlinkMessage::DelRoute(route))
                         if route_table(&route) == table
                             || state.egress_table == Some(route_table(&route))
@@ -634,6 +660,20 @@ mod tests {
         assert!(!first.contains("unselected-"));
         facts.reject(&mut expected, "later_conflict");
         assert_eq!(expected.first_conflict.as_deref(), Some(first.as_str()));
+    }
+
+    #[test]
+    fn owed_capture_table_events_are_consumed_once_each() {
+        let mut expected = Expected::default();
+        expected.expect_egress(false, vec![1]);
+        expected.expect_egress(false, vec![1]);
+        expected.expect_egress(true, vec![1]);
+        assert!(!expected.egress_event(true, vec![2]));
+        assert!(expected.egress_event(false, vec![1]));
+        assert!(expected.egress_event(false, vec![1]));
+        assert!(!expected.egress_event(false, vec![1]));
+        assert!(expected.egress_event(true, vec![1]));
+        assert!(expected.egress_events.is_empty());
     }
 
     #[test]

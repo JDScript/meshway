@@ -70,6 +70,8 @@ pub(super) struct Report {
     pub content: Option<Arc<meshway_configuration::netmap::CompiledNetmap>>,
     /// Lease end of `content` as accepted by Engine; reporting only.
     pub expires_at: Option<DateTime<Utc>>,
+    /// Egress capture Engine computed for `content`; reporting only.
+    pub capture: Option<meshway_configuration::evaluation::CaptureSummary>,
     pub dns_guard: Option<watch::Receiver<Option<meshway_dns::SystemDnsError>>>,
     /// Netmap whose installation this report describes.
     pub netmap: Option<NetmapRef>,
@@ -101,6 +103,7 @@ impl Report {
             problem: None,
             content: None,
             expires_at: None,
+            capture: None,
             dns_guard: None,
             netmap: None,
             completion: None,

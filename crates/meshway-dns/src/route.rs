@@ -1,7 +1,7 @@
 use meshway_configuration::{
     DnsTransport,
     execution::LocalEgressAction,
-    netmap::{EgressAction, NodeNetmap, ResolverAction},
+    netmap::{EgressAction, ResolverAction},
 };
 use meshway_engine::Desired;
 use meshway_model::{NetmapRef, exit::ExitDnsUnavailableReason};
@@ -97,33 +97,32 @@ impl fmt::Debug for LocalResolverRoute {
 /// partition must leave it to a local socket. Exit-routed, Mesh and pool
 /// addresses never get one.
 fn netmap_local_action(
-    netmap: &NodeNetmap,
+    desired: &Desired,
     endpoint: SocketAddr,
 ) -> Result<LocalEgressAction, RouteError> {
-    local_decision(netmap, endpoint.ip()).map_err(|_| RouteError::Binding)
+    local_decision(desired, endpoint.ip()).map_err(|_| RouteError::Binding)
 }
 
 /// The one classification behind every local resolver decision, with the
 /// reason an address cannot be one.
 pub(crate) fn local_decision(
-    netmap: &NodeNetmap,
+    desired: &Desired,
     address: std::net::IpAddr,
 ) -> Result<LocalEgressAction, ExitDnsUnavailableReason> {
-    let pools = &netmap.self_.mesh_address_pools;
+    let pools = &desired.netmap().self_.mesh_address_pools;
     if pools.ipv4.iter().chain(&pools.ipv6).any(|pool| {
         pool.parse::<ipnet::IpNet>()
             .is_ok_and(|net| net.contains(&address))
     }) {
         return Err(ExitDnsUnavailableReason::MeshServer);
     }
-    let plan = netmap
-        .egress
-        .as_ref()
+    let partition = desired
+        .partition()
         .ok_or(ExitDnsUnavailableReason::ExitRoutedServer)?;
-    match plan.route(address).map(|route| &route.action) {
-        Some(EgressAction::Direct) => Ok(LocalEgressAction::Direct),
-        Some(EgressAction::Unmanaged) => Ok(LocalEgressAction::Unmanaged),
-        _ => Err(ExitDnsUnavailableReason::ExitRoutedServer),
+    match partition.action(address) {
+        EgressAction::Direct => Ok(LocalEgressAction::Direct),
+        EgressAction::Unmanaged => Ok(LocalEgressAction::Unmanaged),
+        EgressAction::Exit { .. } => Err(ExitDnsUnavailableReason::ExitRoutedServer),
     }
 }
 
@@ -131,7 +130,7 @@ pub(crate) fn local_decision(
 /// resolved's proxy stub, every OS server resolved may pick) needs a local
 /// decision of this netmap.
 pub(crate) fn served_decisions(
-    netmap: &NodeNetmap,
+    desired: &Desired,
     system: &crate::SystemResolverSnapshot,
 ) -> Result<(), ExitDnsUnavailableReason> {
     if system.upstreams.is_empty() {
@@ -147,7 +146,7 @@ pub(crate) fn served_decisions(
         .map(SocketAddr::ip)
         .chain(servers.iter().copied())
     {
-        local_decision(netmap, address)?;
+        local_decision(desired, address)?;
     }
     Ok(())
 }
@@ -174,7 +173,7 @@ impl LocalResolverRoute {
         let endpoint = SocketAddr::new(server.server, server.server_port.get());
         let transport = server.transport;
         // The resolver decision and the source partition must agree.
-        if netmap_local_action(netmap, endpoint)? != action {
+        if netmap_local_action(desired, endpoint)? != action {
             return Err(RouteError::Binding);
         }
         let route = Self {
@@ -212,7 +211,7 @@ impl LocalResolverRoute {
         {
             return Err(RouteError::Binding);
         }
-        let action = netmap_local_action(netmap, endpoint)?;
+        let action = netmap_local_action(desired, endpoint)?;
         if matches!(
             system.provenance,
             crate::system::Provenance::ResolvedProxy { .. }
@@ -220,7 +219,7 @@ impl LocalResolverRoute {
             // resolved forwards for this Node: only an exit resolver uses
             // it, and every OS server it may pick needs a local decision.
             if !matches!(netmap.dns.egress, DnsPlan::ServeExitResolver { .. })
-                || served_decisions(netmap, &system).is_err()
+                || served_decisions(desired, &system).is_err()
             {
                 return Err(RouteError::Binding);
             }

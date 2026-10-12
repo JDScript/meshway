@@ -7,8 +7,8 @@
 use crate::{
     AddressPools, DnsTransport, NodeAddresses, NodeIdentity, SerializationError,
     execution::{
-        DialCandidate, DnsEgressUnavailable, EgressCapturePlan, ExecutionAddress, ExitNat,
-        LogicalPath, TrustedNode,
+        DialCandidate, DnsEgressUnavailable, ExecutionAddress, ExitNat, LogicalPath, TrustedNode,
+        UnavailableReason,
     },
     object::{object, tagged, unique_map},
 };
@@ -42,21 +42,31 @@ pub enum EgressAction {
 } }
 
 object! {
-/// One prefix of the source's first-match egress partition.
-pub struct EgressRoute {
-    /// IPv4 or IPv6 prefix, disjoint from every other route.
-    pub prefix: String,
-    /// Action selected by the first matching rule or the profile fallback.
+/// One egress rule in effect for the source, in first-match order. Its
+/// match lists and rule-set references are the projection's rule at `rule`.
+pub struct EgressRuleRef {
+    /// JSON Pointer of the rule in the configuration.
+    pub rule: String,
+    /// Action the rule selects.
     pub action: EgressAction,
 } }
 
 object! {
-/// Source egress ownership with the action of every partition prefix.
+/// Source egress selection: the rules in effect and the fallback. The Node
+/// computes the address partition from these rules and the rule-set artifacts
+/// it holds; no prefix list is distributed.
 pub struct EgressPlan {
-    /// Capture boundary handed to the packet owner; `generation` is the selection identity.
-    pub capture: EgressCapturePlan,
-    /// Complete disjoint partition of IPv4 and IPv6; empty when capture is unavailable.
-    pub routes: Vec<EgressRoute>,
+    /// Selection identity: network, Node, effective profile, selection
+    /// version, `routing.egress` and the digests of the sets those rules use.
+    pub generation: Digest,
+    /// Public rules, then the effective profile's rules.
+    pub rules: Vec<EgressRuleRef>,
+    /// Action for destinations no rule matches.
+    pub fallback: EgressAction,
+    /// Why the partition is unavailable with every referenced artifact
+    /// loaded; null when it is computable. Capture is then the full range.
+    #[serde(deserialize_with = "meshway_model::wire::required_nullable")]
+    pub unavailable: Option<UnavailableReason> [required = true],
 } }
 
 object! {
@@ -258,18 +268,6 @@ impl NodeNetmap {
         let mut counter = Counter(0);
         serde_json::to_writer(&mut counter, self).map_err(|_| SerializationError)?;
         Ok(counter.0)
-    }
-}
-
-impl EgressPlan {
-    /// The unique partition prefix containing `address`.
-    pub fn route(&self, address: std::net::IpAddr) -> Option<&EgressRoute> {
-        self.routes.iter().find(|route| {
-            route
-                .prefix
-                .parse::<ipnet::IpNet>()
-                .is_ok_and(|net| net.contains(&address))
-        })
     }
 }
 
