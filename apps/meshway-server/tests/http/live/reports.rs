@@ -233,6 +233,9 @@ async fn production_reports_snapshots_delta_replay_permissions_and_shutdown() {
         as_of,
         sequence,
         configuration_revision,
+        links,
+        adjacencies,
+        paths,
         ..
     } = delta.0
     else {
@@ -246,6 +249,19 @@ async fn production_reports_snapshots_delta_replay_permissions_and_shutdown() {
     )
     .await;
     assert_eq!(view.nodes[&node.node_id].report_sequence.unwrap().get(), 1);
+    let network_view: StateView = json(
+        c.get(net(&s, network, "state"))
+            .bearer_auth(member.token.expose()),
+    )
+    .await;
+    assert_eq!(
+        (links, adjacencies, paths),
+        (
+            network_view.links,
+            network_view.adjacencies,
+            network_view.paths
+        )
+    );
     assert_eq!(sequence, Some(view.sequence));
     assert_eq!(configuration_revision, Some(view.configuration_revision));
     assert!(as_of.unwrap() <= view.as_of);

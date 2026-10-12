@@ -37,6 +37,8 @@ const listed = (
     networkId: "eeeeeeee-0000-4000-8000-000000000005",
     registeredAt: T,
     hostname,
+    dnsName: `${hostname}.mesh.example`,
+    magicDNS: true,
     enabled,
     identity: { type: "user", user: "owner@example.com" },
     addresses: { ipv4: null, ipv6: null },
@@ -72,11 +74,9 @@ const located = (address: string): NodeStateView => ({
   hostname: "located",
   freshness: "current",
   derived: {
-    ipInfo: {},
+    addressScope: {},
     location: {
       address,
-      data: { country: "US", position: { latitude: 1, longitude: 2 } },
-      datasetId: "dddddddd-0000-4000-8000-000000000004",
       endpointSource: "stun",
       observedAt: "2026-10-03T00:00:00Z",
       expiresAt: "2026-10-03T00:05:00Z",
@@ -117,6 +117,7 @@ const state = (
   asOf: "2026-10-03T00:01:00Z",
   configurationRevision: 3,
   links,
+  adjacencies: [],
   networkId: "eeeeeeee-0000-4000-8000-000000000005",
   nodes,
   paths: [],
@@ -160,7 +161,7 @@ test("a node is located where geojs places the server's address; the others say 
     [B]: {
       hostname: "b",
       freshness: "awaiting_report",
-      derived: { ipInfo: {}, locationAbsent: "noObservation" },
+      derived: { addressScope: {}, locationAbsent: "noObservation" },
     },
     [C]: located("203.0.113.9"),
     "dddddddd-0000-4000-8000-000000000004": located("203.0.113.10"),
@@ -212,7 +213,7 @@ test("a node is named by the inventory and takes its status from it", () => {
       [B]: {
         hostname: "b",
         freshness: "awaiting_report",
-        derived: { ipInfo: {}, locationAbsent: "noObservation" },
+        derived: { addressScope: {}, locationAbsent: "noObservation" },
       },
       [C]: located(SEOUL),
     }),
@@ -235,7 +236,11 @@ test("a link is drawn only between two located nodes", () => {
     state({
       [A]: located(TOKYO),
       [B]: located(SEOUL),
-      [C]: { hostname: "c", freshness: "current", derived: { ipInfo: {} } },
+      [C]: {
+        hostname: "c",
+        freshness: "current",
+        derived: { addressScope: {} },
+      },
     }),
     new Map(),
     PLACES
@@ -326,7 +331,11 @@ test("the scene draws at most one edge per pair, with history only for pairs abs
     state({
       [A]: located(TOKYO),
       [B]: located(SEOUL),
-      [C]: { hostname: "c", freshness: "current", derived: { ipInfo: {} } },
+      [C]: {
+        hostname: "c",
+        freshness: "current",
+        derived: { addressScope: {} },
+      },
     }),
     new Map(),
     PLACES

@@ -49,7 +49,7 @@
 | `sockets` | `Record<SocketId, SocketState>` | 实际外层 socket、所属资源及 endpoint 观测 |
 | `links` | `Record<PeerNodeId, LinkState[]>` | 对各 peer 的认证通道；可有主备／更替期记录 |
 | `adjacencies` | `Record<PeerNodeId, "idle" \| "unreachable">` | 已获准但当前无通道的邻接：`idle` 为按需边因空闲关闭或尚无需求，`unreachable` 为有需求（业务、中继或常驻边）但未建立通道；有通道的 peer 只出现在 `links`；状态变化不单独触发上报，随常规上报（20 秒）更新 |
-| `paths` | 按运行路径标识索引 | 本节点观察到的选路／使用结果，非全网权威路径表 |
+| `paths` | 按运行路径标识索引，最多 64 条 | 本节点参与的已建立业务 circuit 的完整路径与本节点角色，非全网权威路径表，见 [PathState](/v2/state-reference/resources#paths) |
 | `selection.appliedProfile` | ProfileKey 或 null | 当前实际方案，必须处于 Config 允许范围 |
 | `probes` | `ProbeObservation[]` | 少量最新真实测量；重复快照引用相同事件，不制造新历史点 |
 | `problems` | 类型化问题列表 | 当前有来源的失败原因，不使用任意服务端异常文本 |
@@ -64,9 +64,9 @@ Node 须校验并保存后按有效许可安装，不等待其他节点完成。
 
 节点能报告实际 capability 和资源状态。User／Tag 身份、enabled、access 和出口资格由 Config 决定，公钥绑定与永久吊销由认证存储决定；Node State 不能自行改变它们。
 
-GeoIP 位置由 Server 根据合格的底层公网 IP 观测计算，放在 [StateView 的派生部分](/v2/state-reference/network#derived)，不直接采用节点自报 country。用户方案选择是受配置约束的使用状态，不等于修改管理员方案。
+位置依据由 Server 从合格的底层公网 IP 观测中选择，放在 [StateView 的派生部分](/v2/state-reference/network#derived)，不直接采用节点自报 country。用户方案选择是受配置约束的使用状态，不等于修改管理员方案。
 
-GeoIP／ASN 作为 Server 的 ipInfo 派生信息返回；节点位置的近似坐标、精度、来源及缺失原因见[IP 信息](/v2/state-reference/ip-info)。Node 的 State 上报不会自行成为可信地理或 ASN 数据源。
+地址类别（addressScope）与位置依据（location／locationAbsent）见[地址类别与位置依据](/v2/state-reference/ip-info)；State 不含 GeoIP／ASN 查询结果。Node 的 State 上报不会自行成为可信地理或 ASN 数据源。
 
 用户方案选择跨重启保存；恢复时仍在 allowed 且未被锁定才继续使用，否则采用当前管理员默认。它不进入管理员配置回滚历史，切换不能带走旧出口流／NAT 资格。
 

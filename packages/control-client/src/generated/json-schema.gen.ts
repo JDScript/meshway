@@ -705,6 +705,25 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "AddressScope": {
+        "type": "string",
+        "description": "Address class of a visible endpoint IP.",
+        "enum": [
+          "public",
+          "nonPublic",
+          "mesh"
+        ]
+      },
+      "AdjacencyConnection": {
+        "type": "string",
+        "description": "Server conclusion about the adjacency of one Node pair from both endpoints' current reports.",
+        "enum": [
+          "connected",
+          "idle",
+          "unreachable",
+          "unknown"
+        ]
+      },
       "AdjacencyStatus": {
         "type": "string",
         "description": "An admitted adjacency of this Node that has no current channel.",
@@ -712,6 +731,30 @@ export const schemaDocument = {
           "idle",
           "unreachable"
         ]
+      },
+      "AggregatedAdjacency": {
+        "type": "object",
+        "description": "Connection conclusion for one Node pair, the same for every caller who sees the pair.",
+        "required": [
+          "a",
+          "b",
+          "status"
+        ],
+        "properties": {
+          "a": {
+            "$ref": "#/components/schemas/NodeId",
+            "description": "Lower Node ID of the pair."
+          },
+          "b": {
+            "$ref": "#/components/schemas/NodeId",
+            "description": "Higher Node ID of the pair."
+          },
+          "status": {
+            "$ref": "#/components/schemas/AdjacencyConnection",
+            "description": "Conclusion derived from both endpoints' current reports, including reports the caller cannot read."
+          }
+        },
+        "additionalProperties": false
       },
       "AggregatedLink": {
         "type": "object",
@@ -852,14 +895,6 @@ export const schemaDocument = {
           }
         },
         "additionalProperties": false
-      },
-      "ArtifactId": {
-        "type": "string",
-        "format": "uuid",
-        "description": "Immutable dataset artifact identifier.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
-        "maxLength": 36,
-        "minLength": 36,
-        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
       },
       "ArtifactSummary": {
         "type": "object",
@@ -3076,16 +3111,16 @@ export const schemaDocument = {
       },
       "DerivedNodeState": {
         "type": "object",
-        "description": "Server-derived IP metadata restricted to endpoint observations visible to the caller.",
+        "description": "Server-derived address facts restricted to endpoint observations visible to the caller.",
         "required": [
-          "ipInfo"
+          "addressScope"
         ],
         "properties": {
-          "ipInfo": {
+          "addressScope": {
             "type": "object",
-            "description": "Independent GeoIP and ASN lookups indexed by canonical visible endpoint IP.",
+            "description": "Address class of every canonical visible endpoint IP.",
             "additionalProperties": {
-              "$ref": "#/components/schemas/IpInfo"
+              "$ref": "#/components/schemas/AddressScope"
             },
             "propertyNames": {
               "type": "string"
@@ -3094,8 +3129,8 @@ export const schemaDocument = {
           "location": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/GeoObservation",
-                "description": "Approximate location from valid eligible local underlay observations, or null when unavailable."
+                "$ref": "#/components/schemas/LocationObservation",
+                "description": "The current local public observation a location can be derived from, or null when none is selected."
               },
               {
                 "type": "null"
@@ -3106,7 +3141,7 @@ export const schemaDocument = {
             "oneOf": [
               {
                 "$ref": "#/components/schemas/LocationAbsentReason",
-                "description": "Reason no location can be derived, or null when location is available."
+                "description": "Reason no location address is selected, or null when location is present."
               },
               {
                 "type": "null"
@@ -5613,130 +5648,6 @@ export const schemaDocument = {
           "revoked"
         ]
       },
-      "GeoIpData": {
-        "type": "object",
-        "description": "Approximate geographic metadata returned by the Server's IP dataset.",
-        "properties": {
-          "city": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Dataset-provided city name, or null if absent."
-          },
-          "country": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Dataset-provided ISO 3166-1 alpha-2 country or territory code, or null if absent."
-          },
-          "position": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/GeoPosition",
-                "description": "Approximate coordinates supplied by the dataset, or null when none are available."
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "region": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Dataset-provided first-level region name or identifier, or null if absent."
-          }
-        },
-        "additionalProperties": false
-      },
-      "GeoObservation": {
-        "type": "object",
-        "description": "Server-derived approximate location retaining the selected local observation's source and deadline.",
-        "required": [
-          "address",
-          "sourceSocketId",
-          "sourceGeneration",
-          "datasetId",
-          "data",
-          "endpointSource",
-          "observedAt",
-          "expiresAt"
-        ],
-        "properties": {
-          "address": {
-            "type": "string",
-            "description": "Eligible observed public underlay IP used for the geographic lookup."
-          },
-          "data": {
-            "$ref": "#/components/schemas/GeoIpData",
-            "description": "Geographic metadata returned for the selected observed address."
-          },
-          "datasetId": {
-            "$ref": "#/components/schemas/ArtifactId",
-            "description": "Immutable geographic dataset artifact used to derive the location."
-          },
-          "endpointSource": {
-            "$ref": "#/components/schemas/LocationSource",
-            "description": "Local observation source; configured declarations alone cannot establish a Node location."
-          },
-          "expiresAt": {
-            "type": "string",
-            "format": "date-time",
-            "description": "Original UTC endpoint deadline limiting this location's current validity."
-          },
-          "observedAt": {
-            "type": "string",
-            "format": "date-time",
-            "description": "Original UTC time of the endpoint observation, not the lookup time."
-          },
-          "sourceGeneration": {
-            "$ref": "#/components/schemas/Sequence",
-            "description": "Source socket resource generation associated with the observation."
-          },
-          "sourceSocketId": {
-            "type": "string",
-            "description": "Actual socket whose endpoint observation supplies the address."
-          }
-        },
-        "additionalProperties": false
-      },
-      "GeoPosition": {
-        "type": "object",
-        "description": "Dataset-provided approximate coordinates and optional accuracy radius.",
-        "required": [
-          "latitude",
-          "longitude"
-        ],
-        "properties": {
-          "accuracyRadiusKm": {
-            "type": [
-              "number",
-              "null"
-            ],
-            "format": "double",
-            "description": "Dataset provider's nonnegative estimated accuracy radius in kilometers, or null if absent.",
-            "minimum": 0
-          },
-          "latitude": {
-            "type": "number",
-            "format": "double",
-            "description": "Finite latitude in degrees, from -90 through 90.",
-            "maximum": 90,
-            "minimum": -90
-          },
-          "longitude": {
-            "type": "number",
-            "format": "double",
-            "description": "Finite longitude in degrees, from -180 through 180.",
-            "maximum": 180,
-            "minimum": -180
-          }
-        },
-        "additionalProperties": false
-      },
       "HistoricalEvent": {
         "type": "object",
         "description": "Stored event with authenticated source identity and original Server reception time.",
@@ -6332,25 +6243,6 @@ export const schemaDocument = {
           "instanceId": {
             "$ref": "#/components/schemas/InstanceId",
             "description": "Instance identifier acquired for the current Node runtime."
-          }
-        },
-        "additionalProperties": false
-      },
-      "IpInfo": {
-        "type": "object",
-        "description": "Independent Server-derived geographic and autonomous-system lookups for one visible IP.",
-        "required": [
-          "geoip",
-          "asn"
-        ],
-        "properties": {
-          "asn": {
-            "$ref": "#/components/schemas/LookupResult_AsnData",
-            "description": "Autonomous-system dataset result, independent of geographic lookup success."
-          },
-          "geoip": {
-            "$ref": "#/components/schemas/LookupResult_GeoIpData",
-            "description": "Geographic dataset result, including explicit absence or lookup failure."
           }
         },
         "additionalProperties": false
@@ -7859,15 +7751,53 @@ export const schemaDocument = {
       },
       "LocationAbsentReason": {
         "type": "string",
-        "description": "Reason the Server cannot derive a current approximate Node location.",
+        "description": "Reason the Server names no current location address for a Node.",
         "enum": [
           "noObservation",
           "observationExpired",
-          "datasetUnavailable",
-          "notInDataset",
-          "lookupFailed",
           "ambiguousObservation"
         ]
+      },
+      "LocationObservation": {
+        "type": "object",
+        "description": "The local public underlay observation the Node's location is derived from;\nthe Server performs no geographic lookup for State.",
+        "required": [
+          "address",
+          "sourceSocketId",
+          "sourceGeneration",
+          "endpointSource",
+          "observedAt",
+          "expiresAt"
+        ],
+        "properties": {
+          "address": {
+            "type": "string",
+            "description": "Eligible observed public underlay IP."
+          },
+          "endpointSource": {
+            "$ref": "#/components/schemas/LocationSource",
+            "description": "Local observation source; configured declarations alone cannot establish a Node location."
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Original UTC endpoint deadline limiting this location's current validity."
+          },
+          "observedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Original UTC time of the endpoint observation."
+          },
+          "sourceGeneration": {
+            "$ref": "#/components/schemas/Sequence",
+            "description": "Source socket resource generation associated with the observation."
+          },
+          "sourceSocketId": {
+            "type": "string",
+            "description": "Actual socket whose endpoint observation supplies the address."
+          }
+        },
+        "additionalProperties": false
       },
       "LocationSource": {
         "type": "string",
@@ -7931,287 +7861,6 @@ export const schemaDocument = {
           }
         },
         "additionalProperties": false
-      },
-      "LookupResult_AsnData": {
-        "oneOf": [
-          {
-            "type": "object",
-            "description": "The selected dataset contains a valid result for the address.",
-            "required": [
-              "datasetId",
-              "lookedUpAt",
-              "data",
-              "status"
-            ],
-            "properties": {
-              "data": {
-                "type": "object",
-                "description": "Dataset mapping from an IP address to its autonomous system, not a live routing measurement.",
-                "required": [
-                  "number"
-                ],
-                "properties": {
-                  "number": {
-                    "type": "integer",
-                    "format": "int32",
-                    "description": "Actual autonomous system number; zero is not an unknown-value placeholder.",
-                    "minimum": 0
-                  },
-                  "organization": {
-                    "type": [
-                      "string",
-                      "null"
-                    ],
-                    "description": "Dataset-recorded network organization, or null if absent; this does not identify the Node owner."
-                  },
-                  "prefix": {
-                    "type": [
-                      "string",
-                      "null"
-                    ],
-                    "description": "Matching IP prefix returned by the dataset, or null if absent."
-                  }
-                },
-                "additionalProperties": false
-              },
-              "datasetId": {
-                "$ref": "#/components/schemas/ArtifactId",
-                "description": "Immutable dataset artifact used for the lookup."
-              },
-              "lookedUpAt": {
-                "type": "string",
-                "format": "date-time",
-                "description": "UTC time of the actual lookup, retained when its result is cached."
-              },
-              "status": {
-                "type": "string",
-                "enum": [
-                  "available"
-                ]
-              }
-            },
-            "additionalProperties": false
-          },
-          {
-            "type": "object",
-            "description": "The lookup succeeded but the selected dataset has no entry for the address.",
-            "required": [
-              "datasetId",
-              "lookedUpAt",
-              "status"
-            ],
-            "properties": {
-              "datasetId": {
-                "$ref": "#/components/schemas/ArtifactId",
-                "description": "Immutable dataset artifact searched for the address."
-              },
-              "lookedUpAt": {
-                "type": "string",
-                "format": "date-time",
-                "description": "UTC time of the actual lookup, retained when its result is cached."
-              },
-              "status": {
-                "type": "string",
-                "enum": [
-                  "notFound"
-                ]
-              }
-            },
-            "additionalProperties": false
-          },
-          {
-            "type": "object",
-            "description": "No valid lookup result could be obtained.",
-            "required": [
-              "reason",
-              "status"
-            ],
-            "properties": {
-              "reason": {
-                "$ref": "#/components/schemas/LookupUnavailableReason",
-                "description": "Dataset availability or lookup failure preventing a result."
-              },
-              "status": {
-                "type": "string",
-                "enum": [
-                  "unavailable"
-                ]
-              }
-            },
-            "additionalProperties": false
-          },
-          {
-            "type": "object",
-            "description": "The address is ineligible for public IP metadata lookup.",
-            "required": [
-              "reason",
-              "status"
-            ],
-            "properties": {
-              "reason": {
-                "$ref": "#/components/schemas/NotApplicableReason",
-                "description": "Address classification that excludes the lookup."
-              },
-              "status": {
-                "type": "string",
-                "enum": [
-                  "notApplicable"
-                ]
-              }
-            },
-            "additionalProperties": false
-          }
-        ],
-        "description": "Server IP metadata lookup result retaining dataset identity and original query time."
-      },
-      "LookupResult_GeoIpData": {
-        "oneOf": [
-          {
-            "type": "object",
-            "description": "The selected dataset contains a valid result for the address.",
-            "required": [
-              "datasetId",
-              "lookedUpAt",
-              "data",
-              "status"
-            ],
-            "properties": {
-              "data": {
-                "type": "object",
-                "description": "Approximate geographic metadata returned by the Server's IP dataset.",
-                "properties": {
-                  "city": {
-                    "type": [
-                      "string",
-                      "null"
-                    ],
-                    "description": "Dataset-provided city name, or null if absent."
-                  },
-                  "country": {
-                    "type": [
-                      "string",
-                      "null"
-                    ],
-                    "description": "Dataset-provided ISO 3166-1 alpha-2 country or territory code, or null if absent."
-                  },
-                  "position": {
-                    "oneOf": [
-                      {
-                        "$ref": "#/components/schemas/GeoPosition",
-                        "description": "Approximate coordinates supplied by the dataset, or null when none are available."
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
-                  "region": {
-                    "type": [
-                      "string",
-                      "null"
-                    ],
-                    "description": "Dataset-provided first-level region name or identifier, or null if absent."
-                  }
-                },
-                "additionalProperties": false
-              },
-              "datasetId": {
-                "$ref": "#/components/schemas/ArtifactId",
-                "description": "Immutable dataset artifact used for the lookup."
-              },
-              "lookedUpAt": {
-                "type": "string",
-                "format": "date-time",
-                "description": "UTC time of the actual lookup, retained when its result is cached."
-              },
-              "status": {
-                "type": "string",
-                "enum": [
-                  "available"
-                ]
-              }
-            },
-            "additionalProperties": false
-          },
-          {
-            "type": "object",
-            "description": "The lookup succeeded but the selected dataset has no entry for the address.",
-            "required": [
-              "datasetId",
-              "lookedUpAt",
-              "status"
-            ],
-            "properties": {
-              "datasetId": {
-                "$ref": "#/components/schemas/ArtifactId",
-                "description": "Immutable dataset artifact searched for the address."
-              },
-              "lookedUpAt": {
-                "type": "string",
-                "format": "date-time",
-                "description": "UTC time of the actual lookup, retained when its result is cached."
-              },
-              "status": {
-                "type": "string",
-                "enum": [
-                  "notFound"
-                ]
-              }
-            },
-            "additionalProperties": false
-          },
-          {
-            "type": "object",
-            "description": "No valid lookup result could be obtained.",
-            "required": [
-              "reason",
-              "status"
-            ],
-            "properties": {
-              "reason": {
-                "$ref": "#/components/schemas/LookupUnavailableReason",
-                "description": "Dataset availability or lookup failure preventing a result."
-              },
-              "status": {
-                "type": "string",
-                "enum": [
-                  "unavailable"
-                ]
-              }
-            },
-            "additionalProperties": false
-          },
-          {
-            "type": "object",
-            "description": "The address is ineligible for public IP metadata lookup.",
-            "required": [
-              "reason",
-              "status"
-            ],
-            "properties": {
-              "reason": {
-                "$ref": "#/components/schemas/NotApplicableReason",
-                "description": "Address classification that excludes the lookup."
-              },
-              "status": {
-                "type": "string",
-                "enum": [
-                  "notApplicable"
-                ]
-              }
-            },
-            "additionalProperties": false
-          }
-        ],
-        "description": "Server IP metadata lookup result retaining dataset identity and original query time."
-      },
-      "LookupUnavailableReason": {
-        "type": "string",
-        "description": "Reason the Server could not perform an IP metadata lookup.",
-        "enum": [
-          "datasetUnavailable",
-          "lookupFailed"
-        ]
       },
       "MaterialRequirement": {
         "type": "string",
@@ -9637,6 +9286,8 @@ export const schemaDocument = {
           "networkId",
           "registeredAt",
           "hostname",
+          "dnsName",
+          "magicDNS",
           "enabled",
           "identity",
           "addresses",
@@ -9701,6 +9352,10 @@ export const schemaDocument = {
               }
             ]
           },
+          "dnsName": {
+            "type": "string",
+            "description": "Canonical Mesh DNS name, the hostname under the network `dns.domain`, from the same configuration; a configured name, not proof that any resolver serves it."
+          },
           "enabled": {
             "type": "boolean",
             "description": "Whether configuration enables business execution; disabled Nodes may still synchronize control state."
@@ -9742,6 +9397,10 @@ export const schemaDocument = {
                 "type": "null"
               }
             ]
+          },
+          "magicDNS": {
+            "type": "boolean",
+            "description": "Whether the same configuration enables MagicDNS, under which Nodes resolve `dnsName`."
           },
           "netmap": {
             "oneOf": [
@@ -10546,7 +10205,7 @@ export const schemaDocument = {
         "properties": {
           "derived": {
             "$ref": "#/components/schemas/DerivedNodeState",
-            "description": "IP metadata and approximate location derived by the Server from visible observations."
+            "description": "Address classes and the location address derived by the Server from visible observations."
           },
           "freshness": {
             "$ref": "#/components/schemas/Freshness",
@@ -10623,14 +10282,6 @@ export const schemaDocument = {
           }
         },
         "additionalProperties": false
-      },
-      "NotApplicableReason": {
-        "type": "string",
-        "description": "Reason public IP metadata lookup does not apply to an address.",
-        "enum": [
-          "nonPublicAddress",
-          "meshAddress"
-        ]
       },
       "NullableRuleSetProvider": {
         "oneOf": [
@@ -16249,9 +15900,17 @@ export const schemaDocument = {
           "asOf",
           "nodes",
           "links",
+          "adjacencies",
           "paths"
         ],
         "properties": {
+          "adjacencies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AggregatedAdjacency"
+            },
+            "description": "One connection conclusion per visible Node pair, independent of report trimming."
+          },
           "asOf": {
             "type": "string",
             "format": "date-time",
@@ -17548,10 +17207,18 @@ export const schemaDocument = {
               "updated",
               "removed",
               "links",
+              "adjacencies",
               "paths",
               "type"
             ],
             "properties": {
+              "adjacencies": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/AggregatedAdjacency"
+                },
+                "description": "Replacement collection of current pair connection conclusions."
+              },
               "asOf": {
                 "type": [
                   "string",

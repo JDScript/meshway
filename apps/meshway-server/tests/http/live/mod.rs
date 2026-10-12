@@ -238,3 +238,5 @@ fn report(lease: &InstanceLease, sequence: u64) -> StateReport {
 mod reports;
 
 mod visibility;
+
+mod dns_names;

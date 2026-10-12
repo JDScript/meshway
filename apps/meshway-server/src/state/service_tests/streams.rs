@@ -28,10 +28,6 @@ fn sse_export_declares_bytes_and_a_separate_json_event_schema() {
         .unwrap();
     assert_eq!(header["required"], false);
     assert_eq!(header["schema"]["type"], "string");
-    assert_eq!(
-        json["components"]["schemas"]["GeoPosition"]["properties"]["latitude"]["minimum"],
-        -90
-    );
 }
 
 #[tokio::test]

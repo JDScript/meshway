@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { randomUUID } from "node:crypto";
 import { controller } from "./support/controller.ts";
-import { zUnavailableReason, zLookupResult_AsnData } from "../src/generated/zod.gen.ts";
+import { zUnavailableReason, zAddressScope, zLocationAbsentReason } from "../src/generated/zod.gen.ts";
 import {
   register, createNetwork, getConfiguration, applyConfiguration,
   createJoinLink, inspectJoinLink, listJoinLinks, redeemJoinLink,
@@ -10,15 +10,16 @@ import {
   type ConfigurationRequest,
 } from "../src/index.ts";
 
-test("generated execution and IP lookup failure schemas have independent vocabularies", () => {
-  for (const reason of ["unauthorized", "noPath", "routingCycle", "routingLimit", "missingCapability", "missingDependency", "missingDns", "invalidProfile", "inactiveNode"]) {
-    assert.ok(zUnavailableReason.safeParse(reason).success);
-    assert.equal(zLookupResult_AsnData.safeParse({ status: "unavailable", reason }).success, false);
+test("generated State address facts carry no IP dataset vocabulary", () => {
+  for (const reason of ["noObservation", "observationExpired", "ambiguousObservation"]) {
+    assert.ok(zLocationAbsentReason.safeParse(reason).success);
   }
-  for (const reason of ["datasetUnavailable", "lookupFailed"]) {
-    assert.ok(zLookupResult_AsnData.safeParse({ status: "unavailable", reason }).success);
+  for (const reason of ["datasetUnavailable", "notInDataset", "lookupFailed"]) {
+    assert.equal(zLocationAbsentReason.safeParse(reason).success, false);
     assert.equal(zUnavailableReason.safeParse(reason).success, false);
   }
+  for (const scope of ["public", "nonPublic", "mesh"]) assert.ok(zAddressScope.safeParse(scope).success);
+  assert.ok(zUnavailableReason.safeParse("noPath").success);
 });
 
 test("generated defaults patches preserve concurrent dialer edits and classify both conflict kinds", async t => {

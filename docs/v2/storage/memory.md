@@ -49,7 +49,7 @@ freshness 结合当前时间、实例、配置和撤销计算。单份报告最�
 
 | 内容 | 输入与约束 |
 | --- | --- |
-| GeoIP／ASN／location | 合格 endpoint、观测期限和数据集版本；不刷新原时间、不补坐标 |
+| addressScope／location | 可见 endpoint 与原观测期限；不刷新原时间、不查询数据集 |
 | links／paths 聚合 | 保留真实报告者、通道／路径标识和证据阶段 |
 | 应用进度 | 固定提交目标、实际 receipt、当前实例与 lease |
 | Node／成员 actions | 当前用户、网络权限和配置身份 |
