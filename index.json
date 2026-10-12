@@ -1,8 +1,198 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-12T04:40:52.699378+00:00",
+  "updatedAt": "2026-10-12T04:59:19.654132+00:00",
   "runs": [
+    {
+      "id": 38205803641,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "e243f9e0c36268e38ba803faad437140454a46dc",
+      "message": "docs(rule-sets): single CI catalog signing key; rotation by Server release",
+      "createdAt": "2026-10-12T04:56:16Z",
+      "updatedAt": "2026-10-12T04:57:09Z",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/JDScript/meshway/actions/runs/38205803641",
+      "jobs": [
+        {
+          "id": 114668924944,
+          "name": "changes",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-12T04:56:25Z",
+          "completedAt": "2026-10-12T04:56:36Z",
+          "seconds": 11.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38205803641/job/114668924944"
+        },
+        {
+          "id": 114668973151,
+          "name": "docs-and-scripts",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-12T04:56:52Z",
+          "completedAt": "2026-10-12T04:57:09Z",
+          "seconds": 17.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38205803641/job/114668973151"
+        },
+        {
+          "id": 114668974147,
+          "name": "cargo",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "skipped",
+          "startedAt": "2026-10-12T04:56:37Z",
+          "completedAt": "2026-10-12T04:56:36Z",
+          "seconds": 0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38205803641/job/114668974147"
+        },
+        {
+          "id": 114668974270,
+          "name": "console",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "skipped",
+          "startedAt": "2026-10-12T04:56:37Z",
+          "completedAt": "2026-10-12T04:56:36Z",
+          "seconds": 0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38205803641/job/114668974270"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 38205605053,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "b0ab5d838f7d30278fc43a039687c86c1df199c2",
+      "message": "release: publish meshway-rules CLI to meshway-org/meshway-rules; docs: actual rule-set publishing repository",
+      "createdAt": "2026-10-12T04:53:18Z",
+      "updatedAt": "2026-10-12T04:56:22Z",
+      "status": "completed",
+      "conclusion": "cancelled",
+      "url": "https://github.com/JDScript/meshway/actions/runs/38205605053",
+      "jobs": [
+        {
+          "id": 114668292955,
+          "name": "changes",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-12T04:53:19Z",
+          "completedAt": "2026-10-12T04:53:23Z",
+          "seconds": 4.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38205605053/job/114668292955"
+        },
+        {
+          "id": 114668307536,
+          "name": "cargo",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "cancelled",
+          "startedAt": "2026-10-12T04:55:31Z",
+          "completedAt": "2026-10-12T04:56:22Z",
+          "seconds": 51.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38205605053/job/114668307536"
+        },
+        {
+          "id": 114668307553,
+          "name": "console",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-12T04:53:25Z",
+          "completedAt": "2026-10-12T04:55:29Z",
+          "seconds": 124.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38205605053/job/114668307553"
+        },
+        {
+          "id": 114668307557,
+          "name": "docs-and-scripts",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "cancelled",
+          "startedAt": "2026-10-12T04:53:23Z",
+          "completedAt": "2026-10-12T04:56:16Z",
+          "seconds": 173.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38205605053/job/114668307557"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 38205605017,
+      "attempt": 1,
+      "workflow": "Build",
+      "event": "push",
+      "branch": "main",
+      "commit": "b0ab5d838f7d30278fc43a039687c86c1df199c2",
+      "message": "release: publish meshway-rules CLI to meshway-org/meshway-rules; docs: actual rule-set publishing repository",
+      "createdAt": "2026-10-12T04:53:18Z",
+      "updatedAt": "2026-10-12T04:53:23Z",
+      "status": "in_progress",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/38205605017",
+      "jobs": [
+        {
+          "id": 114668293155,
+          "name": "node-linux (aarch64-unknown-linux-musl)",
+          "runner": "mars-epyc7543",
+          "status": "in_progress",
+          "conclusion": null,
+          "startedAt": "2026-10-12T04:53:21Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38205605017/job/114668293155"
+        },
+        {
+          "id": 114668293350,
+          "name": "node-linux (x86_64-unknown-linux-musl)",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-12T04:53:23Z",
+          "completedAt": "2026-10-12T04:56:52Z",
+          "seconds": 209.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38205605017/job/114668293350"
+        }
+      ],
+      "artifacts": [
+        {
+          "id": 11727276880,
+          "name": "node-x86_64-unknown-linux-musl-b0ab5d838f7d30278fc43a039687c86c1df199c2",
+          "bytes": 10074881,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38205605017/artifacts/11727276880",
+          "jobId": 114668293350,
+          "runner": "planck",
+          "seconds": 209.0,
+          "state": "ok",
+          "error": null,
+          "reports": [],
+          "matrices": [],
+          "builds": [
+            {
+              "target": "x86_64-unknown-linux-musl",
+              "binary": "meshwayd",
+              "bytes": 17075240,
+              "sha256": "02759104fd985d4b513832f8c1fa0c3bd48cf67e7ba2f2702152adb585a6ac88"
+            },
+            {
+              "target": "x86_64-unknown-linux-musl",
+              "binary": "meshway",
+              "bytes": 2018704,
+              "sha256": "693531a0f3839e636c4cce83a815267b130d3e3a2f5929e4a7f619b3ba5d03cb"
+            }
+          ]
+        }
+      ]
+    },
     {
       "id": 38203697030,
       "attempt": 1,
