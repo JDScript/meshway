@@ -39,6 +39,8 @@ pub struct Desired {
     /// Own egress partition with the loaded artifacts and its capture
     /// boundary, live associated addresses included; `None` for a disabled Node.
     egress: Option<(meshway_policy::compile::Partition, Arc<EgressCapturePlan>)>,
+    /// What this Node installs for that capture boundary, computed with it.
+    capture_summary: Option<meshway_configuration::evaluation::CaptureSummary>,
     /// The signed overlay this state was built from, and its live entries.
     overlay: Option<Arc<DnsAssociationOverlay>>,
     associations: Arc<Associations>,
@@ -64,8 +66,12 @@ impl Desired {
             )),
             None => None,
         };
+        let capture_summary = egress
+            .as_ref()
+            .and_then(|_| compiler.capture_summary(content.netmap.node_id).ok());
         Ok(Self {
             egress,
+            capture_summary,
             missing: compiler.missing(),
             content: content.clone(),
             compiler,
@@ -94,11 +100,12 @@ impl Desired {
                 .capture()
                 .map_err(|_| Error::Content)?
                 .ok_or(Error::Content)?;
-            let capture = self
+            let (capture, summary) = self
                 .compiler
                 .associated_capture(node, &base, &associations)
                 .map_err(|_| Error::Content)?;
             next.egress = Some((partition.clone(), Arc::new(capture)));
+            next.capture_summary = Some(summary);
         }
         next.associations = Arc::new(associations);
         Ok(next)
@@ -177,14 +184,12 @@ impl Desired {
     pub fn capture(&self) -> Option<&EgressCapturePlan> {
         self.egress.as_ref().map(|(_, capture)| capture.as_ref())
     }
-    /// What this Node installs for its egress capture, for diagnostics:
-    /// interval elements and capture-table routes, or why only the full
-    /// fail-closed boundary is installed. `None` for a disabled Node.
+    /// What this Node installs for its egress capture ([`Self::capture`],
+    /// associated addresses included), for diagnostics: interval elements
+    /// and capture-table routes, or why only the full fail-closed boundary is
+    /// installed. `None` for a disabled Node.
     pub fn capture_summary(&self) -> Option<meshway_configuration::evaluation::CaptureSummary> {
-        self.egress.as_ref()?;
-        self.compiler
-            .capture_summary(self.content.netmap.node_id)
-            .ok()
+        self.capture_summary.clone()
     }
     /// Own egress partition; `None` while disabled or unavailable (then
     /// [`Self::capture`] is the full fail-closed boundary).

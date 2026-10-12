@@ -137,11 +137,18 @@ fn a_name_rule_decides_only_the_addresses_associated_with_the_name() {
 
     // The source captures exactly that host; the rest stays direct.
     let held = Associations::new(Some(&overlay(&compiled.nodes[&node(1)], entries)), 0);
-    let carved = source.associated_capture(node(1), &base, &held).unwrap();
+    let (carved, summary) = source.associated_capture(node(1), &base, &held).unwrap();
     let host: std::net::Ipv4Addr = "203.0.113.9".parse().unwrap();
     assert_eq!(carved.managed_ipv4, [(host, host)]);
     assert_eq!(carved.generation, plan.generation);
     assert_eq!(carved.sink_ipv6, base.sink_ipv6);
+    // The summary counts what is installed with the association, not the
+    // partition without it.
+    assert_eq!(
+        (summary.managed_ipv4, summary.routes, summary.unavailable),
+        (1, 1, None)
+    );
+    assert_ne!(summary, source.capture_summary(node(1)).unwrap());
 }
 
 #[test]
@@ -160,7 +167,7 @@ fn incompatible_names_selection_access_and_expiry_never_widen() {
     // A conflicting address is still captured, so it is dropped, not sent direct.
     let source = LocalCompiler::new(&at.netmap, &Default::default());
     let base = source.capture().unwrap().unwrap();
-    let carved = source
+    let (carved, _) = source
         .associated_capture(node(1), &base, &conflict)
         .unwrap();
     let host: std::net::Ipv4Addr = "203.0.113.9".parse().unwrap();

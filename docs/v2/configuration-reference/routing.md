@@ -169,7 +169,7 @@ Server 为最终出口生成绑定 origin、实际目的范围、出口和完整
 | 捕获路由 | 32,768 | 受管 IPv4 区间的最小 CIDR 覆盖（私有捕获表路由） |
 | 计算量 | 2²⁴ 次区间操作 | 一次分割计算 |
 
-超限时该方案 `unavailable: routingLimit`（全范围捕获）。配置校验对每个可分配方案计算同一分割，超限给出警告 `egress_partition_limit`（`params.profile`／`ranges`／`maxRanges`／`routes`／`maxRoutes`，路径为方案或 `/routing/egress/rules`）；路径检测的 `profile.capture` 给出 `{managedIpv4, sinkIpv6, routes, unavailable}`，与节点 IPC `NetmapStatus.capture`（CLI `meshway status` 的 Egress 行）同一计算。`geoip:cn` 的直连方案（补集）约 4,341 个受管 IPv4 区间、12,680 条路由。
+超限时该方案 `unavailable: routingLimit`（全范围捕获）。配置校验对每个可分配方案计算同一分割，超限给出警告 `egress_partition_limit`（`params.profile`／`ranges`／`maxRanges`／`routes`／`maxRoutes`，路径为方案或 `/routing/egress/rules`）；路径检测的 `profile.capture` 给出 `{managedIpv4, sinkIpv6, routes, unavailable}`，与节点 IPC `NetmapStatus.capture`（CLI `meshway status` 的 Egress 行）同一计算；节点侧的数字另含本源当前生效的可信域名关联（按实际安装的捕获边界计数，关联变化或到期后随之更新）。`geoip:cn` 的直连方案（补集）约 4,341 个受管 IPv4 区间、12,680 条路由。
 
 上限由实测定出（`mise run perf:capture`，Linux 6.8／AMD 9950X、Linux 7.0／OrbStack VM，nftables 1.0.9；原始结果在私有证据 `.meshway/validation/r3/perf/`）：
 

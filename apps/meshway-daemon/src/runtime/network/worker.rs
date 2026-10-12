@@ -392,15 +392,12 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                     continue;
                 };
                 let reference = netmap.content.reference();
-                // Same healthy content: Engine extends its own timer only. A
-                // degraded installation re-applies and reports below.
-                let same = !engine.degraded()
-                    && engine.desired().is_some_and(|desired| {
-                        desired.reference() == reference
-                            && desired.same_artifacts(&netmap.artifacts)
-                    });
-                if same {
-                    // Same content: Engine extends its own timer only.
+                // Same healthy content and associations: Engine extends its
+                // own timer only. Changed associations, other content and a
+                // degraded installation apply and report below.
+                let change =
+                    super::transitions::change(engine.desired(), engine.degraded(), &netmap);
+                if change == super::transitions::Change::Renewal {
                     if engine.reconfig(Some(&netmap)).await.is_err() {
                         tracing::warn!(
                             netmap_serial = reference.serial.get(),
@@ -419,17 +416,21 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 }
                 let previous = reports.borrow().clone();
                 let mut report = previous.clone();
-                report.plane = DataPlane::Preparing;
-                report.problem = None;
-                report.netmap = Some(reference);
-                report.completion = None;
-                report.facts = None;
-                report.content = None;
-                report.generation = report
-                    .generation
-                    .checked_next()
-                    .unwrap_or(report.generation);
-                reports.send_replace(report.clone());
+                // Changed associations keep the installed content's work: its
+                // report stays until the new desired state's outcome below.
+                if change == super::transitions::Change::Content {
+                    report.plane = DataPlane::Preparing;
+                    report.problem = None;
+                    report.netmap = Some(reference);
+                    report.completion = None;
+                    report.facts = None;
+                    report.content = None;
+                    report.generation = report
+                        .generation
+                        .checked_next()
+                        .unwrap_or(report.generation);
+                    reports.send_replace(report.clone());
+                }
                 let plane = engine.components_mut();
                 plane.report = report;
                 plane.failure = None;
@@ -513,13 +514,23 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 reports.send_replace(report);
             }
             Work::Expired => {
-                diagnostics.stop().await;
-                if engine.expire().await.is_err() {
+                // An ended association only narrows the desired state; the
+                // lease's diagnostics stop with the lease alone.
+                let (withdrawn, failed) =
+                    super::transitions::expire(&mut engine, async || diagnostics.stop().await)
+                        .await;
+                if failed {
                     tracing::warn!("Netmap expiry cleanup failed");
                 }
-                if engine.desired().is_none() {
+                if withdrawn {
                     tracing::info!("Netmap lease ended; terminating the packet plane");
                     finish_withdrawal(&mut engine, &reports, false);
+                } else {
+                    let mut report = reports.borrow().clone();
+                    report.capture = engine
+                        .desired()
+                        .and_then(|desired| desired.capture_summary());
+                    reports.send_replace(report);
                 }
                 continue;
             }

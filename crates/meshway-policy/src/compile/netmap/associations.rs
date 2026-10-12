@@ -5,6 +5,7 @@
 use super::*;
 use crate::compile::rules::{self, Destination, Membership};
 use ipnet::IpNet;
+use meshway_configuration::evaluation::CaptureSummary;
 use meshway_configuration::netmap::{AssociationRecordType, DnsAssociation, DnsAssociationOverlay};
 use std::net::IpAddr;
 
@@ -296,15 +297,22 @@ impl LocalCompiler {
     /// leave the managed ranges. The selection identity stays the signed
     /// one; only the ranges change. A result beyond the node-side limits
     /// fails closed like the partition itself: full IPv4 capture, IPv6 sink,
-    /// no exception, `routingLimit`.
+    /// no exception, `routingLimit`. Returned with what the Node installs
+    /// for it: the counts of the associated ranges, beyond the limits too.
     pub fn associated_capture(
         &self,
         source: NodeId,
         capture: &EgressCapturePlan,
         associations: &Associations,
-    ) -> Result<EgressCapturePlan, CompileError> {
-        if capture.unavailable.is_some() || associations.is_empty() {
-            return Ok(capture.clone());
+    ) -> Result<(EgressCapturePlan, CaptureSummary), CompileError> {
+        if capture.unavailable.is_some() {
+            return Ok((capture.clone(), self.capture_summary(source)?));
+        }
+        if associations.is_empty() {
+            return Ok((
+                capture.clone(),
+                crate::compile::capture::plan_summary(capture),
+            ));
         }
         let generation = capture.generation;
         let mut next = capture.clone();
@@ -314,12 +322,16 @@ impl LocalCompiler {
             let captured = !matches!(action, Some(RouteAction::Direct | RouteAction::Unmanaged));
             crate::compile::capture::assign(&mut next, address, captured);
         }
+        let summary = crate::compile::capture::plan_summary(&next);
         if !crate::compile::capture::installable(&next) {
-            return Ok(crate::compile::unavailable_capture(
-                generation,
-                UnavailableReason::RoutingLimit,
+            return Ok((
+                crate::compile::unavailable_capture(generation, UnavailableReason::RoutingLimit),
+                CaptureSummary {
+                    unavailable: Some(UnavailableReason::RoutingLimit),
+                    ..summary
+                },
             ));
         }
-        Ok(next)
+        Ok((next, summary))
     }
 }

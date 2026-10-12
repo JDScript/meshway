@@ -44,7 +44,9 @@ mimalloc = { version = "=0.1.52", default-features = false }
 [dev-dependencies]
 axum.workspace = true
 meshway-server = { path = "../meshway-server" }
+meshway-test-server = { path = "../../tools/meshway-test-server" }
 tempfile.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
 
 [lints]
 workspace = true

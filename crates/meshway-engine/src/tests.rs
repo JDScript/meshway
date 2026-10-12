@@ -484,6 +484,13 @@ async fn associations_apply_without_new_content_and_end_on_their_own_deadline() 
     };
     // The name exits: its associated address joins the capture.
     assert!(!managed(&before) && managed(&desired));
+    // The capture summary counts the installed boundary, association included.
+    let installed = desired.capture_summary().unwrap();
+    assert_eq!(
+        installed.managed_ipv4 as usize,
+        desired.capture().unwrap().managed_ipv4.len()
+    );
+    assert_ne!(Some(installed), before.capture_summary());
     // The signed content itself is unchanged.
     assert!(Arc::ptr_eq(desired.netmap(), before.netmap()));
     // An overlay of other content is ignored.
@@ -503,4 +510,5 @@ async fn associations_apply_without_new_content_and_end_on_their_own_deadline() 
     assert!(pruned.associations().is_empty() && pruned.same_content(&desired));
     assert!(engine.components.calls.len() > calls);
     assert!(!managed(pruned));
+    assert_eq!(pruned.capture_summary(), before.capture_summary());
 }

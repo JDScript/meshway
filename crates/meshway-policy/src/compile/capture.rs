@@ -274,15 +274,28 @@ pub fn assign(plan: &mut EgressCapturePlan, address: IpAddr, captured: bool) {
     }
 }
 
+/// What a Node installs for `plan`, counted as [`EgressPartition::summary`]
+/// counts a partition.
+pub fn plan_summary(plan: &EgressCapturePlan) -> CaptureSummary {
+    let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+    CaptureSummary {
+        managed_ipv4: count(plan.managed_ipv4.len()),
+        sink_ipv6: count(plan.sink_ipv6.len()),
+        routes: count(
+            plan.managed_ipv4
+                .iter()
+                .map(|(s, e)| cover(u32::from(*s), u32::from(*e)))
+                .sum(),
+        ),
+        unavailable: plan.unavailable,
+    }
+}
+
 /// Whether a capture plan fits what a Node installs.
 pub fn installable(plan: &EgressCapturePlan) -> bool {
-    let routes: usize = plan
-        .managed_ipv4
-        .iter()
-        .map(|(s, e)| cover(u32::from(*s), u32::from(*e)))
-        .sum();
-    plan.managed_ipv4.len() + plan.sink_ipv6.len() <= MAX_CAPTURE_RANGES
-        && routes <= MAX_CAPTURE_ROUTES
+    let summary = plan_summary(plan);
+    (summary.managed_ipv4 as usize + summary.sink_ipv6 as usize) <= MAX_CAPTURE_RANGES
+        && summary.routes as usize <= MAX_CAPTURE_ROUTES
 }
 
 /// The fail-closed boundary of an unavailable partition: full IPv4 capture,

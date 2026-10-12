@@ -18,6 +18,8 @@ mod reporting;
 mod requirements;
 #[cfg(target_os = "linux")]
 mod traversal;
+#[cfg(any(target_os = "linux", test))]
+mod transitions;
 #[cfg(target_os = "linux")]
 mod worker;
 
@@ -193,20 +195,23 @@ pub(super) struct Offer {
     pub clock_floor_ms: Option<u64>,
 }
 
-/// What identifies an offered netmap: content, lease and the loaded rule-set
-/// artifacts (more artifacts for the same content is a new offer).
+/// What identifies an offered netmap: content, lease, the loaded rule-set
+/// artifacts (more artifacts for the same content is a new offer) and the
+/// DNS association overlay (a changed or cleared overlay is a new offer).
 fn offered(
     netmap: &Option<meshway_engine::Netmap>,
 ) -> Option<(
     NetmapRef,
     meshway_model::NetmapLease,
     Vec<meshway_rules::Digest>,
+    Option<Arc<meshway_configuration::netmap::DnsAssociationOverlay>>,
 )> {
     netmap.as_ref().map(|netmap| {
         (
             netmap.content.reference(),
             netmap.lease,
             netmap.artifacts.keys().copied().collect(),
+            netmap.associations.clone(),
         )
     })
 }
