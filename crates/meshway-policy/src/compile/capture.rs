@@ -31,22 +31,15 @@ fn subtract(
     Ok(())
 }
 
-fn prefixes(
-    sets: &rules::RuleSets,
-    matcher: &RouteMatch,
-    may_exit: bool,
-) -> Result<Vec<IpNet>, CompileError> {
+/// The IP part of one rule. Its names own no address: they decide only the
+/// addresses of a trusted association (see `netmap::Associations`).
+fn prefixes(sets: &rules::RuleSets, matcher: &RouteMatch) -> Result<Vec<IpNet>, CompileError> {
     if matcher.ip_cidr.len() > MAX_CAPTURE_PREFIXES
         || matcher.rule_sets.len() > MAX_CAPTURE_PREFIXES
     {
         return Err(CompileError::Budget);
     }
-    let (nets, names) = rules::prefixes(matcher, sets, MAX_CAPTURE_PREFIXES)?;
-    // An IP-only route table cannot represent the identity of a queried name.
-    if names && may_exit {
-        return Err(CompileError::InvalidInput);
-    }
-    Ok(nets)
+    Ok(rules::prefixes(matcher, sets, MAX_CAPTURE_PREFIXES)?.0)
 }
 
 fn resolved<'a>(
@@ -136,7 +129,6 @@ fn compile_ranges(
     plan: &mut EgressCapturePlan,
     routes: &mut Vec<Route>,
 ) -> Result<(), CompileError> {
-    let may_exit = matching::dns_requires_exit(cfg, profile);
     let mut rules: Vec<_> = cfg.routing.egress.rules.iter().collect();
     let fallback = match resolved(cfg, profile)? {
         EgressProfile::Mesh => RouteAction::Unmanaged,
@@ -160,7 +152,7 @@ fn compile_ranges(
         if remaining.is_empty() {
             break;
         }
-        for prefix in prefixes(rule_sets, &rule.matcher, may_exit)? {
+        for prefix in prefixes(rule_sets, &rule.matcher)? {
             let mut rest = Vec::new();
             let mut hit = Vec::new();
             for net in remaining {

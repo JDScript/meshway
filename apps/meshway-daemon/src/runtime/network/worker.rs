@@ -89,6 +89,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
     let mut diagnostics = super::diagnostics::Diagnostics::default();
     let buffers = packet_pool(mtu)?;
     let mut dns_requests = engine.components_mut().dns.take_queries();
+    let mut dns_reports = engine.components_mut().dns.take_reports();
     let mut exit_dns = engine.components().dns.exit_dns();
     let mut dns_queries = super::dns::mesh::Queries::default();
     let mut retry = Retry::default();
@@ -98,6 +99,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
         meshway_logging::profile::report();
         enum Work {
             DnsQuery(Box<super::dns::mesh::Query>),
+            DnsReport(Box<meshway_protocol::DnsAssociationReport>),
             ObservationPlan,
             DiagnosticSent,
             Command(Option<Command>),
@@ -179,6 +181,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             changed = observation_plans.changed() => if changed.is_ok() { Work::ObservationPlan } else { Work::Command(None) },
             changed = offers.changed() => if changed.is_err() { Work::Command(None) } else { Work::Offer },
             query = dns_requests.recv() => match query { Some(query) => Work::DnsQuery(Box::new(query)), None => Work::Command(None) },
+            Some(report) = dns_reports.recv() => Work::DnsReport(Box::new(report)),
             _ = sleep_until(retry_at) => Work::Retry,
             _ = dns.failed(), if !dns_failed => Work::DnsFailure,
             _ = dns.recovered(), if dns_failed => Work::DnsRecovered,
@@ -263,6 +266,12 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             || matches!(&work, Work::Carrier(events) if events.iter().any(|event| matches!(event, Event::Changed)));
         match work {
             Work::DnsQuery(query) => dns_queries.enqueue(*query),
+            Work::DnsReport(report) => {
+                if gateway.try_send(Request::DnsAssociation(report)).is_err() {
+                    tracing::debug!("Control queue full; DNS association report dropped");
+                }
+                continue;
+            }
             Work::NetworkChanged => {
                 network_changes.borrow_and_update();
                 let report =

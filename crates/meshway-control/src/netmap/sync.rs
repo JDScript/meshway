@@ -164,6 +164,7 @@ impl Control {
         let token = Zeroizing::new(self.token()?.to_owned());
         if self.netmap.facts.is_some() && self.netmap().is_none() {
             self.netmap.facts = None;
+            self.netmap.associations = None;
             self.netmap.traversal = Arc::default();
             self.netmap.exchange = Arc::new(());
         }
@@ -198,6 +199,7 @@ impl Control {
                 .collect::<Vec<_>>()
                 .try_into()
                 .unwrap_or_default(),
+            associations: self.held_associations().map(|(digest, _)| digest),
         }
     }
 
@@ -260,6 +262,8 @@ impl Control {
             self.pin_server_key(next, response.lease, &signature)
                 .await?;
         }
+        // Content first: an overlay binds the netmap just installed.
+        self.record_associations(response.associations)?;
         let facts = response.peer_facts.is_some();
         if let Some(delta) = response.peer_facts {
             self.netmap.facts = Some(delta.cursor);

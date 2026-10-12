@@ -12,7 +12,7 @@ pub(super) struct Local {
     pub dns: NetmapDns,
 }
 
-fn action(route: &RouteAction) -> Result<EgressAction, CompileError> {
+pub(super) fn action(route: &RouteAction) -> Result<EgressAction, CompileError> {
     let nodes = |selectors: &[String]| {
         selectors
             .iter()

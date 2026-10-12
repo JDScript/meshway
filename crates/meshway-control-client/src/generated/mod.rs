@@ -4109,6 +4109,29 @@ impl crate::Client {
         }
     }
 
+    pub async fn report_dns_association(
+        &self,
+        body: &meshway_protocol::DnsAssociationReport,
+        token: &str,
+    ) -> Result<
+        meshway_protocol::DnsAssociationAccepted,
+        crate::ClientError<meshway_protocol::ErrorResponse>,
+    > {
+        let response = self
+            .send(
+                reqwest::Method::POST,
+                "/agent-api/v1/dns-associations",
+                Some(token),
+                Some(body),
+            )
+            .await?;
+        match response.status {
+            200 => response.json(),
+            400 | 401 | 403 | 409 | 413 | 415 | 429 | 503 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
     pub async fn report_node_history(
         &self,
         body: &meshway_protocol::HistoryReport,

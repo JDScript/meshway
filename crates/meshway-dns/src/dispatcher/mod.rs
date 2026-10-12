@@ -79,7 +79,8 @@ impl Scope {
         self
     }
 
-    /// The same content and the same system resolver observations.
+    /// The same content and the same system resolver observations, whatever
+    /// the trusted associations: their change keeps every ticket.
     pub fn equivalent(&self, other: &Self) -> bool {
         let same = |a: &Option<crate::SystemResolverSnapshot>,
                     b: &Option<crate::SystemResolverSnapshot>| match (a, b) {
@@ -87,7 +88,7 @@ impl Scope {
             (Some(a), Some(b)) => a.same(b),
             _ => false,
         };
-        self.desired.same(&other.desired)
+        self.desired.same_content(&other.desired)
             && same(&self.system_resolvers, &other.system_resolvers)
             && same(&self.served_resolvers, &other.served_resolvers)
     }
@@ -151,10 +152,16 @@ const VALIDATION: std::time::Duration = std::time::Duration::from_secs(1);
 /// owner; anything else ends the previous scope's work before replacing it.
 pub fn publish(scopes: &watch::Sender<Option<Scope>>, next: Option<Scope>) {
     scopes.send_if_modified(|current| {
-        if let (Some(old), Some(new)) = (current.as_ref(), next.as_ref())
+        if let (Some(old), Some(new)) = (current.as_mut(), next.as_ref())
             && old.equivalent(new)
         {
-            return false;
+            // Only associations may differ: the scope (and its work) stays,
+            // later answers see the new associations.
+            if old.desired.same(&new.desired) {
+                return false;
+            }
+            old.desired = new.desired.clone();
+            return true;
         }
         if let Some(old) = current.take() {
             old.ended.cancel();
@@ -219,9 +226,21 @@ pub struct OwnerDispatcher {
     exchange: Arc<dyn ResolverExchange>,
     limits: Limits,
     udp_payload_limit: u16,
+    /// Exit side: completions of the served plan's association task.
+    reports: Option<tokio::sync::mpsc::Sender<meshway_protocol::DnsAssociationReport>>,
 }
 
 impl OwnerDispatcher {
+    /// Send association completions of served answers to `reports`
+    /// (bounded; a full queue drops the completion, never the answer).
+    pub fn with_association_reports(
+        mut self,
+        reports: tokio::sync::mpsc::Sender<meshway_protocol::DnsAssociationReport>,
+    ) -> Self {
+        self.reports = Some(reports);
+        self
+    }
+
     /// Installation checks include the real adapter. A syntactically valid
     /// ViaExit plan cannot be reported applied with the local-only adapter.
     pub fn validate_scope(&self, scope: &Scope) -> Result<(), DispatchError> {
@@ -264,6 +283,7 @@ impl OwnerDispatcher {
             exchange,
             limits,
             udp_payload_limit,
+            reports: None,
         })
     }
 
@@ -308,6 +328,9 @@ impl OwnerDispatcher {
         let equivalent = state.installed.as_ref().is_some_and(|installed| {
             installed.equivalent(&scope) && !installed.ended.is_cancelled()
         });
+        if equivalent {
+            state.installed = Some(scope.clone());
+        }
         if (changed && !equivalent) || state.owner.is_none() {
             // New content cancels old tickets. No old operation is completed
             // under a transplanted generation.
@@ -437,16 +460,70 @@ impl OwnerDispatcher {
             }
             break response;
         };
-        let mut state = self.state.lock().await;
-        self.reconcile_state(&mut state)?;
-        let result = state
-            .owner
-            .as_mut()
-            .ok_or(DispatchError::Scope)?
-            .complete_upstream(&work, response);
-        let answer = completed(result)?;
+        let (answer, scopes) = {
+            let mut state = self.state.lock().await;
+            self.reconcile_state(&mut state)?;
+            let result = state
+                .owner
+                .as_mut()
+                .ok_or(DispatchError::Scope)?
+                .complete_upstream(&work, response);
+            (completed(result)?, state.scopes.clone())
+        };
+        let answer = match &work.route {
+            ResolverRoute::Mesh(_) => self.associated(answer, scopes).await?,
+            ResolverRoute::Local(_) => answer,
+        };
         cancellation.0 = None;
         Ok(answer)
+    }
+
+    /// Source side: hold an answer whose name a name rule of this Node
+    /// decides until an association covering it is applied, at most
+    /// [`crate::ASSOCIATION_WAIT`]; then cap its TTLs to that association.
+    async fn associated(
+        &self,
+        mut answer: Answer,
+        mut scopes: watch::Receiver<Option<Scope>>,
+    ) -> Result<Answer, DispatchError> {
+        let Some(facts) = crate::association::answered(answer.query(), answer.message()) else {
+            return Ok(answer);
+        };
+        let until = tokio::time::Instant::now() + crate::ASSOCIATION_WAIT;
+        loop {
+            let desired = scopes
+                .borrow_and_update()
+                .as_ref()
+                .map(|scope| scope.desired.clone())
+                .ok_or(DispatchError::Scope)?;
+            let node = desired.netmap().node_id;
+            if !desired
+                .compiler()
+                .egress_rule_for_name(node, &facts.name)
+                .is_ok_and(|hit| hit.is_some())
+            {
+                return Ok(answer);
+            }
+            let now = crate::association::wall_ms();
+            if let Some(association) = desired.associations().covering(
+                node,
+                &facts.name,
+                facts.record_type,
+                &facts.addresses,
+            ) && association.expires_at_ms >= now + crate::association::MIN_REMAINING_MS
+            {
+                crate::association::cap_ttl(answer.message_mut(), association.expires_at_ms - now);
+                return Ok(answer);
+            }
+            tokio::select! { biased;
+                () = answer.ended() => return Err(DispatchError::Expired),
+                changed = scopes.changed() => changed.map_err(|_| DispatchError::Scope)?,
+                () = tokio::time::sleep_until(until) => {
+                    tracing::debug!(name = %facts.name, "No trusted association arrived for a name-rule answer");
+                    return Err(DispatchError::Expired);
+                }
+            }
+        }
     }
 }
 

@@ -52,6 +52,12 @@ pub(crate) struct State {
     exchange: Arc<()>,
     /// Rule-set artifacts `base` references.
     artifacts: artifacts::State,
+    /// Verified DNS association overlay and its digest. Usable only while
+    /// its netmap is `base`; never saved, so a restart starts without one.
+    associations: Option<(
+        meshway_model::Digest,
+        Arc<meshway_configuration::netmap::DnsAssociationOverlay>,
+    )>,
 }
 
 impl Control {
@@ -196,6 +202,7 @@ impl Control {
     /// only a new signed sync response publishes a lease again.
     pub(crate) fn revoke_netmap(&mut self) {
         self.netmap.lease = None;
+        self.netmap.associations = None;
         self.netmap.exchange = Arc::new(());
     }
 
@@ -212,7 +219,45 @@ impl Control {
             content: self.netmap.base.clone()?,
             lease,
             artifacts: self.published_artifacts(),
+            associations: self.held_associations().map(|(_, overlay)| overlay),
         })
+    }
+
+    /// The held overlay when it belongs to the held content.
+    pub(crate) fn held_associations(
+        &self,
+    ) -> Option<(
+        meshway_model::Digest,
+        Arc<meshway_configuration::netmap::DnsAssociationOverlay>,
+    )> {
+        let base = self.netmap.base.as_ref()?.reference();
+        self.netmap
+            .associations
+            .as_ref()
+            .filter(|(_, overlay)| overlay.netmap == base)
+            .cloned()
+    }
+
+    /// Replace the held overlay with a verified update for the held content,
+    /// or drop one bound to other content.
+    pub(crate) fn record_associations(
+        &mut self,
+        update: Option<meshway_protocol::DnsAssociationsUpdate>,
+    ) -> Result<(), Error> {
+        let Some(update) = update else {
+            if self.held_associations().is_none() {
+                self.netmap.associations = None;
+            }
+            return Ok(());
+        };
+        let binding = self.record.binding.as_ref().ok_or(Error::Lifecycle)?;
+        let digest = store::verify_associations(binding, &update)?;
+        if Some(update.overlay.netmap) != self.netmap_reference() {
+            return Err(Error::Contract);
+        }
+        self.netmap.associations =
+            (!update.overlay.associations.is_empty()).then(|| (digest, Arc::new(update.overlay)));
+        Ok(())
     }
 
     /// Verified content held, with or without a lease; comparison data only.

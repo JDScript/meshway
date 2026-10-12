@@ -71,6 +71,7 @@ impl PeerFactsSource for NoPeerFacts {
 pub(super) struct Issue<'a> {
     pub(super) signer: &'a super::signing::NetmapSigningKeys,
     pub(super) validity: Duration,
+    pub(super) associations: &'a super::associations::Store,
 }
 
 /// Credentials, the netmap part, peer facts and a fresh lease from one transaction.
@@ -133,6 +134,32 @@ pub(super) fn read(
     let lease = NetmapLease::new(current.current, now_ms, now_ms.saturating_add(validity_ms))
         .map_err(|_| Error::Internal("netmap validity"))?;
     let (signature, key_rotation) = issue.signer.issue(tx, network, node, &lease, now)?;
+    let overlay = issue
+        .associations
+        .overlay(tx, sealer, network, node, current.current, now_ms)?;
+    let digest = overlay
+        .as_ref()
+        .map(|overlay| overlay.digest())
+        .transpose()
+        .map_err(|_| Error::Internal("association digest"))?;
+    // Unchanged is null; a held overlay that ended or became invalid is
+    // cleared by an empty one.
+    let associations = if digest == request.associations {
+        None
+    } else {
+        let overlay = overlay.unwrap_or(meshway_configuration::netmap::DnsAssociationOverlay {
+            netmap: current.current,
+            associations: Vec::new(),
+        });
+        let (signature, rotation_signature) = issue
+            .signer
+            .sign_associations(tx, network, node, &overlay, now)?;
+        Some(meshway_protocol::DnsAssociationsUpdate {
+            overlay,
+            signature,
+            rotation_signature,
+        })
+    };
     let response = SyncResponse {
         signature,
         lease,
@@ -140,6 +167,7 @@ pub(super) fn read(
         peer_facts: delta,
         key_rotation,
         traversal_requests,
+        associations,
     };
     response
         .check(request)

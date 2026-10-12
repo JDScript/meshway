@@ -1,6 +1,7 @@
 //! Lease scheduling belongs only to Engine. This module exports no deadline,
 //! guard, transferable permission, cancellation ancestry or renewal handle.
 use super::*;
+use meshway_configuration::netmap::DnsAssociationOverlay;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::Instant;
 
@@ -14,6 +15,15 @@ pub struct Netmap {
     /// referenced artifact not yet here leaves its rules unavailable; the
     /// content still applies at once.
     pub artifacts: Arc<Artifacts>,
+    /// Verified, signed DNS associations Control holds for exactly this
+    /// content; `None` when there are none. Their entries end on their own
+    /// deadlines, which Engine schedules with the lease.
+    pub associations: Option<Arc<DnsAssociationOverlay>>,
+}
+
+/// Milliseconds since the Unix epoch, for association deadlines.
+pub(super) fn wall_now() -> u64 {
+    wall()
 }
 
 pub(super) struct Clock {

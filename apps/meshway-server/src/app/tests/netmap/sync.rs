@@ -45,6 +45,7 @@ async fn sync_answers_full_delta_or_unchanged_and_renews_only_the_lease() {
                 state: Some(cursor),
                 server_key_generation: None,
                 traversal_requests: Default::default(),
+                associations: None,
             },
         )
         .await
@@ -327,6 +328,7 @@ async fn a_hold_answers_before_the_lease_the_node_holds_ends() {
                 state: cursor,
                 server_key_generation: None,
                 traversal_requests: Default::default(),
+                associations: None,
             },
         )
         .await

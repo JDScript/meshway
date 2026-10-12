@@ -87,6 +87,34 @@ pub fn signed(
         peer_facts: None,
         key_rotation: None,
         traversal_requests: Default::default(),
+        associations: None,
+    }
+}
+
+/// A fixture-signed DNS association overlay update for one Node.
+pub fn sign_associations(
+    network: NetworkId,
+    node: NodeId,
+    overlay: meshway_configuration::netmap::DnsAssociationOverlay,
+) -> meshway_protocol::DnsAssociationsUpdate {
+    let (secret, key) = server_key();
+    let digest = overlay.digest().expect("overlay digest");
+    let message = meshway_protocol::dns_associations_transcript(
+        network,
+        node,
+        &overlay.netmap,
+        &digest,
+        key.key_id,
+        key.key_generation,
+    );
+    meshway_protocol::DnsAssociationsUpdate {
+        overlay,
+        signature: NetmapSignature {
+            key_id: key.key_id,
+            key_generation: key.key_generation,
+            signature: URL_SAFE_NO_PAD.encode(secret.sign(&message).to_bytes()),
+        },
+        rotation_signature: None,
     }
 }
 

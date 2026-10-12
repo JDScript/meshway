@@ -15,9 +15,11 @@ use crate::{
 use meshway_model::{Digest, NetmapRef, NetworkId, NodeId, Revision, Version, exit::ExitFamily};
 use meshway_transport::spec::PreparedListener;
 use std::collections::BTreeMap;
+mod associations;
 mod delta;
 mod projection;
 mod services;
+pub use associations::*;
 pub use delta::*;
 pub use projection::*;
 pub use services::*;

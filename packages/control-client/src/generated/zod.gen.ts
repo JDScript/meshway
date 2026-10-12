@@ -410,6 +410,8 @@ export const zArtifactSummary = z.strictObject({
   ["format"]: z.int().gte(0).lte(2147483647)
 });
 
+export const zAssociationRecordType = z.enum(["a","aaaa"]);
+
 export const zNetworkNameTrim = z.enum(["unicodeWhiteSpace"]);
 
 export const zNetworkNameRules = z.strictObject({
@@ -1826,6 +1828,50 @@ export const zDeviceAuthorizationView = z.strictObject({
   ["request"]: zEnrollmentRequestView
 });
 
+export const zDnsAssociation = z.strictObject({
+  ["addresses"]: z.array(zExecutionAddress),
+  ["cnames"]: z.array(z.string()),
+  ["expiresAt"]: zTimestamp,
+  ["generation"]: zDigest,
+  ["name"]: z.string(),
+  ["recordType"]: zAssociationRecordType,
+  ["source"]: zNodeId
+});
+
+export const zDnsAssociationAccepted = z.strictObject({
+  ["expiresAt"]: zTimestamp
+});
+
+export const zDnsAssociationOverlay = z.strictObject({
+  ["associations"]: z.array(zDnsAssociation),
+  ["netmap"]: zNetmapRef
+});
+
+export const zDnsAssociationReport = z.strictObject({
+  ["addresses"]: z.array(zExecutionAddress),
+  ["cnames"]: z.array(z.string()),
+  ["generation"]: zDigest,
+  ["name"]: z.string(),
+  ["netmap"]: zNetmapRef,
+  ["recordType"]: zAssociationRecordType,
+  ["reportId"]: zRequestId,
+  ["resolvedAt"]: zTimestamp,
+  ["source"]: zNodeId,
+  ["ttlSeconds"]: z.int().gte(0).lte(2147483647)
+});
+
+export const zNetmapSignature = z.strictObject({
+  ["keyGeneration"]: zVersion,
+  ["keyId"]: zKeyId,
+  ["signature"]: z.string()
+});
+
+export const zDnsAssociationsUpdate = z.strictObject({
+  ["overlay"]: zDnsAssociationOverlay,
+  ["rotationSignature"]: zNetmapSignature.nullable(),
+  ["signature"]: zNetmapSignature
+});
+
 export const zEmptyParams = z.strictObject({
 
 });
@@ -2837,12 +2883,6 @@ export const zNetmapDelta = z.strictObject({
   ["target"]: zNetmapRef
 });
 
-export const zNetmapSignature = z.strictObject({
-  ["keyGeneration"]: zVersion,
-  ["keyId"]: zKeyId,
-  ["signature"]: z.string()
-});
-
 export const zNetmapKeyRotation = z.strictObject({
   ["endorsement"]: z.string(),
   ["leaseSignature"]: zNetmapSignature,
@@ -3550,6 +3590,7 @@ export const zSyncNetmap = z.union([z.strictObject({
 export const zUdpTraversalRequestIds = z.array(z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u"))).max(32);
 
 export const zSyncRequest = z.strictObject({
+  ["associations"]: zDigest.nullable().exactOptional(),
   ["netmap"]: zNetmapRef.nullable().exactOptional(),
   ["serverKeyGeneration"]: zVersion.nullable().exactOptional(),
   ["state"]: zStateCursor.nullable().exactOptional(),
@@ -3564,6 +3605,7 @@ export const zUdpTraversalRequests = z.array(z.strictObject({
 })).max(32);
 
 export const zSyncResponse = z.strictObject({
+  ["associations"]: zDnsAssociationsUpdate.nullable(),
   ["keyRotation"]: zNetmapKeyRotation.nullable(),
   ["lease"]: zNetmapLease,
   ["netmap"]: zSyncNetmap,

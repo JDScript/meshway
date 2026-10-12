@@ -903,6 +903,14 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "AssociationRecordType": {
+        "type": "string",
+        "description": "Address record type of an answered query.",
+        "enum": [
+          "a",
+          "aaaa"
+        ]
+      },
       "AuthOptionsResponse": {
         "type": "object",
         "description": "Public registration settings and input validation rules.",
@@ -3458,6 +3466,190 @@ export const schemaDocument = {
         "maxLength": 64,
         "minLength": 64,
         "pattern": "^[0-9a-f]{64}$"
+      },
+      "DnsAssociation": {
+        "type": "object",
+        "description": "One name a source's exit resolver answered, for that source only.",
+        "required": [
+          "source",
+          "generation",
+          "name",
+          "recordType",
+          "cnames",
+          "addresses",
+          "expiresAt"
+        ],
+        "properties": {
+          "addresses": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExecutionAddress"
+            },
+            "description": "Public addresses of the answer for `recordType`, sorted and unique; 1 to 16."
+          },
+          "cnames": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "CNAME chain in answer order, from `name` to the owner of `addresses`; at most 8."
+          },
+          "expiresAt": {
+            "$ref": "#/components/schemas/Timestamp",
+            "description": "End of the association: the answer's shortest TTL (30 s to 1 h) after resolution."
+          },
+          "generation": {
+            "$ref": "#/components/schemas/Digest",
+            "description": "Source egress selection identity the answer belongs to; another selection never reuses it."
+          },
+          "name": {
+            "type": "string",
+            "description": "Queried name: ASCII lowercase without a trailing dot."
+          },
+          "recordType": {
+            "$ref": "#/components/schemas/AssociationRecordType",
+            "description": "Record type of the answered query."
+          },
+          "source": {
+            "$ref": "#/components/schemas/NodeId",
+            "description": "Source Node whose query produced the answer."
+          }
+        },
+        "additionalProperties": false
+      },
+      "DnsAssociationAccepted": {
+        "type": "object",
+        "description": "An accepted association; the source receives it in its next sync answer.",
+        "required": [
+          "expiresAt"
+        ],
+        "properties": {
+          "expiresAt": {
+            "$ref": "#/components/schemas/Timestamp",
+            "description": "End of the accepted association."
+          }
+        },
+        "additionalProperties": false
+      },
+      "DnsAssociationOverlay": {
+        "type": "object",
+        "description": "Every association the receiving Node may use: those of its own queries and, at an exit resolver, those of the sources it serves.",
+        "required": [
+          "netmap",
+          "associations"
+        ],
+        "properties": {
+          "associations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DnsAssociation"
+            },
+            "description": "Associations sorted by source, name and record type, at most one per triple."
+          },
+          "netmap": {
+            "$ref": "#/components/schemas/NetmapRef",
+            "description": "Exact netmap of the receiving Node; any other netmap makes the overlay unusable."
+          }
+        },
+        "additionalProperties": false
+      },
+      "DnsAssociationReport": {
+        "type": "object",
+        "description": "`POST /agent-api/v1/dns-associations`: an exit resolver's answer to one query of a source it serves, whose name a name rule of that source decides.",
+        "required": [
+          "netmap",
+          "reportId",
+          "source",
+          "generation",
+          "name",
+          "recordType",
+          "cnames",
+          "addresses",
+          "ttlSeconds",
+          "resolvedAt"
+        ],
+        "properties": {
+          "addresses": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExecutionAddress"
+            },
+            "description": "Public addresses of the answer for `recordType`, sorted and unique; 1 to 16."
+          },
+          "cnames": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "CNAME chain of the answer in order from `name`; at most 8."
+          },
+          "generation": {
+            "$ref": "#/components/schemas/Digest",
+            "description": "Source egress selection identity from the served DNS service."
+          },
+          "name": {
+            "type": "string",
+            "description": "Queried name, ASCII lowercase without a trailing dot."
+          },
+          "netmap": {
+            "$ref": "#/components/schemas/NetmapRef",
+            "description": "Netmap the reporting exit held when it served the query."
+          },
+          "recordType": {
+            "$ref": "#/components/schemas/AssociationRecordType",
+            "description": "Record type of the query."
+          },
+          "reportId": {
+            "$ref": "#/components/schemas/RequestId",
+            "description": "Single-use identifier of this completion."
+          },
+          "resolvedAt": {
+            "$ref": "#/components/schemas/Timestamp",
+            "description": "When the exit's resolver answered."
+          },
+          "source": {
+            "$ref": "#/components/schemas/NodeId",
+            "description": "Source whose authenticated query was answered."
+          },
+          "ttlSeconds": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Shortest TTL of the chain and address records, in seconds.",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "DnsAssociationsUpdate": {
+        "type": "object",
+        "description": "A signed DNS association overlay for the requesting Node.",
+        "required": [
+          "overlay",
+          "signature",
+          "rotationSignature"
+        ],
+        "properties": {
+          "overlay": {
+            "$ref": "#/components/schemas/DnsAssociationOverlay",
+            "description": "Complete overlay for the netmap of this answer's lease."
+          },
+          "rotationSignature": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NetmapSignature",
+                "description": "Signature of the same overlay by the successor key while `keyRotation` is present; null otherwise."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "signature": {
+            "$ref": "#/components/schemas/NetmapSignature",
+            "description": "Signature over `dns_associations_transcript` by the key of the answer's `signature`."
+          }
+        },
+        "additionalProperties": false
       },
       "DnsConfiguration": {
         "type": "object",
@@ -15825,6 +16017,17 @@ export const schemaDocument = {
         "type": "object",
         "description": "`POST /agent-api/v1/sync`: what the Node currently holds.",
         "properties": {
+          "associations": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Digest",
+                "description": "Digest of the DNS association overlay the Node holds for `netmap`; null or omission: none."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "netmap": {
             "oneOf": [
               {
@@ -15874,9 +16077,21 @@ export const schemaDocument = {
           "netmap",
           "peerFacts",
           "keyRotation",
-          "traversalRequests"
+          "traversalRequests",
+          "associations"
         ],
         "properties": {
+          "associations": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DnsAssociationsUpdate",
+                "description": "The Node's current DNS association overlay when it differs from the one the request named (an empty `associations` list clears it); null when unchanged."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "keyRotation": {
             "oneOf": [
               {

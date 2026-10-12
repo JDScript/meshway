@@ -34,6 +34,8 @@ pub struct App {
     netmap_timing: crate::netmap::SyncTiming,
     peer_facts: Arc<dyn crate::netmap::PeerFactsSource>,
     netmap_signer: Arc<crate::netmap::signing::NetmapSigningKeys>,
+    /// Process-local trusted DNS associations (see `netmap::associations`).
+    dns_associations: crate::netmap::associations::Shared,
     /// The production stored-netmap reader shared by State, observations and coordination.
     netmaps: Arc<crate::store::netmap::LateNetmaps>,
     shutdown_hooks: ShutdownHooks,
@@ -258,6 +260,7 @@ impl App {
             effects,
             netmap_timing: crate::netmap::SyncTiming::default(),
             netmap_signer,
+            dns_associations: Default::default(),
             netmaps,
             shutdown_hooks,
             console_origin,
@@ -438,6 +441,7 @@ impl App {
             Arc::clone(&self.peer_facts),
             Arc::clone(&self.netmap_signer),
             self.netmap_timing,
+            Arc::clone(&self.dns_associations),
         )
     }
     /// Starts a netmap signing-key rotation window (see `netmap::signing`).

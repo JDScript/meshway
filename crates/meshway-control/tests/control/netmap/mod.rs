@@ -12,6 +12,7 @@ use meshway_test_server::client::ClientError;
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use support::{Facts, Script, compiled, full, lease, signed, unchanged};
 
+mod associations;
 mod restart;
 mod review;
 mod server_key;

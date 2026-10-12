@@ -20,4 +20,7 @@ pub use configuration::single_node;
 pub use meshway_control_client as client;
 pub use proxy::PinningProxy;
 pub use server::{Options, Owner, RESPONSE_LIMIT, TestServer, http, random_id, register};
-pub use sync::{Facts, Reply, Script, lease, now_ms, reply, server_key, sign, sign_with, signed};
+pub use sync::{
+    Facts, Reply, Script, lease, now_ms, reply, server_key, sign, sign_associations, sign_with,
+    signed,
+};

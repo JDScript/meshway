@@ -8,7 +8,7 @@ use meshway_policy::{
 use std::net::IpAddr;
 
 /// Source 1 may reach the Internet and 10.20/16 on tcp:443 through exit 4 via 3.
-fn setup() -> Scenario {
+pub(super) fn setup() -> Scenario {
     let mut s = base(4);
     s.cfg.access = vec![access(
         &[sel(1)],
@@ -321,17 +321,17 @@ fn capture_budget_or_unknown_domain_fails_closed_without_routes() {
         LocalDecision::Denied(UnavailableReason::RoutingLimit)
     );
     s.cfg.routing.egress.rules.clear();
-    let mut unknown = egress_rule("8.8.0.0/16", RuleAction::Direct);
-    unknown.matcher.domain.push("example.com".into());
-    s.cfg.routing.egress.rules.push(unknown);
-    let conflict = netmaps(&s);
-    assert_eq!(
-        plan(&conflict).capture.unavailable,
-        Some(UnavailableReason::EgressConflict)
-    );
+    // A rule's names own no address: only its IP part partitions, and the
+    // names decide nothing without a trusted association.
+    let mut mixed = egress_rule("8.8.0.0/16", RuleAction::Direct);
+    mixed.matcher.domain.push("example.com".into());
+    s.cfg.routing.egress.rules.push(mixed);
+    let partitioned = netmaps(&s);
+    assert_eq!(plan(&partitioned).capture.unavailable, None);
+    assert_eq!(select(&partitioned, "8.8.8.8"), LocalDecision::Direct);
     assert!(matches!(
-        select(&conflict, "8.8.8.8"),
-        LocalDecision::Denied(_)
+        select(&partitioned, "9.9.9.9"),
+        LocalDecision::Permitted(_)
     ));
 }
 

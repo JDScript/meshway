@@ -7,6 +7,7 @@
 //! of the same Node replaces it, or the hold times out. A hold never outlasts
 //! the lease the Node holds less [`SYNC_RENEWAL_MARGIN`]. Every answer carries a fresh lease for the current netmap. Content is
 //! stored by `store::netmap` and only changes in stable-input transactions.
+pub(crate) mod associations;
 mod hub;
 pub(crate) mod records;
 pub mod signing;
@@ -134,9 +135,11 @@ pub struct Netmaps {
     facts: Arc<dyn PeerFactsSource>,
     signer: Arc<signing::NetmapSigningKeys>,
     timing: SyncTiming,
+    associations: associations::Shared,
 }
 
 impl Netmaps {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         handle: Handle,
         sealer: Arc<Sealer>,
@@ -145,6 +148,7 @@ impl Netmaps {
         facts: Arc<dyn PeerFactsSource>,
         signer: Arc<signing::NetmapSigningKeys>,
         timing: SyncTiming,
+        associations: associations::Shared,
     ) -> Self {
         Self {
             handle,
@@ -154,7 +158,40 @@ impl Netmaps {
             facts,
             signer,
             timing,
+            associations,
         }
+    }
+
+    /// Complete the standing association task of the calling exit for one
+    /// source query (see `associations`), then wake both Nodes' syncs.
+    pub async fn report_association(
+        &self,
+        token: &str,
+        report: meshway_protocol::DnsAssociationReport,
+    ) -> Result<meshway_protocol::DnsAssociationAccepted, Error> {
+        let token = proof::token_hash(token)?;
+        let (sealer, boot, store) = (self.sealer.clone(), self.boot, self.associations.clone());
+        let (network, accepted, woken) = self
+            .handle
+            .read(move |tx| {
+                let now = crate::store::execution::now()?;
+                let principal =
+                    crate::store::execution::authorize_node(tx, &sealer, boot, token, now)?;
+                let now_ms =
+                    u64::try_from(now).map_err(|_| Error::Internal("system clock before epoch"))?;
+                let (accepted, woken) = store.complete(
+                    tx,
+                    &sealer,
+                    principal.network,
+                    principal.node,
+                    &report,
+                    now_ms,
+                )?;
+                Ok((principal.network, accepted, woken))
+            })
+            .await?;
+        self.hub.wake(network, &woken);
+        Ok(accepted)
     }
 
     /// Holds the request until something the Node lacks exists, then answers
@@ -204,6 +241,7 @@ impl Netmaps {
                 .peer_facts
                 .as_ref()
                 .is_some_and(|facts| facts.base.is_none() || Some(facts.cursor) != request.state)
+                || response.associations.is_some()
                 || response.traversal_requests.as_slice().iter().any(|asked| {
                     !request
                         .traversal_requests
@@ -264,12 +302,13 @@ impl Netmaps {
         token: [u8; 32],
         request: &SyncRequest,
     ) -> Result<(SyncResponse, Option<PeerFactsChanged>), Error> {
-        let (sealer, boot, facts, signer, validity) = (
+        let (sealer, boot, facts, signer, validity, associations) = (
             self.sealer.clone(),
             self.boot,
             self.facts.clone(),
             self.signer.clone(),
             self.timing.validity,
+            self.associations.clone(),
         );
         let request = request.clone();
         self.handle
@@ -284,6 +323,7 @@ impl Netmaps {
                     &sync::Issue {
                         signer: &signer,
                         validity,
+                        associations: &associations,
                     },
                 )
             })

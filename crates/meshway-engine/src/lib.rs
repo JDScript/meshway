@@ -8,11 +8,14 @@
 
 use meshway_configuration::{
     execution::DialCandidate,
-    netmap::{CompiledNetmap, EgressPlan, ExitRole, NetmapDns, NetmapSelf, NodeNetmap},
+    netmap::{
+        CompiledNetmap, DnsAssociationOverlay, EgressPlan, ExitRole, NetmapDns, NetmapSelf,
+        NodeNetmap,
+    },
 };
 use meshway_model::{NetmapLease, NetmapRef};
 pub use meshway_policy::compile::Artifacts;
-use meshway_policy::compile::netmap::LocalCompiler;
+use meshway_policy::compile::netmap::{Associations, LocalCompiler};
 use std::{collections::BTreeMap, sync::Arc};
 
 mod keys;
@@ -33,6 +36,9 @@ pub struct Desired {
     /// `LocalCompiler::effective`); the signed content when none is missing.
     effective: Arc<NodeNetmap>,
     missing: Vec<meshway_rules::Digest>,
+    /// The signed overlay this state was built from, and its live entries.
+    overlay: Option<Arc<DnsAssociationOverlay>>,
+    associations: Arc<Associations>,
 }
 
 impl Desired {
@@ -51,7 +57,53 @@ impl Desired {
             content: content.clone(),
             compiler,
             effective,
+            overlay: None,
+            associations: Arc::default(),
         })
+    }
+
+    /// The same content with the entries of `overlay` live at `now_ms`. An
+    /// overlay for other content is ignored. This Node's own associated
+    /// addresses enter its capture as their names decide them.
+    pub fn with_associations(
+        &self,
+        overlay: Option<&Arc<DnsAssociationOverlay>>,
+        now_ms: u64,
+    ) -> Result<Self, Error> {
+        let overlay = overlay.filter(|overlay| overlay.netmap == self.reference());
+        let associations = Associations::new(overlay.map(Arc::as_ref), now_ms);
+        let mut next = self.clone();
+        next.overlay = overlay.cloned();
+        let base = self.compiler.effective().map_err(|_| Error::Content)?;
+        next.effective = match &base.egress {
+            Some(plan) if !associations.is_empty() => {
+                let carved = self
+                    .compiler
+                    .associated_egress(base.node_id, plan, &associations)
+                    .map_err(|_| Error::Content)?;
+                let mut netmap = (*base).clone();
+                netmap.egress = Some(carved);
+                Arc::new(netmap)
+            }
+            _ => base,
+        };
+        next.associations = Arc::new(associations);
+        Ok(next)
+    }
+
+    /// Live trusted DNS associations of this state.
+    pub fn associations(&self) -> &Arc<Associations> {
+        &self.associations
+    }
+
+    /// The signed overlay these associations came from.
+    pub fn overlay(&self) -> Option<&Arc<DnsAssociationOverlay>> {
+        self.overlay.as_ref()
+    }
+
+    /// Wall-clock end of the earliest live association.
+    pub fn next_association_expiry(&self) -> Option<u64> {
+        self.associations.next_expiry()
     }
 
     /// Referenced rule-set artifacts this desired state is computed without.
@@ -71,6 +123,13 @@ impl Desired {
     /// same missing artifacts. Components compare desired states with this,
     /// so content whose artifacts arrived later is applied again.
     pub fn same(&self, other: &Desired) -> bool {
+        self.same_content(other) && self.associations == other.associations
+    }
+
+    /// The same executed content, whatever the associations. Components whose
+    /// work must outlive an association change (DNS tickets, established
+    /// flows) compare with this.
+    pub fn same_content(&self, other: &Desired) -> bool {
         self.reference() == other.reference() && self.missing == other.missing
     }
 
@@ -215,11 +274,20 @@ impl<C: Components> Engine<C> {
                         && current.same_artifacts(&next.artifacts)
                 })
                 .cloned();
+            let now = self.clock.now();
             let accepted =
                 lease::Active::accept(next, self.latest, &mut self.clock).and_then(|active| {
                     match &same {
-                        Some(current) => Ok((active, current.clone())),
+                        Some(current) if current.overlay() == next.associations.as_ref() => {
+                            Ok((active, current.clone()))
+                        }
+                        Some(current) => current
+                            .with_associations(next.associations.as_ref(), now)
+                            .map(|desired| (active, desired)),
                         None => Desired::new(&next.content, &next.artifacts)
+                            .and_then(|desired| {
+                                desired.with_associations(next.associations.as_ref(), now)
+                            })
                             .map(|desired| (active, desired)),
                     }
                 });
@@ -236,6 +304,14 @@ impl<C: Components> Engine<C> {
                 }
             };
             self.latest = Some(next.lease);
+            if let Some(current) = &same
+                && !current.same(&desired)
+            {
+                // Same content, other associations: a new desired state whose
+                // components keep the work of the same content.
+                self.lease = Some(active);
+                return self.settle(Some(desired)).await;
+            }
             if same.is_some() {
                 // Renewal changes only this owner's timer; a degraded content
                 // retries its missing capabilities.
@@ -289,7 +365,16 @@ impl<C: Components> Engine<C> {
     /// Selected by the engine's event loop, independently of Control HTTP and
     /// component work. This is scheduling data; components never receive it.
     pub fn next_expiry(&self) -> Option<tokio::time::Instant> {
-        self.lease.as_ref().map(|lease| lease.at)
+        let lease = self.lease.as_ref()?.at;
+        let association = self
+            .desired
+            .as_ref()
+            .and_then(Desired::next_association_expiry)
+            .map(|at_ms| {
+                let left = at_ms.saturating_sub(lease::wall_now());
+                tokio::time::Instant::now() + std::time::Duration::from_millis(left)
+            });
+        Some(association.map_or(lease, |association| association.min(lease)))
     }
 
     /// Whether the active lease has ended on either clock. The monotonic
@@ -310,6 +395,17 @@ impl<C: Components> Engine<C> {
             .is_some_and(|lease| lease.expired(&mut self.clock))
         {
             self.withdraw().await?;
+            return Ok(());
+        }
+        // An ended association leaves the desired state; the rest stays.
+        let now = self.clock.now();
+        if let Some(current) = &self.desired
+            && current
+                .next_association_expiry()
+                .is_some_and(|at| at <= now)
+        {
+            let next = current.with_associations(current.overlay(), now)?;
+            return self.settle(Some(next)).await;
         }
         Ok(())
     }
