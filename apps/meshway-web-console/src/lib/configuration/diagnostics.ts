@@ -51,6 +51,8 @@ const TRANSPORT_REASON: Record<string, () => string> = {
   material_required: () => m.configuration_transport_material_required(),
   local_address: () => m.configuration_transport_local_address(),
   repeated_transport: () => m.configuration_transport_repeated_transport(),
+  retained_secret_unavailable: () =>
+    m.configuration_transport_retained_secret_unavailable(),
 }
 
 /** How an issue names nodes: a Node ID or `node:<id>` as its hostname, else as written. */

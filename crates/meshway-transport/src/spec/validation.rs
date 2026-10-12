@@ -36,6 +36,8 @@ pub enum DeclarationError {
     MaterialRequired,
     #[error("localAddress must be an IP or empty")]
     LocalAddress,
+    #[error("a retained secret has no saved value to keep")]
+    RetainedSecretUnavailable,
 }
 impl DeclarationError {
     pub fn code(self) -> &'static str {
@@ -54,6 +56,7 @@ impl DeclarationError {
             Self::EmptyTrojanPassword => "empty_trojan_password",
             Self::MaterialRequired => "material_required",
             Self::LocalAddress => "local_address",
+            Self::RetainedSecretUnavailable => "retained_secret_unavailable",
         }
     }
 }
@@ -144,6 +147,7 @@ fn listener_tls(value: &mut ListenerTls) -> Result<(), DeclarationError> {
         || value
             .private_key
             .as_ref()
+            .and_then(ListenerSecret::value)
             .is_some_and(|v| v.expose().is_empty())
     {
         return Err(DeclarationError::EmptyTlsMaterial);
@@ -151,7 +155,40 @@ fn listener_tls(value: &mut ListenerTls) -> Result<(), DeclarationError> {
     Ok(())
 }
 impl Listener {
+    /// A `{"retained": true}` marker left after inheritance names no saved
+    /// value; it is never generated anew or read as absence.
+    pub fn check_retained(&self) -> Result<(), DeclarationError> {
+        let (credential, tls) = match self {
+            Self::NativeUdp(_) | Self::NativeTcp(_) => return Ok(()),
+            Self::Vless(v) => (&v.uuid, &v.tls),
+            Self::Trojan(v) => (&v.password, &v.tls),
+        };
+        if [credential, &tls.private_key]
+            .into_iter()
+            .any(|secret| secret.as_ref().is_some_and(ListenerSecret::is_retained))
+        {
+            return Err(DeclarationError::RetainedSecretUnavailable);
+        }
+        Ok(())
+    }
+
+    /// Replace every present credential and private key with the
+    /// `{"retained": true}` marker; certificates are public and stay.
+    pub fn redact_secrets(&mut self) {
+        let (credential, tls) = match self {
+            Self::NativeUdp(_) | Self::NativeTcp(_) => return,
+            Self::Vless(v) => (&mut v.uuid, &mut v.tls),
+            Self::Trojan(v) => (&mut v.password, &mut v.tls),
+        };
+        for secret in [credential, &mut tls.private_key] {
+            if secret.is_some() {
+                *secret = Some(ListenerSecret::Retained);
+            }
+        }
+    }
+
     pub fn normalize(&mut self) -> Result<(), DeclarationError> {
+        self.check_retained()?;
         let endpoints = match self {
             Self::NativeUdp(v) => &mut v.endpoints,
             Self::NativeTcp(v) => {
@@ -164,7 +201,7 @@ impl Listener {
                 if !v.flow.is_empty() {
                     return Err(DeclarationError::VlessFlow);
                 }
-                if let Some(uuid) = &v.uuid {
+                if let Some(uuid) = v.uuid.as_ref().and_then(ListenerSecret::value) {
                     validate_vless_uuid(uuid.expose())?;
                 }
                 match v.stream {
@@ -186,7 +223,11 @@ impl Listener {
             Self::Trojan(v) => {
                 tcp(&v.tcp)?;
                 listener_tls(&mut v.tls)?;
-                if v.password.as_ref().is_some_and(|s| s.expose().is_empty()) {
+                if v.password
+                    .as_ref()
+                    .and_then(ListenerSecret::value)
+                    .is_some_and(|s| s.expose().is_empty())
+                {
                     return Err(DeclarationError::EmptyTrojanPassword);
                 }
                 &mut v.endpoints

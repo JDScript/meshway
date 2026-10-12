@@ -26,7 +26,7 @@ Trojan TCP CONNECT over TLS 监听配置。执行按 Server 允许协议与节�
 | --- | --- | --- | --- |
 | `type` | literal | 必填 | `trojan` |
 | `stream` | literal | `"tcp"` | 只接受 TCP/TLS，不接受 websocket 等封装 |
-| `password` | 非空字符串 | 平台生成并保存 | 管理员可指定；字节值不做 trim 或大小写归一化 |
+| `password` | 非空字符串或 `{"retained": true}` | 平台生成并保存 | 管理员可指定；字节值不做 trim 或大小写归一化；读取只显示[保留标记](/v2/configuration-reference/editing#secret-retained-marker) |
 | `tls` | [TLS listener](/v2/configuration-reference/shared/tls#listener-structure) | 必填 | 托管目标使用平台材料 |
 
 ## 编译到节点的参数

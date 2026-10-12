@@ -26,7 +26,7 @@ fn material(authority: &CertifiedIssuer<'_, KeyPair>, version: TlsVersion) -> Li
         mode: TlsMode::Provided,
         server_name: NAME.into(),
         certificate: Some(SecretString::new(cert.pem() + &authority.pem())),
-        private_key: Some(SecretString::new(key.serialize_pem())),
+        private_key: Some(SecretString::new(key.serialize_pem()).into()),
         min_version: version,
         max_version: version,
         alpn: vec!["http/1.1".into()],

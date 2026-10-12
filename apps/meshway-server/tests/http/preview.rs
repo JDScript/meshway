@@ -131,18 +131,22 @@ async fn generated_listener_preview_is_read_only_and_matches_real_apply() {
         .await;
         let actual = source(&c, &s, network, owner.token.expose()).await;
         assert_eq!(actual.revision, applied.revision);
-        let declaration =
-            actual.configuration.nodes[&node.node_id].listeners["vless"].declaration();
+        // Generated secrets read as retained markers; the public certificate is shown.
+        let declaration = &actual.configuration.nodes[&node.node_id].listeners["vless"];
         let meshway_configuration::transport::Listener::Vless(vless) = declaration else {
             panic!("VLESS")
         };
-        assert!(uuid::Uuid::parse_str(vless.uuid.as_ref().unwrap().expose()).is_ok());
-        assert!(vless.tls.certificate.is_some() && vless.tls.private_key.is_some());
+        let retained = Some(meshway_configuration::transport::ListenerSecret::Retained);
+        assert_eq!(vless.uuid, retained);
+        assert_eq!(vless.tls.private_key, retained);
+        assert!(vless.tls.certificate.is_some());
         if recreate {
-            assert!(
-                before.configuration.nodes[&node.node_id].listeners["vless"].declaration()
-                    != declaration
-            );
+            let meshway_configuration::transport::Listener::Vless(old) =
+                &before.configuration.nodes[&node.node_id].listeners["vless"]
+            else {
+                panic!("VLESS")
+            };
+            assert_ne!(old.tls.certificate, vless.tls.certificate, "new materials");
         }
         let comparison: ConfigurationComparison = json(
             c.post(net(&s, network, "configuration/compare"))
@@ -193,7 +197,7 @@ async fn generated_listener_preview_is_read_only_and_matches_real_apply() {
         );
     }
     let current = source(&c, &s, network, owner.token.expose()).await;
-    let mut input = meshway_configuration::NetworkConfigurationInput::from(&current.configuration);
+    let mut input = current.configuration.clone();
     input
         .nodes
         .get_mut(&node.node_id)

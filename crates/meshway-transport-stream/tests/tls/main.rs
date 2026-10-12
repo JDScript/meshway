@@ -4,7 +4,7 @@ use std::{
     task::Poll,
 };
 
-use meshway_transport::spec::{SecretString, TlsMode, TlsVersion};
+use meshway_transport::spec::{ListenerSecret, SecretString, TlsMode, TlsVersion};
 use meshway_transport_stream::tls::{Client, Error, Server, verify_listener};
 use rcgen::{CertificateParams, KeyPair};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, duplex};
@@ -16,7 +16,12 @@ use support::{NAME, TrackedStream, authority, client, issued, listener, self_sig
 fn certificate_chain_never_accepts_key_blocks_or_skipped_text_for_dialer_distribution() {
     let original = self_signed();
     let certificate = original.certificate.as_ref().unwrap().expose();
-    let key = original.private_key.as_ref().unwrap().expose();
+    let key = original
+        .private_key
+        .as_ref()
+        .and_then(ListenerSecret::value)
+        .unwrap()
+        .expose();
     for pem in [
         format!("{certificate}{key}"),
         format!("{key}{certificate}"),
@@ -214,9 +219,8 @@ fn wrong_name_key_bad_or_expired_material_is_rejected_before_use() {
     ));
 
     let mut wrong_key = original.clone();
-    wrong_key.private_key = Some(SecretString::new(
-        KeyPair::generate().unwrap().serialize_pem(),
-    ));
+    wrong_key.private_key =
+        Some(SecretString::new(KeyPair::generate().unwrap().serialize_pem()).into());
     assert_eq!(verify_listener(&wrong_key), Err(Error::PrivateKey));
     assert!(matches!(Server::new(&wrong_key), Err(Error::PrivateKey)));
 
@@ -269,7 +273,7 @@ fn material_caps_and_missing_inputs_are_enforced() {
         Err(Error::Certificate)
     ));
     tls = original.clone();
-    tls.private_key = Some(SecretString::new("x".repeat(32 * 1024 + 1)));
+    tls.private_key = Some(SecretString::new("x".repeat(32 * 1024 + 1)).into());
     assert_eq!(verify_listener(&tls), Err(Error::PrivateKey));
     tls = original.clone();
     tls.certificate = Some(SecretString::new(
@@ -377,7 +381,7 @@ async fn cancellation_and_timeout_release_each_injected_stream() {
 #[test]
 fn error_formatting_is_bounded_and_has_no_secret_source() {
     let mut tls = self_signed();
-    tls.private_key = Some(SecretString::new("private-config-sentinel".into()));
+    tls.private_key = Some(SecretString::new("private-config-sentinel".into()).into());
     let error = verify_listener(&tls).unwrap_err();
     assert_eq!(error, Error::PrivateKey);
     assert_eq!(format!("{error:?}"), "PrivateKey");

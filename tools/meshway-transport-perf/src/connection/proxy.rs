@@ -30,7 +30,7 @@ pub(super) async fn open(
         mode: TlsMode::Provided,
         server_name: name.into(),
         certificate: Some(SecretString::new(cert.pem())),
-        private_key: Some(SecretString::new(key.serialize_pem())),
+        private_key: Some(SecretString::new(key.serialize_pem()).into()),
         min_version: TlsVersion::Tls12,
         max_version: TlsVersion::Tls13,
         alpn: alpn.clone(),
@@ -72,7 +72,7 @@ pub(super) async fn open(
                 socket: socket.clone(),
                 tcp: TcpOptions::default(),
                 stream,
-                uuid: Some(uuid.clone()),
+                uuid: Some(uuid.clone().into()),
                 flow: String::new(),
                 tls,
                 websocket: ws.clone(),
@@ -116,7 +116,7 @@ pub(super) async fn open(
                 socket: socket.clone(),
                 tcp: TcpOptions::default(),
                 stream: TrojanStream::Tcp,
-                password: Some(password.clone()),
+                password: Some(password.clone().into()),
                 tls,
             }))?;
             let parameters = DialParameters::Trojan {

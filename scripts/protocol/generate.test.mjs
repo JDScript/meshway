@@ -36,6 +36,7 @@ function fixture() {
         FixtureMap: { type: "object", additionalProperties: { type: "string" }, propertyNames: { type: "string", pattern: "^[a-z_]+$" }, maxProperties: 2 },
         FixtureAlias: { allOf: [ref("FixtureInput")], description: "One referenced schema" },
         FixtureInt32: { type: "integer", format: "int32" },
+        FixtureSecret: { oneOf: [{ type: "string" }, closed({ retained: { type: "boolean", enum: [true] } })] },
       },
     },
     paths: {
@@ -79,6 +80,8 @@ test("generated schemas execute exact UUID, bounds, null, closed union and map c
     assert.equal(schemas.zFixtureOutput.safeParse({ ...valid, ...change }).success, false, JSON.stringify(change));
   }
   assert.equal(schemas.zFixtureOutput.safeParse({ ...valid, optionalNullable: null }).success, true);
+  for (const value of ["key", { retained: true }]) assert.equal(schemas.zFixtureSecret.safeParse(value).success, true, JSON.stringify(value));
+  for (const value of [{ retained: false }, { retained: "true" }, {}, { retained: true, value: "key" }]) assert.equal(schemas.zFixtureSecret.safeParse(value).success, false, JSON.stringify(value));
   assert.equal(schemas.zFixtureOutput.safeParse({ ...valid, time: "2016-12-31t23:59:60z" }).success, true);
   for (const time of ["2024-02-29T12:34:56.123456789+05:30", "2016-12-31T23:59:60Z", "2016-12-31t23:59:60z", "2026-10-03t12:00:00-08:00"]) {
     assert.equal(schemas.zFixtureOutput.safeParse({ ...valid, time }).success, true, time);

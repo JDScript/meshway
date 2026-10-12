@@ -88,9 +88,10 @@ pub(super) async fn revision(
         configuration: (&snapshot.document.configuration).into(),
     }))
 }
-/// Read the complete sensitive JSONC source and canonical configuration.
+/// Read the JSONC source and canonical configuration for full-document editing.
 ///
 /// Requires current Owner or Admin membership in the network; omitting `revision` selects the current source version.
+/// Saved listener credentials and private keys are never returned: both forms show them as `{"retained": true}`, which keeps the saved value when the document is submitted.
 #[utoipa::path(get,path="/api/v1/networks/{networkId}/configuration/source",operation_id="getConfigurationSource",tag="configuration",security(("userSession"=[])),params(("networkId"=NetworkId,Path),ConfigurationRevisionQuery),responses((status=200,body=ConfigurationSourceResponse),(status=400,body=ErrorResponse,description="invalid_request"),(status=401,body=ErrorResponse,description="invalid_session"),(status=403,body=ErrorResponse,description="permission_denied"),(status=404,body=ErrorResponse,description="not_found"),(status=503,body=ErrorResponse,description="service_unavailable")))]
 pub(super) async fn source(
     State(service): State<Configurations>,
@@ -105,7 +106,10 @@ pub(super) async fn source(
         .read(bearer(&headers, id)?, network, query.revision)
         .await
         .map_err(|e| HttpError::domain(id, e))?;
-    Ok(Json(crate::configuration::source_response(&snapshot, id)))
+    Ok(Json(
+        crate::configuration::source_response(&snapshot, id)
+            .map_err(|e| HttpError::domain(id, e))?,
+    ))
 }
 /// Plan one source and target over the current version or a draft.
 ///

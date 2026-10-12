@@ -295,8 +295,7 @@ impl Server {
             200,
         )
         .await;
-        let mut input =
-            meshway_configuration::NetworkConfigurationInput::from(&source.configuration);
+        let mut input = source.configuration.clone();
         edit(&mut input);
         let _: ConfigurationAppliedResponse = json(
             self.post(

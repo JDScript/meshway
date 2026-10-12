@@ -65,7 +65,7 @@ async fn startup_scheduler_updates_backs_off_persists_and_cancels_its_tls_socket
     let token = owner.token.expose();
     let network = s.create(token).await.id;
     let current = s.source(token, network).await;
-    let mut input = NetworkConfigurationInput::from(&current.configuration);
+    let mut input = current.configuration.clone();
     let mut definition = remote.definition();
     if let RuleSet::Remote {
         update_interval, ..
@@ -192,7 +192,7 @@ async fn download_races_recheck_source_role_and_scope_and_do_not_hold_sqlite() {
     )
     .await;
     let source = s.source(token, network).await;
-    let mut input = NetworkConfigurationInput::from(&source.configuration);
+    let mut input = source.configuration.clone();
     input.rule_sets.insert("remote".into(), remote.definition());
     s.apply(token, network, source.revision, &input).await;
     let first = s.refresh(token, network).await.artifact.unwrap().id;
@@ -243,7 +243,7 @@ async fn download_races_recheck_source_role_and_scope_and_do_not_hold_sqlite() {
     remote.entered.notified().await;
     // This normal configuration request completes while DNS/download is paused.
     let source = s.source(token, network).await;
-    let mut input = NetworkConfigurationInput::from(&source.configuration);
+    let mut input = source.configuration.clone();
     if let RuleSet::Remote { url, .. } = input.rule_sets.get_mut("remote").unwrap() {
         *url = remote.url("/changed");
     }
@@ -379,7 +379,7 @@ async fn download_races_recheck_source_role_and_scope_and_do_not_hold_sqlite() {
     // the new version does not pretend the set was never checked.
     let failed = s.view(token, network).await;
     let current = s.source(token, network).await;
-    let mut input = NetworkConfigurationInput::from(&current.configuration);
+    let mut input = current.configuration.clone();
     input.tags_owners.insert("tag:later".into(), vec![]);
     s.apply(token, network, current.revision, &input).await;
     let carried = s.view(token, network).await;

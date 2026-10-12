@@ -8,7 +8,6 @@ use crate::{
     request,
     signals::{Role, Signal, Signals},
 };
-use meshway_configuration::NetworkConfigurationInput;
 use meshway_control_client::{Client, DeleteNodePath};
 use meshway_model::{NetworkId, NodeId, Revision};
 use std::{collections::BTreeMap, time::Duration};
@@ -191,7 +190,7 @@ async fn revoke(context: &Context<'_>) -> Result<()> {
         ..
     } = context;
     let original = source(client, *network, token).await?;
-    let allowed = NetworkConfigurationInput::from(&original.configuration);
+    let allowed = original.configuration.clone();
     let mut denied = allowed.clone();
     let rule = denied
         .access

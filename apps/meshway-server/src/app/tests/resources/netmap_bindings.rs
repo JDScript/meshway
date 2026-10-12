@@ -11,7 +11,7 @@ async fn refreshed_rule_set_bindings_are_read_without_any_publication() {
     let token = owner.token.expose();
     let network = s.create(token).await.id;
     let source = s.source(token, network).await;
-    let mut input = NetworkConfigurationInput::from(&source.configuration);
+    let mut input = source.configuration.clone();
     input.tags_owners.insert("tag:test".into(), vec![]);
     input.rule_sets.insert("remote".into(), remote.definition());
     // A rule matching on the set: only referenced sets reach a netmap.

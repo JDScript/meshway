@@ -36,7 +36,7 @@
 | `mode` | listener | `"managed"` | managed 由平台生成；provided 使用管理员提交的证书／私钥 |
 | `serverName` | listener | 必填 | 配置的 TLS 名称，决定证书 SAN 及目标拨号验证名 |
 | `certificate` | listener | provided 输入必填；managed 首次省略时生成 | PEM 证书链，叶证书在前；规范化版本保存完整值 |
-| `privateKey` | listener | provided 输入必填；managed 首次省略时生成 | 匹配的 PEM 私钥；规范化版本加密保存完整值 |
+| `privateKey` | listener | provided 输入必填；managed 首次省略时生成 | 匹配的 PEM 私钥；规范化版本加密保存完整值，读取只显示[保留标记](/v2/configuration-reference/editing#secret-retained-marker) `{"retained": true}` |
 | `trust` | dialer | `"managed"` | 使用 Server 为目标绑定的材料、信任根与指纹 |
 | `minVersion` / `maxVersion` | 两侧 | `"1.2"` / `"1.3"` | 仅这两个版本，min 不大于 max |
 | `alpn` | 两侧 | `[]` | 有序协议名；WS 只允许兼容 HTTP/1.1 的协商 |

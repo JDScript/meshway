@@ -15,7 +15,7 @@
 
 公开摘要可进入普通查询缓存；含秘密的完整配置／JSONC 只在编辑上下文内存中保存，不放通用 query cache 或 LocalStorage。跨页面保留不等于跨刷新持久保存秘密；涉及退出／重载时保留草稿提示与身份隔离。
 
-JSONC 提交整份文档；表单通过 ops 轻量编辑，秘密字段默认“保持”或写新值。日常表单不读取旧秘密，完整秘密读取仅经 configuration/source。
+JSONC 提交整份文档；表单通过 ops 轻量编辑，秘密字段默认“保持”或写新值。任何读取都不返回已保存的 listener 秘密；整份编辑入口 configuration/source 以[保留标记](#secret-retained-marker)表示它们。
 
 账户、成员、加入链接、接入密钥、诊断任务等有独立生命周期的动作不加入配置草稿。显式节点删除可独立提交，也可以由最终配置差异表达；它推进配置 revision，其他未保存草稿仍按严格 CAS 处理。
 
@@ -56,7 +56,7 @@ JSONC 输入使用 `type: "document"`、expectedRevision、requestId、sourceJso
 
 没有任意 `replace(pointer, JSON)` 操作。NodeSettingsPatch 仅含 hostname、remark、enabled、exitEnabled、dialers 等明确定义字段；不借通用 fields 改身份、凭据或另一张网络。新增 Node 仍由接入流程创建。
 
-ListenerUpdate 使用明确的协议字段与更新语义：已有秘密省略为保持，显式值为修改；首次创建按该协议规则补全／要求必要输入。服务端合成完整 Listener 再校验，不能要求表单提交它未读取的旧私钥，也不能把脱敏占位当值。
+ListenerUpdate 使用明确的协议字段与更新语义：已有秘密省略或写[保留标记](#secret-retained-marker)为保持，显式值为修改；首次创建按该协议规则补全／要求必要输入。服务端合成完整 Listener 再校验，不能要求表单提交它未读取的旧私钥，也不把保留标记当成新值。
 
 普通字段编辑不自动永久吊销旧材料。独立吊销记录中的材料不能通过回滚或复制到另一配置恢复有效。
 
@@ -95,13 +95,27 @@ Console 在最终应用前展示**有效修改数量、前后对照和影响范�
 
 计数对同一基准下的最终差异去重：改同一字段多次只计最终变化；改回原值不计；新增／删除整个对象或数组元素时不再重复计算其所有子字段。数组按下标逐元素比较，变化定位到最深的不同成员（如 `/access/3/dst/1`）；在中间插入一条规则因此会把其后每条下标的变化都列出，完整对照显示顺序。changeCount 与返回的完整变化摘要一致；超出预算明确报限制，不隐瞒剩余变化。
 
-表单的前后对照使用同一基准的非秘密 ConfigurationView 与 validate.preview；秘密字段只显示“保持／修改／将生成”。Node 的设置 GET 也是非秘密视图。完整秘密读取只经 configuration/source 的整份 JSONC 编辑入口。仅注释变化时单独显示，不把它宣传成节点业务配置变化。
+表单的前后对照使用同一基准的非秘密 ConfigurationView 与 validate.preview；秘密字段只显示“保持／修改／将生成”。Node 的设置 GET 也是非秘密视图。整份 JSONC 编辑入口 configuration/source 同样只以保留标记表示 listener 秘密。仅注释变化时单独显示，不把它宣传成节点业务配置变化。
 
 预览不落盘、不分配永久材料、不预留地址、不创建待激活版本。材料准备要求不能作为成功预览的真实材料；应用时重新准备并检查当前权限、依赖和 CAS。提交后读取同 revision 的配置取得最终值，预览失败保留草稿。
 
 规范化由 Rust 配置库完成，Console 不重复实现默认／继承／地址算法。更新同一 listener 时省略的 UUID／password／证书继承当前值；托管（managed）证书只对一个 serverName 签发，改名后不继承而是重新生成，provided 材料则由作者决定保留或替换。首次创建或删除再创建 VLESS／Trojan listener 时，自动材料保持缺失，成功预览的 `credentialPresent`、`certificatePresent`、`privateKeyPresent` 如实为 false，生成计划单独列入 `willGenerate`；证书验证列入 `requirements`。这只是不可执行的声明计划，不使用占位 UUID／证书，也不创建 PreparedListener 或 publication。完整的已提供材料仍须通过密码／证书、名称、密钥一致性和永久吊销检查。
 
 不满足身份、地址或规则集等必要依赖，以及 provided TLS 缺失／无效材料，仍返回校验错误；生成计划不绕过这些检查。apply 在相同基准上重新准备真实材料并执行正常完整验证、CAS 和发布。preview 不写入当前配置／State 缓存，与当前 ConfigurationView 共用字段类型，但 envelope 明确本次预览基准及其非提交性质。
+
+## 秘密保留标记 {#secret-retained-marker}
+
+Server 不把已保存的 listener 秘密交回任何调用方。`GET /configuration/source` 的两种形式都把它们写成同一个标记：
+
+| 字段 | 读取时 | 提交时 |
+| --- | --- | --- |
+| VLESS `uuid`、Trojan `password`、TLS `privateKey` | 已保存 → `{"retained": true}`；未保存 → 省略 | 字符串＝新值（完整校验）；`{"retained": true}`＝保持同一 listener 的已保存值；省略＝继承或生成 |
+| TLS `certificate` | 原值（公开材料，拨号端本就收到） | 字符串＝新值；省略＝继承或生成 |
+
+- `configuration`：完整规范化值的可编辑形式（默认值、已分配地址、证书都显式写出），可原样作为 `sourceJsonc` 提交；提交后规范值不变。
+- `sourceJsonc`：保存的原文，注释与排版不变，只把其中写出的上述秘密值替换为标记。历史 revision 的读取同样替换。WebSocket header 值由作者书写，按原样返回。
+- 标记只指向**当前**同一 listener 资源中可继承的已保存值：listener 不存在或同批删除再创建、协议／`mode` 改变、managed 证书改了 `serverName` 时，没有值可保持，返回 422 `configuration_invalid`（`invalid_transport`，`reason: retained_secret_unavailable`）。标记从不表示“生成新值”，也不表示删除；删除材料即删除 listener。
+- 节点 netmap 与执行输入只含实际值，不出现标记。
 
 ## 冲突
 

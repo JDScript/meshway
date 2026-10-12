@@ -1,6 +1,6 @@
 //! Private assembly only: enrollment, configuration and execution all use the
 //! generated client and production Server/Control implementations.
-use meshway_configuration::{EgressRule, NetworkConfigurationInput, RouteMatch, RuleAction};
+use meshway_configuration::{EgressRule, RouteMatch, RuleAction};
 use meshway_control::Control;
 use meshway_protocol::{ConfigurationRequest, WireSecret};
 use meshway_test_server::{
@@ -65,7 +65,7 @@ impl Server {
             )
             .await
             .unwrap();
-        let mut input = NetworkConfigurationInput::from(&source.configuration);
+        let mut input = source.configuration.clone();
         input.dns.override_local = false;
         input.dns.servers.clear();
         input.dns.default.clear();

@@ -200,8 +200,8 @@ pub struct VlessListenerUpdate {
     #[serde(default)] pub tcp: TcpOptions,
     /// VLESS encapsulation, `tcp` or `websocket`; defaults to `tcp` and both use TLS over TCP.
     #[serde(default = "tcp_stream")] pub stream: VlessStream,
-    /// Protocol UUID; omission retains this resource's saved UUID or generates one initially, while null is rejected.
-    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")] pub uuid: Option<SecretString> [value_type = SecretString],
+    /// Protocol UUID; omission or `{"retained": true}` retains this resource's saved UUID, omission generates one initially, and null is rejected.
+    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")] pub uuid: Option<ListenerSecret> [value_type = ListenerSecret],
     /// VLESS flow; only the default empty string is supported.
     #[serde(default)] pub flow: String,
     /// TLS declaration; omitted materials are retained for the same mode, and managed certificates are regenerated when the server name changes.

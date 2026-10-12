@@ -24,7 +24,7 @@ pub use duration::PositiveDuration;
 pub use error::ValidationError;
 pub use port::Port;
 pub use prepared::{ClientTls, DialParameters};
-pub use secret::SecretString;
+pub use secret::{ListenerSecret, SecretString};
 pub use settings::*;
 pub use tls::{TlsVersion, validate_websocket_alpn};
 pub use validation::{

@@ -127,7 +127,7 @@ pub(super) async fn coordinate(
         .network
         .id;
     let original = source(&client, network, token).await?;
-    let mut input = NetworkConfigurationInput::from(&original.configuration);
+    let mut input = original.configuration.clone();
     input.dns.magic_dns = false;
     input.dns.override_local = false;
     input.dns.servers.clear();
@@ -188,7 +188,7 @@ pub(super) async fn coordinate(
         nodes.insert(role.name(), identity.node_id);
     }
     let original = source(&client, network, token).await?;
-    input = NetworkConfigurationInput::from(&original.configuration);
+    input = original.configuration.clone();
     for role in ExitRole::NODES {
         let node = input
             .nodes

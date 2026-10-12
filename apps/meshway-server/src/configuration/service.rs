@@ -485,14 +485,22 @@ impl Configurations {
     }
 }
 
-pub(crate) fn source_response(snapshot: &Snapshot, id: RequestId) -> ConfigurationSourceResponse {
-    ConfigurationSourceResponse {
+/// The only read of a saved document: listener credentials and private keys
+/// leave the Server only as `{"retained": true}`.
+pub(crate) fn source_response(
+    snapshot: &Snapshot,
+    id: RequestId,
+) -> Result<ConfigurationSourceResponse, Error> {
+    Ok(ConfigurationSourceResponse {
         request_id: id,
         network_id: snapshot.network_id,
         revision: snapshot.revision,
-        source_jsonc: WireSecret::new(snapshot.document.source_jsonc.expose().to_owned()),
-        configuration: snapshot.document.configuration.clone(),
-    }
+        source_jsonc: WireSecret::new(
+            meshway_configuration::redacted_source(snapshot.document.source_jsonc.expose())
+                .map_err(|_| Error::Internal("saved configuration source"))?,
+        ),
+        configuration: meshway_configuration::redacted_document(&snapshot.document.configuration),
+    })
 }
 
 #[cfg(test)]

@@ -12,7 +12,8 @@ use std::{fmt, io, time::Duration};
 use meshway_model::VlessStream;
 use meshway_transport::raw::{CheckedOutput, Stream};
 use meshway_transport::spec::{
-    DialParameters, DialerStream, Endpoint, Listener, PreparedListener, validate_websocket_alpn,
+    DialParameters, DialerStream, Endpoint, Listener, ListenerSecret, PreparedListener,
+    validate_websocket_alpn,
 };
 use tokio::{io::AsyncWriteExt, time::Instant};
 use zeroize::Zeroizing;
@@ -159,7 +160,14 @@ impl Acceptor {
         deadline(timeout)?;
         Ok(Self {
             tls: crate::tls::Server::new(&options.tls)?,
-            uuid: protocol::uuid(options.uuid.as_ref().ok_or(Error::Configuration)?.expose())?,
+            uuid: protocol::uuid(
+                options
+                    .uuid
+                    .as_ref()
+                    .and_then(ListenerSecret::value)
+                    .ok_or(Error::Configuration)?
+                    .expose(),
+            )?,
             websocket,
             timeout,
         })

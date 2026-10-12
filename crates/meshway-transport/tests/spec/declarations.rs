@@ -251,3 +251,55 @@ fn declaration_schema_preserves_objects_and_closed_protocol_options() {
             .is_none()
     );
 }
+
+#[test]
+fn retained_secret_marker_is_exact_and_never_prepared() {
+    let tls = r#""tls":{"serverName":"edge.example","certificate":"certificate fixture","privateKey":{"retained":true}}"#;
+    let mut listener: Listener = serde_json::from_str(&format!(
+        r#"{{"type":"vless","listenPort":443,"uuid":{{"retained":true}},{tls}}}"#
+    ))
+    .unwrap();
+    let Listener::Vless(v) = &listener else {
+        unreachable!()
+    };
+    assert_eq!(v.uuid, Some(ListenerSecret::Retained));
+    assert_eq!(v.tls.private_key, Some(ListenerSecret::Retained));
+    assert_eq!(
+        serde_json::to_value(&listener).unwrap()["tls"]["privateKey"],
+        json!({"retained": true})
+    );
+    assert_eq!(
+        listener.normalize(),
+        Err(DeclarationError::RetainedSecretUnavailable)
+    );
+    assert!(PreparedListener::prepare(listener.clone()).is_err());
+    for marker in [
+        r#"{"retained":false}"#,
+        r#"{"retained":"true"}"#,
+        r#"{}"#,
+        r#"{"retained":true,"value":"x"}"#,
+        r#"{"value":"x"}"#,
+    ] {
+        assert!(
+            serde_json::from_str::<Listener>(&format!(
+                r#"{{"type":"trojan","listenPort":443,"password":{marker},{tls}}}"#
+            ))
+            .is_err(),
+            "{marker}"
+        );
+    }
+    // Redaction replaces present secrets only; the certificate is public.
+    let mut trojan: Listener = serde_json::from_str(r#"{"type":"trojan","listenPort":443,"password":"p","tls":{"serverName":"edge.example","certificate":"c","privateKey":"k"}}"#).unwrap();
+    trojan.redact_secrets();
+    let value = serde_json::to_value(&trojan).unwrap();
+    assert_eq!(value["password"], json!({"retained": true}));
+    assert_eq!(value["tls"]["privateKey"], json!({"retained": true}));
+    assert_eq!(value["tls"]["certificate"], json!("c"));
+    listener = serde_json::from_str(
+        r#"{"type":"vless","listenPort":443,"tls":{"serverName":"edge.example"}}"#,
+    )
+    .unwrap();
+    let before = listener.clone();
+    listener.redact_secrets();
+    assert_eq!(listener, before, "absent secrets stay absent");
+}

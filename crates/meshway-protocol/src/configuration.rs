@@ -3,7 +3,7 @@ use crate::{
     object::{wire_object, wire_tagged},
 };
 use meshway_configuration::{
-    ConfigurationChange, ConfigurationOperation, ConfigurationView, NetworkConfiguration,
+    ConfigurationChange, ConfigurationOperation, ConfigurationView, NetworkConfigurationInput,
 };
 use meshway_model::{NetworkId, NodeId, RequestId, Revision};
 
@@ -86,7 +86,7 @@ pub struct ConfigurationResponse {
     pub configuration:ConfigurationView
 } }
 wire_object! {
-/// Sensitive source and canonical configuration for authorized full-document editing.
+/// Editable source and canonical configuration for authorized full-document editing, with saved listener secrets withheld.
 pub struct ConfigurationSourceResponse {
     /// Correlation identifier for this HTTP request.
     pub request_id:RequestId,
@@ -94,10 +94,10 @@ pub struct ConfigurationSourceResponse {
     pub network_id:NetworkId,
     /// Exact source revision represented by both document forms.
     pub revision:Revision,
-    /// Original JSONC text including comments and secret values.
+    /// Saved JSONC text with comments and layout; listener `uuid`, `password` and `tls.privateKey` values it spells out read `{"retained": true}`. WebSocket header values stay as written.
     pub source_jsonc:WireSecret,
-    /// Complete canonical configuration including fixed defaults and prepared secret material.
-    pub configuration:NetworkConfiguration
+    /// Complete canonical configuration as an editable document: fixed defaults, assigned addresses and certificates explicit, every saved listener `uuid`, `password` and `tls.privateKey` as `{"retained": true}`. Submitted as `sourceJsonc` it keeps those values.
+    pub configuration:NetworkConfigurationInput
 } }
 wire_object! {
 /// One listener affected by a proposed configuration change.

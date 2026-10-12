@@ -2398,7 +2398,7 @@ export const schemaDocument = {
       },
       "ConfigurationSourceResponse": {
         "type": "object",
-        "description": "Sensitive source and canonical configuration for authorized full-document editing.",
+        "description": "Editable source and canonical configuration for authorized full-document editing, with saved listener secrets withheld.",
         "required": [
           "requestId",
           "networkId",
@@ -2408,8 +2408,8 @@ export const schemaDocument = {
         ],
         "properties": {
           "configuration": {
-            "$ref": "#/components/schemas/NetworkConfiguration",
-            "description": "Complete canonical configuration including fixed defaults and prepared secret material."
+            "$ref": "#/components/schemas/NetworkConfigurationInput",
+            "description": "Complete canonical configuration as an editable document: fixed defaults, assigned addresses and certificates explicit, every saved listener `uuid`, `password` and `tls.privateKey` as `{\"retained\": true}`. Submitted as `sourceJsonc` it keeps those values."
           },
           "networkId": {
             "$ref": "#/components/schemas/NetworkId",
@@ -2425,7 +2425,7 @@ export const schemaDocument = {
           },
           "sourceJsonc": {
             "$ref": "#/components/schemas/WireSecret",
-            "description": "Original JSONC text including comments and secret values."
+            "description": "Saved JSONC text with comments and layout; listener `uuid`, `password` and `tls.privateKey` values it spells out read `{\"retained\": true}`. WebSocket header values stay as written."
           }
         },
         "additionalProperties": false
@@ -6903,8 +6903,8 @@ export const schemaDocument = {
                 ]
               },
               "uuid": {
-                "$ref": "#/components/schemas/SecretString",
-                "description": "Hyphenated UUID credential with case-insensitive hexadecimal digits; omission makes the Server generate or retain saved material, while null is rejected."
+                "$ref": "#/components/schemas/ListenerSecret",
+                "description": "Hyphenated UUID credential with case-insensitive hexadecimal digits; omission makes the Server generate or retain saved material, while null is rejected. Reads show a saved UUID as `{\"retained\": true}`, which keeps it when submitted."
               },
               "websocket": {
                 "$ref": "#/components/schemas/ListenerWebSocket",
@@ -6946,8 +6946,8 @@ export const schemaDocument = {
                 "description": "Required local listening port in the range 1–65535."
               },
               "password": {
-                "$ref": "#/components/schemas/SecretString",
-                "description": "Nonempty password preserved without trimming or case normalization; omission makes the Server generate or retain saved material, while null is rejected."
+                "$ref": "#/components/schemas/ListenerSecret",
+                "description": "Nonempty password preserved without trimming or case normalization; omission makes the Server generate or retain saved material, while null is rejected. Reads show a saved password as `{\"retained\": true}`, which keeps it when submitted."
               },
               "remark": {
                 "type": "string",
@@ -6979,7 +6979,7 @@ export const schemaDocument = {
             "additionalProperties": false
           }
         ],
-        "description": "An inbound listener as declared: `type` selects the carrier; credential and TLS materials may be omitted for the Server to generate."
+        "description": "An inbound listener as declared: `type` selects the carrier; credential and TLS materials may be omitted for the Server to generate, and a `{\"retained\": true}` secret keeps the saved value."
       },
       "ListenerChange": {
         "type": "object",
@@ -7014,6 +7014,29 @@ export const schemaDocument = {
           "stopped",
           "failed"
         ]
+      },
+      "ListenerSecret": {
+        "oneOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "object",
+            "required": [
+              "retained"
+            ],
+            "properties": {
+              "retained": {
+                "type": "boolean",
+                "enum": [
+                  true
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        ],
+        "description": "The secret value, or `{\"retained\": true}`: a saved value withheld by a read, which keeps the same listener's saved value when submitted."
       },
       "ListenerState": {
         "type": "object",
@@ -7105,8 +7128,8 @@ export const schemaDocument = {
             "description": "Certificate-material source; defaults to `managed`, while `provided` requires both certificate and private key."
           },
           "privateKey": {
-            "$ref": "#/components/schemas/SecretString",
-            "description": "Nonempty matching PEM private key; required in provided mode, otherwise omission generates or retains saved material and null is rejected."
+            "$ref": "#/components/schemas/ListenerSecret",
+            "description": "Nonempty matching PEM private key; required in provided mode, otherwise omission generates or retains saved material and null is rejected. Reads show a saved key as `{\"retained\": true}`, which keeps it when submitted."
           },
           "serverName": {
             "type": "string",
@@ -7332,8 +7355,8 @@ export const schemaDocument = {
                 ]
               },
               "uuid": {
-                "$ref": "#/components/schemas/SecretString",
-                "description": "Protocol UUID; omission retains this resource's saved UUID or generates one initially, while null is rejected."
+                "$ref": "#/components/schemas/ListenerSecret",
+                "description": "Protocol UUID; omission or `{\"retained\": true}` retains this resource's saved UUID, omission generates one initially, and null is rejected."
               },
               "websocket": {
                 "oneOf": [
@@ -7382,8 +7405,8 @@ export const schemaDocument = {
                 "description": "Required local listening port in the range 1–65535."
               },
               "password": {
-                "$ref": "#/components/schemas/SecretString",
-                "description": "Nonempty password preserved without trimming or case normalization; omission makes the Server generate or retain saved material, while null is rejected."
+                "$ref": "#/components/schemas/ListenerSecret",
+                "description": "Nonempty password preserved without trimming or case normalization; omission makes the Server generate or retain saved material, while null is rejected. Reads show a saved password as `{\"retained\": true}`, which keeps it when submitted."
               },
               "remark": {
                 "type": "string",
@@ -8842,11 +8865,10 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
-      "NetworkConfiguration": {
+      "NetworkConfigurationInput": {
         "type": "object",
-        "description": "Complete canonical network configuration with fixed defaults, addresses and prepared materials.",
+        "description": "Complete editable network document before canonicalization and dependency preparation.",
         "required": [
-          "addressPools",
           "dns"
         ],
         "properties": {
@@ -8858,8 +8880,8 @@ export const schemaDocument = {
             "description": "Additive traffic grants; defaults to an empty list, denying new Mesh business traffic."
           },
           "addressPools": {
-            "$ref": "#/components/schemas/AddressPools",
-            "description": "Network-wide usable Mesh address pools."
+            "$ref": "#/components/schemas/AddressPoolsInput",
+            "description": "Address pool edits; omitted families retain existing pools or require initial preparation."
           },
           "defaults": {
             "$ref": "#/components/schemas/Defaults",
@@ -8884,9 +8906,9 @@ export const schemaDocument = {
           },
           "nodes": {
             "type": "object",
-            "description": "Registered node IDs mapped to canonical settings; adding a key does not enroll a node.",
+            "description": "Registered node IDs mapped to desired settings; removing an existing node permanently deletes it on apply.",
             "additionalProperties": {
-              "$ref": "#/components/schemas/NodeSettings"
+              "$ref": "#/components/schemas/NodeSettingsInput"
             },
             "propertyNames": {
               "type": "string",
@@ -8903,7 +8925,7 @@ export const schemaDocument = {
           },
           "ruleSets": {
             "type": "object",
-            "description": "Named inline or remote destination sets referenced by routing rules; defaults to an empty map.",
+            "description": "Named inline or remote destination sets; defaults to an empty map, with referenced remote contents prepared before apply.",
             "additionalProperties": {
               "$ref": "#/components/schemas/RuleSet"
             },
@@ -9977,18 +9999,17 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
-      "NodeSettings": {
+      "NodeSettingsInput": {
         "type": "object",
-        "description": "Canonical settings for a registered node, including prepared listener materials.",
+        "description": "Editable settings for an already registered node, before address and material preparation.",
         "required": [
           "hostname",
-          "identity",
-          "addresses"
+          "identity"
         ],
         "properties": {
           "addresses": {
-            "$ref": "#/components/schemas/NodeAddresses",
-            "description": "Desired Mesh addresses bound to the same configuration version as identity and DNS."
+            "$ref": "#/components/schemas/NodeAddressesInput",
+            "description": "Per-family desired addresses; omitted families retain existing assignments or request initial allocation."
           },
           "dialers": {
             "$ref": "#/components/schemas/DialerSet",
@@ -9996,7 +10017,7 @@ export const schemaDocument = {
           },
           "enabled": {
             "type": "boolean",
-            "description": "Enable business execution; defaults to true, while false still permits authenticated configuration synchronization."
+            "description": "Enable business execution; defaults to true, while false retains authenticated configuration synchronization."
           },
           "exitEnabled": {
             "type": "boolean",
@@ -10004,17 +10025,17 @@ export const schemaDocument = {
           },
           "hostname": {
             "type": "string",
-            "description": "Network-unique DNS label of 1–63 lowercase letters, digits or interior hyphens."
+            "description": "Network-unique DNS label of 1–63 letters, digits or interior hyphens, normalized to lowercase."
           },
           "identity": {
             "$ref": "#/components/schemas/NodeIdentity",
-            "description": "Authoritative user or tag identity for policy matching."
+            "description": "Requested user or tag identity; identity transitions require current authorization and any required device proof."
           },
           "listeners": {
             "type": "object",
-            "description": "Fixed inbound resources keyed by a nonempty node-local name; defaults to an empty map.",
+            "description": "Fixed inbound declarations keyed by a nonempty node-local name; omitted automatic materials are retained or initially generated.",
             "additionalProperties": {
-              "$ref": "#/components/schemas/PreparedListener"
+              "$ref": "#/components/schemas/Listener"
             },
             "propertyNames": {
               "type": "string"
@@ -11940,8 +11961,8 @@ export const schemaDocument = {
                     "description": "Certificate-material source; defaults to `managed`, while `provided` requires both certificate and private key."
                   },
                   "privateKey": {
-                    "$ref": "#/components/schemas/SecretString",
-                    "description": "Nonempty matching PEM private key; required in provided mode, otherwise omission generates or retains saved material and null is rejected."
+                    "type": "string",
+                    "description": "Serialization is secret-bearing and requires protected storage."
                   },
                   "serverName": {
                     "type": "string",
@@ -11957,8 +11978,8 @@ export const schemaDocument = {
                 ]
               },
               "uuid": {
-                "$ref": "#/components/schemas/SecretString",
-                "description": "Hyphenated UUID credential with case-insensitive hexadecimal digits; omission makes the Server generate or retain saved material, while null is rejected."
+                "type": "string",
+                "description": "Serialization is secret-bearing and requires protected storage."
               },
               "websocket": {
                 "$ref": "#/components/schemas/ListenerWebSocket",
@@ -12001,8 +12022,8 @@ export const schemaDocument = {
                 "description": "Required local listening port in the range 1–65535."
               },
               "password": {
-                "$ref": "#/components/schemas/SecretString",
-                "description": "Nonempty password preserved without trimming or case normalization; omission makes the Server generate or retain saved material, while null is rejected."
+                "type": "string",
+                "description": "Serialization is secret-bearing and requires protected storage."
               },
               "remark": {
                 "type": "string",
@@ -12057,8 +12078,8 @@ export const schemaDocument = {
                     "description": "Certificate-material source; defaults to `managed`, while `provided` requires both certificate and private key."
                   },
                   "privateKey": {
-                    "$ref": "#/components/schemas/SecretString",
-                    "description": "Nonempty matching PEM private key; required in provided mode, otherwise omission generates or retains saved material and null is rejected."
+                    "type": "string",
+                    "description": "Serialization is secret-bearing and requires protected storage."
                   },
                   "serverName": {
                     "type": "string",
@@ -12077,7 +12098,7 @@ export const schemaDocument = {
             "additionalProperties": false
           }
         ],
-        "description": "An inbound listener as saved: `type` selects the carrier, and credential and TLS materials are complete. Returned by configuration reads."
+        "description": "An inbound listener as saved: `type` selects the carrier, and credential and TLS materials are complete values."
       },
       "PreparedRuleSet": {
         "type": "object",
@@ -15902,8 +15923,8 @@ export const schemaDocument = {
             "description": "Required local listening port in the range 1–65535."
           },
           "password": {
-            "$ref": "#/components/schemas/SecretString",
-            "description": "Nonempty password preserved without trimming or case normalization; omission makes the Server generate or retain saved material, while null is rejected."
+            "$ref": "#/components/schemas/ListenerSecret",
+            "description": "Nonempty password preserved without trimming or case normalization; omission makes the Server generate or retain saved material, while null is rejected. Reads show a saved password as `{\"retained\": true}`, which keeps it when submitted."
           },
           "remark": {
             "type": "string",
@@ -17150,8 +17171,8 @@ export const schemaDocument = {
             "description": "Required TLS server settings, including the certificate verification name and material source."
           },
           "uuid": {
-            "$ref": "#/components/schemas/SecretString",
-            "description": "Hyphenated UUID credential with case-insensitive hexadecimal digits; omission makes the Server generate or retain saved material, while null is rejected."
+            "$ref": "#/components/schemas/ListenerSecret",
+            "description": "Hyphenated UUID credential with case-insensitive hexadecimal digits; omission makes the Server generate or retain saved material, while null is rejected. Reads show a saved UUID as `{\"retained\": true}`, which keeps it when submitted."
           },
           "websocket": {
             "$ref": "#/components/schemas/ListenerWebSocket",
@@ -17216,8 +17237,8 @@ export const schemaDocument = {
             "description": "TLS declaration; omitted materials are retained for the same mode, and managed certificates are regenerated when the server name changes."
           },
           "uuid": {
-            "$ref": "#/components/schemas/SecretString",
-            "description": "Protocol UUID; omission retains this resource's saved UUID or generates one initially, while null is rejected."
+            "$ref": "#/components/schemas/ListenerSecret",
+            "description": "Protocol UUID; omission or `{\"retained\": true}` retains this resource's saved UUID, omission generates one initially, and null is rejected."
           },
           "websocket": {
             "oneOf": [

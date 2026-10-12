@@ -270,8 +270,7 @@ async fn defaults_replay_preserves_other_admin_changes_and_reports_precise_confl
     let op: meshway_configuration::ConfigurationOperation =
         serde_json::from_str(r#"{"type":"replaceDefaults","defaults":{"topology":"deny"}}"#)
             .unwrap();
-    let mut concurrent =
-        meshway_configuration::NetworkConfigurationInput::from(&initial.configuration);
+    let mut concurrent = initial.configuration.clone();
     concurrent.defaults.dialers.vless.as_mut().unwrap().remark = "concurrent".into();
     concurrent
         .defaults

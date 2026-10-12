@@ -12,7 +12,7 @@ async fn nonsecret_defaults_edit_keeps_and_explicitly_clears_websocket_headers()
         .network
         .id;
     let initial = source(&c, &s, n, owner.token.expose()).await;
-    let mut input = meshway_configuration::NetworkConfigurationInput::from(&initial.configuration);
+    let mut input = initial.configuration.clone();
     input.defaults.dialers.vless.as_mut().unwrap().websocket =
         Some(serde_json::from_str(r#"{"headers":{"Authorization":"private value"}}"#).unwrap());
     c.post(net(&s, n, "configuration"))

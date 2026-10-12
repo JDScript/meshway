@@ -3,7 +3,7 @@ use crate::{
     signals::{Role, Signal, Signals},
     tls,
 };
-use meshway_configuration::{AccessRule, MeshRoute, NetworkConfigurationInput};
+use meshway_configuration::{AccessRule, MeshRoute};
 use meshway_control_client::{
     ApplyConfigurationPath, ApproveDeviceAuthorizationPath, Client, GetConfigurationSourcePath,
     GetConfigurationSourceQuery, GetDeviceAuthorizationPath, ListNodesPath,
@@ -170,7 +170,7 @@ async fn coordinate(cli: &Cli) -> Result<()> {
             session.token.expose(),
         )
         .await?;
-    let mut input = NetworkConfigurationInput::from(&source.configuration);
+    let mut input = source.configuration.clone();
     for role in Role::ALL {
         let node = input
             .nodes

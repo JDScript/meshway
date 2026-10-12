@@ -16,13 +16,13 @@ async fn exact_names_in_remote_lists_bind_under_an_internet_grant() {
     let token = owner.token.expose();
     let network = s.create(token).await.id;
     let current = s.source(token, network).await;
-    let mut input = NetworkConfigurationInput::from(&current.configuration);
+    let mut input = current.configuration.clone();
     input.tags_owners.insert("tag:test".into(), vec![]);
     s.apply(token, network, current.revision, &input).await;
     let (_, _, _) = enroll(&s, token, network, 51).await;
     let (b, _, _) = enroll(&s, token, network, 52).await;
     let current = s.source(token, network).await;
-    let mut input = NetworkConfigurationInput::from(&current.configuration);
+    let mut input = current.configuration.clone();
     input.rule_sets.insert(
         "remote".into(),
         serde_json::from_str(&format!(

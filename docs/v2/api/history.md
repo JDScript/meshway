@@ -10,7 +10,7 @@
 | --- | --- | --- |
 | `GET /configuration/revisions` | cursor、limit | 固定上界的版本摘要列表 |
 | `GET /configuration/revisions/{revision}` | revision | ConfigurationResponse：networkId、revision 与非秘密 ConfigurationView |
-| `GET /configuration/source` | 可选 revision，省略为当前 | 获准管理员读取原始 JSONC／完整规范化值及必要材料，no-store |
+| `GET /configuration/source` | 可选 revision，省略为当前 | 获准管理员读取 JSONC 原文与完整规范化值的可编辑形式，listener 秘密只以[保留标记](/v2/configuration-reference/editing#secret-retained-marker)出现，no-store |
 | `POST /configuration/compare` | fromRevision、toRevision | 字段路径级变化摘要，区分语义／原文／绑定变化 |
 | `POST /configuration` | expectedRevision＋新草稿，或 restoreFrom 历史引用 | 按普通 apply 保存新版本，返回 revision／publication 引用 |
 
@@ -48,7 +48,7 @@ cause 表示主触发来源，具体影响由 compare 的 changes 表达。系�
 | `bindingsChanged` | 固定用户／资源／数据集绑定是否改变 |
 | `changes` | 合法字段路径的变化摘要 |
 
-ConfigurationChange 包含 `path`（JSON Pointer）与 `kind`（added／removed／changed）。有序数组重排按数组变化说明，不凭 remark 当主键；秘密字段只报告“已变更”，不把密码或私钥写进差异摘要。完整文本 diff 由获准管理员显式读取两个 source 后查看，脱敏视图不能整份回写。
+ConfigurationChange 包含 `path`（JSON Pointer）与 `kind`（added／removed／changed）。有序数组重排按数组变化说明，不凭 remark 当主键；秘密字段只报告“已变更”，不把密码或私钥写进差异摘要。完整文本 diff 由获准管理员显式读取两个 source 后查看；source 中的保留标记回写时保持当前已保存值，ConfigurationView 不能整份回写。
 
 ## 操作历史接口
 

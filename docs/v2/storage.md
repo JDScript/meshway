@@ -66,4 +66,4 @@ Server 识别 `meshway-demand-1` 至 `meshway-demand-6` 为过时派生缓存；
 | Console | 身份／网络隔离的缓存和草稿；秘密 source 仅在编辑上下文内存中 |
 | 日志与临时产物 | 脱敏、有大小和保留边界，不作配置／观测数据库 |
 
-Node 身份私钥与协议 UUID／password 用途不同。短期加密重交付只适用于有明确生命周期的接入结果，不把普通凭据摘要包装成可恢复秘密。
+listener UUID／password／TLS 私钥只以认证加密保存在配置历史中，只下发给需要它的节点执行输入；任何 HTTP 读取（含 configuration/source 与历史 revision）只返回[保留标记](/v2/configuration-reference/editing#secret-retained-marker)。Node 身份私钥与协议 UUID／password 用途不同。短期加密重交付只适用于有明确生命周期的接入结果，不把普通凭据摘要包装成可恢复秘密。

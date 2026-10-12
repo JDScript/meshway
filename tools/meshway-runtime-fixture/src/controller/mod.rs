@@ -377,7 +377,7 @@ async fn coordinate(
     // Commit the supported network policy before approving any daemon. In
     // particular the first downloaded configuration already has the selected DNS policy.
     let original = source(&client, network, token).await?;
-    let mut input = NetworkConfigurationInput::from(&original.configuration);
+    let mut input = original.configuration.clone();
     input.address_pools.ipv4 = Input::Value(vec!["100.64.0.0/10".into()]);
     input.address_pools.ipv6 = Input::Value(vec!["fc00::/64".into()]);
     input.dns.magic_dns = cli.dns_backend.enabled();
@@ -505,7 +505,7 @@ async fn coordinate(
         return Err("unexpected registered inventory".into());
     }
     let original = source(&client, network, token).await?;
-    input = NetworkConfigurationInput::from(&original.configuration);
+    input = original.configuration.clone();
     for role in Role::ALL {
         let node = input
             .nodes
@@ -715,7 +715,7 @@ async fn coordinate(
             }
         }
         if cli.reported_endpoints && !node.listeners.values().all(|listener|
-            matches!(listener.declaration(), Listener::NativeUdp(listener) if listener.endpoints.is_empty())) {
+            matches!(listener, Listener::NativeUdp(listener) if listener.endpoints.is_empty())) {
             return Err("reported-only fixture must not configure an endpoint".into());
         }
         let extra_tcp =
@@ -723,18 +723,18 @@ async fn coordinate(
         if cli.traversal == crate::TraversalMode::Nat
             && (node.listeners.len() != if extra_tcp { 2 } else { 1 }
                 || !node.listeners.iter().all(|(key, listener)| {
-                    matches!(listener.declaration(),
+                    matches!(listener,
                     Listener::NativeUdp(listener) if listener.enabled
                         && listener.listen == std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)
                         && listener.listen_port.get() == 35000
                         && listener.endpoints.is_empty())
                     || (cli.on_demand_nat() && role == Role::A && key == "reverse-tcp"
-                        && matches!(listener.declaration(), Listener::NativeTcp(listener)
+                        && matches!(listener, Listener::NativeTcp(listener)
                             if listener.enabled && listener.listen_port.get() == 35001
                                 && listener.listen == std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)
                                 && listener.endpoints.is_empty()))
                     || (cli.traversal_fallback && role == Role::R && key == "fallback-tcp"
-                        && matches!(listener.declaration(), Listener::NativeTcp(listener)
+                        && matches!(listener, Listener::NativeTcp(listener)
                             if listener.enabled && listener.listen_port.get() == 35001
                                 && listener.listen == std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)
                                 && listener.endpoints == vec![Endpoint { host: underlay.routers[&Role::R].wan.to_string(), port: 35001.try_into().expect("fixed port") }]))
@@ -747,8 +747,14 @@ async fn coordinate(
         addresses.insert(
             role,
             Addresses {
-                ipv4: node.addresses.ipv4.ok_or("missing IPv4")?,
-                ipv6: node.addresses.ipv6.ok_or("missing IPv6")?,
+                ipv4: match node.addresses.ipv4 {
+                    Input::Value(Some(address)) => address,
+                    _ => return Err("missing IPv4".into()),
+                },
+                ipv6: match node.addresses.ipv6 {
+                    Input::Value(Some(address)) => address,
+                    _ => return Err("missing IPv6".into()),
+                },
             },
         );
     }
@@ -879,7 +885,7 @@ async fn coordinate(
         .await;
     }
     let original = source(&client, network, token).await?;
-    let mut allowed = NetworkConfigurationInput::from(&original.configuration);
+    let mut allowed = original.configuration.clone();
     // Isolate ICMP revocation from the later relay address change: changing a
     // Node's addresses intentionally invalidates its execution continuity.
     let mut business_only = allowed.clone();

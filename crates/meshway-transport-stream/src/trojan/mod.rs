@@ -7,7 +7,9 @@ mod protocol;
 use std::{fmt, io, time::Duration};
 
 use meshway_transport::raw::{CheckedOutput, Stream};
-use meshway_transport::spec::{DialParameters, Endpoint, Listener, PreparedListener, TrojanStream};
+use meshway_transport::spec::{
+    DialParameters, Endpoint, Listener, ListenerSecret, PreparedListener, TrojanStream,
+};
 use tokio::{io::AsyncWriteExt, time::Instant};
 use zeroize::Zeroizing;
 
@@ -108,6 +110,7 @@ impl Acceptor {
                 options
                     .password
                     .as_ref()
+                    .and_then(ListenerSecret::value)
                     .ok_or(Error::Configuration)?
                     .expose(),
             )?,

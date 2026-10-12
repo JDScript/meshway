@@ -15,9 +15,12 @@ pub(super) async fn listener(cli: &Cli, host: String) -> Result<Listener> {
         certificate: Some(SecretString::new(
             tokio::fs::read_to_string(cli.public.join("carrier/server.pem")).await?,
         )),
-        private_key: Some(SecretString::new(
-            tokio::fs::read_to_string(cli.private.join("carrier/server.key")).await?,
-        )),
+        private_key: Some(
+            SecretString::new(
+                tokio::fs::read_to_string(cli.private.join("carrier/server.key")).await?,
+            )
+            .into(),
+        ),
         min_version: TlsVersion::Tls12,
         max_version: TlsVersion::Tls13,
         alpn: vec![],

@@ -98,3 +98,5 @@ mod delegation;
 mod identity;
 
 mod members;
+
+mod secrets;

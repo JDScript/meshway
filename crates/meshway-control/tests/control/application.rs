@@ -96,7 +96,7 @@ async fn configure(
         )
         .await
         .unwrap();
-    let mut input = NetworkConfigurationInput::from(&source.configuration);
+    let mut input = source.configuration.clone();
     edit(&mut input);
     server
         .client

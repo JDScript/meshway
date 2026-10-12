@@ -646,6 +646,7 @@
   "configuration_transport_material_required": "the listener's material is not prepared yet",
   "configuration_transport_local_address": "the local address must be an IP or empty",
   "configuration_transport_repeated_transport": "Transport listed more than once in this rule",
+  "configuration_transport_retained_secret_unavailable": "the retained marker has no saved value to keep here; write the value",
   "configuration_change_unread": "Could not read this version",
   "configuration_history_count_more": "{count} read, earlier ones not yet"
 }

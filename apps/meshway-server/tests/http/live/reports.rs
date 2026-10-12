@@ -170,7 +170,7 @@ async fn production_reports_snapshots_delta_replay_permissions_and_shutdown() {
     let (node, node_token, lease) = enroll(&c, &s, network, member.token.expose(), 5).await;
     let owner_node = enroll(&c, &s, network, owner.token.expose(), 6).await.0;
     let before = source(&c, &s, network, owner.token.expose()).await;
-    let mut input = meshway_configuration::NetworkConfigurationInput::from(&before.configuration);
+    let mut input = before.configuration.clone();
     input
         .groups
         .insert("group:private".into(), vec![owner.user.email.clone()]);

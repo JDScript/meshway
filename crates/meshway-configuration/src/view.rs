@@ -311,3 +311,33 @@ impl From<&NodeSettings> for NodeSettingsView {
         }
     }
 }
+
+/// The complete normalized configuration as an editable document: defaults
+/// and assigned addresses explicit, every saved listener credential and
+/// private key shown as `{"retained": true}`. Submitting it keeps them.
+pub fn redacted_document(configuration: &NetworkConfiguration) -> NetworkConfigurationInput {
+    let mut document = NetworkConfigurationInput::from(configuration);
+    for node in document.nodes.values_mut() {
+        for listener in node.listeners.values_mut() {
+            listener.redact_secrets();
+        }
+    }
+    document
+}
+
+/// The saved JSONC text with every listener credential and private key it
+/// spells out replaced by `{"retained": true}`; comments and the rest of the
+/// text are unchanged.
+pub fn redacted_source(source: &str) -> Result<String, ConfigurationError> {
+    let before = parse_jsonc(source)?;
+    let mut after = before.clone();
+    for node in after.nodes.values_mut() {
+        for listener in node.listeners.values_mut() {
+            listener.redact_secrets();
+        }
+    }
+    if after == before {
+        return Ok(source.to_owned());
+    }
+    rewrite_source(source, &before, &after)
+}

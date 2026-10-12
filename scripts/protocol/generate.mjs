@@ -254,7 +254,11 @@ export function validators(document) {
         return `z.preprocess(unwrapJsonNumber, ${code})`;
       }
       case "boolean":
-        keys(schema, ["type"]);
+        keys(schema, ["type", "enum"]);
+        if (schema.enum !== undefined) {
+          if (!Array.isArray(schema.enum) || schema.enum.length !== 1 || typeof schema.enum[0] !== "boolean") throw new Error("Only single boolean literals are supported");
+          return `z.literal(${schema.enum[0]})`;
+        }
         return "z.boolean()";
       case "null":
         keys(schema, ["type"]);

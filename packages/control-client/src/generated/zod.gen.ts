@@ -1054,11 +1054,11 @@ export const zPreparedListener = z.union([z.strictObject({
   ["maxVersion"]: zTlsVersion.exactOptional(),
   ["minVersion"]: zTlsVersion.exactOptional(),
   ["mode"]: zTlsMode.exactOptional(),
-  ["privateKey"]: zSecretString,
+  ["privateKey"]: z.string(),
   ["serverName"]: z.string()
 }),
   ["type"]: z.enum(["vless"]),
-  ["uuid"]: zSecretString,
+  ["uuid"]: z.string(),
   ["websocket"]: zListenerWebSocket.exactOptional()
 }), z.strictObject({
   ["bindInterface"]: z.string().exactOptional(),
@@ -1066,7 +1066,7 @@ export const zPreparedListener = z.union([z.strictObject({
   ["endpoints"]: z.array(zEndpoint).exactOptional(),
   ["listen"]: z.string().exactOptional(),
   ["listenPort"]: zPort,
-  ["password"]: zSecretString,
+  ["password"]: z.string(),
   ["remark"]: z.string().exactOptional(),
   ["socket"]: zSocketOptions.exactOptional(),
   ["stream"]: zTrojanStream.exactOptional(),
@@ -1078,7 +1078,7 @@ export const zPreparedListener = z.union([z.strictObject({
   ["maxVersion"]: zTlsVersion.exactOptional(),
   ["minVersion"]: zTlsVersion.exactOptional(),
   ["mode"]: zTlsMode.exactOptional(),
-  ["privateKey"]: zSecretString,
+  ["privateKey"]: z.string(),
   ["serverName"]: z.string()
 }),
   ["type"]: z.enum(["trojan"])
@@ -1217,6 +1217,10 @@ export const zNodeSettingsPatch = z.strictObject({
   ["remark"]: z.string().exactOptional()
 });
 
+export const zListenerSecret = z.union([z.string(), z.strictObject({
+  ["retained"]: z.literal(true)
+})]);
+
 export const zListenerTls = z.strictObject({
   ["alpn"]: z.array(z.string()).exactOptional(),
   ["certificate"]: zSecretString.exactOptional(),
@@ -1224,7 +1228,7 @@ export const zListenerTls = z.strictObject({
   ["maxVersion"]: zTlsVersion.exactOptional(),
   ["minVersion"]: zTlsVersion.exactOptional(),
   ["mode"]: zTlsMode.exactOptional(),
-  ["privateKey"]: zSecretString.exactOptional(),
+  ["privateKey"]: zListenerSecret.exactOptional(),
   ["serverName"]: z.string()
 });
 
@@ -1266,7 +1270,7 @@ export const zListenerUpdate = z.union([z.strictObject({
   ["tcp"]: zTcpOptions.exactOptional(),
   ["tls"]: zListenerTls,
   ["type"]: z.enum(["vless"]),
-  ["uuid"]: zSecretString.exactOptional(),
+  ["uuid"]: zListenerSecret.exactOptional(),
   ["websocket"]: zListenerWebSocketUpdate.nullable().exactOptional()
 }), z.strictObject({
   ["bindInterface"]: z.string().exactOptional(),
@@ -1274,7 +1278,7 @@ export const zListenerUpdate = z.union([z.strictObject({
   ["endpoints"]: z.array(zEndpoint).exactOptional(),
   ["listen"]: z.string().exactOptional(),
   ["listenPort"]: zPort,
-  ["password"]: zSecretString.exactOptional(),
+  ["password"]: zListenerSecret.exactOptional(),
   ["remark"]: z.string().exactOptional(),
   ["socket"]: zSocketOptions.exactOptional(),
   ["stream"]: zTrojanStream.exactOptional(),
@@ -1463,64 +1467,6 @@ export const zDefaults = z.strictObject({
   ["topology"]: zTopologyDefault.exactOptional()
 });
 
-export const zNodeSettings = z.strictObject({
-  ["addresses"]: zNodeAddresses,
-  ["dialers"]: zDialerSet.exactOptional(),
-  ["enabled"]: z.boolean().exactOptional(),
-  ["exitEnabled"]: z.boolean().exactOptional(),
-  ["hostname"]: z.string(),
-  ["identity"]: zNodeIdentity,
-  ["listeners"]: typedMap(z.string(), zPreparedListener, {}).exactOptional(),
-  ["remark"]: z.string().exactOptional()
-});
-
-export const zNetworkConfiguration = z.strictObject({
-  ["access"]: z.array(zAccessRule).exactOptional(),
-  ["addressPools"]: zAddressPools,
-  ["defaults"]: zDefaults.exactOptional(),
-  ["dns"]: zDnsConfiguration,
-  ["groups"]: typedMap(z.string(), z.array(z.string()), {}).exactOptional(),
-  ["nodes"]: typedMap(z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u")), zNodeSettings, {}).exactOptional(),
-  ["routing"]: zRoutingConfiguration.exactOptional(),
-  ["ruleSets"]: typedMap(z.string(), zRuleSet, {}).exactOptional(),
-  ["tagsOwners"]: typedMap(z.string(), z.array(z.string()), {}).exactOptional(),
-  ["topology"]: z.array(zTopologyRule).exactOptional()
-});
-
-export const zConfigurationSourceResponse = z.strictObject({
-  ["configuration"]: zNetworkConfiguration,
-  ["networkId"]: zNetworkId,
-  ["requestId"]: zRequestId,
-  ["revision"]: zRevision,
-  ["sourceJsonc"]: zWireSecret
-});
-
-export const zConfigurationState = z.strictObject({
-  ["applied"]: zNetmapRef.nullable().exactOptional(),
-  ["progress"]: zConfigurationProgress.nullable().exactOptional(),
-  ["saved"]: zNetmapRef.nullable().exactOptional()
-});
-
-export const zConfigurationValidationParams = z.strictObject({
-  ["issues"]: z.array(zConfigurationIssue),
-  ["requirements"]: z.array(zPreparationRequirement)
-});
-
-export const zCount = z.int().gte(0).lte(9007199254740991);
-
-export const zCoverageReason = z.enum(["retention","capacity"]);
-
-export const zCreateDelegationRequest = z.strictObject({
-  ["client"]: z.string(),
-  ["codeChallenge"]: z.string(),
-  ["codeChallengeMethod"]: zCodeChallengeMethod,
-  ["redirectUri"]: z.string()
-});
-
-export const zCreateEnrollmentKeyPath = z.strictObject({
-  ["networkId"]: zNetworkId
-});
-
 export const zListener = z.union([z.strictObject({
   ["bindInterface"]: z.string().exactOptional(),
   ["enabled"]: z.boolean().exactOptional(),
@@ -1553,7 +1499,7 @@ export const zListener = z.union([z.strictObject({
   ["tcp"]: zTcpOptions.exactOptional(),
   ["tls"]: zListenerTls,
   ["type"]: z.enum(["vless"]),
-  ["uuid"]: zSecretString.exactOptional(),
+  ["uuid"]: zListenerSecret.exactOptional(),
   ["websocket"]: zListenerWebSocket.exactOptional()
 }), z.strictObject({
   ["bindInterface"]: z.string().exactOptional(),
@@ -1561,7 +1507,7 @@ export const zListener = z.union([z.strictObject({
   ["endpoints"]: z.array(zEndpoint).exactOptional(),
   ["listen"]: z.string().exactOptional(),
   ["listenPort"]: zPort,
-  ["password"]: zSecretString.exactOptional(),
+  ["password"]: zListenerSecret.exactOptional(),
   ["remark"]: z.string().exactOptional(),
   ["socket"]: zSocketOptions.exactOptional(),
   ["stream"]: zTrojanStream.exactOptional(),
@@ -1569,6 +1515,64 @@ export const zListener = z.union([z.strictObject({
   ["tls"]: zListenerTls,
   ["type"]: z.enum(["trojan"])
 })]);
+
+export const zNodeSettingsInput = z.strictObject({
+  ["addresses"]: zNodeAddressesInput.exactOptional(),
+  ["dialers"]: zDialerSet.exactOptional(),
+  ["enabled"]: z.boolean().exactOptional(),
+  ["exitEnabled"]: z.boolean().exactOptional(),
+  ["hostname"]: z.string(),
+  ["identity"]: zNodeIdentity,
+  ["listeners"]: typedMap(z.string(), zListener, {}).exactOptional(),
+  ["remark"]: z.string().exactOptional()
+});
+
+export const zNetworkConfigurationInput = z.strictObject({
+  ["access"]: z.array(zAccessRule).exactOptional(),
+  ["addressPools"]: zAddressPoolsInput.exactOptional(),
+  ["defaults"]: zDefaults.exactOptional(),
+  ["dns"]: zDnsConfiguration,
+  ["groups"]: typedMap(z.string(), z.array(z.string()), {}).exactOptional(),
+  ["nodes"]: typedMap(z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u")), zNodeSettingsInput, {}).exactOptional(),
+  ["routing"]: zRoutingConfiguration.exactOptional(),
+  ["ruleSets"]: typedMap(z.string(), zRuleSet, {}).exactOptional(),
+  ["tagsOwners"]: typedMap(z.string(), z.array(z.string()), {}).exactOptional(),
+  ["topology"]: z.array(zTopologyRule).exactOptional()
+});
+
+export const zConfigurationSourceResponse = z.strictObject({
+  ["configuration"]: zNetworkConfigurationInput,
+  ["networkId"]: zNetworkId,
+  ["requestId"]: zRequestId,
+  ["revision"]: zRevision,
+  ["sourceJsonc"]: zWireSecret
+});
+
+export const zConfigurationState = z.strictObject({
+  ["applied"]: zNetmapRef.nullable().exactOptional(),
+  ["progress"]: zConfigurationProgress.nullable().exactOptional(),
+  ["saved"]: zNetmapRef.nullable().exactOptional()
+});
+
+export const zConfigurationValidationParams = z.strictObject({
+  ["issues"]: z.array(zConfigurationIssue),
+  ["requirements"]: z.array(zPreparationRequirement)
+});
+
+export const zCount = z.int().gte(0).lte(9007199254740991);
+
+export const zCoverageReason = z.enum(["retention","capacity"]);
+
+export const zCreateDelegationRequest = z.strictObject({
+  ["client"]: z.string(),
+  ["codeChallenge"]: z.string(),
+  ["codeChallengeMethod"]: zCodeChallengeMethod,
+  ["redirectUri"]: z.string()
+});
+
+export const zCreateEnrollmentKeyPath = z.strictObject({
+  ["networkId"]: zNetworkId
+});
 
 export const zInitialNodeSettings = z.strictObject({
   ["hostname"]: z.string().nullable().exactOptional(),
@@ -3513,7 +3517,7 @@ export const zTrojanListener = z.strictObject({
   ["endpoints"]: z.array(zEndpoint).exactOptional(),
   ["listen"]: z.string().exactOptional(),
   ["listenPort"]: zPort,
-  ["password"]: zSecretString.exactOptional(),
+  ["password"]: zListenerSecret.exactOptional(),
   ["remark"]: z.string().exactOptional(),
   ["socket"]: zSocketOptions.exactOptional(),
   ["stream"]: zTrojanStream.exactOptional(),
@@ -3637,7 +3641,7 @@ export const zVlessListener = z.strictObject({
   ["stream"]: zVlessStream.exactOptional(),
   ["tcp"]: zTcpOptions.exactOptional(),
   ["tls"]: zListenerTls,
-  ["uuid"]: zSecretString.exactOptional(),
+  ["uuid"]: zListenerSecret.exactOptional(),
   ["websocket"]: zListenerWebSocket.exactOptional()
 });
 
@@ -3653,7 +3657,7 @@ export const zVlessListenerUpdate = z.strictObject({
   ["stream"]: zVlessStream.exactOptional(),
   ["tcp"]: zTcpOptions.exactOptional(),
   ["tls"]: zListenerTls,
-  ["uuid"]: zSecretString.exactOptional(),
+  ["uuid"]: zListenerSecret.exactOptional(),
   ["websocket"]: zListenerWebSocketUpdate.nullable().exactOptional()
 });
 

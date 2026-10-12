@@ -63,9 +63,9 @@ pub async fn tls_server(
         certificate: Some(SecretString::new(
             tokio::fs::read_to_string(public.join("server.pem")).await?,
         )),
-        private_key: Some(SecretString::new(
-            tokio::fs::read_to_string(private.join("server.key")).await?,
-        )),
+        private_key: Some(
+            SecretString::new(tokio::fs::read_to_string(private.join("server.key")).await?).into(),
+        ),
         min_version: TlsVersion::Tls12,
         max_version: TlsVersion::Tls13,
         alpn: vec!["http/1.1".into()],

@@ -13,13 +13,13 @@ async fn evaluation_plans_current_and_draft_configurations_with_bound_rule_sets(
     let token = owner.token.expose();
     let network = s.create(token).await.id;
     let current = s.source(token, network).await;
-    let mut input = NetworkConfigurationInput::from(&current.configuration);
+    let mut input = current.configuration.clone();
     input.tags_owners.insert("tag:test".into(), vec![]);
     s.apply(token, network, current.revision, &input).await;
     let (a, _, _) = enroll(&s, token, network, 61).await;
     let (b, _, _) = enroll(&s, token, network, 62).await;
     let current = s.source(token, network).await;
-    let mut input = NetworkConfigurationInput::from(&current.configuration);
+    let mut input = current.configuration.clone();
     input.rule_sets.insert(
         "remote".into(),
         serde_json::from_str(&format!(
@@ -97,11 +97,14 @@ async fn evaluation_plans_current_and_draft_configurations_with_bound_rule_sets(
     assert!(e.paths.is_empty());
     assert_eq!(e.targets[0].problem, Some(TargetProblem::ExitUnavailable));
     // A Mesh peer by address: the template Access rule, automatic routing.
-    let b_address = s.source(token, network).await.configuration.nodes[&b.node_id]
-        .addresses
-        .ipv4
-        .unwrap()
-        .to_string();
+    let meshway_configuration::Input::Value(Some(b_address)) =
+        s.source(token, network).await.configuration.nodes[&b.node_id]
+            .addresses
+            .ipv4
+    else {
+        panic!("b holds an IPv4 address")
+    };
+    let b_address = b_address.to_string();
     let response: EvaluationResponse = evaluate(serde_json::json!({
         "configuration": {"type": "current"},
         "source": a.node_id,
@@ -122,7 +125,7 @@ async fn evaluation_plans_current_and_draft_configurations_with_bound_rule_sets(
     assert_eq!(e.access.grants[0].rule, "/access/0");
     assert_eq!(e.outcome, EvaluationOutcome::Permitted);
     // A draft evaluated as a change to the current version, without applying it.
-    let mut draft = NetworkConfigurationInput::from(&s.source(token, network).await.configuration);
+    let mut draft = s.source(token, network).await.configuration;
     draft.nodes.get_mut(&b.node_id).unwrap().exit_enabled = false;
     let before = resource_counts(&s, network).await;
     let response: EvaluationResponse = evaluate(serde_json::json!({

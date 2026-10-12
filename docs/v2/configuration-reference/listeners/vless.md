@@ -28,7 +28,7 @@ VLESS TCP/TLS 或 WebSocket/TLS 监听配置。配置与能力匹配见[承载](
 | --- | --- | --- | --- |
 | `type` | literal | 必填 | `vless` |
 | `stream` | `"tcp" \| "websocket"` | `"tcp"` | 外层封装，两者都使用 TCP socket |
-| `uuid` | UUID 字符串 | 平台生成并保存 | 管理员可明确填写；关联拨号端引用同一值 |
+| `uuid` | UUID 字符串或 `{"retained": true}` | 平台生成并保存 | 管理员可明确填写；关联拨号端引用同一值；读取只显示[保留标记](/v2/configuration-reference/editing#secret-retained-marker) |
 | `flow` | string | `""` | 当前只接受空 flow／空 addons |
 | `tls` | [TLS listener](/v2/configuration-reference/shared/tls#listener-structure) | 必填 | 平台托管 TLS |
 | `websocket` | [WS listener](/v2/configuration-reference/shared/websocket#listener-structure) | 由 WS 默认值生成 | 仅 stream=websocket 时允许 |

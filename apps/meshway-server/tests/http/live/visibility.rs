@@ -73,8 +73,7 @@ async fn production_config_changes_and_scope_changes_do_not_become_identity_loss
     http_events.ready().await;
     for pure_source in [false, true] {
         let current = source(&c, &s, network, owner.token.expose()).await;
-        let mut input =
-            meshway_configuration::NetworkConfigurationInput::from(&current.configuration);
+        let mut input = current.configuration.clone();
         if !pure_source {
             input
                 .groups

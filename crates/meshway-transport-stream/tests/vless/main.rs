@@ -30,7 +30,7 @@ fn declaration_and_provider_share_strict_uuid_syntax() {
         let Listener::Vless(listener) = &mut declaration else {
             unreachable!()
         };
-        listener.uuid = Some(SecretString::new(uuid.clone()));
+        listener.uuid = Some(SecretString::new(uuid.clone()).into());
         let DialParameters::Vless {
             uuid: credential, ..
         } = &mut parameters
@@ -49,7 +49,7 @@ fn fixture(stream: VlessStream) -> (DialParameters, PreparedListener, ListenerTl
         mode: TlsMode::Provided,
         server_name: "localhost".into(),
         certificate: Some(SecretString::new(certified.cert.pem())),
-        private_key: Some(SecretString::new(certified.signing_key.serialize_pem())),
+        private_key: Some(SecretString::new(certified.signing_key.serialize_pem()).into()),
         min_version: TlsVersion::Tls12,
         max_version: TlsVersion::Tls13,
         alpn: vec![],
@@ -71,7 +71,7 @@ fn fixture(stream: VlessStream) -> (DialParameters, PreparedListener, ListenerTl
         socket: SocketOptions::default(),
         tcp: TcpOptions::default(),
         stream,
-        uuid: Some(SecretString::new(UUID.into())),
+        uuid: Some(SecretString::new(UUID.into()).into()),
         flow: String::new(),
         tls: tls.clone(),
         websocket: websocket.clone(),

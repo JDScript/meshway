@@ -89,7 +89,12 @@ pub(super) fn candidates(
                 let Some(d) = set.vless.as_ref().filter(|d| d.enabled) else {
                     continue;
                 };
-                let uuid = l.uuid.clone().ok_or(CompileError::Material)?;
+                let uuid = l
+                    .uuid
+                    .as_ref()
+                    .and_then(ListenerSecret::value)
+                    .cloned()
+                    .ok_or(CompileError::Material)?;
                 let tls = tls(&l.tls, &d.tls)?;
                 (
                     &l.endpoints,
@@ -107,7 +112,12 @@ pub(super) fn candidates(
                 let Some(d) = set.trojan.as_ref().filter(|d| d.enabled) else {
                     continue;
                 };
-                let password = l.password.clone().ok_or(CompileError::Material)?;
+                let password = l
+                    .password
+                    .as_ref()
+                    .and_then(ListenerSecret::value)
+                    .cloned()
+                    .ok_or(CompileError::Material)?;
                 let tls = tls(&l.tls, &d.tls)?;
                 (
                     &l.endpoints,
@@ -204,7 +214,11 @@ fn tls(l: &ListenerTls, d: &DialerTls) -> Result<ClientTls, CompileError> {
     // PreparedListener is the trusted certificate validation boundary. Missing
     // material on a compatible candidate is corruption.
     let certificate_chain = l.certificate.clone().ok_or(CompileError::Material)?;
-    if l.private_key.is_none() {
+    if l.private_key
+        .as_ref()
+        .and_then(ListenerSecret::value)
+        .is_none()
+    {
         return Err(CompileError::Material);
     }
     // Declaration compatibility has already checked the version intersection.

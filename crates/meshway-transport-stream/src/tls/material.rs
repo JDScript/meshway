@@ -1,6 +1,6 @@
 use std::{io::Cursor, sync::Arc};
 
-use meshway_transport::spec::ListenerTls;
+use meshway_transport::spec::{ListenerSecret, ListenerTls};
 use rustls::{
     RootCertStore,
     client::{WebPkiServerVerifier, danger::ServerCertVerifier},
@@ -123,7 +123,12 @@ pub(crate) fn listener(
     provider: Arc<CryptoProvider>,
 ) -> Result<CertifiedKey, Error> {
     let pem = tls.certificate.as_ref().ok_or(Error::Certificate)?.expose();
-    let key = tls.private_key.as_ref().ok_or(Error::PrivateKey)?.expose();
+    let key = tls
+        .private_key
+        .as_ref()
+        .and_then(ListenerSecret::value)
+        .ok_or(Error::PrivateKey)?
+        .expose();
     if key.len() > MAX_PRIVATE_KEY_PEM {
         return Err(Error::PrivateKey);
     }

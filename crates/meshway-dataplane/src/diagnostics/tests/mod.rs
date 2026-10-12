@@ -132,7 +132,7 @@ impl Fixture {
             use meshway_configuration::transport::*;
             node.listeners.insert(
                 "udp".into(),
-                PreparedListener::prepare(Listener::NativeUdp(NativeUdpListener {
+                Listener::NativeUdp(NativeUdpListener {
                     enabled: true,
                     remark: String::new(),
                     listen: "0.0.0.0".parse().unwrap(),
@@ -140,8 +140,7 @@ impl Fixture {
                     endpoints: Vec::new(),
                     bind_interface: String::new(),
                     socket: Default::default(),
-                }))
-                .unwrap(),
+                }),
             );
         }
         client
@@ -152,12 +151,7 @@ impl Fixture {
                 &ConfigurationRequest::Document {
                     expected_revision: source.revision,
                     request_id: id(),
-                    source_jsonc: WireSecret::new(
-                        meshway_configuration::canonical_json(&cfg)
-                            .unwrap()
-                            .expose()
-                            .to_owned(),
-                    ),
+                    source_jsonc: WireSecret::new(serde_json::to_string(&cfg).unwrap()),
                 },
                 owner.token.expose(),
             )

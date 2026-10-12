@@ -551,9 +551,19 @@ impl From<&NetworkConfiguration> for NetworkConfigurationInput {
     }
 }
 
-/// Preserve omitted material only within an existing listener resource.
+/// Preserve omitted material only within an existing listener resource; a
+/// `{"retained": true}` secret takes the saved value under the same rule, and
+/// stays a marker (rejected by `Listener::normalize`) when there is none.
 /// Callers must not pass a deleted/recreated resource as `previous`.
 pub fn inherit_materials(target: &mut Listener, previous: &Listener) {
+    use meshway_transport::spec::ListenerSecret;
+    fn secret(target: &mut Option<ListenerSecret>, previous: &Option<ListenerSecret>) {
+        if target.as_ref().is_none_or(ListenerSecret::is_retained)
+            && let Some(value) = previous.as_ref().and_then(ListenerSecret::value)
+        {
+            *target = Some(value.clone().into());
+        }
+    }
     fn tls(t: &mut meshway_transport::spec::ListenerTls, p: &meshway_transport::spec::ListenerTls) {
         // A managed certificate is issued for one server name; a different
         // name gets a new one instead of inheriting a certificate that would
@@ -564,22 +574,16 @@ pub fn inherit_materials(target: &mut Listener, previous: &Listener) {
             if t.certificate.is_none() {
                 t.certificate = p.certificate.clone();
             }
-            if t.private_key.is_none() {
-                t.private_key = p.private_key.clone();
-            }
+            secret(&mut t.private_key, &p.private_key);
         }
     }
     match (target, previous) {
         (Listener::Vless(t), Listener::Vless(p)) => {
-            if t.uuid.is_none() {
-                t.uuid = p.uuid.clone();
-            }
+            secret(&mut t.uuid, &p.uuid);
             tls(&mut t.tls, &p.tls);
         }
         (Listener::Trojan(t), Listener::Trojan(p)) => {
-            if t.password.is_none() {
-                t.password = p.password.clone();
-            }
+            secret(&mut t.password, &p.password);
             tls(&mut t.tls, &p.tls);
         }
         _ => {}

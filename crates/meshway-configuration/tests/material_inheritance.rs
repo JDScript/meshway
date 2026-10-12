@@ -1,5 +1,5 @@
 use meshway_configuration::{ListenerUpdate, inherit_materials};
-use meshway_transport::spec::Listener;
+use meshway_transport::spec::{Listener, ListenerSecret};
 
 #[test]
 fn managed_certificates_are_reissued_per_server_name_and_provided_ones_are_kept() {
@@ -18,7 +18,10 @@ fn managed_certificates_are_reissued_per_server_name_and_provided_ones_are_kept(
     inherit_materials(&mut same, &previous);
     let Listener::Vless(v) = &same else { panic!() };
     assert_eq!(
-        v.uuid.as_ref().map(|s| s.expose()),
+        v.uuid
+            .as_ref()
+            .and_then(ListenerSecret::value)
+            .map(|s| s.expose()),
         Some("11111111-1111-4111-8111-111111111111")
     );
     assert_eq!(
@@ -32,7 +35,10 @@ fn managed_certificates_are_reissued_per_server_name_and_provided_ones_are_kept(
         panic!()
     };
     assert_eq!(
-        v.uuid.as_ref().map(|s| s.expose()),
+        v.uuid
+            .as_ref()
+            .and_then(ListenerSecret::value)
+            .map(|s| s.expose()),
         Some("11111111-1111-4111-8111-111111111111")
     );
     assert_eq!(v.tls.certificate, None);
@@ -100,7 +106,10 @@ fn listener_updates_keep_omitted_websocket_response_headers_for_the_same_resourc
         panic!()
     };
     assert_eq!(
-        v.uuid.as_ref().map(|s| s.expose()),
+        v.uuid
+            .as_ref()
+            .and_then(ListenerSecret::value)
+            .map(|s| s.expose()),
         Some("11111111-1111-4111-8111-111111111111")
     );
     assert_eq!(

@@ -17,7 +17,7 @@ fn fixture() -> (DialParameters, PreparedListener) {
         mode: TlsMode::Provided,
         server_name: "localhost".into(),
         certificate: Some(SecretString::new(certified.cert.pem())),
-        private_key: Some(SecretString::new(certified.signing_key.serialize_pem())),
+        private_key: Some(SecretString::new(certified.signing_key.serialize_pem()).into()),
         min_version: TlsVersion::Tls12,
         max_version: TlsVersion::Tls13,
         alpn: vec![],
@@ -43,7 +43,7 @@ fn fixture() -> (DialParameters, PreparedListener) {
         socket: SocketOptions::default(),
         tcp: TcpOptions::default(),
         stream: TrojanStream::Tcp,
-        password: Some(SecretString::new("fixture-password".into())),
+        password: Some(SecretString::new("fixture-password".into()).into()),
         tls,
     }))
     .unwrap();

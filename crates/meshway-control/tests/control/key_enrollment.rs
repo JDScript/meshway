@@ -26,8 +26,7 @@ async fn access_key_enrollment_recovers_lost_commit_without_browser_credentials(
         )
         .await
         .unwrap();
-    let mut configuration =
-        meshway_configuration::NetworkConfigurationInput::from(&source.configuration);
+    let mut configuration = source.configuration.clone();
     configuration
         .tags_owners
         .insert("tag:service".into(), vec![]);

@@ -24,7 +24,7 @@ pub fn listener(certificate: &Certificate, key: &KeyPair) -> ListenerTls {
         mode: TlsMode::Provided,
         server_name: NAME.into(),
         certificate: Some(SecretString::new(certificate.pem())),
-        private_key: Some(SecretString::new(key.serialize_pem())),
+        private_key: Some(SecretString::new(key.serialize_pem()).into()),
         min_version: TlsVersion::Tls12,
         max_version: TlsVersion::Tls13,
         alpn: vec![],

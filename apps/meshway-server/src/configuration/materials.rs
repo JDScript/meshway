@@ -7,7 +7,7 @@ use crate::secrets::Sealer;
 use chrono::Datelike;
 use meshway_configuration::{ConfigurationError, NetworkConfigurationInput};
 use meshway_model::{Digest, NetworkId, NodeId};
-use meshway_transport::spec::{Listener, ListenerTls, SecretString, TlsMode};
+use meshway_transport::spec::{Listener, ListenerSecret, ListenerTls, SecretString, TlsMode};
 use rusqlite::Transaction;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -91,27 +91,7 @@ pub(crate) fn prepare_listener_materials(
     sealer: &Sealer,
     generate: bool,
 ) -> Result<bool, Error> {
-    match listener {
-        Listener::Vless(v) => {
-            if v.uuid.is_none() && generate {
-                v.uuid = Some(SecretString::new(random_uuid()?.to_string()));
-            }
-            prepare_tls(&mut v.tls, generate)?;
-        }
-        Listener::Trojan(v) => {
-            if v.password.is_none() && generate {
-                v.password = Some(SecretString::new(
-                    crate::accounts::issue_one_time("mwp_")?
-                        .0
-                        .expose()
-                        .to_owned(),
-                ));
-            }
-            prepare_tls(&mut v.tls, generate)?;
-        }
-        _ => {}
-    }
-    listener.normalize().map_err(|error| {
+    let declaration = |error: meshway_transport::spec::DeclarationError| {
         Error::InvalidConfiguration(ConfigurationError::Invalid(vec![
             meshway_configuration::ConfigurationIssue::new(
                 "",
@@ -119,16 +99,42 @@ pub(crate) fn prepare_listener_materials(
             )
             .with("reason", error.code()),
         ]))
-    })?;
+    };
+    // A marker inheritance did not resolve is neither generated nor verified.
+    listener.check_retained().map_err(declaration)?;
+    match listener {
+        Listener::Vless(v) => {
+            if v.uuid.is_none() && generate {
+                v.uuid = Some(SecretString::new(random_uuid()?.to_string()).into());
+            }
+            prepare_tls(&mut v.tls, generate)?;
+        }
+        Listener::Trojan(v) => {
+            if v.password.is_none() && generate {
+                v.password = Some(
+                    SecretString::new(
+                        crate::accounts::issue_one_time("mwp_")?
+                            .0
+                            .expose()
+                            .to_owned(),
+                    )
+                    .into(),
+                );
+            }
+            prepare_tls(&mut v.tls, generate)?;
+        }
+        _ => {}
+    }
+    listener.normalize().map_err(declaration)?;
     let tls = match listener {
         Listener::Vless(v) => {
-            if let Some(value) = &v.uuid {
+            if let Some(value) = v.uuid.as_ref().and_then(ListenerSecret::value) {
                 check_revocation(tx, sealer, network, "vlessUuid", value.expose().as_bytes())?;
             }
             &v.tls
         }
         Listener::Trojan(v) => {
-            if let Some(value) = &v.password {
+            if let Some(value) = v.password.as_ref().and_then(ListenerSecret::value) {
                 check_revocation(
                     tx,
                     sealer,
@@ -179,7 +185,7 @@ fn prepare_tls(tls: &mut ListenerTls, generate: bool) -> Result<(), Error> {
         .self_signed(&key)
         .map_err(|_| Error::Internal("TLS certificate signing"))?;
     tls.certificate = Some(SecretString::new(certificate.pem()));
-    tls.private_key = Some(SecretString::new(key.serialize_pem()));
+    tls.private_key = Some(SecretString::new(key.serialize_pem()).into());
     Ok(())
 }
 
@@ -223,9 +229,8 @@ mod tests {
         tls.server_name = "other.example.test".into();
         assert!(verify_tls(&tls).is_err());
         tls = original.clone();
-        tls.private_key = Some(SecretString::new(
-            rcgen::KeyPair::generate().unwrap().serialize_pem(),
-        ));
+        tls.private_key =
+            Some(SecretString::new(rcgen::KeyPair::generate().unwrap().serialize_pem()).into());
         assert!(verify_tls(&tls).is_err());
         for (from, to) in [(2000, 2001), (2090, 2091)] {
             let mut params =
@@ -235,7 +240,7 @@ mod tests {
             let key = rcgen::KeyPair::generate().unwrap();
             tls = original.clone();
             tls.certificate = Some(SecretString::new(params.self_signed(&key).unwrap().pem()));
-            tls.private_key = Some(SecretString::new(key.serialize_pem()));
+            tls.private_key = Some(SecretString::new(key.serialize_pem()).into());
             assert!(verify_tls(&tls).is_err());
         }
         tls = original;
@@ -248,9 +253,8 @@ mod tests {
         let mut tls = managed();
         prepare_tls(&mut tls, false).unwrap();
         assert!(tls.certificate.is_none());
-        tls.private_key = Some(SecretString::new(
-            rcgen::KeyPair::generate().unwrap().serialize_pem(),
-        ));
+        tls.private_key =
+            Some(SecretString::new(rcgen::KeyPair::generate().unwrap().serialize_pem()).into());
         assert!(prepare_tls(&mut tls, true).is_err());
     }
 
@@ -264,7 +268,7 @@ mod tests {
             unreachable!()
         };
         v.tls = tls;
-        v.uuid = Some(SecretString::new(random_uuid().unwrap().to_string()));
+        v.uuid = Some(SecretString::new(random_uuid().unwrap().to_string()).into());
         let update: meshway_configuration::ListenerUpdate = serde_json::from_str(r#"{"type":"vless","listenPort":8443,"tls":{"serverName":"node.example.test","mode":"provided"}}"#).unwrap();
         let Listener::Vless(updated) = update.apply(Some(&old)) else {
             unreachable!()

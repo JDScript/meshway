@@ -1,7 +1,7 @@
 //! Pure declared fields. Acceptance here is not a compiled/runtime capability.
 use crate::spec::{
-    Port, PositiveDuration, SecretString, TlsVersion, WebSocketHeaders, WebSocketPath,
-    object::object,
+    ListenerSecret, Port, PositiveDuration, SecretString, TlsVersion, WebSocketHeaders,
+    WebSocketPath, object::object,
 };
 use meshway_model::VlessStream;
 use serde::{Deserialize, Serialize};
@@ -143,8 +143,8 @@ pub struct ListenerTls {
     pub server_name: String,
     /// Nonempty PEM certificate chain, leaf first; required in provided mode, otherwise omission generates or retains saved material and null is rejected.
     #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")] pub certificate: Option<SecretString> [value_type = SecretString],
-    /// Nonempty matching PEM private key; required in provided mode, otherwise omission generates or retains saved material and null is rejected.
-    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")] pub private_key: Option<SecretString> [value_type = SecretString],
+    /// Nonempty matching PEM private key; required in provided mode, otherwise omission generates or retains saved material and null is rejected. Reads show a saved key as `{"retained": true}`, which keeps it when submitted.
+    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")] pub private_key: Option<ListenerSecret> [value_type = ListenerSecret],
     /// Minimum accepted TLS version, `1.2` or `1.3`; defaults to `1.2` and must not exceed maxVersion.
     #[serde(default = "min_tls")] pub min_version: TlsVersion,
     /// Maximum accepted TLS version, `1.2` or `1.3`; defaults to `1.3` and must not precede minVersion.
@@ -242,8 +242,8 @@ listener!(VlessListener {
     #[serde(default)] tcp: TcpOptions,
     /// VLESS encapsulation, `tcp` or `websocket`, both over TLS; defaults to `tcp`.
     #[serde(default = "tcp_stream")] stream: VlessStream,
-    /// Hyphenated UUID credential with case-insensitive hexadecimal digits; omission makes the Server generate or retain saved material, while null is rejected.
-    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")] uuid: Option<SecretString> [value_type = SecretString],
+    /// Hyphenated UUID credential with case-insensitive hexadecimal digits; omission makes the Server generate or retain saved material, while null is rejected. Reads show a saved UUID as `{"retained": true}`, which keeps it when submitted.
+    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")] uuid: Option<ListenerSecret> [value_type = ListenerSecret],
     /// VLESS flow selection; only the empty string is accepted and omission defaults to it.
     #[serde(default)] flow: String,
     /// Required TLS server settings, including the certificate verification name and material source.
@@ -274,8 +274,8 @@ listener!(TrojanListener {
     #[serde(default)] tcp: TcpOptions,
     /// Trojan encapsulation; only `tcp` is accepted and omission defaults to it.
     #[serde(default)] stream: TrojanStream,
-    /// Nonempty password preserved without trimming or case normalization; omission makes the Server generate or retain saved material, while null is rejected.
-    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")] password: Option<SecretString> [value_type = SecretString],
+    /// Nonempty password preserved without trimming or case normalization; omission makes the Server generate or retain saved material, while null is rejected. Reads show a saved password as `{"retained": true}`, which keeps it when submitted.
+    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")] password: Option<ListenerSecret> [value_type = ListenerSecret],
     /// Required TLS server settings, including the certificate verification name and material source.
     tls: ListenerTls,
 });
@@ -341,10 +341,11 @@ pub(crate) fn listener_schema(
     };
     let mut union = OneOfBuilder::new().description(Some(if prepared {
         "An inbound listener as saved: `type` selects the carrier, and credential \
-         and TLS materials are complete. Returned by configuration reads."
+         and TLS materials are complete values."
     } else {
         "An inbound listener as declared: `type` selects the carrier; credential \
-         and TLS materials may be omitted for the Server to generate."
+         and TLS materials may be omitted for the Server to generate, and a \
+         `{\"retained\": true}` secret keeps the saved value."
     }));
     for (tag, schema, credential) in [
         ("native_udp", NativeUdpListener::schema(), None),
@@ -364,12 +365,18 @@ pub(crate) fn listener_schema(
         );
         object.required.push("type".into());
         if let Some(credential) = credential.filter(|_| prepared) {
+            // Saved materials are values; only declarations carry the marker.
             object.required.push(credential.into());
+            object
+                .properties
+                .insert(credential.into(), SecretString::schema());
             let RefOr::T(Schema::Object(mut tls)) = ListenerTls::schema() else {
                 unreachable!("listener TLS is an object")
             };
             tls.required
                 .extend(["certificate".into(), "privateKey".into()]);
+            tls.properties
+                .insert("privateKey".into(), SecretString::schema());
             object.properties.insert("tls".into(), tls.into());
         }
         union = union.item(object);

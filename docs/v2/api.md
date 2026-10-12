@@ -47,7 +47,7 @@
 
 ## 查询、秘密与缓存
 
-普通 Config／Node settings 使用非秘密视图；整份 `configuration/source` 是显式秘密读取，不进通用缓存或 LocalStorage。表单秘密使用保持／覆盖语义，JSONC 编辑整份文档。
+普通 Config／Node settings 使用非秘密视图；整份 `configuration/source` 是显式编辑读取（含注释、WebSocket header 值等作者原文，listener 秘密只以[保留标记](/v2/configuration-reference/editing#secret-retained-marker)出现），不进通用缓存或 LocalStorage。表单秘密使用保持／覆盖语义，JSONC 编辑整份文档。
 
 单节点 settings 返回 networkId、nodeId、revision 与共享 settings 片段。库存中的 desiredExecution 是期望引用；实际回执和 State 独立。普通成员的本人读取不扩展为整网配置历史或原创建 Tag 设备的管理权限。
 
