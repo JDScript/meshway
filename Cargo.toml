@@ -31,6 +31,7 @@ members = [
     "tools/meshway-test-server",
     "tools/meshway-netmap-perf",
     "tools/meshway-rules-cli",
+    "tools/meshway-rules-perf",
 ]
 resolver = "3"
 

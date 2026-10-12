@@ -14,7 +14,6 @@ use crate::{
     format::{EXACT, SUBDOMAIN, SUFFIX},
     name::name_byte,
 };
-use std::collections::HashMap;
 
 const VERSION: u64 = 3;
 const EMPTY: usize = 0;
@@ -298,36 +297,112 @@ impl<'a> Fst<'a> {
 }
 
 /// Load-time structural proof; see the module comment. `Some(())` iff valid.
+///
+/// The builder writes nodes back to back after the 16-byte header and the
+/// root last, so the section must tile exactly: walking down from the root,
+/// each node ends where the next lower one's state byte is. The walk visits
+/// every node once in descending address order, which is a topological order
+/// (transitions point strictly down), so one forward pass propagates output
+/// sums, path counts and depths from the root. Transition targets must be tile
+/// addresses, found in O(1) through a bitmap with rank counts.
 pub(crate) fn validate(fst: &Fst<'_>) -> Option<()> {
-    struct Seen {
-        node: Node,
-        /// Bit `s` set when some path reaches the node with output sum `s`
-        /// (0..=4; larger sums cannot end in a valid value).
-        sums: u8,
-        keys: u64,
-        depth: usize,
+    const HEADER: usize = 16;
+    if fst.root == EMPTY {
+        // Only the empty name, which is not a name.
+        return None;
     }
-    let mut seen: HashMap<usize, Seen> = HashMap::new();
-    let mut stack = vec![fst.root];
-    while let Some(addr) = stack.pop() {
-        if seen.contains_key(&addr) {
-            continue;
-        }
-        let node = fst.node(addr)?;
-        if addr != EMPTY && node.end < 16 {
+    let tiles = || {
+        let mut next = Some(fst.root);
+        std::iter::from_fn(move || {
+            let addr = next?;
+            let node = fst.node(addr);
+            next = node.and_then(|n| (n.end > HEADER).then(|| n.end - 1));
+            Some(node.map(|n| (addr, n)))
+        })
+    };
+    let mut bits = vec![0u64; fst.data.len().div_ceil(64)];
+    let mut n = 0usize;
+    let mut last_end = usize::MAX;
+    for tile in tiles() {
+        let (addr, node) = tile?;
+        bits[addr / 64] |= 1 << (addr % 64);
+        n += 1;
+        last_end = node.end;
+    }
+    if last_end != HEADER {
+        return None;
+    }
+    // rank[w] = tiles below word w.
+    let mut rank = Vec::with_capacity(bits.len());
+    let mut below = 0u32;
+    for w in &bits {
+        rank.push(below);
+        below += w.count_ones();
+    }
+    // Index in walk (descending) order.
+    let index_of = |addr: usize| -> Option<usize> {
+        let word = *bits.get(addr / 64)?;
+        if word & (1 << (addr % 64)) == 0 {
             return None;
         }
+        let ascending =
+            rank[addr / 64] as usize + (word & ((1 << (addr % 64)) - 1)).count_ones() as usize;
+        Some(n - 1 - ascending)
+    };
+    let shift = |sums: u8, by: u64| -> Option<u8> {
+        if sums == 0 {
+            return Some(0);
+        }
+        let shifted = u16::from(sums).checked_shl(u32::try_from(by).ok()?)?;
+        (shifted < 1 << 5).then_some(shifted as u8)
+    };
+    let allowed = (1u8 << EXACT) | (1 << SUFFIX) | (1 << SUBDOMAIN);
+    let valid_final =
+        |sums: u8, output: u64| shift(sums, output).is_some_and(|v| v != 0 && v & !allowed == 0);
+    // Per node: bit `s` of `sums` set when some path from the root arrives
+    // with output sum `s` (0..=4; larger sums cannot end in a valid value),
+    // the number of such paths, and the longest one.
+    let mut sums = vec![0u8; n];
+    let mut paths = vec![0u64; n];
+    let mut depth = vec![0u8; n];
+    sums[0] = 1;
+    paths[0] = 1;
+    let mut keys = 0u64;
+    for (i, tile) in tiles().enumerate() {
+        let (_, node) = tile?;
+        if node.is_final {
+            if i == 0 || !valid_final(sums[i], node.final_output) {
+                return None;
+            }
+            keys = keys.saturating_add(paths[i]);
+        }
         let mut previous: Option<u8> = None;
-        for i in 0..node.ntrans {
-            let t = fst.transition(&node, i)?;
+        for t in 0..node.ntrans {
+            let t = fst.transition(&node, t)?;
             if !name_byte(t.input) || previous.is_some_and(|p| p >= t.input) {
                 return None;
             }
             previous = Some(t.input);
-            if fst.find(&node, t.input).map(|f| f.target) != Some(t.target) {
+            // Sorted unique inputs make the linear search agree with
+            // iteration; an input index must be checked entry by entry.
+            if matches!(node.kind, Kind::Any { index: true, .. })
+                && fst.find(&node, t.input).map(|f| f.target) != Some(t.target)
+            {
                 return None;
             }
-            stack.push(t.target);
+            let s = shift(sums[i], t.output)?;
+            let d = depth[i].checked_add(1).filter(|d| *d <= 253)?;
+            if t.target == EMPTY {
+                if !valid_final(s, 0) {
+                    return None;
+                }
+                keys = keys.saturating_add(paths[i]);
+                continue;
+            }
+            let c = index_of(t.target)?;
+            sums[c] |= s;
+            paths[c] = paths[c].saturating_add(paths[i]);
+            depth[c] = depth[c].max(d);
         }
         if let Kind::Any {
             index: true,
@@ -336,72 +411,18 @@ pub(crate) fn validate(fst: &Fst<'_>) -> Option<()> {
         } = node.kind
         {
             // The index may not name a transition for any other byte.
-            let index = fst.data.get(inputs_end..inputs_end.checked_add(256)?)?;
-            let listed = index
+            let table = fst.data.get(inputs_end..inputs_end.checked_add(256)?)?;
+            if table
                 .iter()
                 .filter(|i| usize::from(**i) < node.ntrans)
-                .count();
-            if listed != node.ntrans {
+                .count()
+                != node.ntrans
+            {
                 return None;
             }
         }
-        seen.insert(
-            addr,
-            Seen {
-                node,
-                sums: 0,
-                keys: 0,
-                depth: 0,
-            },
-        );
     }
-    let mut order: Vec<usize> = seen.keys().copied().collect();
-    // Transitions point strictly downwards, so descending address order is a
-    // topological order from the root.
-    order.sort_unstable_by(|a, b| b.cmp(a));
-    seen.get_mut(&fst.root)?.sums = 1;
-    let shift = |sums: u8, by: u64| -> Option<u8> {
-        if sums == 0 {
-            return Some(0);
-        }
-        let shifted = u16::from(sums).checked_shl(u32::try_from(by).ok()?)?;
-        (shifted < 1 << 5).then_some(shifted as u8)
-    };
-    for addr in &order {
-        let (node, sums) = {
-            let s = &seen[addr];
-            (s.node, s.sums)
-        };
-        if node.is_final {
-            let values = shift(sums, node.final_output)?;
-            let allowed = (1u8 << EXACT) | (1 << SUFFIX) | (1 << SUBDOMAIN);
-            if values == 0 || values & !allowed != 0 {
-                return None;
-            }
-        }
-        for i in 0..node.ntrans {
-            let t = fst.transition(&node, i)?;
-            let s = shift(sums, t.output)?;
-            seen.get_mut(&t.target)?.sums |= s;
-        }
-    }
-    for addr in order.iter().rev() {
-        let node = seen[addr].node;
-        let mut keys = u64::from(node.is_final);
-        let mut depth = 0;
-        for i in 0..node.ntrans {
-            let t = fst.transition(&node, i)?;
-            let child = &seen[&t.target];
-            keys = keys.saturating_add(child.keys);
-            depth = depth.max(child.depth + 1);
-        }
-        let s = seen.get_mut(addr)?;
-        s.keys = keys;
-        s.depth = depth;
-    }
-    let root = &seen[&fst.root];
-    // A final root would be the empty name.
-    (!root.node.is_final && root.keys == fst.len && root.depth <= 253).then_some(())
+    (keys == fst.len).then_some(())
 }
 
 /// Depth-first walk over every key in byte order of the reversed name.
