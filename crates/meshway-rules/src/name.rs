@@ -1,6 +1,7 @@
 use std::{
     fmt,
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
+    ops::RangeInclusive,
 };
 
 /// Canonical DNS name: UTS 46 ToASCII (`idna::domain_to_ascii`), lowercase,
@@ -142,6 +143,61 @@ impl Cidr {
         }
     }
 }
+macro_rules! prefixes {
+    ($name:ident, $t:ty, $bits:expr, $variant:ident, $addr:ty) => {
+        /// Minimal CIDR cover of a closed range.
+        fn $name(start: $t, end: $t) -> Vec<Cidr> {
+            let mut out = vec![];
+            let mut s = start;
+            loop {
+                let mut bits: u32 = if s == 0 {
+                    0
+                } else {
+                    $bits - s.trailing_zeros()
+                };
+                loop {
+                    let host = <$t>::MAX.checked_shr(bits).unwrap_or(0);
+                    if s.checked_add(host).is_some_and(|last| last <= end) {
+                        break;
+                    }
+                    bits += 1;
+                }
+                let host = <$t>::MAX.checked_shr(bits).unwrap_or(0);
+                out.push(Cidr::$variant(<$addr>::from(s), bits as u8));
+                match (s + host).checked_add(1) {
+                    Some(next) if next <= end => s = next,
+                    _ => return out,
+                }
+            }
+        }
+    };
+}
+prefixes!(v4_prefixes, u32, 32, V4, std::net::Ipv4Addr);
+prefixes!(v6_prefixes, u128, 128, V6, std::net::Ipv6Addr);
+
+impl Cidr {
+    /// The minimal CIDR cover of a closed IPv4 range, in ascending order; for
+    /// example one merged range of [`crate::RuleSet::ipv4_ranges`].
+    pub fn cover_v4(range: RangeInclusive<Ipv4Addr>) -> Vec<Cidr> {
+        v4_prefixes(u32::from(*range.start()), u32::from(*range.end()))
+    }
+    pub fn cover_v6(range: RangeInclusive<Ipv6Addr>) -> Vec<Cidr> {
+        v6_prefixes(u128::from(*range.start()), u128::from(*range.end()))
+    }
+    /// The prefix length.
+    pub fn bits(&self) -> u8 {
+        match self {
+            Self::V4(_, bits) | Self::V6(_, bits) => *bits,
+        }
+    }
+    pub fn address(&self) -> IpAddr {
+        match self {
+            Self::V4(ip, _) => IpAddr::V4(*ip),
+            Self::V6(ip, _) => IpAddr::V6(*ip),
+        }
+    }
+}
+
 impl fmt::Display for Cidr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -205,6 +261,21 @@ mod tests {
         for bad in ["", "a b", "中国", "a\tb", &"a".repeat(254)] {
             assert_eq!(Keyword::parse(bad), Err(InvalidKeyword), "{bad}");
         }
+    }
+
+    #[test]
+    fn prefix_cover_is_minimal() {
+        assert_eq!(
+            v4_prefixes(0, u32::MAX),
+            vec![Cidr::parse("0.0.0.0/0").unwrap()]
+        );
+        let got: Vec<String> = v4_prefixes(1, 6).iter().map(ToString::to_string).collect();
+        assert_eq!(
+            got,
+            ["0.0.0.1/32", "0.0.0.2/31", "0.0.0.4/31", "0.0.0.6/32"]
+        );
+        assert_eq!(v6_prefixes(0, u128::MAX).len(), 1);
+        assert_eq!(v6_prefixes(u128::MAX, u128::MAX).len(), 1);
     }
 
     #[test]

@@ -180,6 +180,71 @@ impl Directory {
     }
 }
 
+/// Immutable content: owner read-only (0400) regular files published by
+/// atomic rename and never written in place, so a reader may map them.
+impl Directory {
+    /// Durably publish `bytes` as an owner read-only file. An existing file
+    /// of that name is replaced by rename; readers keep their old inode.
+    pub fn publish_read_only(&self, final_name: &str, bytes: &[u8]) -> Result<(), Error> {
+        name(final_name)?;
+        if final_name == self.lock_name {
+            return Err(Error::InvalidPath);
+        }
+        #[cfg(unix)]
+        {
+            unix::publish_read_only(&self.directory, final_name, bytes)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = bytes;
+            Err(Error::UnsupportedPlatform)
+        }
+    }
+
+    /// Open a checked owner read-only file; `None` when absent.
+    pub fn read_only_file(&self, file_name: &str) -> Result<Option<File>, Error> {
+        name(file_name)?;
+        #[cfg(unix)]
+        {
+            unix::read_only_file(&self.directory, file_name)
+        }
+        #[cfg(not(unix))]
+        {
+            Err(Error::UnsupportedPlatform)
+        }
+    }
+
+    /// Durably remove a checked owner read-only file; absent is removed.
+    pub fn remove_read_only(&self, file_name: &str) -> Result<(), Error> {
+        name(file_name)?;
+        #[cfg(unix)]
+        {
+            if unix::read_only_file(&self.directory, file_name)?.is_none() {
+                return Ok(());
+            }
+            unix::unlink(&self.directory, file_name)
+        }
+        #[cfg(not(unix))]
+        {
+            Err(Error::UnsupportedPlatform)
+        }
+    }
+
+    /// Names of the entries in this directory (bounded), the lock excluded.
+    pub fn names(&self) -> Result<Vec<String>, Error> {
+        #[cfg(unix)]
+        {
+            let mut names = unix::names(&self.directory)?;
+            names.retain(|n| *n != self.lock_name);
+            Ok(names)
+        }
+        #[cfg(not(unix))]
+        {
+            Err(Error::UnsupportedPlatform)
+        }
+    }
+}
+
 const STALE: &str = ".stale-";
 const STAGING: &str = ".write-";
 

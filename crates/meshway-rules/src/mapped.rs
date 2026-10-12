@@ -25,7 +25,12 @@ pub enum MapError {
 }
 
 pub fn open(path: &Path) -> Result<RuleSet, MapError> {
-    let file = File::open(path)?;
+    open_file(File::open(path)?)
+}
+
+/// Same as [`open`] for a file the caller already opened through its own
+/// checked directory handle.
+pub fn open_file(file: File) -> Result<RuleSet, MapError> {
     let metadata = file.metadata()?;
     if !metadata.is_file() || !read_only(&metadata) {
         return Err(MapError::Writable);

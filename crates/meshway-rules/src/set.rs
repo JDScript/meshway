@@ -380,6 +380,30 @@ impl RuleSet {
         }
     }
 
+    /// The merged range containing `addr`, for reporting which member matched.
+    pub fn ip_range(&self, addr: IpAddr) -> Option<RangeInclusive<IpAddr>> {
+        match addr {
+            IpAddr::V4(a) => {
+                let pairs = self.bytes()[self.v4.clone()].as_chunks::<8>().0;
+                let i = pairs.partition_point(|p| v4_at(p, 0) <= u32::from(a));
+                let p = pairs.get(i.checked_sub(1)?)?;
+                (v4_at(p, 4) >= u32::from(a)).then(|| {
+                    IpAddr::V4(Ipv4Addr::from(v4_at(p, 0)))
+                        ..=IpAddr::V4(Ipv4Addr::from(v4_at(p, 4)))
+                })
+            }
+            IpAddr::V6(a) => {
+                let pairs = self.bytes()[self.v6.clone()].as_chunks::<32>().0;
+                let i = pairs.partition_point(|p| v6_at(p, 0) <= u128::from(a));
+                let p = pairs.get(i.checked_sub(1)?)?;
+                (v6_at(p, 16) >= u128::from(a)).then(|| {
+                    IpAddr::V6(Ipv6Addr::from(v6_at(p, 0)))
+                        ..=IpAddr::V6(Ipv6Addr::from(v6_at(p, 16)))
+                })
+            }
+        }
+    }
+
     /// Merged ranges in ascending order: disjoint, non-adjacent, closed. This
     /// is directly an nftables interval set.
     pub fn ipv4_ranges(&self) -> impl ExactSizeIterator<Item = RangeInclusive<Ipv4Addr>> + '_ {

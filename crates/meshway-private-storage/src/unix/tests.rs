@@ -137,3 +137,29 @@ fn removal_is_idempotent_and_never_touches_the_lock() {
     assert!(directory.remove("link").is_err());
     assert!(path.join("owner.lock").exists());
 }
+
+#[test]
+fn read_only_files_are_published_once_checked_and_listed() {
+    let temp = tempfile::tempdir().unwrap();
+    let directory =
+        Directory::open(&temp.path().canonicalize().unwrap().join("owner"), "lock").unwrap();
+    directory.publish_read_only("a.bin", b"one").unwrap();
+    let mut bytes = Vec::new();
+    let mut file = directory.read_only_file("a.bin").unwrap().unwrap();
+    assert_eq!(
+        file.metadata().unwrap().permissions().mode() & 0o7777,
+        0o400
+    );
+    file.read_to_end(&mut bytes).unwrap();
+    assert_eq!(bytes, b"one");
+    assert!(directory.read_only_file("absent").unwrap().is_none());
+    directory.replace("w.bin", b"x").unwrap();
+    assert!(matches!(
+        directory.read_only_file("w.bin"),
+        Err(Error::UnsafeStorage)
+    ));
+    assert_eq!(directory.names().unwrap(), ["a.bin", "w.bin"]);
+    directory.remove_read_only("a.bin").unwrap();
+    directory.remove_read_only("a.bin").unwrap();
+    assert_eq!(directory.names().unwrap(), ["w.bin"]);
+}
