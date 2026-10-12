@@ -2,9 +2,9 @@
 
 按合入 main 的顺序记录工作包、提交与证据 ID。规则见[工程流程](/v2/process)；性能数字的口径见[分层性能测量](/v2/node/performance)，验收状态见[验收范围](/v2/node/validation)。
 
-## 未发布
+## v0.1.0-alpha.4
 
-wire 6 不变；IPC 升为 8；`compilerVersion` 升为 `meshway-netmap-2`；Server schema 版本 4（开发环境重新初始化数据目录）；HTTP 契约变化见 R2a、R2c、X6 与 R3。
+wire 6 不变；IPC 升为 8；`compilerVersion` 升为 `meshway-netmap-2`；Server schema 版本 4（开发环境重新初始化数据目录）。HTTP 契约：新增 `GET /agent-api/v1/artifacts/{digest}`、`POST /agent-api/v1/dns-associations`（`reportDnsAssociation`）、规则集 `report`／`entries`／`match` 与 `rule-set-catalog` 端点；配置新增 `ruleSetProviders` 与 `<provider>:<name>` 引用；netmap `ruleSets` 改为 digest 引用，`EgressPlan` 改为 `{generation, rules, fallback, unavailable}`（删除 `capture`／`routes`／`EgressRoute`）；`SyncRequest`／`SyncResponse` 增加 `associations`；`RuleSetView`、`ArtifactSummary`、`PreparedRuleSet`、`ResourceProblem` 与警告 `egress_partition_limit` 按下列 R2a、R2c、X6、R3 变化。
 
 - 规则集格式（R1）：新 crate `meshway-rules` 实现 `MWRS` v1（64 B 头＋段表、反转名称 FST、keyword 段、合并 IPv4／IPv6 区间，digest＝整份 SHA-256，集合相等即字节相等）、确定性 builder、对任意字节要么拒绝要么查询不 panic 的校验 loader（`fst` 段由自有有界读取器在加载时证明结构；堆与 `mapped` mmap 后端，`mapped` 为 crate 唯一审计 `unsafe`）、matcher（`match_domain`／`match_ip`／有序区间迭代器）、与现 Server 相同口径的名称／CIDR 规范化、sing-box source v1–v3／mihomo YAML 与文本／classical／inline 转换（逐条报告跳过原因，不整次失败）及 ed25519 签名的规则目录。`tools/meshway-rules-cli`（bin `meshway-rules`：`convert`／`inspect`／`match`／`index`／`verify`）与 `perf:rules`。R0 的 16 份真实来源与 spike 参考实现 0 差异、arm64／x86_64 digest 一致、loader fuzz 80 万例无 panic；数字见[规则集引擎设计 · R1 实测](/v2/rule-sets-design#r1-实测)。用户决定（对齐 mihomo、`meshway-org/meshway-rules`、`mapped` 例外、regex 跳过、`domainSubdomain`、节点侧出口分割）已写入设计稿；Server／节点接线待 R2a。
 - 规则集发布（R2b）：`build.yml` 同时交叉编译 `meshway-rules-cli`；`release.yml` 新 job `rules-cli`（`environment: Production`）把 `meshway-rules-x86_64-unknown-linux-musl.tar.gz` 与 `SHA256SUMS` 发布为 `meshway-org/meshway-rules` 的 Release `cli-<tag>`，`MESHWAY_RULES_PUSH_TOKEN` 缺失即失败；该仓库每日签发 meta-rules-dat 全量目录（`catalog-1`／`catalog-2`：2,168 项），见[规则集引擎设计 · 发布仓库](/v2/rule-sets-design#发布仓库)。
