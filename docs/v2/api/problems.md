@@ -85,7 +85,9 @@ revision_conflict 不携带当前配置差异；客户端重新读取基准后�
 
 参数约定：引用类问题带被引用的名字（`user`、`name`、`node`、`key`、`profile`、`value`、`address`、`hostname`）；节点级的出口授权问题（`exit_outside_access`、`global_exit_requires_internet`、`exit_fallback_requires_internet`）挂在**规则／分配／fallback** 的 pointer 上，受影响节点在 `params.node`；传输声明问题 `invalid_transport` 的 `params.reason` 是传输层声明错误码（如 `invalid_host`、`websocket_alpn`）；源文本问题 `invalid_jsonc`／`invalid_shape` 带 1 起算的 `line`、`column`，不回显文本；远程规则集问题 `rule_set_unavailable` 的 `params.reason` 是 `ResourceProblem` code。`netmap_limit` 表示该版本会使某节点的 netmap 超过 8 MiB 下发安全上界，路径为 `/nodes/<id>`，参数 `node`、`bytes`、`maxBytes`。`netmap_budget` 表示编译整网 netmap 超过固定的编译预算（节点数或每边承载候选），路径为空、无参数；它是确定性的，重试同一版本不会成功（Node 触发的同类情况不报配置错误，netmap 记为不可用）。
 
-同一类型也用于 `warnings`（接受但可能非本意的配置，如 `shadowed_rule`：该规则的全部目标已被前面的规则匹配，`params.by` 是补齐覆盖的那条规则下标）和 `unavailableDependencies`（保留但已失效的依赖）。
+`edge_transport_unavailable`（`invalid_transport` 的一种 `reason`）一次报全：同一次 validate／apply 为每个受影响的（Mesh 路由规则，边）各给一条，最多 64 条（按源、目标 Node ID 顺序取前 64 条），超出部分在修正后再次检查时出现；同一条路由要经过多条没有承载的边时，每条边各一条。
+
+同一类型也用于 `warnings`（接受但可能非本意的配置，如 `shadowed_rule`：该规则的全部目标已被前面的规则匹配，`params.by` 是补齐覆盖的那条规则下标；`ineffective_block_option`：block 组网规则写了 `transports` 或 `keepalive: true`，block 总是阻断整条边、不使用它们，路径为 `/topology/<i>/<field>`，`params.field` 为 `transports` 或 `keepalive`，配置照常接受）和 `unavailableDependencies`（保留但已失效的依赖）。
 
 `cursor_too_old`／`view_changed` 属于 SSE reset 原因，见[事件流](/v2/api/events)，不混作 HTTP Problem code。
 

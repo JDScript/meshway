@@ -304,6 +304,8 @@ const TEXT: Record<IssueCode, (p: Params, node: NodeNamer) => string> = {
   netmap_budget: () => m.configuration_issue_netmap_budget(),
   shadowed_rule: (p) =>
     m.configuration_issue_shadowed_rule({ index: ordinal(p.by) }),
+  ineffective_block_option: (p) =>
+    m.configuration_issue_ineffective_block_option({ field: p.field ?? "?" }),
 }
 
 function familyText(value: string | undefined): string {

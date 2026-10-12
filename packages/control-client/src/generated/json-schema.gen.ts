@@ -6427,7 +6427,8 @@ export const schemaDocument = {
           "exit_fallback_requires_internet",
           "netmap_limit",
           "netmap_budget",
-          "shadowed_rule"
+          "shadowed_rule",
+          "ineffective_block_option"
         ]
       },
       "JoinLinkActions": {
