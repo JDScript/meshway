@@ -98,7 +98,11 @@ def run_icmp_phase(command, detached, evidence, addresses, subnets, source):
             raise RuntimeError("PMTU discovery through the exit did not converge")
         # Errors injected beyond the exit about A's live UDP flow (post-NAT
         # quote): delivered within the per-flow budget. One naming no flow: none.
-        detached("a", "python3", "/dns-fixture/icmp.py", "udp", far, "8080", "/evidence/icmp-udp.json", "20")
+        # The flow targets the service's external address: its unbound UDP
+        # replies leave from the address of the link they are routed on.
+        service = addresses["external"]["external"]
+        result["udpTarget"] = service
+        detached("a", "python3", "/dns-fixture/icmp.py", "udp", service, "8080", "/evidence/icmp-udp.json", "20")
         deadline = time.monotonic() + 10
         while True:
             record = command("a", "cat", "/evidence/icmp-udp.json", required=False)
@@ -108,15 +112,15 @@ def run_icmp_phase(command, detached, evidence, addresses, subnets, source):
             if time.monotonic() >= deadline:
                 raise RuntimeError("A live UDP flow through the exit did not start")
             time.sleep(.2)
-        ct = command("e", "/usr/sbin/conntrack", "-L", "-f", "ipv4", "-p", "udp", "-d", far, "-o", "extended")
-        nat = evidence.nat_tuple(ct["stdout"], "udp", flow["local"], far + ":8080", exit_address)
+        ct = command("e", "/usr/sbin/conntrack", "-L", "-f", "ipv4", "-p", "udp", "-d", service, "-o", "extended")
+        nat = evidence.nat_tuple(ct["stdout"], "udp", flow["local"], service + ":8080", exit_address)
         port = int(nat["reply"]["dport"])
         local = int(flow["local"].rsplit(":", 1)[1])
         before = len(received())
         result["forged"] = command("router", "python3", "/dns-fixture/icmp.py", "inject", router, exit_address, "5",
-                                   exit_address, str(port + 1), far, "8080")
+                                   exit_address, str(port + 1), service, "8080")
         result["injected"] = command("router", "python3", "/dns-fixture/icmp.py", "inject", router, exit_address, "30",
-                                     exit_address, str(port), far, "8080")
+                                     exit_address, str(port), service, "8080")
         time.sleep(2)
         arrivals = [entry for entry in received()[before:] if entry["type"] == 11 and entry["source"] == router]
         related = [entry for entry in arrivals if entry.get("quoted", {}).get("source") == source
