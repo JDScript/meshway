@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-12T04:38:31.747466+00:00",
+  "updatedAt": "2026-10-12T04:40:52.699378+00:00",
   "runs": [
     {
       "id": 38203697030,
@@ -236,9 +236,9 @@
       "commit": "4503138aaed645cda64a360c46213a6e36501fc0",
       "message": "docs: rule-sets design updated for R1 (format, loader proof, converters, catalog, CLI, measurements, R2a interfaces); architecture and changelog",
       "createdAt": "2026-10-12T04:25:06Z",
-      "updatedAt": "2026-10-12T04:30:50Z",
-      "status": "in_progress",
-      "conclusion": null,
+      "updatedAt": "2026-10-12T04:36:46Z",
+      "status": "completed",
+      "conclusion": "success",
       "url": "https://github.com/JDScript/meshway/actions/runs/38203696993",
       "jobs": [
         {
@@ -256,11 +256,11 @@
           "id": 114662403738,
           "name": "node-linux (aarch64-unknown-linux-musl)",
           "runner": "mars-epyc7543",
-          "status": "in_progress",
-          "conclusion": null,
+          "status": "completed",
+          "conclusion": "success",
           "startedAt": "2026-10-12T04:30:49Z",
-          "completedAt": null,
-          "seconds": null,
+          "completedAt": "2026-10-12T04:36:45Z",
+          "seconds": 356.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/38203696993/job/114662403738"
         }
       ],
