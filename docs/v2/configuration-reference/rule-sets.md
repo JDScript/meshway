@@ -167,7 +167,7 @@ validate 走相同准备与授权校验，但不存储 artifact、不预留版�
 - netmap 投影的 `ruleSets` 为 `key → {digest, format, bytes, entries}`，只含被保留的公共或 profile 规则引用的 key；集合定义（URL、目录、inline 列表）不进入 netmap。见 [Netmap 设计](/v2/node/netmap-design#rule-set-artifacts)。
 - 节点 Control 以节点会话 `GET /agent-api/v1/artifacts/{digest}` 取 artifact：只有该节点某份仍可能在租约内的 netmap（当前一份，或被替换不足一个租约有效期的一份）引用的 digest 返回 200 与原始字节（`application/vnd.meshway.rules.v1`，`ETag` 为 digest，`Cache-Control: private, max-age=31536000, immutable`），其他一律 404，不区分“不存在”与“无权”。
 - 节点检查长度、SHA-256 与完整结构后，以 0400 只读文件 `identity/artifacts/sha256-<hex>.mwrs` 原子写入私有目录，并只保留当前 netmap 引用的文件；重启离线时从该缓存加载。每节点同时最多 2 个下载，失败按 5 秒起、上限 5 分钟退避。
-- 新 netmap 立即生效，不等待 artifact：撤销与收紧不被下载阻塞。引用尚未取得的集合的规则不可用：first-match 在该规则停止（不跳到后续规则、不当作空集合、不 direct），源节点的出口捕获保持全范围捕获与 IPv6 sink、不发布 direct 例外，resolver socket 一律拒绝。artifact 取得后同一 netmap 重新应用。`meshway status --json` 的 `netmap.missingArtifacts` 与 `netmap.artifactProblem` 报告缺失的 digest 与最后错误（`download`／`integrity`／`storage`／`budget`）。
+- 新 netmap 立即生效，不等待 artifact：撤销与收紧不被下载阻塞。引用尚未取得的集合的规则不可用：first-match 在该规则停止（不跳到后续规则、不当作空集合、不 direct），源节点自己的出口方案依赖缺失集合时，该方案为不可用：出口捕获保持全范围捕获与 IPv6 sink、不发布 direct 例外，resolver socket 一律拒绝，与其他不可用出口方案一样本次安装报告失败（负向边界保持）。artifact 取得后 Control 以同一 netmap 再发布，自动重新应用，不需第二次 `up`。`meshway status --json` 的 `netmap.missingArtifacts` 与 `netmap.artifactProblem` 报告缺失的 digest 与最后错误（`download`／`integrity`／`storage`／`budget`）。
 
 ## 周期更新与生命周期
 
