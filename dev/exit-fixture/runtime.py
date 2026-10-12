@@ -583,13 +583,65 @@ def execute(report, artifacts, runtime_os, platform, short, load):
         named["directAssociated"] = by_name(target)
         if named["directAssociated"]["exitCode"] or len(visits_from(e_peer)) != before + 3:
             raise RuntimeError("associated address did not follow its name rule")
+        # An established flow outlives its association: A keeps the address
+        # captured for it, so its packets keep leaving through E (A has no
+        # direct path to the external service), while a new connection to
+        # the bare address takes the post-association IP decision (direct,
+        # dropped). Once the flow ends the address leaves A's capture.
+        held_program = (
+            "import json,os,socket,sys,time\n"
+            "name,duration=sys.argv[1],float(sys.argv[2])\n"
+            "address=socket.getaddrinfo(name,8080,socket.AF_INET,socket.SOCK_STREAM)[0][4]\n"
+            "t=socket.create_connection(address,3); t.settimeout(3)\n"
+            "u=socket.socket(socket.AF_INET,socket.SOCK_DGRAM); u.connect(address); u.settimeout(3)\n"
+            "result={'address':address[0],'tcp':[],'udp':[],'done':False}\n"
+            "def save():\n"
+            " open('/evidence/held-flow.tmp','w').write(json.dumps(result)); os.replace('/evidence/held-flow.tmp','/evidence/held-flow.json')\n"
+            "def tcp(m):\n"
+            " t.sendall(m); return t.recv(64)==m\n"
+            "def udp(m):\n"
+            " u.send(m); return u.recv(64)==m\n"
+            "start=time.monotonic(); i=0\n"
+            "while time.monotonic()-start<duration:\n"
+            " m=b'held-%d'%i; at=round(time.monotonic()-start,1)\n"
+            " for kind,probe in (('tcp',tcp),('udp',udp)):\n"
+            "  try: ok=probe(m)\n"
+            "  except OSError: ok=False\n"
+            "  result[kind].append([at,ok])\n"
+            " save(); i+=1; time.sleep(2)\n"
+            "t.close(); u.close(); result['done']=True; save()\n")
+        owned("container", containers["a"])
+        subprocess.run(["docker", "exec", "-d", containers["a"], "python3", "-c", held_program, name, "100"],
+                       check=True, timeout=15, close_fds=True)
+        def held_flow():
+            record = command("a", "cat", "/evidence/held-flow.json", required=False)
+            return json.loads(record["stdout"]) if record["exitCode"] == 0 else None
+        wait_for(lambda: (held_flow() or {}).get("tcp"), "held flow started", 30)
+        # The association lives at most its 60 s TTL after that lookup.
+        wait_for(lambda: len((held_flow() or {}).get("tcp", [])) >= 1 and held_flow()["tcp"][-1][0] >= 75,
+                 "held flow past its association", 120)
+        named["heldAddressAfterExpiry"] = by_name(target)
+        if named["heldAddressAfterExpiry"]["exitCode"] == 0:
+            raise RuntimeError("the bare address still followed an ended association")
+        if not managed(a_capture("domain-exit-held"), ipaddress.ip_address(target)):
+            raise RuntimeError("A released the address of a live exit flow")
+        wait_for(lambda: (held_flow() or {}).get("done"), "held flow finished", 60)
+        held = held_flow()
+        named["heldFlow"] = held
+        write(report / "held-flow.json", held)
+        if not all(ok for _, ok in held["tcp"]) or sum(not ok for _, ok in held["udp"]) > 1:
+            raise RuntimeError("an established exit flow failed after its association ended")
+        if any(v["peer"].rsplit(":", 1)[0] != e_peer for v in json.loads(command("external", "cat", "/evidence/access.json")["stdout"])):
+            raise RuntimeError("external service saw a peer other than E")
+        wait_for(lambda: not managed(a_capture("domain-exit-released"), ipaddress.ip_address(target)),
+                 "address released after its flows ended", 180)
         named["revoked"] = stage_config("exit-name-revoke", "exit-name-revoked.json")
         named["afterRevoke"] = by_name(name)
-        if named["afterRevoke"]["exitCode"] == 0 or len(visits_from(e_peer)) != before + 3:
+        if named["afterRevoke"]["exitCode"] == 0 or len(visits_from(e_peer)) != before + 4:
             raise RuntimeError("named exit outlived its Access revocation")
         named["restored"] = stage_config("exit-name-restore", "exit-name-restored.json")
         write(report / "domain-exit.json", named)
-        manifest["stages"]["10"] = {"status": "passed", "evidence": ["domain-exit.json", "domain-exit-configured.json",
+        manifest["stages"]["10"] = {"status": "passed", "evidence": ["domain-exit.json", "domain-exit-configured.json", "held-flow.json",
                                                                     "external/access.json", "controller/association-reports.json"]}
 
         manifest["status"] = "traffic"
