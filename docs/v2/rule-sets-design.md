@@ -1,6 +1,6 @@
 # 规则集引擎设计草案
 
-> **未实现、未验收。** 本页是 R0 设计研究稿，不加入文档导航，不构成可用 API 或功能承诺。当前行为仍以 [Rule Sets](/v2/configuration-reference/rule-sets)、[Routing](/v2/configuration-reference/routing) 与 [Netmap 设计](/v2/node/netmap-design) 为准。字段名为草案，最终类型由所属 crate 定义并生成 OpenAPI／SDK。
+> **R1 已实现格式与 crate；Server／节点接线待 R2a。** `crates/meshway-rules`（格式、builder、校验 loader、matcher、转换器、`mapped`、签名目录）与 `tools/meshway-rules-cli` 已合入并有实测（[R1 实测](#r1-实测)）；Server、Policy、Control 尚未使用它，配置、netmap 与 HTTP 字段仍是草案。本页不加入文档导航，不构成可用 API 或功能承诺。当前行为仍以 [Rule Sets](/v2/configuration-reference/rule-sets)、[Routing](/v2/configuration-reference/routing) 与 [Netmap 设计](/v2/node/netmap-design) 为准。字段名为草案，最终类型由所属 crate 定义并生成 OpenAPI／SDK。
 
 ## 目标与结论
 
@@ -12,7 +12,8 @@
 2. **溯源不进 artifact**。上游 repo／commit／格式／未转换条目报告放在发布目录和 Server 资源记录中；否则上游每次提交都会改 digest，引发无内容变化的全网 netmap 更新。
 3. **唯一实现 `crates/meshway-rules`**：格式、builder、loader、matcher、来源转换器。Policy 只用 matcher API；Server、发布流水线（CLI）和节点 Control 复用同一 crate。
 4. **规则集内容按 digest 下发**：netmap 的 `ruleSets` 只有 `{digest, bytes, entries}`，替代现在每份 netmap 内联的 JSON 内容；规则集刷新只改变引用。
-5. spike 实测：现转换器在 8 份受支持格式的真实来源中**整次失败 4 份**；新格式 artifact 为 source 的 22–39 %（域名）／46–51 %（IP），打开 3–5 µs（无 keyword、planck），`match_domain` 命中 125–212 ns／未命中 43–112 ns、`match_ip` 5–43 ns，与参考实现 0 差异；现 Policy 线性匹配同类查询要 0.48–54 ms。详见 [spike 实测](#spike-实测)。
+5. R1 实测（正式 crate）：16 份真实来源与 spike 参考实现 0 差异（3,150 万次域名、3,210 万次 IP 查询），arm64／x86_64 digest 一致；planck 上 `match_domain` 命中 163–261 ns／未命中 55–129 ns、`match_ip` 5–46 ns；打开（含整份 SHA-256 与 FST 结构证明）816 KB 约 4 ms、最大 3.66 MB 约 42 ms，每进程每 digest 一次。详见 [R1 实测](#r1-实测)。
+6. spike 实测：现转换器在 8 份受支持格式的真实来源中**整次失败 4 份**；新格式 artifact 为 source 的 22–39 %（域名）／46–51 %（IP），打开 3–5 µs（无 keyword、planck），`match_domain` 命中 125–212 ns／未命中 43–112 ns、`match_ip` 5–43 ns，与参考实现 0 差异；现 Policy 线性匹配同类查询要 0.48–54 ms。详见 [spike 实测](#spike-实测)。
 
 ## 现状与问题
 
@@ -29,24 +30,24 @@
 
 ### 布局
 
-所有整数小端；段起点 8 字节对齐；未使用字节为 0。
+所有整数小端；段起点 8 字节对齐；头、段表与各段之外的字节（对齐填充、尾部）必须为 0。
 
 | 偏移 | 字段 | 说明 |
 | --- | --- | --- |
 | 0 | `magic` | `MWRULES\0` |
 | 8 | `major` u16 | 不兼容变更时递增；loader 拒绝未知 major |
-| 10 | `minor` u16 | 只增加可选段或可选头字段 |
+| 10 | `minor` u16 | 只增加可选段或可选头字段；当前 0 |
 | 12 | `flags` u32 | v1 为 0 |
-| 16 | `sectionCount` u32 | ≤ 64 |
+| 16 | `sectionCount` u32 | ≤ 64；20–23 保留为 0 |
 | 24 | `totalLength` u64 | 必须等于实际字节数 |
 | 32 | `counts` 6×u32 | exact、suffix、keyword、v4 区间、v6 区间、subdomain |
 | 56 | 保留 | 0 |
-| 64 | 段表 | 每项 24 B：`kind` u32、`flags` u32（bit0＝required）、`offset` u64、`length` u64 |
+| 64 | 段表 | 每项 24 B：`kind` u32、`flags` u32（bit0＝required，其余位为 0）、`offset` u64、`length` u64 |
 
 | kind | 段 | 编码 |
 | --- | --- | --- |
-| 1 | `domains` | `fst::Map`：key 为规范名称的**字节反转**，value 位 0＝exact、1＝suffix、2＝subdomain。一次从尾到头遍历即可在每个标签边界判断 suffix／subdomain，在名称起点判断 exact，O(名称长度)，与条目数无关 |
-| 2 | `keywords` | `count` u32、`count+1` 个 u32 偏移、字节 blob；字面量排序去重 |
+| 1 | `domains` | `fst` 0.4.7（格式版本 3，crate 版本精确锁定，因为其输出进入 digest）的 Map：key 为规范名称的**字节反转**，value 恰为 1＝exact、2＝suffix、4＝subdomain 之一。一次从尾到头遍历即可在每个标签边界判断 suffix／subdomain，在名称起点判断 exact，O(名称长度)，与条目数无关 |
+| 2 | `keywords` | `count` u32、`count+1` 个 u32 偏移（首个为 0、末个为 blob 长度）、字节 blob；字面量严格升序、非空、≤ 253 B 可打印 ASCII 且无大写 |
 | 3 | `ipv4` | `count` 个 `(start u32, end u32)` 闭区间，排序、不相交、不相邻 |
 | 4 | `ipv6` | `count` 个 `(start u128, end u128)`，同上 |
 
@@ -54,17 +55,24 @@
 
 **keyword 在加载时建自动机**：Aho-Corasick 没有可零拷贝加载的稳定序列化格式；实测 278 个关键字的 DFA 构建 0.60 ms、1,024 个 2.0 ms／1.6 MB 堆（[关键字](#关键字自动机规模)）。v1 每个 artifact 最多 1,024 个关键字，进程内每个 digest 只建一次。
 
+四个 kind 必须各出现一次且标为 required；未知 kind 若标 required 则拒绝，否则忽略。v1 builder 按 1–4 的顺序写四段（空段也写）。
+
+**loader 校验**（`RuleSet::from_vec`／`mapped::open` 同一路径，任意字节要么拒绝要么得到查询不会 panic 的句柄）：大小 ≤ 16 MiB；magic、major、保留字节与 `totalLength`；段表在界内、对齐、互不重叠、填充为 0；头 `counts` 不超上限且与各段一致；keyword 表与 IP 区间的排序／不相交／不相邻；整份 SHA-256。`fst` crate 的读取端假定输入可信（畸形字节可 panic），所以 `domains` 由 `meshway-rules` 自己的有界读取器解码，加载时证明：节点从 root 向下首尾相接铺满段（builder 的写出方式）、每个转移指向更低的铺块地址（遍历必终止）、输入为严格升序的名称字节、256 B 输入索引与转移一致、每个 key 的值恰为一个 kind 位、key 总数等于头计数、最长 key ≤ 253 B。该证明对每个节点一次线性遍历，是打开耗时的主要部分（见 [R1 实测](#r1-实测)）。
+
 **IP 为区间而非前缀**：区间二分查找与前缀长度无关；同一数组也是 nftables interval set 的直接输入。需要展示命中条目时，在冷路径把所在区间按规范最小 CIDR 分解给出包含该地址的那一块。
 
 ### 规范化与 digest
 
 builder 的输入是转换器产出的条目，输出唯一确定：
 
-- 名称：IDNA→ASCII、小写、去结尾点；label 1–63 字节、全名 ≤ 253、字符 `[a-z0-9-]` 且不以 `-` 开头或结尾（与现 `canonical_domain` 相同）。
-- 去冗余：被同集合 suffix 覆盖的 exact／suffix／subdomain，被 keyword 覆盖的名称，包含另一 keyword 的 keyword 均删除；`exact(n)`＋`subdomain(n)` 合并为 `suffix(n)`。CIDR 掩码规范化后合并为区间。
+- 名称（`meshway_rules::Name::parse`）：`idna::domain_to_ascii`（UTS 46 ToASCII）→小写、去结尾点；label 1–63 字节、全名 ≤ 253、字符 `[a-z0-9-]` 且不以 `-` 开头或结尾，与现 Server `canonical_domain` 逐字相同。重复项由集合去重。
+- 与上游的差异：mihomo／sing-box 按字面比较名称，不做 IDNA 校验，也接受 `_`。因此 punycode 标签解码后不是合法 IDNA 的名称（meta-rules-dat `geolocation-!cn` 的 `xn--wcvs22d1m.hk`、`xn--wcvs22d1m.xn--j6w193g`）与含 `_` 的条目在我们这里报告为 `invalidName` 并跳过，本集合是上游的子集。
+- keyword（`Keyword::parse`）：小写后 1–253 字节可打印 ASCII（不含空格）；故意比名称宽，查询名可能含 `_`（blackmatrix7 Advertising 有 `_vmind.qqvideo.tc.qq.com`）。
+- CIDR（`Cidr::parse`）：`address/bits`，清除主机位（`10.4.3.2/8`→`10.0.0.0/8`），与现 Server 相同；裸地址、zone 不接受。
+- 去冗余：包含另一 keyword 的 keyword；包含某 keyword 的名称；`exact(n)`＋`subdomain(n)` 合并为 `suffix(n)`；位于某 suffix 之下（exact／subdomain 含该 suffix 本身）或严格位于某 subdomain 之下的名称均删除。CIDR 合并为区间（相邻也合并）。
 - `digest = "sha256:" + hex(SHA-256(artifact 全部字节))`。`bytes`＝artifact 字节数；`entries`＝exact＋suffix＋subdomain＋keyword＋v4 区间＋v6 区间（规范化后计数，不是源条目数）。
 
-去冗余的条目数单独报告（geosite-cn 2,578、blackmatrix7 Global 8,081），不算未转换。
+去冗余的条目数单独报告（geosite-cn 2,578、blackmatrix7 Global 8,081），不算未转换。R1 比 spike 多删“严格位于 subdomain 之下”的名称：sing-geosite `geolocation-!cn` 的 `ads.yandex`（在 `.yandex` 下）与 `adtrafficquality.google`（在 `.google` 下），这是 16 份中唯一与 spike digest 不同的一份，匹配结果相同。
 
 ### 来源溯源与转换报告
 
@@ -72,14 +80,25 @@ builder 的输入是转换器产出的条目，输出唯一确定：
 
 | 字段 | 说明 |
 | --- | --- |
-| `source.repo`／`ref`／`commit`／`path` | 上游仓库、分支、提交 SHA 与文件路径 |
+| `upstream.repo`／`ref`／`commit`／`path` | 上游仓库、分支、提交 SHA 与文件路径（`catalog::Location`） |
 | `source.format` | 输入格式（见[转换器](#转换器)） |
-| `source.sha256`／`source.bytes` | 原始输入摘要与大小 |
-| `converter` | `meshway-rules` 版本与源码提交 |
-| `report.converted` | 按 kind 计数 |
-| `report.redundant` | 去冗余删除数 |
-| `report.unconverted` | 按原因计数：`regex`、`invalidName`、`wildcard`（mihomo `*.`）、`mixedRule`（sing-box 名称与 IP 混合）、`unsupportedField:<name>`、`classical:<TYPE>` 等 |
-| `report.items` | 未转换条目原文与原因，最多 1,000 条，超出只计数 |
+| `source.sha256`／`source.bytes` | 原始输入摘要（小写 hex）与大小 |
+| `converter` | `version`（`meshway-rules` 版本）、`formatMajor`／`formatMinor` |
+| `report.summary.converted` | 接受的源条目按成为的 kind 计数：`exact`、`suffix`、`subdomain`、`keyword`、`cidr`（去冗余前，含重复） |
+| `report.summary.redundant` | 接受后因重复或被覆盖而删除的名称／keyword 数（IP 合并不计） |
+| `report.summary.unconverted` | 跳过原因→计数，见下表 |
+| `report.items` | `{at, reason, entry}`：位置（`/rules/3/domain_regex/0`、`/payload/7`、`line 12`、`/domainSuffix/2`）、原因与原文（截断到 256 字符）；最多 1,000 条，超出只计数 |
+
+| 原因 | 含义 |
+| --- | --- |
+| `regex` | `domain_regex`／`DOMAIN-REGEX`，v1 不降级 |
+| `invalidName`／`invalidKeyword`／`invalidCidr` | 不满足[规范化](#规范化与-digest) |
+| `wildcard` | mihomo `*`，或 `+.` 之外的 `+` |
+| `mixedRule` | 一条 sing-box 规则同时有名称与 `ip_cidr` 字段（AND），整条的每项都报告 |
+| `emptyRule` | sing-box 规则无条件（上游等于匹配全部），按一项报告 |
+| `notString` | 列表项不是字符串 |
+| `unsupportedField:<name>` | sing-box 规则含 `domain`／`domain_suffix`／`domain_keyword`／`domain_regex`／`ip_cidr` 之外的字段（`invert`、logical 的 `mode` 等；`type: default` 视为无），整条的每项以首个（按名排序）未知字段报告 |
+| `classical:<TYPE>` | 无等价的 classical 类型（`IP-ASN`、`PROCESS-NAME` 等），或 `DOMAIN*` 带选项、`IP-CIDR*` 带 `no-resolve` 之外的选项 |
 
 ### 上限
 
@@ -111,23 +130,27 @@ builder 的输入是转换器产出的条目，输出唯一确定：
 
 - 集合内所有条目取并集；一条 sing-box 规则内名称与 IP 字段为 AND，不能表达，整条报告为 `mixedRule`。
 - regex（用户决定）：v1 逐条报告并跳过，不做字面量降级（真实数据中 160 条可降级的为 0）；后续若支持只能按[兼容策略](#兼容策略)作为新的 required 段。跳过意味着本集合是上游语义的子集，`RuleSetView` 必须显示 `unconverted.regex` 计数。
-- 匹配输入必须是规范名称；DNS owner 每次查询规范化一次（`meshway_rules::Name::parse`），不在 matcher 内重复。
-- `match_domain` 返回 `Option<DomainHit>`：`Exact`、`Suffix { len }`（命中项是查询名的尾部 `len` 字节）、`Subdomain { len }`、`Keyword { index }`。由此可在不额外存储的情况下给出评估结果的 `RuleSetMatch.entry`。`match_ip` 返回 `Option<IpHit { range }>`。
+- 查询输入为小写 ASCII、无结尾点的名称（如 `Name::as_str()`），按字节比较，不在 matcher 内再规范化；其他写法不会命中。规范名称不含 `_`，但 matcher 本身接受任意字节，`_dmarc.example.com` 可以命中 suffix `example.com` 与 keyword；DNS owner 是用 `Name::parse` 还是只做小写＋去结尾点，归 R2a／X6 决定（见[未解决](#未解决)）。
+- `match_domain(&str) -> Option<DomainHit>`：`Exact`、`Suffix { len }`（命中项是查询名的尾部 `len` 字节）、`Subdomain { len }`、`Keyword { index }`（`RuleSet::keyword(index)` 给出字面量）。suffix／subdomain 从最短的尾部开始尝试，exact 只在全名处，keyword 最后。由此可在不额外存储的情况下给出 `RuleSetMatch.entry`。
+- `match_ip(IpAddr) -> bool`：IPv4 只查 v4 区间、IPv6 只查 v6 区间（`::ffff:a.b.c.d` 不当作 IPv4）。`ipv4_ranges()`／`ipv6_ranges()` 按升序给出合并后的闭区间（`RangeInclusive<Ipv4Addr>`／`<Ipv6Addr>`），即 nftables interval set 的输入；需要展示命中区间的 CIDR 时由调用方在冷路径分解。
+- `domains()` 按反转名称顺序列出全部 exact／suffix／subdomain，`keywords()` 列出字面量；`counts()`、`digest()`、`sections()`、`as_bytes()` 给出头与段信息。
 
 ## crate 与 owner
 
 | 组件 | 持有 | 不得 |
 | --- | --- | --- |
-| `crates/meshway-rules` | 格式常量、builder、loader、matcher、全部来源转换器与报告类型 | 依赖 Server／Policy／网络 I/O；第二套匹配 |
+| `crates/meshway-rules` | 格式常量、builder、loader、matcher、名称／keyword／CIDR 规范化、全部来源转换器与报告类型、签名目录类型与签名／验签 | 依赖 Server／Policy／网络 I/O；第二套匹配 |
 | `meshway-policy` | 首个匹配规则判定；只调用 `RuleSet::match_domain`／`match_ip`／迭代器，以及从路由规则内联列表构建内存 `RuleSet` 的 `RuleSet::from_inline` | 读取文件、下载、解析来源格式；自写字符串比较 |
 | Server `resources/` | 下载、provider 目录验签、转换、artifact 存储（全局内容寻址）、网络绑定、`GET /rule-sets`、`artifacts/{digest}` 授权 | 在 netmap 内联内容 |
 | Node `meshway-control` | 按 netmap 引用取 artifact、校验 digest、私有原子缓存与清理 | 解析或重建 artifact 内容 |
 | `meshway-engine` | 把已加载的 `RuleSet` 句柄连同 netmap 交给 Policy／组件 | 持有第二份授权状态 |
-| 发布流水线 CLI（`tools/meshway-rules-cli`） | 调用 `meshway-rules` 转换并写目录 | 自带转换逻辑 |
+| 发布流水线 CLI（`tools/meshway-rules-cli`，bin `meshway-rules`） | 文件 I/O 与参数，调用 `meshway-rules` 转换、组装与签名目录 | 自带转换、校验或签名逻辑 |
 
-feature 划分：默认只含 matcher、loader 与内存 builder（Policy、Engine 用）；`convert` 含来源解析与报告（Server、CLI 用）；`mapped` 含 mmap 后端（Server、Control 用）。
+feature 划分：默认含规范化、builder、loader、matcher 与 inline 转换（Policy、Engine 用）；`convert` 含来源解析（`serde_json`、`serde_yaml_ng`；Server、CLI 用）；`mapped` 含 mmap 后端（`memmap2`；Server、Control 用）；`catalog` 含 `index.json` 类型、组装、签名与验签（`ed25519-dalek`、`chrono`；Server、CLI 用，蕴含 `convert`）。目录签名钥只签规则目录，与 netmap 租约签发无关，不构成第二份授权状态。
 
-**mmap 与 `unsafe`**（用户已批准例外）：`memmap2::Mmap::map` 是 `unsafe`（文件被截断或改写即未定义行为／SIGBUS），与“业务代码 forbid unsafe”冲突。它隔离在 `meshway-rules::mapped` 一个审计模块中（模块级 `#![allow(unsafe_code)]`、每处 `// SAFETY:`，crate 其余部分 deny unsafe），前提条件是：只映射 Control／Server 私有目录中以 digest 命名、0400、经原子 rename 写入且此后不改写的文件；进程首次打开每个 digest 时整份校验 SHA-256（planck 816 KB 0.32 ms）。loader 接受任意 `AsRef<[u8]>` 后端，堆读取（`std::fs::read`）是同一 API 的另一后端（planck 816 KB 打开 16.5 µs）。
+`inline` 模块：`Inline { domain, domain_suffix, domain_subdomain, ip_cidr }`（`&[String]`）。`inline::convert` 返回带报告的 `Conversion`（位置 `/<字段>/<序号>`）；`RuleSet::from_inline` 要求零跳过且非空，否则返回首个问题。
+
+**mmap 与 `unsafe`**（用户已批准例外）：`memmap2::Mmap::map` 是 `unsafe`（文件被截断或改写即未定义行为／SIGBUS），与“业务代码 forbid unsafe”冲突。它隔离在 `meshway-rules::mapped` 一个审计模块中（模块级 `#![allow(unsafe_code)]`、每处 `// SAFETY:`，crate 其余部分 deny unsafe），前提条件是：只映射 Control／Server 私有目录中以 digest 命名、0400、经原子 rename 写入且此后不改写的文件；进程首次打开每个 digest 时整份校验 SHA-256（planck 816 KB 0.32 ms）。`mapped::open(path)` 检查普通文件、无任何写权限位、≤ 16 MiB，再走与堆读取（`RuleSet::from_vec`）完全相同的校验与 digest；调用方比较 `digest()` 与期望值。
 
 **每进程每 digest 一个句柄**：Server 计算所有节点的路径检测时共享同一 `Arc<RuleSet>`；1,000 个句柄共享一份映射只增加 0.8 MB，1,000 份堆副本增加 786 MB（[内存](#内存-1-000-个句柄)）。
 
@@ -135,13 +158,13 @@ feature 划分：默认只含 matcher、loader 与内存 builder（Policy、Engi
 
 | `format` | 输入 |
 | --- | --- |
-| `sing-box-source` | sing-box rule-set source JSON v1–v3；字段可为字符串或数组（sing-box listable，`sing-box rule-set decompile` 对单元素输出字符串） |
-| `mihomo-domain`／`mihomo-ipcidr` | mihomo YAML `payload`（现有） |
-| `mihomo-domain-text`／`mihomo-ipcidr-text` | meta-rules-dat `.list`，每行一项 |
-| `classical` | `TYPE,value[,...]` 文本 |
-| `meshway` | 本格式；解析后按同一 builder 重建，digest 必须不变 |
+| `sing-box-source` | sing-box rule-set source JSON v1–v3（顶层只允许 `version`、`rules`）；字段可为字符串或数组（sing-box listable）；`domain_suffix` 以 `.` 开头为 subdomain。可选格式，不是默认源；不解析 `.srs` |
+| `mihomo-domain`／`mihomo-ipcidr` | mihomo YAML `payload`（顶层只允许 `payload`）；`+.x` suffix、`.x` subdomain、裸名 exact |
+| `mihomo-domain-text`／`mihomo-ipcidr-text` | mihomo `format: text`（meta-rules-dat `.list`）：每行一项，去首尾空白，跳过空行与 `#` 行 |
+| `classical` | mihomo／Clash classical 文本 `TYPE,value[,option]`：`DOMAIN`、`DOMAIN-SUFFIX`、`DOMAIN-KEYWORD`、`DOMAIN-REGEX`（跳过）、`IP-CIDR`／`IP-CIDR6`（`no-resolve`） |
+| `meshway` | 本格式；按同一 builder 重建，字节必须不变（非规范 artifact 为 `invalid_source`） |
 
-转换只在文档无法解析、超出预算或转换后为空时整次失败（`invalid_source`／`too_large`／`rule_set_budget`／`conversion_failed`）；单条无法转换只进入报告。
+转换只在文档无法解析（`InvalidSource`→`invalid_source`）、源超过 32 MiB（`TooLarge`→`too_large`）、结果超出 artifact 上限（`Budget`→`rule_set_budget`）或无任何条目可转换（`Empty`→`conversion_failed`）时整次失败；单条无法转换只进入报告。对现 Server 转换器的语义变化（均已有测试 `crates/meshway-rules/tests/convert.rs`）：未知字段／regex／通配／混合规则由整次失败改为逐条报告；`domain_keyword` 与 `.example.com` 由拒绝改为 keyword／subdomain；被 suffix 覆盖的同名 exact 不再单独保存。
 
 ## 发布仓库
 
@@ -156,11 +179,33 @@ feature 划分：默认只含 matcher、loader 与内存 builder（Policy、Engi
 
 1. 读取上游 meta-rules-dat `meta` 分支的当前 commit，按 commit SHA 拉取原文（raw URL 不重定向）。
 2. 每个集合运行 CLI：转换、构建、报告。单个集合失败时沿用上一版 artifact，并在目录中记录 `held: {since, reason}`；规范条目数比上一版减少超过 50 % 视为可疑，同样 hold 并开 issue。
-3. 生成 `index.json`：`schema: 1`、单调递增的 `sequence`、`generatedAt`、`converter`、`upstreams[]`（repo／ref／commit）、`sets: { "<collection>/<name>": { digest, bytes, entries, format, source, report } }`；完整报告另存 `reports/<digest>.json`。
-4. 用 ed25519 签名 `index.json` 原始字节得 `index.json.sig`（含 key ID）。签名钥存为仓库 GitHub environment secret，环境只允许 `main` 上的该 workflow 使用；用户离线持有第二把轮换钥。Server 内置两把公钥（CI 钥与离线轮换钥），任一签名有效即接受；CI 钥泄露时用离线钥签发并发布去掉旧钥的 Server 版本。
-5. 强制推送 `dist`：`index.json`、`index.json.sig`、`artifacts/<digest>.mwrs`、`reports/`；保留最近 7 份目录引用的 artifact，使目录与 artifact 读取之间的更新竞态在实践中不发生。同时打 tag 并创建 GitHub Release 供人工审计。
+3. 生成 `index.json`（`meshway-rules index`）：`schema: 1`、`sequence`（输出路径已有目录时为其值＋1，否则 1）、`generatedAt`、`converter`、`upstreams[]`（由各集合的 repo／ref／commit 去重得出；同一 repo／ref 出现两个 commit 即拒绝）、`sets: { "<collection>/<name>": { digest, bytes, entries, format, counts, upstream, source, report } }`（`report` 为 summary）。每项 artifact 都被打开并核对 digest、字节数、计数与 major。完整报告留在 `sets/<collection>/<name>.json`。
+4. 签名得 `index.json.sig`：`{"keyId": "ed25519:<64 hex 公钥>", "signature": "<128 hex>"}`，签名对象为 `"meshway-rules catalog v1\0"` 前缀＋`index.json` 原始字节（域分隔，目录钥不会被诱导签其他内容）；验签用 `verify_strict`，`keyId` 必须是受信公钥之一。签名钥文件为 32 字节种子的 64 位小写 hex（`openssl rand -hex 32`），公钥由 `index` 输出的 `keyId` 给出。签名钥存为仓库 GitHub environment secret，环境只允许 `main` 上的该 workflow 使用；用户离线持有第二把轮换钥。Server 内置两把公钥（CI 钥与离线轮换钥），任一签名有效即接受；CI 钥泄露时用离线钥签发并发布去掉旧钥的 Server 版本。
+5. 强制推送 `dist`：`index.json`、`index.json.sig`、`artifacts/sha256-<hex>.mwrs`、`sets/<collection>/<name>.json`；保留最近 7 份目录引用的 artifact，使目录与 artifact 读取之间的更新竞态在实践中不发生。同时打 tag 并创建 GitHub Release 供人工审计。
 
-**Server 怎样取与钉钥**：Server 从 `https://raw.githubusercontent.com/meshway-org/meshway-rules/dist/index.json` 取目录与签名，用内置公钥（源码常量，可由部署设置追加或替换，网络管理员不能改内置 provider 的信任根）验签，拒绝 `sequence` 小于该 provider 上次接受值的目录；再按 digest 取 `artifacts/<digest>.mwrs` 并校验 SHA-256。GitHub Release 下载会 302 重定向，而现行下载器拒绝重定向，所以不用 Release 作为 Server 来源。
+**Server 怎样取与钉钥**：Server 从 `https://raw.githubusercontent.com/meshway-org/meshway-rules/dist/index.json` 取目录与签名，用内置公钥（源码常量，可由部署设置追加或替换，网络管理员不能改内置 provider 的信任根）验签，拒绝 `sequence` 小于该 provider 上次接受值的目录；再按 digest 取 `artifacts/sha256-<hex>.mwrs`，打开后比较 `digest()` 并以 `CatalogSet::check` 核对目录项。GitHub Release 下载会 302 重定向，而现行下载器拒绝重定向，所以不用 Release 作为 Server 来源。
+
+**`dist` 目录与 CLI**（R1 已实现；仓库与 workflow 属 R2b）：
+
+```text
+index.json  index.json.sig
+artifacts/sha256-<hex>.mwrs        不可变 artifact
+sets/<collection>/<name>.json      SetRecord：{ upstream, conversion }，含完整报告
+```
+
+集合名 `<collection>` 为 `[a-z0-9][a-z0-9-]{0,31}`，`<name>` 为 `[a-z0-9][a-z0-9!@._+-]{0,127}`。
+
+```sh
+meshway-rules convert --format mihomo-domain-text geosite/openai.list -o openai.mwrs > conversion.json
+#   stdout：ConversionRecord { digest, bytes, entries, format, counts, source, report }
+#   流水线把它与 upstream 组成 sets/meta-geosite/openai.json，并把 artifact 复制为 artifacts/sha256-<hex>.mwrs
+meshway-rules index --sign-key ci.key dist -o dist/index.json      # 写 index.json 与 index.json.sig
+meshway-rules verify --public-key ed25519:<hex> dist/index.json dist
+meshway-rules inspect artifacts/sha256-<hex>.mwrs                  # 头、段表、计数、digest
+meshway-rules match artifacts/sha256-<hex>.mwrs api.openai.com     # 或 IP
+```
+
+输出均为 stdout JSON，日志在 stderr（`--log-filter`／`--log-format`）。
 
 **失败行为**：目录取不到、验签失败、sequence 回退或 artifact 校验失败都保留上一份已验证内容，`problem` 记录原因，不发布半份；目录超过 7 天未前进时 `RuleSetView` 报告 `stale`，但不使执行失败。首次没有任何可用内容时与现有 remote 相同：`not_ready`，引用它的规则不可执行。
 
@@ -175,13 +220,13 @@ feature 划分：默认只含 matcher、loader 与内存 builder（Policy、Engi
     "geosite": {
       "catalog": "https://raw.githubusercontent.com/meshway-org/meshway-rules/dist/index.json",
       "collection": "meta-geosite",
-      "publicKeys": ["ed25519:<base64>"],
+      "publicKeys": ["ed25519:<hex>"],
       "updateInterval": "24h"
     },
     "corp": {
       "catalog": "https://rules.corp.example/index.json",
       "collection": "corp",
-      "publicKeys": ["ed25519:<base64>"]
+      "publicKeys": ["ed25519:<hex>"]
     },
     "geoip": null
   }
@@ -193,7 +238,7 @@ feature 划分：默认只含 matcher、loader 与内存 builder（Policy、Engi
 | key | provider 名，`[a-z][a-z0-9-]{0,31}` |
 | `catalog` | HTTPS 目录 URL，规则同现有 remote URL |
 | `collection` | 目录内集合前缀 |
-| `publicKeys` | 1–4 个 ed25519 公钥；覆盖内置 provider 时必须给出 |
+| `publicKeys` | 1–4 个 ed25519 公钥，`ed25519:<64 位小写 hex>`（`catalog::PublicKey`）；覆盖内置 provider 时必须给出 |
 | `updateInterval` | 默认 `24h`，调度、下界与退避同现有 remote |
 | 值为 `null` | 禁用同名内置 provider |
 
@@ -287,6 +332,44 @@ Control 把 artifact 写入私有目录 `artifacts/sha256-<hex>.mwrs`（0400、�
 - `match_domain(name) -> Option<rule index>` 的“rule index”属于 Policy；`meshway-rules` 只回答集合成员关系与命中项。
 - 同一 IP 被多个名称解析且对应不相容动作时，沿用 [Exit 设计 · DNS 路径与可信域名上下文](/v2/node/exit-design#dns-路径与可信域名上下文) 与 [Routing](/v2/configuration-reference/routing#direct-unmanaged) 的既有决定：拒绝／不可执行，不选更宽路径；域名授权仍是解析地址集合。本稿不改变 X6 的可信关联生产者要求，域名型规则在 X6 前仍不可执行。
 - 出口分割：IP 规则集不再展开为字符串 CIDR，Policy 用区间数组做 first-match 分割。分割结果若仍由 Server 计算并写入 `egress.routes`，geoip-cn 需要约 6,000 个 v4 前缀，远超现 4,096；用户已决定：分割移到节点，由 Engine 用 artifact 区间物化（nftables interval set＋fwmark），netmap 只带有序“规则→动作”（R3，不在 R1）。`meshway-rules` 的 `ipv4_ranges()`／`ipv6_ranges()` 直接给出合并后的有序闭区间，即 interval set 的输入。这涉及 Underlay owner，列入[未解决](#未解决)。
+
+## R1 实测
+
+正式 crate（源码 `83adf0f9`），Apple M3 Pro／macOS 27.0 与 AMD Ryzen 9 9950X／Linux 6.8（planck，`taskset -c 4`），rustc 1.98.0，workspace release profile（fat LTO）。输入为 R0 的 16 份私有数据（`.meshway/rules-spike/data.sha256`）；原始输出在 `.meshway/rules-spike/r1/{macos-m3pro,planck-9950x}/`（`digests.txt`、`perf.json`、`artifacts/`、`r1diff.jsonl`），fuzz 日志在 `.meshway/rules-spike/r1/fuzz/`。
+
+```sh
+# 16 份转换（CLI），两台主机各跑一次后比较 digests.txt
+.meshway/rules-spike/r1/convert-all.sh target/release/meshway-rules .meshway/rules-spike <out>/artifacts > <out>/digests.txt
+# 与 spike 参考实现差分（spike crate 的 r1diff 命令链接正式 crate）
+mise exec -- cargo build --release --no-default-features --manifest-path tools/meshway-rules-spike/Cargo.toml
+target/release/meshway-rules-spike r1diff .meshway/rules-spike 1000000
+# 打开与匹配耗时（每集合 3 轮 × 每类 100 万次查询、200 次打开取 p50）
+mise run perf:rules -- <artifacts...>
+# 长时间 fuzz：溢出检查与 debug 断言打开
+CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS=true CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true PROPTEST_CASES=400000 \
+  mise exec -- cargo test --release -p meshway-rules --test fuzz
+```
+
+**差分**：16 份全部 0 差异。查询包括每个规范名称本身、其随机子名称、无标签边界的前缀拼接与父名称、每个 keyword 及包含它的名称，再加每份 100 万个随机名称与其规范名称下的随机子名称（合计 31,494,338 次域名查询）；IP 为每个区间的两端及两端外一位，再加每族 100 万个随机地址（合计 32,079,864 次）。跳过计数与 spike 逐份相同。15 份 digest 与 spike 逐字节相同；`sing-geosite geolocation-!cn` 因多删两条严格位于 subdomain 下的 suffix 而不同（见[规范化](#规范化与-digest)）。`perf:rules` 另以 artifact 自身枚举构建的朴素匹配器核对全部计时查询，两台主机 0 差异。
+
+**跨架构 digest**：CLI 在 arm64（macOS）与 x86_64（planck）上转换 16 份，`digest`／`bytes`／`entries`／跳过原因逐行相同；mihomo YAML 与 `.list`、sing-geosite 与 meta 的 `openai` 仍各为同一 digest（`openai` 为 `sha256:44ab0c1a4c37…`）。
+
+**fuzz**：`tests/fuzz.rs` 以 proptest 生成任意字节（≤ 2 KiB）以及对真实构建 artifact 的 1–5 次变异（改字节、异或、截断、追加、覆写头与段表字段，可选修正 `totalLength`），对能打开的句柄执行查询与全部迭代器。macOS 上 release＋溢出检查／debug 断言，`PROPTEST_CASES=400000` 两个测试各 40 万例，用时 147.5 s，0 panic；其中 8,192–16,383 份变异 artifact 通过了 loader 并被完整调用。常规 `mise run check` 用默认 256 例。
+
+**耗时**：planck／macOS（v4、v6 列为 planck，括号内为 macOS），3 轮中位数。打开包含读取（堆）或映射、全部结构校验、FST 证明、keyword 自动机构建与整份 SHA-256；每进程每 digest 只需一次。
+
+| 集合 | 字节 | 读入堆＋打开 µs | mmap＋打开 µs | 其中 SHA-256 µs | 域名命中 ns | 域名未命中 ns | v4 命中／未命中 ns | v6 命中／未命中 ns |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| sing-geosite `cn` | 50,184 | 308.7／362.5 | 310.8／368.0 | 18.5／103.3 | 163.5／167.2 | 55.5／58.6 | — | — |
+| meta `geosite/cn` | 816,448 | 3,958／5,141 | 3,959／5,101 | 303.4／1,688 | 172.7／204.4 | 71.9／80.8 | — | — |
+| sing-geosite `geolocation-!cn` | 205,528 | 1,491／1,659 | 1,492／1,655 | 76.7／422.5 | 190.3／200.9 | 73.8／85.8 | — | — |
+| sing-geoip `cn` | 98,632 | 40.2／221.8 | 43.2／226.5 | 35.7／202.9 | — | — | 9.2／9.3（12.3／12.3） | 42.2／6.1（13.1／11.8） |
+| meta `geoip/cn` | 107,088 | 44.3／239.5 | 47.4／244.0 | 39.4／220.4 | — | — | 9.3／9.3（12.2／12.2） | 45.5／6.4（14.5／12.7） |
+| bm7 `Global`（36 keyword） | 239,208 | 1,767／1,979 | 1,765／1,979 | 88.5／492.4 | 182.3／197.4 | 129.4／159.9 | 4.8／4.8（5.7／5.8） | 11.3／3.7（2.6／2.1） |
+| bm7 `Advertising`（278 keyword） | 3,663,064 | 42,389／42,541 | 42,310／40,911 | 1,337／7,592 | 261.0／274.5 | 112.9／121.2 | 6.1／6.1（7.8／7.7） | 9.5／3.7（2.6／2.1） |
+
+- `match_domain` 比 spike（命中 125–212 ns）慢约 20–30 %，来自有界读取器的逐次边界检查；仍远低于 DNS 往返，且比现 Policy 线性路径（0.48–54 ms）快 3–5 个数量级。
+- 打开比 spike 的 3–5 µs 慢两到三个数量级，是有意的：spike 只做头部检查并依赖会在畸形输入上 panic 的 `fst` 读取器；R1 在打开时证明整个 FST，成本与节点数线性相关（Advertising 约 160 万个节点，planck 约 41 ms，SHA-256 只占 1.3 ms）。heap 与 mmap 打开时间相同，区别只在常驻内存（[内存](#内存-1-000-个句柄)）。
 
 ## spike 实测
 
@@ -415,7 +498,7 @@ meta `geosite/cn`（816,448 B），每个句柄打开后各执行 1,151 次查�
 
 | 包 | 独占范围 | 依赖 | 必需验证 |
 | --- | --- | --- | --- |
-| R1 格式＋crate | 新 `crates/meshway-rules`（format、build、load、match、convert、mapped）；`tools/meshway-rules-cli`；本稿格式定稿为 `docs/v2/` 下的格式参考页。manifest／lock 交协调者 | 无；不改 Server／Policy | 与本 spike 的参考实现做差分测试；`.srs` 解析与 `sing-box rule-set decompile` 差分；loader 对任意字节不 panic（fuzz）；跨架构 digest 一致；`mise run check` |
+| R1 格式＋crate（**已完成**） | `crates/meshway-rules`（format、build、load、match、inline、convert、mapped、catalog）；`tools/meshway-rules-cli`；`tools/meshway-rules-perf`（`perf:rules`） | 无；未改 Server／Policy | 已完成：与 spike 参考实现 0 差异；loader fuzz；跨架构 digest 一致；`mise run check`（见 [R1 实测](#r1-实测)） |
 | R2a Server＋Policy＋Control 接线 | Server `resources/`（转换改用 R1、全局内容寻址存储、provider 目录与验签、`ruleSetProviders`、隐式展开、`RuleSetView` 新字段、`artifacts/{digest}` 路由与引用索引）；`meshway-configuration` netmap 类型（`RuleSetRef`、`meshway-netmap-2`）与配置类型；`meshway-policy` 的 `plan_match`／`capture`／validation 改用 matcher；`meshway-control` artifact 获取与缓存；OpenAPI／SDK 重生成 | R1 | 投影等价测试含规则集变异；缺 artifact fail closed；撤销不被下载阻塞；离线重启载入；1,000 节点引用同一 artifact 的 perf（Server 存储、刷新耗时、请求授权）；drift 与 Rust／TS 消费者 |
 | R2b 发布仓库 | `meshway-org/meshway-rules` 仓库、workflow、签名 secret、`dist` 分支 | R1 CLI；与 R2a 并行 | 上游未变不发布；单集合失败 hold；sequence 单调；Server 用钉住公钥验通一次真实目录 |
 | R3 出口分割物化（建议） | Policy 区间分割；Engine desired；Underlay nft interval set 与 fwmark | R2a；与 X3 owner 协调 | geoip-cn 规模的 direct 例外不进 TUN；artifact 缺失保持全范围捕获；`exit/off` 行不回退 |
@@ -425,11 +508,27 @@ meta `geosite/cn`（816,448 B），每个句柄打开后各执行 1,151 次查�
 
 R0 列出的七项已由用户决定并写入相应章节：regex v1 逐条跳过（[匹配语义](#匹配语义)）；内置 provider 对齐 mihomo、指向 meta-rules-dat（[配置面](#配置面)）；签名钥为 GitHub environment secret＋用户离线轮换钥（[发布仓库](#发布仓库)）；仓库 `meshway-org/meshway-rules`；批准 `mapped` 的 `unsafe` 隔离例外（[crate 与 owner](#crate-与-owner)）；subdomain 在格式、转换器与 inline（`domainSubdomain`）支持；出口分割移到节点（R3，[Policy 接口与 X6](#policy-接口与-x6)）。
 
+## R2a 要接的接口
+
+| 消费者 | 接口 |
+| --- | --- |
+| Server `resources/` 转换 | `convert::convert(bytes, Format) -> Result<Conversion, ConvertError>`；`Format` 的字符串即配置 `format`（现 `RuleSetFormat` 需增加 `mihomo-domain-text`、`mihomo-ipcidr-text`、`classical`）；`ConvertError` 映射 `invalid_source`／`too_large`／`rule_set_budget`（`BuildError { limit, max, actual }`→`params`）／`conversion_failed`；`MAX_SOURCE_BYTES`；`Report`／`Summary`／`Reason` 进入 `RuleSetView.conversion`（需在 `meshway-protocol` 定义生成类型，或给这些类型加 schema derive） |
+| Server inline | `inline::convert(&Inline)`（逐条位置 `/<字段>/<序号>` 映射配置 issue path）；新字段 `domainSubdomain` 进入 `meshway-configuration::RuleSet::Inline` |
+| Server artifact 存储 | `Artifact::{bytes, digest, counts}`、`Counts::entries()`；`Digest` 的 `Display`／`FromStr`／`file_name()`；`MEDIA_TYPE`、`MAJOR` 进 netmap `format` |
+| Server provider 目录 | `catalog::verify(index, sig, &[PublicKey])`（sequence 单调由 Server 持久状态检查）、`Catalog::sets`、`CatalogSet::check(&RuleSet)`；内置两把 `PublicKey` 常量（CI 钥、离线轮换钥） |
+| Server／Control 加载 | `mapped::open(path)`（文件须 0400、原子 rename 写入）或 `RuleSet::from_vec`；之后比较 `digest()` 与 netmap 引用；每进程每 digest 一个 `Arc<RuleSet>` |
+| Policy | `RuleSet::match_domain(&str) -> Option<DomainHit>`、`match_ip(IpAddr) -> bool`、`keyword(index)`、`domains()`／`keywords()`／`ipv4_ranges()`／`ipv6_ranges()`（validation 与 R3 分割）、`RuleSet::from_inline(&Inline)`（路由规则 `match` 列表）、`Name::parse`（查询规范化，见下） |
+
 ## 未解决
 
+- `tools/meshway-rules-spike` 的删除归属未定：R0 数据溯源与 R1 差分（`r1diff`）仍依赖它，R1 未删除。建议在 R2b 首个真实目录验通、R1 实测证据归档后由协调者删除，`r1diff` 不迁移。
+- DNS 查询名与规范名称：`Name::parse` 拒绝 `_`，而真实查询可能含 `_`（`_dmarc.example.com`）。matcher 接受任意小写字节；DNS owner 用哪种规范化（严格 `Name::parse` 后不匹配，或仅小写＋去结尾点）需在 R2a／X6 决定。
+- sing-box `ip_cidr` 接受裸地址（视为 /32、/128），现转换器与 R1 都报告为 `invalidCidr`；是否放宽未定。
+- `held: {since, reason}`、减少 50 % hold、保留 7 份目录与 issue 由 R2b workflow 实现，CLI 未包含。
+- 打开耗时与 FST 节点数线性相关（3.66 MB 约 42 ms）；若需更快，可只在 Server 入库时做 FST 证明、节点以 digest 信任，但那会让“任意字节不 panic”依赖 digest 来源，需另行决定。
 - R3 未经 Underlay owner 评审；nftables interval set 在 6,000＋区间下的提交时延、原子替换与 conntrack 交互未测。
 - X6 可信关联生产者仍不存在；本设计让 DNS 查询时匹配变快，但不让域名型出口规则变为可执行。
-- 我们的规范化会拒绝 sing-box／mihomo 接受的部分名称（例如 `xn--wcvs22d1m.hk`），这些条目被报告并跳过，与上游语义存在差距。
+- 我们的规范化会拒绝 sing-box／mihomo 接受的部分名称（例如 `xn--wcvs22d1m.hk`、含 `_` 的名称），这些条目被报告并跳过，与上游语义存在差距（[规范化](#规范化与-digest)）。
 - 现 Policy 路径检测在大规则集上每次查询 0.5–54 ms（实测），在 R2a 前已是可观测的性能问题。
-- 未在 Linux arm64 与常驻 lab 节点上测量；macOS 时间波动较大。
+- 未在 Linux arm64 与常驻 lab 节点上测量；macOS 时间波动较大。R1 的 Linux clippy 覆盖 `aarch64-unknown-linux-musl`，测试与实测只在 macOS arm64 与 planck x86_64 上运行。
 - Server 端 artifact 保留期限（回滚需要历史 digest）沿用现有“保留期限在接口／运维规则中给出”，未定数值。

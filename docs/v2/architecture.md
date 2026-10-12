@@ -28,10 +28,13 @@ crates/
   meshway-logging/
   meshway-transport/        # 含 spec、tcp、udp
   meshway-transport-stream/ # 含 tls、vless、trojan
+  meshway-rules/            # MWRS 规则集格式、校验 loader、matcher、转换器、签名目录
 tools/
   meshway-test-server/      # 测试专用：进程内 Server、钉钥代理、签名 sync 回复、配置生成器
   meshway-desired-fixture/ # 基准／fixture 的编译期望内容与密钥材料（非生产，不签发）
   meshway-netmap-perf/      # netmap 投影测量
+  meshway-rules-cli/        # binary: meshway-rules（规则集转换、检查、目录签名与验证）
+  meshway-rules-perf/       # 规则集打开与匹配测量
   meshway-circuit-perf/     # 进程内受保护 circuit CPU 测量（L0）
   meshway-crypto-bench/     # 非生产对照密码原语基准
   meshway-transport-perf/   # 承载 raw／datagram 对照测量（L1）
@@ -71,6 +74,7 @@ Rust import 按语言规则使用下划线，如 `meshway_model`。可执行名�
 | `meshway-private-storage` | Server、Node control／daemon／underlay | 私有目录／文件、锁与原子发布原语；记录格式归调用者 |
 | `meshway-logging` | Server、daemon、CLI 程序入口 | 统一 tracing subscriber、日志参数与 stderr 格式；见[运行日志](/v2/logging) |
 | `meshway-transport-stream` | Server 材料验证（`tls`）、HTTP client 装配、connectivity | `tls`：同一 ring provider、证书／密钥验证、精确叶证书信任、显式系统信任配置与既有流上的 TLS 握手；`vless`／`trojan`：既有流上的 TCP CONNECT 封装 |
+| `meshway-rules` | `tools/meshway-rules-cli`；规划中 Server `resources/`、Policy、Node control（R2a，尚未接线） | `MWRS` 规则集格式、确定性 builder、任意字节安全的校验 loader（堆与审计的 `mapped` mmap 后端，crate 唯一 `unsafe`）、域名／IP matcher、来源转换器与报告、签名规则目录；见[规则集引擎设计](/v2/rule-sets-design) |
 | `meshway-stun` | Server STUN 服务、Node connectivity | 有界 RFC 8489 Binding 编解码、映射观测与 UDP Service；见[连接获取](/v2/node/connectivity#stun-与-server-协调) |
 
 Server 使用 `policy` 的完整规范化／语义校验入口及编译器；Node 数据面调用它对已发布执行许可的纯判定，无需取得全网配置和秘密后再编译全网。`configuration` 提供规范化阶段的语义 hook，由 `policy` 在同一次处理内注入，保持字段位置、保留依赖和错误优先级；没有 `configuration → policy` 反向依赖或第二套 Access 实现。SQL、账户密码哈希、全局可变容器和平台 I/O 不放进 model。
