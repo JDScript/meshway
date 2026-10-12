@@ -41,6 +41,9 @@ pub struct Desired {
     egress: Option<(meshway_policy::compile::Partition, Arc<EgressCapturePlan>)>,
     /// What this Node installs for that capture boundary, computed with it.
     capture_summary: Option<meshway_configuration::evaluation::CaptureSummary>,
+    /// Addresses the capture keeps only for live flows established through
+    /// an earlier boundary (see [`Desired::retaining`]).
+    retained: Arc<[std::net::Ipv4Addr]>,
     /// The signed overlay this state was built from, and its live entries.
     overlay: Option<Arc<DnsAssociationOverlay>>,
     associations: Arc<Associations>,
@@ -72,6 +75,7 @@ impl Desired {
         Ok(Self {
             egress,
             capture_summary,
+            retained: Arc::new([]),
             missing: compiler.missing(),
             content: content.clone(),
             compiler,
@@ -106,9 +110,41 @@ impl Desired {
                 .map_err(|_| Error::Content)?;
             next.egress = Some((partition.clone(), Arc::new(capture)));
             next.capture_summary = Some(summary);
+            next.retained = Arc::new([]);
         }
         next.associations = Arc::new(associations);
         Ok(next)
+    }
+
+    /// This state with every destination of `live` (this Node's live flows
+    /// toward an exit) that `previous` captured and this state releases kept
+    /// in the capture: an association that ends never sends an established
+    /// flow past its exit; the flow keeps its original decision until it
+    /// ends. Content changes are not retained (the packet owner re-decides
+    /// every flow against new content).
+    pub fn retaining(
+        mut self,
+        previous: &Desired,
+        live: &std::collections::BTreeSet<std::net::IpAddr>,
+    ) -> Self {
+        if !self.same_content(previous) {
+            return self;
+        }
+        if let (Some((partition, capture)), Some(old)) = (&self.egress, previous.capture()) {
+            let (plan, retained, summary) =
+                meshway_policy::compile::retained_capture(old, capture, live.iter().copied());
+            if !retained.is_empty() {
+                self.egress = Some((partition.clone(), Arc::new(plan)));
+                self.capture_summary = Some(summary);
+                self.retained = retained.into();
+            }
+        }
+        self
+    }
+
+    /// Addresses captured only for live flows of an earlier boundary.
+    pub fn retained(&self) -> &[std::net::Ipv4Addr] {
+        &self.retained
     }
 
     /// Live trusted DNS associations of this state.
@@ -143,7 +179,9 @@ impl Desired {
     /// same missing artifacts. Components compare desired states with this,
     /// so content whose artifacts arrived later is applied again.
     pub fn same(&self, other: &Desired) -> bool {
-        self.same_content(other) && self.associations == other.associations
+        self.same_content(other)
+            && self.associations == other.associations
+            && self.retained == other.retained
     }
 
     /// The same executed content, whatever the associations. Components whose
@@ -234,6 +272,10 @@ pub enum Error {
 /// negative capture boundary until explicit operator down removes ownership.
 #[allow(async_fn_in_trait)]
 pub trait Components {
+    /// Destinations of this Node's live flows toward an exit (the packet
+    /// owner's flow table); retained in the capture an association change
+    /// would otherwise release.
+    fn exit_destinations(&self) -> std::collections::BTreeSet<std::net::IpAddr>;
     async fn apply_packets(&mut self, desired: Option<&Desired>) -> Result<(), Error>;
     async fn apply_adjacencies(&mut self, desired: Option<&Desired>) -> Result<(), Error>;
     async fn apply_host(&mut self, desired: Option<&Desired>) -> Result<(), Error>;
@@ -327,7 +369,10 @@ impl<C: Components> Engine<C> {
                         }
                         Some(current) => current
                             .with_associations(next.associations.as_ref(), now)
-                            .map(|desired| (active, desired)),
+                            .map(|desired| {
+                                let live = self.components.exit_destinations();
+                                (active, desired.retaining(current, &live))
+                            }),
                         None => Desired::new(&next.content, &next.artifacts)
                             .and_then(|desired| {
                                 desired.with_associations(next.associations.as_ref(), now)
@@ -453,10 +498,41 @@ impl<C: Components> Engine<C> {
                     .is_some_and(|at| tokio::time::Instant::now() >= at))
         {
             now = now.max(at_ms);
-            let next = current.with_associations(current.overlay(), now)?;
+            let live = self.components.exit_destinations();
+            let next = current
+                .with_associations(current.overlay(), now)?
+                .retaining(current, &live);
             return self.settle(Some(next)).await;
         }
         Ok(())
+    }
+
+    /// Release what the capture keeps only for flows that have ended since
+    /// (see [`Desired::retaining`]); the owner calls this on its regular
+    /// wakeups. Nothing to release changes nothing.
+    pub async fn release_retained(&mut self) -> Result<(), Error> {
+        let Some(current) = &self.desired else {
+            return Ok(());
+        };
+        if current.retained.is_empty() {
+            return Ok(());
+        }
+        let live = self.components.exit_destinations();
+        if current
+            .retained
+            .iter()
+            .all(|address| live.contains(&std::net::IpAddr::V4(*address)))
+        {
+            return Ok(());
+        }
+        let now = self.clock.now();
+        let next = current
+            .with_associations(current.overlay(), now)?
+            .retaining(current, &live);
+        if current.same(&next) {
+            return Ok(());
+        }
+        self.settle(Some(next)).await
     }
 
     async fn withdraw(&mut self) -> Result<(), Error> {

@@ -291,6 +291,53 @@ pub fn plan_summary(plan: &EgressCapturePlan) -> CaptureSummary {
     }
 }
 
+/// `next` with every IPv4 address of `keep` still captured that `previous`
+/// captured and `next` releases: the destinations of flows established
+/// through the previous boundary keep reaching the packet owner, which keeps
+/// their original decision, until those flows end. Beyond the node-side
+/// limits the result fails closed like a partition does. Returned with the
+/// retained addresses and the summary of the result.
+pub fn retained_capture(
+    previous: &EgressCapturePlan,
+    next: &EgressCapturePlan,
+    keep: impl IntoIterator<Item = IpAddr>,
+) -> (EgressCapturePlan, Vec<Ipv4Addr>, CaptureSummary) {
+    let managed = |plan: &EgressCapturePlan, address: Ipv4Addr| {
+        plan.managed_ipv4
+            .iter()
+            .any(|(start, end)| *start <= address && address <= *end)
+    };
+    let mut kept: Vec<Ipv4Addr> = keep
+        .into_iter()
+        .filter_map(|address| match address.to_canonical() {
+            IpAddr::V4(address) => Some(address),
+            IpAddr::V6(_) => None,
+        })
+        .filter(|address| managed(previous, *address) && !managed(next, *address))
+        .collect();
+    kept.sort_unstable();
+    kept.dedup();
+    if kept.is_empty() || next.unavailable.is_some() {
+        return (next.clone(), Vec::new(), plan_summary(next));
+    }
+    let mut plan = next.clone();
+    for address in &kept {
+        assign(&mut plan, IpAddr::V4(*address), true);
+    }
+    let summary = plan_summary(&plan);
+    if !installable(&plan) {
+        return (
+            unavailable_capture(next.generation, UnavailableReason::RoutingLimit),
+            kept,
+            CaptureSummary {
+                unavailable: Some(UnavailableReason::RoutingLimit),
+                ..summary
+            },
+        );
+    }
+    (plan, kept, summary)
+}
+
 /// Whether a capture plan fits what a Node installs.
 pub fn installable(plan: &EgressCapturePlan) -> bool {
     let summary = plan_summary(plan);
@@ -479,6 +526,33 @@ pub fn summary(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn released_destinations_of_live_flows_stay_captured_until_they_end() {
+        let host = |s: &str| s.parse::<Ipv4Addr>().unwrap();
+        let generation = Digest::from_bytes([1; 32]);
+        let plan = |ranges: &[(&str, &str)]| EgressCapturePlan {
+            generation,
+            managed_ipv4: ranges.iter().map(|(a, b)| (host(a), host(b))).collect(),
+            default_capture: false,
+            sink_ipv6: vec![],
+            unavailable: None,
+        };
+        let previous = plan(&[
+            ("198.51.100.0", "198.51.100.255"),
+            ("203.0.113.9", "203.0.113.9"),
+        ]);
+        let next = plan(&[("198.51.100.0", "198.51.100.255")]);
+        let keep = ["203.0.113.9", "192.0.2.1", "198.51.100.7"].map(|a| IpAddr::V4(host(a)));
+        let (kept_plan, kept, summary) = retained_capture(&previous, &next, keep);
+        // Only the released one: never one `previous` did not capture.
+        assert_eq!(kept, [host("203.0.113.9")]);
+        assert_eq!(kept_plan.managed_ipv4, previous.managed_ipv4);
+        assert_eq!(summary.managed_ipv4, 2);
+        // Without live flows the release takes effect.
+        let (released, kept, _) = retained_capture(&previous, &next, []);
+        assert!(kept.is_empty() && released == next);
+    }
 
     #[test]
     fn split_and_cover() {

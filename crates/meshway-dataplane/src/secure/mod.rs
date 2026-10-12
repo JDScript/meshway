@@ -1919,6 +1919,12 @@ impl SecureNode {
     pub fn flow_count(&self) -> usize {
         self.engine.flow_count()
     }
+    /// Destinations of this Node's live flows toward an exit, from the one
+    /// flow table; capture keeps them while an association ends (see
+    /// `meshway_engine::Components::exit_destinations`).
+    pub fn exit_destinations(&self) -> std::collections::BTreeSet<std::net::IpAddr> {
+        self.engine.exit_destinations()
+    }
 
     /// Read original grant/path metadata from the one Engine flow table. This
     /// neither selects nor opens a circuit and never grants packet authority.

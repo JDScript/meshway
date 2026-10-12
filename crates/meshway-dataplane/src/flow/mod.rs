@@ -307,6 +307,26 @@ impl FlowTable {
         Some(flow)
     }
 
+    /// Destinations of the live flows `node` originated toward an exit: what
+    /// its capture must keep reaching this owner while those flows last.
+    pub fn exit_destinations(
+        &self,
+        node: NodeId,
+        time: FlowTime,
+    ) -> std::collections::BTreeSet<IpAddr> {
+        self.entries
+            .iter()
+            .filter(|(key, flow)| {
+                key.node == node
+                    && key.role == Role::Origin
+                    && matches!(key.grant, Target::Exit { .. })
+                    && !flow.closing
+                    && flow.live_at(time.instant, time.now_ms)
+            })
+            .map(|(key, _)| key.tuple.destination)
+            .collect()
+    }
+
     /// Exact tuple lookup in the established table; never refresh or advance it.
     /// Relay traffic and the remote direction of endpoint traffic cannot be
     /// borrowed to originate a local packet. Ambiguous metadata fails closed.

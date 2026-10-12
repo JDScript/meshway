@@ -160,6 +160,11 @@ impl Plane {
 }
 
 impl meshway_engine::Components for Plane {
+    fn exit_destinations(&self) -> std::collections::BTreeSet<std::net::IpAddr> {
+        self.secure()
+            .map(meshway_dataplane::secure::SecureNode::exit_destinations)
+            .unwrap_or_default()
+    }
     /// Flows, circuits, queued outputs and the exit forwarding owner.
     async fn apply_packets(&mut self, desired: Option<&Desired>) -> Result<(), Error> {
         let Some(desired) = desired else {

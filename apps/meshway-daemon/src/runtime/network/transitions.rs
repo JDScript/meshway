@@ -63,6 +63,9 @@ mod tests {
     #[derive(Default)]
     struct Components;
     impl meshway_engine::Components for Components {
+        fn exit_destinations(&self) -> std::collections::BTreeSet<std::net::IpAddr> {
+            Default::default()
+        }
         async fn apply_packets(
             &mut self,
             _: Option<&Desired>,

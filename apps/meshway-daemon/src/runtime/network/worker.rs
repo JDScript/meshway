@@ -97,6 +97,33 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
     let mut sample_at = None;
     loop {
         meshway_logging::profile::report();
+        // Addresses an ended association left captured for its live exit
+        // flows are released once those flows end (checked on every wakeup;
+        // a live plane wakes at least every second).
+        if engine
+            .desired()
+            .is_some_and(|desired| !desired.retained().is_empty())
+        {
+            let before = engine
+                .desired()
+                .and_then(|desired| desired.capture_summary());
+            if engine.release_retained().await.is_err() {
+                tracing::warn!("Releasing the capture of ended exit flows failed");
+            }
+            if engine.desired().is_none() {
+                diagnostics.stop().await;
+                finish_withdrawal(&mut engine, &reports, true);
+                continue;
+            }
+            let after = engine
+                .desired()
+                .and_then(|desired| desired.capture_summary());
+            if after != before {
+                let mut report = reports.borrow().clone();
+                report.capture = after;
+                reports.send_replace(report);
+            }
+        }
         enum Work {
             DnsQuery(Box<super::dns::mesh::Query>),
             DnsReport(Box<meshway_protocol::DnsAssociationReport>),

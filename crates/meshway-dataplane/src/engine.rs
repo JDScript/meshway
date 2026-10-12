@@ -61,6 +61,13 @@ impl Engine {
         self.flows.expire(reading.instant, reading.now_ms);
     }
 
+    /// Destinations of this Node's live flows toward an exit.
+    pub fn exit_destinations(&self) -> std::collections::BTreeSet<std::net::IpAddr> {
+        let reading = View::of(&self.desired);
+        self.flows
+            .exit_destinations(reading.node(), (&reading).into())
+    }
+
     /// Number of kept entries; deliberately does not refresh or expire them.
     pub fn flow_count(&self) -> usize {
         self.flows.len()

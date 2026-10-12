@@ -13,6 +13,8 @@ struct Resources {
     calls: Vec<(Part, Option<NetmapRef>)>,
     fail: Option<Part>,
     block: Option<Part>,
+    /// Destinations of live exit flows, as a packet owner reports them.
+    live: std::collections::BTreeSet<std::net::IpAddr>,
 }
 impl Resources {
     async fn apply(&mut self, part: Part, desired: Option<&Desired>) -> Result<(), Error> {
@@ -28,6 +30,9 @@ impl Resources {
     }
 }
 impl Components for Resources {
+    fn exit_destinations(&self) -> std::collections::BTreeSet<std::net::IpAddr> {
+        self.live.clone()
+    }
     async fn apply_packets(&mut self, desired: Option<&Desired>) -> Result<(), Error> {
         self.apply(Part::Packets, desired).await
     }
@@ -210,6 +215,9 @@ impl Degrading {
     }
 }
 impl Components for Degrading {
+    fn exit_destinations(&self) -> std::collections::BTreeSet<std::net::IpAddr> {
+        Default::default()
+    }
     async fn apply_packets(&mut self, desired: Option<&Desired>) -> Result<(), Error> {
         self.apply(Part::Packets, desired)
     }
@@ -449,6 +457,53 @@ async fn a_wall_clock_set_back_never_extends_an_accepted_association() {
     tokio::time::advance(Duration::from_secs(30)).await;
     engine.expire().await.unwrap();
     assert!(engine.desired().unwrap().associations().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_ended_association_keeps_capturing_its_live_flows_until_they_end() {
+    let mut engine = Engine::new(Resources::default());
+    let now = engine.clock.now();
+    let (content, overlay) = with_association(now + 30_000);
+    let associated = Netmap {
+        associations: Some(overlay),
+        ..input(&mut engine, content, 3_600_000)
+    };
+    engine.reconfig(Some(&associated)).await.unwrap();
+    let host: std::net::Ipv4Addr = "203.0.113.9".parse().unwrap();
+    let managed = |engine: &Engine<Resources>| {
+        engine
+            .desired()
+            .unwrap()
+            .capture()
+            .unwrap()
+            .managed_ipv4
+            .iter()
+            .any(|(start, end)| *start <= host && host <= *end)
+    };
+    assert!(managed(&engine));
+    // A flow to it was established through the exit and is still live.
+    engine.components.live.insert(host.into());
+    tokio::time::advance(Duration::from_secs(31)).await;
+    engine.expire().await.unwrap();
+    let desired = engine.desired().unwrap();
+    assert!(desired.associations().is_empty());
+    // The association ended; its established flow is still captured.
+    assert!(managed(&engine));
+    assert_eq!(engine.desired().unwrap().retained(), [host]);
+    // Still live: nothing is released.
+    let calls = engine.components.calls.len();
+    engine.release_retained().await.unwrap();
+    assert_eq!(engine.components.calls.len(), calls);
+    // The flow ended: the address leaves the capture.
+    engine.components.live.clear();
+    engine.release_retained().await.unwrap();
+    assert!(engine.components.calls.len() > calls);
+    assert!(!managed(&engine));
+    assert!(engine.desired().unwrap().retained().is_empty());
+    // A new flow to it later is not retained: only an earlier boundary is.
+    engine.components.live.insert(host.into());
+    engine.release_retained().await.unwrap();
+    assert!(!managed(&engine));
 }
 
 #[tokio::test(start_paused = true)]
