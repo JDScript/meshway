@@ -1,6 +1,6 @@
 # 规则集引擎设计草案
 
-> **R1 已实现格式与 crate；R2a 已接线 Server／Policy／Control。** `crates/meshway-rules` 与 `tools/meshway-rules-cli` 见 [R1 实测](#r1-实测)；R2a 的实际接口与验收见 [R2a 接线](#r2a-接线)。可用行为、字段与 HTTP 契约的唯一定义是 [Rule Sets](/v2/configuration-reference/rule-sets)、[Routing](/v2/configuration-reference/routing) 与 [Netmap 设计](/v2/node/netmap-design#rule-set-artifacts)；本页其余部分是设计记录，不加入文档导航。出口分割移到节点（R3）与 X6 尚未实现。
+> **R1 已实现格式与 crate；R2a 已接线 Server／Policy／Control。** `crates/meshway-rules` 与 `tools/meshway-rules-cli` 见 [R1 实测](#r1-实测)；R2a 的实际接口与验收见 [R2a 接线](#r2a-接线)，R3 见 [R3 节点侧出口分割](#r3-节点侧出口分割)。可用行为、字段与 HTTP 契约的唯一定义是 [Rule Sets](/v2/configuration-reference/rule-sets)、[Routing](/v2/configuration-reference/routing) 与 [Netmap 设计](/v2/node/netmap-design#rule-set-artifacts)；本页其余部分是设计记录，不加入文档导航。出口分割已移到节点（R3）；X6 尚未实现。
 
 ## 目标与结论
 
@@ -355,7 +355,7 @@ Control 把 artifact 写入私有目录 `artifacts/sha256-<hex>.mwrs`（0400、�
 
 - `match_domain(name) -> Option<rule index>` 的“rule index”属于 Policy；`meshway-rules` 只回答集合成员关系与命中项。
 - 同一 IP 被多个名称解析且对应不相容动作时，沿用 [Exit 设计 · DNS 路径与可信域名上下文](/v2/node/exit-design#dns-路径与可信域名上下文) 与 [Routing](/v2/configuration-reference/routing#direct-unmanaged) 的既有决定：拒绝／不可执行，不选更宽路径；域名授权仍是解析地址集合。本稿不改变 X6 的可信关联生产者要求，域名型规则在 X6 前仍不可执行。
-- 出口分割：IP 规则集不再展开为字符串 CIDR，Policy 用区间数组做 first-match 分割。分割结果若仍由 Server 计算并写入 `egress.routes`，geoip-cn 需要约 6,000 个 v4 前缀，远超现 4,096；用户已决定：分割移到节点，由 Engine 用 artifact 区间物化（nftables interval set＋fwmark），netmap 只带有序“规则→动作”（R3，不在 R1）。`meshway-rules` 的 `ipv4_ranges()`／`ipv6_ranges()` 直接给出合并后的有序闭区间，即 interval set 的输入。这涉及 Underlay owner，列入[未解决](#未解决)。
+- 出口分割：IP 规则集不展开为字符串 CIDR。节点用 Policy 从投影规则与 artifact 的合并区间（`ipv4_ranges()`／`ipv6_ranges()`）做 first-match 区间分割并安装为 nftables interval 集合，netmap 只带有序“规则→动作”（R3，[R3 节点侧出口分割](#r3-节点侧出口分割)）。
 
 ## R1 实测
 
@@ -525,7 +525,7 @@ meta `geosite/cn`（816,448 B），每个句柄打开后各执行 1,151 次查�
 | R1 格式＋crate（**已完成**） | `crates/meshway-rules`（format、build、load、match、inline、convert、mapped、catalog）；`tools/meshway-rules-cli`；`tools/meshway-rules-perf`（`perf:rules`） | 无；未改 Server／Policy | 已完成：与 spike 参考实现 0 差异；loader fuzz；跨架构 digest 一致；`mise run check`（见 [R1 实测](#r1-实测)） |
 | R2a Server＋Policy＋Control 接线（**已接线**，见 [R2a 接线](#r2a-接线)） | Server `resources/`（转换改用 R1、全局内容寻址存储、provider 目录与验签、`ruleSetProviders`、隐式展开、`RuleSetView` 新字段、`artifacts/{digest}` 路由与引用索引）；`meshway-configuration` netmap 类型（`RuleSetRef`、`meshway-netmap-2`）与配置类型；`meshway-policy` 的 `plan_match`／`capture`／validation 改用 matcher；`meshway-control` artifact 获取与缓存；OpenAPI／SDK 重生成 | R1 | 投影等价测试含规则集变异；缺 artifact fail closed；撤销不被下载阻塞；离线重启载入；1,000 节点引用同一 artifact 的 perf（Server 存储、刷新耗时、请求授权）；drift 与 Rust／TS 消费者 |
 | R2b 发布仓库 | `meshway-org/meshway-rules` 仓库、workflow、签名 secret、`dist` 分支 | R1 CLI；与 R2a 并行 | 上游未变不发布；单集合失败 hold；sequence 单调；Server 用钉住公钥验通一次真实目录 |
-| R3 出口分割物化（建议） | Policy 区间分割；Engine desired；Underlay nft interval set 与 fwmark | R2a；与 X3 owner 协调 | geoip-cn 规模的 direct 例外不进 TUN；artifact 缺失保持全范围捕获；`exit/off` 行不回退 |
+| R3 出口分割物化（**已实现**，见 [R3 节点侧出口分割](#r3-节点侧出口分割)） | Policy 区间分割；Engine desired；Underlay nft interval 集合与私有捕获表 | R2a | 已完成：7,000 个 direct 区间的 `exit/off` 与全量 16 行矩阵；artifact 缺失保持全范围捕获 |
 | X6 可信域名 | 按 [Exit 设计](/v2/node/exit-design#工作包与依赖) 的 X6 边界；DNS owner 查询时调用 Policy `egress_rule_for_name` | R2a | 同 IP 多名称冲突、TTL、跨 profile 不复用；域名规则仅在可信关联存在时可执行 |
 
 ## 需用户决定
@@ -536,12 +536,26 @@ R0 列出的七项已由用户决定并写入相应章节：regex v1 逐条跳�
 
 | 范围 | 实现（owner） |
 | --- | --- |
-| 配置 | `meshway-configuration`：`RuleSet::Inline.domainSubdomain`；`RuleSetFormat` 增 `mihomo-domain-text`／`mihomo-ipcidr-text`／`classical`；`ruleSetProviders: key → RuleSetProvider \| null`；内置 provider 表与 `<provider>:<name>` 解析（`providers`）；校验码 `invalid_rule_set_key`、`unknown_rule_set_provider`、`invalid_rule_set_provider`、警告 `rule_set_partition_limit` |
+| 配置 | `meshway-configuration`：`RuleSet::Inline.domainSubdomain`；`RuleSetFormat` 增 `mihomo-domain-text`／`mihomo-ipcidr-text`／`classical`；`ruleSetProviders: key → RuleSetProvider \| null`；内置 provider 表与 `<provider>:<name>` 解析（`providers`）；校验码 `invalid_rule_set_key`、`unknown_rule_set_provider`、`invalid_rule_set_provider`（R2a 的警告 `rule_set_partition_limit` 已由 R3 的 `egress_partition_limit` 取代） |
 | netmap | `projection.ruleSets: key → RuleSetRef { digest, format, bytes, entries }`，投影不含任何集合定义；`compilerVersion` `meshway-netmap-2` |
-| Policy | `compile::rules`：规则自身列表经 `RuleSet::from_inline`、引用集合经已加载句柄，逐规则 `match_domain`／`match_ip`；路径检测、出口分割（区间→最小 CIDR，仍限 4,096 前缀）、节点 `LocalCompiler::{egress_rule_for_ip, egress_rule_for_name, effective, missing}` 与配置校验（`shadowed_rule`／`exit_outside_access` 读 artifact 迭代器）共用；缺句柄即 `UnavailableDependency` |
+| Policy | `compile::rules`：规则自身列表经 `RuleSet::from_inline`、引用集合经已加载句柄，逐规则 `match_domain`／`match_ip`；路径检测、出口分割（R3 起为区间分割，见下节）、节点 `LocalCompiler::{egress_rule_for_ip, egress_rule_for_name, effective, missing}` 与配置校验（`shadowed_rule`／`exit_outside_access` 读 artifact 迭代器）共用；缺句柄即 `UnavailableDependency` |
 | Server | `resources/rulesets`（来源与转换适配）、`catalogs`（目录验签，一次准备内共用目录）、`artifacts`（全局内容寻址 `rule_set_artifacts`、每 (来源, digest) 溯源 `rule_set_records`、每进程每 digest 一个 `Arc<RuleSet>`）、`rule_set_catalogs`（持久 sequence 单调）、`node_netmap_artifacts`（netmap 写入同事务的引用索引）；`GET /rule-sets` 含隐式项，`GET /rule-sets/{key}/report`，`GET /agent-api/v1/artifacts/{digest}`；schema 版本 3 |
 | Node | `meshway-control::netmap::artifacts`（取、校验、0400 原子落盘、按引用 GC、离线载入，sync 后顺序取回）；`meshway_engine::Netmap.artifacts` 与 `Desired::{missing, same}`；组件以 `Desired::same` 判断期望状态是否变化；IPC 8 `NetmapStatus.{missingArtifacts, artifactProblem}` |
 | 生成链 | 生成器支持 `application/vnd.meshway.*` 二进制 GET（Rust 返回 `Vec<u8>`，TS 客户端不生成该 Node 专用操作） |
+
+## R3 节点侧出口分割
+
+| 范围 | 实现（owner） |
+| --- | --- |
+| 分割计算 | `meshway-policy` `compile::capture`：`compute`／`partition`（first-match 区间扣除，覆盖两族、相邻区间动作不同的 `EgressPartition`）、`summary`（`CaptureSummary`）、`EgressPartition::capture`（受管 IPv4／sink IPv6 合并区间的 `EgressCapturePlan`）；Server 校验（`egress_partition_limit`）、路径检测 `profile.capture`、`NetmapDns.resolvers` 与节点 `LocalCompiler::{partition, capture, decide, transit}` 共用；节点按方案缓存 |
+| netmap | `EgressPlan { generation, rules: [{rule, action}], fallback, unavailable }`，不含前缀与 `EgressRoute`；`generation` 绑定生效规则所用集合的 digest，与节点持有的 artifact 无关 |
+| desired | `meshway_engine::Desired::{capture, partition, capture_summary}`；DNS 的本地 resolver 判定与 served 上游检查读 `Desired::partition` |
+| 安装 | `meshway-underlay` `kernel::egress`：受管区间为 `managed4`／`managed6` interval 元素（无回显批替换、读回逐元素与计数核验，大小为两份方案的暂存并集），未经活动 TUN 的受管目的立即拒绝（TCP reset／ICMP admin-prohibited）；一条 IPv4 RPDB 选择器查私有捕获表，表中为活动时受管区间的最小 CIDR 覆盖；journal v2 只记 gate（区间与设备），表内路由由 gate 推出，恢复时精确对账删除；路由变更每 256 条等待内核监视器观测；DNS 锚点冲突检查豁免该表 |
+| 诊断 | IPC 8 `NetmapStatus.capture`、CLI `meshway status` 的 Egress 行；`mise run perf:capture` |
+
+不变量与选择：分割计算只在 Policy，Underlay 只把区间转换为 nft 元素与 CIDR 覆盖，不做匹配；源 socket 的源地址在 `connect` 时由 FIB 选定，nft 标记后重路由会保留物理接口地址，因此 IPv4 导向仍用私有表路由（区间的 CIDR 覆盖），nft 集合承载原子的负向门与 IPv6 sink，不引入源端 SNAT／conntrack 依赖，严格 rp_filter 下回复路径不变。
+
+实测与上限见 [Routing · 节点侧上限](/v2/configuration-reference/routing#capture-limits)；隔离组件证据在私有 `.meshway/validation/r3/kernel/`（`default_capture_…`、`large_partitions_…`、SIGKILL 后负向保留），矩阵在 `.meshway/validation/r3/matrix/`。
 
 ## 未解决
 
@@ -549,11 +563,10 @@ R0 列出的七项已由用户决定并写入相应章节：regex v1 逐条跳�
 - sing-box `ip_cidr` 接受裸地址（视为 /32、/128），现转换器与 R1 都报告为 `invalidCidr`；是否放宽未定。
 - 减少 50 % hold、保留 7 份目录与 issue 由 R2b workflow 实现；CLI 的 `SetRecord.held` 已可写入，workflow 尚未写入目录。
 - 打开耗时与 FST 节点数线性相关（3.66 MB 约 42 ms）；若需更快，可只在 Server 入库时做 FST 证明、节点以 digest 信任，但那会让“任意字节不 panic”依赖 digest 来源，需另行决定。
-- R3 未经 Underlay owner 评审；nftables interval set 在 6,000＋区间下的提交时延、原子替换与 conntrack 交互未测。
+- R3 的导向用私有捕获表路由而不是设计稿的 nft fwmark：fwmark 重路由不改源地址，需源端 SNAT 并在严格 rp_filter 下失去回复路径；是否仍要求 fwmark 方案待用户决定。
 - X6 可信关联生产者仍不存在；本设计让 DNS 查询时匹配变快，但不让域名型出口规则变为可执行。
 - 我们的规范化会拒绝 sing-box／mihomo 接受的部分名称（例如 `xn--wcvs22d1m.hk`、含 `_` 的名称），这些条目被报告并跳过，与上游语义存在差距（[规范化](#规范化与-digest)）。
 - 目录超过 7 天未前进时的 `stale` 视图字段未实现。
 - 1,000 节点共享一个 artifact 的 Server perf（存储、刷新耗时、授权查询）未测。
-- 出口分割仍由 Server 计算并受 4,096 前缀限制，`geoip:cn` 级集合不能用于出口分割（R3）。
 - 未在 Linux arm64 与常驻 lab 节点上测量；macOS 时间波动较大。R1 的 Linux clippy 覆盖 `aarch64-unknown-linux-musl`，测试与实测只在 macOS arm64 与 planck x86_64 上运行。
 - Server 端 artifact 永久保留（回滚总可用）；无引用 artifact 的回收策略未定。

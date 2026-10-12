@@ -215,7 +215,9 @@ capture 使用执行配置中完整的 `meshAddressPools`，其[契约](/v2/conf
 
 journal 绑定 namespace／boot 身份，记录有界资源及待完成操作。过期 namespace 记录先归档，当前 namespace 的未知归属、未知／未解决操作或资源身份不匹配阻断接管；归档与冲突重试规则见[生命周期](/v2/node/runtime#生命周期)。Linux rule／route 没有 incarnation cookie 或 compare-and-delete：特权主体用完全相同对象替换的 ABA 无法证明，资源归属要求外部不并发修改这些对象。
 
-`Options` 默认上限为 64 个池、128 个受保护 socket、16,384 个内核对象，连接超时 10 秒；一部分 socket 预算为 Server bootstrap 保留。网络安装成功不自动表示 DNS、邻接或应用包流成功。
+源端出口捕获（受管外部目的）是 Host 的第二块：区间由本节点用 Policy 从 netmap 规则与持有的 artifact 计算（`Desired::capture`），装为 owned nft interval 集合与私有捕获表路由（一条 RPDB 选择器），未经活动 TUN 的受管目的立即拒绝；暂存、切换、暂停与精确删除的 journal 只记录 gate（区间与设备），表内路由由 gate 推出。机制、上限与实测见 [Routing · 执行捕获](/v2/configuration-reference/routing#执行捕获与精确许可)。
+
+`Options` 默认上限为 64 个池、128 个受保护 socket、单次 netlink 读取 65,536 个内核对象（捕获表最多 32,768 条路由），连接超时 10 秒；一部分 socket 预算为 Server bootstrap 保留。网络安装成功不自动表示 DNS、邻接或应用包流成功。
 
 #### Bootstrap 与普通业务隔离
 
@@ -255,7 +257,7 @@ exchange 适配器须在每次 connect／write／read poll 检查路由期限与
 | 源 → 出口 | dataplane | `query_dns` 在 `Purpose::Dns` circuit 上发送；circuit 的 grant 是 `(Dns, Mesh { exit })`，路径固定为 `DnsService.path`，握手摘要的 selection 是该 service 的摘要。出口能力事实不是 ready 时不建 circuit、不发查询，查询立即失败 |
 | 中继 | dataplane | `admit_dns` 在中继自己的投影上重算 `dns_service(origin)` 并只按完整路径位置与相邻承载转发密文，不解密 |
 | 出口 ingress | dataplane → `meshway-dns` | 出口收到的请求是不透明 `DnsRequest`，origin、完整路径、传输、所属内容和截止来自已认证 circuit；`OwnerDispatcher::serve_authenticated` 再用 `netmap_dns_service` 匹配 `ServeExitResolver.services` 中该源的精确 service。socket 地址不参与身份判断 |
-| 出口上游 | `meshway-dns` → Underlay | `dns.overrideLocal: true` 时为配置的 default resolver（第一个，按其自己的 `LocalResolverRoute`，与本节点自身普通名称相同）；否则为 served 系统快照，每个上游各有 UDP 与独立 TCP `LocalResolverRoute`。两者都由出口自己的 egress 分割判定并经受保护 socket 发送 |
+| 出口上游 | `meshway-dns` → Underlay | `dns.overrideLocal: true` 时为配置的 default resolver（第一个，按其自己的 `LocalResolverRoute`，与本节点自身普通名称相同）；否则为 served 系统快照，每个上游各有 UDP 与独立 TCP `LocalResolverRoute`。两者都由出口自己的 egress 分割（本节点计算，`Desired::partition`）判定并经受保护 socket 发送 |
 | 回答 | dataplane | 按请求自身的传输编码：UDP 不超过 1232 bytes，超出时置 TC，由源改用 TCP；无法服务时回 SERVFAIL。`answer_dns` 只沿原 circuit 反向返回，旧请求的 guard 到期后不回答 |
 
 `dns.overrideLocal: true` 的出口不使用系统 resolver：default resolver 地址在 Mesh 池外且 egress 分割为 Direct／Unmanaged（安装时校验，不通过即 DNS 安装失败），因此不经本节点 stub、无环。两个系统后端的语义相同。

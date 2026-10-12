@@ -67,7 +67,7 @@ Node 侧消费按需编译的入口：`apps/meshway-daemon/src/runtime/network/p
 | `self` | `NetmapSelf` | enabled、hostname、identity、addresses、selfKeys、meshAddressPools、本节点完整 listeners（禁用时为空）、exitEnabled |
 | `projection` | `ProjectedConfiguration { configuration: ConfigurationView, subjects: SubjectContext, inventory, ruleSets, selectedProfiles, selectionVersions }` | 全量配置的单调子集，复用现有 `ConfigurationView`／`NodeSettingsView`（已脱敏的 listener／dialer 声明）、`AccessRule`／`TopologyRule`／`MeshRoute`、`TrustedNode`、`SubjectContext`（移入 configuration crate）；`ruleSets` 为 `key → RuleSetRef { digest, format, bytes, entries }`，见[规则集 artifact](#rule-set-artifacts) |
 | `dialers` | `CandidateKey → DialCandidate` | 本节点到每个 topology 相邻可见节点的拨号候选与客户端材料；只含 configured 端点，local 端点走事实线 |
-| `egress` | `Option<EgressPlan { capture, routes }>` | 禁用节点为 null；`routes` 是 IPv4＋IPv6 的完整互斥分割，每段 `EgressAction::{Exit { nodes, via }, Direct, Unmanaged}`；capture 不可用时 `routes` 为空 |
+| `egress` | `Option<EgressPlan { generation, rules, fallback, unavailable }>` | 禁用节点为 null；`rules` 为生效规则 `{rule: JSON Pointer, action: EgressAction::{Exit { nodes, via }, Direct, Unmanaged}}`（公共在前），`fallback` 为未命中动作；不含前缀——分割由节点用投影与 artifact 计算（[Routing · 执行捕获](/v2/configuration-reference/routing#执行捕获与精确许可)） |
 | `exitRole` | `Option<ExitRole { generation, family, nat }>` | enabled ∧ exitEnabled ∧ `feature:exit-ipv4` v1 时下发 |
 | `dns` | `NetmapDns { meshHosts, resolvers, profile, egress: DnsPlan }` | DNS settings 在投影里；`resolvers` 为每个配置 resolver 键的 `ResolverAction::{Direct, Unmanaged, Exit, Rejected}`；`DnsService` 去掉 instance 与截止 |
 
@@ -89,10 +89,10 @@ Node 侧消费按需编译的入口：`apps/meshway-daemon/src/runtime/network/p
 正确性依据：节点作为端点或中继参与的每条路径都在它的连通分量里；路径搜索只为 topology 允许的边计预算，routing 每段只以段端点 first-match，被删的规则不可能匹配分量内的段、边或流，因此投影上的结果与全量配置逐项相同（[差分验证](#规模与预算)）。
 
 - **服务集合以节点对为单位**：Access 规则取并集、顺序无关；`bidirectional` 规则两个方向各自成立，单向规则只成立一个；回复仍只依赖已有正向流。
-- **出口**：源端分割给出 `(nodes 有序主备, via)`；同一 `(源, nodes, via)` 的路径集合相同，目的地的服务集合是覆盖该目的地的外部 Access 规则并集。
+- **出口**：源端分割（节点用投影规则与持有的 artifact 计算，按方案缓存于 `LocalCompiler`）给出 `(nodes 有序主备, via)`；同一 `(源, nodes, via)` 的路径集合相同，目的地的服务集合是覆盖该目的地的外部 Access 规则并集。
 - `observable` 由路径上全部节点在投影 inventory 中的 `feature:path-observation` v1 能力计算。
 - `meshHosts` 与精确发现同一谓词：本节点自身及 `mesh_access_allows_any(self, T)` 的已登记活动节点；`magicDNS` 关闭时为空。
-- `egress.capture.generation`（即决定的 `selection`）＝digest(网络、节点、有效方案、持久选择版本、routing.egress、分割结果)。**不含 revision**：无关配置变更不改变它，也不结束出口连接；任何选择切换（含切回）都会改变选择版本。出口节点从自己的投影重算源端 selection。`ExitRole.generation` 同样不含 revision。
+- `egress.generation`（即决定的 `selection`）＝digest(网络、节点、有效方案、持久选择版本、routing.egress、生效规则所用集合的 digest)。与节点持有哪些 artifact 无关。**不含 revision**：无关配置变更不改变它，也不结束出口连接；任何选择切换（含切回）都会改变选择版本。出口节点从自己的投影重算源端 selection。`ExitRole.generation` 同样不含 revision。
 
 ### 规则集 artifact {#rule-set-artifacts}
 
@@ -339,17 +339,17 @@ cold（静态端点）：  T ≈ Σ每跳串行邻接获取（TCP 1 RTT；TLS �
 | --- | --- | --- |
 | 出口决定（源→出口的服务、路径、selection） | netmap 投影上本地编译 | Access ∩ 允许方案 ∩ `exitEnabled` ∩ 能力 ∩ 路径；不要求就绪 |
 | `ExitRolePlan` | netmap（出口节点） | 只要 `exitEnabled` 且声明 `feature:exit-ipv4` 就下发；去掉 instance 绑定。职责本身仍不转发包 |
-| `EgressCapturePlan`／`egress.routes` | netmap（源节点） | 按 revision＋选择版本 |
+| `egress`（规则引用与 fallback；分割与 `EgressCapturePlan` 由节点计算） | netmap（源节点） | 按 revision＋选择版本 |
 | `ExitCapability`（probing／ready／unavailable、families） | 动态事实 | 出口节点 State 上报，经 `sync` 的 `peerFacts` 送给看见该出口的节点 |
 | X1 `ExitInputs` | 拆分 | `instances`／`instance_expires_at_ms` 不再是编译输入；`selection_generations` 进入 netmap 稳定输入；`ready_until_ms`／`unavailable_reasons` 变成源端选择用事实 |
 
-源端在 `egress.routes` 给出的有序主备出口中，选第一个能力事实新鲜且 ready 的出口建流；都不 ready 时丢弃并计数，保留负向捕获，**永不 direct**。出口端准入只看自己投影上的决定与本地已安装 role，不看自己的 State 上报。能力事实错误只会让源选错出口而被拒，不会放宽准入。
+源端在其出口分割给出的有序主备出口中，选第一个能力事实新鲜且 ready 的出口建流；都不 ready 时丢弃并计数，保留负向捕获，**永不 direct**。出口端准入只看自己投影上的决定与本地已安装 role，不看自己的 State 上报。能力事实错误只会让源选错出口而被拒，不会放宽准入。
 
 这把“出口能力按需编译”收窄为“出口能力作为选择事实、零编译”，与已定决定的措辞不同，列入[已决产品问题](#已决产品问题)。
 
 ### DNS
 
-- 配置 resolver 与系统 resolver 的本地 socket 许可：源端用 `egress.routes` 求 resolver 端点的动作——direct／unmanaged 允许本机 socket，exit 动作必须经出口 DNS，unmanaged 范围以外的 Mesh 地址拒绝。UDP 与 TCP 仍分别判定。R1／R4／F14 的 resolver demand、ID 映射和退休白名单删除。
+- 配置 resolver 与系统 resolver 的本地 socket 许可：源端用其出口分割求 resolver 端点的动作——direct／unmanaged 允许本机 socket，exit 动作必须经出口 DNS，unmanaged 范围以外的 Mesh 地址拒绝。UDP 与 TCP 仍分别判定。R1／R4／F14 的 resolver demand、ID 映射和退休白名单删除。
 - X5（已交付）`DnsService` 留在 netmap：客户端 `DnsPlan::ViaExit`、出口 `DnsPlan::ServeExitResolver` 列表都按 revision 编译，没有 instance 与截止字段，截止来自租约；出口就绪与出口 resolver 可用性（`NodeState.exitDns`）都是事实。行为见[出口 resolver](/v2/node/dataplane#exit-resolver)。
 - X6 可信域名关联是唯一保留的按需编译：Server 受控解析任务完成后，为该源签发 `DnsAssociationOverlay { netmap: NetmapRef, associations, expiresAt = min(TTL, 任务期限) }`，经同一 netmap 查询端点交付并随期望内容应用。overlay 有自己的截止，只扩大该源与相关出口的域名目的判定，不改变 netmap serial；它只影响源和所选出口两个节点。
 
@@ -382,7 +382,7 @@ cold（静态端点）：  T ≈ Σ每跳串行邻接获取（TCP 1 RTT；TLS �
 | Server R6 | demand／republish 合约测试（1,491） | 消失：有效断言（receipt 顺序、撤销、旧实例）迁到 netmap fixture |
 | Server R7 | 需求驱动的 State 可见与期限聚合（42） | 变形：可见范围取投影 `nodes` |
 | Server R8 | 忽略参数的 reauthorize、不可达 Cancel（20） | 消失：独立清理 C0 |
-| Node R1 | DNS demand 编排（233） | 消失：resolver 本地按 `egress.routes` 判定 |
+| Node R1 | DNS demand 编排（233） | 消失：resolver 本地按出口分割判定 |
 | Node R2 | packet Intent 续租（159） | 消失 |
 | Node R3 | demand 网关与回复（180） | 消失 |
 | Node R4 | 退休 DNS 白名单（48） | 消失 |
@@ -419,7 +419,7 @@ S 类简化不在本表；N1 使 S1–S6（Server）、S1–S5（Node）、S1–
 | **N1d** authority 与 Control | 变形 | `meshway-authority` snapshot／clock；`meshway-control` netmap 查询与续期、记录 v5、事件、回执、观察；删除 `demand.rs` | N1a 后；先冻结快照 API 供 N1e–g | Server 停止后 session／instance 过期而快照有效；同内容续租不取消 guard；serial 回退拒绝；v1–v4 记录归档 | — |
 | **N1e** dataplane 与诊断 | 变形 | `meshway-dataplane`（flow、secure、codec v6、probe、exit）；`meshway-diagnostics` | N1d API 后，与 N1f／N1g 并行 | 真 SecureNode A→R→B：首包无外部调用、`update` 保留未变 (origin, target) 流、端口撤销只结束该流、路径变化结束 circuit、租约到期全终止、tombstone 窗口回收、wire v6 互验 | — |
 | **N1f** connectivity | 变形 | `meshway-connectivity`（Manager、continuity、traversal、workers） | N1d API 后并行 | `AdjacencyInterest` 驱动获取、空闲关闭、事实更新不换 epoch、serial 变化只动变化资源、CAS／ABA 保留 | — |
-| **N1g** underlay 与 DNS | 变形 | `meshway-underlay`（protection、kernel exit／egress 接口）；`meshway-dns`（route、dispatcher、system） | N1d API 后并行 | F01／F02 删除后资源撤销及时关闭 FD；resolver 按 `egress.routes` 判定；ScopeFence 只随 netmap／就绪变化 | — |
+| **N1g** underlay 与 DNS | 变形 | `meshway-underlay`（protection、kernel exit／egress 接口）；`meshway-dns`（route、dispatcher、system） | N1d API 后并行 | F01／F02 删除后资源撤销及时关闭 FD；resolver 按出口分割判定；ScopeFence 只随 netmap／就绪变化 | — |
 | **N1h** daemon 切换 | 删 | `apps/meshway-daemon`（control、network、dns、ping）、`meshway-ipc` v6、`apps/meshway-cli` | N1e–g 合入后；Node 侧旧链在本包整体删除 | daemon 进程内三节点：首包、ping、DNS 不产生 HTTP；`sync` 事实分发；netmap 更新差量 | T2 全部既有行重跑 |
 | **N1i** Server 旧链删除 | 删 | Server demands、publications、诊断编译、witness、`instances.rs` 编译调用、R6 测试族、cache obsolete 分支 | N1h 后（无旧消费者） | 迁移后的 receipt／撤销／旧实例断言通过 | — |
 | **N1j** 验收与文档 | 验 | `tools/meshway-{packet,runtime}-fixture`、`scripts/validate_matrix.py`、`docs/v2/`（execution、node-configuration、topology、routing、access、control、runtime、dataplane、connectivity、diagnostics、realtime、storage、validation）、AGENTS 描述 | fixture 可在 N1a 后准备；运行等 N1i | — | 新行与 lab，见下 |

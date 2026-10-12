@@ -136,9 +136,41 @@ Server 为最终出口生成绑定 origin、实际目的范围、出口和完整
 
 ### 执行捕获与精确许可
 
-`meshway-demand-6` 的 `NodeConfiguration.egressCapture` 是独立的包归属计划，不扩大 `meshAddressPools` 或 Access。`managedIpv4`、`directIpv4`、`unmanagedIpv4` 是按 first-match 切分后的互斥 CIDR；`defaultCapture` 明确表示默认捕获。受管 IPv6 通过 `sinkIpv6` 拒绝，先于外部默认路由，已授权 Mesh IPv6 仍走 Mesh 路由。源端没有 IPv6 地址也不能省略该拒绝边界。
+出口分割（源节点的包归属）由**节点**用 `meshway-policy` 从自己的 netmap 与持有的规则集 artifact 计算，Server 用同一实现做校验与预览，netmap 不携带前缀列表。netmap 的 `egress`（`EgressPlan`）只带生效规则的引用与动作、fallback、选择身份 `generation` 与 `unavailable`：
 
-Policy 按顺序从尚未命中的地址集合扣除每条规则的 CIDR，然后应用 fallback。最多输出 4,096 个前缀，单次切分最多 131,072 工作项；超限或缺少依赖发布带 `unavailable` 的全范围捕获／sink，不发布 direct 例外。涉及出口且需要域名上下文的归属在首版返回 `egressConflict`，等待可信解析与冲突处理；不能把 DNS 查询猜成普通 IP 包的业务身份。
+| 字段 | 含义 |
+| --- | --- |
+| `generation` | 选择身份：网络、节点、有效方案、持久选择版本、`routing.egress` 与这些规则所用集合的 digest；与节点持有哪些 artifact 无关，出口节点为源算出的值相同 |
+| `rules[]` | 公共规则在前、有效方案规则在后：`{rule: JSON Pointer, action}` |
+| `fallback` | 无规则命中时的动作 |
+| `unavailable` | 持有全部 artifact 时分割仍不可用的原因（`egressConflict`、`routingLimit` 等）；可用为 null |
+
+分割语义：按顺序从尚未命中的 IPv4／IPv6 地址中扣除每条规则自己的 CIDR 与所引用集合的合并区间（first-match），余下归 fallback。结果是覆盖两族全部地址的有序、互斥区间，相邻区间动作不同。节点安装的捕获边界只有受管部分：出口动作的 IPv4 区间（受管，进本节点 TUN）与出口动作的 IPv6 区间（`sinkIpv6`，拒绝；已授权 Mesh IPv6 仍走 Mesh 路由，源端没有 IPv6 地址也不省略），direct／unmanaged 是其补集，交宿主路由。fallback 为出口且还剩 IPv4 时为默认捕获。
+
+规则引用的集合未持有（artifact 缺失）时该规则 `missingDependency`，分割不可用；涉及出口且需要域名上下文的规则返回 `egressConflict`。不可用时安装全范围 IPv4 捕获与全范围 IPv6 sink，没有 direct／unmanaged 例外，新流拒绝；不能把 DNS 查询猜成普通 IP 包的业务身份。
+
+#### 节点侧上限 {#capture-limits}
+
+| 上限 | 值 | 计数 |
+| --- | --- | --- |
+| 捕获区间 | 16,384 | 受管 IPv4 区间＋sink IPv6 区间（nft interval 元素） |
+| 捕获路由 | 32,768 | 受管 IPv4 区间的最小 CIDR 覆盖（私有捕获表路由） |
+| 计算量 | 2²⁴ 次区间操作 | 一次分割计算 |
+
+超限时该方案 `unavailable: routingLimit`（全范围捕获）。配置校验对每个可分配方案计算同一分割，超限给出警告 `egress_partition_limit`（`params.profile`／`ranges`／`maxRanges`／`routes`／`maxRoutes`，路径为方案或 `/routing/egress/rules`）；路径检测的 `profile.capture` 给出 `{managedIpv4, sinkIpv6, routes, unavailable}`，与节点 IPC `NetmapStatus.capture`（CLI `meshway status` 的 Egress 行）同一计算。`geoip:cn` 的直连方案（补集）约 4,341 个受管 IPv4 区间、12,680 条路由。
+
+上限由实测定出（`mise run perf:capture`，Linux 6.8／AMD 9950X、Linux 7.0／OrbStack VM，nftables 1.0.9；原始结果在私有证据 `.meshway/validation/r3/perf/`）：
+
+| 区间 | nft 提交 | nft 替换 | nft 读回 | 读回字节 | 内核 slab | 带回显替换（`-e`） |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1,000 | 4–11 ms | 12–17 ms | 3–7 ms | 47 KB | ≤ 0.2 MB | 成功 |
+| 6,000 | 16–28 ms | 27–31 ms | 12–24 ms | 285 KB | ≤ 0.8 MB | 成功 |
+| 10,000 | 25–36 ms | 40–43 ms | 21–33 ms | 476 KB | ≤ 1.2 MB | 成功 |
+| 16,384 | 41–59 ms | 59–62 ms | 36–50 ms | 786 KB | ≤ 2.0 MB | 成功 |
+| 32,768 | 92–113 ms | 114–118 ms | 84–104 ms | 1.57 MB | ≤ 4.1 MB | ENOBUFS |
+| 50,000 | 148–179 ms | 174–190 ms | 141–160 ms | 2.39 MB | ≤ 6.4 MB | ENOBUFS |
+
+nft 进程峰值 RSS 约 1.6 KB／区间（16,384 区间 28 MB）。带回显的大批次在 32,768 区间起被 netlink 以 ENOBUFS 拒绝，因此元素替换不回显、以读回核验；16,384 个区间使最坏情况（全为 IPv6）的批次与读回仍低于 1.6 MB，且留出暂存并集（两份方案）的空间。生产路径（release，Planck 隔离 namespace，`large_partitions_install_switch_read_back_and_retire`）在 16,077 个区间、16,034–19,240 条路由时暂存 0.37–0.50 s、提交 0.45–0.57 s、读回 0.07 s、暂停 0.41 s；路由变更按内核监视器的观测分批，不使其通知缓冲溢出。
 
 `PathPermit` 仍绑定精确源地址、目的 IP、协议／端口、完整路径、到期与原路径回复。外部许可另有 `exit: ExitPermit`：`family`、`generation`、`destination`（`internet` 或显式 `cidr.prefix`）和按出口索引的 `roles`。范围分类只限制精确目的，不授予范围内其他目的。`ExitRolePlan` 绑定 instance、角色 generation、IPv4 与 masquerade；network／node／publication 和执行截止由外围 target／lease 绑定。职责在能力探测前发布，职责本身不能转发包。
 

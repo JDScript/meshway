@@ -147,10 +147,10 @@ sha 应用 IPv4
 
 现有 socket mark＋own-mark goto→capture 块末尾的机制可以复用：Server HTTP／SSE、STUN、获准 carrier、明确 resolver socket 均继续按用途受保护，普通应用到同 IP 不获豁免。实际 mark 从 journal 读取，不能硬编码 `0x40000000`。已有 `meshAddressPools` 是地址所有权边界，不能把公网 `/0` 塞进它。
 
-新增由 Server 编译的 **egress capture plan**，区分：受管 IPv4 前缀／默认捕获、明确 direct/unmanaged 例外、必须拒绝的 IPv6 范围，以及计划 generation。其 route 只负责将包交 owner，并不授予整个前缀的 Access；第一包仍触发精确目的／协议／端口 demand。
+**egress capture plan** 由节点用 Policy 从自己 netmap 的规则与持有的 artifact 计算（R3；netmap 只带规则引用、fallback 与选择 generation），区分：受管 IPv4 区间／默认捕获、必须拒绝的 IPv6 区间，direct/unmanaged 为其补集。它只负责将包交 owner，并不授予整个范围的 Access；第一包仍由精确目的／协议／端口判定。字段、上限与实测见 [Routing · 执行捕获](/v2/configuration-reference/routing#执行捕获与精确许可)。
 
-- 有序规则不能直接变成同序路由：Linux 最长前缀与业务 first-match 不同。Policy 必须把相交 CIDR 分割为语义等价、互斥且有界的集合；不能在更宽高优先级 exit 内插入更具体低优先级 direct 绕行。域名／IP 混合有冲突时按现行契约拒绝，不猜测。
-- 私有 egress table 装 `0.0.0.0/0→客户端 TUN`；受管 IPv6 装明确 unreachable／drop（Mesh IPv6 仍先按 Mesh 专用路由处理）。正向表缺失／TUN 关闭时有覆盖同范围的负向规则，不允许继续落到 main default。
+- 有序规则不能直接变成同序路由：Linux 最长前缀与业务 first-match 不同。Policy 把相交范围分割为语义等价、互斥且有界的区间；不能在更宽高优先级 exit 内插入更具体低优先级 direct 绕行。域名／IP 混合有冲突时按现行契约拒绝，不猜测。
+- 受管区间是 owned nft 表的 interval 集合 `managed4`／`managed6`：未经活动客户端 TUN 的受管目的在 OUTPUT 立即拒绝（TCP reset／ICMP admin-prohibited），受管 IPv6 恒拒绝（Mesh IPv6 先由 `mesh6` 放行）。一条 IPv4 RPDB 选择器（非保护 mark、`iif lo`）查私有 egress table；活动时表中为受管区间的最小 CIDR 覆盖 `→客户端 TUN src Mesh 地址`，暂停／TUN 关闭时为空，包落到 main 后仍被集合拒绝，不允许继续 direct。导向不用 nft mark 重路由：那样不改连接已选的物理源地址，需源端 SNAT。
 - 源端 LAN 例外只来自管理员有效方案中的明确 direct/unmanaged CIDR，不能自动把 RFC1918、当前连接网段或网关整个网段全放行；**出口 LAN** 则仍为 exit 动作＋显式 CIDR Access＋masquerade。两者不能混用一个 allow-LAN 开关。必要 DHCP／邻居发现等本机链路控制例外按最小协议范围建模，不授予 LAN 应用通路。
 - 新的 `/0` 检查不能复用“所有相交外部 local 地址都冲突”的 Mesh 池检查；local-table 本机服务、loopback 和地址控制必须单独建模，外部路由优先级仍需核验。捕获不承诺阻止设备所有者访问本机进程；不能利用本机地址／broadcast 路由绕去远端 LAN。
 - 切换顺序：先安装旧新范围并集的负向边界，暂停旧 flow／DNS 和投影，准备新表／TUN／resolver／权限，再切换活动 selector，读回确认全部必需组件后上报 applied。RPDB／DNS／nft 没有跨子系统事务，允许短暂失败，不允许短暂 direct。只能在显式新 direct/unmanaged 已生效或 down 时精确解除相应受管边界。
@@ -193,7 +193,7 @@ Noise 证明回答来自出口，不证明出口上报的域名／地址自然�
 真实类型以 `crates/meshway-model/src/exit.rs`（`ExitCapability`、`ExitStatus`、`ExitUnavailableReason`、`ExitFamily`）、`crates/meshway-configuration/src/execution/exit.rs`（`EgressCapturePlan`、`ExitRolePlan`、`ExitPermit`、`ExitDestinationScope`、`ExitNat`）和 `execution/mod.rs`（`NodeConfiguration`、`PathPermit`）为准。HTTP 使用这些类型生成同一 OpenAPI／SDK；规范 camelCase 错误名由 enum 序列化给出。
 
 - X2 消费 `PathPermit.exit`、精确 target／sourceAddresses／服务／paths／expiresAt，并使用 Policy 准入与 `permit_authorization_digest`／`permit_transition`。公网边界唯一实现为 `meshway_policy::is_internet_address`。
-- X3 消费 `NodeConfiguration.egressCapture` 与 `exitRole`；职责只准许准备资源，实际 NAT 投影仍需 X2 的活 flow 与 guard。IPv6 受管范围必须 sink。
+- X3 消费节点计算的 `Desired::capture`（R3 起；原 `NodeConfiguration.egressCapture`）与 `exitRole`；职责只准许准备资源，实际 NAT 投影仍需 X2 的活 flow 与 guard。IPv6 受管范围必须 sink。
 - X4 把真实探测写入 `NodeState.exitCapability`，携带 instanceId、精确 target、supportedFamilies、installedFamilies、status 与原始 observedAt；报告失败不要求 applied。静态 IPv4 后端声明使用 acquire 的 `feature:exit-ipv4` version 1。没有观测保持省略，不补 ready。
 - X5（已交付）：netmap 的 `DnsService`／`DnsPlan::ViaExit`／`ServeExitResolver` 复用 capture generation 与角色绑定处理 DNS 撤回；密封 Mesh ingress、DNS purpose 的中继授权、出口受保护系统 resolver 已接线，见[经 Mesh 的出口 resolver](#经-mesh-的出口-resolver)。
 

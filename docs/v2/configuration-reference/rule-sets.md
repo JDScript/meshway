@@ -113,7 +113,7 @@ Server 只用 `meshway-rules` 一份转换器，与发布仓库相同。每个�
 | 单次配置准备 | 最多 32 项需下载的集合（remote 与 provider），总期限 30 秒（`rule_set_timeout`） |
 | 节点 | 当前 netmap 引用的 artifact 合计 64 MiB，超出时不下载并报告 `budget` |
 
-出口分割（源节点 netmap 的 egress 前缀表）仍由 Server 计算且最多 4,096 个前缀。规则引用的 IP 集合合并区间展开后超过该数时，该源的出口方案为不可用（`routing_limit`，全范围捕获、拒绝新流），配置校验另给出警告 `rule_set_partition_limit`（`params.key`／`prefixes`／`maxPrefixes`）。`geoip:cn` 级集合目前因此不能用于出口分割。
+出口分割由节点用集合的合并区间直接计算并安装为 nft interval 集合，netmap 只带 digest 引用；`geoip:cn` 级集合可以用于出口分割。节点侧上限（16,384 个捕获区间、32,768 条捕获路由）与超限诊断 `egress_partition_limit` 见 [Routing · 节点侧上限](/v2/configuration-reference/routing#capture-limits)。
 
 ## 数据与状态
 
