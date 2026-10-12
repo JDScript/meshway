@@ -66,6 +66,22 @@ pub(super) async fn observe_acquisition(
             } => axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response(),
         };
     }
+    if request.uri().path() == "/agent-api/v1/dns-associations" {
+        // Every accepted association task completion is one Server round
+        // trip of the domain exit stage; the count is its evidence.
+        static ACCEPTED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let response = next.run(request).await;
+        if response.status().is_success() {
+            let count = ACCEPTED.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+            if write(&evidence.join("association-reports.json"), &count)
+                .await
+                .is_err()
+            {
+                return axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            }
+        }
+        return response;
+    }
     if request.uri().path() != "/agent-api/v1/instances" {
         return next.run(request).await;
     }
@@ -329,6 +345,41 @@ pub(super) async fn coordinate(
     )
     .await?;
     write(&cli.signals.join("exit-configured.json"), &revision).await?;
+    // Domain exit stage: names under NAME_ZONE exit through E via R by a
+    // name rule, everything else of A is direct; Access grants the names.
+    let original_input = input.clone();
+    let mut named = input.clone();
+    let name_zone = crate::exit::NAME_ZONE.trim_end_matches('.').to_owned();
+    for rule in &mut named.access {
+        for destination in &mut rule.dst {
+            if destination == "autogroup:internet" {
+                *destination = format!("domain:{name_zone}");
+            }
+        }
+    }
+    let profile = named
+        .routing
+        .egress
+        .profiles
+        .get_mut("exit")
+        .ok_or("missing exit profile")?;
+    profile.rules.push(meshway_configuration::EgressRule {
+        remark: "names through E by a trusted association".into(),
+        matcher: meshway_configuration::RouteMatch {
+            domain_suffix: vec![name_zone.clone()],
+            ..Default::default()
+        },
+        action: meshway_configuration::RuleAction::Exit {
+            nodes: vec![format!("node:{}", nodes["e"])],
+            via: vec![format!("node:{}", nodes["r"])],
+        },
+    });
+    profile.fallback = RouteAction::Direct;
+    let mut revoked = named.clone();
+    for rule in &mut revoked.access {
+        rule.dst.retain(|destination| !destination.starts_with("domain:"));
+    }
+    let mut name_stage = 0;
     let mut outage = false;
     let mut reopened = false;
     let mut withdrawn = false;
@@ -352,6 +403,18 @@ pub(super) async fn coordinate(
                 &state,
             )
             .await?;
+        }
+        for (step, signal, done, target) in [
+            (0, "exit-name-configure", "exit-name-configured.json", &named),
+            (1, "exit-name-revoke", "exit-name-revoked.json", &revoked),
+            (2, "exit-name-restore", "exit-name-restored.json", &original_input),
+        ] {
+            if name_stage == step && tokio::fs::try_exists(cli.signals.join(signal)).await? {
+                let current = source(&client, network, token).await?;
+                let revision = apply(&client, network, token, current.revision, target).await?;
+                write(&cli.signals.join(done), &revision).await?;
+                name_stage += 1;
+            }
         }
         if !outage && tokio::fs::try_exists(cli.signals.join("exit-http-close")).await? {
             ready(cli, "exit-http-hold").await?;

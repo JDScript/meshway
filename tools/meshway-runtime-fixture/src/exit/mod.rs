@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{collections::BTreeMap, net::Ipv4Addr, path::Path, time::Duration};
 
 mod dns;
-pub use dns::SPLIT_ZONE;
+pub use dns::{NAME_ZONE, SPLIT_ZONE};
 mod service;
 mod traffic;
 
