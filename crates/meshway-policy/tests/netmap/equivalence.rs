@@ -40,8 +40,8 @@ fn projected_and_full_configuration_have_identical_local_admission_and_paths() {
             full.projection.subjects = scenario.subjects.clone();
             full.projection.inventory = scenario.inventory.clone();
             full.projection.selection_versions = scenario.selection_versions.clone();
-            let full = LocalCompiler::from_shared(Arc::new(full));
-            let local = LocalCompiler::from_shared(projected.netmap.clone());
+            let full = LocalCompiler::from_shared(Arc::new(full), &Default::default());
+            let local = LocalCompiler::from_shared(projected.netmap.clone(), &Default::default());
             for destination in &destinations {
                 for (protocol, port) in [
                     (BusinessProtocol::IcmpEcho, None),
@@ -75,6 +75,7 @@ fn projected_and_full_configuration_have_identical_local_admission_and_paths() {
                             {
                                 let relay = LocalCompiler::from_shared(
                                     compiled.nodes[relay].netmap.clone(),
+                                    &Default::default(),
                                 );
                                 assert_eq!(
                                     relay.transit(*source, &decision.target).unwrap(),

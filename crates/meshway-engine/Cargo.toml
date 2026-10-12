@@ -10,6 +10,7 @@ ed25519-dalek = { version = "2.2", default-features = false, features = ["std", 
 meshway-configuration = { path = "../meshway-configuration" }
 meshway-model = { path = "../meshway-model" }
 meshway-policy = { path = "../meshway-policy" }
+meshway-rules = { path = "../meshway-rules" }
 thiserror.workspace = true
 tokio.workspace = true
 zeroize = "1.8"

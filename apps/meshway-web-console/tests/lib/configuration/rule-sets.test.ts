@@ -20,12 +20,18 @@ const remote: RuleSet = {
 const view = (fields: Partial<RuleSetView>): RuleSetView => ({
   key: "cn",
   configurationRevision: 3,
+  implicit: false,
+  provider: null,
+  source: null,
+  conversion: null,
+  held: null,
   ...fields,
 })
 
 const ARTIFACT = {
-  id: "33333333-3333-4333-8333-333333333333",
-  digest: "sha256:abc",
+  digest: `sha256:${"ab".repeat(32)}`,
+  format: 1,
+  bytes: 584,
   entries: 12,
   createdAt: "2026-10-03T10:00:00Z",
 }

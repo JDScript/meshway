@@ -27,7 +27,7 @@ pub use view::{
     NetcheckUnavailable, NodeSelf, PeerRtt, PeerState, PeerStatus, PortMapping, StunMapping,
 };
 
-pub const VERSION: u16 = 7;
+pub const VERSION: u16 = 8;
 pub const MAX_MESSAGE_BYTES: usize = 64 * 1024;
 pub const DEFAULT_SOCKET: &str = "/var/lib/meshway/control.sock";
 
@@ -213,7 +213,28 @@ meshway_model::object! {
     pub netmap: NetmapRef,
     pub issued_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
+    /// Rule-set artifacts the netmap references that this Node does not
+    /// hold yet (`sha256:<hex>`); rules naming them are unavailable.
+    pub missing_artifacts: Vec<String>,
+    /// Last fetch or storage failure while an artifact is missing; null otherwise.
+    #[serde(deserialize_with = "meshway_model::wire::required_nullable")]
+    pub artifact_problem: Option<ArtifactProblem> [required = true],
 } }
+meshway_model::string_enum! {
+/// Why a referenced rule-set artifact is not held.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum ArtifactProblem {
+    /// The Server did not answer with the artifact.
+    Download,
+    /// The bytes differ from the netmap reference or are not a valid artifact.
+    Integrity,
+    /// The private artifact cache could not be written or read.
+    Storage,
+    /// The referenced artifacts together exceed 64 MiB.
+    Budget,
+}
+}
 meshway_model::string_enum! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]

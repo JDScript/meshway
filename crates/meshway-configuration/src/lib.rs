@@ -18,6 +18,7 @@ pub mod netmap;
 pub use editing_secrets::*;
 mod fields;
 mod object;
+pub mod providers;
 mod source;
 mod subjects;
 pub use subjects::SubjectContext;

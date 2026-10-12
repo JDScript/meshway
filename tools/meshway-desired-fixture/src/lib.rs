@@ -166,7 +166,7 @@ impl StaticAuthority {
     /// The content a real Engine would apply for `node`.
     pub fn desired(&self, node: NodeId) -> Result<Desired, Error> {
         let netmap = self.netmaps.get(&node).ok_or("unknown static node")?;
-        Desired::new(netmap).map_err(|_| "invalid compiled netmap".into())
+        Desired::new(netmap, &Default::default()).map_err(|_| "invalid compiled netmap".into())
     }
 
     pub fn keys(&self, node: NodeId) -> Result<DataPlaneKeys, Error> {
@@ -186,6 +186,7 @@ pub fn check_path(
     let port = meshway_configuration::transport::Port::new(service.1)?;
     match meshway_policy::compile::netmap::compile_local(
         &netmap.netmap,
+        &Default::default(),
         source,
         destination,
         (service.0, Some(port)),

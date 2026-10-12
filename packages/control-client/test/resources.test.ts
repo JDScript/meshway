@@ -56,7 +56,7 @@ test("generated resource SDK exposes exact artifacts, refresh events and explici
   const detail = await getRuleSet(client, resourcePath, user);
   assert.ok(resources.ok && detail.ok);
   assert.deepEqual(resources.data.items, detail.data.items);
-  assert.equal(detail.data.items[0]?.artifact?.id, refreshed.data.artifact.id);
+  assert.equal(detail.data.items[0]?.artifact?.digest, refreshed.data.artifact.digest);
   const current = await getConfiguration(client, path, user);
   assert.ok(current.ok);
   assert.equal(current.data.revision, declared.data.revision, "refresh does not rewrite source revision");
@@ -67,7 +67,7 @@ test("generated resource SDK exposes exact artifacts, refresh events and explici
   assert.ok(restored.ok);
   const after = await getRuleSet(client, resourcePath, user);
   assert.ok(after.ok);
-  assert.equal(after.data.items[0]?.artifact?.id, refreshed.data.artifact.id);
+  assert.equal(after.data.items[0]?.artifact?.digest, refreshed.data.artifact.digest);
   assert.equal(after.data.items[0]?.configurationRevision, restored.data.revision);
 
   const link = await createJoinLink(client, path, { requestId: randomUUID(), role: "member", expiresInSeconds: 600 }, user);

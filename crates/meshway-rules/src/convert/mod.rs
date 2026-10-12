@@ -155,12 +155,12 @@ fn rebuild(bytes: &[u8]) -> Result<Conversion, ConvertError> {
         ));
     }
     for r in set.ipv4_ranges() {
-        for cidr in v4_prefixes(u32::from(*r.start()), u32::from(*r.end())) {
+        for cidr in Cidr::cover_v4(r) {
             c.accept(Entry::Cidr(cidr));
         }
     }
     for r in set.ipv6_ranges() {
-        for cidr in v6_prefixes(u128::from(*r.start()), u128::from(*r.end())) {
+        for cidr in Cidr::cover_v6(r) {
             c.accept(Entry::Cidr(cidr));
         }
     }
@@ -174,38 +174,6 @@ fn rebuild(bytes: &[u8]) -> Result<Conversion, ConvertError> {
 fn noncanonical() -> ConvertError {
     ConvertError::InvalidSource("the artifact is not in canonical form".into())
 }
-
-macro_rules! prefixes {
-    ($name:ident, $t:ty, $bits:expr, $variant:ident, $addr:ty) => {
-        /// Minimal CIDR cover of a closed range.
-        fn $name(start: $t, end: $t) -> Vec<Cidr> {
-            let mut out = vec![];
-            let mut s = start;
-            loop {
-                let mut bits: u32 = if s == 0 {
-                    0
-                } else {
-                    $bits - s.trailing_zeros()
-                };
-                loop {
-                    let host = <$t>::MAX.checked_shr(bits).unwrap_or(0);
-                    if s.checked_add(host).is_some_and(|last| last <= end) {
-                        break;
-                    }
-                    bits += 1;
-                }
-                let host = <$t>::MAX.checked_shr(bits).unwrap_or(0);
-                out.push(Cidr::$variant(<$addr>::from(s), bits as u8));
-                match (s + host).checked_add(1) {
-                    Some(next) if next <= end => s = next,
-                    _ => return out,
-                }
-            }
-        }
-    };
-}
-prefixes!(v4_prefixes, u32, 32, V4, std::net::Ipv4Addr);
-prefixes!(v6_prefixes, u128, 128, V6, std::net::Ipv6Addr);
 
 fn cidr(text: &str, at: impl FnOnce() -> String, c: &mut Collector) {
     match Cidr::parse(text) {
@@ -231,21 +199,6 @@ fn keyword(text: &str, at: impl FnOnce() -> String, c: &mut Collector) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn prefix_cover_is_minimal() {
-        assert_eq!(
-            v4_prefixes(0, u32::MAX),
-            vec![Cidr::parse("0.0.0.0/0").unwrap()]
-        );
-        let got: Vec<String> = v4_prefixes(1, 6).iter().map(ToString::to_string).collect();
-        assert_eq!(
-            got,
-            ["0.0.0.1/32", "0.0.0.2/31", "0.0.0.4/31", "0.0.0.6/32"]
-        );
-        assert_eq!(v6_prefixes(0, u128::MAX).len(), 1);
-        assert_eq!(v6_prefixes(u128::MAX, u128::MAX).len(), 1);
-    }
 
     #[test]
     fn format_names_round_trip() {

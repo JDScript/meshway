@@ -8,12 +8,14 @@ description = "Shared Meshway Access, routing, compilation and execution-permit 
 [dependencies]
 meshway-configuration = { path = "../meshway-configuration" }
 meshway-model = { path = "../meshway-model" }
+meshway-rules = { path = "../meshway-rules" }
 meshway-transport = { path = "../meshway-transport" }
 ipnet.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+meshway-rules = { path = "../meshway-rules", features = ["convert"] }
 serde_json.workspace = true
 
 [lints]

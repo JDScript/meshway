@@ -184,6 +184,17 @@ pub struct GetRuleSetPath {
 }
 
 #[derive(Clone)]
+pub struct GetRuleSetArtifactPath {
+    pub r#digest: String,
+}
+
+#[derive(Clone)]
+pub struct GetRuleSetReportPath {
+    pub r#network_id: meshway_protocol::NetworkId,
+    pub r#rule_set_key: String,
+}
+
+#[derive(Clone)]
 pub struct LeaveNetworkPath {
     pub r#network_id: meshway_protocol::NetworkId,
 }
@@ -2488,6 +2499,92 @@ impl crate::Client {
         let query_values = [];
         let url = self.parameter_url(
             "/api/v1/networks/{networkId}/rule-sets/{ruleSetKey}",
+            &path_values,
+            &query_values,
+        )?;
+        let response = self
+            .send_url(reqwest::Method::GET, url, Some(token), None::<&()>)
+            .await?;
+        match response.status {
+            200 => response.json(),
+            400 | 401 | 403 | 404 | 503 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
+    pub async fn get_rule_set_artifact(
+        &self,
+        path: &GetRuleSetArtifactPath,
+        token: &str,
+    ) -> Result<Vec<u8>, crate::ClientError<meshway_protocol::ErrorResponse>> {
+        let path_values = [("digest", {
+            let value = {
+                let input = &path.r#digest;
+                input.to_owned()
+            };
+            value.to_string()
+        })];
+        let query_values = [];
+        let url = self.parameter_url(
+            "/agent-api/v1/artifacts/{digest}",
+            &path_values,
+            &query_values,
+        )?;
+        let response = self
+            .send_binary_url(
+                reqwest::Method::GET,
+                url,
+                Some(token),
+                "application/vnd.meshway.rules.v1",
+            )
+            .await?;
+        match response.status {
+            200 => response.bytes(),
+            401 | 403 | 404 | 503 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
+    pub async fn get_rule_set_report(
+        &self,
+        path: &GetRuleSetReportPath,
+        token: &str,
+    ) -> Result<meshway_protocol::RuleSetReport, crate::ClientError<meshway_protocol::ErrorResponse>>
+    {
+        let path_values = [
+            ("networkId", {
+                let value = serde_json::from_slice::<String>(
+                    &serde_json::to_vec(&path.r#network_id)
+                        .map_err(|_| crate::ClientError::Request)?,
+                )
+                .map_err(|_| crate::ClientError::Request)?;
+                if !(value.len() == 36
+                    && value != "00000000-0000-0000-0000-000000000000"
+                    && value.bytes().enumerate().all(|(index, byte)| {
+                        if matches!(index, 8 | 13 | 18 | 23) {
+                            byte == b'-'
+                        } else {
+                            byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
+                        }
+                    }))
+                    || value.chars().count() < 36
+                    || value.chars().count() > 36
+                {
+                    return Err(crate::ClientError::Request);
+                }
+                value.to_string()
+            }),
+            ("ruleSetKey", {
+                let value = {
+                    let input = &path.r#rule_set_key;
+                    input.to_owned()
+                };
+                value.to_string()
+            }),
+        ];
+        let query_values = [];
+        let url = self.parameter_url(
+            "/api/v1/networks/{networkId}/rule-sets/{ruleSetKey}/report",
             &path_values,
             &query_values,
         )?;

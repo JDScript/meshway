@@ -1,25 +1,6 @@
 use crate::error::Error;
-use meshway_model::{ArtifactId, Digest, NetworkId, Revision};
-use rusqlite::{OptionalExtension, Transaction, params};
-
-pub(crate) fn artifact_by_digest(
-    tx: &Transaction<'_>,
-    network: NetworkId,
-    digest: Digest,
-) -> Result<Option<ArtifactId>, Error> {
-    let id: Option<String> = tx
-        .query_row(
-            "SELECT id FROM dataset_artifacts WHERE network_id=?1 AND kind='ruleSet' AND digest=?2",
-            params![network.as_uuid().as_bytes().as_slice(), digest.to_string()],
-            |row| row.get(0),
-        )
-        .optional()?;
-    id.map(|id| {
-        id.parse()
-            .map_err(|_| Error::decode("dataset_artifacts.id"))
-    })
-    .transpose()
-}
+use meshway_model::{NetworkId, Revision};
+use rusqlite::{Transaction, params};
 
 pub(crate) fn record_check(
     tx: &Transaction<'_>,

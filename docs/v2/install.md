@@ -121,9 +121,9 @@ meshway version
 ```text
 meshway 0.1.0-alpha.3 (v0.1.0-alpha.3-0-g1234abcd)
 target:   aarch64-unknown-linux-musl
-ipc:      6
+ipc:      8
 wire:     6
-compiler: meshway-netmap-1
+compiler: meshway-netmap-2
 ```
 
 `--json` 输出同名字段（`version`、`git`、`target`、`ipc`、`wire`、`compilerVersion`）。`wire` 是受保护 circuit 版本，同一路径上的节点必须一致；`compilerVersion` 是 netmap 编译契约。该命令不联系 daemon。

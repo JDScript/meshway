@@ -27,7 +27,8 @@ pub struct Node {
 impl Node {
     /// Control's currently published netmap as desired content.
     pub fn desired(&self) -> meshway_engine::Desired {
-        meshway_engine::Desired::new(&self.control.netmap().unwrap().content).unwrap()
+        meshway_engine::Desired::new(&self.control.netmap().unwrap().content, &Default::default())
+            .unwrap()
     }
 
     pub fn packet_keys(&self) -> meshway_engine::DataPlaneKeys {

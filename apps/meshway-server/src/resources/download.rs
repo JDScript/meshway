@@ -49,9 +49,11 @@ pub(crate) fn client_builder(
         .resolve_to_addrs(host, addresses))
 }
 
+/// At most `limit` bytes of one public HTTPS source, without redirects.
 pub(crate) async fn download(
     source: &str,
     connector: &dyn Connector,
+    limit: usize,
 ) -> Result<Vec<u8>, ResourceProblem> {
     let url = reqwest::Url::parse(source).map_err(|_| ResourceProblem::InvalidSource)?;
     if url.scheme() != "https"
@@ -100,7 +102,7 @@ pub(crate) async fn download(
         }
         if response
             .content_length()
-            .is_some_and(|size| size > super::MAX_DATASET_BYTES as u64)
+            .is_some_and(|size| size > limit as u64)
         {
             return Err(ResourceProblem::TooLarge);
         }
@@ -110,7 +112,7 @@ pub(crate) async fn download(
             .await
             .map_err(|_| ResourceProblem::DownloadFailed)?
         {
-            if bytes.len() + chunk.len() > super::MAX_DATASET_BYTES {
+            if bytes.len() + chunk.len() > limit {
                 return Err(ResourceProblem::TooLarge);
             }
             bytes.extend_from_slice(&chunk);
@@ -165,7 +167,7 @@ mod tests {
                 address: address.parse().unwrap(),
             };
             assert_eq!(
-                download(url, &source).await,
+                download(url, &source, 1024).await,
                 Err(ResourceProblem::BudgetExceeded)
             );
         }
@@ -180,7 +182,7 @@ mod tests {
             "https://[::ffff:93.184.216.34]/rules",
         ] {
             assert_eq!(
-                download(url, &source).await,
+                download(url, &source, 1024).await,
                 Err(ResourceProblem::InvalidSource)
             );
         }

@@ -145,7 +145,7 @@ Mesh 池、loopback、链路本地、组播、保留／广播及出口本机地�
 
 `underlay-egress.json` 保存 boot／namespace、随机 installation、mark／table、计划、当前门与待提交门、设备标识、nft 规范对象／handle、精确 route/rule 及 removed。自有规则／路由变化注册到同一 monitor，不制造外部切网事件。暂停、执行失效和同 namespace 重启保留负向范围；TUN 消失不会落回 main direct。恢复先关闭旧活动 selector 并清理旧正向资源，只有新的有效执行安装可以重新激活；显式 down 才解除所属负向边界。
 
-IPC 7 的公开运行状态（`meshway status --json` 原样输出）：
+IPC 8 的公开运行状态（`meshway status --json` 原样输出）：
 
 | 字段 | 含义 |
 | --- | --- |
@@ -158,7 +158,7 @@ IPC 7 的公开运行状态（`meshway status --json` 原样输出）：
 | `lastError`／`retryAt` | 类型化故障与重试时点；安装问题可为 unsupportedMode、underlay、tun、dns、transport、apply |
 | `sync` | 必填，`connected`（最近一次 sync 成功、下一次由 Server 挂起）、`reconnecting`、`disconnected`；不代表 Node 授权或业务连通 |
 | `lastSyncAt`／`syncError` | 必填可空：本进程最近一次返回已验签 netmap 的 sync 时间；sync 重试期间的失败类别 |
-| `netmap` | 必填可空：当前 netmap 引用与签名租约 `issuedAt`／`expiresAt`；无有效租约为 null |
+| `netmap` | 必填可空：当前 netmap 引用与签名租约 `issuedAt`／`expiresAt`，以及 `missingArtifacts`（引用但尚未持有的规则集 digest；命名它们的规则不可用，见[规则集 · 下发](/v2/configuration-reference/rule-sets#下发)）与 `artifactProblem`（缺失时最后一次的 `download`／`integrity`／`storage`／`budget`，否则 null）；无有效租约为 null |
 | `node` | 必填可空：已安装 netmap 中的本节点 `hostname` 与 Mesh `addresses`；未安装（down、control-only、准备中）为 null |
 | `peers` | 必填：已安装 netmap 中可见的其他节点（与 `ping` 解析名称的集合相同），按 hostname 排序；未安装为空。字段见下表 |
 | `exit` | 可省略；包含 target-bound `capability`、已安装 role generation、`activeFlows` 和独立的 `dnsUnavailable`（出口 resolver 不能为源解析的原因，与 State [`exitDns`](/v2/state-reference#exitdns) 同源；可用或不服务时为 null）。未观测的计数保持 null，失去当前执行权限后不显示已安装角色／活流数 |

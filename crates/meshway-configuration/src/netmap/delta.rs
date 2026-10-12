@@ -61,9 +61,9 @@ pub struct NetmapDelta {
     pub subjects: crate::SubjectContext,
     /// Visible inventory changes.
     pub inventory: NetmapInventoryDelta,
-    /// Complete replacement rule-set contents.
+    /// Complete replacement rule-set references.
     #[serde(deserialize_with = "unique_map")]
-    pub rule_sets: BTreeMap<String, crate::execution::RuleSetContent>,
+    pub rule_sets: BTreeMap<String, super::RuleSetRef>,
     /// Complete replacement profile selections.
     #[serde(deserialize_with = "unique_map")]
     pub selected_profiles: BTreeMap<NodeId, String>,

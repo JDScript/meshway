@@ -109,6 +109,7 @@ pub(super) fn domain_rules(access: &[&str], rules: serde_json::Value) -> Network
             ip_cidr: vec![],
             domain_suffix: vec![],
             domain: vec!["Telegram.org.".into()],
+            domain_subdomain: vec![],
         },
     );
     c.routing =

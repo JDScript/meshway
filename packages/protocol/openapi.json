@@ -6,6 +6,121 @@
     "version": "0.1.0-alpha.3"
   },
   "paths": {
+    "/agent-api/v1/artifacts/{digest}": {
+      "get": {
+        "tags": [
+          "execution"
+        ],
+        "summary": "Download one rule-set artifact by digest.",
+        "description": "Requires a Node session. `digest` (`sha256:<64 lowercase hex>`) must be referenced by a netmap the Server stored for the calling Node that can still be under a lease (the current one, or one replaced less than a lease validity ago); otherwise, including an unknown digest, the answer is 404.\nThe body is the immutable artifact; the Node checks its length and digest against the netmap reference before use.",
+        "operationId": "getRuleSetArtifact",
+        "parameters": [
+          {
+            "name": "digest",
+            "in": "path",
+            "description": "`sha256:` and the lowercase hex SHA-256 of the artifact.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The artifact bytes; `ETag` is the digest and `Cache-Control` is `private, max-age=31536000, immutable`.",
+            "content": {
+              "application/vnd.meshway.rules.v1": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "invalid_credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "problem": {
+                    "code": "invalid_credentials",
+                    "message": "Invalid credentials.",
+                    "params": {}
+                  },
+                  "requestId": "00000000-0000-0000-0000-000000000001",
+                  "status": 401
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "node_identity_rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "problem": {
+                    "code": "node_identity_rejected",
+                    "message": "Node identity is no longer eligible",
+                    "params": {}
+                  },
+                  "requestId": "00000000-0000-0000-0000-000000000001",
+                  "status": 403
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not_found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "problem": {
+                    "code": "not_found",
+                    "message": "Resource not found.",
+                    "params": {}
+                  },
+                  "requestId": "00000000-0000-0000-0000-000000000001",
+                  "status": 404
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "busy, service_unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "problem": {
+                    "code": "busy",
+                    "message": "Service is busy; retry later.",
+                    "params": {}
+                  },
+                  "requestId": "00000000-0000-0000-0000-000000000001",
+                  "status": 503
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "nodeSession": []
+          }
+        ]
+      }
+    },
     "/agent-api/v1/auth/challenges": {
       "post": {
         "tags": [
@@ -12859,7 +12974,8 @@
                   "identityChangedNodeIds": [],
                   "preparedRuleSets": {
                     "regional": {
-                      "digest": "e58c70f9a1b2634d8e5f60718293a4b5c6d7e8f90123456789abcdef01234567",
+                      "bytes": 4096,
+                      "digest": "sha256:e58c70f9a1b2634d8e5f60718293a4b5c6d7e8f90123456789abcdef01234567",
                       "entries": 128
                     }
                   },
@@ -18999,9 +19115,69 @@
                 "example": {
                   "items": [
                     {
-                      "artifact": null,
+                      "artifact": {
+                        "bytes": 592,
+                        "createdAt": "2026-10-08T09:05:00Z",
+                        "digest": "sha256:44ab0c1a4c37ef326a172e57f7ef86113ebb7d511450eff4606c870823a55fbe",
+                        "entries": 22,
+                        "format": 1
+                      },
+                      "checkedAt": "2026-10-08T09:07:00Z",
+                      "configurationRevision": 7,
+                      "conversion": {
+                        "converted": {
+                          "cidr": 0,
+                          "exact": 9,
+                          "keyword": 0,
+                          "subdomain": 0,
+                          "suffix": 13
+                        },
+                        "redundant": 0,
+                        "unconverted": {
+                          "regex": 1
+                        }
+                      },
+                      "definition": null,
+                      "held": null,
+                      "implicit": true,
+                      "key": "geosite:openai",
+                      "lastSuccessAt": "2026-10-08T09:07:00Z",
+                      "problem": null,
+                      "provider": {
+                        "catalog": "https://raw.githubusercontent.com/meshway-org/meshway-rules/dist/index.json",
+                        "collection": "meta-geosite",
+                        "name": "geosite",
+                        "sequence": 2
+                      },
+                      "source": {
+                        "commit": "83c8208bdfae92b1caaa29745f51f233b6f1847e",
+                        "format": "classical",
+                        "path": "geo/geosite/classical/openai.list",
+                        "ref": "meta",
+                        "repo": "MetaCubeX/meta-rules-dat"
+                      }
+                    },
+                    {
+                      "artifact": {
+                        "bytes": 360,
+                        "createdAt": "2026-10-08T09:00:00Z",
+                        "digest": "sha256:395cd5d462f00b1a3e794ab359404dea4a0bb200cba9087fdf7bfdc8c1f9eec1",
+                        "entries": 3,
+                        "format": 1
+                      },
                       "checkedAt": null,
                       "configurationRevision": 7,
+                      "conversion": {
+                        "converted": {
+                          "cidr": 1,
+                          "exact": 1,
+                          "keyword": 0,
+                          "subdomain": 0,
+                          "suffix": 1
+                        },
+                        "redundant": 0,
+                        "unconverted": {}
+                      },
                       "definition": {
                         "domain": [
                           "login.partner.example.com"
@@ -19014,28 +19190,62 @@
                         ],
                         "type": "inline"
                       },
+                      "held": null,
+                      "implicit": false,
                       "key": "office",
                       "lastSuccessAt": null,
-                      "problem": null
+                      "problem": null,
+                      "provider": null,
+                      "source": {
+                        "commit": null,
+                        "format": "inline",
+                        "path": null,
+                        "ref": null,
+                        "repo": null
+                      }
                     },
                     {
                       "artifact": {
+                        "bytes": 4096,
                         "createdAt": "2026-10-08T09:05:00Z",
-                        "digest": "e58c70f9a1b2634d8e5f60718293a4b5c6d7e8f90123456789abcdef01234567",
+                        "digest": "sha256:e58c70f9a1b2634d8e5f60718293a4b5c6d7e8f90123456789abcdef01234567",
                         "entries": 128,
-                        "id": "db2c3d4e-5f6a-4b7c-8d9e-0f1a2b3c4d50"
+                        "format": 1
                       },
                       "checkedAt": "2026-10-08T09:07:00Z",
                       "configurationRevision": 7,
+                      "conversion": {
+                        "converted": {
+                          "cidr": 4,
+                          "exact": 4,
+                          "keyword": 0,
+                          "subdomain": 0,
+                          "suffix": 120
+                        },
+                        "redundant": 0,
+                        "unconverted": {
+                          "regex": 2
+                        }
+                      },
                       "definition": {
                         "format": "sing-box-source",
                         "type": "remote",
                         "updateInterval": "24h",
                         "url": "https://rules.example.com/regional.json"
                       },
+                      "held": null,
+                      "implicit": false,
                       "key": "regional",
                       "lastSuccessAt": "2026-10-08T09:07:00Z",
-                      "problem": null
+                      "problem": null,
+                      "provider": null,
+                      "source": {
+                        "commit": null,
+                        "format": "sing-box-source",
+                        "path": null,
+                        "ref": null,
+                        "repo": null
+                      }
                     }
                   ]
                 }
@@ -19182,22 +19392,46 @@
                   "items": [
                     {
                       "artifact": {
+                        "bytes": 4096,
                         "createdAt": "2026-10-08T09:05:00Z",
-                        "digest": "e58c70f9a1b2634d8e5f60718293a4b5c6d7e8f90123456789abcdef01234567",
+                        "digest": "sha256:e58c70f9a1b2634d8e5f60718293a4b5c6d7e8f90123456789abcdef01234567",
                         "entries": 128,
-                        "id": "db2c3d4e-5f6a-4b7c-8d9e-0f1a2b3c4d50"
+                        "format": 1
                       },
                       "checkedAt": "2026-10-08T09:07:00Z",
                       "configurationRevision": 7,
+                      "conversion": {
+                        "converted": {
+                          "cidr": 4,
+                          "exact": 4,
+                          "keyword": 0,
+                          "subdomain": 0,
+                          "suffix": 120
+                        },
+                        "redundant": 0,
+                        "unconverted": {
+                          "regex": 2
+                        }
+                      },
                       "definition": {
                         "format": "sing-box-source",
                         "type": "remote",
                         "updateInterval": "24h",
                         "url": "https://rules.example.com/regional.json"
                       },
+                      "held": null,
+                      "implicit": false,
                       "key": "regional",
                       "lastSuccessAt": "2026-10-08T09:07:00Z",
-                      "problem": null
+                      "problem": null,
+                      "provider": null,
+                      "source": {
+                        "commit": null,
+                        "format": "sing-box-source",
+                        "path": null,
+                        "ref": null,
+                        "repo": null
+                      }
                     }
                   ]
                 }
@@ -19312,7 +19546,7 @@
         "tags": [
           "resources"
         ],
-        "summary": "Refresh a remote rule set and publish validated content changes.",
+        "summary": "Refresh a remote or catalog rule set and publish validated content changes.",
         "description": "Requires current Owner or Admin membership, rechecked before binding the downloaded content.\nFor 24 hours, same-user and same-network `requestId` retries for this key return its current view; reuse for another key returns 409.\nFailed checks preserve the last validated artifact and report the problem in the returned view.",
         "operationId": "refreshRuleSet",
         "parameters": [
@@ -19355,22 +19589,46 @@
                 },
                 "example": {
                   "artifact": {
+                    "bytes": 4096,
                     "createdAt": "2026-10-08T09:05:00Z",
-                    "digest": "e58c70f9a1b2634d8e5f60718293a4b5c6d7e8f90123456789abcdef01234567",
+                    "digest": "sha256:e58c70f9a1b2634d8e5f60718293a4b5c6d7e8f90123456789abcdef01234567",
                     "entries": 128,
-                    "id": "db2c3d4e-5f6a-4b7c-8d9e-0f1a2b3c4d50"
+                    "format": 1
                   },
                   "checkedAt": "2026-10-08T09:07:00Z",
                   "configurationRevision": 7,
+                  "conversion": {
+                    "converted": {
+                      "cidr": 4,
+                      "exact": 4,
+                      "keyword": 0,
+                      "subdomain": 0,
+                      "suffix": 120
+                    },
+                    "redundant": 0,
+                    "unconverted": {
+                      "regex": 2
+                    }
+                  },
                   "definition": {
                     "format": "sing-box-source",
                     "type": "remote",
                     "updateInterval": "24h",
                     "url": "https://rules.example.com/regional.json"
                   },
+                  "held": null,
+                  "implicit": false,
                   "key": "regional",
                   "lastSuccessAt": "2026-10-08T09:07:00Z",
-                  "problem": null
+                  "problem": null,
+                  "provider": null,
+                  "source": {
+                    "commit": null,
+                    "format": "sing-box-source",
+                    "path": null,
+                    "ref": null,
+                    "repo": null
+                  }
                 }
               }
             }
@@ -19538,6 +19796,174 @@
                   "problem": {
                     "code": "busy",
                     "message": "Service is busy; retry later.",
+                    "params": {}
+                  },
+                  "requestId": "00000000-0000-0000-0000-000000000001",
+                  "status": 503
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "userSession": []
+          }
+        ]
+      }
+    },
+    "/api/v1/networks/{networkId}/rule-sets/{ruleSetKey}/report": {
+      "get": {
+        "tags": [
+          "resources"
+        ],
+        "summary": "Read the complete conversion report of one rule set's bound content.",
+        "description": "Requires current Owner or Admin membership. The report lists the first 1,000 skipped source entries with position, reason and text; a catalog set whose published report could not be read lists none and keeps its counts. A key without bound content returns 404.",
+        "operationId": "getRuleSetReport",
+        "parameters": [
+          {
+            "name": "networkId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/NetworkId"
+            }
+          },
+          {
+            "name": "ruleSetKey",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuleSetReport"
+                },
+                "example": {
+                  "conversion": {
+                    "converted": {
+                      "cidr": 4,
+                      "exact": 4,
+                      "keyword": 0,
+                      "subdomain": 0,
+                      "suffix": 120
+                    },
+                    "redundant": 0,
+                    "unconverted": {
+                      "regex": 2
+                    }
+                  },
+                  "digest": "sha256:e58c70f9a1b2634d8e5f60718293a4b5c6d7e8f90123456789abcdef01234567",
+                  "items": [
+                    {
+                      "at": "/rules/3/domain_regex/0",
+                      "entry": "^ads[0-9]+\\.example\\.com$",
+                      "reason": "regex"
+                    },
+                    {
+                      "at": "/rules/3/domain_regex/1",
+                      "entry": "^cdn-.*\\.example\\.net$",
+                      "reason": "regex"
+                    }
+                  ],
+                  "key": "regional"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "problem": {
+                    "code": "invalid_request",
+                    "message": "Invalid request parameters.",
+                    "params": {}
+                  },
+                  "requestId": "00000000-0000-0000-0000-000000000001",
+                  "status": 400
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "invalid_session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "problem": {
+                    "code": "invalid_session",
+                    "message": "Invalid or expired session.",
+                    "params": {}
+                  },
+                  "requestId": "00000000-0000-0000-0000-000000000001",
+                  "status": 401
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "permission_denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "problem": {
+                    "code": "permission_denied",
+                    "message": "This operation is not permitted for the current principal.",
+                    "params": {}
+                  },
+                  "requestId": "00000000-0000-0000-0000-000000000001",
+                  "status": 403
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not_found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "problem": {
+                    "code": "not_found",
+                    "message": "Resource not found.",
+                    "params": {}
+                  },
+                  "requestId": "00000000-0000-0000-0000-000000000001",
+                  "status": 404
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "service_unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "problem": {
+                    "code": "service_unavailable",
+                    "message": "Service is unavailable.",
                     "params": {}
                   },
                   "requestId": "00000000-0000-0000-0000-000000000001",
@@ -20952,32 +21378,42 @@
       },
       "ArtifactSummary": {
         "type": "object",
-        "description": "Immutable, validated rule-set artifact selected by a resource binding.",
+        "description": "Immutable rule-set artifact selected by a resource binding. Artifacts are content addressed and shared by every network.",
         "required": [
-          "id",
           "digest",
-          "createdAt",
-          "entries"
+          "format",
+          "bytes",
+          "entries",
+          "createdAt"
         ],
         "properties": {
+          "bytes": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Artifact length in bytes.",
+            "minimum": 0
+          },
           "createdAt": {
             "type": "string",
             "format": "date-time",
-            "description": "UTC time the immutable artifact was created, distinct from later refresh checks."
+            "description": "UTC time the Server first stored this content, distinct from later refresh checks."
           },
           "digest": {
-            "$ref": "#/components/schemas/Digest",
-            "description": "Digest of the complete normalized destination content."
+            "type": "string",
+            "description": "`sha256:` and the lowercase hex SHA-256 of the complete artifact; Nodes fetch it by this digest.",
+            "pattern": "^sha256:[0-9a-f]{64}$"
           },
           "entries": {
             "type": "integer",
             "format": "int32",
-            "description": "Total normalized CIDR, suffix and exact-name entries.",
+            "description": "Canonical members: names, keywords and merged address ranges.",
             "minimum": 0
           },
-          "id": {
-            "$ref": "#/components/schemas/ArtifactId",
-            "description": "Immutable artifact identity used to bind exact historical content."
+          "format": {
+            "type": "integer",
+            "format": "int32",
+            "description": "`MWRS` major format version.",
+            "minimum": 0
           }
         },
         "additionalProperties": false
@@ -22650,6 +23086,16 @@
           "routing": {
             "$ref": "#/components/schemas/RoutingConfiguration",
             "description": "Mesh waypoint requirements and external destination routing."
+          },
+          "ruleSetProviders": {
+            "type": "object",
+            "description": "Catalog provider overrides; null entries disable a built-in provider.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/NullableRuleSetProvider"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
           },
           "ruleSets": {
             "type": "object",
@@ -26287,6 +26733,10 @@
           "unknown_rule_set",
           "invalid_rule_source",
           "empty_rule_set_key",
+          "invalid_rule_set_key",
+          "unknown_rule_set_provider",
+          "invalid_rule_set_provider",
+          "rule_set_partition_limit",
           "empty_inline_rule_set",
           "rule_set_budget",
           "rule_set_unavailable",
@@ -28506,9 +28956,9 @@
           },
           "ruleSets": {
             "type": "object",
-            "description": "Complete replacement rule-set contents.",
+            "description": "Complete replacement rule-set references.",
             "additionalProperties": {
-              "$ref": "#/components/schemas/RuleSetContent"
+              "$ref": "#/components/schemas/RuleSetRef"
             },
             "propertyNames": {
               "type": "string"
@@ -29011,6 +29461,16 @@
           "routing": {
             "$ref": "#/components/schemas/RoutingConfiguration",
             "description": "Mesh path constraints and egress selection; defaults to empty routing declarations."
+          },
+          "ruleSetProviders": {
+            "type": "object",
+            "description": "Catalog providers keyed by name, replacing a built-in provider of the same name; null disables it. Defaults to an empty map.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/NullableRuleSetProvider"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
           },
           "ruleSets": {
             "type": "object",
@@ -29734,7 +30194,7 @@
         "properties": {
           "compilerVersion": {
             "type": "string",
-            "description": "Compiler contract family, `meshway-netmap-1`."
+            "description": "Compiler contract family, `meshway-netmap-2`."
           },
           "dependencyDigest": {
             "$ref": "#/components/schemas/Digest",
@@ -30496,6 +30956,17 @@
           "nonPublicAddress",
           "meshAddress"
         ]
+      },
+      "NullableRuleSetProvider": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/RuleSetProvider"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "A catalog provider, or null to disable the built-in provider of this name."
       },
       "ObservationEvent": {
         "type": "object",
@@ -32191,20 +32662,28 @@
       },
       "PreparedRuleSet": {
         "type": "object",
-        "description": "Transient validated rule-set content summary produced by a noncommitting configuration preview.",
+        "description": "Transient validated rule-set content produced by a noncommitting configuration preview.",
         "required": [
           "digest",
+          "bytes",
           "entries"
         ],
         "properties": {
+          "bytes": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Artifact length in bytes.",
+            "minimum": 0
+          },
           "digest": {
-            "$ref": "#/components/schemas/Digest",
-            "description": "Digest of the complete normalized destination content, without reserving an artifact ID."
+            "type": "string",
+            "description": "`sha256:` and the lowercase hex SHA-256 of the complete artifact; content addressed, no ID is reserved.",
+            "pattern": "^sha256:[0-9a-f]{64}$"
           },
           "entries": {
             "type": "integer",
             "format": "int32",
-            "description": "Total normalized CIDR, suffix and exact-name entries.",
+            "description": "Canonical members: names, keywords and merged address ranges.",
             "minimum": 0
           }
         },
@@ -33685,9 +34164,9 @@
           },
           "ruleSets": {
             "type": "object",
-            "description": "Resolved remote rule-set contents referenced by egress rules.",
+            "description": "Content references of the rule sets retained egress rules name, keyed\nas in `match.ruleSets`; the content is fetched by digest.",
             "additionalProperties": {
-              "$ref": "#/components/schemas/RuleSetContent"
+              "$ref": "#/components/schemas/RuleSetRef"
             },
             "propertyNames": {
               "type": "string"
@@ -33954,7 +34433,7 @@
       },
       "RefreshRuleSetRequest": {
         "type": "object",
-        "description": "Idempotent manual refresh of one remote rule set.",
+        "description": "Idempotent manual refresh of one remote or catalog rule set.",
         "required": [
           "requestId"
         ],
@@ -34174,7 +34653,12 @@
           "configuration_changed",
           "budget_exceeded",
           "not_ready",
-          "validation_failed"
+          "validation_failed",
+          "rule_set_budget",
+          "signature_invalid",
+          "catalog_regressed",
+          "unknown_rule_set",
+          "integrity_failed"
         ]
       },
       "ResourceRef": {
@@ -34488,7 +34972,7 @@
             "items": {
               "type": "string"
             },
-            "description": "Referenced rule-set keys whose destinations join this match; defaults to an empty list."
+            "description": "Referenced rule sets whose destinations join this match: a network `ruleSets` key, or `<provider>:<name>` for a catalog set; defaults to an empty list."
           }
         },
         "additionalProperties": false
@@ -34649,6 +35133,13 @@
                 },
                 "description": "Exact DNS names without subdomains; defaults to empty and is omitted from canonical output when empty."
               },
+              "domainSubdomain": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "DNS names matching only their subdomains, not the name itself; defaults to empty and is omitted from canonical output when empty."
+              },
               "domainSuffix": {
                 "type": "array",
                 "items": {
@@ -34683,7 +35174,7 @@
             "properties": {
               "format": {
                 "$ref": "#/components/schemas/RuleSetFormat",
-                "description": "Source format to convert without dropping unsupported entries."
+                "description": "Source format; entries without an equivalent are skipped and reported by the resource view."
               },
               "type": {
                 "type": "string",
@@ -34713,45 +35204,75 @@
           "refreshed"
         ]
       },
-      "RuleSetContent": {
+      "RuleSetConversion": {
         "type": "object",
-        "description": "Resolved rule-set artifact content supplied as a fixed Server compilation dependency.",
+        "description": "How the bound content was converted from its source.",
         "required": [
-          "networkId",
-          "artifact",
-          "ipCIDR",
-          "domainSuffix",
-          "domain"
+          "converted",
+          "redundant",
+          "unconverted"
         ],
         "properties": {
-          "artifact": {
-            "$ref": "#/components/schemas/ArtifactId",
-            "description": "Exact artifact version whose content is supplied."
+          "converted": {
+            "$ref": "#/components/schemas/RuleSetConverted",
+            "description": "Accepted entries by kind."
           },
-          "domain": {
-            "type": "array",
-            "items": {
-              "type": "string"
+          "redundant": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Accepted names and keywords dropped as duplicates or covered by another member.",
+            "minimum": 0
+          },
+          "unconverted": {
+            "type": "object",
+            "description": "Skipped entries by reason (`regex`, `invalidName`, `classical:<TYPE>`, `unsupportedField:<name>`, ...); the content is a subset of the source's semantics whenever this is not empty.",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
             },
-            "description": "Exact domain names used by rule-set matching."
-          },
-          "domainSuffix": {
-            "type": "array",
-            "items": {
+            "propertyNames": {
               "type": "string"
-            },
-            "description": "Domain suffixes used by rule-set matching."
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "RuleSetConverted": {
+        "type": "object",
+        "description": "Accepted source entries by the member kind they became, counted before duplicates and covered members are dropped.",
+        "required": [
+          "exact",
+          "suffix",
+          "subdomain",
+          "keyword",
+          "cidr"
+        ],
+        "properties": {
+          "cidr": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
           },
-          "ipCIDR": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "IP CIDR ranges used by rule-set matching."
+          "exact": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
           },
-          "networkId": {
-            "$ref": "#/components/schemas/NetworkId",
-            "description": "Network owning this resolved rule-set input."
+          "keyword": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "subdomain": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "suffix": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
           }
         },
         "additionalProperties": false
@@ -34762,8 +35283,31 @@
         "enum": [
           "sing-box-source",
           "mihomo-domain",
-          "mihomo-ipcidr"
+          "mihomo-ipcidr",
+          "mihomo-domain-text",
+          "mihomo-ipcidr-text",
+          "classical"
         ]
+      },
+      "RuleSetHeld": {
+        "type": "object",
+        "description": "The catalog still publishes an older artifact for this set.",
+        "required": [
+          "since",
+          "reason"
+        ],
+        "properties": {
+          "reason": {
+            "type": "string",
+            "description": "The publisher's reason."
+          },
+          "since": {
+            "type": "string",
+            "format": "date-time",
+            "description": "UTC time since which the catalog holds the previous artifact."
+          }
+        },
+        "additionalProperties": false
       },
       "RuleSetList": {
         "type": "object",
@@ -34801,19 +35345,226 @@
         },
         "additionalProperties": false
       },
+      "RuleSetProvider": {
+        "type": "object",
+        "description": "Signed rule-set catalog referenced as `<provider>:<name>` from routing rules.",
+        "required": [
+          "catalog",
+          "collection",
+          "publicKeys"
+        ],
+        "properties": {
+          "catalog": {
+            "type": "string",
+            "description": "HTTPS URL of the catalog `index.json`; its signature is `index.json.sig` and artifacts are under `artifacts/` beside it."
+          },
+          "collection": {
+            "type": "string",
+            "description": "Catalog collection holding this provider's sets; `<provider>:<name>` selects `<collection>/<name>`."
+          },
+          "publicKeys": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "One to four trusted `ed25519:<64 lowercase hex>` catalog keys; any one valid signature is accepted."
+          },
+          "updateInterval": {
+            "$ref": "#/components/schemas/PositiveDuration",
+            "description": "Positive integer duration with `ms`, `s`, `m` or `h`; defaults to `24h`, with scheduling bounded below by one second."
+          }
+        },
+        "additionalProperties": false
+      },
+      "RuleSetProviderView": {
+        "type": "object",
+        "description": "The catalog a provider-referenced set came from.",
+        "required": [
+          "name",
+          "catalog",
+          "collection",
+          "sequence"
+        ],
+        "properties": {
+          "catalog": {
+            "type": "string",
+            "description": "Catalog `index.json` URL."
+          },
+          "collection": {
+            "type": "string",
+            "description": "Catalog collection of the provider."
+          },
+          "name": {
+            "type": "string",
+            "description": "Provider name, the part of the key before `:`."
+          },
+          "sequence": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Sequence of the verified catalog the bound artifact was taken from; null before any content is bound.",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "RuleSetRef": {
+        "type": "object",
+        "description": "One rule-set artifact a netmap depends on. Nodes fetch the bytes from\n`GET /agent-api/v1/artifacts/{digest}` and check length and digest.",
+        "required": [
+          "digest",
+          "format",
+          "bytes",
+          "entries"
+        ],
+        "properties": {
+          "bytes": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Artifact length in bytes.",
+            "minimum": 0
+          },
+          "digest": {
+            "type": "string",
+            "description": "`sha256:` and the lowercase hex SHA-256 of the complete artifact.",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "entries": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Canonical members: names, keywords and merged address ranges.",
+            "minimum": 0
+          },
+          "format": {
+            "type": "integer",
+            "format": "int32",
+            "description": "`MWRS` major format version of the artifact.",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "RuleSetReport": {
+        "type": "object",
+        "description": "Complete conversion report of the bound content.",
+        "required": [
+          "key",
+          "digest",
+          "conversion",
+          "items"
+        ],
+        "properties": {
+          "conversion": {
+            "$ref": "#/components/schemas/RuleSetConversion"
+          },
+          "digest": {
+            "type": "string",
+            "description": "The bound artifact the report describes.",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RuleSetSkippedEntry"
+            },
+            "description": "The first 1,000 skipped entries; the rest are only counted in `conversion`. Empty when the provider published only a summary."
+          },
+          "key": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "RuleSetSkippedEntry": {
+        "type": "object",
+        "description": "One source entry that did not become a member.",
+        "required": [
+          "at",
+          "reason",
+          "entry"
+        ],
+        "properties": {
+          "at": {
+            "type": "string",
+            "description": "Position in the source: `/rules/3/domain_regex/0`, `/payload/7`, `line 12` or `/domainSuffix/2`."
+          },
+          "entry": {
+            "type": "string",
+            "description": "The entry text, truncated to 256 characters."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Skip reason, as in `RuleSetConversion.unconverted`."
+          }
+        },
+        "additionalProperties": false
+      },
+      "RuleSetSourceView": {
+        "type": "object",
+        "description": "Where the bound content's source came from.",
+        "required": [
+          "format",
+          "repo",
+          "ref",
+          "commit",
+          "path"
+        ],
+        "properties": {
+          "commit": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Upstream commit; null when not from a catalog."
+          },
+          "format": {
+            "type": "string",
+            "description": "Source format the content was converted from."
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Upstream file path; null when not from a catalog."
+          },
+          "ref": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Upstream branch or tag; null when not from a catalog."
+          },
+          "repo": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Upstream repository of a catalog set; null for a remote URL or inline set."
+          }
+        },
+        "additionalProperties": false
+      },
       "RuleSetView": {
         "type": "object",
         "description": "Current rule-set declaration, selected immutable artifact and actual check status.",
         "required": [
           "key",
-          "configurationRevision"
+          "configurationRevision",
+          "implicit",
+          "provider",
+          "source",
+          "conversion",
+          "held"
         ],
         "properties": {
           "artifact": {
             "oneOf": [
               {
                 "$ref": "#/components/schemas/ArtifactSummary",
-                "description": "Selected validated artifact, retained after failed refreshes; null when no artifact is bound, including inline definitions."
+                "description": "Selected validated artifact, retained after failed refreshes; null when no content is bound."
               },
               {
                 "type": "null"
@@ -34832,20 +35583,46 @@
             "$ref": "#/components/schemas/Revision",
             "description": "Current source revision owning this definition and resource view."
           },
-          "definition": {
+          "conversion": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/RuleSet",
-                "description": "Source declaration when included in the authorized resource scope; null when the scope does not expose it."
+                "$ref": "#/components/schemas/RuleSetConversion",
+                "description": "Conversion summary of the bound content; null when none is bound. The full skipped-entry list is `GET .../rule-sets/{ruleSetKey}/report`."
               },
               {
                 "type": "null"
               }
             ]
           },
+          "definition": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RuleSet",
+                "description": "Source declaration when included in the authorized resource scope; null for implicit sets or when the scope does not expose it."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "held": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RuleSetHeld",
+                "description": "The catalog holds an older artifact for this set; null otherwise."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "implicit": {
+            "type": "boolean",
+            "description": "Whether the set comes from a `<provider>:<name>` reference rather than a `ruleSets` declaration."
+          },
           "key": {
             "type": "string",
-            "description": "Rule-set key in the network configuration."
+            "description": "Rule-set key as routing rules reference it: a network `ruleSets` key, or `<provider>:<name>`."
           },
           "lastSuccessAt": {
             "type": [
@@ -34860,6 +35637,28 @@
               {
                 "$ref": "#/components/schemas/ResourceProblem",
                 "description": "Last check failure or `not_ready` for missing initial remote content; null when no problem is recorded."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "provider": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RuleSetProviderView",
+                "description": "Catalog of an implicit set; null for declared sets."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RuleSetSourceView",
+                "description": "Provenance of the bound content; null when none is bound."
               },
               {
                 "type": "null"

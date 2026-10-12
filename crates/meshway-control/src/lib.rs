@@ -20,8 +20,9 @@ mod leave;
 pub use leave::Left;
 mod netmap;
 pub use netmap::{
-    KnownPeers, NetmapChange, PeerFactsSink, SYNC_TIMEOUT, SyncCall, SyncFuture, SyncOutcome,
-    SyncReply, SyncTransport, sync_loop,
+    ArtifactCall, ArtifactProblem, ArtifactReply, KnownPeers, NetmapChange, PeerFactsSink,
+    SYNC_TIMEOUT, SyncCall, SyncFuture, SyncOutcome, SyncReply, SyncTransport, fetch_artifacts,
+    sync_loop,
 };
 mod observations;
 mod probe;
@@ -127,6 +128,10 @@ pub struct Status {
     pub held: Option<NetmapRef>,
     /// Published signed lease of the held netmap, while it has not ended.
     pub netmap: Option<NetmapLease>,
+    /// Rule-set artifacts the held netmap references and this Node lacks.
+    pub missing_artifacts: Vec<meshway_rules::Digest>,
+    /// Last fetch or storage failure while some artifact is missing.
+    pub artifact_problem: Option<ArtifactProblem>,
     /// The durable leave intent awaiting the Server's confirmation.
     pub leaving: Option<meshway_model::RequestId>,
     pub reload_required: bool,
@@ -260,6 +265,8 @@ impl Control {
                 self.netmap_reference()
             },
             netmap: self.netmap_lease(),
+            missing_artifacts: self.missing_artifacts(),
+            artifact_problem: self.artifact_problem(),
             leaving: if self.dirty { None } else { self.record.leave },
             reload_required: self.dirty,
         };

@@ -13,5 +13,6 @@ mod exit;
 mod incremental;
 mod projection;
 mod properties;
+mod rule_sets;
 mod support;
 use support::*;

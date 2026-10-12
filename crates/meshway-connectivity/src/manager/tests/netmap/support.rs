@@ -187,7 +187,11 @@ impl Netmaps {
 
     /// Control's currently published netmap as desired content.
     fn published(&self, index: usize) -> Desired {
-        Desired::new(&self.controls[index].netmap().unwrap().content).unwrap()
+        Desired::new(
+            &self.controls[index].netmap().unwrap().content,
+            &Default::default(),
+        )
+        .unwrap()
     }
 
     /// The reserved listener sockets, for one shared test factory.

@@ -377,6 +377,9 @@ pub async fn sync_loop(
                         idle = true;
                     }
                     netmaps.send_replace(Some(outcome.netmap));
+                    drop(driver);
+                    // Content first, then the artifacts it references.
+                    super::fetch_artifacts(control, netmaps, stop).await;
                 }
                 Err(Error::Pending) => {}
                 Err(error) => {

@@ -231,7 +231,7 @@ async fn enrolled(server: &support::Server) -> (Control, Arc<Script>) {
 async fn sync(control: &mut Control, script: &Script, reply: SyncResponse) -> Desired {
     script.push(Ok(reply));
     control.sync(&mut Facts::default()).await.unwrap();
-    Desired::new(&control.netmap().unwrap().content).unwrap()
+    Desired::new(&control.netmap().unwrap().content, &Default::default()).unwrap()
 }
 
 fn named(name: &str) -> Query {
@@ -475,7 +475,8 @@ async fn exit_resolver_rejects_raw_addresses_even_when_the_source_is_in_its_plan
     };
     let packet = |control: &Control| {
         (
-            meshway_engine::Desired::new(&control.netmap().unwrap().content).unwrap(),
+            meshway_engine::Desired::new(&control.netmap().unwrap().content, &Default::default())
+                .unwrap(),
             control.dataplane_keys().unwrap(),
         )
     };

@@ -97,6 +97,7 @@ pub fn new_network(
         topology: vec![],
         routing: RoutingConfiguration::default(),
         rule_sets: BTreeMap::new(),
+        rule_set_providers: BTreeMap::new(),
     };
     // This constructor has no editable policy: only the fixed initial defaults
     // above. Editable configurations require the caller's semantic validator.

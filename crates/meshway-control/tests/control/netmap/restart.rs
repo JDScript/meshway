@@ -87,6 +87,10 @@ async fn restart_loads_a_live_sealed_netmap_without_any_server_contact() {
     fs::set_permissions(&copy, fs::Permissions::from_mode(0o700)).unwrap();
     for entry in fs::read_dir(&path).unwrap() {
         let entry = entry.unwrap();
+        // The artifact cache directory is empty: these netmaps reference no rule set.
+        if entry.file_type().unwrap().is_dir() {
+            continue;
+        }
         let target = copy.join(entry.file_name());
         fs::copy(entry.path(), &target).unwrap();
         fs::set_permissions(&target, fs::Permissions::from_mode(0o600)).unwrap();
@@ -237,6 +241,10 @@ fn keep(path: &Path, name: &str) -> (tempfile::TempDir, std::path::PathBuf) {
     fs::set_permissions(&copy, fs::Permissions::from_mode(0o700)).unwrap();
     for entry in fs::read_dir(path).unwrap() {
         let entry = entry.unwrap();
+        // The artifact cache directory is empty: these netmaps reference no rule set.
+        if entry.file_type().unwrap().is_dir() {
+            continue;
+        }
         let target = copy.join(entry.file_name());
         fs::copy(entry.path(), &target).unwrap();
         fs::set_permissions(&target, fs::Permissions::from_mode(0o600)).unwrap();

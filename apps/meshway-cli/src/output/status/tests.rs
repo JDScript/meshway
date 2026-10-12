@@ -28,7 +28,7 @@ fn status() -> Status {
         "observedAt":"2026-10-11T12:00:00Z","enrollmentRequestId":null,"enrollmentUrl":null,
         "identity":null,"authenticated":true,"sync":"connected","lastSyncAt":"2026-10-11T11:59:48Z",
         "syncError":null,"instance":null,
-        "netmap":{"netmap":reference,"issuedAt":"2026-10-11T11:00:00Z","expiresAt":"2026-10-12T11:59:00Z"},
+        "netmap":{"netmap":reference,"issuedAt":"2026-10-11T11:00:00Z","expiresAt":"2026-10-12T11:59:00Z","missingArtifacts":[],"artifactProblem":null},
         "saved":reference,"applied":reference,"dataPlane":"ready","networkMode":"tun",
         "node":{"hostname":"meshway-lax","addresses":{"ipv4":"100.64.0.4","ipv6":null}},
         "peers":[nyc, sha, peer(OLD, "meshway-old", "100.64.0.9", "offline")],

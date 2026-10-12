@@ -48,6 +48,7 @@ fn fingerprints(
         topology,
         routing,
         rule_sets,
+        rule_set_providers,
     } = input.configuration;
     let addresses: BTreeMap<_, _> = nodes
         .iter()
@@ -62,7 +63,14 @@ fn fingerprints(
             groups,
             tags_owners,
         ),
-        (access, dns, topology, routing, rule_sets, input.rule_sets),
+        (
+            access,
+            dns,
+            topology,
+            routing,
+            (rule_sets, rule_set_providers),
+            references(input.rule_sets),
+        ),
         // Resolver classification consults all configured addresses, and
         // subject aliases can affect selectors outside a retained projection.
         (&addresses, input.subjects),

@@ -232,6 +232,7 @@ fn routes() -> OpenApiRouter<HttpState> {
         .routes(routes!(agent::renew))
         .routes(routes!(agent::release))
         .routes(routes!(agent::sync))
+        .routes(routes!(agent::artifact))
         .routes(routes!(agent::leave))
         .routes(routes!(connectivity::query))
         .routes(routes!(connectivity::prepare))
@@ -421,12 +422,21 @@ async fn context(mut request: Request, next: Next) -> Response {
     } else {
         HttpError::unavailable(None).into_response()
     };
-    response
-        .headers_mut()
-        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    response
-        .headers_mut()
-        .insert(header::PRAGMA, HeaderValue::from_static("no-cache"));
+    // Only immutable content-addressed bodies (rule-set artifacts) declare
+    // their own caching; everything else is never stored.
+    let immutable = response
+        .headers()
+        .get(header::CACHE_CONTROL)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.ends_with(", immutable"));
+    if !immutable {
+        response
+            .headers_mut()
+            .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+        response
+            .headers_mut()
+            .insert(header::PRAGMA, HeaderValue::from_static("no-cache"));
+    }
     if let Some(id) = request_id
         && let Ok(value) = HeaderValue::from_str(&id.to_string())
     {

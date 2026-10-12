@@ -2,76 +2,157 @@ use super::{references::*, *};
 use crate::internet_ranges;
 use ipnet::IpNet;
 use meshway_configuration::AddressSet;
+use std::sync::Arc;
 
 #[derive(Clone, Copy)]
 struct PriorRules<'a> {
     configuration: &'a NetworkConfiguration,
+    rule_sets: &'a BTreeMap<String, Arc<meshway_rules::RuleSet>>,
     rules: &'a [EgressRule],
 }
-fn expanded_match(matcher: &RouteMatch, config: &NetworkConfiguration) -> Option<RouteMatch> {
-    let mut result = matcher.clone();
+
+/// The loaded content a configuration's rules are judged against.
+#[derive(Clone, Copy)]
+struct Sets<'a> {
+    configuration: &'a NetworkConfiguration,
+    loaded: &'a BTreeMap<String, Arc<meshway_rules::RuleSet>>,
+}
+
+/// A matcher's destinations as validation compares them. Subdomain members
+/// (only names strictly below) are kept apart; keywords cannot be compared
+/// with suffix and CIDR grants.
+#[derive(Default)]
+struct Expanded {
+    ips: Vec<IpNet>,
+    suffixes: Vec<String>,
+    exact: Vec<String>,
+    subdomains: Vec<String>,
+    keywords: Vec<String>,
+}
+
+impl Expanded {
+    fn has_destinations(&self) -> bool {
+        !self.ips.is_empty()
+            || !self.suffixes.is_empty()
+            || !self.exact.is_empty()
+            || !self.subdomains.is_empty()
+            || !self.keywords.is_empty()
+    }
+    /// Every destination is inside what `domains`/`ranges` match. A subdomain
+    /// member is judged as its suffix (a stronger requirement); a keyword is
+    /// never covered.
+    fn covered_by(&self, ranges: &AddressSet, domains: &DomainSet) -> bool {
+        self.keywords.is_empty()
+            && self.ips.iter().all(|net| ranges.covers(net))
+            && domains.covers_all(&self.suffixes, &self.exact)
+            && self.subdomains.iter().all(|n| domains.covers_suffix(n))
+    }
+    fn extend(&mut self, other: Expanded) {
+        self.ips.extend(other.ips);
+        self.suffixes.extend(other.suffixes);
+        self.exact.extend(other.exact);
+        self.subdomains.extend(other.subdomains);
+        self.keywords.extend(other.keywords);
+    }
+}
+
+/// The matcher's own lists and every referenced set's members; `None` when a
+/// referenced set has no loaded content (or its own CIDRs are invalid).
+fn expanded_match(matcher: &RouteMatch, sets: Sets<'_>) -> Option<Expanded> {
+    let mut result = Expanded {
+        ips: matcher
+            .ip_cidr
+            .iter()
+            .map(|s| s.parse::<IpNet>().ok())
+            .collect::<Option<_>>()?,
+        suffixes: matcher.domain_suffix.clone(),
+        exact: matcher.domain.clone(),
+        ..Expanded::default()
+    };
     for key in &matcher.rule_sets {
-        let RuleSet::Inline {
+        if let Some(RuleSet::Inline {
             ip_cidr,
             domain_suffix,
             domain,
-        } = config.rule_sets.get(key)?
-        else {
-            return None;
-        };
-        result.ip_cidr.extend(ip_cidr.iter().cloned());
-        result.domain_suffix.extend(domain_suffix.iter().cloned());
-        result.domain.extend(domain.iter().cloned());
+            domain_subdomain,
+        }) = sets.configuration.rule_sets.get(key)
+        {
+            result.extend(Expanded {
+                ips: ip_cidr
+                    .iter()
+                    .map(|s| s.parse::<IpNet>().ok())
+                    .collect::<Option<_>>()?,
+                suffixes: domain_suffix.clone(),
+                exact: domain.clone(),
+                subdomains: domain_subdomain.clone(),
+                keywords: Vec::new(),
+            });
+            continue;
+        }
+        let set = sets.loaded.get(key)?;
+        let mut members = Expanded::default();
+        for entry in set.domains() {
+            match entry.kind {
+                meshway_rules::DomainKind::Exact => members.exact.push(entry.name),
+                meshway_rules::DomainKind::Suffix => members.suffixes.push(entry.name),
+                meshway_rules::DomainKind::Subdomain => members.subdomains.push(entry.name),
+            }
+        }
+        members.keywords = set.keywords().map(str::to_owned).collect();
+        for cidr in set
+            .ipv4_ranges()
+            .flat_map(meshway_rules::Cidr::cover_v4)
+            .chain(set.ipv6_ranges().flat_map(meshway_rules::Cidr::cover_v6))
+        {
+            members.ips.push(cidr.to_string().parse().ok()?);
+        }
+        result.extend(members);
     }
-    result.rule_sets.clear();
     Some(result)
 }
-fn retained_egress(
-    rule: &EgressRule,
-    config: &NetworkConfiguration,
-    previous: Option<PriorRules<'_>>,
-) -> bool {
+
+/// The identity of one referenced set's content: its inline definition or the
+/// digest of its loaded artifact.
+fn content_of(key: &str, sets: Sets<'_>) -> Option<Result<RuleSet, meshway_rules::Digest>> {
+    match sets.configuration.rule_sets.get(key) {
+        Some(inline @ RuleSet::Inline { .. }) => Some(Ok(inline.clone())),
+        _ => sets.loaded.get(key).map(|set| Err(set.digest())),
+    }
+}
+
+fn retained_egress(rule: &EgressRule, sets: Sets<'_>, previous: Option<PriorRules<'_>>) -> bool {
     let Some(previous) = previous else {
         return false;
+    };
+    let old_sets = Sets {
+        configuration: previous.configuration,
+        loaded: previous.rule_sets,
     };
     previous.rules.iter().any(|old| {
         if rule.action != old.action {
             return false;
         }
-        // Resolved rule sets are inline content here, so equal matchers with
-        // equal referenced content are the same grant without any expansion.
+        // Equal matchers over equal referenced content are the same grant
+        // without any expansion.
         if rule.matcher == old.matcher
-            && rule
-                .matcher
-                .rule_sets
-                .iter()
-                .all(|key| config.rule_sets.get(key) == previous.configuration.rule_sets.get(key))
+            && rule.matcher.rule_sets.iter().all(|key| {
+                content_of(key, sets).is_some()
+                    && content_of(key, sets) == content_of(key, old_sets)
+            })
         {
             return true;
         }
         match (
-            expanded_match(&rule.matcher, config),
-            expanded_match(&old.matcher, previous.configuration),
+            expanded_match(&rule.matcher, sets),
+            expanded_match(&old.matcher, old_sets),
         ) {
             (Some(current), Some(old)) => {
-                let Ok(grants) = old
-                    .ip_cidr
-                    .iter()
-                    .map(|s| s.parse::<IpNet>())
-                    .collect::<Result<Vec<_>, _>>()
-                else {
-                    return false;
-                };
-                let grants = AddressSet::new(grants);
+                let grants = AddressSet::new(old.ips.iter().copied());
                 let domains = DomainSet::new(
-                    old.domain_suffix.iter().map(String::as_str),
-                    old.domain.iter().map(String::as_str),
+                    old.suffixes.iter().map(String::as_str),
+                    old.exact.iter().map(String::as_str),
                 );
-                current
-                    .ip_cidr
-                    .iter()
-                    .all(|s| s.parse::<IpNet>().is_ok_and(|net| grants.covers(&net)))
-                    && domains.covers_all(&current.domain_suffix, &current.domain)
+                current.covered_by(&grants, &domains)
             }
             _ => false,
         }
@@ -157,11 +238,13 @@ fn action(
         }
     }
 }
-/// `path` is the object holding `ipCIDR`, `domainSuffix` and `domain`.
+/// `path` is the object holding `ipCIDR`, `domainSuffix`, `domain` and
+/// (inline sets) `domainSubdomain`.
 fn destinations(
     cidr: &mut [String],
     suffixes: &mut [String],
     exact: &mut [String],
+    subdomains: &mut [String],
     path: &str,
     check: &mut Check,
 ) {
@@ -180,6 +263,7 @@ fn destinations(
     for (field, code, names) in [
         ("domainSuffix", IssueCode::InvalidDomainSuffix, suffixes),
         ("domain", IssueCode::InvalidDomain, exact),
+        ("domainSubdomain", IssueCode::InvalidDomain, subdomains),
     ] {
         for (index, text) in names.iter_mut().enumerate() {
             match domain_name(text) {
@@ -203,17 +287,21 @@ fn profile_exists(value: &str, config: &NetworkConfiguration, allow_auto: bool) 
 }
 fn rules(
     rules: &mut [EgressRule],
-    config: &NetworkConfiguration,
+    sets: Sets<'_>,
     path: &str,
     check: &mut Check,
     previous: Option<PriorRules<'_>>,
 ) {
+    let config = sets.configuration;
+    let providers =
+        meshway_configuration::providers::effective_rule_set_providers(&config.rule_set_providers);
     for (i, rule) in rules.iter_mut().enumerate() {
         let path = format!("{path}/{i}");
         destinations(
             &mut rule.matcher.ip_cidr,
             &mut rule.matcher.domain_suffix,
             &mut rule.matcher.domain,
+            &mut [],
             &format!("{path}/match"),
             check,
         );
@@ -228,19 +316,53 @@ fn rules(
             ));
         }
         for (index, key) in rule.matcher.rule_sets.iter().enumerate() {
-            if !config.rule_sets.contains_key(key) {
-                check.issue(
-                    ConfigurationIssue::new(
-                        format!("{path}/match/ruleSets/{index}"),
-                        IssueCode::UnknownRuleSet,
+            let at = format!("{path}/match/ruleSets/{index}");
+            match meshway_configuration::providers::rule_set_reference(key) {
+                Some((provider, name)) => {
+                    if !providers.contains_key(provider) {
+                        check.issue(
+                            ConfigurationIssue::new(&at, IssueCode::UnknownRuleSetProvider)
+                                .with("provider", provider),
+                        );
+                    } else if !meshway_configuration::providers::valid_set_name(name) {
+                        check.issue(
+                            ConfigurationIssue::new(&at, IssueCode::UnknownRuleSet)
+                                .with("key", key),
+                        );
+                    } else if !sets.loaded.contains_key(key) {
+                        check.require(at.clone(), PreparationKind::RuleSetContent);
+                    }
+                }
+                None => match config.rule_sets.get(key) {
+                    None => check.issue(
+                        ConfigurationIssue::new(&at, IssueCode::UnknownRuleSet).with("key", key),
+                    ),
+                    Some(RuleSet::Remote { .. }) if !sets.loaded.contains_key(key) => {
+                        check.require(
+                            format!("/ruleSets/{}", pointer(key)),
+                            PreparationKind::RuleSetContent,
+                        );
+                    }
+                    Some(_) => {}
+                },
+            }
+            if let Some(set) = sets.loaded.get(key) {
+                let prefixes: usize = set
+                    .ipv4_ranges()
+                    .map(|r| meshway_rules::Cidr::cover_v4(r).len())
+                    .chain(
+                        set.ipv6_ranges()
+                            .map(|r| meshway_rules::Cidr::cover_v6(r).len()),
                     )
-                    .with("key", key),
-                );
-            } else if matches!(config.rule_sets.get(key), Some(RuleSet::Remote { .. })) {
-                check.require(
-                    format!("/ruleSets/{}", pointer(key)),
-                    PreparationKind::RuleSetContent,
-                );
+                    .sum();
+                if prefixes > crate::compile::MAX_CAPTURE_PREFIXES {
+                    check.warn(
+                        ConfigurationIssue::new(&at, IssueCode::RuleSetPartitionLimit)
+                            .with("key", key)
+                            .with("prefixes", prefixes)
+                            .with("maxPrefixes", crate::compile::MAX_CAPTURE_PREFIXES),
+                    );
+                }
             }
         }
         action(
@@ -248,48 +370,36 @@ fn rules(
             config,
             &format!("{path}/action"),
             check,
-            retained_egress(rule, config, previous),
+            retained_egress(rule, sets, previous),
         );
     }
-    shadowed(rules, config, path, check);
+    shadowed(rules, sets, path, check);
 }
 
 /// A rule whose every destination earlier rules already match never fires.
-/// Rules with unresolved remote content are not judged either way.
-fn shadowed(rules: &[EgressRule], config: &NetworkConfiguration, path: &str, check: &mut Check) {
+/// Rules with unresolved content are not judged either way; earlier subdomain
+/// and keyword members never count as cover.
+fn shadowed(rules: &[EgressRule], sets: Sets<'_>, path: &str, check: &mut Check) {
     let mut ranges = Vec::new();
     let mut suffixes = Vec::new();
     let mut exact = Vec::new();
     let mut complete = true;
-    let covered = |ranges: &[IpNet], suffixes: &[String], exact: &[String], m: &RouteMatch| {
+    let covered = |ranges: &[IpNet], suffixes: &[String], exact: &[String], m: &Expanded| {
         let r = AddressSet::new(ranges.iter().copied());
         let d = DomainSet::new(
             suffixes.iter().map(String::as_str),
             exact.iter().map(String::as_str),
         );
-        m.ip_cidr
-            .iter()
-            .all(|s| s.parse::<IpNet>().is_ok_and(|net| r.covers(&net)))
-            && d.covers_all(&m.domain_suffix, &m.domain)
+        m.covered_by(&r, &d)
     };
     for (index, rule) in rules.iter().enumerate() {
-        let Some(matcher) = expanded_match(&rule.matcher, config) else {
+        let Some(matcher) = expanded_match(&rule.matcher, sets) else {
             complete = false;
             continue;
         };
-        let Ok(nets) = matcher
-            .ip_cidr
-            .iter()
-            .map(|s| s.parse::<IpNet>())
-            .collect::<Result<Vec<_>, _>>()
-        else {
-            continue;
-        };
-        let has_destinations =
-            !nets.is_empty() || !matcher.domain_suffix.is_empty() || !matcher.domain.is_empty();
         if complete
             && index > 0
-            && has_destinations
+            && matcher.has_destinations()
             && covered(&ranges, &suffixes, &exact, &matcher)
         {
             // The earlier rule after which the cover became complete.
@@ -298,11 +408,10 @@ fn shadowed(rules: &[EgressRule], config: &NetworkConfiguration, path: &str, che
             let mut partial_exact = Vec::new();
             let by = (0..index)
                 .find(|i| {
-                    if let Some(m) = expanded_match(&rules[*i].matcher, config) {
-                        partial_ranges
-                            .extend(m.ip_cidr.iter().filter_map(|s| s.parse::<IpNet>().ok()));
-                        partial_suffixes.extend(m.domain_suffix);
-                        partial_exact.extend(m.domain);
+                    if let Some(m) = expanded_match(&rules[*i].matcher, sets) {
+                        partial_ranges.extend(m.ips);
+                        partial_suffixes.extend(m.suffixes);
+                        partial_exact.extend(m.exact);
                     }
                     covered(&partial_ranges, &partial_suffixes, &partial_exact, &matcher)
                 })
@@ -312,9 +421,9 @@ fn shadowed(rules: &[EgressRule], config: &NetworkConfiguration, path: &str, che
                     .with("by", by),
             );
         }
-        ranges.extend(nets);
-        suffixes.extend(matcher.domain_suffix);
-        exact.extend(matcher.domain);
+        ranges.extend(matcher.ips);
+        suffixes.extend(matcher.suffixes);
+        exact.extend(matcher.exact);
     }
 }
 
@@ -385,60 +494,60 @@ pub(super) fn validate(
     context: &ValidationContext<'_>,
     check: &mut Check,
 ) {
-    // Validate declared sources separately; trusted content must not hide an
-    // invalid URL. Resolved copies make retained-rule coverage compare content,
-    // rather than treating an unchanged reference as unchanged authorization.
-    let remote: BTreeMap<_, _> = config
-        .rule_sets
-        .iter()
-        .filter(|(_, value)| matches!(value, RuleSet::Remote { .. }))
-        .map(|(key, value)| (key.clone(), value.clone()))
-        .collect();
-    for (key, set) in &remote {
-        if let RuleSet::Remote { url, .. } = set {
-            let authority = url
-                .strip_prefix("https://")
-                .and_then(|s| s.split(['/', '?', '#']).next());
-            if authority.is_none_or(|a| !https_authority(a))
-                || url.len() > 2048
-                || url.chars().any(|c| c.is_control() || c.is_whitespace())
-                || url.contains('#')
-            {
-                check.issue(ConfigurationIssue::new(
-                    format!("/ruleSets/{}/url", pointer(key)),
-                    IssueCode::InvalidRuleSource,
-                ));
-            }
+    for (key, set) in &config.rule_sets {
+        if let RuleSet::Remote { url, .. } = set
+            && !https_source(url)
+        {
+            check.issue(ConfigurationIssue::new(
+                format!("/ruleSets/{}/url", pointer(key)),
+                IssueCode::InvalidRuleSource,
+            ));
         }
     }
-    fn resolve(
-        config: &mut NetworkConfiguration,
-        contents: &BTreeMap<String, meshway_model::resources::RuleSetData>,
-    ) {
-        for (key, data) in contents {
-            if matches!(config.rule_sets.get(key), Some(RuleSet::Remote { .. })) {
-                config.rule_sets.insert(
-                    key.clone(),
-                    RuleSet::Inline {
-                        ip_cidr: data.ip_cidr.clone(),
-                        domain_suffix: data.domain_suffix.clone(),
-                        domain: data.domain.clone(),
-                    },
-                );
-            }
+    for (name, provider) in &config.rule_set_providers {
+        let path = format!("/ruleSetProviders/{}", pointer(name));
+        let invalid = |field: &str| {
+            ConfigurationIssue::new(&path, IssueCode::InvalidRuleSetProvider).with("field", field)
+        };
+        if !meshway_configuration::providers::valid_provider_name(name) {
+            check.issue(invalid("name"));
+        }
+        let Some(provider) = provider else {
+            continue;
+        };
+        // Signature and artifacts are named beside the catalog document.
+        if !https_source(&provider.catalog) || provider.catalog.contains('?') {
+            check.issue(invalid("catalog"));
+        }
+        if !meshway_configuration::providers::valid_collection(&provider.collection) {
+            check.issue(invalid("collection"));
+        }
+        let keys = &provider.public_keys;
+        if keys.is_empty()
+            || keys.len() > 4
+            || keys
+                .iter()
+                .any(|key| !meshway_configuration::providers::valid_public_key(key))
+            || keys
+                .iter()
+                .enumerate()
+                .any(|(i, key)| keys[..i].contains(key))
+        {
+            check.issue(invalid("publicKeys"));
         }
     }
-    resolve(config, &context.rule_sets);
-    let mut previous = context.previous.cloned();
-    if let Some(previous) = &mut previous {
-        resolve(previous, &context.previous_rule_sets);
-    }
-    let context = ValidationContext {
-        previous: previous.as_ref(),
-        ..context.clone()
-    };
-    validate_resolved(config, &context, check);
-    config.rule_sets.extend(remote);
+    validate_resolved(config, context, check);
+}
+
+/// HTTPS without credentials or fragment, as a download source.
+fn https_source(url: &str) -> bool {
+    let authority = url
+        .strip_prefix("https://")
+        .and_then(|s| s.split(['/', '?', '#']).next());
+    authority.is_some_and(https_authority)
+        && url.len() <= 2048
+        && !url.chars().any(|c| c.is_control() || c.is_whitespace())
+        && !url.contains('#')
 }
 
 fn validate_resolved(
@@ -450,22 +559,38 @@ fn validate_resolved(
         let path = format!("/ruleSets/{}", pointer(key));
         if key.is_empty() {
             check.issue(ConfigurationIssue::new(&path, IssueCode::EmptyRuleSetKey));
+        } else if key.contains(':') {
+            check.issue(
+                ConfigurationIssue::new(&path, IssueCode::InvalidRuleSetKey).with("key", key),
+            );
         }
         match set {
             RuleSet::Inline {
                 ip_cidr,
                 domain_suffix,
                 domain,
+                domain_subdomain,
             } => {
-                if ip_cidr.is_empty() && domain_suffix.is_empty() && domain.is_empty() {
+                if ip_cidr.is_empty()
+                    && domain_suffix.is_empty()
+                    && domain.is_empty()
+                    && domain_subdomain.is_empty()
+                {
                     check.issue(ConfigurationIssue::new(
                         &path,
                         IssueCode::EmptyInlineRuleSet,
                     ));
                 }
-                destinations(ip_cidr, domain_suffix, domain, &path, check);
+                destinations(
+                    ip_cidr,
+                    domain_suffix,
+                    domain,
+                    domain_subdomain,
+                    &path,
+                    check,
+                );
             }
-            // Sources were checked before resolving immutable contents.
+            // Sources were checked before the routing rules.
             RuleSet::Remote { .. } => {}
         }
     }
@@ -497,11 +622,15 @@ fn validate_resolved(
     let mut public = std::mem::take(&mut config.routing.egress.rules);
     rules(
         &mut public,
-        config,
+        Sets {
+            configuration: config,
+            loaded: &context.rule_sets,
+        },
         "/routing/egress/rules",
         check,
         context.previous.map(|old| PriorRules {
             configuration: old,
+            rule_sets: &context.previous_rule_sets,
             rules: &old.routing.egress.rules,
         }),
     );
@@ -519,12 +648,16 @@ fn validate_resolved(
             .and_then(|old| old.routing.egress.profiles.get(key));
         rules(
             &mut profile.rules,
-            config,
+            Sets {
+                configuration: config,
+                loaded: &context.rule_sets,
+            },
             &format!("{path}/rules"),
             check,
             context.previous.and_then(|old| {
                 previous.map(|p| PriorRules {
                     configuration: old,
+                    rule_sets: &context.previous_rule_sets,
                     rules: &p.rules,
                 })
             }),
@@ -763,7 +896,7 @@ impl Permits {
 /// Exit rules of one Node must only send destinations its access grants
 /// cover. Reported at the rule, with the Node as a parameter.
 fn verify_rules(
-    config: &NetworkConfiguration,
+    sets: Sets<'_>,
     permits: &Permits,
     node: NodeId,
     rules: &[EgressRule],
@@ -775,35 +908,31 @@ fn verify_rules(
         if !matches!(rule.action, RuleAction::Exit { .. }) {
             continue;
         }
-        // An exact name needs the same coverage as the suffix equal to it.
-        let mut destinations: Vec<_> = rule.matcher.ip_cidr.clone();
+        // A rule without loaded content already requires its preparation.
+        let Some(expanded) = expanded_match(&rule.matcher, sets) else {
+            continue;
+        };
+        // An exact name or a subdomain member needs the same coverage as the
+        // suffix equal to it; a keyword only an Internet grant covers.
+        let mut destinations: Vec<String> = expanded.ips.iter().map(ToString::to_string).collect();
         destinations.extend(
-            rule.matcher
-                .domain_suffix
+            expanded
+                .suffixes
                 .iter()
-                .chain(&rule.matcher.domain)
+                .chain(&expanded.exact)
+                .chain(&expanded.subdomains)
                 .map(|s| format!("domain:{s}")),
         );
-        for key in &rule.matcher.rule_sets {
-            match config.rule_sets.get(key) {
-                Some(RuleSet::Inline {
-                    ip_cidr,
-                    domain_suffix,
-                    domain,
-                }) => {
-                    destinations.extend(ip_cidr.clone());
-                    destinations.extend(
-                        domain_suffix
-                            .iter()
-                            .chain(domain)
-                            .map(|s| format!("domain:{s}")),
-                    );
-                }
-                // Every rule reference already requires unresolved content.
-                Some(RuleSet::Remote { .. }) | None => {}
-            }
-        }
-        if let Some(outside) = destinations.iter().find(|d| !permits.covers(d)) {
+        let outside = destinations
+            .iter()
+            .find(|d| !permits.covers(d))
+            .cloned()
+            .or_else(|| {
+                (!permits.internet)
+                    .then(|| expanded.keywords.first().map(|k| format!("keyword:{k}")))
+                    .flatten()
+            });
+        if let Some(outside) = outside {
             check.dependency(
                 ConfigurationIssue::new(
                     format!("{rules_path}/{index}"),
@@ -811,7 +940,7 @@ fn verify_rules(
                 )
                 .with("node", node)
                 .with("destination", outside),
-                retained_egress(rule, config, previous),
+                retained_egress(rule, sets, previous),
             );
         }
     }
@@ -850,8 +979,12 @@ fn validate_assignments_access(
             .collect();
         let previous = context.previous.filter(|old| old.nodes.contains_key(id));
         let permits = Permits::for_node(config, *id, &subjects);
+        let sets = Sets {
+            configuration: config,
+            loaded: &context.rule_sets,
+        };
         verify_rules(
-            config,
+            sets,
             &permits,
             *id,
             &config.routing.egress.rules,
@@ -859,6 +992,7 @@ fn validate_assignments_access(
             check,
             previous.map(|old| PriorRules {
                 configuration: old,
+                rule_sets: &context.previous_rule_sets,
                 rules: &old.routing.egress.rules,
             }),
         );
@@ -912,7 +1046,7 @@ fn validate_assignments_access(
                     .filter(|_| retained)
                     .and_then(|old| old.routing.egress.profiles.get(name));
                 verify_rules(
-                    config,
+                    sets,
                     &permits,
                     *id,
                     &profile.rules,
@@ -921,6 +1055,7 @@ fn validate_assignments_access(
                     previous.and_then(|old| {
                         old_profile.map(|p| PriorRules {
                             configuration: old,
+                            rule_sets: &context.previous_rule_sets,
                             rules: &p.rules,
                         })
                     }),

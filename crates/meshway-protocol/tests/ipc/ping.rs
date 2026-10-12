@@ -13,7 +13,7 @@ fn target() -> Value {
 
 #[test]
 fn ping_command_has_a_bounded_count_and_no_budget_override() {
-    assert_eq!(VERSION, 7);
+    assert_eq!(VERSION, 8);
     for count in [1, 10, 1000] {
         let value = json!({"version":VERSION,"requestId":ID,"command":{"type":"ping","target":{"type":"name","name":"node.mesh"},"count":count}});
         let request: Request = serde_json::from_value(value.clone()).unwrap();

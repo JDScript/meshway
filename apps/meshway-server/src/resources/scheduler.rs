@@ -8,7 +8,6 @@ use super::{
 use crate::error::Error;
 use crate::store::{self, Handle};
 use chrono::Utc;
-use meshway_configuration::RuleSet;
 use meshway_model::NetworkId;
 use rusqlite::Transaction;
 use std::{sync::Arc, time::Duration};
@@ -91,12 +90,7 @@ fn scan_network(
         .definitions
         .iter()
         .filter_map(|(key, definition)| {
-            let RuleSet::Remote {
-                update_interval, ..
-            } = definition
-            else {
-                return None;
-            };
+            let interval = definition.interval_ms()?;
             let view = scope.views.get(key)?;
             // A historical restore may have a valid artifact but no check record
             // for the new version. Schedule its first interval from the source
@@ -108,7 +102,7 @@ fn scan_network(
             due(
                 now.timestamp_millis().max(0) as u64,
                 checked,
-                update_interval.as_millis(),
+                interval,
                 *failures.get(key).unwrap_or(&0),
             )
             .then(|| SystemTask {
@@ -116,7 +110,7 @@ fn scan_network(
                 revision: scope.revision,
                 key: key.clone(),
                 definition: definition.clone(),
-                artifact: view.artifact.as_ref().map(|a| a.id),
+                artifact: view.artifact.as_ref().and_then(|a| a.digest.parse().ok()),
                 checked_at: view.checked_at,
                 check_version: *scope.check_versions.get(key).unwrap_or(&0),
             })

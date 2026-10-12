@@ -61,27 +61,67 @@ async fn exact_names_in_remote_lists_bind_under_an_internet_grant() {
             }),
     )
     .await;
-    assert_eq!(preview.prepared_rule_sets["remote"].entries, 4);
+    // `t.me` exact is covered by `+.t.me`: three canonical members.
+    assert_eq!(preview.prepared_rule_sets["remote"].entries, 3);
     s.apply(token, network, current.revision, &input).await;
     let view = s.view(token, network).await;
     assert_eq!(view.problem, None);
+    assert!(!view.implicit);
+    let conversion = view.conversion.clone().unwrap();
+    assert_eq!(
+        (
+            conversion.converted.exact,
+            conversion.converted.suffix,
+            conversion.redundant
+        ),
+        (2, 2, 1)
+    );
+    assert_eq!(view.source.as_ref().unwrap().format, "mihomo-domain");
     let artifact = view.artifact.unwrap();
-    assert_eq!(artifact.entries, 4);
-    let data = s
+    assert_eq!(artifact.entries, 3);
+    let digest: meshway_rules::Digest = artifact.digest.parse().unwrap();
+    let set = s
         .app
         .executor
         .handle()
-        .read(move |tx| crate::resources::load_artifact(tx, network, artifact.id))
+        .read(move |tx| crate::resources::artifacts::load(tx, &digest))
         .await
         .unwrap();
-    assert_eq!(data.domain_suffix, vec!["t.me", "telegram.org"]);
-    assert_eq!(data.domain, vec!["t.me", "telegram.me"]);
-    assert!(data.ip_cidr.is_empty());
-    // The one mihomo form without an equivalent still fails the whole list.
+    assert_eq!(
+        set.match_domain("a.telegram.org"),
+        Some(meshway_rules::DomainHit::Suffix { len: 12 })
+    );
+    assert_eq!(
+        set.match_domain("telegram.me"),
+        Some(meshway_rules::DomainHit::Exact)
+    );
+    assert_eq!(set.match_domain("a.telegram.me"), None);
+    assert_eq!(
+        set.match_domain("t.me"),
+        Some(meshway_rules::DomainHit::Suffix { len: 4 })
+    );
+    // A list whose every entry has no equivalent converts nothing; the bound
+    // content stays.
     remote.set(200, "payload:\n - '*.telegram.org'\n");
     let failed = s.refresh(token, network).await;
     assert_eq!(failed.problem, Some(ResourceProblem::ConversionFailed));
-    assert_eq!(failed.artifact.unwrap().id, artifact.id);
+    assert_eq!(failed.artifact.unwrap().digest, artifact.digest);
+    // One unsupported entry among others is skipped and reported.
+    remote.set(200, "payload:\n - '*.telegram.org'\n - '+.telegram.org'\n");
+    let partial = s.refresh(token, network).await;
+    assert_eq!(partial.problem, None);
+    assert_eq!(partial.conversion.unwrap().unconverted["wildcard"], 1);
+    let report: RuleSetReport = json(
+        s.client
+            .get(s.network(network, "rule-sets/remote/report"))
+            .bearer_auth(token),
+    )
+    .await;
+    assert_eq!(report.items.len(), 1);
+    assert_eq!(
+        (report.items[0].at.as_str(), report.items[0].reason.as_str()),
+        ("/payload/0", "wildcard")
+    );
     // A refresh is idempotent per request ID: the retry neither downloads
     // nor records a new check; the same ID for another key is a conflict.
     let replay = rid();

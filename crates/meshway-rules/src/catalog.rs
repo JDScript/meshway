@@ -223,6 +223,18 @@ impl ConversionRecord {
 pub struct SetRecord {
     pub upstream: Location,
     pub conversion: ConversionRecord,
+    /// The pipeline kept the previous artifact because this set's latest
+    /// conversion failed or looked suspicious; absent for a current set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub held: Option<Held>,
+}
+
+/// Why a catalog still publishes an older artifact for one set.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Held {
+    pub since: DateTime<Utc>,
+    pub reason: String,
 }
 
 /// One `index.json` set; the report is the summary (items stay in the record).
@@ -237,6 +249,8 @@ pub struct CatalogSet {
     pub upstream: Location,
     pub source: SourceFacts,
     pub report: Summary,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub held: Option<Held>,
 }
 
 impl CatalogSet {
@@ -337,6 +351,7 @@ impl Catalog {
             let SetRecord {
                 upstream,
                 conversion: c,
+                held,
             } = record;
             let entry = CatalogSet {
                 digest: c.digest,
@@ -347,6 +362,7 @@ impl Catalog {
                 upstream,
                 source: c.source,
                 report: c.report.summary,
+                held,
             };
             let problem = |problem: String| CatalogError::Set {
                 name: name.clone(),
@@ -406,6 +422,7 @@ mod tests {
                     path: "geo/geosite/openai.list".into(),
                 },
                 conversion: ConversionRecord::new(source, Format::MihomoDomainText, &conversion),
+                held: None,
             },
             bytes,
         )

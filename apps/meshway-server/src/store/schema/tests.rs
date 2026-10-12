@@ -92,10 +92,17 @@ fn challenge_clock_is_persistent_monotonic_singleton_and_never_repaired() {
 #[test]
 fn ip_dataset_heads_enforce_kind_and_scope_and_missing_heads_fail_integrity() {
     let mut db = database();
+    // Rule-set artifacts are not datasets; the kind is refused.
+    assert!(
+        db.execute(
+            "INSERT INTO dataset_artifacts VALUES('rules',NULL,'ruleSet','test','x',x'01',?1,1000)",
+            ["0".repeat(64)],
+        )
+        .is_err()
+    );
     for (id, kind, format) in [
         ("city", "geoip", "mmdb"),
         ("asn", "asn", "mmdb"),
-        ("rules", "ruleSet", "meshway-rules-v1"),
         ("wrong-format", "geoip", "unknown"),
     ] {
         db.execute(
@@ -106,10 +113,9 @@ fn ip_dataset_heads_enforce_kind_and_scope_and_missing_heads_fail_integrity() {
     }
     for (kind, artifact) in [
         ("geoip", "asn"),
-        ("geoip", "rules"),
         ("geoip", "wrong-format"),
         ("geoip", "missing"),
-        ("ruleSet", "rules"),
+        ("ruleSet", "city"),
     ] {
         assert!(
             db.execute(

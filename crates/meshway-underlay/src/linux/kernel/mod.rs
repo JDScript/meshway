@@ -323,7 +323,7 @@ impl Kernel {
             && self
                 .shared
                 .installed()?
-                .is_some_and(|installed| installed.reference() == desired.reference())
+                .is_some_and(|installed| installed.same(&desired))
         {
             return Ok(());
         }
@@ -459,7 +459,7 @@ impl Kernel {
         let Some(installed) = active.as_mut() else {
             return Err(Error::Expired);
         };
-        if installed.desired.reference() != previous.reference() {
+        if !installed.desired.same(&previous) {
             return Err(Error::Expired);
         }
         self.shared.resources.apply(&previous, desired)?;
@@ -959,7 +959,7 @@ fn verify_rules(journal: &Journal, rules: &[RuleMessage]) -> Result<()> {
 /// The installed `previous` content as a view, when `next` is new content
 /// for the same Node of the same network. Comparison data only.
 fn continuation<'a>(next: &Desired, previous: &'a Desired) -> Option<View<'a>> {
-    (next.reference() != previous.reference()
+    (!next.same(previous)
         && next.netmap().network_id == previous.netmap().network_id
         && next.netmap().node_id == previous.netmap().node_id
         && next.local().self_keys == previous.local().self_keys)

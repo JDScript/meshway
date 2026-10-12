@@ -2,11 +2,25 @@
 //! compiler for every pair it terminates or relays.
 use crate::{
     ConfigurationView, SubjectContext,
-    execution::{RuleSetContent, TrustedNode},
+    execution::TrustedNode,
     object::{object, unique_map},
 };
 use meshway_model::NodeId;
 use std::collections::BTreeMap;
+
+object! {
+/// One rule-set artifact a netmap depends on. Nodes fetch the bytes from
+/// `GET /agent-api/v1/artifacts/{digest}` and check length and digest.
+pub struct RuleSetRef {
+    /// `sha256:` and the lowercase hex SHA-256 of the complete artifact.
+    pub digest: meshway_rules::Digest [value_type = String, pattern = "^sha256:[0-9a-f]{64}$"],
+    /// `MWRS` major format version of the artifact.
+    pub format: u16,
+    /// Artifact length in bytes.
+    pub bytes: u32,
+    /// Canonical members: names, keywords and merged address ranges.
+    pub entries: u32,
+} }
 
 object! {
 /// A monotone subset of the full configuration: every rule is an unchanged
@@ -20,9 +34,10 @@ pub struct ProjectedConfiguration {
     /// Trusted keys and authenticated capabilities of visible registered Nodes.
     #[serde(deserialize_with = "unique_map")]
     pub inventory: BTreeMap<NodeId, TrustedNode>,
-    /// Resolved remote rule-set contents referenced by egress rules.
+    /// Content references of the rule sets retained egress rules name, keyed
+    /// as in `match.ruleSets`; the content is fetched by digest.
     #[serde(deserialize_with = "unique_map")]
-    pub rule_sets: BTreeMap<String, RuleSetContent>,
+    pub rule_sets: BTreeMap<String, RuleSetRef>,
     /// Persisted profile selections of visible Nodes.
     #[serde(deserialize_with = "unique_map")]
     pub selected_profiles: BTreeMap<NodeId, String>,

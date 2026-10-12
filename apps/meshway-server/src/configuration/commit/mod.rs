@@ -19,9 +19,7 @@ use crate::{
     store::{self, authorization::current_session},
 };
 use meshway_configuration::{NetworkConfigurationInput, NodeIdentity, UserBinding, canonical_json};
-use meshway_model::{
-    ArtifactId, MembershipId, NetworkId, NodeId, RequestId, Revision, UserId, Version,
-};
+use meshway_model::{MembershipId, NetworkId, NodeId, RequestId, Revision, UserId, Version};
 use meshway_protocol::configuration::{ConfigurationPreviewResponse, ConfigurationRequest};
 use rusqlite::Transaction;
 use std::collections::{BTreeMap, BTreeSet};
@@ -72,8 +70,8 @@ pub(crate) struct Draft {
     pub(crate) expected_node_user_bindings: BTreeMap<NodeId, UserBinding>,
     pub(crate) approved_identities: BTreeMap<NodeId, NodeIdentity>,
     pub(crate) recreated_listeners: BTreeSet<(NodeId, String)>,
-    pub(crate) rule_sets: BTreeMap<String, ArtifactId>,
-    pub(crate) rule_set_contents: BTreeMap<String, meshway_model::resources::RuleSetData>,
+    pub(crate) rule_sets: crate::resources::bindings::Bindings,
+    pub(crate) rule_set_contents: crate::resources::bindings::Contents,
     /// A preview found downloaded content that is not stored yet.
     pub(crate) new_content: bool,
     pub(crate) rollback_from: Option<Revision>,
@@ -107,7 +105,7 @@ impl Draft {
 
 pub(crate) struct EvaluationDraft {
     pub(crate) prepared: PreparedConfiguration,
-    pub(crate) rule_set_contents: BTreeMap<String, meshway_model::resources::RuleSetData>,
+    pub(crate) rule_set_contents: crate::resources::bindings::Contents,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

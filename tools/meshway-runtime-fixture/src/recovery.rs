@@ -339,6 +339,8 @@ mod tests {
             },
             issued_at: "1970-01-01T00:00:01Z".parse().unwrap(),
             expires_at: "1970-01-01T00:05:01Z".parse().unwrap(),
+            missing_artifacts: Vec::new(),
+            artifact_problem: None,
         };
         assert_eq!(
             outage_deadlines(&before, Some(&latest), &netmap).unwrap(),

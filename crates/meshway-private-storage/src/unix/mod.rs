@@ -220,6 +220,84 @@ pub(super) fn replace(directory: &File, final_name: &str, bytes: &[u8]) -> Resul
     result
 }
 
+pub(super) fn publish_read_only(
+    directory: &File,
+    final_name: &str,
+    bytes: &[u8],
+) -> Result<(), Error> {
+    let mut nonce = [0u8; 16];
+    getrandom::fill(&mut nonce).map_err(|_| Error::Io)?;
+    let staging = format!("{}{:032x}", super::STAGING, u128::from_be_bytes(nonce));
+    let mut file = File::from(
+        openat(
+            directory,
+            staging.as_str(),
+            FILE_FLAGS | OFlags::CREATE | OFlags::EXCL,
+            Mode::from_raw_mode(0o600),
+        )
+        .map_err(io_error)?,
+    );
+    let result = (|| {
+        check(&file, false)?;
+        file.write_all(bytes).map_err(|_| Error::Io)?;
+        rustix::fs::fchmod(&file, Mode::from_raw_mode(0o400)).map_err(io_error)?;
+        file.sync_all().map_err(|_| Error::Io)?;
+        rustix::fs::renameat(directory, staging.as_str(), directory, final_name)
+            .map_err(io_error)?;
+        directory.sync_all().map_err(|_| Error::Io)
+    })();
+    if result.is_err() {
+        let _ = rustix::fs::unlinkat(directory, staging.as_str(), rustix::fs::AtFlags::empty());
+    }
+    result
+}
+
+pub(super) fn read_only_file(directory: &File, name: &str) -> Result<Option<File>, Error> {
+    let flags = OFlags::RDONLY
+        .union(OFlags::NOFOLLOW)
+        .union(OFlags::CLOEXEC)
+        .union(OFlags::NONBLOCK);
+    let file = match openat(directory, name, flags, Mode::empty()) {
+        Ok(fd) => File::from(fd),
+        Err(Errno::NOENT) => return Ok(None),
+        Err(error) => return Err(io_error(error)),
+    };
+    let metadata = file.metadata().map_err(|_| Error::Io)?;
+    if !metadata.is_file()
+        || metadata.uid() != rustix::process::geteuid().as_raw()
+        || metadata.mode() & 0o7777 != 0o400
+        || metadata.nlink() != 1
+    {
+        return Err(Error::UnsafeStorage);
+    }
+    Ok(Some(file))
+}
+
+pub(super) fn unlink(directory: &File, name: &str) -> Result<(), Error> {
+    rustix::fs::unlinkat(directory, name, rustix::fs::AtFlags::empty()).map_err(io_error)?;
+    directory.sync_all().map_err(|_| Error::Io)
+}
+
+pub(super) fn names(directory: &File) -> Result<Vec<String>, Error> {
+    let mut names = Vec::new();
+    let mut entries = rustix::fs::Dir::read_from(directory).map_err(io_error)?;
+    while let Some(entry) = entries.read() {
+        let entry = entry.map_err(io_error)?;
+        let Ok(name) = entry.file_name().to_str() else {
+            continue;
+        };
+        if matches!(name, "." | "..") {
+            continue;
+        }
+        names.push(name.to_owned());
+        if names.len() > 4096 {
+            return Err(Error::Io);
+        }
+    }
+    names.sort();
+    Ok(names)
+}
+
 fn check(file: &File, directory: bool) -> Result<(), Error> {
     let metadata = file.metadata().map_err(|_| Error::Io)?;
     check_metadata(&metadata, directory)?;

@@ -79,8 +79,7 @@ pub(super) fn author(
                 snapshot.bindings.rule_sets.clone()
             }
         };
-        draft.rule_set_contents =
-            crate::resources::bindings::contents(tx, current.network_id, &bindings)?;
+        draft.rule_set_contents = crate::resources::bindings::contents(tx, &bindings)?;
         draft.rule_sets = bindings;
     } else {
         draft.retain_rule_sets(tx, current)?;

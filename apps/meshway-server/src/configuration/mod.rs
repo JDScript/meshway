@@ -18,7 +18,7 @@ use meshway_configuration::{
     ConfigurationChange, ConfigurationDocument, NetworkConfigurationInput, UserBinding,
     ValidationContext, configuration_changes,
 };
-use meshway_model::{ArtifactId, NetworkId, NodeId, Revision};
+use meshway_model::{NetworkId, NodeId, Revision};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -32,7 +32,7 @@ pub(crate) struct ConfigurationBindings {
     /// Resolution of each User Node's editable Config.identity.
     pub(crate) node_users: BTreeMap<NodeId, UserBinding>,
     pub(crate) listeners: BTreeMap<NodeId, BTreeMap<String, Revision>>,
-    pub(crate) rule_sets: BTreeMap<String, ArtifactId>,
+    pub(crate) rule_sets: BTreeMap<String, meshway_rules::Digest>,
 }
 
 pub(crate) struct PreparedConfiguration {
@@ -95,7 +95,7 @@ pub(crate) fn prepare(
     source: String,
     current: &Snapshot,
     context: &ValidationContext<'_>,
-    rule_sets: BTreeMap<String, ArtifactId>,
+    rule_sets: BTreeMap<String, meshway_rules::Digest>,
 ) -> Result<PreparedConfiguration, Error> {
     if context.previous != Some(&current.document.configuration) {
         return Err(Error::DependencyUnavailable);

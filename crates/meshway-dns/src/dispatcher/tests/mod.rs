@@ -98,7 +98,9 @@ async fn real_dispatcher_system_failover_keeps_ticket_authority_and_original_bud
         .sync(&mut meshway_test_server::Facts::default())
         .await
         .unwrap();
-    let snapshot = meshway_engine::Desired::new(&control.netmap().unwrap().content).unwrap();
+    let snapshot =
+        meshway_engine::Desired::new(&control.netmap().unwrap().content, &Default::default())
+            .unwrap();
     let endpoints: Vec<SocketAddr> = vec![
         "192.0.2.53:53".parse().unwrap(),
         "192.0.2.54:53".parse().unwrap(),

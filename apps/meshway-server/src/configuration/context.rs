@@ -64,7 +64,7 @@ pub(crate) fn for_draft<'a>(
 pub(crate) fn for_current<'a>(
     tx: &Transaction<'_>,
     current: &'a Snapshot,
-    rule_sets: BTreeMap<String, meshway_model::resources::RuleSetData>,
+    rule_sets: crate::resources::bindings::Contents,
 ) -> Result<ValidationContext<'a>, Error> {
     Ok(ValidationContext {
         members: members(tx, current.network_id)?,

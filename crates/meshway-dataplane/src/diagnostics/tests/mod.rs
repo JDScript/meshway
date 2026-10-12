@@ -33,7 +33,8 @@ fn instance_of(control: &Control) -> meshway_protocol::InstanceRequest {
 /// Control's published netmap as Engine's desired content, and the instance.
 fn content(control: &Control) -> (meshway_engine::Desired, Option<meshway_model::InstanceId>) {
     (
-        meshway_engine::Desired::new(&control.netmap().unwrap().content).unwrap(),
+        meshway_engine::Desired::new(&control.netmap().unwrap().content, &Default::default())
+            .unwrap(),
         Some(instance_of(control).instance_id),
     )
 }

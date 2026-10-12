@@ -9,6 +9,7 @@ description = "Server/Node/Console HTTP contracts and the typed bounded local No
 chrono.workspace = true
 meshway-configuration = { path = "../meshway-configuration" }
 meshway-model = { path = "../meshway-model" }
+meshway-rules = { path = "../meshway-rules" }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

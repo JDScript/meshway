@@ -1,7 +1,7 @@
 //! Node-side compilation over an installed netmap's projection: the same
 //! routing and Access evaluation, without dynamic exit facts or server grants.
 use super::*;
-use crate::compile::routing::PathError;
+use crate::compile::{routing::PathError, rules};
 use meshway_transport::spec::Port;
 use std::{net::IpAddr, sync::Arc};
 
@@ -45,6 +45,20 @@ pub enum LocalDecision {
 pub struct LocalCompiler {
     netmap: Arc<NodeNetmap>,
     configuration: NetworkConfiguration,
+    /// Referenced sets whose artifact this Node holds; a missing one is an
+    /// unavailable dependency of every rule naming it.
+    rule_sets: rules::RuleSets,
+    matchers: rules::Matchers,
+}
+
+/// The egress rule that decides a destination.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EgressRuleHit {
+    /// JSON Pointer of the rule in the configuration.
+    pub rule: String,
+    /// The rule-set member through which it matched, when it did.
+    pub rule_set: Option<meshway_configuration::evaluation::RuleSetMatch>,
+    pub action: RouteAction,
 }
 
 fn rebuild(view: &ConfigurationView) -> NetworkConfiguration {
@@ -81,6 +95,7 @@ fn rebuild(view: &ConfigurationView) -> NetworkConfiguration {
         topology: view.topology.clone(),
         routing: view.routing.clone(),
         rule_sets: view.rule_sets.clone(),
+        rule_set_providers: view.rule_set_providers.clone(),
     }
 }
 
@@ -99,17 +114,147 @@ fn search(
 }
 
 impl LocalCompiler {
-    pub fn new(netmap: &Arc<NodeNetmap>) -> Self {
-        Self::from_shared(netmap.clone())
+    pub fn new(netmap: &Arc<NodeNetmap>, artifacts: &rules::Artifacts) -> Self {
+        Self::from_shared(netmap.clone(), artifacts)
     }
 
     /// Own immutable content so a runtime may retain one compiler across
     /// requests. A compiler computes decisions; it never carries authority.
-    pub fn from_shared(netmap: Arc<NodeNetmap>) -> Self {
+    /// `artifacts` are the loaded rule sets; the projection's references to
+    /// others are unavailable dependencies.
+    pub fn from_shared(netmap: Arc<NodeNetmap>, artifacts: &rules::Artifacts) -> Self {
+        let configuration = rebuild(&netmap.projection.configuration);
+        // Validated on the Server; a list that does not convert matches nothing
+        // and every rule depending on it is unavailable.
+        let matchers =
+            rules::Matchers::new(&configuration).unwrap_or_else(|_| rules::Matchers::unavailable());
         Self {
-            configuration: rebuild(&netmap.projection.configuration),
+            rule_sets: rules::resolve(&netmap.projection.rule_sets, artifacts),
+            matchers,
+            configuration,
             netmap,
         }
+    }
+
+    /// This Node's netmap as it executes with the artifacts it holds. With
+    /// every referenced artifact loaded it is the signed content itself.
+    /// Otherwise its own egress plan is recomputed here, which fails closed
+    /// for a rule naming a missing set (full IPv4 capture, IPv6 sink, no
+    /// direct or unmanaged exception); resolver sockets follow that plan and
+    /// a Mesh DNS service bound to the signed plan is unavailable.
+    pub fn effective(&self) -> Result<Arc<NodeNetmap>, CompileError> {
+        if self.missing().is_empty() {
+            return Ok(Arc::clone(&self.netmap));
+        }
+        let mut netmap = (*self.netmap).clone();
+        if netmap.egress.is_some() {
+            let plan = self.egress(netmap.node_id)?;
+            netmap.dns.resolvers = local::resolvers(&self.configuration, true, &plan);
+            if netmap.egress.as_ref() != Some(&plan)
+                && matches!(netmap.dns.egress, DnsPlan::ViaExit { .. })
+            {
+                netmap.dns.egress = DnsPlan::Unavailable {
+                    reason:
+                        meshway_configuration::execution::DnsEgressUnavailable::ExitPlanRequired,
+                };
+            }
+            netmap.egress = Some(plan);
+        }
+        Ok(Arc::new(netmap))
+    }
+
+    /// Referenced artifacts this compiler does not hold.
+    pub fn missing(&self) -> Vec<meshway_rules::Digest> {
+        let mut missing: Vec<_> = self
+            .netmap
+            .projection
+            .rule_sets
+            .iter()
+            .filter(|(key, _)| !self.rule_sets.contains_key(*key))
+            .map(|(_, reference)| reference.digest)
+            .collect();
+        missing.sort();
+        missing.dedup();
+        missing
+    }
+
+    /// The first egress rule of `source` selecting `destination`; `None` when
+    /// the profile fallback applies. A referenced set this Node does not hold
+    /// is `UnavailableDependency`: evaluation never skips past it.
+    pub fn egress_rule_for_ip(
+        &self,
+        source: NodeId,
+        destination: IpAddr,
+    ) -> Result<Option<EgressRuleHit>, CompileError> {
+        self.egress_rule(
+            source,
+            rules::Destination::Address(destination.to_canonical()),
+        )
+    }
+
+    /// Same for a DNS query name, compared in [`rules::query_name`] form.
+    pub fn egress_rule_for_name(
+        &self,
+        source: NodeId,
+        name: &str,
+    ) -> Result<Option<EgressRuleHit>, CompileError> {
+        let name = rules::query_name(name);
+        self.egress_rule(source, rules::Destination::Name(&name))
+    }
+
+    fn egress_rule(
+        &self,
+        source: NodeId,
+        destination: rules::Destination<'_>,
+    ) -> Result<Option<EgressRuleHit>, CompileError> {
+        let cfg = &self.configuration;
+        let projection = &self.netmap.projection;
+        let mut profile = effective_profile(
+            cfg,
+            &projection.subjects,
+            &projection.selected_profiles,
+            source,
+        )?;
+        let mut skipped = Vec::new();
+        let public = "/routing/egress/rules";
+        let hit = |index: usize, rule_set, rules: &[EgressRule], prefix: &str| -> EgressRuleHit {
+            EgressRuleHit {
+                rule: format!("{prefix}/{index}"),
+                rule_set,
+                action: rules[index].action.clone().into(),
+            }
+        };
+        let rules_list = &cfg.routing.egress.rules;
+        if let Some((index, set)) = rules::first_match(
+            rules_list,
+            self.matchers.of(None)?,
+            &self.rule_sets,
+            destination,
+            public,
+            &mut skipped,
+        )? {
+            return Ok(Some(hit(index, set, rules_list, public)));
+        }
+        if let matching::EgressProfile::Auto(auto) = matching::resolve_profile(cfg, &profile)? {
+            profile = auto.fallback.clone();
+        }
+        let matching::EgressProfile::Custom(custom) = matching::resolve_profile(cfg, &profile)?
+        else {
+            return Ok(None);
+        };
+        let prefix = format!(
+            "/routing/egress/profiles/{}/rules",
+            profile.replace('~', "~0").replace('/', "~1")
+        );
+        Ok(rules::first_match(
+            &custom.rules,
+            self.matchers.of(Some(&profile))?,
+            &self.rule_sets,
+            destination,
+            &prefix,
+            &mut skipped,
+        )?
+        .map(|(index, set)| hit(index, set, &custom.rules, &prefix)))
     }
 
     /// The same DNS service the Server compiled for `source`, reconstructed
@@ -128,7 +273,7 @@ impl LocalCompiler {
             configuration: &self.configuration,
             subjects: &projection.subjects,
             inventory: &projection.inventory,
-            rule_sets: &projection.rule_sets,
+            rule_sets: &self.rule_sets,
             selected_profiles: &projection.selected_profiles,
             selection_versions: &projection.selection_versions,
             previous: &BTreeMap::new(),
@@ -174,7 +319,7 @@ impl LocalCompiler {
         local::egress(
             self.netmap.network_id,
             &self.configuration,
-            &projection.rule_sets,
+            &self.rule_sets,
             source,
             &profile,
             projection
@@ -448,18 +593,20 @@ fn external_overlaps(
 /// Decide one new flow; see [`LocalCompiler::decide`].
 pub fn compile_local(
     netmap: &Arc<NodeNetmap>,
+    artifacts: &rules::Artifacts,
     source: NodeId,
     destination: IpAddr,
     service: (BusinessProtocol, Option<Port>),
 ) -> Result<LocalDecision, CompileError> {
-    LocalCompiler::new(netmap).decide(source, destination, service.0, service.1)
+    LocalCompiler::new(netmap, artifacts).decide(source, destination, service.0, service.1)
 }
 
 /// Relay paths of a circuit; see [`LocalCompiler::transit`].
 pub fn transit(
     netmap: &Arc<NodeNetmap>,
+    artifacts: &rules::Artifacts,
     origin: NodeId,
     target: &Target,
 ) -> Result<Vec<LogicalPath>, CompileError> {
-    LocalCompiler::new(netmap).transit(origin, target)
+    LocalCompiler::new(netmap, artifacts).transit(origin, target)
 }

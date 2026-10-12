@@ -41,6 +41,7 @@ fn retained_routes_allow_narrowing_but_ruleset_expansion_requires_current_grants
             ip_cidr: vec!["8.8.8.0/24".into()],
             domain_suffix: vec![],
             domain: vec![],
+            domain_subdomain: vec![],
         },
     );
     let rule = &mut input.routing.egress.profiles.get_mut("work").unwrap().rules[0];
@@ -68,6 +69,7 @@ fn retained_routes_allow_narrowing_but_ruleset_expansion_requires_current_grants
                 ip_cidr: vec![cidr.into()],
                 domain_suffix: vec![],
                 domain: vec![],
+                domain_subdomain: vec![],
             },
         );
         let result = normalize_with_dependencies(changed, &ctx);
@@ -280,6 +282,7 @@ fn large_rule_set_validation_preserves_grants_across_unrelated_edits() {
             ip_cidr: cidrs,
             domain_suffix: domains,
             domain: vec![],
+            domain_subdomain: vec![],
         },
     );
     let rule = &mut input.routing.egress.profiles.get_mut("work").unwrap().rules[0];
@@ -354,6 +357,7 @@ fn domain_destinations_are_covered_by_suffix_grants_or_an_internet_grant() {
             ip_cidr: vec![],
             domain_suffix: vec![],
             domain: vec!["telegram.org".into()],
+            domain_subdomain: vec![],
         }
     );
     normalize(

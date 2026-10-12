@@ -58,7 +58,7 @@ pub async fn sync(
 ) -> meshway_engine::Desired {
     script.push(Ok(meshway_test_server::reply(netmap, validity_ms, full)));
     let netmap = control.sync(&mut Facts::default()).await.unwrap().netmap;
-    meshway_engine::Desired::new(&netmap.content).unwrap()
+    meshway_engine::Desired::new(&netmap.content, &Default::default()).unwrap()
 }
 
 pub fn listener(port: u16) -> PreparedListener {

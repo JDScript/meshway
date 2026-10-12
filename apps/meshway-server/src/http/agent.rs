@@ -35,6 +35,50 @@ pub(super) async fn sync(
         .map_err(|e| HttpError::domain(id, e))
 }
 
+/// Schema of raw `MWRS` artifact bytes.
+pub(super) struct ArtifactBytes;
+impl utoipa::PartialSchema for ArtifactBytes {
+    fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+        use utoipa::openapi::schema::{KnownFormat, ObjectBuilder, SchemaFormat, Type};
+        ObjectBuilder::new()
+            .schema_type(Type::String)
+            .format(Some(SchemaFormat::KnownFormat(KnownFormat::Binary)))
+            .into()
+    }
+}
+impl utoipa::ToSchema for ArtifactBytes {}
+
+/// Download one rule-set artifact by digest.
+///
+/// Requires a Node session. `digest` (`sha256:<64 lowercase hex>`) must be referenced by a netmap the Server stored for the calling Node that can still be under a lease (the current one, or one replaced less than a lease validity ago); otherwise, including an unknown digest, the answer is 404.
+/// The body is the immutable artifact; the Node checks its length and digest against the netmap reference before use.
+#[utoipa::path(get,path="/agent-api/v1/artifacts/{digest}",operation_id="getRuleSetArtifact",tag="execution",security(("nodeSession"=[])),params(("digest"=String,Path,description="`sha256:` and the lowercase hex SHA-256 of the artifact.")),responses((status=200,content_type="application/vnd.meshway.rules.v1",body=inline(ArtifactBytes),description="The artifact bytes; `ETag` is the digest and `Cache-Control` is `private, max-age=31536000, immutable`."),(status=401,body=ErrorResponse,description="invalid_credentials"),(status=403,body=ErrorResponse,description="node_identity_rejected"),(status=404,body=ErrorResponse,description="not_found"),(status=503,body=ErrorResponse,description="busy, service_unavailable")))]
+pub(super) async fn artifact(
+    State(service): State<crate::netmap::Netmaps>,
+    Extension(id): Extension<RequestId>,
+    super::TypedPath(digest): super::TypedPath<String>,
+    headers: HeaderMap,
+) -> Result<axum::response::Response, HttpError> {
+    use axum::{http::header, response::IntoResponse};
+    let token = node_bearer(&headers, id)?;
+    let bytes = service
+        .artifact(token, digest.clone())
+        .await
+        .map_err(|e| HttpError::domain(id, e))?;
+    Ok((
+        [
+            (header::CONTENT_TYPE, meshway_rules::MEDIA_TYPE.to_owned()),
+            (header::ETAG, format!("\"{digest}\"")),
+            (
+                header::CACHE_CONTROL,
+                "private, max-age=31536000, immutable".to_owned(),
+            ),
+        ],
+        bytes,
+    )
+        .into_response())
+}
+
 /// Permanently delete the calling Node from its network.
 ///
 /// Requires a Node session; `nodeId` must name the authenticated Node itself.

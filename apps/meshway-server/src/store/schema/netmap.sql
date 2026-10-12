@@ -46,6 +46,20 @@ WHEN EXISTS(SELECT 1 FROM node_netmaps WHERE network_id=NEW.network_id AND node_
 BEGIN SELECT RAISE(ABORT,'netmap serial must increase'); END;
 CREATE TRIGGER node_netmaps_immutable BEFORE UPDATE OF network_id,node_id,serial,revision,digest,dependency_digest,payload,created_at ON node_netmaps
 BEGIN SELECT RAISE(ABORT,'immutable netmap content'); END;
+-- Rule-set artifacts each stored netmap serial references. A Node may fetch
+-- a digest while some netmap of its own that references it can still be
+-- under a lease: the current one, or one superseded less than a lease
+-- validity ago. Rows superseded longer than the longest validity are removed.
+CREATE TABLE node_netmap_artifacts (
+    network_id BLOB NOT NULL,
+    node_id BLOB NOT NULL,
+    serial INTEGER NOT NULL CHECK(serial BETWEEN 1 AND 9007199254740991),
+    digest BLOB NOT NULL CHECK(length(digest)=32),
+    superseded_at INTEGER CHECK(superseded_at>=0),
+    PRIMARY KEY(network_id,node_id,serial,digest),
+    FOREIGN KEY(network_id,node_id) REFERENCES nodes(network_id,id)
+) STRICT;
+CREATE INDEX node_netmap_artifacts_digest ON node_netmap_artifacts(network_id,node_id,digest);
 -- Node-reported save/installation outcome of one exact netmap, ordered by
 -- instance, attempt and sequence. Rows are history: a receipt is current
 -- evidence only for the Node's current netmap and live instance.

@@ -80,6 +80,7 @@ const titles = {
   renameNetwork: "重命名网络",
   listRuleSets: "列出规则集",
   getRuleSet: "读取规则集",
+  getRuleSetReport: "读取规则集转换报告",
   refreshRuleSet: "刷新规则集",
   getNetworkState: "读取网络状态",
   getTransportCatalog: "读取传输目录",

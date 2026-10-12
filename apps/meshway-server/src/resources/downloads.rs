@@ -1,11 +1,12 @@
 //! Shared bounded, coalesced downloads; cancellation drops the socket future.
 use super::download::{Connector, Https};
+use super::rulesets::{Prepared, Source};
 use futures_util::{
     FutureExt,
     future::{BoxFuture, Shared},
 };
 use meshway_configuration::RuleSet;
-use meshway_protocol::resources::{ResourceProblem, RuleSetData};
+use meshway_protocol::resources::ResourceProblem;
 use std::{
     collections::BTreeMap,
     sync::{Arc, Mutex, Weak},
@@ -23,7 +24,7 @@ impl From<ResourceProblem> for FetchError {
         Self::Resource(problem)
     }
 }
-type ResultFuture = Shared<BoxFuture<'static, Result<RuleSetData, FetchError>>>;
+type ResultFuture = Shared<BoxFuture<'static, Result<Prepared, FetchError>>>;
 struct Flight {
     result: ResultFuture,
 }
@@ -55,28 +56,23 @@ impl Downloads {
             let _ = stop.changed().await;
         }
     }
-    pub(crate) async fn fetch(&self, definition: &RuleSet) -> Result<RuleSetData, FetchError> {
+    /// Content of one source ready to bind: converted, or taken from a
+    /// verified catalog. Concurrent fetches of one source share a download.
+    /// `catalogs` memoizes verified catalogs across the fetches of one
+    /// preparation.
+    pub(crate) async fn fetch(
+        &self,
+        source: &Source,
+        catalogs: &super::catalogs::Catalogs,
+    ) -> Result<Prepared, FetchError> {
         if self.closed() {
             return Err(FetchError::Cancelled);
         }
-        let (url, format) = match definition {
-            RuleSet::Inline {
-                ip_cidr,
-                domain_suffix,
-                domain,
-            } => {
-                return super::normalize(RuleSetData {
-                    ip_cidr: ip_cidr.clone(),
-                    domain_suffix: domain_suffix.clone(),
-                    domain: domain.clone(),
-                })
-                .map_err(Into::into);
-            }
-            RuleSet::Remote { url, format, .. } => (url, format),
-        };
-        // Updating the interval does not change the source/format being fetched.
-        let key =
-            serde_json::to_string(&(url, format)).map_err(|_| ResourceProblem::InvalidSource)?;
+        if let Source::Inline(set) = source {
+            return super::rulesets::inline(set).map_err(Into::into);
+        }
+        // Updating the interval does not change the source being fetched.
+        let key = source.identity();
         let flight = {
             let mut flights = self
                 .flights
@@ -90,18 +86,46 @@ impl Downloads {
                     .try_acquire()
                     .map_err(|_| ResourceProblem::BudgetExceeded)?;
                 let connector = self.connector.clone();
-                let url = url.clone();
-                let format = format.clone();
+                let catalogs = catalogs.clone();
+                let source = source.clone();
                 let mut stop = self.stop.subscribe();
                 let result = async move {
                     let _permit = permit;
-                    if *stop.borrow() { return Err(FetchError::Cancelled); }
+                    if *stop.borrow() {
+                        return Err(FetchError::Cancelled);
+                    }
+                    let work = async {
+                        match &source {
+                            Source::Remote(RuleSet::Remote { url, format, .. }) => {
+                                let bytes = super::download::download(
+                                    url,
+                                    connector.as_ref(),
+                                    meshway_rules::convert::MAX_SOURCE_BYTES,
+                                )
+                                .await?;
+                                tokio::task::spawn_blocking({
+                                    let format = format.clone();
+                                    move || super::rulesets::convert(&bytes, &format)
+                                })
+                                .await
+                                .map_err(|_| ResourceProblem::BudgetExceeded)?
+                            }
+                            Source::Provider {
+                                name, definition, ..
+                            } => catalogs.fetch(definition, name, connector.as_ref()).await,
+                            Source::Inline(set) | Source::Remote(set) => {
+                                super::rulesets::inline(set)
+                            }
+                        }
+                    };
                     tokio::select! {
                         biased;
                         _ = stop.changed() => Err(FetchError::Cancelled),
-                        result = super::download::download(&url, connector.as_ref()) => super::convert(&result?, &format).map_err(Into::into),
+                        result = work => result.map_err(Into::into),
                     }
-                }.boxed().shared();
+                }
+                .boxed()
+                .shared();
                 let flight = Arc::new(Flight { result });
                 flights.insert(key, Arc::downgrade(&flight));
                 flight

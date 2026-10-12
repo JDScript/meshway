@@ -11,6 +11,7 @@ base64 = "0.23"
 chrono.workspace = true
 curve25519-dalek = "4.1"
 ed25519-dalek = { version = "2.2", default-features = false, features = ["std", "zeroize"] }
+futures-util.workspace = true
 getrandom.workspace = true
 meshway-configuration = { path = "../meshway-configuration" }
 meshway-engine = { path = "../meshway-engine" }
@@ -19,11 +20,13 @@ meshway-control-client = { path = "../meshway-control-client" }
 meshway-model = { path = "../meshway-model" }
 meshway-private-storage = { path = "../meshway-private-storage" }
 meshway-protocol = { path = "../meshway-protocol" }
+meshway-rules = { path = "../meshway-rules", features = ["mapped"] }
 reqwest.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
 sha2.workspace = true
 thiserror.workspace = true
+tracing.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 uuid.workspace = true

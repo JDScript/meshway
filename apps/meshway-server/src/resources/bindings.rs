@@ -1,62 +1,52 @@
-//! Exact immutable contents selected for a source version and each publication.
+//! The artifact each rule-set key of a configuration version is bound to.
+//! Bindings name content by digest; inline, remote and catalog sets alike.
+use super::rulesets::{Source, sources};
 use crate::configuration::Snapshot;
 use crate::error::Error;
 use crate::store;
-use meshway_configuration::{NetworkConfigurationInput, RuleSet};
-use meshway_model::resources::RuleSetData;
-use meshway_model::{ArtifactId, NetworkId, Revision};
+use meshway_configuration::{
+    ConfigurationError, ConfigurationIssue, IssueCode, NetworkConfiguration,
+    NetworkConfigurationInput,
+};
+use meshway_model::{NetworkId, Revision};
+use meshway_policy::compile::RuleSets;
+use meshway_rules::Digest;
 use rusqlite::Transaction;
 use std::collections::BTreeMap;
 
-pub(crate) type Bindings = BTreeMap<String, ArtifactId>;
-pub(crate) type Contents = BTreeMap<String, RuleSetData>;
-#[derive(Default)]
-struct ContentBudget {
-    bytes: usize,
-    entries: usize,
+pub(crate) type Bindings = BTreeMap<String, Digest>;
+pub(crate) type Contents = RuleSets;
+
+/// Distinct artifacts one network binds, counted once per digest.
+pub(crate) const MAX_BOUND_BYTES: u64 = 64 << 20;
+pub(crate) const MAX_BOUND_SETS: usize = 128;
+
+pub(crate) fn budget_error(limit: &'static str, value: u64) -> Error {
+    Error::InvalidConfiguration(ConfigurationError::Invalid(vec![
+        ConfigurationIssue::new("/ruleSets", IssueCode::RuleSetBudget).with(limit, value),
+    ]))
 }
-impl ContentBudget {
-    fn include(&mut self, data: &RuleSetData) -> Result<(), Error> {
-        self.bytes = self.bytes.saturating_add(
-            serde_json::to_vec(data)
-                .map_err(|_| Error::encode("rule set data"))?
-                .len(),
-        );
-        self.entries = self.entries.saturating_add(super::entries(data));
-        if self.bytes > super::MAX_DATASET_BYTES || self.entries > super::MAX_RULE_ENTRIES {
-            return Err(Error::InvalidConfiguration(
-                meshway_configuration::ConfigurationError::Invalid(vec![
-                    meshway_configuration::ConfigurationIssue::new(
-                        "/ruleSets",
-                        meshway_configuration::IssueCode::RuleSetBudget,
-                    )
-                    .with("maxBytes", super::MAX_DATASET_BYTES)
-                    .with("maxEntries", super::MAX_RULE_ENTRIES),
-                ]),
-            ));
-        }
-        Ok(())
-    }
-}
+
+/// Per-network budget over distinct digests.
 pub(crate) fn check_budget(contents: &Contents) -> Result<(), Error> {
-    let mut budget = ContentBudget::default();
-    for data in contents.values() {
-        budget.include(data)?;
+    let mut distinct = BTreeMap::new();
+    for set in contents.values() {
+        distinct.insert(set.digest(), set.as_bytes().len() as u64);
+    }
+    if distinct.len() > MAX_BOUND_SETS {
+        return Err(budget_error("maxSets", MAX_BOUND_SETS as u64));
+    }
+    if distinct.values().sum::<u64>() > MAX_BOUND_BYTES {
+        return Err(budget_error("maxBytes", MAX_BOUND_BYTES));
     }
     Ok(())
 }
-pub(crate) fn same_source(a: &RuleSet, b: &RuleSet) -> bool {
-    match (a, b) {
-        (
-            RuleSet::Remote {
-                url: a, format: af, ..
-            },
-            RuleSet::Remote {
-                url: b, format: bf, ..
-            },
-        ) => a == b && af == bf,
-        _ => a == b,
-    }
+
+pub(crate) fn configuration_sources(cfg: &NetworkConfiguration) -> BTreeMap<String, Source> {
+    sources(&cfg.rule_sets, &cfg.rule_set_providers, &cfg.routing)
+}
+pub(crate) fn input_sources(input: &NetworkConfigurationInput) -> BTreeMap<String, Source> {
+    sources(&input.rule_sets, &input.rule_set_providers, &input.routing)
 }
 
 pub(crate) fn inherit_checks(
@@ -71,23 +61,21 @@ pub(crate) fn inherit_checks(
         current.revision,
         &current.bindings.rule_sets,
     )?;
+    let before = configuration_sources(&current.document.configuration);
     // A check record follows its rule set into the next version whenever the
-    // definition and the bound content are unchanged, including a set that has
+    // source and the bound content are unchanged, including a set that has
     // no content yet because every check so far failed.
-    for (key, definition) in &prepared.document.configuration.rule_sets {
-        let unchanged_source = current
-            .document
-            .configuration
-            .rule_sets
-            .get(key)
-            .is_some_and(|before| same_source(before, definition));
-        if unchanged_source && previous.get(key) == prepared.bindings.rule_sets.get(key) {
+    for (key, source) in configuration_sources(&prepared.document.configuration) {
+        let unchanged_source = before
+            .get(&key)
+            .is_some_and(|old| old.same_content(&source));
+        if unchanged_source && previous.get(&key) == prepared.bindings.rule_sets.get(&key) {
             store::resources::checks::inherit(
                 tx,
                 current.network_id,
                 current.revision,
                 revision,
-                key,
+                &key,
             )?;
         }
     }
@@ -106,28 +94,22 @@ pub(crate) fn at_revision(
         .unwrap_or_else(|| initial.clone()))
 }
 
-pub(crate) fn contents(
-    tx: &Transaction<'_>,
-    network: NetworkId,
-    bindings: &Bindings,
-) -> Result<Contents, Error> {
-    let mut budget = ContentBudget::default();
-    bindings
+/// The loaded sets of a binding, within the network budget.
+pub(crate) fn contents(tx: &Transaction<'_>, bindings: &Bindings) -> Result<Contents, Error> {
+    let contents = bindings
         .iter()
-        .map(|(key, id)| {
-            let data = super::load_artifact(tx, network, *id)?;
-            budget.include(&data)?;
-            Ok((key.clone(), data))
-        })
-        .collect()
+        .map(|(key, digest)| Ok((key.clone(), super::artifacts::load(tx, digest)?)))
+        .collect::<Result<Contents, Error>>()?;
+    check_budget(&contents)?;
+    Ok(contents)
 }
+
 pub(crate) fn current_contents(
     tx: &Transaction<'_>,
     current: &Snapshot,
 ) -> Result<Contents, Error> {
     contents(
         tx,
-        current.network_id,
         &at_revision(
             tx,
             current.network_id,
@@ -136,6 +118,8 @@ pub(crate) fn current_contents(
         )?,
     )
 }
+
+/// The current bindings an input keeps: keys whose source is unchanged.
 pub(crate) fn for_input(
     tx: &Transaction<'_>,
     current: &Snapshot,
@@ -147,37 +131,15 @@ pub(crate) fn for_input(
         current.revision,
         &current.bindings.rule_sets,
     )?;
+    let (next, before) = (
+        input_sources(input),
+        configuration_sources(&current.document.configuration),
+    );
     bindings.retain(|key, _| {
-        input
-            .rule_sets
-            .get(key)
-            .zip(current.document.configuration.rule_sets.get(key))
-            .is_some_and(|(a, b)| same_source(a, b))
+        next.get(key)
+            .zip(before.get(key))
+            .is_some_and(|(a, b)| a.same_content(b))
     });
-    let data = contents(tx, current.network_id, &bindings)?;
+    let data = contents(tx, &bindings)?;
     Ok((bindings, data))
-}
-
-pub(crate) fn compilation_contents(
-    tx: &Transaction<'_>,
-    network: NetworkId,
-    bindings: &Bindings,
-) -> Result<BTreeMap<String, meshway_configuration::execution::RuleSetContent>, crate::error::Error>
-{
-    contents(tx, network, bindings)?
-        .into_iter()
-        .map(|(key, data)| {
-            let artifact = bindings[&key];
-            Ok((
-                key.clone(),
-                meshway_configuration::execution::RuleSetContent {
-                    network_id: network,
-                    artifact,
-                    ip_cidr: data.ip_cidr,
-                    domain_suffix: data.domain_suffix,
-                    domain: data.domain,
-                },
-            ))
-        })
-        .collect()
 }

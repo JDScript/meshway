@@ -87,7 +87,7 @@ impl Scope {
             (Some(a), Some(b)) => a.same(b),
             _ => false,
         };
-        self.desired.reference() == other.desired.reference()
+        self.desired.same(&other.desired)
             && same(&self.system_resolvers, &other.system_resolvers)
             && same(&self.served_resolvers, &other.served_resolvers)
     }

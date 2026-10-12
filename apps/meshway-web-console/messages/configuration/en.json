@@ -649,5 +649,17 @@
   "configuration_transport_repeated_transport": "Transport listed more than once in this rule",
   "configuration_transport_retained_secret_unavailable": "there is no saved value to keep here (a new or recreated listener, a changed protocol or certificate mode, or a managed certificate with a new serverName); write the value",
   "configuration_change_unread": "Could not read this version",
-  "configuration_history_count_more": "{count} read, earlier ones not yet"
+  "configuration_history_count_more": "{count} read, earlier ones not yet",
+  "configuration_ruleset_format_mihomo_domain_text": "mihomo domain list (text)",
+  "configuration_ruleset_format_mihomo_ipcidr_text": "mihomo IP CIDR list (text)",
+  "configuration_ruleset_format_classical": "Classical rules (mihomo/Clash)",
+  "configuration_ruleset_problem_unknown_rule_set": "The catalog has no set of this name",
+  "configuration_ruleset_problem_rule_set_budget": "The converted set is over the artifact limit",
+  "configuration_ruleset_problem_signature_invalid": "The catalog signature does not verify with a trusted key",
+  "configuration_ruleset_problem_catalog_regressed": "The catalog is older than one already accepted",
+  "configuration_ruleset_problem_integrity_failed": "The artifact does not match its catalog entry",
+  "configuration_issue_invalid_rule_set_key": "Rule set names cannot contain “:” ({key})",
+  "configuration_issue_unknown_rule_set_provider": "Unknown or disabled rule set provider {provider}",
+  "configuration_issue_invalid_rule_set_provider": "Invalid rule set provider ({field})",
+  "configuration_issue_rule_set_partition_limit": "{key} needs {prefixes} address prefixes, more than the {max} a source's egress plan carries; that source's egress is unavailable"
 }

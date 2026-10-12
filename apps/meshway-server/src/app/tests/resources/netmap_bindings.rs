@@ -35,7 +35,7 @@ async fn refreshed_rule_set_bindings_are_read_without_any_publication() {
     remote.set(200, "payload:\n - 8.8.8.0/24\n");
     let refreshed = s.refresh(token, network).await;
     assert!(refreshed.problem.is_none(), "{:?}", refreshed.problem);
-    let artifact = refreshed.artifact.unwrap().id;
+    let artifact = refreshed.artifact.unwrap().digest;
 
     // The current binding has its own storage and no execution publication table.
     let revision = applied.revision;
@@ -58,7 +58,7 @@ async fn refreshed_rule_set_bindings_are_read_without_any_publication() {
         })
         .await
         .unwrap();
-    assert_eq!(bound["remote"], artifact);
+    assert_eq!(bound["remote"].to_string(), artifact);
 
     // The next version retains the binding and its netmaps carry the content.
     let (node, ..) = enroll(&s, token, network, 61).await;
@@ -75,8 +75,12 @@ async fn refreshed_rule_set_bindings_are_read_without_any_publication() {
         .await
         .unwrap();
     assert_eq!(
-        netmap.netmap.projection.rule_sets["remote"].artifact,
+        netmap.netmap.projection.rule_sets["remote"]
+            .digest
+            .to_string(),
         artifact
     );
+    // Definitions (the source URL) never reach a Node.
+    assert!(netmap.netmap.projection.configuration.rule_sets.is_empty());
     s.close().await;
 }

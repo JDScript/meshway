@@ -123,7 +123,7 @@ impl Runtime {
             .scopes
             .borrow()
             .as_ref()
-            .is_some_and(|scope| scope.desired.reference() == desired.reference());
+            .is_some_and(|scope| scope.desired.same(&desired));
         if continuing {
             return self.observe().await;
         }

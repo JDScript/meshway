@@ -863,32 +863,42 @@ export const schemaDocument = {
       },
       "ArtifactSummary": {
         "type": "object",
-        "description": "Immutable, validated rule-set artifact selected by a resource binding.",
+        "description": "Immutable rule-set artifact selected by a resource binding. Artifacts are content addressed and shared by every network.",
         "required": [
-          "id",
           "digest",
-          "createdAt",
-          "entries"
+          "format",
+          "bytes",
+          "entries",
+          "createdAt"
         ],
         "properties": {
+          "bytes": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Artifact length in bytes.",
+            "minimum": 0
+          },
           "createdAt": {
             "type": "string",
             "format": "date-time",
-            "description": "UTC time the immutable artifact was created, distinct from later refresh checks."
+            "description": "UTC time the Server first stored this content, distinct from later refresh checks."
           },
           "digest": {
-            "$ref": "#/components/schemas/Digest",
-            "description": "Digest of the complete normalized destination content."
+            "type": "string",
+            "description": "`sha256:` and the lowercase hex SHA-256 of the complete artifact; Nodes fetch it by this digest.",
+            "pattern": "^sha256:[0-9a-f]{64}$"
           },
           "entries": {
             "type": "integer",
             "format": "int32",
-            "description": "Total normalized CIDR, suffix and exact-name entries.",
+            "description": "Canonical members: names, keywords and merged address ranges.",
             "minimum": 0
           },
-          "id": {
-            "$ref": "#/components/schemas/ArtifactId",
-            "description": "Immutable artifact identity used to bind exact historical content."
+          "format": {
+            "type": "integer",
+            "format": "int32",
+            "description": "`MWRS` major format version.",
+            "minimum": 0
           }
         },
         "additionalProperties": false
@@ -2561,6 +2571,16 @@ export const schemaDocument = {
           "routing": {
             "$ref": "#/components/schemas/RoutingConfiguration",
             "description": "Mesh waypoint requirements and external destination routing."
+          },
+          "ruleSetProviders": {
+            "type": "object",
+            "description": "Catalog provider overrides; null entries disable a built-in provider.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/NullableRuleSetProvider"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
           },
           "ruleSets": {
             "type": "object",
@@ -6198,6 +6218,10 @@ export const schemaDocument = {
           "unknown_rule_set",
           "invalid_rule_source",
           "empty_rule_set_key",
+          "invalid_rule_set_key",
+          "unknown_rule_set_provider",
+          "invalid_rule_set_provider",
+          "rule_set_partition_limit",
           "empty_inline_rule_set",
           "rule_set_budget",
           "rule_set_unavailable",
@@ -8417,9 +8441,9 @@ export const schemaDocument = {
           },
           "ruleSets": {
             "type": "object",
-            "description": "Complete replacement rule-set contents.",
+            "description": "Complete replacement rule-set references.",
             "additionalProperties": {
-              "$ref": "#/components/schemas/RuleSetContent"
+              "$ref": "#/components/schemas/RuleSetRef"
             },
             "propertyNames": {
               "type": "string"
@@ -8922,6 +8946,16 @@ export const schemaDocument = {
           "routing": {
             "$ref": "#/components/schemas/RoutingConfiguration",
             "description": "Mesh path constraints and egress selection; defaults to empty routing declarations."
+          },
+          "ruleSetProviders": {
+            "type": "object",
+            "description": "Catalog providers keyed by name, replacing a built-in provider of the same name; null disables it. Defaults to an empty map.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/NullableRuleSetProvider"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
           },
           "ruleSets": {
             "type": "object",
@@ -9645,7 +9679,7 @@ export const schemaDocument = {
         "properties": {
           "compilerVersion": {
             "type": "string",
-            "description": "Compiler contract family, `meshway-netmap-1`."
+            "description": "Compiler contract family, `meshway-netmap-2`."
           },
           "dependencyDigest": {
             "$ref": "#/components/schemas/Digest",
@@ -10407,6 +10441,17 @@ export const schemaDocument = {
           "nonPublicAddress",
           "meshAddress"
         ]
+      },
+      "NullableRuleSetProvider": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/RuleSetProvider"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "A catalog provider, or null to disable the built-in provider of this name."
       },
       "ObservationEvent": {
         "type": "object",
@@ -12102,20 +12147,28 @@ export const schemaDocument = {
       },
       "PreparedRuleSet": {
         "type": "object",
-        "description": "Transient validated rule-set content summary produced by a noncommitting configuration preview.",
+        "description": "Transient validated rule-set content produced by a noncommitting configuration preview.",
         "required": [
           "digest",
+          "bytes",
           "entries"
         ],
         "properties": {
+          "bytes": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Artifact length in bytes.",
+            "minimum": 0
+          },
           "digest": {
-            "$ref": "#/components/schemas/Digest",
-            "description": "Digest of the complete normalized destination content, without reserving an artifact ID."
+            "type": "string",
+            "description": "`sha256:` and the lowercase hex SHA-256 of the complete artifact; content addressed, no ID is reserved.",
+            "pattern": "^sha256:[0-9a-f]{64}$"
           },
           "entries": {
             "type": "integer",
             "format": "int32",
-            "description": "Total normalized CIDR, suffix and exact-name entries.",
+            "description": "Canonical members: names, keywords and merged address ranges.",
             "minimum": 0
           }
         },
@@ -13596,9 +13649,9 @@ export const schemaDocument = {
           },
           "ruleSets": {
             "type": "object",
-            "description": "Resolved remote rule-set contents referenced by egress rules.",
+            "description": "Content references of the rule sets retained egress rules name, keyed\nas in `match.ruleSets`; the content is fetched by digest.",
             "additionalProperties": {
-              "$ref": "#/components/schemas/RuleSetContent"
+              "$ref": "#/components/schemas/RuleSetRef"
             },
             "propertyNames": {
               "type": "string"
@@ -13865,7 +13918,7 @@ export const schemaDocument = {
       },
       "RefreshRuleSetRequest": {
         "type": "object",
-        "description": "Idempotent manual refresh of one remote rule set.",
+        "description": "Idempotent manual refresh of one remote or catalog rule set.",
         "required": [
           "requestId"
         ],
@@ -14085,7 +14138,12 @@ export const schemaDocument = {
           "configuration_changed",
           "budget_exceeded",
           "not_ready",
-          "validation_failed"
+          "validation_failed",
+          "rule_set_budget",
+          "signature_invalid",
+          "catalog_regressed",
+          "unknown_rule_set",
+          "integrity_failed"
         ]
       },
       "ResourceRef": {
@@ -14399,7 +14457,7 @@ export const schemaDocument = {
             "items": {
               "type": "string"
             },
-            "description": "Referenced rule-set keys whose destinations join this match; defaults to an empty list."
+            "description": "Referenced rule sets whose destinations join this match: a network `ruleSets` key, or `<provider>:<name>` for a catalog set; defaults to an empty list."
           }
         },
         "additionalProperties": false
@@ -14560,6 +14618,13 @@ export const schemaDocument = {
                 },
                 "description": "Exact DNS names without subdomains; defaults to empty and is omitted from canonical output when empty."
               },
+              "domainSubdomain": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "DNS names matching only their subdomains, not the name itself; defaults to empty and is omitted from canonical output when empty."
+              },
               "domainSuffix": {
                 "type": "array",
                 "items": {
@@ -14594,7 +14659,7 @@ export const schemaDocument = {
             "properties": {
               "format": {
                 "$ref": "#/components/schemas/RuleSetFormat",
-                "description": "Source format to convert without dropping unsupported entries."
+                "description": "Source format; entries without an equivalent are skipped and reported by the resource view."
               },
               "type": {
                 "type": "string",
@@ -14624,45 +14689,75 @@ export const schemaDocument = {
           "refreshed"
         ]
       },
-      "RuleSetContent": {
+      "RuleSetConversion": {
         "type": "object",
-        "description": "Resolved rule-set artifact content supplied as a fixed Server compilation dependency.",
+        "description": "How the bound content was converted from its source.",
         "required": [
-          "networkId",
-          "artifact",
-          "ipCIDR",
-          "domainSuffix",
-          "domain"
+          "converted",
+          "redundant",
+          "unconverted"
         ],
         "properties": {
-          "artifact": {
-            "$ref": "#/components/schemas/ArtifactId",
-            "description": "Exact artifact version whose content is supplied."
+          "converted": {
+            "$ref": "#/components/schemas/RuleSetConverted",
+            "description": "Accepted entries by kind."
           },
-          "domain": {
-            "type": "array",
-            "items": {
-              "type": "string"
+          "redundant": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Accepted names and keywords dropped as duplicates or covered by another member.",
+            "minimum": 0
+          },
+          "unconverted": {
+            "type": "object",
+            "description": "Skipped entries by reason (`regex`, `invalidName`, `classical:<TYPE>`, `unsupportedField:<name>`, ...); the content is a subset of the source's semantics whenever this is not empty.",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
             },
-            "description": "Exact domain names used by rule-set matching."
-          },
-          "domainSuffix": {
-            "type": "array",
-            "items": {
+            "propertyNames": {
               "type": "string"
-            },
-            "description": "Domain suffixes used by rule-set matching."
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "RuleSetConverted": {
+        "type": "object",
+        "description": "Accepted source entries by the member kind they became, counted before duplicates and covered members are dropped.",
+        "required": [
+          "exact",
+          "suffix",
+          "subdomain",
+          "keyword",
+          "cidr"
+        ],
+        "properties": {
+          "cidr": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
           },
-          "ipCIDR": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "IP CIDR ranges used by rule-set matching."
+          "exact": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
           },
-          "networkId": {
-            "$ref": "#/components/schemas/NetworkId",
-            "description": "Network owning this resolved rule-set input."
+          "keyword": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "subdomain": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "suffix": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
           }
         },
         "additionalProperties": false
@@ -14673,8 +14768,31 @@ export const schemaDocument = {
         "enum": [
           "sing-box-source",
           "mihomo-domain",
-          "mihomo-ipcidr"
+          "mihomo-ipcidr",
+          "mihomo-domain-text",
+          "mihomo-ipcidr-text",
+          "classical"
         ]
+      },
+      "RuleSetHeld": {
+        "type": "object",
+        "description": "The catalog still publishes an older artifact for this set.",
+        "required": [
+          "since",
+          "reason"
+        ],
+        "properties": {
+          "reason": {
+            "type": "string",
+            "description": "The publisher's reason."
+          },
+          "since": {
+            "type": "string",
+            "format": "date-time",
+            "description": "UTC time since which the catalog holds the previous artifact."
+          }
+        },
+        "additionalProperties": false
       },
       "RuleSetList": {
         "type": "object",
@@ -14712,19 +14830,226 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "RuleSetProvider": {
+        "type": "object",
+        "description": "Signed rule-set catalog referenced as `<provider>:<name>` from routing rules.",
+        "required": [
+          "catalog",
+          "collection",
+          "publicKeys"
+        ],
+        "properties": {
+          "catalog": {
+            "type": "string",
+            "description": "HTTPS URL of the catalog `index.json`; its signature is `index.json.sig` and artifacts are under `artifacts/` beside it."
+          },
+          "collection": {
+            "type": "string",
+            "description": "Catalog collection holding this provider's sets; `<provider>:<name>` selects `<collection>/<name>`."
+          },
+          "publicKeys": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "One to four trusted `ed25519:<64 lowercase hex>` catalog keys; any one valid signature is accepted."
+          },
+          "updateInterval": {
+            "$ref": "#/components/schemas/PositiveDuration",
+            "description": "Positive integer duration with `ms`, `s`, `m` or `h`; defaults to `24h`, with scheduling bounded below by one second."
+          }
+        },
+        "additionalProperties": false
+      },
+      "RuleSetProviderView": {
+        "type": "object",
+        "description": "The catalog a provider-referenced set came from.",
+        "required": [
+          "name",
+          "catalog",
+          "collection",
+          "sequence"
+        ],
+        "properties": {
+          "catalog": {
+            "type": "string",
+            "description": "Catalog `index.json` URL."
+          },
+          "collection": {
+            "type": "string",
+            "description": "Catalog collection of the provider."
+          },
+          "name": {
+            "type": "string",
+            "description": "Provider name, the part of the key before `:`."
+          },
+          "sequence": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Sequence of the verified catalog the bound artifact was taken from; null before any content is bound.",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "RuleSetRef": {
+        "type": "object",
+        "description": "One rule-set artifact a netmap depends on. Nodes fetch the bytes from\n`GET /agent-api/v1/artifacts/{digest}` and check length and digest.",
+        "required": [
+          "digest",
+          "format",
+          "bytes",
+          "entries"
+        ],
+        "properties": {
+          "bytes": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Artifact length in bytes.",
+            "minimum": 0
+          },
+          "digest": {
+            "type": "string",
+            "description": "`sha256:` and the lowercase hex SHA-256 of the complete artifact.",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "entries": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Canonical members: names, keywords and merged address ranges.",
+            "minimum": 0
+          },
+          "format": {
+            "type": "integer",
+            "format": "int32",
+            "description": "`MWRS` major format version of the artifact.",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "RuleSetReport": {
+        "type": "object",
+        "description": "Complete conversion report of the bound content.",
+        "required": [
+          "key",
+          "digest",
+          "conversion",
+          "items"
+        ],
+        "properties": {
+          "conversion": {
+            "$ref": "#/components/schemas/RuleSetConversion"
+          },
+          "digest": {
+            "type": "string",
+            "description": "The bound artifact the report describes.",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RuleSetSkippedEntry"
+            },
+            "description": "The first 1,000 skipped entries; the rest are only counted in `conversion`. Empty when the provider published only a summary."
+          },
+          "key": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "RuleSetSkippedEntry": {
+        "type": "object",
+        "description": "One source entry that did not become a member.",
+        "required": [
+          "at",
+          "reason",
+          "entry"
+        ],
+        "properties": {
+          "at": {
+            "type": "string",
+            "description": "Position in the source: `/rules/3/domain_regex/0`, `/payload/7`, `line 12` or `/domainSuffix/2`."
+          },
+          "entry": {
+            "type": "string",
+            "description": "The entry text, truncated to 256 characters."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Skip reason, as in `RuleSetConversion.unconverted`."
+          }
+        },
+        "additionalProperties": false
+      },
+      "RuleSetSourceView": {
+        "type": "object",
+        "description": "Where the bound content's source came from.",
+        "required": [
+          "format",
+          "repo",
+          "ref",
+          "commit",
+          "path"
+        ],
+        "properties": {
+          "commit": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Upstream commit; null when not from a catalog."
+          },
+          "format": {
+            "type": "string",
+            "description": "Source format the content was converted from."
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Upstream file path; null when not from a catalog."
+          },
+          "ref": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Upstream branch or tag; null when not from a catalog."
+          },
+          "repo": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Upstream repository of a catalog set; null for a remote URL or inline set."
+          }
+        },
+        "additionalProperties": false
+      },
       "RuleSetView": {
         "type": "object",
         "description": "Current rule-set declaration, selected immutable artifact and actual check status.",
         "required": [
           "key",
-          "configurationRevision"
+          "configurationRevision",
+          "implicit",
+          "provider",
+          "source",
+          "conversion",
+          "held"
         ],
         "properties": {
           "artifact": {
             "oneOf": [
               {
                 "$ref": "#/components/schemas/ArtifactSummary",
-                "description": "Selected validated artifact, retained after failed refreshes; null when no artifact is bound, including inline definitions."
+                "description": "Selected validated artifact, retained after failed refreshes; null when no content is bound."
               },
               {
                 "type": "null"
@@ -14743,20 +15068,46 @@ export const schemaDocument = {
             "$ref": "#/components/schemas/Revision",
             "description": "Current source revision owning this definition and resource view."
           },
-          "definition": {
+          "conversion": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/RuleSet",
-                "description": "Source declaration when included in the authorized resource scope; null when the scope does not expose it."
+                "$ref": "#/components/schemas/RuleSetConversion",
+                "description": "Conversion summary of the bound content; null when none is bound. The full skipped-entry list is `GET .../rule-sets/{ruleSetKey}/report`."
               },
               {
                 "type": "null"
               }
             ]
           },
+          "definition": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RuleSet",
+                "description": "Source declaration when included in the authorized resource scope; null for implicit sets or when the scope does not expose it."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "held": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RuleSetHeld",
+                "description": "The catalog holds an older artifact for this set; null otherwise."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "implicit": {
+            "type": "boolean",
+            "description": "Whether the set comes from a `<provider>:<name>` reference rather than a `ruleSets` declaration."
+          },
           "key": {
             "type": "string",
-            "description": "Rule-set key in the network configuration."
+            "description": "Rule-set key as routing rules reference it: a network `ruleSets` key, or `<provider>:<name>`."
           },
           "lastSuccessAt": {
             "type": [
@@ -14771,6 +15122,28 @@ export const schemaDocument = {
               {
                 "$ref": "#/components/schemas/ResourceProblem",
                 "description": "Last check failure or `not_ready` for missing initial remote content; null when no problem is recorded."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "provider": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RuleSetProviderView",
+                "description": "Catalog of an implicit set; null for declared sets."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RuleSetSourceView",
+                "description": "Provenance of the bound content; null when none is bound."
               },
               {
                 "type": "null"

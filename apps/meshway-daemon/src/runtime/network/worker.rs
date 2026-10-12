@@ -386,9 +386,10 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 // Same healthy content: Engine extends its own timer only. A
                 // degraded installation re-applies and reports below.
                 let same = !engine.degraded()
-                    && engine
-                        .desired()
-                        .is_some_and(|desired| desired.reference() == reference);
+                    && engine.desired().is_some_and(|desired| {
+                        desired.reference() == reference
+                            && desired.same_artifacts(&netmap.artifacts)
+                    });
                 if same {
                     // Same content: Engine extends its own timer only.
                     if engine.reconfig(Some(&netmap)).await.is_err() {

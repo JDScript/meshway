@@ -103,7 +103,12 @@ impl Decisions {
         if self.content != Some(reference) {
             *self = Self {
                 content: Some(reference),
-                compiler: Some(Arc::new(LocalCompiler::from_shared(netmap.netmap.clone()))),
+                // Content other than the desired one is judged without
+                // artifacts: rules naming a rule set are unavailable.
+                compiler: Some(Arc::new(LocalCompiler::from_shared(
+                    netmap.netmap.clone(),
+                    &Default::default(),
+                ))),
                 ..Default::default()
             };
         }

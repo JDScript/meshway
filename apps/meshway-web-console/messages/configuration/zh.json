@@ -569,5 +569,17 @@
   "configuration_transport_repeated_transport": "同一规则中重复列出了承载",
   "configuration_transport_retained_secret_unavailable": "这里没有已保存的值可保留（新建或重建的监听、改了协议或证书模式、托管证书改了 serverName），请写入实际值",
   "configuration_change_unread": "无法读取这一版的内容",
-  "configuration_history_count_more": "已读取 {count} 个版本，还有更早的"
+  "configuration_history_count_more": "已读取 {count} 个版本，还有更早的",
+  "configuration_ruleset_format_mihomo_domain_text": "mihomo 域名列表（文本）",
+  "configuration_ruleset_format_mihomo_ipcidr_text": "mihomo IP 段列表（文本）",
+  "configuration_ruleset_format_classical": "classical 规则（mihomo／Clash）",
+  "configuration_ruleset_problem_unknown_rule_set": "目录中没有此名称的规则集",
+  "configuration_ruleset_problem_rule_set_budget": "转换后的规则集超过 artifact 上限",
+  "configuration_ruleset_problem_signature_invalid": "目录签名无法用受信公钥验证",
+  "configuration_ruleset_problem_catalog_regressed": "目录比已接受的版本更旧",
+  "configuration_ruleset_problem_integrity_failed": "artifact 与目录条目不符",
+  "configuration_issue_invalid_rule_set_key": "规则集名称不能包含“:”（{key}）",
+  "configuration_issue_unknown_rule_set_provider": "未知或已禁用的规则集 provider {provider}",
+  "configuration_issue_invalid_rule_set_provider": "规则集 provider 声明无效（{field}）",
+  "configuration_issue_rule_set_partition_limit": "{key} 需要 {prefixes} 个地址前缀，超过出口方案可携带的 {max} 个；该源的出口不可用"
 }
