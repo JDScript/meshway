@@ -453,33 +453,85 @@ fn partition_limits(
     }
     for name in names {
         let summary = crate::compile::capture_summary(config, &sets, name);
-        let ranges = summary.managed_ipv4 as usize + summary.sink_ipv6 as usize;
-        let oversized = ranges > crate::compile::MAX_CAPTURE_RANGES
-            || summary.routes as usize > crate::compile::MAX_CAPTURE_ROUTES;
-        // The computation itself ran out of its budget: no counts exist, the
-        // Node fails closed all the same.
-        let exhausted = !oversized
-            && summary.unavailable
-                == Some(meshway_configuration::execution::UnavailableReason::RoutingLimit);
-        if !oversized && !exhausted {
-            continue;
-        }
         let path = if config.routing.egress.profiles.contains_key(name) {
             format!("/routing/egress/profiles/{}", pointer(name))
         } else {
             "/routing/egress/rules".to_owned()
         };
-        let issue =
-            ConfigurationIssue::new(path, IssueCode::EgressPartitionLimit).with("profile", name);
-        check.warn(if exhausted {
-            issue.with("work", crate::compile::MAX_CAPTURE_WORK)
-        } else {
+        if let Some(issue) = limit_warning(path, name, &summary) {
+            check.warn(issue);
+        }
+    }
+}
+
+/// The `egress_partition_limit` warning of one profile: its counts beyond
+/// the node-side limits, or only the work budget when the computation ran
+/// out of it (then no counts exist; the Node fails closed all the same).
+fn limit_warning(
+    path: String,
+    name: &str,
+    summary: &meshway_configuration::evaluation::CaptureSummary,
+) -> Option<ConfigurationIssue> {
+    let ranges = summary.managed_ipv4 as usize + summary.sink_ipv6 as usize;
+    let oversized = ranges > crate::compile::MAX_CAPTURE_RANGES
+        || summary.routes as usize > crate::compile::MAX_CAPTURE_ROUTES;
+    let exhausted = summary.unavailable
+        == Some(meshway_configuration::execution::UnavailableReason::RoutingLimit);
+    let issue =
+        ConfigurationIssue::new(path, IssueCode::EgressPartitionLimit).with("profile", name);
+    if oversized {
+        Some(
             issue
                 .with("ranges", ranges)
                 .with("maxRanges", crate::compile::MAX_CAPTURE_RANGES)
                 .with("routes", summary.routes)
-                .with("maxRoutes", crate::compile::MAX_CAPTURE_ROUTES)
-        });
+                .with("maxRoutes", crate::compile::MAX_CAPTURE_ROUTES),
+        )
+    } else if exhausted {
+        Some(issue.with("work", crate::compile::MAX_CAPTURE_WORK))
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod limit_tests {
+    use super::*;
+    use meshway_configuration::{evaluation::CaptureSummary, execution::UnavailableReason};
+
+    #[test]
+    fn an_exhausted_work_budget_warns_without_counts_and_other_failures_do_not() {
+        let summary = |n: u32, unavailable| CaptureSummary {
+            managed_ipv4: n,
+            sink_ipv6: n,
+            routes: n,
+            unavailable,
+        };
+        // A computation over its work budget reports the fail-closed 1/1/1.
+        let exhausted = limit_warning(
+            "/p".into(),
+            "work",
+            &summary(1, Some(UnavailableReason::RoutingLimit)),
+        )
+        .unwrap();
+        assert_eq!(
+            exhausted.params.get("work").map(String::as_str),
+            Some(crate::compile::MAX_CAPTURE_WORK.to_string().as_str())
+        );
+        assert!(!exhausted.params.contains_key("ranges"));
+        let oversized = limit_warning(
+            "/p".into(),
+            "work",
+            &summary(17_000, Some(UnavailableReason::RoutingLimit)),
+        )
+        .unwrap();
+        assert_eq!(
+            oversized.params.get("ranges").map(String::as_str),
+            Some("34000")
+        );
+        for unavailable in [None, Some(UnavailableReason::MissingDependency)] {
+            assert!(limit_warning("/p".into(), "work", &summary(1, unavailable)).is_none());
+        }
     }
 }
 
