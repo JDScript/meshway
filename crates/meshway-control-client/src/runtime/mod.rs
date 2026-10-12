@@ -47,6 +47,35 @@ impl<P> fmt::Display for ClientError<P> {
 }
 impl<P> std::error::Error for ClientError<P> {}
 
+/// A transport failure keeps only its class. The debug event names that
+/// class and the innermost I/O error kind, never the URL, headers or body.
+fn network<P>(error: &(dyn std::error::Error + 'static), status: Option<u16>) -> ClientError<P> {
+    let mut stage = "other";
+    let mut io = None;
+    let mut current = Some(error);
+    while let Some(error) = current {
+        if let Some(error) = error.downcast_ref::<reqwest::Error>() {
+            stage = if error.is_timeout() {
+                "timeout"
+            } else if error.is_connect() {
+                "connect"
+            } else if error.is_body() {
+                "body"
+            } else if error.is_request() {
+                "request"
+            } else {
+                stage
+            };
+        }
+        if let Some(error) = error.downcast_ref::<std::io::Error>() {
+            io = Some(error.kind());
+        }
+        current = error.source();
+    }
+    tracing::debug!(stage, io = ?io, status, "Control HTTP transport failed");
+    ClientError::Network { status }
+}
+
 /// Start a caller-owned HTTP builder with Meshway's explicit ring provider and
 /// platform certificate verification. Socket protection, proxy policy and
 /// deadlines remain the caller's responsibility. For managed certificate trust,
@@ -226,7 +255,7 @@ impl Client {
         let response = request
             .send()
             .await
-            .map_err(|_| ClientError::Network { status: None })?;
+            .map_err(|error| network(&error, None))?;
         Response::read(response, self.limit).await
     }
 
@@ -246,7 +275,7 @@ impl Client {
         let response = request
             .send()
             .await
-            .map_err(|_| ClientError::Network { status: None })?;
+            .map_err(|error| network(&error, None))?;
         Response::read_media(response, self.limit, Some(media)).await
     }
 
@@ -308,7 +337,7 @@ impl Client {
         let response = request
             .send()
             .await
-            .map_err(|_| ClientError::Network { status: None })?;
+            .map_err(|error| network(&error, None))?;
         let status = response.status().as_u16();
         if status != contract.success_status {
             return Err(if contract.error_statuses.contains(&status) {
@@ -391,9 +420,7 @@ impl Response {
         let mut stream = response.bytes_stream();
         let mut bytes = Vec::new();
         while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|_| ClientError::Network {
-                status: Some(status),
-            })?;
+            let chunk = chunk.map_err(|error| network(&error, Some(status)))?;
             if chunk.len() > limit.saturating_sub(bytes.len()) {
                 return Err(limit_error(status));
             }
