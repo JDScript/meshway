@@ -2,6 +2,31 @@
 
 按合入 main 的顺序记录工作包、提交与证据 ID。规则见[工程流程](/v2/process)；性能数字的口径见[分层性能测量](/v2/node/performance)，验收状态见[验收范围](/v2/node/validation)。
 
+## 未发布
+
+wire 6、IPC 8、`compilerVersion` 不变；Server schema 版本 5（新增 `rule_set_record_heads`；开发环境重新初始化数据目录）。HTTP 契约：`SyncRequest` 新增可省略的 `lease`。alpha.4 代码审阅修复（F4a）：
+
+- A1 `POST /agent-api/v1/dns-associations` 接纳前对条目执行与 overlay 相同的校验（`DnsAssociation::validate`：名称／CNAME 为 1–253 B ASCII 小写等），非法条目 400 `invalid_request`，不再让源与出口的 `sync` 持续内部错误。
+- A2 出口 overlay 容量在接纳时对源与出口统一预算：任一方未到期条目将超过 4,096 即 429 `state_limit`；交付时不再截断单方副本；源换出口时唤醒原出口。
+- A3 规则集 FST 输入索引按完整转移（input、output、target）校验，交换共享目标的表项不再把 exact 读成 suffix。
+- A4 删除 `meshway-rules` 的 mmap 后端与 `memmap2`，artifact 只读入堆校验；workspace 零 `unsafe`（`meshway-rules` 使用 workspace lints）；Control 有界读取 0400 缓存文件；`perf:rules` 报告删去 mapped 列。
+- A5 规则集转换与目录校验由 `Downloads` 内唯一有界 worker owner 执行：每个任务持有预算至结束（取消或超时的获取不释放），`App::shutdown` join 全部已开始任务。
+- A6 同 digest 的刷新更新当前记录（新表 `rule_set_record_heads`：目录 sequence、upstream、held、报告），`rule_set_records` 保持不可变首次溯源。
+- A7 路径检测对外部目的在源无分割（`capture.unavailable`）时给出 `unavailable`，与节点判定一致。
+- A8 `sync` 挂起只按请求 `lease`（节点实际持有、经其验签的租约）计算，且仅当它是本进程最近签发给该节点的 8 份之一；省略或不可核验即立即回答，回复生成后丢失再重试不再越过节点租约。Control 每个请求带上已发布租约。
+- A9 出口分割计算耗尽工作预算时也给出 `egress_partition_limit`（`params.profile`／`work`），与计数超限区分。
+- A10 所有分页游标共用 `crate::cursor` 封装（作用域绑定、期限为列表首页起 15 分钟、后续页不续期）；目录游标绑定目录 URL、可信钥集合、collection、sequence 与已验签原文 digest。
+- B1 名称规则决定的回答若含任一关联无法完整覆盖的公网地址（超过 16 个、不在 CNAME 链终点、链成环或超过 8 跳），出口不完成任务，源立即 SERVFAIL，不再截取前 16 个验证。
+- B2 关联截止在应用时固定为与租约同一时钟的单调 deadline，墙钟回拨不再推迟。
+- B3 关联到期时，本节点仍存活、经出口建立的流的目的地址留在捕获中直至这些流退役（`Desired::retaining`、Policy `retained_capture`、`SecureNode::exit_destinations`），已建立流不再从物理网卡绕过出口；`exit/off` 第 10 阶段新增跨关联到期的 TCP／UDP 持有流检查。
+- B4 同内容不同关联的 offer 作为 Desired 变化应用：结果写入状态报告，失败按重试处理。
+- B5 只有租约到期或撤回才停止诊断，关联到期不再停止。
+- B6 offer 去重键包含 DNS 关联 overlay（含 Some→None）。
+- B7 `Directory::remove_staging` 接受经校验的 0600／0400 两态 staging 文件，Control artifact 回收失败写日志。
+- B8 IPC `NetmapStatus.capture` 由最终安装的捕获计算（含关联与保留地址），关联变化或到期后更新。
+- B9 同一次启动内仍持有资源的其他版本 egress journal 以专用错误（文件名、版本、先用旧版本 `meshway down` 再升级）阻止启动；已 down 或其他启动的记录照旧归档。
+- 文档：`dataplane.md` 出口投影截止改为流 idle 与 circuit 生命期、随租约与角色 generation；`execution.md` 改为节点已消费 `sync`。
+
 ## v0.1.0-alpha.4
 
 wire 6 不变；IPC 升为 8；`compilerVersion` 升为 `meshway-netmap-2`；Server schema 版本 4（开发环境重新初始化数据目录）。HTTP 契约：新增 `GET /agent-api/v1/artifacts/{digest}`、`POST /agent-api/v1/dns-associations`（`reportDnsAssociation`）、规则集 `report`／`entries`／`match` 与 `rule-set-catalog` 端点；配置新增 `ruleSetProviders` 与 `<provider>:<name>` 引用；netmap `ruleSets` 改为 digest 引用，`EgressPlan` 改为 `{generation, rules, fallback, unavailable}`（删除 `capture`／`routes`／`EgressRoute`）；`SyncRequest`／`SyncResponse` 增加 `associations`；`RuleSetView`、`ArtifactSummary`、`PreparedRuleSet`、`ResourceProblem` 与警告 `egress_partition_limit` 按下列 R2a、R2c、X6、R3 变化。
