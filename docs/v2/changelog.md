@@ -4,9 +4,12 @@
 
 ## 未发布
 
-wire 6、`meshway-netmap-1` 不变；IPC 升为 7；HTTP 契约新增可选 `NodeState.exitDns`、`leaveNode`，删除 `ExitUnavailableReason.dnsUnavailable`。
+wire 6、`meshway-netmap-1` 不变；IPC 升为 7；HTTP 契约新增可选 `NodeState.exitDns`、`leaveNode`，删除 `ExitUnavailableReason.dnsUnavailable`；`ConfigurationSourceResponse.configuration` 改为可编辑文档（`NetworkConfigurationInput`），listener 秘密字段为 `ListenerSecret`。
 
 - CLI（C2）：`meshway logout` 经新 Node 端点 `POST /agent-api/v1/leave` 让 Server 以管理员删除的同一事务永久删除本节点，确认后本机清除身份与 netmap／peer 事实缓存并下线，Server 不可达或拒绝时不变，见 [自助注销](/v2/configuration-reference/nodes#node-self-leave)。`meshway netcheck` 一次有界地复用 Manager 的同 socket STUN 观测与控制客户端，报告映射、端口保持／端点相关性、STUN 与 Server 往返，见 [netcheck](/v2/node/diagnostics#netcheck)。`meshway status` 先显示本节点摘要，再列 peers（direct／relay／idle／unreachable／offline、承载、远端、最近一次测量 RTT），IPC Status 新增 `node`／`peers`。`meshway ping` 每探测一行、末行汇总，preparing 只在 `-v` 下显示。颜色与表格线只用于无 `NO_COLOR` 的 TTY；所有命令有 `--json`；读端关闭时静默退出。IPC 7：`Logout`、`Netcheck`、`ResultBody::Netcheck`，见 [CLI 与 IPC](/v2/node/runtime#cli-与-ipc)。
+- 配置秘密（S2）：`GET /configuration/source`（含历史 revision）不再返回已保存的 VLESS `uuid`、Trojan `password` 与 TLS `privateKey`：`configuration` 是完整规范值的可编辑文档、`sourceJsonc` 是注释不变的原文，二者都以 `{"retained": true}` 表示这些值；证书照常显示。原样提交标记保持同一 listener 的已保存值，没有可保持的值（新建／删除再创建、改协议或 mode、managed 改 serverName）时为 422 `retained_secret_unavailable`；显式值照常完整校验。见[秘密保留标记](/v2/configuration-reference/editing#secret-retained-marker)。
+- 注销意图（S2）：`meshway logout` 先把意图写入 `control.json`，Server 确认或此后拒绝该身份（旧 session `401` 后新认证得 `403 node_identity_rejected`）即完成本机清除；没有回答时保持新 phase `leaving` 按 1–15 秒退避重试、重启后继续，期间 `up`／`rotate-key` 返回 `ErrorCode::Leaving`，只有 `up --enrollment-key` 覆盖；`403 permission_denied`／`422` 撤回意图。lab 一次性第四节点以容器内 nft 丢弃回答实测收敛。见[自助注销](/v2/configuration-reference/nodes#node-self-leave)。
+- 测试：`keepalive_edge_is_resident_without_interest` 偶发失败是测试取到了随后按 rank 被双向拨号收敛替换的入站 channel（Manager 行为正确）；改为等待两端持有同一收敛 channel，50 次 0 失败。
 - 删除不再生产的 `ExitUnavailableReason::DnsUnavailable`；出口 resolver 不可用只见 [exitDns](/v2/state-reference#exitdns)。
 
 - 单出口 DNS（X5）：源节点方案使用单一出口时，普通查询在解析前经完整获准路径上的 DNS circuit 交给出口，由出口机器的系统 resolver 解析并沿原路径回答；MagicDNS 本地回答，`useWithExit` split 解析器按其本机 direct／unmanaged 路由；出口能力事实非 ready、出口上游不可用或回答失败时查询失败，从不回落到源节点本机上游。resolved 后端经其代理 stub `127.0.0.54` 保留按链路／后缀选上游，会回到本节点 DNS 的名称与含本地 stub／锚点／Mesh 地址的服务器清单使出口查询不可用；文件后端使用记录的原 nameserver。行为见 [出口 resolver](/v2/node/dataplane#exit-resolver)。
