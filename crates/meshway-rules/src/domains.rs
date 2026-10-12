@@ -436,14 +436,68 @@ pub(crate) struct Keys<'a> {
 }
 
 impl<'a> Keys<'a> {
-    pub(crate) fn new(fst: Fst<'a>) -> Self {
-        let stack = fst.root().map(|n| (n, 0, 0)).into_iter().collect();
-        Self {
+    /// Keys starting with `prefix` and, when `after` is given, strictly
+    /// greater than it, in ascending order. The walk starts at `after`
+    /// instead of skipping the keys before it.
+    pub(crate) fn range(fst: Fst<'a>, prefix: &[u8], after: Option<&[u8]>) -> Self {
+        let empty = Self {
             fst,
-            stack,
+            stack: vec![],
             key: vec![],
-            emitted_root: false,
+            emitted_root: true,
+        };
+        let Some(mut node) = fst.root() else {
+            return empty;
+        };
+        let mut sum = 0u64;
+        for b in prefix {
+            let Some((t, next)) = fst
+                .find(&node, *b)
+                .and_then(|t| Some((t, fst.node(t.target)?)))
+            else {
+                return empty;
+            };
+            sum = sum.wrapping_add(t.output);
+            node = next;
         }
+        let mut keys = Self {
+            fst,
+            stack: vec![(node, 0, sum)],
+            key: prefix.to_vec(),
+            emitted_root: false,
+        };
+        let Some(after) = after else {
+            return keys;
+        };
+        let Some(rest) = after.strip_prefix(prefix) else {
+            // Every key under `prefix` is on one side of `after`.
+            return if after < prefix { keys } else { empty };
+        };
+        // The prefix node and every node on the way to `after` are not
+        // greater than it; resume each level after `after`'s byte.
+        keys.emitted_root = true;
+        for &b in rest {
+            let Some(top) = keys.stack.last_mut() else {
+                break;
+            };
+            let (node, sum) = (top.0, top.2);
+            let mut i = 0;
+            while fst.transition(&node, i).is_some_and(|t| t.input < b) {
+                i += 1;
+            }
+            let child = fst
+                .transition(&node, i)
+                .filter(|t| t.input == b)
+                .and_then(|t| Some((t, fst.node(t.target)?)));
+            let Some((t, child)) = child else {
+                top.1 = i;
+                break;
+            };
+            top.1 = i + 1;
+            keys.key.push(b);
+            keys.stack.push((child, 0, sum.wrapping_add(t.output)));
+        }
+        keys
     }
 }
 
@@ -453,9 +507,9 @@ impl Iterator for Keys<'_> {
     fn next(&mut self) -> Option<Self::Item> {
         if !self.emitted_root {
             self.emitted_root = true;
-            let (root, _, _) = self.stack.first()?;
+            let (root, _, sum) = self.stack.first()?;
             if root.is_final {
-                return Some((vec![], root.final_output));
+                return Some((self.key.clone(), sum.wrapping_add(root.final_output)));
             }
         }
         loop {
@@ -529,9 +583,21 @@ mod tests {
             for p in &probes {
                 prop_assert_eq!(lookup(&ours, p), theirs.get(p));
             }
-            let walked: Vec<(Vec<u8>, u64)> = Keys::new(ours).collect();
-            let expected: Vec<(Vec<u8>, u64)> = keys.into_iter().collect();
+            let walked: Vec<(Vec<u8>, u64)> = Keys::range(ours, &[], None).collect();
+            let expected: Vec<(Vec<u8>, u64)> = keys.clone().into_iter().collect();
             prop_assert_eq!(walked, expected);
+            for prefix in probes.iter().take(8) {
+                for after in [None].into_iter().chain(probes.iter().take(8).map(Some)) {
+                    let walked: Vec<(Vec<u8>, u64)> =
+                        Keys::range(ours, prefix, after.map(Vec::as_slice)).collect();
+                    let expected: Vec<(Vec<u8>, u64)> = keys
+                        .iter()
+                        .filter(|(k, _)| k.starts_with(prefix) && after.is_none_or(|a| *k > a))
+                        .map(|(k, v)| (k.clone(), *v))
+                        .collect();
+                    prop_assert_eq!(walked, expected, "prefix {:?} after {:?}", prefix, after);
+                }
+            }
         }
     }
 
