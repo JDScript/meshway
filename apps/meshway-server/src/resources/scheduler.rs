@@ -52,12 +52,12 @@ impl Scheduler {
                 tokio::select! { biased; _ = cancellation.cancelled() => break, _ = tokio::time::sleep(SCAN_PERIOD) => {} }
                 if tokio::time::Instant::now() >= collect_at {
                     collect_at += COLLECT_PERIOD;
-                    let sealer = Arc::clone(&provider.sealer);
+                    let owner = provider.clone();
                     let collected = tokio::select! {
                         biased;
                         _ = cancellation.cancelled() => break,
                         collected = handle.write(move |tx| {
-                            super::artifacts::collect(tx, &sealer, Utc::now().timestamp_millis())
+                            super::artifacts::collect(tx, &owner.sealer, Utc::now().timestamp_millis())
                         }) => collected,
                     };
                     match collected {
