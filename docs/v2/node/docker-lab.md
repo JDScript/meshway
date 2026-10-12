@@ -131,4 +131,4 @@ mise run node:lab stop
 
 可在 machine 内用 network namespace 构造额外 Node（独立 `--data-dir`、私有 mount namespace 中的 `/etc`），例如经端口保持型 masquerade 只能单向拨入 machine 的 LAN Node。它们的 nft 表、namespace 与数据目录由验收脚本命名并精确清理；不修改 machine 默认 namespace 中未知归属的规则。
 
-该 machine 与 lab 容器之间的 UDP 路径不可用于承载稳定性验收：OrbStack 在容器→machine 的同一 UDP 流上从第 3 个报文起每隔一个丢弃一个（不运行 Meshway 时实测 20 个报文到达 9–11 个，每报文新 socket 时全部到达），Native UDP 健康 Pong 因而确定性丢失。该边上的通道重建与丢包是环境承载失败；单向 NAT 稳定性在 machine 内的 namespace 拓扑上验收，见[通道稳定性](/v2/node/connectivity#channel-stability)。TCP 承载不受此影响。原始记录位于私有目录 `.meshway/node-lab/s1/`、`.meshway/node-lab/f3/`。
+该 machine 与 lab 容器之间的路径在 **OrbStack 2.2.4 之前**有两个缺陷：容器→machine 的同一 UDP 流从第 3 个报文起每隔一个丢弃一个（不运行 Meshway 时实测 20 个报文到达 9–11 个，每报文新 socket 时全部到达），Native UDP 健康 Pong 因而确定性丢失、通道每 4–9 s 重建；TCP 小包请求／应答每次往返约 200 ms（延迟 ACK 定时器，吞吐不受影响）。2026-10-12 升级到 OrbStack 2.2.4 后同一裸测 UDP 20/20 到达、TCP 往返 ≤1 ms，`meshway ping` lax→machine 经 VLESS 0.3–1.0 ms 零丢包，该边恢复为可用承载。单向 NAT 稳定性的正式证据仍以 machine 内的 namespace 拓扑为准，见[通道稳定性](/v2/node/connectivity#channel-stability)。原始记录位于私有目录 `.meshway/node-lab/s1/`、`.meshway/node-lab/f3/`。

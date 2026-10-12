@@ -168,7 +168,7 @@ Manager→SecureNode owner 的 circuit 控制／诊断帧和 lifecycle 事件另
 
 拨号方每次获取使用新的本地 socket，因此重建后的通道在监听端表现为新的源端口；源端口持续变化说明通道在反复失效，不是刷新本身引起的。
 
-实测（2026-10-11，F3，`v0.1.0-alpha.1-14-g5b67b257`）：在常驻 systemd VM 内用 network namespace 与端口保持型 masquerade 构造只能单向拨入的 Native UDP 边（监听端 dialers 关闭），100 次 `meshway ping` 与 100 次 OS ping 全部回复，100 个样本使用同一 link ID 与源端口，拨号侧 102 秒内（跨越多个 STUN 节拍与健康探测周期）没有通道转移。同一 VM 与 OrbStack Docker 容器之间的边每 6–17 秒重建，原因是该环境的 UDP 路径在同一流上每隔一个报文丢弃一个（无 Meshway 时同样存在），健康 Pong 因而确定性丢失，属于真实承载失败；该环境不能作为 Native UDP 稳定性证据，见[常驻 systemd 验收 VM](/v2/node/docker-lab#systemd-vm)。
+实测（2026-10-11，F3，`v0.1.0-alpha.1-14-g5b67b257`）：在常驻 systemd VM 内用 network namespace 与端口保持型 masquerade 构造只能单向拨入的 Native UDP 边（监听端 dialers 关闭），100 次 `meshway ping` 与 100 次 OS ping 全部回复，100 个样本使用同一 link ID 与源端口，拨号侧 102 秒内（跨越多个 STUN 节拍与健康探测周期）没有通道转移。同一 VM 与 OrbStack Docker 容器之间的边当时每 6–17 秒重建，原因是 OrbStack 2.2.4 之前容器→machine 的 UDP 路径在同一流上每隔一个报文丢弃一个（无 Meshway 时同样存在），健康 Pong 因而确定性丢失，属于真实承载失败；OrbStack 2.2.4 已修复（2026-10-12 实测 `meshway ping` 0.3–1.0 ms 零丢包），见[常驻 systemd 验收 VM](/v2/node/docker-lab#systemd-vm)。
 
 ## 路径选择
 

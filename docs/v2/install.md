@@ -163,7 +163,7 @@ tag `v*` 触发 `.github/workflows/release.yml`：
 | `systemctl stop systemd-resolved`（`v0.1.0-alpha.1`） | 系统与 Mesh 解析均失败（fail closed），数据面撤回；`start` 后不恢复，重启机器后恢复 |
 | `--uninstall`（保留身份）／`--purge` | `down` 后停止并删除服务；无 meshwayd 进程、TUN、DNS 锚点、私有 RPDB 规则或 resolved 链路，`/run/meshway`、unit 与二进制删除，`/var/lib/meshway` 与 `/etc/meshway` 保留；`--purge` 后上述目录与 unit drop-in 均不存在 |
 
-lab 对端 `meshway-lax` 位于 OrbStack Docker bridge 后（对 machine 单向 NAT），只能由 lax 拨入；该边上 lax 每 4–9 s 换一个源端口重新建立 Native UDP 通道，`meshway ping` 与 OS ping 有 60–80% 丢包。原因是 OrbStack 的容器→machine UDP 路径本身：不运行 Meshway 时，同一 UDP 流的第 3 个起每隔一个报文在到达 machine 前被丢弃（每个报文换新 socket 则全部到达），因此监听端的健康 Pong 被确定性丢弃，通道按[健康窗口](/v2/node/transport#邻接管理)正确退役。同一单向拓扑在 machine 内用 network namespace 与端口保持型 masquerade 重建后无此现象，见[通道稳定性](/v2/node/connectivity#channel-stability)。原始记录位于仓库私有目录 `.meshway/node-lab/s1/`、`.meshway/node-lab/f3/`。
+lab 对端 `meshway-lax` 位于 OrbStack Docker bridge 后（对 machine 单向 NAT），只能由 lax 拨入；该边上 lax 每 4–9 s 换一个源端口重新建立 Native UDP 通道，`meshway ping` 与 OS ping 有 60–80% 丢包。原因是当时 OrbStack（< 2.2.4）的容器→machine UDP 路径本身：不运行 Meshway 时，同一 UDP 流的第 3 个起每隔一个报文在到达 machine 前被丢弃（每个报文换新 socket 则全部到达），因此监听端的健康 Pong 被确定性丢弃，通道按[健康窗口](/v2/node/transport#邻接管理)正确退役。同一单向拓扑在 machine 内用 network namespace 与端口保持型 masquerade 重建后无此现象；OrbStack 2.2.4 修复了该路径（2026-10-12 实测零丢包），见[通道稳定性](/v2/node/connectivity#channel-stability)。原始记录位于仓库私有目录 `.meshway/node-lab/s1/`、`.meshway/node-lab/f3/`。
 
 2026-10-11 第二轮（F3，分支 `f3/service-fixes`，本地构建 `v0.1.0-alpha.1-14-g5b67b257`，`install.sh --artifact` 原地升级，保留身份；machine 为常驻 `meshway-vm`，见[常驻 systemd 验收 VM](/v2/node/docker-lab#systemd-vm)）：
 
