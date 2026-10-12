@@ -28,6 +28,9 @@ pub(super) enum Command {
         context: DiscoveryContext,
         server: String,
         targets: Vec<SocketAddr>,
+        /// A local diagnostic asked for this round: also probe the path
+        /// size toward each target.
+        size_probe: bool,
     },
     Reserve {
         offer: ValidatedOffer,
@@ -385,6 +388,14 @@ async fn run_content(
             // A live discovery context already authorizes same-socket STUN;
             // metadata is queried only when none is usable. New content or
             // sockets drop this context; query admission keeps its budget.
+            // Rounds a local diagnostic asked for, before they are recorded.
+            let probed: Vec<[u8; 32]> = due
+                .iter()
+                .filter(|id| {
+                    requested.is_some_and(|at| rounds.get(*id).is_none_or(|round| round.sent < at))
+                })
+                .copied()
+                .collect();
             let observation_query = !due.is_empty()
                 && context
                     .as_ref()
@@ -515,6 +526,7 @@ async fn run_content(
                                             context: context.clone(),
                                             server: server.id.clone(),
                                             targets,
+                                            size_probe: probed.contains(id),
                                         });
                                     }
                                 }

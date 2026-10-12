@@ -126,6 +126,31 @@ impl Proxy {
     }
 }
 
+/// Happy Eyeballs (RFC 8305): a connection attempt that has not completed
+/// after this delay does not hold back the next address.
+const ATTEMPT_DELAY: Duration = Duration::from_millis(250);
+
+/// The resolver's order with address families alternating, starting with
+/// the family of its first answer: an unusable family (no route, or a
+/// blackhole that only times out) cannot delay the other.
+fn interleave(addresses: Vec<std::net::SocketAddr>) -> Vec<std::net::SocketAddr> {
+    let first_v6 = addresses.first().is_some_and(|address| address.is_ipv6());
+    let (mut v6, mut v4): (std::collections::VecDeque<_>, std::collections::VecDeque<_>) =
+        addresses.into_iter().partition(|address| address.is_ipv6());
+    let mut ordered = Vec::with_capacity(v6.len() + v4.len());
+    let mut take_v6 = first_v6;
+    while !v6.is_empty() || !v4.is_empty() {
+        let next = if take_v6 {
+            v6.pop_front().or_else(|| v4.pop_front())
+        } else {
+            v4.pop_front().or_else(|| v6.pop_front())
+        };
+        ordered.extend(next);
+        take_v6 = !take_v6;
+    }
+    ordered
+}
+
 async fn relay(
     local: UnixStream,
     host: &str,
@@ -155,26 +180,28 @@ async fn relay_current(
     let scope = shared.bootstrap();
     let establish = async {
         let addresses = resolver.resolve(host, port).await?;
+        let (options, tcp) = (Default::default(), Default::default());
+        let connect = |address| connect_tcp(scope.clone(), address, None, &options, &tcp, timeout);
+        let mut queue = interleave(addresses).into_iter();
+        let mut attempts = futures_util::stream::FuturesUnordered::new();
+        attempts.extend(queue.next().map(connect));
         let mut last = Error::Resolver;
-        for address in addresses {
-            match connect_tcp(
-                scope.clone(),
-                address,
-                None,
-                &Default::default(),
-                &Default::default(),
-                timeout,
-            )
-            .await
-            {
-                Ok(stream) => return Ok(stream),
-                Err(error) => {
-                    scope.check()?;
-                    if !matches!(error, Error::Io(_)) {
-                        return Err(error);
+        while !attempts.is_empty() {
+            let stagger = tokio::time::sleep(ATTEMPT_DELAY);
+            tokio::select! { biased;
+                Some(result) = futures_util::StreamExt::next(&mut attempts) => match result {
+                    Ok(stream) => return Ok(stream),
+                    Err(error) => {
+                        scope.check()?;
+                        // Protection/capacity failures are terminal, never a retry without protection.
+                        if !matches!(error, Error::Io(_)) {
+                            return Err(error);
+                        }
+                        last = error;
+                        attempts.extend(queue.next().map(connect));
                     }
-                    last = error;
-                }
+                },
+                _ = stagger, if queue.len() != 0 => attempts.extend(queue.next().map(connect)),
             }
         }
         Err(last)
@@ -264,6 +291,37 @@ impl Drop for Proxy {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn families_alternate_from_the_resolvers_first_answer() {
+        let addresses = |list: &[&str]| -> Vec<std::net::SocketAddr> {
+            list.iter()
+                .map(|address| address.parse().unwrap())
+                .collect()
+        };
+        assert_eq!(
+            super::interleave(addresses(&[
+                "[2001:db8::1]:443",
+                "[2001:db8::2]:443",
+                "192.0.2.1:443",
+                "192.0.2.2:443",
+            ])),
+            addresses(&[
+                "[2001:db8::1]:443",
+                "192.0.2.1:443",
+                "[2001:db8::2]:443",
+                "192.0.2.2:443",
+            ])
+        );
+        assert_eq!(
+            super::interleave(addresses(&[
+                "192.0.2.1:443",
+                "192.0.2.2:443",
+                "[2001:db8::1]:443"
+            ])),
+            addresses(&["192.0.2.1:443", "[2001:db8::1]:443", "192.0.2.2:443"])
+        );
+        assert!(super::interleave(Vec::new()).is_empty());
+    }
 
     fn directory() -> (tempfile::TempDir, Directory, PathBuf, std::fs::Metadata) {
         let root = tempfile::tempdir().unwrap();

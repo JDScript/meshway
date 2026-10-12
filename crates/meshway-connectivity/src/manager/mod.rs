@@ -35,7 +35,7 @@ mod tests;
 mod traversal;
 mod workers;
 pub use interest::{AdjacencyInterest, Interest};
-pub use probe::{SocketObservation, StunProbe, StunReport, StunSample};
+pub use probe::{SizeProbe, SocketObservation, StunProbe, StunReport, StunSample};
 
 // Diagnostics only: at most 64 events/second and 32768/process; contention drops
 // a diagnostic rather than delaying an owner or changing a selection decision.
@@ -135,6 +135,27 @@ pub struct LinkFact {
     pub peer_boot: crate::Boot,
 }
 
+/// Size limits of one selected Native UDP channel. `path` is the outer path
+/// MTU its socket's route toward the remote knows (a smaller PMTU once ICMP
+/// taught it); every outer datagram carries DF. `inner` is the largest inner
+/// IP packet one Data frame carries without exceeding it: `path` minus the
+/// outer IP/UDP header (28 IPv4, 48 IPv6) and the fixed Data frame overhead.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LinkMtu {
+    pub path: u16,
+    pub inner: u16,
+}
+impl LinkMtu {
+    pub fn new(path: u16, ipv4: bool) -> Option<Self> {
+        let outer = if ipv4 { 28 } else { 48 } + meshway_dataplane::secure::DATA_FRAME_OVERHEAD;
+        let inner = usize::from(path).checked_sub(outer)?;
+        Some(Self {
+            path,
+            inner: u16::try_from(inner).ok()?,
+        })
+    }
+}
+
 /// The actual selected channel and transport admission boundary of a locally
 /// completed send. This does not assert remote receipt or authentication.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -150,6 +171,8 @@ pub struct Snapshot {
     pub sockets: Vec<SocketFact>,
     /// Admitted peers without a current channel: idle, or wanted but unreached.
     pub adjacencies: BTreeMap<NodeId, meshway_model::state::AdjacencyStatus>,
+    /// Size limits of selected Native UDP channels whose route MTU is known.
+    pub mtu: BTreeMap<NodeId, LinkMtu>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -230,6 +253,9 @@ impl LinkTable {
 /// Mechanism state shared by the Manager and its owners. `plans` holds the
 /// current desired content; owners read it when they act, and only the
 /// Manager's apply replaces it. Each owner has its own child `stop`.
+/// Route MTU by link ID, with the socket owning that channel.
+type PathMtus = BTreeMap<[u8; 32], ([u8; 32], u16)>;
+
 struct Shared {
     keys: DataPlaneKeys,
     plans: tokio::sync::watch::Sender<Arc<Plan>>,
@@ -246,6 +272,11 @@ struct Shared {
     stun_confirmed: Arc<Mutex<BTreeMap<[u8; 32], tokio::time::Instant>>>,
     /// Latest validated STUN answer of each socket per observer address.
     stun_samples: Arc<Mutex<probe::StunSamples>>,
+    /// Outer route MTU of each Native UDP channel by link ID, with the
+    /// socket owning it; that owner keeps only its own channels.
+    path_mtu: Arc<Mutex<PathMtus>>,
+    /// Latest DF size probe toward each observer.
+    size_probes: Arc<Mutex<BTreeMap<SocketAddr, probe::SizeProbe>>>,
     /// A local diagnostic asked every traversal socket to observe now.
     observation_request: Arc<Mutex<Option<tokio::time::Instant>>>,
     /// State socket generation of this Manager's descriptors.
@@ -281,6 +312,8 @@ impl Shared {
             sockets: self.sockets.clone(),
             stun_confirmed: self.stun_confirmed.clone(),
             stun_samples: self.stun_samples.clone(),
+            path_mtu: self.path_mtu.clone(),
+            size_probes: self.size_probes.clone(),
             observation_request: self.observation_request.clone(),
             generation: self.generation,
             traversal_endpoints: self.traversal_endpoints.clone(),
@@ -445,6 +478,8 @@ impl Manager {
             sockets: Arc::new(Mutex::new(BTreeMap::new())),
             stun_confirmed: Arc::default(),
             stun_samples: Arc::default(),
+            path_mtu: Arc::default(),
+            size_probes: Arc::default(),
             observation_request: Arc::default(),
             generation,
             traversal_endpoints: Arc::new(Mutex::new(BTreeMap::new())),
@@ -798,8 +833,22 @@ impl Manager {
                 )
             })
             .collect();
+        let path_mtu = self.shared.path_mtu.lock().map_err(|_| Error::Worker)?;
+        let mtu = links
+            .values()
+            .filter(|link| link.scope.check().is_ok())
+            .filter_map(|link| {
+                let (_, path) = path_mtu.get(&link.fact.id)?;
+                Some((
+                    link.fact.peer,
+                    LinkMtu::new(*path, link.fact.remote.is_ipv4())?,
+                ))
+            })
+            .collect();
+        drop(path_mtu);
         Ok(Snapshot {
             adjacencies,
+            mtu,
             listeners: self.listeners.clone(),
             sockets: self
                 .shared

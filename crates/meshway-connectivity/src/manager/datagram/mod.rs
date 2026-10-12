@@ -133,6 +133,8 @@ struct Owner {
     shared: Arc<Shared>,
     id: [u8; 32],
     local: SocketAddr,
+    /// The same endpoint the Session owns, read only for its route MTU.
+    path: Arc<dyn Datagram>,
     lifetime: Scope,
     sender: Arc<AsyncMutex<Sender>>,
     receiver: Option<Receiver>,
@@ -194,6 +196,7 @@ impl Owner {
 
     fn new(shared: Arc<Shared>, endpoint: Box<dyn Datagram>, id: [u8; 32]) -> Result<Self, Error> {
         let local = endpoint.local_addr()?;
+        let path: Arc<dyn Datagram> = Arc::from(endpoint);
         let lifetime = shared.scope(None, false);
         let limits = shared.limits.session;
         if limits.max_frame_bytes() < adjacency::MAX_MESSAGE {
@@ -213,7 +216,7 @@ impl Owner {
         .map_err(|_| Error::Limits)?;
         let (mut sender, receiver) = Session::datagram(
             scope::Datagram {
-                inner: endpoint,
+                inner: Box::new(path.clone()),
                 scope: shared.physical()?,
             },
             limits,
@@ -230,6 +233,7 @@ impl Owner {
             shared,
             id,
             local,
+            path,
             lifetime,
             sender: Arc::new(AsyncMutex::new(sender)),
             receiver: Some(receiver),
@@ -249,6 +253,24 @@ impl Owner {
 
     fn changed(&self) {
         let _ = self.shared.control_events.try_send(Event::Changed);
+    }
+
+    /// Read each channel's route MTU and drop entries of channels this owner
+    /// no longer has. A system call per channel, no packet.
+    fn measure_mtu(&self) {
+        let measured: Vec<_> = self
+            .channels
+            .iter()
+            .filter_map(|(remote, channel)| Some((channel.fact.id, self.path.path_mtu(*remote)?)))
+            .collect();
+        if let Ok(mut known) = self.shared.path_mtu.lock() {
+            known.retain(|id, (socket, _)| {
+                *socket != self.id || self.channels.values().any(|channel| channel.fact.id == *id)
+            });
+            for (id, mtu) in measured {
+                known.insert(id, (self.id, mtu));
+            }
+        }
     }
 
     fn selected(&self, channel: &Channel) -> bool {
@@ -319,7 +341,7 @@ impl Owner {
             self.authorization
                 .as_ref()
                 .ok_or(Error::Underlay)?
-                .authorize_channel(attempt, Arc::new(scope.clone()))?;
+                .authorize_channel(attempt, Arc::new(scope.clone()), remote)?;
         }
         let fact = LinkFact {
             id: transcript.id(),
@@ -373,6 +395,7 @@ impl Owner {
                 recovery: None,
             },
         );
+        self.measure_mtu();
         self.changed();
         Ok(true)
     }
@@ -439,6 +462,13 @@ impl Owner {
     }
 
     async fn tick(&mut self) -> Result<(), Error> {
+        if self
+            .channels
+            .values()
+            .any(|channel| Instant::now() >= channel.next_probe)
+        {
+            self.measure_mtu();
+        }
         self.stun_tick().await?;
         self.traversal_tick().await?;
         self.lifetime.check()?;
@@ -1317,6 +1347,9 @@ impl Owner {
 impl Drop for Owner {
     fn drop(&mut self) {
         self.lifetime.cancellation.cancel();
+        if let Ok(mut known) = self.shared.path_mtu.lock() {
+            known.retain(|_, (socket, _)| *socket != self.id);
+        }
         for attempt in self.traversal.values() {
             attempt.cancel();
         }
@@ -1594,6 +1627,8 @@ pub(in crate::manager) mod tests {
             sockets: Arc::new(Mutex::new(BTreeMap::new())),
             stun_confirmed: Arc::default(),
             stun_samples: Arc::default(),
+            path_mtu: Arc::default(),
+            size_probes: Arc::default(),
             observation_request: Arc::default(),
             generation,
             traversal_endpoints: Arc::new(Mutex::new(BTreeMap::new())),

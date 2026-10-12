@@ -58,7 +58,10 @@ impl ProtectedDatagram {
         scope.prepare_checked(&SockRef::from(&socket))?;
         meshway_transport::raw::apply_socket_options(&SockRef::from(&socket), options)?;
         scope.prepare_checked(&SockRef::from(&socket))?;
-        socket.bind(&local.into())?;
+        socket.bind(&local.into()).map_err(|source| Error::Bind {
+            address: local,
+            source,
+        })?;
         scope.prepare_checked(&SockRef::from(&socket))?;
         let endpoint = UdpTransport::adopt_batch(UdpSocket::from_std(socket.into())?, options)?;
         scope.prepare_checked(&SockRef::from(&endpoint))?;
@@ -156,6 +159,32 @@ impl Datagram for ProtectedDatagram {
     ) -> Poll<io::Result<DatagramRead>> {
         self.owned.wakers.read.register(cx.waker());
         self.with(|endpoint| endpoint.poll_recv_from(cx, bytes))
+    }
+
+    /// The route this descriptor's datagrams to `peer` take: a transient
+    /// socket with the same protection and local address, connected (which
+    /// sends nothing) only to read the route MTU, including a learned PMTU.
+    fn path_mtu(&self, peer: SocketAddr) -> Option<u16> {
+        if peer.is_ipv4() != self.local.is_ipv4() {
+            return None;
+        }
+        let probe = || -> Result<u16> {
+            let socket = Socket::new(Domain::for_address(peer), Type::DGRAM, Some(Protocol::UDP))?;
+            if peer.is_ipv6() {
+                socket.set_only_v6(true)?;
+            }
+            self.owned.scope.prepare_checked(&SockRef::from(&socket))?;
+            if !self.local.ip().is_unspecified() {
+                socket.bind(&SocketAddr::new(self.local.ip(), 0).into())?;
+            }
+            socket.connect(&peer.into())?;
+            self.owned.scope.prepare_checked(&SockRef::from(&socket))?;
+            Ok(meshway_transport::udp::connected_path_mtu(
+                &socket,
+                peer.is_ipv4(),
+            )?)
+        };
+        probe().ok()
     }
 }
 

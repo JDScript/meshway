@@ -6,6 +6,8 @@ use meshway_transport::SendLifetime;
 
 pub(super) const MAGIC: &[u8; 8] = b"MWTRV1\0\0";
 const HEADER: usize = 41;
+/// Sources one attempt may learn besides its offer recipient.
+const MAX_LEARNED: usize = 2;
 
 pub(super) struct Attempt {
     offer: ValidatedOffer,
@@ -19,8 +21,20 @@ pub(super) struct Attempt {
     total: u8,
     replacement: Replacement,
     completed: bool,
+    /// Sources of the peer's signed opening message other than the offer's
+    /// recipient (its NAT mapped this socket's destination to another port).
+    /// Proven by the signature only; the channel still needs the handshake.
+    learned: Vec<SocketAddr>,
 }
 impl Attempt {
+    fn registered(&self) -> Option<SocketAddr> {
+        meshway_control::connectivity::udp_recipient(&self.offer.peer().address).ok()
+    }
+    /// The offer recipient or a learned source of this attempt.
+    fn reaches(&self, remote: SocketAddr) -> bool {
+        self.registered() == Some(remote) || self.learned.contains(&remote)
+    }
+
     pub fn cancel(&self) {
         self.offer.cancel();
         if let Some(active) = &self.active {
@@ -110,7 +124,8 @@ impl Owner {
                 context,
                 server,
                 targets,
-            } => self.discover(context, server, targets),
+                size_probe,
+            } => self.discover(context, server, targets, size_probe),
             Command::Reserve { offer, reply } => {
                 if reply.is_closed() {
                     return Ok(());
@@ -237,6 +252,7 @@ impl Owner {
                 total: 0,
                 replacement,
                 completed: false,
+                learned: Vec::new(),
             },
         );
         Ok(())
@@ -272,22 +288,22 @@ impl Owner {
                 continue;
             }
             attempt.total += 1;
-            let remote =
-                meshway_control::connectivity::udp_recipient(&attempt.offer.peer().address)
-                    .map_err(|_| Error::Configuration)?;
-            let lifetime = Arc::new(Lifetime {
+            let remote = attempt.registered().ok_or(Error::Configuration)?;
+            let lifetime: Arc<dyn SendLifetime> = Arc::new(Lifetime {
                 scope: self.lifetime.clone(),
                 active: active.clone(),
                 original: attempt.offer.clone(),
             });
-            let _ = send(
-                &self.sender,
-                lifetime,
-                attempt.offer.expires_at().into(),
-                remote,
-                attempt.output.clone(),
-            )
-            .await;
+            for remote in std::iter::once(remote).chain(attempt.learned.iter().copied()) {
+                let _ = send(
+                    &self.sender,
+                    lifetime.clone(),
+                    attempt.offer.expires_at().into(),
+                    remote,
+                    attempt.output.clone(),
+                )
+                .await;
+            }
         }
         Ok(())
     }
@@ -309,15 +325,21 @@ impl Owner {
             return Ok(());
         }
         let Some(id) = self.traversal.iter().find_map(|(id, attempt)| {
-            (attempt.offer.offer().digest.as_bytes().as_slice() == &bytes[8..40]
-                && meshway_control::connectivity::udp_recipient(&attempt.offer.peer().address).ok()
-                    == Some(remote))
-            .then_some(*id)
+            (attempt.offer.offer().digest.as_bytes().as_slice() == &bytes[8..40]).then_some(*id)
         }) else {
             return Ok(());
         };
         let mut attempt = self.traversal.remove(&id).ok_or(Error::Worker)?;
-        let result = self.traversal_message(&mut attempt, remote, bytes[40], &bytes[HEADER..]);
+        let (kind, body) = (bytes[40], &bytes[HEADER..]);
+        let result = if attempt.reaches(remote) {
+            self.traversal_message(&mut attempt, remote, kind, body)
+        } else {
+            match self.learn(&mut attempt, remote, kind, body) {
+                Ok(true) => self.traversal_message(&mut attempt, remote, kind, body),
+                Ok(false) => Ok(()),
+                Err(error) => Err(error),
+            }
+        };
         // Bad packets never consume a reservation or stop its valid retries.
         if attempt.offer.ensure_current().is_ok() {
             self.traversal.insert(id, attempt);
@@ -334,6 +356,52 @@ impl Owner {
             ) => Ok(()),
             result => result,
         }
+    }
+
+    /// A signed opening message of this attempt's peer from another source
+    /// than the offer recipient: an endpoint-dependent NAT gave the peer's
+    /// socket another port toward this one. The signature proves the peer;
+    /// the source only becomes one more recipient of this attempt's bounded
+    /// output. Same IP as the recipient, at most [`MAX_LEARNED`] per attempt.
+    fn learn(
+        &mut self,
+        attempt: &mut Attempt,
+        source: SocketAddr,
+        kind: u8,
+        body: &[u8],
+    ) -> Result<bool, Error> {
+        let Some(active) = attempt.active.clone() else {
+            return Ok(false);
+        };
+        let Some(registered) = attempt.registered() else {
+            return Ok(false);
+        };
+        let cfg = self.shared.plan();
+        let carrier = &attempt.offer.offer().carrier;
+        // The peer's opening kind: a responder punches (0), a dialer INITs (1).
+        let opening = if carrier.dialer == cfg.node { 0 } else { 1 };
+        if attempt.completed
+            || kind != opening
+            || !learnable(registered, &attempt.learned, source)
+            || active.ensure_current().is_err()
+            || super::super::traversal::matching_endpoint(&self.shared, &attempt.offer)
+                != Some(self.id)
+        {
+            return Ok(false);
+        }
+        let peer = attempt.offer.peer().candidate.socket.node_id;
+        adjacency::incoming_bound(&cfg, peer, carrier, attempt.offer.offer().digest, body)?;
+        self.authorization
+            .as_ref()
+            .ok_or(Error::Underlay)?
+            .authorize_learned(&active, source)?;
+        attempt.learned.push(source);
+        // The current output's own pacing may be spent on the unreachable
+        // recipient; the attempt total still bounds every send.
+        attempt.retry = Retry::due();
+        tracing::debug!(%peer, %source, %registered, attempt = %attempt.offer.offer().attempt_id,
+            "Traversal learned the peer's mapped source");
+        Ok(true)
     }
 
     fn traversal_message(
@@ -422,11 +490,10 @@ impl Owner {
             // The authenticated offer's remote participant is the authority for
             // provenance. Never relabel a channel using current State candidates
             // or a coincidentally equal published address.
+            // The channel endpoint is where this handshake actually ran: the
+            // offer recipient or a source learned from the peer's signature.
             let participant = attempt.offer.peer();
-            if meshway_control::connectivity::udp_recipient(&participant.address)
-                .map_err(|_| Error::Authentication)?
-                != remote
-            {
+            if !attempt.reaches(remote) {
                 return Err(Error::Authentication);
             }
             let acquisition = LinkAcquisition::CoordinatedUdp {
@@ -458,5 +525,47 @@ impl Owner {
             }
         }
         Ok(())
+    }
+}
+
+/// Whether `source` may become one more recipient of an attempt to
+/// `registered` that already learned `learned`.
+fn learnable(registered: SocketAddr, learned: &[SocketAddr], source: SocketAddr) -> bool {
+    source != registered
+        && source.ip() == registered.ip()
+        && !learned.contains(&source)
+        && learned.len() < MAX_LEARNED
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_bounded_other_ports_of_the_recipient_ip_are_learnable() {
+        let registered: SocketAddr = "198.51.100.7:54507".parse().unwrap();
+        let first: SocketAddr = "198.51.100.7:53587".parse().unwrap();
+        let second: SocketAddr = "198.51.100.7:53588".parse().unwrap();
+        assert!(learnable(registered, &[], first));
+        assert!(
+            !learnable(registered, &[], registered),
+            "already a recipient"
+        );
+        assert!(!learnable(registered, &[first], first), "already learned");
+        assert!(learnable(registered, &[first], second));
+        assert!(
+            !learnable(
+                registered,
+                &[first, second],
+                "198.51.100.7:1".parse().unwrap()
+            ),
+            "at most two per attempt"
+        );
+        for other in ["198.51.100.8:53587", "[2001:db8::7]:53587"] {
+            assert!(
+                !learnable(registered, &[], other.parse().unwrap()),
+                "another IP is never learned: {other}"
+            );
+        }
     }
 }

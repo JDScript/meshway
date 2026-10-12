@@ -144,6 +144,12 @@ pub enum Error {
     Storage(#[from] meshway_private_storage::Error),
     #[error("underlay I/O failed: {0}")]
     Io(#[from] std::io::Error),
+    /// A listener's local address is unavailable, e.g. another process holds it.
+    #[error("cannot bind {address}: {source}")]
+    Bind {
+        address: std::net::SocketAddr,
+        source: std::io::Error,
+    },
     #[error("TUN installation failed: {0}")]
     Tun(#[from] meshway_tun::Error),
     #[error("kernel netlink operation failed")]

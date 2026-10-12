@@ -384,6 +384,46 @@ impl SocketFactory {
         Ok(endpoints)
     }
 
+    /// Whether an up, non-loopback interface outside the Mesh address pools
+    /// has a prefix holding `ip`, i.e. the kernel has an on-link route to it.
+    /// Unreadable interfaces answer `true`: the dial is then only paced.
+    pub fn on_link(&self, desired: &Desired, ip: IpAddr) -> bool {
+        use nix::{ifaddrs::getifaddrs, net::if_::InterfaceFlags};
+        let own = &desired.netmap().self_.mesh_address_pools;
+        let pools: Vec<ipnet::IpNet> = own
+            .ipv4
+            .iter()
+            .chain(&own.ipv6)
+            .filter_map(|pool| pool.parse().ok())
+            .collect();
+        let Ok(interfaces) = getifaddrs() else {
+            return true;
+        };
+        interfaces
+            .filter(|interface| {
+                interface.flags.contains(InterfaceFlags::IFF_UP)
+                    && !interface.flags.contains(InterfaceFlags::IFF_LOOPBACK)
+            })
+            .filter_map(|interface| {
+                let (address, netmask) = (interface.address?, interface.netmask?);
+                let prefix =
+                    |address: IpAddr, mask: IpAddr| ipnet::IpNet::with_netmask(address, mask).ok();
+                if let (Some(address), Some(mask)) =
+                    (address.as_sockaddr_in(), netmask.as_sockaddr_in())
+                {
+                    prefix(address.ip().into(), mask.ip().into())
+                } else {
+                    prefix(
+                        address.as_sockaddr_in6()?.ip().into(),
+                        netmask.as_sockaddr_in6()?.ip().into(),
+                    )
+                }
+            })
+            .any(|prefix| {
+                !pools.iter().any(|pool| pool.contains(&prefix.addr())) && prefix.contains(&ip)
+            })
+    }
+
     pub async fn listen(&self, handle: &ListenerHandle) -> Result<ProtectedListener> {
         if !Arc::ptr_eq(&self.shared, &handle.scope.shared) {
             return Err(Error::Target);
@@ -397,7 +437,9 @@ impl SocketFactory {
         // REUSEPORT stays off, so a live foreign listener still prevents binding.
         socket.set_reuseaddr(true)?;
         meshway_transport::raw::apply_socket_options(&SockRef::from(&socket), options)?;
-        socket.bind(address)?;
+        socket
+            .bind(address)
+            .map_err(|source| Error::Bind { address, source })?;
         handle.scope.prepare_checked(&SockRef::from(&socket))?;
         let listener = socket.listen(128)?;
         handle.scope.prepare_checked(&SockRef::from(&listener))?;

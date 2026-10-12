@@ -13,6 +13,8 @@ pub(super) struct Pending {
     /// When the transaction was last sent, and how often.
     sent: Option<Instant>,
     sends: u8,
+    /// A DF size probe of this many IP bytes rather than a mapping round.
+    probe: Option<u16>,
 }
 
 #[derive(Debug)]
@@ -44,6 +46,7 @@ impl Owner {
         context: DiscoveryContext,
         server: String,
         targets: Vec<SocketAddr>,
+        size_probe: bool,
     ) -> Result<(), Error> {
         if context.ensure_current().is_err()
             || !context.servers().iter().any(|value| value.id == server)
@@ -78,22 +81,82 @@ impl Owner {
                     retry: Retry::due(),
                     sent: None,
                     sends: 0,
+                    probe: None,
+                },
+            );
+            if size_probe {
+                self.size_probe(&context, remote)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// One DF Binding request as large as this socket's route toward
+    /// `remote` allows: an answer proves the path carries that size; no answer
+    /// is not a measurement (an observer may drop large requests). An ICMP
+    /// "too big" on the way teaches the route, read again afterwards.
+    fn size_probe(&mut self, context: &DiscoveryContext, remote: SocketAddr) -> Result<(), Error> {
+        let header = if remote.is_ipv4() { 28 } else { 48 };
+        let Some(route) = self.path.path_mtu(remote) else {
+            return Ok(());
+        };
+        let datagram = (usize::from(route).min(1500) - header) / 4 * 4;
+        let transaction = TransactionId::random().map_err(|_| Error::Authentication)?;
+        let Some(output) = meshway_stun::encode_size_probe(transaction, datagram) else {
+            return Ok(());
+        };
+        if self.discovery.len() >= 8 {
+            return Ok(());
+        }
+        self.discovery.insert(
+            *transaction.as_bytes(),
+            Pending {
+                context: context.clone(),
+                remote,
+                transaction,
+                output,
+                deadline: Instant::now()
+                    .checked_add(Duration::from_secs(5))
+                    .ok_or(Error::Limits)?
+                    .min(context.expires_at().into()),
+                retry: Retry::due(),
+                sent: None,
+                sends: 0,
+                probe: u16::try_from(datagram + header).ok(),
+            },
+        );
+        Ok(())
+    }
+
+    fn record_size_probe(&self, remote: SocketAddr, size: u16, answered: bool) {
+        let route = self.path.path_mtu(remote);
+        if let Ok(mut probes) = self.shared.size_probes.lock()
+            && (probes.len() < 16 || probes.contains_key(&remote))
+        {
+            probes.insert(
+                remote,
+                crate::manager::SizeProbe {
+                    size,
+                    answered,
+                    route_mtu: route,
+                    at: Instant::now(),
                 },
             );
         }
-        Ok(())
     }
 
     pub(super) async fn stun_tick(&mut self) -> Result<(), Error> {
         self.discovery.retain(|_, pending| {
             pending.context.ensure_current().is_ok() && Instant::now() < pending.deadline
         });
+        let mut probes = Vec::new();
         for pending in self.discovery.values_mut() {
             if !pending.retry.take(Duration::from_millis(500), MAX_SENDS) {
                 continue;
             }
             pending.sent = Some(Instant::now());
             pending.sends = pending.sends.saturating_add(1);
+            let first_probe = pending.probe.filter(|_| pending.sends == 1);
             let lifetime = Arc::new(Lifetime {
                 context: pending.context.clone(),
                 scope: self.lifetime.clone(),
@@ -107,6 +170,12 @@ impl Owner {
                 pending.output.clone(),
             )
             .await;
+            if let Some(size) = first_probe {
+                probes.push((pending.remote, size));
+            }
+        }
+        for (remote, size) in probes {
+            self.record_size_probe(remote, size, false);
         }
         let now = u64::try_from(chrono::Utc::now().timestamp_millis()).unwrap_or(0);
         let changed = {
@@ -139,6 +208,20 @@ impl Owner {
             return Ok(());
         };
         if pending.context.ensure_current().is_err() || Instant::now() >= pending.deadline {
+            return Ok(());
+        }
+        if let Some(size) = pending.probe {
+            // Any structurally valid answer to this exact transaction from its
+            // observer proves arrival, including an error response.
+            if matches!(
+                meshway_stun::parse_response(pending.transaction, pending.remote, remote, bytes),
+                Ok(_)
+                    | Err(meshway_stun::Error::ErrorResponse { .. }
+                        | meshway_stun::Error::UnknownAttribute)
+            ) {
+                self.discovery.remove(&transaction);
+                self.record_size_probe(remote, size, true);
+            }
             return Ok(());
         }
         let Ok(mapped) =

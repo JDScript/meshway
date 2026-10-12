@@ -33,6 +33,7 @@ hickory-net = { version = "0.26.3", default-features = false, features = ["tokio
 
 [target.'cfg(target_os = "linux")'.dependencies]
 rtnetlink = { version = "=0.23.0", default-features = false, features = ["tokio_socket"] }
+nix = { version = "=0.31.3", default-features = false, features = ["net"] }
 
 [dev-dependencies]
 meshway-test-server = { path = "../../tools/meshway-test-server" }

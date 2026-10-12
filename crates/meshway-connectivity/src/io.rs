@@ -45,10 +45,19 @@ pub trait DatagramAuthorization: Send + Sync + 'static {
         &self,
         scope: &meshway_control::connectivity::AttemptScope,
     ) -> Result<(), Error>;
+    /// A source a signed message of this attempt arrived from, other than
+    /// the offer's recipient: the peer's NAT mapped it to another port.
+    fn authorize_learned(
+        &self,
+        scope: &meshway_control::connectivity::AttemptScope,
+        address: SocketAddr,
+    ) -> Result<(), Error>;
+    /// `address` is the offer's recipient or a source learned for `scope`.
     fn authorize_channel(
         &self,
         scope: &meshway_control::connectivity::AttemptScope,
         lifetime: std::sync::Arc<dyn meshway_transport::SendLifetime>,
+        address: SocketAddr,
     ) -> Result<(), Error>;
 }
 
@@ -103,6 +112,37 @@ pub trait SocketFactory: Send + Sync + 'static {
     ) -> BoxFuture<'a, Result<Box<dyn Datagram>, Error>> {
         Box::pin(async { Err(Error::Configuration) })
     }
+
+    /// Whether a host interface outside the Mesh carries a prefix holding
+    /// `ip`: only then can a peer's private, CGNAT or ULA interface address
+    /// be reached directly rather than through the public Internet.
+    fn on_link(&self, _desired: &meshway_engine::Desired, _ip: std::net::IpAddr) -> bool {
+        true
+    }
+}
+
+/// Addresses meaningful only on a shared link or private network.
+pub(crate) fn link_scoped(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(ip) => {
+            ip.is_private() || (ip.octets()[0] == 100 && ip.octets()[1] & 0xc0 == 64)
+        }
+        std::net::IpAddr::V6(ip) => ip.segments()[0] & 0xfe00 == 0xfc00,
+    }
+}
+
+/// A listener's bind failure keeps its cause; every other protected-socket
+/// failure stays opaque.
+#[cfg(target_os = "linux")]
+fn listener_error(key: &str, error: meshway_underlay::Error) -> Error {
+    match error {
+        meshway_underlay::Error::Bind { address, source } => Error::Bind {
+            key: key.to_owned(),
+            address,
+            source,
+        },
+        _ => Error::Underlay,
+    }
 }
 
 /// The Host's installed content, which must be exactly `desired`.
@@ -131,7 +171,7 @@ impl SocketFactory for meshway_underlay::SocketFactory {
             let socket = self
                 .traversal_listener(snapshot, key, reference)
                 .await
-                .map_err(|_| Error::Underlay)?;
+                .map_err(|error| listener_error(key, error))?;
             Ok(TraversalSocket {
                 endpoint: Box::new(socket.endpoint),
                 authorization: std::sync::Arc::new(socket.authorization),
@@ -167,7 +207,7 @@ impl SocketFactory for meshway_underlay::SocketFactory {
             let endpoint = self
                 .datagram_listener(snapshot, key)
                 .await
-                .map_err(|_| Error::Underlay)?;
+                .map_err(|error| listener_error(key, error))?;
             Ok(Box::new(endpoint) as Box<dyn Datagram>)
         })
     }
@@ -211,6 +251,9 @@ impl SocketFactory for meshway_underlay::SocketFactory {
             })
         })
     }
+    fn on_link(&self, desired: &meshway_engine::Desired, ip: std::net::IpAddr) -> bool {
+        self.on_link(desired, ip)
+    }
     fn listen<'a>(
         &'a self,
         desired: &'a meshway_engine::Desired,
@@ -219,7 +262,10 @@ impl SocketFactory for meshway_underlay::SocketFactory {
         Box::pin(async move {
             let snapshot = &installed(self, desired)?;
             let handle = self.listener(snapshot, key).map_err(|_| Error::Underlay)?;
-            let listener = self.listen(&handle).await.map_err(|_| Error::Underlay)?;
+            let listener = self
+                .listen(&handle)
+                .await
+                .map_err(|error| listener_error(key, error))?;
             Ok(Box::new(listener) as Box<dyn ListenerSocket>)
         })
     }
@@ -250,12 +296,21 @@ impl DatagramAuthorization for meshway_underlay::DatagramAuthorization {
     ) -> Result<(), Error> {
         self.authorize_attempt(scope).map_err(|_| Error::Underlay)
     }
+    fn authorize_learned(
+        &self,
+        scope: &meshway_control::connectivity::AttemptScope,
+        address: SocketAddr,
+    ) -> Result<(), Error> {
+        self.authorize_learned(scope, address)
+            .map_err(|_| Error::Underlay)
+    }
     fn authorize_channel(
         &self,
         scope: &meshway_control::connectivity::AttemptScope,
         lifetime: std::sync::Arc<dyn meshway_transport::SendLifetime>,
+        address: SocketAddr,
     ) -> Result<(), Error> {
-        self.authorize_channel(scope, lifetime)
+        self.authorize_channel(scope, lifetime, address)
             .map_err(|_| Error::Underlay)
     }
 }

@@ -16,8 +16,8 @@ pub use io::{
     TraversalSocket,
 };
 pub use manager::{
-    AdjacencyInterest, Event, Interest, LinkFact, ListenerFact, Manager, SendReceipt, Snapshot,
-    SocketFact, SocketObservation, StunProbe, StunReport, StunSample,
+    AdjacencyInterest, Event, Interest, LinkFact, LinkMtu, ListenerFact, Manager, SendReceipt,
+    SizeProbe, Snapshot, SocketFact, SocketObservation, StunProbe, StunReport, StunSample,
 };
 pub use meshway_policy::admission::Carrier;
 
@@ -122,6 +122,13 @@ pub enum Error {
     Io(#[from] std::io::Error),
     #[error("protected socket operation failed")]
     Underlay,
+    /// A listener's local address is unavailable, e.g. another process holds it.
+    #[error("listener {key} cannot bind {address}: {source}")]
+    Bind {
+        key: String,
+        address: std::net::SocketAddr,
+        source: std::io::Error,
+    },
     #[error("provider handshake failed")]
     Provider,
     #[error("packet transport failed")]

@@ -12,6 +12,9 @@ use std::{
 };
 use tokio_util::sync::CancellationToken;
 
+/// Sources one attempt may learn besides its offer recipient.
+const MAX_LEARNED: usize = 2;
+
 pub struct TraversalDatagram {
     pub endpoint: ProtectedDatagram,
     pub authorization: DatagramAuthorization,
@@ -154,6 +157,11 @@ impl DatagramAuthorization {
         Ok(targets)
     }
     pub fn authorize_attempt(&self, scope: &AttemptScope) -> Result<()> {
+        self.insert(self.attempt_peer(scope)?, Lifetime::Attempt(scope.clone()))
+    }
+
+    /// The offer's peer recipient, once the attempt is live on this socket.
+    fn attempt_peer(&self, scope: &AttemptScope) -> Result<SocketAddr> {
         scope.ensure_current().map_err(|_| Error::Expired)?;
         let offer = scope.validated_offer();
         self.check()?;
@@ -162,27 +170,72 @@ impl DatagramAuthorization {
         {
             return Err(Error::Target);
         }
-        self.insert(
-            udp_recipient(&offer.peer().address).map_err(|_| Error::Target)?,
-            Lifetime::Attempt(scope.clone()),
-        )
+        udp_recipient(&offer.peer().address).map_err(|_| Error::Target)
     }
+
+    /// Addresses this attempt reaches besides its offer recipient.
+    fn learned(targets: &[Target], scope: &AttemptScope, peer: SocketAddr) -> Vec<SocketAddr> {
+        targets
+            .iter()
+            .filter_map(|target| match &target.lifetime {
+                Lifetime::Attempt(other)
+                    if other.validated_offer().offer() == scope.validated_offer().offer()
+                        && target.address != peer =>
+                {
+                    Some(target.address)
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// A source the endpoint's authentication owner verified a signed message
+    /// of this attempt from: the peer's NAT translated the offer's address to
+    /// another port. Only the same IP as the offer recipient, at most
+    /// [`MAX_LEARNED`] per attempt, and only for the attempt's lifetime.
+    pub fn authorize_learned(&self, scope: &AttemptScope, address: SocketAddr) -> Result<()> {
+        let peer = self.attempt_peer(scope)?;
+        let address = udp_recipient(&address.to_string()).map_err(|_| Error::Target)?;
+        if address == peer {
+            return Ok(());
+        }
+        if address.ip() != peer.ip() {
+            return Err(Error::Target);
+        }
+        {
+            let mut targets = self.registry.targets.lock().map_err(|_| Error::Worker)?;
+            targets.retain(|target| target.lifetime.current());
+            let learned = Self::learned(&targets, scope, peer);
+            if learned.contains(&address) {
+                return Ok(());
+            }
+            if learned.len() >= MAX_LEARNED {
+                return Err(Error::Capacity);
+            }
+        }
+        self.insert(address, Lifetime::Attempt(scope.clone()))
+    }
+
     /// The endpoint's authentication owner transfers a live attempt target to
     /// its selected channel guard. Revoking the attempt cannot extend this guard.
+    /// `address` is the offer recipient or a source learned for this attempt.
     pub fn authorize_channel(
         &self,
         scope: &AttemptScope,
         lifetime: Arc<dyn SendLifetime>,
+        address: SocketAddr,
     ) -> Result<()> {
-        scope.ensure_current().map_err(|_| Error::Expired)?;
-        let offer = scope.validated_offer();
-        self.check()?;
-        if offer.local().candidate.socket
-            != self.binding.lock().map_err(|_| Error::Worker)?.reference
+        let peer = self.attempt_peer(scope)?;
+        if address != peer
+            && !Self::learned(
+                &self.registry.targets.lock().map_err(|_| Error::Worker)?,
+                scope,
+                peer,
+            )
+            .contains(&address)
         {
             return Err(Error::Target);
         }
-        let address = udp_recipient(&offer.peer().address).map_err(|_| Error::Target)?;
         if !lifetime.is_current() {
             return Err(Error::Expired);
         }

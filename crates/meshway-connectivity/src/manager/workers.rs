@@ -143,6 +143,16 @@ pub(super) async fn dial(shared: Arc<Shared>, factory: Arc<dyn SocketFactory>, p
                     if !shared.wanted(peer) {
                         continue 'acquisition;
                     }
+                    // A peer's private interface address is reachable only on
+                    // a link this host shares; elsewhere the datagrams would
+                    // leave through the default route toward nothing.
+                    if source == LinkAcquisition::LocalEndpoint
+                        && target.endpoint.host.parse().is_ok_and(|ip| {
+                            crate::io::link_scoped(ip) && !factory.on_link(&plan.desired, ip)
+                        })
+                    {
+                        continue;
+                    }
                     if shared
                         .links
                         .lock()

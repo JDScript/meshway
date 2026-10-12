@@ -19,6 +19,19 @@ pub struct StunSample {
     pub at: Instant,
 }
 
+/// The latest DF size probe toward one observer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SizeProbe {
+    /// IP bytes of the probe datagram, sent with DF.
+    pub size: u16,
+    /// The observer answered it: the path carried `size`.
+    pub answered: bool,
+    /// The route MTU toward the observer after the probe (a PMTU the probe
+    /// taught it, or the interface MTU), `None` when unreadable.
+    pub route_mtu: Option<u16>,
+    pub at: Instant,
+}
+
 /// Latest answers of every socket by observer address.
 pub(super) type StunSamples = BTreeMap<[u8; 32], BTreeMap<SocketAddr, StunSample>>;
 
@@ -37,6 +50,8 @@ pub struct StunReport {
     pub sockets: Vec<SocketObservation>,
     /// Authenticated Native UDP channels selected now.
     pub udp_links: usize,
+    /// DF size probes of this round by observer address.
+    pub size_probes: BTreeMap<SocketAddr, SizeProbe>,
 }
 
 /// A pending local observation request of one Manager.
@@ -120,8 +135,21 @@ impl StunProbe {
                     .count()
             })
             .unwrap_or(0);
+        let size_probes = self
+            .shared
+            .size_probes
+            .lock()
+            .map(|probes| {
+                probes
+                    .iter()
+                    .filter(|(_, probe)| probe.at >= self.requested_at)
+                    .map(|(observer, probe)| (*observer, *probe))
+                    .collect()
+            })
+            .unwrap_or_default();
         StunReport {
             requested_at: self.requested_at,
+            size_probes,
             sockets: endpoints
                 .iter()
                 .filter_map(|id| {

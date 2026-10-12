@@ -416,6 +416,7 @@ mod tests {
         assert!(Arc::ptr_eq(&first, &schedule.latest().key));
         report.plane = meshway_protocol::ipc::DataPlane::Ready;
         report.facts = Some(meshway_connectivity::Snapshot {
+            mtu: Default::default(),
             listeners: vec![meshway_connectivity::ListenerFact {
                 socket_id: [1; 32],
                 key: "native".into(),

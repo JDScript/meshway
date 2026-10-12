@@ -1873,6 +1873,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -2413,6 +2414,7 @@ dependencies = [
  "meshway-transport",
  "meshway-transport-stream",
  "meshway-tun",
+ "nix 0.31.3",
  "reqwest",
  "rtnetlink",
  "serde",
