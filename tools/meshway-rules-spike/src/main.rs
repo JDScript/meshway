@@ -41,7 +41,7 @@ const SOURCES: &[(&str, &str, &str, Option<&str>)] = &[
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let root = PathBuf::from(args.get(2).expect("root"));
+    let root = PathBuf::from(args.get(2).expect("root or count"));
     match args.get(1).map(String::as_str) {
         Some("coverage") => coverage(&root),
         Some("bench") => bench(&root, &args[3], args[4].parse().expect("iters")),
@@ -52,7 +52,8 @@ fn main() {
             &args[5],
             args.get(6).map_or("mwrs", String::as_str),
         ),
-        _ => panic!("usage: coverage|bench|memory"),
+        Some("acbuild") => acbuild(args[2].parse().expect("keywords")),
+        _ => panic!("usage: coverage|bench|memory|acbuild"),
     }
 }
 
@@ -523,4 +524,42 @@ fn rss() -> String {
         })
         .unwrap_or_default();
     format!("ps_rss_kb={ps} {footprint}")
+}
+
+/// Synthetic keyword scale (random 5-12 byte keywords): automaton build time,
+/// heap and match cost. Real lists stay in `bench`.
+fn acbuild(n: usize) {
+    use aho_corasick::{AhoCorasick, AhoCorasickKind, MatchKind};
+    let mut rng = Rng(0x2545_f491_4f6c_dd1d);
+    let words: Vec<String> = (0..n).map(|_| rng.label()).collect();
+    for kind in [AhoCorasickKind::DFA, AhoCorasickKind::ContiguousNFA] {
+        let mut times = vec![];
+        let mut ac = None;
+        for _ in 0..5 {
+            let t = Instant::now();
+            ac = Some(
+                AhoCorasick::builder()
+                    .kind(Some(kind))
+                    .match_kind(MatchKind::LeftmostFirst)
+                    .build(&words)
+                    .expect("build"),
+            );
+            times.push(ms(t.elapsed()));
+        }
+        let ac = ac.expect("built");
+        let queries: Vec<String> = (0..200_000)
+            .map(|_| format!("{}.{}.com", rng.label(), rng.label()))
+            .collect();
+        let t = Instant::now();
+        let mut hits = 0usize;
+        for q in &queries {
+            hits += usize::from(ac.is_match(black_box(q.as_bytes())));
+        }
+        println!(
+            "acbuild keywords={n} kind={kind:?} build_ms p50={:.2} heap_bytes={} match_ns={:.1} hits={hits}",
+            percentile(times, 0.5),
+            ac.memory_usage(),
+            per_op(t.elapsed(), queries.len())
+        );
+    }
 }
