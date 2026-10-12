@@ -67,7 +67,7 @@ pub struct EgressRuleHit {
     pub action: RouteAction,
 }
 
-fn rebuild(view: &ConfigurationView) -> NetworkConfiguration {
+pub(super) fn rebuild(view: &ConfigurationView) -> NetworkConfiguration {
     NetworkConfiguration {
         address_pools: view.address_pools.clone(),
         defaults: Defaults {

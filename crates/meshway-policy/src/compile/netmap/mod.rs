@@ -19,6 +19,24 @@ pub use decide::{Decision, LocalCompiler, LocalDecision, Target, compile_local, 
 pub use incremental::{IncrementalNetmaps, compile_incremental};
 pub use observe::{ObservationDenied, ObservationPaths, observation_paths};
 
+/// This Node's routing profile selection as its netmap decides it: the same
+/// value the Server reports for the configuration the netmap projects.
+pub fn routing_selection(
+    netmap: &NodeNetmap,
+) -> Result<meshway_configuration::selection::RoutingSelectionState, CompileError> {
+    let projection = &netmap.projection;
+    super::routing_selection(
+        &decide::rebuild(&projection.configuration),
+        &projection.subjects,
+        projection
+            .selected_profiles
+            .get(&netmap.node_id)
+            .map(String::as_str),
+        projection.selection_versions.get(&netmap.node_id).copied(),
+        netmap.node_id,
+    )
+}
+
 /// Stable inputs only. The caller loads them in the committing transaction.
 pub struct NetmapInput<'a> {
     pub network: NetworkId,
