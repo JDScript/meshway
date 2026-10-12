@@ -365,25 +365,19 @@ impl RuleSet {
 
     pub fn match_ip(&self, addr: IpAddr) -> bool {
         match addr {
-            IpAddr::V4(a) => self.contains::<4>(&self.v4, u128::from(u32::from(a))),
-            IpAddr::V6(a) => self.contains::<16>(&self.v6, u128::from(a)),
-        }
-    }
-
-    fn contains<const W: usize>(&self, section: &Range<usize>, addr: u128) -> bool {
-        let b = &self.bytes()[section.clone()];
-        let n = b.len() / (W * 2);
-        let at = |i: usize, half: usize| int::<W>(&b[i * W * 2 + half * W..][..W]);
-        let (mut lo, mut hi) = (0, n);
-        while lo < hi {
-            let mid = lo + (hi - lo) / 2;
-            if at(mid, 0) <= addr {
-                lo = mid + 1;
-            } else {
-                hi = mid;
+            IpAddr::V4(a) => {
+                let a = u32::from(a);
+                let pairs = self.bytes()[self.v4.clone()].as_chunks::<8>().0;
+                let i = pairs.partition_point(|p| v4_at(p, 0) <= a);
+                i > 0 && v4_at(&pairs[i - 1], 4) >= a
+            }
+            IpAddr::V6(a) => {
+                let a = u128::from(a);
+                let pairs = self.bytes()[self.v6.clone()].as_chunks::<32>().0;
+                let i = pairs.partition_point(|p| v6_at(p, 0) <= a);
+                i > 0 && v6_at(&pairs[i - 1], 16) >= a
             }
         }
-        lo > 0 && at(lo - 1, 1) >= addr
     }
 
     /// Merged ranges in ascending order: disjoint, non-adjacent, closed. This
@@ -437,6 +431,16 @@ impl RuleSet {
             })
         })
     }
+}
+
+fn v4_at(pair: &[u8; 8], at: usize) -> u32 {
+    u32::from_le_bytes([pair[at], pair[at + 1], pair[at + 2], pair[at + 3]])
+}
+
+fn v6_at(pair: &[u8; 32], at: usize) -> u128 {
+    let mut b = [0u8; 16];
+    b.copy_from_slice(&pair[at..at + 16]);
+    u128::from_le_bytes(b)
 }
 
 fn int<const W: usize>(b: &[u8]) -> u128 {
