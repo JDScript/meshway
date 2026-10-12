@@ -179,18 +179,6 @@ impl Error {
     pub fn invalid_configuration(issues: Vec<ConfigurationIssue>) -> Self {
         Self::InvalidConfiguration(ConfigurationError::Invalid(issues))
     }
-    pub const fn is_storage(&self) -> bool {
-        matches!(self, Self::Storage(_))
-    }
-    pub const fn is_unavailable(&self) -> bool {
-        matches!(
-            self,
-            Self::Storage(_)
-                | Self::Unavailable(_)
-                | Self::DependencyUnavailable
-                | Self::Internal(_)
-        )
-    }
 }
 
 impl From<rusqlite::Error> for Error {

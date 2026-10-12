@@ -73,9 +73,10 @@ enum Command {
         /// Absolute path to this instance's private data directory.
         #[arg(long, env = "MESHWAY_DATA_DIR")]
         data_dir: PathBuf,
-        /// Handover window, such as 48h, 90m or 120s (60 s through 30 days).
-        #[arg(long, default_value = "48h", value_parser = window)]
-        window: Duration,
+        /// Handover window, such as 48h, 90m or 120s (60 s through 30 days);
+        /// defaults to twice the longest lease, 48h.
+        #[arg(long, value_parser = window)]
+        window: Option<Duration>,
     },
 }
 
@@ -130,6 +131,7 @@ async fn main() -> ExitCode {
 
 async fn maintain(command: Command) -> Result<(), String> {
     let Command::RotateNetmapKey { data_dir, window } = command;
+    let window = window.unwrap_or(meshway_server::netmap::signing::DEFAULT_ROTATION_WINDOW);
     let app = App::open(Settings::new(data_dir))
         .await
         .map_err(open_failure)?;

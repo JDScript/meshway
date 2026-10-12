@@ -7,7 +7,6 @@
 //! held content (unchanged), bound to this identity, saved and published to
 //! Engine. Peer facts fold into Control's last known facts, which it
 //! publishes to a [`PeerFactsSink`]; they never become netmap content.
-use super::NetmapChange as Change;
 use crate::{Control, Error};
 use meshway_configuration::netmap::{CompiledNetmap, apply_netmap_delta};
 use meshway_control_client::ClientError;
@@ -411,11 +410,5 @@ pub async fn sync_loop(
                 _ = tokio::time::sleep(delay) => {},
             }
         }
-    }
-}
-
-impl NetmapChange {
-    pub fn is_new(&self) -> bool {
-        matches!(self, Change::New { .. })
     }
 }

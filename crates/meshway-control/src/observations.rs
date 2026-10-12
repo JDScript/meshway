@@ -35,9 +35,6 @@ impl ObservationLease {
     pub fn is_cancelled(&self) -> bool {
         self.cancelled.is_cancelled()
     }
-    pub fn is_expired(&self) -> bool {
-        !self.deadline.valid()
-    }
     pub fn expires_at(&self) -> std::time::Instant {
         self.deadline.expires_at()
     }

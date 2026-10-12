@@ -89,17 +89,6 @@ pub async fn send_scoped_with_receipt(
 
 /// Shared endpoint admission never holds its mutex while awaiting completion.
 /// One peer's unpolled caller must not retain another peer's physical sender.
-pub async fn send_shared(
-    sender: &tokio::sync::Mutex<Sender>,
-    pending: PendingFrame,
-    peer: SocketAddr,
-    channel: Arc<dyn meshway_transport::SendLifetime>,
-) -> Result<(), Error> {
-    send_shared_with_receipt(sender, pending, peer, channel)
-        .await
-        .map(|_| ())
-}
-
 pub async fn send_shared_with_receipt(
     sender: &tokio::sync::Mutex<Sender>,
     pending: PendingFrame,
