@@ -12,7 +12,8 @@ pub const MAX_SOURCE_ASSOCIATIONS: usize = 128;
 pub const MAX_ASSOCIATION_ADDRESSES: usize = 16;
 /// CNAME records of one chain at most.
 pub const MAX_ASSOCIATION_CNAMES: usize = 8;
-/// Associations of one overlay at most (own source and every served source).
+/// Associations of one overlay at most (own source and every served source);
+/// the Server refuses a report that would put either Node's overlay above it.
 pub const MAX_OVERLAY_ASSOCIATIONS: usize = 4096;
 /// Shortest association life: a shorter TTL counts as this long.
 pub const MIN_ASSOCIATION_LIFETIME_MS: u64 = 30_000;
@@ -81,7 +82,9 @@ impl DnsAssociation {
             .any(|known| known.0.to_canonical() == address.to_canonical())
     }
 
-    fn check(&self) -> Result<(), InvalidAssociations> {
+    /// Bounds of one entry: the check every overlay applies to each entry,
+    /// and the one the Server applies before it accepts a report.
+    pub fn validate(&self) -> Result<(), InvalidAssociations> {
         let name = |value: &str| {
             !value.is_empty()
                 && value.len() <= 253
@@ -121,7 +124,7 @@ impl DnsAssociationOverlay {
         }
         let mut sources: BTreeMap<NodeId, (Digest, usize)> = BTreeMap::new();
         for (index, association) in self.associations.iter().enumerate() {
-            association.check()?;
+            association.validate()?;
             if index > 0 {
                 let previous = &self.associations[index - 1];
                 if (previous.source, &previous.name, previous.record_type)

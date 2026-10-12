@@ -152,6 +152,25 @@ async fn an_exit_completes_its_task_once_and_both_nodes_receive_the_overlay() {
             .await,
         Err(Error::InvalidRequest)
     );
+    // Entries every overlay would refuse are refused before acceptance, so
+    // they never reach (and break) either Node's sync.
+    let label = "a".repeat(63);
+    let long = [label.as_str(); 4].join(".") + ".chat.example";
+    assert!(long.len() > 253);
+    for cnames in [vec!["é".to_owned()], vec![long.clone()]] {
+        let mut bad = report("api.chat.example", "104.16.0.9");
+        bad.cnames = cnames;
+        assert_eq!(
+            netmaps.report_association(&lab.tokens[1], bad).await,
+            Err(Error::InvalidRequest)
+        );
+    }
+    assert_eq!(
+        netmaps
+            .report_association(&lab.tokens[1], report(&long, "104.16.0.9"))
+            .await,
+        Err(Error::InvalidRequest)
+    );
 
     let sync = |token: String, netmap, state, associations| {
         let netmaps = lab.app.netmaps();

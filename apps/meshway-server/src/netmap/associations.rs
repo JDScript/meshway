@@ -14,8 +14,8 @@
 use crate::{error::Error, secrets::Sealer, store::netmap as store};
 use meshway_configuration::netmap::{
     CompiledNetmap, DnsAssociation, DnsAssociationOverlay, DnsPlan, DnsService,
-    MAX_ASSOCIATION_ADDRESSES, MAX_ASSOCIATION_CNAMES, MAX_ASSOCIATION_LIFETIME_MS,
-    MAX_OVERLAY_ASSOCIATIONS, MAX_SOURCE_ASSOCIATIONS, MIN_ASSOCIATION_LIFETIME_MS,
+    MAX_ASSOCIATION_LIFETIME_MS, MAX_OVERLAY_ASSOCIATIONS, MAX_SOURCE_ASSOCIATIONS,
+    MIN_ASSOCIATION_LIFETIME_MS,
 };
 use meshway_model::{NetmapRef, NetworkId, NodeId, RequestId};
 use meshway_policy::compile::{
@@ -130,6 +130,25 @@ fn overlay_of(netmap: NetmapRef, entries: Vec<DnsAssociation>) -> DnsAssociation
     }
 }
 
+/// Whether the overlay of any of `nodes` would carry more than
+/// [`MAX_OVERLAY_ASSOCIATIONS`] entries, given every source's (key, exit,
+/// live entries): a Node's overlay holds its own and those it resolves.
+fn overlay_overflows(
+    loads: impl Iterator<Item = (Key, NodeId, usize)>,
+    network: NetworkId,
+    nodes: [NodeId; 2],
+) -> bool {
+    let mut totals = [0usize; 2];
+    for ((owner, source), exit, live) in loads {
+        for (node, total) in nodes.iter().zip(&mut totals) {
+            if owner == network && (source == *node || exit == *node) {
+                *total += live;
+            }
+        }
+    }
+    totals.iter().any(|total| *total > MAX_OVERLAY_ASSOCIATIONS)
+}
+
 impl Source {
     /// Live entries in overlay order.
     fn live(&self, now_ms: u64) -> Vec<DnsAssociation> {
@@ -138,6 +157,13 @@ impl Source {
             .filter(|entry| entry.expires_at_ms > now_ms)
             .cloned()
             .collect()
+    }
+
+    fn live_count(&self, now_ms: u64) -> usize {
+        self.entries
+            .values()
+            .filter(|entry| entry.expires_at_ms > now_ms)
+            .count()
     }
 
     /// Drop what `compiler` no longer decides by name.
@@ -178,22 +204,30 @@ impl Store {
             return Err(Error::StateScopeChanged);
         }
         let name = query_name(&report.name);
-        let addresses = &report.addresses;
+        let lifetime = (u64::from(report.ttl_seconds) * 1000)
+            .clamp(MIN_ASSOCIATION_LIFETIME_MS, MAX_ASSOCIATION_LIFETIME_MS);
+        let expires_at_ms = report.resolved_at_ms.saturating_add(lifetime);
+        let association = DnsAssociation {
+            source: report.source,
+            generation: report.generation,
+            name: name.clone(),
+            record_type: report.record_type,
+            cnames: report.cnames.clone(),
+            addresses: report.addresses.clone(),
+            expires_at_ms,
+        };
+        // The entry must pass the very check every overlay carrying it
+        // passes, or both Nodes' syncs would fail on it.
         if name != report.name
-            || name.is_empty()
-            || report.cnames.len() > MAX_ASSOCIATION_CNAMES
+            || association.validate().is_err()
             || report
                 .cnames
                 .iter()
-                .any(|cname| query_name(cname) != *cname || cname.is_empty())
-            || addresses.is_empty()
-            || addresses.len() > MAX_ASSOCIATION_ADDRESSES
-            || !addresses.windows(2).all(|pair| pair[0].0 < pair[1].0)
-            || !addresses
-                .iter()
-                .all(|address| report.record_type.admits(address.0) && associable(address.0))
+                .any(|cname| query_name(cname) != *cname)
+            || !report.addresses.iter().all(|address| associable(address.0))
             || report.resolved_at_ms > now_ms + MAX_REPORT_SKEW_MS
             || report.resolved_at_ms + MAX_REPORT_AGE_MS < now_ms
+            || expires_at_ms <= now_ms
         {
             return Err(Error::InvalidRequest);
         }
@@ -205,21 +239,6 @@ impl Store {
         {
             return Err(Error::PermissionDenied);
         }
-        let lifetime = (u64::from(report.ttl_seconds) * 1000)
-            .clamp(MIN_ASSOCIATION_LIFETIME_MS, MAX_ASSOCIATION_LIFETIME_MS);
-        let expires_at_ms = report.resolved_at_ms.saturating_add(lifetime);
-        if expires_at_ms <= now_ms {
-            return Err(Error::InvalidRequest);
-        }
-        let association = DnsAssociation {
-            source: report.source,
-            generation: report.generation,
-            name: name.clone(),
-            record_type: report.record_type,
-            cnames: report.cnames.clone(),
-            addresses: addresses.clone(),
-            expires_at_ms,
-        };
         let mut state = self.state();
         if state.seen.contains(&report.report_id) {
             return Err(Error::RequestConflict);
@@ -250,6 +269,18 @@ impl Store {
                 None => break,
             };
         }
+        // Both Nodes receive the same entries: one that either overlay could
+        // not carry in full is refused here, never cut from one copy.
+        let replaced = state.sources.get(&key).map(|known| known.exit);
+        let loads = state
+            .sources
+            .iter()
+            .filter(|(other, _)| **other != key)
+            .chain([(&key, &next)])
+            .map(|(key, entry)| (*key, entry.exit, entry.live_count(now_ms)));
+        if overlay_overflows(loads, network, [report.source, exit]) {
+            return Err(Error::StateLimit);
+        }
         if state.sources.len() >= MAX_SOURCES && !state.sources.contains_key(&key) {
             let oldest = state
                 .sources
@@ -277,10 +308,9 @@ impl Store {
             now_ms + MAX_REPORT_AGE_MS + MAX_REPORT_SKEW_MS,
         ));
         state.seen.insert(report.report_id);
-        Ok((
-            DnsAssociationAccepted { expires_at_ms },
-            BTreeSet::from([report.source, exit]),
-        ))
+        // A source that moved to another exit leaves the previous one's overlay.
+        let woken = [report.source, exit].into_iter().chain(replaced).collect();
+        Ok((DnsAssociationAccepted { expires_at_ms }, woken))
     }
 
     /// The overlay of `node` for its current netmap `netmap`: its own
@@ -348,10 +378,53 @@ impl Store {
         associations.sort_by(|a, b| {
             (a.source, &a.name, a.record_type).cmp(&(b.source, &b.name, b.record_type))
         });
-        associations.truncate(MAX_OVERLAY_ASSOCIATIONS);
+        // Admission keeps every overlay within its budget and entries only
+        // leave afterwards; a cut here would hide from one Node what the
+        // other holds.
+        if associations.len() > MAX_OVERLAY_ASSOCIATIONS {
+            return Err(Error::Internal("association overlay above its budget"));
+        }
         Ok(Some(overlay_of(netmap, associations)))
     }
 }
 
 /// Shared by every sync answer and report of this process.
 pub(crate) type Shared = Arc<Store>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn id<T: std::str::FromStr>(n: u8) -> T
+    where
+        T::Err: std::fmt::Debug,
+    {
+        format!("00000000-0000-4000-8000-0000000000{n:02x}")
+            .parse()
+            .unwrap()
+    }
+
+    #[test]
+    fn an_exit_overlay_is_budgeted_over_every_source_it_serves() {
+        let (network, other): (NetworkId, NetworkId) = (id(1), id(2));
+        let exit: NodeId = id(9);
+        let per = MAX_SOURCE_ASSOCIATIONS;
+        let full = MAX_OVERLAY_ASSOCIATIONS / per;
+        let served = |count: usize, last: usize| {
+            (0..count).map(move |index| {
+                let source: NodeId = id(10 + index as u8);
+                let live = if index + 1 == count { last } else { per };
+                ((network, source), exit, live)
+            })
+        };
+        let first: NodeId = id(10);
+        // Exactly at the budget: both copies carry everything.
+        assert!(!overlay_overflows(served(full, per), network, [first, exit]));
+        // One more entry would only fit the source's own copy: refused.
+        let over = served(full, per).chain([((network, id::<NodeId>(200)), exit, 1)]);
+        assert!(overlay_overflows(over, network, [id(200), exit]));
+        // Another network's sources never count.
+        let elsewhere = served(full, per).chain([((other, id::<NodeId>(200)), exit, 1)]);
+        assert!(!overlay_overflows(elsewhere, network, [first, exit]));
+    }
+}
