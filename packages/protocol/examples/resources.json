@@ -4,8 +4,52 @@
       "200": {
         "items": [
           {
+            "key": "geosite:openai",
+            "configurationRevision": 7,
+            "implicit": true,
+            "definition": null,
+            "provider": {
+              "name": "geosite",
+              "catalog": "https://raw.githubusercontent.com/meshway-org/meshway-rules/dist/index.json",
+              "collection": "meta-geosite",
+              "sequence": 2
+            },
+            "artifact": {
+              "digest": "sha256:44ab0c1a4c37ef326a172e57f7ef86113ebb7d511450eff4606c870823a55fbe",
+              "format": 1,
+              "bytes": 592,
+              "entries": 22,
+              "createdAt": "2026-10-08T09:05:00Z"
+            },
+            "source": {
+              "format": "classical",
+              "repo": "MetaCubeX/meta-rules-dat",
+              "ref": "meta",
+              "commit": "83c8208bdfae92b1caaa29745f51f233b6f1847e",
+              "path": "geo/geosite/classical/openai.list"
+            },
+            "conversion": {
+              "converted": {
+                "exact": 9,
+                "suffix": 13,
+                "subdomain": 0,
+                "keyword": 0,
+                "cidr": 0
+              },
+              "redundant": 0,
+              "unconverted": {
+                "regex": 1
+              }
+            },
+            "held": null,
+            "problem": null,
+            "checkedAt": "2026-10-08T09:07:00Z",
+            "lastSuccessAt": "2026-10-08T09:07:00Z"
+          },
+          {
             "key": "office",
             "configurationRevision": 7,
+            "implicit": false,
             "definition": {
               "type": "inline",
               "ipCIDR": [
@@ -18,7 +62,33 @@
                 "login.partner.example.com"
               ]
             },
-            "artifact": null,
+            "provider": null,
+            "artifact": {
+              "digest": "sha256:395cd5d462f00b1a3e794ab359404dea4a0bb200cba9087fdf7bfdc8c1f9eec1",
+              "format": 1,
+              "bytes": 360,
+              "entries": 3,
+              "createdAt": "2026-10-08T09:00:00Z"
+            },
+            "source": {
+              "format": "inline",
+              "repo": null,
+              "ref": null,
+              "commit": null,
+              "path": null
+            },
+            "conversion": {
+              "converted": {
+                "exact": 1,
+                "suffix": 1,
+                "subdomain": 0,
+                "keyword": 0,
+                "cidr": 1
+              },
+              "redundant": 0,
+              "unconverted": {}
+            },
+            "held": null,
             "problem": null,
             "checkedAt": null,
             "lastSuccessAt": null
@@ -26,18 +96,42 @@
           {
             "key": "regional",
             "configurationRevision": 7,
+            "implicit": false,
             "definition": {
               "type": "remote",
               "url": "https://rules.example.com/regional.json",
               "format": "sing-box-source",
               "updateInterval": "24h"
             },
+            "provider": null,
             "artifact": {
-              "id": "db2c3d4e-5f6a-4b7c-8d9e-0f1a2b3c4d50",
-              "digest": "e58c70f9a1b2634d8e5f60718293a4b5c6d7e8f90123456789abcdef01234567",
-              "createdAt": "2026-10-08T09:05:00Z",
-              "entries": 128
+              "digest": "sha256:e58c70f9a1b2634d8e5f60718293a4b5c6d7e8f90123456789abcdef01234567",
+              "format": 1,
+              "bytes": 4096,
+              "entries": 128,
+              "createdAt": "2026-10-08T09:05:00Z"
             },
+            "source": {
+              "format": "sing-box-source",
+              "repo": null,
+              "ref": null,
+              "commit": null,
+              "path": null
+            },
+            "conversion": {
+              "converted": {
+                "exact": 4,
+                "suffix": 120,
+                "subdomain": 0,
+                "keyword": 0,
+                "cidr": 4
+              },
+              "redundant": 0,
+              "unconverted": {
+                "regex": 2
+              }
+            },
+            "held": null,
             "problem": null,
             "checkedAt": "2026-10-08T09:07:00Z",
             "lastSuccessAt": "2026-10-08T09:07:00Z"
@@ -53,21 +147,78 @@
           {
             "key": "regional",
             "configurationRevision": 7,
+            "implicit": false,
             "definition": {
               "type": "remote",
               "url": "https://rules.example.com/regional.json",
               "format": "sing-box-source",
               "updateInterval": "24h"
             },
+            "provider": null,
             "artifact": {
-              "id": "db2c3d4e-5f6a-4b7c-8d9e-0f1a2b3c4d50",
-              "digest": "e58c70f9a1b2634d8e5f60718293a4b5c6d7e8f90123456789abcdef01234567",
-              "createdAt": "2026-10-08T09:05:00Z",
-              "entries": 128
+              "digest": "sha256:e58c70f9a1b2634d8e5f60718293a4b5c6d7e8f90123456789abcdef01234567",
+              "format": 1,
+              "bytes": 4096,
+              "entries": 128,
+              "createdAt": "2026-10-08T09:05:00Z"
             },
+            "source": {
+              "format": "sing-box-source",
+              "repo": null,
+              "ref": null,
+              "commit": null,
+              "path": null
+            },
+            "conversion": {
+              "converted": {
+                "exact": 4,
+                "suffix": 120,
+                "subdomain": 0,
+                "keyword": 0,
+                "cidr": 4
+              },
+              "redundant": 0,
+              "unconverted": {
+                "regex": 2
+              }
+            },
+            "held": null,
             "problem": null,
             "checkedAt": "2026-10-08T09:07:00Z",
             "lastSuccessAt": "2026-10-08T09:07:00Z"
+          }
+        ]
+      }
+    }
+  },
+  "getRuleSetReport": {
+    "responses": {
+      "200": {
+        "key": "regional",
+        "digest": "sha256:e58c70f9a1b2634d8e5f60718293a4b5c6d7e8f90123456789abcdef01234567",
+        "conversion": {
+          "converted": {
+            "exact": 4,
+            "suffix": 120,
+            "subdomain": 0,
+            "keyword": 0,
+            "cidr": 4
+          },
+          "redundant": 0,
+          "unconverted": {
+            "regex": 2
+          }
+        },
+        "items": [
+          {
+            "at": "/rules/3/domain_regex/0",
+            "reason": "regex",
+            "entry": "^ads[0-9]+\\.example\\.com$"
+          },
+          {
+            "at": "/rules/3/domain_regex/1",
+            "reason": "regex",
+            "entry": "^cdn-.*\\.example\\.net$"
           }
         ]
       }
@@ -81,18 +232,42 @@
       "200": {
         "key": "regional",
         "configurationRevision": 7,
+        "implicit": false,
         "definition": {
           "type": "remote",
           "url": "https://rules.example.com/regional.json",
           "format": "sing-box-source",
           "updateInterval": "24h"
         },
+        "provider": null,
         "artifact": {
-          "id": "db2c3d4e-5f6a-4b7c-8d9e-0f1a2b3c4d50",
-          "digest": "e58c70f9a1b2634d8e5f60718293a4b5c6d7e8f90123456789abcdef01234567",
-          "createdAt": "2026-10-08T09:05:00Z",
-          "entries": 128
+          "digest": "sha256:e58c70f9a1b2634d8e5f60718293a4b5c6d7e8f90123456789abcdef01234567",
+          "format": 1,
+          "bytes": 4096,
+          "entries": 128,
+          "createdAt": "2026-10-08T09:05:00Z"
         },
+        "source": {
+          "format": "sing-box-source",
+          "repo": null,
+          "ref": null,
+          "commit": null,
+          "path": null
+        },
+        "conversion": {
+          "converted": {
+            "exact": 4,
+            "suffix": 120,
+            "subdomain": 0,
+            "keyword": 0,
+            "cidr": 4
+          },
+          "redundant": 0,
+          "unconverted": {
+            "regex": 2
+          }
+        },
+        "held": null,
         "problem": null,
         "checkedAt": "2026-10-08T09:07:00Z",
         "lastSuccessAt": "2026-10-08T09:07:00Z"

@@ -12974,7 +12974,8 @@
                   "identityChangedNodeIds": [],
                   "preparedRuleSets": {
                     "regional": {
-                      "digest": "e58c70f9a1b2634d8e5f60718293a4b5c6d7e8f90123456789abcdef01234567",
+                      "bytes": 4096,
+                      "digest": "sha256:e58c70f9a1b2634d8e5f60718293a4b5c6d7e8f90123456789abcdef01234567",
                       "entries": 128
                     }
                   },
@@ -19114,9 +19115,69 @@
                 "example": {
                   "items": [
                     {
-                      "artifact": null,
+                      "artifact": {
+                        "bytes": 592,
+                        "createdAt": "2026-10-08T09:05:00Z",
+                        "digest": "sha256:44ab0c1a4c37ef326a172e57f7ef86113ebb7d511450eff4606c870823a55fbe",
+                        "entries": 22,
+                        "format": 1
+                      },
+                      "checkedAt": "2026-10-08T09:07:00Z",
+                      "configurationRevision": 7,
+                      "conversion": {
+                        "converted": {
+                          "cidr": 0,
+                          "exact": 9,
+                          "keyword": 0,
+                          "subdomain": 0,
+                          "suffix": 13
+                        },
+                        "redundant": 0,
+                        "unconverted": {
+                          "regex": 1
+                        }
+                      },
+                      "definition": null,
+                      "held": null,
+                      "implicit": true,
+                      "key": "geosite:openai",
+                      "lastSuccessAt": "2026-10-08T09:07:00Z",
+                      "problem": null,
+                      "provider": {
+                        "catalog": "https://raw.githubusercontent.com/meshway-org/meshway-rules/dist/index.json",
+                        "collection": "meta-geosite",
+                        "name": "geosite",
+                        "sequence": 2
+                      },
+                      "source": {
+                        "commit": "83c8208bdfae92b1caaa29745f51f233b6f1847e",
+                        "format": "classical",
+                        "path": "geo/geosite/classical/openai.list",
+                        "ref": "meta",
+                        "repo": "MetaCubeX/meta-rules-dat"
+                      }
+                    },
+                    {
+                      "artifact": {
+                        "bytes": 360,
+                        "createdAt": "2026-10-08T09:00:00Z",
+                        "digest": "sha256:395cd5d462f00b1a3e794ab359404dea4a0bb200cba9087fdf7bfdc8c1f9eec1",
+                        "entries": 3,
+                        "format": 1
+                      },
                       "checkedAt": null,
                       "configurationRevision": 7,
+                      "conversion": {
+                        "converted": {
+                          "cidr": 1,
+                          "exact": 1,
+                          "keyword": 0,
+                          "subdomain": 0,
+                          "suffix": 1
+                        },
+                        "redundant": 0,
+                        "unconverted": {}
+                      },
                       "definition": {
                         "domain": [
                           "login.partner.example.com"
@@ -19129,28 +19190,62 @@
                         ],
                         "type": "inline"
                       },
+                      "held": null,
+                      "implicit": false,
                       "key": "office",
                       "lastSuccessAt": null,
-                      "problem": null
+                      "problem": null,
+                      "provider": null,
+                      "source": {
+                        "commit": null,
+                        "format": "inline",
+                        "path": null,
+                        "ref": null,
+                        "repo": null
+                      }
                     },
                     {
                       "artifact": {
+                        "bytes": 4096,
                         "createdAt": "2026-10-08T09:05:00Z",
-                        "digest": "e58c70f9a1b2634d8e5f60718293a4b5c6d7e8f90123456789abcdef01234567",
+                        "digest": "sha256:e58c70f9a1b2634d8e5f60718293a4b5c6d7e8f90123456789abcdef01234567",
                         "entries": 128,
-                        "id": "db2c3d4e-5f6a-4b7c-8d9e-0f1a2b3c4d50"
+                        "format": 1
                       },
                       "checkedAt": "2026-10-08T09:07:00Z",
                       "configurationRevision": 7,
+                      "conversion": {
+                        "converted": {
+                          "cidr": 4,
+                          "exact": 4,
+                          "keyword": 0,
+                          "subdomain": 0,
+                          "suffix": 120
+                        },
+                        "redundant": 0,
+                        "unconverted": {
+                          "regex": 2
+                        }
+                      },
                       "definition": {
                         "format": "sing-box-source",
                         "type": "remote",
                         "updateInterval": "24h",
                         "url": "https://rules.example.com/regional.json"
                       },
+                      "held": null,
+                      "implicit": false,
                       "key": "regional",
                       "lastSuccessAt": "2026-10-08T09:07:00Z",
-                      "problem": null
+                      "problem": null,
+                      "provider": null,
+                      "source": {
+                        "commit": null,
+                        "format": "sing-box-source",
+                        "path": null,
+                        "ref": null,
+                        "repo": null
+                      }
                     }
                   ]
                 }
@@ -19297,22 +19392,46 @@
                   "items": [
                     {
                       "artifact": {
+                        "bytes": 4096,
                         "createdAt": "2026-10-08T09:05:00Z",
-                        "digest": "e58c70f9a1b2634d8e5f60718293a4b5c6d7e8f90123456789abcdef01234567",
+                        "digest": "sha256:e58c70f9a1b2634d8e5f60718293a4b5c6d7e8f90123456789abcdef01234567",
                         "entries": 128,
-                        "id": "db2c3d4e-5f6a-4b7c-8d9e-0f1a2b3c4d50"
+                        "format": 1
                       },
                       "checkedAt": "2026-10-08T09:07:00Z",
                       "configurationRevision": 7,
+                      "conversion": {
+                        "converted": {
+                          "cidr": 4,
+                          "exact": 4,
+                          "keyword": 0,
+                          "subdomain": 0,
+                          "suffix": 120
+                        },
+                        "redundant": 0,
+                        "unconverted": {
+                          "regex": 2
+                        }
+                      },
                       "definition": {
                         "format": "sing-box-source",
                         "type": "remote",
                         "updateInterval": "24h",
                         "url": "https://rules.example.com/regional.json"
                       },
+                      "held": null,
+                      "implicit": false,
                       "key": "regional",
                       "lastSuccessAt": "2026-10-08T09:07:00Z",
-                      "problem": null
+                      "problem": null,
+                      "provider": null,
+                      "source": {
+                        "commit": null,
+                        "format": "sing-box-source",
+                        "path": null,
+                        "ref": null,
+                        "repo": null
+                      }
                     }
                   ]
                 }
@@ -19470,22 +19589,46 @@
                 },
                 "example": {
                   "artifact": {
+                    "bytes": 4096,
                     "createdAt": "2026-10-08T09:05:00Z",
-                    "digest": "e58c70f9a1b2634d8e5f60718293a4b5c6d7e8f90123456789abcdef01234567",
+                    "digest": "sha256:e58c70f9a1b2634d8e5f60718293a4b5c6d7e8f90123456789abcdef01234567",
                     "entries": 128,
-                    "id": "db2c3d4e-5f6a-4b7c-8d9e-0f1a2b3c4d50"
+                    "format": 1
                   },
                   "checkedAt": "2026-10-08T09:07:00Z",
                   "configurationRevision": 7,
+                  "conversion": {
+                    "converted": {
+                      "cidr": 4,
+                      "exact": 4,
+                      "keyword": 0,
+                      "subdomain": 0,
+                      "suffix": 120
+                    },
+                    "redundant": 0,
+                    "unconverted": {
+                      "regex": 2
+                    }
+                  },
                   "definition": {
                     "format": "sing-box-source",
                     "type": "remote",
                     "updateInterval": "24h",
                     "url": "https://rules.example.com/regional.json"
                   },
+                  "held": null,
+                  "implicit": false,
                   "key": "regional",
                   "lastSuccessAt": "2026-10-08T09:07:00Z",
-                  "problem": null
+                  "problem": null,
+                  "provider": null,
+                  "source": {
+                    "commit": null,
+                    "format": "sing-box-source",
+                    "path": null,
+                    "ref": null,
+                    "repo": null
+                  }
                 }
               }
             }
@@ -19701,6 +19844,35 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/RuleSetReport"
+                },
+                "example": {
+                  "conversion": {
+                    "converted": {
+                      "cidr": 4,
+                      "exact": 4,
+                      "keyword": 0,
+                      "subdomain": 0,
+                      "suffix": 120
+                    },
+                    "redundant": 0,
+                    "unconverted": {
+                      "regex": 2
+                    }
+                  },
+                  "digest": "sha256:e58c70f9a1b2634d8e5f60718293a4b5c6d7e8f90123456789abcdef01234567",
+                  "items": [
+                    {
+                      "at": "/rules/3/domain_regex/0",
+                      "entry": "^ads[0-9]+\\.example\\.com$",
+                      "reason": "regex"
+                    },
+                    {
+                      "at": "/rules/3/domain_regex/1",
+                      "entry": "^cdn-.*\\.example\\.net$",
+                      "reason": "regex"
+                    }
+                  ],
+                  "key": "regional"
                 }
               }
             }

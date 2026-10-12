@@ -1083,7 +1083,8 @@
       "200": {
         "preparedRuleSets": {
           "regional": {
-            "digest": "e58c70f9a1b2634d8e5f60718293a4b5c6d7e8f90123456789abcdef01234567",
+            "digest": "sha256:e58c70f9a1b2634d8e5f60718293a4b5c6d7e8f90123456789abcdef01234567",
+            "bytes": 4096,
             "entries": 128
           }
         },
