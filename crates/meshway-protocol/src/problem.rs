@@ -168,6 +168,8 @@ problems! {
     ConfigurationInvalid(ConfigurationValidationParams) = "configuration_invalid",
     /// The current lifecycle state or sequence does not permit the operation; returns HTTP 409.
     StateConflict(EmptyParams) = "state_conflict",
+    /// The Server has not yet verified the provider's catalog: it does so the first time it prepares one of the provider's sets (a configuration change, a refresh or a periodic check) for any network; returns HTTP 409.
+    RuleSetCatalogNotReady(EmptyParams) = "rule_set_catalog_not_ready",
     /// The State report's execution scope changed; returns HTTP 409, so refresh the scope and observe again.
     StateScopeChanged(EmptyParams) = "state_scope_changed",
     /// The operation exceeds the State resource budget; returns HTTP 429.
