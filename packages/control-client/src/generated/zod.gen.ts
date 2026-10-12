@@ -3707,6 +3707,7 @@ export const zUdpTraversalRequestIds = z.array(z.string().refine(value => [...va
 
 export const zSyncRequest = z.strictObject({
   ["associations"]: zDigest.nullable().exactOptional(),
+  ["lease"]: zNetmapLease.nullable().exactOptional(),
   ["netmap"]: zNetmapRef.nullable().exactOptional(),
   ["serverKeyGeneration"]: zVersion.nullable().exactOptional(),
   ["state"]: zStateCursor.nullable().exactOptional(),

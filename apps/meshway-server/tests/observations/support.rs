@@ -272,6 +272,7 @@ impl Server {
                     server_key_generation: None,
                     traversal_requests: Default::default(),
                     associations: None,
+                    lease: None,
                 },
             ),
             200,

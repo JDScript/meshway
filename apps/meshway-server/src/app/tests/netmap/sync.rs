@@ -46,6 +46,7 @@ async fn sync_answers_full_delta_or_unchanged_and_renews_only_the_lease() {
                 server_key_generation: None,
                 traversal_requests: Default::default(),
                 associations: None,
+                lease: Some(first.lease),
             },
         )
         .await
@@ -315,25 +316,28 @@ async fn a_hold_answers_before_the_lease_the_node_holds_ends() {
     // The Node holds a 60 s lease that ends in 17 s (its last answer, 43 s
     // ago): a nominal 54 s hold answers 15 s before the end, with a renewal.
     let now = chrono::Utc::now().timestamp_millis() as u64;
-    let held = app.effects.netmaps.register(network, a).unwrap();
-    held.answered(now + 17_000);
-    drop(held);
+    let held = meshway_model::NetmapLease::new(base, now - 43_000, now + 17_000).unwrap();
+    app.effects.netmaps.issued(network, a, held);
     let cursor = first.peer_facts.map(|facts| facts.cursor);
-    let started = Instant::now();
-    let renewed = service
-        .sync(
-            token.token.expose(),
-            SyncRequest {
-                netmap: Some(base),
-                state: cursor,
-                server_key_generation: None,
-                traversal_requests: Default::default(),
-                associations: None,
-            },
-        )
-        .await
-        .unwrap();
-    let elapsed = started.elapsed();
+    let request = |lease| SyncRequest {
+        netmap: Some(base),
+        state: cursor,
+        server_key_generation: None,
+        traversal_requests: Default::default(),
+        associations: None,
+        lease,
+    };
+    let timed = |lease| {
+        let service = service.clone();
+        let token = token.token.expose().to_owned();
+        let request = request(lease);
+        async move {
+            let started = Instant::now();
+            let answer = service.sync(&token, request).await.unwrap();
+            (answer, started.elapsed())
+        }
+    };
+    let (renewed, elapsed) = timed(Some(held)).await;
     assert!(
         elapsed >= Duration::from_millis(1_500) && elapsed < Duration::from_secs(5),
         "{elapsed:?}"
@@ -341,5 +345,16 @@ async fn a_hold_answers_before_the_lease_the_node_holds_ends() {
     assert_eq!(renewed.netmap, SyncNetmap::Unchanged);
     assert!(renewed.lease.issued_at_ms < now + 17_000);
     assert!(renewed.lease.expires_at_ms > now + 17_000);
+    // That answer was generated but lost: the Node retries naming the lease
+    // it still holds, and the hold is bounded by that one, not by the newer
+    // lease the Server issued.
+    let (_, elapsed) = timed(Some(held)).await;
+    assert!(elapsed < Duration::from_secs(5), "{elapsed:?}");
+    // A lease the Server never issued, or none, bounds no hold.
+    let forged = meshway_model::NetmapLease::new(base, now, now + 60_000).unwrap();
+    for lease in [Some(forged), None] {
+        let (_, elapsed) = timed(lease).await;
+        assert!(elapsed < Duration::from_secs(2), "{elapsed:?}");
+    }
     app.shutdown().await.unwrap();
 }

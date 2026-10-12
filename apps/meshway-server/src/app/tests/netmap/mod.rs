@@ -167,6 +167,7 @@ fn holding(netmap: Option<NetmapRef>) -> SyncRequest {
         server_key_generation: None,
         traversal_requests: Default::default(),
         associations: None,
+        lease: None,
     }
 }
 
@@ -180,9 +181,13 @@ fn spawn_sync(
     let token = token.token.expose().to_owned();
     tokio::spawn(async move {
         let mut request = request;
-        if request.netmap.is_some() && request.state.is_none() {
+        // A Node holds the facts cursor and the lease of its last answer.
+        if request.netmap.is_some() && (request.state.is_none() || request.lease.is_none()) {
             let initial = service.sync(&token, holding(None)).await.unwrap();
-            request.state = initial.peer_facts.map(|facts| facts.cursor);
+            if request.state.is_none() {
+                request.state = initial.peer_facts.map(|facts| facts.cursor);
+            }
+            request.lease.get_or_insert(initial.lease);
         }
         let started = Instant::now();
         let response = service.sync(&token, request).await;

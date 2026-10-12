@@ -149,6 +149,7 @@ async fn sync_netmap(app: &App, token: &str, instance: &InstanceRequest) -> Comp
                 server_key_generation: None,
                 traversal_requests: Default::default(),
                 associations: None,
+                lease: None,
             },
         )
         .await

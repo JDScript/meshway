@@ -172,7 +172,7 @@ async fn an_exit_completes_its_task_once_and_both_nodes_receive_the_overlay() {
         Err(Error::InvalidRequest)
     );
 
-    let sync = |token: String, netmap, state, associations| {
+    let sync = |token: String, netmap, state, associations, lease| {
         let netmaps = lab.app.netmaps();
         async move {
             netmaps
@@ -184,13 +184,14 @@ async fn an_exit_completes_its_task_once_and_both_nodes_receive_the_overlay() {
                         server_key_generation: None,
                         traversal_requests: Default::default(),
                         associations,
+                        lease,
                     },
                 )
                 .await
                 .unwrap()
         }
     };
-    let answer = sync(lab.tokens[0].clone(), na.reference(), None, None).await;
+    let answer = sync(lab.tokens[0].clone(), na.reference(), None, None, None).await;
     let update = answer.associations.expect("overlay for the source");
     assert_eq!(update.overlay.netmap, na.reference());
     assert_eq!(update.signature.key_id, answer.signature.key_id);
@@ -205,7 +206,7 @@ async fn an_exit_completes_its_task_once_and_both_nodes_receive_the_overlay() {
         (a, "api.chat.example", &["edge.cdn.example".to_owned()][..])
     );
     // The exit holds the same association for its own netmap.
-    let exit = sync(lab.tokens[1].clone(), nb.reference(), None, None).await;
+    let exit = sync(lab.tokens[1].clone(), nb.reference(), None, None, None).await;
     let exit = exit.associations.unwrap();
     assert_eq!(exit.overlay.netmap, nb.reference());
     assert_eq!(exit.overlay.associations, update.overlay.associations);
@@ -218,6 +219,7 @@ async fn an_exit_completes_its_task_once_and_both_nodes_receive_the_overlay() {
             na.reference(),
             answer.peer_facts.as_ref().map(|facts| facts.cursor),
             Some(digest),
+            Some(answer.lease),
         ),
     )
     .await;
@@ -228,7 +230,14 @@ async fn an_exit_completes_its_task_once_and_both_nodes_receive_the_overlay() {
     configure_split(&lab, false).await;
     let na2 = lab.netmap(a).await;
     assert_ne!(na2.reference(), na.reference());
-    let cleared = sync(lab.tokens[0].clone(), na.reference(), None, Some(digest)).await;
+    let cleared = sync(
+        lab.tokens[0].clone(),
+        na.reference(),
+        None,
+        Some(digest),
+        None,
+    )
+    .await;
     let cleared = cleared.associations.expect("explicit clear");
     assert!(cleared.overlay.associations.is_empty());
     assert_eq!(cleared.overlay.netmap, na2.reference());

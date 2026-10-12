@@ -11,6 +11,7 @@ async fn hold(
     node: &Node,
     state: Option<meshway_protocol::netmap::StateCursor>,
     held: Vec<UdpTraversalId>,
+    lease: Option<meshway_model::NetmapLease>,
 ) -> (SyncResponse, Duration) {
     let started = Instant::now();
     let response = netmaps
@@ -22,6 +23,7 @@ async fn hold(
                 server_key_generation: None,
                 traversal_requests: UdpTraversalRequestIds::try_from(held).unwrap(),
                 associations: None,
+                lease,
             },
         )
         .await
@@ -29,19 +31,26 @@ async fn hold(
     (response, started.elapsed())
 }
 
-/// The cursor after which `node`'s hold has no fact to deliver.
-async fn settled(app: &App, node: &Node) -> meshway_protocol::netmap::StateCursor {
-    let (response, _) = hold(&app.netmaps(), node, None, vec![]).await;
-    response.peer_facts.unwrap().cursor
+/// The cursor after which `node`'s hold has no fact to deliver, and the
+/// lease it then holds.
+async fn settled(
+    app: &App,
+    node: &Node,
+) -> (
+    meshway_protocol::netmap::StateCursor,
+    meshway_model::NetmapLease,
+) {
+    let (response, _) = hold(&app.netmaps(), node, None, vec![], None).await;
+    (response.peer_facts.unwrap().cursor, response.lease)
 }
 
 #[tokio::test]
 async fn a_prepared_attempt_answers_the_targets_hold_and_ends_with_acceptance() {
     let (_dir, app, _, a, b) = setup(true).await;
-    let cursor = settled(&app, &b).await;
+    let (cursor, lease) = settled(&app, &b).await;
     let held = {
         let (netmaps, b) = (app.netmaps(), clone(&b));
-        tokio::spawn(async move { hold(&netmaps, &b, Some(cursor), vec![]).await })
+        tokio::spawn(async move { hold(&netmaps, &b, Some(cursor), vec![], Some(lease)).await })
     };
     for _ in 0..400 {
         if app.effects.netmaps.pending() == 1 {
@@ -67,7 +76,7 @@ async fn a_prepared_attempt_answers_the_targets_hold_and_ends_with_acceptance() 
     // The preparer is never asked to accept its own attempt.
     let (own, _) = tokio::time::timeout(
         Duration::from_secs(5),
-        hold(&app.netmaps(), &a, None, vec![]),
+        hold(&app.netmaps(), &a, None, vec![], None),
     )
     .await
     .unwrap();
@@ -75,10 +84,19 @@ async fn a_prepared_attempt_answers_the_targets_hold_and_ends_with_acceptance() 
 
     // Echoing the held request does not answer at once: the hold continues
     // until something else (here b's acceptance ends the request).
-    let cursor = settled(&app, &b).await;
+    let (cursor, lease) = settled(&app, &b).await;
     let echoed = {
         let (netmaps, b) = (app.netmaps(), clone(&b));
-        tokio::spawn(async move { hold(&netmaps, &b, Some(cursor), vec![offer.attempt_id]).await })
+        tokio::spawn(async move {
+            hold(
+                &netmaps,
+                &b,
+                Some(cursor),
+                vec![offer.attempt_id],
+                Some(lease),
+            )
+            .await
+        })
     };
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert!(
@@ -95,7 +113,7 @@ async fn a_prepared_attempt_answers_the_targets_hold_and_ends_with_acceptance() 
         accepted,
         AcceptUdpTraversalResponse::Waiting { .. }
     ));
-    let (after, _) = hold(&app.netmaps(), &b, None, vec![]).await;
+    let (after, _) = hold(&app.netmaps(), &b, None, vec![], None).await;
     assert!(
         after.traversal_requests.as_slice().is_empty(),
         "an accepted participant is not asked again"

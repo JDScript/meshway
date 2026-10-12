@@ -37811,6 +37811,17 @@
               }
             ]
           },
+          "lease": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NetmapLease",
+                "description": "The signed lease the Node currently holds, exactly as it verified it. A hold ends at the latest 15 s before this lease ends, and only a lease this Server process issued to the Node bounds a hold at all; null, omission or an unknown lease is answered without holding."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "netmap": {
             "oneOf": [
               {

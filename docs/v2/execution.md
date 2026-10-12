@@ -45,7 +45,7 @@ Node execution lease 最长为 Server 当前时点后 60 秒，并受当前 inst
 
 ## Netmap 同步（预发布） {#netmap-同步}
 
-Server 与现行按需发布并存地维护每个 Node 的 netmap（[设计](/v2/node/netmap-design)）并提供 `POST /agent-api/v1/sync`（`syncNode`）。Node 尚未消费该端点；Node 侧执行仍以上文发布为准。
+Server 维护每个 Node 的 netmap（[设计](/v2/node/netmap-design)）并提供 `POST /agent-api/v1/sync`（`syncNode`）。Node 的 Control 以这一个长轮询取得 netmap、peer 事实、穿透提示与 DNS 关联 overlay，验签缓存后交 Engine 计算 `Desired`；节点授权只来自签名租约内的 netmap（见 [Node Control](/v2/node/control)）。
 
 **存储与编译**。每个已登记、有可信 Control／数据面密钥的配置节点有一份 `CompiledNetmap`，按 (网络, 节点) 保存当前 serial 及其前一份（delta 基准），内容私有密封。下列稳定输入在其自身事务内整网重新投影，内容 digest 不变则 serial 与 revision 不变。任一节点超过 8 MiB 时：配置版本与规则集绑定以 `configuration_invalid`（问题 code `netmap_limit`）拒绝整个事务；密钥吊销／换钥、实例能力与方案选择照常提交，超限节点被移出可信库存，其 netmap 记为不可用（其他节点在不含它的库存上编译），直到后续重编不再超限；节点库存视图以 `netmapUnavailable`（`notIssued`／`withdrawn`／`limit`，后者带 `bytes`／`maxBytes`）给出无 netmap 的原因，并给出本进程最近签发的租约 `lease`、最近收到 sync 的时间 `lastSyncAt` 与该请求报告的钉住钥 `serverKey`（`{ keyGeneration, status: current | rotating | keyMismatch }`，见[签发钥轮换](/v2/server#netmap-签发钥轮换)）（均为进程内观测，Server 重启后为 null，不构成授权）。每节点回执只保留最新 64 条，旧回执随新回执删除：
 
@@ -59,7 +59,7 @@ Server 与现行按需发布并存地维护每个 Node 的 netmap（[设计](/v2
 
 State 报告、实例续租／释放／到期与观察订阅不重新投影。规则集按配置版本保存当前绑定（版本自身绑定，或其后检查更新绑定的 artifact），不依赖执行发布。失去可信密钥或被移出配置的节点，其 netmap 被撤回但保留 serial 高水位；之后恢复也不会出现 serial 回退。
 
-**请求与响应**。请求为 `SyncRequest { netmap, state }`，二者都可省略；只需 Node session，无需 instance。网络与节点只由凭据决定，请求不携带也不能指定。
+**请求与响应**。请求为 `SyncRequest { netmap, state, serverKeyGeneration, traversalRequests, associations, lease }`，均可省略；只需 Node session，无需 instance。网络与节点只由凭据决定，请求不携带也不能指定。
 
 | 请求的 `netmap` | Server 当前 | 响应 `netmap` |
 | --- | --- | --- |
@@ -70,7 +70,7 @@ State 报告、实例续租／释放／到期与观察订阅不重新投影。�
 | 任意 | 本节点 netmap 因超限不可用 | `503 service_unavailable` |
 | 任意 | 本节点无当前 netmap | `409 binding_conflict` |
 
-每个成功响应都签发新的 `lease`（`issuedAt` 为 Server 当前时刻，`expiresAt` 为其后 `--netmap-validity`），续期不写入 serial。每个响应的 `signature` 是 Server netmap 签发钥对 `netmap_lease_transcript(network, node, lease, server, keyId, keyGeneration)` 的 Ed25519 签名，覆盖认证所得的网络与节点、`NetmapRef` 与租约区间；该钥的公钥随接入响应 `serverSigningKey` 下发并由 Node 钉住。签发钥在 Server 首次启动时生成（generation 1），私钥由主密钥密封私有保存，重启沿用；由运维命令[轮换](/v2/server#netmap-签发钥轮换)。轮换窗口内 `signature` 仍由被替换钥签署，`keyRotation` 携带 `next`（下一代 `ServerSigningKey`）、`notBefore`、`endorsement`（被替换钥对 `netmap_key_rotation_transcript(network, keyId, keyGeneration, next, notBefore)` 的 Ed25519 签名）与 `leaseSignature`（`next` 对同一租约的签名）；窗口外为 null。请求的 `serverKeyGeneration` 是节点报告的钉住钥 generation，只用于库存视图，不选择也不授权任何内容。`peerFacts` 是投影内 peer 的动态事实增量（按 `StateCursor` 接续，base 为 null 即全量替换）；`expiresAt`（报告后至多 60 秒，且不超过上报者实例 lease）只表示新鲜度，到期只停止刷新，不产生 `removed`；`removed` 仅在上报者无 netmap 而撤回事实或节点退休时出现；查看者 netmap 变化以全量替换体现，见[最后已知事实](/v2/node/connectivity#last-known-facts)。挂起时长为 `--netmap-sync-hold` 加 ±10% 抖动，最长不足 60 秒；同一节点的新请求使旧请求立即返回。凭据缺失、无效、属于用户或节点已吊销返回 `401 invalid_credentials`。
+每个成功响应都签发新的 `lease`（`issuedAt` 为 Server 当前时刻，`expiresAt` 为其后 `--netmap-validity`），续期不写入 serial。每个响应的 `signature` 是 Server netmap 签发钥对 `netmap_lease_transcript(network, node, lease, server, keyId, keyGeneration)` 的 Ed25519 签名，覆盖认证所得的网络与节点、`NetmapRef` 与租约区间；该钥的公钥随接入响应 `serverSigningKey` 下发并由 Node 钉住。签发钥在 Server 首次启动时生成（generation 1），私钥由主密钥密封私有保存，重启沿用；由运维命令[轮换](/v2/server#netmap-签发钥轮换)。轮换窗口内 `signature` 仍由被替换钥签署，`keyRotation` 携带 `next`（下一代 `ServerSigningKey`）、`notBefore`、`endorsement`（被替换钥对 `netmap_key_rotation_transcript(network, keyId, keyGeneration, next, notBefore)` 的 Ed25519 签名）与 `leaseSignature`（`next` 对同一租约的签名）；窗口外为 null。请求的 `serverKeyGeneration` 是节点报告的钉住钥 generation，只用于库存视图，不选择也不授权任何内容。`peerFacts` 是投影内 peer 的动态事实增量（按 `StateCursor` 接续，base 为 null 即全量替换）；`expiresAt`（报告后至多 60 秒，且不超过上报者实例 lease）只表示新鲜度，到期只停止刷新，不产生 `removed`；`removed` 仅在上报者无 netmap 而撤回事实或节点退休时出现；查看者 netmap 变化以全量替换体现，见[最后已知事实](/v2/node/connectivity#last-known-facts)。挂起时长为 `--netmap-sync-hold` 加 ±10% 抖动，最长不足 60 秒，且在请求 `lease`（节点当前持有、经其验签的租约）结束前至少 15 秒回答；只有本 Server 进程签发给该节点的最近 8 份租约之一才约束挂起，省略、null、伪造或进程重启前签发的租约一律立即回答（不按“已生成的响应”推断节点持有的租约：响应可能生成后丢失）；同一节点的新请求使旧请求立即返回。凭据缺失、无效、属于用户或节点已吊销返回 `401 invalid_credentials`。
 
 ## 各方职责
 

@@ -47,6 +47,9 @@ pub struct SyncRequest {
     /// Digest of the DNS association overlay the Node holds for `netmap`; null or omission: none.
     #[serde(default)]
     pub associations: Option<Digest>,
+    /// The signed lease the Node currently holds, exactly as it verified it. A hold ends at the latest 15 s before this lease ends, and only a lease this Server process issued to the Node bounds a hold at all; null, omission or an unknown lease is answered without holding.
+    #[serde(default)]
+    pub lease: Option<NetmapLease>,
 } }
 
 wire_tagged! {
@@ -573,6 +576,7 @@ mod tests {
             server_key_generation: Some(Version::MIN),
             traversal_requests: Default::default(),
             associations: None,
+            lease: None,
         };
         let next = ServerSigningKey {
             key_id: "00000000-0000-4000-8000-0000000000bb".parse().unwrap(),
@@ -631,6 +635,7 @@ mod tests {
             server_key_generation: None,
             traversal_requests: Default::default(),
             associations: None,
+            lease: None,
         };
         let response = SyncResponse {
             lease: NetmapLease::new(base, 0, 60_000).unwrap(),
@@ -648,6 +653,7 @@ mod tests {
             server_key_generation: None,
             traversal_requests: Default::default(),
             associations: None,
+            lease: None,
         };
         assert!(response.check(&stale).is_err());
         let text = serde_json::to_string(&response).unwrap();
@@ -668,6 +674,7 @@ mod tests {
                 server_key_generation: None,
                 traversal_requests: Default::default(),
                 associations: None,
+                lease: None,
             }
         );
     }
@@ -697,6 +704,7 @@ mod tests {
             server_key_generation: None,
             traversal_requests: Default::default(),
             associations: None,
+            lease: None,
         };
         let mut response = SyncResponse {
             lease: NetmapLease::new(base, 0, 60_000).unwrap(),

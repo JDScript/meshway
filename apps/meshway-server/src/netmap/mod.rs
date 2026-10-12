@@ -5,7 +5,8 @@
 //! request until a committed change wakes it, the peer-fact source reports a
 //! change or a traversal attempt the Node does not hold yet, a newer request
 //! of the same Node replaces it, or the hold times out. A hold never outlasts
-//! the lease the Node holds less [`SYNC_RENEWAL_MARGIN`]. Every answer carries a fresh lease for the current netmap. Content is
+//! the lease the request names (one this process issued to the Node) less
+//! [`SYNC_RENEWAL_MARGIN`]. Every answer carries a fresh lease for the current netmap. Content is
 //! stored by `store::netmap` and only changes in stable-input transactions.
 pub(crate) mod associations;
 mod hub;
@@ -34,9 +35,9 @@ pub const MAX_SYNC_HOLD: Duration = Duration::from_secs(54);
 pub const SYNC_RENEWAL_MARGIN: Duration = Duration::from_secs(15);
 
 /// The hold of one request: the nominal hold, cut so the answer leaves the
-/// Node [`SYNC_RENEWAL_MARGIN`] of the lease it holds. A Node whose held
-/// lease this Server does not know (its first request to this process) is
-/// answered at once.
+/// Node [`SYNC_RENEWAL_MARGIN`] of the lease it names. A request naming no
+/// lease this process issued to it (its first request to this process, or a
+/// lease it cannot prove) is answered at once.
 fn hold_within_lease(hold: Duration, held_until_ms: Option<u64>, now_ms: u64) -> Duration {
     let Some(until) = held_until_ms else {
         return Duration::ZERO;
@@ -218,18 +219,23 @@ impl Netmaps {
             chrono::Utc::now().timestamp_millis().max(0) as u64,
             request.server_key_generation,
         );
-        let answered = |waiter: &hub::Waiter, response: SyncResponse| {
+        let answered = |response: SyncResponse| {
             records::Records::shared().issued(principal.network, principal.node, response.lease);
-            waiter.answered(response.lease.expires_at_ms);
+            self.hub
+                .issued(principal.network, principal.node, response.lease);
             response
         };
         // Register before the first read: a change committed after this point
         // wakes the waiter, one committed before it is visible to the read.
         let mut waiter = self.hub.register(principal.network, principal.node)?;
+        // Only the lease the request names, checked against those this
+        // process issued, bounds the hold: an answer generated earlier may
+        // never have reached the Node.
         let deadline = tokio::time::Instant::now()
             + hold_within_lease(
                 self.timing.jittered_hold(),
-                waiter.held_until_ms(),
+                self.hub
+                    .held_until_ms(principal.network, principal.node, request.lease.as_ref()),
                 chrono::Utc::now().timestamp_millis().max(0) as u64,
             );
         loop {
@@ -249,7 +255,7 @@ impl Netmaps {
                         .contains(&asked.attempt_id)
                 })
             {
-                return Ok(answered(&waiter, response));
+                return Ok(answered(response));
             }
             let facts_changed = async move {
                 match changed {
@@ -265,7 +271,7 @@ impl Netmaps {
         }
         // Woken, replaced, closing or timed out: one final answer with a fresh lease.
         let response = self.read(token, &request).await?.0;
-        Ok(answered(&waiter, response))
+        Ok(answered(response))
     }
 
     /// Bytes of a rule-set artifact some netmap of the calling Node

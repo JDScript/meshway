@@ -199,6 +199,7 @@ impl Control {
                 .try_into()
                 .unwrap_or_default(),
             associations: self.held_associations().map(|(digest, _)| digest),
+            lease: self.netmap_lease(),
         }
     }
 
