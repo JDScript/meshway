@@ -130,6 +130,12 @@ pub enum Error {
     Protection,
     #[error("private underlay journal is invalid or requires recovery")]
     Journal,
+    /// A journal an earlier version wrote, still owning host resources this
+    /// version cannot recover.
+    #[error(
+        "private underlay journal {file} has version {version} from an earlier Meshway and still owns host resources: run `meshway down` with that earlier version (or reboot the host), then upgrade"
+    )]
+    JournalVersion { file: &'static str, version: u64 },
     #[error(
         "bootstrap DNS requires explicit real upstreams or a hosts entry; local stub upstream protection is unknown"
     )]

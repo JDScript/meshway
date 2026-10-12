@@ -37,7 +37,7 @@ fn startup_problem(error: &meshway_underlay::Error) -> Problem {
     use meshway_underlay::Error;
     match error {
         Error::Storage(meshway_private_storage::Error::InUse) => Problem::Underlay,
-        Error::Journal | Error::Storage(_) => Problem::Storage,
+        Error::Journal | Error::JournalVersion { .. } | Error::Storage(_) => Problem::Storage,
         Error::Unsupported => Problem::UnsupportedMode,
         Error::Options | Error::Origin | Error::Resolver => Problem::Configuration,
         _ => Problem::Underlay,
@@ -195,17 +195,17 @@ pub(super) struct Offer {
     pub clock_floor_ms: Option<u64>,
 }
 
-/// What identifies an offered netmap: content, lease, the loaded rule-set
-/// artifacts (more artifacts for the same content is a new offer) and the
-/// DNS association overlay (a changed or cleared overlay is a new offer).
-fn offered(
-    netmap: &Option<meshway_engine::Netmap>,
-) -> Option<(
+type OfferKey = (
     NetmapRef,
     meshway_model::NetmapLease,
     Vec<meshway_rules::Digest>,
     Option<Arc<meshway_configuration::netmap::DnsAssociationOverlay>>,
-)> {
+);
+
+/// What identifies an offered netmap: content, lease, the loaded rule-set
+/// artifacts (more artifacts for the same content is a new offer) and the
+/// DNS association overlay (a changed or cleared overlay is a new offer).
+fn offered(netmap: &Option<meshway_engine::Netmap>) -> Option<OfferKey> {
     netmap.as_ref().map(|netmap| {
         (
             netmap.content.reference(),
@@ -564,6 +564,13 @@ mod tests {
         use meshway_protocol::ipc::Problem;
         assert_eq!(
             startup_problem(&meshway_underlay::Error::Journal),
+            Problem::Storage
+        );
+        assert_eq!(
+            startup_problem(&meshway_underlay::Error::JournalVersion {
+                file: "underlay-egress.json",
+                version: 1
+            }),
             Problem::Storage
         );
         assert_eq!(

@@ -66,17 +66,24 @@ impl Store {
                 source.archive_stale(FILE, super::super::journal::STALE_ARCHIVES)?;
                 return Ok(None);
             }
-            let ledger: Ledger = serde_json::from_value(raw).map_err(|_| Error::Journal)?;
+            // Nor does one of another boot or namespace.
             let (boot, dev, ino) = super::super::journal::Journal::identity()?;
-            if (
-                ledger.boot.as_str(),
-                ledger.namespace_device,
-                ledger.namespace_inode,
-            ) != (boot.as_str(), dev, ino)
-            {
+            let recorded = (
+                raw.get("boot").and_then(serde_json::Value::as_str),
+                raw.get("namespace_device")
+                    .and_then(serde_json::Value::as_u64),
+                raw.get("namespace_inode")
+                    .and_then(serde_json::Value::as_u64),
+            );
+            let (Some(recorded_boot), Some(recorded_dev), Some(recorded_ino)) = recorded else {
+                return Err(Error::Journal);
+            };
+            if (recorded_boot, recorded_dev, recorded_ino) != (boot.as_str(), dev, ino) {
                 source.archive_stale(FILE, super::super::journal::STALE_ARCHIVES)?;
                 return Ok(None);
             }
+            supported(&raw)?;
+            let ledger: Ledger = serde_json::from_value(raw).map_err(|_| Error::Journal)?;
             ledger.validate()?;
             Ok(Some(ledger))
         })
@@ -109,9 +116,26 @@ impl Store {
             .await
     }
 }
+/// The ledger version this build reads and writes.
+const VERSION: u64 = 2;
+
+/// A live (not removed) record of another version is named as such before
+/// its content is parsed: only the version that wrote it can release what
+/// it owns.
+fn supported(raw: &serde_json::Value) -> Result<()> {
+    match raw.get("version").and_then(serde_json::Value::as_u64) {
+        Some(VERSION) => Ok(()),
+        Some(version) => Err(Error::JournalVersion {
+            file: FILE,
+            version,
+        }),
+        None => Err(Error::Journal),
+    }
+}
+
 impl Ledger {
     fn validate(&self) -> Result<()> {
-        if self.version != 2
+        if u64::from(self.version) != VERSION
             || self.program.installation.len() != 32
             || !self
                 .program
@@ -145,5 +169,32 @@ impl Ledger {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod unit {
+    use super::*;
+
+    #[test]
+    fn a_live_record_of_another_version_is_named_with_its_file_and_version() {
+        let error = supported(&serde_json::json!({"version": 1, "removed": false})).unwrap_err();
+        assert!(matches!(
+            error,
+            Error::JournalVersion {
+                file: FILE,
+                version: 1
+            }
+        ));
+        let text = error.to_string();
+        assert!(
+            text.contains(FILE) && text.contains("version 1") && text.contains("meshway down"),
+            "{text}"
+        );
+        assert!(supported(&serde_json::json!({"version": 2})).is_ok());
+        assert!(matches!(
+            supported(&serde_json::json!({"version": "x"})),
+            Err(Error::Journal)
+        ));
     }
 }

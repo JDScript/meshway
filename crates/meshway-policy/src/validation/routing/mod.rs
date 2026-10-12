@@ -494,47 +494,6 @@ fn limit_warning(
     }
 }
 
-#[cfg(test)]
-mod limit_tests {
-    use super::*;
-    use meshway_configuration::{evaluation::CaptureSummary, execution::UnavailableReason};
-
-    #[test]
-    fn an_exhausted_work_budget_warns_without_counts_and_other_failures_do_not() {
-        let summary = |n: u32, unavailable| CaptureSummary {
-            managed_ipv4: n,
-            sink_ipv6: n,
-            routes: n,
-            unavailable,
-        };
-        // A computation over its work budget reports the fail-closed 1/1/1.
-        let exhausted = limit_warning(
-            "/p".into(),
-            "work",
-            &summary(1, Some(UnavailableReason::RoutingLimit)),
-        )
-        .unwrap();
-        assert_eq!(
-            exhausted.params.get("work").map(String::as_str),
-            Some(crate::compile::MAX_CAPTURE_WORK.to_string().as_str())
-        );
-        assert!(!exhausted.params.contains_key("ranges"));
-        let oversized = limit_warning(
-            "/p".into(),
-            "work",
-            &summary(17_000, Some(UnavailableReason::RoutingLimit)),
-        )
-        .unwrap();
-        assert_eq!(
-            oversized.params.get("ranges").map(String::as_str),
-            Some("34000")
-        );
-        for unavailable in [None, Some(UnavailableReason::MissingDependency)] {
-            assert!(limit_warning("/p".into(), "work", &summary(1, unavailable)).is_none());
-        }
-    }
-}
-
 fn https_source(url: &str) -> bool {
     let authority = url
         .strip_prefix("https://")
@@ -828,4 +787,45 @@ fn https_authority(authority: &str) -> bool {
     };
     meshway_transport::spec::normalize_host(host).is_ok()
         && port.is_none_or(|p| p.parse::<u16>().is_ok_and(|p| p > 0))
+}
+
+#[cfg(test)]
+mod limit_tests {
+    use super::*;
+    use meshway_configuration::{evaluation::CaptureSummary, execution::UnavailableReason};
+
+    #[test]
+    fn an_exhausted_work_budget_warns_without_counts_and_other_failures_do_not() {
+        let summary = |n: u32, unavailable| CaptureSummary {
+            managed_ipv4: n,
+            sink_ipv6: n,
+            routes: n,
+            unavailable,
+        };
+        // A computation over its work budget reports the fail-closed 1/1/1.
+        let exhausted = limit_warning(
+            "/p".into(),
+            "work",
+            &summary(1, Some(UnavailableReason::RoutingLimit)),
+        )
+        .unwrap();
+        assert_eq!(
+            exhausted.params.get("work").map(String::as_str),
+            Some(crate::compile::MAX_CAPTURE_WORK.to_string().as_str())
+        );
+        assert!(!exhausted.params.contains_key("ranges"));
+        let oversized = limit_warning(
+            "/p".into(),
+            "work",
+            &summary(17_000, Some(UnavailableReason::RoutingLimit)),
+        )
+        .unwrap();
+        assert_eq!(
+            oversized.params.get("ranges").map(String::as_str),
+            Some("34000")
+        );
+        for unavailable in [None, Some(UnavailableReason::MissingDependency)] {
+            assert!(limit_warning("/p".into(), "work", &summary(1, unavailable)).is_none());
+        }
+    }
 }

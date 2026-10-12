@@ -143,7 +143,7 @@ Mesh 池、loopback、链路本地、组播、保留／广播及出口本机地�
 
 捕获规则只匹配本机来源和非保护 mark。Server／peer 的受保护 socket 继续使用原宿主 RPDB，普通应用连接相同 IP 不获得豁免；出口 TUN 转发也不重新进入本机 capture。`inet meshway_egress_<installation>` 的 OUTPUT 门覆盖 local-table 广播等早于捕获查表的路径，防止其从外部接口直出。本机 local／loopback 服务保留；IPv6 ND 仅允许 type 133–137、hop limit 255、本机或未指定源的链路控制，保护新邻居解析，IPv6 TCP／UDP／echo 字面量不因此放行。
 
-`underlay-egress.json`（v2）保存 boot／namespace、随机 installation、mark／table、计划、当前门与待提交门（区间与设备）、nft 规范对象／handle、选择器规则及 removed；捕获表路由由门推出，恢复时与表内实际路由精确对账。自有规则／路由变化注册到同一 monitor（路由每 64 条等待其观测，不使通知缓冲溢出），不制造外部切网事件。暂停、执行失效和同 namespace 重启保留负向范围；TUN 消失不会落回 main direct。恢复先关闭旧活动 selector 并清理旧正向资源，只有新的有效执行安装可以重新激活；显式 down 才解除所属负向边界。
+`underlay-egress.json`（v2）保存 boot／namespace、随机 installation、mark／table、计划、当前门与待提交门（区间与设备）、nft 规范对象／handle、选择器规则及 removed；已 down（removed）或属于另一次启动的记录不论版本直接归档，同一次启动内仍持有资源的其他版本记录在解析内容前即以专用错误（含文件名与版本，提示先用写它的旧版本 `meshway down` 或重启主机再升级）阻止启动；捕获表路由由门推出，恢复时与表内实际路由精确对账。自有规则／路由变化注册到同一 monitor（路由每 64 条等待其观测，不使通知缓冲溢出），不制造外部切网事件。暂停、执行失效和同 namespace 重启保留负向范围；TUN 消失不会落回 main direct。恢复先关闭旧活动 selector 并清理旧正向资源，只有新的有效执行安装可以重新激活；显式 down 才解除所属负向边界。
 
 IPC 8 的公开运行状态（`meshway status --json` 原样输出）：
 
