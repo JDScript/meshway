@@ -1,8 +1,58 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-12T18:18:39.331513+00:00",
+  "updatedAt": "2026-10-12T20:07:58.429441+00:00",
   "runs": [
+    {
+      "id": 38301717699,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "0cbbefdddfb553be111ad587f5c76377f0b804ed",
+      "message": "docs: OrbStack 2.2.4 fixes the container→machine UDP drop and TCP delayed-ACK latency; the lab–VM edge is usable again",
+      "createdAt": "2026-10-12T20:03:27Z",
+      "updatedAt": "2026-10-12T20:05:00Z",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/JDScript/meshway/actions/runs/38301717699",
+      "jobs": [
+        {
+          "id": 114985960587,
+          "name": "changes",
+          "runner": "mars-epyc7543",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-12T20:03:30Z",
+          "completedAt": "2026-10-12T20:03:42Z",
+          "seconds": 12.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38301717699/job/114985960587"
+        },
+        {
+          "id": 114986046550,
+          "name": "web",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-12T20:03:43Z",
+          "completedAt": "2026-10-12T20:04:59Z",
+          "seconds": 76.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38301717699/job/114986046550"
+        },
+        {
+          "id": 114986047747,
+          "name": "cargo",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "skipped",
+          "startedAt": "2026-10-12T20:03:42Z",
+          "completedAt": "2026-10-12T20:03:42Z",
+          "seconds": 0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38301717699/job/114986047747"
+        }
+      ],
+      "artifacts": []
+    },
     {
       "id": 38288268679,
       "attempt": 1,
