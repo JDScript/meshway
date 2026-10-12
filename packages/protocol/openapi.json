@@ -11539,6 +11539,12 @@
                         "mesh"
                       ],
                       "assignment": null,
+                      "capture": {
+                        "managedIpv4": 0,
+                        "routes": 0,
+                        "sinkIpv6": 0,
+                        "unavailable": null
+                      },
                       "locked": false,
                       "name": "mesh",
                       "requested": false

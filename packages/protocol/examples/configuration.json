@@ -343,7 +343,8 @@
             "assignment": null,
             "allowed": ["mesh"],
             "locked": false,
-            "requested": false
+            "requested": false,
+            "capture": { "managedIpv4": 0, "sinkIpv6": 0, "routes": 0, "unavailable": null }
           },
           "access": {
             "allowed": true,
