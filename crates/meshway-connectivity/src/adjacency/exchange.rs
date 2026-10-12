@@ -53,15 +53,32 @@ pub(crate) fn encode(kind: Kind, body: &[u8]) -> Result<Vec<u8>, Error> {
     Ok(message)
 }
 
+/// A Ping filled with zeros to exactly `datagram` bytes: a path size probe.
+/// Its signed body is the ordinary Ping; the filler carries nothing.
+pub(crate) fn encode_padded(kind: Kind, body: &[u8], datagram: usize) -> Result<Vec<u8>, Error> {
+    let mut message = encode(kind, body)?;
+    if kind != Kind::Ping || datagram < message.len() || datagram > MAX_MESSAGE {
+        return Err(Error::Authentication);
+    }
+    message.resize(datagram, 0);
+    Ok(message)
+}
+
 pub(crate) fn decode(message: &[u8]) -> Result<(Kind, &[u8]), Error> {
     if message.len() < 12 || message.len() > MAX_MESSAGE || &message[..8] != MAGIC {
         return Err(Error::Authentication);
     }
     let length = usize::from(u16::from_be_bytes([message[9], message[10]]));
-    if length != message.len() - 11 {
+    let kind = Kind::from_byte(message[8])?;
+    let end = 11 + length;
+    // Only a Ping may carry filler (a size probe), and only zeros.
+    if end > message.len()
+        || (end < message.len()
+            && (kind != Kind::Ping || message[end..].iter().any(|byte| *byte != 0)))
+    {
         return Err(Error::Authentication);
     }
-    Ok((Kind::from_byte(message[8])?, &message[11..]))
+    Ok((kind, &message[11..end]))
 }
 
 pub(crate) struct Initiation {

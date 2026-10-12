@@ -16,7 +16,7 @@ const ACK: &[u8] = b"meshway/adjacency/linkAck/v1\0";
 
 mod exchange;
 pub(crate) use exchange::incoming_bound;
-pub(crate) use exchange::{Initiation, Kind, Transcript, decode, encode, incoming};
+pub(crate) use exchange::{Initiation, Kind, Transcript, decode, encode, encode_padded, incoming};
 
 fn keys(cfg: &Plan, node: NodeId) -> Result<(&BoundNodeKey, &BoundNodeKey), Error> {
     cfg.keys(node)

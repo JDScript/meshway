@@ -11,6 +11,7 @@ use std::{
     time::Duration,
 };
 use tokio::{sync::OwnedSemaphorePermit, time::Instant};
+mod mtu;
 mod stun;
 mod traversal;
 
@@ -127,6 +128,7 @@ struct Channel {
     budget: ControlBudget,
     _capacity: OwnedSemaphorePermit,
     recovery: Option<Recovery>,
+    mtu: mtu::Search,
 }
 
 struct Owner {
@@ -261,7 +263,12 @@ impl Owner {
         let measured: Vec<_> = self
             .channels
             .iter()
-            .filter_map(|(remote, channel)| Some((channel.fact.id, self.path.path_mtu(*remote)?)))
+            .filter_map(|(remote, channel)| {
+                Some((
+                    channel.fact.id,
+                    channel.mtu.path(self.path.path_mtu(*remote))?,
+                ))
+            })
             .collect();
         if let Ok(mut known) = self.shared.path_mtu.lock() {
             known.retain(|id, (socket, _)| {
@@ -393,6 +400,7 @@ impl Owner {
                 budget: ControlBudget::with_limit(16),
                 _capacity: capacity,
                 recovery: None,
+                mtu: mtu::Search::new(),
             },
         );
         self.measure_mtu();
@@ -550,6 +558,25 @@ impl Owner {
                     recovery.output.clone(),
                 )
                 .await;
+            }
+            if channel.scope.check().is_ok()
+                && let Some(size) = channel.mtu.due(self.path.path_mtu(*remote), Instant::now())
+            {
+                // A DF size probe: the channel's own signed Ping, filled.
+                let nonce = adjacency::boot_nonce(&self.shared.boot)?;
+                channel.mtu.sent(nonce);
+                let header = if remote.is_ipv4() { 28 } else { 48 };
+                let bytes = adjacency::encode_padded(
+                    Kind::Ping,
+                    &channel.transcript.health(
+                        &self.shared.keys,
+                        &self.shared.plan(),
+                        Kind::Ping,
+                        &nonce,
+                    )?,
+                    usize::from(size).saturating_sub(header),
+                )?;
+                let _ = send_control(&self.sender, &channel.scope, *remote, bytes).await;
             }
             if channel.scope.check().is_err() || Instant::now() < channel.next_probe {
                 continue;
@@ -1141,6 +1168,9 @@ impl Owner {
         };
         if kind == Kind::Pong {
             if channel.probe != Some(nonce) {
+                if channel.mtu.answered(&nonce, Instant::now()) {
+                    self.measure_mtu();
+                }
                 return Ok(());
             }
             if channel.scope.check().is_err() {

@@ -220,7 +220,18 @@ fn datagram_codec_has_exact_lengths_and_distinct_udp_phase_ids() {
         }
         let mut trailing = bytes.clone();
         trailing.push(0);
-        assert!(decode(&trailing).is_err());
+        // Only a Ping is filled (a path size probe), and only with zeros.
+        assert_eq!(decode(&trailing).is_ok(), kind == Kind::Ping);
+        let mut nonzero = trailing.clone();
+        *nonzero.last_mut().unwrap() = 1;
+        assert!(decode(&nonzero).is_err());
+        if kind == Kind::Ping {
+            let probe = encode_padded(kind, &[7; 160], 1329).unwrap();
+            assert_eq!(probe.len(), 1329);
+            assert_eq!(decode(&probe).unwrap(), (kind, &[7; 160][..]));
+        } else {
+            assert!(encode_padded(kind, &[7; 160], 1329).is_err());
+        }
         let mut unknown = bytes;
         unknown[8] = 7;
         assert!(decode(&unknown).is_err());
