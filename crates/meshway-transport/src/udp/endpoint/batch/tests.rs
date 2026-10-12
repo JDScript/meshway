@@ -155,7 +155,7 @@ async fn gso_eio_yields_before_ordinary_send_and_preserves_datagrams() {
         // Inject the driver failure at the production syscall-result boundary.
         assert!(
             state
-                .send_result(&mut cx, true, false, Err(Errno::EIO.into()))
+                .send_result(&mut cx, BATCH, true, false, Err(Errno::EIO.into()))
                 .is_pending()
         );
         assert_eq!(wakes.0.load(Ordering::Relaxed), 1);
@@ -205,6 +205,63 @@ async fn gso_eio_yields_before_ordinary_send_and_preserves_datagrams() {
     }
 }
 
+const BATCH: (std::net::SocketAddr, usize) = (
+    std::net::SocketAddr::V4(std::net::SocketAddrV4::new(
+        std::net::Ipv4Addr::new(198, 51, 100, 7),
+        4500,
+    )),
+    1366,
+);
+
+#[tokio::test]
+async fn a_path_mtu_rejection_splits_only_its_batch_and_keeps_gso() {
+    let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let state = State::new(&socket).unwrap();
+    state.caps.lock().unwrap().udp_segment = true;
+    let mut cx = Context::from_waker(Waker::noop());
+    let (peer, size) = BATCH;
+    let now = std::time::Instant::now();
+    for rejection in [Errno::EINVAL, Errno::EMSGSIZE] {
+        // The kernel refuses a segment larger than the route's PMTU.
+        assert!(
+            state
+                .send_result(&mut cx, BATCH, true, false, Err(rejection.into()))
+                .is_pending()
+        );
+        assert!(!state.gso.lock().unwrap().allows(peer, size, now));
+        // The same batch without GSO hits DF: the size, not GSO, was wrong.
+        let Poll::Ready(Err(error)) =
+            state.send_result(&mut cx, BATCH, false, true, Err(Errno::EMSGSIZE.into()))
+        else {
+            panic!("an oversized datagram is a real error");
+        };
+        assert_eq!(error.raw_os_error(), Some(Errno::EMSGSIZE as i32));
+        assert!(state.capabilities().udp_segment, "GSO stays enabled");
+        let mut gso = state.gso.lock().unwrap();
+        assert!(gso.split.is_none());
+        assert!(!gso.allows(peer, size, now), "this size to this peer");
+        assert!(gso.allows(peer, size - 30, now), "a smaller segment fits");
+        assert!(gso.allows("198.51.100.8:4500".parse().unwrap(), size, now));
+        assert!(
+            gso.allows(peer, size, std::time::Instant::now() + OVERSIZED_FOR),
+            "probes again later"
+        );
+    }
+    assert_eq!(state.capabilities().gso_size_rejections, 2);
+    // A rejection the plain send does not reproduce is GSO's own refusal.
+    let other = ("198.51.100.9:4500".parse().unwrap(), 1200);
+    assert!(
+        state
+            .send_result(&mut cx, other, true, false, Err(Errno::EINVAL.into()))
+            .is_pending()
+    );
+    assert!(matches!(
+        state.send_result(&mut cx, other, false, true, Ok(32)),
+        Poll::Ready(Ok(32))
+    ));
+    assert!(!state.capabilities().udp_segment);
+}
+
 #[tokio::test]
 async fn ordinary_eio_and_all_emsgsize_are_real_errors() {
     let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
@@ -216,9 +273,9 @@ async fn ordinary_eio_and_all_emsgsize_are_real_errors() {
         (false, true, Errno::EIO),
         (false, false, Errno::EMSGSIZE),
         (false, true, Errno::EMSGSIZE),
-        (true, false, Errno::EMSGSIZE),
     ] {
-        let Poll::Ready(Err(actual)) = state.send_result(&mut cx, gso, mmsg, Err(error.into()))
+        let Poll::Ready(Err(actual)) =
+            state.send_result(&mut cx, BATCH, gso, mmsg, Err(error.into()))
         else {
             panic!("{error} must not trigger fallback");
         };

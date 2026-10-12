@@ -6,6 +6,9 @@ const XOR_MAPPED: u16 = 0x0020;
 const ERROR_CODE: u16 = 0x0009;
 const UNKNOWN_ATTRIBUTES: u16 = 0x000a;
 const FINGERPRINT: u16 = 0x8028;
+/// Comprehension-optional filler of a size probe; a server ignores it and
+/// answers with an ordinary small response.
+const SIZE_FILLER: u16 = 0xc0de;
 const MAX_UNKNOWN: usize = 16;
 pub const MAX_DATAGRAM_SIZE: usize = 2048;
 
@@ -133,6 +136,23 @@ pub fn encode_request(transaction: TransactionId, fingerprint: Fingerprint) -> V
     let mut bytes = header(MessageKind::Request, transaction);
     finish(&mut bytes, fingerprint);
     bytes
+}
+
+/// A Binding request of exactly `datagram` UDP payload bytes, filled with
+/// one comprehension-optional attribute: sent with DF, an answer proves the
+/// path carried that size. `None` below the smallest such request or above
+/// [`MAX_DATAGRAM_SIZE`]; `datagram` must be a multiple of 4.
+pub fn encode_size_probe(transaction: TransactionId, datagram: usize) -> Option<Vec<u8>> {
+    let filler = datagram.checked_sub(HEADER + 4 + 8)?;
+    if !datagram.is_multiple_of(4) || datagram > MAX_DATAGRAM_SIZE {
+        return None;
+    }
+    let mut bytes = header(MessageKind::Request, transaction);
+    bytes.extend_from_slice(&SIZE_FILLER.to_be_bytes());
+    bytes.extend_from_slice(&u16::try_from(filler).ok()?.to_be_bytes());
+    bytes.resize(bytes.len() + filler, 0);
+    finish(&mut bytes, Fingerprint::Include);
+    (bytes.len() == datagram).then_some(bytes)
 }
 
 pub fn parse_request(bytes: &[u8]) -> Result<BindingRequest, Error> {

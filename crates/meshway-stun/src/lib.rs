@@ -12,6 +12,7 @@ mod service;
 
 pub use codec::{
     BindingRequest, Error, Fingerprint, MAX_DATAGRAM_SIZE, MappedAddress, MessageKind,
-    TransactionId, classify, encode_request, encode_response, parse_request, parse_response,
+    TransactionId, classify, encode_request, encode_response, encode_size_probe, parse_request,
+    parse_response,
 };
 pub use service::{Service, ServiceConfig, ServiceConfigError, ServiceStats};

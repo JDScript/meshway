@@ -31,6 +31,8 @@ pub struct Capabilities {
     pub gro_receives: u64,
     pub mmsg_sends: u64,
     pub mmsg_receives: u64,
+    /// GSO batches the path MTU rejected; GSO stayed enabled for them.
+    pub gso_size_rejections: u64,
 }
 
 /// A raw, unconnected UDP endpoint. It can serve many explicit peers; no
@@ -50,6 +52,34 @@ impl AsFd for UdpTransport {
     }
 }
 
+/// Every outer datagram carries DF (IPv6: never fragmented locally). A packet
+/// larger than the route's path MTU fails its send with `EMSGSIZE` instead of
+/// leaving as fragments a middlebox may drop; the kernel's route learns a
+/// smaller PMTU from ICMP and [`connected_path_mtu`] reads it.
+#[cfg(target_os = "linux")]
+fn forbid_fragmentation(socket: &UdpSocket, ipv4: bool) -> io::Result<()> {
+    use rustix::net::sockopt;
+    if ipv4 {
+        sockopt::set_ip_mtu_discover(socket, sockopt::Ipv4PathMtuDiscovery::DO)?;
+    } else {
+        sockopt::set_ipv6_mtu_discover(socket, sockopt::Ipv6PathMtuDiscovery::DO)?;
+    }
+    Ok(())
+}
+
+/// The route MTU of a connected UDP socket (`IP_MTU`/`IPV6_MTU`): the kernel
+/// route toward its peer, including a PMTU learned from ICMP. The host opens
+/// and protects that socket; connecting a UDP socket sends nothing.
+#[cfg(target_os = "linux")]
+pub fn connected_path_mtu(socket: &impl AsFd, ipv4: bool) -> io::Result<u16> {
+    let mtu = if ipv4 {
+        rustix::net::sockopt::ip_mtu(socket)?
+    } else {
+        rustix::net::sockopt::ipv6_mtu(socket)?
+    };
+    u16::try_from(mtu).map_err(|_| io::Error::from(io::ErrorKind::InvalidData))
+}
+
 impl UdpTransport {
     /// Adopts an already-bound, unconnected Tokio socket. Connected UDP is
     /// rejected because its kernel peer filtering would hide endpoint source
@@ -61,9 +91,13 @@ impl UdpTransport {
                 "UDP endpoint requires an unconnected socket",
             ));
         }
-        socket.local_addr()?;
+        let local = socket.local_addr()?;
         let reference = SockRef::from(&socket);
         raw::apply_socket_options(&reference, options)?;
+        #[cfg(target_os = "linux")]
+        forbid_fragmentation(&socket, local.is_ipv4())?;
+        #[cfg(not(target_os = "linux"))]
+        let _ = local;
         Ok(Self {
             socket,
             #[cfg(target_os = "linux")]

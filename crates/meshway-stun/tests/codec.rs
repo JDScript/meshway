@@ -2,7 +2,7 @@ use std::net::SocketAddr;
 
 use meshway_stun::{
     Error, Fingerprint, MAX_DATAGRAM_SIZE, MessageKind, TransactionId, classify, encode_request,
-    encode_response, parse_request, parse_response,
+    encode_response, encode_size_probe, parse_request, parse_response,
 };
 
 // Literal protocol test data transcribed from RFC 5769 sections 2.2 and 2.3,
@@ -325,5 +325,27 @@ fn sha256_integrity_has_bounded_length_and_follows_sha1_if_both_present() {
         let mut bytes = response.clone();
         append(&mut bytes, &attrs);
         assert!(parse(&bytes).is_err());
+    }
+}
+
+#[test]
+fn a_size_probe_is_an_ordinary_request_of_exactly_its_size() {
+    for size in [36, 1252, 1328, 1472] {
+        let probe = encode_size_probe(TX, size).unwrap();
+        assert_eq!(probe.len(), size);
+        assert_eq!(classify(&probe), Some(MessageKind::Request));
+        // The filler is comprehension-optional: the request is answered normally.
+        let request = parse_request(&probe).unwrap();
+        let response = encode_response(&request, endpoint());
+        assert!(response.len() < 64);
+        assert_eq!(
+            parse_response(TX, endpoint(), endpoint(), &response)
+                .unwrap()
+                .socket_addr(),
+            endpoint()
+        );
+    }
+    for size in [0, 35, 1473, MAX_DATAGRAM_SIZE + 4] {
+        assert!(encode_size_probe(TX, size).is_none(), "{size}");
     }
 }

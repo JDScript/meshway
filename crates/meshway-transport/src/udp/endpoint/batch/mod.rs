@@ -11,6 +11,7 @@ use std::{
     os::fd::AsRawFd,
     sync::{Arc, Mutex},
     task::{Context, Poll, ready},
+    time::{Duration, Instant},
 };
 use tokio::{io::Interest, net::UdpSocket};
 
@@ -34,6 +35,42 @@ struct Rx {
 pub(super) struct State {
     pub(super) caps: Arc<Mutex<Capabilities>>,
     rx: Mutex<Rx>,
+    gso: Mutex<Segmentation>,
+}
+
+/// How long a segment size the path rejected keeps its peer's batches off
+/// GSO. Then one GSO send probes again (the kernel's PMTU may have grown).
+const OVERSIZED_FOR: Duration = Duration::from_secs(60);
+const OVERSIZED_PEERS: usize = 64;
+
+/// GSO's size rejections. The kernel refuses (EINVAL/EMSGSIZE) a UDP_SEGMENT
+/// send whose segment plus headers exceed the route's path MTU, which says
+/// nothing about GSO support. The rejected batch is sent once more without
+/// GSO: DF makes an oversized datagram fail there too (EMSGSIZE), so its
+/// segment size is recorded for that peer and GSO stays on; a success means
+/// GSO itself was refused and it is disabled.
+#[derive(Default)]
+struct Segmentation {
+    split: Option<(SocketAddr, usize)>,
+    oversized: VecDeque<(SocketAddr, usize, Instant)>,
+}
+impl Segmentation {
+    fn allows(&mut self, peer: SocketAddr, size: usize, now: Instant) -> bool {
+        self.oversized
+            .retain(|(_, _, at)| now.duration_since(*at) < OVERSIZED_FOR);
+        self.split != Some((peer, size))
+            && !self
+                .oversized
+                .iter()
+                .any(|(known, segment, _)| *known == peer && size >= *segment)
+    }
+    fn oversized(&mut self, peer: SocketAddr, size: usize, now: Instant) {
+        self.oversized.retain(|(known, _, _)| *known != peer);
+        if self.oversized.len() >= OVERSIZED_PEERS {
+            self.oversized.pop_front();
+        }
+        self.oversized.push_back((peer, size, now));
+    }
 }
 
 impl std::fmt::Debug for State {
@@ -109,6 +146,7 @@ impl State {
                 scratch: (0..COUNT).map(|_| vec![0; SIZE]).collect(),
                 pending: VecDeque::new(),
             }),
+            gso: Mutex::new(Segmentation::default()),
         })
     }
 
@@ -129,7 +167,14 @@ impl State {
         let caps = self.capabilities();
         let packets = &packets[..packets.len().min(COUNT)];
         let size = packets[0].payload.len();
-        let (gso_count, bytes) = if caps.udp_segment {
+        let peer = packets[0].peer;
+        let (gso_count, bytes) = if caps.udp_segment
+            && self
+                .gso
+                .lock()
+                .expect("UDP segmentation lock")
+                .allows(peer, size, Instant::now())
+        {
             gso_prefix(packets)
         } else {
             (0, 0)
@@ -202,16 +247,48 @@ impl State {
                 Ok(1)
             }
         });
-        self.send_result(cx, gso, mmsg, result)
+        self.send_result(cx, (peer, size), gso, mmsg, result)
     }
 
     fn send_result(
         &self,
         cx: &mut Context<'_>,
+        batch: (SocketAddr, usize),
         gso: bool,
         mmsg: bool,
         result: io::Result<usize>,
     ) -> Poll<io::Result<usize>> {
+        use nix::errno::Errno;
+        let errno = result
+            .as_ref()
+            .err()
+            .and_then(|error| error.raw_os_error())
+            .map(Errno::from_raw);
+        {
+            let mut segmentation = self.gso.lock().expect("UDP segmentation lock");
+            if gso && matches!(errno, Some(Errno::EINVAL | Errno::EMSGSIZE)) {
+                // Only this batch goes without GSO; its outcome decides.
+                segmentation.split = Some(batch);
+                cx.waker().wake_by_ref();
+                return Poll::Pending;
+            }
+            if !gso && segmentation.split == Some(batch) {
+                segmentation.split = None;
+                match errno {
+                    Some(Errno::EMSGSIZE) => {
+                        segmentation.oversized(batch.0, batch.1, Instant::now());
+                        self.caps
+                            .lock()
+                            .expect("UDP capability lock")
+                            .gso_size_rejections += 1;
+                    }
+                    None => {
+                        self.caps.lock().expect("UDP capability lock").udp_segment = false;
+                    }
+                    Some(_) => {}
+                }
+            }
+        }
         match result {
             // UDP_SEGMENT needs driver Tx checksum support. EIO only means
             // capability loss for that send, never for ordinary I/O or probes.

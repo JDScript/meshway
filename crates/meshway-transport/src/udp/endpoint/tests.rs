@@ -374,3 +374,72 @@ async fn datagram_invalidation_does_not_cancel_unrelated_queued_scope() {
     assert_eq!(session.sender().available_budget().operations, 2);
     session.shutdown().await.unwrap();
 }
+
+/// Run in a disposable network namespace whose loopback carries the 1357-byte
+/// path MTU measured through a real Cloudflare WARP client, e.g.
+/// `unshare -rn sh -c 'ip link set lo mtu 1357 up && MESHWAY_TRANSPORT_ISOLATED=1 <test> --ignored --exact ...'`.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+#[ignore = "requires an isolated network namespace whose loopback MTU is 1357"]
+async fn df_datagrams_learn_the_path_mtu_and_keep_gso_below_it() {
+    use crate::raw::{Datagram, DatagramSend};
+    use std::future::poll_fn;
+    assert_eq!(
+        std::env::var("MESHWAY_TRANSPORT_ISOLATED").as_deref(),
+        Ok("1")
+    );
+    let left = UdpTransport::adopt_batch(
+        UdpSocket::bind("127.0.0.1:0").await.unwrap(),
+        &SocketOptions::default(),
+    )
+    .unwrap();
+    let right = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let peer = right.local_addr().unwrap();
+    let probe = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    probe.connect(peer).unwrap();
+    assert_eq!(super::connected_path_mtu(&probe, true).unwrap(), 1357);
+    // 1357 - 28: the largest datagram leaves whole; one byte more never
+    // becomes fragments.
+    let fits = vec![1; 1329];
+    let over = vec![2; 1330];
+    assert_eq!(left.send_to(&fits, peer).await.unwrap(), 1329);
+    let error = left.send_to(&over, peer).await.unwrap_err();
+    assert_eq!(
+        error.raw_os_error(),
+        Some(nix::errno::Errno::EMSGSIZE as i32)
+    );
+    let mut buffer = vec![0; 2048];
+    let (len, _) = right.recv_from(&mut buffer).await.unwrap();
+    assert_eq!(len, 1329);
+    let segment = |size| -> Vec<Vec<u8>> { (0..4).map(|_| vec![3; size]).collect() };
+    for (size, delivered) in [(1366, false), (1300, true)] {
+        let payloads = segment(size);
+        let sends: Vec<_> = payloads
+            .iter()
+            .map(|payload| DatagramSend { payload, peer })
+            .collect();
+        let result = poll_fn(|cx| left.poll_send_batch(cx, &sends)).await;
+        if delivered {
+            assert_eq!(result.unwrap(), sends.len());
+            for _ in 0..sends.len() {
+                let (len, _) = right.recv_from(&mut buffer).await.unwrap();
+                assert_eq!(len, size);
+            }
+        } else {
+            let error = result.unwrap_err();
+            assert_eq!(
+                error.raw_os_error(),
+                Some(nix::errno::Errno::EMSGSIZE as i32)
+            );
+        }
+        let caps = left.capabilities();
+        assert!(caps.udp_segment, "a size rejection never disables GSO");
+    }
+    let caps = left.capabilities();
+    assert_eq!(caps.gso_size_rejections, 1);
+    assert!(caps.gso_sends >= 1, "the fitting batch still used GSO");
+    assert!(
+        right.try_recv_from(&mut buffer).is_err(),
+        "nothing oversized arrived, not even as fragments"
+    );
+}

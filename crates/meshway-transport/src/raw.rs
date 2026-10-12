@@ -115,6 +115,12 @@ pub trait Datagram: Send + Sync + 'static {
         cx: &mut Context<'_>,
         buffer: &mut [u8],
     ) -> Poll<io::Result<DatagramRead>>;
+    /// The outer path MTU (IP bytes) toward `peer` as this endpoint's own
+    /// route currently knows it, including a learned smaller PMTU; `None`
+    /// when the endpoint cannot tell. Sends no packet.
+    fn path_mtu(&self, _peer: SocketAddr) -> Option<u16> {
+        None
+    }
 }
 
 impl<D: Datagram + ?Sized> Datagram for Box<D> {
@@ -151,6 +157,48 @@ impl<D: Datagram + ?Sized> Datagram for Box<D> {
         buffer: &mut [u8],
     ) -> Poll<io::Result<DatagramRead>> {
         (**self).poll_recv_from(cx, buffer)
+    }
+    fn path_mtu(&self, peer: SocketAddr) -> Option<u16> {
+        (**self).path_mtu(peer)
+    }
+}
+
+/// A shared endpoint: one owner polls I/O, another may read path facts.
+impl<D: Datagram + ?Sized> Datagram for std::sync::Arc<D> {
+    fn poll_send_batch(
+        &self,
+        cx: &mut Context<'_>,
+        packets: &[DatagramSend<'_>],
+    ) -> Poll<io::Result<usize>> {
+        (**self).poll_send_batch(cx, packets)
+    }
+    fn poll_recv_batch(
+        &self,
+        cx: &mut Context<'_>,
+        buffers: &mut [Vec<u8>],
+    ) -> Poll<io::Result<Vec<DatagramRead>>> {
+        (**self).poll_recv_batch(cx, buffers)
+    }
+    fn local_addr(&self) -> io::Result<SocketAddr> {
+        (**self).local_addr()
+    }
+    fn poll_send_to(
+        &self,
+        cx: &mut Context<'_>,
+        payload: &[u8],
+        peer: SocketAddr,
+    ) -> Poll<io::Result<usize>> {
+        (**self).poll_send_to(cx, payload, peer)
+    }
+    fn poll_recv_from(
+        &self,
+        cx: &mut Context<'_>,
+        buffer: &mut [u8],
+    ) -> Poll<io::Result<DatagramRead>> {
+        (**self).poll_recv_from(cx, buffer)
+    }
+    fn path_mtu(&self, peer: SocketAddr) -> Option<u16> {
+        (**self).path_mtu(peer)
     }
 }
 
