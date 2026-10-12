@@ -63,7 +63,10 @@ mod tests {
     #[derive(Default)]
     struct Components;
     impl meshway_engine::Components for Components {
-        async fn apply_packets(&mut self, _: Option<&Desired>) -> Result<(), meshway_engine::Error> {
+        async fn apply_packets(
+            &mut self,
+            _: Option<&Desired>,
+        ) -> Result<(), meshway_engine::Error> {
             Ok(())
         }
         async fn apply_adjacencies(
@@ -125,7 +128,11 @@ mod tests {
         let desired = engine.desired();
         assert_eq!(change(desired, false, &plain), Change::Renewal);
         assert_eq!(change(desired, true, &plain), Change::Content);
-        let associated = offer(&content, 600_000, Some(overlay(&content, now_ms() + 60_000)));
+        let associated = offer(
+            &content,
+            600_000,
+            Some(overlay(&content, now_ms() + 60_000)),
+        );
         assert_eq!(change(desired, false, &associated), Change::Associations);
         engine.reconfig(Some(&associated)).await.unwrap();
         let desired = engine.desired();
@@ -143,7 +150,11 @@ mod tests {
     async fn only_an_ended_lease_stops_diagnostics() {
         let mut engine = Engine::new(Components);
         let content = Arc::new(meshway_test_server::single_node("a", None));
-        let associated = offer(&content, 120_000, Some(overlay(&content, now_ms() + 30_000)));
+        let associated = offer(
+            &content,
+            120_000,
+            Some(overlay(&content, now_ms() + 30_000)),
+        );
         engine.reconfig(Some(&associated)).await.unwrap();
         let mut stops = 0;
         // The association ends first: the lease and its diagnostics stay.

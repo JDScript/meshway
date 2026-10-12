@@ -519,7 +519,7 @@ impl App {
         // Each shutdown signals its producer before its first await. Poll all
         // of them together so one queued SQL reply or task join cannot delay
         // cancellation of another producer. Accepted SQL work drains below.
-        let (stun_result, maintenance_result, (), traversal_result) = tokio::join!(
+        let (stun_result, maintenance_result, (), traversal_result, ()) = tokio::join!(
             self.stun.shutdown(),
             async move {
                 match maintenance {
@@ -531,6 +531,8 @@ impl App {
             },
             self.resource_scheduler.shutdown(),
             self.traversal_maintenance.shutdown(),
+            // Started conversions cannot be cancelled; they end here.
+            self.downloads.join(),
         );
         self.executor.shutdown().await?;
         traversal_result.map_err(|_| AppError::Worker)?;

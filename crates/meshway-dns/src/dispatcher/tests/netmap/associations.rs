@@ -63,7 +63,8 @@ async fn a_name_rule_answer_waits_for_its_association_and_never_leaks_without_on
     let desired = sync(&mut control, &script, reply(&netmap, true)).await;
     let (scopes, received) = watch::channel(None);
     crate::publish_scope(&scopes, Some(Scope::netmap(desired.clone(), None)));
-    let dispatcher = OwnerDispatcher::new(received, Arc::new(MeshAnswer(1)), limits(), 1232).unwrap();
+    let dispatcher =
+        OwnerDispatcher::new(received, Arc::new(MeshAnswer(1)), limits(), 1232).unwrap();
     let deadline = || Instant::now() + Duration::from_secs(4);
 
     // No name rule decides it: released at once, unchanged.

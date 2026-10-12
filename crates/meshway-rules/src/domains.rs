@@ -636,7 +636,10 @@ mod tests {
         else {
             panic!("expected an indexed root")
         };
-        let (a, b) = (inputs_end + usize::from(b'a'), inputs_end + usize::from(b'b'));
+        let (a, b) = (
+            inputs_end + usize::from(b'a'),
+            inputs_end + usize::from(b'b'),
+        );
         let a_slot = fst.find(&root, b'a').unwrap();
         let b_slot = fst.find(&root, b'b').unwrap();
         assert_eq!((a_slot.target, a_slot == b_slot), (b_slot.target, false));

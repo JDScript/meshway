@@ -41,7 +41,9 @@ impl Clock {
     /// The monotonic instant at which this clock reaches `at_ms`, fixed now.
     pub fn deadline(&mut self, at_ms: u64) -> Instant {
         let left = Duration::from_millis(at_ms.saturating_sub(self.now()));
-        Instant::now().checked_add(left).unwrap_or_else(Instant::now)
+        Instant::now()
+            .checked_add(left)
+            .unwrap_or_else(Instant::now)
     }
     pub fn now(&mut self) -> u64 {
         let now = Instant::now();

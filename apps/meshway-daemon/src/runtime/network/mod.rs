@@ -16,10 +16,10 @@ mod packets;
 mod plane;
 mod reporting;
 mod requirements;
-#[cfg(target_os = "linux")]
-mod traversal;
 #[cfg(any(target_os = "linux", test))]
 mod transitions;
+#[cfg(target_os = "linux")]
+mod traversal;
 #[cfg(target_os = "linux")]
 mod worker;
 

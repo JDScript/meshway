@@ -109,6 +109,7 @@ impl Catalogs {
         provider: &RuleSetProvider,
         name: &str,
         connector: &dyn Connector,
+        workers: &super::downloads::Workers,
     ) -> Result<Prepared, ResourceProblem> {
         let verified = self.catalog(provider, connector).await?;
         let catalog = &verified.catalog;
@@ -127,18 +128,18 @@ impl Catalogs {
         )
         .await?;
         let checked = entry.clone();
-        let artifact = tokio::task::spawn_blocking(move || {
-            let set = RuleSet::from_vec(bytes).map_err(|_| ResourceProblem::IntegrityFailed)?;
-            checked
-                .check(&set)
-                .map_err(|_| ResourceProblem::IntegrityFailed)?;
-            // Rebuilding proves the artifact is the canonical one for its members.
-            meshway_rules::convert::convert(set.as_bytes(), Format::Meshway)
-                .map(|conversion| conversion.artifact)
-                .map_err(|_| ResourceProblem::IntegrityFailed)
-        })
-        .await
-        .map_err(|_| ResourceProblem::BudgetExceeded)??;
+        let artifact = workers
+            .run(move || {
+                let set = RuleSet::from_vec(bytes).map_err(|_| ResourceProblem::IntegrityFailed)?;
+                checked
+                    .check(&set)
+                    .map_err(|_| ResourceProblem::IntegrityFailed)?;
+                // Rebuilding proves the artifact is the canonical one for its members.
+                meshway_rules::convert::convert(set.as_bytes(), Format::Meshway)
+                    .map(|conversion| conversion.artifact)
+                    .map_err(|_| ResourceProblem::IntegrityFailed)
+            })
+            .await?;
         let published = match download(
             &sibling(
                 &provider.catalog,

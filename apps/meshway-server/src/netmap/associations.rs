@@ -419,7 +419,11 @@ mod tests {
         };
         let first: NodeId = id(10);
         // Exactly at the budget: both copies carry everything.
-        assert!(!overlay_overflows(served(full, per), network, [first, exit]));
+        assert!(!overlay_overflows(
+            served(full, per),
+            network,
+            [first, exit]
+        ));
         // One more entry would only fit the source's own copy: refused.
         let over = served(full, per).chain([((network, id::<NodeId>(200)), exit, 1)]);
         assert!(overlay_overflows(over, network, [id(200), exit]));
