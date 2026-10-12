@@ -96,6 +96,11 @@ pub(crate) struct Downloads {
 }
 impl Downloads {
     pub(crate) fn new() -> Arc<Self> {
+        // The Server fetches provider catalogs by itself; unit tests never
+        // reach the Internet (resource tests inject their own source).
+        #[cfg(test)]
+        return Self::with_connector(Arc::new(super::download::Offline));
+        #[cfg(not(test))]
         Self::with_connector(Arc::new(Https))
     }
     pub(crate) fn with_connector(connector: Arc<dyn Connector>) -> Arc<Self> {
@@ -124,6 +129,28 @@ impl Downloads {
         let mut stop = self.stop.subscribe();
         if !*stop.borrow() {
             let _ = stop.changed().await;
+        }
+    }
+    /// A provider's catalog, downloaded and verified within the shared
+    /// transfer budget. Only the scheduler fetches catalogs alone, one at a
+    /// time, so there is nothing to coalesce.
+    pub(crate) async fn catalog(
+        &self,
+        provider: &meshway_configuration::RuleSetProvider,
+    ) -> Result<super::catalogs::VerifiedCatalog, FetchError> {
+        let _permit = BUDGET
+            .try_acquire()
+            .map_err(|_| ResourceProblem::BudgetExceeded)?;
+        let mut stop = self.stop.subscribe();
+        if *stop.borrow() {
+            return Err(FetchError::Cancelled);
+        }
+        tokio::select! {
+            biased;
+            _ = stop.changed() => Err(FetchError::Cancelled),
+            result = super::catalogs::download_verified(provider, self.connector.as_ref()) => {
+                result.map_err(Into::into)
+            }
         }
     }
     /// Content of one source ready to bind: converted, or taken from a

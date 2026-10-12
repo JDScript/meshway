@@ -105,6 +105,41 @@ pub(crate) fn record_execution_targets(
     Ok(())
 }
 
+/// The sealed bindings of every version a network that is not deleted can
+/// restore, opened by `open`.
+pub(crate) fn each_restorable_bindings(
+    tx: &Transaction<'_>,
+    sealer: &Sealer,
+    mut each: impl FnMut(ConfigurationBindings) -> Result<(), Error>,
+) -> Result<(), Error> {
+    let mut statement = tx.prepare(
+        "SELECT v.network_id,v.revision,v.bindings FROM configuration_versions v
+         JOIN networks n ON n.id=v.network_id WHERE n.deleted_at IS NULL",
+    )?;
+    let mut rows = statement.query([])?;
+    while let Some(row) = rows.next()? {
+        let network = crate::store::execution::id(row.get(0)?)?;
+        let revision = Revision::new(
+            u64::try_from(row.get::<_, i64>(1)?)
+                .map_err(|_| Error::decode("configuration_versions.revision"))?,
+        )
+        .map_err(|_| Error::decode("configuration_versions.revision"))?;
+        let bindings = sealer.open(
+            network,
+            revision,
+            Purpose::Bindings,
+            row.get_ref(2)?
+                .as_blob()
+                .map_err(|_| Error::decode("configuration_versions.bindings"))?,
+        )?;
+        each(
+            serde_json::from_slice(bindings.as_bytes())
+                .map_err(|_| Error::decode("configuration_versions.bindings"))?,
+        )?;
+    }
+    Ok(())
+}
+
 pub(crate) struct SealedVersion {
     network: NetworkId,
     revision: Revision,

@@ -27,13 +27,15 @@ const SETS: [(&str, meshway_rules::convert::Format, &str); 4] = [
     ),
 ];
 
-/// Serves a catalog of `SETS`, with the `openai` source replaced when
-/// given, and returns it.
-fn publish(
+/// Serves a catalog of `SETS`, with the `openai` source replaced and the
+/// `openai` set held (its upstream pinned to its commit) when given, and
+/// returns it.
+pub(super) fn publish(
     remote: &HttpsSource,
     key: &ed25519_dalek::SigningKey,
     previous: Option<&Catalog>,
     openai: Option<&str>,
+    held: Option<catalog::Held>,
 ) -> Catalog {
     let mut records = BTreeMap::new();
     let mut artifacts = BTreeMap::new();
@@ -43,15 +45,17 @@ fn publish(
             _ => source,
         };
         let conversion = meshway_rules::convert::convert(source.as_bytes(), format).unwrap();
+        let commit = "0123456789abcdef0123456789abcdef01234567";
+        let held = held.clone().filter(|_| name == "openai");
         let record = SetRecord {
             upstream: Location {
                 repo: "corp/rules".into(),
-                reference: "main".into(),
-                commit: "0123456789abcdef0123456789abcdef01234567".into(),
+                reference: if held.is_some() { commit } else { "main" }.into(),
+                commit: commit.into(),
                 path: format!("{name}.list"),
             },
             conversion: ConversionRecord::new(source.as_bytes(), format, &conversion),
-            held: None,
+            held,
         };
         let digest = conversion.artifact.digest();
         let bytes = conversion.artifact.bytes().to_vec();
@@ -94,7 +98,7 @@ async fn catalog_sets_members_and_matches_are_read_from_verified_content() {
     let path = temp.path().canonicalize().unwrap().join("data");
     let remote = HttpsSource::new();
     let key = catalog::signing_key(&"33".repeat(32)).unwrap();
-    let first = publish(&remote, &key, None, None);
+    let first = publish(&remote, &key, None, None, None);
     let s = Server::open(&path, remote.clone()).await;
     let owner = s.register("browse-owner@example.com").await;
     let member = s.register("browse-member@example.com").await;
@@ -129,20 +133,22 @@ async fn catalog_sets_members_and_matches_are_read_from_verified_content() {
     );
     let applied = s.apply(token, network, current.revision, &input).await;
 
-    // Before any set of a provider is prepared its catalog is not verified:
-    // an explicit problem, never an empty list, and no download.
-    let requests = remote.requests.load(Ordering::SeqCst);
-    for provider in ["corp", "geosite"] {
-        let (code, body) =
-            status(get(&format!("rule-set-catalog?provider={provider}"), token)).await;
-        assert_eq!(code, StatusCode::CONFLICT, "{body}");
-        assert!(body.contains("rule_set_catalog_not_ready"), "{body}");
-    }
+    // The built-in catalog is unreachable here: never verified, an explicit
+    // problem rather than an empty list. The Server fetches `corp` by itself.
+    let (code, body) = status(get("rule-set-catalog?provider=geosite", token)).await;
+    assert_eq!(code, StatusCode::CONFLICT, "{body}");
+    assert!(body.contains("rule_set_catalog_not_ready"), "{body}");
     let (code, _) = status(get("rule-set-catalog?provider=nope", token)).await;
     assert_eq!(code, StatusCode::NOT_FOUND);
-    assert_eq!(remote.requests.load(Ordering::SeqCst), requests);
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while status(get("rule-set-catalog?provider=corp", token)).await.0 != StatusCode::OK {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the scheduler verified the provider catalog");
 
-    // Referencing one set verifies and keeps the catalog.
+    // Referencing one set keeps the same catalog.
     let mut referencing = input.clone();
     referencing.routing.egress.rules.push(EgressRule {
         remark: String::new(),
@@ -375,6 +381,7 @@ async fn catalog_sets_members_and_matches_are_read_from_verified_content() {
         &key,
         Some(&first),
         Some("DOMAIN-SUFFIX,openai.com\n"),
+        None,
     );
     let refreshed: RuleSetView = json(
         s.client

@@ -19312,7 +19312,7 @@
           "resources"
         ],
         "summary": "Search the sets of a provider's verified catalog.",
-        "description": "Requires current Owner or Admin membership. Lists the sets of one provider effective in this network (built-in or `ruleSetProviders`), ordered by name, from the newest catalog this Server verified; it never downloads. `q` is a case-insensitive name prefix. A provider not effective in this network returns 404; one whose catalog this Server has not verified yet returns 409 `rule_set_catalog_not_ready`. A cursor is valid for 15 minutes with the same provider and `q` while the catalog sequence is unchanged.",
+        "description": "Requires current Owner or Admin membership. Lists the sets of one provider effective in this network (built-in or `ruleSetProviders`), ordered by name, from the newest catalog this Server verified; it never downloads. The Server fetches the catalog of every provider effective in any network by itself, at start and on the provider's interval, before any set is referenced. `q` is a case-insensitive name prefix. A provider not effective in this network returns 404; one whose catalog the Server has not fetched successfully yet returns 409 `rule_set_catalog_not_ready`. A cursor is valid for 15 minutes with the same provider and `q` while the catalog sequence is unchanged.",
         "operationId": "listRuleSetCatalog",
         "parameters": [
           {

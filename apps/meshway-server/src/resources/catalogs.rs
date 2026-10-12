@@ -42,7 +42,7 @@ type Verified = BTreeMap<(String, String), VerifiedCatalog>;
 
 /// One verified catalog with the exact bytes that verified.
 #[derive(Clone)]
-struct VerifiedCatalog {
+pub(crate) struct VerifiedCatalog {
     catalog: Arc<Catalog>,
     document: Arc<[u8]>,
     signature: Arc<[u8]>,
@@ -62,6 +62,32 @@ fn verify_error(error: CatalogError) -> ResourceProblem {
     }
 }
 
+/// Downloads the provider's `index.json` and signature and verifies them
+/// against the provider's keys.
+pub(super) async fn download_verified(
+    provider: &RuleSetProvider,
+    connector: &dyn Connector,
+) -> Result<VerifiedCatalog, ResourceProblem> {
+    let keys = provider
+        .public_keys
+        .iter()
+        .map(|key| key.parse::<PublicKey>())
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| ResourceProblem::SignatureInvalid)?;
+    let index = download(&provider.catalog, connector, MAX_CATALOG_BYTES).await?;
+    let signature = download(
+        &sibling(&provider.catalog, catalog::SIGNATURE)?,
+        connector,
+        MAX_SIGNATURE_BYTES,
+    )
+    .await?;
+    Ok(VerifiedCatalog {
+        catalog: Arc::new(catalog::verify(&index, &signature, &keys).map_err(verify_error)?),
+        document: index.into(),
+        signature: signature.into(),
+    })
+}
+
 impl Catalogs {
     async fn catalog(
         &self,
@@ -77,24 +103,7 @@ impl Catalogs {
         {
             return Ok(verified.clone());
         }
-        let keys = provider
-            .public_keys
-            .iter()
-            .map(|key| key.parse::<PublicKey>())
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|_| ResourceProblem::SignatureInvalid)?;
-        let index = download(&provider.catalog, connector, MAX_CATALOG_BYTES).await?;
-        let signature = download(
-            &sibling(&provider.catalog, catalog::SIGNATURE)?,
-            connector,
-            MAX_SIGNATURE_BYTES,
-        )
-        .await?;
-        let verified = VerifiedCatalog {
-            catalog: Arc::new(catalog::verify(&index, &signature, &keys).map_err(verify_error)?),
-            document: index.into(),
-            signature: signature.into(),
-        };
+        let verified = download_verified(provider, connector).await?;
         self.verified
             .lock()
             .map_err(|_| ResourceProblem::BudgetExceeded)?
@@ -180,6 +189,69 @@ impl Catalogs {
             }),
         })
     }
+}
+
+/// Whether the Server should fetch `provider`'s catalog by itself now: it
+/// never verified it, or its last fetch is older than the provider's
+/// interval (with the remote-set backoff after failures). A verification by
+/// a set preparation counts as a successful fetch. One (URL, trusted keys)
+/// is one catalog for every network that names it.
+pub(crate) fn due(
+    tx: &Transaction<'_>,
+    provider: &RuleSetProvider,
+    now: i64,
+) -> Result<bool, Error> {
+    use crate::store::resources::artifacts as sql;
+    let keys = trust(&provider.public_keys);
+    let check = sql::catalog_check(tx, &provider.catalog, &keys)?;
+    let verified = sql::catalog_head(tx, &provider.catalog, &keys)?.map(|(_, at)| at);
+    let (checked, failures) = match (check, verified) {
+        (Some(check), Some(verified)) if verified >= check.checked_at => (Some(verified), 0),
+        (Some(check), _) => (Some(check.checked_at), check.failures),
+        (None, verified) => (verified, 0),
+    };
+    Ok(super::scheduler::due(
+        u64::try_from(now).unwrap_or_default(),
+        checked.map(|at| u64::try_from(at).unwrap_or_default()),
+        provider.update_interval.as_millis(),
+        failures,
+    ))
+}
+
+/// Fetches, verifies and accepts `provider`'s catalog without any set, so
+/// `GET /rule-set-catalog` can list it before anything references it. A
+/// failure or a lower sequence keeps the accepted catalog and backs off.
+pub(crate) async fn refresh(
+    handle: &crate::store::Handle,
+    downloads: &super::downloads::Downloads,
+    provider: RuleSetProvider,
+) -> Result<Option<ResourceProblem>, Error> {
+    let fetched = match downloads.catalog(&provider).await {
+        Ok(verified) => Ok(verified),
+        Err(super::downloads::FetchError::Resource(problem)) => Err(problem),
+        Err(super::downloads::FetchError::Cancelled) => return Err(Error::CLOSED),
+    };
+    handle
+        .write(move |tx| {
+            use crate::store::resources::artifacts as sql;
+            let now = Utc::now().timestamp_millis();
+            let keys = trust(&provider.public_keys);
+            let problem = match fetched {
+                Err(problem) => Some(problem),
+                Ok(verified) => (!sql::accept_catalog(
+                    tx,
+                    &provider.catalog,
+                    &keys,
+                    verified.catalog.sequence,
+                    (&verified.document, &verified.signature),
+                    now,
+                )?)
+                .then_some(ResourceProblem::CatalogRegressed),
+            };
+            sql::record_catalog_check(tx, &provider.catalog, &keys, problem, now)?;
+            Ok(problem)
+        })
+        .await
 }
 
 /// A catalog this Server accepted, as stored: the newest verified sequence.
