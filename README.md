@@ -70,7 +70,7 @@ mise run build
 mise run check
 ```
 
-`check` 与 CI 使用同一任务，并行运行两条有序链：`check:cargo`（Rust fmt／Clippy／测试、生成 drift、Rust／TS SDK 消费，共用 Cargo target）和 `check:web`（Console 检查／测试／构建、脚本测试和文档检查，不涉及 Cargo）。Console 的 `tsc -b` 不开增量缓存：它只按本包输入判断是否过期，看不到 `@meshway/control-client` 生成类型的变化，会漏报契约不兼容。可单独运行 `mise run check:console`、`mise run check:docs` 或 `mise run generate:protocol`；完整入口与说明见 `mise tasks`。
+`check` 与 CI 使用同一任务，并行运行两条有序链：`check:cargo`（Rust fmt／Clippy／测试、生成 drift、Rust／TS SDK 消费，共用 Cargo target）和 `check:web`（共享 UI、Console 检查／测试／构建、站点检查与构建、脚本测试和文档检查，不涉及 Cargo）。Console 的 `tsc -b` 不开增量缓存：它只按本包输入判断是否过期，看不到 `@meshway/control-client` 生成类型的变化，会漏报契约不兼容。可单独运行 `mise run check:console`、`mise run check:docs` 或 `mise run generate:protocol`；完整入口与说明见 `mise tasks`。
 
 Rust 测试默认同时运行 4 个用例，可用 `RUST_TEST_THREADS` 调整；更高并发会让多个场景同时做密码 KDF，撞上 Server 的 4 个 KDF 名额而收到 503 busy，并不缩短总时长。用例内部的 Tokio 并发单独控制；共享进程资源由对应测试的局部锁协调。
 

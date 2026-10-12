@@ -20,9 +20,7 @@ jobs:
     outputs:
       rust: ${{ steps.filter.outputs.rust }}
       protocol: ${{ steps.filter.outputs.protocol }}
-      console: ${{ steps.filter.outputs.console }}
-      docs: ${{ steps.filter.outputs.docs }}
-      scripts: ${{ steps.filter.outputs.scripts }}
+      web: ${{ steps.filter.outputs.web }}
       workflows: ${{ steps.filter.outputs.workflows }}
     steps:
       - uses: actions/checkout@v4
@@ -43,14 +41,15 @@ jobs:
             protocol:
               - "packages/**"
               - "scripts/protocol/**"
-            console:
+            web:
               - "apps/meshway-web-console/**"
+              - "apps/meshway-web-site/**"
               - "pnpm-lock.yaml"
               - "pnpm-workspace.yaml"
               - "package.json"
-            docs:
+              - "mise.toml"
+              - "mise.lock"
               - "docs/**"
-            scripts:
               - "scripts/**"
               - "dev/**"
             workflows:
@@ -75,13 +74,15 @@ jobs:
       - run: mise run setup
       - run: mise run check:cargo
 
-  console:
-    # Console-only changes never build Rust; SDK changes still re-check the
-    # Console because it consumes the generated client.
+  web:
+    # The same check:web chain as local `mise run check`: shared UI, Console,
+    # site, scripts tests and docs. No Cargo. SDK changes run it too because
+    # the Console and site consume the generated client and the docs validate
+    # OpenAPI examples against the committed contract.
     needs: changes
-    if: needs.changes.outputs.console == 'true' || needs.changes.outputs.protocol == 'true' || needs.changes.outputs.workflows == 'true'
+    if: needs.changes.outputs.web == 'true' || needs.changes.outputs.protocol == 'true' || needs.changes.outputs.workflows == 'true'
     runs-on: [self-hosted, linux, x64]
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: jdx/mise-action@v4
@@ -89,24 +90,4 @@ jobs:
           version: 2026.8.14
           install_args: --locked
       - run: mise run setup
-      - run: mise run check:console
-      - run: mise run test:console
-      - run: mise run build:console
-
-  docs-and-scripts:
-    # Docs check also validates OpenAPI examples against the committed contract,
-    # so protocol changes run it as well.
-    needs: changes
-    if: needs.changes.outputs.docs == 'true' || needs.changes.outputs.scripts == 'true' || needs.changes.outputs.protocol == 'true' || needs.changes.outputs.workflows == 'true'
-    runs-on: [self-hosted, linux, x64]
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-      - uses: jdx/mise-action@v4
-        with:
-          version: 2026.8.14
-          install_args: --locked
-      - run: mise run setup
-      - run: mise run test:scripts
-        if: needs.changes.outputs.scripts == 'true' || needs.changes.outputs.workflows == 'true'
-      - run: mise run check:docs
+      - run: mise run check:web
