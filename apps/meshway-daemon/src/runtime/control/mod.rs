@@ -34,6 +34,9 @@ const BACKOFF_MAX: u64 = 15;
 /// above one Server hold plus the request budget's margin.
 pub(super) const SYNC_STALE: Duration = Duration::from_secs(100);
 
+/// The Control owner's private directory inside the daemon's state directory.
+pub(super) const IDENTITY_DIRECTORY: &str = "identity";
+
 type Shared = Arc<Mutex<Control>>;
 
 /// The `sync` long poll as seen by status: whether it runs, and when it last
@@ -255,7 +258,7 @@ pub(super) async fn run(
                 let settings = settings.clone();
                 tokio::task::spawn_blocking(move || {
                     Control::open(
-                        &settings.data_dir.join("identity"),
+                        &settings.data_dir.join(IDENTITY_DIRECTORY),
                         &settings.server,
                         builder,
                     )

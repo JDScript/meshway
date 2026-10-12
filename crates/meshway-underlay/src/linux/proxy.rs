@@ -51,7 +51,7 @@ impl Proxy {
             .trim_end_matches(']')
             .to_owned();
         let port = url.port_or_known_default().ok_or(Error::Origin)?;
-        let path = directory.path().join("underlay-bootstrap.sock");
+        let path = directory.path().join(crate::files::BOOTSTRAP_SOCKET);
         let uid = std::fs::metadata(directory.path())?.uid();
         recover(&directory, &path, uid).await?;
         let listener = UnixListener::bind(&path)?;
@@ -70,9 +70,11 @@ impl Proxy {
         let bytes = serde_json::to_vec(&proxy.record).map_err(|_| Error::Journal)?;
         // Accepted replacement owns its directory lock even if startup's caller
         // cancels. No accept/network work starts before durable completion.
-        tokio::task::spawn_blocking(move || directory.replace("underlay-bootstrap.json", &bytes))
-            .await
-            .map_err(|_| Error::Worker)??;
+        tokio::task::spawn_blocking(move || {
+            directory.replace(crate::files::BOOTSTRAP_RECORD, &bytes)
+        })
+        .await
+        .map_err(|_| Error::Worker)??;
         let permits = Arc::new(Semaphore::new(limit));
         let tasks = shared.tasks.clone();
         let worker = shared.clone();
@@ -202,7 +204,7 @@ async fn recover(directory: &Directory, path: &std::path::Path, uid: u32) -> Res
     // identity (same inode). The device number is not stable across mounts
     // and boots, so it never vetoes. Without a record, the private directory
     // under its lock is the ownership proof.
-    let record: Option<Record> = match directory.file("underlay-bootstrap.json", false)? {
+    let record: Option<Record> = match directory.file(crate::files::BOOTSTRAP_RECORD, false)? {
         Some(file) => {
             let mut bytes = Vec::new();
             tokio::fs::File::from_std(file)

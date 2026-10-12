@@ -289,7 +289,7 @@ meshway rotate-key
 
 up/down 按本机期望状态 revision 执行 CAS，并保留最后一次变更的请求身份以恢复不确定结果。本机 revision 与 Server 配置 revision 分开。已接纳命令的持久化由协调器完成，CLI 断开不会撤回它；读取 status 不写入状态或生成测量。
 
-daemon 独占目录锁，启动时记录 socket 的文件身份；只有身份匹配且确认无监听者的旧 socket 可清理。未知文件、符号链接、活跃 socket 和损坏的状态文件都保留并报错。
+daemon 独占目录锁，启动时记录 socket 的文件身份；只有身份匹配且确认无监听者的旧 socket 可清理。未知文件、符号链接、活跃 socket 和损坏的状态文件都保留并报错；状态文件缺失时的目录判定见[数据目录与启动检查](#数据目录与启动检查)。
 
 CLI 生命周期不承载 Node 身份或 lease，不收集账户密码、不取得浏览器会话。业务 listener／DNS／策略无本地覆盖源；获准路由方案切换仍是使用选择，具体入口待定。`down` 不等于云端永久删除；永久删除本节点用 `logout`。
 
@@ -348,6 +348,29 @@ Underlay 启动时当前 namespace 的资源归属或路由保护冲突仍拒绝
 | 系统资源归属 journal | 已认证的资源状态与运行代际 |
 
 缓存只作恢复基准，不复活旧授权。重启、释放或过期后使用新 instance；配置历史不能覆盖永久吊销。运行目录／IPC 地址是安装参数，不是另一份网络业务配置。
+
+### 数据目录与启动检查
+
+`--data-dir` 内每个文件只有一个 owner；daemon 装配这些组件，并在状态文件缺失时据此判定目录归属：
+
+| 文件 | owner | 用途 |
+| --- | --- | --- |
+| `daemon.lock`、`daemon.json`、`control.sock` | daemon | 目录锁、本机期望状态（revision／desiredUp／最近请求／socket 身份）、本机 IPC |
+| `identity/` | Control（`meshway-control`） | `node-control.lock`、`control.json`（身份信封）、`clock.json`、`netmap.json`、`peer-facts.json`；目录内规则由 Control 自行检查 |
+| `underlay.lock`、`underlay.json`、`underlay-egress.json`、`underlay-exit.json`、`exit-child.json` 及各自的 `*.stale-<Unix 纳秒>` 归档、`underlay-bootstrap.json`、`underlay-bootstrap.sock` | Underlay（`meshway-underlay`） | 内核资源 journal、出口／egress 账本、bootstrap 代理记录与 socket |
+| `.write-<32 位十六进制>` | 私有存储 | 原子替换被中断后留下的 staging 文件，不被读取 |
+
+fail closed 针对的是未知归属或不一致的本地存储。`daemon.json` 存在时按其内容恢复；缺失时按下表判定，通过则以 `revision=1`、`desiredUp=false` 的新状态写入 `daemon.json`，以未接入状态启动，并在 WARN 日志中列出目录里已有的自有文件。不通过时不写任何文件，`Node state is missing from a directory with unowned files.` 退出：
+
+| 目录形态 | 结果 |
+| --- | --- |
+| 空目录、只有 `daemon.lock`（含 `install.sh --uninstall --purge` 后重装） | 启动，未接入 |
+| lock＋`underlay.json`（空或记录了资源）＋`underlay.json.stale-*`／其他 Underlay 文件 | 启动，未接入；`tun` 模式下由 Underlay 按[既有规则](#持久与重建)回收 journal：上一 boot／其他 namespace 的归档，同 namespace 且驻留的资源先核验再在未接入的 down 中删除，空 journal 无事可做。`control-only` 不打开 Underlay，journal 原样保留 |
+| 残留 `control.sock`／`underlay-bootstrap.sock` | 启动；无监听者的旧 socket 按 socket 身份规则回收，活跃 socket 仍报错退出 |
+| `logout` 后的 `identity/`（空身份 `control.json`、`clock.json`、lock）＋journal | 启动，未接入；身份目录由 Control 载入为无身份记录 |
+| 以上之外的任何名称、符号链接、类型不符（如目录名为 `underlay.json`、普通文件名为 `identity`） | 拒绝，目录原样保留 |
+
+自己留下的 journal 不是拒绝启动的理由：它存在的目的就是让下一次启动回收上一实例的资源。手工删除身份文件后 systemd 不再陷入每 5 秒重启的循环；重新接入仍需显式 `up`。
 
 ## 生命周期
 

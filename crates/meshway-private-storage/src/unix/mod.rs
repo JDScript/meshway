@@ -149,8 +149,8 @@ pub(super) fn publish_once(
     directory.sync_all().map_err(|_| Error::Io)
 }
 
-/// Remove all but the newest `keep` regular files named `<prefix><digits>`.
-pub(super) fn prune_stale(directory: &File, prefix: &str, keep: usize) -> Result<(), Error> {
+/// Remove all but the newest `keep` stale archives of `source`.
+pub(super) fn prune_stale(directory: &File, source: &str, keep: usize) -> Result<(), Error> {
     let mut archives = Vec::new();
     let mut entries = rustix::fs::Dir::read_from(directory).map_err(io_error)?;
     while let Some(entry) = entries.read() {
@@ -158,11 +158,7 @@ pub(super) fn prune_stale(directory: &File, prefix: &str, keep: usize) -> Result
         let Ok(name) = entry.file_name().to_str() else {
             continue;
         };
-        let Some(stamp) = name
-            .strip_prefix(prefix)
-            .filter(|stamp| !stamp.is_empty() && stamp.bytes().all(|b| b.is_ascii_digit()))
-            .and_then(|stamp| stamp.parse::<u128>().ok())
-        else {
+        let Some(stamp) = super::stale_stamp(name, source) else {
             continue;
         };
         archives.push((stamp, name.to_owned()));
@@ -197,7 +193,7 @@ pub(super) fn replace(directory: &File, final_name: &str, bytes: &[u8]) -> Resul
     file(directory, final_name, false)?;
     let mut nonce = [0u8; 16];
     getrandom::fill(&mut nonce).map_err(|_| Error::Io)?;
-    let staging = format!(".write-{:032x}", u128::from_be_bytes(nonce));
+    let staging = format!("{}{:032x}", super::STAGING, u128::from_be_bytes(nonce));
     let mut file = File::from(
         openat(
             directory,

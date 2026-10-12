@@ -4,7 +4,7 @@ use meshway_model::{RequestId, Version};
 use meshway_private_storage::Directory;
 use meshway_protocol::ipc::{EnrollmentKey, ErrorCode};
 use serde::{Deserialize, Serialize};
-use std::{io::Read, sync::Arc};
+use std::{io::Read, os::unix::fs::FileTypeExt, sync::Arc};
 use tokio::sync::oneshot;
 
 #[derive(Clone)]
@@ -95,6 +95,25 @@ impl Record {
     }
 }
 
+const LOCK: &str = "daemon.lock";
+const RECORD: &str = "daemon.json";
+
+/// Whether `name` in the state directory belongs to this daemon or to a
+/// component it assembles there. Each component's leftovers (a stale IPC or
+/// bootstrap socket, a resource journal of a previous instance and its
+/// archives, the Control identity directory) are recovered by that component
+/// under its own rules once the daemon runs; a missing intent record never
+/// turns them into a reason to refuse starting. Anything else is storage of
+/// unknown ownership and keeps the directory closed.
+fn owned(name: &str) -> bool {
+    name == LOCK
+        || name == RECORD
+        || name == crate::ipc::SOCKET_FILE
+        || name == super::control::IDENTITY_DIRECTORY
+        || meshway_underlay::owns_file(name)
+        || meshway_private_storage::is_staging(name)
+}
+
 pub(super) struct Store {
     pub directory: Arc<Directory>,
     pub record: Record,
@@ -102,11 +121,10 @@ pub(super) struct Store {
 impl Store {
     pub fn open(path: &std::path::Path) -> Result<Self, &'static str> {
         let directory = Arc::new(
-            Directory::open(path, "daemon.lock")
-                .map_err(|_| "Node directory ownership or lock failed.")?,
+            Directory::open(path, LOCK).map_err(|_| "Node directory ownership or lock failed.")?,
         );
         let record = if let Some(file) = directory
-            .file("daemon.json", false)
+            .file(RECORD, false)
             .map_err(|_| "Invalid Node state file.")?
         {
             let mut bytes = Vec::new();
@@ -127,16 +145,38 @@ impl Store {
             }
             record
         } else {
+            // A new or emptied installation: the intent record is created only
+            // among this daemon's own files, each of its own kind.
+            let mut leftovers = Vec::new();
             for entry in
                 std::fs::read_dir(directory.path()).map_err(|_| "Cannot inspect Node directory.")?
             {
-                if entry
-                    .map_err(|_| "Cannot inspect Node directory.")?
-                    .file_name()
-                    != "daemon.lock"
-                {
-                    return Err("Node state is missing from a nonempty directory.");
+                let entry = entry.map_err(|_| "Cannot inspect Node directory.")?;
+                let kind = entry
+                    .file_type()
+                    .map_err(|_| "Cannot inspect Node directory.")?;
+                let name = entry.file_name();
+                let own = name.to_str().is_some_and(|name| {
+                    owned(name)
+                        && if name == super::control::IDENTITY_DIRECTORY {
+                            kind.is_dir()
+                        } else {
+                            kind.is_file() || kind.is_socket()
+                        }
+                });
+                if !own {
+                    return Err("Node state is missing from a directory with unowned files.");
                 }
+                if name != LOCK {
+                    leftovers.push(name.to_string_lossy().into_owned());
+                }
+            }
+            if !leftovers.is_empty() {
+                leftovers.sort();
+                tracing::warn!(
+                    files = ?leftovers,
+                    "Node state is missing; starting unenrolled among this daemon's own files"
+                );
             }
             let record = Record {
                 version: 1,
@@ -270,13 +310,183 @@ impl Store {
 fn save(directory: &Directory, record: &Record) -> Result<(), &'static str> {
     let bytes = serde_json::to_vec(record).map_err(|_| "Cannot encode Node state.")?;
     directory
-        .replace("daemon.json", &bytes)
+        .replace(RECORD, &bytes)
         .map_err(|_| "Cannot commit Node state; reopen before retrying.")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The journal `meshway-vm` was left with after its identity files were
+    /// removed by hand (F3 acceptance leftover): same boot and namespace, no
+    /// recorded resources.
+    const EMPTY_JOURNAL: &[u8] = br#"{"version":1,"boot":"f8871843-30b4-4a12-ae10-15123abcf79b\n","namespace_device":5,"namespace_inode":4026532281,"installation":"3f78fbb7c9765599939ea6ce3c4e5b2e","binding":null,"mark":{"value":2147483648,"mask":2147483648},"table":3086720847,"start":6524,"pool_limit":64,"pools":[],"rules":[],"routes":[],"tun":null,"anchor":null,"pending":null}"#;
+    /// A journal recording a negative capture boundary of a previous instance.
+    /// Whether those rules still exist is the Host's question when the daemon
+    /// opens it (`meshway_underlay` recovery); it is not a reason to refuse start.
+    const RESOURCE_JOURNAL: &[u8] = br#"{"version":1,"boot":"f8871843-30b4-4a12-ae10-15123abcf79b\n","namespace_device":5,"namespace_inode":4026532281,"installation":"3f78fbb7c9765599939ea6ce3c4e5b2e","binding":null,"mark":{"value":2147483648,"mask":2147483648},"table":3086720847,"start":6524,"pool_limit":64,"pools":["100.64.0.0/10"],"rules":[{"spec":{"kind":"End","priority":6653,"table":3086720847,"ipv6":false},"observed":[1,2,3]}],"routes":[],"tun":null,"anchor":null,"pending":null}"#;
+
+    struct Shape {
+        files: Vec<(&'static str, &'static [u8])>,
+        sockets: Vec<&'static str>,
+        identity: bool,
+    }
+
+    fn shape() -> Shape {
+        Shape {
+            files: Vec::new(),
+            sockets: Vec::new(),
+            identity: false,
+        }
+    }
+
+    fn lay_out(root: &std::path::Path, shape: &Shape) -> std::path::PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let path = root.join("node");
+        std::fs::create_dir(&path).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        for (name, bytes) in &shape.files {
+            std::fs::write(path.join(name), bytes).unwrap();
+            std::fs::set_permissions(path.join(name), std::fs::Permissions::from_mode(0o600))
+                .unwrap();
+        }
+        for name in &shape.sockets {
+            drop(std::os::unix::net::UnixListener::bind(path.join(name)).unwrap());
+        }
+        if shape.identity {
+            // The Control directory of a Node that left (`meshway logout`):
+            // its lock marker, the unenrolled identity record and the clock floor.
+            let identity = path.join(super::super::control::IDENTITY_DIRECTORY);
+            std::fs::create_dir(&identity).unwrap();
+            std::fs::set_permissions(&identity, std::fs::Permissions::from_mode(0o700)).unwrap();
+            for (name, bytes) in [
+                ("node-control.lock", &b"meshway-control/1\n"[..]),
+                (
+                    "control.json",
+                    br#"{"version":5,"origin":"https://server.example","keys":null,"enrollment":null,"binding":null}"#,
+                ),
+                (
+                    "clock.json",
+                    br#"{"format":"meshway-clock-floor/1","highWaterMs":1760200000000}"#,
+                ),
+            ] {
+                std::fs::write(identity.join(name), bytes).unwrap();
+                std::fs::set_permissions(
+                    identity.join(name),
+                    std::fs::Permissions::from_mode(0o600),
+                )
+                .unwrap();
+            }
+        }
+        path
+    }
+
+    fn opens_unenrolled(shape: &Shape) -> Result<Vec<String>, &'static str> {
+        let temp = tempfile::tempdir().unwrap();
+        let path = lay_out(&temp.path().canonicalize().unwrap(), shape);
+        let before: std::collections::BTreeSet<_> = std::fs::read_dir(&path)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        let store = Store::open(&path)?;
+        assert!(!store.record.desired_up);
+        assert_eq!(store.record.revision, Version::MIN);
+        assert!(store.record.enrollment_key.is_none());
+        assert!(store.record.rotation.is_none() && store.record.logout.is_none());
+        // Opening writes the record and touches nothing else.
+        let after: std::collections::BTreeSet<_> = std::fs::read_dir(&path)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        let mut expected = before;
+        expected.insert(LOCK.into());
+        expected.insert(RECORD.into());
+        assert_eq!(after, expected);
+        Ok(after.into_iter().collect())
+    }
+
+    #[test]
+    fn a_missing_record_starts_unenrolled_among_the_daemons_own_files() {
+        // Empty directory and lock only: a new installation (also the shape
+        // after `install.sh --uninstall --purge` and a reinstall).
+        opens_unenrolled(&shape()).unwrap();
+        let mut only_lock = shape();
+        only_lock.files.push((LOCK, b""));
+        opens_unenrolled(&only_lock).unwrap();
+
+        // Lock and the empty journal of the previous instance (the F3 leftover).
+        let mut empty_journal = shape();
+        empty_journal.files.push((LOCK, b""));
+        empty_journal.files.push(("underlay.json", EMPTY_JOURNAL));
+        opens_unenrolled(&empty_journal).unwrap();
+
+        // Lock and a journal recording resources, with the bounded stale
+        // archives and the other Underlay records: the Host reclaims them.
+        let mut resources = shape();
+        resources.files.extend([
+            (LOCK, &b""[..]),
+            ("underlay.json", RESOURCE_JOURNAL),
+            ("underlay.lock", b""),
+            ("underlay.json.stale-1760100000000000000", EMPTY_JOURNAL),
+            ("underlay.json.stale-1760100000000000001", EMPTY_JOURNAL),
+            ("underlay.json.stale-1760100000000000002", EMPTY_JOURNAL),
+            ("underlay-egress.json", b"{}"),
+            ("underlay-exit.json", b"{}"),
+            ("exit-child.json", b"{}"),
+            ("underlay-bootstrap.json", br#"{"device":1,"inode":2}"#),
+        ]);
+        resources.sockets.push("underlay-bootstrap.sock");
+        resources.sockets.push(crate::ipc::SOCKET_FILE);
+        opens_unenrolled(&resources).unwrap();
+
+        // The Control directory of a Node that left, next to the journal.
+        let mut left = shape();
+        left.files.push((LOCK, b""));
+        left.files.push(("underlay.json", EMPTY_JOURNAL));
+        left.identity = true;
+        opens_unenrolled(&left).unwrap();
+
+        // An interrupted private write's staging file is this daemon's own.
+        let mut staging = shape();
+        staging
+            .files
+            .push((".write-0123456789abcdef0123456789abcdef", b"{"));
+        opens_unenrolled(&staging).unwrap();
+    }
+
+    #[test]
+    fn a_missing_record_keeps_a_directory_with_unowned_files_closed() {
+        let rejected = "Node state is missing from a directory with unowned files.";
+        let mut unknown = shape();
+        unknown.files.push((LOCK, b""));
+        unknown.files.push(("underlay.json", EMPTY_JOURNAL));
+        unknown.files.push(("notes.txt", b"operator"));
+        assert_eq!(opens_unenrolled(&unknown), Err(rejected));
+
+        let mut near_miss = shape();
+        near_miss.files.push(("underlay.json.bak", EMPTY_JOURNAL));
+        assert_eq!(opens_unenrolled(&near_miss), Err(rejected));
+
+        let mut stale_dir = shape();
+        stale_dir
+            .files
+            .push(("underlay.json.stale-", EMPTY_JOURNAL));
+        assert_eq!(opens_unenrolled(&stale_dir), Err(rejected));
+
+        // An owned name of the wrong kind is not the daemon's file.
+        let temp = tempfile::tempdir().unwrap();
+        let path = lay_out(&temp.path().canonicalize().unwrap(), &shape());
+        std::os::unix::fs::symlink(path.join("elsewhere"), path.join("underlay.json")).unwrap();
+        assert_eq!(Store::open(&path).err(), Some(rejected));
+        std::fs::remove_file(path.join("underlay.json")).unwrap();
+        std::fs::create_dir(path.join("underlay.json")).unwrap();
+        assert_eq!(Store::open(&path).err(), Some(rejected));
+        std::fs::remove_dir(path.join("underlay.json")).unwrap();
+        std::fs::write(path.join(super::super::control::IDENTITY_DIRECTORY), b"").unwrap();
+        assert_eq!(Store::open(&path).err(), Some(rejected));
+        assert!(!path.join(RECORD).exists(), "no record was written");
+    }
 
     #[tokio::test]
     async fn key_intent_replay_uses_digest_after_secret_retirement_and_rotation_preserves_down() {

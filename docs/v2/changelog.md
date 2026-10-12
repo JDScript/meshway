@@ -11,6 +11,7 @@ wire 6、`meshway-netmap-1` 不变；IPC 升为 7；HTTP 契约新增可选 `Nod
 - 注销意图（S2）：`meshway logout` 先把意图写入 `control.json`，Server 确认或此后拒绝该身份（旧 session `401` 后新认证得 `403 node_identity_rejected`）即完成本机清除；没有回答时保持新 phase `leaving` 按 1–15 秒退避重试、重启后继续，期间 `up`／`rotate-key` 返回 `ErrorCode::Leaving`，只有 `up --enrollment-key` 覆盖；`403 permission_denied`／`422` 撤回意图。lab 一次性第四节点以容器内 nft 丢弃回答实测收敛。见[自助注销](/v2/configuration-reference/nodes#node-self-leave)。
 - 测试：`keepalive_edge_is_resident_without_interest` 偶发失败是测试取到了随后按 rank 被双向拨号收敛替换的入站 channel（Manager 行为正确）；改为等待两端持有同一收敛 channel，50 次 0 失败。
 - 删除不再生产的 `ExitUnavailableReason::DnsUnavailable`；出口 resolver 不可用只见 [exitDns](/v2/state-reference#exitdns)。
+- 本机运行（D1）：`daemon.json` 缺失时，目录里只有 daemon 自己及其组件的文件（Underlay journal 与 `*.stale-*` 归档、bootstrap 记录／socket、`identity/`、残留 `control.sock`、私有存储 staging）即以未接入状态启动并写入新状态；仍有未知名称、符号链接或类型不符的条目才拒绝。此前手工删除身份文件后，daemon 自己留下的空 `underlay.json` 使 `meshwayd` 报 `Node state is missing from a nonempty directory.` 退出，systemd 每 5 秒重启且不自愈（`meshway-vm` 1700 余次）。文件归属表与判定矩阵见[数据目录与启动检查](/v2/node/runtime#数据目录与启动检查)；证据 `.meshway/node-lab/d1/`。
 
 - 单出口 DNS（X5）：源节点方案使用单一出口时，普通查询在解析前经完整获准路径上的 DNS circuit 交给出口，由出口机器的系统 resolver 解析并沿原路径回答；MagicDNS 本地回答，`useWithExit` split 解析器按其本机 direct／unmanaged 路由；出口能力事实非 ready、出口上游不可用或回答失败时查询失败，从不回落到源节点本机上游。resolved 后端经其代理 stub `127.0.0.54` 保留按链路／后缀选上游，会回到本节点 DNS 的名称与含本地 stub／锚点／Mesh 地址的服务器清单使出口查询不可用；文件后端使用记录的原 nameserver。行为见 [出口 resolver](/v2/node/dataplane#exit-resolver)。
 - DNS：上游 UDP 回答带 TC 且记录被截断（resolved 代理 stub 的行为）或超出通告大小时按截断处理，只由独立 TCP 路由完成。

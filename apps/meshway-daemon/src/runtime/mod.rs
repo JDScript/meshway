@@ -99,11 +99,12 @@ pub async fn run(
     let mut control_done = false;
     let mut failure = None;
     let mut rotations = Vec::new();
-    tracing::info!(socket = %settings.data_dir.join("control.sock").display(), "Local IPC ready");
+    let socket_path = settings.data_dir.join(ipc::SOCKET_FILE);
+    tracing::info!(socket = %socket_path.display(), "Local IPC ready");
     if writeln!(
         std::io::stdout().lock(),
         "Local IPC ready: {}",
-        settings.data_dir.join("control.sock").display()
+        socket_path.display()
     )
     .is_err()
     {

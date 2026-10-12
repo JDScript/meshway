@@ -5,7 +5,7 @@ use meshway_private_storage::Directory;
 use serde::{Deserialize, Serialize};
 use std::{io::Read, sync::Arc};
 
-const FILE: &str = "underlay-egress.json";
+const FILE: &str = crate::files::EGRESS;
 const LIMIT: usize = 8 * 1024 * 1024;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

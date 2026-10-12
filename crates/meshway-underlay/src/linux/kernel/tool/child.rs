@@ -5,7 +5,7 @@ use meshway_private_storage::Directory;
 use serde::{Deserialize, Serialize};
 use std::{io::Read, os::unix::fs::MetadataExt, sync::Arc};
 
-const FILE: &str = "exit-child.json";
+const FILE: &str = crate::files::EXIT_CHILD;
 pub(super) const GATE: &str = "IFS= read -r gate && [ \"$gate\" = go ] && exec \"$@\"";
 
 #[derive(Clone)]

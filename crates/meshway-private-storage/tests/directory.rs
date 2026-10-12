@@ -117,3 +117,36 @@ fn publication_never_overwrites_and_unsafe_destinations_are_preserved() {
     assert!(directory.file("a/b", true).is_err());
     assert!(directory.file(".", true).is_err());
 }
+
+#[test]
+fn stale_archives_and_staging_files_are_recognized_by_their_exact_names() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().canonicalize().unwrap().join("private");
+    let directory = Directory::open(&path, "owner.lock").unwrap();
+    directory.replace("journal.json", b"{}").unwrap();
+    let archive = directory.archive_stale("journal.json", 3).unwrap();
+    assert!(meshway_private_storage::stale_stamp(&archive, "journal.json").is_some());
+    assert!(meshway_private_storage::stale_stamp(&archive, "other.json").is_none());
+    assert!(meshway_private_storage::stale_stamp("journal.json.stale-", "journal.json").is_none());
+    assert!(
+        meshway_private_storage::stale_stamp("journal.json.stale-1x", "journal.json").is_none()
+    );
+    assert!(meshway_private_storage::stale_stamp("journal.json", "journal.json").is_none());
+    let names: Vec<String> = fs::read_dir(&path)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert!(names.contains(&archive));
+    assert!(
+        !names
+            .iter()
+            .any(|name| meshway_private_storage::is_staging(name))
+    );
+    assert!(meshway_private_storage::is_staging(
+        ".write-0123456789abcdef0123456789abcdef"
+    ));
+    assert!(!meshway_private_storage::is_staging(".write-0123"));
+    assert!(!meshway_private_storage::is_staging(
+        "write-0123456789abcdef0123456789abcdef"
+    ));
+}

@@ -110,7 +110,7 @@ impl Host {
         let path = directory.path().to_owned();
         // The directory lock also excludes other processes from this installation.
         let directory = Arc::new(
-            tokio::task::spawn_blocking(move || Directory::open(&path, "underlay.lock"))
+            tokio::task::spawn_blocking(move || Directory::open(&path, crate::files::LOCK))
                 .await
                 .map_err(|_| Error::Worker)??,
         );
