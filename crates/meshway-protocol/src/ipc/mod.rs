@@ -161,6 +161,8 @@ pub enum ErrorCode {
     Contract,
     #[error("Server rejected the request; the daemon log names its reason.")]
     Rejected,
+    #[error("The Node is leaving its network and retries until the Server confirms; `meshway up` with a new enrollment key replaces the pending leave.")]
+    Leaving,
 }
 }
 meshway_model::string_enum! {
@@ -225,6 +227,9 @@ pub enum Phase {
     Retrying,
     Blocked,
     Stopping,
+    /// A durable leave intent awaits the Server's confirmation; it is retried
+    /// and nothing rejoins meanwhile.
+    Leaving,
 }
 }
 meshway_model::string_enum! {

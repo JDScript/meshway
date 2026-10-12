@@ -40,6 +40,10 @@ impl Control {
     /// Reuse a live session until either its UTC high-water or monotonic
     /// remaining lifetime reaches 60 seconds, then refresh it proactively.
     pub async fn authenticate(&mut self) -> Result<(), Error> {
+        // A pending leave is resumed only by `leave`; nothing rejoins meanwhile.
+        if self.record.leave.is_some() {
+            return Err(Error::Pending);
+        }
         if self.authentication_current()? {
             return Ok(());
         }

@@ -103,9 +103,18 @@ user 分支不接受 tags，tag 分支不接受 user。Node 数据库记录不�
 | 效果 | 与管理员删除相同：吊销凭据、移除配置项与库存、记录旧地址退出、撤回 netmap、重新编译受影响节点；配置版本 cause 为 `nodeDeleted` |
 | 版本作者 | 版本表要求 user 作者：User 身份设备记为其绑定用户，Tag 设备记为接入它的用户（批准者或接入密钥签发者）。配置变更通知的 `actor` 为 `node`（该 Node ID） |
 | 之后 | 该 Node 的 session 随凭据结束，再调用得 `401`；其控制密钥重新认证得 `403 node_identity_rejected`。重新加入需要新的接入 |
-| 失败 | Server 不可达或拒绝时什么都不发生；配置无法删除该 Node（例如有规则引用它）时为 `422 configuration_invalid`，与管理员删除相同 |
+| 拒绝 | 配置无法删除该 Node（例如有规则引用它）时为 `422 configuration_invalid`，与管理员删除相同；`403 permission_denied` 同属明确拒绝 |
 
-Node 只在收到成功响应后清除本机身份记录、`netmap.json` 与 `peer-facts.json`（见[私有存储](/v2/node/control#私有存储与传输)）。响应丢失时 Server 已删除而本机仍持有身份，之后的同步与认证得到 `node_identity_rejected`（`blocked`）。
+注销是持久意图，归 Control 的本机身份记录（`control.json` 的 `leave`，与 `daemon.json.desiredUp` 同样跨重启保留）：发送前先保存（带 requestId），之后只有下列结果结束它：
+
+| Server 的回答 | 本机 |
+| --- | --- |
+| 成功响应（`network`／`node` 与本机绑定一致） | 清除身份记录、`netmap.json` 与 `peer-facts.json`（见[私有存储](/v2/node/control#私有存储与传输)），下线 |
+| 对该身份的拒绝：旧 session 得 `401` 后，一次新的持钥认证得 `403 node_identity_rejected`；或直接得到该拒绝 | 视为注销已完成（先前请求已删除、响应丢失，或管理员已删除），同样清除 |
+| 明确拒绝（`403 permission_denied`、`422`） | 撤回意图，身份与运行不变 |
+| 没有回答（网络不可达、无可解码 body 的状态、`409`／`5xx`） | 保留意图，状态 `leaving`，按 1–15 秒退避重试，重启后继续；期间不同步、不取得 instance、数据面停止 |
+
+意图存在期间 `up`、`up --reenroll`、`rotate-key` 返回 `ErrorCode::Leaving`；`logout` 继续同一意图（沿用已保存的 requestId）；`down` 只改变期望上线，不取消注销。只有带新接入密钥的 `up --enrollment-key` 覆盖意图：本机放弃旧身份（Server 未回答时其记录留待管理员删除）并以新密钥接入。
 
 Node 使用本地持久密钥身份认证。接入批准、公钥与实体绑定走[注册流程](/v2/api/authentication#node-的三层凭据)，私钥不进入这份静态配置。
 

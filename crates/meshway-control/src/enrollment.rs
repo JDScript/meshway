@@ -53,7 +53,7 @@ impl Control {
             Some(pending) if pending.intent.existing.is_some() => {}
             Some(_) => return Err(Error::Pending),
             None => {
-                if self.record.rotation.is_some() {
+                if self.record.rotation.is_some() || self.record.leave.is_some() {
                     return Err(Error::Pending);
                 }
                 let hostname = hostname.to_ascii_lowercase();

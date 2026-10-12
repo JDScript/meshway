@@ -185,14 +185,14 @@ Server [轮换签发钥](/v2/server#netmap-签发钥轮换)期间，sync 回复�
 
 | 文件 | 内容 |
 | --- | --- |
-| `control.json` | 身份记录：origin、密钥、待完成接入、身份绑定（含钉住的 Server 签名钥，随[签名钥轮换](#server-签名钥轮换)更新）与换钥状态；包含秘密 |
+| `control.json` | 身份记录：origin、密钥、待完成接入、身份绑定（含钉住的 Server 签名钥，随[签名钥轮换](#server-签名钥轮换)更新）、换钥状态与待完成的注销意图（`leave` requestId）；包含秘密 |
 | `netmap.json` | `{ format: "meshway-netmap-cache/2", netmap, lease, signature, seal }` |
 | `peer-facts.json` | `{ format: "meshway-peer-facts-cache/1", networkId, nodeId, netmap: NetmapRef, cursor, peers: NodeId → PeerFacts }`；最后已知 peer 事实，无签名 |
 | `execution.json` | 旧 publication 目标缓存 `{ format: "meshway-execution-cache/1", saved }`，随旧执行链删除 |
 
 缓存文件缺失、格式未知、损坏或绑定不符时忽略，不阻断身份也不生成授权。
 
-[自助注销](/v2/configuration-reference/nodes#node-self-leave)只在 Server 确认删除后改写本机状态：先撤回已发布租约并结束 session／instance，等待在途写入，再把 `control.json` 原子改写为只保留 origin 的空身份记录，最后删除 `netmap.json` 与 `peer-facts.json`（`clock.json` 保留）。目录因此仍是已初始化的无身份目录，下一次接入生成新密钥；中途失败按未知写入结果要求重新打开，不回退为旧身份。
+[自助注销](/v2/configuration-reference/nodes#node-self-leave)先把注销意图写入 `control.json`，只在 Server 确认删除或拒绝该身份后改写本机状态：先撤回已发布租约并结束 session／instance，等待在途写入，再把 `control.json` 原子改写为只保留 origin 的空身份记录，最后删除 `netmap.json` 与 `peer-facts.json`（`clock.json` 保留）。目录因此仍是已初始化的无身份目录，下一次接入生成新密钥；中途失败按未知写入结果要求重新打开，不回退为旧身份。
 
 `peer-facts.json` 不是授权：它只提供地址候选，每条承载、通道和包的准入仍由已验签 netmap 与认证握手决定，伪造或过时的地址最多连不上。因此它不带 Server 签名或本节点 seal，只要求私有目录与 `0600`。仅当 `netmap.json` 作为执行授权载入时才读取；网络／节点须与身份一致，内容按载入 netmap 的投影过滤（不在投影内的 peer 丢弃，listener 细节只保留本节点可拨的）。`netmap` 与载入内容不一致时不重放。写入失败或中断只留下旧或新的完整文件，不影响 sync。换钥清空内存中的事实；文件与 `netmap.json` 同生命周期。
 

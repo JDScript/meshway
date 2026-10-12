@@ -196,7 +196,7 @@ pub(crate) async fn run(arguments: Arguments) -> Result<(), Error> {
 fn converging(phase: Phase) -> bool {
     matches!(
         phase,
-        Phase::Starting | Phase::Synchronizing | Phase::Stopping | Phase::Retrying
+        Phase::Starting | Phase::Synchronizing | Phase::Stopping | Phase::Retrying | Phase::Leaving
     )
 }
 
@@ -259,6 +259,7 @@ mod tests {
             Phase::Synchronizing,
             Phase::Stopping,
             Phase::Retrying,
+            Phase::Leaving,
         ] {
             assert!(converging(phase), "{phase:?}");
         }

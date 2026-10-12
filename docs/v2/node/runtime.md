@@ -26,7 +26,7 @@ install -d -m 700 .meshway
 - 在 Console 登录并选择网络批准后，daemon 自动兑换身份、认证、取得实例、保存配置和发送 saved 回执。
 - 此示例的 `controlReady`／`dataPlane=controlOnly` 表示控制流程就绪，`applied=null`，不安装网络。Linux TUN 使用 `--network-mode tun`（默认值），还须满足下节安装范围与设备／路由权限。
 
-`meshwayd` 前台运行，SIGINT／SIGTERM 执行关闭与 join。进程退出保留期望状态：退出前为 up，重启后自动重新取得运行资格；显式 down 后重启继续保持下线。CLI 的 Ctrl-C 仅停止等待，不撤回已由 daemon 接纳的持久操作。`up`／`down` 最多等待 30 秒，期间 `starting`／`synchronizing`／`stopping`／`retrying` 视为仍在收敛；期满仍为 `retrying`，或进入 `blocked`，以失败退出并显示最近问题。
+`meshwayd` 前台运行，SIGINT／SIGTERM 执行关闭与 join。进程退出保留期望状态：退出前为 up，重启后自动重新取得运行资格；显式 down 后重启继续保持下线。CLI 的 Ctrl-C 仅停止等待，不撤回已由 daemon 接纳的持久操作。`up`／`down` 最多等待 30 秒，期间 `starting`／`synchronizing`／`stopping`／`retrying`／`leaving` 视为仍在收敛；期满仍为 `retrying`，或进入 `blocked`，以失败退出并显示最近问题。
 
 | 参数 | 行为 |
 | --- | --- |
@@ -174,7 +174,7 @@ IPC 7 的公开运行状态（`meshway status --json` 原样输出）：
 | `via` | `relay` 时按路径顺序的中转 Node ID；其他为空 |
 | `rtt` | 必填可空：到该 peer 最近一次成功 `ping`／观察任务测量的 `durationUs` 与 `observedAt`；没有测量为 null，不补零；down、撤回或租约结束时清空 |
 
-`phase` 的全部 9 个值：
+`phase` 的全部 10 个值：
 
 | 值 | 含义 |
 | --- | --- |
@@ -187,6 +187,7 @@ IPC 7 的公开运行状态（`meshway status --json` 原样输出）：
 | `retrying` | 故障后等待有界重试 |
 | `blocked` | 需要操作员处理，后台不继续准入 |
 | `stopping` | 正在停止与清理 |
+| `leaving` | 持久注销意图等待 Server 确认：数据面已停，按 1–15 秒退避重试 `leave`，期间不重新接入（见[自助注销](/v2/configuration-reference/nodes#node-self-leave)） |
 
 `lastError` 使用 `Problem` 的全部 17 个值；无故障为 null：
 
@@ -230,14 +231,14 @@ Linux 首版每台机器运行一个系统级 `meshwayd`，同一时间只启用
 | `meshway up --enrollment-key @file` | 通过 Server 的一次性 Tag 接入密钥加入网络，不取得用户会话；既有身份不被接入密钥改绑 |
 | `meshway rotate-key` | 同步返回已完成换钥的公开身份／状态或类型化失败；随后重新取得实例和运行资格，换钥成功不等于数据面已 applied |
 | `meshway down` | 停止当前网络并终止相关资格；daemon 与私有身份保留 |
-| `meshway logout` | 请 Server 永久删除本节点（[自助注销](/v2/configuration-reference/nodes#node-self-leave)），确认后下线并清除本机身份；Server 不可达或拒绝时本机不变 |
+| `meshway logout` | 持久保存注销意图后请 Server 永久删除本节点（[自助注销](/v2/configuration-reference/nodes#node-self-leave)），确认后下线并清除本机身份；没有回答时保持 `leaving` 并在后台重试，Server 明确拒绝时撤回意图、本机不变 |
 | `meshway ping <target>` | 获准的端到端 Mesh 探测；参数、授权与输出见[路径诊断](/v2/node/diagnostics) |
 | `meshway status [--watch]` | 本节点摘要与 peers 表；`--watch` 每秒刷新（TTY 原地重绘，否则逐份输出） |
 | `meshway netcheck` | 一次有界的本机网络诊断，见[路径诊断 · netcheck](/v2/node/diagnostics#netcheck) |
 | `meshway version` | 程序与协议版本；不连接 daemon |
 | 切网 | 尚未实现；先停止旧网络、完成隔离清理，再运行新网络 |
 
-CLI 通过 Unix domain socket 发命令、读结果；状态由 daemon／组件的唯一 owner 持有。`meshway_protocol::ipc` 是唯一的请求／响应定义，当前版本为 7（新增 `Logout`、`Netcheck` 命令、`ResultBody::Netcheck` 与 Status 的 `node`／`peers`），使用 JSON 与长度前缀，单条消息上限 64 KiB；CLI 和 daemon 同版本发布。每个连接处理一个请求，Ping 可返回有序的多个事件，Netcheck 返回一个报告；连接数、请求等待、写入和队列均有上限。`Up` 的 `enrollmentKey` 可省略；`Up`／`Down`／`RotateKey`／`Logout` 的 `expectedRevision` 由 CLI 读取后提交，换钥与注销不会绕过本机 CAS。
+CLI 通过 Unix domain socket 发命令、读结果；状态由 daemon／组件的唯一 owner 持有。`meshway_protocol::ipc` 是唯一的请求／响应定义，当前版本为 7（新增 `Logout`、`Netcheck` 命令、`ResultBody::Netcheck`、Status 的 `node`／`peers`、`Phase::Leaving` 与 `ErrorCode::Leaving`），使用 JSON 与长度前缀，单条消息上限 64 KiB；CLI 和 daemon 同版本发布。每个连接处理一个请求，Ping 可返回有序的多个事件，Netcheck 返回一个报告；连接数、请求等待、写入和队列均有上限。`Up` 的 `enrollmentKey` 可省略；`Up`／`Down`／`RotateKey`／`Logout` 的 `expectedRevision` 由 CLI 读取后提交，换钥与注销不会绕过本机 CAS。
 
 ### CLI 输出与退出码
 
@@ -269,7 +270,7 @@ meshway-nyc  100.64.0.6  relay   native_udp  via meshway-lax     2.00 ms
 | 命令 | 退出码 |
 | --- | --- |
 | `up`／`down` | 0：已收敛，或仍在 `starting`／`synchronizing`／`stopping`／`retrying`（意图已保存）；1：`blocked`、意图被并发改变或 IPC 错误 |
-| `logout` | 0：Server 已删除且本机已清除；1：Server 不可达或拒绝（本机不变）、本机无身份或 IPC 错误 |
+| `logout` | 0：Server 已删除且本机已清除；1：`leaving`（意图已保存，后台继续）、Server 明确拒绝（本机不变）、本机无身份或 IPC 错误 |
 | `ping` | 0：至少一次成功回复；1：全部失败／超时或操作错误；130：Ctrl-C |
 | `status`／`netcheck`／`rotate-key`／`version` | 0：已读取并输出（netcheck 的 Server 不可达或无数据面也是 0，报告本身说明）；1：IPC 或操作错误 |
 | 参数错误 | 2 |

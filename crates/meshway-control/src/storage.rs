@@ -68,6 +68,11 @@ pub(super) struct Record {
     pub rotation: Option<crate::rotation::Rotation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub completed_rotation: Option<meshway_model::RequestId>,
+    /// The operator's durable leave intent, saved before the request is sent.
+    /// Only the Server's confirmation or its rejection of this identity ends
+    /// it locally (`forget`); a definitive refusal withdraws it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub leave: Option<meshway_model::RequestId>,
     /// A definitive identity rejection forbids offline cache activation until
     /// a fresh signed sync succeeds. This is local identity lifecycle state.
     #[serde(default)]
@@ -142,6 +147,7 @@ impl Record {
                 binding: None,
                 rotation: None,
                 completed_rotation: None,
+                leave: None,
                 cache_blocked: false,
             });
         };
@@ -168,6 +174,7 @@ impl Record {
             binding: None,
             rotation: None,
             completed_rotation: None,
+            leave: None,
             cache_blocked: false,
         }
     }
@@ -175,6 +182,13 @@ impl Record {
     fn validate(&self) -> Result<(), Error> {
         let record = self;
         if record.completed_rotation.is_some() && record.binding.is_none() {
+            return Err(Error::Record);
+        }
+        if record.leave.is_some()
+            && (record.binding.is_none()
+                || record.rotation.is_some()
+                || record.enrollment.is_some())
+        {
             return Err(Error::Record);
         }
         if let Some(rotation) = &record.rotation {

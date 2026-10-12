@@ -17,6 +17,7 @@ pub use exchange::shared;
 mod identity;
 mod instance;
 mod leave;
+pub use leave::Left;
 mod netmap;
 pub use netmap::{
     KnownPeers, NetmapChange, PeerFactsSink, SYNC_TIMEOUT, SyncCall, SyncFuture, SyncOutcome,
@@ -126,6 +127,8 @@ pub struct Status {
     pub held: Option<NetmapRef>,
     /// Published signed lease of the held netmap, while it has not ended.
     pub netmap: Option<NetmapLease>,
+    /// The durable leave intent awaiting the Server's confirmation.
+    pub leaving: Option<meshway_model::RequestId>,
     pub reload_required: bool,
 }
 
@@ -257,6 +260,7 @@ impl Control {
                 self.netmap_reference()
             },
             netmap: self.netmap_lease(),
+            leaving: if self.dirty { None } else { self.record.leave },
             reload_required: self.dirty,
         };
         StatusSnapshot {

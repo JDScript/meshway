@@ -92,7 +92,10 @@ impl View {
                 Phase::Stopping
             }
         } else if !desired.up {
-            if matches!(report.phase, Phase::Starting | Phase::Blocked) {
+            if matches!(
+                report.phase,
+                Phase::Starting | Phase::Blocked | Phase::Leaving
+            ) {
                 report.phase
             } else {
                 Phase::Down

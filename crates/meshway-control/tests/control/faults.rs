@@ -14,6 +14,8 @@ use tokio::{
 #[derive(Clone, Copy)]
 pub enum Fault {
     RejectBefore,
+    /// No Server answer: an intermediary 503 before forwarding.
+    Unavailable,
     Lost,
     Hold,
     WrongController,
@@ -126,6 +128,12 @@ async fn forward(State(state): State<Forward>, request: Request) -> Response<Bod
             .body(Body::from(serde_json::to_vec(&body).unwrap()))
             .unwrap();
     }
+    if matches!(fault, Some(Fault::Unavailable)) {
+        return Response::builder()
+            .status(StatusCode::SERVICE_UNAVAILABLE)
+            .body(Body::empty())
+            .unwrap();
+    }
     if matches!(fault, Some(Fault::RejectBefore)) {
         return Response::builder()
             .status(StatusCode::UNAUTHORIZED)
@@ -183,7 +191,9 @@ async fn forward(State(state): State<Forward>, request: Request) -> Response<Bod
                         value["serverSigningKey"] = serde_json::Value::Null;
                     }
                     Fault::Lost | Fault::Hold => unreachable!("delivery fault handled above"),
-                    Fault::RejectBefore => unreachable!("rejected before forwarding"),
+                    Fault::RejectBefore | Fault::Unavailable => {
+                        unreachable!("rejected before forwarding")
+                    }
                     Fault::ReceiptConflict(..) => unreachable!("rejected before forwarding"),
                 }
                 serde_json::to_vec(&value).unwrap()

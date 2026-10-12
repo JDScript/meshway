@@ -122,8 +122,14 @@ pub mod shared {
     use crate::connectivity::{AttemptView, Discovery, DiscoveryContext, Outcome, ValidatedOffer};
 
     pub async fn authenticate(control: &Mutex<Control>) -> Result<(), Error> {
-        if control.lock().await.authentication_current()? {
-            return Ok(());
+        {
+            let mut control = control.lock().await;
+            if control.leaving().is_some() {
+                return Err(Error::Pending);
+            }
+            if control.authentication_current()? {
+                return Ok(());
+            }
         }
         let session = unlocked(
             control,

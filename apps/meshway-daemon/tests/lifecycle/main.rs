@@ -1,6 +1,7 @@
 #![cfg(unix)]
 #[cfg(target_os = "linux")]
 mod cleanup;
+mod leave;
 #[cfg(not(target_os = "linux"))]
 mod network;
 mod recovery;

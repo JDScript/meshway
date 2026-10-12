@@ -297,6 +297,7 @@ pub(super) async fn run(
             }
         }
         let shared = control.clone().expect("control opened above");
+        let leaving = shared.lock().await.leaving();
         if let Some(id) = plan.rotation {
             let mut driver = shared.lock().await;
             stop(&mut driver, false).await;
@@ -341,27 +342,71 @@ pub(super) async fn run(
             let _ = desired
                 .wait_for(|next| next.shutdown || next.rotation != Some(id))
                 .await;
-        } else if let Some(id) = plan.logout {
+        } else if leaving.is_some() && plan.logout.is_none() && plan.enrollment_key.is_some() {
+            // An explicit new enrollment replaces the pending leave.
             let mut driver = shared.lock().await;
-            // No session work runs meanwhile; the request needs a session only.
             stop(&mut driver, false).await;
+            match driver.abandon_leave().await {
+                Ok(()) => {
+                    tracing::warn!("A new enrollment key replaced the pending leave");
+                    if let Some(network) = &mut network {
+                        let _ = network.stop(true).await;
+                    }
+                    left = true;
+                }
+                Err(error) => {
+                    publish(
+                        &reported,
+                        &plan,
+                        Some(&driver),
+                        Phase::Blocked,
+                        None,
+                        Some(failure(error, true).problem),
+                        None,
+                    );
+                    drop(driver);
+                    wait_change(&mut desired, &plan, None).await;
+                }
+            }
+        } else if let Some(id) = plan.logout.or(leaving) {
+            let mut driver = shared.lock().await;
+            // No session work runs meanwhile, and the data plane stops: the
+            // operator asked to leave. The request needs a session only.
+            stop(&mut driver, false).await;
+            if let Some(network) = &mut network {
+                let _ = network.stop(false).await;
+            }
             publish(
                 &reported,
                 &plan,
                 Some(&driver),
-                Phase::Stopping,
+                Phase::Leaving,
                 None,
                 None,
                 None,
             );
-            let result = match driver.authenticate().await {
-                Ok(()) => driver.leave(id).await.map(|left| {
-                    tracing::info!(network = %left.network_id, node = %left.node_id,
-                        revision = left.revision.get(), "Node left its network");
-                }),
-                Err(error) => Err(error),
-            }
-            .map_err(leave_error);
+            let attempt = driver.leave(id).await;
+            let pending = driver.leaving().is_some();
+            let mut problem = None;
+            let result = match attempt {
+                Ok(left) => {
+                    match left {
+                        meshway_control::Left::Confirmed(left) => tracing::info!(
+                            network = %left.network_id, node = %left.node_id,
+                            revision = left.revision.get(), "Node left its network"),
+                        meshway_control::Left::IdentityRejected => {
+                            tracing::info!("Node left its network: the Server rejects its identity")
+                        }
+                    }
+                    Ok(())
+                }
+                // The intent stays and is retried: no Server answer yet.
+                Err(error) if pending => {
+                    problem = Some(failure::at("leave", error, true).problem);
+                    Err(meshway_protocol::ipc::ErrorCode::Leaving)
+                }
+                Err(error) => Err(leave_error(error)),
+            };
             if result.is_ok() {
                 // The Server withdrew everything; remove every local resource.
                 if let Some(network) = &mut network {
@@ -369,26 +414,50 @@ pub(super) async fn run(
                 }
                 left = true;
             }
+            let retry = pending.then(|| Duration::from_secs(backoff));
             publish(
                 &reported,
                 &plan,
                 Some(&driver),
-                if result.is_ok() {
-                    Phase::Down
-                } else {
-                    Phase::Starting
+                match &result {
+                    Ok(()) => Phase::Down,
+                    Err(_) if pending => Phase::Leaving,
+                    Err(_) => Phase::Starting,
                 },
                 None,
-                None,
-                None,
+                problem,
+                retry,
             );
             drop(driver);
-            reported.send_modify(|report| {
-                report.logout = Some(super::status::RotationOutcome { id, result })
-            });
-            let _ = desired
-                .wait_for(|next| next.shutdown || next.logout != Some(id))
-                .await;
+            // The operator's request, or a retried leave that completed,
+            // reports its outcome; the coordinator settles the intent.
+            if plan.logout.is_some() || result.is_ok() {
+                reported.send_modify(|report| {
+                    report.logout = Some(super::status::RotationOutcome { id, result })
+                });
+            }
+            match retry {
+                Some(delay) => {
+                    backoff = (backoff * 2).min(BACKOFF_MAX);
+                    wait_change(&mut desired, &plan, Some(delay)).await;
+                    // Keep the backoff across the next attempt.
+                    plan = desired.borrow_and_update().clone();
+                    reset = plan.retry_enrollment;
+                    reenroll = plan.reenroll;
+                    continue;
+                }
+                None if plan.logout.is_some() => {
+                    let _ = desired
+                        .wait_for(|next| next.shutdown || next.logout != Some(id))
+                        .await;
+                }
+                None if result.is_ok() => {
+                    wait_change(&mut desired, &plan, None).await;
+                }
+                // A retried leave was refused: the intent is gone, the held
+                // identity carries on.
+                None => {}
+            }
         } else if !plan.up {
             let mut driver = shared.lock().await;
             stop(&mut driver, true).await;

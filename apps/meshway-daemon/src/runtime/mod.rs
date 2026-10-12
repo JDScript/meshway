@@ -245,6 +245,14 @@ async fn apply(
     }
     let has_key = command.enrollment_key.is_some();
     let blocked = matches!(view.status().phase, Phase::Blocked);
+    // A pending leave ends only by its completion, another logout, or an
+    // explicit new enrollment; nothing else may rejoin with this identity.
+    let leaving = view
+        .report
+        .borrow()
+        .control
+        .as_ref()
+        .is_some_and(|snapshot| snapshot.status().leaving.is_some());
     let mutation = store.mutation(
         command.action,
         command.id,
@@ -252,6 +260,17 @@ async fn apply(
         blocked,
         command.enrollment_key,
     );
+    if leaving
+        && mutation.as_ref().is_ok_and(|record| record.is_some())
+        && match command.action {
+            Action::Up => !has_key,
+            Action::RotateKey | Action::Reenroll => true,
+            Action::Down | Action::Logout => false,
+        }
+    {
+        let _ = command.reply.send(Err(ErrorCode::Leaving));
+        return Ok(());
+    }
     if matches!(
         command.action,
         Action::RotateKey | Action::Reenroll | Action::Logout
@@ -276,6 +295,7 @@ async fn apply(
         }
     }
     if has_key
+        && !leaving
         && mutation.as_ref().is_ok_and(|record| record.is_some())
         && (view.report.borrow().control.is_none() || view.status().identity.is_some())
     {
@@ -363,14 +383,20 @@ async fn complete(
         *waiters = pending;
     }
     if let Some(outcome) = report.logout
-        && store
+        && let awaited = store
             .record
             .logout
             .as_ref()
             .is_some_and(|logout| logout.id == outcome.id && logout.result.is_none())
+        // A retried leave can also complete after its request was answered.
+        && (awaited
+            || (outcome.result.is_ok()
+                && (store.record.desired_up || store.record.enrollment_key.is_some())))
     {
         let mut record = store.record.clone();
-        record.logout.as_mut().expect("pending logout").result = Some(outcome.result);
+        if awaited {
+            record.logout.as_mut().expect("pending logout").result = Some(outcome.result);
+        }
         if outcome.result.is_ok() {
             // The identity is gone: the Node stays down until a new enrollment.
             record.desired_up = false;

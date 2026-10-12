@@ -102,6 +102,9 @@ impl Control {
     ) -> Result<NodeKeyMetadata, Error> {
         self.ready()?;
         let binding = self.record.binding.clone().ok_or(Error::Lifecycle)?;
+        if self.record.leave.is_some() {
+            return Err(Error::Pending);
+        }
         if self
             .record
             .rotation
