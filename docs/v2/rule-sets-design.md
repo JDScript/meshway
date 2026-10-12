@@ -572,7 +572,7 @@ R0 列出的七项已由用户决定并写入相应章节：regex v1 逐条跳�
 
 保留期常量来源：配置版本由 `configuration_versions_no_delete` 触发器永久保留，因此“可回滚”的绑定没有时间上限；时间窗口只来自租约——`store::resources::artifacts::MAX_LEASE_MS`（`netmap::SyncTiming` 允许的最长租约，24 小时），与 `node_netmap_artifacts` 修剪、`GET /agent-api/v1/artifacts/{digest}` 授权使用同一常量。
 
-验收：`app::tests::resources::catalogs`（未引用时取回；两网络同 URL 只取一次；从未成功为 409；失败保留；新 sequence 替换、低 sequence 不替换；held 在目录页与视图透出）、`app::tests::resources::retention`（租约窗口内不回收、窗口外回收被替换内容及其记录，初始与刷新绑定均保留并可经 `initial`／`refreshed` 回滚）；发布仓库 `scripts/test_publish.py`；Planck 16 行矩阵 `20261012T212926Z-abd9b9c8` 全部通过。
+验收：`app::tests::resources::catalogs`（未引用时取回；两网络同 URL 只取一次；从未成功为 409；失败保留；新 sequence 替换、低 sequence 不替换；held 在目录页与视图透出）、`app::tests::resources::retention`（租约窗口内不回收、窗口外回收被替换内容及其记录，初始与刷新绑定均保留并可经 `initial`／`refreshed` 回滚）；发布仓库 `scripts/test_publish.py`；Planck 16 行矩阵 `20261012T212926Z-abd9b9c8` 与 `20261012T232408Z-75436f19`（最终候选）全部通过；新部署的本地 Server 在无任何引用时 3 秒内取得真实内置目录（`geosite`／`geoip`，sequence 3），证据 `.meshway/validation/r2d/builtin-prewarm/`。
 
 ## 未解决
 
