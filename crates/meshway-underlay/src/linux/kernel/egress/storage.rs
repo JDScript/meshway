@@ -59,7 +59,14 @@ impl Store {
             if bytes.len() > LIMIT {
                 return Err(Error::Journal);
             }
-            let ledger: Ledger = serde_json::from_slice(&bytes).map_err(|_| Error::Journal)?;
+            // A removed record owns nothing, whatever version wrote it.
+            let raw: serde_json::Value =
+                serde_json::from_slice(&bytes).map_err(|_| Error::Journal)?;
+            if raw.get("removed") == Some(&serde_json::Value::Bool(true)) {
+                source.archive_stale(FILE, super::super::journal::STALE_ARCHIVES)?;
+                return Ok(None);
+            }
+            let ledger: Ledger = serde_json::from_value(raw).map_err(|_| Error::Journal)?;
             let (boot, dev, ino) = super::super::journal::Journal::identity()?;
             if (
                 ledger.boot.as_str(),
