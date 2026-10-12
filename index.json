@@ -1,8 +1,328 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-12T17:48:02.587865+00:00",
+  "updatedAt": "2026-10-12T18:11:16.917340+00:00",
   "runs": [
+    {
+      "id": 38288268679,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "49741edce7b7cb10e6f1232d8f6746768cc7a898",
+      "message": "docs: netmap dialers are keyed by String, there is no CandidateKey type",
+      "createdAt": "2026-10-12T18:02:44Z",
+      "updatedAt": "2026-10-12T18:06:17Z",
+      "status": "in_progress",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/38288268679",
+      "jobs": [
+        {
+          "id": 114941765760,
+          "name": "changes",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-12T18:02:47Z",
+          "completedAt": "2026-10-12T18:02:59Z",
+          "seconds": 12.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38288268679/job/114941765760"
+        },
+        {
+          "id": 114941856202,
+          "name": "web",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-12T18:03:03Z",
+          "completedAt": "2026-10-12T18:06:14Z",
+          "seconds": 191.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38288268679/job/114941856202"
+        },
+        {
+          "id": 114941856241,
+          "name": "cargo",
+          "runner": "mars-14900k",
+          "status": "in_progress",
+          "conclusion": null,
+          "startedAt": "2026-10-12T18:06:17Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38288268679/job/114941856241"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 38288268675,
+      "attempt": 1,
+      "workflow": "Perf",
+      "event": "push",
+      "branch": "main",
+      "commit": "49741edce7b7cb10e6f1232d8f6746768cc7a898",
+      "message": "docs: netmap dialers are keyed by String, there is no CandidateKey type",
+      "createdAt": "2026-10-12T18:02:44Z",
+      "updatedAt": "2026-10-12T18:10:11Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "url": "https://github.com/JDScript/meshway/actions/runs/38288268675",
+      "jobs": [
+        {
+          "id": 114941765283,
+          "name": "perf",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "failure",
+          "startedAt": "2026-10-12T18:09:58Z",
+          "completedAt": "2026-10-12T18:10:10Z",
+          "seconds": 12.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38288268675/job/114941765283"
+        },
+        {
+          "id": 114941765435,
+          "name": "perf-arm64",
+          "runner": "jp-tyo-arm64",
+          "status": "completed",
+          "conclusion": "failure",
+          "startedAt": "2026-10-12T18:02:47Z",
+          "completedAt": "2026-10-12T18:02:59Z",
+          "seconds": 12.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38288268675/job/114941765435"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 38288268642,
+      "attempt": 1,
+      "workflow": "Build",
+      "event": "push",
+      "branch": "main",
+      "commit": "49741edce7b7cb10e6f1232d8f6746768cc7a898",
+      "message": "docs: netmap dialers are keyed by String, there is no CandidateKey type",
+      "createdAt": "2026-10-12T18:02:44Z",
+      "updatedAt": "2026-10-12T18:08:47Z",
+      "status": "in_progress",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/38288268642",
+      "jobs": [
+        {
+          "id": 114941765330,
+          "name": "node-linux (x86_64-unknown-linux-musl)",
+          "runner": "mars-epyc7543",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-12T18:02:48Z",
+          "completedAt": "2026-10-12T18:08:43Z",
+          "seconds": 355.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38288268642/job/114941765330"
+        },
+        {
+          "id": 114941766031,
+          "name": "node-linux (aarch64-unknown-linux-musl)",
+          "runner": "mars-epyc7543",
+          "status": "in_progress",
+          "conclusion": null,
+          "startedAt": "2026-10-12T18:08:46Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38288268642/job/114941766031"
+        }
+      ],
+      "artifacts": [
+        {
+          "id": 11764053920,
+          "name": "node-x86_64-unknown-linux-musl-49741edce7b7cb10e6f1232d8f6746768cc7a898",
+          "bytes": 10468980,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38288268642/artifacts/11764053920",
+          "jobId": 114941765330,
+          "runner": "mars-epyc7543",
+          "seconds": 355.0,
+          "state": "ok",
+          "error": null,
+          "reports": [],
+          "matrices": [],
+          "builds": [
+            {
+              "target": "x86_64-unknown-linux-musl",
+              "binary": "meshwayd",
+              "bytes": 17890728,
+              "sha256": "c83075fd0b91b2c783cead6a09ec17f1276531856cf8fad5d0561ed0110df12a"
+            },
+            {
+              "target": "x86_64-unknown-linux-musl",
+              "binary": "meshway",
+              "bytes": 2035584,
+              "sha256": "7ca6c8eb261f6ddd9a677b57951bc1a4c9ae7b14840ef31881447b52bc9859d4"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 38287718128,
+      "attempt": 1,
+      "workflow": "Validate",
+      "event": "schedule",
+      "branch": "main",
+      "commit": "3118272d215258640e456238ca0aa27eb60479f1",
+      "message": "release: workspace version 0.1.0-alpha.4",
+      "createdAt": "2026-10-12T17:57:51Z",
+      "updatedAt": "2026-10-12T18:09:58Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "url": "https://github.com/JDScript/meshway/actions/runs/38287718128",
+      "jobs": [
+        {
+          "id": 114939971655,
+          "name": "matrix",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "failure",
+          "startedAt": "2026-10-12T17:57:53Z",
+          "completedAt": "2026-10-12T18:09:57Z",
+          "seconds": 724.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38287718128/job/114939971655"
+        }
+      ],
+      "artifacts": [
+        {
+          "id": 11764128458,
+          "name": "validate-matrix-38287718128",
+          "bytes": 787905,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38287718128/artifacts/11764128458",
+          "jobId": 114939971655,
+          "runner": "planck",
+          "seconds": 724.0,
+          "state": "ok",
+          "error": null,
+          "reports": [],
+          "matrices": [
+            {
+              "reportId": "20261012T175800Z-6b5dc9b7",
+              "short": false,
+              "rows": [
+                {
+                  "row": "tun",
+                  "passed": true,
+                  "reportId": "20261012T180012Z-4f0ee32f",
+                  "seconds": 0.845,
+                  "load": "6.86/4.86/5.48"
+                },
+                {
+                  "row": "packet",
+                  "passed": true,
+                  "reportId": "20261012T180012Z-7392072f",
+                  "seconds": 254.018,
+                  "load": "6.86/4.86/5.48"
+                },
+                {
+                  "row": "udp/off",
+                  "passed": true,
+                  "reportId": "20261012T180012Z-54fa165e",
+                  "seconds": 278.839,
+                  "load": "6.86/4.86/5.48"
+                },
+                {
+                  "row": "tcp/off",
+                  "passed": true,
+                  "reportId": "20261012T180012Z-70971ca9",
+                  "seconds": 252.371,
+                  "load": "6.86/4.86/5.48"
+                },
+                {
+                  "row": "vless/off",
+                  "passed": true,
+                  "reportId": "20261012T180012Z-63f99b23",
+                  "seconds": 251.678,
+                  "load": "6.86/4.86/5.48"
+                },
+                {
+                  "row": "trojan/off",
+                  "passed": true,
+                  "reportId": "20261012T180012Z-d9f97451",
+                  "seconds": 252.648,
+                  "load": "6.86/4.86/5.48"
+                },
+                {
+                  "row": "udp/resolv-conf",
+                  "passed": true,
+                  "reportId": "20261012T180012Z-d491b5f5",
+                  "seconds": 253.25,
+                  "load": "6.86/4.86/5.48"
+                },
+                {
+                  "row": "udp/resolved",
+                  "passed": true,
+                  "reportId": "20261012T180012Z-5824c2a6",
+                  "seconds": 262.434,
+                  "load": "6.86/4.86/5.48"
+                },
+                {
+                  "row": "nat/off",
+                  "passed": true,
+                  "reportId": "20261012T180012Z-e6309419",
+                  "seconds": 261.169,
+                  "load": "6.86/4.86/5.48"
+                },
+                {
+                  "row": "nat+fallback/off",
+                  "passed": true,
+                  "reportId": "20261012T180423Z-4983453a",
+                  "seconds": 256.928,
+                  "load": "2.65/4.41/5.23"
+                },
+                {
+                  "row": "nat/resolved",
+                  "passed": true,
+                  "reportId": "20261012T180424Z-986b4f18",
+                  "seconds": 283.117,
+                  "load": "3.56/4.57/5.28"
+                },
+                {
+                  "row": "exit/off",
+                  "passed": true,
+                  "reportId": "20261012T180424Z-014bfc26",
+                  "seconds": 266.534,
+                  "load": "3.56/4.57/5.28"
+                },
+                {
+                  "row": "netmap/offline",
+                  "passed": true,
+                  "reportId": "20261012T180425Z-6cdbba2c",
+                  "seconds": 326.46,
+                  "load": "3.56/4.57/5.28"
+                },
+                {
+                  "row": "netmap/revoke",
+                  "passed": true,
+                  "reportId": "20261012T180426Z-0acb7a6b",
+                  "seconds": 125.378,
+                  "load": "3.56/4.57/5.28"
+                },
+                {
+                  "row": "netmap/expiry",
+                  "passed": false,
+                  "reportId": "20261012T180434Z-b451dfd7",
+                  "seconds": 199.339,
+                  "load": "4.31/4.71/5.32"
+                },
+                {
+                  "row": "netmap/restart",
+                  "passed": true,
+                  "reportId": "20261012T180434Z-5b5ed669",
+                  "seconds": 262.085,
+                  "load": "4.37/4.72/5.32"
+                }
+              ]
+            }
+          ],
+          "builds": []
+        }
+      ]
+    },
     {
       "id": 38284832750,
       "attempt": 1,
