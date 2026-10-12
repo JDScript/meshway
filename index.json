@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-12T18:12:23.589105+00:00",
+  "updatedAt": "2026-10-12T18:15:42.010714+00:00",
   "runs": [
     {
       "id": 38288268679,
@@ -12,9 +12,9 @@
       "commit": "49741edce7b7cb10e6f1232d8f6746768cc7a898",
       "message": "docs: netmap dialers are keyed by String, there is no CandidateKey type",
       "createdAt": "2026-10-12T18:02:44Z",
-      "updatedAt": "2026-10-12T18:06:17Z",
-      "status": "in_progress",
-      "conclusion": null,
+      "updatedAt": "2026-10-12T18:12:52Z",
+      "status": "completed",
+      "conclusion": "success",
       "url": "https://github.com/JDScript/meshway/actions/runs/38288268679",
       "jobs": [
         {
@@ -43,11 +43,11 @@
           "id": 114941856241,
           "name": "cargo",
           "runner": "mars-14900k",
-          "status": "in_progress",
-          "conclusion": null,
+          "status": "completed",
+          "conclusion": "success",
           "startedAt": "2026-10-12T18:06:17Z",
-          "completedAt": null,
-          "seconds": null,
+          "completedAt": "2026-10-12T18:12:51Z",
+          "seconds": 394.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/38288268679/job/114941856241"
         }
       ],
