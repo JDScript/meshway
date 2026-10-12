@@ -198,9 +198,8 @@ hold 记录在 `dist/status.json`：`held: { "<collection>/<name>": { since, rea
 | 公钥 | 用途 |
 | --- | --- |
 | `ed25519:68dfc59cf585e0320129db7f1716b0dbb3d13c462fcefee7151d4b51ae1fc45c` | CI 钥，`publish` environment secret |
-| `ed25519:9510100007025beaf427aa8bdf1ff328cb9cb69f15ff2b520ac0e52e2615928f` | 离线轮换钥，用户持有 |
 
-签名对象为 `"meshway-rules catalog v1\0"` 前缀＋`index.json` 原始字节（域分隔，目录钥不会被诱导签其他内容），`index.json.sig` 为 `{"keyId": "ed25519:<64 hex 公钥>", "signature": "<128 hex>"}`；验签用 `verify_strict`，`keyId` 必须是受信公钥之一。Server 内置两把公钥，任一签名有效即接受；CI 钥泄露时用离线钥签发并发布去掉旧钥的 Server 版本。目录签名钥只签规则目录，与 netmap 租约签发无关。
+签名对象为 `"meshway-rules catalog v1\0"` 前缀＋`index.json` 原始字节（域分隔，目录钥不会被诱导签其他内容），`index.json.sig` 为 `{"keyId": "ed25519:<64 hex 公钥>", "signature": "<128 hex>"}`；验签用 `verify_strict`，`keyId` 必须是受信公钥（当前只有 CI 钥；轮换＝发布钉新公钥的 Server 版本）。Server 内置两把公钥，任一签名有效即接受；CI 钥泄露时用离线钥签发并发布去掉旧钥的 Server 版本。目录签名钥只签规则目录，与 netmap 租约签发无关。
 
 **首发**：`catalog-1` 以本地流水线生成（相同脚本，macOS arm64 CLI；planck x86_64 musl CLI 对全部集合 digest 相同），CI 钥签名后推送；随后 Actions 首次运行因输入未变不发布，手动 dispatch（`accept`）签发内容相同的 `catalog-2`，打通 Actions 下载、签名、验证、推送与 Release。上游 `83c8208b`：2,177 个上游文件，目录 2,168 项；9 项只含 `DOMAIN-REGEX`（`conversion failed: No source item could be converted.`）未发布，0 项 hold；59 项有逐条跳过（`regex` 394、`invalidName` 8）；2,097 个不同 artifact 共 13,107,552 B，不含 `index.json` 的树 15,154,676 B，`index.json` 2,047,159 B；本地构建 18.7 s、Actions 9.7 s。digest 清单在私有证据 `.meshway/rules-publish/catalog-1/digests.txt`。
 
