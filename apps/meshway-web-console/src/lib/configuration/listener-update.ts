@@ -1,4 +1,8 @@
-import type { ListenerUpdate, ListenerView } from "@meshway/control-client"
+import type {
+  ListenerSecret,
+  ListenerUpdate,
+  ListenerView,
+} from "@meshway/control-client"
 
 // A listener's update (`setListener`) restates the whole listener: the
 // controller replaces it, keeping from the listener of the same key only
@@ -67,14 +71,17 @@ export function listenerFromView(view: ListenerView): ListenerUpdate | null {
   }
 }
 
+/** A secret value of its own: `{retained: true}` keeps the saved one. */
+const written = (secret: ListenerSecret | undefined) =>
+  typeof secret === "string"
+
 /** An update carries secret material of its own (it overwrites the kept one). */
 export function writesSecrets(update: ListenerUpdate): boolean {
-  if (update.type === "vless" && update.uuid !== undefined) return true
-  if (update.type === "trojan" && update.password !== undefined) return true
+  if (update.type === "vless" && written(update.uuid)) return true
+  if (update.type === "trojan" && written(update.password)) return true
   if (update.type === "vless" || update.type === "trojan")
     return (
-      update.tls.certificate !== undefined ||
-      update.tls.privateKey !== undefined
+      update.tls.certificate !== undefined || written(update.tls.privateKey)
     )
   return false
 }

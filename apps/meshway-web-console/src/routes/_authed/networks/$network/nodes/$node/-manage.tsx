@@ -360,6 +360,11 @@ function Deletion({
           }
         />
       )}
+      {deleting ? null : (
+        <p className="px-1 text-meta text-muted-foreground">
+          {m.nodes_delete_from_device()}
+        </p>
+      )}
       <ConfirmDialog
         open={confirming}
         onOpenChange={(open) => {

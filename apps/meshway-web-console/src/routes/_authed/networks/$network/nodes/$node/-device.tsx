@@ -6,6 +6,7 @@ import { CopyButton } from "@/components/chrome/copy-button"
 import { useNow } from "@/hooks/use-now"
 import { agoTime, dateTime } from "@/lib/format"
 import { fullReport, stateOf } from "@/lib/nodes/state-model"
+import { serverKeyLabel } from "@/lib/state-labels"
 import { m } from "@/paraglide/messages.js"
 
 import { Card, LoadingRow, Row, Rows } from "./-kit"
@@ -79,6 +80,28 @@ export function NodeDevice({
             </Row>
           </>
         )}
+        <Row
+          label={m.nodes_server_key()}
+          tone={
+            node.serverKey === null
+              ? "muted"
+              : node.serverKey.status === "keyMismatch"
+                ? "destructive"
+                : undefined
+          }
+          detail={
+            node.serverKey?.status === "keyMismatch"
+              ? m.nodes_server_key_mismatch_detail()
+              : undefined
+          }
+        >
+          {node.serverKey
+            ? m.nodes_server_key_generation({
+                generation: node.serverKey.keyGeneration,
+                status: serverKeyLabel[node.serverKey.status](),
+              })
+            : m.nodes_server_key_none()}
+        </Row>
         <Row
           label={m.nodes_registered()}
           detail={agoTime(node.registeredAt, now)}

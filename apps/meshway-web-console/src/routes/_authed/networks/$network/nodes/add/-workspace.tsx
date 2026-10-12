@@ -50,6 +50,7 @@ import {
   listenerProblemText,
 } from "../-listener-inputs"
 import { EnrollmentKeys } from "./-enrollment-keys"
+import { InstallSteps } from "./-install"
 
 /** Long enough for the dialog to finish closing before the key is dropped. */
 const UNMOUNT_AFTER_MS = 400
@@ -351,7 +352,7 @@ export function AddNode({
             </Section>
 
             <Section title={m.nodes_install()}>
-              <EmptyLine>{m.nodes_install_none()}</EmptyLine>
+              <InstallSteps />
             </Section>
 
             <EnrollmentKeys
@@ -426,7 +427,7 @@ function KeyDialog({
           {m.nodes_key_unavailable()}
         </p>
       )}
-      <p className="text-row text-muted-foreground">{m.nodes_install_none()}</p>
+      {secret ? <InstallSteps joining /> : null}
     </GlassDialog>
   )
 }

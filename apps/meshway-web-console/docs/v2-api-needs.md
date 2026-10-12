@@ -72,6 +72,7 @@ console 已接入 `/api/v1` 下全部 Console 操作：
 - 观测历史；
 - 主动路径观察；
 - 节点的 netmap：服务端为它保存的当前 netmap（`netmap`）与节点报告的已应用 netmap 比对（不看网络版本）；没有时按 `netmapUnavailable` 说明原因（尚未下发、已撤回、超限及大小）；租约（`lease`）与最近同步（`lastSyncAt`），离线节点据此说明可运行到何时；没有通道的组网边与邻居按 `NodeState.adjacencies` 显示空闲或连不上。
+- 节点的出口：`exitCapability`（检查中、就绪、不可用及原因，已安装的地址族）与 `exitDns`（为源解析或不可用及原因），不可用时在概览的“需要注意”里列出；`serverKey`（钉住的签名钥代数与状态），`keyMismatch` 时提示在设备上 `meshway up --reenroll` 再批准；源文件里已保存的监听密钥按 `{"retained": true}` 显示并说明；添加节点页给出 `install.sh` 与 `meshway up --enrollment-key @file` 的命令（服务端地址与版本由构建时的环境变量提供，见“尚未提供的接口”）。
 
 8420 运行 main `e4b1fd8b`（N1 netmap 与 F2），console 在其上核对过节点详情、拓扑和组网规则表单。
 
@@ -83,8 +84,8 @@ console 已接入 `/api/v1` 下全部 Console 操作：
 - 成员切换路由方案：`requestedProfile`、`appliedProfile`、允许的方案、`locked` 和自动方案的判断依据。
 - 节点的版本兼容状态 `versionStatus`（current、outdated、unsupported），由服务端按兼容门槛判定。
 - `reassignAddresses`、`rotateMaterial`（editing.md 已不再列出，需要时重新定义）。
-- 安装脚本和 Agent 发布。
 - 可信 DNS 的数据输入，以及基于它和 GeoIP 的自动方案。
+- 节点访问服务端的地址与服务端对应的 Node 版本：添加节点页的安装命令需要 `--server` 和 `--version`，用户接口里两者都没有。现在由 console 构建时的 `VITE_MESHWAY_SERVER_URL`、`VITE_MESHWAY_RELEASE` 提供，没设置时命令里留占位并说明；如果服务端能给出（例如在 `getAuthOptions` 或单独的服务信息接口里），console 改为读取它。
 - **API 参考需要的契约内容**（站点从 `openapi.json` 生成参考页）：
   - ~~示例~~：已提供。fixture 在 `packages/protocol/examples/<tag>.json`，按 operationId 给 `request` 和 `responses.<status>`；Server 导出契约时写进 `requestBody.content[...].example` 和 `responses[...].content[...].example`，所以 `openapi.json` 直接带示例。SDK 测试（`packages/control-client/test/examples.test.ts`）用生成的 zod schema 校验每个示例，并要求所有 JSON 请求体和 2xx 响应都有示例；错误响应不用手写，Server 用该响应首个 problem code 的真实 `ErrorResponse` 作为示例（`password_weak` 带真实 PasswordRules，`configuration_invalid` 在 validate 上有手写的 `invalid_domain` 例子）。所有示例描述同一个 `lab` 网络（paris 中继、NAT 后的 office-gw、alice-laptop、bob-phone），ID／时间在各操作间一致。注意示例对象的键按字母序输出（Rust 侧 `serde_json::Value` 不保序）。
   - tag 的顺序和分组：现在是平铺列表，顺序跟着路由注册走。

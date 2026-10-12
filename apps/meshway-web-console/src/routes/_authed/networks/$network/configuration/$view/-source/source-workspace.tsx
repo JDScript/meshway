@@ -380,9 +380,17 @@ function SourceEditor({
           />
         </Suspense>
       </div>
+      {RETAINED.test(text) ? (
+        <p className="shrink-0 px-3.5 text-meta text-muted-foreground">
+          {m.configuration_source_retained({ marker: '{"retained": true}' })}
+        </p>
+      ) : null}
     </div>
   )
 }
+
+/** A saved listener secret the server withholds, kept as it is when applied. */
+const RETAINED = /"retained"\s*:\s*true/
 
 /** The counts of schema hints and controller diagnostics; every problem listed, each one a jump. */
 function ProblemList({

@@ -2,6 +2,10 @@ import type {
   ApplyPhase,
   EndpointKind,
   EndpointSource,
+  ExitDnsStatus,
+  ExitDnsUnavailableReason,
+  ExitStatus,
+  ExitUnavailableReason,
   LinkAcquisition,
   LinkEvidence,
   LinkPhase,
@@ -9,6 +13,7 @@ import type {
   LocationAbsentReason,
   NetmapRef,
   PathEvidence,
+  PinnedServerKeyStatus,
   ReporterRole,
   ResourceRef,
   StateProblem,
@@ -66,6 +71,61 @@ export const listenerPhaseLabel: Record<ListenerPhase, () => string> = {
 /** A node's netmap in short: the revision it comes from and its serial. */
 export const netmapText = (netmap: NetmapRef) =>
   m.netmap_ref({ revision: netmap.revision, serial: netmap.serial })
+
+const exitUnavailableLabel: Record<ExitUnavailableReason, () => string> = {
+  ipForwardDisabled: () => m.state_exit_ip_forward_disabled(),
+  forwardingProbeFailed: () => m.state_exit_forwarding_probe_failed(),
+  netAdminMissing: () => m.state_exit_net_admin_missing(),
+  nftUnavailable: () => m.state_exit_nft_unavailable(),
+  conntrackUnavailable: () => m.state_exit_conntrack_unavailable(),
+  reversePathFilterConflict: () => m.state_exit_reverse_path_filter(),
+  tunUnavailable: () => m.state_exit_tun_unavailable(),
+  firewallConflict: () => m.state_exit_firewall_conflict(),
+  routeConflict: () => m.state_exit_route_conflict(),
+  unsupportedFamily: () => m.state_exit_unsupported_family(),
+  ownershipConflict: () => m.state_exit_ownership_conflict(),
+}
+
+/** An exit's lifecycle as the node observed it, with the cause when it cannot serve. */
+export function exitStatusText(status: ExitStatus): string {
+  switch (status.status) {
+    case "notRequested":
+      return m.state_exit_not_requested()
+    case "probing":
+      return m.state_exit_probing()
+    case "ready":
+      return m.state_exit_ready()
+    case "unavailable":
+      return m.state_exit_unavailable({
+        reason: exitUnavailableLabel[status.reason](),
+      })
+  }
+}
+
+const exitDnsReasonLabel: Record<ExitDnsUnavailableReason, () => string> = {
+  unobserved: () => m.state_exit_dns_unobserved(),
+  noServers: () => m.state_exit_dns_no_servers(),
+  localServer: () => m.state_exit_dns_local_server(),
+  anchorServer: () => m.state_exit_dns_anchor_server(),
+  meshServer: () => m.state_exit_dns_mesh_server(),
+  exitRoutedServer: () => m.state_exit_dns_exit_routed_server(),
+  proxyStubMissing: () => m.state_exit_dns_proxy_stub_missing(),
+}
+
+/** Whether the exit resolves its sources' names, with the cause when it cannot. */
+export function exitDnsText(status: ExitDnsStatus): string {
+  return status.status === "serving"
+    ? m.state_exit_dns_serving()
+    : m.state_exit_dns_unavailable({
+        reason: exitDnsReasonLabel[status.reason](),
+      })
+}
+
+export const serverKeyLabel: Record<PinnedServerKeyStatus, () => string> = {
+  current: () => m.state_server_key_current(),
+  rotating: () => m.state_server_key_rotating(),
+  keyMismatch: () => m.state_server_key_mismatch(),
+}
 
 export const applyPhaseLabel: Record<ApplyPhase, () => string> = {
   receiving: () => m.state_apply_receiving(),

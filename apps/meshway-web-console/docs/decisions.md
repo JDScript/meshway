@@ -86,9 +86,11 @@ its generated client only, and only what the controller delivers:
   block rule are said to have no effect. Rebuilding a rule for an
   operation keeps every field it has. One
   draft per sign-in and network (`state/configuration-draft.ts`), kept
-  across the network's pages, in memory only (the source holds secrets:
-  never storage, the URL or the query cache), dropped when the sign-in
-  changes. It holds one kind of input with the revision it was read at:
+  across the network's pages, in memory only (the text can hold secrets
+  typed into it and WebSocket header values: never storage, the URL or the
+  query cache), dropped when the sign-in changes. The server withholds
+  saved listener secrets: the source reads them `{"retained": true}`,
+  which keeps them when applied, and the editor says so under the text. It holds one kind of input with the revision it was read at:
   the source text as typed (invalid or with comments), or the forms' typed
   operations over the non-secret view of that revision, one `replace…` /
   `setAddressPools` per edited part holding its final value (a part set
@@ -154,7 +156,11 @@ its generated client only, and only what the controller delivers:
   - overview: the saved configuration's DNS name (while readable) and
     MagicDNS setting, Mesh IPv4/IPv6, connected neighbor count, every
     observed public IP with its place and AS, compact configuration progress
-    and reported problems. A node is up to date when the netmap it reports
+    and what needs someone: its reported problems, an exit or exit DNS
+    that is unavailable (with the cause), a Server signing key it pinned
+    that no longer matches (`serverKey: keyMismatch`: re-enrol on the device
+    with `meshway up --reenroll`, approved here) and a netmap over the
+    per-node limit. A node is up to date when the netmap it reports
     applied is exactly the one the server holds for it (the inventory's
     `netmap`: revision, serial and digest), never by the network's revision:
     a revision that leaves a node's netmap unchanged (a comment, another
@@ -251,8 +257,15 @@ its generated client only, and only what the controller delivers:
   the controller fills its defaults and generates credentials. The
   controller checks the listener only when the node enrols, so the form
   checks the generated `Listener` schema and the host rules first. The
-  key is shown once in a dialog dropped when it closes; this controller
-  provides no Agent install, and the page says so instead of a command.
+  key is shown once in a dialog dropped when it closes. The page shows how
+  to install the Node on Linux (`install.sh` from the release, then
+  `meshway up --enrollment-key @/root/enrollment-key`; the key is read from
+  a file, never written into a command), and the dialog the joining step.
+  The Server origin Nodes reach and the release tag are the deployment's,
+  set when the console is built (`VITE_MESHWAY_SERVER_URL`,
+  `VITE_MESHWAY_RELEASE`, `VITE_MESHWAY_RELEASE_REPO` defaulting to
+  `JDScript/meshway`); without them the commands keep `<SERVER_URL>` /
+  `<RELEASE>` and say so (the installer takes no unpinned pre-release).
   Below, the keys (`listEnrollmentKeys`, newest first, a page at a time
   with the controller's total): each key's tags, the initial hostname
   (else the device's) and listeners (the non-secret view), who created it
@@ -669,8 +682,10 @@ states stay distinguishable by stroke and colour.
     bind overrides, TLS/WS and material editing are expanded when needed.
     There is one owner for each editor and the existing network
     configuration draft.
-  - Device & keys: what the device reports of itself, its keys, and
-    deleting the node.
+  - Device & keys: what the device reports of itself, the Server signing
+    key it pinned (generation and current, rotating or mismatched; none
+    yet after the server restarts), its keys, and deleting the node (which
+    `meshway logout` on the device does too).
 - Public addresses stay visible even when there is only one. Repeated
   place/network metadata may be grouped while retaining every address;
   differing places or AS networks must remain distinguishable. An AS

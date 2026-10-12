@@ -3,6 +3,7 @@ import type {
   NodeInventoryView,
   StateView,
 } from "@meshway/control-client"
+import { cn } from "@meshway/ui/cn"
 import type { UseQueryResult } from "@tanstack/react-query"
 import { CircleAlertIcon, CircleCheckIcon } from "lucide-react"
 
@@ -23,6 +24,8 @@ import {
   stateOf,
 } from "@/lib/nodes/state-model"
 import {
+  exitDnsText,
+  exitStatusText,
   locationAbsentLabel,
   netmapText,
   problemText,
@@ -101,6 +104,63 @@ export function NodeOverview({
           netmap: netmapText(lease.netmap),
         })
       : null
+
+  // What needs someone: the node's own problems, then what its exit and
+  // its Server key say, and a netmap the server will not send.
+  const exit = report?.exitCapability
+  const exitDns = report?.exitDns
+  const alerts: {
+    key: string
+    text: string
+    at?: string
+    tone: "destructive" | "warning"
+  }[] = [
+    ...(report?.problems ?? []).map((problem, index) => ({
+      key: `problem:${index}`,
+      text: problemText(problem),
+      at: problem.observedAt,
+      tone: "destructive" as const,
+    })),
+    ...(exit?.status.status === "unavailable"
+      ? [
+          {
+            key: "exit",
+            text: m.nodes_alert_exit({ reason: exitStatusText(exit.status) }),
+            at: exit.observedAt,
+            tone: "warning" as const,
+          },
+        ]
+      : []),
+    ...(exitDns?.status.status === "unavailable"
+      ? [
+          {
+            key: "exit-dns",
+            text: m.nodes_alert_exit_dns({
+              reason: exitDnsText(exitDns.status),
+            }),
+            tone: "warning" as const,
+          },
+        ]
+      : []),
+    ...(node.serverKey?.status === "keyMismatch"
+      ? [
+          {
+            key: "server-key",
+            text: m.nodes_alert_server_key(),
+            tone: "destructive" as const,
+          },
+        ]
+      : []),
+    ...(node.netmapUnavailable?.reason === "limit"
+      ? [
+          {
+            key: "netmap-limit",
+            text: m.nodes_alert_netmap_limit(),
+            tone: "destructive" as const,
+          },
+        ]
+      : []),
+  ]
 
   const syncTile = (() => {
     switch (sync.kind) {
@@ -330,26 +390,28 @@ export function NodeOverview({
         </Rows>
       </Card>
 
-      <Card
-        title={m.nodes_attention()}
-        aside={
-          report && report.problems.length ? report.problems.length : undefined
-        }
-      >
-        {report && report.problems.length > 0 ? (
+      <Card title={m.nodes_attention()} aside={alerts.length || undefined}>
+        {alerts.length > 0 ? (
           <Rows>
-            {report.problems.map((problem, index) => (
+            {alerts.map((alert) => (
               <div
-                key={index}
+                key={alert.key}
                 className="flex min-h-11 items-center gap-3 px-4 py-2.5"
               >
-                <CircleAlertIcon className="size-4 shrink-0 text-destructive" />
-                <span className="min-w-0 flex-1 text-row">
-                  {problemText(problem)}
-                </span>
-                <span className="shrink-0 text-meta text-muted-foreground">
-                  {agoTime(problem.observedAt, now)}
-                </span>
+                <CircleAlertIcon
+                  className={cn(
+                    "size-4 shrink-0",
+                    alert.tone === "warning"
+                      ? "text-warning"
+                      : "text-destructive"
+                  )}
+                />
+                <span className="min-w-0 flex-1 text-row">{alert.text}</span>
+                {alert.at ? (
+                  <span className="shrink-0 text-meta text-muted-foreground">
+                    {agoTime(alert.at, now)}
+                  </span>
+                ) : null}
               </div>
             ))}
           </Rows>

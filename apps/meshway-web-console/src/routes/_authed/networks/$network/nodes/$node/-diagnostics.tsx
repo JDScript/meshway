@@ -4,6 +4,7 @@ import type {
   NetmapRef,
   NetmapUnavailable,
   NodeInventoryView,
+  NodeState,
   NodeStateView,
   StateView,
 } from "@meshway/control-client"
@@ -38,6 +39,8 @@ import {
 } from "@/lib/nodes/state-model"
 import {
   applyPhaseLabel,
+  exitDnsText,
+  exitStatusText,
   locationAbsentLabel,
   netmapText,
   pathEvidenceLabel,
@@ -131,9 +134,66 @@ export function NodeDiagnostics({
           now={now}
         />
       ) : null}
+      {report.view === "full" ? (
+        <Exit report={report.report} now={now} />
+      ) : null}
       <ReportedPaths nodeId={nodeId} state={state.data} now={now} />
       <Location derived={view.derived} now={now} />
     </div>
+  )
+}
+
+const familyText = (families: readonly string[]) =>
+  families.map((family) => (family === "ipv4" ? "IPv4" : "IPv6")).join("、")
+
+/**
+ * The node as an exit, when it reports being one: its prerequisites and
+ * installation, the families it installed (ready alone installs none), and
+ * whether it resolves names for the nodes whose DNS goes through it.
+ */
+function Exit({ report, now }: { report: NodeState; now: number }) {
+  const exit = report.exitCapability
+  const dns = report.exitDns
+  if ((!exit || exit.status.status === "notRequested") && !dns) return null
+  return (
+    <Section title={m.nodes_exit()}>
+      <div className={GRID}>
+        <div className="col-span-2">
+          <Tile
+            label={m.nodes_exit_status()}
+            tone={exit?.status.status === "unavailable" ? "warning" : undefined}
+          >
+            {exit ? exitStatusText(exit.status) : "—"}
+          </Tile>
+        </div>
+        <Tile label={m.nodes_exit_families()}>
+          {exit && exit.installedFamilies.length > 0 ? (
+            familyText(exit.installedFamilies)
+          ) : (
+            <span className="font-normal text-muted-foreground">
+              {m.nodes_exit_families_none()}
+            </span>
+          )}
+        </Tile>
+        <Tile label={m.nodes_exit_observed()}>
+          <When at={exit?.observedAt} now={now} />
+        </Tile>
+        <div className="col-span-2">
+          <Tile
+            label={m.nodes_exit_dns()}
+            tone={dns?.status.status === "unavailable" ? "warning" : undefined}
+          >
+            {dns ? (
+              exitDnsText(dns.status)
+            ) : (
+              <span className="font-normal text-muted-foreground">
+                {m.nodes_exit_dns_none()}
+              </span>
+            )}
+          </Tile>
+        </div>
+      </div>
+    </Section>
   )
 }
 

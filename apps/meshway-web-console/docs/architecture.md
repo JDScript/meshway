@@ -150,3 +150,9 @@ Start a controller on a private data directory with
 development server does not start, so it never proxies to another
 controller. `pnpm run check` (types, lint, format), `pnpm test` and
 `pnpm run build` are what `mise run check` runs for the console.
+
+A build fills the add-node page's install commands from
+`VITE_MESHWAY_SERVER_URL` (the Server origin Nodes reach) and
+`VITE_MESHWAY_RELEASE` (the Node release tag), with
+`VITE_MESHWAY_RELEASE_REPO` for a fork; without them the commands keep
+placeholders (`lib/install.ts`).
