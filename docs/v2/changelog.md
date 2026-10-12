@@ -2,7 +2,7 @@
 
 按合入 main 的顺序记录工作包、提交与证据 ID。规则见[工程流程](/v2/process)；性能数字的口径见[分层性能测量](/v2/node/performance)，验收状态见[验收范围](/v2/node/validation)。
 
-## 未发布
+## v0.1.0-alpha.3
 
 wire 6、`meshway-netmap-1` 不变；IPC 升为 7；HTTP 契约新增可选 `NodeState.exitDns`、`leaveNode`，删除 `ExitUnavailableReason.dnsUnavailable`；`ConfigurationSourceResponse.configuration` 改为可编辑文档（`NetworkConfigurationInput`），listener 秘密字段为 `ListenerSecret`。
 

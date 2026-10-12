@@ -18,8 +18,8 @@
 ## 安装
 
 ```sh
-curl -fsSLO https://github.com/JDScript/meshway/releases/download/v0.1.0-alpha.2/install.sh
-sudo sh install.sh --version v0.1.0-alpha.2 --server https://controller.example.com
+curl -fsSLO https://github.com/JDScript/meshway/releases/download/v0.1.0-alpha.3/install.sh
+sudo sh install.sh --version v0.1.0-alpha.3 --server https://controller.example.com
 sudo meshway up --enrollment-key @/root/enrollment-key
 sudo meshway status
 ```
@@ -119,7 +119,7 @@ meshway version
 ```
 
 ```text
-meshway 0.1.0-alpha.2 (v0.1.0-alpha.2-0-g1234abcd)
+meshway 0.1.0-alpha.3 (v0.1.0-alpha.3-0-g1234abcd)
 target:   aarch64-unknown-linux-musl
 ipc:      6
 wire:     6
