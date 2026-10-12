@@ -89,5 +89,18 @@
         "expiresAt": "2026-10-08T09:05:00Z"
       }
     }
+  },
+  "leaveNode": {
+    "request": {
+      "requestId": "0f8fad5b-d9cb-469f-a165-70867728950e",
+      "nodeId": "6ba7b810-9dad-41d1-80b4-00c04fd430c8"
+    },
+    "responses": {
+      "200": {
+        "networkId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+        "nodeId": "6ba7b810-9dad-41d1-80b4-00c04fd430c8",
+        "revision": 43
+      }
+    }
   }
 }

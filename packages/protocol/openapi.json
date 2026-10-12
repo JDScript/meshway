@@ -3614,6 +3614,10 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/NodeLeaveRequest"
+              },
+              "example": {
+                "nodeId": "6ba7b810-9dad-41d1-80b4-00c04fd430c8",
+                "requestId": "0f8fad5b-d9cb-469f-a165-70867728950e"
               }
             }
           },
@@ -3625,6 +3629,11 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/NodeLeaveResponse"
+                },
+                "example": {
+                  "networkId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+                  "nodeId": "6ba7b810-9dad-41d1-80b4-00c04fd430c8",
+                  "revision": 43
                 }
               }
             }
