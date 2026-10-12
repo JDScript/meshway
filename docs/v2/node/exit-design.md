@@ -185,11 +185,11 @@ sha 应用 IPv4
 | 步骤 | owner | 内容 |
 | --- | --- | --- |
 | 1 | 源 A 的 DNS owner | 普通查询照 X5 经 `Purpose::Dns` circuit 送 E（不改 wire、不另发请求） |
-| 2 | E 的 DNS owner（served 路径） | 用出口系统 resolver 解析，回答**立即**沿原路径回 A；若 E 在自己的投影上 `egress_rule_for_name(A, name)` 命中（名称由某条规则的名称成员决定），且回答是 NOERROR 的 A／AAAA 并含公网地址，且 E 持有的关联里没有覆盖这些地址并剩余 ≥ 本次寿命一半的同名条目，就产生一份完成 |
+| 2 | E 的 DNS owner（served 路径） | 用出口系统 resolver 解析，回答**立即**沿原路径回 A；若 E 在自己的投影上 `egress_rule_for_name(A, name)` 命中（名称由某条规则的名称成员决定），且回答是 NOERROR 的 A／AAAA 并含公网地址、这些公网地址全部在至多 8 跳的 CNAME 链终点上且不超过 16 个，且 E 持有的关联里没有覆盖这些地址并剩余 ≥ 本次寿命一半的同名条目，就产生一份完成 |
 | 3 | E 的 Control | `POST /agent-api/v1/dns-associations`（`DnsAssociationReport`：E 的 `netmap`、单次使用 `reportId`、`source`、`generation`、`name`、`recordType`、≤ 8 个 CNAME 链、1–16 个已排序公网地址、链与地址记录中最短 TTL、`resolvedAt`）；队列有界（256），满则丢弃该完成 |
 | 4 | Server（`netmap::associations`） | 校验见下表；通过即在内存保存并唤醒 A 与 E 挂起的 `sync` |
 | 5 | A／E 的 Control | `sync` 回答带 `associations: DnsAssociationsUpdate`（overlay＋签名），验签、绑定当前 netmap 后与 netmap 一起发布给 Engine |
-| 6 | A 的 DNS owner | 第 1 步的回答在 overlay 已应用（Engine `Desired` 含覆盖其公网地址的同名关联、剩余 ≥ 5 s）后才交给本机客户端，TTL 截为关联剩余寿命减 2 s；至多等 2 s（`ASSOCIATION_WAIT`），未到则回 SERVFAIL，客户端不会拿到名称规则无法判定的地址 |
+| 6 | A 的 DNS owner | 第 1 步的回答在 overlay 已应用（Engine `Desired` 含覆盖其公网地址的同名关联、剩余 ≥ 5 s）后才交给本机客户端，TTL 截为关联剩余寿命减 2 s；至多等 2 s（`ASSOCIATION_WAIT`），未到则回 SERVFAIL，客户端不会拿到名称规则无法判定的地址。名称规则决定的回答若含任何一份关联都无法完整覆盖的公网地址（超过 16 个、不在 CNAME 链终点、链成环或超过 8 跳）立即回 SERVFAIL，不截取其中一部分验证 |
 
 Server 的完成校验（任一失败即拒绝，不部分接受）：
 
@@ -198,12 +198,13 @@ Server 的完成校验（任一失败即拒绝，不部分接受）：
 | 调用者 E 的当前 netmap 等于 `netmap`；`generation` 等于源当前 `DnsService.generation` | 409 `state_scope_changed` |
 | 源当前 netmap 为 `ViaExit { service }`，`service.exit` 是调用者，且 E 当前 netmap 的 `ServeExitResolver` 含同一 service | 403 `permission_denied` |
 | 源投影上（含全部 artifact）`egress_rule_for_name(source, name)` 命中 | 403 `permission_denied` |
-| 名称为查询规范形式（ASCII 小写、无结尾点）；CNAME ≤ 8；地址 1–16、已排序去重、与记录类型一致、全部 `is_internet_address`（私网、Mesh、链路本地等永不进入关联，防 DNS rebinding 借名称规则进入 LAN）；`resolvedAt` 不早于 30 s、不晚于 Server 时间 5 s | 400 `invalid_request` |
+| 名称为查询规范形式（ASCII 小写、无结尾点）；名称与每个 CNAME 均为 1–253 B ASCII 小写（与 overlay 逐条校验为同一函数 `DnsAssociation::validate`，通不过的条目不会进入任何一方的 `sync`）；CNAME ≤ 8；地址 1–16、已排序去重、与记录类型一致、全部 `is_internet_address`（私网、Mesh、链路本地等永不进入关联，防 DNS rebinding 借名称规则进入 LAN）；`resolvedAt` 不早于 30 s、不晚于 Server 时间 5 s | 400 `invalid_request` |
 | `reportId` 未用过（进程内保留至其窗口结束） | 409 `request_id_conflict` |
+| 接纳后源与出口各自 overlay 的未到期条目都不超过 4,096（同一条目两份副本一起交付，绝不只截断一方） | 429 `state_limit` |
 
 **Overlay**（`meshway_configuration::netmap::DnsAssociationOverlay { netmap, associations }`）按**接收节点**签发：A 收到自己作为源的条目，E 收到它服务的各源的条目；`netmap` 是接收者当前 `NetmapRef`。每条 `DnsAssociation { source, generation, name, recordType, cnames, addresses, expiresAt }`，`expiresAt = resolvedAt + clamp(TTL, 30 s, 1 h)`；overlay 本身没有总截止，只在它绑定的 netmap 及其租约内可用。签名为 `dns_associations_transcript(network, node, overlay.netmap, overlay digest, keyId, keyGeneration)`，复用 netmap 签钥；轮换窗口内另附后继钥签名 `rotationSignature`，节点只验它钉住的那把钥。`sync` 请求以 `associations` 指明持有的 overlay digest：相同则回答 `null`（不唤醒、不重发），不同则回答完整 overlay（空 `associations` 即清除）。overlay 不改变 netmap serial，不写入 `netmap.json`：节点重启、Server 重启都从空开始（Server 重启后的第一次回答清除节点持有的 overlay）。
 
-**界限**：每源 128 条（超出先逐出最早到期者）、每 overlay 4,096 条、每源每 (名称, 记录类型) 一条（新完成替换旧条目）；Server 最多记 65,536 个源。
+**界限**：每源 128 条（超出先逐出最早到期者）、每 overlay 4,096 条（接纳时对源与出口统一预算，超出即拒绝该完成）、每源每 (名称, 记录类型) 一条（新完成替换旧条目）；Server 最多记 65,536 个源。
 
 **失效**：Server 在任一方 netmap 变化（新 serial）后、下一次交付前用新内容重验每条关联：service／generation／名称规则不再成立即删除——撤权（`domain:` 授权由节点每次准入检查）、出口停用、方案切换（selection 变化）、名称规则删除都在同一次 `sync` 回答中随新 netmap 生效；跨 source、profile、出口和 netmap 不复用。条目到期由 Engine 计时：`Engine::next_expiry` 取租约与最早关联到期的较早者，到期后以同一内容、更少关联重新应用。
 

@@ -8,7 +8,8 @@ use std::collections::BTreeMap;
 
 /// Associations of one source at most; the Server evicts the earliest expiry.
 pub const MAX_SOURCE_ASSOCIATIONS: usize = 128;
-/// Addresses of one association at most; a larger answer keeps the first ones.
+/// Addresses of one association at most; a larger answer has no association
+/// (a source refuses it for a name a name rule decides).
 pub const MAX_ASSOCIATION_ADDRESSES: usize = 16;
 /// CNAME records of one chain at most.
 pub const MAX_ASSOCIATION_CNAMES: usize = 8;

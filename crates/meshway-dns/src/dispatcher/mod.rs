@@ -486,8 +486,27 @@ impl OwnerDispatcher {
         mut answer: Answer,
         mut scopes: watch::Receiver<Option<Scope>>,
     ) -> Result<Answer, DispatchError> {
-        let Some(facts) = crate::association::answered(answer.query(), answer.message()) else {
-            return Ok(answer);
+        let facts = match crate::association::answered(answer.query(), answer.message()) {
+            crate::association::Facts::Unrelated => return Ok(answer),
+            crate::association::Facts::Associable(facts) => facts,
+            crate::association::Facts::Unassociable => {
+                let name = crate::association::question_name(answer.query());
+                let desired = scopes
+                    .borrow()
+                    .as_ref()
+                    .map(|scope| scope.desired.clone())
+                    .ok_or(DispatchError::Scope)?;
+                let node = desired.netmap().node_id;
+                if desired
+                    .compiler()
+                    .egress_rule_for_name(node, &name)
+                    .is_ok_and(|hit| hit.is_none())
+                {
+                    return Ok(answer);
+                }
+                tracing::debug!(%name, "A name-rule answer no association can cover");
+                return Err(DispatchError::Expired);
+            }
         };
         let until = tokio::time::Instant::now() + crate::ASSOCIATION_WAIT;
         loop {

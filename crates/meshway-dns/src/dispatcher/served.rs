@@ -148,7 +148,10 @@ impl OwnerDispatcher {
         let Some(reports) = &self.reports else {
             return;
         };
-        let Some(facts) = crate::association::answered(answer.query(), answer.message()) else {
+        // An unassociable answer gets no completion; its source refuses it.
+        let crate::association::Facts::Associable(facts) =
+            crate::association::answered(answer.query(), answer.message())
+        else {
             return;
         };
         if !desired

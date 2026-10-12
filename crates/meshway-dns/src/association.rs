@@ -57,18 +57,68 @@ fn name_of(name: &hickory_proto::rr::Name) -> String {
     query_name(&name.to_ascii())
 }
 
-/// What `message` answers for `query`; `None` unless it is a NOERROR answer
-/// to an A or AAAA question with at least one public address.
-pub(crate) fn answered(query: &Query, message: &Message) -> Option<Answered> {
+/// The queried name in association form.
+pub(crate) fn question_name(query: &Query) -> String {
+    name_of(query.question().name())
+}
+
+/// What one answer means for associations.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Facts {
+    /// No public address of the queried type: nothing to associate.
+    Unrelated,
+    /// Every public address of the answer, reached through one bounded chain.
+    Associable(Answered),
+    /// Public addresses no single association can cover (more than
+    /// [`MAX_ASSOCIATION_ADDRESSES`], outside the chain, or behind a looping
+    /// or over-long chain); a source never releases such an answer for a name
+    /// a name rule decides.
+    Unassociable,
+}
+
+/// What `message` answers for `query`. Only a NOERROR answer to an A or AAAA
+/// question with a public address of that type relates to associations, and
+/// it is associable only when one association covers all of them.
+pub(crate) fn answered(query: &Query, message: &Message) -> Facts {
     let question = query.question();
     let record_type = match question.query_type() {
         RecordType::A => AssociationRecordType::A,
         RecordType::AAAA => AssociationRecordType::Aaaa,
-        _ => return None,
+        _ => return Facts::Unrelated,
     };
     if message.metadata.response_code != ResponseCode::NoError {
-        return None;
+        return Facts::Unrelated;
     }
+    let mut public: Vec<IpAddr> = message
+        .answers
+        .iter()
+        .filter_map(|record| match &record.data {
+            RData::A(address) if record_type == AssociationRecordType::A => {
+                Some(IpAddr::V4(address.0))
+            }
+            RData::AAAA(address) if record_type == AssociationRecordType::Aaaa => {
+                Some(IpAddr::V6(address.0))
+            }
+            _ => None,
+        })
+        .filter(|address| associable(*address))
+        .collect();
+    public.sort();
+    public.dedup();
+    if public.is_empty() {
+        return Facts::Unrelated;
+    }
+    match chain(question, record_type, message) {
+        Some(answered) if answered.addresses == public => Facts::Associable(answered),
+        _ => Facts::Unassociable,
+    }
+}
+
+fn chain(
+    question: &hickory_proto::op::Query,
+    record_type: AssociationRecordType,
+    message: &Message,
+) -> Option<Answered> {
     let name = name_of(question.name());
     let mut owner = name.clone();
     let mut cnames = Vec::new();
@@ -114,8 +164,7 @@ pub(crate) fn answered(query: &Query, message: &Message) -> Option<Answered> {
     addresses.retain(|address| associable(*address));
     addresses.sort();
     addresses.dedup();
-    addresses.truncate(MAX_ASSOCIATION_ADDRESSES);
-    if addresses.is_empty() || name.is_empty() {
+    if addresses.is_empty() || addresses.len() > MAX_ASSOCIATION_ADDRESSES || name.is_empty() {
         return None;
     }
     Some(Answered {
@@ -233,7 +282,9 @@ mod tests {
                 RData::A(rdata::A(address.parse().unwrap())),
             ));
         }
-        let facts = answered(&query, &message).unwrap();
+        let Facts::Associable(facts) = answered(&query, &message) else {
+            panic!()
+        };
         assert_eq!(facts.name, "chat.example");
         assert_eq!(facts.cnames, ["edge.cdn.example"]);
         assert_eq!(facts.addresses, ["8.8.4.4".parse::<IpAddr>().unwrap()]);
@@ -252,7 +303,7 @@ mod tests {
             60,
             RData::A(rdata::A("192.168.1.2".parse().unwrap())),
         ));
-        assert_eq!(answered(&query, &message), None);
+        assert_eq!(answered(&query, &message), Facts::Unrelated);
         let (query, mut looped) = super::tests::query("a.example.", RecordType::A);
         let a = Name::from_str("a.example.").unwrap();
         let b = Name::from_str("b.example.").unwrap();
@@ -262,9 +313,52 @@ mod tests {
             RData::CNAME(rdata::CNAME(b.clone())),
         ));
         looped.add_answer(Record::from_rdata(b, 60, RData::CNAME(rdata::CNAME(a))));
-        assert_eq!(answered(&query, &looped), None);
+        assert_eq!(answered(&query, &looped), Facts::Unrelated);
+        // A public address behind an over-long chain can never be associated.
+        let (query, mut long) = super::tests::query("h0.example.", RecordType::A);
+        let hop = |n: usize| Name::from_str(&format!("h{n}.example.")).unwrap();
+        for n in 0..=MAX_ASSOCIATION_CNAMES {
+            long.add_answer(Record::from_rdata(
+                hop(n),
+                60,
+                RData::CNAME(rdata::CNAME(hop(n + 1))),
+            ));
+        }
+        long.add_answer(Record::from_rdata(
+            hop(MAX_ASSOCIATION_CNAMES + 1),
+            60,
+            RData::A(rdata::A("8.8.8.8".parse().unwrap())),
+        ));
+        assert_eq!(answered(&query, &long), Facts::Unassociable);
         let (query, mut failed) = super::tests::query("lan.example.", RecordType::A);
         failed.metadata.response_code = ResponseCode::ServFail;
-        assert_eq!(answered(&query, &failed), None);
+        assert_eq!(answered(&query, &failed), Facts::Unrelated);
+    }
+
+    #[test]
+    fn an_answer_with_more_addresses_than_one_association_covers_is_unassociable() {
+        let (query, mut message) = query("big.example.", RecordType::A);
+        let owner = Name::from_str("big.example.").unwrap();
+        for index in 1..=MAX_ASSOCIATION_ADDRESSES as u8 + 1 {
+            message.add_answer(Record::from_rdata(
+                owner.clone(),
+                60,
+                RData::A(rdata::A(std::net::Ipv4Addr::new(104, 16, 0, index))),
+            ));
+        }
+        // Seventeen: no prefix of them may stand for the answer.
+        assert_eq!(answered(&query, &message), Facts::Unassociable);
+        message.answers.pop();
+        let Facts::Associable(facts) = answered(&query, &message) else {
+            panic!()
+        };
+        assert_eq!(facts.addresses.len(), MAX_ASSOCIATION_ADDRESSES);
+        // A public address outside the chain is not covered either.
+        message.add_answer(Record::from_rdata(
+            Name::from_str("other.example.").unwrap(),
+            60,
+            RData::A(rdata::A("9.9.9.9".parse().unwrap())),
+        ));
+        assert_eq!(answered(&query, &message), Facts::Unassociable);
     }
 }
