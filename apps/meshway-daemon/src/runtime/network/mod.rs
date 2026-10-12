@@ -187,18 +187,31 @@ pub(super) struct Offer {
     pub clock_floor_ms: Option<u64>,
 }
 
+/// What identifies an offered netmap: content, lease and the loaded rule-set
+/// artifacts (more artifacts for the same content is a new offer).
+fn offered(
+    netmap: &Option<meshway_engine::Netmap>,
+) -> Option<(
+    NetmapRef,
+    meshway_model::NetmapLease,
+    Vec<meshway_rules::Digest>,
+)> {
+    netmap.as_ref().map(|netmap| {
+        (
+            netmap.content.reference(),
+            netmap.lease,
+            netmap.artifacts.keys().copied().collect(),
+        )
+    })
+}
+
 /// Sync's direct path to the Engine worker: only the verified netmap and its
 /// lease change; keys and instance stay Control's offer.
 pub(super) struct LeaseSink(Arc<watch::Sender<Offer>>);
 impl LeaseSink {
     pub fn offer_netmap(&self, netmap: Option<meshway_engine::Netmap>) {
-        let key = |netmap: &Option<meshway_engine::Netmap>| {
-            netmap
-                .as_ref()
-                .map(|netmap| (netmap.content.reference(), netmap.lease))
-        };
         self.0.send_if_modified(|current| {
-            if key(&current.netmap) == key(&netmap) {
+            if offered(&current.netmap) == offered(&netmap) {
                 return false;
             }
             current.netmap = netmap;
@@ -336,14 +349,7 @@ impl Handle {
     /// offer is not resent; Engine alone decides renewal or reconfiguration.
     pub fn offer(&self, offer: Offer) {
         self.offers.send_if_modified(|current| {
-            let unchanged = current
-                .netmap
-                .as_ref()
-                .map(|netmap| (netmap.content.reference(), netmap.lease))
-                == offer
-                    .netmap
-                    .as_ref()
-                    .map(|netmap| (netmap.content.reference(), netmap.lease))
+            let unchanged = offered(&current.netmap) == offered(&offer.netmap)
                 && current.keys.is_some() == offer.keys.is_some()
                 && current.instance == offer.instance;
             if unchanged {

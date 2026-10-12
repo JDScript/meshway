@@ -1926,6 +1926,7 @@ dependencies = [
  "meshway-model",
  "meshway-private-storage",
  "meshway-protocol",
+ "meshway-rules",
  "meshway-server",
  "meshway-tun",
  "meshway-underlay",
