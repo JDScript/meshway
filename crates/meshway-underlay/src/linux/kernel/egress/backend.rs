@@ -25,9 +25,10 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-/// Route mutations between two waits for the kernel monitor: their
-/// notifications fit its socket buffer with a wide margin.
-const ROUTE_BATCH: usize = 256;
+/// Route mutations between two waits for the kernel monitor. The socket
+/// buffer is charged per notification buffer (about 1 KiB each), so the
+/// default 208 KiB holds about 200: 64 leave a wide margin.
+const ROUTE_BATCH: usize = 64;
 
 pub(super) struct Backend {
     pub store: Store,

@@ -550,7 +550,7 @@ R0 列出的七项已由用户决定并写入相应章节：regex v1 逐条跳�
 | 分割计算 | `meshway-policy` `compile::capture`：`compute`／`partition`（first-match 区间扣除，覆盖两族、相邻区间动作不同的 `EgressPartition`）、`summary`（`CaptureSummary`）、`EgressPartition::capture`（受管 IPv4／sink IPv6 合并区间的 `EgressCapturePlan`）；Server 校验（`egress_partition_limit`）、路径检测 `profile.capture`、`NetmapDns.resolvers` 与节点 `LocalCompiler::{partition, capture, decide, transit}` 共用；节点按方案缓存 |
 | netmap | `EgressPlan { generation, rules: [{rule, action}], fallback, unavailable }`，不含前缀与 `EgressRoute`；`generation` 绑定生效规则所用集合的 digest，与节点持有的 artifact 无关 |
 | desired | `meshway_engine::Desired::{capture, partition, capture_summary}`；DNS 的本地 resolver 判定与 served 上游检查读 `Desired::partition` |
-| 安装 | `meshway-underlay` `kernel::egress`：受管区间为 `managed4`／`managed6` interval 元素（无回显批替换、读回逐元素与计数核验，大小为两份方案的暂存并集），未经活动 TUN 的受管目的立即拒绝（TCP reset／ICMP admin-prohibited）；一条 IPv4 RPDB 选择器查私有捕获表，表中为活动时受管区间的最小 CIDR 覆盖；journal v2 只记 gate（区间与设备），表内路由由 gate 推出，恢复时精确对账删除；路由变更每 256 条等待内核监视器观测；DNS 锚点冲突检查豁免该表 |
+| 安装 | `meshway-underlay` `kernel::egress`：受管区间为 `managed4`／`managed6` interval 元素（无回显批替换、读回逐元素与计数核验，大小为两份方案的暂存并集），未经活动 TUN 的受管目的立即拒绝（TCP reset／ICMP admin-prohibited）；一条 IPv4 RPDB 选择器查私有捕获表，表中为活动时受管区间的最小 CIDR 覆盖；journal v2 只记 gate（区间与设备），表内路由由 gate 推出，恢复时精确对账删除；路由变更每 64 条等待内核监视器观测；DNS 锚点冲突检查豁免该表 |
 | 诊断 | IPC 8 `NetmapStatus.capture`、CLI `meshway status` 的 Egress 行；`mise run perf:capture` |
 
 不变量与选择：分割计算只在 Policy，Underlay 只把区间转换为 nft 元素与 CIDR 覆盖，不做匹配；源 socket 的源地址在 `connect` 时由 FIB 选定，nft 标记后重路由会保留物理接口地址，因此 IPv4 导向仍用私有表路由（区间的 CIDR 覆盖），nft 集合承载原子的负向门与 IPv6 sink，不引入源端 SNAT／conntrack 依赖，严格 rp_filter 下回复路径不变。
