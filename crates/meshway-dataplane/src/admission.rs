@@ -79,6 +79,7 @@ impl Engine {
             };
         let policy = Policy {
             netmap: &reading.netmap().netmap,
+            compiler: reading.desired.compiler(),
             decide: &mut decide,
         };
         let mut prepared =

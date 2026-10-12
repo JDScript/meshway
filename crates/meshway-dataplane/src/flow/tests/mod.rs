@@ -84,6 +84,31 @@ fn compiled_three_node_udp_preserves_full_path_in_both_directions() {
 }
 
 #[test]
+fn an_established_flow_keeps_its_decision_under_the_same_content() {
+    let mut scene = Scene::new(BusinessProtocol::Udp, false, true);
+    forward(&mut scene, udp(1, 3, 50000, 443));
+    reply(&mut scene, udp(3, 1, 443, 50000));
+    // The same content now decides the destination otherwise (an ended
+    // association): the established flow keeps its admitted decision ...
+    scene.refuse_fresh = true;
+    forward(&mut scene, udp(1, 3, 50000, 443));
+    reply(&mut scene, udp(3, 1, 443, 50000));
+    // ... a new flow takes the new decision ...
+    assert!(
+        scene
+            .process(1, None, 1, &[1, 2, 3], udp(1, 3, 50001, 443))
+            .is_err()
+    );
+    // ... and other content decides even the established flow again.
+    scene.decisions.insert(node(1), Default::default());
+    assert!(
+        scene
+            .process(1, None, 1, &[1, 2, 3], udp(1, 3, 50000, 443))
+            .is_err()
+    );
+}
+
+#[test]
 fn compiled_three_node_ipv6_uses_the_same_parser_policy_and_flow_owner() {
     let mut scene = Scene::new(BusinessProtocol::Udp, false, true);
     let packet = Packet::parse(datagram(

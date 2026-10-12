@@ -101,6 +101,13 @@ impl Decisions {
         }
     }
 
+    /// The compiler judging `netmap` (binding to it first).
+    #[cfg(test)]
+    pub(crate) fn compiler_for(&mut self, netmap: &CompiledNetmap) -> Arc<LocalCompiler> {
+        self.bind(netmap);
+        self.compiler.clone().expect("bound compiler")
+    }
+
     /// Callers pass the content these caches belong to; another content
     /// starts over on its own compiler.
     pub fn bind(&mut self, netmap: &CompiledNetmap) {

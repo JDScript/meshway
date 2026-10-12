@@ -118,6 +118,15 @@ struct Flow {
     /// Exit TCP completion drains its final guarded output within the already
     /// installed deadline. It accepts no further packets and never renews.
     closing: bool,
+    /// The decision this flow was admitted with and the compiler (executed
+    /// content and artifacts) that made it. Under the same compiler the flow
+    /// keeps it: a trusted DNS association that ends changes only new
+    /// flows. Other content decides again (and `SecureNode::apply` already
+    /// re-judged the flow in place).
+    decided: (
+        std::sync::Weak<meshway_policy::compile::netmap::LocalCompiler>,
+        Arc<Decision>,
+    ),
 }
 
 impl Flow {
@@ -160,6 +169,9 @@ pub(crate) struct Entry<'a> {
 /// on the same content, or an error.
 pub(crate) struct Policy<'a, 'd> {
     pub netmap: &'a meshway_configuration::netmap::NodeNetmap,
+    /// The compiler of the executed content (`Desired::compiler`): a flow
+    /// keeps the decision it was admitted with while this stays the same.
+    pub compiler: &'a Arc<meshway_policy::compile::netmap::LocalCompiler>,
     pub decide: &'d mut dyn FnMut(&Traffic) -> Result<Arc<Decision>, Error>,
 }
 
@@ -503,16 +515,25 @@ impl FlowTable {
             return Err(Error::Sender);
         }
         let forward = existing.map_or(facts.traffic, |flow| flow.forward);
-        let (hop, is_exit, selection) = {
+        let (hop, is_exit, selection, decided) = {
             static PROFILE: meshway_logging::profile::Metric =
                 meshway_logging::profile::Metric::new("policy.packet");
             let _profile = PROFILE.enter();
             let Policy {
                 netmap: leased,
+                compiler,
                 decide,
             } = policy;
             let target = &entry.grant;
-            let decision = decide(&forward)?;
+            let kept = existing
+                .map(|flow| &flow.decided)
+                .filter(|(decided, _)| std::sync::Weak::ptr_eq(decided, &Arc::downgrade(compiler)))
+                .map(|(_, decision)| decision.clone());
+            let decision = match kept {
+                Some(decision) => decision,
+                None => decide(&forward)?,
+            };
+            let decided = (Arc::downgrade(compiler), decision.clone());
             if decision.target != *target || decision.source != entry.origin {
                 return Err(Error::Flow);
             }
@@ -543,6 +564,7 @@ impl FlowTable {
                 hop,
                 matches!(target, Target::Exit { .. }),
                 decision.selection,
+                decided,
             )
         };
         let mut state = match existing {
@@ -587,6 +609,7 @@ impl FlowTable {
             exit: self.exit_state(&key, existing, is_exit)?,
             selection,
             closing,
+            decided,
         };
         Ok(Prepared {
             key,

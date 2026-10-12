@@ -25,6 +25,9 @@ pub(super) struct Scene {
     pub target: Target,
     pub instant: Instant,
     pub now_ms: u64,
+    /// Every fresh decision is refused, as for an address whose trusted
+    /// association ended under the same content.
+    pub refuse_fresh: bool,
 }
 
 impl Scene {
@@ -181,6 +184,7 @@ impl Scene {
             },
             instant,
             now_ms,
+            refuse_fresh: false,
         }
     }
 
@@ -247,12 +251,19 @@ impl Scene {
         let origin = entry.origin;
         let netmap = &self.configs[&id];
         let decisions = self.decisions.get_mut(&id).unwrap();
-        let mut decide = |traffic: &meshway_policy::admission::Traffic| match decisions.decide(
-            netmap,
-            origin,
-            traffic.destination,
-            (traffic.protocol, traffic.destination_port),
-        )? {
+        let compiler = decisions.compiler_for(netmap);
+        let refuse_fresh = self.refuse_fresh;
+        let mut decide = |traffic: &meshway_policy::admission::Traffic| match (!refuse_fresh)
+            .then_some(())
+            .ok_or(Error::Flow)
+            .and_then(|()| {
+                decisions.decide(
+                    netmap,
+                    origin,
+                    traffic.destination,
+                    (traffic.protocol, traffic.destination_port),
+                )
+            })? {
             crate::netmap::Outcome::Permitted(decision) => Ok(decision),
             crate::netmap::Outcome::Denied(_) => Err(Error::Admission(
                 meshway_policy::admission::AdmissionError::Traffic,
@@ -263,6 +274,7 @@ impl Scene {
         let prepared = table.prepare(
             Policy {
                 netmap: &netmap.netmap,
+                compiler: &compiler,
                 decide: &mut decide,
             },
             id,

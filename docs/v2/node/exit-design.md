@@ -212,7 +212,7 @@ Server 的完成校验（任一失败即拒绝，不部分接受）：
 
 - 判定：`LocalCompiler::decide_with(source, dst, …, &Associations)`。dst 有该源在当前 selection 下的关联名称时，按有效规则顺序 first-match，规则命中条件为“匹配该地址**或**匹配其任一名称”；各名称得到的动作必须相同，否则 `egressConflict`（同 IP 多名称动作不相容即不可执行）。服务为覆盖该地址的 CIDR／`autogroup:internet` 授权与覆盖其任一名称的 `domain:` 授权之并。没有关联的地址只按 IP 分割决定：名称成员不拥有任何地址（`capture` 分割不再因名称规则整体 `egressConflict`）。
 - 捕获：关联地址是节点侧分割的一类输入。Engine 的 `Desired` 在本节点计算的捕获区间上加入本源的关联地址——出口（及冲突）地址并入 `managedIpv4`／`sinkIpv6` 区间，direct／unmanaged 地址移出受管区间（`LocalCompiler::associated_capture`）；selection identity 不变。关联到期即以新的 `Desired` 重新应用、移除该地址；但本节点仍存活、经出口建立的流（唯一流表 `SecureNode::exit_destinations`）的目的地址留在捕获中（`Desired::retaining`，Policy `retained_capture`；只保留先前边界已捕获、新边界释放的 IPv4 地址，不新增），这些流按原判定继续经出口与必经点，流退役后（节点每次唤醒检查，至多约 1 s）才移除；保留期间新到该地址的流按新判定，direct／unmanaged 包在 Mesh 接口上丢弃，绝不从物理网卡带着 Mesh 源出网。netmap 内容变化不保留（数据面按新内容重判全部流）。超出节点侧上限（[Routing · 节点侧上限](/v2/configuration-reference/routing#capture-limits)）时按分割的 fail closed 形态（全范围捕获、IPv6 sink、`routingLimit`）；Server 不再预先校验捕获大小。
-- 中继与出口握手：`transit` 对 `(nodes, via)` 也接受“有名称成员且动作完全相同的规则＋源有 `domain:` 或 Internet 授权”，中继不需要关联；出口逐包在自己的投影上以同一 overlay 重算源的判定。
+- 中继与出口握手：`transit` 对 `(nodes, via)` 也接受“有名称成员且动作完全相同的规则＋源有 `domain:` 或 Internet 授权”，中继不需要关联；出口在自己的投影上以同一 overlay 为源的新流作判定；已建立的流（源、中继与出口各自的唯一流表）在同一内容（同一 `Desired` 编译器）下保留准入时的判定，关联到期不改变它，netmap 内容变化才重判。
 - 关联变化只影响新流：同一内容、不同关联时 `SecureNode` 只换判定缓存，已建立的流和 circuit 不重判（其捕获见上一条的保留）；DNS owner 保留 scope 与已接纳查询。netmap 内容变化时照常以当时的关联重判全部流。
 
 **往返与等待**：首次解析到可用 ＝ 一次 Mesh DNS 往返（含出口解析）＋ E→Server 一次 HTTP 往返＋ Server→A 挂起 `sync` 的回答（半个往返）＋ A 应用；A 的回答至多为此再等 2 s。之后在关联寿命内：本机缓存命中（TTL 已截短）零往返；缓存未命中的再次查询仍经 E 解析，但 E 见到仍剩余 ≥ 一半寿命的覆盖条目即不再完成任务，A 见到覆盖条目即刻放行，零额外 Server 往返；同名第二次连接直接按已应用关联建流。
