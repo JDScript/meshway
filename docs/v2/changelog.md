@@ -18,7 +18,7 @@ wire 6、IPC 8、`compilerVersion` 不变；Server schema 版本 5（新增 `rul
 - A10 所有分页游标共用 `crate::cursor` 封装（作用域绑定、期限为列表首页起 15 分钟、后续页不续期）；目录游标绑定目录 URL、可信钥集合、collection、sequence 与已验签原文 digest。
 - B1 名称规则决定的回答若含任一关联无法完整覆盖的公网地址（超过 16 个、不在 CNAME 链终点、链成环或超过 8 跳），出口不完成任务，源立即 SERVFAIL，不再截取前 16 个验证。
 - B2 关联截止在应用时固定为与租约同一时钟的单调 deadline，墙钟回拨不再推迟。
-- B3 关联到期时，本节点仍存活、经出口建立的流的目的地址留在捕获中直至这些流退役（`Desired::retaining`、Policy `retained_capture`、`SecureNode::exit_destinations`），已建立流不再从物理网卡绕过出口；`exit/off` 第 10 阶段新增跨关联到期的 TCP／UDP 持有流检查。
+- B3 关联到期时，本节点仍存活、经出口建立的流的目的地址留在捕获中直至这些流退役（`Desired::retaining`、Policy `retained_capture`、`SecureNode::exit_destinations`），已建立流不再从物理网卡绕过出口；源、中继与出口的已建立流在同一内容（同一编译器）下保留准入时的判定，不再逐包按到期后的关联重判；`exit/off` 第 10 阶段新增跨关联到期的 TCP／UDP 持有流检查。
 - B4 同内容不同关联的 offer 作为 Desired 变化应用：结果写入状态报告，失败按重试处理。
 - B5 只有租约到期或撤回才停止诊断，关联到期不再停止。
 - B6 offer 去重键包含 DNS 关联 overlay（含 Some→None）。
@@ -26,6 +26,8 @@ wire 6、IPC 8、`compilerVersion` 不变；Server schema 版本 5（新增 `rul
 - B8 IPC `NetmapStatus.capture` 由最终安装的捕获计算（含关联与保留地址），关联变化或到期后更新。
 - B9 同一次启动内仍持有资源的其他版本 egress journal 以专用错误（文件名、版本、先用旧版本 `meshway down` 再升级）阻止启动；已 down 或其他启动的记录照旧归档。
 - 文档：`dataplane.md` 出口投影截止改为流 idle 与 circuit 生命期、随租约与角色 generation；`execution.md` 改为节点已消费 `sync`。
+
+验证：Planck 16 行矩阵 `20261012T195053Z-bc48b6cc` 全部通过（`exit/off` 第 10 阶段含跨关联到期的 TCP／UDP 持有流）；证据 `.meshway/validation/f4a/`。
 
 ## v0.1.0-alpha.4
 
