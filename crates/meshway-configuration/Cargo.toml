@@ -18,7 +18,6 @@ sha2.workspace = true
 sha2-fast = { package = "sha2", version = "0.11", features = ["zeroize"] }
 thiserror.workspace = true
 utoipa.workspace = true
-zeroize = "1.8"
 
 [lints]
 workspace = true

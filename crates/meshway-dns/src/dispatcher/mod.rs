@@ -195,18 +195,6 @@ pub trait Dispatcher: Send + Sync + 'static {
         query: Query,
         deadline: Instant,
     ) -> DnsFuture<'_, Result<Answer, DispatchError>>;
-    /// A query a Mesh source sent to `local`. Only a resolver Node's served
-    /// plan accepts one; loopback clients use `dispatch`.
-    fn dispatch_from(
-        &self,
-        _peer: std::net::SocketAddr,
-        _local: std::net::SocketAddr,
-        _transport: DnsTransport,
-        _query: Query,
-        _deadline: Instant,
-    ) -> DnsFuture<'_, Result<Answer, DispatchError>> {
-        Box::pin(async { Err(DispatchError::Scope) })
-    }
     fn stop(&self) -> DnsFuture<'_, ()>;
 }
 

@@ -41,7 +41,7 @@ TCP 乱序区间只记录已准入字节的序号，不制造接收确认：缺�
 
 ### IPv4 出口流与内核投影
 
-出口业务复用同一 `SecureNode`／`FlowTable`：Policy 检查已认证原始源、`sourceAddresses`、精确目的／服务、`ExitPermit.destination` 和完整路径；出口端另外绑定当前 role 的 instance。首版拒绝出口 IPv6 并计数。出口回程由 `exit::ExitReplyIngress` 交给 `SecureNode::exit_reply`，只从已有流选择原 CID，再执行 `admit_reply` 和原路径反向 Noise 保护；未关联包丢弃并计数。
+出口业务复用同一 `SecureNode`／`FlowTable`：Policy 在本节点投影上检查已认证原始源、`sourceAddresses`、出口 `Decision` 的精确目的／服务、selection 和完整路径；出口端另需本地 `exitRole`（[Routing · 出口联合许可](/v2/configuration-reference/routing#出口联合许可)）。首版拒绝出口 IPv6 并计数。出口回程由 `exit::ExitReplyIngress` 交给 `SecureNode::exit_reply`，只从已有流选择原 CID，再执行 `admit_reply` 和原路径反向 Noise 保护；未关联包丢弃并计数。
 
 `SecureNode::next_exit_projection` 按需返回一个不透明 `exit::ExitProjection`：`Install`／`Renew` 携带 flow incarnation、原 IPv4 tuple、不可换绑的 `ProjectionScope` 和一次性 ACK；`Retire` 携带原资源绑定与独立清理 ACK。**内核侧由 Underlay 执行，见 [Exit 设计](/v2/node/exit-design#数据路径与唯一-owner)**；daemon 映射类型并驱动事件和 I/O，不增加业务流表。此接口本身不证明 Linux NAT 安装或包流已验收。
 

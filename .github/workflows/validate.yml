@@ -8,6 +8,10 @@ on:
     - cron: "17 8 * * *"
   pull_request:
     paths:
+      - "crates/meshway-configuration/**"
+      - "crates/meshway-policy/**"
+      - "crates/meshway-rules/**"
+      - "crates/meshway-engine/**"
       - "crates/meshway-connectivity/**"
       - "crates/meshway-control/**"
       - "crates/meshway-underlay/**"
@@ -18,8 +22,16 @@ on:
       - "apps/meshway-daemon/**"
       - "apps/meshway-server/src/execution/**"
       - "apps/meshway-server/src/state/**"
+      - "apps/meshway-server/src/netmap/**"
+      - "apps/meshway-server/src/resources/**"
+      - "tools/meshway-runtime-fixture/**"
+      - "tools/meshway-packet-fixture/**"
+      - "tools/meshway-test-server/**"
       - "scripts/verify_*.py"
       - "scripts/validate_*.py"
+      - "scripts/verification_sources.py"
+      - "scripts/validation_support.py"
+      - "scripts/node_lab.py"
       - "dev/**"
       - ".github/workflows/validate.yml"
   workflow_dispatch:

@@ -130,20 +130,6 @@ pub fn open(mut job: RecvJob) -> Result<Opened, Error> {
 }
 
 impl SecureNode {
-    pub fn prepare_send(
-        &mut self,
-        circuit: [u8; 32],
-        bytes: PacketBuffer,
-    ) -> Result<SendJob, Error> {
-        let desired = self.desired.clone();
-        let reading = View::of(&desired);
-        self.prepare_send_at(
-            circuit,
-            Packet::parse(bytes).map_err(|_| Error::Packet)?,
-            &reading,
-        )
-    }
-
     /// Data only. Handshakes and probes use the independent synchronous receive path.
     pub fn prepare_receive(
         &mut self,

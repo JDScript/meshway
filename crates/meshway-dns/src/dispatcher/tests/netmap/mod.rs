@@ -420,7 +420,7 @@ async fn same_content_keeps_owner_while_new_content_ends_its_answers() {
 }
 
 #[tokio::test]
-async fn exit_resolver_rejects_raw_addresses_even_when_the_source_is_in_its_plan() {
+async fn exit_resolver_serves_only_authenticated_requests_of_its_current_plan() {
     let server = support::Server::start().await;
     let (mut control, script) = enrolled(&server).await;
     let mut network = Network::new(&control, 'e');
@@ -454,36 +454,15 @@ async fn exit_resolver_rejects_raw_addresses_even_when_the_source_is_in_its_plan
         invalid: CancellationToken::new(),
         verified_until: Arc::new(StdMutex::new(Instant::now() + Duration::from_secs(30))),
     };
-    let scope = Scope::netmap(snapshot.clone(), None).serving(Some(system));
+    let scope = Scope::netmap(snapshot.clone(), None).serving(Some(system.clone()));
     let exchange = Exchange::new(&[Step::Answer, Step::Fail]);
-    let (_sender, receiver) = watch::channel(Some(scope.clone()));
+    let (sender, receiver) = watch::channel(Some(scope.clone()));
     let dispatcher = OwnerDispatcher::new(receiver, exchange.clone(), limits(), 1232).unwrap();
     dispatcher.validate_scope(&scope).unwrap();
-    let local: SocketAddr = "100.64.0.3:53".parse().unwrap();
     let deadline = || Instant::now() + Duration::from_secs(2);
-    // A socket tuple is not DNS-purpose circuit authentication, including
-    // the exact address of a source named in the service.
-    for (peer, at) in [
-        ("100.64.0.1:40000", local),
-        ("100.64.0.2:40000", local),
-        ("100.64.0.1:40000", "100.64.0.4:53".parse().unwrap()),
-    ] {
-        assert!(matches!(
-            dispatcher
-                .dispatch_from(
-                    peer.parse().unwrap(),
-                    at,
-                    DnsTransport::Udp,
-                    named("x.test."),
-                    deadline()
-                )
-                .await,
-            Err(DispatchError::Scope)
-        ));
-    }
-    assert!(exchange.endpoints().is_empty());
-    // The same query with actual SecureNode proof reaches only the verified
-    // system resolver. Both endpoint identities are issued by real Controls.
+    // The only Mesh DNS entry is a request authenticated by SecureNode on a
+    // DNS-purpose circuit; it reaches only the verified system resolver.
+    // Both endpoint identities are issued by real Controls.
     let source_map = source_network.compile(None);
     sync(&mut source, &source_script, reply(&source_map, true)).await;
     let DnsPlan::ViaExit { service } = &source_map.netmap.dns.egress else {
@@ -592,6 +571,43 @@ async fn exit_resolver_rejects_raw_addresses_even_when_the_source_is_in_its_plan
         exchange.endpoints(),
         [("192.0.2.53:53".parse().unwrap(), DnsTransport::Udp); 2]
     );
+    // An authenticated request is still answered SERVFAIL without any
+    // upstream when the exit has no verified system snapshot, or once the
+    // exit's netmap content is no longer the one the request is bound to.
+    let wire = origin
+        .query_dns(
+            cid,
+            meshway_model::EventId::new(uuid::Uuid::from_u128(102)).unwrap(),
+            DnsTransport::Udp,
+            &named("ordinary.test.").encode_upstream(1232).unwrap(),
+            deadline(),
+        )
+        .unwrap();
+    let Received::DnsRequest(request) = exit
+        .receive(&carrier, wire.release(|b| b).unwrap())
+        .unwrap()
+    else {
+        panic!("authenticated request");
+    };
+    let servfail = |bytes: Option<bytes::Bytes>| {
+        Message::from_vec(&bytes.expect("SERVFAIL reply"))
+            .unwrap()
+            .metadata
+            .response_code
+            == hickory_proto::op::ResponseCode::ServFail
+    };
+    let (_unserved, unserved) = watch::channel(Some(Scope::netmap(snapshot.clone(), None)));
+    let unserving = OwnerDispatcher::new(unserved, exchange.clone(), limits(), 1232).unwrap();
+    assert!(servfail(unserving.serve_authenticated(&request).await));
+    network.hostname = "e2".into();
+    let next = network.compile(Some(&netmap));
+    let next = sync(&mut control, &script, reply(&next, true)).await;
+    crate::publish_scope(
+        &sender,
+        Some(Scope::netmap(next, None).serving(Some(system))),
+    );
+    assert!(servfail(dispatcher.serve_authenticated(&request).await));
+    assert_eq!(exchange.endpoints().len(), 2);
     source.shutdown().await.unwrap();
     let _ = control.shutdown().await;
     server.close().await;

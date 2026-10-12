@@ -365,8 +365,8 @@ impl App {
     pub fn netmap_diagnostics(&self) -> crate::execution::NetmapDiagnostics {
         crate::execution::NetmapDiagnostics::new(self.execution(), self.netmaps.clone())
     }
-    /// Shared core handles are available before constructing any HTTP provider.
-    pub fn state_reader(&self) -> crate::state::service::StateReader {
+    #[cfg(test)]
+    pub(crate) fn state_reader(&self) -> crate::state::service::StateReader {
         crate::state::service::StateReader::new(Arc::clone(&self.state_runtime))
     }
 
@@ -473,8 +473,9 @@ impl App {
             self.stun.health(),
         )
     }
-    pub fn stun_ready(&self) -> bool {
-        self.stun.ready()
+    #[cfg(test)]
+    pub(crate) fn stun_ready(&self) -> bool {
+        self.stun.health().ready()
     }
     pub fn enrollment(&self) -> crate::enrollment::Enrollment {
         crate::enrollment::Enrollment::new(

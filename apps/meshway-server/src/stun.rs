@@ -89,9 +89,6 @@ impl Hosted {
         }
         Ok(owner)
     }
-    pub fn ready(&self) -> bool {
-        self.health().ready()
-    }
     pub async fn shutdown(mut self) -> Result<(), AppError> {
         self.stop.cancel();
         let mut failed = self.failed.load(Ordering::Acquire);
@@ -117,7 +114,7 @@ mod tests {
         assert!(sockets.is_empty());
         let owner = Hosted::start(sockets).unwrap();
         assert!(owner.tasks.is_empty());
-        assert!(owner.ready());
+        assert!(owner.health().ready());
         let health = owner.health();
         owner.shutdown().await.unwrap();
         assert!(!health.ready());

@@ -1888,52 +1888,6 @@ impl SecureNode {
         Ok(ready)
     }
 
-    /// Select a local output from the unique flow owner's authenticated cipher
-    /// binding. A terminal must never guess among locally completed handshakes:
-    /// the origin may not have received one of their responses. Only an origin
-    /// can acquire another cipher for its unchanged route after the old one ends.
-    /// Reading this does not advance any flow, nonce or deadline; send rechecks.
-    pub fn local_grant_circuit(
-        &self,
-        grant: &CircuitGrant,
-        path: &[NodeId],
-        packet: &Packet,
-    ) -> Result<Option<CircuitInfo>, Error> {
-        static PROFILE: meshway_logging::profile::Metric =
-            meshway_logging::profile::Metric::new("secure.local_circuit");
-        let _profile = PROFILE.enter();
-        self.local_circuit_at(grant, path, packet, &View::of(&self.desired))
-    }
-
-    fn local_circuit_at(
-        &self,
-        grant: &CircuitGrant,
-        path: &[NodeId],
-        packet: &Packet,
-        reading: &View<'_>,
-    ) -> Result<Option<CircuitInfo>, Error> {
-        let origin = path.first() == Some(&reading.node());
-        let flow_grant = grant.flow().ok_or(Error::Policy)?;
-        if let Some(flow) = self.local_flow_at(packet, reading)? {
-            if flow.grant != flow_grant || flow.path != path {
-                return Err(Error::Flow);
-            }
-            if let Some(id) = flow.circuit
-                && let Some(info) = self.circuit_info_at(id, reading)
-                && info.state != CircuitState::Closed
-            {
-                if info.grant != *grant || info.path != path {
-                    return Err(Error::Context);
-                }
-                return Ok((info.state == CircuitState::Established).then_some(info));
-            }
-        }
-        if !origin {
-            return Ok(None);
-        }
-        Ok(self.established(grant, path, reading))
-    }
-
     /// An established origin circuit of exactly this grant and path.
     fn established(
         &self,
