@@ -364,9 +364,10 @@ Control 把 artifact 写入私有目录 `artifacts/sha256-<hex>.mwrs`（0400、�
 ```sh
 # 16 份转换（CLI），两台主机各跑一次后比较 digests.txt
 .meshway/rules-spike/r1/convert-all.sh target/release/meshway-rules .meshway/rules-spike <out>/artifacts > <out>/digests.txt
-# 与 spike 参考实现差分（spike crate 的 r1diff 命令链接正式 crate）
-mise exec -- cargo build --release --no-default-features --manifest-path tools/meshway-rules-spike/Cargo.toml
-target/release/meshway-rules-spike r1diff .meshway/rules-spike 1000000
+# 与 spike 参考实现差分（spike crate 已删除；r1diff 在历史提交 4503138a 的工作树中运行）
+git worktree add .worktree/rules-r1 4503138a
+mise exec -- cargo build --release --no-default-features --manifest-path .worktree/rules-r1/tools/meshway-rules-spike/Cargo.toml
+.worktree/rules-r1/tools/meshway-rules-spike/target/release/meshway-rules-spike r1diff .meshway/rules-spike 1000000
 # 打开与匹配耗时（每集合 3 轮 × 每类 100 万次查询、200 次打开取 p50）
 mise run perf:rules -- <artifacts...>
 # 长时间 fuzz：溢出检查与 debug 断言打开
@@ -397,7 +398,7 @@ CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS=true CARGO_PROFILE_RELEASE_DEBUG_ASSERTION
 
 ## spike 实测
 
-源码 `tools/meshway-rules-spike/`：独立 `Cargo.toml`（自带 `[workspace]`、`Cargo.lock`、`target/`），**不是 workspace 成员**，因此不影响根 manifest、lockfile 与 `mise run check`。`server` feature（默认开）链接真实的 `meshway_server::resources::convert` 与 `meshway_policy::domain_{name,suffix}_matches` 测现行实现。
+源码已从活跃树删除，保存在历史提交 `a2891655`（R0 测量）与 `4503138a`（含 R1 `r1diff`）的 `tools/meshway-rules-spike/`：独立 `Cargo.toml`（自带 `[workspace]`、`Cargo.lock`、`target/`），不是 workspace 成员。以下命令在该提交的工作树中运行（`git worktree add .worktree/rules-r0 a2891655`；`tools/` 路径相对该工作树，私有数据 `.meshway/rules-spike` 按主仓库路径传入）。`server` feature（默认开）链接真实的 `meshway_server::resources::convert` 与 `meshway_policy::domain_{name,suffix}_matches` 测现行实现。
 
 ```sh
 # 输入（私有，不提交），按固定上游 commit 下载；sing-box 1.14.3 仅用于把 .srs 解码成 JSON
@@ -560,7 +561,6 @@ R0 列出的七项已由用户决定并写入相应章节：regex v1 逐条跳�
 
 ## 未解决
 
-- `tools/meshway-rules-spike` 的删除归属未定：R0 数据溯源与 R1 差分（`r1diff`）仍依赖它，R1 未删除。建议在 R2b 首个真实目录验通、R1 实测证据归档后由协调者删除，`r1diff` 不迁移。
 - sing-box `ip_cidr` 接受裸地址（视为 /32、/128），现转换器与 R1 都报告为 `invalidCidr`；是否放宽未定。
 - 减少 50 % hold、保留 7 份目录与 issue 由 R2b workflow 实现；CLI 的 `SetRecord.held` 已可写入，workflow 尚未写入目录。
 - 打开耗时与 FST 节点数线性相关（3.66 MB 约 42 ms）；若需更快，可只在 Server 入库时做 FST 证明、节点以 digest 信任，但那会让“任意字节不 panic”依赖 digest 来源，需另行决定。
