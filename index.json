@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-12T10:34:46.945732+00:00",
+  "updatedAt": "2026-10-12T10:38:56.236342+00:00",
   "runs": [
     {
       "id": 38236271075,
@@ -12,9 +12,9 @@
       "commit": "6548b4557701b88e8faa04dce3b4ac2cf91a1bdf",
       "message": "Merge branch 'r2c/rule-set-browse'",
       "createdAt": "2026-10-12T10:25:53Z",
-      "updatedAt": "2026-10-12T10:29:32Z",
-      "status": "in_progress",
-      "conclusion": null,
+      "updatedAt": "2026-10-12T10:36:16Z",
+      "status": "completed",
+      "conclusion": "success",
       "url": "https://github.com/JDScript/meshway/actions/runs/38236271075",
       "jobs": [
         {
@@ -54,11 +54,11 @@
           "id": 114767702715,
           "name": "cargo",
           "runner": "mars-14900k",
-          "status": "in_progress",
-          "conclusion": null,
+          "status": "completed",
+          "conclusion": "success",
           "startedAt": "2026-10-12T10:29:32Z",
-          "completedAt": null,
-          "seconds": null,
+          "completedAt": "2026-10-12T10:36:15Z",
+          "seconds": 403.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/38236271075/job/114767702715"
         }
       ],
