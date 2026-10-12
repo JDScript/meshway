@@ -43,7 +43,7 @@ Server 在配置 revision 固定时为每个节点生成 **netmap**（配置投�
 | --- | --- | --- |
 | `self` | `NetmapSelf` | enabled、hostname、identity、addresses、selfKeys、meshAddressPools、本节点完整 listeners（禁用时为空）、exitEnabled |
 | `projection` | `ProjectedConfiguration { configuration: ConfigurationView, subjects: SubjectContext, inventory, ruleSets, selectedProfiles, selectionVersions }` | 全量配置的单调子集，复用现有 `ConfigurationView`／`NodeSettingsView`（已脱敏的 listener／dialer 声明）、`AccessRule`／`TopologyRule`／`MeshRoute`、`TrustedNode`、`SubjectContext`（移入 configuration crate）；`ruleSets` 为 `key → RuleSetRef { digest, format, bytes, entries }`，见[规则集 artifact](#rule-set-artifacts) |
-| `dialers` | `CandidateKey → DialCandidate` | 本节点到每个 topology 相邻可见节点的拨号候选与客户端材料；只含 configured 端点，local 端点走事实线 |
+| `dialers` | `String → DialCandidate`（候选键） | 本节点到每个 topology 相邻可见节点的拨号候选与客户端材料；只含 configured 端点，local 端点走事实线 |
 | `egress` | `Option<EgressPlan { generation, rules, fallback, unavailable }>` | 禁用节点为 null；`rules` 为生效规则 `{rule: JSON Pointer, action: EgressAction::{Exit { nodes, via }, Direct, Unmanaged}}`（公共在前），`fallback` 为未命中动作；不含前缀——分割由节点用投影与 artifact 计算（[Routing · 执行捕获](/v2/configuration-reference/routing#执行捕获与精确许可)） |
 | `exitRole` | `Option<ExitRole { generation, family, nat }>` | enabled ∧ exitEnabled ∧ `feature:exit-ipv4` v1 时下发 |
 | `dns` | `NetmapDns { meshHosts, resolvers, profile, egress: DnsPlan }` | DNS settings 在投影里；`resolvers` 为每个配置 resolver 键的 `ResolverAction::{Direct, Unmanaged, Exit, Rejected}`；`DnsService` 不含 instance 与截止 |
