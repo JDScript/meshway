@@ -592,10 +592,14 @@ fn network_changed(state: &Expected, payload: &NetlinkPayload<RouteNetlinkMessag
                 .is_none_or(|(_, creating)| *creating != Some(index))
     };
     match payload {
+        // A link that is not up carries no path: creating or deleting one
+        // (a VPN daemon's idle ppp0, say) changes no route to anything. An up
+        // link going down also deletes its addresses and routes, reported below.
         NetlinkPayload::InnerMessage(
             RouteNetlinkMessage::NewLink(link) | RouteNetlinkMessage::DelLink(link),
         ) => {
-            external(link.header.index)
+            link.header.flags.contains(LinkFlags::Up)
+                && external(link.header.index)
                 && !state.anchor_creating.as_ref().is_some_and(|(name, _)| {
                     link.attributes
                         .iter()
@@ -686,6 +690,7 @@ mod tests {
         let link = |index, name: &str| {
             let mut link = LinkMessage::default();
             link.header.index = index;
+            link.header.flags = LinkFlags::Up;
             link.attributes.push(LinkAttribute::IfName(name.into()));
             NetlinkPayload::InnerMessage(RouteNetlinkMessage::NewLink(link))
         };
@@ -704,5 +709,28 @@ mod tests {
         assert!(!network_changed(&state, &link(7, "mwd0123456789")));
         assert!(network_changed(&state, &link(8, "eth1")));
         assert!(network_changed(&state, &address(8)));
+    }
+
+    #[test]
+    fn a_link_that_is_not_up_is_not_a_network_change() {
+        use rtnetlink::packet_route::link::LinkMessage;
+        let mut idle = LinkMessage::default();
+        idle.header.index = 9;
+        idle.attributes.push(LinkAttribute::IfName("ppp0".into()));
+        let state = Expected::default();
+        for message in [
+            RouteNetlinkMessage::NewLink(idle.clone()),
+            RouteNetlinkMessage::DelLink(idle.clone()),
+        ] {
+            assert!(!network_changed(
+                &state,
+                &NetlinkPayload::InnerMessage(message)
+            ));
+        }
+        idle.header.flags = LinkFlags::Up;
+        assert!(network_changed(
+            &state,
+            &NetlinkPayload::InnerMessage(RouteNetlinkMessage::DelLink(idle))
+        ));
     }
 }

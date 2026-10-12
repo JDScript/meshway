@@ -28,7 +28,8 @@ async fn userspace_multicast_cannot_poison_kernel_monitor_or_control_proxy() {
     let task = tokio::spawn(connection);
     handle
         .link()
-        .add(rtnetlink::LinkDummy::new("v5-external").build())
+        // Only a link that is up can change a path.
+        .add(rtnetlink::LinkDummy::new("v5-external").up().build())
         .execute()
         .await
         .unwrap();
