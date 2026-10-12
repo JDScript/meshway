@@ -241,6 +241,10 @@ pub struct Engine<C> {
     lease: Option<lease::Active>,
     latest: Option<NetmapLease>,
     clock: lease::Clock,
+    /// Monotonic end of the earliest live association of `desired`, fixed
+    /// on the lease clock when that desired state was applied: a wall clock
+    /// set back never moves an accepted association's end later.
+    association_at: Option<tokio::time::Instant>,
     /// The current desired content was last applied as [`Error::Degraded`].
     degraded: bool,
 }
@@ -253,6 +257,7 @@ impl<C: Components> Engine<C> {
             lease: None,
             latest: None,
             clock: lease::Clock::new(),
+            association_at: None,
             degraded: false,
         }
     }
@@ -373,6 +378,7 @@ impl<C: Components> Engine<C> {
     async fn settle(&mut self, desired: Option<Desired>) -> Result<(), Error> {
         let lease = self.lease.take();
         self.desired = None;
+        self.association_at = None;
         let result = match &lease {
             Some(active) => tokio::time::timeout_at(active.at, self.apply(desired.as_ref()))
                 .await
@@ -383,6 +389,10 @@ impl<C: Components> Engine<C> {
             Ok(()) | Err(Error::Degraded) => {
                 self.degraded = result.is_err();
                 self.lease = lease;
+                self.association_at = desired
+                    .as_ref()
+                    .and_then(Desired::next_association_expiry)
+                    .map(|at_ms| self.clock.deadline(at_ms));
                 self.desired = desired;
                 result
             }
@@ -400,15 +410,10 @@ impl<C: Components> Engine<C> {
     /// component work. This is scheduling data; components never receive it.
     pub fn next_expiry(&self) -> Option<tokio::time::Instant> {
         let lease = self.lease.as_ref()?.at;
-        let association = self
-            .desired
-            .as_ref()
-            .and_then(Desired::next_association_expiry)
-            .map(|at_ms| {
-                let left = at_ms.saturating_sub(lease::wall_now());
-                tokio::time::Instant::now() + std::time::Duration::from_millis(left)
-            });
-        Some(association.map_or(lease, |association| association.min(lease)))
+        Some(
+            self.association_at
+                .map_or(lease, |association| association.min(lease)),
+        )
     }
 
     /// Whether the active lease has ended on either clock. The monotonic
@@ -431,13 +436,18 @@ impl<C: Components> Engine<C> {
             self.withdraw().await?;
             return Ok(());
         }
-        // An ended association leaves the desired state; the rest stays.
-        let now = self.clock.now();
+        // An ended association leaves the desired state; the rest stays. It
+        // has ended once either its monotonic deadline or the lease clock
+        // reached it, whichever comes first.
+        let mut now = self.clock.now();
         if let Some(current) = &self.desired
-            && current
-                .next_association_expiry()
-                .is_some_and(|at| at <= now)
+            && let Some(at_ms) = current.next_association_expiry()
+            && (at_ms <= now
+                || self
+                    .association_at
+                    .is_some_and(|at| tokio::time::Instant::now() >= at))
         {
+            now = now.max(at_ms);
             let next = current.with_associations(current.overlay(), now)?;
             return self.settle(Some(next)).await;
         }
@@ -446,6 +456,7 @@ impl<C: Components> Engine<C> {
 
     async fn withdraw(&mut self) -> Result<(), Error> {
         self.desired = None;
+        self.association_at = None;
         self.lease = None;
         self.degraded = false;
         self.apply(None).await

@@ -426,6 +426,32 @@ fn with_association(
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_wall_clock_set_back_never_extends_an_accepted_association() {
+    let mut engine = Engine::new(Resources::default());
+    // The lease clock stands 20 s ahead of the host wall clock: exactly what
+    // a wall clock set back 20 s after an earlier observation leaves.
+    let wall = engine.clock.now();
+    engine.raise_clock_floor(wall + 20_000);
+    let now = engine.clock.now();
+    let (content, overlay) = with_association(now + 30_000);
+    let associated = Netmap {
+        associations: Some(overlay),
+        ..input(&mut engine, content, 3_600_000)
+    };
+    engine.reconfig(Some(&associated)).await.unwrap();
+    assert_eq!(engine.desired().unwrap().associations().entries().len(), 1);
+    // Scheduled 30 s out on the lease clock, not 50 s on the host wall clock.
+    let at = engine.next_expiry().unwrap();
+    assert!(at <= tokio::time::Instant::now() + Duration::from_secs(30));
+    // Renewing the same content keeps the accepted end.
+    engine.reconfig(Some(&associated)).await.unwrap();
+    assert_eq!(engine.next_expiry(), Some(at));
+    tokio::time::advance(Duration::from_secs(30)).await;
+    engine.expire().await.unwrap();
+    assert!(engine.desired().unwrap().associations().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
 async fn associations_apply_without_new_content_and_end_on_their_own_deadline() {
     let mut engine = Engine::new(Resources::default());
     let now = engine.clock.now();

@@ -21,11 +21,6 @@ pub struct Netmap {
     pub associations: Option<Arc<DnsAssociationOverlay>>,
 }
 
-/// Milliseconds since the Unix epoch, for association deadlines.
-pub(super) fn wall_now() -> u64 {
-    wall()
-}
-
 pub(super) struct Clock {
     at: Instant,
     wall: u64,
@@ -42,6 +37,11 @@ impl Clock {
     pub fn raise_floor(&mut self, floor_ms: u64) {
         let now = self.now();
         self.wall = now.max(floor_ms);
+    }
+    /// The monotonic instant at which this clock reaches `at_ms`, fixed now.
+    pub fn deadline(&mut self, at_ms: u64) -> Instant {
+        let left = Duration::from_millis(at_ms.saturating_sub(self.now()));
+        Instant::now().checked_add(left).unwrap_or_else(Instant::now)
     }
     pub fn now(&mut self) -> u64 {
         let now = Instant::now();
