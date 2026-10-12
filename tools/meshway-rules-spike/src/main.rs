@@ -21,22 +21,87 @@ use std::time::{Duration, Instant};
 
 /// (set name, file, spike format, current Server format if any)
 const SOURCES: &[(&str, &str, &str, Option<&str>)] = &[
-    ("sing-geosite-cn", "data/geosite-cn.json", "sing-box", Some("sing-box-source")),
-    ("sing-geosite-openai", "data/geosite-openai.json", "sing-box", Some("sing-box-source")),
-    ("sing-geosite-geolocation-!cn", "data/geosite-geolocation-!cn.json", "sing-box", Some("sing-box-source")),
-    ("sing-geoip-cn", "data/geoip-cn.json", "sing-box", Some("sing-box-source")),
-    ("mihomo-geosite-cn", "data/mihomo-geosite-cn.yaml", "mihomo-domain", Some("mihomo-domain")),
-    ("mihomo-geosite-openai", "data/mihomo-geosite-openai.yaml", "mihomo-domain", Some("mihomo-domain")),
-    ("mihomo-geosite-geolocation-!cn", "data/mihomo-geosite-geolocation-!cn.yaml", "mihomo-domain", Some("mihomo-domain")),
-    ("mihomo-geoip-cn", "data/mihomo-geoip-cn.yaml", "mihomo-ipcidr", Some("mihomo-ipcidr")),
-    ("mihomo-geosite-cn-text", "data/mihomo-geosite-cn.list", "mihomo-domain-text", None),
-    ("mihomo-geosite-openai-text", "data/mihomo-geosite-openai.list", "mihomo-domain-text", None),
-    ("mihomo-geosite-geolocation-!cn-text", "data/mihomo-geosite-geolocation-!cn.list", "mihomo-domain-text", None),
-    ("mihomo-geoip-cn-text", "data/mihomo-geoip-cn.list", "mihomo-ipcidr-text", None),
+    (
+        "sing-geosite-cn",
+        "data/geosite-cn.json",
+        "sing-box",
+        Some("sing-box-source"),
+    ),
+    (
+        "sing-geosite-openai",
+        "data/geosite-openai.json",
+        "sing-box",
+        Some("sing-box-source"),
+    ),
+    (
+        "sing-geosite-geolocation-!cn",
+        "data/geosite-geolocation-!cn.json",
+        "sing-box",
+        Some("sing-box-source"),
+    ),
+    (
+        "sing-geoip-cn",
+        "data/geoip-cn.json",
+        "sing-box",
+        Some("sing-box-source"),
+    ),
+    (
+        "mihomo-geosite-cn",
+        "data/mihomo-geosite-cn.yaml",
+        "mihomo-domain",
+        Some("mihomo-domain"),
+    ),
+    (
+        "mihomo-geosite-openai",
+        "data/mihomo-geosite-openai.yaml",
+        "mihomo-domain",
+        Some("mihomo-domain"),
+    ),
+    (
+        "mihomo-geosite-geolocation-!cn",
+        "data/mihomo-geosite-geolocation-!cn.yaml",
+        "mihomo-domain",
+        Some("mihomo-domain"),
+    ),
+    (
+        "mihomo-geoip-cn",
+        "data/mihomo-geoip-cn.yaml",
+        "mihomo-ipcidr",
+        Some("mihomo-ipcidr"),
+    ),
+    (
+        "mihomo-geosite-cn-text",
+        "data/mihomo-geosite-cn.list",
+        "mihomo-domain-text",
+        None,
+    ),
+    (
+        "mihomo-geosite-openai-text",
+        "data/mihomo-geosite-openai.list",
+        "mihomo-domain-text",
+        None,
+    ),
+    (
+        "mihomo-geosite-geolocation-!cn-text",
+        "data/mihomo-geosite-geolocation-!cn.list",
+        "mihomo-domain-text",
+        None,
+    ),
+    (
+        "mihomo-geoip-cn-text",
+        "data/mihomo-geoip-cn.list",
+        "mihomo-ipcidr-text",
+        None,
+    ),
     ("bm7-global", "extra/bm7-Global.list", "classical", None),
     ("bm7-china", "extra/bm7-China.list", "classical", None),
     ("bm7-openai", "extra/bm7-OpenAI.list", "classical", None),
-    ("bm7-advertising", "extra/bm7-Advertising.list", "classical", None),
+    (
+        "bm7-advertising",
+        "extra/bm7-Advertising.list",
+        "classical",
+        None,
+    ),
 ];
 
 fn main() {
@@ -58,10 +123,7 @@ fn main() {
 }
 
 fn find(name: &str) -> (&'static str, Format, Option<&'static str>) {
-    let (_, file, format, server) = SOURCES
-        .iter()
-        .find(|s| s.0 == name)
-        .expect("known set");
+    let (_, file, format, server) = SOURCES.iter().find(|s| s.0 == name).expect("known set");
     (file, Format::parse(format).expect("format"), *server)
 }
 
@@ -107,7 +169,10 @@ fn current(bytes: &[u8], format: Option<&str>) -> (String, Option<usize>, Option
             Some(serde_json::to_vec(&data).expect("json").len()),
         ),
         Err(problem) => (
-            format!("failed:{}", serde_json::to_string(&problem).expect("problem")),
+            format!(
+                "failed:{}",
+                serde_json::to_string(&problem).expect("problem")
+            ),
             None,
             None,
         ),
@@ -140,7 +205,14 @@ fn coverage(root: &Path) {
             current_converter,
             current_entries,
             current_json_bytes,
-            canonical: [c.exact.len(), c.suffix.len(), c.keyword.len(), c.v4.len(), c.v6.len(), c.subdomain.len()],
+            canonical: [
+                c.exact.len(),
+                c.suffix.len(),
+                c.keyword.len(),
+                c.v4.len(),
+                c.v6.len(),
+                c.subdomain.len(),
+            ],
             redundant: c.redundant,
             v4_min_prefixes: format::v4_prefix_count(&c.v4),
             artifact_bytes: artifact.len(),
@@ -200,12 +272,25 @@ fn bench(root: &Path, name: &str, iters: usize) {
     let (_, _, c) = load_canonical(root, name);
     let path = root.join("out").join(format!("{name}.mwrs"));
     let size = std::fs::metadata(&path).expect("artifact").len();
-    println!("set={name} artifact_bytes={size} canonical(exact,suffix,keyword,v4,v6,subdomain)={:?}", [c.exact.len(), c.suffix.len(), c.keyword.len(), c.v4.len(), c.v6.len(), c.subdomain.len()]);
+    println!(
+        "set={name} artifact_bytes={size} canonical(exact,suffix,keyword,v4,v6,subdomain)={:?}",
+        [
+            c.exact.len(),
+            c.suffix.len(),
+            c.keyword.len(),
+            c.v4.len(),
+            c.v6.len(),
+            c.subdomain.len()
+        ]
+    );
 
     // Load: first open in this process, then 1000 repeats.
     let t = Instant::now();
     let first = RuleSet::open(mmap(&path)).expect("open");
-    println!("load first_mmap_open_us={:.1}", t.elapsed().as_secs_f64() * 1e6);
+    println!(
+        "load first_mmap_open_us={:.1}",
+        t.elapsed().as_secs_f64() * 1e6
+    );
     black_box(&first);
     let mut mm = vec![];
     let mut heap = vec![];
@@ -227,8 +312,17 @@ fn bench(root: &Path, name: &str, iters: usize) {
         set.verify().expect("verify");
         verify.push(t.elapsed().as_secs_f64() * 1e6);
     }
-    for (label, v) in [("mmap_open", mm), ("read_heap_open", heap), ("mmap_sha256", sha), ("verify", verify)] {
-        println!("load {label}_us p50={:.1} p99={:.1}", percentile(v.clone(), 0.5), percentile(v, 0.99));
+    for (label, v) in [
+        ("mmap_open", mm),
+        ("read_heap_open", heap),
+        ("mmap_sha256", sha),
+        ("verify", verify),
+    ] {
+        println!(
+            "load {label}_us p50={:.1} p99={:.1}",
+            percentile(v.clone(), 0.5),
+            percentile(v, 0.99)
+        );
     }
     // Baselines: what loading costs when the content is deserialised.
     let t = Instant::now();
@@ -270,7 +364,12 @@ fn bench(root: &Path, name: &str, iters: usize) {
                 if !subs.is_empty() && rng.below(50) == 0 {
                     format!("{}.{}", rng.label(), subs[rng.below(subs.len())])
                 } else if !keywords.is_empty() && (names.is_empty() || rng.below(10) == 0) {
-                    format!("{}{}{}.com", rng.label(), keywords[rng.below(keywords.len())], rng.label())
+                    format!(
+                        "{}{}{}.com",
+                        rng.label(),
+                        keywords[rng.below(keywords.len())],
+                        rng.label()
+                    )
                 } else {
                     let i = rng.below(names.len());
                     let n = names[i];
@@ -284,10 +383,17 @@ fn bench(root: &Path, name: &str, iters: usize) {
             .collect();
         let tlds = ["com", "net", "org", "io", "xyz", "dev", "app", "co.uk"];
         let misses: Vec<String> = (0..iters)
-            .map(|_| loop {
-                let q = format!("{}.{}.{}", rng.label(), rng.label(), tlds[rng.below(tlds.len())]);
-                if !reference.domain(&q) {
-                    break q;
+            .map(|_| {
+                loop {
+                    let q = format!(
+                        "{}.{}.{}",
+                        rng.label(),
+                        rng.label(),
+                        tlds[rng.below(tlds.len())]
+                    );
+                    if !reference.domain(&q) {
+                        break q;
+                    }
                 }
             })
             .collect();
@@ -296,7 +402,10 @@ fn bench(root: &Path, name: &str, iters: usize) {
                 .iter()
                 .filter(|q| m.match_domain(q.as_bytes()).is_some() != reference.domain(q))
                 .count();
-            let wrong = queries.iter().filter(|q| reference.domain(q) != expect).count();
+            let wrong = queries
+                .iter()
+                .filter(|q| reference.domain(q) != expect)
+                .count();
             let t = Instant::now();
             let mut count = 0usize;
             for q in queries.iter() {
@@ -336,7 +445,9 @@ fn bench(root: &Path, name: &str, iters: usize) {
     }
     for family in [4u8, 6] {
         let ranges: Vec<(u128, u128)> = if family == 4 {
-            c.v4.iter().map(|(s, e)| (u128::from(*s), u128::from(*e))).collect()
+            c.v4.iter()
+                .map(|(s, e)| (u128::from(*s), u128::from(*e)))
+                .collect()
         } else {
             c.v6.clone()
         };
@@ -366,15 +477,21 @@ fn bench(root: &Path, name: &str, iters: usize) {
             .map(|_| {
                 let (s, e) = ranges[rng.below(ranges.len())];
                 let span = e - s;
-                let off = if span == u128::MAX { 0 } else { (u128::from(rng.next()) << 64 | u128::from(rng.next())) % (span + 1) };
+                let off = if span == u128::MAX {
+                    0
+                } else {
+                    (u128::from(rng.next()) << 64 | u128::from(rng.next())) % (span + 1)
+                };
                 addr(s + off)
             })
             .collect();
         let misses: Vec<IpAddr> = (0..iters)
-            .map(|_| loop {
-                let v = wide(&mut rng);
-                if !contains(v) {
-                    break addr(v);
+            .map(|_| {
+                loop {
+                    let v = wide(&mut rng);
+                    if !contains(v) {
+                        break addr(v);
+                    }
                 }
             })
             .collect();
@@ -418,8 +535,12 @@ fn current_policy_match(c: &Canonical, queries: &[String]) {
     let t = Instant::now();
     let mut count = 0usize;
     for q in &queries[..n] {
-        let hit = exact.iter().any(|d| meshway_policy::domain_name_matches(q, d))
-            || suffix.iter().any(|s| meshway_policy::domain_suffix_matches(q, s));
+        let hit = exact
+            .iter()
+            .any(|d| meshway_policy::domain_name_matches(q, d))
+            || suffix
+                .iter()
+                .any(|s| meshway_policy::domain_suffix_matches(q, s));
         count += usize::from(black_box(hit));
     }
     println!(
@@ -462,7 +583,13 @@ fn current_json_load(_: &Path, _: &str) {}
 fn memory(root: &Path, name: &str, handles: usize, mode: &str, ext: &str) {
     let path = root.join("out").join(format!("{name}.{ext}"));
     let (_, _, c) = load_canonical(root, name);
-    let probes: Vec<String> = c.suffix.iter().chain(&c.exact).step_by(97).cloned().collect();
+    let probes: Vec<String> = c
+        .suffix
+        .iter()
+        .chain(&c.exact)
+        .step_by(97)
+        .cloned()
+        .collect();
     let before = rss();
     let shared = mmap(&path);
     let sets: Vec<RuleSet> = (0..handles)
@@ -500,7 +627,17 @@ fn rss() -> String {
     if let Ok(s) = std::fs::read_to_string("/proc/self/smaps_rollup") {
         return s
             .lines()
-            .filter(|l| ["Rss:", "Pss:", "Shared_Clean:", "Private_Clean:", "Private_Dirty:"].iter().any(|k| l.starts_with(k)))
+            .filter(|l| {
+                [
+                    "Rss:",
+                    "Pss:",
+                    "Shared_Clean:",
+                    "Private_Clean:",
+                    "Private_Dirty:",
+                ]
+                .iter()
+                .any(|k| l.starts_with(k))
+            })
             .map(|l| l.split_whitespace().collect::<Vec<_>>().join(" "))
             .collect::<Vec<_>>()
             .join(", ");

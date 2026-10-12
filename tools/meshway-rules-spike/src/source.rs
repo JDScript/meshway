@@ -335,7 +335,9 @@ pub fn canonical_domain(name: &str) -> Option<String> {
                 && label.len() <= 63
                 && !label.starts_with('-')
                 && !label.ends_with('-')
-                && label.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+                && label
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-')
         });
     ok.then_some(name)
 }

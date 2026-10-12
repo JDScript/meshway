@@ -187,7 +187,8 @@ pub fn build_with(c: &Canonical, hashed: bool) -> Vec<u8> {
         v6.extend(s.to_le_bytes());
         v6.extend(e.to_le_bytes());
     }
-    let mut sections: Vec<(u32, Vec<u8>)> = vec![(DOMAINS, fst), (KEYWORDS, kw), (IPV4, v4), (IPV6, v6)];
+    let mut sections: Vec<(u32, Vec<u8>)> =
+        vec![(DOMAINS, fst), (KEYWORDS, kw), (IPV4, v4), (IPV6, v6)];
     if hashed {
         sections.push((DOMAIN_HASH, hash_index(&keys)));
     }
@@ -369,12 +370,14 @@ impl RuleSet {
             range: found.get(&kind).cloned().unwrap_or(0..0),
         };
         let domains = fst::Map::new(slice(DOMAINS)).map_err(|_| Invalid("fst"))?;
-        if domains.len() as u64 > u64::from(counts[0]) + u64::from(counts[1]) + u64::from(counts[5]) {
+        if domains.len() as u64 > u64::from(counts[0]) + u64::from(counts[1]) + u64::from(counts[5])
+        {
             return Err(Invalid("domain count"));
         }
         let v4 = slice(IPV4);
         let v6 = slice(IPV6);
-        if v4.as_ref().len() != counts[3] as usize * 8 || v6.as_ref().len() != counts[4] as usize * 32
+        if v4.as_ref().len() != counts[3] as usize * 8
+            || v6.as_ref().len() != counts[4] as usize * 32
         {
             return Err(Invalid("ip count"));
         }
@@ -433,7 +436,10 @@ impl RuleSet {
 
     /// O(n) checks a loader may skip for digest-verified artifacts.
     pub fn verify(&self) -> Result<(), Invalid> {
-        self.domains.as_fst().verify().map_err(|_| Invalid("fst checksum"))?;
+        self.domains
+            .as_fst()
+            .verify()
+            .map_err(|_| Invalid("fst checksum"))?;
         let v4 = self.v4.as_ref();
         let mut prev: Option<u32> = None;
         for i in 0..v4.len() / 8 {
@@ -579,7 +585,9 @@ impl Reference<'_> {
     pub fn domain(&self, name: &str) -> bool {
         self.c.exact.contains(name)
             || label_suffixes(name).any(|s| self.c.suffix.contains(s))
-            || label_suffixes(name).skip(1).any(|s| self.c.subdomain.contains(s))
+            || label_suffixes(name)
+                .skip(1)
+                .any(|s| self.c.subdomain.contains(s))
             || self.c.keyword.iter().any(|k| name.contains(k.as_str()))
     }
     pub fn ip(&self, addr: IpAddr) -> bool {
@@ -603,7 +611,11 @@ pub fn v4_prefix_count(ranges: &[(u32, u32)]) -> usize {
     for &(s, e) in ranges {
         let (mut s, e) = (u64::from(s), u64::from(e) + 1);
         while s < e {
-            let mut size = if s == 0 { 1u64 << 32 } else { s & s.wrapping_neg() };
+            let mut size = if s == 0 {
+                1u64 << 32
+            } else {
+                s & s.wrapping_neg()
+            };
             while s + size > e {
                 size >>= 1;
             }
