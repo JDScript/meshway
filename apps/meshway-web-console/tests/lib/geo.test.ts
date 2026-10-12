@@ -69,36 +69,30 @@ test("an address's place and network, in full and short, or why they are not kno
   assert.equal(shortGeoText({ kind: "pending" }), null)
 })
 
-test("a node's addresses: those the server does not look up are not public, the location's is", () => {
+test("a node's addresses: only the server's public ones are public, the location's is", () => {
   const derived: DerivedNodeState = {
-    ipInfo: {
-      "192.168.1.20": {
-        geoip: { status: "notApplicable", reason: "nonPublicAddress" },
-        asn: { status: "notApplicable", reason: "nonPublicAddress" },
-      },
-      "198.51.100.42": {
-        geoip: { status: "unavailable", reason: "datasetUnavailable" },
-        asn: { status: "unavailable", reason: "datasetUnavailable" },
-      },
+    addressScope: {
+      "100.64.0.1": "mesh",
+      "192.168.1.20": "nonPublic",
+      "198.51.100.42": "public",
     },
-    locationAbsent: "datasetUnavailable",
+    locationAbsent: "ambiguousObservation",
   }
   const addresses = nodeAddresses(derived)
   assert.equal(addresses.location, null)
-  assert.equal(addresses.locationAbsent, "datasetUnavailable")
+  assert.equal(addresses.locationAbsent, "ambiguousObservation")
   assert.deepEqual(
     [...addresses.scopes],
     [
+      ["100.64.0.1", "notPublic"],
       ["192.168.1.20", "notPublic"],
       ["198.51.100.42", "public"],
     ]
   )
   const located = nodeAddresses({
-    ipInfo: {},
+    addressScope: {},
     location: {
       address: "198.51.100.42",
-      data: {},
-      datasetId: "a87ed054-27b2-4028-8f0a-726aa2d79f5e",
       endpointSource: "stun",
       observedAt: "2026-10-03T12:00:00Z",
       expiresAt: "2026-10-03T12:00:30Z",

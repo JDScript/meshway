@@ -179,6 +179,9 @@ pub(crate) fn inventory_in_transaction(
             network_id: network,
             registered_at_ms: registered as u64,
             hostname: settings.hostname.clone(),
+            dns_name: meshway_configuration::node_dns_name(&settings.hostname, &cfg.dns.domain)
+                .map_err(|_| Error::decode("configuration node DNS name"))?,
+            magic_dns: cfg.dns.magic_dns,
             enabled: settings.enabled,
             identity: settings.identity.clone(),
             addresses: settings.addresses.clone(),

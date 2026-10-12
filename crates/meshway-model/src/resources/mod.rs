@@ -236,43 +236,48 @@ pub struct IpInfo {
 crate::string_enum! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
-/// Reason the Server cannot derive a current approximate Node location.
+/// Reason the Server names no current location address for a Node.
 pub enum LocationAbsentReason {
     /// No eligible local underlay public-IP observation is available.
     NoObservation,
     /// Eligible observations have expired and cannot support a current location.
     ObservationExpired,
-    /// No usable geographic dataset is available.
-    DatasetUnavailable,
-    /// The geographic dataset has no result for the eligible observed address.
-    NotInDataset,
-    /// The geographic lookup failed to produce a valid result.
-    LookupFailed,
-    /// Eligible observations do not support a consistent location.
+    /// More than one distinct address is eligible at the highest selection rank.
     AmbiguousObservation,
 }
 }
 
 crate::object! {
-#[derive(Clone, Debug, PartialEq)]
-/// Server-derived approximate location retaining the selected local observation's source and deadline.
-pub struct GeoObservation {
-    /// Eligible observed public underlay IP used for the geographic lookup.
+#[derive(Clone, Debug, PartialEq, Eq)]
+/// The local public underlay observation the Node's location is derived from;
+/// the Server performs no geographic lookup for State.
+pub struct LocationObservation {
+    /// Eligible observed public underlay IP.
     pub address: String,
     /// Actual socket whose endpoint observation supplies the address.
     pub source_socket_id: String,
     /// Source socket resource generation associated with the observation.
     pub source_generation: crate::Sequence,
-    /// Immutable geographic dataset artifact used to derive the location.
-    pub dataset_id: ArtifactId,
-    /// Geographic metadata returned for the selected observed address.
-    pub data: GeoIpData,
     /// Local observation source; configured declarations alone cannot establish a Node location.
     pub endpoint_source: LocationSource,
-    /// Original UTC time of the endpoint observation, not the lookup time.
+    /// Original UTC time of the endpoint observation.
     pub observed_at: DateTime<Utc>,
     /// Original UTC endpoint deadline limiting this location's current validity.
     pub expires_at: DateTime<Utc>,
+}
+}
+
+crate::string_enum! {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+/// Address class of a visible endpoint IP.
+pub enum AddressScope {
+    /// Globally routable unicast address.
+    Public,
+    /// Private, shared, link-local, loopback, documentation or other reserved address.
+    NonPublic,
+    /// A Mesh address of this network.
+    Mesh,
 }
 }
 crate::string_enum! {

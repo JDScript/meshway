@@ -50,7 +50,9 @@
             "netmapUnavailable": null,
             "lease": null,
             "lastSyncAt": null,
-            "serverKey": null
+            "serverKey": null,
+            "dnsName": "bob-phone.mesh.example.com",
+            "magicDNS": true
           }
         ]
       }
@@ -105,7 +107,9 @@
         "netmapUnavailable": null,
         "lease": null,
         "lastSyncAt": null,
-        "serverKey": null
+        "serverKey": null,
+        "dnsName": "bob-phone.mesh.example.com",
+        "magicDNS": true
       }
     }
   },

@@ -2,6 +2,8 @@
 
 网络 DNS 配置。节点名称来自 `nodes[id].hostname`，Mesh 记录地址来自同版 `nodes[id].addresses`。
 
+节点的规范名称为 hostname 加规范化后的 `domain`（小写 ASCII、无结尾点），由节点库存 `NodeInventoryView.dnsName` 给出，同一视图的 `magicDNS` 为本开关；二者随同版配置更新，GET 与 SSE 一致。它是配置名称，不证明节点的系统 resolver 已安装，也不代表其他节点有权解析或访问它。
+
 ## Structure
 
 <!-- schema: DnsConfiguration -->

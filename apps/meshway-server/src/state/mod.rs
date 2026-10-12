@@ -1,6 +1,7 @@
 //! Volatile source reports and read-time projections. All calls are serialized
 //! with commits on the SQLite owner; no HTTP future owns committed effects.
 pub(crate) mod connectivity;
+pub(crate) mod derived;
 pub(crate) mod exit;
 pub mod facts;
 pub mod service;
@@ -9,11 +10,10 @@ pub(crate) mod validation;
 pub mod wake;
 
 use crate::error::Error;
-use crate::resources::GeoIp;
 use chrono::{DateTime, Duration, Utc};
 use meshway_model::{
     Digest, InstanceId, NetmapRef, NetworkId, NodeId, Revision, Sequence, StateEpoch, Version,
-    state::{ResourceRef, SocketNetwork},
+    state::{NodeState, ResourceRef, SocketNetwork},
 };
 use meshway_protocol::state::*;
 use std::collections::{BTreeMap, BTreeSet};
@@ -135,12 +135,7 @@ mod service_tests;
 #[cfg(test)]
 mod tests;
 impl StateHub {
-    pub fn location(
-        &self,
-        admission: &ReportAdmission,
-        geoip: &mut GeoIp,
-        now: DateTime<Utc>,
-    ) -> DerivedNodeState {
+    pub fn location(&self, admission: &ReportAdmission, now: DateTime<Utc>) -> DerivedNodeState {
         let report = self
             .reports
             .get(&(admission.network_id, admission.node_id))
@@ -155,7 +150,7 @@ impl StateHub {
             .map(|stored| VisibleReport::Full {
                 report: Box::new(stored.report.state.clone()),
             });
-        geoip.derive(
+        derived::derive(
             report.as_ref(),
             report.is_some(),
             &admission.mesh_addresses,
@@ -335,18 +330,10 @@ impl StateHub {
         self.wakeups.bump(Some(network));
     }
 
-    pub fn dataset_changed(&mut self) {
-        let networks: BTreeSet<_> = self.reports.keys().map(|(network, _)| *network).collect();
-        for network_id in networks {
-            self.publish_committed(crate::effect::Effect::Resource { network_id });
-        }
-    }
-
     pub fn query(
         &mut self,
         scope: &VisibilityScope,
         nodes: Option<&[NodeId]>,
-        geoip: &mut GeoIp,
         now: DateTime<Utc>,
     ) -> Result<StateView, Error> {
         if scope.expires_at <= now {
@@ -380,41 +367,7 @@ impl StateHub {
         for node_id in selected {
             let stored = self.reports.get(&(scope.network_id, node_id));
             let current = scope.current.get(&node_id);
-            // Order matters: a report past its TTL or a node without a live
-            // instance is expired, whatever that report said. Only a different
-            // live instance makes the report superseded, and only a live
-            // instance's applied reference can mismatch the configuration.
-            let freshness = match (stored, current) {
-                (_, Some(current)) if current.revoked => Freshness::Revoked,
-                (None, _) => Freshness::AwaitingReport,
-                (Some(stored), _) if stored.expires_at <= now => Freshness::Expired,
-                (Some(_), Some(current))
-                    if current
-                        .instance_id
-                        .is_none_or(|_| current.lease_expires_at.is_none_or(|e| e <= now)) =>
-                {
-                    Freshness::Expired
-                }
-                (Some(stored), Some(current))
-                    if current.instance_id != Some(stored.report.instance_id)
-                        || current.instance_generation != Some(stored.instance_generation) =>
-                {
-                    Freshness::Superseded
-                }
-                (Some(stored), Some(current))
-                    if stored
-                        .report
-                        .state
-                        .configuration
-                        .applied
-                        .as_ref()
-                        .is_some_and(|reference| !current.configurations.contains(reference)) =>
-                {
-                    Freshness::ConfigMismatch
-                }
-                (Some(_), None) => Freshness::ConfigMismatch,
-                _ => Freshness::Current,
-            };
+            let freshness = freshness(stored, current, now);
             let report = stored.map(|stored| {
                 if scope.full.contains(&node_id) {
                     let mut report = stored.report.state.clone();
@@ -518,7 +471,7 @@ impl StateHub {
                     }
                 }
             });
-            let derived = geoip.derive(
+            let derived = derived::derive(
                 report.as_ref(),
                 freshness == Freshness::Current,
                 &scope.mesh_addresses,
@@ -548,6 +501,7 @@ impl StateHub {
             );
         }
         let (links, paths) = aggregate(&views, &scope.current, now);
+        let adjacencies = self.adjacencies(scope, &views, now);
         Ok(StateView {
             network_id: scope.network_id,
             state_epoch: self.epoch,
@@ -560,8 +514,162 @@ impl StateHub {
             as_of: now,
             nodes: views,
             links,
+            adjacencies,
             paths,
         })
+    }
+
+    /// The current state of a Node's own report, usable as adjacency evidence
+    /// whatever the caller may read of it.
+    fn executing(
+        &self,
+        scope: &VisibilityScope,
+        node: NodeId,
+        now: DateTime<Utc>,
+    ) -> Option<&NodeState> {
+        let stored = self.reports.get(&(scope.network_id, node))?;
+        let current = scope.current.get(&node)?;
+        (freshness(Some(stored), Some(current), now) == Freshness::Current
+            && current.execution.is_some())
+        .then_some(&stored.report.state)
+    }
+
+    /// One conclusion per pair the caller already sees: at least one endpoint
+    /// is fully visible and both are visible, and one of them is selected.
+    /// Both endpoints' reports decide it, so trimming one report for the
+    /// caller does not change the conclusion.
+    fn adjacencies(
+        &self,
+        scope: &VisibilityScope,
+        selected: &BTreeMap<NodeId, NodeStateView>,
+        now: DateTime<Utc>,
+    ) -> Vec<AggregatedAdjacency> {
+        let mut pairs = BTreeSet::new();
+        for ((network, node), stored) in &self.reports {
+            if *network != scope.network_id || !scope.visible.contains(node) {
+                continue;
+            }
+            let state = &stored.report.state;
+            for peer in state.links.keys().chain(state.adjacencies.keys()) {
+                if peer != node
+                    && scope.visible.contains(peer)
+                    && (scope.full.contains(node) || scope.full.contains(peer))
+                    && (selected.contains_key(node) || selected.contains_key(peer))
+                {
+                    pairs.insert(((*node).min(*peer), (*node).max(*peer)));
+                }
+            }
+        }
+        pairs
+            .into_iter()
+            .map(|(a, b)| AggregatedAdjacency {
+                a,
+                b,
+                status: connection(
+                    self.executing(scope, a, now),
+                    self.executing(scope, b, now),
+                    a,
+                    b,
+                    now,
+                ),
+            })
+            .collect()
+    }
+}
+
+/// Order matters: a report past its TTL or a node without a live instance is
+/// expired, whatever that report said. Only a different live instance makes
+/// the report superseded, and only a live instance's applied reference can
+/// mismatch the configuration.
+fn freshness(
+    stored: Option<&StoredReport>,
+    current: Option<&CurrentNode>,
+    now: DateTime<Utc>,
+) -> Freshness {
+    match (stored, current) {
+        (_, Some(current)) if current.revoked => Freshness::Revoked,
+        (None, _) => Freshness::AwaitingReport,
+        (Some(stored), _) if stored.expires_at <= now => Freshness::Expired,
+        (Some(_), Some(current))
+            if current
+                .instance_id
+                .is_none_or(|_| current.lease_expires_at.is_none_or(|e| e <= now)) =>
+        {
+            Freshness::Expired
+        }
+        (Some(stored), Some(current))
+            if current.instance_id != Some(stored.report.instance_id)
+                || current.instance_generation != Some(stored.instance_generation) =>
+        {
+            Freshness::Superseded
+        }
+        (Some(stored), Some(current))
+            if stored
+                .report
+                .state
+                .configuration
+                .applied
+                .as_ref()
+                .is_some_and(|reference| !current.configurations.contains(reference)) =>
+        {
+            Freshness::ConfigMismatch
+        }
+        (Some(_), None) => Freshness::ConfigMismatch,
+        _ => Freshness::Current,
+    }
+}
+
+/// Channels decide first: an authenticated, unexpired channel reported by one
+/// endpoint is a connection unless the other endpoint reports the same
+/// channel differently. Without one, `unreachable` from either endpoint wins
+/// over `idle`; no current report says nothing.
+fn connection(
+    a_state: Option<&NodeState>,
+    b_state: Option<&NodeState>,
+    a: NodeId,
+    b: NodeId,
+    now: DateTime<Utc>,
+) -> AdjacencyConnection {
+    use meshway_model::state::{AdjacencyStatus, LinkPhase, LinkState};
+    fn links(state: Option<&NodeState>, peer: NodeId) -> Vec<&LinkState> {
+        state
+            .and_then(|state| state.links.get(&peer))
+            .map(|links| links.iter().collect())
+            .unwrap_or_default()
+    }
+    let (from_a, from_b) = (links(a_state, b), links(b_state, a));
+    let agrees = |link: &LinkState, other: &[&LinkState]| {
+        other.iter().all(|seen| {
+            seen.link_id != link.link_id
+                || (seen.transport == link.transport
+                    && seen.phase == link.phase
+                    && seen.initiator_node_id == link.initiator_node_id)
+        })
+    };
+    let channel =
+        |link: &LinkState| link.phase == LinkPhase::Authenticated && link.expires_at > now;
+    if from_a
+        .iter()
+        .any(|link| channel(link) && agrees(link, &from_b))
+        || from_b
+            .iter()
+            .any(|link| channel(link) && agrees(link, &from_a))
+    {
+        return AdjacencyConnection::Connected;
+    }
+    if from_a.iter().chain(&from_b).any(|link| channel(link)) {
+        return AdjacencyConnection::Unknown;
+    }
+    let statuses: Vec<_> = [(a_state, b), (b_state, a)]
+        .into_iter()
+        .filter_map(|(state, peer)| state?.adjacencies.get(&peer).copied())
+        .collect();
+    if statuses.contains(&AdjacencyStatus::Unreachable) {
+        AdjacencyConnection::Unreachable
+    } else if statuses.contains(&AdjacencyStatus::Idle) {
+        AdjacencyConnection::Idle
+    } else {
+        AdjacencyConnection::Unknown
     }
 }
 
@@ -662,7 +770,13 @@ fn aggregate(
                 }
             }
         }
-        for (path_id, state) in &report.paths {
+        // Only current observations: a path is the circuit in use now.
+        let current = view.freshness == Freshness::Current && executing;
+        for (path_id, state) in report
+            .paths
+            .iter()
+            .filter(|(_, path)| current && path.expires_at > now)
+        {
             paths.push(AggregatedPath {
                 path_id: path_id.clone(),
                 reporter: reference.clone(),

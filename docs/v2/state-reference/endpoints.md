@@ -85,11 +85,11 @@ configured 的地址可以是配置中的域名加端口。interface／stun 必�
 
 peer 验证记录属于实际发起方及对应 link，绑定使用的候选、时间和通道。B 自报自己有一个 STUN endpoint，不能直接把它标成“对所有节点 verified”；对 A 的成功也不能当作对 C 的可达证明。
 
-## GeoIP／ASN
+## 地址类别与位置依据
 
-Server 从这些可见 IP 派生 [ipInfo](/v2/state-reference/ip-info)，包含独立的 GeoIP／ASN 结果、版本和查询时间。原始 Node 报告不接收可信地理／ASN 自声明。
+Server 从这些可见 IP 派生 [addressScope 与 location](/v2/state-reference/ip-info)：每个字面 IP 的类别（public／nonPublic／mesh），以及节点位置所依据的那个本机公网观测。State 不做 GeoIP／ASN 查询，原始 Node 报告也不接收地理／ASN 自声明。
 
-公网 configured 地址可展示其入口网络信息，但不自动作为设备位置；节点 location／自动地区方案仅用合格本机观测。私网、Mesh 地址、缺数据和过期观测分别表达，不填 AS0 或虚构坐标。
+公网 configured 地址是 `public`，但不自动作为设备位置；`location` 仅用合格的 STUN／interface 观测，多个地址按[选择规则](/v2/state-reference/ip-info#location)取一个或报告 `ambiguousObservation`。
 
 ## Peer 投影
 

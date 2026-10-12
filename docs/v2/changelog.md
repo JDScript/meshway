@@ -4,7 +4,7 @@
 
 ## 未发布
 
-wire 6、IPC 8、`compilerVersion` 不变；Server schema 版本 6（F4a 新增 `rule_set_record_heads`，R2d 新增 `rule_set_catalog_checks` 并允许回收 artifact；开发环境重新初始化数据目录）。HTTP 契约：`SyncRequest` 新增可省略的 `lease`；`listRuleSetCatalog` 描述更新（无字段变化）。
+wire 6、IPC 8、`compilerVersion` 不变；Server schema 版本 6（F4a 新增 `rule_set_record_heads`，R2d 新增 `rule_set_catalog_checks` 并允许回收 artifact；开发环境重新初始化数据目录）。HTTP 契约：`SyncRequest` 新增可省略的 `lease`；`listRuleSetCatalog` 描述更新（无字段变化）；S3 的 State／库存／诊断变化见下。
 
 规则集收尾（R2d）：
 
@@ -40,6 +40,17 @@ alpha.4 代码审阅修复（F4a）：
 - 文档：`dataplane.md` 出口投影截止改为流 idle 与 circuit 生命期、随租约与角色 generation；`execution.md` 改为节点已消费 `sync`。
 
 验证：Planck 16 行矩阵 `20261012T195053Z-bc48b6cc` 全部通过（`exit/off` 第 10 阶段含跨关联到期的 TCP／UDP 持有流）；证据 `.meshway/validation/f4a/`。
+
+Console 提出的 Server 侧欠账（S3）：
+
+- 相邻连接结论：`StateView.adjacencies`（与 `state.delta.adjacencies`）每对节点一条 `{a, b, status: connected | idle | unreachable | unknown}`，由 Server 用两端各自的当前报告判定（含调用者读不到的完整报告），只列调用者已能看到的节点对；成员与 Owner 对同一对得到相同结论，`links` 仍按权限保留为诊断证据。见 [Adjacencies](/v2/state-reference/network#adjacencies)。
+- 节点 Mesh DNS 名称：`NodeInventoryView.dnsName`（hostname 加规范化 `dns.domain`）与 `magicDNS`，与库存同一配置版本，GET 与 SSE `entities` 一致。
+- State 不再返回 GeoIP／ASN：`derived.ipInfo` 换成 `addressScope: {ip: public | nonPublic | mesh}`；`derived.location` 为 `LocationObservation {address, endpointSource, observedAt, expiresAt, sourceSocketId, sourceGeneration}`（去掉 `data`／`datasetId`，不依赖数据集），多个合格地址按 STUN 先于 interface、IPv4 先于 IPv6 取最高等级，该等级有多个地址时为 `ambiguousObservation`；`LocationAbsentReason` 只剩 `noObservation`／`observationExpired`／`ambiguousObservation`；OpenAPI 删除 `IpInfo`、`GeoObservation`、`GeoIpData`、`LookupResult_*` 等组件。数据集只留给自动方案与 `ip-datasets lookup`，导入数据集不再产生 State 事件。见[地址类别与位置依据](/v2/state-reference/ip-info)。
+- 业务路径：Node 报告参与的已建立业务 circuit 为 `NodeState.paths`（完整路径、本节点角色、`netmap`；端点 `peerConfirmed`、中继 `sent`；每份最多 64 条，`STATE_MAX_PATHS`），Server 校验参与与角色位置后接受（此前拒绝任何非空 `paths`），`StateView.paths` 只聚合当前未到期的路径。此前 A→R→B 持续流期间三节点都报 `paths: {}`、links `businessDependencies: 1`（矩阵 `20261012T195053Z-bc48b6cc` `udp-resolved` 行的 `state-traffic-*.json`）；fixture 的承载检查现在要求三节点各报告 A→R→B 路径及自身角色。见 [PathState](/v2/state-reference/resources#paths)。
+- 配置校验：`edge_transport_unavailable` 一次报出全部受影响的（Mesh 路由规则，边），一条路由要经过的每条无承载边各一条，上限 64 条；block 组网规则写了 `transports` 或 `keepalive: true` 时接受并给出警告 `ineffective_block_option`（`params.field`）。见[配置问题](/v2/api/problems#configuration-issue)。
+- 批量路径检测（一个来源到所有节点）未做，仍按目的地逐个调用 `evaluateConfiguration`。
+
+验证：Planck 16 行矩阵 `20261012T220402Z-33d41c74` 14 行通过（含新的 State 路径检查）；`exit/off`、`netmap/expiry` 失败，同一窗口 main `1852b477` 复跑这两行（`20261012T224249Z-0dc077d7`）同样失败，见[验收范围](/v2/node/validation#traffic-anchor)。
 
 ## v0.1.0-alpha.4
 

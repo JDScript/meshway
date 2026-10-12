@@ -141,7 +141,7 @@ impl Fixture {
                 "listeners":{},"sockets":{socket_id:current_physical},"links":{},"adjacencies":{},"paths":{},"selection":{"appliedProfile":null},"probes":[],"problems":[] });
             let node = id::<NodeId>(n);
             let view: StateView = serde_json::from_value(json!({ "networkId":id::<meshway_model::NetworkId>(100),"stateEpoch":id::<meshway_model::StateEpoch>(110),"sequence":20,"configurationRevision":6,"asOf":"1970-01-01T00:00:20Z",
-                "nodes":{node.to_string():{"hostname":role.name(),"instanceId":id::<InstanceId>(n+10),"reportSequence":20,"observedAt":"1970-01-01T00:00:20Z","receivedAt":"1970-01-01T00:00:20Z","reportExpiresAt":"1970-01-01T00:01:00Z","lastAuthenticatedAt":"1970-01-01T00:00:20Z","freshness":"current","report":{"view":"full","report":report},"derived":{"ipInfo":{},"location":null,"locationAbsent":null}}},"links":[],"paths":[] })).unwrap();
+                "nodes":{node.to_string():{"hostname":role.name(),"instanceId":id::<InstanceId>(n+10),"reportSequence":20,"observedAt":"1970-01-01T00:00:20Z","receivedAt":"1970-01-01T00:00:20Z","reportExpiresAt":"1970-01-01T00:01:00Z","lastAuthenticatedAt":"1970-01-01T00:00:20Z","freshness":"current","report":{"view":"full","report":report},"derived":{"addressScope":{},"location":null,"locationAbsent":null}}},"links":[],"adjacencies":[],"paths":[] })).unwrap();
             current.insert(
                 node,
                 Current {

@@ -109,6 +109,7 @@ function applyStateDelta(
       delta.configurationRevision ?? state.configurationRevision,
     nodes: replaceEntries(state.nodes, delta.updated, delta.removed),
     links: delta.links,
+    adjacencies: delta.adjacencies,
     paths: delta.paths,
   }
 }

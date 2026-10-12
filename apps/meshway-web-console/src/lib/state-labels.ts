@@ -167,9 +167,6 @@ export const reporterRoleLabel: Record<ReporterRole, () => string> = {
 export const locationAbsentLabel: Record<LocationAbsentReason, () => string> = {
   noObservation: () => m.state_location_no_observation(),
   observationExpired: () => m.state_location_observation_expired(),
-  datasetUnavailable: () => m.state_location_dataset_unavailable(),
-  notInDataset: () => m.state_location_not_in_dataset(),
-  lookupFailed: () => m.state_location_lookup_failed(),
   ambiguousObservation: () => m.state_location_ambiguous(),
 }
 

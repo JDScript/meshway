@@ -8,13 +8,13 @@ fn legacy_unicode_socket_ids_remain_full_facts_but_are_not_automatic_references(
     report.state.listeners.get_mut("udp").unwrap().socket_ids = vec!["旧socket".into()];
     let mut hub = StateHub::new().unwrap();
     hub.accept_report(&admission, report, now).unwrap();
-    let full = hub.query(&scope, None, &mut GeoIp::default(), now).unwrap();
+    let full = hub.query(&scope, None, now).unwrap();
     let Some(VisibleReport::Full { report }) = &full.nodes[&admission.node_id].report else {
         panic!();
     };
     assert!(report.sockets.contains_key("旧socket"));
     scope.full.clear();
-    let peer = hub.query(&scope, None, &mut GeoIp::default(), now).unwrap();
+    let peer = hub.query(&scope, None, now).unwrap();
     let Some(VisibleReport::Peer { report }) = &peer.nodes[&admission.node_id].report else {
         panic!();
     };
@@ -28,7 +28,7 @@ fn exact_resource_disclosure_and_instance_generation_fence_old_reports() {
     hub.accept_report(&admission, report.clone(), now).unwrap();
     scope.full.clear();
     scope.endpoint_resources = Some(BTreeMap::new());
-    let view = hub.query(&scope, None, &mut GeoIp::default(), now).unwrap();
+    let view = hub.query(&scope, None, now).unwrap();
     let Some(VisibleReport::Peer { report: peer }) = &view.nodes[&admission.node_id].report else {
         panic!();
     };
@@ -37,7 +37,7 @@ fn exact_resource_disclosure_and_instance_generation_fence_old_reports() {
         admission.node_id,
         BTreeSet::from([ResourceRef::Listener { key: "udp".into() }]),
     )]));
-    let view = hub.query(&scope, None, &mut GeoIp::default(), now).unwrap();
+    let view = hub.query(&scope, None, now).unwrap();
     let Some(VisibleReport::Peer { report: peer }) = &view.nodes[&admission.node_id].report else {
         panic!();
     };
@@ -56,7 +56,7 @@ fn exact_resource_disclosure_and_instance_generation_fence_old_reports() {
         .get_mut(&admission.node_id)
         .unwrap()
         .instance_generation = Some(admission.instance_generation);
-    let view = hub.query(&scope, None, &mut GeoIp::default(), now).unwrap();
+    let view = hub.query(&scope, None, now).unwrap();
     assert_eq!(
         view.nodes[&admission.node_id].freshness,
         Freshness::Superseded
@@ -77,10 +77,7 @@ fn freshness_distinguishes_an_absent_instance_from_a_replaced_one() {
     let mut hub = StateHub::new().unwrap();
     hub.accept_report(&admission, report.clone(), now).unwrap();
     let freshness = |hub: &mut StateHub, scope: &VisibilityScope, at| {
-        hub.query(scope, None, &mut GeoIp::default(), at)
-            .unwrap()
-            .nodes[&node]
-            .freshness
+        hub.query(scope, None, at).unwrap().nodes[&node].freshness
     };
     assert_eq!(freshness(&mut hub, &scope, now), Freshness::Current);
     // The instance was released or its lease ran out: the node is gone, not
@@ -121,9 +118,8 @@ fn retry_is_idempotent_without_refreshing_report_or_endpoint() {
         hub.accept_report(&admission, conflicting, now).unwrap_err(),
         Error::StateConflict
     );
-    let mut geo = GeoIp::default();
     let view = hub
-        .query(&scope, None, &mut geo, now + Duration::seconds(61))
+        .query(&scope, None, now + Duration::seconds(61))
         .unwrap();
     assert_eq!(view.nodes[&admission.node_id].freshness, Freshness::Expired);
     assert_eq!(view.nodes[&admission.node_id].received_at, Some(now));
@@ -142,7 +138,7 @@ fn snapshot_replacement_deletes_resources_and_stale_instance_rejected() {
     report.state.sockets.clear();
     report.state.listeners.clear();
     hub.accept_report(&admission, report.clone(), now).unwrap();
-    let view = hub.query(&scope, None, &mut GeoIp::default(), now).unwrap();
+    let view = hub.query(&scope, None, now).unwrap();
     let Some(VisibleReport::Full { report: source }) = &view.nodes[&admission.node_id].report
     else {
         panic!()
@@ -156,11 +152,7 @@ fn snapshot_replacement_deletes_resources_and_stale_instance_rejected() {
     let mut restarted = StateHub::new().unwrap();
     assert_ne!(restarted.epoch, hub.epoch);
     assert_eq!(
-        restarted
-            .query(&scope, None, &mut GeoIp::default(), now)
-            .unwrap()
-            .nodes[&admission.node_id]
-            .freshness,
+        restarted.query(&scope, None, now).unwrap().nodes[&admission.node_id].freshness,
         Freshness::AwaitingReport
     );
 }
@@ -205,25 +197,19 @@ fn peer_projection_expires_candidates_and_does_not_leak_interfaces() {
     let mut hub = StateHub::new().unwrap();
     hub.accept_report(&admission, report, now).unwrap();
     scope.full.clear();
-    let view = hub.query(&scope, None, &mut GeoIp::default(), now).unwrap();
+    let view = hub.query(&scope, None, now).unwrap();
     let json = serde_json::to_string(&view).unwrap();
     assert!(!json.contains("secret-interface"));
     assert!(!json.contains("boundAddress"));
     let view = hub
-        .query(
-            &scope,
-            None,
-            &mut GeoIp::default(),
-            now + Duration::seconds(11),
-        )
+        .query(&scope, None, now + Duration::seconds(11))
         .unwrap();
     let Some(VisibleReport::Peer { report }) = &view.nodes[&admission.node_id].report else {
         panic!()
     };
     assert!(report.endpoints.is_empty());
     assert_eq!(
-        hub.query(&scope, Some(&[id(999)]), &mut GeoIp::default(), now)
-            .unwrap_err(),
+        hub.query(&scope, Some(&[id(999)]), now).unwrap_err(),
         Error::NotFound
     );
 }
@@ -276,13 +262,13 @@ fn retained_configuration_context_does_not_keep_old_peer_endpoints_usable() {
     let mut hub = StateHub::new().unwrap();
     hub.accept_report(&admission, report, now).unwrap();
     scope.full.clear();
-    let view = hub.query(&scope, None, &mut GeoIp::default(), now).unwrap();
+    let view = hub.query(&scope, None, now).unwrap();
     let Some(VisibleReport::Peer { report }) = &view.nodes[&admission.node_id].report else {
         panic!()
     };
     assert_eq!(report.endpoints.len(), 1);
     scope.current.get_mut(&admission.node_id).unwrap().execution = None;
-    let view = hub.query(&scope, None, &mut GeoIp::default(), now).unwrap();
+    let view = hub.query(&scope, None, now).unwrap();
     let Some(VisibleReport::Peer { report }) = &view.nodes[&admission.node_id].report else {
         panic!()
     };
@@ -315,13 +301,13 @@ fn link_evidence_requires_a_current_execution_not_only_a_fresh_report() {
     );
     let mut hub = StateHub::new().unwrap();
     hub.accept_report(&admission, report, now).unwrap();
-    let view = hub.query(&scope, None, &mut GeoIp::default(), now).unwrap();
+    let view = hub.query(&scope, None, now).unwrap();
     assert_eq!(view.links.len(), 1);
     assert_eq!(view.links[0].evidence, LinkEvidence::OneSided);
     // The instance lease is still valid and the report is young, but the
     // execution lease lapsed: the channel is no longer current evidence.
     scope.current.get_mut(&admission.node_id).unwrap().execution = None;
-    let view = hub.query(&scope, None, &mut GeoIp::default(), now).unwrap();
+    let view = hub.query(&scope, None, now).unwrap();
     assert_eq!(view.nodes[&admission.node_id].freshness, Freshness::Current);
     assert_eq!(view.links[0].evidence, LinkEvidence::Expired);
 }

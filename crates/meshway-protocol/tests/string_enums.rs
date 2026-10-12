@@ -54,6 +54,8 @@ fn shared_wire_unit_enums_accept_exactly_their_published_strings() {
     string_contract::<model::resources::NotApplicableReason>();
     string_contract::<model::resources::LocationAbsentReason>();
     string_contract::<model::resources::LocationSource>();
+    string_contract::<model::resources::AddressScope>();
+    string_contract::<protocol::state::AdjacencyConnection>();
     string_contract::<configuration::DnsTransport>();
     string_contract::<configuration::RuleSetFormat>();
     string_contract::<configuration::AddressFamily>();

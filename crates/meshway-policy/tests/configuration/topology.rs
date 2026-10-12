@@ -173,3 +173,120 @@ fn route_order_is_retained_and_topology_block_always_wins() {
         id(2)
     ));
 }
+
+#[test]
+fn every_routing_rule_blocked_by_one_edge_is_reported_in_one_validation() {
+    let mut c = constrained_route();
+    c.topology[0].a = format!("node:{}", id(1));
+    c.topology[0].b = format!("node:{}", id(2));
+    c.topology[0].transports = Input::Value(vec![]);
+    c.topology.push(TopologyRule {
+        remark: String::new(),
+        action: TopologyAction::Allow,
+        a: "*".into(),
+        b: "*".into(),
+        transports: Input::Omitted,
+        keepalive: false,
+    });
+    let route = |src: u8, dst: u8, via: u8| MeshRoute {
+        remark: String::new(),
+        src: vec![format!("node:{}", id(src))],
+        dst: vec![format!("node:{}", id(dst))],
+        via: vec![format!("node:{}", id(via))],
+    };
+    c.routing.mesh = vec![route(1, 3, 2), route(3, 1, 2)];
+    let ConfigurationError::Invalid(issues) = normalize(c, &context()).unwrap_err() else {
+        panic!("expected configuration issue");
+    };
+    let mut rules: Vec<_> = issues
+        .iter()
+        .filter(|i| i.params.get("reason") == Some(&"edge_transport_unavailable".into()))
+        .map(|i| i.params["routingRule"].as_str().to_owned())
+        .collect();
+    rules.sort();
+    rules.dedup();
+    assert_eq!(rules, ["/routing/mesh/0", "/routing/mesh/1"], "{issues:?}");
+}
+
+#[test]
+fn every_blocked_edge_of_one_routed_path_is_reported() {
+    let mut c = constrained_route();
+    // One rule covers both edges of 1--2--3.
+    c.topology[0].a = format!("node:{}", id(2));
+    c.topology[0].transports = Input::Value(vec![]);
+    let ConfigurationError::Invalid(issues) = normalize(c, &context()).unwrap_err() else {
+        panic!("expected configuration issue");
+    };
+    let mut edges: Vec<_> = issues
+        .iter()
+        .filter(|i| i.params.get("reason") == Some(&"edge_transport_unavailable".into()))
+        .map(|i| {
+            (
+                i.params["a"].clone(),
+                i.params["b"].clone(),
+                i.params["routingRule"].clone(),
+            )
+        })
+        .collect();
+    edges.sort();
+    assert_eq!(
+        edges,
+        [
+            (
+                id(1).to_string(),
+                id(2).to_string(),
+                "/routing/mesh/0".to_owned()
+            ),
+            (
+                id(2).to_string(),
+                id(3).to_string(),
+                "/routing/mesh/0".to_owned()
+            ),
+        ],
+        "{issues:?}"
+    );
+}
+
+#[test]
+fn block_rule_options_are_accepted_with_a_warning() {
+    let mut c = with_nodes();
+    let rule = |transports, keepalive| TopologyRule {
+        remark: String::new(),
+        action: TopologyAction::Block,
+        a: format!("node:{}", id(1)),
+        b: format!("node:{}", id(2)),
+        transports,
+        keepalive,
+    };
+    c.topology = vec![
+        rule(Input::Value(vec![TransportProtocol::NativeUdp]), false),
+        rule(Input::Value(vec![]), true),
+        rule(Input::Omitted, false),
+    ];
+    let normalized = normalize_with_dependencies(c, &context()).unwrap();
+    let warnings: Vec<_> = normalized
+        .warnings
+        .iter()
+        .map(|w| (w.code, w.path.as_str(), w.params["field"].as_str()))
+        .collect();
+    assert_eq!(
+        warnings,
+        [
+            (
+                IssueCode::IneffectiveBlockOption,
+                "/topology/0/transports",
+                "transports"
+            ),
+            (
+                IssueCode::IneffectiveBlockOption,
+                "/topology/1/transports",
+                "transports"
+            ),
+            (
+                IssueCode::IneffectiveBlockOption,
+                "/topology/1/keepalive",
+                "keepalive"
+            ),
+        ]
+    );
+}
