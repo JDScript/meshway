@@ -182,7 +182,7 @@ Server 为最终出口生成绑定 origin、实际目的范围、出口和完整
 | 32,768 | 92–113 ms | 114–118 ms | 84–104 ms | 1.57 MB | ≤ 4.1 MB | ENOBUFS |
 | 50,000 | 148–179 ms | 174–190 ms | 141–160 ms | 2.39 MB | ≤ 6.4 MB | ENOBUFS |
 
-nft 进程峰值 RSS 约 1.6 KB／区间（16,384 区间 28 MB）。带回显的大批次在 32,768 区间起被 netlink 以 ENOBUFS 拒绝，因此元素替换不回显、以读回核验；16,384 个区间使最坏情况（全为 IPv6）的批次与读回仍低于 1.6 MB，且留出暂存并集（两份方案）的空间。生产路径（release，Planck 隔离 namespace，`large_partitions_install_switch_read_back_and_retire`）在 16,077 个区间、16,034–19,240 条路由时暂存 0.37–0.50 s、提交 0.45–0.57 s、读回 0.07 s、暂停 0.41 s；路由变更按内核监视器的观测分批，不使其通知缓冲溢出。
+nft 进程峰值 RSS 约 1.6 KB／区间（16,384 区间 28 MB）。带回显的大批次在 32,768 区间起被 netlink 以 ENOBUFS 拒绝，因此元素替换不回显、以读回核验；16,384 个区间使最坏情况（全为 IPv6）的批次与读回仍低于 1.6 MB，且留出暂存并集（两份方案）的空间。生产路径（release，Planck 隔离 namespace，`large_partitions_install_switch_read_back_and_retire`）在 16,077 个区间、16,034–19,240 条路由时暂存 0.30–0.45 s、提交 0.38–0.50 s、读回 0.07 s、暂停 0.37 s；路由变更每 64 条等待内核监视器观测，不使其通知缓冲（约 200 条）溢出。
 
 `PathPermit` 仍绑定精确源地址、目的 IP、协议／端口、完整路径、到期与原路径回复。外部许可另有 `exit: ExitPermit`：`family`、`generation`、`destination`（`internet` 或显式 `cidr.prefix`）和按出口索引的 `roles`。范围分类只限制精确目的，不授予范围内其他目的。`ExitRolePlan` 绑定 instance、角色 generation、IPv4 与 masquerade；network／node／publication 和执行截止由外围 target／lease 绑定。职责在能力探测前发布，职责本身不能转发包。
 
