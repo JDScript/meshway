@@ -310,7 +310,13 @@ fn dns_plans(
             continue;
         }
         if let Ok(crate::compile::DnsResolution::PlanRequired { pointer }) =
-            crate::compile::dns_resolution(config, sets, name, node)
+            crate::compile::dns_resolution(
+                config,
+                crate::compile::Exits::Full(config),
+                sets,
+                name,
+                node,
+            )
         {
             check.issue(
                 ConfigurationIssue::new(

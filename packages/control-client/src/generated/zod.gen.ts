@@ -1042,6 +1042,7 @@ export const zSubjectContext = z.strictObject({
 
 export const zProjectedConfiguration = z.strictObject({
   ["configuration"]: zConfigurationView,
+  ["eligibleExits"]: z.array(zNodeId).exactOptional(),
   ["inventory"]: typedMap(z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u")), zTrustedNode, {}),
   ["ruleSets"]: typedMap(z.string(), zRuleSetRef, {}),
   ["selectedProfiles"]: typedMap(z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u")), z.string(), {}),

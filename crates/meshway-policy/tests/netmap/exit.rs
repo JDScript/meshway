@@ -709,3 +709,170 @@ fn compiler_summary(s: &Scenario, at: u8) -> meshway_configuration::evaluation::
         .capture_summary(node(at))
         .unwrap()
 }
+
+/// `1.2.5.0/24 → exit [4, 5]` for source 5: 4 is an eligible exit of the full
+/// configuration, so 5 exits through it or fails closed — never direct — also
+/// when topology isolates 4 or 4 holds no keys (not enrolled, or revoked) and
+/// 5's projection therefore lacks 4. Only a configuration that makes 4
+/// ineligible makes 5 direct. Node, Server preview and signed plan agree.
+#[test]
+fn a_self_naming_source_never_infers_direct_from_a_missing_exit() {
+    let mut s = base(5);
+    s.cfg.access = vec![access(
+        &[sel(5)],
+        &["autogroup:internet".into()],
+        &["tcp:443"],
+        false,
+    )];
+    s.cfg.routing.egress.rules = vec![egress_rule("1.2.5.0/24", exit_action(&[4, 5], &[]))];
+    let isolated = {
+        let mut s = s.clone();
+        s.cfg.topology.push(TopologyRule {
+            remark: String::new(),
+            action: TopologyAction::Block,
+            a: sel(4),
+            b: "*".into(),
+            transports: Input::Omitted,
+            keepalive: false,
+        });
+        s
+    };
+    let unenrolled = {
+        let mut s = s.clone();
+        s.inventory.remove(&node(4));
+        s
+    };
+    let ineligible = {
+        let mut s = s.clone();
+        s.cfg.nodes.get_mut(&node(4)).unwrap().enabled = false;
+        s
+    };
+    let destination: std::net::Ipv4Addr = "1.2.5.8".parse().unwrap();
+    for (name, s, direct) in [
+        ("reachable", &s, false),
+        ("isolated", &isolated, false),
+        ("unenrolled", &unenrolled, false),
+        ("ineligible", &ineligible, true),
+    ] {
+        let compiled = netmaps(s);
+        let netmap = &compiled.nodes[&node(5)].netmap;
+        if name != "reachable" {
+            assert!(
+                !netmap.projection.configuration.nodes.contains_key(&node(4))
+                    || name == "ineligible",
+                "{name}: 4 is outside 5's projection"
+            );
+        }
+        assert_eq!(
+            netmap.projection.eligible_exits,
+            if direct { vec![] } else { vec![node(4)] },
+            "{name}"
+        );
+        let compiler = LocalCompiler::new(netmap, &Default::default());
+        let decision = compiler
+            .decide(
+                node(5),
+                IpAddr::V4(destination),
+                BusinessProtocol::Tcp,
+                port(443),
+            )
+            .unwrap();
+        let plan = netmap.egress.as_ref().unwrap();
+        let captured = compiler
+            .capture()
+            .unwrap()
+            .unwrap()
+            .managed_ipv4
+            .iter()
+            .any(|(start, end)| *start <= destination && destination <= *end);
+        let preview = meshway_policy::compile::plan(PlanRequest {
+            topology: Topology {
+                configuration: &s.cfg,
+                subjects: &s.subjects,
+                inventory: &s.inventory,
+            },
+            rule_sets: &BTreeMap::new(),
+            selected_profiles: &BTreeMap::new(),
+            source: node(5),
+            destination: PlanDestination::Address(IpAddr::V4(destination)),
+            profile: None,
+        })
+        .unwrap();
+        if direct {
+            assert_eq!(decision, LocalDecision::Direct, "{name}");
+            assert_eq!(plan.rules[0].action, EgressAction::Direct, "{name}");
+            assert!(!captured, "{name}");
+            assert_eq!(
+                preview.outcome,
+                meshway_configuration::evaluation::EvaluationOutcome::Direct
+            );
+            continue;
+        }
+        assert_eq!(
+            plan.rules[0].action,
+            EgressAction::Exit {
+                nodes: vec![node(4)],
+                via: vec![]
+            },
+            "{name}"
+        );
+        assert!(captured, "{name}: the exit range stays captured");
+        assert_ne!(
+            preview.outcome,
+            meshway_configuration::evaluation::EvaluationOutcome::Direct,
+            "{name}"
+        );
+        match name {
+            "reachable" => assert!(
+                matches!(&decision, LocalDecision::Permitted(d) if d.target == Target::Exit { nodes: vec![node(4)], via: vec![] }),
+                "{name}: {decision:?}"
+            ),
+            _ => assert!(
+                matches!(decision, LocalDecision::Denied(_)),
+                "{name}: fails closed, got {decision:?}"
+            ),
+        }
+    }
+}
+
+/// `example.com → exit [6, 4, 5]` with 6 a disabled exit: source 5 executes
+/// `[4]` (ineligible exits before it skipped, order kept), so its names have
+/// one exit and the configuration is saved, not `dns_exit_plan_required`.
+#[test]
+fn ineligible_exits_before_a_self_naming_source_leave_its_dns_plan() {
+    let mut s = base(6);
+    let six = s.cfg.nodes.get_mut(&node(6)).unwrap();
+    six.exit_enabled = true;
+    six.enabled = false;
+    s.cfg.access = vec![access(
+        &[sel(5)],
+        &["autogroup:internet".into()],
+        &["tcp:443", "udp:53"],
+        false,
+    )];
+    s.cfg.routing.egress.rules = vec![domain_rule("example.com", exit_action(&[6, 4, 5], &[]))];
+    assert_eq!(
+        dns_resolution(
+            &s.cfg,
+            Exits::Full(&s.cfg),
+            &BTreeMap::new(),
+            "mesh",
+            node(5)
+        )
+        .unwrap(),
+        DnsResolution::Exit {
+            exit: node(4),
+            via: vec![]
+        }
+    );
+    let compiled = netmaps(&s);
+    assert!(matches!(
+        &compiled.nodes[&node(5)].netmap.dns.egress,
+        DnsPlan::ViaExit { service } if service.exit == node(4)
+    ));
+    // 6 is ineligible: the projection only carries 4.
+    assert_eq!(
+        compiled.nodes[&node(5)].netmap.projection.eligible_exits,
+        [node(4)]
+    );
+}

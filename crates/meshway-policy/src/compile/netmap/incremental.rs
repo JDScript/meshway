@@ -30,6 +30,11 @@ pub fn compile_incremental(
     Ok(IncrementalNetmaps { compiled, inputs })
 }
 
+/// Raised when a projection holds more for unchanged inputs (2:
+/// `eligibleExits`): the next recompilation of a network then refreshes every
+/// netmap, and content that did not change keeps its serial.
+const PROJECTION_INPUTS: u32 = 2;
+
 fn fingerprints(
     input: &NetmapInput<'_>,
     index: &project::Index,
@@ -57,6 +62,7 @@ fn fingerprints(
     let global = digest(&(
         (
             NETMAP_COMPILER_VERSION,
+            PROJECTION_INPUTS,
             input.network,
             address_pools,
             defaults,

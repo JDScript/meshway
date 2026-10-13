@@ -35498,7 +35498,7 @@
       },
       "ProjectedConfiguration": {
         "type": "object",
-        "description": "A monotone subset of the full configuration: every rule is an unchanged\nfull-configuration rule in its original relative order, and every Node\ndeclaration is the existing redacted `NodeSettingsView` of a visible Node.",
+        "description": "A monotone subset of the full configuration: every rule is an unchanged\nfull-configuration rule in its original relative order, and every Node\ndeclaration is the existing redacted `NodeSettingsView` of a visible Node.\n`eligibleExits` is the one fact taken from outside the visible Nodes.",
         "required": [
           "configuration",
           "subjects",
@@ -35511,6 +35511,13 @@
           "configuration": {
             "$ref": "#/components/schemas/ConfigurationView",
             "description": "Redacted configuration restricted to visible Nodes and the rules that can affect them."
+          },
+          "eligibleExits": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NodeId"
+            },
+            "description": "Ascending Nodes the full configuration makes eligible exits (enabled\nwith `exitEnabled`) among those a retained exit set lists ahead of\nanother Node, visible or not. A source named in such a set resolves the\nexits before it against this list only; omitted when empty."
           },
           "inventory": {
             "type": "object",

@@ -183,8 +183,13 @@ impl LocalCompiler {
             &projection.selected_profiles,
             source,
         )?;
-        let named = crate::compile::capture::names_exit(&self.configuration, &profile, source)
-            .then_some(source);
+        let named = crate::compile::capture::names_exit(
+            &self.configuration,
+            self.exits(),
+            &profile,
+            source,
+        )
+        .then_some(source);
         let key = (profile, named);
         let mut partitions = self
             .partitions
@@ -193,9 +198,14 @@ impl LocalCompiler {
         if let Some(partition) = partitions.get(&key) {
             return Ok(partition.clone());
         }
-        let partition =
-            crate::compile::capture::partition(&self.configuration, &self.rule_sets, &key.0, named)
-                .map(Arc::new);
+        let partition = crate::compile::capture::partition(
+            &self.configuration,
+            self.exits(),
+            &self.rule_sets,
+            &key.0,
+            named,
+        )
+        .map(Arc::new);
         partitions.insert(key, partition.clone());
         Ok(partition)
     }
@@ -216,6 +226,7 @@ impl LocalCompiler {
         )?;
         Ok(crate::compile::capture_summary(
             &self.configuration,
+            self.exits(),
             &self.rule_sets,
             &profile,
             Some(source),
@@ -297,7 +308,11 @@ impl LocalCompiler {
             Ok(EgressRuleHit {
                 rule: format!("{prefix}/{index}"),
                 rule_set,
-                action: matching::executed(cfg, rules[index].action.clone().into(), source)?,
+                action: matching::executed(
+                    self.exits(),
+                    rules[index].action.clone().into(),
+                    source,
+                )?,
             })
         };
         let rules_list = &cfg.routing.egress.rules;
@@ -355,9 +370,10 @@ impl LocalCompiler {
             selection_versions: &projection.selection_versions,
             previous: &BTreeMap::new(),
         };
-        let source_local = local::Local::compile(&input, source)?;
+        let source_local = local::Local::compile(&input, self.exits(), source)?;
         let super::super::dns::DnsResolution::Exit { exit, .. } = super::super::dns::resolution(
             &self.configuration,
+            self.exits(),
             &self.rule_sets,
             &source_local.dns.profile,
             source,
@@ -371,7 +387,7 @@ impl LocalCompiler {
             return Ok(None);
         }
         let graph = paths::Graph::projected(input.topology(), &projection.configuration)?;
-        Ok(local::service(&input, &graph, &source_local, source)?.ok())
+        Ok(local::service(&input, self.exits(), &graph, &source_local, source)?.ok())
     }
 
     fn topology(&self) -> Topology<'_> {
@@ -381,6 +397,11 @@ impl LocalCompiler {
             subjects: &projection.subjects,
             inventory: &projection.inventory,
         }
+    }
+
+    /// Exit eligibility from the full configuration, as the Server derived it.
+    pub(super) fn exits(&self) -> matching::Exits<'_> {
+        matching::Exits::Projected(&self.netmap.projection.eligible_exits)
     }
 
     fn graph(&self) -> Result<paths::Graph<'_>, CompileError> {
@@ -405,6 +426,7 @@ impl LocalCompiler {
         local::egress(
             self.netmap.network_id,
             &self.configuration,
+            self.exits(),
             &references,
             &self.partition(source)?,
             source,

@@ -3,7 +3,7 @@
 //! they use, name rules resolve through their one exit, and name rules
 //! through two exits are rejected at the rule.
 use super::*;
-use meshway_policy::compile::{DnsResolution, dns_resolution};
+use meshway_policy::compile::{DnsResolution, Exits, dns_resolution};
 use std::sync::Arc;
 
 fn exit_rule(matcher: serde_json::Value, exit: u8) -> serde_json::Value {
@@ -72,7 +72,14 @@ fn judge(rules: Vec<serde_json::Value>) -> Result<DnsResolution, Vec<(String, St
     match normalize_with_dependencies(network(rules), &context()) {
         Ok(normalized) => {
             let configuration = normalized.configuration;
-            Ok(dns_resolution(&configuration, &sets(&configuration), "mesh", id(1)).unwrap())
+            Ok(dns_resolution(
+                &configuration,
+                Exits::Full(&configuration),
+                &sets(&configuration),
+                "mesh",
+                id(1),
+            )
+            .unwrap())
         }
         Err(ConfigurationError::Invalid(issues)) => Err(issues
             .into_iter()

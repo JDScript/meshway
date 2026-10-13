@@ -26,6 +26,7 @@ object! {
 /// A monotone subset of the full configuration: every rule is an unchanged
 /// full-configuration rule in its original relative order, and every Node
 /// declaration is the existing redacted `NodeSettingsView` of a visible Node.
+/// `eligibleExits` is the one fact taken from outside the visible Nodes.
 pub struct ProjectedConfiguration {
     /// Redacted configuration restricted to visible Nodes and the rules that can affect them.
     pub configuration: ConfigurationView,
@@ -44,4 +45,10 @@ pub struct ProjectedConfiguration {
     /// Persisted selection versions of visible Nodes; each switch increments one.
     #[serde(deserialize_with = "unique_map")]
     pub selection_versions: BTreeMap<NodeId, meshway_model::Version>,
+    /// Ascending Nodes the full configuration makes eligible exits (enabled
+    /// with `exitEnabled`) among those a retained exit set lists ahead of
+    /// another Node, visible or not. A source named in such a set resolves the
+    /// exits before it against this list only; omitted when empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub eligible_exits: Vec<NodeId>,
 } }

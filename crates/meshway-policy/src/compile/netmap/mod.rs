@@ -188,7 +188,10 @@ fn compile_selected(
     ))?;
     let mut locals = BTreeMap::new();
     for id in selected {
-        locals.insert(*id, local::Local::compile(input, *id)?);
+        locals.insert(
+            *id,
+            local::Local::compile(input, matching::Exits::Full(input.configuration), *id)?,
+        );
     }
     local::dns(input, graph, members, &mut locals)?;
     let mut nodes = BTreeMap::new();

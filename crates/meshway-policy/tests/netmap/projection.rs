@@ -125,3 +125,25 @@ fn islands_see_only_themselves_and_their_access_peers() {
     let dialers = &compiled.nodes[&node(1)].netmap.dialers;
     assert!(dialers.values().all(|d| d.peer == node(2)) && !dialers.is_empty());
 }
+
+/// `eligibleExits` is omitted when empty, so a netmap stored before the field
+/// existed keeps its bytes and digest; a present list round-trips.
+#[test]
+fn eligible_exits_are_omitted_when_empty_and_round_trip() {
+    let mut s = base(5);
+    let compiled = netmaps(&s);
+    let netmap = &compiled.nodes[&node(1)].netmap;
+    assert!(netmap.projection.eligible_exits.is_empty());
+    let text = serde_json::to_value(&netmap.projection).unwrap();
+    assert!(text.get("eligibleExits").is_none());
+    let decoded: ProjectedConfiguration = serde_json::from_value(text).unwrap();
+    assert_eq!(&decoded, &netmap.projection);
+    s.cfg.routing.egress.rules = vec![egress_rule("1.2.5.0/24", exit_action(&[4, 1], &[]))];
+    let compiled = netmaps(&s);
+    let projection = &compiled.nodes[&node(1)].netmap.projection;
+    assert_eq!(projection.eligible_exits, [node(4)]);
+    let text = serde_json::to_value(projection).unwrap();
+    assert_eq!(text["eligibleExits"], serde_json::json!([node(4)]));
+    let decoded: ProjectedConfiguration = serde_json::from_value(text).unwrap();
+    assert_eq!(&decoded, projection);
+}

@@ -37,6 +37,7 @@ impl Rng {
     }
 }
 
+#[derive(Clone)]
 pub(super) struct Scenario {
     pub cfg: NetworkConfiguration,
     pub subjects: SubjectContext,
@@ -357,6 +358,8 @@ pub(super) fn generated(seed: u64) -> Scenario {
         egress_rule("10.0.0.0/8", RuleAction::Direct),
         egress_rule("10.20.0.0/16", exit_action(&[5, 4], &[])),
         egress_rule("192.168.0.0/16", exit_action(&[4, 5], &[2])),
+        // Source 1 names itself behind 4, which an island hides from it.
+        egress_rule("1.1.0.0/16", exit_action(&[4, 1], &[])),
     ];
     let mut rules: Vec<EgressRule> = candidates
         .iter()

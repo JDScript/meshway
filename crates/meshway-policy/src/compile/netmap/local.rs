@@ -21,6 +21,7 @@ pub(super) struct Local {
 pub(super) fn egress(
     network: NetworkId,
     cfg: &NetworkConfiguration,
+    exits: matching::Exits<'_>,
     references: &BTreeMap<String, meshway_rules::Digest>,
     partition: &capture::Partition,
     node: NodeId,
@@ -57,14 +58,14 @@ pub(super) fn egress(
                 Ok(EgressRuleRef {
                     rule: rule.clone(),
                     action: capture::action(&matching::executed(
-                        cfg,
+                        exits,
                         egress.action.clone().into(),
                         node,
                     )?)?,
                 })
             })
             .collect::<Result<_, CompileError>>()?,
-        fallback: capture::action(&matching::executed(cfg, fallback, node)?)?,
+        fallback: capture::action(&matching::executed(exits, fallback, node)?)?,
         unavailable: partition.as_ref().err().copied(),
     })
 }
@@ -175,11 +176,17 @@ pub(super) fn resolvers(
 }
 
 impl Local {
-    pub fn compile(input: &NetmapInput<'_>, node: NodeId) -> Result<Self, CompileError> {
+    /// `exits` is [`matching::Exits::Full`] on the Server and the
+    /// projection's list on a Node.
+    pub fn compile(
+        input: &NetmapInput<'_>,
+        exits: matching::Exits<'_>,
+        node: NodeId,
+    ) -> Result<Self, CompileError> {
         let cfg = input.configuration;
         let profile = input.profile(node)?;
-        let partition =
-            capture::partition(cfg, input.rule_sets, &profile, Some(node)).map(std::sync::Arc::new);
+        let partition = capture::partition(cfg, exits, input.rule_sets, &profile, Some(node))
+            .map(std::sync::Arc::new);
         let references = input
             .rule_sets
             .iter()
@@ -188,6 +195,7 @@ impl Local {
         let egress = egress(
             input.network,
             cfg,
+            exits,
             &references,
             &partition,
             node,
@@ -199,7 +207,8 @@ impl Local {
         )?;
         let enabled = cfg.nodes[&node].enabled;
         // An exit resolution is completed by [`dns`] into its service.
-        let plan = match super::super::dns::resolution(cfg, input.rule_sets, &profile, node)? {
+        let plan = match super::super::dns::resolution(cfg, exits, input.rule_sets, &profile, node)?
+        {
             DnsResolution::Local => DnsPlan::NoExit,
             _ => DnsPlan::Unavailable {
                 reason: DnsEgressUnavailable::ExitPlanRequired,
@@ -230,8 +239,13 @@ pub(super) fn dns(
     let mut services = Vec::new();
     for &source in members {
         let profile = input.profile(source)?;
-        let resolution =
-            super::super::dns::resolution(input.configuration, input.rule_sets, &profile, source)?;
+        let resolution = super::super::dns::resolution(
+            input.configuration,
+            matching::Exits::Full(input.configuration),
+            input.rule_sets,
+            &profile,
+            source,
+        )?;
         if resolution == DnsResolution::Local
             || (!locals.contains_key(&source)
                 && !matches!(&resolution, DnsResolution::Exit { exit, .. } if locals.contains_key(exit)))
@@ -242,11 +256,18 @@ pub(super) fn dns(
         let local = match locals.get(&source) {
             Some(local) => local,
             None => {
-                temporary = Local::compile(input, source)?;
+                temporary =
+                    Local::compile(input, matching::Exits::Full(input.configuration), source)?;
                 &temporary
             }
         };
-        let plan = match service(input, graph, local, source)? {
+        let plan = match service(
+            input,
+            matching::Exits::Full(input.configuration),
+            graph,
+            local,
+            source,
+        )? {
             Ok(service) => {
                 services.push(service.clone());
                 DnsPlan::ViaExit {
@@ -278,13 +299,15 @@ pub(super) fn dns(
 
 pub(super) fn service(
     input: &NetmapInput<'_>,
+    exits: matching::Exits<'_>,
     graph: &paths::Graph,
     local: &Local,
     source: NodeId,
 ) -> Result<Result<DnsService, DnsEgressUnavailable>, CompileError> {
     let cfg = input.configuration;
-    let resolve =
-        |profile: &str, node| super::super::dns::resolution(cfg, input.rule_sets, profile, node);
+    let resolve = |profile: &str, node| {
+        super::super::dns::resolution(cfg, exits, input.rule_sets, profile, node)
+    };
     let DnsResolution::Exit { exit, via } = resolve(&local.dns.profile, source)? else {
         return Ok(Err(DnsEgressUnavailable::ExitPlanRequired));
     };

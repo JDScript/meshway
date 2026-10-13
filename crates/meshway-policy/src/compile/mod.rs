@@ -22,7 +22,7 @@ pub use dns::{DnsResolution, resolution as dns_resolution};
 pub use edge_constraints::MAX_EDGE_TRANSPORT_ISSUES;
 pub(crate) use edge_constraints::validate_edge_transports;
 pub use exit::ExitInputs;
-pub use matching::profile_allowed;
+pub use matching::{Exits, profile_allowed};
 use meshway_configuration::{execution::*, *};
 use meshway_model::{NetworkId, NodeId, Revision};
 pub use plan::{PlanDestination, PlanRequest, plan, plan_with_exit};

@@ -41,9 +41,11 @@ pub enum DnsResolution {
 /// or a referenced set with names; a set not in `sets` counts as one with
 /// names. Each such rule leaving through an exit, and an exit fallback,
 /// must name the same single exit and via; a rule naming the source itself
-/// is its direct egress ([`matching::executed`]).
+/// is its direct egress, and ineligible exits before it are skipped
+/// ([`matching::executed`]).
 pub fn resolution(
     cfg: &NetworkConfiguration,
+    exits: matching::Exits<'_>,
     sets: &rules::RuleSets,
     profile: &str,
     source: NodeId,
@@ -77,7 +79,7 @@ pub fn resolution(
         .chain(std::iter::once((fallback_pointer, fallback)));
     let mut chosen: Option<(NodeId, Vec<NodeId>)> = None;
     for (pointer, action) in deciding {
-        let RouteAction::Exit { nodes, via } = matching::executed(cfg, action, source)? else {
+        let RouteAction::Exit { nodes, via } = matching::executed(exits, action, source)? else {
             continue;
         };
         let [exit] = nodes.as_slice() else {

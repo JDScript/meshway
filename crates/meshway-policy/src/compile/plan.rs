@@ -74,7 +74,13 @@ fn plan_inner(
         ),
     };
     let profile = ProfileEvaluation {
-        capture: capture::summary(cfg, request.rule_sets, &name, Some(source)),
+        capture: capture::summary(
+            cfg,
+            matching::Exits::Full(cfg),
+            request.rule_sets,
+            &name,
+            Some(source),
+        ),
         name,
         assignment: assignment
             .index
@@ -441,20 +447,21 @@ fn route_of(
     rule_set: Option<RuleSetMatch>,
     resolution_dependent: Vec<String>,
 ) -> Result<RouteEvaluation, CompileError> {
-    let (kind, targets, via) = match &matching::executed(cfg, kind_action.clone(), source)? {
-        RouteAction::Exit { nodes, via } => (
-            RouteKind::Exit,
-            nodes
-                .iter()
-                .map(|s| matching::node_selector(s))
-                .collect::<Result<Vec<_>, _>>()?,
-            via.iter()
-                .map(|s| matching::node_selector(s))
-                .collect::<Result<Vec<_>, _>>()?,
-        ),
-        RouteAction::Direct => (RouteKind::Direct, Vec::new(), Vec::new()),
-        RouteAction::Unmanaged => (RouteKind::Unmanaged, Vec::new(), Vec::new()),
-    };
+    let (kind, targets, via) =
+        match &matching::executed(matching::Exits::Full(cfg), kind_action.clone(), source)? {
+            RouteAction::Exit { nodes, via } => (
+                RouteKind::Exit,
+                nodes
+                    .iter()
+                    .map(|s| matching::node_selector(s))
+                    .collect::<Result<Vec<_>, _>>()?,
+                via.iter()
+                    .map(|s| matching::node_selector(s))
+                    .collect::<Result<Vec<_>, _>>()?,
+            ),
+            RouteAction::Direct => (RouteKind::Direct, Vec::new(), Vec::new()),
+            RouteAction::Unmanaged => (RouteKind::Unmanaged, Vec::new(), Vec::new()),
+        };
     Ok(RouteEvaluation {
         kind,
         rule,

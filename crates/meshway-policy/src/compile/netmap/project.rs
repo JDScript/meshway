@@ -398,7 +398,22 @@ pub fn project(input: &NetmapInput<'_>, index: &Index, node: NodeId) -> Projecte
             .filter(|id| map.contains_key(id))
             .collect()
     };
+    let routing = RoutingConfiguration {
+        mesh: mesh.iter().map(|i| cfg.routing.mesh[*i].clone()).collect(),
+        egress: EgressRouting {
+            rules: egress.rules.clone(),
+            profiles: egress
+                .profiles
+                .iter()
+                .filter(|(name, _)| profiles_used.contains(name.as_str()))
+                .map(|(name, profile)| (name.clone(), profile.clone()))
+                .collect(),
+            assignments,
+            auto: egress.auto.clone(),
+        },
+    };
     ProjectedConfiguration {
+        eligible_exits: matching::eligible_exits(cfg, &routing.egress),
         configuration: ConfigurationView {
             address_pools: cfg.address_pools.clone(),
             defaults: (&cfg.defaults).into(),
@@ -411,20 +426,7 @@ pub fn project(input: &NetmapInput<'_>, index: &Index, node: NodeId) -> Projecte
                 .collect(),
             dns: cfg.dns.clone(),
             topology: topology.iter().map(|i| cfg.topology[*i].clone()).collect(),
-            routing: RoutingConfiguration {
-                mesh: mesh.iter().map(|i| cfg.routing.mesh[*i].clone()).collect(),
-                egress: EgressRouting {
-                    rules: egress.rules.clone(),
-                    profiles: egress
-                        .profiles
-                        .iter()
-                        .filter(|(name, _)| profiles_used.contains(name.as_str()))
-                        .map(|(name, profile)| (name.clone(), profile.clone()))
-                        .collect(),
-                    assignments,
-                    auto: egress.auto.clone(),
-                },
-            },
+            routing,
             // Nodes judge sets by content, fetched by digest: definitions
             // (source URLs, catalogs, inline lists) stay on the Server.
             rule_sets: BTreeMap::new(),

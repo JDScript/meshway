@@ -40,6 +40,14 @@ fn projected_and_full_configuration_have_identical_local_admission_and_paths() {
             full.projection.subjects = scenario.subjects.clone();
             full.projection.inventory = scenario.inventory.clone();
             full.projection.selection_versions = scenario.selection_versions.clone();
+            // The oracle knows every exit's eligibility, visible or not.
+            full.projection.eligible_exits = scenario
+                .cfg
+                .nodes
+                .iter()
+                .filter(|(_, n)| n.enabled && n.exit_enabled)
+                .map(|(id, _)| *id)
+                .collect();
             let full = LocalCompiler::from_shared(Arc::new(full), &Default::default());
             let local = LocalCompiler::from_shared(projected.netmap.clone(), &Default::default());
             for destination in &destinations {

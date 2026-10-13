@@ -61,6 +61,7 @@ Server 在配置 revision 固定时为每个节点生成 **netmap**（配置投�
 | `groups`、`tagsOwners` | 名称：被保留规则（access／topology／mesh／assignment）以 `group:`／`tag:` 引用的，或含 V 中 User 节点的用户（组）／V 中节点携带的（tag）；成员与 owner 只保留 V 中 User 节点的用户邮箱 |
 | `ruleSets` 引用 | 只保留公共 egress 规则或被保留 profile 的规则在 `match.ruleSets` 引用的 key（含 `<provider>:<name>`）；`configuration.ruleSets` 与 `configuration.ruleSetProviders` 的定义（URL、目录、inline 列表）一律不投影 |
 | `inventory`、`subjects`、`selectedProfiles`、`selectionVersions` | 限于 V；`users`／`members` 只保留 V 中 User 节点的绑定 |
+| `eligibleExits` | 被保留 egress 规则／profile（含 fallback）的出口集合中排在另一节点之前、且在全量配置中启用并 `exitEnabled` 的节点，升序；不论是否在 V 中，为空时省略。出口集合含源自身时，自身之前的出口只按此判定可用（[Action](/v2/configuration-reference/routing#action)）：出口不在投影里（被 topology 隔离、未登记或已吊销）不等于不可用 |
 | 其余（defaults、addressPools、dns） | 全量 |
 
 正确性依据：节点作为端点或中继参与的每条路径都在它的连通分量里；路径搜索只为 topology 允许的边计预算，routing 每段只以段端点 first-match，被删的规则不可能匹配分量内的段、边或流，因此投影上的结果与全量配置逐项相同（[差分验证](#规模与预算)）。

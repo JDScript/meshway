@@ -415,14 +415,19 @@ pub(super) fn selection<'a>(
 
 /// Whether some action of `profile`'s selection names `source` as an exit,
 /// i.e. whether `source` executes a partition other than the profile's.
-pub(super) fn names_exit(cfg: &NetworkConfiguration, profile: &str, source: NodeId) -> bool {
+pub(super) fn names_exit(
+    cfg: &NetworkConfiguration,
+    exits: matching::Exits<'_>,
+    profile: &str,
+    source: NodeId,
+) -> bool {
     selection(cfg, profile).is_ok_and(|Selection { rules, fallback }| {
         rules
             .iter()
             .map(|(_, rule)| rule.action.clone().into())
             .chain(std::iter::once(fallback))
             .any(|route| {
-                matching::executed(cfg, route.clone(), source)
+                matching::executed(exits, route.clone(), source)
                     .map_or(true, |executed| executed != route)
             })
     })
@@ -456,12 +461,12 @@ fn unavailable(error: CompileError) -> UnavailableReason {
 /// Rule actions as `source` executes them ([`matching::executed`]); without a
 /// source (a profile-level preview) as written.
 fn executed(
-    cfg: &NetworkConfiguration,
+    exits: matching::Exits<'_>,
     route: RouteAction,
     source: Option<NodeId>,
 ) -> Result<RouteAction, CompileError> {
     match source {
-        Some(source) => matching::executed(cfg, route, source),
+        Some(source) => matching::executed(exits, route, source),
         None => Ok(route),
     }
 }
@@ -471,12 +476,13 @@ fn executed(
 /// in `sets` is a missing dependency, never an empty set.
 pub fn compute(
     cfg: &NetworkConfiguration,
+    exits: matching::Exits<'_>,
     sets: &rules::RuleSets,
     profile: &str,
     source: Option<NodeId>,
 ) -> Result<EgressPartition, UnavailableReason> {
     let Selection { rules, fallback } = selection(cfg, profile).map_err(unavailable)?;
-    let fallback = executed(cfg, fallback, source).map_err(unavailable)?;
+    let fallback = executed(exits, fallback, source).map_err(unavailable)?;
     let mut actions = Vec::new();
     let mut remaining4 = vec![(0u32, u32::MAX)];
     let mut remaining6 = vec![(0u128, u128::MAX)];
@@ -491,7 +497,7 @@ pub fn compute(
         let rules::Ranges { v4, v6 } = rules::ranges(&rule.matcher, sets).map_err(unavailable)?;
         let id = index(
             &mut actions,
-            action(&executed(cfg, rule.action.clone().into(), source).map_err(unavailable)?)
+            action(&executed(exits, rule.action.clone().into(), source).map_err(unavailable)?)
                 .map_err(unavailable)?,
         );
         let (hit, rest) = split(&remaining4, &normalize(v4), &mut work)?;
@@ -629,11 +635,12 @@ fn except<T: Address>(
 /// The partition a Node installs: [`compute`] within the node-side limits.
 pub fn partition(
     cfg: &NetworkConfiguration,
+    exits: matching::Exits<'_>,
     sets: &rules::RuleSets,
     profile: &str,
     source: Option<NodeId>,
 ) -> Result<EgressPartition, UnavailableReason> {
-    let partition = compute(cfg, sets, profile, source)?;
+    let partition = compute(cfg, exits, sets, profile, source)?;
     if !partition.within_limits() {
         return Err(UnavailableReason::RoutingLimit);
     }
@@ -645,11 +652,12 @@ pub fn partition(
 /// boundary's with its reason.
 pub fn summary(
     cfg: &NetworkConfiguration,
+    exits: matching::Exits<'_>,
     sets: &rules::RuleSets,
     profile: &str,
     source: Option<NodeId>,
 ) -> CaptureSummary {
-    match compute(cfg, sets, profile, source) {
+    match compute(cfg, exits, sets, profile, source) {
         Ok(partition) => {
             let summary = partition.summary();
             if partition.within_limits() {
