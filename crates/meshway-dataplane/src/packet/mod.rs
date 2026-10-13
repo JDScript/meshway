@@ -8,7 +8,10 @@
 //! offload placeholders are not accepted (IPv4 UDP's optional zero is valid).
 //! TCP/UDP port zero is outside the business Port contract. TCP options are
 //! limited to bounded MSS, window scale, SACK-permitted/SACK and timestamps,
-//! plus padding. ICMP accepts echo request/reply with code zero only.
+//! plus padding. ICMP accepts echo request/reply with code zero only, and
+//! IPv4 destination-unreachable/time-exceeded errors quoting a TCP, UDP or
+//! echo-request header ([`Transport::Error`]); such an error is never business
+//! traffic and only accompanies the live flow its quote names.
 use crate::PacketBuffer;
 use meshway_configuration::execution::BusinessProtocol;
 use meshway_policy::admission::Traffic;
@@ -72,6 +75,13 @@ impl PacketFacts {
             (BusinessProtocol::Tcp, Transport::Tcp(_)) => 20,
             (BusinessProtocol::Udp, Transport::Udp)
             | (BusinessProtocol::IcmpEcho, Transport::Echo { .. }) => 8,
+            (BusinessProtocol::IcmpEcho, Transport::Error(error))
+                if self.traffic.source.is_ipv4()
+                    && error.quoted.traffic.source.is_ipv4()
+                    && error.quoted.traffic.source == self.traffic.destination =>
+            {
+                8 + ERROR_QUOTE
+            }
             _ => return Err(PacketError::Header),
         };
         if self.len > max_len || self.len < ip_header + transport_header {
@@ -79,7 +89,7 @@ impl PacketFacts {
         }
         let ports = [self.traffic.source_port, self.traffic.destination_port];
         if match self.transport {
-            Transport::Echo { .. } => ports.iter().any(Option::is_some),
+            Transport::Echo { .. } | Transport::Error(_) => ports.iter().any(Option::is_some),
             _ => ports
                 .iter()
                 .any(|port| port.is_none_or(|port| port.get() == 0)),
@@ -117,6 +127,30 @@ pub enum Transport {
         identifier: u16,
         sequence: u16,
     },
+    /// An ICMPv4 error; its traffic carries the outer addresses only.
+    Error(IcmpError),
+}
+
+/// The quoted IPv4 header plus 8 bytes every error must carry.
+const ERROR_QUOTE: usize = 28;
+
+/// ICMPv4 destination unreachable (3, codes 0–15) or time exceeded (11,
+/// codes 0–1), e.g. fragmentation needed (3/4) carrying the next-hop MTU.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct IcmpError {
+    pub kind: u8,
+    pub code: u8,
+    /// The packet the error is about, as its sender sent it.
+    pub quoted: Quoted,
+}
+
+/// The tuple of a quoted IPv4 TCP/UDP segment or echo request. Its own
+/// length and checksums are not checked: the quote is usually truncated.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Quoted {
+    pub traffic: Traffic,
+    /// Identifier and sequence of a quoted echo request.
+    pub echo: Option<(u16, u16)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -232,6 +266,31 @@ impl Packet {
                 let reply = match (protocol, body[0], body[1]) {
                     (1, 8, 0) | (58, 128, 0) => false,
                     (1, 0, 0) | (58, 129, 0) => true,
+                    (1, 3, 0..=15) | (1, 11, 0..=1) => {
+                        if finish(sum(0, body)) != 0 {
+                            return Err(PacketError::Checksum);
+                        }
+                        let quoted = quoted(&body[8..])?;
+                        if quoted.traffic.source != destination {
+                            return Err(PacketError::Header);
+                        }
+                        let error = IcmpError {
+                            kind: body[0],
+                            code: body[1],
+                            quoted,
+                        };
+                        return Ok(Packet {
+                            traffic: Traffic {
+                                source,
+                                destination,
+                                protocol: BusinessProtocol::IcmpEcho,
+                                source_port: None,
+                                destination_port: None,
+                            },
+                            transport: Transport::Error(error),
+                            bytes: storage,
+                        });
+                    }
                     _ => return Err(PacketError::Unsupported),
                 };
                 if protocol == 1 {
@@ -322,6 +381,54 @@ fn ipv4(bytes: &[u8]) -> Result<(IpAddr, IpAddr, u8, usize), PacketError> {
         bytes[9],
         header,
     ))
+}
+
+/// The quoted packet of an ICMPv4 error: an option-free, unfragmented IPv4
+/// header followed by at least 8 bytes of TCP/UDP ports or an echo request.
+fn quoted(bytes: &[u8]) -> Result<Quoted, PacketError> {
+    if bytes.len() < ERROR_QUOTE {
+        return Err(PacketError::Length);
+    }
+    if bytes[0] != 0x45 {
+        return Err(PacketError::Unsupported);
+    }
+    if word(bytes, 6) & 0x3fff != 0 {
+        return Err(PacketError::Fragment);
+    }
+    if usize::from(word(bytes, 2)) < ERROR_QUOTE || word(bytes, 6) & 0x8000 != 0 {
+        return Err(PacketError::Header);
+    }
+    let source = Ipv4Addr::new(bytes[12], bytes[13], bytes[14], bytes[15]).into();
+    let destination = Ipv4Addr::new(bytes[16], bytes[17], bytes[18], bytes[19]).into();
+    let body = &bytes[20..];
+    let (protocol, source_port, destination_port, echo) = match bytes[9] {
+        6 | 17 => {
+            let (src, dst) = ports(body)?;
+            let protocol = if bytes[9] == 6 {
+                BusinessProtocol::Tcp
+            } else {
+                BusinessProtocol::Udp
+            };
+            (protocol, Some(src), Some(dst), None)
+        }
+        1 if body[0] == 8 && body[1] == 0 => (
+            BusinessProtocol::IcmpEcho,
+            None,
+            None,
+            Some((word(body, 4), word(body, 6))),
+        ),
+        _ => return Err(PacketError::Unsupported),
+    };
+    Ok(Quoted {
+        traffic: Traffic {
+            source,
+            destination,
+            protocol,
+            source_port,
+            destination_port,
+        },
+        echo,
+    })
 }
 
 fn ipv6(bytes: &[u8]) -> Result<(IpAddr, IpAddr, u8, usize), PacketError> {

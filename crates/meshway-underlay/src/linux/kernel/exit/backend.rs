@@ -92,6 +92,10 @@ impl Backend {
             .routing
             .forward(&mut backend.ledger, &mut backend.store)
             .await?;
+        backend
+            .routing
+            .related(&mut backend.ledger, &mut backend.store)
+            .await?;
         backend.ledger.pending = false;
         backend.store.persist(&backend.ledger).await?;
         Ok(backend)
@@ -267,15 +271,40 @@ impl Backend {
         self.store.persist(&self.ledger).await?;
         Ok(ProjectionAck { incarnation })
     }
+    /// The owner's polling of [`Self::poll_confirm`], run to its end.
+    #[cfg(test)]
     pub async fn confirm(&mut self, incarnation: super::ExitIncarnation) -> Result<CtConfirmation> {
-        let live = self.live.get(&incarnation).cloned().ok_or(Error::Expired)?;
-        let until = (Instant::now() + Duration::from_secs(3))
-            .min(live.deadline.expires_at())
-            .min(live.gate_until);
+        let until = self.confirmation_cutoff(incarnation)?;
         loop {
-            if self.stop.is_cancelled() || !live.valid() || Instant::now() >= until {
-                break;
+            if let Some(confirmation) = self.poll_confirm(incarnation, until).await? {
+                return Ok(confirmation);
             }
+            tokio::time::sleep_until((Instant::now() + CONFIRM_POLL).min(until).into()).await;
+        }
+    }
+
+    /// The last instant an installed projection may still be confirmed.
+    pub fn confirmation_cutoff(&self, incarnation: super::ExitIncarnation) -> Result<Instant> {
+        let live = self.live.get(&incarnation).ok_or(Error::Expired)?;
+        Ok((Instant::now() + CONFIRM_WAIT)
+            .min(live.deadline.expires_at())
+            .min(live.gate_until))
+    }
+
+    /// One bounded look for the projection's owned conntrack entry. `None`:
+    /// not there yet, look again later; the caller (the single owner) keeps
+    /// serving every other operation meanwhile. A forward packet that died
+    /// before confirmation (TTL, MTU at this host) never confirms: at `until`
+    /// the projection closes and the result is `ConfirmFailed`.
+    pub async fn poll_confirm(
+        &mut self,
+        incarnation: super::ExitIncarnation,
+        until: Instant,
+    ) -> Result<Option<CtConfirmation>> {
+        let Some(live) = self.live.get(&incarnation).cloned() else {
+            return Ok(Some(CtConfirmation::ConfirmFailed { incarnation }));
+        };
+        if !self.stop.is_cancelled() && live.valid() && Instant::now() < until {
             match tokio::time::timeout_at(
                 until.into(),
                 conntrack::lookup_owned(&mut self.commands, live.tuple, self.ledger.program.mark),
@@ -291,36 +320,27 @@ impl Backend {
                         .iter_mut()
                         .find(|flow| flow.incarnation == incarnation)
                         .ok_or(Error::Journal)?;
-                    if record.ct.as_ref().is_some_and(|old| {
+                    if !record.ct.as_ref().is_some_and(|old| {
                         old.id != entry.id
                             || old.original != entry.original
                             || old.reply != entry.reply
                     }) {
-                        break;
+                        record.ct = Some(entry.clone());
+                        self.store.persist(&self.ledger).await?;
+                        if live.valid() && !self.stop.is_cancelled() {
+                            return Ok(Some(CtConfirmation::Confirmed {
+                                incarnation,
+                                conntrack_id: entry.id,
+                            }));
+                        }
                     }
-                    record.ct = Some(entry.clone());
-                    self.store.persist(&self.ledger).await?;
-                    if !live.valid() || self.stop.is_cancelled() {
-                        break;
-                    }
-                    return Ok(CtConfirmation::Confirmed {
-                        incarnation,
-                        conntrack_id: entry.id,
-                    });
                 }
-                Ok(Ok(None)) => {
-                    tokio::time::sleep_until(
-                        (Instant::now() + Duration::from_millis(10))
-                            .min(until)
-                            .into(),
-                    )
-                    .await
-                }
-                _ => break,
+                Ok(Ok(None)) => return Ok(None),
+                _ => {}
             }
         }
         self.close_projection(incarnation).await?;
-        Ok(CtConfirmation::ConfirmFailed { incarnation })
+        Ok(Some(CtConfirmation::ConfirmFailed { incarnation }))
     }
     pub async fn renew(
         &mut self,
@@ -716,6 +736,10 @@ impl Backend {
 
 /// A quarantined reply tuple is kept at least this long (above every
 /// conntrack timeout of a deleted, NATed flow's late replies).
+/// How long an installed projection waits for its first forwarded packet's
+/// conntrack entry, and how often the owner looks while it waits.
+pub(super) const CONFIRM_WAIT: Duration = Duration::from_secs(3);
+pub(super) const CONFIRM_POLL: Duration = Duration::from_millis(10);
 const QUARANTINE_MIN_AGE: Duration = Duration::from_secs(300);
 /// Housekeeping drops quarantine entries older than this.
 const QUARANTINE_AGE: Duration = Duration::from_secs(900);

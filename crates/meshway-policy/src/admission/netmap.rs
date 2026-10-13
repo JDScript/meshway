@@ -232,6 +232,42 @@ pub fn admit_reply(
     Ok(hop)
 }
 
+/// Admit an ICMP error that relates to the caller's own established flow:
+/// `quoted` (the packet the error is about) is exactly that flow's `forward`
+/// traffic, and the error travels the reply direction of its original path,
+/// addressed to the flow's source. It comes from the quoted destination
+/// itself, from the terminal Node's own address or, for an exit flow, from an
+/// address outside the Mesh (a router beyond the exit). Nothing else of the
+/// error (type, code, quoted length) authorizes anything.
+#[allow(clippy::too_many_arguments)]
+pub fn admit_related(
+    netmap: &NodeNetmap,
+    decision: &Decision,
+    path: &[NodeId],
+    origin: NodeId,
+    previous: Option<NodeId>,
+    forward: &Traffic,
+    quoted: &Traffic,
+    error_source: IpAddr,
+    error_destination: IpAddr,
+) -> Result<Hop, AdmissionError> {
+    let hop = admit_handshake(netmap, decision, path, origin, previous, true)?;
+    admitted_traffic(netmap, decision, forward)?;
+    let terminal = *path.last().ok_or(AdmissionError::Path)?;
+    let source = error_source.to_canonical();
+    let from = source == quoted.destination.to_canonical()
+        || contains(addresses(netmap, terminal)?, source)
+        || (matches!(decision.target, Target::Exit { .. })
+            && !in_pools(netmap, source)
+            && !source.is_unspecified()
+            && !source.is_multicast()
+            && source != IpAddr::V4(std::net::Ipv4Addr::BROADCAST));
+    if quoted != forward || error_destination != forward.source || !from {
+        return Err(AdmissionError::Traffic);
+    }
+    Ok(hop)
+}
+
 /// Admit a circuit through this relay: the projection must produce `path`
 /// for `(origin, target)` with some Access service, and this Node must be an
 /// intermediate hop. Relays never inspect business traffic.

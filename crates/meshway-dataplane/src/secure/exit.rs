@@ -109,4 +109,8 @@ impl SecureNode {
     pub fn exit_counters(&self) -> Counters {
         self.engine.exit_counters
     }
+
+    pub fn related_counters(&self) -> crate::RelatedCounters {
+        self.engine.related_counters()
+    }
 }

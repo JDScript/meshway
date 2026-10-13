@@ -66,7 +66,7 @@
 
 单出口编译通过 `DnsPlan::ViaExit { service }` 指定普通查询的 Mesh resolver。只要当前方案的 fallback 或 CIDR 规则使用同一个出口及同一组有序 via，普通名称在解析前即选择该出口，不先查询客户端上游再根据答案选择路径。MagicDNS 仍按本地记录处理；`useWithExit: true` 的解析器保留最长后缀 split／default 用途。
 
-`DnsService` 绑定源节点及 Mesh 源地址、出口及其 Mesh IPv4 地址（只作绑定，出口不在该地址监听 DNS）、UDP／TCP 传输、完整有序路径、源 profile／capture generation、出口 role generation、并发和查询时间预算。执行截止来自 netmap 租约；instance 和 State 就绪事实不签发 DNS 权限。编译要求出口已启用并声明能力、路径可行且源有外部 Access 资格。缺少出口能力／路径／资格分别返回 `exitUnavailable`／`noPath`／`unauthorized`；没有无环单出口方案返回 `exitPlanRequired`。
+`DnsService` 绑定源节点及 Mesh 源地址、出口及其 Mesh IPv4 地址（只作绑定，出口不在该地址监听 DNS）、UDP／TCP 传输、完整有序路径、源 profile／capture generation、出口 role generation、并发和查询时间预算。执行截止来自 netmap 租约；instance 和 State 就绪事实不签发 DNS 权限。编译要求出口已启用并声明能力、路径可行且源有外部 Access 资格。缺少出口能力／路径／资格分别返回 `exitUnavailable`／`noPath`／`unauthorized`；没有无环单出口方案返回 `exitPlanRequired`。出口集合含源自己的规则按 [Routing · Action](/v2/configuration-reference/routing#action) 的顺序语义执行（自己之前没有可用出口即 direct），direct 的规则不计入其出口方案：只经自己出口的源为 `noExit`。
 
 例外不是目的地址的全局放行；解析器流量仍须走明确、获准的网络路径。没有有效出口／解析依赖时报告不可用，不静默落回另一路公共解析器。
 

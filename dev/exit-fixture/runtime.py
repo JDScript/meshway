@@ -13,13 +13,19 @@ from validation_support import bind_access_options, export_evidence, mount_names
 from verification_sources import fingerprint
 
 
-ROLES = ("controller", "a", "r", "e", "external", "lan", "resolver")
+ROLES = ("controller", "a", "r", "e", "external", "lan", "resolver", "router")
 # Separate control links prevent the control bridge becoming an A-E shortcut.
 # `split` carries only A's own OS DNS upstream, which is also its useWithExit
-# split resolver; E's only OS DNS upstream is the external authority.
+# split resolver; E's only OS DNS upstream is the external authority. `far`
+# is a second public-classified link behind a router on `external`: the
+# external service's far address is reached E → router → far, whose router
+# interface is narrower (FAR_MTU) than the path before it.
 LINKS = {"ca": ("controller", "a"), "cr": ("controller", "r"),
          "ce": ("controller", "e"), "ar": ("a", "r"), "re": ("r", "e"),
-         "external": ("e", "external"), "lan": ("e", "lan"), "split": ("a", "resolver")}
+         "external": ("e", "external", "router"), "lan": ("e", "lan"), "split": ("a", "resolver"),
+         "far": ("router", "external")}
+PUBLIC_LINKS = ("external", "far")
+FAR_MTU = 1280
 
 
 NETMAP_CONTENT = "import json; print(json.dumps(json.load(open('/state/node/identity/netmap.json'))['netmap']))"
@@ -40,18 +46,106 @@ def write(path, value):
     temporary.replace(path)
 
 
+def run_icmp_phase(command, detached, evidence, addresses, subnets, source):
+    """Stage 12: ICMP errors about A's live exit flows return to A, from E
+    itself and from a router beyond it; errors naming no flow of A do not.
+    PMTU discovery through the narrower far link converges."""
+    far, router = addresses["far"]["external"], addresses["external"]["router"]
+    exit_address = addresses["external"]["e"]
+    result = {"far": far, "router": router, "farMtu": FAR_MTU}
+    narrow = [link["ifname"] for link in json.loads(command("router", "ip", "-j", "address")["stdout"])
+              if any(item.get("local") == addresses["far"]["router"] for item in link["addr_info"])]
+    if len(narrow) != 1:
+        raise RuntimeError("router far interface not found")
+    result["narrow"] = command("router", "ip", "link", "set", "dev", narrow[0], "mtu", str(FAR_MTU))
+    e_addresses = {item["local"] for link in json.loads(command("e", "ip", "-j", "address")["stdout"])
+                   for item in link["addr_info"] if item["family"] == "inet"}
+    result["route"] = command("e", "ip", "route", "add", subnets["far"], "via", router)
+    try:
+        def received():
+            record = command("a", "cat", "/evidence/icmp-received.json", required=False)
+            return json.loads(record["stdout"])["errors"] if record["exitCode"] == 0 else None
+
+        detached("a", "python3", "/dns-fixture/icmp.py", "listen", "/evidence/icmp-received.json", "120")
+        deadline = time.monotonic() + 10
+        while received() is None:
+            if time.monotonic() >= deadline:
+                raise RuntimeError("A ICMP listener did not start")
+            time.sleep(.1)
+        # Hop 1 is E's own time exceeded, hop 2 the router's, hop 3 the target.
+        trace = command("a", "traceroute", "-I", "-n", "-q", "1", "-w", "2", "-m", "5", far, required=False)
+        hops = {}
+        for line in trace["stdout"].splitlines()[1:]:
+            fields = line.split()
+            if len(fields) >= 2 and fields[0].isdigit():
+                hops[int(fields[0])] = fields[1]
+        result["traceroute"] = {"record": trace, "hops": hops, "exitAddresses": sorted(e_addresses)}
+        if hops.get(1) not in e_addresses or hops.get(2) != router or hops.get(3) != far:
+            raise RuntimeError("traceroute through the exit did not show E, the router and the target")
+        # A TCP echo larger than the far link converges through fragmentation needed.
+        result["tcp"] = command("a", "timeout", "14", "python3", "/dns-fixture/icmp.py", "tcp", far, "8080", "65536",
+                                required=False)
+        result["routeCache"] = command("a", "ip", "route", "get", far)
+        result["pingTooLarge"] = command("a", "ping", "-n", "-M", "do", "-s", "1300", "-c", "2", "-W", "2", far,
+                                         required=False)
+        result["pingFits"] = command("a", "ping", "-n", "-M", "do", "-s", str(FAR_MTU - 28), "-c", "2", "-W", "2", far,
+                                     required=False)
+        fragmentation = [entry for entry in received() if (entry["type"], entry["code"]) == (3, 4)
+                         and entry["source"] == router and entry["mtu"] == FAR_MTU]
+        result["fragmentationNeeded"] = fragmentation
+        if (result["tcp"]["exitCode"] or f"mtu {FAR_MTU}" not in result["routeCache"]["stdout"]
+                or result["pingTooLarge"]["exitCode"] == 0 or result["pingFits"]["exitCode"] or not fragmentation):
+            raise RuntimeError("PMTU discovery through the exit did not converge")
+        # Errors injected beyond the exit about A's live UDP flow (post-NAT
+        # quote): delivered within the per-flow budget. One naming no flow: none.
+        # The flow targets the service's external address: its unbound UDP
+        # replies leave from the address of the link they are routed on.
+        service = addresses["external"]["external"]
+        result["udpTarget"] = service
+        detached("a", "python3", "/dns-fixture/icmp.py", "udp", service, "8080", "/evidence/icmp-udp.json", "20")
+        deadline = time.monotonic() + 10
+        while True:
+            record = command("a", "cat", "/evidence/icmp-udp.json", required=False)
+            flow = json.loads(record["stdout"]) if record["exitCode"] == 0 else {}
+            if flow.get("answered"):
+                break
+            if time.monotonic() >= deadline:
+                raise RuntimeError("A live UDP flow through the exit did not start")
+            time.sleep(.2)
+        ct = command("e", "/usr/sbin/conntrack", "-L", "-f", "ipv4", "-p", "udp", "-d", service, "-o", "extended")
+        nat = evidence.nat_tuple(ct["stdout"], "udp", flow["local"], service + ":8080", exit_address)
+        port = int(nat["reply"]["dport"])
+        local = int(flow["local"].rsplit(":", 1)[1])
+        before = len(received())
+        result["forged"] = command("router", "python3", "/dns-fixture/icmp.py", "inject", router, exit_address, "5",
+                                   exit_address, str(port + 1), service, "8080")
+        result["injected"] = command("router", "python3", "/dns-fixture/icmp.py", "inject", router, exit_address, "30",
+                                     exit_address, str(port), service, "8080")
+        time.sleep(2)
+        arrivals = [entry for entry in received()[before:] if entry["type"] == 11 and entry["source"] == router]
+        related = [entry for entry in arrivals if entry.get("quoted", {}).get("source") == source
+                   and entry["quoted"]["head"][:8] == f"{local:04x}{8080:04x}"]
+        result["arrivals"] = arrivals
+        result["related"] = len(related)
+        if len(arrivals) != len(related) or not 1 <= len(related) <= 10:
+            raise RuntimeError("injected ICMP errors were not limited to A's live flow and its budget")
+    finally:
+        result["routeRemoved"] = command("e", "ip", "route", "del", subnets["far"], "via", router, required=False)
+    return result
+
+
 def execute(report, artifacts, runtime_os, platform, short, load):
     identity = report.name
     label_key = "io.meshway.runtime-fixture"
     label = label_key + "=" + identity
     image = runtime_os["imageId"]
-    containers, networks, addresses, captures = {}, {}, {}, []
+    containers, networks, addresses, subnets, captures = {}, {}, {}, {}, []
     manifest = {**artifacts, "run": identity, "passed": False, "status": "preparing",
                 "scope": "diagnostic-short" if short else "acceptance",
                 "traversal": "exit", "dnsBackend": "off", "runtimeOsAssets": runtime_os,
                 "loadBeforeRuntime": load, "resources": {"containers": containers, "networks": networks},
                 "productStatus": "running", "cleanup": {}, "processes": {},
-                "stages": {str(n): {"status": "notRun"} for n in range(1, 12)}}
+                "stages": {str(n): {"status": "notRun"} for n in range(1, 13)}}
     metadata = report / "report.json"
     started = time.monotonic()
     failure = None
@@ -141,6 +235,7 @@ def execute(report, artifacts, runtime_os, platform, short, load):
         shutil.copyfile(ROOT / "dev/dns-fixture/namespace.sh", report / "exit-support/namespace.sh")
         shutil.copyfile(ROOT / "dev/exit-fixture/forwarding.sh", report / "exit-support/forwarding.sh")
         shutil.copyfile(ROOT / "dev/exit-fixture/lease.py", report / "exit-support/lease.py")
+        shutil.copyfile(ROOT / "dev/exit-fixture/icmp.py", report / "exit-support/icmp.py")
         (report / "exit-support/os-packages.tsv").write_text("".join(
             package["name"] + "\t" + package["version"] + "\t" + package["architecture"] + "\n"
             for package in runtime_os["packages"]))
@@ -166,7 +261,11 @@ def execute(report, artifacts, runtime_os, platform, short, load):
         for link, roles in LINKS.items():
             # Public classification, isolated by an internal bridge with only E
             # and the service attached. Never route this address onto the host WAN.
-            options = ["--subnet", f"11.77.{uuid.uuid4().int % 256}.0/29"] if link == "external" else []
+            options = []
+            if link in PUBLIC_LINKS:
+                octet = next(value for value in (uuid.uuid4().int % 256 for _ in range(64))
+                             if f"11.77.{value}.0/29" not in subnets.values())
+                options = ["--subnet", f"11.77.{octet}.0/29"]
             identifier = run("docker", "network", "create", "--internal", "--label", label, *options,
                              f"meshway-runtime-{identity.lower()}-exit-{link}", capture=True).strip()
             networks[link] = identifier
@@ -177,12 +276,14 @@ def execute(report, artifacts, runtime_os, platform, short, load):
             subnet = ipaddress.ip_network(inspection["IPAM"]["Config"][0]["Subnet"])
             if subnet.version != 4 or subnet.num_addresses < 8:
                 raise RuntimeError("exit link requires IPv4 /29 or larger")
-            if link != "external" and not any(subnet.subnet_of(ipaddress.ip_network(private)) for private in
+            if link not in PUBLIC_LINKS and not any(subnet.subnet_of(ipaddress.ip_network(private)) for private in
                                               ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")):
                 raise RuntimeError("exit underlay/LAN must be RFC1918")
             addresses[link] = {role: str(subnet.network_address + 2 + index) for index, role in enumerate(roles)}
+            subnets[link] = str(subnet)
             manifest["resources"].setdefault("networkInspections", {})[link] = inspection
         manifest["addresses"] = addresses
+        manifest["subnets"] = subnets
         manifest["externalClassification"] = "11.77/16: public-classified isolated address; permit scope must be Internet"
         lan_subnet = manifest["resources"]["networkInspections"]["lan"]["IPAM"]["Config"][0]["Subnet"]
         write(report / "public/exit-topology.json", {"addresses": addresses, "lanCidr": lan_subnet})
@@ -195,11 +296,14 @@ def execute(report, artifacts, runtime_os, platform, short, load):
                         "--security-opt", "no-new-privileges", "--cpus", "2", "--memory", "768m", "--pids-limit", "128",
                         "--tmpfs", "/state:rw,nosuid,nodev,mode=700", "--entrypoint", "",
                         "--network", networks[first], "--ip", addresses[first][role],
-                        "--sysctl", "net.ipv4.ip_forward=0",
+                        "--sysctl", "net.ipv4.ip_forward=" + ("1" if role == "router" else "0"),
                         "--sysctl", "net.ipv4.conf.all.rp_filter=0", "--sysctl", "net.ipv4.conf.default.rp_filter=0",
                         "--env", "TMPDIR=/state", "--env", "MESHWAY_EXIT_FIXTURE_OWNED=1", *bind_access_options()]
             if role in ("external", "resolver"):
                 creation += ["--cap-add", "NET_BIND_SERVICE"]
+            if role == "router":
+                creation += ["--cap-add", "NET_ADMIN", "--cap-add", "NET_RAW",
+                             "--mount", f"type=bind,source={report / 'exit-support'},target=/dns-fixture,readonly"]
             if role in ("a", "r", "e"):
                 upstream = {"a": addresses["split"]["resolver"], "r": addresses["cr"]["controller"],
                             "e": addresses["external"]["external"]}[role]
@@ -860,6 +964,16 @@ def execute(report, artifacts, runtime_os, platform, short, load):
             echo = command("a", "ping", "-n", "-c", "3", "-W", "2", target, required=False)
             write(report / ("icmp-" + link + ".json"), echo)
             if echo["exitCode"]: raise RuntimeError("real exit ICMP echo failed")
+        manifest["status"] = "icmp-errors"
+        save()
+        def detached(role, *arguments):
+            owned("container", containers[role])
+            subprocess.run(["docker", "exec", "-d", containers[role], *arguments], check=True, timeout=15,
+                           close_fds=True)
+
+        icmp = run_icmp_phase(command, detached, evidence, addresses, subnets, own["ipv4"])
+        write(report / "icmp-errors.json", icmp)
+        manifest["stages"]["12"] = {"status": "passed", "evidence": ["icmp-errors.json"]}
         # HTTP outage under the netmap model: closing Node HTTP never withdraws
         # the exit. Existing and new flows continue on the signed lease, with
         # no Server contact, until its actual expiry, which fails closed.

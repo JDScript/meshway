@@ -42,6 +42,15 @@ fn original(direction: &str) -> Value {
     ]})
 }
 
+/// ICMPv4 destination unreachable and time exceeded: the RELATED errors an
+/// owned flow's quoted forward packet may cause, at a router or this host.
+fn error_type() -> Value {
+    eq(
+        json!({"payload": {"protocol": "icmp", "field": "type"}}),
+        json!({"set": [3, 11]}),
+    )
+}
+
 impl Program {
     pub fn filter(&self) -> String {
         format!("meshway_exit_{}", self.installation)
@@ -60,6 +69,20 @@ impl Program {
     }
     fn unowned(&self) -> Value {
         eq(json!({"&": [ct("mark"), self.mark]}), json!(0))
+    }
+    /// A connection this host has not confirmed yet: the forward packet that
+    /// caused a local error died before FORWARD (TTL, MTU), so it never
+    /// received the owned mark.
+    fn unconfirmed(&self) -> Value {
+        // nft lists `ct status & confirmed == 0` in this negated-flag form.
+        relation("!", ct("status"), json!(8))
+    }
+    fn open(&self) -> Value {
+        relation(
+            "!=",
+            json!({"&": [ct("mark"), self.mark]}),
+            json!("@closing"),
+        )
     }
     fn state(&self, states: &[&str]) -> Value {
         relation("in", ct("state"), json!({"set": states}))
@@ -109,14 +132,15 @@ impl Program {
         }
         out.push(json!({"add": {"set": {"family": "inet", "table": self.filter(), "name": "closing", "type": "mark", "size": 2}}}));
         out.push(json!({"add": {"set": {"family": "inet", "table": self.filter(), "name": "mesh", "type": "ipv4_addr", "flags": ["interval"], "elem": self.pools.iter().map(|pool| json!({"prefix": {"addr": pool.network().to_string(), "len": pool.prefix_len()}})).collect::<Vec<_>>()}}}));
-        for (name, hook, priority) in [
-            ("raw", "prerouting", -300),
-            ("route", "prerouting", -90),
-            ("input", "input", 0),
-            ("forward", "forward", 0),
-            ("final", "postrouting", 300),
+        for (name, kind, hook, priority) in [
+            ("raw", "filter", "prerouting", -300),
+            ("route", "filter", "prerouting", -90),
+            ("local", "route", "output", -150),
+            ("input", "filter", "input", 0),
+            ("forward", "filter", "forward", 0),
+            ("final", "filter", "postrouting", 300),
         ] {
-            out.push(json!({"add": {"chain": {"family": "inet", "table": self.filter(), "name": name, "type": "filter", "hook": hook, "prio": priority, "policy": "accept"}}}));
+            out.push(json!({"add": {"chain": {"family": "inet", "table": self.filter(), "name": name, "type": kind, "hook": hook, "prio": priority, "policy": "accept"}}}));
         }
         out.push(json!({"add": {"chain": {"family": "ip", "table": self.nat(), "name": "postrouting", "type": "nat", "hook": "postrouting", "prio": 100, "policy": "accept"}}}));
         out.push(self.rule(
@@ -241,8 +265,49 @@ impl Program {
                 json!({"return": null}),
             ],
         ));
+        // A router's error about an owned forward packet (conntrack RELATED,
+        // reverse-translated) returns to the exit TUN like a reply.
+        out.push(self.rule(
+            "route",
+            vec![
+                self.owned(),
+                direction("reply"),
+                self.state(&["related"]),
+                error_type(),
+                active(),
+                relation("!=", original("reply"), json!("@quarantine")),
+                json!({"mangle": {"key": meta("mark"), "value": {"|": [meta("mark"), self.mark]}}}),
+                json!({"return": null}),
+            ],
+        ));
         out.push(self.rule("route", vec![self.ingress(), json!({"drop": null})]));
         out.push(self.rule("route", vec![self.owned(), json!({"drop": null})]));
+        // This host's own error (time exceeded, fragmentation needed) about an
+        // owned or a not yet confirmed forward packet is rerouted to the exit
+        // TUN. Every other local packet is the host's and passes untouched.
+        out.push(self.rule(
+            "local",
+            vec![
+                relation("!=", meta("nfproto"), json!("ipv4")),
+                json!({"return": null}),
+            ],
+        ));
+        for owner in [self.owned(), self.unconfirmed()] {
+            out.push(self.rule(
+                "local",
+                vec![
+                    owner,
+                    self.open(),
+                    direction("reply"),
+                    self.state(&["related"]),
+                    error_type(),
+                    active(),
+                    relation("!=", original("reply"), json!("@quarantine")),
+                    json!({"mangle": {"key": meta("mark"), "value": {"|": [meta("mark"), self.mark]}}}),
+                    json!({"return": null}),
+                ],
+            ));
+        }
         out.push(self.rule("input", vec![self.ingress(), json!({"drop": null})]));
         out.push(self.rule("input", vec![self.owned(), json!({"drop": null})]));
         out.push(self.rule(
@@ -282,6 +347,27 @@ impl Program {
                     json!({"return": null}),
                 ],
             ));
+            let owners = if chain == "final" {
+                vec![self.owned(), self.unconfirmed()]
+            } else {
+                vec![self.owned()]
+            };
+            for owner in owners {
+                out.push(self.rule(
+                    chain,
+                    vec![
+                        owner,
+                        self.open(),
+                        direction("reply"),
+                        eq(meta("oif"), json!(self.interface)),
+                        self.state(&["related"]),
+                        error_type(),
+                        active(),
+                        relation("!=", original("reply"), json!("@quarantine")),
+                        json!({"return": null}),
+                    ],
+                ));
+            }
             out.push(self.rule(chain, vec![self.ingress(), json!({"drop": null})]));
             out.push(self.rule(chain, vec![self.owned(), json!({"drop": null})]));
             out.push(self.rule(
@@ -336,18 +422,27 @@ fn sequence_rules(rule: Value, mark: u32) -> Vec<Value> {
         .and_then(Value::as_array_mut)
         .expect("generated rule")
         .insert(0, relation("!=", ct("protocol"), json!(1)));
+    // An error's echo identity is its quoted request's: after the 8-byte
+    // ICMP header and an option-free 20-byte quoted IPv4 header.
+    let related = expressions.contains(&error_type());
+    let offset = if related { (8 + 20 + 4) * 8 } else { 32 };
     let mut echo = rule;
     let original = echo
         .pointer_mut("/add/rule/expr")
         .and_then(Value::as_array_mut)
         .expect("generated rule");
-    let mut checks = vec![
-        eq(ct("protocol"), json!(1)),
-        eq(
+    let mut checks = vec![eq(ct("protocol"), json!(1))];
+    if related {
+        checks.push(eq(
+            json!({"payload": {"base": "th", "offset": 64, "len": 8}}),
+            json!(0x45),
+        ));
+    } else {
+        checks.push(eq(
             json!({"payload": {"protocol": "icmp", "field": "type"}}),
             json!({"set": [0, 8]}),
-        ),
-    ];
+        ));
+    }
     let mut lookups = Vec::new();
     let mut actions = Vec::new();
     for mut expression in std::mem::take(original) {
@@ -382,7 +477,7 @@ fn sequence_rules(rule: Value, mark: u32) -> Vec<Value> {
     // every successful return. A failed lookup reaches the mandatory private
     // owner/ingress drop, so no RPDB or foreign hook observes the scratch value.
     checks.push(eq(meta("mark"), json!({"set": [0, mark]})));
-    checks.push(json!({"mangle": {"key": meta("mark"), "value": {"payload": {"base": "th", "offset": 32, "len": 32}}}}));
+    checks.push(json!({"mangle": {"key": meta("mark"), "value": {"payload": {"base": "th", "offset": offset, "len": 32}}}}));
     checks.push(json!({"mangle": {"key": meta("mark"), "value": {"&": [meta("mark"), 65535]}}}));
     checks.extend(lookups);
     let at = actions

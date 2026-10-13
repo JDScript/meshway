@@ -72,7 +72,12 @@ impl Live {
             _ = tokio::time::sleep_until(self.gate_until.into()) => {},
         }
     }
+    /// The reverse-NAT reply of this projection or an ICMP error quoting its
+    /// forward packet (conntrack RELATED); framing only, the flow owner admits.
     fn reply(&self, packet: &[u8]) -> bool {
+        self.tuple.related(packet) || self.exact_reply(packet)
+    }
+    fn exact_reply(&self, packet: &[u8]) -> bool {
         if packet.len() < 28
             || packet[0] != 0x45
             || usize::from(u16::from_be_bytes([packet[2], packet[3]])) != packet.len()

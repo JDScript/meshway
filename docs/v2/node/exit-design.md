@@ -115,6 +115,18 @@ sha 应用 IPv4
 4. `postrouting` 仅对所属 forward ct／资格集合做 IPv4 masquerade；公网与 LAN 均采用实际出接口地址。回包须 ct reply direction、关联原 tuple 和活 flow 投影；未关联新入站不允许进入 Mesh。DNS 和普通 Mesh TUN 流量不能被这条 NAT 规则接管。
 5. 首版使用宿主默认 conntrack zone＋精确归属 mark／原 tuple／ct identity，不笼统设置一个“出口 zone”：回程包必须在 conntrack lookup 前知道 zone，不能在查到 ct mark 后才决定 zone。若环境无法证明原 tuple／mark 不冲突，安装拒绝。实现阶段可另评估专用 namespace，但不以未经验证的 zone 分离宣称隔离成立。
 6. conntrack 只拥有内核 NAT 映射。Underlay 的有界 kernel handle／tuple 投影完全由 dataplane 接纳、续期、退役事件驱动，不能自行从读状态或回包建立业务流；回复查询同一个 FlowTable 的 `LocalFlow`／CID 后再走正式准入。
+7. 首包写入出口 TUN 后，owner 在至多 3 秒内等待其 owned conntrack 条目出现，以绑定精确清理用的 ct 身份；没有出现（首包在出口因 TTL 或 MTU 被丢弃、未经 FORWARD）则该流 `ConfirmFailed` 并退役。等待不占用任何队列：daemon 的出口 driver 与 Underlay owner 都把未决确认放在一旁按 10 ms 轮询，其他流的投影、续期、退役与包照常执行。
+
+#### ICMP 错误 {#icmp-errors}
+
+已投影流的 ICMP 错误是 conntrack RELATED 报文，在内核侧按原路回到出口 TUN，再由数据面按[被引用的流](/v2/node/dataplane#icmp-errors)准入；没有第二份白名单。IPv4 首版，受管 IPv6 仍 sink。
+
+| 来源 | 内核路径 |
+| --- | --- |
+| 出口之外的路由器（time exceeded、destination unreachable、fragmentation needed） | masquerade 的 conntrack 把错误与其引用的包一起逆转换；`route` 链对 owned、reply 方向、state related、类型 3／11 且原 tuple 在 `flows`（echo 为被引用 request 的 sequence 在 `echo_flows`，按无选项的 20 字节被引用头读取）且不在 quarantine 的错误打出口 mark；一条 `fwmark ＋ ipproto icmp` 的 RPDB 规则在全部成对规则之后查回程表（只含已投影源的 `/32`，其他目的落空继续），`forward`／`final` 对同样条件放行至出口 TUN |
+| 出口主机自己（TTL 在本机耗尽、本机出接口 MTU 不足） | 内核把错误挂到被丢弃 forward 包的 conntrack（RELATED、reply 方向）；该 ct 已 owned，或尚未确认（包死于 FORWARD 之前，未获 owned mark）。`local`（`type route hook output`）链对这两类且原 tuple 在 `flows`／`echo_flows`、不在 quarantine、未 closing 的错误打出口 mark 触发重路由到出口 TUN，`final` 同条件放行；源地址为内核按到源的路由所选（通常是出口的 Mesh 地址）。其他本机报文不受影响 |
+
+出口 TUN 读取方（`Live::reply`）只按框架接收：发往该投影源、类型 3／11、被引用头为该投影的 forward 包；源地址不限，由数据面判定。未引用任何 conntrack 的伪造错误在内核即为 invalid，不会被路由进出口 TUN。
 
 ### 生存期、撤回与内核排队
 
@@ -253,11 +265,11 @@ Server／Policy 入口为 `compile_with_exit` 和 `ExitInputs`；实例、选择
 - **开放代理：**出口 role、单源 permit、具体目的／服务、完整实际 path 和活执行上下文缺一不可；本机 DNS／NAT 无公网 listener，未请求方向不能建立新流。
 - **源伪造：**已认证 origin 绑定其精确 Mesh 地址，lax 不成为 origin；不接受 LAN 源、另一 Node 源、IPv4-mapped IPv6 绕分类或源端声称已校验的 metadata。
 - **公网集合：**唯一 Policy 分类排除 RFC1918、ULA、link-local、组播、CGNAT `100.64.0.0/10`、loopback、unspecified、保留／广播等特殊范围；测试覆盖边界地址，不能用 `!is_private()` 近似。出口 LAN 必须明确 CIDR Access，不能因域名解析成私网就借 Internet grant 放行。
-- **hairpin：**首版禁止出口本机／所属虚拟设备／Mesh 池作为外部转发目标，避免 local INPUT、递归 TUN 或 NAT 回卷。源节点自己作为出口的单节点路径当前不合法，明确拒绝；所需本机 direct 由配置表达。
+- **hairpin：**首版禁止出口本机／所属虚拟设备／Mesh 池作为外部转发目标，避免 local INPUT、递归 TUN 或 NAT 回卷。出口集合中源节点自己的位置对该源就是 direct（[Routing · Action](/v2/configuration-reference/routing#action)），不产生单节点出口路径。
 - **状态回复：**conntrack 不证明 business flow；TCP／UDP／echo 仍经过唯一 FlowTable。相同 tuple 换 demand、path、profile／instance 或迟到旧回复不能接管新流。
 - **撤回：**路径节点、成员、Access、出口开关、方案或执行 lease 变化均检查；旧内核投影、DNS ticket、密文／明文队列一起失效。禁用出口后宿主原本开启的 ip_forward 不改回，但 Meshway 转发资格与 NAT 全部撤回。
 - **IPv6：**首版拒绝 exit IPv6 permit，客户端受管 IPv6 负向捕获，出口专用 TUN 的 IPv6 转发 drop；外层 IPv6 carrier 与内层 IPv6 出口能力分别表达。已授权 Mesh IPv6 可继续使用自己的路径。
-- **MTU／协议：**首版继承现有 IPv4 无 options／分片、TCP／UDP／ICMP echo 范围；明确限制超 MTU UDP。TCP 需验证双向 MSS／PMTU，ICMP errors 不能直接当业务 reply。若实现 RELATED 错误，须校验内嵌原 tuple／流并另做 parser／state 测试，不开放通用 RELATED helpers。禁止 NFT flowtable／硬件 offload 绕过逐包截止门。
+- **MTU／协议：**首版继承现有 IPv4 无 options／分片、TCP／UDP／ICMP echo 范围；明确限制超 MTU UDP。ICMP 错误不当业务 reply：只作为被引用活流的 RELATED 报文按[ICMP 错误](#icmp-errors)放行（内嵌 tuple 校验、每流每秒 10 条），PMTU 发现由此收敛；不开放通用 RELATED helpers。禁止 NFT flowtable／硬件 offload 绕过逐包截止门。
 - **资源与宿主：**每节点流上限、nft set／ct 投影、query 数、命令队列和 buffers 有界。未知表／相同名字的外部资源／mark 冲突停装；mark 归属检查须覆盖外部 nft／connmark 写入，不能只检查当前 RPDB selector。规则丢失监测、部分事务、NET_ADMIN 丢失均停止正向 I/O，保留可核验恢复证据。
 
 ## 工作包与依赖

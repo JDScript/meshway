@@ -271,6 +271,33 @@ impl Scene {
             _ => Err(Error::Flow),
         };
         let table = self.tables.get_mut(&id).unwrap();
+        if let crate::Transport::Error(error) = facts.transport {
+            // The Engine's related admission: the flow table lookup with the
+            // Policy check over the flow's own decision.
+            return table
+                .related(
+                    id,
+                    &entry,
+                    &error.quoted,
+                    None,
+                    time,
+                    |decision, forward| {
+                        meshway_policy::admission::netmap::admit_related(
+                            &netmap.netmap,
+                            decision,
+                            entry.path,
+                            entry.origin,
+                            entry.previous,
+                            forward,
+                            &error.quoted.traffic,
+                            facts.traffic.source,
+                            facts.traffic.destination,
+                        )
+                        .map_err(Error::from)
+                    },
+                )
+                .map(|related| related.checked);
+        }
         let prepared = table.prepare(
             Policy {
                 netmap: &netmap.netmap,

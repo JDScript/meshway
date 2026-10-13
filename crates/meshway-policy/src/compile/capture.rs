@@ -413,6 +413,21 @@ pub(super) fn selection<'a>(
     Ok(Selection { rules, fallback })
 }
 
+/// Whether some action of `profile`'s selection names `source` as an exit,
+/// i.e. whether `source` executes a partition other than the profile's.
+pub(super) fn names_exit(cfg: &NetworkConfiguration, profile: &str, source: NodeId) -> bool {
+    selection(cfg, profile).is_ok_and(|Selection { rules, fallback }| {
+        rules
+            .iter()
+            .map(|(_, rule)| rule.action.clone().into())
+            .chain(std::iter::once(fallback))
+            .any(|route| {
+                matching::executed(cfg, route.clone(), source)
+                    .map_or(true, |executed| executed != route)
+            })
+    })
+}
+
 pub(super) fn action(route: &RouteAction) -> Result<EgressAction, CompileError> {
     let nodes = |selectors: &[String]| {
         selectors
@@ -438,15 +453,30 @@ fn unavailable(error: CompileError) -> UnavailableReason {
     }
 }
 
-/// The partition of `profile` without the node-side limits; `Err` names why
-/// no partition exists. A rule referencing a set not in `sets` is a missing
-/// dependency, never an empty set.
+/// Rule actions as `source` executes them ([`matching::executed`]); without a
+/// source (a profile-level preview) as written.
+fn executed(
+    cfg: &NetworkConfiguration,
+    route: RouteAction,
+    source: Option<NodeId>,
+) -> Result<RouteAction, CompileError> {
+    match source {
+        Some(source) => matching::executed(cfg, route, source),
+        None => Ok(route),
+    }
+}
+
+/// The partition of `profile` that `source` executes, without the node-side
+/// limits; `Err` names why no partition exists. A rule referencing a set not
+/// in `sets` is a missing dependency, never an empty set.
 pub fn compute(
     cfg: &NetworkConfiguration,
     sets: &rules::RuleSets,
     profile: &str,
+    source: Option<NodeId>,
 ) -> Result<EgressPartition, UnavailableReason> {
     let Selection { rules, fallback } = selection(cfg, profile).map_err(unavailable)?;
+    let fallback = executed(cfg, fallback, source).map_err(unavailable)?;
     let mut actions = Vec::new();
     let mut remaining4 = vec![(0u32, u32::MAX)];
     let mut remaining6 = vec![(0u128, u128::MAX)];
@@ -461,7 +491,8 @@ pub fn compute(
         let rules::Ranges { v4, v6 } = rules::ranges(&rule.matcher, sets).map_err(unavailable)?;
         let id = index(
             &mut actions,
-            action(&rule.action.clone().into()).map_err(unavailable)?,
+            action(&executed(cfg, rule.action.clone().into(), source).map_err(unavailable)?)
+                .map_err(unavailable)?,
         );
         let (hit, rest) = split(&remaining4, &normalize(v4), &mut work)?;
         out4.extend(hit.into_iter().map(|(s, e)| (s, e, id)));
@@ -487,22 +518,25 @@ pub fn partition(
     cfg: &NetworkConfiguration,
     sets: &rules::RuleSets,
     profile: &str,
+    source: Option<NodeId>,
 ) -> Result<EgressPartition, UnavailableReason> {
-    let partition = compute(cfg, sets, profile)?;
+    let partition = compute(cfg, sets, profile, source)?;
     if !partition.within_limits() {
         return Err(UnavailableReason::RoutingLimit);
     }
     Ok(partition)
 }
 
-/// What a Node would install for `profile`: the partition's counts, or the
-/// fail-closed boundary's with its reason.
+/// What `source` (any source not named as an exit when omitted) would
+/// install for `profile`: the partition's counts, or the fail-closed
+/// boundary's with its reason.
 pub fn summary(
     cfg: &NetworkConfiguration,
     sets: &rules::RuleSets,
     profile: &str,
+    source: Option<NodeId>,
 ) -> CaptureSummary {
-    match compute(cfg, sets, profile) {
+    match compute(cfg, sets, profile, source) {
         Ok(partition) => {
             let summary = partition.summary();
             if partition.within_limits() {

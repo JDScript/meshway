@@ -18,6 +18,8 @@ pub enum Role {
     External,
     Lan,
     Resolver,
+    /// A plain kernel router between E and the far link; no Meshway process.
+    Router,
 }
 impl Role {
     pub const NODES: [Self; 3] = [Self::A, Self::R, Self::E];
@@ -30,6 +32,7 @@ impl Role {
             Self::External => "external",
             Self::Lan => "lan",
             Self::Resolver => "resolver",
+            Self::Router => "router",
         }
     }
 }
@@ -111,6 +114,12 @@ pub async fn run(cli: &Cli, role: Role) -> Result<()> {
         }
         Role::Lan => return service::run(cli).await,
         Role::Resolver => return dns::run(cli, role).await,
+        Role::Router => {
+            while !tokio::fs::try_exists(cli.signals.join("exit-stop")).await? {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            return Ok(());
+        }
         _ => {}
     }
     let topology: Topology = read(&cli.public.join("exit-topology.json")).await?;

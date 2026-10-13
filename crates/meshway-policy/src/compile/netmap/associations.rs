@@ -192,6 +192,7 @@ impl LocalCompiler {
                     break;
                 }
             }
+            let action = matching::executed(&self.configuration, action, source)?;
             match &decided {
                 Some(previous) if *previous != action => return Ok(None),
                 _ => decided = Some(action),
@@ -256,10 +257,10 @@ impl LocalCompiler {
         }
         let (rules, _) = self.effective_rules(origin)?;
         for (rule, own) in rules {
-            let RuleAction::Exit {
+            let RouteAction::Exit {
                 nodes: exits,
                 via: waypoints,
-            } = &rule.action
+            } = matching::executed(cfg, rule.action.clone().into(), origin)?
             else {
                 continue;
             };
@@ -269,7 +270,7 @@ impl LocalCompiler {
                     .map(|s| matching::node_selector(s))
                     .collect::<Result<Vec<_>, _>>()
             };
-            if parsed(exits)? != nodes || parsed(waypoints)? != via {
+            if parsed(&exits)? != nodes || parsed(&waypoints)? != via {
                 continue;
             }
             let mut names = own.is_some_and(|set| {

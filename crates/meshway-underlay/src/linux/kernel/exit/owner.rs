@@ -19,7 +19,7 @@ use std::{
     collections::BTreeMap,
     net::{IpAddr, Ipv4Addr},
     sync::{Arc, Mutex, RwLock},
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
@@ -471,6 +471,13 @@ impl super::super::Kernel {
         let interface_name = backend.ledger.tun_name.clone();
         let shutdown = self.shared.tasks.stop.clone();
         let task = tokio::spawn(async move {
+            // Confirmations wait for a kernel fact; they never hold the owner.
+            let mut confirming: Vec<(
+                super::ExitIncarnation,
+                Instant,
+                oneshot::Sender<Result<CtConfirmation>>,
+            )> = Vec::new();
+            let mut next_poll = Instant::now();
             let mut tick = tokio::time::interval(Duration::from_millis(100));
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             let mut audit = tokio::time::interval(Duration::from_secs(1));
@@ -481,6 +488,32 @@ impl super::super::Kernel {
                     _ = conflict.cancelled() => break,
                     _ = shutdown.cancelled() => break,
                     _ = audit.tick() => { if let Err(error) = backend.verify().await { stopped("audit", &error); break; } },
+                    _ = tokio::time::sleep_until(next_poll.into()), if !confirming.is_empty() => {
+                        let mut failed = false;
+                        let mut waiting = Vec::with_capacity(confirming.len());
+                        for (incarnation, until, reply) in std::mem::take(&mut confirming) {
+                            let result = match backend.poll_confirm(incarnation, until).await {
+                                Ok(None) => {
+                                    waiting.push((incarnation, until, reply));
+                                    continue;
+                                }
+                                Ok(Some(confirmation)) => Ok(confirmation),
+                                Err(error) => {
+                                    tracing::debug!(operation = "confirm", %error, "Exit projection operation failed");
+                                    Err(error)
+                                }
+                            };
+                            let error = result.is_err();
+                            let sent = reply.send(result).is_ok();
+                            if (error || !sent) && reconcile(&mut backend, incarnation).await.is_err() {
+                                failed = true;
+                                break;
+                            }
+                        }
+                        confirming.extend(waiting);
+                        next_poll = Instant::now() + super::backend::CONFIRM_POLL;
+                        if failed { break; }
+                    },
                     _ = tick.tick() => {
                         // Withdrawal, Host suspension or a withdrawn role stops the
                         // owner: every projection retires with its exact CT.
@@ -519,11 +552,18 @@ impl super::super::Kernel {
                                 if result.is_err() && reconcile(&mut backend, incarnation).await.is_err() { break; }
                                 if reply.send(result).is_err() && reconcile(&mut backend, incarnation).await.is_err() { break; }
                             },
-                            Request::Confirm { incarnation, reply } => {
-                                let result = backend.confirm(incarnation).await;
-                                if let Err(error) = &result { tracing::debug!(operation = "confirm", %error, "Exit projection operation failed"); }
-                                if result.is_err() && reconcile(&mut backend, incarnation).await.is_err() { break; }
-                                if reply.send(result).is_err() && reconcile(&mut backend, incarnation).await.is_err() { break; }
+                            Request::Confirm { incarnation, reply } => match backend.confirmation_cutoff(incarnation) {
+                                Ok(until) => {
+                                    if confirming.is_empty() {
+                                        next_poll = Instant::now() + super::backend::CONFIRM_POLL;
+                                    }
+                                    confirming.push((incarnation, until, reply));
+                                }
+                                Err(error) => {
+                                    tracing::debug!(operation = "confirm", %error, "Exit projection operation failed");
+                                    let _ = reply.send(Err(error));
+                                    if reconcile(&mut backend, incarnation).await.is_err() { break; }
+                                }
                             },
                             Request::Retire { incarnation, reply } => {
                                 let result = backend.retire(incarnation).await;

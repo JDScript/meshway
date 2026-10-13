@@ -121,6 +121,8 @@ A→C via B
 | `{ "type": "direct" }` | 匹配流量从源节点本地网络直接发出 |
 | `{ "type": "unmanaged" }` | 不接管 |
 
+出口集合含源节点自己时，该源把自己当作那个位置上永远可用的 `direct`：`nodes` 是有序主备，自己之前在配置上可用（启用且 `exitEnabled`）的出口按原顺序保留，否则直接 direct——`[self]`、`[self, other]` 为 direct，`[other, self]` 在 other 可用时经 other、否则 direct。运行时出口就绪事实不是输入：可用但未就绪的出口照常失败闭合。direct 时它自己就是出口，流量从本机直接发出，`via` 是空段；普通 DNS 按 `noExit` 用本机系统 resolver（与它为其他源服务的是同一系统 resolver）。分割、捕获、`egress` 计划、DNS plan、路径检测与节点判定都由 `meshway-policy` 的同一函数给出（`matching::executed`），Access 不变；其他源照常经该出口。因此一条“`geoip:cn` → exit sha”的公共规则对 sha 自身是 direct、对其余节点经 sha。
+
 出口必须启用 `nodes[id].exitEnabled`，目的访问必须获 access 允许：IP 目的地须在源节点的 CIDR／`autogroup:internet` 授权内；域名目的地（`domain`、`domainSuffix` 与规则集内容，规则集的 subdomain 成员按其后缀判断，keyword 成员只有 `autogroup:internet` 能覆盖）须被 `domain:` 后缀授权或 `autogroup:internet` 覆盖，不满足时报告 `exit_outside_access`（`params.node`、`params.destination`）。域名授权按解析地址集合执行，见 [Access](/v2/configuration-reference/access#domains)。没有可用获准路径时拒绝，不能回退到后续规则或偷偷 direct。
 
 ### 域名规则的执行

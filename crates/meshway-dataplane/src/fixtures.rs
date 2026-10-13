@@ -146,3 +146,17 @@ pub(crate) fn echo(reverse: bool, identifier: u16, sequence: u16) -> Packet {
     body.extend(b"echo contents");
     Packet::parse(datagram(address(source), address(destination), 1, body)).unwrap()
 }
+
+/// An ICMPv4 error from `source` to `destination` quoting `quoted`, truncated
+/// as routers do to its IPv4 header plus at most 64 bytes.
+pub(crate) fn icmp_error(
+    source: IpAddr,
+    destination: IpAddr,
+    kind: u8,
+    code: u8,
+    quoted: &[u8],
+) -> Packet {
+    let mut body = vec![kind, code, 0, 0, 0, 0, 0, 0];
+    body.extend(&quoted[..quoted.len().min(20 + 64)]);
+    Packet::parse(datagram(source, destination, 1, body)).unwrap()
+}

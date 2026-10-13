@@ -18,6 +18,16 @@ wire 6、`compilerVersion` 不变，IPC 9（C3）；Server schema 版本 7（F4a
 
 出口方案切换（C3）：IPC 升为 9，Server schema 版本 6（`activity_events` 新增 Node actor 与路由方案目标；开发环境重新初始化数据目录）；wire 6、`compilerVersion` 不变。
 
+E1 出口 ICMP 错误与出口自指（wire、IPC、HTTP 契约与 `compilerVersion` 均不变）：
+
+- 出口 ICMP 错误回传：ICMPv4 destination unreachable（含 fragmentation needed）与 time exceeded 作为其引用活流的 RELATED 报文，沿该流原路径回复方向返回源；出口之外路由器与出口主机自身的错误都经出口 TUN（`route` 链、新 `local` 输出路由链、一条 `fwmark＋ipproto icmp` RPDB 规则），数据面按引用的 forward 包、circuit、路径与来源规则（`admission::netmap::admit_related`）准入，每流每端每秒至多 10 条，`SecureNode::related_counters` 计数；traceroute 显示出口与其后各跳，PMTU 发现经出口收敛。见 [数据面 · ICMP 错误](/v2/node/dataplane#icmp-errors)、[Exit 设计 · ICMP 错误](/v2/node/exit-design#icmp-errors)。
+- Underlay 的路由读取（`get_routes`，全部归属核对的唯一来源）忽略内核派生的缓存例外（`RTM_F_CLONED`）：PMTU 例外随 fragmentation needed 出现在源的受管捕获表后，egress owner 不再把它当作外来路由而在下一次门切换（如租约到期暂停）时失败闭合并卡在冲突。
+- 出口的 conntrack 确认不再阻塞：首包死于出口（TTL／MTU）时最长 3 秒的等待原先挡住 daemon 出口 driver 与 Underlay owner 的全部后续工作，现与其他流并行。
+- 出口集合含源自己时按有序主备执行：自己是那个位置上永远可用的 direct，`[self, other]` 为 direct，`[other, self]` 在 other 配置可用时经 other、否则 direct（`matching::executed` 统一用于分割、`egress` 计划、DNS plan、路径检测与节点判定），`geoip:cn → exit sha` 这类公共规则不再拒绝 sha 自己的流量、也不再使其 DNS 为 `exitPlanRequired`；Access 不变。见 [Routing · Action](/v2/configuration-reference/routing#action)。
+- `exit/off` 新增第 12 阶段（router＋窄 MTU 的 far 网段：traceroute、PMTU、伪造／限速）。
+
+验证：合入 main `1211538b` 后（`6aaf979a`）Planck 16 行矩阵 `20261013T022738Z-789636f9` 全部通过（`exit/off` 含第 12 阶段）。合并前：`exit/off`（ICMP 阶段当时为第 11 阶段）Planck `20261013T011243Z-62bc2868` 等通过；三次全量矩阵 15／14／14 行通过，未通过行（`netmap/expiry` 租约到期前的 suspended／TUN 竞态、`exit/off` 第 9 阶段日志读取竞态、一次 `udp/resolv-conf` CLI 样本）与 S3 同类或单行复跑通过，详见[验收范围](/v2/node/validation)；证据 `.meshway/validation/e1/`、`.meshway/node-lab/e1/`。
+
 规则集收尾（R2d）：
 
 - Server 启动后及按 provider 间隔自己取回并验签每个网络生效的 provider 目录（内置与覆盖；同一目录 URL 与信任钥只取一次，共用下载预算，退避持久保存，失败与 sequence 回退保留上一份），`GET /rule-set-catalog` 不再需要先引用集合；`rule_set_catalog_not_ready` 只表示首次取回尚未完成或从未成功。见[规则集 · 目录更新](/v2/configuration-reference/rule-sets#catalog-refresh)。

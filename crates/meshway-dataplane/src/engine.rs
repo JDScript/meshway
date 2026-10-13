@@ -12,6 +12,7 @@ impl Engine {
             desired: desired.clone(),
             flows: FlowTable::new(limits),
             exit_counters: Default::default(),
+            related_counters: Default::default(),
         })
     }
 
@@ -66,6 +67,10 @@ impl Engine {
         let reading = View::of(&self.desired);
         self.flows
             .exit_destinations(reading.node(), (&reading).into())
+    }
+
+    pub fn related_counters(&self) -> crate::RelatedCounters {
+        self.related_counters
     }
 
     /// Number of kept entries; deliberately does not refresh or expire them.

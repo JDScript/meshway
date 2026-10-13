@@ -25,9 +25,14 @@
 | IPv4 | 精确长度与 checksum；暂不支持 options 或分片 |
 | IPv6 | 精确长度；最多两个顺序合法、仅含 padding 的扩展头；拒绝 routing header、全部 fragment header 和 jumbogram |
 | 业务协议 | TCP、UDP、ICMP echo；检查端口、协议头及适用 checksum |
+| ICMP 错误 | IPv4 destination unreachable（code 0–15，含 fragmentation needed）与 time exceeded（code 0–1），引用无选项、未分片的 IPv4 头加至少 8 字节 TCP／UDP 端口或 echo request；见[ICMP 错误](#icmp-errors)。不是业务流量，不建立流 |
 | UDP／ICMP | 回复匹配已建立反向 tuple；echo 另绑定 identifier／sequence |
 | TCP | 三次握手、每方向 16 MiB 序号历史内的 ACK／重分段重传、前方 16 MiB 内最多 64 个已见乱序区间、FIN 与已建立 RST；支持序号回绕，状态有界。端点按空闲回收的 TCP tuple 记入有界续接集合（同一内容内有效，内容更换或撤空即清空）；其后源方向带 ACK、无 SYN／RST 的同 tuple 段按首包重新准入（续接：forward 从该段序号、reply 从其 ACK 起算），回包仍须确认源已发出的字节；回复方向的段不能建流。因撤销、撤回或租约到期结束的流不可续接，旧连接只能重新握手。由端点 TCP 处理实际重排／SACK；不缓存包体，不支持 simultaneous-open、TFO 或握手 RST |
 | 资源 | 默认 4,096 流、60 秒空闲；最大 65,536 流、24 小时空闲设置；实际寿命受空闲、circuit 与 Engine 撤回约束 |
+
+#### ICMP 错误 {#icmp-errors}
+
+ICMP 错误是一条已准入流的 RELATED 报文：`Packet::parse` 把它解析为 `Transport::Error`（外层地址＋被引用包的元组），流表只在它**引用的正是某条活流的 forward 包**（TCP／UDP 端口、echo 的 identifier 与 sequence 完全相同）时，沿该流原路径的回复方向放行：在流的终点（出口或 Mesh 终点）发送、在源接收，且必须是该流绑定的 circuit 与完整路径。Policy（`admission::netmap::admit_related`）另要求错误发往该流的源地址，来自被引用的目的地址本身、终点节点自己的地址，或（出口流）Mesh 地址池以外的地址（出口之外的路由器）；Mesh 中其他节点的地址不能冒充。错误不刷新流期限、不推进协议状态、不创建流；排空中、已到期、出口投影未 ACK 或匹配不唯一的流都不放行。每条流在每个端点每秒至多 10 条（`RELATED_PER_SECOND`），超出即丢弃；`SecureNode::related_counters` 计数放行、拒绝（无匹配流或 Policy 不符）与限速。引用 forward 方向以外的包（例如源本机对回包产生的错误）、ICMPv6 错误与其他类型照旧丢弃。中继不变，仍按会话转发。
 
 同一流固定原 demand ID 与完整路径；同一节点／角色范围的活 tuple 在多个 demand ID 之间也不能被另一条路径接管。`LocalFlow` 只读查询同一 FlowTable，供本机源包／原路径回复使用，不刷新流、推进协议状态或形成第二份路由表。SecureNode 中继不创建业务流，也不因此获得本机发起资格；歧义拒绝。
 
@@ -41,7 +46,7 @@ TCP 乱序区间只记录已准入字节的序号，不制造接收确认：缺�
 
 ### IPv4 出口流与内核投影
 
-出口业务复用同一 `SecureNode`／`FlowTable`：Policy 在本节点投影上检查已认证原始源、`sourceAddresses`、出口 `Decision` 的精确目的／服务、selection 和完整路径；出口端另需本地 `exitRole`（[Routing · 出口联合许可](/v2/configuration-reference/routing#出口联合许可)）。首版拒绝出口 IPv6 并计数。出口回程由 `exit::ExitReplyIngress` 交给 `SecureNode::exit_reply`，只从已有流选择原 CID，再执行 `admit_reply` 和原路径反向 Noise 保护；未关联包丢弃并计数。
+出口业务复用同一 `SecureNode`／`FlowTable`：Policy 在本节点投影上检查已认证原始源、`sourceAddresses`、出口 `Decision` 的精确目的／服务、selection 和完整路径；出口端另需本地 `exitRole`（[Routing · 出口联合许可](/v2/configuration-reference/routing#出口联合许可)）。首版拒绝出口 IPv6 并计数。出口回程由 `exit::ExitReplyIngress` 交给 `SecureNode::exit_reply`，只从已有流选择原 CID，再执行 `admit_reply` 和原路径反向 Noise 保护；未关联包丢弃并计数。出口之外路由器与出口主机自己产生的 [ICMP 错误](#icmp-errors)走同一回程，内核侧见 [Exit 设计 · ICMP 错误](/v2/node/exit-design#icmp-errors)。
 
 `SecureNode::next_exit_projection` 按需返回一个不透明 `exit::ExitProjection`：`Install`／`Renew` 携带 flow incarnation、原 IPv4 tuple、不可换绑的 `ProjectionScope` 和一次性 ACK；`Retire` 携带原资源绑定与独立清理 ACK。**内核侧由 Underlay 执行，见 [Exit 设计](/v2/node/exit-design#数据路径与唯一-owner)**；daemon 映射类型并驱动事件和 I/O，不增加业务流表。此接口本身不证明 Linux NAT 安装或包流已验收。
 
@@ -204,7 +209,7 @@ Manager 在提交时捕获实际 link，按冻结 ChannelScope 分组；换代�
 
 capture 使用执行配置中完整的 `meshAddressPools`，其[契约](/v2/configuration-reference/node-configuration#capture-与本机-egress)不授予 Access。私有 route table 只包含所属 capture 路由；RPDB 安装 own-mark goto、各池 lookup／unreachable 和 end，受保护 socket 跳到此块末尾后继续原 RPDB，而非强制走 main table。SO_MARK 选择、保留已有 selector 语义与读回验证必须成功；同 UID 其他 socket 不获全局绕过。
 
-安装、保留交接与运行监控均检查优先于 capture 的 local-table 路由和外部接口地址。只有本 owner 的精确 TUN 本机地址路由可豁免；覆盖 Mesh 池的外来 local 路由／地址会阻断安装或使其失效，外部对象保留供宿主处理。
+安装、保留交接与运行监控均检查优先于 capture 的 local-table 路由和外部接口地址。归属核对只看路由对象：内核由所属路由派生的缓存例外（`RTM_F_CLONED`，例如 fragmentation needed 留下的 PMTU）随父路由存亡，不计入任何表的内容。只有本 owner 的精确 TUN 本机地址路由可豁免；覆盖 Mesh 池的外来 local 路由／地址会阻断安装或使其失效，外部对象保留供宿主处理。
 
 | 生命周期 | 处理 |
 | --- | --- |

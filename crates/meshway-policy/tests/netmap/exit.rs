@@ -515,3 +515,200 @@ fn single_exit_dns_service_is_shared_by_source_and_resolver() {
         }
     );
 }
+
+/// A public rule `1.2.4.0/24 → exit 4 via 3`: node 4 is the exit itself, so
+/// it executes the rule as direct (partition, plan, DNS, preview); source 1
+/// still leaves through 4 via 3. A backup set naming the source is direct too.
+#[test]
+fn an_exit_naming_its_source_is_that_sources_direct_egress() {
+    let mut s = base(5);
+    s.cfg.access = vec![access(
+        &[sel(1), sel(4), sel(5)],
+        &["autogroup:internet".into()],
+        &["tcp:443"],
+        false,
+    )];
+    s.cfg.routing.egress.rules = vec![
+        egress_rule("1.2.4.0/24", exit_action(&[4], &[3])),
+        egress_rule("1.2.5.0/24", exit_action(&[4, 5], &[])),
+    ];
+    let compiled = netmaps(&s);
+    let compiler =
+        |at: u8| LocalCompiler::new(&compiled.nodes[&node(at)].netmap, &Default::default());
+    let decide = |at: u8, source: u8, destination: &str| {
+        compiler(at)
+            .decide(
+                node(source),
+                destination.parse().unwrap(),
+                BusinessProtocol::Tcp,
+                port(443),
+            )
+            .unwrap()
+    };
+    // The exit itself: direct, on its own projection and on any other.
+    for at in [4, 1, 3] {
+        assert_eq!(decide(at, 4, "1.2.4.8"), LocalDecision::Direct, "at {at}");
+        assert_eq!(decide(at, 4, "1.2.5.8"), LocalDecision::Direct, "at {at}");
+    }
+    // Ordered: 5 stands after the eligible 4, so 5 exits through 4.
+    let LocalDecision::Permitted(backup) = decide(5, 5, "1.2.5.8") else {
+        panic!("5 must exit through its primary 4");
+    };
+    assert_eq!(
+        backup.target,
+        Target::Exit {
+            nodes: vec![node(4)],
+            via: vec![]
+        }
+    );
+    // Other sources are unaffected.
+    let LocalDecision::Permitted(through) = decide(1, 1, "1.2.4.8") else {
+        panic!("source 1 must still exit through 4");
+    };
+    assert_eq!(
+        through.target,
+        Target::Exit {
+            nodes: vec![node(4)],
+            via: vec![node(3)]
+        }
+    );
+    assert!(
+        through
+            .paths
+            .iter()
+            .all(|p| p.nodes.first() == Some(&node(1))
+                && p.nodes.contains(&node(3))
+                && p.nodes.last() == Some(&node(4)))
+    );
+    let LocalDecision::Permitted(backup) = decide(1, 1, "1.2.5.8") else {
+        panic!("source 1 keeps the ordered exit set");
+    };
+    assert_eq!(
+        backup.target,
+        Target::Exit {
+            nodes: vec![node(4), node(5)],
+            via: vec![]
+        }
+    );
+    // The exit captures nothing for its own rules; source 1 captures both.
+    let own = compiler(4).capture().unwrap().unwrap();
+    assert!(own.managed_ipv4.is_empty() && !own.default_capture);
+    let source = compiler(1).capture().unwrap().unwrap();
+    let managed = |plan: &EgressCapturePlan, address: &str| {
+        let address: std::net::Ipv4Addr = address.parse().unwrap();
+        plan.managed_ipv4
+            .iter()
+            .any(|(start, end)| *start <= address && address <= *end)
+    };
+    assert!(managed(&source, "1.2.4.8") && managed(&source, "1.2.5.8"));
+    // The signed egress plan carries the executed actions.
+    let plan4 = compiled.nodes[&node(4)].netmap.egress.as_ref().unwrap();
+    assert!(
+        plan4
+            .rules
+            .iter()
+            .all(|rule| rule.action == EgressAction::Direct)
+    );
+    // A relay never carries the exit's own traffic as an exit circuit.
+    assert!(
+        compiler(3)
+            .transit(
+                node(4),
+                &Target::Exit {
+                    nodes: vec![node(4)],
+                    via: vec![node(3)]
+                }
+            )
+            .unwrap()
+            .is_empty()
+    );
+    // DNS: 4 resolves locally. 1 and 5 both have two exit sets (4 via 3
+    // and 4 directly), hence no single-exit plan; nothing is served.
+    assert_eq!(compiled.nodes[&node(4)].netmap.dns.egress, DnsPlan::NoExit);
+    for source in [1, 5] {
+        assert!(matches!(
+            &compiled.nodes[&node(source)].netmap.dns.egress,
+            DnsPlan::Unavailable {
+                reason: DnsEgressUnavailable::ExitPlanRequired
+            }
+        ));
+    }
+    // With no eligible exit before it, the backup source is direct.
+    let mut ineligible_primary = netmaps(&{
+        let mut copy = base(5);
+        copy.cfg = s.cfg.clone();
+        copy.cfg.nodes.get_mut(&node(4)).unwrap().exit_enabled = false;
+        copy
+    });
+    let compiled5 = ineligible_primary.nodes.remove(&node(5)).unwrap();
+    assert_eq!(
+        LocalCompiler::new(&compiled5.netmap, &Default::default())
+            .decide(
+                node(5),
+                "1.2.5.8".parse().unwrap(),
+                BusinessProtocol::Tcp,
+                port(443)
+            )
+            .unwrap(),
+        LocalDecision::Direct
+    );
+    assert!(matches!(
+        &compiled.nodes[&node(1)].netmap.dns.egress,
+        DnsPlan::Unavailable {
+            reason: DnsEgressUnavailable::ExitPlanRequired
+        }
+    ));
+    // The management preview equals what the exit executes.
+    for (destination, kind) in [
+        (
+            "1.2.4.8",
+            meshway_configuration::evaluation::RouteKind::Direct,
+        ),
+        (
+            "1.2.5.8",
+            meshway_configuration::evaluation::RouteKind::Direct,
+        ),
+    ] {
+        let preview = meshway_policy::compile::plan(PlanRequest {
+            topology: Topology {
+                configuration: &s.cfg,
+                subjects: &s.subjects,
+                inventory: &s.inventory,
+            },
+            rule_sets: &BTreeMap::new(),
+            selected_profiles: &BTreeMap::new(),
+            source: node(4),
+            destination: PlanDestination::Address(destination.parse().unwrap()),
+            profile: None,
+        })
+        .unwrap();
+        assert_eq!(preview.route.as_ref().map(|route| route.kind), Some(kind));
+        assert!(preview.route.unwrap().targets.is_empty());
+        assert_eq!(
+            preview.outcome,
+            meshway_configuration::evaluation::EvaluationOutcome::Direct
+        );
+        assert!(preview.paths.is_empty());
+        assert_eq!(preview.profile.capture, compiler_summary(&s, 4));
+    }
+    // Without the second (two-exit) rule source 1 has a single exit plan;
+    // the exit serves 1 and 5 and still resolves its own names locally.
+    s.cfg.routing.egress.rules.truncate(1);
+    let compiled = netmaps(&s);
+    assert!(matches!(
+        &compiled.nodes[&node(1)].netmap.dns.egress,
+        DnsPlan::ViaExit { service } if service.exit == node(4)
+    ));
+    assert!(matches!(
+        &compiled.nodes[&node(4)].netmap.dns.egress,
+        DnsPlan::ServeExitResolver { services }
+            if services.iter().map(|s| s.source).collect::<Vec<_>>() == [node(1), node(5)]
+    ));
+}
+
+fn compiler_summary(s: &Scenario, at: u8) -> meshway_configuration::evaluation::CaptureSummary {
+    let compiled = netmaps(s);
+    LocalCompiler::new(&compiled.nodes[&node(at)].netmap, &Default::default())
+        .capture_summary(node(at))
+        .unwrap()
+}

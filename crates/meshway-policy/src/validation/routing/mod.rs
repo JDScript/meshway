@@ -452,7 +452,7 @@ fn partition_limits(
         }
     }
     for name in names {
-        let summary = crate::compile::capture_summary(config, &sets, name);
+        let summary = crate::compile::capture_summary(config, &sets, name, None);
         let path = if config.routing.egress.profiles.contains_key(name) {
             format!("/routing/egress/profiles/{}", pointer(name))
         } else {

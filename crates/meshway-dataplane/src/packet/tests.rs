@@ -243,7 +243,7 @@ fn tcp_bounds_options_and_checksums() {
 }
 
 #[test]
-fn only_echo_icmp_and_family_correct_checksums() {
+fn only_echo_and_quoting_error_icmp_and_family_correct_checksums() {
     assert!(matches!(
         echo(false, 9, 8).transport(),
         Transport::Echo {
@@ -265,12 +265,23 @@ fn only_echo_icmp_and_family_correct_checksums() {
         bad[42] ^= 1;
         assert_eq!(Packet::parse(bad).unwrap_err(), PacketError::Checksum);
     }
+    // An error must quote its packet; other ICMP types are unsupported.
     assert_eq!(
         Packet::parse(datagram(
             address(1),
             address(3),
             1,
             vec![3, 0, 0, 0, 0, 0, 0, 0]
+        ))
+        .unwrap_err(),
+        PacketError::Length
+    );
+    assert_eq!(
+        Packet::parse(datagram(
+            address(1),
+            address(3),
+            1,
+            vec![5, 0, 0, 0, 0, 0, 0, 0]
         ))
         .unwrap_err(),
         PacketError::Unsupported
@@ -289,4 +300,70 @@ fn only_echo_icmp_and_family_correct_checksums() {
         .unwrap_err(),
         PacketError::Unsupported
     );
+}
+
+#[test]
+fn icmp_errors_parse_their_quoted_tuple_and_nothing_else() {
+    let router: IpAddr = "198.51.100.1".parse().unwrap();
+    let forward = tcp(false, 100, 0, 2, 0);
+    let quoted = forward.as_bytes().to_vec();
+    // Fragmentation needed with its next-hop MTU, quoting a TCP segment.
+    let mut body = vec![3, 4, 0, 0, 0, 0, 0x05, 0x00];
+    body.extend(&quoted);
+    let packet = Packet::parse(datagram(router, address(1), 1, body)).unwrap();
+    let Transport::Error(error) = packet.transport() else {
+        panic!("{packet:?}");
+    };
+    assert_eq!((error.kind, error.code), (3, 4));
+    assert_eq!(error.quoted.traffic, forward.traffic());
+    assert_eq!(error.quoted.echo, None);
+    assert_eq!(packet.traffic().source, router);
+    assert_eq!(packet.facts().validate(), Ok(()));
+    // Time exceeded quoting an echo request: identifier and sequence.
+    let request = echo(false, 7, 9);
+    let packet = icmp_error(router, address(1), 11, 0, request.as_bytes());
+    let Transport::Error(error) = packet.transport() else {
+        panic!();
+    };
+    assert_eq!(error.quoted.echo, Some((7, 9)));
+    let parse = |kind: u8, code: u8, quoted: &[u8], to: u8| {
+        let mut body = vec![kind, code, 0, 0, 0, 0, 0, 0];
+        body.extend(quoted);
+        Packet::parse(datagram(router, address(to), 1, body)).map(|_| ())
+    };
+    assert_eq!(parse(11, 0, &quoted, 1), Ok(()));
+    // Only destination unreachable and time exceeded with defined codes.
+    assert_eq!(parse(11, 2, &quoted, 1), Err(PacketError::Unsupported));
+    assert_eq!(parse(12, 0, &quoted, 1), Err(PacketError::Unsupported));
+    assert_eq!(parse(5, 0, &quoted, 1), Err(PacketError::Unsupported));
+    // Addressed to the quoted packet's sender only.
+    assert_eq!(parse(11, 0, &quoted, 2), Err(PacketError::Header));
+    // At least the quoted header plus 8 bytes.
+    assert_eq!(parse(11, 0, &quoted[..27], 1), Err(PacketError::Length));
+    // No quoted options or fragments, no nested errors or echo replies.
+    let mut options = quoted.clone();
+    options[0] = 0x46;
+    assert_eq!(parse(11, 0, &options, 1), Err(PacketError::Unsupported));
+    let mut fragment = quoted.clone();
+    fragment[6] = 0x20;
+    assert_eq!(parse(11, 0, &fragment, 1), Err(PacketError::Fragment));
+    let nested = icmp_error(address(3), address(1), 11, 0, request.as_bytes());
+    assert_eq!(
+        parse(11, 0, &nested.as_bytes()[..48], 1),
+        Err(PacketError::Unsupported)
+    );
+    let reply = echo(true, 7, 9);
+    assert_eq!(
+        parse(11, 0, reply.as_bytes(), 3),
+        Err(PacketError::Unsupported)
+    );
+    // The outer checksum covers the quote.
+    let mut bytes = datagram(router, address(1), 1, {
+        let mut body = vec![11, 0, 0, 0, 0, 0, 0, 0];
+        body.extend(&quoted);
+        body
+    });
+    let last = bytes.len() - 1;
+    bytes[last] ^= 1;
+    assert_eq!(Packet::parse(bytes).map(|_| ()), Err(PacketError::Checksum));
 }

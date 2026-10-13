@@ -9,7 +9,7 @@ mod exit;
 mod index;
 mod tcp;
 
-use crate::{Direction, Error, LocalFlow, PacketFacts, Route, Transport, authority::Cap};
+use crate::{Direction, Error, LocalFlow, PacketFacts, Quoted, Route, Transport, authority::Cap};
 use meshway_configuration::execution::BusinessProtocol;
 use meshway_model::{Digest, NodeId};
 use meshway_policy::{
@@ -55,6 +55,22 @@ impl Tuple {
                 } => Some((identifier, sequence)),
                 _ => None,
             },
+        }
+    }
+    /// The forward tuple of the packet an ICMP error quotes.
+    fn quoted(quoted: &Quoted) -> Self {
+        let traffic = quoted.traffic;
+        Self {
+            source: traffic.source,
+            destination: traffic.destination,
+            protocol: match traffic.protocol {
+                BusinessProtocol::Tcp => 6,
+                BusinessProtocol::Udp => 17,
+                BusinessProtocol::IcmpEcho => 1,
+            },
+            source_port: traffic.source_port,
+            destination_port: traffic.destination_port,
+            echo: quoted.echo,
         }
     }
     fn reversed(&self) -> Self {
@@ -127,6 +143,45 @@ struct Flow {
         std::sync::Weak<meshway_policy::compile::netmap::LocalCompiler>,
         Arc<Decision>,
     ),
+    /// ICMP errors relating to this flow in the current one-second window.
+    related: RelatedBudget,
+}
+
+/// At most [`RELATED_PER_SECOND`] ICMP errors per flow and second at each
+/// endpoint: one error answers one packet, the bound stops a flood of them.
+pub(crate) const RELATED_PER_SECOND: u8 = 10;
+
+#[derive(Clone, Copy, Default)]
+struct RelatedBudget {
+    since: Option<Instant>,
+    count: u8,
+}
+
+impl RelatedBudget {
+    fn take(&mut self, now: Instant) -> bool {
+        if self
+            .since
+            .is_none_or(|since| now.saturating_duration_since(since) >= Duration::from_secs(1))
+        {
+            *self = Self {
+                since: Some(now),
+                count: 0,
+            };
+        }
+        if self.count >= RELATED_PER_SECOND {
+            return false;
+        }
+        self.count += 1;
+        true
+    }
+}
+
+/// The checked route of an ICMP error on its flow's reply direction.
+pub(crate) struct Related {
+    pub cap: Cap,
+    pub flow: Option<tokio_util::sync::CancellationToken>,
+    pub projection: Option<Arc<crate::exit::Gate>>,
+    pub checked: CommittedRoute,
 }
 
 impl Flow {
@@ -354,6 +409,14 @@ impl FlowTable {
         if tuple == reverse {
             return Err(Error::Flow);
         }
+        if let Transport::Error(error) = facts.transport {
+            let key = self.related_key(node, &error.quoted, false, &time)?;
+            let flow = &self.entries[&key];
+            return Ok(Some(LocalMatch {
+                route: LocalFlow::new(key.grant.clone(), key.path.clone(), flow.circuit),
+                cap: flow.cap,
+            }));
+        }
         let mut found = None;
         for key in self.index.matching(&tuple) {
             let flow = &self.entries[key];
@@ -381,6 +444,98 @@ impl FlowTable {
             ProtocolState::new(facts.transport, self.idle.contains(&(node, tuple)))?;
         }
         Ok(found)
+    }
+
+    /// The one live flow an ICMP error quoting `quoted` relates to: the flow
+    /// whose forward packet it quotes, at its terminal (which sends the error
+    /// back along the reply direction) or at its origin (which receives it).
+    /// Closing, expired, unacknowledged exit and ambiguous flows never match.
+    fn related_key(
+        &self,
+        node: NodeId,
+        quoted: &Quoted,
+        receiving: bool,
+        time: &FlowTime,
+    ) -> Result<Key, Error> {
+        let tuple = Tuple::quoted(quoted);
+        let role = if receiving {
+            Role::Origin
+        } else {
+            Role::Terminal
+        };
+        let mut found = None;
+        for key in self.index.matching(&tuple) {
+            let flow = &self.entries[key];
+            if key.node != node
+                || key.role != role
+                || key.tuple != tuple
+                || flow.closing
+                || !flow.live_at(time.instant, time.now_ms)
+                || flow
+                    .exit
+                    .as_ref()
+                    .and_then(|exit| exit.gate.as_ref())
+                    .is_some_and(|gate| gate.ready().is_err())
+            {
+                continue;
+            }
+            if found.replace(key.clone()).is_some() {
+                return Err(Error::Flow);
+            }
+        }
+        found.ok_or(Error::Flow)
+    }
+
+    /// Admit an ICMP error on the reply direction of the flow it relates to
+    /// ([`Self::related_key`]) for the circuit and path it arrived on or is
+    /// sent on. `admit` is the Policy check over the flow's own decision and
+    /// forward traffic. It neither refreshes nor advances the flow; a flow
+    /// over its per-second budget answers `Capacity`, any mismatch `Flow`.
+    pub fn related(
+        &mut self,
+        node: NodeId,
+        entry: &Entry<'_>,
+        quoted: &Quoted,
+        circuit: Option<[u8; 32]>,
+        time: FlowTime,
+        admit: impl FnOnce(&Decision, &Traffic) -> Result<Hop, Error>,
+    ) -> Result<Related, Error> {
+        self.expire(time.instant, time.now_ms);
+        let path = entry.path;
+        let (origin, terminal) = match (path.first(), path.last()) {
+            (Some(origin), Some(terminal)) if path.len() >= 2 => (*origin, *terminal),
+            _ => return Err(Error::Ingress),
+        };
+        if entry.sender != terminal || (node != origin && node != terminal) {
+            return Err(Error::Sender);
+        }
+        let key = self.related_key(node, quoted, node == origin, &time)?;
+        let flow = &self.entries[&key];
+        if key.grant != entry.grant || key.path != path || flow.circuit != circuit {
+            return Err(Error::Flow);
+        }
+        let hop = admit(&flow.decided.1, &flow.forward)?;
+        let flow = self.entries.get_mut(&key).ok_or(Error::Flow)?;
+        if !flow.related.take(time.instant) {
+            return Err(Error::Capacity);
+        }
+        let (cancellation, projection) = flow.exit.as_ref().map_or((None, None), |exit| {
+            (Some(exit.cancellation.clone()), exit.gate.clone())
+        });
+        Ok(Related {
+            cap: flow.cap,
+            flow: cancellation,
+            projection,
+            checked: CommittedRoute {
+                hop,
+                route: Route {
+                    grant: key.grant.clone(),
+                    origin,
+                    original_path: key.path.clone(),
+                    direction: Direction::Reply,
+                },
+            },
+        })
     }
 
     /// In-place content update. Each live flow is judged once by `keep`; a
@@ -610,6 +765,7 @@ impl FlowTable {
             selection,
             closing,
             decided,
+            related: existing.map_or_else(Default::default, |flow| flow.related),
         };
         Ok(Prepared {
             key,

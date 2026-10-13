@@ -597,3 +597,52 @@ async fn netmap_exit_selection_change_ends_the_old_exit_connection() {
     f.a.send(mesh_id, input).unwrap();
     f.close().await;
 }
+
+/// Errors of an exit flow: a router beyond the exit and the exit host itself
+/// (time exceeded, fragmentation needed) reach the source back through the
+/// relay on the flow's own circuit; a quote naming no live flow of the source
+/// stops at the exit and is counted there.
+#[tokio::test]
+async fn netmap_exit_icmp_errors_return_on_their_flow_only() {
+    let mut f = standard().await;
+    let id = handshake(&mut f).await;
+    let input = udp(&f, false, 41000);
+    let quoted = input.as_bytes().to_vec();
+    let pending = forward(&mut f, id, input);
+    install(&mut f);
+    pending.release(|_| ()).unwrap();
+    let source = f.address(0);
+    let router = "198.51.100.1".parse().unwrap();
+    let exit = f.address(2);
+    use super::support::packet::icmp_error;
+    deliver_reply(&mut f, id, icmp_error(router, source, 11, 0, 0, &quoted));
+    deliver_reply(&mut f, id, icmp_error(exit, source, 3, 4, 1280, &quoted));
+    assert_eq!(f.a.related_counters().admitted, 2);
+    assert_eq!(f.b.related_counters().admitted, 2);
+    let other = udp(&f, false, 41001).as_bytes().to_vec();
+    let before = f.b.exit_counters().unassociated_reply;
+    assert!(
+        f.b.exit_reply(ExitReplyIngress::new(icmp_error(
+            router, source, 11, 0, 0, &other
+        )))
+        .is_err()
+    );
+    assert_eq!(f.b.exit_counters().unassociated_reply, before + 1);
+    // A Mesh address other than the exit's is never a router beyond it.
+    assert!(
+        f.b.exit_reply(ExitReplyIngress::new(icmp_error(
+            f.address(1),
+            source,
+            11,
+            0,
+            0,
+            &quoted
+        )))
+        .is_err()
+    );
+    assert_eq!(f.b.related_counters().rejected, 1);
+    // The flow is unchanged: its ordinary reply still returns.
+    let reply = udp(&f, true, 41000);
+    deliver_reply(&mut f, id, reply);
+    f.close().await;
+}
