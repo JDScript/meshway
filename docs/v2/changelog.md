@@ -37,6 +37,8 @@ E1 出口 ICMP 错误与出口自指（wire 6、IPC 8、HTTP 契约与 `compiler
 - 出口集合含源自己的规则对该源为 direct（`matching::executed` 统一用于分割、`egress` 计划、DNS plan、路径检测与节点判定），`geoip:cn → exit sha` 这类公共规则不再拒绝 sha 自己的流量、也不再使其 DNS 为 `exitPlanRequired`；Access 不变。见 [Routing · Action](/v2/configuration-reference/routing#action)。
 - `exit/off` 新增第 11 阶段（router＋窄 MTU 的 far 网段：traceroute、PMTU、伪造／限速）。
 
+验证：`exit/off`（含第 11 阶段）Planck `20261013T011243Z-62bc2868` 等通过；三次全量矩阵 15／14／14 行通过，未通过行（`netmap/expiry` 租约到期前的 suspended／TUN 竞态、`exit/off` 第 9 阶段日志读取竞态、一次 `udp/resolv-conf` CLI 样本）与 S3 同类或单行复跑通过，详见[验收范围](/v2/node/validation)；证据 `.meshway/validation/e1/`、`.meshway/node-lab/e1/`。
+
 ## v0.1.0-alpha.4
 
 wire 6 不变；IPC 升为 8；`compilerVersion` 升为 `meshway-netmap-2`；Server schema 版本 4（开发环境重新初始化数据目录）。HTTP 契约：新增 `GET /agent-api/v1/artifacts/{digest}`、`POST /agent-api/v1/dns-associations`（`reportDnsAssociation`）、规则集 `report`／`entries`／`match` 与 `rule-set-catalog` 端点；配置新增 `ruleSetProviders` 与 `<provider>:<name>` 引用；netmap `ruleSets` 改为 digest 引用，`EgressPlan` 改为 `{generation, rules, fallback, unavailable}`（删除 `capture`／`routes`／`EgressRoute`）；`SyncRequest`／`SyncResponse` 增加 `associations`；`RuleSetView`、`ArtifactSummary`、`PreparedRuleSet`、`ResourceProblem` 与警告 `egress_partition_limit` 按下列 R2a、R2c、X6、R3 变化。
