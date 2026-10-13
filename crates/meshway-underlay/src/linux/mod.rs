@@ -10,6 +10,70 @@ pub use kernel::exit::{
     ExitSendGuard, ExitTransport, Invalidated, OriginalTuple, ProjectionAck,
 };
 mod protection;
+
+/// This host's `net.ipv4.ip_local_port_range`: ports the kernel may give an
+/// unbound outgoing socket of any process, so a listener there can find its
+/// port held for a moment. `None` when it cannot be read.
+pub fn ephemeral_ports() -> Option<std::ops::RangeInclusive<u16>> {
+    let text = std::fs::read_to_string("/proc/sys/net/ipv4/ip_local_port_range").ok()?;
+    let mut fields = text.split_ascii_whitespace().map(str::parse::<u16>);
+    let (Some(Ok(first)), Some(Ok(last)), None) = (fields.next(), fields.next(), fields.next())
+    else {
+        return None;
+    };
+    (first <= last).then_some(first..=last)
+}
+
+/// Processes holding a socket bound to local `port` (UDP or TCP, IPv4 or
+/// IPv6), as `(pid, command)`: the diagnosis of a listener whose bind found
+/// its port in use. Bounded and best effort; unreadable entries are skipped.
+pub fn port_holders(port: u16, udp: bool) -> Vec<(u32, String)> {
+    let suffix = format!(":{port:04X}");
+    let mut inodes = std::collections::BTreeSet::new();
+    for table in if udp {
+        ["udp", "udp6"]
+    } else {
+        ["tcp", "tcp6"]
+    } {
+        let Ok(text) = std::fs::read_to_string(format!("/proc/net/{table}")) else {
+            continue;
+        };
+        for line in text.lines().skip(1).take(65536) {
+            let fields: Vec<_> = line.split_ascii_whitespace().collect();
+            if fields.get(1).is_some_and(|local| local.ends_with(&suffix))
+                && let Some(inode) = fields.get(9).filter(|inode| **inode != "0")
+            {
+                inodes.insert(format!("socket:[{inode}]"));
+            }
+        }
+    }
+    let mut holders = Vec::new();
+    let Ok(processes) = std::fs::read_dir("/proc") else {
+        return holders;
+    };
+    for process in processes.flatten().take(65536) {
+        let Some(pid) = process
+            .file_name()
+            .to_str()
+            .and_then(|name| name.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        let Ok(descriptors) = std::fs::read_dir(process.path().join("fd")) else {
+            continue;
+        };
+        if descriptors.flatten().take(65536).any(|fd| {
+            std::fs::read_link(fd.path())
+                .is_ok_and(|target| target.to_str().is_some_and(|t| inodes.contains(t)))
+        }) {
+            let command = std::fs::read_to_string(process.path().join("comm"))
+                .map(|comm| comm.trim().to_owned())
+                .unwrap_or_default();
+            holders.push((pid, command));
+        }
+    }
+    holders
+}
 mod proxy;
 mod resolver_exchange;
 pub mod sockets;

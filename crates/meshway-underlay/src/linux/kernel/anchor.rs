@@ -502,11 +502,14 @@ pub(super) async fn verify(
     capture: Option<u32>,
     limit: usize,
 ) -> Result<()> {
-    let identity = super::journal::Journal::identity()?;
-    if identity.0.trim() != record.identity.boot
-        || identity.1 != record.identity.namespace_device
-        || identity.2 != record.identity.namespace_inode
-    {
+    // The journal that holds this record carries the namespace cookie; the
+    // anchor itself is proven resident by its link and alias below.
+    if !super::namespace::Identity::current()?.is(
+        &record.identity.boot,
+        record.identity.namespace_device,
+        record.identity.namespace_inode,
+        None,
+    ) {
         return Err(Error::Conflict);
     }
     let link = owned_link(handle, record, limit).await?;

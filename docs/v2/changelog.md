@@ -4,10 +4,24 @@
 
 ## 未发布
 
+出口 conntrack 经 ctnetlink（M3）：wire 6、IPC 10、HTTP 契约、`compilerVersion` 与 Server schema 均不变。
+
+- 出口的 conntrack 精确读取、删除与 mark 过滤读取改由 Underlay 的 conntrack 模块直接经内核 ctnetlink 完成，删除按 original tuple、默认 zone 与已核对的 ct id（同 tuple 的替换条目不会被删）并回读不存在。出口宿主不再需要安装 `conntrack`（conntrack-tools）；`conntrackUnavailable` 只表示内核 ctnetlink 不可用，内核拒绝权限报 `netAdminMissing`。见[出口宿主](/v2/install#出口宿主)、[NAT 技术选择与宿主条件](/v2/node/exit-design#nat-技术选择与宿主条件)。
+- Node lab／fixture 镜像仍含 `conntrack` 工具，只用于 `exit/off` 的独立证据与人工排查。
+
+启动期瞬时失败自愈（U1）：wire 6、IPC 10、`compilerVersion` 与 Server schema 均不变。HTTP 契约：`IssueCode` 新增 `ephemeral_listener_port`（警告）。Underlay 私有记录新增可省略字段（`namespace_cookie`／`net_cookie`）：降级到本版本之前的 daemon 会以 `storage` 拒绝读取已写入 cookie 的记录。
+
+- 修复：容器重建后新 network namespace 复用旧 nsfs inode 时，`exit-child.json` 被当作当前 namespace 的记录，PID namespace 不同又无法证明旧工具已退出，Underlay 永久停在冲突退避（`Underlay startup failed: kernel ownership or routing protection conflict`，N5 nyc、M1 lax，只能重启容器）。capture journal、出口／egress 账本与 exit-child 记录现在共用 Underlay 唯一的 namespace 身份，含 namespace cookie（`SO_NETNS_COOKIE`，一次 boot 内不复用）；无 cookie 的旧记录与内核仍按 inode。cookie 经新 crate `meshway-netns` 读取，是 workspace 唯一经审计的 `unsafe`。见[生命周期](/v2/node/runtime#生命周期)。
+- 修复：listener 绑定失败（`EADDRINUSE` 等）不再使节点在重启前一直没有该 listener（ops5 nyc 只能经中继）：Manager 中该 key 的 owner 按 1 s 起翻倍、上限 60 s 重试（`EACCES` 每 60 s），其他资源照常安装；期间 State 中该 listener 为 `failed`＋`resource_unavailable`，Status `lastError: transport`，`lastErrorDetail` 含 bind 错误、占用进程与临时端口范围提示；绑定后同一内容再 apply 并清除错误。完整 apply 现在清除先前 Degraded apply 的 `lastError`。见 [listener 绑定与重试](/v2/node/connectivity#listener-bind-retry)。
+- listener 端口在 Linux 默认临时端口范围（32768–60999）内时配置校验给出警告 `ephemeral_listener_port`，节点按本机 `ip_local_port_range` 记 WARN。
+- `udp/off` 行新增阶段：B 的 listener 端口在其 daemon 首次绑定时被占用，验证 Status 原因、释放后自行绑定与清除错误。
+
+验证：Planck 18 行矩阵 `20261013T211635Z-273c8e3a`（`7a6dab15`）全部通过，lab 三容器八轮重建见 [U1 启动期自愈证据](/v2/node/validation#u1-startup-self-heal)；证据 `.meshway/node-lab/u1/`、`.meshway/validation/u1/`。
+
 UDP 接收缓冲（M2）：IPC 11（`Status.sockets`）；wire 6、HTTP 契约、`compilerVersion` 与 Server schema 均不变。CLI 与 daemon 须一起升级（IPC 10 的 CLI 对新 daemon 得到 `version` 错误）。
 
 - Native UDP socket 默认缓冲：接收 4 MiB、发送 2 MiB（原为 7／7 MiB 的普通请求）；请求先用 `SO_RCVBUFFORCE`／`SO_SNDBUFFORCE`，daemon 有 `CAP_NET_ADMIN` 时不再被 `net.core.rmem_max` 截到 416 KB（it7、planck 此前均为 416 KB，it7 的 socket 有接收丢包）；没有该权限时退回普通请求。显式 `socket.receiveBuffer`／`sendBuffer` 按配置请求。见 [UDP 批量接口](/v2/node/transport#udp-批量接口)。
-- 实际值可观测：每个 Mesh UDP socket 一条 `UDP socket buffers` 日志（被截断时为 warn），IPC Status 新增 `sockets`（资源、地址、读回值与请求值），`meshway status` 新增 SOCKET 表并标注 `limited`。见[运行状态](/v2/node/runtime)。
+- 实际值可观测：每个 Mesh UDP socket 一条 `UDP socket buffers` 日志（被截断时为 warn），IPC Status 新增 `sockets`（资源、地址、读回值与请求值；U1 重试绑定中的 listener 为 `unavailable` 行并带失败原因，绑定成功后同样读回），`meshway status` 新增 SOCKET 表并标注 `limited`。见[运行状态](/v2/node/runtime)。
 - 接收路径核对：已是 `recvmmsg`（32 × 64 KiB）＋`UDP_GRO`，未改。按通道的发送节奏实测无收益，未加入。
 - 文档：[高吞吐宿主](/v2/install#high-throughput) 的 sysctl 建议（daemon 不修改）。
 

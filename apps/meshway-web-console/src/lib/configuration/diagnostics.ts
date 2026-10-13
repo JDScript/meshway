@@ -317,6 +317,12 @@ const TEXT: Record<IssueCode, (p: Params, node: NodeNamer) => string> = {
     m.configuration_issue_shadowed_rule({ index: ordinal(p.by) }),
   ineffective_block_option: (p) =>
     m.configuration_issue_ineffective_block_option({ field: p.field ?? "?" }),
+  ephemeral_listener_port: (p) =>
+    m.configuration_issue_ephemeral_listener_port({
+      port: p.port ?? "?",
+      first: p.first ?? "?",
+      last: p.last ?? "?",
+    }),
 }
 
 function familyText(value: string | undefined): string {

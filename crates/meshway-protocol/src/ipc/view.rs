@@ -120,19 +120,29 @@ meshway_model::object! {
 } }
 
 meshway_model::object! {
-/// One Native UDP socket of this Node's listeners and dialers in the installed
-/// netmap, with the buffer sizes the kernel granted it.
+/// One socket of this Node's listeners and dialers in the installed netmap:
+/// a bound Native UDP socket with the buffer sizes the kernel granted it, or
+/// a listener whose bind is being retried.
 #[derive(Clone, Debug, PartialEq, Eq)] pub struct SocketStatus {
     pub resource: ResourceRef,
-    pub bound_address: SocketAddress,
-    /// Effective receive buffer in bytes as the kernel reports it (`SO_RCVBUF`; Linux reports twice the granted size, covering bookkeeping).
-    pub receive_buffer: u32,
-    /// Bytes requested: `socket.receiveBuffer`, or the default when 0.
-    pub receive_requested: u32,
-    /// Effective send buffer in bytes as the kernel reports it (`SO_SNDBUF`).
-    pub send_buffer: u32,
-    /// Bytes requested: `socket.sendBuffer`, or the default when 0.
-    pub send_requested: u32,
+    /// Address the socket is bound to; null while unavailable.
+    #[serde(deserialize_with = "meshway_model::wire::required_nullable")]
+    pub bound_address: Option<SocketAddress> [required = true],
+    /// Effective receive buffer in bytes as the kernel reports it (`SO_RCVBUF`; Linux reports twice the granted size, covering bookkeeping); null while unavailable.
+    #[serde(deserialize_with = "meshway_model::wire::required_nullable")]
+    pub receive_buffer: Option<u32> [required = true],
+    /// Bytes requested: `socket.receiveBuffer`, or the default when 0; null while unavailable.
+    #[serde(deserialize_with = "meshway_model::wire::required_nullable")]
+    pub receive_requested: Option<u32> [required = true],
+    /// Effective send buffer in bytes as the kernel reports it (`SO_SNDBUF`); null while unavailable.
+    #[serde(deserialize_with = "meshway_model::wire::required_nullable")]
+    pub send_buffer: Option<u32> [required = true],
+    /// Bytes requested: `socket.sendBuffer`, or the default when 0; null while unavailable.
+    #[serde(deserialize_with = "meshway_model::wire::required_nullable")]
+    pub send_requested: Option<u32> [required = true],
+    /// The listener is not bound and its bind is being retried: the last failure, e.g. `listener lab-udp cannot bind 0.0.0.0:35000: Address in use (os error 98)`; null when bound.
+    #[serde(deserialize_with = "meshway_model::wire::required_nullable")]
+    pub unavailable: Option<String> [required = true],
 } }
 
 meshway_model::object! {

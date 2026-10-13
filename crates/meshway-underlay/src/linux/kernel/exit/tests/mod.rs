@@ -1,9 +1,6 @@
 use super::io::ExitCutoff as Deadline;
 use super::*;
-use crate::linux::{
-    kernel::{Kernel, journal::Journal},
-    tasks::Tasks,
-};
+use crate::linux::{kernel::Kernel, tasks::Tasks};
 use meshway_configuration::execution::ExitNat;
 use meshway_model::{Digest, exit::ExitFamily};
 use meshway_private_storage::Directory;
@@ -54,16 +51,17 @@ async fn exit_nat_udp_real_reply_qualification_confirm_retire_and_expiry() {
     let mut nonce = [0; 16];
     getrandom::fill(&mut nonce).unwrap();
     let mark = if kernel.journal.mark.mask != 1 { 1 } else { 2 };
-    let (boot, namespace_device, namespace_inode) = Journal::identity().unwrap();
+    let namespace = crate::linux::kernel::namespace::Identity::current().unwrap();
     let (store, previous) = storage::Store::open(kernel.store.directory())
         .await
         .unwrap();
     assert!(previous.is_none());
     let ledger = storage::Ledger {
         version: 2,
-        boot,
-        namespace_device,
-        namespace_inode,
+        boot: namespace.boot,
+        namespace_device: namespace.device,
+        namespace_inode: namespace.inode,
+        namespace_cookie: namespace.cookie,
         base_installation: kernel.journal.installation.clone(),
         network: "11111111-1111-4111-8111-111111111111".parse().unwrap(),
         node: "22222222-2222-4222-8222-222222222222".parse().unwrap(),
@@ -181,7 +179,7 @@ async fn exit_nat_udp_real_reply_qualification_confirm_retire_and_expiry() {
         .unwrap();
     backend.retire(id(1)).await.unwrap();
     assert!(
-        conntrack::lookup_owned(&mut backend.commands, tuple, mark)
+        conntrack::lookup_owned(tuple, mark)
             .await
             .unwrap()
             .is_none()
@@ -194,12 +192,14 @@ async fn exit_nat_udp_real_reply_qualification_confirm_retire_and_expiry() {
     );
     adversarial::conflicts(&mut backend, &tun, tuple).await;
     protocols::round_trips(&mut backend, &tun, tuple, &external_source).await;
-    assert!(
-        backend
-            .install(id(2), tuple, cutoff(30_000), scope.clone())
-            .await
-            .is_err()
-    );
+    // A retired projection leaves the history once its conntrack is deleted
+    // and its reply tuple quarantined: the same original tuple may be
+    // projected again under a new incarnation.
+    backend
+        .install(id(2), tuple, cutoff(30_000), scope.clone())
+        .await
+        .unwrap();
+    backend.retire(id(2)).await.unwrap();
     let expiring = OriginalTuple {
         transport: ExitTransport::Udp {
             source_port: 17002,
@@ -301,9 +301,8 @@ async fn exit_nat_udp_real_reply_qualification_confirm_retire_and_expiry() {
     let mut recovered = Kernel::open(directory, Default::default(), tasks.clone())
         .await
         .unwrap();
-    let mut commands = command::Commands::default();
     assert!(
-        conntrack::lookup_owned(&mut commands, crash, mark)
+        conntrack::lookup_owned(crash, mark)
             .await
             .unwrap()
             .is_none()
@@ -355,7 +354,7 @@ async fn exit_recovers_real_sigkill_live_ct_in_same_namespace() {
     assert!(!record.retired && record.ct.is_some());
     let mut commands = command::Commands::default();
     assert!(
-        conntrack::lookup_owned(&mut commands, record.tuple, prior.program.mark)
+        conntrack::lookup_owned(record.tuple, prior.program.mark)
             .await
             .unwrap()
             .is_some()
@@ -366,7 +365,7 @@ async fn exit_recovers_real_sigkill_live_ct_in_same_namespace() {
         .await
         .unwrap();
     assert!(
-        conntrack::lookup_owned(&mut commands, record.tuple, prior.program.mark)
+        conntrack::lookup_owned(record.tuple, prior.program.mark)
             .await
             .unwrap()
             .is_none()

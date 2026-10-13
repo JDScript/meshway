@@ -23,7 +23,7 @@
 | --- | --- | --- | --- | --- | --- |
 | `test:tun:linux` | — | — | — | 真实 TUN 设备创建与双栈包 I/O | 当前 wire 已通过；`20261007T212324Z-904a137e` |
 | `test:packet:linux` | Native TCP | off | — | A→R→B 双栈小包／满 MTU UDP、MTU+1 拒绝、daemon 多 MSS TCP、R 只转发受保护帧、原路径回复 | 当前 wire 已通过；`20261007T212330Z-f7e9a2e9` |
-| `test:runtime:linux --transport native-udp --reported-endpoints` | Native UDP 本机上报端点（无 configured／STUN） | off | — | daemon 整组：下文[共同场景](#runtime-共同场景) | W5 全长通过；Planck `20261008T185416Z-08dce814`；历史静态端点：`20261008T033613Z-abbd4545` |
+| `test:runtime:linux --transport native-udp --reported-endpoints` | Native UDP 本机上报端点（无 configured／STUN） | off | — | daemon 整组：下文[共同场景](#runtime-共同场景)；B 的 listener 端口在其 daemon 首次绑定时被占用：Status 报告原因后再占 3 秒，释放后无需重启即绑定、清空 `lastError`，端口归 daemon（U1） | W5 全长通过；Planck `20261008T185416Z-08dce814`；历史静态端点：`20261008T033613Z-abbd4545` |
 | `test:runtime:linux` | Native TCP | off | — | daemon 整组：共同场景 | W5 全长通过；Planck `20261008T185416Z-9a4a35f1` |
 | `test:runtime:linux --transport vless` | VLESS TCP/TLS | off | — | 共同场景；仅 R listener、A/B 拨入，精确叶证书验证 | W5 全长通过；Planck `20261008T185416Z-b31bfda5` |
 | `test:runtime:linux --transport trojan` | Trojan TCP/TLS | off | — | 共同场景；仅 R listener、A/B 拨入，精确叶证书验证 | 当前 wire 已通过（两次）；Planck `20261008T060730Z-58ae84d3`、`20261008T061612Z-c9edd384` |
@@ -136,7 +136,7 @@ VM→it7 方向 Mesh TCP 远低于裸路径、UDP iperf 30 Mbit/s 时丢包 0.6%
 | 同上，修复后 | it7 经 planck：`ping` 4/4（约 110 ms），`IpForwDatagrams` +15、`IPReversePathFilter` 不变；lax 经 it7 中继到 planck 出口（公共规则 `128.238.0.0/16` → Exit planck via it7）：`ping` 4/4，`traceroute -I` 第 1 跳 planck 的 Mesh 地址 `100.64.0.6`、第 2 跳 Docker 网桥 `172.18.0.1`、第 3 跳目标；`curl smtp://128.238.2.93/` 收到 `220 duke.poly.edu ESMTP Postfix` 与 EHLO 回答。`128.238.177.1` 不提供 HTTP，所查 NYU `128.238/16` 主机中未找到开放 HTTP 的目标 |
 | us-lax-it7（Docker 28 iptables-nft，`DOCKER-ISOLATION-STAGE-*`／`DOCKER` 链有限定网桥的 DROP，FORWARD `policy accept`）`exitEnabled=true` | 修复前报 `firewallConflict` 且整机 `synchronizing · not applied`、peer 全部 unreachable；修复后 running、applied（revision 30）、5 个 peer `direct`，`Exit unavailable (conntrack unavailable)`，Server State 同为 `unavailable`／`conntrackUnavailable`（`freshness=current`）。防火墙判定通过：it7 实际 `nft -j list ruleset` 的离线判定为无冲突；下一项真实缺口是 it7 未安装 `conntrack`。前后 it7 的外来 nft 对象（74 个，忽略计数器与 handle）完全相同；`exitEnabled` 已恢复为 `false`（revision 31） |
 
-未完成：it7 安装 `conntrack` 前不能作为出口，lax 经 it7 出口的 `curl ifconfig.me` 未执行。
+未完成：lax 经 it7 出口的 `curl ifconfig.me` 未执行。上表 `conntrackUnavailable` 是 M3 之前缺 `conntrack` 工具所致；M3 起出口经内核 ctnetlink 管理 conntrack，不再需要该工具，it7 上的实网复验待补。
 
 ### N5 实网证据 {#n5-real-network}
 
@@ -167,6 +167,21 @@ lab／VM 与 planck 之间设计上没有直连（两端端点相关映射），
 | 名称规则经两个出口（`nyu.edu → planck`、`example.net → nyc`，再加上述两条 IP 规则） | 保存 422 `dns_exit_plan_required`，路径 `/routing/egress/rules/1`，节点 lax、sha、vm、it7（planck、nyc 对自己的规则为 direct）；revision 不变 |
 
 测试配置结束后以原 JSONC 源文 CAS 恢复（rev 41 与 rev 39 内容相同）。
+
+### U1 启动期自愈证据 {#u1-startup-self-heal}
+
+2026-10-13，只用 lab 三容器（`node:lab deploy`，每轮以不同 `RUST_LOG` 强制重建全部容器；开发 Server 未改动）。证据 `.meshway/node-lab/u1/`（`check.sh` 逐轮输出 `deploy-<n>-check.txt`，端口占用采样 `holder/`）。
+
+| 检查 | 结果 |
+| --- | --- |
+| namespace inode 复用 | 八轮重建中 inode 多次复用：lax 得到 N5 中 nyc 冲突时的 `4026532721`，之后 nyc、sha 也先后得到它；`4026532512`、`4026532616` 同样在不同容器间复用。每次 cookie 都不同（96625 → 98254 单调），旧 `exit-child.json`／journal 以 `Archived the exit-child record of another network namespace`／`changed_namespace` 归档，无一次 `Underlay startup failed` 或冲突退避 |
+| 升级过渡 | 第一轮从无 cookie 的旧记录升级时 inode 未复用，旧记录按 inode 规则归档；新记录即带 cookie |
+| listener `EADDRINUSE` | 约三分之一的节点启动时 `0.0.0.0:35000` 绑定失败（`Listener unavailable; retrying its bind`，`attempts=1`），1 s 后 `Listener bound after retry`，随即以同一内容再 apply，Status 清空 `lastError`；套接字由 daemon 持有（`ss`），peers 全部 direct。旧构建同一现象需重启容器（ops5 nyc） |
+| 修复中发现 | 第一版重试绑定后 Status 仍保留 `lastError: transport`（完整 apply 不清除先前 Degraded 的问题），deploy 因 sha 不收敛失败；`775fbeb5` 修复后重部署 |
+
+Planck 18 行矩阵 `20261013T211635Z-273c8e3a`（`7a6dab15`）全部通过；`udp/off` 行 `20261013T211638Z-24df659d` 中 B 的 Status 报告 `held by meshway-runtime pid 1`（fixture 占住端口），释放后 3.3 秒绑定、`lastError` 清空、端口归 daemon。同一分支的前一次矩阵 `20261013T205702Z-9626e731` 中 `nat/resolved` 失败：A 在 access 撤销阶段 DNS owner 健康检查失败（`Backend`）后整体重装，之后 45 秒内首个 UDP 流无回显；此前通过的 `nat/resolved` 报告均无该 DNS 失败，listener 重试未出现，复跑通过，记为未定位的偶发。远程副本 `.meshway/validation/u1/remote/`。
+
+剩余：`EADDRINUSE` 的占用者未在失败瞬间捕获。采样显示失败前数毫秒同一 daemon 刚在 35000 绑定过一个 socket（无 instance 时的普通 listener），失败约 200 ms 后已无进程持有该端口；退役 socket 关闭与协调改绑之间的竞争是最可能原因，未作为单独缺陷修复（重试在 1 s 内收敛）。
 
 ### 当前验证证据
 

@@ -146,6 +146,7 @@ pub(super) fn decode(bytes: &[u8]) -> Result<Ledger> {
                 boot: old.boot,
                 namespace_device: old.namespace_device,
                 namespace_inode: old.namespace_inode,
+                namespace_cookie: None,
                 base_installation: old.base_installation,
                 network: old.network,
                 node: old.node,

@@ -189,6 +189,10 @@ pub enum ConfigurationError {
     PreparationRequired(Vec<PreparationRequirement>),
 }
 
+/// Linux's default `net.ipv4.ip_local_port_range`. A Node reports its own
+/// range when one of its listeners cannot bind.
+pub const EPHEMERAL_PORTS: std::ops::RangeInclusive<u16> = 32768..=60999;
+
 #[derive(Default)]
 pub struct ValidationReport {
     pub issues: Vec<ConfigurationIssue>,
@@ -430,6 +434,18 @@ fn normalize_inner(
             if let Err(e) = listener.normalize() {
                 check.issue(transport_issue(&lp, &e));
                 continue;
+            }
+            let (bind, enabled) = listener.bind();
+            if enabled && EPHEMERAL_PORTS.contains(&bind.port()) {
+                check.warn(
+                    ConfigurationIssue::new(
+                        format!("{lp}/listenPort"),
+                        IssueCode::EphemeralListenerPort,
+                    )
+                    .with("port", bind.port())
+                    .with("first", EPHEMERAL_PORTS.start())
+                    .with("last", EPHEMERAL_PORTS.end()),
+                );
             }
             let verified = context.verified_listeners.get(&(id, name.clone())) == Some(&listener);
             let missing: Vec<_> = listener

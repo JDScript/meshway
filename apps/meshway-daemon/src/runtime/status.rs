@@ -265,34 +265,98 @@ fn timestamp(ms: u64) -> Option<DateTime<Utc>> {
     DateTime::from_timestamp_millis(i64::try_from(ms).ok()?)
 }
 
-/// The installed netmap's UDP sockets that report granted buffer sizes.
+/// The installed netmap's UDP sockets that report granted buffer sizes,
+/// then its listeners whose bind is being retried.
 fn sockets(
     facts: Option<&meshway_connectivity::Snapshot>,
     netmap: Option<meshway_model::state::NetmapRef>,
 ) -> Vec<meshway_protocol::ipc::SocketStatus> {
-    let bytes = |value: usize| u32::try_from(value).unwrap_or(u32::MAX);
+    let Some(facts) = facts else {
+        return Vec::new();
+    };
+    let bytes = |value: usize| Some(u32::try_from(value).unwrap_or(u32::MAX));
     let mut sockets: Vec<_> = facts
-        .map(|facts| facts.sockets.as_slice())
-        .unwrap_or_default()
+        .sockets
         .iter()
         .filter(|socket| Some(socket.reference.netmap) == netmap)
         .filter_map(|socket| {
             let buffers = socket.buffers?;
             Some(meshway_protocol::ipc::SocketStatus {
                 resource: socket.reference.resource.clone(),
-                bound_address: meshway_model::SocketAddress::try_from(socket.bound_address).ok()?,
+                bound_address: Some(
+                    meshway_model::SocketAddress::try_from(socket.bound_address).ok()?,
+                ),
                 receive_buffer: bytes(buffers.receive),
                 receive_requested: bytes(buffers.receive_requested),
                 send_buffer: bytes(buffers.send),
                 send_requested: bytes(buffers.send_requested),
+                unavailable: None,
             })
         })
         .collect();
     sockets.sort_by_key(|socket| {
-        (
-            socket.bound_address.get().is_ipv6(),
-            socket.bound_address.to_string(),
-        )
+        socket
+            .bound_address
+            .map(|address| (address.get().is_ipv6(), address.to_string()))
     });
+    let mut unavailable: Vec<_> = facts
+        .unavailable
+        .iter()
+        .map(|listener| meshway_protocol::ipc::SocketStatus {
+            resource: meshway_model::state::ResourceRef::Listener {
+                key: listener.key.clone(),
+            },
+            bound_address: None,
+            receive_buffer: None,
+            receive_requested: None,
+            send_buffer: None,
+            send_requested: None,
+            unavailable: Some(listener.detail.clone()),
+        })
+        .collect();
+    unavailable.sort_by(|a, b| a.resource.cmp(&b.resource));
+    sockets.extend(unavailable);
     sockets
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_listener_retrying_its_bind_is_an_unavailable_socket_row() {
+        let facts = meshway_connectivity::Snapshot {
+            listeners: Vec::new(),
+            links: Vec::new(),
+            sockets: Vec::new(),
+            adjacencies: Default::default(),
+            mtu: Default::default(),
+            unavailable: vec![meshway_connectivity::ListenerUnavailable {
+                key: "lab-udp".into(),
+                address: Some("0.0.0.0:35000".parse().unwrap()),
+                detail: "listener lab-udp cannot bind 0.0.0.0:35000: Address in use (os error 98)"
+                    .into(),
+                recoverable: true,
+                attempts: 2,
+                retry_at: std::time::Instant::now(),
+            }],
+        };
+        let rows = sockets(Some(&facts), None);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows[0].resource,
+            meshway_model::state::ResourceRef::Listener {
+                key: "lab-udp".into()
+            }
+        );
+        assert!(rows[0].bound_address.is_none() && rows[0].receive_buffer.is_none());
+        assert!(
+            rows[0]
+                .unavailable
+                .as_deref()
+                .unwrap()
+                .contains("Address in use")
+        );
+        assert!(sockets(None, None).is_empty());
+    }
 }

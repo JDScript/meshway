@@ -74,38 +74,6 @@ impl OriginalTuple {
             && self.fields() == other.fields()
     }
 
-    pub(super) fn filter(self) -> Vec<String> {
-        let (protocol, source, destination) = self.fields();
-        let mut arguments = vec![
-            "-f".into(),
-            "ipv4".into(),
-            "-p".into(),
-            protocol.to_string(),
-            "--orig-src".into(),
-            self.source.to_string(),
-            "--orig-dst".into(),
-            self.destination.to_string(),
-        ];
-        if protocol == 1 {
-            arguments.extend([
-                "--icmp-type".into(),
-                "8".into(),
-                "--icmp-code".into(),
-                "0".into(),
-                "--icmp-id".into(),
-                source.to_string(),
-            ]);
-        } else {
-            arguments.extend([
-                "--sport".into(),
-                source.to_string(),
-                "--dport".into(),
-                destination.to_string(),
-            ]);
-        }
-        arguments
-    }
-
     /// Ownership framing only. Full packet/service admission remains upstream.
     pub(super) fn matches(self, packet: &[u8]) -> bool {
         self.header(packet)
@@ -263,23 +231,5 @@ mod tests {
             );
         }
         assert!(tuple.validate(&pools, &[tuple.destination]).is_err());
-        let filter = tuple.filter();
-        assert_eq!(
-            filter,
-            [
-                "-f",
-                "ipv4",
-                "-p",
-                "17",
-                "--orig-src",
-                "100.96.0.1",
-                "--orig-dst",
-                "192.168.1.2",
-                "--sport",
-                "3456",
-                "--dport",
-                "443"
-            ]
-        );
     }
 }

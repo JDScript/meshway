@@ -96,20 +96,18 @@ impl Manager {
             })
             .cloned()
             .collect();
-        Ok(retired
-            .into_iter()
-            .filter_map(|key| {
-                let owner = self.owners.remove(&key)?;
-                owner.stop();
-                Some(owner)
-            })
-            .collect())
+        Ok(self.retire_keys(&retired))
     }
 
     /// Stop the owners of `keys`; the caller joins them.
     pub(super) fn retire_keys(&mut self, keys: &[Key]) -> Vec<Owner> {
         keys.iter()
             .filter_map(|key| {
+                if let Key::Listener(listener) = key
+                    && let Ok(mut unbound) = self.shared.unbound.lock()
+                {
+                    unbound.remove(listener);
+                }
                 let owner = self.owners.remove(key)?;
                 owner.stop();
                 Some(owner)

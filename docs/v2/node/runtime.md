@@ -72,13 +72,13 @@ daemon／CLI 共用[运行日志参数](/v2/logging)，日志位于 stderr；CLI
 
 ### 出口宿主前置探测
 
-Linux `Host::exit_probe` 在打开 Host 前执行，独占本进程的 Host 预约。探测读取 `ip_forward`、实际接口与临时出口 TUN 的 `rp_filter`／`src_valid_mark`，实际创建并关闭非持久 TUN，并通过固定路径 `/usr/sbin/nft` 的 JSON 原子事务检查 timed set、original conntrack tuple 与 ct mark 表达式；`/usr/sbin/conntrack` 执行有界的 IPv4 mark 过滤读取；已加载 legacy iptables 表时以 `/usr/sbin/iptables-legacy-save` 只读其内容。探测不修改宿主 sysctl 或防火墙策略，临时 nft 表在同一事务中创建、删除，取消后的命令结果经 join 与表列表回读处理。
+Linux `Host::exit_probe` 在打开 Host 前执行，独占本进程的 Host 预约。探测读取 `ip_forward`、实际接口与临时出口 TUN 的 `rp_filter`／`src_valid_mark`，实际创建并关闭非持久 TUN，并通过固定路径 `/usr/sbin/nft` 的 JSON 原子事务检查 timed set、original conntrack tuple 与 ct mark 表达式；经 ctnetlink 执行有界的 IPv4 mark 过滤 dump（内核按 mark 过滤，返回项仍逐项复核，不作身份或授权证据）；已加载 legacy iptables 表时以 `/usr/sbin/iptables-legacy-save` 只读其内容。探测不修改宿主 sysctl 或防火墙策略，临时 nft 表在同一事务中创建、删除，取消后的命令结果经 join 与表列表回读处理。
 
-`ip_forward=0`，或新建 TUN 继承的 `forwarding`（来自 `conf/default/forwarding`，临时 TUN 上读取）为 0，返回 `ipForwardDisabled`；读取失败或格式错误返回 `forwardingProbeFailed`；实际 TUN 管理操作无权限返回 `netAdminMissing`。有效 `rp_filter=max(all,interface)` 为 strict 时返回 `reversePathFilterConflict`，不会自动改为 loose/off；loose（2）与 off（0）可用：出口 TUN 没有 IPv4 地址，内核对它的入包做反向路径检查时只在反向查找本身落到该 TUN 才放行，回程表的成对规则因此不带出口 mark，正是该反向查找（见[IPv4 出口角色与 NAT 投影](#ipv4-出口角色与-nat-投影)）。工具不可用分别返回 `nftUnavailable`／`conntrackUnavailable`。观测保留原始 `observedAt`，重试上报不得重新计时。
+`ip_forward=0`，或新建 TUN 继承的 `forwarding`（来自 `conf/default/forwarding`，临时 TUN 上读取）为 0，返回 `ipForwardDisabled`；读取失败或格式错误返回 `forwardingProbeFailed`；实际 TUN 管理操作无权限返回 `netAdminMissing`。有效 `rp_filter=max(all,interface)` 为 strict 时返回 `reversePathFilterConflict`，不会自动改为 loose/off；loose（2）与 off（0）可用：出口 TUN 没有 IPv4 地址，内核对它的入包做反向路径检查时只在反向查找本身落到该 TUN 才放行，回程表的成对规则因此不带出口 mark，正是该反向查找（见[IPv4 出口角色与 NAT 投影](#ipv4-出口角色与-nat-投影)）。nft 不可用返回 `nftUnavailable`；ctnetlink 不可用（无 `nf_conntrack_netlink`、不支持 mark 过滤、回答畸形或超时）返回 `conntrackUnavailable`，内核以 `EPERM`／`EACCES` 拒绝返回 `netAdminMissing`。观测保留原始 `observedAt`，重试上报不得重新计时。
 
 此前置探测成功仍为 `probing`，`supportedFamilies`／`installedFamilies` 为空。探测与下面的角色安装是不同操作，不能据此前置探测发布 `ready`／`applied`。宿主管理员预配置 forwarding 和提供工具／设备不等于完整出口功能已可用。
 
-已打开的 Host 使用 `probe_exit(&mut self, instance: InstanceId, target: ConfigurationRef) -> ExitCapability`。它使用真实、处于 up 状态的外部接口，排除所属 Mesh／出口 TUN 和 DNS 锚点；临时设备的精确 index 注册到同一 monitor，创建／删除不会制造外部切网事件。探测检查实际 TUN 权限、转发／反向路径条件、完整 IPv4 nft 程序和 conntrack 读取；排除经 owner 回读确认的自有表后，可能挡住出口流量的宿主规则返回 `firewallConflict`，未知 mark 修改／offload 返回 `ownershipConflict`，不改写宿主规则。
+已打开的 Host 使用 `probe_exit(&mut self, instance: InstanceId, target: ConfigurationRef) -> ExitCapability`。它使用真实、处于 up 状态的外部接口，排除所属 Mesh／出口 TUN 和 DNS 锚点；临时设备的精确 index 注册到同一 monitor，创建／删除不会制造外部切网事件。探测检查实际 TUN 权限、转发／反向路径条件、完整 IPv4 nft 程序和 ctnetlink 读取；排除经 owner 回读确认的自有表后，可能挡住出口流量的宿主规则返回 `firewallConflict`，未知 mark 修改／offload 返回 `ownershipConflict`，不改写宿主规则。
 
 宿主规则只在**能匹配出口流量**时冲突。判定（`exit/firewall.rs` 的唯一实现）对 `ip`／`inet` 族的 nft 规则和已加载 legacy iptables 表的内容做同一遍历，考察的包为：经出口 TUN 转发到出口接口及其回包（forward、postrouting 钩子；出口接口为主路由表中通往 Internet 分类地址的 IPv4 路由的接口，即默认路由与直连公网网段，只通往私网的路由如 Docker 网桥不在内）、本机发往出口 TUN 的 ICMP 错误（output 钩子）。出口 TUN 是新建的内核 `tun<N>`，名字不同于任何现有接口。
 
@@ -120,11 +120,11 @@ incarnation 的类型为 `ExitIncarnation`：`new([u8; 32])`／`bytes() -> [u8; 
 
 角色安装使用 `inet meshway_exit_<installation>` 与 `ip meshway_exit_nat_<installation>` 私有表。只有独立 TUN ingress、Mesh 源、精确活投影、NEW 状态且归属 bit 尚未设置时，FORWARD 才设置 CT mark；已归属 NEW／ESTABLISHED／RELATED 必须继续匹配投影，未归属 ESTABLISHED 不接管。NEW 重传仍受同一资格约束。PREROUTING 只准备专用路由 bit，回程要求 reply direction／原 tuple／归属 mark；最终 postrouting 再检查资格。原方向执行 masquerade，回程 RPDB 将逆 NAT 后的源节点 `/32` 导向出口 TUN。正向绕过客户端 capture 的规则同时匹配出口 iif 与资格生成的 mark。每对（远端、源）的回程规则 `from <远端>/32 to <源>/32 lookup <回程表>` 不带 mark，同时是内核对该对 forward 包的反向路径查找；带 mark 的配对 `unreachable` 规则在表中无路由时终止回程查找。不带 mark 而走到出口 TUN 的包没有归属 mark，被 forward／final 链的 `oif` 规则丢弃。
 
-Mesh 池、loopback、链路本地、组播、保留／广播及出口本机地址不能作为外部转发目的。IPv6 出口拒绝。宿主必须提供实际可用的 TUN／NET_ADMIN、固定路径 nft／conntrack、`ip_forward=1` 和已支持的 loose/off 反向路径校验（宿主前提见 [Linux 安装 · 出口宿主](/v2/install#出口宿主)）；无法证明 mark 写入或 flow offload 不冲突时停装。**不要求或修改 `nf_conntrack_acct`**，计数不用于 CT 归属证明。宿主原有防火墙仍可拒绝包。
+Mesh 池、loopback、链路本地、组播、保留／广播及出口本机地址不能作为外部转发目的。IPv6 出口拒绝。宿主必须提供实际可用的 TUN／NET_ADMIN、固定路径 nft、内核 ctnetlink、`ip_forward=1` 和已支持的 loose/off 反向路径校验（宿主前提见 [Linux 安装 · 出口宿主](/v2/install#出口宿主)）；无法证明 mark 写入或 flow offload 不冲突时停装。**不要求或修改 `nf_conntrack_acct`**，计数不用于 CT 归属证明。宿主原有防火墙仍可拒绝包。
 
 所有 nft 变更通过结构化 JSON 原子批提交；工具执行每次两秒预算，全局命令槽最多等待一秒，输入和各输出管道各 2 MiB，进程并发与请求／包队列均有界。timeout 使用秒，按原单调／墙钟截止减去预算保守取整，实际资格可提前到期。续期在异步检查后再次核验旧资格，ACK 不延长原 guard。取消或丢失响应后 join 并读回核验，不把工具被杀视作回滚。
 
-私有 `underlay-exit.json` 记录 boot／namespace、基础与出口 installation、节点／网络／职责、TUN 名称与 index／MTU、mark／回程表、精确 route/rule、nft handle 与规范规则、投影截止／CT 身份／隔离 tuple，以及 pending／closing／removed。`exit-child.json` 在工具执行前记录 PID／启动时间／namespace，阻止仍存活或不可判定的旧工具与恢复竞争。同 namespace 重启先核对资源并关闭旧投影、精确清除 CT；跨 namespace 记录归档，不操作原 namespace。所有权冲突保留证据并停装。
+私有 `underlay-exit.json` 记录 boot／namespace、基础与出口 installation、节点／网络／职责、TUN 名称与 index／MTU、mark／回程表、精确 route/rule、nft handle 与规范规则、投影截止／CT 身份／隔离 tuple，以及 pending／closing／removed。`exit-child.json` 在工具执行前记录 PID／启动时间／network 与 PID namespace，阻止仍存活或不可判定的旧工具与恢复竞争：另一个 network namespace（boot、inode 或 cookie 不同，见[生命周期](#生命周期)）的记录归档，同一 network namespace 而 PID namespace 不同时无法证明工具已退出，仍为冲突。同 namespace 重启先核对资源并关闭旧投影、精确清除 CT；跨 namespace 记录归档，不操作原 namespace。所有权冲突保留证据并停装。
 
 出口 journal 当前为 v2，保存完整 incarnation 与 ICMP sequence。v1 只进入精确清理路径，不恢复活投影；旧 128-bit handle 完整保留用于追溯，旧记录没有 sequence 证据时保留较宽的转换 tuple 拒绝记录，不猜测 sequence 或放行重用。
 
@@ -167,13 +167,13 @@ IPC 11 的公开运行状态（`meshway status --json` 原样输出）：
 | `saved`／`applied` | 独立的必填可空目标引用；saved 来自持久保存，applied 来自对应实例／目标的实际成功安装结果 |
 | `phase` | 完整枚举见下表；结合 dataPlane、当前资格和错误读取 |
 | `lastError`／`retryAt` | 类型化故障与重试时点；安装问题可为 unsupportedMode、underlay、tun、dns、transport、apply |
-| `lastErrorDetail` | 必填可空：故障组件给出具体原因时的一行说明，目前为 listener 的 bind 错误（例如 `listener lab-tcp cannot bind 0.0.0.0:443: Address in use (os error 98)`）；其他情况为 null。daemon 日志的同一告警带相同文本 |
+| `lastErrorDetail` | 必填可空：故障组件给出具体原因时的一行说明，目前为暂未绑定的 listener：bind 错误、占用该端口的进程（本 daemon 自己标注 `this daemon`）、端口在本机临时端口范围内时的提示，以 `retrying` 结尾（例如 `listener lab-udp cannot bind 0.0.0.0:35000: Address in use (os error 98); port 35000 is inside this host's ephemeral port range 32768-60999; retrying`，行为见[连接获取 · listener 绑定与重试](/v2/node/connectivity#listener-bind-retry)）；其他情况为 null。daemon 日志的同一告警带相同文本 |
 | `sync` | 必填，`connected`（最近一次 sync 成功、下一次由 Server 挂起）、`reconnecting`、`disconnected`；不代表 Node 授权或业务连通 |
 | `lastSyncAt`／`syncError` | 必填可空：本进程最近一次返回已验签 netmap 的 sync 时间；sync 重试期间的失败类别 |
 | `netmap` | 必填可空：当前 netmap 引用与签名租约 `issuedAt`／`expiresAt`，以及 `missingArtifacts`（引用但尚未持有的规则集 digest；命名它们的规则不可用，见[规则集 · 下发](/v2/configuration-reference/rule-sets#下发)）、`artifactProblem`（缺失时最后一次的 `download`／`integrity`／`storage`／`budget`，否则 null）与 `capture`（本节点从 netmap 与 artifact 计算并安装的出口捕获：`managedIpv4`／`sinkIpv6` 区间数、捕获表 `routes` 数，以及未安装分割而改为完整捕获时的 `unavailable` 原因，否则 null；本节点无出口捕获时整项为 null，计算见 [Routing · 节点侧上限](/v2/configuration-reference/routing#capture-limits)）、`routing`（本节点在该 netmap 下的路由方案选择 `RoutingSelectionState`，字段见 [Routing · 当前选择的状态](/v2/configuration-reference/routing#selection-state)；无法由 netmap 求出时为 null）；无有效租约为 null |
 | `node` | 必填可空：已安装 netmap 中的本节点 `hostname` 与 Mesh `addresses`；未安装（down、control-only、准备中）为 null |
 | `peers` | 必填：已安装 netmap 中可见的其他节点（与 `ping` 解析名称的集合相同），按 hostname 排序；未安装为空。字段见下表 |
-| `sockets` | 必填：已安装 netmap 中本节点 Native UDP listener 与拨号候选的 socket，按地址族、地址排序；未安装为空。每项 `resource`（`listener`／`dial` 资源）、`boundAddress`、`receiveBuffer`／`sendBuffer`（内核读回的实际字节数，Linux 为授予值的两倍）与 `receiveRequested`／`sendRequested`（配置值，0 时为默认值）；读回小于请求表示被 `rmem_max`／`wmem_max` 截断，`meshway status` 标注 `limited`。规则见 [UDP 批量接口](/v2/node/transport#udp-批量接口) |
+| `sockets` | 必填：已安装 netmap 中本节点已绑定的 Native UDP listener 与拨号候选 socket（按地址族、地址排序），其后是绑定正在重试的 listener（按 key）；未安装为空。每项 `resource`（`listener`／`dial` 资源）、`boundAddress`、`receiveBuffer`／`sendBuffer`（内核读回的实际字节数，Linux 为授予值的两倍）、`receiveRequested`／`sendRequested`（配置值，0 时为默认值）与 `unavailable`；读回小于请求表示被 `rmem_max`／`wmem_max` 截断，`meshway status` 标注 `limited`。重试中的 listener 只有 `resource` 与 `unavailable`（最近一次失败，例如 `listener lab-udp cannot bind 0.0.0.0:35000: Address in use (os error 98)`），其余为 null，`meshway status` 显示 `unavailable`；重试绑定成功后同样读回缓冲。规则见 [UDP 批量接口](/v2/node/transport#udp-批量接口) |
 | `exit` | 可省略；包含 target-bound `capability`、已安装 role generation、`activeFlows` 和独立的 `dnsUnavailable`（出口 resolver 不能为源解析的原因，与 State [`exitDns`](/v2/state-reference#exitdns) 同源；可用或不服务时为 null）。未观测的计数保持 null，失去当前执行权限后不显示已安装角色／活流数 |
 
 `peers[]` 只投影本节点自己的事实，不生成测量或授权：
@@ -335,7 +335,7 @@ CLI 生命周期不承载 Node 身份或 lease，不收集账户密码、不取�
 
 | 输入 | Engine 行为 |
 | --- | --- |
-| 新内容（更大 serial） | 构造一次不可变 `Desired`（内容与共享 `LocalCompiler`），按 Host → 邻接 → SecureNode → DNS 顺序调用各组件幂等 `apply`。安全相关步骤（capture／TUN、负向 DNS、circuit 与流收窄、出口退役）失败时对全部组件应用空期望；只缺新增能力（listener／拨号 socket、邻接 Manager、出口角色、DNS 查询应答）时组件返回 `Degraded`：内容保持安装、对应能力缺失并上报，回执不报 applied，有界重试同内容 |
+| 新内容（更大 serial） | 构造一次不可变 `Desired`（内容与共享 `LocalCompiler`），按 Host → 邻接 → SecureNode → DNS 顺序调用各组件幂等 `apply`。安全相关步骤（capture／TUN、负向 DNS、circuit 与流收窄、出口退役）失败时对全部组件应用空期望；只缺新增能力（listener／拨号 socket、邻接 Manager、出口角色、DNS 查询应答）时组件返回 `Degraded`：内容保持安装、对应能力缺失并上报，回执不报 applied，有界重试同内容；listener 的 bind 由 Manager 自行重试，其可用性变化（变为不可用或重试后绑定）时以同一内容再 apply 一次，完整 apply 清除先前 Degraded 的 `lastError` |
 | 同内容、不更早到期的租约 | 只延长自身计时器，不调用任何组件；当前为 `Degraded` 时重新应用同内容。Server 时钟回拨造成更早的 `issuedAt` 不算重放 |
 | 更早到期的同内容租约或回退引用 | 拒绝，当前期望不变 |
 | 计时到期（`next_expiry`／`expire`） | 按 SecureNode → 邻接 → Host → DNS 顺序应用空期望；已到期内容须由新租约重新安装。单调计时在宿主挂起期间不走，网络 owner 每秒的例行唤醒另按墙钟检查到期 |
@@ -422,14 +422,16 @@ fail closed 针对的是未知归属或不一致的本地存储。`daemon.json` 
 
 崩溃恢复只处理有可验证归属的 journal，不恢复旧流。未知格式或不明归属不能作为删除宿主规则的依据。
 
-journal 的 namespace 身份不只靠 inode。nsfs 的 device／inode 只在 namespace 存活期间唯一：容器 `docker stop`／`start` 后新 namespace 可能拿到同一个 inode。因此身份由两部分组成：
+Underlay 的每份记录（`underlay.json`、`underlay-exit.json`、`underlay-egress.json`、`exit-child.json`）都带同一个 network namespace 身份，由 `meshway-underlay` 的唯一实现读取与比较。nsfs 的 device／inode 只在 namespace 存活期间唯一：容器重建（`docker compose up` 换容器、`docker stop`／`start`）后新 namespace 常拿到同一个 inode。namespace cookie（`SO_NETNS_COOKIE`，Linux 5.7 起）在一次 boot 内单调分配、从不复用，因此身份由以下部分组成：
 
 | 部分 | 内容 | 不同即 |
 | --- | --- | --- |
-| 写入时的内核与 namespace | `/proc/sys/kernel/random/boot_id`、`/proc/self/ns/net` 的 device／inode | 过期（整机、容器虚拟机重启或容器重建后挂载同一卷） |
+| 写入时的内核与 namespace | `/proc/sys/kernel/random/boot_id`、`/proc/self/ns/net` 的 device／inode，以及 namespace cookie（字段 `namespace_cookie`；`exit-child.json` 为 `net_cookie`） | 过期（整机、容器虚拟机重启、容器重建后挂载同一卷）；记录与当前都有 cookie 时，inode 相同而 cookie 不同即为被复用的 inode，同样过期 |
 | 驻留证据 | journal 记录的、只能存在于写入它的 namespace 中的对象：精确字节的 RPDB 规则（随机私有 table 与随机优先级区间）或 DNS 锚点（alias 含随机 installation） | journal 记录了对象而当前 namespace 一个也没有：inode 被新 namespace 复用，同样过期 |
 
-过期记录在分配新资源前原子改名为 `underlay.json.stale-<Unix 纳秒时间>` 并持久保留；INFO 日志记录旧 namespace、原因（`changed_namespace`／`reused_namespace_inode`）与归档名。按无 journal 在当前 namespace 重新分配，不进入旧 namespace 清理，也不把旧记录作为当前资源的归属证明。归档失败时不覆盖原文件或继续分配。身份相同且驻留证据存在时仍按原有逐项归属核验恢复：只缺部分对象、或出现不属于 journal 的同区间对象，仍是真实冲突并使用上述有界退避。没有记录任何对象的 journal 不需要驻留证据，直接按当前 namespace 重新分配。
+没有 cookie 的记录（本版本之前写入）或不支持 cookie 的内核仍只按 boot 与 device／inode 判定，再由驻留证据区分复用的 inode；`exit-child.json` 没有驻留证据，这种组合下 inode 复用仍可能使启动停在下述冲突退避，直到它按新规则重写（升级后第一次工具执行即重写）。cookie 由 `meshway-netns` 读取，这是 workspace 唯一经审计的 `unsafe`（一次 `getsockopt`）。
+
+过期记录在分配新资源前原子改名为 `underlay.json.stale-<Unix 纳秒时间>` 并持久保留；INFO 日志记录旧 namespace（含 cookie）、原因（`changed_namespace`：boot、inode 或 cookie 不同；`reused_namespace_inode`：无 cookie 而驻留证据缺失）与归档名。按无 journal 在当前 namespace 重新分配，不进入旧 namespace 清理，也不把旧记录作为当前资源的归属证明。归档失败时不覆盖原文件或继续分配。身份相同且驻留证据存在时仍按原有逐项归属核验恢复：只缺部分对象、或出现不属于 journal 的同区间对象，仍是真实冲突并使用上述有界退避。没有记录任何对象的 journal 不需要驻留证据，直接按当前 namespace 重新分配。
 
 SIGTERM／SIGINT 干净退出且期望仍为 up 时，先取消和 join 运行任务，经 `suspend` 删除本进程的正向路由、关闭非持久 TUN，并清空、持久保存对应 journal 记录；负向 capture 规则及独立 DNS 锚点继续保留以供同 namespace 重启恢复。因此 `Node stopped failed=false` 不表示 journal 应整份删除。异常退出保留的可核验资源仍走恢复检查；namespace 变化使用过期归档规则。
 

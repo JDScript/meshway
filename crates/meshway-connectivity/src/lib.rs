@@ -16,8 +16,9 @@ pub use io::{
     TraversalSocket,
 };
 pub use manager::{
-    AdjacencyInterest, Event, Interest, LinkFact, LinkMtu, ListenerFact, Manager, SendReceipt,
-    SizeProbe, Snapshot, SocketFact, SocketObservation, StunProbe, StunReport, StunSample,
+    AdjacencyInterest, Event, Interest, LinkFact, LinkMtu, ListenerFact, ListenerUnavailable,
+    Manager, SendReceipt, SizeProbe, Snapshot, SocketFact, SocketObservation, StunProbe,
+    StunReport, StunSample,
 };
 pub use meshway_policy::admission::Carrier;
 

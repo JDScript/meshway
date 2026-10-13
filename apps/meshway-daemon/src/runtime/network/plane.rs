@@ -114,6 +114,15 @@ impl Plane {
         })
     }
 
+    /// Whether a configured listener of the installed content is unbound
+    /// (its Manager owner retries the bind).
+    pub fn listeners_unavailable(&self) -> bool {
+        self.installed
+            .as_ref()
+            .and_then(|state| state.manager.as_ref())
+            .is_some_and(|manager| !manager.unavailable_listeners().is_empty())
+    }
+
     pub fn secure(&self) -> Option<&SecureNode> {
         self.installed.as_ref()?.secure.as_ref()
     }
@@ -306,6 +315,7 @@ impl meshway_engine::Components for Plane {
                 let Some(keys) = self.keys.clone() else {
                     return Err(self.fail(Problem::Apply, ApplyFailure::Validation));
                 };
+                warn_ephemeral(desired);
                 match Manager::start_with_traversal(
                     desired,
                     keys,
@@ -327,9 +337,22 @@ impl meshway_engine::Components for Plane {
                 }
             }
         };
+        // A listener whose bind its owner retries leaves the content
+        // installed without it until it binds.
+        let unbound = manager.unavailable_listeners();
         manager.attach_facts(self.peers.clone());
         if let Some(state) = &mut self.installed {
             state.manager = Some(manager);
+        }
+        if let Some(listener) = unbound.first() {
+            self.failure = Some((Problem::Transport, ApplyFailure::Listeners));
+            self.failure_detail = Some(unavailable_detail(listener, desired));
+            tracing::warn!(
+                key = listener.key,
+                detail = self.failure_detail.as_deref(),
+                "Content installed without a listener"
+            );
+            return Err(Error::Degraded);
         }
         Ok(())
     }
@@ -480,6 +503,73 @@ impl meshway_engine::Components for Plane {
 /// cannot bind which address, and the system's reason.
 fn detail(error: &meshway_connectivity::Error) -> Option<String> {
     matches!(error, meshway_connectivity::Error::Bind { .. }).then(|| error.to_string())
+}
+
+/// An unbound listener's cause, naming this host's ephemeral port range
+/// when the port is inside it (another socket may hold it for a moment)
+/// and which processes hold it (this daemon among them is named so).
+fn unavailable_detail(
+    listener: &meshway_connectivity::ListenerUnavailable,
+    desired: &meshway_engine::Desired,
+) -> String {
+    let mut detail = listener.detail.clone();
+    let Some(address) = listener.address else {
+        return detail + "; retrying";
+    };
+    let udp = desired
+        .netmap()
+        .self_
+        .listeners
+        .get(&listener.key)
+        .is_some_and(|declaration| {
+            matches!(
+                declaration.declaration(),
+                meshway_configuration::transport::Listener::NativeUdp(_)
+            )
+        });
+    let holders = meshway_underlay::port_holders(address.port(), udp);
+    if !holders.is_empty() {
+        let own = std::process::id();
+        let names: Vec<_> = holders
+            .iter()
+            .take(4)
+            .map(|(pid, command)| match *pid == own {
+                true => format!("{command} pid {pid} (this daemon)"),
+                false => format!("{command} pid {pid}"),
+            })
+            .collect();
+        detail += &format!("; held by {}", names.join(", "));
+    }
+    if let Some(range) =
+        meshway_underlay::ephemeral_ports().filter(|range| range.contains(&address.port()))
+    {
+        detail += &format!(
+            "; port {} is inside this host's ephemeral port range {}-{}",
+            address.port(),
+            range.start(),
+            range.end()
+        );
+    }
+    detail + "; retrying"
+}
+
+/// Listener ports another process's outgoing socket can hold for a moment.
+fn warn_ephemeral(desired: &meshway_engine::Desired) {
+    let Some(range) = meshway_underlay::ephemeral_ports() else {
+        return;
+    };
+    for (key, listener) in &desired.netmap().self_.listeners {
+        let (bind, enabled) = listener.declaration().bind();
+        if enabled && range.contains(&bind.port()) {
+            tracing::warn!(
+                key,
+                port = bind.port(),
+                first = range.start(),
+                last = range.end(),
+                "Listener port is inside this host's ephemeral port range; its bind may need a retry"
+            );
+        }
+    }
 }
 
 #[cfg(test)]

@@ -2100,6 +2100,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "meshway-netns"
+version = "0.1.0-alpha.6"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "meshway-packet-fixture"
 version = "0.1.0-alpha.6"
 dependencies = [
@@ -2408,6 +2415,7 @@ dependencies = [
  "meshway-dns",
  "meshway-engine",
  "meshway-model",
+ "meshway-netns",
  "meshway-policy",
  "meshway-private-storage",
  "meshway-test-server",

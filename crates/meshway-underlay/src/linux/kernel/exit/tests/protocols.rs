@@ -48,7 +48,7 @@ pub(super) async fn round_trips(
         .install(id(104), shared, cutoff(30_000), scope.clone())
         .await
         .unwrap();
-    let old_ct = conntrack::lookup_owned(&mut backend.commands, echo, backend.ledger.program.mark)
+    let old_ct = conntrack::lookup_owned(echo, backend.ledger.program.mark)
         .await
         .unwrap()
         .unwrap();
@@ -68,7 +68,7 @@ pub(super) async fn round_trips(
     assert_eq!(&packet[26..28], &2u16.to_be_bytes());
     backend.retire(id(102)).await.unwrap();
     assert_eq!(
-        conntrack::lookup_owned(&mut backend.commands, shared, backend.ledger.program.mark)
+        conntrack::lookup_owned(shared, backend.ledger.program.mark)
             .await
             .unwrap()
             .unwrap()
@@ -89,7 +89,7 @@ pub(super) async fn round_trips(
     assert_eq!(&packet[26..28], &2u16.to_be_bytes());
     backend.retire(id(104)).await.unwrap();
     assert!(
-        conntrack::lookup_owned(&mut backend.commands, shared, backend.ledger.program.mark)
+        conntrack::lookup_owned(shared, backend.ledger.program.mark)
             .await
             .unwrap()
             .is_none()
@@ -141,7 +141,7 @@ pub(super) async fn round_trips(
     );
     backend.retire(id(103)).await.unwrap();
     assert!(
-        conntrack::lookup_owned(&mut backend.commands, tcp, backend.ledger.program.mark)
+        conntrack::lookup_owned(tcp, backend.ledger.program.mark)
             .await
             .unwrap()
             .is_none()

@@ -32,6 +32,7 @@ hickory-resolver = { version = "0.26.3", default-features = false, features = ["
 hickory-net = { version = "0.26.3", default-features = false, features = ["tokio"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+meshway-netns = { path = "../meshway-netns" }
 rtnetlink = { version = "=0.23.0", default-features = false, features = ["tokio_socket"] }
 
 [dev-dependencies]

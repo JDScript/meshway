@@ -208,23 +208,27 @@ fn size(bytes: u32) -> String {
 }
 
 /// Granted buffers as the kernel reports them; less than requested means
-/// the kernel limited the request (`net.core.rmem_max`／`wmem_max`).
+/// the kernel limited the request (`net.core.rmem_max`／`wmem_max`). A
+/// listener whose bind is being retried shows why it is unavailable.
 fn sockets(output: &mut impl Write, term: &Term, status: &Status) -> io::Result<()> {
     let mut table = Table::new(vec!["SOCKET", "BOUND", "RECEIVE BUFFER", "SEND BUFFER"]);
-    let cell = |granted: u32, requested: u32| {
-        if granted < requested {
-            Cell::styled(
-                format!("{} (requested {}, limited)", size(granted), size(requested)),
-                Role::Warn,
-            )
-        } else {
-            Cell::new(size(granted))
-        }
+    let cell = |granted: Option<u32>, requested: Option<u32>| match (granted, requested) {
+        (Some(granted), Some(requested)) if granted < requested => Cell::styled(
+            format!("{} (requested {}, limited)", size(granted), size(requested)),
+            Role::Warn,
+        ),
+        (Some(granted), _) => Cell::new(size(granted)),
+        (None, _) => Cell::new(""),
     };
     for socket in &status.sockets {
+        let bound = match (&socket.bound_address, &socket.unavailable) {
+            (_, Some(_)) => Cell::styled("unavailable", Role::Bad),
+            (Some(address), None) => Cell::new(address.to_string()),
+            (None, None) => Cell::new(""),
+        };
         table.row(vec![
             Cell::new(super::netcheck::resource(&socket.resource, &status.peers)),
-            Cell::new(socket.bound_address.to_string()),
+            bound,
             cell(socket.receive_buffer, socket.receive_requested),
             cell(socket.send_buffer, socket.send_requested),
         ]);

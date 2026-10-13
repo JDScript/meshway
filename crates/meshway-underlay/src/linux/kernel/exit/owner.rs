@@ -363,7 +363,7 @@ impl super::super::Kernel {
         for shift in 0..32 {
             let bit = 1u32 << ((shift + u32::from(random[0])) % 32);
             if mask & bit == 0
-                && super::conntrack::mark_unused(&mut commands, bit)
+                && super::conntrack::mark_unused(bit)
                     .await
                     .map_err(|_| Error::Conflict)?
             {
@@ -407,12 +407,13 @@ impl super::super::Kernel {
             tun
         };
         self.quiesce().await?;
-        let (boot, namespace_device, namespace_inode) = super::super::journal::Journal::identity()?;
+        let namespace = super::super::namespace::Identity::current()?;
         let ledger = Ledger {
             version: 2,
-            boot,
-            namespace_device,
-            namespace_inode,
+            boot: namespace.boot,
+            namespace_device: namespace.device,
+            namespace_inode: namespace.inode,
+            namespace_cookie: namespace.cookie,
             base_installation: self.journal.installation.clone(),
             network,
             node,

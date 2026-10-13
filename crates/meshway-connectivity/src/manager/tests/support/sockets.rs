@@ -20,6 +20,9 @@ impl Datagram for Endpoint {
     fn local_addr(&self) -> io::Result<SocketAddr> {
         self.inner.local_addr()
     }
+    fn buffers(&self) -> Option<meshway_transport::raw::Buffers> {
+        Some(self.inner.buffers())
+    }
     fn poll_recv_from(
         &self,
         cx: &mut Context<'_>,
@@ -138,6 +141,14 @@ impl ListenerSocket for StreamListener {
         })
     }
 }
+/// As the Linux factory reports a listener's bind failure.
+fn bind_error(key: &str, address: SocketAddr, source: io::Error) -> Error {
+    Error::Bind {
+        key: key.to_owned(),
+        address,
+        source,
+    }
+}
 fn listener_address(listener: &Listener) -> Result<SocketAddr, Error> {
     let (ip, port) = match listener {
         Listener::NativeTcp(value) => (value.listen, value.listen_port),
@@ -227,7 +238,9 @@ impl SocketFactory for Factory {
             let reserved = self.tcp.lock().unwrap().remove(&address);
             let socket = match reserved {
                 Some(socket) => socket,
-                None => TcpListener::bind(address).await?,
+                None => TcpListener::bind(address)
+                    .await
+                    .map_err(|source| bind_error(key, address, source))?,
             };
             assert_eq!(socket.local_addr()?.port(), address.port());
             Ok(Box::new(StreamListener(socket)) as Box<dyn ListenerSocket>)
@@ -247,7 +260,9 @@ impl SocketFactory for Factory {
             let reserved = self.udp.lock().unwrap().remove(&address);
             let socket = match reserved {
                 Some(socket) => socket,
-                None => UdpSocket::bind(address).await?,
+                None => UdpSocket::bind(address)
+                    .await
+                    .map_err(|source| bind_error(key, address, source))?,
             };
             assert_eq!(socket.local_addr()?.port(), listener.listen_port.get());
             Ok(self.endpoint(socket))

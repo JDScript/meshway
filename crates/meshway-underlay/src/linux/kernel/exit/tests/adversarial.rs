@@ -12,28 +12,8 @@ pub(super) async fn conflicts(
         },
         ..tuple
     };
-    let mut insert = vec!["-I".into()];
-    // conntrack-tools infers the family from addresses for INSERT; unlike
-    // LIST/DELETE, this pinned command rejects the explicit --family option.
-    insert.extend(tuple.filter().into_iter().skip(2));
-    insert.extend([
-        "--timeout".into(),
-        "60".into(),
-        "--mark".into(),
-        "0".into(),
-        "--status".into(),
-        "SEEN_REPLY".into(),
-    ]);
-    let created = backend
-        .commands
-        .run(command::Tool::Conntrack, insert.clone(), Vec::new())
-        .await
-        .unwrap();
-    assert!(
-        created.success,
-        "{}",
-        String::from_utf8_lossy(&created.stderr)
-    );
+    // A foreign (mark 0), seen-reply entry under the projection's tuple.
+    conntrack::insert_foreign(tuple, 60).await.unwrap();
     let scope = ExitScope {
         binding: Digest::from_bytes([10; 32]),
         revoked: CancellationToken::new(),
@@ -44,37 +24,13 @@ pub(super) async fn conflicts(
             .await
             .is_err()
     );
-    assert_eq!(
-        conntrack::lookup(&mut backend.commands, tuple)
-            .await
-            .unwrap()
-            .unwrap()
-            .mark,
-        0
-    );
-    let mut delete = vec!["-D".into()];
-    delete.extend(tuple.filter());
-    delete.extend(["--mark".into(), "0/4294967295".into()]);
-    assert!(
-        backend
-            .commands
-            .run(command::Tool::Conntrack, delete.clone(), Vec::new())
-            .await
-            .unwrap()
-            .success
-    );
+    assert_eq!(conntrack::lookup(tuple).await.unwrap().unwrap().mark, 0);
+    conntrack::delete_foreign(tuple).await.unwrap();
     backend
         .install(id(100), tuple, cutoff(30_000), scope.clone())
         .await
         .unwrap();
-    assert!(
-        backend
-            .commands
-            .run(command::Tool::Conntrack, insert, Vec::new())
-            .await
-            .unwrap()
-            .success
-    );
+    conntrack::insert_foreign(tuple, 60).await.unwrap();
     tun.send(&udp(tuple, b"unowned-established")).await.unwrap();
     let mut packet = vec![0; 1280];
     assert!(
@@ -88,22 +44,8 @@ pub(super) async fn conflicts(
             incarnation: id(100)
         }
     );
-    assert_eq!(
-        conntrack::lookup(&mut backend.commands, tuple)
-            .await
-            .unwrap()
-            .unwrap()
-            .mark,
-        0
-    );
-    assert!(
-        backend
-            .commands
-            .run(command::Tool::Conntrack, delete, Vec::new())
-            .await
-            .unwrap()
-            .success
-    );
+    assert_eq!(conntrack::lookup(tuple).await.unwrap().unwrap().mark, 0);
+    conntrack::delete_foreign(tuple).await.unwrap();
     backend.retire(id(100)).await.unwrap();
     let revoked = OriginalTuple {
         transport: ExitTransport::Udp {

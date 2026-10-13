@@ -150,7 +150,7 @@ feature 划分：默认含规范化、builder、loader、matcher 与 inline 转�
 
 `inline` 模块：`Inline { domain, domain_suffix, domain_subdomain, ip_cidr }`（`&[String]`）。`inline::convert` 返回带报告的 `Conversion`（位置 `/<字段>/<序号>`）；`RuleSet::from_inline` 要求零跳过且非空，否则返回首个问题。
 
-**只有堆读取，零 `unsafe`**：artifact 一律读入堆缓冲再经 `RuleSet::from_vec` 校验；整个 workspace 不含 `unsafe`。曾评估的 mmap 后端（`memmap2::Mmap::map` 是 `unsafe`，文件被截断或改写即未定义行为／SIGBUS，安全 API 无法让调用者证明该前提）已删除：R1 实测打开 4 ms 几乎全是结构校验与 digest，映射省下的读取可以忽略。Control 从私有目录按 digest 打开 0400 文件、有界读取（≤ 16 MiB）后与网络下载走同一校验；调用方比较 `digest()` 与期望值。
+**只有堆读取，零 `unsafe`**：artifact 一律读入堆缓冲再经 `RuleSet::from_vec` 校验；规则集代码不含 `unsafe`（workspace 唯一的例外是 `meshway-netns` 的一次审计 `getsockopt`，与规则集无关）。曾评估的 mmap 后端（`memmap2::Mmap::map` 是 `unsafe`，文件被截断或改写即未定义行为／SIGBUS，安全 API 无法让调用者证明该前提）已删除：R1 实测打开 4 ms 几乎全是结构校验与 digest，映射省下的读取可以忽略。Control 从私有目录按 digest 打开 0400 文件、有界读取（≤ 16 MiB）后与网络下载走同一校验；调用方比较 `digest()` 与期望值。
 
 **每进程每 digest 一个句柄**：Server 计算所有节点的路径检测时共享同一 `Arc<RuleSet>`，每个 digest 只有一份堆副本（[内存](#内存-1-000-个句柄)中的 mmap 列为 R1 评估数据，现已不用）。
 

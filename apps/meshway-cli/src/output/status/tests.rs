@@ -43,9 +43,11 @@ fn status() -> Status {
         "peers":[nyc, sha, peer(OLD, "meshway-old", "100.64.0.9", "offline"), planck],
         "sockets":[
             {"resource":{"kind":"listener","key":"native"},"boundAddress":"0.0.0.0:35000",
-             "receiveBuffer":8388608,"receiveRequested":4194304,"sendBuffer":4194304,"sendRequested":2097152},
+             "receiveBuffer":8388608,"receiveRequested":4194304,"sendBuffer":4194304,"sendRequested":2097152,"unavailable":null},
             {"resource":{"kind":"listener","key":"native6"},"boundAddress":"[::]:35000",
-             "receiveBuffer":425984,"receiveRequested":4194304,"sendBuffer":4194304,"sendRequested":2097152}
+             "receiveBuffer":425984,"receiveRequested":4194304,"sendBuffer":4194304,"sendRequested":2097152,"unavailable":null},
+            {"resource":{"kind":"listener","key":"held"},"boundAddress":null,"receiveBuffer":null,"receiveRequested":null,
+             "sendBuffer":null,"sendRequested":null,"unavailable":"listener held cannot bind 0.0.0.0:35001: Address in use (os error 98)"}
         ],"lastError":null,"lastErrorDetail":null,"retryAt":null
     }))
     .unwrap()
@@ -107,6 +109,10 @@ fn plain_summary_and_peer_table_have_no_escapes() {
         ]
     );
     assert!(lines[header + 2].contains("416 KiB (requested 4.0 MiB, limited)"));
+    assert_eq!(
+        lines[header + 3].split_whitespace().collect::<Vec<_>>(),
+        ["listener", "held", "unavailable"]
+    );
 }
 
 #[test]
