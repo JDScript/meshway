@@ -275,6 +275,25 @@ impl Decisions {
         self.adjacency.push((peer, carrier.clone(), admitted));
         admitted
     }
+
+    /// Listener keys each hop of `path` may dial the next with, and back, on
+    /// this content: what a path's reachability depends on besides its keys.
+    pub fn hop_carriers(
+        &mut self,
+        netmap: &CompiledNetmap,
+        path: &[NodeId],
+    ) -> Option<Vec<(Vec<String>, Vec<String>)>> {
+        self.bind(netmap);
+        let compiler = self.compiler.as_ref().expect("bound compiler");
+        path.windows(2)
+            .map(|hop| {
+                Some((
+                    compiler.carriers(hop[0], hop[1]).ok()?,
+                    compiler.carriers(hop[1], hop[0]).ok()?,
+                ))
+            })
+            .collect()
+    }
 }
 
 fn bytes(hash: &mut Sha256, value: &[u8]) {

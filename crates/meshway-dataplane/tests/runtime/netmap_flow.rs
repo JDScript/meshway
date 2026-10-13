@@ -752,3 +752,78 @@ async fn an_unanswered_path_is_paused_and_the_next_circuit_takes_another_one() {
     );
     f.close().await;
 }
+
+#[tokio::test]
+async fn a_path_pause_survives_content_unrelated_to_that_path() {
+    let mut f = direct_or_relayed().await;
+    let [a, r, b] = f.ids();
+    f.rebuild(
+        meshway_dataplane::secure::Limits {
+            handshake_timeout: Duration::from_millis(400),
+            ..Default::default()
+        },
+        Default::default(),
+    );
+    let direct = |key: &str| meshway_dataplane::secure::Carrier {
+        dialer: a,
+        listener: b,
+        listener_key: key.into(),
+        protocol: meshway_model::TransportProtocol::NativeTcp,
+    };
+    f.a.set_carriers(BTreeMap::from([
+        (r, f.ar.carrier.clone()),
+        (b, direct("tcp")),
+    ]))
+    .unwrap();
+    let Outbound::Queued { init: Some(lost) } = f.a.outbound(f.mesh_udp(false, 42424)).unwrap()
+    else {
+        panic!("a new flow starts its circuit")
+    };
+    assert_eq!(lost.next(), b);
+    drop(lost);
+    tokio::time::sleep(Duration::from_millis(450)).await;
+    f.a.maintain().unwrap();
+    let (direct_path, relayed) = ([a, b], [a, r, b]);
+    let paths = [direct_path.as_slice(), relayed.as_slice()];
+    assert_eq!(f.a.choose_path(paths), Some(1), "the direct path is paused");
+    // Another service in Access changes A's content, not this path's.
+    f.publish(|cfg, [a, _, b]| cfg.access.push(rule(a, &sel(b), &["udp:9"])))
+        .await;
+    assert_eq!(
+        f.a.choose_path(paths),
+        Some(1),
+        "unrelated content keeps it"
+    );
+    // B's listener changes: the A–B carrier is another one now.
+    f.publish(|cfg, [_, _, b]| {
+        let node = cfg.nodes.get_mut(&b).unwrap();
+        let listener = node.listeners.remove("tcp").unwrap();
+        node.listeners.insert("tcp-2".into(), listener);
+    })
+    .await;
+    f.a.set_carriers(BTreeMap::from([
+        (r, f.ar.carrier.clone()),
+        (b, direct("tcp-2")),
+    ]))
+    .unwrap();
+    assert_eq!(
+        f.a.choose_path(paths),
+        Some(0),
+        "this path's carrier changed"
+    );
+    f.close().await;
+}
+
+#[tokio::test]
+async fn a_needed_peer_without_a_circuit_reports_the_relay_a_new_one_would_take() {
+    let mut f = direct_or_relayed().await;
+    let [a, r, b] = f.ids();
+    // A has a channel with R only; nothing is established toward B.
+    assert_eq!(f.a.relay_route(b), None, "R reports no channel with B yet");
+    f.a.set_peer_channels(BTreeMap::from([(r, [b].into())]));
+    assert_eq!(f.a.relay_route(b), Some(vec![a, r, b]));
+    // Without a channel to the relay itself nothing reaches B.
+    f.a.set_carriers(BTreeMap::new()).unwrap();
+    assert_eq!(f.a.relay_route(b), None);
+    f.close().await;
+}

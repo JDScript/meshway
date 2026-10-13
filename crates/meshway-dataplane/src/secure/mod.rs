@@ -978,8 +978,14 @@ impl SecureNode {
 
     fn bury(&mut self, id: [u8; 32], circuit: &Circuit, now_ms: u64) {
         if circuit.unanswered_handshake {
+            let content = netmap::PathContent::of(
+                &mut self.engine.decisions,
+                &View::of(&self.desired),
+                &circuit.context.path,
+            );
             self.first.unanswered(
                 &circuit.context.path,
+                content,
                 Instant::now(),
                 self.limits.handshake_timeout,
             );

@@ -31,7 +31,37 @@ const MAX_INTERESTS: usize = 256;
 /// Paths whose last origin handshake ended unanswered.
 const MAX_UNANSWERED: usize = 256;
 /// Longest pause of a path whose handshakes keep ending unanswered.
-pub const MAX_PATH_PAUSE: std::time::Duration = std::time::Duration::from_secs(300);
+pub const MAX_PATH_PAUSE: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// What a path's reachability depends on in the content: the key set of its
+/// Nodes and the carriers between each hop. A pause outlives content changes
+/// that leave it equal (another Node's remark, Access, DNS, exits).
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub(super) struct PathContent {
+    keys: meshway_model::Digest,
+    hops: Vec<(Vec<String>, Vec<String>)>,
+}
+
+impl PathContent {
+    pub(super) fn of(
+        decisions: &mut crate::netmap::Decisions,
+        reading: &View<'_>,
+        path: &[NodeId],
+    ) -> Option<Self> {
+        Some(Self {
+            keys: crypto::key_digest(reading, path).ok()?,
+            hops: decisions.hop_carriers(reading.netmap(), path)?,
+        })
+    }
+}
+
+/// One paused path: consecutive unanswered handshakes, the end of the pause
+/// and the content it was paused on.
+struct Paused {
+    count: u32,
+    until: Instant,
+    content: Option<PathContent>,
+}
 
 /// Circuits and flows an [`SecureNode::apply`] retired; reporting only.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -88,7 +118,7 @@ pub(super) struct FirstPackets {
     pub dropped: u64,
     /// Paths whose origin handshake ended unanswered: consecutive count and
     /// the end of the pause during which another carried path is preferred.
-    unanswered: BTreeMap<Vec<NodeId>, (u32, Instant)>,
+    unanswered: BTreeMap<Vec<NodeId>, Paused>,
     /// Peers' reported authenticated channels (peer facts): ranking only.
     pub peer_channels: BTreeMap<NodeId, BTreeSet<NodeId>>,
 }
@@ -106,17 +136,36 @@ impl FirstPackets {
     /// An origin handshake on `path` ended at its deadline without an
     /// answer: a relay could not reach the next hop, or the path is dead.
     /// The pause doubles from `base` up to [`MAX_PATH_PAUSE`].
-    pub fn unanswered(&mut self, path: &[NodeId], now: Instant, base: std::time::Duration) {
-        self.unanswered.retain(|_, (_, until)| *until > now);
+    pub(super) fn unanswered(
+        &mut self,
+        path: &[NodeId],
+        content: Option<PathContent>,
+        now: Instant,
+        base: std::time::Duration,
+    ) {
+        self.unanswered.retain(|_, paused| paused.until > now);
         if self.unanswered.len() >= MAX_UNANSWERED && !self.unanswered.contains_key(path) {
             return;
         }
-        let entry = self.unanswered.entry(path.to_vec()).or_insert((0, now));
-        entry.0 = entry.0.saturating_add(1);
-        entry.1 = now
+        let entry = self.unanswered.entry(path.to_vec()).or_insert(Paused {
+            count: 0,
+            until: now,
+            content: content.clone(),
+        });
+        if entry.content != content {
+            entry.count = 0;
+            entry.content = content;
+        }
+        entry.count = entry.count.saturating_add(1);
+        entry.until = now
             + base
-                .saturating_mul(1 << (entry.0 - 1).min(16))
+                .saturating_mul(1 << (entry.count - 1).min(16))
                 .min(MAX_PATH_PAUSE);
+    }
+    /// New content keeps the pause of every path whose own content is equal.
+    fn retain_paths(&mut self, mut content: impl FnMut(&[NodeId]) -> Option<PathContent>) {
+        self.unanswered
+            .retain(|path, paused| paused.content.is_some() && content(path) == paused.content);
     }
     pub fn answered(&mut self, path: &[NodeId]) {
         self.unanswered.remove(path);
@@ -124,7 +173,7 @@ impl FirstPackets {
     fn paused(&self, path: &[NodeId], now: Instant) -> bool {
         self.unanswered
             .get(path)
-            .is_some_and(|(_, until)| *until > now)
+            .is_some_and(|paused| paused.until > now)
     }
     pub fn maintain(&mut self, now: Instant) {
         let before: usize = self.waiting.iter().map(|w| w.packets.len()).sum();
@@ -367,8 +416,10 @@ impl SecureNode {
         });
         self.carriers = carriers;
         self.probes.retain_current();
-        // New content decides paths afresh.
-        self.first.unanswered.clear();
+        // A path stays paused only while its own content is unchanged.
+        let decisions = &mut self.engine.decisions;
+        self.first
+            .retain_paths(|path| PathContent::of(decisions, reading, path));
         self.engine.desired = desired.clone();
         self.desired = desired.clone();
         let closed: Vec<_> = self
@@ -628,6 +679,34 @@ impl SecureNode {
     ) -> Option<usize> {
         let desired = self.desired.clone();
         self.choose_at(paths, &View::of(&desired))
+    }
+
+    /// The relayed path a new circuit toward `peer` would take now, though
+    /// none is established: the first ranked path of the content that relays,
+    /// whose next hop has a carrier here and whose relay reports a channel
+    /// with the Node after it. Reporting only; a circuit is still admitted
+    /// and chosen per flow.
+    pub fn relay_route(&self, peer: NodeId) -> Option<Vec<NodeId>> {
+        let paths = self
+            .desired
+            .compiler()
+            .transit(self.desired.netmap().node_id, &Target::Mesh { node: peer })
+            .ok()?;
+        let paths: Vec<&[NodeId]> = paths.iter().map(|path| path.nodes.as_slice()).collect();
+        let (ranked, _) = ranked(&paths, &self.carriers, &self.first.peer_channels);
+        ranked
+            .into_iter()
+            .map(|index| paths[index])
+            .find(|path| {
+                path.len() > 2
+                    && self.carriers.contains_key(&path[1])
+                    && self
+                        .first
+                        .peer_channels
+                        .get(&path[1])
+                        .is_some_and(|connected| connected.contains(&path[2]))
+            })
+            .map(<[NodeId]>::to_vec)
     }
 
     fn choose_at<'p>(
