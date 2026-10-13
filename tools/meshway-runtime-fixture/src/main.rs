@@ -125,6 +125,11 @@ enum NetmapScenario {
     /// `--traversal nat` only: A–B becomes an allowed direct edge that A's NAT
     /// router drops; new A→B traffic relays through R at once.
     Relay,
+    /// `--traversal nat` only: A's router switches to endpoint-dependent
+    /// mapping and R's admits inbound UDP; the punched A–R channel recovers
+    /// within a minute of a NAT mapping loss after a real Server restart, of
+    /// R's daemon restart and of A's daemon restart.
+    Reconnect,
 }
 
 impl NetmapScenario {
@@ -135,6 +140,7 @@ impl NetmapScenario {
             Self::Expiry => "expiry",
             Self::Restart => "restart",
             Self::Relay => "relay",
+            Self::Reconnect => "reconnect",
         }
     }
 }
@@ -249,14 +255,14 @@ async fn main() -> std::process::ExitCode {
         return std::process::ExitCode::FAILURE;
     }
     if let Some(scenario) = cli.netmap_scenario {
-        let traversal = if scenario == NetmapScenario::Relay {
+        let traversal = if matches!(scenario, NetmapScenario::Relay | NetmapScenario::Reconnect) {
             cli.traversal == TraversalMode::Nat && !cli.traversal_fallback
         } else {
             cli.traversal == TraversalMode::Off
         };
         if !traversal || cli.dns_backend != DnsBackend::Off {
             eprintln!(
-                "--netmap-scenario relay requires --traversal nat (no fallback), the others traversal off; DNS off"
+                "--netmap-scenario relay/reconnect require --traversal nat (no fallback), the others traversal off; DNS off"
             );
             return std::process::ExitCode::FAILURE;
         }

@@ -41,6 +41,7 @@ pub(super) async fn run(scenario: NetmapScenario, context: Context<'_>) -> Resul
         NetmapScenario::Restart => restart(context).await,
         NetmapScenario::Revoke => revoke(context).await,
         NetmapScenario::Relay => relay(context).await,
+        NetmapScenario::Reconnect => reconnect(context).await,
     }
 }
 
@@ -402,6 +403,97 @@ async fn relay(context: Context<'_>) -> Result<String> {
     )
     .await?;
     Ok(context.tun)
+}
+
+/// A's status: R reached over a selected channel of its own.
+fn direct_to_r(status: &Status) -> bool {
+    status.peers.iter().any(|peer| {
+        peer.hostname == Role::R.name() && peer.state == meshway_protocol::ipc::PeerState::Direct
+    })
+}
+
+async fn direct_probe(cli: &Cli) -> Result<bool> {
+    Ok(direct_to_r(&command(cli, "status").await?))
+}
+
+/// See the Controller's `reconnect`. A reports when its channel with R is
+/// gone and when a new one is selected; R and A restart their own daemons.
+async fn reconnect(mut context: Context<'_>) -> Result<String> {
+    let Context {
+        cli, role, signals, ..
+    } = context;
+    if role == Role::B {
+        signals
+            .wait_for("reconnect-done", Duration::from_secs(1500))
+            .await?;
+        return Ok(context.tun);
+    }
+    let budget = Duration::from_secs(180);
+    let report = async |name: &str, at_ms: u64| {
+        signals
+            .write(name, &Signal::Observed { role, at_ms })
+            .await
+    };
+    let instance = |status: &Status| status.instance.as_ref().map(|lease| lease.instance_id);
+    for stage in ["nat", "server"] {
+        if stage == "server" {
+            let before = instance(&command(cli, "status").await?);
+            stepped(signals, "reconnect-server").await?;
+            let status = wait_status_for(cli, budget, |status| {
+                instance(status).is_some() && instance(status) != before
+            })
+            .await?;
+            save(cli, "scenario-reconnect-instance", &status).await?;
+            report(&format!("reconnect-instance-{}", role.name()), now_ms()?).await?;
+        }
+        if role == Role::A {
+            stepped(signals, &format!("reconnect-break-{stage}")).await?;
+            let lost = until(async || direct_probe(cli).await, false, budget).await?;
+            report(&format!("reconnect-lost-{stage}"), lost).await?;
+            stepped(signals, &format!("reconnect-heal-{stage}")).await?;
+            let direct = until(async || direct_probe(cli).await, true, budget).await?;
+            save(cli, &format!("scenario-reconnect-{stage}-status"), &command(cli, "status").await?).await?;
+            report(&format!("reconnect-direct-{stage}"), direct).await?;
+        }
+    }
+    for actor in [Role::R, Role::A] {
+        let stage = format!("restart-{}", actor.name());
+        stepped(signals, &format!("reconnect-{stage}")).await?;
+        if role == actor {
+            let netmap = installed(&command(cli, "status").await?);
+            terminate(context.daemon).await?;
+            *context.daemon = spawn_daemon(cli, role, signals::underlay(cli).await?.controller)?;
+            wait_ipc(cli, context.daemon).await?;
+            let status = wait_status(cli, |status| {
+                status.data_plane == DataPlane::Ready && status.desired_up && installed(status) == netmap
+            })
+            .await?;
+            context.tun = owned_tun().await?;
+            save(cli, &format!("scenario-reconnect-{stage}-restarted"), &status).await?;
+            report(&format!("reconnect-restarted-{}", role.name()), now_ms()?).await?;
+        }
+        if role == Role::A {
+            if actor == Role::R {
+                let lost = until(async || direct_probe(cli).await, false, budget).await?;
+                save(cli, "scenario-reconnect-restart-r-lost", &lost).await?;
+            }
+            let direct = until(async || direct_probe(cli).await, true, budget).await?;
+            save(cli, &format!("scenario-reconnect-{stage}-status"), &command(cli, "status").await?).await?;
+            report(&format!("reconnect-direct-{stage}"), direct).await?;
+        }
+    }
+    signals
+        .wait_for("reconnect-done", Duration::from_secs(600))
+        .await?;
+    Ok(context.tun)
+}
+
+/// A Controller step signal under its exact name (routers read the same files).
+async fn stepped(signals: &Signals, name: &str) -> Result<u64> {
+    match signals.wait_for(name, Duration::from_secs(600)).await? {
+        Signal::Step { at_ms, .. } => Ok(at_ms),
+        _ => Err("invalid reconnect step".into()),
+    }
 }
 
 async fn step(signals: &Signals, name: &str) -> Result<(Revision, u64)> {

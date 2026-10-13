@@ -184,7 +184,7 @@ def handshake(records, local, target, public_local, offers):
     raise RuntimeError("Missing complete same-offer bilateral traversal handshake before ciphertext")
 
 
-def verify(report, actors, routers, *, fallback=False, short=False, relay=False):
+def verify(report, actors, routers, *, fallback=False, short=False, relay=False, reconnect=False):
     evidence = {"outerFamily": "ipv4", "natModel": "linux-conntrack-port-preserving-snat",
                 "path": ["a", "r", "b"], "routers": {}, "fallback": None}
     offers = bounded_json(report / "controller/traversal-verified-offers.json")
@@ -338,8 +338,72 @@ def verify(report, actors, routers, *, fallback=False, short=False, relay=False)
         evidence["fallback"].update(applicationBefore=before, applicationAfter=after, circuits=continuity)
     if relay:
         evidence["relay"] = relay_counters(report, actors)
+    if reconnect:
+        evidence["reconnect"] = reconnect_evidence(report, actors, routers)
     (report / "traversal-packets.json").write_text(json.dumps(evidence, indent=2) + "\n")
     return evidence
+
+
+RECONNECT_STAGES = ("nat", "server", "restart-r", "restart-a")
+RECONNECT_BUDGET_MS = 60_000
+
+
+def firewall_rules(path):
+    if not path.is_file() or path.stat().st_size > LIMIT:
+        raise RuntimeError(f"Missing bounded router firewall {path.name}")
+    for line in path.read_text().splitlines():
+        match = re.fullmatch(r"\[(\d+):(\d+)\] (.+)", line)
+        if match:
+            tokens = shlex.split(match[3])
+            yield int(match[1]), tokens
+
+
+def reconnect_evidence(report, actors, routers):
+    """nat/reconnect: router-a switched to random (endpoint-dependent) UDP
+    mappings and router-r to inbound-open UDP, both with real counters; each
+    A-R break dropped real packets before it healed; every disruption was
+    repaired by a new direct channel within the budget, in order."""
+    a_wan, r_wan = routers["a"]["wan"], routers["r"]["wan"]
+    random_snat = dnat = 0
+    for packets, tokens in firewall_rules(report / "router-a/firewall-final.txt"):
+        options = dict(zip(tokens[::2], tokens[1::2]))
+        if (options.get("-A") == "POSTROUTING" and options.get("-s") == actors["a"] + "/32"
+                and options.get("-p") == "udp" and "--random-fully" in tokens and options.get("--to-source") == a_wan):
+            random_snat = packets
+    for packets, tokens in firewall_rules(report / "router-r/firewall-final.txt"):
+        options = dict(zip(tokens[::2], tokens[1::2]))
+        if (options.get("-A") == "PREROUTING" and options.get("-d") == r_wan + "/32"
+                and options.get("-p") == "udp" and options.get("--to-destination") == actors["r"]):
+            dnat = packets
+    if random_snat == 0 or dnat == 0:
+        raise RuntimeError("Reconnect NAT models were not exercised (random SNAT / inbound DNAT counters)")
+    breaks = {}
+    for stage in ("nat", "server"):
+        blocked = bounded_json(report / f"router-a/reconnect-break-{stage}.json")["blockedAtMs"]
+        healed = bounded_json(report / f"router-a/reconnect-heal-{stage}.json")["healedAtMs"]
+        drops = 0
+        for packets, tokens in firewall_rules(report / f"router-a/firewall-reconnect-{stage}.txt"):
+            options = dict(zip(tokens[::2], tokens[1::2]))
+            if options.get("-A") == "FORWARD" and options.get("-j") == "DROP" and options.get("-p") == "udp" and (
+                    (options.get("-s"), options.get("-d")) in ((actors["a"] + "/32", r_wan + "/32"), (r_wan + "/32", actors["a"] + "/32"))):
+                drops += packets
+        if not 0 < blocked < healed or drops == 0:
+            raise RuntimeError(f"Reconnect break {stage} dropped nothing or healed before it blocked")
+        breaks[stage] = {"blockedAtMs": blocked, "healedAtMs": healed, "drops": drops}
+    timings = bounded_json(report / "controller/scenario-reconnect-timings.json")
+    previous = 0
+    for stage in RECONNECT_STAGES:
+        stage_timing = timings.get(stage) or {}
+        start, direct = stage_timing.get("disruptedAtMs"), stage_timing.get("directAtMs")
+        if not (isinstance(start, int) and isinstance(direct, int) and previous < start < direct):
+            raise RuntimeError(f"Reconnect stage {stage} lacks ordered disruption/recovery times")
+        if direct - start > RECONNECT_BUDGET_MS:
+            raise RuntimeError(f"Reconnect stage {stage} took {direct - start} ms")
+        previous = direct
+    if not breaks["server"]["healedAtMs"] >= timings["server"]["restartedAtMs"]:
+        raise RuntimeError("The server-stage break was healed before the Server restarted")
+    return {"laterNatModel": "a: SNAT --random-fully (endpoint-dependent mapping); r: inbound UDP DNAT",
+            "randomSnatPackets": random_snat, "inboundDnatPackets": dnat, "breaks": breaks, "timings": timings}
 
 
 def relay_counters(report, actors):

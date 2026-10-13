@@ -24,6 +24,7 @@ pub(super) struct Context<'a> {
     pub nodes: &'a BTreeMap<Role, NodeId>,
     pub revision: Revision,
     pub availability: &'a Availability,
+    pub server: &'a super::server::Server<'a>,
 }
 
 pub(super) async fn run(scenario: NetmapScenario, context: Context<'_>) -> Result<()> {
@@ -38,6 +39,7 @@ pub(super) async fn run(scenario: NetmapScenario, context: Context<'_>) -> Resul
         NetmapScenario::Restart => outage(&context, "restart", Duration::ZERO).await,
         NetmapScenario::Revoke => revoke(&context).await,
         NetmapScenario::Relay => relay(&context).await,
+        NetmapScenario::Reconnect => reconnect(&context).await,
     }
 }
 
@@ -588,4 +590,156 @@ async fn settled(
         Ok::<(), crate::Error>(())
     })
     .await?
+}
+
+/// Each disruption of the punched A–R channel must be repaired by a new
+/// direct channel within this.
+const RECONNECT: Duration = Duration::from_secs(60);
+
+/// A's router maps every new UDP flow to a random port and R's admits
+/// inbound UDP: R is a public host, A is behind endpoint-dependent NAT, and
+/// only coordinated traversal with source learning connects them. Four
+/// disruptions in turn, each repaired within [`RECONNECT`]:
+/// - `nat`: A–R UDP dropped until both ends retire the channel, then healed
+///   with every A mapping forgotten (the NAT models switch at this break);
+/// - `server`: the real Server restarts in place (every instance, State
+///   report and fact ends with it), A and R take new instances, then the
+///   same break and heal;
+/// - `restart-r`, `restart-a`: one daemon restarts, the other keeps running.
+async fn reconnect(context: &Context<'_>) -> Result<()> {
+    let Context {
+        cli,
+        signals,
+        client,
+        network,
+        token,
+        nodes,
+        revision,
+        server,
+        ..
+    } = context;
+    let mut timings = serde_json::Map::new();
+    // Saved after every stage: a stage that never recovers keeps the others.
+    let save = async |timings: &serde_json::Map<String, serde_json::Value>| -> Result<()> {
+        tokio::fs::write(
+            cli.evidence.join("scenario-reconnect-timings.json"),
+            serde_json::to_vec_pretty(timings)?,
+        )
+        .await?;
+        Ok(())
+    };
+    let observed = async |name: &str, budget: Duration| -> Result<u64> {
+        match signals.wait_for(name, budget).await? {
+            Signal::Observed { at_ms, .. } => Ok(at_ms),
+            _ => Err(format!("invalid {name} evidence").into()),
+        }
+    };
+    let routers = async |name: &str| -> Result<()> {
+        for router in ["router-a", "router-r"] {
+            signals.ready(&format!("{name}-{router}")).await?;
+        }
+        Ok(())
+    };
+    let step = async |name: &str| -> Result<u64> {
+        let at_ms = now_ms()?;
+        signals
+            .write(
+                name,
+                &Signal::Step {
+                    revision: *revision,
+                    at_ms,
+                },
+            )
+            .await?;
+        Ok(at_ms)
+    };
+    // A's own status shows the channel gone, then (after the heal) a new one.
+    let breaks = async |stage: &str| -> Result<serde_json::Value> {
+        step(&format!("reconnect-break-{stage}")).await?;
+        routers(&format!("reconnect-blocked-{stage}")).await?;
+        let lost = observed(&format!("reconnect-lost-{stage}"), STARTUP + IO).await?;
+        let healed = step(&format!("reconnect-heal-{stage}")).await?;
+        routers(&format!("reconnect-healed-{stage}")).await?;
+        let direct = observed(&format!("reconnect-direct-{stage}"), RECONNECT * 3).await?;
+        Ok(serde_json::json!({ "lostAtMs": lost, "disruptedAtMs": healed, "directAtMs": direct }))
+    };
+    tracing::info!(phase = "reconnect", stage = "nat", "switching NAT models");
+    timings.insert("nat".into(), breaks("nat").await?);
+    save(&timings).await?;
+    tracing::info!(phase = "reconnect", stage = "server", "restarting the Server");
+    let stopped = now_ms()?;
+    let restarted = server.restart().await?;
+    step("reconnect-server").await?;
+    let mut instances = serde_json::Map::new();
+    for role in [Role::A, Role::R] {
+        let at = observed(&format!("reconnect-instance-{}", role.name()), STARTUP + IO).await?;
+        instances.insert(role.name().into(), at.into());
+    }
+    // State (and the facts derived from it) is volatile: the new owner knows
+    // A and R again once they report under their new instances.
+    let mut reported = serde_json::Map::new();
+    for role in [Role::A, Role::R] {
+        let at = tokio::time::timeout(STARTUP, async {
+            loop {
+                let view = client
+                    .get_node_state(
+                        &meshway_control_client::GetNodeStatePath {
+                            network_id: *network,
+                            node_id: nodes[&role],
+                        },
+                        token,
+                    )
+                    .await?;
+                let current = view.nodes.get(&nodes[&role]).is_some_and(|state| {
+                    state.freshness == meshway_protocol::state::Freshness::Current
+                        && matches!(&state.report,
+                            Some(meshway_protocol::state::VisibleReport::Full { report })
+                                if report.sockets.values().any(|socket| !socket.endpoints.is_empty()))
+                });
+                if current {
+                    return now_ms();
+                }
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+        })
+        .await??;
+        reported.insert(role.name().into(), at.into());
+    }
+    let mut server_stage = breaks("server").await?;
+    server_stage["stoppedAtMs"] = stopped.into();
+    server_stage["restartedAtMs"] = restarted.into();
+    server_stage["instanceAtMs"] = instances.into();
+    server_stage["stateCurrentAtMs"] = reported.into();
+    timings.insert("server".into(), server_stage);
+    save(&timings).await?;
+    for (stage, actor) in [("restart-r", Role::R), ("restart-a", Role::A)] {
+        tracing::info!(phase = "reconnect", stage, "restarting one daemon");
+        let disrupted = step(&format!("reconnect-{stage}")).await?;
+        let restarted = observed(
+            &format!("reconnect-restarted-{}", actor.name()),
+            STARTUP + IO,
+        )
+        .await?;
+        let direct = observed(&format!("reconnect-direct-{stage}"), RECONNECT * 3).await?;
+        timings.insert(
+            stage.into(),
+            serde_json::json!({
+                "disruptedAtMs": disrupted, "restartedAtMs": restarted, "directAtMs": direct
+            }),
+        );
+        save(&timings).await?;
+    }
+    for (stage, value) in &timings {
+        let elapsed = value["directAtMs"]
+            .as_u64()
+            .zip(value["disruptedAtMs"].as_u64())
+            .and_then(|(direct, start)| direct.checked_sub(start))
+            .ok_or("reconnect timing out of order")?;
+        tracing::info!(phase = "reconnect", stage, elapsed_ms = elapsed, "direct again");
+        if Duration::from_millis(elapsed) > RECONNECT {
+            return Err(format!("reconnect {stage}: direct again after {elapsed} ms").into());
+        }
+    }
+    signals.write("reconnect-done", &Signal::Ready).await?;
+    Ok(())
 }

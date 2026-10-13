@@ -123,6 +123,46 @@ while test ! -f /signals/routers-stop.json; do
         printf '{"kind":"ready"}\n' > "/signals/.relay-blocked-$role.tmp"
         mv "/signals/.relay-blocked-$role.tmp" "/signals/relay-blocked-$role.json"
     fi
+    # nat/reconnect: at the first break A's router maps every new UDP flow to
+    # a random port (endpoint-dependent mapping) and R's admits inbound UDP
+    # (R behaves as a public host). Each break drops A↔R UDP until healed;
+    # healing also forgets every A mapping, as a NAT rebinding does.
+    if test "${MESHWAY_TRAVERSAL_RECONNECT:-0}" = 1; then
+        for stage in nat server; do
+            if test -f "/signals/reconnect-break-$stage.json" && test ! -f "/evidence/reconnect-break-$stage.json"; then
+                if test ! -f /evidence/reconnect-mode.json; then
+                    if test "$role" = router-a; then
+                        iptables -t nat -I POSTROUTING 1 -s "$actor/32" -o "$wan_if" -p udp -j SNAT --to-source "$wan" --random-fully
+                    else
+                        iptables -t nat -A PREROUTING -i "$wan_if" -d "$wan/32" -p udp -j DNAT --to-destination "$actor"
+                        iptables -I FORWARD 1 -i "$wan_if" -o "$lan_if" -d "$actor/32" -p udp -j ACCEPT
+                    fi
+                    printf '{"atMs":%s}\n' "$(date +%s%3N)" > /evidence/reconnect-mode.json
+                    iptables-save -c > /evidence/firewall-reconnect-mode.txt
+                fi
+                if test "$role" = router-a; then
+                    test -n "${MESHWAY_TRAVERSAL_RECONNECT_PEER:-}"
+                    iptables -I FORWARD 1 -i "$lan_if" -o "$wan_if" -s "$actor/32" -d "$MESHWAY_TRAVERSAL_RECONNECT_PEER/32" -p udp -j DROP
+                    iptables -I FORWARD 1 -i "$wan_if" -o "$lan_if" -s "$MESHWAY_TRAVERSAL_RECONNECT_PEER/32" -d "$actor/32" -p udp -j DROP
+                fi
+                printf '{"blockedAtMs":%s}\n' "$(date +%s%3N)" > "/evidence/reconnect-break-$stage.json"
+                printf '{"kind":"ready"}\n' > "/signals/.reconnect-blocked-$stage-$role.tmp"
+                mv "/signals/.reconnect-blocked-$stage-$role.tmp" "/signals/reconnect-blocked-$stage-$role.json"
+            fi
+            if test -f "/signals/reconnect-heal-$stage.json" && test -f "/evidence/reconnect-break-$stage.json" \
+                    && test ! -f "/evidence/reconnect-heal-$stage.json"; then
+                if test "$role" = router-a; then
+                    iptables-save -c > "/evidence/firewall-reconnect-$stage.txt"
+                    iptables -D FORWARD -i "$lan_if" -o "$wan_if" -s "$actor/32" -d "$MESHWAY_TRAVERSAL_RECONNECT_PEER/32" -p udp -j DROP
+                    iptables -D FORWARD -i "$wan_if" -o "$lan_if" -s "$MESHWAY_TRAVERSAL_RECONNECT_PEER/32" -d "$actor/32" -p udp -j DROP
+                    conntrack -D -p udp -s "$actor" > /dev/null 2>&1 || :
+                fi
+                printf '{"healedAtMs":%s}\n' "$(date +%s%3N)" > "/evidence/reconnect-heal-$stage.json"
+                printf '{"kind":"ready"}\n' > "/signals/.reconnect-healed-$stage-$role.tmp"
+                mv "/signals/.reconnect-healed-$stage-$role.tmp" "/signals/reconnect-healed-$stage-$role.json"
+            fi
+        done
+    fi
     if test -f /signals/traversal-first.json && test ! -f /evidence/conntrack-first.txt; then
         conntrack -L -p udp -s "$actor" -o extended > /evidence/conntrack-first.txt 2>/evidence/conntrack-first.stderr
         iptables-save -c > /evidence/firewall-first.txt

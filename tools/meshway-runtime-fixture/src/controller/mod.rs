@@ -175,6 +175,7 @@ async fn coordinate(
     cli: &Cli,
     audit: &crate::traversal::Audit,
     availability: &crate::recovery::Availability,
+    server: &server::Server<'_>,
 ) -> Result<()> {
     let signals = Signals::new(&cli.signals);
     let underlay = signals::underlay(cli).await?;
@@ -731,6 +732,7 @@ async fn coordinate(
                 nodes: &nodes,
                 revision,
                 availability,
+                server,
             },
         )
         .await;
@@ -744,6 +746,7 @@ async fn coordinate(
         nodes: &nodes,
         revision,
         availability,
+        server,
     })
     .await
 }
