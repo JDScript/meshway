@@ -19,6 +19,9 @@ pub struct Underlay {
     pub actors: BTreeMap<Role, Ipv4Addr>,
     #[serde(default)]
     pub routers: BTreeMap<Role, NatRouter>,
+    /// nat/relay's additional public relays by name; empty otherwise.
+    #[serde(default)]
+    pub relays: BTreeMap<String, Ipv4Addr>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -41,6 +44,15 @@ pub enum Signal {
     Status {
         role: Role,
         status: Box<Status>,
+    },
+    /// An extra nat/relay relay's own CLI status.
+    Relay {
+        name: String,
+        status: Box<Status>,
+    },
+    /// The complete path a scenario expects new traffic to take.
+    Path {
+        nodes: Vec<meshway_model::NodeId>,
     },
     Configuration {
         revision: Revision,
@@ -155,7 +167,7 @@ impl Signals {
         meshway_packet_fixture::rendezvous::write(&self.0, name, value).await
     }
     pub async fn read(&self, name: &str) -> Result<Option<Signal>> {
-        for role in ["a", "r", "b", "controller"] {
+        for role in ["a", "r", "b", "controller", "relay-x", "relay-y"] {
             if tokio::fs::try_exists(self.0.join(format!("abort-{role}.json"))).await? {
                 return Err("another runtime actor failed; inspect its private evidence".into());
             }

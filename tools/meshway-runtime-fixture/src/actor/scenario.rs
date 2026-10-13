@@ -351,17 +351,29 @@ async fn restart(mut context: Context<'_>) -> Result<String> {
     Ok(context.tun)
 }
 
-/// A's new flows and CLI ping to B take [A, R, B] although [A, B] is now
-/// allowed and preferred: A's router drops every A↔B packet. Status shows B
-/// relayed through R.
+/// A's new flows and CLI ping to B take [A, R2, B] although [A, B] is now
+/// allowed and preferred: A's router drops every A↔B packet, and of the
+/// relays R2 alone has channels with both ends (R1 lost B, A has no channel
+/// with R3). Status shows B relayed through R2 and R3 without a channel.
+/// Flows established on [A, R1, B] keep that path and lose B with R1.
 async fn relay(context: Context<'_>) -> Result<String> {
     let Context {
         cli, role, signals, ..
     } = context;
+    let path = if role == Role::A {
+        let Signal::Path { nodes } = signals
+            .wait_for("scenario-relay-path", Duration::from_secs(600))
+            .await?
+        else {
+            return Err("invalid relay path".into());
+        };
+        Some(nodes)
+    } else {
+        None
+    };
     let (revision, _) = step(signals, "relay").await?;
     running(cli, revision).await?;
-    if role == Role::A {
-        let path = crate::fallback::original_path(signals).await?;
+    if let Some(path) = path {
         let run = crate::ping_cli::run(cli, crate::ping::Stage::Relayed, "b", &path).await?;
         save(cli, "scenario-relay-ping", &run).await?;
         let mut traffic =
@@ -382,9 +394,6 @@ async fn relay(context: Context<'_>) -> Result<String> {
         })
         .await?;
         save(cli, "scenario-relay-status", &status).await?;
-        if let Some(traffic) = context.traffic.as_mut() {
-            traffic.exchange().await?;
-        }
     }
     observed(
         signals,

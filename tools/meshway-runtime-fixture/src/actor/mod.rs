@@ -1,5 +1,6 @@
 mod interface_change;
 mod reconnect;
+pub mod relay;
 mod scenario;
 
 use crate::{

@@ -138,6 +138,6 @@ while test ! -f /signals/routers-stop.json; do
         mv "/signals/.traffic-$role.tmp" "/signals/traffic-$role.json"
     fi
     count=$((count + 1))
-    test "$count" -lt 930
+    test "$count" -lt 1800
     sleep 1
 done

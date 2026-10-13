@@ -209,6 +209,11 @@ enum Command {
         #[arg(long, value_enum)]
         role: Role,
     },
+    /// nat/relay only: an additional public relay (`x` or `y`).
+    RelayActor {
+        #[arg(long)]
+        name: String,
+    },
     UnderlayPeer {
         #[arg(long)]
         ipv4: std::net::Ipv4Addr,
@@ -265,6 +270,13 @@ async fn main() -> std::process::ExitCode {
         Command::Prepare => prepare(&cli).await,
         Command::Controller => controller::run(&cli).await,
         Command::Actor { role } => actor::run(&cli, role).await,
+        Command::RelayActor { ref name } => {
+            if cli.netmap_scenario != Some(NetmapScenario::Relay) {
+                eprintln!("relay-actor requires --netmap-scenario relay");
+                return std::process::ExitCode::FAILURE;
+            }
+            actor::relay::run(&cli, name).await
+        }
         Command::UnderlayPeer { ipv4, ipv6 } => peer::run(&cli, ipv4, ipv6).await,
     };
     match result {

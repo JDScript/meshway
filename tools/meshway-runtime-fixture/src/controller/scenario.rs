@@ -292,9 +292,14 @@ async fn revoke(context: &Context<'_>) -> Result<()> {
 /// A new flow must take the relay within this of the new content's commit.
 const RELAY_SWITCH: Duration = Duration::from_secs(30);
 
-/// Direct A–B allowed (no `via`), but A's NAT router drops every A↔B packet:
-/// Policy prefers [A, B], A has no channel to B, and new traffic and a CLI
-/// ping relay through R, which has no listener of its own toward either.
+/// Five Nodes. A's and R's NAT routers drop every packet to and from B, so
+/// R (R1) keeps its channel with A but loses B. Two public relays enroll
+/// now: the one with the lower Node ID is R3 (topology to both ends, a
+/// resident edge only with B, so A has no channel with it); the other is R2
+/// (resident edges with A and B). Then direct A–B is allowed (no `via`):
+/// Policy lists [A, B] and every two-hop relay, A has no channel with B, and
+/// new traffic and a CLI ping relay through R2, the relay with channels to
+/// both ends, within [`RELAY_SWITCH`].
 async fn relay(context: &Context<'_>) -> Result<()> {
     let Context {
         cli,
@@ -307,6 +312,85 @@ async fn relay(context: &Context<'_>) -> Result<()> {
     } = context;
     signals.write("relay-block", &Signal::Ready).await?;
     signals.ready("relay-blocked-router-a").await?;
+    signals.ready("relay-blocked-router-r").await?;
+    let extra = enroll_relays(context).await?;
+    let (r3, r2) = (extra[0].1, extra[1].1);
+    let underlay = crate::signals::underlay(cli).await?;
+    let mut input = source(client, *network, token).await?.configuration;
+    for (name, node) in &extra {
+        let settings = input
+            .nodes
+            .get_mut(node)
+            .ok_or("missing enrolled extra relay")?;
+        let public = underlay.relays.get(*name).ok_or("missing relay underlay")?;
+        settings.listeners = BTreeMap::from([(
+            "udp".into(),
+            meshway_transport::spec::Listener::NativeUdp(
+                meshway_transport::spec::NativeUdpListener {
+                    enabled: true,
+                    remark: String::new(),
+                    listen: "0.0.0.0".parse()?,
+                    listen_port: 35000.try_into()?,
+                    endpoints: vec![meshway_transport::spec::Endpoint {
+                        host: public.to_string(),
+                        port: 35000.try_into()?,
+                    }],
+                    bind_interface: String::new(),
+                    socket: Default::default(),
+                },
+            ),
+        )]);
+    }
+    for (a, b, keepalive) in [
+        (nodes[&Role::A], r2, true),
+        (r2, nodes[&Role::B], true),
+        (nodes[&Role::A], r3, false),
+        (r3, nodes[&Role::B], true),
+    ] {
+        input.topology.push(meshway_configuration::TopologyRule {
+            remark: "nat/relay extra relay".into(),
+            action: meshway_configuration::TopologyAction::Allow,
+            a: format!("node:{a}"),
+            b: format!("node:{b}"),
+            transports: meshway_configuration::Input::Omitted,
+            keepalive,
+        });
+    }
+    let current = source(client, *network, token).await?.revision;
+    let configured = apply(client, *network, token, current, &input).await?;
+    signals
+        .write(
+            "relay-extra-config",
+            &Signal::Revision {
+                revision: configured,
+            },
+        )
+        .await?;
+    for name in crate::actor::relay::NAMES {
+        signals.ready(&format!("relay-running-{name}")).await?;
+    }
+    let r1 = nodes[&Role::R];
+    tokio::fs::write(
+        cli.evidence.join("scenario-relay-roles.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "r1": r1, "r2": r2, "r3": r3,
+            "r3BeforeR2": r3 < r2, "r1BeforeR2": r1 < r2,
+        }))?,
+    )
+    .await?;
+    // The channels this scenario ranks by: R2 with A and B, R3 with B
+    // only, and R1 no longer with B, each in a fresh report of its own.
+    settled(
+        context,
+        &[
+            (r2, vec![nodes[&Role::A], nodes[&Role::B]], vec![]),
+            (r3, vec![nodes[&Role::B]], vec![nodes[&Role::A]]),
+            (r1, vec![nodes[&Role::A]], vec![nodes[&Role::B]]),
+        ],
+    )
+    .await?;
+    // Facts reach A with its next sync answer, which a fact change wakes.
+    tokio::time::sleep(Duration::from_secs(3)).await;
     let original = source(client, *network, token).await?;
     let mut direct = original.configuration.clone();
     direct.routing.mesh.clear();
@@ -318,6 +402,14 @@ async fn relay(context: &Context<'_>) -> Result<()> {
         transports: meshway_configuration::Input::Omitted,
         keepalive: false,
     });
+    signals
+        .write(
+            "scenario-relay-path",
+            &Signal::Path {
+                nodes: vec![nodes[&Role::A], r2, nodes[&Role::B]],
+            },
+        )
+        .await?;
     let revision = apply(client, *network, token, original.revision, &direct).await?;
     let at_ms = now_ms()?;
     signals
@@ -360,7 +452,13 @@ async fn relay(context: &Context<'_>) -> Result<()> {
             _ => return Err("invalid relay scenario evidence".into()),
         }
     }
-    applied(
+    // A never acquired a channel with R3: the ranking did not need it.
+    settled(
+        context,
+        &[(r3, vec![nodes[&Role::B]], vec![nodes[&Role::A]])],
+    )
+    .await?;
+    let result = applied(
         cli,
         client,
         *network,
@@ -369,5 +467,125 @@ async fn relay(context: &Context<'_>) -> Result<()> {
         revision,
         ("scenario-relay", None),
     )
-    .await
+    .await;
+    signals.write("relay-extra-stop", &Signal::Ready).await?;
+    result
+}
+
+/// Enroll the extra relays; returns their names and Node IDs, the lower ID
+/// first (R3, then R2).
+async fn enroll_relays(context: &Context<'_>) -> Result<Vec<(&'static str, NodeId)>> {
+    let Context {
+        signals,
+        client,
+        network,
+        token,
+        ..
+    } = context;
+    signals.write("relay-extra-enroll", &Signal::Ready).await?;
+    let mut enrolled = Vec::new();
+    for name in crate::actor::relay::NAMES {
+        let Signal::Relay {
+            name: claimed,
+            status,
+        } = signals.wait(&format!("relay-enrollment-{name}")).await?
+        else {
+            return Err("invalid extra relay enrollment status".into());
+        };
+        let enrollment = status
+            .enrollment_request_id
+            .filter(|_| claimed == name)
+            .ok_or("extra relay has no pending enrollment")?;
+        let request = client
+            .get_device_authorization(
+                &meshway_control_client::GetDeviceAuthorizationPath {
+                    enrollment_request_id: enrollment,
+                },
+                token,
+            )
+            .await?;
+        if request.request.hostname != format!("relay-{name}") {
+            return Err("extra relay enrollment name mismatch".into());
+        }
+        client
+            .approve_device_authorization(
+                &meshway_control_client::ApproveDeviceAuthorizationPath {
+                    enrollment_request_id: enrollment,
+                },
+                &meshway_protocol::ApproveEnrollmentRequest {
+                    network_id: *network,
+                },
+                token,
+            )
+            .await?;
+        let Signal::Relay {
+            name: claimed,
+            status,
+        } = signals.wait(&format!("relay-enrolled-{name}")).await?
+        else {
+            return Err("invalid extra relay enrolled status".into());
+        };
+        let identity = status
+            .identity
+            .filter(|identity| claimed == name && identity.network_id == *network)
+            .ok_or("extra relay identity mismatch")?;
+        enrolled.push((name, identity.node_id));
+    }
+    enrolled.sort_by_key(|(_, node)| *node);
+    Ok(enrolled)
+}
+
+/// Wait until each Node's own current report has an authenticated channel
+/// with every Node of `with` and none with any of `without`.
+async fn settled(
+    context: &Context<'_>,
+    expected: &[(NodeId, Vec<NodeId>, Vec<NodeId>)],
+) -> Result<()> {
+    let Context {
+        cli,
+        client,
+        network,
+        token,
+        ..
+    } = context;
+    tokio::time::timeout(STARTUP * 2, async {
+        for (node, with, without) in expected {
+            loop {
+                let view = client
+                    .get_node_state(
+                        &meshway_control_client::GetNodeStatePath {
+                            network_id: *network,
+                            node_id: *node,
+                        },
+                        token,
+                    )
+                    .await?;
+                let channel = |report: &meshway_model::state::NodeState, peer: &NodeId| {
+                    report.links.get(peer).is_some_and(|links| {
+                        links.iter().any(|link| {
+                            link.phase == meshway_model::state::LinkPhase::Authenticated
+                        })
+                    })
+                };
+                if let Some(state) = view.nodes.get(node)
+                    && state.freshness == meshway_protocol::state::Freshness::Current
+                    && let Some(meshway_protocol::state::VisibleReport::Full { report }) =
+                        &state.report
+                    && with.iter().all(|peer| channel(report, peer))
+                    && !without.iter().any(|peer| channel(report, peer))
+                {
+                    tokio::fs::write(
+                        cli.evidence
+                            .join(format!("state-relay-settled-{node}.json")),
+                        serde_json::to_vec_pretty(&view)?,
+                    )
+                    .await?;
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+        }
+        Ok::<(), crate::Error>(())
+    })
+    .await?
 }

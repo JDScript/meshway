@@ -34,6 +34,8 @@ PLATFORM_BINARIES = {"platform-dns": ("meshway_dns", "meshway-dns-platform-tests
 ARTIFACTS = (*BINARIES, KERNEL_BINARY, BOOTSTRAP_BINARY, LIFECYCLE_BINARY, UNDERLAY_NETMAP_BINARY,
              *(binary for _, binary in PLATFORM_BINARIES.values()))
 ROLES = ("controller", "a", "r", "b")
+# nat/relay only: public relays enrolled by the scenario itself (R2/R3 by Node ID).
+RELAY_ROLES = ("relay-x", "relay-y")
 KERNEL_TESTS = {
     "underlay-suspend-notification": "linux::kernel::tests::network_changes::owned_suspend_keeps_control_connection_and_reports_no_network_change",
     "underlay-interface-multicast": "linux::tests::userspace_multicast_cannot_poison_kernel_monitor_or_control_proxy",
@@ -232,7 +234,7 @@ def main():
     target, platform, machine = docker_target()  # read-only engine architecture query
     report = report_directory("runtime", args.report_dir)
     identity = report.name
-    for name in ("bin", "public", "public/empty-cert-dir", "controller", "signals", "dns-support", "traversal-support", "router-a", "router-r", *ROLES,
+    for name in ("bin", "public", "public/empty-cert-dir", "controller", "signals", "dns-support", "traversal-support", "router-a", "router-r", *ROLES, *RELAY_ROLES,
                   "underlay-peer", "bootstrap", "daemon-cleanup", "daemon-owner-conflict", "restart", *KERNEL_TESTS, *PLATFORM_BINARIES):
         (report / name).mkdir(parents=True, exist_ok=True)
     source = fingerprint()
@@ -498,7 +500,8 @@ def main():
         if args.traversal_fallback:
             command.extend(["--env", "MESHWAY_TRAVERSAL_FALLBACK=1", "--env",
                             "MESHWAY_TRAVERSAL_PEER_WAN=" + routers["r" if actor == "a" else "a"]["wan"]])
-        if args.netmap_scenario == "relay" and actor == "a":
+        if args.netmap_scenario == "relay":
+            # A loses its direct path to B, R (R1) its channel with B.
             command.extend(["--env", "MESHWAY_TRAVERSAL_RELAY_PEER=" + addresses["b"]])
         command.extend([traversal_image, "/bin/sh", "/traversal-fixture/router.sh", role,
                         router["private"], router["wan"], addresses[actor]])
@@ -611,13 +614,17 @@ def main():
                 ipv4 = subnet
             else:
                 ipv6 = subnet
-        if ipv4 is None or ipv4.num_addresses < 32:
-            raise RuntimeError("fixture needs an isolated IPv4 subnet with at least 32 addresses")
+        if ipv4 is None or ipv4.num_addresses < 64:
+            raise RuntimeError("fixture needs an isolated IPv4 subnet with at least 64 addresses")
         if ipv6 != ipv6_requested:
             raise RuntimeError("fixture IPv6 underlay differs from requested documentation-only prefix")
         network_roles = (*ROLES, "underlay-peer", "bootstrap", *KERNEL_TESTS)
         addresses = {role: str(ipv4.network_address + 10 + index) for index, role in enumerate(network_roles)}
         addresses6 = {role: str(ipv6.network_address + 10 + index) for index, role in enumerate(network_roles)}
+        relays = RELAY_ROLES if args.netmap_scenario == "relay" else ()
+        for index, role in enumerate(relays):
+            addresses[role] = str(ipv4.network_address + 40 + index)
+            addresses6[role] = str(ipv6.network_address + 40 + index)
         gateways = {config.get("Gateway") for config in configurations}
         if gateways.intersection((*addresses.values(), *addresses6.values())):
             raise RuntimeError("fixture address conflicts with isolated gateway")
@@ -661,6 +668,7 @@ def main():
             manifest["natRouters"] = routers
         write_json(report / "public/underlay.json", {"controller": addresses["controller"],
                     "actors": {role: addresses[role] for role in ("a", "r", "b")},
+                    "relays": {role.removeprefix("relay-"): addresses[role] for role in relays},
                     "routers": {role: {"private": router["private"], "wan": router["wan"]} for role, router in routers.items()}})
         manifest["underlay"] = addresses
         manifest["underlay6"] = addresses6
@@ -729,14 +737,17 @@ def main():
         create("controller", ["controller"], address=addresses["controller"], address6=addresses6["controller"], private=True)
         for role in ("a", "r", "b"):
             create(role, ["actor", "--role", role], address=addresses[role], address6=addresses6[role], tun=True)
+        for role in relays:
+            create(role, ["relay-actor", "--name", role.removeprefix("relay-")],
+                   address=addresses[role], address6=addresses6[role], tun=True)
         create("bootstrap", ["--ignored", "--exact", "fixed_origin_https_survives_explicit_network_down", "--nocapture"],
                address=addresses["bootstrap"], address6=addresses6["bootstrap"], admin=True,
                executable=BOOTSTRAP_BINARY, environment={"MESHWAY_UNDERLAY_ISOLATED": "1",
                     "MESHWAY_UNDERLAY_ORIGIN": "https://meshway-packet-controller:8443/",
                     "MESHWAY_UNDERLAY_ORIGIN_IP": addresses["controller"],
                     "MESHWAY_UNDERLAY_CA": "/public/server.pem"})
-        with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
-            futures = {executor.submit(execute, role): role for role in ROLES}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=6 + len(relays)) as executor:
+            futures = {executor.submit(execute, role): role for role in (*ROLES, *relays)}
             def interface_change():
                 replacement = str(ipv4.network_address + 30)
                 if replacement in addresses.values() or replacement in gateways:

@@ -343,32 +343,43 @@ def verify(report, actors, routers, *, fallback=False, short=False, relay=False)
 
 
 def relay_counters(report, actors):
-    """nat/relay: router-a dropped A's direct attempts toward B (both IP-pair
-    rules exist with real counters, nothing broader), and A's relayed traffic
-    and ping were observed in time by the fixture itself."""
-    blocked = bounded_json(report / "router-a/relay.json")["blockedAtMs"]
-    path = report / "router-a/firewall-final.txt"
-    if not path.is_file() or path.stat().st_size > LIMIT:
-        raise RuntimeError("Missing bounded final router-a firewall for the relay block")
+    """nat/relay: router-a dropped A's direct attempts toward B and router-r
+    every packet between R (R1) and B (both IP-pair rules exist with real
+    counters, nothing broader), and A's relayed traffic and ping were
+    observed in time by the fixture itself."""
+    blocked = {}
     counters = {}
-    for line in path.read_text().splitlines():
-        match = re.fullmatch(r"\[(\d+):(\d+)\] (.+)", line)
-        if not match:
-            continue
-        tokens = shlex.split(match[3])
-        options = dict(zip(tokens[::2], tokens[1::2]))
-        if options.get("-A") != "FORWARD" or options.get("-j") != "DROP" or "-s" not in options:
-            continue
-        pair = (options.get("-s"), options.get("-d"))
-        if pair == (actors["a"] + "/32", actors["b"] + "/32") and "-p" not in options:
-            counters["outboundDrops"] = int(match[1])
-        elif pair == (actors["b"] + "/32", actors["a"] + "/32") and "-p" not in options:
-            counters["inboundDrops"] = int(match[1])
-        else:
-            raise RuntimeError("Relay block expanded beyond the A-B IP pair")
-    if set(counters) != {"outboundDrops", "inboundDrops"} or counters["outboundDrops"] == 0:
+    for actor in ("a", "r"):
+        blocked[actor] = bounded_json(report / f"router-{actor}/relay.json")["blockedAtMs"]
+        path = report / f"router-{actor}/firewall-final.txt"
+        if not path.is_file() or path.stat().st_size > LIMIT:
+            raise RuntimeError(f"Missing bounded final router-{actor} firewall for the relay block")
+        found = {}
+        for line in path.read_text().splitlines():
+            match = re.fullmatch(r"\[(\d+):(\d+)\] (.+)", line)
+            if not match:
+                continue
+            tokens = shlex.split(match[3])
+            options = dict(zip(tokens[::2], tokens[1::2]))
+            if options.get("-A") != "FORWARD" or options.get("-j") != "DROP" or "-s" not in options:
+                continue
+            pair = (options.get("-s"), options.get("-d"))
+            if pair == (actors[actor] + "/32", actors["b"] + "/32") and "-p" not in options:
+                found["outboundDrops"] = int(match[1])
+            elif pair == (actors["b"] + "/32", actors[actor] + "/32") and "-p" not in options:
+                found["inboundDrops"] = int(match[1])
+            else:
+                raise RuntimeError(f"Relay block of router-{actor} expanded beyond its B IP pair")
+        if set(found) != {"outboundDrops", "inboundDrops"}:
+            raise RuntimeError(f"Router-{actor} lacks its B relay block")
+        counters[actor] = found
+    if counters["a"]["outboundDrops"] == 0:
         raise RuntimeError("A never attempted the dropped direct A-B path")
     timing = bounded_json(report / "controller/scenario-relay-timing.json")
-    if not blocked <= timing["committedAtMs"] <= timing["relayedAtMs"]:
+    if not max(blocked.values()) <= timing["committedAtMs"] <= timing["relayedAtMs"]:
         raise RuntimeError("Relayed traffic was not observed after the direct path was dropped")
-    return {"blockedAtMs": blocked, **counters, "switch": timing}
+    roles = bounded_json(report / "controller/scenario-relay-roles.json")
+    if roles.get("r3BeforeR2") is not True:
+        raise RuntimeError("R3 must precede R2 in Node ID order")
+    return {"blockedAtMs": blocked["a"], "r1BlockedAtMs": blocked["r"], **counters["a"],
+            "r1": counters["r"], "roles": roles, "switch": timing}
