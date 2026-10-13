@@ -191,16 +191,13 @@ impl DatagramAuthorization {
 
     /// A source the endpoint's authentication owner verified a signed message
     /// of this attempt from: the peer's NAT translated the offer's address to
-    /// another port. Only the same IP as the offer recipient, at most
+    /// another port or public address. Any valid unicast recipient, at most
     /// [`MAX_LEARNED`] per attempt, and only for the attempt's lifetime.
     pub fn authorize_learned(&self, scope: &AttemptScope, address: SocketAddr) -> Result<()> {
         let peer = self.attempt_peer(scope)?;
         let address = udp_recipient(&address.to_string()).map_err(|_| Error::Target)?;
         if address == peer {
             return Ok(());
-        }
-        if address.ip() != peer.ip() {
-            return Err(Error::Target);
         }
         {
             let mut targets = self.registry.targets.lock().map_err(|_| Error::Worker)?;

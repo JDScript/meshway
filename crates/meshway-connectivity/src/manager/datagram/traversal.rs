@@ -22,8 +22,9 @@ pub(super) struct Attempt {
     replacement: Replacement,
     completed: bool,
     /// Sources of the peer's signed opening message other than the offer's
-    /// recipient (its NAT mapped this socket's destination to another port).
-    /// Proven by the signature only; the channel still needs the handshake.
+    /// recipient (its NAT mapped this socket's destination to another port,
+    /// or to another public address). Proven by the signature only; the
+    /// channel still needs the handshake.
     learned: Vec<SocketAddr>,
 }
 impl Attempt {
@@ -376,9 +377,10 @@ impl Owner {
 
     /// A signed opening message of this attempt's peer from another source
     /// than the offer recipient: an endpoint-dependent NAT gave the peer's
-    /// socket another port toward this one. The signature proves the peer;
-    /// the source only becomes one more recipient of this attempt's bounded
-    /// output. Same IP as the recipient, at most [`MAX_LEARNED`] per attempt.
+    /// socket another port, or another public address, toward this one. The
+    /// signature proves the peer whatever the source; the source only becomes
+    /// one more recipient of this attempt's bounded output, at most
+    /// [`MAX_LEARNED`] per attempt.
     fn learn(
         &mut self,
         attempt: &mut Attempt,
@@ -547,10 +549,7 @@ impl Owner {
 /// Whether `source` may become one more recipient of an attempt to
 /// `registered` that already learned `learned`.
 fn learnable(registered: SocketAddr, learned: &[SocketAddr], source: SocketAddr) -> bool {
-    source != registered
-        && source.ip() == registered.ip()
-        && !learned.contains(&source)
-        && learned.len() < MAX_LEARNED
+    source != registered && !learned.contains(&source) && learned.len() < MAX_LEARNED
 }
 
 #[cfg(test)]
@@ -558,30 +557,29 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_bounded_other_ports_of_the_recipient_ip_are_learnable() {
+    fn at_most_two_other_sources_are_learnable_whatever_their_address() {
         let registered: SocketAddr = "198.51.100.7:54507".parse().unwrap();
-        let first: SocketAddr = "198.51.100.7:53587".parse().unwrap();
-        let second: SocketAddr = "198.51.100.7:53588".parse().unwrap();
-        assert!(learnable(registered, &[], first));
+        let port: SocketAddr = "198.51.100.7:53587".parse().unwrap();
+        // WARP-like egress: the peer's mapping uses another public address.
+        let address: SocketAddr = "203.0.113.9:40001".parse().unwrap();
+        assert!(learnable(registered, &[], port));
+        assert!(learnable(registered, &[], address));
         assert!(
             !learnable(registered, &[], registered),
             "already a recipient"
         );
-        assert!(!learnable(registered, &[first], first), "already learned");
-        assert!(learnable(registered, &[first], second));
+        assert!(
+            !learnable(registered, &[address], address),
+            "already learned"
+        );
+        assert!(learnable(registered, &[address], port));
         assert!(
             !learnable(
                 registered,
-                &[first, second],
-                "198.51.100.7:1".parse().unwrap()
+                &[address, port],
+                "198.51.100.8:1".parse().unwrap()
             ),
             "at most two per attempt"
         );
-        for other in ["198.51.100.8:53587", "[2001:db8::7]:53587"] {
-            assert!(
-                !learnable(registered, &[], other.parse().unwrap()),
-                "another IP is never learned: {other}"
-            );
-        }
     }
 }
