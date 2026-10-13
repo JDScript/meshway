@@ -471,3 +471,18 @@ impl meshway_engine::Components for Plane {
 fn detail(error: &meshway_connectivity::Error) -> Option<String> {
     matches!(error, meshway_connectivity::Error::Bind { .. }).then(|| error.to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn only_a_bind_failure_names_its_cause() {
+        let busy = meshway_connectivity::Error::Bind {
+            key: "lab-tcp".into(),
+            address: "0.0.0.0:443".parse().unwrap(),
+            source: std::io::ErrorKind::AddrInUse.into(),
+        };
+        let detail = super::detail(&busy).unwrap();
+        assert!(detail.starts_with("listener lab-tcp cannot bind 0.0.0.0:443: "));
+        assert!(super::detail(&meshway_connectivity::Error::Underlay).is_none());
+    }
+}

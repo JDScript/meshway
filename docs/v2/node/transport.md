@@ -52,7 +52,7 @@ Native UDP 复用同一 context、codec 和签名实现，并增加监听方签�
 
 重启／端口重绑定通过新鲜认证替换精确的旧 channel ID，不能等待旧健康窗口结束才开始建连。只有拨号能力的 peer 可用当前通道签名 Ping 触发监听端重新发起 source challenge；旧探测本身不恢复通道或延长许可。完成 Ack／READY 后仍检查捕获的旧通道或空槽代际，迟到确认不能覆盖后来建立的通道；被替换 peer 的旧排队输出立即失效。
 
-UDP 通道使用新鲜 nonce 的认证 Ping／Pong 检查存活，默认间隔 2 秒、健康窗口 6 秒；`send_to` 成功不构成可达证明。失效后按获准候选尝试其他承载。业务帧的实际目的地址由已认证通道固定，其后台发送同时检查原包期限、peer 通道和 endpoint 生命周期；外层等待者未继续被轮询也不能产生失效后的迟到输出。
+UDP 健康 Ping 允许在声明长度之后以零填充（仅 Ping，仅零），用作[路径 MTU 探测](/v2/node/connectivity#path-mtu)；签名体不变，旧版本接收方丢弃填充的 Ping。UDP 通道使用新鲜 nonce 的认证 Ping／Pong 检查存活，默认间隔 2 秒、健康窗口 6 秒；`send_to` 成功不构成可达证明。失效后按获准候选尝试其他承载。业务帧的实际目的地址由已认证通道固定，其后台发送同时检查原包期限、peer 通道和 endpoint 生命周期；外层等待者未继续被轮询也不能产生失效后的迟到输出。
 
 默认预算为 64 连接、16 listener、128 候选；事件的帧／容量双重上限与批次语义见[UDP 控制消息预算](/v2/node/connectivity#udp-控制消息预算)。握手期限 5 秒，重试退避 1 秒。事件与 snapshot 来自真实 listener／link 生命周期，不制造 RTT／丢包数据。停止取消并 join 任务，guard 在阻塞 I/O 中持续检查。
 
@@ -95,7 +95,7 @@ VLESS 客户端先交付 CONNECT 请求，再延迟读取首个响应头，允�
 
 Linux `UdpTransport::adopt_batch` 对未指定（0）的接收／发送 socket buffer 请求 **7 MiB**，吸收 GSO/GRO 突发；已有更大的 buffer 不降低，显式非零值优先。仅使用普通 `SO_RCVBUF`／`SO_SNDBUF`，内核可按自身上限裁剪，返回大小在 Linux 上通常含双倍记账；不修改系统 sysctl，也不请求 `SO_*BUFFORCE`。其它 provider 与非 Linux／逐包 UDP 的 0 仍保留系统值。buffer 不提供新的 authority，原 descriptor、scope／mark 和逐 syscall 检查继续生效。
 
-`Datagram::poll_send_batch` 返回完整发送的前缀数量；`poll_recv_batch` 填充接收缓冲前缀并逐报文返回来源、长度和截断信息。默认实现每次处理一个报文，provider 可实现内核批量。Linux UDP 同目的、等长帧（最后一段可短）通过 `UDP_SEGMENT` 一次 `sendmsg` 发送；聚合 payload 按目的地址限制为 IPv4 65,507 字节、IPv6 65,527 字节，IPv4-mapped IPv6 按 IPv4 处理。`UDP_GRO` cmsg 拆回独立报文。不适合 GSO 时使用 `sendmmsg`；接收使用 `recvmmsg` 并解析每个消息的 cmsg；不支持 mmsg 时回退 `sendmsg`／`recvmsg`。仅 `UDP_SEGMENT` 发送的 `EIO` 按驱动 Tx checksum 能力不足关闭 GSO；普通发送／接收的 `EIO` 与所有路径的 `EMSGSIZE` 仍报错。一次批量 poll 至多一个数据 syscall，能力回退在下一次 poll 执行，因此受保护 socket 每次 syscall 前仍经过 scope／mark 检查。
+`Datagram::poll_send_batch` 返回完整发送的前缀数量；`poll_recv_batch` 填充接收缓冲前缀并逐报文返回来源、长度和截断信息。默认实现每次处理一个报文，provider 可实现内核批量。Linux UDP 同目的、等长帧（最后一段可短）通过 `UDP_SEGMENT` 一次 `sendmsg` 发送；聚合 payload 按目的地址限制为 IPv4 65,507 字节、IPv6 65,527 字节，IPv4-mapped IPv6 按 IPv4 处理。`UDP_GRO` cmsg 拆回独立报文。不适合 GSO 时使用 `sendmmsg`；接收使用 `recvmmsg` 并解析每个消息的 cmsg；不支持 mmsg 时回退 `sendmsg`／`recvmsg`。Linux 外层 socket 一律设 DF（`IP_PMTUDISC_DO`／`IPV6_MTU_DISCOVER=DO`），从不在本机分片；超过路由 MTU 的报文返回 `EMSGSIZE`。段长加报头超过路由 MTU 时，内核以 `EINVAL`／`EMSGSIZE` 拒绝 `UDP_SEGMENT` 发送，这与 GSO 能力无关：这一批改为不用 GSO 再发一次，若同样得到 `EMSGSIZE`（段长确实超过路径），记录该目的与段长 60 秒（最多 64 个目的），期间该目的不小于此段长的批次不用 GSO，GSO 保持开启（`gsoSizeRejections` 计数）；若不用 GSO 发送成功，说明 GSO 本身被拒，才关闭 GSO。仅 `UDP_SEGMENT` 发送的 `EIO` 按驱动 Tx checksum 能力不足关闭 GSO；普通发送／接收的 `EIO` 与所有路径的 `EMSGSIZE` 仍报错。`Datagram::path_mtu(peer)` 报告该 endpoint 到 peer 的路由 MTU（含 ICMP 学到的 PMTU），受保护 socket 用同 mark 的瞬时 connected socket 读取，不发包；通道的路径 MTU 搜索见[外层路径 MTU](/v2/node/connectivity#path-mtu)。一次批量 poll 至多一个数据 syscall，能力回退在下一次 poll 执行，因此受保护 socket 每次 syscall 前仍经过 scope／mark 检查。
 
 `capabilities()` 区分成功启用的 GSO／GRO、已由真实调用验证的 mmsg（未探测为 `None`），并记录成功的 GSO／GRO／mmsg 调用次数。批量 UDP provider 的 scratch 上限为 32 × 64 KiB，已接收剩余报文以槽位／区间元数据保留在同一 scratch 中，最多 2,048 个分段，耗尽前不执行下一次接收 syscall；交付时直接复制到调用者缓冲，不再逐段分配／复制 pending payload。逐包 API 同样保留 GRO 中未取走的报文。Session 的批量接收 scratch 按帧长取最多 32 个，容量不超过 `min(maxBytes, 2 MiB)`（允许单个更大的合法帧），使用时分配。交付批次仍不超过 32 帧／64 KiB；超过本批字节上限的已读帧保留到下一次接收，逐包入口也先消费这个前缀。截断或不一致的批量接收元数据返回错误，不交付伪造的完整帧。
 

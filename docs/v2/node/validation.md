@@ -35,9 +35,22 @@
 | [常驻三节点 lab](/v2/node/docker-lab) | Native UDP 显式端点 | resolved | — | 六向双栈系统解析／echo、路径诊断、关闭插桩的同路径 TCP 吞吐对照 | 未验收（当前整组）；2026-10-07 已有下述 L5 局部证据；共享 bridge 不构成 NAT 证明 |
 | `validate:matrix --rows exit/off` | Native UDP；声明 Native TCP 能力 | 三端 resolved 后端（MagicDNS＋一个 `useWithExit` split） | IPv4 出口 masquerade | A→R→E；能力／安装、公网与 LAN、长流／仅接收、撤回、HTTP 中断内离线出口与租约到期全撤／恢复、journal；单出口 DNS（第 9 阶段）；域名出口与可信关联（第 10 阶段）；A 的 7,000 区间节点侧分割 | 当前 wire 已通过（含 DNS、域名出口阶段与节点侧分割）；R3＋X6 矩阵 `20261012T115405Z-61e14403` 行 `20261012T115835Z-1812d1b8`；X6 Planck 矩阵 `20261012T101704Z-ae64c486` 行 `20261012T102856Z-a05feedb`，见[出口场景](#exit-scenario) |
 
-以下范围未验收：外层 IPv6 NAT、端点相关映射、映射轮换、NAT 与 resolv-conf 的组合、VLESS WS/TLS 承载上的 daemon 包流、TLS／WS 材料轮换、多路径切换、文件后端（resolv-conf）出口 resolver、resolved 代理 stub 缺失（systemd < 248 或 `DNSStubListener=no`）时的出口 resolver 不可用（仅组件测试）、`dns.overrideLocal` 出口 resolver（仅组件测试）、显式多出口 DNS plan、出口 IPv6、完整 TCP conntrack、动态 MTU／路径 MTU 发现及分片重组、userspace／SOCKS5。整机重启与 resolved 停机间隙不属于隔离矩阵，由系统服务安装单独实测：重启（含 Server 不可达）通过，systemd-resolved 重启后 5 秒内、停止再启动后 10 秒内恢复 Mesh 名称解析，见 [Linux 安装与系统服务](/v2/install#验收记录)；`udp/resolved` 行另在隔离 namespace 内重启 resolved 并要求 5 秒内再次解析 Mesh 名称。
+以下范围未验收：外层 IPv6 NAT、隔离 fixture 中的端点相关映射（仅有下述[实网证据](#real-nat)）、两端都在端点相关映射 NAT 后、映射轮换、NAT 与 resolv-conf 的组合、VLESS WS/TLS 承载上的 daemon 包流、TLS／WS 材料轮换、多路径切换、文件后端（resolv-conf）出口 resolver、resolved 代理 stub 缺失（systemd < 248 或 `DNSStubListener=no`）时的出口 resolver 不可用（仅组件测试）、`dns.overrideLocal` 出口 resolver（仅组件测试）、显式多出口 DNS plan、出口 IPv6、完整 TCP conntrack、数据面按通道 MTU 合成 Frag Needed／限制 MSS（通道路径 MTU 已发现并报告，见[外层路径 MTU](/v2/node/connectivity#path-mtu)）及分片重组、userspace／SOCKS5。整机重启与 resolved 停机间隙不属于隔离矩阵，由系统服务安装单独实测：重启（含 Server 不可达）通过，systemd-resolved 重启后 5 秒内、停止再启动后 10 秒内恢复 Mesh 名称解析，见 [Linux 安装与系统服务](/v2/install#验收记录)；`udp/resolved` 行另在隔离 namespace 内重启 resolved 并要求 5 秒内再次解析 Mesh 名称。
 
 常驻 lab 的 L5 原始证据目录为 `.meshway/perf/l5/20261007T162418Z-main-f39ba2b6-2cpu/`。该目录的两次 TCP 接收吞吐分别约 318／364 Mbps；协调者另报告空闲宿主复测 1,367 Mbps，独立报告路径待补，不能把该数值归入前述目录或用吞吐局部证据替代整组验收。
+
+### 实网 NAT 证据 {#real-nat}
+
+2026-10-13，候选 `f1aa2250`：us-lax-it7（x86_64 公网、无 NAT、无 listener，只能拨出）与 meshway-vm（arm64，经 macOS Cloudflare WARP 出网：同一 socket 对不同目的得到不同外部端口，即端点相关映射）。证据 `.meshway/node-lab/n2a/`。
+
+| 项 | 之前（main `1852b477`） | 之后 |
+| --- | --- | --- |
+| 邻接 | `unreachable`，双向 `meshway ping` 超时；it7 的 INIT 发往 STUN 候选端口，被 WARP 过滤 | `direct native_udp`，双向 `meshway ping` 5/5；it7 从 VM 的签名 punch 学到来源端口（候选 `:54017`，实际 `:53572`）。同时与两个 WARP 后的 lab 容器（main 版本，仅作响应方）直连 |
+| 外层分片 | it7→VM 超过 1,357 B 的报文本机分片后全部丢失 | 全部带 DF，抓包 0 个分片 |
+| 通道 MTU | 无 | it7→VM `1444/1330`（内层 DF ping 外层 1,444 B 5/5、1,445 B 0/5），VM→it7 `1500/1386` |
+| TCP 吞吐（iperf3 20 s） | 无通道 | VM→it7 6.4 Mbit/s（62 次重传）；it7→VM 0（内层 TCP 1,366 B 超过 1,330，被外层丢弃；数据面 MSS 限制属后续工作）；`-M 1250` 时 it7→VM 101 Mbit/s。裸路径：VM→it7 117 Mbit/s、it7→VM 679 Mbit/s |
+
+VM→it7 方向 Mesh TCP 远低于裸路径、UDP iperf 30 Mbit/s 时丢包 0.6%，原因未定位，不归入本证据的结论。
 
 ### 当前验证证据
 

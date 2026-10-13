@@ -106,7 +106,9 @@ Control 以 RPC 开始时的时钟高水位和单调时钟固定已确认的订�
 | --- | --- |
 | UDP socket 映射 | 已安装 Manager 的每个 Native UDP traversal socket 立即按其[持续观测](/v2/node/connectivity#continuous-stun)执行一轮同 socket STUN（同一查询预算与元数据，不新建 socket），最多等待 5 秒；报告每个 observer 最近一次经验证的映射与 `fresh`（本次诊断内获得） |
 | 端口 | `preserved`：本次映射端口都等于绑定端口；`changed`：有不同端口；`unknown`：本次无映射 |
-| 映射 | `independent`：至少两个 observer 本次看到相同映射；`dependent`：不同；`unknown`：不足两个 observer 回答（只配置一个 STUN 服务器时总是 unknown） |
+| 映射 | 只比较不同 IP 的 observer：`independent`：两个以上不同 IP 的 observer 本次看到相同映射；`dependent`：不同（端点相关映射 NAT，对端从 STUN 未见过的端口到达，见[来源学习](/v2/node/connectivity#source-learning)）；`unknown`：不同 IP 的 observer 不足两个（只配置一个 STUN 服务器时总是 unknown） |
+| 过滤 | 不报告：判断过滤行为需要观测点从其他地址主动发包（RFC 5780 CHANGE-REQUEST），公共 STUN 服务器不提供 |
+| 外层 PMTU | 每个 observer：`sizeProbe` 为本次向它发送的一个 DF Binding 请求（以可忽略属性填充到路由 MTU，最多 1,500 B）及是否得到回答；回答证明该大小可达，未回答不是测量（observer 可能丢弃大请求）。`pathMtu` 为探测后到该 observer 的路由 MTU（ICMP 学到的更小值，否则接口 MTU）。通道自己的路径 MTU 见 `meshway status` 的 MTU 列 |
 | STUN RTT | 各 observer 本次最快的往返；只计单次发送即得回答的事务，重传后的往返不确定，记为 null |
 | IPv4／IPv6／UDP | 本次该地址族有映射；UDP 另在存在已认证 Native UDP 选定通道时为真 |
 | Server | Node 控制客户端（同一受保护 socket 与 origin）对只读 `getAuthOptions` 先预热一次，再计时第二次往返，5 秒上限；不使用凭据 |
@@ -119,7 +121,7 @@ Network check
   UDP        yes
   IPv4       yes
   IPv6       no
-  STUN       74.125.250.129:19302 in 38.97 ms
+  STUN       74.125.250.129:19302 in 38.97 ms · 1500 B DF answered · route MTU 1500
 
 SOCKET                    BOUND          MAPPED                OBSERVER              PORT     MAPPING
 listener lab-udp          0.0.0.0:35000  104.28.152.187:36928  74.125.250.129:19302  changed  unknown

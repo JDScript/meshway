@@ -57,13 +57,15 @@ Node 拨号候选的顺序为：netmap 中的 configured 端点，然后是 `pee
 | `stunCandidates` | 各候选按自己的 `expiresAt` 停用（NAT 绑定确实会失效） | 同上，或候选自身到期 |
 | 出口就绪 `exit` | 不再作为 ready 出口的依据 | 同上 |
 
+对端的 `localEndpoints` 若是私网（RFC 1918）、CGNAT（`100.64.0.0/10`）或 IPv6 ULA（`fc00::/7`）地址，只有本机某个 up、非 loopback、不属于 Mesh 地址池的接口前缀包含它（即本机有对应的 on-link 路由）时才拨号；否则这类地址只能经默认路由发往公网，必然不可达，候选直接跳过、不发 INIT 也不进入退避。公网地址与 configured 端点不受此限。接口不可读时照常拨号（只受退避节流）。
+
 账本唯一 owner 是 Control 的最后已知事实（按 peer 保存最后一份，见 [Node 控制组件](/v2/node/control#netmap-发布)）；Manager 的 `manager/facts.rs` 只读取 Control 发布的 `KnownPeers` 快照、唤醒事实变化的 peer worker，不另存账本；`plan.rs::fact_endpoints` 是唯一的候选展开。Server 停机时事实不再刷新，但已安装租约内仍可用最后已知地址重建空闲关闭的邻接。Control 把同一份最后已知事实保存为 `peer-facts.json`，节点离线重启后随 netmap 载入，见[私有存储](/v2/node/control#私有存储与传输)。事实只提供尝试地址：错误或过时的地址最多导致连不上；准入仍只由 netmap 与认证握手决定。
 
 STUN 继续使用原有同 socket 观测与双边接受的协调路径，不把 UDP 映射加入 TCP／VLESS／Trojan 目标。每个 Native UDP socket 都[持续观测](#continuous-stun)自己的映射，与是否有 configured 地址或 interest 无关；本机候选或 STUN 候选都不意味着 NAT 穿透已成功。
 
 STUN 使用 RFC 8489 Binding 交换观察 socket 的外部映射；Meshway Server 负责当前主体／网络权限、获准 peer 的候选交换和有期限的尝试协调；Node 使用实际 socket 互发探测并完成认证。
 
-Server 的 STUN 监听与发布端点由 `--stun-listen`／`--stun-server` 分别配置，参数见 [Server 运行参数](/v2/server#运行参数)。两者默认均为空；监听地址与对外端点分开声明，不从 wildcard bind 或 HTTP 地址猜测。
+Server 的 STUN 监听与发布端点由 `--stun-listen`／`--stun-server` 分别配置，参数见 [Server 运行参数](/v2/server#运行参数)。两者默认均为空；监听地址与对外端点分开声明，不从 wildcard bind 或 HTTP 地址猜测。至少两个不同 IP 的观测点才能判断映射是否与目的相关（[netcheck](/v2/node/diagnostics#netcheck) 的 `endpointMapping`）；开发 Server 发布 Google 与 Cloudflare 两个 STUN 端点。
 
 `meshway-stun` 提供有界 RFC 8489 Binding 编解码与 UDP Service。它校验事务、消息／属性长度、XOR-MAPPED-ADDRESS 和可选 FINGERPRINT；客户端还验证实际响应来源。Binding 结果是未认证的映射观测，服务按来源 IP、接收包数、输出字节和有限来源表限流。STUN 不承担管理 HTTP 或 Mesh 业务转发。
 
@@ -112,6 +114,32 @@ NAT 后两端都能拨出时，邻接按需建立：可能只有一方有需求�
 3. Control 随 `KnownPeers` 发布请求；connectivity 对其中未到期请求的 `peerId` 登记 interest（与首包 interest 同一机制，仍只限当前投影的 peer），随后按上文查询、预留真实接收槽并接受该 offer。interest 本身不授权：offer、承载与双方投影仍由 Server 和 Node 各自复核。
 
 因此目标在一个 sync hold 内得知请求，不需要本地业务 interest；Server 不持有数据面状态，尝试记录本身仍是有期限的协调状态（至多 10 秒）。双方同时 prepare 时仍由 Server 的“同一 peer 对／地址族只接纳一个活动尝试”决胜，被拒一方经信令或查询接受对方的 offer。Server 停机期间没有信令，只有静态端点与已有通道可用。
+
+### 端点相关映射与来源学习 {#source-learning}
+
+对称（端点相关映射）NAT 为每个目的地分配不同的外部端口：STUN 观测到的映射只对 STUN 服务器有效，对端从另一端口到达。双方 Active 后，若收到本 offer 的对端**开场消息**（响应方的签名 punch `k=0`、拨号方的签名 INIT `k=1`），其签名按 offer digest 验证通过，而来源地址与 offer 登记的候选不同，则：
+
+- 来源 IP 必须与登记候选的 IP 相同（只换端口）；每个尝试最多学习 2 个来源，随尝试期限结束。
+- 学到的来源加入本尝试有界输出的目的（原候选继续发送；每尝试 32 次的总发送上限不变），当前输出的节拍重新开始一次。Underlay 的目标授权（`DatagramAuthorization::authorize_learned`）独立核对同一 IP、同一尝试与上限。
+- 后续 Challenge／Ack／READY 可来自学到的来源；安装的通道以 offer 与签名 transcript 为身份依据，以握手实际完成的地址为通道端点（`LinkFact.remote`），acquisition 仍为 `coordinatedUdp`。
+- 未通过签名、属于其他 offer 或来自其他 IP 的报文不被学习，也不消耗尝试；源地址只是投递信息，身份只由签名证明。
+
+一方在公网（无 NAT）、另一方在端点相关映射 NAT 后时由此直连：公网一方从对方 punch 的实际来源学习端口，回复经该映射进入 NAT。双方都在端点相关映射 NAT 后仍不可达（需要端口预测，不实现）。
+
+### 外层路径 MTU {#path-mtu}
+
+Linux 的 Mesh 外层 UDP socket 设 `IP_PMTUDISC_DO`／`IPV6_MTU_DISCOVER=DO`：外层报文从不在本机分片，超过路由 MTU 的发送返回 `EMSGSIZE`（见 [UDP 批量接口](/v2/node/transport#udp-批量接口)）。很多路径丢弃超大 DF 报文却不回 ICMP（实测 Cloudflare WARP），内核路由因此停留在接口 MTU，所以每条 Native UDP 选定通道自己搜索路径 MTU（RFC 8899 式）：
+
+| 项 | 规则 |
+| --- | --- |
+| 探测 | 通道自己的签名 Ping，以零填充到目标大小，带 DF；对这个新鲜 nonce 的认证 Pong 证明该大小可达。旧版本对端不接受填充的 Ping，结果为未知，不影响健康检查 |
+| 顺序 | 先试路由 MTU（通过即结束）；否则在 1,280 与失败大小之间二分；每个大小最多 2 次、每次等待 2 秒 |
+| 结果 | `path` = 已确认的最大大小与当前路由 MTU（受保护 socket 同 mark、同本地地址的瞬时 connected socket 读 `IP_MTU`，不发包）的较小者；`inner = path − 28`（IPv6 为 48）`− 86`（Data 帧固定开销）。搜索完成前或连 1,280 都未确认时为未知 |
+| 更新 | 每 10 分钟重新向上搜索；路由学到更小的 PMTU 时立即取较小值 |
+
+`path`／`inner` 是 channel 事实（`Snapshot.mtu`、IPC `peers[].mtu`），不改变任何发送：超过 `inner` 的内层包仍会在外层被丢弃（本机 `EMSGSIZE` 或路径静默丢弃）。据此合成 ICMP Frag Needed／Packet Too Big 与 TCP MSS 限制属于数据面后续工作。探测丢失会让结果偏小（保守方向）。
+
+实测（2026-10-13，`f1aa2250`）：us-lax-it7（公网）→ meshway-vm（WARP）通道搜索得 `1444/1330`，内层 DF ping `-s 1302`（外层 1444）5/5 回复、`-s 1303`（外层 1445）0/5；反方向 `1500/1386`。证据 `.meshway/node-lab/n2a/`。
 
 ### 持续 STUN 观测 {#continuous-stun}
 

@@ -145,7 +145,7 @@ Mesh 池、loopback、链路本地、组播、保留／广播及出口本机地�
 
 `underlay-egress.json`（v2）保存 boot／namespace、随机 installation、mark／table、计划、当前门与待提交门（区间与设备）、nft 规范对象／handle、选择器规则及 removed；已 down（removed）或属于另一次启动的记录不论版本直接归档，同一次启动内仍持有资源的其他版本记录在解析内容前即以专用错误（含文件名与版本，提示先用写它的旧版本 `meshway down` 或重启主机再升级）阻止启动；捕获表路由由门推出，恢复时与表内实际路由精确对账。自有规则／路由变化注册到同一 monitor（路由每 64 条等待其观测，不使通知缓冲溢出），不制造外部切网事件。暂停、执行失效和同 namespace 重启保留负向范围；TUN 消失不会落回 main direct。恢复先关闭旧活动 selector 并清理旧正向资源，只有新的有效执行安装可以重新激活；显式 down 才解除所属负向边界。
 
-IPC 8 的公开运行状态（`meshway status --json` 原样输出）：
+IPC 9 的公开运行状态（`meshway status --json` 原样输出）：
 
 | 字段 | 含义 |
 | --- | --- |
@@ -155,6 +155,7 @@ IPC 8 的公开运行状态（`meshway status --json` 原样输出）：
 | `saved`／`applied` | 独立的必填可空目标引用；saved 来自持久保存，applied 来自对应实例／目标的实际成功安装结果 |
 | `phase` | 完整枚举见下表；结合 dataPlane、当前资格和错误读取 |
 | `lastError`／`retryAt` | 类型化故障与重试时点；安装问题可为 unsupportedMode、underlay、tun、dns、transport、apply |
+| `lastErrorDetail` | 必填可空：故障组件给出具体原因时的一行说明，目前为 listener 的 bind 错误（例如 `listener lab-tcp cannot bind 0.0.0.0:443: Address in use (os error 98)`）；其他情况为 null。daemon 日志的同一告警带相同文本 |
 | `sync` | 必填，`connected`（最近一次 sync 成功、下一次由 Server 挂起）、`reconnecting`、`disconnected`；不代表 Node 授权或业务连通 |
 | `lastSyncAt`／`syncError` | 必填可空：本进程最近一次返回已验签 netmap 的 sync 时间；sync 重试期间的失败类别 |
 | `netmap` | 必填可空：当前 netmap 引用与签名租约 `issuedAt`／`expiresAt`，以及 `missingArtifacts`（引用但尚未持有的规则集 digest；命名它们的规则不可用，见[规则集 · 下发](/v2/configuration-reference/rule-sets#下发)）、`artifactProblem`（缺失时最后一次的 `download`／`integrity`／`storage`／`budget`，否则 null）与 `capture`（本节点从 netmap 与 artifact 计算并安装的出口捕获：`managedIpv4`／`sinkIpv6` 区间数、捕获表 `routes` 数，以及未安装分割而改为完整捕获时的 `unavailable` 原因，否则 null；本节点无出口捕获时整项为 null，计算见 [Routing · 节点侧上限](/v2/configuration-reference/routing#capture-limits)）；无有效租约为 null |
@@ -170,6 +171,7 @@ IPC 8 的公开运行状态（`meshway status --json` 原样输出）：
 | `state` | `direct`：有选定的认证通道；`relay`：有经其他节点的已建立 circuit（本节点为端点）；`offline`：该 peer 的最后已知事实缺失或已过 `PeerFacts.expiresAt` 且以上皆无；`unreachable`：需要邻接但无通道；`idle`：其余（含非相邻且当前无 circuit） |
 | `transport` | 必填可空：`direct` 为选定通道的承载，`relay` 为首跳通道的承载；其他为 null |
 | `endpoint` | 必填可空：`direct` 选定通道的实际远端地址；其他为 null |
+| `mtu` | 必填可空：`direct` 的 Native UDP 选定通道的 `path`（外层路径 MTU，IP 字节）与 `inner`（一个 Data 帧能承载的最大内层 IP 包）；搜索完成前、其他承载或未确认时为 null，定义见[外层路径 MTU](/v2/node/connectivity#path-mtu) |
 | `via` | `relay` 时按路径顺序的中转 Node ID；其他为空 |
 | `rtt` | 必填可空：到该 peer 最近一次成功 `ping`／观察任务测量的 `durationUs` 与 `observedAt`；没有测量为 null，不补零；down、撤回或租约结束时清空 |
 
@@ -252,9 +254,9 @@ meshway-sha  100.64.0.2  fd89:98a2:2060::1  running
   Exit       none
   Identity   node dbb6fcbb-… · network 8998a220-… · key generation 1
 
-PEER         MESH IPV4   STATE   TRANSPORT   ENDPOINT            RTT
-meshway-lax  100.64.0.1  direct  native_udp  192.168.97.3:52242  0.90 ms
-meshway-nyc  100.64.0.6  relay   native_udp  via meshway-lax     2.00 ms
+PEER         MESH IPV4   STATE   TRANSPORT   ENDPOINT            MTU        RTT
+meshway-lax  100.64.0.1  direct  native_udp  192.168.97.3:52242  1500/1386  0.90 ms
+meshway-nyc  100.64.0.6  relay   native_udp  via meshway-lax                2.00 ms
 ```
 
 `status --json` 中对应的 peer：
@@ -262,7 +264,7 @@ meshway-nyc  100.64.0.6  relay   native_udp  via meshway-lax     2.00 ms
 ```json
 {"nodeId":"3740cacb-68ff-4fe8-9559-2733b5b1ad76","hostname":"meshway-nyc",
  "addresses":{"ipv4":"100.64.0.6","ipv6":"fd89:98a2:2060::5"},"state":"relay",
- "transport":"native_udp","endpoint":null,"via":["21ee69e3-493e-40f8-b635-19ec4689fac9"],
+ "transport":"native_udp","endpoint":null,"mtu":null,"via":["21ee69e3-493e-40f8-b635-19ec4689fac9"],
  "rtt":{"durationUs":2079,"observedAt":"2026-10-11T20:38:37.572291623Z"}}
 ```
 
@@ -327,7 +329,7 @@ Node 不消费 SSE 事件流（用户 SSE 保留给 Console）。已有待确认
 
 期望上线时，网络失败、HTTP 408／429／5xx、无可解码 body 的任何状态及 400 等其他已解码拒绝按 1–15 秒有界退避自动重试，签名租约内数据面持续运行。不可解码或超限响应会撤回旧运行上下文后重新取得资格；运行中的 session／instance 拒绝、lease 到期或实例更换会重新持钥认证、取得有效 instance 并上报 State，不要求再次执行 `up`。已解码的身份拒绝、Server（`controllerId`）／key／目标绑定错误进入 `blocked`：前者同时撤回数据面，后者让已持有的 netmap 运行到租约到期；本机记录损坏或写入结果不确定进入 `blocked` 并撤回数据面。分类定义见 [Node 控制组件](/v2/node/control#netmap-发布)；后台残留请求不能绕过该停止状态。
 
-Linux 运行中的外部接口删除／重建、地址变更及路由变化由既有 Underlay netlink 监视器通知。变化关闭旧控制 HTTP 的底层连接，后续请求按当前路由重新连接并沿用上述有界重试；不要求重启 daemon、再次 `up` 或修改配置。本机端点变化经既有合并报告路径发布，刷新规则见[连接获取](/v2/node/connectivity#stun-与-server-协调)。只有 kernel 来源的 netlink 通知参与资源归属检查；用户态 multicast 消息被忽略，不能把普通接口重连变成永久保护冲突。当前 namespace 中真实的所属 TUN／DNS 锚点或保护规则冲突仍阻断执行。
+Linux 运行中的外部接口删除／重建、地址变更及路由变化由既有 Underlay netlink 监视器通知；未 up 的接口的创建／删除（例如 VPN 守护进程反复重建的空闲 `ppp0`）不承载任何路径，不算变化，已 up 接口的停用另以其地址／路由删除通知。变化关闭旧控制 HTTP 的底层连接，后续请求按当前路由重新连接并沿用上述有界重试；受保护控制中继按 Happy Eyeballs（RFC 8305）连接 Server 解析出的地址：地址族交替（从解析结果的首个地址族开始），250 ms 未完成即并发尝试下一个，任一失败立即尝试下一个，先连上者胜出，因此无路由或黑洞的 IPv6 不拖住 IPv4；不要求重启 daemon、再次 `up` 或修改配置。本机端点变化经既有合并报告路径发布，刷新规则见[连接获取](/v2/node/connectivity#stun-与-server-协调)。只有 kernel 来源的 netlink 通知参与资源归属检查；用户态 multicast 消息被忽略，不能把普通接口重连变成永久保护冲突。当前 namespace 中真实的所属 TUN／DNS 锚点或保护规则冲突仍阻断执行。
 
 Underlay 启动时当前 namespace 的资源归属或路由保护冲突仍拒绝准入，保留现有资源；状态为 `retrying`／`lastError=underlay`，以同一 1–30 秒有界退避发布 `retryAt` 并重新检查。冲突 owner 释放资源后无需再次 `up`。损坏的 Underlay journal／私有存储错误归为 `storage`，安装参数或 bootstrap resolver 配置错误归为 `configuration`，仍须修正后恢复。
 

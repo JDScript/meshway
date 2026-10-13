@@ -25,7 +25,9 @@ ROOT = Path(__file__).resolve().parents[1]
 SERVICES = {"server": (8420, "/api/v1/auth/options"), "docs": (5173, "/v2/")}
 CONSOLE_ORIGIN = "http://127.0.0.1:3001"
 SERVER_ORIGIN = "https://meshway-dev-api.jdscript.dev"
-STUN_SERVER = "dev-public=stun.l.google.com:19302"
+# Two observers at different IPs: netcheck can tell an endpoint-dependent
+# (symmetric) mapping only by comparing them.
+STUN_SERVERS = ("dev-public=stun.l.google.com:19302", "dev-cloudflare=stun.cloudflare.com:3478")
 # The public site (`mise run dev:site`), which tries the API with a session the Console delegates.
 SITE_CLIENT = "docs=http://localhost:3002"
 MAX_DATASET_BYTES = 128 * 1024 * 1024
@@ -86,7 +88,7 @@ def run(args, *, cwd=ROOT, check=True, timeout=30, env=None):
 
 def command(service, root):
     if service == "server":
-        return [str(root / "target/debug/meshway-server"), "--listen", "127.0.0.1:8420", "--data-dir", str(root / ".meshway/server"), "--console-origin", CONSOLE_ORIGIN, "--stun-server", STUN_SERVER, "--delegation-client", SITE_CLIENT]
+        return [str(root / "target/debug/meshway-server"), "--listen", "127.0.0.1:8420", "--data-dir", str(root / ".meshway/server"), "--console-origin", CONSOLE_ORIGIN, *(argument for server in STUN_SERVERS for argument in ("--stun-server", server)), "--delegation-client", SITE_CLIENT]
     return ["pnpm", "--filter", "@meshway/docs", "dev"]
 
 
