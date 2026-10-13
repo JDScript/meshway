@@ -78,6 +78,93 @@ struct Pending {
     accept_at: Instant,
 }
 
+/// Coordination pacing of one content. An attempt that ended without a
+/// channel pauses this Node's own preparation toward that peer, and the
+/// queries made for it, for [`workers::backoff`] (1 s doubling, at most five
+/// minutes). A channel with the peer, a change of its endpoint facts or a
+/// live request it sent ends the pause; new content starts a new pacing.
+#[derive(Default)]
+struct Coordination(BTreeMap<NodeId, Paused>);
+
+struct Paused {
+    failures: u32,
+    until: Instant,
+    link: Option<[u8; 32]>,
+    facts: std::collections::BTreeSet<String>,
+}
+
+/// The peer's listener endpoint addresses, without their freshness.
+fn endpoint_facts(shared: &Shared, peer: NodeId) -> std::collections::BTreeSet<String> {
+    let Some(facts) = shared.facts.get(peer) else {
+        return Default::default();
+    };
+    facts
+        .listeners
+        .iter()
+        .flat_map(|(key, listener)| {
+            listener
+                .local_endpoints
+                .iter()
+                .map(move |endpoint| format!("{key} {}", endpoint.address))
+                .chain(
+                    listener
+                        .stun_candidates
+                        .iter()
+                        .map(move |candidate| format!("{key} {}", candidate.address)),
+                )
+        })
+        .collect()
+}
+
+fn last_link(shared: &Shared, peer: NodeId) -> Option<[u8; 32]> {
+    shared
+        .links
+        .lock()
+        .ok()
+        .and_then(|links| links.last.get(&peer).copied())
+}
+
+impl Coordination {
+    /// An attempt with `peer` ended; without a channel it is one failure.
+    fn ended(&mut self, shared: &Shared, peer: NodeId) {
+        if shared
+            .links
+            .lock()
+            .is_ok_and(|links| links.contains_key(&peer))
+        {
+            self.0.remove(&peer);
+            return;
+        }
+        let link = last_link(shared, peer);
+        let facts = endpoint_facts(shared, peer);
+        let entry = self.0.entry(peer).or_insert(Paused {
+            failures: 0,
+            until: Instant::now(),
+            link,
+            facts: facts.clone(),
+        });
+        if entry.link != link || entry.facts != facts {
+            entry.failures = 0;
+        }
+        entry.failures = entry.failures.saturating_add(1);
+        entry.until = Instant::now() + workers::backoff(Duration::from_secs(1), entry.failures);
+        entry.link = link;
+        entry.facts = facts;
+        tracing::debug!(%peer, failures = entry.failures,
+            retry_ms = entry.until.saturating_duration_since(Instant::now()).as_millis() as u64,
+            "Traversal attempt ended without a channel");
+    }
+
+    fn paused(&self, shared: &Shared, peer: NodeId) -> bool {
+        self.0.get(&peer).is_some_and(|paused| {
+            Instant::now() < paused.until
+                && last_link(shared, peer) == paused.link
+                && endpoint_facts(shared, peer) == paused.facts
+                && !shared.facts.asked(peer, wall_ms())
+        })
+    }
+}
+
 // Capability knowledge from the latest bounded metadata resolution, not I/O
 // authority. A socket whose address family no STUN server serves cannot poll
 // forever; failures remain retryable and metadata expiry forces a fresh query.
@@ -189,15 +276,22 @@ fn retry(failures: u32) -> Duration {
         .min(STUN_IDLE)
 }
 
-fn needs_acquisition(shared: &Shared, pending: &BTreeMap<UdpTraversalId, Pending>) -> bool {
+fn needs_acquisition(
+    shared: &Shared,
+    pending: &BTreeMap<UdpTraversalId, Pending>,
+    coordination: &Coordination,
+) -> bool {
     let plan = &*shared.plan();
-    let Ok(links) = shared.links.lock() else {
-        return false;
-    };
     plan.peers().any(|peer| {
         // The selected owner retires unhealthy channels. A selected channel is
         // not a vacant physical slot: prepare() must wait for that owner too.
-        if links.contains_key(&peer) || !shared.wanted(peer) {
+        if shared
+            .links
+            .lock()
+            .is_ok_and(|links| links.contains_key(&peer))
+            || !shared.wanted(peer)
+            || coordination.paused(shared, peer)
+        {
             return false;
         }
         // The exact admitted offer already supplies this peer's acquisition
@@ -328,6 +422,7 @@ async fn run_content(
     let scope = shared.scope(None, false);
     let mut pending: BTreeMap<UdpTraversalId, Pending> = BTreeMap::new();
     let mut retired: BTreeMap<UdpTraversalId, u64> = BTreeMap::new();
+    let mut coordination = Coordination::default();
     let mut prepare_at = Instant::now();
     let mut context: Option<DiscoveryContext> = None;
     let mut observers: Option<Observers> = None;
@@ -340,6 +435,7 @@ async fn run_content(
                 if value.offer.ensure_current().is_ok() {
                     return true;
                 }
+                coordination.ended(&shared, value.offer.peer().candidate.socket.node_id);
                 value.offer.cancel();
                 if let Some(endpoint) = endpoints.get(&value.endpoint) {
                     let _ = endpoint.commands.try_send(Command::Cancel(*id));
@@ -359,7 +455,8 @@ async fn run_content(
             // Their original slots expire normally; they cannot keep polling a
             // healthy selected link merely because their phase is still Waiting.
             // A selected channel suppresses acquisition, never observation.
-            let acquisition = !endpoints.is_empty() && needs_acquisition(&shared, &pending);
+            let acquisition =
+                !endpoints.is_empty() && needs_acquisition(&shared, &pending, &coordination);
             let confirmed = shared
                 .stun_confirmed
                 .lock()
@@ -421,6 +518,8 @@ async fn run_content(
                     pending.retain(|id, value| {
                         let keep = visible.contains(id) && value.offer.ensure_current().is_ok();
                         if !keep {
+                            coordination
+                                .ended(&shared, value.offer.peer().candidate.socket.node_id);
                             retired.insert(*id, value.offer.offer().expires_at_ms);
                             value.offer.cancel();
                             if let Some(endpoint) = endpoints.get(&value.endpoint) {
@@ -460,6 +559,7 @@ async fn run_content(
                 } else if matches!(query, Ok(Reply::Query(Outcome::Unavailable(_)))) {
                     context = None;
                     for (id, value) in std::mem::take(&mut pending) {
+                        coordination.ended(&shared, value.offer.peer().candidate.socket.node_id);
                         value.offer.cancel();
                         retired.insert(id, value.offer.offer().expires_at_ms);
                         if let Some(endpoint) = endpoints.get(&value.endpoint) {
@@ -554,6 +654,7 @@ async fn run_content(
                         endpoints,
                         context,
                         &mut pending,
+                        &coordination,
                         after_peer,
                     )
                     .await;
@@ -722,6 +823,7 @@ async fn prepare(
     endpoints: &BTreeMap<[u8; 32], Endpoint>,
     context: &DiscoveryContext,
     pending: &mut BTreeMap<UdpTraversalId, Pending>,
+    coordination: &Coordination,
     after_peer: &mut Option<NodeId>,
 ) -> Result<(), Error> {
     let plan = &*shared.plan();
@@ -758,6 +860,7 @@ async fn prepare(
             .any(|pending| pending.offer.peer().candidate.socket.node_id == *peer)
             // Let the selected owner finish its retirement before a new acquisition.
             && !shared.links.lock().is_ok_and(|links| links.contains_key(peer))
+            && !coordination.paused(shared, *peer)
     });
     // Advance before the RPC, including errors/no observations. An unavailable
     // prefix must not starve other peers; the cursor survives new content.
@@ -888,7 +991,7 @@ mod tests {
         let ids = fixture.ids();
         let quiet = |index: usize| {
             let (shared, _) = shared(&fixture.desired[index], &fixture.keys[index]);
-            !needs_acquisition(&shared, &BTreeMap::new())
+            !needs_acquisition(&shared, &BTreeMap::new(), &Coordination::default())
         };
         // Every edge is dialable both ways: nobody coordinates without a need.
         assert!(quiet(0) && quiet(1));
@@ -906,8 +1009,42 @@ mod tests {
             let (shared, _) = shared(&fixture.desired[index], &fixture.keys[index]);
             let peer = ids[1 - index];
             assert!(shared.wanted(peer));
-            assert!(needs_acquisition(&shared, &BTreeMap::new()));
+            assert!(needs_acquisition(
+                &shared,
+                &BTreeMap::new(),
+                &Coordination::default()
+            ));
         }
+        fixture.close().await;
+    }
+
+    #[tokio::test]
+    async fn an_attempt_without_a_channel_pauses_coordination_toward_that_peer() {
+        let mut fixture = Netmaps::start(false, false).await;
+        let ids = fixture.ids();
+        let (shared, _) = shared(&fixture.desired[0], &fixture.keys[0]);
+        let peer = ids[1];
+        let mut coordination = Coordination::default();
+        assert!(!coordination.paused(&shared, peer));
+        let pauses: Vec<_> = (0..10)
+            .map(|_| {
+                coordination.ended(&shared, peer);
+                let until = coordination.0[&peer].until;
+                (until - Instant::now()).as_secs_f64().round() as u64
+            })
+            .collect();
+        assert_eq!(pauses, [1, 2, 4, 8, 16, 32, 64, 128, 256, 300]);
+        assert!(coordination.paused(&shared, peer));
+        assert!(!coordination.paused(&shared, ids[2]), "per peer");
+        // The peer's endpoint facts changed since the failure: try again now,
+        // and the next failure starts the sequence over.
+        coordination.0.get_mut(&peer).unwrap().facts = ["udp 192.0.2.1:1".to_owned()].into();
+        assert!(!coordination.paused(&shared, peer));
+        coordination.ended(&shared, peer);
+        assert_eq!(coordination.0[&peer].failures, 1);
+        // So does a channel installed (and maybe ended) since.
+        coordination.0.get_mut(&peer).unwrap().link = Some([9; 32]);
+        assert!(!coordination.paused(&shared, peer));
         fixture.close().await;
     }
 

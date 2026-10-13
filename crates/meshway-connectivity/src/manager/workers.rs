@@ -100,6 +100,20 @@ pub(super) fn candidates(
 /// Longest pause between two attempts of one failing candidate.
 pub(super) const MAX_CANDIDATE_BACKOFF: std::time::Duration = std::time::Duration::from_secs(300);
 
+/// The pause after `failures` consecutive failures: `base · 2^(failures − 1)`,
+/// at most [`MAX_CANDIDATE_BACKOFF`].
+pub(super) fn backoff(base: std::time::Duration, failures: u32) -> std::time::Duration {
+    base.saturating_mul(1 << failures.saturating_sub(1).min(16))
+        .min(MAX_CANDIDATE_BACKOFF)
+}
+
+/// Endpoint sources an explicit dial tries, in this priority order. STUN
+/// mappings are tried only by coordinated traversal.
+const DIALED: [LinkAcquisition; 2] = [
+    LinkAcquisition::PublishedEndpoint,
+    LinkAcquisition::LocalEndpoint,
+];
+
 /// One dial target: candidate key and endpoint.
 type TargetKey = (String, String, meshway_transport::spec::Port);
 
@@ -165,9 +179,7 @@ impl Pacing {
     ) -> (u32, std::time::Duration) {
         let entry = self.failed.entry(key).or_insert((0, now));
         entry.0 = entry.0.saturating_add(1);
-        let pause = base
-            .saturating_mul(1 << (entry.0 - 1).min(16))
-            .min(MAX_CANDIDATE_BACKOFF);
+        let pause = backoff(base, entry.0);
         entry.1 = now + pause;
         (entry.0, pause)
     }
@@ -230,6 +242,7 @@ pub(super) async fn dial(shared: Arc<Shared>, factory: Arc<dyn SocketFactory>, p
                     candidate
                         .endpoints
                         .iter()
+                        .filter(|target| DIALED.contains(&target.acquisition))
                         .map(|target| Pacing::key(candidate, target))
                 })
                 .collect(),
@@ -238,10 +251,7 @@ pub(super) async fn dial(shared: Arc<Shared>, factory: Arc<dyn SocketFactory>, p
         // Provenance is the first priority across all of this peer's carriers.
         // In particular, an unreachable local UDP address must not delay an
         // explicitly configured TCP fallback after a coordinated link fails.
-        for source in [
-            LinkAcquisition::PublishedEndpoint,
-            LinkAcquisition::LocalEndpoint,
-        ] {
+        for source in DIALED {
             for candidate in candidates.iter() {
                 for target in candidate
                     .endpoints

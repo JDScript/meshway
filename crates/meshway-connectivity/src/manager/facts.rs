@@ -22,6 +22,17 @@ impl Store {
         known.as_ref()?.peers.get(&peer).cloned()
     }
 
+    /// Whether `peer` holds a live traversal request toward this Node.
+    pub(super) fn asked(&self, peer: NodeId, now_ms: u64) -> bool {
+        let Ok(source) = self.source.lock() else {
+            return false;
+        };
+        let Some(source) = source.as_ref() else {
+            return false;
+        };
+        asked(source.borrow().as_ref(), now_ms).contains(&peer)
+    }
+
     fn attach(&self, source: watch::Receiver<Option<KnownPeers>>) {
         if let Ok(mut current) = self.source.lock() {
             *current = Some(source);
