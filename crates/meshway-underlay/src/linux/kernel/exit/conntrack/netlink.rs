@@ -63,6 +63,10 @@ const CTA_PROTO_ICMP_CODE: u16 = 6;
 const IPS_OFFLOAD: u32 = (1 << 14) | (1 << 15);
 #[cfg(test)]
 const IPS_SEEN_REPLY: u32 = 1 << 1;
+/// A ctnetlink-created entry is inserted confirmed; omitting the bit from
+/// `CTA_STATUS` asks to clear it and the kernel answers `EBUSY`.
+#[cfg(test)]
+const IPS_CONFIRMED: u32 = 1 << 3;
 
 const EPERM: i32 = 1;
 const ENOENT: i32 = 2;
@@ -196,7 +200,7 @@ pub(super) async fn insert(tuple: &Tuple, mark: u32, timeout: u32) -> Result<(),
     )
     .tuple(CTA_TUPLE_ORIG, tuple)
     .tuple(CTA_TUPLE_REPLY, &reply)
-    .u32(CTA_STATUS, IPS_SEEN_REPLY)
+    .u32(CTA_STATUS, IPS_SEEN_REPLY | IPS_CONFIRMED)
     .u32(CTA_TIMEOUT, timeout)
     .u32(CTA_MARK, mark);
     match exchange(request, |_| Err(Failure::Unavailable)).await? {
@@ -591,12 +595,16 @@ mod tests {
     }
 
     fn entry(tuple: &Tuple) -> impl FnOnce(Request) -> Request {
+        status(tuple, IPS_SEEN_REPLY)
+    }
+
+    fn status(tuple: &Tuple, status: u32) -> impl FnOnce(Request) -> Request {
         let tuple = tuple.clone();
         move |request| {
             request
                 .tuple(CTA_TUPLE_ORIG, &tuple)
                 .tuple(CTA_TUPLE_REPLY, &reply_of(&tuple))
-                .u32(CTA_STATUS, IPS_SEEN_REPLY)
+                .u32(CTA_STATUS, status)
                 .u32(CTA_TIMEOUT, 29)
                 .u32(CTA_MARK, 8)
                 .u32(CTA_ID, 123)
@@ -686,10 +694,15 @@ mod tests {
             Failure::Unavailable
         );
         type Mutation = fn(Request) -> Request;
-        let ownership: [Mutation; 3] = [
+        for offload in [1 << 14, 1 << 15] {
+            assert_eq!(
+                collect(&answer(9, status(&tuple, IPS_SEEN_REPLY | offload)), 9).unwrap_err(),
+                Failure::Ownership
+            );
+        }
+        let ownership: [Mutation; 2] = [
             |request| request.u16(CTA_ZONE, 1),
             |request| request.attribute(CTA_HELP | NLA_F_NESTED, &[]),
-            |request| request.u32(CTA_STATUS, 1 << 14),
         ];
         for mutation in ownership {
             let base = entry(&tuple);
