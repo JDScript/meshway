@@ -10,7 +10,7 @@ x-node: &node
   environment:
     PATH: /opt/meshway:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
     MESHWAY_SERVER_URL: https://meshway-dev-api.jdscript.dev
-    RUST_LOG: info
+    RUST_LOG: ${RUST_LOG:-info}
     MESHWAY_PROFILE: ${MESHWAY_PROFILE:-0}
     MESHWAY_PROFILE_DETAIL: ${MESHWAY_PROFILE_DETAIL:-0}
     MESHWAY_LOG_FORMAT: json

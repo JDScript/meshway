@@ -45,7 +45,7 @@ mise run node:lab status
 
 出口 E 的 IPv4 forwarding 前置应由 lab 声明配置提供：仅对出口容器的 namespace 声明 `sysctls: {net.ipv4.ip_forward: "1"}`，并保留 `NET_ADMIN` 与 `/dev/net/tun`。Agent 只检测该条件。当前常驻 Compose 尚未启用出口；隔离 `exit/off` 行先声明 forwarding=0 验证原因，再由 fixture 在 E 的私有 mount／network namespace 内写入并读回 1，详见 `dev/exit-fixture/README.md`。只读 proc-sys 上 `sysctl -w` 可能返回零却未写入，不能只凭退出码认定前置条件成立。镜像包含工具不代表已部署或已支持出口。
 
-`deploy` 使用 `docker compose up --no-build`，校验产物后启动或更新三个容器，等待本机 IPC 健康检查。初始期望状态为 down；执行 up 后按链接在 Console 中选择网络批准：
+`deploy` 使用 `docker compose up --no-build`，校验产物后启动或更新三个容器，等待本机 IPC 健康检查。daemon 日志过滤取部署时的 `RUST_LOG`（缺省 `info`，语法见[日志](/v2/logging)），改变它会按上述规则重建容器。初始期望状态为 down；执行 up 后按链接在 Console 中选择网络批准：
 
 ```sh
 docker exec meshway-lax meshway up
