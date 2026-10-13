@@ -50,12 +50,17 @@ impl<'a> Graph<'a> {
         graph.declarations_only = true;
         Ok(graph)
     }
+    /// Paths from `source` to `target` in Policy order: shorter first, then
+    /// by Node ID. Every path of a length is found before any longer one;
+    /// the search ends after the first length at which `enough` paths are
+    /// known (so the relays of one length are never cut by Node ID), within
+    /// the shared work budget and at most [`MAX_SEARCH_PATHS`] paths.
     pub fn paths(
         &self,
         source: NodeId,
         target: NodeId,
         via: Option<&[NodeId]>,
-        limit: usize,
+        enough: usize,
     ) -> Result<Vec<LogicalPath>, PathError> {
         self.transport_failures.borrow_mut().clear();
         let mut routes = routing::Routes::new(self.input);
@@ -66,28 +71,45 @@ impl<'a> Graph<'a> {
         if required.iter().any(|id| !self.available(*id)) {
             return Ok(vec![]);
         }
-        // Declaration checks continue through an edge without a common
-        // transport so that one validation names every such edge of a path
-        // that otherwise satisfies routing; such paths are never found.
-        let mut queue = VecDeque::from([(vec![source], required, Vec::new())]);
-        let mut found = Vec::new();
+        // Each partial path is expanded twice: first only toward its next
+        // required Node, later (re-queued) toward every other Node. Thus all
+        // completions of one length are tried before any detour is explored,
+        // and the detours of a large projection cannot exhaust the budget
+        // before every two-hop relay is known.
+        let mut queue = VecDeque::from([(vec![source], required, Vec::new(), true)]);
+        let mut found: Vec<LogicalPath> = Vec::new();
         let mut blocked_paths = BTreeMap::new();
         let mut truncated = false;
-        'search: while let Some((path, required, blocked)) = queue.pop_front() {
+        'search: while let Some((path, required, blocked, toward_goal)) = queue.pop_front() {
             if path.len() >= MAX_HOPS {
                 continue;
             }
+            let shortest = path.len() + if toward_goal { 1 } else { 2 };
+            if found.len() >= enough && found.last().is_some_and(|last| shortest > last.nodes.len())
+            {
+                break;
+            }
             let a = *path.last().ok_or(CompileError::InvalidInput)?;
-            // Required waypoint first keeps the common direct case bounded.
             let goal = required[0];
-            let candidates = std::iter::once(goal).chain(
-                self.input
-                    .configuration
-                    .nodes
-                    .keys()
-                    .copied()
-                    .filter(|n| *n != goal),
-            );
+            let candidates: Box<dyn Iterator<Item = NodeId>> = if toward_goal {
+                if path.len() + 1 < MAX_HOPS {
+                    if queue.len() < MAX_SEARCH_PATHS {
+                        queue.push_back((path.clone(), required.clone(), blocked.clone(), false));
+                    } else {
+                        truncated = true;
+                    }
+                }
+                Box::new(std::iter::once(goal))
+            } else {
+                Box::new(
+                    self.input
+                        .configuration
+                        .nodes
+                        .keys()
+                        .copied()
+                        .filter(|n| *n != goal),
+                )
+            };
             for b in candidates {
                 // Budget only edges the topology allows: Nodes outside the
                 // searched component (absent from a projection) cost nothing.
@@ -160,11 +182,11 @@ impl<'a> Graph<'a> {
                     blocked_paths.extend(blocked);
                 } else if remaining.is_empty() {
                     found.push(self.materialize(extended)?);
-                    if found.len() == limit {
+                    if found.len() == MAX_SEARCH_PATHS {
                         return Ok(found);
                     }
-                } else if queue.len() < 2048 {
-                    queue.push_back((extended, remaining, blocked));
+                } else if queue.len() < MAX_SEARCH_PATHS {
+                    queue.push_back((extended, remaining, blocked, true));
                 } else {
                     truncated = true;
                 }

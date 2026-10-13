@@ -10,7 +10,7 @@ use super::{
     AdmissionError, Carrier, Hop, Traffic, contains, keys_valid, valid_path, valid_traffic,
 };
 use crate::compile::{
-    MAX_EXIT_CANDIDATES, MAX_PATHS,
+    MAX_EXIT_CANDIDATES, MAX_SEARCH_PATHS,
     netmap::{Decision, LocalCompiler, Target, observable},
 };
 use meshway_configuration::{
@@ -69,7 +69,7 @@ fn positioned(
     valid_self(netmap)?;
     if !valid_path(path)
         || path.first() != Some(&origin)
-        || paths.len() > MAX_PATHS * MAX_EXIT_CANDIDATES
+        || paths.len() > MAX_SEARCH_PATHS * MAX_EXIT_CANDIDATES
         || !paths.iter().any(|candidate| candidate.nodes == path)
     {
         return Err(AdmissionError::Path);

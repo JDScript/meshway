@@ -28,7 +28,13 @@ pub use rules::{Artifacts, RuleSets};
 pub use selection::routing_selection;
 use std::collections::BTreeMap;
 
-pub const MAX_PATHS: usize = 4;
+/// Candidate paths a new circuit chooses among, the direct one included.
+/// Policy's search completes the first path length at which this many are
+/// known; the source ranks them by its own connectivity and keeps this many.
+pub const MAX_PATHS: usize = 8;
+/// Paths one target search may return at most (every relay of the shortest
+/// lengths, within the shared work budget); equal to its queue bound.
+pub const MAX_SEARCH_PATHS: usize = 2048;
 /// Ordered exits have a separate budget from alternatives per exit.
 pub const MAX_EXIT_CANDIDATES: usize = 16;
 pub const MAX_HOPS: usize = 8;
