@@ -164,7 +164,7 @@ impl Manager {
 
     /// Socket authorization of kept traversal descriptors names the new
     /// content's State reference; earlier offers and discovery end there.
-    fn rebind_sockets(&self) -> Result<(), Error> {
+    pub(super) fn rebind_sockets(&self) -> Result<(), Error> {
         let endpoints: Vec<_> = self
             .shared
             .traversal_endpoints

@@ -1147,6 +1147,10 @@ impl Manager {
         for fact in links {
             self.shared.register_link_socket(&fact)?;
         }
+        // Underlay authorizes attempt targets against this exact reference:
+        // without the rebind every later offer (prepared under the new
+        // instance) would be refused on activation and never punch.
+        self.rebind_sockets()?;
         if !first || self.traversal.is_none() {
             return Ok(());
         }

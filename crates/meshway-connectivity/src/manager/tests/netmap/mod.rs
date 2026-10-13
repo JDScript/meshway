@@ -662,3 +662,52 @@ async fn dial_only_traversal_sockets_bind_once_the_first_instance_arrives() {
     manager.shutdown().await.unwrap();
     fixture.close().await;
 }
+
+/// A Server restart ends every instance: the Node acquires a new one on the
+/// same content. The Underlay authorization of each kept traversal socket
+/// must name the new reference, or every later offer (prepared under the new
+/// instance) is refused when it activates and this Node never punches.
+#[tokio::test]
+async fn a_replaced_instance_rebinds_every_traversal_socket() {
+    let mut fixture = Netmaps::start(false, true).await;
+    let a = fixture.ids()[0];
+    fixture
+        .publish(|cfg| cfg.nodes.get_mut(&a).unwrap().listeners = Default::default())
+        .await;
+    let factory = fixture.factory();
+    let mut manager = Manager::start_with_traversal(
+        &fixture.desired[0],
+        fixture.keys[0].clone(),
+        factory.clone(),
+        Default::default(),
+        Arc::new(Offline),
+        meshway_model::Sequence::MIN.checked_next().unwrap(),
+        None,
+    )
+    .await
+    .unwrap();
+    let instance = |n: u8| -> meshway_protocol::InstanceRequest {
+        serde_json::from_value(serde_json::json!({
+            "instanceId": format!("00000000-0000-4000-8000-0000000000c{n}"),
+            "generation": 1
+        }))
+        .unwrap()
+    };
+    manager.set_instance(Some(instance(1))).await.unwrap();
+    let sockets = manager.shared.traversal_endpoints.lock().unwrap().len();
+    assert!(sockets > 0, "coordination sockets bound");
+    factory.rebinds.lock().unwrap().clear();
+    manager.set_instance(Some(instance(2))).await.unwrap();
+    let rebinds = factory.rebinds.lock().unwrap().clone();
+    assert_eq!(rebinds.len(), sockets, "every traversal socket rebound");
+    assert!(
+        rebinds
+            .iter()
+            .all(|reference| reference.instance == instance(2))
+    );
+    // The same instance again changes nothing.
+    manager.set_instance(Some(instance(2))).await.unwrap();
+    assert_eq!(factory.rebinds.lock().unwrap().len(), sockets);
+    manager.shutdown().await.unwrap();
+    fixture.close().await;
+}

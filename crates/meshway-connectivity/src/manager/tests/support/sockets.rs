@@ -70,11 +70,21 @@ pub(in crate::manager::tests) struct Factory {
     pub(in crate::manager::tests) blocked_dialers: Mutex<BTreeSet<NodeId>>,
     pub(in crate::manager::tests) acquisitions: AtomicUsize,
     pub(in crate::manager::tests) traversal_binds: AtomicUsize,
+    /// State references each traversal socket was rebound to, in order.
+    pub(in crate::manager::tests) rebinds:
+        Arc<Mutex<Vec<meshway_control::connectivity::SocketReference>>>,
 }
 
 /// Coordination authority that grants no target: binding only.
-struct Unauthorized;
+struct Unauthorized(Arc<Mutex<Vec<meshway_control::connectivity::SocketReference>>>);
 impl crate::DatagramAuthorization for Unauthorized {
+    fn rebind(
+        &self,
+        reference: &meshway_control::connectivity::SocketReference,
+    ) -> Result<(), Error> {
+        self.0.lock().unwrap().push(reference.clone());
+        Ok(())
+    }
     fn authorize_stun<'a>(
         &'a self,
         _context: &'a meshway_control::connectivity::DiscoveryContext,
@@ -150,7 +160,7 @@ impl SocketFactory for Factory {
             let local = if ipv4 { "127.0.0.1:0" } else { "[::1]:0" };
             Ok(crate::TraversalSocket {
                 endpoint: self.endpoint(UdpSocket::bind(local).await?),
-                authorization: Arc::new(Unauthorized),
+                authorization: Arc::new(Unauthorized(self.rebinds.clone())),
             })
         })
     }
