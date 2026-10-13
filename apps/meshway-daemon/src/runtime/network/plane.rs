@@ -346,7 +346,12 @@ impl meshway_engine::Components for Plane {
         }
         if let Some(listener) = unbound.first() {
             self.failure = Some((Problem::Transport, ApplyFailure::Listeners));
-            self.failure_detail = Some(unavailable_detail(listener));
+            self.failure_detail = Some(unavailable_detail(listener, desired));
+            tracing::warn!(
+                key = listener.key,
+                detail = self.failure_detail.as_deref(),
+                "Content installed without a listener"
+            );
             return Err(Error::Degraded);
         }
         Ok(())
@@ -501,19 +506,51 @@ fn detail(error: &meshway_connectivity::Error) -> Option<String> {
 }
 
 /// An unbound listener's cause, naming this host's ephemeral port range
-/// when the port is inside it (another socket may hold it for a moment).
-fn unavailable_detail(listener: &meshway_connectivity::ListenerUnavailable) -> String {
-    let range = meshway_underlay::ephemeral_ports();
-    match (listener.address, range) {
-        (Some(address), Some(range)) if range.contains(&address.port()) => format!(
-            "{}; port {} is inside this host's ephemeral port range {}-{}; retrying",
-            listener.detail,
+/// when the port is inside it (another socket may hold it for a moment)
+/// and which processes hold it (this daemon among them is named so).
+fn unavailable_detail(
+    listener: &meshway_connectivity::ListenerUnavailable,
+    desired: &meshway_engine::Desired,
+) -> String {
+    let mut detail = listener.detail.clone();
+    let Some(address) = listener.address else {
+        return detail + "; retrying";
+    };
+    let udp = desired
+        .netmap()
+        .self_
+        .listeners
+        .get(&listener.key)
+        .is_some_and(|declaration| {
+            matches!(
+                declaration.declaration(),
+                meshway_configuration::transport::Listener::NativeUdp(_)
+            )
+        });
+    let holders = meshway_underlay::port_holders(address.port(), udp);
+    if !holders.is_empty() {
+        let own = std::process::id();
+        let names: Vec<_> = holders
+            .iter()
+            .take(4)
+            .map(|(pid, command)| match *pid == own {
+                true => format!("{command} pid {pid} (this daemon)"),
+                false => format!("{command} pid {pid}"),
+            })
+            .collect();
+        detail += &format!("; held by {}", names.join(", "));
+    }
+    if let Some(range) =
+        meshway_underlay::ephemeral_ports().filter(|range| range.contains(&address.port()))
+    {
+        detail += &format!(
+            "; port {} is inside this host's ephemeral port range {}-{}",
             address.port(),
             range.start(),
             range.end()
-        ),
-        _ => format!("{}; retrying", listener.detail),
+        );
     }
+    detail + "; retrying"
 }
 
 /// Listener ports another process's outgoing socket can hold for a moment.
