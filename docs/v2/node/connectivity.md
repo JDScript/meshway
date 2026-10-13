@@ -66,12 +66,14 @@ Node 拨号候选的顺序为：netmap 中的 configured 端点，然后是 `pee
 
 | 获取方式 | 失败的单位 | 失败后暂停 | 重新开始（清零全部暂停） |
 | --- | --- | --- | --- |
-| 显式拨号（configured、`localEndpoints`） | 一个候选（承载 key＋地址＋端口）的一次尝试 | 第 n 次连续失败后 `1 s × 2^(n−1)`，上限 **300 秒** | 与该 peer 已有选定通道，或上次检查以来有通道建立（含已结束）；该 peer 的候选集合变化（端点事实）；本机任一 socket 观测到的映射变化；新内容中**这条边**变化 |
-| 协调 UDP 穿透（STUN 映射） | 本节点准备或接受的一个尝试，结束时没有通道 | 本节点对该 peer 的 prepare 及为它发的邻接获取查询暂停 `1 s × 2^(n−1)`，上限 300 秒 | 同上，另加该 peer 发来仍有效的[穿透请求](#traversal-signalling)（对端发起的尝试照常接受） |
+| 显式拨号（configured、`localEndpoints`） | 一个候选（承载 key＋地址＋端口）的一次尝试 | 第 n 次连续失败后 `1 s × 2^(n−1)`，上限 **60 秒** | 与该 peer 已有选定通道，或上次检查以来有通道建立（含已结束）；该 peer 的候选集合变化（端点事实）；本机任一 socket 观测到的映射变化；新内容中**这条边**变化 |
+| 协调 UDP 穿透（STUN 映射） | 本节点准备或接受的一个尝试，结束时没有通道 | 本节点对该 peer **主动发起**的 prepare 及为它发的邻接获取查询暂停 `1 s × 2^(n−1)`，上限 60 秒 | 同显式拨号 |
 
 “这条边”是内容对该 peer 的描述（`plan.rs::Plan::edge`）：对端注册密钥、双向的承载与拨号候选（含双方 listener／dialer 参数与 configured 端点）、该边是否常驻（决定它的 topology 规则的 `keepalive` 或单向可拨）。与它无关的内容变化（其他节点加入或改备注、Access、出口、DNS）不重置暂停；协调暂停同样跨内容与本机资源变化保留。暂停因上述原因重新开始时记一条 debug 事件 `operation=candidate_pacing`（`peer`、`cause`：`edge`／`candidates`／`own_mapping`／`channel`），每次失败记 `operation=candidate_backoff`（`failures`、`retry_ms`）。
 
-同一 peer 一旦有选定通道就停止探测它的其他候选。暂停期间其余候选各按自己的节奏尝试；首次暂停为 1 秒（`Limits::retry_backoff`），连续失败约 9 次（累计约 9 分钟）后到达每 5 分钟一次。没有失败记录的候选立即可试。暂停只影响尝试节奏，不改变候选顺序、准入或通道的健康判定。实现唯一归属 Manager 的候选调度（`manager/workers.rs::Pacing`、`manager/traversal.rs::Coordination`）。
+协调暂停只约束本节点主动发起：该 peer 发来仍有效的[穿透请求](#traversal-signalling)时，本节点不论自己是否在暂停中都立即查询并接受该尝试（不因此 prepare，也不清零自己的暂停）。因此一端重启或恢复后由它发起的尝试，另一端当场参与，两端不会因各自的暂停节奏错开。
+
+同一 peer 一旦有选定通道就停止探测它的其他候选。暂停期间其余候选各按自己的节奏尝试；首次暂停为 1 秒（`Limits::retry_backoff`），连续失败 7 次（累计约 1 分钟）后到达每分钟一次，因此对端重启、路径恢复后至多约一分钟内重试。没有失败记录的候选立即可试。暂停只影响尝试节奏，不改变候选顺序、准入或通道的健康判定。实现唯一归属 Manager 的候选调度（`manager/workers.rs::Pacing`、`manager/traversal.rs::Coordination`）。
 
 失败的直连不阻塞业务：经第三节点的备选路径同时可用时，新流立即经中继，见[路径选择](#路径选择)。
 
@@ -104,6 +106,8 @@ Server 的 STUN 监听与发布端点由 `--stun-listen`／`--stun-server` 分�
 
 `SocketReference` 绑定 node、instance／generation、完整 configuration 引用、实际 socket ID／generation 和 resource。`CandidateReference` 进一步绑定原始地址、来源、观测／到期时间及 bind 信息的规范摘要。摘要不包含外层 report sequence 或接收时间；重复上报／读取不会刷新观测。State 是候选的唯一 owner，peer 视图携带引用并继续隐藏不必要的本机接口／observer 细节。
 
+Underlay 对每个穿透 socket 按其确切 `SocketReference` 授权尝试目标。instance 换代（Server 重启、instance 租约断续后重新取得）时 Manager 在同一内容上把每个穿透 socket 的引用连同 Underlay 授权一起改绑到新 instance（`Manager::set_instance`），旧 discovery 与尝试目标随之失效，已选定通道保留自己的期限；改绑前的尝试在激活时被拒（`target_not_authorized`），不会因 instance 变化长期无法打洞。
+
 每次准备、接受及获取授权均检查双方当前身份、实例、精确 UDP 邻接及共同的业务或诊断完整路径许可。诊断 witness 另绑定同一 ObservationId、source instance、service 和完整路径，只用于获准诊断连接，不授予业务包权限；可见 peer 不自动获得非相邻 socket 端点。offer 的 nonce、候选对、粗粒度 endpoint source、digest 和期限固定；寿命最多 10 秒，且不超过原候选、报告、session／instance／execution 与所选许可期限。每节点最多八个活动尝试，每网络最多 256 条记录、进程最多 4,096 条记录；同一无序 peer 对／地址族不并行安装不同活动尝试。
 
 Node 先在实际 UDP owner 预留 STUN 事务，再经同一 Session sender 发送，由唯一 receiver 分流响应。候选的真实 State 上报获确认后，才参与 offer。双方 Active 后从同一 socket 发包，签名握手额外绑定 offer 的 nonce／digest；接入前再次验证原尝试与接收槽，旧尝试不能借新 channel scope 延期。获取成功后，通道由当前执行许可和认证健康检查维持，不依赖过期的 STUN 观测续命。
@@ -130,6 +134,18 @@ NAT 后两端都能拨出时，邻接按需建立：可能只有一方有需求�
 3. Control 随 `KnownPeers` 发布请求；connectivity 对其中未到期请求的 `peerId` 登记 interest（与首包 interest 同一机制，仍只限当前投影的 peer），随后按上文查询、预留真实接收槽并接受该 offer。interest 本身不授权：offer、承载与双方投影仍由 Server 和 Node 各自复核。
 
 因此目标在一个 sync hold 内得知请求，不需要本地业务 interest；Server 不持有数据面状态，尝试记录本身仍是有期限的协调状态（至多 10 秒）。双方同时 prepare 时仍由 Server 的“同一 peer 对／地址族只接纳一个活动尝试”决胜，被拒一方经信令或查询接受对方的 offer。Server 停机期间没有信令，只有静态端点与已有通道可用。
+
+### 重启后的恢复 {#restart-recovery}
+
+任一端 daemon 重启、Server 重启（instance、State 与事实都随之结束）或 NAT 映射丢失后，需要打洞的边无需人工操作即重新获取：
+
+| 事件 | 恢复依据 |
+| --- | --- |
+| Server 重启 | 节点取得新 instance，穿透 socket 改绑（见上文 `SocketReference`）；随即以新 instance 上报 State，Server 重建事实（见 [Netmap · 事实重建](/v2/node/netmap-design#facts-rebuild)） |
+| 对端 daemon 重启 | 旧通道健康失效后退役；有需求的一端按[候选节奏](#candidate-pacing)重试（≤60 秒），另一端无论自己是否暂停都参与对方发起的尝试 |
+| 本端 daemon 重启 | 新进程无暂停记录，按需求立即获取 |
+
+不变量：任意一方重启后，在一个 sync 周期加一个 State 周期（约 35 秒）内双方取得对方当前候选，需要打洞的边在 60 秒内重新直连（有需求时）。隔离验收见 [nat/reconnect 行](/v2/node/validation#reconnect-row)。
 
 ### 端点相关映射与来源学习 {#source-learning}
 
@@ -239,9 +255,9 @@ Policy 给出候选集合，源节点按本机已知的连通事实排序：
 
 候选计算有界：一次目标搜索共享 16,384 工作项预算、队列 2,048 项，每目标最多 2,048 条（`MAX_SEARCH_PATHS`）。先只朝下一必经点扩展、再扩展绕行，使 1,000 个节点的全连通投影中直连＋998 个两跳中继约用 5,000 个工作项列出，随后因已满 8 条而结束，不扩展三跳；排序只看前 8 条，每个新流的 circuit 查找也只在这 8 条上进行。
 
-源端握手到期（`handshake_timeout`，10 秒）仍无应答时，该路径暂停 `10 s × 2^(n−1)`（上限 300 秒），下一个 circuit 换用其他有通道的路径；得到应答或新 netmap 内容即清除。这覆盖“中继有通道但到不了目标”：中继缺下一跳时只登记需求并拒绝 INIT（不消耗 CID），源不会因此永久固定在这条路径上。已建立的 circuit 与流始终保持原完整路径，切换承载或路径只作用于新 circuit。
+源端握手到期（`handshake_timeout`，10 秒）仍无应答时，该路径暂停 `10 s × 2^(n−1)`（上限 60 秒），下一个 circuit 换用其他有通道的路径；得到应答即清除。新 netmap 内容只清除自身内容变化了的路径的暂停：路径内容是路径上各节点的数据面密钥与相邻两跳之间双向的获准承载（`secure/netmap.rs::PathContent`），其他节点的备注、Access、DNS、出口等变化保留暂停。这覆盖“中继有通道但到不了目标”：中继缺下一跳时只登记需求并拒绝 INIT（不消耗 CID），源不会因此永久固定在这条路径上。已建立的 circuit 与流始终保持原完整路径，切换承载或路径只作用于新 circuit。
 
-`meshway status` 对经中继的 peer 显示 `relay … via <R>`，`meshway ping` 每个回复显示 `via relay <R>`。直连不可能时（两端都在端点相关映射 NAT 后、无共同私网），流量经与双方都有通道的第三节点中继；R 不需要 listener，只要它与两端各有通道。
+`meshway status` 对经中继的 peer 显示 `relay … via <R>`；有邻接需求、当前没有通道也没有 circuit，但按上述排序的第一条中继路径首跳有通道、且该中继在最后已知事实中与下一节点有通道时显示 `relay (idle) via <R>`（`SecureNode::relay_route`），`unreachable` 只用于没有任何可用路径，见[运行状态](/v2/node/runtime)。`meshway ping` 每个回复显示 `via relay <R>`。直连不可能时（两端都在端点相关映射 NAT 后、无共同私网），流量经与双方都有通道的第三节点中继；R 不需要 listener，只要它与两端各有通道。
 
 实测（N4，2026-10-13）：6 节点 lab 中 lax、sha、nyc、meshway-vm 都到不了 meshway-planck（NAT 后的容器），只有 us-lax-it7（节点 ID 最大）与两端都有通道；此前四路径截断恰好去掉 it7，lax→planck ping 超时。现在四个源 `meshway ping meshway-planck` 各 10/10 `via relay us-lax-it7`，经 Mesh 的 HTTP 请求 200；见[验收范围](/v2/node/validation#n4-real-network)。
 

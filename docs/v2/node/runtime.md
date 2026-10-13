@@ -180,11 +180,11 @@ IPC 9 的公开运行状态（`meshway status --json` 原样输出）：
 | 字段 | 含义 |
 | --- | --- |
 | `nodeId`／`hostname`／`addresses` | 投影中的配置值 |
-| `state` | `direct`：有选定的认证通道；`relay`：有经其他节点的已建立 circuit（本节点为端点）；`offline`：该 peer 的最后已知事实缺失或已过 `PeerFacts.expiresAt` 且以上皆无；`unreachable`：需要邻接但无通道；`idle`：其余（含非相邻且当前无 circuit） |
-| `transport` | 必填可空：`direct` 为选定通道的承载，`relay` 为首跳通道的承载；其他为 null |
+| `state` | `direct`：有选定的认证通道；`relay`：有经其他节点的已建立 circuit（本节点为端点）；`relayIdle`：需要邻接但无通道、也无 circuit，而新 circuit 会经中继：排序第一的中继路径首跳有通道、该中继在最后已知事实中与下一节点有通道（`meshway status` 显示 `relay (idle) via <R>`，见[中继兜底](/v2/node/connectivity#relay-fallback)）；`offline`：该 peer 的最后已知事实缺失或已过 `PeerFacts.expiresAt` 且以上皆无；`unreachable`：需要邻接但无通道、circuit 或可用中继，即确实没有路径；`idle`：其余（含非相邻且当前无 circuit） |
+| `transport` | 必填可空：`direct` 为选定通道的承载，`relay`／`relayIdle` 为首跳通道的承载；其他为 null |
 | `endpoint` | 必填可空：`direct` 选定通道的实际远端地址；其他为 null |
 | `mtu` | 必填可空：`direct` 的 Native UDP 选定通道的 `path`（外层路径 MTU，IP 字节）与 `inner`（一个 Data 帧能承载的最大内层 IP 包）；搜索完成前、其他承载或未确认时为 null，定义见[外层路径 MTU](/v2/node/connectivity#path-mtu) |
-| `via` | `relay` 时按路径顺序的中转 Node ID；其他为空 |
+| `via` | `relay`／`relayIdle` 时按路径顺序的中转 Node ID；其他为空 |
 | `rtt` | 必填可空：到该 peer 最近一次成功 `ping`／观察任务测量的 `durationUs` 与 `observedAt`；没有测量为 null，不补零；down、撤回或租约结束时清空 |
 
 `phase` 的全部 10 个值：

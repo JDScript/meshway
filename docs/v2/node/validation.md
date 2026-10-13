@@ -17,7 +17,7 @@
 
 可执行行 ID 来自 `scripts/validate_matrix.py` 的 `ROWS`：`tun`、`packet`、`udp/off`、`tcp/off`、`vless/off`、`trojan/off`、`udp/resolv-conf`、`udp/resolved`、`nat/off`、`nat+fallback/off`、`nat/resolved`，顺序对应下表十一个隔离入口。常驻 lab 不属于一次性矩阵。统一运行、并发预算与远程证据位置见[矩阵入口](/v2/development#validation-matrix)。
 
-默认矩阵另含 `exit/off`（真实 A→R→E IPv4 出口与单出口 DNS）、`nat/relay`（直连不可达时经第三节点中继，见[中继兜底行](#relay-row)）与四个 `netmap/*` 生命周期行（见[netmap 生命周期行](#netmap-rows)）；出口详见[出口场景](#exit-scenario)。
+默认矩阵另含 `exit/off`（真实 A→R→E IPv4 出口与单出口 DNS）、`nat/relay`（直连不可达时经第三节点中继，见[中继兜底行](#relay-row)）、`nat/reconnect`（Server 与 daemon 重启后打洞边自愈，见[重启自愈行](#reconnect-row)）与四个 `netmap/*` 生命周期行（见[netmap 生命周期行](#netmap-rows)）；出口详见[出口场景](#exit-scenario)。
 
 | 入口 | 承载 | DNS | NAT | 覆盖行为 | 状态 |
 | --- | --- | --- | --- | --- | --- |
@@ -77,6 +77,27 @@ VM→it7 方向 Mesh TCP 远低于裸路径、UDP iperf 30 Mbit/s 时丢包 0.6%
 结果：`8f6bb90b` 单行 `20261013T065956Z-a803e97f` 失败——R1 的节点 ID 在 R2 之前，ping 经 R2 成功，而新 UDP 流按 Policy 顺序加入了 A 在 `[A, R1, B]` 上的旧 circuit 并被固定在该路径（据此修复为“新流只加入排序位置不低于所选路径的 circuit”）；`94babca6` 单行 `20261013T071339Z-51b9968f`（行 `20261013T071540Z-fc1cd00e`，提交后 1,555 ms 经 R2 回复，R3 `idle`，A→B 直连尝试被丢 16 个）；`1a5a1274` 全量 17 行 `20261013T091200Z-d6fd0e7c`（行 `20261013T092053Z-8fe259a9`，R1 在 R2 之前，1,185 ms）。N3 的 3 节点版本：`991ca758` `20261013T053059Z-11b6d36a`、`3e1142ee` 全量 `20261013T060913Z-86100acd`。证据 `.meshway/validation/n4/`、`.meshway/validation/n3/`。
 
 这一行用路由器丢包造成“直连不可能”，不是两端各自的端点相关映射＋端口相关过滤；后者的实网形态见下节 lax↔planck。
+
+### 重启自愈行 {#reconnect-row}
+
+`nat/reconnect` 在 `nat/off` 的拓扑与共同启动、70 秒持续流之后，把 A–R 变成“端点相关映射的 A ↔ 公网 R”：第一次断开时 router-a 对 A 的新 UDP 流改用随机端口映射（`SNAT --random-fully`，每个目的一个外部端口），router-r 放行全部入站 UDP（DNAT 到 R，R 等同公网主机）。A 的 STUN 映射因此对 R 无效，只有协调穿透加来源学习（R 从 A 的签名 INIT 学到实际端口）能连通。A–R 是按需边（R 能经 TCP 反向拨入 A）：没有通道时 A 每 2 秒发一次 `meshway ping r` 维持需求。
+
+依次四个阶段，每个都要求 A 的 status 中 R 重新为 `direct`（新通道）且距扰动 ≤ 60 秒：
+
+| 阶段 | 扰动 | 计时起点 |
+| --- | --- | --- |
+| `nat` | router-a 丢弃 A↔R UDP 直到 A 的 status 失去 R，再恢复并清空 A 的全部映射（conntrack） | 恢复 |
+| `server` | 真实 Server 原地重启（同一数据库与密钥、新 boot；instance、State、事实全部丢失）；A、R 取得新 instance、State 恢复 `current` 后，同 `nat` 断开再恢复 | 恢复 |
+| `restart-r` | 只重启 R 的 daemon | 重启指令 |
+| `restart-a` | 只重启 A 的 daemon | 重启指令 |
+
+路由器证据：随机映射与入站 DNAT 规则计数 > 0，两次断开的 DROP 计数 > 0，Server 阶段的恢复晚于 Server 重新服务；各阶段时间单调。证据 `controller/scenario-reconnect-timings.json`、`traversal-packets.json` 的 `reconnect`。
+
+| 候选 | 结果 |
+| --- | --- |
+| `97051237`（main `e7b9ff0d` 产品代码＋本行） | 单行 `20261013T131635Z-426130a9` 未通过（复现）：`nat` 0.5 秒恢复；Server 重启后 A、R 的每次尝试在激活时都以 `target_not_authorized` 丢弃（穿透 socket 的 Underlay 授权仍指向旧 instance），双方从不发 punch，180 秒内未恢复 |
+| `ec24b778` | 单行 `20261013T132830Z-d8e85fdf`：`nat`／`server`／`restart-r` 分别 1.1／10.8／7.3 秒恢复；`restart-a` 未恢复——新进程没有业务需求（A–R 为按需边），fixture 据此改为无通道时持续 ping |
+| `7c0febbb` | 单行 `20261013T134136Z-fbcbd4ea` 通过：`nat` 1.2 秒、`server` 10.4 秒（A、R 在 Server 重新服务后 1.6／2.4 秒取得新 instance，8.3／8.9 秒 State `current`）、`restart-r` 7.3 秒、`restart-a` 9.6 秒；R 从 A 的签名 INIT 学到随机映射端口（候选 `:35000`／`:1391`／`:62265`，实际 `:24025`／`:22396`） |
 
 ### N3 实网证据 {#n3-real-network}
 

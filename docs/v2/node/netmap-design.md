@@ -143,6 +143,10 @@ Server 挂起请求直至 netmap、可见事实或本节点的 DNS 关联 overla
 - Manager 只读最新 `KnownPeers` 合并候选，不重建 epoch、不换 scope；已有健康通道不因候选变化断开。
 - 事实丢失（请求失败、Server 停机）时保留最后已知事实：`expiresAt` 只表示新鲜度，本机端点继续可拨，STUN 映射按各自截止停用；事实只在被替换、`removed`、离开投影或 netmap 结束时消失，并随 `peer-facts.json` 跨离线重启，见[最后已知事实](/v2/node/connectivity#last-known-facts)。
 
+### 事实重建 {#facts-rebuild}
+
+Server 的事实账本（`state/facts::FactLedger`）与 State 汇聚、instance 一样只在内存，不持久化；重建的唯一来源是节点重报。Server 重启后 boot 改变，节点的 session 与 instance 随之失效：节点重新认证、取得新 instance 并立即以新 instance 上报 State（含各 socket 当前 STUN 观测与本机 listener 端点），Server 据此记录事实并唤醒可见它的节点挂起的 `sync`。节点手中的 `StateCursor` 属于旧 epoch，重启后第一个回答必为 `base: null` 的完整替换（只含 Server 此刻已知的事实，只增改、不删除），之后为增量；节点在重报到达前继续使用最后已知事实。不变量：任意一方重启后，在一个 sync 周期加一个 State 周期（约 35 秒）内双方取得对方当前候选；实测（[nat/reconnect](/v2/node/validation#reconnect-row)）A、R 在 Server 重新服务后约 1.6–2.4 秒取得新 instance，6.8–8.9 秒内 State 恢复 `current` 且带端点。
+
 ## 本地准入
 
 ### 首包
