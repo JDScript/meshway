@@ -1,8 +1,58 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-13T00:37:19.607610+00:00",
+  "updatedAt": "2026-10-13T02:14:57.930565+00:00",
   "runs": [
+    {
+      "id": 38335490448,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "1211538baa5b880e52001973838bddc2cff07504",
+      "message": "docs: R2d matrix on the merged head",
+      "createdAt": "2026-10-13T02:08:49Z",
+      "updatedAt": "2026-10-13T02:11:58Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "url": "https://github.com/JDScript/meshway/actions/runs/38335490448",
+      "jobs": [
+        {
+          "id": 115094504963,
+          "name": "changes",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-13T02:08:52Z",
+          "completedAt": "2026-10-13T02:09:05Z",
+          "seconds": 13.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38335490448/job/115094504963"
+        },
+        {
+          "id": 115094567843,
+          "name": "cargo",
+          "runner": "mars-epyc7543",
+          "status": "completed",
+          "conclusion": "failure",
+          "startedAt": "2026-10-13T02:09:08Z",
+          "completedAt": "2026-10-13T02:11:57Z",
+          "seconds": 169.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38335490448/job/115094567843"
+        },
+        {
+          "id": 115094567921,
+          "name": "web",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-13T02:09:08Z",
+          "completedAt": "2026-10-13T02:11:32Z",
+          "seconds": 144.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38335490448/job/115094567921"
+        }
+      ],
+      "artifacts": []
+    },
     {
       "id": 38327313922,
       "attempt": 1,
