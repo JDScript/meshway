@@ -37,6 +37,18 @@ pub(super) fn publish(
     openai: Option<&str>,
     held: Option<catalog::Held>,
 ) -> Catalog {
+    publish_at(remote, "/dist", key, previous, openai, held)
+}
+
+/// [`publish`] under the directory `base` (`<base>/index.json`).
+fn publish_at(
+    remote: &HttpsSource,
+    base: &str,
+    key: &ed25519_dalek::SigningKey,
+    previous: Option<&Catalog>,
+    openai: Option<&str>,
+    held: Option<catalog::Held>,
+) -> Catalog {
     let mut records = BTreeMap::new();
     let mut artifacts = BTreeMap::new();
     for (name, format, source) in SETS {
@@ -60,12 +72,12 @@ pub(super) fn publish(
         let digest = conversion.artifact.digest();
         let bytes = conversion.artifact.bytes().to_vec();
         remote.route(
-            &format!("/dist/artifacts/{}", digest.file_name()),
+            &format!("{base}/artifacts/{}", digest.file_name()),
             200,
             &bytes,
         );
         remote.route(
-            &format!("/dist/sets/corp/{name}.json"),
+            &format!("{base}/sets/corp/{name}.json"),
             200,
             &serde_json::to_vec(&record).unwrap(),
         );
@@ -77,9 +89,9 @@ pub(super) fn publish(
     })
     .unwrap();
     let index = catalog.to_bytes();
-    remote.route("/dist/index.json", 200, &index);
+    remote.route(&format!("{base}/index.json"), 200, &index);
     remote.route(
-        "/dist/index.json.sig",
+        &format!("{base}/index.json.sig"),
         200,
         &serde_json::to_vec(&catalog::sign(&index, key)).unwrap(),
     );
@@ -468,4 +480,66 @@ async fn catalog_sets_members_and_matches_are_read_from_verified_content() {
         assert_eq!(code, StatusCode::UNAUTHORIZED, "{path}");
     }
     s.close().await;
+}
+
+/// A provider whose catalog URL is near the 2,048-byte bound (its `.sig`
+/// beside it must still fit) still pages: the cursor holds a fixed-length
+/// identity of the content, not the URL.
+#[tokio::test]
+async fn catalog_cursors_of_a_long_catalog_url_page() {
+    let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().canonicalize().unwrap().join("data");
+    let remote = HttpsSource::new();
+    let key = catalog::signing_key(&"34".repeat(32)).unwrap();
+    let probe = remote.url("/index.json");
+    let base = format!("/{}", "d".repeat(2040 - probe.len() - 1));
+    publish_at(&remote, &base, &key, None, None, None);
+    let url = remote.url(&format!("{base}/index.json"));
+    assert_eq!(url.len(), 2040);
+    let s = Server::open(&path, remote.clone()).await;
+    let owner = s.register("long-url-owner@example.com").await;
+    let token = owner.token.expose();
+    let network = s.create(token).await.id;
+    let current = s.source(token, network).await;
+    let mut input = current.configuration.clone();
+    input.rule_set_providers.insert(
+        "corp".into(),
+        Some(RuleSetProvider {
+            catalog: url,
+            collection: "corp".into(),
+            public_keys: vec![catalog::public_key(&key).to_string()],
+            update_interval: "24h".parse().unwrap(),
+        }),
+    );
+    s.apply(token, network, current.revision, &input).await;
+    let get = |path: &str| {
+        s.client
+            .get(s.network(network, path))
+            .bearer_auth(token.to_owned())
+    };
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while status(get("rule-set-catalog?provider=corp")).await.0 != StatusCode::OK {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the scheduler verified the provider catalog");
+    let mut names = Vec::new();
+    let mut cursor: Option<String> = None;
+    loop {
+        let query = match &cursor {
+            Some(cursor) => format!("rule-set-catalog?provider=corp&limit=1&cursor={cursor}"),
+            None => "rule-set-catalog?provider=corp&limit=1".into(),
+        };
+        let (code, body) = status(get(&query)).await;
+        assert_eq!(code, StatusCode::OK, "{body}");
+        let page: RuleSetCatalogPage = serde_json::from_str(&body).unwrap();
+        names.extend(page.items.into_iter().map(|item| item.name));
+        match page.next_cursor {
+            Some(next) => cursor = Some(next),
+            None => break,
+        }
+    }
+    assert_eq!(names, ["openai", "openai@ads", "opera", "zoom"]);
 }

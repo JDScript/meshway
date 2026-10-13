@@ -26,13 +26,23 @@ const MAX_NAME: usize = 253;
 
 /// Continuation of one listing (see `crate::cursor`): valid only for the
 /// same query over the same content (the catalog's URL, keys, collection,
-/// sequence and document digest, or the bound artifact digest).
+/// sequence and document digest, or the bound artifact digest). Both are
+/// held as fixed-length SHA-256 identities, so a cursor of any listing stays
+/// within the cursor text bound however long a catalog URL is.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Cursor {
     query: String,
     content: String,
     after: String,
+}
+
+fn identity(text: &str) -> String {
+    use sha2::{Digest as _, Sha256};
+    Sha256::digest(text.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 impl Cursor {
@@ -49,7 +59,7 @@ impl Cursor {
             return Ok((None, now));
         };
         let (value, issued): (Self, i64) = crate::cursor::open(&scope.sealer, kind, cursor, now)?;
-        if value.query != query || value.content != content {
+        if value.query != identity(query) || value.content != identity(content) {
             return Err(Error::InvalidCursor);
         }
         Ok((Some(value.after), issued))
@@ -64,8 +74,8 @@ impl Cursor {
         issued: i64,
     ) -> Result<String, Error> {
         let value = Self {
-            query: query.to_owned(),
-            content: content.to_owned(),
+            query: identity(query),
+            content: identity(content),
             after,
         };
         crate::cursor::seal(&scope.sealer, kind, value, issued)
