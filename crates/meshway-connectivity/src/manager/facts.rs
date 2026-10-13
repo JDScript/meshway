@@ -143,6 +143,7 @@ mod tests {
                                 node_id: node(*n),
                                 listeners: BTreeMap::new(),
                                 exit: None,
+                                connected: Vec::new(),
                                 observed_at: at(*seconds),
                                 expires_at: at(*seconds),
                             },

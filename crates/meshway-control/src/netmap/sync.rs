@@ -83,6 +83,19 @@ impl KnownPeers {
             .map(|(peer, _)| *peer)
             .collect()
     }
+
+    /// Each peer's reported authenticated channels, from current facts only:
+    /// stale facts say nothing about channels now.
+    pub fn channels(
+        &self,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> BTreeMap<NodeId, BTreeSet<NodeId>> {
+        self.peers
+            .iter()
+            .filter(|(_, facts)| facts.expires_at > now && !facts.connected.is_empty())
+            .map(|(peer, facts)| (*peer, facts.connected.iter().copied().collect()))
+            .collect()
+    }
 }
 
 /// Where Control publishes [`KnownPeers`] after they change.

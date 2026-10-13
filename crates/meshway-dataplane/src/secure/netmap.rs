@@ -12,7 +12,10 @@ use crate::{
 };
 use meshway_configuration::execution::{BusinessProtocol, LogicalPath, UnavailableReason};
 use meshway_model::NodeId;
-use meshway_policy::compile::netmap::{Target, observable};
+use meshway_policy::compile::{
+    MAX_PATHS,
+    netmap::{Target, observable},
+};
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     net::IpAddr,
@@ -86,6 +89,8 @@ pub(super) struct FirstPackets {
     /// Paths whose origin handshake ended unanswered: consecutive count and
     /// the end of the pause during which another carried path is preferred.
     unanswered: BTreeMap<Vec<NodeId>, (u32, Instant)>,
+    /// Peers' reported authenticated channels (peer facts): ranking only.
+    pub peer_channels: BTreeMap<NodeId, BTreeSet<NodeId>>,
 }
 
 impl FirstPackets {
@@ -147,6 +152,33 @@ impl FirstPackets {
             until,
         });
     }
+}
+
+/// The candidate order of [`SecureNode::choose_path`]: indices into `paths`
+/// (in Policy order, the direct path first), at most [`MAX_PATHS`], and how
+/// many relayed paths were cut. A relayed path ranks by whether this Node
+/// has a channel with its next hop, then whether that relay reports a
+/// channel with the Node after it; ties keep Policy order.
+fn ranked(
+    paths: &[&[NodeId]],
+    carriers: &BTreeMap<NodeId, super::Carrier>,
+    channels: &BTreeMap<NodeId, BTreeSet<NodeId>>,
+) -> (Vec<usize>, usize) {
+    let rank = |path: &[NodeId]| -> (bool, bool, bool) {
+        let relayed = path.len() > 2;
+        let carried = path.get(1).is_some_and(|next| carriers.contains_key(next));
+        let onward = path.get(1).zip(path.get(2)).is_some_and(|(relay, after)| {
+            channels
+                .get(relay)
+                .is_some_and(|connected| connected.contains(after))
+        });
+        (relayed, !(relayed && carried), !(relayed && onward))
+    };
+    let mut order: Vec<usize> = (0..paths.len()).collect();
+    order.sort_by_key(|&index| rank(paths[index]));
+    let truncated = order.len().saturating_sub(MAX_PATHS);
+    order.truncate(MAX_PATHS);
+    (order, truncated)
 }
 
 /// Paths of a permitted `icmpEcho` decision toward `target` that every Node
@@ -369,6 +401,12 @@ impl SecureNode {
         self.first.ready_exits = exits;
     }
 
+    /// Each peer's reported authenticated channels, from fresh peer facts:
+    /// they only rank relay candidates (see [`Self::choose_path`]).
+    pub fn set_peer_channels(&mut self, channels: BTreeMap<NodeId, BTreeSet<NodeId>>) {
+        self.first.peer_channels = channels;
+    }
+
     /// First packets dropped by the bounded queue or its deadline.
     pub fn dropped_first_packets(&self) -> u64 {
         self.first.dropped
@@ -546,14 +584,18 @@ impl SecureNode {
             .map(Some)
     }
 
-    /// The one rule choosing which of a decision's paths (in Policy order) a
-    /// new circuit uses: the first whose next hop has a carrier and whose
-    /// last handshake did not end unanswered within its pause, else the first
-    /// with a carrier. A preferred path whose next hop lacks a carrier (e.g.
-    /// the direct one while a relay carries the circuit) still gets interest,
-    /// so the next circuit can use it; with no carrier at all every next hop
-    /// gets interest and `None` is returned. Established circuits keep their
-    /// own path.
+    /// The one rule choosing which of a decision's paths a new circuit uses.
+    /// The candidates are ranked by what this Node knows of connectivity:
+    /// the direct path stays first; every relayed path is ordered by (this
+    /// Node has a channel with its next hop, that relay reports a channel with
+    /// the Node after it), stably in Policy order otherwise; the first
+    /// [`MAX_PATHS`] are kept. Among them it takes the first whose next hop has a carrier
+    /// and whose last handshake did not end unanswered within its pause, else
+    /// the first with a carrier. A preferred path whose next hop lacks a
+    /// carrier (e.g. the direct one while a relay carries the circuit) still
+    /// gets interest, so the next circuit can use it; with no carrier at all
+    /// every kept next hop gets interest and `None` is returned. Established
+    /// circuits keep their own path.
     pub fn choose_path<'p>(
         &mut self,
         paths: impl IntoIterator<Item = &'p [NodeId]>,
@@ -572,19 +614,28 @@ impl SecureNode {
             path.get(1)
                 .is_some_and(|next| self.carriers.contains_key(next))
         };
-        let chosen = paths
+        let (ranked, truncated) = ranked(&paths, &self.carriers, &self.first.peer_channels);
+        if truncated > 0 {
+            tracing::debug!(operation = "path_candidates", target = ?paths[0].last(),
+                kept = ranked.len(), truncated_relays = truncated,
+                "Relay candidates beyond the kept ones are not tried");
+        }
+        let chosen = ranked
             .iter()
-            .position(|path| carried(path) && !self.first.paused(path, reading.instant))
-            .or_else(|| paths.iter().position(|path| carried(path)));
-        let preferred: Vec<NodeId> = paths[..chosen.unwrap_or(paths.len())]
+            .position(|&index| {
+                carried(paths[index]) && !self.first.paused(paths[index], reading.instant)
+            })
+            .or_else(|| ranked.iter().position(|&index| carried(paths[index])));
+        let preferred: Vec<NodeId> = ranked[..chosen.unwrap_or(ranked.len())]
             .iter()
+            .map(|&index| paths[index])
             .filter(|path| !carried(path))
             .filter_map(|path| path.get(1).copied())
             .collect();
         for next in preferred {
             self.first.interest(next);
         }
-        chosen
+        chosen.map(|position| ranked[position])
     }
 
     /// Progress queued first packets: start handshakes whose adjacency became
@@ -696,5 +747,103 @@ impl SecureNode {
             .filter(|(_, circuit)| circuit.context.grant == grant)
             .filter_map(|(id, _)| self.circuit_info_at(*id, &reading))
             .find(|info| info.state == CircuitState::Established)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn node(i: u8) -> NodeId {
+        format!("00000000-0000-4000-8000-{i:012}").parse().unwrap()
+    }
+
+    fn carriers(local: NodeId, peers: &[NodeId]) -> BTreeMap<NodeId, super::super::Carrier> {
+        peers
+            .iter()
+            .map(|peer| {
+                (
+                    *peer,
+                    super::super::Carrier {
+                        dialer: local,
+                        listener: *peer,
+                        listener_key: "udp".into(),
+                        protocol: meshway_model::TransportProtocol::NativeUdp,
+                    },
+                )
+            })
+            .collect()
+    }
+
+    /// Policy order: the direct path, then one relay each in Node ID order.
+    fn paths(source: NodeId, relays: &[NodeId], target: NodeId) -> Vec<Vec<NodeId>> {
+        std::iter::once(vec![source, target])
+            .chain(relays.iter().map(|relay| vec![source, *relay, target]))
+            .collect()
+    }
+
+    #[test]
+    fn a_relay_with_channels_to_both_ends_ranks_first_whatever_its_id() {
+        // lax → planck: lax has channels with every relay; only it7 (the
+        // highest ID, cut by the former four-path limit) reaches planck.
+        let (lax, sha, vm, nyc, it7, planck) =
+            (node(1), node(2), node(3), node(4), node(5), node(6));
+        let paths = paths(lax, &[sha, vm, nyc, it7], planck);
+        let refs: Vec<&[NodeId]> = paths.iter().map(Vec::as_slice).collect();
+        let carriers = carriers(lax, &[sha, vm, nyc, it7]);
+        let channels = BTreeMap::from([
+            (sha, BTreeSet::from([lax, vm, nyc, it7])),
+            (vm, BTreeSet::from([lax, sha, nyc, it7])),
+            (nyc, BTreeSet::from([lax, sha, vm, it7])),
+            (it7, BTreeSet::from([lax, sha, vm, nyc, planck])),
+        ]);
+        let (order, truncated) = ranked(&refs, &carriers, &channels);
+        assert_eq!(truncated, 0);
+        let order: Vec<&[NodeId]> = order.iter().map(|&index| refs[index]).collect();
+        assert_eq!(
+            order,
+            [
+                [lax, planck].as_slice(),
+                &[lax, it7, planck],
+                &[lax, sha, planck],
+                &[lax, vm, planck],
+                &[lax, nyc, planck],
+            ]
+        );
+        // Without any reported channel the relays keep Policy order.
+        let (order, _) = ranked(&refs, &carriers, &BTreeMap::new());
+        assert_eq!(order, [0, 1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn candidates_beyond_eight_are_cut_after_ranking_and_counted() {
+        let (source, target) = (node(1), node(20));
+        let relays: Vec<NodeId> = (2..=12).map(node).collect();
+        let paths = paths(source, &relays, target);
+        let refs: Vec<&[NodeId]> = paths.iter().map(Vec::as_slice).collect();
+        // Channels with relays 10 and 11; relay 11 reports one with the
+        // target, relay 12 too but this Node has no channel with it.
+        let carriers = carriers(source, &[node(10), node(11)]);
+        let channels = BTreeMap::from([
+            (node(11), BTreeSet::from([target])),
+            (node(12), BTreeSet::from([target])),
+        ]);
+        let (order, truncated) = ranked(&refs, &carriers, &channels);
+        let next: Vec<NodeId> = order.iter().map(|&index| refs[index][1]).collect();
+        assert_eq!(
+            next,
+            [
+                target,
+                node(11),
+                node(10),
+                node(12),
+                node(2),
+                node(3),
+                node(4),
+                node(5)
+            ]
+        );
+        assert_eq!(order.len(), MAX_PATHS);
+        assert_eq!(truncated, 4, "relays 6 to 9 are not tried");
     }
 }

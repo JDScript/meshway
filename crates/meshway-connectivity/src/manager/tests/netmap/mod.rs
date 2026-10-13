@@ -299,6 +299,7 @@ fn facts(peer: NodeId, address: SocketAddr) -> PeerFacts {
             },
         )]),
         exit: None,
+        connected: Vec::new(),
         observed_at: now,
         expires_at: now + chrono::Duration::minutes(5),
     }

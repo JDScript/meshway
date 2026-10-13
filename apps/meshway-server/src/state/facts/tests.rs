@@ -13,6 +13,7 @@ fn fifty_steady_reporters_renew_freshness_without_cursor_or_wakeup_fanout() {
         node_id: node,
         listeners: BTreeMap::new(),
         exit: None,
+        connected: Vec::new(),
         observed_at: at,
         expires_at: at + chrono::Duration::seconds(60),
     };

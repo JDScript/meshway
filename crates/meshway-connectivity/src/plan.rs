@@ -417,6 +417,7 @@ mod tests {
                 },
             )]),
             exit: None,
+            connected: Vec::new(),
             observed_at: at(0),
             expires_at: at(60),
         };

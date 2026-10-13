@@ -11382,6 +11382,13 @@ export const schemaDocument = {
           "expiresAt"
         ],
         "properties": {
+          "connected": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NodeId"
+            },
+            "description": "Nodes of the viewer's projection the peer reports an authenticated channel with, ascending and unique; it orders relay candidates and authorizes nothing. Omission: not reported (a Server before this field)."
+          },
           "exit": {
             "oneOf": [
               {

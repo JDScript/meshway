@@ -95,6 +95,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
     let mut retry = Retry::default();
     let mut dns_failed = false;
     let mut sample_at = None;
+    let mut channels = PeerChannels::default();
     loop {
         meshway_logging::profile::report();
         // Addresses an ended association left captured for its live exit
@@ -711,13 +712,19 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             if let Ok(boots) = manager.peer_boots() {
                 packets.closes(secure.set_peer_boots(boots));
             }
-            secure.set_ready_exits(
-                peers
-                    .borrow()
-                    .as_ref()
-                    .map(|known| known.ready_exits(chrono::Utc::now()))
-                    .unwrap_or_default(),
-            );
+            {
+                let known = peers.borrow();
+                let now = chrono::Utc::now();
+                secure.set_ready_exits(
+                    known
+                        .as_ref()
+                        .map(|known| known.ready_exits(now))
+                        .unwrap_or_default(),
+                );
+                if let Some(current) = channels.changed(known.as_ref(), now) {
+                    secure.set_peer_channels(current);
+                }
+            }
             diagnostics.synchronize(&state.desired, instance);
             tokio::select! { biased;
                 _ = host.ended() => {},
@@ -748,6 +755,49 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 tokio::time::Instant::now() + super::reporting::CHANGE_INTERVAL
             });
         }
+    }
+}
+
+/// Recomputes the peers' reported channels only when the facts or their
+/// freshness change, not on every packet turn.
+#[derive(Default)]
+struct PeerChannels {
+    facts: Option<
+        std::sync::Arc<
+            std::collections::BTreeMap<meshway_model::NodeId, meshway_protocol::PeerFacts>,
+        >,
+    >,
+    until: Option<chrono::DateTime<chrono::Utc>>,
+}
+impl PeerChannels {
+    fn changed(
+        &mut self,
+        known: Option<&meshway_control::KnownPeers>,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Option<
+        std::collections::BTreeMap<
+            meshway_model::NodeId,
+            std::collections::BTreeSet<meshway_model::NodeId>,
+        >,
+    > {
+        let facts = known.map(|known| &known.peers);
+        let same = match (&self.facts, facts) {
+            (Some(old), Some(new)) => std::sync::Arc::ptr_eq(old, new),
+            (None, None) => true,
+            _ => false,
+        };
+        if same && self.until.is_none_or(|until| now < until) {
+            return None;
+        }
+        self.facts = facts.cloned();
+        self.until = facts.and_then(|facts| {
+            facts
+                .values()
+                .map(|facts| facts.expires_at)
+                .filter(|at| *at > now)
+                .min()
+        });
+        Some(known.map(|known| known.channels(now)).unwrap_or_default())
     }
 }
 

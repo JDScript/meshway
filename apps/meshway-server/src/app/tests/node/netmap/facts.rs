@@ -45,6 +45,32 @@ async fn state_reports_record_facts_and_never_compile_or_change_netmaps() {
 }
 
 #[tokio::test]
+async fn reported_channels_reach_viewers_and_wake_them_on_change() {
+    let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
+    let lab = lab(false).await;
+    let [a, b, _] = lab.nodes;
+    let na = lab.netmap(a).await;
+    let facts = lab.app.peer_facts();
+    lab.report_endpoints(1, 1, &["10.1.0.1:23456"]).await;
+    let first = facts.peer_facts(&na, None, None).unwrap().unwrap();
+    assert!(first.updated[&b].connected.is_empty());
+    // b's channel with a is content: it wakes a and travels in full.
+    let wake = facts.watch(&na).unwrap();
+    lab.report_channels(1, 2, &["10.1.0.1:23456"], &[a]).await;
+    assert!(wake.has_changed());
+    let next = facts
+        .peer_facts(&na, Some(na.reference()), Some(first.cursor))
+        .unwrap()
+        .unwrap();
+    assert_eq!(next.updated[&b].connected, [a]);
+    // The same channel again only renews freshness.
+    let wake = facts.watch(&na).unwrap();
+    lab.report_channels(1, 3, &["10.1.0.1:23456"], &[a]).await;
+    assert!(!wake.has_changed());
+    lab.app.shutdown().await.unwrap();
+}
+
+#[tokio::test]
 async fn endpoint_changes_wake_only_viewers_that_see_the_reporter() {
     let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
     let lab = lab(false).await;

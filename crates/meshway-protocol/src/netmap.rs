@@ -117,6 +117,8 @@ impl PeerFacts {
             return None;
         }
         let mut facts = self.clone();
+        let nodes = &viewer.projection.configuration.nodes;
+        facts.connected.retain(|node| nodes.contains_key(node));
         facts.listeners.retain(|key, _| {
             viewer
                 .dialers
@@ -444,7 +446,11 @@ impl SyncResponse {
                     .keys()
                     .any(|node| facts.updated.contains_key(node))
                 || facts.updated.iter().any(|(node, value)| {
-                    *node != value.node_id || value.expires_at <= value.observed_at
+                    *node != value.node_id
+                        || value.expires_at <= value.observed_at
+                        || value.connected.contains(node)
+                        || value.connected.len() > MAX_CONNECTED_FACTS
+                        || !value.connected.is_sorted_by(|a, b| a < b)
                 }))
         {
             return Err(InconsistentSyncResponse);
@@ -479,6 +485,9 @@ pub struct PeerExitFacts {
     pub installed_families: Vec<ExitFamily>,
 } }
 
+/// Peers whose channels one State report may list (its `links` bound).
+pub const MAX_CONNECTED_FACTS: usize = 256;
+
 wire_object! {
 #[derive(Clone, Debug, PartialEq, Eq)]
 /// Current dynamic facts of one peer, disclosed only to Nodes whose netmap lists it.
@@ -490,6 +499,9 @@ pub struct PeerFacts {
     pub listeners: BTreeMap<String, PeerListenerFacts>,
     /// Exit readiness, or null when the peer has no exit role.
     pub exit: Option<PeerExitFacts> [required = true],
+    /// Nodes of the viewer's projection the peer reports an authenticated channel with, ascending and unique; it orders relay candidates and authorizes nothing. Omission: not reported (a Server before this field).
+    #[serde(default)]
+    pub connected: Vec<NodeId>,
     /// Original report time.
     pub observed_at: DateTime<Utc>,
     /// Freshness bound: afterwards the facts are stale (last known) but stay until replaced or removed; STUN candidates and exit readiness are usable only before their own expiry.
@@ -738,6 +750,7 @@ mod tests {
                 node_id: node,
                 listeners: BTreeMap::new(),
                 exit: None,
+                connected: Vec::new(),
                 observed_at: now,
                 expires_at: now + chrono::Duration::seconds(60),
             },

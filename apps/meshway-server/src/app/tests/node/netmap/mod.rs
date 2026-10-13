@@ -172,8 +172,42 @@ impl Lab {
 
     /// A complete report of the `udp` listener with the given local endpoints.
     pub async fn report_endpoints(&self, index: usize, sequence: u64, addresses: &[&str]) {
+        self.report_channels(index, sequence, addresses, &[]).await;
+    }
+
+    /// The same report with one authenticated channel to each of `peers` on
+    /// the `udp` listener socket.
+    pub async fn report_channels(
+        &self,
+        index: usize,
+        sequence: u64,
+        addresses: &[&str],
+        peers: &[NodeId],
+    ) {
         let applied = self.applied[index];
         let now = chrono::Utc::now();
+        let links = peers
+            .iter()
+            .enumerate()
+            .map(|(n, peer)| {
+                (
+                    *peer,
+                    vec![LinkState {
+                        link_id: format!("link-{n}"),
+                        transport: "native_udp".into(),
+                        initiator_node_id: *peer,
+                        socket_id: "s1".into(),
+                        phase: LinkPhase::Authenticated,
+                        business_dependencies: 0,
+                        observation_ids: vec![],
+                        observed_at: now,
+                        expires_at: now + chrono::Duration::seconds(60),
+                        since: None,
+                        acquisition: None,
+                    }],
+                )
+            })
+            .collect();
         let report = StateReport {
             instance_id: self.instances[index].instance_id,
             sequence: Sequence::new(sequence).unwrap(),
@@ -223,7 +257,7 @@ impl Lab {
                         ),
                     },
                 )]),
-                links: BTreeMap::new(),
+                links,
                 adjacencies: Default::default(),
                 paths: BTreeMap::new(),
                 selection: SelectionState::default(),

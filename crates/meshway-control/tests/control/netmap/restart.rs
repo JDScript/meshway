@@ -270,6 +270,7 @@ fn peer_facts(peer: meshway_model::NodeId, address: &str) -> meshway_protocol::P
             },
         )]),
         exit: None,
+        connected: Vec::new(),
         observed_at: observed,
         // Already stale: expiry is freshness, the facts stay last known.
         expires_at: observed + chrono::Duration::seconds(60),

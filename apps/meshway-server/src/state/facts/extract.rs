@@ -3,7 +3,7 @@ use super::super::{REPORT_TTL_SECONDS, ReportAdmission};
 use chrono::{DateTime, Duration, Utc};
 use meshway_configuration::netmap::NodeNetmap;
 use meshway_model::state::{
-    EndpointSource, ListenerPhase, MAX_LOCAL_ENDPOINTS, ResourceRef, SocketNetwork,
+    EndpointSource, LinkPhase, ListenerPhase, MAX_LOCAL_ENDPOINTS, ResourceRef, SocketNetwork,
 };
 use meshway_protocol::netmap::{PeerExitFacts, PeerFacts, PeerListenerFacts};
 use meshway_protocol::state::StateReport;
@@ -114,6 +114,19 @@ pub(crate) fn peer_facts(
         }
         _ => None,
     };
+    // Channels of this report's own netmap, authenticated and current.
+    let connected = state
+        .links
+        .iter()
+        .filter(|(peer, links)| {
+            **peer != admission.node_id
+                && reporter.projection.configuration.nodes.contains_key(peer)
+                && links
+                    .iter()
+                    .any(|link| link.phase == LinkPhase::Authenticated && link.expires_at > now)
+        })
+        .map(|(peer, _)| *peer)
+        .collect();
     let expires_at = (report.observed_at + Duration::seconds(REPORT_TTL_SECONDS))
         .min(now + Duration::seconds(REPORT_TTL_SECONDS))
         .min(admission.lease_expires_at);
@@ -121,6 +134,7 @@ pub(crate) fn peer_facts(
         node_id: admission.node_id,
         listeners,
         exit,
+        connected,
         observed_at: report.observed_at,
         expires_at,
     })

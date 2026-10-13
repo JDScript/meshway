@@ -299,7 +299,7 @@ impl FactLedger {
     }
 }
 
-/// Same addresses, origins and exit readiness. Observation times and
+/// Same addresses, origins, exit readiness and channels. Observation times and
 /// freshness bounds (of the facts and of each STUN candidate) are not
 /// content: they travel compactly as `refreshed`, never as a wake-up.
 fn same_content(old: &PeerFacts, new: &PeerFacts) -> bool {
@@ -322,7 +322,7 @@ fn same_content(old: &PeerFacts, new: &PeerFacts) -> bool {
             })
             .collect::<Vec<_>>()
     };
-    old.exit == new.exit && shape(old) == shape(new)
+    old.exit == new.exit && old.connected == new.connected && shape(old) == shape(new)
 }
 
 /// Production `PeerFactsSource` over the State runtime's ledger.

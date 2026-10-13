@@ -3312,6 +3312,7 @@ export const zPeerListenerFacts = z.strictObject({
 });
 
 export const zPeerFacts = z.strictObject({
+  ["connected"]: z.array(zNodeId).exactOptional(),
   ["exit"]: zPeerExitFacts.nullable(),
   ["expiresAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
   ["listeners"]: typedMap(z.string(), zPeerListenerFacts, {}),
