@@ -1,15 +1,27 @@
+use super::pace::Pacer;
 use super::*;
 use crate::secure::pipeline::timing;
 use meshway_transport::{BatchOutcome, ChannelScope, ScopedFrame, SendLifetime};
 
+/// `pacer` is the channel's [`Pacer`]: datagram channels pass theirs, so a
+/// batch leaves as the pacer allows; stream channels pass none.
 pub async fn send_batch(
     sender: &mut Sender,
     frames: Vec<PendingFrame>,
     peer: Option<SocketAddr>,
     scope: ChannelScope,
     channel: Option<Arc<dyn SendLifetime>>,
+    pacer: Option<&Pacer>,
 ) -> Result<SendReceipt, Error> {
-    send(SendOwner::Borrowed(sender), frames, peer, scope, channel).await
+    send(
+        SendOwner::Borrowed(sender),
+        frames,
+        peer,
+        scope,
+        channel,
+        pacer,
+    )
+    .await
 }
 
 pub async fn send_batch_shared(
@@ -18,6 +30,7 @@ pub async fn send_batch_shared(
     peer: SocketAddr,
     scope: ChannelScope,
     channel: Option<Arc<dyn SendLifetime>>,
+    pacer: Option<&Pacer>,
 ) -> Result<SendReceipt, Error> {
     send(
         SendOwner::Shared(sender),
@@ -25,8 +38,31 @@ pub async fn send_batch_shared(
         Some(peer),
         scope,
         channel,
+        pacer,
     )
     .await
+}
+
+/// Wait until the pacer admits a prefix of `frames`; the suffix it does not
+/// admit yet is returned, to be sent after the prefix.
+async fn paced(
+    pacer: &Pacer,
+    lifetime: &Arc<OutputLifetime>,
+    frames: &mut VecDeque<ScopedFrame>,
+) -> Result<VecDeque<ScopedFrame>, Error> {
+    loop {
+        let now = std::time::Instant::now();
+        match pacer.admit(frames.iter().map(|frame| frame.frame.payload.len()), now) {
+            Ok(count) => return Ok(frames.split_off(count)),
+            Err(at) => {
+                meshway_logging::profile::event("carrier.pace", "wait");
+                static WAIT: meshway_logging::profile::Metric =
+                    meshway_logging::profile::Metric::new("carrier.pace.wait.wall");
+                guarded(lifetime, tokio::time::sleep_until(at.into())).await?;
+                WAIT.elapsed(now.elapsed());
+            }
+        }
+    }
 }
 
 async fn send(
@@ -35,6 +71,7 @@ async fn send(
     peer: Option<SocketAddr>,
     scope: ChannelScope,
     channel: Option<Arc<dyn SendLifetime>>,
+    pacer: Option<&Pacer>,
 ) -> Result<SendReceipt, Error> {
     static PROFILE: meshway_logging::profile::Metric =
         meshway_logging::profile::Metric::new("carrier.send.poll");
@@ -98,6 +135,11 @@ async fn send(
             }
             let mut first_admission = None;
             while !frames.is_empty() {
+                let mut later = match pacer {
+                    Some(pacer) => paced(pacer, &lifetime, &mut frames).await?,
+                    None => VecDeque::new(),
+                };
+                let offered: usize = frames.iter().map(|frame| frame.frame.payload.len()).sum();
                 let (admitted, at) = match &mut sender {
                     SendOwner::Borrowed(sender) => {
                         let at = std::time::Instant::now();
@@ -109,6 +151,11 @@ async fn send(
                         (sender.submit_batch(&mut frames, context.clone()), at)
                     }
                 };
+                if let Some(pacer) = pacer {
+                    let left: usize = frames.iter().map(|frame| frame.frame.payload.len()).sum();
+                    pacer.sent(offered - left, std::time::Instant::now());
+                }
+                frames.append(&mut later);
                 if admitted.accepted != 0 {
                     if first_admission.is_none()
                         && let Some(released_at) = released_at

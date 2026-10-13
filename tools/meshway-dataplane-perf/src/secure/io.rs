@@ -20,7 +20,10 @@ pub(super) enum Io {
         receiver: Receiver,
         incoming: BTreeMap<SocketAddr, Carrier>,
         scopes: BTreeMap<SocketAddr, ChannelScope>,
+        /// One pacer per neighbour channel, as the Manager keeps per link.
+        pacers: BTreeMap<SocketAddr, Arc<carrier::Pacer>>,
         report: Box<dyn Fn() -> meshway_transport::udp::Capabilities + Send + Sync>,
+        buffers: meshway_transport::udp::Buffers,
     },
     #[cfg(target_os = "linux")]
     Manager {
@@ -55,6 +58,7 @@ impl Io {
             },
         )?;
         let report = Box::new(endpoint.capability_report());
+        let buffers = endpoint.buffers();
         let frame_limit = (options.mtu + 2048).min(65_507);
         let (sender, receiver) = endpoint
             .into_session(Limits::new(frame_limit, 1024, frame_limit * 1024, 1, 1024)?)
@@ -73,7 +77,13 @@ impl Io {
             .keys()
             .map(|peer| (*peer, ChannelScope::new()))
             .collect();
+        let pacers = incoming
+            .keys()
+            .map(|peer| (*peer, Arc::new(carrier::Pacer::default())))
+            .collect();
         Ok(Self::Session {
+            buffers,
+            pacers,
             sender: Arc::new(tokio::sync::Mutex::new(sender)),
             receiver,
             incoming,
@@ -206,7 +216,12 @@ impl Io {
         let selected = (|| -> Result<Vec<SendFuture>, Error> {
             let mut sends: Vec<SendFuture> = Vec::new();
             match self {
-                Self::Session { sender, scopes, .. } => {
+                Self::Session {
+                    sender,
+                    scopes,
+                    pacers,
+                    ..
+                } => {
                     let mut groups = BTreeMap::<SocketAddr, Vec<PendingFrame>>::new();
                     for frame in frames {
                         let peer = *fixture
@@ -226,8 +241,17 @@ impl Io {
                     for (peer, frames) in groups {
                         let sender = sender.clone();
                         let scope = scopes.get(&peer).ok_or("unknown scope")?.clone();
+                        let pacer = pacers.get(&peer).ok_or("unknown pacer")?.clone();
                         sends.push(Box::pin(async move {
-                            carrier::send_batch_shared(&sender, frames, peer, scope, None).await?;
+                            carrier::send_batch_shared(
+                                &sender,
+                                frames,
+                                peer,
+                                scope,
+                                None,
+                                Some(&pacer),
+                            )
+                            .await?;
                             Ok(())
                         }));
                     }
@@ -275,14 +299,19 @@ impl Io {
 
     pub fn capabilities(&self) -> serde_json::Value {
         match self {
-            Self::Session { report, .. } => {
+            Self::Session {
+                report, buffers, ..
+            } => {
                 let udp = report();
                 serde_json::json!({"udp": {"segment": udp.udp_segment, "gro": udp.udp_gro,
                     "sendmmsg": udp.sendmmsg, "recvmmsg": udp.recvmmsg, "gsoSends": udp.gso_sends,
-                    "groReceives": udp.gro_receives, "mmsgSends": udp.mmsg_sends, "mmsgReceives": udp.mmsg_receives}})
+                    "groReceives": udp.gro_receives, "mmsgSends": udp.mmsg_sends, "mmsgReceives": udp.mmsg_receives},
+                    "buffers": [buffers_json(*buffers)]})
             }
             #[cfg(target_os = "linux")]
-            Self::Manager { .. } => serde_json::json!({"udp": null}),
+            Self::Manager { manager, .. } => serde_json::json!({"udp": null,
+                "buffers": manager.snapshot().map(|snapshot| snapshot.sockets.iter()
+                    .filter_map(|socket| socket.buffers).map(buffers_json).collect::<Vec<_>>()).ok()}),
         }
     }
 
@@ -304,4 +333,9 @@ impl Io {
         }
         Ok(capabilities)
     }
+}
+
+fn buffers_json(buffers: meshway_transport::udp::Buffers) -> serde_json::Value {
+    serde_json::json!({"receive": buffers.receive, "receiveRequested": buffers.receive_requested,
+        "send": buffers.send, "sendRequested": buffers.send_requested})
 }
