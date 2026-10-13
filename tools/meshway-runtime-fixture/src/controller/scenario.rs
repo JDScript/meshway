@@ -666,7 +666,11 @@ async fn reconnect(context: &Context<'_>) -> Result<()> {
     tracing::info!(phase = "reconnect", stage = "nat", "switching NAT models");
     timings.insert("nat".into(), breaks("nat").await?);
     save(&timings).await?;
-    tracing::info!(phase = "reconnect", stage = "server", "restarting the Server");
+    tracing::info!(
+        phase = "reconnect",
+        stage = "server",
+        "restarting the Server"
+    );
     let stopped = now_ms()?;
     let restarted = server.restart().await?;
     step("reconnect-server").await?;
@@ -735,7 +739,12 @@ async fn reconnect(context: &Context<'_>) -> Result<()> {
             .zip(value["disruptedAtMs"].as_u64())
             .and_then(|(direct, start)| direct.checked_sub(start))
             .ok_or("reconnect timing out of order")?;
-        tracing::info!(phase = "reconnect", stage, elapsed_ms = elapsed, "direct again");
+        tracing::info!(
+            phase = "reconnect",
+            stage,
+            elapsed_ms = elapsed,
+            "direct again"
+        );
         if Duration::from_millis(elapsed) > RECONNECT {
             return Err(format!("reconnect {stage}: direct again after {elapsed} ms").into());
         }

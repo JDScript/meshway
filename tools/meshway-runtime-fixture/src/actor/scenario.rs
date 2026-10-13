@@ -429,11 +429,8 @@ async fn reconnect(mut context: Context<'_>) -> Result<String> {
         return Ok(context.tun);
     }
     let budget = Duration::from_secs(180);
-    let report = async |name: &str, at_ms: u64| {
-        signals
-            .write(name, &Signal::Observed { role, at_ms })
-            .await
-    };
+    let report =
+        async |name: &str, at_ms: u64| signals.write(name, &Signal::Observed { role, at_ms }).await;
     let instance = |status: &Status| status.instance.as_ref().map(|lease| lease.instance_id);
     for stage in ["nat", "server"] {
         if stage == "server" {
@@ -452,7 +449,12 @@ async fn reconnect(mut context: Context<'_>) -> Result<String> {
             report(&format!("reconnect-lost-{stage}"), lost).await?;
             stepped(signals, &format!("reconnect-heal-{stage}")).await?;
             let direct = until(async || direct_probe(cli).await, true, budget).await?;
-            save(cli, &format!("scenario-reconnect-{stage}-status"), &command(cli, "status").await?).await?;
+            save(
+                cli,
+                &format!("scenario-reconnect-{stage}-status"),
+                &command(cli, "status").await?,
+            )
+            .await?;
             report(&format!("reconnect-direct-{stage}"), direct).await?;
         }
     }
@@ -465,11 +467,18 @@ async fn reconnect(mut context: Context<'_>) -> Result<String> {
             *context.daemon = spawn_daemon(cli, role, signals::underlay(cli).await?.controller)?;
             wait_ipc(cli, context.daemon).await?;
             let status = wait_status(cli, |status| {
-                status.data_plane == DataPlane::Ready && status.desired_up && installed(status) == netmap
+                status.data_plane == DataPlane::Ready
+                    && status.desired_up
+                    && installed(status) == netmap
             })
             .await?;
             context.tun = owned_tun().await?;
-            save(cli, &format!("scenario-reconnect-{stage}-restarted"), &status).await?;
+            save(
+                cli,
+                &format!("scenario-reconnect-{stage}-restarted"),
+                &status,
+            )
+            .await?;
             report(&format!("reconnect-restarted-{}", role.name()), now_ms()?).await?;
         }
         if role == Role::A {
@@ -478,7 +487,12 @@ async fn reconnect(mut context: Context<'_>) -> Result<String> {
                 save(cli, "scenario-reconnect-restart-r-lost", &lost).await?;
             }
             let direct = until(async || direct_probe(cli).await, true, budget).await?;
-            save(cli, &format!("scenario-reconnect-{stage}-status"), &command(cli, "status").await?).await?;
+            save(
+                cli,
+                &format!("scenario-reconnect-{stage}-status"),
+                &command(cli, "status").await?,
+            )
+            .await?;
             report(&format!("reconnect-direct-{stage}"), direct).await?;
         }
     }
