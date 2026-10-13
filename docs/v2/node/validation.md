@@ -179,6 +179,8 @@ lab／VM 与 planck 之间设计上没有直连（两端端点相关映射），
 | listener `EADDRINUSE` | 约三分之一的节点启动时 `0.0.0.0:35000` 绑定失败（`Listener unavailable; retrying its bind`，`attempts=1`），1 s 后 `Listener bound after retry`，随即以同一内容再 apply，Status 清空 `lastError`；套接字由 daemon 持有（`ss`），peers 全部 direct。旧构建同一现象需重启容器（ops5 nyc） |
 | 修复中发现 | 第一版重试绑定后 Status 仍保留 `lastError: transport`（完整 apply 不清除先前 Degraded 的问题），deploy 因 sha 不收敛失败；`775fbeb5` 修复后重部署 |
 
+Planck 18 行矩阵 `20261013T211635Z-273c8e3a`（`7a6dab15`）全部通过；`udp/off` 行 `20261013T211638Z-24df659d` 中 B 的 Status 报告 `held by meshway-runtime pid 1`（fixture 占住端口），释放后 3.3 秒绑定、`lastError` 清空、端口归 daemon。同一分支的前一次矩阵 `20261013T205702Z-9626e731` 中 `nat/resolved` 失败：A 在 access 撤销阶段 DNS owner 健康检查失败（`Backend`）后整体重装，之后 45 秒内首个 UDP 流无回显；此前通过的 `nat/resolved` 报告均无该 DNS 失败，listener 重试未出现，复跑通过，记为未定位的偶发。远程副本 `.meshway/validation/u1/remote/`。
+
 剩余：`EADDRINUSE` 的占用者未在失败瞬间捕获。采样显示失败前数毫秒同一 daemon 刚在 35000 绑定过一个 socket（无 instance 时的普通 listener），失败约 200 ms 后已无进程持有该端口；退役 socket 关闭与协调改绑之间的竞争是最可能原因，未作为单独缺陷修复（重试在 1 s 内收敛）。
 
 ### 当前验证证据

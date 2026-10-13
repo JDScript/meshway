@@ -11,7 +11,7 @@
 - listener 端口在 Linux 默认临时端口范围（32768–60999）内时配置校验给出警告 `ephemeral_listener_port`，节点按本机 `ip_local_port_range` 记 WARN。
 - `udp/off` 行新增阶段：B 的 listener 端口在其 daemon 首次绑定时被占用，验证 Status 原因、释放后自行绑定与清除错误。
 
-验证：见 [U1 启动期自愈证据](/v2/node/validation#u1-startup-self-heal)；证据 `.meshway/node-lab/u1/`、`.meshway/validation/u1/`。
+验证：Planck 18 行矩阵 `20261013T211635Z-273c8e3a`（`7a6dab15`）全部通过，lab 三容器八轮重建见 [U1 启动期自愈证据](/v2/node/validation#u1-startup-self-heal)；证据 `.meshway/node-lab/u1/`、`.meshway/validation/u1/`。
 
 ## v0.1.0-alpha.6
 
