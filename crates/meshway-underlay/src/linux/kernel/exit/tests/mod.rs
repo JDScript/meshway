@@ -194,12 +194,14 @@ async fn exit_nat_udp_real_reply_qualification_confirm_retire_and_expiry() {
     );
     adversarial::conflicts(&mut backend, &tun, tuple).await;
     protocols::round_trips(&mut backend, &tun, tuple, &external_source).await;
-    assert!(
-        backend
-            .install(id(2), tuple, cutoff(30_000), scope.clone())
-            .await
-            .is_err()
-    );
+    // A retired projection leaves the history once its conntrack is deleted
+    // and its reply tuple quarantined: the same original tuple may be
+    // projected again under a new incarnation.
+    backend
+        .install(id(2), tuple, cutoff(30_000), scope.clone())
+        .await
+        .unwrap();
+    backend.retire(id(2)).await.unwrap();
     let expiring = OriginalTuple {
         transport: ExitTransport::Udp {
             source_port: 17002,
