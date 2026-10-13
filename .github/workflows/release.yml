@@ -139,13 +139,20 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Push the converter release to meshway-rules
+        # Plain REST so the job does not depend on `gh` being installed on
+        # whichever self-hosted x64 runner picks it up.
         env:
           GH_TOKEN: ${{ secrets.MESHWAY_RULES_PUSH_TOKEN }}
           PRERELEASE: ${{ needs.version.outputs.prerelease }}
         run: |
           set -eu
           test -n "$GH_TOKEN" || { echo "MESHWAY_RULES_PUSH_TOKEN is not available in environment Production"; exit 1; }
-          set -- --repo "$RULES_REPO" --target main --title "meshway-rules CLI $TAG" \
-            --notes "Converter for publish.yml: meshway-rules ${TAG#v}, x86_64-unknown-linux-musl, from the Meshway $TAG release ($GITHUB_SHA). Verify with \`sha256sum -c SHA256SUMS\`; publish.yml pins the archive's SHA-256."
-          if [ "$PRERELEASE" = true ]; then set -- "$@" --prerelease; fi
-          gh release create "cli-$TAG" "$@" rules-release/meshway-rules-x86_64-unknown-linux-musl.tar.gz rules-release/SHA256SUMS
+          api() { curl -fsS -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" "$@"; }
+          notes="Converter for publish.yml: meshway-rules ${TAG#v}, x86_64-unknown-linux-musl, from the Meshway $TAG release ($GITHUB_SHA). Verify with \`sha256sum -c SHA256SUMS\`; publish.yml pins the archive's SHA-256."
+          body=$(python3 -c 'import json,os,sys; print(json.dumps({"tag_name": "cli-"+os.environ["TAG"], "target_commitish": "main", "name": "meshway-rules CLI "+os.environ["TAG"], "body": sys.argv[1], "prerelease": os.environ["PRERELEASE"] == "true"}))' "$notes")
+          release=$(api -X POST "https://api.github.com/repos/$RULES_REPO/releases" -d "$body")
+          upload_url=$(printf '%s' "$release" | python3 -c 'import json,sys; print(json.load(sys.stdin)["upload_url"].split("{")[0])')
+          for f in meshway-rules-x86_64-unknown-linux-musl.tar.gz SHA256SUMS; do
+            api -X POST -H "Content-Type: application/octet-stream" --data-binary "@rules-release/$f" "$upload_url?name=$f" > /dev/null
+          done
+          echo "created cli-$TAG with 2 assets"
