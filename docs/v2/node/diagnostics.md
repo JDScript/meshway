@@ -16,7 +16,7 @@ meshway ping fd12:3456::2 -c 3 --json
 | `-c`／`--count` | 1–1000，默认 10 |
 | `--json` | 每行一个类型化 `PingEvent`，保持真实事件顺序 |
 | `-v`／`--verbose` | 人读输出另显示目标 Node ID、preparing 等待与每个通道的获取来源 |
-| probe | 默认 `icmp:*` 服务授权、auto 路径选择；单个探测期限 5 秒，发送间隔至少 1 秒，每任务一个 in-flight |
+| probe | 默认 `icmp:*` 服务授权、auto 路径选择（与业务首包同一规则：首跳有通道的第一条可观测路径，见[中继兜底](/v2/node/connectivity#relay-fallback)）；单个探测期限 5 秒，发送间隔至少 1 秒，每任务一个 in-flight |
 | Ctrl-C | 停止本机等待并取消本订阅，退出码 130；不修改持久 up/down 意图 |
 | 退出码 | 正常完成且存在成功回复为 0；全部失败／超时或操作错误为 1 |
 

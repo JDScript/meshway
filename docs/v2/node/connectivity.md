@@ -57,7 +57,18 @@ Node 拨号候选的顺序为：netmap 中的 configured 端点，然后是 `pee
 | `stunCandidates` | 各候选按自己的 `expiresAt` 停用（NAT 绑定确实会失效） | 同上，或候选自身到期 |
 | 出口就绪 `exit` | 不再作为 ready 出口的依据 | 同上 |
 
-对端的 `localEndpoints` 若是私网（RFC 1918）、CGNAT（`100.64.0.0/10`）或 IPv6 ULA（`fc00::/7`）地址，只有本机某个 up、非 loopback、不属于 Mesh 地址池的接口前缀包含它（即本机有对应的 on-link 路由）时才拨号；否则这类地址只能经默认路由发往公网，必然不可达，候选直接跳过、不发 INIT 也不进入退避。公网地址与 configured 端点不受此限。接口不可读时照常拨号（只受退避节流）。
+### 候选节奏 {#candidate-pacing}
+
+所有候选都会尝试，不按地址类别（公网、私网 RFC 1918、CGNAT、IPv6 ULA、STUN 映射）猜测可达性：两个节点可能共享一段私网（同一宿主上的容器与虚拟机），也可能都只能经第三方中继。错误的地址最多导致一次失败的尝试；身份与准入只由握手决定。探测的节奏由退避收敛：
+
+| 获取方式 | 失败的单位 | 失败后暂停 | 重新开始（清零全部暂停） |
+| --- | --- | --- | --- |
+| 显式拨号（configured、`localEndpoints`） | 一个候选（承载 key＋地址＋端口）的一次尝试 | 第 n 次连续失败后 `1 s × 2^(n−1)`，上限 **300 秒** | 与该 peer 已有选定通道，或上次检查以来有通道建立（含已结束）；该 peer 的候选集合变化（端点事实）；新 netmap 内容 |
+| 协调 UDP 穿透（STUN 映射） | 本节点准备或接受的一个尝试，结束时没有通道 | 本节点对该 peer 的 prepare 及为它发的邻接获取查询暂停 `1 s × 2^(n−1)`，上限 300 秒 | 同上，另加该 peer 发来仍有效的[穿透请求](#traversal-signalling)（对端发起的尝试照常接受） |
+
+同一 peer 一旦有选定通道就停止探测它的其他候选。暂停期间其余候选各按自己的节奏尝试；首次暂停为 1 秒（`Limits::retry_backoff`），连续失败约 9 次（累计约 9 分钟）后到达每 5 分钟一次。没有失败记录的候选立即可试。暂停只影响尝试节奏，不改变候选顺序、准入或通道的健康判定。实现唯一归属 Manager 的候选调度（`manager/workers.rs::Pacing`、`manager/traversal.rs::Coordination`）。
+
+失败的直连不阻塞业务：经第三节点的备选路径同时可用时，新流立即经中继，见[路径选择](#路径选择)。
 
 账本唯一 owner 是 Control 的最后已知事实（按 peer 保存最后一份，见 [Node 控制组件](/v2/node/control#netmap-发布)）；Manager 的 `manager/facts.rs` 只读取 Control 发布的 `KnownPeers` 快照、唤醒事实变化的 peer worker，不另存账本；`plan.rs::fact_endpoints` 是唯一的候选展开。Server 停机时事实不再刷新，但已安装租约内仍可用最后已知地址重建空闲关闭的邻接。Control 把同一份最后已知事实保存为 `peer-facts.json`，节点离线重启后随 netmap 载入，见[私有存储](/v2/node/control#私有存储与传输)。事实只提供尝试地址：错误或过时的地址最多导致连不上；准入仍只由 netmap 与认证握手决定。
 
@@ -94,7 +105,7 @@ Node 先在实际 UDP owner 预留 STUN 事务，再经同一 Session sender 发
 
 候选协调由 Manager 按需调度：有实际 UDP endpoint，且存在有需求（interest 或[常驻](/v2/configuration-reference/topology#邻接的建立与常驻)）、任一方向获准 Native UDP 承载却缺少健康选定通道的 peer 时查询，包括原 offer 等待双边接受的阶段。需求方以本机拨号承载 prepare；不按节点 ID 限定由哪一方发起，两方同时发起时 Server 对同一 peer 对／地址族只接纳一个活动尝试，另一方经查询取得该 offer 后接受。没有需求的一方由[穿透信令](#traversal-signalling)获知并参与。健康的 Native UDP／TCP 选定通道抑制重复邻接获取；其他地址族的等待 offer 和旧候选过期不会替换健康通道。失联后的下一次获取重新读取候选和期限。
 
-每个 Manager 的邻接获取查询在**任意半开 60 秒窗口最多 30 次**，发起至少相隔 250 ms。只为 STUN 取元数据的查询仅在有到期 socket 且没有仍有效的 discovery context 时发起，与邻接获取共用同一次 `queryUdpTraversal`，不消耗邻接获取预算。失败、取消、publication／资源交接不重置预算，健康选链不消耗或抑制 STUN 观测。查询、prepare 和候选观测均不延长原授权。
+每个 Manager 的邻接获取查询在**任意半开 60 秒窗口最多 30 次**，发起至少相隔 250 ms；尝试没有得到通道的 peer 按[候选节奏](#candidate-pacing)暂停，不再计入“有需求”。只为 STUN 取元数据的查询仅在有到期 socket 且没有仍有效的 discovery context 时发起，与邻接获取共用同一次 `queryUdpTraversal`，不消耗邻接获取预算。失败、取消、publication／资源交接不重置预算，健康选链不消耗或抑制 STUN 观测。查询、prepare 和候选观测均不延长原授权。
 
 ### 穿透信令 {#traversal-signalling}
 
@@ -203,6 +214,18 @@ Manager→SecureNode owner 的 circuit 控制／诊断帧和 lifecycle 事件另
 普通拨号、反向拨号、协调 UDP 打洞、中继和真正直连分别报告。双方认证成功、真实双向往返与实际承载路径一起构成切换依据；STUN 返回值或已发送探测包不构成成功证明。
 
 打洞失败时仅可使用已允许的其他连接／中继路径。例如逻辑路径要求 A→R→B，A 与 B 的候选即使能直连，也不能绕过 R。新通道和旧通道竞争时，由同一连接 owner 完成选择，业务流保持其原完整路径。
+
+### 中继兜底 {#relay-fallback}
+
+Policy 对每个目标给出至多 4 条完整路径（[routing](/v2/configuration-reference/routing) 的搜索顺序：必经点展开后最短优先，直连在前）。拓扑允许 A–B 直连而没有 `via` 时，A→B 与经其他可见节点的 A→R→B 都是候选。新 circuit（业务首包、`meshway ping`、诊断任务）按同一规则 `SecureNode::choose_path` 选路：
+
+1. 取第一条下一跳已有选定通道、且最近一次源端握手没有无应答结束的路径；都在暂停中时取第一条有通道的路径。
+2. 排在所选路径之前、下一跳没有通道的路径（通常是直连）登记邻接需求，Manager 按[候选节奏](#candidate-pacing)继续获取；直连建立后，新流走直连。
+3. 没有任何路径的下一跳有通道时，为全部下一跳登记需求并排队首包，任一通道就绪即在其路径上握手。
+
+源端握手到期（`handshake_timeout`，10 秒）仍无应答时，该路径暂停 `10 s × 2^(n−1)`（上限 300 秒），下一个 circuit 换用其他有通道的路径；得到应答或新 netmap 内容即清除。这覆盖“中继有通道但到不了目标”：中继缺下一跳时只登记需求并拒绝 INIT（不消耗 CID），源不会因此永久固定在这条路径上。已建立的 circuit 与流始终保持原完整路径，切换承载或路径只作用于新 circuit。
+
+`meshway status` 对经中继的 peer 显示 `relay … via <R>`，`meshway ping` 每个回复显示 `via relay <R>`。直连不可能时（两端都在端点相关映射 NAT 后、无共同私网），流量经与双方都有通道的第三节点中继；R 不需要 listener，只要它与两端各有通道。
 
 已实际选定的流式通道结束后，拨号 owner 经原重试间隔重新按候选来源优先级获取连接，不继续此前候选列表尚未尝试的后缀。因此已认证的 configured TCP 退路短暂断开后，会先重试该来源，再考虑本机候选；未完成认证或未获选的尝试仍继续当前候选轮次。对端仍健康的更优通道不会因此被替换。
 

@@ -17,7 +17,7 @@
 
 可执行行 ID 来自 `scripts/validate_matrix.py` 的 `ROWS`：`tun`、`packet`、`udp/off`、`tcp/off`、`vless/off`、`trojan/off`、`udp/resolv-conf`、`udp/resolved`、`nat/off`、`nat+fallback/off`、`nat/resolved`，顺序对应下表十一个隔离入口。常驻 lab 不属于一次性矩阵。统一运行、并发预算与远程证据位置见[矩阵入口](/v2/development#validation-matrix)。
 
-默认矩阵另含 `exit/off`（真实 A→R→E IPv4 出口与单出口 DNS）与四个 `netmap/*` 生命周期行（见[netmap 生命周期行](#netmap-rows)）；出口详见[出口场景](#exit-scenario)。
+默认矩阵另含 `exit/off`（真实 A→R→E IPv4 出口与单出口 DNS）、`nat/relay`（直连不可达时经第三节点中继，见[中继兜底行](#relay-row)）与四个 `netmap/*` 生命周期行（见[netmap 生命周期行](#netmap-rows)）；出口详见[出口场景](#exit-scenario)。
 
 | 入口 | 承载 | DNS | NAT | 覆盖行为 | 状态 |
 | --- | --- | --- | --- | --- | --- |

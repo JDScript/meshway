@@ -32,7 +32,7 @@
 | `action` | `"allow" \| "block"` | 必填 | 承载许可或阻断 |
 | `a` / `b` | 节点选择器 | 必填 | 无方向的节点对，支持 Node／User／Group／Tag／`*` |
 | `transports` | `string[]` | 省略＝不限制，采用平台顺序 | 有序的允许承载列表，越靠前越优先；元素为 `TransportProtocol` 的 wire 名：`native_udp`／`native_tcp`／`vless`／`trojan`；`[]` 表示没有允许的承载，不接受 null、未知值或重复协议 |
-| `keepalive` | `boolean` | `false` | allow 规则匹配的边常驻：无业务也保持已认证邻接，不因空闲关闭；block 规则忽略（为 `true` 时报警告）。见[邻接的建立与常驻](#邻接的建立与常驻) |
+| `keepalive` | `boolean` | `false` | 由该 allow 规则决定的边（首条匹配的 allow，与 `transports` 同一条）常驻：无业务也保持已认证邻接，不因空闲关闭；选择器任意（`*`、Tag、Group、Node 均可）；block 规则忽略（为 `true` 时报警告）。见[邻接的建立与常驻](#邻接的建立与常驻) |
 
 重复协议在 validate／apply 时返回 IssueCode `invalid_transport`，`params.reason` 为 `repeated_transport`，`path` 为 `/topology/<i>/transports/<j>`，其中 `i` 为规则下标，`j` 为重复出现位置的下标。
 
@@ -59,7 +59,7 @@ Node 按本机 netmap 判断每条获准边，两端对同一投影得到相同�
 | --- | --- |
 | 双方都能拨出对方（各有获准承载） | **按需**：本机首包选路、中继收到经过本节点的握手或诊断需要下一跳时建立；无 interest 且无帧 120 秒后关闭 |
 | 只有一方能拨出（另一方仅监听，或其 dialers 与对方 listeners 无获准承载） | **常驻**：能拨出的一方不等本机需求就建立并保持，仅监听的一方不因空闲关闭，并作为协调 UDP 穿透的目标参与 |
-| 匹配 allow 规则的 `keepalive: true` | **常驻**，与上一行相同 |
+| 决定该边的 allow 规则（首条匹配）为 `keepalive: true` | **常驻**：两端都不等需求就拨号，同时拨出时各自保留同一条通道（低 Node ID 拨出的那条），之后不因空闲关闭 |
 
 只有一方能拨出的边是按需建立的唯一隐式例外：仅监听的节点没有通道向对端表达需求，若等对端本机产生需求，它作为中继或目标时永远等不到承载。常驻只决定是否持有通道，不授予业务、路径或出口权限；承载顺序、候选与认证规则不变。
 
