@@ -56,17 +56,25 @@ VM→it7 方向 Mesh TCP 远低于裸路径、UDP iperf 30 Mbit/s 时丢包 0.6%
 
 ### 中继兜底行 {#relay-row}
 
-`nat/relay` 在 `nat/off` 的拓扑（A、R 各在端口保持型 SNAT 后，B 公网）上完成共同启动与 70 秒持续流后：router-a 丢弃 A 与 B 之间的全部报文；Controller 去掉 `A→B via R` 并允许 A–B 直连。Policy 此后优先 `[A, B]`，A 没有到 B 的通道，于是：
+`nat/relay` 是 5 节点行。在 `nat/off` 的拓扑（A、R 各在端口保持型 SNAT 后，B 公网）上完成共同启动与 70 秒持续流后：
+
+1. router-a 丢弃 A 与 B 之间、router-r 丢弃 R 与 B 之间的全部报文：A 没有直连，R（R1）保留与 A 的通道、失去 B。
+2. 两个公网中继在这一步才 enroll；节点 ID 较小的作 R3（与 A、B 都有拓扑，只与 B 常驻，因此 A 与它没有通道），另一个作 R2（与 A、B 都常驻）。
+3. Server State 显示 R2 与 A、B，R3 只与 B，R1 只与 A 有已认证通道后，Controller 去掉 `A→B via R` 并允许 A–B 直连。Policy 的候选为 `[A, B]` 与经 R1、R2、R3 的三条两跳路径；只有 R2 与两端都有通道。
 
 | 检查 | 要求 |
 | --- | --- |
-| CLI ping | `meshway ping b` 的完整路径为 `[A, R, B]` |
-| 新流 | 新的 UDP／TCP 5 元组完成回显（同一 `choose_path`） |
+| CLI ping | `meshway ping b` 的完整路径为 `[A, R2, B]` |
+| 新流 | 新的 UDP／TCP 5 元组完成回显（同一排序；不加入 `[A, R1, B]` 上的旧 circuit） |
 | 切换时间 | 提交新内容到首个中继回复 ≤ 30 秒 |
-| status | A 的 peer B 为 `relay`、`via = [R]` |
-| 路由器证据 | 两条 A–B IP 对 DROP 规则真实存在，A→B 方向计数 > 0（A 确实尝试过直连），没有更宽的规则 |
+| status | A 的 peer B 为 `relay`、`via = [R2]` |
+| 未用中继 | 结束时 R3 的报告仍没有与 A 的通道 |
+| 节点 ID | `scenario-relay-roles.json` 中 R3 在 R2 之前（R1 与 R2 的先后随 enrollment 而定，一并记录） |
+| 路由器证据 | 两个路由器各有其两条 B IP 对 DROP 规则，A→B 方向计数 > 0（A 确实尝试过直连），没有更宽的规则 |
 
-结果：`991ca758` 单行 `20261013T053059Z-11b6d36a`（提交后 1,116 ms 中继回复，A→B 直连尝试被丢 7 个）；`45ec6e99` 全量 17 行矩阵 `20261013T053433Z-a688a9f6`（行 `20261013T053955Z-8b43b4de`）；`3e1142ee` 全量 17 行 `20261013T060913Z-86100acd`（行 `20261013T061459Z-ba45e9f1`）。证据 `.meshway/validation/n3/`。
+经 `[A, R1, B]` 建立的旧流保持原路径，R1 失去 B 后不再有回复，本行不再检查它们。
+
+结果：`8f6bb90b` 单行 `20261013T065956Z-a803e97f` 失败——R1 的节点 ID 在 R2 之前，ping 经 R2 成功，而新 UDP 流按 Policy 顺序加入了 A 在 `[A, R1, B]` 上的旧 circuit 并被固定在该路径（据此修复为“新流只加入排序位置不低于所选路径的 circuit”）；`94babca6` 单行 `20261013T071339Z-51b9968f`（行 `20261013T071540Z-fc1cd00e`，提交后 1,555 ms 经 R2 回复，R3 `idle`，A→B 直连尝试被丢 16 个）。N3 的 3 节点版本：`991ca758` `20261013T053059Z-11b6d36a`、`3e1142ee` 全量 `20261013T060913Z-86100acd`。证据 `.meshway/validation/n4/`、`.meshway/validation/n3/`。
 
 这一行用路由器丢包造成“直连不可能”，不是两端各自的端点相关映射＋端口相关过滤；后者的实网形态见下节 lax↔planck。
 
@@ -84,6 +92,17 @@ VM→it7 方向 Mesh TCP 远低于裸路径、UDP iperf 30 Mbit/s 时丢包 0.6%
 | it7 ↔ 全部节点 | `direct native_udp`；planck 容器与 it7 直连 |
 
 未观测：WARP 更换出口 IP 后的恢复（本轮窗口内未发生）。netcheck 的过滤类型判定未实现（需要能从未联系过的地址／端口回包的观测点；开发 Server 的 STUN 端点为 Google、Cloudflare，不支持 RFC 5780 CHANGE-REQUEST）。
+
+### N4 实网证据 {#n4-real-network}
+
+2026-10-13，`94babca6`（lab 三容器、VM、it7、planck 容器 `meshway-planck` 与开发 Server）。证据 `.meshway/node-lab/n4/`。
+
+| 项 | 结果 |
+| --- | --- |
+| 事实 | lax 的最后已知事实中 it7 的 `connected` 含 planck 与全部 lab 节点，planck 的只含 it7 |
+| lax、sha、nyc、VM → planck | `meshway ping meshway-planck` 各 10/10 `via relay us-lax-it7`（RTT 101–145 ms）；lax status 为 `relay via us-lax-it7`。N3 时四路径截断去掉了 it7，lax→planck 超时 |
+| 经 Mesh 的业务 | planck 容器 `python3 -m http.server 8080 --bind 100.64.0.6`，四个源 `curl http://100.64.0.6:8080/` 均 200（0.35–0.89 s），planck 日志记录四个 Mesh 源地址 |
+| 无关修订不重置退避 | lax 内 tc 丢弃 VM 的来包后，lax 对 VM `lab-udp 192.168.139.66:35000` 的 `candidate_backoff` 为 failures 1–7（暂停 1→64 s）；09:02:04 修改 nyc 的 remark（revision 32，lax netmap serial 35→36）后下一次尝试仍按原节奏在 09:02:27 发生（failures 8、暂停 128 s），随后 failures 9（256 s），其间没有 `candidate_pacing` 重新开始事件 |
 
 ### 当前验证证据
 

@@ -56,6 +56,9 @@ Node 拨号候选的顺序为：netmap 中的 configured 端点，然后是 `pee
 | `localEndpoints` | 作为最后已知地址继续拨号 | 被同一 peer 的新事实替换、出现在 `removed`、peer 不在当前投影内，或 netmap 结束（`apply(empty)`） |
 | `stunCandidates` | 各候选按自己的 `expiresAt` 停用（NAT 绑定确实会失效） | 同上，或候选自身到期 |
 | 出口就绪 `exit` | 不再作为 ready 出口的依据 | 同上 |
+| 通道 `connected` | 不再作为[中继排序](#relay-fallback)的依据 | 同上 |
+
+`connected` 是该 peer 自己 State 报告中已认证且未到期的 `links` 对端（只含其 netmap 投影内、且查看者投影内的节点，升序去重，最多 256 个）；变化即是事实内容变化，唤醒查看者的 `sync`。它只给中继候选排序，不授予邻接、路径或业务权限；省略表示 Server 未报告（旧 Server）。
 
 ### 候选节奏 {#candidate-pacing}
 
@@ -63,8 +66,10 @@ Node 拨号候选的顺序为：netmap 中的 configured 端点，然后是 `pee
 
 | 获取方式 | 失败的单位 | 失败后暂停 | 重新开始（清零全部暂停） |
 | --- | --- | --- | --- |
-| 显式拨号（configured、`localEndpoints`） | 一个候选（承载 key＋地址＋端口）的一次尝试 | 第 n 次连续失败后 `1 s × 2^(n−1)`，上限 **300 秒** | 与该 peer 已有选定通道，或上次检查以来有通道建立（含已结束）；该 peer 的候选集合变化（端点事实）；本机任一 socket 观测到的映射变化；新 netmap 内容 |
+| 显式拨号（configured、`localEndpoints`） | 一个候选（承载 key＋地址＋端口）的一次尝试 | 第 n 次连续失败后 `1 s × 2^(n−1)`，上限 **300 秒** | 与该 peer 已有选定通道，或上次检查以来有通道建立（含已结束）；该 peer 的候选集合变化（端点事实）；本机任一 socket 观测到的映射变化；新内容中**这条边**变化 |
 | 协调 UDP 穿透（STUN 映射） | 本节点准备或接受的一个尝试，结束时没有通道 | 本节点对该 peer 的 prepare 及为它发的邻接获取查询暂停 `1 s × 2^(n−1)`，上限 300 秒 | 同上，另加该 peer 发来仍有效的[穿透请求](#traversal-signalling)（对端发起的尝试照常接受） |
+
+“这条边”是内容对该 peer 的描述（`plan.rs::Plan::edge`）：对端注册密钥、双向的承载与拨号候选（含双方 listener／dialer 参数与 configured 端点）、该边是否常驻（决定它的 topology 规则的 `keepalive` 或单向可拨）。与它无关的内容变化（其他节点加入或改备注、Access、出口、DNS）不重置暂停；协调暂停同样跨内容与本机资源变化保留。暂停因上述原因重新开始时记一条 debug 事件 `operation=candidate_pacing`（`peer`、`cause`：`edge`／`candidates`／`own_mapping`／`channel`），每次失败记 `operation=candidate_backoff`（`failures`、`retry_ms`）。
 
 同一 peer 一旦有选定通道就停止探测它的其他候选。暂停期间其余候选各按自己的节奏尝试；首次暂停为 1 秒（`Limits::retry_backoff`），连续失败约 9 次（累计约 9 分钟）后到达每 5 分钟一次。没有失败记录的候选立即可试。暂停只影响尝试节奏，不改变候选顺序、准入或通道的健康判定。实现唯一归属 Manager 的候选调度（`manager/workers.rs::Pacing`、`manager/traversal.rs::Coordination`）。
 
@@ -219,15 +224,26 @@ Manager→SecureNode owner 的 circuit 控制／诊断帧和 lifecycle 事件另
 
 ### 中继兜底 {#relay-fallback}
 
-Policy 对每个目标给出至多 4 条完整路径（[routing](/v2/configuration-reference/routing) 的搜索顺序：必经点展开后最短优先，直连在前）。拓扑允许 A–B 直连而没有 `via` 时，A→B 与经其他可见节点的 A→R→B 都是候选。新 circuit（业务首包、`meshway ping`、诊断任务）按同一规则 `SecureNode::choose_path` 选路：
+Policy 给出候选集合，源节点按本机已知的连通事实排序：
+
+- **集合**（Policy，[routing](/v2/configuration-reference/routing#可行性循环与失败) 的搜索）：必经点展开后最短优先、同长按节点 ID；同一长度的路径全部列出后才看更长的，列满 `MAX_PATHS`（8）条的那个长度结束搜索。拓扑允许 A–B 直连而没有 `via` 时，A→B 与拓扑允许的**每一个** A→R→B 都是候选，不按节点 ID 截断。中继与端点各自在自己的投影上用同一搜索准入，因此源选中的任一候选在中继和目标处都被接受。
+- **排序**（`SecureNode::choose_path`，`secure/netmap.rs::ranked`）：直连路径在前；经中继的路径按（本机与其下一跳有通道，该中继在[最后已知事实](#last-known-facts)的 `connected` 中与路径上的下一节点有通道）字典序排列，即“与两端都有通道”的中继最先、只与本机有通道的次之、其余在后，同类保持 Policy 顺序。取前 8 条（含直连）；超出的中继不尝试，并记一条 debug 事件 `operation=path_candidates`（`kept`、`truncated_relays`）。
+
+新 circuit（业务首包、`meshway ping`、诊断任务）在排序后的候选上选路：
 
 1. 取第一条下一跳已有选定通道、且最近一次源端握手没有无应答结束的路径；都在暂停中时取第一条有通道的路径。
 2. 排在所选路径之前、下一跳没有通道的路径（通常是直连）登记邻接需求，Manager 按[候选节奏](#candidate-pacing)继续获取；直连建立后，新流走直连。
-3. 没有任何路径的下一跳有通道时，为全部下一跳登记需求并排队首包，任一通道就绪即在其路径上握手。
+3. 没有任何路径的下一跳有通道时，为保留的全部下一跳登记需求并排队首包，任一通道就绪即在其路径上握手。
+
+新流只加入排在第 1 条所选路径及其之前的已建立 circuit：已失去远端的中继（事实中不再与目标有通道）或直连已有通道时的中继上的旧 circuit 不再接纳新流，新流在所选路径上新建 circuit。已经建立的流始终保持自己的原完整路径。
+
+候选计算有界：一次目标搜索共享 16,384 工作项预算、队列 2,048 项，每目标最多 2,048 条（`MAX_SEARCH_PATHS`）。先只朝下一必经点扩展、再扩展绕行，使 1,000 个节点的全连通投影中直连＋998 个两跳中继约用 5,000 个工作项列出，随后因已满 8 条而结束，不扩展三跳；排序只看前 8 条，每个新流的 circuit 查找也只在这 8 条上进行。
 
 源端握手到期（`handshake_timeout`，10 秒）仍无应答时，该路径暂停 `10 s × 2^(n−1)`（上限 300 秒），下一个 circuit 换用其他有通道的路径；得到应答或新 netmap 内容即清除。这覆盖“中继有通道但到不了目标”：中继缺下一跳时只登记需求并拒绝 INIT（不消耗 CID），源不会因此永久固定在这条路径上。已建立的 circuit 与流始终保持原完整路径，切换承载或路径只作用于新 circuit。
 
 `meshway status` 对经中继的 peer 显示 `relay … via <R>`，`meshway ping` 每个回复显示 `via relay <R>`。直连不可能时（两端都在端点相关映射 NAT 后、无共同私网），流量经与双方都有通道的第三节点中继；R 不需要 listener，只要它与两端各有通道。
+
+实测（N4，2026-10-13）：6 节点 lab 中 lax、sha、nyc、meshway-vm 都到不了 meshway-planck（NAT 后的容器），只有 us-lax-it7（节点 ID 最大）与两端都有通道；此前四路径截断恰好去掉 it7，lax→planck ping 超时。现在四个源 `meshway ping meshway-planck` 各 10/10 `via relay us-lax-it7`，经 Mesh 的 HTTP 请求 200；见[验收范围](/v2/node/validation#n4-real-network)。
 
 已实际选定的流式通道结束后，拨号 owner 经原重试间隔重新按候选来源优先级获取连接，不继续此前候选列表尚未尝试的后缀。因此已认证的 configured TCP 退路短暂断开后，会先重试该来源，再考虑本机候选；未完成认证或未获选的尝试仍继续当前候选轮次。对端仍健康的更优通道不会因此被替换。
 

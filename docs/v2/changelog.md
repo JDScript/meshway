@@ -6,6 +6,16 @@
 
 wire 6、`compilerVersion` 不变，IPC 9（C3）；Server schema 版本 7（F4a 新增 `rule_set_record_heads`，C3 为 6，R2d 新增 `rule_set_catalog_checks` 并允许回收 artifact 为 7；开发环境重新初始化数据目录）。HTTP 契约：`SyncRequest` 新增可省略的 `lease`；`listRuleSetCatalog` 描述更新（无字段变化）；S3 的 State／库存／诊断变化见下。
 
+中继候选排序与退避重置范围（N4）：wire 6、IPC 9、`compilerVersion` 与 Server schema 均不变。HTTP 契约：`PeerFacts` 新增可省略的 `connected`。旧 Node 严格解码会拒绝含此字段的 `sync` 回答，须先升级 Node 再升级 Server（新 Node 接受省略）。
+
+- 中继候选不再按节点 ID 截断：Policy 列出同一长度的全部路径后才搜索更长的，在已满 8 条（`MAX_PATHS`，原为 4）的长度结束，每目标至多 2,048 条，仍在 16,384 工作项预算内。源节点按事实排序：直连在前，中继按（本机与它有通道，它在 `connected` 中与下一节点有通道）排列，取前 8 条，截断的中继数记为 `operation=path_candidates`。新流只加入排序位置不低于所选路径的已建立 circuit。见[中继兜底](/v2/node/connectivity#relay-fallback)。lax、sha、nyc、VM → planck 由超时变为 10/10 `via relay us-lax-it7`。
+- `PeerFacts.connected`：peer 报告中已认证、未到期的通道对端，限查看者投影；只用于排序。
+- 退避重置收窄：只有该 peer 的边（`Plan::edge`：密钥、双向承载与拨号候选、listener、常驻）、端点事实、本机映射或该 peer 的通道变化才重新开始候选与协调暂停；其他节点、Access、出口等修订不再重置。见[候选节奏](/v2/node/connectivity#candidate-pacing)。
+- `nat/relay` 扩为 5 节点（R1 失去 B、R2 与两端有通道、R3 ID 更小且与 A 无通道），要求经 R2、30 秒内。
+- node lab：daemon 日志过滤取部署时的 `RUST_LOG`。
+
+验证：见[中继兜底行](/v2/node/validation#relay-row)与[N4 实网证据](/v2/node/validation#n4-real-network)；证据 `.meshway/node-lab/n4/`、`.meshway/validation/n4/`。
+
 连通性三条（N3）：wire 6、IPC 9、HTTP 契约、`compilerVersion` 与 Server schema 均不变。
 
 - 候选不再按地址类别过滤（撤回 N2a 的“私网／CGNAT／ULA `localEndpoints` 只在本机有包含它的接口前缀时拨号”）：所有候选都尝试，每个失败候选按 `1 s × 2^(n−1)` 暂停、上限 300 秒；与 peer 有通道即停止探测，候选集合、通道或 netmap 变化时重新开始。协调穿透对无果结束的 peer 同样暂停 prepare 与为它发的查询。见[候选节奏](/v2/node/connectivity#candidate-pacing)。lax（Docker）↔ meshway-vm（OrbStack machine）恢复为 `direct native_udp`。
