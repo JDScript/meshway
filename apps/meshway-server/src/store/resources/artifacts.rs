@@ -2,8 +2,10 @@
 //! the accepted sequence of each signed catalog.
 use crate::error::Error;
 use chrono::{DateTime, Utc};
+use meshway_protocol::resources::ResourceProblem;
 use meshway_rules::Digest;
 use rusqlite::{OptionalExtension, Transaction, params};
+use std::collections::BTreeSet;
 
 /// Stores the artifact bytes once; an existing digest is left unchanged.
 /// The caller has built or verified `bytes` and computed `digest` from them.
@@ -149,6 +151,103 @@ pub(crate) fn catalog_head(
     .transpose()
 }
 
+fn digest_column(bytes: Vec<u8>) -> Result<Digest, Error> {
+    <[u8; 32]>::try_from(bytes.as_slice())
+        .map(Digest::from_bytes)
+        .map_err(|_| Error::decode("rule_set_artifacts.digest"))
+}
+
+/// Every stored artifact.
+pub(crate) fn stored(tx: &Transaction<'_>) -> Result<BTreeSet<Digest>, Error> {
+    let mut statement = tx.prepare("SELECT digest FROM rule_set_artifacts")?;
+    let rows = statement.query_map([], |row| row.get::<_, Vec<u8>>(0))?;
+    rows.map(|row| digest_column(row?)).collect()
+}
+
+/// Artifacts some Node netmap references that can still be under a lease at
+/// `now`: the current one, or one superseded less than the longest lease ago.
+pub(crate) fn leased(tx: &Transaction<'_>, now: i64) -> Result<BTreeSet<Digest>, Error> {
+    let mut statement = tx.prepare(
+        "SELECT DISTINCT digest FROM node_netmap_artifacts
+         WHERE superseded_at IS NULL OR superseded_at>=?1",
+    )?;
+    let rows = statement.query_map([now.saturating_sub(MAX_LEASE_MS)], |row| {
+        row.get::<_, Vec<u8>>(0)
+    })?;
+    rows.map(|row| digest_column(row?)).collect()
+}
+
+/// The refreshed binding of every version of a network that is not deleted.
+pub(crate) fn refreshed_bindings(tx: &Transaction<'_>) -> Result<Vec<String>, Error> {
+    let mut statement = tx.prepare(
+        "SELECT b.bindings FROM rule_set_bindings b JOIN networks n ON n.id=b.network_id
+         WHERE n.deleted_at IS NULL",
+    )?;
+    let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+    Ok(rows.collect::<Result<_, _>>()?)
+}
+
+/// Removes an artifact and every record of it.
+pub(crate) fn delete(tx: &Transaction<'_>, digest: &Digest) -> Result<(), Error> {
+    let digest = digest.as_bytes().as_slice();
+    tx.execute(
+        "DELETE FROM rule_set_record_heads WHERE digest=?1",
+        [digest],
+    )?;
+    tx.execute("DELETE FROM rule_set_records WHERE digest=?1", [digest])?;
+    tx.execute("DELETE FROM rule_set_artifacts WHERE digest=?1", [digest])?;
+    Ok(())
+}
+
+/// The Server's last own fetch of (`catalog`, `trust`): when, and the
+/// consecutive failures since the last success. The problem is kept for
+/// diagnosis only.
+pub(crate) struct CatalogCheck {
+    pub(crate) checked_at: i64,
+    pub(crate) failures: u32,
+}
+
+pub(crate) fn catalog_check(
+    tx: &Transaction<'_>,
+    catalog: &str,
+    trust: &str,
+) -> Result<Option<CatalogCheck>, Error> {
+    Ok(tx
+        .query_row(
+            "SELECT checked_at,failures FROM rule_set_catalog_checks WHERE catalog=?1 AND trust=?2",
+            params![catalog, trust],
+            |row| {
+                Ok(CatalogCheck {
+                    checked_at: row.get(0)?,
+                    failures: row.get(1)?,
+                })
+            },
+        )
+        .optional()?)
+}
+
+/// Records one fetch of (`catalog`, `trust`); a success resets the failures.
+pub(crate) fn record_catalog_check(
+    tx: &Transaction<'_>,
+    catalog: &str,
+    trust: &str,
+    problem: Option<ResourceProblem>,
+    now: i64,
+) -> Result<(), Error> {
+    let stored = problem
+        .map(|problem| serde_json::to_string(&problem))
+        .transpose()
+        .map_err(|_| Error::encode("rule-set catalog check problem"))?;
+    tx.execute(
+        "INSERT INTO rule_set_catalog_checks(catalog,trust,problem,checked_at,failures)
+         VALUES(?1,?2,?3,?4,?5) ON CONFLICT(catalog,trust) DO UPDATE SET
+         problem=excluded.problem,checked_at=excluded.checked_at,
+         failures=CASE WHEN excluded.problem IS NULL THEN 0 ELSE min(rule_set_catalog_checks.failures+1,16) END",
+        params![catalog, trust, stored, now, i64::from(problem.is_some())],
+    )?;
+    Ok(())
+}
+
 /// The accepted `index.json` and `index.json.sig` bytes.
 pub(crate) fn catalog_document(
     tx: &Transaction<'_>,
@@ -225,7 +324,9 @@ pub(crate) fn restore(
     Ok(())
 }
 
-const MAX_LEASE_MS: i64 = 24 * 60 * 60 * 1000;
+/// The longest netmap lease validity (`netmap::SyncTiming`): a netmap
+/// superseded longer ago than this can no longer authorize or need anything.
+pub(crate) const MAX_LEASE_MS: i64 = 24 * 60 * 60 * 1000;
 
 /// Whether some netmap of this Node that references `digest` can still be
 /// under a lease of `validity_ms` at `now`.

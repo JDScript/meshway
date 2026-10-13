@@ -22,8 +22,9 @@ async fn resource_scan_shutdown_releases_its_waiter_before_accepted_sql_drains()
         }).await.unwrap();
     });
     started.await.unwrap();
-    // The scanner clones its provider before awaiting the serial owner. The
-    // extra cache reference proves it has entered a scan behind the blocked job.
+    // The scheduler clones its provider before awaiting the serial owner. The
+    // extra cache reference proves it has entered a scan (or the artifact
+    // collection it starts with) behind the blocked job.
     tokio::time::timeout(Duration::from_secs(3), async {
         while Arc::strong_count(&app.committer.cache) == cache_owners {
             tokio::time::sleep(Duration::from_millis(1)).await;

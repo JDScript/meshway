@@ -29,6 +29,8 @@ type Routes = Arc<Mutex<BTreeMap<String, (u16, Vec<u8>)>>>;
 
 struct HttpsSource {
     requests: Arc<AtomicUsize>,
+    /// Request paths in arrival order.
+    paths: Arc<Mutex<Vec<String>>>,
     request_times: Arc<Mutex<Vec<chrono::DateTime<chrono::Utc>>>>,
     hold_body: Arc<AtomicBool>,
     body_entered: Arc<tokio::sync::Notify>,
@@ -79,6 +81,8 @@ impl HttpsSource {
         let requests = Arc::new(AtomicUsize::new(0));
         let server_requests = requests.clone();
         let request_times = Arc::new(Mutex::new(Vec::new()));
+        let paths: Arc<Mutex<Vec<String>>> = Arc::default();
+        let server_paths = paths.clone();
         let server_request_times = request_times.clone();
         let hold_body = Arc::new(AtomicBool::new(false));
         let held = hold_body.clone();
@@ -153,6 +157,7 @@ impl HttpsSource {
                     .nth(1)
                     .unwrap_or_default()
                     .to_owned();
+                server_paths.lock().unwrap().push(path.clone());
                 let (status, body) = server_routes
                     .lock()
                     .unwrap()
@@ -174,6 +179,7 @@ impl HttpsSource {
         });
         Arc::new(Self {
             requests,
+            paths,
             request_times,
             hold_body,
             body_entered,
@@ -198,6 +204,14 @@ impl HttpsSource {
             .lock()
             .unwrap()
             .insert(path.into(), (status, body.to_vec()));
+    }
+    fn fetched(&self, path: &str) -> usize {
+        self.paths
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|p| *p == path)
+            .count()
     }
     fn pause(&self) {
         self.pause.store(true, Ordering::SeqCst);
@@ -225,7 +239,10 @@ impl Drop for HttpsSource {
 impl Connector for HttpsSource {
     fn resolve<'a>(&'a self, host: &'a str, port: u16) -> ResolveFuture<'a> {
         Box::pin(async move {
-            assert_eq!(host, "rules.meshway.example");
+            // The Server also fetches the built-in providers' catalogs.
+            if host != "rules.meshway.example" {
+                return Err(ResourceProblem::DownloadFailed);
+            }
             if self.pause.swap(false, Ordering::SeqCst) {
                 self.entered.notify_one();
                 self.resume.notified().await;
@@ -595,3 +612,7 @@ mod netmap_bindings;
 mod publication;
 
 mod providers;
+
+mod catalogs;
+
+mod retention;

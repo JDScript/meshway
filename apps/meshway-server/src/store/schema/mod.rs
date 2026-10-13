@@ -10,7 +10,8 @@ const APPLICATION_ID: i64 = 0x4d534857; // MSHW: stable Meshway application iden
 // 4: accepted rule-set catalogs keep their verified document.
 // 5: rule-set record heads beside immutable provenance.
 // 6: routing selections are activities (Node actor, selection target).
-const VERSION: i64 = 6;
+// 7: provider catalog checks; unreferenced rule-set artifacts are collected.
+const VERSION: i64 = 7;
 const SQL: &str = concat!(
     include_str!("current.sql"),
     "\n",

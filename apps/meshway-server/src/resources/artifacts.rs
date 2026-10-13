@@ -81,6 +81,51 @@ pub(crate) fn store(
     Ok(Ok(artifact.digest()))
 }
 
+/// Deletes the artifacts nothing can use any more, with their records, and
+/// returns how many. Retention follows configuration history: versions are
+/// never deleted, so every artifact a version of a live network binds (its
+/// initial binding, restorable as `initial`, or its current refreshed one,
+/// restorable as `refreshed`) stays. What a refresh replaced, and what only a
+/// deleted network bound, stays while a Node netmap that references it can
+/// still be under a lease (`MAX_LEASE_MS`), the same window in which the
+/// artifact endpoint still serves it.
+pub(crate) fn collect(
+    tx: &Transaction<'_>,
+    sealer: &crate::secrets::Sealer,
+    now: i64,
+) -> Result<usize, Error> {
+    let mut unused = sql::stored(tx)?;
+    if unused.is_empty() {
+        return Ok(0);
+    }
+    for digest in sql::leased(tx, now)? {
+        unused.remove(&digest);
+    }
+    for text in crate::store::resources::artifacts::refreshed_bindings(tx)? {
+        let bindings: super::bindings::Bindings =
+            serde_json::from_str(&text).map_err(|_| Error::decode("rule_set_bindings.bindings"))?;
+        for digest in bindings.values() {
+            unused.remove(digest);
+        }
+    }
+    crate::store::configuration::versions::each_restorable_bindings(tx, sealer, |bindings| {
+        for digest in bindings.rule_sets.values() {
+            unused.remove(digest);
+        }
+        Ok(())
+    })?;
+    for digest in &unused {
+        sql::delete(tx, digest)?;
+    }
+    if !unused.is_empty() {
+        LOADED
+            .lock()
+            .map_err(|_| Error::RUNTIME)?
+            .retain(|digest, _| !unused.contains(digest));
+    }
+    Ok(unused.len())
+}
+
 /// The current record of `digest` as bound for `source` (the latest
 /// preparation that produced it); inline content is described by converting
 /// its declaration again.

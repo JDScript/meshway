@@ -13,7 +13,11 @@ use crate::{
 };
 use meshway_model::{NetmapRef, Revision};
 use meshway_protocol::ipc::{DataPlane, Phase, Status};
-use std::{collections::BTreeMap, path::Path, time::Duration};
+use std::{
+    collections::BTreeMap,
+    path::Path,
+    time::{Duration, Instant},
+};
 use tokio::process::Child;
 
 pub(super) struct Context<'a> {
@@ -203,6 +207,10 @@ async fn offline(context: Context<'_>) -> Result<String> {
     Ok(context.tun)
 }
 
+/// Bound on the daemon's own withdrawal after the lease deadline, from the
+/// first Status without the lease to the TUN's removal.
+const WITHDRAWAL: Duration = Duration::from_secs(2);
+
 /// The Controller is unreachable past the lease: Engine withdraws every
 /// component (no TUN, negative capture, traffic blocked), then a new lease
 /// after reopening reinstalls the same content.
@@ -217,9 +225,22 @@ async fn expiry(mut context: Context<'_>) -> Result<String> {
     })
     .await?;
     save(cli, "scenario-expired-status", &status).await?;
-    if tokio::fs::try_exists(Path::new("/sys/class/net").join(&context.tun)).await? {
-        return Err("lease end left the TUN installed".into());
+    // Status drops the lease by the clock at the deadline; the daemon's
+    // timer withdraws the components at the same deadline, which takes a
+    // moment (tens of milliseconds) to remove the TUN.
+    let expired = Instant::now();
+    while tokio::fs::try_exists(Path::new("/sys/class/net").join(&context.tun)).await? {
+        if expired.elapsed() >= WITHDRAWAL {
+            return Err("lease end left the TUN installed".into());
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
     }
+    save(
+        cli,
+        "scenario-expired-tun-removed-ms",
+        &(expired.elapsed().as_millis() as u64),
+    )
+    .await?;
     route_proof(
         cli,
         &context.addresses[&Role::B],

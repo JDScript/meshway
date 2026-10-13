@@ -27,6 +27,16 @@ pub(crate) fn due(now: u64, checked: Option<u64>, interval: u64, failures: u32) 
     };
     now >= checked.saturating_add(delay)
 }
+/// How often unreferenced artifacts are collected; the first pass runs at start.
+const COLLECT_PERIOD: Duration = Duration::from_secs(60 * 60);
+
+/// One unit of periodic work found by a network scan.
+enum Task {
+    /// A provider catalog effective in the network, fetched on its own.
+    Catalog(meshway_configuration::RuleSetProvider),
+    RuleSet(SystemTask),
+}
+
 pub(crate) struct Scheduler {
     downloads: Arc<Downloads>,
     task: Option<tokio::task::JoinHandle<()>>,
@@ -37,18 +47,43 @@ impl Scheduler {
         let cancellation = downloads.clone();
         let task = tokio::spawn(async move {
             let mut after = None;
+            let mut collect_at = tokio::time::Instant::now();
             loop {
                 tokio::select! { biased; _ = cancellation.cancelled() => break, _ = tokio::time::sleep(SCAN_PERIOD) => {} }
-                let provider = provider.clone();
+                if tokio::time::Instant::now() >= collect_at {
+                    collect_at += COLLECT_PERIOD;
+                    let owner = provider.clone();
+                    let collected = tokio::select! {
+                        biased;
+                        _ = cancellation.cancelled() => break,
+                        collected = handle.write(move |tx| {
+                            super::artifacts::collect(tx, &owner.sealer, Utc::now().timestamp_millis())
+                        }) => collected,
+                    };
+                    match collected {
+                        Ok(0) => {}
+                        Ok(count) => {
+                            tracing::info!(count, "Unreferenced rule-set artifacts collected")
+                        }
+                        Err(error) => tracing::warn!(%error, "Rule-set artifact collection failed"),
+                    }
+                }
+                let scanned = provider.clone();
                 let scan = tokio::select! {
                     biased;
                     _ = cancellation.cancelled() => break,
-                    scan = handle.read(move |tx| scan_network(tx, &provider, after)) => scan,
+                    scan = handle.read(move |tx| scan_network(tx, &scanned, after)) => scan,
                 };
                 if let Ok((network, task)) = scan {
                     after = network;
-                    if let Some(task) = task {
-                        tokio::select! { biased; _ = cancellation.cancelled() => break, _ = service.refresh_system(task) => {} }
+                    match task {
+                        Some(Task::Catalog(catalog)) => {
+                            tokio::select! { biased; _ = cancellation.cancelled() => break, _ = super::catalogs::refresh(&handle, &cancellation, catalog) => {} }
+                        }
+                        Some(Task::RuleSet(task)) => {
+                            tokio::select! { biased; _ = cancellation.cancelled() => break, _ = service.refresh_system(task) => {} }
+                        }
+                        None => {}
                     }
                 }
             }
@@ -70,7 +105,7 @@ fn scan_network(
     tx: &Transaction<'_>,
     provider: &Provider,
     after: Option<NetworkId>,
-) -> Result<(Option<NetworkId>, Option<SystemTask>), Error> {
+) -> Result<(Option<NetworkId>, Option<Task>), Error> {
     let network = match store::resources::checks::next_network(tx, after)? {
         Some(id) => Some(id),
         None => store::resources::checks::next_network(tx, None)?,
@@ -85,6 +120,13 @@ fn scan_network(
         Ok(scope) => scope,
         Err(_) => return Ok((Some(network), None)),
     };
+    // Catalogs first: browsing a provider needs no referenced set, and a set
+    // of a provider is then prepared against a catalog already accepted.
+    for catalog in scope.providers.values() {
+        if super::catalogs::due(tx, catalog, now.timestamp_millis())? {
+            return Ok((Some(network), Some(Task::Catalog(catalog.clone()))));
+        }
+    }
     let (created, failures) = store::resources::checks::schedule(tx, network, scope.revision)?;
     let task = scope
         .definitions
@@ -116,7 +158,7 @@ fn scan_network(
             })
         })
         .min_by_key(|task| (task.checked_at, task.key.clone()));
-    Ok((Some(network), task))
+    Ok((Some(network), task.map(Task::RuleSet)))
 }
 impl Drop for Scheduler {
     fn drop(&mut self) {

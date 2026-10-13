@@ -31,7 +31,9 @@ CREATE TRIGGER ip_dataset_heads_no_delete BEFORE DELETE ON ip_dataset_heads
 BEGIN SELECT RAISE(ABORT, 'IP dataset heads require a replacement'); END;
 
 -- Rule-set artifacts (`MWRS`), content addressed and shared by every network:
--- the SHA-256 of `data` is `digest`. Rows are immutable and retained.
+-- the SHA-256 of `data` is `digest`. Rows are immutable; one no configuration
+-- version can restore and no netmap still under lease references is collected
+-- (`resources::artifacts::collect`) together with its records.
 CREATE TABLE rule_set_artifacts (
     digest BLOB PRIMARY KEY NOT NULL CHECK(length(digest)=32),
     data BLOB NOT NULL CHECK(length(data) BETWEEN 64 AND 16777216),
@@ -39,8 +41,6 @@ CREATE TABLE rule_set_artifacts (
 ) STRICT;
 CREATE TRIGGER rule_set_artifacts_immutable BEFORE UPDATE ON rule_set_artifacts
 BEGIN SELECT RAISE(ABORT, 'rule-set artifacts are immutable'); END;
-CREATE TRIGGER rule_set_artifacts_retained BEFORE DELETE ON rule_set_artifacts
-BEGIN SELECT RAISE(ABORT, 'rule-set artifacts are retained'); END;
 
 -- Where an artifact came from for one source (a remote URL and format, or a
 -- catalog set): provenance and the conversion report stay out of the
@@ -81,6 +81,18 @@ CREATE TABLE rule_set_catalogs (
 CREATE TRIGGER rule_set_catalogs_monotonic BEFORE UPDATE ON rule_set_catalogs
 WHEN NEW.sequence < OLD.sequence OR NEW.catalog != OLD.catalog OR NEW.trust != OLD.trust
 BEGIN SELECT RAISE(ABORT, 'catalog sequence must not decrease'); END;
+
+-- The Server's own last fetch of each effective catalog (URL, trusted key
+-- set), independent of any set: schedules the next one and its backoff. The
+-- accepted catalog stays in rule_set_catalogs; a failure keeps it.
+CREATE TABLE rule_set_catalog_checks (
+    catalog TEXT NOT NULL,
+    trust TEXT NOT NULL,
+    problem TEXT,
+    checked_at INTEGER NOT NULL CHECK(checked_at>=0),
+    failures INTEGER NOT NULL CHECK(failures BETWEEN 0 AND 16),
+    PRIMARY KEY(catalog, trust)
+) STRICT;
 
 -- Current check outcome is separate from immutable configuration and publication
 -- bindings. A failed refresh retains the last successfully published artifact.

@@ -4,6 +4,8 @@
 
 ## 未发布
 
+wire 6、`compilerVersion` 不变，IPC 9（C3）；Server schema 版本 7（F4a 新增 `rule_set_record_heads`，C3 为 6，R2d 新增 `rule_set_catalog_checks` 并允许回收 artifact 为 7；开发环境重新初始化数据目录）。HTTP 契约：`SyncRequest` 新增可省略的 `lease`；`listRuleSetCatalog` 描述更新（无字段变化）；S3 的 State／库存／诊断变化见下。
+
 真实网络穿透与外层 PMTU（N2a）：IPC 9 新增（`peers[].mtu`、`lastErrorDetail`、netcheck `sizeProbe`／`pathMtu`），wire 6 不变（接收方另接受以零填充的 UDP 健康 Ping）。
 
 - 来源学习：对称（端点相关映射）NAT 下，本 offer 对端的签名开场消息从同 IP 的另一端口到达时，该来源成为本尝试的第二目的（每尝试 ≤2、随尝试结束），通道端点取握手实际完成的地址；身份仍只由签名证明。见[来源学习](/v2/node/connectivity#source-learning)。
@@ -16,6 +18,18 @@
 
 出口方案切换（C3）：IPC 升为 9，Server schema 版本 6（`activity_events` 新增 Node actor 与路由方案目标；开发环境重新初始化数据目录）；wire 6、`compilerVersion` 不变。
 
+规则集收尾（R2d）：
+
+- Server 启动后及按 provider 间隔自己取回并验签每个网络生效的 provider 目录（内置与覆盖；同一目录 URL 与信任钥只取一次，共用下载预算，退避持久保存，失败与 sequence 回退保留上一份），`GET /rule-set-catalog` 不再需要先引用集合；`rule_set_catalog_not_ready` 只表示首次取回尚未完成或从未成功。见[规则集 · 目录更新](/v2/configuration-reference/rule-sets#catalog-refresh)。
+- 无引用 artifact 回收：未删除网络任一版本的初始或刷新绑定引用的 artifact 保留；被刷新替换或只属于已删除网络的 artifact，在可能仍处于租约内（24 小时）的 netmap 都不再引用后连同记录删除，启动时及每小时一次。见[规则集 · artifact 保留](/v2/configuration-reference/rule-sets#artifact-retention)。
+- 发布仓库 `meshway-org/meshway-rules`（`379bdb4`）把 hold 写入签名目录 `CatalogSet.held`，`since` 从上一份目录读取，`status.json` 只是副本；README 写明 held 集合 `upstream.ref` 为其 commit 的上游一致规则。
+- runtime fixture：`netmap/expiry` 在 Status 去掉租约后 2 秒内要求 TUN 删除并记录延迟，不再与 daemon 的撤回竞争；根因见[租约到期撤回](/v2/node/validation#lease-expiry-withdrawal)。
+- `validation.md` 补齐 R2a、X6、R3、F4a 的矩阵行与证据位置。
+
+验证：Planck 16 行矩阵 `20261012T212926Z-abd9b9c8`（`4164e184`）、`20261012T232408Z-75436f19`（`b4fe0619`）与合入 main（含 S3、C3）后的 `20261013T015222Z-59ebfafc`（`861d58d3`）全部通过；高负载下的未通过矩阵与签名见[验收范围](/v2/node/validation#netmap-rows)；`mise run check` 通过；证据 `.meshway/validation/r2d/`。
+
+出口方案切换（C3）：IPC 升为 9，`activity_events` 新增 Node actor 与路由方案目标（schema 6）。
+
 - `meshway exit [profile|off]`：无参数显示本机 netmap 中的方案选择（生效／请求的方案、默认与锁定、`auto` 解析、每个允许方案的摘要）；带方案时请 Server 切换并等待本机应用带新版本的 netmap，`off` 即 `mesh`。人读输出、`--json` 与退出码见 [出口方案](/v2/node/runtime#exit-profile)。
 - IPC 9：命令 `SelectProfile`、结果 `Selection`、`NetmapStatus.routing`，错误码 `profileNotAllowed`／`profileLocked`／`selectionConflict`；`meshway status` 新增 Profile 行。
 - Control 调用 `selectNodeRoutingProfile`，CAS 基准为持有 netmap 中自身的选择版本；方案被拒或版本过期不结束 session／instance。本机只缓存 netmap，不保存选择。
@@ -27,6 +41,8 @@
 验证：Planck 16 行矩阵 `20261012T224334Z-469128d0`（`7facc522`）与合入 main 后的 `20261013T000304Z-56e3679e`（`f2441b12`）全部通过；证据 `.meshway/validation/c3/`。已知：切到 `global:<exit>` 与 `useWithExit` split resolver 组合时节点 DNS 安装拒绝新 netmap，见[验收范围 · 剩余边界](/v2/node/validation#remaining-boundaries)。
 
 此前：wire 6、IPC 8、`compilerVersion` 不变；Server schema 版本 5（新增 `rule_set_record_heads`；开发环境重新初始化数据目录）。HTTP 契约：`SyncRequest` 新增可省略的 `lease`；S3 的 State／库存／诊断变化见下。alpha.4 代码审阅修复（F4a）：
+
+alpha.4 代码审阅修复（F4a）：
 
 - A1 `POST /agent-api/v1/dns-associations` 接纳前对条目执行与 overlay 相同的校验（`DnsAssociation::validate`：名称／CNAME 为 1–253 B ASCII 小写等），非法条目 400 `invalid_request`，不再让源与出口的 `sync` 持续内部错误。
 - A2 出口 overlay 容量在接纳时对源与出口统一预算：任一方未到期条目将超过 4,096 即 429 `state_limit`；交付时不再截断单方副本；源换出口时唤醒原出口。
