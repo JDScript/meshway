@@ -2,6 +2,15 @@
 
 按合入 main 的顺序记录工作包、提交与证据 ID。规则见[工程流程](/v2/process)；性能数字的口径见[分层性能测量](/v2/node/performance)，验收状态见[验收范围](/v2/node/validation)。
 
+## 未发布
+
+第二轮审阅卫生清理（F5b）：wire 6、IPC 11、`compilerVersion` 与 Server schema 均不变。HTTP 契约：删除从未产生的枚举值 `UnavailableReason` 的 `missingCapability`／`missingDns`／`invalidProfile` 与 `NotApplicableReason` 的 `meshAddress`。
+
+- 观察历史分页改用 Server 唯一的 cursor 信封（分页起点不变）：cursor 文本上限 2,048 B，拒绝未来签发，与其他列表一致。
+- 区间归并与 CIDR 覆盖只有 `meshway_rules::ranges` 一份实现：规则集构建、Policy 分割的路由计数与 Underlay 捕获表路由共用同一惰性迭代器。
+- 删除无消费者的 API（`validate_configuration`、`domain_name_matches`、`admit_path_carrier`、`dropped_first_packets`、`diagnostic_circuit`）与 `meshway-rules` 的 dev 依赖 `tempfile`；`validate.yml` 的 PR 路径覆盖被验证二进制的全部 crate（含 `meshway-netns`），由 `scripts/test_validate_workflow.py` 检查。
+- 文档：[Exit 设计](/v2/node/exit-design) 与[运行时](/v2/node/runtime#ipv4-出口角色与-nat-投影)按签名 netmap、Engine `Desired`、Policy `Decision` 与 quarantine 生命周期重写。
+
 ## v0.1.0-alpha.7
 
 范围：wire 6、`compilerVersion` `meshway-netmap-2`、Server schema 不变；IPC 11（`Status.sockets`，CLI 与 daemon 一起升级）；Native UDP socket 默认缓冲接收 4 MiB／发送 2 MiB，经 `SO_RCVBUFFORCE`／`SO_SNDBUFFORCE` 不受 `rmem_max` 截断；出口 conntrack 经内核 ctnetlink（宿主不再需要 `conntrack` 工具）；Underlay namespace 身份含 netns cookie；listener 绑定失败退避重试；HTTP 契约 `IssueCode` 新增 `ephemeral_listener_port`（警告）；以及下列 M3、U1、M2 工作包。
