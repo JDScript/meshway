@@ -2,7 +2,7 @@
 //! on observable paths only, never waiting for a Server round trip.
 use super::support::netmap::{NetmapMesh, rule, sel};
 use meshway_dataplane::secure::{
-    Applied, CircuitGrant, Error, PendingFrame, Received, Target, diagnostic_paths,
+    Applied, CircuitGrant, CircuitState, Error, PendingFrame, Received, Target, diagnostic_paths,
 };
 use meshway_model::{Digest, EventId};
 use std::time::{Duration, Instant};
@@ -19,8 +19,9 @@ async fn ping(f: &mut NetmapMesh) -> [u8; 32] {
     let b = f.ids()[2];
     let init = f.a.start_diagnostic(b, None).unwrap().unwrap();
     let id = f.finish_handshake(init).await;
-    let info = f.a.diagnostic_circuit(b).unwrap();
+    let info = f.a.circuit_info(id).unwrap().unwrap();
     assert_eq!(info.id, id);
+    assert_eq!(info.state, CircuitState::Established);
     assert_eq!(
         info.grant,
         CircuitGrant {
