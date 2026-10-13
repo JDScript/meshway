@@ -4,15 +4,14 @@
 
 ## 未发布
 
-UDP 接收缓冲与发送节奏（M2）：IPC 11（`Status.sockets`）；wire 6、HTTP 契约、`compilerVersion` 与 Server schema 均不变。CLI 与 daemon 须一起升级（IPC 10 的 CLI 对新 daemon 得到 `version` 错误）。
+UDP 接收缓冲（M2）：IPC 11（`Status.sockets`）；wire 6、HTTP 契约、`compilerVersion` 与 Server schema 均不变。CLI 与 daemon 须一起升级（IPC 10 的 CLI 对新 daemon 得到 `version` 错误）。
 
-- Native UDP socket 默认缓冲：接收 7 MiB、发送 2 MiB（原为 7／7 MiB）；请求先用 `SO_RCVBUFFORCE`／`SO_SNDBUFFORCE`，daemon 有 `CAP_NET_ADMIN` 时不再被 `net.core.rmem_max` 截到 416 KB（it7、planck 此前均为 416 KB，it7 的 socket 有接收丢包）；没有该权限时退回普通请求。显式 `socket.receiveBuffer`／`sendBuffer` 按配置请求。见 [UDP 批量接口](/v2/node/transport#udp-批量接口)。
+- Native UDP socket 默认缓冲：接收 4 MiB、发送 2 MiB（原为 7／7 MiB 的普通请求）；请求先用 `SO_RCVBUFFORCE`／`SO_SNDBUFFORCE`，daemon 有 `CAP_NET_ADMIN` 时不再被 `net.core.rmem_max` 截到 416 KB（it7、planck 此前均为 416 KB，it7 的 socket 有接收丢包）；没有该权限时退回普通请求。显式 `socket.receiveBuffer`／`sendBuffer` 按配置请求。见 [UDP 批量接口](/v2/node/transport#udp-批量接口)。
 - 实际值可观测：每个 Mesh UDP socket 一条 `UDP socket buffers` 日志（被截断时为 warn），IPC Status 新增 `sockets`（资源、地址、读回值与请求值），`meshway status` 新增 SOCKET 表并标注 `limited`。见[运行状态](/v2/node/runtime)。
-- Native UDP 通道发送节奏（`carrier::Pacer`）：允许速率为最近 100 ms 峰值的两倍、突发额度 2 ms（至少 64 KiB），只摊开空闲后与超过近期峰值两倍的突发，不是拥塞控制。见[发送节奏](/v2/node/dataplane#send-pacing)。
-- 接收路径核对：已是 `recvmmsg`（32 × 64 KiB）＋`UDP_GRO`，未改。
+- 接收路径核对：已是 `recvmmsg`（32 × 64 KiB）＋`UDP_GRO`，未改。按通道的发送节奏实测无收益，未加入。
 - 文档：[高吞吐宿主](/v2/install#high-throughput) 的 sysctl 建议（daemon 不修改）。
 
-验证：Planck `perf:dataplane`（L3 direct／L4 relay，每容器 2 CPU）TCP 2,540／2,229 → 2,749／2,514 Mbit/s，重传 618／512 → 0；60 ms RTT（netem）内层 TCP 266–315 → 413 Mbit/s；1 ms RTT 满载时内层 RTT 2 → 10 ms（缓冲排队）。20 ms 记忆的 Pacer 实测降低 60 ms RTT 吞吐 14%，未采用。Planck 18 行矩阵 `20261013T203523Z-5b8e5fc0`（`8107b20a`）全部通过，daemon 日志与 `status --json` 显示 socket 读回 14 MiB／4 MiB。见[接收缓冲与发送节奏](/v2/node/performance#接收缓冲与发送节奏)；证据 `.meshway/validation/m2/`、`.meshway/node-lab/m2/`。真机部署后复测待补。
+验证：Planck `perf:dataplane`（每容器 2 CPU）L3 direct／L4 relay TCP 2,540／2,229 → 2,674／2,468 Mbit/s，重传 618／512 → 0；60 ms RTT（netem）内层 TCP 266–315 → 410–412 Mbit/s；4 MiB 与 7 MiB 各格无差别。见[接收缓冲](/v2/node/performance#接收缓冲)；证据 `.meshway/validation/m2/`、`.meshway/node-lab/m2/`。Planck 18 行矩阵见下方补记。真机部署后复测待补。
 
 ## v0.1.0-alpha.6
 

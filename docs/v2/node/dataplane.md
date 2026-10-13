@@ -187,27 +187,9 @@ H_live,max ≤ PacketPool + pipeline／输入预取 + Manager事件队列
 
 启用对应内存记账的 Linux cgroup v2，其 `memory.current` 还计入同组其他进程、文件页和内核内存。`memory.stat` 的 `anon`、`file`、`kernel`、`sock` 分别观察这些归属；`shmem` 已包含在 `file`、`slab` 已包含在 `kernel`，不能再次相加。共享文件页的 cgroup 归属与每个进程 RSS 不同，故各进程 RSS 之和也不等于 `memory.current`。内核启动选项可以关闭 kernel／socket 记账；该环境的零计数不能证明实际无占用。
 
-Mesh UDP socket 默认请求接收 7 MiB、发送 2 MiB（见 [UDP 批量接口](/v2/node/transport#udp-批量接口)），Linux 读回为每 socket 14 MiB／4 MiB；有 `CAP_NET_ADMIN` 时不受 `rmem_max`／`wmem_max` 截断。实际排队的 socket／skb 内存计入 cgroup，**不计入该进程的 RssAnon**。预算需按实际 socket 数（每个 UDP listener 与拨号候选每地址族一个，实际值见 `meshway status` 的 SOCKET 表）、读回上限及两方向计，并为 TUN／skb、页表、slab、应用和采样器留出空间；上限不是启动即全额分配，只在接收方跟不上时被占满。不能把请求值直接当成每 socket 总额，也不能把 `sock` 当作全部网络相关内核内存。真实占用应同时核对 `ss -m` 与 cgroup 分项，不能因 pending 有界就推导 512 MiB 容器不会 OOM。
+Mesh UDP socket 默认请求接收 4 MiB、发送 2 MiB（见 [UDP 批量接口](/v2/node/transport#udp-批量接口)），Linux 读回为每 socket 8 MiB／4 MiB；有 `CAP_NET_ADMIN` 时不受 `rmem_max`／`wmem_max` 截断。实际排队的 socket／skb 内存计入 cgroup，**不计入该进程的 RssAnon**。预算需按实际 socket 数（每个 UDP listener 与拨号候选每地址族一个，实际值见 `meshway status` 的 SOCKET 表）、读回上限及两方向计，并为 TUN／skb、页表、slab、应用和采样器留出空间；上限不是启动即全额分配，只在接收方跟不上时被占满。不能把请求值直接当成每 socket 总额，也不能把 `sock` 当作全部网络相关内核内存。真实占用应同时核对 `ss -m` 与 cgroup 分项，不能因 pending 有界就推导 512 MiB 容器不会 OOM。
 
 Manager 在提交时捕获实际 link，按冻结 ChannelScope 分组；换代创建新 scope 标识。业务批次使用所有原 packet guard 与 channel guard 的交集，任何成员失效均阻止该批后续 I/O。每次 syscall／release 重新检查；同一 SecureNode 精确 snapshot 代际的 guards 可共用本次同步 Reading，但仍逐一检查 circuit 取消与各自期限，跨等待不缓存 Reading。握手、诊断、health 与 STUN 保留独立控制路径。
-
-#### 发送节奏 {#send-pacing}
-
-Native UDP 通道的业务批次由该通道的 `carrier::Pacer` 限速后交给 Session。它不是拥塞控制（内层 TCP 保留自己的），只防止快的发送方在空闲后把突然到来的大量报文以本机速度倒进慢的接收方——接收方 socket buffer 溢出后每次丢包都让内层 CUBIC 减窗。流式承载（Native TCP／VLESS／Trojan）有自己的外层 TCP，不经 Pacer。
-
-| 量 | 值 |
-| --- | --- |
-| 采样 | 每 5 ms epoch 统计该通道被 Session 接纳的字节，保留最近 20 个（100 ms） |
-| 允许速率 | `2 × max(最近 20 个 epoch 的字节/s, 4 MiB/s)` |
-| 突发额度 | `max(允许速率 × 2 ms, 64 KiB)` 的令牌桶 |
-| 等待 | 令牌不足以发出批首时，在运行时定时器（毫秒精度）上等到足够为止；突发额度至少覆盖 1 ms，等待不会让可发送的通道空转 |
-
-- 稳定的流从不被延迟：允许速率始终至少是近期峰值的两倍。按窗口发送的流（每个 RTT 一窗）在 RTT ≤ 100 ms 时，后续窗口也不再被延迟。
-- 空闲 100 ms 后从下限开始；持续有积压时允许速率每个 epoch 翻倍（从空闲到约 2.6 Gbit/s 约 25 ms），不封顶增长中的流。被摊开的只有空闲后的首个突发和超过近期峰值两倍的突发。
-- 不做 µs 级包间隔：一次 GSO `sendmsg` 本就以一个 skb 离开本机，用户态定时器无法细分；摊开发生在毫秒尺度。
-- 每个 link 一个 Pacer，随 link 替换而重建；批内未获准的后缀保留原顺序，等待期间持有全部原 packet／channel guard，取消或到期即结束。等待计入 profile 事件 `carrier.pace`／`wait` 与 `carrier.pace.wait.wall`。
-- 发送 FIFO 每方向至多一个执行中的批次，被限速的批次也会推迟其后其他通道的批次；这与 Session 背压相同，不另建队列。
-- 记忆期的取舍有实测（[接收缓冲与发送节奏](/v2/node/performance#接收缓冲与发送节奏)）：20 ms 记忆在 60 ms RTT 上让每一窗都重新爬升，内层 TCP 吞吐降 14%；它在 416 KB 接收缓冲下消除了接收方丢包，而默认缓冲本身已无丢包。接收方溢出的主修复是[接收缓冲](/v2/node/transport#udp-批量接口)，Pacer 只摊开空闲后的突发。
 
 诊断使用独立的加密 challenge request／reply，同一 owner 验证原路径和请求关联；不产生业务 FlowTable 准入。实际发送／接收通道、计时、重放与取消边界见[路径诊断](/v2/node/diagnostics)。
 

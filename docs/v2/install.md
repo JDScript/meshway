@@ -33,17 +33,17 @@ Docker 可以与出口共存：Docker 自己的 `DOCKER-*` 链只丢弃进出其
 
 ## 高吞吐宿主 {#high-throughput}
 
-`meshwayd` 以 `CAP_NET_ADMIN` 运行，Mesh UDP socket 的默认缓冲（接收 7 MiB、发送 2 MiB）不受 `net.core.rmem_max`／`wmem_max` 限制，一般不需要改 sysctl；默认值与机制见 [UDP 批量接口](/v2/node/transport#udp-批量接口)。`meshway status` 的 SOCKET 表显示每个 socket 实际得到的大小，被截断时标注 `limited`（日志同时有 warn `UDP socket buffers limited by net.core.rmem_max/wmem_max`）。
+`meshwayd` 以 `CAP_NET_ADMIN` 运行，Mesh UDP socket 的默认缓冲（接收 4 MiB、发送 2 MiB）不受 `net.core.rmem_max`／`wmem_max` 限制，一般不需要改 sysctl；默认值与机制见 [UDP 批量接口](/v2/node/transport#udp-批量接口)。`meshway status` 的 SOCKET 表显示每个 socket 实际得到的大小，被截断时标注 `limited`（日志同时有 warn `UDP socket buffers limited by net.core.rmem_max/wmem_max`）。
 
 只有在 daemon 没有 `CAP_NET_ADMIN`（例如自行改写 unit 去掉了它），或为某个 listener／dialer 显式配置了更大的 `socket.receiveBuffer` 而宿主不允许强制时，才需要提高上限。以下只是建议，daemon 不会自动修改；值需大于等于要请求的字节数：
 
 ```sh
 # /etc/sysctl.d/90-meshway.conf
-net.core.rmem_max = 8388608
-net.core.wmem_max = 4194304
+net.core.rmem_max = 4194304
+net.core.wmem_max = 2097152
 ```
 
-`sysctl --system` 生效，已有 socket 需要重启 daemon 才重新请求。出口或中继节点同时承载多条通道时，还应检查 `nstat -az UdpRcvbufErrors`：持续增长表示接收方处理不过来，见[发送节奏](/v2/node/dataplane#send-pacing)与[性能](/v2/node/performance)。
+`sysctl --system` 生效，已有 socket 需要重启 daemon 才重新请求。出口或中继节点同时承载多条通道时，还应检查 `nstat -az UdpRcvbufErrors`：持续增长表示接收方处理不过来，见[接收缓冲实测](/v2/node/performance#接收缓冲)。
 
 ## 安装
 

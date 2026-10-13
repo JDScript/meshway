@@ -38,5 +38,5 @@ Server 目录与 Node 能力共同约束可选承载，见[承载](/v2/configura
 - `enabled: false` 保留静态配置但不执行该 listener。
 - `listen` 是本机 bind；`endpoints` 是可选的额外公告地址，默认空数组。Node 自动上报实际 listener 的本机地址，接口 IP 变化通过 State 更新拨号候选；管理员只需为 NAT 公网地址／域名等补充公告。候选不证明可达，与协调端点的区别见[承载与邻接模型](/v2/node/carriers#两类建连机制)。
 - 管理员可填写协议凭据／TLS 参数，省略的可生成字段由平台补全并保存；不创建独立代理账户清单。完整配置与分发见 [NodeConfiguration](/v2/configuration-reference/node-configuration)。
-- `socket.receiveBuffer`／`sendBuffer` 为 0 时用 provider 默认值；Native UDP listener 默认接收 7 MiB、发送 2 MiB，有 `CAP_NET_ADMIN` 时不受 `net.core.rmem_max` 截断，实际值在 `meshway status` 的 SOCKET 表，见 [Socket 缓冲](/v2/configuration-reference/transports#socket-缓冲)。
+- `socket.receiveBuffer`／`sendBuffer` 为 0 时用 provider 默认值；Native UDP listener 默认接收 4 MiB、发送 2 MiB，有 `CAP_NET_ADMIN` 时不受 `net.core.rmem_max` 截断，实际值在 `meshway status` 的 SOCKET 表，见 [Socket 缓冲](/v2/configuration-reference/transports#socket-缓冲)。
 - listener key 与授权 Tag 不同；改变 type 或替换资源须按新运行代际处理，不借用旧 socket。

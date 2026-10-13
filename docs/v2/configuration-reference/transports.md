@@ -30,7 +30,7 @@ getTransportCatalog 返回 protocol、outerSocket、requiredCapability 和 schem
 
 ## Socket 缓冲
 
-listener／dialer 的 `socket.receiveBuffer`／`sendBuffer` 默认 0，表示由 provider 决定。Linux Native UDP 默认请求接收 7 MiB、发送 2 MiB，按承载速率设计而非内核缺省（约 208 KB）；请求先以特权方式绕过 `net.core.rmem_max`／`wmem_max`，没有 `CAP_NET_ADMIN` 时才受其截断。显式值覆盖默认值。完整规则见 [UDP 批量接口](/v2/node/transport#udp-批量接口)，宿主建议见[高吞吐宿主](/v2/install#high-throughput)。
+listener／dialer 的 `socket.receiveBuffer`／`sendBuffer` 默认 0，表示由 provider 决定。Linux Native UDP 默认请求接收 4 MiB、发送 2 MiB，按承载速率设计而非内核缺省（约 208 KB）；请求先以特权方式绕过 `net.core.rmem_max`／`wmem_max`，没有 `CAP_NET_ADMIN` 时才受其截断。显式值覆盖默认值。完整规则见 [UDP 批量接口](/v2/node/transport#udp-批量接口)，宿主建议见[高吞吐宿主](/v2/install#high-throughput)。
 
 ## 边界
 

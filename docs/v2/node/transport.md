@@ -97,12 +97,12 @@ Linux `UdpTransport::adopt_batch` 的 socket buffer：
 
 | 方向 | 未指定（0）时请求 | 设计依据 |
 | --- | --- | --- |
-| 接收 | **7 MiB** | 约 2.5 Gbit/s 通道 20 ms 的报文：接收方短暂失去 CPU（2 vCPU 主机忙于加解密）或 GSO 批次成串到达时不溢出 |
+| 接收 | **4 MiB** | 大于 400 Mbit/s 通道在 60 ms RTT 上的带宽时延积（约 3 MB）：一整窗同时到达或接收方短暂失去 CPU（2 vCPU 主机忙于加解密）时不溢出；接收方受 CPU 限制时，buffer 越大排队时延越长 |
 | 发送 | **2 MiB** | 发送 buffer 只容纳本机尚未发出的报文，更大只增加本机排队时延 |
 
 - 未指定时已有更大的 buffer 不降低；显式非零值（`socket.receiveBuffer`／`sendBuffer`）按配置请求。
 - 每次请求先用特权的 `SO_RCVBUFFORCE`／`SO_SNDBUFFORCE`（需要 `CAP_NET_ADMIN`；`meshwayd` 的 systemd unit 与 lab 容器都有），不受 `net.core.rmem_max`／`wmem_max` 限制；没有该权限（返回 `EPERM`）时改用普通 `SO_RCVBUF`／`SO_SNDBUF`，内核把它截到 `rmem_max`／`wmem_max`（Ubuntu 默认 212,992 B，读回 416 KB）。Node 不修改任何 sysctl；宿主调整见[高吞吐宿主](/v2/install#high-throughput)。
-- 请求后读回实际值一次（`raw::Buffers`，`Datagram::buffers()`）。Linux 读回的是授予值的两倍（含 skb 记账开销），即 7 MiB 请求读回 14 MiB；读回值小于请求值表示被截断。实际值经三处可见：每个 Mesh UDP socket 一条日志（`UDP socket buffers`，截断时为 warn `UDP socket buffers limited by net.core.rmem_max/wmem_max`），IPC Status 的 [`sockets`](/v2/node/runtime)，以及 `meshway status` 的 SOCKET 表。
+- 请求后读回实际值一次（`raw::Buffers`，`Datagram::buffers()`）。Linux 读回的是授予值的两倍（含 skb 记账开销），即 4 MiB 请求读回 8 MiB；读回值小于请求值表示被截断。实际值经三处可见：每个 Mesh UDP socket 一条日志（`UDP socket buffers`，截断时为 warn `UDP socket buffers limited by net.core.rmem_max/wmem_max`），IPC Status 的 [`sockets`](/v2/node/runtime)，以及 `meshway status` 的 SOCKET 表。
 - 同一 primitive 也用于受保护的 bootstrap DNS socket，得到相同默认值；buffer 只在有排队报文时占用内存，预算见[进程与容器内存记账](/v2/node/dataplane#进程与容器内存记账)。
 - 其它 provider 与非 Linux／逐包 UDP 的 0 仍保留系统值。buffer 不提供新的 authority，原 descriptor、scope／mark 和逐 syscall 检查继续生效。
 
