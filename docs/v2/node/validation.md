@@ -75,6 +75,7 @@ TUN、packet 和表中 V1 的静态 UDP/resolved 证据来自 `3887256b` 生产�
 | `c4018706`（R3＋X6） | 全量 16 行，Planck 矩阵 `20261012T115405Z-61e14403`（并行 8，墙钟 597 秒） | 16 行全部通过；`exit/off`（`20261012T115835Z-1812d1b8`，265.5 秒，含第 10 阶段） |
 | `7cf62c52`（S3） | 全量 16 行，Planck 矩阵 `20261012T220402Z-33d41c74`（并行 8，墙钟 979 秒，开始负载 8.7–20.7） | 14 行通过，含 State 业务路径检查（A／R／B 各报告 A→R→B 及自身角色）；`exit/off`（`20261012T221422Z-665d0bf9`）第 10 阶段“first named connection did not leave through E”，`netmap/expiry`（`20261012T221429Z-4ea9cc44`）R 在租约到期时 TUN 尚未删除。两行复跑 `20261012T223042Z-07dc2864` 仍失败（`exit/off` 同一阶段；`netmap/expiry` 为 daemon-cleanup 测试 status 未收敛）；同一窗口以 main `1852b477` 复跑这两行 `20261012T224249Z-0dc077d7` 同样失败（`exit/off` 第 10 阶段“associated address did not follow its name rule”、`netmap/expiry` daemon-cleanup 未收敛），主机负载 12–24（其他租户矩阵并行），未归因于 S3 |
 | `7facc522`（C3） | 全量 16 行，Planck 矩阵 `20261012T224334Z-469128d0`（并行 8，墙钟 1,625 秒，启动 load 12–26） | 16 行全部通过；`exit/off`（`20261012T230753Z-f4b5dbb0`，751 秒）含第 11 阶段方案切换。此前单行 `20261012T215508Z-04ee3535` 切到 `global:E` 时 A 的 DNS 安装拒绝新 netmap（第 11 阶段改为 `exit-alt`，见[剩余边界](#remaining-boundaries)）；`20261012T220808Z-43169c17` 在宿主 load 21 下接入阶段超出行期限，复跑 `20261012T222615Z-3a71f2cb` 通过 |
+| `f2441b12`（C3 合入 main `7e07313e` 后） | 全量 16 行，Planck 矩阵 `20261013T000304Z-56e3679e`（并行 8，墙钟 847 秒） | 16 行全部通过；`exit/off`（`20261013T001400Z-28cda72a`，568 秒）含第 11 阶段 |
 
 ### 远程矩阵证据 {#remote-matrix-evidence}
 
