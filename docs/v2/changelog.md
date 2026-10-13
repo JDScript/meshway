@@ -2,6 +2,13 @@
 
 按合入 main 的顺序记录工作包、提交与证据 ID。规则见[工程流程](/v2/process)；性能数字的口径见[分层性能测量](/v2/node/performance)，验收状态见[验收范围](/v2/node/validation)。
 
+## 未发布
+
+出口 conntrack 经 ctnetlink（M3）：wire 6、IPC 10、HTTP 契约、`compilerVersion` 与 Server schema 均不变。
+
+- 出口的 conntrack 精确读取、删除与 mark 过滤读取改由 Underlay 的 conntrack 模块直接经内核 ctnetlink 完成，删除按 original tuple、默认 zone 与已核对的 ct id（同 tuple 的替换条目不会被删）并回读不存在。出口宿主不再需要安装 `conntrack`（conntrack-tools）；`conntrackUnavailable` 只表示内核 ctnetlink 不可用，内核拒绝权限报 `netAdminMissing`。见[出口宿主](/v2/install#出口宿主)、[NAT 技术选择与宿主条件](/v2/node/exit-design#nat-技术选择与宿主条件)。
+- Node lab／fixture 镜像仍含 `conntrack` 工具，只用于 `exit/off` 的独立证据与人工排查。
+
 ## v0.1.0-alpha.6
 
 范围：wire 6、`compilerVersion` `meshway-netmap-2`、Server schema 不变；IPC 10（`peers[].state` 新增 `relayIdle`，`Command::Ping.target` 为 `PingTarget`，CLI 与 daemon 一起升级）；HTTP 契约自 alpha.5 起的 `PeerFacts.connected`、`IssueCode` 新增 `dns_exit_plan_required`（错误）与 `resolver_outside_access`（警告）；验收矩阵行 `nat/relay`、`nat/reconnect`（18 行）；通道 MTU（MSS clamp、本机 fragmentation needed／packet too big）；`meshway ping` 公网 IP／域名目标；以及下列 M1、D2、N5 工作包。

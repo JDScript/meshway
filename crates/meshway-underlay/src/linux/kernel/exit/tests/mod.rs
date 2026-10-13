@@ -181,7 +181,7 @@ async fn exit_nat_udp_real_reply_qualification_confirm_retire_and_expiry() {
         .unwrap();
     backend.retire(id(1)).await.unwrap();
     assert!(
-        conntrack::lookup_owned(&mut backend.commands, tuple, mark)
+        conntrack::lookup_owned(tuple, mark)
             .await
             .unwrap()
             .is_none()
@@ -301,9 +301,8 @@ async fn exit_nat_udp_real_reply_qualification_confirm_retire_and_expiry() {
     let mut recovered = Kernel::open(directory, Default::default(), tasks.clone())
         .await
         .unwrap();
-    let mut commands = command::Commands::default();
     assert!(
-        conntrack::lookup_owned(&mut commands, crash, mark)
+        conntrack::lookup_owned(crash, mark)
             .await
             .unwrap()
             .is_none()
@@ -355,7 +354,7 @@ async fn exit_recovers_real_sigkill_live_ct_in_same_namespace() {
     assert!(!record.retired && record.ct.is_some());
     let mut commands = command::Commands::default();
     assert!(
-        conntrack::lookup_owned(&mut commands, record.tuple, prior.program.mark)
+        conntrack::lookup_owned(record.tuple, prior.program.mark)
             .await
             .unwrap()
             .is_some()
@@ -366,7 +365,7 @@ async fn exit_recovers_real_sigkill_live_ct_in_same_namespace() {
         .await
         .unwrap();
     assert!(
-        conntrack::lookup_owned(&mut commands, record.tuple, prior.program.mark)
+        conntrack::lookup_owned(record.tuple, prior.program.mark)
             .await
             .unwrap()
             .is_none()

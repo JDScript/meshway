@@ -41,7 +41,7 @@ mise run node:lab status
 
 `image-build` 独立构建 Ubuntu 工具与 DNS userspace：校验锁定索引／deb 摘要，使用普通 Docker builder 在无网络构建步骤安装。镜像清单与选择保存在 `.meshway/node-lab/images/` 和 `selected-image.json`，源码、平台、label 或 image ID 不符则拒绝部署；deploy 不下载或构建镜像。
 
-锁定工具还包含 `nftables`（`/usr/sbin/nft`）、conntrack-tools 的 Ubuntu 包 `conntrack`（`/usr/sbin/conntrack`）与 `tcpdump`。包版本和依赖闭包由锁定 snapshot 索引确定，每个 deb 校验 SHA-256，构建时核对安装版本和工具执行路径。更新 `assets.lock.json`／Dockerfile／builder 会改变镜像输入指纹，必须显式重新运行 `node:lab image-build`；旧 selected image 不能直接部署。fixture 复用同一 Ubuntu 工具镜像和宿主已构建的只读程序。
+锁定工具还包含 `nftables`（`/usr/sbin/nft`）、conntrack-tools 的 Ubuntu 包 `conntrack`（`/usr/sbin/conntrack`）与 `tcpdump`。daemon 的出口经内核 ctnetlink 管理 conntrack，不调用 `conntrack`；该工具保留给 `exit/off` 的独立证据读取与人工排查，不是运行前提。包版本和依赖闭包由锁定 snapshot 索引确定，每个 deb 校验 SHA-256，构建时核对安装版本和工具执行路径。更新 `assets.lock.json`／Dockerfile／builder 会改变镜像输入指纹，必须显式重新运行 `node:lab image-build`；旧 selected image 不能直接部署。fixture 复用同一 Ubuntu 工具镜像和宿主已构建的只读程序。
 
 出口 E 的 IPv4 forwarding 前置应由 lab 声明配置提供：仅对出口容器的 namespace 声明 `sysctls: {net.ipv4.ip_forward: "1"}`，并保留 `NET_ADMIN` 与 `/dev/net/tun`。Agent 只检测该条件。当前常驻 Compose 尚未启用出口；隔离 `exit/off` 行先声明 forwarding=0 验证原因，再由 fixture 在 E 的私有 mount／network namespace 内写入并读回 1，详见 `dev/exit-fixture/README.md`。只读 proc-sys 上 `sysctl -w` 可能返回零却未写入，不能只凭退出码认定前置条件成立。镜像包含工具不代表已部署或已支持出口。
 

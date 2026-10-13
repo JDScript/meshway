@@ -136,7 +136,7 @@ VM→it7 方向 Mesh TCP 远低于裸路径、UDP iperf 30 Mbit/s 时丢包 0.6%
 | 同上，修复后 | it7 经 planck：`ping` 4/4（约 110 ms），`IpForwDatagrams` +15、`IPReversePathFilter` 不变；lax 经 it7 中继到 planck 出口（公共规则 `128.238.0.0/16` → Exit planck via it7）：`ping` 4/4，`traceroute -I` 第 1 跳 planck 的 Mesh 地址 `100.64.0.6`、第 2 跳 Docker 网桥 `172.18.0.1`、第 3 跳目标；`curl smtp://128.238.2.93/` 收到 `220 duke.poly.edu ESMTP Postfix` 与 EHLO 回答。`128.238.177.1` 不提供 HTTP，所查 NYU `128.238/16` 主机中未找到开放 HTTP 的目标 |
 | us-lax-it7（Docker 28 iptables-nft，`DOCKER-ISOLATION-STAGE-*`／`DOCKER` 链有限定网桥的 DROP，FORWARD `policy accept`）`exitEnabled=true` | 修复前报 `firewallConflict` 且整机 `synchronizing · not applied`、peer 全部 unreachable；修复后 running、applied（revision 30）、5 个 peer `direct`，`Exit unavailable (conntrack unavailable)`，Server State 同为 `unavailable`／`conntrackUnavailable`（`freshness=current`）。防火墙判定通过：it7 实际 `nft -j list ruleset` 的离线判定为无冲突；下一项真实缺口是 it7 未安装 `conntrack`。前后 it7 的外来 nft 对象（74 个，忽略计数器与 handle）完全相同；`exitEnabled` 已恢复为 `false`（revision 31） |
 
-未完成：it7 安装 `conntrack` 前不能作为出口，lax 经 it7 出口的 `curl ifconfig.me` 未执行。
+未完成：lax 经 it7 出口的 `curl ifconfig.me` 未执行。上表 `conntrackUnavailable` 是 M3 之前缺 `conntrack` 工具所致；M3 起出口经内核 ctnetlink 管理 conntrack，不再需要该工具，it7 上的实网复验待补。
 
 ### N5 实网证据 {#n5-real-network}
 

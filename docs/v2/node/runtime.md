@@ -72,13 +72,13 @@ daemon／CLI 共用[运行日志参数](/v2/logging)，日志位于 stderr；CLI
 
 ### 出口宿主前置探测
 
-Linux `Host::exit_probe` 在打开 Host 前执行，独占本进程的 Host 预约。探测读取 `ip_forward`、实际接口与临时出口 TUN 的 `rp_filter`／`src_valid_mark`，实际创建并关闭非持久 TUN，并通过固定路径 `/usr/sbin/nft` 的 JSON 原子事务检查 timed set、original conntrack tuple 与 ct mark 表达式；`/usr/sbin/conntrack` 执行有界的 IPv4 mark 过滤读取；已加载 legacy iptables 表时以 `/usr/sbin/iptables-legacy-save` 只读其内容。探测不修改宿主 sysctl 或防火墙策略，临时 nft 表在同一事务中创建、删除，取消后的命令结果经 join 与表列表回读处理。
+Linux `Host::exit_probe` 在打开 Host 前执行，独占本进程的 Host 预约。探测读取 `ip_forward`、实际接口与临时出口 TUN 的 `rp_filter`／`src_valid_mark`，实际创建并关闭非持久 TUN，并通过固定路径 `/usr/sbin/nft` 的 JSON 原子事务检查 timed set、original conntrack tuple 与 ct mark 表达式；经 ctnetlink 执行有界的 IPv4 mark 过滤 dump（内核按 mark 过滤，返回项仍逐项复核，不作身份或授权证据）；已加载 legacy iptables 表时以 `/usr/sbin/iptables-legacy-save` 只读其内容。探测不修改宿主 sysctl 或防火墙策略，临时 nft 表在同一事务中创建、删除，取消后的命令结果经 join 与表列表回读处理。
 
-`ip_forward=0`，或新建 TUN 继承的 `forwarding`（来自 `conf/default/forwarding`，临时 TUN 上读取）为 0，返回 `ipForwardDisabled`；读取失败或格式错误返回 `forwardingProbeFailed`；实际 TUN 管理操作无权限返回 `netAdminMissing`。有效 `rp_filter=max(all,interface)` 为 strict 时返回 `reversePathFilterConflict`，不会自动改为 loose/off；loose（2）与 off（0）可用：出口 TUN 没有 IPv4 地址，内核对它的入包做反向路径检查时只在反向查找本身落到该 TUN 才放行，回程表的成对规则因此不带出口 mark，正是该反向查找（见[IPv4 出口角色与 NAT 投影](#ipv4-出口角色与-nat-投影)）。工具不可用分别返回 `nftUnavailable`／`conntrackUnavailable`。观测保留原始 `observedAt`，重试上报不得重新计时。
+`ip_forward=0`，或新建 TUN 继承的 `forwarding`（来自 `conf/default/forwarding`，临时 TUN 上读取）为 0，返回 `ipForwardDisabled`；读取失败或格式错误返回 `forwardingProbeFailed`；实际 TUN 管理操作无权限返回 `netAdminMissing`。有效 `rp_filter=max(all,interface)` 为 strict 时返回 `reversePathFilterConflict`，不会自动改为 loose/off；loose（2）与 off（0）可用：出口 TUN 没有 IPv4 地址，内核对它的入包做反向路径检查时只在反向查找本身落到该 TUN 才放行，回程表的成对规则因此不带出口 mark，正是该反向查找（见[IPv4 出口角色与 NAT 投影](#ipv4-出口角色与-nat-投影)）。nft 不可用返回 `nftUnavailable`；ctnetlink 不可用（无 `nf_conntrack_netlink`、不支持 mark 过滤、回答畸形或超时）返回 `conntrackUnavailable`，内核以 `EPERM`／`EACCES` 拒绝返回 `netAdminMissing`。观测保留原始 `observedAt`，重试上报不得重新计时。
 
 此前置探测成功仍为 `probing`，`supportedFamilies`／`installedFamilies` 为空。探测与下面的角色安装是不同操作，不能据此前置探测发布 `ready`／`applied`。宿主管理员预配置 forwarding 和提供工具／设备不等于完整出口功能已可用。
 
-已打开的 Host 使用 `probe_exit(&mut self, instance: InstanceId, target: ConfigurationRef) -> ExitCapability`。它使用真实、处于 up 状态的外部接口，排除所属 Mesh／出口 TUN 和 DNS 锚点；临时设备的精确 index 注册到同一 monitor，创建／删除不会制造外部切网事件。探测检查实际 TUN 权限、转发／反向路径条件、完整 IPv4 nft 程序和 conntrack 读取；排除经 owner 回读确认的自有表后，可能挡住出口流量的宿主规则返回 `firewallConflict`，未知 mark 修改／offload 返回 `ownershipConflict`，不改写宿主规则。
+已打开的 Host 使用 `probe_exit(&mut self, instance: InstanceId, target: ConfigurationRef) -> ExitCapability`。它使用真实、处于 up 状态的外部接口，排除所属 Mesh／出口 TUN 和 DNS 锚点；临时设备的精确 index 注册到同一 monitor，创建／删除不会制造外部切网事件。探测检查实际 TUN 权限、转发／反向路径条件、完整 IPv4 nft 程序和 ctnetlink 读取；排除经 owner 回读确认的自有表后，可能挡住出口流量的宿主规则返回 `firewallConflict`，未知 mark 修改／offload 返回 `ownershipConflict`，不改写宿主规则。
 
 宿主规则只在**能匹配出口流量**时冲突。判定（`exit/firewall.rs` 的唯一实现）对 `ip`／`inet` 族的 nft 规则和已加载 legacy iptables 表的内容做同一遍历，考察的包为：经出口 TUN 转发到出口接口及其回包（forward、postrouting 钩子；出口接口为主路由表中通往 Internet 分类地址的 IPv4 路由的接口，即默认路由与直连公网网段，只通往私网的路由如 Docker 网桥不在内）、本机发往出口 TUN 的 ICMP 错误（output 钩子）。出口 TUN 是新建的内核 `tun<N>`，名字不同于任何现有接口。
 
@@ -120,7 +120,7 @@ incarnation 的类型为 `ExitIncarnation`：`new([u8; 32])`／`bytes() -> [u8; 
 
 角色安装使用 `inet meshway_exit_<installation>` 与 `ip meshway_exit_nat_<installation>` 私有表。只有独立 TUN ingress、Mesh 源、精确活投影、NEW 状态且归属 bit 尚未设置时，FORWARD 才设置 CT mark；已归属 NEW／ESTABLISHED／RELATED 必须继续匹配投影，未归属 ESTABLISHED 不接管。NEW 重传仍受同一资格约束。PREROUTING 只准备专用路由 bit，回程要求 reply direction／原 tuple／归属 mark；最终 postrouting 再检查资格。原方向执行 masquerade，回程 RPDB 将逆 NAT 后的源节点 `/32` 导向出口 TUN。正向绕过客户端 capture 的规则同时匹配出口 iif 与资格生成的 mark。每对（远端、源）的回程规则 `from <远端>/32 to <源>/32 lookup <回程表>` 不带 mark，同时是内核对该对 forward 包的反向路径查找；带 mark 的配对 `unreachable` 规则在表中无路由时终止回程查找。不带 mark 而走到出口 TUN 的包没有归属 mark，被 forward／final 链的 `oif` 规则丢弃。
 
-Mesh 池、loopback、链路本地、组播、保留／广播及出口本机地址不能作为外部转发目的。IPv6 出口拒绝。宿主必须提供实际可用的 TUN／NET_ADMIN、固定路径 nft／conntrack、`ip_forward=1` 和已支持的 loose/off 反向路径校验（宿主前提见 [Linux 安装 · 出口宿主](/v2/install#出口宿主)）；无法证明 mark 写入或 flow offload 不冲突时停装。**不要求或修改 `nf_conntrack_acct`**，计数不用于 CT 归属证明。宿主原有防火墙仍可拒绝包。
+Mesh 池、loopback、链路本地、组播、保留／广播及出口本机地址不能作为外部转发目的。IPv6 出口拒绝。宿主必须提供实际可用的 TUN／NET_ADMIN、固定路径 nft、内核 ctnetlink、`ip_forward=1` 和已支持的 loose/off 反向路径校验（宿主前提见 [Linux 安装 · 出口宿主](/v2/install#出口宿主)）；无法证明 mark 写入或 flow offload 不冲突时停装。**不要求或修改 `nf_conntrack_acct`**，计数不用于 CT 归属证明。宿主原有防火墙仍可拒绝包。
 
 所有 nft 变更通过结构化 JSON 原子批提交；工具执行每次两秒预算，全局命令槽最多等待一秒，输入和各输出管道各 2 MiB，进程并发与请求／包队列均有界。timeout 使用秒，按原单调／墙钟截止减去预算保守取整，实际资格可提前到期。续期在异步检查后再次核验旧资格，ACK 不延长原 guard。取消或丢失响应后 join 并读回核验，不把工具被杀视作回滚。
 

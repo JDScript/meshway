@@ -363,7 +363,7 @@ impl super::super::Kernel {
         for shift in 0..32 {
             let bit = 1u32 << ((shift + u32::from(random[0])) % 32);
             if mask & bit == 0
-                && super::conntrack::mark_unused(&mut commands, bit)
+                && super::conntrack::mark_unused(bit)
                     .await
                     .map_err(|_| Error::Conflict)?
             {

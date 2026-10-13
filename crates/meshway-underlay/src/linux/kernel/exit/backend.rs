@@ -194,10 +194,9 @@ impl Backend {
         self.verify().await?;
         // A mark-owned entry without this incarnation's journal binding is not
         // adoptable either. Install replay above retains the existing binding.
-        if let Some(entry) =
-            conntrack::lookup_owned(&mut self.commands, tuple, self.ledger.program.mark)
-                .await
-                .map_err(|_| Error::Conflict)?
+        if let Some(entry) = conntrack::lookup_owned(tuple, self.ledger.program.mark)
+            .await
+            .map_err(|_| Error::Conflict)?
         {
             let shared = matches!(tuple.transport, super::ExitTransport::IcmpEcho { .. })
                 && self
@@ -310,7 +309,7 @@ impl Backend {
         if !self.stop.is_cancelled() && live.valid() && Instant::now() < until {
             match tokio::time::timeout_at(
                 until.into(),
-                conntrack::lookup_owned(&mut self.commands, live.tuple, self.ledger.program.mark),
+                conntrack::lookup_owned(live.tuple, self.ledger.program.mark),
             )
             .await
             {
@@ -367,16 +366,13 @@ impl Backend {
             .and_then(|flow| flow.ct.clone())
             .ok_or(Error::Expired)?;
         self.verify().await?;
-        let entry =
-            match conntrack::lookup_owned(&mut self.commands, old.tuple, self.ledger.program.mark)
-                .await
-            {
-                Ok(entry) => entry,
-                Err(_) => {
-                    self.close_projection(incarnation).await?;
-                    return Err(Error::Conflict);
-                }
-            };
+        let entry = match conntrack::lookup_owned(old.tuple, self.ledger.program.mark).await {
+            Ok(entry) => entry,
+            Err(_) => {
+                self.close_projection(incarnation).await?;
+                return Err(Error::Conflict);
+            }
+        };
         if entry.as_ref().is_none_or(|entry| {
             entry.id != before.id
                 || entry.original != before.original
@@ -473,9 +469,9 @@ impl Backend {
             .tuple;
         self.ledger.pending = true;
         self.store.persist(&self.ledger).await?;
-        // A timed-out confirmation may have abandoned a read. Join it before
-        // the reconciliation dump; a failed read is not an excuse to skip the
-        // negative qualification transaction.
+        // An abandoned nft operation is joined before the reconciliation
+        // dump; a failed one is not an excuse to skip the negative
+        // qualification transaction.
         let _outcome = self.commands.settle().await;
         let dump = objects::dump(&mut self.commands, &self.ledger.program).await?;
         let expected = self.ledger.receipt.as_ref().ok_or(Error::Journal)?;
@@ -521,10 +517,9 @@ impl Backend {
             .find(|flow| flow.incarnation == incarnation)
             .ok_or(Error::Journal)?
             .clone();
-        let entry =
-            conntrack::lookup_owned(&mut self.commands, record.tuple, self.ledger.program.mark)
-                .await
-                .map_err(|_| Error::Conflict)?;
+        let entry = conntrack::lookup_owned(record.tuple, self.ledger.program.mark)
+            .await
+            .map_err(|_| Error::Conflict)?;
         // Preserve a confirmed translated tuple even if conntrack aged out
         // before retirement. Absence must not erase the old-reply tombstone.
         if let Some(entry) = entry.or(record.ct.clone()) {
@@ -571,14 +566,9 @@ impl Backend {
                 .values()
                 .any(|live| live.valid() && live.tuple.same_connection(record.tuple));
             if !shared {
-                conntrack::delete(
-                    &mut self.commands,
-                    record.tuple,
-                    &entry,
-                    self.ledger.program.mark,
-                )
-                .await
-                .map_err(|_| Error::Netlink)?;
+                conntrack::delete(record.tuple, &entry, self.ledger.program.mark)
+                    .await
+                    .map_err(|_| Error::Netlink)?;
             }
         }
         self.ledger

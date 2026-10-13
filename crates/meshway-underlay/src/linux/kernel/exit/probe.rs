@@ -1,7 +1,4 @@
-use super::{
-    ExitError,
-    command::{Commands, Tool},
-};
+use super::{ExitError, command::Commands};
 use meshway_model::exit::{ExitCapability, ExitStatus, ExitUnavailableReason as Reason};
 use meshway_model::{InstanceId, NetmapRef};
 use std::time::SystemTime;
@@ -198,28 +195,7 @@ impl ExitProbe {
             super::nft::submit(&mut self.commands, &batch).await?;
         }
         drop(tun);
-        let output = self
-            .commands
-            .run(
-                Tool::Conntrack,
-                vec![
-                    "-L".into(),
-                    "-f".into(),
-                    "ipv4".into(),
-                    "--mark".into(),
-                    "0xffffffff/0xffffffff".into(),
-                    "-o".into(),
-                    "xml".into(),
-                ],
-                Vec::new(),
-            )
-            .await
-            .map_err(|_| Reason::ConntrackUnavailable)?;
-        // This proves only that the filtered dump operation is available. No
-        // output entry is treated as identity, authority, or deletion evidence.
-        if !output.success {
-            return Err(Reason::ConntrackUnavailable.into());
-        }
+        super::conntrack::available().await?;
         Ok(())
     }
 }

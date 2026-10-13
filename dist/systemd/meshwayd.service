@@ -13,7 +13,7 @@ Environment=MESHWAY_LOG_FORMAT=json RUST_LOG=info
 ExecStart=/usr/local/bin/meshwayd --data-dir /var/lib/meshway $MESHWAYD_OPTIONS
 Restart=on-failure
 RestartSec=5s
-# SIGTERM to the daemon only: it cancels and joins its own nft/conntrack children.
+# SIGTERM to the daemon only: it cancels and joins its own nft children.
 KillMode=mixed
 TimeoutStartSec=60s
 TimeoutStopSec=45s

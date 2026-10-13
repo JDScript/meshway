@@ -15,7 +15,6 @@ static PROCESS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
 #[derive(Clone, Copy)]
 pub(in crate::linux::kernel) enum Tool {
     Nft,
-    Conntrack,
     /// Read-only dump of loaded legacy iptables tables.
     IptablesLegacySave,
 }
@@ -24,7 +23,6 @@ impl Tool {
     fn path(self) -> &'static str {
         match self {
             Self::Nft => "/usr/sbin/nft",
-            Self::Conntrack => "/usr/sbin/conntrack",
             Self::IptablesLegacySave => "/usr/sbin/iptables-legacy-save",
         }
     }
@@ -45,8 +43,6 @@ pub(in crate::linux::kernel) struct Output {
     pub stdout: Vec<u8>,
     #[cfg(test)]
     pub stderr: Vec<u8>,
-    #[cfg(test)]
-    pub status: std::process::ExitStatus,
 }
 
 #[derive(Default)]
@@ -193,8 +189,6 @@ fn execute(
             stdout,
             #[cfg(test)]
             stderr: _stderr,
-            #[cfg(test)]
-            status,
         })
     })
 }
@@ -213,18 +207,15 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires isolated Linux namespace, conntrack events and NET_ADMIN"]
+    #[ignore = "requires isolated Linux namespace, nft monitor and NET_ADMIN"]
     async fn exit_command_abandoned_waiter_is_still_bounded_and_joined() {
         assert_eq!(
             std::env::var("MESHWAY_UNDERLAY_ISOLATED").as_deref(),
             Ok("1")
         );
         let mut commands = Commands::default();
-        let mut waiter = Box::pin(commands.run(
-            Tool::Conntrack,
-            vec!["-E".into(), "-f".into(), "ipv4".into()],
-            Vec::new(),
-        ));
+        // `nft monitor` never exits by itself: only the budget ends it.
+        let mut waiter = Box::pin(commands.run(Tool::Nft, vec!["monitor".into()], Vec::new()));
         assert!(futures_util::poll!(waiter.as_mut()).is_pending());
         drop(waiter);
         assert!(commands.pending.is_some());

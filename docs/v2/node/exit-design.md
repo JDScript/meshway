@@ -6,7 +6,7 @@
 
 首版实现 Linux **IPv4 内核转发＋状态型 masquerade**，公网与显式授权的出口 LAN 使用同一准入、流生命周期和撤回机制。IPv6 在模型中明确表达，但首版出口执行拒绝；不能因没有 IPv6 NAT 而让受管 IPv6 从源端本地出网。
 
-推荐 Underlay 的现有唯一 Kernel owner 管理独立出口 TUN、nftables 私有表、路由、归属 journal 和精确 conntrack 清理；初版通过固定路径的 `nft` CLI 提交类型化生成的批事务。dataplane 保持唯一业务流表、Noise、完整有序路径和最终输出检查；Control 保持唯一执行快照签发者。DNS 由现有 DNS owner 扩展为经 Mesh 的受许可 resolver 服务。
+推荐 Underlay 的现有唯一 Kernel owner 管理独立出口 TUN、nftables 私有表、路由、归属 journal 和精确 conntrack 清理；初版通过固定路径的 `nft` CLI 提交类型化生成的批事务，conntrack 经内核 ctnetlink 直接读取与删除。dataplane 保持唯一业务流表、Noise、完整有序路径和最终输出检查；Control 保持唯一执行快照签发者。DNS 由现有 DNS owner 扩展为经 Mesh 的受许可 resolver 服务。
 
 出口开关仍只有管理员 Web 配置 `nodes[id].exitEnabled`。Agent 收到职责后自动准备／安装／撤回所属转发资源，不新增手工开出口的 CLI。宿主 `ip_forward` 是**检测前置条件**：本方案不修改宿主 sysctl；值不为 1 时明确报告 `exit_unavailable: ip_forward_disabled`，由系统安装文档说明宿主管理员如何预配置。自动安装 NAT／路由与自动修改全局 forwarding 是不同权限范围。
 
@@ -133,7 +133,7 @@ sha 应用 IPv4
 只删 MASQUERADE 规则不足以终止已有 NAT：conntrack 保留映射；只删 daemon 流也不足以撤回已交给内核的正向工作。建议采用两层截止：
 
 - dataplane 为已准入 flow 输出不透明的内核投影操作（flow incarnation、原 tuple、当前 deadline、scope），Underlay 只安装其镜像。nft 的有界 timed set 在 forward／回程交付门逐包检查，超时不得长于 flow idle、permit、instance／execution 截止的交集；新增／续期等待 ACK 后才 release 第一包。相对 timeout 从提交时剩余预算保守换算，排队／执行命令不重置原截止，ACK 后再次检查原 guard；时钟失效即关闭门。按批差量操作，不能每包启动 `nft`。
-- 正常撤回／方案切换先使原 guard 失效并停止新准入，再原子删除内核可转发投影、取消排队输出、退役旧 flow／cipher，精确删除其 ct mark＋original tuple 对应 conntrack，确认后回收 handle。删除失败保持 drop 门与 journal，拒绝 tuple／incarnation 复用，不回滚到旧许可。不能全局 `conntrack -F`。
+- 正常撤回／方案切换先使原 guard 失效并停止新准入，再原子删除内核可转发投影、取消排队输出、退役旧 flow／cipher，精确删除其 ct mark＋original tuple 对应 conntrack，确认后回收 handle。删除失败保持 drop 门与 journal，拒绝 tuple／incarnation 复用，不回滚到旧许可。不能全局 flush conntrack。
 - 续租只对仍活且 Control 认可直接连续性的同授权／同路径 flow 更新；**方案切换总是结束旧出口连接**。超过旧截止后不能通过新的 set timeout 或保留 conntrack 复活它。
 - 崩溃后非持久 TUN 自动消失，timed set 到期、负向 capture 保留；重启先核对 boot／namespace／installation，再清除所属旧投影与 conntrack，重新签发和握手。旧包不能因同 tuple 新建 flow 被接纳；必要的 tuple 隔离／tombstone 需覆盖延迟旧包窗口，容量耗尽拒绝新流。
 - 必须明确最终边界：已在撤回前通过内核最终过滤并排入网卡的包不能被“追回”。nft 超时／drop ACK 证明后续穿越该门的包被拒绝，不等价于物理链路上此后零字节。T2 同时测延迟 daemon 输出、内核队列和门关闭后发起的包，报告准确截止；若要求逐网卡发射时刻零旧包，需要额外 qdisc／egress 门设计，不能由普通 nft forward hook 冒称满足。
@@ -149,9 +149,9 @@ sha 应用 IPv4
 | 系统 `nft` CLI | netfilter 官方用户态，`nft -j -f -` 批事务，`nft -j list ...` 回读；无需 Meshway 自编 FFI，但有系统包／进程开销 | **首版推荐**。镜像／安装包锁定支持版本，固定可执行路径、结构化输入、无 shell 拼接、有界输出／超时／并发／join。取消后结果不明先读回 reconcile，不能假定事务未提交 |
 | 用户态 NAT／netstack | 易将每次 socket I/O 绑 guard，跨平台潜力；需要 TCP／UDP／ICMP 转发、PMTU 与另一套资源集成，当前无正式 netstack | 不符合首版 Linux 内核转发目标，不作为权限不足的自动降级 |
 
-初版 conntrack 精确删除也可使用固定路径 `conntrack` 工具（conntrack-tools），要求 family、original tuple、归属 mark/mask 和读回身份校验；内核不支持所需过滤／可验证删除时明确不可用。它不是 nft CLI 自带功能。X3 负责证明 tuple 重用竞态和工具取消后回读；不能只检查工具退出码。
+conntrack 精确删除由 Underlay 唯一的 conntrack 模块经 ctnetlink（`NFNL_SUBSYS_CTNETLINK`）完成，不依赖 conntrack-tools：先按 IPv4 original tuple 与默认 zone `GET`，核对 id、mark、original／reply 与已绑定身份一致，再以 original tuple、默认 zone 与该 ct id `DELETE`（内核比较 id，同 tuple 的替换条目回答 `ENOENT` 而不被删除），最后 `GET` 回读不存在才算退役；删除的应答本身不是证据。请求总是携带 tuple，编码层不能表达 flush。回答在 64 KiB 单报文缓冲内有界解析，畸形、截断、zone／helper／offload 无法证明归属时分别为 `conntrackUnavailable`／`ownershipConflict`；内核 `EPERM`／`EACCES` 为 `netAdminMissing`。mark 位选择与安装探测使用内核 mark 过滤的 dump，返回项逐项复核。
 
-安装探测至少包含 `/dev/net/tun`、实际 NET_ADMIN 操作、nft batch／set timeout／ct 支持、route/rule、可验证 conntrack 管理和 `ip_forward`。`/proc/sys/net/ipv4/ip_forward` 为 0 返回 `ip_forward_disabled`；不可读／格式错返回不同原因 `forwarding_probe_failed`。不把 `uid=0` 或 cap bitmap 当真实成功。
+安装探测至少包含 `/dev/net/tun`、实际 NET_ADMIN 操作、nft batch／set timeout／ct 支持、route/rule、ctnetlink mark 过滤读取和 `ip_forward`。`/proc/sys/net/ipv4/ip_forward` 为 0 返回 `ip_forward_disabled`；不可读／格式错返回不同原因 `forwarding_probe_failed`。不把 `uid=0` 或 cap bitmap 当真实成功。
 
 还要检测实际 ingress／egress 的 `rp_filter`、`src_valid_mark` 与策略路由相容性：全局 `/0` capture 可能让 underlay 反向路径校验走错接口，**SO_MARK 本身不解决入站 rp_filter**。首版支持已证明的 loose/off 组合；strict 组合未经双向路由验证则报 `reverse_path_filter_conflict`。出口 TUN 不配 IPv4 地址，内核对无地址入接口的反向路径检查只在反向查找落到该接口时放行（否则 `EXDEV`，计入 `TcpExtIPReversePathFilter`）；因此每对的回程规则不带出口 mark，兼作 forward 包的反向查找，每个新投影在 ACK 前向内核取实际入路由判定，见 [IPv4 出口角色与 NAT 投影](/v2/node/runtime#ipv4-出口角色与-nat-投影)。不照搬 Tailscale 自动写 `src_valid_mark`，也不自动关闭宿主防火墙。出口接口／地址变化撤回受影响 NAT 映射并重探测，不把旧 masquerade 连续性强行保留。
 
@@ -305,7 +305,7 @@ X1 的 manifest／lock／生成物不能由其他工作包同时改写。Console
 ### 常驻 lab 验收步骤
 
 1. 先用现有 `node:lab versions/status` 和真实 Server 接口核对 nyc／sha／lax 的身份、PID、hash、namespace、配置 revision；地区名只是节点标识。记录现有混合承载／DNS 配置，不运行会覆盖它的通用 configure。
-2. X7 更新锁定 Ubuntu 工具镜像纳入所选 `nft`／conntrack 工具；image-build、Linux build、deploy 分开，部署后再次核对实际 `/proc/<daemon-pid>/exe` hash。不进入宿主虚拟机目录、不改 Docker daemon／宿主 sysctl。
+2. X7 更新锁定 Ubuntu 工具镜像纳入所选 `nft` 工具（镜像另含 conntrack-tools，仅供 fixture 证据与人工排查，不是运行前提）；image-build、Linux build、deploy 分开，部署后再次核对实际 `/proc/<daemon-pid>/exe` hash。不进入宿主虚拟机目录、不改 Docker daemon／宿主 sysctl。
 3. 为实验保留私有原配置和 CAS revision。由管理员 Web 开 nyc.exitEnabled，给 sha 精确所需 Internet 服务授权，分配 profile，要求 sha→lax→nyc；出口 LAN 另选 nyc 可达的受控测试服务并显式授权 CIDR／服务。nyc 的 forwarding 前置条件由 lab 声明配置提供，Agent 不执行手工 sysctl。
 4. 从 sha 用数字 IPv4 先验证 TCP／UDP／echo，再默认 IPv4 出口；在 nyc 出接口抓 NAT 前后 tuple、nft 计数、ct 记录和远端访问日志，在 lax 抓加密承载和零业务明文。三个容器可能共享相同公网地址，**仅 curl IP-check 相等不能证明经 nyc**；应结合 nyc 唯一实际发包与阻断 nyc 后业务失败证明。
 5. 按 X5 验普通系统 DNS 确实由 nyc resolver 发出、MagicDNS 保持、useWithExit split 独立获准；断 nyc resolver 不向 sha 上游 fallback。再验 125 秒持续／纯接收、Web 关出口、撤权限、方案切换、实际 lease 到期、旧队列拒绝与重新开启恢复。

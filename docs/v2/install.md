@@ -21,7 +21,8 @@
 
 | 项 | 要求 | 不满足时 |
 | --- | --- | --- |
-| 工具 | `/usr/sbin/nft`（nftables）与 `/usr/sbin/conntrack`（Debian／Ubuntu 包 `conntrack`）；已加载 legacy iptables 表时还需 `/usr/sbin/iptables-legacy-save` | `nftUnavailable`／`conntrackUnavailable`；legacy 表不可读为 `firewallConflict` |
+| 工具 | `/usr/sbin/nft`（nftables）；已加载 legacy iptables 表时还需 `/usr/sbin/iptables-legacy-save` | `nftUnavailable`；legacy 表不可读为 `firewallConflict` |
+| conntrack | 内核 ctnetlink（`nf_conntrack_netlink`，含 `CONFIG_NF_CONNTRACK_MARK`；发行版内核默认提供，首次使用时由内核自动加载）。daemon 直接经 netlink 读取与精确删除连接，**不需要** `conntrack` 命令行工具 | `conntrackUnavailable`；内核拒绝（缺 `CAP_NET_ADMIN`）为 `netAdminMissing` |
 | 转发 | `net.ipv4.ip_forward=1`，且 `net.ipv4.conf.default.forwarding=1`（出口 TUN 是新接口，继承 default） | `ipForwardDisabled` |
 | 反向路径 | 每个接口的有效 `rp_filter`（`max(all, 接口)`）为 0 或 2；strict（1）不支持 | `reversePathFilterConflict` |
 | 防火墙 | 没有能挡住出口流量的规则：forward／output／postrouting 上不限于其他接口的 drop／reject，或 `policy drop` 的 FORWARD／OUTPUT | `firewallConflict` |
@@ -29,7 +30,7 @@
 
 Docker 可以与出口共存：Docker 自己的 `DOCKER-*` 链只丢弃进出其网桥的包，不算冲突。Docker 启动时若由它打开 `ip_forward`，会把 `FORWARD` 置为 `policy drop`，这确实挡住出口流量；在 Docker 启动前由系统配置打开 `ip_forward`，或在 `/etc/docker/daemon.json` 中设置 `"ip-forward-no-drop": true`（[Docker 文档](https://docs.docker.com/engine/network/packet-filtering-firewalls/#docker-on-a-router)），FORWARD 保持 accept。也可在 `DOCKER-USER` 中显式放行 `-i tun+`／`-o tun+`（放行全部 `tun*` 接口的转发，是宿主管理员的决定）。
 
-出口节点本身运行在 Docker 容器中时，容器需要 `NET_ADMIN`、`/dev/net/tun`、`--sysctl net.ipv4.ip_forward=1` 和镜像内的 nft／conntrack；容器继承的 loose `rp_filter`（2）可用。
+出口节点本身运行在 Docker 容器中时，容器需要 `NET_ADMIN`、`/dev/net/tun`、`--sysctl net.ipv4.ip_forward=1` 和镜像内的 nft（不需要 conntrack 工具）；容器继承的 loose `rp_filter`（2）可用。
 
 ## 安装
 
@@ -64,7 +65,7 @@ unit 原文为仓库 `dist/systemd/meshwayd.service`，随每个 Release tarball
 | 启动顺序 | `Wants=`／`After=network-online.target`，另在 systemd-resolved 与 D-Bus 之后启动 |
 | 就绪 | `Type=notify`、`NotifyAccess=main`：本机 IPC socket 绑定后发送 `READY=1`，开始停止时发送 `STOPPING=1`。就绪只表示可接受 CLI 命令，不表示已 running |
 | 命令 | `meshwayd --data-dir /var/lib/meshway $MESHWAYD_OPTIONS`；`EnvironmentFile=/etc/meshway/meshwayd.env` 提供 `MESHWAY_SERVER_URL` |
-| 重启 | `Restart=on-failure`、`RestartSec=5s`；`KillMode=mixed`，SIGTERM 只发给 daemon，由它取消并等待自有 nft／conntrack 子进程；`TimeoutStopSec=45s` |
+| 重启 | `Restart=on-failure`、`RestartSec=5s`；`KillMode=mixed`，SIGTERM 只发给 daemon，由它取消并等待自有 nft 子进程；`TimeoutStopSec=45s` |
 | 状态目录 | `StateDirectory=meshway`（`/var/lib/meshway`，0700）：身份、`netmap.json`、journal 与 `control.sock`（0600，只允许 root 或 daemon 同 UID） |
 | 运行目录 | `RuntimeDirectory=meshway`（`/run/meshway`，0700）且 `RuntimeDirectoryPreserve=yes`：namespace 级 DNS 归属记录需要跨 daemon 重启保留（DNS 锚点保留到显式 down），重启机器时随 tmpfs 清空 |
 | 日志 | stderr JSON（`MESHWAY_LOG_FORMAT=json`，`RUST_LOG=info`）进入 journald；stdout 的就绪／停止行同样进入 journal。字段见[运行日志](/v2/logging) |
