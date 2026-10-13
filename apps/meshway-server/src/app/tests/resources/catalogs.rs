@@ -203,3 +203,56 @@ async fn provider_catalogs_are_fetched_unreferenced_once_per_url_and_kept_throug
     assert_eq!(view.held, Some(expected));
     s.close().await;
 }
+
+/// Two documents accepted at the same sequence in the same millisecond: the
+/// parsed-catalog cache is keyed by content, so the second is what is read.
+#[tokio::test]
+async fn the_accepted_catalog_cache_follows_content_not_time() {
+    let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().canonicalize().unwrap().join("data");
+    let remote = HttpsSource::new();
+    let s = Server::open(&path, remote.clone()).await;
+    let key = catalog::signing_key(&"56".repeat(32)).unwrap();
+    let first = super::browse::publish(&remote, &key, None, None, None);
+    let second = super::browse::publish(
+        &remote,
+        &key,
+        None,
+        Some("DOMAIN-SUFFIX,other.example\n"),
+        None,
+    );
+    assert_eq!(first.sequence, second.sequence);
+    assert_ne!(first.to_bytes(), second.to_bytes());
+    let provider = RuleSetProvider {
+        catalog: "https://cache.example/index.json".into(),
+        collection: "corp".into(),
+        public_keys: vec![catalog::public_key(&key).to_string()],
+        update_interval: "24h".parse().unwrap(),
+    };
+    for document in [first, second] {
+        let bytes = document.to_bytes();
+        let signature = serde_json::to_vec(&catalog::sign(&bytes, &key)).unwrap();
+        let provider = provider.clone();
+        let read = s
+            .app
+            .executor
+            .handle()
+            .write(move |tx| {
+                let trust = crate::resources::rulesets::trust(&provider.public_keys);
+                crate::store::resources::artifacts::accept_catalog(
+                    tx,
+                    &provider.catalog,
+                    &trust,
+                    document.sequence,
+                    (&bytes, &signature),
+                    1_000,
+                )?;
+                let accepted = crate::resources::catalogs::accepted(tx, &provider)?.unwrap();
+                Ok((accepted.digest, meshway_rules::Digest::of(&bytes)))
+            })
+            .await
+            .unwrap();
+        assert_eq!(read.0, read.1);
+    }
+}

@@ -249,6 +249,22 @@ pub(crate) fn record_catalog_check(
 }
 
 /// The accepted `index.json` and `index.json.sig` bytes.
+/// The accepted signature bytes of (`catalog`, `trust`): small, and with the
+/// sequence the identity of the accepted document.
+pub(crate) fn catalog_signature(
+    tx: &Transaction<'_>,
+    catalog: &str,
+    trust: &str,
+) -> Result<Vec<u8>, Error> {
+    tx.query_row(
+        "SELECT signature FROM rule_set_catalogs WHERE catalog=?1 AND trust=?2",
+        params![catalog, trust],
+        |row| row.get(0),
+    )
+    .optional()?
+    .ok_or(Error::NotFound)
+}
+
 pub(crate) fn catalog_document(
     tx: &Transaction<'_>,
     catalog: &str,

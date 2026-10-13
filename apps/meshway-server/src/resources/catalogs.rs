@@ -259,10 +259,12 @@ pub(crate) struct Accepted {
     pub digest: meshway_rules::Digest,
 }
 
-/// Parsed accepted catalogs by (catalog URL, trust), with the stored row's
-/// (sequence, verification time): every acceptance rewrites both, so an
-/// entry is replaced whenever the stored document may have changed.
-type Parsed = BTreeMap<(String, String), ((u64, i64), Arc<Catalog>, meshway_rules::Digest)>;
+/// Parsed accepted catalogs by (catalog URL, trust), with the content
+/// identity of the stored row: its sequence and the SHA-256 of its signature
+/// bytes. The signature is over the document under the trusted keys, so a
+/// different accepted document has a different identity even at the same
+/// sequence and millisecond; time is not part of it.
+type Parsed = BTreeMap<(String, String), ((u64, [u8; 32]), Arc<Catalog>, meshway_rules::Digest)>;
 static ACCEPTED: LazyLock<Mutex<Parsed>> = LazyLock::new(Mutex::default);
 const MAX_PARSED: usize = 16;
 
@@ -281,8 +283,15 @@ pub(crate) fn accepted(
     };
     let verified_at = DateTime::from_timestamp_millis(at)
         .ok_or(Error::decode("rule_set_catalogs.verified_at"))?;
+    use sha2::Digest as _;
+    let identity = (
+        sequence,
+        <[u8; 32]>::from(sha2::Sha256::digest(
+            crate::store::resources::artifacts::catalog_signature(tx, &key.0, &key.1)?,
+        )),
+    );
     if let Some((parsed, catalog, digest)) = ACCEPTED.lock().map_err(|_| Error::RUNTIME)?.get(&key)
-        && *parsed == (sequence, at)
+        && *parsed == identity
     {
         return Ok(Some(Accepted {
             catalog: Arc::clone(catalog),
@@ -308,7 +317,7 @@ pub(crate) fn accepted(
         parsed.clear();
     }
     let digest = meshway_rules::Digest::of(&document);
-    parsed.insert(key, ((sequence, at), Arc::clone(&catalog), digest));
+    parsed.insert(key, (identity, Arc::clone(&catalog), digest));
     Ok(Some(Accepted {
         catalog,
         verified_at,
