@@ -151,6 +151,12 @@ impl ExitProbe {
         ))
         .map_err(|_| Reason::ForwardingProbeFailed)?;
         reverse_path(all_rpf, ingress_rpf, all_mark, ingress_mark)?;
+        // A new interface inherits `default/forwarding`, not `ip_forward`:
+        // the exit TUN forwards only if this fresh TUN does.
+        forwarding(read_sysctl(&format!(
+            "/proc/sys/net/ipv4/conf/{}/forwarding",
+            tun.name()
+        )))?;
         let mut random = [0u8; 16];
         getrandom::fill(&mut random).map_err(|_| Reason::NftUnavailable)?;
         let name = format!(

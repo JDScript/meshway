@@ -136,14 +136,67 @@ impl Routing {
                 RuleAttribute::Priority(base + offset),
                 RuleAttribute::Table(ledger.route_table),
                 RuleAttribute::Protocol(PROTOCOL.into()),
-                RuleAttribute::FwMark(ledger.program.mark),
-                RuleAttribute::FwMask(ledger.program.mark),
+            ];
+            // The return lookup carries no mark: it is also the kernel's
+            // reverse-path check of this pair's forward packets (no mark
+            // unless `src_valid_mark`), which with `rp_filter` on must find the
+            // source on the exit TUN. An unmarked packet that takes it meets
+            // the exit TUN's output drop; only marked ones end unreachable.
+            if action == RuleAction::Unreachable {
+                rule.attributes.extend([
+                    RuleAttribute::FwMark(ledger.program.mark),
+                    RuleAttribute::FwMask(ledger.program.mark),
+                ]);
+            }
+            rule.attributes.extend([
                 RuleAttribute::Source(remote.into()),
                 RuleAttribute::Destination(source.into()),
-            ];
+            ]);
             self.add_rule(rule, ledger, store).await?;
         }
         Ok(())
+    }
+
+    /// The kernel's own input-route decision for this pair's forward packets
+    /// as they leave the exit TUN with the exit mark: forwarding on the TUN,
+    /// a route out, the reverse-path filter. Nothing is sent. A refusal names
+    /// the host condition that stops forwarding instead of a silent drop.
+    pub async fn forwards(
+        &self,
+        ledger: &Ledger,
+        source: Ipv4Addr,
+        remote: Ipv4Addr,
+    ) -> Result<()> {
+        use futures_util::TryStreamExt;
+        use rtnetlink::packet_route::route::{RouteAddress, RouteAttribute, RouteMessage};
+        let mut message = RouteMessage::default();
+        message.header.address_family = AddressFamily::Inet;
+        message.header.destination_prefix_length = 32;
+        message.header.source_prefix_length = 32;
+        message.attributes = vec![
+            RouteAttribute::Destination(RouteAddress::Inet(remote)),
+            RouteAttribute::Source(RouteAddress::Inet(source)),
+            RouteAttribute::Iif(ledger.program.interface),
+            RouteAttribute::Mark(ledger.program.mark),
+        ];
+        let decision = self.handle.route().get(message).execute().try_next().await;
+        let refusal = match decision {
+            Ok(Some(route)) if route.header.kind == RouteType::Unicast => return Ok(()),
+            Ok(_) => "not a forwarding route",
+            Err(rtnetlink::Error::NetlinkError(error)) => match -error.raw_code() {
+                18 => "reverse-path filter (rp_filter) rejects the exit TUN's source",
+                101 | 113 => "no forwarding route (forwarding disabled or no route)",
+                22 => "martian source or destination",
+                _ => "kernel route lookup refused",
+            },
+            Err(_) => return Err(Error::Netlink),
+        };
+        tracing::warn!(
+            interface = %ledger.tun_name,
+            refusal,
+            "Exit forwarding refused by the kernel route decision; flow not admitted"
+        );
+        Err(Error::Target)
     }
 
     async fn add_rule(

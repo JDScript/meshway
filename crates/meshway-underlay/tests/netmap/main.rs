@@ -122,6 +122,16 @@ async fn withdrawal_closes_descriptors_and_keeps_the_negative_boundary() {
     println!("N1G_NETMAP_WITHDRAWAL=descriptors-closed,tun-inactive");
 }
 
+/// A destination the isolated exit namespace routes (the fixture's external
+/// service): each projection asks the kernel for its forwarding decision.
+fn routable() -> std::net::Ipv4Addr {
+    let external: std::net::SocketAddrV4 = std::env::var("MESHWAY_X4_EXTERNAL")
+        .expect("MESHWAY_X4_EXTERNAL")
+        .parse()
+        .unwrap();
+    *external.ip()
+}
+
 fn cutoff(milliseconds: u64) -> meshway_underlay::ExitCutoff {
     let now = u64::try_from(
         std::time::SystemTime::now()
@@ -154,13 +164,13 @@ async fn netmap_exit_role_survives_renewal_and_unchanged_serial_and_ends_on_with
         revoked: CancellationToken::new(),
     };
     // One new projection per probe: the exit's own decision for source 2 on
-    // its installed netmap (an Internet destination; no packet is sent).
+    // its installed netmap (no packet is sent).
     let mut next_port = 17_000u16;
-    let mut project = |source: &str| {
+    let mut project_to = |source: &str, destination: std::net::Ipv4Addr| {
         next_port += 1;
         let tuple = OriginalTuple {
             source: source.parse().unwrap(),
-            destination: "8.8.8.8".parse().unwrap(),
+            destination,
             transport: ExitTransport::Udp {
                 source_port: next_port,
                 destination_port: 42424,
@@ -177,7 +187,16 @@ async fn netmap_exit_role_survives_renewal_and_unchanged_serial_and_ends_on_with
     };
     // Tuple Access admission is SecureNode's flow table alone
     // (dataplane `netmap_exit`); the role owner installs its projections.
-    project("100.64.0.2").await.unwrap();
+    project_to("100.64.0.2", routable()).await.unwrap();
+    // A destination this host cannot forward to (the namespace has no
+    // default route) is refused by the kernel's own route decision; the
+    // role keeps serving.
+    assert!(matches!(
+        project_to("100.64.0.2", "8.8.8.8".parse().unwrap()).await,
+        Err(meshway_underlay::Error::Target)
+    ));
+    assert!(role.is_active());
+    let mut project = |source: &str| project_to(source, routable());
 
     // Same content: nothing changes and the instance-free role is unchanged.
     let renewed = sync(&mut control, &script, &first, false, HOUR).await;
@@ -243,7 +262,7 @@ async fn netmap_exit_projection_capacity_refuses_one_flow_and_keeps_the_role() {
     };
     let tuple = |port: u16| OriginalTuple {
         source: "100.64.0.2".parse().unwrap(),
-        destination: "8.8.8.8".parse().unwrap(),
+        destination: routable(),
         transport: ExitTransport::Udp {
             source_port: port,
             destination_port: 42424,
