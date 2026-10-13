@@ -6,6 +6,15 @@
 
 wire 6、`compilerVersion` 不变，IPC 9（C3）；Server schema 版本 7（F4a 新增 `rule_set_record_heads`，C3 为 6，R2d 新增 `rule_set_catalog_checks` 并允许回收 artifact 为 7；开发环境重新初始化数据目录）。HTTP 契约：`SyncRequest` 新增可省略的 `lease`；`listRuleSetCatalog` 描述更新（无字段变化）；S3 的 State／库存／诊断变化见下。
 
+出口宿主（X7）：wire 6、IPC 9、HTTP 契约、`compilerVersion` 与 Server schema 均不变。
+
+- 宿主防火墙只在能匹配出口流量时为 `firewallConflict`：forward／output／postrouting 上的阻断判决或 `policy drop`，且接口约束不排除出口 TUN 与通往 Internet 的出口接口；经 `jump`／`goto` 遍历，legacy iptables 按 `iptables-legacy-save` 内容同样判定（不再因表存在即冲突）。Docker 的网桥隔离规则与出口共存，FORWARD `policy drop`、ufw、firewalld 区域与不限接口的 drop 仍冲突。见[出口宿主前置探测](/v2/node/runtime#出口宿主前置探测)、[Linux 安装 · 出口宿主](/v2/install#出口宿主)。
+- 出口角色准备失败不再阻断 netmap：前置条件不满足或角色安装失败时内容照常 applied，只报 `exitCapability: unavailable`；周期能力探测观测到 ready 后以同一内容重新 apply（`Engine::reapply`）安装角色，无需重启或新 netmap。
+- 修复：`rp_filter` loose 的宿主（如 Docker-on-Linux 容器）上出口不转发——无地址的出口 TUN 入包被反向路径检查丢弃。回程成对规则不再要求出口 mark，兼作反向查找；每个新投影在 ACK 前取内核对其 forward 包的实际入路由判定，失败即拒绝该流并记录原因；探测另读取新 TUN 继承的 `forwarding`。
+- `exit/off` 第 2 阶段改为断言 `ip_forward=0` 时 E 已 applied，打开 forwarding 后不重启即安装角色。
+
+验证：Planck 17 行矩阵 `20261013T092932Z-0d781dd4`（`5183bf6e`）与 `20261013T090318Z-539d8762`（`df591c3f`）全部通过；`mise run --jobs 1 check` 通过；真实宿主见 [X7 真实出口宿主](/v2/node/validation#x7-exit-hosts)；证据 `.meshway/node-lab/x7/`、`.meshway/validation/x7/`。
+
 连通性三条（N3）：wire 6、IPC 9、HTTP 契约、`compilerVersion` 与 Server schema 均不变。
 
 - 候选不再按地址类别过滤（撤回 N2a 的“私网／CGNAT／ULA `localEndpoints` 只在本机有包含它的接口前缀时拨号”）：所有候选都尝试，每个失败候选按 `1 s × 2^(n−1)` 暂停、上限 300 秒；与 peer 有通道即停止探测，候选集合、通道或 netmap 变化时重新开始。协调穿透对无果结束的 peer 同样暂停 prepare 与为它发的查询。见[候选节奏](/v2/node/connectivity#candidate-pacing)。lax（Docker）↔ meshway-vm（OrbStack machine）恢复为 `direct native_udp`。

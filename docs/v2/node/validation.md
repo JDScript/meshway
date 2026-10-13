@@ -85,6 +85,18 @@ VM→it7 方向 Mesh TCP 远低于裸路径、UDP iperf 30 Mbit/s 时丢包 0.6%
 
 未观测：WARP 更换出口 IP 后的恢复（本轮窗口内未发生）。netcheck 的过滤类型判定未实现（需要能从未联系过的地址／端口回包的观测点；开发 Server 的 STUN 端点为 Google、Cloudflare，不支持 RFC 5780 CHANGE-REQUEST）。
 
+### X7 真实出口宿主 {#x7-exit-hosts}
+
+2026-10-13，分支 `x7/exit-hosts` 的 `bede97a0` 构建（最终 `5183bf6e` 只另把直连公网网段计入出口接口、修正组件测试并整理 worker 代码，planck 最终运行 `df591c3f`）。证据 `.meshway/node-lab/x7/`。
+
+| 项 | 结果 |
+| --- | --- |
+| planck 容器作出口（Docker-on-Linux，`172.18.0.2/16`，全部接口 `rp_filter=2`），修复前 | it7 经 planck 出口 `ping 128.238.177.1` 0/3；echo request 进入出口 TUN 并命中 `echo_flows`，容器 `IpForwDatagrams` 不变、`TcpExtIPReversePathFilter` +3。根因：出口 TUN 没有 IPv4 地址，loose `rp_filter` 对它的反向路径检查在反向查找未落到该 TUN 时一律 `EXDEV`（无流时 `ip route get 128.238.177.1 from 100.64.0.5 iif tun1 mark …` 即 `Invalid cross-device link`）。lab 的 OrbStack 容器 `rp_filter=0`，不做该检查 |
+| 同上，修复后 | it7 经 planck：`ping` 4/4（约 110 ms），`IpForwDatagrams` +15、`IPReversePathFilter` 不变；lax 经 it7 中继到 planck 出口（公共规则 `128.238.0.0/16` → Exit planck via it7）：`ping` 4/4，`traceroute -I` 第 1 跳 planck 的 Mesh 地址 `100.64.0.6`、第 2 跳 Docker 网桥 `172.18.0.1`、第 3 跳目标；`curl smtp://128.238.2.93/` 收到 `220 duke.poly.edu ESMTP Postfix` 与 EHLO 回答。`128.238.177.1` 不提供 HTTP，所查 NYU `128.238/16` 主机中未找到开放 HTTP 的目标 |
+| us-lax-it7（Docker 28 iptables-nft，`DOCKER-ISOLATION-STAGE-*`／`DOCKER` 链有限定网桥的 DROP，FORWARD `policy accept`）`exitEnabled=true` | 修复前报 `firewallConflict` 且整机 `synchronizing · not applied`、peer 全部 unreachable；修复后 running、applied（revision 30）、5 个 peer `direct`，`Exit unavailable (conntrack unavailable)`，Server State 同为 `unavailable`／`conntrackUnavailable`（`freshness=current`）。防火墙判定通过：it7 实际 `nft -j list ruleset` 的离线判定为无冲突；下一项真实缺口是 it7 未安装 `conntrack`。前后 it7 的外来 nft 对象（74 个，忽略计数器与 handle）完全相同；`exitEnabled` 已恢复为 `false`（revision 31） |
+
+未完成：it7 安装 `conntrack` 前不能作为出口，lax 经 it7 出口的 `curl ifconfig.me` 未执行。
+
 ### 当前验证证据
 
 `validate:matrix` 为每行独立保留报告并汇总 `matrix.json`／`summary.md`；通过结论同时要求 fixture `passed`、进程成功退出和本 run 无遗留资源。`--short` 的报告标记 `scope=diagnostic-short`：只运行 30 秒持续／纯接收窗口（退路 5 秒后触发），不要求已经跨原需求期限，未测到的延长为 null。其他场景仍执行，包括真实 instance 失效恢复；短模式不是整组验收，不能更新下述历史／当前通过状态。并发运行还需读取各行启动 load，不能与低负载串行结果不加区分地合并。
@@ -138,6 +150,7 @@ TUN、packet 和表中 V1 的静态 UDP/resolved 证据来自 `3887256b` 生产�
 | `6aaf979a`（E1 合入 main `1211538b`，含 S3、C3、R2d） | 三行 `exit/off`、`netmap/expiry`、`udp/resolv-conf`：Planck 矩阵 `20261013T021341Z-ba543719`（启动 load 6.5）；随后全量 16 行 `20261013T022738Z-789636f9`（并行 8，墙钟 898 秒，启动 load 6–8） | 三行通过（`exit/off` `20261013T021836Z-5bf70fb0`，493.0 秒，12 阶段）；全量 16 行全部通过，`exit/off`（`20261013T023637Z-8155b4dd`，518.3 秒）含第 11 阶段方案切换与第 12 阶段 ICMP 错误 |
 | `45ec6e99`（N3 前段） | 全量 17 行（新增 `nat/relay`），Planck 矩阵 `20261013T053433Z-a688a9f6`（并行 8，墙钟 772 秒，启动 load 0.9–2.7） | 17 行全部通过（`nat/relay` `20261013T053955Z-8b43b4de` 146.1 秒） |
 | `3e1142ee`（N3） | 全量 17 行，Planck 矩阵 `20261013T060913Z-86100acd`（并行 8，墙钟 766 秒，启动 load 1.6–2.7） | 17 行全部通过（`nat/relay` `20261013T061459Z-ba45e9f1` 150.7 秒；`exit/off` `20261013T061459Z-e26901ca` 491.8 秒）；证据 `.meshway/validation/n3/` |
+| `5183bf6e`（X7） | 全量 17 行，Planck 矩阵 `20261013T092932Z-0d781dd4`（并行 8，墙钟 778 秒，启动 load 1.2–2.9）；同产品行为的 `df591c3f` 矩阵 `20261013T090318Z-539d8762` 同样 17 行通过 | 17 行全部通过（`exit/off` `20261013T093730Z-4df28179` 504.3 秒，第 2 阶段 E 在 `ip_forward=0` 下 applied、打开 forwarding 后约 21 秒自动安装角色）；此前 `bede97a0` 矩阵 `20261013T071339Z-d4bdcc87` 16 行通过，`exit/off` 组件测试的投影目的 `8.8.8.8` 在无默认路由的隔离 namespace 中被新的逐流路由判定拒绝（测试改用 fixture 的外部服务并补拒绝断言），单行 `20261013T085053Z-f5b51954` 通过；证据 `.meshway/validation/x7/` |
 
 #### 租约到期撤回 {#lease-expiry-withdrawal}
 
@@ -231,6 +244,8 @@ mise run validate:remote -- --ref <commit> --rows exit/off
 `exit/off` 使用真实 Server／CLI／daemon 和独立身份的 A、R、E，仅 E 启用出口，仅 A 使用 Exit→E via R 的 profile。公网分类目标使用完全隔离 internal bridge 中的 `11.77.x.0/29`，另有显式授权的精确 RFC1918 LAN；不能把 TEST-NET 或 LAN 成功记为 Internet grant。三端均运行隔离的私有 D-Bus／resolved：A 的系统上游是 Resolver 容器（也是 A 的 `useWithExit` split 解析器；A 的方案以一个 7,000 个 `/20` 区间加该 /32 的 inline 集合规则把它定为 direct，A 由 artifact 计算并安装约 7,000 个受管区间），E 的系统上游是 external 网段内的隔离 DNS authority；配置开启 MagicDNS。Server 租约为 60 秒。
 
 入口收集能力／前置条件、saved／applied 与 netmap 租约、投影（A 的 egress 规则与 fallback、三端相同的外部 Access、E 的 exit role、R 无 role）、A 实际安装的分割（egress journal 的计划、nft `managed4` 元素数与 IPC `netmap.capture` 三者一致且不少于 7,000，split /32 不受管，external 与 LAN 目的受管）、capture、原始与 NAT tuple、nft／conntrack、服务日志、R 密文、E 阻断对照、持续／仅接收窗口、`exitEnabled` 撤回、HTTP 中断与租约到期、同 namespace journal 恢复证据。HTTP 中断同时结束在途 sync 长轮询：此后三端不再取得租约，已有 TCP 与每两秒新建的 UDP 流在离线期间继续经出口往返，直至路径上首个租约到期才结束；E 在自身租约到期时撤回 role，owned nft 表与 conntrack 精确清理，A 保留负向 egress 门（`managed4` 非空、无活动 selector）；恢复 HTTP 后无第二次 up 取得新租约并以新 circuit 建立新流。投影 ACK、projection 容量拒绝等内部边界另运行同源码的正式组件测试；组件通过不能代替独立进程行通过。所有阶段（1–12）、进程退出与精确清理通过后该次行才通过。
+
+第 2 阶段（出口前置条件，X7）：E 在 `ip_forward=0` 下启动，必须照常 running（applied 等于 saved、data plane ready），IPC 与 Server State 的 `exitCapability` 同为 `unavailable`／`ipForwardDisabled` 且没有安装角色；fixture 在 E 的 namespace 打开 forwarding 后不重启 daemon、不发新 netmap，E 的周期能力探测观测到 ready 后以同一内容安装角色（第 1、3 阶段：`ready`、`installedFamilies=[ipv4]`、applied 不变）。
 
 第 9 阶段（DNS）：A 的计划为 `viaExit`（路径 A→R→E），E 为 `serveExitResolver` 且只服务 A；A 的 `split` 解析器决定为 `direct`。A 的系统 `getaddrinfo` 必须得到 E 的系统 resolver（resolved，上游为 external 网段内的隔离 DNS authority）的回答：A、双栈 A＋AAAA（AAAA 原样返回）、90 条 A 记录（超出 Mesh UDP 1232 bytes，只能经 Mesh TCP 路由完成）；authority 记录的唯一提问者是 E 的 external 地址。A 自己的 MagicDNS 名称本地解析，未知 MagicDNS 名称本地拒绝，两者都不出现在任何上游；`split.test` 名称只从 A 的 split 地址到达 Resolver。A 的系统上游就是 Resolver，它对任何名称都会给出标记地址：E 上加 unreachable 路由阻断其 DNS authority 时 A 的查询失败，Resolver 不收到该名称。E 的出口 role 撤回与 A 的租约到期后查询失败，HTTP 中断后的租约内查询成功，撤回恢复与租约恢复后查询再次成功。抓包中 `exit-dns` 字节只出现在 E 的 external 接口，A、R 与 E 的其他接口没有。
 

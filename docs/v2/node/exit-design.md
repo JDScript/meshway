@@ -109,7 +109,7 @@ sha 应用 IPv4
 
 ### 内核规则与回程识别
 
-1. 拟用 `inet meshway_exit_<installation>` 过滤表与 `ip meshway_exit_nat_<installation>` NAT 表，名称／handle／规范规则摘要写 journal。不 flush ruleset，不接管宿主 FORWARD policy。私有 hook 对不属于本 owner 的流量 return；对本 owner 流量缺资格一律 drop。独立表 accept 不能覆盖其他表的 drop，宿主防火墙阻断应如实报不可用而非修改它。
+1. 拟用 `inet meshway_exit_<installation>` 过滤表与 `ip meshway_exit_nat_<installation>` NAT 表，名称／handle／规范规则摘要写 journal。不 flush ruleset，不接管宿主 FORWARD policy。私有 hook 对不属于本 owner 的流量 return；对本 owner 流量缺资格一律 drop。独立表 accept 不能覆盖其他表的 drop，宿主防火墙阻断应如实报不可用而非修改它；只有能匹配出口流量的宿主规则算阻断（限于其他接口的规则，如 Docker 网桥隔离，不算），判定见[出口宿主前置探测](/v2/node/runtime#出口宿主前置探测)。
 2. 只有专用 TUN ingress、已分配给 permit.source 的精确 IPv4、获准外部目的／协议／端口及仍有效的 flow 投影能进入 FORWARD。公网/LAN 的区别由 Policy 许可表达，NAT 实现不分两条业务通路。禁止转入任一 Mesh 池、loopback、链路本地、组播、广播、出口本机地址和所属虚拟接口；出口本机服务须用 Mesh 服务许可。
 3. 专用 TUN 的转发流在内核 conntrack 上标记可证明归属的 ct mark；该 mark 与 socket bypass mark 分开分配、保留外部 bit，不从网络包信任 mark。在 PREROUTING 路由前为已识别回复恢复专用回程路由标志；reply RPDB 只把逆 NAT 后的源节点地址导向出口 TUN。forward 方向仅凭专用 iif＋受管资格跳过客户端 capture 块、继续原宿主 RPDB，避免出口自己启用默认捕获时再次吞包。
 4. `postrouting` 仅对所属 forward ct／资格集合做 IPv4 masquerade；公网与 LAN 均采用实际出接口地址。回包须 ct reply direction、关联原 tuple 和活 flow 投影；未关联新入站不允许进入 Mesh。DNS 和普通 Mesh TUN 流量不能被这条 NAT 规则接管。
@@ -153,7 +153,7 @@ sha 应用 IPv4
 
 安装探测至少包含 `/dev/net/tun`、实际 NET_ADMIN 操作、nft batch／set timeout／ct 支持、route/rule、可验证 conntrack 管理和 `ip_forward`。`/proc/sys/net/ipv4/ip_forward` 为 0 返回 `ip_forward_disabled`；不可读／格式错返回不同原因 `forwarding_probe_failed`。不把 `uid=0` 或 cap bitmap 当真实成功。
 
-还要检测实际 ingress／egress 的 `rp_filter`、`src_valid_mark` 与策略路由相容性：全局 `/0` capture 可能让 underlay 反向路径校验走错接口，**SO_MARK 本身不解决入站 rp_filter**。首版支持已证明的 loose/off 组合；strict 组合未经双向路由验证则报 `reverse_path_filter_conflict`。不照搬 Tailscale 自动写 `src_valid_mark`，也不自动关闭宿主防火墙。出口接口／地址变化撤回受影响 NAT 映射并重探测，不把旧 masquerade 连续性强行保留。
+还要检测实际 ingress／egress 的 `rp_filter`、`src_valid_mark` 与策略路由相容性：全局 `/0` capture 可能让 underlay 反向路径校验走错接口，**SO_MARK 本身不解决入站 rp_filter**。首版支持已证明的 loose/off 组合；strict 组合未经双向路由验证则报 `reverse_path_filter_conflict`。出口 TUN 不配 IPv4 地址，内核对无地址入接口的反向路径检查只在反向查找落到该接口时放行（否则 `EXDEV`，计入 `TcpExtIPReversePathFilter`）；因此每对的回程规则不带出口 mark，兼作 forward 包的反向查找，每个新投影在 ACK 前向内核取实际入路由判定，见 [IPv4 出口角色与 NAT 投影](/v2/node/runtime#ipv4-出口角色与-nat-投影)。不照搬 Tailscale 自动写 `src_valid_mark`，也不自动关闭宿主防火墙。出口接口／地址变化撤回受影响 NAT 映射并重探测，不把旧 masquerade 连续性强行保留。
 
 ## 客户端捕获、LAN 与切换
 
@@ -239,7 +239,7 @@ Server 的完成校验（任一失败即拒绝，不部分接受）：
 
 - X2 消费 `PathPermit.exit`、精确 target／sourceAddresses／服务／paths／expiresAt，并使用 Policy 准入与 `permit_authorization_digest`／`permit_transition`。公网边界唯一实现为 `meshway_policy::is_internet_address`。
 - X3 消费节点计算的 `Desired::capture`（R3 起；原 `NodeConfiguration.egressCapture`）与 `exitRole`；职责只准许准备资源，实际 NAT 投影仍需 X2 的活 flow 与 guard。IPv6 受管范围必须 sink。
-- X4 把真实探测写入 `NodeState.exitCapability`，携带 instanceId、精确 target、supportedFamilies、installedFamilies、status 与原始 observedAt；报告失败不要求 applied。静态 IPv4 后端声明使用 acquire 的 `feature:exit-ipv4` version 1。没有观测保持省略，不补 ready。
+- X4 把真实探测写入 `NodeState.exitCapability`，携带 instanceId、精确 target、supportedFamilies、installedFamilies、status 与原始 observedAt；报告失败不要求 applied，出口角色准备失败也不阻断本节点其余内容的 applied（X7，见[出口宿主前置探测](/v2/node/runtime#出口宿主前置探测)）。静态 IPv4 后端声明使用 acquire 的 `feature:exit-ipv4` version 1。没有观测保持省略，不补 ready。
 - X5（已交付）：netmap 的 `DnsService`／`DnsPlan::ViaExit`／`ServeExitResolver` 复用 capture generation 与角色绑定处理 DNS 撤回；密封 Mesh ingress、DNS purpose 的中继授权、出口受保护系统 resolver 已接线，见[经 Mesh 的出口 resolver](#经-mesh-的出口-resolver)。
 
 Server／Policy 入口为 `compile_with_exit` 和 `ExitInputs`；实例、选择版本与新鲜能力预算由 Server 当前事务提供。旧 demand-5 派生缓存经原始摘要／身份检查后退役，不解码成当前执行权限。此段冻结类型不代表 X2–X5 的运行安装或 T2 已验收。
