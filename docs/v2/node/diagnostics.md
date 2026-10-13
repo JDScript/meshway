@@ -1,6 +1,6 @@
 # Mesh 路径诊断与 ping
 
-`meshway ping` 由 daemon 执行获准的端到端 Mesh 探测，展示实际路径、源端通道和往返耗时。它与 [Realtime Observation](/v2/state-reference/realtime) 共用 Server 任务、执行许可和测量来源。
+`meshway ping` 先打印本节点对目标的本地判定，再由 daemon 探测。Mesh 节点目标执行获准的端到端 Mesh 探测，展示实际路径、源端通道和往返耗时，与 [Realtime Observation](/v2/state-reference/realtime) 共用 Server 任务、执行许可和测量来源；公网 IP 与域名目标按同一判定经出口路径或本机直出 ICMP echo，见 [Mesh 外目标](#external)。
 
 ## 命令
 
@@ -8,19 +8,23 @@
 meshway ping peer-name
 meshway ping 100.64.0.2 --count 3
 meshway ping fd12:3456::2 -c 3 --json
+meshway ping 1.2.4.8
+meshway ping www.example.com -c 3
 ```
 
 | 参数／行为 | 合同 |
 | --- | --- |
-| target | 当前网络的 hostname、本网络 FQDN 或精确分配给某节点的 Mesh IP，由 Server 在授权事务内解析 |
+| target | 本节点已安装 netmap 中可见节点的 hostname、本网络 FQDN 或精确分配给它的 Mesh IP 为 Mesh 目标；其他数字 IP 与名称为 [Mesh 外目标](#external)。本节点自己的名称／地址返回 `targetNotFound` |
 | `-c`／`--count` | 1–1000，默认 10 |
-| `--json` | 每行一个类型化 `PingEvent`，保持真实事件顺序 |
+| `--json` | 每行一个类型化 `PingEvent`，保持真实事件顺序；`decision` 在任何测量事件（accepted／sample／echo／completed）之前且只有一条，名称解析期间可先有 `preparing` |
 | `-v`／`--verbose` | 人读输出另显示目标 Node ID、preparing 等待与每个通道的获取来源 |
 | probe | 默认 `icmp:*` 服务授权、auto 路径选择（与业务首包同一规则：首跳有通道的第一条可观测路径，见[中继兜底](/v2/node/connectivity#relay-fallback)）；单个探测期限 5 秒，发送间隔至少 1 秒，每任务一个 in-flight |
 | Ctrl-C | 停止本机等待并取消本订阅，退出码 130；不修改持久 up/down 意图 |
 | 退出码 | 正常完成且存在成功回复为 0；全部失败／超时或操作错误为 1 |
 
 当前入口依托 Linux TUN runtime 中已安装的 Manager／SecureNode。未上线或真实资格已失效时返回明确错误；`control-only` 与非支持的运行模式返回 unsupported。正常 publication 同步中的请求可进入有界 Preparing 队列，由实际 Control owner 检查当前实例，安装 ready 后才创建订阅和探测；排队不授予权限。请求固定本机 operator revision，down／再次 up 不会复活旧请求。
+
+Mesh 目标的 `decision` 事件只在 `-v` 或判定为 denied 时显示为人读行；其后的输出不变。
 
 ## 授权与路径
 
@@ -128,6 +132,72 @@ listener lab-udp          0.0.0.0:35000  104.28.152.187:36928  74.125.250.129:19
 dial meshway-sha/lab-udp  [::]:40651     —                     —                     unknown  unknown
 ```
 
+## Mesh 外目标 {#external}
+
+不属于任何可见节点的数字 IP 与名称是 Mesh 外目标。判定与探测都在本节点完成，零 Server 往返。
+
+### 判定
+
+名称先经本节点自己的 DNS 路径解析：daemon 像普通应用一样调用系统解析（`getaddrinfo`，即本机安装的 resolved／resolv.conf 代理与 DNS owner），取第一个 IPv4 回答（没有则取第一个回答）。显示的解析路径来自 DNS owner 对该名称的同一选择（`meshway_dns::name_route`）：MagicDNS、`exit <E>`（出口 resolver）、`resolver <key>`（split／default 配置的 resolver）、`system DNS`（unmanaged）或 `no DNS path`。名称没有解析出地址时 `decision.destination`／`action` 为 null，随后以 `targetNotFound` 结束。
+
+地址的判定是本节点首包对 `icmp:*` 的同一判定（`SecureNode::preview`：Policy `LocalCompiler` 的决定、出口按就绪事实取第一个就绪出口、路径按 `choose_path` 排序，不登记邻接需求，不建 circuit）。被本节点可信 DNS 关联命名的地址按关联名称判定，其余按地址判定，与[可信域名关联](/v2/node/exit-design#trusted-dns-associations)一致；显示的规则同样来自 `egress_rule_for_name`（有关联）或 `egress_rule_for_ip`。
+
+| `decision` 字段 | 含义 |
+| --- | --- |
+| `destination` | 判定的地址；名称未解析时为 null |
+| `node` | 地址属于某个可见节点时为该节点（Mesh 目标），否则 null |
+| `resolution` | 名称目标的 `name`、`resolver`、全部解析地址与 `association`（命名该地址的关联名称及最早一条的剩余整秒）；地址目标为 null |
+| `profile` | 本节点生效的路由方案（`NetmapStatus.routing.appliedProfile`）；Mesh 目标为 null |
+| `rule` | 决定该地址的 egress 规则：JSON Pointer、remark 与命中的规则集条目；方案 fallback 或 Mesh 目标为 null |
+| `action` | `mesh`、`exit`（`node` 为选中的出口）、`direct`、`unmanaged`、`denied`（`reason` 为 `UnavailableReason`） |
+| `path` | 新流此刻会走的完整路径（本节点在前）：会加入的已建立 circuit，否则新 circuit 会选的路径，否则首个候选；不经 Mesh 时为空 |
+
+### 探测
+
+| 判定 | 探测 |
+| --- | --- |
+| `exit` | daemon 以本节点 Mesh IPv4 为源构造 ICMP echo，作为普通本地包交给 SecureNode：与 TUN 包同一首包判定、出口路径、出口 NAT 投影与原完整路径回复。回复或引用该请求的 ICMP 错误（[ICMP 错误](/v2/node/dataplane#icmp-errors)）在交付 TUN 前由诊断取走，不进入系统 ICMP 栈 |
+| `direct`／`unmanaged` | daemon 以不带保护 mark 的 raw ICMP socket 从本机直出，由宿主路由像普通应用包一样处理；不经过 Mesh，不改变任何 Mesh 状态 |
+| `denied` | 不探测，以 `permissionDenied` 结束 |
+
+每次一个请求在途，期限 5 秒，发送间隔至少 1 秒；identifier 每次 ping 随机。RTT 为源端单调时钟：Mesh 出口探测从 SecureNode 接纳该请求，到认证后的回复被取走；本机直出从 `sendto` 返回到收到回复。接纳时尚无已建立 circuit（等待握手或邻接）的请求标 `setup: true`，其 RTT 包含本节点的 circuit 建立。只报告一个总 RTT，不拆分 Mesh 段与出口到目标段。
+
+`echo` 事件：`sequence`；`outcome` 为 `reply`、`unreachable`（`error` 为 ICMP 类型／代码）、`timeout`（已接纳但期限内无回答）或 `failed`（本机未接纳）；`from` 为回复或错误的来源；`durationUs`（无回答为 null，不补零）；`setup`；`path` 为回复返回所在的完整 Mesh 路径（本机直出为空）。结束的 `completed` 中 `sent` 为已接纳的请求数、`success` 为回复数、`timeout` 为超时数、`failed` 为本机未接纳数；`unreachable` 计入 `sent`，不计入 loss。
+
+```text
+$ meshway ping 11.77.130.3 -c 2
+decision for 11.77.130.3: exit e via a → r → e · profile exit, fallback
+pong from 11.77.130.3 via exit e (a → r → e) in 61.71 ms
+pong from 11.77.130.3 via exit e (a → r → e) in 62.12 ms
+11.77.130.3: 2 sent, 2 replied, 0% loss · rtt min/avg/max 61.71/61.91/62.12 ms
+
+$ meshway ping svc.name.exit-dns.test -c 2
+svc.name.exit-dns.test resolved via exit e: 11.77.130.3 · associated as svc.name.exit-dns.test, 53 s left
+decision for 11.77.130.3: exit e via a → r → e · profile exit, rule /routing/egress/profiles/exit/rules/2 "names through E by a trusted association"
+pong from 11.77.130.3 via exit e (a → r → e) in 64.32 ms
+pong from 11.77.130.3 via exit e (a → r → e) in 65.32 ms
+svc.name.exit-dns.test: 2 sent, 2 replied, 0% loss · rtt min/avg/max 64.32/64.82/65.32 ms
+
+$ meshway ping 172.27.0.3 -c 2
+decision for 172.27.0.3: direct, not via Mesh · profile exit, rule /routing/egress/profiles/exit/rules/0 "useWithExit split resolver among 7,000 direct ranges" (rule set exit-direct: 172.27.0.3/32)
+pong from 172.27.0.3 direct, not via Mesh in 0.03 ms
+pong from 172.27.0.3 direct, not via Mesh in 0.01 ms
+172.27.0.3: 2 sent, 2 replied, 0% loss · rtt min/avg/max 0.01/0.02/0.03 ms
+
+$ meshway ping svc.name.exit-dns.test -c 1   # domain: 授权撤回后
+svc.name.exit-dns.test resolved via exit e: 11.77.130.3 · associated as svc.name.exit-dns.test, 55 s left
+decision for 11.77.130.3: denied (unauthorized), not probed · profile exit, rule /routing/egress/profiles/exit/rules/2 "names through E by a trusted association"
+ping failed: permission denied
+```
+
+ICMP 错误显示为 `unreachable from <hop> (<类型>) via exit …`，超时为 `no reply from <地址> … within 5 s`。`--json` 对应：
+
+```json
+{"type":"decision","decision":{"destination":"11.77.130.3","node":null,"resolution":null,"profile":"exit","rule":null,"action":{"type":"exit","node":"1de5b1d2-2525-4093-95aa-971f5c899dd1"},"path":["510d669d-3f4f-4471-accd-fdd35fc73fbe","025fc49b-881c-41b0-bf4c-11c0a6349481","1de5b1d2-2525-4093-95aa-971f5c899dd1"]}}
+{"type":"echo","echo":{"sequence":0,"outcome":"reply","from":"11.77.130.3","error":null,"durationUs":60267,"setup":false,"path":["510d669d-3f4f-4471-accd-fdd35fc73fbe","025fc49b-881c-41b0-bf4c-11c0a6349481","1de5b1d2-2525-4093-95aa-971f5c899dd1"]}}
+{"type":"completed","sent":1,"success":1,"timeout":0,"failed":0}
+```
+
 ## 限制
 
-`traffic` 测量当前为 unsupported；中转 hostname 不额外披露；daemon 重启不恢复旧 CLI ping 意图。验收状态见[验收范围](/v2/node/validation)。
+`traffic` 测量当前为 unsupported；中转 hostname 不额外披露；daemon 重启不恢复旧 CLI ping 意图。Mesh 外目标只探测 IPv4：IPv6 目标的出口判定为 denied `unsupportedFamily`，direct／unmanaged 判定以 `unsupported` 结束；不拆分 Mesh 段与出口到目标段的 RTT（出口侧探测需要新的许可）；同一 ping 内不切换出口。验收状态见[验收范围](/v2/node/validation)。

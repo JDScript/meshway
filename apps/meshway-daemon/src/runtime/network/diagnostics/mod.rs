@@ -1,7 +1,10 @@
 //! Host adapter for the shared observation executor. No HTTP or cipher owner.
 //! Server tasks (Console observations) and local `meshway ping` share one
 //! executor; a ping is a local task decided on the installed netmap alone,
-//! never published, and its results go back to IPC only.
+//! never published, and its results go back to IPC only. A target outside
+//! the Mesh is echoed instead ([`external`]).
+mod direct;
+pub(super) mod external;
 use super::Request;
 use crate::runtime::PingRequest;
 use crate::runtime::ping::Progress;
@@ -13,9 +16,9 @@ use meshway_model::InstanceId;
 use meshway_model::{
     EventId, NodeId, ObservationId, ObservationSubscriptionId, observations::ProbeChannel,
 };
-use meshway_protocol::ipc::{PingError, PingEvent};
+use meshway_protocol::ipc::{PingError, PingEvent, PingTarget};
 use meshway_protocol::{
-    NodeObservationTarget, NodeObservationTargetView,
+    NodeObservationTargetView,
     observations::{ObservationPath, ObservationPhase, ObservationTask, ObservationUpdate},
 };
 use std::{
@@ -70,6 +73,8 @@ pub(super) struct Diagnostics {
     effective_pauses: std::collections::BTreeSet<ObservationId>,
     /// Latest successful round trip of any task, by target; status only.
     rtts: BTreeMap<NodeId, meshway_protocol::ipc::PeerRtt>,
+    /// Pings of targets outside the Mesh.
+    pub externals: external::Externals,
 }
 
 fn random_uuid() -> Option<uuid::Uuid> {
@@ -78,13 +83,11 @@ fn random_uuid() -> Option<uuid::Uuid> {
     Some(uuid::Builder::from_random_bytes(bytes).into_uuid())
 }
 
-/// Resolve a ping target on the netmap: a configured hostname or Mesh FQDN
-/// from its visible projection, or an exact Mesh IP. MagicDNS enablement only
-/// controls system DNS handling; diagnostic admission is checked separately.
-fn resolve(
-    desired: &Desired,
-    target: &NodeObservationTarget,
-) -> Result<NodeObservationTargetView, PingError> {
+/// The Mesh Node a ping target names on the netmap: a configured hostname
+/// or Mesh FQDN of its visible projection, or an exact Mesh IP. MagicDNS
+/// enablement only controls system DNS handling; diagnostic admission is
+/// checked separately. Any other target lies outside the Mesh.
+fn mesh_target(desired: &Desired, target: &PingTarget) -> Option<NodeObservationTargetView> {
     let netmap = desired.netmap();
     let configuration = &netmap.projection.configuration;
     let domain = &configuration.dns.domain;
@@ -92,26 +95,53 @@ fn resolve(
         **id != netmap.node_id
             && netmap.projection.inventory.contains_key(id)
             && match target {
-                NodeObservationTarget::Name { name } => {
+                PingTarget::Name { name } => {
                     let name = name.trim_end_matches('.').to_ascii_lowercase();
                     let fqdn = meshway_configuration::node_dns_name(&node.hostname, domain).ok();
                     name == node.hostname.to_ascii_lowercase()
                         || fqdn.is_some_and(|fqdn| fqdn.eq_ignore_ascii_case(&name))
                 }
-                NodeObservationTarget::MeshIp { address } => address
-                    .parse::<std::net::IpAddr>()
-                    .is_ok_and(|ip| match ip {
-                        std::net::IpAddr::V4(ip) => node.addresses.ipv4 == Some(ip),
-                        std::net::IpAddr::V6(ip) => node.addresses.ipv6 == Some(ip),
-                    }),
+                PingTarget::Address { address } => {
+                    address
+                        .parse::<std::net::IpAddr>()
+                        .is_ok_and(|ip| match ip.to_canonical() {
+                            std::net::IpAddr::V4(ip) => node.addresses.ipv4 == Some(ip),
+                            std::net::IpAddr::V6(ip) => node.addresses.ipv6 == Some(ip),
+                        })
+                }
             }
     });
-    let (id, node) = found.ok_or(PingError::TargetNotFound)?;
-    Ok(NodeObservationTargetView {
+    let (id, node) = found?;
+    Some(NodeObservationTargetView {
         node_id: *id,
         hostname: node.hostname.clone(),
         addresses: node.addresses.clone(),
     })
+}
+
+/// This Node's own Mesh address is not a ping target.
+fn own_target(desired: &Desired, target: &PingTarget) -> bool {
+    let local = desired.netmap();
+    let addresses = &local.self_.addresses;
+    match target {
+        PingTarget::Name { name } => {
+            let name = name.trim_end_matches('.').to_ascii_lowercase();
+            name == local.self_.hostname.to_ascii_lowercase()
+                || meshway_configuration::node_dns_name(
+                    &local.self_.hostname,
+                    &local.projection.configuration.dns.domain,
+                )
+                .is_ok_and(|fqdn| fqdn.eq_ignore_ascii_case(&name))
+        }
+        PingTarget::Address { address } => {
+            address
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|ip| match ip.to_canonical() {
+                    std::net::IpAddr::V4(ip) => addresses.ipv4 == Some(ip),
+                    std::net::IpAddr::V6(ip) => addresses.ipv6 == Some(ip),
+                })
+        }
+    }
 }
 
 impl Diagnostics {
@@ -194,7 +224,7 @@ impl Diagnostics {
     /// targets fail at once; otherwise preparation begins locally.
     pub fn ping(
         &mut self,
-        installed: Option<(&Desired, Option<InstanceId>)>,
+        installed: Option<(&Desired, Option<InstanceId>, &mut SecureNode)>,
         session: crate::runtime::PingSession,
     ) {
         let crate::runtime::PingSession {
@@ -207,16 +237,55 @@ impl Diagnostics {
             let _ = request.events.try_send(PingEvent::Failed { code });
             request.cancellation.cancel();
         };
-        let Some((desired, bound)) = installed else {
+        let Some((desired, bound, secure)) = installed else {
             return fail(&request, PingError::NotRunning);
         };
-        if self.locals.len() >= 8 {
+        if self.locals.len() + self.externals.len() >= 8 {
             return fail(&request, PingError::Busy);
         }
-        let target = match resolve(desired, &request.target) {
-            Ok(target) => target,
-            Err(code) => return fail(&request, code),
+        if own_target(desired, &request.target) {
+            return fail(&request, PingError::TargetNotFound);
+        }
+        let Some(target) = mesh_target(desired, &request.target) else {
+            return match request.target.clone() {
+                PingTarget::Name { name } => {
+                    self.externals.resolve(desired, request, progress, name)
+                }
+                PingTarget::Address { address } => match address.parse::<std::net::IpAddr>() {
+                    Ok(destination) => self.externals.start(
+                        secure,
+                        request,
+                        progress,
+                        destination.to_canonical(),
+                        None,
+                    ),
+                    Err(_) => fail(&request, PingError::TargetNotFound),
+                },
+            };
         };
+        // The decision comes first; a Mesh Node is then measured on its
+        // diagnostic circuit.
+        let address = target
+            .addresses
+            .ipv4
+            .map(std::net::IpAddr::V4)
+            .or(target.addresses.ipv6.map(std::net::IpAddr::V6));
+        if let Some(address) = address {
+            let decision = meshway_dataplane::diagnostics::decision::decide(
+                secure,
+                address,
+                None,
+                u64::try_from(chrono::Utc::now().timestamp_millis()).unwrap_or_default(),
+            );
+            if request
+                .events
+                .try_send(PingEvent::Decision { decision })
+                .is_err()
+            {
+                request.cancellation.cancel();
+                return;
+            }
+        }
         match meshway_dataplane::secure::diagnostic_paths(desired, target.node_id, None) {
             Ok(_) => {}
             Err(meshway_dataplane::secure::Error::Unsupported) => {
@@ -359,6 +428,7 @@ impl Diagnostics {
         self.paused.clear();
         self.effective_pauses.clear();
         self.rtts.clear();
+        self.externals.stop().await;
         while self.sends.join_next().await.is_some() {}
         self.epoch = tokio_util::sync::CancellationToken::new();
     }
@@ -389,6 +459,7 @@ impl Diagnostics {
             .wake_at()
             .into_iter()
             .chain(poll)
+            .chain(self.externals.wake_at())
             .min()
             .map(Into::into)
     }
@@ -402,6 +473,7 @@ impl Diagnostics {
         >,
         gateway: &mpsc::Sender<Request>,
     ) {
+        self.externals.drive(Some(secure));
         // Drain already-completed admissions before considering probe timers.
         // Packet work may have deferred this consumer without delaying wire I/O.
         while let Some(sent) = self.sends.try_join_next() {

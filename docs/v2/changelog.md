@@ -4,13 +4,22 @@
 
 ## 未发布
 
-路径 MTU 收口与出口 DNS 语义（M1）：wire 6、IPC 9、`compilerVersion` 与 Server schema 均不变。HTTP 契约：`IssueCode` 新增 `dns_exit_plan_required`（错误）与 `resolver_outside_access`（警告）。
+路径 MTU 收口与出口 DNS 语义（M1）：wire 6、IPC（随 D2 为 10）、`compilerVersion` 与 Server schema 均不变。HTTP 契约：`IssueCode` 新增 `dns_exit_plan_required`（错误）与 `resolver_outside_access`（警告）。
 
 - 出口 DNS 条件收窄：普通查询只在方案有经出口的名称规则（`domain`、`domainSuffix`、含名称的规则集）或 fallback 经出口时经出口解析，用那一个出口；只有 IP 规则（含 `geoip:*`）、fallback direct／unmanaged 的方案用本机 resolver，经几个出口都可以。名称规则／出口 fallback 经不同出口仍为 `exitPlanRequired`，Server 保存时即以 `dns_exit_plan_required` 拒绝（指向规则）。唯一实现 `meshway_policy::compile::dns_resolution`。见 [DNS · 使用出口时](/v2/configuration-reference/dns#使用出口时)。
 - `useWithExit` 解析器在出口区间内时是源分割的 direct 例外：`global:<exit>` 下 DNS 不再以 “resolver plan is incomplete” 卡在 synchronizing；节点 Access 不覆盖其地址时保存给出 `resolver_outside_access` 警告。
 - 通道 MTU：本节点超过首跳通道内层上限的包在消耗 nonce 前丢弃，并向本机 TUN 合成 fragmentation needed（IPv4）／packet too big（IPv6），源地址为原目的；TCP SYN 的 MSS 由 Underlay 自有 nft 表 `meshway_mss_<installation>` 限到通道上限（Mesh 目的／来源、出口 TUN 的源节点）。数据面另接受 ICMPv6 destination unreachable／packet too big／time exceeded 作为相关报文。见[通道 MTU](/v2/node/dataplane#channel-mtu)。
 - 可信域名关联：源端持有名称规则回答等到该查询截止前 250 ms（至多 5 秒），只有该查询等待。
 - `exit/off`：第 11 阶段切到 `global:E`；第 12 阶段新增窄 A–R 通道（MSS 限制、本机 fragmentation needed）。
+
+`meshway ping` 公网目标（D2）：IPC 10；wire 6、HTTP 契约、`compilerVersion` 与 Server schema 均不变。CLI 与 daemon 须一起升级（IPC 9 的 CLI 对新 daemon 得到 `version` 错误）。
+
+- `meshway ping` 接受公网 IP 与域名：先打印本节点的本地判定（方案、规则 pointer／remark／规则集条目、exit／direct／unmanaged／denied 与完整路径；域名显示经本机 DNS 路径的解析与 X6 关联剩余秒数），再探测：exit 经出口路径 ICMP echo（ICMP 错误显示为 `unreachable from <hop>`），direct／unmanaged 本机直出并标注 not via Mesh，denied 不探测。只报告总 RTT。见 [Mesh 外目标](/v2/node/diagnostics#external)。
+- IPC 10：`Command::Ping.target` 为 `PingTarget`（`name`／`address`，取代 `meshIp`）；`PingEvent` 新增 `decision`（在任何测量事件之前，Mesh 目标也有）与 `echo`；`--json` 依次输出。
+- `meshway status` 的 `relay … via <R>` 与 `ping` 的判定路径取新流实际会加入的 circuit（与 `choose_path`／`joinable` 同一排序），不再是多条等长 circuit 中 ID 序的第一条（N5 遗留）。
+- `exit/off` 新增第 13 阶段：公网 IP 经 E、split resolver direct、名称规则域名经 E resolver 与关联、`domain:` 撤权后 denied。
+
+验证：Planck 18 行矩阵 `20261013T160631Z-761b2963`（`79ef1788`）全部通过，`exit/off` 行 `20261013T161638Z-b6eb53a0`；证据 `.meshway/node-lab/d2/`。真机（lab／VM／it7／planck）部署后验收待补。
 
 重启后自愈（N5）：wire 6、IPC 9（`peers[].state` 新增 `relayIdle`）、HTTP 契约、`compilerVersion` 与 Server schema 均不变。
 

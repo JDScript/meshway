@@ -5,6 +5,9 @@ import unittest
 spec = importlib.util.spec_from_file_location("exit_evidence", Path(__file__).resolve().parents[1] / "dev/exit-fixture/evidence.py")
 evidence = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(evidence)
+spec = importlib.util.spec_from_file_location("exit_ping", Path(__file__).resolve().parents[1] / "dev/exit-fixture/ping.py")
+pinging = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(pinging)
 
 
 class ExitEvidenceTests(unittest.TestCase):
@@ -18,7 +21,7 @@ class ExitEvidenceTests(unittest.TestCase):
                 evidence.nat_tuple(invalid, "udp", "100.64.0.1:40000", "11.77.2.3:8080", "11.77.2.2")
 
     def test_component_or_partial_pass_cannot_promote_row(self):
-        report = {"stages": {str(i): {"status": "passed"} for i in range(1, 13)},
+        report = {"stages": {str(i): {"status": "passed"} for i in range(1, 14)},
                   "dnsNoSourceFallback": {"passed": True},
                   "processes": {role: {"ExitCode": 0, "Running": False, "OOMKilled": False}
                                 for role in ("controller", "a", "r", "e", "external", "lan", "resolver", "router")}}
@@ -37,6 +40,74 @@ class ExitEvidenceTests(unittest.TestCase):
         report["stages"]["7"]["status"] = "passed"
         report["cleanupErrors"] = ["namespace still running"]
         self.assertFalse(evidence.all_stages_passed(report))
+
+    def test_component_or_partial_pass_cannot_promote_row_without_the_ping_phase(self):
+        report = {"stages": {str(i): {"status": "passed"} for i in range(1, 14)},
+                  "processes": {}}
+        del report["stages"]["13"]
+        self.assertFalse(evidence.all_stages_passed(report))
+
+
+A, R, E = "a-id", "r-id", "e-id"
+
+
+def record(stream, code=0):
+    import json
+    return {"exitCode": code, "stdout": "".join(json.dumps(event) + "\n" for event in stream)}
+
+
+def decided(action, path, rule=None, resolution=None, destination="11.77.0.3"):
+    return {"type": "decision", "decision": {"destination": destination, "node": None, "resolution": resolution,
+            "profile": "exit", "rule": rule, "action": action, "path": path}}
+
+
+def reply(source, path):
+    return {"type": "echo", "echo": {"sequence": 0, "outcome": "reply", "from": source, "error": None,
+            "durationUs": 900, "setup": False, "path": path}}
+
+
+DONE = {"type": "completed", "sent": 1, "success": 1, "timeout": 0, "failed": 0}
+
+
+class ExitPingTests(unittest.TestCase):
+    def test_exit_ping_needs_the_decision_first_and_replies_on_the_same_path(self):
+        good = [decided({"type": "exit", "node": E}, [A, R, E]), reply("11.77.0.3", [A, R, E]), DONE]
+        self.assertEqual(pinging.exit_ping(record(good), "11.77.0.3", E, [A, R, E])["success"], 1)
+        preparing = {"type": "preparing", "elapsedMs": 900}
+        pinging.exit_ping(record([preparing] + good), "11.77.0.3", E, [A, R, E])
+        for broken in ([good[1], good[0], DONE],
+                       [decided({"type": "direct"}, []), good[1], DONE],
+                       [good[0], reply("11.77.0.1", [A, R, E]), DONE],
+                       [good[0], reply("11.77.0.3", [A, E]), DONE],
+                       [good[0], good[1], dict(DONE, success=0)]):
+            with self.assertRaises(RuntimeError):
+                pinging.exit_ping(record(broken), "11.77.0.3", E, [A, R, E])
+        with self.assertRaises(RuntimeError):
+            pinging.exit_ping(record(good, code=1), "11.77.0.3", E, [A, R, E])
+
+    def test_a_name_needs_the_exit_resolver_and_its_association(self):
+        name = "svc.name.exit-dns.test"
+        resolution = {"name": name, "resolver": {"type": "exit", "node": E}, "addresses": ["11.77.0.3"],
+                      "association": {"names": [name], "remainingSeconds": 40}}
+        rule = {"pointer": "/routing/egress/profiles/exit/rules/2", "remark": "", "ruleSet": None}
+        good = [decided({"type": "exit", "node": E}, [A, R, E], rule, resolution), reply("11.77.0.3", [A, R, E]), DONE]
+        pinging.exit_ping(record(good), "11.77.0.3", E, [A, R, E], rule["pointer"], name)
+        for change in ({"association": None}, {"resolver": {"type": "system"}}):
+            broken = [decided({"type": "exit", "node": E}, [A, R, E], rule, dict(resolution, **change)), good[1], DONE]
+            with self.assertRaises(RuntimeError):
+                pinging.exit_ping(record(broken), "11.77.0.3", E, [A, R, E], rule["pointer"], name)
+
+    def test_direct_and_denied(self):
+        rule = {"pointer": "/routing/egress/profiles/exit/rules/0", "remark": "", "ruleSet": None}
+        good = [decided({"type": "direct"}, [], rule, destination="10.9.0.2"), reply("10.9.0.2", []), DONE]
+        pinging.local_ping(record(good), "10.9.0.2", "direct", rule["pointer"])
+        with self.assertRaises(RuntimeError):
+            pinging.local_ping(record([good[0], reply("10.9.0.2", [A, R, E]), DONE]), "10.9.0.2", "direct", rule["pointer"])
+        denied = [decided({"type": "denied", "reason": "unauthorized"}, []), {"type": "failed", "code": "permissionDenied"}]
+        self.assertEqual(pinging.denied_ping(record(denied, code=1))["reason"], "unauthorized")
+        for broken in (record(denied, code=0), record([denied[0], reply("11.77.0.3", []), denied[1]], code=1)):
+            with self.assertRaises(RuntimeError):
+                pinging.denied_ping(broken)
 
 
 if __name__ == "__main__":

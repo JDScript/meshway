@@ -3,10 +3,10 @@
 #[cfg(unix)]
 mod client;
 mod codec;
+mod ping;
 mod secret;
 mod view;
-pub use crate::NodeObservationTarget as PingTarget;
-use crate::{EnrollmentResponse, InstanceLease, NodeObservationTarget, NodeObservationTargetView};
+use crate::{EnrollmentResponse, InstanceLease, NodeObservationTargetView};
 use chrono::{DateTime, Utc};
 #[cfg(unix)]
 pub use client::{Client, ClientError, PingStream};
@@ -19,6 +19,10 @@ pub use meshway_model::{
     observations::{EndpointKind, LinkAcquisition},
     state::ProbeOutcome,
 };
+pub use ping::{
+    PingAction, PingAssociation, PingDecision, PingEcho, PingEchoOutcome, PingIcmpError,
+    PingResolution, PingResolver, PingRule, PingTarget,
+};
 pub use secret::EnrollmentKey;
 use serde::Serialize;
 use utoipa::ToSchema;
@@ -28,7 +32,7 @@ pub use view::{
     PortMapping, StunMapping,
 };
 
-pub const VERSION: u16 = 9;
+pub const VERSION: u16 = 10;
 pub const MAX_MESSAGE_BYTES: usize = 64 * 1024;
 pub const DEFAULT_SOCKET: &str = "/var/lib/meshway/control.sock";
 
@@ -70,7 +74,7 @@ pub enum Command {
         profile: String,
     },
     Ping {
-        target: NodeObservationTarget,
+        target: PingTarget,
         #[serde(deserialize_with = "ping_count")]
         count: u16 [minimum = 1, maximum = 1000],
     },
@@ -102,6 +106,9 @@ meshway_model::tagged! { #[derive(Clone, Debug)] pub enum ResultBody {
 } }
 
 meshway_model::tagged! { #[derive(Clone, Debug)] pub enum PingEvent {
+    /// First event: this Node's local decision for the target, before any probe.
+    Decision { decision: PingDecision },
+    /// A Mesh Node target: its measurement subscription.
     Accepted {
         #[serde(rename = "subscriptionId")]
         subscription_id: ObservationSubscriptionId,
@@ -118,6 +125,8 @@ meshway_model::tagged! { #[derive(Clone, Debug)] pub enum PingEvent {
         observation_id: ObservationId,
         sample: ObservationSample,
     },
+    /// One echo request toward a target outside the Mesh.
+    Echo { echo: PingEcho },
     Completed { sent: u32, success: u32, timeout: u32, failed: u32 },
     Failed { code: PingError },
 } }

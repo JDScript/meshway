@@ -25,7 +25,7 @@ use tokio::sync::{mpsc, watch};
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))] // Executed by the Linux-only worker.
 pub(crate) struct PingRequest {
     pub id: meshway_model::RequestId,
-    pub target: meshway_protocol::NodeObservationTarget,
+    pub target: meshway_protocol::ipc::PingTarget,
     pub count: u16,
     pub events: mpsc::Sender<meshway_protocol::ipc::PingEvent>,
     pub cancellation: tokio_util::sync::CancellationToken,

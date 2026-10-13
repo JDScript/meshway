@@ -5,6 +5,11 @@
 //! decision on Engine's desired netmap, as for a first packet, with no Server
 //! round trip. The host clears this owner when Engine withdraws the content. A permitted pair without a path every Node can
 //! observe reports `Unsupported`; a denied pair does not bind.
+//!
+//! [`decision`] reports a target's local decision and [`echo`] times ICMP
+//! echo toward an address outside the Mesh.
+pub mod decision;
+pub mod echo;
 mod measurement;
 #[cfg(test)]
 mod tests;

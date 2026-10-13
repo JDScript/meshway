@@ -646,3 +646,144 @@ async fn netmap_exit_icmp_errors_return_on_their_flow_only() {
     deliver_reply(&mut f, id, reply);
     f.close().await;
 }
+
+/// `meshway ping` toward an Internet address: the diagnostic echo is an
+/// ordinary local packet decided on A's netmap, carried A → R → exit B, and
+/// its reply and an ICMP error quoting it return on the same full path, where
+/// the echo owner matches and times them.
+#[tokio::test]
+async fn netmap_exit_echo_diagnostic_measures_the_exit_reply_and_maps_errors_to_unreachable() {
+    use meshway_dataplane::diagnostics::echo::{Echo, Outcome};
+    use meshway_dataplane::secure::{Flushed, Preview};
+    let mut f = NetmapMesh::with(DAY_MS, |cfg, [a, _, _]| {
+        cfg.access.push(rule(a, "autogroup:internet", &["icmp:*"]))
+    })
+    .await;
+    let [a, r, b] = f.ids();
+    let internet: std::net::IpAddr = super::support::netmap::INTERNET.parse().unwrap();
+    let std::net::IpAddr::V4(target) = internet else {
+        unreachable!()
+    };
+    let icmp = (
+        meshway_configuration::execution::BusinessProtocol::IcmpEcho,
+        None,
+    );
+    assert_eq!(
+        f.a.preview(internet, icmp).unwrap(),
+        Preview::Denied(meshway_configuration::execution::UnavailableReason::ExitUnavailable),
+        "no exit is ready yet"
+    );
+    f.a.set_ready_exits([b].into());
+    assert!(matches!(f.a.preview(internet, icmp).unwrap(),
+        Preview::Mesh { path, established: false, .. } if path == [a, r, b]));
+    let std::net::IpAddr::V4(source) = f.address(0) else {
+        unreachable!()
+    };
+    let start = std::time::Instant::now();
+    let mut echo = Echo::new(target, 0x4d57, start);
+    let request = echo.packet(source, start).unwrap();
+    assert!(echo.is_request(&request.facts()));
+    let quoted = request.as_bytes().to_vec();
+    let Outbound::Queued { init: Some(init) } = f.a.outbound(request).unwrap() else {
+        panic!("the first echo waits for its exit circuit")
+    };
+    echo.admitted(std::time::Instant::now(), true);
+    let id = f.finish_handshake(init).await;
+    let mut flushed = f.a.flush(32);
+    let Ok(Flushed::Send(job)) = flushed.remove(0) else {
+        panic!("queued echo")
+    };
+    let frame = meshway_dataplane::secure::pipeline::seal(job).unwrap();
+    let Received::Forward(next) =
+        f.r.receive(&f.ar.carrier, frame.release(|b| b).unwrap())
+            .unwrap()
+    else {
+        panic!("relay")
+    };
+    let Received::Packet(pending) =
+        f.b.receive(&f.rb.carrier, next.release(|b| b).unwrap())
+            .unwrap()
+    else {
+        panic!("exit")
+    };
+    assert_eq!(pending.hop(), meshway_dataplane::Hop::Exit);
+    install(&mut f);
+    pending.release(|_| ()).unwrap();
+    assert!(matches!(f.a.preview(internet, icmp).unwrap(),
+        Preview::Mesh { path, established: true, .. } if path == [a, r, b]));
+    let answer = |f: &mut NetmapMesh, packet: Packet| {
+        let reply = f.b.exit_reply(ExitReplyIngress::new(packet)).unwrap();
+        if let Some(ExitProjection::Renew { ack, .. }) = f.b.next_exit_projection() {
+            ack.complete(true).unwrap();
+        }
+        let Received::Forward(next) =
+            f.r.receive(&f.rb.carrier, reply.release(|bytes| bytes).unwrap())
+                .unwrap()
+        else {
+            panic!("reverse relay")
+        };
+        let Received::Packet(delivered) =
+            f.a.receive(&f.ar.carrier, next.release(|bytes| bytes).unwrap())
+                .unwrap()
+        else {
+            panic!("source reply")
+        };
+        delivered
+    };
+    use super::support::packet::{echo as echo_packet, icmp_error};
+    let own = f.address(0);
+    let delivered = answer(
+        &mut f,
+        echo_packet(internet, own, true, 0x4d57, 0, &quoted[28..]),
+    );
+    assert_eq!(delivered.route().original_path, [a, r, b]);
+    let result = echo
+        .answer(&delivered.facts(), std::time::Instant::now())
+        .unwrap();
+    assert_eq!(
+        (result.outcome, result.from, result.setup),
+        (Outcome::Reply, Some(internet), true)
+    );
+    assert!(result.rtt.is_some());
+    // The next request joins the circuit; a router's error quoting it maps
+    // to unreachable from that router.
+    let later = start + std::time::Duration::from_secs(1);
+    let request = echo.packet(source, later).unwrap();
+    let quoted = request.as_bytes().to_vec();
+    let Outbound::Send(job) = f.a.outbound(request).unwrap() else {
+        panic!("joins the established exit circuit")
+    };
+    echo.admitted(std::time::Instant::now(), false);
+    assert_eq!(job.circuit(), id);
+    let frame = meshway_dataplane::secure::pipeline::seal(job).unwrap();
+    let Received::Forward(next) =
+        f.r.receive(&f.ar.carrier, frame.release(|b| b).unwrap())
+            .unwrap()
+    else {
+        panic!("relay")
+    };
+    let Received::Packet(pending) =
+        f.b.receive(&f.rb.carrier, next.release(|b| b).unwrap())
+            .unwrap()
+    else {
+        panic!("exit")
+    };
+    if let Some(ExitProjection::Install { ack, .. }) = f.b.next_exit_projection() {
+        ack.complete(true).unwrap();
+    }
+    pending.release(|_| ()).unwrap();
+    let router: std::net::IpAddr = "198.51.100.1".parse().unwrap();
+    let delivered = answer(&mut f, icmp_error(router, own, 3, 1, 0, &quoted));
+    let result = echo
+        .answer(&delivered.facts(), std::time::Instant::now())
+        .unwrap();
+    assert_eq!(
+        (result.outcome, result.from, result.setup),
+        (
+            Outcome::Unreachable { kind: 3, code: 1 },
+            Some(router),
+            false
+        )
+    );
+    f.close().await;
+}

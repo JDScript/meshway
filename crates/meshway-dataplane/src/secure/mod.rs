@@ -47,7 +47,7 @@ use meshway_engine::Desired;
 use meshway_model::NodeId;
 pub use meshway_policy::admission::Carrier;
 pub use meshway_policy::compile::netmap::Target;
-pub use netmap::{AdjacencyInterest, Applied, Flushed, Outbound, diagnostic_paths};
+pub use netmap::{AdjacencyInterest, Applied, Flushed, Outbound, Preview, diagnostic_paths};
 use replay::{ReplayWindow, SendNonce};
 use sha2::{Digest as _, Sha256};
 use std::{

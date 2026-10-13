@@ -423,3 +423,126 @@ async fn netcheck_is_one_bounded_request_with_one_typed_report() {
     ));
     server.await.unwrap();
 }
+
+fn decision(action: serde_json::Value) -> PingEvent {
+    serde_json::from_value(json!({
+        "type":"decision","decision":{"destination":"11.77.0.3","node":null,"resolution":null,
+        "profile":"exit","rule":null,"action":action,"path":[ID]}
+    }))
+    .unwrap()
+}
+
+fn echo() -> PingEvent {
+    serde_json::from_value(json!({
+        "type":"echo","echo":{"sequence":0,"outcome":"reply","from":"11.77.0.3","error":null,
+        "durationUs":1200,"setup":false,"path":[ID]}
+    }))
+    .unwrap()
+}
+
+#[tokio::test]
+async fn an_external_decision_is_followed_by_echoes_never_by_a_mesh_sample() {
+    let (_directory, listener, client) = listener();
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let request = crate::ipc::read(&mut stream).await.unwrap();
+        send(
+            &mut stream,
+            &request,
+            0,
+            decision(json!({"type":"exit","node":ID})),
+        )
+        .await;
+        send(&mut stream, &request, 1, echo()).await;
+        send(
+            &mut stream,
+            &request,
+            2,
+            PingEvent::Completed {
+                sent: 1,
+                success: 1,
+                timeout: 0,
+                failed: 0,
+            },
+        )
+        .await;
+    });
+    let mut ping = client.ping(target(), 1).await.unwrap();
+    assert!(matches!(
+        ping.next().await.unwrap(),
+        Some(PingEvent::Decision { .. })
+    ));
+    assert!(matches!(
+        ping.next().await.unwrap(),
+        Some(PingEvent::Echo { .. })
+    ));
+    assert!(matches!(
+        ping.next().await.unwrap(),
+        Some(PingEvent::Completed { .. })
+    ));
+    server.await.unwrap();
+
+    // An external decision admits no subscription; a denied one no echo.
+    for (action, next) in [
+        (json!({"type":"direct"}), accepted()),
+        (json!({"type":"denied","reason":"unauthorized"}), echo()),
+    ] {
+        let (_directory, listener, client) = self::listener();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let request = crate::ipc::read(&mut stream).await.unwrap();
+            send(&mut stream, &request, 0, decision(action)).await;
+            send(&mut stream, &request, 1, next).await;
+        });
+        let mut ping = client.ping(target(), 1).await.unwrap();
+        assert!(matches!(
+            ping.next().await.unwrap(),
+            Some(PingEvent::Decision { .. })
+        ));
+        assert!(ping.next().await.is_err());
+        server.await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn preparing_may_precede_the_decision_but_a_second_decision_is_rejected() {
+    let (_directory, listener, client) = listener();
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let request = crate::ipc::read(&mut stream).await.unwrap();
+        send(
+            &mut stream,
+            &request,
+            0,
+            PingEvent::Preparing {
+                elapsed_ms: Sequence::MIN,
+            },
+        )
+        .await;
+        send(
+            &mut stream,
+            &request,
+            1,
+            decision(json!({"type":"exit","node":ID})),
+        )
+        .await;
+        send(
+            &mut stream,
+            &request,
+            2,
+            decision(json!({"type":"exit","node":ID})),
+        )
+        .await;
+    });
+    let mut ping = client.ping(target(), 1).await.unwrap();
+    assert!(matches!(
+        ping.next().await.unwrap(),
+        Some(PingEvent::Preparing { .. })
+    ));
+    assert!(matches!(
+        ping.next().await.unwrap(),
+        Some(PingEvent::Decision { .. })
+    ));
+    assert!(ping.next().await.is_err());
+    server.await.unwrap();
+}

@@ -1,5 +1,6 @@
-//! `meshway ping`: one line per probe and a summary; `--json` keeps the
-//! exact typed event stream.
+//! `meshway ping`: the local decision, one line per probe and a summary;
+//! `--json` keeps the exact typed event stream.
+mod external;
 use super::format::{millis, words};
 use super::term::{Role, Term};
 use meshway_model::NodeId;
@@ -11,9 +12,13 @@ use std::io::{self, Write};
 pub(crate) struct Ping {
     verbose: bool,
     target: Option<NodeObservationTargetView>,
+    /// The decision of a target outside the Mesh.
+    decision: Option<meshway_protocol::ipc::PingDecision>,
     /// Successful round trips in microseconds, for the summary.
     rtts: Vec<u64>,
-    /// Hostnames of this Node's visible peers, for relays.
+    /// Echo results answered by an ICMP error, for the summary.
+    unreachable: u32,
+    /// Hostnames of this Node and its visible peers, for paths.
     names: Option<BTreeMap<NodeId, String>>,
 }
 
@@ -22,23 +27,39 @@ impl Ping {
         Self {
             verbose,
             target: None,
+            decision: None,
             rtts: Vec::new(),
+            unreachable: 0,
             names: None,
         }
     }
 
-    /// The sample names relays this view cannot name yet.
+    /// The event names Nodes this view cannot name yet.
     pub fn wants_names(&self, event: &PingEvent) -> bool {
         self.names.is_none()
-            && matches!(event, PingEvent::Sample { sample, .. }
-                if sample.probe.as_ref().is_some_and(|probe| probe.path.len() > 2))
+            && match event {
+                PingEvent::Sample { sample, .. } => sample
+                    .probe
+                    .as_ref()
+                    .is_some_and(|probe| probe.path.len() > 2),
+                PingEvent::Decision { decision } => {
+                    !decision.path.is_empty()
+                        || matches!(
+                            decision.resolution.as_ref().map(|r| &r.resolver),
+                            Some(meshway_protocol::ipc::PingResolver::Exit { .. })
+                        )
+                }
+                _ => false,
+            }
     }
 
-    pub fn names(&mut self, peers: &[PeerStatus]) {
+    /// Names of this Node (`own`) and its visible peers.
+    pub fn names(&mut self, peers: &[PeerStatus], own: Option<(NodeId, String)>) {
         self.names = Some(
             peers
                 .iter()
                 .map(|peer| (peer.node_id, peer.hostname.clone()))
+                .chain(own)
                 .collect(),
         );
     }
@@ -74,6 +95,8 @@ impl Ping {
         event: &PingEvent,
     ) -> io::Result<()> {
         match event {
+            PingEvent::Decision { decision } => self.decision(output, term, decision),
+            PingEvent::Echo { echo } => self.echo(output, term, echo),
             PingEvent::Accepted { target, .. } => {
                 self.target = Some(target.clone());
                 if self.verbose {
@@ -184,6 +207,9 @@ impl Ping {
                 }
                 writeln!(output)
             }
+            PingEvent::Completed { .. } if self.decision.is_some() => {
+                self.external_summary(output, term, event)
+            }
             PingEvent::Completed {
                 sent,
                 success,
@@ -205,15 +231,7 @@ impl Ping {
                 if *failed > 0 {
                     text.push_str(&format!(", {failed} failed locally"));
                 }
-                if let (Some(min), Some(max)) = (self.rtts.iter().min(), self.rtts.iter().max()) {
-                    let average = self.rtts.iter().sum::<u64>() / self.rtts.len() as u64;
-                    text.push_str(&format!(
-                        " · rtt min/avg/max {}/{}/{}",
-                        millis(*min).trim_end_matches(" ms"),
-                        millis(average).trim_end_matches(" ms"),
-                        millis(*max)
-                    ));
-                }
+                text.push_str(&self.rtt_summary());
                 writeln!(output, "{}", term.paint(Role::Bold, text))
             }
             PingEvent::Failed { code } => writeln!(
@@ -221,6 +239,23 @@ impl Ping {
                 "{}",
                 term.paint(Role::Bad, format!("ping failed: {}", words(code)))
             ),
+        }
+    }
+}
+
+impl Ping {
+    fn rtt_summary(&self) -> String {
+        match (self.rtts.iter().min(), self.rtts.iter().max()) {
+            (Some(min), Some(max)) => {
+                let average = self.rtts.iter().sum::<u64>() / self.rtts.len() as u64;
+                format!(
+                    " · rtt min/avg/max {}/{}/{}",
+                    millis(*min).trim_end_matches(" ms"),
+                    millis(average).trim_end_matches(" ms"),
+                    millis(*max)
+                )
+            }
+            _ => String::new(),
         }
     }
 }

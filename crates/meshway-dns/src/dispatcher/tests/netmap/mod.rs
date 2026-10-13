@@ -341,6 +341,28 @@ async fn netmap_resolvers_follow_their_decisions_and_magic_dns_uses_mesh_hosts()
         }
         other => panic!("an invisible name must not need discovery: {other:?}"),
     }
+    // `meshway ping` reports the same routes without a ticket.
+    use crate::{NameRoute, name_route};
+    assert_eq!(
+        name_route(&snapshot, "x.direct.example"),
+        NameRoute::Resolvers(vec!["direct".into()])
+    );
+    assert_eq!(
+        name_route(&snapshot, "x.routed.example"),
+        NameRoute::Resolvers(vec!["routed".into()])
+    );
+    assert_eq!(
+        name_route(&snapshot, "x.mesh.example"),
+        NameRoute::Unavailable
+    );
+    assert_eq!(
+        name_route(&snapshot, "ordinary.test"),
+        NameRoute::Exit(network.e)
+    );
+    assert_eq!(
+        name_route(&snapshot, "b.test.internal."),
+        NameRoute::MagicDns
+    );
     // Readiness fails closed: a declared resolver without a local route.
     assert_eq!(
         Scope::netmap(snapshot, None).validate_resolvers(),

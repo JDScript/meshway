@@ -216,7 +216,7 @@ def execute(report, artifacts, runtime_os, platform, short, load):
                 "traversal": "exit", "dnsBackend": "off", "runtimeOsAssets": runtime_os,
                 "loadBeforeRuntime": load, "resources": {"containers": containers, "networks": networks},
                 "productStatus": "running", "cleanup": {}, "processes": {},
-                "stages": {str(n): {"status": "notRun"} for n in range(1, 13)}}
+                "stages": {str(n): {"status": "notRun"} for n in range(1, 14)}}
     metadata = report / "report.json"
     started = time.monotonic()
     failure = None
@@ -326,6 +326,9 @@ def execute(report, artifacts, runtime_os, platform, short, load):
         spec = importlib.util.spec_from_file_location("meshway_exit_evidence", ROOT / "dev/exit-fixture/evidence.py")
         evidence = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(evidence)
+        spec = importlib.util.spec_from_file_location("meshway_exit_ping", ROOT / "dev/exit-fixture/ping.py")
+        pinging = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(pinging)
         save()
         for role in ROLES:
             (report / role).mkdir(exist_ok=True)
@@ -680,6 +683,37 @@ def execute(report, artifacts, runtime_os, platform, short, load):
         no_source_fallback()
         write(report / "dns-exit.json", dns)
 
+        # `meshway ping` outside the Mesh (phase 13): A's CLI prints its local
+        # decision, then echoes through E (the fallback) or from A itself (the
+        # split resolver's direct rule). Names and denial run in phase 10.
+        manifest["status"] = "ping"
+        save()
+
+        def ping_cli(target, count, as_json=True):
+            return command("a", "/fixtures/meshway", "--socket", "/state/node/control.sock",
+                           *(["--json"] if as_json else []), "ping", target, "-c", str(count),
+                           required=False, timeout=60)
+
+        def ping_text(label, target):
+            record = ping_cli(target, 2, as_json=False)
+            (report / "a" / ("ping-" + label + ".txt")).write_text(record["stdout"])
+            if record["exitCode"]:
+                raise RuntimeError("human ping output failed: " + label)
+            return record
+
+        pings = {}
+        external_ip = addresses["external"]["external"]
+        pings["external"] = ping_cli(external_ip, 3)
+        write(report / "a" / "ping-external.json", pings["external"])
+        pings["externalSummary"] = pinging.exit_ping(pings["external"], external_ip, node_ids[2], node_ids)
+        pings["externalText"] = ping_text("external", external_ip)
+        split_ip = addresses["split"]["resolver"]
+        pings["direct"] = ping_cli(split_ip, 3)
+        pings["directSummary"] = pinging.local_ping(pings["direct"], split_ip, "direct",
+                                                    "/routing/egress/profiles/exit/rules/0")
+        pings["directText"] = ping_text("direct", split_ip)
+        write(report / "ping-external.json", pings)
+
         # Domain exit (X6): a name rule sends names under the name zone through
         # E via R, everything else of A is direct. E's served answer completes
         # one association task; A holds the answer until the signed overlay is
@@ -759,6 +793,13 @@ def execute(report, artifacts, runtime_os, platform, short, load):
         named["directAssociated"] = by_name(target)
         if named["directAssociated"]["exitCode"] or len(visits_from(e_peer)) != before + 3:
             raise RuntimeError("associated address did not follow its name rule")
+        # Phase 13: the name resolves through E's resolver with its live
+        # association, and its echo leaves through E by the name rule.
+        named["ping"] = ping_cli(name, 2)
+        write(report / "a" / "ping-name.json", named["ping"])
+        named["pingSummary"] = pinging.exit_ping(named["ping"], target, node_ids[2], node_ids,
+                                                 "/routing/egress/profiles/exit/rules/2", name)
+        named["pingText"] = ping_text("name", name)
         # An established flow outlives its association: A keeps the address
         # captured for it, so its packets keep leaving through E (A has no
         # direct path to the external service), while a new connection to
@@ -815,8 +856,17 @@ def execute(report, artifacts, runtime_os, platform, short, load):
         named["afterRevoke"] = by_name(name)
         if named["afterRevoke"]["exitCode"] == 0 or len(visits_from(e_peer)) != before + 4:
             raise RuntimeError("named exit outlived its Access revocation")
+        # Phase 13: once the grant is revoked the name's decision is denied
+        # and nothing is probed.
+        named["revokedPing"] = ping_cli(name, 1)
+        write(report / "a" / "ping-revoked.json", named["revokedPing"])
+        named["revokedAction"] = pinging.denied_ping(named["revokedPing"])
+        (report / "a" / "ping-revoked.txt").write_text(ping_cli(name, 1, as_json=False)["stdout"])
         named["restored"] = stage_config("exit-name-restore", "exit-name-restored.json")
         write(report / "domain-exit.json", named)
+        manifest["stages"]["13"] = {"status": "passed", "evidence": ["ping-external.json", "domain-exit.json",
+                                                                    "a/ping-external.txt", "a/ping-direct.txt",
+                                                                    "a/ping-name.txt", "a/ping-revoked.txt"]}
         manifest["stages"]["10"] = {"status": "passed", "evidence": ["domain-exit.json", "domain-exit-configured.json", "held-flow.json",
                                                                     "external/access.json", "controller/association-reports.json"]}
 

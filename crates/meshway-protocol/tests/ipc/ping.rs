@@ -13,16 +13,16 @@ fn target() -> Value {
 
 #[test]
 fn ping_command_has_a_bounded_count_and_no_budget_override() {
-    assert_eq!(VERSION, 9);
+    assert_eq!(VERSION, 10);
     for count in [1, 10, 1000] {
         let value = json!({"version":VERSION,"requestId":ID,"command":{"type":"ping","target":{"type":"name","name":"node.mesh"},"count":count}});
         let request: Request = serde_json::from_value(value.clone()).unwrap();
         assert_eq!(serde_json::to_value(request).unwrap(), value);
     }
     for invalid in [
-        json!({"type":"ping","target":{"type":"meshIp","address":"10.0.0.1"},"count":0}),
-        json!({"type":"ping","target":{"type":"meshIp","address":"10.0.0.1"},"count":1001}),
-        json!({"type":"ping","target":{"type":"meshIp","address":"10.0.0.1"},"count":10,"timeout":5000}),
+        json!({"type":"ping","target":{"type":"address","address":"10.0.0.1"},"count":0}),
+        json!({"type":"ping","target":{"type":"address","address":"10.0.0.1"},"count":1001}),
+        json!({"type":"ping","target":{"type":"address","address":"10.0.0.1"},"count":10,"timeout":5000}),
         json!({"type":"ping","target":{"type":"name","name":"node.mesh"}}),
         json!({"type":"ping","target":["name","node.mesh"],"count":10}),
     ] {
@@ -200,4 +200,57 @@ async fn status_stays_object_only_through_tagged_buffering_and_nullable_fields_a
     assert!(
         serde_json::from_value::<ResultBody>(json!({"type":"error","code":{"busy":null}})).is_err()
     );
+}
+
+#[test]
+fn targets_outside_the_mesh_have_a_decision_and_echo_events_with_explicit_nulls() {
+    for target in [
+        json!({"type":"name","name":"www.example.com"}),
+        json!({"type":"address","address":"1.2.4.8"}),
+        json!({"type":"address","address":"fd00::1"}),
+    ] {
+        let value = json!({"type":"ping","target":target,"count":3});
+        let command: Command = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(serde_json::to_value(command).unwrap(), value);
+    }
+    for target in [
+        json!({"type":"address","address":"www.example.com"}),
+        json!({"type":"name","name":""}),
+        json!({"type":"meshIp","address":"10.0.0.1"}),
+    ] {
+        let value = json!({"type":"ping","target":target,"count":3});
+        assert!(serde_json::from_value::<Command>(value).is_err());
+    }
+    let decision = json!({"type":"decision","decision":{
+        "destination":"11.77.0.3","node":null,
+        "resolution":{"name":"svc.name.exit-dns.test","resolver":{"type":"exit","node":ID},
+            "addresses":["11.77.0.3"],"association":{"names":["svc.name.exit-dns.test"],"remainingSeconds":58}},
+        "profile":"exit",
+        "rule":{"pointer":"/routing/egress/profiles/exit/rules/2","remark":"names","ruleSet":null},
+        "action":{"type":"exit","node":ID},"path":[ID,ID]}});
+    let echo = json!({"type":"echo","echo":{"sequence":3,"outcome":"unreachable","from":"11.77.0.1",
+        "error":{"kind":3,"code":1},"durationUs":900,"setup":true,"path":[ID,ID]}});
+    for event in [&decision, &echo] {
+        let decoded: PingEvent = serde_json::from_value(event.clone()).unwrap();
+        assert_eq!(&serde_json::to_value(decoded).unwrap(), event);
+    }
+    for (event, field) in [
+        (&decision, "/decision/rule"),
+        (&decision, "/decision/resolution/association"),
+        (&echo, "/echo/error"),
+        (&echo, "/echo/durationUs"),
+    ] {
+        let mut missing = event.clone();
+        let (parent, key) = field.rsplit_once('/').unwrap();
+        missing
+            .pointer_mut(parent)
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .remove(key);
+        assert!(
+            serde_json::from_value::<PingEvent>(missing).is_err(),
+            "{field}"
+        );
+    }
 }
