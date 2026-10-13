@@ -297,7 +297,7 @@ impl LocalCompiler {
             Ok(EgressRuleHit {
                 rule: format!("{prefix}/{index}"),
                 rule_set,
-                action: matching::executed(rules[index].action.clone().into(), source)?,
+                action: matching::executed(cfg, rules[index].action.clone().into(), source)?,
             })
         };
         let rules_list = &cfg.routing.egress.rules;

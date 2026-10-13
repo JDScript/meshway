@@ -422,11 +422,8 @@ pub(super) fn names_exit(cfg: &NetworkConfiguration, profile: &str, source: Node
             .map(|(_, rule)| rule.action.clone().into())
             .chain(std::iter::once(fallback))
             .any(|route| {
-                matches!(&route, RouteAction::Exit { .. })
-                    && !matches!(
-                        matching::executed(route, source),
-                        Ok(RouteAction::Exit { .. })
-                    )
+                matching::executed(cfg, route.clone(), source)
+                    .map_or(true, |executed| executed != route)
             })
     })
 }
@@ -458,9 +455,13 @@ fn unavailable(error: CompileError) -> UnavailableReason {
 
 /// Rule actions as `source` executes them ([`matching::executed`]); without a
 /// source (a profile-level preview) as written.
-fn executed(route: RouteAction, source: Option<NodeId>) -> Result<RouteAction, CompileError> {
+fn executed(
+    cfg: &NetworkConfiguration,
+    route: RouteAction,
+    source: Option<NodeId>,
+) -> Result<RouteAction, CompileError> {
     match source {
-        Some(source) => matching::executed(route, source),
+        Some(source) => matching::executed(cfg, route, source),
         None => Ok(route),
     }
 }
@@ -475,7 +476,7 @@ pub fn compute(
     source: Option<NodeId>,
 ) -> Result<EgressPartition, UnavailableReason> {
     let Selection { rules, fallback } = selection(cfg, profile).map_err(unavailable)?;
-    let fallback = executed(fallback, source).map_err(unavailable)?;
+    let fallback = executed(cfg, fallback, source).map_err(unavailable)?;
     let mut actions = Vec::new();
     let mut remaining4 = vec![(0u32, u32::MAX)];
     let mut remaining6 = vec![(0u128, u128::MAX)];
@@ -490,7 +491,7 @@ pub fn compute(
         let rules::Ranges { v4, v6 } = rules::ranges(&rule.matcher, sets).map_err(unavailable)?;
         let id = index(
             &mut actions,
-            action(&executed(rule.action.clone().into(), source).map_err(unavailable)?)
+            action(&executed(cfg, rule.action.clone().into(), source).map_err(unavailable)?)
                 .map_err(unavailable)?,
         );
         let (hit, rest) = split(&remaining4, &normalize(v4), &mut work)?;

@@ -47,7 +47,7 @@ pub(super) fn single_exit(
     }
     let mut selected = None;
     for action in actions {
-        let RouteAction::Exit { nodes, via } = matching::executed(action, source)? else {
+        let RouteAction::Exit { nodes, via } = matching::executed(cfg, action, source)? else {
             continue;
         };
         if nodes.len() != 1 {

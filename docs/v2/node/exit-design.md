@@ -265,7 +265,7 @@ Server／Policy 入口为 `compile_with_exit` 和 `ExitInputs`；实例、选择
 - **开放代理：**出口 role、单源 permit、具体目的／服务、完整实际 path 和活执行上下文缺一不可；本机 DNS／NAT 无公网 listener，未请求方向不能建立新流。
 - **源伪造：**已认证 origin 绑定其精确 Mesh 地址，lax 不成为 origin；不接受 LAN 源、另一 Node 源、IPv4-mapped IPv6 绕分类或源端声称已校验的 metadata。
 - **公网集合：**唯一 Policy 分类排除 RFC1918、ULA、link-local、组播、CGNAT `100.64.0.0/10`、loopback、unspecified、保留／广播等特殊范围；测试覆盖边界地址，不能用 `!is_private()` 近似。出口 LAN 必须明确 CIDR Access，不能因域名解析成私网就借 Internet grant 放行。
-- **hairpin：**首版禁止出口本机／所属虚拟设备／Mesh 池作为外部转发目标，避免 local INPUT、递归 TUN 或 NAT 回卷。出口集合含源节点自己的规则对该源就是 direct（[Routing · Action](/v2/configuration-reference/routing#action)），不产生单节点出口路径。
+- **hairpin：**首版禁止出口本机／所属虚拟设备／Mesh 池作为外部转发目标，避免 local INPUT、递归 TUN 或 NAT 回卷。出口集合中源节点自己的位置对该源就是 direct（[Routing · Action](/v2/configuration-reference/routing#action)），不产生单节点出口路径。
 - **状态回复：**conntrack 不证明 business flow；TCP／UDP／echo 仍经过唯一 FlowTable。相同 tuple 换 demand、path、profile／instance 或迟到旧回复不能接管新流。
 - **撤回：**路径节点、成员、Access、出口开关、方案或执行 lease 变化均检查；旧内核投影、DNS ticket、密文／明文队列一起失效。禁用出口后宿主原本开启的 ip_forward 不改回，但 Meshway 转发资格与 NAT 全部撤回。
 - **IPv6：**首版拒绝 exit IPv6 permit，客户端受管 IPv6 负向捕获，出口专用 TUN 的 IPv6 转发 drop；外层 IPv6 carrier 与内层 IPv6 出口能力分别表达。已授权 Mesh IPv6 可继续使用自己的路径。

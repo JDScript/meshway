@@ -192,7 +192,7 @@ impl LocalCompiler {
                     break;
                 }
             }
-            let action = matching::executed(action, source)?;
+            let action = matching::executed(&self.configuration, action, source)?;
             match &decided {
                 Some(previous) if *previous != action => return Ok(None),
                 _ => decided = Some(action),
@@ -260,7 +260,7 @@ impl LocalCompiler {
             let RouteAction::Exit {
                 nodes: exits,
                 via: waypoints,
-            } = matching::executed(rule.action.clone().into(), origin)?
+            } = matching::executed(cfg, rule.action.clone().into(), origin)?
             else {
                 continue;
             };

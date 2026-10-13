@@ -433,6 +433,7 @@ fn mesh_route(
 
 /// The route `source` executes for the deciding action ([`matching::executed`]).
 fn route_of(
+    cfg: &NetworkConfiguration,
     source: NodeId,
     kind_action: &RouteAction,
     rule: Option<String>,
@@ -440,7 +441,7 @@ fn route_of(
     rule_set: Option<RuleSetMatch>,
     resolution_dependent: Vec<String>,
 ) -> Result<RouteEvaluation, CompileError> {
-    let (kind, targets, via) = match &matching::executed(kind_action.clone(), source)? {
+    let (kind, targets, via) = match &matching::executed(cfg, kind_action.clone(), source)? {
         RouteAction::Exit { nodes, via } => (
             RouteKind::Exit,
             nodes
@@ -552,6 +553,7 @@ fn external_route(
         let rule = &cfg.routing.egress.rules[index];
         return Ok((
             Some(route_of(
+                cfg,
                 request.source,
                 &rule.action.clone().into(),
                 Some(format!("/routing/egress/rules/{index}")),
@@ -586,6 +588,7 @@ fn external_route(
         EgressProfile::Mesh => {
             return Ok((
                 Some(route_of(
+                    cfg,
                     request.source,
                     &RouteAction::Unmanaged,
                     None,
@@ -599,6 +602,7 @@ fn external_route(
         EgressProfile::Global(node) => {
             return Ok((
                 Some(route_of(
+                    cfg,
                     request.source,
                     &RouteAction::Exit {
                         nodes: vec![format!("node:{node}")],
@@ -643,6 +647,7 @@ fn external_route(
     };
     Ok((
         Some(route_of(
+            cfg,
             request.source,
             &action,
             Some(rule),

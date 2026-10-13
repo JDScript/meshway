@@ -56,13 +56,14 @@ pub(super) fn egress(
                 Ok(EgressRuleRef {
                     rule: rule.clone(),
                     action: capture::action(&matching::executed(
+                        cfg,
                         egress.action.clone().into(),
                         node,
                     )?)?,
                 })
             })
             .collect::<Result<_, CompileError>>()?,
-        fallback: capture::action(&matching::executed(fallback, node)?)?,
+        fallback: capture::action(&matching::executed(cfg, fallback, node)?)?,
         unavailable: partition.as_ref().err().copied(),
     })
 }

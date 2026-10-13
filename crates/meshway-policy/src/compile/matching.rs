@@ -7,20 +7,42 @@ pub(super) fn node_selector(s: &str) -> Result<NodeId, CompileError> {
         .parse()
         .map_err(|_| CompileError::InvalidInput)
 }
-/// The action `source` executes for `route`. An exit set naming the source
-/// itself is that source's own direct egress, wherever it stands in the set:
-/// the source is the exit, its traffic leaves this host and its `via` is an
-/// empty segment. Every executed partition, plan, DNS plan and preview of a
-/// source goes through here; Access is unaffected.
-pub(super) fn executed(route: RouteAction, source: NodeId) -> Result<RouteAction, CompileError> {
-    if let RouteAction::Exit { nodes, .. } = &route {
-        for selector in nodes {
-            if node_selector(selector)? == source {
+/// The action `source` executes for `route`. Exit sets are ordered
+/// primary/backup; the source itself in such a set is its own direct egress,
+/// always available at its position: from the source on, nothing later is
+/// tried. Before it, the set keeps every exit the configuration makes
+/// eligible (enabled with `exitEnabled`); with none, the source is direct.
+/// `[self, other]` is direct; `[other, self]` exits through `other` while it
+/// is eligible, else direct. Its `via` is then an empty segment. Every
+/// executed partition, plan, DNS plan and preview of a source goes through
+/// here; Access is unaffected. Runtime exit readiness is not an input: an
+/// eligible exit that is not ready fails closed like any exit.
+pub(super) fn executed(
+    cfg: &NetworkConfiguration,
+    route: RouteAction,
+    source: NodeId,
+) -> Result<RouteAction, CompileError> {
+    let RouteAction::Exit { nodes, via } = route else {
+        return Ok(route);
+    };
+    let mut before: Vec<String> = Vec::new();
+    for selector in &nodes {
+        let node = node_selector(selector)?;
+        if node == source {
+            if !before.iter().any(|exit| {
+                node_selector(exit.as_str()).is_ok_and(|exit| {
+                    cfg.nodes
+                        .get(&exit)
+                        .is_some_and(|settings| settings.enabled && settings.exit_enabled)
+                })
+            }) {
                 return Ok(RouteAction::Direct);
             }
+            return Ok(RouteAction::Exit { nodes: before, via });
         }
+        before.push(selector.clone());
     }
-    Ok(route)
+    Ok(RouteAction::Exit { nodes, via })
 }
 pub(super) fn selectors(
     cfg: &NetworkConfiguration,
@@ -134,21 +156,26 @@ pub(super) fn resolve_profile<'a>(
 }
 
 /// Whether `source` executes `route` as an exit; an unparsable set counts.
-fn may_exit(route: RouteAction, source: NodeId) -> bool {
-    executed(route, source).map_or(true, |route| matches!(route, RouteAction::Exit { .. }))
+fn may_exit(cfg: &NetworkConfiguration, route: RouteAction, source: NodeId) -> bool {
+    executed(cfg, route, source).map_or(true, |route| matches!(route, RouteAction::Exit { .. }))
 }
-fn rules_may_exit(rules: &[EgressRule], source: NodeId) -> bool {
+fn rules_may_exit(cfg: &NetworkConfiguration, rules: &[EgressRule], source: NodeId) -> bool {
     rules
         .iter()
-        .any(|rule| may_exit(rule.action.clone().into(), source))
+        .any(|rule| may_exit(cfg, rule.action.clone().into(), source))
 }
-fn non_auto_may_exit(profile: EgressProfile<'_>, source: NodeId) -> bool {
+fn non_auto_may_exit(
+    cfg: &NetworkConfiguration,
+    profile: EgressProfile<'_>,
+    source: NodeId,
+) -> bool {
     match profile {
         EgressProfile::Mesh => false,
         EgressProfile::Global(node) => node != source,
         EgressProfile::Auto(_) => true,
         EgressProfile::Custom(profile) => {
-            rules_may_exit(&profile.rules, source) || may_exit(profile.fallback.clone(), source)
+            rules_may_exit(cfg, &profile.rules, source)
+                || may_exit(cfg, profile.fallback.clone(), source)
         }
     }
 }
@@ -161,7 +188,7 @@ pub(super) fn dns_requires_exit(
     profile: &str,
     source: NodeId,
 ) -> bool {
-    rules_may_exit(&config.routing.egress.rules, source)
+    rules_may_exit(config, &config.routing.egress.rules, source)
         || match resolve_profile(config, profile) {
             Ok(EgressProfile::Auto(auto)) => auto
                 .rules
@@ -170,9 +197,9 @@ pub(super) fn dns_requires_exit(
                 .chain(std::iter::once(&auto.fallback))
                 .any(|choice| {
                     resolve_profile(config, choice)
-                        .map_or(true, |profile| non_auto_may_exit(profile, source))
+                        .map_or(true, |profile| non_auto_may_exit(config, profile, source))
                 }),
-            Ok(profile) => non_auto_may_exit(profile, source),
+            Ok(profile) => non_auto_may_exit(config, profile, source),
             Err(_) => true,
         }
 }

@@ -549,8 +549,18 @@ fn an_exit_naming_its_source_is_that_sources_direct_egress() {
     for at in [4, 1, 3] {
         assert_eq!(decide(at, 4, "1.2.4.8"), LocalDecision::Direct, "at {at}");
         assert_eq!(decide(at, 4, "1.2.5.8"), LocalDecision::Direct, "at {at}");
-        assert_eq!(decide(at, 5, "1.2.5.8"), LocalDecision::Direct, "at {at}");
     }
+    // Ordered: 5 stands after the eligible 4, so 5 exits through 4.
+    let LocalDecision::Permitted(backup) = decide(5, 5, "1.2.5.8") else {
+        panic!("5 must exit through its primary 4");
+    };
+    assert_eq!(
+        backup.target,
+        Target::Exit {
+            nodes: vec![node(4)],
+            via: vec![]
+        }
+    );
     // Other sources are unaffected.
     let LocalDecision::Permitted(through) = decide(1, 1, "1.2.4.8") else {
         panic!("source 1 must still exit through 4");
@@ -612,17 +622,36 @@ fn an_exit_naming_its_source_is_that_sources_direct_egress() {
             .unwrap()
             .is_empty()
     );
-    // DNS: 4 resolves locally. 5 executes only the first rule as an exit
-    // (the second names it) and so has the single plan via 4, which 4
-    // serves; source 1 has two exit sets and no single-exit plan.
-    assert!(matches!(
-        &compiled.nodes[&node(4)].netmap.dns.egress,
-        DnsPlan::ServeExitResolver { services } if services.len() == 1 && services[0].source == node(5)
-    ));
-    assert!(matches!(
-        &compiled.nodes[&node(5)].netmap.dns.egress,
-        DnsPlan::ViaExit { service } if service.exit == node(4)
-    ));
+    // DNS: 4 resolves locally. 1 and 5 both have two exit sets (4 via 3
+    // and 4 directly), hence no single-exit plan; nothing is served.
+    assert_eq!(compiled.nodes[&node(4)].netmap.dns.egress, DnsPlan::NoExit);
+    for source in [1, 5] {
+        assert!(matches!(
+            &compiled.nodes[&node(source)].netmap.dns.egress,
+            DnsPlan::Unavailable {
+                reason: DnsEgressUnavailable::ExitPlanRequired
+            }
+        ));
+    }
+    // With no eligible exit before it, the backup source is direct.
+    let mut ineligible_primary = netmaps(&{
+        let mut copy = base(5);
+        copy.cfg = s.cfg.clone();
+        copy.cfg.nodes.get_mut(&node(4)).unwrap().exit_enabled = false;
+        copy
+    });
+    let compiled5 = ineligible_primary.nodes.remove(&node(5)).unwrap();
+    assert_eq!(
+        LocalCompiler::new(&compiled5.netmap, &Default::default())
+            .decide(
+                node(5),
+                "1.2.5.8".parse().unwrap(),
+                BusinessProtocol::Tcp,
+                port(443)
+            )
+            .unwrap(),
+        LocalDecision::Direct
+    );
     assert!(matches!(
         &compiled.nodes[&node(1)].netmap.dns.egress,
         DnsPlan::Unavailable {
