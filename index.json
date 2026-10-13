@@ -1,8 +1,193 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-13T16:18:42.337724+00:00",
+  "updatedAt": "2026-10-13T16:44:55.570224+00:00",
   "runs": [
+    {
+      "id": 38431735323,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "2ae855c4eda6aebf712cb09bb9414a3dfd0105ae",
+      "message": "AGENTS: IPC 10 and meshway ping for external targets (D2)",
+      "createdAt": "2026-10-13T16:35:20Z",
+      "updatedAt": "2026-10-13T16:41:58Z",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/JDScript/meshway/actions/runs/38431735323",
+      "jobs": [
+        {
+          "id": 115415371944,
+          "name": "changes",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-13T16:35:24Z",
+          "completedAt": "2026-10-13T16:35:37Z",
+          "seconds": 13.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38431735323/job/115415371944"
+        },
+        {
+          "id": 115415498671,
+          "name": "web",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-13T16:39:04Z",
+          "completedAt": "2026-10-13T16:40:25Z",
+          "seconds": 81.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38431735323/job/115415498671"
+        },
+        {
+          "id": 115415498723,
+          "name": "cargo",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-13T16:35:40Z",
+          "completedAt": "2026-10-13T16:41:57Z",
+          "seconds": 377.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38431735323/job/115415498723"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 38431735015,
+      "attempt": 1,
+      "workflow": "Perf",
+      "event": "push",
+      "branch": "main",
+      "commit": "2ae855c4eda6aebf712cb09bb9414a3dfd0105ae",
+      "message": "AGENTS: IPC 10 and meshway ping for external targets (D2)",
+      "createdAt": "2026-10-13T16:35:20Z",
+      "updatedAt": "2026-10-13T16:40:26Z",
+      "status": "in_progress",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/38431735015",
+      "jobs": [
+        {
+          "id": 115415372077,
+          "name": "perf-arm64",
+          "runner": "jp-tyo-arm64",
+          "status": "completed",
+          "conclusion": "failure",
+          "startedAt": "2026-10-13T16:35:24Z",
+          "completedAt": "2026-10-13T16:35:46Z",
+          "seconds": 22.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38431735015/job/115415372077"
+        },
+        {
+          "id": 115415372451,
+          "name": "perf",
+          "runner": "planck",
+          "status": "in_progress",
+          "conclusion": null,
+          "startedAt": "2026-10-13T16:40:26Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38431735015/job/115415372451"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 38431734901,
+      "attempt": 1,
+      "workflow": "Build",
+      "event": "push",
+      "branch": "main",
+      "commit": "2ae855c4eda6aebf712cb09bb9414a3dfd0105ae",
+      "message": "AGENTS: IPC 10 and meshway ping for external targets (D2)",
+      "createdAt": "2026-10-13T16:35:20Z",
+      "updatedAt": "2026-10-13T16:41:44Z",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/JDScript/meshway/actions/runs/38431734901",
+      "jobs": [
+        {
+          "id": 115415368985,
+          "name": "node-linux (x86_64-unknown-linux-musl)",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-13T16:35:22Z",
+          "completedAt": "2026-10-13T16:39:03Z",
+          "seconds": 221.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38431734901/job/115415368985"
+        },
+        {
+          "id": 115415369516,
+          "name": "node-linux (aarch64-unknown-linux-musl)",
+          "runner": "mars-epyc7543",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-13T16:35:23Z",
+          "completedAt": "2026-10-13T16:41:43Z",
+          "seconds": 380.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38431734901/job/115415369516"
+        }
+      ],
+      "artifacts": [
+        {
+          "id": 11831182294,
+          "name": "node-x86_64-unknown-linux-musl-2ae855c4eda6aebf712cb09bb9414a3dfd0105ae",
+          "bytes": 10816963,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38431734901/artifacts/11831182294",
+          "jobId": 115415368985,
+          "runner": "planck",
+          "seconds": 221.0,
+          "state": "ok",
+          "error": null,
+          "reports": [],
+          "matrices": [],
+          "builds": [
+            {
+              "target": "x86_64-unknown-linux-musl",
+              "binary": "meshwayd",
+              "bytes": 18503272,
+              "sha256": "bec2cd942452b628d7654d25dd7491aeccf0104a6a44b5aefc70b9fe31c7f84e"
+            },
+            {
+              "target": "x86_64-unknown-linux-musl",
+              "binary": "meshway",
+              "bytes": 2173032,
+              "sha256": "7ac1aa9fbd25284a64ba83b33aadbe0ecaf7a29388f10058a58fdf615107abaa"
+            }
+          ]
+        },
+        {
+          "id": 11830808645,
+          "name": "node-aarch64-unknown-linux-musl-2ae855c4eda6aebf712cb09bb9414a3dfd0105ae",
+          "bytes": 10107368,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38431734901/artifacts/11830808645",
+          "jobId": 115415369516,
+          "runner": "mars-epyc7543",
+          "seconds": 380.0,
+          "state": "ok",
+          "error": null,
+          "reports": [],
+          "matrices": [],
+          "builds": [
+            {
+              "target": "aarch64-unknown-linux-musl",
+              "binary": "meshwayd",
+              "bytes": 15274744,
+              "sha256": "d2fbe0d69dfbaa856a356be4a323ebd90d55fd5ca1c1ac3cc0c8f5fd63a593eb"
+            },
+            {
+              "target": "aarch64-unknown-linux-musl",
+              "binary": "meshway",
+              "bytes": 1909856,
+              "sha256": "b3fdff466750092a4b43e6f8525e23f873cd703d0a093f2909f6a229be8e949b"
+            }
+          ]
+        }
+      ]
+    },
     {
       "id": 38427070769,
       "attempt": 1,
