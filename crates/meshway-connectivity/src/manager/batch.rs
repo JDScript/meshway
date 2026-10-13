@@ -5,7 +5,6 @@ struct Group {
     scope: Scope,
     batch_scope: meshway_transport::ChannelScope,
     fact: LinkFact,
-    pacer: Option<Arc<meshway_dataplane::carrier::Pacer>>,
     frames: Vec<PendingFrame>,
 }
 
@@ -44,7 +43,6 @@ impl Manager {
                         scope: link.scope.clone(),
                         batch_scope: link.batch_scope.clone(),
                         fact: link.fact.clone(),
-                        pacer: link.pacer.clone(),
                         frames: Vec::new(),
                     })
                     .frames
@@ -72,7 +70,6 @@ impl Manager {
                     group.fact.remote,
                     group.batch_scope,
                     Some(Arc::new(group.scope)),
-                    group.pacer.as_deref(),
                 )
                 .await?;
                 Ok(SendReceipt {

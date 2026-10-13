@@ -246,8 +246,6 @@ struct Link {
     scope: Scope,
     batch_scope: meshway_transport::ChannelScope,
     activity: Arc<interest::Activity>,
-    /// Native UDP channels only; a stream carrier is paced by its own TCP.
-    pacer: Option<Arc<meshway_dataplane::carrier::Pacer>>,
 }
 
 /// The one selected-link owner also remembers its latest committed ID per peer.
@@ -1426,12 +1424,9 @@ fn install_ready(shared: &Shared, ready: ReadyPeer) -> Result<bool, Error> {
     }
     let activity = Arc::new(interest::Activity::default());
     activity.record(&shared.interests);
-    let pacer = (ready.fact.carrier.protocol == TransportProtocol::NativeUdp)
-        .then(|| Arc::new(meshway_dataplane::carrier::Pacer::default()));
     links.insert(
         ready.fact.peer,
         Link {
-            pacer,
             fact: ready.fact,
             sender: ready.sender,
             scope: ready.scope,
