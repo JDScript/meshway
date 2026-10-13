@@ -50,6 +50,8 @@
 | 通道 MTU | 无 | it7→VM `1444/1330`（内层 DF ping 外层 1,444 B 5/5、1,445 B 0/5），VM→it7 `1500/1386` |
 | TCP 吞吐（iperf3 20 s） | 无通道 | VM→it7 6.4 Mbit/s（62 次重传）；it7→VM 0（内层 TCP 1,366 B 超过 1,330，被外层丢弃；数据面 MSS 限制属后续工作）；`-M 1250` 时 it7→VM 101 Mbit/s。裸路径：VM→it7 117 Mbit/s、it7→VM 679 Mbit/s |
 
+开发 Server 发布第二个 STUN 观测点后（2026-10-13 00:54），netcheck 在 VM 判定 `endpoint-dependent`、在 it7 判定 `endpoint-independent`；it7 换装中继修复后 30 分钟内 sync 0 次 `Network` 失败（此前每次失败都与中继 300 秒连接寿命到期精确对应）。
+
 VM→it7 方向 Mesh TCP 远低于裸路径、UDP iperf 30 Mbit/s 时丢包 0.6%，原因未定位，不归入本证据的结论。
 
 ### 当前验证证据
