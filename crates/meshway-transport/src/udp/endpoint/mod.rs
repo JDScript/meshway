@@ -36,13 +36,15 @@ pub struct Capabilities {
     pub gso_size_rejections: u64,
 }
 
-/// Default Linux batch-endpoint receive buffer request: about 20 ms of a
-/// 2.5 Gbit/s channel, so a receiver that is briefly descheduled (a 2 vCPU
-/// host busy with crypto) or a burst of GSO trains does not overflow it.
-pub const DEFAULT_RECEIVE_BUFFER: usize = 7 * 1024 * 1024;
+/// Default Linux batch-endpoint receive buffer request: above the 3 MB
+/// bandwidth-delay product of a 400 Mbit/s channel at 60 ms RTT, so a window
+/// arriving at once or a briefly descheduled receiver (a 2 vCPU host busy
+/// with crypto) does not overflow it; larger only adds queueing delay when
+/// the receiver is CPU-bound.
+pub const DEFAULT_RECEIVE_BUFFER: usize = 4 * 1024 * 1024;
 /// Default Linux batch-endpoint send buffer request. A send buffer only
 /// holds datagrams the host has not transmitted yet; a larger one adds
-/// queueing delay, not throughput, once the sender is paced.
+/// queueing delay, not throughput.
 pub const DEFAULT_SEND_BUFFER: usize = 2 * 1024 * 1024;
 
 fn read_buffers(

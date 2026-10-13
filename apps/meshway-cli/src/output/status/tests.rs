@@ -43,9 +43,9 @@ fn status() -> Status {
         "peers":[nyc, sha, peer(OLD, "meshway-old", "100.64.0.9", "offline"), planck],
         "sockets":[
             {"resource":{"kind":"listener","key":"native"},"boundAddress":"0.0.0.0:35000",
-             "receiveBuffer":14680064,"receiveRequested":7340032,"sendBuffer":4194304,"sendRequested":2097152},
+             "receiveBuffer":8388608,"receiveRequested":4194304,"sendBuffer":4194304,"sendRequested":2097152},
             {"resource":{"kind":"listener","key":"native6"},"boundAddress":"[::]:35000",
-             "receiveBuffer":425984,"receiveRequested":7340032,"sendBuffer":4194304,"sendRequested":2097152}
+             "receiveBuffer":425984,"receiveRequested":4194304,"sendBuffer":4194304,"sendRequested":2097152}
         ],"lastError":null,"lastErrorDetail":null,"retryAt":null
     }))
     .unwrap()
@@ -100,13 +100,13 @@ fn plain_summary_and_peer_table_have_no_escapes() {
             "listener",
             "native",
             "0.0.0.0:35000",
-            "14.0",
+            "8.0",
             "MiB",
             "4.0",
             "MiB"
         ]
     );
-    assert!(lines[header + 2].contains("416 KiB (requested 7.0 MiB, limited)"));
+    assert!(lines[header + 2].contains("416 KiB (requested 4.0 MiB, limited)"));
 }
 
 #[test]
