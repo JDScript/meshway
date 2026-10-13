@@ -28,6 +28,10 @@ getTransportCatalog 返回 protocol、outerSocket、requiredCapability 和 schem
 
 公共字段见 [Listen](/v2/configuration-reference/shared/listen)、[Dial](/v2/configuration-reference/shared/dial)、[TLS](/v2/configuration-reference/shared/tls)、[WebSocket](/v2/configuration-reference/shared/websocket)。默认／覆盖规则见[继承](/v2/configuration-reference/inheritance)。
 
+## Socket 缓冲
+
+listener／dialer 的 `socket.receiveBuffer`／`sendBuffer` 默认 0，表示由 provider 决定。Linux Native UDP 默认请求接收 7 MiB、发送 2 MiB，按承载速率设计而非内核缺省（约 208 KB）；请求先以特权方式绕过 `net.core.rmem_max`／`wmem_max`，没有 `CAP_NET_ADMIN` 时才受其截断。显式值覆盖默认值。完整规则见 [UDP 批量接口](/v2/node/transport#udp-批量接口)，宿主建议见[高吞吐宿主](/v2/install#high-throughput)。
+
 ## 边界
 
 协议账户字段不创建 Meshway User。目标 endpoint 来自目标 listener，拨号端不维护另一份服务端凭据。underlay 的 mark／namespace 由资源 owner 管理，不通过协议参数任意覆盖。

@@ -30,7 +30,7 @@
 | `connectTimeout` | duration | `"5s"` | 建立承载的总预算，受剩余活动 lease 进一步限制 |
 | `bindInterface` | string | `""` | 当前 underlay 内的指定接口；空值由平台选择 |
 | `localAddress` | IP 字符串 | `""` | 本地出站地址；空值自动选择，不能绑定 Mesh 地址来绕过保护 |
-| `socket` | object | 系统值 | 与 [Listen](/v2/configuration-reference/shared/listen#fields) 相同的 buffer 字段 |
+| `socket` | object | provider 默认值 | 与 [Listen](/v2/configuration-reference/shared/listen#fields) 相同的 buffer 字段与默认值 |
 | `tcp` | object | 同 Listen | [TCP socket 设置](/v2/configuration-reference/shared/listen#tcp) |
 
 总建立预算覆盖外层解析／建连与所需 TLS／协议握手；TLS 子预算不能延长它。失败后的重试、候选切换属于有界连接调度，不把每次重试累加成无限 deadline。

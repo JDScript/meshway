@@ -157,7 +157,7 @@ Mesh 池、loopback、链路本地、组播、保留／广播及出口本机地�
 
 `underlay-egress.json`（v2）保存 boot／namespace、随机 installation、mark／table、计划、当前门与待提交门（区间与设备）、nft 规范对象／handle、选择器规则及 removed；已 down（removed）或属于另一次启动的记录不论版本直接归档，同一次启动内仍持有资源的其他版本记录在解析内容前即以专用错误（含文件名与版本，提示先用写它的旧版本 `meshway down` 或重启主机再升级）阻止启动；捕获表路由由门推出，恢复时与表内实际路由精确对账。自有规则／路由变化注册到同一 monitor（路由每 64 条等待其观测，不使通知缓冲溢出），不制造外部切网事件。暂停、执行失效和同 namespace 重启保留负向范围；TUN 消失不会落回 main direct。恢复先关闭旧活动 selector 并清理旧正向资源，只有新的有效执行安装可以重新激活；显式 down 才解除所属负向边界。
 
-IPC 10 的公开运行状态（`meshway status --json` 原样输出）：
+IPC 11 的公开运行状态（`meshway status --json` 原样输出）：
 
 | 字段 | 含义 |
 | --- | --- |
@@ -173,6 +173,7 @@ IPC 10 的公开运行状态（`meshway status --json` 原样输出）：
 | `netmap` | 必填可空：当前 netmap 引用与签名租约 `issuedAt`／`expiresAt`，以及 `missingArtifacts`（引用但尚未持有的规则集 digest；命名它们的规则不可用，见[规则集 · 下发](/v2/configuration-reference/rule-sets#下发)）、`artifactProblem`（缺失时最后一次的 `download`／`integrity`／`storage`／`budget`，否则 null）与 `capture`（本节点从 netmap 与 artifact 计算并安装的出口捕获：`managedIpv4`／`sinkIpv6` 区间数、捕获表 `routes` 数，以及未安装分割而改为完整捕获时的 `unavailable` 原因，否则 null；本节点无出口捕获时整项为 null，计算见 [Routing · 节点侧上限](/v2/configuration-reference/routing#capture-limits)）、`routing`（本节点在该 netmap 下的路由方案选择 `RoutingSelectionState`，字段见 [Routing · 当前选择的状态](/v2/configuration-reference/routing#selection-state)；无法由 netmap 求出时为 null）；无有效租约为 null |
 | `node` | 必填可空：已安装 netmap 中的本节点 `hostname` 与 Mesh `addresses`；未安装（down、control-only、准备中）为 null |
 | `peers` | 必填：已安装 netmap 中可见的其他节点（与 `ping` 解析名称的集合相同），按 hostname 排序；未安装为空。字段见下表 |
+| `sockets` | 必填：已安装 netmap 中本节点 Native UDP listener 与拨号候选的 socket，按地址族、地址排序；未安装为空。每项 `resource`（`listener`／`dial` 资源）、`boundAddress`、`receiveBuffer`／`sendBuffer`（内核读回的实际字节数，Linux 为授予值的两倍）与 `receiveRequested`／`sendRequested`（配置值，0 时为默认值）；读回小于请求表示被 `rmem_max`／`wmem_max` 截断，`meshway status` 标注 `limited`。规则见 [UDP 批量接口](/v2/node/transport#udp-批量接口) |
 | `exit` | 可省略；包含 target-bound `capability`、已安装 role generation、`activeFlows` 和独立的 `dnsUnavailable`（出口 resolver 不能为源解析的原因，与 State [`exitDns`](/v2/state-reference#exitdns) 同源；可用或不服务时为 null）。未观测的计数保持 null，失去当前执行权限后不显示已安装角色／活流数 |
 
 `peers[]` 只投影本节点自己的事实，不生成测量或授权：

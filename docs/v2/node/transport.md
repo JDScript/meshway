@@ -93,7 +93,18 @@ VLESS 客户端先交付 CONNECT 请求，再延迟读取首个响应头，允�
 
 ### UDP 批量接口
 
-Linux `UdpTransport::adopt_batch` 对未指定（0）的接收／发送 socket buffer 请求 **7 MiB**，吸收 GSO/GRO 突发；已有更大的 buffer 不降低，显式非零值优先。仅使用普通 `SO_RCVBUF`／`SO_SNDBUF`，内核可按自身上限裁剪，返回大小在 Linux 上通常含双倍记账；不修改系统 sysctl，也不请求 `SO_*BUFFORCE`。其它 provider 与非 Linux／逐包 UDP 的 0 仍保留系统值。buffer 不提供新的 authority，原 descriptor、scope／mark 和逐 syscall 检查继续生效。
+Linux `UdpTransport::adopt_batch` 的 socket buffer：
+
+| 方向 | 未指定（0）时请求 | 设计依据 |
+| --- | --- | --- |
+| 接收 | **7 MiB** | 约 2.5 Gbit/s 通道 20 ms 的报文：接收方短暂失去 CPU（2 vCPU 主机忙于加解密）或 GSO 批次成串到达时不溢出 |
+| 发送 | **2 MiB** | 发送 buffer 只容纳本机尚未发出的报文，更大只增加本机排队时延 |
+
+- 未指定时已有更大的 buffer 不降低；显式非零值（`socket.receiveBuffer`／`sendBuffer`）按配置请求。
+- 每次请求先用特权的 `SO_RCVBUFFORCE`／`SO_SNDBUFFORCE`（需要 `CAP_NET_ADMIN`；`meshwayd` 的 systemd unit 与 lab 容器都有），不受 `net.core.rmem_max`／`wmem_max` 限制；没有该权限（返回 `EPERM`）时改用普通 `SO_RCVBUF`／`SO_SNDBUF`，内核把它截到 `rmem_max`／`wmem_max`（Ubuntu 默认 212,992 B，读回 416 KB）。Node 不修改任何 sysctl；宿主调整见[高吞吐宿主](/v2/install#high-throughput)。
+- 请求后读回实际值一次（`raw::Buffers`，`Datagram::buffers()`）。Linux 读回的是授予值的两倍（含 skb 记账开销），即 7 MiB 请求读回 14 MiB；读回值小于请求值表示被截断。实际值经三处可见：每个 Mesh UDP socket 一条日志（`UDP socket buffers`，截断时为 warn `UDP socket buffers limited by net.core.rmem_max/wmem_max`），IPC Status 的 [`sockets`](/v2/node/runtime)，以及 `meshway status` 的 SOCKET 表。
+- 同一 primitive 也用于受保护的 bootstrap DNS socket，得到相同默认值；buffer 只在有排队报文时占用内存，预算见[进程与容器内存记账](/v2/node/dataplane#进程与容器内存记账)。
+- 其它 provider 与非 Linux／逐包 UDP 的 0 仍保留系统值。buffer 不提供新的 authority，原 descriptor、scope／mark 和逐 syscall 检查继续生效。
 
 `Datagram::poll_send_batch` 返回完整发送的前缀数量；`poll_recv_batch` 填充接收缓冲前缀并逐报文返回来源、长度和截断信息。默认实现每次处理一个报文，provider 可实现内核批量。Linux UDP 同目的、等长帧（最后一段可短）通过 `UDP_SEGMENT` 一次 `sendmsg` 发送；聚合 payload 按目的地址限制为 IPv4 65,507 字节、IPv6 65,527 字节，IPv4-mapped IPv6 按 IPv4 处理。`UDP_GRO` cmsg 拆回独立报文。不适合 GSO 时使用 `sendmmsg`；接收使用 `recvmmsg` 并解析每个消息的 cmsg；不支持 mmsg 时回退 `sendmsg`／`recvmsg`。Linux 外层 socket 一律设 DF（`IP_PMTUDISC_DO`／`IPV6_MTU_DISCOVER=DO`），从不在本机分片；超过路由 MTU 的报文返回 `EMSGSIZE`。唯一例外：DF 拒绝且连 1,500 B 路径也装不下的单个报文（UDP payload 超过 1,472 B，IPv6 1,452 B；例如最长 4 KiB 的出口 DNS 消息），DF 只会让它必然丢失，于是只为这一次发送切到 `IP_PMTUDISC_WANT`（可分片）后立即恢复 DF；它在批次中单独发送。Mesh 数据帧受 TUN MTU 约束，不超过这个大小，超过路由 MTU 时照常失败而不分片；数据面在发送前按通道测得的内层上限拦下超限的本机包并回 ICMP，见[通道 MTU](/v2/node/dataplane#channel-mtu)。段长加报头超过路由 MTU 时，内核以 `EINVAL`／`EMSGSIZE` 拒绝 `UDP_SEGMENT` 发送，这与 GSO 能力无关：这一批改为不用 GSO 再发一次，若同样得到 `EMSGSIZE`（段长确实超过路径），记录该目的与段长 60 秒（最多 64 个目的），期间该目的不小于此段长的批次不用 GSO，GSO 保持开启（`gsoSizeRejections` 计数）；若不用 GSO 发送成功，说明 GSO 本身被拒，才关闭 GSO。仅 `UDP_SEGMENT` 发送的 `EIO` 按驱动 Tx checksum 能力不足关闭 GSO；普通发送／接收的 `EIO` 与所有路径的 `EMSGSIZE` 仍报错。`Datagram::path_mtu(peer)` 报告该 endpoint 到 peer 的路由 MTU（含 ICMP 学到的 PMTU），受保护 socket 用同 mark 的瞬时 connected socket 读取，不发包；通道的路径 MTU 搜索见[外层路径 MTU](/v2/node/connectivity#path-mtu)。一次批量 poll 至多一个数据 syscall，能力回退在下一次 poll 执行，因此受保护 socket 每次 syscall 前仍经过 scope／mark 检查。
 

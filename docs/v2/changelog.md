@@ -2,6 +2,18 @@
 
 按合入 main 的顺序记录工作包、提交与证据 ID。规则见[工程流程](/v2/process)；性能数字的口径见[分层性能测量](/v2/node/performance)，验收状态见[验收范围](/v2/node/validation)。
 
+## 未发布
+
+UDP 接收缓冲与发送节奏（M2）：IPC 11（`Status.sockets`）；wire 6、HTTP 契约、`compilerVersion` 与 Server schema 均不变。CLI 与 daemon 须一起升级（IPC 10 的 CLI 对新 daemon 得到 `version` 错误）。
+
+- Native UDP socket 默认缓冲：接收 7 MiB、发送 2 MiB（原为 7／7 MiB）；请求先用 `SO_RCVBUFFORCE`／`SO_SNDBUFFORCE`，daemon 有 `CAP_NET_ADMIN` 时不再被 `net.core.rmem_max` 截到 416 KB（it7、planck 此前均为 416 KB，it7 的 socket 有接收丢包）；没有该权限时退回普通请求。显式 `socket.receiveBuffer`／`sendBuffer` 按配置请求。见 [UDP 批量接口](/v2/node/transport#udp-批量接口)。
+- 实际值可观测：每个 Mesh UDP socket 一条 `UDP socket buffers` 日志（被截断时为 warn），IPC Status 新增 `sockets`（资源、地址、读回值与请求值），`meshway status` 新增 SOCKET 表并标注 `limited`。见[运行状态](/v2/node/runtime)。
+- Native UDP 通道发送节奏（`carrier::Pacer`）：允许速率为最近 100 ms 峰值的两倍、突发额度 2 ms（至少 64 KiB），只摊开空闲后与超过近期峰值两倍的突发，不是拥塞控制。见[发送节奏](/v2/node/dataplane#send-pacing)。
+- 接收路径核对：已是 `recvmmsg`（32 × 64 KiB）＋`UDP_GRO`，未改。
+- 文档：[高吞吐宿主](/v2/install#high-throughput) 的 sysctl 建议（daemon 不修改）。
+
+验证：Planck `perf:dataplane`（L3 direct／L4 relay，每容器 2 CPU）TCP 2,540／2,229 → 2,749／2,514 Mbit/s，重传 618／512 → 0；60 ms RTT（netem）内层 TCP 266–315 → 413 Mbit/s；1 ms RTT 满载时内层 RTT 2 → 10 ms（缓冲排队）。20 ms 记忆的 Pacer 实测降低 60 ms RTT 吞吐 14%，未采用。见[接收缓冲与发送节奏](/v2/node/performance#接收缓冲与发送节奏)；证据 `.meshway/validation/m2/`、`.meshway/node-lab/m2/`。真机部署后复测待补。
+
 ## v0.1.0-alpha.6
 
 范围：wire 6、`compilerVersion` `meshway-netmap-2`、Server schema 不变；IPC 10（`peers[].state` 新增 `relayIdle`，`Command::Ping.target` 为 `PingTarget`，CLI 与 daemon 一起升级）；HTTP 契约自 alpha.5 起的 `PeerFacts.connected`、`IssueCode` 新增 `dns_exit_plan_required`（错误）与 `resolver_outside_access`（警告）；验收矩阵行 `nat/relay`、`nat/reconnect`（18 行）；通道 MTU（MSS clamp、本机 fragmentation needed／packet too big）；`meshway ping` 公网 IP／域名目标；以及下列 M1、D2、N5 工作包。
