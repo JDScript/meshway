@@ -142,12 +142,14 @@ type TargetKey = (String, String, meshway_transport::spec::Port);
 /// its address class; a failed one waits `retry_backoff · 2^(failures − 1)`,
 /// at most [`MAX_CANDIDATE_BACKOFF`], before its next attempt. A channel with
 /// the peer (selected now, or installed since the last look), a changed
-/// candidate set (the peer's endpoint facts) or new netmap content start
-/// every candidate over. Addresses only say where to try: identity and
-/// admission stay with the handshake.
+/// candidate set (the peer's endpoint facts), a change of this edge in the
+/// content ([`Plan::edge`]) or of this Node's own mappings start every
+/// candidate over. Other content changes leave the pacing as it is.
+/// Addresses only say where to try: identity and admission stay with the
+/// handshake.
 #[derive(Default)]
 pub(super) struct Pacing {
-    reference: Option<meshway_model::NetmapRef>,
+    edge: Option<crate::plan::Edge>,
     targets: std::collections::BTreeSet<TargetKey>,
     own: std::collections::BTreeSet<String>,
     last_link: Option<[u8; 32]>,
@@ -163,26 +165,36 @@ impl Pacing {
         )
     }
 
-    /// Start over when the content, the candidate set, this Node's own
+    /// Start over when the edge, the candidate set, this Node's own
     /// mappings or the peer's latest channel changed since the last sweep.
+    /// Returns why paused candidates started over, if any did.
     pub(super) fn sweep(
         &mut self,
-        reference: meshway_model::NetmapRef,
+        edge: crate::plan::Edge,
         targets: std::collections::BTreeSet<TargetKey>,
         own: std::collections::BTreeSet<String>,
         last_link: Option<[u8; 32]>,
-    ) {
-        if self.reference != Some(reference)
-            || self.targets != targets
-            || self.own != own
-            || self.last_link != last_link
-        {
+    ) -> Option<&'static str> {
+        let cause = if self.edge.as_ref() != Some(&edge) {
+            Some("edge")
+        } else if self.targets != targets {
+            Some("candidates")
+        } else if self.own != own {
+            Some("own_mapping")
+        } else if self.last_link != last_link {
+            Some("channel")
+        } else {
+            None
+        };
+        let restarted = cause.filter(|_| !self.failed.is_empty());
+        if cause.is_some() {
             self.failed.clear();
         }
-        self.reference = Some(reference);
+        self.edge = Some(edge);
         self.targets = targets;
         self.own = own;
         self.last_link = last_link;
+        restarted
     }
 
     /// A channel with the peer exists: its candidates start over later.
@@ -259,8 +271,8 @@ pub(super) async fn dial(shared: Arc<Shared>, factory: Arc<dyn SocketFactory>, p
         let Ok(candidates) = candidates(&shared, &plan, peer) else {
             return;
         };
-        pacing.sweep(
-            plan.reference,
+        let restarted = pacing.sweep(
+            plan.edge(peer),
             candidates
                 .iter()
                 .flat_map(|candidate| {
@@ -274,6 +286,12 @@ pub(super) async fn dial(shared: Arc<Shared>, factory: Arc<dyn SocketFactory>, p
             own_mappings(&shared),
             last_link(&shared, peer),
         );
+        if let Some(cause) = restarted
+            && diagnostic_event()
+        {
+            tracing::debug!(operation = "candidate_pacing", peer = %peer, cause,
+                "Connectivity candidate pacing starts over");
+        }
         // Provenance is the first priority across all of this peer's carriers.
         // In particular, an unreachable local UDP address must not delay an
         // explicitly configured TCP fallback after a coordinated link fails.
@@ -587,14 +605,6 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
-    fn reference(digest: u8) -> meshway_model::NetmapRef {
-        meshway_model::NetmapRef {
-            revision: meshway_model::Revision::MIN,
-            serial: meshway_model::Version::MIN,
-            digest: [digest; 32].into(),
-        }
-    }
-
     fn key(host: &str) -> TargetKey {
         (
             "peer/udp".to_owned(),
@@ -609,7 +619,7 @@ mod tests {
         let (private, public) = (key("192.168.139.66"), key("198.51.100.7"));
         let mut pacing = Pacing::default();
         pacing.sweep(
-            reference(1),
+            crate::plan::Edge::default(),
             [private.clone(), public.clone()].into(),
             Default::default(),
             None,
@@ -629,7 +639,7 @@ mod tests {
     }
 
     #[test]
-    fn content_facts_or_a_channel_start_every_candidate_over() {
+    fn facts_own_mappings_or_a_channel_start_every_candidate_over() {
         let now = tokio::time::Instant::now();
         let base = Duration::from_secs(1);
         let (old, new) = (key("192.168.139.66"), key("203.0.113.9"));
@@ -640,14 +650,25 @@ mod tests {
             assert!(!pacing.due(&old, now + base));
         };
         let mut pacing = Pacing::default();
-        pacing.sweep(reference(1), [old.clone()].into(), Default::default(), None);
+        pacing.sweep(
+            crate::plan::Edge::default(),
+            [old.clone()].into(),
+            Default::default(),
+            None,
+        );
         failed(&mut pacing);
-        // The same content, candidates and channel keep the pause.
-        pacing.sweep(reference(1), [old.clone()].into(), Default::default(), None);
+        // The same edge, candidates and channel keep the pause (the edge
+        // itself is covered with real contents by the Manager tests).
+        pacing.sweep(
+            crate::plan::Edge::default(),
+            [old.clone()].into(),
+            Default::default(),
+            None,
+        );
         assert!(!pacing.due(&old, now + base));
         // The peer's endpoint facts changed.
         pacing.sweep(
-            reference(1),
+            crate::plan::Edge::default(),
             [old.clone(), new.clone()].into(),
             Default::default(),
             None,
@@ -656,25 +677,16 @@ mod tests {
         failed(&mut pacing);
         // This Node's own mapping changed (another egress address).
         pacing.sweep(
-            reference(1),
+            crate::plan::Edge::default(),
             [old.clone(), new.clone()].into(),
             ["203.0.113.9:40001".to_owned()].into(),
             None,
         );
         assert!(pacing.due(&old, now));
         failed(&mut pacing);
-        // New netmap content.
-        pacing.sweep(
-            reference(2),
-            [old.clone(), new.clone()].into(),
-            Default::default(),
-            None,
-        );
-        assert!(pacing.due(&old, now));
-        failed(&mut pacing);
         // A channel was installed (and may have ended) since the last sweep.
         pacing.sweep(
-            reference(2),
+            crate::plan::Edge::default(),
             [old.clone(), new.clone()].into(),
             Default::default(),
             Some([7; 32]),

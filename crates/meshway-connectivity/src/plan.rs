@@ -37,6 +37,15 @@ struct Projection {
     admitted: Mutex<BTreeMap<AdmissionKey, bool>>,
 }
 
+/// One edge as a content describes it; see [`Plan::edge`].
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Edge {
+    binding: Option<TrustedNode>,
+    outgoing: Option<Vec<(String, DialCandidate)>>,
+    incoming: Option<Vec<(String, Option<PreparedListener>)>>,
+    resident: bool,
+}
+
 pub(crate) struct Plan {
     /// The desired content this plan was built from.
     pub desired: meshway_engine::Desired,
@@ -231,6 +240,38 @@ impl Plan {
             .map_err(|_| Error::Worker)?
             .insert(peer, keys.clone());
         Ok(keys)
+    }
+
+    /// What this content says about the edge with `peer`: its registered
+    /// keys, both directions' carriers with their dial candidates and
+    /// listeners, and whether the edge is resident. Other content (another
+    /// Node, Access, egress) leaves it equal: failures toward `peer` keep
+    /// their pacing across it.
+    pub fn edge(&self, peer: NodeId) -> Edge {
+        let incoming = self
+            .projection
+            .compiler
+            .carriers(peer, self.node)
+            .ok()
+            .map(|keys| {
+                keys.into_iter()
+                    .map(|key| {
+                        let listener = self.listeners.get(&key).cloned();
+                        (key, listener)
+                    })
+                    .collect()
+            });
+        Edge {
+            binding: self.peers.get(&peer).map(|p| p.binding.clone()),
+            outgoing: self.outgoing(peer).ok().map(|candidates| {
+                candidates
+                    .into_iter()
+                    .map(|(key, dial)| (key.clone(), dial.clone()))
+                    .collect()
+            }),
+            incoming,
+            resident: self.resident(peer),
+        }
     }
 
     /// Dial candidates toward `peer`, in the edge's transport order.

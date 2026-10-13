@@ -6,6 +6,7 @@ use meshway_configuration::{TopologyAction, TopologyRule};
 use meshway_control::KnownPeers;
 use meshway_model::state::{ListenerPhase, LocalEndpoint, LocalEndpointSource, SocketNetwork};
 use meshway_protocol::{PeerFacts, PeerListenerFacts};
+use meshway_transport::spec::NativeUdpDialer;
 use support::{Netmaps, eventually, links};
 
 pub(in crate::manager) mod support;
@@ -194,10 +195,10 @@ async fn wildcard_keepalive_keeps_every_edge_of_three_nodes_resident() {
 }
 
 #[tokio::test]
-async fn failing_candidates_back_off_stop_once_connected_and_start_over_on_new_content() {
+async fn failing_candidates_back_off_across_unrelated_content_and_start_over_on_their_edge() {
     let mut fixture = Netmaps::start(false, true).await;
     let ids = fixture.ids();
-    let (a_id, b_id) = (ids[0], ids[1]);
+    let (a_id, b_id, c_id) = (ids[0], ids[1], ids[2]);
     fixture
         .publish(|cfg| {
             cfg.topology.push(TopologyRule {
@@ -220,26 +221,54 @@ async fn failing_candidates_back_off_stop_once_connected_and_start_over_on_new_c
     let mut a = manager(&fixture, 0, &factory, limits).await;
     let mut b = manager(&fixture, 1, &factory, limits).await;
     // Each end's one candidate fails at once: attempts at about 0, 0.1, 0.3,
-    // 0.7, 1.5 and 3.1 s, then 6.3 and 12.7 s (a fixed pace would be ~30).
+    // 0.7, 1.5, 3.1, 6.3 and 12.7 s, then 25.5 s (a fixed pace would be ~130).
     tokio::time::sleep_until(start + Duration::from_millis(3600)).await;
     let early = factory.acquisitions.load(Ordering::SeqCst);
     assert!((8..=14).contains(&early), "{early} attempts in 3.6 s");
-    tokio::time::sleep_until(start + Duration::from_millis(7000)).await;
-    let late = factory.acquisitions.load(Ordering::SeqCst) - early;
-    assert!(late <= 4, "{late} attempts in the next 3.4 s");
-    // New content starts the paused candidates over at once, long before
-    // their next attempt at 12.7 s.
+    tokio::time::sleep_until(start + Duration::from_millis(13_500)).await;
+    let paused = factory.acquisitions.load(Ordering::SeqCst);
+    assert!(
+        paused - early <= 6,
+        "{} attempts until 13.5 s",
+        paused - early
+    );
+    // Content that does not concern the a–b edge (an Access rule, another
+    // Node's remark) keeps the pause: nothing is tried before 25.5 s.
     factory.blocked_dialers.lock().unwrap().clear();
     fixture.reserial(0).await;
+    let changed = fixture
+        .publish(|cfg| cfg.nodes.get_mut(&c_id).unwrap().remark = "unrelated".into())
+        .await;
+    assert!(changed[0] && changed[1]);
+    apply_all(&fixture, &mut [&mut a, &mut b]).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert_eq!(
+        factory.acquisitions.load(Ordering::SeqCst),
+        paused,
+        "unrelated content restarted paused candidates"
+    );
+    assert!(links(&a).is_empty() && links(&b).is_empty());
+    // A change of the edge's own dialers starts them over at once, long
+    // before their next attempt.
+    let changed = fixture
+        .publish(|cfg| {
+            cfg.defaults.dialers.native_udp = Some(NativeUdpDialer {
+                connect_timeout: "3s".parse().unwrap(),
+                ..Default::default()
+            })
+        })
+        .await;
+    assert!(changed[0] && changed[1]);
     let resumed = tokio::time::Instant::now();
     apply_all(&fixture, &mut [&mut a, &mut b]).await;
-    eventually("the edge connects after new content", || {
+    eventually("the edge connects after its own change", || {
         let (a, b) = (links(&a), links(&b));
         a.get(&b_id)
             .is_some_and(|link| b.get(&a_id).is_some_and(|back| back.id == link.id))
     })
     .await;
     assert!(resumed.elapsed() < Duration::from_secs(4));
+    assert!(start.elapsed() < Duration::from_millis(25_500));
     // A selected channel stops every probe of the peer's candidates.
     let connected = factory.acquisitions.load(Ordering::SeqCst);
     tokio::time::sleep(Duration::from_secs(2)).await;
