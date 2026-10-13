@@ -14,7 +14,7 @@ listener 是配置资源，socket 是运行资源，endpoint 是带来源的候�
 | `problem` | 类型化失败原因或 null |
 | `netmap` | 显式 NetmapRef；省略／null 继承报告的 configuration.applied |
 
-listening 只说明本机监听成功，不证明公网可达。安装中资源须显式引用其目标，不能冒充当前 peer 可用入口。listener key 相同不代表材料、切片或运行代际相同。
+listening 只说明本机监听成功，不证明公网可达。Linux Node 对正在重试绑定的 listener 报告 `phase: failed`、空 `socketIds` 与 `problem.type: resource_unavailable`（`resource` 为该 listener），绑定后改为 listening，见 [listener 绑定与重试](/v2/node/connectivity#listener-bind-retry)。安装中资源须显式引用其目标，不能冒充当前 peer 可用入口。listener key 相同不代表材料、切片或运行代际相同。
 
 ## SocketState
 

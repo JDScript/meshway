@@ -2,6 +2,17 @@
 
 按合入 main 的顺序记录工作包、提交与证据 ID。规则见[工程流程](/v2/process)；性能数字的口径见[分层性能测量](/v2/node/performance)，验收状态见[验收范围](/v2/node/validation)。
 
+## 未发布
+
+启动期瞬时失败自愈（U1）：wire 6、IPC 10、`compilerVersion` 与 Server schema 均不变。HTTP 契约：`IssueCode` 新增 `ephemeral_listener_port`（警告）。Underlay 私有记录新增可省略字段（`namespace_cookie`／`net_cookie`）：降级到本版本之前的 daemon 会以 `storage` 拒绝读取已写入 cookie 的记录。
+
+- 修复：容器重建后新 network namespace 复用旧 nsfs inode 时，`exit-child.json` 被当作当前 namespace 的记录，PID namespace 不同又无法证明旧工具已退出，Underlay 永久停在冲突退避（`Underlay startup failed: kernel ownership or routing protection conflict`，N5 nyc、M1 lax，只能重启容器）。capture journal、出口／egress 账本与 exit-child 记录现在共用 Underlay 唯一的 namespace 身份，含 namespace cookie（`SO_NETNS_COOKIE`，一次 boot 内不复用）；无 cookie 的旧记录与内核仍按 inode。cookie 经新 crate `meshway-netns` 读取，是 workspace 唯一经审计的 `unsafe`。见[生命周期](/v2/node/runtime#生命周期)。
+- 修复：listener 绑定失败（`EADDRINUSE` 等）不再使节点在重启前一直没有该 listener（ops5 nyc 只能经中继）：Manager 中该 key 的 owner 按 1 s 起翻倍、上限 60 s 重试（`EACCES` 每 60 s），其他资源照常安装；期间 State 中该 listener 为 `failed`＋`resource_unavailable`，Status `lastError: transport`，`lastErrorDetail` 含 bind 错误、占用进程与临时端口范围提示；绑定后同一内容再 apply 并清除错误。完整 apply 现在清除先前 Degraded apply 的 `lastError`。见 [listener 绑定与重试](/v2/node/connectivity#listener-bind-retry)。
+- listener 端口在 Linux 默认临时端口范围（32768–60999）内时配置校验给出警告 `ephemeral_listener_port`，节点按本机 `ip_local_port_range` 记 WARN。
+- `udp/off` 行新增阶段：B 的 listener 端口在其 daemon 首次绑定时被占用，验证 Status 原因、释放后自行绑定与清除错误。
+
+验证：见 [U1 启动期自愈证据](/v2/node/validation#u1-startup-self-heal)；证据 `.meshway/node-lab/u1/`、`.meshway/validation/u1/`。
+
 ## v0.1.0-alpha.6
 
 范围：wire 6、`compilerVersion` `meshway-netmap-2`、Server schema 不变；IPC 10（`peers[].state` 新增 `relayIdle`，`Command::Ping.target` 为 `PingTarget`，CLI 与 daemon 一起升级）；HTTP 契约自 alpha.5 起的 `PeerFacts.connected`、`IssueCode` 新增 `dns_exit_plan_required`（错误）与 `resolver_outside_access`（警告）；验收矩阵行 `nat/relay`、`nat/reconnect`（18 行）；通道 MTU（MSS clamp、本机 fragmentation needed／packet too big）；`meshway ping` 公网 IP／域名目标；以及下列 M1、D2、N5 工作包。

@@ -21,6 +21,24 @@ Meshway 共用一套承载会话与受保护数据面，将显式端点建连和
 
 crate 职责总表见[跨入口复用](/v2/architecture#跨入口复用)。两类入口不分别维护身份、权限、业务流表或加密状态。候选观测变化不自行修改业务授权；更换物理承载仍须符合当前许可及完整逻辑路径。
 
+## listener 绑定与重试 {#listener-bind-retry}
+
+Manager 是 listener 生命周期的唯一 owner。安装内容时先绑定全部新 listener，再启动它们的 worker；某个 listener 的本机地址不可用（`Error::Bind`：端口被其他 socket 占用、地址尚未分配、无权限的特权端口）时，它不阻止其他 listener、拨号 socket 和邻接安装，而由该 key 自己的 owner 在当前内容下重试：
+
+| 原因 | 重试间隔 |
+| --- | --- |
+| 可自行消失（`EADDRINUSE`、`EADDRNOTAVAIL` 等） | 1 s 起翻倍，上限 60 s |
+| 需要运维处理（`EACCES`） | 每 60 s |
+
+绑定成功后 Manager 接管该 socket（Native UDP 有 live instance 时为协调 socket，进入 STUN 观测并重新发布候选），发出 `Changed`；内容变化使该 key 不再存在或声明改变时，重试 owner 随旧资源退役。重试期间：
+
+- `Snapshot.unavailable` 列出该 listener（地址、原因、是否可自行消失、已失败次数、下次尝试时间）。
+- Node State 中该 listener 为 `phase: failed`、无 socket、`problem` 为 `resource_unavailable`（`resource` 为该 listener）。
+- 本地 Status 为 `lastError: transport`，`lastErrorDetail` 给出 bind 错误、占用端口的进程与临时端口范围提示，见[运行状态](/v2/node/runtime)；绑定后 daemon 以同一内容再 apply，二者清空。
+- WARN 日志 `Listener unavailable; retrying its bind`（`key`、`error`、`recoverable`、`attempts`、`retry_ms`），绑定后 INFO `Listener bound after retry`。
+
+Linux 默认临时端口范围（`net.ipv4.ip_local_port_range`，32768–60999）内的 listener 端口可能在某一刻被任意进程的出站 socket 占用；配置校验对已启用 listener 的此类端口给出警告 `ephemeral_listener_port`，节点在启动邻接时按本机实际范围记 WARN。建议选用范围外的端口（或调整该 sysctl）。实测（U1 lab，容器重建后 `up`）约三分之一的启动得到 `EADDRINUSE`：失败前数毫秒同一 daemon 刚在该端口绑定过一个 socket（无 instance 时的普通 Native UDP listener，随后改绑为协调 socket），失败约 200 ms 后已没有进程持有该端口，1 s 后重试成功。
+
 ## Provider 的连接需求
 
 连接需求描述的是 provider 接收什么底层资源，不代表网络一定可达，也不代表业务发起方必须是拨号方。各承载的建连需求与反向拨号示例见[承载与邻接模型](/v2/node/carriers#按承载类型的建连需求)。
