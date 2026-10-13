@@ -123,9 +123,20 @@ impl Matchers {
     }
 }
 
-fn has_names(set: &RuleSet) -> bool {
+fn set_has_names(set: &RuleSet) -> bool {
     let c = set.counts();
     c.exact + c.suffix + c.subdomain + c.keyword > 0
+}
+
+/// Whether a rule judges names: its own domain lists, or a referenced set
+/// with names. A set `sets` lacks may hold names.
+pub(super) fn has_names(matcher: &RouteMatch, sets: &RuleSets) -> bool {
+    !matcher.domain.is_empty()
+        || !matcher.domain_suffix.is_empty()
+        || matcher
+            .rule_sets
+            .iter()
+            .any(|key| sets.get(key).is_none_or(|set| set_has_names(set)))
 }
 fn has_addresses(set: &RuleSet) -> bool {
     let c = set.counts();
@@ -181,7 +192,7 @@ pub(super) fn judge(
             })));
         }
         other_kind |= match destination {
-            Destination::Address(_) => has_names(set),
+            Destination::Address(_) => set_has_names(set),
             Destination::Name(_) => has_addresses(set),
         };
         None

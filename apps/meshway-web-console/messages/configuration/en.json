@@ -710,6 +710,7 @@
   "configuration_issue_exit_outside_access": "{node} has no access to {destination}, so it cannot go there through an exit",
   "configuration_issue_global_exit_requires_internet": "{node} has no access to the internet, so it cannot use {profile}",
   "configuration_issue_exit_fallback_requires_internet": "{node} has no access to the internet, so profile {profile} cannot fall back to an exit",
+  "configuration_issue_dns_exit_plan_required": "{node} cannot use profile {profile}: its domain rules leave through more than one exit, so no single exit can resolve its names",
   "configuration_issue_netmap_limit": "The configuration sent to {node} would be {size}, over the {max} limit",
   "configuration_bytes": "{count} bytes",
   "configuration_issue_netmap_budget": "Too many nodes, or too many transport combinations on an edge: this version is over the limit for compiling node configurations. Reduce them and apply again; retrying as is will not succeed",

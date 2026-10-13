@@ -6390,6 +6390,7 @@ export const schemaDocument = {
           "exit_outside_access",
           "global_exit_requires_internet",
           "exit_fallback_requires_internet",
+          "dns_exit_plan_required",
           "netmap_limit",
           "netmap_budget",
           "shadowed_rule",

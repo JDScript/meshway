@@ -622,16 +622,14 @@ fn an_exit_naming_its_source_is_that_sources_direct_egress() {
             .unwrap()
             .is_empty()
     );
-    // DNS: 4 resolves locally. 1 and 5 both have two exit sets (4 via 3
-    // and 4 directly), hence no single-exit plan; nothing is served.
-    assert_eq!(compiled.nodes[&node(4)].netmap.dns.egress, DnsPlan::NoExit);
-    for source in [1, 5] {
-        assert!(matches!(
-            &compiled.nodes[&node(source)].netmap.dns.egress,
-            DnsPlan::Unavailable {
-                reason: DnsEgressUnavailable::ExitPlanRequired
-            }
-        ));
+    // DNS: pure IP rules never need an exit's answer, however many exits
+    // they use: every source resolves locally and nothing is served.
+    for source in [1, 4, 5] {
+        assert_eq!(
+            compiled.nodes[&node(source)].netmap.dns.egress,
+            DnsPlan::NoExit,
+            "source {source}"
+        );
     }
     // With no eligible exit before it, the backup source is direct.
     let mut ineligible_primary = netmaps(&{
@@ -652,12 +650,6 @@ fn an_exit_naming_its_source_is_that_sources_direct_egress() {
             .unwrap(),
         LocalDecision::Direct
     );
-    assert!(matches!(
-        &compiled.nodes[&node(1)].netmap.dns.egress,
-        DnsPlan::Unavailable {
-            reason: DnsEgressUnavailable::ExitPlanRequired
-        }
-    ));
     // The management preview equals what the exit executes.
     for (destination, kind) in [
         (
@@ -691,9 +683,14 @@ fn an_exit_naming_its_source_is_that_sources_direct_egress() {
         assert!(preview.paths.is_empty());
         assert_eq!(preview.profile.capture, compiler_summary(&s, 4));
     }
-    // Without the second (two-exit) rule source 1 has a single exit plan;
-    // the exit serves 1 and 5 and still resolves its own names locally.
+    // A name rule through 4 makes 4 the resolver of every source that leaves
+    // through it; 4 itself executes the rule as direct and resolves locally.
     s.cfg.routing.egress.rules.truncate(1);
+    s.cfg
+        .routing
+        .egress
+        .rules
+        .push(domain_rule("example.com", exit_action(&[4], &[3])));
     let compiled = netmaps(&s);
     assert!(matches!(
         &compiled.nodes[&node(1)].netmap.dns.egress,

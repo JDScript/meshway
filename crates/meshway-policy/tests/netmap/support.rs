@@ -194,6 +194,20 @@ pub(super) fn egress_rule(prefix: &str, action: RuleAction) -> EgressRule {
     }
 }
 
+/// A name rule: `suffix` and its subdomains.
+pub(super) fn domain_rule(suffix: &str, action: RuleAction) -> EgressRule {
+    EgressRule {
+        remark: String::new(),
+        matcher: RouteMatch {
+            ip_cidr: vec![],
+            domain: vec![],
+            domain_suffix: vec![suffix.into()],
+            rule_sets: vec![],
+        },
+        action,
+    }
+}
+
 pub(super) fn exit_action(nodes: &[u8], via: &[u8]) -> RuleAction {
     RuleAction::Exit {
         nodes: nodes.iter().map(|i| sel(*i)).collect(),

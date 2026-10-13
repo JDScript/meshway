@@ -11,6 +11,7 @@ mod support;
 use support::*;
 mod declarations;
 mod diagnostics;
+mod dns_plans;
 mod identity_addressing;
 mod routing;
 mod schema;

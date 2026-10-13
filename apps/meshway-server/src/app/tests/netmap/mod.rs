@@ -14,6 +14,7 @@ use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 mod commit;
+mod dns;
 mod signing;
 mod sync;
 

@@ -293,6 +293,11 @@ const TEXT: Record<IssueCode, (p: Params, node: NodeNamer) => string> = {
       node: node(p.node ?? "?"),
       profile: profileText(p.profile ?? "?", node),
     }),
+  dns_exit_plan_required: (p, node) =>
+    m.configuration_issue_dns_exit_plan_required({
+      node: node(p.node ?? "?"),
+      profile: profileText(p.profile ?? "?", node),
+    }),
   netmap_limit: (p, node) => {
     const [size, max] = sizesApart(p.bytes, p.maxBytes)
     return m.configuration_issue_netmap_limit({

@@ -1,6 +1,7 @@
 //! Per-node content outside the projection: egress partition, exit role,
 //! names, resolver decisions and the DNS service plan.
 use super::*;
+use crate::compile::dns::DnsResolution;
 use ipnet::IpNet;
 use meshway_configuration::execution::{DnsEgressUnavailable, ExecutionAddress, ExitNat};
 use meshway_model::exit::{EXIT_IPV4_FEATURE, EXIT_IPV4_VERSION, ExitFamily};
@@ -197,12 +198,12 @@ impl Local {
                 .map_or(0, |version| version.get()),
         )?;
         let enabled = cfg.nodes[&node].enabled;
-        let plan = if matching::dns_requires_exit(cfg, &profile, node) {
-            DnsPlan::Unavailable {
+        // An exit resolution is completed by [`dns`] into its service.
+        let plan = match super::super::dns::resolution(cfg, input.rule_sets, &profile, node)? {
+            DnsResolution::Local => DnsPlan::NoExit,
+            _ => DnsPlan::Unavailable {
                 reason: DnsEgressUnavailable::ExitPlanRequired,
-            }
-        } else {
-            DnsPlan::NoExit
+            },
         };
         Ok(Self {
             exit_role: exit_role(input.network, cfg, input.inventory, node)?,
@@ -217,8 +218,9 @@ impl Local {
     }
 }
 
-/// Resolver services follow the same single-exit rule as before, without any
-/// instance or readiness input. Returns every service for path distribution.
+/// Resolver services of every source whose names resolve through an exit
+/// ([`crate::compile::dns::resolution`]), without any instance or readiness
+/// input. Returns every service for path distribution.
 pub(super) fn dns(
     input: &NetmapInput<'_>,
     graph: &paths::Graph,
@@ -228,12 +230,11 @@ pub(super) fn dns(
     let mut services = Vec::new();
     for &source in members {
         let profile = input.profile(source)?;
-        if !matching::dns_requires_exit(input.configuration, &profile, source) {
-            continue;
-        }
-        if !locals.contains_key(&source)
-            && !super::super::dns::single_exit(input.configuration, &profile, source)?
-                .is_some_and(|(exit, _)| locals.contains_key(&exit))
+        let resolution =
+            super::super::dns::resolution(input.configuration, input.rule_sets, &profile, source)?;
+        if resolution == DnsResolution::Local
+            || (!locals.contains_key(&source)
+                && !matches!(&resolution, DnsResolution::Exit { exit, .. } if locals.contains_key(exit)))
         {
             continue;
         }
@@ -282,11 +283,14 @@ pub(super) fn service(
     source: NodeId,
 ) -> Result<Result<DnsService, DnsEgressUnavailable>, CompileError> {
     let cfg = input.configuration;
-    let Some((exit, via)) = super::super::dns::single_exit(cfg, &local.dns.profile, source)? else {
+    let resolve =
+        |profile: &str, node| super::super::dns::resolution(cfg, input.rule_sets, profile, node);
+    let DnsResolution::Exit { exit, via } = resolve(&local.dns.profile, source)? else {
         return Ok(Err(DnsEgressUnavailable::ExitPlanRequired));
     };
+    // The exit resolves with its own resolvers, never through another exit.
     if local.egress.unavailable.is_some()
-        || matching::dns_requires_exit(cfg, &input.profile(exit)?, exit)
+        || resolve(&input.profile(exit)?, exit)? != DnsResolution::Local
     {
         return Ok(Err(DnsEgressUnavailable::ExitPlanRequired));
     }

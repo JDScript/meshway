@@ -417,21 +417,12 @@ pub(super) fn validate(
     validate_resolved(config, context, check);
 }
 
-/// HTTPS without credentials or fragment, as a download source.
-/// Every assignable profile's egress partition must fit what a Node
-/// installs; otherwise that profile's sources have no egress.
-fn partition_limits(
+/// The sets rules are judged with: the loaded ones, and inline definitions
+/// as the artifacts they become.
+fn judged_sets(
     config: &NetworkConfiguration,
     loaded: &BTreeMap<String, Arc<meshway_rules::RuleSet>>,
-    check: &mut Check,
-) {
-    let mut names: BTreeSet<&str> = BTreeSet::from(["mesh"]);
-    for assignment in &config.routing.egress.assignments {
-        names.extend(assignment.allowed.iter().map(String::as_str));
-        names.insert(&assignment.default);
-    }
-    names.extend(config.routing.egress.profiles.keys().map(String::as_str));
-    // Inline definitions judge as the artifacts they become.
+) -> BTreeMap<String, Arc<meshway_rules::RuleSet>> {
     let mut sets = loaded.clone();
     for (key, set) in &config.rule_sets {
         if let RuleSet::Inline {
@@ -451,6 +442,23 @@ fn partition_limits(
             sets.insert(key.clone(), Arc::new(built));
         }
     }
+    sets
+}
+
+/// Every assignable profile's egress partition must fit what a Node
+/// installs; otherwise that profile's sources have no egress.
+fn partition_limits(
+    config: &NetworkConfiguration,
+    loaded: &BTreeMap<String, Arc<meshway_rules::RuleSet>>,
+    check: &mut Check,
+) {
+    let mut names: BTreeSet<&str> = BTreeSet::from(["mesh"]);
+    for assignment in &config.routing.egress.assignments {
+        names.extend(assignment.allowed.iter().map(String::as_str));
+        names.insert(&assignment.default);
+    }
+    names.extend(config.routing.egress.profiles.keys().map(String::as_str));
+    let sets = judged_sets(config, loaded);
     for name in names {
         let summary = crate::compile::capture_summary(config, &sets, name, None);
         let path = if config.routing.egress.profiles.contains_key(name) {
@@ -494,6 +502,7 @@ fn limit_warning(
     }
 }
 
+/// HTTPS without credentials or fragment, as a download source.
 fn https_source(url: &str) -> bool {
     let authority = url
         .strip_prefix("https://")

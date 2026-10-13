@@ -356,8 +356,12 @@ impl LocalCompiler {
             previous: &BTreeMap::new(),
         };
         let source_local = local::Local::compile(&input, source)?;
-        let Some((exit, _)) =
-            super::super::dns::single_exit(&self.configuration, &source_local.dns.profile, source)?
+        let super::super::dns::DnsResolution::Exit { exit, .. } = super::super::dns::resolution(
+            &self.configuration,
+            &self.rule_sets,
+            &source_local.dns.profile,
+            source,
+        )?
         else {
             return Ok(None);
         };

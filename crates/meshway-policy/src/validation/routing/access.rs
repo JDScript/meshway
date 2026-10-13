@@ -127,6 +127,7 @@ pub(super) fn validate_assignments_access(
         members: context.members.clone(),
     };
     let assignments = &config.routing.egress.assignments;
+    let judged = judged_sets(config, &context.rule_sets);
     for id in config.nodes.keys() {
         // Every (assignment, allowed profile) pair that applies to this Node,
         // with the pointer of the allowing entry.
@@ -186,6 +187,7 @@ pub(super) fn validate_assignments_access(
                     .with("node", id),
             );
         }
+        dns_plans(config, &judged, *id, &allowed, check);
         let mut seen = BTreeSet::new();
         for (allowed_path, name) in &allowed {
             let name: &String = name;
@@ -260,6 +262,63 @@ pub(super) fn validate_assignments_access(
                     );
                 }
             }
+        }
+    }
+}
+
+/// Every profile a Node may execute must have an executable DNS plan: its
+/// name rules (and an exit fallback) leave through one exit and via
+/// ([`crate::compile::dns_resolution`], the function its netmap uses). A
+/// Node without an assignment executes `mesh`. Profiles whose rule sets
+/// await their content are judged once the content is prepared.
+fn dns_plans(
+    config: &NetworkConfiguration,
+    sets: &BTreeMap<String, Arc<meshway_rules::RuleSet>>,
+    node: NodeId,
+    allowed: &[(String, &String)],
+    check: &mut Check,
+) {
+    let mesh = "mesh".to_owned();
+    let implicit = [("/routing/egress/rules".to_owned(), &mesh)];
+    let profiles: &[(String, &String)] = if allowed.is_empty() {
+        &implicit
+    } else {
+        allowed
+    };
+    let mut seen = BTreeSet::new();
+    for (path, name) in profiles {
+        if !seen.insert(*name) || !profile_exists(name, config, true) {
+            continue;
+        }
+        let profile_rules = config
+            .routing
+            .egress
+            .profiles
+            .get(*name)
+            .map(|profile| profile.rules.as_slice())
+            .unwrap_or_default();
+        if config
+            .routing
+            .egress
+            .rules
+            .iter()
+            .chain(profile_rules)
+            .flat_map(|rule| &rule.matcher.rule_sets)
+            .any(|key| !sets.contains_key(key))
+        {
+            continue;
+        }
+        if let Ok(crate::compile::DnsResolution::PlanRequired { pointer }) =
+            crate::compile::dns_resolution(config, sets, name, node)
+        {
+            check.issue(
+                ConfigurationIssue::new(
+                    pointer.unwrap_or_else(|| path.clone()),
+                    IssueCode::DnsExitPlanRequired,
+                )
+                .with("node", node)
+                .with("profile", *name),
+            );
         }
     }
 }

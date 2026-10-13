@@ -630,6 +630,7 @@
   "configuration_issue_exit_outside_access": "{node} 没有访问 {destination} 的权限，不能经出口发往这里",
   "configuration_issue_global_exit_requires_internet": "{node} 没有访问公网的权限，不能使用{profile}",
   "configuration_issue_exit_fallback_requires_internet": "{node} 没有访问公网的权限，方案 {profile} 的兜底不能经出口",
+  "configuration_issue_dns_exit_plan_required": "{node} 不能使用方案 {profile}：其中的域名规则经过不止一个出口，没有唯一的出口可以解析这些名称",
   "configuration_issue_netmap_limit": "下发给 {node} 的配置有 {size}，超过 {max} 的上限",
   "configuration_bytes": "{count} 字节",
   "configuration_issue_netmap_budget": "节点太多，或某条边可用的承载组合太多，这一版的节点配置超出编译上限；减少后再应用，原样重试不会成功",
