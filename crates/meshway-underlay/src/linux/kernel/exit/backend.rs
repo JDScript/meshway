@@ -241,6 +241,9 @@ impl Backend {
                 &mut self.store,
             )
             .await?;
+        self.routing
+            .forwards(&self.ledger, tuple.source, tuple.destination)
+            .await?;
         let seconds = timeout(&deadline)?;
         let submitted = Instant::now();
         let batch = json!({"nftables": [self.ledger.program.element("add", tuple.set(), vec![timed(tuple, seconds)])]});

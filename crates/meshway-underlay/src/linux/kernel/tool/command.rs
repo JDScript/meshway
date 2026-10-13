@@ -16,6 +16,8 @@ static PROCESS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
 pub(in crate::linux::kernel) enum Tool {
     Nft,
     Conntrack,
+    /// Read-only dump of loaded legacy iptables tables.
+    IptablesLegacySave,
 }
 
 impl Tool {
@@ -23,6 +25,7 @@ impl Tool {
         match self {
             Self::Nft => "/usr/sbin/nft",
             Self::Conntrack => "/usr/sbin/conntrack",
+            Self::IptablesLegacySave => "/usr/sbin/iptables-legacy-save",
         }
     }
 }

@@ -53,14 +53,11 @@ pub(super) async fn check(commands: &mut Commands, owned: &[(String, String)]) -
     }) {
         return Err(Error::Conflict);
     }
-    // An unreadable list is not evidence of a conflicting table here; the
-    // probe treats it as a firewall conflict before reporting readiness.
-    if host::legacy_tables()
-        .unwrap_or_default()
-        .iter()
-        .any(|table| matches!(table.as_str(), "mangle" | "raw" | "nat"))
-    {
-        return Err(Error::Conflict);
+    // Legacy iptables by content, as the probe judges it: loaded tables that
+    // cannot be read, or that touch marks or conntrack handling, conflict.
+    match super::firewall::legacy(commands).await {
+        Ok(None) => Ok(()),
+        Ok(Some(legacy)) if !legacy.marks => Ok(()),
+        Ok(Some(_)) | Err(_) => Err(Error::Conflict),
     }
-    Ok(())
 }

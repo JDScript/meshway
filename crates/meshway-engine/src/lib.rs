@@ -253,9 +253,11 @@ pub enum Error {
     #[error("required Node component could not apply desired state")]
     Apply,
     /// The desired content is installed and every safety boundary holds, but
-    /// some added capability (a listener, dial socket, exit role or DNS
-    /// answers) is unavailable. Engine keeps the content and re-applies it on
-    /// the next reconfig of the same content.
+    /// some capability this Node's own traffic uses (a listener, dial socket
+    /// or DNS answers) is unavailable. Engine keeps the content and re-applies
+    /// it on the next reconfig of the same content. A role this Node serves
+    /// for others (the exit role) is not graded here: its unmet prerequisites
+    /// are a reported capability fact and the apply succeeds without it.
     #[error("desired state installed without some added capability")]
     Degraded,
     #[error("netmap lease is invalid or has expired")]
@@ -533,6 +535,23 @@ impl<C: Components> Engine<C> {
             return Ok(());
         }
         self.settle(Some(next)).await
+    }
+
+    /// Apply the current desired state again, unchanged, for a component
+    /// whose capability returned (an exit role whose prerequisites now hold).
+    /// Idempotent components keep everything already installed.
+    pub async fn reapply(&mut self) -> Result<(), Error> {
+        if self
+            .lease
+            .as_ref()
+            .is_some_and(|lease| lease.expired(&mut self.clock))
+        {
+            return self.withdraw().await;
+        }
+        let Some(current) = self.desired.clone() else {
+            return Ok(());
+        };
+        self.settle(Some(current)).await
     }
 
     async fn withdraw(&mut self) -> Result<(), Error> {

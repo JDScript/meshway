@@ -53,6 +53,10 @@ impl super::super::Kernel {
         )
         .await
         .map_err(|_| Reason::RouteConflict)?;
+        let routes = super::super::get_routes(&self.handle, self.options.max_kernel_objects)
+            .await
+            .map_err(|_| Reason::RouteConflict)?;
+        let crossing = super::firewall::Crossing::observe(&links, &routes);
         let interfaces: Vec<_> = links
             .iter()
             .filter(|link| {
@@ -93,6 +97,7 @@ impl super::super::Kernel {
             .probe
             .get_or_insert_with(|| super::probe::ExitProbe::live(self.expected.clone()));
         probe.owned_tables = owned_tables;
+        probe.crossing = crossing;
         let observation = probe
             .observe(instance, netmap, role_generation, &interfaces)
             .await;

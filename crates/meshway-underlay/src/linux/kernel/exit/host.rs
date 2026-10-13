@@ -82,7 +82,10 @@ pub(super) async fn foreign_ruleset(
     decode_ruleset(&output.stdout, owned)
 }
 
-fn decode_ruleset(bytes: &[u8], owned: &[(String, String)]) -> Result<Vec<Object>, Failure> {
+pub(super) fn decode_ruleset(
+    bytes: &[u8],
+    owned: &[(String, String)],
+) -> Result<Vec<Object>, Failure> {
     let document: Document = serde_json::from_slice(bytes).map_err(|_| Failure::Malformed)?;
     if document.nftables.len() > 16384 {
         return Err(Failure::Malformed);

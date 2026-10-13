@@ -48,6 +48,8 @@ TCP 乱序区间只记录已准入字节的序号，不制造接收确认：缺�
 
 出口业务复用同一 `SecureNode`／`FlowTable`：Policy 在本节点投影上检查已认证原始源、`sourceAddresses`、出口 `Decision` 的精确目的／服务、selection 和完整路径；出口端另需本地 `exitRole`（[Routing · 出口联合许可](/v2/configuration-reference/routing#出口联合许可)）。首版拒绝出口 IPv6 并计数。出口回程由 `exit::ExitReplyIngress` 交给 `SecureNode::exit_reply`，只从已有流选择原 CID，再执行 `admit_reply` 和原路径反向 Noise 保护；未关联包丢弃并计数。出口之外路由器与出口主机自己产生的 [ICMP 错误](#icmp-errors)走同一回程，内核侧见 [Exit 设计 · ICMP 错误](/v2/node/exit-design#icmp-errors)。
 
+出口角色是本节点为其他源提供的能力，不是本节点自身流量的必需组件：本地 `exitRole` 的前置条件不满足或角色安装失败时，本节点其余内容照常 applied，只报告 `exitCapability: unavailable`；角色未安装时出口端不建立出口流（源端按出口就绪事实不选它）。宿主条件与恢复见[出口宿主前置探测](/v2/node/runtime#出口宿主前置探测)。
+
 `SecureNode::next_exit_projection` 按需返回一个不透明 `exit::ExitProjection`：`Install`／`Renew` 携带 flow incarnation、原 IPv4 tuple、不可换绑的 `ProjectionScope` 和一次性 ACK；`Retire` 携带原资源绑定与独立清理 ACK。**内核侧由 Underlay 执行，见 [Exit 设计](/v2/node/exit-design#数据路径与唯一-owner)**；daemon 映射类型并驱动事件和 I/O，不增加业务流表。此接口本身不证明 Linux NAT 安装或包流已验收。
 
 首包和触发续期的输出保留原 guard，通过 `PendingAction::projection_ready`／`PendingFrame::projection_ready` 等待 ACK；每次 `release` 仍检查原截止、流／cipher 取消和 ACK。`PendingAction::exit_flow` 给出该包的精确投影 incarnation；ACK 后的 `exit_scope` 供宿主异步写适配器逐次 poll 检查原包权限，不能用最新流 scope 替换旧排队包。安装失败、丢失 ACK 或等待超时使流不可执行。投影截止取流 idle 与所属 circuit 生命期的交集（不再有 permit 或执行／instance 截止）；投影绑定安装它的出口角色 generation，随 netmap 租约存续，租约到期、角色撤回或 generation 改变时 Retire；未 ACK 的投影 scope 还受命令等待及旧投影截止约束，不能先迟到安装再依赖 ACK 回调拒绝。续期不会因命令排队重置预算。同授权直接交接只为仍活流发出不超过旧流截止的 `Renew`，实际获准包才刷新流期限。未 ACK 的流不跨交接保留；授权 generation／路径变化结束旧流和 cipher。普通 tuple 退役以独立流 guard 取消旧输出，同 CID 的其他活 tuple 继续执行；最后一条流结束后退役该 cipher。

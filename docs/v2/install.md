@@ -15,6 +15,22 @@
 | 下载 | 在线安装需要 `curl`、`sha256sum`、`tar`；私有仓库需 `GITHUB_TOKEN`（releases 读权限） |
 | Server | 可达的 HTTPS Server origin；数字 loopback 可用 HTTP |
 
+## 出口宿主
+
+管理员为节点打开 `exitEnabled` 后，daemon 自动探测并安装 IPv4 出口角色；前提不满足时节点照常 running，只报告 `Exit unavailable (<原因>)`（State `exitCapability`），条件满足后约 20 秒内自动安装，无需重启或 `up`。daemon 从不修改宿主 sysctl 或防火墙。判定细节见[出口宿主前置探测](/v2/node/runtime#出口宿主前置探测)。
+
+| 项 | 要求 | 不满足时 |
+| --- | --- | --- |
+| 工具 | `/usr/sbin/nft`（nftables）与 `/usr/sbin/conntrack`（Debian／Ubuntu 包 `conntrack`）；已加载 legacy iptables 表时还需 `/usr/sbin/iptables-legacy-save` | `nftUnavailable`／`conntrackUnavailable`；legacy 表不可读为 `firewallConflict` |
+| 转发 | `net.ipv4.ip_forward=1`，且 `net.ipv4.conf.default.forwarding=1`（出口 TUN 是新接口，继承 default） | `ipForwardDisabled` |
+| 反向路径 | 每个接口的有效 `rp_filter`（`max(all, 接口)`）为 0 或 2；strict（1）不支持 | `reversePathFilterConflict` |
+| 防火墙 | 没有能挡住出口流量的规则：forward／output／postrouting 上不限于其他接口的 drop／reject，或 `policy drop` 的 FORWARD／OUTPUT | `firewallConflict` |
+| mark／offload | 外来规则不读写 packet／conntrack mark，不用 flowtable／ct helper；legacy iptables 不用 `MARK`／`CONNMARK`／`CT`／`NOTRACK`／`TPROXY` | `ownershipConflict` |
+
+Docker 可以与出口共存：Docker 自己的 `DOCKER-*` 链只丢弃进出其网桥的包，不算冲突。Docker 启动时若由它打开 `ip_forward`，会把 `FORWARD` 置为 `policy drop`，这确实挡住出口流量；在 Docker 启动前由系统配置打开 `ip_forward`，或在 `/etc/docker/daemon.json` 中设置 `"ip-forward-no-drop": true`（[Docker 文档](https://docs.docker.com/engine/network/packet-filtering-firewalls/#docker-on-a-router)），FORWARD 保持 accept。也可在 `DOCKER-USER` 中显式放行 `-i tun+`／`-o tun+`（放行全部 `tun*` 接口的转发，是宿主管理员的决定）。
+
+出口节点本身运行在 Docker 容器中时，容器需要 `NET_ADMIN`、`/dev/net/tun`、`--sysctl net.ipv4.ip_forward=1` 和镜像内的 nft／conntrack；容器继承的 loose `rp_filter`（2）可用。
+
 ## 安装
 
 ```sh

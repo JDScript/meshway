@@ -63,7 +63,7 @@ daemon／CLI 共用[运行日志参数](/v2/logging)，日志位于 stderr；CLI
 | --- | --- |
 | Linux Mesh-only | TUN capture、Native TCP／Native UDP 静态端点认证邻接、协调 UDP 穿透、双栈 UDP／TCP 多跳包流、持续续租和失效清理；验收状态见[验收范围](/v2/node/validation) |
 | DNS | 已接入 loopback 服务、精确 resolver 需求、resolved／显式文件代理；所有必需组件安装成功才可 applied，后端约束见[系统 DNS 安装](/v2/node/dataplane#系统-dns-安装) |
-| Exit／本机 egress | daemon 按当前执行目标探测并安装 IPv4 出口角色、精确 NAT 投影和源端 capture／IPv6 sink；回包由同一 SecureNode 按原完整路径返回。角色、capture、承载及必需的负向 DNS 资源共同进入本机 applied 边界。源节点 DNS 经出口 resolver 解析（[出口 resolver](/v2/node/dataplane#exit-resolver)），出口 resolver 不可用只对源 SERVFAIL 并单独报告 `exit.dnsUnavailable`；完整多进程验收范围见[验收范围](/v2/node/validation) |
+| Exit／本机 egress | daemon 按当前执行目标探测并安装 IPv4 出口角色、精确 NAT 投影和源端 capture／IPv6 sink；回包由同一 SecureNode 按原完整路径返回。capture、承载及必需的负向 DNS 资源共同进入本机 applied 边界；出口角色是本节点为其他源提供的能力，其前置条件不满足或安装失败只报告 `exitCapability: unavailable`，不阻断 applied（见[出口宿主前置探测](#出口宿主前置探测)）。源节点 DNS 经出口 resolver 解析（[出口 resolver](/v2/node/dataplane#exit-resolver)），出口 resolver 不可用只对源 SERVFAIL 并单独报告 `exit.dnsUnavailable`；完整多进程验收范围见[验收范围](/v2/node/validation) |
 | 诊断 | `meshway ping` 与 Server observation tasks 共用获准测量器，见[路径诊断](/v2/node/diagnostics) |
 | 承载 | Manager 共用获准的 stream、Native UDP 静态端点和协调 UDP 穿透；会话与交接见[邻接管理](/v2/node/transport#邻接管理)，NAT 范围见[连接获取](/v2/node/connectivity) |
 | 其他平台／入口 | 非 Linux 的 tun 返回 unsupported；userspace（见[规划](#规划-userspace-networking)）、动态插件和切网尚未实现 |
@@ -72,19 +72,31 @@ daemon／CLI 共用[运行日志参数](/v2/logging)，日志位于 stderr；CLI
 
 ### 出口宿主前置探测
 
-Linux `Host::exit_probe` 在打开 Host 前执行，独占本进程的 Host 预约。探测读取 `ip_forward`、实际接口与临时出口 TUN 的 `rp_filter`／`src_valid_mark`，实际创建并关闭非持久 TUN，并通过固定路径 `/usr/sbin/nft` 的 JSON 原子事务检查 timed set、original conntrack tuple 与 ct mark 表达式；`/usr/sbin/conntrack` 执行有界的 IPv4 mark 过滤读取。探测不修改宿主 sysctl 或防火墙策略，临时 nft 表在同一事务中创建、删除，取消后的命令结果经 join 与表列表回读处理。
+Linux `Host::exit_probe` 在打开 Host 前执行，独占本进程的 Host 预约。探测读取 `ip_forward`、实际接口与临时出口 TUN 的 `rp_filter`／`src_valid_mark`，实际创建并关闭非持久 TUN，并通过固定路径 `/usr/sbin/nft` 的 JSON 原子事务检查 timed set、original conntrack tuple 与 ct mark 表达式；`/usr/sbin/conntrack` 执行有界的 IPv4 mark 过滤读取；已加载 legacy iptables 表时以 `/usr/sbin/iptables-legacy-save` 只读其内容。探测不修改宿主 sysctl 或防火墙策略，临时 nft 表在同一事务中创建、删除，取消后的命令结果经 join 与表列表回读处理。
 
-`ip_forward=0` 返回 `ipForwardDisabled`，读取失败或格式错误返回 `forwardingProbeFailed`；实际 TUN 管理操作无权限返回 `netAdminMissing`。有效 `rp_filter=max(all,interface)` 为 strict 时返回 `reversePathFilterConflict`，不会自动改为 loose/off。工具不可用分别返回 `nftUnavailable`／`conntrackUnavailable`。观测保留原始 `observedAt`，重试上报不得重新计时。
+`ip_forward=0`，或新建 TUN 继承的 `forwarding`（来自 `conf/default/forwarding`，临时 TUN 上读取）为 0，返回 `ipForwardDisabled`；读取失败或格式错误返回 `forwardingProbeFailed`；实际 TUN 管理操作无权限返回 `netAdminMissing`。有效 `rp_filter=max(all,interface)` 为 strict 时返回 `reversePathFilterConflict`，不会自动改为 loose/off；loose（2）与 off（0）可用：出口 TUN 没有 IPv4 地址，内核对它的入包做反向路径检查时只在反向查找本身落到该 TUN 才放行，回程表的成对规则因此不带出口 mark，正是该反向查找（见[IPv4 出口角色与 NAT 投影](#ipv4-出口角色与-nat-投影)）。工具不可用分别返回 `nftUnavailable`／`conntrackUnavailable`。观测保留原始 `observedAt`，重试上报不得重新计时。
 
 此前置探测成功仍为 `probing`，`supportedFamilies`／`installedFamilies` 为空。探测与下面的角色安装是不同操作，不能据此前置探测发布 `ready`／`applied`。宿主管理员预配置 forwarding 和提供工具／设备不等于完整出口功能已可用。
 
-已打开的 Host 使用 `probe_exit(&mut self, instance: InstanceId, target: ConfigurationRef) -> ExitCapability`。它使用真实、处于 up 状态的外部接口，排除所属 Mesh／出口 TUN 和 DNS 锚点；临时设备的精确 index 注册到同一 monitor，创建／删除不会制造外部切网事件。探测检查实际 TUN 权限、转发／反向路径条件、完整 IPv4 nft 程序和 conntrack 读取；排除经 owner 回读确认的自有表后，无法证明兼容的宿主阻断规则／旧 iptables 表返回 `firewallConflict`，未知 mark 修改／offload 返回 `ownershipConflict`，不改写宿主规则。
+已打开的 Host 使用 `probe_exit(&mut self, instance: InstanceId, target: ConfigurationRef) -> ExitCapability`。它使用真实、处于 up 状态的外部接口，排除所属 Mesh／出口 TUN 和 DNS 锚点；临时设备的精确 index 注册到同一 monitor，创建／删除不会制造外部切网事件。探测检查实际 TUN 权限、转发／反向路径条件、完整 IPv4 nft 程序和 conntrack 读取；排除经 owner 回读确认的自有表后，可能挡住出口流量的宿主规则返回 `firewallConflict`，未知 mark 修改／offload 返回 `ownershipConflict`，不改写宿主规则。
+
+宿主规则只在**能匹配出口流量**时冲突。判定（`exit/firewall.rs` 的唯一实现）对 `ip`／`inet` 族的 nft 规则和已加载 legacy iptables 表的内容做同一遍历，考察的包为：经出口 TUN 转发到出口接口及其回包（forward、postrouting 钩子；出口接口为主路由表中通往 Internet 分类地址的 IPv4 路由的接口，即默认路由与直连公网网段，只通往私网的路由如 Docker 网桥不在内）、本机发往出口 TUN 的 ICMP 错误（output 钩子）。出口 TUN 是新建的内核 `tun<N>`，名字不同于任何现有接口。
+
+| 规则 | 判定 |
+| --- | --- |
+| `drop`／`reject`／`queue`／`tproxy`／`dup`／`fwd`，legacy 的 `DROP`／`REJECT`／`NFQUEUE`／`QUEUE`／`TPROXY`／`TEE` | 其匹配可能命中上述任一包即冲突；经 `jump`／`goto`（legacy 为自定义链目标）可达的链同样遍历 |
+| 接口约束（`iifname`／`oifname`／`iif`／`oif`，legacy `-i`／`-o`，含 `!`、集合与 `*`／`+` 通配） | 按实际接口判定：只匹配其他接口（如 Docker 的 `br-*`／`docker0`）的规则不命中出口流量；`tun*` 命中出口 TUN |
+| `ct state` 只含 `invalid`／`untracked`，`meta nfproto ipv6` | 不命中（出口流量为 IPv4 且被跟踪） |
+| 其他匹配（地址、端口、`limit`、xt match 等） | 视为可能命中 |
+| forward／output／postrouting 基链 `policy drop`（legacy 内建链 `DROP`） | 出口流量不能确定在此前被同链 `accept` 时冲突 |
+
+因此 Docker（`DOCKER-ISOLATION-STAGE-*`、`DOCKER` 链只丢弃进出其网桥的包）与出口共存，Docker 把 `FORWARD` 置为 `policy drop`（Docker 自己打开 `ip_forward` 时的默认）、ufw 默认 forward drop、firewalld 区域转发拒绝和不限接口的 drop 仍冲突。prerouting／input 钩子与 netdev／bridge／arp 族不在判定范围；它们若丢弃出口流量，表现为下面的逐流路由判定拒绝或 conntrack 确认失败。
 
 live probe 成功返回 `ready` 和 `supportedFamilies=[ipv4]`，`installedFamilies` 仍为空；其含义是所报后端前置条件完成，不代替角色安装或业务连通证明。失败携带具体原因。返回值保留传入 instance／target 与本次真实 `observedAt`，X4 不需自行把 `probing` 改成 `ready`。
 
-daemon 首次取得执行目标及每次向网络 worker 发布执行刷新时，若 `exitEnabled` 或 `exitRole` 存在，即调用 live probe。该 Future 的 monitor 预约不可跨线程移动，因此唯一网络 worker 在一个固定线程上驱动，并在停止时显式等待退出；Host、Control 和内核资源仍各只有一个 owner。探测失败也可上报 State；只有角色及其他必需组件实际完成当前目标安装后，才填充 `installedFamilies` 和 applied。
+daemon 首次取得执行目标及每次向网络 worker 发布执行刷新时，若 `exitEnabled` 或 `exitRole` 存在，即调用 live probe。该 Future 的 monitor 预约不可跨线程移动，因此唯一网络 worker 在一个固定线程上驱动，并在停止时显式等待退出；Host、Control 和内核资源仍各只有一个 owner。出口前置条件不满足或角色安装失败时，内容照常 applied：`exitCapability` 为 `unavailable` 及具体原因并上报 State，IPC Status 显示 `Exit unavailable (<原因>)`，peer 与本节点作为源的流量不受影响，也不进入 apply 重试。能力探测按下文周期重新真实探测；观测为 `ready` 而当前内容的角色尚未安装时，网络 worker 以同一内容重新 apply（`Engine::reapply`），由此安装角色。实例在内容应用之后才取得（启动时从保存的 netmap 恢复）时，取得实例即探测一次。只有角色实际安装后才填充 `installedFamilies`。
 
-Control 在保存执行目标和签发快照时检查本地 `exitRole.instanceId` 等于当前实例、出口开关仍启用，以及 permit 内引用的本地角色与目标角色一致。`NodeState.exitCapability` 是独立观测：失败可在尚未 applied 时报告，新观测必须绑定当前 instance／精确 target；错绑在发送 HTTP 前拒绝。不确定交付的重试保留原内容、序号和 `observedAt`，不把旧探测换绑到新目标。能力报告不生成应用回执，也不替代必需组件的原子 applied 边界。出口 role 安装期间，网络 worker 在每个事件上检查该观测：超过 State 报告寿命（60 秒）的三分之一即重新真实探测，持续业务流量不推迟刷新。
+Control 在保存执行目标和签发快照时检查本地 `exitRole.instanceId` 等于当前实例、出口开关仍启用，以及 permit 内引用的本地角色与目标角色一致。`NodeState.exitCapability` 是独立观测：失败可在尚未 applied 时报告，新观测必须绑定当前 instance／精确 target；错绑在发送 HTTP 前拒绝。不确定交付的重试保留原内容、序号和 `observedAt`，不把旧探测换绑到新目标。能力报告不生成应用回执，也不替代必需组件的原子 applied 边界。netmap 带出口职责期间，网络 worker 在每个事件上检查该观测：超过 State 报告寿命（60 秒）的三分之一即重新真实探测，持续业务流量不推迟刷新。
 
 ### IPv4 出口角色与 NAT 投影
 
@@ -92,7 +104,7 @@ Linux `Host::install_exit_role(ExitRolePlan)` 消费当前执行快照中相同�
 
 | 操作 | 行为 |
 | --- | --- |
-| `install(incarnation, original_tuple, deadline, scope)` | 拒绝已有冲突 CT／tuple／incarnation；安装精确 timed set 资格并回读，返回 `ProjectionAck`，此后才允许提交首包 |
+| `install(incarnation, original_tuple, deadline, scope)` | 拒绝已有冲突 CT／tuple／incarnation；安装回程路由与成对规则后，向内核取该对 forward 包的实际入路由判定（入接口为出口 TUN、带出口 mark，不发包），不是单播转发路由即拒绝该流，并在日志中指明原因（`rp_filter`、无转发路由、martian）；安装精确 timed set 资格并回读，返回 `ProjectionAck`，此后才允许提交首包 |
 | `send(incarnation, packet, guard: impl ExitSendGuard)` | 每个排队包独立持有原 guard 与入队时的投影；每次 TUN 写 future 的 poll 前同步检查该 guard，再受原截止／撤回／tuple 约束；不使用最新 Live 投影替换排队包的权限 |
 | `confirm(incarnation)` | 首包产生 CT 后，按 IPv4 original tuple＋归属 mark 检查，返回 `CtConfirmation::Confirmed`；有界等待不超过三秒及流截止，缺失或冲突时先关闭资格，再返回 `ConfirmFailed`；清理失败返回错误 |
 | `renew(incarnation, deadline, scope)` | 仅在旧资格仍活、绑定相同且已确认 CT 身份仍一致时原子续期 timed set；不创建新的 CT，不复活过期投影 |
@@ -106,9 +118,9 @@ incarnation 的类型为 `ExitIncarnation`：`new([u8; 32])`／`bytes() -> [u8; 
 
 `ExitTransport::IcmpEcho { identifier, sequence }` 按两字段独立投影。同 identifier 不同 sequence 可以共存并共享内核 CT；读回包也精确匹配 sequence，退役一个不会撤销另一个的资格。ICMP 使用独立 timed set；固定 nft 版本通过规则内的 32-bit 字读取、掩码和恢复实现 sequence 检查，未知输入 mark 拒绝，成功返回前恢复专用路由 bit，临时值不交给外部 hook／RPDB。这只实现内核资源共享，不增加业务流准入规则。
 
-角色安装使用 `inet meshway_exit_<installation>` 与 `ip meshway_exit_nat_<installation>` 私有表。只有独立 TUN ingress、Mesh 源、精确活投影、NEW 状态且归属 bit 尚未设置时，FORWARD 才设置 CT mark；已归属 NEW／ESTABLISHED／RELATED 必须继续匹配投影，未归属 ESTABLISHED 不接管。NEW 重传仍受同一资格约束。PREROUTING 只准备专用路由 bit，回程要求 reply direction／原 tuple／归属 mark；最终 postrouting 再检查资格。原方向执行 masquerade，回程 RPDB 将逆 NAT 后的源节点 `/32` 导向出口 TUN。正向绕过客户端 capture 的规则同时匹配出口 iif 与资格生成的 mark。
+角色安装使用 `inet meshway_exit_<installation>` 与 `ip meshway_exit_nat_<installation>` 私有表。只有独立 TUN ingress、Mesh 源、精确活投影、NEW 状态且归属 bit 尚未设置时，FORWARD 才设置 CT mark；已归属 NEW／ESTABLISHED／RELATED 必须继续匹配投影，未归属 ESTABLISHED 不接管。NEW 重传仍受同一资格约束。PREROUTING 只准备专用路由 bit，回程要求 reply direction／原 tuple／归属 mark；最终 postrouting 再检查资格。原方向执行 masquerade，回程 RPDB 将逆 NAT 后的源节点 `/32` 导向出口 TUN。正向绕过客户端 capture 的规则同时匹配出口 iif 与资格生成的 mark。每对（远端、源）的回程规则 `from <远端>/32 to <源>/32 lookup <回程表>` 不带 mark，同时是内核对该对 forward 包的反向路径查找；带 mark 的配对 `unreachable` 规则在表中无路由时终止回程查找。不带 mark 而走到出口 TUN 的包没有归属 mark，被 forward／final 链的 `oif` 规则丢弃。
 
-Mesh 池、loopback、链路本地、组播、保留／广播及出口本机地址不能作为外部转发目的。IPv6 出口拒绝。宿主必须提供实际可用的 TUN／NET_ADMIN、固定路径 nft／conntrack、`ip_forward=1` 和已支持的 loose/off 反向路径校验；无法证明 mark 写入或 flow offload 不冲突时停装。**不要求或修改 `nf_conntrack_acct`**，计数不用于 CT 归属证明。宿主原有防火墙仍可拒绝包。
+Mesh 池、loopback、链路本地、组播、保留／广播及出口本机地址不能作为外部转发目的。IPv6 出口拒绝。宿主必须提供实际可用的 TUN／NET_ADMIN、固定路径 nft／conntrack、`ip_forward=1` 和已支持的 loose/off 反向路径校验（宿主前提见 [Linux 安装 · 出口宿主](/v2/install#出口宿主)）；无法证明 mark 写入或 flow offload 不冲突时停装。**不要求或修改 `nf_conntrack_acct`**，计数不用于 CT 归属证明。宿主原有防火墙仍可拒绝包。
 
 所有 nft 变更通过结构化 JSON 原子批提交；工具执行每次两秒预算，全局命令槽最多等待一秒，输入和各输出管道各 2 MiB，进程并发与请求／包队列均有界。timeout 使用秒，按原单调／墙钟截止减去预算保守取整，实际资格可提前到期。续期在异步检查后再次核验旧资格，ACK 不延长原 guard。取消或丢失响应后 join 并读回核验，不把工具被杀视作回滚。
 

@@ -145,7 +145,6 @@ pub async fn run(cli: &Cli, role: Role) -> Result<()> {
             &status,
         )
         .await?;
-        let mut restarted = false;
         let mut crashed = false;
         let mut traffic_done = false;
         loop {
@@ -154,16 +153,6 @@ pub async fn run(cli: &Cli, role: Role) -> Result<()> {
             }
             if tokio::fs::try_exists(cli.signals.join("exit-down")).await? {
                 break;
-            }
-            if role == Role::E
-                && !restarted
-                && tokio::fs::try_exists(cli.signals.join("exit-restart-e")).await?
-            {
-                actor::terminate(&mut daemon).await?;
-                daemon = actor::spawn_named_daemon(cli, role.name(), topology.controller(role))?;
-                actor::wait_ipc(cli, &mut daemon).await?;
-                restarted = true;
-                ready(cli, "exit-restarted-e").await?;
             }
             if role == Role::A
                 && !traffic_done

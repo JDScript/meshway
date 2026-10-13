@@ -94,6 +94,9 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
     let mut dns_queries = super::dns::mesh::Queries::default();
     let mut retry = Retry::default();
     let mut dns_failed = false;
+    // The exit role's prerequisites came to hold after its content applied
+    // without it: apply that content again so the role installs.
+    let mut exit_recovered = false;
     let mut sample_at = None;
     let mut channels = PeerChannels::default();
     loop {
@@ -133,6 +136,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             Command(Option<Command>),
             Offer,
             Retry,
+            ExitRecovered,
             Expired,
             HostFailed,
             DnsFailure,
@@ -211,6 +215,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             query = dns_requests.recv() => match query { Some(query) => Work::DnsQuery(Box::new(query)), None => Work::Command(None) },
             Some(report) = dns_reports.recv() => Work::DnsReport(Box::new(report)),
             _ = sleep_until(retry_at) => Work::Retry,
+            () = std::future::ready(()), if exit_recovered => Work::ExitRecovered,
             _ = dns.failed(), if !dns_failed => Work::DnsFailure,
             _ = dns.recovered(), if dns_failed => Work::DnsRecovered,
             _ = host.ended(), if installed.is_some() => Work::HostFailed,
@@ -286,12 +291,18 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             });
         if stale && engine.desired().is_some() {
             let capability = engine.components_mut().exit_capability().await;
+            exit_recovered = engine.components().exit_pending()
+                && capability
+                    .as_ref()
+                    .is_some_and(|fact| fact.status == meshway_model::exit::ExitStatus::Ready);
             let mut report = reports.borrow().clone();
             report.exit_capability = capability;
             reports.send_replace(report);
         }
-        let structural = matches!(&work, Work::Offer | Work::Retry | Work::DnsRecovered)
-            || matches!(&work, Work::Carrier(events) if events.iter().any(|event| matches!(event, Event::Changed)));
+        let structural = matches!(
+            &work,
+            Work::Offer | Work::Retry | Work::DnsRecovered | Work::ExitRecovered
+        ) || matches!(&work, Work::Carrier(events) if events.iter().any(|event| matches!(event, Event::Changed)));
         match work {
             Work::DnsQuery(query) => dns_queries.enqueue(*query),
             Work::DnsReport(report) => {
@@ -394,9 +405,16 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 let _ = reply.send(result);
                 continue;
             }
-            Work::Offer | Work::Retry | Work::DnsRecovered => {
+            Work::Offer | Work::Retry | Work::DnsRecovered | Work::ExitRecovered => {
                 // An offer and a recovered component are new inputs; a retry
-                // continues the bounded backoff of the same failure.
+                // continues the bounded backoff of the same failure. A newer
+                // offer pending takes precedence over reapplying the current one.
+                let reapply = matches!(work, Work::ExitRecovered)
+                    && offers.has_changed().is_ok_and(|changed| !changed);
+                exit_recovered = false;
+                if reapply {
+                    tracing::info!("Exit prerequisites hold; installing the exit role");
+                }
                 if !matches!(work, Work::Retry) {
                     retry = Retry::default();
                 }
@@ -423,9 +441,11 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 // Same healthy content and associations: Engine extends its
                 // own timer only. Changed associations, other content and a
                 // degraded installation apply and report below.
-                let change =
-                    super::transitions::change(engine.desired(), engine.degraded(), &netmap);
-                if change == super::transitions::Change::Renewal {
+                // Reapplying keeps the installed content's work and report.
+                let change = (!reapply).then(|| {
+                    super::transitions::change(engine.desired(), engine.degraded(), &netmap)
+                });
+                if change == Some(super::transitions::Change::Renewal) {
                     if engine.reconfig(Some(&netmap)).await.is_err() {
                         tracing::warn!(
                             netmap_serial = reference.serial.get(),
@@ -437,6 +457,12 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                         if rebound {
                             report.exit_capability =
                                 engine.components_mut().exit_capability().await;
+                            // Content applied before the instance arrived
+                            // could not observe the exit prerequisites.
+                            exit_recovered = engine.components().exit_pending()
+                                && report.exit_capability.as_ref().is_some_and(|fact| {
+                                    fact.status == meshway_model::exit::ExitStatus::Ready
+                                });
                         }
                         reports.send_replace(report);
                     }
@@ -446,7 +472,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 let mut report = previous.clone();
                 // Changed associations keep the installed content's work: its
                 // report stays until the new desired state's outcome below.
-                if change == super::transitions::Change::Content {
+                if change == Some(super::transitions::Change::Content) {
                     report.plane = DataPlane::Preparing;
                     report.problem = None;
                     report.problem_detail = None;
@@ -464,7 +490,11 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 plane.report = report;
                 plane.failure = None;
                 plane.failure_detail = None;
-                let result = engine.reconfig(Some(&netmap)).await;
+                let result = if reapply {
+                    engine.reapply().await
+                } else {
+                    engine.reconfig(Some(&netmap)).await
+                };
                 let kept = engine.desired().is_some();
                 let capture = engine
                     .desired()
