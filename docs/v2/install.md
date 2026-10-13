@@ -34,8 +34,8 @@ Docker 可以与出口共存：Docker 自己的 `DOCKER-*` 链只丢弃进出其
 ## 安装
 
 ```sh
-curl -fsSLO https://github.com/JDScript/meshway/releases/download/v0.1.0-alpha.4/install.sh
-sudo sh install.sh --version v0.1.0-alpha.4 --server https://controller.example.com
+curl -fsSLO https://github.com/JDScript/meshway/releases/download/v0.1.0-alpha.5/install.sh
+sudo sh install.sh --version v0.1.0-alpha.5 --server https://controller.example.com
 sudo meshway up --enrollment-key @/root/enrollment-key
 sudo meshway status
 ```
@@ -135,9 +135,9 @@ meshway version
 ```
 
 ```text
-meshway 0.1.0-alpha.4 (v0.1.0-alpha.4-0-g1234abcd)
+meshway 0.1.0-alpha.5 (v0.1.0-alpha.5-0-g1234abcd)
 target:   aarch64-unknown-linux-musl
-ipc:      8
+ipc:      9
 wire:     6
 compiler: meshway-netmap-2
 ```

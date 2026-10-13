@@ -2,7 +2,9 @@
 
 按合入 main 的顺序记录工作包、提交与证据 ID。规则见[工程流程](/v2/process)；性能数字的口径见[分层性能测量](/v2/node/performance)，验收状态见[验收范围](/v2/node/validation)。
 
-## 未发布
+## v0.1.0-alpha.5
+
+范围：wire 6、`compilerVersion` `meshway-netmap-2` 不变；IPC 9；Server schema 7；HTTP 契约新增可省略的 `SyncRequest.lease` 与 `PeerFacts.connected`（先升 Node 再升 Server）；新增验收行 `nat/relay`；以及下列 C3、S3、F4a、R2d、N4、X7 等工作包。
 
 wire 6、`compilerVersion` 不变，IPC 9（C3）；Server schema 版本 7（F4a 新增 `rule_set_record_heads`，C3 为 6，R2d 新增 `rule_set_catalog_checks` 并允许回收 artifact 为 7；开发环境重新初始化数据目录）。HTTP 契约：`SyncRequest` 新增可省略的 `lease`；`listRuleSetCatalog` 描述更新（无字段变化）；S3 的 State／库存／诊断变化见下。
 
