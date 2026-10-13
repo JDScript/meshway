@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-13T21:51:40.557760+00:00",
+  "updatedAt": "2026-10-13T21:55:27.410728+00:00",
   "runs": [
     {
       "id": 38472578531,
@@ -147,9 +147,9 @@
       "commit": "e07f5cd9f9b7736b645f4de8d9d40625c9881d8c",
       "message": "Merge branch 'u1/startup-self-heal'",
       "createdAt": "2026-10-13T21:42:16Z",
-      "updatedAt": "2026-10-13T21:48:38Z",
-      "status": "in_progress",
-      "conclusion": null,
+      "updatedAt": "2026-10-13T21:52:51Z",
+      "status": "completed",
+      "conclusion": "success",
       "url": "https://github.com/JDScript/meshway/actions/runs/38472578484",
       "jobs": [
         {
@@ -178,11 +178,11 @@
           "id": 115555257946,
           "name": "web",
           "runner": "mars-epyc7543",
-          "status": "in_progress",
-          "conclusion": null,
+          "status": "completed",
+          "conclusion": "success",
           "startedAt": "2026-10-13T21:48:38Z",
-          "completedAt": null,
-          "seconds": null,
+          "completedAt": "2026-10-13T21:52:50Z",
+          "seconds": 252.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/38472578484/job/115555257946"
         }
       ],
