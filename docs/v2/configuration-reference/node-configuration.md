@@ -41,8 +41,8 @@ diagnostics 不进入普通业务 permits。没有对应许可时不能发起或
 
 | 值 | 含义 |
 | --- | --- |
-| `{"type":"noExit"}` | 编译器证明当前 DNS 选择不存在出口可能；不授予上游 socket |
-| `{"type":"unavailable","reason":"exitPlanRequired"}` | 存在出口可能，缺少可执行 DNS plan |
+| `{"type":"noExit"}` | 普通查询用本机系统 resolver：没有经出口的名称规则，fallback 也不经出口（只有 IP 规则的出口不影响 DNS）；不授予上游 socket |
+| `{"type":"unavailable","reason":"exitPlanRequired"}` | 名称规则或出口 fallback 不止一个出口，没有单一出口方案（保存时即拒绝；节点缺规则集 artifact 时也会出现），见 [DNS · 使用出口时](/v2/configuration-reference/dns#使用出口时) |
 | `viaExit` | `exit`、`service: DnsServicePermit`、`generation` 指定单出口 resolver；仍需真实 Mesh 适配才能安装 |
 | `serveExitResolver` | `permit: DnsServicePermit[]` 为该出口接受的源许可；不自行认证 socket 来访者 |
 

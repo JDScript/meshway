@@ -25,14 +25,14 @@
 | IPv4 | 精确长度与 checksum；暂不支持 options 或分片 |
 | IPv6 | 精确长度；最多两个顺序合法、仅含 padding 的扩展头；拒绝 routing header、全部 fragment header 和 jumbogram |
 | 业务协议 | TCP、UDP、ICMP echo；检查端口、协议头及适用 checksum |
-| ICMP 错误 | IPv4 destination unreachable（code 0–15，含 fragmentation needed）与 time exceeded（code 0–1），引用无选项、未分片的 IPv4 头加至少 8 字节 TCP／UDP 端口或 echo request；见[ICMP 错误](#icmp-errors)。不是业务流量，不建立流 |
+| ICMP 错误 | IPv4 destination unreachable（code 0–15，含 fragmentation needed）与 time exceeded（code 0–1），引用无选项、未分片的 IPv4 头加至少 8 字节 TCP／UDP 端口或 echo request；ICMPv6 destination unreachable（code 0–6）、packet too big（code 0）与 time exceeded（code 0–1），引用无扩展头的 IPv6 头加至少 8 字节同类内容；见[ICMP 错误](#icmp-errors)。不是业务流量，不建立流 |
 | UDP／ICMP | 回复匹配已建立反向 tuple；echo 另绑定 identifier／sequence |
 | TCP | 三次握手、每方向 16 MiB 序号历史内的 ACK／重分段重传、前方 16 MiB 内最多 64 个已见乱序区间、FIN 与已建立 RST；支持序号回绕，状态有界。端点按空闲回收的 TCP tuple 记入有界续接集合（同一内容内有效，内容更换或撤空即清空）；其后源方向带 ACK、无 SYN／RST 的同 tuple 段按首包重新准入（续接：forward 从该段序号、reply 从其 ACK 起算），回包仍须确认源已发出的字节；回复方向的段不能建流。因撤销、撤回或租约到期结束的流不可续接，旧连接只能重新握手。由端点 TCP 处理实际重排／SACK；不缓存包体，不支持 simultaneous-open、TFO 或握手 RST |
 | 资源 | 默认 4,096 流、60 秒空闲；最大 65,536 流、24 小时空闲设置；实际寿命受空闲、circuit 与 Engine 撤回约束 |
 
 #### ICMP 错误 {#icmp-errors}
 
-ICMP 错误是一条已准入流的 RELATED 报文：`Packet::parse` 把它解析为 `Transport::Error`（外层地址＋被引用包的元组），流表只在它**引用的正是某条活流的 forward 包**（TCP／UDP 端口、echo 的 identifier 与 sequence 完全相同）时，沿该流原路径的回复方向放行：在流的终点（出口或 Mesh 终点）发送、在源接收，且必须是该流绑定的 circuit 与完整路径。Policy（`admission::netmap::admit_related`）另要求错误发往该流的源地址，来自被引用的目的地址本身、终点节点自己的地址，或（出口流）Mesh 地址池以外的地址（出口之外的路由器）；Mesh 中其他节点的地址不能冒充。错误不刷新流期限、不推进协议状态、不创建流；排空中、已到期、出口投影未 ACK 或匹配不唯一的流都不放行。每条流在每个端点每秒至多 10 条（`RELATED_PER_SECOND`），超出即丢弃；`SecureNode::related_counters` 计数放行、拒绝（无匹配流或 Policy 不符）与限速。引用 forward 方向以外的包（例如源本机对回包产生的错误）、ICMPv6 错误与其他类型照旧丢弃。中继不变，仍按会话转发。
+ICMP 错误是一条已准入流的 RELATED 报文：`Packet::parse` 把它解析为 `Transport::Error`（外层地址＋被引用包的元组），流表只在它**引用的正是某条活流的 forward 包**（TCP／UDP 端口、echo 的 identifier 与 sequence 完全相同）时，沿该流原路径的回复方向放行：在流的终点（出口或 Mesh 终点）发送、在源接收，且必须是该流绑定的 circuit 与完整路径。Policy（`admission::netmap::admit_related`）另要求错误发往该流的源地址，来自被引用的目的地址本身、终点节点自己的地址，或（出口流）Mesh 地址池以外的地址（出口之外的路由器）；Mesh 中其他节点的地址不能冒充。错误不刷新流期限、不推进协议状态、不创建流；排空中、已到期、出口投影未 ACK 或匹配不唯一的流都不放行。每条流在每个端点每秒至多 10 条（`RELATED_PER_SECOND`），超出即丢弃；`SecureNode::related_counters` 计数放行、拒绝（无匹配流或 Policy 不符）与限速。引用 forward 方向以外的包（例如源本机对回包产生的错误）与其他类型照旧丢弃；ICMPv6 错误按同一规则判定（出口仅 IPv4，受管 IPv6 仍 sink，只有 Mesh 内 IPv6 流有可引用的流）。中继不变，仍按会话转发。本节点为自己超限的包合成的错误不经网络，见[通道 MTU](#channel-mtu)。
 
 同一流固定原 demand ID 与完整路径；同一节点／角色范围的活 tuple 在多个 demand ID 之间也不能被另一条路径接管。`LocalFlow` 只读查询同一 FlowTable，供本机源包／原路径回复使用，不刷新流、推进协议状态或形成第二份路由表。SecureNode 中继不创建业务流，也不因此获得本机发起资格；歧义拒绝。
 
@@ -43,6 +43,18 @@ TCP 乱序区间只记录已准入字节的序号，不制造接收确认：缺�
 `SecureNode::apply(&Desired)` 对新内容就地比较：仅保留服务、完整路径与出口选择仍由新内容决定的活流，以及授权 digest 与路径密钥不变的 circuit；本节点身份、地址或密钥变化时全部结束。同内容为空操作。
 
 应用不延长任何流期限；只有实际获准包通过同一协议状态机才能刷新其期限。拒绝包不建立或推进流状态。
+
+#### 通道 MTU {#channel-mtu}
+
+连接组件为每条选定的 Native UDP 通道测得内层上限（[外层路径 MTU](/v2/node/connectivity#path-mtu) 的 `inner`，`Snapshot.mtu`），daemon 每轮与承载一起交给唯一 SecureNode（`set_path_limits`）。TUN MTU 仍是固定的 1,366（`DEFAULT_INNER_MTU`），比某条通道能装下的大时：
+
+| 机制 | Owner | 行为 |
+| --- | --- | --- |
+| 超限包 | dataplane | 端点业务包准入后、消耗 nonce 之前，若它比到下一跳那条通道的 `inner` 大即丢弃（`Error::TooBig`）。本节点 TUN 是该流本机一端时（源发出的包；Mesh 流终点的回包），合成一条错误交本机 TUN：IPv4 为 fragmentation needed（3/4，next-hop MTU = `inner`，引用原包 IPv4 头＋8 字节），IPv6 为 packet too big（2/0，MTU 取 `inner` 与 1,280 的较大者，引用原包至多 1,232 字节），源地址为原包目的地址，像该路径上的路由器发出。错误绑定该流的期限与取消，经与收到的包相同的 TUN 交付（`take_local_errors` → `deliver_batch`），不进入网络、不经 `admit_related`；全节点每秒至多 32 条、待交付至多 32 条。应用栈据此学到 PMTU（Linux 路由缓存 `mtu <inner>`），TCP 降段、`ping -M do` 报告 `Frag needed` |
+| TCP MSS | Underlay（nft） | 自有表 `inet meshway_mss_<installation>`（与出口捕获同一 installation、同一命令序列化），每次变化以一个 nft 事务整表替换，随捕获退役删除，出口前置探测把它算作本节点所有。Mesh TUN 上发出的 SYN 按目的、收到的 SYN 按来源、出口 TUN 收到的源节点 SYN 按来源，把 MSS 限到上限 −40（IPv4）／−60（IPv6）；不小于 TUN 给出的 MSS 时不限，没有任何限制时表不存在 |
+| 上限 | dataplane（`SecureNode::clamps`） | 直连 peer：到它那条通道的 `inner`；经中继的 peer：已知上限中最小者（首跳未知）；Mesh 以外的目的（经出口）：到各就绪出口的上限中最小者。daemon 每秒把结果交 Underlay（`Host::clamp_mss`），只有变化才写 nft；直连↔中继切换或通道重新测量后随之更新 |
+
+范围：只有本节点首跳的通道上限可知；中继到下一跳更窄时帧在中继处丢弃，不会生成错误（中继不解密）。出口对来自外部、超过其首跳上限的回包只丢弃，不向外部发送错误，TCP 由出口 TUN 的 MSS 限制覆盖。不合成 ICMP 的包（ICMP 错误本身、echo reply、带扩展头的 IPv6）只丢弃。上限只改变包的大小，不授予也不撤销任何准入。
 
 ### IPv4 出口流与内核投影
 
@@ -282,9 +294,9 @@ exchange 适配器须在每次 connect／write／read poll 检查路由期限与
 
 内容变化（含出口 role 撤回、方案切换）和租约到期按 [scope 发布](#dns-查询-owner) 结束两端旧 ticket；新内容下的 DNS circuit 由 `SecureNode::update` 按 path 授权摘要判定保留或退役，旧回答不能换绑。
 
-可信域名关联（X6）：served 路径回答源节点名称规则决定的名称后，产生一份关联任务完成交 Control 上报（不等待、不扩大 DNS permit，队列满即丢弃）；源节点的 client 路径持有这类回答直至 Engine 应用覆盖其地址的关联（至多 2 秒，否则 SERVFAIL），TTL 截为关联剩余寿命。关联变化不结束 DNS scope 与已接纳查询，也不重判已建立的流；新流由 `Decisions` 以当前关联判定。见 [Exit 设计 · 可信域名关联](/v2/node/exit-design#trusted-dns-associations)。
+可信域名关联（X6）：served 路径回答源节点名称规则决定的名称后，产生一份关联任务完成交 Control 上报（不等待、不扩大 DNS permit，队列满即丢弃）；源节点的 client 路径持有这类回答直至 Engine 应用覆盖其地址的关联（到该查询截止前 250 ms、至多 5 秒，否则 SERVFAIL；其他查询不等它），TTL 截为关联剩余寿命。关联变化不结束 DNS scope 与已接纳查询，也不重判已建立的流；新流由 `Decisions` 以当前关联判定。见 [Exit 设计 · 可信域名关联](/v2/node/exit-design#trusted-dns-associations)。
 
-限制：resolved 后端的出口查询需要 systemd ≥ 248 且 `DNSStubListener=yes`（提供代理 stub `127.0.0.54`），否则出口查询不可用（`proxyStubMissing`），见 [Linux 安装](/v2/install)。首版只解析经 IPv4 出口的普通查询；AAAA 原样返回出口 resolver 的真实回答，不伪造 NXDOMAIN，受管 IPv6 包仍由源端捕获 sink 与 permit 双重拒绝。显式多出口 DNS plan 未实现。DNS 消息上限 4096 bytes，单查询不超过 5 秒。这些范围以外或任何必需安装失败均阻断整体 applied。
+限制：resolved 后端的出口查询需要 systemd ≥ 248 且 `DNSStubListener=yes`（提供代理 stub `127.0.0.54`），否则出口查询不可用（`proxyStubMissing`），见 [Linux 安装](/v2/install)。首版只解析经 IPv4 出口的普通查询；AAAA 原样返回出口 resolver 的真实回答，不伪造 NXDOMAIN，受管 IPv6 包仍由源端捕获 sink 与 permit 双重拒绝。名称规则经多个出口的显式 DNS plan 未实现（保存即拒绝）。DNS 消息上限 4096 bytes，单查询不超过 5 秒。这些范围以外或任何必需安装失败均阻断整体 applied。
 
 ## 系统 DNS 安装
 

@@ -171,7 +171,7 @@ Linux 的 Mesh 外层 UDP socket 设 `IP_PMTUDISC_DO`／`IPV6_MTU_DISCOVER=DO`�
 | 结果 | `path` = 已确认的最大大小与当前路由 MTU（受保护 socket 同 mark、同本地地址的瞬时 connected socket 读 `IP_MTU`，不发包）的较小者；`inner = path − 28`（IPv6 为 48）`− 86`（Data 帧固定开销）。搜索完成前或连 1,280 都未确认时为未知 |
 | 更新 | 每 10 分钟重新向上搜索；路由学到更小的 PMTU 时立即取较小值 |
 
-`path`／`inner` 是 channel 事实（`Snapshot.mtu`、IPC `peers[].mtu`），不改变任何发送：超过 `inner` 的内层包仍会在外层被丢弃（本机 `EMSGSIZE` 或路径静默丢弃）。据此合成 ICMP Frag Needed／Packet Too Big 与 TCP MSS 限制属于数据面后续工作。探测丢失会让结果偏小（保守方向）。
+`path`／`inner` 是 channel 事实（`Snapshot.mtu`、`Manager::path_mtu`、IPC `peers[].mtu`），连接组件自己不据此改变发送。数据面据此对本节点超过 `inner` 的包回 fragmentation needed／packet too big，Underlay 据此限制 TCP MSS，见[通道 MTU](/v2/node/dataplane#channel-mtu)。探测丢失会让结果偏小（保守方向）。
 
 实测（2026-10-13，`f1aa2250`）：us-lax-it7（公网）→ meshway-vm（WARP）通道搜索得 `1444/1330`，内层 DF ping `-s 1302`（外层 1444）5/5 回复、`-s 1303`（外层 1445）0/5；反方向 `1500/1386`。证据 `.meshway/node-lab/n2a/`。
 

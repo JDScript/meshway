@@ -4,6 +4,14 @@
 
 ## 未发布
 
+路径 MTU 收口与出口 DNS 语义（M1）：wire 6、IPC 9、`compilerVersion` 与 Server schema 均不变。HTTP 契约：`IssueCode` 新增 `dns_exit_plan_required`（错误）与 `resolver_outside_access`（警告）。
+
+- 出口 DNS 条件收窄：普通查询只在方案有经出口的名称规则（`domain`、`domainSuffix`、含名称的规则集）或 fallback 经出口时经出口解析，用那一个出口；只有 IP 规则（含 `geoip:*`）、fallback direct／unmanaged 的方案用本机 resolver，经几个出口都可以。名称规则／出口 fallback 经不同出口仍为 `exitPlanRequired`，Server 保存时即以 `dns_exit_plan_required` 拒绝（指向规则）。唯一实现 `meshway_policy::compile::dns_resolution`。见 [DNS · 使用出口时](/v2/configuration-reference/dns#使用出口时)。
+- `useWithExit` 解析器在出口区间内时是源分割的 direct 例外：`global:<exit>` 下 DNS 不再以 “resolver plan is incomplete” 卡在 synchronizing；节点 Access 不覆盖其地址时保存给出 `resolver_outside_access` 警告。
+- 通道 MTU：本节点超过首跳通道内层上限的包在消耗 nonce 前丢弃，并向本机 TUN 合成 fragmentation needed（IPv4）／packet too big（IPv6），源地址为原目的；TCP SYN 的 MSS 由 Underlay 自有 nft 表 `meshway_mss_<installation>` 限到通道上限（Mesh 目的／来源、出口 TUN 的源节点）。数据面另接受 ICMPv6 destination unreachable／packet too big／time exceeded 作为相关报文。见[通道 MTU](/v2/node/dataplane#channel-mtu)。
+- 可信域名关联：源端持有名称规则回答等到该查询截止前 250 ms（至多 5 秒），只有该查询等待。
+- `exit/off`：第 11 阶段切到 `global:E`；第 12 阶段新增窄 A–R 通道（MSS 限制、本机 fragmentation needed）。
+
 重启后自愈（N5）：wire 6、IPC 9（`peers[].state` 新增 `relayIdle`）、HTTP 契约、`compilerVersion` 与 Server schema 均不变。
 
 - 修复：instance 换代（Server 重启、instance 租约断续后重新取得）时穿透 socket 的 Underlay 授权不再停留在旧 instance。此前之后的每次协调尝试都在激活时被拒（`target_not_authorized`），节点从不发 punch，需要打洞的边直到新内容或 daemon 重启都不恢复；这是 alpha.5 部署后实网分区与 12:28–12:57 Server 不可达后再次分区的根因。见[连接获取 · Node 协调契约](/v2/node/connectivity#node-协调契约)。

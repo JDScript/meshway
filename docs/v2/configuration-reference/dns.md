@@ -64,13 +64,25 @@
 
 ## 使用出口时
 
-单出口编译通过 `DnsPlan::ViaExit { service }` 指定普通查询的 Mesh resolver。只要当前方案的 fallback 或 CIDR 规则使用同一个出口及同一组有序 via，普通名称在解析前即选择该出口，不先查询客户端上游再根据答案选择路径。MagicDNS 仍按本地记录处理；`useWithExit: true` 的解析器保留最长后缀 split／default 用途。
+普通查询（非 MagicDNS、非 `useWithExit` split）由哪个 resolver 回答，在解析前由源节点生效的方案决定（公共规则在前，`auto` 按其 fallback；与出口分割同一选择）：
 
-`DnsService` 绑定源节点及 Mesh 源地址、出口及其 Mesh IPv4 地址（只作绑定，出口不在该地址监听 DNS）、UDP／TCP 传输、完整有序路径、源 profile／capture generation、出口 role generation、并发和查询时间预算。执行截止来自 netmap 租约；instance 和 State 就绪事实不签发 DNS 权限。编译要求出口已启用并声明能力、路径可行且源有外部 Access 资格。缺少出口能力／路径／资格分别返回 `exitUnavailable`／`noPath`／`unauthorized`；没有无环单出口方案返回 `exitPlanRequired`。出口集合含源自己的规则按 [Routing · Action](/v2/configuration-reference/routing#action) 的顺序语义执行（自己之前没有可用出口即 direct），direct 的规则不计入其出口方案：只经自己出口的源为 `noExit`。
+| 方案形态 | 普通查询 | `netmap.dns.egress` |
+| --- | --- | --- |
+| 只有 IP 规则（`ipCIDR`、只含 IP 的规则集如 `geoip:*`），fallback 为 direct／unmanaged，经几个出口都可以 | 本机系统 resolver | `noExit` |
+| 有名称规则（`domain`、`domainSuffix`，或含名称成员的规则集）经出口，和／或 fallback 为出口 | 这些名称规则与 fallback 共同的那一个出口及其有序 `via` | `viaExit` |
+| 上述名称规则与出口 fallback 指向不同出口或不同 `via`，或其出口集合有主备 | 无可执行方案 | `unavailable: exitPlanRequired` |
+
+名称规则动作为 direct／unmanaged、或出口集合中源自己在前（[Routing · Action](/v2/configuration-reference/routing#action)，对它是 direct）时不计入。只按 IP 判定的规则不需要先知道答案：IP 规则经哪个出口与 DNS 无关。规则集的名称成员按其内容判定；节点尚未持有的集合按“含名称”计。MagicDNS 仍按本地记录处理；`useWithExit: true` 的解析器保留最长后缀 split／default 用途。
+
+保存配置时 Server 对每个节点可用的每个方案（assignment 的 `allowed`，无 assignment 的节点为 `mesh`）做同一判定，任何一个为 `exitPlanRequired` 即以 `dns_exit_plan_required`（`params.node`、`params.profile`）拒绝整个版本，路径指向第二个使方案不可执行的名称规则或 fallback；规则集内容尚未取得的方案在内容取得后判定。多出口的显式 DNS plan（让不同名称规则各自经自己的出口解析）未实现。
+
+`DnsService` 绑定源节点及 Mesh 源地址、出口及其 Mesh IPv4 地址（只作绑定，出口不在该地址监听 DNS）、UDP／TCP 传输、完整有序路径、源 profile／capture generation、出口 role generation、并发和查询时间预算。执行截止来自 netmap 租约；instance 和 State 就绪事实不签发 DNS 权限。编译要求出口已启用并声明能力、路径可行且源有外部 Access 资格，且出口自己的普通查询是 `noExit`。缺少出口能力／路径／资格分别返回 `exitUnavailable`／`noPath`／`unauthorized`；没有单一出口方案返回 `exitPlanRequired`。
+
+### `useWithExit` 解析器
+
+`useWithExit: true` 的解析器在任何方案下都由源节点自己访问：它的地址落在某个出口区间（例如 `global:<exit>` 的全范围）时，该地址成为这个源分割里的 direct 例外，不进捕获，`dns.resolvers[key]` 为 `direct`，DNS 安装不会因它被出口路由而失败。Mesh 地址的解析器仍 `rejected`。例外只是包归属，不是 Access 授权：节点的 Access 没有覆盖该解析器地址时，保存配置给出 `resolver_outside_access` 警告（`params.node`、`params.profile`、`params.server`，路径 `/dns/servers/<key>`），版本照常保存。没有 `useWithExit` 的解析器不享有例外。
 
 例外不是目的地址的全局放行；解析器流量仍须走明确、获准的网络路径。没有有效出口／解析依赖时报告不可用，不静默落回另一路公共解析器。
-
-存在歧义的多出口、不同 via、auto 和域名依赖方案继续要求**显式、无循环的 DNS plan**；首版单出口编译不推测这些依赖。出口自己的 egress 必须证明无出口，避免 resolver 再指回 Mesh。该显式 plan 的用户配置字段尚未实现。
 
 客户端 owner 将普通查询生成独立 `MeshResolverRoute`；出口能力事实不是 ready、出口不可达或出口回 SERVFAIL 时查询失败，不进入客户端系统上游重试队列。UDP 截断只可使用同一个 service 中独立允许的 TCP；旧查询、过期回答和切换前的输出保留原 ticket／scope 截止。
 
@@ -79,7 +91,7 @@
 | 查询 | 走向 |
 | --- | --- |
 | MagicDNS 域内名称 | 源节点本地回答，不离开源节点 |
-| `useWithExit: true` 解析器的 split 后缀 | 该解析器，按其地址在源节点 egress 分割中的 Direct／Unmanaged 从本机发出；地址被出口路由时 DNS 安装失败，阻断 applied |
+| `useWithExit: true` 解析器的 split 后缀 | 该解析器，从本机发出（地址在出口区间内时是 direct 例外，见上） |
 | 其他名称（含不带 `useWithExit` 的 split） | 经完整获准路径交给出口的系统 resolver（出口 `overrideLocal: true` 时为其 default resolver）；落在出口自身 Meshway DNS 域内的名称回 SERVFAIL |
 
 IPv4 首版：A 与 AAAA 都原样返回出口 resolver 的真实回答，AAAA 不伪造 NXDOMAIN；受管 IPv6 包仍被源端捕获与准入拒绝。
@@ -92,4 +104,4 @@ Node 的 TTL 0 MagicDNS、REFUSED／NODATA、loopback Service、路由证据及�
 
 ## 域名执行关联
 
-经出口 resolver 的回答本身不授予解析地址的业务访问。源节点的名称规则（[Routing · 域名规则的执行](/v2/configuration-reference/routing#域名规则的执行)）决定的名称，由出口在回答后向 Server 完成一次受控解析任务；Server 校验当前 netmap、DNS service、名称规则、公网地址与 TTL 后为源节点和出口签发可信关联，经同一 `sync` 下发。源节点在关联生效前不把该回答交给本机客户端（至多 2 秒，否则 SERVFAIL），并把回答 TTL 截为关联剩余寿命。节点原始 State 不能自行创建关联或扩大出口接受范围。同 IP 域名不具有严格服务隔离保证，见 [Access](/v2/configuration-reference/access#domains)；任务与 overlay 见 [Exit 设计 · 可信域名关联](/v2/node/exit-design#trusted-dns-associations)。
+经出口 resolver 的回答本身不授予解析地址的业务访问。源节点的名称规则（[Routing · 域名规则的执行](/v2/configuration-reference/routing#域名规则的执行)）决定的名称，由出口在回答后向 Server 完成一次受控解析任务；Server 校验当前 netmap、DNS service、名称规则、公网地址与 TTL 后为源节点和出口签发可信关联，经同一 `sync` 下发。源节点在关联生效前不把该回答交给本机客户端（等到该查询截止前 250 ms、至多 5 秒，否则 SERVFAIL；只有这一个查询等待），并把回答 TTL 截为关联剩余寿命。节点原始 State 不能自行创建关联或扩大出口接受范围。同 IP 域名不具有严格服务隔离保证，见 [Access](/v2/configuration-reference/access#domains)；任务与 overlay 见 [Exit 设计 · 可信域名关联](/v2/node/exit-design#trusted-dns-associations)。
