@@ -201,3 +201,70 @@ async fn a_needed_peer_without_a_circuit_reports_the_relay_a_new_one_would_take(
     assert_eq!(f.a.relay_route(b), None);
     f.close().await;
 }
+
+#[tokio::test]
+async fn preview_and_joined_route_report_the_circuit_a_new_flow_takes() {
+    use meshway_configuration::execution::BusinessProtocol;
+    use meshway_dataplane::secure::Preview;
+    let mut f = direct_or_relayed().await;
+    let [a, r, b] = f.ids();
+    let destination = f.address(2);
+    let preview = |f: &mut NetmapMesh| {
+        f.a.preview(
+            destination,
+            (BusinessProtocol::Udp, Some(42424.try_into().unwrap())),
+        )
+        .unwrap()
+    };
+    let Preview::Mesh {
+        path, established, ..
+    } = preview(&mut f)
+    else {
+        panic!("a Mesh decision")
+    };
+    assert_eq!(
+        (path, established),
+        (vec![a, r, b], false),
+        "the circuit it would open"
+    );
+    assert!(
+        f.a.take_adjacency_interests().is_empty(),
+        "a preview wants no adjacency"
+    );
+    let Outbound::Queued { init: Some(init) } = f.a.outbound(f.mesh_udp(false, 42424)).unwrap()
+    else {
+        panic!("the relayed path starts at once")
+    };
+    f.finish_handshake(init).await;
+    let Preview::Mesh {
+        path, established, ..
+    } = preview(&mut f)
+    else {
+        panic!("a Mesh decision")
+    };
+    assert_eq!(
+        (path, established),
+        (vec![a, r, b], true),
+        "it joins the relay"
+    );
+    assert_eq!(f.a.joined_route(b), Some(vec![a, r, b]));
+    // With a carrier to B a new flow opens the direct path: the relayed
+    // circuit is no longer the one a new flow takes.
+    let direct = meshway_dataplane::secure::Carrier {
+        dialer: a,
+        listener: b,
+        listener_key: "tcp".into(),
+        protocol: meshway_model::TransportProtocol::NativeTcp,
+    };
+    f.a.set_carriers(BTreeMap::from([(r, f.ar.carrier.clone()), (b, direct)]))
+        .unwrap();
+    let Preview::Mesh {
+        path, established, ..
+    } = preview(&mut f)
+    else {
+        panic!("a Mesh decision")
+    };
+    assert_eq!((path, established), (vec![a, b], false));
+    assert_eq!(f.a.joined_route(b), None);
+    f.close().await;
+}

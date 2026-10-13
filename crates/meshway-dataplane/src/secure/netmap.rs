@@ -96,6 +96,31 @@ pub enum Outbound {
     Denied(UnavailableReason),
 }
 
+/// A new local flow's route before any circuit: see `SecureNode::new_route`.
+enum NewRoute {
+    Paths(Target, Vec<LogicalPath>),
+    Direct,
+    Unmanaged,
+    Denied(UnavailableReason),
+    /// Permitted, but none of the decision's exits is ready.
+    NoReadyExit,
+}
+
+/// Result of [`SecureNode::preview`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Preview {
+    /// Through the Mesh toward `target` on `path` (this Node first);
+    /// `established` when it joins an established circuit.
+    Mesh {
+        target: Target,
+        path: Vec<NodeId>,
+        established: bool,
+    },
+    Direct,
+    Unmanaged,
+    Denied(UnavailableReason),
+}
+
 /// Output of [`SecureNode::flush`].
 #[derive(Debug)]
 pub enum Flushed {
@@ -473,7 +498,6 @@ impl SecureNode {
         let _profile = PROFILE.enter();
         let desired = self.desired.clone();
         let reading = View::of(&desired);
-        let netmap = reading.netmap();
         // A local packet originates here: it carries this Node's own address.
         let addresses = &desired.local().addresses;
         let own = match packet.facts().traffic.source {
@@ -530,36 +554,65 @@ impl SecureNode {
             };
             return self.wait(target.clone(), vec![path], packet, &reading);
         }
-        let facts = packet.facts();
-        let traffic = facts.traffic;
+        let traffic = packet.facts().traffic;
+        let (target, paths) = match self.new_route(
+            &reading,
+            traffic.source,
+            traffic.destination,
+            (traffic.protocol, traffic.destination_port),
+        )? {
+            NewRoute::Paths(target, paths) => (target, paths),
+            NewRoute::Direct => return Ok(Outbound::Direct),
+            NewRoute::Unmanaged => return Ok(Outbound::Unmanaged),
+            NewRoute::Denied(reason) => return Ok(Outbound::Denied(reason)),
+            NewRoute::NoReadyExit => {
+                self.first.dropped = self.first.dropped.saturating_add(1);
+                return Ok(Outbound::Denied(UnavailableReason::ExitUnavailable));
+            }
+        };
+        let grant = CircuitGrant {
+            purpose: Purpose::Business,
+            target: target.clone(),
+        };
+        if let Some(info) = self.joinable(&grant, &paths, &reading) {
+            return self
+                .prepare_send_at(info.id, packet, &reading)
+                .map(Outbound::Send);
+        }
+        self.wait(target, paths, packet, &reading)
+    }
+
+    /// A new local flow's decision on the desired netmap, with an exit
+    /// decision narrowed to the paths of its first ready exit.
+    fn new_route(
+        &mut self,
+        reading: &View<'_>,
+        source: IpAddr,
+        destination: IpAddr,
+        service: (BusinessProtocol, Option<meshway_transport::spec::Port>),
+    ) -> Result<NewRoute, Error> {
         let outcome = self
             .engine
             .decisions
-            .decide(
-                netmap,
-                local,
-                traffic.destination,
-                (traffic.protocol, traffic.destination_port),
-            )
+            .decide(reading.netmap(), reading.node(), destination, service)
             .map_err(|_| Error::Policy)?;
         let decision = match outcome {
             Outcome::Permitted(decision) => decision,
-            Outcome::Direct => return Ok(Outbound::Direct),
-            Outcome::Unmanaged => return Ok(Outbound::Unmanaged),
-            Outcome::Denied(reason) => return Ok(Outbound::Denied(reason)),
+            Outcome::Direct => return Ok(NewRoute::Direct),
+            Outcome::Unmanaged => return Ok(NewRoute::Unmanaged),
+            Outcome::Denied(reason) => return Ok(NewRoute::Denied(reason)),
         };
         let paths: Vec<LogicalPath> = match &decision.target {
             Target::Mesh { .. } => decision.paths.clone(),
             Target::Exit { nodes, .. } => {
-                if traffic.destination.is_ipv6() || traffic.source.is_ipv6() {
-                    return Ok(Outbound::Denied(UnavailableReason::UnsupportedFamily));
+                if destination.is_ipv6() || source.is_ipv6() {
+                    return Ok(NewRoute::Denied(UnavailableReason::UnsupportedFamily));
                 }
                 let Some(exit) = nodes
                     .iter()
                     .find(|exit| self.first.ready_exits.contains(exit))
                 else {
-                    self.first.dropped = self.first.dropped.saturating_add(1);
-                    return Ok(Outbound::Denied(UnavailableReason::ExitUnavailable));
+                    return Ok(NewRoute::NoReadyExit);
                 };
                 decision
                     .paths
@@ -569,16 +622,87 @@ impl SecureNode {
                     .collect()
             }
         };
+        Ok(NewRoute::Paths(decision.target.clone(), paths))
+    }
+
+    /// What a new local flow toward `destination` does now: the decision and
+    /// exit choice of [`Self::outbound`], and the complete path it takes:
+    /// the established circuit it joins, else the path a new circuit takes
+    /// ([`Self::choose_path`]), else the first candidate while no next hop
+    /// has a carrier. Reporting only: nothing is admitted, opened or wanted.
+    pub fn preview(
+        &mut self,
+        destination: IpAddr,
+        service: (BusinessProtocol, Option<meshway_transport::spec::Port>),
+    ) -> Result<Preview, Error> {
+        let desired = self.desired.clone();
+        let reading = View::of(&desired);
+        let addresses = &desired.local().addresses;
+        let source = match destination {
+            IpAddr::V4(_) => addresses.ipv4.map(IpAddr::V4),
+            IpAddr::V6(_) => addresses.ipv6.map(IpAddr::V6),
+        };
+        let Some(source) = source.or(addresses.ipv4.map(IpAddr::V4)) else {
+            return Ok(Preview::Denied(UnavailableReason::UnsupportedFamily));
+        };
+        Ok(
+            match self.new_route(&reading, source, destination, service)? {
+                NewRoute::Paths(target, paths) => {
+                    let grant = CircuitGrant {
+                        purpose: Purpose::Business,
+                        target: target.clone(),
+                    };
+                    let (path, established) = self
+                        .route_path(&grant, &paths, &reading)
+                        .unwrap_or_default();
+                    Preview::Mesh {
+                        target,
+                        path,
+                        established,
+                    }
+                }
+                NewRoute::Direct => Preview::Direct,
+                NewRoute::Unmanaged => Preview::Unmanaged,
+                NewRoute::Denied(reason) => Preview::Denied(reason),
+                NewRoute::NoReadyExit => Preview::Denied(UnavailableReason::ExitUnavailable),
+            },
+        )
+    }
+
+    /// The established business circuit toward `peer` a new flow joins now,
+    /// in the order of [`Self::choose_path`]; reporting only.
+    pub fn joined_route(&self, peer: NodeId) -> Option<Vec<NodeId>> {
+        let target = Target::Mesh { node: peer };
+        let paths = self
+            .desired
+            .compiler()
+            .transit(self.desired.netmap().node_id, &target)
+            .ok()?;
         let grant = CircuitGrant {
             purpose: Purpose::Business,
-            target: decision.target.clone(),
+            target,
         };
-        if let Some(info) = self.joinable(&grant, &paths, &reading) {
-            return self
-                .prepare_send_at(info.id, packet, &reading)
-                .map(Outbound::Send);
+        self.joinable(&grant, &paths, &View::of(&self.desired))
+            .map(|info| info.path)
+    }
+
+    fn route_path(
+        &self,
+        grant: &CircuitGrant,
+        paths: &[LogicalPath],
+        reading: &View<'_>,
+    ) -> Option<(Vec<NodeId>, bool)> {
+        if let Some(info) = self.joinable(grant, paths, reading) {
+            return Some((info.path, true));
         }
-        self.wait(decision.target.clone(), paths, packet, &reading)
+        let refs: Vec<&[NodeId]> = paths.iter().map(|path| path.nodes.as_slice()).collect();
+        let index = self.choice(&refs, reading).0.or_else(|| {
+            ranked(&refs, &self.carriers, &self.first.peer_channels)
+                .0
+                .first()
+                .copied()
+        })?;
+        Some((refs[index].to_vec(), false))
     }
 
     /// Queue a first packet behind a pending or new handshake on the first
@@ -716,11 +840,21 @@ impl SecureNode {
         reading: &View<'_>,
     ) -> Option<usize> {
         let paths: Vec<&[NodeId]> = paths.into_iter().collect();
+        let (chosen, preferred) = self.choice(&paths, reading);
+        for next in preferred {
+            self.first.interest(next);
+        }
+        chosen
+    }
+
+    /// [`Self::choose_path`]'s choice and the next hops it wants an
+    /// adjacency with, without registering them.
+    fn choice(&self, paths: &[&[NodeId]], reading: &View<'_>) -> (Option<usize>, Vec<NodeId>) {
         let carried = |path: &[NodeId]| {
             path.get(1)
                 .is_some_and(|next| self.carriers.contains_key(next))
         };
-        let (ranked, truncated) = ranked(&paths, &self.carriers, &self.first.peer_channels);
+        let (ranked, truncated) = ranked(paths, &self.carriers, &self.first.peer_channels);
         if truncated > 0 {
             tracing::debug!(operation = "path_candidates", target = ?paths[0].last(),
                 kept = ranked.len(), truncated_relays = truncated,
@@ -738,10 +872,7 @@ impl SecureNode {
             .filter(|path| !carried(path))
             .filter_map(|path| path.get(1).copied())
             .collect();
-        for next in preferred {
-            self.first.interest(next);
-        }
-        chosen.map(|position| ranked[position])
+        (chosen.map(|position| ranked[position]), preferred)
     }
 
     /// Progress queued first packets: start handshakes whose adjacency became

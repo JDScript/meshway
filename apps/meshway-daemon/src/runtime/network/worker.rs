@@ -1022,6 +1022,13 @@ fn sample(
                     }
                 }
             }
+            // A peer reached through several circuits shows the one a new
+            // flow joins, in SecureNode's path order, not the first in ID order.
+            for (far, path) in &mut report.routes {
+                if let Some(joined) = secure.joined_route(*far) {
+                    *path = joined;
+                }
+            }
             // Bounded by ID order, the same set on every sample.
             while report.circuits.len() > meshway_protocol::STATE_MAX_PATHS {
                 report.circuits.pop_last();
