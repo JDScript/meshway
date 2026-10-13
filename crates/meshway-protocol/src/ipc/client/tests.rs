@@ -375,7 +375,8 @@ fn report() -> NetcheckReport {
         "sockets":[{"resource":{"kind":"listener","key":"udp"},"boundAddress":"0.0.0.0:35000",
             "mappings":[{"observer":"192.0.2.10:3478","mapped":"198.51.100.4:35000","rttUs":800,"fresh":true}],
             "portMapping":"preserved","endpointMapping":"unknown"}],
-        "observers":[{"observer":"192.0.2.10:3478","rttUs":800}]
+        "observers":[{"observer":"192.0.2.10:3478","rttUs":800,
+            "sizeProbe":{"size":1500,"answered":false},"pathMtu":1500}]
     }))
     .unwrap()
 }
