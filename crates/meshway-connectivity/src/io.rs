@@ -112,23 +112,6 @@ pub trait SocketFactory: Send + Sync + 'static {
     ) -> BoxFuture<'a, Result<Box<dyn Datagram>, Error>> {
         Box::pin(async { Err(Error::Configuration) })
     }
-
-    /// Whether a host interface outside the Mesh carries a prefix holding
-    /// `ip`: only then can a peer's private, CGNAT or ULA interface address
-    /// be reached directly rather than through the public Internet.
-    fn on_link(&self, _desired: &meshway_engine::Desired, _ip: std::net::IpAddr) -> bool {
-        true
-    }
-}
-
-/// Addresses meaningful only on a shared link or private network.
-pub(crate) fn link_scoped(ip: std::net::IpAddr) -> bool {
-    match ip {
-        std::net::IpAddr::V4(ip) => {
-            ip.is_private() || (ip.octets()[0] == 100 && ip.octets()[1] & 0xc0 == 64)
-        }
-        std::net::IpAddr::V6(ip) => ip.segments()[0] & 0xfe00 == 0xfc00,
-    }
 }
 
 /// A listener's bind failure keeps its cause; every other protected-socket
@@ -250,9 +233,6 @@ impl SocketFactory for meshway_underlay::SocketFactory {
                 stream: Box::new(stream),
             })
         })
-    }
-    fn on_link(&self, desired: &meshway_engine::Desired, ip: std::net::IpAddr) -> bool {
-        self.on_link(desired, ip)
     }
     fn listen<'a>(
         &'a self,

@@ -97,12 +97,106 @@ pub(super) fn candidates(
     Ok(out)
 }
 
+/// Longest pause between two attempts of one failing candidate.
+pub(super) const MAX_CANDIDATE_BACKOFF: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// One dial target: candidate key and endpoint.
+type TargetKey = (String, String, meshway_transport::spec::Port);
+
+/// Candidate pacing of one peer worker. Every candidate is tried, whatever
+/// its address class; a failed one waits `retry_backoff · 2^(failures − 1)`,
+/// at most [`MAX_CANDIDATE_BACKOFF`], before its next attempt. A channel with
+/// the peer (selected now, or installed since the last look), a changed
+/// candidate set (the peer's endpoint facts) or new netmap content start
+/// every candidate over. Addresses only say where to try: identity and
+/// admission stay with the handshake.
+#[derive(Default)]
+pub(super) struct Pacing {
+    reference: Option<meshway_model::NetmapRef>,
+    targets: std::collections::BTreeSet<TargetKey>,
+    last_link: Option<[u8; 32]>,
+    failed: BTreeMap<TargetKey, (u32, tokio::time::Instant)>,
+}
+
+impl Pacing {
+    fn key(candidate: &Candidate, target: &Target) -> TargetKey {
+        (
+            candidate.key.clone(),
+            target.endpoint.host.clone(),
+            target.endpoint.port,
+        )
+    }
+
+    /// Start over when the content, the candidate set or the peer's latest
+    /// channel changed since the last sweep.
+    pub(super) fn sweep(
+        &mut self,
+        reference: meshway_model::NetmapRef,
+        targets: std::collections::BTreeSet<TargetKey>,
+        last_link: Option<[u8; 32]>,
+    ) {
+        if self.reference != Some(reference)
+            || self.targets != targets
+            || self.last_link != last_link
+        {
+            self.failed.clear();
+        }
+        self.reference = Some(reference);
+        self.targets = targets;
+        self.last_link = last_link;
+    }
+
+    /// A channel with the peer exists: its candidates start over later.
+    pub(super) fn connected(&mut self, last_link: Option<[u8; 32]>) {
+        self.failed.clear();
+        self.last_link = last_link;
+    }
+
+    pub(super) fn due(&self, key: &TargetKey, now: tokio::time::Instant) -> bool {
+        self.failed.get(key).is_none_or(|(_, at)| *at <= now)
+    }
+
+    /// Record a failed attempt; returns its consecutive failures and pause.
+    pub(super) fn failed(
+        &mut self,
+        key: TargetKey,
+        base: std::time::Duration,
+        now: tokio::time::Instant,
+    ) -> (u32, std::time::Duration) {
+        let entry = self.failed.entry(key).or_insert((0, now));
+        entry.0 = entry.0.saturating_add(1);
+        let pause = base
+            .saturating_mul(1 << (entry.0 - 1).min(16))
+            .min(MAX_CANDIDATE_BACKOFF);
+        entry.1 = now + pause;
+        (entry.0, pause)
+    }
+
+    /// When the earliest paused candidate of the current set is due again.
+    pub(super) fn next_due(&self) -> Option<tokio::time::Instant> {
+        self.targets
+            .iter()
+            .map(|key| self.failed.get(key).map(|(_, at)| *at))
+            .min()
+            .flatten()
+    }
+}
+
+fn last_link(shared: &Shared, peer: NodeId) -> Option<[u8; 32]> {
+    shared
+        .links
+        .lock()
+        .ok()
+        .and_then(|links| links.last.get(&peer).copied())
+}
+
 /// One peer's acquisition owner for the Manager's lifetime. Every sweep
 /// reads the current plan; Manager's apply stops this owner when the peer is
 /// no longer a dial peer.
 pub(super) async fn dial(shared: Arc<Shared>, factory: Arc<dyn SocketFactory>, peer: NodeId) {
     let lifetime = shared.scope(None, false);
     let mut plans = shared.plans.subscribe();
+    let mut pacing = Pacing::default();
     'acquisition: loop {
         if lifetime.check().is_err() {
             return;
@@ -117,7 +211,8 @@ pub(super) async fn dial(shared: Arc<Shared>, factory: Arc<dyn SocketFactory>, p
             .lock()
             .is_ok_and(|links| links.contains_key(&peer));
         if selected {
-            if backoff(&shared, &lifetime, peer).await.is_err() {
+            pacing.connected(last_link(&shared, peer));
+            if pause(&shared, &lifetime, peer, None).await.is_err() {
                 return;
             }
             continue;
@@ -127,10 +222,23 @@ pub(super) async fn dial(shared: Arc<Shared>, factory: Arc<dyn SocketFactory>, p
         let Ok(candidates) = candidates(&shared, &plan, peer) else {
             return;
         };
+        pacing.sweep(
+            plan.reference,
+            candidates
+                .iter()
+                .flat_map(|candidate| {
+                    candidate
+                        .endpoints
+                        .iter()
+                        .map(|target| Pacing::key(candidate, target))
+                })
+                .collect(),
+            last_link(&shared, peer),
+        );
         // Provenance is the first priority across all of this peer's carriers.
         // In particular, an unreachable local UDP address must not delay an
         // explicitly configured TCP fallback after a coordinated link fails.
-        'candidates: for source in [
+        for source in [
             LinkAcquisition::PublishedEndpoint,
             LinkAcquisition::LocalEndpoint,
         ] {
@@ -143,24 +251,18 @@ pub(super) async fn dial(shared: Arc<Shared>, factory: Arc<dyn SocketFactory>, p
                     if !shared.wanted(peer) {
                         continue 'acquisition;
                     }
-                    // A peer's private interface address is reachable only on
-                    // a link this host shares; elsewhere the datagrams would
-                    // leave through the default route toward nothing.
-                    if source == LinkAcquisition::LocalEndpoint
-                        && target.endpoint.host.parse().is_ok_and(|ip| {
-                            crate::io::link_scoped(ip) && !factory.on_link(&plan.desired, ip)
-                        })
-                    {
-                        continue;
-                    }
                     if shared
                         .links
                         .lock()
                         .is_ok_and(|links| links.contains_key(&peer))
                     {
-                        break 'candidates;
+                        continue 'acquisition;
                     }
-                    if matches!(&candidate.driver, Driver::Datagram) {
+                    let key = Pacing::key(candidate, target);
+                    if !pacing.due(&key, tokio::time::Instant::now()) {
+                        continue;
+                    }
+                    let connected = if matches!(&candidate.driver, Driver::Datagram) {
                         let _ = datagram::dial(
                             shared.clone(),
                             factory.clone(),
@@ -175,96 +277,112 @@ pub(super) async fn dial(shared: Arc<Shared>, factory: Arc<dyn SocketFactory>, p
                         if lifetime.check().is_err() {
                             return;
                         }
-                        if backoff(&shared, &lifetime, peer).await.is_err() {
+                        // Its channel, or one of another owner, was installed
+                        // meanwhile (and may already have ended).
+                        last_link(&shared, peer) != pacing.last_link
+                    } else {
+                        let scope = shared.scope(Some((peer, candidate.carrier.clone())), true);
+                        if scope.check().is_err() {
+                            continue;
+                        }
+                        let Ok(capacity) = shared.capacity.clone().try_acquire_owned() else {
+                            break;
+                        };
+                        let attempt = async {
+                            let opening = Arc::new(scope::Opening::new(scope.clone()));
+                            let socket = factory
+                                .connect_endpoint(&plan.desired, &candidate.key, &target.endpoint)
+                                .await?;
+                            let raw = Box::new(scope::Stream {
+                                inner: socket.stream,
+                                scope: shared.physical()?,
+                                opening: Some(opening.clone()),
+                            });
+                            let Driver::Stream(connector) = &candidate.driver else {
+                                return Err(Error::Configuration);
+                            };
+                            let stream = connector.connect(raw).await?;
+                            let (stream, id, peer_boot) = adjacency::dial(
+                                &shared.keys,
+                                &plan,
+                                &scope,
+                                stream,
+                                &candidate.carrier,
+                                &shared.boot,
+                            )
+                            .await?;
+                            Ok((
+                                stream,
+                                LinkFact {
+                                    id,
+                                    socket_id: id,
+                                    peer,
+                                    carrier: candidate.carrier.clone(),
+                                    local: socket.local,
+                                    remote: socket.peer,
+                                    acquisition: target.acquisition.clone(),
+                                    peer_boot,
+                                },
+                                opening,
+                            ))
+                        };
+                        let result = tokio::select! { biased;
+                            // New content: restart the sweep on it.
+                            _ = plans.changed() => {
+                                scope.cancellation.cancel();
+                                continue 'acquisition;
+                            },
+                            result = scope.run(attempt) => result,
+                        };
+                        let mut was_selected = false;
+                        if let Ok((stream, fact, opening)) = result {
+                            let _ = connected(
+                                shared.clone(),
+                                stream,
+                                fact,
+                                plan.clone(),
+                                opening,
+                                &mut was_selected,
+                            )
+                            .await;
+                        }
+                        drop(capacity);
+                        if lifetime.check().is_err() {
                             return;
                         }
-                        continue;
-                    }
-                    let scope = shared.scope(Some((peer, candidate.carrier.clone())), true);
-                    if scope.check().is_err() {
-                        continue;
-                    }
-                    let Ok(capacity) = shared.capacity.clone().try_acquire_owned() else {
-                        break;
+                        was_selected || last_link(&shared, peer) != pacing.last_link
                     };
-                    let attempt = async {
-                        let opening = Arc::new(scope::Opening::new(scope.clone()));
-                        let socket = factory
-                            .connect_endpoint(&plan.desired, &candidate.key, &target.endpoint)
-                            .await?;
-                        let raw = Box::new(scope::Stream {
-                            inner: socket.stream,
-                            scope: shared.physical()?,
-                            opening: Some(opening.clone()),
-                        });
-                        let Driver::Stream(connector) = &candidate.driver else {
-                            return Err(Error::Configuration);
-                        };
-                        let stream = connector.connect(raw).await?;
-                        let (stream, id, peer_boot) = adjacency::dial(
-                            &shared.keys,
-                            &plan,
-                            &scope,
-                            stream,
-                            &candidate.carrier,
-                            &shared.boot,
-                        )
-                        .await?;
-                        Ok((
-                            stream,
-                            LinkFact {
-                                id,
-                                socket_id: id,
-                                peer,
-                                carrier: candidate.carrier.clone(),
-                                local: socket.local,
-                                remote: socket.peer,
-                                acquisition: target.acquisition.clone(),
-                                peer_boot,
-                            },
-                            opening,
-                        ))
-                    };
-                    let result = tokio::select! { biased;
-                        // New content: restart the sweep on it.
-                        _ = plans.changed() => {
-                            scope.cancellation.cancel();
-                            continue 'acquisition;
-                        },
-                        result = scope.run(attempt) => result,
-                    };
-                    let mut was_selected = false;
-                    if let Ok((stream, fact, opening)) = result {
-                        let _ = connected(
-                            shared.clone(),
-                            stream,
-                            fact,
-                            plan.clone(),
-                            opening,
-                            &mut was_selected,
-                        )
-                        .await;
-                    }
-                    drop(capacity);
-                    if lifetime.check().is_err() {
-                        return;
-                    }
-                    // Every failure/rejected duplicate is paced; no immediate
-                    // failed-dial loop, including single-candidate contents.
-                    if backoff(&shared, &lifetime, peer).await.is_err() {
-                        return;
-                    }
-                    if was_selected {
-                        // A selected stream ending starts a new acquisition,
-                        // not the untried suffix of its old candidate sweep.
-                        // In particular, retry configured TCP before a local
-                        // UDP blackhole after asymmetric peer health expiry.
+                    if connected {
+                        // A channel that ended starts a new acquisition, not
+                        // the untried suffix of its old sweep: in particular,
+                        // configured TCP is retried before a local UDP
+                        // blackhole after asymmetric peer health expiry. One
+                        // pace keeps a channel that fails at once from looping.
+                        pacing.connected(last_link(&shared, peer));
+                        if pause(&shared, &lifetime, peer, None).await.is_err() {
+                            return;
+                        }
                         continue 'acquisition;
+                    }
+                    let (failures, retry) = pacing.failed(
+                        key,
+                        shared.limits.retry_backoff,
+                        tokio::time::Instant::now(),
+                    );
+                    if diagnostic_event() {
+                        tracing::debug!(operation = "candidate_backoff", peer = %peer,
+                            candidate = %candidate.key, endpoint = %target.endpoint.host,
+                            port = target.endpoint.port.get(), failures,
+                            retry_ms = retry.as_millis() as u64,
+                            "Connectivity candidate failed");
                     }
                 }
             }
         }
-        if backoff(&shared, &lifetime, peer).await.is_err() {
+        if pause(&shared, &lifetime, peer, pacing.next_due())
+            .await
+            .is_err()
+        {
             return;
         }
     }
@@ -307,13 +425,21 @@ pub(super) fn acquisition(
     }
 }
 
-/// Paced retry. New peer facts or new content end the wait early (a changed
-/// candidate set may be dialable now); interest alone never shortens the pace.
-async fn backoff(shared: &Shared, lifetime: &Scope, peer: NodeId) -> Result<(), Error> {
+/// Wait until `until` (or one `retry_backoff`). New content, changed peer
+/// facts or a channel installed meanwhile end the wait early: the candidate
+/// set may have changed. Interest alone never shortens it.
+async fn pause(
+    shared: &Shared,
+    lifetime: &Scope,
+    peer: NodeId,
+    until: Option<tokio::time::Instant>,
+) -> Result<(), Error> {
     let facts = shared.facts.get(peer);
+    let link = last_link(shared, peer);
     let wake = shared.interests.waker(peer);
     let mut plans = shared.plans.subscribe();
-    let deadline = tokio::time::Instant::now() + shared.limits.retry_backoff;
+    let deadline =
+        until.unwrap_or_else(|| tokio::time::Instant::now() + shared.limits.retry_backoff);
     lifetime
         .run(async {
             loop {
@@ -321,7 +447,7 @@ async fn backoff(shared: &Shared, lifetime: &Scope, peer: NodeId) -> Result<(), 
                     result = plans.changed() => return result.map_err(|_| Error::Cancelled),
                     _ = tokio::time::sleep_until(deadline) => return Ok(()),
                     _ = wake.notified() => {
-                        if shared.facts.get(peer) != facts {
+                        if shared.facts.get(peer) != facts || last_link(shared, peer) != link {
                             return Ok(());
                         }
                     },
@@ -418,4 +544,84 @@ pub(super) async fn listen(
     drop(listener);
     shared.stop.cancel();
     while children.join_next().await.is_some() {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn reference(digest: u8) -> meshway_model::NetmapRef {
+        meshway_model::NetmapRef {
+            revision: meshway_model::Revision::MIN,
+            serial: meshway_model::Version::MIN,
+            digest: [digest; 32].into(),
+        }
+    }
+
+    fn key(host: &str) -> TargetKey {
+        (
+            "peer/udp".to_owned(),
+            host.to_owned(),
+            meshway_transport::spec::Port::new(35000).unwrap(),
+        )
+    }
+
+    #[test]
+    fn a_failing_candidate_doubles_its_pause_up_to_five_minutes() {
+        let now = tokio::time::Instant::now();
+        let (private, public) = (key("192.168.139.66"), key("198.51.100.7"));
+        let mut pacing = Pacing::default();
+        pacing.sweep(reference(1), [private.clone(), public.clone()].into(), None);
+        let base = Duration::from_secs(1);
+        let pauses: Vec<_> = (0..11)
+            .map(|_| pacing.failed(private.clone(), base, now).1.as_secs())
+            .collect();
+        assert_eq!(pauses, [1, 2, 4, 8, 16, 32, 64, 128, 256, 300, 300]);
+        assert!(!pacing.due(&private, now + Duration::from_secs(299)));
+        assert!(pacing.due(&private, now + MAX_CANDIDATE_BACKOFF));
+        // Every other candidate, whatever its address class, keeps its own pace.
+        assert!(pacing.due(&public, now));
+        assert_eq!(pacing.next_due(), None, "an untried candidate is due now");
+        pacing.failed(public.clone(), base, now);
+        assert_eq!(pacing.next_due(), Some(now + base));
+    }
+
+    #[test]
+    fn content_facts_or_a_channel_start_every_candidate_over() {
+        let now = tokio::time::Instant::now();
+        let base = Duration::from_secs(1);
+        let (old, new) = (key("192.168.139.66"), key("203.0.113.9"));
+        let failed = |pacing: &mut Pacing| {
+            for _ in 0..5 {
+                pacing.failed(old.clone(), base, now);
+            }
+            assert!(!pacing.due(&old, now + base));
+        };
+        let mut pacing = Pacing::default();
+        pacing.sweep(reference(1), [old.clone()].into(), None);
+        failed(&mut pacing);
+        // The same content, candidates and channel keep the pause.
+        pacing.sweep(reference(1), [old.clone()].into(), None);
+        assert!(!pacing.due(&old, now + base));
+        // The peer's endpoint facts changed.
+        pacing.sweep(reference(1), [old.clone(), new.clone()].into(), None);
+        assert!(pacing.due(&old, now));
+        failed(&mut pacing);
+        // New netmap content.
+        pacing.sweep(reference(2), [old.clone(), new.clone()].into(), None);
+        assert!(pacing.due(&old, now));
+        failed(&mut pacing);
+        // A channel was installed (and may have ended) since the last sweep.
+        pacing.sweep(
+            reference(2),
+            [old.clone(), new.clone()].into(),
+            Some([7; 32]),
+        );
+        assert!(pacing.due(&old, now));
+        failed(&mut pacing);
+        // A selected channel exists now.
+        pacing.connected(Some([7; 32]));
+        assert!(pacing.due(&old, now));
+    }
 }

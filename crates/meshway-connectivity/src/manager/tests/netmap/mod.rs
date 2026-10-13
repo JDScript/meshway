@@ -144,6 +144,62 @@ async fn keepalive_edge_is_resident_without_interest() {
 }
 
 #[tokio::test]
+async fn failing_candidates_back_off_stop_once_connected_and_start_over_on_new_content() {
+    let mut fixture = Netmaps::start(false, true).await;
+    let ids = fixture.ids();
+    let (a_id, b_id) = (ids[0], ids[1]);
+    fixture
+        .publish(|cfg| {
+            cfg.topology.push(TopologyRule {
+                remark: String::new(),
+                action: TopologyAction::Allow,
+                a: format!("node:{a_id}"),
+                b: format!("node:{b_id}"),
+                transports: meshway_configuration::Input::Omitted,
+                keepalive: true,
+            })
+        })
+        .await;
+    let factory = fixture.factory();
+    factory.blocked_dialers.lock().unwrap().extend([a_id, b_id]);
+    let limits = Limits {
+        retry_backoff: Duration::from_millis(100),
+        ..limits(Duration::from_millis(500))
+    };
+    let start = tokio::time::Instant::now();
+    let mut a = manager(&fixture, 0, &factory, limits).await;
+    let mut b = manager(&fixture, 1, &factory, limits).await;
+    // Each end's one candidate fails at once: attempts at about 0, 0.1, 0.3,
+    // 0.7, 1.5 and 3.1 s, then 6.3 and 12.7 s (a fixed pace would be ~30).
+    tokio::time::sleep_until(start + Duration::from_millis(3600)).await;
+    let early = factory.acquisitions.load(Ordering::SeqCst);
+    assert!((8..=14).contains(&early), "{early} attempts in 3.6 s");
+    tokio::time::sleep_until(start + Duration::from_millis(7000)).await;
+    let late = factory.acquisitions.load(Ordering::SeqCst) - early;
+    assert!(late <= 4, "{late} attempts in the next 3.4 s");
+    // New content starts the paused candidates over at once, long before
+    // their next attempt at 12.7 s.
+    factory.blocked_dialers.lock().unwrap().clear();
+    fixture.reserial(0).await;
+    let resumed = tokio::time::Instant::now();
+    apply_all(&fixture, &mut [&mut a, &mut b]).await;
+    eventually("the edge connects after new content", || {
+        let (a, b) = (links(&a), links(&b));
+        a.get(&b_id)
+            .is_some_and(|link| b.get(&a_id).is_some_and(|back| back.id == link.id))
+    })
+    .await;
+    assert!(resumed.elapsed() < Duration::from_secs(4));
+    // A selected channel stops every probe of the peer's candidates.
+    let connected = factory.acquisitions.load(Ordering::SeqCst);
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert_eq!(factory.acquisitions.load(Ordering::SeqCst), connected);
+    a.shutdown().await.unwrap();
+    b.shutdown().await.unwrap();
+    fixture.close().await;
+}
+
+#[tokio::test]
 async fn one_way_edge_is_resident_at_both_ends_without_interest() {
     // Only b listens (TCP): a and c can dial b, b can dial neither.
     let mut fixture = Netmaps::start(true, true).await;
