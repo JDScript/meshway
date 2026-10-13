@@ -14,6 +14,8 @@ wire 6、`compilerVersion` 不变，IPC 9（C3）；Server schema 版本 7（F4a
 - 来源学习不再要求与登记候选同 IP：经 offer digest 签名验证的开场消息来自任意合法单播来源都可成为本尝试的目的（仍 ≤2、随尝试结束）。本机映射变化（如 WARP 换出口 IP）使全部候选节奏重新开始。
 - 新矩阵行 `nat/relay`（17 行）。
 
+验证：Planck 17 行矩阵 `20261013T053433Z-a688a9f6`（`45ec6e99`）与 `20261013T060913Z-86100acd`（`3e1142ee`）全部通过；`mise run --jobs 1 check` 通过；实网见[N3 实网证据](/v2/node/validation#n3-real-network)；证据 `.meshway/node-lab/n3/`、`.meshway/validation/n3/`。
+
 真实网络穿透与外层 PMTU（N2a）：IPC 9 新增（`peers[].mtu`、`lastErrorDetail`、netcheck `sizeProbe`／`pathMtu`），wire 6 不变（接收方另接受以零填充的 UDP 健康 Ping）。
 
 - 来源学习：对称（端点相关映射）NAT 下，本 offer 对端的签名开场消息从同 IP 的另一端口到达时，该来源成为本尝试的第二目的（每尝试 ≤2、随尝试结束），通道端点取握手实际完成的地址；身份仍只由签名证明。见[来源学习](/v2/node/connectivity#source-learning)。
