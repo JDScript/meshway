@@ -97,6 +97,11 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
     // The exit role's prerequisites came to hold after its content applied
     // without it: apply that content again so the role installs.
     let mut exit_recovered = false;
+    // Whether the last apply saw a configured listener unbound; its Manager
+    // owner retries the bind, and a change of this fact applies the content
+    // again so the outcome reports it.
+    let mut listener_gap = false;
+    let mut listeners_changed = false;
     let mut sample_at = None;
     let mut channels = PeerChannels::default();
     let mut clamped_at: Option<tokio::time::Instant> = None;
@@ -138,6 +143,8 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             Offer,
             Retry,
             ExitRecovered,
+            /// A listener became unavailable or bound again.
+            ListenersChanged,
             Expired,
             HostFailed,
             DnsFailure,
@@ -217,6 +224,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             Some(report) = dns_reports.recv() => Work::DnsReport(Box::new(report)),
             _ = sleep_until(retry_at) => Work::Retry,
             () = std::future::ready(()), if exit_recovered => Work::ExitRecovered,
+            () = std::future::ready(()), if listeners_changed => Work::ListenersChanged,
             _ = dns.failed(), if !dns_failed => Work::DnsFailure,
             _ = dns.recovered(), if dns_failed => Work::DnsRecovered,
             _ = host.ended(), if installed.is_some() => Work::HostFailed,
@@ -302,7 +310,11 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
         }
         let structural = matches!(
             &work,
-            Work::Offer | Work::Retry | Work::DnsRecovered | Work::ExitRecovered
+            Work::Offer
+                | Work::Retry
+                | Work::DnsRecovered
+                | Work::ExitRecovered
+                | Work::ListenersChanged
         ) || matches!(&work, Work::Carrier(events) if events.iter().any(|event| matches!(event, Event::Changed)));
         match work {
             Work::DnsQuery(query) => dns_queries.enqueue(*query),
@@ -415,16 +427,24 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 let _ = reply.send(result);
                 continue;
             }
-            Work::Offer | Work::Retry | Work::DnsRecovered | Work::ExitRecovered => {
+            Work::Offer
+            | Work::Retry
+            | Work::DnsRecovered
+            | Work::ExitRecovered
+            | Work::ListenersChanged => {
                 // An offer and a recovered component are new inputs; a retry
                 // continues the bounded backoff of the same failure. A newer
                 // offer pending takes precedence over reapplying the current one.
-                let reapply = matches!(work, Work::ExitRecovered)
+                let reapply = matches!(work, Work::ExitRecovered | Work::ListenersChanged)
                     && offers.has_changed().is_ok_and(|changed| !changed);
-                exit_recovered = false;
-                if reapply {
+                if reapply && matches!(work, Work::ExitRecovered) {
                     tracing::info!("Exit prerequisites hold; installing the exit role");
                 }
+                if reapply && matches!(work, Work::ListenersChanged) {
+                    tracing::info!("Listener availability changed; applying the netmap again");
+                }
+                exit_recovered = false;
+                listeners_changed = false;
                 if !matches!(work, Work::Retry) {
                     retry = Retry::default();
                 }
@@ -476,6 +496,10 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                         }
                         reports.send_replace(report);
                     }
+                    // A first instance rebinds Native UDP listeners as
+                    // coordination sockets; one may now be unavailable.
+                    listeners_changed |=
+                        rebound && engine.components().listeners_unavailable() != listener_gap;
                     continue;
                 }
                 let previous = reports.borrow().clone();
@@ -506,6 +530,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                     engine.reconfig(Some(&netmap)).await
                 };
                 let kept = engine.desired().is_some();
+                listener_gap = engine.components().listeners_unavailable();
                 let capture = engine
                     .desired()
                     .and_then(|desired| desired.capture_summary());
@@ -798,6 +823,12 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             }
         } else {
             dns_queries.stop().await;
+        }
+        if structural
+            && engine.desired().is_some()
+            && engine.components().listeners_unavailable() != listener_gap
+        {
+            listeners_changed = true;
         }
         if structural {
             let report = sample_host(engine.components(), &diagnostics, reports.borrow().clone());

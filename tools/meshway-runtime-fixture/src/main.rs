@@ -98,6 +98,13 @@ impl Cli {
             && self.dns_backend == DnsBackend::Off
     }
 
+    /// `udp/off`: another socket holds B's listener port while its daemon
+    /// first binds it; the Node reports the listener unavailable, retries,
+    /// and serves it once the port is free, with no restart.
+    fn held_listener_port(&self) -> bool {
+        self.reported_endpoints && self.netmap_scenario.is_none()
+    }
+
     fn traffic_duration(&self) -> Duration {
         Duration::from_secs(if self.short { 30 } else { TRAFFIC_SECONDS })
     }

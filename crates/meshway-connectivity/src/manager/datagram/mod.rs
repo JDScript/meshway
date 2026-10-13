@@ -1667,6 +1667,7 @@ pub(in crate::manager) mod tests {
             facts: Default::default(),
             instance: Default::default(),
             boot: crate::adjacency::boot().unwrap(),
+            unbound: Arc::default(),
         });
         (shared, receiver)
     }

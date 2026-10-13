@@ -29,6 +29,7 @@ mod evidence;
 mod facts;
 mod interest;
 mod probe;
+mod rebind;
 mod resources;
 #[cfg(test)]
 mod tests;
@@ -36,6 +37,7 @@ mod traversal;
 mod workers;
 pub use interest::{AdjacencyInterest, Interest};
 pub use probe::{SizeProbe, SocketObservation, StunProbe, StunReport, StunSample};
+pub use rebind::ListenerUnavailable;
 
 // Diagnostics only: at most 64 events/second and 32768/process; contention drops
 // a diagnostic rather than delaying an owner or changing a selection decision.
@@ -173,6 +175,8 @@ pub struct Snapshot {
     pub adjacencies: BTreeMap<NodeId, meshway_model::state::AdjacencyStatus>,
     /// Size limits of selected Native UDP channels whose route MTU is known.
     pub mtu: BTreeMap<NodeId, LinkMtu>,
+    /// Configured listeners whose bind is being retried.
+    pub unavailable: Vec<ListenerUnavailable>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -289,6 +293,8 @@ struct Shared {
     instance: Arc<Mutex<Option<meshway_protocol::InstanceRequest>>>,
     /// This owner's boot identity, signed into every adjacency nonce.
     boot: crate::Boot,
+    /// Listeners of the current content whose bind is being retried.
+    unbound: Arc<Mutex<BTreeMap<String, rebind::Unbound>>>,
 }
 
 impl Shared {
@@ -322,6 +328,7 @@ impl Shared {
             facts: self.facts.clone(),
             instance: self.instance.clone(),
             boot: self.boot,
+            unbound: self.unbound.clone(),
         })
     }
 
@@ -381,6 +388,10 @@ pub struct Manager {
         Arc<dyn crate::traversal::TraversalGateway>,
         meshway_model::Sequence,
     )>,
+    /// Listeners bound by their retry owners, for [`Self::adopt`].
+    rebound: mpsc::Receiver<rebind::Rebound>,
+    rebound_sender: mpsc::Sender<rebind::Rebound>,
+    rebind_tokens: u64,
 }
 
 impl Manager {
@@ -488,7 +499,9 @@ impl Manager {
             facts,
             instance: Arc::new(Mutex::new(instance)),
             boot,
+            unbound: Arc::default(),
         });
+        let (rebound_sender, rebound) = mpsc::channel(limits.listeners);
         let mut manager = Self {
             factory,
             shared,
@@ -497,6 +510,9 @@ impl Manager {
             control_events,
             owners: BTreeMap::new(),
             traversal,
+            rebound,
+            rebound_sender,
+            rebind_tokens: 0,
         };
         manager.install_resources().await?;
         if diagnostic_event() {
@@ -524,10 +540,11 @@ impl Manager {
         let plan = manager.shared.plan();
         validate_scale(&plan, limits)?;
         let mut prepared = Vec::new();
-        let mut datagrams = Vec::new();
-        let mut traversal_endpoints = Vec::new();
+        let mut unbound = Vec::new();
         let mut bound_candidates = Vec::new();
-        // All declarations must validate and bind before any worker is installed.
+        // Every declaration validates and binds before any worker is
+        // installed; a listener whose address is unavailable is retried by
+        // its own owner instead of withholding the rest.
         for (key, declaration) in &plan.listeners {
             if manager
                 .owners
@@ -535,69 +552,26 @@ impl Manager {
             {
                 continue;
             }
-            let (protocol, enabled) = provider::declaration(declaration);
+            let (_, enabled) = provider::declaration(declaration);
             if !enabled {
                 continue;
             }
             if key.is_empty() || key.len() > 128 {
                 return Err(Error::Configuration);
             }
-            if protocol == TransportProtocol::NativeUdp {
-                let id = adjacency::nonce()?;
-                // Coordination needs the State reference of a live instance;
-                // without one the listener binds as a plain datagram socket.
-                let reference = match &traversal {
-                    Some(_) => traversal::socket_reference(
-                        &manager.shared,
-                        id,
-                        meshway_model::state::ResourceRef::Listener { key: key.clone() },
-                    )?,
-                    None => None,
-                };
-                if let Some(reference) = reference {
-                    let socket = tokio::time::timeout(
-                        limits.handshake_timeout,
-                        factory.traversal_listener(&plan.desired, key, reference.clone()),
-                    )
-                    .await
-                    .map_err(|_| Error::Cancelled)??;
-                    let fact = ListenerFact {
-                        socket_id: id,
-                        key: key.clone(),
-                        protocol,
-                        local: socket.endpoint.local_addr()?,
-                    };
-                    traversal_endpoints.push((fact, reference, socket));
-                    continue;
-                }
-                let endpoint = tokio::time::timeout(
-                    limits.handshake_timeout,
-                    factory.datagram_listener(&plan.desired, key),
-                )
-                .await
-                .map_err(|_| Error::Cancelled)??;
-                let fact = ListenerFact {
-                    socket_id: adjacency::nonce()?,
-                    key: key.clone(),
-                    protocol,
-                    local: endpoint.local_addr()?,
-                };
-                datagrams.push((fact, endpoint));
-                continue;
+            match rebind::bind(&manager.shared, &factory, traversal.is_some(), key).await {
+                Ok(bound) => prepared.push(bound),
+                Err(error @ Error::Bind { .. }) => unbound.push((key.clone(), error)),
+                Err(error) => return Err(error),
             }
-            let acceptor = Arc::new(provider::Acceptor::new(declaration)?);
-            let listener =
-                tokio::time::timeout(limits.handshake_timeout, factory.listen(&plan.desired, key))
-                    .await
-                    .map_err(|_| Error::Cancelled)??;
-            let fact = ListenerFact {
-                socket_id: adjacency::nonce()?,
-                key: key.clone(),
-                protocol,
-                local: listener.local_addr()?,
-            };
-            prepared.push((fact, listener, acceptor));
         }
+        let bound_listeners: Vec<_> = prepared
+            .iter()
+            .filter_map(|bound| match bound {
+                rebind::Bound::Traversal { fact, .. } => Some(fact.clone()),
+                _ => None,
+            })
+            .collect();
         if traversal.is_some() {
             // Dial-only acquisition uses a real configured Native UDP socket,
             // even when the compiler intentionally kept no published target.
@@ -630,9 +604,8 @@ impl Manager {
                     if local.is_some_and(|local| local.is_ipv4() != ipv4) {
                         continue;
                     }
-                    if traversal_endpoints
+                    if bound_listeners
                         .iter()
-                        .map(|(fact, _, _)| fact)
                         .chain(manager.listeners.iter())
                         .any(|fact| {
                             fact.local.is_ipv4() == ipv4
@@ -689,56 +662,10 @@ impl Manager {
         if manager.shared.stop.is_cancelled() {
             return Err(Error::Cancelled);
         }
-        for (fact, listener, acceptor) in prepared {
-            manager.register_listener(&fact)?;
-            manager.listeners.push(fact.clone());
-            manager.spawn_owner(
-                resources::Key::Listener(fact.key.clone()),
-                Some(fact.socket_id),
-                |shared| workers::listen(shared, fact, listener, acceptor),
-            );
-        }
-        for (fact, endpoint) in datagrams {
-            manager.register_listener(&fact)?;
-            manager.listeners.push(fact.clone());
-            manager.spawn_owner(
-                resources::Key::Listener(fact.key.clone()),
-                Some(fact.socket_id),
-                |shared| datagram::listen(shared, fact, endpoint),
-            );
-        }
         let mut endpoints = BTreeMap::new();
-        for (fact, reference, socket) in traversal_endpoints {
-            manager.listeners.push(fact.clone());
-            let (commands, received) = mpsc::channel(8);
-            manager
-                .shared
-                .sockets
-                .lock()
-                .map_err(|_| Error::Worker)?
-                .insert(
-                    fact.socket_id,
-                    SocketFact {
-                        reference,
-                        network: meshway_model::state::SocketNetwork::Udp,
-                        bound_address: fact.local,
-                        endpoints: Vec::new(),
-                    },
-                );
-            endpoints.insert(
-                fact.socket_id,
-                traversal::Endpoint {
-                    commands,
-                    authorization: socket.authorization.clone(),
-                },
-            );
-            manager.spawn_owner(
-                resources::Key::Listener(fact.key.clone()),
-                Some(fact.socket_id),
-                |shared| {
-                    datagram::listen_traversal(shared, fact.socket_id, Some(fact), socket, received)
-                },
-            );
+        manager.install_bound(prepared, &mut endpoints)?;
+        for (key, error) in unbound {
+            manager.retry_listener(key, &error)?;
         }
         for (key, id, reference, socket) in bound_candidates {
             let (commands, received) = mpsc::channel(8);
@@ -767,29 +694,7 @@ impl Manager {
                 datagram::listen_traversal(shared, id, None, socket, received)
             });
         }
-        let added_endpoints = !endpoints.is_empty();
-        manager
-            .shared
-            .traversal_endpoints
-            .lock()
-            .map_err(|_| Error::Worker)?
-            .extend(endpoints);
-        if added_endpoints {
-            manager.shared.resource_changes.send_replace(());
-        }
-        if !manager
-            .shared
-            .traversal_endpoints
-            .lock()
-            .map_err(|_| Error::Worker)?
-            .is_empty()
-            && !manager.owners.contains_key(&resources::Key::Traversal)
-            && let Some((gateway, _)) = manager.traversal.clone()
-        {
-            manager.spawn_owner(resources::Key::Traversal, None, |shared| {
-                traversal::run(shared, gateway)
-            });
-        }
+        manager.publish_endpoints(endpoints)?;
         if !manager.owners.contains_key(&resources::Key::Idle) {
             manager.spawn_owner(resources::Key::Idle, None, interest::idle);
         }
@@ -803,6 +708,112 @@ impl Manager {
                     workers::dial(shared, factory, peer)
                 });
             }
+        }
+        Ok(())
+    }
+
+    /// Serve bound listeners. Coordination sockets join `endpoints`.
+    fn install_bound(
+        &mut self,
+        bound: Vec<rebind::Bound>,
+        endpoints: &mut BTreeMap<[u8; 32], traversal::Endpoint>,
+    ) -> Result<(), Error> {
+        for bound in bound {
+            match bound {
+                rebind::Bound::Stream {
+                    fact,
+                    listener,
+                    acceptor,
+                } => {
+                    self.register_listener(&fact)?;
+                    self.listeners.push(fact.clone());
+                    self.spawn_owner(
+                        resources::Key::Listener(fact.key.clone()),
+                        Some(fact.socket_id),
+                        |shared| workers::listen(shared, fact, listener, acceptor),
+                    );
+                }
+                rebind::Bound::Datagram { fact, endpoint } => {
+                    self.register_listener(&fact)?;
+                    self.listeners.push(fact.clone());
+                    self.spawn_owner(
+                        resources::Key::Listener(fact.key.clone()),
+                        Some(fact.socket_id),
+                        |shared| datagram::listen(shared, fact, endpoint),
+                    );
+                }
+                rebind::Bound::Traversal {
+                    fact,
+                    reference,
+                    socket,
+                } => {
+                    self.listeners.push(fact.clone());
+                    let (commands, received) = mpsc::channel(8);
+                    self.shared
+                        .sockets
+                        .lock()
+                        .map_err(|_| Error::Worker)?
+                        .insert(
+                            fact.socket_id,
+                            SocketFact {
+                                reference,
+                                network: meshway_model::state::SocketNetwork::Udp,
+                                bound_address: fact.local,
+                                endpoints: Vec::new(),
+                            },
+                        );
+                    endpoints.insert(
+                        fact.socket_id,
+                        traversal::Endpoint {
+                            commands,
+                            authorization: socket.authorization.clone(),
+                        },
+                    );
+                    self.spawn_owner(
+                        resources::Key::Listener(fact.key.clone()),
+                        Some(fact.socket_id),
+                        |shared| {
+                            datagram::listen_traversal(
+                                shared,
+                                fact.socket_id,
+                                Some(fact),
+                                socket,
+                                received,
+                            )
+                        },
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// New coordination sockets reach discovery and the traversal owner.
+    fn publish_endpoints(
+        &mut self,
+        endpoints: BTreeMap<[u8; 32], traversal::Endpoint>,
+    ) -> Result<(), Error> {
+        let added_endpoints = !endpoints.is_empty();
+        self.shared
+            .traversal_endpoints
+            .lock()
+            .map_err(|_| Error::Worker)?
+            .extend(endpoints);
+        if added_endpoints {
+            self.shared.resource_changes.send_replace(());
+        }
+        if !self
+            .shared
+            .traversal_endpoints
+            .lock()
+            .map_err(|_| Error::Worker)?
+            .is_empty()
+            && !self.owners.contains_key(&resources::Key::Traversal)
+            && let Some((gateway, _)) = self.traversal.clone()
+        {
+            self.spawn_owner(resources::Key::Traversal, None, |shared| {
+                traversal::run(shared, gateway)
+            });
         }
         Ok(())
     }
@@ -861,6 +872,7 @@ impl Manager {
         Ok(Snapshot {
             adjacencies,
             mtu,
+            unavailable: self.unavailable_listeners(),
             listeners: self.listeners.clone(),
             sockets: self
                 .shared
@@ -1049,6 +1061,17 @@ impl Manager {
             let mut controls = Vec::new();
             let count = tokio::select! { biased;
                 _ = self.shared.stop.cancelled() => return vec![Event::Closed],
+                Some(rebound) = self.rebound.recv() => {
+                    match self.adopt(rebound) {
+                        Ok(true) => return vec![Event::Changed],
+                        Ok(false) => continue,
+                        Err(error) => {
+                            tracing::warn!(%error, "Installing a rebound listener failed");
+                            self.shared.stop.cancel();
+                            return vec![Event::Closed];
+                        }
+                    }
+                },
                 count = self.control_events.recv_many(&mut controls, limit) => { events = controls; count },
                 count = self.events.recv_many(&mut events, limit), if data => count,
             };
@@ -1218,6 +1241,11 @@ impl Manager {
         }
         self.shared.links.lock().map_err(|_| Error::Worker)?.clear();
         self.listeners.clear();
+        self.shared
+            .unbound
+            .lock()
+            .map_err(|_| Error::Worker)?
+            .clear();
         self.shared
             .traversal_endpoints
             .lock()

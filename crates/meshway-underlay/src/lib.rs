@@ -51,6 +51,7 @@ pub use linux::{
     CtConfirmation, DatagramAuthorization, DatagramCandidate, EgressCapture, ExitCutoff,
     ExitIncarnation, ExitReply, ExitReplyReader, ExitRole, ExitScope, ExitSendGuard, ExitTransport,
     Host, Invalidated, OriginalTuple, ProjectionAck, ProtectedDatagram, TraversalDatagram,
+    ephemeral_ports,
     sockets::{CandidateHandle, ListenerHandle, ProtectedListener, ProtectedTcp, SocketFactory},
 };
 

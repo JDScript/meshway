@@ -54,6 +54,9 @@ pub async fn run(cli: &Cli, role: Role) -> Result<()> {
     let baseline = capture().await?;
     save(cli, "capture-before", &baseline).await?;
     let mut dns = crate::dns::Probe::start(cli, role).await?;
+    let mut held = (cli.held_listener_port() && role == Role::B)
+        .then(|| std::net::UdpSocket::bind(HELD_LISTENER))
+        .transpose()?;
     let mut daemon = spawn_daemon(cli, role, underlay.controller)?;
     let mut echo = None;
     let result = exercise(
@@ -64,8 +67,10 @@ pub async fn run(cli: &Cli, role: Role) -> Result<()> {
         &mut daemon,
         &mut echo,
         &mut dns,
+        &mut held,
     )
     .await;
+    drop(held);
     if let Err(error) = &result {
         crate::record_error(cli, "failure.txt", error.as_ref());
         if let Some(dns) = &dns {
@@ -154,6 +159,55 @@ pub(super) fn spawn_named_daemon(
         .spawn()?)
 }
 
+/// The listener every Native UDP actor declares.
+const HELD_LISTENER: &str = "0.0.0.0:35000";
+
+/// While another socket holds the listener port the Node reports why, and
+/// after it is released the Node binds it on its own: the content applies
+/// cleanly and the port is the daemon's.
+async fn release_held_listener(cli: &Cli, held: std::net::UdpSocket) -> Result<()> {
+    let unavailable = wait_status(cli, |status| {
+        status.last_error == Some(meshway_protocol::ipc::Problem::Transport)
+            && status
+                .last_error_detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains(&format!("cannot bind {HELD_LISTENER}")))
+    })
+    .await?;
+    save(cli, "held-listener-unavailable-status", &unavailable).await?;
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    drop(held);
+    let released = Instant::now();
+    let recovered = wait_status_for(cli, Duration::from_secs(90), |status| {
+        status.last_error.is_none() && status.data_plane == DataPlane::Ready
+    })
+    .await?;
+    let owned = matches!(
+        std::net::UdpSocket::bind(HELD_LISTENER),
+        Err(error) if error.kind() == std::io::ErrorKind::AddrInUse
+    );
+    save(
+        cli,
+        "held-listener-recovered",
+        &serde_json::json!({
+            "status": recovered,
+            "recoveredMs": released.elapsed().as_millis() as u64,
+            "daemonHoldsPort": owned,
+        }),
+    )
+    .await?;
+    if !owned {
+        return Err("the released listener port was not bound by the daemon".into());
+    }
+    tracing::info!(
+        phase = "held-listener-recovered",
+        recovered_ms = released.elapsed().as_millis() as u64,
+        "listener bound after its port was released"
+    );
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn exercise(
     cli: &Cli,
     role: Role,
@@ -162,6 +216,7 @@ async fn exercise(
     daemon: &mut Child,
     echo: &mut Option<Echo>,
     dns: &mut Option<crate::dns::Probe>,
+    held: &mut Option<std::net::UdpSocket>,
 ) -> Result<()> {
     tracing::info!(
         phase = "cli-up",
@@ -188,6 +243,9 @@ async fn exercise(
     };
     if addresses.len() != 3 || Role::ALL.iter().any(|role| !addresses.contains_key(role)) {
         return Err("incomplete managed actor addresses".into());
+    }
+    if let Some(held) = held.take() {
+        release_held_listener(cli, held).await?;
     }
     let status = running(cli, revision).await?;
     publish_status(cli, signals, role, "initial", status).await?;

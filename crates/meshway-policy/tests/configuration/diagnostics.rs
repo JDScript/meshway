@@ -78,3 +78,39 @@ fn source_parse_errors_report_position_without_echoing_text() {
     assert_eq!(found[0].params["line"], "3");
     assert!(!format!("{found:?}").contains("s3cret"));
 }
+
+#[test]
+fn an_enabled_listener_on_a_default_ephemeral_port_is_accepted_with_a_warning() {
+    let mut c = with_nodes();
+    c.nodes.get_mut(&id(1)).unwrap().listeners = serde_json::from_value(serde_json::json!({
+        "busy": {"type": "native_udp", "listenPort": 35000},
+        "edge": {"type": "native_udp", "listenPort": 60999},
+        "off": {"type": "native_udp", "listenPort": 40000, "enabled": false},
+        "low": {"type": "native_udp", "listenPort": 32767},
+        "high": {"type": "native_tcp", "listenPort": 61000},
+    }))
+    .unwrap();
+    let normalized = normalize_with_dependencies(c, &context()).unwrap();
+    let warnings: Vec<_> = normalized
+        .warnings
+        .iter()
+        .filter(|w| w.code == IssueCode::EphemeralListenerPort)
+        .map(|w| {
+            (
+                w.path.clone(),
+                w.params["port"].clone(),
+                w.params["first"].clone(),
+                w.params["last"].clone(),
+            )
+        })
+        .collect();
+    let at = |key: &str, port: &str| {
+        (
+            format!("/nodes/{}/listeners/{key}/listenPort", id(1)),
+            port.to_owned(),
+            "32768".to_owned(),
+            "60999".to_owned(),
+        )
+    };
+    assert_eq!(warnings, [at("busy", "35000"), at("edge", "60999")]);
+}

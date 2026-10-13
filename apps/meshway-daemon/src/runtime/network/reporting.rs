@@ -36,6 +36,8 @@ pub(super) struct Key {
     exit: Option<ExitKey>,
     exit_dns: Option<meshway_model::exit::ExitDns>,
     listeners: BTreeMap<[u8; 32], Listener>,
+    /// Keys only: a retry's attempt count and time are not a change.
+    unavailable: Vec<String>,
     links: BTreeMap<[u8; 32], LinkFact>,
     sockets: Vec<meshway_connectivity::SocketFact>,
     dependencies: BTreeMap<NodeId, u32>,
@@ -64,6 +66,7 @@ impl Key {
             }),
             exit_dns: report.exit_dns.clone(),
             listeners: BTreeMap::new(),
+            unavailable: Vec::new(),
             links: BTreeMap::new(),
             sockets: Vec::new(),
             dependencies: BTreeMap::new(),
@@ -86,6 +89,11 @@ impl Key {
                         },
                     )
                 })
+                .collect();
+            key.unavailable = facts
+                .unavailable
+                .iter()
+                .map(|listener| listener.key.clone())
                 .collect();
             key.links = facts
                 .links
@@ -429,6 +437,7 @@ mod tests {
             links: vec![],
             sockets: vec![],
             adjacencies: BTreeMap::new(),
+            unavailable: vec![],
         });
         publisher.send_replace(report.clone());
         let physical = schedule.changes.borrow_and_update().clone();

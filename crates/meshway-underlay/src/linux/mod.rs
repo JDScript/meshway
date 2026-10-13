@@ -10,6 +10,19 @@ pub use kernel::exit::{
     ExitSendGuard, ExitTransport, Invalidated, OriginalTuple, ProjectionAck,
 };
 mod protection;
+
+/// This host's `net.ipv4.ip_local_port_range`: ports the kernel may give an
+/// unbound outgoing socket of any process, so a listener there can find its
+/// port held for a moment. `None` when it cannot be read.
+pub fn ephemeral_ports() -> Option<std::ops::RangeInclusive<u16>> {
+    let text = std::fs::read_to_string("/proc/sys/net/ipv4/ip_local_port_range").ok()?;
+    let mut fields = text.split_ascii_whitespace().map(str::parse::<u16>);
+    let (Some(Ok(first)), Some(Ok(last)), None) = (fields.next(), fields.next(), fields.next())
+    else {
+        return None;
+    };
+    (first <= last).then_some(first..=last)
+}
 mod proxy;
 mod resolver_exchange;
 pub mod sockets;
