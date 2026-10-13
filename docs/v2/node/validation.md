@@ -54,6 +54,37 @@
 
 VM→it7 方向 Mesh TCP 远低于裸路径、UDP iperf 30 Mbit/s 时丢包 0.6%，原因未定位，不归入本证据的结论。
 
+### 中继兜底行 {#relay-row}
+
+`nat/relay` 在 `nat/off` 的拓扑（A、R 各在端口保持型 SNAT 后，B 公网）上完成共同启动与 70 秒持续流后：router-a 丢弃 A 与 B 之间的全部报文；Controller 去掉 `A→B via R` 并允许 A–B 直连。Policy 此后优先 `[A, B]`，A 没有到 B 的通道，于是：
+
+| 检查 | 要求 |
+| --- | --- |
+| CLI ping | `meshway ping b` 的完整路径为 `[A, R, B]` |
+| 新流 | 新的 UDP／TCP 5 元组完成回显（同一 `choose_path`） |
+| 切换时间 | 提交新内容到首个中继回复 ≤ 30 秒 |
+| status | A 的 peer B 为 `relay`、`via = [R]` |
+| 路由器证据 | 两条 A–B IP 对 DROP 规则真实存在，A→B 方向计数 > 0（A 确实尝试过直连），没有更宽的规则 |
+
+结果：`991ca758` 单行 `20261013T053059Z-11b6d36a`（提交后 1,116 ms 中继回复，A→B 直连尝试被丢 7 个）；`45ec6e99` 全量 17 行矩阵 `20261013T053433Z-a688a9f6`（行 `20261013T053955Z-8b43b4de`）。证据 `.meshway/validation/n3/`。
+
+这一行用路由器丢包造成“直连不可能”，不是两端各自的端点相关映射＋端口相关过滤；后者的实网形态见下节 lax↔planck。
+
+### N3 实网证据 {#n3-real-network}
+
+2026-10-13，`7376e3e0`（lab、VM、it7）与 `66897a30`（lab、VM、it7、planck 容器 `meshway-planck`）。证据 `.meshway/node-lab/n3/`。
+
+| 项 | 结果 |
+| --- | --- |
+| lax（Docker）↔ meshway-vm（OrbStack machine） | 部署后无流量即 `direct native_udp`（lax 拨 VM 的本地候选 `192.168.139.66:35000`），`meshway ping` 双向 5/5（0.2–0.9 ms） |
+| `* ↔ *` keepalive | 三容器六个方向在部署后数秒内 `direct`，05:09:47–05:15:54 的 13 次采样端点不变；it7、VM 与全部 lab 节点同样常驻 |
+| 中继（lax 内用 tc 丢弃 VM 的来包） | 通道健康失效后（6 秒内）`meshway ping meshway-vm` 10/10 `via relay meshway-sha`、OS ping 5/5，status 为 `relay via meshway-sha` |
+| 候选节奏 | 同一阻断下 lax 对 `192.168.139.66:35000` 的拨号尝试（每次 5 秒）起点间隔 6、7、9、13、21.8、37.9、69.1、133.6、261.6 秒；期间两次被其他工作流的配置修订（新 netmap）重新开始；解除阻断后约 4.5 分钟（当时的暂停）恢复直连 |
+| lax、sha、nyc、VM ↔ planck 容器 | 双向 `unreachable`。planck 容器在 Docker masquerade 后（映射与端点无关、端口保持 `128.238.177.131:35000`），lax 等经 WARP（端点相关映射）。planck 宿主 `enp14s0` 45 秒抓包：发往 `104.28.152.187` 的 punch 139 个，来自 WARP 的入站 0 个；同期 lax 确实发出发往 `128.238.177.131:35000` 的 punch。即 lax 的报文在到达 planck 网卡之前被丢弃，planck 也就无从学习 lax 的映射端口；属于上文“端点相关映射 × 端口相关过滤”的不可直连形态 |
+| it7 ↔ 全部节点 | `direct native_udp`；planck 容器与 it7 直连 |
+
+未观测：WARP 更换出口 IP 后的恢复（本轮窗口内未发生）。netcheck 的过滤类型判定未实现（需要能从未联系过的地址／端口回包的观测点；开发 Server 的 STUN 端点为 Google、Cloudflare，不支持 RFC 5780 CHANGE-REQUEST）。
+
 ### 当前验证证据
 
 `validate:matrix` 为每行独立保留报告并汇总 `matrix.json`／`summary.md`；通过结论同时要求 fixture `passed`、进程成功退出和本 run 无遗留资源。`--short` 的报告标记 `scope=diagnostic-short`：只运行 30 秒持续／纯接收窗口（退路 5 秒后触发），不要求已经跨原需求期限，未测到的延长为 null。其他场景仍执行，包括真实 instance 失效恢复；短模式不是整组验收，不能更新下述历史／当前通过状态。并发运行还需读取各行启动 load，不能与低负载串行结果不加区分地合并。

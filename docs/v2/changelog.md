@@ -11,6 +11,7 @@ wire 6、`compilerVersion` 不变，IPC 9（C3）；Server schema 版本 7（F4a
 - 候选不再按地址类别过滤（撤回 N2a 的“私网／CGNAT／ULA `localEndpoints` 只在本机有包含它的接口前缀时拨号”）：所有候选都尝试，每个失败候选按 `1 s × 2^(n−1)` 暂停、上限 300 秒；与 peer 有通道即停止探测，候选集合、通道或 netmap 变化时重新开始。协调穿透对无果结束的 peer 同样暂停 prepare 与为它发的查询。见[候选节奏](/v2/node/connectivity#candidate-pacing)。lax（Docker）↔ meshway-vm（OrbStack machine）恢复为 `direct native_udp`。
 - 修复：`keepalive` 只对字面 `node:<id>` 的规则生效，`* ↔ *`、Tag、Group 选择器的 keepalive 边仍按需（lab 两两 `idle`）。现由决定该边的首条 allow 规则（与 `transports` 同一条）给出，Policy `LocalCompiler::keepalive` 唯一实现。
 - 中继兜底：业务首包与 `meshway ping`／诊断任务共用 `SecureNode::choose_path`：取首跳有通道、且最近源端握手未无应答结束的第一条路径；之前的直连路径登记邻接需求。无应答结束的路径暂停 `10 s × 2^(n−1)`（≤300 秒）。修复 `meshway ping` 只绑定首条路径、直连不可用时超时而业务已经经中继的问题。见[中继兜底](/v2/node/connectivity#relay-fallback)。
+- 来源学习不再要求与登记候选同 IP：经 offer digest 签名验证的开场消息来自任意合法单播来源都可成为本尝试的目的（仍 ≤2、随尝试结束）。本机映射变化（如 WARP 换出口 IP）使全部候选节奏重新开始。
 - 新矩阵行 `nat/relay`（17 行）。
 
 真实网络穿透与外层 PMTU（N2a）：IPC 9 新增（`peers[].mtu`、`lastErrorDetail`、netcheck `sizeProbe`／`pathMtu`），wire 6 不变（接收方另接受以零填充的 UDP 健康 Ping）。
