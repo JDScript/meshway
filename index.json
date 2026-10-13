@@ -1,8 +1,58 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-13T18:26:50.772999+00:00",
+  "updatedAt": "2026-10-13T19:00:04.479713+00:00",
   "runs": [
+    {
+      "id": 38450249942,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "e5a56b27d090d540171a7a6b80683b27bc0974f4",
+      "message": "release.yml: push the converter release with the REST API; no gh dependency on the x64 runner",
+      "createdAt": "2026-10-13T18:52:13Z",
+      "updatedAt": "2026-10-13T18:58:53Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "url": "https://github.com/JDScript/meshway/actions/runs/38450249942",
+      "jobs": [
+        {
+          "id": 115478999013,
+          "name": "changes",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-13T18:52:16Z",
+          "completedAt": "2026-10-13T18:52:28Z",
+          "seconds": 12.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38450249942/job/115478999013"
+        },
+        {
+          "id": 115479107060,
+          "name": "web",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-13T18:52:29Z",
+          "completedAt": "2026-10-13T18:53:48Z",
+          "seconds": 79.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38450249942/job/115479107060"
+        },
+        {
+          "id": 115479107114,
+          "name": "cargo",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "failure",
+          "startedAt": "2026-10-13T18:52:30Z",
+          "completedAt": "2026-10-13T18:58:53Z",
+          "seconds": 383.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38450249942/job/115479107114"
+        }
+      ],
+      "artifacts": []
+    },
     {
       "id": 38443118508,
       "attempt": 1,
