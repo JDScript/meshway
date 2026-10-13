@@ -22,6 +22,27 @@ fn line(output: &mut impl Write, term: &Term, label: &str, value: String) -> io:
     )
 }
 
+/// A socket's owning resource; `peers` names the far end of dial sockets,
+/// whose keys carry its Node ID.
+pub(crate) fn resource(
+    resource: &ResourceRef,
+    peers: &[meshway_protocol::ipc::PeerStatus],
+) -> String {
+    match resource {
+        ResourceRef::Listener { key } => format!("listener {key}"),
+        ResourceRef::Dial { key } => {
+            let named = key.split_once('/').and_then(|(node, listener)| {
+                peers
+                    .iter()
+                    .find(|peer| peer.node_id.to_string() == node)
+                    .map(|peer| format!("dial {}/{listener}", peer.hostname))
+            });
+            named.unwrap_or_else(|| format!("dial {key}"))
+        }
+        ResourceRef::Coordination { key } => format!("coordination {key}"),
+    }
+}
+
 /// `peers` names the far end of dial sockets, whose keys carry its Node ID.
 pub(crate) fn write(
     output: &mut impl Write,
@@ -116,19 +137,7 @@ pub(crate) fn write(
         "SOCKET", "BOUND", "MAPPED", "OBSERVER", "PORT", "MAPPING",
     ]);
     for socket in &report.sockets {
-        let resource = match &socket.resource {
-            ResourceRef::Listener { key } => format!("listener {key}"),
-            ResourceRef::Dial { key } => {
-                let named = key.split_once('/').and_then(|(node, listener)| {
-                    peers
-                        .iter()
-                        .find(|peer| peer.node_id.to_string() == node)
-                        .map(|peer| format!("dial {}/{listener}", peer.hostname))
-                });
-                named.unwrap_or_else(|| format!("dial {key}"))
-            }
-            ResourceRef::Coordination { key } => format!("coordination {key}"),
-        };
+        let resource = resource(&socket.resource, peers);
         let port = match socket.port_mapping {
             PortMapping::Preserved => Cell::styled("preserved", Role::Good),
             PortMapping::Changed => Cell::styled("changed", Role::Warn),

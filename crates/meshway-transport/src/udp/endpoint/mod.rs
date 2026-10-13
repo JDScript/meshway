@@ -5,6 +5,7 @@ use std::{
     task::{Context, Poll, ready},
 };
 
+use crate::raw::Buffers;
 use crate::spec::SocketOptions;
 use crate::{
     Limits, Session,
@@ -35,13 +36,62 @@ pub struct Capabilities {
     pub gso_size_rejections: u64,
 }
 
+/// Default Linux batch-endpoint receive buffer request: about 20 ms of a
+/// 2.5 Gbit/s channel, so a receiver that is briefly descheduled (a 2 vCPU
+/// host busy with crypto) or a burst of GSO trains does not overflow it.
+pub const DEFAULT_RECEIVE_BUFFER: usize = 7 * 1024 * 1024;
+/// Default Linux batch-endpoint send buffer request. A send buffer only
+/// holds datagrams the host has not transmitted yet; a larger one adds
+/// queueing delay, not throughput, once the sender is paced.
+pub const DEFAULT_SEND_BUFFER: usize = 2 * 1024 * 1024;
+
+fn read_buffers(
+    socket: &UdpSocket,
+    receive_requested: usize,
+    send_requested: usize,
+) -> io::Result<Buffers> {
+    let reference = SockRef::from(socket);
+    Ok(Buffers {
+        receive: reference.recv_buffer_size()?,
+        send: reference.send_buffer_size()?,
+        receive_requested,
+        send_requested,
+    })
+}
+
 /// A raw, unconnected UDP endpoint. It can serve many explicit peers; no
 /// authenticated accepts, automatic retransmission, or global ordering.
 #[derive(Debug)]
 pub struct UdpTransport {
     socket: UdpSocket,
+    buffers: Buffers,
     #[cfg(target_os = "linux")]
     batch: Option<batch::State>,
+}
+
+/// Request `bytes` for one direction: first the privileged request that is
+/// not limited by the sysctl maximum, then, without the privilege, the
+/// ordinary one the kernel limits to `net.core.rmem_max`／`wmem_max`.
+#[cfg(target_os = "linux")]
+fn request_buffer(socket: &UdpSocket, receive: bool, bytes: usize) -> io::Result<()> {
+    use nix::sys::socket::{setsockopt, sockopt};
+    let forced = if receive {
+        setsockopt(socket, sockopt::RcvBufForce, &bytes)
+    } else {
+        setsockopt(socket, sockopt::SndBufForce, &bytes)
+    };
+    match forced {
+        Ok(()) => Ok(()),
+        Err(nix::errno::Errno::EPERM) => {
+            let reference = SockRef::from(socket);
+            if receive {
+                reference.set_recv_buffer_size(bytes)
+            } else {
+                reference.set_send_buffer_size(bytes)
+            }
+        }
+        Err(error) => Err(error.into()),
+    }
 }
 
 // The host's protection wrapper borrows the actual adopted descriptor before
@@ -149,29 +199,48 @@ impl UdpTransport {
         forbid_fragmentation(&socket, local.is_ipv4())?;
         #[cfg(not(target_os = "linux"))]
         let _ = local;
+        let buffers = read_buffers(
+            &socket,
+            options.receive_buffer as usize,
+            options.send_buffer as usize,
+        )?;
         Ok(Self {
             socket,
+            buffers,
             #[cfg(target_os = "linux")]
             batch: None,
         })
     }
 
     /// Opt into Linux GSO/GRO and mmsg, preserving the single-message API.
-    /// Unspecified Linux batch buffers request 7 MiB to absorb GSO bursts;
-    /// explicit sizes win, and the kernel may clamp the ordinary SO_*BUF request.
+    /// Unspecified Linux batch buffers request [`DEFAULT_RECEIVE_BUFFER`] and
+    /// [`DEFAULT_SEND_BUFFER`] and never lower a larger existing buffer;
+    /// explicit sizes are requested as configured. Each request is made
+    /// privileged first (`SO_RCVBUFFORCE`／`SO_SNDBUFFORCE`, `CAP_NET_ADMIN`),
+    /// so a Node daemon is not limited by `net.core.rmem_max`／`wmem_max`;
+    /// without the privilege the kernel limits it. [`Self::buffers`] reports
+    /// what was granted.
     pub fn adopt_batch(socket: UdpSocket, options: &SocketOptions) -> io::Result<Self> {
         let endpoint = Self::adopt(socket, options)?;
         #[cfg(target_os = "linux")]
         {
             let mut endpoint = endpoint;
-            const DEFAULT_BUFFER: usize = 7 * 1024 * 1024;
             let reference = SockRef::from(&endpoint.socket);
-            if options.receive_buffer == 0 && reference.recv_buffer_size()? < DEFAULT_BUFFER {
-                reference.set_recv_buffer_size(DEFAULT_BUFFER)?;
+            let receive = match options.receive_buffer {
+                0 => DEFAULT_RECEIVE_BUFFER,
+                bytes => bytes as usize,
+            };
+            let send = match options.send_buffer {
+                0 => DEFAULT_SEND_BUFFER,
+                bytes => bytes as usize,
+            };
+            if options.receive_buffer != 0 || reference.recv_buffer_size()? < receive {
+                request_buffer(&endpoint.socket, true, receive)?;
             }
-            if options.send_buffer == 0 && reference.send_buffer_size()? < DEFAULT_BUFFER {
-                reference.set_send_buffer_size(DEFAULT_BUFFER)?;
+            if options.send_buffer != 0 || reference.send_buffer_size()? < send {
+                request_buffer(&endpoint.socket, false, send)?;
             }
+            endpoint.buffers = read_buffers(&endpoint.socket, receive, send)?;
             endpoint.batch = Some(batch::State::new(&endpoint.socket)?);
             Ok(endpoint)
         }
@@ -179,6 +248,11 @@ impl UdpTransport {
         {
             Ok(endpoint)
         }
+    }
+
+    /// Buffer sizes read back once the endpoint was adopted.
+    pub fn buffers(&self) -> Buffers {
+        self.buffers
     }
 
     pub fn capabilities(&self) -> Capabilities {
@@ -301,6 +375,9 @@ impl Datagram for UdpTransport {
     }
     fn local_addr(&self) -> io::Result<SocketAddr> {
         self.local_addr()
+    }
+    fn buffers(&self) -> Option<Buffers> {
+        Some(self.buffers)
     }
 
     fn poll_send_to(

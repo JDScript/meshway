@@ -120,6 +120,22 @@ meshway_model::object! {
 } }
 
 meshway_model::object! {
+/// One Native UDP socket of this Node's listeners and dialers in the installed
+/// netmap, with the buffer sizes the kernel granted it.
+#[derive(Clone, Debug, PartialEq, Eq)] pub struct SocketStatus {
+    pub resource: ResourceRef,
+    pub bound_address: SocketAddress,
+    /// Effective receive buffer in bytes as the kernel reports it (`SO_RCVBUF`; Linux reports twice the granted size, covering bookkeeping).
+    pub receive_buffer: u32,
+    /// Bytes requested: `socket.receiveBuffer`, or the default when 0.
+    pub receive_requested: u32,
+    /// Effective send buffer in bytes as the kernel reports it (`SO_SNDBUF`).
+    pub send_buffer: u32,
+    /// Bytes requested: `socket.sendBuffer`, or the default when 0.
+    pub send_requested: u32,
+} }
+
+meshway_model::object! {
 /// One Native UDP socket that observes its mapping.
 #[derive(Clone, Debug, PartialEq, Eq)] pub struct NetcheckSocket {
     pub resource: ResourceRef,

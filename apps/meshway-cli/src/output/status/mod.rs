@@ -190,8 +190,46 @@ pub(crate) fn write(
         } else {
             peers(output, term, status)?;
         }
+        if !status.sockets.is_empty() {
+            writeln!(output)?;
+            sockets(output, term, status)?;
+        }
     }
     Ok(())
+}
+
+fn size(bytes: u32) -> String {
+    let bytes = f64::from(bytes);
+    if bytes >= 1024.0 * 1024.0 {
+        format!("{:.1} MiB", bytes / (1024.0 * 1024.0))
+    } else {
+        format!("{:.0} KiB", bytes / 1024.0)
+    }
+}
+
+/// Granted buffers as the kernel reports them; less than requested means
+/// the kernel limited the request (`net.core.rmem_max`／`wmem_max`).
+fn sockets(output: &mut impl Write, term: &Term, status: &Status) -> io::Result<()> {
+    let mut table = Table::new(vec!["SOCKET", "BOUND", "RECEIVE BUFFER", "SEND BUFFER"]);
+    let cell = |granted: u32, requested: u32| {
+        if granted < requested {
+            Cell::styled(
+                format!("{} (requested {}, limited)", size(granted), size(requested)),
+                Role::Warn,
+            )
+        } else {
+            Cell::new(size(granted))
+        }
+    };
+    for socket in &status.sockets {
+        table.row(vec![
+            Cell::new(super::netcheck::resource(&socket.resource, &status.peers)),
+            Cell::new(socket.bound_address.to_string()),
+            cell(socket.receive_buffer, socket.receive_requested),
+            cell(socket.send_buffer, socket.send_requested),
+        ]);
+    }
+    table.render(output, term)
 }
 
 fn exit(term: &Term, exit: Option<&meshway_protocol::ipc::ExitState>) -> String {

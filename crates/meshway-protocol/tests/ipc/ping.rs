@@ -13,7 +13,7 @@ fn target() -> Value {
 
 #[test]
 fn ping_command_has_a_bounded_count_and_no_budget_override() {
-    assert_eq!(VERSION, 10);
+    assert_eq!(VERSION, 11);
     for count in [1, 10, 1000] {
         let value = json!({"version":VERSION,"requestId":ID,"command":{"type":"ping","target":{"type":"name","name":"node.mesh"},"count":count}});
         let request: Request = serde_json::from_value(value.clone()).unwrap();
@@ -111,7 +111,7 @@ fn status() -> Value {
         "observedAt":"2026-10-05T00:00:00Z","enrollmentRequestId":null,"enrollmentUrl":null,
         "identity":null,"authenticated":false,"instance":null,"saved":null,"applied":null,
         "dataPlane":"stopped","networkMode":"tun","lastError":null,"lastErrorDetail":null,"retryAt":null,
-        "node":null,"peers":[]
+        "node":null,"peers":[],"sockets":[]
     })
 }
 
@@ -172,6 +172,7 @@ async fn status_stays_object_only_through_tagged_buffering_and_nullable_fields_a
         "netmap",
         "node",
         "peers",
+        "sockets",
     ] {
         let mut missing = good.clone();
         missing["result"]["status"]

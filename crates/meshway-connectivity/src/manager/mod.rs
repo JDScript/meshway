@@ -106,12 +106,38 @@ fn diagnostic_link(
         "Connectivity channel transition");
 }
 
+/// The one log line of a Mesh UDP socket's granted buffers. Linux reports
+/// twice the granted bytes; less than requested means the kernel limited an
+/// unprivileged request to `net.core.rmem_max`／`wmem_max`.
+fn log_buffers(
+    resource: &str,
+    local: SocketAddr,
+    buffers: Option<meshway_transport::raw::Buffers>,
+) {
+    let Some(buffers) = buffers else {
+        return;
+    };
+    if buffers.limited() {
+        tracing::warn!(resource, %local,
+            receive_buffer = buffers.receive, receive_requested = buffers.receive_requested,
+            send_buffer = buffers.send, send_requested = buffers.send_requested,
+            "UDP socket buffers limited by net.core.rmem_max/wmem_max");
+    } else {
+        tracing::info!(resource, %local,
+            receive_buffer = buffers.receive, receive_requested = buffers.receive_requested,
+            send_buffer = buffers.send, send_requested = buffers.send_requested,
+            "UDP socket buffers");
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ListenerFact {
     pub socket_id: [u8; 32],
     pub key: String,
     pub protocol: TransportProtocol,
     pub local: SocketAddr,
+    /// Buffer sizes the kernel granted a datagram listener's socket.
+    pub buffers: Option<meshway_transport::raw::Buffers>,
 }
 
 /// Only produced after registered-key adjacency authentication (UDP also
@@ -181,6 +207,9 @@ pub struct SocketFact {
     pub network: meshway_model::state::SocketNetwork,
     pub bound_address: SocketAddr,
     pub endpoints: Vec<meshway_model::state::EndpointCandidate>,
+    /// Buffer sizes the kernel granted this UDP socket; `None` for stream
+    /// sockets and sockets whose provider reports none.
+    pub buffers: Option<meshway_transport::raw::Buffers>,
 }
 impl SocketFact {
     pub fn candidate(
@@ -566,7 +595,9 @@ impl Manager {
                         key: key.clone(),
                         protocol,
                         local: socket.endpoint.local_addr()?,
+                        buffers: socket.endpoint.buffers(),
                     };
+                    log_buffers(&format!("listener {key}"), fact.local, fact.buffers);
                     traversal_endpoints.push((fact, reference, socket));
                     continue;
                 }
@@ -581,7 +612,9 @@ impl Manager {
                     key: key.clone(),
                     protocol,
                     local: endpoint.local_addr()?,
+                    buffers: endpoint.buffers(),
                 };
+                log_buffers(&format!("listener {key}"), fact.local, fact.buffers);
                 datagrams.push((fact, endpoint));
                 continue;
             }
@@ -595,6 +628,7 @@ impl Manager {
                 key: key.clone(),
                 protocol,
                 local: listener.local_addr()?,
+                buffers: None,
             };
             prepared.push((fact, listener, acceptor));
         }
@@ -677,6 +711,11 @@ impl Manager {
                     )
                     .await
                     .map_err(|_| Error::Cancelled)??;
+                    log_buffers(
+                        &format!("dial {key}"),
+                        socket.endpoint.local_addr()?,
+                        socket.endpoint.buffers(),
+                    );
                     bound_candidates.push((
                         resources::Key::Candidate(key.clone(), ipv4),
                         id,
@@ -723,6 +762,7 @@ impl Manager {
                         network: meshway_model::state::SocketNetwork::Udp,
                         bound_address: fact.local,
                         endpoints: Vec::new(),
+                        buffers: fact.buffers,
                     },
                 );
             endpoints.insert(
@@ -754,6 +794,7 @@ impl Manager {
                         network: meshway_model::state::SocketNetwork::Udp,
                         bound_address: socket.endpoint.local_addr()?,
                         endpoints: Vec::new(),
+                        buffers: socket.endpoint.buffers(),
                     },
                 );
             endpoints.insert(
@@ -906,6 +947,7 @@ impl Manager {
                     },
                     bound_address: fact.local,
                     endpoints: Vec::new(),
+                    buffers: fact.buffers,
                 },
             );
         Ok(())

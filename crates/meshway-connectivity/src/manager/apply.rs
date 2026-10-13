@@ -42,6 +42,7 @@ impl Shared {
                 },
                 bound_address: local,
                 endpoints: Vec::new(),
+                buffers: None,
             });
         Ok(())
     }

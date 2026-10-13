@@ -130,6 +130,10 @@ impl meshway_transport::raw::Datagram for Datagram {
         result
     }
 
+    fn buffers(&self) -> Option<meshway_transport::raw::Buffers> {
+        self.inner.buffers()
+    }
+
     fn local_addr(&self) -> std::io::Result<std::net::SocketAddr> {
         self.scope
             .check()

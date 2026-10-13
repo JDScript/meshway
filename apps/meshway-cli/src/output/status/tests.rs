@@ -41,7 +41,12 @@ fn status() -> Status {
         "saved":reference,"applied":reference,"dataPlane":"ready","networkMode":"tun",
         "node":{"hostname":"meshway-lax","addresses":{"ipv4":"100.64.0.4","ipv6":null}},
         "peers":[nyc, sha, peer(OLD, "meshway-old", "100.64.0.9", "offline"), planck],
-        "lastError":null,"lastErrorDetail":null,"retryAt":null
+        "sockets":[
+            {"resource":{"kind":"listener","key":"native"},"boundAddress":"0.0.0.0:35000",
+             "receiveBuffer":14680064,"receiveRequested":7340032,"sendBuffer":4194304,"sendRequested":2097152},
+            {"resource":{"kind":"listener","key":"native6"},"boundAddress":"[::]:35000",
+             "receiveBuffer":425984,"receiveRequested":7340032,"sendBuffer":4194304,"sendRequested":2097152}
+        ],"lastError":null,"lastErrorDetail":null,"retryAt":null
     }))
     .unwrap()
 }
@@ -85,6 +90,23 @@ fn plain_summary_and_peer_table_have_no_escapes() {
         lines[header + 4],
         "meshway-pla  100.64.0.7  relay (idle)  native_udp  via meshway-sha"
     );
+    let header = lines
+        .iter()
+        .position(|line| line.starts_with("SOCKET"))
+        .unwrap();
+    assert_eq!(
+        lines[header + 1].split_whitespace().collect::<Vec<_>>(),
+        [
+            "listener",
+            "native",
+            "0.0.0.0:35000",
+            "14.0",
+            "MiB",
+            "4.0",
+            "MiB"
+        ]
+    );
+    assert!(lines[header + 2].contains("416 KiB (requested 7.0 MiB, limited)"));
 }
 
 #[test]

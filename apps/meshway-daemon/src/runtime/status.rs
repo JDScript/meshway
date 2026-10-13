@@ -186,6 +186,7 @@ impl View {
                 })
             })
             .unwrap_or_default();
+        let sockets = sockets(content.and(network.facts.as_ref()), network.netmap);
         Status {
             process_id: std::process::id(),
             revision: desired.revision,
@@ -239,6 +240,7 @@ impl View {
             exit,
             node: content.map(|netmap| super::peers::own(netmap)),
             peers,
+            sockets,
             last_error: report
                 .problem
                 .or(if active { network.problem } else { None }),
@@ -261,4 +263,36 @@ impl View {
 
 fn timestamp(ms: u64) -> Option<DateTime<Utc>> {
     DateTime::from_timestamp_millis(i64::try_from(ms).ok()?)
+}
+
+/// The installed netmap's UDP sockets that report granted buffer sizes.
+fn sockets(
+    facts: Option<&meshway_connectivity::Snapshot>,
+    netmap: Option<meshway_model::state::NetmapRef>,
+) -> Vec<meshway_protocol::ipc::SocketStatus> {
+    let bytes = |value: usize| u32::try_from(value).unwrap_or(u32::MAX);
+    let mut sockets: Vec<_> = facts
+        .map(|facts| facts.sockets.as_slice())
+        .unwrap_or_default()
+        .iter()
+        .filter(|socket| Some(socket.reference.netmap) == netmap)
+        .filter_map(|socket| {
+            let buffers = socket.buffers?;
+            Some(meshway_protocol::ipc::SocketStatus {
+                resource: socket.reference.resource.clone(),
+                bound_address: meshway_model::SocketAddress::try_from(socket.bound_address).ok()?,
+                receive_buffer: bytes(buffers.receive),
+                receive_requested: bytes(buffers.receive_requested),
+                send_buffer: bytes(buffers.send),
+                send_requested: bytes(buffers.send_requested),
+            })
+        })
+        .collect();
+    sockets.sort_by_key(|socket| {
+        (
+            socket.bound_address.get().is_ipv6(),
+            socket.bound_address.to_string(),
+        )
+    });
+    sockets
 }

@@ -20,6 +20,7 @@ use tokio::net::UdpSocket;
 pub struct ProtectedDatagram {
     owned: Owned<UdpTransport>,
     local: SocketAddr,
+    buffers: meshway_transport::udp::Buffers,
     targets: Option<Vec<SocketAddr>>,
     pub(super) traversal: Option<std::sync::Arc<super::traversal::Registry>>,
 }
@@ -66,9 +67,11 @@ impl ProtectedDatagram {
         let endpoint = UdpTransport::adopt_batch(UdpSocket::from_std(socket.into())?, options)?;
         scope.prepare_checked(&SockRef::from(&endpoint))?;
         let local = endpoint.local_addr()?;
+        let buffers = endpoint.buffers();
         Ok(Self {
             owned: Owned::new(endpoint, scope, capacity)?,
             local,
+            buffers,
             targets,
             traversal: None,
         })
@@ -77,6 +80,11 @@ impl ProtectedDatagram {
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
         self.owned.scope.check().map_err(io_error)?;
         Ok(self.local)
+    }
+
+    /// Socket buffer sizes the kernel granted when this endpoint was bound.
+    pub fn buffers(&self) -> meshway_transport::udp::Buffers {
+        self.buffers
     }
 
     fn with<T>(
@@ -164,6 +172,9 @@ impl Datagram for ProtectedDatagram {
     /// The route this descriptor's datagrams to `peer` take: a transient
     /// socket with the same protection and local address, connected (which
     /// sends nothing) only to read the route MTU, including a learned PMTU.
+    fn buffers(&self) -> Option<meshway_transport::udp::Buffers> {
+        Some(self.buffers)
+    }
     fn path_mtu(&self, peer: SocketAddr) -> Option<u16> {
         if peer.is_ipv4() != self.local.is_ipv4() {
             return None;

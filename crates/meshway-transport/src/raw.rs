@@ -51,6 +51,26 @@ pub struct DatagramRead {
     pub truncated: bool,
 }
 
+/// Socket buffer sizes the kernel actually granted, read back after the
+/// request. Linux reports twice the granted bytes (skb bookkeeping) and
+/// limits an ordinary request to `net.core.rmem_max`／`wmem_max`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Buffers {
+    pub receive: usize,
+    pub send: usize,
+    /// The requests in bytes (configured, or the provider default).
+    pub receive_requested: usize,
+    pub send_requested: usize,
+}
+
+impl Buffers {
+    /// The kernel granted less than requested in either direction: the
+    /// ordinary request was limited by `net.core.rmem_max`／`wmem_max`.
+    pub fn limited(&self) -> bool {
+        self.receive < self.receive_requested || self.send < self.send_requested
+    }
+}
+
 #[derive(Clone, Copy)]
 pub struct DatagramSend<'a> {
     pub payload: &'a [u8],
@@ -121,6 +141,11 @@ pub trait Datagram: Send + Sync + 'static {
     fn path_mtu(&self, _peer: SocketAddr) -> Option<u16> {
         None
     }
+    /// The socket buffer sizes the kernel granted this endpoint; `None` when
+    /// the endpoint has no operating-system socket of its own to report.
+    fn buffers(&self) -> Option<Buffers> {
+        None
+    }
 }
 
 impl<D: Datagram + ?Sized> Datagram for Box<D> {
@@ -161,6 +186,9 @@ impl<D: Datagram + ?Sized> Datagram for Box<D> {
     fn path_mtu(&self, peer: SocketAddr) -> Option<u16> {
         (**self).path_mtu(peer)
     }
+    fn buffers(&self) -> Option<Buffers> {
+        (**self).buffers()
+    }
 }
 
 /// A shared endpoint: one owner polls I/O, another may read path facts.
@@ -199,6 +227,9 @@ impl<D: Datagram + ?Sized> Datagram for std::sync::Arc<D> {
     }
     fn path_mtu(&self, peer: SocketAddr) -> Option<u16> {
         (**self).path_mtu(peer)
+    }
+    fn buffers(&self) -> Option<Buffers> {
+        (**self).buffers()
     }
 }
 

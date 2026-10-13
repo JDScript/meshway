@@ -44,7 +44,7 @@ fn status(n: u8) -> meshway_protocol::ipc::Status {
             "serverSigningKey":{"keyId":id::<meshway_model::KeyId>(98),"keyGeneration":1,"publicKey":{"algorithm":"ed25519","bytes":Digest::from_bytes([98;32])}}},
         "authenticated":true,"instance":{"instanceId":id::<InstanceId>(n+10),"generation":1,"expiresAt":"1970-01-01T00:01:00Z"},
         "netmap":{"netmap":cfg(102),"issuedAt":"1970-01-01T00:00:00Z","expiresAt":"1970-01-01T00:05:00Z","missingArtifacts":[],"artifactProblem":null,"capture":null,"routing":null},
-        "saved":cfg(102),"applied":cfg(102),"dataPlane":"ready","networkMode":"tun","lastError":null,"lastErrorDetail":null,"retryAt":null,"node":null,"peers":[]
+        "saved":cfg(102),"applied":cfg(102),"dataPlane":"ready","networkMode":"tun","lastError":null,"lastErrorDetail":null,"retryAt":null,"node":null,"peers":[],"sockets":[]
     })).unwrap()
 }
 

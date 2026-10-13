@@ -29,10 +29,10 @@ use utoipa::ToSchema;
 pub use view::{
     EndpointMapping, NetcheckObserver, NetcheckReport, NetcheckServer, NetcheckSizeProbe,
     NetcheckSocket, NetcheckUnavailable, NodeSelf, PeerMtu, PeerRtt, PeerState, PeerStatus,
-    PortMapping, StunMapping,
+    PortMapping, SocketStatus, StunMapping,
 };
 
-pub const VERSION: u16 = 10;
+pub const VERSION: u16 = 11;
 pub const MAX_MESSAGE_BYTES: usize = 64 * 1024;
 pub const DEFAULT_SOCKET: &str = "/var/lib/meshway/control.sock";
 
@@ -381,6 +381,8 @@ meshway_model::object! { #[derive(Clone, Debug)] pub struct Status {
     pub node: Option<NodeSelf> [required = true],
     /// Visible peers of the installed netmap; empty without one.
     pub peers: Vec<PeerStatus>,
+    /// Native UDP sockets of the installed netmap's listeners and dialers; empty without one.
+    pub sockets: Vec<SocketStatus>,
     #[serde(deserialize_with = "meshway_model::wire::required_nullable")]
     pub last_error: Option<Problem> [required = true],
     /// The concrete cause of `lastError` when the failing component names one,

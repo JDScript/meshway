@@ -17,23 +17,25 @@ use socket2::SockRef;
 #[cfg(target_os = "linux")]
 #[tokio::test]
 async fn batch_buffers_use_kernel_clamped_defaults_and_preserve_explicit_sizes() {
+    use super::{DEFAULT_RECEIVE_BUFFER, DEFAULT_SEND_BUFFER};
+    // Unprivileged tests: the forced request is refused (EPERM) and the
+    // ordinary request is limited like on an unprivileged host. Under
+    // CAP_NET_ADMIN, the expected socket takes the same forced request.
     for (receive_buffer, send_buffer) in [(0, 0), (16 * 1024, 32 * 1024)] {
         let expected = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let receive = if receive_buffer == 0 {
+            DEFAULT_RECEIVE_BUFFER
+        } else {
+            receive_buffer as usize
+        };
+        let send = if send_buffer == 0 {
+            DEFAULT_SEND_BUFFER
+        } else {
+            send_buffer as usize
+        };
+        super::request_buffer(&expected, true, receive).unwrap();
+        super::request_buffer(&expected, false, send).unwrap();
         let expected = SockRef::from(&expected);
-        expected
-            .set_recv_buffer_size(if receive_buffer == 0 {
-                7 * 1024 * 1024
-            } else {
-                receive_buffer as usize
-            })
-            .unwrap();
-        expected
-            .set_send_buffer_size(if send_buffer == 0 {
-                7 * 1024 * 1024
-            } else {
-                send_buffer as usize
-            })
-            .unwrap();
         let endpoint = UdpTransport::adopt_batch(
             UdpSocket::bind("127.0.0.1:0").await.unwrap(),
             &SocketOptions {
@@ -50,6 +52,13 @@ async fn batch_buffers_use_kernel_clamped_defaults_and_preserve_explicit_sizes()
         assert_eq!(
             actual.send_buffer_size().unwrap(),
             expected.send_buffer_size().unwrap()
+        );
+        let buffers = endpoint.buffers();
+        assert_eq!(buffers.receive, actual.recv_buffer_size().unwrap());
+        assert_eq!(buffers.send, actual.send_buffer_size().unwrap());
+        assert_eq!(
+            (buffers.receive_requested, buffers.send_requested),
+            (receive, send)
         );
     }
 }

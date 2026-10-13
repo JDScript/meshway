@@ -1684,6 +1684,7 @@ pub(in crate::manager) mod tests {
             key: "udp".into(),
             protocol: TransportProtocol::NativeUdp,
             local,
+            buffers: None,
         };
         shared
             .register_socket(
@@ -1902,6 +1903,7 @@ pub(in crate::manager) mod tests {
             key: "udp".into(),
             protocol: TransportProtocol::NativeUdp,
             local,
+            buffers: None,
         });
         let client = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let source = client.local_addr().unwrap();

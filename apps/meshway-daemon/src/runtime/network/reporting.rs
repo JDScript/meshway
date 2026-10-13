@@ -425,6 +425,7 @@ mod tests {
                 key: "native".into(),
                 protocol: meshway_model::TransportProtocol::NativeUdp,
                 local: "127.0.0.1:35000".parse().unwrap(),
+                buffers: None,
             }],
             links: vec![],
             sockets: vec![],
