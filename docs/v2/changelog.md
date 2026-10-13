@@ -12,6 +12,8 @@
 - 可信域名关联：源端持有名称规则回答等到该查询截止前 250 ms（至多 5 秒），只有该查询等待。
 - `exit/off`：第 11 阶段切到 `global:E`；第 12 阶段新增窄 A–R 通道（MSS 限制、本机 fragmentation needed）。
 
+验证：Planck 18 行矩阵 `20261013T163418Z-ca02b918`（`287e2385`）与合入 main 后的 `20261013T170843Z-f7c75f4f`（`1b8e8df2`）全部通过；实网 it7 → VM 不限 MSS 由 0 变为 408／394 Mbit/s，纯 IP 双出口六台正常，见 [M1 实网证据](/v2/node/validation#m1-real-network)；证据 `.meshway/node-lab/m1/`、`.meshway/validation/m1/`。
+
 `meshway ping` 公网目标（D2）：IPC 10；wire 6、HTTP 契约、`compilerVersion` 与 Server schema 均不变。CLI 与 daemon 须一起升级（IPC 9 的 CLI 对新 daemon 得到 `version` 错误）。
 
 - `meshway ping` 接受公网 IP 与域名：先打印本节点的本地判定（方案、规则 pointer／remark／规则集条目、exit／direct／unmanaged／denied 与完整路径；域名显示经本机 DNS 路径的解析与 X6 关联剩余秒数），再探测：exit 经出口路径 ICMP echo（ICMP 错误显示为 `unreachable from <hop>`），direct／unmanaged 本机直出并标注 not via Mesh，denied 不探测。只报告总 RTT。见 [Mesh 外目标](/v2/node/diagnostics#external)。
