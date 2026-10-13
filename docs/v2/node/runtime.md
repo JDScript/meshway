@@ -351,7 +351,7 @@ Node 不消费 SSE 事件流（用户 SSE 保留给 Console）。已有待确认
 
 期望上线时，网络失败、HTTP 408／429／5xx、无可解码 body 的任何状态及 400 等其他已解码拒绝按 1–15 秒有界退避自动重试，签名租约内数据面持续运行。不可解码或超限响应会撤回旧运行上下文后重新取得资格；运行中的 session／instance 拒绝、lease 到期或实例更换会重新持钥认证、取得有效 instance 并上报 State，不要求再次执行 `up`。已解码的身份拒绝、Server（`controllerId`）／key／目标绑定错误进入 `blocked`：前者同时撤回数据面，后者让已持有的 netmap 运行到租约到期；本机记录损坏或写入结果不确定进入 `blocked` 并撤回数据面。分类定义见 [Node 控制组件](/v2/node/control#netmap-发布)；后台残留请求不能绕过该停止状态。
 
-Linux 运行中的外部接口删除／重建、地址变更及路由变化由既有 Underlay netlink 监视器通知；未 up 的接口的创建／删除（例如 VPN 守护进程反复重建的空闲 `ppp0`）不承载任何路径，不算变化，已 up 接口的停用另以其地址／路由删除通知。变化关闭旧控制 HTTP 的底层连接，后续请求按当前路由重新连接并沿用上述有界重试；受保护控制中继按 Happy Eyeballs（RFC 8305）连接 Server 解析出的地址：地址族交替（从解析结果的首个地址族开始），250 ms 未完成即并发尝试下一个，任一失败立即尝试下一个，先连上者胜出，因此无路由或黑洞的 IPv6 不拖住 IPv4；不要求重启 daemon、再次 `up` 或修改配置。本机端点变化经既有合并报告路径发布，刷新规则见[连接获取](/v2/node/connectivity#stun-与-server-协调)。只有 kernel 来源的 netlink 通知参与资源归属检查；用户态 multicast 消息被忽略，不能把普通接口重连变成永久保护冲突。当前 namespace 中真实的所属 TUN／DNS 锚点或保护规则冲突仍阻断执行。
+Linux 运行中的外部接口删除／重建、地址变更及路由变化由既有 Underlay netlink 监视器通知；未 up 的接口的创建／删除（例如 VPN 守护进程反复重建的空闲 `ppp0`）不承载任何路径，不算变化，已 up 接口的停用另以其地址／路由删除通知。变化关闭旧控制 HTTP 的底层连接，后续请求按当前路由重新连接并沿用上述有界重试；受保护控制中继按 Happy Eyeballs（RFC 8305）连接 Server 解析出的地址：地址族交替（从解析结果的首个地址族开始），250 ms 未完成即并发尝试下一个，任一失败立即尝试下一个，先连上者胜出，因此无路由或黑洞的 IPv6 不拖住 IPv4；中继连接在双向 120 秒无字节时关闭（不按连接年龄截断，挂起的 sync 长轮询不被中继自己的时钟切断）；不要求重启 daemon、再次 `up` 或修改配置。本机端点变化经既有合并报告路径发布，刷新规则见[连接获取](/v2/node/connectivity#stun-与-server-协调)。只有 kernel 来源的 netlink 通知参与资源归属检查；用户态 multicast 消息被忽略，不能把普通接口重连变成永久保护冲突。当前 namespace 中真实的所属 TUN／DNS 锚点或保护规则冲突仍阻断执行。
 
 Underlay 启动时当前 namespace 的资源归属或路由保护冲突仍拒绝准入，保留现有资源；状态为 `retrying`／`lastError=underlay`，以同一 1–30 秒有界退避发布 `retryAt` 并重新检查。冲突 owner 释放资源后无需再次 `up`。损坏的 Underlay journal／私有存储错误归为 `storage`，安装参数或 bootstrap resolver 配置错误归为 `configuration`，仍须修正后恢复。
 

@@ -67,6 +67,57 @@ fn forbid_fragmentation(socket: &UdpSocket, ipv4: bool) -> io::Result<()> {
     Ok(())
 }
 
+/// UDP payload a 1500-byte path carries in one IP packet toward `peer`.
+#[cfg(target_os = "linux")]
+pub(super) fn whole_on_ethernet(peer: SocketAddr) -> usize {
+    match peer {
+        SocketAddr::V6(peer) if peer.ip().to_ipv4_mapped().is_none() => 1500 - 48,
+        _ => 1500 - 28,
+    }
+}
+
+/// One datagram DF refused (larger than the route MTU) that no 1500-byte
+/// path carries whole either (an exit DNS message of up to 4 KiB, say): DF
+/// could only lose it, so for this send alone the kernel may fragment it
+/// (`IP_PMTUDISC_WANT`). A Mesh data frame of a 1500-byte path's size never
+/// takes this path: it fails instead of leaving as fragments.
+#[cfg(target_os = "linux")]
+pub(super) fn send_fragmentable(
+    socket: &UdpSocket,
+    payload: &[u8],
+    peer: SocketAddr,
+) -> io::Result<usize> {
+    use rustix::net::sockopt;
+    let ipv4 = socket.local_addr()?.is_ipv4();
+    let discovery = |strict: bool| {
+        if ipv4 {
+            sockopt::set_ip_mtu_discover(
+                socket,
+                if strict {
+                    sockopt::Ipv4PathMtuDiscovery::DO
+                } else {
+                    sockopt::Ipv4PathMtuDiscovery::WANT
+                },
+            )
+        } else {
+            sockopt::set_ipv6_mtu_discover(
+                socket,
+                if strict {
+                    sockopt::Ipv6PathMtuDiscovery::DO
+                } else {
+                    sockopt::Ipv6PathMtuDiscovery::WANT
+                },
+            )
+        }
+    };
+    discovery(false)?;
+    // A raw nonblocking send: the caller's try_io owns readiness.
+    let sent = SockRef::from(socket).send_to(payload, &peer.into());
+    // DF again before any other send, whatever this one did.
+    discovery(true)?;
+    sent
+}
+
 /// The route MTU of a connected UDP socket (`IP_MTU`/`IPV6_MTU`): the kernel
 /// route toward its peer, including a PMTU learned from ICMP. The host opens
 /// and protects that socket; connecting a UDP socket sends nothing.
@@ -261,7 +312,24 @@ impl Datagram for UdpTransport {
         static PROFILE: meshway_logging::profile::Metric =
             meshway_logging::profile::Metric::new("udp.send.poll");
         let _profile = PROFILE.enter();
-        self.socket.poll_send_to(cx, payload, peer)
+        let result = ready!(self.socket.poll_send_to(cx, payload, peer));
+        #[cfg(target_os = "linux")]
+        if result
+            .as_ref()
+            .is_err_and(|error| error.raw_os_error() == Some(nix::errno::Errno::EMSGSIZE as i32))
+            && payload.len() > whole_on_ethernet(peer)
+        {
+            loop {
+                ready!(self.socket.poll_send_ready(cx))?;
+                match self.socket.try_io(Interest::WRITABLE, || {
+                    send_fragmentable(&self.socket, payload, peer)
+                }) {
+                    Err(error) if error.kind() == io::ErrorKind::WouldBlock => continue,
+                    result => return Poll::Ready(result),
+                }
+            }
+        }
+        Poll::Ready(result)
     }
 
     fn poll_recv_from(

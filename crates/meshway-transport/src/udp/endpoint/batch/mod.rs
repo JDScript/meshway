@@ -52,6 +52,9 @@ const OVERSIZED_PEERS: usize = 64;
 #[derive(Default)]
 struct Segmentation {
     split: Option<(SocketAddr, usize)>,
+    /// The next batch starts with this datagram, which DF refused and no
+    /// 1500-byte path carries whole: it alone is sent fragmentable.
+    fragment: Option<(SocketAddr, usize)>,
     oversized: VecDeque<(SocketAddr, usize, Instant)>,
 }
 impl Segmentation {
@@ -166,6 +169,30 @@ impl State {
         ready!(socket.poll_send_ready(cx))?;
         let caps = self.capabilities();
         let packets = &packets[..packets.len().min(COUNT)];
+        if self
+            .gso
+            .lock()
+            .expect("UDP segmentation lock")
+            .fragment
+            .take_if(|batch| *batch == (packets[0].peer, packets[0].payload.len()))
+            .is_some()
+        {
+            // Alone, and allowed to fragment: see send_fragmentable.
+            let first = packets[0];
+            return match socket.try_io(Interest::WRITABLE, || {
+                super::send_fragmentable(socket, first.payload, first.peer)
+            }) {
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    self.gso.lock().expect("UDP segmentation lock").fragment =
+                        Some((first.peer, first.payload.len()));
+                    cx.waker().wake_by_ref();
+                    Poll::Pending
+                }
+                Ok(n) if n == first.payload.len() => Poll::Ready(Ok(1)),
+                Ok(_) => Poll::Ready(Err(io::ErrorKind::WriteZero.into())),
+                Err(error) => Poll::Ready(Err(error)),
+            };
+        }
         let size = packets[0].payload.len();
         let peer = packets[0].peer;
         let (gso_count, bytes) = if caps.udp_segment
@@ -269,6 +296,15 @@ impl State {
             if gso && matches!(errno, Some(Errno::EINVAL | Errno::EMSGSIZE)) {
                 // Only this batch goes without GSO; its outcome decides.
                 segmentation.split = Some(batch);
+                cx.waker().wake_by_ref();
+                return Poll::Pending;
+            }
+            if !gso && errno == Some(Errno::EMSGSIZE) && batch.1 > super::whole_on_ethernet(batch.0)
+            {
+                if segmentation.split.take() == Some(batch) {
+                    segmentation.oversized(batch.0, batch.1, Instant::now());
+                }
+                segmentation.fragment = Some(batch);
                 cx.waker().wake_by_ref();
                 return Poll::Pending;
             }

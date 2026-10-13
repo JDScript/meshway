@@ -128,7 +128,7 @@ NAT 后两端都能拨出时，邻接按需建立：可能只有一方有需求�
 
 ### 外层路径 MTU {#path-mtu}
 
-Linux 的 Mesh 外层 UDP socket 设 `IP_PMTUDISC_DO`／`IPV6_MTU_DISCOVER=DO`：外层报文从不在本机分片，超过路由 MTU 的发送返回 `EMSGSIZE`（见 [UDP 批量接口](/v2/node/transport#udp-批量接口)）。很多路径丢弃超大 DF 报文却不回 ICMP（实测 Cloudflare WARP），内核路由因此停留在接口 MTU，所以每条 Native UDP 选定通道自己搜索路径 MTU（RFC 8899 式）：
+Linux 的 Mesh 外层 UDP socket 设 `IP_PMTUDISC_DO`／`IPV6_MTU_DISCOVER=DO`：外层报文从不在本机分片，超过路由 MTU 的发送返回 `EMSGSIZE`；只有连 1,500 B 路径也装不下的单个控制报文（出口 DNS 消息）允许分片，见 [UDP 批量接口](/v2/node/transport#udp-批量接口)。很多路径丢弃超大 DF 报文却不回 ICMP（实测 Cloudflare WARP），内核路由因此停留在接口 MTU，所以每条 Native UDP 选定通道自己搜索路径 MTU（RFC 8899 式）：
 
 | 项 | 规则 |
 | --- | --- |

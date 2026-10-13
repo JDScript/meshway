@@ -443,3 +443,47 @@ async fn df_datagrams_learn_the_path_mtu_and_keep_gso_below_it() {
         "nothing oversized arrived, not even as fragments"
     );
 }
+
+/// Same isolated namespace as above (loopback MTU 1357).
+#[cfg(target_os = "linux")]
+#[tokio::test]
+#[ignore = "requires an isolated network namespace whose loopback MTU is 1357"]
+async fn only_a_datagram_no_ethernet_path_carries_whole_may_fragment() {
+    use crate::raw::{Datagram, DatagramSend};
+    use std::future::poll_fn;
+    assert_eq!(
+        std::env::var("MESHWAY_TRANSPORT_ISOLATED").as_deref(),
+        Ok("1")
+    );
+    let left = UdpTransport::adopt_batch(
+        UdpSocket::bind("127.0.0.1:0").await.unwrap(),
+        &SocketOptions::default(),
+    )
+    .unwrap();
+    let right = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let peer = right.local_addr().unwrap();
+    let mut buffer = vec![0; 8192];
+    // A data-sized frame above the route MTU fails: never fragments.
+    let data = vec![1; 1452];
+    assert!(left.send_to(&data, peer).await.is_err());
+    // A 4 KiB control message arrives whole, reassembled from fragments.
+    let message = vec![2; 4096];
+    for _ in 0..2 {
+        let sends = [DatagramSend {
+            payload: &message,
+            peer,
+        }];
+        assert_eq!(
+            poll_fn(|cx| left.poll_send_batch(cx, &sends))
+                .await
+                .unwrap(),
+            1
+        );
+        let (len, _) = right.recv_from(&mut buffer).await.unwrap();
+        assert_eq!(len, 4096);
+    }
+    assert_eq!(left.send_to(&message, peer).await.unwrap(), 4096);
+    assert_eq!(right.recv_from(&mut buffer).await.unwrap().0, 4096);
+    // DF is back for everything else.
+    assert!(left.send_to(&data, peer).await.is_err());
+}

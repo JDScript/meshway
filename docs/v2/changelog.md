@@ -7,11 +7,11 @@
 真实网络穿透与外层 PMTU（N2a）：IPC 9 新增（`peers[].mtu`、`lastErrorDetail`、netcheck `sizeProbe`／`pathMtu`），wire 6 不变（接收方另接受以零填充的 UDP 健康 Ping）。
 
 - 来源学习：对称（端点相关映射）NAT 下，本 offer 对端的签名开场消息从同 IP 的另一端口到达时，该来源成为本尝试的第二目的（每尝试 ≤2、随尝试结束），通道端点取握手实际完成的地址；身份仍只由签名证明。见[来源学习](/v2/node/connectivity#source-learning)。
-- 外层 UDP 一律 DF；`UDP_SEGMENT` 因段长超过路径 MTU 被拒时只拆这一批，GSO 不再被永久关闭。每条 Native UDP 通道以填充的签名 Ping 搜索路径 MTU，`meshway status` 的 MTU 列显示 `path/inner`。见[外层路径 MTU](/v2/node/connectivity#path-mtu)。
+- 外层 UDP 一律 DF（连 1,500 B 路径也装不下的单个控制报文，如出口 DNS 大回答，仍可分片）；`UDP_SEGMENT` 因段长超过路径 MTU 被拒时只拆这一批，GSO 不再被永久关闭。每条 Native UDP 通道以填充的签名 Ping 搜索路径 MTU，`meshway status` 的 MTU 列显示 `path/inner`。见[外层路径 MTU](/v2/node/connectivity#path-mtu)。
 - netcheck：映射类型只比较不同 IP 的观测点；每个观测点一个 DF 大小探测与路由 MTU。开发 Server 增加 Cloudflare STUN 观测点。
 - 私网／CGNAT／ULA 的 `localEndpoints` 只在本机有包含它的接口前缀时拨号。
 - listener bind 失败的日志与 `lastErrorDetail` 带地址与系统错误（如 `Address in use`）。
-- 修复：未 up 的接口创建／删除不再算外部网络变化（us-lax-it7 上反复重建的空闲 `ppp0` 每隔数秒关闭全部控制连接，sync 以 `Network` 失败）；没有 Native UDP listener 的节点在首个 instance 前启动时补绑拨号穿透 socket；受保护控制中继按 Happy Eyeballs 交替地址族连接。
+- 修复：未 up 的接口创建／删除不再算外部网络变化（us-lax-it7 上反复重建的空闲 `ppp0` 每隔数秒关闭全部控制连接，sync 以 `Network` 失败）；没有 Native UDP listener 的节点在首个 instance 前启动时补绑拨号穿透 socket；受保护控制中继按 Happy Eyeballs 交替地址族连接；中继的固定 300 秒连接寿命改为双向 120 秒无字节才关闭（原寿命截断恰在挂起的 sync 长轮询，us-lax-it7 每次 `Network` 失败都与之精确对应）。
 - 实网：us-lax-it7（公网 dial-only）↔ meshway-vm（WARP）Native UDP 直连，见[实网 NAT 证据](/v2/node/validation#real-nat)。
 
 出口方案切换（C3）：IPC 升为 9，Server schema 版本 6（`activity_events` 新增 Node actor 与路由方案目标；开发环境重新初始化数据目录）；wire 6、`compilerVersion` 不变。
