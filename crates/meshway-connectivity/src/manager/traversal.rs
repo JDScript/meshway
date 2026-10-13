@@ -81,8 +81,9 @@ struct Pending {
 /// Coordination pacing of one content. An attempt that ended without a
 /// channel pauses this Node's own preparation toward that peer, and the
 /// queries made for it, for [`workers::backoff`] (1 s doubling, at most five
-/// minutes). A channel with the peer, a change of its endpoint facts or a
-/// live request it sent ends the pause; new content starts a new pacing.
+/// minutes). A channel with the peer, a change of its endpoint facts or of
+/// this Node's own mappings, or a live request it sent ends the pause; new
+/// content starts a new pacing.
 #[derive(Default)]
 struct Coordination(BTreeMap<NodeId, Paused>);
 
@@ -91,6 +92,7 @@ struct Paused {
     until: Instant,
     link: Option<[u8; 32]>,
     facts: std::collections::BTreeSet<String>,
+    own: std::collections::BTreeSet<String>,
 }
 
 /// The peer's listener endpoint addresses, without their freshness.
@@ -137,19 +139,22 @@ impl Coordination {
         }
         let link = last_link(shared, peer);
         let facts = endpoint_facts(shared, peer);
+        let own = workers::own_mappings(shared);
         let entry = self.0.entry(peer).or_insert(Paused {
             failures: 0,
             until: Instant::now(),
             link,
             facts: facts.clone(),
+            own: own.clone(),
         });
-        if entry.link != link || entry.facts != facts {
+        if entry.link != link || entry.facts != facts || entry.own != own {
             entry.failures = 0;
         }
         entry.failures = entry.failures.saturating_add(1);
         entry.until = Instant::now() + workers::backoff(Duration::from_secs(1), entry.failures);
         entry.link = link;
         entry.facts = facts;
+        entry.own = own;
         tracing::debug!(%peer, failures = entry.failures,
             retry_ms = entry.until.saturating_duration_since(Instant::now()).as_millis() as u64,
             "Traversal attempt ended without a channel");
@@ -160,6 +165,7 @@ impl Coordination {
             Instant::now() < paused.until
                 && last_link(shared, peer) == paused.link
                 && endpoint_facts(shared, peer) == paused.facts
+                && workers::own_mappings(shared) == paused.own
                 && !shared.facts.asked(peer, wall_ms())
         })
     }
@@ -1042,6 +1048,10 @@ mod tests {
         assert!(!coordination.paused(&shared, peer));
         coordination.ended(&shared, peer);
         assert_eq!(coordination.0[&peer].failures, 1);
+        // So does a new mapping of this Node's own.
+        coordination.0.get_mut(&peer).unwrap().own = ["203.0.113.9:40001".to_owned()].into();
+        assert!(!coordination.paused(&shared, peer));
+        coordination.ended(&shared, peer);
         // So does a channel installed (and maybe ended) since.
         coordination.0.get_mut(&peer).unwrap().link = Some([9; 32]);
         assert!(!coordination.paused(&shared, peer));

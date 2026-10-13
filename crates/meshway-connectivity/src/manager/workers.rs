@@ -114,6 +114,27 @@ const DIALED: [LinkAcquisition; 2] = [
     LinkAcquisition::LocalEndpoint,
 ];
 
+/// This Node's own public mappings as its sockets last observed them. A new
+/// mapping (another egress address or port, e.g. a VPN changing its public
+/// IP) is a new network path: earlier failures say nothing about it.
+pub(super) fn own_mappings(shared: &Shared) -> std::collections::BTreeSet<String> {
+    shared
+        .sockets
+        .lock()
+        .map(|sockets| {
+            sockets
+                .values()
+                .flat_map(|socket| {
+                    socket
+                        .endpoints
+                        .iter()
+                        .map(|endpoint| endpoint.address.clone())
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// One dial target: candidate key and endpoint.
 type TargetKey = (String, String, meshway_transport::spec::Port);
 
@@ -128,6 +149,7 @@ type TargetKey = (String, String, meshway_transport::spec::Port);
 pub(super) struct Pacing {
     reference: Option<meshway_model::NetmapRef>,
     targets: std::collections::BTreeSet<TargetKey>,
+    own: std::collections::BTreeSet<String>,
     last_link: Option<[u8; 32]>,
     failed: BTreeMap<TargetKey, (u32, tokio::time::Instant)>,
 }
@@ -141,22 +163,25 @@ impl Pacing {
         )
     }
 
-    /// Start over when the content, the candidate set or the peer's latest
-    /// channel changed since the last sweep.
+    /// Start over when the content, the candidate set, this Node's own
+    /// mappings or the peer's latest channel changed since the last sweep.
     pub(super) fn sweep(
         &mut self,
         reference: meshway_model::NetmapRef,
         targets: std::collections::BTreeSet<TargetKey>,
+        own: std::collections::BTreeSet<String>,
         last_link: Option<[u8; 32]>,
     ) {
         if self.reference != Some(reference)
             || self.targets != targets
+            || self.own != own
             || self.last_link != last_link
         {
             self.failed.clear();
         }
         self.reference = Some(reference);
         self.targets = targets;
+        self.own = own;
         self.last_link = last_link;
     }
 
@@ -246,6 +271,7 @@ pub(super) async fn dial(shared: Arc<Shared>, factory: Arc<dyn SocketFactory>, p
                         .map(|target| Pacing::key(candidate, target))
                 })
                 .collect(),
+            own_mappings(&shared),
             last_link(&shared, peer),
         );
         // Provenance is the first priority across all of this peer's carriers.
@@ -582,7 +608,12 @@ mod tests {
         let now = tokio::time::Instant::now();
         let (private, public) = (key("192.168.139.66"), key("198.51.100.7"));
         let mut pacing = Pacing::default();
-        pacing.sweep(reference(1), [private.clone(), public.clone()].into(), None);
+        pacing.sweep(
+            reference(1),
+            [private.clone(), public.clone()].into(),
+            Default::default(),
+            None,
+        );
         let base = Duration::from_secs(1);
         let pauses: Vec<_> = (0..11)
             .map(|_| pacing.failed(private.clone(), base, now).1.as_secs())
@@ -609,23 +640,43 @@ mod tests {
             assert!(!pacing.due(&old, now + base));
         };
         let mut pacing = Pacing::default();
-        pacing.sweep(reference(1), [old.clone()].into(), None);
+        pacing.sweep(reference(1), [old.clone()].into(), Default::default(), None);
         failed(&mut pacing);
         // The same content, candidates and channel keep the pause.
-        pacing.sweep(reference(1), [old.clone()].into(), None);
+        pacing.sweep(reference(1), [old.clone()].into(), Default::default(), None);
         assert!(!pacing.due(&old, now + base));
         // The peer's endpoint facts changed.
-        pacing.sweep(reference(1), [old.clone(), new.clone()].into(), None);
+        pacing.sweep(
+            reference(1),
+            [old.clone(), new.clone()].into(),
+            Default::default(),
+            None,
+        );
+        assert!(pacing.due(&old, now));
+        failed(&mut pacing);
+        // This Node's own mapping changed (another egress address).
+        pacing.sweep(
+            reference(1),
+            [old.clone(), new.clone()].into(),
+            ["203.0.113.9:40001".to_owned()].into(),
+            None,
+        );
         assert!(pacing.due(&old, now));
         failed(&mut pacing);
         // New netmap content.
-        pacing.sweep(reference(2), [old.clone(), new.clone()].into(), None);
+        pacing.sweep(
+            reference(2),
+            [old.clone(), new.clone()].into(),
+            Default::default(),
+            None,
+        );
         assert!(pacing.due(&old, now));
         failed(&mut pacing);
         // A channel was installed (and may have ended) since the last sweep.
         pacing.sweep(
             reference(2),
             [old.clone(), new.clone()].into(),
+            Default::default(),
             Some([7; 32]),
         );
         assert!(pacing.due(&old, now));
