@@ -80,10 +80,12 @@ struct Pending {
 
 /// Coordination pacing of one content. An attempt that ended without a
 /// channel pauses this Node's own preparation toward that peer, and the
-/// queries made for it, for [`workers::backoff`] (1 s doubling, at most five
-/// minutes). A channel with the peer, a change of its endpoint facts, of
-/// this edge in the content ([`Plan::edge`]) or of this Node's own mappings,
-/// or a live request it sent ends the pause. Other content changes keep it.
+/// queries made for it, for [`workers::backoff`] (1 s doubling, at most one
+/// minute). A channel with the peer, a change of its endpoint facts, of this
+/// edge in the content ([`Plan::edge`]) or of this Node's own mappings ends
+/// the pause; other content changes keep it. The pause never delays taking
+/// part in an attempt the peer started: a live request it sent is queried
+/// and accepted at once (see [`needs_acquisition`]), without preparing.
 #[derive(Default)]
 struct Coordination(BTreeMap<NodeId, Paused>);
 
@@ -171,7 +173,6 @@ impl Coordination {
                 && shared.plan().edge(peer) == paused.edge
                 && endpoint_facts(shared, peer) == paused.facts
                 && workers::own_mappings(shared) == paused.own
-                && !shared.facts.asked(peer, wall_ms())
         })
     }
 }
@@ -301,7 +302,7 @@ fn needs_acquisition(
             .lock()
             .is_ok_and(|links| links.contains_key(&peer))
             || !shared.wanted(peer)
-            || coordination.paused(shared, peer)
+            || (coordination.paused(shared, peer) && !shared.facts.asked(peer, wall_ms()))
         {
             return false;
         }
@@ -1032,6 +1033,54 @@ mod tests {
         fixture.close().await;
     }
 
+    /// The pause paces only what this Node starts. A peer that restarted
+    /// prepares toward it at once; the paused side must still query and
+    /// accept that attempt immediately, or both ends stay out of step.
+    #[tokio::test]
+    async fn a_paused_peer_that_asks_is_accepted_at_once_without_preparing() {
+        let fixture = Netmaps::start(false, false).await;
+        let ids = fixture.ids();
+        let (shared, _) = shared(&fixture.desired[0], &fixture.keys[0]);
+        let peer = ids[1];
+        shared.interests.touch(peer);
+        let mut coordination = Coordination::default();
+        assert!(needs_acquisition(&shared, &BTreeMap::new(), &coordination));
+        for _ in 0..9 {
+            coordination.ended(&shared, peer);
+        }
+        assert!(coordination.paused(&shared, peer));
+        assert!(
+            !needs_acquisition(&shared, &BTreeMap::new(), &coordination),
+            "paused: no own query"
+        );
+        let (publish, source) = tokio::sync::watch::channel(None);
+        shared.facts.attach(source);
+        publish.send_replace(Some(meshway_control::KnownPeers {
+            netmap: shared.plan().reference,
+            peers: Arc::default(),
+            traversal_requests: Arc::new(vec![meshway_protocol::UdpTraversalRequest {
+                attempt_id: UdpTraversalId::new(uuid::Uuid::from_u128(7)).unwrap(),
+                peer_id: peer,
+                carrier: Carrier {
+                    dialer: peer,
+                    listener: ids[0],
+                    listener_key: "udp".into(),
+                    protocol: TransportProtocol::NativeUdp,
+                },
+                expires_at_ms: wall_ms() + 9_000,
+            }]),
+        }));
+        assert!(
+            needs_acquisition(&shared, &BTreeMap::new(), &coordination),
+            "the peer's request is queried for at once"
+        );
+        assert!(
+            coordination.paused(&shared, peer),
+            "this Node's own preparation stays paused"
+        );
+        fixture.close().await;
+    }
+
     #[tokio::test]
     async fn an_attempt_without_a_channel_pauses_coordination_toward_that_peer() {
         let fixture = Netmaps::start(false, false).await;
@@ -1047,7 +1096,7 @@ mod tests {
                 (until - Instant::now()).as_secs_f64().round() as u64
             })
             .collect();
-        assert_eq!(pauses, [1, 2, 4, 8, 16, 32, 64, 128, 256, 300]);
+        assert_eq!(pauses, [1, 2, 4, 8, 16, 32, 60, 60, 60, 60]);
         assert!(coordination.paused(&shared, peer));
         assert!(!coordination.paused(&shared, ids[2]), "per peer");
         // The peer's endpoint facts changed since the failure: try again now,

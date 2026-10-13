@@ -33,7 +33,7 @@ impl Store {
         asked(source.borrow().as_ref(), now_ms).contains(&peer)
     }
 
-    fn attach(&self, source: watch::Receiver<Option<KnownPeers>>) {
+    pub(super) fn attach(&self, source: watch::Receiver<Option<KnownPeers>>) {
         if let Ok(mut current) = self.source.lock() {
             *current = Some(source);
         }

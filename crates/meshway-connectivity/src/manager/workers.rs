@@ -97,8 +97,10 @@ pub(super) fn candidates(
     Ok(out)
 }
 
-/// Longest pause between two attempts of one failing candidate.
-pub(super) const MAX_CANDIDATE_BACKOFF: std::time::Duration = std::time::Duration::from_secs(300);
+/// Longest pause between two attempts of one failing candidate, or between
+/// two coordinated attempts this Node starts toward one peer. A peer that
+/// restarted, or whose path recovered, is retried within this bound.
+pub(super) const MAX_CANDIDATE_BACKOFF: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// The pause after `failures` consecutive failures: `base · 2^(failures − 1)`,
 /// at most [`MAX_CANDIDATE_BACKOFF`].
@@ -614,7 +616,7 @@ mod tests {
     }
 
     #[test]
-    fn a_failing_candidate_doubles_its_pause_up_to_five_minutes() {
+    fn a_failing_candidate_doubles_its_pause_up_to_one_minute() {
         let now = tokio::time::Instant::now();
         let (private, public) = (key("192.168.139.66"), key("198.51.100.7"));
         let mut pacing = Pacing::default();
@@ -628,8 +630,8 @@ mod tests {
         let pauses: Vec<_> = (0..11)
             .map(|_| pacing.failed(private.clone(), base, now).1.as_secs())
             .collect();
-        assert_eq!(pauses, [1, 2, 4, 8, 16, 32, 64, 128, 256, 300, 300]);
-        assert!(!pacing.due(&private, now + Duration::from_secs(299)));
+        assert_eq!(pauses, [1, 2, 4, 8, 16, 32, 60, 60, 60, 60, 60]);
+        assert!(!pacing.due(&private, now + Duration::from_secs(59)));
         assert!(pacing.due(&private, now + MAX_CANDIDATE_BACKOFF));
         // Every other candidate, whatever its address class, keeps its own pace.
         assert!(pacing.due(&public, now));
