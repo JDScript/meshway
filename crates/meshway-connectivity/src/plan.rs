@@ -4,7 +4,7 @@
 //! sides' listener/dialer declarations) through Engine's shared compiler.
 use crate::{Carrier, Error};
 use meshway_configuration::{
-    AddressPools, TopologyAction, TopologyRule,
+    AddressPools,
     execution::{DialCandidate, DialEndpoint, DialEndpointSource, TrustedNode},
     netmap::NodeNetmap,
 };
@@ -30,9 +30,9 @@ type AdmissionKey = (NodeId, NodeId, String, TransportProtocol);
 struct Projection {
     netmap: Arc<NodeNetmap>,
     compiler: Arc<meshway_policy::compile::netmap::LocalCompiler>,
-    keepalive: BTreeSet<NodeId>,
     // Lazy per-content caches, bounded by the visible Nodes of this projection.
     directions: Mutex<BTreeMap<NodeId, Option<(bool, bool)>>>,
+    keepalive: Mutex<BTreeMap<NodeId, bool>>,
     outgoing: Mutex<BTreeMap<NodeId, Arc<Vec<String>>>>,
     admitted: Mutex<BTreeMap<AdmissionKey, bool>>,
 }
@@ -49,32 +49,6 @@ pub(crate) struct Plan {
     pub dialers: BTreeMap<String, DialCandidate>,
     peers: BTreeMap<NodeId, Peer>,
     projection: Projection,
-}
-
-fn keepalive_rule(rule: &TopologyRule) -> bool {
-    rule.action == TopologyAction::Allow && rule.keepalive
-}
-
-fn keepalive_peers(netmap: &NodeNetmap) -> BTreeSet<NodeId> {
-    let own = format!("node:{}", netmap.node_id);
-    netmap
-        .projection
-        .configuration
-        .topology
-        .iter()
-        .filter(|rule| keepalive_rule(rule))
-        .filter_map(|rule| {
-            let other = if rule.a == own {
-                &rule.b
-            } else if rule.b == own {
-                &rule.a
-            } else {
-                return None;
-            };
-            other.strip_prefix("node:")?.parse().ok()
-        })
-        .filter(|peer| *peer != netmap.node_id)
-        .collect()
 }
 
 impl Plan {
@@ -109,24 +83,43 @@ impl Plan {
             dialers: netmap.dialers.clone(),
             peers,
             projection: Projection {
-                keepalive: keepalive_peers(netmap),
                 compiler: desired.compiler().clone(),
                 netmap: shared_netmap,
                 directions: Mutex::default(),
+                keepalive: Mutex::default(),
                 outgoing: Mutex::default(),
                 admitted: Mutex::default(),
             },
         }))
     }
 
-    /// Resident regardless of interest: the topology edge asks for keepalive,
-    /// or only one of the two Nodes can dial the other. A listener-only end
+    /// Resident regardless of interest: the topology rule deciding the edge
+    /// asks for keepalive (whatever its selectors), or only one of the two
+    /// Nodes can dial the other. A listener-only end
     /// has no channel through which to express a need, so the end that can
     /// dial holds the edge and the other keeps (and coordinates) it. Both
     /// ends evaluate the same projection. Every other adjacency is acquired
     /// on demand.
     pub fn resident(&self, peer: NodeId) -> bool {
-        self.projection.keepalive.contains(&peer) || self.one_way(peer)
+        self.one_way(peer) || (self.adjacent(peer) && self.keepalive(peer))
+    }
+
+    /// The deciding topology rule's `keepalive`, cached per content.
+    fn keepalive(&self, peer: NodeId) -> bool {
+        let projection = &self.projection;
+        if let Some(cached) = projection
+            .keepalive
+            .lock()
+            .ok()
+            .and_then(|cache| cache.get(&peer).copied())
+        {
+            return cached;
+        }
+        let keepalive = projection.compiler.keepalive(self.node, peer);
+        if let Ok(mut cache) = projection.keepalive.lock() {
+            cache.insert(peer, keepalive);
+        }
+        keepalive
     }
 
     fn one_way(&self, peer: NodeId) -> bool {

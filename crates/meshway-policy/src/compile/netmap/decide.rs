@@ -632,6 +632,15 @@ impl LocalCompiler {
         }
         graph.listener_keys(a, b)
     }
+
+    /// Whether the edge between `a` and `b` is resident: the first allow rule
+    /// matching it, the one deciding its transports, sets `keepalive`.
+    pub fn keepalive(&self, a: NodeId, b: NodeId) -> bool {
+        matches!(
+            crate::topology_decision(&self.configuration, &self.netmap.projection.subjects, a, b),
+            Some(Some(index)) if self.configuration.topology[index].keepalive
+        )
+    }
 }
 
 fn external_scope(selector: &str) -> Option<IpScope> {

@@ -144,6 +144,56 @@ async fn keepalive_edge_is_resident_without_interest() {
 }
 
 #[tokio::test]
+async fn wildcard_keepalive_keeps_every_edge_of_three_nodes_resident() {
+    // `* ↔ *` with keepalive: every edge is dialable both ways and resident,
+    // although no rule names a Node.
+    let mut fixture = Netmaps::start(false, true).await;
+    let ids = fixture.ids();
+    fixture
+        .publish(|cfg| {
+            cfg.topology.push(TopologyRule {
+                remark: String::new(),
+                action: TopologyAction::Allow,
+                a: "*".to_owned(),
+                b: "*".to_owned(),
+                transports: meshway_configuration::Input::Omitted,
+                keepalive: true,
+            })
+        })
+        .await;
+    let factory = fixture.factory();
+    let idle = Duration::from_millis(500);
+    let managers = [
+        manager(&fixture, 0, &factory, limits(idle)).await,
+        manager(&fixture, 1, &factory, limits(idle)).await,
+        manager(&fixture, 2, &factory, limits(idle)).await,
+    ];
+    let pairs = [(0, 1), (0, 2), (1, 2)];
+    let converged = || {
+        pairs.iter().all(|&(x, y)| {
+            let (from, to) = (links(&managers[x]), links(&managers[y]));
+            from.get(&ids[y])
+                .is_some_and(|link| to.get(&ids[x]).is_some_and(|back| back.id == link.id))
+        })
+    };
+    eventually("every wildcard keepalive edge converges", converged).await;
+    let before: Vec<_> = pairs
+        .iter()
+        .map(|&(x, y)| links(&managers[x])[&ids[y]].id)
+        .collect();
+    tokio::time::sleep(idle * 4).await;
+    let after: Vec<_> = pairs
+        .iter()
+        .map(|&(x, y)| links(&managers[x])[&ids[y]].id)
+        .collect();
+    assert_eq!(after, before, "no resident edge is idle-closed");
+    for mut manager in managers {
+        manager.shutdown().await.unwrap();
+    }
+    fixture.close().await;
+}
+
+#[tokio::test]
 async fn failing_candidates_back_off_stop_once_connected_and_start_over_on_new_content() {
     let mut fixture = Netmaps::start(false, true).await;
     let ids = fixture.ids();
