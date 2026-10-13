@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-13T22:44:40.495514+00:00",
+  "updatedAt": "2026-10-13T22:47:21.522117+00:00",
   "runs": [
     {
       "id": 38478343000,
@@ -62,8 +62,8 @@
       "commit": "b8c6691a7248eb173c74f5bcc909b542877a917b",
       "message": "release: workspace version 0.1.0-alpha.7",
       "createdAt": "2026-10-13T22:31:15Z",
-      "updatedAt": "2026-10-13T22:36:26Z",
-      "status": "queued",
+      "updatedAt": "2026-10-13T22:45:02Z",
+      "status": "in_progress",
       "conclusion": null,
       "url": "https://github.com/JDScript/meshway/actions/runs/38478342912",
       "jobs": [
@@ -81,10 +81,10 @@
         {
           "id": 115576369037,
           "name": "perf",
-          "runner": null,
-          "status": "queued",
+          "runner": "planck",
+          "status": "in_progress",
           "conclusion": null,
-          "startedAt": "2026-10-13T22:36:26Z",
+          "startedAt": "2026-10-13T22:45:01Z",
           "completedAt": null,
           "seconds": null,
           "url": "https://github.com/JDScript/meshway/actions/runs/38478342912/job/115576369037"
