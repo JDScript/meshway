@@ -475,7 +475,8 @@ def execute(report, artifacts, runtime_os, platform, short, load):
             reported = ((state.get("report") or {}).get("report") or {}).get("exitCapability")
             matched = (capability.get("status") == {"status": "unavailable", "reason": "ipForwardDisabled"}
                     and capability.get("installedFamilies") == [] and (value.get("exit") or {}).get("installedRole") is None
-                    and value.get("applied") is None and reported == capability and state["freshness"] == "current")
+                    # An unavailable exit role is a reported fact: the netmap is applied.
+                    and running(value) and reported == capability and state["freshness"] == "current")
             if matched:
                 observations["unavailable"] = value
                 write(report / "e/ip-forward-disabled-server-state.json", json.loads(server["stdout"]))
@@ -487,8 +488,8 @@ def execute(report, artifacts, runtime_os, platform, short, load):
         write(report / "forwarding-restored.json", command("e", "/bin/sh", "/dns-fixture/forwarding.sh", "1"))
         if command("e", "cat", "/proc/sys/net/ipv4/ip_forward")["stdout"].strip() != "1":
             raise RuntimeError("fixture forwarding change did not survive namespace readback")
-        (report / "signals/exit-restart-e").touch()
-        wait_for(lambda: (report / "signals/exit-restarted-e").exists(), "same-namespace daemon restart")
+        # No restart and no new netmap: the periodic capability probe sees the
+        # restored prerequisite and the same applied content installs the role.
         manifest["status"] = "role-installation"
         save()
         def installed():

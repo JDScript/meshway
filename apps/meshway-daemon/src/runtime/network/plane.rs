@@ -106,6 +106,14 @@ impl Plane {
         Some(capability)
     }
 
+    /// The applied content assigns this Node an exit role it has not
+    /// installed (its prerequisites were unavailable when it was applied).
+    pub fn exit_pending(&self) -> bool {
+        self.installed.as_ref().is_some_and(|state| {
+            state.secure.is_some() && state.exit.is_none() && state.desired.exit_role().is_some()
+        })
+    }
+
     pub fn secure(&self) -> Option<&SecureNode> {
         self.installed.as_ref()?.secure.as_ref()
     }
@@ -400,19 +408,26 @@ impl meshway_engine::Components for Plane {
                 return Err(self.fail(problem, ApplyFailure::Underlay));
             }
         }
-        // An exit role that cannot be installed is a missing capability, not
-        // a safety failure: the content stays installed without it.
-        let mut degraded = false;
+        // This Node's exit role is a capability it reports, not a component
+        // its own traffic requires: unmet prerequisites or a failed role
+        // installation leave `exitCapability` unavailable and the rest of the
+        // content applied. The periodic capability probe installs the role
+        // once its prerequisites hold (see `exit_pending`).
         if let Some(role) = &netmap.exit_role
             && role_changed
         {
-            if self
+            let status = self
                 .report
                 .exit_capability
                 .as_ref()
-                .is_some_and(|c| c.status != meshway_model::exit::ExitStatus::Ready)
-            {
-                degraded = true;
+                .map(|capability| &capability.status);
+            if status != Some(&meshway_model::exit::ExitStatus::Ready) {
+                // No status yet: content applied from the saved netmap before
+                // the instance its observation binds to was known.
+                tracing::info!(
+                    ?status,
+                    "Exit role not installed yet: prerequisites not observed ready"
+                );
             } else if let Err(error) = self.host.install_netmap_exit_role(role).await {
                 tracing::warn!(%error, "Exit role installation failed");
                 if let Some(capability) = &mut self.report.exit_capability {
@@ -420,7 +435,6 @@ impl meshway_engine::Components for Plane {
                         reason: meshway_model::exit::ExitUnavailableReason::OwnershipConflict,
                     };
                 }
-                degraded = true;
             }
         }
         if self.host.tun().is_none() {
@@ -436,10 +450,6 @@ impl meshway_engine::Components for Plane {
                     exit: None,
                 })
             }
-        }
-        if degraded {
-            self.failure = Some((Problem::Underlay, ApplyFailure::Underlay));
-            return Err(Error::Degraded);
         }
         Ok(())
     }

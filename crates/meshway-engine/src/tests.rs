@@ -272,6 +272,38 @@ async fn a_degraded_apply_keeps_content_and_the_same_content_retries_it() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn reapply_runs_the_current_content_again_and_never_an_ended_lease() {
+    let mut engine = Engine::new(Resources::default());
+    assert_eq!(engine.reapply().await, Ok(()));
+    assert!(engine.components.calls.is_empty(), "nothing to apply");
+    let content = Arc::new(meshway_test_server::single_node("a", None));
+    let netmap = input(&mut engine, content, 60_000);
+    engine.reconfig(Some(&netmap)).await.unwrap();
+    let reference = Some(netmap.content.reference());
+    let compiler = engine.desired().unwrap().compiler().clone();
+    engine.components.calls.clear();
+    engine.reapply().await.unwrap();
+    // The same desired state (not a rebuilt one) goes through every step.
+    assert!(Arc::ptr_eq(&compiler, engine.desired().unwrap().compiler()));
+    assert!(!engine.degraded());
+    assert_eq!(
+        engine.components.calls,
+        [Part::Host, Part::Adjacencies, Part::Packets, Part::Dns].map(|part| (part, reference))
+    );
+    tokio::time::advance(Duration::from_secs(61)).await;
+    engine.components.calls.clear();
+    engine.reapply().await.unwrap();
+    assert!(engine.desired().is_none());
+    assert!(
+        engine
+            .components
+            .calls
+            .iter()
+            .all(|(_, desired)| desired.is_none())
+    );
+}
+
+#[tokio::test(start_paused = true)]
 async fn a_raised_clock_floor_never_lets_an_ended_lease_run() {
     let mut engine = Engine::new(Resources::default());
     let content = Arc::new(meshway_test_server::single_node("a", None));
