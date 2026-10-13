@@ -10,6 +10,7 @@ use std::time::SystemTime;
 /// original requester is cancelled. No UID/capability bitmap stands in for I/O.
 pub struct ExitProbe {
     pub(in crate::linux::kernel) owned_tables: Vec<(String, String)>,
+    pub(in crate::linux::kernel) crossing: super::firewall::Crossing,
     commands: Commands,
     pending_table: Option<String>,
     // Probe TUN events must not race an already running Host monitor.
@@ -21,6 +22,7 @@ impl ExitProbe {
     pub(in crate::linux) fn new(owner: super::super::super::HostOwner) -> Self {
         Self {
             owned_tables: Vec::new(),
+            crossing: Default::default(),
             commands: Commands::default(),
             pending_table: None,
             _owner: Some(owner),
@@ -32,6 +34,7 @@ impl ExitProbe {
     ) -> Self {
         Self {
             owned_tables: Vec::new(),
+            crossing: Default::default(),
             commands: Commands::default(),
             pending_table: None,
             _owner: None,
@@ -113,7 +116,7 @@ impl ExitProbe {
             reverse_path(all_rpf, rpf, all_mark, mark)?;
         }
         if self.monitor.is_some() {
-            super::firewall::check(&mut self.commands, &self.owned_tables).await?;
+            super::firewall::check(&mut self.commands, &self.owned_tables, &self.crossing).await?;
         }
         let _device = std::fs::OpenOptions::new()
             .read(true)
