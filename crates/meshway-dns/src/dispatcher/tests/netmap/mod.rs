@@ -280,7 +280,9 @@ async fn netmap_resolvers_follow_their_decisions_and_magic_dns_uses_mesh_hosts()
     let netmap = network.compile(None);
     let dns = &netmap.netmap.dns;
     assert_eq!(dns.resolvers["direct"], ResolverAction::Direct);
-    assert_eq!(dns.resolvers["routed"], ResolverAction::Exit);
+    // Kept under the exit (`useWithExit`), an address the exit would route
+    // is this Node's direct exception.
+    assert_eq!(dns.resolvers["routed"], ResolverAction::Direct);
     assert_eq!(dns.resolvers["mesh"], ResolverAction::Rejected);
     assert!(matches!(dns.egress, DnsPlan::ViaExit { .. }));
     let snapshot = sync(&mut control, &script, reply(&netmap, true)).await;
@@ -296,13 +298,19 @@ async fn netmap_resolvers_follow_their_decisions_and_magic_dns_uses_mesh_hosts()
         panic!("a configured resolver is local")
     };
     assert_eq!(route.endpoint(), "192.0.2.53:53".parse().unwrap());
-    // Exit-routed and Mesh resolvers never get a local socket, nor a fallback.
-    for name in ["x.routed.example.", "x.mesh.example."] {
-        assert!(matches!(
-            owner.begin_published_until(named(name), deadline),
-            Begin::Unavailable(Unavailable::MissingResolverPlan)
-        ));
-    }
+    let Begin::Upstream(work) = owner.begin_published_until(named("x.routed.example."), deadline)
+    else {
+        panic!("a kept resolver is routed locally")
+    };
+    let ResolverRoute::Local(route) = work.route() else {
+        panic!("a configured resolver is local")
+    };
+    assert_eq!(route.endpoint(), "203.0.113.53:53".parse().unwrap());
+    // A Mesh resolver never gets a local socket, nor a fallback.
+    assert!(matches!(
+        owner.begin_published_until(named("x.mesh.example."), deadline),
+        Begin::Unavailable(Unavailable::MissingResolverPlan)
+    ));
     // Ordinary names use only the exit's Mesh resolver service.
     let Begin::Upstream(work) = owner.begin_published_until(named("ordinary.test."), deadline)
     else {

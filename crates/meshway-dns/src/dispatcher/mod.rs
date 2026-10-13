@@ -468,7 +468,8 @@ impl OwnerDispatcher {
 
     /// Source side: hold an answer whose name a name rule of this Node
     /// decides until an association covering it is applied, at most
-    /// [`crate::ASSOCIATION_WAIT`]; then cap its TTLs to that association.
+    /// [`crate::ASSOCIATION_WAIT`] and never past the query's deadline; then
+    /// cap its TTLs to that association.
     async fn associated(
         &self,
         mut answer: Answer,
@@ -496,7 +497,15 @@ impl OwnerDispatcher {
                 return Err(DispatchError::Expired);
             }
         };
-        let until = tokio::time::Instant::now() + crate::ASSOCIATION_WAIT;
+        // Until just before the query's own deadline, so the SERVFAIL of a
+        // missing association still reaches the client; other queries do
+        // not wait on this one.
+        let until = (Instant::now() + crate::ASSOCIATION_WAIT).min(
+            answer
+                .deadline()
+                .checked_sub(crate::association::ANSWER_MARGIN)
+                .unwrap_or_else(Instant::now),
+        );
         loop {
             let desired = scopes
                 .borrow_and_update()
@@ -525,7 +534,7 @@ impl OwnerDispatcher {
             tokio::select! { biased;
                 () = answer.ended() => return Err(DispatchError::Expired),
                 changed = scopes.changed() => changed.map_err(|_| DispatchError::Scope)?,
-                () = tokio::time::sleep_until(until) => {
+                () = tokio::time::sleep_until(until.into()) => {
                     tracing::debug!(name = %facts.name, "No trusted association arrived for a name-rule answer");
                     return Err(DispatchError::Expired);
                 }

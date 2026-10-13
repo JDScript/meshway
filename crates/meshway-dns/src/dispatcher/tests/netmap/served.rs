@@ -135,17 +135,17 @@ async fn unusable_served_upstreams_withdraw_only_served_queries() {
         Err(Reason::MeshServer)
     );
     // An OS upstream the Node's egress partition sends through an exit: A's
-    // partition (192.0.2/24 direct, the rest through E).
+    // partition (192.0.2/24 and the kept resolver direct, the rest through E).
     let source = Network::new(&control, 'a');
     let routed = Desired::new(&Arc::new(source.compile(None)), &Default::default()).unwrap();
     assert_eq!(
-        decide(&routed, Ok(served_snapshot("203.0.113.53:53", None))),
+        decide(&routed, Ok(served_snapshot("203.0.113.54:53", None))),
         Err(Reason::ExitRoutedServer)
     );
     assert_eq!(
         decide(
             &routed,
-            Ok(served_snapshot("127.0.0.54:53", Some(&["203.0.113.53"])))
+            Ok(served_snapshot("127.0.0.54:53", Some(&["203.0.113.54"])))
         ),
         Err(Reason::ExitRoutedServer)
     );

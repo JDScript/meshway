@@ -83,7 +83,22 @@ async fn a_name_rule_answer_waits_for_its_association_and_never_leaks_without_on
             .unwrap_err(),
         DispatchError::Expired
     );
-    assert!(started.elapsed() >= crate::ASSOCIATION_WAIT);
+    // It waits until just before the query's deadline (the owner's 2 s
+    // query budget here), not the 5 s bound, and answers within it.
+    let waited = started.elapsed();
+    assert!(waited >= Duration::from_secs(2) - crate::association::ANSWER_MARGIN);
+    assert!(waited < Duration::from_secs(2));
+    // A held answer holds only its own query.
+    let held = dispatcher.dispatch(named("other.chat.example."), deadline());
+    tokio::pin!(held);
+    let started = Instant::now();
+    tokio::select! { biased;
+        _ = &mut held => panic!("no association arrives for the held query"),
+        plain = dispatcher.dispatch(named("example.org."), deadline()) => {
+            plain.unwrap();
+        }
+    }
+    assert!(started.elapsed() < Duration::from_millis(500));
 
     // The association arrives while the answer is held: released, TTL capped.
     let generation = desired.egress().unwrap().generation;

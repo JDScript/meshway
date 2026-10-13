@@ -6,9 +6,10 @@
 //! the answer itself goes back to the source at once.
 //!
 //! Source: such an answer reaches the local client only once Engine applied
-//! an association of the same name covering its public addresses, at most
-//! [`ASSOCIATION_WAIT`] later (otherwise SERVFAIL, so no client ever holds
-//! an address its name rule could not decide). Its TTLs are capped to the
+//! an association of the same name covering its public addresses: it waits
+//! until just before the query's own deadline, at most [`ASSOCIATION_WAIT`]
+//! (otherwise SERVFAIL, so no client ever holds an address its name rule
+//! could not decide). Only that query waits. Its TTLs are capped to the
 //! association's remaining life, so caches end first.
 use crate::{Query, wire::WireError};
 use hickory_proto::{
@@ -25,8 +26,12 @@ use meshway_configuration::{
 use meshway_policy::compile::{netmap::associable, rules::query_name};
 use std::{net::IpAddr, time::Duration};
 
-/// Longest a source holds an answer for its association.
-pub const ASSOCIATION_WAIT: Duration = Duration::from_secs(2);
+/// Longest a source holds an answer for its association. The query's own
+/// deadline (at most 5 s after it arrived) ends the wait earlier.
+pub const ASSOCIATION_WAIT: Duration = Duration::from_secs(5);
+/// Time left before the query deadline when a source stops waiting, so its
+/// SERVFAIL still reaches the client in time.
+pub(crate) const ANSWER_MARGIN: Duration = Duration::from_millis(250);
 /// An association with less life left is waited for anew.
 pub(crate) const MIN_REMAINING_MS: u64 = 5_000;
 /// Margin between a capped TTL and the association's end.

@@ -11,6 +11,10 @@ impl Answer {
     pub(crate) fn query(&self) -> &Query {
         &self.ready.query
     }
+    /// The query's deadline: an answer must be sent before it.
+    pub(crate) fn deadline(&self) -> Instant {
+        self.ready.deadline
+    }
     pub(crate) fn answers(&self, query: &Query) -> bool {
         self.ready.query == *query
     }
