@@ -80,7 +80,7 @@ mise exec -- cargo run -p meshway-server --bin reset-password --locked -- \
 
 `--expires-in-seconds` 默认 900，范围 60–86400。命令显式交付一次性链接，兑换流程见[无邮件账户恢复](/v2/api/authentication#无邮件账户恢复)；网络 Owner／Admin 无他人全局密码重置权。
 
-GeoIP／ASN 数据集由本机 `ip-datasets` binary 导入，见[数据集部署](/v2/state-reference/ip-info#datasets)。
+GeoIP／ASN 数据集由本机 `ip-datasets` binary 导入，只供自动路由方案使用，State 不返回查询结果，见[数据集部署](/v2/state-reference/ip-info#datasets)。
 
 ### Netmap 签发钥轮换
 

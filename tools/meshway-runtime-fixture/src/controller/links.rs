@@ -59,6 +59,28 @@ pub(super) async fn measured_links(
                             })
                         })
                     });
+                // Every Node on the mandatory path reports the business circuit
+                // it takes part in, with its own position.
+                let path = [nodes[&Role::A], nodes[&Role::R], nodes[&Role::B]];
+                let reports_path = report.paths.values().any(|observed| {
+                    let forward = observed.nodes == path;
+                    let backward = observed.nodes.iter().rev().eq(path.iter());
+                    use meshway_model::state::ReporterRole::*;
+                    (forward || backward)
+                        && match (role, observed.reporter_role) {
+                            (Role::R, Relay) => true,
+                            (Role::A, Origin) => forward,
+                            (Role::A, Target) => backward,
+                            (Role::B, Target) => forward,
+                            (Role::B, Origin) => backward,
+                            _ => false,
+                        }
+                        && view.paths.iter().any(|aggregated| {
+                            aggregated.reporter.node_id == nodes[&role]
+                                && aggregated.state == *observed
+                        })
+                });
+                let complete = complete && reports_path;
                 if report.links.iter().any(|(peer, links)| {
                     !peers.iter().any(|role| nodes[role] == *peer)
                         && links.iter().any(|link| {

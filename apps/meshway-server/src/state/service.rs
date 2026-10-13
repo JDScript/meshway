@@ -356,8 +356,7 @@ impl<P: StateProvider> StateService<P> {
                 let now = Utc::now();
                 let scope = provider.state_scope(tx, &identity, now)?;
                 let mut runtime = runtime.lock().map_err(|_| Error::RUNTIME)?;
-                let Runtime { hub, geoip, .. } = &mut *runtime;
-                hub.query(&scope, nodes.as_deref(), geoip, now)
+                runtime.hub.query(&scope, nodes.as_deref(), now)
             })
             .await
     }
@@ -498,9 +497,9 @@ impl<P: StateProvider> StateService<P> {
                 {
                     return Err(Error::StateLimit);
                 }
-                let Runtime { hub, geoip, .. } = &mut *runtime;
+                let Runtime { hub, .. } = &mut *runtime;
                 let listener = hub.wakeups.listen(view.scope.network_id);
-                let state = hub.query(&view.scope, None, geoip, now)?;
+                let state = hub.query(&view.scope, None, now)?;
                 let ready = random_id()?;
                 let mut sub = Subscription {
                     identity,
@@ -593,8 +592,8 @@ impl<P: StateProvider> StateService<P> {
                 let active_observations = runtime.observations.active_subscriptions(&tasks);
                 let observation_scope_changed = sub.active_observations != active_observations;
                 sub.active_observations = active_observations;
-                let Runtime { hub, geoip, .. } = &mut *runtime;
-                let state = hub.query(&view.scope, None, geoip, now)?;
+                let Runtime { hub, .. } = &mut *runtime;
+                let state = hub.query(&view.scope, None, now)?;
                 let journal = hub
                     .events
                     .after(sub.journal_sequence, view.scope.network_id);
@@ -793,6 +792,7 @@ impl<P: StateProvider> StateService<P> {
                     }
                     if state.nodes != sub.state.nodes
                         || state.links != sub.state.links
+                        || state.adjacencies != sub.state.adjacencies
                         || state.paths != sub.state.paths
                         || state.sequence != sub.state.sequence
                         || state.configuration_revision != sub.state.configuration_revision
@@ -821,6 +821,7 @@ impl<P: StateProvider> StateService<P> {
                             updated,
                             removed,
                             links: state.links.clone(),
+                            adjacencies: state.adjacencies.clone(),
                             paths: state.paths.clone(),
                         };
                         enqueue_at::<P>(&mut sub, event, next)?;
@@ -885,12 +886,11 @@ impl StateReader {
         admission: &ReportAdmission,
         now: DateTime<Utc>,
     ) -> Result<meshway_protocol::state::DerivedNodeState, Error> {
-        let mut runtime = self.runtime.lock().map_err(|_| Error::RUNTIME)?;
+        let runtime = self.runtime.lock().map_err(|_| Error::RUNTIME)?;
         if runtime.closed {
             return Err(Error::CLOSED);
         }
-        let Runtime { hub, geoip, .. } = &mut *runtime;
-        Ok(hub.location(admission, geoip, now))
+        Ok(runtime.hub.location(admission, now))
     }
 }
 fn random_id() -> Result<String, Error> {

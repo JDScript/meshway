@@ -264,7 +264,7 @@ export const zAcquireInstanceRequest = z.strictObject({
   ["instanceId"]: zInstanceId
 });
 
-export const zActivityAction = z.enum(["account.register","session.login","session.logout","session.revoke","session.revokeOthers","session.revokeAll","session.delegate","account.password","account.passwordReset","account.resetIssued","account.email","network.create","network.rename","configuration.apply","membership.role","membership.join","membership.remove","joinLink.create","joinLink.revoke"]);
+export const zActivityAction = z.enum(["account.register","session.login","session.logout","session.revoke","session.revokeOthers","session.revokeAll","session.delegate","account.password","account.passwordReset","account.resetIssued","account.email","network.create","network.rename","configuration.apply","membership.role","membership.join","membership.remove","joinLink.create","joinLink.revoke","routing.select"]);
 
 export const zActivityActor = z.union([z.strictObject({
   ["email"]: z.string().nullable(),
@@ -272,6 +272,9 @@ export const zActivityActor = z.union([z.strictObject({
   ["userId"]: zUserId
 }), z.strictObject({
   ["type"]: z.enum(["system"])
+}), z.strictObject({
+  ["nodeId"]: zNodeId,
+  ["type"]: z.enum(["node"])
 })]);
 
 export const zActivityId = z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u"));
@@ -299,6 +302,10 @@ export const zActivityTarget = z.union([z.strictObject({
 }), z.strictObject({
   ["revision"]: zRevision,
   ["type"]: z.enum(["configuration"])
+}), z.strictObject({
+  ["nodeId"]: zNodeId,
+  ["profile"]: z.string(),
+  ["type"]: z.enum(["routingSelection"])
 })]);
 
 export const zActivityEvent = z.strictObject({
@@ -336,7 +343,17 @@ export const zAddressPoolsInput = z.strictObject({
   ["ipv6"]: z.array(z.string()).exactOptional()
 });
 
+export const zAddressScope = z.enum(["public","nonPublic","mesh"]);
+
+export const zAdjacencyConnection = z.enum(["connected","idle","unreachable","unknown"]);
+
 export const zAdjacencyStatus = z.enum(["idle","unreachable"]);
+
+export const zAggregatedAdjacency = z.strictObject({
+  ["a"]: zNodeId,
+  ["b"]: zNodeId,
+  ["status"]: zAdjacencyConnection
+});
 
 export const zLinkEvidence = z.enum(["oneSided","matched","conflicting","expired"]);
 
@@ -400,8 +417,6 @@ export const zApproveEnrollmentRequest = z.strictObject({
   ["networkId"]: zNetworkId
 });
 
-export const zArtifactId = z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u"));
-
 export const zArtifactSummary = z.strictObject({
   ["bytes"]: z.int().gte(0).lte(2147483647),
   ["createdAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
@@ -450,6 +465,8 @@ export const zAuthSessionResponse = z.strictObject({
   ["user"]: zUserView
 });
 
+export const zAutoBasis = z.enum(["noTrustedRegion"]);
+
 export const zCountryProfile = z.strictObject({
   ["countries"]: z.array(z.string()),
   ["profile"]: z.string()
@@ -458,6 +475,11 @@ export const zCountryProfile = z.strictObject({
 export const zAutoProfile = z.strictObject({
   ["fallback"]: z.string(),
   ["rules"]: z.array(zCountryProfile)
+});
+
+export const zAutoResolution = z.strictObject({
+  ["basis"]: zAutoBasis,
+  ["profile"]: z.string()
 });
 
 export const zKeyId = z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u"));
@@ -1182,7 +1204,7 @@ export const zConfigurationComparison = z.strictObject({
   ["toRevision"]: zRevision
 });
 
-export const zIssueCode = z.enum(["invalid_jsonc","invalid_shape","incomplete_version","unknown_user","invalid_group_name","invalid_tag_name","unknown_group","unknown_tag","duplicate_tag","identity_membership_missing","empty_tag_identity","unknown_node","unknown_node_selector","retained_membership_inactive","empty_selector_set","bidirectional_requires_mesh","invalid_port_set","invalid_domain_suffix","invalid_domain","noncanonical_cidr","invalid_dns_domain","invalid_node_dns_name","dns_override_requires_default","unknown_resolver","invalid_resolver","empty_resolver_set","duplicate_dns_suffix","invalid_dns_suffix","invalid_hostname","duplicate_hostname","empty_listener_key","invalid_transport","invalid_listener_materials","overlapping_pools","invalid_pool","address_outside_pool","duplicate_address","unknown_reassignment_target","no_address_available","repeated_required_node","empty_exit_set","repeated_exit","exit_not_enabled","invalid_destination_cidr","empty_route_match","unknown_rule_set","invalid_rule_source","empty_rule_set_key","invalid_rule_set_key","unknown_rule_set_provider","invalid_rule_set_provider","egress_partition_limit","empty_inline_rule_set","rule_set_budget","rule_set_unavailable","rule_set_timeout","reserved_profile_name","unknown_profile","default_not_allowed","auto_target_not_allowed","auto_target_unknown","conflicting_assignments","invalid_country_code","exit_outside_access","global_exit_requires_internet","exit_fallback_requires_internet","netmap_limit","netmap_budget","shadowed_rule"]);
+export const zIssueCode = z.enum(["invalid_jsonc","invalid_shape","incomplete_version","unknown_user","invalid_group_name","invalid_tag_name","unknown_group","unknown_tag","duplicate_tag","identity_membership_missing","empty_tag_identity","unknown_node","unknown_node_selector","retained_membership_inactive","empty_selector_set","bidirectional_requires_mesh","invalid_port_set","invalid_domain_suffix","invalid_domain","noncanonical_cidr","invalid_dns_domain","invalid_node_dns_name","dns_override_requires_default","unknown_resolver","invalid_resolver","empty_resolver_set","duplicate_dns_suffix","invalid_dns_suffix","invalid_hostname","duplicate_hostname","empty_listener_key","invalid_transport","invalid_listener_materials","overlapping_pools","invalid_pool","address_outside_pool","duplicate_address","unknown_reassignment_target","no_address_available","repeated_required_node","empty_exit_set","repeated_exit","exit_not_enabled","invalid_destination_cidr","empty_route_match","unknown_rule_set","invalid_rule_source","empty_rule_set_key","invalid_rule_set_key","unknown_rule_set_provider","invalid_rule_set_provider","egress_partition_limit","empty_inline_rule_set","rule_set_budget","rule_set_unavailable","rule_set_timeout","reserved_profile_name","unknown_profile","default_not_allowed","auto_target_not_allowed","auto_target_unknown","conflicting_assignments","invalid_country_code","exit_outside_access","global_exit_requires_internet","exit_fallback_requires_internet","netmap_limit","netmap_budget","shadowed_rule","ineffective_block_option"]);
 
 export const zConfigurationIssue = z.strictObject({
   ["code"]: zIssueCode,
@@ -1716,77 +1738,10 @@ export const zDenyDeviceAuthorizationPath = z.strictObject({
   ["enrollmentRequestId"]: zEnrollmentRequestId
 });
 
-export const zLookupUnavailableReason = z.enum(["datasetUnavailable","lookupFailed"]);
-
-export const zNotApplicableReason = z.enum(["nonPublicAddress","meshAddress"]);
-
-export const zLookupResult_AsnData = z.union([z.strictObject({
-  ["data"]: z.strictObject({
-  ["number"]: z.int().gte(0).lte(2147483647),
-  ["organization"]: z.string().nullable().exactOptional(),
-  ["prefix"]: z.string().nullable().exactOptional()
-}),
-  ["datasetId"]: zArtifactId,
-  ["lookedUpAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
-  ["status"]: z.enum(["available"])
-}), z.strictObject({
-  ["datasetId"]: zArtifactId,
-  ["lookedUpAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
-  ["status"]: z.enum(["notFound"])
-}), z.strictObject({
-  ["reason"]: zLookupUnavailableReason,
-  ["status"]: z.enum(["unavailable"])
-}), z.strictObject({
-  ["reason"]: zNotApplicableReason,
-  ["status"]: z.enum(["notApplicable"])
-})]);
-
-export const zGeoPosition = z.strictObject({
-  ["accuracyRadiusKm"]: z.preprocess(unwrapJsonNumber, z.number().gte(0)).nullable().exactOptional(),
-  ["latitude"]: z.preprocess(unwrapJsonNumber, z.number().gte(-90).lte(90)),
-  ["longitude"]: z.preprocess(unwrapJsonNumber, z.number().gte(-180).lte(180))
-});
-
-export const zLookupResult_GeoIpData = z.union([z.strictObject({
-  ["data"]: z.strictObject({
-  ["city"]: z.string().nullable().exactOptional(),
-  ["country"]: z.string().nullable().exactOptional(),
-  ["position"]: zGeoPosition.nullable().exactOptional(),
-  ["region"]: z.string().nullable().exactOptional()
-}),
-  ["datasetId"]: zArtifactId,
-  ["lookedUpAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
-  ["status"]: z.enum(["available"])
-}), z.strictObject({
-  ["datasetId"]: zArtifactId,
-  ["lookedUpAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
-  ["status"]: z.enum(["notFound"])
-}), z.strictObject({
-  ["reason"]: zLookupUnavailableReason,
-  ["status"]: z.enum(["unavailable"])
-}), z.strictObject({
-  ["reason"]: zNotApplicableReason,
-  ["status"]: z.enum(["notApplicable"])
-})]);
-
-export const zIpInfo = z.strictObject({
-  ["asn"]: zLookupResult_AsnData,
-  ["geoip"]: zLookupResult_GeoIpData
-});
-
-export const zGeoIpData = z.strictObject({
-  ["city"]: z.string().nullable().exactOptional(),
-  ["country"]: z.string().nullable().exactOptional(),
-  ["position"]: zGeoPosition.nullable().exactOptional(),
-  ["region"]: z.string().nullable().exactOptional()
-});
-
 export const zLocationSource = z.enum(["interface","stun"]);
 
-export const zGeoObservation = z.strictObject({
+export const zLocationObservation = z.strictObject({
   ["address"]: z.string(),
-  ["data"]: zGeoIpData,
-  ["datasetId"]: zArtifactId,
   ["endpointSource"]: zLocationSource,
   ["expiresAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
   ["observedAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
@@ -1794,11 +1749,11 @@ export const zGeoObservation = z.strictObject({
   ["sourceSocketId"]: z.string()
 });
 
-export const zLocationAbsentReason = z.enum(["noObservation","observationExpired","datasetUnavailable","notInDataset","lookupFailed","ambiguousObservation"]);
+export const zLocationAbsentReason = z.enum(["noObservation","observationExpired","ambiguousObservation"]);
 
 export const zDerivedNodeState = z.strictObject({
-  ["ipInfo"]: typedMap(z.string(), zIpInfo, {}),
-  ["location"]: zGeoObservation.nullable().exactOptional(),
+  ["addressScope"]: typedMap(z.string(), zAddressScope, {}),
+  ["location"]: zLocationObservation.nullable().exactOptional(),
   ["locationAbsent"]: zLocationAbsentReason.nullable().exactOptional()
 });
 
@@ -1969,6 +1924,13 @@ export const zEntityRemovals = z.strictObject({
   ["nodes"]: z.array(zNodeId)
 });
 
+export const zSelectionUnavailable = z.enum(["notAllowed","locked"]);
+
+export const zRoutingProfileUnavailableParams = z.strictObject({
+  ["allowed"]: z.array(z.string()),
+  ["reason"]: zSelectionUnavailable
+});
+
 export const zProblem = z.union([z.strictObject({
   ["code"]: z.enum(["invalid_credentials"]),
   ["message"]: z.string(),
@@ -2129,6 +2091,10 @@ export const zProblem = z.union([z.strictObject({
   ["code"]: z.enum(["configuration_invalid"]),
   ["message"]: z.string(),
   ["params"]: zConfigurationValidationParams
+}), z.strictObject({
+  ["code"]: z.enum(["routing_profile_unavailable"]),
+  ["message"]: z.string(),
+  ["params"]: zRoutingProfileUnavailableParams
 }), z.strictObject({
   ["code"]: z.enum(["state_conflict"]),
   ["message"]: z.string(),
@@ -2404,6 +2370,11 @@ export const zGetNodeObservationQuery = z.strictObject({
 });
 
 export const zGetNodePath = z.strictObject({
+  ["networkId"]: zNetworkId,
+  ["nodeId"]: zNodeId
+});
+
+export const zGetNodeRoutingSelectionPath = z.strictObject({
   ["networkId"]: zNetworkId,
   ["nodeId"]: zNodeId
 });
@@ -3014,6 +2985,13 @@ export const zNodeChallengeIntent = z.strictObject({
   ["request"]: zNodeChallengeRequest
 });
 
+export const zNodeRoutingSummary = z.strictObject({
+  ["appliedProfile"]: z.string(),
+  ["canSelect"]: z.boolean(),
+  ["locked"]: z.boolean(),
+  ["requestedProfile"]: z.string().nullable()
+});
+
 export const zPinnedServerKeyStatus = z.enum(["current","rotating","keyMismatch"]);
 
 export const zPinnedServerKeyView = z.strictObject({
@@ -3030,6 +3008,7 @@ export const zNodeInventoryView = z.strictObject({
   ["controlKeyRevokedAt"]: zTimestamp.nullable(),
   ["dataplaneKeyCreatedAt"]: zTimestamp,
   ["dataplaneKeyRevokedAt"]: zTimestamp.nullable(),
+  ["dnsName"]: z.string(),
   ["enabled"]: z.boolean(),
   ["hostname"]: z.string(),
   ["id"]: zNodeId,
@@ -3037,10 +3016,12 @@ export const zNodeInventoryView = z.strictObject({
   ["keys"]: zNodeKeyMetadata,
   ["lastSyncAt"]: zTimestamp.nullable(),
   ["lease"]: zNetmapLease.nullable(),
+  ["magicDNS"]: z.boolean(),
   ["netmap"]: zNetmapRef.nullable(),
   ["netmapUnavailable"]: zNetmapUnavailable.nullable(),
   ["networkId"]: zNetworkId,
   ["registeredAt"]: zTimestamp,
+  ["routing"]: zNodeRoutingSummary,
   ["serverKey"]: zPinnedServerKeyView.nullable()
 });
 
@@ -3141,6 +3122,35 @@ export const zNodeRotationRequest = z.strictObject({
   ["intent"]: zNodeRotationIntent,
   ["newSignature"]: zWireSecret,
   ["oldProof"]: zNodeProof
+});
+
+export const zProfileKind = z.enum(["mesh","global","auto","custom"]);
+
+export const zProfileSummary = z.strictObject({
+  ["exits"]: z.array(zNodeId),
+  ["fallback"]: zRouteAction.nullable(),
+  ["kind"]: zProfileKind,
+  ["name"]: z.string(),
+  ["rules"]: z.int().gte(0).lte(2147483647)
+});
+
+export const zRoutingSelectionState = z.strictObject({
+  ["appliedProfile"]: z.string(),
+  ["auto"]: zAutoResolution.nullable(),
+  ["defaultProfile"]: z.string(),
+  ["locked"]: z.boolean(),
+  ["profiles"]: z.array(zProfileSummary),
+  ["requestedProfile"]: z.string().nullable(),
+  ["requestedUnavailable"]: zSelectionUnavailable.nullable(),
+  ["version"]: zVersion.nullable()
+});
+
+export const zNodeRoutingSelectionResponse = z.strictObject({
+  ["canSelect"]: z.boolean(),
+  ["networkId"]: zNetworkId,
+  ["nodeId"]: zNodeId,
+  ["requestId"]: zRequestId,
+  ["selection"]: zRoutingSelectionState
 });
 
 export const zNodeSessionIntent = z.strictObject({
@@ -3506,8 +3516,7 @@ export const zRoutingSelectionRequest = z.strictObject({
 });
 
 export const zRoutingSelectionResponse = z.strictObject({
-  ["profile"]: z.string(),
-  ["version"]: zVersion
+  ["selection"]: zRoutingSelectionState
 });
 
 export const zRuleSetHeld = z.strictObject({
@@ -3653,11 +3662,21 @@ export const zRuleSetReport = z.strictObject({
   ["key"]: z.string()
 });
 
+export const zSelectNodeRoutingProfileRequest = z.strictObject({
+  ["profile"]: z.string(),
+  ["requestId"]: zRequestId
+});
+
 export const zSessionIssuedResponse = z.strictObject({
   ["requestId"]: zRequestId,
   ["session"]: zSessionMetadata,
   ["token"]: zWireSecret,
   ["user"]: zUserView
+});
+
+export const zSetNodeRoutingSelectionPath = z.strictObject({
+  ["networkId"]: zNetworkId,
+  ["nodeId"]: zNodeId
 });
 
 export const zSignedNodeChallengeRequest = z.strictObject({
@@ -3683,6 +3702,7 @@ export const zStateReport = z.strictObject({
 });
 
 export const zStateView = z.strictObject({
+  ["adjacencies"]: z.array(zAggregatedAdjacency),
   ["asOf"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
   ["configurationRevision"]: zRevision,
   ["links"]: z.array(zAggregatedLink),
@@ -3805,6 +3825,7 @@ export const zUserEvent = z.union([z.strictObject({
   ["heartbeatIntervalMs"]: z.int().gte(0).lte(2147483647),
   ["type"]: z.enum(["sync.ready"])
 }), z.strictObject({
+  ["adjacencies"]: z.array(zAggregatedAdjacency),
   ["asOf"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time").nullable().exactOptional(),
   ["baseCursor"]: z.string(),
   ["configurationRevision"]: zRevision.nullable().exactOptional(),

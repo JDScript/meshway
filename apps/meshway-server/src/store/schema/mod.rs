@@ -9,7 +9,9 @@ const APPLICATION_ID: i64 = 0x4d534857; // MSHW: stable Meshway application iden
 // 3: rule-set artifacts are global `MWRS` content referenced by digest.
 // 4: accepted rule-set catalogs keep their verified document.
 // 5: rule-set record heads beside immutable provenance.
-const VERSION: i64 = 5;
+// 6: routing selections are activities (Node actor, selection target).
+// 7: provider catalog checks; unreferenced rule-set artifacts are collected.
+const VERSION: i64 = 7;
 const SQL: &str = concat!(
     include_str!("current.sql"),
     "\n",

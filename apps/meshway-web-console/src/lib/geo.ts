@@ -1,7 +1,7 @@
 import type {
   DerivedNodeState,
-  GeoObservation,
   LocationAbsentReason,
+  LocationObservation,
   LocationSource,
 } from "@meshway/control-client"
 
@@ -22,7 +22,7 @@ export const NO_ADDRESSES: ReadonlyMap<string, AddressScope> = new Map()
 
 /** The address the server rests a node's location on, as observed. */
 export type LocationAddress = Pick<
-  GeoObservation,
+  LocationObservation,
   "address" | "endpointSource" | "observedAt" | "expiresAt"
 >
 
@@ -34,12 +34,12 @@ export type NodeAddresses = {
   scopes: ReadonlyMap<string, AddressScope>
 }
 
-/** A node's addresses as its State shows them; the server marks one it does not look up (private, Mesh) not applicable. */
+/** A node's addresses as its State shows them; only `public` ones are looked up. */
 export function nodeAddresses(derived: DerivedNodeState): NodeAddresses {
   const scopes = new Map<string, AddressScope>(
-    Object.entries(derived.ipInfo).map(([ip, info]) => [
+    Object.entries(derived.addressScope).map(([ip, scope]) => [
       ip,
-      info.geoip.status === "notApplicable" ? "notPublic" : "public",
+      scope === "public" ? "public" : "notPublic",
     ])
   )
   const observed = derived.location

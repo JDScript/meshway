@@ -27,7 +27,7 @@ pub use view::{
     NetcheckUnavailable, NodeSelf, PeerRtt, PeerState, PeerStatus, PortMapping, StunMapping,
 };
 
-pub const VERSION: u16 = 8;
+pub const VERSION: u16 = 9;
 pub const MAX_MESSAGE_BYTES: usize = 64 * 1024;
 pub const DEFAULT_SOCKET: &str = "/var/lib/meshway/control.sock";
 
@@ -64,6 +64,10 @@ pub enum Command {
     },
     /// One bounded local network diagnostic.
     Netcheck,
+    /// Ask the Server to select this Node's routing profile; answers its committed selection.
+    SelectProfile {
+        profile: String,
+    },
     Ping {
         target: NodeObservationTarget,
         #[serde(deserialize_with = "ping_count")]
@@ -92,6 +96,8 @@ meshway_model::tagged! { #[derive(Clone, Debug)] pub enum ResultBody {
     Error { code: ErrorCode },
     Ping { sequence: Sequence, event: PingEvent },
     Netcheck { report: Box<crate::ipc::NetcheckReport> },
+    /// The Server's committed selection; the Node's next netmap carries it.
+    Selection { selection: Box<meshway_configuration::selection::RoutingSelectionState> },
 } }
 
 meshway_model::tagged! { #[derive(Clone, Debug)] pub enum PingEvent {
@@ -163,6 +169,12 @@ pub enum ErrorCode {
     Rejected,
     #[error("The Node is leaving its network and retries until the Server confirms; `meshway up` with a new enrollment key replaces the pending leave.")]
     Leaving,
+    #[error("The Node's assignment does not allow this routing profile.")]
+    ProfileNotAllowed,
+    #[error("An administrator locked this Node's routing profile.")]
+    ProfileLocked,
+    #[error("The routing selection changed elsewhere; retry once the Node has the new netmap.")]
+    SelectionConflict,
 }
 }
 meshway_model::string_enum! {
@@ -225,6 +237,10 @@ meshway_model::object! {
     /// null for a disabled Node.
     #[serde(deserialize_with = "meshway_model::wire::required_nullable")]
     pub capture: Option<meshway_configuration::evaluation::CaptureSummary> [required = true],
+    /// This Node's routing profile selection as the netmap decides it;
+    /// null when it cannot be computed from the netmap.
+    #[serde(deserialize_with = "meshway_model::wire::required_nullable")]
+    pub routing: Option<meshway_configuration::selection::RoutingSelectionState> [required = true],
 } }
 meshway_model::string_enum! {
 /// Why a referenced rule-set artifact is not held.

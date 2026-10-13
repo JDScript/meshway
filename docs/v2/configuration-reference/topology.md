@@ -32,7 +32,7 @@
 | `action` | `"allow" \| "block"` | 必填 | 承载许可或阻断 |
 | `a` / `b` | 节点选择器 | 必填 | 无方向的节点对，支持 Node／User／Group／Tag／`*` |
 | `transports` | `string[]` | 省略＝不限制，采用平台顺序 | 有序的允许承载列表，越靠前越优先；元素为 `TransportProtocol` 的 wire 名：`native_udp`／`native_tcp`／`vless`／`trojan`；`[]` 表示没有允许的承载，不接受 null、未知值或重复协议 |
-| `keepalive` | `boolean` | `false` | allow 规则匹配的边常驻：无业务也保持已认证邻接，不因空闲关闭；block 规则忽略。见[邻接的建立与常驻](#邻接的建立与常驻) |
+| `keepalive` | `boolean` | `false` | allow 规则匹配的边常驻：无业务也保持已认证邻接，不因空闲关闭；block 规则忽略（为 `true` 时报警告）。见[邻接的建立与常驻](#邻接的建立与常驻) |
 
 重复协议在 validate／apply 时返回 IssueCode `invalid_transport`，`params.reason` 为 `repeated_transport`，`path` 为 `/topology/<i>/transports/<j>`，其中 `i` 为规则下标，`j` 为重复出现位置的下标。
 
@@ -42,7 +42,7 @@
 2. 没有 block，且存在匹配的 allow，则允许；取数组中首条匹配 allow 的 `transports` 作为承载集合与顺序，不合并后续规则。
 3. 都不匹配时使用 [defaults.topology](/v2/configuration-reference/defaults#topology)。
 
-不存在“后面的 allow 覆盖前面的 block”。允许／阻断结果与数组顺序无关；多个 allow 的承载约束按首条匹配决定。默认允许的边没有边级承载限制。block 始终阻断整条边，不用 `transports` 表达只阻断某个协议。诊断引用本配置版本中的 `/topology/<index>`。
+不存在“后面的 allow 覆盖前面的 block”。允许／阻断结果与数组顺序无关；多个 allow 的承载约束按首条匹配决定。默认允许的边没有边级承载限制。block 始终阻断整条边，不用 `transports` 表达只阻断某个协议；block 规则写了 `transports`（含 `[]`）或 `keepalive: true` 时配置照常接受，validate／apply 返回警告 `ineffective_block_option`（`params.field`），见[配置问题](/v2/api/problems#configuration-issue)。诊断引用本配置版本中的 `/topology/<index>`。
 
 ## Behavior
 
@@ -103,6 +103,6 @@ VLESS stream、TLS 版本、运行能力与材料还须相容。只需一个拨�
 
 两个方向都没有候选的边不会进入发布路径。递归 routing 的必经点不能删除，也不回退到后续 routing 规则；自动补入的中继仍须满足所有分段 routing 和边级交集。
 
-validate／apply 对配置声明可证明的 routing 不可执行返回 `invalid_transport`，`params.reason` 为 `edge_transport_unavailable`，`path` 为 `/topology/<index>/transports`，`params.a`／`b` 为实际节点 ID，`params.routingRule` 定位 Mesh 路由规则。保留规则因依赖撤回失效时报告不可用依赖，允许撤销事务完成；运行库存／能力变化由按需编译返回 `unavailable/noPath`，不影响其他有效需求。已验证可行的自动中继路径不会因某条未使用的直接边无交集被拒绝。
+validate／apply 对配置声明可证明的 routing 不可执行返回 `invalid_transport`，`params.reason` 为 `edge_transport_unavailable`，`path` 为 `/topology/<index>/transports`，`params.a`／`b` 为实际节点 ID，`params.routingRule` 定位 Mesh 路由规则。一次检查报出全部受影响的（路由规则，边）：同一条组网规则让多条路由走不通时每条路由各报，一条路由要经过的每条无承载边也各报；上限 64 条，见[配置问题](/v2/api/problems#configuration-issue)。保留规则因依赖撤回失效时报告不可用依赖，允许撤销事务完成；运行库存／能力变化由按需编译返回 `unavailable/noPath`，不影响其他有效需求。已验证可行的自动中继路径不会因某条未使用的直接边无交集被拒绝。
 
 Node 执行配置只收到交集内的 `dialers` 候选及路径 `dialCandidates`。节点级 listener 可以继续服务其他边，但不能用来绕过本边的许可；Manager 按已发布候选建连，不把节点级 dialers 或已编译 provider 当作兜底。

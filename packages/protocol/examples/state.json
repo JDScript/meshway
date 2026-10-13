@@ -187,17 +187,8 @@
               }
             },
             "derived": {
-              "ipInfo": {
-                "203.0.113.10": {
-                  "geoip": {
-                    "status": "notApplicable",
-                    "reason": "nonPublicAddress"
-                  },
-                  "asn": {
-                    "status": "notApplicable",
-                    "reason": "nonPublicAddress"
-                  }
-                }
+              "addressScope": {
+                "203.0.113.10": "nonPublic"
               },
               "location": null,
               "locationAbsent": "noObservation"
@@ -205,7 +196,8 @@
           }
         },
         "links": [],
-        "paths": []
+        "paths": [],
+        "adjacencies": []
       }
     }
   },
@@ -315,17 +307,8 @@
               }
             },
             "derived": {
-              "ipInfo": {
-                "198.51.100.42": {
-                  "geoip": {
-                    "status": "notApplicable",
-                    "reason": "nonPublicAddress"
-                  },
-                  "asn": {
-                    "status": "notApplicable",
-                    "reason": "nonPublicAddress"
-                  }
-                }
+              "addressScope": {
+                "198.51.100.42": "nonPublic"
               },
               "location": null,
               "locationAbsent": "noObservation"
@@ -333,7 +316,8 @@
           }
         },
         "links": [],
-        "paths": []
+        "paths": [],
+        "adjacencies": []
       }
     }
   },
@@ -439,21 +423,14 @@
                 },
                 "probes": [],
                 "problems": [],
-                "adjacencies": {}
+                "adjacencies": {
+                  "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50": "idle"
+                }
               }
             },
             "derived": {
-              "ipInfo": {
-                "198.51.100.42": {
-                  "geoip": {
-                    "status": "notApplicable",
-                    "reason": "nonPublicAddress"
-                  },
-                  "asn": {
-                    "status": "notApplicable",
-                    "reason": "nonPublicAddress"
-                  }
-                }
+              "addressScope": {
+                "198.51.100.42": "nonPublic"
               },
               "location": null,
               "locationAbsent": "noObservation"
@@ -559,21 +536,14 @@
                 },
                 "probes": [],
                 "problems": [],
-                "adjacencies": {}
+                "adjacencies": {
+                  "a7b6c5d4-5e6f-4a3b-8c9d-9e8f7a6b5c70": "idle"
+                }
               }
             },
             "derived": {
-              "ipInfo": {
-                "203.0.113.10": {
-                  "geoip": {
-                    "status": "notApplicable",
-                    "reason": "nonPublicAddress"
-                  },
-                  "asn": {
-                    "status": "notApplicable",
-                    "reason": "nonPublicAddress"
-                  }
-                }
+              "addressScope": {
+                "203.0.113.10": "nonPublic"
               },
               "location": null,
               "locationAbsent": "noObservation"
@@ -581,7 +551,14 @@
           }
         },
         "links": [],
-        "paths": []
+        "paths": [],
+        "adjacencies": [
+          {
+            "a": "a7b6c5d4-5e6f-4a3b-8c9d-9e8f7a6b5c70",
+            "b": "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50",
+            "status": "idle"
+          }
+        ]
       }
     }
   }

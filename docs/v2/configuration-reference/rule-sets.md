@@ -118,11 +118,15 @@ Server 只用 `meshway-rules` 一份转换器，与发布仓库相同。每个�
 ## 数据与状态
 
 - 配置保存定义、来源和更新策略；`<provider>:<name>` 只保存引用本身。
-- artifact 全局内容寻址，跨网络只存一份、永久保留；每个配置版本按 key 绑定 digest。inline 内容在配置提交时转换并同样绑定 digest。
-- 每个 (来源, digest) 保存一份不可变溯源记录：源格式、上游 repo／ref／commit／path（provider 集合）、目录 sequence、`held` 与转换报告。
+- artifact 全局内容寻址，跨网络只存一份；每个配置版本按 key 绑定 digest。inline 内容在配置提交时转换并同样绑定 digest。保留见[artifact 保留](#artifact-retention)。
+- 每个 (来源, digest) 保存一份不可变溯源记录：源格式、上游 repo／ref／commit／path（provider 集合）、目录 sequence、`held`（签名目录该集合的 `held`）与转换报告。
 - provider 目录按 (目录 URL, 信任钥集合) 持久保存已接受的最大 `sequence` 及验签通过的 `index.json`／`index.json.sig` 原始字节（供[目录搜索](#浏览与命中查询)读取）；`sequence` 更小的目录（即使签名有效）为 `catalog_regressed`，不使用其内容。验签失败为 `signature_invalid`，artifact 与目录条目不符为 `integrity_failed`，目录中没有该集合为 `unknown_rule_set`。
 - 更新失败保留最后一份已验证内容并记录 `problem`，不发布半份内容；首次没有可用内容为 `not_ready`，引用它的规则不可执行。
-- 回滚使用历史版本绑定的 digest；artifact 永久保留，因此历史内容总可用。
+- 回滚使用历史版本绑定的 digest（`ruleSetBindings` 选择 `initial` 或 `refreshed`）；这两类绑定的 artifact 都随配置历史保留，因此历史内容总可用。
+
+### artifact 保留 {#artifact-retention}
+
+保留跟随配置版本历史：配置版本从不删除，未删除网络的每个版本可回滚到的两份绑定（版本自己的初始绑定、该版本当前的刷新绑定）引用的 artifact 一直保留。不再被任何可回滚绑定引用的 artifact——被同一版本的后续刷新替换的中间内容，或只被已删除网络引用的内容——在仍可能处于租约内的 netmap（当前一份，或被替换不足 24 小时的一份；24 小时是租约有效期上限，与 `artifacts/{digest}` 的授权窗口相同）都不再引用它之后，连同其溯源与当前记录一起删除。Server 启动时与此后每小时回收一次。节点 Control 的缓存回收不受影响（只保留当前 netmap 引用的文件）。
 
 ## 配置与刷新
 
@@ -156,7 +160,7 @@ validate 走相同准备与授权校验，但不存储 artifact、不预留版�
 | `artifact` | `{digest, format, bytes, entries, createdAt}`，`createdAt` 为该内容首次入库时间 |
 | `source` | 溯源：`format`，及 provider 集合的 `repo`／`ref`／`commit`／`path` |
 | `conversion` | `{converted: {exact, suffix, subdomain, keyword, cidr}, redundant, unconverted}` |
-| `held` | 目录仍发布该集合旧 artifact 的 `{since, reason}`；否则 null |
+| `held` | 签名目录对该集合的 `held`：发布流水线仍沿用旧 artifact 的 `{since, reason}`；否则 null |
 | `problem`／`checkedAt`／`lastSuccessAt` | 最后检查的失败原因（或 `not_ready`）、检查时间与最后成功时间；没有检查记录为 null |
 
 检查时间与 artifact 创建时间不同；失败更新检查时间与错误，保留最后成功的绑定。来源与绑定内容都不变时，检查记录随普通配置版本延续。
@@ -172,7 +176,7 @@ validate 走相同准备与授权校验，但不存储 artifact、不预留版�
 **目录搜索** `GET /rule-set-catalog`：
 
 - `provider` 必填，为本网络有效的 provider（内置项按 `ruleSetProviders` 替换或禁用后），否则 404；`q` 可省略，为集合名（`<name>`）的前缀，大小写不敏感，最长 128 字符。
-- 读取该 provider 的 (目录 URL, 信任钥集合) 最新接受的目录，只列其 `collection` 下的集合，按名称升序。目录在 Server 首次为任一网络准备该 provider 的集合（配置提交、手动刷新或周期检查）时验签保存；此前为 409 `rule_set_catalog_not_ready`（不是空列表）。从未被引用过的 provider（包括新部署上的内置 `geosite`／`geoip`）因此要先在配置中引用其一个集合。
+- 读取该 provider 的 (目录 URL, 信任钥集合) 最新接受的目录，只列其 `collection` 下的集合，按名称升序。Server 自己保持目录最新（见[目录更新](#catalog-refresh)），不需要先引用任何集合；只有 Server 对该目录的首次取回尚未完成或从未成功时为 409 `rule_set_catalog_not_ready`（不是空列表）。之后的取回失败保留上一份已接受目录。
 - `RuleSetCatalogPage`：`provider` 为 `{name, catalog, collection, sequence, generatedAt, verifiedAt}`；`items` 每项为 `{reference, name, set, digest, bytes, entries, upstream: {repo, ref, commit, path}, held}`，`reference` 即 `match.ruleSets` 的写法（`geosite:openai`），`set` 为目录键（`meta-geosite/openai`）；`total` 为匹配 `q` 的集合数。列出的 digest 是目录当前发布的内容，可能与某网络已绑定的不同。
 
 **成员列表** `GET /rule-sets/{ruleSetKey}/entries`：
@@ -201,6 +205,12 @@ validate 走相同准备与授权校验，但不存储 artifact、不预留版�
 - 新 netmap 立即生效，不等待 artifact：撤销与收紧不被下载阻塞。引用尚未取得的集合的规则不可用：first-match 在该规则停止（不跳到后续规则、不当作空集合、不 direct），源节点自己的出口方案依赖缺失集合时，该方案为不可用：出口捕获保持全范围捕获与 IPv6 sink、不发布 direct 例外，resolver socket 一律拒绝，与其他不可用出口方案一样本次安装报告失败（负向边界保持）。artifact 取得后 Control 以同一 netmap 再发布，自动重新应用，不需第二次 `up`。`meshway status --json` 的 `netmap.missingArtifacts` 与 `netmap.artifactProblem` 报告缺失的 digest 与最后错误（`download`／`integrity`／`storage`／`budget`）。
 
 ## 周期更新与生命周期
+
+### 目录更新 {#catalog-refresh}
+
+Server 启动后及周期调度中，对任一网络当前生效的每个 provider（内置项按 `ruleSetProviders` 替换或禁用后）自己取回 `index.json` 与签名并验签，不取 artifact。同一 (目录 URL, 信任钥集合) 是一个目录：无论多少网络引用，一次取回服务全部网络，期限取这些网络中最短的 `updateInterval`；集合准备（配置提交、手动或周期刷新）时验签通过的同一目录也算一次成功取回。期限、退避与远端集合相同：从上次成功起 `max(updateInterval, 1s)`，失败从 5 秒指数退避至 5 分钟，取回时间与失败次数持久保存。与其他下载共用 4 项传输预算。验签失败、取不到或 `sequence` 小于已接受值（`catalog_regressed`）都保留上一份已接受目录；接受新目录不改变任何网络的绑定，绑定只随集合刷新改变。内置目录约 2 MB，每天一次。
+
+### 集合检查
 
 Server 的周期调度器以当前网络配置、持久检查记录与绑定为输入，使用内部任务资格，不持有管理员会话。网络按轮转顺序检查，网内优先处理最久未检查的到期集合（remote 与 provider 集合；inline 不需更新）。调度下界为 1 秒；每轮检查间隔至少 100 ms，每个实例同时执行一项周期下载，所有配置／手动／周期调用共用进程内 4 项实际下载预算。同一来源的并发下载合并，最多同时接纳 8 项刷新工作；一次配置准备内的多个 provider 集合共用一次目录下载与验签。
 

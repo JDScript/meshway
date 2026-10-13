@@ -713,6 +713,7 @@
   "configuration_issue_netmap_limit": "The configuration sent to {node} would be {size}, over the {max} limit",
   "configuration_bytes": "{count} bytes",
   "configuration_issue_netmap_budget": "Too many nodes, or too many transport combinations on an edge: this version is over the limit for compiling node configurations. Reduce them and apply again; retrying as is will not succeed",
+  "configuration_issue_ineffective_block_option": "A block rule blocks the whole edge, so {field} has no effect",
   "configuration_issue_shadowed_rule": "Earlier rules (through rule {index}) already match every destination of this rule, so it never applies",
   "configuration_transport_invalid_host": "the host is not valid",
   "configuration_transport_keep_alive_count": "the keep-alive count must be above 0",

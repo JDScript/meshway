@@ -26,7 +26,7 @@
 
 ## 无样本与无连接
 
-Node 确认没有 link 时可表达无连接。Server 只有过期报告时则是未知。没有样本不表示 RTT=0、节点离线或丢包率=100%。
+Node 确认没有 link 时可表达无连接。Server 只有过期报告时则是未知。每对节点的产品级结论（connected／idle／unreachable／unknown）由 Server 汇总两端报告给出，见 [Adjacencies](/v2/state-reference/network#adjacencies)。没有样本不表示 RTT=0、节点离线或丢包率=100%。
 
 历史若有明确 idle 关闭事件，可展示“空闲、未测量”；缺少事件时只显示“无样本／原因未知”。[历史查询](/v2/state-reference/observations)不隐式发起测量。
 

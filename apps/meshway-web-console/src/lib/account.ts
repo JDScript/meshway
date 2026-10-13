@@ -31,6 +31,7 @@ export type ActivityTargetView =
   | { kind: "membership"; short: string }
   | { kind: "join_link"; short: string }
   | { kind: "configuration"; revision: number }
+  | { kind: "routing_selection"; profile: string }
 
 export function activityTarget(
   target: ActivityEvent["target"],
@@ -51,6 +52,8 @@ export function activityTarget(
       return { kind: "join_link", short: shortId(target.linkId) }
     case "configuration":
       return { kind: "configuration", revision: target.revision }
+    case "routingSelection":
+      return { kind: "routing_selection", profile: target.profile }
   }
 }
 

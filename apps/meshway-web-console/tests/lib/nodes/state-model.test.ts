@@ -82,7 +82,7 @@ const STATE: StateView = {
   nodes: {
     [A]: {
       hostname: "a",
-      derived: { ipInfo: {} },
+      derived: { addressScope: {} },
       freshness: "current",
       receivedAt: T1,
       observedAt: T0,
@@ -90,11 +90,12 @@ const STATE: StateView = {
     },
     [B]: {
       hostname: "b",
-      derived: { ipInfo: {} },
+      derived: { addressScope: {} },
       freshness: "awaiting_report",
     },
   },
   links: [link(B, A, "l2"), link(A, C, "l1"), link(B, C, "l3")],
+  adjacencies: [],
   paths: [
     {
       pathId: "p1",

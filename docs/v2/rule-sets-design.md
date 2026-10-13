@@ -1,6 +1,6 @@
 # 规则集引擎设计草案
 
-> **R1 已实现格式与 crate；R2a 已接线 Server／Policy／Control。** `crates/meshway-rules` 与 `tools/meshway-rules-cli` 见 [R1 实测](#r1-实测)；R2a 的实际接口与验收见 [R2a 接线](#r2a-接线)，R3 见 [R3 节点侧出口分割](#r3-节点侧出口分割)。可用行为、字段与 HTTP 契约的唯一定义是 [Rule Sets](/v2/configuration-reference/rule-sets)、[Routing](/v2/configuration-reference/routing) 与 [Netmap 设计](/v2/node/netmap-design#rule-set-artifacts)；本页其余部分是设计记录，不加入文档导航。出口分割已移到节点（R3）；X6 可信域名关联已接线，见 [Exit 设计 · 可信域名关联](/v2/node/exit-design#trusted-dns-associations)。
+> **R1 已实现格式与 crate；R2a 已接线 Server／Policy／Control。** `crates/meshway-rules` 与 `tools/meshway-rules-cli` 见 [R1 实测](#r1-实测)；R2a 的实际接口与验收见 [R2a 接线](#r2a-接线)，R3 见 [R3 节点侧出口分割](#r3-节点侧出口分割)，目录主动更新、artifact 回收与签名 held 见 [R2d 收尾](#r2d-收尾)。可用行为、字段与 HTTP 契约的唯一定义是 [Rule Sets](/v2/configuration-reference/rule-sets)、[Routing](/v2/configuration-reference/routing) 与 [Netmap 设计](/v2/node/netmap-design#rule-set-artifacts)；本页其余部分是设计记录，不加入文档导航。出口分割已移到节点（R3）；X6 可信域名关联已接线，见 [Exit 设计 · 可信域名关联](/v2/node/exit-design#trusted-dns-associations)。
 
 ## 目标与结论
 
@@ -187,13 +187,15 @@ feature 划分：默认含规范化、builder、loader、matcher 与 inline 转�
 
 1. `git ls-remote` 取 `meta` 当前 commit，`git fetch --depth 1 <commit>` 后只检出 `sources.toml` 中的路径。
 2. 每个上游文件运行 `meshway-rules convert --format classical`，并行；名称不合 `[a-z0-9][a-z0-9!@._+-]{0,127}` 的文件不转换（当前没有）。
-3. hold（脚本实现，CLI 不含）：对上一份目录中已有的集合，本次转换失败，或规范 `entries` 少于上一版的一半，即沿用上一版 `SetRecord` 与 artifact；首次出现的 hold 开 issue。从未发布过的集合转换失败则跳过并记入 `status.json.skipped`。上游删除的文件从目录移除。条目骤减属实时，手动 dispatch 并在输入 `accept` 列出集合名即发布新内容；转换失败的 hold 不能接受。
+3. hold（脚本实现，CLI 不含）：对上一份目录中已有的集合，本次转换失败，或规范 `entries` 少于上一版的一半，即沿用上一版 `SetRecord` 与 artifact，并在记录上写 `held`；首次出现的 hold 开 issue。从未发布过的集合转换失败则跳过并记入 `status.json.skipped`。上游删除的文件从目录移除。条目骤减属实时，手动 dispatch 并在输入 `accept` 列出集合名即发布新内容；转换失败的 hold 不能接受。
 4. 组 `sets/<collection>/<name>.json`（`upstream` repo／ref／commit／path＋CLI 的 ConversionRecord），把 artifact 移为 `artifacts/sha256-<hex>.mwrs`；复制上一份 `index.json` 到输出，使 `meshway-rules index` 的 sequence 接续。
 5. `meshway-rules index --sign-key`、`meshway-rules verify --public-key <CI 钥>`。
 6. 保留：`history/<sequence>.json` 存前 6 份目录原文，`artifacts/` 保留当前与这 6 份引用的全部 artifact（共 7 份目录）；更早的 artifact 仍在对应 tag。
 7. `scripts/push-dist.sh`：以 `--force-with-lease` 指向构建开始时的 `dist` commit（期间 `dist` 变化即失败）原子推送 `dist` 与 tag，再建 Release。
 
-hold 记录在 `dist/status.json`：`held: { "<collection>/<name>": { since, reason, digest } }`，`reason` 为 `conversion failed: <错误>` 或 `entries dropped from <旧> to <新>`，`since` 为首次 hold 时间。`index.json` 的 `CatalogSet` 拒绝未知字段，因此 held 不进签名目录；held 集合保留真实来源 commit，并把 `upstream.ref` 写成该 commit——目录要求同一 repo／ref 只有一个 commit，而 held 内容不属于分支当前 commit，于是 `upstreams[]` 中多一项 `ref` 等于 `commit` 的条目。
+hold 的权威记录是签名目录：held 集合的 `SetRecord.held`／`CatalogSet.held` 为 `{since, reason}`，`reason` 为 `conversion failed: <错误>` 或 `entries dropped from <旧> to <新>`，`since` 为首次 hold 时间，下一次构建从上一份 `index.json` 读取。`dist/status.json` 的 `held: { "<collection>/<name>": { since, reason, digest } }` 只是给人看的副本。
+
+上游一致规则（R2d 核实，写入发布仓库 README）：`upstreams[]` 列出目录内容实际来自的 (repo, ref, commit)，`Catalog::assemble` 要求同一 (repo, ref) 只有一个 commit。分支 ref 只对应本次转换的 commit；held 集合的内容来自更早的 commit，它的 `upstream.ref` 写成该 commit 本身（git 可按 commit 直接取回），所以 `upstreams[]` 多一项 `ref` 等于 `commit` 的条目，多个从同一 commit hold 的集合共用这一项。两者不冲突：分支 ref 与 commit ref 是不同的 (repo, ref) 键，同一 commit ref 只能对应它自己。以真实 CLI（`0.1.0-alpha.4`）在本地上游上构建“发布→hold（条目骤减）→持续 hold→accept”四份目录，`index`／`verify` 均通过，`since` 跨构建不变，accept 后 `held` 与 commit ref 一起消失；目录原文在私有证据 `.meshway/rules-publish/r2d-held-e2e/`。
 
 | 公钥 | 用途 |
 | --- | --- |
@@ -203,7 +205,7 @@ hold 记录在 `dist/status.json`：`held: { "<collection>/<name>": { since, rea
 
 **首发**：`catalog-1` 以本地流水线生成（相同脚本，macOS arm64 CLI；planck x86_64 musl CLI 对全部集合 digest 相同），CI 钥签名后推送；随后 Actions 首次运行因输入未变不发布，手动 dispatch（`accept`）签发内容相同的 `catalog-2`，打通 Actions 下载、签名、验证、推送与 Release。上游 `83c8208b`：2,177 个上游文件，目录 2,168 项；9 项只含 `DOMAIN-REGEX`（`conversion failed: No source item could be converted.`）未发布，0 项 hold；59 项有逐条跳过（`regex` 394、`invalidName` 8）；2,097 个不同 artifact 共 13,107,552 B，不含 `index.json` 的树 15,154,676 B，`index.json` 2,047,159 B；本地构建 18.7 s、Actions 9.7 s。digest 清单在私有证据 `.meshway/rules-publish/catalog-1/digests.txt`。
 
-**Server 怎样取与钉钥**：Server 从 `https://raw.githubusercontent.com/meshway-org/meshway-rules/dist/index.json` 取目录与签名，用内置公钥（源码常量，可由部署设置追加或替换，网络管理员不能改内置 provider 的信任根）验签，拒绝 `sequence` 小于该 provider 上次接受值的目录；再按 digest 取 `artifacts/sha256-<hex>.mwrs`，打开后比较 `digest()` 并以 `CatalogSet::check` 核对目录项。GitHub Release 下载会 302 重定向，而现行下载器拒绝重定向，所以不用 Release 作为 Server 来源。
+**Server 怎样取与钉钥**：Server 启动后及按 provider 间隔主动取 `https://raw.githubusercontent.com/meshway-org/meshway-rules/dist/index.json` 的目录与签名（不需要先引用集合，见 [Rule Sets · 目录更新](/v2/configuration-reference/rule-sets#catalog-refresh)），用内置公钥（源码常量，可由部署设置追加或替换，网络管理员不能改内置 provider 的信任根）验签，拒绝 `sequence` 小于该 provider 上次接受值的目录；再按 digest 取 `artifacts/sha256-<hex>.mwrs`，打开后比较 `digest()` 并以 `CatalogSet::check` 核对目录项。GitHub Release 下载会 302 重定向，而现行下载器拒绝重定向，所以不用 Release 作为 Server 来源。
 
 **`dist` 目录与 CLI**：
 
@@ -212,7 +214,7 @@ index.json  index.json.sig
 artifacts/sha256-<hex>.mwrs        不可变 artifact
 sets/<collection>/<name>.json      SetRecord：{ upstream, conversion }，含完整报告
 history/<sequence>.json            前 6 份目录原文（保留其 artifact）
-status.json                        流水线输入、held、skipped（不签名）
+status.json                        流水线输入、held 副本、skipped（不签名）
 ```
 
 集合名 `<collection>` 为 `[a-z0-9][a-z0-9-]{0,31}`，`<name>` 为 `[a-z0-9][a-z0-9!@._+-]{0,127}`。
@@ -231,7 +233,7 @@ meshway-rules match artifacts/sha256-<hex>.mwrs api.openai.com     # 或 IP
 
 **失败行为**：目录取不到、验签失败、sequence 回退或 artifact 校验失败都保留上一份已验证内容，`problem` 记录原因，不发布半份；目录超过 7 天未前进时 `RuleSetView` 报告 `stale`，但不使执行失败。首次没有任何可用内容时与现有 remote 相同：`not_ready`，引用它的规则不可执行。
 
-**held**：R2a 在 `CatalogSet`／`SetRecord` 增加可选 `held: {since, reason}`（省略即未 hold，现有目录不受影响），Server 在 `RuleSetView.held` 透出；发布流水线写入该字段后才可见，当前 workflow 仍只写 `status.json`。
+**held**：`CatalogSet`／`SetRecord` 的可选 `held: {since, reason}`（省略即未 hold）由发布流水线写入（R2d，`meshway-org/meshway-rules` `379bdb4`），Server 在 `RuleSetCatalogSet.held` 与 `RuleSetView.held` 原样透出。
 
 ## 配置面
 
@@ -526,6 +528,7 @@ meta `geosite/cn`（816,448 B），每个句柄打开后各执行 1,151 次查�
 | R1 格式＋crate（**已完成**） | `crates/meshway-rules`（format、build、load、match、inline、convert、mapped、catalog）；`tools/meshway-rules-cli`；`tools/meshway-rules-perf`（`perf:rules`） | 无；未改 Server／Policy | 已完成：与 spike 参考实现 0 差异；loader fuzz；跨架构 digest 一致；`mise run check`（见 [R1 实测](#r1-实测)） |
 | R2a Server＋Policy＋Control 接线（**已接线**，见 [R2a 接线](#r2a-接线)） | Server `resources/`（转换改用 R1、全局内容寻址存储、provider 目录与验签、`ruleSetProviders`、隐式展开、`RuleSetView` 新字段、`artifacts/{digest}` 路由与引用索引）；`meshway-configuration` netmap 类型（`RuleSetRef`、`meshway-netmap-2`）与配置类型；`meshway-policy` 的 `plan_match`／`capture`／validation 改用 matcher；`meshway-control` artifact 获取与缓存；OpenAPI／SDK 重生成 | R1 | 投影等价测试含规则集变异；缺 artifact fail closed；撤销不被下载阻塞；离线重启载入；1,000 节点引用同一 artifact 的 perf（Server 存储、刷新耗时、请求授权）；drift 与 Rust／TS 消费者 |
 | R2b 发布仓库 | `meshway-org/meshway-rules` 仓库、workflow、签名 secret、`dist` 分支 | R1 CLI；与 R2a 并行 | 上游未变不发布；单集合失败 hold；sequence 单调；Server 用钉住公钥验通一次真实目录 |
+| R2d 收尾（**已完成**，见 [R2d 收尾](#r2d-收尾)） | Server 目录主动更新、artifact 回收；发布流水线签名 held | R2a、R2b | 见该节验收 |
 | R3 出口分割物化（**已实现**，见 [R3 节点侧出口分割](#r3-节点侧出口分割)） | Policy 区间分割；Engine desired；Underlay nft interval 集合与私有捕获表 | R2a | 已完成：7,000 个 direct 区间的 `exit/off` 与全量 16 行矩阵；artifact 缺失保持全范围捕获 |
 | X6 可信域名（**已交付**） | 按 [Exit 设计](/v2/node/exit-design#工作包与依赖) 的 X6 边界；DNS owner 查询时调用 Policy `egress_rule_for_name` | R2a | 已验：同 IP 多名称冲突、TTL、跨 selection 不复用、域名规则仅在可信关联存在时可执行（`exit/off` 第 10 阶段） |
 
@@ -541,7 +544,7 @@ R0 列出的七项已由用户决定并写入相应章节：regex v1 逐条跳�
 | netmap | `projection.ruleSets: key → RuleSetRef { digest, format, bytes, entries }`，投影不含任何集合定义；`compilerVersion` `meshway-netmap-2` |
 | Policy | `compile::rules`：规则自身列表经 `RuleSet::from_inline`、引用集合经已加载句柄，逐规则 `match_domain`／`match_ip`；路径检测、出口分割（R3 起为区间分割，见下节）、节点 `LocalCompiler::{egress_rule_for_ip, egress_rule_for_name, effective, missing}` 与配置校验（`shadowed_rule`／`exit_outside_access` 读 artifact 迭代器）共用；缺句柄即 `UnavailableDependency` |
 | Server | `resources/rulesets`（来源与转换适配）、`catalogs`（目录验签，一次准备内共用目录）、`artifacts`（全局内容寻址 `rule_set_artifacts`、每 (来源, digest) 不可变溯源 `rule_set_records` 与随每次刷新更新的当前记录 `rule_set_record_heads`（同 digest 的新目录 sequence、upstream、held 与报告只更新后者）、每进程每 digest 一个 `Arc<RuleSet>`）、`rule_set_catalogs`（持久 sequence 单调，保存验签通过的目录原文）、`browse`（目录搜索、成员列表与命中查询，只读）、`node_netmap_artifacts`（netmap 写入同事务的引用索引）；`GET /rule-sets` 含隐式项，`GET /rule-sets/{key}/report`、`/entries`、`/match`，`GET /rule-set-catalog`，`GET /agent-api/v1/artifacts/{digest}`；schema 版本 5 |
-| Node | `meshway-control::netmap::artifacts`（取、校验、0400 原子落盘、按引用 GC、离线载入，sync 后顺序取回）；`meshway_engine::Netmap.artifacts` 与 `Desired::{missing, same}`；组件以 `Desired::same` 判断期望状态是否变化；IPC 8 `NetmapStatus.{missingArtifacts, artifactProblem}` |
+| Node | `meshway-control::netmap::artifacts`（取、校验、0400 原子落盘、按引用 GC、离线载入，sync 后顺序取回）；`meshway_engine::Netmap.artifacts` 与 `Desired::{missing, same}`；组件以 `Desired::same` 判断期望状态是否变化；IPC `NetmapStatus.{missingArtifacts, artifactProblem}` |
 | 生成链 | 生成器支持 `application/vnd.meshway.*` 二进制 GET（Rust 返回 `Vec<u8>`，TS 客户端不生成该 Node 专用操作） |
 
 ## R3 节点侧出口分割
@@ -553,20 +556,31 @@ R0 列出的七项已由用户决定并写入相应章节：regex v1 逐条跳�
 | desired | `meshway_engine::Desired::{capture, partition, capture_summary}`；DNS 的本地 resolver 判定与 served 上游检查读 `Desired::partition` |
 | 安装 | `meshway-underlay` `kernel::egress`：受管区间为 `managed4`／`managed6` interval 元素（无回显批替换、读回逐元素与计数核验，大小为两份方案的暂存并集），未经活动 TUN 的受管目的立即拒绝（TCP reset／ICMP admin-prohibited）；一条 IPv4 RPDB 选择器查私有捕获表，表中为活动时受管区间的最小 CIDR 覆盖；journal v2 只记 gate（区间与设备），表内路由由 gate 推出，恢复时精确对账删除；路由变更每 64 条等待内核监视器观测；DNS 锚点冲突检查豁免该表 |
 | 可信关联（X6） | `LocalCompiler::associated_capture`：关联地址按名称规则并入（出口／冲突）或移出（direct／unmanaged）受管区间，`Desired::with_associations` 重算捕获，到期由 Engine 重新应用；超出节点侧上限即全范围捕获；Server 不再校验捕获大小 |
-| 诊断 | IPC 8 `NetmapStatus.capture`、CLI `meshway status` 的 Egress 行；`mise run perf:capture` |
+| 诊断 | IPC `NetmapStatus.capture`、CLI `meshway status` 的 Egress 行；`mise run perf:capture` |
 
 不变量与选择：分割计算只在 Policy，Underlay 只把区间转换为 nft 元素与 CIDR 覆盖，不做匹配；源 socket 的源地址在 `connect` 时由 FIB 选定，nft 标记后重路由会保留物理接口地址，因此 IPv4 导向仍用私有表路由（区间的 CIDR 覆盖），nft 集合承载原子的负向门与 IPv6 sink，不引入源端 SNAT／conntrack 依赖，严格 rp_filter 下回复路径不变。
 
 实测与上限见 [Routing · 节点侧上限](/v2/configuration-reference/routing#capture-limits)；隔离组件证据在私有 `.meshway/validation/r3/kernel/`（`default_capture_…`、`large_partitions_…`、SIGKILL 后负向保留），矩阵在 `.meshway/validation/r3/matrix/`（合并 X6 后 `20261012T115405Z-61e14403` 16 行通过）。
 
+## R2d 收尾
+
+| 范围 | 实现（owner） |
+| --- | --- |
+| 目录主动更新 | `resources::scheduler` 每轮先查本网络有效 provider 的目录是否到期（`catalogs::due`：从未验签、或上次成功／失败加间隔／退避；集合准备的验签算成功），到期即 `catalogs::refresh`：`Downloads::catalog` 在共用 4 项预算内下载并验签，同一事务 `accept_catalog`（sequence 单调，回退为 `catalog_regressed`）并写 `rule_set_catalog_checks`（schema 7）。键为 (目录 URL, 信任钥集合)，多网络只取一次；调度串行，不需合并 |
+| artifact 回收 | `resources::artifacts::collect`（调度器启动时及每小时一次，单个写事务）：保留未删除网络全部版本的初始绑定（经 sealer 打开 `configuration_versions.bindings`）与 `rule_set_bindings` 刷新绑定引用的 digest，以及 `node_netmap_artifacts` 中当前或被替换不足 `MAX_LEASE_MS`（24 小时，租约有效期上限）的引用；其余连同 `rule_set_records`／`rule_set_record_heads` 删除，并移出进程内句柄缓存。删除 `rule_set_artifacts_retained` 触发器 |
+| 签名 held | 发布流水线写 `SetRecord.held`，`meshway-rules index` 带入 `CatalogSet.held`；Server 视图早已透出 |
+
+保留期常量来源：配置版本由 `configuration_versions_no_delete` 触发器永久保留，因此“可回滚”的绑定没有时间上限；时间窗口只来自租约——`store::resources::artifacts::MAX_LEASE_MS`（`netmap::SyncTiming` 允许的最长租约，24 小时），与 `node_netmap_artifacts` 修剪、`GET /agent-api/v1/artifacts/{digest}` 授权使用同一常量。
+
+验收：`app::tests::resources::catalogs`（未引用时取回；两网络同 URL 只取一次；从未成功为 409；失败保留；新 sequence 替换、低 sequence 不替换；held 在目录页与视图透出）、`app::tests::resources::retention`（租约窗口内不回收、窗口外回收被替换内容及其记录，初始与刷新绑定均保留并可经 `initial`／`refreshed` 回滚）；发布仓库 `scripts/test_publish.py`；Planck 16 行矩阵 `20261012T212926Z-abd9b9c8`、`20261012T232408Z-75436f19` 与合入 main 后的 `20261013T015222Z-59ebfafc` 全部通过；新部署的本地 Server 在无任何引用时 3 秒内取得真实内置目录（`geosite`／`geoip`，sequence 3），证据 `.meshway/validation/r2d/builtin-prewarm/`。
+
 ## 未解决
 
 - sing-box `ip_cidr` 接受裸地址（视为 /32、/128），现转换器与 R1 都报告为 `invalidCidr`；是否放宽未定。
-- 减少 50 % hold、保留 7 份目录与 issue 由 R2b workflow 实现；CLI 的 `SetRecord.held` 已可写入，workflow 尚未写入目录。
 - 打开耗时与 FST 节点数线性相关（3.66 MB 约 42 ms）；若需更快，可只在 Server 入库时做 FST 证明、节点以 digest 信任，但那会让“任意字节不 panic”依赖 digest 来源，需另行决定。
 - R3 的导向用私有捕获表路由而不是设计稿的 nft fwmark：fwmark 重路由不改源地址，需源端 SNAT 并在严格 rp_filter 下失去回复路径；是否仍要求 fwmark 方案待用户决定。
 - 我们的规范化会拒绝 sing-box／mihomo 接受的部分名称（例如 `xn--wcvs22d1m.hk`、含 `_` 的名称），这些条目被报告并跳过，与上游语义存在差距（[规范化](#规范化与-digest)）。
-- 目录超过 7 天未前进时的 `stale` 视图字段未实现。
+- 目录超过 7 天未前进时的 `stale` 视图字段未实现；Server 自己取回目录的最后错误只持久保存（`rule_set_catalog_checks.problem`），尚未出现在目录页或 409 的 params 中。
 - 1,000 节点共享一个 artifact 的 Server perf（存储、刷新耗时、授权查询）未测。
 - 未在 Linux arm64 与常驻 lab 节点上测量；macOS 时间波动较大。R1 的 Linux clippy 覆盖 `aarch64-unknown-linux-musl`，测试与实测只在 macOS arm64 与 planck x86_64 上运行。
-- Server 端 artifact 永久保留（回滚总可用）；无引用 artifact 的回收策略未定。
+- 集成黑盒测试（`apps/meshway-server/tests/`）的 App 使用生产 HTTPS 连接器：它们创建网络后，Server 会在后台尝试取回内置目录（离线时 DNS 失败并退避，不影响结果）。库单测使用离线连接器，资源测试注入自己的 HTTPS 源。

@@ -33,6 +33,19 @@ impl Connector for Https {
             .map_err(|_| ResourceProblem::DownloadFailed)
     }
 }
+/// A connection boundary that resolves nothing: every download fails.
+#[cfg(test)]
+pub(crate) struct Offline;
+#[cfg(test)]
+impl Connector for Offline {
+    fn resolve<'a>(&'a self, _: &'a str, _: u16) -> ResolveFuture<'a> {
+        Box::pin(async { Err(ResourceProblem::DownloadFailed) })
+    }
+    fn client(&self, _: &str, _: &[SocketAddr]) -> Result<reqwest::Client, ResourceProblem> {
+        Err(ResourceProblem::DownloadFailed)
+    }
+}
+
 pub(crate) fn client_builder(
     host: &str,
     addresses: &[SocketAddr],

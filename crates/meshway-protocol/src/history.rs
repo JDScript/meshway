@@ -2,11 +2,11 @@ use crate::object::{wire_object, wire_tagged};
 use chrono::{DateTime, Utc};
 use meshway_model::wire::required_nullable as nullable;
 use meshway_model::{
-    ActivityId, JoinLinkId, MembershipId, NetworkId, RequestId, Revision, SessionId, UserId,
+    ActivityId, JoinLinkId, MembershipId, NetworkId, NodeId, RequestId, Revision, SessionId, UserId,
 };
 
 wire_tagged! {
-/// Verified user or system responsible for a committed activity.
+/// Verified user, Node or system responsible for a committed activity.
 pub enum ActivityActor {
 /// User identity with an email snapshot from the time of the activity.
 User{
@@ -16,7 +16,12 @@ User{
     #[serde(deserialize_with="nullable")]email:Option<String> [required=true],
 },
 /// Server-originated action without a user actor.
-System{}}}
+System{},
+/// Authenticated Node acting for itself, such as `meshway exit` on the device.
+Node{
+    /// Stable identifier of the Node that performed the action.
+    #[serde(rename="nodeId")]node_id:NodeId,
+}}}
 wire_tagged! {
 /// Stable typed reference to the object affected by a committed activity.
 pub enum ActivityTarget {
@@ -51,6 +56,13 @@ JoinLink{
 Configuration{
     /// Configuration revision produced by the operation.
     revision:Revision
+},
+/// A Node's persistent routing profile selection.
+RoutingSelection{
+    /// Node whose selection changed.
+    #[serde(rename="nodeId")]node_id:NodeId,
+    /// Profile the selection names after the action.
+    profile:String,
 }}}
 
 macro_rules! actions {
@@ -127,6 +139,8 @@ actions! {
     JoinLinkCreate = "joinLink.create",
     /// Records revocation of a join link with a joinLink target carrying linkId.
     JoinLinkRevoke = "joinLink.revoke",
+    /// Records a committed routing profile selection by the Node itself or a user, with a routingSelection target carrying nodeId and the selected profile.
+    RoutingSelect = "routing.select",
 }
 
 wire_object! {
@@ -136,7 +150,7 @@ pub struct ActivityEvent {
     pub id:ActivityId,
     /// Server time at which the action completed.
     pub at:DateTime<Utc>,
-    /// Verified user or system that performed the action.
+    /// Verified user, Node or system that performed the action.
     pub actor:ActivityActor,
     /// Completed management operation represented by this record.
     pub action:ActivityAction,

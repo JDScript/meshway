@@ -202,6 +202,33 @@ nft 进程峰值 RSS 约 1.6 KB／区间（16,384 区间 28 MB）。带回显的
 
 用户选择属于持久的使用状态。重启后仍在 allowed 且未被锁定时恢复；否则采用当前管理员默认。任何方案切换都结束旧出口存量连接，不能携带旧方案的 NAT／流资格跨过去。
 
+`auto` 当前没有可信的地区输入：编译不使用节点的公网地址或 GeoIP，`auto` 总是采用 `auto.fallback`，状态中的 `auto.basis` 为 `noTrustedRegion`。按地区选择尚未实现。
+
+#### 选择的入口
+
+持久选择只有一份，归 Server（`routing_selections`，按节点当前身份保存；身份改变后旧选择不再适用）。三个入口共用同一提交：
+
+| 入口 | 调用者 | 约束 |
+| --- | --- | --- |
+| `selectNodeRoutingProfile`（`POST /agent-api/v1/routing-selection`） | 节点自身（`meshway exit`），需当前 instance | `expectedVersion` 为节点 netmap 中自身的选择版本，不一致 `409 version_conflict` |
+| `getNodeRoutingSelection`（`GET /api/v1/networks/{networkId}/nodes/{nodeId}/routing-selection`） | 用户 | 成员只能读自己的 User 身份设备，Owner／Admin 可读任意节点；其他为 404 |
+| `setNodeRoutingSelection`（`POST` 同一路径，`{requestId, profile}`） | 用户 | 可见范围同上，Tag 设备只有 Owner／Admin 可切；同一 `requestId` 重试返回当前选择，换节点或方案得 `409 request_id_conflict` |
+
+方案不在节点的 allowed 内、或 assignment 已锁定而不是默认方案时，得 `422 routing_profile_unavailable`（`params.reason` 为 `notAllowed`／`locked`，`params.allowed` 为允许的方案）。每次接受的切换都使版本加一（含切回同名方案），在同一事务记录活动 `routing.select`（actor 为节点或用户，target 为 `routingSelection {nodeId, profile}`），并重新编译 netmap；节点经下一次 `sync` 取得。节点库存 `NodeInventoryView.routing` 给出列表摘要 `{requestedProfile, appliedProfile, locked, canSelect}`。
+
+#### 当前选择的状态 {#selection-state}
+
+`RoutingSelectionState` 由 `meshway-policy` 的同一函数求出：Server 用当前配置回答以上接口，节点用自己的 netmap 投影求出 `NetmapStatus.routing`，两者对同一配置相同。
+
+| 字段 | 含义 |
+| --- | --- |
+| `requestedProfile`／`version` | 节点当前身份下的持久选择与版本；没有选择为 null（下一次节点 CAS 基准为 null） |
+| `appliedProfile` | 生效方案：请求的方案仍在 allowed 且未被锁定时为它，否则为 `defaultProfile` |
+| `requestedUnavailable` | 请求的方案为何未生效：`notAllowed`、`locked`；生效或无请求为 null |
+| `defaultProfile`／`locked` | 合并后的 assignment 默认方案与锁定 |
+| `profiles[]` | 允许的方案（assignment 顺序，去重）：`name`、`kind`（`mesh`／`global`／`auto`／`custom`）、`rules`（方案自身规则数，不含公共规则）、`exits`（规则与 fallback 引用的出口节点）、`fallback`（未命中动作；`auto` 为 null） |
+| `auto` | 生效方案为 `auto` 时的解析：`profile`（实际采用的方案）与 `basis`；否则为 null |
+
 ### direct / unmanaged
 
 两者从源节点本地网络发出，不受 Mesh access 的额外过滤。必须是明确的有效配置／使用选择；出口故障、授权撤回、lease 到期不能当成隐式切换为不接管。

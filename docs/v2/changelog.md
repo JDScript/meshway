@@ -4,7 +4,43 @@
 
 ## 未发布
 
-wire 6、IPC 8、`compilerVersion` 不变；Server schema 版本 5（新增 `rule_set_record_heads`；开发环境重新初始化数据目录）。HTTP 契约：`SyncRequest` 新增可省略的 `lease`。alpha.4 代码审阅修复（F4a）：
+wire 6、`compilerVersion` 不变，IPC 9（C3）；Server schema 版本 7（F4a 新增 `rule_set_record_heads`，C3 为 6，R2d 新增 `rule_set_catalog_checks` 并允许回收 artifact 为 7；开发环境重新初始化数据目录）。HTTP 契约：`SyncRequest` 新增可省略的 `lease`；`listRuleSetCatalog` 描述更新（无字段变化）；S3 的 State／库存／诊断变化见下。
+
+E1 出口 ICMP 错误与出口自指（wire、IPC、HTTP 契约与 `compilerVersion` 均不变）：
+
+- 出口 ICMP 错误回传：ICMPv4 destination unreachable（含 fragmentation needed）与 time exceeded 作为其引用活流的 RELATED 报文，沿该流原路径回复方向返回源；出口之外路由器与出口主机自身的错误都经出口 TUN（`route` 链、新 `local` 输出路由链、一条 `fwmark＋ipproto icmp` RPDB 规则），数据面按引用的 forward 包、circuit、路径与来源规则（`admission::netmap::admit_related`）准入，每流每端每秒至多 10 条，`SecureNode::related_counters` 计数；traceroute 显示出口与其后各跳，PMTU 发现经出口收敛。见 [数据面 · ICMP 错误](/v2/node/dataplane#icmp-errors)、[Exit 设计 · ICMP 错误](/v2/node/exit-design#icmp-errors)。
+- Underlay 的路由读取（`get_routes`，全部归属核对的唯一来源）忽略内核派生的缓存例外（`RTM_F_CLONED`）：PMTU 例外随 fragmentation needed 出现在源的受管捕获表后，egress owner 不再把它当作外来路由而在下一次门切换（如租约到期暂停）时失败闭合并卡在冲突。
+- 出口的 conntrack 确认不再阻塞：首包死于出口（TTL／MTU）时最长 3 秒的等待原先挡住 daemon 出口 driver 与 Underlay owner 的全部后续工作，现与其他流并行。
+- 出口集合含源自己时按有序主备执行：自己是那个位置上永远可用的 direct，`[self, other]` 为 direct，`[other, self]` 在 other 配置可用时经 other、否则 direct（`matching::executed` 统一用于分割、`egress` 计划、DNS plan、路径检测与节点判定），`geoip:cn → exit sha` 这类公共规则不再拒绝 sha 自己的流量、也不再使其 DNS 为 `exitPlanRequired`；Access 不变。见 [Routing · Action](/v2/configuration-reference/routing#action)。
+- `exit/off` 新增第 12 阶段（router＋窄 MTU 的 far 网段：traceroute、PMTU、伪造／限速）。
+
+验证：`exit/off`（含 ICMP 阶段，合并前为第 11 阶段）Planck `20261013T011243Z-62bc2868` 等通过；三次全量矩阵 15／14／14 行通过，未通过行（`netmap/expiry` 租约到期前的 suspended／TUN 竞态、`exit/off` 第 9 阶段日志读取竞态、一次 `udp/resolv-conf` CLI 样本）与 S3 同类或单行复跑通过，详见[验收范围](/v2/node/validation)；证据 `.meshway/validation/e1/`、`.meshway/node-lab/e1/`。
+
+规则集收尾（R2d）：
+
+- Server 启动后及按 provider 间隔自己取回并验签每个网络生效的 provider 目录（内置与覆盖；同一目录 URL 与信任钥只取一次，共用下载预算，退避持久保存，失败与 sequence 回退保留上一份），`GET /rule-set-catalog` 不再需要先引用集合；`rule_set_catalog_not_ready` 只表示首次取回尚未完成或从未成功。见[规则集 · 目录更新](/v2/configuration-reference/rule-sets#catalog-refresh)。
+- 无引用 artifact 回收：未删除网络任一版本的初始或刷新绑定引用的 artifact 保留；被刷新替换或只属于已删除网络的 artifact，在可能仍处于租约内（24 小时）的 netmap 都不再引用后连同记录删除，启动时及每小时一次。见[规则集 · artifact 保留](/v2/configuration-reference/rule-sets#artifact-retention)。
+- 发布仓库 `meshway-org/meshway-rules`（`379bdb4`）把 hold 写入签名目录 `CatalogSet.held`，`since` 从上一份目录读取，`status.json` 只是副本；README 写明 held 集合 `upstream.ref` 为其 commit 的上游一致规则。
+- runtime fixture：`netmap/expiry` 在 Status 去掉租约后 2 秒内要求 TUN 删除并记录延迟，不再与 daemon 的撤回竞争；根因见[租约到期撤回](/v2/node/validation#lease-expiry-withdrawal)。
+- `validation.md` 补齐 R2a、X6、R3、F4a 的矩阵行与证据位置。
+
+验证：Planck 16 行矩阵 `20261012T212926Z-abd9b9c8`（`4164e184`）、`20261012T232408Z-75436f19`（`b4fe0619`）与合入 main（含 S3、C3）后的 `20261013T015222Z-59ebfafc`（`861d58d3`）全部通过；高负载下的未通过矩阵与签名见[验收范围](/v2/node/validation#netmap-rows)；`mise run check` 通过；证据 `.meshway/validation/r2d/`。
+
+出口方案切换（C3）：IPC 升为 9，`activity_events` 新增 Node actor 与路由方案目标（schema 6）。
+
+- `meshway exit [profile|off]`：无参数显示本机 netmap 中的方案选择（生效／请求的方案、默认与锁定、`auto` 解析、每个允许方案的摘要）；带方案时请 Server 切换并等待本机应用带新版本的 netmap，`off` 即 `mesh`。人读输出、`--json` 与退出码见 [出口方案](/v2/node/runtime#exit-profile)。
+- IPC 9：命令 `SelectProfile`、结果 `Selection`、`NetmapStatus.routing`，错误码 `profileNotAllowed`／`profileLocked`／`selectionConflict`；`meshway status` 新增 Profile 行。
+- Control 调用 `selectNodeRoutingProfile`，CAS 基准为持有 netmap 中自身的选择版本；方案被拒或版本过期不结束 session／instance。本机只缓存 netmap，不保存选择。
+- HTTP：`selectNodeRoutingProfile` 的回答改为 `{selection: RoutingSelectionState}`，版本不一致改为 `409 version_conflict`、方案不可选为 `422 routing_profile_unavailable`（带允许的方案）；新增 `getNodeRoutingSelection`、`setNodeRoutingSelection`（`/api/v1/networks/{networkId}/nodes/{nodeId}/routing-selection`，成员限自己的 User 设备，Owner／Admin 任意节点，`requestId` 幂等）；`NodeInventoryView.routing` 摘要；活动 `routing.select`（actor `node`／`user`，target `routingSelection`）。三个入口共用同一提交，选择版本跨身份单调递增，过期身份的选择不作为 CAS 基准。
+- `RoutingSelectionState` 由 `meshway-policy` 唯一计算，Server 与节点对同一配置给出同一值；`auto` 没有可信地区输入，总是采用 fallback（`basis: noTrustedRegion`）。
+- Console 仅补齐新增枚举的映射。
+- `exit/off` 第 11 阶段：真实 CLI 切换后旧选择的 TCP／UDP 流结束、新流经出口，`exit off` 后无外部捕获。
+
+验证：Planck 16 行矩阵 `20261012T224334Z-469128d0`（`7facc522`）与合入 main 后的 `20261013T000304Z-56e3679e`（`f2441b12`）全部通过；证据 `.meshway/validation/c3/`。已知：切到 `global:<exit>` 与 `useWithExit` split resolver 组合时节点 DNS 安装拒绝新 netmap，见[验收范围 · 剩余边界](/v2/node/validation#remaining-boundaries)。
+
+此前：wire 6、IPC 8、`compilerVersion` 不变；Server schema 版本 5（新增 `rule_set_record_heads`；开发环境重新初始化数据目录）。HTTP 契约：`SyncRequest` 新增可省略的 `lease`；S3 的 State／库存／诊断变化见下。alpha.4 代码审阅修复（F4a）：
+
+alpha.4 代码审阅修复（F4a）：
 
 - A1 `POST /agent-api/v1/dns-associations` 接纳前对条目执行与 overlay 相同的校验（`DnsAssociation::validate`：名称／CNAME 为 1–253 B ASCII 小写等），非法条目 400 `invalid_request`，不再让源与出口的 `sync` 持续内部错误。
 - A2 出口 overlay 容量在接纳时对源与出口统一预算：任一方未到期条目将超过 4,096 即 429 `state_limit`；交付时不再截断单方副本；源换出口时唤醒原出口。
@@ -29,15 +65,16 @@ wire 6、IPC 8、`compilerVersion` 不变；Server schema 版本 5（新增 `rul
 
 验证：Planck 16 行矩阵 `20261012T195053Z-bc48b6cc` 全部通过（`exit/off` 第 10 阶段含跨关联到期的 TCP／UDP 持有流）；证据 `.meshway/validation/f4a/`。
 
-E1 出口 ICMP 错误与出口自指（wire 6、IPC 8、HTTP 契约与 `compilerVersion` 不变）：
+Console 提出的 Server 侧欠账（S3）：
 
-- 出口 ICMP 错误回传：ICMPv4 destination unreachable（含 fragmentation needed）与 time exceeded 作为其引用活流的 RELATED 报文，沿该流原路径回复方向返回源；出口之外路由器与出口主机自身的错误都经出口 TUN（`route` 链、新 `local` 输出路由链、一条 `fwmark＋ipproto icmp` RPDB 规则），数据面按引用的 forward 包、circuit、路径与来源规则（`admission::netmap::admit_related`）准入，每流每端每秒至多 10 条，`SecureNode::related_counters` 计数；traceroute 显示出口与其后各跳，PMTU 发现经出口收敛。见 [数据面 · ICMP 错误](/v2/node/dataplane#icmp-errors)、[Exit 设计 · ICMP 错误](/v2/node/exit-design#icmp-errors)。
-- Underlay 的路由读取（`get_routes`，全部归属核对的唯一来源）忽略内核派生的缓存例外（`RTM_F_CLONED`）：PMTU 例外随 fragmentation needed 出现在源的受管捕获表后，egress owner 不再把它当作外来路由而在下一次门切换（如租约到期暂停）时失败闭合并卡在冲突。
-- 出口的 conntrack 确认不再阻塞：首包死于出口（TTL／MTU）时最长 3 秒的等待原先挡住 daemon 出口 driver 与 Underlay owner 的全部后续工作，现与其他流并行。
-- 出口集合含源自己时按有序主备执行：自己是那个位置上永远可用的 direct，`[self, other]` 为 direct，`[other, self]` 在 other 配置可用时经 other、否则 direct（`matching::executed` 统一用于分割、`egress` 计划、DNS plan、路径检测与节点判定），`geoip:cn → exit sha` 这类公共规则不再拒绝 sha 自己的流量、也不再使其 DNS 为 `exitPlanRequired`；Access 不变。见 [Routing · Action](/v2/configuration-reference/routing#action)。
-- `exit/off` 新增第 11 阶段（router＋窄 MTU 的 far 网段：traceroute、PMTU、伪造／限速）。
+- 相邻连接结论：`StateView.adjacencies`（与 `state.delta.adjacencies`）每对节点一条 `{a, b, status: connected | idle | unreachable | unknown}`，由 Server 用两端各自的当前报告判定（含调用者读不到的完整报告），只列调用者已能看到的节点对；成员与 Owner 对同一对得到相同结论，`links` 仍按权限保留为诊断证据。见 [Adjacencies](/v2/state-reference/network#adjacencies)。
+- 节点 Mesh DNS 名称：`NodeInventoryView.dnsName`（hostname 加规范化 `dns.domain`）与 `magicDNS`，与库存同一配置版本，GET 与 SSE `entities` 一致。
+- State 不再返回 GeoIP／ASN：`derived.ipInfo` 换成 `addressScope: {ip: public | nonPublic | mesh}`；`derived.location` 为 `LocationObservation {address, endpointSource, observedAt, expiresAt, sourceSocketId, sourceGeneration}`（去掉 `data`／`datasetId`，不依赖数据集），多个合格地址按 STUN 先于 interface、IPv4 先于 IPv6 取最高等级，该等级有多个地址时为 `ambiguousObservation`；`LocationAbsentReason` 只剩 `noObservation`／`observationExpired`／`ambiguousObservation`；OpenAPI 删除 `IpInfo`、`GeoObservation`、`GeoIpData`、`LookupResult_*` 等组件。数据集只留给自动方案与 `ip-datasets lookup`，导入数据集不再产生 State 事件。见[地址类别与位置依据](/v2/state-reference/ip-info)。
+- 业务路径：Node 报告参与的已建立业务 circuit 为 `NodeState.paths`（完整路径、本节点角色、`netmap`；端点 `peerConfirmed`、中继 `sent`；每份最多 64 条，`STATE_MAX_PATHS`），Server 校验参与与角色位置后接受（此前拒绝任何非空 `paths`），`StateView.paths` 只聚合当前未到期的路径。此前 A→R→B 持续流期间三节点都报 `paths: {}`、links `businessDependencies: 1`（矩阵 `20261012T195053Z-bc48b6cc` `udp-resolved` 行的 `state-traffic-*.json`）；fixture 的承载检查现在要求三节点各报告 A→R→B 路径及自身角色。见 [PathState](/v2/state-reference/resources#paths)。
+- 配置校验：`edge_transport_unavailable` 一次报出全部受影响的（Mesh 路由规则，边），一条路由要经过的每条无承载边各一条，上限 64 条；block 组网规则写了 `transports` 或 `keepalive: true` 时接受并给出警告 `ineffective_block_option`（`params.field`）。见[配置问题](/v2/api/problems#configuration-issue)。
+- 批量路径检测（一个来源到所有节点）未做，仍按目的地逐个调用 `evaluateConfiguration`。
 
-验证：`exit/off`（含第 11 阶段）Planck `20261013T011243Z-62bc2868` 等通过；三次全量矩阵 15／14／14 行通过，未通过行（`netmap/expiry` 租约到期前的 suspended／TUN 竞态、`exit/off` 第 9 阶段日志读取竞态、一次 `udp/resolv-conf` CLI 样本）与 S3 同类或单行复跑通过，详见[验收范围](/v2/node/validation)；证据 `.meshway/validation/e1/`、`.meshway/node-lab/e1/`。
+验证：Planck 16 行矩阵 `20261012T220402Z-33d41c74` 14 行通过（含新的 State 路径检查）；`exit/off`、`netmap/expiry` 失败，同一窗口 main `1852b477` 复跑这两行（`20261012T224249Z-0dc077d7`）同样失败，见[验收范围](/v2/node/validation#traffic-anchor)。
 
 ## v0.1.0-alpha.4
 

@@ -91,6 +91,8 @@ pub enum StreamEvent<C, E, P> {
         removed: Vec<NodeId>,
         /// Replacement collection of currently visible aggregated links.
         links: Vec<crate::state::AggregatedLink>,
+        /// Replacement collection of current pair connection conclusions.
+        adjacencies: Vec<crate::state::AggregatedAdjacency>,
         /// Replacement collection of currently visible aggregated paths.
         paths: Vec<crate::state::AggregatedPath>,
     },

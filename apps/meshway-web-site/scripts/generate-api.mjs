@@ -71,6 +71,8 @@ const titles = {
   deleteNode: "删除节点",
   revokeNodeKey: "撤销节点密钥",
   getNodeSettings: "读取节点设置",
+  getNodeRoutingSelection: "读取节点路由方案",
+  setNodeRoutingSelection: "切换节点路由方案",
   getNodeState: "读取节点状态",
   listObservations: "列出观测订阅",
   createObservation: "创建观测订阅",

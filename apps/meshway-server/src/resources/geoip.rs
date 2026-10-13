@@ -1,8 +1,7 @@
 use crate::error::Error;
 use chrono::{DateTime, Utc};
 use maxminddb::{Reader, geoip2};
-use meshway_model::{ArtifactId, resources::*, state::EndpointSource};
-use meshway_protocol::state::{DerivedNodeState, VisibleReport};
+use meshway_model::{ArtifactId, resources::*};
 use std::{collections::BTreeMap, net::IpAddr};
 
 #[derive(Default)]
@@ -154,130 +153,8 @@ impl GeoIp {
             },
         }
     }
-    pub fn derive(
-        &mut self,
-        report: Option<&VisibleReport>,
-        current: bool,
-        mesh_addresses: &std::collections::BTreeSet<IpAddr>,
-        now: DateTime<Utc>,
-    ) -> DerivedNodeState {
-        let mut endpoints = vec![];
-        match report {
-            Some(VisibleReport::Full { report }) => {
-                for (socket, state) in &report.sockets {
-                    for endpoint in &state.endpoints {
-                        let source = match endpoint.origin {
-                            EndpointSource::Configured { .. } => None,
-                            EndpointSource::Interface { .. } => Some(LocationSource::Interface),
-                            EndpointSource::Stun { .. } => Some(LocationSource::Stun),
-                        };
-                        endpoints.push((
-                            socket,
-                            state.generation,
-                            &endpoint.address,
-                            source,
-                            endpoint.observed_at,
-                            endpoint.expires_at,
-                        ));
-                    }
-                }
-            }
-            Some(VisibleReport::Peer { report }) => {
-                for endpoint in &report.endpoints {
-                    let source = match endpoint.candidate.source {
-                        meshway_protocol::state::CandidateSource::Configured => None,
-                        meshway_protocol::state::CandidateSource::Interface => {
-                            Some(LocationSource::Interface)
-                        }
-                        meshway_protocol::state::CandidateSource::Stun => {
-                            Some(LocationSource::Stun)
-                        }
-                    };
-                    endpoints.push((
-                        &endpoint.socket_id,
-                        endpoint.generation,
-                        &endpoint.candidate.address,
-                        source,
-                        endpoint.candidate.observed_at,
-                        endpoint.candidate.expires_at,
-                    ));
-                }
-            }
-            None => {}
-        }
-        let mut ip_info = BTreeMap::new();
-        let mut observations = vec![];
-        let mut observed_ips = std::collections::BTreeSet::new();
-        let mut absent = LocationAbsentReason::NoObservation;
-        for (socket, generation, address, source, observed_at, expires_at) in endpoints {
-            let Ok(address) = address.parse::<std::net::SocketAddr>() else {
-                continue;
-            };
-            let info = if mesh_addresses.contains(&address.ip()) {
-                IpInfo {
-                    geoip: LookupResult::NotApplicable {
-                        reason: NotApplicableReason::MeshAddress,
-                    },
-                    asn: LookupResult::NotApplicable {
-                        reason: NotApplicableReason::MeshAddress,
-                    },
-                }
-            } else {
-                self.lookup(address.ip(), now)
-            };
-            ip_info.insert(address.ip().to_string(), info.clone());
-            let Some(source) = source else {
-                continue;
-            };
-            if !is_public(address.ip()) || mesh_addresses.contains(&address.ip()) {
-                continue;
-            }
-            if !current || expires_at <= now {
-                absent = LocationAbsentReason::ObservationExpired;
-                continue;
-            }
-            observed_ips.insert(address.ip());
-            match info.geoip {
-                LookupResult::Available {
-                    dataset_id, data, ..
-                } => observations.push(GeoObservation {
-                    address: address.ip().to_string(),
-                    source_socket_id: socket.clone(),
-                    source_generation: generation,
-                    dataset_id,
-                    data,
-                    endpoint_source: source,
-                    observed_at,
-                    expires_at,
-                }),
-                LookupResult::NotFound { .. } => absent = LocationAbsentReason::NotInDataset,
-                LookupResult::Unavailable {
-                    reason: UnavailableReason::DatasetUnavailable,
-                } => absent = LocationAbsentReason::DatasetUnavailable,
-                _ => absent = LocationAbsentReason::LookupFailed,
-            }
-        }
-        // No preferred-underlay decision exists. Even two successful different
-        // public IP observations are ambiguous rather than map-order selection.
-        let different = observed_ips.len() > 1;
-        let location = if different {
-            absent = LocationAbsentReason::AmbiguousObservation;
-            None
-        } else {
-            observations.into_iter().min_by_key(|o| o.expires_at)
-        };
-        DerivedNodeState {
-            ip_info,
-            location_absent: if location.is_none() {
-                Some(absent)
-            } else {
-                None
-            },
-            location,
-        }
-    }
 }
-pub(super) fn is_public(ip: IpAddr) -> bool {
+pub(crate) fn is_public(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(ip) => {
             let [a, b, c, _] = ip.octets();
