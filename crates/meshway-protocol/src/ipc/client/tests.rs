@@ -503,3 +503,46 @@ async fn an_external_decision_is_followed_by_echoes_never_by_a_mesh_sample() {
         server.await.unwrap();
     }
 }
+
+#[tokio::test]
+async fn preparing_may_precede_the_decision_but_a_second_decision_is_rejected() {
+    let (_directory, listener, client) = listener();
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let request = crate::ipc::read(&mut stream).await.unwrap();
+        send(
+            &mut stream,
+            &request,
+            0,
+            PingEvent::Preparing {
+                elapsed_ms: Sequence::MIN,
+            },
+        )
+        .await;
+        send(
+            &mut stream,
+            &request,
+            1,
+            decision(json!({"type":"exit","node":ID})),
+        )
+        .await;
+        send(
+            &mut stream,
+            &request,
+            2,
+            decision(json!({"type":"exit","node":ID})),
+        )
+        .await;
+    });
+    let mut ping = client.ping(target(), 1).await.unwrap();
+    assert!(matches!(
+        ping.next().await.unwrap(),
+        Some(PingEvent::Preparing { .. })
+    ));
+    assert!(matches!(
+        ping.next().await.unwrap(),
+        Some(PingEvent::Decision { .. })
+    ));
+    assert!(ping.next().await.is_err());
+    server.await.unwrap();
+}

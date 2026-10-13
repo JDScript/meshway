@@ -73,6 +73,8 @@ class ExitPingTests(unittest.TestCase):
     def test_exit_ping_needs_the_decision_first_and_replies_on_the_same_path(self):
         good = [decided({"type": "exit", "node": E}, [A, R, E]), reply("11.77.0.3", [A, R, E]), DONE]
         self.assertEqual(pinging.exit_ping(record(good), "11.77.0.3", E, [A, R, E])["success"], 1)
+        preparing = {"type": "preparing", "elapsedMs": 900}
+        pinging.exit_ping(record([preparing] + good), "11.77.0.3", E, [A, R, E])
         for broken in ([good[1], good[0], DONE],
                        [decided({"type": "direct"}, []), good[1], DONE],
                        [good[0], reply("11.77.0.1", [A, R, E]), DONE],

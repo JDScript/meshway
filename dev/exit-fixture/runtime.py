@@ -633,6 +633,7 @@ def execute(report, artifacts, runtime_os, platform, short, load):
         pings = {}
         external_ip = addresses["external"]["external"]
         pings["external"] = ping_cli(external_ip, 3)
+        write(report / "a" / "ping-external.json", pings["external"])
         pings["externalSummary"] = pinging.exit_ping(pings["external"], external_ip, node_ids[2], node_ids)
         pings["externalText"] = ping_text("external", external_ip)
         split_ip = addresses["split"]["resolver"]
@@ -724,6 +725,7 @@ def execute(report, artifacts, runtime_os, platform, short, load):
         # Phase 13: the name resolves through E's resolver with its live
         # association, and its echo leaves through E by the name rule.
         named["ping"] = ping_cli(name, 2)
+        write(report / "a" / "ping-name.json", named["ping"])
         named["pingSummary"] = pinging.exit_ping(named["ping"], target, node_ids[2], node_ids,
                                                  "/routing/egress/profiles/exit/rules/2", name)
         named["pingText"] = ping_text("name", name)
@@ -786,6 +788,7 @@ def execute(report, artifacts, runtime_os, platform, short, load):
         # Phase 13: once the grant is revoked the name's decision is denied
         # and nothing is probed.
         named["revokedPing"] = ping_cli(name, 1)
+        write(report / "a" / "ping-revoked.json", named["revokedPing"])
         named["revokedAction"] = pinging.denied_ping(named["revokedPing"])
         (report / "a" / "ping-revoked.txt").write_text(ping_cli(name, 1, as_json=False)["stdout"])
         named["restored"] = stage_config("exit-name-restore", "exit-name-restored.json")

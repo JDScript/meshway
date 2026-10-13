@@ -10,9 +10,12 @@ def events(record):
 
 
 def decision(stream):
-    if not stream or stream[0].get("type") != "decision":
+    """The decision precedes every other event; only preparing (a name
+    still resolving) may come before it."""
+    measured = [event for event in stream if event.get("type") != "preparing"]
+    if not measured or measured[0].get("type") != "decision":
         raise RuntimeError("ping did not report its decision first")
-    return stream[0]["decision"]
+    return measured[0]["decision"]
 
 
 def echoes(stream):
