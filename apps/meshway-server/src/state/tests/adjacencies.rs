@@ -123,3 +123,24 @@ fn channels_win_then_unreachable_then_idle_and_stale_or_conflicting_is_unknown()
         [(node, peer, AdjacencyConnection::Unknown)]
     );
 }
+
+/// A report accepted while the peer was visible keeps its adjacency entry;
+/// after the reader's permission shrinks, the full report read omits it, as
+/// it omits links.
+#[test]
+fn a_full_report_omits_adjacencies_of_peers_no_longer_visible() {
+    let (admission, mut report, mut scope, now) = setup();
+    let peer = id(2);
+    report.state.adjacencies = BTreeMap::from([(peer, AdjacencyStatus::Unreachable)]);
+    let mut hub = StateHub::new().unwrap();
+    hub.accept_report(&admission, report, now).unwrap();
+    let full = |view: &StateView| match &view.nodes[&admission.node_id].report {
+        Some(VisibleReport::Full { report }) => (*report).clone(),
+        other => panic!("{other:?}"),
+    };
+    let before = full(&hub.query(&scope, None, now).unwrap());
+    assert!(before.adjacencies.contains_key(&peer));
+    scope.visible.remove(&peer);
+    let after = full(&hub.query(&scope, None, now).unwrap());
+    assert!(after.adjacencies.is_empty(), "{:?}", after.adjacencies);
+}

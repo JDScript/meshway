@@ -34,7 +34,7 @@
 
 NodeStateView 包含 hostname、instanceId、reportSequence、observedAt、receivedAt、reportExpiresAt、lastAuthenticatedAt、freshness、report 和 derived。hostname 是当前配置里的规范主机名（显示名），对成员可见的依赖 peer 同样给出；它不是报告里的 OS hostname，也不扩大其他字段的裁剪范围。未报告时 report=null，不能用空对象伪造 NodeState。
 
-report 以 `view: full | peer` 区分，内部 report 分别是完整 NodeState 或裁剪的 PeerState。freshness 按固定顺序判定：revoked（凭据永久吊销）；awaiting_report（从未报告）；expired（报告超过 TTL，**或节点没有活实例**——`meshway down`、进程退出、lease 到期都在这里，不论报告多新）；superseded（存在另一个活实例，与报告的实例不同——节点重启后旧报告尚未被替换）；config_mismatch（活实例报告的 applied 不在当前配置集合内）；否则 current。current 不等于每个 endpoint 已验证可达。
+report 以 `view: full | peer` 区分，内部 report 分别是完整 NodeState 或裁剪的 PeerState。完整 NodeState 也只保留读取者当前可见的对端：`links`、`adjacencies` 按对端、`paths`／`probes` 按路径上全部节点过滤，权限收缩后读取旧报告同样适用。freshness 按固定顺序判定：revoked（凭据永久吊销）；awaiting_report（从未报告）；expired（报告超过 TTL，**或节点没有活实例**——`meshway down`、进程退出、lease 到期都在这里，不论报告多新）；superseded（存在另一个活实例，与报告的实例不同——节点重启后旧报告尚未被替换）；config_mismatch（活实例报告的 applied 不在当前配置集合内）；否则 current。current 不等于每个 endpoint 已验证可达。
 
 ## 派生值 {#derived}
 

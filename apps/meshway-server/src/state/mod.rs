@@ -372,6 +372,9 @@ impl StateHub {
                 if scope.full.contains(&node_id) {
                     let mut report = stored.report.state.clone();
                     report.links.retain(|peer, _| scope.visible.contains(peer));
+                    report
+                        .adjacencies
+                        .retain(|peer, _| scope.visible.contains(peer));
                     report.paths.retain(|_, path| {
                         path.nodes.iter().all(|node| scope.visible.contains(node))
                     });
