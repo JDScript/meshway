@@ -1,4 +1,5 @@
 mod backend;
+pub(in crate::linux::kernel) mod mss;
 mod owner;
 pub(super) mod plan;
 mod program;
@@ -43,6 +44,11 @@ pub(super) async fn recover(
     backend.pause().await?;
     backend.remove_rules().await?;
     if remove {
+        let _ = super::exit::objects::apply(
+            &mut backend.commands,
+            &mss::batch(&backend.ledger.program.installation, None),
+        )
+        .await;
         backend.retire().await?;
     }
     if backend.ledger.pending_gate.is_some() {

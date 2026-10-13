@@ -807,6 +807,30 @@ impl Manager {
         Ok(())
     }
 
+    /// Size limits of the selected Native UDP channels whose route MTU is
+    /// known ([`Snapshot::mtu`]), without the rest of the snapshot: the
+    /// packet owner reads them every turn, as it reads the carriers.
+    pub fn path_mtu(&self) -> Result<BTreeMap<NodeId, LinkMtu>, Error> {
+        self.check_view()?;
+        let links = self.shared.links.lock().map_err(|_| Error::Worker)?;
+        self.link_mtu(&links)
+    }
+
+    fn link_mtu(&self, links: &LinkTable) -> Result<BTreeMap<NodeId, LinkMtu>, Error> {
+        let path_mtu = self.shared.path_mtu.lock().map_err(|_| Error::Worker)?;
+        Ok(links
+            .values()
+            .filter(|link| link.scope.check().is_ok())
+            .filter_map(|link| {
+                let (_, path) = path_mtu.get(&link.fact.id)?;
+                Some((
+                    link.fact.peer,
+                    LinkMtu::new(*path, link.fact.remote.is_ipv4())?,
+                ))
+            })
+            .collect())
+    }
+
     pub fn snapshot(&self) -> Result<Snapshot, Error> {
         static PROFILE: meshway_logging::profile::Metric =
             meshway_logging::profile::Metric::new("manager.snapshot");
@@ -833,19 +857,7 @@ impl Manager {
                 )
             })
             .collect();
-        let path_mtu = self.shared.path_mtu.lock().map_err(|_| Error::Worker)?;
-        let mtu = links
-            .values()
-            .filter(|link| link.scope.check().is_ok())
-            .filter_map(|link| {
-                let (_, path) = path_mtu.get(&link.fact.id)?;
-                Some((
-                    link.fact.peer,
-                    LinkMtu::new(*path, link.fact.remote.is_ipv4())?,
-                ))
-            })
-            .collect();
-        drop(path_mtu);
+        let mtu = self.link_mtu(&links)?;
         Ok(Snapshot {
             adjacencies,
             mtu,

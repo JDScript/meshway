@@ -13,7 +13,21 @@
 //! is removed by the kernel when dropped. There is no adoption, persistence,
 //! descriptor export, multiqueue, Ethernet, or packet-information header.
 
-use std::net::{Ipv4Addr, Ipv6Addr};
+use std::{
+    collections::BTreeMap,
+    net::{IpAddr, Ipv4Addr, Ipv6Addr},
+};
+
+/// Largest inner packets the path toward a destination carries, as the
+/// packet owner knows them from its channels: per Mesh address of a peer,
+/// and for every destination outside the Mesh. A host clamps the TCP MSS of
+/// SYNs crossing a TUN to them. A missing entry needs no clamp. Sizes only;
+/// no permission.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PathLimits {
+    pub peers: BTreeMap<IpAddr, u16>,
+    pub other: Option<u16>,
+}
 
 #[cfg(target_os = "linux")]
 mod linux;

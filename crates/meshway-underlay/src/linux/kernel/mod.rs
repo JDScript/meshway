@@ -54,6 +54,8 @@ pub(super) struct Kernel {
     pub(super) exit: Option<exit::owner::Owner>,
     probe: Option<exit::ExitProbe>,
     egress: Option<egress::Owner>,
+    /// The MSS clamp last handed to the capture owner.
+    clamp: Option<egress::mss::Clamp>,
 }
 
 impl Kernel {
@@ -207,6 +209,7 @@ impl Kernel {
             exit: None,
             probe: None,
             egress: None,
+            clamp: None,
         })
     }
 
@@ -781,6 +784,7 @@ impl Kernel {
     pub async fn down(&mut self) -> Result<()> {
         self.suspend().await?;
         if let Some(mut owner) = self.egress.take() {
+            self.clamp = None;
             owner.shutdown(true).await?;
             self.quiesce().await?;
             self.expected
@@ -837,6 +841,33 @@ impl Kernel {
     pub async fn settle(&mut self) -> Result<()> {
         self.store.settle().await
     }
+    /// Clamp the TCP MSS of SYNs crossing the Mesh TUN (and the exit TUN) to
+    /// `limits`. Only a change reaches nft; without a capture owner or TUN
+    /// nothing is clamped.
+    pub fn clamp(&mut self, limits: meshway_tun::PathLimits) -> Result<()> {
+        let Some(owner) = &self.egress else {
+            return Ok(());
+        };
+        let clamp = {
+            let expected = self.expected.lock().map_err(|_| Error::Worker)?;
+            expected
+                .tun
+                .as_ref()
+                .map(|(_, name, mtu, _)| egress::mss::Clamp {
+                    mesh: name.clone(),
+                    exit: self.exit.as_ref().map(|exit| exit.interface_name.clone()),
+                    pools: expected.pools.clone(),
+                    mtu: *mtu,
+                    limits,
+                })
+        };
+        if clamp == self.clamp {
+            return Ok(());
+        }
+        owner.capture.clamp(clamp.clone())?;
+        self.clamp = clamp;
+        Ok(())
+    }
     /// Activate the staged capture plan. An already active, unchanged plan is
     /// a resource left as is across a continuation.
     async fn resume_egress(&self) -> Result<()> {
@@ -849,6 +880,7 @@ impl Kernel {
     }
     pub async fn finish_egress(&mut self) -> Result<()> {
         if let Some(mut owner) = self.egress.take() {
+            self.clamp = None;
             owner.shutdown(false).await?;
         }
         Ok(())

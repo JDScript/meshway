@@ -349,6 +349,34 @@ impl PendingRoute {
         })
     }
 
+    /// An ICMP error this Node reports about the packet admitted on this
+    /// route, delivered to its own TUN on the opposite direction of the same
+    /// flow, within the flow's lifetime. It is no admission of its own: the
+    /// error never leaves this Node.
+    pub(crate) fn local_error(&self, error: Packet) -> Result<PendingAction, Error> {
+        let route = &self.checked.route;
+        let pending = PendingRoute {
+            life: self.life.clone(),
+            constrained: self.constrained,
+            checked: CommittedRoute {
+                hop: Hop::Deliver,
+                route: Route {
+                    grant: route.grant.clone(),
+                    origin: route.origin,
+                    original_path: route.original_path.clone(),
+                    direction: match route.direction {
+                        Direction::Forward => Direction::Reply,
+                        Direction::Reply => Direction::Forward,
+                    },
+                },
+            },
+            facts: error.facts(),
+            projection: None,
+            exit_incarnation: None,
+        };
+        pending.attach(error)
+    }
+
     /// Bind the receiving circuit's own bound and cancellation, once.
     pub(crate) fn constrain(
         &mut self,

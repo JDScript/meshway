@@ -23,6 +23,8 @@ enum Request {
     Switch(EgressCapturePlan, oneshot::Sender<Result<()>>),
     Pause(oneshot::Sender<Result<()>>),
     Retire(oneshot::Sender<Result<()>>),
+    /// Replace the MSS clamp table; serialized with the capture's nft work.
+    Clamp(Option<super::mss::Clamp>),
 }
 #[derive(Clone)]
 struct State {
@@ -45,6 +47,18 @@ impl EgressCapture {
         self.submit(Request::Audit(reply))?;
         result.await.map_err(|_| Error::Worker)?
     }
+    /// The nft tables this owner holds, audited: the capture table and its
+    /// MSS clamp table.
+    pub(in crate::linux::kernel) async fn owned_tables(&self) -> Result<Vec<(String, String)>> {
+        let table = self.audit().await?;
+        let installation = table
+            .strip_prefix("meshway_egress_")
+            .ok_or(Error::Journal)?;
+        Ok(vec![
+            ("inet".into(), super::mss::table(installation)),
+            ("inet".into(), table),
+        ])
+    }
     pub async fn switch(&self, new_plan: EgressCapturePlan) -> Result<()> {
         let (reply, result) = oneshot::channel();
         self.submit(Request::Switch(new_plan, reply))?;
@@ -64,6 +78,11 @@ impl EgressCapture {
     }
     pub fn plan(&self) -> EgressCapturePlan {
         self.state.borrow().plan.clone()
+    }
+    /// Replace the MSS clamp, without waiting: its outcome changes no
+    /// capture state (see [`super::mss`]).
+    pub(in crate::linux::kernel) fn clamp(&self, clamp: Option<super::mss::Clamp>) -> Result<()> {
+        self.submit(Request::Clamp(clamp))
     }
     pub(super) async fn stage(&self, plan: EgressCapturePlan) -> Result<()> {
         let (reply, result) = oneshot::channel();
@@ -150,6 +169,7 @@ impl super::super::Kernel {
             .is_some_and(|owner| owner.capture.state.borrow().retired)
             && let Some(mut owner) = self.egress.take()
         {
+            self.clamp = None;
             owner.shutdown(true).await?;
             self.quiesce().await?;
             self.expected
@@ -275,6 +295,13 @@ impl super::super::Kernel {
                     },
                     request = receiver.recv() => {
                         let Some(request) = request else { break; };
+                        if let Request::Clamp(clamp) = &request {
+                            let batch = super::mss::batch(&backend.ledger.program.installation, clamp.as_ref());
+                            if super::super::exit::objects::apply(&mut backend.commands, &batch).await.is_err() {
+                                tracing::warn!("TCP MSS clamp table could not be replaced");
+                            }
+                            continue;
+                        }
                         if !matches!(&request, Request::Audit(_)) { state.send_modify(|state| state.active = false); }
                         let (reply, result, active) = match request {
                             Request::Audit(reply) => {
@@ -305,7 +332,9 @@ impl super::super::Kernel {
                                 (reply, result, true)
                             },
                             Request::Pause(reply) => (reply, backend.pause().await, false),
+                            Request::Clamp(_) => unreachable!("handled above"),
                             Request::Retire(reply) => {
+                                let _ = super::super::exit::objects::apply(&mut backend.commands, &super::mss::batch(&backend.ledger.program.installation, None)).await;
                                 let result = backend.retire().await;
                                 let ok = result.is_ok();
                                 if ok { state.send_modify(|state| { state.active = false; state.retired = true; }); }

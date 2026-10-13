@@ -215,6 +215,7 @@ impl Packets {
                 secure::Error::Policy => "policy",
                 secure::Error::Replay => "replay",
                 secure::Error::Proof => "proof",
+                secure::Error::TooBig => "too_big",
                 _ => "other",
             },
         );
@@ -633,6 +634,22 @@ impl Packets {
         self.flush_sends(manager, &mut outgoing).await;
         pool.flush();
         self.complete_crypto(secure, manager, pool, exit.as_deref_mut());
+        // Path MTU errors for this Node's own oversized packets reach its TUN
+        // like any delivered packet.
+        let errors = secure.take_local_errors();
+        if !errors.is_empty()
+            && let Some(tun) = host.tun()
+        {
+            let count = errors.len();
+            if meshway_dataplane::carrier::deliver_batch(tun, errors)
+                .await
+                .is_err()
+            {
+                for _ in 0..count {
+                    self.drop_packet("too_big_delivery");
+                }
+            }
+        }
         if let Some(exit) = exit {
             exit.drive(secure);
         }

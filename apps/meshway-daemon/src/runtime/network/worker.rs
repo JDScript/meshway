@@ -99,6 +99,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
     let mut exit_recovered = false;
     let mut sample_at = None;
     let mut channels = PeerChannels::default();
+    let mut clamped_at: Option<tokio::time::Instant> = None;
     loop {
         meshway_logging::profile::report();
         // Addresses an ended association left captured for its live exit
@@ -736,6 +737,22 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             let carriers = manager.carriers().ok();
             if let Some(carriers) = &carriers {
                 let _ = secure.set_carriers(carriers.clone());
+            }
+            // Measured inner MTU of each current channel: oversized local
+            // packets are answered with fragmentation needed on the TUN,
+            // and the TCP MSS of SYNs is clamped to it (refreshed each second).
+            if let Ok(mtu) = manager.path_mtu() {
+                secure.set_path_limits(
+                    mtu.into_iter()
+                        .map(|(peer, limit)| (peer, limit.inner))
+                        .collect(),
+                );
+            }
+            if clamped_at.is_none_or(|at| at.elapsed() >= Duration::from_secs(1)) {
+                clamped_at = Some(tokio::time::Instant::now());
+                if let Err(error) = host.clamp_mss(secure.clamps()) {
+                    tracing::debug!(%error, "TCP MSS clamp not updated");
+                }
             }
             // A restarted adjacent peer lost its circuits: end them here and
             // pass a Close on to the surviving side of each relayed one.

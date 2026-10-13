@@ -225,6 +225,10 @@ impl Host {
     /// descriptor and exit role whose exact purpose is unchanged and
     /// re-stages only a changed capture plan. `suspend` (the empty apply)
     /// ends every operation and descriptor and keeps the negative boundary.
+    /// The TCP MSS clamp of this Node's TUNs (see [`meshway_tun::PathLimits`]).
+    pub fn clamp_mss(&mut self, limits: meshway_tun::PathLimits) -> Result<()> {
+        self.kernel.clamp(limits)
+    }
     pub async fn install(&mut self, desired: Desired) -> Result<()> {
         self.kernel.install(desired).await
     }

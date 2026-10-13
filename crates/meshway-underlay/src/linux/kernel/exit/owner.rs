@@ -356,7 +356,7 @@ impl super::super::Kernel {
         let mut commands = Commands::default();
         let mut owned = Vec::new();
         if let Some(egress) = &self.egress {
-            owned.push(("inet".into(), egress.capture.audit().await?));
+            owned.extend(egress.capture.owned_tables().await?);
         }
         super::prerequisites::check(&mut commands, &owned).await?;
         let mut selected = None;

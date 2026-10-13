@@ -21,6 +21,8 @@ mod diagnostics;
 mod dns;
 mod exit;
 mod maintenance;
+mod mtu;
+pub use mtu::Clamps;
 mod netmap;
 pub mod pipeline;
 mod probe;
@@ -100,6 +102,8 @@ pub enum Error {
     Packet,
     #[error("packet has no valid unambiguous local flow role")]
     Flow,
+    #[error("packet exceeds the inner MTU of its next hop")]
+    TooBig,
 }
 
 /// Allowed difference between an origin's INIT time and a receiver's clock.
@@ -710,6 +714,7 @@ pub struct SecureNode {
     maintenance: maintenance::Maintenance,
     cancellation: CancellationToken,
     first: netmap::FirstPackets,
+    mtu: mtu::PathMtu,
 }
 
 #[derive(Clone, Copy)]
@@ -813,6 +818,7 @@ impl SecureNode {
             maintenance: Default::default(),
             cancellation: CancellationToken::new(),
             first: Default::default(),
+            mtu: Default::default(),
         };
         node.set_carriers(carriers)?;
         Ok(node)
@@ -1435,6 +1441,7 @@ impl SecureNode {
                 carriers: &self.carriers,
             },
             &mut self.engine,
+            &mut self.mtu,
             circuit,
             packet,
             reading,
@@ -1452,6 +1459,7 @@ impl SecureNode {
     fn send_inner(
         owner: OutputOwner<'_>,
         engine: &mut Engine,
+        mtu: &mut mtu::PathMtu,
         circuit: &mut Circuit,
         packet: Packet,
         reading: &View<'_>,
@@ -1487,6 +1495,23 @@ impl SecureNode {
             .map_err(|error| circuit.engine_rejected("send", error))?;
         if (route.route().direction == Direction::Reply) != reply {
             return Err(Error::Context);
+        }
+        // Too big for the channel to the next hop: dropped before a nonce is
+        // used. When this Node's own TUN is the flow's local end, its sender
+        // learns the path MTU from an error as a router would send it.
+        if let Hop::Forward(next) = route.hop()
+            && let Some(limit) = mtu.limit(next)
+            && facts.len > limit
+        {
+            let local_end = !reply || matches!(route.route().grant, Target::Mesh { .. });
+            if local_end
+                && let Some(error) =
+                    crate::packet::too_big(&packet, u16::try_from(limit).unwrap_or(u16::MAX))
+                && let Ok(error) = route.local_error(error)
+            {
+                mtu.report(error, reading.instant);
+            }
+            return Err(Error::TooBig);
         }
         // Flow and cryptographic state have distinct irreversible commit points.
         // Neither a later output failure nor a scope handoff rolls either back.

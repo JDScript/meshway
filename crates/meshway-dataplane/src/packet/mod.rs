@@ -9,14 +9,17 @@
 //! TCP/UDP port zero is outside the business Port contract. TCP options are
 //! limited to bounded MSS, window scale, SACK-permitted/SACK and timestamps,
 //! plus padding. ICMP accepts echo request/reply with code zero only, and
-//! IPv4 destination-unreachable/time-exceeded errors quoting a TCP, UDP or
-//! echo-request header ([`Transport::Error`]); such an error is never business
-//! traffic and only accompanies the live flow its quote names.
+//! destination-unreachable/time-exceeded errors (ICMPv6 also packet too big)
+//! quoting a TCP, UDP or echo-request header ([`Transport::Error`]); such an
+//! error is never business traffic and only accompanies the live flow its
+//! quote names.
 use crate::PacketBuffer;
 use meshway_configuration::execution::BusinessProtocol;
 use meshway_policy::admission::Traffic;
 use meshway_transport::spec::Port;
+mod icmp;
 mod storage;
+pub(crate) use icmp::too_big;
 use std::{
     fmt,
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
@@ -76,11 +79,14 @@ impl PacketFacts {
             (BusinessProtocol::Udp, Transport::Udp)
             | (BusinessProtocol::IcmpEcho, Transport::Echo { .. }) => 8,
             (BusinessProtocol::IcmpEcho, Transport::Error(error))
-                if self.traffic.source.is_ipv4()
-                    && error.quoted.traffic.source.is_ipv4()
+                if self.traffic.source.is_ipv4() == error.quoted.traffic.source.is_ipv4()
                     && error.quoted.traffic.source == self.traffic.destination =>
             {
-                8 + ERROR_QUOTE
+                8 + if self.traffic.source.is_ipv4() {
+                    ERROR_QUOTE
+                } else {
+                    ERROR_QUOTE6
+                }
             }
             _ => return Err(PacketError::Header),
         };
@@ -127,15 +133,19 @@ pub enum Transport {
         identifier: u16,
         sequence: u16,
     },
-    /// An ICMPv4 error; its traffic carries the outer addresses only.
+    /// An ICMP error; its traffic carries the outer addresses only.
     Error(IcmpError),
 }
 
 /// The quoted IPv4 header plus 8 bytes every error must carry.
 const ERROR_QUOTE: usize = 28;
+/// The quoted IPv6 header plus 8 bytes.
+const ERROR_QUOTE6: usize = 48;
 
 /// ICMPv4 destination unreachable (3, codes 0–15) or time exceeded (11,
-/// codes 0–1), e.g. fragmentation needed (3/4) carrying the next-hop MTU.
+/// codes 0–1), e.g. fragmentation needed (3/4) carrying the next-hop MTU;
+/// ICMPv6 destination unreachable (1, codes 0–6), packet too big (2/0,
+/// carrying the MTU) or time exceeded (3, codes 0–1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct IcmpError {
     pub kind: u8,
@@ -144,7 +154,7 @@ pub struct IcmpError {
     pub quoted: Quoted,
 }
 
-/// The tuple of a quoted IPv4 TCP/UDP segment or echo request. Its own
+/// The tuple of a quoted TCP/UDP segment or echo request. Its own
 /// length and checksums are not checked: the quote is usually truncated.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Quoted {
@@ -266,11 +276,23 @@ impl Packet {
                 let reply = match (protocol, body[0], body[1]) {
                     (1, 8, 0) | (58, 128, 0) => false,
                     (1, 0, 0) | (58, 129, 0) => true,
-                    (1, 3, 0..=15) | (1, 11, 0..=1) => {
-                        if finish(sum(0, body)) != 0 {
-                            return Err(PacketError::Checksum);
+                    (1, 3, 0..=15)
+                    | (1, 11, 0..=1)
+                    | (58, 1, 0..=6)
+                    | (58, 2, 0)
+                    | (58, 3, 0..=1) => {
+                        if protocol == 1 {
+                            if finish(sum(0, body)) != 0 {
+                                return Err(PacketError::Checksum);
+                            }
+                        } else {
+                            check_transport(source, destination, protocol, body)?;
                         }
-                        let quoted = quoted(&body[8..])?;
+                        let quoted = if protocol == 1 {
+                            quoted(&body[8..])?
+                        } else {
+                            quoted6(&body[8..])?
+                        };
                         if quoted.traffic.source != destination {
                             return Err(PacketError::Header);
                         }
@@ -423,6 +445,51 @@ fn quoted(bytes: &[u8]) -> Result<Quoted, PacketError> {
         traffic: Traffic {
             source,
             destination,
+            protocol,
+            source_port,
+            destination_port,
+        },
+        echo,
+    })
+}
+
+/// The quoted packet of an ICMPv6 error: an IPv6 header without extension
+/// headers followed by at least 8 bytes of TCP/UDP ports or an echo request.
+fn quoted6(bytes: &[u8]) -> Result<Quoted, PacketError> {
+    if bytes.len() < ERROR_QUOTE6 {
+        return Err(PacketError::Length);
+    }
+    if bytes[0] >> 4 != 6 {
+        return Err(PacketError::Unsupported);
+    }
+    let mut source = [0; 16];
+    let mut destination = [0; 16];
+    source.copy_from_slice(&bytes[8..24]);
+    destination.copy_from_slice(&bytes[24..40]);
+    let body = &bytes[40..];
+    let (protocol, source_port, destination_port, echo) = match bytes[6] {
+        6 | 17 => {
+            let (src, dst) = ports(body)?;
+            let protocol = if bytes[6] == 6 {
+                BusinessProtocol::Tcp
+            } else {
+                BusinessProtocol::Udp
+            };
+            (protocol, Some(src), Some(dst), None)
+        }
+        58 if body[0] == 128 && body[1] == 0 => (
+            BusinessProtocol::IcmpEcho,
+            None,
+            None,
+            Some((word(body, 4), word(body, 6))),
+        ),
+        44 => return Err(PacketError::Fragment),
+        _ => return Err(PacketError::Unsupported),
+    };
+    Ok(Quoted {
+        traffic: Traffic {
+            source: Ipv6Addr::from(source).into(),
+            destination: Ipv6Addr::from(destination).into(),
             protocol,
             source_port,
             destination_port,

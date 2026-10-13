@@ -84,14 +84,13 @@ impl super::super::Kernel {
             }
         }
         if let Some(owner) = &self.egress {
-            owned_tables.push((
-                "inet".into(),
+            owned_tables.extend(
                 owner
                     .capture
-                    .audit()
+                    .owned_tables()
                     .await
                     .map_err(|_| Reason::OwnershipConflict)?,
-            ));
+            );
         }
         let probe = self
             .probe
