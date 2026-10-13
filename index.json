@@ -1,8 +1,371 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-13T10:21:06.818222+00:00",
+  "updatedAt": "2026-10-13T11:03:30.776934+00:00",
   "runs": [
+    {
+      "id": 38386372315,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "e7b9ff0d6d6a437b7b0e70f782a41f8ed69bcb38",
+      "message": "release: workspace version 0.1.0-alpha.5",
+      "createdAt": "2026-10-13T10:52:52Z",
+      "updatedAt": "2026-10-13T10:59:14Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "url": "https://github.com/JDScript/meshway/actions/runs/38386372315",
+      "jobs": [
+        {
+          "id": 115259063378,
+          "name": "changes",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-13T10:53:11Z",
+          "completedAt": "2026-10-13T10:53:22Z",
+          "seconds": 11.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38386372315/job/115259063378"
+        },
+        {
+          "id": 115259249215,
+          "name": "cargo",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-13T10:53:24Z",
+          "completedAt": "2026-10-13T10:59:13Z",
+          "seconds": 349.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38386372315/job/115259249215"
+        },
+        {
+          "id": 115259249328,
+          "name": "web",
+          "runner": "mars-epyc7543",
+          "status": "completed",
+          "conclusion": "failure",
+          "startedAt": "2026-10-13T10:53:50Z",
+          "completedAt": "2026-10-13T10:53:56Z",
+          "seconds": 6.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38386372315/job/115259249328"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 38386372209,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "v0.1.0-alpha.5",
+      "commit": "e7b9ff0d6d6a437b7b0e70f782a41f8ed69bcb38",
+      "message": "release: workspace version 0.1.0-alpha.5",
+      "createdAt": "2026-10-13T10:52:52Z",
+      "updatedAt": "2026-10-13T10:53:09Z",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/JDScript/meshway/actions/runs/38386372209",
+      "jobs": [
+        {
+          "id": 115259062245,
+          "name": "changes",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-13T10:52:55Z",
+          "completedAt": "2026-10-13T10:53:08Z",
+          "seconds": 13.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38386372209/job/115259062245"
+        },
+        {
+          "id": 115259163023,
+          "name": "web",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "skipped",
+          "startedAt": "2026-10-13T10:53:08Z",
+          "completedAt": "2026-10-13T10:53:08Z",
+          "seconds": 0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38386372209/job/115259163023"
+        },
+        {
+          "id": 115259163817,
+          "name": "cargo",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "skipped",
+          "startedAt": "2026-10-13T10:53:08Z",
+          "completedAt": "2026-10-13T10:53:08Z",
+          "seconds": 0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38386372209/job/115259163817"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 38386371921,
+      "attempt": 1,
+      "workflow": "Build",
+      "event": "push",
+      "branch": "main",
+      "commit": "e7b9ff0d6d6a437b7b0e70f782a41f8ed69bcb38",
+      "message": "release: workspace version 0.1.0-alpha.5",
+      "createdAt": "2026-10-13T10:52:52Z",
+      "updatedAt": "2026-10-13T10:53:01Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "url": "https://github.com/JDScript/meshway/actions/runs/38386371921",
+      "jobs": [
+        {
+          "id": 115259061703,
+          "name": "node-linux (aarch64-unknown-linux-musl)",
+          "runner": "mars-epyc7543",
+          "status": "completed",
+          "conclusion": "failure",
+          "startedAt": "2026-10-13T10:52:54Z",
+          "completedAt": "2026-10-13T10:53:00Z",
+          "seconds": 6.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38386371921/job/115259061703"
+        },
+        {
+          "id": 115259062208,
+          "name": "node-linux (x86_64-unknown-linux-musl)",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "cancelled",
+          "startedAt": "2026-10-13T10:52:52Z",
+          "completedAt": "2026-10-13T10:53:00Z",
+          "seconds": 8.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38386371921/job/115259062208"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 38386371802,
+      "attempt": 1,
+      "workflow": "Perf",
+      "event": "push",
+      "branch": "main",
+      "commit": "e7b9ff0d6d6a437b7b0e70f782a41f8ed69bcb38",
+      "message": "release: workspace version 0.1.0-alpha.5",
+      "createdAt": "2026-10-13T10:52:51Z",
+      "updatedAt": "2026-10-13T11:02:11Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "url": "https://github.com/JDScript/meshway/actions/runs/38386371802",
+      "jobs": [
+        {
+          "id": 115259060612,
+          "name": "perf-arm64",
+          "runner": "jp-tyo-arm64",
+          "status": "completed",
+          "conclusion": "failure",
+          "startedAt": "2026-10-13T10:52:54Z",
+          "completedAt": "2026-10-13T10:53:07Z",
+          "seconds": 13.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38386371802/job/115259060612"
+        },
+        {
+          "id": 115259060880,
+          "name": "perf",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-13T10:52:53Z",
+          "completedAt": "2026-10-13T11:02:11Z",
+          "seconds": 558.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38386371802/job/115259060880"
+        }
+      ],
+      "artifacts": [
+        {
+          "id": 11806433110,
+          "name": "perf-38386371802",
+          "bytes": 112449,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38386371802/artifacts/11806433110",
+          "jobId": 115259060880,
+          "runner": "planck",
+          "seconds": 558.0,
+          "state": "ok",
+          "error": null,
+          "reports": [
+            {
+              "reportId": "20261013T105404Z-a865e172",
+              "kind": "circuit",
+              "revision": "e7b9ff0d6d6a437b7b0e70f782a41f8ed69bcb38",
+              "dirty": false,
+              "quick": false,
+              "sourcesUnchanged": null,
+              "loadMin": 1.8408203125,
+              "loadMax": 3.2294921875,
+              "metrics": [
+                {
+                  "label": "L0 2 nodes CPU",
+                  "unit": "µs/packet",
+                  "scope": "{\"bytes\": 1280, \"nodes\": 2, \"profile\": 0, \"rounds\": 10000, \"warmup\": 200, \"workers\": null}",
+                  "value": 5.855440499999999,
+                  "samples": 3,
+                  "attempted": 3
+                },
+                {
+                  "label": "L0 2 nodes pps",
+                  "unit": "pps",
+                  "scope": "{\"bytes\": 1280, \"nodes\": 2, \"profile\": 0, \"rounds\": 10000, \"warmup\": 200, \"workers\": null}",
+                  "value": 170766.1281457202,
+                  "samples": 3,
+                  "attempted": 3
+                },
+                {
+                  "label": "L0 3 nodes CPU",
+                  "unit": "µs/packet",
+                  "scope": "{\"bytes\": 1280, \"nodes\": 3, \"profile\": 0, \"rounds\": 10000, \"warmup\": 200, \"workers\": null}",
+                  "value": 8.2694475,
+                  "samples": 3,
+                  "attempted": 3
+                },
+                {
+                  "label": "L0 3 nodes pps",
+                  "unit": "pps",
+                  "scope": "{\"bytes\": 1280, \"nodes\": 3, \"profile\": 0, \"rounds\": 10000, \"warmup\": 200, \"workers\": null}",
+                  "value": 120914.65576978952,
+                  "samples": 3,
+                  "attempted": 3
+                },
+                {
+                  "label": "L0 5 nodes CPU",
+                  "unit": "µs/packet",
+                  "scope": "{\"bytes\": 1280, \"nodes\": 5, \"profile\": 0, \"rounds\": 10000, \"warmup\": 200, \"workers\": null}",
+                  "value": 12.932471,
+                  "samples": 3,
+                  "attempted": 3
+                },
+                {
+                  "label": "L0 5 nodes pps",
+                  "unit": "pps",
+                  "scope": "{\"bytes\": 1280, \"nodes\": 5, \"profile\": 0, \"rounds\": 10000, \"warmup\": 200, \"workers\": null}",
+                  "value": 77319.85416315707,
+                  "samples": 3,
+                  "attempted": 3
+                }
+              ]
+            },
+            {
+              "reportId": "20261013t105713z-4a81d7dc",
+              "kind": "dataplane",
+              "revision": "e7b9ff0d6d6a437b7b0e70f782a41f8ed69bcb38",
+              "dirty": false,
+              "quick": false,
+              "sourcesUnchanged": true,
+              "loadMin": 2.12939453125,
+              "loadMax": 3.22607421875,
+              "metrics": [
+                {
+                  "label": "manager-relay TCP",
+                  "unit": "Mbps",
+                  "scope": "{\"allocator\": \"system\", \"batch\": 32, \"cpus\": 2.0, \"memory\": \"512m\", \"mtu\": 1280, \"omit\": 1, \"payload\": 1200, \"profile\": 0, \"seconds\": 6, \"tcp_streams\": 1, \"traffic\": \"tcp\", \"udp_buffer\": 0, \"udp_rate\": \"2G\", \"workers\": 0}",
+                  "value": 2356.4970294253576,
+                  "samples": 2,
+                  "attempted": 2
+                },
+                {
+                  "label": "manager-relay TCP retransmits",
+                  "unit": "count",
+                  "scope": "{\"allocator\": \"system\", \"batch\": 32, \"cpus\": 2.0, \"memory\": \"512m\", \"mtu\": 1280, \"omit\": 1, \"payload\": 1200, \"profile\": 0, \"seconds\": 6, \"tcp_streams\": 1, \"traffic\": \"tcp\", \"udp_buffer\": 0, \"udp_rate\": \"2G\", \"workers\": 0}",
+                  "value": 241.5,
+                  "samples": 2,
+                  "attempted": 2
+                },
+                {
+                  "label": "manager-relay TCP sender RTT",
+                  "unit": "ms",
+                  "scope": "{\"allocator\": \"system\", \"batch\": 32, \"cpus\": 2.0, \"memory\": \"512m\", \"mtu\": 1280, \"omit\": 1, \"payload\": 1200, \"profile\": 0, \"seconds\": 6, \"tcp_streams\": 1, \"traffic\": \"tcp\", \"udp_buffer\": 0, \"udp_rate\": \"2G\", \"workers\": 0}",
+                  "value": 2.4225000000000003,
+                  "samples": 2,
+                  "attempted": 2
+                },
+                {
+                  "label": "manager-relay UDP",
+                  "unit": "pps",
+                  "scope": "{\"allocator\": \"system\", \"batch\": 32, \"cpus\": 2.0, \"memory\": \"512m\", \"mtu\": 1280, \"omit\": 1, \"payload\": 1200, \"profile\": 0, \"seconds\": 6, \"tcp_streams\": 1, \"traffic\": \"udp\", \"udp_buffer\": 0, \"udp_rate\": \"2G\", \"workers\": 0}",
+                  "value": 208254.9096150215,
+                  "samples": 2,
+                  "attempted": 2
+                },
+                {
+                  "label": "secure-direct TCP",
+                  "unit": "Mbps",
+                  "scope": "{\"allocator\": \"system\", \"batch\": 32, \"cpus\": 2.0, \"memory\": \"512m\", \"mtu\": 1280, \"omit\": 1, \"payload\": 1200, \"profile\": 0, \"seconds\": 6, \"tcp_streams\": 1, \"traffic\": \"tcp\", \"udp_buffer\": 0, \"udp_rate\": \"2G\", \"workers\": 0}",
+                  "value": 2631.3556818395728,
+                  "samples": 2,
+                  "attempted": 2
+                },
+                {
+                  "label": "secure-direct TCP retransmits",
+                  "unit": "count",
+                  "scope": "{\"allocator\": \"system\", \"batch\": 32, \"cpus\": 2.0, \"memory\": \"512m\", \"mtu\": 1280, \"omit\": 1, \"payload\": 1200, \"profile\": 0, \"seconds\": 6, \"tcp_streams\": 1, \"traffic\": \"tcp\", \"udp_buffer\": 0, \"udp_rate\": \"2G\", \"workers\": 0}",
+                  "value": 375.5,
+                  "samples": 2,
+                  "attempted": 2
+                },
+                {
+                  "label": "secure-direct TCP sender RTT",
+                  "unit": "ms",
+                  "scope": "{\"allocator\": \"system\", \"batch\": 32, \"cpus\": 2.0, \"memory\": \"512m\", \"mtu\": 1280, \"omit\": 1, \"payload\": 1200, \"profile\": 0, \"seconds\": 6, \"tcp_streams\": 1, \"traffic\": \"tcp\", \"udp_buffer\": 0, \"udp_rate\": \"2G\", \"workers\": 0}",
+                  "value": 2.016,
+                  "samples": 2,
+                  "attempted": 2
+                },
+                {
+                  "label": "secure-direct UDP",
+                  "unit": "pps",
+                  "scope": "{\"allocator\": \"system\", \"batch\": 32, \"cpus\": 2.0, \"memory\": \"512m\", \"mtu\": 1280, \"omit\": 1, \"payload\": 1200, \"profile\": 0, \"seconds\": 6, \"tcp_streams\": 1, \"traffic\": \"udp\", \"udp_buffer\": 0, \"udp_rate\": \"2G\", \"workers\": 0}",
+                  "value": 208248.38860156163,
+                  "samples": 2,
+                  "attempted": 2
+                },
+                {
+                  "label": "secure-relay TCP",
+                  "unit": "Mbps",
+                  "scope": "{\"allocator\": \"system\", \"batch\": 32, \"cpus\": 2.0, \"memory\": \"512m\", \"mtu\": 1280, \"omit\": 1, \"payload\": 1200, \"profile\": 0, \"seconds\": 6, \"tcp_streams\": 1, \"traffic\": \"tcp\", \"udp_buffer\": 0, \"udp_rate\": \"2G\", \"workers\": 0}",
+                  "value": 2538.998528915048,
+                  "samples": 2,
+                  "attempted": 2
+                },
+                {
+                  "label": "secure-relay TCP retransmits",
+                  "unit": "count",
+                  "scope": "{\"allocator\": \"system\", \"batch\": 32, \"cpus\": 2.0, \"memory\": \"512m\", \"mtu\": 1280, \"omit\": 1, \"payload\": 1200, \"profile\": 0, \"seconds\": 6, \"tcp_streams\": 1, \"traffic\": \"tcp\", \"udp_buffer\": 0, \"udp_rate\": \"2G\", \"workers\": 0}",
+                  "value": 198.0,
+                  "samples": 2,
+                  "attempted": 2
+                },
+                {
+                  "label": "secure-relay TCP sender RTT",
+                  "unit": "ms",
+                  "scope": "{\"allocator\": \"system\", \"batch\": 32, \"cpus\": 2.0, \"memory\": \"512m\", \"mtu\": 1280, \"omit\": 1, \"payload\": 1200, \"profile\": 0, \"seconds\": 6, \"tcp_streams\": 1, \"traffic\": \"tcp\", \"udp_buffer\": 0, \"udp_rate\": \"2G\", \"workers\": 0}",
+                  "value": 2.282,
+                  "samples": 2,
+                  "attempted": 2
+                },
+                {
+                  "label": "secure-relay UDP",
+                  "unit": "pps",
+                  "scope": "{\"allocator\": \"system\", \"batch\": 32, \"cpus\": 2.0, \"memory\": \"512m\", \"mtu\": 1280, \"omit\": 1, \"payload\": 1200, \"profile\": 0, \"seconds\": 6, \"tcp_streams\": 1, \"traffic\": \"udp\", \"udp_buffer\": 0, \"udp_rate\": \"2G\", \"workers\": 0}",
+                  "value": 208216.12657653308,
+                  "samples": 2,
+                  "attempted": 2
+                }
+              ]
+            }
+          ],
+          "matrices": [],
+          "builds": []
+        }
+      ]
+    },
     {
       "id": 38382427710,
       "attempt": 1,
@@ -12,9 +375,9 @@
       "commit": "70278dace4c7a7bd29a9f1c4c3b9acc44a57129a",
       "message": "Merge branch 'x7/exit-hosts'",
       "createdAt": "2026-10-13T10:18:14Z",
-      "updatedAt": "2026-10-13T10:18:25Z",
-      "status": "in_progress",
-      "conclusion": null,
+      "updatedAt": "2026-10-13T10:19:31Z",
+      "status": "completed",
+      "conclusion": "failure",
       "url": "https://github.com/JDScript/meshway/actions/runs/38382427710",
       "jobs": [
         {
@@ -32,11 +395,11 @@
           "id": 115245879391,
           "name": "node-linux (x86_64-unknown-linux-musl)",
           "runner": "planck",
-          "status": "in_progress",
-          "conclusion": null,
+          "status": "completed",
+          "conclusion": "cancelled",
           "startedAt": "2026-10-13T10:18:16Z",
-          "completedAt": null,
-          "seconds": null,
+          "completedAt": "2026-10-13T10:19:30Z",
+          "seconds": 74.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/38382427710/job/115245879391"
         }
       ],
