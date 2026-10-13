@@ -25,7 +25,7 @@ UDP 接收缓冲（M2）：IPC 11（`Status.sockets`）；wire 6、HTTP 契约�
 - 接收路径核对：已是 `recvmmsg`（32 × 64 KiB）＋`UDP_GRO`，未改。按通道的发送节奏实测无收益，未加入。
 - 文档：[高吞吐宿主](/v2/install#high-throughput) 的 sysctl 建议（daemon 不修改）。
 
-验证：Planck `perf:dataplane`（每容器 2 CPU）L3 direct／L4 relay TCP 2,540／2,229 → 2,674／2,468 Mbit/s，重传 618／512 → 0；60 ms RTT（netem）内层 TCP 266–315 → 410–412 Mbit/s；4 MiB 与 7 MiB 各格无差别。见[接收缓冲](/v2/node/performance#接收缓冲)；证据 `.meshway/validation/m2/`、`.meshway/node-lab/m2/`。Planck 18 行矩阵 `20261013T212758Z-c843b625`（`b0c76039`）全部通过，`status --json` 显示 socket 读回 8 MiB／4 MiB。真机部署后复测待补。
+验证：Planck `perf:dataplane`（每容器 2 CPU）L3 direct／L4 relay TCP 2,540／2,229 → 2,674／2,468 Mbit/s，重传 618／512 → 0；60 ms RTT（netem）内层 TCP 266–315 → 410–412 Mbit/s；4 MiB 与 7 MiB 各格无差别。见[接收缓冲](/v2/node/performance#接收缓冲)；证据 `.meshway/validation/m2/`、`.meshway/node-lab/m2/`。合入 main（U1）后 Planck 18 行矩阵 `20261013T220137Z-ac7e2c25`（`52d01af7`）全部通过，`status --json` 显示 socket 读回 8 MiB／4 MiB，`udp/off` 的被占端口阶段 B 的 `sockets` 有 `listener tcp` 的 `unavailable` 行。真机部署后复测待补。
 
 ## v0.1.0-alpha.6
 
