@@ -108,8 +108,6 @@ wire 6、`compilerVersion` 不变，IPC 9（C3）；Server schema 版本 7（F4a
 - 修复：未 up 的接口创建／删除不再算外部网络变化（us-lax-it7 上反复重建的空闲 `ppp0` 每隔数秒关闭全部控制连接，sync 以 `Network` 失败）；没有 Native UDP listener 的节点在首个 instance 前启动时补绑拨号穿透 socket；受保护控制中继按 Happy Eyeballs 交替地址族连接；中继的固定 300 秒连接寿命改为双向 120 秒无字节才关闭（原寿命截断恰在挂起的 sync 长轮询，us-lax-it7 每次 `Network` 失败都与之精确对应）。
 - 实网：us-lax-it7（公网 dial-only）↔ meshway-vm（WARP）Native UDP 直连，见[实网 NAT 证据](/v2/node/validation#real-nat)。
 
-出口方案切换（C3）：IPC 升为 9，Server schema 版本 6（`activity_events` 新增 Node actor 与路由方案目标；开发环境重新初始化数据目录）；wire 6、`compilerVersion` 不变。
-
 E1 出口 ICMP 错误与出口自指（wire、IPC、HTTP 契约与 `compilerVersion` 均不变）：
 
 - 出口 ICMP 错误回传：ICMPv4 destination unreachable（含 fragmentation needed）与 time exceeded 作为其引用活流的 RELATED 报文，沿该流原路径回复方向返回源；出口之外路由器与出口主机自身的错误都经出口 TUN（`route` 链、新 `local` 输出路由链、一条 `fwmark＋ipproto icmp` RPDB 规则），数据面按引用的 forward 包、circuit、路径与来源规则（`admission::netmap::admit_related`）准入，每流每端每秒至多 10 条，`SecureNode::related_counters` 计数；traceroute 显示出口与其后各跳，PMTU 发现经出口收敛。见 [数据面 · ICMP 错误](/v2/node/dataplane#icmp-errors)、[Exit 设计 · ICMP 错误](/v2/node/exit-design#icmp-errors)。
@@ -130,7 +128,7 @@ E1 出口 ICMP 错误与出口自指（wire、IPC、HTTP 契约与 `compilerVers
 
 验证：Planck 16 行矩阵 `20261012T212926Z-abd9b9c8`（`4164e184`）、`20261012T232408Z-75436f19`（`b4fe0619`）与合入 main（含 S3、C3）后的 `20261013T015222Z-59ebfafc`（`861d58d3`）全部通过；高负载下的未通过矩阵与签名见[验收范围](/v2/node/validation#netmap-rows)；`mise run check` 通过；证据 `.meshway/validation/r2d/`。
 
-出口方案切换（C3）：IPC 升为 9，`activity_events` 新增 Node actor 与路由方案目标（schema 6）。
+出口方案切换（C3）：IPC 升为 9，Server schema 版本 6（`activity_events` 新增 Node actor 与路由方案目标；开发环境重新初始化数据目录）；wire 6、`compilerVersion` 不变。
 
 - `meshway exit [profile|off]`：无参数显示本机 netmap 中的方案选择（生效／请求的方案、默认与锁定、`auto` 解析、每个允许方案的摘要）；带方案时请 Server 切换并等待本机应用带新版本的 netmap，`off` 即 `mesh`。人读输出、`--json` 与退出码见 [出口方案](/v2/node/runtime#exit-profile)。
 - IPC 9：命令 `SelectProfile`、结果 `Selection`、`NetmapStatus.routing`，错误码 `profileNotAllowed`／`profileLocked`／`selectionConflict`；`meshway status` 新增 Profile 行。
@@ -142,7 +140,7 @@ E1 出口 ICMP 错误与出口自指（wire、IPC、HTTP 契约与 `compilerVers
 
 验证：Planck 16 行矩阵 `20261012T224334Z-469128d0`（`7facc522`）与合入 main 后的 `20261013T000304Z-56e3679e`（`f2441b12`）全部通过；证据 `.meshway/validation/c3/`。已知：切到 `global:<exit>` 与 `useWithExit` split resolver 组合时节点 DNS 安装拒绝新 netmap，见[验收范围 · 剩余边界](/v2/node/validation#remaining-boundaries)。
 
-此前：wire 6、IPC 8、`compilerVersion` 不变；Server schema 版本 5（新增 `rule_set_record_heads`；开发环境重新初始化数据目录）。HTTP 契约：`SyncRequest` 新增可省略的 `lease`；S3 的 State／库存／诊断变化见下。alpha.4 代码审阅修复（F4a）：
+此前：wire 6、IPC 8、`compilerVersion` 不变；Server schema 版本 5（新增 `rule_set_record_heads`；开发环境重新初始化数据目录）。HTTP 契约：`SyncRequest` 新增可省略的 `lease`；S3 的 State／库存／诊断变化见下。
 
 alpha.4 代码审阅修复（F4a）：
 
