@@ -1,0 +1,289 @@
+//! Listener binding and its bounded retry. A listener whose local address is
+//! unavailable (another process holds the port for a moment, the address is
+//! not assigned yet, a privileged port without the capability) does not keep
+//! the Manager from installing everything else, nor stays unbound until the
+//! Node restarts: its own owner retries the bind under the current content,
+//! starting after 1 s and doubling to 60 s (60 s throughout for a cause that
+//! needs an operator), and reports why it is unavailable until it binds.
+use super::*;
+use std::time::Duration;
+
+const FIRST: Duration = Duration::from_secs(1);
+const MAX: Duration = Duration::from_secs(60);
+
+/// A configured listener of the current content that is not bound.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ListenerUnavailable {
+    pub key: String,
+    /// The address the last attempt could not bind, when the bind was reached.
+    pub address: Option<SocketAddr>,
+    /// The failure of the last attempt, e.g. `listener lab-udp cannot bind
+    /// 0.0.0.0:35000: Address in use (os error 98)`.
+    pub detail: String,
+    /// Whether the cause can end on its own (a held port, an address not yet
+    /// assigned); otherwise it needs an operator. Both are retried.
+    pub recoverable: bool,
+    /// Failed attempts so far.
+    pub attempts: u32,
+    /// When the next attempt runs.
+    pub retry_at: std::time::Instant,
+}
+
+pub(super) struct Unbound {
+    /// The retry owner this entry belongs to; a bind it sends is adopted only
+    /// while it is still that key's owner.
+    token: u64,
+    pub report: ListenerUnavailable,
+}
+
+/// A bound listener resource, not yet serving.
+pub(super) enum Bound {
+    Stream {
+        fact: ListenerFact,
+        listener: Box<dyn crate::ListenerSocket>,
+        acceptor: Arc<provider::Acceptor>,
+    },
+    Datagram {
+        fact: ListenerFact,
+        endpoint: Box<dyn meshway_transport::raw::Datagram>,
+    },
+    Traversal {
+        fact: ListenerFact,
+        reference: meshway_protocol::connectivity::SocketReference,
+        socket: crate::TraversalSocket,
+    },
+}
+
+pub(super) struct Rebound {
+    token: u64,
+    key: String,
+    bound: Bound,
+}
+
+fn recoverable(error: &Error) -> bool {
+    !matches!(
+        error,
+        Error::Bind { source, .. } if source.kind() == std::io::ErrorKind::PermissionDenied
+    )
+}
+
+fn delay(recoverable: bool, attempts: u32) -> Duration {
+    if !recoverable {
+        return MAX;
+    }
+    FIRST
+        .saturating_mul(1 << attempts.saturating_sub(1).min(6))
+        .min(MAX)
+}
+
+/// Bind one listener of the current content. Native UDP binds as a
+/// coordination socket when a live instance qualifies its State reference.
+pub(super) async fn bind(
+    shared: &Shared,
+    factory: &Arc<dyn SocketFactory>,
+    traversal: bool,
+    key: &str,
+) -> Result<Bound, Error> {
+    let plan = shared.plan();
+    let limits = shared.limits;
+    let declaration = plan.listeners.get(key).ok_or(Error::Configuration)?;
+    let (protocol, _) = provider::declaration(declaration);
+    if protocol == TransportProtocol::NativeUdp {
+        let id = adjacency::nonce()?;
+        let reference = match traversal {
+            true => traversal::socket_reference(
+                shared,
+                id,
+                meshway_model::state::ResourceRef::Listener {
+                    key: key.to_owned(),
+                },
+            )?,
+            false => None,
+        };
+        if let Some(reference) = reference {
+            let socket = tokio::time::timeout(
+                limits.handshake_timeout,
+                factory.traversal_listener(&plan.desired, key, reference.clone()),
+            )
+            .await
+            .map_err(|_| Error::Cancelled)??;
+            let fact = ListenerFact {
+                socket_id: id,
+                key: key.to_owned(),
+                protocol,
+                local: socket.endpoint.local_addr()?,
+            };
+            return Ok(Bound::Traversal {
+                fact,
+                reference,
+                socket,
+            });
+        }
+        let endpoint = tokio::time::timeout(
+            limits.handshake_timeout,
+            factory.datagram_listener(&plan.desired, key),
+        )
+        .await
+        .map_err(|_| Error::Cancelled)??;
+        let fact = ListenerFact {
+            socket_id: adjacency::nonce()?,
+            key: key.to_owned(),
+            protocol,
+            local: endpoint.local_addr()?,
+        };
+        return Ok(Bound::Datagram { fact, endpoint });
+    }
+    let acceptor = Arc::new(provider::Acceptor::new(declaration)?);
+    let listener =
+        tokio::time::timeout(limits.handshake_timeout, factory.listen(&plan.desired, key))
+            .await
+            .map_err(|_| Error::Cancelled)??;
+    let fact = ListenerFact {
+        socket_id: adjacency::nonce()?,
+        key: key.to_owned(),
+        protocol,
+        local: listener.local_addr()?,
+    };
+    Ok(Bound::Stream {
+        fact,
+        listener,
+        acceptor,
+    })
+}
+
+impl Shared {
+    fn record_unbound(&self, token: u64, key: &str, error: &Error, attempts: u32) -> Duration {
+        let recoverable = recoverable(error);
+        let wait = delay(recoverable, attempts);
+        let report = ListenerUnavailable {
+            key: key.to_owned(),
+            address: match error {
+                Error::Bind { address, .. } => Some(*address),
+                _ => None,
+            },
+            detail: error.to_string(),
+            recoverable,
+            attempts,
+            retry_at: std::time::Instant::now() + wait,
+        };
+        tracing::warn!(
+            key,
+            error = %report.detail,
+            recoverable,
+            attempts,
+            retry_ms = wait.as_millis() as u64,
+            "Listener unavailable; retrying its bind"
+        );
+        if let Ok(mut unbound) = self.unbound.lock() {
+            unbound.insert(key.to_owned(), Unbound { token, report });
+        }
+        wait
+    }
+}
+
+/// The retry owner of one unbound listener. It hands a bound resource to the
+/// Manager and ends when the Manager adopts it or retires the key.
+async fn retry(
+    shared: Arc<Shared>,
+    factory: Arc<dyn SocketFactory>,
+    traversal: bool,
+    token: u64,
+    key: String,
+    mut wait: Duration,
+    rebound: mpsc::Sender<Rebound>,
+) {
+    let mut attempts = 1;
+    loop {
+        tokio::select! {
+            _ = shared.stop.cancelled() => return,
+            _ = tokio::time::sleep(wait) => {}
+        }
+        match bind(&shared, &factory, traversal, &key).await {
+            Ok(bound) => {
+                tokio::select! {
+                    _ = shared.stop.cancelled() => {}
+                    _ = rebound.send(Rebound { token, key, bound }) => {}
+                }
+                // An owner that ends unasked stops the Manager: this one
+                // ends when the Manager adopts the bind (or retires the key).
+                shared.stop.cancelled().await;
+                return;
+            }
+            Err(error) => {
+                attempts += 1;
+                wait = shared.record_unbound(token, &key, &error, attempts);
+            }
+        }
+    }
+}
+
+impl Manager {
+    /// The first bind of `key` failed: report it and start its retry owner.
+    pub(super) fn retry_listener(&mut self, key: String, error: &Error) -> Result<(), Error> {
+        self.rebind_tokens = self.rebind_tokens.checked_add(1).ok_or(Error::Capacity)?;
+        let token = self.rebind_tokens;
+        let wait = self.shared.record_unbound(token, &key, error, 1);
+        let factory = self.factory.clone();
+        let traversal = self.traversal.is_some();
+        let sender = self.rebound_sender.clone();
+        let owner_key = key.clone();
+        self.spawn_owner(resources::Key::Listener(owner_key), None, |shared| {
+            retry(shared, factory, traversal, token, key, wait, sender)
+        });
+        Ok(())
+    }
+
+    /// Install a listener its retry owner bound, if that owner still owns
+    /// the key under the content it was bound for.
+    pub(super) fn adopt(&mut self, rebound: Rebound) -> Result<bool, Error> {
+        let Rebound { token, key, bound } = rebound;
+        {
+            let mut unbound = self.shared.unbound.lock().map_err(|_| Error::Worker)?;
+            if unbound.get(&key).is_none_or(|entry| entry.token != token) {
+                return Ok(false);
+            }
+            unbound.remove(&key);
+        }
+        // Its retry owner only waits for this; dropping it is the request.
+        self.owners.remove(&resources::Key::Listener(key.clone()));
+        let mut endpoints = BTreeMap::new();
+        self.install_bound(vec![bound], &mut endpoints)?;
+        self.publish_endpoints(endpoints)?;
+        tracing::info!(key, "Listener bound after retry");
+        Ok(true)
+    }
+
+    /// Configured listeners of the current content that are not bound.
+    pub fn unavailable_listeners(&self) -> Vec<ListenerUnavailable> {
+        self.shared
+            .unbound
+            .lock()
+            .map(|unbound| unbound.values().map(|entry| entry.report.clone()).collect())
+            .unwrap_or_default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn retries_back_off_from_one_second_to_a_minute() {
+        let waits: Vec<_> = (1..=9).map(|n| delay(true, n).as_secs()).collect();
+        assert_eq!(waits, [1, 2, 4, 8, 16, 32, 60, 60, 60]);
+        assert_eq!(delay(false, 1), MAX);
+        let busy = Error::Bind {
+            key: "k".into(),
+            address: "0.0.0.0:35000".parse().unwrap(),
+            source: std::io::ErrorKind::AddrInUse.into(),
+        };
+        let denied = Error::Bind {
+            key: "k".into(),
+            address: "0.0.0.0:443".parse().unwrap(),
+            source: std::io::ErrorKind::PermissionDenied.into(),
+        };
+        assert!(recoverable(&busy));
+        assert!(!recoverable(&denied));
+        assert!(recoverable(&Error::Underlay));
+    }
+}

@@ -27,6 +27,9 @@ pub(super) struct Ledger {
     pub boot: String,
     pub namespace_device: u64,
     pub namespace_inode: u64,
+    /// Absent in a ledger of an earlier build or of a kernel without one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub namespace_cookie: Option<u64>,
     pub base_installation: String,
     pub network: NetworkId,
     pub node: NodeId,
@@ -123,11 +126,12 @@ impl Store {
                 return Err(Error::Journal);
             }
             let ledger = super::legacy::decode(&bytes)?;
-            let (boot, device, inode) = super::super::journal::Journal::identity()?;
-            if ledger.boot != boot
-                || ledger.namespace_device != device
-                || ledger.namespace_inode != inode
-            {
+            if !super::super::namespace::Identity::current()?.is(
+                &ledger.boot,
+                ledger.namespace_device,
+                ledger.namespace_inode,
+                ledger.namespace_cookie,
+            ) {
                 reader.archive_stale(FILE, super::super::journal::STALE_ARCHIVES)?;
                 return Ok(None);
             }

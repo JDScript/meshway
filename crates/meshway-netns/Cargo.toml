@@ -1,0 +1,14 @@
+[package]
+name = "meshway-netns"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Network namespace cookie: the workspace's one audited syscall bridge (SO_NETNS_COOKIE)"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2.190"
+
+# The workspace forbids `unsafe`; this crate denies it and allows exactly one
+# audited block (see src/lib.rs). Every other workspace lint is the default.
+[lints.rust]
+unsafe_code = "deny"

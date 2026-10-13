@@ -32,6 +32,9 @@ pub(super) struct Ledger {
     pub boot: String,
     pub namespace_device: u64,
     pub namespace_inode: u64,
+    /// Absent in a ledger of an earlier build or of a kernel without one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub namespace_cookie: Option<u64>,
     pub program: Program,
     pub table: u32,
     pub plan: EgressCapturePlan,
@@ -67,7 +70,6 @@ impl Store {
                 return Ok(None);
             }
             // Nor does one of another boot or namespace.
-            let (boot, dev, ino) = super::super::journal::Journal::identity()?;
             let recorded = (
                 raw.get("boot").and_then(serde_json::Value::as_str),
                 raw.get("namespace_device")
@@ -78,7 +80,16 @@ impl Store {
             let (Some(recorded_boot), Some(recorded_dev), Some(recorded_ino)) = recorded else {
                 return Err(Error::Journal);
             };
-            if (recorded_boot, recorded_dev, recorded_ino) != (boot.as_str(), dev, ino) {
+            let recorded_cookie = match raw.get("namespace_cookie") {
+                None => None,
+                Some(value) => Some(value.as_u64().ok_or(Error::Journal)?),
+            };
+            if !super::super::namespace::Identity::current()?.is(
+                recorded_boot,
+                recorded_dev,
+                recorded_ino,
+                recorded_cookie,
+            ) {
                 source.archive_stale(FILE, super::super::journal::STALE_ARCHIVES)?;
                 return Ok(None);
             }

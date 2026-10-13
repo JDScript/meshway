@@ -177,6 +177,10 @@ pub enum IssueCode {
     /// A block topology rule sets `transports` or `keepalive: true`, which
     /// only allow rules use; params `field`.
     IneffectiveBlockOption,
+    /// An enabled listener's port is inside Linux's default ephemeral port
+    /// range, where an outgoing socket of another process can hold it for a
+    /// moment and delay the listener's bind; params `port`, `first`, `last`.
+    EphemeralListenerPort,
 }
 }
 
@@ -265,6 +269,9 @@ impl IssueCode {
             }
             ShadowedRule => "every destination of this rule is matched by earlier rules",
             IneffectiveBlockOption => "a block rule blocks the whole edge and ignores this option",
+            EphemeralListenerPort => {
+                "listener port is inside the default Linux ephemeral port range"
+            }
         }
     }
 }

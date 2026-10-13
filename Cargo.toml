@@ -13,6 +13,7 @@ members = [
     "crates/meshway-connectivity",
     "crates/meshway-stun",
     "crates/meshway-dns",
+    "crates/meshway-netns",
     "crates/meshway-control-client",
     "crates/meshway-protocol",
     "crates/meshway-private-storage",

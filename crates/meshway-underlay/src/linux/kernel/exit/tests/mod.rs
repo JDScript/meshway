@@ -1,9 +1,6 @@
 use super::io::ExitCutoff as Deadline;
 use super::*;
-use crate::linux::{
-    kernel::{Kernel, journal::Journal},
-    tasks::Tasks,
-};
+use crate::linux::{kernel::Kernel, tasks::Tasks};
 use meshway_configuration::execution::ExitNat;
 use meshway_model::{Digest, exit::ExitFamily};
 use meshway_private_storage::Directory;
@@ -54,16 +51,17 @@ async fn exit_nat_udp_real_reply_qualification_confirm_retire_and_expiry() {
     let mut nonce = [0; 16];
     getrandom::fill(&mut nonce).unwrap();
     let mark = if kernel.journal.mark.mask != 1 { 1 } else { 2 };
-    let (boot, namespace_device, namespace_inode) = Journal::identity().unwrap();
+    let namespace = crate::linux::kernel::namespace::Identity::current().unwrap();
     let (store, previous) = storage::Store::open(kernel.store.directory())
         .await
         .unwrap();
     assert!(previous.is_none());
     let ledger = storage::Ledger {
         version: 2,
-        boot,
-        namespace_device,
-        namespace_inode,
+        boot: namespace.boot,
+        namespace_device: namespace.device,
+        namespace_inode: namespace.inode,
+        namespace_cookie: namespace.cookie,
         base_installation: kernel.journal.installation.clone(),
         network: "11111111-1111-4111-8111-111111111111".parse().unwrap(),
         node: "22222222-2222-4222-8222-222222222222".parse().unwrap(),

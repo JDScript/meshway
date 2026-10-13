@@ -6395,7 +6395,8 @@ export const schemaDocument = {
           "netmap_budget",
           "resolver_outside_access",
           "shadowed_rule",
-          "ineffective_block_option"
+          "ineffective_block_option",
+          "ephemeral_listener_port"
         ]
       },
       "JoinLinkActions": {

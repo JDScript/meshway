@@ -155,6 +155,17 @@ fn listener_tls(value: &mut ListenerTls) -> Result<(), DeclarationError> {
     Ok(())
 }
 impl Listener {
+    /// The local address this listener binds and whether it is created.
+    pub fn bind(&self) -> (std::net::SocketAddr, bool) {
+        let (listen, port, enabled) = match self {
+            Self::NativeUdp(v) => (v.listen, v.listen_port, v.enabled),
+            Self::NativeTcp(v) => (v.listen, v.listen_port, v.enabled),
+            Self::Vless(v) => (v.listen, v.listen_port, v.enabled),
+            Self::Trojan(v) => (v.listen, v.listen_port, v.enabled),
+        };
+        (std::net::SocketAddr::new(listen, port.get()), enabled)
+    }
+
     /// A `{"retained": true}` marker left after inheritance names no saved
     /// value; it is never generated anew or read as absence.
     pub fn check_retained(&self) -> Result<(), DeclarationError> {

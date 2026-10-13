@@ -4,6 +4,7 @@ pub(crate) mod egress;
 pub(crate) mod exit;
 mod journal;
 mod monitor;
+mod namespace;
 mod plan;
 mod rpdb;
 mod tool;
@@ -1113,13 +1114,14 @@ fn allocate(rules: &[RuleMessage], routes: &[RouteMessage], pool_limit: usize) -
         })
         .find(|mark| mark.transform(0, &selectors).is_ok())
         .ok_or(Error::Conflict)?;
-    let (boot, namespace_device, namespace_inode) = Journal::identity()?;
+    let namespace = namespace::Identity::current()?;
     let installation = random.iter().map(|byte| format!("{byte:02x}")).collect();
     Ok(Journal {
         version: 1,
-        boot,
-        namespace_device,
-        namespace_inode,
+        boot: namespace.boot,
+        namespace_device: namespace.device,
+        namespace_inode: namespace.inode,
+        namespace_cookie: namespace.cookie,
         installation,
         binding: None,
         mark,

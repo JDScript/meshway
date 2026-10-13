@@ -88,7 +88,7 @@ revision_conflict 不携带当前配置差异；客户端重新读取基准后�
 
 `edge_transport_unavailable`（`invalid_transport` 的一种 `reason`）一次报全：同一次 validate／apply 为每个受影响的（Mesh 路由规则，边）各给一条，最多 64 条（按源、目标 Node ID 顺序取前 64 条），超出部分在修正后再次检查时出现；同一条路由要经过多条没有承载的边时，每条边各一条。
 
-同一类型也用于 `warnings`（接受但可能非本意的配置，如 `shadowed_rule`：该规则的全部目标已被前面的规则匹配，`params.by` 是补齐覆盖的那条规则下标；`ineffective_block_option`：block 组网规则写了 `transports` 或 `keepalive: true`，block 总是阻断整条边、不使用它们，路径为 `/topology/<i>/<field>`，`params.field` 为 `transports` 或 `keepalive`，配置照常接受）和 `unavailableDependencies`（保留但已失效的依赖）。
+同一类型也用于 `warnings`（接受但可能非本意的配置，如 `shadowed_rule`：该规则的全部目标已被前面的规则匹配，`params.by` 是补齐覆盖的那条规则下标；`ineffective_block_option`：block 组网规则写了 `transports` 或 `keepalive: true`，block 总是阻断整条边、不使用它们，路径为 `/topology/<i>/<field>`，`params.field` 为 `transports` 或 `keepalive`，配置照常接受；`ephemeral_listener_port`：已启用 listener 的端口在 Linux 默认临时端口范围内，路径为 `/nodes/<id>/listeners/<key>/listenPort`，`params.port`／`first`／`last`，见 [Listeners](/v2/configuration-reference/listeners#behavior)）和 `unavailableDependencies`（保留但已失效的依赖）。
 
 `cursor_too_old`／`view_changed` 属于 SSE reset 原因，见[事件流](/v2/api/events)，不混作 HTTP Problem code。
 

@@ -10,7 +10,11 @@ async fn container_restart_archives_previous_namespace_journal() {
     let phase = std::env::var("MESHWAY_RESTART_PHASE").unwrap();
     std::fs::write(
         format!("/restart/identity-{phase}.json"),
-        serde_json::to_vec(&Journal::identity().unwrap()).unwrap(),
+        serde_json::to_vec(&{
+            let current = super::namespace::Identity::current().unwrap();
+            (current.boot, current.device, current.inode, current.cookie)
+        })
+        .unwrap(),
     )
     .unwrap();
     let directory =
@@ -59,51 +63,59 @@ async fn container_restart_archives_previous_namespace_journal() {
     tasks.shutdown().await.unwrap();
     if let Some(bytes) = previous {
         // A restarted container may receive the destroyed namespace's nsfs
-        // inode. A's journal under B's exact identity names objects B never
-        // had: it is archived, not adopted and not a conflict.
-        let mut reused: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        let (_, device, inode) = Journal::identity().unwrap();
-        reused["namespace_device"] = device.into();
-        reused["namespace_inode"] = inode.into();
-        let reused = serde_json::to_vec(&reused).unwrap();
-        directory.replace("underlay.json", &reused).unwrap();
-        let tasks = Tasks::new(64);
-        let mut kernel = Kernel::open(directory.clone(), Options::default(), tasks.clone())
-            .await
-            .unwrap();
-        let old: Journal = serde_json::from_slice(&reused).unwrap();
-        assert_eq!(
-            (old.namespace_device, old.namespace_inode),
-            (
-                kernel.journal.namespace_device,
-                kernel.journal.namespace_inode
-            )
-        );
-        assert_ne!(old.installation, kernel.journal.installation);
-        assert!(kernel.journal.rules.is_empty());
-        let archived: Vec<_> = std::fs::read_dir(directory.path())
-            .unwrap()
-            .map(|entry| entry.unwrap().path())
-            .filter(|path| {
-                path.file_name()
-                    .unwrap()
-                    .to_string_lossy()
-                    .starts_with("underlay.json.stale-")
-            })
-            .map(|path| std::fs::read(path).unwrap())
-            .collect();
-        assert_eq!(archived.len(), 2);
-        assert!(archived.contains(&reused));
-        // The fresh allocation installs and cleans up exactly as usual.
-        kernel
-            .retain_negative(&["100.96.0.0/16".parse().unwrap()])
-            .await
-            .unwrap();
-        kernel.suspend().await.unwrap();
-        kernel.down().await.unwrap();
-        kernel.settle().await.unwrap();
-        drop(kernel);
-        tasks.shutdown().await.unwrap();
+        // inode. A's journal under B's exact device/inode names objects B
+        // never had: it is archived, not adopted and not a conflict. With A's
+        // namespace cookie it is another namespace outright; without one (an
+        // earlier build) B holding none of its objects proves the same.
+        let current = super::namespace::Identity::current().unwrap();
+        for (round, keep_cookie) in [(2, true), (3, false)] {
+            let mut reused: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            reused["namespace_device"] = current.device.into();
+            reused["namespace_inode"] = current.inode.into();
+            if !keep_cookie {
+                reused.as_object_mut().unwrap().remove("namespace_cookie");
+            }
+            let reused = serde_json::to_vec(&reused).unwrap();
+            directory.replace("underlay.json", &reused).unwrap();
+            let tasks = Tasks::new(64);
+            let mut kernel = Kernel::open(directory.clone(), Options::default(), tasks.clone())
+                .await
+                .unwrap();
+            let old: Journal = serde_json::from_slice(&reused).unwrap();
+            assert_eq!(
+                (old.namespace_device, old.namespace_inode),
+                (
+                    kernel.journal.namespace_device,
+                    kernel.journal.namespace_inode
+                )
+            );
+            assert_eq!(kernel.journal.namespace_cookie, current.cookie);
+            assert_ne!(old.installation, kernel.journal.installation);
+            assert!(kernel.journal.rules.is_empty());
+            let archived: Vec<_> = std::fs::read_dir(directory.path())
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .filter(|path| {
+                    path.file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .starts_with("underlay.json.stale-")
+                })
+                .map(|path| std::fs::read(path).unwrap())
+                .collect();
+            assert_eq!(archived.len(), round);
+            assert!(archived.contains(&reused));
+            // The fresh allocation installs and cleans up exactly as usual.
+            kernel
+                .retain_negative(&["100.96.0.0/16".parse().unwrap()])
+                .await
+                .unwrap();
+            kernel.suspend().await.unwrap();
+            kernel.down().await.unwrap();
+            kernel.settle().await.unwrap();
+            drop(kernel);
+            tasks.shutdown().await.unwrap();
+        }
     }
     drop(directory);
     if phase == "a" {

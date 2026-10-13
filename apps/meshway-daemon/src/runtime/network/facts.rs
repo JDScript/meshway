@@ -118,6 +118,24 @@ impl Report {
                 },
             );
         }
+        // A listener whose bind its owner retries: no socket, and why.
+        for listener in &facts.unavailable {
+            state
+                .listeners
+                .entry(listener.key.clone())
+                .or_insert(ListenerState {
+                    phase: ListenerPhase::Failed,
+                    socket_ids: Vec::new(),
+                    loaded_certificate_sha256: None,
+                    problem: Some(StateProblem::ResourceUnavailable {
+                        resource: ResourceRef::Listener {
+                            key: listener.key.clone(),
+                        },
+                        observed_at: self.facts_observed_at,
+                    }),
+                    netmap: Some(target),
+                });
+        }
         let (Some(netmap), Some(lease_end)) = (&self.content, self.expires_at) else {
             return state;
         };
