@@ -416,6 +416,29 @@ async fn direct_probe(cli: &Cli) -> Result<bool> {
     Ok(direct_to_r(&command(cli, "status").await?))
 }
 
+/// A–R is an on-demand edge (R can dial A's reverse TCP listener): while it
+/// has no channel, A keeps needing R the way a user does, with one `meshway
+/// ping r` every two seconds. The reply is not awaited.
+async fn direct_needed(cli: &Cli, last: &std::cell::Cell<Option<Instant>>) -> Result<bool> {
+    let direct = direct_probe(cli).await?;
+    if !direct
+        && last
+            .get()
+            .is_none_or(|at| at.elapsed() >= Duration::from_secs(2))
+    {
+        last.set(Some(Instant::now()));
+        tokio::process::Command::new(cli.binaries.join("meshway"))
+            .arg("--socket")
+            .arg(cli.state.join("node/control.sock"))
+            .args(["ping", Role::R.name(), "--count", "1"])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()?;
+    }
+    Ok(direct)
+}
+
 /// See the Controller's `reconnect`. A reports when its channel with R is
 /// gone and when a new one is selected; R and A restart their own daemons.
 async fn reconnect(mut context: Context<'_>) -> Result<String> {
@@ -431,6 +454,7 @@ async fn reconnect(mut context: Context<'_>) -> Result<String> {
     let budget = Duration::from_secs(180);
     let report =
         async |name: &str, at_ms: u64| signals.write(name, &Signal::Observed { role, at_ms }).await;
+    let pinged = std::cell::Cell::new(None);
     let instance = |status: &Status| status.instance.as_ref().map(|lease| lease.instance_id);
     for stage in ["nat", "server"] {
         if stage == "server" {
@@ -448,7 +472,7 @@ async fn reconnect(mut context: Context<'_>) -> Result<String> {
             let lost = until(async || direct_probe(cli).await, false, budget).await?;
             report(&format!("reconnect-lost-{stage}"), lost).await?;
             stepped(signals, &format!("reconnect-heal-{stage}")).await?;
-            let direct = until(async || direct_probe(cli).await, true, budget).await?;
+            let direct = until(async || direct_needed(cli, &pinged).await, true, budget).await?;
             save(
                 cli,
                 &format!("scenario-reconnect-{stage}-status"),
@@ -486,7 +510,7 @@ async fn reconnect(mut context: Context<'_>) -> Result<String> {
                 let lost = until(async || direct_probe(cli).await, false, budget).await?;
                 save(cli, "scenario-reconnect-restart-r-lost", &lost).await?;
             }
-            let direct = until(async || direct_probe(cli).await, true, budget).await?;
+            let direct = until(async || direct_needed(cli, &pinged).await, true, budget).await?;
             save(
                 cli,
                 &format!("scenario-reconnect-{stage}-status"),
