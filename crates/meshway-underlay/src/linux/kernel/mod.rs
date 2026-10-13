@@ -1142,6 +1142,11 @@ async fn get_rules(handle: &Handle, limit: usize) -> Result<Vec<RuleMessage>> {
     Ok(rules)
 }
 
+/// Route objects of every table. A cached exception the kernel derives from
+/// a route (`RTM_F_CLONED`: a PMTU learnt from fragmentation needed, a
+/// redirect) is not a route: it lives and dies with its parent, nobody adds
+/// it, and an ICMP error reaching a captured flow creates one in an owned
+/// table. Ownership checks never see it.
 async fn get_routes(handle: &Handle, limit: usize) -> Result<Vec<RouteMessage>> {
     let mut routes = Vec::new();
     for family in [AddressFamily::Inet, AddressFamily::Inet6] {
@@ -1152,7 +1157,14 @@ async fn get_routes(handle: &Handle, limit: usize) -> Result<Vec<RouteMessage>> 
                 handle.route().get(message).execute(),
                 limit.saturating_sub(routes.len()),
             )
-            .await?,
+            .await?
+            .into_iter()
+            .filter(|route| {
+                !route
+                    .header
+                    .flags
+                    .contains(rtnetlink::packet_route::route::RouteFlags::Cloned)
+            }),
         );
     }
     Ok(routes)
