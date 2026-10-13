@@ -1020,7 +1020,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_attempt_without_a_channel_pauses_coordination_toward_that_peer() {
-        let mut fixture = Netmaps::start(false, false).await;
+        let fixture = Netmaps::start(false, false).await;
         let ids = fixture.ids();
         let (shared, _) = shared(&fixture.desired[0], &fixture.keys[0]);
         let peer = ids[1];
