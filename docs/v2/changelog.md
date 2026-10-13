@@ -2,7 +2,9 @@
 
 按合入 main 的顺序记录工作包、提交与证据 ID。规则见[工程流程](/v2/process)；性能数字的口径见[分层性能测量](/v2/node/performance)，验收状态见[验收范围](/v2/node/validation)。
 
-## 未发布
+## v0.1.0-alpha.7
+
+范围：wire 6、`compilerVersion` `meshway-netmap-2`、Server schema 不变；IPC 11（`Status.sockets`，CLI 与 daemon 一起升级）；Native UDP socket 默认缓冲接收 4 MiB／发送 2 MiB，经 `SO_RCVBUFFORCE`／`SO_SNDBUFFORCE` 不受 `rmem_max` 截断；出口 conntrack 经内核 ctnetlink（宿主不再需要 `conntrack` 工具）；Underlay namespace 身份含 netns cookie；listener 绑定失败退避重试；HTTP 契约 `IssueCode` 新增 `ephemeral_listener_port`（警告）；以及下列 M3、U1、M2 工作包。
 
 出口 conntrack 经 ctnetlink（M3）：wire 6、IPC 10、HTTP 契约、`compilerVersion` 与 Server schema 均不变。
 
