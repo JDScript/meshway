@@ -335,7 +335,16 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 diagnostics.plan(observation_plans.borrow_and_update().clone());
             }
             Work::Command(Some(Command::Ping(request))) => {
-                let scope = engine.components().diagnostic_scope().filter(|_| live);
+                let instance = engine
+                    .components()
+                    .diagnostic_scope()
+                    .and_then(|(_, instance)| instance);
+                let scope = engine
+                    .components_mut()
+                    .installed
+                    .as_mut()
+                    .filter(|_| live)
+                    .and_then(|state| Some((&state.desired, instance, state.secure.as_mut()?)));
                 diagnostics.ping(scope, request);
             }
             Work::Command(Some(Command::Netcheck(reply))) => {

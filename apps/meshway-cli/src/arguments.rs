@@ -16,9 +16,12 @@ pub(crate) struct Arguments {
 
 #[derive(Subcommand)]
 pub(crate) enum Command {
-    /// Diagnose the authorized full Mesh route using ICMP (5s probes, >=1s interval).
+    /// Show this Node's decision for a target, then probe it with ICMP (5s probes, >=1s interval).
+    ///
+    /// A Mesh Node is measured over its full Mesh path; any other address or
+    /// name is echoed through its exit, or from this host when direct.
     Ping {
-        /// Node hostname or Mesh IP address.
+        /// Node hostname, Mesh IP, public IP address or domain name.
         target: String,
         #[arg(short = 'c', long, default_value_t = 10, value_parser = clap::value_parser!(u16).range(1..=1000))]
         count: u16,

@@ -77,7 +77,7 @@ pub(crate) async fn run(arguments: Arguments) -> Result<(), Error> {
     } = arguments.command
     {
         let target = match target.parse::<std::net::IpAddr>() {
-            Ok(address) => PingTarget::MeshIp {
+            Ok(address) => PingTarget::Address {
                 address: address.to_string(),
             },
             Err(_) => PingTarget::Name { name: target },
@@ -87,14 +87,22 @@ pub(crate) async fn run(arguments: Arguments) -> Result<(), Error> {
         let mut stream = client.ping(target, count).await?;
         while let Some(event) = stream.next().await? {
             if !arguments.json && view.wants_names(&event) {
-                // Relays are named from this Node's own netmap peers; without
-                // them the line keeps the Node IDs.
-                let peers = client
-                    .call(Command::Status)
-                    .await
-                    .map(|status| status.peers)
-                    .unwrap_or_default();
-                view.names(&peers);
+                // Paths are named from this Node's own netmap; without it
+                // the line keeps the Node IDs.
+                let status = client.call(Command::Status).await.ok();
+                let own = status.as_ref().and_then(|status| {
+                    Some((
+                        status.identity.as_ref()?.node_id,
+                        status.node.as_ref()?.hostname.clone(),
+                    ))
+                });
+                view.names(
+                    status
+                        .as_ref()
+                        .map(|s| s.peers.as_slice())
+                        .unwrap_or_default(),
+                    own,
+                );
             }
             {
                 use std::io::Write;

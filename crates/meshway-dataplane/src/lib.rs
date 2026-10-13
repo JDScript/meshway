@@ -255,6 +255,11 @@ impl PendingAction {
         self.pending.route()
     }
 
+    /// Payload-free facts of the admitted packet; scheduling metadata only.
+    pub fn facts(&self) -> PacketFacts {
+        self.packet.facts()
+    }
+
     pub fn ensure_current(&self) -> Result<(), Error> {
         self.pending.ensure_current()?;
         if let Some(gate) = &self.pending.projection {

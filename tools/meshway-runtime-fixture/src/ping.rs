@@ -309,11 +309,24 @@ impl Run {
         let mut accepted = false;
         let mut terminal = false;
         let mut count = 0;
-        for event in &self.events {
+        for (index, event) in self.events.iter().enumerate() {
             if terminal {
                 return Err("ping emitted events after terminal".into());
             }
             match event {
+                // The local decision of a Mesh Node comes first: the Mesh
+                // action on a full path from this Node to the target.
+                PingEvent::Decision { decision } => {
+                    if index != 0
+                        || decision.node.as_ref().map(|node| node.node_id) != path.last().copied()
+                        || decision.action != Some(meshway_protocol::ipc::PingAction::Mesh)
+                        || decision.path.first() != path.first()
+                        || decision.path.last() != path.last()
+                    {
+                        return Err("ping decision is not the measured Mesh path".into());
+                    }
+                }
+                PingEvent::Echo { .. } => return Err("a Mesh Node ping echoed".into()),
                 PingEvent::Accepted { target, .. } => {
                     accepted = true;
                     if Some(&target.node_id) != path.last()

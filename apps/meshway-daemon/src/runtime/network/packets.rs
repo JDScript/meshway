@@ -313,6 +313,13 @@ impl Packets {
         let Some(carriers) = carriers else {
             return;
         };
+        // `meshway ping` echoes outside the Mesh enter as local packets.
+        for packet in diagnostics
+            .externals
+            .packets(desired.local().addresses.ipv4)
+        {
+            self.enqueue(packet);
+        }
         if let Some(exit) = exit.as_deref_mut() {
             exit.drive(secure);
         }
@@ -351,7 +358,13 @@ impl Packets {
                 Err(error) => self.drop_admission("keepalive", error),
             }
         }
-        self.complete_crypto(secure, manager, pool, exit.as_deref_mut());
+        self.complete_crypto(
+            secure,
+            manager,
+            pool,
+            exit.as_deref_mut(),
+            &mut diagnostics.externals,
+        );
         // Continue a bounded scan on the next turn, including ready suffixes
         // left after a full batch. Waiting packets are scanned only once per
         // external event, rather than creating an unbounded busy loop.
@@ -517,6 +530,9 @@ impl Packets {
                         self.drop_packet("unsupported_exit");
                         continue;
                     }
+                    if diagnostics.externals.answer(&packet) {
+                        continue;
+                    }
                     deliveries.push(packet);
                 }
                 Err(error) => self.drop_admission("cipher_admission", error),
@@ -594,7 +610,17 @@ impl Packets {
                     meshway_logging::profile::Metric::new("queue.tun_attempt_age");
                 WAIT.elapsed((item.deadline - RETENTION).elapsed());
             }
-            match secure.outbound(item.packet) {
+            let echo = diagnostics.externals.request(&item.packet.facts());
+            let result = secure.outbound(item.packet);
+            if let Some(echo) = echo {
+                let admitted = match &result {
+                    Ok(Outbound::Send(_)) => Some(false),
+                    Ok(Outbound::Queued { .. } | Outbound::AwaitingAdjacency) => Some(true),
+                    _ => None,
+                };
+                diagnostics.externals.admitted(echo, admitted);
+            }
+            match result {
                 Ok(Outbound::Send(job)) => {
                     assert!(pool.submit(secure::pipeline::Job::Send(job)).is_none());
                     if pool.available().is_multiple_of(8) {
@@ -632,7 +658,13 @@ impl Packets {
         }
         self.flush_sends(manager, &mut outgoing).await;
         pool.flush();
-        self.complete_crypto(secure, manager, pool, exit.as_deref_mut());
+        self.complete_crypto(
+            secure,
+            manager,
+            pool,
+            exit.as_deref_mut(),
+            &mut diagnostics.externals,
+        );
         if let Some(exit) = exit {
             exit.drive(secure);
         }
@@ -698,6 +730,7 @@ impl Packets {
         manager: &Manager,
         pool: &mut secure::pipeline::Pool,
         mut exit: Option<&mut super::exit::Runtime>,
+        echoes: &mut super::diagnostics::external::Externals,
     ) {
         let mut outgoing = Vec::new();
         let mut deliveries = Vec::new();
@@ -721,6 +754,11 @@ impl Packets {
                     send_credits.push(credit);
                 }
                 Ok(Received::Packet(packet)) if packet.hop() == meshway_dataplane::Hop::Deliver => {
+                    // A `meshway ping` answer ends here, never in the TUN.
+                    if echoes.answer(&packet) {
+                        drop(credit);
+                        continue;
+                    }
                     deliveries.push(packet);
                     delivery_credits.push(credit);
                 }

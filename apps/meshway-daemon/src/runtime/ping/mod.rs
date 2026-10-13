@@ -144,7 +144,7 @@ pub(super) async fn forward(
             event,
             PingEvent::Completed { .. } | PingEvent::Failed { .. }
         );
-        if matches!(event, PingEvent::Sample { .. }) {
+        if matches!(event, PingEvent::Sample { .. } | PingEvent::Echo { .. }) {
             waiting_started = tokio::time::Instant::now();
         }
         // This is elapsed waiting time, not connection time or packet RTT.

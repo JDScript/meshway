@@ -79,6 +79,7 @@ impl Client {
                 request_id: request.request_id,
                 sequence: Sequence::MIN,
                 observation_id: None,
+                external: false,
                 pending: None,
             };
             ping.pending = ping.next().await?;
@@ -202,6 +203,8 @@ pub struct PingStream {
     request_id: RequestId,
     sequence: Sequence,
     observation_id: Option<ObservationId>,
+    /// The decision sends echo requests outside the Mesh.
+    external: bool,
     pending: Option<PingEvent>,
 }
 
@@ -233,14 +236,26 @@ impl PingStream {
             return Err(ClientError::Response);
         }
         match &event {
-            PingEvent::Accepted { observation_id, .. } if self.observation_id.is_none() => {
+            // The decision comes first, once; a Mesh Node target is then
+            // accepted as a measurement, any other target is echoed.
+            PingEvent::Decision { decision } if self.sequence == Sequence::MIN => {
+                use crate::ipc::PingAction;
+                self.external = matches!(
+                    decision.action,
+                    Some(PingAction::Exit { .. } | PingAction::Direct | PingAction::Unmanaged)
+                ) && decision.node.is_none();
+            }
+            PingEvent::Accepted { observation_id, .. }
+                if self.observation_id.is_none() && !self.external =>
+            {
                 self.observation_id = Some(*observation_id);
             }
             PingEvent::Failed { .. } => {}
             PingEvent::Preparing { .. } => {}
-            PingEvent::Completed { .. } if self.observation_id.is_some() => {}
+            PingEvent::Completed { .. } if self.observation_id.is_some() || self.external => {}
             PingEvent::Sample { observation_id, .. }
                 if self.observation_id == Some(*observation_id) => {}
+            PingEvent::Echo { .. } if self.external => {}
             _ => return Err(ClientError::Response),
         }
         if !matches!(

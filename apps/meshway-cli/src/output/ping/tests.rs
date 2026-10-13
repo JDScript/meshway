@@ -32,7 +32,7 @@ fn accepted() -> PingEvent {
 
 fn lines(events: &[PingEvent], verbose: bool, term: &Term) -> String {
     let mut view = Ping::new(verbose);
-    view.names(&[]);
+    view.names(&[], None);
     let mut output = Vec::new();
     for event in events {
         view.write(&mut output, term, event).unwrap();
@@ -79,7 +79,7 @@ fn relays_are_named_from_peers_and_the_first_hop_channel_is_labelled_as_such() {
         via: Vec::new(),
         rtt: None,
     };
-    view.names(&[peer(R, "meshway-sha")]);
+    view.names(&[peer(R, "meshway-sha")], None);
     assert!(!view.wants_names(&event));
     let mut output = Vec::new();
     view.write(&mut output, &Term::plain(), &event).unwrap();
@@ -175,4 +175,176 @@ fn json_lines_are_exact_authoritative_events_including_nulls() {
         );
     }
     assert!(text.contains("\"reply\":null"));
+}
+
+const E: &str = "00000000-0000-4000-8000-000000000005";
+
+fn decision(action: serde_json::Value, rule: serde_json::Value, path: &[&str]) -> PingEvent {
+    serde_json::from_value(json!({"type":"decision","decision":{
+        "destination":"11.77.0.3","node":null,"resolution":null,"profile":"exit",
+        "rule":rule,"action":action,"path":path}}))
+    .unwrap()
+}
+
+fn echo(outcome: &str, from: &str, error: serde_json::Value, path: &[&str]) -> PingEvent {
+    serde_json::from_value(json!({"type":"echo","echo":{"sequence":0,"outcome":outcome,
+        "from":from,"error":error,"durationUs":142_310,"setup":false,"path":path}}))
+    .unwrap()
+}
+
+fn named(events: &[PingEvent]) -> String {
+    let mut view = Ping::new(false);
+    let peer = |id: &str, name: &str| meshway_protocol::ipc::PeerStatus {
+        node_id: id.parse().unwrap(),
+        hostname: name.into(),
+        addresses: meshway_configuration::NodeAddresses {
+            ipv4: None,
+            ipv6: None,
+        },
+        state: meshway_protocol::ipc::PeerState::Direct,
+        transport: None,
+        endpoint: None,
+        mtu: None,
+        via: Vec::new(),
+        rtt: None,
+    };
+    assert!(view.wants_names(&events[0]));
+    view.names(
+        &[peer(R, "lax"), peer(E, "it7")],
+        Some((A.parse().unwrap(), "a".into())),
+    );
+    let mut output = Vec::new();
+    for event in events {
+        view.write(&mut output, &Term::plain(), event).unwrap();
+    }
+    String::from_utf8(output).unwrap()
+}
+
+#[test]
+fn an_exit_target_prints_its_decision_then_one_line_per_echo_and_the_summary() {
+    let path = [A, R, E];
+    let text = named(&[
+        decision(json!({"type":"exit","node":E}), json!(null), &path),
+        echo("reply", "11.77.0.3", json!(null), &path),
+        echo(
+            "unreachable",
+            "11.77.0.1",
+            json!({"kind":3,"code":1}),
+            &path,
+        ),
+        PingEvent::Completed {
+            sent: 3,
+            success: 1,
+            timeout: 1,
+            failed: 0,
+        },
+    ]);
+    assert_eq!(
+        text,
+        "decision for 11.77.0.3: exit it7 via a → lax → it7 · profile exit, fallback\n\
+         pong from 11.77.0.3 via exit it7 (a → lax → it7) in 142.31 ms\n\
+         unreachable from 11.77.0.1 (host unreachable) via exit it7 (a → lax → it7) in 142.31 ms\n\
+         11.77.0.3: 3 sent, 1 replied, 33% loss, 1 unreachable · rtt min/avg/max 142.31/142.31/142.31 ms\n"
+    );
+}
+
+#[test]
+fn a_name_resolved_through_the_exit_shows_its_association_and_rule() {
+    let event: PingEvent = serde_json::from_value(json!({"type":"decision","decision":{
+        "destination":"11.77.0.3","node":null,
+        "resolution":{"name":"svc.name.exit-dns.test","resolver":{"type":"exit","node":E},
+            "addresses":["11.77.0.3"],"association":{"names":["svc.name.exit-dns.test"],"remainingSeconds":58}},
+        "profile":"exit",
+        "rule":{"pointer":"/routing/egress/profiles/exit/rules/2","remark":"names through E","ruleSet":null},
+        "action":{"type":"exit","node":E},"path":[A,R,E]}}))
+    .unwrap();
+    assert_eq!(
+        named(&[event]),
+        "svc.name.exit-dns.test resolved via exit it7: 11.77.0.3 · associated as svc.name.exit-dns.test, 58 s left\n\
+         decision for 11.77.0.3: exit it7 via a → lax → it7 · profile exit, rule /routing/egress/profiles/exit/rules/2 \"names through E\"\n"
+    );
+}
+
+#[test]
+fn direct_unmanaged_and_denied_decisions_say_so_and_denied_is_not_probed() {
+    let rule = json!({"pointer":"/routing/egress/profiles/exit/rules/0","remark":"split",
+        "ruleSet":{"key":"exit-direct","entry":"192.168.5.3/32"}});
+    let text = lines(
+        &[
+            decision(json!({"type":"direct"}), rule, &[]),
+            echo("reply", "11.77.0.3", json!(null), &[]),
+        ],
+        false,
+        &Term::plain(),
+    );
+    assert_eq!(
+        text,
+        "decision for 11.77.0.3: direct, not via Mesh · profile exit, rule /routing/egress/profiles/exit/rules/0 \"split\" (rule set exit-direct: 192.168.5.3/32)\n\
+         pong from 11.77.0.3 direct, not via Mesh in 142.31 ms\n"
+    );
+    let text = lines(
+        &[
+            decision(json!({"type":"unmanaged"}), json!(null), &[]),
+            echo("timeout", "11.77.0.3", json!(null), &[]),
+        ],
+        false,
+        &Term::plain(),
+    );
+    assert!(
+        text.starts_with(
+            "decision for 11.77.0.3: unmanaged, not via Mesh · profile exit, fallback\n"
+        )
+    );
+    assert!(text.ends_with("no reply from 11.77.0.3 unmanaged, not via Mesh within 5 s\n"));
+    let text = lines(
+        &[
+            decision(
+                json!({"type":"denied","reason":"unauthorized"}),
+                json!(null),
+                &[],
+            ),
+            PingEvent::Failed {
+                code: meshway_protocol::ipc::PingError::PermissionDenied,
+            },
+        ],
+        false,
+        &Term::plain(),
+    );
+    assert_eq!(
+        text,
+        "decision for 11.77.0.3: denied (unauthorized), not probed · profile exit, fallback\n\
+         ping failed: permission denied\n"
+    );
+    // An unresolved name has no decision beyond its resolution.
+    let unresolved: PingEvent = serde_json::from_value(json!({"type":"decision","decision":{
+        "destination":null,"node":null,"resolution":{"name":"nx.example","resolver":{"type":"system"},
+        "addresses":[],"association":null},"profile":null,"rule":null,"action":null,"path":[]}}))
+    .unwrap();
+    assert_eq!(
+        lines(&[unresolved], false, &Term::plain()),
+        "nx.example did not resolve via system DNS\n"
+    );
+}
+
+#[test]
+fn a_mesh_target_decision_shows_only_verbose_and_json_keeps_the_decision_first() {
+    let mesh: PingEvent = serde_json::from_value(json!({"type":"decision","decision":{
+        "destination":"100.64.0.6","node":{"nodeId":B,"hostname":"meshway-nyc","addresses":{"ipv4":"100.64.0.6","ipv6":null}},
+        "resolution":null,"profile":null,"rule":null,"action":{"type":"mesh"},"path":[A,B]}}))
+    .unwrap();
+    assert_eq!(text(&mesh), "");
+    let verbose = lines(&[mesh.clone(), accepted(), sample()], true, &Term::plain());
+    assert!(verbose.starts_with(&format!("decision for meshway-nyc: Mesh via {A} → {B}\n")));
+    assert!(verbose.contains("pong from meshway-nyc"));
+    let events = [mesh, echo("reply", "11.77.0.3", json!(null), &[A, B])];
+    let mut output = Vec::new();
+    for event in &events {
+        json(&mut output, event).unwrap();
+    }
+    let text = String::from_utf8(output).unwrap();
+    let first: serde_json::Value = serde_json::from_str(text.lines().next().unwrap()).unwrap();
+    assert_eq!(first["type"], "decision");
+    assert_eq!(first["decision"]["rule"], serde_json::Value::Null);
+    let second: serde_json::Value = serde_json::from_str(text.lines().nth(1).unwrap()).unwrap();
+    assert_eq!(second["echo"]["error"], serde_json::Value::Null);
 }

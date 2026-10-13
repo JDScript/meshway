@@ -123,7 +123,7 @@ async fn ip_target_count_flags_timeout_and_terminal_failures_exit_unsuccessfully
             let (mut stream, _) = listener.accept().await.unwrap();
             let request: Request = meshway_protocol::ipc::read(&mut stream).await.unwrap();
             assert!(
-                matches!(&request.command, Command::Ping { target: PingTarget::MeshIp { address }, count: 1 } if address == "fd00::2")
+                matches!(&request.command, Command::Ping { target: PingTarget::Address { address }, count: 1 } if address == "fd00::2")
             );
             if failure {
                 send(
