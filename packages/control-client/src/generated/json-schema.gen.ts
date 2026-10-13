@@ -311,7 +311,7 @@ export const schemaDocument = {
       },
       "ActivityAction": {
         "type": "string",
-        "description": "`account.register`: Records completed account registration with an account target carrying userId and null previousEmail.\n`session.login`: Records successful sign-in with a session target carrying the newly created sessionId.\n`session.logout`: Records completed sign-out with a session target carrying the revoked sessionId.\n`session.revoke`: Records explicit revocation of one session with a session target carrying its sessionId.\n`session.revokeOthers`: Records revocation of the user's other sessions with an account target carrying userId and null previousEmail.\n`session.revokeAll`: Records revocation of all the user's sessions with an account target carrying userId and null previousEmail.\n`session.delegate`: A signed-in user authorized a delegation client; the target is the authorizing session.\n`account.password`: Records a password change authenticated by the current password with an account target carrying userId and null previousEmail.\n`account.passwordReset`: Records password replacement using a recovery credential with an account target carrying userId and null previousEmail.\n`account.resetIssued`: Records issuance of a password recovery credential by a system actor with an account target carrying userId and null previousEmail.\n`account.email`: Records an email change with an account target carrying userId and previousEmail set to the address before the change.\n`network.create`: Records completed network creation with a network target carrying networkId.\n`network.rename`: Records a network name change with a network target carrying networkId.\n`configuration.apply`: Records a committed configuration apply with a configuration target carrying the saved revision, independently of Node application results.\n`membership.role`: Records a member's role change with a membership target carrying membershipId.\n`membership.join`: Records a completed network join with a membership target carrying the new membershipId.\n`membership.remove`: Records a completed membership removal with a membership target carrying membershipId.\n`joinLink.create`: Records creation of a join link with a joinLink target carrying linkId.\n`joinLink.revoke`: Records revocation of a join link with a joinLink target carrying linkId.",
+        "description": "`account.register`: Records completed account registration with an account target carrying userId and null previousEmail.\n`session.login`: Records successful sign-in with a session target carrying the newly created sessionId.\n`session.logout`: Records completed sign-out with a session target carrying the revoked sessionId.\n`session.revoke`: Records explicit revocation of one session with a session target carrying its sessionId.\n`session.revokeOthers`: Records revocation of the user's other sessions with an account target carrying userId and null previousEmail.\n`session.revokeAll`: Records revocation of all the user's sessions with an account target carrying userId and null previousEmail.\n`session.delegate`: A signed-in user authorized a delegation client; the target is the authorizing session.\n`account.password`: Records a password change authenticated by the current password with an account target carrying userId and null previousEmail.\n`account.passwordReset`: Records password replacement using a recovery credential with an account target carrying userId and null previousEmail.\n`account.resetIssued`: Records issuance of a password recovery credential by a system actor with an account target carrying userId and null previousEmail.\n`account.email`: Records an email change with an account target carrying userId and previousEmail set to the address before the change.\n`network.create`: Records completed network creation with a network target carrying networkId.\n`network.rename`: Records a network name change with a network target carrying networkId.\n`configuration.apply`: Records a committed configuration apply with a configuration target carrying the saved revision, independently of Node application results.\n`membership.role`: Records a member's role change with a membership target carrying membershipId.\n`membership.join`: Records a completed network join with a membership target carrying the new membershipId.\n`membership.remove`: Records a completed membership removal with a membership target carrying membershipId.\n`joinLink.create`: Records creation of a join link with a joinLink target carrying linkId.\n`joinLink.revoke`: Records revocation of a join link with a joinLink target carrying linkId.\n`routing.select`: Records a committed routing profile selection by the Node itself or a user, with a routingSelection target carrying nodeId and the selected profile.",
         "enum": [
           "account.register",
           "session.login",
@@ -331,7 +331,8 @@ export const schemaDocument = {
           "membership.join",
           "membership.remove",
           "joinLink.create",
-          "joinLink.revoke"
+          "joinLink.revoke",
+          "routing.select"
         ]
       },
       "ActivityActor": {
@@ -380,9 +381,30 @@ export const schemaDocument = {
               }
             },
             "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "Authenticated Node acting for itself, such as `meshway exit` on the device.",
+            "required": [
+              "nodeId",
+              "type"
+            ],
+            "properties": {
+              "nodeId": {
+                "$ref": "#/components/schemas/NodeId",
+                "description": "Stable identifier of the Node that performed the action."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "node"
+                ]
+              }
+            },
+            "additionalProperties": false
           }
         ],
-        "description": "Verified user or system responsible for a committed activity."
+        "description": "Verified user, Node or system responsible for a committed activity."
       },
       "ActivityEvent": {
         "type": "object",
@@ -404,7 +426,7 @@ export const schemaDocument = {
           },
           "actor": {
             "$ref": "#/components/schemas/ActivityActor",
-            "description": "Verified user or system that performed the action."
+            "description": "Verified user, Node or system that performed the action."
           },
           "afterRevision": {
             "oneOf": [
@@ -642,6 +664,32 @@ export const schemaDocument = {
                 "type": "string",
                 "enum": [
                   "configuration"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "A Node's persistent routing profile selection.",
+            "required": [
+              "nodeId",
+              "profile",
+              "type"
+            ],
+            "properties": {
+              "nodeId": {
+                "$ref": "#/components/schemas/NodeId",
+                "description": "Node whose selection changed."
+              },
+              "profile": {
+                "type": "string",
+                "description": "Profile the selection names after the action."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "routingSelection"
                 ]
               }
             },
@@ -999,6 +1047,13 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "AutoBasis": {
+        "type": "string",
+        "description": "What decided `auto`'s profile.",
+        "enum": [
+          "noTrustedRegion"
+        ]
+      },
       "AutoProfile": {
         "type": "object",
         "description": "Ordered region-to-profile selection with an explicit fallback.",
@@ -1017,6 +1072,24 @@ export const schemaDocument = {
               "$ref": "#/components/schemas/CountryProfile"
             },
             "description": "Country mappings evaluated in first-match order."
+          }
+        },
+        "additionalProperties": false
+      },
+      "AutoResolution": {
+        "type": "object",
+        "description": "The concrete profile `auto` applies and why.",
+        "required": [
+          "profile",
+          "basis"
+        ],
+        "properties": {
+          "basis": {
+            "$ref": "#/components/schemas/AutoBasis"
+          },
+          "profile": {
+            "type": "string",
+            "description": "Allowed non-`auto` profile in effect."
           }
         },
         "additionalProperties": false
@@ -9303,7 +9376,8 @@ export const schemaDocument = {
           "canRevokeControlKey",
           "canRevokeDataplaneKey",
           "controlKeyCreatedAt",
-          "dataplaneKeyCreatedAt"
+          "dataplaneKeyCreatedAt",
+          "routing"
         ],
         "properties": {
           "addresses": {
@@ -9431,6 +9505,10 @@ export const schemaDocument = {
           "registeredAt": {
             "$ref": "#/components/schemas/Timestamp",
             "description": "UTC time at which the Node was registered."
+          },
+          "routing": {
+            "$ref": "#/components/schemas/NodeRoutingSummary",
+            "description": "The Node's routing profile selection for list display; `getNodeRoutingSelection` has the allowed profiles."
           },
           "serverKey": {
             "oneOf": [
@@ -9811,6 +9889,72 @@ export const schemaDocument = {
           "oldProof": {
             "$ref": "#/components/schemas/NodeProof",
             "description": "Existing control key's signature over the rotation challenge."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NodeRoutingSelectionResponse": {
+        "type": "object",
+        "description": "A Node's routing profile selection as the current configuration decides it.",
+        "required": [
+          "requestId",
+          "networkId",
+          "nodeId",
+          "selection",
+          "canSelect"
+        ],
+        "properties": {
+          "canSelect": {
+            "type": "boolean",
+            "description": "Whether the current caller may select another profile for this Node."
+          },
+          "networkId": {
+            "$ref": "#/components/schemas/NetworkId",
+            "description": "Network containing the Node."
+          },
+          "nodeId": {
+            "$ref": "#/components/schemas/NodeId",
+            "description": "Node whose selection is returned."
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId",
+            "description": "Server request identifier for correlation."
+          },
+          "selection": {
+            "$ref": "#/components/schemas/RoutingSelectionState",
+            "description": "Requested and applied profile, the allowed profiles, the lock and how `auto` resolves."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NodeRoutingSummary": {
+        "type": "object",
+        "description": "Short routing profile selection state of one Node.",
+        "required": [
+          "requestedProfile",
+          "appliedProfile",
+          "locked",
+          "canSelect"
+        ],
+        "properties": {
+          "appliedProfile": {
+            "type": "string",
+            "description": "Profile in effect under the current configuration."
+          },
+          "canSelect": {
+            "type": "boolean",
+            "description": "Whether the current caller may select another profile for this Node."
+          },
+          "locked": {
+            "type": "boolean",
+            "description": "The Node's assignment pins its default profile."
+          },
+          "requestedProfile": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Persistently selected profile under the Node's current identity; null when it has none."
           }
         },
         "additionalProperties": false
@@ -13273,6 +13417,32 @@ export const schemaDocument = {
           },
           {
             "type": "object",
+            "description": "The requested routing profile is not allowed for the Node or its assignment is locked to another one; returns HTTP 422 with the allowed profiles.",
+            "required": [
+              "code",
+              "params",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "routing_profile_unavailable"
+                ]
+              },
+              "message": {
+                "type": "string",
+                "description": "Safe fallback text. Clients branch on code."
+              },
+              "params": {
+                "$ref": "#/components/schemas/RoutingProfileUnavailableParams",
+                "description": "Structured context defined by this problem code, or an empty object when none is exposed."
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
             "description": "The current lifecycle state or sequence does not permit the operation; returns HTTP 409.",
             "required": [
               "code",
@@ -13476,6 +13646,61 @@ export const schemaDocument = {
           "requested": {
             "type": "boolean",
             "description": "Whether the request named this profile (true) or it is the source's\ncurrent selection / default (false)."
+          }
+        },
+        "additionalProperties": false
+      },
+      "ProfileKind": {
+        "type": "string",
+        "description": "Built-in or configured kind of a routing profile.",
+        "enum": [
+          "mesh",
+          "global",
+          "auto",
+          "custom"
+        ]
+      },
+      "ProfileSummary": {
+        "type": "object",
+        "description": "What one allowed profile does with external traffic, after the public rules.",
+        "required": [
+          "name",
+          "kind",
+          "rules",
+          "exits",
+          "fallback"
+        ],
+        "properties": {
+          "exits": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NodeId"
+            },
+            "description": "Exit Nodes the profile's rules and fallback name, in first-reference order."
+          },
+          "fallback": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RouteAction",
+                "description": "Action for traffic no rule matches; null for `auto`, whose resolution decides."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ProfileKind"
+          },
+          "name": {
+            "type": "string",
+            "description": "Profile name: `mesh`, `auto`, `global:<nodeId>` or a configured profile key."
+          },
+          "rules": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The profile's own rules (public rules excluded); zero for built-ins.",
+            "minimum": 0
           }
         },
         "additionalProperties": false
@@ -14373,6 +14598,28 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "RoutingProfileUnavailableParams": {
+        "type": "object",
+        "description": "Why a requested routing profile cannot be selected for the Node, with its current choices.",
+        "required": [
+          "reason",
+          "allowed"
+        ],
+        "properties": {
+          "allowed": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The Node's allowed profiles in assignment order; while locked only the default is selectable."
+          },
+          "reason": {
+            "$ref": "#/components/schemas/SelectionUnavailable",
+            "description": "The profile is outside the Node's allowed profiles, or the assignment is locked to another one."
+          }
+        },
+        "additionalProperties": false
+      },
       "RoutingSelectionRequest": {
         "type": "object",
         "description": "Node request to select an authorized routing profile using compare-and-swap against its current selection.",
@@ -14385,7 +14632,7 @@ export const schemaDocument = {
             "oneOf": [
               {
                 "$ref": "#/components/schemas/Version",
-                "description": "Existing selection version to replace; null or omission requires that no selection record exists."
+                "description": "Current selection version (the netmap's `selectionVersions` entry of this Node); null or omission requires that the Node has no selection under its current identity."
               },
               {
                 "type": "null"
@@ -14407,17 +14654,88 @@ export const schemaDocument = {
         "type": "object",
         "description": "Server-committed routing selection; the Node's next netmap carries it.",
         "required": [
-          "version",
-          "profile"
+          "selection"
         ],
         "properties": {
-          "profile": {
+          "selection": {
+            "$ref": "#/components/schemas/RoutingSelectionState",
+            "description": "The Node's selection after the commit: the new version, the requested and applied profile and its choices."
+          }
+        },
+        "additionalProperties": false
+      },
+      "RoutingSelectionState": {
+        "type": "object",
+        "description": "Routing profile selection of one Node under the current configuration.",
+        "required": [
+          "requestedProfile",
+          "version",
+          "appliedProfile",
+          "requestedUnavailable",
+          "defaultProfile",
+          "locked",
+          "profiles",
+          "auto"
+        ],
+        "properties": {
+          "appliedProfile": {
             "type": "string",
-            "description": "Profile selected by the accepted request."
+            "description": "Profile in effect: the requested one while it is allowed and not locked out, otherwise the default."
+          },
+          "auto": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AutoResolution",
+                "description": "How `auto` resolves while it is the applied profile; null otherwise."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "defaultProfile": {
+            "type": "string",
+            "description": "Assignment default, in effect without a usable selection."
+          },
+          "locked": {
+            "type": "boolean",
+            "description": "The assignment pins the default: no other profile can be selected."
+          },
+          "profiles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProfileSummary"
+            },
+            "description": "Allowed profiles in assignment order, each with a summary of what it does."
+          },
+          "requestedProfile": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Profile the Node's persistent selection names under its current identity; null when it has none."
+          },
+          "requestedUnavailable": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SelectionUnavailable",
+                "description": "Why the requested profile is not in effect; null when nothing is requested or it applies."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "version": {
-            "$ref": "#/components/schemas/Version",
-            "description": "New selection version required by the next compare-and-swap update."
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Version",
+                "description": "Persistent selection version, the base of the next compare-and-swap; null when there is no selection."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false
@@ -15445,6 +15763,25 @@ export const schemaDocument = {
         "type": "string",
         "description": "Serialization is secret-bearing and requires protected storage."
       },
+      "SelectNodeRoutingProfileRequest": {
+        "type": "object",
+        "description": "Idempotent selection of a Node's routing profile by a user.",
+        "required": [
+          "requestId",
+          "profile"
+        ],
+        "properties": {
+          "profile": {
+            "type": "string",
+            "description": "Allowed profile to use: `mesh`, `auto`, `global:<exitNodeId>` or a configured profile key."
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId",
+            "description": "Request identifier binding retries to the same caller, Node and profile."
+          }
+        },
+        "additionalProperties": false
+      },
       "SelectionState": {
         "type": "object",
         "description": "Node-reported routing profile currently in use.",
@@ -15458,6 +15795,14 @@ export const schemaDocument = {
           }
         },
         "additionalProperties": false
+      },
+      "SelectionUnavailable": {
+        "type": "string",
+        "description": "Why a selected profile is not the one in effect.",
+        "enum": [
+          "notAllowed",
+          "locked"
+        ]
       },
       "Sequence": {
         "type": "integer",

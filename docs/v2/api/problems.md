@@ -45,6 +45,7 @@ Problem 的每个分支均有 code、params、message。params 由 code 决定�
 | 生命周期 | state_conflict、last_owner、already_member | 当前操作不符合资源或成员约束 |
 | 一次性链接 | join_link_used、join_link_revoked、join_link_expired、join_link_issuer_unavailable | 仅验证真实 token 后区分，不返回原值 |
 | 配置 | configuration_invalid | ConfigurationValidationParams：issues 和 requirements |
+| 路由方案 | routing_profile_unavailable | HTTP 422；RoutingProfileUnavailableParams：`reason`（`notAllowed`／`locked`）与节点 `allowed` 方案；Node 收到时 session 与 instance 保持 |
 | 查询／预算 | invalid_cursor、state_limit、observation_limit、busy | 不泄露其他用户的活动或隐藏范围 |
 
 revision_conflict 不携带当前配置差异；客户端重新读取基准后保留并验证原草稿。公开注册提供 email_taken，因此能得知邮箱占用；登录仍使用统一错误。

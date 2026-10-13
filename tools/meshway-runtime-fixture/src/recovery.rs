@@ -342,6 +342,7 @@ mod tests {
             missing_artifacts: Vec::new(),
             artifact_problem: None,
             capture: None,
+            routing: None,
         };
         assert_eq!(
             outage_deadlines(&before, Some(&latest), &netmap).unwrap(),

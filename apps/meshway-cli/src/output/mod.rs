@@ -3,6 +3,7 @@
 use meshway_protocol::ipc::Status;
 use std::io::{self, Write};
 
+pub(crate) mod exit;
 mod format;
 pub(crate) mod netcheck;
 pub(crate) mod ping;
@@ -32,6 +33,60 @@ pub(crate) fn status(status: &Status, json: bool, watch: bool) -> io::Result<()>
         writeln!(output)?;
     }
     output.flush()
+}
+
+/// `meshway exit` without a profile: the netmap's selection.
+pub(crate) fn exit_view(
+    status: &Status,
+    selection: &meshway_configuration::selection::RoutingSelectionState,
+    json: bool,
+) -> io::Result<()> {
+    let mut output = io::stdout().lock();
+    if json {
+        return self::json(&mut output, selection);
+    }
+    exit::write(
+        &mut output,
+        &Term::stdout(),
+        selection,
+        &exit::Names(&status.peers),
+    )
+}
+
+/// `meshway exit <profile>`: the Server's committed selection and, once
+/// applied, the netmap's. JSON keeps both and whether the Node applied it.
+pub(crate) fn exit_selected(
+    status: &Status,
+    committed: &meshway_configuration::selection::RoutingSelectionState,
+    applied: bool,
+    json: bool,
+) -> io::Result<()> {
+    let mut output = io::stdout().lock();
+    let local = status.netmap.as_ref().and_then(|n| n.routing.as_ref());
+    if json {
+        return self::json(
+            &mut output,
+            &serde_json::json!({ "committed": committed, "applied": applied, "local": local }),
+        );
+    }
+    let term = Term::stdout();
+    let shown = if applied {
+        local.unwrap_or(committed)
+    } else {
+        committed
+    };
+    exit::write(&mut output, &term, shown, &exit::Names(&status.peers))?;
+    if !applied {
+        writeln!(
+            output,
+            "\n{}",
+            term.paint(
+                term::Role::Warn,
+                "Saved on the Server; this Node has not applied the new netmap yet."
+            )
+        )?;
+    }
+    Ok(())
 }
 
 /// The Node after a confirmed self-deletion.

@@ -4,7 +4,7 @@
 
 ## 未发布
 
-wire 6、IPC 8、`compilerVersion` 不变；Server schema 版本 6（F4a 新增 `rule_set_record_heads`，R2d 新增 `rule_set_catalog_checks` 并允许回收 artifact；开发环境重新初始化数据目录）。HTTP 契约：`SyncRequest` 新增可省略的 `lease`；`listRuleSetCatalog` 描述更新（无字段变化）；S3 的 State／库存／诊断变化见下。
+wire 6、`compilerVersion` 不变，IPC 9（C3）；Server schema 版本 7（F4a 新增 `rule_set_record_heads`，C3 为 6，R2d 新增 `rule_set_catalog_checks` 并允许回收 artifact 为 7；开发环境重新初始化数据目录）。HTTP 契约：`SyncRequest` 新增可省略的 `lease`；`listRuleSetCatalog` 描述更新（无字段变化）；S3 的 State／库存／诊断变化见下。
 
 规则集收尾（R2d）：
 
@@ -15,6 +15,20 @@ wire 6、IPC 8、`compilerVersion` 不变；Server schema 版本 6（F4a 新增 
 - `validation.md` 补齐 R2a、X6、R3、F4a 的矩阵行与证据位置。
 
 验证：Planck 16 行矩阵 `20261012T212926Z-abd9b9c8`（`4164e184`）与最终候选 `b4fe0619` 的 `20261012T232408Z-75436f19` 全部通过（其间一次高负载矩阵两行在 Docker 地址池／行前清理测试失败，未进入产品阶段）；`mise run check` 通过；证据 `.meshway/validation/r2d/`。
+
+出口方案切换（C3）：IPC 升为 9，`activity_events` 新增 Node actor 与路由方案目标（schema 6）。
+
+- `meshway exit [profile|off]`：无参数显示本机 netmap 中的方案选择（生效／请求的方案、默认与锁定、`auto` 解析、每个允许方案的摘要）；带方案时请 Server 切换并等待本机应用带新版本的 netmap，`off` 即 `mesh`。人读输出、`--json` 与退出码见 [出口方案](/v2/node/runtime#exit-profile)。
+- IPC 9：命令 `SelectProfile`、结果 `Selection`、`NetmapStatus.routing`，错误码 `profileNotAllowed`／`profileLocked`／`selectionConflict`；`meshway status` 新增 Profile 行。
+- Control 调用 `selectNodeRoutingProfile`，CAS 基准为持有 netmap 中自身的选择版本；方案被拒或版本过期不结束 session／instance。本机只缓存 netmap，不保存选择。
+- HTTP：`selectNodeRoutingProfile` 的回答改为 `{selection: RoutingSelectionState}`，版本不一致改为 `409 version_conflict`、方案不可选为 `422 routing_profile_unavailable`（带允许的方案）；新增 `getNodeRoutingSelection`、`setNodeRoutingSelection`（`/api/v1/networks/{networkId}/nodes/{nodeId}/routing-selection`，成员限自己的 User 设备，Owner／Admin 任意节点，`requestId` 幂等）；`NodeInventoryView.routing` 摘要；活动 `routing.select`（actor `node`／`user`，target `routingSelection`）。三个入口共用同一提交，选择版本跨身份单调递增，过期身份的选择不作为 CAS 基准。
+- `RoutingSelectionState` 由 `meshway-policy` 唯一计算，Server 与节点对同一配置给出同一值；`auto` 没有可信地区输入，总是采用 fallback（`basis: noTrustedRegion`）。
+- Console 仅补齐新增枚举的映射。
+- `exit/off` 第 11 阶段：真实 CLI 切换后旧选择的 TCP／UDP 流结束、新流经出口，`exit off` 后无外部捕获。
+
+验证：Planck 16 行矩阵 `20261012T224334Z-469128d0`（`7facc522`）与合入 main 后的 `20261013T000304Z-56e3679e`（`f2441b12`）全部通过；证据 `.meshway/validation/c3/`。已知：切到 `global:<exit>` 与 `useWithExit` split resolver 组合时节点 DNS 安装拒绝新 netmap，见[验收范围 · 剩余边界](/v2/node/validation#remaining-boundaries)。
+
+此前：wire 6、IPC 8、`compilerVersion` 不变；Server schema 版本 5（新增 `rule_set_record_heads`；开发环境重新初始化数据目录）。HTTP 契约：`SyncRequest` 新增可省略的 `lease`；S3 的 State／库存／诊断变化见下。alpha.4 代码审阅修复（F4a）：
 
 alpha.4 代码审阅修复（F4a）：
 

@@ -107,6 +107,12 @@ const node = (id: string, hostname: string): NodeInventoryView => ({
   lease: null,
   lastSyncAt: null,
   serverKey: null,
+  routing: {
+    requestedProfile: null,
+    appliedProfile: "mesh",
+    locked: false,
+    canSelect: true,
+  },
 })
 
 const entities = (

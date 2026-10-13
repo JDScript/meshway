@@ -31,6 +31,16 @@ pub(crate) struct PingRequest {
     pub cancellation: tokio_util::sync::CancellationToken,
 }
 
+/// An operator's routing profile selection for the control owner to send.
+pub(crate) struct Selection {
+    pub profile: String,
+    /// The operator stops waiting then; an unserved request is dropped, never sent late.
+    pub deadline: tokio::time::Instant,
+    pub reply: tokio::sync::oneshot::Sender<
+        Result<meshway_configuration::selection::RoutingSelectionState, ErrorCode>,
+    >,
+}
+
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))] // Executed by the Linux-only worker.
 pub(crate) struct PingSession {
     pub request: PingRequest,
@@ -72,6 +82,7 @@ pub async fn run(
     let (pings, mut ping_requests) = mpsc::channel::<PingRequest>(8);
     let (netchecks, mut netcheck_requests) =
         mpsc::channel::<tokio::sync::oneshot::Sender<meshway_protocol::ipc::NetcheckReport>>(4);
+    let (selections, selection_requests) = mpsc::channel::<Selection>(4);
     let (packet_pings, local_pings) = watch::channel(None);
     let (server_probe, server_probes) = watch::channel(None);
     let (stop_ipc, stop_rx) = watch::channel(false);
@@ -84,12 +95,16 @@ pub async fn run(
         packet_pings,
         server_probe,
         sync_status,
+        selection_requests,
     ));
     let mut listener = tokio::spawn(ipc::serve(
         socket,
-        commands,
-        pings,
-        netchecks,
+        ipc::Channels {
+            commands,
+            pings,
+            netchecks,
+            selections,
+        },
         view.clone(),
         stop_rx.clone(),
     ));

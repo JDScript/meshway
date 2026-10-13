@@ -8,7 +8,7 @@ wire_object! {
 #[derive(Clone,Debug,PartialEq,Eq)] pub struct RoutingSelectionRequest {
     /// Current runtime instance authorized to change the selection.
     pub instance: InstanceRequest,
-    /// Existing selection version to replace; null or omission requires that no selection record exists.
+    /// Current selection version (the netmap's `selectionVersions` entry of this Node); null or omission requires that the Node has no selection under its current identity.
     pub expected_version: Option<Version>,
     /// Allowed routing profile to select for subsequent flows and DNS execution.
     pub profile: String,
@@ -16,10 +16,8 @@ wire_object! {
 wire_object! {
 /// Server-committed routing selection; the Node's next netmap carries it.
 #[derive(Clone,Debug,PartialEq,Eq)] pub struct RoutingSelectionResponse {
-    /// New selection version required by the next compare-and-swap update.
-    pub version: Version,
-    /// Profile selected by the accepted request.
-    pub profile: String,
+    /// The Node's selection after the commit: the new version, the requested and applied profile and its choices.
+    pub selection: meshway_configuration::selection::RoutingSelectionState,
 } }
 wire_object! {
 /// Authenticated Node request to acquire its runtime instance with actual build capabilities.

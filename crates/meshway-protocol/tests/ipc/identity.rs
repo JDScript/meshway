@@ -3,7 +3,7 @@ use serde_json::json;
 
 #[test]
 fn identity_commands_are_typed_optional_and_secret_debug_is_redacted() {
-    assert_eq!(VERSION, 8);
+    assert_eq!(VERSION, 9);
     let old_up: Command =
         serde_json::from_value(json!({"type":"up","expectedRevision":1})).unwrap();
     assert!(matches!(
@@ -44,6 +44,18 @@ fn identity_commands_are_typed_optional_and_secret_debug_is_redacted() {
         serde_json::from_value::<Command>(json!({"type":"netcheck"})).unwrap(),
         Command::Netcheck
     ));
+    // A selection names exactly one profile; the Server decides it.
+    assert!(matches!(
+        serde_json::from_value::<Command>(json!({"type":"selectProfile","profile":"mesh"})).unwrap(),
+        Command::SelectProfile { profile } if profile == "mesh"
+    ));
+    for invalid in [
+        json!({"type":"selectProfile"}),
+        json!({"type":"selectProfile","profile":null}),
+        json!({"type":"selectProfile","profile":"mesh","expectedVersion":1}),
+    ] {
+        assert!(serde_json::from_value::<Command>(invalid).is_err());
+    }
     for key in [
         json!(""),
         json!({"secret":"private"}),

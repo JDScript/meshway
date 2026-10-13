@@ -29,7 +29,9 @@ fn status() -> Status {
         "identity":null,"authenticated":true,"sync":"connected","lastSyncAt":"2026-10-11T11:59:48Z",
         "syncError":null,"instance":null,
         "netmap":{"netmap":reference,"issuedAt":"2026-10-11T11:00:00Z","expiresAt":"2026-10-12T11:59:00Z","missingArtifacts":[],"artifactProblem":null,
-            "capture":{"managedIpv4":4341,"sinkIpv6":2256,"routes":12680,"unavailable":null}},
+            "capture":{"managedIpv4":4341,"sinkIpv6":2256,"routes":12680,"unavailable":null},
+            "routing":{"requestedProfile":"work","version":2,"appliedProfile":"work","requestedUnavailable":null,
+                "defaultProfile":"mesh","locked":false,"profiles":[],"auto":null}},
         "saved":reference,"applied":reference,"dataPlane":"ready","networkMode":"tun",
         "node":{"hostname":"meshway-lax","addresses":{"ipv4":"100.64.0.4","ipv6":null}},
         "peers":[nyc, sha, peer(OLD, "meshway-old", "100.64.0.9", "offline")],
@@ -53,6 +55,7 @@ fn plain_summary_and_peer_table_have_no_escapes() {
     assert!(text.contains("  Sync       connected · last sync 12s ago\n"));
     assert!(text.contains("  Netmap     revision 42 · serial 17 · lease 23h 59m left\n"));
     assert!(text.contains("  Egress     4341 IPv4 · 2256 IPv6 sink ranges · 12680 routes\n"));
+    assert!(text.contains("  Profile    work (meshway exit)\n"));
     assert!(text.contains("  Data plane ready · mode tun\n"));
     let header = lines
         .iter()

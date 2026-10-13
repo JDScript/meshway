@@ -142,6 +142,7 @@ async fn live_tun_owner_conflict_retries_and_recovers_without_new_up() {
         pings,
         server_probe,
         sync,
+        tokio::sync::mpsc::channel(1).1,
     ));
     let first = tokio::time::timeout(
         Duration::from_secs(10),

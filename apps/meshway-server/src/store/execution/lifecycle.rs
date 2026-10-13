@@ -1,75 +1,16 @@
-//! Node lifecycle effects of configuration and selection changes: routing
-//! profile selection, session retirement, revocation of removed Nodes, the
-//! compilation inputs every netmap shares and the netmap targets of a version.
-use super::{
-    authentication::authorize_node, current_configuration, id, identity_digest,
-    instances::current_instance, json, now, subjects, user_binding,
-};
+//! Node lifecycle effects of configuration changes: session retirement,
+//! revocation of removed Nodes, the compilation inputs every netmap shares
+//! and the netmap targets of a version.
+use super::{current_configuration, id, identity_digest, json, subjects, user_binding};
 use crate::configuration::ConfigurationBindings;
-use crate::effect::Effect;
 use crate::error::Error;
 use crate::secrets::Sealer;
 use meshway_configuration::{NetworkConfiguration, execution::TrustedNode};
 use meshway_model::{
-    BoundNodeKey, Digest, InstanceId, KeyAlgorithm, NetmapRef, NetworkId, NodeId, NodePublicKey,
-    Version,
+    BoundNodeKey, Digest, KeyAlgorithm, NetmapRef, NetworkId, NodeId, NodePublicKey, Version,
 };
-use meshway_policy::compile;
-use meshway_protocol::execution::*;
-use rusqlite::{OptionalExtension, Transaction, params};
+use rusqlite::{Transaction, params};
 use std::collections::BTreeMap;
-
-pub(crate) fn select_profile(
-    tx: &Transaction<'_>,
-    sealer: &Sealer,
-    boot: InstanceId,
-    token: [u8; 32],
-    request: RoutingSelectionRequest,
-) -> Result<(RoutingSelectionResponse, Vec<Effect>), Error> {
-    let now = now()?;
-    let p = authorize_node(tx, sealer, boot, token, now)?;
-    current_instance(tx, boot, &p, &request.instance, now)?;
-    let (_, cfg, bindings) = current_configuration(tx, sealer, p.network)?;
-    if !compile::profile_allowed(
-        &cfg,
-        &subjects(tx, p.network, &bindings)?,
-        p.node,
-        &request.profile,
-    )? {
-        return Err(Error::PermissionDenied);
-    }
-    let digest = identity_digest(&cfg, &bindings, p.node)?;
-    let current: Option<i64> = tx
-        .query_row(
-            "SELECT version FROM routing_selections WHERE network_id=?1 AND node_id=?2",
-            params![
-                p.network.as_uuid().as_bytes().as_slice(),
-                p.node.as_uuid().as_bytes().as_slice()
-            ],
-            |r| r.get(0),
-        )
-        .optional()?;
-    if current != request.expected_version.map(|v| v.get() as i64) {
-        return Err(Error::BindingConflict);
-    }
-    let version =
-        Version::new(current.unwrap_or(0) as u64 + 1).map_err(|_| Error::BindingConflict)?;
-    tx.execute("INSERT INTO routing_selections(network_id,node_id,identity_digest,profile,version,selected_at) VALUES(?1,?2,?3,?4,?5,?6) ON CONFLICT(network_id,node_id) DO UPDATE SET identity_digest=excluded.identity_digest,profile=excluded.profile,version=excluded.version,selected_at=excluded.selected_at",params![p.network.as_uuid().as_bytes().as_slice(),p.node.as_uuid().as_bytes().as_slice(),digest.as_bytes().as_slice(),request.profile,version.get() as i64,now])?;
-    let netmap = crate::store::netmap::recompile(
-        tx,
-        sealer,
-        p.network,
-        now,
-        crate::store::netmap::Trigger::Node,
-    )?;
-    Ok((
-        RoutingSelectionResponse {
-            version,
-            profile: request.profile,
-        },
-        netmap.effects(),
-    ))
-}
 
 /// Who the configuration's subjects are, which nodes hold trusted keys, and
 /// which profile each node selected under its current identity: the inputs

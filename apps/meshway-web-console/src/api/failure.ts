@@ -36,6 +36,7 @@ const problemMessage: Record<ProblemCode, () => string> = {
   revision_conflict: () => m.problem_revision_conflict(),
   configuration_invalid: () => m.problem_configuration_invalid(),
   state_conflict: () => m.problem_state_conflict(),
+  routing_profile_unavailable: () => m.problem_routing_profile_unavailable(),
   state_scope_changed: () => m.problem_state_conflict(),
   binding_conflict: () => m.problem_binding_conflict(),
   rule_set_catalog_not_ready: () => m.problem_rule_set_catalog_not_ready(),

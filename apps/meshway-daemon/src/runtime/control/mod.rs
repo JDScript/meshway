@@ -9,7 +9,7 @@ mod failure;
 #[cfg(all(test, target_os = "linux"))]
 mod tests;
 
-use super::{intent::Desired, network, status::Report};
+use super::{Selection, intent::Desired, network, status::Report};
 use crate::settings::Settings;
 use cycle::{Online, online};
 use failure::failure;
@@ -177,6 +177,7 @@ pub(super) async fn run(
     local_pings: watch::Sender<Option<network::Local>>,
     server_probe: watch::Sender<Option<meshway_control::ServerProbe>>,
     sync_status: watch::Sender<SyncStatus>,
+    mut selections: tokio::sync::mpsc::Receiver<Selection>,
 ) -> Result<(), &'static str> {
     let mut control: Option<Shared> = None;
     let mut network: Option<network::Handle> = None;
@@ -494,6 +495,7 @@ pub(super) async fn run(
                 &sync_status,
                 &mut reset,
                 &mut reenroll,
+                &mut selections,
             )
             .await;
             sync_status.send_modify(|status| {
@@ -581,6 +583,62 @@ pub(super) async fn run(
 
 /// The local result of a failed self-deletion; nothing local changed.
 fn leave_error(error: Error) -> meshway_protocol::ipc::ErrorCode {
+    operation_error("leave", error)
+}
+
+/// The local result of a failed routing profile selection: the Server's
+/// refusal of the profile or of the held version, or the request's failure.
+fn selection_error(error: Error) -> meshway_protocol::ipc::ErrorCode {
+    use meshway_configuration::selection::SelectionUnavailable;
+    use meshway_protocol::{Problem, ipc::ErrorCode};
+    if let Error::Server(meshway_control_client::ClientError::Http {
+        problem: Some(body),
+        ..
+    }) = &error
+    {
+        match &body.problem {
+            Problem::RoutingProfileUnavailable { params, .. } => {
+                return match params.reason {
+                    SelectionUnavailable::NotAllowed => ErrorCode::ProfileNotAllowed,
+                    SelectionUnavailable::Locked => ErrorCode::ProfileLocked,
+                };
+            }
+            Problem::VersionConflict { .. } => return ErrorCode::SelectionConflict,
+            _ => {}
+        }
+    }
+    if matches!(error, Error::Expired) {
+        return ErrorCode::NotReady;
+    }
+    operation_error("select_profile", error)
+}
+
+/// Send one operator selection unless the operator stopped waiting.
+async fn serve_selection(shared: &Shared, selection: Selection) {
+    if selection.reply.is_closed() || Instant::now() >= selection.deadline {
+        return;
+    }
+    let profile = selection.profile.clone();
+    let result = tokio::time::timeout_at(
+        selection.deadline,
+        meshway_control::shared::select_profile(shared, selection.profile),
+    )
+    .await
+    .unwrap_or(Err(Error::Pending))
+    .map_err(selection_error);
+    match &result {
+        Ok(state) => tracing::info!(
+            profile,
+            applied = state.applied_profile,
+            version = state.version.map(|version| version.get()),
+            "Routing profile selected"
+        ),
+        Err(code) => tracing::warn!(profile, error = ?code, "Routing profile selection failed"),
+    }
+    let _ = selection.reply.send(result);
+}
+
+fn operation_error(operation: &'static str, error: Error) -> meshway_protocol::ipc::ErrorCode {
     use meshway_protocol::ipc::ErrorCode;
     let rejected = matches!(
         &error,
@@ -594,7 +652,7 @@ fn leave_error(error: Error) -> meshway_protocol::ipc::ErrorCode {
         Error::Lifecycle => Some(ErrorCode::NotReady),
         _ => None,
     };
-    let problem = failure::at("leave", error, false).problem;
+    let problem = failure::at(operation, error, false).problem;
     if rejected {
         return ErrorCode::Rejected;
     }
@@ -630,12 +688,14 @@ async fn idle(
     desired: &mut watch::Receiver<Desired>,
     plan: &Desired,
     delay: Duration,
+    selections: &mut tokio::sync::mpsc::Receiver<Selection>,
 ) -> Wake {
     let deadline = Instant::now() + delay;
     loop {
         tokio::select! { biased;
             _ = changed(desired, plan) => return Wake::Changed,
             _ = tokio::time::sleep_until(deadline) => return Wake::Due,
+            Some(selection) = selections.recv() => serve_selection(shared, selection).await,
             work = async { match network.as_deref_mut() { Some(network) => network.work().await, None => std::future::pending().await } } => match work {
                 network::Work::Request(request) => {
                     if let Err(error) = network::request(shared, request).await {
@@ -664,6 +724,7 @@ async fn session(
     sync_status: &watch::Sender<SyncStatus>,
     reset: &mut bool,
     reenroll: &mut bool,
+    selections: &mut tokio::sync::mpsc::Receiver<Selection>,
 ) -> Ended {
     {
         let driver = shared.lock().await;
@@ -756,6 +817,7 @@ async fn session(
                     plan,
                     reported,
                     sync_status,
+                    selections,
                 )
                 .await
                 {
@@ -782,7 +844,16 @@ async fn session(
                 delay
             }
         };
-        match idle(shared, network.as_deref_mut(), desired, plan, delay).await {
+        match idle(
+            shared,
+            network.as_deref_mut(),
+            desired,
+            plan,
+            delay,
+            selections,
+        )
+        .await
+        {
             Wake::Changed => return Ended::Changed,
             Wake::Worker => return Ended::Worker,
             Wake::Due => {}
@@ -801,8 +872,11 @@ async fn online_session(
     plan: &Desired,
     reported: &watch::Sender<Report>,
     sync_status: &watch::Sender<SyncStatus>,
+    selections: &mut tokio::sync::mpsc::Receiver<Selection>,
 ) -> Result<(), Option<Ended>> {
     let stop = CancellationToken::new();
+    // Selections run beside the maintenance work and end with the session.
+    let mut selecting = tokio::task::JoinSet::new();
     let (netmaps, mut netmap_rx) = watch::channel::<Option<meshway_engine::Netmap>>(None);
     netmap_rx.borrow_and_update();
     let mut sink = match network.as_deref() {
@@ -842,6 +916,11 @@ async fn online_session(
     let result = loop {
         tokio::select! { biased;
             _ = changed(desired, plan) => break Err(Some(Ended::Changed)),
+            _ = selecting.join_next(), if !selecting.is_empty() => {},
+            Some(selection) = selections.recv(), if selecting.len() < 4 => {
+                let shared = shared.clone();
+                selecting.spawn(async move { serve_selection(&shared, selection).await });
+            },
             joined = &mut sync => {
                 let error = match joined {
                     Ok(Ok(())) => break Ok(()),
@@ -913,6 +992,7 @@ async fn online_session(
         }
     };
     stop.cancel();
+    selecting.shutdown().await;
     if !sync.is_finished() {
         let _ = sync.await;
     }

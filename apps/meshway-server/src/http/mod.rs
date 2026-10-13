@@ -255,6 +255,10 @@ fn routes() -> OpenApiRouter<HttpState> {
         .routes(routes!(nodes::settings))
         .routes(routes!(nodes::get, nodes::delete))
         .routes(routes!(nodes::revoke_key))
+        .routes(routes!(
+            nodes::routing_selection,
+            nodes::select_routing_profile
+        ))
 }
 
 pub use error::{ProblemSample, problem_samples};

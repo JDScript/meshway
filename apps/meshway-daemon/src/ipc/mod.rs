@@ -1,7 +1,7 @@
 //! Authorize local peers and forward mutations to the runtime's single owner.
 mod socket;
 
-use crate::runtime::{Action, Mutation, PingRequest, View};
+use crate::runtime::{Action, Mutation, PingRequest, Selection, View};
 use meshway_model::Sequence;
 use meshway_protocol::ipc::{
     Command, ErrorCode, NetcheckReport, PingError, PingEvent, Request, Response, ResultBody,
@@ -18,6 +18,8 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+/// One selection request: Control's 20 s HTTP bound plus lock waits.
+const SELECTION_TIMEOUT: Duration = Duration::from_secs(25);
 const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 
 fn authorized(stream: &UnixStream) -> bool {
@@ -26,14 +28,26 @@ fn authorized(stream: &UnixStream) -> bool {
         .is_ok_and(|peer| peer.uid() == 0 || peer.uid() == rustix::process::geteuid().as_raw())
 }
 
+#[derive(Clone)]
+pub(crate) struct Channels {
+    pub commands: mpsc::Sender<Mutation>,
+    pub pings: mpsc::Sender<PingRequest>,
+    pub netchecks: mpsc::Sender<oneshot::Sender<NetcheckReport>>,
+    pub selections: mpsc::Sender<Selection>,
+}
+
 async fn handle(
     mut stream: UnixStream,
-    commands: mpsc::Sender<Mutation>,
-    pings: mpsc::Sender<PingRequest>,
-    netchecks: mpsc::Sender<oneshot::Sender<NetcheckReport>>,
+    channels: Channels,
     view: View,
     stop: watch::Receiver<bool>,
 ) {
+    let Channels {
+        commands,
+        pings,
+        netchecks,
+        selections,
+    } = channels;
     let deadline = tokio::time::Instant::now() + REQUEST_TIMEOUT;
     if !authorized(&stream) {
         return;
@@ -55,6 +69,10 @@ async fn handle(
     }
     if request.version == VERSION && matches!(request.command, Command::Netcheck) {
         handle_netcheck(stream, request, netchecks).await;
+        return;
+    }
+    if request.version == VERSION && matches!(request.command, Command::SelectProfile { .. }) {
+        handle_selection(stream, request, selections, view).await;
         return;
     }
     let deadline = if matches!(
@@ -97,6 +115,58 @@ async fn handle_netcheck(
         version: VERSION,
         request_id: request.request_id,
         result,
+    };
+    let _ = tokio::time::timeout(
+        WRITE_TIMEOUT,
+        meshway_protocol::ipc::write(&mut stream, &response),
+    )
+    .await;
+}
+
+/// A selection needs an online Node holding a netmap; the Server's answer
+/// is relayed as is and nothing of it is stored here.
+async fn handle_selection(
+    mut stream: UnixStream,
+    request: Request,
+    selections: mpsc::Sender<Selection>,
+    view: View,
+) {
+    let Command::SelectProfile { profile } = request.command else {
+        return;
+    };
+    let status = view.status();
+    let result = if !status.desired_up
+        || status.identity.is_none()
+        || status.netmap.is_none()
+        || status.instance.is_none()
+    {
+        Err(ErrorCode::NotReady)
+    } else {
+        let (reply, answer) = oneshot::channel();
+        let deadline = tokio::time::Instant::now() + SELECTION_TIMEOUT;
+        match selections.try_send(Selection {
+            profile,
+            deadline,
+            reply,
+        }) {
+            Ok(()) => match tokio::time::timeout_at(deadline, answer).await {
+                Ok(Ok(result)) => result,
+                Ok(Err(_)) => Err(ErrorCode::Stopping),
+                Err(_) => Err(ErrorCode::Busy),
+            },
+            Err(mpsc::error::TrySendError::Full(_)) => Err(ErrorCode::Busy),
+            Err(mpsc::error::TrySendError::Closed(_)) => Err(ErrorCode::Stopping),
+        }
+    };
+    let response = Response {
+        version: VERSION,
+        request_id: request.request_id,
+        result: match result {
+            Ok(selection) => ResultBody::Selection {
+                selection: Box::new(selection),
+            },
+            Err(code) => ResultBody::Error { code },
+        },
     };
     let _ = tokio::time::timeout(
         WRITE_TIMEOUT,
@@ -179,7 +249,7 @@ async fn one_shot(
             Command::Logout { expected_revision } => {
                 Ok(Some((Action::Logout, expected_revision, None)))
             }
-            Command::Ping { .. } | Command::Netcheck => return,
+            Command::Ping { .. } | Command::Netcheck | Command::SelectProfile { .. } => return,
         };
         match action {
             Err(code) => Err(code),
@@ -255,9 +325,7 @@ async fn ping_stream(
 
 pub(crate) async fn serve(
     socket: Socket,
-    commands: mpsc::Sender<Mutation>,
-    pings: mpsc::Sender<PingRequest>,
-    netchecks: mpsc::Sender<oneshot::Sender<NetcheckReport>>,
+    channels: Channels,
     view: View,
     mut stop: watch::Receiver<bool>,
 ) -> Result<(), &'static str> {
@@ -274,13 +342,11 @@ pub(crate) async fn serve(
                 if clients.len() >= 32 {
                     continue;
                 }
-                let commands = commands.clone();
-                let pings = pings.clone();
-                let netchecks = netchecks.clone();
+                let channels = channels.clone();
                 let view = view.clone();
                 let stop = stop.clone();
                 clients.spawn(async move {
-                    handle(stream, commands, pings, netchecks, view, stop).await;
+                    handle(stream, channels, view, stop).await;
                 });
             },
         }

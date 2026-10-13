@@ -11,7 +11,7 @@
 | 赋予 Tag | 本网络有效节点 | 需具备该 Tag owner 资格 | 仅本人的 User 身份设备，且仅其拥有的 Tag | 不自行赋予身份／标签 |
 | 查看 State／History | 本网络 | 自身获准业务及执行依赖的相关视图 | 与普通成员相同，不因 Tag owner 扩大范围 | 自身及获准执行所需的 peer 视图 |
 | Console 主动诊断 | 本网络内的获准诊断范围 | 仅自己的 User 身份设备作为 source | 与普通成员相同 | 仅执行获准、绑定本实例的任务 |
-| 选择路由方案 | 在有效配置约束内操作 | 自己有权使用的设备，受 allowed／locked 限制 | 不因此管理其他 Tag 节点 | 仅自身允许的使用选择 |
+| 选择路由方案 | 本网络任意节点（含 Tag 设备），活动记录操作者本人；受 allowed／locked 限制 | 仅自己的 User 身份设备，受 allowed／locked 限制；其他节点为 404 | 不因此管理其他 Tag 节点 | 仅自身（需当前 instance），受 allowed／locked 限制；入口见 [Routing · 选择的入口](/v2/configuration-reference/routing#选择的入口) |
 | 上报 State／历史事件 | 不伪造节点报告 | 不伪造节点报告 | 不伪造节点报告 | 仅自身，绑定实例和配置上下文 |
 | 读取完整配置历史／网络操作历史 | 本网络 | 不自动开放管理历史；仍可读相关观测 | 不因 Tag owner 扩大 | 不提供管理历史 |
 | 永久删除 Node | 本网络，依当前管理权限 | 不因成员身份自动允许 | 不因 Tag owner 自动允许 | 仅以当前 session 删除自身（[自助注销](/v2/configuration-reference/nodes#node-self-leave)）；不以 State 上报删除身份 |

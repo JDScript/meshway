@@ -44,6 +44,8 @@ function targetLabel(target: ActivityTargetView): string | null {
       return m.account_target_join_link({ id: target.short })
     case "configuration":
       return m.revision({ revision: String(target.revision) })
+    case "routing_selection":
+      return m.activity_target_routing_selection({ profile: target.profile })
   }
 }
 

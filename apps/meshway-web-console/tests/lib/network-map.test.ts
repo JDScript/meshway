@@ -62,6 +62,12 @@ const listed = (
     lease: null,
     lastSyncAt: null,
     serverKey: null,
+    routing: {
+      requestedProfile: null,
+      appliedProfile: "mesh",
+      locked: false,
+      canSelect: true,
+    },
     canRevokeControlKey: true,
     canRevokeDataplaneKey: true,
     controlKeyCreatedAt: T,
