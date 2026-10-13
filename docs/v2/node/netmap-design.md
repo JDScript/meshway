@@ -88,7 +88,7 @@ Server 在配置 revision 固定时为每个节点生成 **netmap**（配置投�
 
 ### 规模与预算
 
-每份 netmap 只检查 `MAX_NETMAP_BYTES`（8 MiB）安全上界，超限 `NetmapError::Limit`、整体拒绝；不设节点对或 grant 上限。每节点对的路径按[routing 的搜索](/v2/configuration-reference/routing#可行性循环与失败)列出（最短长度全部列出、满 8 条的长度结束、至多 2,048 条）、每条 ≤ 8 跳、每次搜索 16,384 工作项。为使投影与全量结果在预算边界也一致，路径搜索只为 topology 允许的候选边计预算，routing 段解析每段计 1 次。
+每份 netmap 只检查 `MAX_NETMAP_BYTES`（8 MiB）安全上界，超限 `NetmapError::Limit`、整体拒绝；不设节点对或 grant 上限。每节点对的路径按[routing 的搜索](/v2/configuration-reference/routing#可行性、循环与失败)列出（最短长度全部列出、满 8 条的长度结束、至多 2,048 条）、每条 ≤ 8 跳、每次搜索 16,384 工作项。为使投影与全量结果在预算边界也一致，路径搜索只为 topology 允许的候选边计预算，routing 段解析每段计 1 次。
 
 实测（M3、release、单线程，私有证据 `.meshway/netmap/n1a/scale.md`），全互访、单一连通分量：
 

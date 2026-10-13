@@ -226,7 +226,7 @@ Manager→SecureNode owner 的 circuit 控制／诊断帧和 lifecycle 事件另
 
 Policy 给出候选集合，源节点按本机已知的连通事实排序：
 
-- **集合**（Policy，[routing](/v2/configuration-reference/routing#可行性循环与失败) 的搜索）：必经点展开后最短优先、同长按节点 ID；同一长度的路径全部列出后才看更长的，列满 `MAX_PATHS`（8）条的那个长度结束搜索。拓扑允许 A–B 直连而没有 `via` 时，A→B 与拓扑允许的**每一个** A→R→B 都是候选，不按节点 ID 截断。中继与端点各自在自己的投影上用同一搜索准入，因此源选中的任一候选在中继和目标处都被接受。
+- **集合**（Policy，[routing](/v2/configuration-reference/routing#可行性、循环与失败) 的搜索）：必经点展开后最短优先、同长按节点 ID；同一长度的路径全部列出后才看更长的，列满 `MAX_PATHS`（8）条的那个长度结束搜索。拓扑允许 A–B 直连而没有 `via` 时，A→B 与拓扑允许的**每一个** A→R→B 都是候选，不按节点 ID 截断。中继与端点各自在自己的投影上用同一搜索准入，因此源选中的任一候选在中继和目标处都被接受。
 - **排序**（`SecureNode::choose_path`，`secure/netmap.rs::ranked`）：直连路径在前；经中继的路径按（本机与其下一跳有通道，该中继在[最后已知事实](#last-known-facts)的 `connected` 中与路径上的下一节点有通道）字典序排列，即“与两端都有通道”的中继最先、只与本机有通道的次之、其余在后，同类保持 Policy 顺序。取前 8 条（含直连）；超出的中继不尝试，并记一条 debug 事件 `operation=path_candidates`（`kept`、`truncated_relays`）。
 
 新 circuit（业务首包、`meshway ping`、诊断任务）在排序后的候选上选路：

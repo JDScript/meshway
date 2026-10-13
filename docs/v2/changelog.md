@@ -14,7 +14,7 @@ wire 6、`compilerVersion` 不变，IPC 9（C3）；Server schema 版本 7（F4a
 - `nat/relay` 扩为 5 节点（R1 失去 B、R2 与两端有通道、R3 ID 更小且与 A 无通道），要求经 R2、30 秒内。
 - node lab：daemon 日志过滤取部署时的 `RUST_LOG`。
 
-验证：见[中继兜底行](/v2/node/validation#relay-row)与[N4 实网证据](/v2/node/validation#n4-real-network)；证据 `.meshway/node-lab/n4/`、`.meshway/validation/n4/`。
+验证：Planck 17 行矩阵 `20261013T091200Z-d6fd0e7c`（`1a5a1274`）全部通过；`mise run --jobs 1 check` 通过；见[中继兜底行](/v2/node/validation#relay-row)与[N4 实网证据](/v2/node/validation#n4-real-network)；证据 `.meshway/node-lab/n4/`、`.meshway/validation/n4/`。
 
 连通性三条（N3）：wire 6、IPC 9、HTTP 契约、`compilerVersion` 与 Server schema 均不变。
 
