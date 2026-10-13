@@ -14,7 +14,7 @@ E1 出口 ICMP 错误与出口自指（wire、IPC、HTTP 契约与 `compilerVers
 - 出口集合含源自己时按有序主备执行：自己是那个位置上永远可用的 direct，`[self, other]` 为 direct，`[other, self]` 在 other 配置可用时经 other、否则 direct（`matching::executed` 统一用于分割、`egress` 计划、DNS plan、路径检测与节点判定），`geoip:cn → exit sha` 这类公共规则不再拒绝 sha 自己的流量、也不再使其 DNS 为 `exitPlanRequired`；Access 不变。见 [Routing · Action](/v2/configuration-reference/routing#action)。
 - `exit/off` 新增第 12 阶段（router＋窄 MTU 的 far 网段：traceroute、PMTU、伪造／限速）。
 
-验证：`exit/off`（含 ICMP 阶段，合并前为第 11 阶段）Planck `20261013T011243Z-62bc2868` 等通过；三次全量矩阵 15／14／14 行通过，未通过行（`netmap/expiry` 租约到期前的 suspended／TUN 竞态、`exit/off` 第 9 阶段日志读取竞态、一次 `udp/resolv-conf` CLI 样本）与 S3 同类或单行复跑通过，详见[验收范围](/v2/node/validation)；证据 `.meshway/validation/e1/`、`.meshway/node-lab/e1/`。
+验证：合入 main `1211538b` 后（`6aaf979a`）Planck 16 行矩阵 `20261013T022738Z-789636f9` 全部通过（`exit/off` 含第 12 阶段）。合并前：`exit/off`（ICMP 阶段当时为第 11 阶段）Planck `20261013T011243Z-62bc2868` 等通过；三次全量矩阵 15／14／14 行通过，未通过行（`netmap/expiry` 租约到期前的 suspended／TUN 竞态、`exit/off` 第 9 阶段日志读取竞态、一次 `udp/resolv-conf` CLI 样本）与 S3 同类或单行复跑通过，详见[验收范围](/v2/node/validation)；证据 `.meshway/validation/e1/`、`.meshway/node-lab/e1/`。
 
 规则集收尾（R2d）：
 
