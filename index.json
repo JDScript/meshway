@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-13T15:15:45.517411+00:00",
+  "updatedAt": "2026-10-13T15:16:59.079072+00:00",
   "runs": [
     {
       "id": 38418939576,
@@ -80,9 +80,9 @@
       "commit": "8b7bf3d64a53554ac03c34d7c835c1f3765d85ad",
       "message": "dataplane tests: path choice tests in their own module (file limit)",
       "createdAt": "2026-10-13T15:04:50Z",
-      "updatedAt": "2026-10-13T15:08:20Z",
-      "status": "in_progress",
-      "conclusion": null,
+      "updatedAt": "2026-10-13T15:14:30Z",
+      "status": "completed",
+      "conclusion": "success",
       "url": "https://github.com/JDScript/meshway/actions/runs/38418939406",
       "jobs": [
         {
