@@ -1,8 +1,10 @@
 //! One bounded DNS query owner per installed netmap. MagicDNS answers come
 //! from the netmap's complete `meshHosts`; nothing here authorizes resolver
 //! traffic beyond the sealed per-query routes.
+mod describe;
 mod exit;
 mod response;
+pub use describe::{NameRoute, name_route};
 mod system;
 use crate::{
     ConfigurationError, ExitSelection, LocalResolverRoute, PublishedDns, Query, ResolverRoute,

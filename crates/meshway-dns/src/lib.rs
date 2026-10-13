@@ -29,7 +29,10 @@ pub use dispatcher::{
     publish as publish_scope,
 };
 pub use exit_route::{MeshResolverRoute, ResolverRoute};
-pub use owner::{Answer, Begin, Limits, Owner, OwnerError, Ticket, Unavailable, UpstreamWork};
+pub use owner::{
+    Answer, Begin, Limits, NameRoute, Owner, OwnerError, Ticket, Unavailable, UpstreamWork,
+    name_route,
+};
 pub use route::{LocalResolverRoute, RouteError};
 pub use selection::{
     ConfigurationError, ExitSelection, PublishedAnswer, PublishedDns, ResolverCandidate, Selection,
