@@ -6393,6 +6393,7 @@ export const schemaDocument = {
           "dns_exit_plan_required",
           "netmap_limit",
           "netmap_budget",
+          "resolver_outside_access",
           "shadowed_rule",
           "ineffective_block_option"
         ]

@@ -166,6 +166,11 @@ pub enum IssueCode {
     /// Compiling the network's netmaps exceeds a fixed compiler budget (Node count or carrier candidates per edge); no params.
     NetmapBudget,
     // Warnings.
+    /// A resolver kept under an exit (`useWithExit`) that a profile's rules
+    /// would send through an exit is reached from the node directly, and no
+    /// access grant of the node covers its address; params `node`,
+    /// `profile`, `server`.
+    ResolverOutsideAccess,
     /// Every destination of this rule is matched by earlier rules; params
     /// `by` (index of the last rule that completes the cover).
     ShadowedRule,
@@ -255,6 +260,9 @@ impl IssueCode {
             DnsExitPlanRequired => "no single exit can resolve the names this profile routes",
             NetmapLimit => "netmap exceeds the distribution safety bound",
             NetmapBudget => "netmap compilation exceeds a fixed compiler budget",
+            ResolverOutsideAccess => {
+                "a resolver kept under an exit is reached directly without an access grant"
+            }
             ShadowedRule => "every destination of this rule is matched by earlier rules",
             IneffectiveBlockOption => "a block rule blocks the whole edge and ignores this option",
         }

@@ -187,7 +187,7 @@ pub(super) fn validate_assignments_access(
                     .with("node", id),
             );
         }
-        dns_plans(config, &judged, *id, &allowed, check);
+        dns_plans(config, &judged, &permits, *id, &allowed, check);
         let mut seen = BTreeSet::new();
         for (allowed_path, name) in &allowed {
             let name: &String = name;
@@ -274,6 +274,7 @@ pub(super) fn validate_assignments_access(
 fn dns_plans(
     config: &NetworkConfiguration,
     sets: &BTreeMap<String, Arc<meshway_rules::RuleSet>>,
+    permits: &Permits,
     node: NodeId,
     allowed: &[(String, &String)],
     check: &mut Check,
@@ -319,6 +320,22 @@ fn dns_plans(
                 .with("node", node)
                 .with("profile", *name),
             );
+        }
+        // A kept resolver under an exit is reached from the Node itself;
+        // that exception is no Access grant, so say when none covers it.
+        for key in crate::compile::excepted_resolvers(config, sets, name) {
+            let address = config.dns.servers[&key].server.to_canonical();
+            if !permits.covers(&ipnet::IpNet::from(address).to_string()) {
+                check.warn(
+                    ConfigurationIssue::new(
+                        format!("/dns/servers/{}", pointer(&key)),
+                        IssueCode::ResolverOutsideAccess,
+                    )
+                    .with("node", node)
+                    .with("profile", *name)
+                    .with("server", &key),
+                );
+            }
         }
     }
 }

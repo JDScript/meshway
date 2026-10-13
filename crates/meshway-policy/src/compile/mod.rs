@@ -15,7 +15,8 @@ mod transports;
 use crate::{SubjectContext, topology_allows};
 pub use capture::{
     EgressPartition, MAX_CAPTURE_RANGES, MAX_CAPTURE_ROUTES, MAX_WORK as MAX_CAPTURE_WORK,
-    Partition, retained_capture, summary as capture_summary, unavailable_capture,
+    Partition, excepted_resolvers, retained_capture, summary as capture_summary,
+    unavailable_capture,
 };
 pub use dns::{DnsResolution, resolution as dns_resolution};
 pub use edge_constraints::MAX_EDGE_TRANSPORT_ISSUES;

@@ -307,6 +307,12 @@ const TEXT: Record<IssueCode, (p: Params, node: NodeNamer) => string> = {
     })
   },
   netmap_budget: () => m.configuration_issue_netmap_budget(),
+  resolver_outside_access: (p, node) =>
+    m.configuration_issue_resolver_outside_access({
+      node: node(p.node ?? "?"),
+      profile: profileText(p.profile ?? "?", node),
+      server: p.server ?? "?",
+    }),
   shadowed_rule: (p) =>
     m.configuration_issue_shadowed_rule({ index: ordinal(p.by) }),
   ineffective_block_option: (p) =>

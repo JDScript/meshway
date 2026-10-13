@@ -127,3 +127,39 @@ fn ip_rules_resolve_locally_and_name_rules_through_their_one_exit() {
         )])
     );
 }
+
+/// A kept resolver an exit profile would capture is reached directly; a
+/// warning names it for each Node whose Access does not cover its address.
+#[test]
+fn a_kept_resolver_outside_access_is_a_warning() {
+    let warnings = |grants: &[&str]| {
+        let mut c = network(vec![]);
+        c.access[0].dst = grants.iter().map(|g| (*g).into()).collect();
+        let mut dns = serde_json::to_value(&c.dns).unwrap();
+        dns["servers"] = serde_json::json!(
+            {"office": {"type": "udp", "server": "10.20.0.53", "useWithExit": true}});
+        dns["routes"] = serde_json::json!({"corp.example": ["office"]});
+        c.dns = serde_json::from_value(dns).unwrap();
+        let global = format!("global:{}", id(2));
+        c.routing = serde_json::from_value(serde_json::json!({"egress": {"assignments": [
+            {"target": [format!("node:{}", id(1))], "allowed": [global], "default": global, "locked": false}
+        ]}}))
+        .unwrap();
+        normalize_with_dependencies(c, &context())
+            .unwrap()
+            .warnings
+            .into_iter()
+            .filter(|w| w.code == IssueCode::ResolverOutsideAccess)
+            .map(|w| (w.path, w.params["node"].clone(), w.params["server"].clone()))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        warnings(&["autogroup:internet"]),
+        [(
+            "/dns/servers/office".to_owned(),
+            id(1).to_string(),
+            "office".to_owned()
+        )]
+    );
+    assert!(warnings(&["autogroup:internet", "10.20.0.0/16"]).is_empty());
+}

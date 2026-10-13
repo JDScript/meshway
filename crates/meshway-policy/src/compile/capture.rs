@@ -505,12 +505,125 @@ pub fn compute(
     let id = index(&mut actions, action(&fallback).map_err(unavailable)?);
     out4.extend(remaining4.into_iter().map(|(s, e)| (s, e, id)));
     out6.extend(remaining6.into_iter().map(|(s, e)| (s, e, id)));
+    // A resolver kept under an exit (`useWithExit`) is reached from this
+    // Node itself: its address is a direct exception of any exit range.
+    let resolvers = kept_resolvers(cfg);
+    if !resolvers.is_empty() {
+        let exits: Vec<bool> = actions
+            .iter()
+            .map(|action| matches!(action, EgressAction::Exit { .. }))
+            .collect();
+        let direct = index(&mut actions, EgressAction::Direct);
+        let exit = |id: usize| exits.get(id).copied().unwrap_or(false);
+        for address in resolvers {
+            match address {
+                IpAddr::V4(a) => except(&mut out4, u32::from(a), direct, exit),
+                IpAddr::V6(a) => except(&mut out6, u128::from(a), direct, exit),
+            }
+        }
+    }
     Ok(EgressPartition {
         ipv4: assemble(out4),
         ipv6: assemble(out6),
         actions,
         default_capture,
     })
+}
+
+/// Addresses of the resolvers kept under an exit (`useWithExit`), outside
+/// the Mesh: a Mesh address is never an egress destination.
+pub(super) fn kept_resolvers(cfg: &NetworkConfiguration) -> Vec<IpAddr> {
+    cfg.dns
+        .servers
+        .values()
+        .filter(|server| server.use_with_exit)
+        .map(|server| server.server.to_canonical())
+        .filter(|address| {
+            !address.is_unspecified()
+                && !address.is_multicast()
+                && !cfg
+                    .address_pools
+                    .ipv4
+                    .iter()
+                    .chain(&cfg.address_pools.ipv6)
+                    .any(|pool| {
+                        pool.parse::<ipnet::IpNet>()
+                            .is_ok_and(|pool| pool.contains(address))
+                    })
+        })
+        .collect()
+}
+
+/// The keys of the kept resolvers (`useWithExit`) that `profile`'s rules
+/// would send through an exit, i.e. that are its direct exceptions. A
+/// selection or rule that cannot be judged excepts nothing here; its
+/// partition fails closed anyway.
+pub fn excepted_resolvers(
+    cfg: &NetworkConfiguration,
+    sets: &rules::RuleSets,
+    profile: &str,
+) -> Vec<String> {
+    let Ok(Selection { rules, fallback }) = selection(cfg, profile) else {
+        return Vec::new();
+    };
+    let kept = kept_resolvers(cfg);
+    cfg.dns
+        .servers
+        .iter()
+        .filter(|(_, server)| kept.contains(&server.server.to_canonical()))
+        .filter(|(_, server)| {
+            let address = server.server.to_canonical();
+            let mut chosen = None;
+            for (_, rule) in &rules {
+                let Ok(ranges) = rules::ranges(&rule.matcher, sets) else {
+                    return false;
+                };
+                let hit = match address {
+                    IpAddr::V4(a) => ranges
+                        .v4
+                        .iter()
+                        .any(|(s, e)| (*s..=*e).contains(&u32::from(a))),
+                    IpAddr::V6(a) => ranges
+                        .v6
+                        .iter()
+                        .any(|(s, e)| (*s..=*e).contains(&u128::from(a))),
+                };
+                if hit {
+                    chosen = Some(RouteAction::from(rule.action.clone()));
+                    break;
+                }
+            }
+            matches!(
+                chosen.unwrap_or_else(|| fallback.clone()),
+                RouteAction::Exit { .. }
+            )
+        })
+        .map(|(key, _)| key.clone())
+        .collect()
+}
+
+/// `address` taken out of the range holding it, as `direct`, when that
+/// range's action is an exit.
+fn except<T: Address>(
+    pieces: &mut Vec<(T, T, usize)>,
+    address: T,
+    direct: usize,
+    exit: impl Fn(usize) -> bool,
+) {
+    let Some(at) = pieces
+        .iter()
+        .position(|(start, end, id)| *start <= address && address <= *end && exit(*id))
+    else {
+        return;
+    };
+    let (start, end, id) = pieces.swap_remove(at);
+    if let Some(before) = address.previous().filter(|before| *before >= start) {
+        pieces.push((start, before, id));
+    }
+    if let Some(after) = address.next().filter(|after| *after <= end) {
+        pieces.push((after, end, id));
+    }
+    pieces.push((address, address, direct));
 }
 
 /// The partition a Node installs: [`compute`] within the node-side limits.

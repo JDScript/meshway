@@ -16,6 +16,7 @@ mod partition;
 mod projection;
 mod properties;
 mod relays;
+mod resolvers;
 mod rule_sets;
 mod support;
 use support::*;
