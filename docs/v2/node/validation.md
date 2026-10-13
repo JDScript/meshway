@@ -98,6 +98,7 @@ VM→it7 方向 Mesh TCP 远低于裸路径、UDP iperf 30 Mbit/s 时丢包 0.6%
 | `97051237`（main `e7b9ff0d` 产品代码＋本行） | 单行 `20261013T131635Z-426130a9` 未通过（复现）：`nat` 0.5 秒恢复；Server 重启后 A、R 的每次尝试在激活时都以 `target_not_authorized` 丢弃（穿透 socket 的 Underlay 授权仍指向旧 instance），双方从不发 punch，180 秒内未恢复 |
 | `ec24b778` | 单行 `20261013T132830Z-d8e85fdf`：`nat`／`server`／`restart-r` 分别 1.1／10.8／7.3 秒恢复；`restart-a` 未恢复——新进程没有业务需求（A–R 为按需边），fixture 据此改为无通道时持续 ping |
 | `7c0febbb` | 单行 `20261013T134136Z-fbcbd4ea` 通过：`nat` 1.2 秒、`server` 10.4 秒（A、R 在 Server 重新服务后 1.6／2.4 秒取得新 instance，8.3／8.9 秒 State `current`）、`restart-r` 7.3 秒、`restart-a` 9.6 秒；R 从 A 的签名 INIT 学到随机映射端口（候选 `:35000`／`:1391`／`:62265`，实际 `:24025`／`:22396`） |
+| `db193112`（全量矩阵） | `20261013T135826Z-fe73e26e` 通过：`nat` 10.5 秒、`server` 1.4 秒、`restart-r` 10.4 秒、`restart-a` 9.4 秒 |
 
 ### N3 实网证据 {#n3-real-network}
 
@@ -136,6 +137,23 @@ VM→it7 方向 Mesh TCP 远低于裸路径、UDP iperf 30 Mbit/s 时丢包 0.6%
 | us-lax-it7（Docker 28 iptables-nft，`DOCKER-ISOLATION-STAGE-*`／`DOCKER` 链有限定网桥的 DROP，FORWARD `policy accept`）`exitEnabled=true` | 修复前报 `firewallConflict` 且整机 `synchronizing · not applied`、peer 全部 unreachable；修复后 running、applied（revision 30）、5 个 peer `direct`，`Exit unavailable (conntrack unavailable)`，Server State 同为 `unavailable`／`conntrackUnavailable`（`freshness=current`）。防火墙判定通过：it7 实际 `nft -j list ruleset` 的离线判定为无冲突；下一项真实缺口是 it7 未安装 `conntrack`。前后 it7 的外来 nft 对象（74 个，忽略计数器与 handle）完全相同；`exitEnabled` 已恢复为 `false`（revision 31） |
 
 未完成：it7 安装 `conntrack` 前不能作为出口，lax 经 it7 出口的 `curl ifconfig.me` 未执行。
+
+### N5 实网证据 {#n5-real-network}
+
+2026-10-13，lab 三容器、VM、us-lax-it7、planck 容器与开发 Server 统一在 `db193112`。证据 `.meshway/node-lab/n5/`。
+
+修复前的根因证据：it7 journal（`it7-journal-1207-now.txt`）记录 12:27:51–12:57:42 开发 Server 经 Cloudflare 不可达（530／502），`renew_instance` 失败后 `acquire_instance` 取得新 instance；此后所有需要打洞的边（lab／VM ↔ it7）`unreachable`，13:47 部署前仍是（`before/`）。11:19:27 alpha.5 的 Server 重启同样使全部节点换 instance，之后只有两端都在其后重启过的边能重新打洞，与 11:16–12:07 的分区及“只重启一端无效、两端同时重启才恢复”一致。fixture 中同一序列的激活日志为 `target_not_authorized`（[重启自愈行](#reconnect-row)）。
+
+| 扰动 | 结果（应直连的边 direct、lab／VM↔planck 为 `relay`／`relayIdle`，10 秒一次采样） |
+| --- | --- |
+| 部署本身的 Server 更新（14:05:21） | 14:05:38 只剩 VM↔it7 为 `relayIdle`，14:05:59 起全部达标（≤38 秒） |
+| `dev.py restart server`（14:07:29） | 六个节点全部换 instance（`instanceId`／`generation` 均变）；已有通道不中断，12 个样本中 11 个达标；14:09:01 一个样本 planck 对 lax／nyc／vm 为 `unreachable`、对 sha 为 `offline`，下一样本恢复 |
+| 重启 it7 的 meshwayd（14:10:02，其他节点保持 Server 重启后的新 instance） | 首个样本（+13 秒）起全部达标；修复前正是这一序列（Server 重启后只重启一端）无法恢复 |
+| `docker restart meshway-lax`（14:12:24） | 首个样本（+11 秒）起全部达标 |
+
+lab／VM 与 planck 之间设计上没有直连（两端端点相关映射），空闲时显示 `relay (idle) via us-lax-it7`，不再是 `unreachable`。
+
+之后 `relayIdle` 改为要求路径上每个中继都报告与下一节点的通道，六台与 Server 重新统一到该提交，并做 10 分钟观察窗（`window/`，`check.py` 逐样本判定）。
 
 ### 当前验证证据
 
@@ -192,6 +210,7 @@ TUN、packet 和表中 V1 的静态 UDP/resolved 证据来自 `3887256b` 生产�
 | `3e1142ee`（N3） | 全量 17 行，Planck 矩阵 `20261013T060913Z-86100acd`（并行 8，墙钟 766 秒，启动 load 1.6–2.7） | 17 行全部通过（`nat/relay` `20261013T061459Z-ba45e9f1` 150.7 秒；`exit/off` `20261013T061459Z-e26901ca` 491.8 秒）；证据 `.meshway/validation/n3/` |
 | `1a5a1274`（N4） | 全量 17 行（`nat/relay` 为 5 节点），Planck 矩阵 `20261013T091200Z-d6fd0e7c`（并行 8，墙钟 753 秒，启动 load 2.0–5.9） | 17 行全部通过（`nat/relay` `20261013T092053Z-8fe259a9` 155.2 秒，R1 的节点 ID 在 R2 之前，提交后 1,185 ms 经 R2 回复）；证据 `.meshway/validation/n4/` |
 
+| `db193112`（N5） | 全量 18 行（新增 `nat/reconnect`），Planck 矩阵 `20261013T135230Z-e8df696e`（并行 8，墙钟 803 秒，启动 load 2.7–5.0） | 18 行全部通过（`nat/reconnect` `20261013T135826Z-fe73e26e` 195.3 秒；`exit/off` `20261013T135832Z-7800f081` 514.4 秒） |
 | `5183bf6e`（X7） | 全量 17 行，Planck 矩阵 `20261013T092932Z-0d781dd4`（并行 8，墙钟 778 秒，启动 load 1.2–2.9）；同产品行为的 `df591c3f` 矩阵 `20261013T090318Z-539d8762` 同样 17 行通过 | 17 行全部通过（`exit/off` `20261013T093730Z-4df28179` 504.3 秒，第 2 阶段 E 在 `ip_forward=0` 下 applied、打开 forwarding 后约 21 秒自动安装角色）；此前 `bede97a0` 矩阵 `20261013T071339Z-d4bdcc87` 16 行通过，`exit/off` 组件测试的投影目的 `8.8.8.8` 在无默认路由的隔离 namespace 中被新的逐流路由判定拒绝（测试改用 fixture 的外部服务并补拒绝断言），单行 `20261013T085053Z-f5b51954` 通过；证据 `.meshway/validation/x7/` |
 
 #### 租约到期撤回 {#lease-expiry-withdrawal}

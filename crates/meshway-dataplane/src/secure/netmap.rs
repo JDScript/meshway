@@ -683,9 +683,9 @@ impl SecureNode {
 
     /// The relayed path a new circuit toward `peer` would take now, though
     /// none is established: the first ranked path of the content that relays,
-    /// whose next hop has a carrier here and whose relay reports a channel
-    /// with the Node after it. Reporting only; a circuit is still admitted
-    /// and chosen per flow.
+    /// whose next hop has a carrier here and whose every relay reports a
+    /// channel with the Node after it. Reporting only; a circuit is still
+    /// admitted and chosen per flow.
     pub fn relay_route(&self, peer: NodeId) -> Option<Vec<NodeId>> {
         let paths = self
             .desired
@@ -700,11 +700,12 @@ impl SecureNode {
             .find(|path| {
                 path.len() > 2
                     && self.carriers.contains_key(&path[1])
-                    && self
-                        .first
-                        .peer_channels
-                        .get(&path[1])
-                        .is_some_and(|connected| connected.contains(&path[2]))
+                    && path[1..].windows(2).all(|hop| {
+                        self.first
+                            .peer_channels
+                            .get(&hop[0])
+                            .is_some_and(|connected| connected.contains(&hop[1]))
+                    })
             })
             .map(<[NodeId]>::to_vec)
     }

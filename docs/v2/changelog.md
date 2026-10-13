@@ -2,6 +2,19 @@
 
 按合入 main 的顺序记录工作包、提交与证据 ID。规则见[工程流程](/v2/process)；性能数字的口径见[分层性能测量](/v2/node/performance)，验收状态见[验收范围](/v2/node/validation)。
 
+## 未发布
+
+重启后自愈（N5）：wire 6、IPC 9（`peers[].state` 新增 `relayIdle`）、HTTP 契约、`compilerVersion` 与 Server schema 均不变。
+
+- 修复：instance 换代（Server 重启、instance 租约断续后重新取得）时穿透 socket 的 Underlay 授权不再停留在旧 instance。此前之后的每次协调尝试都在激活时被拒（`target_not_authorized`），节点从不发 punch，需要打洞的边直到新内容或 daemon 重启都不恢复；这是 alpha.5 部署后实网分区与 12:28–12:57 Server 不可达后再次分区的根因。见[连接获取 · Node 协调契约](/v2/node/connectivity#node-协调契约)。
+- 显式拨号与协调穿透的暂停上限 300 → 60 秒；协调暂停只约束本节点主动发起，对端仍有效的穿透请求即时查询并接受。见[候选节奏](/v2/node/connectivity#candidate-pacing)、[重启后的恢复](/v2/node/connectivity#restart-recovery)。
+- 数据面路径暂停上限 300 → 60 秒，且只在该路径自身内容（节点密钥、各跳承载）变化时清除。见[中继兜底](/v2/node/connectivity#relay-fallback)。
+- `meshway status`：有需求但无通道、可经有通道的中继到达的 peer 显示 `relay (idle) via <R>`；`unreachable` 只表示没有任何路径。见[运行状态](/v2/node/runtime)。
+- 文档：Server 重启后的事实重建与 ≈35 秒不变量，见[事实重建](/v2/node/netmap-design#facts-rebuild)。
+- 新矩阵行 `nat/reconnect`（18 行）：端点相关映射的 A ↔ 公网 R，NAT 映射丢失、真实 Server 原地重启、单独重启 R、单独重启 A 后各 ≤60 秒重新直连。
+
+验证：Planck 18 行矩阵 `20261013T135230Z-e8df696e`（`db193112`）全部通过；修复前复现 `20261013T131635Z-426130a9`；实网见[N5 实网证据](/v2/node/validation#n5-real-network)；证据 `.meshway/node-lab/n5/`、`.meshway/validation/n5/`。
+
 ## v0.1.0-alpha.5
 
 范围：wire 6、`compilerVersion` `meshway-netmap-2` 不变；IPC 9；Server schema 7；HTTP 契约新增可省略的 `SyncRequest.lease` 与 `PeerFacts.connected`（先升 Node 再升 Server）；新增验收行 `nat/relay`；以及下列 C3、S3、F4a、R2d、N4、X7 等工作包。

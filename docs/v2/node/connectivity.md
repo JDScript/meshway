@@ -257,7 +257,7 @@ Policy 给出候选集合，源节点按本机已知的连通事实排序：
 
 源端握手到期（`handshake_timeout`，10 秒）仍无应答时，该路径暂停 `10 s × 2^(n−1)`（上限 60 秒），下一个 circuit 换用其他有通道的路径；得到应答即清除。新 netmap 内容只清除自身内容变化了的路径的暂停：路径内容是路径上各节点的数据面密钥与相邻两跳之间双向的获准承载（`secure/netmap.rs::PathContent`），其他节点的备注、Access、DNS、出口等变化保留暂停。这覆盖“中继有通道但到不了目标”：中继缺下一跳时只登记需求并拒绝 INIT（不消耗 CID），源不会因此永久固定在这条路径上。已建立的 circuit 与流始终保持原完整路径，切换承载或路径只作用于新 circuit。
 
-`meshway status` 对经中继的 peer 显示 `relay … via <R>`；有邻接需求、当前没有通道也没有 circuit，但按上述排序的第一条中继路径首跳有通道、且该中继在最后已知事实中与下一节点有通道时显示 `relay (idle) via <R>`（`SecureNode::relay_route`），`unreachable` 只用于没有任何可用路径，见[运行状态](/v2/node/runtime)。`meshway ping` 每个回复显示 `via relay <R>`。直连不可能时（两端都在端点相关映射 NAT 后、无共同私网），流量经与双方都有通道的第三节点中继；R 不需要 listener，只要它与两端各有通道。
+`meshway status` 对经中继的 peer 显示 `relay … via <R>`；有邻接需求、当前没有通道也没有 circuit，但按上述排序的第一条中继路径首跳有通道、且其上每个中继在最后已知事实中都与下一节点有通道时显示 `relay (idle) via <R>`（`SecureNode::relay_route`），`unreachable` 只用于没有任何可用路径，见[运行状态](/v2/node/runtime)。`meshway ping` 每个回复显示 `via relay <R>`。直连不可能时（两端都在端点相关映射 NAT 后、无共同私网），流量经与双方都有通道的第三节点中继；R 不需要 listener，只要它与两端各有通道。
 
 实测（N4，2026-10-13）：6 节点 lab 中 lax、sha、nyc、meshway-vm 都到不了 meshway-planck（NAT 后的容器），只有 us-lax-it7（节点 ID 最大）与两端都有通道；此前四路径截断恰好去掉 it7，lax→planck ping 超时。现在四个源 `meshway ping meshway-planck` 各 10/10 `via relay us-lax-it7`，经 Mesh 的 HTTP 请求 200；见[验收范围](/v2/node/validation#n4-real-network)。
 
