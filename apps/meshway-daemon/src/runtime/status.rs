@@ -179,6 +179,7 @@ impl View {
                     netmap,
                     facts: network.facts.as_ref(),
                     routes: &network.routes,
+                    relays: &network.relays,
                     rtts: &network.rtts,
                     known: known.as_ref(),
                     now: Utc::now(),

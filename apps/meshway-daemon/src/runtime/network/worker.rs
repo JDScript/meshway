@@ -947,6 +947,7 @@ fn sample(
     report.observation_dependencies.clear();
     report.circuits.clear();
     report.routes.clear();
+    report.relays.clear();
     report.rtts = diagnostics.rtts().clone();
     report.facts_observed_at = chrono::Utc::now();
     if let Some(state) = installed
@@ -1024,6 +1025,18 @@ fn sample(
             // Bounded by ID order, the same set on every sample.
             while report.circuits.len() > meshway_protocol::STATE_MAX_PATHS {
                 report.circuits.pop_last();
+            }
+        }
+        // Only needed peers without a channel or circuit; bounded by the
+        // adjacency needs the Manager tracks.
+        if let Some(facts) = &report.facts {
+            for (peer, status) in &facts.adjacencies {
+                if *status == meshway_model::state::AdjacencyStatus::Unreachable
+                    && !report.routes.contains_key(peer)
+                    && let Some(path) = secure.relay_route(*peer)
+                {
+                    report.relays.insert(*peer, path);
+                }
             }
         }
     }

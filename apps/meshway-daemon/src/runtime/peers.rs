@@ -11,6 +11,7 @@ pub(super) struct Inputs<'a> {
     pub netmap: &'a NodeNetmap,
     pub facts: Option<&'a meshway_connectivity::Snapshot>,
     pub routes: &'a BTreeMap<NodeId, Vec<NodeId>>,
+    pub relays: &'a BTreeMap<NodeId, Vec<NodeId>>,
     pub rtts: &'a BTreeMap<NodeId, PeerRtt>,
     pub known: Option<&'a meshway_control::KnownPeers>,
     pub now: DateTime<Utc>,
@@ -62,6 +63,10 @@ pub(super) fn peers(inputs: &Inputs<'_>) -> Vec<PeerStatus> {
                     });
             } else if let Some(path) = inputs.routes.get(id).filter(|path| path.len() > 2) {
                 peer.state = PeerState::Relay;
+                peer.via = path[1..path.len() - 1].to_vec();
+                peer.transport = link(path[1]).map(|link| link.carrier.protocol);
+            } else if let Some(path) = inputs.relays.get(id).filter(|path| path.len() > 2) {
+                peer.state = PeerState::RelayIdle;
                 peer.via = path[1..path.len() - 1].to_vec();
                 peer.transport = link(path[1]).map(|link| link.carrier.protocol);
             } else if !inputs.known.is_some_and(|known| {

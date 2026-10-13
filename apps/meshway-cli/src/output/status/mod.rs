@@ -245,12 +245,13 @@ fn peers(output: &mut impl Write, term: &Term, status: &Status) -> io::Result<()
         let (state, role) = match peer.state {
             PeerState::Direct => ("direct", Role::Good),
             PeerState::Relay => ("relay", Role::Accent),
+            PeerState::RelayIdle => ("relay (idle)", Role::Dim),
             PeerState::Idle => ("idle", Role::Dim),
             PeerState::Unreachable => ("unreachable", Role::Warn),
             PeerState::Offline => ("offline", Role::Bad),
         };
         let endpoint = match peer.state {
-            PeerState::Relay => format!(
+            PeerState::Relay | PeerState::RelayIdle => format!(
                 "via {}",
                 peer.via.iter().map(name).collect::<Vec<_>>().join(" → ")
             ),

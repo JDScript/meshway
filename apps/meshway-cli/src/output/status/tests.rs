@@ -4,6 +4,7 @@ use serde_json::json;
 const NYC: &str = "00000000-0000-4000-8000-000000000002";
 const SHA: &str = "00000000-0000-4000-8000-000000000003";
 const OLD: &str = "00000000-0000-4000-8000-000000000004";
+const PLA: &str = "00000000-0000-4000-8000-000000000005";
 
 fn now() -> DateTime<Utc> {
     "2026-10-11T12:00:00Z".parse().unwrap()
@@ -23,6 +24,10 @@ fn status() -> Status {
     sha["endpoint"] = json!("192.168.97.3:35000");
     sha["mtu"] = json!({"path":1444,"inner":1330});
     sha["rtt"] = json!({"durationUs":140,"observedAt":"2026-10-11T11:59:59Z"});
+    // Needed, no circuit now, but reachable through a relay with channels.
+    let mut planck = peer(PLA, "meshway-pla", "100.64.0.7", "relayIdle");
+    planck["via"] = json!([SHA]);
+    planck["transport"] = json!("native_udp");
     let reference = json!({"revision":42,"serial":17,"digest":"01".repeat(32)});
     serde_json::from_value(json!({
         "processId":1,"revision":3,"desiredUp":true,"phase":"running","server":"http://127.0.0.1:8420",
@@ -35,7 +40,7 @@ fn status() -> Status {
                 "defaultProfile":"mesh","locked":false,"profiles":[],"auto":null}},
         "saved":reference,"applied":reference,"dataPlane":"ready","networkMode":"tun",
         "node":{"hostname":"meshway-lax","addresses":{"ipv4":"100.64.0.4","ipv6":null}},
-        "peers":[nyc, sha, peer(OLD, "meshway-old", "100.64.0.9", "offline")],
+        "peers":[nyc, sha, peer(OLD, "meshway-old", "100.64.0.9", "offline"), planck],
         "lastError":null,"lastErrorDetail":null,"retryAt":null
     }))
     .unwrap()
@@ -64,18 +69,22 @@ fn plain_summary_and_peer_table_have_no_escapes() {
         .unwrap();
     assert_eq!(
         lines[header],
-        "PEER         MESH IPV4   STATE    TRANSPORT   ENDPOINT            MTU        RTT"
+        "PEER         MESH IPV4   STATE         TRANSPORT   ENDPOINT            MTU        RTT"
     );
     assert_eq!(
         lines[header + 1],
-        "meshway-nyc  100.64.0.6  relay    native_udp  via meshway-sha                0.31 ms"
+        "meshway-nyc  100.64.0.6  relay         native_udp  via meshway-sha                0.31 ms"
     );
     assert_eq!(
         lines[header + 2],
-        "meshway-sha  100.64.0.5  direct   native_udp  192.168.97.3:35000  1444/1330  0.14 ms"
+        "meshway-sha  100.64.0.5  direct        native_udp  192.168.97.3:35000  1444/1330  0.14 ms"
     );
     // No measurement is not zero.
     assert_eq!(lines[header + 3], "meshway-old  100.64.0.9  offline");
+    assert_eq!(
+        lines[header + 4],
+        "meshway-pla  100.64.0.7  relay (idle)  native_udp  via meshway-sha"
+    );
 }
 
 #[test]
@@ -89,7 +98,8 @@ fn json_keeps_every_status_field_including_peers_and_nulls() {
     let mut output = Vec::new();
     crate::output::json(&mut output, &status()).unwrap();
     let value: serde_json::Value = serde_json::from_slice(&output).unwrap();
-    assert_eq!(value["peers"].as_array().unwrap().len(), 3);
+    assert_eq!(value["peers"].as_array().unwrap().len(), 4);
+    assert_eq!(value["peers"][3]["state"], "relayIdle");
     assert_eq!(value["node"]["hostname"], "meshway-lax");
     assert!(value["peers"][2]["rtt"].is_null() && value["identity"].is_null());
     let decoded: Status = serde_json::from_value(value).unwrap();

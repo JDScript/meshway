@@ -22,9 +22,11 @@ pub enum PeerState {
     Direct,
     /// An established circuit reaches the peer through other Nodes.
     Relay,
+    /// No channel or circuit now, but a new circuit would relay through a Node this one has a channel with and that reports a channel onward.
+    RelayIdle,
     /// Adjacent, but nothing needs a channel now.
     Idle,
-    /// Something needs the peer, but no channel or circuit reaches it.
+    /// Something needs the peer, but no channel, circuit or relay reaches it.
     Unreachable,
     /// The peer's last reported facts are stale or absent, and nothing reaches it.
     Offline,
