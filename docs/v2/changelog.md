@@ -4,6 +4,13 @@
 
 ## 未发布
 
+`meshway ping` 公网目标（D2）：IPC 10；wire 6、HTTP 契约、`compilerVersion` 与 Server schema 均不变。CLI 与 daemon 须一起升级（IPC 9 的 CLI 对新 daemon 得到 `version` 错误）。
+
+- `meshway ping` 接受公网 IP 与域名：先打印本节点的本地判定（方案、规则 pointer／remark／规则集条目、exit／direct／unmanaged／denied 与完整路径；域名显示经本机 DNS 路径的解析与 X6 关联剩余秒数），再探测：exit 经出口路径 ICMP echo（ICMP 错误显示为 `unreachable from <hop>`），direct／unmanaged 本机直出并标注 not via Mesh，denied 不探测。只报告总 RTT。见 [Mesh 外目标](/v2/node/diagnostics#external)。
+- IPC 10：`Command::Ping.target` 为 `PingTarget`（`name`／`address`，取代 `meshIp`）；`PingEvent` 新增 `decision`（在任何测量事件之前，Mesh 目标也有）与 `echo`；`--json` 依次输出。
+- `meshway status` 的 `relay … via <R>` 与 `ping` 的判定路径取新流实际会加入的 circuit（与 `choose_path`／`joinable` 同一排序），不再是多条等长 circuit 中 ID 序的第一条（N5 遗留）。
+- `exit/off` 新增第 13 阶段：公网 IP 经 E、split resolver direct、名称规则域名经 E resolver 与关联、`domain:` 撤权后 denied。
+
 重启后自愈（N5）：wire 6、IPC 9（`peers[].state` 新增 `relayIdle`）、HTTP 契约、`compilerVersion` 与 Server schema 均不变。
 
 - 修复：instance 换代（Server 重启、instance 租约断续后重新取得）时穿透 socket 的 Underlay 授权不再停留在旧 instance。此前之后的每次协调尝试都在激活时被拒（`target_not_authorized`），节点从不发 punch，需要打洞的边直到新内容或 daemon 重启都不恢复；这是 alpha.5 部署后实网分区与 12:28–12:57 Server 不可达后再次分区的根因。见[连接获取 · Node 协调契约](/v2/node/connectivity#node-协调契约)。
