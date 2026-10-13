@@ -184,10 +184,10 @@ Linux 的 Mesh 外层 UDP socket 设 `IP_PMTUDISC_DO`／`IPV6_MTU_DISCOVER=DO`�
 
 | 项 | 规则 |
 | --- | --- |
-| 探测 | 通道自己的签名 Ping，以零填充到目标大小，带 DF；对这个新鲜 nonce 的认证 Pong 证明该大小可达。旧版本对端不接受填充的 Ping，结果为未知，不影响健康检查 |
+| 探测 | 独立的 `Probe` 消息（与健康 Ping 区分、单独限速应答），签名覆盖通道、新鲜 nonce 与**整个报文长度**，以零填充到目标大小，带 DF；接收方按实际收到的长度验签，长度不符（被截短）不应答；对这个 nonce 的认证 Pong 证明该大小可达。UDP payload 最多 2,048 B（报文编解码上限），所以搜索上限是 `min(路由 MTU, 2,048 + 28／48)`：路由 MTU 更大（巨型帧）时报告该上限，任何内层 MTU 都在其内。探测无法构造时只结束这一次测量。早于 alpha.8 的对端不认识 `Probe`，结果为未知，不影响健康检查 |
 | 顺序 | 先试路由 MTU（通过即结束）；否则在 1,280 与失败大小之间二分；每个大小最多 2 次、每次等待 2 秒 |
-| 结果 | `path` = 已确认的最大大小与当前路由 MTU（受保护 socket 同 mark、同本地地址的瞬时 connected socket 读 `IP_MTU`，不发包）的较小者；`inner = path − 28`（IPv6 为 48）`− 86`（Data 帧固定开销）。搜索完成前或连 1,280 都未确认时为未知 |
-| 更新 | 每 10 分钟重新向上搜索；路由学到更小的 PMTU 时立即取较小值 |
+| 结果 | `path` = 已确认的最大大小与当前路由 MTU（受保护 socket 同 mark、同本地地址的瞬时 connected socket 读 `IP_MTU`，不发包，上限同上）的较小者；`inner = path − 28`（IPv6 为 48）`− 86`（Data 帧固定开销）。搜索完成前或连 1,280 都未确认时为未知 |
+| 更新 | 每 10 分钟重新搜索：先重验已确认的大小（期间旧值仍作为暂存事实报告），通过才向上搜索；连续 2 次丢失即放弃旧值、在 1,280 与它之间重新二分，连 1,280 都不通过时撤回为未知。路由学到更小的 PMTU 时立即取较小值 |
 
 `path`／`inner` 是 channel 事实（`Snapshot.mtu`、`Manager::path_mtu`、IPC `peers[].mtu`），连接组件自己不据此改变发送。数据面据此对本节点超过 `inner` 的包回 fragmentation needed／packet too big，Underlay 据此限制 TCP MSS，见[通道 MTU](/v2/node/dataplane#channel-mtu)。探测丢失会让结果偏小（保守方向）。
 

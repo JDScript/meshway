@@ -123,6 +123,8 @@ struct Channel {
     probe: Option<[u8; 32]>,
     next_probe: Instant,
     last_response: Instant,
+    /// Size probes are answered on their own budget, apart from health Pings.
+    last_probe_response: Instant,
     confirmed: bool,
     ready_until: Instant,
     budget: ControlBudget,
@@ -259,6 +261,8 @@ impl Owner {
 
     /// Read each channel's route MTU and drop entries of channels this owner
     /// no longer has. A system call per channel, no packet.
+    /// A finished search that confirmed nothing (the path shrank below the
+    /// floor) withdraws the channel's value; one still searching keeps it.
     fn measure_mtu(&self) {
         let measured: Vec<_> = self
             .channels
@@ -266,7 +270,9 @@ impl Owner {
             .filter_map(|(remote, channel)| {
                 Some((
                     channel.fact.id,
-                    channel.mtu.path(self.path.path_mtu(*remote))?,
+                    channel
+                        .mtu
+                        .measured(probe_route(self.path.as_ref(), *remote))?,
                 ))
             })
             .collect();
@@ -275,7 +281,10 @@ impl Owner {
                 *socket != self.id || self.channels.values().any(|channel| channel.fact.id == *id)
             });
             for (id, mtu) in measured {
-                known.insert(id, (self.id, mtu));
+                match mtu {
+                    Some(mtu) => known.insert(id, (self.id, mtu)),
+                    None => known.remove(&id),
+                };
             }
         }
     }
@@ -395,6 +404,7 @@ impl Owner {
                 probe: None,
                 next_probe: Instant::now() + PROBE_INTERVAL,
                 last_response: Instant::now() - RETRY,
+                last_probe_response: Instant::now() - RETRY,
                 confirmed: false,
                 ready_until,
                 budget: ControlBudget::with_limit(16),
@@ -560,23 +570,29 @@ impl Owner {
                 .await;
             }
             if channel.scope.check().is_ok()
-                && let Some(size) = channel.mtu.due(self.path.path_mtu(*remote), Instant::now())
+                && let Some(size) = channel
+                    .mtu
+                    .due(probe_route(self.path.as_ref(), *remote), Instant::now())
             {
-                // A DF size probe: the channel's own signed Ping, filled.
+                // A DF size probe signed for its exact length. One that cannot
+                // be built ends this measurement only, never the owner.
                 let nonce = adjacency::boot_nonce(&self.shared.boot)?;
-                channel.mtu.sent(nonce);
-                let header = if remote.is_ipv4() { 28 } else { 48 };
-                let bytes = adjacency::encode_padded(
-                    Kind::Ping,
-                    &channel.transcript.health(
-                        &self.shared.keys,
-                        &self.shared.plan(),
-                        Kind::Ping,
-                        &nonce,
-                    )?,
-                    usize::from(size).saturating_sub(header),
-                )?;
-                let _ = send_control(&self.sender, &channel.scope, *remote, bytes).await;
+                match channel.transcript.probe(
+                    &self.shared.keys,
+                    &self.shared.plan(),
+                    &nonce,
+                    usize::from(size.saturating_sub(header(*remote))),
+                ) {
+                    Ok(bytes) => {
+                        channel.mtu.sent(nonce);
+                        let _ = send_control(&self.sender, &channel.scope, *remote, bytes).await;
+                    }
+                    Err(error) => {
+                        tracing::debug!(?error, peer = %channel.fact.peer, channel = ?channel.fact.id,
+                            size, "UDP size probe not built; measurement ended");
+                        channel.mtu.abandon(Instant::now());
+                    }
+                }
             }
             if channel.scope.check().is_err() || Instant::now() < channel.next_probe {
                 continue;
@@ -723,6 +739,10 @@ impl Owner {
                 Kind::Challenge | Kind::Ready => self.client_message(remote, kind, body).await?,
                 Kind::Ack => self.ack(remote, body).await?,
                 Kind::Ping | Kind::Pong => self.health(remote, kind, body).await?,
+                Kind::Probe => {
+                    self.answer_size_probe(remote, frame.payload.len(), body)
+                        .await?
+                }
             }
         } else if let Some(channel) = self.channels.get(&remote)
             && self.selected(channel)
@@ -1195,6 +1215,38 @@ impl Owner {
         Ok(())
     }
 
+    /// Answer a peer's size probe with a Pong over its nonce, only if it was
+    /// signed for the length actually received.
+    async fn answer_size_probe(
+        &mut self,
+        remote: SocketAddr,
+        datagram: usize,
+        body: &[u8],
+    ) -> Result<(), Error> {
+        let Some(channel) = self.channels.get_mut(&remote) else {
+            return Ok(());
+        };
+        if channel.scope.check().is_err() || Instant::now() < channel.last_probe_response + RETRY {
+            return Ok(());
+        }
+        let plan = self.shared.plan();
+        let Ok(nonce) = channel
+            .transcript
+            .verify_probe(&plan, channel.fact.peer, datagram, body)
+        else {
+            return Ok(());
+        };
+        channel.last_probe_response = Instant::now();
+        let bytes = adjacency::encode(
+            Kind::Pong,
+            &channel
+                .transcript
+                .health(&self.shared.keys, &plan, Kind::Pong, &nonce)?,
+        )?;
+        let _ = send_control(&self.sender, &channel.scope, remote, bytes).await;
+        Ok(())
+    }
+
     /// A passive restart cannot dial a dial-only peer. Verify that peer's signed
     /// outstanding Ping, then require a NEW source challenge/ACK. Neither an
     /// unknown datagram nor a copied old probe retires any channel.
@@ -1398,6 +1450,21 @@ impl Drop for Owner {
         }
         self.receiver.take();
     }
+}
+
+/// IP and UDP header bytes of a datagram toward `remote`.
+fn header(remote: SocketAddr) -> u16 {
+    if remote.is_ipv4() { 28 } else { 48 }
+}
+
+/// The route MTU toward `remote` as far as a size probe can show it: never
+/// above the largest probe the codec encodes. A larger route (jumbo frames)
+/// is reported at that bound, which every inner MTU fits.
+fn probe_route(path: &dyn Datagram, remote: SocketAddr) -> Option<u16> {
+    let ceiling = u16::try_from(adjacency::MAX_PROBE)
+        .unwrap_or(u16::MAX)
+        .saturating_add(header(remote));
+    path.path_mtu(remote).map(|route| route.min(ceiling))
 }
 
 async fn send_control(
@@ -2060,6 +2127,134 @@ pub(in crate::manager) mod tests {
             0,
             "business queue really saturated"
         );
+        owner.shutdown().await.unwrap();
+        fixture.close().await;
+    }
+
+    /// A real UDP endpoint whose route claims jumbo frames.
+    struct Jumbo<T>(T);
+
+    impl<T: Datagram> Datagram for Jumbo<T> {
+        fn local_addr(&self) -> std::io::Result<SocketAddr> {
+            self.0.local_addr()
+        }
+        fn poll_send_to(
+            &self,
+            cx: &mut std::task::Context<'_>,
+            payload: &[u8],
+            peer: SocketAddr,
+        ) -> std::task::Poll<std::io::Result<usize>> {
+            self.0.poll_send_to(cx, payload, peer)
+        }
+        fn poll_recv_from(
+            &self,
+            cx: &mut std::task::Context<'_>,
+            buffer: &mut [u8],
+        ) -> std::task::Poll<std::io::Result<meshway_transport::raw::DatagramRead>> {
+            self.0.poll_recv_from(cx, buffer)
+        }
+        fn path_mtu(&self, _peer: SocketAddr) -> Option<u16> {
+            Some(9000)
+        }
+    }
+
+    /// Route MTU 9000: the owner's size probe stays within the codec (the
+    /// search is capped at the largest encodable probe) and the owner keeps
+    /// running. A peer's probe is answered only at the length it was signed
+    /// for: a truncated copy gets no Pong.
+    #[tokio::test]
+    async fn size_probes_stay_encodable_on_a_jumbo_route_and_bind_their_length() {
+        let mut fixture = Netmaps::start(false, true).await;
+        let ids = fixture.ids();
+        let (shared, _receiver) = shared(&fixture.desired[1], &fixture.keys[1]);
+        let socket = UdpTransport::adopt(fixture.take_udp(1), &Default::default()).unwrap();
+        let local = socket.local_addr().unwrap();
+        let id = adjacency::nonce().unwrap();
+        let mut owner = Owner::new(shared.clone(), Box::new(Jumbo(socket)), id).unwrap();
+        owner.listener = Some(ListenerFact {
+            socket_id: id,
+            key: "udp".into(),
+            protocol: TransportProtocol::NativeUdp,
+            local,
+            buffers: None,
+        });
+        let client = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let source = client.local_addr().unwrap();
+        let carrier = carriers(&fixture.desired[0])[&ids[1]].clone();
+        let dialer = Plan::new(&fixture.desired[0]).unwrap();
+        let (initiation, intro) =
+            Initiation::new(&fixture.keys[0], &dialer, &carrier, &DIALER_BOOT).unwrap();
+        owner.init(source, &intro).await.unwrap();
+        let mut bytes = vec![0; 65_536];
+        let (len, _) = client.recv_from(&mut bytes).await.unwrap();
+        let (kind, body) = adjacency::decode(&bytes[..len]).unwrap();
+        assert_eq!(kind, Kind::Challenge);
+        let transcript = initiation.challenge(&dialer, ids[1], body).unwrap();
+        let ack = transcript
+            .message(&fixture.keys[0], &dialer, Kind::Ack)
+            .unwrap();
+        owner.ack(source, &ack).await.unwrap();
+        assert!(owner.channels.contains_key(&source));
+        owner.tick().await.unwrap();
+        let probe = loop {
+            let (len, _) =
+                tokio::time::timeout(Duration::from_secs(5), client.recv_from(&mut bytes))
+                    .await
+                    .expect("a size probe")
+                    .unwrap();
+            if adjacency::decode(&bytes[..len]).unwrap().0 == Kind::Probe {
+                break bytes[..len].to_vec();
+            }
+        };
+        assert_eq!(probe.len(), adjacency::MAX_PROBE);
+        let (_, body) = adjacency::decode(&probe).unwrap();
+        let owner_plan = Plan::new(&fixture.desired[1]).unwrap();
+        assert!(
+            transcript
+                .verify_probe(&dialer, ids[1], probe.len(), body)
+                .is_ok()
+        );
+        assert!(
+            transcript
+                .verify_probe(&dialer, ids[1], 1300, body)
+                .is_err()
+        );
+        // The peer's probe: truncated, then whole.
+        let nonce = adjacency::nonce().unwrap();
+        let signed = transcript
+            .probe(&fixture.keys[0], &dialer, &nonce, 1300)
+            .unwrap();
+        assert!(
+            transcript
+                .probe(&fixture.keys[0], &dialer, &nonce, 9000 - 28)
+                .is_err()
+        );
+        let (_, body) = adjacency::decode(&signed[..1200]).unwrap();
+        let before = owner.channels[&source].last_probe_response;
+        owner.answer_size_probe(source, 1200, body).await.unwrap();
+        assert_eq!(
+            owner.channels[&source].last_probe_response, before,
+            "a truncated probe is not answered"
+        );
+        let (_, body) = adjacency::decode(&signed).unwrap();
+        owner
+            .answer_size_probe(source, signed.len(), body)
+            .await
+            .unwrap();
+        let pong = loop {
+            let (len, _) =
+                tokio::time::timeout(Duration::from_secs(5), client.recv_from(&mut bytes))
+                    .await
+                    .expect("a Pong")
+                    .unwrap();
+            let (kind, body) = adjacency::decode(&bytes[..len]).unwrap();
+            if kind == Kind::Pong {
+                break transcript
+                    .verify_health(&owner_plan, ids[1], Kind::Pong, body)
+                    .unwrap();
+            }
+        };
+        assert_eq!(pong, nonce, "only the whole probe is answered");
         owner.shutdown().await.unwrap();
         fixture.close().await;
     }

@@ -212,6 +212,7 @@ fn datagram_codec_has_exact_lengths_and_distinct_udp_phase_ids() {
         Kind::Ready,
         Kind::Ping,
         Kind::Pong,
+        Kind::Probe,
     ] {
         let bytes = encode(kind, &[7; 160]).unwrap();
         assert_eq!(decode(&bytes).unwrap(), (kind, &[7; 160][..]));
@@ -220,20 +221,13 @@ fn datagram_codec_has_exact_lengths_and_distinct_udp_phase_ids() {
         }
         let mut trailing = bytes.clone();
         trailing.push(0);
-        // Only a Ping is filled (a path size probe), and only with zeros.
-        assert_eq!(decode(&trailing).is_ok(), kind == Kind::Ping);
+        // Only a size probe is filled, and only with zeros.
+        assert_eq!(decode(&trailing).is_ok(), kind == Kind::Probe);
         let mut nonzero = trailing.clone();
         *nonzero.last_mut().unwrap() = 1;
         assert!(decode(&nonzero).is_err());
-        if kind == Kind::Ping {
-            let probe = encode_padded(kind, &[7; 160], 1329).unwrap();
-            assert_eq!(probe.len(), 1329);
-            assert_eq!(decode(&probe).unwrap(), (kind, &[7; 160][..]));
-        } else {
-            assert!(encode_padded(kind, &[7; 160], 1329).is_err());
-        }
         let mut unknown = bytes;
-        unknown[8] = 7;
+        unknown[8] = 8;
         assert!(decode(&unknown).is_err());
     }
     assert!(encode(Kind::Init, &[]).is_err());

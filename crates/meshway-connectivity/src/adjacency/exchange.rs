@@ -11,6 +11,8 @@ pub(crate) enum Kind {
     Ready = 4,
     Ping = 5,
     Pong = 6,
+    /// A path size probe; answered by a Pong over its nonce.
+    Probe = 7,
 }
 
 impl Kind {
@@ -22,6 +24,7 @@ impl Kind {
             4 => Ok(Self::Ready),
             5 => Ok(Self::Ping),
             6 => Ok(Self::Pong),
+            7 => Ok(Self::Probe),
             _ => Err(Error::Authentication),
         }
     }
@@ -33,6 +36,7 @@ impl Kind {
             Self::Ready => b"meshway/adjacency/udpReady/v1\0",
             Self::Ping => b"meshway/adjacency/udpPing/v1\0",
             Self::Pong => b"meshway/adjacency/udpPong/v1\0",
+            Self::Probe => b"meshway/adjacency/udpSizeProbe/v1\0",
         }
     }
 }
@@ -53,16 +57,8 @@ pub(crate) fn encode(kind: Kind, body: &[u8]) -> Result<Vec<u8>, Error> {
     Ok(message)
 }
 
-/// A Ping filled with zeros to exactly `datagram` bytes: a path size probe.
-/// Its signed body is the ordinary Ping; the filler carries nothing.
-pub(crate) fn encode_padded(kind: Kind, body: &[u8], datagram: usize) -> Result<Vec<u8>, Error> {
-    let mut message = encode(kind, body)?;
-    if kind != Kind::Ping || datagram < message.len() || datagram > MAX_MESSAGE {
-        return Err(Error::Authentication);
-    }
-    message.resize(datagram, 0);
-    Ok(message)
-}
+/// The largest UDP payload a size probe can be: the codec's message bound.
+pub(crate) const MAX_PROBE: usize = MAX_MESSAGE;
 
 pub(crate) fn decode(message: &[u8]) -> Result<(Kind, &[u8]), Error> {
     if message.len() < 12 || message.len() > MAX_MESSAGE || &message[..8] != MAGIC {
@@ -71,10 +67,11 @@ pub(crate) fn decode(message: &[u8]) -> Result<(Kind, &[u8]), Error> {
     let length = usize::from(u16::from_be_bytes([message[9], message[10]]));
     let kind = Kind::from_byte(message[8])?;
     let end = 11 + length;
-    // Only a Ping may carry filler (a size probe), and only zeros.
+    // Only a size probe carries filler, and only zeros; its signature covers
+    // the whole length (`Transcript::verify_probe`).
     if end > message.len()
         || (end < message.len()
-            && (kind != Kind::Ping || message[end..].iter().any(|byte| *byte != 0)))
+            && (kind != Kind::Probe || message[end..].iter().any(|byte| *byte != 0)))
     {
         return Err(Error::Authentication);
     }
@@ -297,6 +294,68 @@ impl Transcript {
         let mut context = self.context.clone();
         context.extend_from_slice(&self.id());
         context
+    }
+
+    fn probe_context(&self, datagram: usize) -> Result<Vec<u8>, Error> {
+        let mut context = self.health_context();
+        context.extend_from_slice(
+            &u16::try_from(datagram)
+                .map_err(|_| Error::Authentication)?
+                .to_be_bytes(),
+        );
+        Ok(context)
+    }
+
+    /// A size probe of exactly `datagram` UDP payload bytes: signed over the
+    /// channel, the fresh `nonce` and that length, then zero-filled. Fails for
+    /// a length the codec cannot carry (`MAX_PROBE`) or below the message.
+    pub fn probe(
+        &self,
+        keys: &DataPlaneKeys,
+        cfg: &Plan,
+        nonce: &[u8; 32],
+        datagram: usize,
+    ) -> Result<Vec<u8>, Error> {
+        if datagram > MAX_PROBE {
+            return Err(Error::Authentication);
+        }
+        let context = self.probe_context(datagram)?;
+        let id = self.id();
+        let signature = cfg.sign(keys, digest(Kind::Probe.domain(), &context, nonce, &id))?;
+        let mut message = encode(Kind::Probe, &response(&context, nonce, &id, signature))?;
+        if datagram < message.len() {
+            return Err(Error::Authentication);
+        }
+        message.resize(datagram, 0);
+        Ok(message)
+    }
+
+    /// The nonce of a peer's size probe received as `datagram` payload bytes:
+    /// valid only if it was signed for exactly that length, so a truncated
+    /// probe proves nothing and is not answered.
+    pub fn verify_probe(
+        &self,
+        cfg: &Plan,
+        peer: NodeId,
+        datagram: usize,
+        body: &[u8],
+    ) -> Result<[u8; 32], Error> {
+        if body.len() != 160 {
+            return Err(Error::Authentication);
+        }
+        let nonce = body[32..64].try_into().map_err(|_| Error::Authentication)?;
+        let context = self.probe_context(datagram)?;
+        let id = self.id();
+        if parse_response(body, &context, &nonce)? != id {
+            return Err(Error::Authentication);
+        }
+        verify(
+            cfg,
+            peer,
+            digest(Kind::Probe.domain(), &context, &nonce, &id),
+            &body[96..],
+        )?;
+        Ok(nonce)
     }
 
     pub fn health(
