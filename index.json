@@ -1,8 +1,58 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-13T22:57:20.367378+00:00",
+  "updatedAt": "2026-10-13T23:18:21.707509+00:00",
   "runs": [
+    {
+      "id": 38482893742,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "3eb56e63fd9c7a9feca66de09ffa5c1cd581e7c8",
+      "message": "changelog: M2 real-machine result from the alpha.7 rollout",
+      "createdAt": "2026-10-13T23:13:23Z",
+      "updatedAt": "2026-10-13T23:15:48Z",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/JDScript/meshway/actions/runs/38482893742",
+      "jobs": [
+        {
+          "id": 115589485088,
+          "name": "changes",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-13T23:13:24Z",
+          "completedAt": "2026-10-13T23:13:28Z",
+          "seconds": 4.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38482893742/job/115589485088"
+        },
+        {
+          "id": 115589508596,
+          "name": "web",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-13T23:13:30Z",
+          "completedAt": "2026-10-13T23:15:48Z",
+          "seconds": 138.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38482893742/job/115589508596"
+        },
+        {
+          "id": 115589510570,
+          "name": "cargo",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "skipped",
+          "startedAt": "2026-10-13T23:13:28Z",
+          "completedAt": "2026-10-13T23:13:28Z",
+          "seconds": 0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38482893742/job/115589510570"
+        }
+      ],
+      "artifacts": []
+    },
     {
       "id": 38478343000,
       "attempt": 1,
