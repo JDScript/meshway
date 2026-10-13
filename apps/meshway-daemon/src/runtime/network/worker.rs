@@ -542,6 +542,10 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 match result {
                     Ok(()) => {
                         dns_failed = false;
+                        // A complete apply ends an earlier degraded one's
+                        // problem (a listener that bound on retry).
+                        report.problem = None;
+                        report.problem_detail = None;
                         report.completion = Some(Ok(()));
                         report.content = Some(netmap.content.clone());
                         report.capture = capture;
