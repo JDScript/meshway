@@ -77,8 +77,9 @@ pub use netmap::{
 pub use node::{
     DeleteNodeRequest, NodeChallenge, NodeChallengeRequest, NodeInventoryResponse,
     NodeInventoryView, NodeKeyMetadata, NodeLeaveRequest, NodeLeaveResponse, NodeRotationRequest,
-    NodeSessionRequest, NodeSessionResponse, NodeSettingsResponse, PinnedServerKeyStatus,
-    PinnedServerKeyView, RevokeNodeKeyRequest,
+    NodeRoutingSelectionResponse, NodeRoutingSummary, NodeSessionRequest, NodeSessionResponse,
+    NodeSettingsResponse, PinnedServerKeyStatus, PinnedServerKeyView, RevokeNodeKeyRequest,
+    SelectNodeRoutingProfileRequest,
 };
 pub use node_observations::{
     CreateNodeObservation, NodeObservationCancelled, NodeObservationQuery, NodeObservationResponse,
@@ -89,8 +90,8 @@ pub use observations::{
     ObservationResult, ObservationTask,
 };
 pub use state::{
-    STATE_FACT_MAX_SECONDS, STATE_REPORT_TTL_SECONDS, StateAccepted, StateQuery, StateReport,
-    StateView,
+    STATE_FACT_MAX_SECONDS, STATE_MAX_PATHS, STATE_REPORT_TTL_SECONDS, StateAccepted, StateQuery,
+    StateReport, StateView,
 };
 
 pub use auth::{
@@ -109,7 +110,10 @@ pub use networks::{
     NetworkMembersResponse, NetworkPageQuery, NetworkResponse, NetworkSummary,
     RenameNetworkRequest,
 };
-pub use problem::{ConfigurationValidationParams, EmptyParams, ErrorResponse, Problem};
+pub use problem::{
+    ConfigurationValidationParams, EmptyParams, ErrorResponse, Problem,
+    RoutingProfileUnavailableParams,
+};
 pub use resources::{
     RefreshRuleSetRequest, RuleSetCatalogPage, RuleSetEntryKind, RuleSetEntryPage, RuleSetList,
     RuleSetMatchResponse, RuleSetReport, RuleSetView,

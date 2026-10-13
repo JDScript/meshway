@@ -125,3 +125,59 @@ pub(super) async fn get(
         .map(Json)
         .ok_or_else(|| HttpError::domain(id, Error::NotFound))
 }
+/// Read a Node's routing profile selection.
+///
+/// Requires a user session. Owners and Admins may read any Node; a member only their own User-identity devices, every other Node returns 404.
+/// The answer is the requested and applied profile, the allowed profiles with a summary of each, the assignment's lock, how `auto` resolves, and whether the caller may select.
+#[utoipa::path(get,path="/api/v1/networks/{networkId}/nodes/{nodeId}/routing-selection",operation_id="getNodeRoutingSelection",tag="nodes",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("nodeId"=NodeId,Path)),responses((status=200,body=NodeRoutingSelectionResponse),(status=400,body=ErrorResponse,description="invalid_request"),(status=401,body=ErrorResponse,description="invalid_session"),(status=404,body=ErrorResponse,description="not_found"),(status=503,body=ErrorResponse,description="service_unavailable")))]
+pub(super) async fn routing_selection(
+    State(service): State<Execution>,
+    Extension(id): Extension<RequestId>,
+    headers: HeaderMap,
+    path: Result<Path<(NetworkId, NodeId)>, PathRejection>,
+) -> Result<Json<NodeRoutingSelectionResponse>, HttpError> {
+    let token = bearer(&headers, id)?;
+    let Path((network, node)) = path.map_err(|_| HttpError::invalid_request(id))?;
+    let selection = service
+        .routing_selection(token, network, node)
+        .await
+        .map_err(|e| HttpError::domain(id, e))?;
+    Ok(Json(selection_response(id, network, node, selection)))
+}
+/// Select a Node's routing profile.
+///
+/// Requires a user session with the same visibility as `getNodeRoutingSelection`: a member selects for their own User-identity devices, Owners and Admins for any Node, Tag Nodes included; the activity records the acting user.
+/// The profile must be allowed for the Node and, while its assignment is locked, be the default; otherwise routing_profile_unavailable lists the allowed profiles.
+/// The request identifier makes retries of the same selection return the current selection without a second change; reuse with another Node or profile returns request_id_conflict.
+/// Acceptance persists the selection as the Node's usage state, recompiles its netmap (ending flows through the previous exit) and records a `routing.select` activity.
+#[utoipa::path(post,path="/api/v1/networks/{networkId}/nodes/{nodeId}/routing-selection",operation_id="setNodeRoutingSelection",tag="nodes",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("nodeId"=NodeId,Path)),request_body=SelectNodeRoutingProfileRequest,responses((status=200,body=NodeRoutingSelectionResponse),(status=400,body=ErrorResponse,description="invalid_request"),(status=401,body=ErrorResponse,description="invalid_session"),(status=404,body=ErrorResponse,description="not_found"),(status=409,body=ErrorResponse,description="request_id_conflict, state_conflict"),(status=413,body=ErrorResponse,description="request_too_large"),(status=415,body=ErrorResponse,description="unsupported_media_type"),(status=422,body=ErrorResponse,description="routing_profile_unavailable"),(status=503,body=ErrorResponse,description="busy, service_unavailable")))]
+pub(super) async fn select_routing_profile(
+    State(service): State<Execution>,
+    Extension(id): Extension<RequestId>,
+    headers: HeaderMap,
+    path: Result<Path<(NetworkId, NodeId)>, PathRejection>,
+    body: Result<Json<SelectNodeRoutingProfileRequest>, JsonRejection>,
+) -> Result<Json<NodeRoutingSelectionResponse>, HttpError> {
+    let token = bearer(&headers, id)?;
+    let Path((network, node)) = path.map_err(|_| HttpError::invalid_request(id))?;
+    let Json(body) = body.map_err(|e| HttpError::json(id, e))?;
+    let selection = service
+        .select_user_profile(token, network, node, body)
+        .await
+        .map_err(|e| HttpError::domain(id, e))?;
+    Ok(Json(selection_response(id, network, node, selection)))
+}
+fn selection_response(
+    id: RequestId,
+    network: NetworkId,
+    node: NodeId,
+    selection: meshway_configuration::selection::RoutingSelectionState,
+) -> NodeRoutingSelectionResponse {
+    NodeRoutingSelectionResponse {
+        request_id: id,
+        network_id: network,
+        node_id: node,
+        can_select: crate::store::execution::can_select(&selection),
+        selection,
+    }
+}

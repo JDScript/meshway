@@ -52,7 +52,7 @@ pub(super) fn report(
         || state.sockets.len() > 256
         || state.links.len() > 256
         || state.adjacencies.len() > 1024
-        || state.paths.len() > 256
+        || state.paths.len() > meshway_protocol::STATE_MAX_PATHS
         || state.probes.len() > 64
         || state.problems.len() > 64
     {
@@ -291,9 +291,41 @@ pub(super) fn report(
             }
         }
     }
-    // Complete paths are decided locally on each netmap and are not State.
-    if !state.paths.is_empty() {
-        return Err(Error::InvalidRequest);
+    // Paths are observations of circuits the Node itself takes part in, in
+    // origin-to-terminal order, under its applied netmap.
+    for (path_id, path) in &state.paths {
+        let reference = state
+            .configuration
+            .applied
+            .as_ref()
+            .ok_or(Error::InvalidRequest)?;
+        let context = admission.context(reference)?;
+        let nodes = &path.nodes;
+        let last = nodes.len().saturating_sub(1);
+        let position = nodes.iter().position(|node| *node == admission.node_id);
+        let role = matches!(
+            (path.reporter_role, position),
+            (ReporterRole::Origin, Some(0))
+        ) || matches!(
+            (path.reporter_role, position),
+            (ReporterRole::Target | ReporterRole::Exit, Some(i)) if i == last
+        ) || matches!(
+            (path.reporter_role, position),
+            (ReporterRole::Relay, Some(i)) if i > 0 && i < last
+        );
+        if !text(path_id)
+            || nodes.len() < 2
+            || nodes.len() > 16
+            || nodes.iter().collect::<BTreeSet<_>>().len() != nodes.len()
+            || nodes
+                .iter()
+                .any(|node| *node != admission.node_id && !context.peers.contains(node))
+            || path.netmap != *reference
+            || !role
+            || !time(path.observed_at, path.expires_at, now)
+        {
+            return Err(Error::InvalidRequest);
+        }
     }
     if let Some(profile) = &state.selection.applied_profile {
         let reference = state

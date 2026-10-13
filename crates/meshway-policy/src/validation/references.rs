@@ -225,6 +225,24 @@ pub(super) fn rules(
                 }
             }
         }
+        // A block rule blocks the whole edge; carrier and residency options
+        // only apply to allow rules.
+        if rule.action == TopologyAction::Block {
+            for (field, present) in [
+                ("transports", !matches!(rule.transports, Input::Omitted)),
+                ("keepalive", rule.keepalive),
+            ] {
+                if present {
+                    check.warn(
+                        ConfigurationIssue::new(
+                            format!("/topology/{i}/{field}"),
+                            IssueCode::IneffectiveBlockOption,
+                        )
+                        .with("field", field),
+                    );
+                }
+            }
+        }
     }
 }
 

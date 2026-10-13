@@ -39,6 +39,7 @@ pub(super) struct Key {
     links: BTreeMap<[u8; 32], LinkFact>,
     sockets: Vec<meshway_connectivity::SocketFact>,
     dependencies: BTreeMap<NodeId, u32>,
+    circuits: BTreeMap<[u8; 32], (Vec<NodeId>, meshway_model::state::ReporterRole)>,
 }
 impl Key {
     fn of(report: &Report) -> Self {
@@ -66,6 +67,7 @@ impl Key {
             links: BTreeMap::new(),
             sockets: Vec::new(),
             dependencies: BTreeMap::new(),
+            circuits: BTreeMap::new(),
         };
         if dns_live
             && report.plane == meshway_protocol::ipc::DataPlane::Ready
@@ -91,6 +93,7 @@ impl Key {
                 .map(|link| (link.id, link.clone()))
                 .collect();
             key.dependencies = report.dependencies.clone();
+            key.circuits = report.circuits.clone();
             key.sockets = facts.sockets.clone();
         }
         key

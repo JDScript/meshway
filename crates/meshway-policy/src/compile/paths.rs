@@ -66,10 +66,14 @@ impl<'a> Graph<'a> {
         if required.iter().any(|id| !self.available(*id)) {
             return Ok(vec![]);
         }
-        let mut queue = VecDeque::from([(vec![source], required)]);
+        // Declaration checks continue through an edge without a common
+        // transport so that one validation names every such edge of a path
+        // that otherwise satisfies routing; such paths are never found.
+        let mut queue = VecDeque::from([(vec![source], required, Vec::new())]);
         let mut found = Vec::new();
+        let mut blocked_paths = BTreeMap::new();
         let mut truncated = false;
-        'search: while let Some((path, required)) = queue.pop_front() {
+        'search: while let Some((path, required, blocked)) = queue.pop_front() {
             if path.len() >= MAX_HOPS {
                 continue;
             }
@@ -106,21 +110,29 @@ impl<'a> Graph<'a> {
                     Err(PathError::Limit) => continue,
                     Err(error) => return Err(error),
                 }
+                let mut blocked = blocked.clone();
                 if !self.has_transport(a, b)? {
-                    if let Some(Some(index)) = crate::topology_decision(
+                    let Some(Some(index)) = crate::topology_decision(
                         self.input.configuration,
                         self.input.subjects,
                         a,
                         b,
-                    ) && matches!(
+                    ) else {
+                        continue;
+                    };
+                    if !matches!(
                         self.input.configuration.topology[index].transports,
                         Input::Value(_)
                     ) {
-                        self.transport_failures
-                            .borrow_mut()
-                            .insert((a.min(b), a.max(b)), index);
+                        continue;
                     }
-                    continue;
+                    self.transport_failures
+                        .borrow_mut()
+                        .insert((a.min(b), a.max(b)), index);
+                    if !self.declarations_only {
+                        continue;
+                    }
+                    blocked.push(((a.min(b), a.max(b)), index));
                 }
                 let mut extended = path.clone();
                 extended.push(b);
@@ -144,19 +156,25 @@ impl<'a> Graph<'a> {
                 {
                     continue;
                 }
-                if remaining.is_empty() {
+                if remaining.is_empty() && !blocked.is_empty() {
+                    blocked_paths.extend(blocked);
+                } else if remaining.is_empty() {
                     found.push(self.materialize(extended)?);
                     if found.len() == limit {
                         return Ok(found);
                     }
                 } else if queue.len() < 2048 {
-                    queue.push_back((extended, remaining));
+                    queue.push_back((extended, remaining, blocked));
                 } else {
                     truncated = true;
                 }
             }
         }
-        if found.is_empty() && (truncated || routes.exhausted()) {
+        let blocked = found.is_empty() && !blocked_paths.is_empty();
+        if blocked {
+            *self.transport_failures.borrow_mut() = blocked_paths;
+        }
+        if found.is_empty() && !blocked && (truncated || routes.exhausted()) {
             Err(PathError::Limit)
         } else if found.is_empty()
             && let Some((&(a, b), &rule)) = self.transport_failures.borrow().first_key_value()

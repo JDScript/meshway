@@ -91,7 +91,7 @@ mod tests {
     }
 
     #[test]
-    fn actual_execution_and_lookup_failures_remain_distinct() {
+    fn execution_failures_are_published_and_ip_lookups_are_not() {
         let spec = serde_json::to_value(crate::http::openapi()).unwrap();
         let schemas = &spec["components"]["schemas"];
         assert!(
@@ -100,9 +100,9 @@ mod tests {
                 .unwrap()
                 .contains(&serde_json::json!("unauthorized"))
         );
-        assert_eq!(
-            schemas["LookupUnavailableReason"]["enum"],
-            serde_json::json!(["datasetUnavailable", "lookupFailed"])
-        );
+        // IP datasets serve automatic routing only; no HTTP type carries a lookup.
+        for name in ["IpInfo", "GeoIpData", "LookupUnavailableReason"] {
+            assert!(schemas.get(name).is_none(), "{name}");
+        }
     }
 }

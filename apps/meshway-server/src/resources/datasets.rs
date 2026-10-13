@@ -60,7 +60,6 @@ impl IpDatasets {
                         install(&mut runtime.geoip, kind, id, content.0)?;
                     }
                 }
-                runtime.hub.dataset_changed();
                 Ok(())
             })
             .await
@@ -99,7 +98,6 @@ impl IpDatasets {
                 )?;
                 tx.commit()?;
                 install(&mut runtime.geoip, kind, id, content.0)?;
-                runtime.hub.dataset_changed();
                 Ok(id)
             })
             .await?

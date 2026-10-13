@@ -865,6 +865,7 @@ fn sample(
         .map(|exit| exit.health.borrow().flows);
     report.dependencies.clear();
     report.observation_dependencies.clear();
+    report.circuits.clear();
     report.routes.clear();
     report.rtts = diagnostics.rtts().clone();
     report.facts_observed_at = chrono::Utc::now();
@@ -893,6 +894,21 @@ fn sample(
                     if shorter {
                         report.routes.insert(far, path);
                     }
+                }
+                if circuit.grant.purpose == meshway_dataplane::Purpose::Business {
+                    use meshway_dataplane::secure::CircuitRole;
+                    use meshway_model::state::ReporterRole;
+                    let role = match circuit.role {
+                        CircuitRole::Origin => ReporterRole::Origin,
+                        CircuitRole::Relay => ReporterRole::Relay,
+                        CircuitRole::Terminal => match circuit.grant.target {
+                            meshway_dataplane::Target::Exit { .. } => ReporterRole::Exit,
+                            meshway_dataplane::Target::Mesh { .. } => ReporterRole::Target,
+                        },
+                    };
+                    report
+                        .circuits
+                        .insert(circuit.id, (circuit.path.clone(), role));
                 }
                 for pair in circuit.path.windows(2) {
                     let peer = if pair[0] == node {
@@ -924,6 +940,10 @@ fn sample(
                         }
                     }
                 }
+            }
+            // Bounded by ID order, the same set on every sample.
+            while report.circuits.len() > meshway_protocol::STATE_MAX_PATHS {
+                report.circuits.pop_last();
             }
         }
     }

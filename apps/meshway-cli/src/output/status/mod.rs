@@ -112,6 +112,14 @@ pub(crate) fn write(
         };
         line(output, term, "Egress", text)?;
     }
+    if let Some(routing) = status.netmap.as_ref().and_then(|n| n.routing.as_ref()) {
+        let mut text = routing.applied_profile.clone();
+        if routing.requested_unavailable.is_some() {
+            text.push_str(&term.paint(Role::Warn, " · requested profile not applied"));
+        }
+        text.push_str(&term.paint(Role::Dim, " (meshway exit)"));
+        line(output, term, "Profile", text)?;
+    }
     let plane = term.paint(
         match status.data_plane {
             DataPlane::Ready => Role::Good,

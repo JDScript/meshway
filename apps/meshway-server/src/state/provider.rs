@@ -121,6 +121,7 @@ impl StateProvider for UserProvider {
             tx,
             network.id,
             cfg,
+            &snapshot.bindings,
             &scope.full,
             manager,
         )?

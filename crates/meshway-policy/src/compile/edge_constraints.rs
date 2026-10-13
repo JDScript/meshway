@@ -3,6 +3,10 @@
 use super::*;
 use std::collections::BTreeSet;
 
+/// One validation names at most this many routing rule / edge pairs; the
+/// first ones in Node ID order are kept.
+pub const MAX_EDGE_TRANSPORT_ISSUES: usize = 64;
+
 pub(crate) fn validate_edge_transports(
     configuration: &NetworkConfiguration,
     context: &ValidationContext<'_>,
@@ -27,7 +31,7 @@ pub(crate) fn validate_edge_transports(
         members: context.members.clone(),
     };
     let mut seen = BTreeSet::new();
-    for (&source, settings) in &configuration.nodes {
+    'pairs: for (&source, settings) in &configuration.nodes {
         if !settings.enabled {
             continue;
         }
@@ -57,6 +61,9 @@ pub(crate) fn validate_edge_transports(
                 continue;
             }
             for (&(a, b), &edge) in graph.transport_failures.borrow().iter() {
+                if seen.len() == MAX_EDGE_TRANSPORT_ISSUES {
+                    break 'pairs;
+                }
                 if seen.insert((edge, a, b, index)) {
                     let rule = &configuration.topology[edge];
                     let retained = context.previous.is_some_and(|old| {

@@ -15,6 +15,7 @@ pub(crate) mod rulesets;
 pub(crate) mod scheduler;
 pub mod service;
 pub use geoip::GeoIp;
+pub(crate) use geoip::is_public;
 
 use meshway_model::Digest;
 use sha2::{Digest as _, Sha256};

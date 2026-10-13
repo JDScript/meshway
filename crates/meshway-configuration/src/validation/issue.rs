@@ -164,6 +164,9 @@ pub enum IssueCode {
     /// Every destination of this rule is matched by earlier rules; params
     /// `by` (index of the last rule that completes the cover).
     ShadowedRule,
+    /// A block topology rule sets `transports` or `keepalive: true`, which
+    /// only allow rules use; params `field`.
+    IneffectiveBlockOption,
 }
 }
 
@@ -247,6 +250,7 @@ impl IssueCode {
             NetmapLimit => "netmap exceeds the distribution safety bound",
             NetmapBudget => "netmap compilation exceeds a fixed compiler budget",
             ShadowedRule => "every destination of this rule is matched by earlier rules",
+            IneffectiveBlockOption => "a block rule blocks the whole edge and ignores this option",
         }
     }
 }

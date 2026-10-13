@@ -106,7 +106,7 @@ mise run services reset server
 
 ### 独立 GeoIP／ASN 部署资产
 
-部署方将已取得的真实 MMDB 文件保存在当前工作树 `.meshway/ip-datasets/`，与业务库 `.meshway/server/` 分开。MaxMind 授权、账户和下载由部署方处理；reset 只复用这些本地文件，不自动下载、生成替代数据或从旧业务库回退选取数据。独立资产不随业务库 reset 删除。
+数据集只供自动路由方案（尚未实现）和 `ip-datasets lookup` 诊断使用；State 与 Console 地图不依赖它（Console 按 `addressScope` 中的 `public` 地址自行查询地点），开发环境不部署它也不影响任何 State 字段。部署方将已取得的真实 MMDB 文件保存在当前工作树 `.meshway/ip-datasets/`，与业务库 `.meshway/server/` 分开。MaxMind 授权、账户和下载由部署方处理；reset 只复用这些本地文件，不自动下载、生成替代数据或从旧业务库回退选取数据。独立资产不随业务库 reset 删除。
 
 目录中的固定文件为 `manifest.json`、`geoip.mmdb`／`asn.mmdb`。清单结构如下，摘要占位符必须替换为对应文件实际的 64 位小写十六进制 SHA-256：
 
@@ -129,7 +129,7 @@ mise run services reset server
 - 顶层只接受 `version`、`datasets`；`version` 为整数 `1`。`datasets` 只接受 `geoip`／`asn`，至少一项；每项只接受 `sha256`、`source`，没有 `file` 字段，不接受重复 JSON 键。
 - `source` 为 1–256 UTF-8 字节的非控制字符字符串，作为正式导入的来源记录。每个声明文件大小必须在 `(0, 128 MiB]` 内，实际摘要必须匹配清单。
 - 资产目录为当前 UID 所有、权限 `0700`；清单和声明文件为当前 UID 所有的普通文件、权限 `0600`，禁止符号链接和硬链接。
-- 整个资产目录缺失时，reset 保持无数据集的初始化行为；未提供种类的查询仍真实返回 `datasetUnavailable`。存在目录时，清单、声明文件、大小、摘要或权限检查失败均在停服前拒绝，保留原服务及业务库。
+- 整个资产目录缺失时，reset 保持无数据集的初始化行为；未提供种类的 `ip-datasets lookup` 仍真实报告数据集不可用。存在目录时，清单、声明文件、大小、摘要或权限检查失败均在停服前拒绝，保留原服务及业务库。
 - 校验快照保存在 `.meshway/backups/server-<UTC时间>-<runId>/ip-datasets/`，含本次规范化 `manifest.json` 和已核对摘要的文件；目录／文件同样为 `0700`／`0600`。停服后仅从这一批快照读取，部署方后续更新源目录不会混入本次 reset。
 
 归档后、fresh Server 启动前，脚本执行 `target/debug/ip-datasets --data-dir <fresh-path> import --kind <geoip|asn> --file <backup-snapshot> --source=<source>`，通过正式 App owner 导入；不会直接写 SQL，也不在运行中 Server 的数据目录执行导入。内容不符合 MMDB 类型／范围或导入失败时，journal 记录 `failedAt=datasets`，保留现场供检查。

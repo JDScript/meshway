@@ -22,6 +22,17 @@ wire_object! {
     }
 }
 
+wire_object! {
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    /// Why a requested routing profile cannot be selected for the Node, with its current choices.
+    pub struct RoutingProfileUnavailableParams {
+        /// The profile is outside the Node's allowed profiles, or the assignment is locked to another one.
+        pub reason: meshway_configuration::selection::SelectionUnavailable,
+        /// The Node's allowed profiles in assignment order; while locked only the default is selectable.
+        pub allowed: Vec<String>,
+    }
+}
+
 // utoipa's tagged enum derive does not close each variant object for
 // serde(deny_unknown_fields). Keep the wire enum and closed schema in one list.
 macro_rules! problems {
@@ -166,6 +177,8 @@ problems! {
     RevisionConflict(EmptyParams) = "revision_conflict",
     /// Configuration validation fails or required preparation is incomplete; returns HTTP 422 with ConfigurationValidationParams containing issues and requirements.
     ConfigurationInvalid(ConfigurationValidationParams) = "configuration_invalid",
+    /// The requested routing profile is not allowed for the Node or its assignment is locked to another one; returns HTTP 422 with the allowed profiles.
+    RoutingProfileUnavailable(RoutingProfileUnavailableParams) = "routing_profile_unavailable",
     /// The current lifecycle state or sequence does not permit the operation; returns HTTP 409.
     StateConflict(EmptyParams) = "state_conflict",
     /// The Server has not yet verified the provider's catalog: it does so the first time it prepares one of the provider's sets (a configuration change, a refresh or a periodic check) for any network; returns HTTP 409.

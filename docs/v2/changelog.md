@@ -4,7 +4,7 @@
 
 ## 未发布
 
-真实网络穿透与外层 PMTU（N2a）：IPC 9（`peers[].mtu`、`lastErrorDetail`、netcheck `sizeProbe`／`pathMtu`），wire 6 不变（接收方另接受以零填充的 UDP 健康 Ping）。
+真实网络穿透与外层 PMTU（N2a）：IPC 9 新增（`peers[].mtu`、`lastErrorDetail`、netcheck `sizeProbe`／`pathMtu`），wire 6 不变（接收方另接受以零填充的 UDP 健康 Ping）。
 
 - 来源学习：对称（端点相关映射）NAT 下，本 offer 对端的签名开场消息从同 IP 的另一端口到达时，该来源成为本尝试的第二目的（每尝试 ≤2、随尝试结束），通道端点取握手实际完成的地址；身份仍只由签名证明。见[来源学习](/v2/node/connectivity#source-learning)。
 - 外层 UDP 一律 DF；`UDP_SEGMENT` 因段长超过路径 MTU 被拒时只拆这一批，GSO 不再被永久关闭。每条 Native UDP 通道以填充的签名 Ping 搜索路径 MTU，`meshway status` 的 MTU 列显示 `path/inner`。见[外层路径 MTU](/v2/node/connectivity#path-mtu)。
@@ -14,7 +14,19 @@
 - 修复：未 up 的接口创建／删除不再算外部网络变化（us-lax-it7 上反复重建的空闲 `ppp0` 每隔数秒关闭全部控制连接，sync 以 `Network` 失败）；没有 Native UDP listener 的节点在首个 instance 前启动时补绑拨号穿透 socket；受保护控制中继按 Happy Eyeballs 交替地址族连接。
 - 实网：us-lax-it7（公网 dial-only）↔ meshway-vm（WARP）Native UDP 直连，见[实网 NAT 证据](/v2/node/validation#real-nat)。
 
-wire 6、IPC 8、`compilerVersion` 不变；Server schema 版本 5（新增 `rule_set_record_heads`；开发环境重新初始化数据目录）。HTTP 契约：`SyncRequest` 新增可省略的 `lease`。alpha.4 代码审阅修复（F4a）：
+出口方案切换（C3）：IPC 升为 9，Server schema 版本 6（`activity_events` 新增 Node actor 与路由方案目标；开发环境重新初始化数据目录）；wire 6、`compilerVersion` 不变。
+
+- `meshway exit [profile|off]`：无参数显示本机 netmap 中的方案选择（生效／请求的方案、默认与锁定、`auto` 解析、每个允许方案的摘要）；带方案时请 Server 切换并等待本机应用带新版本的 netmap，`off` 即 `mesh`。人读输出、`--json` 与退出码见 [出口方案](/v2/node/runtime#exit-profile)。
+- IPC 9：命令 `SelectProfile`、结果 `Selection`、`NetmapStatus.routing`，错误码 `profileNotAllowed`／`profileLocked`／`selectionConflict`；`meshway status` 新增 Profile 行。
+- Control 调用 `selectNodeRoutingProfile`，CAS 基准为持有 netmap 中自身的选择版本；方案被拒或版本过期不结束 session／instance。本机只缓存 netmap，不保存选择。
+- HTTP：`selectNodeRoutingProfile` 的回答改为 `{selection: RoutingSelectionState}`，版本不一致改为 `409 version_conflict`、方案不可选为 `422 routing_profile_unavailable`（带允许的方案）；新增 `getNodeRoutingSelection`、`setNodeRoutingSelection`（`/api/v1/networks/{networkId}/nodes/{nodeId}/routing-selection`，成员限自己的 User 设备，Owner／Admin 任意节点，`requestId` 幂等）；`NodeInventoryView.routing` 摘要；活动 `routing.select`（actor `node`／`user`，target `routingSelection`）。三个入口共用同一提交，选择版本跨身份单调递增，过期身份的选择不作为 CAS 基准。
+- `RoutingSelectionState` 由 `meshway-policy` 唯一计算，Server 与节点对同一配置给出同一值；`auto` 没有可信地区输入，总是采用 fallback（`basis: noTrustedRegion`）。
+- Console 仅补齐新增枚举的映射。
+- `exit/off` 第 11 阶段：真实 CLI 切换后旧选择的 TCP／UDP 流结束、新流经出口，`exit off` 后无外部捕获。
+
+验证：Planck 16 行矩阵 `20261012T224334Z-469128d0`（`7facc522`）与合入 main 后的 `20261013T000304Z-56e3679e`（`f2441b12`）全部通过；证据 `.meshway/validation/c3/`。已知：切到 `global:<exit>` 与 `useWithExit` split resolver 组合时节点 DNS 安装拒绝新 netmap，见[验收范围 · 剩余边界](/v2/node/validation#remaining-boundaries)。
+
+此前：wire 6、IPC 8、`compilerVersion` 不变；Server schema 版本 5（新增 `rule_set_record_heads`；开发环境重新初始化数据目录）。HTTP 契约：`SyncRequest` 新增可省略的 `lease`；S3 的 State／库存／诊断变化见下。alpha.4 代码审阅修复（F4a）：
 
 - A1 `POST /agent-api/v1/dns-associations` 接纳前对条目执行与 overlay 相同的校验（`DnsAssociation::validate`：名称／CNAME 为 1–253 B ASCII 小写等），非法条目 400 `invalid_request`，不再让源与出口的 `sync` 持续内部错误。
 - A2 出口 overlay 容量在接纳时对源与出口统一预算：任一方未到期条目将超过 4,096 即 429 `state_limit`；交付时不再截断单方副本；源换出口时唤醒原出口。
@@ -38,6 +50,17 @@ wire 6、IPC 8、`compilerVersion` 不变；Server schema 版本 5（新增 `rul
 - 文档：`dataplane.md` 出口投影截止改为流 idle 与 circuit 生命期、随租约与角色 generation；`execution.md` 改为节点已消费 `sync`。
 
 验证：Planck 16 行矩阵 `20261012T195053Z-bc48b6cc` 全部通过（`exit/off` 第 10 阶段含跨关联到期的 TCP／UDP 持有流）；证据 `.meshway/validation/f4a/`。
+
+Console 提出的 Server 侧欠账（S3）：
+
+- 相邻连接结论：`StateView.adjacencies`（与 `state.delta.adjacencies`）每对节点一条 `{a, b, status: connected | idle | unreachable | unknown}`，由 Server 用两端各自的当前报告判定（含调用者读不到的完整报告），只列调用者已能看到的节点对；成员与 Owner 对同一对得到相同结论，`links` 仍按权限保留为诊断证据。见 [Adjacencies](/v2/state-reference/network#adjacencies)。
+- 节点 Mesh DNS 名称：`NodeInventoryView.dnsName`（hostname 加规范化 `dns.domain`）与 `magicDNS`，与库存同一配置版本，GET 与 SSE `entities` 一致。
+- State 不再返回 GeoIP／ASN：`derived.ipInfo` 换成 `addressScope: {ip: public | nonPublic | mesh}`；`derived.location` 为 `LocationObservation {address, endpointSource, observedAt, expiresAt, sourceSocketId, sourceGeneration}`（去掉 `data`／`datasetId`，不依赖数据集），多个合格地址按 STUN 先于 interface、IPv4 先于 IPv6 取最高等级，该等级有多个地址时为 `ambiguousObservation`；`LocationAbsentReason` 只剩 `noObservation`／`observationExpired`／`ambiguousObservation`；OpenAPI 删除 `IpInfo`、`GeoObservation`、`GeoIpData`、`LookupResult_*` 等组件。数据集只留给自动方案与 `ip-datasets lookup`，导入数据集不再产生 State 事件。见[地址类别与位置依据](/v2/state-reference/ip-info)。
+- 业务路径：Node 报告参与的已建立业务 circuit 为 `NodeState.paths`（完整路径、本节点角色、`netmap`；端点 `peerConfirmed`、中继 `sent`；每份最多 64 条，`STATE_MAX_PATHS`），Server 校验参与与角色位置后接受（此前拒绝任何非空 `paths`），`StateView.paths` 只聚合当前未到期的路径。此前 A→R→B 持续流期间三节点都报 `paths: {}`、links `businessDependencies: 1`（矩阵 `20261012T195053Z-bc48b6cc` `udp-resolved` 行的 `state-traffic-*.json`）；fixture 的承载检查现在要求三节点各报告 A→R→B 路径及自身角色。见 [PathState](/v2/state-reference/resources#paths)。
+- 配置校验：`edge_transport_unavailable` 一次报出全部受影响的（Mesh 路由规则，边），一条路由要经过的每条无承载边各一条，上限 64 条；block 组网规则写了 `transports` 或 `keepalive: true` 时接受并给出警告 `ineffective_block_option`（`params.field`）。见[配置问题](/v2/api/problems#configuration-issue)。
+- 批量路径检测（一个来源到所有节点）未做，仍按目的地逐个调用 `evaluateConfiguration`。
+
+验证：Planck 16 行矩阵 `20261012T220402Z-33d41c74` 14 行通过（含新的 State 路径检查）；`exit/off`、`netmap/expiry` 失败，同一窗口 main `1852b477` 复跑这两行（`20261012T224249Z-0dc077d7`）同样失败，见[验收范围](/v2/node/validation#traffic-anchor)。
 
 ## v0.1.0-alpha.4
 

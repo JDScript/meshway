@@ -74,16 +74,18 @@ Server 聚合为 [AggregatedLink](/v2/state-reference/network#links)，区分 on
 
 ## PathState {#paths}
 
-`paths` 以运行路径标识为 key。
+`paths` 以运行路径标识为 key（Node 用 circuit 标识的十六进制），每份报告最多 64 条（`STATE_MAX_PATHS`）。Node 报告它参与的每条已建立业务 circuit（Mesh 与出口业务；诊断和出口 DNS circuit 不报告），按 circuit 标识顺序取前 64 条；circuit 集合变化即触发新报告。
 
 | 字段 | 含义 |
 | --- | --- |
-| `nodes` | 实际有序完整 Node 路径 |
-| `publicationId` | 本路径所属执行发布 |
-| `reporterRole` | origin／relay／target／exit |
+| `nodes` | 实际有序完整 Node 路径，origin 在前、终点在后 |
+| `netmap` | 本路径所在的 applied netmap |
+| `reporterRole` | origin（首节点）／relay（中间节点）／target（Mesh 终点）／exit（出口终点） |
 | `evidence` | selected／sent／peerConfirmed／delivered |
 | `observedAt`／`expiresAt` | 原观测时间与期限 |
 
-报告者必须参与路径，只报告自己能观察的阶段。中转看到密文不代表目标已交付明文；selected、sent 与 delivered 不能合为“路径已验证”。
+报告者必须参与路径，只报告自己能观察的阶段：端点在端到端握手完成后报告 `peerConfirmed`，中继在双向转发握手后报告 `sent`。中转看到密文不代表目标已交付明文；selected、sent 与 delivered 不能合为“路径已验证”。Server 校验：2–16 个不重复节点、报告者位置与角色一致、其他节点都在本节点 netmap 投影内、`netmap` 为报告的 applied，否则拒绝整份报告。
+
+有业务流量的承载 link `businessDependencies` 大于零（AggregatedLink `inUse: true`），同时其两端与途经节点各报告一条对应 path；`inUse` 只说明该通道承载着依赖，不给方向，方向取 path 的节点顺序。
 
 Server 保留原报告者并聚合为 AggregatedPath。不能从当前 links 拼出路径后称它正在承载业务，也不能相加邻接 RTT 伪造端到端测量。主动测量见[实时观察](/v2/state-reference/realtime)。

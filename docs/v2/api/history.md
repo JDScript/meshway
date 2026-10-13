@@ -66,7 +66,7 @@ ConfigurationChange 包含 `path`（JSON Pointer）与 `kind`（added／removed�
 | --- | --- |
 | `id` | 不透明记录 ID |
 | `at` | Server 完成该动作的时间 |
-| `actor` | 用户或系统 |
+| `actor` | 用户、节点（Node 为自己执行的动作，目前只有 `routing.select`）或系统 |
 | `action` | 已知管理动作枚举 |
 | `target` | 类型化目标引用，不是任意 metadata |
 | `beforeRevision` | 配置变更前版本；不涉及配置则 null |
@@ -77,9 +77,9 @@ scope 由所属记录及路径确定。返回时可以按权限投影主体／�
 
 用户 actor 返回稳定 `userId` 与发生时的 `email` 快照，成功活动及配置版本在同一事务记录。后续改邮箱或离网不改写历史，也不向原网络披露离网后的新邮箱。没有快照时 `email` 明确为 `null`，展示 User ID，不用当前邮箱猜补，也不推断为已删除用户。
 
-ActivityAction 覆盖账户注册／登录／密码／邮箱／会话撤销、网络创建／改名、成员加入／角色／移除、加入链接创建／撤销以及 configuration.apply。配置系统变更的具体来源使用 ConfigurationChangeCause，不能把它当成另一组活动枚举。
+ActivityAction 覆盖账户注册／登录／密码／邮箱／会话撤销、网络创建／改名、成员加入／角色／移除、加入链接创建／撤销、configuration.apply 以及 routing.select（节点或用户切换路由方案，见 [Routing · 选择的入口](/v2/configuration-reference/routing#选择的入口)）。配置系统变更的具体来源使用 ConfigurationChangeCause，不能把它当成另一组活动枚举。
 
-ActivityTarget 分支为 account(userId, previousEmail)、session(sessionId)、network(networkId)、membership(membershipId)、joinLink(linkId)、configuration(revision)。`previousEmail` 只在 account.email 上携带修改前的地址，其他账户活动为 null；actor 的 email 快照是提交时刻的新地址。完整枚举见[生成契约](/v2/contracts/openapi.json)。
+ActivityTarget 分支为 account(userId, previousEmail)、session(sessionId)、network(networkId)、membership(membershipId)、joinLink(linkId)、configuration(revision)、routingSelection(nodeId, profile)。`previousEmail` 只在 account.email 上携带修改前的地址，其他账户活动为 null；actor 的 email 快照是提交时刻的新地址。完整枚举见[生成契约](/v2/contracts/openapi.json)。
 
 ### 记录语义
 

@@ -240,6 +240,20 @@ pub mod shared {
         .await
     }
 
+    /// Ask the Server to select this Node's routing profile; the answer is
+    /// its committed selection, which the next netmap carries.
+    pub async fn select_profile(
+        control: &Mutex<Control>,
+        profile: String,
+    ) -> Result<meshway_configuration::selection::RoutingSelectionState, Error> {
+        unlocked(
+            control,
+            |control| control.prepare_select_profile(profile),
+            Control::apply_select_profile,
+        )
+        .await
+    }
+
     pub async fn query_udp_traversal(
         control: &Mutex<Control>,
         netmap: NetmapRef,

@@ -13,6 +13,8 @@ use tokio::net::UnixStream;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(12);
 const PING_IDLE_TIMEOUT: Duration = Duration::from_secs(15);
+/// Above the daemon's own bound on one selection request (25 s).
+const SELECTION_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, thiserror::Error)]
 pub enum ClientError {
@@ -102,13 +104,37 @@ impl Client {
         .map_err(|_| ClientError::Timeout)?
     }
 
+    /// Ask the daemon to have the Server select this Node's routing profile.
+    /// The answer is the Server's committed selection; the Node applies it
+    /// with its next netmap. A timeout leaves the outcome unknown: inspect
+    /// status before retrying.
+    pub async fn select_profile(
+        &self,
+        profile: String,
+    ) -> Result<meshway_configuration::selection::RoutingSelectionState, ClientError> {
+        let request = request(Command::SelectProfile { profile })?;
+        tokio::time::timeout(SELECTION_TIMEOUT, async {
+            let mut stream = self.connect_send(&request).await?;
+            let response = read_response(&mut stream, request.request_id).await?;
+            match response.result {
+                ResultBody::Selection { selection } => Ok(*selection),
+                ResultBody::Error { code } => Err(ClientError::Remote(code)),
+                _ => Err(ClientError::Response),
+            }
+        })
+        .await
+        .map_err(|_| ClientError::Timeout)?
+    }
+
     async fn exchange(&self, request: &Request) -> Result<Status, ClientError> {
         let mut stream = self.connect_send(request).await?;
         let response = read_response(&mut stream, request.request_id).await?;
         match response.result {
             ResultBody::Status { status } => Ok(*status),
             ResultBody::Error { code } => Err(ClientError::Remote(code)),
-            ResultBody::Ping { .. } | ResultBody::Netcheck { .. } => Err(ClientError::Response),
+            ResultBody::Ping { .. }
+            | ResultBody::Netcheck { .. }
+            | ResultBody::Selection { .. } => Err(ClientError::Response),
         }
     }
 

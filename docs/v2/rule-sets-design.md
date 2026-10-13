@@ -541,7 +541,7 @@ R0 列出的七项已由用户决定并写入相应章节：regex v1 逐条跳�
 | netmap | `projection.ruleSets: key → RuleSetRef { digest, format, bytes, entries }`，投影不含任何集合定义；`compilerVersion` `meshway-netmap-2` |
 | Policy | `compile::rules`：规则自身列表经 `RuleSet::from_inline`、引用集合经已加载句柄，逐规则 `match_domain`／`match_ip`；路径检测、出口分割（R3 起为区间分割，见下节）、节点 `LocalCompiler::{egress_rule_for_ip, egress_rule_for_name, effective, missing}` 与配置校验（`shadowed_rule`／`exit_outside_access` 读 artifact 迭代器）共用；缺句柄即 `UnavailableDependency` |
 | Server | `resources/rulesets`（来源与转换适配）、`catalogs`（目录验签，一次准备内共用目录）、`artifacts`（全局内容寻址 `rule_set_artifacts`、每 (来源, digest) 不可变溯源 `rule_set_records` 与随每次刷新更新的当前记录 `rule_set_record_heads`（同 digest 的新目录 sequence、upstream、held 与报告只更新后者）、每进程每 digest 一个 `Arc<RuleSet>`）、`rule_set_catalogs`（持久 sequence 单调，保存验签通过的目录原文）、`browse`（目录搜索、成员列表与命中查询，只读）、`node_netmap_artifacts`（netmap 写入同事务的引用索引）；`GET /rule-sets` 含隐式项，`GET /rule-sets/{key}/report`、`/entries`、`/match`，`GET /rule-set-catalog`，`GET /agent-api/v1/artifacts/{digest}`；schema 版本 5 |
-| Node | `meshway-control::netmap::artifacts`（取、校验、0400 原子落盘、按引用 GC、离线载入，sync 后顺序取回）；`meshway_engine::Netmap.artifacts` 与 `Desired::{missing, same}`；组件以 `Desired::same` 判断期望状态是否变化；IPC 8 `NetmapStatus.{missingArtifacts, artifactProblem}` |
+| Node | `meshway-control::netmap::artifacts`（取、校验、0400 原子落盘、按引用 GC、离线载入，sync 后顺序取回）；`meshway_engine::Netmap.artifacts` 与 `Desired::{missing, same}`；组件以 `Desired::same` 判断期望状态是否变化；IPC `NetmapStatus.{missingArtifacts, artifactProblem}` |
 | 生成链 | 生成器支持 `application/vnd.meshway.*` 二进制 GET（Rust 返回 `Vec<u8>`，TS 客户端不生成该 Node 专用操作） |
 
 ## R3 节点侧出口分割
@@ -553,7 +553,7 @@ R0 列出的七项已由用户决定并写入相应章节：regex v1 逐条跳�
 | desired | `meshway_engine::Desired::{capture, partition, capture_summary}`；DNS 的本地 resolver 判定与 served 上游检查读 `Desired::partition` |
 | 安装 | `meshway-underlay` `kernel::egress`：受管区间为 `managed4`／`managed6` interval 元素（无回显批替换、读回逐元素与计数核验，大小为两份方案的暂存并集），未经活动 TUN 的受管目的立即拒绝（TCP reset／ICMP admin-prohibited）；一条 IPv4 RPDB 选择器查私有捕获表，表中为活动时受管区间的最小 CIDR 覆盖；journal v2 只记 gate（区间与设备），表内路由由 gate 推出，恢复时精确对账删除；路由变更每 64 条等待内核监视器观测；DNS 锚点冲突检查豁免该表 |
 | 可信关联（X6） | `LocalCompiler::associated_capture`：关联地址按名称规则并入（出口／冲突）或移出（direct／unmanaged）受管区间，`Desired::with_associations` 重算捕获，到期由 Engine 重新应用；超出节点侧上限即全范围捕获；Server 不再校验捕获大小 |
-| 诊断 | IPC 8 `NetmapStatus.capture`、CLI `meshway status` 的 Egress 行；`mise run perf:capture` |
+| 诊断 | IPC `NetmapStatus.capture`、CLI `meshway status` 的 Egress 行；`mise run perf:capture` |
 
 不变量与选择：分割计算只在 Policy，Underlay 只把区间转换为 nft 元素与 CIDR 覆盖，不做匹配；源 socket 的源地址在 `connect` 时由 FIB 选定，nft 标记后重路由会保留物理接口地址，因此 IPv4 导向仍用私有表路由（区间的 CIDR 覆盖），nft 集合承载原子的负向门与 IPv6 sink，不引入源端 SNAT／conntrack 依赖，严格 rp_filter 下回复路径不变。
 

@@ -158,7 +158,7 @@ IPC 9 的公开运行状态（`meshway status --json` 原样输出）：
 | `lastErrorDetail` | 必填可空：故障组件给出具体原因时的一行说明，目前为 listener 的 bind 错误（例如 `listener lab-tcp cannot bind 0.0.0.0:443: Address in use (os error 98)`）；其他情况为 null。daemon 日志的同一告警带相同文本 |
 | `sync` | 必填，`connected`（最近一次 sync 成功、下一次由 Server 挂起）、`reconnecting`、`disconnected`；不代表 Node 授权或业务连通 |
 | `lastSyncAt`／`syncError` | 必填可空：本进程最近一次返回已验签 netmap 的 sync 时间；sync 重试期间的失败类别 |
-| `netmap` | 必填可空：当前 netmap 引用与签名租约 `issuedAt`／`expiresAt`，以及 `missingArtifacts`（引用但尚未持有的规则集 digest；命名它们的规则不可用，见[规则集 · 下发](/v2/configuration-reference/rule-sets#下发)）、`artifactProblem`（缺失时最后一次的 `download`／`integrity`／`storage`／`budget`，否则 null）与 `capture`（本节点从 netmap 与 artifact 计算并安装的出口捕获：`managedIpv4`／`sinkIpv6` 区间数、捕获表 `routes` 数，以及未安装分割而改为完整捕获时的 `unavailable` 原因，否则 null；本节点无出口捕获时整项为 null，计算见 [Routing · 节点侧上限](/v2/configuration-reference/routing#capture-limits)）；无有效租约为 null |
+| `netmap` | 必填可空：当前 netmap 引用与签名租约 `issuedAt`／`expiresAt`，以及 `missingArtifacts`（引用但尚未持有的规则集 digest；命名它们的规则不可用，见[规则集 · 下发](/v2/configuration-reference/rule-sets#下发)）、`artifactProblem`（缺失时最后一次的 `download`／`integrity`／`storage`／`budget`，否则 null）与 `capture`（本节点从 netmap 与 artifact 计算并安装的出口捕获：`managedIpv4`／`sinkIpv6` 区间数、捕获表 `routes` 数，以及未安装分割而改为完整捕获时的 `unavailable` 原因，否则 null；本节点无出口捕获时整项为 null，计算见 [Routing · 节点侧上限](/v2/configuration-reference/routing#capture-limits)）、`routing`（本节点在该 netmap 下的路由方案选择 `RoutingSelectionState`，字段见 [Routing · 当前选择的状态](/v2/configuration-reference/routing#selection-state)；无法由 netmap 求出时为 null）；无有效租约为 null |
 | `node` | 必填可空：已安装 netmap 中的本节点 `hostname` 与 Mesh `addresses`；未安装（down、control-only、准备中）为 null |
 | `peers` | 必填：已安装 netmap 中可见的其他节点（与 `ping` 解析名称的集合相同），按 hostname 排序；未安装为空。字段见下表 |
 | `exit` | 可省略；包含 target-bound `capability`、已安装 role generation、`activeFlows` 和独立的 `dnsUnavailable`（出口 resolver 不能为源解析的原因，与 State [`exitDns`](/v2/state-reference#exitdns) 同源；可用或不服务时为 null）。未观测的计数保持 null，失去当前执行权限后不显示已安装角色／活流数 |
@@ -236,10 +236,11 @@ Linux 首版每台机器运行一个系统级 `meshwayd`，同一时间只启用
 | `meshway ping <target>` | 获准的端到端 Mesh 探测；参数、授权与输出见[路径诊断](/v2/node/diagnostics) |
 | `meshway status [--watch]` | 本节点摘要与 peers 表；`--watch` 每秒刷新（TTY 原地重绘，否则逐份输出） |
 | `meshway netcheck` | 一次有界的本机网络诊断，见[路径诊断 · netcheck](/v2/node/diagnostics#netcheck) |
+| `meshway exit [profile]` | 无参数：显示本机 netmap 中的方案选择；带方案：请 Server 切换并等待本机应用，`off` 即 `mesh`。见[出口方案](#exit-profile) |
 | `meshway version` | 程序与协议版本；不连接 daemon |
 | 切网 | 尚未实现；先停止旧网络、完成隔离清理，再运行新网络 |
 
-CLI 通过 Unix domain socket 发命令、读结果；状态由 daemon／组件的唯一 owner 持有。`meshway_protocol::ipc` 是唯一的请求／响应定义，当前版本为 8，使用 JSON 与长度前缀，单条消息上限 64 KiB；CLI 和 daemon 同版本发布。每个连接处理一个请求，Ping 可返回有序的多个事件，Netcheck 返回一个报告；连接数、请求等待、写入和队列均有上限。`Up` 的 `enrollmentKey` 可省略；`Up`／`Down`／`RotateKey`／`Logout` 的 `expectedRevision` 由 CLI 读取后提交，换钥与注销不会绕过本机 CAS。
+CLI 通过 Unix domain socket 发命令、读结果；状态由 daemon／组件的唯一 owner 持有。`meshway_protocol::ipc` 是唯一的请求／响应定义，当前版本为 9，使用 JSON 与长度前缀，单条消息上限 64 KiB；CLI 和 daemon 同版本发布。每个连接处理一个请求，Ping 可返回有序的多个事件，Netcheck 返回一个报告，SelectProfile 返回 Server 提交的选择（`Selection`）；连接数、请求等待、写入和队列均有上限。`Up` 的 `enrollmentKey` 可省略；`Up`／`Down`／`RotateKey`／`Logout` 的 `expectedRevision` 由 CLI 读取后提交，换钥与注销不会绕过本机 CAS。
 
 ### CLI 输出与退出码
 
@@ -273,6 +274,7 @@ meshway-nyc  100.64.0.6  relay   native_udp  via meshway-lax                2.00
 | `up`／`down` | 0：已收敛，或仍在 `starting`／`synchronizing`／`stopping`／`retrying`（意图已保存）；1：`blocked`、意图被并发改变或 IPC 错误 |
 | `logout` | 0：Server 已删除且本机已清除；1：`leaving`（意图已保存，后台继续）、Server 明确拒绝（本机不变）、本机无身份或 IPC 错误 |
 | `ping` | 0：至少一次成功回复；1：全部失败／超时或操作错误；130：Ctrl-C |
+| `exit` | 无参数：0 已输出，1 无 netmap 或 IPC 错误。带方案：0 为 Server 已提交且本机已应用，或已提交但 30 秒内未应用（stderr 警告，状态见 `status --watch`）；1 为不在允许范围（列出允许的方案）、已锁定、未就绪（未接入、无 netmap／instance）、Server 不可达或拒绝、选择被他处更新（`selectionConflict`，取得新 netmap 后重试） |
 | `status`／`netcheck`／`rotate-key`／`version` | 0：已读取并输出（netcheck 的 Server 不可达或无数据面也是 0，报告本身说明）；1：IPC 或操作错误 |
 | 参数错误 | 2 |
 
@@ -286,13 +288,33 @@ meshway status --json
 meshway rotate-key
 ```
 
+### 出口方案 {#exit-profile}
+
+`meshway exit` 显示本机已持有 netmap 中的方案选择（`NetmapStatus.routing`，与 Server 对同一配置的回答相同，离线可读）：生效方案、请求的方案与版本、默认方案与是否锁定、`auto` 的解析依据，以及每个允许方案的类型与一句摘要（规则数、出口节点、未命中时的动作；节点名取自本机 peers，未知时为 Node ID）。
+
+```text
+Exit profile exit
+  Requested  none (the default applies)
+  Default    exit · not locked
+
+PROFILE                                      KIND    STATE             SUMMARY
+exit                                         custom  applied, default  2 rules · exits e · otherwise exit e via r
+exit-alt                                     custom                    2 rules · exits e · otherwise exit e via r
+mesh                                         mesh                      Mesh only; other external traffic unmanaged
+global:e3210ff3-d7a6-4112-931b-0af816fddb47  global                    all external traffic: exit e
+```
+
+`meshway exit <profile>` 经 IPC `SelectProfile` 交给 Control：Control 以持有 netmap 中本节点的 `selectionVersions` 为 CAS 基准调用 `selectNodeRoutingProfile`，Server 提交后重新编译 netmap；CLI 等到本机持有的 netmap 带上该版本（TUN 模式另需该 netmap 已 applied）才返回，最多 30 秒。`off` 即 `mesh`。本机不保存“想要的方案”：Server 的回答只用于本次输出，生效状态只来自 netmap。切换总是新的选择版本，经旧方案出口的已有流随新 netmap 结束（[netmap 设计 · revision 变化时的已有流](/v2/node/netmap-design#revision-变化时的已有流)）。
+
+`--json` 无参数时输出 `RoutingSelectionState`；切换时输出 `{"committed": <Server 的回答>, "applied": <是否已应用>, "local": <本机 netmap 的选择或 null>}`。IPC 错误码：`profileNotAllowed`（不在允许范围）、`profileLocked`（锁定在默认方案）、`selectionConflict`（选择已被 Console 等更新，本机尚未取得新 netmap）、`notReady`（未接入、无 netmap 或 instance）、`network`／`serverBusy`／`credentials`。Server 拒绝不结束 session 或 instance。
+
 接入密钥输入统一走 IPC 持久命令；daemon 不另提供重复的 `--enrollment-key-file` 启动源，避免启动参数与已接纳意图的恢复顺序冲突。换钥处理预算为 65 秒、CLI 等待 70 秒；超时／Ctrl-C 不取消已接纳操作，先通过 status 的公钥 generation 检查结果再决定是否重试。原始接入密钥、私钥和 token 不进入状态、错误分类或普通日志。
 
 up/down 按本机期望状态 revision 执行 CAS，并保留最后一次变更的请求身份以恢复不确定结果。本机 revision 与 Server 配置 revision 分开。已接纳命令的持久化由协调器完成，CLI 断开不会撤回它；读取 status 不写入状态或生成测量。
 
 daemon 独占目录锁，启动时记录 socket 的文件身份；只有身份匹配且确认无监听者的旧 socket 可清理。未知文件、符号链接、活跃 socket 和损坏的状态文件都保留并报错；状态文件缺失时的目录判定见[数据目录与启动检查](#数据目录与启动检查)。
 
-CLI 生命周期不承载 Node 身份或 lease，不收集账户密码、不取得浏览器会话。业务 listener／DNS／策略无本地覆盖源；获准路由方案切换仍是使用选择，具体入口待定。`down` 不等于云端永久删除；永久删除本节点用 `logout`。
+CLI 生命周期不承载 Node 身份或 lease，不收集账户密码、不取得浏览器会话。业务 listener／DNS／策略无本地覆盖源；路由方案切换是使用选择，由 Server 持有并决定，入口见[出口方案](#exit-profile)。`down` 不等于云端永久删除；永久删除本节点用 `logout`。
 
 ## Engine
 

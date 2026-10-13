@@ -94,6 +94,15 @@ pub(super) struct Report {
     pub dependencies: std::collections::BTreeMap<meshway_model::NodeId, u32>,
     pub observation_dependencies:
         std::collections::BTreeMap<meshway_model::NodeId, Vec<meshway_model::ObservationId>>,
+    /// Established business circuits this Node takes part in, in
+    /// origin-to-terminal order with its role; at most `STATE_MAX_PATHS`.
+    pub circuits: std::collections::BTreeMap<
+        [u8; 32],
+        (
+            Vec<meshway_model::NodeId>,
+            meshway_model::state::ReporterRole,
+        ),
+    >,
     /// Complete path of an established circuit this Node ends, by far end.
     pub routes: std::collections::BTreeMap<meshway_model::NodeId, Vec<meshway_model::NodeId>>,
     /// Latest successful measured round trip toward each target.
@@ -124,6 +133,7 @@ impl Report {
             owned_interfaces: Vec::new(),
             dependencies: Default::default(),
             observation_dependencies: Default::default(),
+            circuits: Default::default(),
             routes: Default::default(),
             rtts: Default::default(),
             known_peers: None,

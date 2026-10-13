@@ -283,6 +283,8 @@ mod identity;
 
 mod leave;
 
+mod selection;
+
 mod netmap;
 
 mod signatures;

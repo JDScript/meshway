@@ -19,6 +19,7 @@ pub use editing_secrets::*;
 mod fields;
 mod object;
 pub mod providers;
+pub mod selection;
 mod source;
 mod subjects;
 pub use subjects::SubjectContext;

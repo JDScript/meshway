@@ -142,4 +142,7 @@ pub(super) fn identity(network: NetworkId) -> service::ReadIdentity {
     }
 }
 
+mod adjacencies;
 mod admission;
+mod derived;
+mod paths;

@@ -9,6 +9,7 @@ mod paths;
 mod plan;
 mod routing;
 pub mod rules;
+mod selection;
 mod transports;
 
 use crate::{SubjectContext, topology_allows};
@@ -16,6 +17,7 @@ pub use capture::{
     EgressPartition, MAX_CAPTURE_RANGES, MAX_CAPTURE_ROUTES, MAX_WORK as MAX_CAPTURE_WORK,
     Partition, retained_capture, summary as capture_summary, unavailable_capture,
 };
+pub use edge_constraints::MAX_EDGE_TRANSPORT_ISSUES;
 pub(crate) use edge_constraints::validate_edge_transports;
 pub use exit::ExitInputs;
 pub use matching::profile_allowed;
@@ -23,6 +25,7 @@ use meshway_configuration::{execution::*, *};
 use meshway_model::{NetworkId, NodeId, Revision};
 pub use plan::{PlanDestination, PlanRequest, plan, plan_with_exit};
 pub use rules::{Artifacts, RuleSets};
+pub use selection::routing_selection;
 use std::collections::BTreeMap;
 
 pub const MAX_PATHS: usize = 4;
