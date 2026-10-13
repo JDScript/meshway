@@ -133,8 +133,6 @@ crate::string_enum! {
 pub enum NotApplicableReason {
     /// The address is outside the eligible public unicast address space.
     NonPublicAddress,
-    /// The address belongs to this network's Mesh address space.
-    MeshAddress,
 }
 }
 

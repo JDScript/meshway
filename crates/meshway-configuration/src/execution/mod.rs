@@ -148,14 +148,8 @@ pub enum UnavailableReason {
     RoutingCycle,
     /// The bounded routing expansion or path search cannot complete.
     RoutingLimit,
-    /// A capability required for execution is unavailable.
-    MissingCapability,
     /// A trusted rule-set or other required compilation dependency is unavailable.
     MissingDependency,
-    /// No current trusted DNS association binds the source's domain to the requested address.
-    MissingDns,
-    /// The requested profile is not allowed or does not match the source's current selection.
-    InvalidProfile,
     /// The source is disabled or absent from the trusted Node inventory.
     InactiveNode,
 }

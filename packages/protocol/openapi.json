@@ -39039,10 +39039,7 @@
           "noPath",
           "routingCycle",
           "routingLimit",
-          "missingCapability",
           "missingDependency",
-          "missingDns",
-          "invalidProfile",
           "inactiveNode"
         ]
       },
