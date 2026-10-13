@@ -566,7 +566,7 @@ R0 列出的七项已由用户决定并写入相应章节：regex v1 逐条跳�
 
 | 范围 | 实现（owner） |
 | --- | --- |
-| 目录主动更新 | `resources::scheduler` 每轮先查本网络有效 provider 的目录是否到期（`catalogs::due`：从未验签、或上次成功／失败加间隔／退避；集合准备的验签算成功），到期即 `catalogs::refresh`：`Downloads::catalog` 在共用 4 项预算内下载并验签，同一事务 `accept_catalog`（sequence 单调，回退为 `catalog_regressed`）并写 `rule_set_catalog_checks`（schema 7）。键为 (目录 URL, 信任钥集合)，多网络只取一次；调度串行，不需合并 |
+| 目录主动更新 | `resources::scheduler` 每轮在本网络有效 provider 的目录与集合中取到期时刻最早的一项（`catalogs::due_at`：从未验签为 0，否则上次成功／失败加间隔／退避；集合准备的验签算成功；同一时刻目录在前），选中目录即 `catalogs::refresh`：`Downloads::catalog` 在共用 4 项预算内下载并验签，同一事务 `accept_catalog`（sequence 单调，回退为 `catalog_regressed`）并写 `rule_set_catalog_checks`（schema 7）。键为 (目录 URL, 信任钥集合)，多网络只取一次；调度串行，不需合并 |
 | artifact 回收 | `resources::artifacts::collect`（调度器启动时及每小时一次，单个写事务）：保留未删除网络全部版本的初始绑定（经 sealer 打开 `configuration_versions.bindings`）与 `rule_set_bindings` 刷新绑定引用的 digest，以及 `node_netmap_artifacts` 中当前或被替换不足 `MAX_LEASE_MS`（24 小时，租约有效期上限）的引用；其余连同 `rule_set_records`／`rule_set_record_heads` 删除，并移出进程内句柄缓存。删除 `rule_set_artifacts_retained` 触发器 |
 | 签名 held | 发布流水线写 `SetRecord.held`，`meshway-rules index` 带入 `CatalogSet.held`；Server 视图早已透出 |
 

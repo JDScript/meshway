@@ -110,12 +110,14 @@ async fn startup_scheduler_updates_backs_off_persists_and_cancels_its_tls_socket
         .iter()
         .find(|at| at.timestamp_millis() > failed_at.timestamp_millis())
         .expect("actual first HTTP retry, even if the view skipped a check");
-    assert!(crate::resources::scheduler::due(
-        first_retry.timestamp_millis() as u64,
-        Some(failed_at.timestamp_millis() as u64),
-        crate::resources::scheduler::MIN_INTERVAL_MS,
-        1,
-    ));
+    assert!(
+        first_retry.timestamp_millis() as u64
+            >= crate::resources::scheduler::due_at(
+                Some(failed_at.timestamp_millis() as u64),
+                crate::resources::scheduler::MIN_INTERVAL_MS,
+                1,
+            )
+    );
     assert_eq!(retried.artifact, failed.artifact);
     remote.set(200, "payload:\n - 8.8.8.0/24\n");
     s.refresh(token, network).await;

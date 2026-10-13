@@ -66,7 +66,6 @@ pub(crate) struct SystemTask {
     pub key: String,
     pub definition: Source,
     pub artifact: Option<Digest>,
-    pub checked_at: Option<DateTime<Utc>>,
     pub check_version: i64,
 }
 static REFRESHES: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(8);

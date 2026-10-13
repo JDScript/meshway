@@ -196,11 +196,9 @@ impl Catalogs {
 /// interval (with the remote-set backoff after failures). A verification by
 /// a set preparation counts as a successful fetch. One (URL, trusted keys)
 /// is one catalog for every network that names it.
-pub(crate) fn due(
-    tx: &Transaction<'_>,
-    provider: &RuleSetProvider,
-    now: i64,
-) -> Result<bool, Error> {
+/// When `provider`'s catalog is next due (Unix ms), as
+/// [`super::scheduler::due_at`].
+pub(crate) fn due_at(tx: &Transaction<'_>, provider: &RuleSetProvider) -> Result<u64, Error> {
     use crate::store::resources::artifacts as sql;
     let keys = trust(&provider.public_keys);
     let check = sql::catalog_check(tx, &provider.catalog, &keys)?;
@@ -210,8 +208,7 @@ pub(crate) fn due(
         (Some(check), _) => (Some(check.checked_at), check.failures),
         (None, verified) => (verified, 0),
     };
-    Ok(super::scheduler::due(
-        u64::try_from(now).unwrap_or_default(),
+    Ok(super::scheduler::due_at(
         checked.map(|at| u64::try_from(at).unwrap_or_default()),
         provider.update_interval.as_millis(),
         failures,
