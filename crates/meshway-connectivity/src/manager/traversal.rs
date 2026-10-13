@@ -702,6 +702,10 @@ async fn accept(
                     .commands
                     .try_send(Command::Activate(active))
                     .is_ok();
+                if !pending.active {
+                    tracing::debug!(attempt = %pending.offer.offer().attempt_id,
+                        "Traversal activation not delivered: endpoint command queue full");
+                }
             }
         }
         Ok(Reply::Accept(Outcome::Unavailable(_))) => pending.offer.cancel(),

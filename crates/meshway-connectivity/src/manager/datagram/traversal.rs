@@ -132,6 +132,9 @@ impl Owner {
                 }
                 let id = offer.offer().attempt_id;
                 let result = self.reserve_traversal(offer);
+                if let Err(error) = &result {
+                    tracing::debug!(attempt = %id, ?error, "Traversal reservation refused");
+                }
                 if reply.send(result).is_err()
                     && let Some(attempt) = self.traversal.remove(&id)
                 {
@@ -140,16 +143,21 @@ impl Owner {
                 Ok(())
             }
             Command::Activate(active) => {
+                let id = active.validated_offer().offer().attempt_id;
+                let dropped = |cause: &'static str| {
+                    tracing::debug!(attempt = %id, cause, "Traversal activation dropped");
+                };
                 if super::super::traversal::matching_endpoint(
                     &self.shared,
                     active.validated_offer(),
                 ) != Some(self.id)
                 {
+                    dropped("candidate_not_on_socket");
                     active.cancel();
                     return Ok(());
                 }
-                let id = active.validated_offer().offer().attempt_id;
                 let Some(attempt) = self.traversal.get_mut(&id) else {
+                    dropped("no_reservation");
                     active.cancel();
                     return Ok(());
                 };
@@ -160,15 +168,18 @@ impl Owner {
                     || attempt.offer.ensure_current().is_err()
                     || active.validated_offer().offer() != attempt.offer.offer()
                 {
+                    dropped("offer_ended_or_changed");
                     active.cancel();
                     attempt.cancel();
                     return Ok(());
                 }
                 let Some(authorization) = &self.authorization else {
+                    dropped("no_authorization");
                     active.cancel();
                     return Ok(());
                 };
                 if authorization.authorize_attempt(&active).is_err() {
+                    dropped("target_not_authorized");
                     active.cancel();
                     attempt.cancel();
                     return Ok(());
