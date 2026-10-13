@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-13T03:02:16.244855+00:00",
+  "updatedAt": "2026-10-13T03:05:19.279822+00:00",
   "runs": [
     {
       "id": 38339020183,
@@ -51,9 +51,9 @@
       "commit": "c6da4e00ff5217800fcbe233bc9d932438778161",
       "message": "docs: second STUN observer and sync stability on the real network",
       "createdAt": "2026-10-13T02:53:05Z",
-      "updatedAt": "2026-10-13T02:53:20Z",
-      "status": "queued",
-      "conclusion": null,
+      "updatedAt": "2026-10-13T03:02:40Z",
+      "status": "completed",
+      "conclusion": "success",
       "url": "https://github.com/JDScript/meshway/actions/runs/38339020182",
       "jobs": [
         {
@@ -70,12 +70,12 @@
         {
           "id": 115105651178,
           "name": "web",
-          "runner": null,
-          "status": "queued",
-          "conclusion": null,
-          "startedAt": "2026-10-13T02:53:20Z",
-          "completedAt": null,
-          "seconds": null,
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-13T03:00:15Z",
+          "completedAt": "2026-10-13T03:02:40Z",
+          "seconds": 145.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/38339020182/job/115105651178"
         },
         {
