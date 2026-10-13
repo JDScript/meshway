@@ -145,12 +145,13 @@ pub fn prune(
     )
 }
 
+/// Body of the sealed history cursor (`crate::cursor`); the envelope's
+/// issue time is the listing's `as_of`.
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReadWindow {
     pub ceiling: i64,
     pub offset: usize,
-    pub as_of: DateTime<Utc>,
     pub query_digest: meshway_model::Digest,
     pub authorization_digest: meshway_model::Digest,
     pub result_count: Option<usize>,
@@ -162,15 +163,16 @@ pub fn query_digest(query: &HistoryQuery) -> Result<meshway_model::Digest, Error
         &serde_json::to_vec(&query).map_err(|_| Error::encode("observation history query"))?,
     ))
 }
-/// The service encrypts `ReadWindow` with caller/network-bound cursor AAD.
-/// Rows are read under the same transaction as current authorization.
+/// The service seals `ReadWindow` with the listing's start (milliseconds)
+/// as a caller/network-bound cursor. Rows are read under the same
+/// transaction as current authorization.
 pub fn query(
     tx: &Transaction<'_>,
     scope: &VisibilityScope,
     query: &HistoryQuery,
-    previous: Option<ReadWindow>,
+    previous: Option<(ReadWindow, i64)>,
     now: DateTime<Utc>,
-) -> Result<(HistoryPage, Option<ReadWindow>), Error> {
+) -> Result<(HistoryPage, Option<(ReadWindow, i64)>), Error> {
     if scope.expires_at <= now {
         return Err(Error::InvalidSession);
     }
@@ -204,25 +206,27 @@ pub fn query(
         return Err(Error::InvalidRequest);
     }
     let query_digest = query_digest(query)?;
-    let mut window = match previous {
-        Some(window) => {
+    let (mut window, started) = match previous {
+        Some((window, started)) => {
             if window.query_digest != query_digest
                 || window.authorization_digest != scope.authorization_digest
-                || window.as_of + Duration::minutes(15) <= now
             {
                 return Err(Error::InvalidCursor);
             }
-            window
+            (window, started)
         }
-        None => ReadWindow {
-            ceiling: store::upper(tx)?,
-            offset: 0,
-            as_of: now,
-            query_digest,
-            authorization_digest: scope.authorization_digest,
-            result_count: None,
-        },
+        None => (
+            ReadWindow {
+                ceiling: store::upper(tx)?,
+                offset: 0,
+                query_digest,
+                authorization_digest: scope.authorization_digest,
+                result_count: None,
+            },
+            now.timestamp_millis(),
+        ),
     };
+    let as_of = DateTime::from_timestamp_millis(started).ok_or(Error::InvalidCursor)?;
     // Gaps may end after the requested display window. Read the bounded
     // retention window, then intersect gap intervals separately from samples.
     // Current source visibility and any narrower source selection precede the
@@ -390,13 +394,13 @@ pub fn query(
     let page = HistoryPage {
         from: query.from,
         to: query.to,
-        as_of: window.as_of,
+        as_of,
         next_cursor: None,
         coverage,
         result,
     };
     window.offset += limit;
-    Ok((page, (window.offset < total).then_some(window)))
+    Ok((page, (window.offset < total).then_some((window, started))))
 }
 fn peer(payload: &ObservationPayload) -> Option<NodeId> {
     match payload {

@@ -365,6 +365,65 @@ async fn production_reports_snapshots_delta_replay_permissions_and_shutdown() {
         panic!("raw history")
     };
     assert_eq!(items.len(), 1);
+    let later = meshway_protocol::observations::HistoryReport {
+        instance_id: lease.instance_id,
+        events: vec![meshway_model::observations::ObservationEvent {
+            event_id: EventId::new(*request().as_uuid()).unwrap(),
+            netmap: netmap.reference(),
+            occurred_at: now,
+            payload: meshway_model::observations::ObservationPayload::CollectionGap {
+                dropped: Sequence::new(1).unwrap(),
+                from: now - chrono::Duration::seconds(1),
+                to: now,
+            },
+        }],
+    };
+    let later_accepted: meshway_protocol::observations::HistoryAccepted = json(
+        c.post(format!("{}/agent-api/v1/history", s.url))
+            .bearer_auth(&node_token)
+            .json(&later),
+    )
+    .await;
+    assert_eq!(later_accepted.accepted, 1);
+    let paged = |cursor: Option<String>| meshway_protocol::observations::HistoryQuery {
+        from: now - chrono::Duration::minutes(1),
+        to: now + chrono::Duration::seconds(1),
+        source_node_id: Some(node.node_id),
+        peer_node_id: None,
+        mode: meshway_protocol::observations::HistoryMode::Raw,
+        bucket_seconds: None,
+        cursor,
+        limit: 1,
+        kinds: None,
+        link_id: None,
+    };
+    let first: meshway_protocol::observations::HistoryPage = json(
+        c.post(net(&s, network, "history/query"))
+            .bearer_auth(member.token.expose())
+            .json(&paged(None)),
+    )
+    .await;
+    let next = first.next_cursor.clone().expect("second history page");
+    let second: meshway_protocol::observations::HistoryPage = json(
+        c.post(net(&s, network, "history/query"))
+            .bearer_auth(member.token.expose())
+            .json(&paged(Some(next.clone()))),
+    )
+    .await;
+    assert_eq!(second.as_of, first.as_of);
+    assert!(second.next_cursor.is_none());
+    for invalid in [format!("{next}A"), "A".repeat(2049)] {
+        assert_eq!(
+            c.post(net(&s, network, "history/query"))
+                .bearer_auth(member.token.expose())
+                .json(&paged(Some(invalid)))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
+    }
     {
         let token = member.token.expose();
         assert_eq!(
