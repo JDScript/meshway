@@ -155,6 +155,19 @@ lab／VM 与 planck 之间设计上没有直连（两端端点相关映射），
 
 之后 `relayIdle` 改为要求路径上每个中继都报告与下一节点的通道，六台与 Server 重新统一到该提交，并做 10 分钟观察窗（`window/`，`check.py` 逐样本判定）。
 
+### M1 实网证据 {#m1-real-network}
+
+2026-10-13，lab 三容器、VM、us-lax-it7、planck 容器与开发 Server 统一在 `287e2385`（先 Node 后 Server）。证据 `.meshway/node-lab/m1/`。
+
+| 检查 | 结果 |
+| --- | --- |
+| it7 → VM TCP，不限 MSS（VM 端 `iperf3 -R`，20 秒） | 升级前（main）0 bit/s（重现 N2a 基线）；只升 it7 后 373 Mbit/s；全部升级后 408／394 Mbit/s，`-M 1250` 对照 355 Mbit/s。it7 到 VM 的通道 `1395/1281`→`1415/1301`，it7 把 VM 的 SYN 限为 MSS 1261，两端路由缓存都没有 PMTU 例外 |
+| it7 的 fragmentation needed | `ping -M do -s 1300 100.64.0.4`（1328）报告 `Frag needed and DF set (mtu = 1301)`（it7 自己的数据面合成），路由缓存 `mtu 1301`；`-s 1273` 3/3 |
+| OPS4 的纯 IP 双出口（公共规则 `128.238.0.0/16 → planck`、`geoip:cn → it7`） | 六台 running／applied、`dns.egress` 全为 `noExit`、`getent` 各自本机解析；lax `traceroute -I 128.238.177.1` 第 1 跳 planck（100.64.0.6），`traceroute -I 1.2.4.8` 第 1 跳 it7（100.64.0.5），ping 均 3/3。main 下同一形态曾让六台 `blocked`（OPS4 rev 34） |
+| 名称规则经两个出口（`nyu.edu → planck`、`example.net → nyc`，再加上述两条 IP 规则） | 保存 422 `dns_exit_plan_required`，路径 `/routing/egress/rules/1`，节点 lax、sha、vm、it7（planck、nyc 对自己的规则为 direct）；revision 不变 |
+
+测试配置结束后以原 JSONC 源文 CAS 恢复（rev 41 与 rev 39 内容相同）。
+
 ### 当前验证证据
 
 `validate:matrix` 为每行独立保留报告并汇总 `matrix.json`／`summary.md`；通过结论同时要求 fixture `passed`、进程成功退出和本 run 无遗留资源。`--short` 的报告标记 `scope=diagnostic-short`：只运行 30 秒持续／纯接收窗口（退路 5 秒后触发），不要求已经跨原需求期限，未测到的延长为 null。其他场景仍执行，包括真实 instance 失效恢复；短模式不是整组验收，不能更新下述历史／当前通过状态。并发运行还需读取各行启动 load，不能与低负载串行结果不加区分地合并。
