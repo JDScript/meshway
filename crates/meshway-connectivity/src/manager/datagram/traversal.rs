@@ -195,6 +195,7 @@ impl Owner {
                     == attempt.offer.local().candidate.socket.node_id;
                 attempt.initiation = Some(initiation);
                 attempt.active = Some(active);
+                tracing::debug!(attempt = %id, dialer, "Traversal attempt active");
                 // A signed punch from the responder opens its NAT filter before
                 // it receives INIT. It grants no link or business authority.
                 attempt.output(if dialer { 1 } else { 0 }, intro);
@@ -306,14 +307,18 @@ impl Owner {
                 original: attempt.offer.clone(),
             });
             for remote in std::iter::once(remote).chain(attempt.learned.iter().copied()) {
-                let _ = send(
+                if let Err(error) = send(
                     &self.sender,
                     lifetime.clone(),
                     attempt.offer.expires_at().into(),
                     remote,
                     attempt.output.clone(),
                 )
-                .await;
+                .await
+                {
+                    tracing::debug!(attempt = %attempt.offer.offer().attempt_id, %remote, ?error,
+                        "Traversal output not sent");
+                }
             }
         }
         Ok(())
