@@ -2,7 +2,9 @@
 
 按合入 main 的顺序记录工作包、提交与证据 ID。规则见[工程流程](/v2/process)；性能数字的口径见[分层性能测量](/v2/node/performance)，验收状态见[验收范围](/v2/node/validation)。
 
-## 未发布
+## v0.1.0-alpha.6
+
+范围：wire 6、`compilerVersion` `meshway-netmap-2`、Server schema 不变；IPC 10（`peers[].state` 新增 `relayIdle`，`Command::Ping.target` 为 `PingTarget`，CLI 与 daemon 一起升级）；HTTP 契约自 alpha.5 起的 `PeerFacts.connected`、`IssueCode` 新增 `dns_exit_plan_required`（错误）与 `resolver_outside_access`（警告）；验收矩阵行 `nat/relay`、`nat/reconnect`（18 行）；通道 MTU（MSS clamp、本机 fragmentation needed／packet too big）；`meshway ping` 公网 IP／域名目标；以及下列 M1、D2、N5 工作包。
 
 路径 MTU 收口与出口 DNS 语义（M1）：wire 6、IPC（随 D2 为 10）、`compilerVersion` 与 Server schema 均不变。HTTP 契约：`IssueCode` 新增 `dns_exit_plan_required`（错误）与 `resolver_outside_access`（警告）。
 
