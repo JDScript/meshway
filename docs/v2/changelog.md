@@ -14,7 +14,7 @@ wire 6、`compilerVersion` 不变，IPC 9（C3）；Server schema 版本 7（F4a
 - runtime fixture：`netmap/expiry` 在 Status 去掉租约后 2 秒内要求 TUN 删除并记录延迟，不再与 daemon 的撤回竞争；根因见[租约到期撤回](/v2/node/validation#lease-expiry-withdrawal)。
 - `validation.md` 补齐 R2a、X6、R3、F4a 的矩阵行与证据位置。
 
-验证：Planck 16 行矩阵 `20261012T212926Z-abd9b9c8`（`4164e184`）与最终候选 `b4fe0619` 的 `20261012T232408Z-75436f19` 全部通过（其间一次高负载矩阵两行在 Docker 地址池／行前清理测试失败，未进入产品阶段）；`mise run check` 通过；证据 `.meshway/validation/r2d/`。
+验证：Planck 16 行矩阵 `20261012T212926Z-abd9b9c8`（`4164e184`）、`20261012T232408Z-75436f19`（`b4fe0619`）与合入 main（含 S3、C3）后的 `20261013T015222Z-59ebfafc`（`861d58d3`）全部通过；高负载下的未通过矩阵与签名见[验收范围](/v2/node/validation#netmap-rows)；`mise run check` 通过；证据 `.meshway/validation/r2d/`。
 
 出口方案切换（C3）：IPC 升为 9，`activity_events` 新增 Node actor 与路由方案目标（schema 6）。
 
