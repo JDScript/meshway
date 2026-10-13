@@ -12,7 +12,7 @@ UDP 接收缓冲与发送节奏（M2）：IPC 11（`Status.sockets`）；wire 6�
 - 接收路径核对：已是 `recvmmsg`（32 × 64 KiB）＋`UDP_GRO`，未改。
 - 文档：[高吞吐宿主](/v2/install#high-throughput) 的 sysctl 建议（daemon 不修改）。
 
-验证：Planck `perf:dataplane`（L3 direct／L4 relay，每容器 2 CPU）TCP 2,540／2,229 → 2,749／2,514 Mbit/s，重传 618／512 → 0；60 ms RTT（netem）内层 TCP 266–315 → 413 Mbit/s；1 ms RTT 满载时内层 RTT 2 → 10 ms（缓冲排队）。20 ms 记忆的 Pacer 实测降低 60 ms RTT 吞吐 14%，未采用。见[接收缓冲与发送节奏](/v2/node/performance#接收缓冲与发送节奏)；证据 `.meshway/validation/m2/`、`.meshway/node-lab/m2/`。真机部署后复测待补。
+验证：Planck `perf:dataplane`（L3 direct／L4 relay，每容器 2 CPU）TCP 2,540／2,229 → 2,749／2,514 Mbit/s，重传 618／512 → 0；60 ms RTT（netem）内层 TCP 266–315 → 413 Mbit/s；1 ms RTT 满载时内层 RTT 2 → 10 ms（缓冲排队）。20 ms 记忆的 Pacer 实测降低 60 ms RTT 吞吐 14%，未采用。Planck 18 行矩阵 `20261013T203523Z-5b8e5fc0`（`8107b20a`）全部通过，daemon 日志与 `status --json` 显示 socket 读回 14 MiB／4 MiB。见[接收缓冲与发送节奏](/v2/node/performance#接收缓冲与发送节奏)；证据 `.meshway/validation/m2/`、`.meshway/node-lab/m2/`。真机部署后复测待补。
 
 ## v0.1.0-alpha.6
 
