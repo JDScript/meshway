@@ -26,6 +26,10 @@ LINKS = {"ca": ("controller", "a"), "cr": ("controller", "r"),
          "far": ("router", "external")}
 PUBLIC_LINKS = ("external", "far")
 FAR_MTU = 1280
+# Stage 12 also narrows the A–R link: A's Native UDP channel to R then carries
+# inner packets of NARROW_MTU - 28 (IPv4/UDP) - 86 (Data frame) bytes.
+NARROW_MTU = 1400
+NARROW_INNER = NARROW_MTU - 28 - 86
 
 
 NETMAP_CONTENT = "import json; print(json.dumps(json.load(open('/state/node/identity/netmap.json'))['netmap']))"
@@ -131,6 +135,73 @@ def run_icmp_phase(command, detached, evidence, addresses, subnets, source):
             raise RuntimeError("injected ICMP errors were not limited to A's live flow and its budget")
     finally:
         result["routeRemoved"] = command("e", "ip", "route", "del", subnets["far"], "via", router, required=False)
+    return result
+
+
+def interface_of(command, role, address):
+    names = [link["ifname"] for link in json.loads(command(role, "ip", "-j", "address")["stdout"])
+             if any(item.get("local") == address for item in link["addr_info"])]
+    if len(names) != 1:
+        raise RuntimeError(role + " interface of " + address + " not found")
+    return names[0]
+
+
+def run_narrow_channel(command, detached, status, wait_for, addresses, r_node):
+    """Stage 12, narrow Mesh channel: with the A–R link at NARROW_MTU, A's
+    channel to R measures NARROW_INNER. A TCP echo through the exit converges
+    at once (A's SYN and the SYN-ACK it receives are clamped to that MSS, so
+    no segment exceeds the channel in either direction), and an oversized DF
+    packet of A is answered on A's own TUN with fragmentation needed naming
+    NARROW_INNER, which A's kernel caches."""
+    target = addresses["external"]["external"]
+    result = {"target": target, "mtu": NARROW_MTU, "inner": NARROW_INNER}
+    links = {role: interface_of(command, role, addresses["ar"][role]) for role in ("a", "r")}
+
+    def channel(value):
+        peer = next((p for p in value.get("peers", []) if p.get("nodeId") == r_node), None)
+        return (peer or {}).get("mtu")
+
+    for role, name in links.items():
+        result[role + "Narrowed"] = command(role, "ip", "link", "set", "dev", name, "mtu", str(NARROW_MTU))
+    try:
+        wait_for(lambda: (channel(status("a")) or {}).get("inner") == NARROW_INNER,
+                 "A's channel to R at the narrow MTU", 90)
+        result["channel"] = channel(status("a"))
+        clamp = [line for line in command("a", "nft", "list", "tables")["stdout"].splitlines()
+                 if line.startswith("table inet meshway_mss_")]
+        if len(clamp) != 1:
+            raise RuntimeError("A has no MSS clamp table")
+        time.sleep(2)  # the clamp follows the channel facts within a second
+        result["clampTable"] = command("a", "nft", "list", "table", *clamp[0].split()[1:])
+        if f"maxseg size set {NARROW_INNER - 40}" not in result["clampTable"]["stdout"]:
+            raise RuntimeError("A's MSS clamp does not follow its narrow channel")
+        result["tcp"] = command("a", "timeout", "20", "python3", "/dns-fixture/icmp.py", "tcp", target, "8080",
+                                "65536", required=False)
+        echoed = json.loads(result["tcp"]["stdout"] or "{}") if result["tcp"]["exitCode"] == 0 else {}
+        if not echoed.get("echoed") or echoed.get("mss", 1 << 16) > NARROW_INNER - 40:
+            raise RuntimeError("a TCP echo through the narrow channel was not clamped or did not complete")
+        detached("a", "python3", "/dns-fixture/icmp.py", "listen", "/evidence/icmp-narrow.json", "30")
+        deadline = time.monotonic() + 10
+        while command("a", "test", "-f", "/evidence/icmp-narrow.json", required=False)["exitCode"]:
+            if time.monotonic() >= deadline:
+                raise RuntimeError("A ICMP listener did not start")
+            time.sleep(.1)
+        result["pingTooLarge"] = command("a", "ping", "-n", "-M", "do", "-s", str(NARROW_INNER - 28 + 1), "-c", "2",
+                                         "-W", "2", target, required=False)
+        result["routeCache"] = command("a", "ip", "route", "get", target)
+        result["pingFits"] = command("a", "ping", "-n", "-M", "do", "-s", str(NARROW_INNER - 28), "-c", "2", "-W", "3",
+                                     target, required=False)
+        errors = json.loads(command("a", "cat", "/evidence/icmp-narrow.json")["stdout"])["errors"]
+        result["fragmentationNeeded"] = [entry for entry in errors if (entry["type"], entry["code"]) == (3, 4)
+                                         and entry["source"] == target and entry["mtu"] == NARROW_INNER]
+        if (result["pingTooLarge"]["exitCode"] == 0 or result["pingFits"]["exitCode"]
+                or f"mtu {NARROW_INNER}" not in result["routeCache"]["stdout"]
+                or not result["fragmentationNeeded"]):
+            raise RuntimeError("A's oversized packet was not answered with fragmentation needed")
+    finally:
+        for role, name in links.items():
+            result[role + "Restored"] = command(role, "ip", "link", "set", "dev", name, "mtu", "1500", required=False)
+        result["cacheFlushed"] = command("a", "ip", "route", "flush", "cache", required=False)
     return result
 
 
@@ -836,6 +907,26 @@ def execute(report, artifacts, runtime_os, platform, short, load):
         plan = a_capture("profile-alternative")
         if not plan["defaultCapture"] or not managed(plan, ipaddress.ip_address(target)):
             raise RuntimeError("the alternative profile does not capture external traffic")
+        # The global exit profile has no rule for the useWithExit split
+        # resolver: its address is A's direct exception, so A's DNS installs
+        # and the split name still reaches the Resolver from A itself.
+        visits = len(visits_from(e_peer))
+        switch["global"] = exit_cli("global:" + e_node)
+        if not applied_profile(switch["global"], "global:" + e_node):
+            raise RuntimeError("the global exit profile was not applied")
+        wait_for(lambda: running(status("a")), "A running under the global exit profile")
+        plan = a_capture("profile-global")
+        split_address = ipaddress.ip_address(addresses["split"]["resolver"])
+        if not plan["defaultCapture"] or managed(plan, split_address):
+            raise RuntimeError("the global exit profile captures the kept split resolver")
+        switch["globalFlow"] = connect(target)
+        if switch["globalFlow"]["exitCode"] or len(visits_from(e_peer)) <= visits:
+            raise RuntimeError("a new flow did not leave through E under the global profile")
+        global_split = "global-" + dns_tag + ".split.test"
+        switch["globalSplit"] = resolves(global_split, ["198.51.100.53"])
+        if {query["peer"].rsplit(":", 1)[0] for query in dns_queries("resolver")
+                if query["name"].rstrip(".") == global_split} != {addresses["split"]["a"]}:
+            raise RuntimeError("the kept split resolver was not reached from A directly")
         visits = len(visits_from(e_peer))
         switch["off"] = exit_cli("off")
         if not applied_profile(switch["off"], "mesh"):
@@ -852,7 +943,7 @@ def execute(report, artifacts, runtime_os, platform, short, load):
             raise RuntimeError("the exit profile was not restored")
         wait_for(lambda: running(status("a")), "A running after the restored profile")
         write(report / "profile-switch.json", switch)
-        manifest["stages"]["11"] = {"status": "passed", "evidence": ["profile-switch.json", "profile-alternative.json", "profile-mesh.json",
+        manifest["stages"]["11"] = {"status": "passed", "evidence": ["profile-switch.json", "profile-alternative.json", "profile-global.json", "profile-mesh.json",
                                                                     "a/exit-view.txt", "a/exit-off.txt"]}
 
         manifest["status"] = "traffic"
@@ -974,7 +1065,9 @@ def execute(report, artifacts, runtime_os, platform, short, load):
 
         icmp = run_icmp_phase(command, detached, evidence, addresses, subnets, own["ipv4"])
         write(report / "icmp-errors.json", icmp)
-        manifest["stages"]["12"] = {"status": "passed", "evidence": ["icmp-errors.json"]}
+        narrow = run_narrow_channel(command, detached, status, wait_for, addresses, plans["r"]["nodeId"])
+        write(report / "narrow-channel.json", narrow)
+        manifest["stages"]["12"] = {"status": "passed", "evidence": ["icmp-errors.json", "narrow-channel.json"]}
         # HTTP outage under the netmap model: closing Node HTTP never withdraws
         # the exit. Existing and new flows continue on the signed lease, with
         # no Server contact, until its actual expiry, which fails closed.
