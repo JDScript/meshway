@@ -209,7 +209,7 @@ Manager 在提交时捕获实际 link，按冻结 ChannelScope 分组；换代�
 
 capture 使用执行配置中完整的 `meshAddressPools`，其[契约](/v2/configuration-reference/node-configuration#capture-与本机-egress)不授予 Access。私有 route table 只包含所属 capture 路由；RPDB 安装 own-mark goto、各池 lookup／unreachable 和 end，受保护 socket 跳到此块末尾后继续原 RPDB，而非强制走 main table。SO_MARK 选择、保留已有 selector 语义与读回验证必须成功；同 UID 其他 socket 不获全局绕过。
 
-安装、保留交接与运行监控均检查优先于 capture 的 local-table 路由和外部接口地址。只有本 owner 的精确 TUN 本机地址路由可豁免；覆盖 Mesh 池的外来 local 路由／地址会阻断安装或使其失效，外部对象保留供宿主处理。
+安装、保留交接与运行监控均检查优先于 capture 的 local-table 路由和外部接口地址。归属核对只看路由对象：内核由所属路由派生的缓存例外（`RTM_F_CLONED`，例如 fragmentation needed 留下的 PMTU）随父路由存亡，不计入任何表的内容。只有本 owner 的精确 TUN 本机地址路由可豁免；覆盖 Mesh 池的外来 local 路由／地址会阻断安装或使其失效，外部对象保留供宿主处理。
 
 | 生命周期 | 处理 |
 | --- | --- |
