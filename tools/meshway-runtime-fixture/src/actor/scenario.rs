@@ -40,6 +40,7 @@ pub(super) async fn run(scenario: NetmapScenario, context: Context<'_>) -> Resul
         NetmapScenario::Expiry => expiry(context).await,
         NetmapScenario::Restart => restart(context).await,
         NetmapScenario::Revoke => revoke(context).await,
+        NetmapScenario::Relay => relay(context).await,
     }
 }
 
@@ -344,6 +345,50 @@ async fn restart(mut context: Context<'_>) -> Result<String> {
     observed(
         signals,
         &format!("scenario-recovered-{}", role.name()),
+        role,
+    )
+    .await?;
+    Ok(context.tun)
+}
+
+/// A's new flows and CLI ping to B take [A, R, B] although [A, B] is now
+/// allowed and preferred: A's router drops every A↔B packet. Status shows B
+/// relayed through R.
+async fn relay(context: Context<'_>) -> Result<String> {
+    let Context {
+        cli, role, signals, ..
+    } = context;
+    let (revision, _) = step(signals, "relay").await?;
+    running(cli, revision).await?;
+    if role == Role::A {
+        let path = crate::fallback::original_path(signals).await?;
+        let run = crate::ping_cli::run(cli, crate::ping::Stage::Relayed, "b", &path).await?;
+        save(cli, "scenario-relay-ping", &run).await?;
+        let mut traffic =
+            Traffic::new(&context.addresses[&Role::A], &context.addresses[&Role::B]).await?;
+        traffic.first_udp().await?;
+        traffic
+            .open_remaining_flows(&context.addresses[&Role::A])
+            .await?;
+        traffic.exchange().await?;
+        save(cli, "scenario-relay-new-flows", &traffic.sockets()?).await?;
+        observed(signals, "scenario-relay-observed", role).await?;
+        let status = wait_status(cli, |status| {
+            status.peers.iter().any(|peer| {
+                peer.node_id == path[2]
+                    && peer.state == meshway_protocol::ipc::PeerState::Relay
+                    && peer.via == [path[1]]
+            })
+        })
+        .await?;
+        save(cli, "scenario-relay-status", &status).await?;
+        if let Some(traffic) = context.traffic.as_mut() {
+            traffic.exchange().await?;
+        }
+    }
+    observed(
+        signals,
+        &format!("scenario-relay-done-{}", role.name()),
         role,
     )
     .await?;

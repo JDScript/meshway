@@ -67,6 +67,8 @@ pub enum Stage {
     Recovered,
     /// netmap/restart only: after every adjacency closed idle offline.
     IdleRedial,
+    /// nat/relay only: the direct A–B edge is allowed but unreachable.
+    Relayed,
 }
 
 #[derive(Clone, Serialize, Deserialize)]

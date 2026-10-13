@@ -122,6 +122,9 @@ enum NetmapScenario {
     Expiry,
     /// Daemon restarts with the Controller unreachable: cached netmap serves.
     Restart,
+    /// `--traversal nat` only: A–B becomes an allowed direct edge that A's NAT
+    /// router drops; new A→B traffic relays through R at once.
+    Relay,
 }
 
 impl NetmapScenario {
@@ -131,6 +134,7 @@ impl NetmapScenario {
             Self::Revoke => "revoke",
             Self::Expiry => "expiry",
             Self::Restart => "restart",
+            Self::Relay => "relay",
         }
     }
 }
@@ -239,11 +243,18 @@ async fn main() -> std::process::ExitCode {
         eprintln!("--traversal nat requires --transport native-udp");
         return std::process::ExitCode::FAILURE;
     }
-    if cli.netmap_scenario.is_some()
-        && (cli.traversal != TraversalMode::Off || cli.dns_backend != DnsBackend::Off)
-    {
-        eprintln!("--netmap-scenario requires traversal and DNS off");
-        return std::process::ExitCode::FAILURE;
+    if let Some(scenario) = cli.netmap_scenario {
+        let traversal = if scenario == NetmapScenario::Relay {
+            cli.traversal == TraversalMode::Nat && !cli.traversal_fallback
+        } else {
+            cli.traversal == TraversalMode::Off
+        };
+        if !traversal || cli.dns_backend != DnsBackend::Off {
+            eprintln!(
+                "--netmap-scenario relay requires --traversal nat (no fallback), the others traversal off; DNS off"
+            );
+            return std::process::ExitCode::FAILURE;
+        }
     }
     if cli.logging.init().is_err() {
         eprintln!("invalid runtime fixture logging configuration");

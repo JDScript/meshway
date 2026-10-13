@@ -161,9 +161,10 @@ class MatrixTests(unittest.TestCase):
             with support.build_lock():
                 self.assertTrue((Path(temporary) / "build.lock").exists())
 
-    def test_rows_are_sixteen_and_filter_keeps_order_without_duplicates(self):
-        self.assertEqual(len(matrix.DEFAULT_ROWS), 16)
-        self.assertEqual(len(matrix.ROWS), 16)
+    def test_rows_are_seventeen_and_filter_keeps_order_without_duplicates(self):
+        self.assertEqual(len(matrix.DEFAULT_ROWS), 17)
+        self.assertEqual(len(matrix.ROWS), 17)
+        self.assertIn("nat/relay", matrix.DEFAULT_ROWS)
         self.assertEqual([name for name in matrix.DEFAULT_ROWS if name.startswith("netmap/")],
                          ["netmap/offline", "netmap/revoke", "netmap/expiry", "netmap/restart"])
         self.assertIn("exit/off", matrix.parse_args([]).rows)
@@ -220,7 +221,7 @@ class MatrixTests(unittest.TestCase):
                 code = matrix.main(["--parallel", "4", "--short", "--run", "run"])
             report = json.loads((root / ".meshway/validation/matrix/run/matrix.json").read_text())
             self.assertEqual(code, 1)
-            self.assertEqual(len(report["rows"]), 16)
+            self.assertEqual(len(report["rows"]), 17)
             self.assertEqual(len(builds), 3)
             self.assertTrue(all("--build-only" in command for command in builds))
             self.assertEqual(report["scope"], "diagnostic-short")

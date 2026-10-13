@@ -184,7 +184,7 @@ def handshake(records, local, target, public_local, offers):
     raise RuntimeError("Missing complete same-offer bilateral traversal handshake before ciphertext")
 
 
-def verify(report, actors, routers, *, fallback=False, short=False):
+def verify(report, actors, routers, *, fallback=False, short=False, relay=False):
     evidence = {"outerFamily": "ipv4", "natModel": "linux-conntrack-port-preserving-snat",
                 "path": ["a", "r", "b"], "routers": {}, "fallback": None}
     offers = bounded_json(report / "controller/traversal-verified-offers.json")
@@ -336,5 +336,39 @@ def verify(report, actors, routers, *, fallback=False, short=False):
         if continuity.get("passed") is not True or len(continuity.get("circuits", [])) != 1:
             raise RuntimeError("Fallback lacks production circuit continuity evidence")
         evidence["fallback"].update(applicationBefore=before, applicationAfter=after, circuits=continuity)
+    if relay:
+        evidence["relay"] = relay_counters(report, actors)
     (report / "traversal-packets.json").write_text(json.dumps(evidence, indent=2) + "\n")
     return evidence
+
+
+def relay_counters(report, actors):
+    """nat/relay: router-a dropped A's direct attempts toward B (both IP-pair
+    rules exist with real counters, nothing broader), and A's relayed traffic
+    and ping were observed in time by the fixture itself."""
+    blocked = bounded_json(report / "router-a/relay.json")["blockedAtMs"]
+    path = report / "router-a/firewall-final.txt"
+    if not path.is_file() or path.stat().st_size > LIMIT:
+        raise RuntimeError("Missing bounded final router-a firewall for the relay block")
+    counters = {}
+    for line in path.read_text().splitlines():
+        match = re.fullmatch(r"\[(\d+):(\d+)\] (.+)", line)
+        if not match:
+            continue
+        tokens = shlex.split(match[3])
+        options = dict(zip(tokens[::2], tokens[1::2]))
+        if options.get("-A") != "FORWARD" or options.get("-j") != "DROP" or "-s" not in options:
+            continue
+        pair = (options.get("-s"), options.get("-d"))
+        if pair == (actors["a"] + "/32", actors["b"] + "/32") and "-p" not in options:
+            counters["outboundDrops"] = int(match[1])
+        elif pair == (actors["b"] + "/32", actors["a"] + "/32") and "-p" not in options:
+            counters["inboundDrops"] = int(match[1])
+        else:
+            raise RuntimeError("Relay block expanded beyond the A-B IP pair")
+    if set(counters) != {"outboundDrops", "inboundDrops"} or counters["outboundDrops"] == 0:
+        raise RuntimeError("A never attempted the dropped direct A-B path")
+    timing = bounded_json(report / "controller/scenario-relay-timing.json")
+    if not blocked <= timing["committedAtMs"] <= timing["relayedAtMs"]:
+        raise RuntimeError("Relayed traffic was not observed after the direct path was dropped")
+    return {"blockedAtMs": blocked, **counters, "switch": timing}

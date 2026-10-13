@@ -37,6 +37,7 @@ pub(super) async fn run(scenario: NetmapScenario, context: Context<'_>) -> Resul
         NetmapScenario::Expiry => outage(&context, "expiry", Duration::ZERO).await,
         NetmapScenario::Restart => outage(&context, "restart", Duration::ZERO).await,
         NetmapScenario::Revoke => revoke(&context).await,
+        NetmapScenario::Relay => relay(&context).await,
     }
 }
 
@@ -286,4 +287,87 @@ async fn revoke(context: &Context<'_>) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// A new flow must take the relay within this of the new content's commit.
+const RELAY_SWITCH: Duration = Duration::from_secs(30);
+
+/// Direct A–B allowed (no `via`), but A's NAT router drops every A↔B packet:
+/// Policy prefers [A, B], A has no channel to B, and new traffic and a CLI
+/// ping relay through R, which has no listener of its own toward either.
+async fn relay(context: &Context<'_>) -> Result<()> {
+    let Context {
+        cli,
+        signals,
+        client,
+        network,
+        token,
+        nodes,
+        ..
+    } = context;
+    signals.write("relay-block", &Signal::Ready).await?;
+    signals.ready("relay-blocked-router-a").await?;
+    let original = source(client, *network, token).await?;
+    let mut direct = original.configuration.clone();
+    direct.routing.mesh.clear();
+    direct.topology.push(meshway_configuration::TopologyRule {
+        remark: "direct A-B, dropped by A's NAT".into(),
+        action: meshway_configuration::TopologyAction::Allow,
+        a: format!("node:{}", nodes[&Role::A]),
+        b: format!("node:{}", nodes[&Role::B]),
+        transports: meshway_configuration::Input::Omitted,
+        keepalive: false,
+    });
+    let revision = apply(client, *network, token, original.revision, &direct).await?;
+    let at_ms = now_ms()?;
+    signals
+        .write("scenario-relay", &Signal::Step { revision, at_ms })
+        .await?;
+    let Signal::Observed { role, at_ms: seen } = signals
+        .wait_for("scenario-relay-observed", STARTUP + IO)
+        .await?
+    else {
+        return Err("invalid relay observation".into());
+    };
+    let elapsed = seen
+        .checked_sub(at_ms)
+        .ok_or("observation precedes the change")?;
+    tokio::fs::write(
+        cli.evidence.join("scenario-relay-timing.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "committedAtMs": at_ms, "relayedAtMs": seen, "elapsedMs": elapsed
+        }))?,
+    )
+    .await?;
+    tracing::info!(
+        phase = "scenario-step",
+        step = "relay",
+        elapsed_ms = elapsed,
+        "relayed traffic observed"
+    );
+    if role != Role::A || Duration::from_millis(elapsed) > RELAY_SWITCH {
+        return Err(format!("relay: first relayed reply took {elapsed} ms").into());
+    }
+    for role in Role::ALL {
+        match signals
+            .wait_for(
+                &format!("scenario-relay-done-{}", role.name()),
+                STARTUP + IO,
+            )
+            .await?
+        {
+            Signal::Observed { role: claimed, .. } if claimed == role => {}
+            _ => return Err("invalid relay scenario evidence".into()),
+        }
+    }
+    applied(
+        cli,
+        client,
+        *network,
+        token,
+        nodes,
+        revision,
+        ("scenario-relay", None),
+    )
+    .await
 }

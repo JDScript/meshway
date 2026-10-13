@@ -30,6 +30,7 @@ ROWS = {
     "nat/off": ("runtime", ("--transport", "native-udp", "--traversal", "nat", "--dns-backend", "off")),
     "nat+fallback/off": ("runtime", ("--transport", "native-udp", "--traversal", "nat", "--traversal-fallback", "--dns-backend", "off")),
     "nat/resolved": ("runtime", ("--transport", "native-udp", "--traversal", "nat", "--dns-backend", "resolved")),
+    "nat/relay": ("runtime", ("--transport", "native-udp", "--traversal", "nat", "--dns-backend", "off", "--netmap-scenario", "relay")),
     "exit/off": ("runtime", ("--transport", "native-udp", "--traversal", "exit", "--dns-backend", "off")),
     "netmap/offline": ("runtime", ("--transport", "native-udp", "--dns-backend", "off", "--reported-endpoints", "--netmap-scenario", "offline")),
     "netmap/revoke": ("runtime", ("--transport", "native-tcp", "--dns-backend", "off", "--netmap-scenario", "revoke")),

@@ -113,6 +113,16 @@ while test ! -f /signals/routers-stop.json; do
             mv /signals/.fallback-router-a.tmp /signals/fallback-router-a.json
         fi
     fi
+    # nat/relay: drop every packet between this actor and B (direct A–B).
+    if test -n "${MESHWAY_TRAVERSAL_RELAY_PEER:-}" && test -f /signals/relay-block.json && test ! -f /evidence/relay.json; then
+        iptables-save -c > /evidence/firewall-before-relay.txt
+        iptables -I FORWARD 1 -i "$lan_if" -o "$wan_if" -s "$actor/32" -d "$MESHWAY_TRAVERSAL_RELAY_PEER/32" -j DROP
+        iptables -I FORWARD 1 -i "$wan_if" -o "$lan_if" -s "$MESHWAY_TRAVERSAL_RELAY_PEER/32" -d "$actor/32" -j DROP
+        printf '{"blockedAtMs":%s}\n' "$(date +%s%3N)" > /evidence/relay.json
+        iptables-save -c > /evidence/firewall-relay.txt
+        printf '{"kind":"ready"}\n' > "/signals/.relay-blocked-$role.tmp"
+        mv "/signals/.relay-blocked-$role.tmp" "/signals/relay-blocked-$role.json"
+    fi
     if test -f /signals/traversal-first.json && test ! -f /evidence/conntrack-first.txt; then
         conntrack -L -p udp -s "$actor" -o extended > /evidence/conntrack-first.txt 2>/evidence/conntrack-first.stderr
         iptables-save -c > /evidence/firewall-first.txt
