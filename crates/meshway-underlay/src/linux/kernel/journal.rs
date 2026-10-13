@@ -1,7 +1,7 @@
 use ipnet::IpNet;
 use meshway_private_storage::Directory;
 use serde::{Deserialize, Serialize};
-use std::{io::Read, os::unix::fs::MetadataExt, sync::Arc};
+use std::{io::Read, sync::Arc};
 
 use super::{
     super::protection::Mark,
@@ -54,6 +54,9 @@ pub(super) struct Journal {
     pub boot: String,
     pub namespace_device: u64,
     pub namespace_inode: u64,
+    /// Absent in a journal of an earlier build or of a kernel without one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub namespace_cookie: Option<u64>,
     pub installation: String,
     /// Restricts later installations; never reconstructs execution authority.
     pub binding: Option<(meshway_model::NetworkId, meshway_model::NodeId)>,
@@ -75,21 +78,13 @@ impl Journal {
         self.start + (self.pool_limit as u32) * 2 + 1
     }
 
-    pub fn identity() -> Result<(String, u64, u64)> {
-        let boot = std::fs::read_to_string("/proc/sys/kernel/random/boot_id")?;
-        if boot.len() > 64 {
-            return Err(Error::Journal);
-        }
-        let namespace = std::fs::metadata("/proc/self/ns/net")?;
-        Ok((boot, namespace.dev(), namespace.ino()))
-    }
-
     /// Whether this namespace still holds what the journal says it installed:
     /// any of its recorded rules (exact bytes, in its own random table and
     /// priority range) or its DNS anchor (alias with the random
-    /// installation). Boot ID and nsfs device/inode identify a namespace only
-    /// while it lives: a destroyed namespace's inode is reused by the next one
-    /// (a restarted container), which holds none of these objects.
+    /// installation). A journal without a namespace cookie (see
+    /// [`super::namespace`]) identifies its namespace only by an inode the
+    /// next namespace (a restarted container) may reuse; that one holds none
+    /// of these objects.
     pub fn resident(&self, rules: &[Vec<u8>], aliases: &[String]) -> bool {
         self.rules
             .iter()
@@ -102,10 +97,13 @@ impl Journal {
 
     /// Resources in another kernel or network namespace cannot be adopted or
     /// cleaned up here. Preserve their evidence and allocate in this namespace.
-    pub fn is_stale(&self, boot: &str, device: u64, inode: u64) -> bool {
-        self.boot.trim() != boot.trim()
-            || self.namespace_device != device
-            || self.namespace_inode != inode
+    pub fn is_stale(&self, current: &super::namespace::Identity) -> bool {
+        !current.is(
+            &self.boot,
+            self.namespace_device,
+            self.namespace_inode,
+            self.namespace_cookie,
+        )
     }
 
     fn validate(&self) -> Result<()> {
@@ -126,11 +124,8 @@ impl Journal {
         {
             return Err(Error::Journal);
         }
-        let (boot, device, inode) = Self::identity()?;
         if (!self.rules.is_empty() || !self.routes.is_empty() || self.anchor.is_some())
-            && (self.boot != boot
-                || self.namespace_device != device
-                || self.namespace_inode != inode)
+            && self.is_stale(&super::namespace::Identity::current()?)
         {
             return Err(Error::Conflict);
         }
@@ -242,8 +237,7 @@ impl Store {
                 return Err(Error::Journal);
             }
             let journal: Journal = serde_json::from_slice(&bytes).map_err(|_| Error::Journal)?;
-            let (boot, device, inode) = Journal::identity()?;
-            if journal.is_stale(&boot, device, inode) {
+            if journal.is_stale(&super::namespace::Identity::current()?) {
                 archive(&worker_directory, &journal, "changed_namespace")?;
                 return Ok(None);
             }
@@ -304,6 +298,7 @@ fn archive(directory: &Directory, journal: &Journal, cause: &'static str) -> Res
         old_boot = journal.boot.trim(),
         old_namespace_device = journal.namespace_device,
         old_namespace_inode = journal.namespace_inode,
+        old_namespace_cookie = journal.namespace_cookie,
         cause,
         archive,
         "Archived stale Underlay journal"
@@ -314,14 +309,16 @@ fn archive(directory: &Directory, journal: &Journal, cause: &'static str) -> Res
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::linux::kernel::namespace::Identity;
 
     fn journal(boot: &str) -> Vec<u8> {
-        let (_, device, inode) = Journal::identity().unwrap();
+        let current = Identity::current().unwrap();
         serde_json::json!({
             "version": 1,
             "boot": boot,
-            "namespace_device": device,
-            "namespace_inode": inode,
+            "namespace_device": current.device,
+            "namespace_inode": current.inode,
+            "namespace_cookie": current.cookie,
             "installation": "11e127022ad1c0b02359a8298b165be2",
             "binding": null,
             "mark": {"value": 131072, "mask": 131072},
@@ -350,24 +347,34 @@ mod tests {
         assert!(previous.is_none());
         assert!(directory.file(FILE, false).unwrap().is_none());
 
-        let (boot, _, _) = Journal::identity().unwrap();
+        let boot = Identity::current().unwrap().boot;
         directory.replace(FILE, &journal(&boot)).unwrap();
         assert!(matches!(Store::open(directory).await, Err(Error::Journal)));
     }
 
     #[test]
     fn journal_classifies_same_namespace_changed_namespace_and_changed_boot() {
-        let (boot, device, inode) = Journal::identity().unwrap();
-        let journal: Journal = serde_json::from_slice(&journal(&boot)).unwrap();
-        assert!(!journal.is_stale(&boot, device, inode));
-        assert!(journal.is_stale(&boot, device, inode + 1));
-        assert!(journal.is_stale("another-boot", device, inode));
-        assert!(journal.is_stale(&boot, device + 1, inode));
+        let current = Identity::current().unwrap();
+        let journal: Journal = serde_json::from_slice(&journal(&current.boot)).unwrap();
+        let other = |change: fn(&mut Identity)| {
+            let mut other = current.clone();
+            change(&mut other);
+            other
+        };
+        assert!(!journal.is_stale(&current));
+        assert!(journal.is_stale(&other(|i| i.inode += 1)));
+        assert!(journal.is_stale(&other(|i| i.boot = "another-boot".into())));
+        assert!(journal.is_stale(&other(|i| i.device += 1)));
+        // The same inode in a namespace with another cookie (a recreated
+        // container), on kernels that have namespace cookies.
+        if current.cookie.is_some() {
+            assert!(journal.is_stale(&other(|i| i.cookie = i.cookie.map(|c| c + 1))));
+        }
     }
 
     #[test]
     fn namespace_identity_needs_a_resident_object_not_only_the_inode() {
-        let (boot, _, _) = Journal::identity().unwrap();
+        let boot = Identity::current().unwrap().boot;
         let mut journal: Journal = serde_json::from_slice(&journal(&boot)).unwrap();
         journal.pending = None;
         let rule = super::super::plan::RuleSpec {
@@ -395,7 +402,7 @@ mod tests {
     async fn changed_namespace_archives_exact_journal_and_same_namespace_recovers() {
         let temp = tempfile::tempdir().unwrap();
         let directory = Arc::new(Directory::open(&temp.path().join("node"), "node.lock").unwrap());
-        let (boot, _, _) = Journal::identity().unwrap();
+        let boot = Identity::current().unwrap().boot;
         let mut journal: Journal = serde_json::from_slice(&journal(&boot)).unwrap();
         journal.pending = None;
         directory
@@ -420,5 +427,34 @@ mod tests {
         assert_eq!(archives.len(), 1);
         assert_eq!(std::fs::read(&archives[0]).unwrap(), bytes);
         assert!(Store::open(directory).await.unwrap().1.is_none());
+    }
+
+    #[tokio::test]
+    async fn same_inode_another_cookie_is_archived_and_no_cookie_keeps_the_inode_rule() {
+        let current = Identity::current().unwrap();
+        let Some(cookie) = current.cookie else {
+            return; // kernel before 5.7: the inode rule above is the only one
+        };
+        let temp = tempfile::tempdir().unwrap();
+        let directory = Arc::new(Directory::open(&temp.path().join("node"), "node.lock").unwrap());
+        let mut journal: Journal = serde_json::from_slice(&journal(&current.boot)).unwrap();
+        journal.pending = None;
+        journal.namespace_cookie = Some(cookie + 1);
+        directory
+            .replace(FILE, &serde_json::to_vec(&journal).unwrap())
+            .unwrap();
+        assert!(Store::open(directory.clone()).await.unwrap().1.is_none());
+        assert!(directory.file(FILE, false).unwrap().is_none());
+        // Written by an earlier build: same boot and inode is this namespace.
+        journal.namespace_cookie = None;
+        let bytes = serde_json::to_vec(&journal).unwrap();
+        assert!(!String::from_utf8_lossy(&bytes).contains("namespace_cookie"));
+        directory.replace(FILE, &bytes).unwrap();
+        assert!(Store::open(directory.clone()).await.unwrap().1.is_some());
+        journal.namespace_cookie = Some(cookie);
+        directory
+            .replace(FILE, &serde_json::to_vec(&journal).unwrap())
+            .unwrap();
+        assert!(Store::open(directory).await.unwrap().1.is_some());
     }
 }

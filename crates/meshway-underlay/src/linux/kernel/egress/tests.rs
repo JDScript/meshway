@@ -1,9 +1,6 @@
 use super::*;
 use crate::linux::{
-    kernel::{
-        Kernel,
-        journal::{Journal, TunRecord},
-    },
+    kernel::{Kernel, journal::TunRecord},
     tasks::Tasks,
 };
 use backend::Backend;
@@ -94,15 +91,16 @@ async fn setup() -> Setup {
     changed.borrow_and_update();
     let (store, old) = Store::open(directory).await.unwrap();
     assert!(old.is_none());
-    let (boot, namespace_device, namespace_inode) = Journal::identity().unwrap();
+    let namespace = crate::linux::kernel::namespace::Identity::current().unwrap();
     let mut random = [0; 16];
     getrandom::fill(&mut random).unwrap();
     let mesh = Ranges::of(pools.iter().copied());
     let ledger = Ledger {
         version: 2,
-        boot,
-        namespace_device,
-        namespace_inode,
+        boot: namespace.boot,
+        namespace_device: namespace.device,
+        namespace_inode: namespace.inode,
+        namespace_cookie: namespace.cookie,
         program: program::Program {
             installation: random.iter().map(|byte| format!("{byte:02x}")).collect(),
             mark: kernel.journal.mark.mask,

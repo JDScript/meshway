@@ -216,13 +216,13 @@ impl super::super::Kernel {
                             .any(|rule| super::super::rule_table(rule) == *table)
                 })
                 .ok_or(Error::Conflict)?;
-            let (boot, namespace_device, namespace_inode) =
-                super::super::journal::Journal::identity()?;
+            let namespace = super::super::namespace::Identity::current()?;
             Ledger {
                 version: 2,
-                boot,
-                namespace_device,
-                namespace_inode,
+                boot: namespace.boot,
+                namespace_device: namespace.device,
+                namespace_inode: namespace.inode,
+                namespace_cookie: namespace.cookie,
                 program: Program {
                     installation,
                     mark: self.journal.mark.mask,
