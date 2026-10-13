@@ -522,12 +522,10 @@ impl SecureNode {
             purpose: Purpose::Business,
             target: decision.target.clone(),
         };
-        for path in &paths {
-            if let Some(info) = self.established(&grant, &path.nodes, &reading) {
-                return self
-                    .prepare_send_at(info.id, packet, &reading)
-                    .map(Outbound::Send);
-            }
+        if let Some(info) = self.joinable(&grant, &paths, &reading) {
+            return self
+                .prepare_send_at(info.id, packet, &reading)
+                .map(Outbound::Send);
         }
         self.wait(decision.target.clone(), paths, packet, &reading)
     }
@@ -564,6 +562,34 @@ impl SecureNode {
         } else {
             Outbound::Queued { init }
         })
+    }
+
+    /// The established circuit a new flow joins: the first in the candidate
+    /// order of [`Self::choose_path`], up to the path a new circuit would
+    /// take there. A circuit on a lower-ranked path (a relay that lost the far
+    /// end, while another one has channels to both) is not joined.
+    fn joinable(
+        &self,
+        grant: &CircuitGrant,
+        paths: &[LogicalPath],
+        reading: &View<'_>,
+    ) -> Option<super::CircuitInfo> {
+        let refs: Vec<&[NodeId]> = paths.iter().map(|path| path.nodes.as_slice()).collect();
+        let (order, _) = ranked(&refs, &self.carriers, &self.first.peer_channels);
+        for index in order {
+            let path = refs[index];
+            if let Some(info) = self.established(grant, path, reading) {
+                return Some(info);
+            }
+            if path
+                .get(1)
+                .is_some_and(|next| self.carriers.contains_key(next))
+                && !self.first.paused(path, reading.instant)
+            {
+                return None;
+            }
+        }
+        None
     }
 
     /// Start a handshake on the path [`Self::choose_path`] selects, or wait
@@ -657,10 +683,7 @@ impl SecureNode {
                 purpose: Purpose::Business,
                 target: waiting.target.clone(),
             };
-            let established = waiting
-                .paths
-                .iter()
-                .find_map(|path| self.established(&grant, &path.nodes, &reading));
+            let established = self.joinable(&grant, &waiting.paths, &reading);
             if let Some(next) = established
                 .as_ref()
                 .and_then(|info| self.missing_next_hop(info.id, reading.node()))

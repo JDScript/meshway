@@ -671,6 +671,45 @@ async fn a_direct_path_without_a_carrier_relays_and_keeps_wanting_the_direct_adj
 }
 
 #[tokio::test]
+async fn a_new_flow_opens_the_direct_path_once_it_has_a_carrier_instead_of_joining_the_relay() {
+    let mut f = direct_or_relayed().await;
+    let [a, r, b] = f.ids();
+    let packet = f.mesh_udp(false, 42424);
+    let Outbound::Queued { init: Some(init) } = f.a.outbound(packet).unwrap() else {
+        panic!("the relayed path starts at once")
+    };
+    assert_eq!(init.next(), r);
+    let relayed = f.finish_handshake(init).await;
+    let mut flushed = f.a.flush(32);
+    let Ok(Flushed::Send(job)) = flushed.remove(0) else {
+        panic!("queued packet")
+    };
+    delivered(&mut f, sealed(job));
+    let direct = meshway_dataplane::secure::Carrier {
+        dialer: a,
+        listener: b,
+        listener_key: "tcp".into(),
+        protocol: meshway_model::TransportProtocol::NativeTcp,
+    };
+    f.a.set_carriers(BTreeMap::from([(r, f.ar.carrier.clone()), (b, direct)]))
+        .unwrap();
+    // The existing flow keeps its relayed circuit.
+    let Outbound::Send(job) = f.a.outbound(f.mesh_udp(false, 42424)).unwrap() else {
+        panic!("the established flow keeps its path")
+    };
+    assert_eq!(job.circuit(), relayed);
+    drop(job);
+    // A new flow ranks the direct path first and does not join the relay.
+    let packet = super::packet::udp(f.address(0), f.address(2), 50001, 42424, b"new flow");
+    let Outbound::Queued { init: Some(init) } = f.a.outbound(packet).unwrap() else {
+        panic!("a new circuit on the direct path")
+    };
+    assert_eq!(init.next(), b);
+    drop(init);
+    f.close().await;
+}
+
+#[tokio::test]
 async fn an_unanswered_path_is_paused_and_the_next_circuit_takes_another_one() {
     let mut f = direct_or_relayed().await;
     let [a, r, b] = f.ids();
