@@ -21,6 +21,7 @@ fn status() -> Status {
     let mut sha = peer(SHA, "meshway-sha", "100.64.0.5", "direct");
     sha["transport"] = json!("native_udp");
     sha["endpoint"] = json!("192.168.97.3:35000");
+    sha["mtu"] = json!({"path":1444,"inner":1330});
     sha["rtt"] = json!({"durationUs":140,"observedAt":"2026-10-11T11:59:59Z"});
     let reference = json!({"revision":42,"serial":17,"digest":"01".repeat(32)});
     serde_json::from_value(json!({
@@ -60,15 +61,15 @@ fn plain_summary_and_peer_table_have_no_escapes() {
         .unwrap();
     assert_eq!(
         lines[header],
-        "PEER         MESH IPV4   STATE    TRANSPORT   ENDPOINT            RTT"
+        "PEER         MESH IPV4   STATE    TRANSPORT   ENDPOINT            MTU        RTT"
     );
     assert_eq!(
         lines[header + 1],
-        "meshway-nyc  100.64.0.6  relay    native_udp  via meshway-sha     0.31 ms"
+        "meshway-nyc  100.64.0.6  relay    native_udp  via meshway-sha                0.31 ms"
     );
     assert_eq!(
         lines[header + 2],
-        "meshway-sha  100.64.0.5  direct   native_udp  192.168.97.3:35000  0.14 ms"
+        "meshway-sha  100.64.0.5  direct   native_udp  192.168.97.3:35000  1444/1330  0.14 ms"
     );
     // No measurement is not zero.
     assert_eq!(lines[header + 3], "meshway-old  100.64.0.9  offline");
