@@ -14,7 +14,7 @@ use meshway_configuration::execution::{BusinessProtocol, LogicalPath, Unavailabl
 use meshway_model::NodeId;
 use meshway_policy::compile::netmap::{Target, observable};
 use std::{
-    collections::{BTreeSet, VecDeque},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     net::IpAddr,
     time::Instant,
 };
@@ -25,6 +25,10 @@ const MAX_QUEUED: usize = 32;
 const MAX_TARGETS: usize = 64;
 /// Distinct peers of outstanding adjacency interest.
 const MAX_INTERESTS: usize = 256;
+/// Paths whose last origin handshake ended unanswered.
+const MAX_UNANSWERED: usize = 256;
+/// Longest pause of a path whose handshakes keep ending unanswered.
+pub const MAX_PATH_PAUSE: std::time::Duration = std::time::Duration::from_secs(300);
 
 /// Circuits and flows an [`SecureNode::apply`] retired; reporting only.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -79,6 +83,9 @@ pub(super) struct FirstPackets {
     interests: BTreeSet<NodeId>,
     pub ready_exits: BTreeSet<NodeId>,
     pub dropped: u64,
+    /// Paths whose origin handshake ended unanswered: consecutive count and
+    /// the end of the pause during which another carried path is preferred.
+    unanswered: BTreeMap<Vec<NodeId>, (u32, Instant)>,
 }
 
 impl FirstPackets {
@@ -89,6 +96,30 @@ impl FirstPackets {
     }
     pub fn clear(&mut self) {
         self.waiting.clear();
+        self.unanswered.clear();
+    }
+    /// An origin handshake on `path` ended at its deadline without an
+    /// answer: a relay could not reach the next hop, or the path is dead.
+    /// The pause doubles from `base` up to [`MAX_PATH_PAUSE`].
+    pub fn unanswered(&mut self, path: &[NodeId], now: Instant, base: std::time::Duration) {
+        self.unanswered.retain(|_, (_, until)| *until > now);
+        if self.unanswered.len() >= MAX_UNANSWERED && !self.unanswered.contains_key(path) {
+            return;
+        }
+        let entry = self.unanswered.entry(path.to_vec()).or_insert((0, now));
+        entry.0 = entry.0.saturating_add(1);
+        entry.1 = now
+            + base
+                .saturating_mul(1 << (entry.0 - 1).min(16))
+                .min(MAX_PATH_PAUSE);
+    }
+    pub fn answered(&mut self, path: &[NodeId]) {
+        self.unanswered.remove(path);
+    }
+    fn paused(&self, path: &[NodeId], now: Instant) -> bool {
+        self.unanswered
+            .get(path)
+            .is_some_and(|(_, until)| *until > now)
     }
     pub fn maintain(&mut self, now: Instant) {
         let before: usize = self.waiting.iter().map(|w| w.packets.len()).sum();
@@ -304,6 +335,8 @@ impl SecureNode {
         });
         self.carriers = carriers;
         self.probes.retain_current();
+        // New content decides paths afresh.
+        self.first.unanswered.clear();
         self.engine.desired = desired.clone();
         self.desired = desired.clone();
         let closed: Vec<_> = self
@@ -495,30 +528,63 @@ impl SecureNode {
         })
     }
 
-    /// Start a handshake on the first path with an admitted next-hop carrier,
-    /// or register interest in every next hop, in path order.
+    /// Start a handshake on the path [`Self::choose_path`] selects, or wait
+    /// for an adjacency of some next hop (interest is registered).
     fn open(
         &mut self,
         grant: &CircuitGrant,
         paths: &[LogicalPath],
         reading: &View<'_>,
     ) -> Result<Option<PendingFrame>, Error> {
-        for path in paths {
-            let Some(next) = path.nodes.get(1) else {
-                continue;
-            };
-            if let Some(carrier) = self.carriers.get(next).cloned() {
-                return self
-                    .start_at(grant.clone(), path.nodes.clone(), &carrier, reading)
-                    .map(Some);
-            }
+        let Some(index) = self.choose_at(paths.iter().map(|path| path.nodes.as_slice()), reading)
+        else {
+            return Ok(None);
+        };
+        let path = &paths[index].nodes;
+        let carrier = self.carriers.get(&path[1]).cloned().ok_or(Error::State)?;
+        self.start_at(grant.clone(), path.clone(), &carrier, reading)
+            .map(Some)
+    }
+
+    /// The one rule choosing which of a decision's paths (in Policy order) a
+    /// new circuit uses: the first whose next hop has a carrier and whose
+    /// last handshake did not end unanswered within its pause, else the first
+    /// with a carrier. A preferred path whose next hop lacks a carrier (e.g.
+    /// the direct one while a relay carries the circuit) still gets interest,
+    /// so the next circuit can use it; with no carrier at all every next hop
+    /// gets interest and `None` is returned. Established circuits keep their
+    /// own path.
+    pub fn choose_path<'p>(
+        &mut self,
+        paths: impl IntoIterator<Item = &'p [NodeId]>,
+    ) -> Option<usize> {
+        let desired = self.desired.clone();
+        self.choose_at(paths, &View::of(&desired))
+    }
+
+    fn choose_at<'p>(
+        &mut self,
+        paths: impl IntoIterator<Item = &'p [NodeId]>,
+        reading: &View<'_>,
+    ) -> Option<usize> {
+        let paths: Vec<&[NodeId]> = paths.into_iter().collect();
+        let carried = |path: &[NodeId]| {
+            path.get(1)
+                .is_some_and(|next| self.carriers.contains_key(next))
+        };
+        let chosen = paths
+            .iter()
+            .position(|path| carried(path) && !self.first.paused(path, reading.instant))
+            .or_else(|| paths.iter().position(|path| carried(path)));
+        let preferred: Vec<NodeId> = paths[..chosen.unwrap_or(paths.len())]
+            .iter()
+            .filter(|path| !carried(path))
+            .filter_map(|path| path.get(1).copied())
+            .collect();
+        for next in preferred {
+            self.first.interest(next);
         }
-        for path in paths {
-            if let Some(next) = path.nodes.get(1) {
-                self.first.interest(*next);
-            }
-        }
-        Ok(None)
+        chosen
     }
 
     /// Progress queued first packets: start handshakes whose adjacency became

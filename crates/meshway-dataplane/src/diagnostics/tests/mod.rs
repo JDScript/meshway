@@ -61,6 +61,10 @@ impl Fixture {
         Self::open_route(false).await
     }
     async fn open_route(relay: bool) -> Self {
+        Self::open_with(relay, relay).await
+    }
+    /// `relay` enrolls a third Node; `route` makes every path go through it.
+    async fn open_with(relay: bool, route: bool) -> Self {
         let server = meshway_test_server::TestServer::start_with(meshway_test_server::Options {
             hold: None,
             pin: false,
@@ -118,7 +122,7 @@ impl Fixture {
             ip: vec!["icmp:*".into()],
             bidirectional: false,
         }];
-        if relay {
+        if route {
             cfg.routing.mesh = vec![meshway_configuration::MeshRoute {
                 remark: String::new(),
                 src: vec![format!("node:{a}")],
@@ -661,5 +665,47 @@ async fn observations_of_one_circuit_share_a_probe_and_each_get_a_sample() {
         .collect();
     assert_eq!(samples.len(), 2, "both observations measured by one probe");
     assert_eq!(samples[&second.id], shared);
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn auto_ping_takes_the_relay_when_the_direct_next_hop_has_no_carrier() {
+    let mut fixture = Fixture::open_with(true, false).await;
+    let ids: Vec<_> = fixture
+        .controls
+        .iter()
+        .map(|control| control.status().binding.unwrap().node_id)
+        .collect();
+    let (source, target, relay) = (ids[0], ids[1], ids[2]);
+    let carrier = meshway_configuration::execution::Carrier {
+        dialer: source,
+        listener: relay,
+        listener_key: "udp".into(),
+        protocol: meshway_configuration::TransportProtocol::NativeUdp,
+    };
+    let carriers = BTreeMap::from([(relay, carrier)]);
+    let mut secure = fixture.secure(0, carriers.clone());
+    assert_eq!(
+        fixture.owner.tasks[&fixture.task.id].path,
+        [source, target],
+        "Policy prefers the direct path"
+    );
+    let segment = fixture.owner.tasks[&fixture.task.id].segment;
+    let actions = fixture.owner.actions(&mut secure, &carriers, MAX_TASKS);
+    assert_eq!(actions.len(), 1);
+    assert_eq!(
+        actions[0].frame.next(),
+        relay,
+        "the handshake goes through R"
+    );
+    let task = &fixture.owner.tasks[&fixture.task.id];
+    assert_eq!(task.path, [source, relay, target]);
+    assert!(task.segment > segment, "a new path is a new segment");
+    let interests: Vec<_> = secure
+        .take_adjacency_interests()
+        .into_iter()
+        .map(|interest| interest.peer)
+        .collect();
+    assert_eq!(interests, [target], "the direct adjacency is still wanted");
     fixture.close().await;
 }

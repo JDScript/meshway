@@ -39,6 +39,7 @@ pub(super) fn circuit(state: State, parent: &CancellationToken) -> Circuit {
         keepalive: None,
         adjacent: Vec::new(),
         origin: true,
+        unanswered_handshake: false,
         selected: None,
         send: Default::default(),
         receive: Default::default(),

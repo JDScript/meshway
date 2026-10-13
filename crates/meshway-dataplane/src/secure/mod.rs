@@ -417,6 +417,8 @@ struct Circuit {
     adjacent: Vec<(NodeId, Option<PeerBoot>)>,
     /// This Node is the circuit's origin (`path[0]`).
     origin: bool,
+    /// Retired as an origin whose handshake deadline passed unanswered.
+    unanswered_handshake: bool,
     /// The exact path this owner admitted, with its dial candidates.
     selected: Option<Arc<LogicalPath>>,
     send: [SendNonce; 2],
@@ -477,6 +479,7 @@ impl Circuit {
             keepalive: None,
             adjacent,
             origin,
+            unanswered_handshake: false,
             selected,
             send: Default::default(),
             receive: Default::default(),
@@ -629,6 +632,12 @@ impl Circuit {
                 handshake_expires_at_ms = self.handshake.ms,
                 "Dataplane circuit retired");
         }
+        self.unanswered_handshake = self.origin
+            && matches!(self.state, State::Initiator(_))
+            && !self.cancellation.is_cancelled()
+            && !self
+                .handshake
+                .live_at(Instant::now(), crate::authority::now_ms());
         self.cancellation.cancel();
         self.state = State::Closed;
         self.recovery = Default::default();
@@ -968,6 +977,13 @@ impl SecureNode {
     }
 
     fn bury(&mut self, id: [u8; 32], circuit: &Circuit, now_ms: u64) {
+        if circuit.unanswered_handshake {
+            self.first.unanswered(
+                &circuit.context.path,
+                Instant::now(),
+                self.limits.handshake_timeout,
+            );
+        }
         let until = circuit.context.initiated_at_ms.saturating_add(
             u64::try_from((self.limits.handshake_timeout + 2 * INIT_SKEW).as_millis())
                 .unwrap_or(u64::MAX),
@@ -1307,6 +1323,7 @@ impl SecureNode {
                         circuit.recovery.response =
                             Some(recovery::Stage::new(fingerprint, guard, None)?);
                         circuit.recovery.init = None;
+                        self.first.answered(&circuit.context.path);
                         Ok(Received::Established {
                             circuit: circuit.context.circuit,
                             response: None,

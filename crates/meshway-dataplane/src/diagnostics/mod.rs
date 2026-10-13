@@ -67,6 +67,10 @@ impl Output {
 struct Task {
     task: ObservationTask,
     netmap: NetmapRef,
+    /// Observable paths this task may measure, in Policy order; a bound
+    /// (Server) path is the only one.
+    candidates: Vec<Vec<NodeId>>,
+    /// The candidate chosen for the current circuit (SecureNode's rule).
     path: Vec<NodeId>,
     segment: Sequence,
     circuit: Option<[u8; 32]>,
@@ -138,7 +142,15 @@ impl Owner {
         }
         let mut plans = Vec::with_capacity(tasks.len());
         for (index, task) in tasks.iter().enumerate() {
-            let (path, supported) = bind(desired, instance, task)?;
+            let (candidates, supported) = bind(desired, instance, task)?;
+            // The current choice survives while the candidates are unchanged.
+            let path = self
+                .tasks
+                .get(&task.id)
+                .filter(|old| old.candidates == candidates)
+                .map(|old| old.path.clone())
+                .or_else(|| candidates.first().cloned())
+                .unwrap_or_default();
             if tasks[..index].iter().any(|old| old.id == task.id) {
                 return Err(Error::Binding);
             }
@@ -158,15 +170,16 @@ impl Owner {
                     old.segment
                 });
             }
-            plans.push((task, path, segment, supported));
+            plans.push((task, candidates, path, segment, supported));
         }
         self.tasks
             .retain(|id, _| tasks.iter().any(|task| task.id == *id));
-        for (task, path, segment, supported) in plans {
+        for (task, candidates, path, segment, supported) in plans {
             let now = Instant::now();
             if let Some(old) = self.tasks.get_mut(&task.id)
                 && old.netmap == netmap
                 && !old.output_invalidated.is_cancelled()
+                && old.candidates == candidates
                 && old.path == path
                 && old.task.service == task.service
                 && old.task.metrics == task.metrics
@@ -202,6 +215,7 @@ impl Owner {
                 Task {
                     task: task.clone(),
                     netmap,
+                    candidates,
                     path,
                     segment,
                     circuit: None,
@@ -386,6 +400,29 @@ impl Owner {
                     },
                 ));
                 continue;
+            }
+            // A task without a live circuit takes the path a new circuit
+            // would: SecureNode's one choice over its candidates.
+            let live = task
+                .circuit
+                .and_then(|id| secure.circuit_info(id).ok().flatten())
+                .is_some_and(|info| info.state != CircuitState::Closed);
+            if !live
+                && let Some(index) = secure.choose_path(task.candidates.iter().map(Vec::as_slice))
+                && task.candidates[index] != task.path
+            {
+                let Ok(segment) = task.segment.checked_next() else {
+                    task.output = Some(output(
+                        task,
+                        ObservationUpdate::Phase {
+                            phase: ReportedObservationPhase::Failed,
+                        },
+                    ));
+                    continue;
+                };
+                task.path = task.candidates[index].clone();
+                task.segment = segment;
+                task.circuit = None;
             }
             let Some(carrier) = task.path.get(1).and_then(|node| carriers.get(node)) else {
                 preparation_stage(task, "first_hop_channel");
@@ -724,12 +761,13 @@ fn valid_task(task: &ObservationTask, now: u64) -> Result<(), Error> {
     Ok(())
 }
 
-/// Bind on the source's own netmap decision.
+/// Bind on the source's own netmap decision: the observable paths it may
+/// measure, in Policy order (only the bound one once the Server names it).
 fn bind(
     desired: &Desired,
     instance: Option<InstanceId>,
     task: &ObservationTask,
-) -> Result<(Vec<NodeId>, bool), Error> {
+) -> Result<(Vec<Vec<NodeId>>, bool), Error> {
     use meshway_configuration::execution::ObservationServiceScope;
     let now = u64::try_from(Utc::now().timestamp_millis()).map_err(|_| Error::Binding)?;
     valid_task(task, now)?;
@@ -753,11 +791,15 @@ fn bind(
         Err(crate::secure::Error::Unsupported) => return Ok((Vec::new(), false)),
         Err(_) => return Err(Error::Binding),
     };
-    if task.path.as_ref().is_some_and(|path| !paths.contains(path)) {
+    let paths = match &task.path {
+        Some(path) if !paths.contains(path) => return Err(Error::Binding),
+        Some(path) => vec![path.clone()],
+        None => paths,
+    };
+    if paths.is_empty() {
         return Err(Error::Binding);
     }
-    let path = paths.into_iter().next().ok_or(Error::Binding)?;
-    Ok((path, true))
+    Ok((paths, true))
 }
 
 fn preparing_failure(task: &mut Task, now: Instant) {

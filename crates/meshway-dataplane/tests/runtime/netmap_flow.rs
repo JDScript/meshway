@@ -631,3 +631,85 @@ async fn tcp_flow_and_its_reply_stay_on_the_original_circuit_through_renewal() {
     ));
     f.close().await;
 }
+
+/// A↔B allowed directly as well as through R: Policy's paths are [A, B]
+/// then [A, R, B].
+async fn direct_or_relayed() -> NetmapMesh {
+    NetmapMesh::with(super::support::netmap::DAY_MS, |cfg, _| {
+        cfg.routing.mesh.clear()
+    })
+    .await
+}
+
+#[tokio::test]
+async fn a_direct_path_without_a_carrier_relays_and_keeps_wanting_the_direct_adjacency() {
+    let mut f = direct_or_relayed().await;
+    let [_, r, b] = f.ids();
+    let packet = f.mesh_udp(false, 42424);
+    let Outbound::Queued { init: Some(init) } = f.a.outbound(packet).unwrap() else {
+        panic!("the relayed path starts at once")
+    };
+    assert_eq!(init.next(), r, "relayed through R");
+    let interests: Vec<_> =
+        f.a.take_adjacency_interests()
+            .into_iter()
+            .map(|interest| interest.peer)
+            .collect();
+    assert_eq!(
+        interests,
+        [b],
+        "the preferred direct adjacency is still wanted"
+    );
+    let id = f.finish_handshake(init).await;
+    let mut flushed = f.a.flush(32);
+    let Ok(Flushed::Send(job)) = flushed.remove(0) else {
+        panic!("queued packet")
+    };
+    assert_eq!(job.circuit(), id);
+    delivered(&mut f, sealed(job));
+    f.close().await;
+}
+
+#[tokio::test]
+async fn an_unanswered_path_is_paused_and_the_next_circuit_takes_another_one() {
+    let mut f = direct_or_relayed().await;
+    let [a, r, b] = f.ids();
+    f.rebuild(
+        meshway_dataplane::secure::Limits {
+            handshake_timeout: Duration::from_millis(100),
+            ..Default::default()
+        },
+        Default::default(),
+    );
+    // A has a carrier to B, but nothing on it is ever answered.
+    let direct = meshway_dataplane::secure::Carrier {
+        dialer: a,
+        listener: b,
+        listener_key: "tcp".into(),
+        protocol: meshway_model::TransportProtocol::NativeTcp,
+    };
+    f.a.set_carriers(BTreeMap::from([(r, f.ar.carrier.clone()), (b, direct)]))
+        .unwrap();
+    let packet = f.mesh_udp(false, 42424);
+    let Outbound::Queued { init: Some(lost) } = f.a.outbound(packet).unwrap() else {
+        panic!("a new flow starts its circuit")
+    };
+    assert_eq!(lost.next(), b, "the direct path comes first");
+    drop(lost);
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    f.a.maintain().unwrap();
+    // The direct handshake ended unanswered: the relay carries the next one.
+    let packet = f.mesh_udp(false, 42424);
+    let Outbound::Queued { init: Some(init) } = f.a.outbound(packet).unwrap() else {
+        panic!("a new circuit on another path")
+    };
+    assert_eq!(init.next(), r);
+    f.finish_handshake(init).await;
+    // Its pause (one handshake timeout) over, the direct path is tried again.
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    assert_eq!(
+        f.a.choose_path([[a, b].as_slice(), [a, r, b].as_slice()]),
+        Some(0)
+    );
+    f.close().await;
+}
