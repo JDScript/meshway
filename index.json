@@ -1,8 +1,291 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-13T16:52:46.521260+00:00",
+  "updatedAt": "2026-10-13T18:03:29.820929+00:00",
   "runs": [
+    {
+      "id": 38443118508,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "v0.1.0-alpha.6",
+      "commit": "1fffe7a9f549e58dada0646b9d5769ac1c312101",
+      "message": "release: workspace version 0.1.0-alpha.6",
+      "createdAt": "2026-10-13T17:59:31Z",
+      "updatedAt": "2026-10-13T18:00:16Z",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/JDScript/meshway/actions/runs/38443118508",
+      "jobs": [
+        {
+          "id": 115454518657,
+          "name": "changes",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-13T18:00:02Z",
+          "completedAt": "2026-10-13T18:00:15Z",
+          "seconds": 13.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38443118508/job/115454518657"
+        },
+        {
+          "id": 115454850831,
+          "name": "web",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "skipped",
+          "startedAt": "2026-10-13T18:00:15Z",
+          "completedAt": "2026-10-13T18:00:15Z",
+          "seconds": 0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38443118508/job/115454850831"
+        },
+        {
+          "id": 115454852154,
+          "name": "cargo",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "skipped",
+          "startedAt": "2026-10-13T18:00:15Z",
+          "completedAt": "2026-10-13T18:00:15Z",
+          "seconds": 0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38443118508/job/115454852154"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 38443118466,
+      "attempt": 1,
+      "workflow": "Perf",
+      "event": "push",
+      "branch": "main",
+      "commit": "1fffe7a9f549e58dada0646b9d5769ac1c312101",
+      "message": "release: workspace version 0.1.0-alpha.6",
+      "createdAt": "2026-10-13T17:59:31Z",
+      "updatedAt": "2026-10-13T17:59:32Z",
+      "status": "pending",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/38443118466",
+      "jobs": [],
+      "artifacts": []
+    },
+    {
+      "id": 38443118240,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "1fffe7a9f549e58dada0646b9d5769ac1c312101",
+      "message": "release: workspace version 0.1.0-alpha.6",
+      "createdAt": "2026-10-13T17:59:31Z",
+      "updatedAt": "2026-10-13T18:00:30Z",
+      "status": "queued",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/38443118240",
+      "jobs": [
+        {
+          "id": 115454633591,
+          "name": "changes",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-13T18:00:18Z",
+          "completedAt": "2026-10-13T18:00:29Z",
+          "seconds": 11.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38443118240/job/115454633591"
+        },
+        {
+          "id": 115454964886,
+          "name": "web",
+          "runner": "mars-14900k",
+          "status": "in_progress",
+          "conclusion": null,
+          "startedAt": "2026-10-13T18:00:32Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38443118240/job/115454964886"
+        },
+        {
+          "id": 115454965122,
+          "name": "cargo",
+          "runner": null,
+          "status": "queued",
+          "conclusion": null,
+          "startedAt": "2026-10-13T18:00:30Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38443118240/job/115454965122"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 38443118191,
+      "attempt": 1,
+      "workflow": "Build",
+      "event": "push",
+      "branch": "main",
+      "commit": "1fffe7a9f549e58dada0646b9d5769ac1c312101",
+      "message": "release: workspace version 0.1.0-alpha.6",
+      "createdAt": "2026-10-13T17:59:31Z",
+      "updatedAt": "2026-10-13T18:00:29Z",
+      "status": "queued",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/38443118191",
+      "jobs": [
+        {
+          "id": 115454962995,
+          "name": "node-linux (aarch64-unknown-linux-musl)",
+          "runner": null,
+          "status": "queued",
+          "conclusion": null,
+          "startedAt": "2026-10-13T18:00:29Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38443118191/job/115454962995"
+        },
+        {
+          "id": 115454963483,
+          "name": "node-linux (x86_64-unknown-linux-musl)",
+          "runner": null,
+          "status": "queued",
+          "conclusion": null,
+          "startedAt": "2026-10-13T18:00:29Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38443118191/job/115454963483"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 38442792404,
+      "attempt": 1,
+      "workflow": "Build",
+      "event": "push",
+      "branch": "main",
+      "commit": "f70f8ca2b970cf3d2c1388dcb6b8cd264892257f",
+      "message": "AGENTS: exit DNS resolution semantics and path-MTU handling (M1)",
+      "createdAt": "2026-10-13T17:57:05Z",
+      "updatedAt": "2026-10-13T18:00:29Z",
+      "status": "completed",
+      "conclusion": "cancelled",
+      "url": "https://github.com/JDScript/meshway/actions/runs/38442792404",
+      "jobs": [
+        {
+          "id": 115453377910,
+          "name": "node-linux (x86_64-unknown-linux-musl)",
+          "runner": "mars-epyc7543",
+          "status": "completed",
+          "conclusion": "cancelled",
+          "startedAt": "2026-10-13T17:57:08Z",
+          "completedAt": "2026-10-13T18:00:29Z",
+          "seconds": 201.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38442792404/job/115453377910"
+        },
+        {
+          "id": 115453378318,
+          "name": "node-linux (aarch64-unknown-linux-musl)",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "cancelled",
+          "startedAt": "2026-10-13T17:57:05Z",
+          "completedAt": "2026-10-13T17:59:32Z",
+          "seconds": 147.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38442792404/job/115453378318"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 38442792401,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "f70f8ca2b970cf3d2c1388dcb6b8cd264892257f",
+      "message": "AGENTS: exit DNS resolution semantics and path-MTU handling (M1)",
+      "createdAt": "2026-10-13T17:57:05Z",
+      "updatedAt": "2026-10-13T17:59:47Z",
+      "status": "completed",
+      "conclusion": "cancelled",
+      "url": "https://github.com/JDScript/meshway/actions/runs/38442792401",
+      "jobs": [
+        {
+          "id": 115453378396,
+          "name": "changes",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-13T17:57:08Z",
+          "completedAt": "2026-10-13T17:57:19Z",
+          "seconds": 11.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38442792401/job/115453378396"
+        },
+        {
+          "id": 115453486682,
+          "name": "web",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "cancelled",
+          "startedAt": "2026-10-13T17:57:22Z",
+          "completedAt": "2026-10-13T17:59:46Z",
+          "seconds": 144.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38442792401/job/115453486682"
+        },
+        {
+          "id": 115453486750,
+          "name": "cargo",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "cancelled",
+          "startedAt": "2026-10-13T17:57:19Z",
+          "completedAt": "2026-10-13T17:59:33Z",
+          "seconds": 134.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38442792401/job/115453486750"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 38442792391,
+      "attempt": 1,
+      "workflow": "Perf",
+      "event": "push",
+      "branch": "main",
+      "commit": "f70f8ca2b970cf3d2c1388dcb6b8cd264892257f",
+      "message": "AGENTS: exit DNS resolution semantics and path-MTU handling (M1)",
+      "createdAt": "2026-10-13T17:57:05Z",
+      "updatedAt": "2026-10-13T17:57:08Z",
+      "status": "in_progress",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/38442792391",
+      "jobs": [
+        {
+          "id": 115453377612,
+          "name": "perf",
+          "runner": "planck",
+          "status": "in_progress",
+          "conclusion": null,
+          "startedAt": "2026-10-13T17:57:06Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38442792391/job/115453377612"
+        },
+        {
+          "id": 115453378087,
+          "name": "perf-arm64",
+          "runner": "jp-tyo-arm64",
+          "status": "completed",
+          "conclusion": "failure",
+          "startedAt": "2026-10-13T17:57:08Z",
+          "completedAt": "2026-10-13T17:57:21Z",
+          "seconds": 13.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38442792391/job/115453378087"
+        }
+      ],
+      "artifacts": []
+    },
     {
       "id": 38431735323,
       "attempt": 1,
