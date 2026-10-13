@@ -2417,6 +2417,7 @@ dependencies = [
  "meshway-netns",
  "meshway-policy",
  "meshway-private-storage",
+ "meshway-rules",
  "meshway-test-server",
  "meshway-transport",
  "meshway-transport-stream",

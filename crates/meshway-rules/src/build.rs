@@ -77,26 +77,6 @@ fn label_suffixes(name: &str) -> impl Iterator<Item = &str> {
     std::iter::once(name).chain(name.match_indices('.').map(move |(i, _)| &name[i + 1..]))
 }
 
-macro_rules! merge {
-    ($name:ident, $t:ty) => {
-        fn $name(mut ranges: Vec<($t, $t)>) -> Vec<($t, $t)> {
-            ranges.sort_unstable();
-            let mut out: Vec<($t, $t)> = Vec::with_capacity(ranges.len());
-            for (start, end) in ranges {
-                match out.last_mut() {
-                    Some(last) if start <= last.1 || last.1.checked_add(1) == Some(start) => {
-                        last.1 = last.1.max(end);
-                    }
-                    _ => out.push((start, end)),
-                }
-            }
-            out
-        }
-    };
-}
-merge!(merge4, u32);
-merge!(merge6, u128);
-
 fn budget(limit: Limit, max: usize, actual: usize) -> Result<(), BuildError> {
     if actual > max {
         return Err(BuildError {
@@ -243,8 +223,8 @@ impl Builder {
             suffix: keep(&suffix, false),
             subdomain: keep(&subdomain, true),
             keyword,
-            v4: merge4(v4),
-            v6: merge6(v6),
+            v4: crate::ranges::merge(v4),
+            v6: crate::ranges::merge(v6),
         })
     }
 }
