@@ -170,7 +170,7 @@ async fn relay(
 }
 
 async fn relay_current(
-    mut local: UnixStream,
+    local: UnixStream,
     host: &str,
     port: u16,
     shared: Arc<Shared>,
@@ -206,18 +206,101 @@ async fn relay_current(
         }
         Err(last)
     };
-    let mut remote = tokio::select! { biased;
+    let remote = tokio::select! { biased;
         _ = scope.ended() => return Err(Error::Conflict),
         result = tokio::time::timeout(timeout, establish) => result.map_err(|_| Error::Io(io::ErrorKind::TimedOut.into()))??,
     };
-    // Finite pooled-connection lifetime plus fixed per-direction copy buffers.
-    // Expiry closes the connection; reqwest can establish a fresh protected one.
+    // Fixed per-direction copy buffers; a connection quiet in both directions
+    // for IDLE closes, and reqwest establishes a fresh protected one. Quiet,
+    // not age: a request in flight (a sync long poll holds up to ~55 s with
+    // no bytes) is never cut by the relay's own clock.
+    let activity = Activity::default();
+    let mut local = Active {
+        inner: local,
+        activity: &activity,
+    };
+    let mut remote = Active {
+        inner: remote,
+        activity: &activity,
+    };
     tokio::select! { biased;
         _ = scope.ended() => Err(Error::Conflict),
-        result = tokio::time::timeout(Duration::from_secs(300), tokio::io::copy_bidirectional_with_sizes(&mut local, &mut remote, 8192, 8192)) => {
-            result.map_err(|_| Error::Io(io::ErrorKind::TimedOut.into()))??;
+        _ = activity.quiet(IDLE) => Ok(()),
+        result = tokio::io::copy_bidirectional_with_sizes(&mut local, &mut remote, 8192, 8192) => {
+            result?;
             Ok(())
         },
+    }
+}
+
+/// A relayed connection with no byte in either direction this long closes.
+/// Longer than any request the Control client holds open.
+const IDLE: Duration = Duration::from_secs(120);
+
+/// When a byte last crossed the relay in either direction.
+struct Activity(std::sync::Mutex<tokio::time::Instant>);
+impl Default for Activity {
+    fn default() -> Self {
+        Self(std::sync::Mutex::new(tokio::time::Instant::now()))
+    }
+}
+impl Activity {
+    fn touch(&self) {
+        if let Ok(mut last) = self.0.lock() {
+            *last = tokio::time::Instant::now();
+        }
+    }
+    async fn quiet(&self, idle: Duration) {
+        loop {
+            let Ok(last) = self.0.lock().map(|last| *last) else {
+                return;
+            };
+            if tokio::time::Instant::now() >= last + idle {
+                return;
+            }
+            tokio::time::sleep_until(last + idle).await;
+        }
+    }
+}
+
+/// One side of the relay, recording every byte it delivers.
+struct Active<'a, S> {
+    inner: S,
+    activity: &'a Activity,
+}
+impl<S: tokio::io::AsyncRead + Unpin> tokio::io::AsyncRead for Active<'_, S> {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buffer: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        let before = buffer.filled().len();
+        let result = std::pin::Pin::new(&mut self.inner).poll_read(cx, buffer);
+        if buffer.filled().len() > before {
+            self.activity.touch();
+        }
+        result
+    }
+}
+impl<S: tokio::io::AsyncWrite + Unpin> tokio::io::AsyncWrite for Active<'_, S> {
+    fn poll_write(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        bytes: &[u8],
+    ) -> std::task::Poll<io::Result<usize>> {
+        std::pin::Pin::new(&mut self.inner).poll_write(cx, bytes)
+    }
+    fn poll_flush(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        std::pin::Pin::new(&mut self.inner).poll_flush(cx)
+    }
+    fn poll_shutdown(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        std::pin::Pin::new(&mut self.inner).poll_shutdown(cx)
     }
 }
 
@@ -291,6 +374,36 @@ impl Drop for Proxy {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn a_held_request_is_not_cut_and_only_quiet_connections_close() {
+        // Scaled: 200 ms stands for IDLE.
+        let idle = Duration::from_millis(200);
+        let activity = Activity::default();
+        // A held request: no byte for most of the idle time, then the answer.
+        let quiet = activity.quiet(idle);
+        tokio::pin!(quiet);
+        tokio::select! {
+            _ = &mut quiet => panic!("closed while a request was held"),
+            _ = tokio::time::sleep(idle * 3 / 4) => activity.touch(),
+        }
+        // An active connection lives past any fixed age.
+        let started = tokio::time::Instant::now();
+        let alive = async {
+            for _ in 0..10 {
+                tokio::time::sleep(idle / 2).await;
+                activity.touch();
+            }
+        };
+        tokio::select! {
+            _ = activity.quiet(idle) => panic!("an active connection closed"),
+            _ = alive => {},
+        }
+        assert!(started.elapsed() >= idle * 5);
+        let quiet_since = tokio::time::Instant::now();
+        activity.quiet(idle).await;
+        assert!(quiet_since.elapsed() >= idle * 9 / 10);
+    }
+
     #[test]
     fn families_alternate_from_the_resolvers_first_answer() {
         let addresses = |list: &[&str]| -> Vec<std::net::SocketAddr> {
