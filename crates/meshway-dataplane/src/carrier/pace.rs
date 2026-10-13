@@ -1,13 +1,11 @@
 //! Send pacing of one datagram channel. Not congestion control: the inner
 //! transport keeps that. A channel may send at most twice the highest rate
-//! it sent at in the last 100 ms (5 ms epochs), with a burst allowance of
-//! 2 ms at that rate (at least 64 KiB). A steady flow is never delayed, nor
-//! a window-limited one whose bursts repeat within a round trip of up to
-//! 100 ms; a burst far above that rate (a TCP window arriving at once after
-//! idle, from a fast host) leaves spread over the following epochs instead
-//! of at host speed, while the allowed rate still doubles every epoch it is
-//! used, so a growing flow is not capped. After 100 ms idle the allowance is
-//! the floor.
+//! it sent at in the last 20 ms (5 ms epochs), with a burst allowance of
+//! 2 ms at that rate (at least 64 KiB). A steady flow is never delayed; a
+//! burst far above the recent rate (a TCP window arriving at once from a
+//! fast host) leaves spread over the following epochs instead of at host
+//! speed, while the allowed rate still doubles every epoch it is used, so a
+//! growing flow is not capped. After 20 ms idle the allowance is the floor.
 //!
 //! A wait sleeps on the runtime timer (millisecond resolution); the burst
 //! allowance covers at least 1 ms at the paced rate, so a wait never idles
@@ -18,7 +16,7 @@ use std::{
 };
 
 const EPOCH: Duration = Duration::from_millis(5);
-const EPOCHS: usize = 20;
+const EPOCHS: usize = 4;
 const GAIN: u64 = 2;
 /// Bytes/s a channel may always use: 4 MiB/s (about 33 Mbit/s) before gain.
 const FLOOR: u64 = 4 << 20;
@@ -227,36 +225,6 @@ mod tests {
     }
 
     #[test]
-    fn window_limited_bursts_repeating_within_a_round_trip_are_not_delayed_again() {
-        let pacer = Pacer::default();
-        let start = Instant::now();
-        let mut drained = Vec::new();
-        for round in 0..6u32 {
-            // 1 MB arrives at once every 60 ms (a window per round trip).
-            let at = start + Duration::from_millis(60) * round;
-            let mut queued = 1_000_000u64;
-            let mut now = at;
-            while queued >= 1400 {
-                match pacer.admit([1400], now) {
-                    Ok(_) => {
-                        pacer.sent(1400, now);
-                        queued -= 1400;
-                    }
-                    Err(_) => now += Duration::from_micros(100),
-                }
-            }
-            drained.push(now - at);
-        }
-        assert!(drained[0] > Duration::from_millis(10), "{drained:?}");
-        assert!(
-            drained[2..]
-                .iter()
-                .all(|time| *time <= Duration::from_millis(2)),
-            "{drained:?}"
-        );
-    }
-
-    #[test]
     fn idle_returns_to_the_floor_and_oversized_waits_for_a_full_allowance() {
         let pacer = Pacer::default();
         let start = Instant::now();
@@ -267,7 +235,7 @@ mod tests {
             Duration::from_micros(250),
             Duration::from_millis(40),
         );
-        let later = start + Duration::from_millis(200);
+        let later = start + Duration::from_millis(100);
         assert!(pacer.admit([1400], later).is_ok());
         {
             let mut state = pacer.0.lock().unwrap();
