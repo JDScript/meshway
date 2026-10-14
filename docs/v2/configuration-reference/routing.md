@@ -202,7 +202,7 @@ nft 进程峰值 RSS 约 1.6 KB／区间（16,384 区间 28 MB）。带回显的
 
 用户选择属于持久的使用状态。重启后仍在 allowed 且未被锁定时恢复；否则采用当前管理员默认。任何方案切换都结束旧出口存量连接，不能携带旧方案的 NAT／流资格跨过去。
 
-`auto` 当前没有可信的地区输入：编译不使用节点的公网地址或 GeoIP，`auto` 总是采用 `auto.fallback`，状态中的 `auto.basis` 为 `noTrustedRegion`。按地区选择尚未实现。
+`auto` 当前没有可信的地区输入：编译不使用节点的公网地址或 GeoIP，`auto` 总是采用 `auto.fallback`，状态中的 `auto.basis` 为 `noTrustedRegion`。按地区选择尚未实现，设计稿见[自动方案设计](/v2/routing-auto-design)。
 
 #### 选择的入口
 
