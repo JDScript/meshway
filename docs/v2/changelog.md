@@ -2,6 +2,35 @@
 
 按合入 main 的顺序记录工作包、提交与证据 ID。规则见[工程流程](/v2/process)；性能数字的口径见[分层性能测量](/v2/node/performance)，验收状态见[验收范围](/v2/node/validation)。
 
+## 未发布
+
+第二轮审阅的行为／安全修复（F5a，`f5a/review-fixes`）：wire 6、IPC 11、`compilerVersion` `meshway-netmap-2` 与 Server schema 均不变。HTTP 契约：netmap 投影新增可省略的 `ProjectedConfiguration.eligibleExits`（为空时省略，已存 netmap 字节与 digest 不变）；旧 Node 严格解码会拒绝带非空该字段的 `sync` 回答，须先升级 Node 再升级 Server。Server 的 netmap 输入指纹改变：升级后某网络第一次重编译（任一配置、密钥、能力或选择变化）即按新投影刷新该网络全部 netmap，内容未变者保留 serial。UDP 邻接新增路径大小探测消息 `Probe`（类型 7），健康 Ping 不再接受填充：新旧节点混跑时该通道路径 MTU 为未知（不影响健康检查），两端都升级后恢复。系统 DNS 预约（`/run/meshway/dns-*/owner.json`）新增可省略的 `namespace.cookie`：降级到本版本之前的 daemon 会以 `storage` 拒绝读取已写入 cookie 的预约。
+
+- A1 修复：出口集合含源自身（`exit [A, S]`）而 A 被 topology 隔离、未登记或已吊销时，S 的投影里没有 A，节点把它当作“未启用”而判 direct，捕获边界放开。现在 Server 在投影里给出全量配置判定的出口资格（`eligibleExits`：保留规则的出口集合中排在另一节点之前、启用且 `exitEnabled` 的节点），节点只按它判定自身之前的出口，不再从“不在投影里”推断；A 可用时 S 经 A 或失败闭合。投影等价测试以全量资格为 oracle，生成器加入被孤岛隔开的自指规则。见 [Routing · Action](/v2/configuration-reference/routing#action)、[投影规则](/v2/node/netmap-design#内容字段)。
+- A2 修复：自身之前不可用的出口仍留在执行结果里，名称规则因此被算成多出口而误报 `dns_exit_plan_required`。现在自身之前的出口按全量资格过滤并保序（与 A1 同一实现 `matching::executed`）。
+- A3 修复：周期调度器总是先处理到期的目录且按 key 从头扫，两个 `updateInterval` 极短的 provider 可饿死其余目录与规则集刷新。现在网内在到期的目录与集合中取到期时刻最早的一项（同刻目录在前）。见[规则集 · 周期更新](/v2/configuration-reference/rule-sets#周期更新与生命周期)。
+- A4 修复：目录／成员翻页游标内含目录 URL（至多 2,048 B），封装后超过游标文本上限，长 URL 的第二页必为 `invalid_cursor`。游标改存查询与内容的 SHA-256 身份。
+- A5 修复：完整 State 报告的 `adjacencies` 未按读取者可见范围裁剪，权限收缩后读旧报告会泄露不可见 peer；现在与 `links` 同样裁剪。见 [网络 State](/v2/state-reference/network)。
+- A6：已接受目录的解析缓存以（sequence, 签名 digest）为内容身份，不再用（sequence, 验签毫秒）；同一毫秒、同一 sequence 接受的不同文档不再读到旧解析。
+- B1 修复：路由 MTU 9000（巨型帧）时路径 MTU 探测超过报文编解码上限，构造失败经 `?` 结束整个 UDP endpoint owner、Manager 退出。探测上限改为 `min(路由 MTU, 2,048 + IP/UDP 头)`，构造失败只结束这一次测量。见[外层路径 MTU](/v2/node/connectivity#path-mtu)。
+- B2 修复：listener 重试绑定后、被接管前到达新 instance 时，接管的 socket 仍带旧 instance 引用；离线绑定的普通 Native UDP 在首个 instance 到达后被原样接管，没有转为协调 socket。现在接管时按当前 instance 重新确认模式与引用，需要改绑时先同步释放旧 socket（不再撞上自己的端口，U1 中“自占 `EADDRINUSE`”的线索）。见 [listener 绑定与重试](/v2/node/connectivity#listener-bind-retry)。
+- B3 修复：数据面失败撤回（`reconfig(None)`）后 `meshway ping` 的本机直出 raw ICMP、出口与解析任务仍继续；现在撤回时取消并等待这些任务，请求以 `stopped` 结束。见 [诊断 · 探测](/v2/node/diagnostics)。
+- B4 修复：路径 MTU 搜索只升不降，路径静默变小后永远发现不了。每 10 分钟的重新搜索先重验已确认大小（期间旧值作为暂存事实），连续两次丢失即在 1,280 与它之间重新二分，连 1,280 都不通过时撤回为未知。
+- B5 修复：通道内层上限低于 1,280 时 IPv6 packet too big 被强制写成 1,280，源继续发 1,280 仍被拒，永不收敛。这样的通道现在不承载 IPv6：IPv6 包一律丢弃（`Error::Ipv6Unavailable`），本机一端回 ICMPv6 destination unreachable（no route）；不做外层分片重组。见[通道 MTU](/v2/node/dataplane#channel-mtu)。
+- B6 修复：路径 MTU 探测的签名不覆盖长度（填充未签名），被截短的探测仍得到有效 Pong，测量偏大。探测改为独立的 `Probe` 消息，签名含整个报文长度，接收方按实际收到的长度验签后才应答，并与健康 Ping 分开限速（此前同一轮发出的探测与健康 Ping 共用 250 ms 应答限速，探测常被吞掉）。
+- B7 修复：路径暂停在到期时连同次数一起被删，`10 s × 2^(n−1)` 退避累积不起来。到期只让路径重新可试，次数保留；应答、路径内容变化或有界回收（256 条，让位给暂停结束最久的）才清零。见[路径选择](/v2/node/connectivity)。
+- B8 修复：出口防火墙判定漏了 prerouting（含 raw），丢弃出口 TUN 入包或外部回包的 prerouting 规则不被发现。现在判定从出口 TUN 与出口接口进入的包；为不误伤 Docker 为发布容器加的 raw 规则（`-d <容器> ! -i <网桥> -j DROP`），目的地址按方向判定（转发为 Internet 分类地址，回包为出口接口地址或 Mesh 池）。见[出口前置条件](/v2/node/runtime)。
+- B9 修复：已安装角色的周期探测把出口 TUN 当作“尚不存在的新 TUN”，针对实际 `tun1` 的阻断被判为不命中。现在已安装的出口 TUN 按名字精确匹配。
+- B10：防火墙链遍历按（链, 包）记忆结果，共享子链不再成倍展开；一次判定至多评估 2^20 条规则，超过为 `firewallConflict`。
+- B11：协调暂停表在内容切换时剔除离开投影的 peer，且至多 1,024 个 peer。
+- B12 修复：conntrack dump 未检查 `NLM_F_DUMP_INTR`，被中断的 dump 被当作“无匹配”；现在为 `conntrackUnavailable`（已找到的条目仍算数）。
+- B13 修复：MSS clamp 入队即被当作已安装，nft 事务失败后同一上限永不重试；现在按执行回执，失败的同一内容按 1 s 起翻倍、上限 60 s 重试。
+- C1 修复：Linux 读回的缓冲是授予值的两倍，日志、`meshway status` 与默认值提升按“读回 < 请求”判断，被截到请求与两倍请求之间时漏报 `limited`（例如 4 MiB 请求被截到 3 MiB，读回 6 MiB）。判定集中到 `raw::satisfies`（Linux 上读回需不小于请求的两倍）。见 [UDP 批量接口](/v2/node/transport#udp-批量接口)。
+- C6：系统 DNS 的 namespace 预约带 namespace cookie，并与 Underlay 记录共用唯一比较规则 `meshway_netns::same`：inode 被新 namespace 复用时不再被当作同一个 namespace（预约以冲突失败、不接管）；本版本之前的无 cookie 预约按 inode 接管并改写为带 cookie。见[生命周期](/v2/node/runtime#生命周期)。
+- C11：`meshway ping` 的 echo 构造改用 packet 模块唯一的 Internet checksum，删除第二份实现。
+
+验证：每条有对应反例的行为测试（A1、A4、A5、A6、B2 的测试已在修复前代码上实测失败）；Linux 专属单元测试（防火墙、ctnetlink、DNS namespace、netns 规则）在 Planck 312 项全部通过；Planck 18 行矩阵 `20261014T003034Z-604c44b1`（`9500dc12`）全部通过；证据 `.meshway/validation/f5a/`。
+
 ## v0.1.0-alpha.7
 
 范围：wire 6、`compilerVersion` `meshway-netmap-2`、Server schema 不变；IPC 11（`Status.sockets`，CLI 与 daemon 一起升级）；Native UDP socket 默认缓冲接收 4 MiB／发送 2 MiB，经 `SO_RCVBUFFORCE`／`SO_SNDBUFFORCE` 不受 `rmem_max` 截断；出口 conntrack 经内核 ctnetlink（宿主不再需要 `conntrack` 工具）；Underlay namespace 身份含 netns cookie；listener 绑定失败退避重试；HTTP 契约 `IssueCode` 新增 `ephemeral_listener_port`（警告）；以及下列 M3、U1、M2 工作包。
