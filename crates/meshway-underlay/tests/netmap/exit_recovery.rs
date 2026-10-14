@@ -100,16 +100,22 @@ fn tool(program: &str, arguments: &[&str]) -> String {
 }
 
 /// End the source's echo conntrack entry, as its ICMP timeout does. The
-/// kernel derives an entry's id from its slot; a local flow takes the freed
-/// one first, so the next entry of the same echo id has a new id.
-fn end_entry() {
+/// kernel derives an entry's id from its slot; local flows take freed slots
+/// first, so the next entry of the same echo id usually has a new id. The
+/// returned sockets keep those flows' entries alive.
+fn end_entry() -> Vec<std::net::UdpSocket> {
     tool(
         "conntrack",
         &["-D", "-f", "ipv4", "-p", "icmp", "-s", &SOURCE.to_string()],
     );
-    let socket = std::net::UdpSocket::bind("0.0.0.0:0").unwrap();
     let remote = std::net::SocketAddr::from((routable(), 18080));
-    socket.send_to(b"x8-slot", remote).unwrap();
+    (0..16)
+        .map(|_| {
+            let socket = std::net::UdpSocket::bind("0.0.0.0:0").unwrap();
+            socket.send_to(b"x8-slot", remote).unwrap();
+            socket
+        })
+        .collect()
 }
 
 /// The exit role's return table: the one of its pair rule for this source.
@@ -156,17 +162,31 @@ async fn netmap_exit_echo_reconnect_and_route_loss_stop_only_the_role() {
     // The connection's entry ends while sequence 1 is still projected (its
     // ICMP timeout, here a deletion); sequence 2 creates the next entry.
     let old = exchange(&role, &scope, 1).await;
-    end_entry();
-    let current = exchange(&role, &scope, 2).await;
+    // A re-created entry that took the same slot has the same id; end it
+    // again until the id differs, as after the 17:47 incident.
+    let mut slots = Vec::new();
+    let mut sequence = 1;
+    let current = loop {
+        slots.extend(end_entry());
+        sequence += 1;
+        let current = exchange(&role, &scope, sequence).await;
+        if current != old || sequence == 6 {
+            break current;
+        }
+    };
     assert_ne!(old, current, "a new conntrack entry for the same echo id");
     // A later sequence joins the current entry; the stale one is no owner.
-    let joined = exchange(&role, &scope, 3).await;
+    let joined = exchange(&role, &scope, 10).await;
     assert_eq!(joined, current);
     // Retiring sequence 1 (its entry long gone) keeps the current one.
     role.retire_flow(incarnation(1)).await.unwrap();
     assert!(role.is_active(), "a replaced echo entry is no conflict");
-    role.retire_flow(incarnation(2)).await.unwrap();
+    // Sequence 10 stays projected: its pair rule names the return table below.
+    for retired in 2..=sequence {
+        role.retire_flow(incarnation(retired)).await.unwrap();
+    }
     assert!(role.is_active());
+    drop(slots);
     println!("X8_EXIT_ECHO_RECONNECT=old={old},current={current},role-kept");
 
     // Someone deletes the source's return route: only the role stops, and
