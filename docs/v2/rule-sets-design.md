@@ -583,4 +583,4 @@ R0 列出的七项已由用户决定并写入相应章节：regex v1 逐条跳�
 - 目录超过 7 天未前进时的 `stale` 视图字段未实现；Server 自己取回目录的最后错误只持久保存（`rule_set_catalog_checks.problem`），尚未出现在目录页或 409 的 params 中。
 - 1,000 节点共享一个 artifact 的 Server perf（存储、刷新耗时、授权查询）未测。
 - 未在 Linux arm64 与常驻 lab 节点上测量；macOS 时间波动较大。R1 的 Linux clippy 覆盖 `aarch64-unknown-linux-musl`，测试与实测只在 macOS arm64 与 planck x86_64 上运行。
-- 集成黑盒测试（`apps/meshway-server/tests/`）的 App 使用生产 HTTPS 连接器：它们创建网络后，Server 会在后台尝试取回内置目录（离线时 DNS 失败并退避，不影响结果）。库单测使用离线连接器，资源测试注入自己的 HTTPS 源。
+- 测试不访问外网：库单测、集成黑盒测试（`apps/meshway-server/tests/`）与各测试 Server（`meshway-test-server`、daemon／CLI／control-client 的测试）都以 `App::open_with_connector(…, resources::download::Offline)` 装配 App（离线连接器不解析、不连接，取回立即失败），资源测试注入自己的 HTTPS 源。例外是启动 `meshway-server` 可执行文件的 `http_cli` 测试：可执行文件没有连接器注入点，`open_event_streams_do_not_block_signal_shutdown_or_storage_release` 创建网络后它在后台尝试取回内置目录（H1 在 planck 上以 `strace` 跟踪全量 243 个 Server 测试，唯一的非回环连接是这个进程对 `raw.githubusercontent.com:443` 的一次取回及其 DNS 查询；离线时失败并退避，不影响结果）。

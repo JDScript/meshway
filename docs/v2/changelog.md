@@ -8,6 +8,7 @@
 
 - listener 同端口改绑：重试 owner 已绑定、尚未被 Manager 接管的 socket 在该 owner 退役（内容变化使声明改变或 key 消失、Manager 重启／`shutdown`）后仍留在接管队列里，随后同端口的新 bind 得到 `EADDRINUSE`、再进入 1 s 重试。现在退役时同步关闭该 socket 再 bind（唯一 owner `manager::rebind`）；首个 instance 到达的普通 listener → 协调 socket 改绑已是先 join 再 bind，补真实同端口测试。见 [listener 绑定与重试](/v2/node/connectivity#listener-bind-retry)。
 - `meshway status` 的兜底路径：此前只有 `relayIdle` 显示 `via <R>`，`idle`／`unreachable`／`offline` 的 peer 不显示路径。IPC 11 的 `peers[]` 新增可省略的 `idlePath`（`route` 为 `direct`／`relay`／`none`，`via`）：任一既无通道也无 circuit 的 peer 给出新 circuit 此刻会走的路径，与首包同一选择（`SecureNode::idle_route`，复用 `ranked`，不另排序）；有通道或 circuit 时省略、显示实际路径。ENDPOINT 列为 `direct (idle)`／`relay (idle) via <R>`／`no path`；旧 daemon 不发该字段时 CLI 保持原显示。见[运行状态](/v2/node/runtime)。
+- Server 测试离线：`App::open_with_connector` 是 App 装配资源取回连接器的注入点（`resources::download::{Connector, Https, Offline}` 公开；`App::open` 仍为生产 `Https`）。Server 集成黑盒测试与各测试 Server 改用 `Offline`。planck 上 `strace` 跟踪全量 Server 测试（243 通过）：除启动生产可执行文件的 `http_cli` 测试外无非回环连接。见[规则集设计](/v2/rule-sets-design)。
 
 ## v0.1.0-alpha.8
 
