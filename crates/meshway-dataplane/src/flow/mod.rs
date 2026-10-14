@@ -147,6 +147,15 @@ struct Flow {
     related: RelatedBudget,
 }
 
+/// An echo request's flow (one identifier and sequence) waits this long for
+/// its reply or an ICMP error about it; ordinary flows idle much longer. At
+/// an exit every echo flow holds one projection of the owner's bounded
+/// capacity, so a pinging or tracerouting source holds only its last few.
+pub(crate) const ECHO_UNANSWERED: Duration = Duration::from_secs(10);
+/// After its reply an echo flow ends this soon: a duplicate reply still
+/// returns, and a late one meets the retired sequence's quarantine.
+pub(crate) const ECHO_ANSWERED: Duration = Duration::from_secs(2);
+
 /// At most [`RELATED_PER_SECOND`] ICMP errors per flow and second at each
 /// endpoint: one error answers one packet, the bound stops a flood of them.
 pub(crate) const RELATED_PER_SECOND: u8 = 10;
@@ -752,9 +761,21 @@ impl FlowTable {
             false
         };
         let closing = remove && is_exit;
-        let mut cap = time.idle(self.limits.idle_timeout)?;
+        let echo = matches!(facts.transport, Transport::Echo { .. });
+        let mut cap = time.idle(if echo {
+            self.limits.idle_timeout.min(ECHO_UNANSWERED)
+        } else {
+            self.limits.idle_timeout
+        })?;
         if closing {
             cap = cap.min(existing.ok_or(Error::Flow)?.cap);
+        }
+        // Its reply completes one echo exchange: the flow (and an exit
+        // projection) ends shortly after, never later than before it.
+        if echo && direction == Direction::Reply {
+            cap = time
+                .idle(self.limits.idle_timeout.min(ECHO_ANSWERED))?
+                .min(existing.ok_or(Error::Flow)?.cap);
         }
         let flow = Flow {
             forward,

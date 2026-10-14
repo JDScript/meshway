@@ -572,3 +572,33 @@ fn icmp_errors_of_an_echo_flow_name_its_exact_sequence() {
         Err(Error::Flow)
     ));
 }
+
+#[test]
+fn an_echo_flow_ends_soon_after_its_reply_and_waits_briefly_for_one() {
+    // Unanswered: the request's flow waits ECHO_UNANSWERED, not the
+    // ordinary idle timeout.
+    let mut scene = Scene::new(BusinessProtocol::IcmpEcho, false, true);
+    forward(&mut scene, echo(false, 21, 1));
+    scene.advance(crate::flow::ECHO_UNANSWERED - Duration::from_millis(100));
+    reply(&mut scene, echo(true, 21, 1));
+    forward(&mut scene, echo(false, 21, 2));
+    scene.advance(crate::flow::ECHO_UNANSWERED);
+    assert!(
+        scene
+            .process(3, None, 3, &[1, 2, 3], echo(true, 21, 2))
+            .is_err()
+    );
+    // Answered: a duplicate reply within ECHO_ANSWERED still returns, then
+    // the exchange's flow is gone at every hop.
+    let mut scene = Scene::new(BusinessProtocol::IcmpEcho, false, true);
+    forward(&mut scene, echo(false, 22, 1));
+    reply(&mut scene, echo(true, 22, 1));
+    scene.advance(crate::flow::ECHO_ANSWERED - Duration::from_millis(100));
+    reply(&mut scene, echo(true, 22, 1));
+    scene.advance(crate::flow::ECHO_ANSWERED);
+    assert!(
+        scene
+            .process(3, None, 3, &[1, 2, 3], echo(true, 22, 1))
+            .is_err()
+    );
+}
