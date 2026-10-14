@@ -635,6 +635,8 @@
   "configuration_bytes": "{count} 字节",
   "configuration_issue_netmap_budget": "节点太多，或某条边可用的承载组合太多，这一版的节点配置超出编译上限；减少后再应用，原样重试不会成功",
   "configuration_issue_ephemeral_listener_port": "端口 {port} 位于 Linux 默认临时端口范围（{first}–{last}）内：其他程序的出站连接可能短暂占用它，节点会一直重试监听直到端口空闲",
+  "configuration_issue_auto_region_unmatched": "没有 auto 规则包含 {node} 的地区 {region}：auto 总是使用 fallback",
+  "configuration_issue_auto_region_missing": "{nodes} 默认使用 auto 但未声明地区：auto 使用 fallback",
   "configuration_issue_ineffective_block_option": "阻断规则阻断整条边，{field} 不起作用",
   "configuration_issue_resolver_outside_access": "在方案 {profile} 下，{node} 不经出口、直接访问解析器 {server}，而 {node} 的访问规则没有覆盖它的地址",
   "configuration_issue_shadowed_rule": "前面的规则（到第 {index} 条为止）已覆盖这条规则的全部目的地，它不会生效",

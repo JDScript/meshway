@@ -64,4 +64,5 @@ export const activityActionLabel: Record<ActivityAction, () => string> = {
   "joinLink.create": () => m.activity_join_link_create(),
   "joinLink.revoke": () => m.activity_join_link_revoke(),
   "routing.select": () => m.activity_routing_select(),
+  "routing.autoResolve": () => m.activity_routing_auto_resolve(),
 }
