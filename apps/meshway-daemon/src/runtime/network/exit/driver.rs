@@ -21,6 +21,8 @@ type Confirmation = (FlowIncarnation, exit::ProjectionScope, bool);
 enum Event {
     Work(Work),
     Confirmed(Result<Confirmation, tokio::task::JoinError>),
+    /// The role's owner stopped by itself.
+    Ended,
 }
 
 /// At most this many installations share one kernel round.
@@ -101,6 +103,7 @@ pub(super) async fn run(
 ) -> Result<(), Problem> {
     let mut resources: BTreeMap<FlowIncarnation, Resource> = BTreeMap::new();
     let mut failed = false;
+    let mut ended = false;
     // A forward packet that died at this exit (TTL, MTU) never confirms; its
     // up to 3 s wait runs beside every other flow's work, not before it.
     let mut confirming = tokio::task::JoinSet::<Confirmation>::new();
@@ -110,6 +113,7 @@ pub(super) async fn run(
         let work = match deferred.pop_front() {
             Some(work) => Event::Work(work),
             None => tokio::select! {
+                () = role.stopped(), if !ended && !stop.is_cancelled() => Event::Ended,
                 Some(done) = confirming.join_next(), if !confirming.is_empty() => Event::Confirmed(done),
                 work = queue.recv() => match work {
                     Some(work) => Event::Work(work),
@@ -133,6 +137,10 @@ pub(super) async fn run(
             }
             Event::Confirmed(Err(_)) => {
                 failed = true;
+                None
+            }
+            Event::Ended => {
+                ended = true;
                 None
             }
         };
@@ -330,6 +338,7 @@ pub(super) async fn run(
                 .filter(|resource| !resource.revoked.is_cancelled())
                 .count() as u32,
             failed,
+            ended,
         };
         health.send_if_modified(|current| {
             if *current == next {
@@ -346,6 +355,7 @@ pub(super) async fn run(
     health.send_replace(Health {
         flows: 0,
         failed: failed || retired.is_err(),
+        ended,
     });
     retired.and(if failed {
         Err(Problem::Underlay)

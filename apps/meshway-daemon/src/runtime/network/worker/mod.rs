@@ -287,7 +287,10 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                     .as_mut()
                     .and_then(|state| state.exit.as_mut())
                     .is_some_and(|exit| {
-                        exit.health.has_changed().is_err() || exit.health.borrow_and_update().failed
+                        exit.health.has_changed().is_err() || {
+                            let health = exit.health.borrow_and_update();
+                            health.failed || health.ended
+                        }
                     });
                 if failed { Work::ExitFailed } else { Work::Tick }
             }
@@ -647,11 +650,31 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 withdraw(&mut engine, &reports, true).await;
                 continue;
             }
-            Work::ExitFailed
-            | Work::ExitReply(Err(_))
-            | Work::CarrierClosed
-            | Work::Packet(Err(_))
-            | Work::DnsFailure => {
+            Work::ExitFailed | Work::ExitReply(Err(_)) => {
+                // The exit role is a capability this Node provides to other
+                // sources, not a component its own traffic requires: its
+                // failure ends that role alone. Its flows retire with their
+                // projections; the applied content, capture, DNS and
+                // adjacencies stay. The capability probe reinstalls the role
+                // on the same content once its prerequisites hold.
+                let plane = engine.components_mut();
+                let cleanup = plane.withdraw_exit().await;
+                tracing::warn!(
+                    cleanup_failed = cleanup.is_err(),
+                    "Exit role failed; withdrawing it alone"
+                );
+                let capability = plane.exit_capability().await;
+                exit_recovered = engine.components().exit_pending()
+                    && capability
+                        .as_ref()
+                        .is_some_and(|fact| fact.status == meshway_model::exit::ExitStatus::Ready);
+                let mut report = reports.borrow().clone();
+                report.exit_capability = capability;
+                report.exit_flows = None;
+                reports.send_replace(report);
+                continue;
+            }
+            Work::CarrierClosed | Work::Packet(Err(_)) | Work::DnsFailure => {
                 // The decisions of every external ping go with the content.
                 diagnostics.withdraw().await;
                 let dns_error = matches!(work, Work::DnsFailure);

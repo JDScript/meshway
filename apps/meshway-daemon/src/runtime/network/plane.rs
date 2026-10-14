@@ -106,6 +106,25 @@ impl Plane {
         Some(capability)
     }
 
+    /// End only the installed exit role: its flows retire with their
+    /// projections; every other component keeps the applied content.
+    pub async fn withdraw_exit(&mut self) -> Result<(), Problem> {
+        let Some(state) = self.installed.as_mut() else {
+            return Ok(());
+        };
+        let Some(exit) = state.exit.take() else {
+            return Ok(());
+        };
+        let result = match &mut state.secure {
+            Some(secure) => exit.stop(secure).await,
+            None => Err(Problem::Underlay),
+        };
+        if let Some(capability) = &mut self.report.exit_capability {
+            capability.installed_families.clear();
+        }
+        result
+    }
+
     /// The applied content assigns this Node an exit role it has not
     /// installed (its prerequisites were unavailable when it was applied).
     pub fn exit_pending(&self) -> bool {

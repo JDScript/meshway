@@ -22,6 +22,10 @@ enum Work {
 pub(super) struct Health {
     pub flows: u32,
     pub failed: bool,
+    /// The role's Host owner stopped serving by itself (its own kernel
+    /// failure or an exit-owned object removed outside it), not on this
+    /// runtime's request.
+    pub ended: bool,
 }
 
 pub(super) struct Runtime {
