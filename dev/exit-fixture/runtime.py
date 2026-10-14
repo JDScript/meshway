@@ -180,10 +180,17 @@ def run_narrow_channel(command, detached, status, wait_for, addresses, r_node):
         wait_for(lambda: (channel(status("a")) or {}).get("inner") == NARROW_INNER,
                  "A's channel to R at the narrow MTU", 90)
         result["channel"] = channel(status("a"))
-        clamp = [line for line in command("a", "nft", "list", "tables")["stdout"].splitlines()
-                 if line.startswith("table inet meshway_mss_")]
-        if len(clamp) != 1:
-            raise RuntimeError("A has no MSS clamp table")
+
+        def clamp_tables():
+            return [line for line in command("a", "nft", "list", "tables")["stdout"].splitlines()
+                    if line.startswith("table inet meshway_mss_")]
+        # The worker applies the clamp on its next turn, at most once a second,
+        # after the channel facts change; Status shows those facts at once.
+        deadline = time.monotonic() + 5
+        while len(clamp := clamp_tables()) != 1:
+            if time.monotonic() >= deadline:
+                raise RuntimeError("A has no MSS clamp table")
+            time.sleep(.2)
         time.sleep(2)  # the clamp follows the channel facts within a second
         result["clampTable"] = command("a", "nft", "list", "table", *clamp[0].split()[1:])
         if f"maxseg size set {NARROW_INNER - 40}" not in result["clampTable"]["stdout"]:
