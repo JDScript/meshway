@@ -1,9 +1,11 @@
 //! Whether a foreign firewall can stop this exit's traffic. Only a rule that
 //! can match that traffic is a conflict: a blocking verdict or `policy drop`
-//! on the forward, output or postrouting hook whose interface constraints do
-//! not exclude the exit TUN and the default-route interfaces. Rules confined
-//! to other interfaces (Docker's bridges, say) are not. Never rewrite a host
-//! firewall to obtain readiness.
+//! on the prerouting (raw, mangle, nat and filter priorities alike),
+//! forward, output or postrouting hook whose interface and destination
+//! constraints do not exclude the exit TUN, the default-route interfaces and
+//! the addresses exit packets carry. Rules confined to other interfaces or
+//! addresses (Docker's bridges and containers, say) are not. Never rewrite a
+//! host firewall to obtain readiness.
 use super::{
     ExitError,
     command::{Commands, Tool},
@@ -12,25 +14,39 @@ use super::{
 use meshway_model::exit::ExitUnavailableReason as Reason;
 use rtnetlink::packet_route::{
     AddressFamily,
+    address::{AddressAttribute, AddressMessage},
     link::{LinkAttribute, LinkMessage},
     route::{RouteAddress, RouteAttribute, RouteMessage, RouteType},
 };
 use serde_json::Value;
 use std::collections::BTreeMap;
 
-/// The interfaces exit traffic crosses besides its own TUN.
+/// The interfaces and addresses exit traffic crosses besides its own TUN.
 #[derive(Clone, Debug, Default)]
 pub(in crate::linux::kernel) struct Crossing {
     /// Interfaces of main-table IPv4 routes toward Internet-classified
     /// addresses: forwarded traffic leaves, replies arrive. Routes only to
     /// private networks (Docker bridges, say) are not exit paths to judge.
     pub egress: Vec<String>,
-    /// Every interface present. The exit TUN is a new kernel `tun<N>`, none of these.
+    /// Every interface present.
     pub present: Vec<String>,
+    /// The installed exit TUN's name, matched exactly; without one the exit
+    /// TUN is a new kernel `tun<N>`, none of `present`.
+    pub installed: Option<String>,
+    /// IPv4 addresses of the egress interfaces: a reply's destination before
+    /// the masquerade is undone.
+    pub local: Vec<std::net::Ipv4Addr>,
+    /// Mesh address pools: a reply's destination after it is undone, and
+    /// that of this host's own errors toward the exit TUN.
+    pub mesh: Vec<ipnet::IpNet>,
 }
 
 impl Crossing {
-    pub fn observe(links: &[LinkMessage], routes: &[RouteMessage]) -> Self {
+    pub fn observe(
+        links: &[LinkMessage],
+        routes: &[RouteMessage],
+        addresses: &[AddressMessage],
+    ) -> Self {
         let names: BTreeMap<u32, String> = links
             .iter()
             .filter_map(|link| {
@@ -66,9 +82,31 @@ impl Crossing {
                 }
             }
         }
+        let local = addresses
+            .iter()
+            .filter(|address| {
+                names
+                    .get(&address.header.index)
+                    .is_some_and(|name| egress.contains(name))
+            })
+            .flat_map(|address| &address.attributes)
+            .filter_map(|attribute| match attribute {
+                AddressAttribute::Local(std::net::IpAddr::V4(ip))
+                | AddressAttribute::Address(std::net::IpAddr::V4(ip)) => Some(*ip),
+                _ => None,
+            })
+            .fold(Vec::new(), |mut local, ip| {
+                if !local.contains(&ip) {
+                    local.push(ip);
+                }
+                local
+            });
         Self {
             egress,
             present: names.into_values().collect(),
+            installed: None,
+            local,
+            mesh: Vec::new(),
         }
     }
 }
@@ -146,6 +184,7 @@ pub(super) async fn legacy(commands: &mut Commands) -> Result<Option<Legacy>, Fa
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Hook {
+    Prerouting,
     Forward,
     Output,
     Postrouting,
@@ -189,10 +228,22 @@ impl Truth {
 #[derive(Clone, Copy, Debug)]
 enum Interface<'a> {
     Named(&'a str),
-    /// The exit TUN: a fresh kernel `tun<N>`, not a present interface.
+    /// The exit TUN: the installed one by name, else a fresh kernel
+    /// `tun<N>`, not a present interface.
     Exit,
-    /// No interface (the input interface of a locally sent packet).
+    /// No interface (the input interface of a locally sent packet, the
+    /// output interface before routing).
     Absent,
+}
+
+/// What an exit packet's IPv4 destination can be.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Destination {
+    /// Forwarded out of the exit TUN: any Internet-classified address.
+    Internet,
+    /// A reply toward the exit TUN, or this host's error to it: an egress
+    /// address (before the masquerade is undone) or a Mesh address.
+    Reply,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -200,6 +251,7 @@ struct Packet<'a> {
     hook: Hook,
     input: Interface<'a>,
     output: Interface<'a>,
+    destination: Destination,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -210,6 +262,8 @@ enum Match {
     State(bool, Vec<String>),
     /// `meta nfproto`: exit traffic is IPv4.
     Family(bool, Vec<String>),
+    /// IPv4 destination membership (`ip daddr`, iptables `-d`).
+    Destination(bool, Vec<ipnet::Ipv4Net>),
     Unknown,
 }
 
@@ -246,6 +300,21 @@ pub(super) struct Ruleset {
 }
 
 const DEPTH: usize = 64;
+/// Rules evaluated in one judgement, over every chain and packet. Each
+/// (chain, packet) is walked once (later jumps reuse its end), so shared
+/// subchains cannot multiply the work; a ruleset beyond this is unjudged.
+const BUDGET: usize = 1 << 20;
+
+type Key = (String, String, String);
+
+/// Per-judgement state: the end of each (chain, packet) walked so far and
+/// the rules evaluated.
+struct Walk<'r> {
+    ruleset: &'r Ruleset,
+    crossing: &'r Crossing,
+    ends: BTreeMap<(Key, usize), End>,
+    work: usize,
+}
 
 impl Ruleset {
     fn from_nft(objects: &[host::Object]) -> Self {
@@ -271,6 +340,7 @@ impl Ruleset {
                 "chain" => {
                     let entry = ruleset.chains.entry(key).or_default();
                     entry.hook = match field("hook") {
+                        Some("prerouting") => Some(Hook::Prerouting),
                         Some("forward") => Some(Hook::Forward),
                         Some("output") => Some(Hook::Output),
                         Some("postrouting") => Some(Hook::Postrouting),
@@ -298,34 +368,59 @@ impl Ruleset {
         ruleset
     }
 
-    /// The exit's packets on each judged hook: forwarded out of and replies
-    /// into its TUN through every egress interface, and this host's own ICMP
-    /// errors sent to the TUN.
+    /// The exit's packets on each judged hook: arriving from its TUN and
+    /// from every egress interface (prerouting), forwarded out of and
+    /// replies into its TUN through every egress interface, and this host's
+    /// own ICMP errors sent to the TUN.
     fn judge(&self, crossing: &Crossing) -> Result<(), Reason> {
         let mut packets = vec![Packet {
             hook: Hook::Output,
             input: Interface::Absent,
             output: Interface::Exit,
+            destination: Destination::Reply,
         }];
+        packets.push(Packet {
+            hook: Hook::Prerouting,
+            input: Interface::Exit,
+            output: Interface::Absent,
+            destination: Destination::Internet,
+        });
         for egress in &crossing.egress {
             let egress = Interface::Named(egress);
+            packets.push(Packet {
+                hook: Hook::Prerouting,
+                input: egress,
+                output: Interface::Absent,
+                destination: Destination::Reply,
+            });
             for hook in [Hook::Forward, Hook::Postrouting] {
                 packets.push(Packet {
                     hook,
                     input: Interface::Exit,
                     output: egress,
+                    destination: Destination::Internet,
                 });
                 packets.push(Packet {
                     hook,
                     input: egress,
                     output: Interface::Exit,
+                    destination: Destination::Reply,
                 });
             }
         }
-        for ((source, table, _), chain) in &self.chains {
+        let mut walk = Walk {
+            ruleset: self,
+            crossing,
+            ends: BTreeMap::new(),
+            work: 0,
+        };
+        for (key, chain) in &self.chains {
             let Some(hook) = chain.hook else { continue };
-            for packet in packets.iter().filter(|packet| packet.hook == hook) {
-                let end = self.walk(source, table, chain, packet, &crossing.present, 0)?;
+            for (index, packet) in packets.iter().enumerate() {
+                if packet.hook != hook {
+                    continue;
+                }
+                let end = walk.chain(key, chain, packet, index, 0)?;
                 if chain.drops && end != End::Verdict {
                     return Err(Reason::FirewallConflict);
                 }
@@ -333,31 +428,52 @@ impl Ruleset {
         }
         Ok(())
     }
+}
 
+impl Walk<'_> {
     /// How a packet that certainly reaches `chain` certainly leaves it; any
-    /// rule that may block it is a conflict.
-    fn walk(
-        &self,
-        source: &str,
-        table: &str,
+    /// rule that may block it is a conflict. `index` names the packet for
+    /// the memo of ends.
+    fn chain(
+        &mut self,
+        key: &Key,
         chain: &Chain,
         packet: &Packet<'_>,
-        present: &[String],
+        index: usize,
+        depth: usize,
+    ) -> Result<End, Reason> {
+        if let Some(end) = self.ends.get(&(key.clone(), index)) {
+            return Ok(*end);
+        }
+        let end = self.rules(key, chain, packet, index, depth)?;
+        self.ends.insert((key.clone(), index), end);
+        Ok(end)
+    }
+
+    fn rules(
+        &mut self,
+        key: &Key,
+        chain: &Chain,
+        packet: &Packet<'_>,
+        index: usize,
         depth: usize,
     ) -> Result<End, Reason> {
         if depth > DEPTH {
             return Err(Reason::FirewallConflict);
         }
-        let target = |name: &str| -> Result<End, Reason> {
-            let chain = self
-                .chains
-                .get(&(source.to_owned(), table.to_owned(), name.to_owned()))
-                .ok_or(Reason::FirewallConflict)?;
-            self.walk(source, table, chain, packet, present, depth + 1)
+        let ruleset = self.ruleset;
+        let target = |walk: &mut Self, name: &str| -> Result<End, Reason> {
+            let key = (key.0.clone(), key.1.clone(), name.to_owned());
+            let chain = ruleset.chains.get(&key).ok_or(Reason::FirewallConflict)?;
+            walk.chain(&key, chain, packet, index, depth + 1)
         };
         for rule in &chain.rules {
+            self.work += 1;
+            if self.work > BUDGET {
+                return Err(Reason::FirewallConflict);
+            }
             let truth = rule.matches.iter().fold(Truth::Yes, |truth, matched| {
-                truth.and(evaluate(matched, packet, present))
+                truth.and(evaluate(matched, packet, self.crossing))
             });
             let certain = truth == Truth::Yes;
             match (&rule.verdict, truth) {
@@ -367,12 +483,12 @@ impl Ruleset {
                 (Verdict::Return, _) if certain => return Ok(End::Return),
                 (Verdict::Accept | Verdict::Return, _) => {}
                 (Verdict::Jump(name), _) => {
-                    if target(name)? == End::Verdict && certain {
+                    if target(self, name)? == End::Verdict && certain {
                         return Ok(End::Verdict);
                     }
                 }
                 (Verdict::Goto(name), _) => {
-                    let end = target(name)?;
+                    let end = target(self, name)?;
                     if certain {
                         return Ok(if end == End::Verdict {
                             End::Verdict
@@ -386,7 +502,7 @@ impl Ruleset {
                         match verdict {
                             Verdict::Block => return Err(Reason::FirewallConflict),
                             Verdict::Jump(name) | Verdict::Goto(name) => {
-                                target(name)?;
+                                target(self, name)?;
                             }
                             _ => {}
                         }
@@ -406,18 +522,22 @@ enum End {
     Fall,
 }
 
-fn evaluate(matched: &Match, packet: &Packet<'_>, present: &[String]) -> Truth {
+fn evaluate(matched: &Match, packet: &Packet<'_>, crossing: &Crossing) -> Truth {
     let member = |values: &[String], equal: bool, truth: &dyn Fn(&str) -> Truth| {
         let found = Truth::any(values.iter().map(|value| truth(value)));
         if equal { found } else { found.not() }
     };
     match matched {
         Match::Input(equal, names) => member(names, *equal, &|name| {
-            interface(packet.input, name, present)
+            interface(packet.input, name, crossing)
         }),
         Match::Output(equal, names) => member(names, *equal, &|name| {
-            interface(packet.output, name, present)
+            interface(packet.output, name, crossing)
         }),
+        Match::Destination(equal, nets) => {
+            let found = destination(packet.destination, nets, crossing);
+            if *equal { found } else { found.not() }
+        }
         Match::State(equal, states) => {
             let ours = ["new", "established", "related"];
             let covered = ours
@@ -440,9 +560,48 @@ fn evaluate(matched: &Match, packet: &Packet<'_>, present: &[String]) -> Truth {
     }
 }
 
+/// Whether a destination of class `class` lies in `nets`: Yes when every one
+/// does, No when none can.
+fn destination(class: Destination, nets: &[ipnet::Ipv4Net], crossing: &Crossing) -> Truth {
+    let overlaps = |a: &ipnet::Ipv4Net, b: &ipnet::Ipv4Net| a.contains(b) || b.contains(a);
+    let covered = |range: &ipnet::Ipv4Net| nets.iter().any(|net| net.contains(range));
+    let ranges: Vec<ipnet::Ipv4Net> = match class {
+        Destination::Internet => meshway_policy::internet_ranges()
+            .iter()
+            .filter_map(|range| match range {
+                ipnet::IpNet::V4(range) => Some(*range),
+                ipnet::IpNet::V6(_) => None,
+            })
+            .collect(),
+        Destination::Reply => crossing
+            .local
+            .iter()
+            .map(|ip| ipnet::Ipv4Net::from(*ip))
+            .chain(crossing.mesh.iter().filter_map(|pool| match pool {
+                ipnet::IpNet::V4(pool) => Some(*pool),
+                ipnet::IpNet::V6(_) => None,
+            }))
+            .collect(),
+    };
+    if ranges.is_empty() {
+        return Truth::Maybe;
+    }
+    if ranges.iter().all(covered) {
+        Truth::Yes
+    } else if ranges
+        .iter()
+        .any(|range| nets.iter().any(|net| overlaps(net, range)))
+    {
+        Truth::Maybe
+    } else {
+        Truth::No
+    }
+}
+
 /// Whether interface `actual` has the name `pattern`; a trailing `*` (nft)
 /// or `+` (iptables) matches any suffix.
-fn interface(actual: Interface<'_>, pattern: &str, present: &[String]) -> Truth {
+fn interface(actual: Interface<'_>, pattern: &str, crossing: &Crossing) -> Truth {
+    let present = &crossing.present;
     let (prefix, wildcard) = match pattern
         .strip_suffix('*')
         .or_else(|| pattern.strip_suffix('+'))
@@ -457,6 +616,11 @@ fn interface(actual: Interface<'_>, pattern: &str, present: &[String]) -> Truth 
     };
     let truth = |value: bool| if value { Truth::Yes } else { Truth::No };
     match actual {
+        Interface::Exit if let Some(name) = &crossing.installed => truth(if wildcard {
+            name.starts_with(prefix)
+        } else {
+            name == pattern
+        }),
         Interface::Named(name) if wildcard => truth(name.starts_with(prefix)),
         Interface::Named(name) => truth(name == pattern),
         Interface::Absent if wildcard => truth(prefix.is_empty()),
@@ -508,6 +672,11 @@ fn nft_match(object: &Value) -> Match {
             .and_then(|value| value.get("key"))
             .and_then(Value::as_str)
     };
+    if left.pointer("/payload/protocol").and_then(Value::as_str) == Some("ip")
+        && left.pointer("/payload/field").and_then(Value::as_str) == Some("daddr")
+    {
+        return ipv4_nets(right).map_or(Match::Unknown, |nets| Match::Destination(equal, nets));
+    }
     let Some(values) = strings(right) else {
         return Match::Unknown;
     };
@@ -517,6 +686,34 @@ fn nft_match(object: &Value) -> Match {
         (Some("nfproto"), _) => Match::Family(equal, values),
         (_, Some("state")) if left.pointer("/ct/dir").is_none() => Match::State(equal, values),
         _ => Match::Unknown,
+    }
+}
+
+/// An nft address, prefix or anonymous set of them as IPv4 networks.
+fn ipv4_nets(value: &Value) -> Option<Vec<ipnet::Ipv4Net>> {
+    match value {
+        Value::String(text) => text
+            .parse::<ipnet::Ipv4Net>()
+            .ok()
+            .or_else(|| text.parse::<std::net::Ipv4Addr>().ok().map(Into::into))
+            .map(|net| vec![net]),
+        Value::Array(values) => values
+            .iter()
+            .map(ipv4_nets)
+            .collect::<Option<Vec<_>>>()
+            .map(|nets| nets.concat()),
+        Value::Object(object) => {
+            if let Some(set) = object.get("set") {
+                return ipv4_nets(set);
+            }
+            let prefix = object.get("prefix")?;
+            let address = prefix.get("addr")?.as_str()?.parse().ok()?;
+            let length = u8::try_from(prefix.get("len")?.as_u64()?).ok()?;
+            ipnet::Ipv4Net::new(address, length)
+                .ok()
+                .map(|net| vec![net])
+        }
+        _ => None,
     }
 }
 
@@ -626,6 +823,7 @@ impl Legacy {
                 let policy = fields.next().ok_or(Failure::Malformed)?;
                 let chain = legacy.ruleset.chains.entry(key(name)).or_default();
                 chain.hook = match (table, name) {
+                    ("raw" | "mangle" | "nat", "PREROUTING") => Some(Hook::Prerouting),
                     ("filter" | "mangle" | "security", "FORWARD") => Some(Hook::Forward),
                     ("filter" | "mangle" | "raw" | "nat" | "security", "OUTPUT") => {
                         Some(Hook::Output)
@@ -739,8 +937,20 @@ fn legacy_rule(
                 };
             }
             "--comment" => {}
-            "-p" | "--protocol" | "-s" | "--source" | "-d" | "--destination" | "-f"
-            | "--fragment" => matches.push(Match::Unknown),
+            "-d" | "--destination" => matches.push(
+                value(index + 1)?
+                    .split(',')
+                    .map(|net| {
+                        net.parse::<ipnet::Ipv4Net>()
+                            .ok()
+                            .or_else(|| net.parse::<std::net::Ipv4Addr>().ok().map(Into::into))
+                    })
+                    .collect::<Option<Vec<_>>>()
+                    .map_or(Match::Unknown, |nets| Match::Destination(!negated, nets)),
+            ),
+            "-p" | "--protocol" | "-s" | "--source" | "-f" | "--fragment" => {
+                matches.push(Match::Unknown)
+            }
             option if option.starts_with('-') && !matches!(option, "-c") => {
                 matches.push(Match::Unknown)
             }
@@ -763,6 +973,9 @@ mod tests {
             present: ["lo", "eth0", "docker0", "br-35ac0d23089d", "tun0"]
                 .map(String::from)
                 .to_vec(),
+            installed: None,
+            local: vec!["104.194.68.10".parse().unwrap()],
+            mesh: vec!["100.64.0.0/10".parse().unwrap()],
         }
     }
 
@@ -819,7 +1032,14 @@ mod tests {
             r("DOCKER", json!([{"match": {"op": "==", "left": {"payload": {"protocol": "ip", "field": "daddr"}}, "right": "172.18.0.3"}}, name("iifname", "!=", json!(bridge)), name("oifname", "==", json!(bridge)), {"accept": null}])),
             r("DOCKER", json!([name("iifname", "!=", json!(bridge)), name("oifname", "==", json!(bridge)), {"drop": null}])),
             {"chain": {"family": "ip", "table": "raw", "name": "PREROUTING", "type": "filter", "hook": "prerouting", "prio": -300, "policy": "accept"}},
-            rule("ip", "raw", "PREROUTING", json!([name("iifname", "!=", json!(bridge)), {"drop": null}])),
+            rule("ip", "raw", "PREROUTING", json!([{"match": {"op": "==", "left": {"payload": {"protocol": "ip", "field": "daddr"}}, "right": "172.18.0.3"}}, name("iifname", "!=", json!(bridge)), {"drop": null}])),
+        ]))
+    }
+
+    fn prerouting(expr: Value) -> Ruleset {
+        nft(json!([
+            {"chain": {"family": "ip", "table": "raw", "name": "PREROUTING", "type": "filter", "hook": "prerouting", "prio": -300, "policy": "accept"}},
+            rule("ip", "raw", "PREROUTING", expr),
         ]))
     }
 
@@ -949,6 +1169,37 @@ mod tests {
                 Err(Reason::FirewallConflict),
             ),
             ("policy drop, exit TUN accepted", allowed_tun, Ok(())),
+            (
+                "raw prerouting drop of everything off a bridge",
+                prerouting(json!([name("iifname", "!=", json!("docker0")), {"drop": null}])),
+                Err(Reason::FirewallConflict),
+            ),
+            (
+                "prerouting drop of replies from the egress",
+                prerouting(json!([name("iifname", "==", json!("eth0")), {"drop": null}])),
+                Err(Reason::FirewallConflict),
+            ),
+            (
+                "prerouting drop toward an Internet range",
+                prerouting(
+                    json!([{"match": {"op": "==", "left": {"payload": {"protocol": "ip", "field": "daddr"}}, "right": {"prefix": {"addr": "8.0.0.0", "len": 8}}}}, {"drop": null}]),
+                ),
+                Err(Reason::FirewallConflict),
+            ),
+            (
+                "prerouting drop toward the Mesh pool",
+                prerouting(
+                    json!([{"match": {"op": "==", "left": {"payload": {"protocol": "ip", "field": "daddr"}}, "right": {"prefix": {"addr": "100.64.0.0", "len": 10}}}}, {"drop": null}]),
+                ),
+                Err(Reason::FirewallConflict),
+            ),
+            (
+                "prerouting drop toward a container",
+                prerouting(
+                    json!([{"match": {"op": "==", "left": {"payload": {"protocol": "ip", "field": "daddr"}}, "right": {"set": ["172.18.0.3", {"prefix": {"addr": "10.0.0.0", "len": 8}}]}}}, {"drop": null}]),
+                ),
+                Ok(()),
+            ),
         ] {
             assert_eq!(ruleset.judge(&crossing), expected, "{case}");
         }
@@ -996,16 +1247,41 @@ mod tests {
             route("192.168.1.0", 24, 5, 254),
             route("0.0.0.0", 0, 6, 1000),
         ];
-        let crossing = Crossing::observe(&links, &routes);
+        let address = |index, ip: &str| {
+            let mut address = AddressMessage::default();
+            address.header.index = index;
+            address
+                .attributes
+                .push(AddressAttribute::Local(ip.parse().unwrap()));
+            address
+        };
+        let addresses = [
+            address(2, "104.194.68.10"),
+            address(3, "172.17.0.1"),
+            address(4, "11.77.3.2"),
+            address(2, "104.194.68.10"),
+        ];
+        let crossing = Crossing::observe(&links, &routes, &addresses);
         assert_eq!(crossing.egress, ["eth0", "ext"]);
         assert_eq!(crossing.present.len(), 6);
+        // Egress interfaces' addresses only, once each.
+        assert_eq!(
+            crossing.local,
+            ["104.194.68.10", "11.77.3.2"].map(|ip| ip.parse::<std::net::Ipv4Addr>().unwrap())
+        );
         // Without a default route the connected public network remains.
-        assert_eq!(Crossing::observe(&links, &routes[2..]).egress, ["ext"]);
+        assert_eq!(
+            Crossing::observe(&links, &routes[2..], &addresses).egress,
+            ["ext"]
+        );
     }
 
     #[test]
     fn exit_tun_names_are_fresh_kernel_tun_names() {
-        let present = ["tun0".to_owned(), "eth0".to_owned()];
+        let present = Crossing {
+            present: vec!["tun0".to_owned(), "eth0".to_owned()],
+            ..Default::default()
+        };
         for (pattern, expected) in [
             ("tun*", Truth::Yes),
             ("t+", Truth::Yes),
@@ -1027,6 +1303,103 @@ mod tests {
             Truth::Yes
         );
         assert_eq!(interface(Interface::Absent, "eth0", &present), Truth::No);
+    }
+
+    /// The periodic probe of an installed exit judges that exit's TUN by its
+    /// name: a rule on `tun1` matches it, though `tun1` is present.
+    #[test]
+    fn an_installed_exit_tun_is_matched_by_its_name() {
+        let mut crossing = crossing();
+        crossing.present.push("tun1".into());
+        let blocking = nft(json!([
+            {"chain": {"family": "inet", "table": "own", "name": "forward", "type": "filter", "hook": "forward", "prio": 0, "policy": "accept"}},
+            rule("inet", "own", "forward", json!([name("iifname", "==", json!("tun1")), {"drop": null}])),
+        ]));
+        assert_eq!(
+            blocking.judge(&crossing),
+            Ok(()),
+            "a present tun1 is not a fresh exit TUN"
+        );
+        crossing.installed = Some("tun1".into());
+        assert_eq!(blocking.judge(&crossing), Err(Reason::FirewallConflict));
+        for (pattern, expected) in [
+            ("tun1", Truth::Yes),
+            ("tun*", Truth::Yes),
+            ("tun0", Truth::No),
+            ("tun1*", Truth::Yes),
+            ("tun2", Truth::No),
+        ] {
+            assert_eq!(
+                interface(Interface::Exit, pattern, &crossing),
+                expected,
+                "{pattern}"
+            );
+        }
+    }
+
+    /// Chains sharing subchains: each (chain, packet) is walked once, so 2^40
+    /// paths cost 80 chain walks; a ruleset beyond the work budget is
+    /// unjudged rather than walked.
+    #[test]
+    fn shared_subchains_are_walked_once_within_a_budget() {
+        let mut items = vec![chain("ip", "filter", "FORWARD", Some("forward"), "accept")];
+        items.push(rule(
+            "ip",
+            "filter",
+            "FORWARD",
+            json!([{"jump": {"target": "c0"}}]),
+        ));
+        for level in 0..40 {
+            items.push(chain("ip", "filter", &format!("c{level}"), None, ""));
+            for _ in 0..2 {
+                items.push(rule(
+                    "ip",
+                    "filter",
+                    &format!("c{level}"),
+                    json!([{"jump": {"target": format!("c{}", level + 1)}}]),
+                ));
+            }
+        }
+        items.push(chain("ip", "filter", "c40", None, ""));
+        let started = std::time::Instant::now();
+        assert_eq!(nft(Value::Array(items)).judge(&crossing()), Ok(()));
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+        let mut large = Ruleset::default();
+        let forward = large
+            .chains
+            .entry(("ip".into(), "filter".into(), "FORWARD".into()))
+            .or_default();
+        forward.hook = Some(Hook::Forward);
+        forward.rules = vec![
+            Rule {
+                matches: Vec::new(),
+                verdict: Verdict::Continue,
+            };
+            BUDGET / 2 + 1
+        ];
+        assert_eq!(large.judge(&crossing()), Err(Reason::FirewallConflict));
+    }
+
+    /// Docker's raw protection of a published container (`-d <container>
+    /// ! -i <bridge> -j DROP`) excludes every exit destination.
+    #[test]
+    fn legacy_prerouting_drops_are_judged_by_destination() {
+        let docker = "*raw\n:PREROUTING ACCEPT [0:0]\n:OUTPUT ACCEPT [0:0]\n\
+            -A PREROUTING -d 172.17.0.2/32 ! -i docker0 -j DROP\nCOMMIT\n";
+        assert_eq!(
+            Legacy::parse(docker).unwrap().ruleset.judge(&crossing()),
+            Ok(())
+        );
+        let all = "*raw\n:PREROUTING ACCEPT [0:0]\n-A PREROUTING ! -i docker0 -j DROP\nCOMMIT\n";
+        assert_eq!(
+            Legacy::parse(all).unwrap().ruleset.judge(&crossing()),
+            Err(Reason::FirewallConflict)
+        );
+        let policy = "*mangle\n:PREROUTING DROP [0:0]\nCOMMIT\n";
+        assert_eq!(
+            Legacy::parse(policy).unwrap().ruleset.judge(&crossing()),
+            Err(Reason::FirewallConflict)
+        );
     }
 
     #[test]

@@ -56,7 +56,13 @@ impl super::super::Kernel {
         let routes = super::super::get_routes(&self.handle, self.options.max_kernel_objects)
             .await
             .map_err(|_| Reason::RouteConflict)?;
-        let crossing = super::firewall::Crossing::observe(&links, &routes);
+        let addresses = super::super::get_addresses(&self.handle, self.options.max_kernel_objects)
+            .await
+            .map_err(|_| Reason::RouteConflict)?;
+        let mut crossing = super::firewall::Crossing::observe(&links, &routes, &addresses);
+        // An installed exit TUN is judged by its name, not as a fresh one.
+        crossing.installed = self.exit.as_ref().map(|owner| owner.interface_name.clone());
+        crossing.mesh = self.journal.pools.clone();
         let interfaces: Vec<_> = links
             .iter()
             .filter(|link| {
