@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-14T17:10:57.409430+00:00",
+  "updatedAt": "2026-10-14T17:14:16.283543+00:00",
   "runs": [
     {
       "id": 38602641414,
@@ -62,9 +62,9 @@
       "commit": "cbaf0f4fc88ca8c964b3edda7690a6c0bbeec365",
       "message": "release: workspace version 0.1.0-alpha.9",
       "createdAt": "2026-10-14T16:58:26Z",
-      "updatedAt": "2026-10-14T17:02:48Z",
-      "status": "in_progress",
-      "conclusion": null,
+      "updatedAt": "2026-10-14T17:10:59Z",
+      "status": "completed",
+      "conclusion": "success",
       "url": "https://github.com/JDScript/meshway/actions/runs/38602640841",
       "jobs": [
         {
@@ -93,11 +93,11 @@
           "id": 115986073045,
           "name": "cargo",
           "runner": "mars-14900k",
-          "status": "in_progress",
-          "conclusion": null,
+          "status": "completed",
+          "conclusion": "success",
           "startedAt": "2026-10-14T17:02:47Z",
-          "completedAt": null,
-          "seconds": null,
+          "completedAt": "2026-10-14T17:10:58Z",
+          "seconds": 491.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/38602640841/job/115986073045"
         }
       ],
@@ -151,8 +151,8 @@
       "commit": "cbaf0f4fc88ca8c964b3edda7690a6c0bbeec365",
       "message": "release: workspace version 0.1.0-alpha.9",
       "createdAt": "2026-10-14T16:58:26Z",
-      "updatedAt": "2026-10-14T17:09:53Z",
-      "status": "queued",
+      "updatedAt": "2026-10-14T17:11:04Z",
+      "status": "in_progress",
       "conclusion": null,
       "url": "https://github.com/JDScript/meshway/actions/runs/38602640735",
       "jobs": [
@@ -160,20 +160,20 @@
           "id": 115991115969,
           "name": "perf-arm64",
           "runner": "jp-tyo-arm64",
-          "status": "in_progress",
-          "conclusion": null,
+          "status": "completed",
+          "conclusion": "failure",
           "startedAt": "2026-10-14T17:09:56Z",
-          "completedAt": null,
-          "seconds": null,
+          "completedAt": "2026-10-14T17:10:08Z",
+          "seconds": 12.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/38602640735/job/115991115969"
         },
         {
           "id": 115991116505,
           "name": "perf",
-          "runner": null,
-          "status": "queued",
+          "runner": "planck",
+          "status": "in_progress",
           "conclusion": null,
-          "startedAt": "2026-10-14T17:09:53Z",
+          "startedAt": "2026-10-14T17:11:03Z",
           "completedAt": null,
           "seconds": null,
           "url": "https://github.com/JDScript/meshway/actions/runs/38602640735/job/115991116505"
