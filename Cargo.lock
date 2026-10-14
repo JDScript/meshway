@@ -2026,6 +2026,7 @@ dependencies = [
  "meshway-dataplane",
  "meshway-engine",
  "meshway-model",
+ "meshway-netns",
  "meshway-policy",
  "meshway-private-storage",
  "meshway-protocol",

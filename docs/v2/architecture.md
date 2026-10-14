@@ -104,7 +104,7 @@ Control 只验证、保存并发布签名 netmap（内容与租约）；`meshway
 | `meshway-underlay` | [Linux Host、私有 route／rule journal、capture／sink 与用途受限 socket](/v2/node/dataplane#linux-underlay)；期望内容来自 Engine，穿透类型来自 control |
 | `meshway-transport`（`tcp`／`udp`）、`meshway-transport-stream`（`vless`／`trojan`） | 正式承载 provider；既有流／socket 上的协议封装与 I/O |
 | `meshway-tun` | Linux TUN 设备 I/O |
-| `meshway-netns` | 读取当前 network namespace 的 cookie（`SO_NETNS_COOKIE`）；workspace 唯一经审计的 `unsafe`（一次 `getsockopt`），身份规则归 `meshway-underlay`，见[生命周期](/v2/node/runtime#生命周期) |
+| `meshway-netns` | 读取当前 network namespace 的 cookie（`SO_NETNS_COOKIE`）及唯一的 namespace 记录比较规则（`same`），Underlay 记录与系统 DNS 预约共用；workspace 唯一经审计的 `unsafe`（一次 `getsockopt`），见[生命周期](/v2/node/runtime#生命周期) |
 | `meshway-dns` | DNS wire／选择、查询 owner、有界 loopback Service 与 dispatcher，以及系统 DNS 后端／归属 journal；期望内容来自 Engine |
 
 出口转发与 `meshway-netstack` 运行库尚未实现。

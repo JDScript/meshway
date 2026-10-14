@@ -13,21 +13,33 @@ pub(super) struct Local {
     pub dns: NetmapDns,
 }
 
+/// The source whose egress plan is built: its network, Node, effective
+/// profile and selection version.
+pub(super) struct Source<'a> {
+    pub network: NetworkId,
+    pub node: NodeId,
+    pub profile: &'a str,
+    pub selection: u64,
+}
+
 /// The selection identity excludes the revision: an unrelated configuration
 /// change keeps it, while any selection switch, routing change or new content
 /// of a set the rules use replaces it. It does not depend on which artifacts
 /// a Node holds, so every Node computes the same identity for a source.
 /// Shared by the Server and by Nodes recomputing a visible source's selection.
 pub(super) fn egress(
-    network: NetworkId,
+    source: Source<'_>,
     cfg: &NetworkConfiguration,
     exits: matching::Exits<'_>,
     references: &BTreeMap<String, meshway_rules::Digest>,
     partition: &capture::Partition,
-    node: NodeId,
-    profile: &str,
-    selection: u64,
 ) -> Result<EgressPlan, CompileError> {
+    let Source {
+        network,
+        node,
+        profile,
+        selection,
+    } = source;
     let capture::Selection { rules, fallback } = match capture::selection(cfg, profile) {
         Ok(selected) => selected,
         Err(CompileError::Serialization) => return Err(CompileError::Serialization),
@@ -193,17 +205,19 @@ impl Local {
             .map(|(key, set)| (key.clone(), set.digest()))
             .collect();
         let egress = egress(
-            input.network,
+            Source {
+                network: input.network,
+                node,
+                profile: &profile,
+                selection: input
+                    .selection_versions
+                    .get(&node)
+                    .map_or(0, |version| version.get()),
+            },
             cfg,
             exits,
             &references,
             &partition,
-            node,
-            &profile,
-            input
-                .selection_versions
-                .get(&node)
-                .map_or(0, |version| version.get()),
         )?;
         let enabled = cfg.nodes[&node].enabled;
         // An exit resolution is completed by [`dns`] into its service.

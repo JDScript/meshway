@@ -424,17 +424,19 @@ impl LocalCompiler {
             .map(|(key, reference)| (key.clone(), reference.digest))
             .collect();
         local::egress(
-            self.netmap.network_id,
+            local::Source {
+                network: self.netmap.network_id,
+                node: source,
+                profile: &profile,
+                selection: projection
+                    .selection_versions
+                    .get(&source)
+                    .map_or(0, |version| version.get()),
+            },
             &self.configuration,
             self.exits(),
             &references,
             &self.partition(source)?,
-            source,
-            &profile,
-            projection
-                .selection_versions
-                .get(&source)
-                .map_or(0, |version| version.get()),
         )
     }
 

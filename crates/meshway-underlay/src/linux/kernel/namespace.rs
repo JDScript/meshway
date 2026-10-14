@@ -36,13 +36,20 @@ impl Identity {
     /// Whether a record written as `(boot, device, inode, cookie)` was written
     /// in this namespace.
     pub fn is(&self, boot: &str, device: u64, inode: u64, cookie: Option<u64>) -> bool {
-        self.boot.trim() == boot.trim()
-            && self.device == device
-            && self.inode == inode
-            && match (self.cookie, cookie) {
-                (Some(current), Some(recorded)) => current == recorded,
-                _ => true,
-            }
+        meshway_netns::same(
+            meshway_netns::Recorded {
+                boot: &self.boot,
+                device: self.device,
+                inode: self.inode,
+                cookie: self.cookie,
+            },
+            meshway_netns::Recorded {
+                boot,
+                device,
+                inode,
+                cookie,
+            },
+        )
     }
 }
 

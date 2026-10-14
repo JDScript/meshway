@@ -27,6 +27,7 @@ tracing.workspace = true
 resolv-conf = "=0.7.6"
 
 [target.'cfg(target_os = "linux")'.dependencies]
+meshway-netns = { path = "../meshway-netns" }
 zbus = { version = "=5.19.0", default-features = false, features = ["tokio"] }
 rustix = { workspace = true, features = ["fs", "process", "net"] }
 

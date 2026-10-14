@@ -6,14 +6,31 @@ use super::*;
 use meshway_private_storage::Directory;
 use std::os::unix::fs::MetadataExt;
 
+/// The network namespace this owner runs in: boot ID, nsfs device/inode and
+/// the namespace cookie, compared by the one rule of every namespace record
+/// (`meshway_netns::same`, shared with the Underlay).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Namespace {
     boot: String,
     device: u64,
     inode: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cookie: Option<u64>,
 }
 impl Namespace {
+    /// Whether `self` and `other` name the same namespace.
+    fn same(&self, other: &Self) -> bool {
+        meshway_netns::same(self.recorded(), other.recorded())
+    }
+    fn recorded(&self) -> meshway_netns::Recorded<'_> {
+        meshway_netns::Recorded {
+            boot: &self.boot,
+            device: self.device,
+            inode: self.inode,
+            cookie: self.cookie,
+        }
+    }
     fn directory(&self) -> PathBuf {
         PathBuf::from("/run/meshway")
             .join(format!("dns-{}-{}-{}", self.boot, self.device, self.inode))
@@ -31,12 +48,13 @@ impl Namespace {
             boot,
             device: meta.dev(),
             inode: meta.ino(),
+            cookie: meshway_netns::cookie().map_err(|_| SystemDnsError::Unsupported)?,
         })
     }
     fn verify_pid(&self, pid: u32) -> Result<(), SystemDnsError> {
         let meta = std::fs::metadata(format!("/proc/{pid}/ns/net"))
             .map_err(|_| SystemDnsError::Conflict)?;
-        if meta.dev() != self.device || meta.ino() != self.inode || *self != Self::current()? {
+        if meta.dev() != self.device || meta.ino() != self.inode || !self.same(&Self::current()?) {
             return Err(SystemDnsError::Conflict);
         }
         Ok(())
@@ -49,6 +67,16 @@ struct Reservation {
     namespace: Namespace,
     data_owner: PathBuf,
     settings: SystemDnsSettings,
+}
+impl Reservation {
+    /// The same owner in the same namespace ([`Namespace::same`]); a record
+    /// from an earlier build without the cookie is then rewritten with it.
+    fn same_owner(&self, other: &Self) -> bool {
+        self.version == other.version
+            && self.data_owner == other.data_owner
+            && self.settings == other.settings
+            && self.namespace.same(&other.namespace)
+    }
 }
 
 enum Backend {
@@ -69,6 +97,7 @@ impl SystemDnsReservation {
             &self.reservation.namespace.boot,
             self.reservation.namespace.device,
             self.reservation.namespace.inode,
+            self.reservation.namespace.cookie,
         )?;
         Ok(file::has_record(&self.directory)? || resolved::has_record(&self.directory)?)
     }
@@ -111,18 +140,23 @@ impl SystemDnsReservation {
     }
     /// The Kernel consumes the live reservation, not a caller-supplied boolean.
     /// This is only local resource ownership, never execution authority.
+    /// `(boot, device, inode, cookie)` is the caller's record of its
+    /// namespace (the Underlay journal), compared by the same rule.
     pub fn verify_namespace(
         &self,
         boot: &str,
         device: u64,
         inode: u64,
+        cookie: Option<u64>,
     ) -> Result<(), SystemDnsError> {
         let namespace = &self.reservation.namespace;
-        if namespace.boot != boot.trim()
-            || namespace.device != device
-            || namespace.inode != inode
-            || *namespace != Namespace::current()?
-        {
+        let recorded = Namespace {
+            boot: boot.trim().to_owned(),
+            device,
+            inode,
+            cookie,
+        };
+        if !namespace.same(&recorded) || !namespace.same(&Namespace::current()?) {
             return Err(SystemDnsError::Conflict);
         }
         if storage::read::<Reservation>(&self.directory, "owner.json")?.as_ref()
@@ -164,7 +198,7 @@ impl SystemDnsOwner {
                 Some(reservation) => {
                     reservation.settings.validate()?;
                     if reservation.version != 1
-                        || reservation.namespace != namespace
+                        || !reservation.namespace.same(&namespace)
                         || reservation.data_owner != data.path()
                     {
                         return Err(SystemDnsError::Conflict);
@@ -215,7 +249,10 @@ impl SystemDnsOwner {
             {
                 return Err(SystemDnsError::Conflict);
             }
-            if existing.as_ref().is_some_and(|old| old != &reservation) {
+            if existing
+                .as_ref()
+                .is_some_and(|old| !old.same_owner(&reservation))
+            {
                 return Err(SystemDnsError::Conflict);
             }
             // This accepted private write is completed by its blocking owner even
@@ -320,7 +357,7 @@ impl SystemDnsOwner {
                 Some(resolved.anchor())
             }
         };
-        if Namespace::current()? != self.reservation.namespace
+        if !self.reservation.namespace.same(&Namespace::current()?)
             || storage::read::<Reservation>(&self.directory, "owner.json")?.as_ref()
                 != Some(&self.reservation)
         {
@@ -434,7 +471,9 @@ impl SystemDnsOwner {
     pub async fn observe(&mut self) -> Result<(), SystemDnsError> {
         let result = async {
             self.writes.settle().await?;
-            if self.invalid.is_cancelled() || Namespace::current()? != self.reservation.namespace {
+            if self.invalid.is_cancelled()
+                || !self.reservation.namespace.same(&Namespace::current()?)
+            {
                 return Err(SystemDnsError::Conflict);
             }
             if let Some(snapshot) = &self.snapshot {
@@ -504,5 +543,36 @@ impl SystemDnsOwner {
 impl Drop for SystemDnsOwner {
     fn drop(&mut self) {
         self.invalid.cancel();
+    }
+}
+
+#[cfg(test)]
+mod namespace_tests {
+    use super::Namespace;
+
+    /// A reused inode with another cookie is another namespace; a record of
+    /// an earlier build (no cookie) or a kernel without cookies is compared
+    /// by the inode.
+    #[test]
+    fn namespaces_are_compared_by_cookie_when_both_carry_one() {
+        let at = |inode, cookie| Namespace {
+            boot: "b".into(),
+            device: 5,
+            inode,
+            cookie,
+        };
+        assert!(at(7, Some(9)).same(&at(7, Some(9))));
+        assert!(!at(7, Some(9)).same(&at(7, Some(8))), "reused inode");
+        assert!(!at(7, Some(9)).same(&at(8, Some(9))));
+        assert!(at(7, None).same(&at(7, Some(9))));
+        assert!(at(7, Some(9)).same(&at(7, None)));
+        assert!(!at(7, None).same(&at(8, None)));
+        // An earlier build's record decodes without the field and writes none.
+        let old: Namespace = serde_json::from_str(r#"{"boot":"b","device":5,"inode":7}"#).unwrap();
+        assert_eq!(old, at(7, None));
+        assert!(!serde_json::to_string(&old).unwrap().contains("cookie"));
+        let current = Namespace::current().unwrap();
+        assert!(current.cookie.is_some(), "Linux 5.7 or later");
+        assert!(current.same(&Namespace::current().unwrap()));
     }
 }

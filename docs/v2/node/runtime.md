@@ -429,7 +429,7 @@ Underlay 的每份记录（`underlay.json`、`underlay-exit.json`、`underlay-eg
 | 写入时的内核与 namespace | `/proc/sys/kernel/random/boot_id`、`/proc/self/ns/net` 的 device／inode，以及 namespace cookie（字段 `namespace_cookie`；`exit-child.json` 为 `net_cookie`） | 过期（整机、容器虚拟机重启、容器重建后挂载同一卷）；记录与当前都有 cookie 时，inode 相同而 cookie 不同即为被复用的 inode，同样过期 |
 | 驻留证据 | journal 记录的、只能存在于写入它的 namespace 中的对象：精确字节的 RPDB 规则（随机私有 table 与随机优先级区间）或 DNS 锚点（alias 含随机 installation） | journal 记录了对象而当前 namespace 一个也没有：inode 被新 namespace 复用，同样过期 |
 
-没有 cookie 的记录（本版本之前写入）或不支持 cookie 的内核仍只按 boot 与 device／inode 判定，再由驻留证据区分复用的 inode；`exit-child.json` 没有驻留证据，这种组合下 inode 复用仍可能使启动停在下述冲突退避，直到它按新规则重写（升级后第一次工具执行即重写）。cookie 由 `meshway-netns` 读取，这是 workspace 唯一经审计的 `unsafe`（一次 `getsockopt`）。
+没有 cookie 的记录（本版本之前写入）或不支持 cookie 的内核仍只按 boot 与 device／inode 判定，再由驻留证据区分复用的 inode；`exit-child.json` 没有驻留证据，这种组合下 inode 复用仍可能使启动停在下述冲突退避，直到它按新规则重写（升级后第一次工具执行即重写）。cookie 由 `meshway-netns` 读取，这是 workspace 唯一经审计的 `unsafe`（一次 `getsockopt`）；比较规则也只有 `meshway_netns::same` 一份。系统 DNS 的 namespace 预约（`/run/meshway/dns-*/owner.json`，`namespace.cookie`）按同一规则：带 cookie 的预约与当前 cookie 不同即为另一个 namespace 的记录，预约以冲突失败、不接管；本版本之前写入的无 cookie 预约在同一 inode 上被接管并改写为带 cookie。
 
 过期记录在分配新资源前原子改名为 `underlay.json.stale-<Unix 纳秒时间>` 并持久保留；INFO 日志记录旧 namespace（含 cookie）、原因（`changed_namespace`：boot、inode 或 cookie 不同；`reused_namespace_inode`：无 cookie 而驻留证据缺失）与归档名。按无 journal 在当前 namespace 重新分配，不进入旧 namespace 清理，也不把旧记录作为当前资源的归属证明。归档失败时不覆盖原文件或继续分配。身份相同且驻留证据存在时仍按原有逐项归属核验恢复：只缺部分对象、或出现不属于 journal 的同区间对象，仍是真实冲突并使用上述有界退避。没有记录任何对象的 journal 不需要驻留证据，直接按当前 namespace 重新分配。
 

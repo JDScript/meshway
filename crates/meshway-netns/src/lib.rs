@@ -7,7 +7,8 @@
 //!
 //! No safe binding exposes `SO_NETNS_COOKIE`, so this crate is the workspace's
 //! single audited `unsafe` block: one `getsockopt` on a socket it owns, with a
-//! buffer of exactly the size it passes. Callers own every identity rule.
+//! buffer of exactly the size it passes. [`same`] is the one rule comparing
+//! a recorded namespace with another.
 #![deny(unsafe_code)]
 
 #[cfg(target_os = "linux")]
@@ -56,6 +57,32 @@ mod linux {
 #[cfg(target_os = "linux")]
 pub use linux::cookie;
 
+/// A network namespace as a record names it: boot ID, nsfs device/inode and
+/// the cookie, when one was read.
+#[derive(Clone, Copy, Debug)]
+pub struct Recorded<'a> {
+    pub boot: &'a str,
+    pub device: u64,
+    pub inode: u64,
+    pub cookie: Option<u64>,
+}
+
+/// The one identity rule of every namespace record (Underlay journals and
+/// ledgers, the system DNS reservation): the same boot and device/inode
+/// and, when both carry a cookie, the same cookie. An inode is reused by a
+/// later namespace (a recreated container); a cookie never is within a boot.
+/// A record without a cookie (an earlier build) or a kernel without cookies
+/// falls back to the inode.
+pub fn same(a: Recorded<'_>, b: Recorded<'_>) -> bool {
+    a.boot.trim() == b.boot.trim()
+        && a.device == b.device
+        && a.inode == b.inode
+        && match (a.cookie, b.cookie) {
+            (Some(a), Some(b)) => a == b,
+            _ => true,
+        }
+}
+
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
     #[test]
@@ -64,5 +91,37 @@ mod tests {
         assert_eq!(first, super::cookie().unwrap());
         let thread = std::thread::spawn(super::cookie).join().unwrap().unwrap();
         assert_eq!(first, thread);
+    }
+}
+
+#[cfg(test)]
+mod rule_tests {
+    use super::{Recorded, same};
+
+    #[test]
+    fn cookies_decide_when_both_records_carry_one() {
+        let at = |inode, cookie| Recorded {
+            boot: "b\n",
+            device: 5,
+            inode,
+            cookie,
+        };
+        assert!(same(at(7, Some(9)), at(7, Some(9))));
+        assert!(!same(at(7, Some(9)), at(7, Some(8))), "reused inode");
+        assert!(!same(at(7, Some(9)), at(8, Some(9))));
+        assert!(same(at(7, None), at(7, Some(9))));
+        assert!(!same(at(7, None), at(8, None)));
+        let other_boot = Recorded {
+            boot: "c",
+            ..at(7, Some(9))
+        };
+        assert!(!same(at(7, Some(9)), other_boot));
+        assert!(same(
+            at(7, None),
+            Recorded {
+                boot: "b",
+                ..at(7, None)
+            }
+        ));
     }
 }

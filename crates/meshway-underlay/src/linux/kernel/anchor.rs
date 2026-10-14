@@ -121,6 +121,7 @@ impl Kernel {
                 &self.journal.boot,
                 self.journal.namespace_device,
                 self.journal.namespace_inode,
+                self.journal.namespace_cookie,
             )
             .map_err(|_| Error::Conflict)?;
         if !matches!(
