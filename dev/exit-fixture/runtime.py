@@ -180,14 +180,17 @@ def run_narrow_channel(command, detached, status, wait_for, addresses, r_node):
         wait_for(lambda: (channel(status("a")) or {}).get("inner") == NARROW_INNER,
                  "A's channel to R at the narrow MTU", 90)
         result["channel"] = channel(status("a"))
-        clamp = [line for line in command("a", "nft", "list", "tables")["stdout"].splitlines()
-                 if line.startswith("table inet meshway_mss_")]
-        if len(clamp) != 1:
-            raise RuntimeError("A has no MSS clamp table")
-        time.sleep(2)  # the clamp follows the channel facts within a second
-        result["clampTable"] = command("a", "nft", "list", "table", *clamp[0].split()[1:])
-        if f"maxseg size set {NARROW_INNER - 40}" not in result["clampTable"]["stdout"]:
-            raise RuntimeError("A's MSS clamp does not follow its narrow channel")
+
+        def clamped():
+            # A's worker refreshes the clamp from its channel facts once a
+            # second, so the table may trail the status that shows the MTU.
+            tables = [line for line in command("a", "nft", "list", "tables")["stdout"].splitlines()
+                      if line.startswith("table inet meshway_mss_")]
+            if len(tables) != 1:
+                return False
+            result["clampTable"] = command("a", "nft", "list", "table", *tables[0].split()[1:])
+            return f"maxseg size set {NARROW_INNER - 40}" in result["clampTable"]["stdout"]
+        wait_for(clamped, "A's MSS clamp at its narrow channel", 5)
         result["tcp"] = command("a", "timeout", "20", "python3", "/dns-fixture/icmp.py", "tcp", target, "8080",
                                 "65536", required=False)
         echoed = json.loads(result["tcp"]["stdout"] or "{}") if result["tcp"]["exitCode"] == 0 else {}
