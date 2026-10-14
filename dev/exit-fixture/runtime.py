@@ -26,6 +26,9 @@ LINKS = {"ca": ("controller", "a"), "cr": ("controller", "r"),
          "far": ("router", "external")}
 PUBLIC_LINKS = ("external", "far")
 FAR_MTU = 1280
+# Largest RTT a later traceroute hop may add over the first (hops 2 and 3: at
+# most 10 ms per hop).
+HOP_SPREAD_MS = 20
 # Stage 12 also narrows the A–R link: A's Native UDP channel to R then carries
 # inner packets of NARROW_MTU - 28 (IPv4/UDP) - 86 (Data frame) bytes.
 NARROW_MTU = 1400
@@ -78,14 +81,23 @@ def run_icmp_phase(command, detached, evidence, addresses, subnets, source):
             time.sleep(.1)
         # Hop 1 is E's own time exceeded, hop 2 the router's, hop 3 the target.
         trace = command("a", "traceroute", "-I", "-n", "-q", "1", "-w", "2", "-m", "5", far, required=False)
-        hops = {}
+        hops, rtts = {}, {}
         for line in trace["stdout"].splitlines()[1:]:
             fields = line.split()
             if len(fields) >= 2 and fields[0].isdigit():
                 hops[int(fields[0])] = fields[1]
-        result["traceroute"] = {"record": trace, "hops": hops, "exitAddresses": sorted(e_addresses)}
+                if len(fields) >= 4 and fields[3] == "ms":
+                    rtts[int(fields[0])] = float(fields[2])
+        # The probes of one traceroute are new echo flows of one packet turn:
+        # their exit projections share one kernel round, so a later hop waits
+        # for no earlier hop's installation.
+        spread = {hop: round(rtt - rtts[1], 3) for hop, rtt in rtts.items() if hop > 1 and 1 in rtts}
+        result["traceroute"] = {"record": trace, "hops": hops, "rttMs": rtts, "spreadMs": spread,
+                                "spreadLimitMs": HOP_SPREAD_MS, "exitAddresses": sorted(e_addresses)}
         if hops.get(1) not in e_addresses or hops.get(2) != router or hops.get(3) != far:
             raise RuntimeError("traceroute through the exit did not show E, the router and the target")
+        if len(spread) < 2 or max(spread.values()) > HOP_SPREAD_MS:
+            raise RuntimeError(f"later traceroute hops waited on earlier projections: {spread}")
         # A TCP echo larger than the far link converges through fragmentation needed.
         result["tcp"] = command("a", "timeout", "14", "python3", "/dns-fixture/icmp.py", "tcp", far, "8080", "65536",
                                 required=False)

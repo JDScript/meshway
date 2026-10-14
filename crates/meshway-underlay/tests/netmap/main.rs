@@ -315,3 +315,139 @@ async fn netmap_exit_projection_capacity_refuses_one_flow_and_keeps_the_role() {
     server.close().await;
     println!("X8_NETMAP_EXIT_CAPACITY=refused-one,role-kept,slot-reused");
 }
+
+/// One kernel round installs the projections of one driver turn. Each result
+/// is that projection's own: a refused one (a duplicate tuple, a special
+/// destination, a cutoff already past) leaves every other one acknowledged,
+/// and only an acknowledged projection carries packets. The shared steps run
+/// once per round: eight projections take about as long as one.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires an isolated Linux exit namespace (ip_forward=1, loose RPF), nft and NET_ADMIN"]
+async fn netmap_exit_projection_round_acknowledges_each_flow_by_itself() {
+    let temp = isolated();
+    let server = Server::start().await;
+    let (mut control, script) = server.enroll(temp.path()).await;
+    let network = Network::new(&control, true);
+    let netmap = network.compile(None);
+    let role_plan = netmap.netmap.exit_role.clone().expect("exit role");
+    let snapshot = sync(&mut control, &script, &netmap, true, HOUR).await;
+    let mut host = host(&temp).await;
+    host.install(snapshot).await.unwrap();
+    let role = host.install_netmap_exit_role(&role_plan).await.unwrap();
+    let scope = ExitScope {
+        binding: meshway_model::Digest::from_bytes([74; 32]),
+        revoked: CancellationToken::new(),
+    };
+    let incarnation = |sequence: u16| {
+        let mut id = [0u8; 32];
+        id[0] = 0xe1;
+        id[1..3].copy_from_slice(&sequence.to_be_bytes());
+        ExitIncarnation::new(id)
+    };
+    // traceroute -I: one identifier, one sequence per probe.
+    let echo = |sequence: u16| OriginalTuple {
+        source: "100.64.0.2".parse().unwrap(),
+        destination: routable(),
+        transport: ExitTransport::IcmpEcho {
+            identifier: 4242,
+            sequence,
+        },
+    };
+    let started = std::time::Instant::now();
+    role.install(incarnation(1), echo(1), cutoff(120_000), scope.clone())
+        .await
+        .unwrap();
+    let single = started.elapsed();
+    let started = std::time::Instant::now();
+    for sequence in 2..=9 {
+        role.install(
+            incarnation(sequence),
+            echo(sequence),
+            cutoff(120_000),
+            scope.clone(),
+        )
+        .await
+        .unwrap();
+    }
+    let sequential = started.elapsed();
+    let mut round: Vec<_> = (10..=17)
+        .map(|sequence| {
+            (
+                incarnation(sequence),
+                echo(sequence),
+                cutoff(120_000),
+                scope.clone(),
+            )
+        })
+        .collect();
+    // Refused within the round: the same tuple twice, a loopback destination
+    // and a cutoff that already passed.
+    round.insert(
+        2,
+        (incarnation(100), echo(11), cutoff(120_000), scope.clone()),
+    );
+    round.insert(
+        5,
+        (
+            incarnation(101),
+            OriginalTuple {
+                destination: "127.0.0.1".parse().unwrap(),
+                ..echo(101)
+            },
+            cutoff(120_000),
+            scope.clone(),
+        ),
+    );
+    round.push((incarnation(102), echo(102), cutoff(0), scope.clone()));
+    let expected: Vec<Option<ExitIncarnation>> = round
+        .iter()
+        .map(|(id, ..)| {
+            let valid = [incarnation(100), incarnation(101), incarnation(102)]
+                .iter()
+                .all(|refused| refused != id);
+            valid.then_some(*id)
+        })
+        .collect();
+    let started = std::time::Instant::now();
+    let results = role.install_batch(round).await;
+    let batched = started.elapsed();
+    assert_eq!(results.len(), expected.len());
+    for (result, expected) in results.iter().zip(&expected) {
+        match expected {
+            Some(id) => assert_eq!(result.as_ref().map(|ack| ack.incarnation).ok(), Some(*id)),
+            None => assert!(result.is_err(), "{result:?}"),
+        }
+    }
+    assert!(role.is_active(), "refused projections keep the role");
+    // Each acknowledged projection is retired by itself.
+    for sequence in (1..=17).filter(|sequence| *sequence != 11) {
+        role.retire_flow(incarnation(sequence)).await.unwrap();
+    }
+    role.retire_flow(incarnation(11)).await.unwrap();
+    for refused in 100..=102 {
+        role.retire_flow(incarnation(refused)).await.unwrap();
+    }
+    assert!(role.is_active());
+    println!(
+        "H1_EXIT_ROUND=single_ms={:.1},sequential8_ms={:.1},round8_ms={:.1}",
+        single.as_secs_f64() * 1e3,
+        sequential.as_secs_f64() * 1e3,
+        batched.as_secs_f64() * 1e3
+    );
+    assert!(
+        batched * 2 < sequential,
+        "a round shares its kernel steps: {batched:?} vs {sequential:?}"
+    );
+    host.suspend().await.unwrap();
+    tokio::time::timeout(Duration::from_secs(6), async {
+        while role.is_active() {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("exit role ends on withdrawal");
+    role.retire().await.unwrap();
+    let _ = control.shutdown().await;
+    host.shutdown(false).await.unwrap();
+    server.close().await;
+}

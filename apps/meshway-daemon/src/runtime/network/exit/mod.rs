@@ -16,6 +16,9 @@ enum Work {
     Projection(Box<ExitProjection>),
     Packet(Box<PendingAction>),
     Barrier(tokio::sync::oneshot::Sender<()>),
+    /// The end of a packet turn: the installations it created share one
+    /// kernel round.
+    Flush,
 }
 
 #[derive(Clone, Default, PartialEq, Eq)]
@@ -34,6 +37,8 @@ pub(super) struct Runtime {
     stop: CancellationToken,
     _on_drop: tokio_util::sync::DropGuard,
     task: tokio::task::JoinHandle<Result<(), Problem>>,
+    /// This packet turn queued work: its end is announced ([`Self::end_turn`]).
+    turn: bool,
 }
 
 impl Runtime {
@@ -63,6 +68,7 @@ impl Runtime {
             _on_drop: stop.clone().drop_guard(),
             stop,
             task,
+            turn: false,
         })
     }
 
@@ -80,6 +86,7 @@ impl Runtime {
                 return true;
             };
             slot.send(Work::Projection(Box::new(event)));
+            self.turn = true;
         }
         false
     }
@@ -90,6 +97,7 @@ impl Runtime {
         // single FIFO. A full queue rejects the flow instead of waiting while
         // holding the SecureNode owner or dropping an unacknowledged callback.
         let flow = packet.exit_flow();
+        self.turn = true;
         if (!drained
             || self
                 .sender
@@ -98,6 +106,14 @@ impl Runtime {
             && let Some(flow) = flow
         {
             secure.fail_exit_projection(&flow);
+        }
+    }
+
+    /// The end of a packet turn: the installations it queued share one
+    /// kernel round. Without room the round ends by its own bound.
+    pub fn end_turn(&mut self) {
+        if std::mem::take(&mut self.turn) {
+            let _ = self.sender.try_send(Work::Flush);
         }
     }
 

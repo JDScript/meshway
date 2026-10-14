@@ -2,7 +2,8 @@ use super::{Health, Work, scope::PacketGuard};
 use meshway_dataplane::exit::{self, ExitProjection, FlowIncarnation};
 use meshway_protocol::ipc::Problem;
 use meshway_underlay::{CtConfirmation, ExitIncarnation, ExitRole, ExitScope};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
+use std::time::Duration;
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
@@ -22,9 +23,73 @@ enum Event {
     Confirmed(Result<Confirmation, tokio::task::JoinError>),
 }
 
+/// At most this many installations share one kernel round.
+const ROUND: usize = 64;
+/// How long a round waits for the rest of the packet turn that started it
+/// when the turn's end ([`Work::Flush`]) has not arrived yet.
+const ROUND_WAIT: Duration = Duration::from_millis(5);
+
+struct Installing {
+    flow: FlowIncarnation,
+    tuple: exit::ExitTuple,
+    scope: exit::ProjectionScope,
+    ack: exit::ProjectionAck,
+}
+
+/// Collect the installations of the packet turn `first` belongs to: they
+/// share one kernel round. Packets met meanwhile keep their order after the
+/// round (each waits only for its own flow's installation); any other work
+/// ends the round and keeps its place.
+async fn gather(
+    first: Installing,
+    work: &mut mpsc::Receiver<Work>,
+    deferred: &mut VecDeque<Work>,
+) -> Vec<Installing> {
+    let mut round = vec![first];
+    let deadline = tokio::time::Instant::now() + ROUND_WAIT;
+    while round.len() < ROUND && deferred.len() < super::CAPACITY {
+        let next = match work.try_recv() {
+            Ok(next) => next,
+            Err(mpsc::error::TryRecvError::Empty) => {
+                match tokio::time::timeout_at(deadline, work.recv()).await {
+                    Ok(Some(next)) => next,
+                    _ => break,
+                }
+            }
+            Err(mpsc::error::TryRecvError::Disconnected) => break,
+        };
+        match next {
+            Work::Flush => break,
+            Work::Projection(event) => match *event {
+                ExitProjection::Install {
+                    flow,
+                    tuple,
+                    scope,
+                    ack,
+                } => round.push(Installing {
+                    flow,
+                    tuple,
+                    scope,
+                    ack,
+                }),
+                other => {
+                    deferred.push_back(Work::Projection(Box::new(other)));
+                    break;
+                }
+            },
+            packet @ Work::Packet(_) => deferred.push_back(packet),
+            other => {
+                deferred.push_back(other);
+                break;
+            }
+        }
+    }
+    round
+}
+
 pub(super) async fn run(
     role: ExitRole,
-    mut work: mpsc::Receiver<Work>,
+    mut queue: mpsc::Receiver<Work>,
     failures: mpsc::Sender<FlowIncarnation>,
     health: watch::Sender<Health>,
     stop: CancellationToken,
@@ -34,12 +99,17 @@ pub(super) async fn run(
     // A forward packet that died at this exit (TTL, MTU) never confirms; its
     // up to 3 s wait runs beside every other flow's work, not before it.
     let mut confirming = tokio::task::JoinSet::<Confirmation>::new();
+    // Work taken out of the queue by a round, in its original order.
+    let mut deferred = VecDeque::new();
     loop {
-        let work = tokio::select! {
-            Some(done) = confirming.join_next(), if !confirming.is_empty() => Event::Confirmed(done),
-            work = work.recv() => match work {
-                Some(work) => Event::Work(work),
-                None => break,
+        let work = match deferred.pop_front() {
+            Some(work) => Event::Work(work),
+            None => tokio::select! {
+                Some(done) = confirming.join_next(), if !confirming.is_empty() => Event::Confirmed(done),
+                work = queue.recv() => match work {
+                    Some(work) => Event::Work(work),
+                    None => break,
+                },
             },
         };
         let mut failure = None;
@@ -66,6 +136,7 @@ pub(super) async fn run(
                 Work::Barrier(reply) => {
                     let _ = reply.send(());
                 }
+                Work::Flush => {}
                 Work::Projection(event) => match *event {
                     ExitProjection::Retire { flow, ack, .. } => {
                         if let Some(resource) = resources.remove(&flow) {
@@ -83,60 +154,102 @@ pub(super) async fn run(
                         ack.complete(removed);
                         failed |= !removed;
                     }
-                    event => {
-                        let (install, flow, tuple, scope, ack) = match event {
-                            ExitProjection::Install {
-                                flow,
-                                tuple,
-                                scope,
-                                ack,
-                            } => (true, flow, tuple, scope, ack),
-                            ExitProjection::Renew {
-                                flow,
-                                tuple,
-                                scope,
-                                ack,
-                            } => (false, flow, tuple, scope, ack),
-                            ExitProjection::Retire { .. } => unreachable!("handled above"),
+                    ExitProjection::Install {
+                        flow,
+                        tuple,
+                        scope,
+                        ack,
+                    } => {
+                        let first = Installing {
+                            flow,
+                            tuple,
+                            scope,
+                            ack,
                         };
-                        let key = ExitIncarnation::new(flow.bytes());
-                        let revoked = resources
-                            .get(&flow)
-                            .map_or_else(|| stop.child_token(), |r| r.revoked.clone());
-                        let deadline = Ok::<_, ()>(meshway_underlay::ExitCutoff {
-                            at: scope.deadline(),
-                            ms: scope.deadline_ms(),
-                        });
-                        let result = if stop.is_cancelled() || scope.ensure_current().is_err() {
-                            false
-                        } else if let (Ok(deadline), Some(tuple)) =
-                            (deadline, super::scope::tuple(tuple))
-                        {
-                            let kernel_scope = ExitScope {
-                                binding: flow.bytes().into(),
-                                revoked: revoked.clone(),
-                            };
-                            let result = if install {
-                                role.install(key, tuple, deadline, kernel_scope).await
-                            } else {
-                                role.renew(key, deadline, kernel_scope).await
-                            };
-                            result.is_ok_and(|receipt| receipt.incarnation == key)
-                        } else {
-                            false
-                        };
-                        if ack.complete(result).is_ok() {
-                            if install {
+                        let round = gather(first, &mut queue, &mut deferred).await;
+                        let mut submitted = Vec::new();
+                        let mut projections = Vec::new();
+                        let mut outcomes = Vec::new();
+                        for item in round {
+                            let key = ExitIncarnation::new(item.flow.bytes());
+                            let revoked = resources
+                                .get(&item.flow)
+                                .map_or_else(|| stop.child_token(), |r| r.revoked.clone());
+                            let ready = !stop.is_cancelled() && item.scope.ensure_current().is_ok();
+                            match (ready, super::scope::tuple(item.tuple.clone())) {
+                                (true, Some(tuple)) => {
+                                    projections.push((
+                                        key,
+                                        tuple,
+                                        meshway_underlay::ExitCutoff {
+                                            at: item.scope.deadline(),
+                                            ms: item.scope.deadline_ms(),
+                                        },
+                                        ExitScope {
+                                            binding: item.flow.bytes().into(),
+                                            revoked: revoked.clone(),
+                                        },
+                                    ));
+                                    submitted.push(outcomes.len());
+                                    outcomes.push((item, revoked, false));
+                                }
+                                _ => outcomes.push((item, revoked, false)),
+                            }
+                        }
+                        let results = role.install_batch(projections).await;
+                        for (index, result) in submitted.into_iter().zip(results) {
+                            let key = ExitIncarnation::new(outcomes[index].0.flow.bytes());
+                            outcomes[index].2 =
+                                result.is_ok_and(|receipt| receipt.incarnation == key);
+                        }
+                        // Each flow's own acknowledgement, whatever the others'.
+                        for (item, revoked, installed) in outcomes {
+                            if item.ack.complete(installed).is_ok() {
                                 resources.insert(
-                                    flow,
+                                    item.flow,
                                     Resource {
                                         revoked,
                                         confirmed: false,
                                         confirming: false,
                                     },
                                 );
+                            } else {
+                                revoked.cancel();
+                                if failures.try_send(item.flow).is_err() {
+                                    failed = true;
+                                }
                             }
+                        }
+                    }
+                    ExitProjection::Renew {
+                        flow,
+                        tuple,
+                        scope,
+                        ack,
+                    } => {
+                        let key = ExitIncarnation::new(flow.bytes());
+                        let revoked = resources
+                            .get(&flow)
+                            .map_or_else(|| stop.child_token(), |r| r.revoked.clone());
+                        let result = if stop.is_cancelled()
+                            || scope.ensure_current().is_err()
+                            || super::scope::tuple(tuple).is_none()
+                        {
+                            false
                         } else {
+                            let deadline = meshway_underlay::ExitCutoff {
+                                at: scope.deadline(),
+                                ms: scope.deadline_ms(),
+                            };
+                            let kernel_scope = ExitScope {
+                                binding: flow.bytes().into(),
+                                revoked: revoked.clone(),
+                            };
+                            role.renew(key, deadline, kernel_scope)
+                                .await
+                                .is_ok_and(|receipt| receipt.incarnation == key)
+                        };
+                        if ack.complete(result).is_err() {
                             revoked.cancel();
                             failure = Some(flow);
                         }

@@ -21,6 +21,8 @@ CASES = {
              "netmap_exit_role_survives_renewal_and_unchanged_serial_and_ends_on_withdrawal"),
     "capacity": ("meshway-underlay-netmap-tests",
                  "netmap_exit_projection_capacity_refuses_one_flow_and_keeps_the_role"),
+    "round": ("meshway-underlay-netmap-tests",
+              "netmap_exit_projection_round_acknowledges_each_flow_by_itself"),
     "nft": ("meshway-underlay-kernel-tests",
             "linux::kernel::exit::nft::tests::exit_nft_atomic_batch_readback_and_failed_transaction_leave_no_table"),
     "probe": ("meshway-underlay-kernel-tests",

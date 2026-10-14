@@ -28,21 +28,15 @@ enum Request {
     Audit {
         reply: oneshot::Sender<Result<Vec<(String, String)>>>,
     },
+    /// The projections of one driver round, answered one result each.
     Install {
-        incarnation: super::ExitIncarnation,
-        tuple: OriginalTuple,
-        deadline: Deadline,
-        scope: ExitScope,
-        guard: super::super::super::protection::ProtectionScope,
-        reply: oneshot::Sender<Result<ProjectionAck>>,
+        items: Vec<(
+            super::backend::Install,
+            super::super::super::protection::ProtectionScope,
+        )>,
+        reply: oneshot::Sender<Vec<Result<ProjectionAck>>>,
     },
-    Renew {
-        incarnation: super::ExitIncarnation,
-        deadline: Deadline,
-        scope: ExitScope,
-        guard: super::super::super::protection::ProtectionScope,
-        reply: oneshot::Sender<Result<ProjectionAck>>,
-    },
+    Renew(Box<Renew>),
     Confirm {
         incarnation: super::ExitIncarnation,
         reply: oneshot::Sender<Result<CtConfirmation>>,
@@ -51,6 +45,14 @@ enum Request {
         incarnation: super::ExitIncarnation,
         reply: oneshot::Sender<Result<()>>,
     },
+}
+
+struct Renew {
+    incarnation: super::ExitIncarnation,
+    deadline: Deadline,
+    scope: ExitScope,
+    guard: super::super::super::protection::ProtectionScope,
+    reply: oneshot::Sender<Result<ProjectionAck>>,
 }
 
 /// A handle to the Host's single exit owner. It never owns the TUN descriptor.
@@ -79,17 +81,57 @@ impl ExitRole {
         deadline: Deadline,
         scope: ExitScope,
     ) -> Result<ProjectionAck> {
-        let guard = self.validate_projection(original_tuple, &deadline)?;
-        let (reply, result) = oneshot::channel();
-        self.submit(Request::Install {
-            incarnation,
-            tuple: original_tuple,
-            deadline,
-            scope,
-            guard,
-            reply,
-        })?;
-        result.await.map_err(|_| Error::Worker)?
+        self.install_batch(vec![(incarnation, original_tuple, deadline, scope)])
+            .await
+            .pop()
+            .unwrap_or(Err(Error::Worker))
+    }
+    /// Install several projections in one kernel round: one result per
+    /// projection, in order. Each result is that projection's own: it is
+    /// acknowledged only once its own element is in the kernel, and another
+    /// projection's failure does not change it.
+    pub async fn install_batch(
+        &self,
+        projections: Vec<(super::ExitIncarnation, OriginalTuple, Deadline, ExitScope)>,
+    ) -> Vec<Result<ProjectionAck>> {
+        let mut results: Vec<Option<Result<ProjectionAck>>> = Vec::new();
+        let mut items = Vec::new();
+        for (incarnation, tuple, deadline, scope) in projections {
+            match self.validate_projection(tuple, &deadline) {
+                Ok(guard) => {
+                    results.push(None);
+                    items.push((
+                        super::backend::Install {
+                            incarnation,
+                            tuple,
+                            deadline,
+                            scope,
+                        },
+                        guard,
+                    ));
+                }
+                Err(error) => results.push(Some(Err(error))),
+            }
+        }
+        let mut answered = if items.is_empty() {
+            Vec::new()
+        } else {
+            let count = items.len();
+            let (reply, result) = oneshot::channel();
+            match self.submit(Request::Install { items, reply }) {
+                Ok(()) => result
+                    .await
+                    .unwrap_or_else(|_| (0..count).map(|_| Err(Error::Worker)).collect()),
+                Err(error) => (0..count)
+                    .map(|_| Err(super::backend::replicate(&error)))
+                    .collect(),
+            }
+        }
+        .into_iter();
+        results
+            .into_iter()
+            .map(|result| result.unwrap_or_else(|| answered.next().unwrap_or(Err(Error::Worker))))
+            .collect()
     }
     pub async fn renew(
         &self,
@@ -106,13 +148,13 @@ impl ExitRole {
             .ok_or(Error::Expired)?;
         let guard = self.validate_projection(tuple, &deadline)?;
         let (reply, result) = oneshot::channel();
-        self.submit(Request::Renew {
+        self.submit(Request::Renew(Box::new(Renew {
             incarnation,
             deadline,
             scope,
             guard,
             reply,
-        })?;
+        })))?;
         result.await.map_err(|_| Error::Worker)?
     }
     pub async fn confirm(&self, incarnation: super::ExitIncarnation) -> Result<CtConfirmation> {
@@ -529,20 +571,45 @@ impl super::super::Kernel {
                                 let result = backend.verify().await.map(|()| backend.ledger.program.tables().into_iter().map(|(family, name)| (family.to_owned(), name)).collect());
                                 if let Err(error) = &result { stopped("audit", error); } let ok = result.is_ok(); let _ = reply.send(result); if !ok { break; }
                             },
-                            Request::Install { incarnation, tuple, deadline, scope, guard, reply } => {
+                            Request::Install { items, reply } => {
                                 // Rejected queued work never entered the kernel
                                 // transaction and must not retire a kept flow.
-                                if guard.check().is_err() {
-                                    let _ = reply.send(Err(Error::Expired));
-                                    continue;
+                                let mut results: Vec<Option<Result<ProjectionAck>>> = Vec::new();
+                                let mut admitted = Vec::new();
+                                let mut guards = Vec::new();
+                                for (item, guard) in items {
+                                    if guard.check().is_err() {
+                                        results.push(Some(Err(Error::Expired)));
+                                    } else {
+                                        results.push(None);
+                                        admitted.push(item);
+                                        guards.push(guard);
+                                    }
                                 }
-                                let result = backend.install(incarnation, tuple, deadline, scope).await;
-                                if let Err(error) = &result { tracing::debug!(operation = "install", %error, "Exit projection operation failed"); }
-                                let result = result.and_then(|ack| { guard.check()?; Ok(ack) });
-                                if result.is_err() && reconcile(&mut backend, incarnation).await.is_err() { break; }
-                                if reply.send(result).is_err() && reconcile(&mut backend, incarnation).await.is_err() { break; }
+                                let incarnations: Vec<_> = admitted.iter().map(|item| item.incarnation).collect();
+                                let installed = backend.install_batch(admitted).await;
+                                let mut failed = false;
+                                let mut installed = installed.into_iter();
+                                for (incarnation, guard) in incarnations.iter().zip(&guards) {
+                                    let result = installed.next().unwrap_or(Err(Error::Worker));
+                                    if let Err(error) = &result { tracing::debug!(operation = "install", %error, "Exit projection operation failed"); }
+                                    let result = result.and_then(|ack| { guard.check()?; Ok(ack) });
+                                    if result.is_err() && reconcile(&mut backend, *incarnation).await.is_err() { failed = true; break; }
+                                    if let Some(slot) = results.iter_mut().find(|slot| slot.is_none()) { *slot = Some(result); }
+                                }
+                                if failed { break; }
+                                let results: Vec<_> = results.into_iter().map(|result| result.unwrap_or(Err(Error::Worker))).collect();
+                                let delivered: Vec<_> = results.iter().map(|result| result.as_ref().ok().map(|ack| ack.incarnation)).collect();
+                                if reply.send(results).is_err() {
+                                    // Nobody takes these acknowledgements: no flow may use them.
+                                    for incarnation in delivered.into_iter().flatten() {
+                                        if reconcile(&mut backend, incarnation).await.is_err() { failed = true; break; }
+                                    }
+                                    if failed { break; }
+                                }
                             },
-                            Request::Renew { incarnation, deadline, scope, guard, reply } => {
+                            Request::Renew(renew) => {
+                                let Renew { incarnation, deadline, scope, guard, reply } = *renew;
                                 if guard.check().is_err() {
                                     let _ = reply.send(Err(Error::Expired));
                                     continue;
