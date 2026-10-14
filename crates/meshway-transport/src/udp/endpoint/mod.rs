@@ -236,10 +236,14 @@ impl UdpTransport {
                 0 => DEFAULT_SEND_BUFFER,
                 bytes => bytes as usize,
             };
-            if options.receive_buffer != 0 || reference.recv_buffer_size()? < receive {
+            if options.receive_buffer != 0
+                || !crate::raw::satisfies(reference.recv_buffer_size()?, receive)
+            {
                 request_buffer(&endpoint.socket, true, receive)?;
             }
-            if options.send_buffer != 0 || reference.send_buffer_size()? < send {
+            if options.send_buffer != 0
+                || !crate::raw::satisfies(reference.send_buffer_size()?, send)
+            {
                 request_buffer(&endpoint.socket, false, send)?;
             }
             endpoint.buffers = read_buffers(&endpoint.socket, receive, send)?;

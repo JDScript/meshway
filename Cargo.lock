@@ -1762,6 +1762,7 @@ dependencies = [
  "meshway-model",
  "meshway-protocol",
  "meshway-server",
+ "meshway-transport",
  "serde",
  "serde_json",
  "tempfile",

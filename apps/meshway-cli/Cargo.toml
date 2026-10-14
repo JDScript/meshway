@@ -18,6 +18,7 @@ meshway-dataplane = { path = "../../crates/meshway-dataplane" }
 meshway-protocol = { path = "../../crates/meshway-protocol" }
 meshway-logging = { path = "../../crates/meshway-logging" }
 meshway-model = { path = "../../crates/meshway-model" }
+meshway-transport = { path = "../../crates/meshway-transport" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

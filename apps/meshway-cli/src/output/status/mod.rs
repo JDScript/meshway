@@ -207,16 +207,21 @@ fn size(bytes: u32) -> String {
     }
 }
 
-/// Granted buffers as the kernel reports them; less than requested means
-/// the kernel limited the request (`net.core.rmem_max`／`wmem_max`). A
+/// Granted buffers as the kernel reports them; one that does not hold the
+/// request ([`meshway_transport::raw::satisfies`]: Linux reports twice the
+/// grant) means the kernel limited it (`net.core.rmem_max`／`wmem_max`). A
 /// listener whose bind is being retried shows why it is unavailable.
 fn sockets(output: &mut impl Write, term: &Term, status: &Status) -> io::Result<()> {
     let mut table = Table::new(vec!["SOCKET", "BOUND", "RECEIVE BUFFER", "SEND BUFFER"]);
     let cell = |granted: Option<u32>, requested: Option<u32>| match (granted, requested) {
-        (Some(granted), Some(requested)) if granted < requested => Cell::styled(
-            format!("{} (requested {}, limited)", size(granted), size(requested)),
-            Role::Warn,
-        ),
+        (Some(granted), Some(requested))
+            if !meshway_transport::raw::satisfies(granted as usize, requested as usize) =>
+        {
+            Cell::styled(
+                format!("{} (requested {}, limited)", size(granted), size(requested)),
+                Role::Warn,
+            )
+        }
         (Some(granted), _) => Cell::new(size(granted)),
         (None, _) => Cell::new(""),
     };

@@ -102,7 +102,7 @@ Linux `UdpTransport::adopt_batch` 的 socket buffer：
 
 - 未指定时已有更大的 buffer 不降低；显式非零值（`socket.receiveBuffer`／`sendBuffer`）按配置请求。
 - 每次请求先用特权的 `SO_RCVBUFFORCE`／`SO_SNDBUFFORCE`（需要 `CAP_NET_ADMIN`；`meshwayd` 的 systemd unit 与 lab 容器都有），不受 `net.core.rmem_max`／`wmem_max` 限制；没有该权限（返回 `EPERM`）时改用普通 `SO_RCVBUF`／`SO_SNDBUF`，内核把它截到 `rmem_max`／`wmem_max`（Ubuntu 默认 212,992 B，读回 416 KB）。Node 不修改任何 sysctl；宿主调整见[高吞吐宿主](/v2/install#high-throughput)。
-- 请求后读回实际值一次（`raw::Buffers`，`Datagram::buffers()`）。Linux 读回的是授予值的两倍（含 skb 记账开销），即 4 MiB 请求读回 8 MiB；读回值小于请求值表示被截断。实际值经三处可见：每个 Mesh UDP socket 一条日志（`UDP socket buffers`，截断时为 warn `UDP socket buffers limited by net.core.rmem_max/wmem_max`），IPC Status 的 [`sockets`](/v2/node/runtime)，以及 `meshway status` 的 SOCKET 表。
+- 请求后读回实际值一次（`raw::Buffers`，`Datagram::buffers()`）。Linux 读回的是授予值的两倍（含 skb 记账开销），即 4 MiB 请求读回 8 MiB；是否截断只有一处判定（`raw::satisfies`：Linux 上读回值小于请求的两倍即截断，例如被截到 3 MiB 时读回 6 MiB 仍算截断），日志、`meshway status` 与默认值提升都用它。实际值经三处可见：每个 Mesh UDP socket 一条日志（`UDP socket buffers`，截断时为 warn `UDP socket buffers limited by net.core.rmem_max/wmem_max`），IPC Status 的 [`sockets`](/v2/node/runtime)，以及 `meshway status` 的 SOCKET 表。
 - 同一 primitive 也用于受保护的 bootstrap DNS socket，得到相同默认值；buffer 只在有排队报文时占用内存，预算见[进程与容器内存记账](/v2/node/dataplane#进程与容器内存记账)。
 - 其它 provider 与非 Linux／逐包 UDP 的 0 仍保留系统值。buffer 不提供新的 authority，原 descriptor、scope／mark 和逐 syscall 检查继续生效。
 

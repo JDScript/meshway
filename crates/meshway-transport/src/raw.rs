@@ -67,8 +67,20 @@ impl Buffers {
     /// The kernel granted less than requested in either direction: the
     /// ordinary request was limited by `net.core.rmem_max`／`wmem_max`.
     pub fn limited(&self) -> bool {
-        self.receive < self.receive_requested || self.send < self.send_requested
+        !satisfies(self.receive, self.receive_requested)
+            || !satisfies(self.send, self.send_requested)
     }
+}
+
+/// Whether a socket buffer the kernel reports as `readback` bytes holds a
+/// request of `requested` bytes. Linux reports twice what it granted (skb
+/// bookkeeping), so a whole grant reads back as twice the request and a
+/// request limited to anything less reads back below that; other systems
+/// report the grant itself. The one judgement behind the buffer log,
+/// `meshway status` and the default raise.
+pub fn satisfies(readback: usize, requested: usize) -> bool {
+    const REPORTED_PER_GRANTED: usize = if cfg!(target_os = "linux") { 2 } else { 1 };
+    readback >= requested.saturating_mul(REPORTED_PER_GRANTED)
 }
 
 #[derive(Clone, Copy)]
@@ -248,4 +260,31 @@ pub async fn recv_from<D: Datagram + ?Sized>(
     buffer: &mut [u8],
 ) -> io::Result<DatagramRead> {
     poll_fn(|cx| endpoint.poll_recv_from(cx, buffer)).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Linux reads back twice the grant: a 4 MiB request limited to 3 MiB
+    /// reads back 6 MiB, above the request yet limited.
+    #[test]
+    fn a_readback_holds_a_request_only_at_its_reported_size() {
+        let mib = 1024 * 1024;
+        let buffers = |receive| Buffers {
+            receive,
+            send: 4 * mib,
+            receive_requested: 4 * mib,
+            send_requested: 2 * mib,
+        };
+        if cfg!(target_os = "linux") {
+            assert!(buffers(6 * mib).limited());
+            assert!(!buffers(8 * mib).limited());
+            assert!(!satisfies(4 * mib, 4 * mib));
+        } else {
+            assert!(!buffers(4 * mib).limited());
+            assert!(buffers(3 * mib).limited());
+        }
+        assert!(buffers(416 * 1024).limited());
+    }
 }
