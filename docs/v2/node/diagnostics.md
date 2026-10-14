@@ -160,7 +160,7 @@ dial meshway-sha/lab-udp  [::]:40651     —                     —            
 | `direct`／`unmanaged` | daemon 以不带保护 mark 的 raw ICMP socket 从本机直出，由宿主路由像普通应用包一样处理；不经过 Mesh，不改变任何 Mesh 状态 |
 | `denied` | 不探测，以 `permissionDenied` 结束 |
 
-每次一个请求在途，期限 5 秒，发送间隔至少 1 秒；identifier 每次 ping 随机。RTT 为源端单调时钟：Mesh 出口探测从 SecureNode 接纳该请求，到认证后的回复被取走；本机直出从 `sendto` 返回到收到回复。接纳时尚无已建立 circuit（等待握手或邻接）的请求标 `setup: true`，其 RTT 包含本节点的 circuit 建立。只报告一个总 RTT，不拆分 Mesh 段与出口到目标段。
+判定依据的期望状态被撤回（数据面失败后 `reconfig(None)`、租约结束或撤销）时，域名解析、出口与本机直出的 ping 立即以 `stopped` 结束，其任务在撤回完成前被取消并等待退出。每次一个请求在途，期限 5 秒，发送间隔至少 1 秒；identifier 每次 ping 随机。RTT 为源端单调时钟：Mesh 出口探测从 SecureNode 接纳该请求，到认证后的回复被取走；本机直出从 `sendto` 返回到收到回复。接纳时尚无已建立 circuit（等待握手或邻接）的请求标 `setup: true`，其 RTT 包含本节点的 circuit 建立。只报告一个总 RTT，不拆分 Mesh 段与出口到目标段。
 
 `echo` 事件：`sequence`；`outcome` 为 `reply`、`unreachable`（`error` 为 ICMP 类型／代码）、`timeout`（已接纳但期限内无回答）或 `failed`（本机未接纳）；`from` 为回复或错误的来源；`durationUs`（无回答为 null，不补零）；`setup`；`path` 为回复返回所在的完整 Mesh 路径（本机直出为空）。结束的 `completed` 中 `sent` 为已接纳的请求数、`success` 为回复数、`timeout` 为超时数、`failed` 为本机未接纳数；`unreachable` 计入 `sent`，不计入 loss。
 

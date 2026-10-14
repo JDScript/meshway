@@ -645,7 +645,8 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             | Work::CarrierClosed
             | Work::Packet(Err(_))
             | Work::DnsFailure => {
-                diagnostics.invalidate();
+                // The decisions of every external ping go with the content.
+                diagnostics.withdraw().await;
                 let dns_error = matches!(work, Work::DnsFailure);
                 if dns_error {
                     tracing::warn!("Required DNS component failed; suspending packet plane");

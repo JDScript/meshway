@@ -391,3 +391,31 @@ pub(super) fn report(request: &PingRequest, counts: &mut Counts, event: PingEven
         request.cancellation.cancel();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    /// A direct echo task that would run on (it waits on nothing its request
+    /// cancels) is aborted and joined by the withdrawal.
+    #[tokio::test]
+    async fn withdrawal_ends_and_joins_direct_echo_tasks() {
+        struct Dropped(std::sync::Arc<std::sync::atomic::AtomicBool>);
+        impl Drop for Dropped {
+            fn drop(&mut self) {
+                self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+        let mut diagnostics = super::super::Diagnostics::default();
+        let dropped = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let guard = Dropped(dropped.clone());
+        diagnostics.externals.direct.spawn(async move {
+            let _guard = guard;
+            std::future::pending::<()>().await;
+        });
+        assert_eq!(diagnostics.externals.len(), 1);
+        tokio::time::timeout(std::time::Duration::from_secs(2), diagnostics.withdraw())
+            .await
+            .unwrap();
+        assert_eq!(diagnostics.externals.len(), 0);
+        assert!(dropped.load(std::sync::atomic::Ordering::SeqCst));
+    }
+}

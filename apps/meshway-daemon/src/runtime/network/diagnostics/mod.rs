@@ -433,6 +433,16 @@ impl Diagnostics {
         self.epoch = tokio_util::sync::CancellationToken::new();
     }
 
+    /// The Desired every current decision was made on is withdrawn
+    /// (`reconfig(None)` after a data-plane failure): Mesh measurements wait
+    /// for the next content as on [`Self::invalidate`], while external pings
+    /// (resolutions, exit echoes, direct raw ICMP echoes) end now and their
+    /// tasks are joined before this returns.
+    pub async fn withdraw(&mut self) {
+        self.invalidate();
+        self.externals.stop().await;
+    }
+
     pub fn invalidate(&mut self) {
         self.epoch.cancel();
         self.epoch = tokio_util::sync::CancellationToken::new();
