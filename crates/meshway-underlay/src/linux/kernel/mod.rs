@@ -248,7 +248,17 @@ impl Kernel {
                 .cloned()
                 .collect::<Vec<_>>()
         };
-        rules.retain(|rule| !exit_rules.contains(&encode_rule(rule.clone())));
+        // An exit rule whose input TUN is gone carries the kernel's
+        // IIF_DETACHED state flag; it is still that owner's own rule.
+        rules.retain(|rule| {
+            let mut attached = rule.clone();
+            attached
+                .header
+                .flags
+                .remove(rtnetlink::packet_route::rule::RuleFlags::IifDetached);
+            !exit_rules.contains(&encode_rule(rule.clone()))
+                && !exit_rules.contains(&encode_rule(attached))
+        });
         verify_rules(&self.journal, &rules)?;
         let mut foreign: Vec<_> = rules
             .into_iter()
@@ -346,9 +356,8 @@ impl Kernel {
         let view = View::of(&desired);
         if self.exit.as_ref().is_some_and(|owner| {
             view.exit_role().as_ref() != Some(&owner.role.plan) || !view.exit_enabled()
-        }) && let Some(mut owner) = self.exit.take()
-        {
-            owner.shutdown().await?;
+        }) {
+            self.release_exit().await?;
         }
         let binding = (view.network_id(), view.node_id());
         if self
@@ -415,9 +424,7 @@ impl Kernel {
         // pool set before removing any old positive routes or the owned TUN.
         // Retired pools keep their negative rules until explicit down.
         self.shared.suspend()?;
-        if let Some(mut exit) = self.exit.take() {
-            exit.shutdown().await?;
-        }
+        self.release_exit().await?;
         self.retain_negative(&pools).await?;
         self.suspend().await?;
         let outcome = self.activate(&desired, &pools, &addresses).await;
@@ -731,9 +738,7 @@ impl Kernel {
         if let Some(owner) = &self.egress {
             owner.capture.pause().await?;
         }
-        if let Some(mut exit) = self.exit.take() {
-            exit.shutdown().await?;
-        }
+        self.release_exit().await?;
         let result = self.remove_live().await;
         self.drop_owned_tun();
         // Closing the owned descriptor emits address/link notifications after

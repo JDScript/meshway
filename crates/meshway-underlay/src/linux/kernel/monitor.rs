@@ -38,6 +38,10 @@ pub(super) struct Expected {
     pub exit_rules: Vec<Vec<u8>>,
     pub exit_tables: Vec<u32>,
     pub exit_tun: Option<u32>,
+    /// Stops the installed exit role. An exit-owned route or rule removed
+    /// outside its owner stops that role alone: its owner retires every
+    /// projection and cleans up; the Host keeps its own resources.
+    pub exit_stop: Option<tokio_util::sync::CancellationToken>,
     pub probe_tun: Option<u32>,
     pub egress_rules: Vec<Vec<u8>>,
     pub egress_table: Option<u32>,
@@ -269,6 +273,32 @@ impl Expected {
         true
     }
 
+    /// An exit-owned rule (also once its input TUN is gone: the kernel then
+    /// adds its IIF_DETACHED state flag).
+    fn exit_owned_rule(&self, rule: &rtnetlink::packet_route::rule::RuleMessage) -> bool {
+        let mut attached = rule.clone();
+        attached
+            .header
+            .flags
+            .remove(rtnetlink::packet_route::rule::RuleFlags::IifDetached);
+        self.exit_rules.contains(&encode_rule(rule.clone()))
+            || self.exit_rules.contains(&encode_rule(attached))
+    }
+
+    /// Stop the installed exit role for the removal of one of its objects;
+    /// false when no role is installed to take it.
+    fn stop_exit(&self, reason: &'static str) -> bool {
+        let Some(stop) = &self.exit_stop else {
+            return false;
+        };
+        tracing::warn!(
+            reason,
+            "Exit-owned kernel object removed outside its owner; stopping the exit role"
+        );
+        stop.cancel();
+        true
+    }
+
     fn consume(&mut self, event: Event) -> Result<()> {
         let position = self
             .events
@@ -479,6 +509,7 @@ async fn monitor(
                         }
                     }
                     NetlinkPayload::InnerMessage(RouteNetlinkMessage::DelRule(rule)) => {
+                        let exit = state.exit_owned_rule(&rule);
                         if state
                             .consume(Event {
                                 rule: true,
@@ -486,6 +517,7 @@ async fn monitor(
                                 bytes: encode_rule(rule),
                             })
                             .is_err()
+                            && !(exit && state.stop_exit("unexpected_del_rule"))
                         {
                             conflict!("unexpected_del_rule");
                         }
@@ -517,6 +549,7 @@ async fn monitor(
                             || state.egress_table == Some(route_table(&route))
                             || state.exit_tables.contains(&route_table(&route)) =>
                     {
+                        let exit = state.exit_tables.contains(&route_table(&route));
                         if state
                             .consume(Event {
                                 rule: false,
@@ -524,6 +557,7 @@ async fn monitor(
                                 bytes: encode_route(route),
                             })
                             .is_err()
+                            && !(exit && state.stop_exit("unexpected_del_route"))
                         {
                             conflict!("unexpected_del_route");
                         }

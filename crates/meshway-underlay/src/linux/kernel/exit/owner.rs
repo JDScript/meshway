@@ -216,6 +216,11 @@ impl ExitRole {
     pub fn is_active(&self) -> bool {
         !self.stop.is_cancelled()
     }
+    /// Completes once the owner stops serving: retirement, withdrawal of
+    /// its role, or a failure of its own.
+    pub async fn stopped(&self) {
+        self.stop.cancelled().await;
+    }
     fn submit(&self, request: Request) -> Result<()> {
         if self.stop.is_cancelled() {
             return Err(Error::Expired);
@@ -341,9 +346,32 @@ impl super::super::Kernel {
             let mut expected = self.expected.lock().map_err(|_| Error::Worker)?;
             expected.exit_tun = None;
             expected.exit_tables.clear();
+            expected.exit_stop = None;
             self.exit.take();
         }
         Ok(())
+    }
+
+    /// End the exit role for a Host transition (new content, suspension). A
+    /// role that already stopped on its own failure was reported then; its
+    /// kept resources are inert (closed gate, no TUN) and stay recorded in
+    /// its journal and the monitor's expectations, so they never block the
+    /// Host's own resources. Retiring a live role must succeed.
+    pub(in crate::linux::kernel) async fn release_exit(&mut self) -> Result<()> {
+        let Some(mut owner) = self.exit.take() else {
+            return Ok(());
+        };
+        let stopped = !owner.role.is_active();
+        let result = owner.shutdown().await;
+        self.expected.lock().map_err(|_| Error::Worker)?.exit_stop = None;
+        match result {
+            Ok(()) => Ok(()),
+            Err(error) if stopped => {
+                tracing::warn!(%error, "Failed exit role keeps its resources until recovery");
+                Ok(())
+            }
+            Err(error) => Err(error),
+        }
     }
 
     pub async fn install_exit_role(&mut self, plan: RoleIdentity) -> Result<ExitRole> {
@@ -485,6 +513,7 @@ impl super::super::Kernel {
         };
         let view = Arc::new(RwLock::new(BTreeMap::new()));
         let stop = CancellationToken::new();
+        self.expected.lock().map_err(|_| Error::Worker)?.exit_stop = Some(stop.clone());
         let routing = Routing {
             handle: self.handle.clone(),
             expected: self.expected.clone(),
