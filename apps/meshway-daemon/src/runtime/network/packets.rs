@@ -685,7 +685,6 @@ impl Packets {
         }
         if let Some(exit) = exit {
             exit.drive(secure);
-            exit.end_turn();
         }
         self.scan_remaining = self
             .scan_remaining

@@ -25,9 +25,12 @@ enum Event {
 
 /// At most this many installations share one kernel round.
 const ROUND: usize = 64;
-/// How long a round waits for the rest of the packet turn that started it
-/// when the turn's end ([`Work::Flush`]) has not arrived yet.
-const ROUND_WAIT: Duration = Duration::from_millis(5);
+/// A round collects the installations that follow its first one closely
+/// (the new flows of one burst, e.g. one traceroute's probes): it closes once
+/// none arrived for `ROUND_GAP`, and at most `ROUND_WAIT` after it opened.
+/// That bounded wait is what a lone new flow pays for sharing.
+const ROUND_GAP: Duration = Duration::from_millis(3);
+const ROUND_WAIT: Duration = Duration::from_millis(10);
 
 struct Installing {
     flow: FlowIncarnation,
@@ -36,22 +39,22 @@ struct Installing {
     ack: exit::ProjectionAck,
 }
 
-/// Collect the installations of the packet turn `first` belongs to: they
-/// share one kernel round. Packets met meanwhile keep their order after the
-/// round (each waits only for its own flow's installation); any other work
-/// ends the round and keeps its place.
+/// Collect the installations that share `first`'s kernel round. Packets met
+/// meanwhile keep their order after the round (each waits only for its own
+/// flow's installation); any other work ends the round and keeps its place.
 async fn gather(
     first: Installing,
     work: &mut mpsc::Receiver<Work>,
     deferred: &mut VecDeque<Work>,
 ) -> Vec<Installing> {
     let mut round = vec![first];
-    let deadline = tokio::time::Instant::now() + ROUND_WAIT;
+    let closes = tokio::time::Instant::now() + ROUND_WAIT;
+    let mut idle = tokio::time::Instant::now() + ROUND_GAP;
     while round.len() < ROUND && deferred.len() < super::CAPACITY {
         let next = match work.try_recv() {
             Ok(next) => next,
             Err(mpsc::error::TryRecvError::Empty) => {
-                match tokio::time::timeout_at(deadline, work.recv()).await {
+                match tokio::time::timeout_at(idle.min(closes), work.recv()).await {
                     Ok(Some(next)) => next,
                     _ => break,
                 }
@@ -59,19 +62,21 @@ async fn gather(
             Err(mpsc::error::TryRecvError::Disconnected) => break,
         };
         match next {
-            Work::Flush => break,
             Work::Projection(event) => match *event {
                 ExitProjection::Install {
                     flow,
                     tuple,
                     scope,
                     ack,
-                } => round.push(Installing {
-                    flow,
-                    tuple,
-                    scope,
-                    ack,
-                }),
+                } => {
+                    round.push(Installing {
+                        flow,
+                        tuple,
+                        scope,
+                        ack,
+                    });
+                    idle = tokio::time::Instant::now() + ROUND_GAP;
+                }
                 other => {
                     deferred.push_back(Work::Projection(Box::new(other)));
                     break;
@@ -136,7 +141,6 @@ pub(super) async fn run(
                 Work::Barrier(reply) => {
                     let _ = reply.send(());
                 }
-                Work::Flush => {}
                 Work::Projection(event) => match *event {
                     ExitProjection::Retire { flow, ack, .. } => {
                         if let Some(resource) = resources.remove(&flow) {

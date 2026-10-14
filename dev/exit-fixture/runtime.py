@@ -97,7 +97,7 @@ def run_icmp_phase(command, detached, evidence, addresses, subnets, source):
         if hops.get(1) not in e_addresses or hops.get(2) != router or hops.get(3) != far:
             raise RuntimeError("traceroute through the exit did not show E, the router and the target")
         if len(spread) < 2 or max(spread.values()) > HOP_SPREAD_MS:
-            raise RuntimeError(f"later traceroute hops waited on earlier projections: {spread}")
+            raise RuntimeError(f"later traceroute hops waited on earlier projections: rtt {rtts} spread {spread}")
         # A TCP echo larger than the far link converges through fragmentation needed.
         result["tcp"] = command("a", "timeout", "14", "python3", "/dns-fixture/icmp.py", "tcp", far, "8080", "65536",
                                 required=False)
