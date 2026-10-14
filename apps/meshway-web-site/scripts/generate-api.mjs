@@ -73,6 +73,7 @@ const titles = {
   getNodeSettings: "读取节点设置",
   getNodeRoutingSelection: "读取节点路由方案",
   setNodeRoutingSelection: "切换节点路由方案",
+  clearNodeRoutingSelection: "清除节点路由方案选择",
   getNodeState: "读取节点状态",
   listObservations: "列出观测订阅",
   createObservation: "创建观测订阅",
