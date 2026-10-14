@@ -2,7 +2,9 @@
 
 按合入 main 的顺序记录工作包、提交与证据 ID。规则见[工程流程](/v2/process)；性能数字的口径见[分层性能测量](/v2/node/performance)，验收状态见[验收范围](/v2/node/validation)。
 
-## 未发布
+## v0.1.0-alpha.8
+
+范围：wire 6、IPC 11、`compilerVersion` `meshway-netmap-2`、Server schema 不变；HTTP 契约删除 4 个从未产生的枚举值，netmap 投影新增可省略的 `eligibleExits`（须先升级 Node 再升级 Server）。F5a 25 条审阅修复（出口自指 `eligibleExits`、MTU 探测签名绑长度／只升不降修正／路由 MTU 9000 不致命、listener 接管改绑、出口防火墙判定含 prerouting＋记忆化预算、路径暂停退避、调度 EDF、游标 digest、完整 State 报告 adjacencies 裁剪、缓冲截断口径、DNS 预约 cookie 归档、ctnetlink `DUMP_INTR`、MSS 重试）；F5b 卫生（删 4 个枚举值、`meshway_rules::ranges`、观察历史游标共用 cursor 信封）；F5c 大文件拆分；以及下列 F5c、F5b、F5a 工作包。
 
 大文件拆分与偶发卡死测试（F5c，`f5c/splits`）：只移动模块，wire 6、IPC 11、`compilerVersion` 与 Server schema 均不变，无行为变化。
 

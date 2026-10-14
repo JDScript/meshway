@@ -3,7 +3,7 @@
   "info": {
     "title": "Meshway Server",
     "description": "Console API under /api/v1 (user sessions) and Node API under /agent-api/v1 (node sessions), generated from the actual routes.",
-    "version": "0.1.0-alpha.7"
+    "version": "0.1.0-alpha.8"
   },
   "paths": {
     "/agent-api/v1/artifacts/{digest}": {

@@ -49,8 +49,8 @@ net.core.wmem_max = 2097152
 ## 安装
 
 ```sh
-curl -fsSLO https://github.com/JDScript/meshway/releases/download/v0.1.0-alpha.7/install.sh
-sudo sh install.sh --version v0.1.0-alpha.7 --server https://controller.example.com
+curl -fsSLO https://github.com/JDScript/meshway/releases/download/v0.1.0-alpha.8/install.sh
+sudo sh install.sh --version v0.1.0-alpha.8 --server https://controller.example.com
 sudo meshway up --enrollment-key @/root/enrollment-key
 sudo meshway status
 ```
@@ -150,7 +150,7 @@ meshway version
 ```
 
 ```text
-meshway 0.1.0-alpha.7 (v0.1.0-alpha.7-0-g1234abcd)
+meshway 0.1.0-alpha.8 (v0.1.0-alpha.8-0-g1234abcd)
 target:   aarch64-unknown-linux-musl
 ipc:      11
 wire:     6
