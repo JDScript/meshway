@@ -7,10 +7,11 @@
 OPS8 后续三项（H2，`h2/ops8-followups`）：wire 6、IPC 12、`compilerVersion` `meshway-netmap-3`、Server schema 8 均不变。
 
 - 清除方案选择：新增 `clearNodeRoutingProfile`（`DELETE /agent-api/v1/routing-selection`，`{instance, expectedVersion}`，CAS 同 `selectNodeRoutingProfile`）与 `clearNodeRoutingSelection`（`DELETE /api/v1/networks/{networkId}/nodes/{nodeId}/routing-selection`，`{requestId}`，主体与重试规则同 `setNodeRoutingSelection`）；节点回到 assignment 默认方案（含 `auto`），版本计数保留；活动仍为 `routing.select`，`ActivityTarget.routingSelection.profile` 改为必有可空（清除为 null）。IPC 12 新增命令 `ClearProfile`（旧 daemon 不认识该命令，旧 CLI 不受影响），CLI `meshway exit --default`，无请求方案时显示 `none · following the default`。Console 活动列表显示“已清除方案选择”。`exit/off` 第 14 阶段末尾加 ⑥ `meshway exit --default` 回到 `auto` 解析。见 [Routing · 选择的入口](/v2/configuration-reference/routing#选择的入口)、[出口方案](/v2/node/runtime#exit-profile)。
-
 - `idlePath` 与 state 一致：`unreachable`／`offline` 的 peer 总是 `no path`（此前 it7→planck 离线时显示 `relay (idle) via meshway-vm → meshway-lax`），`relayIdle` 的 `idlePath` 即 `via` 那条路径。根因在中继排序：`ranked` 只看第一个中继是否与其后节点有通道，于是“vm 与 lax 相连”使两中继路径排到所有单中继路径之前；现在要求路径上每个中继都报告与其后节点的通道（与 `relayIdle` 同一条件），新 circuit 的选路随之改正。见[中继兜底](/v2/node/connectivity#relay-fallback)、[运行状态 · peers](/v2/node/runtime)。
-
 - 升级文档：[安装 · compilerVersion 变化的版本](/v2/install#compiler-version-upgrade)——全部 Node 与 Server 同一窗口升级、先备齐全部产物（含 lab 构建）、仍先 Node 后 Server，每台节点从升级到 Server 完成之间无 Mesh（`Sync reconnecting (contract)`）；changelog 中 `compilerVersion` 变化的版本在范围句首标注 “⚠ 断网窗口”（alpha.9、alpha.4 已补标注）。
+- `exit/off` 第 12 阶段等待 A 每秒一次的 MSS clamp 刷新再读表（H1 的偶发失败即在刷新前读表）。
+
+验证：Planck 18 行矩阵 `20261014T210943Z-8bc0b498`（候选 `3a47c644`，并行 4）全部通过，见[出口场景](/v2/node/validation#exit-scenario)。
 
 ## v0.1.0-alpha.9
 
