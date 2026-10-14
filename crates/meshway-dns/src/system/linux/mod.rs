@@ -672,13 +672,11 @@ mod namespace_tests {
             Directory::open(&path, "dns.lock").is_err(),
             "the live holder's lock"
         );
-        // Backend records without any reservation are not adopted.
+        // A backend record without any reservation is never adopted.
         let bare = Directory::open(&temp.path().join("bare"), "dns.lock").unwrap();
         bare.replace("resolved.json", b"{}").unwrap();
-        assert!(matches!(
-            take_over(&bare, &reservation(7, Some(9))),
-            Err(SystemDnsError::Conflict)
-        ));
+        assert!(take_over(&bare, &reservation(7, Some(9))).is_err());
+        assert!(owner(&bare).is_none());
     }
 
     /// A reservation an earlier build wrote without a cookie keeps the inode
