@@ -61,7 +61,7 @@ Configuration{
 RoutingSelection{
     /// Node whose selection changed.
     #[serde(rename="nodeId")]node_id:NodeId,
-    /// Profile the selection names after the action.
+    /// Profile the selection names after the action; for `routing.autoResolve`, the profile `auto` now applies.
     profile:String,
 }}}
 
@@ -141,6 +141,8 @@ actions! {
     JoinLinkRevoke = "joinLink.revoke",
     /// Records a committed routing profile selection by the Node itself or a user, with a routingSelection target carrying nodeId and the selected profile.
     RoutingSelect = "routing.select",
+    /// Records, with a system actor, that the profile `auto` resolves to for a Node changed (another profile, basis or region, such as after its declared region changed), with a routingSelection target carrying nodeId and the profile `auto` now applies.
+    RoutingAutoResolve = "routing.autoResolve",
 }
 
 wire_object! {

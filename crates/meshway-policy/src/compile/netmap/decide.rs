@@ -95,6 +95,7 @@ pub(super) fn rebuild(view: &ConfigurationView) -> NetworkConfiguration {
                         listeners: BTreeMap::new(),
                         dialers: Input::Omitted,
                         exit_enabled: n.exit_enabled,
+                        region: n.region.clone(),
                     },
                 )
             })
@@ -183,6 +184,12 @@ impl LocalCompiler {
             &projection.selected_profiles,
             source,
         )?;
+        // Partitions are shared per concrete profile: `auto` differs by source.
+        let profile = match matching::concrete_profile(&self.configuration, &profile, Some(source))
+        {
+            Ok((_, name, _)) => name,
+            Err(_) => profile,
+        };
         let named = crate::compile::capture::names_exit(
             &self.configuration,
             self.exits(),
@@ -292,7 +299,7 @@ impl LocalCompiler {
     ) -> Result<Option<EgressRuleHit>, CompileError> {
         let cfg = &self.configuration;
         let projection = &self.netmap.projection;
-        let mut profile = effective_profile(
+        let profile = effective_profile(
             cfg,
             &projection.subjects,
             &projection.selected_profiles,
@@ -326,10 +333,8 @@ impl LocalCompiler {
         )? {
             return hit(index, set, rules_list, public).map(Some);
         }
-        if let matching::EgressProfile::Auto(auto) = matching::resolve_profile(cfg, &profile)? {
-            profile = auto.fallback.clone();
-        }
-        let matching::EgressProfile::Custom(custom) = matching::resolve_profile(cfg, &profile)?
+        let (matching::EgressProfile::Custom(custom), profile, _) =
+            matching::concrete_profile(cfg, &profile, Some(source))?
         else {
             return Ok(None);
         };

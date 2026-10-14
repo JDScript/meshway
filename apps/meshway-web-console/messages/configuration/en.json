@@ -715,6 +715,8 @@
   "configuration_bytes": "{count} bytes",
   "configuration_issue_netmap_budget": "Too many nodes, or too many transport combinations on an edge: this version is over the limit for compiling node configurations. Reduce them and apply again; retrying as is will not succeed",
   "configuration_issue_ephemeral_listener_port": "Port {port} is inside the default Linux ephemeral port range ({first}–{last}): another program's outgoing connection can hold it for a moment, and the node then retries the listener until it is free",
+  "configuration_issue_auto_region_unmatched": "No auto rule lists {node}'s region {region}: auto always applies its fallback",
+  "configuration_issue_auto_region_missing": "{nodes} default to auto but declare no region: auto applies its fallback",
   "configuration_issue_ineffective_block_option": "A block rule blocks the whole edge, so {field} has no effect",
   "configuration_issue_resolver_outside_access": "Under profile {profile}, {node} reaches resolver {server} directly instead of through the exit, and no access rule of {node} covers its address",
   "configuration_issue_shadowed_rule": "Earlier rules (through rule {index}) already match every destination of this rule, so it never applies",

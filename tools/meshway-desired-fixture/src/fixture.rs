@@ -59,6 +59,7 @@ impl Chain {
                     )]),
                     dialers: Input::Omitted,
                     exit_enabled: false,
+                    region: None,
                 },
             );
             materials.insert(

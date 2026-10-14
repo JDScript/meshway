@@ -96,7 +96,7 @@ A→C via B
 | `rules` | 公共有序规则，排在所有方案前面 |
 | `profiles` | 管理员定义的方案；每项有有序 `rules` 和 `fallback` |
 | `assignments` | 选择器对应的 allowed 方案、默认方案和 locked 状态 |
-| `auto` | 国家／地区到方案的有序映射及无法判断时的 fallback |
+| `auto` | 按源节点声明的地区（[`nodes.<id>.region`](/v2/configuration-reference/nodes#fields)）选方案：有序 `rules: [{countries, profile}]` 与 `fallback`，见[自动方案](#auto) |
 
 有效规则 = 公共规则 → 当前方案规则 → 方案 fallback。空公共／方案规则不覆盖 fallback。
 
@@ -154,7 +154,7 @@ A→C via B
 
 | 字段 | 含义 |
 | --- | --- |
-| `generation` | 选择身份：网络、节点、有效方案、持久选择版本、`routing.egress` 与这些规则所用集合的 digest；与节点持有哪些 artifact 无关，出口节点为源算出的值相同 |
+| `generation` | 选择身份：网络、节点、有效方案、有效方案为 `auto` 时的解析结果（方案、basis、地区）、持久选择版本、`routing.egress` 与这些规则所用集合的 digest；与节点持有哪些 artifact 无关，出口节点为源算出的值相同 |
 | `rules[]` | 公共规则在前、有效方案规则在后：`{rule: JSON Pointer, action}` |
 | `fallback` | 无规则命中时的动作 |
 | `unavailable` | 持有全部 artifact 时分割仍不可用的原因（`egressConflict`、`routingLimit` 等）；可用为 null |
@@ -186,7 +186,7 @@ A→C via B
 
 nft 进程峰值 RSS 约 1.6 KB／区间（16,384 区间 28 MB）。带回显的大批次在 32,768 区间起被 netlink 以 ENOBUFS 拒绝，因此元素替换不回显、以读回核验；16,384 个区间使最坏情况（全为 IPv6）的批次与读回仍低于 1.6 MB，且留出暂存并集（两份方案）的空间。生产路径（release，Planck 隔离 namespace，`large_partitions_install_switch_read_back_and_retire`）在 16,077 个区间、16,034–19,240 条路由时暂存 0.30–0.45 s、提交 0.38–0.50 s、读回 0.07 s、暂停 0.37 s；路由变更每 64 条等待内核监视器观测，不使其通知缓冲（约 200 条）溢出。
 
-节点首包判定（`LocalCompiler`）对一条源流给出 `Decision`：`source`、精确 `destination`、`target`（`mesh { node }`，或 `exit { nodes, via }`：有序主备出口及其前的有序中转）、该源对该目的可用的全部 `services`、全部允许的 `paths`（完整节点序列与按实际拨号方分组的承载候选）以及出口决定的 `selection`。范围分类只限制精确目的，不授予范围内其他目的；回复沿原完整路径返回，由数据面绑定。`selection` 即源端 `egress.generation`：不含 revision，无关配置变更不改变它，任何选择切换（含切回同名方案）都改变它；数据面握手把它绑入路径授权摘要，出口节点从自己的投影重算源端 selection 并核对。
+节点首包判定（`LocalCompiler`）对一条源流给出 `Decision`：`source`、精确 `destination`、`target`（`mesh { node }`，或 `exit { nodes, via }`：有序主备出口及其前的有序中转）、该源对该目的可用的全部 `services`、全部允许的 `paths`（完整节点序列与按实际拨号方分组的承载候选）以及出口决定的 `selection`。范围分类只限制精确目的，不授予范围内其他目的；回复沿原完整路径返回，由数据面绑定。`selection` 即源端 `egress.generation`：不含 revision，无关配置变更不改变它，任何选择切换（含切回同名方案）与 `auto` 解析结果的变化都改变它；数据面握手把它绑入路径授权摘要，出口节点从自己的投影重算源端 selection 并核对。
 
 出口节点的 netmap 带 `exitRole: ExitRole { generation, family, nat }`：当前固定为 `ipv4`／`masquerade`，`generation` 是网络、节点、family 与 nat 的 digest，角色内容不变即不变（不含 revision、选择或 instance）。只有节点 `exitEnabled` 且 inventory 中有 `feature:exit-ipv4` v1 能力时才有角色；角色本身不转发包，转发仍需上述 `Decision`。
 
@@ -198,11 +198,45 @@ nft 进程峰值 RSS 约 1.6 KB／区间（16,384 区间 28 MB）。带回显的
 
 - `mesh`：公共规则，其他外部流量不接管。
 - `global:<exit-node-id>`：为 exitEnabled 节点生成目录项；**目录存在不等于获准使用**，需要 assignment.allowed 明确包含并通过联合校验。
-- `auto`：根据当前底层公网 IP 推导地区，在已允许的方案中选择；无有效观测走配置 fallback，不递归指向 auto。
+- `auto`：按源节点声明的地区在已允许的方案中选择，见[自动方案](#auto)。
 
 用户选择属于持久的使用状态。重启后仍在 allowed 且未被锁定时恢复；否则采用当前管理员默认。任何方案切换都结束旧出口存量连接，不能携带旧方案的 NAT／流资格跨过去。
 
-`auto` 当前没有可信的地区输入：编译不使用节点的公网地址或 GeoIP，`auto` 总是采用 `auto.fallback`，状态中的 `auto.basis` 为 `noTrustedRegion`。按地区选择尚未实现，设计稿见[自动方案设计](/v2/routing-auto-design)。
+#### 自动方案 {#auto}
+
+`auto` 是一个方案选择器：源节点的有效方案为 `auto` 时，采用 `auto.rules` 中第一条 `countries` 含该节点 `region`（管理员在 [`nodes.<id>.region`](/v2/configuration-reference/nodes#fields) 声明的 ISO 3166-1 alpha-2 代码）的规则的 `profile`；没有规则包含它、或节点未声明地区时采用 `auto.fallback`。
+
+| `basis` | 条件 | 采用 |
+| --- | --- | --- |
+| `label` | 节点声明了 `region`，且某条规则的 `countries` 含它 | 第一条这样的规则的 `profile` |
+| `noRuleMatched` | 节点声明了 `region`，没有规则含它 | `auto.fallback` |
+| `noTrustedRegion` | 节点未声明 `region` | `auto.fallback` |
+
+```json
+{
+  "rules": [
+    { "countries": ["US", "CA"], "profile": "us-exit" },
+    { "countries": ["JP"], "profile": "tokyo" }
+  ],
+  "fallback": "mesh"
+}
+```
+
+- **只选已允许的方案**：目标与 fallback 必须是主体 allowed 内的非 `auto` 方案（`auto_target_unknown`／`auto_target_not_allowed`）。地区只决定落在哪个已允许方案上，不扩大授权。
+- **同一解析**：分割、捕获、`egress` 计划、DNS plan（[`dns_resolution`](/v2/configuration-reference/dns#使用出口时) 按解析出的方案判定）、可信关联、路径检测与节点判定都用 `meshway-policy` 的同一解析函数；`region` 随投影下发（[Netmap 设计 · 内容字段](/v2/node/netmap-design#内容字段)），中继与出口在自己的投影上重算同一结果。保存时对每个 allowed 方案各自判定 `dns_exit_plan_required`，因此 `auto` 的每个可能结果都已单独通过。
+- **生效**：地区只经配置保存改变；保存即一次新 revision，Server 重新编译并签发 netmap，节点经下一次 `sync` 取得。解析结果计入 selection 身份（`egress.generation`）：结果变化时与手动切换一样结束经旧出口的存量连接，旧 generation 的可信关联随新 netmap 失效。标签切回原值时 generation 等于最初的值（中间那份 netmap 已结束旧流、删除关联）。
+- **手动选择优先**：节点或用户以 `routing-selection` 选具体方案即覆盖 `auto`（assignment 锁定时除外）；再选 `auto` 回到按地区解析。优先级为：有效的持久选择 → assignment default（可为 `auto`）。
+- **不换方案**：解析不看出口就绪、可达或延迟；选中方案的出口不可用照常失败闭合，不换到其他地区的方案。
+- **活动**：解析结果（方案、basis、地区）随新 netmap 改变时，Server 在同一事务记录一条活动 `routing.autoResolve`（actor 为 `system`，target 为 `routingSelection {nodeId, profile}`，`profile` 为 `auto` 新采用的方案）。手动选择本身记 `routing.select`。
+
+配置警告：
+
+| 代码 | 路径 | 条件 |
+| --- | --- | --- |
+| `auto_region_unmatched` | `/nodes/<id>/region` | 节点 allowed 含 `auto`、声明了 `region`，但没有规则包含它（`auto` 总是 fallback）；`params.node`、`params.region` |
+| `auto_region_missing` | `/routing/egress/assignments/<i>` | assignment 的 default 为 `auto`，其目标中有节点未声明 `region`；`params.nodes`（逗号分隔的节点 ID） |
+
+限制：地区来源只有管理员标签；按底层公网地址的 GeoIP 推断、推断结果的驻留／防抖与按 RTT 选择未实现（第二步设计见[自动方案设计](/v2/routing-auto-design#stability)）。自定义地区名（如 `us-west`）不支持。
 
 #### 选择的入口
 
@@ -227,7 +261,7 @@ nft 进程峰值 RSS 约 1.6 KB／区间（16,384 区间 28 MB）。带回显的
 | `requestedUnavailable` | 请求的方案为何未生效：`notAllowed`、`locked`；生效或无请求为 null |
 | `defaultProfile`／`locked` | 合并后的 assignment 默认方案与锁定 |
 | `profiles[]` | 允许的方案（assignment 顺序，去重）：`name`、`kind`（`mesh`／`global`／`auto`／`custom`）、`rules`（方案自身规则数，不含公共规则）、`exits`（规则与 fallback 引用的出口节点）、`fallback`（未命中动作；`auto` 为 null） |
-| `auto` | 生效方案为 `auto` 时的解析：`profile`（实际采用的方案）与 `basis`；否则为 null |
+| `auto` | 生效方案为 `auto` 时的解析：`profile`（实际采用的方案）、`basis`（`label`／`noRuleMatched`／`noTrustedRegion`）与 `region`（采用的地区代码，`noTrustedRegion` 为 null）；否则为 null。只出现在选择视图，不进入 State |
 
 ### direct / unmanaged
 

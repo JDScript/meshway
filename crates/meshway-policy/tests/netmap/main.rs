@@ -9,6 +9,7 @@ use meshway_transport::spec::*;
 use std::collections::BTreeMap;
 
 mod associations;
+mod auto;
 mod equivalence;
 mod exit;
 mod incremental;

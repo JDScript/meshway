@@ -168,6 +168,8 @@ pub(crate) fn recompile_with_rule_sets(
                 }
             }
             _ => {
+                let previous = heads.get(&node).map(|head| head.previous.reference);
+                record_auto_resolution(tx, sealer, network, node, previous, &netmap, now)?;
                 insert(tx, sealer, network, node, &netmap, now)?;
                 changed.insert(node);
             }
@@ -193,6 +195,45 @@ pub(crate) fn recompile_with_rule_sets(
         network: Some(network),
         changed,
     })
+}
+
+/// A `routing.autoResolve` activity (Server actor) when the new netmap
+/// applies `auto` and resolves it differently from the Node's previous
+/// netmap: another profile, basis or region. Both sides are read from the
+/// netmaps with the same `routing_selection` the Node shows.
+fn record_auto_resolution(
+    tx: &Transaction<'_>,
+    sealer: &Sealer,
+    network: NetworkId,
+    node: NodeId,
+    previous: Option<NetmapRef>,
+    netmap: &CompiledNetmap,
+    now: i64,
+) -> Result<(), Error> {
+    let resolution = |netmap: &CompiledNetmap| {
+        meshway_policy::compile::netmap::routing_selection(&netmap.netmap)
+            .map(|selection| selection.auto)
+    };
+    let Some(current) = resolution(netmap)? else {
+        return Ok(());
+    };
+    if let Some(previous) = previous
+        && resolution(&load(tx, sealer, network, node, previous)?)?.as_ref() == Some(&current)
+    {
+        return Ok(());
+    }
+    tx.execute(
+        "INSERT INTO activity_events (id, scope, network_id, at, actor_kind, action, request_id, target_node_id, target_profile) VALUES (?1, 'network', ?2, ?3, 'system', 'routing.autoResolve', ?4, ?5, ?6)",
+        params![
+            crate::accounts::random_uuid()?.as_bytes().as_slice(),
+            bytes(network.as_uuid()),
+            now,
+            crate::accounts::random_uuid()?.as_bytes().as_slice(),
+            bytes(node.as_uuid()),
+            current.profile,
+        ],
+    )?;
+    Ok(())
 }
 
 /// Compiler inputs are the Server's own committed data: an invalid one is an

@@ -74,6 +74,22 @@ fn projected_and_full_configuration_have_identical_local_admission_and_paths() {
                     }
                     if let LocalDecision::Permitted(decision) = actual {
                         permitted += 1;
+                        // Relays and the exit recompute the source's selection
+                        // identity (`auto` resolved by its region included)
+                        // on their own projections.
+                        if let Some(own) = projected.netmap.egress.as_ref() {
+                            for hop in decision.paths.iter().flat_map(|p| p.nodes.iter().skip(1)) {
+                                let at = LocalCompiler::from_shared(
+                                    compiled.nodes[hop].netmap.clone(),
+                                    &Default::default(),
+                                );
+                                assert_eq!(
+                                    at.egress(*source).unwrap().generation,
+                                    own.generation,
+                                    "seed={seed} source={source} at={hop}"
+                                );
+                            }
+                        }
                         for path in &decision.paths {
                             for relay in path
                                 .nodes

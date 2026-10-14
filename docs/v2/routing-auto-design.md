@@ -1,6 +1,6 @@
 # 自动方案（`auto`）设计
 
-> **设计稿，未实现。**本页定义 `routing.egress.auto` 的可选方向、推荐方案和第一版切片，供产品决定；可用行为、字段与 HTTP 契约的唯一定义仍是 [Routing](/v2/configuration-reference/routing)、[DNS](/v2/configuration-reference/dns) 与 [Netmap 设计](/v2/node/netmap-design#内容字段)。本页不加入文档导航；每节末尾的“待用户决定”汇总到[决定清单](#决定清单)。
+> **第一版已实现**（[第一版切片](#first-slice)：管理员标签 `nodes.<id>.region`＋方案级 `auto`），现行语义的唯一定义是 [Routing · 自动方案](/v2/configuration-reference/routing#auto)、[Nodes · region](/v2/configuration-reference/nodes#region) 与 [Netmap 设计](/v2/node/netmap-design#内容字段)。**第二步（GeoIP 推断、驻留／防抖、`observed`／`held` basis、P2 投影）仍是设计，未实现。**下文“现状”一节描述的是第一版之前的状态；全部 15 条决定均已按推荐采纳（[决定清单](#决定清单)）。本页不加入文档导航。
 
 ## 现状
 
@@ -188,6 +188,8 @@ selection 身份必须随解析结果变：`egress.generation` 当前对 `auto` 
 
 ## 7. 第一版切片 {#first-slice}
 
+> **已实现**，见 [Routing · 自动方案](/v2/configuration-reference/routing#auto)；验收为 `exit/off` 第 14 阶段（[验收范围 · 出口场景](/v2/node/validation#exit-scenario)）。
+
 ### 范围
 
 - 配置：`nodes.<id>.region`（可省略，大写两字母）。
@@ -226,7 +228,7 @@ selection 身份必须随解析结果变：`egress.generation` 当前对 `auto` 
 
 ## 决定清单
 
-| 编号 | 问题 | 推荐 |
+| 编号 | 问题 | 推荐（均已采纳） |
 | --- | --- | --- |
 | Q1 | `auto` 语义 | (b) 按源地区选方案；(c) 作 Console 模板 |
 | Q2 | 地区来源 | 第一版只用标签；GeoIP 第二步；RTT 不做 |

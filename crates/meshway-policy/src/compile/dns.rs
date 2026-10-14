@@ -36,8 +36,8 @@ pub enum DnsResolution {
 }
 
 /// The DNS plan `source` executes for `profile`, on the same ordered
-/// selection its partition uses (public rules first, an automatic profile as
-/// its fallback). A rule takes part when it has names: its own domain lists,
+/// selection its partition uses (public rules first, `auto` as the profile
+/// it resolves to for `source`). A rule takes part when it has names: its own domain lists,
 /// or a referenced set with names; a set not in `sets` counts as one with
 /// names. Each such rule leaving through an exit, and an exit fallback,
 /// must name the same single exit and via; a rule naming the source itself
@@ -53,19 +53,18 @@ pub fn resolution(
     let capture::Selection {
         rules: selected,
         fallback,
-    } = match capture::selection(cfg, profile) {
+    } = match capture::selection(cfg, profile, Some(source)) {
         Ok(selection) => selection,
         Err(CompileError::Serialization) => return Err(CompileError::Serialization),
         Err(_) => return Ok(DnsResolution::PlanRequired { pointer: None }),
     };
-    let fallback_pointer = matching::resolve_profile(cfg, profile)
+    let fallback_pointer = matching::concrete_profile(cfg, profile, Some(source))
         .ok()
-        .and_then(|resolved| match resolved {
-            matching::EgressProfile::Custom(_) => Some(profile),
-            matching::EgressProfile::Auto(auto) => Some(auto.fallback.as_str()),
+        .and_then(|(resolved, name, _)| match resolved {
+            matching::EgressProfile::Custom(_) => Some(name),
             _ => None,
         })
-        .filter(|name| cfg.routing.egress.profiles.contains_key(*name))
+        .filter(|name| cfg.routing.egress.profiles.contains_key(name))
         .map(|name| {
             format!(
                 "/routing/egress/profiles/{}/fallback",

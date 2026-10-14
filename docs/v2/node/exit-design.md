@@ -246,7 +246,7 @@ Server 的完成校验（任一失败即拒绝，不部分接受）：
 | 出口 DNS | netmap 的 `DnsPlan::ViaExit`／`ServeExitResolver` 与 `DnsService`；`NodeState.exitDns`（[exitDns](/v2/state-reference#exitdns)）；关联见[可信域名关联](#trusted-dns-associations) |
 | 判定失败 | `UnavailableReason::ExitUnavailable`／`UnsupportedFamily`／`EgressConflict` 等，由 Policy 在节点判定中给出 |
 
-版本：`compilerVersion` 为 `meshway-netmap-2`，数据面 wire v6（含 DNS circuit 帧）；现有 HTTP 根不变。显式多出口 DNS plan 未建模，Server 保存时以 `dns_exit_plan_required` 拒绝。
+版本：`compilerVersion` 为 `meshway-netmap-3`，数据面 wire v6（含 DNS circuit 帧）；现有 HTTP 根不变。显式多出口 DNS plan 未建模，Server 保存时以 `dns_exit_plan_required` 拒绝。
 
 ## 安全边界与限制清单
 

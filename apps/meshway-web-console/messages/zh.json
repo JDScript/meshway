@@ -125,6 +125,7 @@
   "activity_join_link_create": "生成加入链接",
   "activity_join_link_revoke": "撤销加入链接",
   "activity_routing_select": "切换路由方案",
+  "activity_routing_auto_resolve": "自动方案按地区重新解析",
   "activity_target_routing_selection": "方案 {profile}",
   "actor_node": "节点 {id}",
   "actor_system": "系统",

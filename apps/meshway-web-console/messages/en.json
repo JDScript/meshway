@@ -125,6 +125,7 @@
   "activity_join_link_create": "Created a join link",
   "activity_join_link_revoke": "Revoked a join link",
   "activity_routing_select": "Selected a routing profile",
+  "activity_routing_auto_resolve": "Auto profile resolved by region",
   "activity_target_routing_selection": "Profile {profile}",
   "actor_node": "Node {id}",
   "actor_system": "System",

@@ -323,6 +323,15 @@ const TEXT: Record<IssueCode, (p: Params, node: NodeNamer) => string> = {
       first: p.first ?? "?",
       last: p.last ?? "?",
     }),
+  auto_region_unmatched: (p, node) =>
+    m.configuration_issue_auto_region_unmatched({
+      node: node(p.node ?? "?"),
+      region: p.region ?? "?",
+    }),
+  auto_region_missing: (p, node) =>
+    m.configuration_issue_auto_region_missing({
+      nodes: (p.nodes ?? "?").split(",").map(node).join(", "),
+    }),
 }
 
 function familyText(value: string | undefined): string {

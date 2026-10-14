@@ -6,8 +6,7 @@
 use super::matching::{self, EgressProfile};
 use super::*;
 use meshway_configuration::selection::{
-    AutoBasis, AutoResolution, ProfileKind, ProfileSummary, RoutingSelectionState,
-    SelectionUnavailable,
+    ProfileKind, ProfileSummary, RoutingSelectionState, SelectionUnavailable,
 };
 use meshway_model::Version;
 
@@ -46,10 +45,9 @@ pub fn routing_selection(
         .collect::<Result<_, _>>()?;
     let auto = if applied == "auto" {
         match matching::resolve_profile(configuration, "auto")? {
-            EgressProfile::Auto(auto) => Some(AutoResolution {
-                profile: auto.fallback.clone(),
-                basis: AutoBasis::NoTrustedRegion,
-            }),
+            EgressProfile::Auto(auto) => {
+                Some(matching::auto_resolution(configuration, auto, Some(node)))
+            }
             _ => return Err(CompileError::InvalidInput),
         }
     } else {

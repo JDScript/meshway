@@ -84,6 +84,7 @@ impl PublicFixture {
                     )]),
                     dialers: Input::Omitted,
                     exit_enabled: false,
+                    region: None,
                 },
             );
         }

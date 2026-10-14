@@ -31,7 +31,7 @@
 | `destination` | 解析后的目的：`node`；`address { address, class }`，class 为 `mesh`（池内未分配地址）、`private`、`public`；`domain { name }`（规范化后的名称）；`internet` |
 | `profile` | `name`、决定它的 `assignment` pointer（内置 `mesh` 为 null）、`allowed`、`locked`、`requested`（是否由请求指定） |
 | `access` | `allowed` 与 `grants[]`：每条带 `rule`（`/access/<i>`）、`traffic`、`reverse`（经 `bidirectional` 反向匹配）、`resolutionDependent`（见下）。没有 grant 即按 `defaults.access` 拒绝 |
-| `route` | `kind` 为 `mesh`／`exit`／`direct`／`unmanaged`；`rule` 是决定它的元素 pointer（出口规则、方案 `fallback`、Mesh 路由），隐式决定时为 null（自动 Mesh 选路、`mesh` 方案不接管、`global:` 方案）；`profile` 是实际决定的方案（`auto` 已解析为其 fallback）；`ruleSet { key, entry }` 是命中的规则集条目；`targets`／`via` 是出口候选与必经点，Mesh 目的时 `targets` 为目的节点；`resolutionDependent` 列出因目的地类型而未参与判定的更早规则。整体为 null 表示没有走向可判：池内未分配的 Mesh 地址，或远端规则集还没有内容 |
+| `route` | `kind` 为 `mesh`／`exit`／`direct`／`unmanaged`；`rule` 是决定它的元素 pointer（出口规则、方案 `fallback`、Mesh 路由），隐式决定时为 null（自动 Mesh 选路、`mesh` 方案不接管、`global:` 方案）；`profile` 是实际决定的方案（`auto` 已按源节点地区解析）；`ruleSet { key, entry }` 是命中的规则集条目；`targets`／`via` 是出口候选与必经点，Mesh 目的时 `targets` 为目的节点；`resolutionDependent` 列出因目的地类型而未参与判定的更早规则。整体为 null 表示没有走向可判：池内未分配的 Mesh 地址，或远端规则集还没有内容 |
 | `targets[]` | 每个候选的 `problem`：`disabled`、`exitDisabled`、`notEnrolled`（没有可信密钥：未接入或凭据已吊销）、`noPath`（topology、routing 或承载能力下无路径）、`routingCycle`、`routingLimit`；以及该候选的 `paths` 数 |
 | `paths[]` | 规划路径，主路径在前；`nodes` 为每一跳，`edges[]` 的 `topology` 是允许该边的 `/topology/<i>`，默认允许时为 null |
 | `outcome` | `permitted`；`direct`；`unmanaged`；`unavailable { reason }`，reason 与执行判定相同：`inactiveNode`、`unauthorized`、`noPath`、`routingCycle`、`routingLimit`、`missingDependency` |
@@ -47,7 +47,7 @@
 ## 限制
 
 - 即使 `access.allowed` 为 false，`targets` 和 `paths` 仍然计算，便于区分“没有授权”与“没有路径”；`outcome` 仍为 `unauthorized`。
-- `auto` 方案在规划中没有地区输入，按其 `fallback` 评估，与无有效观测时的执行一致。
+- `auto` 方案按源节点声明的 `region` 解析，与执行同一函数（[自动方案](/v2/configuration-reference/routing#auto)）；没有具体源节点的方案级预览（如分割上限警告）没有地区，按 `fallback` 评估。
 - 草稿缺少 listener 材料时返回与 validate 相同的准备需求（422），不以占位材料规划。
 - 来源有效且 Access 允许、但没有完整路径且搜索发现显式边级承载无交集时，返回配置错误 `invalid_transport`（`params.reason: edge_transport_unavailable`），以 topology 指针和 `params.a`／`b` 定位边；语义见 [Topology](/v2/configuration-reference/topology#承载交集)。存在可行备选路径时不因其他失败边拒绝整个规划。
 - 规划不读取 lease、报告或观测；节点是否在线不影响结果，`notEnrolled` 只表示没有可信密钥。

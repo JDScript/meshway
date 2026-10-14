@@ -32,7 +32,7 @@ pub use view::{
     PeerStatus, PortMapping, SocketStatus, StunMapping,
 };
 
-pub const VERSION: u16 = 11;
+pub const VERSION: u16 = 12;
 pub const MAX_MESSAGE_BYTES: usize = 64 * 1024;
 pub const DEFAULT_SOCKET: &str = "/var/lib/meshway/control.sock";
 

@@ -61,6 +61,7 @@ pub fn tag_node(
         listeners,
         dialers: Input::Omitted,
         exit_enabled,
+        region: None,
     }
 }
 

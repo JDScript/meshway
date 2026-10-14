@@ -571,25 +571,18 @@ fn external_route(
             None,
         ));
     }
-    let mut name = profile.to_owned();
-    let mut resolved = match matching::resolve_profile(cfg, profile) {
-        Ok(resolved) => resolved,
-        Err(CompileError::UnavailableDependency) => return Ok(missing_dependency()),
-        Err(error) => return Err(error),
-    };
-    if let EgressProfile::Auto(auto) = resolved {
-        // The plan knows no region: auto falls back, as compilation does
-        // without a trusted region input.
-        let assignment = matching::assignment(cfg, request.topology.subjects, request.source)?;
-        if auto.fallback == "auto" || !assignment.allowed.contains(&auto.fallback) {
-            return Err(CompileError::InvalidInput);
-        }
-        name = auto.fallback.clone();
-        resolved = match matching::resolve_profile(cfg, &name) {
+    let (resolved, name, auto) =
+        match matching::concrete_profile(cfg, profile, Some(request.source)) {
             Ok(resolved) => resolved,
             Err(CompileError::UnavailableDependency) => return Ok(missing_dependency()),
             Err(error) => return Err(error),
         };
+    if auto.is_some()
+        && !matching::assignment(cfg, request.topology.subjects, request.source)?
+            .allowed
+            .contains(&name)
+    {
+        return Err(CompileError::InvalidInput);
     }
     let custom = match resolved {
         EgressProfile::Mesh => {

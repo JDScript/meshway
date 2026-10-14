@@ -402,6 +402,14 @@ fn normalize_inner(
         {
             check.issue(transport_issue(format!("{path}/dialers"), &e));
         }
+        if let Some(region) = node.region.as_deref()
+            && !crate::country_code(region)
+        {
+            check.issue(
+                ConfigurationIssue::new(format!("{path}/region"), IssueCode::InvalidCountryCode)
+                    .with("value", region),
+            );
+        }
         let addresses = NodeAddresses {
             ipv4: addresses::resolve(
                 node.addresses.ipv4,
@@ -478,6 +486,7 @@ fn normalize_inner(
                 listeners,
                 dialers: node.dialers,
                 exit_enabled: node.exit_enabled,
+                region: node.region,
             },
         );
     }
@@ -557,6 +566,7 @@ impl From<&NetworkConfiguration> for NetworkConfigurationInput {
                                 .collect(),
                             dialers: n.dialers.clone(),
                             exit_enabled: n.exit_enabled,
+                            region: n.region.clone(),
                         },
                     )
                 })

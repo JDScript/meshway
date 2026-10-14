@@ -146,7 +146,7 @@ pub enum IssueCode {
     /// An earlier assignment with an overlapping target has a different
     /// default or lock; params `other` (its index).
     ConflictingAssignments,
-    /// A country list is empty or contains a value other than an uppercase two-letter code; params `value` identifies an invalid entry and is absent for an empty list.
+    /// A country list is empty or contains a value, or a node `region` is a value, other than an uppercase two-letter code; params `value` identifies an invalid entry and is absent for an empty list.
     InvalidCountryCode,
     /// An exit rule sends a destination the node has no access grant for;
     /// params `node`, `destination`.
@@ -181,6 +181,14 @@ pub enum IssueCode {
     /// range, where an outgoing socket of another process can hold it for a
     /// moment and delay the listener's bind; params `port`, `first`, `last`.
     EphemeralListenerPort,
+    /// A node that may select `auto` declares a `region` no `auto` rule
+    /// lists, so `auto` always applies the fallback; params `node`,
+    /// `region`.
+    AutoRegionUnmatched,
+    /// An assignment defaults to `auto` for nodes that declare no `region`,
+    /// so `auto` applies the fallback for them; params `nodes` (the node
+    /// IDs, comma-separated).
+    AutoRegionMissing,
 }
 }
 
@@ -271,6 +279,12 @@ impl IssueCode {
             IneffectiveBlockOption => "a block rule blocks the whole edge and ignores this option",
             EphemeralListenerPort => {
                 "listener port is inside the default Linux ephemeral port range"
+            }
+            AutoRegionUnmatched => {
+                "no auto rule lists the node's region; auto applies the fallback"
+            }
+            AutoRegionMissing => {
+                "nodes defaulting to auto declare no region; auto applies the fallback"
             }
         }
     }

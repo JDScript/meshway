@@ -135,7 +135,7 @@ impl DefaultsUpdate {
     }
 }
 
-fn present<'de, D: serde::Deserializer<'de>, T: serde::Deserialize<'de>>(
+pub(crate) fn present<'de, D: serde::Deserializer<'de>, T: serde::Deserialize<'de>>(
     d: D,
 ) -> Result<Option<T>, D::Error> {
     T::deserialize(d).map(Some)

@@ -72,9 +72,21 @@ fn an_unavailable_request_and_auto_resolution_are_explained() {
     let auto = render(
         &Term::plain(),
         &selection(json!({"requestedProfile":"auto","appliedProfile":"auto",
-            "auto":{"profile":"mesh","basis":"noTrustedRegion"}})),
+            "auto":{"profile":"mesh","basis":"noTrustedRegion","region":null}})),
     );
-    assert!(auto.contains("  Auto       → mesh (no trusted region yet; configured fallback)\n"));
+    assert!(auto.contains("  Auto       auto → mesh (region none, basis noTrustedRegion)\n"));
+    let label = render(
+        &Term::plain(),
+        &selection(json!({"requestedProfile":"auto","appliedProfile":"auto",
+            "auto":{"profile":"work","basis":"label","region":"US"}})),
+    );
+    assert!(label.contains("  Auto       auto → work (region US, basis label)\n"));
+    let unmatched = render(
+        &Term::plain(),
+        &selection(json!({"requestedProfile":"auto","appliedProfile":"auto",
+            "auto":{"profile":"mesh","basis":"noRuleMatched","region":"FR"}})),
+    );
+    assert!(unmatched.contains("  Auto       auto → mesh (region FR, basis noRuleMatched)\n"));
     let none = render(
         &Term::plain(),
         &selection(json!({"requestedProfile":null,"version":null,"appliedProfile":"mesh"})),

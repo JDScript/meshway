@@ -187,6 +187,24 @@ pub(super) fn validate_assignments_access(
                     .with("node", id),
             );
         }
+        if allowed.iter().any(|(_, name)| name.as_str() == "auto")
+            && let Input::Value(auto) = &config.routing.egress.auto
+            && let Some(region) = config.nodes[id].region.as_deref()
+            && meshway_configuration::country_code(region)
+            && !auto
+                .rules
+                .iter()
+                .any(|rule| rule.countries.iter().any(|c| c == region))
+        {
+            check.warn(
+                ConfigurationIssue::new(
+                    format!("/nodes/{id}/region"),
+                    IssueCode::AutoRegionUnmatched,
+                )
+                .with("node", id)
+                .with("region", region),
+            );
+        }
         dns_plans(config, &judged, &permits, *id, &allowed, check);
         let mut seen = BTreeSet::new();
         for (allowed_path, name) in &allowed {
@@ -264,6 +282,35 @@ pub(super) fn validate_assignments_access(
             }
         }
     }
+    if config.routing.egress.auto.is_omitted() {
+        return;
+    }
+    for (index, assignment) in assignments.iter().enumerate() {
+        if assignment.default != "auto" {
+            continue;
+        }
+        let missing: Vec<String> = config
+            .nodes
+            .iter()
+            .filter(|(id, node)| {
+                node.region.is_none()
+                    && assignment
+                        .target
+                        .iter()
+                        .any(|s| subjects.matches(config, s, **id))
+            })
+            .map(|(id, _)| id.to_string())
+            .collect();
+        if !missing.is_empty() {
+            check.warn(
+                ConfigurationIssue::new(
+                    format!("/routing/egress/assignments/{index}"),
+                    IssueCode::AutoRegionMissing,
+                )
+                .with("nodes", missing.join(",")),
+            );
+        }
+    }
 }
 
 /// Every profile a Node may execute must have an executable DNS plan: its
@@ -329,7 +376,7 @@ fn dns_plans(
         }
         // A kept resolver under an exit is reached from the Node itself;
         // that exception is no Access grant, so say when none covers it.
-        for key in crate::compile::excepted_resolvers(config, sets, name) {
+        for key in crate::compile::excepted_resolvers(config, sets, name, node) {
             let address = config.dns.servers[&key].server.to_canonical();
             if !permits.covers(&ipnet::IpNet::from(address).to_string()) {
                 check.warn(

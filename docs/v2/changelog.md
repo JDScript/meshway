@@ -4,11 +4,21 @@
 
 ## 未发布
 
+`auto` 方案按地区选择第一版（AUTO-1，`auto1/region-profile`）：wire 6 不变；`compilerVersion` 升为 `meshway-netmap-3`；IPC 升为 12；Server schema 版本 8（`activity_events` 允许 `routing.autoResolve`；开发环境重新初始化数据目录）。HTTP 契约：`NodeSettings`／`NodeSettingsInput`／`NodeSettingsView` 新增可省略的 `region`，`NodeSettingsPatch.region`（null 清除）；`AutoResolution` 新增必有的 `region`（可为 null），`AutoBasis` 新增 `label`、`noRuleMatched`；`ActivityAction` 新增 `routing.autoResolve`；`IssueCode` 新增警告 `auto_region_unmatched`、`auto_region_missing`，`invalid_country_code` 另用于 `/nodes/<id>/region`。升级顺序：先升级 Node（CLI 与 daemon 一起）再升级 Server——旧 Node 对 `meshway-netmap-3` 的 netmap 验证失败而拒收并报告，新 Node 把缓存的 `-2` netmap 视为过时并重取。
+
+- 地区来源：管理员在 [`nodes.<id>.region`](/v2/configuration-reference/nodes#region) 声明 ISO 3166-1 alpha-2 代码，只有 Owner／Admin 经配置提交写入；接入初始设置与节点自助接口不能携带。GeoIP 推断、驻留／防抖与 RTT 未实现（设计稿第二步）。
+- 解析：`auto` 取第一条 `countries` 含该地区的规则的方案，否则 `auto.fallback`；basis `label`／`noRuleMatched`／`noTrustedRegion`。分割、捕获、`egress` 计划、DNS plan、可信关联、路径检测与节点判定共用 `matching::concrete_profile`（唯一实现；此前五处各自把 `auto` 写死成 fallback）；`region` 随投影的 `NodeSettingsView` 下发，中继与出口在自己的投影上重算。见 [Routing · 自动方案](/v2/configuration-reference/routing#auto)。
+- 修复：`egress.generation` 对 `auto` 只记字面量 `auto`，解析结果改变时 selection 身份不变；现在解析结果（方案、basis、地区）计入 generation，变化即结束旧出口存量连接、删除旧 generation 的可信关联（与手动切换同一路径）。`LocalCompiler` 的分割缓存按解析后的方案为键，不再让不同地区的源共用 `auto` 的分割。
+- 选择：手动 `routing-selection` 总是覆盖 `auto`（locked 除外）；选中方案的出口不可用不换方案。`RoutingSelectionState.auto` 给出 `{profile, basis, region}`（不进入 State）；`meshway exit` 显示 `auto → <profile> (region <XX>, basis <basis>)`。
+- 活动：解析结果随新 netmap 改变时，Server 在同一事务记录 `routing.autoResolve`（actor 为 system，target 为 `routingSelection {nodeId, profile}`）。
+- 验收：`exit/off` 新增第 14 阶段（无地区 → `mesh`／US → `exit` 经 E／改 JP → 旧流断开、旧关联消失、新名称经 E 走 `exit-alt`、活动各一条／手动覆盖与恢复／FR → `noRuleMatched`），见[验收范围 · 出口场景](/v2/node/validation#exit-scenario)。Console 只做字段映射与 en／zh 文案。
+
 小待办（H1，`h1/backlog`）：
 
 - listener 同端口改绑：重试 owner 已绑定、尚未被 Manager 接管的 socket 在该 owner 退役（内容变化使声明改变或 key 消失、Manager 重启／`shutdown`）后仍留在接管队列里，随后同端口的新 bind 得到 `EADDRINUSE`、再进入 1 s 重试。现在退役时同步关闭该 socket 再 bind（唯一 owner `manager::rebind`）；首个 instance 到达的普通 listener → 协调 socket 改绑已是先 join 再 bind，补真实同端口测试。见 [listener 绑定与重试](/v2/node/connectivity#listener-bind-retry)。
-- `meshway status` 的兜底路径：此前只有 `relayIdle` 显示 `via <R>`，`idle`／`unreachable`／`offline` 的 peer 不显示路径。IPC 11 的 `peers[]` 新增可省略的 `idlePath`（`route` 为 `direct`／`relay`／`none`，`via`）：任一既无通道也无 circuit 的 peer 给出新 circuit 此刻会走的路径，与首包同一选择（`SecureNode::idle_route`，复用 `ranked`，不另排序）；有通道或 circuit 时省略、显示实际路径。ENDPOINT 列为 `direct (idle)`／`relay (idle) via <R>`／`no path`；旧 daemon 不发该字段时 CLI 保持原显示。见[运行状态](/v2/node/runtime)。
-- Server 测试离线：`App::open_with_connector` 是 App 装配资源取回连接器的注入点（`resources::download::{Connector, Https, Offline}` 公开；`App::open` 仍为生产 `Https`）。Server 集成黑盒测试与各测试 Server 改用 `Offline`。planck 上 `strace` 跟踪全量 Server 测试（243 通过）：除启动生产可执行文件的 `http_cli` 测试外无非回环连接。见[规则集设计](/v2/rule-sets-design)。
+- `meshway status` 的兜底路径：此前只有 `relayIdle` 显示 `via <R>`，`idle`／`unreachable`／`offline` 的 peer 不显示路径。IPC 12 的 `peers[]` 新增可省略的 `idlePath`（`route` 为 `direct`／`relay`／`none`，`via`）：任一既无通道也无 circuit 的 peer 给出新 circuit 此刻会走的路径，与首包同一选择（`SecureNode::idle_route`，复用 `ranked`，不另排序）；有通道或 circuit 时省略、显示实际路径。ENDPOINT 列为 `direct (idle)`／`relay (idle) via <R>`／`no path`；旧 daemon 不发该字段时 CLI 保持原显示。见[运行状态](/v2/node/runtime)。
+- 出口投影安装按轮摊销：此前每条出口流（每个 ICMP echo 请求也是一条流，键为 `(id, sequence)`）的投影安装各自串行做一次表归属 dump、两次日志落盘、一次 nft 事务与一次回读 dump（planck 隔离测试单条约 55–90 ms），traceroute 的各探测依次排队，第 12 阶段三跳 RTT 为 66／119／173 ms。逐流的精确语义（流键与按序号 quarantine）不变；投影 driver 把紧随第一条到达的新增投影（间隔 ≤ 3 ms，一轮 ≤ 10 ms、64 条）交给 Underlay 作为一轮，dump 校验、日志落盘、nft 事务与回读每轮各一次，每条仍各自做归属／冲突检查、各自先写 journal 记录、各自在回读中核对元素后才 ACK，结果逐条回执，一条失败不影响其他条（整轮事务失败时逐条重试）；续期、退役与 conntrack 确认不合轮。实测：8 条一轮 44 ms，对照逐条 373 ms；`exit/off` 第 12 阶段三跳 66.26／66.61／66.62 ms（后续跳增量 0.35 ms，断言 ≤ 20 ms）。新增隔离测试 `netmap_exit_projection_round_acknowledges_each_flow_by_itself`（同轮内重复 tuple、回环目标与已过截止各自被拒，其余逐条确认）。见 [Exit 设计](/v2/node/exit-design)。
+- Server 测试离线：`App::open_with_connector` 是 App 装配资源取回连接器的注入点（`resources::download::{Connector, Https, Offline}` 公开；`App::open` 仍为生产 `Https`）。Server 集成黑盒测试与各测试 Server 改用 `Offline`；启动生产可执行文件的 SSE 停机测试改在离线预先准备、配置中停用内置 provider（`ruleSetProviders` 的 `geosite`／`geoip` 为 null）的网络上运行，不新增 Server 设置。planck 上 `strace` 跟踪全量 Server 测试：除回环外零连接。见[规则集设计](/v2/rule-sets-design)。
 
 ## v0.1.0-alpha.8
 

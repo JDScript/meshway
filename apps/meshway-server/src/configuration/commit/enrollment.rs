@@ -40,6 +40,7 @@ pub(super) fn author(
                 listeners: admission.initial.listeners.clone(),
                 dialers: Input::Omitted,
                 exit_enabled: false,
+                region: None,
             },
         );
         allocate_addresses(

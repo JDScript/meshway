@@ -181,6 +181,70 @@ pub(super) enum EgressProfile<'a> {
     Auto(&'a AutoProfile),
     Custom(&'a RoutingProfile),
 }
+/// What `auto` applies for `source`: the first rule listing its declared
+/// region, else the fallback. Without a source (a profile-level preview) no
+/// region is known. The only `auto` resolution; every plan, decision,
+/// selection view and selection identity uses it.
+pub(super) fn auto_resolution(
+    config: &NetworkConfiguration,
+    auto: &AutoProfile,
+    source: Option<NodeId>,
+) -> meshway_configuration::selection::AutoResolution {
+    use meshway_configuration::selection::{AutoBasis, AutoResolution};
+    let region = source
+        .and_then(|node| config.nodes.get(&node))
+        .and_then(|settings| settings.region.clone());
+    let Some(region) = region else {
+        return AutoResolution {
+            profile: auto.fallback.clone(),
+            basis: AutoBasis::NoTrustedRegion,
+            region: None,
+        };
+    };
+    match auto
+        .rules
+        .iter()
+        .find(|rule| rule.countries.contains(&region))
+    {
+        Some(rule) => AutoResolution {
+            profile: rule.profile.clone(),
+            basis: AutoBasis::Label,
+            region: Some(region),
+        },
+        None => AutoResolution {
+            profile: auto.fallback.clone(),
+            basis: AutoBasis::NoRuleMatched,
+            region: Some(region),
+        },
+    }
+}
+
+/// `profile` with `auto` resolved for `source`: a non-`auto` profile, its
+/// name, and the resolution when `profile` is `auto`.
+pub(super) fn concrete_profile<'a>(
+    config: &'a NetworkConfiguration,
+    profile: &str,
+    source: Option<NodeId>,
+) -> Result<
+    (
+        EgressProfile<'a>,
+        String,
+        Option<meshway_configuration::selection::AutoResolution>,
+    ),
+    CompileError,
+> {
+    match resolve_profile(config, profile)? {
+        EgressProfile::Auto(auto) => {
+            let resolution = auto_resolution(config, auto, source);
+            match resolve_profile(config, &resolution.profile)? {
+                EgressProfile::Auto(_) => Err(CompileError::InvalidInput),
+                resolved => Ok((resolved, resolution.profile.clone(), Some(resolution))),
+            }
+        }
+        resolved => Ok((resolved, profile.to_owned(), None)),
+    }
+}
+
 pub(super) fn resolve_profile<'a>(
     config: &'a NetworkConfiguration,
     profile: &str,
