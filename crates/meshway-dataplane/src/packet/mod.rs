@@ -635,6 +635,11 @@ fn sum(mut value: u32, bytes: &[u8]) -> u32 {
     }
     value
 }
+/// The Internet checksum of `bytes` alone (an ICMPv4 message, an IPv4
+/// header); with a pseudo header see `check_transport`.
+pub(crate) fn internet_checksum(bytes: &[u8]) -> u16 {
+    finish(sum(0, bytes))
+}
 fn finish(mut value: u32) -> u16 {
     while value >> 16 != 0 {
         value = (value & 0xffff) + (value >> 16);

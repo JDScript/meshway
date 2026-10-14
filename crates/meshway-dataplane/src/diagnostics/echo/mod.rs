@@ -103,7 +103,7 @@ impl Echo {
         for (index, byte) in message[8..].iter_mut().enumerate() {
             *byte = index as u8;
         }
-        let checksum = checksum(&message);
+        let checksum = crate::packet::internet_checksum(&message);
         message[2..4].copy_from_slice(&checksum.to_be_bytes());
         (sequence, message)
     }
@@ -124,7 +124,7 @@ impl Echo {
         bytes.extend_from_slice(&[0x40, 0, 64, 1, 0, 0]);
         bytes.extend_from_slice(&source.octets());
         bytes.extend_from_slice(&self.destination.octets());
-        let header = checksum(&bytes);
+        let header = crate::packet::internet_checksum(&bytes);
         bytes[10..12].copy_from_slice(&header.to_be_bytes());
         bytes.extend_from_slice(&message);
         Packet::parse(bytes)
@@ -220,18 +220,6 @@ impl Echo {
             setup: flight.setup,
         })
     }
-}
-
-fn checksum(bytes: &[u8]) -> u16 {
-    let mut sum = 0u32;
-    for chunk in bytes.chunks(2) {
-        let word = u16::from_be_bytes([chunk[0], *chunk.get(1).unwrap_or(&0)]);
-        sum += u32::from(word);
-    }
-    while sum >> 16 != 0 {
-        sum = (sum & 0xffff) + (sum >> 16);
-    }
-    !(sum as u16)
 }
 
 #[cfg(test)]

@@ -12,7 +12,7 @@ fn ipv4(source: Ipv4Addr, destination: Ipv4Addr, body: &[u8]) -> Vec<u8> {
     bytes.extend_from_slice(&[0, 1, 0x40, 0, 60, 1, 0, 0]);
     bytes.extend_from_slice(&source.octets());
     bytes.extend_from_slice(&destination.octets());
-    let header = checksum(&bytes);
+    let header = crate::packet::internet_checksum(&bytes);
     bytes[10..12].copy_from_slice(&header.to_be_bytes());
     bytes.extend_from_slice(body);
     bytes
@@ -20,7 +20,7 @@ fn ipv4(source: Ipv4Addr, destination: Ipv4Addr, body: &[u8]) -> Vec<u8> {
 
 fn icmp(mut body: Vec<u8>) -> Vec<u8> {
     body[2..4].fill(0);
-    let sum = checksum(&body);
+    let sum = crate::packet::internet_checksum(&body);
     body[2..4].copy_from_slice(&sum.to_be_bytes());
     body
 }
