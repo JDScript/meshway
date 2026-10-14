@@ -4,6 +4,10 @@
 
 ## 未发布
 
+大文件拆分与偶发卡死测试（F5c，`f5c/splits`）：只移动模块，wire 6、IPC 11、`compilerVersion` 与 Server schema 均不变，无行为变化。
+
+- `manager::datagram` 重放耗尽测试偶发卡死（alpha.7 起即有）为测试竞态：重启后新绑定的 socket 尚未观测到写就绪，首个 challenge 交给 Session worker 发送，测试线程停顿超过 `OUTPUT_WAIT`（100 ms）时这一尽力而为报文被丢弃，而测试只收一次、不像拨号端那样重传 INIT。产品行为不变（丢失由 INIT／ACK 重传恢复，新增注入停顿的重传测试）；测试改为先确认写就绪，每次等待控制报文有统一期限。
+
 第二轮审阅卫生清理（F5b）：wire 6、IPC 11、`compilerVersion` 与 Server schema 均不变。HTTP 契约：删除从未产生的枚举值 `UnavailableReason` 的 `missingCapability`／`missingDns`／`invalidProfile` 与 `NotApplicableReason` 的 `meshAddress`。
 
 - 观察历史分页改用 Server 唯一的 cursor 信封（分页起点不变）：cursor 文本上限 2,048 B，拒绝未来签发，与其他列表一致。
