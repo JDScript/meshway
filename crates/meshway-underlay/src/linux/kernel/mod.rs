@@ -862,7 +862,9 @@ impl Kernel {
                     limits,
                 })
         };
-        if clamp == self.clamp {
+        // An unchanged clamp is done only once its replacement succeeded:
+        // a failed nft transaction is submitted again after its backoff.
+        if clamp == self.clamp && !owner.capture.clamp_retry_due() {
             return Ok(());
         }
         owner.capture.clamp(clamp.clone())?;

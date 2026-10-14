@@ -33,6 +33,38 @@ struct State {
     retired: bool,
 }
 
+/// The receipt of the last MSS clamp replacement: after a failed nft
+/// transaction the same clamp is due again after a backoff (1 s doubling to
+/// 60 s), so an unchanged clamp is not taken as installed.
+#[derive(Debug, Default)]
+struct ClampRetry {
+    failures: u32,
+    at: Option<std::time::Instant>,
+}
+
+impl ClampRetry {
+    fn succeeded(&mut self) {
+        *self = Self::default();
+    }
+    fn failed(&mut self, now: std::time::Instant) -> Duration {
+        self.failures = self.failures.saturating_add(1);
+        let wait = Duration::from_secs(1)
+            .saturating_mul(1 << self.failures.saturating_sub(1).min(6))
+            .min(Duration::from_secs(60));
+        self.at = Some(now + wait);
+        wait
+    }
+    /// Whether the failed clamp is due again; once true, it is not due again
+    /// until its next receipt.
+    fn take_due(&mut self, now: std::time::Instant) -> bool {
+        if self.at.is_some_and(|at| now >= at) {
+            self.at = None;
+            return true;
+        }
+        false
+    }
+}
+
 /// Owned source-capture resources. No cloned handle retains the client TUN FD.
 #[derive(Clone)]
 pub struct EgressCapture {
@@ -40,6 +72,7 @@ pub struct EgressCapture {
     state: watch::Receiver<State>,
     stop: CancellationToken,
     shared: Arc<super::super::super::protection::Shared>,
+    clamp_retry: Arc<Mutex<ClampRetry>>,
 }
 impl EgressCapture {
     pub(in crate::linux::kernel) async fn audit(&self) -> Result<String> {
@@ -83,6 +116,12 @@ impl EgressCapture {
     /// capture state (see [`super::mss`]).
     pub(in crate::linux::kernel) fn clamp(&self, clamp: Option<super::mss::Clamp>) -> Result<()> {
         self.submit(Request::Clamp(clamp))
+    }
+    /// Whether the last clamp replacement failed and its retry is due now.
+    pub(in crate::linux::kernel) fn clamp_retry_due(&self) -> bool {
+        self.clamp_retry
+            .lock()
+            .is_ok_and(|mut retry| retry.take_due(std::time::Instant::now()))
     }
     pub(super) async fn stage(&self, plan: EgressCapturePlan) -> Result<()> {
         let (reply, result) = oneshot::channel();
@@ -268,11 +307,13 @@ impl super::super::Kernel {
             retired: false,
         });
         let stop = CancellationToken::new();
+        let clamp_retry = Arc::new(Mutex::new(ClampRetry::default()));
         let capture = EgressCapture {
             sender,
             state: status,
             stop: stop.clone(),
             shared: self.shared.clone(),
+            clamp_retry: clamp_retry.clone(),
         };
         let shared = self.shared.clone();
         let expected = self.expected.clone();
@@ -297,8 +338,16 @@ impl super::super::Kernel {
                         let Some(request) = request else { break; };
                         if let Request::Clamp(clamp) = &request {
                             let batch = super::mss::batch(&backend.ledger.program.installation, clamp.as_ref());
-                            if super::super::exit::objects::apply(&mut backend.commands, &batch).await.is_err() {
-                                tracing::warn!("TCP MSS clamp table could not be replaced");
+                            let applied = super::super::exit::objects::apply(&mut backend.commands, &batch).await;
+                            if let Ok(mut retry) = clamp_retry.lock() {
+                                match applied {
+                                    Ok(_) => retry.succeeded(),
+                                    Err(_) => {
+                                        let wait = retry.failed(std::time::Instant::now());
+                                        tracing::warn!(failures = retry.failures, retry_ms = wait.as_millis() as u64,
+                                            "TCP MSS clamp table could not be replaced; retrying");
+                                    }
+                                }
                             }
                             continue;
                         }
@@ -383,4 +432,31 @@ fn keeps(shared: &super::super::super::protection::Shared, plan: &EgressCaptureP
         .ok()
         .flatten()
         .is_some_and(|desired| View::of(&desired).egress_capture() == Some(plan))
+}
+
+#[cfg(test)]
+mod clamp_tests {
+    use super::ClampRetry;
+    use std::time::{Duration, Instant};
+
+    /// A failed replacement is due again after its backoff, once per receipt;
+    /// a success clears it.
+    #[test]
+    fn a_failed_clamp_is_retried_with_backoff_until_it_applies() {
+        let mut retry = ClampRetry::default();
+        let now = Instant::now();
+        assert!(!retry.take_due(now));
+        let waits: Vec<_> = (0..8).map(|_| retry.failed(now).as_secs()).collect();
+        assert_eq!(waits, [1, 2, 4, 8, 16, 32, 60, 60]);
+        assert!(!retry.take_due(now));
+        assert!(retry.take_due(now + Duration::from_secs(60)));
+        assert!(
+            !retry.take_due(now + Duration::from_secs(61)),
+            "once per receipt"
+        );
+        retry.failed(now);
+        retry.succeeded();
+        assert!(!retry.take_due(now + Duration::from_secs(3600)));
+        assert_eq!(retry.failures, 0);
+    }
 }

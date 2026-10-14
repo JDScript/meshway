@@ -51,7 +51,7 @@ TCP 乱序区间只记录已准入字节的序号，不制造接收确认：缺�
 | 机制 | Owner | 行为 |
 | --- | --- | --- |
 | 超限包 | dataplane | 端点业务包准入后、消耗 nonce 之前，若它比到下一跳那条通道的 `inner` 大即丢弃（`Error::TooBig`）。本节点 TUN 是该流本机一端时（源发出的包；Mesh 流终点的回包），合成一条错误交本机 TUN：IPv4 为 fragmentation needed（3/4，next-hop MTU = `inner`，引用原包 IPv4 头＋8 字节），IPv6 为 packet too big（2/0，MTU = `inner`，引用原包至多 1,232 字节），源地址为原包目的地址，像该路径上的路由器发出。`inner` 低于 IPv6 最小链路 MTU 1,280 的通道**不承载 IPv6**：任何大小的 IPv6 包都丢弃（`Error::Ipv6Unavailable`，profile 事件 `host.reject.kind` 为 `ipv6_unavailable`），本机一端合成 ICMPv6 destination unreachable（1/0，no route），不再发出无法收敛的 packet too big 1,280；不做外层分片重组。错误绑定该流的期限与取消，经与收到的包相同的 TUN 交付（`take_local_errors` → `deliver_batch`），不进入网络、不经 `admit_related`；全节点每秒至多 32 条、待交付至多 32 条。应用栈据此学到 PMTU（Linux 路由缓存 `mtu <inner>`），TCP 降段、`ping -M do` 报告 `Frag needed` |
-| TCP MSS | Underlay（nft） | 自有表 `inet meshway_mss_<installation>`（与出口捕获同一 installation、同一命令序列化），每次变化以一个 nft 事务整表替换，随捕获退役删除，出口前置探测把它算作本节点所有。Mesh TUN 上发出的 SYN 按目的、收到的 SYN 按来源、出口 TUN 收到的源节点 SYN 按来源，把 MSS 限到上限 −40（IPv4）／−60（IPv6）；不小于 TUN 给出的 MSS 时不限，没有任何限制时表不存在 |
+| TCP MSS | Underlay（nft） | 自有表 `inet meshway_mss_<installation>`（与出口捕获同一 installation、同一命令序列化），每次变化以一个 nft 事务整表替换（事务失败时同一内容按 1 s 起翻倍、上限 60 s 重试，直到成功或内容再变），随捕获退役删除，出口前置探测把它算作本节点所有。Mesh TUN 上发出的 SYN 按目的、收到的 SYN 按来源、出口 TUN 收到的源节点 SYN 按来源，把 MSS 限到上限 −40（IPv4）／−60（IPv6）；不小于 TUN 给出的 MSS 时不限，没有任何限制时表不存在 |
 | 上限 | dataplane（`SecureNode::clamps`） | 直连 peer：到它那条通道的 `inner`；经中继的 peer：已知上限中最小者（首跳未知）；Mesh 以外的目的（经出口）：到各就绪出口的上限中最小者。daemon 每秒把结果交 Underlay（`Host::clamp_mss`），只有变化才写 nft；直连↔中继切换或通道重新测量后随之更新 |
 
 范围：只有本节点首跳的通道上限可知；中继到下一跳更窄时帧在中继处丢弃，不会生成错误（中继不解密）。出口对来自外部、超过其首跳上限的回包只丢弃，不向外部发送错误，TCP 由出口 TUN 的 MSS 限制覆盖。不合成 ICMP 的包（ICMP 错误本身、echo reply、带扩展头的 IPv6）只丢弃。上限只改变包的大小，不授予也不撤销任何准入。
