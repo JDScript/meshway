@@ -1,8 +1,165 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-14T17:30:46.243160+00:00",
+  "updatedAt": "2026-10-14T21:58:52.376837+00:00",
   "runs": [
+    {
+      "id": 38642644791,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "61b7631f8a47fa01124df8d3467d74335acd99e3",
+      "message": "H2 site: Chinese title for clearNodeRoutingSelection",
+      "createdAt": "2026-10-14T21:45:07Z",
+      "updatedAt": "2026-10-14T21:55:57Z",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/JDScript/meshway/actions/runs/38642644791",
+      "jobs": [
+        {
+          "id": 116121712843,
+          "name": "changes",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-14T21:45:10Z",
+          "completedAt": "2026-10-14T21:45:22Z",
+          "seconds": 12.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38642644791/job/116121712843"
+        },
+        {
+          "id": 116121817869,
+          "name": "web",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-14T21:45:25Z",
+          "completedAt": "2026-10-14T21:48:16Z",
+          "seconds": 171.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38642644791/job/116121817869"
+        },
+        {
+          "id": 116121817984,
+          "name": "cargo",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-14T21:48:18Z",
+          "completedAt": "2026-10-14T21:55:56Z",
+          "seconds": 458.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38642644791/job/116121817984"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 38642644671,
+      "attempt": 1,
+      "workflow": "Build",
+      "event": "push",
+      "branch": "main",
+      "commit": "61b7631f8a47fa01124df8d3467d74335acd99e3",
+      "message": "H2 site: Chinese title for clearNodeRoutingSelection",
+      "createdAt": "2026-10-14T21:45:07Z",
+      "updatedAt": "2026-10-14T21:45:07Z",
+      "status": "queued",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/38642644671",
+      "jobs": [
+        {
+          "id": 116121709049,
+          "name": "node-linux (aarch64-unknown-linux-musl)",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-14T21:45:08Z",
+          "completedAt": "2026-10-14T21:48:55Z",
+          "seconds": 227.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38642644671/job/116121709049"
+        },
+        {
+          "id": 116121709359,
+          "name": "node-linux (x86_64-unknown-linux-musl)",
+          "runner": null,
+          "status": "queued",
+          "conclusion": null,
+          "startedAt": "2026-10-14T21:45:07Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38642644671/job/116121709359"
+        }
+      ],
+      "artifacts": [
+        {
+          "id": 11931575841,
+          "name": "node-aarch64-unknown-linux-musl-61b7631f8a47fa01124df8d3467d74335acd99e3",
+          "bytes": 10376218,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38642644671/artifacts/11931575841",
+          "jobId": 116121709049,
+          "runner": "planck",
+          "seconds": 227.0,
+          "state": "ok",
+          "error": null,
+          "reports": [],
+          "matrices": [],
+          "builds": [
+            {
+              "target": "aarch64-unknown-linux-musl",
+              "binary": "meshwayd",
+              "bytes": 15701432,
+              "sha256": "91f2762fcd0fee195b74b1b9db17db70cc876813f30e6e2a51cf85dac2d31607"
+            },
+            {
+              "target": "aarch64-unknown-linux-musl",
+              "binary": "meshway",
+              "bytes": 1928272,
+              "sha256": "38badc890d0ec2c3a54a3664d657f73006239442c06b74d808d3580b34432d42"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 38642644649,
+      "attempt": 1,
+      "workflow": "Perf",
+      "event": "push",
+      "branch": "main",
+      "commit": "61b7631f8a47fa01124df8d3467d74335acd99e3",
+      "message": "H2 site: Chinese title for clearNodeRoutingSelection",
+      "createdAt": "2026-10-14T21:45:07Z",
+      "updatedAt": "2026-10-14T21:48:57Z",
+      "status": "in_progress",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/38642644649",
+      "jobs": [
+        {
+          "id": 116121709323,
+          "name": "perf-arm64",
+          "runner": "jp-tyo-arm64",
+          "status": "completed",
+          "conclusion": "failure",
+          "startedAt": "2026-10-14T21:45:10Z",
+          "completedAt": "2026-10-14T21:45:22Z",
+          "seconds": 12.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38642644649/job/116121709323"
+        },
+        {
+          "id": 116121709620,
+          "name": "perf",
+          "runner": "planck",
+          "status": "in_progress",
+          "conclusion": null,
+          "startedAt": "2026-10-14T21:48:56Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38642644649/job/116121709620"
+        }
+      ],
+      "artifacts": []
+    },
     {
       "id": 38602641414,
       "attempt": 1,
