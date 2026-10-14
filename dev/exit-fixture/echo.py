@@ -15,6 +15,7 @@ Three steps, each on the real daemons:
 
 Validation reads the real CLI, E's exit journal and E's daemon log; the
 daemons own every decision. No exit, NAT or admission code lives here."""
+import datetime
 import json
 import time
 
@@ -161,6 +162,7 @@ def run(ctx):
             "recovery-%d-%s.%s" % (len(lookups), ctx.tag, ctx.zone))})
         if reinstalled is None and role_installed(e) and e_log().count(ROLE_FAILED) > failed_before:
             reinstalled = time.monotonic() - started
+            reinstalled_wall = time.time()
         time.sleep(.5)
     pinged = finished(recovery, 40)
     transmitted, received = summary(pinged["stdout"])
@@ -182,4 +184,18 @@ def run(ctx):
     if not tail or received == 0 or not any("icmp_seq=" + str(transmitted - 1) in line or
                                             "icmp_seq=" + str(transmitted) in line for line in tail):
         raise RuntimeError("A's echo through E did not resume after the role reinstalled")
+    # The next phase closes Node HTTP: A then routes new exit flows on the
+    # facts about E it holds, whose freshness only a sync renews (the
+    # Server piggybacks it, it wakes no hold). Start that phase from a sync
+    # A took after the reinstall, not from facts reported before it.
+    deadline = time.monotonic() + 70
+    while True:
+        synced = ctx.status("a").get("lastSyncAt")
+        if synced and datetime.datetime.fromisoformat(synced.replace("Z", "+00:00")).timestamp() > reinstalled_wall + 1:
+            break
+        if time.monotonic() >= deadline:
+            raise RuntimeError("A took no sync after E's exit role reinstalled")
+        time.sleep(.5)
+    result["recovery"]["sourceSyncedAt"] = synced
+    write(report / "echo-capacity.json", result)
     return result
