@@ -22,7 +22,9 @@ OPS8 后续三项（H2，`h2/ops8-followups`）：wire 6、IPC 12、`compilerVer
 - 容量依据：活投影 128 同时是成对回程规则槽位（257 个 RPDB 优先级，位于 512 个保留优先级内）；nft 集合与 journal 历史 4096；现状保持 128；journal 增量记录与活投影 1024（对数 ≤ 128）为后续 X9。见 [Exit 设计 · 安全边界与限制清单](/v2/node/exit-design#安全边界与限制清单)。
 - 验收：`exit/off` 新增第 15 阶段（5 次／秒 ping 60 秒加 traceroute 时投影峰值 ≤ 32 且零丢失；echo 条目两次删除后角色保持；删除出口回程路由后只撤角色并自动重装，期间 E 保持 applied 与 connected，A 的 MagicDNS 与经 E 的普通名称每 0.5 秒解析成功）；组件测试 `exit_recovery::netmap_exit_echo_reconnect_and_route_loss_stop_only_the_role`（main 上在 CT 换代后第 3 个序号安装即失败；仅去掉 monitor 分类时 Host 新 serial 安装 `Conflict`）。见[验收范围 · 出口场景](/v2/node/validation#exit-scenario)。
 
-验证：Planck 18 行矩阵 `20261014T220407Z-2c791342`（`09bc15ad`）全部通过，`exit/off` 行 `20261014T221147Z-ccff6958`（第 15 阶段 300／300 回复、投影峰值 26；main 上 120／300、峰值 128）；OPS8 全链在 main 上的复现行 `20261014T200754Z-13ebca51`；证据 `.meshway/validation/x8/`。
+- 发现、未修复：节点持有的 peer 事实可早于其租约到期（Server 只为内容变化唤醒 hold），HTTP 中断或 hold 期间新出口流可在租约到期前被本地拒绝；第 15 阶段结束前等 A 在角色重装之后取得一次 sync，见[剩余边界](/v2/node/validation#remaining-boundaries)。
+
+验证：合入 H2 后 Planck 18 行矩阵 `20261014T233036Z-e7000147`（`909f2fd6`）全部通过，`exit/off` 行 `20261014T233523Z-9bb7fd1e`；合入前 18 行矩阵 `20261014T220407Z-2c791342`（`09bc15ad`）全部通过，`exit/off` 行 `20261014T221147Z-ccff6958`（第 15 阶段 300／300 回复、投影峰值 26；main 上 120／300、峰值 128）；OPS8 全链在 main 上的复现行 `20261014T200754Z-13ebca51`；证据 `.meshway/validation/x8/`。
 
 ## v0.1.0-alpha.9
 
