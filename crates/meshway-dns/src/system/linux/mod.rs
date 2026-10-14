@@ -23,6 +23,19 @@ impl Namespace {
     fn same(&self, other: &Self) -> bool {
         meshway_netns::same(self.recorded(), other.recorded())
     }
+    /// Whether a record written as `self` belongs to a namespace that no
+    /// longer exists while `current` lives: the same boot and inode (its
+    /// directory) under another cookie. A cookie is never reused within a
+    /// boot, so the inode was reused by `current`.
+    fn replaced_by(&self, current: &Self) -> bool {
+        self.boot == current.boot
+            && self.device == current.device
+            && self.inode == current.inode
+            && self
+                .cookie
+                .zip(current.cookie)
+                .is_some_and(|(old, new)| old != new)
+    }
     fn recorded(&self) -> meshway_netns::Recorded<'_> {
         meshway_netns::Recorded {
             boot: &self.boot,
@@ -183,6 +196,48 @@ pub struct SystemDnsOwner {
     writes: storage::Writes,
     invalid: CancellationToken,
 }
+/// The records of one namespace's DNS ownership in its directory.
+const RECORDS: [&str; 3] = ["owner.json", "resolv-conf.json", "resolved.json"];
+
+/// Make `reservation` the owner of `directory`, held under its lock (another
+/// live process holding it never gets here). A reservation of a namespace
+/// that no longer exists ([`Namespace::replaced_by`]) is archived with every
+/// backend record beside it, as the Underlay archives its journals, and this
+/// one takes over; the same owner in the same namespace (by cookie, or by
+/// inode for a record written without one) is reused and rewritten with the
+/// cookie; anything else is a conflict.
+fn take_over(directory: &Directory, reservation: &Reservation) -> Result<(), SystemDnsError> {
+    let mut existing: Option<Reservation> = storage::read(directory, "owner.json")?;
+    if let Some(old) = &existing
+        && old.namespace.replaced_by(&reservation.namespace)
+    {
+        let names = directory.names().map_err(|_| SystemDnsError::Storage)?;
+        for record in RECORDS {
+            if names.iter().any(|name| name == record) {
+                let archive = directory
+                    .archive_stale(record, meshway_private_storage::STALE_ARCHIVES)
+                    .map_err(|_| SystemDnsError::Storage)?;
+                tracing::info!(record, archive, old_cookie = ?old.namespace.cookie,
+                    cookie = ?reservation.namespace.cookie,
+                    "Archived the DNS record of another network namespace");
+            }
+        }
+        existing = None;
+    }
+    if existing.is_none() && (file::has_record(directory)? || resolved::has_record(directory)?) {
+        return Err(SystemDnsError::Conflict);
+    }
+    if existing
+        .as_ref()
+        .is_some_and(|old| !old.same_owner(reservation))
+    {
+        return Err(SystemDnsError::Conflict);
+    }
+    // This accepted private write is completed by its blocking owner even if
+    // prepare is cancelled; it changes no host DNS configuration.
+    storage::save(directory, "owner.json", &Some(reservation))
+}
+
 impl SystemDnsOwner {
     /// Read the namespace's existing ownership record under its existing lock.
     /// An unused DNS backend creates no /run paths as a side effect of down.
@@ -195,6 +250,8 @@ impl SystemDnsOwner {
                 return Ok(false);
             };
             match storage::read::<Reservation>(&directory, "owner.json")? {
+                // A destroyed namespace's records: nothing of this one to undo.
+                Some(reservation) if reservation.namespace.replaced_by(&namespace) => Ok(false),
                 Some(reservation) => {
                     reservation.settings.validate()?;
                     if reservation.version != 1
@@ -243,21 +300,7 @@ impl SystemDnsOwner {
                 data_owner: data.path().to_owned(),
                 settings: prepared_settings,
             };
-            let existing: Option<Reservation> = storage::read(&directory, "owner.json")?;
-            if existing.is_none()
-                && (file::has_record(&directory)? || resolved::has_record(&directory)?)
-            {
-                return Err(SystemDnsError::Conflict);
-            }
-            if existing
-                .as_ref()
-                .is_some_and(|old| !old.same_owner(&reservation))
-            {
-                return Err(SystemDnsError::Conflict);
-            }
-            // This accepted private write is completed by its blocking owner even
-            // if prepare is cancelled; it changes no host DNS configuration.
-            storage::save(&directory, "owner.json", &Some(&reservation))?;
+            take_over(&directory, &reservation)?;
             Ok::<_, SystemDnsError>((directory, reservation))
         })
         .await
@@ -548,7 +591,112 @@ impl Drop for SystemDnsOwner {
 
 #[cfg(test)]
 mod namespace_tests {
-    use super::Namespace;
+    use super::{Directory, Namespace, Reservation, SystemDnsError, storage, take_over};
+
+    fn reservation(inode: u64, cookie: Option<u64>) -> Reservation {
+        Reservation {
+            version: 1,
+            namespace: Namespace {
+                boot: "b".into(),
+                device: 5,
+                inode,
+                cookie,
+            },
+            data_owner: "/var/lib/meshway".into(),
+            settings: Default::default(),
+        }
+    }
+
+    fn owner(directory: &Directory) -> Option<Reservation> {
+        storage::read(directory, "owner.json").unwrap()
+    }
+
+    fn archives(directory: &Directory, record: &str) -> usize {
+        let prefix = format!("{record}.stale-");
+        directory
+            .names()
+            .unwrap()
+            .iter()
+            .filter(|name| name.starts_with(&prefix))
+            .count()
+    }
+
+    /// The same inode under another cookie is a destroyed namespace: its
+    /// reservation and backend records are archived (the newest three kept,
+    /// as the Underlay keeps its journals) and the current one takes over.
+    #[test]
+    fn a_destroyed_namespaces_records_are_archived_and_taken_over() {
+        let temp = tempfile::tempdir().unwrap();
+        let directory = Directory::open(&temp.path().join("dns"), "dns.lock").unwrap();
+        storage::save(&directory, "owner.json", &Some(&reservation(7, Some(8)))).unwrap();
+        directory.replace("resolved.json", b"{}").unwrap();
+        take_over(&directory, &reservation(7, Some(9))).unwrap();
+        assert!(owner(&directory) == Some(reservation(7, Some(9))));
+        assert!(
+            !directory
+                .names()
+                .unwrap()
+                .iter()
+                .any(|name| name == "resolved.json")
+        );
+        assert_eq!(archives(&directory, "owner.json"), 1);
+        assert_eq!(archives(&directory, "resolved.json"), 1);
+        for cookie in 10..15 {
+            directory.replace("resolv-conf.json", b"{}").unwrap();
+            take_over(&directory, &reservation(7, Some(cookie))).unwrap();
+            assert!(owner(&directory) == Some(reservation(7, Some(cookie))));
+        }
+        assert_eq!(archives(&directory, "owner.json"), 3);
+        assert_eq!(archives(&directory, "resolv-conf.json"), 3);
+    }
+
+    /// Only the same namespace is the same owner: the same cookie with
+    /// another owner is a conflict, and so is a live process holding the
+    /// namespace's lock (it never reaches the records).
+    #[test]
+    fn the_same_namespace_with_another_owner_or_a_live_holder_conflicts() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("dns");
+        let directory = Directory::open(&path, "dns.lock").unwrap();
+        storage::save(&directory, "owner.json", &Some(&reservation(7, Some(9)))).unwrap();
+        take_over(&directory, &reservation(7, Some(9))).unwrap();
+        let mut other = reservation(7, Some(9));
+        other.data_owner = "/srv/other".into();
+        assert!(matches!(
+            take_over(&directory, &other),
+            Err(SystemDnsError::Conflict)
+        ));
+        assert!(owner(&directory) == Some(reservation(7, Some(9))));
+        assert_eq!(archives(&directory, "owner.json"), 0);
+        assert!(
+            Directory::open(&path, "dns.lock").is_err(),
+            "the live holder's lock"
+        );
+        // Backend records without any reservation are not adopted.
+        let bare = Directory::open(&temp.path().join("bare"), "dns.lock").unwrap();
+        bare.replace("resolved.json", b"{}").unwrap();
+        assert!(matches!(
+            take_over(&bare, &reservation(7, Some(9))),
+            Err(SystemDnsError::Conflict)
+        ));
+    }
+
+    /// A reservation an earlier build wrote without a cookie keeps the inode
+    /// rule: the same inode is taken over and rewritten with the cookie.
+    #[test]
+    fn a_reservation_without_a_cookie_follows_the_inode() {
+        let temp = tempfile::tempdir().unwrap();
+        let directory = Directory::open(&temp.path().join("dns"), "dns.lock").unwrap();
+        storage::save(&directory, "owner.json", &Some(&reservation(7, None))).unwrap();
+        take_over(&directory, &reservation(7, Some(9))).unwrap();
+        assert!(owner(&directory) == Some(reservation(7, Some(9))));
+        assert_eq!(archives(&directory, "owner.json"), 0);
+        storage::save(&directory, "owner.json", &Some(&reservation(6, None))).unwrap();
+        assert!(matches!(
+            take_over(&directory, &reservation(7, Some(9))),
+            Err(SystemDnsError::Conflict)
+        ));
+    }
 
     /// A reused inode with another cookie is another namespace; a record of
     /// an earlier build (no cookie) or a kernel without cookies is compared

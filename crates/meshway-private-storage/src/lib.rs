@@ -275,6 +275,10 @@ impl Directory {
 }
 
 const STALE: &str = ".stale-";
+/// Archives of one record kept by [`Directory::archive_stale`] callers that
+/// archive a record of another boot or network namespace: one per such
+/// change, the newest three.
+pub const STALE_ARCHIVES: usize = 3;
 const STAGING: &str = ".write-";
 
 /// The Unix nanosecond stamp of an archive that [`Directory::archive_stale`]

@@ -288,7 +288,7 @@ impl Store {
 
 /// Archives kept per journal; older ones are removed (one archive per boot
 /// or namespace change would otherwise grow without bound).
-pub(super) const STALE_ARCHIVES: usize = 3;
+pub(super) const STALE_ARCHIVES: usize = meshway_private_storage::STALE_ARCHIVES;
 
 /// Checked descriptor-relative, durable NOREPLACE rename. A failed archive
 /// never permits a fresh allocation/overwrite.

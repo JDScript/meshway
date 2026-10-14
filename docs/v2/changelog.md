@@ -33,7 +33,7 @@
 - B12 修复：conntrack dump 未检查 `NLM_F_DUMP_INTR`，被中断的 dump 被当作“无匹配”；现在为 `conntrackUnavailable`（已找到的条目仍算数）。
 - B13 修复：MSS clamp 入队即被当作已安装，nft 事务失败后同一上限永不重试；现在按执行回执，失败的同一内容按 1 s 起翻倍、上限 60 s 重试。
 - C1 修复：Linux 读回的缓冲是授予值的两倍，日志、`meshway status` 与默认值提升按“读回 < 请求”判断，被截到请求与两倍请求之间时漏报 `limited`（例如 4 MiB 请求被截到 3 MiB，读回 6 MiB）。判定集中到 `raw::satisfies`（Linux 上读回需不小于请求的两倍）。见 [UDP 批量接口](/v2/node/transport#udp-批量接口)。
-- C6：系统 DNS 的 namespace 预约带 namespace cookie，并与 Underlay 记录共用唯一比较规则 `meshway_netns::same`：inode 被新 namespace 复用时不再被当作同一个 namespace（预约以冲突失败、不接管）；本版本之前的无 cookie 预约按 inode 接管并改写为带 cookie。见[生命周期](/v2/node/runtime#生命周期)。
+- C6：系统 DNS 的 namespace 预约带 namespace cookie，并与 Underlay 记录共用唯一比较规则 `meshway_netns::same`：inode 被新 namespace 复用（容器重建）时，旧 namespace 的预约与后端记录按 Underlay journal 的规则归档（保留最新 3 份，共用 `meshway_private_storage::STALE_ARCHIVES`）并由当前 namespace 接管，不再被当作同一 namespace；同 cookie 的另一所有者或持锁的活进程仍是冲突；本版本之前的无 cookie 预约按 inode 接管并改写为带 cookie。见[生命周期](/v2/node/runtime#生命周期)。
 - C11：`meshway ping` 的 echo 构造改用 packet 模块唯一的 Internet checksum，删除第二份实现。
 
 验证：每条有对应反例的行为测试（A1、A4、A5、A6、B2 的测试已在修复前代码上实测失败）；Linux 专属单元测试（防火墙、ctnetlink、DNS namespace、netns 规则）在 Planck 312 项全部通过；Planck 18 行矩阵 `20261014T003034Z-604c44b1`（`9500dc12`）全部通过；证据 `.meshway/validation/f5a/`。
