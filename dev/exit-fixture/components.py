@@ -14,7 +14,7 @@ from validation_support import bind_access_options
 
 # The netmap exit role owner: renewal and unchanged-serial apply keep it, Access
 # narrowing admits no new projection, withdrawal ends it; a flow refused at
-# projection capacity does not stop it. Then the role's nft transaction and the
+# projection capacity does not stop it; its own failures stop it alone. Then the role's nft transaction and the
 # live exit-prerequisite probe, in the same build.
 CASES = {
     "role": ("meshway-underlay-netmap-tests",
@@ -23,6 +23,10 @@ CASES = {
                  "netmap_exit_projection_capacity_refuses_one_flow_and_keeps_the_role"),
     "round": ("meshway-underlay-netmap-tests",
               "netmap_exit_projection_round_acknowledges_each_flow_by_itself"),
+    # OPS8: a re-created echo conntrack entry is no ownership conflict; a
+    # deleted exit-owned route stops the role alone, which reinstalls.
+    "recovery": ("meshway-underlay-netmap-tests",
+                 "exit_recovery::netmap_exit_echo_reconnect_and_route_loss_stop_only_the_role"),
     "nft": ("meshway-underlay-kernel-tests",
             "linux::kernel::exit::nft::tests::exit_nft_atomic_batch_readback_and_failed_transaction_leave_no_table"),
     "probe": ("meshway-underlay-kernel-tests",
