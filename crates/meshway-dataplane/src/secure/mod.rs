@@ -104,6 +104,8 @@ pub enum Error {
     Flow,
     #[error("packet exceeds the inner MTU of its next hop")]
     TooBig,
+    #[error("the channel to the next hop is below the IPv6 minimum MTU and carries no IPv6")]
+    Ipv6Unavailable,
 }
 
 /// Allowed difference between an origin's INIT time and a receiver's clock.
@@ -1498,20 +1500,35 @@ impl SecureNode {
         }
         // Too big for the channel to the next hop: dropped before a nonce is
         // used. When this Node's own TUN is the flow's local end, its sender
-        // learns the path MTU from an error as a router would send it.
+        // learns the path MTU from an error as a router would send it. A
+        // channel below the IPv6 minimum carries no IPv6 at all (a packet
+        // too big below 1,280 is not allowed and one naming 1,280 would never
+        // fit): every IPv6 packet is answered with no route instead.
         if let Hop::Forward(next) = route.hop()
             && let Some(limit) = mtu.limit(next)
-            && facts.len > limit
         {
-            let local_end = !reply || matches!(route.route().grant, Target::Mesh { .. });
-            if local_end
-                && let Some(error) =
-                    crate::packet::too_big(&packet, u16::try_from(limit).unwrap_or(u16::MAX))
-                && let Ok(error) = route.local_error(error)
-            {
-                mtu.report(error, reading.instant);
+            let limit = u16::try_from(limit).unwrap_or(u16::MAX);
+            let no_ipv6 =
+                packet.traffic().destination.is_ipv6() && limit < crate::packet::IPV6_MIN_MTU;
+            if no_ipv6 || facts.len > usize::from(limit) {
+                let local_end = !reply || matches!(route.route().grant, Target::Mesh { .. });
+                let error = if no_ipv6 {
+                    crate::packet::no_route(&packet)
+                } else {
+                    crate::packet::too_big(&packet, limit)
+                };
+                if local_end
+                    && let Some(error) = error
+                    && let Ok(error) = route.local_error(error)
+                {
+                    mtu.report(error, reading.instant);
+                }
+                return Err(if no_ipv6 {
+                    Error::Ipv6Unavailable
+                } else {
+                    Error::TooBig
+                });
             }
-            return Err(Error::TooBig);
         }
         // Flow and cryptographic state have distinct irreversible commit points.
         // Neither a later output failure nor a scope handoff rolls either back.

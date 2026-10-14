@@ -216,6 +216,7 @@ impl Packets {
                 secure::Error::Replay => "replay",
                 secure::Error::Proof => "proof",
                 secure::Error::TooBig => "too_big",
+                secure::Error::Ipv6Unavailable => "ipv6_unavailable",
                 _ => "other",
             },
         );

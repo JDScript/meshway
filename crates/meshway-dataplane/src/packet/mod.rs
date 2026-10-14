@@ -19,7 +19,7 @@ use meshway_policy::admission::Traffic;
 use meshway_transport::spec::Port;
 mod icmp;
 mod storage;
-pub(crate) use icmp::too_big;
+pub(crate) use icmp::{IPV6_MIN_MTU, no_route, too_big};
 use std::{
     fmt,
     net::{IpAddr, Ipv4Addr, Ipv6Addr},

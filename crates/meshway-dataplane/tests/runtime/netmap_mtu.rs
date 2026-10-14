@@ -83,6 +83,73 @@ async fn a_packet_beyond_its_next_hop_mtu_is_reported_locally_both_ways() {
     f.close().await;
 }
 
+/// IPv6 needs a 1,280-byte link: over a channel below it no IPv6 packet is
+/// carried, whatever its size, and the sender gets no route (1/0) rather
+/// than a packet too big it could never satisfy. IPv4 on the same channel
+/// is unaffected.
+#[tokio::test]
+async fn ipv6_is_not_carried_over_a_channel_below_the_ipv6_minimum() {
+    let mut f = NetmapMesh::with(super::support::netmap::DAY_MS, |cfg, ids| {
+        cfg.address_pools.ipv6 = vec!["fd00::/64".into()];
+        for (index, id) in ids.iter().enumerate() {
+            cfg.nodes.get_mut(id).unwrap().addresses.ipv6 =
+                Some(format!("fd00::{}", index + 1).parse().unwrap());
+        }
+    })
+    .await;
+    let [_, r, _] = f.ids();
+    let (a, b): (std::net::IpAddr, std::net::IpAddr) =
+        ("fd00::1".parse().unwrap(), "fd00::3".parse().unwrap());
+    let id = first(&mut f, super::packet::tcp(a, b, (50000, 443), 1, 0, 0x02)).await;
+    let Received::Packet(packet) = reply(
+        &mut f,
+        id,
+        super::packet::tcp(b, a, (443, 50000), 7, 2, 0x12),
+    )
+    .unwrap() else {
+        panic!("SYN-ACK")
+    };
+    packet.release(|_| ()).unwrap();
+    f.a.set_path_limits(BTreeMap::from([(r, 1146)]));
+    let small = |seq| super::packet::tcp_with_payload(a, b, (50000, 443), seq, 8, 0x18, &[0; 100]);
+    assert!(matches!(
+        f.a.outbound(small(2)),
+        Err(Error::Ipv6Unavailable)
+    ));
+    let errors = f.a.take_local_errors();
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    let packet = errors
+        .into_iter()
+        .next()
+        .unwrap()
+        .release(|action| match action {
+            Action::Deliver { packet, .. } => packet,
+            other => panic!("{other:?}"),
+        })
+        .unwrap();
+    let Transport::Error(icmp) = packet.transport() else {
+        panic!("{packet:?}")
+    };
+    assert_eq!((icmp.kind, icmp.code), (1, 0));
+    assert_eq!(icmp.quoted.traffic, small(2).traffic());
+    assert_eq!(packet.traffic().destination, a);
+    // IPv4 over the same channel still flows within its limit.
+    let (a4, b4) = (f.address(0), f.address(2));
+    assert!(matches!(
+        f.a.outbound(super::packet::tcp_with_payload(
+            a4,
+            b4,
+            (50001, 443),
+            1,
+            0,
+            0x02,
+            &[]
+        )),
+        Ok(_)
+    ));
+    f.close().await;
+}
+
 #[tokio::test]
 async fn the_mss_clamp_follows_the_channel_limits() {
     let mut f = NetmapMesh::start().await;

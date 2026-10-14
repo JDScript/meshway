@@ -1,7 +1,12 @@
 //! The ICMP error this Node itself reports for one of its own packets that
 //! does not fit the path: IPv4 fragmentation needed (3/4) or ICMPv6 packet
-//! too big (2/0), as a router on that path would send it.
+//! too big (2/0), as a router on that path would send it; and ICMPv6
+//! destination unreachable, no route (1/0), for a path that cannot carry
+//! IPv6 at all (a channel below the IPv6 minimum MTU).
 use super::*;
+
+/// IPv6 minimum link MTU (RFC 8200): a channel below it carries no IPv6.
+pub(crate) const IPV6_MIN_MTU: u16 = 1280;
 
 /// Bytes of the offending packet an IPv6 error quotes at most: what keeps
 /// the error within the IPv6 minimum MTU.
@@ -9,9 +14,28 @@ const QUOTE6_MAX: usize = 1280 - 48;
 
 /// The error reporting that `packet` exceeds `mtu`, from its destination to
 /// its source. `None` for a packet no error may quote (an ICMP error or echo
-/// reply itself): it is only dropped. An IPv6 error never names an MTU
-/// below the IPv6 minimum.
+/// reply itself): it is only dropped. No IPv6 error names an MTU below the
+/// IPv6 minimum: such a path gets [`no_route`] instead, since a packet too
+/// big naming 1,280 would never let the sender fit.
 pub(crate) fn too_big(packet: &Packet, mtu: u16) -> Option<Packet> {
+    if packet.traffic().destination.is_ipv6() && mtu < IPV6_MIN_MTU {
+        return None;
+    }
+    error(packet, (3, 4, mtu), (2, 0, u32::from(mtu)))
+}
+
+/// ICMPv6 destination unreachable (no route) for an IPv6 `packet` whose path
+/// carries no IPv6. `None` for IPv4 or a packet no error may quote.
+pub(crate) fn no_route(packet: &Packet) -> Option<Packet> {
+    if !packet.traffic().destination.is_ipv6() {
+        return None;
+    }
+    error(packet, (3, 4, 0), (1, 0, 0))
+}
+
+/// `(type, code, next-hop MTU)` for IPv4 and `(type, code, 32-bit field)`
+/// for ICMPv6.
+fn error(packet: &Packet, v4: (u8, u8, u16), v6: (u8, u8, u32)) -> Option<Packet> {
     if !matches!(
         packet.transport(),
         Transport::Tcp(_) | Transport::Udp | Transport::Echo { reply: false, .. }
@@ -32,8 +56,8 @@ pub(crate) fn too_big(packet: &Packet, mtu: u16) -> Option<Packet> {
             bytes.extend_from_slice(&source.octets());
             let header = finish(sum(0, &bytes[..20]));
             bytes[10..12].copy_from_slice(&header.to_be_bytes());
-            bytes.extend_from_slice(&[3, 4, 0, 0, 0, 0]);
-            bytes.extend_from_slice(&mtu.to_be_bytes());
+            bytes.extend_from_slice(&[v4.0, v4.1, 0, 0, 0, 0]);
+            bytes.extend_from_slice(&v4.2.to_be_bytes());
             bytes.extend_from_slice(quote);
             let checksum = finish(sum(0, &bytes[20..]));
             bytes[22..24].copy_from_slice(&checksum.to_be_bytes());
@@ -52,8 +76,8 @@ pub(crate) fn too_big(packet: &Packet, mtu: u16) -> Option<Packet> {
             bytes.extend_from_slice(&[58, 64]);
             bytes.extend_from_slice(&destination.octets());
             bytes.extend_from_slice(&source.octets());
-            bytes.extend_from_slice(&[2, 0, 0, 0]);
-            bytes.extend_from_slice(&u32::from(mtu.max(1280)).to_be_bytes());
+            bytes.extend_from_slice(&[v6.0, v6.1, 0, 0]);
+            bytes.extend_from_slice(&v6.2.to_be_bytes());
             bytes.extend_from_slice(quote);
             let checksum = finish(sum(
                 pseudo(destination.into(), source.into(), 58, length),
@@ -108,8 +132,8 @@ mod tests {
     #[test]
     fn a_too_big_error_quotes_the_packet_and_parses_as_its_flow_error() {
         for (source, destination, mtu, reported) in [
-            ("100.64.0.1", "100.64.0.4", 1330, 1330),
-            ("fd00::1", "fd00::4", 1146, 1280),
+            ("100.64.0.1", "100.64.0.4", 1146, 1146),
+            ("fd00::1", "fd00::4", 1280, 1280),
         ] {
             let packet = tcp(source, destination, 1400);
             let error = too_big(&packet, mtu).unwrap();
@@ -132,6 +156,23 @@ mod tests {
             }
             assert!(error.facts().validate().is_ok());
         }
+    }
+
+    /// Below the IPv6 minimum no packet too big is made (naming 1,280 would
+    /// never converge); the path reports no route instead.
+    #[test]
+    fn an_ipv6_path_below_the_minimum_reports_no_route() {
+        let packet = tcp("fd00::1", "fd00::4", 1000);
+        assert!(too_big(&packet, 1146).is_none());
+        let error = no_route(&packet).unwrap();
+        let Transport::Error(icmp) = error.transport() else {
+            panic!("{error:?}");
+        };
+        assert_eq!((icmp.kind, icmp.code), (1, 0));
+        assert_eq!(icmp.quoted.traffic, packet.traffic());
+        assert_eq!(error.traffic().destination, packet.traffic().source);
+        assert!(error.facts().validate().is_ok());
+        assert!(no_route(&tcp("100.64.0.1", "100.64.0.4", 100)).is_none());
     }
 
     #[test]
