@@ -239,8 +239,10 @@ impl Manager {
     }
 
     /// Install a listener its retry owner bound, if that owner still owns
-    /// the key under the content it was bound for.
-    pub(super) fn adopt(&mut self, rebound: Rebound) -> Result<bool, Error> {
+    /// the key under the content it was bound for. The bind may predate the
+    /// current instance (`set_instance` only sees installed listeners), so it
+    /// is first made what a bind now would be ([`Self::current`]).
+    pub(super) async fn adopt(&mut self, rebound: Rebound) -> Result<bool, Error> {
         let Rebound { token, key, bound } = rebound;
         {
             let mut unbound = self.shared.unbound.lock().map_err(|_| Error::Worker)?;
@@ -251,11 +253,62 @@ impl Manager {
         }
         // Its retry owner only waits for this; dropping it is the request.
         self.owners.remove(&resources::Key::Listener(key.clone()));
+        let bound = match self.current(&key, bound).await {
+            Ok(bound) => bound,
+            Err(error) => {
+                self.retry_listener(key, &error)?;
+                return Ok(true);
+            }
+        };
         let mut endpoints = BTreeMap::new();
         self.install_bound(vec![bound], &mut endpoints)?;
         self.publish_endpoints(endpoints)?;
         tracing::info!(key, "Listener bound after retry");
         Ok(true)
+    }
+
+    /// `bound` as a bind under the current instance would make it: a plain
+    /// Native UDP listener becomes a coordination socket once an instance
+    /// qualifies its reference (and back without one), and a coordination
+    /// socket's reference and Underlay authorization name the current
+    /// instance. A changed mode drops the old socket before binding again, so
+    /// the new bind never meets its own port.
+    async fn current(&self, key: &str, bound: Bound) -> Result<Bound, Error> {
+        let traversal = self.traversal.is_some();
+        let resource = || meshway_model::state::ResourceRef::Listener {
+            key: key.to_owned(),
+        };
+        match bound {
+            Bound::Datagram { fact, endpoint }
+                if traversal
+                    && traversal::socket_reference(&self.shared, fact.socket_id, resource())?
+                        .is_some() =>
+            {
+                drop(endpoint);
+                bind(&self.shared, &self.factory, traversal, key).await
+            }
+            Bound::Traversal {
+                fact,
+                reference,
+                socket,
+            } => match traversal::socket_reference(&self.shared, fact.socket_id, resource())? {
+                Some(current) => {
+                    if current != reference {
+                        socket.authorization.rebind(&current)?;
+                    }
+                    Ok(Bound::Traversal {
+                        fact,
+                        reference: current,
+                        socket,
+                    })
+                }
+                None => {
+                    drop(socket);
+                    bind(&self.shared, &self.factory, traversal, key).await
+                }
+            },
+            bound => Ok(bound),
+        }
     }
 
     /// Configured listeners of the current content that are not bound.

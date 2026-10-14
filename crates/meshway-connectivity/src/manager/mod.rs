@@ -1099,7 +1099,7 @@ impl Manager {
             let count = tokio::select! { biased;
                 _ = self.shared.stop.cancelled() => return vec![Event::Closed],
                 Some(rebound) = self.rebound.recv() => {
-                    match self.adopt(rebound) {
+                    match self.adopt(rebound).await {
                         Ok(true) => return vec![Event::Changed],
                         Ok(false) => continue,
                         Err(error) => {

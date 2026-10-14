@@ -73,6 +73,8 @@ pub(in crate::manager::tests) struct Factory {
     pub(in crate::manager::tests) blocked_dialers: Mutex<BTreeSet<NodeId>>,
     pub(in crate::manager::tests) acquisitions: AtomicUsize,
     pub(in crate::manager::tests) traversal_binds: AtomicUsize,
+    /// Native UDP listeners bound as coordination sockets.
+    pub(in crate::manager::tests) traversal_listeners: AtomicUsize,
     /// State references each traversal socket was rebound to, in order.
     pub(in crate::manager::tests) rebinds:
         Arc<Mutex<Vec<meshway_control::connectivity::SocketReference>>>,
@@ -244,6 +246,21 @@ impl SocketFactory for Factory {
             };
             assert_eq!(socket.local_addr()?.port(), address.port());
             Ok(Box::new(StreamListener(socket)) as Box<dyn ListenerSocket>)
+        })
+    }
+    fn traversal_listener<'a>(
+        &'a self,
+        desired: &'a meshway_engine::Desired,
+        key: &'a str,
+        _reference: meshway_control::connectivity::SocketReference,
+    ) -> BoxFuture<'a, Result<crate::TraversalSocket, Error>> {
+        Box::pin(async move {
+            let endpoint = self.datagram_listener(desired, key).await?;
+            self.traversal_listeners.fetch_add(1, Ordering::SeqCst);
+            Ok(crate::TraversalSocket {
+                endpoint,
+                authorization: Arc::new(Unauthorized(self.rebinds.clone())),
+            })
         })
     }
     fn datagram_listener<'a>(

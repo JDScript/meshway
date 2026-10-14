@@ -30,7 +30,7 @@ Manager 是 listener 生命周期的唯一 owner。安装内容时先绑定全�
 | 可自行消失（`EADDRINUSE`、`EADDRNOTAVAIL` 等） | 1 s 起翻倍，上限 60 s |
 | 需要运维处理（`EACCES`） | 每 60 s |
 
-绑定成功后 Manager 接管该 socket（Native UDP 有 live instance 时为协调 socket，进入 STUN 观测并重新发布候选），发出 `Changed`；内容变化使该 key 不再存在或声明改变时，重试 owner 随旧资源退役。重试期间：
+绑定成功后 Manager 接管该 socket（Native UDP 有 live instance 时为协调 socket，进入 STUN 观测并重新发布候选），发出 `Changed`。接管时按**当时**的 instance 重新确认：绑定后、接管前才到达第一个 instance 的普通 Native UDP socket 先同步释放、再绑定为协调 socket（不会撞上自己刚占的端口），协调 socket 的 State 引用与 Underlay 授权改为当前 instance；内容变化使该 key 不再存在或声明改变时，重试 owner 随旧资源退役。重试期间：
 
 - `Snapshot.unavailable` 列出该 listener（地址、原因、是否可自行消失、已失败次数、下次尝试时间）。
 - Node State 中该 listener 为 `phase: failed`、无 socket、`problem` 为 `resource_unavailable`（`resource` 为该 listener）。
