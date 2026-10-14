@@ -1739,12 +1739,34 @@ pub(in crate::manager) mod tests {
         (shared, receiver)
     }
 
+    /// Bound on every control datagram these tests wait for.
+    const CONTROL_WAIT: Duration = Duration::from_secs(5);
+
+    /// An owner endpoint whose write readiness is already observed, so each
+    /// control send completes inline within the owner call that makes it. A
+    /// socket bound just now has none yet: its first send would wait for the
+    /// Session worker, and a runtime stalled beyond [`OUTPUT_WAIT`] drops that
+    /// best-effort datagram (as the network may). A real dialer retransmits;
+    /// these tests drive the owner directly and send each message once.
+    async fn endpoint(socket: UdpSocket) -> UdpTransport {
+        socket.writable().await.unwrap();
+        UdpTransport::adopt(socket, &Default::default()).unwrap()
+    }
+
+    /// The next datagram `client` receives, within [`CONTROL_WAIT`].
+    async fn control(client: &UdpSocket, bytes: &mut [u8]) -> (usize, SocketAddr) {
+        tokio::time::timeout(CONTROL_WAIT, client.recv_from(bytes))
+            .await
+            .expect("a control datagram within CONTROL_WAIT")
+            .unwrap()
+    }
+
     #[tokio::test]
     async fn replay_exhaustion_rebuilds_instead_of_forgetting_nonces_and_old_ack_cannot_install() {
         let mut fixture = Netmaps::start(false, true).await;
         let ids = fixture.ids();
         let (shared, _events) = shared(&fixture.desired[1], &fixture.keys[1]);
-        let socket = UdpTransport::adopt(fixture.take_udp(1), &Default::default()).unwrap();
+        let socket = endpoint(fixture.take_udp(1)).await;
         let local = socket.local_addr().unwrap();
         let id = adjacency::nonce().unwrap();
         let listener = ListenerFact {
@@ -1776,7 +1798,7 @@ pub(in crate::manager) mod tests {
         .unwrap();
         owner.init(source, &intro).await.unwrap();
         let mut bytes = [0; adjacency::MAX_MESSAGE];
-        let (len, from) = client.recv_from(&mut bytes).await.unwrap();
+        let (len, from) = control(&client, &mut bytes).await;
         assert_eq!(from, local);
         let (_, challenge) = adjacency::decode(&bytes[..len]).unwrap();
         let old = initiation
@@ -1790,7 +1812,7 @@ pub(in crate::manager) mod tests {
             )
             .unwrap();
         owner.ack(source, &old_ack).await.unwrap();
-        let (len, _) = client.recv_from(&mut bytes).await.unwrap();
+        let (len, _) = control(&client, &mut bytes).await;
         assert_eq!(adjacency::decode(&bytes[..len]).unwrap().0, Kind::Ready);
         assert_eq!(owner.channels[&source].fact.id, old.id());
 
@@ -1835,7 +1857,7 @@ pub(in crate::manager) mod tests {
             !shared.stop.is_cancelled(),
             "an INIT alone cannot retire channels"
         );
-        let (len, _) = client.recv_from(&mut bytes).await.unwrap();
+        let (len, _) = control(&client, &mut bytes).await;
         let (_, challenge) = adjacency::decode(&bytes[..len]).unwrap();
         let rebuild = rebuild_init
             .challenge(&Plan::new(&fixture.desired[0]).unwrap(), ids[1], challenge)
@@ -1855,7 +1877,7 @@ pub(in crate::manager) mod tests {
             .cancellation
             .cancel();
         owner.init(source, &fresh_intro).await.unwrap();
-        let (len, _) = client.recv_from(&mut bytes).await.unwrap();
+        let (len, _) = control(&client, &mut bytes).await;
         let (_, challenge) = adjacency::decode(&bytes[..len]).unwrap();
         let retried = rebuild_init
             .challenge(&Plan::new(&fixture.desired[0]).unwrap(), ids[1], challenge)
@@ -1899,9 +1921,7 @@ pub(in crate::manager) mod tests {
         // This is a new physical owner, the same path as a host reinstall. An
         // old INIT is harmless only because a fresh source challenge is required.
         let (restarted, _events) = self::shared(&fixture.desired[1], &fixture.keys[1]);
-        let socket =
-            UdpTransport::adopt(UdpSocket::bind(local).await.unwrap(), &Default::default())
-                .unwrap();
+        let socket = endpoint(UdpSocket::bind(local).await.unwrap()).await;
         let socket_id = adjacency::nonce().unwrap();
         let mut owner = Owner::new(restarted.clone(), Box::new(socket), socket_id).unwrap();
         owner.listener = Some(ListenerFact {
@@ -1909,7 +1929,7 @@ pub(in crate::manager) mod tests {
             ..listener
         });
         owner.init(source, &intro).await.unwrap();
-        let (len, from) = client.recv_from(&mut bytes).await.unwrap();
+        let (len, from) = control(&client, &mut bytes).await;
         assert_eq!(from, local);
         let (_, challenge) = adjacency::decode(&bytes[..len]).unwrap();
         let fresh = initiation
@@ -1962,7 +1982,7 @@ pub(in crate::manager) mod tests {
         let mut fixture = Netmaps::start(false, true).await;
         let ids = fixture.ids();
         let (shared, _receiver) = shared(&fixture.desired[1], &fixture.keys[1]);
-        let socket = UdpTransport::adopt(fixture.take_udp(1), &Default::default()).unwrap();
+        let socket = endpoint(fixture.take_udp(1)).await;
         let local = socket.local_addr().unwrap();
         let id = adjacency::nonce().unwrap();
         let mut owner = Owner::new(shared.clone(), Box::new(socket), id).unwrap();
@@ -1997,7 +2017,7 @@ pub(in crate::manager) mod tests {
         owner.init(wrong_source, &intro).await.unwrap();
         assert_eq!(owner.pending.len(), 1);
         let mut bytes = [0; adjacency::MAX_MESSAGE];
-        let (len, actual) = client.recv_from(&mut bytes).await.unwrap();
+        let (len, actual) = control(&client, &mut bytes).await;
         assert_eq!(actual, local);
         let (kind, body) = adjacency::decode(&bytes[..len]).unwrap();
         assert_eq!(kind, Kind::Challenge);
@@ -2167,7 +2187,7 @@ pub(in crate::manager) mod tests {
         let mut fixture = Netmaps::start(false, true).await;
         let ids = fixture.ids();
         let (shared, _receiver) = shared(&fixture.desired[1], &fixture.keys[1]);
-        let socket = UdpTransport::adopt(fixture.take_udp(1), &Default::default()).unwrap();
+        let socket = endpoint(fixture.take_udp(1)).await;
         let local = socket.local_addr().unwrap();
         let id = adjacency::nonce().unwrap();
         let mut owner = Owner::new(shared.clone(), Box::new(Jumbo(socket)), id).unwrap();
@@ -2186,7 +2206,7 @@ pub(in crate::manager) mod tests {
             Initiation::new(&fixture.keys[0], &dialer, &carrier, &DIALER_BOOT).unwrap();
         owner.init(source, &intro).await.unwrap();
         let mut bytes = vec![0; 65_536];
-        let (len, _) = client.recv_from(&mut bytes).await.unwrap();
+        let (len, _) = control(&client, &mut bytes).await;
         let (kind, body) = adjacency::decode(&bytes[..len]).unwrap();
         assert_eq!(kind, Kind::Challenge);
         let transcript = initiation.challenge(&dialer, ids[1], body).unwrap();
@@ -2197,11 +2217,7 @@ pub(in crate::manager) mod tests {
         assert!(owner.channels.contains_key(&source));
         owner.tick().await.unwrap();
         let probe = loop {
-            let (len, _) =
-                tokio::time::timeout(Duration::from_secs(5), client.recv_from(&mut bytes))
-                    .await
-                    .expect("a size probe")
-                    .unwrap();
+            let (len, _) = control(&client, &mut bytes).await;
             if adjacency::decode(&bytes[..len]).unwrap().0 == Kind::Probe {
                 break bytes[..len].to_vec();
             }
@@ -2242,11 +2258,7 @@ pub(in crate::manager) mod tests {
             .await
             .unwrap();
         let pong = loop {
-            let (len, _) =
-                tokio::time::timeout(Duration::from_secs(5), client.recv_from(&mut bytes))
-                    .await
-                    .expect("a Pong")
-                    .unwrap();
+            let (len, _) = control(&client, &mut bytes).await;
             let (kind, body) = adjacency::decode(&bytes[..len]).unwrap();
             if kind == Kind::Pong {
                 break transcript
@@ -2255,6 +2267,92 @@ pub(in crate::manager) mod tests {
             }
         };
         assert_eq!(pong, nonce, "only the whole probe is answered");
+        owner.shutdown().await.unwrap();
+        fixture.close().await;
+    }
+
+    /// A real UDP endpoint whose sends stay pending while `stalled`.
+    struct Stalled<T> {
+        inner: T,
+        stalled: Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    impl<T: Datagram> Datagram for Stalled<T> {
+        fn local_addr(&self) -> std::io::Result<SocketAddr> {
+            self.inner.local_addr()
+        }
+        fn poll_send_to(
+            &self,
+            cx: &mut std::task::Context<'_>,
+            payload: &[u8],
+            peer: SocketAddr,
+        ) -> std::task::Poll<std::io::Result<usize>> {
+            if self.stalled.load(std::sync::atomic::Ordering::SeqCst) {
+                return std::task::Poll::Pending;
+            }
+            self.inner.poll_send_to(cx, payload, peer)
+        }
+        fn poll_recv_from(
+            &self,
+            cx: &mut std::task::Context<'_>,
+            buffer: &mut [u8],
+        ) -> std::task::Poll<std::io::Result<meshway_transport::raw::DatagramRead>> {
+            self.inner.poll_recv_from(cx, buffer)
+        }
+    }
+
+    /// A control send not completed within [`OUTPUT_WAIT`] is dropped like a
+    /// lost datagram, and the owner never waits longer: the dialer's repeated
+    /// INIT is answered with the same stored challenge.
+    #[tokio::test]
+    async fn a_challenge_dropped_at_the_output_wait_is_resent_on_the_repeated_init() {
+        let mut fixture = Netmaps::start(false, true).await;
+        let ids = fixture.ids();
+        let (shared, _receiver) = shared(&fixture.desired[1], &fixture.keys[1]);
+        let socket = endpoint(fixture.take_udp(1)).await;
+        let local = socket.local_addr().unwrap();
+        let stalled = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let id = adjacency::nonce().unwrap();
+        let endpoint = Stalled {
+            inner: socket,
+            stalled: stalled.clone(),
+        };
+        let mut owner = Owner::new(shared.clone(), Box::new(endpoint), id).unwrap();
+        owner.listener = Some(ListenerFact {
+            socket_id: id,
+            key: "udp".into(),
+            protocol: TransportProtocol::NativeUdp,
+            local,
+            buffers: None,
+        });
+        let client = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let source = client.local_addr().unwrap();
+        let carrier = carriers(&fixture.desired[0])[&ids[1]].clone();
+        let dialer = Plan::new(&fixture.desired[0]).unwrap();
+        let (initiation, intro) =
+            Initiation::new(&fixture.keys[0], &dialer, &carrier, &DIALER_BOOT).unwrap();
+        let started = Instant::now();
+        owner.init(source, &intro).await.unwrap();
+        assert!(
+            started.elapsed() >= OUTPUT_WAIT,
+            "the send waited out its bound"
+        );
+        let challenge = owner.pending[&source].challenge.clone();
+        let mut bytes = [0; adjacency::MAX_MESSAGE];
+        assert!(
+            tokio::time::timeout(RETRY, client.recv_from(&mut bytes))
+                .await
+                .is_err(),
+            "the dropped challenge never leaves"
+        );
+        stalled.store(false, std::sync::atomic::Ordering::SeqCst);
+        owner.init(source, &intro).await.unwrap();
+        let (len, from) = control(&client, &mut bytes).await;
+        assert_eq!(from, local);
+        assert_eq!(&bytes[..len], challenge.as_slice());
+        let (kind, body) = adjacency::decode(&bytes[..len]).unwrap();
+        assert_eq!(kind, Kind::Challenge);
+        initiation.challenge(&dialer, ids[1], body).unwrap();
         owner.shutdown().await.unwrap();
         fixture.close().await;
     }
