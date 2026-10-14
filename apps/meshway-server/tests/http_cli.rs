@@ -15,6 +15,105 @@ use meshway_server::{App, Settings};
 
 struct Process(Child);
 
+/// The shutdown user and its network, prepared in process with the offline
+/// connector. The network's configuration disables the built-in rule-set
+/// providers, so the executable later started on `path` (which uses the
+/// production connector) has no catalog to fetch: the test stays off the
+/// Internet without a Server setting for it.
+async fn prepared(path: &Path) -> meshway_model::NetworkId {
+    let app = App::open_with_connector(
+        Settings::new(path),
+        std::sync::Arc::new(meshway_server::resources::download::Offline),
+    )
+    .await
+    .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let router = meshway_server::http::router(&app);
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, router)
+            .with_graceful_shutdown(async {
+                let _ = stopped.await;
+            })
+            .await
+            .unwrap();
+    });
+    let client = reqwest::Client::builder()
+        .tls_backend_preconfigured(meshway_transport_stream::tls::platform_client_config().unwrap())
+        .no_proxy()
+        .build()
+        .unwrap();
+    let session: meshway_protocol::SessionIssuedResponse = client
+        .post(format!("{base}/api/v1/auth/register"))
+        .json(&meshway_protocol::RegisterRequest {
+            email: "shutdown@example.test".into(),
+            password: meshway_protocol::WireSecret::new("valid shutdown test password".into()),
+        })
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let network: meshway_protocol::NetworkResponse = client
+        .post(format!("{base}/api/v1/networks"))
+        .bearer_auth(session.token.expose())
+        .json(&meshway_protocol::CreateNetworkRequest {
+            request_id: "12345678-1234-4321-8765-123456789abc".parse().unwrap(),
+            name: "Shutdown stream".into(),
+        })
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let id = network.network.id;
+    let source: meshway_protocol::configuration::ConfigurationSourceResponse = client
+        .get(format!("{base}/api/v1/networks/{id}/configuration/source"))
+        .bearer_auth(session.token.expose())
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let mut configuration = source.configuration;
+    for (provider, _) in meshway_configuration::providers::BUILTIN_PROVIDERS {
+        configuration
+            .rule_set_providers
+            .insert(provider.to_owned(), None);
+    }
+    client
+        .post(format!("{base}/api/v1/networks/{id}/configuration"))
+        .bearer_auth(session.token.expose())
+        .json(
+            &meshway_protocol::configuration::ConfigurationRequest::Document {
+                expected_revision: source.revision,
+                request_id: "12345678-1234-4321-8765-123456789abd".parse().unwrap(),
+                source_jsonc: meshway_protocol::WireSecret::new(
+                    serde_json::to_string(&configuration).unwrap(),
+                ),
+            },
+        )
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    let _ = stop.send(());
+    server.await.unwrap();
+    app.shutdown().await.unwrap();
+    id
+}
+
 impl Drop for Process {
     fn drop(&mut self) {
         let _ = self.0.kill();
@@ -181,6 +280,7 @@ async fn open_event_streams_do_not_block_signal_shutdown_or_storage_release() {
             .canonicalize()
             .unwrap()
             .join(format!("sse-{index}"));
+        let network = prepared(&path).await;
         let mut process = Process(
             command(&path)
                 .stdout(Stdio::piped())
@@ -202,27 +302,11 @@ async fn open_event_streams_do_not_block_signal_shutdown_or_storage_release() {
         let address = line.trim().strip_prefix("Listening on ").unwrap();
         let base = format!("http://{address}");
         let session: meshway_protocol::SessionIssuedResponse = client
-            .post(format!("{base}/api/v1/auth/register"))
+            .post(format!("{base}/api/v1/auth/login"))
             .timeout(Duration::from_secs(5))
-            .json(&meshway_protocol::RegisterRequest {
+            .json(&meshway_protocol::LoginRequest {
                 email: "shutdown@example.test".into(),
                 password: meshway_protocol::WireSecret::new("valid shutdown test password".into()),
-            })
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
-        let network: meshway_protocol::NetworkResponse = client
-            .post(format!("{base}/api/v1/networks"))
-            .timeout(Duration::from_secs(5))
-            .bearer_auth(session.token.expose())
-            .json(&meshway_protocol::CreateNetworkRequest {
-                request_id: "12345678-1234-4321-8765-123456789abc".parse().unwrap(),
-                name: "Shutdown stream".into(),
             })
             .send()
             .await
@@ -237,10 +321,7 @@ async fn open_event_streams_do_not_block_signal_shutdown_or_storage_release() {
         let mut events = tokio::time::timeout(
             Duration::from_secs(5),
             client
-                .get(format!(
-                    "{base}/api/v1/networks/{}/events",
-                    network.network.id
-                ))
+                .get(format!("{base}/api/v1/networks/{network}/events"))
                 .bearer_auth(session.token.expose())
                 .send(),
         )
