@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-14T05:46:26.358597+00:00",
+  "updatedAt": "2026-10-14T05:51:17.764427+00:00",
   "runs": [
     {
       "id": 38517097012,
@@ -12,35 +12,92 @@
       "commit": "2f9c6c47c177c90172344b6f6e1ec644b58008f0",
       "message": "changelog: F5a verification after merging main",
       "createdAt": "2026-10-14T05:31:29Z",
-      "updatedAt": "2026-10-14T05:31:29Z",
-      "status": "queued",
-      "conclusion": null,
+      "updatedAt": "2026-10-14T05:48:35Z",
+      "status": "completed",
+      "conclusion": "success",
       "url": "https://github.com/JDScript/meshway/actions/runs/38517097012",
       "jobs": [
         {
           "id": 115698229672,
           "name": "node-linux (x86_64-unknown-linux-musl)",
           "runner": "planck",
-          "status": "in_progress",
-          "conclusion": null,
+          "status": "completed",
+          "conclusion": "success",
           "startedAt": "2026-10-14T05:41:04Z",
-          "completedAt": null,
-          "seconds": null,
+          "completedAt": "2026-10-14T05:44:50Z",
+          "seconds": 226.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/38517097012/job/115698229672"
         },
         {
           "id": 115698229829,
           "name": "node-linux (aarch64-unknown-linux-musl)",
-          "runner": null,
-          "status": "queued",
-          "conclusion": null,
-          "startedAt": "2026-10-14T05:31:29Z",
-          "completedAt": null,
-          "seconds": null,
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-14T05:44:50Z",
+          "completedAt": "2026-10-14T05:48:34Z",
+          "seconds": 224.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/38517097012/job/115698229829"
         }
       ],
-      "artifacts": []
+      "artifacts": [
+        {
+          "id": 11872996406,
+          "name": "node-x86_64-unknown-linux-musl-2f9c6c47c177c90172344b6f6e1ec644b58008f0",
+          "bytes": 11076954,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38517097012/artifacts/11872996406",
+          "jobId": 115698229672,
+          "runner": "planck",
+          "seconds": 226.0,
+          "state": "ok",
+          "error": null,
+          "reports": [],
+          "matrices": [],
+          "builds": [
+            {
+              "target": "x86_64-unknown-linux-musl",
+              "binary": "meshwayd",
+              "bytes": 19016936,
+              "sha256": "29da2d63a9078cb30b502b36a215b91ba51f5c1ca14715e3b5c4ef6b155b8a3e"
+            },
+            {
+              "target": "x86_64-unknown-linux-musl",
+              "binary": "meshway",
+              "bytes": 2187304,
+              "sha256": "97300201970dc893994eb09e99bb20c53bea08a6c82120e17c7a88d1a71d53af"
+            }
+          ]
+        },
+        {
+          "id": 11872647780,
+          "name": "node-aarch64-unknown-linux-musl-2f9c6c47c177c90172344b6f6e1ec644b58008f0",
+          "bytes": 10342178,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38517097012/artifacts/11872647780",
+          "jobId": 115698229829,
+          "runner": "planck",
+          "seconds": 224.0,
+          "state": "ok",
+          "error": null,
+          "reports": [],
+          "matrices": [],
+          "builds": [
+            {
+              "target": "aarch64-unknown-linux-musl",
+              "binary": "meshway",
+              "bytes": 1919968,
+              "sha256": "0f2f224a43de1c402b5fef7814465c20c870152fd8da6dc92d31ceab84d06df8"
+            },
+            {
+              "target": "aarch64-unknown-linux-musl",
+              "binary": "meshwayd",
+              "bytes": 15659064,
+              "sha256": "65df8d15c3029bbe1f8e3357c18266c370e4945f78796e465aec58820b9346f6"
+            }
+          ]
+        }
+      ]
     },
     {
       "id": 38517096941,
