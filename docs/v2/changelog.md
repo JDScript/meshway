@@ -11,7 +11,9 @@
 - 出口角色失败只撤该角色（X7 语义延伸到运行中的角色）：driver 在 Host owner 自行停止时报告 `ended`；`ExitFailed` 与回包 reader 失败只结束出口 runtime，立即真实探测，`ready` 即 `Engine::reapply` 重装；netmap 保持 applied。Underlay monitor 观察到出口自有路由或规则（含 `IIF_DETACHED`）在 owner 之外被删除时只停止出口角色；外来新增仍是整个 Host 的冲突。已自行失败的角色不再使 Host 的新内容安装或撤回失败，其保留规则不使 Host 校验失败。monitor 冲突日志新增 `table`／`interface`／`prefix`。
 - 出口 cipher 随最后一条流结束时向来源发出逐跳认证的 `Close`（中继转发），来源下一包新建 circuit，不再在出口已没有的 cipher 上等 15 秒无回复。
 - 容量依据：活投影 128 同时是成对回程规则槽位（257 个 RPDB 优先级，位于 512 个保留优先级内）；nft 集合与 journal 历史 4096；建议先把 journal 改为增量记录并测量每轮安装耗时，再把活投影提高到 1024（对数 ≤ 128），本包不改。见 [Exit 设计 · 安全边界与限制清单](/v2/node/exit-design#安全边界与限制清单)。
-- 验收：`exit/off` 新增第 15 阶段（5 次／秒 ping 60 秒加 traceroute 时投影峰值 ≤ 32 且零丢失；echo 条目两次删除后角色保持；删除出口回程路由后只撤角色并自动重装，期间 E 保持 applied 与 connected，A 的 MagicDNS 与经 E 的普通名称每 0.5 秒解析成功）；组件测试 `exit_recovery::netmap_exit_echo_reconnect_and_route_loss_stop_only_the_role`（main 上在 CT 换代后第 3 个序号安装即失败；仅去掉 monitor 分类时 Host 新 serial 安装 `Conflict`）。见[验收范围 · 出口场景](/v2/node/validation#exit-scenario)。
+- 验收：`exit/off` 新增第 15 阶段（5 次／秒 ping 60 秒加 traceroute 时投影峰值 ≤ 32 且零丢失；echo 条目两次删除后角色保持；删除出口回程路由后只撤角色并自动重装，期间 E 保持 applied 与 connected，A 的 MagicDNS 与经 E 的普通名称每 0.5 秒解析成功）；组件测试 `exit_recovery::netmap_exit_echo_reconnect_and_route_loss_stop_only_the_role`（main 上在 CT 换代后第 3 个序号安装即失败；仅去掉 monitor 分类时 Host 新 serial 安装 `Conflict`）。第 12 阶段的 MSS clamp 表检查改为最多等待 5 秒（worker 在通道事实变化后的下一轮、至多每秒一次应用 clamp）。见[验收范围 · 出口场景](/v2/node/validation#exit-scenario)。
+
+验证：Planck 18 行矩阵 `20261014T220407Z-2c791342`（`09bc15ad`）全部通过，`exit/off` 行 `20261014T221147Z-ccff6958`（第 15 阶段 300／300 回复、投影峰值 26；main 上 120／300、峰值 128）；OPS8 全链在 main 上的复现行 `20261014T200754Z-13ebca51`；证据 `.meshway/validation/x8/`。
 
 ## v0.1.0-alpha.9
 
