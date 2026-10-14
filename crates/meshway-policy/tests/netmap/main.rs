@@ -18,5 +18,6 @@ mod properties;
 mod relays;
 mod resolvers;
 mod rule_sets;
+mod self_exit;
 mod support;
 use support::*;
