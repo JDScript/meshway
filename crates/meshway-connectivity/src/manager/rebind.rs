@@ -311,6 +311,35 @@ impl Manager {
         }
     }
 
+    /// A bind its retry owner handed over but the Manager has not adopted
+    /// yet holds the listener's port. Once that owner is retired (its key
+    /// left the content, its declaration changed, or the Manager stops) the
+    /// bind is closed here, synchronously, before anything binds again; a
+    /// bind whose owner still owns the key stays queued for [`Self::adopt`].
+    pub(super) fn release_retired_binds(&mut self) -> Result<(), Error> {
+        let mut owned = Vec::new();
+        while let Ok(rebound) = self.rebound.try_recv() {
+            let current = self
+                .shared
+                .unbound
+                .lock()
+                .map_err(|_| Error::Worker)?
+                .get(&rebound.key)
+                .is_some_and(|entry| entry.token == rebound.token);
+            if current {
+                owned.push(rebound);
+            }
+        }
+        // At most one bind per retry owner, at most one owner per listener:
+        // the queue (one slot per listener) has room for every one.
+        for rebound in owned {
+            self.rebound_sender
+                .try_send(rebound)
+                .map_err(|_| Error::Worker)?;
+        }
+        Ok(())
+    }
+
     /// Configured listeners of the current content that are not bound.
     pub fn unavailable_listeners(&self) -> Vec<ListenerUnavailable> {
         self.shared

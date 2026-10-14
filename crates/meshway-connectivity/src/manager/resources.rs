@@ -130,6 +130,8 @@ impl Manager {
                 self.shared.resource_changes.send_replace(());
             }
         }
-        Ok(())
+        // Every caller binds next; a retired owner's unadopted bind must not
+        // still hold the port then.
+        self.release_retired_binds()
     }
 }

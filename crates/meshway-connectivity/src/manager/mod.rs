@@ -1276,6 +1276,10 @@ impl Manager {
         for (_, owner) in std::mem::take(&mut self.owners) {
             failed |= owner.join().await.is_err();
         }
+        // Unadopted binds close now, not when this value is dropped: a
+        // restart binds the same ports before the old Manager is replaced.
+        self.rebound.close();
+        while self.rebound.try_recv().is_ok() {}
         self.shared.links.lock().map_err(|_| Error::Worker)?.clear();
         self.listeners.clear();
         self.shared

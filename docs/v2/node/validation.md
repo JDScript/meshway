@@ -181,7 +181,7 @@ lab／VM 与 planck 之间设计上没有直连（两端端点相关映射），
 
 Planck 18 行矩阵 `20261013T211635Z-273c8e3a`（`7a6dab15`）全部通过；`udp/off` 行 `20261013T211638Z-24df659d` 中 B 的 Status 报告 `held by meshway-runtime pid 1`（fixture 占住端口），释放后 3.3 秒绑定、`lastError` 清空、端口归 daemon。同一分支的前一次矩阵 `20261013T205702Z-9626e731` 中 `nat/resolved` 失败：A 在 access 撤销阶段 DNS owner 健康检查失败（`Backend`）后整体重装，之后 45 秒内首个 UDP 流无回显；此前通过的 `nat/resolved` 报告均无该 DNS 失败，listener 重试未出现，复跑通过，记为未定位的偶发。远程副本 `.meshway/validation/u1/remote/`。
 
-剩余：`EADDRINUSE` 的占用者未在失败瞬间捕获。采样显示失败前数毫秒同一 daemon 刚在 35000 绑定过一个 socket（无 instance 时的普通 listener），失败约 200 ms 后已无进程持有该端口；退役 socket 关闭与协调改绑之间的竞争是最可能原因，未作为单独缺陷修复（重试在 1 s 内收敛）。
+`EADDRINUSE` 的占用者未在失败瞬间捕获（alpha.6）：采样显示失败前数毫秒同一 daemon 刚在 35000 绑定过一个 socket，失败约 200 ms 后已无进程持有该端口。后续（B2、H1）逐条核对了 Manager 的同端口改绑路径：首个 instance 到达的普通 listener → 协调 socket 改绑、内容变化与 Manager 重启都先 join 旧 owner（socket 同步关闭）再 bind；B2 前的接管路径和 H1 前“重试 owner 已绑定、未被接管的 socket 在 owner 退役后仍留在接管队列”两处会让新 bind 撞上本进程的旧 socket，均已改为先关闭再 bind，`manager::tests::netmap::rebind` 以真实同端口 bind 覆盖（旧顺序得到 `EADDRINUSE`）。alpha.8 常驻 lab 首次即绑定成功；alpha.6 那一次的确切占用者不再复现，重试仍是对其他进程占用的兜底。
 
 ### 当前验证证据
 

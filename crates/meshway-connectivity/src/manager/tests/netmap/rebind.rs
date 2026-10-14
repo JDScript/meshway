@@ -106,6 +106,63 @@ async fn new_content_without_the_listener_ends_its_retry() {
     fixture.close().await;
 }
 
+/// b's UDP port is held at start; once freed, the retry owner binds and
+/// hands the socket over, but the Manager has not adopted it yet (nothing
+/// reads `recv`). That queued bind is the old socket of the key.
+async fn queued_bind() -> (Manager, Netmaps, SocketAddr) {
+    let mut fixture = Netmaps::start(false, true).await;
+    let factory = fixture.factory();
+    let held = address(&fixture.desired[1], "udp");
+    let holder = factory.udp.lock().unwrap().remove(&held).unwrap();
+    let b = manager(&fixture, 1, &factory, Default::default()).await;
+    assert_eq!(b.unavailable_listeners().len(), 1);
+    drop(holder);
+    // The first retry runs after 1 s and binds.
+    tokio::time::sleep(Duration::from_millis(2500)).await;
+    (b, fixture, held)
+}
+
+/// New content that changes the listener's declaration on the same port
+/// retires the retry owner; its unadopted bind is closed before the new
+/// declaration binds, so the bind does not meet the old socket.
+#[tokio::test]
+async fn an_unadopted_bind_is_closed_before_new_content_binds_its_port() {
+    let (mut b, mut fixture, held) = queued_bind().await;
+    let id = fixture.ids()[1];
+    fixture
+        .publish(|cfg| {
+            let mut listener = super::support::udp_listener(held, true);
+            if let Listener::NativeUdp(value) = &mut listener {
+                value.socket.receive_buffer = 1 << 20;
+            }
+            cfg.nodes.get_mut(&id).unwrap().listeners.insert(
+                "udp".to_owned(),
+                meshway_transport::spec::PreparedListener::prepare(listener).unwrap(),
+            );
+        })
+        .await;
+    b.apply(&fixture.desired[1]).await.unwrap();
+    assert_eq!(b.unavailable_listeners(), Vec::new());
+    let snapshot = b.snapshot().unwrap();
+    assert_eq!(snapshot.listeners.len(), 1);
+    assert_eq!(snapshot.listeners[0].local, held);
+    b.shutdown().await.unwrap();
+    fixture.close().await;
+}
+
+/// Shutdown closes an unadopted bind before it returns (a restart binds the
+/// same port before the old Manager value is replaced).
+#[tokio::test]
+async fn shutdown_closes_an_unadopted_bind() {
+    let (mut b, fixture, held) = queued_bind().await;
+    b.shutdown().await.unwrap();
+    let rebound = std::net::UdpSocket::bind(held);
+    assert!(rebound.is_ok(), "{rebound:?}");
+    drop(rebound);
+    drop(b);
+    fixture.close().await;
+}
+
 fn instance(n: u8) -> meshway_protocol::InstanceRequest {
     serde_json::from_value(serde_json::json!({
         "instanceId": format!("00000000-0000-4000-8000-0000000000c{n}"),
@@ -155,6 +212,38 @@ async fn adopted_after(instances: &[u8]) -> (Manager, Arc<Factory>, Netmaps, Soc
     .await
     .expect("rebound listener adopted");
     (b, factory, fixture, held)
+}
+
+/// The U1 start: b's plain listener bound offline is rebound as a
+/// coordination socket when the first instance arrives. The plain socket's
+/// owner is joined (its socket closed) before the same port binds again.
+#[tokio::test]
+async fn the_first_instance_rebinds_an_installed_plain_listener_on_its_port() {
+    let mut fixture = Netmaps::start(false, true).await;
+    let factory = fixture.factory();
+    let held = address(&fixture.desired[1], "udp");
+    let mut b = Manager::start_with_traversal(
+        &fixture.desired[1],
+        fixture.keys[1].clone(),
+        factory.clone(),
+        Default::default(),
+        Arc::new(Offline),
+        meshway_model::Sequence::MIN.checked_next().unwrap(),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(factory.traversal_listeners.load(Ordering::SeqCst), 0);
+    assert_eq!(b.snapshot().unwrap().listeners[0].local, held);
+    // The reserved socket is gone: the rebind is a real bind of `held`.
+    assert!(factory.udp.lock().unwrap().get(&held).is_none());
+    b.set_instance(Some(instance(1))).await.unwrap();
+    assert_eq!(b.unavailable_listeners(), Vec::new());
+    assert_eq!(factory.traversal_listeners.load(Ordering::SeqCst), 1);
+    assert_eq!(b.snapshot().unwrap().listeners[0].local, held);
+    assert_eq!(listener_reference(&b).instance, instance(1));
+    b.shutdown().await.unwrap();
+    fixture.close().await;
 }
 
 fn listener_reference(manager: &Manager) -> meshway_protocol::connectivity::SocketReference {

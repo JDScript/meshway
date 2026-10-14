@@ -30,14 +30,16 @@ Manager 是 listener 生命周期的唯一 owner。安装内容时先绑定全�
 | 可自行消失（`EADDRINUSE`、`EADDRNOTAVAIL` 等） | 1 s 起翻倍，上限 60 s |
 | 需要运维处理（`EACCES`） | 每 60 s |
 
-绑定成功后 Manager 接管该 socket（Native UDP 有 live instance 时为协调 socket，进入 STUN 观测并重新发布候选），发出 `Changed`。接管时按**当时**的 instance 重新确认：绑定后、接管前才到达第一个 instance 的普通 Native UDP socket 先同步释放、再绑定为协调 socket（不会撞上自己刚占的端口），协调 socket 的 State 引用与 Underlay 授权改为当前 instance；内容变化使该 key 不再存在或声明改变时，重试 owner 随旧资源退役。重试期间：
+绑定成功后 Manager 接管该 socket（Native UDP 有 live instance 时为协调 socket，进入 STUN 观测并重新发布候选），发出 `Changed`。接管时按**当时**的 instance 重新确认：绑定后、接管前才到达第一个 instance 的普通 Native UDP socket 先同步释放、再绑定为协调 socket（不会撞上自己刚占的端口），协调 socket 的 State 引用与 Underlay 授权改为当前 instance；内容变化使该 key 不再存在或声明改变时，重试 owner 随旧资源退役。
+
+同一端口上任何改绑都是“旧 socket 关闭后再 bind”，由 `manager::rebind` 统一保证：内容变化、首个 instance 到达（普通 listener 改为协调 socket）与 Manager 重启都先 join 旧 owner（其 socket 随 owner 同步关闭）；重试 owner 已绑定、尚未被接管的 socket 在该 owner 退役时同步关闭（内容变化在重新安装前、`shutdown` 在返回前），不会留在接管队列里占住端口。重试期间：
 
 - `Snapshot.unavailable` 列出该 listener（地址、原因、是否可自行消失、已失败次数、下次尝试时间）。
 - Node State 中该 listener 为 `phase: failed`、无 socket、`problem` 为 `resource_unavailable`（`resource` 为该 listener）。
 - 本地 Status 为 `lastError: transport`，`lastErrorDetail` 给出 bind 错误、占用端口的进程与临时端口范围提示，见[运行状态](/v2/node/runtime)；绑定后 daemon 以同一内容再 apply，二者清空。
 - WARN 日志 `Listener unavailable; retrying its bind`（`key`、`error`、`recoverable`、`attempts`、`retry_ms`），绑定后 INFO `Listener bound after retry`。
 
-Linux 默认临时端口范围（`net.ipv4.ip_local_port_range`，32768–60999）内的 listener 端口可能在某一刻被任意进程的出站 socket 占用；配置校验对已启用 listener 的此类端口给出警告 `ephemeral_listener_port`，节点在启动邻接时按本机实际范围记 WARN。建议选用范围外的端口（或调整该 sysctl）。实测（U1 lab，容器重建后 `up`）约三分之一的启动得到 `EADDRINUSE`：失败前数毫秒同一 daemon 刚在该端口绑定过一个 socket（无 instance 时的普通 Native UDP listener，随后改绑为协调 socket），失败约 200 ms 后已没有进程持有该端口，1 s 后重试成功。
+Linux 默认临时端口范围（`net.ipv4.ip_local_port_range`，32768–60999）内的 listener 端口可能在某一刻被任意进程的出站 socket 占用；配置校验对已启用 listener 的此类端口给出警告 `ephemeral_listener_port`，节点在启动邻接时按本机实际范围记 WARN。建议选用范围外的端口（或调整该 sysctl）。实测（U1 lab，alpha.6，容器重建后 `up`）约三分之一的启动得到 `EADDRINUSE`，1 s 后重试成功；失败前数毫秒同一 daemon 在该端口绑定过一个 socket，失败约 200 ms 后已没有进程持有该端口。见[验收范围](/v2/node/validation)中该项的结论。
 
 ## Provider 的连接需求
 
