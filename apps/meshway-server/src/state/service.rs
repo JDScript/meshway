@@ -306,7 +306,6 @@ impl<P: StateProvider> StateService<P> {
         identity: ReadIdentity,
         query: meshway_protocol::observations::HistoryQuery,
     ) -> Result<meshway_protocol::observations::HistoryPage, Error> {
-        use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
         let provider = Arc::clone(&self.provider);
         let sealer = Arc::clone(&self.sealer);
         self.handle
@@ -314,31 +313,17 @@ impl<P: StateProvider> StateService<P> {
                 let now = Utc::now();
                 let authorization = provider.state_scope(tx, &identity, now)?;
                 let scope = crate::secrets::CursorScope::ObservationHistory(identity.fingerprint());
-                let previous = match &query.cursor {
-                    None => None,
-                    Some(cursor) => {
-                        if cursor.len() > 4096 {
-                            return Err(Error::InvalidCursor);
-                        }
-                        let bytes = URL_SAFE_NO_PAD
-                            .decode(cursor)
-                            .map_err(|_| Error::InvalidCursor)?;
-                        let plain = sealer
-                            .open_cursor(scope, &bytes)
-                            .map_err(|_| Error::InvalidCursor)?;
-                        Some(
-                            serde_json::from_slice(plain.as_bytes())
-                                .map_err(|_| Error::InvalidCursor)?,
-                        )
-                    }
-                };
+                let previous = query
+                    .cursor
+                    .as_deref()
+                    .map(|cursor| {
+                        crate::cursor::open(&sealer, scope, cursor, now.timestamp_millis())
+                    })
+                    .transpose()?;
                 let (mut page, next) =
                     crate::observations::history::query(tx, &authorization, &query, previous, now)?;
-                if let Some(next) = next {
-                    let bytes = serde_json::to_vec(&next)
-                        .map_err(|_| Error::encode("observation history cursor"))?;
-                    page.next_cursor =
-                        Some(URL_SAFE_NO_PAD.encode(sealer.seal_cursor(scope, &bytes)?.as_bytes()));
+                if let Some((next, started)) = next {
+                    page.next_cursor = Some(crate::cursor::seal(&sealer, scope, next, started)?);
                 }
                 Ok(page)
             })

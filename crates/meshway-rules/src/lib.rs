@@ -20,6 +20,7 @@ mod domains;
 mod format;
 pub mod inline;
 mod name;
+pub mod ranges;
 mod report;
 mod set;
 

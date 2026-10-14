@@ -134,13 +134,10 @@ export const UNAVAILABLE_REASON: Record<UnavailableReason, () => string> = {
   noPath: () => m.nodes_path_reason_noPath(),
   routingCycle: () => m.nodes_path_reason_routingCycle(),
   routingLimit: () => m.nodes_path_reason_routingLimit(),
-  missingCapability: () => m.nodes_path_reason_missingCapability(),
   missingDependency: () => m.nodes_path_reason_missingDependency(),
-  missingDns: () => m.nodes_path_reason_missingDns(),
   exitUnavailable: () => m.nodes_path_reason_exitUnavailable(),
   unsupportedFamily: () => m.nodes_path_reason_unsupportedFamily(),
   egressConflict: () => m.nodes_path_reason_egressConflict(),
-  invalidProfile: () => m.nodes_path_reason_invalidProfile(),
   inactiveNode: () => m.nodes_path_reason_inactiveNode(),
 }
 

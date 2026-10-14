@@ -1,7 +1,8 @@
 use crate::{Error, Result};
-use ipnet::{IpNet, Ipv4Net, Ipv4Subnets};
+use ipnet::{IpNet, Ipv4Net};
 use meshway_configuration::execution::EgressCapturePlan;
 use meshway_policy::compile::{MAX_CAPTURE_RANGES, MAX_CAPTURE_ROUTES};
+use meshway_rules::ranges;
 use serde::{Deserialize, Serialize};
 use std::net::{Ipv4Addr, Ipv6Addr};
 
@@ -17,34 +18,6 @@ pub(super) struct Ranges {
     pub v6: Vec<(Ipv6Addr, Ipv6Addr)>,
 }
 
-fn canonical<T: Copy + Ord>(ranges: &[(T, T)], next: impl Fn(T) -> Option<T>) -> bool {
-    ranges.iter().all(|(start, end)| start <= end)
-        && ranges
-            .windows(2)
-            .all(|pair| next(pair[0].1).is_some_and(|after| after < pair[1].0))
-}
-
-fn merged<T: Copy + Ord>(mut values: Vec<(T, T)>, next: impl Fn(T) -> Option<T>) -> Vec<(T, T)> {
-    values.sort_unstable();
-    let mut out: Vec<(T, T)> = Vec::with_capacity(values.len());
-    for (start, end) in values {
-        match out.last_mut() {
-            Some(last) if next(last.1).is_none_or(|after| start <= after) => {
-                last.1 = last.1.max(end);
-            }
-            _ => out.push((start, end)),
-        }
-    }
-    out
-}
-
-fn next4(address: Ipv4Addr) -> Option<Ipv4Addr> {
-    u32::from(address).checked_add(1).map(Ipv4Addr::from)
-}
-fn next6(address: Ipv6Addr) -> Option<Ipv6Addr> {
-    u128::from(address).checked_add(1).map(Ipv6Addr::from)
-}
-
 impl Ranges {
     /// The ranges of whole prefixes, such as the Mesh pools.
     pub fn of(nets: impl IntoIterator<Item = IpNet>) -> Self {
@@ -56,20 +29,21 @@ impl Ranges {
             }
         }
         Self {
-            v4: merged(v4, next4),
-            v6: merged(v6, next6),
+            v4: ranges::merge(v4),
+            v6: ranges::merge(v6),
         }
     }
 
     pub fn canonical(&self) -> bool {
-        canonical(&self.v4, next4) && canonical(&self.v6, next6)
+        ranges::is_merged(&self.v4) && ranges::is_merged(&self.v6)
     }
 
     /// Routes of the capture table: the minimal CIDR cover of the IPv4 ranges.
     pub fn routes(&self) -> impl Iterator<Item = Ipv4Net> + '_ {
         self.v4
             .iter()
-            .flat_map(|(start, end)| Ipv4Subnets::new(*start, *end, 0))
+            .flat_map(|(start, end)| ranges::cover(*start, *end))
+            .filter_map(|(network, bits)| Ipv4Net::new(network, bits).ok())
     }
 
     pub fn within_limits(&self) -> bool {
@@ -100,8 +74,8 @@ pub(super) fn parse(plan: &EgressCapturePlan) -> Result<Ranges> {
 
 pub(super) fn union(a: &Ranges, b: &Ranges) -> Ranges {
     Ranges {
-        v4: merged(a.v4.iter().chain(&b.v4).copied().collect(), next4),
-        v6: merged(a.v6.iter().chain(&b.v6).copied().collect(), next6),
+        v4: ranges::merge(a.v4.iter().chain(&b.v4).copied().collect()),
+        v6: ranges::merge(a.v6.iter().chain(&b.v6).copied().collect()),
     }
 }
 

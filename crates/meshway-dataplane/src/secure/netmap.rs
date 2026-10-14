@@ -1,8 +1,7 @@
 //! Desired netmap content: its idempotent application, the local
 //! first-packet path and adjacency interest. No Server round trip.
 use super::{
-    CircuitGrant, CircuitState, Error, PendingFrame, SecureNode, State, View, authorization,
-    crypto, pipeline,
+    CircuitGrant, Error, PendingFrame, SecureNode, State, View, authorization, crypto, pipeline,
 };
 use crate::{
     Packet, Purpose,
@@ -140,7 +139,6 @@ pub(super) struct FirstPackets {
     waiting: Vec<Waiting>,
     interests: BTreeSet<NodeId>,
     pub ready_exits: BTreeSet<NodeId>,
-    pub dropped: u64,
     /// Paths whose origin handshake ended unanswered: consecutive count and
     /// the end of the pause during which another carried path is preferred.
     unanswered: BTreeMap<Vec<NodeId>, Paused>,
@@ -213,22 +211,17 @@ impl FirstPackets {
             .is_some_and(|paused| paused.until > now)
     }
     pub fn maintain(&mut self, now: Instant) {
-        let before: usize = self.waiting.iter().map(|w| w.packets.len()).sum();
         self.waiting.retain(|waiting| now < waiting.until);
-        let after: usize = self.waiting.iter().map(|w| w.packets.len()).sum();
-        self.dropped = self.dropped.saturating_add((before - after) as u64);
     }
     fn queue(&mut self, target: &Target, paths: &[LogicalPath], packet: Packet, until: Instant) {
         if let Some(waiting) = self.waiting.iter_mut().find(|w| w.target == *target) {
             if waiting.packets.len() >= MAX_QUEUED {
-                self.dropped = self.dropped.saturating_add(1);
                 return;
             }
             waiting.packets.push_back(packet);
             return;
         }
         if self.waiting.len() >= MAX_TARGETS {
-            self.dropped = self.dropped.saturating_add(1);
             return;
         }
         self.waiting.push(Waiting {
@@ -495,11 +488,6 @@ impl SecureNode {
         self.first.peer_channels = channels;
     }
 
-    /// First packets dropped by the bounded queue or its deadline.
-    pub fn dropped_first_packets(&self) -> u64 {
-        self.first.dropped
-    }
-
     /// Admit a local TUN packet: an existing flow continues on its original
     /// path and circuit; a new flow is decided locally on the installed
     /// netmap. Nothing waits for a Server. Queued packets commit no flow;
@@ -578,7 +566,6 @@ impl SecureNode {
             NewRoute::Unmanaged => return Ok(Outbound::Unmanaged),
             NewRoute::Denied(reason) => return Ok(Outbound::Denied(reason)),
             NewRoute::NoReadyExit => {
-                self.first.dropped = self.first.dropped.saturating_add(1);
                 return Ok(Outbound::Denied(UnavailableReason::ExitUnavailable));
             }
         };
@@ -889,7 +876,7 @@ impl SecureNode {
 
     /// Progress queued first packets: start handshakes whose adjacency became
     /// available and release packets whose circuit is established. Each packet
-    /// is admitted afresh; expired ones are dropped and counted. At most
+    /// is admitted afresh; expired ones are dropped. At most
     /// `budget` outputs leave the queue, allowing the caller to reserve its
     /// bounded crypto/output capacity before any packet is committed.
     pub fn flush(&mut self, budget: usize) -> Vec<Result<Flushed, Error>> {
@@ -979,20 +966,6 @@ impl SecureNode {
             target: Target::Mesh { node: target },
         };
         self.open(&grant, &paths, &reading)
-    }
-
-    /// Established diagnostic circuit toward `target`, if any.
-    pub fn diagnostic_circuit(&self, target: NodeId) -> Option<super::CircuitInfo> {
-        let reading = View::of(&self.desired);
-        let grant = CircuitGrant {
-            purpose: Purpose::Diagnostic,
-            target: Target::Mesh { node: target },
-        };
-        self.circuits
-            .iter()
-            .filter(|(_, circuit)| circuit.context.grant == grant)
-            .filter_map(|(id, _)| self.circuit_info_at(*id, &reading))
-            .find(|info| info.state == CircuitState::Established)
     }
 }
 

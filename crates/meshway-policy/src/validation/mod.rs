@@ -5,9 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 mod references;
 mod routing;
-pub use references::{
-    domain_name_matches, domain_suffix_matches, topology_allows, topology_decision,
-};
+pub use references::{domain_suffix_matches, topology_allows, topology_decision};
 type Check = ValidationReport;
 
 fn pointer(key: &str) -> String {
@@ -58,11 +56,4 @@ pub fn plan_configuration(
     context: &ValidationContext<'_>,
 ) -> Result<ConfigurationPlan, ConfigurationError> {
     plan_with_semantics(input, context, &PolicySemantics)
-}
-
-pub fn validate_configuration(
-    configuration: &NetworkConfiguration,
-    context: &ValidationContext<'_>,
-) -> Result<BTreeMap<String, UserBinding>, ConfigurationError> {
-    normalize(NetworkConfigurationInput::from(configuration), context).map(|(_, bindings)| bindings)
 }

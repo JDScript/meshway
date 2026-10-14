@@ -428,18 +428,3 @@ pub fn admit_adjacency(
     }
     Ok(())
 }
-
-/// Check an actual carrier against one selected path's hop and candidates,
-/// in addition to `admit_adjacency`. Carrier choice never bypasses a waypoint.
-pub fn admit_path_carrier(
-    compiler: &LocalCompiler,
-    netmap: &NodeNetmap,
-    selected: &LogicalPath,
-    peer: NodeId,
-    carrier: &Carrier,
-) -> Result<(), AdmissionError> {
-    if !super::path_carrier(selected, carrier) {
-        return Err(AdmissionError::Path);
-    }
-    admit_adjacency(compiler, netmap, peer, carrier)
-}

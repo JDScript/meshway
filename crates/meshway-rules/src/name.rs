@@ -143,37 +143,18 @@ impl Cidr {
         }
     }
 }
-macro_rules! prefixes {
-    ($name:ident, $t:ty, $bits:expr, $variant:ident, $addr:ty) => {
-        /// Minimal CIDR cover of a closed range.
-        fn $name(start: $t, end: $t) -> Vec<Cidr> {
-            let mut out = vec![];
-            let mut s = start;
-            loop {
-                let mut bits: u32 = if s == 0 {
-                    0
-                } else {
-                    $bits - s.trailing_zeros()
-                };
-                loop {
-                    let host = <$t>::MAX.checked_shr(bits).unwrap_or(0);
-                    if s.checked_add(host).is_some_and(|last| last <= end) {
-                        break;
-                    }
-                    bits += 1;
-                }
-                let host = <$t>::MAX.checked_shr(bits).unwrap_or(0);
-                out.push(Cidr::$variant(<$addr>::from(s), bits as u8));
-                match (s + host).checked_add(1) {
-                    Some(next) if next <= end => s = next,
-                    _ => return out,
-                }
-            }
-        }
-    };
+/// Minimal CIDR cover of a closed IPv4 range.
+fn v4_prefixes(start: u32, end: u32) -> Vec<Cidr> {
+    crate::ranges::cover(Ipv4Addr::from(start), Ipv4Addr::from(end))
+        .map(|(network, bits)| Cidr::V4(network, bits))
+        .collect()
 }
-prefixes!(v4_prefixes, u32, 32, V4, std::net::Ipv4Addr);
-prefixes!(v6_prefixes, u128, 128, V6, std::net::Ipv6Addr);
+/// Minimal CIDR cover of a closed IPv6 range.
+fn v6_prefixes(start: u128, end: u128) -> Vec<Cidr> {
+    crate::ranges::cover(Ipv6Addr::from(start), Ipv6Addr::from(end))
+        .map(|(network, bits)| Cidr::V6(network, bits))
+        .collect()
+}
 
 impl Cidr {
     /// The minimal CIDR cover of a closed IPv4 range, in ascending order; for

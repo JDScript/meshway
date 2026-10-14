@@ -8,6 +8,13 @@ on:
     - cron: "17 8 * * *"
   pull_request:
     paths:
+      # Every crate of the validated binaries; scripts/test_validate_workflow.py
+      # checks this list against the workspace members.
+      - "crates/meshway-model/**"
+      - "crates/meshway-protocol/**"
+      - "crates/meshway-control-client/**"
+      - "crates/meshway-private-storage/**"
+      - "crates/meshway-logging/**"
       - "crates/meshway-configuration/**"
       - "crates/meshway-policy/**"
       - "crates/meshway-rules/**"
@@ -17,9 +24,12 @@ on:
       - "crates/meshway-underlay/**"
       - "crates/meshway-dataplane/**"
       - "crates/meshway-dns/**"
+      - "crates/meshway-netns/**"
+      - "crates/meshway-stun/**"
       - "crates/meshway-tun/**"
       - "crates/meshway-transport*/**"
       - "apps/meshway-daemon/**"
+      - "apps/meshway-cli/**"
       - "apps/meshway-server/src/execution/**"
       - "apps/meshway-server/src/state/**"
       - "apps/meshway-server/src/netmap/**"

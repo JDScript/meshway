@@ -17273,10 +17273,7 @@ export const schemaDocument = {
           "noPath",
           "routingCycle",
           "routingLimit",
-          "missingCapability",
           "missingDependency",
-          "missingDns",
-          "invalidProfile",
           "inactiveNode"
         ]
       },

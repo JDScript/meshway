@@ -525,12 +525,12 @@ meta `geosite/cn`（816,448 B），每个句柄打开后各执行 1,151 次查�
 
 | 包 | 独占范围 | 依赖 | 必需验证 |
 | --- | --- | --- | --- |
-| R1 格式＋crate（**已完成**） | `crates/meshway-rules`（format、build、load、match、inline、convert、mapped、catalog）；`tools/meshway-rules-cli`；`tools/meshway-rules-perf`（`perf:rules`） | 无；未改 Server／Policy | 已完成：与 spike 参考实现 0 差异；loader fuzz；跨架构 digest 一致；`mise run check`（见 [R1 实测](#r1-实测)） |
+| R1 格式＋crate（**已完成**） | `crates/meshway-rules`（format、build、load、match、inline、convert、catalog）；`tools/meshway-rules-cli`；`tools/meshway-rules-perf`（`perf:rules`） | 无；未改 Server／Policy | 已完成：与 spike 参考实现 0 差异；loader fuzz；跨架构 digest 一致；`mise run check`（见 [R1 实测](#r1-实测)） |
 | R2a Server＋Policy＋Control 接线（**已接线**，见 [R2a 接线](#r2a-接线)） | Server `resources/`（转换改用 R1、全局内容寻址存储、provider 目录与验签、`ruleSetProviders`、隐式展开、`RuleSetView` 新字段、`artifacts/{digest}` 路由与引用索引）；`meshway-configuration` netmap 类型（`RuleSetRef`、`meshway-netmap-2`）与配置类型；`meshway-policy` 的 `plan_match`／`capture`／validation 改用 matcher；`meshway-control` artifact 获取与缓存；OpenAPI／SDK 重生成 | R1 | 投影等价测试含规则集变异；缺 artifact fail closed；撤销不被下载阻塞；离线重启载入；1,000 节点引用同一 artifact 的 perf（Server 存储、刷新耗时、请求授权）；drift 与 Rust／TS 消费者 |
 | R2b 发布仓库 | `meshway-org/meshway-rules` 仓库、workflow、签名 secret、`dist` 分支 | R1 CLI；与 R2a 并行 | 上游未变不发布；单集合失败 hold；sequence 单调；Server 用钉住公钥验通一次真实目录 |
 | R2d 收尾（**已完成**，见 [R2d 收尾](#r2d-收尾)） | Server 目录主动更新、artifact 回收；发布流水线签名 held | R2a、R2b | 见该节验收 |
 | R3 出口分割物化（**已实现**，见 [R3 节点侧出口分割](#r3-节点侧出口分割)） | Policy 区间分割；Engine desired；Underlay nft interval 集合与私有捕获表 | R2a | 已完成：7,000 个 direct 区间的 `exit/off` 与全量 16 行矩阵；artifact 缺失保持全范围捕获 |
-| X6 可信域名（**已交付**） | 按 [Exit 设计](/v2/node/exit-design#工作包与依赖) 的 X6 边界；DNS owner 查询时调用 Policy `egress_rule_for_name` | R2a | 已验：同 IP 多名称冲突、TTL、跨 selection 不复用、域名规则仅在可信关联存在时可执行（`exit/off` 第 10 阶段） |
+| X6 可信域名（**已交付**） | 按 [Exit 设计](/v2/node/exit-design#trusted-dns-associations) 的 X6 边界；DNS owner 查询时调用 Policy `egress_rule_for_name` | R2a | 已验：同 IP 多名称冲突、TTL、跨 selection 不复用、域名规则仅在可信关联存在时可执行（`exit/off` 第 10 阶段） |
 
 ## 需用户决定
 

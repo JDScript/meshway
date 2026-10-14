@@ -175,7 +175,7 @@ TUN 源包 → Packet::parse → 查唯一 FlowTable（已有流直接走原路�
 | `admit_reply(…, forward, reply, now)` | 上项＋`forward` 来自调用者自己的已建立流，reply 是精确反向 tuple |
 | `admit_transit(leased, compiler, origin, target, path, previous, reply, now)` | 租约、本节点是 path 的中间节点、path 在 `transit(origin, target)` 内、位置与密钥 |
 | `admit_observation(…, service, now)` | handshake＋Mesh 决定含该服务＋路径全部 observable |
-| `admit_adjacency(compiler, netmap, peer, carrier)`／`admit_path_carrier` | topology 与双方声明允许该承载；本节点拨号时 `dialers` 含该候选 |
+| `admit_adjacency(compiler, netmap, peer, carrier)` | topology 与双方声明允许该承载；本节点拨号时 `dialers` 含该候选 |
 
 `now` 只用于租约；决定本身没有截止。DNS 对应 `dns_route::{netmap_resolver, netmap_dns_service}`。
 

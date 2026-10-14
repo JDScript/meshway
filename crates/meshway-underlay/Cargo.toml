@@ -11,6 +11,7 @@ meshway-configuration = { path = "../meshway-configuration" }
 meshway-control = { path = "../meshway-control" }
 meshway-dns = { path = "../meshway-dns" }
 meshway-policy = { path = "../meshway-policy" }
+meshway-rules = { path = "../meshway-rules" }
 meshway-model = { path = "../meshway-model" }
 meshway-private-storage = { path = "../meshway-private-storage" }
 meshway-transport = { path = "../meshway-transport" }

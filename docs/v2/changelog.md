@@ -4,6 +4,13 @@
 
 ## 未发布
 
+第二轮审阅卫生清理（F5b）：wire 6、IPC 11、`compilerVersion` 与 Server schema 均不变。HTTP 契约：删除从未产生的枚举值 `UnavailableReason` 的 `missingCapability`／`missingDns`／`invalidProfile` 与 `NotApplicableReason` 的 `meshAddress`。
+
+- 观察历史分页改用 Server 唯一的 cursor 信封（分页起点不变）：cursor 文本上限 2,048 B，拒绝未来签发，与其他列表一致。
+- 区间归并与 CIDR 覆盖只有 `meshway_rules::ranges` 一份实现：规则集构建、Policy 分割的路由计数与 Underlay 捕获表路由共用同一惰性迭代器。
+- 删除无消费者的 API（`validate_configuration`、`domain_name_matches`、`admit_path_carrier`、`dropped_first_packets`、`diagnostic_circuit`）与 `meshway-rules` 的 dev 依赖 `tempfile`；`validate.yml` 的 PR 路径覆盖被验证二进制的全部 crate（含 `meshway-netns`），由 `scripts/test_validate_workflow.py` 检查。
+- 文档：[Exit 设计](/v2/node/exit-design) 与[运行时](/v2/node/runtime#ipv4-出口角色与-nat-投影)按签名 netmap、Engine `Desired`、Policy `Decision` 与 quarantine 生命周期重写。
+
 第二轮审阅的行为／安全修复（F5a，`f5a/review-fixes`）：wire 6、IPC 11、`compilerVersion` `meshway-netmap-2` 与 Server schema 均不变。HTTP 契约：netmap 投影新增可省略的 `ProjectedConfiguration.eligibleExits`（为空时省略，已存 netmap 字节与 digest 不变）；旧 Node 严格解码会拒绝带非空该字段的 `sync` 回答，须先升级 Node 再升级 Server。Server 的 netmap 输入指纹改变：升级后某网络第一次重编译（任一配置、密钥、能力或选择变化）即按新投影刷新该网络全部 netmap，内容未变者保留 serial。UDP 邻接新增路径大小探测消息 `Probe`（类型 7），健康 Ping 不再接受填充：新旧节点混跑时该通道路径 MTU 为未知（不影响健康检查），两端都升级后恢复。系统 DNS 预约（`/run/meshway/dns-*/owner.json`）新增可省略的 `namespace.cookie`：降级到本版本之前的 daemon 会以 `storage` 拒绝读取已写入 cookie 的预约。
 
 - A1 修复：出口集合含源自身（`exit [A, S]`）而 A 被 topology 隔离、未登记或已吊销时，S 的投影里没有 A，节点把它当作“未启用”而判 direct，捕获边界放开。现在 Server 在投影里给出全量配置判定的出口资格（`eligibleExits`：保留规则的出口集合中排在另一节点之前、启用且 `exitEnabled` 的节点），节点只按它判定自身之前的出口，不再从“不在投影里”推断；A 可用时 S 经 A 或失败闭合。投影等价测试以全量资格为 oracle，生成器加入被孤岛隔开的自指规则。见 [Routing · Action](/v2/configuration-reference/routing#action)、[投影规则](/v2/node/netmap-design#内容字段)。
@@ -137,8 +144,6 @@ wire 6、`compilerVersion` 不变，IPC 9（C3）；Server schema 版本 7（F4a
 - 修复：未 up 的接口创建／删除不再算外部网络变化（us-lax-it7 上反复重建的空闲 `ppp0` 每隔数秒关闭全部控制连接，sync 以 `Network` 失败）；没有 Native UDP listener 的节点在首个 instance 前启动时补绑拨号穿透 socket；受保护控制中继按 Happy Eyeballs 交替地址族连接；中继的固定 300 秒连接寿命改为双向 120 秒无字节才关闭（原寿命截断恰在挂起的 sync 长轮询，us-lax-it7 每次 `Network` 失败都与之精确对应）。
 - 实网：us-lax-it7（公网 dial-only）↔ meshway-vm（WARP）Native UDP 直连，见[实网 NAT 证据](/v2/node/validation#real-nat)。
 
-出口方案切换（C3）：IPC 升为 9，Server schema 版本 6（`activity_events` 新增 Node actor 与路由方案目标；开发环境重新初始化数据目录）；wire 6、`compilerVersion` 不变。
-
 E1 出口 ICMP 错误与出口自指（wire、IPC、HTTP 契约与 `compilerVersion` 均不变）：
 
 - 出口 ICMP 错误回传：ICMPv4 destination unreachable（含 fragmentation needed）与 time exceeded 作为其引用活流的 RELATED 报文，沿该流原路径回复方向返回源；出口之外路由器与出口主机自身的错误都经出口 TUN（`route` 链、新 `local` 输出路由链、一条 `fwmark＋ipproto icmp` RPDB 规则），数据面按引用的 forward 包、circuit、路径与来源规则（`admission::netmap::admit_related`）准入，每流每端每秒至多 10 条，`SecureNode::related_counters` 计数；traceroute 显示出口与其后各跳，PMTU 发现经出口收敛。见 [数据面 · ICMP 错误](/v2/node/dataplane#icmp-errors)、[Exit 设计 · ICMP 错误](/v2/node/exit-design#icmp-errors)。
@@ -159,7 +164,7 @@ E1 出口 ICMP 错误与出口自指（wire、IPC、HTTP 契约与 `compilerVers
 
 验证：Planck 16 行矩阵 `20261012T212926Z-abd9b9c8`（`4164e184`）、`20261012T232408Z-75436f19`（`b4fe0619`）与合入 main（含 S3、C3）后的 `20261013T015222Z-59ebfafc`（`861d58d3`）全部通过；高负载下的未通过矩阵与签名见[验收范围](/v2/node/validation#netmap-rows)；`mise run check` 通过；证据 `.meshway/validation/r2d/`。
 
-出口方案切换（C3）：IPC 升为 9，`activity_events` 新增 Node actor 与路由方案目标（schema 6）。
+出口方案切换（C3）：IPC 升为 9，Server schema 版本 6（`activity_events` 新增 Node actor 与路由方案目标；开发环境重新初始化数据目录）；wire 6、`compilerVersion` 不变。
 
 - `meshway exit [profile|off]`：无参数显示本机 netmap 中的方案选择（生效／请求的方案、默认与锁定、`auto` 解析、每个允许方案的摘要）；带方案时请 Server 切换并等待本机应用带新版本的 netmap，`off` 即 `mesh`。人读输出、`--json` 与退出码见 [出口方案](/v2/node/runtime#exit-profile)。
 - IPC 9：命令 `SelectProfile`、结果 `Selection`、`NetmapStatus.routing`，错误码 `profileNotAllowed`／`profileLocked`／`selectionConflict`；`meshway status` 新增 Profile 行。
@@ -171,7 +176,7 @@ E1 出口 ICMP 错误与出口自指（wire、IPC、HTTP 契约与 `compilerVers
 
 验证：Planck 16 行矩阵 `20261012T224334Z-469128d0`（`7facc522`）与合入 main 后的 `20261013T000304Z-56e3679e`（`f2441b12`）全部通过；证据 `.meshway/validation/c3/`。已知：切到 `global:<exit>` 与 `useWithExit` split resolver 组合时节点 DNS 安装拒绝新 netmap，见[验收范围 · 剩余边界](/v2/node/validation#remaining-boundaries)。
 
-此前：wire 6、IPC 8、`compilerVersion` 不变；Server schema 版本 5（新增 `rule_set_record_heads`；开发环境重新初始化数据目录）。HTTP 契约：`SyncRequest` 新增可省略的 `lease`；S3 的 State／库存／诊断变化见下。alpha.4 代码审阅修复（F4a）：
+此前：wire 6、IPC 8、`compilerVersion` 不变；Server schema 版本 5（新增 `rule_set_record_heads`；开发环境重新初始化数据目录）。HTTP 契约：`SyncRequest` 新增可省略的 `lease`；S3 的 State／库存／诊断变化见下。
 
 alpha.4 代码审阅修复（F4a）：
 

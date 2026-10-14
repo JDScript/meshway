@@ -1,34 +1,35 @@
-# Exit／NAT 设计草案
+# Exit／NAT 设计
 
-> **未实现、未验收。** 本页是 X0 设计研究稿，不加入文档导航，不构成可用 API 或功能承诺。当前安装器仍拒绝出口目标；运行范围以[网络模式](/v2/node/runtime#安装范围与状态)和[验收范围](/v2/node/validation)为准。
+> 首版（X1–X7：Linux IPv4 出口、单出口 DNS、可信域名关联、真实出口宿主前置条件）已实现。本页记录设计依据、owner 边界与限制；运行行为定义见[IPv4 出口角色与 NAT 投影](/v2/node/runtime#ipv4-出口角色与-nat-投影)与[数据面](/v2/node/dataplane)，验收状态以[验收范围](/v2/node/validation#exit-scenario)为唯一定义。
 
 ## 目标与建议
 
 首版实现 Linux **IPv4 内核转发＋状态型 masquerade**，公网与显式授权的出口 LAN 使用同一准入、流生命周期和撤回机制。IPv6 在模型中明确表达，但首版出口执行拒绝；不能因没有 IPv6 NAT 而让受管 IPv6 从源端本地出网。
 
-推荐 Underlay 的现有唯一 Kernel owner 管理独立出口 TUN、nftables 私有表、路由、归属 journal 和精确 conntrack 清理；初版通过固定路径的 `nft` CLI 提交类型化生成的批事务，conntrack 经内核 ctnetlink 直接读取与删除。dataplane 保持唯一业务流表、Noise、完整有序路径和最终输出检查；Control 保持唯一执行快照签发者。DNS 由现有 DNS owner 扩展为经 Mesh 的受许可 resolver 服务。
+权限只有一个来源：Server 签名的 netmap。Control 验签并缓存它，Engine 由它计算本节点唯一的 `Desired`，Policy 在本节点投影上对首包给出 `Decision`（目标、服务、完整路径与出口 selection）；netmap 的 `exitRole` 只是资源职责，不是转发许可。Underlay 的唯一 Kernel owner 管理独立出口 TUN、nftables 私有表、路由、归属 journal 和精确 conntrack 清理；nft 变更经固定路径的 `nft` CLI 以类型化生成的批事务提交，conntrack 经内核 ctnetlink 直接读取与删除。dataplane 保持唯一业务流表、Noise、完整有序路径和最终输出检查。DNS 由现有 DNS owner 扩展为经 Mesh 的受许可 resolver 服务。
 
-出口开关仍只有管理员 Web 配置 `nodes[id].exitEnabled`。Agent 收到职责后自动准备／安装／撤回所属转发资源，不新增手工开出口的 CLI。宿主 `ip_forward` 是**检测前置条件**：本方案不修改宿主 sysctl；值不为 1 时明确报告 `exit_unavailable: ip_forward_disabled`，由系统安装文档说明宿主管理员如何预配置。自动安装 NAT／路由与自动修改全局 forwarding 是不同权限范围。
+出口开关仍只有管理员 Web 配置 `nodes[id].exitEnabled`。节点收到职责后自动准备／安装／撤回所属转发资源，没有手工开出口的 CLI。宿主 `ip_forward` 是**检测前置条件**：Meshway 不修改宿主 sysctl；值不为 1 时 `exitCapability` 为 `unavailable`／`ipForwardDisabled`，本节点其余内容照常 applied，周期探测观测到 ready 后以同一内容安装角色（[出口宿主前置探测](/v2/node/runtime#出口宿主前置探测)）；宿主管理员如何预配置见 [Linux 安装 · 出口宿主](/v2/install#出口宿主)。自动安装 NAT／路由与自动修改全局 forwarding 是不同权限范围。
 
 配置的唯一语义来源仍为 [routing.egress 与出口联合许可](/v2/configuration-reference/routing#出口联合许可)、[Access](/v2/configuration-reference/access#domains)、[出口 DNS](/v2/configuration-reference/dns#使用出口时)。下面定义实现建议与缺口，不另定义出口选择规则。
 
 ## 当前实现落点
 
-研究基线为 Meshway `678591fe`；文件位置以该提交为准。
-
-| 位置 | 已有行为／新增工作的边界 |
+| 位置 | 职责 |
 | --- | --- |
-| `crates/meshway-policy/src/compile/plan.rs`：`plan`、`external_route`、`route_of` | 已按方案和 first-match 评估 exit、exitEnabled 和路径；规划结果不是运行能力证明 |
+| `crates/meshway-policy/src/compile/plan.rs`：`plan`、`external_route`、`route_of` | 按方案和 first-match 评估 exit、exitEnabled 和路径 |
 | `crates/meshway-policy/src/compile/routing.rs`：`Routes::segment`、`through` | 出口前 Mesh 路段递归求解，保留原业务主体，拒绝重复节点和循环 |
-| `crates/meshway-policy/src/admission.rs`：`admitted_path`、`admitted_traffic`、`admit_forward`、`admit_reply` | 实际文件不在 `compile/` 下；已校验 sourceAddresses、精确 IP、协议／端口、完整 path、previous peer、出口开关与到期 |
-| `crates/meshway-configuration/src/execution/mod.rs`：`PathPermit`、`TrustedDnsAssociation`、`DnsEgress` | 外部 permit 当前是精确地址／端口，不是整个公网的宽 grant；DNS 只有 noExit 或不可用证明 |
-| `crates/meshway-dataplane/src/lib.rs`：`PendingAction::release`、`Action::Exit` | `Hop::Exit` 已能生成受 guard 约束的明文动作；动作枚举存在不代表宿主已转发 |
-| `crates/meshway-underlay/src/linux/kernel/{mod,plan,capture/mod,journal,monitor}.rs` | 唯一 Kernel、私有 RPDB/table、正向 capture／负向 sink、资源监控；`plan::pools` 明确拒绝 `/0` |
+| `crates/meshway-policy/src/compile/netmap/decide.rs`：`LocalCompiler::decide_with`、`Decision`、`egress_rule_for_name` | 节点在自己投影上对首包的唯一判定（目标、服务、完整路径、出口 selection） |
+| `crates/meshway-policy/src/admission/netmap.rs`：`admit_handshake`、`admit_forward`、`admit_reply`、`admit_related`、`admit_transit`、`admit_dns` | 端点准入与中继判定；公网边界唯一实现为 `meshway_policy::is_internet_address` |
+| `crates/meshway-engine/src/lib.rs`：`Desired` | 节点唯一授权状态：已验签内容、捕获边界、可信关联与保留地址 |
+| `crates/meshway-configuration/src/netmap/mod.rs`：`ExitRole`、`DnsService`；`execution/exit.rs`：`EgressCapturePlan`、`ExitNat` | 出口职责与捕获计划；`ExitRole` 只是资源职责，不是转发许可 |
+| `crates/meshway-dataplane/src/secure/exit.rs`：`exit_reply`、`fail_exit_projection`、`retire_exits`、`related_counters` | 出口流在唯一 SecureNode 流表中的投影、回复与退役 |
+| `crates/meshway-underlay/src/linux/kernel/exit/` | 出口 TUN、nft 程序、ctnetlink conntrack、quarantine、journal、能力探测与宿主规则判定（`firewall.rs`） |
+| `crates/meshway-underlay/src/linux/kernel/{mod,plan,capture/mod,journal,monitor}.rs`、`kernel/egress/` | 唯一 Kernel、私有 RPDB/table、正向 capture／负向 sink、源端 egress 门、资源监控；`plan::pools` 明确拒绝 `/0` |
 | `crates/meshway-underlay/src/linux/protection.rs`：`Mark::transform`、`Shared::prepare` | SO_MARK 读改写／读回并保持外部 selector 语义；`kernel::allocate` 随机起点选择空闲单 bit，**不是固定 `0x40000000`** |
 | `crates/meshway-underlay/src/linux/dns.rs`、`resolver_exchange.rs` | 前者仅 bootstrap resolver；后者消费密封 local resolver route，不能将 bootstrap 权限借给出口 DNS |
-| `crates/meshway-dns/src/{selection,route,owner/mod,dispatcher/mod,service/mod}.rs` | MagicDNS、useWithExit 选择、精确上游许可、query ticket 与输出取消；现有 Service 只允许 loopback |
+| `crates/meshway-dns/src/{selection,route,exit_route,association,owner/mod,dispatcher/mod,service/mod}.rs` | MagicDNS、useWithExit 选择、精确上游许可、出口 resolver 路由、可信关联、query ticket 与输出取消 |
 | `crates/meshway-dns/src/system/linux/{mod,resolved,file/mod,storage}.rs` | namespace 预约、真实上游来源、系统 DNS 安装与恢复；不得绕过现有归属机制 |
-| `apps/meshway-daemon/src/runtime/network/{mod,worker,requirements}.rs` | `publish` 协调发布，worker 调用 `requirements::validate`；实际拒绝位于 `requirements.rs`：非 noExit DNS、exitEnabled、非 Mesh permit、非 DNS owner 的 localEgress 均阻断安装 |
+| `apps/meshway-daemon/src/runtime/network/{worker,plane,reporting}.rs`、`exit/` | 装配：出口 driver、能力探测与上报；不持第二份流表或 nft owner |
 
 没有独立的 `docs/v2/node/dns.md`；现行 DNS 组件定义在 [dataplane](/v2/node/dataplane#dns-查询-owner)。
 
@@ -83,7 +84,7 @@ Linux masquerade 的 conntrack 自动将回包逆 NAT 为原 Mesh 源地址，�
 ```text
 sha 应用 IPv4
   → 源端 Underlay：有序 egress capture → 客户端 TUN
-  → 唯一 SecureNode：精确需求／permit、源地址、唯一流、Noise
+  → 唯一 SecureNode：Policy `Decision`（源地址、目的／服务、完整路径）、唯一流、Noise
   → sha → lax → nyc：完整许可路径；lax 仅会话转发密文
   → nyc SecureNode：解密、真实包准入、Action::Exit（仍持原 guard）
   → nyc Underlay：出口专用 TUN 写入 → 内核 PREROUTING／FORWARD
@@ -98,8 +99,10 @@ sha 应用 IPv4
 
 | Owner | 持有内容 | 不可由其他组件代替的检查 |
 | --- | --- | --- |
-| Server／Policy | 联合许可编译、source／target／profile／完整路径、可信 DNS 依赖 | 管理员开关、Access、first-match、身份、路径；State 不是权限来源 |
-| Control／authority | 当前 permit 所在快照、instance／publication、代际取消、三重 Deadline、安装回执 | 生产唯一签发；先撤销旧操作，过期不靠 HTTP 返回才生效 |
+| Server | 配置投影为每节点 netmap 并按租约 ed25519 签名；可信 DNS 关联 overlay 签发 | 管理员开关、Access、身份；State 不是权限来源 |
+| Policy | 节点投影上的首包 `Decision` 与 `admit_*` 准入 | first-match、source／target／profile／完整路径；Server 与节点共用同一实现 |
+| Control | netmap／overlay 验签、缓存、租约、sync 与回执 | 只发布已验签内容；租约到期不靠 HTTP 返回即 fail closed |
+| Engine | 由 netmap 与关联计算唯一 `Desired`，向各组件 `apply` | 本节点没有第二份授权状态 |
 | dataplane | 唯一有界 FlowTable、协议状态、CID、原路径、guard | 原始已认证 Mesh 源与精确内层源、实际目的、服务、路径；回复必须已有正向流 |
 | Underlay Kernel | 出口 TUN、nft、RPDB/table、NAT 资源投影、journal、能力探测 | 确认所属资源／标记／接口；提交和每次 I/O 的有效性；内核状态不生成业务资格 |
 | DNS owner | 查询、响应、受控系统 resolver 适配、pending／TTL／取消 | 专用 DNS permit、查询名／来源／实际完整路径和输出截止；不是任意代理 |
@@ -109,11 +112,11 @@ sha 应用 IPv4
 
 ### 内核规则与回程识别
 
-1. 拟用 `inet meshway_exit_<installation>` 过滤表与 `ip meshway_exit_nat_<installation>` NAT 表，名称／handle／规范规则摘要写 journal。不 flush ruleset，不接管宿主 FORWARD policy。私有 hook 对不属于本 owner 的流量 return；对本 owner 流量缺资格一律 drop。独立表 accept 不能覆盖其他表的 drop，宿主防火墙阻断应如实报不可用而非修改它；只有能匹配出口流量的宿主规则算阻断（限于其他接口的规则，如 Docker 网桥隔离，不算），判定见[出口宿主前置探测](/v2/node/runtime#出口宿主前置探测)。
-2. 只有专用 TUN ingress、已分配给 permit.source 的精确 IPv4、获准外部目的／协议／端口及仍有效的 flow 投影能进入 FORWARD。公网/LAN 的区别由 Policy 许可表达，NAT 实现不分两条业务通路。禁止转入任一 Mesh 池、loopback、链路本地、组播、广播、出口本机地址和所属虚拟接口；出口本机服务须用 Mesh 服务许可。
+1. 使用 `inet meshway_exit_<installation>` 过滤表与 `ip meshway_exit_nat_<installation>` NAT 表，名称／handle／规范规则摘要写 journal。不 flush ruleset，不接管宿主 FORWARD policy。私有 hook 对不属于本 owner 的流量 return；对本 owner 流量缺资格一律 drop。独立表 accept 不能覆盖其他表的 drop，宿主防火墙阻断应如实报不可用而非修改它；只有能匹配出口流量的宿主规则算阻断（限于其他接口的规则，如 Docker 网桥隔离，不算），判定见[出口宿主前置探测](/v2/node/runtime#出口宿主前置探测)。
+2. 只有专用 TUN ingress、准入流的源节点精确 Mesh IPv4、获准外部目的／协议／端口及仍有效的 flow 投影能进入 FORWARD。公网/LAN 的区别由 Policy 许可表达，NAT 实现不分两条业务通路。禁止转入任一 Mesh 池、loopback、链路本地、组播、广播、出口本机地址和所属虚拟接口；出口本机服务须用 Mesh 服务许可。
 3. 专用 TUN 的转发流在内核 conntrack 上标记可证明归属的 ct mark；该 mark 与 socket bypass mark 分开分配、保留外部 bit，不从网络包信任 mark。在 PREROUTING 路由前为已识别回复恢复专用回程路由标志；reply RPDB 只把逆 NAT 后的源节点地址导向出口 TUN。forward 方向仅凭专用 iif＋受管资格跳过客户端 capture 块、继续原宿主 RPDB，避免出口自己启用默认捕获时再次吞包。
 4. `postrouting` 仅对所属 forward ct／资格集合做 IPv4 masquerade；公网与 LAN 均采用实际出接口地址。回包须 ct reply direction、关联原 tuple 和活 flow 投影；未关联新入站不允许进入 Mesh。DNS 和普通 Mesh TUN 流量不能被这条 NAT 规则接管。
-5. 首版使用宿主默认 conntrack zone＋精确归属 mark／原 tuple／ct identity，不笼统设置一个“出口 zone”：回程包必须在 conntrack lookup 前知道 zone，不能在查到 ct mark 后才决定 zone。若环境无法证明原 tuple／mark 不冲突，安装拒绝。实现阶段可另评估专用 namespace，但不以未经验证的 zone 分离宣称隔离成立。
+5. 首版使用宿主默认 conntrack zone＋精确归属 mark／原 tuple／ct identity，不笼统设置一个“出口 zone”：回程包必须在 conntrack lookup 前知道 zone，不能在查到 ct mark 后才决定 zone。若环境无法证明原 tuple／mark 不冲突，安装拒绝。不以未经验证的 zone 分离宣称隔离成立。
 6. conntrack 只拥有内核 NAT 映射。Underlay 的有界 kernel handle／tuple 投影完全由 dataplane 接纳、续期、退役事件驱动，不能自行从读状态或回包建立业务流；回复查询同一个 FlowTable 的 `LocalFlow`／CID 后再走正式准入。
 7. 首包写入出口 TUN 后，owner 在至多 3 秒内等待其 owned conntrack 条目出现，以绑定精确清理用的 ct 身份；没有出现（首包在出口因 TTL 或 MTU 被丢弃、未经 FORWARD）则该流 `ConfirmFailed` 并退役。等待不占用任何队列：daemon 的出口 driver 与 Underlay owner 都把未决确认放在一旁按 10 ms 轮询，其他流的投影、续期、退役与包照常执行。
 
@@ -130,13 +133,13 @@ sha 应用 IPv4
 
 ### 生存期、撤回与内核排队
 
-只删 MASQUERADE 规则不足以终止已有 NAT：conntrack 保留映射；只删 daemon 流也不足以撤回已交给内核的正向工作。建议采用两层截止：
+只删 MASQUERADE 规则不足以终止已有 NAT：conntrack 保留映射；只删 daemon 流也不足以撤回已交给内核的正向工作。因此采用两层截止：
 
-- dataplane 为已准入 flow 输出不透明的内核投影操作（flow incarnation、原 tuple、当前 deadline、scope），Underlay 只安装其镜像。nft 的有界 timed set 在 forward／回程交付门逐包检查，超时不得长于 flow idle、permit、instance／execution 截止的交集；新增／续期等待 ACK 后才 release 第一包。相对 timeout 从提交时剩余预算保守换算，排队／执行命令不重置原截止，ACK 后再次检查原 guard；时钟失效即关闭门。按批差量操作，不能每包启动 `nft`。
-- 正常撤回／方案切换先使原 guard 失效并停止新准入，再原子删除内核可转发投影、取消排队输出、退役旧 flow／cipher，精确删除其 ct mark＋original tuple 对应 conntrack，确认后回收 handle。删除失败保持 drop 门与 journal，拒绝 tuple／incarnation 复用，不回滚到旧许可。不能全局 flush conntrack。
-- 续租只对仍活且 Control 认可直接连续性的同授权／同路径 flow 更新；**方案切换总是结束旧出口连接**。超过旧截止后不能通过新的 set timeout 或保留 conntrack 复活它。
-- 崩溃后非持久 TUN 自动消失，timed set 到期、负向 capture 保留；重启先核对 boot／namespace／installation，再清除所属旧投影与 conntrack，重新签发和握手。旧包不能因同 tuple 新建 flow 被接纳；必要的 tuple 隔离／tombstone 需覆盖延迟旧包窗口，容量耗尽拒绝新流。
-- 必须明确最终边界：已在撤回前通过内核最终过滤并排入网卡的包不能被“追回”。nft 超时／drop ACK 证明后续穿越该门的包被拒绝，不等价于物理链路上此后零字节。T2 同时测延迟 daemon 输出、内核队列和门关闭后发起的包，报告准确截止；若要求逐网卡发射时刻零旧包，需要额外 qdisc／egress 门设计，不能由普通 nft forward hook 冒称满足。
+- dataplane 为已准入 flow 输出不透明的内核投影操作（flow incarnation、原 tuple、当前 deadline、scope），Underlay 只安装其镜像。nft 的有界 timed set 在 forward／回程交付门逐包检查，超时不得长于 flow idle 与 netmap 租约截止的较早者；新增／续期等待 ACK 后才 release 第一包。相对 timeout 从提交时剩余预算保守换算，排队／执行命令不重置原截止，ACK 后再次检查原 guard；时钟失效即关闭门。按批差量操作，不能每包启动 `nft`。
+- 正常撤回／方案切换先使原 guard 失效并停止新准入，再原子删除内核可转发投影、取消排队输出、退役旧 flow／cipher，精确删除其 ct mark＋original tuple 对应 conntrack，确认后投影记录离开历史，转换后的 reply tuple 进入有寿命的 quarantine（拒绝迟到回包；生命周期见 [IPv4 出口角色与 NAT 投影](/v2/node/runtime#ipv4-出口角色与-nat-投影)），同一原 tuple 此后可由新 incarnation 重新安装。删除失败保持 drop 门与 journal，不回收该 tuple，不回滚到旧许可。不能全局 flush conntrack。
+- 续期只对仍活、在新租约下判定不变的同路径 flow 更新；**方案切换总是结束旧出口连接**。超过旧截止后不能通过新的 set timeout 或保留 conntrack 复活它。
+- 崩溃后非持久 TUN 自动消失，timed set 到期、负向 capture 保留；重启先核对 boot／namespace／installation，再清除所属旧投影与 conntrack，以缓存的 netmap 重新握手。旧包不能因同 tuple 新建 flow 被接纳：journal 中的 quarantine 随恢复重新装入，覆盖延迟旧包窗口，容量耗尽拒绝新流。
+- 必须明确最终边界：已在撤回前通过内核最终过滤并排入网卡的包不能被“追回”。nft 超时／drop ACK 证明后续穿越该门的包被拒绝，不等价于物理链路上此后零字节。若要求逐网卡发射时刻零旧包，需要额外 qdisc／egress 门设计，不能由普通 nft forward hook 冒称满足。
 
 ## NAT 技术选择与宿主条件
 
@@ -153,7 +156,7 @@ conntrack 精确删除由 Underlay 唯一的 conntrack 模块经 ctnetlink（`NF
 
 安装探测至少包含 `/dev/net/tun`、实际 NET_ADMIN 操作、nft batch／set timeout／ct 支持、route/rule、ctnetlink mark 过滤读取和 `ip_forward`。`/proc/sys/net/ipv4/ip_forward` 为 0 返回 `ip_forward_disabled`；不可读／格式错返回不同原因 `forwarding_probe_failed`。不把 `uid=0` 或 cap bitmap 当真实成功。
 
-还要检测实际 ingress／egress 的 `rp_filter`、`src_valid_mark` 与策略路由相容性：全局 `/0` capture 可能让 underlay 反向路径校验走错接口，**SO_MARK 本身不解决入站 rp_filter**。首版支持已证明的 loose/off 组合；strict 组合未经双向路由验证则报 `reverse_path_filter_conflict`。出口 TUN 不配 IPv4 地址，内核对无地址入接口的反向路径检查只在反向查找落到该接口时放行（否则 `EXDEV`，计入 `TcpExtIPReversePathFilter`）；因此每对的回程规则不带出口 mark，兼作 forward 包的反向查找，每个新投影在 ACK 前向内核取实际入路由判定，见 [IPv4 出口角色与 NAT 投影](/v2/node/runtime#ipv4-出口角色与-nat-投影)。不照搬 Tailscale 自动写 `src_valid_mark`，也不自动关闭宿主防火墙。出口接口／地址变化撤回受影响 NAT 映射并重探测，不把旧 masquerade 连续性强行保留。
+还要检测实际 ingress／egress 的 `rp_filter`、`src_valid_mark` 与策略路由相容性：全局 `/0` capture 可能让 underlay 反向路径校验走错接口，**SO_MARK 本身不解决入站 rp_filter**。首版支持已证明的 loose/off 组合；strict 组合未经双向路由验证则报 `reversePathFilterConflict`。出口 TUN 不配 IPv4 地址，内核对无地址入接口的反向路径检查只在反向查找落到该接口时放行（否则 `EXDEV`，计入 `TcpExtIPReversePathFilter`）；因此每对的回程规则不带出口 mark，兼作 forward 包的反向查找，每个新投影在 ACK 前向内核取实际入路由判定，见 [IPv4 出口角色与 NAT 投影](/v2/node/runtime#ipv4-出口角色与-nat-投影)。不照搬 Tailscale 自动写 `src_valid_mark`，也不自动关闭宿主防火墙。出口接口／地址变化撤回受影响 NAT 映射并重探测，不把旧 masquerade 连续性强行保留。
 
 ## 客户端捕获、LAN 与切换
 
@@ -232,88 +235,35 @@ Server 的完成校验（任一失败即拒绝，不部分接受）：
 
 **限制**：域名授权仍是解析地址集合，关联期间对该地址的任何连接（不经名称也一样）都按名称规则判定，不保证同 IP 的应用身份隔离；未经该源 Mesh DNS 得到的地址（硬编码 IP、DoH、其他 resolver、忽略 TTL 的应用缓存）只按 IP 规则判定。只有经出口 resolver 的普通查询产生关联：MagicDNS、`useWithExit` split 与 `DnsPlan::NoExit` 的方案不产生，其名称规则只是不匹配任何地址。AAAA 真实回答也产生关联，但受管 IPv6 包仍由捕获 sink 与准入双重拒绝。多出口／依赖答案选出口的显式 DNS plan 仍未实现。
 
-## 协议与模型建议
+## 协议与模型
 
-### X1 接口冻结
-
-真实类型以 `crates/meshway-model/src/exit.rs`（`ExitCapability`、`ExitStatus`、`ExitUnavailableReason`、`ExitFamily`）、`crates/meshway-configuration/src/execution/exit.rs`（`EgressCapturePlan`、`ExitRolePlan`、`ExitPermit`、`ExitDestinationScope`、`ExitNat`）和 `execution/mod.rs`（`NodeConfiguration`、`PathPermit`）为准。HTTP 使用这些类型生成同一 OpenAPI／SDK；规范 camelCase 错误名由 enum 序列化给出。
-
-- X2 消费 `PathPermit.exit`、精确 target／sourceAddresses／服务／paths／expiresAt，并使用 Policy 准入与 `permit_authorization_digest`／`permit_transition`。公网边界唯一实现为 `meshway_policy::is_internet_address`。
-- X3 消费节点计算的 `Desired::capture`（R3 起；原 `NodeConfiguration.egressCapture`）与 `exitRole`；职责只准许准备资源，实际 NAT 投影仍需 X2 的活 flow 与 guard。IPv6 受管范围必须 sink。
-- X4 把真实探测写入 `NodeState.exitCapability`，携带 instanceId、精确 target、supportedFamilies、installedFamilies、status 与原始 observedAt；报告失败不要求 applied，出口角色准备失败也不阻断本节点其余内容的 applied（X7，见[出口宿主前置探测](/v2/node/runtime#出口宿主前置探测)）。静态 IPv4 后端声明使用 acquire 的 `feature:exit-ipv4` version 1。没有观测保持省略，不补 ready。
-- X5（已交付）：netmap 的 `DnsService`／`DnsPlan::ViaExit`／`ServeExitResolver` 复用 capture generation 与角色绑定处理 DNS 撤回；密封 Mesh ingress、DNS purpose 的中继授权、出口受保护系统 resolver 已接线，见[经 Mesh 的出口 resolver](#经-mesh-的出口-resolver)。
-
-Server／Policy 入口为 `compile_with_exit` 和 `ExitInputs`；实例、选择版本与新鲜能力预算由 Server 当前事务提供。旧 demand-5 派生缓存经原始摘要／身份检查后退役，不解码成当前执行权限。此段冻结类型不代表 X2–X5 的运行安装或 T2 已验收。
-
-下列名称是草案字段，不是当前可提交 JSON；最终类型由所属 crate 定义并生成 OpenAPI／SDK。
-
-| 面 | 建议变化／约束 |
+| 面 | 类型（所属 crate 为准，HTTP 经生成 OpenAPI／SDK 发布） |
 | --- | --- |
-| 配置 | 保留 `exitEnabled` 和既有 egress 规则。首版无 NAT-off／端口映射开关。显式多出口 DNS plan 另行建模，不能滥用 State 填配置 |
-| 静态能力与 State | acquire capability 声明可支持的 exit 地址族／后端版本；State `exitCapability` 用 `notRequested / probing / ready / unavailable` 类型化状态并包含 supportedFamilies、实际 installedFamilies、instance／target 绑定和观测时点；`exitUnavailableReason` 在 unavailable 必填，其他状态不适用，未知／过期不补 ready |
-| 失败原因 | 至少 netAdminUnavailable、ipForwardDisabled、forwardingProbeFailed、nftUnavailable、conntrackUnavailable、reversePathFilterConflict、firewallConflict、routeConflict、unsupportedFamily、ownershipConflict（出口 resolver 可用性另见 [exitDns](/v2/state-reference#exitdns)）。日志展示可映射为 `exit_unavailable: ip_forward_disabled`，HTTP 采用同一类型的规范 camelCase |
-| 出口职责 | 新类型化 role plan，绑定 network／exit／instance／publication、IPv4 masquerade、允许的 capture／return 资源语义与 deadline；安装前即允许报告失败。不能先要求 ready 才发职责、又先要求职责才探测 ready 造成循环 |
-| 业务 permit | 复用 `PathPermit` 的 demand、sourceAddresses、精确 target／service、profile、完整 paths、expiresAt、原路径回复。增加明确 exit 执行约束（地址族、NAT 模式、profile selection generation／角色绑定）；不重复复制一个更宽“出口 CIDR 许可”来替代精确业务许可 |
-| 源端捕获 | `NodeConfiguration` 增加独立 egress capture plan 和不受管例外证明；source address family 缺失时仍保留拒绝边界。delta／digest／obsolete 解码同步更新 |
-| DNS | `DnsEgress` 增加可执行单出口计划；内部 DNS service permit、系统 resolver 职责、查询 scope 与来源；可信解析任务／完成契约由 X6 交付（[可信域名关联](#trusted-dns-associations)）。保留 noExit 的明确证明 |
-| 安装／State 顺序 | 扩展 ApplyFailure 以传递实际 exit 原因；Control 接纳当前角色的失败事实，无需伪造 applied。Server 能据新鲜能力事实将需求判为不可用，但不能由 ready 自行增加授权；收到撤销或旧 lease 到期由本地即时失效 |
-| 版本／生成链 | 编译产物语义与捕获／DNS 权限变化，建议从 `meshway-demand-5` 升至 **`meshway-demand-6`**（合入时由协调者分配，避免并行占号）；旧节点不能把不认识字段忽略后继续 applied。重生成 OpenAPI、Rust／TS 客户端、运行时 schema、文档契约，运行 drift 与消费者验证 |
+| 出口职责 | netmap 的 `exitRole`：`meshway_configuration::netmap::ExitRole { generation, family, nat }`，只授权准备资源；实际 NAT 投影仍需活 flow 与 Policy 判定 |
+| 源端捕获 | 节点由 netmap 规则与 artifact 计算 `Desired::capture`（`EgressCapturePlan`）；受管 IPv6 必须 sink |
+| 业务判定 | Policy `Decision`（目标、服务、完整路径、出口 selection）；握手 transcript 绑路径授权摘要，wire v6 |
+| 能力事实 | `NodeState.exitCapability`：`ExitCapability { instanceId, netmap, roleGeneration, supportedFamilies, installedFamilies, status, observedAt }`，`ExitStatus`／`ExitUnavailableReason`；没有观测时省略，不补 ready。报告失败不要求 applied，角色准备失败也不阻断本节点其余内容的 applied（[出口宿主前置探测](/v2/node/runtime#出口宿主前置探测)）。静态 IPv4 后端声明使用 acquire 的 `feature:exit-ipv4` version 1 |
+| 出口 DNS | netmap 的 `DnsPlan::ViaExit`／`ServeExitResolver` 与 `DnsService`；`NodeState.exitDns`（[exitDns](/v2/state-reference#exitdns)）；关联见[可信域名关联](#trusted-dns-associations) |
+| 判定失败 | `UnavailableReason::ExitUnavailable`／`UnsupportedFamily`／`EgressConflict` 等，由 Policy 在节点判定中给出 |
 
-纯 Exit IP 包仍可复用 wire v5 的加密载荷，但新增 permit 摘要必须包含全部新授权字段。若引入独立 DNS circuit purpose／新的帧字段，需另行升级 wire 并全路径协调升级，不能仅改 compilerVersion 冒充 wire 兼容。若 IPC 公共状态增加封闭字段／错误枚举，同步升级 IPC 和 CLI；现有 HTTP 根不改。
+版本：`compilerVersion` 为 `meshway-netmap-2`，数据面 wire v6（含 DNS circuit 帧）；现有 HTTP 根不变。显式多出口 DNS plan 未建模，Server 保存时以 `dns_exit_plan_required` 拒绝。
 
 ## 安全边界与限制清单
 
-- **开放代理：**出口 role、单源 permit、具体目的／服务、完整实际 path 和活执行上下文缺一不可；本机 DNS／NAT 无公网 listener，未请求方向不能建立新流。
+- **开放代理：**出口 role、该源的 Policy 判定（具体目的／服务、完整实际 path）和有效租约缺一不可；本机 DNS／NAT 无公网 listener，未请求方向不能建立新流。
 - **源伪造：**已认证 origin 绑定其精确 Mesh 地址，lax 不成为 origin；不接受 LAN 源、另一 Node 源、IPv4-mapped IPv6 绕分类或源端声称已校验的 metadata。
 - **公网集合：**唯一 Policy 分类排除 RFC1918、ULA、link-local、组播、CGNAT `100.64.0.0/10`、loopback、unspecified、保留／广播等特殊范围；测试覆盖边界地址，不能用 `!is_private()` 近似。出口 LAN 必须明确 CIDR Access，不能因域名解析成私网就借 Internet grant 放行。
 - **hairpin：**首版禁止出口本机／所属虚拟设备／Mesh 池作为外部转发目标，避免 local INPUT、递归 TUN 或 NAT 回卷。出口集合中源节点自己的位置对该源就是 direct（[Routing · Action](/v2/configuration-reference/routing#action)），不产生单节点出口路径。
-- **状态回复：**conntrack 不证明 business flow；TCP／UDP／echo 仍经过唯一 FlowTable。相同 tuple 换 demand、path、profile／instance 或迟到旧回复不能接管新流。
-- **撤回：**路径节点、成员、Access、出口开关、方案或执行 lease 变化均检查；旧内核投影、DNS ticket、密文／明文队列一起失效。禁用出口后宿主原本开启的 ip_forward 不改回，但 Meshway 转发资格与 NAT 全部撤回。
-- **IPv6：**首版拒绝 exit IPv6 permit，客户端受管 IPv6 负向捕获，出口专用 TUN 的 IPv6 转发 drop；外层 IPv6 carrier 与内层 IPv6 出口能力分别表达。已授权 Mesh IPv6 可继续使用自己的路径。
+- **状态回复：**conntrack 不证明 business flow；TCP／UDP／echo 仍经过唯一 FlowTable。相同 tuple 换 path、profile／selection 或迟到旧回复不能接管新流。
+- **撤回：**路径节点、成员、Access、出口开关、方案或 netmap 租约变化均检查；旧内核投影、DNS ticket、密文／明文队列一起失效。禁用出口后宿主原本开启的 ip_forward 不改回，但 Meshway 转发资格与 NAT 全部撤回。
+- **IPv6：**首版拒绝 IPv6 出口判定，客户端受管 IPv6 负向捕获，出口专用 TUN 的 IPv6 转发 drop；外层 IPv6 carrier 与内层 IPv6 出口能力分别表达。已授权 Mesh IPv6 可继续使用自己的路径。
 - **MTU／协议：**首版继承现有 IPv4 无 options／分片、TCP／UDP／ICMP echo 范围；明确限制超 MTU UDP。源节点自己超过首跳通道内层上限的包由源数据面回 fragmentation needed，源与出口的 TCP SYN 按通道上限限制 MSS（[通道 MTU](/v2/node/dataplane#channel-mtu)）；出口对来自外部的超限回包（UDP 等）只丢弃，不向外部发送错误。ICMP 错误不当业务 reply：只作为被引用活流的 RELATED 报文按[ICMP 错误](#icmp-errors)放行（内嵌 tuple 校验、每流每秒 10 条），PMTU 发现由此收敛；不开放通用 RELATED helpers。禁止 NFT flowtable／硬件 offload 绕过逐包截止门。
 - **资源与宿主：**每节点流上限、nft set／ct 投影、query 数、命令队列和 buffers 有界。未知表／相同名字的外部资源／mark 冲突停装；mark 归属检查须覆盖外部 nft／connmark 写入，不能只检查当前 RPDB selector。规则丢失监测、部分事务、NET_ADMIN 丢失均停止正向 I/O，保留可核验恢复证据。
 
-## 工作包与依赖
+## 验收
 
-以下是待实现任务；“T2”指真实 daemon＋Linux 系统资源整组验收层。`exit/off` 等是**建议新增行**，当前 `validate_matrix.py` 尚不接受这些行名。所有包复用正式 owner，不为测试写第二个签发者或第二套 NAT／准入。
-
-| 包 | 文件／crate 独占所有权 | 依赖与可并行范围 | 必需验证 |
-| --- | --- | --- | --- |
-| X1 契约／联合编译 | `meshway-model` State、`meshway-configuration` execution/delta/digest、`meshway-policy` compile/admission；Server 执行编译与状态接纳；`meshway-protocol` 类型。manifest／lock／生成链和版本统一由协调者管理 | 首先冻结 capture／role／permit／failure 接口，之后供 X2–X5 并行消费；同包内 Server 与模型改动统一整合 | first-match CIDR 分割、联合许可、地址族拒绝、Internet 边界、撤销不受旧引用阻挡；OpenAPI/drift、Rust/TS 消费者 |
-| X2 dataplane 出口生命期 | `crates/meshway-dataplane/src/`（lib、flow、secure、carrier 等）及所属测试 | 依赖 X1；与 X3/X4/X5 并行，先约定 opaque kernel projection／reply ingress 接口 | 真 SecureNode 进程内 A→R→E，伪源／错路径／错 CID／错 tuple、纯接收续租、到期／切换、旧输出、projection failure 和容量 |
-| X3 Underlay NAT owner | `crates/meshway-underlay/src/linux/kernel/` 新 exit 模块，journal／monitor／plan／capture；`linux/protection.rs` 和 Host 出口 API | 依赖 X1/X2 接口；与 X2/X4/X5 并行。X4 只消费 Host，不修改这些文件；新依赖交协调者 | 隔离 namespace：nft 原子批、route／mark、masquerade／逆 NAT、精确 ct 删除、严格 rp_filter 拒绝、crash/journal／外部冲突、无 NET_ADMIN／forwarding=0、timed set 到期 |
-| X4 Control／daemon 集成 | `crates/meshway-control/`、必要 `meshway-authority/` 检查；`apps/meshway-daemon/src/runtime/network/{mod,worker,requirements,facts,reporting}.rs` 与包输出队列；IPC／CLI 状态接线由本包通过协调者整合 | 依赖 X1，等待 X2/X3 可执行接口后联调；与 X5 文件分界固定，DNS 子目录归 X5 | 实际职责自动安装、完整成功才 applied、失败可上报、HTTP 挂起时撤回、方案切换原子失败边界、无第二次 up 的恢复 |
-| X5 单出口 DNS（**已交付**） | `crates/meshway-dns/src/`；`meshway-underlay/src/linux/resolver_exchange.rs`；dataplane DNS circuit；daemon `runtime/network/dns/` | — | 已在 `exit/off` 第 9 阶段验收 resolved 后端：真实系统解析经 E 的 resolver、MagicDNS 本地、useWithExit split、Mesh UDP→TCP、E 的 resolver 断开无本地 fallback、撤权／租约到期失效与恢复；文件后端出口组合（`exit/resolv-conf`）未验收 |
-| X6 可信域名任务（**已交付**） | Server `netmap/associations.rs`；DNS owner `association.rs` 与 served／client 路径；Policy `compile/netmap/associations.rs`；Engine 关联输入；Control overlay 验签与完成上报 | — | 已在 `exit/off` 第 10 阶段验收，见[可信域名关联](#trusted-dns-associations)；名称规则经多个出口的显式 plan 未实现 |
-| X7 系统验收与 lab | `tools/meshway-runtime-fixture/`、`tools/meshway-packet-fixture/`、`scripts/verify_runtime.py`、`scripts/validate_matrix.py`、必要 `dev/` 锁定工具镜像和部署脚本；`docs/v2/node/validation.md` 证据更新 | X1 接口冻结后可准备 fixture；整组等 X2–X5；不修改产品 crate，失败回归交对应 owner | `exit/off` 为 IP 数据面门槛；DNS 行独立；nyc／sha→lax 真 lab，核对 PID/hash、完整路径、撤回与清理 |
-
-X1 的 manifest／lock／生成物不能由其他工作包同时改写。Console 的 exit 能力／原因展示由用户转达给 Console 工作流，消费生成字段；X0 不联系或修改 Console 会话。
-
-### T2 `exit/off` 建议合同
-
-拓扑：隔离 Controller、A、R、E 和外部 IPv4 服务／E 的私有 LAN 服务；A→R→E，无 A→E 业务捷径。公网分类用隔离 fixture 明确分配的公网测试地址和不可通外网的路由环境，不把 RFC1918 echo 当 Internet 成功。每次 run 记录源码／产物 hash、namespace、接口、RPDB、nft 计数、ct tuple 与逐端 pcap。
-
-1. 管理员打开 E.exitEnabled、允许源的 Internet 和精确 LAN 服务、配置 profile／via；真实 daemon 自动准备，saved/applied、实际资源与包流分别记录。
-2. IPv4 TCP 多 MSS／UDP 小包与 MTU 边界／ICMP echo；公网与 LAN 同一 NAT，远端看到 E 出接口源；R 无明文，回包 E→R→A；125 秒持续与仅接收流跨旧需求截止。
-3. 不获准源／端口／LAN、公网授权下 RFC1918／CGNAT、伪造内层源、重复 path／跳过 R、伪 reply、新反向 TCP／UDP、hairpin、IPv6 都拒绝。对端只看到许可流，drop 计数不可代替无包证据。
-4. 逐项撤销 Access、exitEnabled、成员、路径、profile；旧 TCP／UDP／echo 停止，新流拒绝，nft 投影和 ct 精确消失；恢复后旧 cipher／tuple 输出不复活，新连接可通。
-5. 控制 HTTP 中断跨 execution／instance 真到期，源保持负向捕获、出口停止转发；恢复不需第二次 up。分别阻塞用户态输出／命令 ACK，测取消与截止。
-6. 容器内 forwarding=0、移除 NET_ADMIN、nft 不可用／宿主 drop、strict rp_filter 冲突、规则外改、nft 提交失败、daemon SIGKILL／同 namespace 重启、跨 namespace 旧 journal；如实报告原因，不能 applied 或 direct。改变 sysctl 仅限 fixture 自己的 namespace。
-7. 默认 `/0` 下 Server/SSE/STUN/peer 保持真实通路；普通应用到相同 Server／peer IP 不享 bypass。LAN explicit direct 例外、first-match 重叠和 IPv6 sink 均检查。
-8. 离线 down／撤回清理仅所属表／链／ct／路由，外部哨兵资源逐项不变。报告成功还须 fixture／daemon 正常结束和 supervisor 无遗留复核。
-
-### 常驻 lab 验收步骤
-
-1. 先用现有 `node:lab versions/status` 和真实 Server 接口核对 nyc／sha／lax 的身份、PID、hash、namespace、配置 revision；地区名只是节点标识。记录现有混合承载／DNS 配置，不运行会覆盖它的通用 configure。
-2. X7 更新锁定 Ubuntu 工具镜像纳入所选 `nft` 工具（镜像另含 conntrack-tools，仅供 fixture 证据与人工排查，不是运行前提）；image-build、Linux build、deploy 分开，部署后再次核对实际 `/proc/<daemon-pid>/exe` hash。不进入宿主虚拟机目录、不改 Docker daemon／宿主 sysctl。
-3. 为实验保留私有原配置和 CAS revision。由管理员 Web 开 nyc.exitEnabled，给 sha 精确所需 Internet 服务授权，分配 profile，要求 sha→lax→nyc；出口 LAN 另选 nyc 可达的受控测试服务并显式授权 CIDR／服务。nyc 的 forwarding 前置条件由 lab 声明配置提供，Agent 不执行手工 sysctl。
-4. 从 sha 用数字 IPv4 先验证 TCP／UDP／echo，再默认 IPv4 出口；在 nyc 出接口抓 NAT 前后 tuple、nft 计数、ct 记录和远端访问日志，在 lax 抓加密承载和零业务明文。三个容器可能共享相同公网地址，**仅 curl IP-check 相等不能证明经 nyc**；应结合 nyc 唯一实际发包与阻断 nyc 后业务失败证明。
-5. 按 X5 验普通系统 DNS 确实由 nyc resolver 发出、MagicDNS 保持、useWithExit split 独立获准；断 nyc resolver 不向 sha 上游 fallback。再验 125 秒持续／纯接收、Web 关出口、撤权限、方案切换、实际 lease 到期、旧队列拒绝与重新开启恢复。
-6. sha 直达 nyc 物理链路即使可用也不能绕 lax；阻断 lax 必经边后访问失败而非自动直达。测试 IPv6 字面量和 AAAA 结果不会经 sha 本地泄漏。读取 nyc DNS／路由／转发能力失败原因，不以路径检测计划代替真实执行。
-7. 按保存的 revision／当前变化核对后 CAS 恢复实验配置，退出实验职责并验证资源撤回；保留身份和外部配置。报告原始证据独立私存，只有实际通过的 T2 行更新 validation 状态，lab 局部成功不替代矩阵。
+组件 owner 与文件归属见[当前实现落点](#当前实现落点)。真实 daemon＋Linux 系统资源的整组验收为矩阵行 `exit/off`（A→R→E，含前置条件、撤回、租约到期、DNS、可信关联、方案切换、ICMP 错误与 PMTU、`meshway ping`），阶段定义、当前状态与证据只在[验收范围 · 出口场景](/v2/node/validation#exit-scenario)维护；真实出口宿主见[X7 真实出口宿主](/v2/node/validation#x7-exit-hosts)。fixture 复用正式 owner，不为测试写第二个签发者或第二套 NAT／准入。
 
 ## 未决产品问题
-
-当前 **没有阻塞 IPv4 IP/CIDR 首版的用户决策**；已有原则足够推进 X1–X5。需实现阶段证明的 conntrack 删除竞态、nft/路由联动、rp_filter 与 resolver 无环性是工程门槛，不转交用户重新决定安全原则。
 
 名称规则经多个出口时的显式 DNS plan 配置交互仍需单独提交产品方案；在其定版前保存即拒绝（`dns_exit_plan_required`），不提前发明可用字段。只有 IP 规则的方案不受限：多个出口照常可用，DNS 走本机。域名型出口规则已随 X6 在单出口 DNS 方案下生效。

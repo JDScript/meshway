@@ -257,14 +257,6 @@ pub fn domain_suffix_matches(name: &str, suffix: &str) -> bool {
     }
 }
 
-/// Exact DNS name equality after the same normalization as suffix matching.
-pub fn domain_name_matches(name: &str, domain: &str) -> bool {
-    match (domain_name(name), domain_name(domain)) {
-        (Ok(name), Ok(domain)) => name == domain,
-        _ => false,
-    }
-}
-
 /// Normalized domain suffixes with label-wise lookup: matching a name costs one
 /// normalization plus one set probe per label, independent of the set size.
 #[derive(Clone, Debug, Default)]

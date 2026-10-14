@@ -7,6 +7,7 @@
 use super::{matching::EgressProfile, *};
 use meshway_configuration::{evaluation::CaptureSummary, netmap::EgressAction};
 use meshway_model::Digest;
+use meshway_rules::ranges::{self as intervals, Address};
 use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
     ops::RangeInclusive,
@@ -21,42 +22,6 @@ pub const MAX_CAPTURE_RANGES: usize = 16_384;
 pub const MAX_CAPTURE_ROUTES: usize = 32_768;
 /// Range operations of one partition computation, bounding its CPU time.
 pub const MAX_WORK: usize = 1 << 24;
-
-trait Address: Copy + Ord {
-    fn next(self) -> Option<Self>;
-    fn previous(self) -> Option<Self>;
-}
-impl Address for u32 {
-    fn next(self) -> Option<Self> {
-        self.checked_add(1)
-    }
-    fn previous(self) -> Option<Self> {
-        self.checked_sub(1)
-    }
-}
-impl Address for u128 {
-    fn next(self) -> Option<Self> {
-        self.checked_add(1)
-    }
-    fn previous(self) -> Option<Self> {
-        self.checked_sub(1)
-    }
-}
-
-/// Sorted, merged ranges; touching ranges become one.
-fn normalize<T: Address>(mut ranges: Vec<(T, T)>) -> Vec<(T, T)> {
-    ranges.sort_unstable();
-    let mut out: Vec<(T, T)> = Vec::with_capacity(ranges.len());
-    for (start, end) in ranges {
-        match out.last_mut() {
-            Some(last) if last.1.next().is_none_or(|after| start <= after) => {
-                last.1 = last.1.max(end);
-            }
-            _ => out.push((start, end)),
-        }
-    }
-    out
-}
 
 type Spans<T> = Vec<(T, T)>;
 
@@ -93,25 +58,6 @@ fn split<T: Address>(
         }
     }
     Ok((hit, rest))
-}
-
-/// Number of CIDR prefixes covering `[start, end]`.
-fn cover(start: u32, end: u32) -> usize {
-    let (mut at, end) = (u64::from(start), u64::from(end));
-    let mut count = 0;
-    while at <= end {
-        let mut size = if at == 0 {
-            1 << 32
-        } else {
-            1u64 << at.trailing_zeros()
-        };
-        while at + size - 1 > end {
-            size >>= 1;
-        }
-        at += size;
-        count += 1;
-    }
-    count
 }
 
 /// A source's partition, or why there is none.
@@ -183,7 +129,7 @@ impl EgressPartition {
 
     /// Exit-owned ranges of one family, adjacent ones merged.
     fn managed<T: Address>(&self, ranges: &[(T, T, usize)]) -> Vec<(T, T)> {
-        normalize(
+        intervals::merge(
             ranges
                 .iter()
                 .filter(|r| matches!(self.actions[r.2], EgressAction::Exit { .. }))
@@ -200,7 +146,12 @@ impl EgressPartition {
         CaptureSummary {
             managed_ipv4: count(managed.len()),
             sink_ipv6: count(self.managed(&self.ipv6).len()),
-            routes: count(managed.iter().map(|(s, e)| cover(*s, *e)).sum()),
+            routes: count(
+                managed
+                    .iter()
+                    .map(|(s, e)| intervals::cover(*s, *e).count())
+                    .sum(),
+            ),
             unavailable: None,
         }
     }
@@ -240,7 +191,7 @@ fn assign_range<T: Address>(ranges: &mut Vec<(T, T)>, address: T, captured: bool
     if captured {
         next.push((address, address));
     }
-    *ranges = normalize(next);
+    *ranges = intervals::merge(next);
 }
 
 /// `plan` with `address` captured (managed IPv4, sunk IPv6) or released to
@@ -284,7 +235,7 @@ pub fn plan_summary(plan: &EgressCapturePlan) -> CaptureSummary {
         routes: count(
             plan.managed_ipv4
                 .iter()
-                .map(|(s, e)| cover(u32::from(*s), u32::from(*e)))
+                .map(|(s, e)| intervals::cover(*s, *e).count())
                 .sum(),
         ),
         unavailable: plan.unavailable,
@@ -500,10 +451,10 @@ pub fn compute(
             action(&executed(exits, rule.action.clone().into(), source).map_err(unavailable)?)
                 .map_err(unavailable)?,
         );
-        let (hit, rest) = split(&remaining4, &normalize(v4), &mut work)?;
+        let (hit, rest) = split(&remaining4, &intervals::merge(v4), &mut work)?;
         out4.extend(hit.into_iter().map(|(s, e)| (s, e, id)));
         remaining4 = rest;
-        let (hit, rest) = split(&remaining6, &normalize(v6), &mut work)?;
+        let (hit, rest) = split(&remaining6, &intervals::merge(v6), &mut work)?;
         out6.extend(hit.into_iter().map(|(s, e)| (s, e, id)));
         remaining6 = rest;
     }
@@ -710,7 +661,7 @@ mod tests {
     }
 
     #[test]
-    fn split_and_cover() {
+    fn split_partitions_by_cut() {
         let mut work = 0;
         let (hit, rest) =
             split(&[(0u32, 100)], &[(10, 20), (30, 30), (90, 200)], &mut work).unwrap();
@@ -720,17 +671,5 @@ mod tests {
         assert_eq!((hit, rest), (vec![(0, u32::MAX)], vec![]));
         let (hit, rest) = split(&[(5u32, 9), (20, 30)], &[(0, 4), (31, 40)], &mut work).unwrap();
         assert_eq!((hit, rest), (vec![], vec![(5, 9), (20, 30)]));
-        assert_eq!(
-            normalize(vec![(5u32, 9), (0, 4), (11, 12)]),
-            [(0, 9), (11, 12)]
-        );
-        assert_eq!(
-            normalize(vec![(0u128, u128::MAX), (3, 4)]),
-            [(0, u128::MAX)]
-        );
-        assert_eq!(cover(0, u32::MAX), 1);
-        assert_eq!(cover(1, u32::MAX), 32);
-        assert_eq!(cover(10, 10), 1);
-        assert_eq!(cover(0, 2), 2);
     }
 }

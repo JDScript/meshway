@@ -525,7 +525,7 @@ export const zCancelUdpTraversalResponse = z.union([z.strictObject({
 
 export const zCandidateSource = z.enum(["configured","interface","stun"]);
 
-export const zUnavailableReason = z.enum(["exitUnavailable","unsupportedFamily","egressConflict","unauthorized","noPath","routingCycle","routingLimit","missingCapability","missingDependency","missingDns","invalidProfile","inactiveNode"]);
+export const zUnavailableReason = z.enum(["exitUnavailable","unsupportedFamily","egressConflict","unauthorized","noPath","routingCycle","routingLimit","missingDependency","inactiveNode"]);
 
 export const zCaptureSummary = z.strictObject({
   ["managedIpv4"]: z.int().gte(0).lte(2147483647),

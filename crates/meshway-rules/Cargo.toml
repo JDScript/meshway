@@ -29,7 +29,6 @@ serde_yaml_ng = { version = "0.10", optional = true }
 fst = { version = "=0.4.7", default-features = false }
 proptest = { version = "1", default-features = false, features = ["std"] }
 serde_json.workspace = true
-tempfile.workspace = true
 
 [lints]
 workspace = true
