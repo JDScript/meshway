@@ -307,12 +307,7 @@ impl Backend {
                         .live
                         .values()
                         .any(|live| live.valid() && live.tuple.same_connection(tuple))
-                    && self
-                        .ledger
-                        .projections
-                        .iter()
-                        .filter(|flow| !flow.retired && flow.tuple.same_connection(tuple))
-                        .all(|flow| flow.ct.as_ref().is_none_or(|ct| ct == &entry));
+                    && self.attributable(None, tuple, &entry);
                 if !shared {
                     results[slot] = Some(Err(Error::Conflict));
                 }
@@ -782,17 +777,30 @@ impl Backend {
             .find(|flow| flow.incarnation == incarnation)
             .ok_or(Error::Journal)?
             .clone();
-        let entry = conntrack::lookup_owned(record.tuple, self.ledger.program.mark)
+        let current = conntrack::lookup_owned(record.tuple, self.ledger.program.mark)
             .await
             .map_err(|_| Error::Conflict)?;
+        // An echo connection's entry that ended while this projection lived
+        // (its ICMP timeout) was re-created by a later sequence: this
+        // record's entry is gone (one entry per original tuple) and the
+        // current one belongs to that projection, which deletes it in turn.
+        let replaced = match (&record.ct, &current) {
+            (Some(old), Some(entry)) if !same_entry(old, entry) => {
+                if !self.attributable(Some(incarnation), record.tuple, entry) {
+                    return Err(Error::Conflict);
+                }
+                true
+            }
+            _ => false,
+        };
         // Preserve a confirmed translated tuple even if conntrack aged out
         // before retirement. Absence must not erase the old-reply tombstone.
-        if let Some(entry) = entry.or(record.ct.clone()) {
-            if record.ct.as_ref().is_some_and(|old| {
-                old.id != entry.id || old.reply != entry.reply || old.original != entry.original
-            }) {
-                return Err(Error::Conflict);
-            }
+        let entry = if replaced {
+            record.ct.clone()
+        } else {
+            current.or(record.ct.clone())
+        };
+        if let Some(entry) = entry {
             let retired = conntrack::RetiredTuple {
                 tuple: entry.reply.clone(),
                 sequence: record.tuple.sequence(),
@@ -830,7 +838,7 @@ impl Backend {
                 .live
                 .values()
                 .any(|live| live.valid() && live.tuple.same_connection(record.tuple));
-            if !shared {
+            if !shared && !replaced {
                 conntrack::delete(record.tuple, &entry, self.ledger.program.mark)
                     .await
                     .map_err(|_| Error::Netlink)?;
@@ -881,6 +889,26 @@ impl Backend {
         objects::mutate(&mut self.commands, &json!({"nftables": elements})).await?;
         self.ledger.quarantine.retain(|old| !expired.contains(old));
         self.store.persist(&self.ledger).await
+    }
+    /// Whether a marked conntrack `entry` of `tuple`'s echo connection
+    /// belongs to this owner's projections: another unretired projection of
+    /// the connection holds it or has not confirmed one yet. A projection
+    /// recording a different entry no longer has it: the kernel keeps one
+    /// entry per original tuple. An entry no projection can account for is
+    /// foreign.
+    fn attributable(
+        &self,
+        except: Option<super::ExitIncarnation>,
+        tuple: OriginalTuple,
+        entry: &conntrack::Entry,
+    ) -> bool {
+        matches!(tuple.transport, super::ExitTransport::IcmpEcho { .. })
+            && self.ledger.projections.iter().any(|flow| {
+                Some(flow.incarnation) != except
+                    && !flow.retired
+                    && flow.tuple.same_connection(tuple)
+                    && flow.ct.as_ref().is_none_or(|ct| same_entry(ct, entry))
+            })
     }
     /// Reconcile a failed/cancelled admitted operation before accepting another
     /// request. A lost caller cannot leave a positive kernel qualification.
@@ -1036,6 +1064,11 @@ fn expired_quarantine(
         }
     }
     Ok(expired)
+}
+
+/// The same kernel conntrack entry (its id and both tuples).
+fn same_entry(old: &conntrack::Entry, entry: &conntrack::Entry) -> bool {
+    old.id == entry.id && old.original == entry.original && old.reply == entry.reply
 }
 
 /// The same failure for each projection a shared step failed for.
