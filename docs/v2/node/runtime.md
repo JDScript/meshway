@@ -97,6 +97,8 @@ live probe 成功返回 `ready` 和 `supportedFamilies=[ipv4]`，`installedFamil
 
 已应用的 netmap 带本节点 `exitRole` 时，网络 worker 在应用后调用 live probe。该 Future 的 monitor 预约不可跨线程移动，因此唯一网络 worker 在一个固定线程上驱动，并在停止时显式等待退出；Host、Control 和内核资源仍各只有一个 owner。出口前置条件不满足或角色安装失败时，内容照常 applied：`exitCapability` 为 `unavailable` 及具体原因并上报 State，IPC Status 显示 `Exit unavailable (<原因>)`，peer 与本节点作为源的流量不受影响，也不进入 apply 重试。能力探测按下文周期重新真实探测；观测为 `ready` 而当前内容的角色尚未安装时，网络 worker 以同一内容重新 apply（`Engine::reapply`），由此安装角色。实例在内容应用之后才取得（启动时从保存的 netmap 恢复）时，取得实例即探测一次。只有角色实际安装后才填充 `installedFamilies`。
 
+**运行中的角色失败只撤该角色**：已安装角色的 Host owner 因自身内核操作失败（`maintain`／`retire`／审计）或其自有对象在 owner 之外被删除（见下文 monitor 分类）而停止时，出口 driver 报告 `ended`，网络 worker 只结束出口 runtime：SecureNode 退役全部出口流、各投影随 CT 精确清理，日志 `Exit role failed; withdrawing it alone`；netmap 保持 applied，capture、DNS、邻接、控制中继与本节点作为源的流量不变。随后立即真实探测一次：`ready` 即以同一内容 `Engine::reapply` 重装角色；清理失败（资源保留）时探测报 `ownershipConflict`，该角色在下次进程启动的 journal 恢复之前保持不可用。被保留的残留（关闭的门、已消失的出口 TUN 上带 `IIF_DETACHED` 的规则）仍记在出口 journal 与 monitor 期望中，不使 Host 的 capture 校验或新内容安装失败；撤回一个仍在服务的角色失败仍是失败。
+
 出口职责只来自 Server 签名的 netmap：`exitRole` 绑定内容（`generation`），不绑定 instance，重新取得 instance 保留已安装的角色。`NodeState.exitCapability` 是独立观测：失败可在尚未 applied 时报告，观测绑定当前 instance、持有的 `netmap` 与其 `roleGeneration`；Control 在发送 HTTP 前拒绝 instance 或 netmap 已变化的观测（`StaleReport`，丢弃该报告而不改绑）。不确定交付的重试保留原内容、序号和 `observedAt`，不把旧探测换绑到新 netmap。能力报告不生成应用回执，也不替代必需组件的原子 applied 边界。netmap 带出口职责期间，网络 worker 在每个事件上检查该观测：超过 State 报告寿命（60 秒）的三分之一即重新真实探测，持续业务流量不推迟刷新。
 
 ### IPv4 出口角色与 NAT 投影
@@ -113,9 +115,13 @@ Linux `Host::install_netmap_exit_role(&ExitRole)` 消费已应用 netmap 中本�
 | `reply_reader()` | 单次取得独立回包 reader；`recv()` 返回 incarnation 与逆 NAT 包，排队期间继续保留原 guard；业务回复仍须通过唯一 dataplane 流表与原完整路径准入 |
 | `retire()` | 停止正向 I/O，关闭全部资格、清理 CT／回程资源，join TUN owner 后移除所属 nft 表；失败保留 journal 和拒绝边界 |
 
-`ExitScope` 携带 dataplane 提供的授权／路径 binding 与不可逆撤回 token，不签发业务权限。原 tuple 仅支持 IPv4 TCP、UDP 和 ICMP echo；角色不能替代精确源地址、目的、服务和活 flow。投影最多 128 个活项；未退役投影记录与 quarantine 合计最多 4096 项，容量耗尽只拒绝该新增流，已安装投影与角色不受影响。
+`ExitScope` 携带 dataplane 提供的授权／路径 binding 与不可逆撤回 token，不签发业务权限。原 tuple 仅支持 IPv4 TCP、UDP 和 ICMP echo；角色不能替代精确源地址、目的、服务和活 flow。投影最多 128 个活项；未退役投影记录与 quarantine 合计最多 4096 项，容量耗尽只拒绝该新增流，已安装投影与角色不受影响。每个 ICMP echo 请求是一条流（键为 `(id, sequence)`）：等待回复或其 ICMP 错误至多 10 秒，收到回复后 2 秒结束（每一跳的流表相同，见[数据面](/v2/node/dataplane)），出口投影随之退役；一个 5 次／秒的 `ping` 因此只占约 10 个投影，traceroute 的探测各占至多 10 秒。按序号的 quarantine 使持续 echo 速率另受 4096 ／ 300 秒 ≈ 13 次／秒（全出口合计）的约束。
 
 **quarantine 生命周期**：流退役时其 CT 精确删除，转换后的 reply tuple 进入 quarantine（nft `quarantine`／`echo_quarantine` 集合，同时写入 journal），拒绝该 tuple 的迟到回包；投影记录随之离开历史，同一原 tuple 此后可由新的 incarnation 重新安装。quarantine 条目至少保留 300 秒（长于被删 NAT 流迟到回包的 conntrack 超时），维护时清除超过 900 秒者；新增流遇到容量上限时先清除已满 300 秒的条目，仍满则拒绝该流，不逐出未满 300 秒的条目。journal v1 恢复的转换 tuple 记入单独的 legacy quarantine，不按寿命清除。
+
+**echo 连接的 CT 换代**：内核对同一原 tuple 只有一条 conntrack；同一 echo id 的各序号投影共享它。该条目在仍有序号投影存活时结束（ICMP conntrack 超时 30 秒，或被删除），后一序号的包新建一条（新 id）。这不是归属冲突：退役记录旧条目的投影时，若当前条目由同一连接另一条未退役投影持有或尚待确认，则旧条目已证明不存在，该投影按自己记录的 reply tuple 与序号进入 quarantine，不删除当前条目；安装新序号时同样只要求当前条目可归属于该连接的某条投影。当前条目不能归属任何投影时仍为冲突（owner 停止，按上文只撤角色）。
+
+**monitor 对出口自有对象的分类**：Underlay monitor 观察到出口自有对象（出口回程表内的路由、出口规则，含已脱离 TUN 的规则）在 owner 之外被删除时，只停止出口角色：owner 退役全部投影并精确清理（已不存在的路由视为已删），随后按上文重装；Host 的 capture、DNS 锚点与保护不受影响。出口表内出现外来路由、出现未知规则等无法归属的变化仍为整个 Host 的保护冲突（fail closed）。冲突日志给出原因与 `table`／`interface`／`prefix`。
 
 incarnation 的类型为 `ExitIncarnation`：`new([u8; 32])`／`bytes() -> [u8; 32]` 原样保留全部 32 字节，不截断成 `u128`。`ExitSendGuard: Send + Sync + 'static` 由 Underlay 定义，唯一方法为 `check(&self) -> std::result::Result<(), Invalidated>`；X4 用 X2 原包的 `exit_scope()` 实现，Underlay 不依赖 dataplane。
 

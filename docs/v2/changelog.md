@@ -2,6 +2,17 @@
 
 按合入 main 的顺序记录工作包、提交与证据 ID。规则见[工程流程](/v2/process)；性能数字的口径见[分层性能测量](/v2/node/performance)，验收状态见[验收范围](/v2/node/validation)。
 
+## 未发布
+
+出口失败不恢复与出口投影容量（X8，`x8/exit-recovery`）：wire 6、IPC 12、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约均不变。OPS8 planck 出口 17:47:10Z 的完整链（隔离复现于 main 产品代码）：每个 ICMP echo 请求一条流、投影存活约 57 秒，2 次／秒的 ping 即占满 128 个投影（拒绝新流，丢包 68–74 %）；被拒期间该 echo id 的 conntrack 条目 30 秒超时，后一序号新建条目，此后同 id 的安装一律 `Conflict`；`maintain` 退役记录旧条目的投影时把新条目当作外来条目，出口 owner 停止且清理失败；daemon 把运行中出口角色的失败当作整个数据面失败撤回全部内容，Engine 重试撤回时 `Kernel::suspend` 在 `remove_live` 失败后照常关闭 Mesh TUN（已脱离出口 TUN 的出口规则带 `IIF_DETACHED`，不再等于登记的出口规则，被当作外来规则），内核删除其 IPv6 capture 路由，monitor 报 `unexpected_del_route`，保护冲突永久，控制中继、DNS 与 capture 全部失败直至重启。alpha.8 15:35Z 的阻断不同源：DNS owner 先失败，出口角色随后被干净撤回。根因与证据见私有 `.meshway/validation/x8/root-cause.md`。
+
+- echo 流寿命：每个 `(id, sequence)` 流等待回复或其 ICMP 错误至多 10 秒，收到回复后 2 秒结束（每一跳流表相同，不长于空闲设置）；出口投影随流退役。逐序号流与 quarantine 不变（对比按 `(src, dst, id)` 聚合：需要按 id 的宽 tombstone 或无界的逐序号 tombstone、迁移 nft 程序与 journal，不在本包）。见[数据面](/v2/node/dataplane)、[IPv4 出口角色与 NAT 投影](/v2/node/runtime#ipv4-出口角色与-nat-投影)。
+- echo 连接的 CT 换代不是归属冲突：退役记录旧条目的投影时，若当前条目可归属于同一连接另一条未退役投影（持有或尚待确认），旧条目已证明不存在，按其 reply tuple 与序号进入 quarantine、不删除当前条目；安装新序号同样只要求可归属。不可归属仍为冲突。
+- 出口角色失败只撤该角色（X7 语义延伸到运行中的角色）：driver 在 Host owner 自行停止时报告 `ended`；`ExitFailed` 与回包 reader 失败只结束出口 runtime，立即真实探测，`ready` 即 `Engine::reapply` 重装；netmap 保持 applied。Underlay monitor 观察到出口自有路由或规则（含 `IIF_DETACHED`）在 owner 之外被删除时只停止出口角色；外来新增仍是整个 Host 的冲突。已自行失败的角色不再使 Host 的新内容安装或撤回失败，其保留规则不使 Host 校验失败。monitor 冲突日志新增 `table`／`interface`／`prefix`。
+- 出口 cipher 随最后一条流结束时向来源发出逐跳认证的 `Close`（中继转发），来源下一包新建 circuit，不再在出口已没有的 cipher 上等 15 秒无回复。
+- 容量依据：活投影 128 同时是成对回程规则槽位（257 个 RPDB 优先级，位于 512 个保留优先级内）；nft 集合与 journal 历史 4096；建议先把 journal 改为增量记录并测量每轮安装耗时，再把活投影提高到 1024（对数 ≤ 128），本包不改。见 [Exit 设计 · 安全边界与限制清单](/v2/node/exit-design#安全边界与限制清单)。
+- 验收：`exit/off` 新增第 15 阶段（5 次／秒 ping 60 秒加 traceroute 时投影峰值 ≤ 32 且零丢失；echo 条目两次删除后角色保持；删除出口回程路由后只撤角色并自动重装，期间 E 保持 applied 与 connected，A 的 MagicDNS 与经 E 的普通名称每 0.5 秒解析成功）；组件测试 `exit_recovery::netmap_exit_echo_reconnect_and_route_loss_stop_only_the_role`（main 上在 CT 换代后第 3 个序号安装即失败；仅去掉 monitor 分类时 Host 新 serial 安装 `Conflict`）。见[验收范围 · 出口场景](/v2/node/validation#exit-scenario)。
+
 ## v0.1.0-alpha.9
 
 范围：wire 6、IPC 12、`compilerVersion` `meshway-netmap-3`、Server schema 8（无迁移，开发环境重新初始化数据目录、节点重新接入；须先升级 Node（CLI 与 daemon 一起）再升级 Server）。AUTO-1：`auto` 方案按管理员声明的 `nodes.<id>.region` 解析（解析结果计入 `egress.generation`，`routing.autoResolve` 活动，`meshway exit` 显示解析结果）；H1：出口投影按轮安装、`meshway status` 的 `idlePath`、listener 退役时释放待接管 socket、Server 测试离线；以及下列 AUTO-1、H1 工作包。
