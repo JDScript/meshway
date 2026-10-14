@@ -73,6 +73,8 @@ pub enum Command {
     SelectProfile {
         profile: String,
     },
+    /// Ask the Server to clear this Node's routing selection so that the assignment's default applies; answers as SelectProfile.
+    ClearProfile,
     Ping {
         target: PingTarget,
         #[serde(deserialize_with = "ping_count")]

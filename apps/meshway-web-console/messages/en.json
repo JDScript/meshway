@@ -127,6 +127,7 @@
   "activity_routing_select": "Selected a routing profile",
   "activity_routing_auto_resolve": "Auto profile resolved by region",
   "activity_target_routing_selection": "Profile {profile}",
+  "activity_target_routing_selection_cleared": "Selection cleared (default applies)",
   "actor_node": "Node {id}",
   "actor_system": "System",
   "actor_user": "User {id}",

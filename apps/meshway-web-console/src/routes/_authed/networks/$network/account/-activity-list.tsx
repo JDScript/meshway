@@ -45,7 +45,9 @@ function targetLabel(target: ActivityTargetView): string | null {
     case "configuration":
       return m.revision({ revision: String(target.revision) })
     case "routing_selection":
-      return m.activity_target_routing_selection({ profile: target.profile })
+      return target.profile === null
+        ? m.activity_target_routing_selection_cleared()
+        : m.activity_target_routing_selection({ profile: target.profile })
   }
 }
 

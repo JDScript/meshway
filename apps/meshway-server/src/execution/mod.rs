@@ -81,6 +81,22 @@ impl Execution {
             })
             .await
     }
+    /// The Node clears its own selection; the default applies afterwards.
+    pub async fn clear_profile(
+        &self,
+        token: &str,
+        id: RequestId,
+        request: ClearRoutingSelectionRequest,
+    ) -> Result<RoutingSelectionResponse, Error> {
+        let token = proof::token_hash(token)?;
+        let sealer = self.sealer.clone();
+        let boot = self.boot;
+        self.handle
+            .transact(TransactionBehavior::Immediate, move |tx| {
+                store::clear_profile(tx, &sealer, boot, token, id, request)
+            })
+            .await
+    }
     pub async fn routing_selection(
         &self,
         token: &str,
@@ -112,7 +128,31 @@ impl Execution {
                     network,
                     node,
                     request.request_id,
-                    request.profile,
+                    Some(request.profile),
+                )
+            })
+            .await
+    }
+    /// A user clears a Node's selection through the same commit.
+    pub async fn clear_user_profile(
+        &self,
+        token: &str,
+        network: NetworkId,
+        node: NodeId,
+        request: ClearNodeRoutingSelectionRequest,
+    ) -> Result<meshway_configuration::selection::RoutingSelectionState, Error> {
+        let token = crate::accounts::token_digest(token)?;
+        let sealer = self.sealer.clone();
+        self.handle
+            .transact(TransactionBehavior::Immediate, move |tx| {
+                store::select_user_profile(
+                    tx,
+                    &sealer,
+                    token,
+                    network,
+                    node,
+                    request.request_id,
+                    None,
                 )
             })
             .await

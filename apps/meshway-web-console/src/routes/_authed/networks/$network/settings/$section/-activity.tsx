@@ -47,7 +47,9 @@ function targetName(event: ActivityEvent, names: Names): string | null {
     case "configuration":
       return m.revision({ revision: String(target.revision) })
     case "routingSelection":
-      return m.activity_target_routing_selection({ profile: target.profile })
+      return target.profile === null
+        ? m.activity_target_routing_selection_cleared()
+        : m.activity_target_routing_selection({ profile: target.profile })
   }
 }
 

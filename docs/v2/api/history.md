@@ -77,7 +77,7 @@ scope 由所属记录及路径确定。返回时可以按权限投影主体／�
 
 用户 actor 返回稳定 `userId` 与发生时的 `email` 快照，成功活动及配置版本在同一事务记录。后续改邮箱或离网不改写历史，也不向原网络披露离网后的新邮箱。没有快照时 `email` 明确为 `null`，展示 User ID，不用当前邮箱猜补，也不推断为已删除用户。
 
-ActivityAction 覆盖账户注册／登录／密码／邮箱／会话撤销、网络创建／改名、成员加入／角色／移除、加入链接创建／撤销、configuration.apply、routing.select（节点或用户切换路由方案，见 [Routing · 选择的入口](/v2/configuration-reference/routing#选择的入口)）以及 routing.autoResolve（`auto` 对某节点的解析结果改变，actor 为系统，见 [Routing · 自动方案](/v2/configuration-reference/routing#auto)）。配置系统变更的具体来源使用 ConfigurationChangeCause，不能把它当成另一组活动枚举。
+ActivityAction 覆盖账户注册／登录／密码／邮箱／会话撤销、网络创建／改名、成员加入／角色／移除、加入链接创建／撤销、configuration.apply、routing.select（节点或用户切换或清除路由方案，清除时 target 的 `profile` 为 null，见 [Routing · 选择的入口](/v2/configuration-reference/routing#选择的入口)）以及 routing.autoResolve（`auto` 对某节点的解析结果改变，actor 为系统，见 [Routing · 自动方案](/v2/configuration-reference/routing#auto)）。配置系统变更的具体来源使用 ConfigurationChangeCause，不能把它当成另一组活动枚举。
 
 ActivityTarget 分支为 account(userId, previousEmail)、session(sessionId)、network(networkId)、membership(membershipId)、joinLink(linkId)、configuration(revision)、routingSelection(nodeId, profile)。`previousEmail` 只在 account.email 上携带修改前的地址，其他账户活动为 null；actor 的 email 快照是提交时刻的新地址。完整枚举见[生成契约](/v2/contracts/openapi.json)。
 

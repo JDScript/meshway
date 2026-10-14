@@ -219,6 +219,54 @@
       }
     }
   },
+  "clearNodeRoutingSelection": {
+    "request": {
+      "requestId": "5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d"
+    },
+    "responses": {
+      "200": {
+        "requestId": "7c1f0e2d-3b4a-4c5d-8e6f-9a0b1c2d3e4f",
+        "networkId": "0d3a2a6e-7f3b-4d0c-9a8e-1c2b3d4e5f60",
+        "nodeId": "b8c7d6e5-4f5a-4b2c-8d9e-0f1a2b3c4d80",
+        "selection": {
+          "requestedProfile": null,
+          "version": null,
+          "appliedProfile": "mesh",
+          "requestedUnavailable": null,
+          "defaultProfile": "mesh",
+          "locked": false,
+          "profiles": [
+            {
+              "name": "mesh",
+              "kind": "mesh",
+              "rules": 0,
+              "exits": [],
+              "fallback": {
+                "type": "unmanaged"
+              }
+            },
+            {
+              "name": "global:e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50",
+              "kind": "global",
+              "rules": 0,
+              "exits": [
+                "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50"
+              ],
+              "fallback": {
+                "type": "exit",
+                "nodes": [
+                  "node:e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50"
+                ],
+                "via": []
+              }
+            }
+          ],
+          "auto": null
+        },
+        "canSelect": true
+      }
+    }
+  },
   "deleteNode": {
     "request": {
       "requestId": "7c9e6679-7425-40de-944b-e07fc1f90ae7",

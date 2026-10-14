@@ -311,7 +311,7 @@ export const schemaDocument = {
       },
       "ActivityAction": {
         "type": "string",
-        "description": "`account.register`: Records completed account registration with an account target carrying userId and null previousEmail.\n`session.login`: Records successful sign-in with a session target carrying the newly created sessionId.\n`session.logout`: Records completed sign-out with a session target carrying the revoked sessionId.\n`session.revoke`: Records explicit revocation of one session with a session target carrying its sessionId.\n`session.revokeOthers`: Records revocation of the user's other sessions with an account target carrying userId and null previousEmail.\n`session.revokeAll`: Records revocation of all the user's sessions with an account target carrying userId and null previousEmail.\n`session.delegate`: A signed-in user authorized a delegation client; the target is the authorizing session.\n`account.password`: Records a password change authenticated by the current password with an account target carrying userId and null previousEmail.\n`account.passwordReset`: Records password replacement using a recovery credential with an account target carrying userId and null previousEmail.\n`account.resetIssued`: Records issuance of a password recovery credential by a system actor with an account target carrying userId and null previousEmail.\n`account.email`: Records an email change with an account target carrying userId and previousEmail set to the address before the change.\n`network.create`: Records completed network creation with a network target carrying networkId.\n`network.rename`: Records a network name change with a network target carrying networkId.\n`configuration.apply`: Records a committed configuration apply with a configuration target carrying the saved revision, independently of Node application results.\n`membership.role`: Records a member's role change with a membership target carrying membershipId.\n`membership.join`: Records a completed network join with a membership target carrying the new membershipId.\n`membership.remove`: Records a completed membership removal with a membership target carrying membershipId.\n`joinLink.create`: Records creation of a join link with a joinLink target carrying linkId.\n`joinLink.revoke`: Records revocation of a join link with a joinLink target carrying linkId.\n`routing.select`: Records a committed routing profile selection by the Node itself or a user, with a routingSelection target carrying nodeId and the selected profile.\n`routing.autoResolve`: Records, with a system actor, that the profile `auto` resolves to for a Node changed (another profile, basis or region, such as after its declared region changed), with a routingSelection target carrying nodeId and the profile `auto` now applies.",
+        "description": "`account.register`: Records completed account registration with an account target carrying userId and null previousEmail.\n`session.login`: Records successful sign-in with a session target carrying the newly created sessionId.\n`session.logout`: Records completed sign-out with a session target carrying the revoked sessionId.\n`session.revoke`: Records explicit revocation of one session with a session target carrying its sessionId.\n`session.revokeOthers`: Records revocation of the user's other sessions with an account target carrying userId and null previousEmail.\n`session.revokeAll`: Records revocation of all the user's sessions with an account target carrying userId and null previousEmail.\n`session.delegate`: A signed-in user authorized a delegation client; the target is the authorizing session.\n`account.password`: Records a password change authenticated by the current password with an account target carrying userId and null previousEmail.\n`account.passwordReset`: Records password replacement using a recovery credential with an account target carrying userId and null previousEmail.\n`account.resetIssued`: Records issuance of a password recovery credential by a system actor with an account target carrying userId and null previousEmail.\n`account.email`: Records an email change with an account target carrying userId and previousEmail set to the address before the change.\n`network.create`: Records completed network creation with a network target carrying networkId.\n`network.rename`: Records a network name change with a network target carrying networkId.\n`configuration.apply`: Records a committed configuration apply with a configuration target carrying the saved revision, independently of Node application results.\n`membership.role`: Records a member's role change with a membership target carrying membershipId.\n`membership.join`: Records a completed network join with a membership target carrying the new membershipId.\n`membership.remove`: Records a completed membership removal with a membership target carrying membershipId.\n`joinLink.create`: Records creation of a join link with a joinLink target carrying linkId.\n`joinLink.revoke`: Records revocation of a join link with a joinLink target carrying linkId.\n`routing.select`: Records a committed routing profile selection or its clearing by the Node itself or a user, with a routingSelection target carrying nodeId and the selected profile (null when cleared).\n`routing.autoResolve`: Records, with a system actor, that the profile `auto` resolves to for a Node changed (another profile, basis or region, such as after its declared region changed), with a routingSelection target carrying nodeId and the profile `auto` now applies.",
         "enum": [
           "account.register",
           "session.login",
@@ -684,8 +684,11 @@ export const schemaDocument = {
                 "description": "Node whose selection changed."
               },
               "profile": {
-                "type": "string",
-                "description": "Profile the selection names after the action; for `routing.autoResolve`, the profile `auto` now applies."
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Profile the selection names after the action; null when a `routing.select` cleared the selection (the assignment's default applies). For `routing.autoResolve`, the profile `auto` now applies."
               },
               "type": {
                 "type": "string",
@@ -1400,6 +1403,45 @@ export const schemaDocument = {
           "password": {
             "$ref": "#/components/schemas/WireSecret",
             "description": "Replacement password satisfying the advertised password rules."
+          }
+        },
+        "additionalProperties": false
+      },
+      "ClearNodeRoutingSelectionRequest": {
+        "type": "object",
+        "description": "Idempotent clearing of a Node's persistent routing selection by a user; the assignment's default applies afterwards.",
+        "required": [
+          "requestId"
+        ],
+        "properties": {
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId",
+            "description": "Request identifier binding retries to the same caller, Node and clearing."
+          }
+        },
+        "additionalProperties": false
+      },
+      "ClearRoutingSelectionRequest": {
+        "type": "object",
+        "description": "Node request to clear its persistent routing selection using compare-and-swap against its current selection; the assignment's default applies afterwards.",
+        "required": [
+          "instance"
+        ],
+        "properties": {
+          "expectedVersion": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Version",
+                "description": "Current selection version (the netmap's `selectionVersions` entry of this Node); null or omission requires that the Node has no selection under its current identity."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "instance": {
+            "$ref": "#/components/schemas/InstanceRequest",
+            "description": "Current runtime instance authorized to change the selection."
           }
         },
         "additionalProperties": false

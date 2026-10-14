@@ -2,6 +2,12 @@
 
 按合入 main 的顺序记录工作包、提交与证据 ID。规则见[工程流程](/v2/process)；性能数字的口径见[分层性能测量](/v2/node/performance)，验收状态见[验收范围](/v2/node/validation)。
 
+## 未发布
+
+OPS8 后续三项（H2，`h2/ops8-followups`）：wire 6、IPC 12、`compilerVersion` `meshway-netmap-3`、Server schema 8 均不变。
+
+- 清除方案选择：新增 `clearNodeRoutingProfile`（`DELETE /agent-api/v1/routing-selection`，`{instance, expectedVersion}`，CAS 同 `selectNodeRoutingProfile`）与 `clearNodeRoutingSelection`（`DELETE /api/v1/networks/{networkId}/nodes/{nodeId}/routing-selection`，`{requestId}`，主体与重试规则同 `setNodeRoutingSelection`）；节点回到 assignment 默认方案（含 `auto`），版本计数保留；活动仍为 `routing.select`，`ActivityTarget.routingSelection.profile` 改为必有可空（清除为 null）。IPC 12 新增命令 `ClearProfile`（旧 daemon 不认识该命令，旧 CLI 不受影响），CLI `meshway exit --default`，无请求方案时显示 `none · following the default`。Console 活动列表显示“已清除方案选择”。`exit/off` 第 14 阶段末尾加 ⑥ `meshway exit --default` 回到 `auto` 解析。见 [Routing · 选择的入口](/v2/configuration-reference/routing#选择的入口)、[出口方案](/v2/node/runtime#exit-profile)。
+
 ## v0.1.0-alpha.9
 
 范围：wire 6、IPC 12、`compilerVersion` `meshway-netmap-3`、Server schema 8（无迁移，开发环境重新初始化数据目录、节点重新接入；须先升级 Node（CLI 与 daemon 一起）再升级 Server）。AUTO-1：`auto` 方案按管理员声明的 `nodes.<id>.region` 解析（解析结果计入 `egress.generation`，`routing.autoResolve` 活动，`meshway exit` 显示解析结果）；H1：出口投影按轮安装、`meshway status` 的 `idlePath`、listener 退役时释放待接管 socket、Server 测试离线；以及下列 AUTO-1、H1 工作包。

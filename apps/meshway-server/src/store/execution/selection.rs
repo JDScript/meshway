@@ -16,12 +16,52 @@ use meshway_configuration::selection::{RoutingSelectionState, SelectionUnavailab
 use meshway_model::{InstanceId, MembershipRole, NetworkId, NodeId, RequestId, UserId, Version};
 use meshway_protocol::{RoutingProfileUnavailableParams, execution::*};
 use rusqlite::{OptionalExtension, Transaction, params};
+use std::collections::BTreeMap;
 
 /// Who commits a selection; recorded as the activity's actor.
 #[derive(Clone, Copy)]
 enum Actor {
     Node,
     User(UserId),
+}
+
+/// `routing_selections.profile` of a cleared selection (no profile name is
+/// empty). The row stays so that versions remain monotonic; the matching
+/// `routing.select` activity carries the same value as its target profile.
+const CLEARED: &str = "";
+
+/// Every configured Node's persistent selection under its current identity:
+/// its profile and version. A cleared selection or one made under an earlier
+/// identity is none. The one reading compilation, netmap versions and the
+/// selection state share.
+pub(crate) fn selections(
+    tx: &Transaction<'_>,
+    network: NetworkId,
+    cfg: &NetworkConfiguration,
+    bindings: &ConfigurationBindings,
+) -> Result<BTreeMap<NodeId, (String, Version)>, Error> {
+    let mut statement = tx.prepare(
+        "SELECT node_id,identity_digest,profile,version FROM routing_selections WHERE network_id=?1",
+    )?;
+    let mut rows = statement.query([network.as_uuid().as_bytes().as_slice()])?;
+    let mut out = BTreeMap::new();
+    while let Some(row) = rows.next()? {
+        let node: NodeId = id(row.get(0)?)?;
+        let digest: Vec<u8> = row.get(1)?;
+        let profile: String = row.get(2)?;
+        if profile == CLEARED
+            || !cfg.nodes.contains_key(&node)
+            || digest != identity_digest(cfg, bindings, node)?.as_bytes()
+        {
+            continue;
+        }
+        let version = u64::try_from(row.get::<_, i64>(3)?)
+            .ok()
+            .and_then(|version| Version::new(version).ok())
+            .ok_or(Error::decode("routing_selections.version"))?;
+        out.insert(node, (profile, version));
+    }
+    Ok(out)
 }
 
 /// The Node's persistent selection under its current identity.
@@ -32,27 +72,7 @@ fn stored(
     bindings: &ConfigurationBindings,
     node: NodeId,
 ) -> Result<Option<(String, Version)>, Error> {
-    let row: Option<(Vec<u8>, String, i64)> = tx
-        .query_row(
-            "SELECT identity_digest,profile,version FROM routing_selections WHERE network_id=?1 AND node_id=?2",
-            params![
-                network.as_uuid().as_bytes().as_slice(),
-                node.as_uuid().as_bytes().as_slice()
-            ],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-        )
-        .optional()?;
-    let Some((digest, profile, version)) = row else {
-        return Ok(None);
-    };
-    if digest != identity_digest(cfg, bindings, node)?.as_bytes() {
-        return Ok(None);
-    }
-    let version = u64::try_from(version)
-        .ok()
-        .and_then(|version| Version::new(version).ok())
-        .ok_or(Error::decode("routing_selections.version"))?;
-    Ok(Some((profile, version)))
+    Ok(selections(tx, network, cfg, bindings)?.remove(&node))
 }
 
 /// A configured Node's selection as the current configuration decides it.
@@ -74,8 +94,10 @@ pub(crate) fn state(
     )?)
 }
 
-/// The one selection commit. `expected` is the Node endpoint's
-/// compare-and-swap base; a user's selection replaces whatever is current.
+/// The one selection commit: `Some(profile)` selects it, `None` clears the
+/// selection so that the assignment's default applies. `expected` is the
+/// Node endpoint's compare-and-swap base; a user's change replaces whatever
+/// is current. Clearing without a current selection changes nothing.
 #[allow(clippy::too_many_arguments)]
 fn commit(
     tx: &Transaction<'_>,
@@ -84,7 +106,7 @@ fn commit(
     node: NodeId,
     actor: Actor,
     request: RequestId,
-    profile: String,
+    profile: Option<String>,
     expected: Option<Option<Version>>,
     now: i64,
 ) -> Result<(RoutingSelectionState, Vec<Effect>), Error> {
@@ -105,11 +127,13 @@ fn commit(
     }
     let subjects = subjects(tx, network, &bindings)?;
     let current = state(tx, network, &cfg, &bindings, &subjects, node)?;
-    if !meshway_policy::profile_allowed(&cfg, &subjects, node, &profile)? {
+    if let Some(profile) = &profile
+        && !meshway_policy::profile_allowed(&cfg, &subjects, node, profile)?
+    {
         let allowed: Vec<String> = current.profiles.iter().map(|p| p.name.clone()).collect();
         return Err(Error::RoutingProfileUnavailable(
             RoutingProfileUnavailableParams {
-                reason: if allowed.contains(&profile) {
+                reason: if allowed.contains(profile) {
                     SelectionUnavailable::Locked
                 } else {
                     SelectionUnavailable::NotAllowed
@@ -121,6 +145,10 @@ fn commit(
     if expected.is_some_and(|expected| expected != current.version) {
         return Err(Error::VersionConflict);
     }
+    if profile.is_none() && current.version.is_none() {
+        return Ok((current, Vec::new()));
+    }
+    let profile = profile.unwrap_or_else(|| CLEARED.to_owned());
     // Versions stay monotonic across identities: a selection is never
     // reissued under a version an earlier selection used.
     let previous: Option<i64> = tx
@@ -189,7 +217,33 @@ pub(crate) fn select_profile(
         p.node,
         Actor::Node,
         request_id,
-        request.profile,
+        Some(request.profile),
+        Some(request.expected_version),
+        now,
+    )?;
+    Ok((RoutingSelectionResponse { selection }, effects))
+}
+
+/// The Node clears its own selection under the same compare-and-swap base.
+pub(crate) fn clear_profile(
+    tx: &Transaction<'_>,
+    sealer: &Sealer,
+    boot: InstanceId,
+    token: [u8; 32],
+    request_id: RequestId,
+    request: ClearRoutingSelectionRequest,
+) -> Result<(RoutingSelectionResponse, Vec<Effect>), Error> {
+    let now = now()?;
+    let p = authorize_node(tx, sealer, boot, token, now)?;
+    current_instance(tx, boot, &p, &request.instance, now)?;
+    let (selection, effects) = commit(
+        tx,
+        sealer,
+        p.network,
+        p.node,
+        Actor::Node,
+        request_id,
+        None,
         Some(request.expected_version),
         now,
     )?;
@@ -242,6 +296,8 @@ pub(crate) fn user_selection(
     state(tx, network, &cfg, &bindings, &subjects, node)
 }
 
+/// A user selects (`Some`) or clears (`None`) a Node's profile. The request
+/// ID binds retries to the same Node and change.
 pub(crate) fn select_user_profile(
     tx: &Transaction<'_>,
     sealer: &Sealer,
@@ -249,7 +305,7 @@ pub(crate) fn select_user_profile(
     network: NetworkId,
     node: NodeId,
     request_id: RequestId,
-    profile: String,
+    profile: Option<String>,
 ) -> Result<(RoutingSelectionState, Vec<Effect>), Error> {
     let now = now()?;
     let (_, cfg, bindings) = current_configuration(tx, sealer, network)?;
@@ -266,7 +322,7 @@ pub(crate) fn select_user_profile(
         )
         .optional()?;
     if let Some((target, selected)) = replay {
-        if id::<NodeId>(target)? != node || selected != profile {
+        if id::<NodeId>(target)? != node || selected != profile.as_deref().unwrap_or(CLEARED) {
             return Err(Error::RequestConflict);
         }
         let subjects = subjects(tx, network, &bindings)?;

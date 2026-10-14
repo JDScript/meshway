@@ -116,7 +116,7 @@ pub(crate) fn write(
         &selection.requested_profile,
         selection.requested_unavailable,
     ) {
-        (None, _) => term.paint(Role::Dim, "none (the default applies)"),
+        (None, _) => term.paint(Role::Dim, "none · following the default"),
         (Some(profile), None) => format!(
             "{profile} · version {}",
             selection.version.map(|v| v.get()).unwrap_or_default()
@@ -191,6 +191,17 @@ pub(crate) fn write(
         ]);
     }
     table.render(output, term)
+}
+
+/// The note after `meshway exit --default`.
+pub(crate) fn cleared(term: &Term, selection: &RoutingSelectionState) -> String {
+    term.paint(
+        Role::Dim,
+        format!(
+            "Persistent selection cleared; following the default `{}`.",
+            selection.default_profile
+        ),
+    )
 }
 
 #[cfg(test)]

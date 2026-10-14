@@ -276,6 +276,12 @@ wire_object! {
     pub profile: String,
 } }
 wire_object! {
+/// Idempotent clearing of a Node's persistent routing selection by a user; the assignment's default applies afterwards.
+#[derive(Clone,Debug,PartialEq,Eq)] pub struct ClearNodeRoutingSelectionRequest {
+    /// Request identifier binding retries to the same caller, Node and clearing.
+    pub request_id: RequestId,
+} }
+wire_object! {
 /// Idempotent permanent Node deletion guarded by the expected configuration revision.
 #[derive(Clone,Debug,PartialEq,Eq)] pub struct DeleteNodeRequest {
     /// Request identifier binding retries to the same caller, network and deletion intent.

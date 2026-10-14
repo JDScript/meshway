@@ -91,11 +91,27 @@ fn an_unavailable_request_and_auto_resolution_are_explained() {
         &Term::plain(),
         &selection(json!({"requestedProfile":null,"version":null,"appliedProfile":"mesh"})),
     );
-    assert!(none.contains("  Requested  none (the default applies)\n"));
+    assert!(none.contains("  Requested  none · following the default\n"));
 }
 
 #[test]
 fn a_terminal_gets_colors_and_a_box_table() {
     let text = render(&Term::rich(), &selection(json!({})));
     assert!(text.contains('\u{1b}') && text.contains('╭') && text.contains('│'));
+}
+
+#[test]
+fn a_cleared_selection_follows_the_default() {
+    let cleared = selection(json!({"requestedProfile":null,"version":null,
+        "appliedProfile":"auto","defaultProfile":"auto",
+        "auto":{"profile":"mesh","basis":"label","region":"CN"}}));
+    let text = render(&Term::plain(), &cleared);
+    assert!(text.starts_with("Exit profile auto\n"));
+    assert!(text.contains("  Requested  none · following the default\n"));
+    assert!(text.contains("  Default    auto · not locked\n"));
+    assert!(text.contains("  Auto       auto → mesh (region CN, basis label)\n"));
+    assert_eq!(
+        super::cleared(&Term::plain(), &cleared),
+        "Persistent selection cleared; following the default `auto`."
+    );
 }

@@ -31,7 +31,7 @@ export type ActivityTargetView =
   | { kind: "membership"; short: string }
   | { kind: "join_link"; short: string }
   | { kind: "configuration"; revision: number }
-  | { kind: "routing_selection"; profile: string }
+  | { kind: "routing_selection"; profile: string | null }
 
 export function activityTarget(
   target: ActivityEvent["target"],

@@ -127,6 +127,7 @@
   "activity_routing_select": "切换路由方案",
   "activity_routing_auto_resolve": "自动方案按地区重新解析",
   "activity_target_routing_selection": "方案 {profile}",
+  "activity_target_routing_selection_cleared": "已清除方案选择（跟随默认）",
   "actor_node": "节点 {id}",
   "actor_system": "系统",
   "actor_user": "用户 {id}",

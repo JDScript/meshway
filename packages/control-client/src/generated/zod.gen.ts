@@ -304,7 +304,7 @@ export const zActivityTarget = z.union([z.strictObject({
   ["type"]: z.enum(["configuration"])
 }), z.strictObject({
   ["nodeId"]: zNodeId,
-  ["profile"]: z.string(),
+  ["profile"]: z.string().nullable(),
   ["type"]: z.enum(["routingSelection"])
 })]);
 
@@ -561,6 +561,20 @@ export const zChangeMemberRoleRequest = z.strictObject({
 export const zChangePasswordRequest = z.strictObject({
   ["currentPassword"]: zWireSecret,
   ["password"]: zWireSecret
+});
+
+export const zClearNodeRoutingSelectionPath = z.strictObject({
+  ["networkId"]: zNetworkId,
+  ["nodeId"]: zNodeId
+});
+
+export const zClearNodeRoutingSelectionRequest = z.strictObject({
+  ["requestId"]: zRequestId
+});
+
+export const zClearRoutingSelectionRequest = z.strictObject({
+  ["expectedVersion"]: zVersion.nullable().exactOptional(),
+  ["instance"]: zInstanceRequest
 });
 
 export const zSecretString = z.string();

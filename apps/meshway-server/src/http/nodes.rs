@@ -167,6 +167,29 @@ pub(super) async fn select_routing_profile(
         .map_err(|e| HttpError::domain(id, e))?;
     Ok(Json(selection_response(id, network, node, selection)))
 }
+/// Clear a Node's routing profile selection.
+///
+/// Requires a user session with the same visibility as `getNodeRoutingSelection`: a member clears for their own User-identity devices, Owners and Admins for any Node, Tag Nodes included; the activity records the acting user.
+/// Afterwards the assignment's default applies (`auto` included); a lock does not refuse clearing, since the default is what a lock pins.
+/// The request identifier makes retries return the current selection without a second change; reuse with another Node or a selection returns request_id_conflict. Clearing a Node without a selection changes nothing and records no activity.
+/// Acceptance keeps the version counter, recompiles the Node's netmap (ending flows through the previous exit) and records a `routing.select` activity whose target profile is null.
+#[utoipa::path(delete,path="/api/v1/networks/{networkId}/nodes/{nodeId}/routing-selection",operation_id="clearNodeRoutingSelection",tag="nodes",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("nodeId"=NodeId,Path)),request_body=ClearNodeRoutingSelectionRequest,responses((status=200,body=NodeRoutingSelectionResponse),(status=400,body=ErrorResponse,description="invalid_request"),(status=401,body=ErrorResponse,description="invalid_session"),(status=404,body=ErrorResponse,description="not_found"),(status=409,body=ErrorResponse,description="request_id_conflict, state_conflict"),(status=413,body=ErrorResponse,description="request_too_large"),(status=415,body=ErrorResponse,description="unsupported_media_type"),(status=503,body=ErrorResponse,description="busy, service_unavailable")))]
+pub(super) async fn clear_routing_selection(
+    State(service): State<Execution>,
+    Extension(id): Extension<RequestId>,
+    headers: HeaderMap,
+    path: Result<Path<(NetworkId, NodeId)>, PathRejection>,
+    body: Result<Json<ClearNodeRoutingSelectionRequest>, JsonRejection>,
+) -> Result<Json<NodeRoutingSelectionResponse>, HttpError> {
+    let token = bearer(&headers, id)?;
+    let Path((network, node)) = path.map_err(|_| HttpError::invalid_request(id))?;
+    let Json(body) = body.map_err(|e| HttpError::json(id, e))?;
+    let selection = service
+        .clear_user_profile(token, network, node, body)
+        .await
+        .map_err(|e| HttpError::domain(id, e))?;
+    Ok(Json(selection_response(id, network, node, selection)))
+}
 fn selection_response(
     id: RequestId,
     network: NetworkId,

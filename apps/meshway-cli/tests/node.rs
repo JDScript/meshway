@@ -512,6 +512,46 @@ async fn exit_profiles(
     assert!(off.starts_with("Exit profile mesh\n"), "{off}");
     assert!(off.contains("  Requested  mesh · version 2\n"), "{off}");
 
+    // `--default` clears the persistent selection: the default applies and
+    // the version counter keeps growing (the clear itself used version 3).
+    let cleared = cli(socket, "exit --default", true).await;
+    assert!(
+        cleared.status.success(),
+        "{}",
+        String::from_utf8_lossy(&cleared.stderr)
+    );
+    let cleared: serde_json::Value = serde_json::from_slice(&cleared.stdout).unwrap();
+    assert_eq!(cleared["applied"], true);
+    assert_eq!(cleared["cleared"], true);
+    assert_eq!(
+        cleared["committed"]["requestedProfile"],
+        serde_json::Value::Null
+    );
+    assert_eq!(cleared["committed"]["version"], serde_json::Value::Null);
+    assert_eq!(
+        cleared["local"]["requestedProfile"],
+        serde_json::Value::Null
+    );
+    assert_eq!(cleared["local"]["appliedProfile"], "mesh");
+    // Clearing again changes nothing and says what applies.
+    let again = cli(socket, "exit --default", false).await;
+    assert!(again.status.success());
+    let again = String::from_utf8(again.stdout).unwrap();
+    assert!(
+        again.contains("  Requested  none · following the default\n"),
+        "{again}"
+    );
+    assert!(
+        again.contains("Persistent selection cleared; following the default `mesh`."),
+        "{again}"
+    );
+    let both = cli(socket, "exit local --default", false).await;
+    assert!(!both.status.success());
+    let reselected = cli(socket, "exit local", true).await;
+    assert!(reselected.status.success());
+    let reselected: serde_json::Value = serde_json::from_slice(&reselected.stdout).unwrap();
+    assert_eq!(reselected["committed"]["version"], 4);
+
     assign(api, network, token, true).await;
     selection(socket, true).await;
     let locked = cli(socket, "exit local", false).await;

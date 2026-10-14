@@ -59,6 +59,7 @@ pub(crate) fn exit_selected(
     status: &Status,
     committed: &meshway_configuration::selection::RoutingSelectionState,
     applied: bool,
+    cleared: bool,
     json: bool,
 ) -> io::Result<()> {
     let mut output = io::stdout().lock();
@@ -66,7 +67,7 @@ pub(crate) fn exit_selected(
     if json {
         return self::json(
             &mut output,
-            &serde_json::json!({ "committed": committed, "applied": applied, "local": local }),
+            &serde_json::json!({ "committed": committed, "applied": applied, "local": local, "cleared": cleared }),
         );
     }
     let term = Term::stdout();
@@ -76,6 +77,9 @@ pub(crate) fn exit_selected(
         committed
     };
     exit::write(&mut output, &term, shown, &exit::Names(&status.peers))?;
+    if cleared {
+        writeln!(output, "\n{}", exit::cleared(&term, shown))?;
+    }
     if !applied {
         writeln!(
             output,

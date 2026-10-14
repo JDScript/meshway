@@ -619,21 +619,33 @@ async fn serve_selection(shared: &Shared, selection: Selection) {
         return;
     }
     let profile = selection.profile.clone();
-    let result = tokio::time::timeout_at(
-        selection.deadline,
-        meshway_control::shared::select_profile(shared, selection.profile),
-    )
-    .await
-    .unwrap_or(Err(Error::Pending))
-    .map_err(selection_error);
-    match &result {
-        Ok(state) => tracing::info!(
+    let request = async {
+        match profile.clone() {
+            Some(profile) => meshway_control::shared::select_profile(shared, profile).await,
+            None => meshway_control::shared::clear_profile(shared).await,
+        }
+    };
+    let result = tokio::time::timeout_at(selection.deadline, request)
+        .await
+        .unwrap_or(Err(Error::Pending))
+        .map_err(selection_error);
+    match (&result, &profile) {
+        (Ok(state), Some(profile)) => tracing::info!(
             profile,
             applied = state.applied_profile,
             version = state.version.map(|version| version.get()),
             "Routing profile selected"
         ),
-        Err(code) => tracing::warn!(profile, error = ?code, "Routing profile selection failed"),
+        (Ok(state), None) => tracing::info!(
+            applied = state.applied_profile,
+            "Routing profile selection cleared; the default applies"
+        ),
+        (Err(code), Some(profile)) => {
+            tracing::warn!(profile, error = ?code, "Routing profile selection failed")
+        }
+        (Err(code), None) => {
+            tracing::warn!(error = ?code, "Clearing the routing profile selection failed")
+        }
     }
     let _ = selection.reply.send(result);
 }

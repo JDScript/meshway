@@ -5429,6 +5429,217 @@
             "nodeSession": []
           }
         ]
+      },
+      "delete": {
+        "tags": [
+          "execution"
+        ],
+        "summary": "Clear the current Node's routing profile selection.",
+        "description": "Requires a Node session and current instance. `expectedVersion` is the Node's current selection version, as for `selectNodeRoutingProfile`; a mismatch returns version_conflict.\nAfterwards the assignment's default applies (`auto` included). Without a selection (`expectedVersion` null) nothing changes and no activity is recorded.\nAcceptance records a `routing.select` activity with the Node as actor and a null target profile, and recompiles the Node's netmap, delivered by its next sync; the answer is the committed selection.",
+        "operationId": "clearNodeRoutingProfile",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClearRoutingSelectionRequest"
+              },
+              "example": {
+                "expectedVersion": 1,
+                "instance": {
+                  "generation": 1,
+                  "instanceId": "8f9a0b1c-2d3e-4f4a-9b5c-6d7e8f9a0b1c"
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoutingSelectionResponse"
+                },
+                "example": {
+                  "selection": {
+                    "appliedProfile": "mesh",
+                    "auto": null,
+                    "defaultProfile": "mesh",
+                    "locked": false,
+                    "profiles": [
+                      {
+                        "exits": [],
+                        "fallback": {
+                          "type": "unmanaged"
+                        },
+                        "kind": "mesh",
+                        "name": "mesh",
+                        "rules": 0
+                      },
+                      {
+                        "exits": [
+                          "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50"
+                        ],
+                        "fallback": {
+                          "nodes": [
+                            "node:e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50"
+                          ],
+                          "type": "exit",
+                          "via": []
+                        },
+                        "kind": "global",
+                        "name": "global:e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50",
+                        "rules": 0
+                      }
+                    ],
+                    "requestedProfile": null,
+                    "requestedUnavailable": null,
+                    "version": null
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "problem": {
+                    "code": "invalid_request",
+                    "message": "Invalid request parameters.",
+                    "params": {}
+                  },
+                  "requestId": "00000000-0000-0000-0000-000000000001",
+                  "status": 400
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "invalid_credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "problem": {
+                    "code": "invalid_credentials",
+                    "message": "Invalid credentials.",
+                    "params": {}
+                  },
+                  "requestId": "00000000-0000-0000-0000-000000000001",
+                  "status": 401
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "node_identity_rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "problem": {
+                    "code": "node_identity_rejected",
+                    "message": "Node identity is no longer eligible",
+                    "params": {}
+                  },
+                  "requestId": "00000000-0000-0000-0000-000000000001",
+                  "status": 403
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "version_conflict, binding_conflict, state_conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "problem": {
+                    "code": "version_conflict",
+                    "message": "Resource changed; reload before retrying.",
+                    "params": {}
+                  },
+                  "requestId": "00000000-0000-0000-0000-000000000001",
+                  "status": 409
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "request_too_large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "problem": {
+                    "code": "request_too_large",
+                    "message": "Request body exceeds the allowed size.",
+                    "params": {}
+                  },
+                  "requestId": "00000000-0000-0000-0000-000000000001",
+                  "status": 413
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "unsupported_media_type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "problem": {
+                    "code": "unsupported_media_type",
+                    "message": "A JSON request body is required.",
+                    "params": {}
+                  },
+                  "requestId": "00000000-0000-0000-0000-000000000001",
+                  "status": 415
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "busy, service_unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "problem": {
+                    "code": "busy",
+                    "message": "Service is busy; retry later.",
+                    "params": {}
+                  },
+                  "requestId": "00000000-0000-0000-0000-000000000001",
+                  "status": 503
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "nodeSession": []
+          }
+        ]
       }
     },
     "/agent-api/v1/state": {
@@ -17916,6 +18127,235 @@
             "userSession": []
           }
         ]
+      },
+      "delete": {
+        "tags": [
+          "nodes"
+        ],
+        "summary": "Clear a Node's routing profile selection.",
+        "description": "Requires a user session with the same visibility as `getNodeRoutingSelection`: a member clears for their own User-identity devices, Owners and Admins for any Node, Tag Nodes included; the activity records the acting user.\nAfterwards the assignment's default applies (`auto` included); a lock does not refuse clearing, since the default is what a lock pins.\nThe request identifier makes retries return the current selection without a second change; reuse with another Node or a selection returns request_id_conflict. Clearing a Node without a selection changes nothing and records no activity.\nAcceptance keeps the version counter, recompiles the Node's netmap (ending flows through the previous exit) and records a `routing.select` activity whose target profile is null.",
+        "operationId": "clearNodeRoutingSelection",
+        "parameters": [
+          {
+            "name": "networkId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/NetworkId"
+            }
+          },
+          {
+            "name": "nodeId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/NodeId"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClearNodeRoutingSelectionRequest"
+              },
+              "example": {
+                "requestId": "5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NodeRoutingSelectionResponse"
+                },
+                "example": {
+                  "canSelect": true,
+                  "networkId": "0d3a2a6e-7f3b-4d0c-9a8e-1c2b3d4e5f60",
+                  "nodeId": "b8c7d6e5-4f5a-4b2c-8d9e-0f1a2b3c4d80",
+                  "requestId": "7c1f0e2d-3b4a-4c5d-8e6f-9a0b1c2d3e4f",
+                  "selection": {
+                    "appliedProfile": "mesh",
+                    "auto": null,
+                    "defaultProfile": "mesh",
+                    "locked": false,
+                    "profiles": [
+                      {
+                        "exits": [],
+                        "fallback": {
+                          "type": "unmanaged"
+                        },
+                        "kind": "mesh",
+                        "name": "mesh",
+                        "rules": 0
+                      },
+                      {
+                        "exits": [
+                          "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50"
+                        ],
+                        "fallback": {
+                          "nodes": [
+                            "node:e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50"
+                          ],
+                          "type": "exit",
+                          "via": []
+                        },
+                        "kind": "global",
+                        "name": "global:e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50",
+                        "rules": 0
+                      }
+                    ],
+                    "requestedProfile": null,
+                    "requestedUnavailable": null,
+                    "version": null
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "problem": {
+                    "code": "invalid_request",
+                    "message": "Invalid request parameters.",
+                    "params": {}
+                  },
+                  "requestId": "00000000-0000-0000-0000-000000000001",
+                  "status": 400
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "invalid_session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "problem": {
+                    "code": "invalid_session",
+                    "message": "Invalid or expired session.",
+                    "params": {}
+                  },
+                  "requestId": "00000000-0000-0000-0000-000000000001",
+                  "status": 401
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not_found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "problem": {
+                    "code": "not_found",
+                    "message": "Resource not found.",
+                    "params": {}
+                  },
+                  "requestId": "00000000-0000-0000-0000-000000000001",
+                  "status": 404
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "request_id_conflict, state_conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "problem": {
+                    "code": "request_id_conflict",
+                    "message": "Request ID was already used with different input.",
+                    "params": {}
+                  },
+                  "requestId": "00000000-0000-0000-0000-000000000001",
+                  "status": 409
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "request_too_large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "problem": {
+                    "code": "request_too_large",
+                    "message": "Request body exceeds the allowed size.",
+                    "params": {}
+                  },
+                  "requestId": "00000000-0000-0000-0000-000000000001",
+                  "status": 413
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "unsupported_media_type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "problem": {
+                    "code": "unsupported_media_type",
+                    "message": "A JSON request body is required.",
+                    "params": {}
+                  },
+                  "requestId": "00000000-0000-0000-0000-000000000001",
+                  "status": 415
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "busy, service_unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "problem": {
+                    "code": "busy",
+                    "message": "Service is busy; retry later.",
+                    "params": {}
+                  },
+                  "requestId": "00000000-0000-0000-0000-000000000001",
+                  "status": 503
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "userSession": []
+          }
+        ]
       }
     },
     "/api/v1/networks/{networkId}/nodes/{nodeId}/settings": {
@@ -22084,7 +22524,7 @@
       },
       "ActivityAction": {
         "type": "string",
-        "description": "`account.register`: Records completed account registration with an account target carrying userId and null previousEmail.\n`session.login`: Records successful sign-in with a session target carrying the newly created sessionId.\n`session.logout`: Records completed sign-out with a session target carrying the revoked sessionId.\n`session.revoke`: Records explicit revocation of one session with a session target carrying its sessionId.\n`session.revokeOthers`: Records revocation of the user's other sessions with an account target carrying userId and null previousEmail.\n`session.revokeAll`: Records revocation of all the user's sessions with an account target carrying userId and null previousEmail.\n`session.delegate`: A signed-in user authorized a delegation client; the target is the authorizing session.\n`account.password`: Records a password change authenticated by the current password with an account target carrying userId and null previousEmail.\n`account.passwordReset`: Records password replacement using a recovery credential with an account target carrying userId and null previousEmail.\n`account.resetIssued`: Records issuance of a password recovery credential by a system actor with an account target carrying userId and null previousEmail.\n`account.email`: Records an email change with an account target carrying userId and previousEmail set to the address before the change.\n`network.create`: Records completed network creation with a network target carrying networkId.\n`network.rename`: Records a network name change with a network target carrying networkId.\n`configuration.apply`: Records a committed configuration apply with a configuration target carrying the saved revision, independently of Node application results.\n`membership.role`: Records a member's role change with a membership target carrying membershipId.\n`membership.join`: Records a completed network join with a membership target carrying the new membershipId.\n`membership.remove`: Records a completed membership removal with a membership target carrying membershipId.\n`joinLink.create`: Records creation of a join link with a joinLink target carrying linkId.\n`joinLink.revoke`: Records revocation of a join link with a joinLink target carrying linkId.\n`routing.select`: Records a committed routing profile selection by the Node itself or a user, with a routingSelection target carrying nodeId and the selected profile.\n`routing.autoResolve`: Records, with a system actor, that the profile `auto` resolves to for a Node changed (another profile, basis or region, such as after its declared region changed), with a routingSelection target carrying nodeId and the profile `auto` now applies.",
+        "description": "`account.register`: Records completed account registration with an account target carrying userId and null previousEmail.\n`session.login`: Records successful sign-in with a session target carrying the newly created sessionId.\n`session.logout`: Records completed sign-out with a session target carrying the revoked sessionId.\n`session.revoke`: Records explicit revocation of one session with a session target carrying its sessionId.\n`session.revokeOthers`: Records revocation of the user's other sessions with an account target carrying userId and null previousEmail.\n`session.revokeAll`: Records revocation of all the user's sessions with an account target carrying userId and null previousEmail.\n`session.delegate`: A signed-in user authorized a delegation client; the target is the authorizing session.\n`account.password`: Records a password change authenticated by the current password with an account target carrying userId and null previousEmail.\n`account.passwordReset`: Records password replacement using a recovery credential with an account target carrying userId and null previousEmail.\n`account.resetIssued`: Records issuance of a password recovery credential by a system actor with an account target carrying userId and null previousEmail.\n`account.email`: Records an email change with an account target carrying userId and previousEmail set to the address before the change.\n`network.create`: Records completed network creation with a network target carrying networkId.\n`network.rename`: Records a network name change with a network target carrying networkId.\n`configuration.apply`: Records a committed configuration apply with a configuration target carrying the saved revision, independently of Node application results.\n`membership.role`: Records a member's role change with a membership target carrying membershipId.\n`membership.join`: Records a completed network join with a membership target carrying the new membershipId.\n`membership.remove`: Records a completed membership removal with a membership target carrying membershipId.\n`joinLink.create`: Records creation of a join link with a joinLink target carrying linkId.\n`joinLink.revoke`: Records revocation of a join link with a joinLink target carrying linkId.\n`routing.select`: Records a committed routing profile selection or its clearing by the Node itself or a user, with a routingSelection target carrying nodeId and the selected profile (null when cleared).\n`routing.autoResolve`: Records, with a system actor, that the profile `auto` resolves to for a Node changed (another profile, basis or region, such as after its declared region changed), with a routingSelection target carrying nodeId and the profile `auto` now applies.",
         "enum": [
           "account.register",
           "session.login",
@@ -22457,8 +22897,11 @@
                 "description": "Node whose selection changed."
               },
               "profile": {
-                "type": "string",
-                "description": "Profile the selection names after the action; for `routing.autoResolve`, the profile `auto` now applies."
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Profile the selection names after the action; null when a `routing.select` cleared the selection (the assignment's default applies). For `routing.autoResolve`, the profile `auto` now applies."
               },
               "type": {
                 "type": "string",
@@ -23173,6 +23616,45 @@
           "password": {
             "$ref": "#/components/schemas/WireSecret",
             "description": "Replacement password satisfying the advertised password rules."
+          }
+        },
+        "additionalProperties": false
+      },
+      "ClearNodeRoutingSelectionRequest": {
+        "type": "object",
+        "description": "Idempotent clearing of a Node's persistent routing selection by a user; the assignment's default applies afterwards.",
+        "required": [
+          "requestId"
+        ],
+        "properties": {
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId",
+            "description": "Request identifier binding retries to the same caller, Node and clearing."
+          }
+        },
+        "additionalProperties": false
+      },
+      "ClearRoutingSelectionRequest": {
+        "type": "object",
+        "description": "Node request to clear its persistent routing selection using compare-and-swap against its current selection; the assignment's default applies afterwards.",
+        "required": [
+          "instance"
+        ],
+        "properties": {
+          "expectedVersion": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Version",
+                "description": "Current selection version (the netmap's `selectionVersions` entry of this Node); null or omission requires that the Node has no selection under its current identity."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "instance": {
+            "$ref": "#/components/schemas/InstanceRequest",
+            "description": "Current runtime instance authorized to change the selection."
           }
         },
         "additionalProperties": false

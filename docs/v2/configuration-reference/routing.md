@@ -240,15 +240,19 @@ nft 进程峰值 RSS 约 1.6 KB／区间（16,384 区间 28 MB）。带回显的
 
 #### 选择的入口
 
-持久选择只有一份，归 Server（`routing_selections`，按节点当前身份保存；身份改变后旧选择不再适用）。三个入口共用同一提交：
+持久选择只有一份，归 Server（`routing_selections`，按节点当前身份保存；身份改变后旧选择不再适用）。以下选择与清除入口共用同一提交：
 
 | 入口 | 调用者 | 约束 |
 | --- | --- | --- |
 | `selectNodeRoutingProfile`（`POST /agent-api/v1/routing-selection`） | 节点自身（`meshway exit`），需当前 instance | `expectedVersion` 为节点 netmap 中自身的选择版本，不一致 `409 version_conflict` |
 | `getNodeRoutingSelection`（`GET /api/v1/networks/{networkId}/nodes/{nodeId}/routing-selection`） | 用户 | 成员只能读自己的 User 身份设备，Owner／Admin 可读任意节点；其他为 404 |
 | `setNodeRoutingSelection`（`POST` 同一路径，`{requestId, profile}`） | 用户 | 可见范围同上，Tag 设备只有 Owner／Admin 可切；同一 `requestId` 重试返回当前选择，换节点或方案得 `409 request_id_conflict` |
+| `clearNodeRoutingProfile`（`DELETE /agent-api/v1/routing-selection`，`{instance, expectedVersion}`） | 节点自身（`meshway exit --default`），需当前 instance | CAS 基准同 `selectNodeRoutingProfile` |
+| `clearNodeRoutingSelection`（`DELETE /api/v1/networks/{networkId}/nodes/{nodeId}/routing-selection`，`{requestId}`） | 用户 | 主体与 `requestId` 规则同 `setNodeRoutingSelection`；同一 `requestId` 不能既清除又选择 |
 
-方案不在节点的 allowed 内、或 assignment 已锁定而不是默认方案时，得 `422 routing_profile_unavailable`（`params.reason` 为 `notAllowed`／`locked`，`params.allowed` 为允许的方案）。每次接受的切换都使版本加一（含切回同名方案），在同一事务记录活动 `routing.select`（actor 为节点或用户，target 为 `routingSelection {nodeId, profile}`），并重新编译 netmap；节点经下一次 `sync` 取得。节点库存 `NodeInventoryView.routing` 给出列表摘要 `{requestedProfile, appliedProfile, locked, canSelect}`。
+**清除**：持久选择被移除，节点回到 assignment 的默认方案（含 `auto`，随即按地区解析）。请求的方案已不在 allowed（状态为 `requestedUnavailable: notAllowed`，`meshway exit` 显示 `not applied (no longer allowed)`）时，清除是去掉这份残留选择的方式；锁定不拒绝清除（锁定钉住的正是默认方案）。接受的清除同样使版本加一（版本计数保留，之后的选择仍大于所有旧版本），记 `routing.select` 活动（target 的 `profile` 为 null），并重新编译 netmap；新 netmap 不再带本节点的 `selectionVersions` 条目，CAS 基准回到 null。没有选择时清除不改变任何东西、不记活动。
+
+方案不在节点的 allowed 内、或 assignment 已锁定而不是默认方案时，得 `422 routing_profile_unavailable`（`params.reason` 为 `notAllowed`／`locked`，`params.allowed` 为允许的方案）。每次接受的切换都使版本加一（含切回同名方案），在同一事务记录活动 `routing.select`（actor 为节点或用户，target 为 `routingSelection {nodeId, profile}`，清除时 `profile` 为 null），并重新编译 netmap；节点经下一次 `sync` 取得。节点库存 `NodeInventoryView.routing` 给出列表摘要 `{requestedProfile, appliedProfile, locked, canSelect}`。
 
 #### 当前选择的状态 {#selection-state}
 

@@ -71,7 +71,12 @@ async fn handle(
         handle_netcheck(stream, request, netchecks).await;
         return;
     }
-    if request.version == VERSION && matches!(request.command, Command::SelectProfile { .. }) {
+    if request.version == VERSION
+        && matches!(
+            request.command,
+            Command::SelectProfile { .. } | Command::ClearProfile
+        )
+    {
         handle_selection(stream, request, selections, view).await;
         return;
     }
@@ -123,7 +128,7 @@ async fn handle_netcheck(
     .await;
 }
 
-/// A selection needs an online Node holding a netmap; the Server's answer
+/// A selection or its clearing needs an online Node holding a netmap; the Server's answer
 /// is relayed as is and nothing of it is stored here.
 async fn handle_selection(
     mut stream: UnixStream,
@@ -131,8 +136,10 @@ async fn handle_selection(
     selections: mpsc::Sender<Selection>,
     view: View,
 ) {
-    let Command::SelectProfile { profile } = request.command else {
-        return;
+    let profile = match request.command {
+        Command::SelectProfile { profile } => Some(profile),
+        Command::ClearProfile => None,
+        _ => return,
     };
     let status = view.status();
     let result = if !status.desired_up
@@ -249,7 +256,10 @@ async fn one_shot(
             Command::Logout { expected_revision } => {
                 Ok(Some((Action::Logout, expected_revision, None)))
             }
-            Command::Ping { .. } | Command::Netcheck | Command::SelectProfile { .. } => return,
+            Command::Ping { .. }
+            | Command::Netcheck
+            | Command::SelectProfile { .. }
+            | Command::ClearProfile => return,
         };
         match action {
             Err(code) => Err(code),
