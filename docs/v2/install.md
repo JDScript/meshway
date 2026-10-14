@@ -159,6 +159,17 @@ compiler: meshway-netmap-3
 
 `--json` 输出同名字段（`version`、`git`、`target`、`ipc`、`wire`、`compilerVersion`）。`wire` 是受保护 circuit 版本，同一路径上的节点必须一致；`compilerVersion` 是 netmap 编译契约。该命令不联系 daemon。
 
+### compilerVersion 变化的版本 {#compiler-version-upgrade}
+
+`compilerVersion` 变化时（[changelog](/v2/changelog) 中该版本的范围句以 “⚠ 断网窗口” 开头），新 Node 不接受旧 Server 签发的 netmap，旧 Node 也不接受新 Server 的：已升级的 Node 每次 `sync` 都以 `Contract` 失败并重试，`meshway status` 为 `synchronizing · Sync reconnecting (contract)`、Netmap none、数据面 suspended／stopped；本机缓存的旧 `netmap.json` 保留在磁盘但不载入。该节点从升级起到 Server 升级完成为止没有 Mesh。这是该类版本的固有窗口，产品不提供兼容轨，因此按以下方式把窗口压到最短：
+
+1. **同一窗口升级全部**：所有 Node 与 Server 在同一个维护窗口内升级；不要只升级一部分后长时间停留。
+2. **先备齐产物**：开始前确认该版本的全部产物已就绪——Release 的各架构 tar 与 `SHA256SUMS` 已发布并校验，Server 已按该版本构建，Docker lab 等需单独构建的环境（`mise run build:node:linux`）已构建完成。不要在产物仍在排队构建时就升级第一台节点。
+3. **顺序不变**：仍先 Node（CLI 与 daemon 一起）后 Server；Server 升级后，各节点下一次 `sync` 即取得新 netmap 并恢复，无需 `up`。
+4. **窗口长度**＝从第一台节点升级到 Server 升级完成；节点升级本身只需数秒，窗口主要由节点之间的等待与 Server 升级决定。
+
+`wire` 变化时同一路径上新旧节点的帧互不兼容（[数据面 · wire](/v2/node/dataplane)），同样在一个窗口内全部升级。
+
 ## 卸载
 
 ```sh
