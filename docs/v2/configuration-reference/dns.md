@@ -64,7 +64,7 @@
 
 ## 使用出口时
 
-普通查询（非 MagicDNS、非 `useWithExit` split）由哪个 resolver 回答，在解析前由源节点生效的方案决定（公共规则在前，`auto` 按其 fallback；与出口分割同一选择）：
+普通查询（非 MagicDNS、非 `useWithExit` split）由哪个 resolver 回答，在解析前由源节点生效的方案决定（公共规则在前，`auto` 按源节点地区解析出的方案，见 [Routing · 自动方案](/v2/configuration-reference/routing#auto)；与出口分割同一选择）：
 
 | 方案形态 | 普通查询 | `netmap.dns.egress` |
 | --- | --- | --- |

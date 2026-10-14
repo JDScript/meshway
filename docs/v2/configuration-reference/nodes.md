@@ -19,7 +19,8 @@
         "ipv6": "fd42:7a65:8800::10"
       },
       "listeners": {},
-      "exitEnabled": false
+      "exitEnabled": false,
+      "region": "US"
     }
   }
 }
@@ -37,6 +38,7 @@
 | `listeners` | `Record<string, Listener>` | `{}` | [本节点入站配置](/v2/configuration-reference/listeners) |
 | `dialers` | `DialerSet` | 省略则继承 | 显式 `{}` 禁用主动建连；非空集合替换默认 |
 | `exitEnabled` | `boolean` | `false` | 管理员允许此节点承担出口；不是执行就绪状态 |
+| `region` | `string` | 省略 | 管理员声明的地区，见 [region](#region) |
 
 ## hostname
 
@@ -84,6 +86,12 @@ user 分支不接受 tags，tag 分支不接受 user。Node 数据库记录不�
 `false` 撤回该节点的业务执行许可，停止依赖它的路径；凭据仍可认证以同步配置、报告停用进度并接收后续启用。改回 `true` 时重新校验身份、授权与路径，不恢复旧流资格。
 
 永久接入吊销／密钥吊销属于认证记录，不能由 enabled=true 或配置回滚清除。当前状态可投影为“配置已启用，但凭据已吊销”，具体来源保留，不能把两者合成一个可写状态。
+
+## region
+
+ISO 3166-1 alpha-2 代码（两个大写字母，如 `US`、`JP`），只作为[自动方案](/v2/configuration-reference/routing#auto) `auto` 的输入：源节点的有效方案为 `auto` 时，按此代码在 `routing.egress.auto.rules` 中选方案。省略表示未声明（`auto` 采用 fallback，basis `noTrustedRegion`），规范输出省略该字段；`null` 不是合法值，编辑操作 `setNodeSettings` 的 `fields.region: null` 表示清除。不合法的值以 `invalid_country_code` 拒绝（路径 `/nodes/<id>/region`，`params.value`）。
+
+只有 Owner／Admin 能写：它是普通配置字段，经配置提交入口保存；接入的初始设置（`initialSettings`）与节点自助接口不能携带它，成员不能声明自己设备的地区。它不是观测：Server 不按节点的公网地址或 GeoIP 推断、也不校验它，节点不在本机判断地区。
 
 ## 生命周期
 

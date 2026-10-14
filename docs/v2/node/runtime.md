@@ -160,7 +160,7 @@ Mesh 池、loopback、链路本地、组播、保留／广播及出口本机地�
 
 `underlay-egress.json`（v2）保存 boot／namespace、随机 installation、mark／table、计划、当前门与待提交门（区间与设备）、nft 规范对象／handle、选择器规则及 removed；已 down（removed）或属于另一次启动的记录不论版本直接归档，同一次启动内仍持有资源的其他版本记录在解析内容前即以专用错误（含文件名与版本，提示先用写它的旧版本 `meshway down` 或重启主机再升级）阻止启动；捕获表路由由门推出，恢复时与表内实际路由精确对账。自有规则／路由变化注册到同一 monitor（路由每 64 条等待其观测，不使通知缓冲溢出），不制造外部切网事件。暂停、执行失效和同 namespace 重启保留负向范围；TUN 消失不会落回 main direct。恢复先关闭旧活动 selector 并清理旧正向资源，只有新的有效执行安装可以重新激活；显式 down 才解除所属负向边界。
 
-IPC 11 的公开运行状态（`meshway status --json` 原样输出）：
+IPC 12 的公开运行状态（`meshway status --json` 原样输出）：
 
 | 字段 | 含义 |
 | --- | --- |

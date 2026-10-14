@@ -2,6 +2,17 @@
 
 按合入 main 的顺序记录工作包、提交与证据 ID。规则见[工程流程](/v2/process)；性能数字的口径见[分层性能测量](/v2/node/performance)，验收状态见[验收范围](/v2/node/validation)。
 
+## 未发布
+
+`auto` 方案按地区选择第一版（AUTO-1，`auto1/region-profile`）：wire 6 不变；`compilerVersion` 升为 `meshway-netmap-3`；IPC 升为 12；Server schema 版本 8（`activity_events` 允许 `routing.autoResolve`；开发环境重新初始化数据目录）。HTTP 契约：`NodeSettings`／`NodeSettingsInput`／`NodeSettingsView` 新增可省略的 `region`，`NodeSettingsPatch.region`（null 清除）；`AutoResolution` 新增必有的 `region`（可为 null），`AutoBasis` 新增 `label`、`noRuleMatched`；`ActivityAction` 新增 `routing.autoResolve`；`IssueCode` 新增警告 `auto_region_unmatched`、`auto_region_missing`，`invalid_country_code` 另用于 `/nodes/<id>/region`。升级顺序：先升级 Node（CLI 与 daemon 一起）再升级 Server——旧 Node 对 `meshway-netmap-3` 的 netmap 验证失败而拒收并报告，新 Node 把缓存的 `-2` netmap 视为过时并重取。
+
+- 地区来源：管理员在 [`nodes.<id>.region`](/v2/configuration-reference/nodes#region) 声明 ISO 3166-1 alpha-2 代码，只有 Owner／Admin 经配置提交写入；接入初始设置与节点自助接口不能携带。GeoIP 推断、驻留／防抖与 RTT 未实现（设计稿第二步）。
+- 解析：`auto` 取第一条 `countries` 含该地区的规则的方案，否则 `auto.fallback`；basis `label`／`noRuleMatched`／`noTrustedRegion`。分割、捕获、`egress` 计划、DNS plan、可信关联、路径检测与节点判定共用 `matching::concrete_profile`（唯一实现；此前五处各自把 `auto` 写死成 fallback）；`region` 随投影的 `NodeSettingsView` 下发，中继与出口在自己的投影上重算。见 [Routing · 自动方案](/v2/configuration-reference/routing#auto)。
+- 修复：`egress.generation` 对 `auto` 只记字面量 `auto`，解析结果改变时 selection 身份不变；现在解析结果（方案、basis、地区）计入 generation，变化即结束旧出口存量连接、删除旧 generation 的可信关联（与手动切换同一路径）。`LocalCompiler` 的分割缓存按解析后的方案为键，不再让不同地区的源共用 `auto` 的分割。
+- 选择：手动 `routing-selection` 总是覆盖 `auto`（locked 除外）；选中方案的出口不可用不换方案。`RoutingSelectionState.auto` 给出 `{profile, basis, region}`（不进入 State）；`meshway exit` 显示 `auto → <profile> (region <XX>, basis <basis>)`。
+- 活动：解析结果随新 netmap 改变时，Server 在同一事务记录 `routing.autoResolve`（actor 为 system，target 为 `routingSelection {nodeId, profile}`）。
+- 验收：`exit/off` 新增第 14 阶段（无地区 → `mesh`／US → `exit` 经 E／改 JP → 旧流断开、旧关联消失、新名称经 E 走 `exit-alt`、活动各一条／手动覆盖与恢复／FR → `noRuleMatched`），见[验收范围 · 出口场景](/v2/node/validation#exit-scenario)。Console 只做字段映射与 en／zh 文案。
+
 ## v0.1.0-alpha.8
 
 范围：wire 6、IPC 11、`compilerVersion` `meshway-netmap-2`、Server schema 不变；HTTP 契约删除 4 个从未产生的枚举值，netmap 投影新增可省略的 `eligibleExits`（须先升级 Node 再升级 Server）。F5a 25 条审阅修复（出口自指 `eligibleExits`、MTU 探测签名绑长度／只升不降修正／路由 MTU 9000 不致命、listener 接管改绑、出口防火墙判定含 prerouting＋记忆化预算、路径暂停退避、调度 EDF、游标 digest、完整 State 报告 adjacencies 裁剪、缓冲截断口径、DNS 预约 cookie 归档、ctnetlink `DUMP_INTR`、MSS 重试）；F5b 卫生（删 4 个枚举值、`meshway_rules::ranges`、观察历史游标共用 cursor 信封）；F5c 大文件拆分；以及下列 F5c、F5b、F5a 工作包。

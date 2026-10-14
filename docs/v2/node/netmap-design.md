@@ -20,7 +20,7 @@ Server 在配置 revision 固定时为每个节点生成 **netmap**（配置投�
 | --- | --- | --- |
 | `NetmapRef { revision, serial, digest }` | `crates/meshway-model/src/netmap.rs` | `digest` 是内容摘要，不含租约、`revision`、`serial`、`dependencyDigest` |
 | `NetmapLease { netmap, issuedAt, expiresAt }` | 同上 | `NetmapLease::validate` 要求 `issuedAt < expiresAt ≤ issuedAt + 24 h`；配置下限 `MIN_NETMAP_VALIDITY_MS`＝60 s、`MAX_NETMAP_BYTES`＝8 MiB |
-| `NodeNetmap`、`CompiledNetmap { digest, netmap }` | `crates/meshway-configuration/src/netmap/mod.rs` | `NodeNetmap::content_digest`、`CompiledNetmap::verify`／`reference`；`NETMAP_COMPILER_VERSION`＝`meshway-netmap-2` |
+| `NodeNetmap`、`CompiledNetmap { digest, netmap }` | `crates/meshway-configuration/src/netmap/mod.rs` | `NodeNetmap::content_digest`、`CompiledNetmap::verify`／`reference`；`NETMAP_COMPILER_VERSION`＝`meshway-netmap-3` |
 | `ProjectedConfiguration` | `crates/meshway-configuration/src/netmap/projection.rs` | 投影本体，见[内容字段](#内容字段) |
 | `NetmapDelta` 与 `netmap_delta`／`apply_netmap_delta` | `crates/meshway-configuration/src/netmap/delta.rs` | 投影的 nodes／inventory 与 dialers 按键增删，其余整块替换；重建后必须复现目标 digest，serial 必须增大 |
 
@@ -30,7 +30,7 @@ Server 在配置 revision 固定时为每个节点生成 **netmap**（配置投�
 | `serial` | 每节点单调递增的内容序号；内容 digest 不变则不递增 |
 | `digest` | 规范序列化内容摘要；Node 校验后保存 |
 | `dependencyDigest` | 产生该 serial 的整网投影输入摘要（配置、主体、库存密钥／能力、方案选择及版本、规则集）；与 `revision` 一样随 serial 保留，不进入 `digest` |
-| `compilerVersion` | **`meshway-netmap-2`**：投影的 `ruleSets` 为 digest 引用；其他版本的缓存视为过时并作废重取 |
+| `compilerVersion` | **`meshway-netmap-3`**：投影的 `ruleSets` 为 digest 引用；`nodes` 带 `region`，`auto` 按它解析且解析结果计入 `egress.generation`（`-2` 起为 digest 引用）。其他版本的 netmap 不通过 `CompiledNetmap::verify`：节点拒收 Server 的回答并报告，已缓存的视为过时、作废重取 |
 | `issuedAt`／`expiresAt` | 租约，不进入 `digest`；Server 每次成功查询签发 `now + 有效期`（默认 24 h） |
 
 没有“依赖截止”缩短整份 netmap：可信 DNS 关联作为独立 overlay 按条目携带自己的截止，见[出口与 DNS](#出口与-dns)。
@@ -53,7 +53,7 @@ Server 在配置 revision 固定时为每个节点生成 **netmap**（配置投�
 | 部分 | 纳入条件 |
 | --- | --- |
 | 可见节点 V(n) | n 自身 ∪ n 在可用节点（已登记且 enabled）topology 允许图中的连通分量 ∪ 与 n 有任一方向 Access 规则的已登记节点 ∪ 被保留 routing 规则 `via` 的节点（迭代至不动点） |
-| `nodes` | V 中节点的 `NodeSettingsView`（listener 私钥、凭据与敏感头值均已脱敏） |
+| `nodes` | V 中节点的 `NodeSettingsView`（listener 私钥、凭据与敏感头值均已脱敏；含 `region`，中继与出口据此重算源端 `auto`） |
 | `access` | src 命中 V 且（dst 命中 V 或 dst 含外部选择器）的规则，原顺序 |
 | `topology` | a、b 两端都命中 V 的规则，原顺序 |
 | `routing.mesh` | src、dst 都命中 V 的规则，原顺序 |
@@ -70,7 +70,7 @@ Server 在配置 revision 固定时为每个节点生成 **netmap**（配置投�
 - **出口**：源端分割（节点用投影规则与持有的 artifact 计算，按方案缓存于 `LocalCompiler`）给出 `(nodes 有序主备, via)`；同一 `(源, nodes, via)` 的路径集合相同，目的地的服务集合是覆盖该目的地的外部 Access 规则并集。
 - `observable` 由路径上全部节点在投影 inventory 中的 `feature:path-observation` v1 能力计算。
 - `meshHosts` 与精确发现同一谓词：本节点自身及 `mesh_access_allows_any(self, T)` 的已登记活动节点；`magicDNS` 关闭时为空。
-- `egress.generation`（即决定的 `selection`）＝digest(网络、节点、有效方案、持久选择版本、routing.egress、生效规则所用集合的 digest)。与节点持有哪些 artifact 无关。**不含 revision**：无关配置变更不改变它，也不结束出口连接；任何选择切换（含切回）都会改变选择版本。出口节点从自己的投影重算源端 selection。`ExitRole.generation` 同样不含 revision。
+- `egress.generation`（即决定的 `selection`）＝digest(网络、节点、有效方案、有效方案为 `auto` 时的解析结果（方案、basis、地区）、持久选择版本、routing.egress、生效规则所用集合的 digest)。与节点持有哪些 artifact 无关。**不含 revision**：无关配置变更不改变它，也不结束出口连接；任何选择切换（含切回）都会改变选择版本；`auto` 解析结果的变化（如源节点 `region` 改变）也改变它（[自动方案](/v2/configuration-reference/routing#auto)）。出口节点从自己的投影重算源端 selection。`ExitRole.generation` 同样不含 revision。
 
 ### 规则集 artifact {#rule-set-artifacts}
 

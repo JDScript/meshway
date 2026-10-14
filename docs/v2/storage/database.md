@@ -237,9 +237,9 @@ tags 是本次接入输入，注册后当前身份只来自 Configuration。模�
 | --- | --- |
 | `sequence`／`id` | 内部提交顺序和公开 ActivityId |
 | `scope`／`account_user_id`／`network_id` | account 或 network 作用域 |
-| `at`／`actor_kind`／`actor_user_id`／`actor_node_id`／`actor_email` | 完成时间与真实 user／node／system 主体，邮箱为历史快照；node 主体只用于 routing.select |
+| `at`／`actor_kind`／`actor_user_id`／`actor_node_id`／`actor_email` | 完成时间与真实 user／node／system 主体，邮箱为历史快照；node 主体只用于 routing.select；`routing.autoResolve` 的主体为 system |
 | `action` | 固定管理动作枚举 |
-| `target_user_id`／`target_session_id`／`target_membership_id`／`target_join_link_id`／`target_node_id`＋`target_profile` | 按动作约束的目标关联；后两者只且必须用于 routing.select，用户提交的 routing.select 以 (network, actor_user_id, request_id) 唯一索引作为重试记录 |
+| `target_user_id`／`target_session_id`／`target_membership_id`／`target_join_link_id`／`target_node_id`＋`target_profile` | 按动作约束的目标关联；后两者只且必须用于 routing.select 与 routing.autoResolve，用户提交的 routing.select 以 (network, actor_user_id, request_id) 唯一索引作为重试记录 |
 | `before_revision`／`after_revision`／`request_id` | 配置变更与请求关联 |
 | `previous_email` | 仅 account.email 允许非空：修改前的地址快照 |
 
