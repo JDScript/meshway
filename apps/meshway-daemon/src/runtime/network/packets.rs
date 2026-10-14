@@ -350,6 +350,8 @@ impl Packets {
                 std::task::Poll::Ready(Err(_)) => self.drop_packet("exit_reply_expired"),
             }
         }
+        let ended = secure.take_exit_closes();
+        self.closes(ended);
         let mut closes = std::mem::take(&mut self.closes);
         self.flush_sends(manager, &mut closes).await;
         for keepalive in secure.keepalives(pool.available().min(MAX_SENDS)) {

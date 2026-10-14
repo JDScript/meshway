@@ -717,7 +717,14 @@ pub struct SecureNode {
     cancellation: CancellationToken,
     first: netmap::FirstPackets,
     mtu: mtu::PathMtu,
+    /// Closes owed toward the origins of exit ciphers this terminal ended
+    /// with their last flow; at most [`MAX_EXIT_CLOSES`].
+    exit_closes: Vec<PendingFrame>,
 }
+
+/// Exit-cipher Closes held for the host's next send turn. Beyond this the
+/// origin ends its circuit by its own reply timeout.
+const MAX_EXIT_CLOSES: usize = 64;
 
 #[derive(Clone, Copy)]
 struct OutputOwner<'a> {
@@ -821,6 +828,7 @@ impl SecureNode {
             cancellation: CancellationToken::new(),
             first: Default::default(),
             mtu: Default::default(),
+            exit_closes: Vec::new(),
         };
         node.set_carriers(carriers)?;
         Ok(node)

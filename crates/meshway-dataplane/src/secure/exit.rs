@@ -34,7 +34,8 @@ impl SecureNode {
         if !self.engine.flows.has_exit_work() {
             return;
         }
-        let reading = View::of(&self.desired);
+        let desired = self.desired.clone();
+        let reading = View::of(&desired);
         self.engine.flows.expire(reading.instant, reading.now_ms);
         for id in self.engine.flows.retired_exit_circuits() {
             // Several tuples may share one admitted cipher. The retired flow's
@@ -43,10 +44,26 @@ impl SecureNode {
                 continue;
             }
             if let Some(mut circuit) = self.circuits.remove(&id) {
+                // The origin still holds its end: tell it at once, so its next
+                // packet opens a new cipher instead of waiting for its reply
+                // timeout on one this terminal no longer has.
+                if circuit.context.path.last() == Some(&reading.node())
+                    && self.exit_closes.len() < super::MAX_EXIT_CLOSES
+                    && let Some(previous) = Self::neighbour(&circuit, true, reading.node())
+                    && let Some(close) = self.close_output(&circuit, previous, true, &reading)
+                {
+                    self.exit_closes.push(close);
+                }
                 circuit.retire_for("exit", "flow_retired");
                 self.bury(id, &circuit, crate::authority::now_ms());
             }
         }
+    }
+
+    /// Closes toward the origins of exit ciphers that ended with their last
+    /// flow, for the host to send with its other frames.
+    pub fn take_exit_closes(&mut self) -> Vec<PendingFrame> {
+        std::mem::take(&mut self.exit_closes)
     }
 
     /// Explicit suspend/replacement hook: invalidate flow guards first, then
