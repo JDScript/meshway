@@ -2,7 +2,9 @@
 
 按合入 main 的顺序记录工作包、提交与证据 ID。规则见[工程流程](/v2/process)；性能数字的口径见[分层性能测量](/v2/node/performance)，验收状态见[验收范围](/v2/node/validation)。
 
-## 未发布
+## v0.1.0-alpha.9
+
+范围：wire 6、IPC 12、`compilerVersion` `meshway-netmap-3`、Server schema 8（无迁移，开发环境重新初始化数据目录、节点重新接入；须先升级 Node（CLI 与 daemon 一起）再升级 Server）。AUTO-1：`auto` 方案按管理员声明的 `nodes.<id>.region` 解析（解析结果计入 `egress.generation`，`routing.autoResolve` 活动，`meshway exit` 显示解析结果）；H1：出口投影按轮安装、`meshway status` 的 `idlePath`、listener 退役时释放待接管 socket、Server 测试离线；以及下列 AUTO-1、H1 工作包。
 
 `auto` 方案按地区选择第一版（AUTO-1，`auto1/region-profile`）：wire 6 不变；`compilerVersion` 升为 `meshway-netmap-3`；IPC 升为 12；Server schema 版本 8（`activity_events` 允许 `routing.autoResolve`；开发环境重新初始化数据目录）。HTTP 契约：`NodeSettings`／`NodeSettingsInput`／`NodeSettingsView` 新增可省略的 `region`，`NodeSettingsPatch.region`（null 清除）；`AutoResolution` 新增必有的 `region`（可为 null），`AutoBasis` 新增 `label`、`noRuleMatched`；`ActivityAction` 新增 `routing.autoResolve`；`IssueCode` 新增警告 `auto_region_unmatched`、`auto_region_missing`，`invalid_country_code` 另用于 `/nodes/<id>/region`。升级顺序：先升级 Node（CLI 与 daemon 一起）再升级 Server——旧 Node 对 `meshway-netmap-3` 的 netmap 验证失败而拒收并报告，新 Node 把缓存的 `-2` netmap 视为过时并重取。
 
