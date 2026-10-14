@@ -6,6 +6,7 @@ import json
 import shutil
 import subprocess
 import time
+import types
 import uuid
 
 from node_lab import ROOT, run, sha256
@@ -216,7 +217,7 @@ def execute(report, artifacts, runtime_os, platform, short, load):
                 "traversal": "exit", "dnsBackend": "off", "runtimeOsAssets": runtime_os,
                 "loadBeforeRuntime": load, "resources": {"containers": containers, "networks": networks},
                 "productStatus": "running", "cleanup": {}, "processes": {},
-                "stages": {str(n): {"status": "notRun"} for n in range(1, 14)}}
+                "stages": {str(n): {"status": "notRun"} for n in range(1, 15)}}
     metadata = report / "report.json"
     started = time.monotonic()
     failure = None
@@ -329,6 +330,9 @@ def execute(report, artifacts, runtime_os, platform, short, load):
         spec = importlib.util.spec_from_file_location("meshway_exit_ping", ROOT / "dev/exit-fixture/ping.py")
         pinging = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(pinging)
+        spec = importlib.util.spec_from_file_location("meshway_exit_auto", ROOT / "dev/exit-fixture/auto.py")
+        auto = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(auto)
         save()
         for role in ROLES:
             (report / role).mkdir(exist_ok=True)
@@ -995,6 +999,22 @@ def execute(report, artifacts, runtime_os, platform, short, load):
         write(report / "profile-switch.json", switch)
         manifest["stages"]["11"] = {"status": "passed", "evidence": ["profile-switch.json", "profile-alternative.json", "profile-global.json", "profile-mesh.json",
                                                                     "a/exit-view.txt", "a/exit-off.txt"]}
+
+        # `auto` by A's declared region (phase 14): dev/exit-fixture/auto.py.
+        manifest["status"] = "auto-profile"
+        save()
+
+        def start_on_a(program, *arguments):
+            owned("container", containers["a"])
+            subprocess.run(["docker", "exec", "-d", containers["a"], "python3", "-c", program, *arguments],
+                           check=True, timeout=15, close_fds=True)
+        auto.run(types.SimpleNamespace(
+            command=command, stage_config=stage_config, exit_cli=exit_cli, wait_for=wait_for,
+            applied=applied_profile, lookup=lookup, connect=connect, by_name=by_name,
+            visits=lambda: len(visits_from(e_peer)), capture=a_capture, managed=managed, start=start_on_a,
+            write=write, report=report, target=target, tag=dns_tag,
+            zone=exit_zone.replace("exit-dns.test", "name.exit-dns.test")))
+        manifest["stages"]["14"] = {"status": "passed", "evidence": ["auto-profile.json"]}
 
         manifest["status"] = "traffic"
         save()

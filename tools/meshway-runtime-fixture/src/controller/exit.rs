@@ -407,6 +407,72 @@ pub(super) async fn coordinate(
         rule.dst
             .retain(|destination| !destination.starts_with("domain:"));
     }
+    // Auto stage (phase 14): `exit` and `exit-alt` send the name zone to E
+    // via R with a direct fallback, so an address leaves through E only by
+    // a live association; `auto` maps A's declared region to one of them.
+    let mut auto = original_input.clone();
+    for name in ["exit", "exit-alt"] {
+        let profile = auto
+            .routing
+            .egress
+            .profiles
+            .get_mut(name)
+            .ok_or("missing auto target profile")?;
+        profile.rules.push(meshway_configuration::EgressRule {
+            remark: "names through E by a trusted association".into(),
+            matcher: meshway_configuration::RouteMatch {
+                domain_suffix: vec![name_zone.clone()],
+                ..Default::default()
+            },
+            action: meshway_configuration::RuleAction::Exit {
+                nodes: vec![format!("node:{}", nodes["e"])],
+                via: vec![format!("node:{}", nodes["r"])],
+            },
+        });
+        profile.fallback = RouteAction::Direct;
+    }
+    auto.routing.egress.auto = Input::Value(meshway_configuration::AutoProfile {
+        rules: vec![
+            meshway_configuration::CountryProfile {
+                countries: vec!["US".into()],
+                profile: "exit".into(),
+            },
+            meshway_configuration::CountryProfile {
+                countries: vec!["JP".into()],
+                profile: "exit-alt".into(),
+            },
+        ],
+        fallback: "mesh".into(),
+    });
+    let assignment = auto
+        .routing
+        .egress
+        .assignments
+        .first_mut()
+        .ok_or("missing A's assignment")?;
+    assignment.allowed.push("auto".into());
+    assignment.default = "auto".into();
+    let regional = |region: &str| -> Result<NetworkConfigurationInput> {
+        let mut input = auto.clone();
+        input.nodes.get_mut(&nodes["a"]).ok_or("missing A")?.region = Some(region.into());
+        Ok(input)
+    };
+    let auto_steps = [
+        (
+            "exit-auto-configure",
+            "exit-auto-configured.json",
+            auto.clone(),
+        ),
+        ("exit-auto-us", "exit-auto-us.json", regional("US")?),
+        ("exit-auto-jp", "exit-auto-jp.json", regional("JP")?),
+        ("exit-auto-fr", "exit-auto-fr.json", regional("FR")?),
+        (
+            "exit-auto-restore",
+            "exit-auto-restored.json",
+            original_input.clone(),
+        ),
+    ];
+    let mut auto_stage = 0;
     let mut name_stage = 0;
     let mut outage = false;
     let mut reopened = false;
@@ -453,6 +519,36 @@ pub(super) async fn coordinate(
                 write(&cli.signals.join(done), &revision).await?;
                 name_stage += 1;
             }
+        }
+        if let Some((signal, done, target)) = auto_steps.get(auto_stage)
+            && tokio::fs::try_exists(cli.signals.join(signal)).await?
+        {
+            let current = source(&client, network, token).await?;
+            let revision = apply(&client, network, token, current.revision, target).await?;
+            write(&cli.signals.join(done), &revision).await?;
+            auto_stage += 1;
+        }
+        if auto_stage > 0 {
+            // Every resolution change is one Server-actor activity.
+            let resolved: Vec<_> = client
+                .list_network_activity(
+                    &meshway_control_client::ListNetworkActivityPath {
+                        network_id: network,
+                    },
+                    &meshway_control_client::ListNetworkActivityQuery {
+                        cursor: None,
+                        limit: Some(100),
+                    },
+                    token,
+                )
+                .await?
+                .items
+                .into_iter()
+                .filter(|event| {
+                    event.action == meshway_protocol::history::ActivityAction::RoutingAutoResolve
+                })
+                .collect();
+            write(&cli.evidence.join("auto-activities.json"), &resolved).await?;
         }
         if !outage && tokio::fs::try_exists(cli.signals.join("exit-http-close")).await? {
             ready(cli, "exit-http-hold").await?;

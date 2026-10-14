@@ -8,6 +8,9 @@ spec.loader.exec_module(evidence)
 spec = importlib.util.spec_from_file_location("exit_ping", Path(__file__).resolve().parents[1] / "dev/exit-fixture/ping.py")
 pinging = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(pinging)
+spec = importlib.util.spec_from_file_location("exit_auto", Path(__file__).resolve().parents[1] / "dev/exit-fixture/auto.py")
+auto = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(auto)
 
 
 class ExitEvidenceTests(unittest.TestCase):
@@ -21,7 +24,7 @@ class ExitEvidenceTests(unittest.TestCase):
                 evidence.nat_tuple(invalid, "udp", "100.64.0.1:40000", "11.77.2.3:8080", "11.77.2.2")
 
     def test_component_or_partial_pass_cannot_promote_row(self):
-        report = {"stages": {str(i): {"status": "passed"} for i in range(1, 14)},
+        report = {"stages": {str(i): {"status": "passed"} for i in range(1, 15)},
                   "dnsNoSourceFallback": {"passed": True},
                   "processes": {role: {"ExitCode": 0, "Running": False, "OOMKilled": False}
                                 for role in ("controller", "a", "r", "e", "external", "lan", "resolver", "router")}}
@@ -42,7 +45,7 @@ class ExitEvidenceTests(unittest.TestCase):
         self.assertFalse(evidence.all_stages_passed(report))
 
     def test_component_or_partial_pass_cannot_promote_row_without_the_ping_phase(self):
-        report = {"stages": {str(i): {"status": "passed"} for i in range(1, 14)},
+        report = {"stages": {str(i): {"status": "passed"} for i in range(1, 15)},
                   "processes": {}}
         del report["stages"]["13"]
         self.assertFalse(evidence.all_stages_passed(report))
@@ -108,6 +111,22 @@ class ExitPingTests(unittest.TestCase):
         for broken in (record(denied, code=0), record([denied[0], reply("11.77.0.3", []), denied[1]], code=1)):
             with self.assertRaises(RuntimeError):
                 pinging.denied_ping(broken)
+
+
+class ExitAutoTests(unittest.TestCase):
+    def test_resolution_is_read_only_while_auto_applies(self):
+        state = {"appliedProfile": "auto", "auto": {"profile": "exit", "basis": "label", "region": "US"}}
+        self.assertEqual(auto.resolution(state), ("exit", "label", "US"))
+        self.assertIsNone(auto.resolution({"appliedProfile": "exit", "auto": None}))
+
+    def test_a_switch_ends_every_flow_and_needs_probes_on_both_sides(self):
+        flow = {"tcp": [[1, True], [2, True], [9, False]], "udp": [[1, True], [2, True], [9, False]]}
+        self.assertTrue(auto.ended_at_switch(flow, 4, 6))
+        # A probe while the switch commits may go either way.
+        self.assertTrue(auto.ended_at_switch({**flow, "tcp": [[1, True], [5, True], [9, False]]}, 4, 6))
+        self.assertFalse(auto.ended_at_switch({**flow, "udp": [[1, True], [9, True]]}, 4, 6))
+        self.assertFalse(auto.ended_at_switch({**flow, "tcp": [[1, False], [9, False]]}, 4, 6))
+        self.assertFalse(auto.ended_at_switch({**flow, "tcp": [[1, True]]}, 4, 6))
 
 
 if __name__ == "__main__":
