@@ -6,6 +6,7 @@
 
 mod netmap_diagnostic;
 mod netmap_exit;
+mod netmap_exit_close;
 mod netmap_flow;
 mod netmap_lifecycle;
 mod netmap_mtu;

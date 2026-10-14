@@ -11,7 +11,7 @@ use meshway_dataplane::{
 };
 use std::time::Duration;
 
-async fn fixture(validity_ms: u64, exit: Limits, idle: Duration) -> NetmapMesh {
+pub(super) async fn fixture(validity_ms: u64, exit: Limits, idle: Duration) -> NetmapMesh {
     let mut f = NetmapMesh::with(validity_ms, |_, _| {}).await;
     f.rebuild(
         meshway_dataplane::secure::Limits {
@@ -30,16 +30,16 @@ async fn standard() -> NetmapMesh {
     fixture(DAY_MS, Default::default(), Duration::from_secs(60)).await
 }
 
-async fn handshake(f: &mut NetmapMesh) -> [u8; 32] {
+pub(super) async fn handshake(f: &mut NetmapMesh) -> [u8; 32] {
     let target = f.exit_target();
     f.handshake(target).await
 }
 
-fn udp(f: &NetmapMesh, reply: bool, port: u16) -> Packet {
+pub(super) fn udp(f: &NetmapMesh, reply: bool, port: u16) -> Packet {
     f.exit_udp(reply, port)
 }
 
-fn forward(f: &mut NetmapMesh, id: [u8; 32], packet: Packet) -> PendingAction {
+pub(super) fn forward(f: &mut NetmapMesh, id: [u8; 32], packet: Packet) -> PendingAction {
     let first =
         f.a.send(id, packet)
             .unwrap()
@@ -75,7 +75,7 @@ fn rejected_forward(f: &mut NetmapMesh, id: [u8; 32], port: u16) {
 }
 
 /// Reverse-NAT input at B back to A, completing an activity Renew if one is due.
-fn deliver_reply(f: &mut NetmapMesh, id: [u8; 32], packet: Packet) {
+pub(super) fn deliver_reply(f: &mut NetmapMesh, id: [u8; 32], packet: Packet) {
     let expected = packet.as_bytes().to_vec();
     let reply = f.b.exit_reply(ExitReplyIngress::new(packet)).unwrap();
     if let Some(event) = f.b.next_exit_projection() {
@@ -785,59 +785,5 @@ async fn netmap_exit_echo_diagnostic_measures_the_exit_reply_and_maps_errors_to_
             false
         )
     );
-    f.close().await;
-}
-
-#[tokio::test]
-async fn netmap_exit_cipher_ending_with_its_last_flow_closes_toward_the_origin() {
-    let mut f = fixture(DAY_MS, Default::default(), Duration::from_secs(1)).await;
-    let [a, r, _] = f.ids();
-    let id = handshake(&mut f).await;
-    let input = udp(&f, false, 41000);
-    let first = forward(&mut f, id, input);
-    let ExitProjection::Install { scope, ack, .. } = f.b.next_exit_projection().unwrap() else {
-        panic!("install")
-    };
-    ack.complete(true).unwrap();
-    first.release(|_| ()).unwrap();
-    let reply = udp(&f, true, 41000);
-    deliver_reply(&mut f, id, reply);
-    assert!(f.b.take_exit_closes().is_empty());
-    // The last flow idles out: the exit ends the cipher and owes the origin
-    // a Close, relayed by R, so A's next packet opens a new cipher at once.
-    tokio::time::sleep_until((scope.deadline() + Duration::from_millis(10)).into()).await;
-    assert!(matches!(
-        f.b.next_exit_projection(),
-        Some(ExitProjection::Retire { .. })
-    ));
-    let mut closes = f.b.take_exit_closes();
-    assert_eq!(closes.len(), 1);
-    let close = closes.remove(0);
-    assert_eq!((close.next(), close.circuit()), (r, id));
-    let Received::Forward(relayed) =
-        f.r.receive(&f.rb.carrier, super::netmap_flow::wire(close))
-            .unwrap()
-    else {
-        panic!("relayed Close")
-    };
-    assert_eq!(relayed.next(), a);
-    assert!(
-        f.r.circuit_info(id).unwrap().is_none(),
-        "the relay ended it"
-    );
-    // A ends its own end with its last flow too (here at the same instant);
-    // with a later last flow the relayed Close ends it, as for a restarted
-    // terminal. A live origin circuit closes on it.
-    match f
-        .a
-        .receive(&f.ar.carrier, super::netmap_flow::wire(relayed))
-    {
-        Ok(Received::Closed { circuit }) => assert_eq!(circuit, id),
-        Ok(_) => panic!("a Close only closes"),
-        Err(_) => assert!(f.a.circuit_info(id).unwrap().is_none()),
-    }
-    // The next exit cipher is a new one.
-    let again = handshake(&mut f).await;
-    assert_ne!(again, id);
     f.close().await;
 }
