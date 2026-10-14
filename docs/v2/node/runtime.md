@@ -80,7 +80,7 @@ Linux `Host::exit_probe` 在打开 Host 前执行，独占本进程的 Host 预�
 
 已打开的 Host 使用 `probe_exit(&mut self, instance: InstanceId, netmap: NetmapRef, role_generation: Digest) -> ExitCapability`。它使用真实、处于 up 状态的外部接口，排除所属 Mesh／出口 TUN 和 DNS 锚点；临时设备的精确 index 注册到同一 monitor，创建／删除不会制造外部切网事件。探测检查实际 TUN 权限、转发／反向路径条件、完整 IPv4 nft 程序和 ctnetlink 读取；排除经 owner 回读确认的自有表后，可能挡住出口流量的宿主规则返回 `firewallConflict`，未知 mark 修改／offload 返回 `ownershipConflict`，不改写宿主规则。
 
-宿主规则只在**能匹配出口流量**时冲突。判定（`exit/firewall.rs` 的唯一实现）对 `ip`／`inet` 族的 nft 规则和已加载 legacy iptables 表的内容做同一遍历，考察的包为：从出口 TUN 进入与从出口接口进入的回包（prerouting 钩子，含 raw／mangle／nat 等各优先级）、经出口 TUN 转发到出口接口及其回包（forward、postrouting 钩子；出口接口为主路由表中通往 Internet 分类地址的 IPv4 路由的接口，即默认路由与直连公网网段，只通往私网的路由如 Docker 网桥不在内）、本机发往出口 TUN 的 ICMP 错误（output 钩子）。安装前的探测把出口 TUN 视为新建的内核 `tun<N>`（名字不同于任何现有接口）；已安装角色的周期探测按实际出口 TUN 名精确匹配。
+宿主规则只在**能匹配出口流量**时冲突。判定（`exit/firewall/` 的唯一实现）对 `ip`／`inet` 族的 nft 规则和已加载 legacy iptables 表的内容做同一遍历，考察的包为：从出口 TUN 进入与从出口接口进入的回包（prerouting 钩子，含 raw／mangle／nat 等各优先级）、经出口 TUN 转发到出口接口及其回包（forward、postrouting 钩子；出口接口为主路由表中通往 Internet 分类地址的 IPv4 路由的接口，即默认路由与直连公网网段，只通往私网的路由如 Docker 网桥不在内）、本机发往出口 TUN 的 ICMP 错误（output 钩子）。安装前的探测把出口 TUN 视为新建的内核 `tun<N>`（名字不同于任何现有接口）；已安装角色的周期探测按实际出口 TUN 名精确匹配。
 
 | 规则 | 判定 |
 | --- | --- |
