@@ -154,12 +154,15 @@ async fn executable_serves_and_gracefully_releases_storage_on_both_signals() {
         ] {
             assert!(!errors.contains(secret));
         }
-        App::open(Settings::new(&path))
-            .await
-            .unwrap()
-            .shutdown()
-            .await
-            .unwrap();
+        App::open_with_connector(
+            Settings::new(&path),
+            std::sync::Arc::new(meshway_server::resources::download::Offline),
+        )
+        .await
+        .unwrap()
+        .shutdown()
+        .await
+        .unwrap();
     }
 }
 
@@ -292,12 +295,15 @@ async fn open_event_streams_do_not_block_signal_shutdown_or_storage_release() {
         assert!(!errors.contains("valid shutdown test password"));
         assert!(!errors.contains("shutdown@example.test"));
         drop(events);
-        App::open(Settings::new(&path))
-            .await
-            .unwrap()
-            .shutdown()
-            .await
-            .unwrap();
+        App::open_with_connector(
+            Settings::new(&path),
+            std::sync::Arc::new(meshway_server::resources::download::Offline),
+        )
+        .await
+        .unwrap()
+        .shutdown()
+        .await
+        .unwrap();
     }
 }
 
@@ -322,12 +328,15 @@ async fn bind_failure_and_invalid_storage_exit_without_taking_over_another_insta
             && event["fields"]["error"] == "Server listen failed.")
     );
     assert!(output.stdout.is_empty());
-    App::open(Settings::new(&path))
-        .await
-        .unwrap()
-        .shutdown()
-        .await
-        .unwrap();
+    App::open_with_connector(
+        Settings::new(&path),
+        std::sync::Arc::new(meshway_server::resources::download::Offline),
+    )
+    .await
+    .unwrap()
+    .shutdown()
+    .await
+    .unwrap();
 
     let output = command(Path::new("relative-sensitive-path"))
         .output()

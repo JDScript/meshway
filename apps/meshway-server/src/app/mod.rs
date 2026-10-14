@@ -117,6 +117,18 @@ impl App {
     pub async fn open(settings: Settings) -> Result<Self, AppError> {
         Self::open_with_downloads(settings, crate::resources::downloads::Downloads::new()).await
     }
+    /// [`Self::open`] with another connection boundary for external resource
+    /// sources, e.g. [`crate::resources::download::Offline`].
+    pub async fn open_with_connector(
+        settings: Settings,
+        connector: Arc<dyn crate::resources::download::Connector>,
+    ) -> Result<Self, AppError> {
+        Self::open_with_downloads(
+            settings,
+            crate::resources::downloads::Downloads::with_connector(connector),
+        )
+        .await
+    }
     async fn open_with_downloads(
         settings: Settings,
         downloads: Arc<crate::resources::downloads::Downloads>,

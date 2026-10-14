@@ -29,7 +29,12 @@ impl Server {
         Self::start_with(settings).await
     }
     async fn start_with(settings: Settings) -> Self {
-        let app = App::open(settings).await.expect("open real SQLite");
+        let app = App::open_with_connector(
+            settings,
+            std::sync::Arc::new(meshway_server::resources::download::Offline),
+        )
+        .await
+        .expect("open real SQLite");
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         let router = http::router(&app);

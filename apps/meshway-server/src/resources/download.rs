@@ -3,9 +3,12 @@
 use meshway_protocol::resources::ResourceProblem;
 use std::{future::Future, net::SocketAddr, pin::Pin, time::Duration};
 
-pub(crate) type ResolveFuture<'a> =
+pub type ResolveFuture<'a> =
     Pin<Box<dyn Future<Output = Result<Vec<SocketAddr>, ResourceProblem>> + Send + 'a>>;
-pub(crate) trait Connector: Send + Sync {
+/// How the App reaches external resource sources (provider catalogs, rule
+/// sets): the one connection boundary [`crate::App::open_with_connector`]
+/// assembles.
+pub trait Connector: Send + Sync {
     fn resolve<'a>(&'a self, host: &'a str, port: u16) -> ResolveFuture<'a>;
     fn client(
         &self,
@@ -13,7 +16,8 @@ pub(crate) trait Connector: Send + Sync {
         addresses: &[SocketAddr],
     ) -> Result<reqwest::Client, ResourceProblem>;
 }
-pub(crate) struct Https;
+/// System DNS and HTTPS: what [`crate::App::open`] uses.
+pub struct Https;
 impl Connector for Https {
     fn resolve<'a>(&'a self, host: &'a str, port: u16) -> ResolveFuture<'a> {
         Box::pin(async move {
@@ -33,10 +37,9 @@ impl Connector for Https {
             .map_err(|_| ResourceProblem::DownloadFailed)
     }
 }
-/// A connection boundary that resolves nothing: every download fails.
-#[cfg(test)]
-pub(crate) struct Offline;
-#[cfg(test)]
+/// A connection boundary that resolves nothing: every download fails
+/// without a request leaving the host.
+pub struct Offline;
 impl Connector for Offline {
     fn resolve<'a>(&'a self, _: &'a str, _: u16) -> ResolveFuture<'a> {
         Box::pin(async { Err(ResourceProblem::DownloadFailed) })

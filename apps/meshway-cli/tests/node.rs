@@ -73,7 +73,12 @@ async fn real_cli_enrollment(console_origin: Option<&str>, key_stdin: Option<boo
     let mut server_settings = meshway_server::Settings::new(root.join("server"));
     server_settings.console_origin =
         console_origin.map(|origin| meshway_server::console_origin(origin).unwrap());
-    let server = meshway_server::App::open(server_settings).await.unwrap();
+    let server = meshway_server::App::open_with_connector(
+        server_settings,
+        std::sync::Arc::new(meshway_server::resources::download::Offline),
+    )
+    .await
+    .unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let origin = format!("http://{}", listener.local_addr().unwrap());
     let router = meshway_server::http::router(&server);

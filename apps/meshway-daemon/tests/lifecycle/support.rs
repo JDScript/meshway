@@ -86,7 +86,12 @@ impl Server {
         }
         let mut settings = Settings::new(path);
         settings.console_origin = Some(meshway_server::console_origin(console_origin).unwrap());
-        let app = App::open(settings).await.unwrap();
+        let app = App::open_with_connector(
+            settings,
+            std::sync::Arc::new(meshway_server::resources::download::Offline),
+        )
+        .await
+        .unwrap();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let origin = format!("http://{}", listener.local_addr().unwrap());
         let router = meshway_server::http::router(&app);

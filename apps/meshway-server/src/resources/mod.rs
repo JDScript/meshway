@@ -7,7 +7,7 @@ pub(crate) mod bindings;
 pub(crate) mod browse;
 pub(crate) mod catalogs;
 pub mod datasets;
-pub(crate) mod download;
+pub mod download;
 pub(crate) mod downloads;
 mod geoip;
 pub mod provider;

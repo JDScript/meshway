@@ -45,9 +45,10 @@ impl Server {
         Self::open(temp).await
     }
     async fn open(temp: tempfile::TempDir) -> Self {
-        let app = App::open(Settings::new(
-            temp.path().canonicalize().unwrap().join("data"),
-        ))
+        let app = App::open_with_connector(
+            Settings::new(temp.path().canonicalize().unwrap().join("data")),
+            std::sync::Arc::new(meshway_server::resources::download::Offline),
+        )
         .await
         .unwrap();
         let router = meshway_server::http::router(&app);

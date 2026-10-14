@@ -14,9 +14,12 @@ async fn live_tun_owner_conflict_retries_and_recovers_without_new_up() {
     );
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().canonicalize().unwrap();
-    let app = meshway_server::App::open(meshway_server::Settings::new(root.join("server")))
-        .await
-        .unwrap();
+    let app = meshway_server::App::open_with_connector(
+        meshway_server::Settings::new(root.join("server")),
+        std::sync::Arc::new(meshway_server::resources::download::Offline),
+    )
+    .await
+    .unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let origin = format!("http://{}", listener.local_addr().unwrap());
     let (stop, stopped) = tokio::sync::oneshot::channel();

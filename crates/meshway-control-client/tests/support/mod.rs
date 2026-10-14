@@ -34,7 +34,12 @@ pub async fn controller(registration: bool) -> (App, Client, Server, tempfile::T
         .unwrap();
     let mut settings = Settings::new(directory.path().canonicalize().unwrap().join("instance"));
     settings.registration_enabled = registration;
-    let app = App::open(settings).await.unwrap();
+    let app = App::open_with_connector(
+        settings,
+        std::sync::Arc::new(meshway_server::resources::download::Offline),
+    )
+    .await
+    .unwrap();
     let (client, server) = serve(http::router(&app), 1024 * 1024).await;
     (app, client, server, directory)
 }

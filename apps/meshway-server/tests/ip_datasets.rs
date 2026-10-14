@@ -123,7 +123,12 @@ async fn imported_datasets_survive_restart_and_answer_lookups() {
     }
 
     // A Server opening the storage loads both datasets before serving.
-    let app = App::open(Settings::new(&data)).await.unwrap();
+    let app = App::open_with_connector(
+        Settings::new(&data),
+        std::sync::Arc::new(meshway_server::resources::download::Offline),
+    )
+    .await
+    .unwrap();
     let status = app.ip_datasets().status().unwrap();
     assert!(status.geoip.is_some() && status.asn.is_some());
     assert!(installed.contains(&status.geoip.unwrap().to_string()));
@@ -155,7 +160,12 @@ async fn imported_datasets_survive_restart_and_answer_lookups() {
     assert_ne!(Some(again), status.geoip);
     assert_eq!(app.ip_datasets().status().unwrap().geoip, Some(again));
     app.shutdown().await.unwrap();
-    let app = App::open(Settings::new(&data)).await.unwrap();
+    let app = App::open_with_connector(
+        Settings::new(&data),
+        std::sync::Arc::new(meshway_server::resources::download::Offline),
+    )
+    .await
+    .unwrap();
     assert_eq!(app.ip_datasets().status().unwrap().geoip, Some(again));
     assert!(
         matches!(app.ip_datasets().lookup(documented.into()).unwrap().geoip,
@@ -169,7 +179,12 @@ async fn invalid_mmdb_coordinates_fail_the_lookup_without_poisoning_asn_or_wire_
     use meshway_model::resources::{IpInfo, UnavailableReason};
     let temp = tempfile::tempdir().unwrap();
     let data = temp.path().canonicalize().unwrap().join("data");
-    let app = App::open(Settings::new(&data)).await.unwrap();
+    let app = App::open_with_connector(
+        Settings::new(&data),
+        std::sync::Arc::new(meshway_server::resources::download::Offline),
+    )
+    .await
+    .unwrap();
     let prefix = Ipv4Addr::new(93, 184, 216, 0);
     let address = Ipv4Addr::new(93, 184, 216, 34);
     let asn_id = app

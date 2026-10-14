@@ -22,7 +22,12 @@ async fn public_account_lifecycle_and_input_contract() {
     let path = temp.path().canonicalize().unwrap().join("accounts");
     let mut settings = Settings::new(&path);
     settings.session_ttl = Duration::from_secs(90);
-    let app = App::open(settings).await.unwrap();
+    let app = App::open_with_connector(
+        settings,
+        std::sync::Arc::new(meshway_server::resources::download::Offline),
+    )
+    .await
+    .unwrap();
     let accounts = app.accounts();
     let options = accounts.options();
     assert!(options.registration_enabled);
@@ -158,7 +163,12 @@ async fn public_account_lifecycle_and_input_contract() {
     }
     let mut settings = Settings::new(&path);
     settings.registration_enabled = false;
-    let app = App::open(settings).await.unwrap();
+    let app = App::open_with_connector(
+        settings,
+        std::sync::Arc::new(meshway_server::resources::download::Offline),
+    )
+    .await
+    .unwrap();
     let accounts = app.accounts();
     assert!(!accounts.options().registration_enabled);
     assert!(matches!(
@@ -194,7 +204,11 @@ async fn ttl_limits_are_validated_before_filesystem_startup() {
         let mut settings = Settings::new(&path);
         settings.session_ttl = ttl;
         assert!(matches!(
-            App::open(settings).await,
+            App::open_with_connector(
+                settings,
+                std::sync::Arc::new(meshway_server::resources::download::Offline)
+            )
+            .await,
             Err(AppError::InvalidSettings)
         ));
         assert!(!path.exists());

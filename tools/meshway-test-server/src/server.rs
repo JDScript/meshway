@@ -113,7 +113,12 @@ impl TestServer {
         if let Some(hold) = options.hold {
             settings.netmap.hold = hold;
         }
-        let app = App::open(settings).await.expect("open Server");
+        let app = App::open_with_connector(
+            settings,
+            std::sync::Arc::new(meshway_server::resources::download::Offline),
+        )
+        .await
+        .expect("open Server");
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("Server listener");

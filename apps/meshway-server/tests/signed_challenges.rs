@@ -50,9 +50,10 @@ struct Fixture {
 impl Fixture {
     async fn open() -> Self {
         let directory = tempfile::tempdir().unwrap();
-        let app = App::open(Settings::new(
-            directory.path().canonicalize().unwrap().join("data"),
-        ))
+        let app = App::open_with_connector(
+            Settings::new(directory.path().canonicalize().unwrap().join("data")),
+            std::sync::Arc::new(meshway_server::resources::download::Offline),
+        )
         .await
         .unwrap();
         let owner = app
