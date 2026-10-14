@@ -27,9 +27,9 @@ pub use secret::EnrollmentKey;
 use serde::Serialize;
 use utoipa::ToSchema;
 pub use view::{
-    EndpointMapping, NetcheckObserver, NetcheckReport, NetcheckServer, NetcheckSizeProbe,
-    NetcheckSocket, NetcheckUnavailable, NodeSelf, PeerMtu, PeerRtt, PeerState, PeerStatus,
-    PortMapping, SocketStatus, StunMapping,
+    EndpointMapping, IdlePath, IdleRoute, NetcheckObserver, NetcheckReport, NetcheckServer,
+    NetcheckSizeProbe, NetcheckSocket, NetcheckUnavailable, NodeSelf, PeerMtu, PeerRtt, PeerState,
+    PeerStatus, PortMapping, SocketStatus, StunMapping,
 };
 
 pub const VERSION: u16 = 11;

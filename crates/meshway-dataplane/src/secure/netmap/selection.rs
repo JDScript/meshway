@@ -42,13 +42,34 @@ impl SecureNode {
             return Some((info.path, true));
         }
         let refs: Vec<&[NodeId]> = paths.iter().map(|path| path.nodes.as_slice()).collect();
-        let index = self.choice(&refs, reading).0.or_else(|| {
-            ranked(&refs, &self.carriers, &self.first.peer_channels)
+        let index = self.fresh_route(&refs, reading)?;
+        Some((refs[index].to_vec(), false))
+    }
+
+    /// The path a new circuit takes: [`Self::choose_path`]'s choice, else
+    /// the first ranked candidate (no next hop has a carrier yet).
+    fn fresh_route(&self, paths: &[&[NodeId]], reading: &View<'_>) -> Option<usize> {
+        self.choice(paths, reading).0.or_else(|| {
+            ranked(paths, &self.carriers, &self.first.peer_channels)
                 .0
                 .first()
                 .copied()
-        })?;
-        Some((refs[index].to_vec(), false))
+        })
+    }
+
+    /// The path a new circuit toward `peer` would take now, though none is
+    /// established ([`Self::fresh_route`] over the content's paths); `None`
+    /// when the content gives no path. Reporting only: no interest is
+    /// registered, and a circuit is still admitted and chosen per flow.
+    pub fn idle_route(&self, peer: NodeId) -> Option<Vec<NodeId>> {
+        let paths = self
+            .desired
+            .compiler()
+            .transit(self.desired.netmap().node_id, &Target::Mesh { node: peer })
+            .ok()?;
+        let refs: Vec<&[NodeId]> = paths.iter().map(|path| path.nodes.as_slice()).collect();
+        let index = self.fresh_route(&refs, &View::of(&self.desired))?;
+        Some(refs[index].to_vec())
     }
 
     /// The established circuit a new flow joins: the first in the candidate

@@ -78,6 +78,7 @@ fn relays_are_named_from_peers_and_the_first_hop_channel_is_labelled_as_such() {
         mtu: None,
         via: Vec::new(),
         rtt: None,
+        idle_path: None,
     };
     view.names(&[peer(R, "meshway-sha")], None);
     assert!(!view.wants_names(&event));
@@ -207,6 +208,7 @@ fn named(events: &[PingEvent]) -> String {
         mtu: None,
         via: Vec::new(),
         rtt: None,
+        idle_path: None,
     };
     assert!(view.wants_names(&events[0]));
     view.names(

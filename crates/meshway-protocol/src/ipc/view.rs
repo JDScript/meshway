@@ -51,6 +51,29 @@ meshway_model::object! {
     pub inner: u16,
 } }
 
+meshway_model::string_enum! {
+/// Which path a new circuit toward a peer would take.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum IdleRoute {
+    /// The direct path to the peer.
+    Direct,
+    /// A path through the Nodes in `via`.
+    Relay,
+    /// The installed content gives this Node no path to the peer.
+    None,
+}
+}
+
+meshway_model::object! {
+/// The path a new circuit toward a peer would take now, chosen as the first
+/// packet chooses it (same candidate order), though none is established.
+#[derive(Clone, Debug, PartialEq, Eq)] pub struct IdlePath {
+    pub route: IdleRoute,
+    /// Ordered intermediate Nodes of a relayed path; empty otherwise.
+    pub via: Vec<NodeId>,
+} }
+
 meshway_model::object! {
 /// One visible peer of the installed netmap.
 #[derive(Clone, Debug, PartialEq, Eq)] pub struct PeerStatus {
@@ -74,6 +97,10 @@ meshway_model::object! {
     /// Null when no successful measurement toward the peer is known.
     #[serde(deserialize_with = "meshway_model::wire::required_nullable")]
     pub rtt: Option<PeerRtt> [required = true],
+    /// The path a new circuit would take while the peer has no selected
+    /// channel and no established circuit; omitted otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub idle_path: Option<IdlePath>,
 } }
 
 meshway_model::string_enum! {

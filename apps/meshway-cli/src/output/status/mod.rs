@@ -3,7 +3,7 @@ use super::format::{ago, left, millis, words};
 use super::table::{Cell, Table};
 use super::term::{Role, Term, pad};
 use chrono::{DateTime, Utc};
-use meshway_protocol::ipc::{DataPlane, PeerState, Phase, Status, SyncState};
+use meshway_protocol::ipc::{DataPlane, IdleRoute, PeerState, Phase, Status, SyncState};
 use std::io::{self, Write};
 
 fn phase_role(phase: Phase) -> Role {
@@ -297,15 +297,26 @@ fn peers(output: &mut impl Write, term: &Term, status: &Status) -> io::Result<()
             PeerState::Unreachable => ("unreachable", Role::Warn),
             PeerState::Offline => ("offline", Role::Bad),
         };
-        let endpoint = match peer.state {
-            PeerState::Relay | PeerState::RelayIdle => format!(
+        let via = |via: &[meshway_model::NodeId]| {
+            format!(
                 "via {}",
-                peer.via.iter().map(name).collect::<Vec<_>>().join(" → ")
-            ),
-            _ => peer
+                via.iter().map(name).collect::<Vec<_>>().join(" → ")
+            )
+        };
+        // Without a channel or circuit: the path a new circuit would take.
+        let endpoint = match (&peer.state, &peer.idle_path) {
+            (PeerState::Direct, _) => peer
                 .endpoint
                 .map(|endpoint| endpoint.to_string())
                 .unwrap_or_default(),
+            (PeerState::Relay, _) => via(&peer.via),
+            (_, Some(idle)) => match idle.route {
+                IdleRoute::Direct => "direct (idle)".to_owned(),
+                IdleRoute::Relay => format!("relay (idle) {}", via(&idle.via)),
+                IdleRoute::None => "no path".to_owned(),
+            },
+            (PeerState::RelayIdle, None) => via(&peer.via),
+            _ => String::new(),
         };
         table.row(vec![
             Cell::new(&peer.hostname),

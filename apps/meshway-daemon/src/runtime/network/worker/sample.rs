@@ -41,6 +41,7 @@ fn sample(
     report.circuits.clear();
     report.routes.clear();
     report.relays.clear();
+    report.idle_paths.clear();
     report.rtts = diagnostics.rtts().clone();
     report.facts_observed_at = chrono::Utc::now();
     if let Some(state) = installed
@@ -137,6 +138,23 @@ fn sample(
                 {
                     report.relays.insert(*peer, path);
                 }
+            }
+        }
+        // Every visible peer without a channel or circuit: the netmap bounds them.
+        let netmap = state.desired.netmap();
+        let linked = |peer: &meshway_model::NodeId| {
+            report
+                .facts
+                .as_ref()
+                .is_some_and(|facts| facts.links.iter().any(|link| link.peer == *peer))
+        };
+        for peer in netmap.projection.configuration.nodes.keys() {
+            if *peer != netmap.node_id
+                && netmap.projection.inventory.contains_key(peer)
+                && !linked(peer)
+                && !report.routes.contains_key(peer)
+            {
+                report.idle_paths.insert(*peer, secure.idle_route(*peer));
             }
         }
     }

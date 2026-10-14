@@ -108,6 +108,11 @@ pub(super) struct Report {
     /// Relayed path a new circuit would take toward a needed peer that has
     /// neither a channel nor a circuit (`SecureNode::relay_route`), by peer.
     pub relays: std::collections::BTreeMap<meshway_model::NodeId, Vec<meshway_model::NodeId>>,
+    /// Complete path a new circuit would take toward each visible peer that
+    /// has neither a channel nor a circuit (`SecureNode::idle_route`; `None`
+    /// when the content gives no path), by peer.
+    pub idle_paths:
+        std::collections::BTreeMap<meshway_model::NodeId, Option<Vec<meshway_model::NodeId>>>,
     /// Latest successful measured round trip toward each target.
     pub rtts: std::collections::BTreeMap<meshway_model::NodeId, meshway_protocol::ipc::PeerRtt>,
     /// Control's last known peer facts, as the worker reads them.
@@ -139,6 +144,7 @@ impl Report {
             circuits: Default::default(),
             routes: Default::default(),
             relays: Default::default(),
+            idle_paths: Default::default(),
             rtts: Default::default(),
             known_peers: None,
         }

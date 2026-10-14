@@ -5,6 +5,8 @@ const NYC: &str = "00000000-0000-4000-8000-000000000002";
 const SHA: &str = "00000000-0000-4000-8000-000000000003";
 const OLD: &str = "00000000-0000-4000-8000-000000000004";
 const PLA: &str = "00000000-0000-4000-8000-000000000005";
+const VM: &str = "00000000-0000-4000-8000-000000000006";
+const IT7: &str = "00000000-0000-4000-8000-000000000007";
 
 fn now() -> DateTime<Utc> {
     "2026-10-11T12:00:00Z".parse().unwrap()
@@ -28,6 +30,12 @@ fn status() -> Status {
     let mut planck = peer(PLA, "meshway-pla", "100.64.0.7", "relayIdle");
     planck["via"] = json!([SHA]);
     planck["transport"] = json!("native_udp");
+    planck["idlePath"] = json!({"route":"relay","via":[SHA]});
+    // No circuit or channel: the path a new circuit would take.
+    let mut vm = peer(VM, "meshway-vm", "100.64.0.8", "idle");
+    vm["idlePath"] = json!({"route":"direct","via":[]});
+    let mut it7 = peer(IT7, "meshway-it7", "100.64.0.10", "unreachable");
+    it7["idlePath"] = json!({"route":"none","via":[]});
     let reference = json!({"revision":42,"serial":17,"digest":"01".repeat(32)});
     serde_json::from_value(json!({
         "processId":1,"revision":3,"desiredUp":true,"phase":"running","server":"http://127.0.0.1:8420",
@@ -40,7 +48,7 @@ fn status() -> Status {
                 "defaultProfile":"mesh","locked":false,"profiles":[],"auto":null}},
         "saved":reference,"applied":reference,"dataPlane":"ready","networkMode":"tun",
         "node":{"hostname":"meshway-lax","addresses":{"ipv4":"100.64.0.4","ipv6":null}},
-        "peers":[nyc, sha, peer(OLD, "meshway-old", "100.64.0.9", "offline"), planck],
+        "peers":[nyc, sha, peer(OLD, "meshway-old", "100.64.0.9", "offline"), planck, vm, it7],
         "sockets":[
             {"resource":{"kind":"listener","key":"native"},"boundAddress":"0.0.0.0:35000",
              "receiveBuffer":8388608,"receiveRequested":4194304,"sendBuffer":4194304,"sendRequested":2097152,"unavailable":null},
@@ -74,24 +82,18 @@ fn plain_summary_and_peer_table_have_no_escapes() {
         .iter()
         .position(|line| line.starts_with("PEER"))
         .unwrap();
-    assert_eq!(
-        lines[header],
-        "PEER         MESH IPV4   STATE         TRANSPORT   ENDPOINT            MTU        RTT"
-    );
-    assert_eq!(
-        lines[header + 1],
-        "meshway-nyc  100.64.0.6  relay         native_udp  via meshway-sha                0.31 ms"
-    );
-    assert_eq!(
-        lines[header + 2],
-        "meshway-sha  100.64.0.5  direct        native_udp  192.168.97.3:35000  1444/1330  0.14 ms"
-    );
-    // No measurement is not zero.
-    assert_eq!(lines[header + 3], "meshway-old  100.64.0.9  offline");
-    assert_eq!(
-        lines[header + 4],
-        "meshway-pla  100.64.0.7  relay (idle)  native_udp  via meshway-sha"
-    );
+    let expected = [
+        "PEER         MESH IPV4    STATE         TRANSPORT   ENDPOINT                      MTU        RTT",
+        "meshway-nyc  100.64.0.6   relay         native_udp  via meshway-sha                          0.31 ms",
+        "meshway-sha  100.64.0.5   direct        native_udp  192.168.97.3:35000            1444/1330  0.14 ms",
+        // No measurement is not zero; no idle path from this daemon: nothing shown.
+        "meshway-old  100.64.0.9   offline",
+        // No channel or circuit: the path a new circuit would take.
+        "meshway-pla  100.64.0.7   relay (idle)  native_udp  relay (idle) via meshway-sha",
+        "meshway-vm   100.64.0.8   idle                      direct (idle)",
+        "meshway-it7  100.64.0.10  unreachable               no path",
+    ];
+    assert_eq!(lines[header..header + expected.len()], expected);
     let header = lines
         .iter()
         .position(|line| line.starts_with("SOCKET"))
@@ -126,8 +128,11 @@ fn json_keeps_every_status_field_including_peers_and_nulls() {
     let mut output = Vec::new();
     crate::output::json(&mut output, &status()).unwrap();
     let value: serde_json::Value = serde_json::from_slice(&output).unwrap();
-    assert_eq!(value["peers"].as_array().unwrap().len(), 4);
+    assert_eq!(value["peers"].as_array().unwrap().len(), 6);
     assert_eq!(value["peers"][3]["state"], "relayIdle");
+    assert_eq!(value["peers"][3]["idlePath"]["route"], "relay");
+    // Omitted, not null, where it does not apply.
+    assert!(value["peers"][0].get("idlePath").is_none());
     assert_eq!(value["node"]["hostname"], "meshway-lax");
     assert!(value["peers"][2]["rtt"].is_null() && value["identity"].is_null());
     let decoded: Status = serde_json::from_value(value).unwrap();

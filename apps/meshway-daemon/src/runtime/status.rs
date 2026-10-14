@@ -180,6 +180,7 @@ impl View {
                     facts: network.facts.as_ref(),
                     routes: &network.routes,
                     relays: &network.relays,
+                    idle_paths: &network.idle_paths,
                     rtts: &network.rtts,
                     known: known.as_ref(),
                     now: Utc::now(),
