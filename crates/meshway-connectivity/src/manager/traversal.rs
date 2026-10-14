@@ -86,8 +86,13 @@ struct Pending {
 /// the pause; other content changes keep it. The pause never delays taking
 /// part in an attempt the peer started: a live request it sent is queried
 /// and accepted at once (see [`needs_acquisition`]), without preparing.
+/// Peers that leave the content leave the table; it holds at most
+/// [`MAX_COORDINATED`] peers.
 #[derive(Default)]
 struct Coordination(BTreeMap<NodeId, Paused>);
+
+/// Peers whose coordination pause one Manager keeps.
+const MAX_COORDINATED: usize = 1024;
 
 struct Paused {
     failures: u32,
@@ -130,6 +135,11 @@ fn last_link(shared: &Shared, peer: NodeId) -> Option<[u8; 32]> {
 }
 
 impl Coordination {
+    /// New content: forget peers it no longer holds.
+    fn retain(&mut self, plan: &crate::plan::Plan) {
+        self.0.retain(|peer, _| plan.has_peer(*peer));
+    }
+
     /// An attempt with `peer` ended; without a channel it is one failure.
     fn ended(&mut self, shared: &Shared, peer: NodeId) {
         if shared
@@ -144,6 +154,21 @@ impl Coordination {
         let facts = endpoint_facts(shared, peer);
         let own = workers::own_mappings(shared);
         let edge = shared.plan().edge(peer);
+        if self.0.len() >= MAX_COORDINATED && !self.0.contains_key(&peer) {
+            // Bounded: the peer whose pause ended longest ago gives way;
+            // while every one is still paused the new failure is not kept.
+            let now = Instant::now();
+            let Some(oldest) = self
+                .0
+                .iter()
+                .filter(|(_, paused)| paused.until <= now)
+                .min_by_key(|(_, paused)| paused.until)
+                .map(|(peer, _)| *peer)
+            else {
+                return;
+            };
+            self.0.remove(&oldest);
+        }
         let entry = self.0.entry(peer).or_insert(Paused {
             failures: 0,
             until: Instant::now(),
@@ -405,7 +430,7 @@ pub(super) async fn run(shared: Arc<Shared>, gateway: Arc<dyn TraversalGateway>)
             Err(_) => return,
         };
         schedule.sockets(&endpoints);
-        plans.borrow_and_update();
+        schedule.coordination.retain(&plans.borrow_and_update());
         resources.borrow_and_update();
         run_content(
             shared.clone(),
@@ -1118,6 +1143,67 @@ mod tests {
         // So does a channel installed (and maybe ended) since.
         coordination.0.get_mut(&peer).unwrap().link = Some([9; 32]);
         assert!(!coordination.paused(&shared, peer));
+        fixture.close().await;
+    }
+
+    /// New content drops the pauses of peers it no longer holds, and the
+    /// table never exceeds its bound: a new peer displaces the one whose
+    /// pause ended longest ago, never one still paused.
+    #[tokio::test]
+    async fn coordination_pauses_are_bounded_and_follow_the_content() {
+        let fixture = Netmaps::start(false, false).await;
+        let ids = fixture.ids();
+        let (shared, _) = shared(&fixture.desired[0], &fixture.keys[0]);
+        let unknown = |i: usize| -> NodeId {
+            format!("00000000-0000-4000-8000-{:012}", 9000 + i)
+                .parse()
+                .unwrap()
+        };
+        let paused = |until| Paused {
+            failures: 1,
+            until,
+            edge: crate::plan::Edge::default(),
+            link: None,
+            facts: Default::default(),
+            own: Default::default(),
+        };
+        let mut coordination = Coordination::default();
+        coordination.ended(&shared, ids[1]);
+        // A peer the content no longer holds (removed, or out of view).
+        coordination.0.insert(unknown(0), paused(Instant::now()));
+        assert!(!shared.plan().has_peer(unknown(0)));
+        coordination.retain(&shared.plan());
+        assert_eq!(coordination.0.keys().copied().collect::<Vec<_>>(), [ids[1]]);
+
+        let mut full = Coordination::default();
+        let paused = |until| Paused {
+            failures: 1,
+            until,
+            edge: crate::plan::Edge::default(),
+            link: None,
+            facts: Default::default(),
+            own: Default::default(),
+        };
+        let now = Instant::now();
+        for i in 0..MAX_COORDINATED {
+            full.0
+                .insert(unknown(i), paused(now + Duration::from_secs(30)));
+        }
+        full.ended(&shared, ids[1]);
+        assert_eq!(full.0.len(), MAX_COORDINATED);
+        assert!(!full.0.contains_key(&ids[1]), "every entry still paused");
+        full.0
+            .insert(unknown(0), paused(now - Duration::from_secs(5)));
+        full.0
+            .insert(unknown(1), paused(now - Duration::from_secs(1)));
+        full.ended(&shared, ids[1]);
+        assert_eq!(full.0.len(), MAX_COORDINATED);
+        assert!(full.0.contains_key(&ids[1]));
+        assert!(
+            !full.0.contains_key(&unknown(0)),
+            "the oldest ended pause gave way"
+        );
+        assert!(full.0.contains_key(&unknown(1)));
         fixture.close().await;
     }
 
