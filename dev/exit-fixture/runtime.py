@@ -229,7 +229,7 @@ def execute(report, artifacts, runtime_os, platform, short, load):
                 "traversal": "exit", "dnsBackend": "off", "runtimeOsAssets": runtime_os,
                 "loadBeforeRuntime": load, "resources": {"containers": containers, "networks": networks},
                 "productStatus": "running", "cleanup": {}, "processes": {},
-                "stages": {str(n): {"status": "notRun"} for n in range(1, 15)}}
+                "stages": {str(n): {"status": "notRun"} for n in range(1, 16)}}
     metadata = report / "report.json"
     started = time.monotonic()
     failure = None
@@ -345,6 +345,9 @@ def execute(report, artifacts, runtime_os, platform, short, load):
         spec = importlib.util.spec_from_file_location("meshway_exit_auto", ROOT / "dev/exit-fixture/auto.py")
         auto = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(auto)
+        spec = importlib.util.spec_from_file_location("meshway_exit_echo", ROOT / "dev/exit-fixture/echo.py")
+        echoing = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(echoing)
         save()
         for role in ROLES:
             (report / role).mkdir(exist_ok=True)
@@ -1150,6 +1153,15 @@ def execute(report, artifacts, runtime_os, platform, short, load):
         narrow = run_narrow_channel(command, detached, status, wait_for, addresses, plans["r"]["nodeId"])
         write(report / "narrow-channel.json", narrow)
         manifest["stages"]["12"] = {"status": "passed", "evidence": ["icmp-errors.json", "narrow-channel.json"]}
+        # Echo lifetime, capacity and exit-role recovery (phase 15): dev/exit-fixture/echo.py.
+        manifest["status"] = "echo-recovery"
+        save()
+        echoing.run(types.SimpleNamespace(
+            command=command, write=write, report=report, target=addresses["external"]["external"],
+            start=start_on_a, status=status, running=running, lookup=lookup, magic=magic[0].rstrip("."),
+            own=own["ipv4"], source=own["ipv4"], tag=dns_tag, zone=exit_zone,
+            logs=lambda role: command(role, "cat", "/evidence/daemon.stderr")["stdout"]))
+        manifest["stages"]["15"] = {"status": "passed", "evidence": ["echo-capacity.json"]}
         # HTTP outage under the netmap model: closing Node HTTP never withdraws
         # the exit. Existing and new flows continue on the signed lease, with
         # no Server contact, until its actual expiry, which fails closed.

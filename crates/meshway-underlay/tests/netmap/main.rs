@@ -3,6 +3,7 @@
 //! changed, and the end of the lease closes descriptors and the exit role.
 #![cfg(target_os = "linux")]
 
+mod exit_recovery;
 mod support;
 
 use meshway_underlay::{ExitIncarnation, ExitScope, ExitTransport, Host, OriginalTuple};

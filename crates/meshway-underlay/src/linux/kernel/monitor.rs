@@ -207,6 +207,42 @@ impl Facts {
     }
 }
 
+/// The routing facts a conflict report names: table, output interface and
+/// destination prefix length of a route; never addresses or raw payloads.
+#[derive(Default)]
+struct Observed {
+    table: Option<u32>,
+    interface: Option<u32>,
+    prefix: Option<u8>,
+}
+
+impl Observed {
+    fn of(payload: &NetlinkPayload<RouteNetlinkMessage>) -> Self {
+        match payload {
+            NetlinkPayload::InnerMessage(
+                RouteNetlinkMessage::NewRoute(route) | RouteNetlinkMessage::DelRoute(route),
+            ) => Self {
+                table: Some(route_table(route)),
+                interface: route
+                    .attributes
+                    .iter()
+                    .find_map(|attribute| match attribute {
+                        RouteAttribute::Oif(index) => Some(*index),
+                        _ => None,
+                    }),
+                prefix: Some(route.header.destination_prefix_length),
+            },
+            NetlinkPayload::InnerMessage(
+                RouteNetlinkMessage::NewRule(rule) | RouteNetlinkMessage::DelRule(rule),
+            ) => Self {
+                table: Some(super::plan::rule_table(rule)),
+                ..Self::default()
+            },
+            _ => Self::default(),
+        }
+    }
+}
+
 impl Expected {
     pub fn add(&mut self, event: Event) -> Result<()> {
         if self.events.len() >= 1024 {
@@ -351,9 +387,16 @@ async fn monitor(
                 let mut state = expected.lock().map_err(|_| Error::Worker)?;
                 #[cfg(test)]
                 let facts = Facts::from_payload(&message.payload);
+                let observed = Observed::of(&message.payload);
                 macro_rules! conflict {
                     ($branch:literal) => {{
-                        tracing::warn!(reason = $branch, "Underlay kernel protection conflict");
+                        tracing::warn!(
+                            reason = $branch,
+                            table = observed.table,
+                            interface = observed.interface,
+                            prefix = observed.prefix,
+                            "Underlay kernel protection conflict"
+                        );
                         #[cfg(test)]
                         facts.reject(&mut state, $branch);
                         return Err(Error::Conflict);
