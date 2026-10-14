@@ -1,8 +1,298 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-14T14:05:14.542888+00:00",
+  "updatedAt": "2026-10-14T17:00:28.551065+00:00",
   "runs": [
+    {
+      "id": 38602641414,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "v0.1.0-alpha.9",
+      "commit": "cbaf0f4fc88ca8c964b3edda7690a6c0bbeec365",
+      "message": "release: workspace version 0.1.0-alpha.9",
+      "createdAt": "2026-10-14T16:58:27Z",
+      "updatedAt": "2026-10-14T16:58:58Z",
+      "status": "in_progress",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/38602641414",
+      "jobs": [
+        {
+          "id": 115985473682,
+          "name": "changes",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-14T16:58:57Z",
+          "completedAt": "2026-10-14T16:59:13Z",
+          "seconds": 16.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38602641414/job/115985473682"
+        },
+        {
+          "id": 115985851418,
+          "name": "cargo",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "skipped",
+          "startedAt": "2026-10-14T16:59:14Z",
+          "completedAt": "2026-10-14T16:59:14Z",
+          "seconds": 0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38602641414/job/115985851418"
+        },
+        {
+          "id": 115985851641,
+          "name": "web",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "skipped",
+          "startedAt": "2026-10-14T16:59:14Z",
+          "completedAt": "2026-10-14T16:59:14Z",
+          "seconds": 0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38602641414/job/115985851641"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 38602640841,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "cbaf0f4fc88ca8c964b3edda7690a6c0bbeec365",
+      "message": "release: workspace version 0.1.0-alpha.9",
+      "createdAt": "2026-10-14T16:58:26Z",
+      "updatedAt": "2026-10-14T16:58:56Z",
+      "status": "queued",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/38602640841",
+      "jobs": [
+        {
+          "id": 115985701448,
+          "name": "changes",
+          "runner": null,
+          "status": "queued",
+          "conclusion": null,
+          "startedAt": "2026-10-14T16:58:55Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38602640841/job/115985701448"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 38602640756,
+      "attempt": 1,
+      "workflow": "Build",
+      "event": "push",
+      "branch": "main",
+      "commit": "cbaf0f4fc88ca8c964b3edda7690a6c0bbeec365",
+      "message": "release: workspace version 0.1.0-alpha.9",
+      "createdAt": "2026-10-14T16:58:26Z",
+      "updatedAt": "2026-10-14T16:59:04Z",
+      "status": "queued",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/38602640756",
+      "jobs": [
+        {
+          "id": 115985766761,
+          "name": "node-linux (x86_64-unknown-linux-musl)",
+          "runner": null,
+          "status": "queued",
+          "conclusion": null,
+          "startedAt": "2026-10-14T16:59:04Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38602640756/job/115985766761"
+        },
+        {
+          "id": 115985767022,
+          "name": "node-linux (aarch64-unknown-linux-musl)",
+          "runner": null,
+          "status": "queued",
+          "conclusion": null,
+          "startedAt": "2026-10-14T16:59:04Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38602640756/job/115985767022"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 38602640735,
+      "attempt": 1,
+      "workflow": "Perf",
+      "event": "push",
+      "branch": "main",
+      "commit": "cbaf0f4fc88ca8c964b3edda7690a6c0bbeec365",
+      "message": "release: workspace version 0.1.0-alpha.9",
+      "createdAt": "2026-10-14T16:58:26Z",
+      "updatedAt": "2026-10-14T16:58:27Z",
+      "status": "pending",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/38602640735",
+      "jobs": [],
+      "artifacts": []
+    },
+    {
+      "id": 38601883538,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "79e980c84f1abdd18161000caf84748c371f14f9",
+      "message": "H1 validation: stage 12 hop spread assertion",
+      "createdAt": "2026-10-14T16:53:12Z",
+      "updatedAt": "2026-10-14T16:58:55Z",
+      "status": "completed",
+      "conclusion": "cancelled",
+      "url": "https://github.com/JDScript/meshway/actions/runs/38601883538",
+      "jobs": [
+        {
+          "id": 115982902506,
+          "name": "changes",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-14T16:53:16Z",
+          "completedAt": "2026-10-14T16:53:28Z",
+          "seconds": 12.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38601883538/job/115982902506"
+        },
+        {
+          "id": 115983021342,
+          "name": "cargo",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "cancelled",
+          "startedAt": "2026-10-14T16:53:30Z",
+          "completedAt": "2026-10-14T16:58:54Z",
+          "seconds": 324.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38601883538/job/115983021342"
+        },
+        {
+          "id": 115983021443,
+          "name": "web",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "cancelled",
+          "startedAt": "2026-10-14T16:53:28Z",
+          "completedAt": "2026-10-14T16:58:27Z",
+          "seconds": 299.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38601883538/job/115983021443"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 38601883512,
+      "attempt": 1,
+      "workflow": "Perf",
+      "event": "push",
+      "branch": "main",
+      "commit": "79e980c84f1abdd18161000caf84748c371f14f9",
+      "message": "H1 validation: stage 12 hop spread assertion",
+      "createdAt": "2026-10-14T16:53:12Z",
+      "updatedAt": "2026-10-14T16:53:12Z",
+      "status": "queued",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/38601883512",
+      "jobs": [
+        {
+          "id": 115982904031,
+          "name": "perf",
+          "runner": null,
+          "status": "queued",
+          "conclusion": null,
+          "startedAt": "2026-10-14T16:53:13Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38601883512/job/115982904031"
+        },
+        {
+          "id": 115982904371,
+          "name": "perf-arm64",
+          "runner": "jp-tyo-arm64",
+          "status": "completed",
+          "conclusion": "failure",
+          "startedAt": "2026-10-14T16:53:16Z",
+          "completedAt": "2026-10-14T16:53:29Z",
+          "seconds": 13.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38601883512/job/115982904371"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 38601883437,
+      "attempt": 1,
+      "workflow": "Build",
+      "event": "push",
+      "branch": "main",
+      "commit": "79e980c84f1abdd18161000caf84748c371f14f9",
+      "message": "H1 validation: stage 12 hop spread assertion",
+      "createdAt": "2026-10-14T16:53:12Z",
+      "updatedAt": "2026-10-14T16:59:04Z",
+      "status": "completed",
+      "conclusion": "cancelled",
+      "url": "https://github.com/JDScript/meshway/actions/runs/38601883437",
+      "jobs": [
+        {
+          "id": 115982901532,
+          "name": "node-linux (x86_64-unknown-linux-musl)",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-14T16:53:14Z",
+          "completedAt": "2026-10-14T16:56:48Z",
+          "seconds": 214.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38601883437/job/115982901532"
+        },
+        {
+          "id": 115982901821,
+          "name": "node-linux (aarch64-unknown-linux-musl)",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "cancelled",
+          "startedAt": "2026-10-14T16:56:48Z",
+          "completedAt": "2026-10-14T16:59:03Z",
+          "seconds": 135.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38601883437/job/115982901821"
+        }
+      ],
+      "artifacts": [
+        {
+          "id": 11915095348,
+          "name": "node-x86_64-unknown-linux-musl-79e980c84f1abdd18161000caf84748c371f14f9",
+          "bytes": 11125993,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38601883437/artifacts/11915095348",
+          "jobId": 115982901532,
+          "runner": "planck",
+          "seconds": 214.0,
+          "state": "ok",
+          "error": null,
+          "reports": [],
+          "matrices": [],
+          "builds": [
+            {
+              "target": "x86_64-unknown-linux-musl",
+              "binary": "meshwayd",
+              "bytes": 19088616,
+              "sha256": "d4ee95f4445af45d6b04065f37b61f12e39d2014f1b2b6d81ec5caaabd1cb90b"
+            },
+            {
+              "target": "x86_64-unknown-linux-musl",
+              "binary": "meshway",
+              "bytes": 2191672,
+              "sha256": "a5540b1492ed1ea011fe5cf72ade7bb8bf647472370f67b3ee6f9cdfe531bd03"
+            }
+          ]
+        }
+      ]
+    },
     {
       "id": 38574469358,
       "attempt": 1,
