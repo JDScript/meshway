@@ -149,7 +149,7 @@ sha 应用 IPv4
 | 系统 `nft` CLI | netfilter 官方用户态，`nft -j -f -` 批事务，`nft -j list ...` 回读；无需 Meshway 自编 FFI，但有系统包／进程开销 | **首版推荐**。镜像／安装包锁定支持版本，固定可执行路径、结构化输入、无 shell 拼接、有界输出／超时／并发／join。取消后结果不明先读回 reconcile，不能假定事务未提交 |
 | 用户态 NAT／netstack | 易将每次 socket I/O 绑 guard，跨平台潜力；需要 TCP／UDP／ICMP 转发、PMTU 与另一套资源集成，当前无正式 netstack | 不符合首版 Linux 内核转发目标，不作为权限不足的自动降级 |
 
-conntrack 精确删除由 Underlay 唯一的 conntrack 模块经 ctnetlink（`NFNL_SUBSYS_CTNETLINK`）完成，不依赖 conntrack-tools：先按 IPv4 original tuple 与默认 zone `GET`，核对 id、mark、original／reply 与已绑定身份一致，再以 original tuple、默认 zone 与该 ct id `DELETE`（内核比较 id，同 tuple 的替换条目回答 `ENOENT` 而不被删除），最后 `GET` 回读不存在才算退役；删除的应答本身不是证据。请求总是携带 tuple，编码层不能表达 flush。回答在 64 KiB 单报文缓冲内有界解析，畸形、截断、zone／helper／offload 无法证明归属时分别为 `conntrackUnavailable`／`ownershipConflict`；内核 `EPERM`／`EACCES` 为 `netAdminMissing`。mark 位选择与安装探测使用内核 mark 过滤的 dump，返回项逐项复核。
+conntrack 精确删除由 Underlay 唯一的 conntrack 模块经 ctnetlink（`NFNL_SUBSYS_CTNETLINK`）完成，不依赖 conntrack-tools：先按 IPv4 original tuple 与默认 zone `GET`，核对 id、mark、original／reply 与已绑定身份一致，再以 original tuple、默认 zone 与该 ct id `DELETE`（内核比较 id，同 tuple 的替换条目回答 `ENOENT` 而不被删除），最后 `GET` 回读不存在才算退役；删除的应答本身不是证据。请求总是携带 tuple，编码层不能表达 flush。回答在 64 KiB 单报文缓冲内有界解析；dump 中任一消息带 `NLM_F_DUMP_INTR`（dump 期间表已变化）时该 dump 为 `conntrackUnavailable`，不当作无匹配（已找到的条目仍算数），畸形、截断、zone／helper／offload 无法证明归属时分别为 `conntrackUnavailable`／`ownershipConflict`；内核 `EPERM`／`EACCES` 为 `netAdminMissing`。mark 位选择与安装探测使用内核 mark 过滤的 dump，返回项逐项复核。
 
 安装探测至少包含 `/dev/net/tun`、实际 NET_ADMIN 操作、nft batch／set timeout／ct 支持、route/rule、ctnetlink mark 过滤读取和 `ip_forward`。`/proc/sys/net/ipv4/ip_forward` 为 0 返回 `ip_forward_disabled`；不可读／格式错返回不同原因 `forwarding_probe_failed`。不把 `uid=0` 或 cap bitmap 当真实成功。
 

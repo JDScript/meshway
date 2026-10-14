@@ -26,6 +26,9 @@ const NLMSG_DONE: u16 = 3;
 const NLM_F_REQUEST: u16 = 0x1;
 const NLM_F_ACK: u16 = 0x4;
 const NLM_F_DUMP: u16 = 0x300;
+/// Set on a dump message when the table changed while it was dumped: the
+/// dump is not a complete view and proves no absence.
+const NLM_F_DUMP_INTR: u16 = 0x10;
 #[cfg(test)]
 const NLM_F_EXCL: u16 = 0x200;
 #[cfg(test)]
@@ -237,6 +240,7 @@ async fn exchange(
             return Err(Failure::Unavailable);
         }
         let mut buffer = vec![0; BUFFER];
+        let mut interrupted = false;
         loop {
             let mut ready = socket.readable().await.map_err(|error| io(&error))?;
             let (size, source) = match socket.get_ref().recv_from(&mut &mut buffer[..], 0) {
@@ -254,7 +258,7 @@ async fn exchange(
             if size == 0 || size >= buffer.len() {
                 return Err(Failure::Unavailable);
             }
-            match decode(&buffer[..size], sequence, &mut entry)? {
+            match decode(&buffer[..size], sequence, &mut interrupted, &mut entry)? {
                 Step::More => {}
                 Step::Stop => return Ok(Answer::Ack),
                 Step::Done(answer) => return Ok(answer),
@@ -273,9 +277,13 @@ enum Step {
 }
 
 /// Decode one datagram of answers to `sequence`. No input panics.
+/// `interrupted` carries across the datagrams of one dump: an end of dump
+/// after any interrupted message is unavailable, never an empty answer. An
+/// entry found before it still exists.
 fn decode(
     mut datagram: &[u8],
     sequence: u32,
+    interrupted: &mut bool,
     entry: &mut impl FnMut(&[u8]) -> Result<bool, Failure>,
 ) -> Result<Step, Failure> {
     while !datagram.is_empty() {
@@ -286,12 +294,14 @@ fn decode(
             return Err(Failure::Unavailable);
         }
         let kind = u16::from_ne_bytes([header[4], header[5]]);
+        *interrupted |= u16::from_ne_bytes([header[6], header[7]]) & NLM_F_DUMP_INTR != 0;
         if u32::from_ne_bytes(word(header, 8)?) != sequence {
             return Err(Failure::Unavailable);
         }
         let payload = &datagram[NLMSG_HEADER..length];
         match kind {
             NLMSG_NOOP => {}
+            NLMSG_DONE if *interrupted => return Err(Failure::Unavailable),
             NLMSG_ERROR | NLMSG_DONE => {
                 let code = match payload.get(..4) {
                     Some(code) => i32::from_ne_bytes(word(code, 0)?),
@@ -613,7 +623,7 @@ mod tests {
 
     fn collect(datagram: &[u8], sequence: u32) -> Result<(Vec<Entry>, bool), Failure> {
         let mut entries = Vec::new();
-        let step = decode(datagram, sequence, &mut |payload: &[u8]| {
+        let step = decode(datagram, sequence, &mut false, &mut |payload: &[u8]| {
             entries.push(parse_entry(payload)?);
             Ok(true)
         })?;
@@ -756,7 +766,7 @@ mod tests {
             bytes.extend(5u32.to_ne_bytes());
             bytes.extend(0u32.to_ne_bytes());
             bytes.extend(i32::to_ne_bytes(code));
-            match decode(&bytes, 5, &mut |_: &[u8]| Ok(true)).unwrap() {
+            match decode(&bytes, 5, &mut false, &mut |_: &[u8]| Ok(true)).unwrap() {
                 Step::Done(Answer::Ack) => assert!(answer.is_none()),
                 Step::Done(Answer::Errno(found)) => assert_eq!(Some(found), answer),
                 _ => panic!("no answer"),
@@ -769,7 +779,7 @@ mod tests {
         done.extend(5u32.to_ne_bytes());
         done.extend(0u32.to_ne_bytes());
         assert!(matches!(
-            decode(&done, 5, &mut |_: &[u8]| Ok(true)),
+            decode(&done, 5, &mut false, &mut |_: &[u8]| Ok(true)),
             Ok(Step::Done(Answer::Ack))
         ));
         assert_eq!(errno(EPERM), Failure::Permission);
@@ -790,6 +800,61 @@ mod tests {
             io(&std::io::Error::from_raw_os_error(93)),
             Failure::Unavailable
         );
+    }
+
+    /// A dump the kernel marks interrupted (the table changed meanwhile)
+    /// proves no absence: its end is unavailable, in the same datagram or a
+    /// later one, while an entry it found still counts.
+    #[test]
+    fn an_interrupted_dump_is_unavailable_not_empty() {
+        let message = |flags: u16| {
+            let mut message = Request::new(IPCTNL_MSG_CT_NEW, 0)
+                .tuple(CTA_TUPLE_ORIG, &udp(1))
+                .finish()
+                .unwrap();
+            message[6..8].copy_from_slice(&flags.to_ne_bytes());
+            message[8..12].copy_from_slice(&5u32.to_ne_bytes());
+            message
+        };
+        let done = |flags: u16| {
+            let mut done = Vec::new();
+            done.extend(16u32.to_ne_bytes());
+            done.extend(NLMSG_DONE.to_ne_bytes());
+            done.extend(flags.to_ne_bytes());
+            done.extend(5u32.to_ne_bytes());
+            done.extend(0u32.to_ne_bytes());
+            done
+        };
+        let skip = |_: &[u8]| Ok(true);
+        let whole = [message(0), done(0)].concat();
+        assert!(matches!(
+            decode(&whole, 5, &mut false, &mut skip.clone()),
+            Ok(Step::Done(Answer::Ack))
+        ));
+        let interrupted = [message(NLM_F_DUMP_INTR), done(0)].concat();
+        assert_eq!(
+            decode(&interrupted, 5, &mut false, &mut skip.clone()).err(),
+            Some(Failure::Unavailable)
+        );
+        assert_eq!(
+            decode(&done(NLM_F_DUMP_INTR), 5, &mut false, &mut skip.clone()).err(),
+            Some(Failure::Unavailable)
+        );
+        // Across datagrams of one dump.
+        let mut state = false;
+        assert!(matches!(
+            decode(&message(NLM_F_DUMP_INTR), 5, &mut state, &mut skip.clone()),
+            Ok(Step::More)
+        ));
+        assert_eq!(
+            decode(&done(0), 5, &mut state, &mut skip.clone()).err(),
+            Some(Failure::Unavailable)
+        );
+        // A match found in an interrupted dump is still a match.
+        assert!(matches!(
+            decode(&interrupted, 5, &mut false, &mut |_: &[u8]| Ok(false)),
+            Ok(Step::Stop)
+        ));
     }
 
     #[test]

@@ -80,17 +80,18 @@ Linux `Host::exit_probe` 在打开 Host 前执行，独占本进程的 Host 预�
 
 已打开的 Host 使用 `probe_exit(&mut self, instance: InstanceId, target: ConfigurationRef) -> ExitCapability`。它使用真实、处于 up 状态的外部接口，排除所属 Mesh／出口 TUN 和 DNS 锚点；临时设备的精确 index 注册到同一 monitor，创建／删除不会制造外部切网事件。探测检查实际 TUN 权限、转发／反向路径条件、完整 IPv4 nft 程序和 ctnetlink 读取；排除经 owner 回读确认的自有表后，可能挡住出口流量的宿主规则返回 `firewallConflict`，未知 mark 修改／offload 返回 `ownershipConflict`，不改写宿主规则。
 
-宿主规则只在**能匹配出口流量**时冲突。判定（`exit/firewall.rs` 的唯一实现）对 `ip`／`inet` 族的 nft 规则和已加载 legacy iptables 表的内容做同一遍历，考察的包为：经出口 TUN 转发到出口接口及其回包（forward、postrouting 钩子；出口接口为主路由表中通往 Internet 分类地址的 IPv4 路由的接口，即默认路由与直连公网网段，只通往私网的路由如 Docker 网桥不在内）、本机发往出口 TUN 的 ICMP 错误（output 钩子）。出口 TUN 是新建的内核 `tun<N>`，名字不同于任何现有接口。
+宿主规则只在**能匹配出口流量**时冲突。判定（`exit/firewall.rs` 的唯一实现）对 `ip`／`inet` 族的 nft 规则和已加载 legacy iptables 表的内容做同一遍历，考察的包为：从出口 TUN 进入与从出口接口进入的回包（prerouting 钩子，含 raw／mangle／nat 等各优先级）、经出口 TUN 转发到出口接口及其回包（forward、postrouting 钩子；出口接口为主路由表中通往 Internet 分类地址的 IPv4 路由的接口，即默认路由与直连公网网段，只通往私网的路由如 Docker 网桥不在内）、本机发往出口 TUN 的 ICMP 错误（output 钩子）。安装前的探测把出口 TUN 视为新建的内核 `tun<N>`（名字不同于任何现有接口）；已安装角色的周期探测按实际出口 TUN 名精确匹配。
 
 | 规则 | 判定 |
 | --- | --- |
 | `drop`／`reject`／`queue`／`tproxy`／`dup`／`fwd`，legacy 的 `DROP`／`REJECT`／`NFQUEUE`／`QUEUE`／`TPROXY`／`TEE` | 其匹配可能命中上述任一包即冲突；经 `jump`／`goto`（legacy 为自定义链目标）可达的链同样遍历 |
 | 接口约束（`iifname`／`oifname`／`iif`／`oif`，legacy `-i`／`-o`，含 `!`、集合与 `*`／`+` 通配） | 按实际接口判定：只匹配其他接口（如 Docker 的 `br-*`／`docker0`）的规则不命中出口流量；`tun*` 命中出口 TUN |
 | `ct state` 只含 `invalid`／`untracked`，`meta nfproto ipv6` | 不命中（出口流量为 IPv4 且被跟踪） |
-| 其他匹配（地址、端口、`limit`、xt match 等） | 视为可能命中 |
-| forward／output／postrouting 基链 `policy drop`（legacy 内建链 `DROP`） | 出口流量不能确定在此前被同链 `accept` 时冲突 |
+| 目的地址（`ip daddr`，legacy `-d`，含前缀与集合） | 转发方向的目的是 Internet 分类地址，回包方向是出口接口地址或 Mesh 地址池：与之不相交（如 Docker 为发布容器加的 raw `-d <容器> ! -i <网桥> -j DROP`）即不命中 |
+| 其他匹配（源地址、端口、`limit`、xt match 等） | 视为可能命中 |
+| prerouting／forward／output／postrouting 基链 `policy drop`（legacy 内建链 `DROP`） | 出口流量不能确定在此前被同链 `accept` 时冲突 |
 
-因此 Docker（`DOCKER-ISOLATION-STAGE-*`、`DOCKER` 链只丢弃进出其网桥的包）与出口共存，Docker 把 `FORWARD` 置为 `policy drop`（Docker 自己打开 `ip_forward` 时的默认）、ufw 默认 forward drop、firewalld 区域转发拒绝和不限接口的 drop 仍冲突。prerouting／input 钩子与 netdev／bridge／arp 族不在判定范围；它们若丢弃出口流量，表现为下面的逐流路由判定拒绝或 conntrack 确认失败。
+因此 Docker（`DOCKER-ISOLATION-STAGE-*`、`DOCKER` 链只丢弃进出其网桥的包）与出口共存，Docker 把 `FORWARD` 置为 `policy drop`（Docker 自己打开 `ip_forward` 时的默认）、ufw 默认 forward drop、firewalld 区域转发拒绝和不限接口的 drop 仍冲突。input 钩子与 netdev／bridge／arp 族不在判定范围；它们若丢弃出口流量，表现为下面的逐流路由判定拒绝或 conntrack 确认失败。遍历按（链, 包）记忆结果，共享子链不会成倍展开；一次判定最多评估 2^20 条规则，超过即 `firewallConflict`（无法判定）。
 
 live probe 成功返回 `ready` 和 `supportedFamilies=[ipv4]`，`installedFamilies` 仍为空；其含义是所报后端前置条件完成，不代替角色安装或业务连通证明。失败携带具体原因。返回值保留传入 instance／target 与本次真实 `observedAt`，X4 不需自行把 `probing` 改成 `ready`。
 
