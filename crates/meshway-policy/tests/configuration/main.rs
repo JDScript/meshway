@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 
 mod support;
 use support::*;
+mod auto;
 mod declarations;
 mod diagnostics;
 mod dns_plans;

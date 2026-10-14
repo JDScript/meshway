@@ -48,6 +48,8 @@ pub struct NodeSettingsPatch {
     #[serde(default,skip_serializing_if="Input::is_omitted")] pub enabled: Input<bool> [value_type=bool],
     /// Administrative exit eligibility; omission retains the current setting.
     #[serde(default,skip_serializing_if="Input::is_omitted")] pub exit_enabled: Input<bool> [value_type=bool],
+    /// Administrator-declared ISO 3166-1 alpha-2 region; omission retains it and null clears it.
+    #[serde(default,skip_serializing_if="Input::is_omitted")] pub region: Input<Option<String>> [value_type=Option<String>],
     /// Omission retains the override, null restores network inheritance, and an explicit set replaces the protocol selection, with `{}` disabling active dialing.
     #[serde(default,skip_serializing_if="Input::is_omitted")] pub dialers: Input<Option<DialerSetUpdate>> [value_type=Option<DialerSetUpdate>],
 } }
@@ -197,6 +199,9 @@ pub fn apply_operations(
                 }
                 if let Input::Value(v) = fields.exit_enabled {
                     n.exit_enabled = v;
+                }
+                if let Input::Value(v) = &fields.region {
+                    n.region = v.clone();
                 }
                 if let Input::Value(v) = &fields.dialers {
                     n.dialers = match v {

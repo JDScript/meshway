@@ -202,6 +202,12 @@ impl Selection {
             .unwrap()
     }
     async fn activities(&self) -> Vec<meshway_protocol::history::ActivityEvent> {
+        self.actions(ActivityAction::RoutingSelect).await
+    }
+    async fn actions(
+        &self,
+        action: ActivityAction,
+    ) -> Vec<meshway_protocol::history::ActivityEvent> {
         self.app
             .history()
             .activities(&self.owner, Some(self.network), 200, None, rid())
@@ -209,9 +215,132 @@ impl Selection {
             .unwrap()
             .items
             .into_iter()
-            .filter(|event| event.action == ActivityAction::RoutingSelect)
+            .filter(|event| event.action == action)
             .collect()
     }
+}
+
+#[tokio::test]
+async fn auto_follows_the_declared_region_and_records_each_change_of_its_resolution() {
+    let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
+    let lab = selection().await;
+    let a = lab.a;
+    let resolved = |netmap: &meshway_configuration::netmap::CompiledNetmap| {
+        let state = meshway_policy::compile::netmap::routing_selection(&netmap.netmap).unwrap();
+        let auto = state.auto.unwrap();
+        (auto.profile, auto.basis, auto.region)
+    };
+    let generation = |netmap: &meshway_configuration::netmap::CompiledNetmap| {
+        netmap.netmap.egress.as_ref().unwrap().generation
+    };
+    lab.node_select(None, "auto").await.unwrap();
+    let none = lab.netmap(a).await;
+    assert_eq!(
+        resolved(&none),
+        ("mesh".into(), AutoBasis::NoTrustedRegion, None)
+    );
+    let region = |value: Option<&str>| {
+        let value = value.map(str::to_owned);
+        move |config: &mut NetworkConfiguration| config.nodes.get_mut(&a).unwrap().region = value
+    };
+    configure(&lab.app, &lab.owner, lab.network, region(Some("US"))).await;
+    let us = lab.netmap(a).await;
+    assert_eq!(
+        resolved(&us),
+        ("work".into(), AutoBasis::Label, Some("US".into()))
+    );
+    // Neither `routing.egress` nor the selection version changed, yet the
+    // selection identity did.
+    assert_ne!(generation(&none), generation(&us));
+    configure(&lab.app, &lab.owner, lab.network, region(Some("JP"))).await;
+    let jp = lab.netmap(a).await;
+    assert_eq!(
+        resolved(&jp),
+        ("mesh".into(), AutoBasis::NoRuleMatched, Some("JP".into()))
+    );
+    assert_ne!(generation(&jp), generation(&none));
+    assert_ne!(generation(&jp), generation(&us));
+    // An unrelated change keeps the resolution and records nothing.
+    configure(&lab.app, &lab.owner, lab.network, |config| {
+        config.nodes.get_mut(&a).unwrap().remark = "tokyo".into()
+    })
+    .await;
+    assert_eq!(generation(&*lab.netmap(a).await), generation(&jp));
+    let events = lab.actions(ActivityAction::RoutingAutoResolve).await;
+    let profiles: Vec<_> = events
+        .iter()
+        .map(|event| match &event.target {
+            ActivityTarget::RoutingSelection { node_id, profile } => {
+                assert_eq!(*node_id, a);
+                assert!(matches!(event.actor, ActivityActor::System {}));
+                profile.as_str()
+            }
+            _ => panic!("routing.autoResolve without a selection target"),
+        })
+        .collect();
+    // Newest first: JP, US, the first resolution without a region.
+    assert_eq!(profiles, ["mesh", "work", "mesh"]);
+    // A manual selection overrides auto and is no resolution change.
+    lab.node_select(Some(1), "work").await.unwrap();
+    let manual =
+        meshway_policy::compile::netmap::routing_selection(&lab.netmap(a).await.netmap).unwrap();
+    assert_eq!(
+        (manual.applied_profile.as_str(), manual.auto),
+        ("work", None)
+    );
+    assert_eq!(
+        lab.actions(ActivityAction::RoutingAutoResolve).await.len(),
+        3
+    );
+}
+
+#[tokio::test]
+async fn only_managers_declare_a_region_and_it_must_be_a_country_code() {
+    let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
+    let lab = selection().await;
+    let apply = |token: String, region: &str| {
+        let app = &lab.app;
+        let network = lab.network;
+        let a = lab.a;
+        let region = region.to_owned();
+        let owner = lab.owner.clone();
+        async move {
+            let current = app
+                .configurations()
+                .read(&owner, network, None)
+                .await
+                .unwrap();
+            let mut config = current.document.configuration.clone();
+            config.nodes.get_mut(&a).unwrap().region = Some(region);
+            app.configurations()
+                .apply(
+                    &token,
+                    network,
+                    meshway_protocol::configuration::ConfigurationRequest::Document {
+                        expected_revision: current.revision,
+                        request_id: rid(),
+                        source_jsonc: WireSecret::new(
+                            canonical_json(&config).unwrap().expose().into(),
+                        ),
+                    },
+                    rid(),
+                )
+                .await
+        }
+    };
+    assert!(matches!(
+        apply(lab.member.clone(), "US").await,
+        Err(Error::PermissionDenied)
+    ));
+    match apply(lab.owner.clone(), "us").await.err().unwrap() {
+        Error::InvalidConfiguration(meshway_configuration::ConfigurationError::Invalid(issues)) => {
+            assert!(issues.iter().any(|issue| issue.code
+                == meshway_configuration::IssueCode::InvalidCountryCode
+                && issue.path == format!("/nodes/{}/region", lab.a)))
+        }
+        other => panic!("{other:?}"),
+    }
+    assert!(apply(lab.owner.clone(), "US").await.is_ok());
 }
 
 #[tokio::test]

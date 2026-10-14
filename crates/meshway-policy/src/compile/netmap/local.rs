@@ -23,8 +23,9 @@ pub(super) struct Source<'a> {
 }
 
 /// The selection identity excludes the revision: an unrelated configuration
-/// change keeps it, while any selection switch, routing change or new content
-/// of a set the rules use replaces it. It does not depend on which artifacts
+/// change keeps it, while any selection switch, change of what `auto`
+/// resolves to, routing change or new content of a set the rules use
+/// replaces it. It does not depend on which artifacts
 /// a Node holds, so every Node computes the same identity for a source.
 /// Shared by the Server and by Nodes recomputing a visible source's selection.
 pub(super) fn egress(
@@ -40,7 +41,8 @@ pub(super) fn egress(
         profile,
         selection,
     } = source;
-    let capture::Selection { rules, fallback } = match capture::selection(cfg, profile) {
+    let capture::Selection { rules, fallback } = match capture::selection(cfg, profile, Some(node))
+    {
         Ok(selected) => selected,
         Err(CompileError::Serialization) => return Err(CompileError::Serialization),
         Err(_) => capture::Selection {
@@ -53,11 +55,18 @@ pub(super) fn egress(
         .flat_map(|(_, rule)| &rule.matcher.rule_sets)
         .filter_map(|key| references.get(key).map(|digest| (key.as_str(), *digest)))
         .collect();
+    // What `auto` resolved to (profile, basis, region) is part of the
+    // identity: a region change alone changes neither `routing.egress` nor
+    // the selection version.
+    let auto = matching::concrete_profile(cfg, profile, Some(node))
+        .ok()
+        .and_then(|(_, _, auto)| auto);
     let generation = digest(&(
         "meshway-netmap-egress",
         network,
         node,
         profile,
+        auto,
         selection,
         &cfg.routing.egress,
         used,

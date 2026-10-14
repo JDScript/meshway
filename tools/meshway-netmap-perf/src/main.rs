@@ -91,6 +91,7 @@ impl Scenario {
                     )]),
                     dialers: Input::Omitted,
                     exit_enabled: false,
+                    region: None,
                 },
             );
             let key = |offset, algorithm| BoundNodeKey {

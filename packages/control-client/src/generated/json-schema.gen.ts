@@ -311,7 +311,7 @@ export const schemaDocument = {
       },
       "ActivityAction": {
         "type": "string",
-        "description": "`account.register`: Records completed account registration with an account target carrying userId and null previousEmail.\n`session.login`: Records successful sign-in with a session target carrying the newly created sessionId.\n`session.logout`: Records completed sign-out with a session target carrying the revoked sessionId.\n`session.revoke`: Records explicit revocation of one session with a session target carrying its sessionId.\n`session.revokeOthers`: Records revocation of the user's other sessions with an account target carrying userId and null previousEmail.\n`session.revokeAll`: Records revocation of all the user's sessions with an account target carrying userId and null previousEmail.\n`session.delegate`: A signed-in user authorized a delegation client; the target is the authorizing session.\n`account.password`: Records a password change authenticated by the current password with an account target carrying userId and null previousEmail.\n`account.passwordReset`: Records password replacement using a recovery credential with an account target carrying userId and null previousEmail.\n`account.resetIssued`: Records issuance of a password recovery credential by a system actor with an account target carrying userId and null previousEmail.\n`account.email`: Records an email change with an account target carrying userId and previousEmail set to the address before the change.\n`network.create`: Records completed network creation with a network target carrying networkId.\n`network.rename`: Records a network name change with a network target carrying networkId.\n`configuration.apply`: Records a committed configuration apply with a configuration target carrying the saved revision, independently of Node application results.\n`membership.role`: Records a member's role change with a membership target carrying membershipId.\n`membership.join`: Records a completed network join with a membership target carrying the new membershipId.\n`membership.remove`: Records a completed membership removal with a membership target carrying membershipId.\n`joinLink.create`: Records creation of a join link with a joinLink target carrying linkId.\n`joinLink.revoke`: Records revocation of a join link with a joinLink target carrying linkId.\n`routing.select`: Records a committed routing profile selection by the Node itself or a user, with a routingSelection target carrying nodeId and the selected profile.",
+        "description": "`account.register`: Records completed account registration with an account target carrying userId and null previousEmail.\n`session.login`: Records successful sign-in with a session target carrying the newly created sessionId.\n`session.logout`: Records completed sign-out with a session target carrying the revoked sessionId.\n`session.revoke`: Records explicit revocation of one session with a session target carrying its sessionId.\n`session.revokeOthers`: Records revocation of the user's other sessions with an account target carrying userId and null previousEmail.\n`session.revokeAll`: Records revocation of all the user's sessions with an account target carrying userId and null previousEmail.\n`session.delegate`: A signed-in user authorized a delegation client; the target is the authorizing session.\n`account.password`: Records a password change authenticated by the current password with an account target carrying userId and null previousEmail.\n`account.passwordReset`: Records password replacement using a recovery credential with an account target carrying userId and null previousEmail.\n`account.resetIssued`: Records issuance of a password recovery credential by a system actor with an account target carrying userId and null previousEmail.\n`account.email`: Records an email change with an account target carrying userId and previousEmail set to the address before the change.\n`network.create`: Records completed network creation with a network target carrying networkId.\n`network.rename`: Records a network name change with a network target carrying networkId.\n`configuration.apply`: Records a committed configuration apply with a configuration target carrying the saved revision, independently of Node application results.\n`membership.role`: Records a member's role change with a membership target carrying membershipId.\n`membership.join`: Records a completed network join with a membership target carrying the new membershipId.\n`membership.remove`: Records a completed membership removal with a membership target carrying membershipId.\n`joinLink.create`: Records creation of a join link with a joinLink target carrying linkId.\n`joinLink.revoke`: Records revocation of a join link with a joinLink target carrying linkId.\n`routing.select`: Records a committed routing profile selection by the Node itself or a user, with a routingSelection target carrying nodeId and the selected profile.\n`routing.autoResolve`: Records, with a system actor, that the profile `auto` resolves to for a Node changed (another profile, basis or region, such as after its declared region changed), with a routingSelection target carrying nodeId and the profile `auto` now applies.",
         "enum": [
           "account.register",
           "session.login",
@@ -332,7 +332,8 @@ export const schemaDocument = {
           "membership.remove",
           "joinLink.create",
           "joinLink.revoke",
-          "routing.select"
+          "routing.select",
+          "routing.autoResolve"
         ]
       },
       "ActivityActor": {
@@ -684,7 +685,7 @@ export const schemaDocument = {
               },
               "profile": {
                 "type": "string",
-                "description": "Profile the selection names after the action."
+                "description": "Profile the selection names after the action; for `routing.autoResolve`, the profile `auto` now applies."
               },
               "type": {
                 "type": "string",
@@ -1051,6 +1052,8 @@ export const schemaDocument = {
         "type": "string",
         "description": "What decided `auto`'s profile.",
         "enum": [
+          "label",
+          "noRuleMatched",
           "noTrustedRegion"
         ]
       },
@@ -1064,7 +1067,7 @@ export const schemaDocument = {
         "properties": {
           "fallback": {
             "type": "string",
-            "description": "Allowed non-`auto` profile used when no region rule matches or no valid region observation exists."
+            "description": "Allowed non-`auto` profile used when the Node declares no region or no rule lists it."
           },
           "rules": {
             "type": "array",
@@ -1081,7 +1084,8 @@ export const schemaDocument = {
         "description": "The concrete profile `auto` applies and why.",
         "required": [
           "profile",
-          "basis"
+          "basis",
+          "region"
         ],
         "properties": {
           "basis": {
@@ -1090,6 +1094,13 @@ export const schemaDocument = {
           "profile": {
             "type": "string",
             "description": "Allowed non-`auto` profile in effect."
+          },
+          "region": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Region the resolution used: the Node's declared `region`; null for `noTrustedRegion`."
           }
         },
         "additionalProperties": false
@@ -2792,7 +2803,7 @@ export const schemaDocument = {
             "items": {
               "type": "string"
             },
-            "description": "Nonempty list of uppercase two-letter country codes matched against the observed public underlay address's region."
+            "description": "Nonempty list of uppercase ISO 3166-1 alpha-2 codes matched against the source Node's declared `region`."
           },
           "profile": {
             "type": "string",
@@ -6396,7 +6407,9 @@ export const schemaDocument = {
           "resolver_outside_access",
           "shadowed_rule",
           "ineffective_block_option",
-          "ephemeral_listener_port"
+          "ephemeral_listener_port",
+          "auto_region_unmatched",
+          "auto_region_missing"
         ]
       },
       "JoinLinkActions": {
@@ -9609,7 +9622,7 @@ export const schemaDocument = {
         "properties": {
           "compilerVersion": {
             "type": "string",
-            "description": "Compiler contract family, `meshway-netmap-2`."
+            "description": "Compiler contract family, `meshway-netmap-3`."
           },
           "dependencyDigest": {
             "$ref": "#/components/schemas/Digest",
@@ -10071,6 +10084,10 @@ export const schemaDocument = {
               "type": "string"
             }
           },
+          "region": {
+            "type": "string",
+            "description": "Administrator-declared ISO 3166-1 alpha-2 region (uppercase) that `auto` resolves by; omission declares none."
+          },
           "remark": {
             "type": "string",
             "description": "Free-form description, defaulting to an empty string and granting no permissions."
@@ -10104,6 +10121,13 @@ export const schemaDocument = {
           "hostname": {
             "type": "string",
             "description": "Replacement network-unique DNS label; omission retains the current hostname."
+          },
+          "region": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Administrator-declared ISO 3166-1 alpha-2 region; omission retains it and null clears it."
           },
           "remark": {
             "type": "string",
@@ -10192,6 +10216,10 @@ export const schemaDocument = {
             "propertyNames": {
               "type": "string"
             }
+          },
+          "region": {
+            "type": "string",
+            "description": "Administrator-declared ISO 3166-1 alpha-2 region that `auto` resolves by; omitted when undeclared."
           },
           "remark": {
             "type": "string",

@@ -69,6 +69,7 @@ impl Scene {
                     )]),
                     dialers: Input::Omitted,
                     exit_enabled: external && i == 3,
+                    region: None,
                 },
             );
             let key = |offset, algorithm| BoundNodeKey {

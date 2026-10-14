@@ -155,6 +155,7 @@ pub(super) fn base(count: u8) -> Scenario {
                 listeners,
                 dialers: Input::Omitted,
                 exit_enabled: i == 4 || i == 5,
+                region: None,
             },
         );
         inventory.insert(node(i), trusted(i, i >= 4, i != 3));
@@ -390,10 +391,48 @@ pub(super) fn generated(seed: u64) -> Scenario {
     } else {
         vec!["*".to_owned()]
     };
+    let mut default = if rng.chance(70) { "exit" } else { "mesh" }.to_owned();
+    let mut allowed = vec!["exit".into(), "mesh".into()];
+    // Draws after every earlier one, so seeds keep the scenarios above.
+    if rng.chance(50) {
+        // `auto` by declared region: US exits through `exit`, JP through
+        // `alt`; other regions and none fall back to `mesh`.
+        s.cfg.routing.egress.profiles.insert(
+            "alt".into(),
+            RoutingProfile {
+                rules: vec![egress_rule("8.8.0.0/16", exit_action(&[5], &[]))],
+                fallback: RouteAction::Exit {
+                    nodes: vec![sel(4)],
+                    via: vec![sel(2)],
+                },
+            },
+        );
+        s.cfg.routing.egress.auto = Input::Value(AutoProfile {
+            rules: vec![
+                CountryProfile {
+                    countries: vec!["US".into()],
+                    profile: "exit".into(),
+                },
+                CountryProfile {
+                    countries: vec!["JP".into(), "KR".into()],
+                    profile: "alt".into(),
+                },
+            ],
+            fallback: "mesh".into(),
+        });
+        allowed.extend(["alt".into(), "auto".into()]);
+        if rng.chance(70) {
+            default = "auto".into();
+        }
+        for id in 1..=5 {
+            let region = *rng.pick(&[None, Some("US"), Some("JP"), Some("FR")]);
+            s.cfg.nodes.get_mut(&node(id)).unwrap().region = region.map(str::to_owned);
+        }
+    }
     s.cfg.routing.egress.assignments.push(ProfileAssignment {
         target,
-        allowed: vec!["exit".into(), "mesh".into()],
-        default: if rng.chance(70) { "exit" } else { "mesh" }.into(),
+        allowed,
+        default,
         locked: false,
     });
     s

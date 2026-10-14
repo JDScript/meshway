@@ -153,10 +153,13 @@ pub(crate) fn write(
             term,
             "Auto",
             format!(
-                "→ {} ({})",
+                "auto → {} (region {}, basis {})",
                 auto.profile,
+                auto.region.as_deref().unwrap_or("none"),
                 match auto.basis {
-                    AutoBasis::NoTrustedRegion => "no trusted region yet; configured fallback",
+                    AutoBasis::Label => "label",
+                    AutoBasis::NoRuleMatched => "noRuleMatched",
+                    AutoBasis::NoTrustedRegion => "noTrustedRegion",
                 }
             ),
         )?;

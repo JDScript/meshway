@@ -76,6 +76,8 @@ pub struct AutoResolution {
     /// Allowed non-`auto` profile in effect.
     pub profile: String,
     pub basis: AutoBasis,
+    /// Region the resolution used: the Node's declared `region`; null for `noTrustedRegion`.
+    #[serde(deserialize_with = "nullable")] pub region: Option<String> [required = true],
 } }
 
 meshway_model::string_enum! {
@@ -83,8 +85,14 @@ meshway_model::string_enum! {
 #[serde(rename_all = "camelCase")]
 /// What decided `auto`'s profile.
 pub enum AutoBasis {
-    /// No trusted region of the Node is a compilation input yet: the
-    /// configured `auto.fallback` applies, whatever its public address is.
+    /// The Node's declared `region` is listed by an `auto` rule: the first
+    /// such rule's profile applies.
+    Label,
+    /// The Node declares a `region` that no `auto` rule lists: the
+    /// configured `auto.fallback` applies.
+    NoRuleMatched,
+    /// The Node declares no `region`: the configured `auto.fallback`
+    /// applies, whatever its public address is.
     NoTrustedRegion,
 }
 }

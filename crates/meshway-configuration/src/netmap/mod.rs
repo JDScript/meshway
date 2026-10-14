@@ -25,7 +25,7 @@ pub use projection::*;
 pub use services::*;
 
 /// Contract family of every netmap produced by this compiler generation.
-pub const NETMAP_COMPILER_VERSION: &str = "meshway-netmap-2";
+pub const NETMAP_COMPILER_VERSION: &str = "meshway-netmap-3";
 
 tagged! {
 /// Source-local action for one managed destination prefix.
@@ -195,7 +195,7 @@ pub struct NodeNetmap {
     pub revision: Revision,
     /// Per-node content sequence.
     pub serial: Version,
-    /// Compiler contract family, `meshway-netmap-2`.
+    /// Compiler contract family, `meshway-netmap-3`.
     pub compiler_version: String,
     /// Digest of the network compilation input that produced this serial.
     pub dependency_digest: Digest,

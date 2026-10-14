@@ -126,7 +126,7 @@ impl LocalCompiler {
     ) -> Result<(EffectiveRules<'_>, RouteAction), CompileError> {
         let cfg = &self.configuration;
         let projection = &self.netmap.projection;
-        let mut profile = effective_profile(
+        let profile = effective_profile(
             cfg,
             &projection.subjects,
             &projection.selected_profiles,
@@ -140,13 +140,8 @@ impl LocalCompiler {
                 own.get(index).ok_or(CompileError::InvalidInput)?.as_deref(),
             ));
         }
-        if let matching::EgressProfile::Auto(auto) = matching::resolve_profile(cfg, &profile)? {
-            if auto.fallback == "auto" {
-                return Err(CompileError::InvalidInput);
-            }
-            profile = auto.fallback.clone();
-        }
-        let fallback = match matching::resolve_profile(cfg, &profile)? {
+        let (resolved, profile, _) = matching::concrete_profile(cfg, &profile, Some(source))?;
+        let fallback = match resolved {
             matching::EgressProfile::Mesh => RouteAction::Unmanaged,
             matching::EgressProfile::Global(node) => RouteAction::Exit {
                 nodes: vec![format!("node:{node}")],

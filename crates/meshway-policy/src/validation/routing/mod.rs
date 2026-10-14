@@ -766,7 +766,7 @@ fn validate_resolved(
             } else if let Some(bad) = rule
                 .countries
                 .iter()
-                .find(|s| s.len() != 2 || !s.bytes().all(|b| b.is_ascii_uppercase()))
+                .find(|s| !meshway_configuration::country_code(s))
             {
                 check.issue(
                     ConfigurationIssue::new(path, IssueCode::InvalidCountryCode).with("value", bad),

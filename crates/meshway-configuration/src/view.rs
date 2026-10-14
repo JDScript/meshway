@@ -244,6 +244,8 @@ pub struct NodeSettingsView {
     #[serde(default,skip_serializing_if="Input::is_omitted")] pub dialers: Input<DialerSetView> [value_type=DialerSetView],
     /// Administrative exit eligibility, independent of actual forwarding readiness.
     pub exit_enabled: bool,
+    /// Administrator-declared ISO 3166-1 alpha-2 region that `auto` resolves by; omitted when undeclared.
+    #[serde(default, deserialize_with = "crate::editing_secrets::present", skip_serializing_if = "Option::is_none")] pub region: Option<String> [value_type = String],
 } }
 object! {
 /// Redacted network configuration projection used for reads and non-executable previews.
@@ -311,6 +313,7 @@ impl From<&NodeSettings> for NodeSettingsView {
                 Input::Value(d) => Input::Value(d.into()),
             },
             exit_enabled: n.exit_enabled,
+            region: n.region.clone(),
         }
     }
 }

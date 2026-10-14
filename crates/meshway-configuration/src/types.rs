@@ -132,6 +132,8 @@ pub struct NodeSettings {
     #[serde(default, skip_serializing_if = "Input::is_omitted")] pub dialers: Input<DialerSet> [value_type = DialerSet],
     /// Permit selection as an exit node; defaults to false and does not indicate execution readiness.
     #[serde(default)] pub exit_enabled: bool,
+    /// Administrator-declared ISO 3166-1 alpha-2 region (uppercase) that `auto` resolves by; omitted when undeclared.
+    #[serde(default, deserialize_with = "crate::editing_secrets::present", skip_serializing_if = "Option::is_none")] pub region: Option<String> [value_type = String],
 } }
 object! {
 /// Editable settings for an already registered node, before address and material preparation.
@@ -152,7 +154,15 @@ pub struct NodeSettingsInput {
     #[serde(default, skip_serializing_if = "Input::is_omitted")] pub dialers: Input<DialerSet> [value_type = DialerSet],
     /// Permit selection as an exit node; defaults to false and does not indicate execution readiness.
     #[serde(default)] pub exit_enabled: bool,
+    /// Administrator-declared ISO 3166-1 alpha-2 region (uppercase) that `auto` resolves by; omission declares none.
+    #[serde(default, deserialize_with = "crate::editing_secrets::present", skip_serializing_if = "Option::is_none")] pub region: Option<String> [value_type = String],
 } }
+
+/// Whether `value` has the shape of an ISO 3166-1 alpha-2 code: two
+/// uppercase ASCII letters. Shared by node regions and `auto` country lists.
+pub fn country_code(value: &str) -> bool {
+    value.len() == 2 && value.bytes().all(|b| b.is_ascii_uppercase())
+}
 
 /// Transport used to send queries to an explicitly configured DNS resolver.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -304,7 +314,7 @@ pub struct ProfileAssignment {
 object! {
 /// Region condition used by the automatic profile selector.
 pub struct CountryProfile {
-    /// Nonempty list of uppercase two-letter country codes matched against the observed public underlay address's region.
+    /// Nonempty list of uppercase ISO 3166-1 alpha-2 codes matched against the source Node's declared `region`.
     pub countries: Vec<String>,
     /// Profile selected on a match; it must be allowed and cannot recursively select `auto`.
     pub profile: String
@@ -314,7 +324,7 @@ object! {
 pub struct AutoProfile {
     /// Country mappings evaluated in first-match order.
     pub rules: Vec<CountryProfile>,
-    /// Allowed non-`auto` profile used when no region rule matches or no valid region observation exists.
+    /// Allowed non-`auto` profile used when the Node declares no region or no rule lists it.
     pub fallback: String
 } }
 object! { #[derive(Default)]

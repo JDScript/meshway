@@ -712,7 +712,7 @@ fn version_reports_build_and_protocol_identity_without_a_daemon() {
     let version: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(version["version"], env!("CARGO_PKG_VERSION"));
     assert_eq!(version["ipc"], meshway_protocol::ipc::VERSION);
-    assert_eq!(version["compilerVersion"], "meshway-netmap-2");
+    assert_eq!(version["compilerVersion"], "meshway-netmap-3");
     assert!(version["wire"].as_u64().is_some_and(|wire| wire > 0));
     assert!(version["git"].as_str().is_some_and(|git| !git.is_empty()));
 }

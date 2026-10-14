@@ -315,22 +315,14 @@ pub(super) struct Selection<'a> {
     pub fallback: RouteAction,
 }
 
+/// `source` resolves `auto` ([`matching::concrete_profile`]).
 pub(super) fn selection<'a>(
     cfg: &'a NetworkConfiguration,
     profile: &str,
+    source: Option<NodeId>,
 ) -> Result<Selection<'a>, CompileError> {
-    let resolved = match matching::resolve_profile(cfg, profile)? {
-        EgressProfile::Auto(auto) => {
-            if auto.fallback == "auto" {
-                return Err(CompileError::InvalidInput);
-            }
-            (
-                matching::resolve_profile(cfg, &auto.fallback)?,
-                auto.fallback.as_str(),
-            )
-        }
-        other => (other, profile),
-    };
+    let (resolved, name, _) = matching::concrete_profile(cfg, profile, source)?;
+    let resolved = (resolved, name.as_str());
     let mut rules: Vec<_> = cfg
         .routing
         .egress
@@ -372,7 +364,7 @@ pub(super) fn names_exit(
     profile: &str,
     source: NodeId,
 ) -> bool {
-    selection(cfg, profile).is_ok_and(|Selection { rules, fallback }| {
+    selection(cfg, profile, Some(source)).is_ok_and(|Selection { rules, fallback }| {
         rules
             .iter()
             .map(|(_, rule)| rule.action.clone().into())
@@ -432,7 +424,7 @@ pub fn compute(
     profile: &str,
     source: Option<NodeId>,
 ) -> Result<EgressPartition, UnavailableReason> {
-    let Selection { rules, fallback } = selection(cfg, profile).map_err(unavailable)?;
+    let Selection { rules, fallback } = selection(cfg, profile, source).map_err(unavailable)?;
     let fallback = executed(exits, fallback, source).map_err(unavailable)?;
     let mut actions = Vec::new();
     let mut remaining4 = vec![(0u32, u32::MAX)];
@@ -519,8 +511,9 @@ pub fn excepted_resolvers(
     cfg: &NetworkConfiguration,
     sets: &rules::RuleSets,
     profile: &str,
+    source: NodeId,
 ) -> Vec<String> {
-    let Ok(Selection { rules, fallback }) = selection(cfg, profile) else {
+    let Ok(Selection { rules, fallback }) = selection(cfg, profile, Some(source)) else {
         return Vec::new();
     };
     let kept = kept_resolvers(cfg);
