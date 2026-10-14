@@ -135,18 +135,8 @@ async fn ipv6_is_not_carried_over_a_channel_below_the_ipv6_minimum() {
     assert_eq!(packet.traffic().destination, a);
     // IPv4 over the same channel still flows within its limit.
     let (a4, b4) = (f.address(0), f.address(2));
-    assert!(matches!(
-        f.a.outbound(super::packet::tcp_with_payload(
-            a4,
-            b4,
-            (50001, 443),
-            1,
-            0,
-            0x02,
-            &[]
-        )),
-        Ok(_)
-    ));
+    let syn = super::packet::tcp_with_payload(a4, b4, (50001, 443), 1, 0, 0x02, &[]);
+    assert!(f.a.outbound(syn).is_ok());
     f.close().await;
 }
 
