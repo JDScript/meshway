@@ -2,7 +2,9 @@
 
 按合入 main 的顺序记录工作包、提交与证据 ID。规则见[工程流程](/v2/process)；性能数字的口径见[分层性能测量](/v2/node/performance)，验收状态见[验收范围](/v2/node/validation)。
 
-## 未发布
+## v0.1.0-alpha.10
+
+范围：wire 6、IPC 12、`compilerVersion` `meshway-netmap-3`、Server schema 8 均不变（普通升级，无断网窗口；CLI 与 daemon 一起升级，IPC 12 新增命令 `ClearProfile`）。HTTP 契约新增 `DELETE /agent-api/v1/routing-selection`（`clearNodeRoutingProfile`）与 `DELETE /api/v1/networks/{networkId}/nodes/{nodeId}/routing-selection`（`clearNodeRoutingSelection`），`ActivityTarget.routingSelection.profile` 改为必有可空。X8：出口角色失败只撤该角色并自动重装、echo 流寿命（等待回复至多 10 秒、回复后 2 秒结束）、echo 连接 CT 换代按归属处理、出口 cipher 随最后一条流结束向来源发 `Close`；H2：清除方案选择（`meshway exit --default`）、`idlePath` 多中继排序修正；以及下列 H2、X8 工作包。
 
 OPS8 后续三项（H2，`h2/ops8-followups`）：wire 6、IPC 12、`compilerVersion` `meshway-netmap-3`、Server schema 8 均不变。
 
