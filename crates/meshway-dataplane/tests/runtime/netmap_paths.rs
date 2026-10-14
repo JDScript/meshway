@@ -203,6 +203,23 @@ async fn a_needed_peer_without_a_circuit_reports_the_relay_a_new_one_would_take(
 }
 
 #[tokio::test]
+async fn the_idle_route_is_the_path_a_new_flow_then_takes() {
+    let mut f = direct_or_relayed().await;
+    let [a, r, b] = f.ids();
+    // Only R carries: the shown path is the relay the circuit starts on.
+    let shown = f.a.idle_route(b);
+    assert_eq!(shown, Some(vec![a, r, b]));
+    let Outbound::Queued { init: Some(init) } = f.a.outbound(f.mesh_udp(false, 42424)).unwrap()
+    else {
+        panic!("a new flow starts its circuit")
+    };
+    assert_eq!(init.next(), r);
+    f.finish_handshake(init).await;
+    assert_eq!(f.a.joined_route(b), shown);
+    f.close().await;
+}
+
+#[tokio::test]
 async fn preview_and_joined_route_report_the_circuit_a_new_flow_takes() {
     use meshway_configuration::execution::BusinessProtocol;
     use meshway_dataplane::secure::Preview;
