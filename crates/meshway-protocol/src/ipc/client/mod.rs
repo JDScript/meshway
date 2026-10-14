@@ -114,7 +114,23 @@ impl Client {
         &self,
         profile: String,
     ) -> Result<meshway_configuration::selection::RoutingSelectionState, ClientError> {
-        let request = request(Command::SelectProfile { profile })?;
+        self.selection(Command::SelectProfile { profile }).await
+    }
+
+    /// Ask the daemon to have the Server clear this Node's routing selection;
+    /// the assignment's default applies with the next netmap. Answers and
+    /// times out as [`Self::select_profile`].
+    pub async fn clear_profile(
+        &self,
+    ) -> Result<meshway_configuration::selection::RoutingSelectionState, ClientError> {
+        self.selection(Command::ClearProfile).await
+    }
+
+    async fn selection(
+        &self,
+        command: Command,
+    ) -> Result<meshway_configuration::selection::RoutingSelectionState, ClientError> {
+        let request = request(command)?;
         tokio::time::timeout(SELECTION_TIMEOUT, async {
             let mut stream = self.connect_send(&request).await?;
             let response = read_response(&mut stream, request.request_id).await?;

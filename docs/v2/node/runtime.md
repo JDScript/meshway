@@ -196,7 +196,7 @@ IPC 12 的公开运行状态（`meshway status --json` 原样输出）：
 | `mtu` | 必填可空：`direct` 的 Native UDP 选定通道的 `path`（外层路径 MTU，IP 字节）与 `inner`（一个 Data 帧能承载的最大内层 IP 包）；搜索完成前、其他承载或未确认时为 null，定义见[外层路径 MTU](/v2/node/connectivity#path-mtu) |
 | `via` | `relay`／`relayIdle` 时按路径顺序的中转 Node ID；其他为空。到同一 peer 有多条已建立 circuit 时取新流实际会加入的那条（与首包同一路径排序 `SecureNode::choose_path`），没有可加入的才取其中最短的一条 |
 | `rtt` | 必填可空：到该 peer 最近一次成功 `ping`／观察任务测量的 `durationUs` 与 `observedAt`；没有测量为 null，不补零；down、撤回或租约结束时清空 |
-| `idlePath` | 可省略：该 peer 既无选定通道也无已建立 circuit 时（`state` 为 `relayIdle`／`idle`／`unreachable`／`offline`），新 circuit 此刻会走的路径——与首包同一选择 `SecureNode::idle_route`（`ranked` 候选顺序中第一条首跳有通道且未暂停的，否则排序第一的；不登记邻接需求）。`route` 为 `direct`（直连路径，`via` 为空）、`relay`（`via` 为按路径顺序的中转 Node ID）或 `none`（已安装内容不给本节点到该 peer 的路径）。有通道或 circuit 时省略（实际路径见 `endpoint`／`via`）；不判定可达，`state` 仍按上文。`meshway status` 的 ENDPOINT 列显示 `direct (idle)`／`relay (idle) via <R>`／`no path` |
+| `idlePath` | 可省略：该 peer 既无选定通道也无已建立 circuit 时（`state` 为 `relayIdle`／`idle`／`unreachable`／`offline`），新 circuit 此刻会走的路径，取值只能是该 state 允许的：`relayIdle` 为 `via` 所列的那条中继路径（`SecureNode::relay_route`）；`unreachable`／`offline` 没有可走的路径，总是 `none`；`idle` 为与首包同一选择 `SecureNode::idle_route`（`ranked` 候选顺序中第一条首跳有通道且未暂停的，否则排序第一的；不登记邻接需求）。`route` 为 `direct`（直连路径，`via` 为空）、`relay`（`via` 为按路径顺序的中转 Node ID）或 `none`（没有新 circuit 可走的路径，或已安装内容不给本节点到该 peer 的路径）。有通道或 circuit 时省略（实际路径见 `endpoint`／`via`）。`meshway status` 的 ENDPOINT 列显示 `direct (idle)`／`relay (idle) via <R>`／`no path` |
 
 `phase` 的全部 10 个值：
 
@@ -259,11 +259,11 @@ Linux 首版每台机器运行一个系统级 `meshwayd`，同一时间只启用
 | `meshway ping <target>` | 先打印本节点的本地判定，再探测：Mesh 节点为获准的端到端 Mesh 探测，公网 IP／域名为经出口路径或本机直出的 ICMP echo；参数、授权与输出见[路径诊断](/v2/node/diagnostics)与[Mesh 外目标](/v2/node/diagnostics#external) |
 | `meshway status [--watch]` | 本节点摘要与 peers 表；`--watch` 每秒刷新（TTY 原地重绘，否则逐份输出） |
 | `meshway netcheck` | 一次有界的本机网络诊断，见[路径诊断 · netcheck](/v2/node/diagnostics#netcheck) |
-| `meshway exit [profile]` | 无参数：显示本机 netmap 中的方案选择；带方案：请 Server 切换并等待本机应用，`off` 即 `mesh`。见[出口方案](#exit-profile) |
+| `meshway exit [profile \| --default]` | 无参数：显示本机 netmap 中的方案选择；带方案：请 Server 切换并等待本机应用，`off` 即 `mesh`；`--default`：请 Server 清除持久选择、回到默认方案。见[出口方案](#exit-profile) |
 | `meshway version` | 程序与协议版本；不连接 daemon |
 | 切网 | 尚未实现；先停止旧网络、完成隔离清理，再运行新网络 |
 
-CLI 通过 Unix domain socket 发命令、读结果；状态由 daemon／组件的唯一 owner 持有。`meshway_protocol::ipc` 是唯一的请求／响应定义，当前版本为 10，使用 JSON 与长度前缀，单条消息上限 64 KiB；CLI 和 daemon 同版本发布。每个连接处理一个请求，Ping 可返回有序的多个事件，Netcheck 返回一个报告，SelectProfile 返回 Server 提交的选择（`Selection`）；连接数、请求等待、写入和队列均有上限。`Up` 的 `enrollmentKey` 可省略；`Up`／`Down`／`RotateKey`／`Logout` 的 `expectedRevision` 由 CLI 读取后提交，换钥与注销不会绕过本机 CAS。
+CLI 通过 Unix domain socket 发命令、读结果；状态由 daemon／组件的唯一 owner 持有。`meshway_protocol::ipc` 是唯一的请求／响应定义，当前版本为 12，使用 JSON 与长度前缀，单条消息上限 64 KiB；CLI 和 daemon 同版本发布。每个连接处理一个请求，Ping 可返回有序的多个事件，Netcheck 返回一个报告，SelectProfile 与 ClearProfile 返回 Server 提交的选择（`Selection`）；连接数、请求等待、写入和队列均有上限。`Up` 的 `enrollmentKey` 可省略；`Up`／`Down`／`RotateKey`／`Logout` 的 `expectedRevision` 由 CLI 读取后提交，换钥与注销不会绕过本机 CAS。
 
 ### CLI 输出与退出码
 
@@ -317,7 +317,7 @@ meshway rotate-key
 
 ```text
 Exit profile exit
-  Requested  none (the default applies)
+  Requested  none · following the default
   Default    exit · not locked
 
 PROFILE                                      KIND    STATE             SUMMARY
@@ -329,7 +329,9 @@ global:e3210ff3-d7a6-4112-931b-0af816fddb47  global                    all exter
 
 `meshway exit <profile>` 经 IPC `SelectProfile` 交给 Control：Control 以持有 netmap 中本节点的 `selectionVersions` 为 CAS 基准调用 `selectNodeRoutingProfile`，Server 提交后重新编译 netmap；CLI 等到本机持有的 netmap 带上该版本（TUN 模式另需该 netmap 已 applied）才返回，最多 30 秒。`off` 即 `mesh`。本机不保存“想要的方案”：Server 的回答只用于本次输出，生效状态只来自 netmap。切换总是新的选择版本，经旧方案出口的已有流随新 netmap 结束（[netmap 设计 · revision 变化时的已有流](/v2/node/netmap-design#revision-变化时的已有流)）。
 
-`--json` 无参数时输出 `RoutingSelectionState`；切换时输出 `{"committed": <Server 的回答>, "applied": <是否已应用>, "local": <本机 netmap 的选择或 null>}`。IPC 错误码：`profileNotAllowed`（不在允许范围）、`profileLocked`（锁定在默认方案）、`selectionConflict`（选择已被 Console 等更新，本机尚未取得新 netmap）、`notReady`（未接入、无 netmap 或 instance）、`network`／`serverBusy`／`credentials`。Server 拒绝不结束 session 或 instance。
+`meshway exit --default` 经 IPC `ClearProfile` 以同一 CAS 基准调用 `clearNodeRoutingProfile`（[选择的入口](/v2/configuration-reference/routing#选择的入口)）：Server 清除持久选择后，节点回到 assignment 的默认方案（默认为 `auto` 时即按地区解析）。清除后的选择没有版本，CLI 等到本机 netmap 的选择版本不再是清除前持有的版本（版本只增）才返回；没有选择时立即返回。输出与无参数时相同（`Requested  none · following the default`），末尾一行 ``Persistent selection cleared; following the default `<profile>`.``。不能与方案参数同用。
+
+`--json` 无参数时输出 `RoutingSelectionState`；切换或清除时输出 `{"committed": <Server 的回答>, "applied": <是否已应用>, "local": <本机 netmap 的选择或 null>, "cleared": <是否为清除>}`。IPC 错误码：`profileNotAllowed`（不在允许范围）、`profileLocked`（锁定在默认方案）、`selectionConflict`（选择已被 Console 等更新，本机尚未取得新 netmap）、`notReady`（未接入、无 netmap 或 instance）、`network`／`serverBusy`／`credentials`。Server 拒绝不结束 session 或 instance。
 
 接入密钥输入统一走 IPC 持久命令；daemon 不另提供重复的 `--enrollment-key-file` 启动源，避免启动参数与已接纳意图的恢复顺序冲突。换钥处理预算为 65 秒、CLI 等待 70 秒；超时／Ctrl-C 不取消已接纳操作，先通过 status 的公钥 generation 检查结果再决定是否重试。原始接入密钥、私钥和 token 不进入状态、错误分类或普通日志。
 

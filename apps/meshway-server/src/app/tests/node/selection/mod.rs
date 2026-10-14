@@ -187,6 +187,35 @@ impl Selection {
             )
             .await
     }
+    async fn node_clear(&self, expected: Option<u64>) -> Result<RoutingSelectionResponse, Error> {
+        self.app
+            .execution()
+            .clear_profile(
+                &self.token,
+                rid(),
+                ClearRoutingSelectionRequest {
+                    instance: self.instance.clone(),
+                    expected_version: expected.map(|v| Version::new(v).unwrap()),
+                },
+            )
+            .await
+    }
+    async fn user_clear(
+        &self,
+        token: &str,
+        node: NodeId,
+        request_id: RequestId,
+    ) -> Result<meshway_configuration::selection::RoutingSelectionState, Error> {
+        self.app
+            .execution()
+            .clear_user_profile(
+                token,
+                self.network,
+                node,
+                ClearNodeRoutingSelectionRequest { request_id },
+            )
+            .await
+    }
     async fn netmap(
         &self,
         node: NodeId,
@@ -273,7 +302,7 @@ async fn auto_follows_the_declared_region_and_records_each_change_of_its_resolut
             ActivityTarget::RoutingSelection { node_id, profile } => {
                 assert_eq!(*node_id, a);
                 assert!(matches!(event.actor, ActivityActor::System {}));
-                profile.as_str()
+                profile.as_deref().unwrap()
             }
             _ => panic!("routing.autoResolve without a selection target"),
         })
@@ -425,7 +454,7 @@ async fn a_node_selects_an_allowed_profile_and_runs_the_netmap_carrying_it() {
     }
     assert!(matches!(
         &events[2].target,
-        ActivityTarget::RoutingSelection { node_id, profile } if *node_id == lab.a && profile == "work"
+        ActivityTarget::RoutingSelection { node_id, profile } if *node_id == lab.a && profile.as_deref() == Some("work")
     ));
 }
 
@@ -627,7 +656,7 @@ async fn members_select_their_own_devices_and_managers_any_node_as_themselves() 
     );
     assert!(matches!(
         &events[1].target,
-        ActivityTarget::RoutingSelection { node_id, profile } if *node_id == lab.a && *profile == global
+        ActivityTarget::RoutingSelection { node_id, profile } if *node_id == lab.a && profile.as_deref() == Some(global.as_str())
     ));
     // The Node's netmap and its compare-and-swap base follow the user's selection.
     assert_eq!(
@@ -707,4 +736,40 @@ async fn the_user_routes_answer_the_selection_and_refuse_a_profile_with_the_allo
     assert_eq!(selected.status(), 200);
     let selected: NodeRoutingSelectionResponse = selected.json().await.unwrap();
     assert_eq!(selected.selection.applied_profile, "work");
+    let cleared = client
+        .delete(&base)
+        .bearer_auth(&lab.member)
+        .json(&serde_json::json!({"requestId": rid()}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(cleared.status(), 200);
+    let cleared: NodeRoutingSelectionResponse = cleared.json().await.unwrap();
+    assert_eq!(
+        (
+            cleared.selection.requested_profile,
+            cleared.selection.applied_profile.as_str(),
+            cleared.can_select
+        ),
+        (None, "mesh", true)
+    );
+    // The activity reads a cleared selection as a null profile.
+    let activity = client
+        .get(format!(
+            "http://{}/api/v1/networks/{}/activity",
+            base.split('/').nth(2).unwrap(),
+            lab.network
+        ))
+        .bearer_auth(&lab.owner)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(activity.status(), 200);
+    let activity: serde_json::Value = activity.json().await.unwrap();
+    let newest = &activity["items"][0];
+    assert_eq!(newest["action"], "routing.select");
+    assert_eq!(newest["target"]["profile"], serde_json::Value::Null);
+    assert_eq!(newest["target"]["nodeId"], lab.m.to_string());
 }
+
+mod clear;

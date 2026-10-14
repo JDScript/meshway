@@ -139,7 +139,8 @@ fn read(r: &rusqlite::Row<'_>) -> rusqlite::Result<(i64, ActivityEvent)> {
     let target = if r.get::<_, Option<Vec<u8>>>(17)?.is_some() {
         ActivityTarget::RoutingSelection {
             node_id: uuid(r, 17, NodeId::new)?,
-            profile: r.get(18)?,
+            // A cleared selection is stored as the empty profile.
+            profile: Some(r.get::<_, String>(18)?).filter(|profile| !profile.is_empty()),
         }
     } else if r.get::<_, Option<Vec<u8>>>(7)?.is_some() {
         ActivityTarget::Session {

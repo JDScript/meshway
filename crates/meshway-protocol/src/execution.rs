@@ -14,6 +14,14 @@ wire_object! {
     pub profile: String,
 } }
 wire_object! {
+/// Node request to clear its persistent routing selection using compare-and-swap against its current selection; the assignment's default applies afterwards.
+#[derive(Clone,Debug,PartialEq,Eq)] pub struct ClearRoutingSelectionRequest {
+    /// Current runtime instance authorized to change the selection.
+    pub instance: InstanceRequest,
+    /// Current selection version (the netmap's `selectionVersions` entry of this Node); null or omission requires that the Node has no selection under its current identity.
+    pub expected_version: Option<Version>,
+} }
+wire_object! {
 /// Server-committed routing selection; the Node's next netmap carries it.
 #[derive(Clone,Debug,PartialEq,Eq)] pub struct RoutingSelectionResponse {
     /// The Node's selection after the commit: the new version, the requested and applied profile and its choices.

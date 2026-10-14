@@ -18,7 +18,9 @@ pub(crate) use lifecycle::{
 use meshway_configuration::{NetworkConfiguration, NodeIdentity};
 use meshway_model::*;
 use rusqlite::{Transaction, params};
-pub(crate) use selection::{can_select, select_profile, select_user_profile, user_selection};
+pub(crate) use selection::{
+    can_select, clear_profile, select_profile, select_user_profile, selections, user_selection,
+};
 
 pub(crate) fn now() -> Result<i64, Error> {
     let now = chrono::Utc::now().timestamp_millis();

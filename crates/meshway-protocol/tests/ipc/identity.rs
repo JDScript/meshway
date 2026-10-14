@@ -49,7 +49,14 @@ fn identity_commands_are_typed_optional_and_secret_debug_is_redacted() {
         serde_json::from_value::<Command>(json!({"type":"selectProfile","profile":"mesh"})).unwrap(),
         Command::SelectProfile { profile } if profile == "mesh"
     ));
+    // Clearing names no profile: the assignment's default applies.
+    assert!(matches!(
+        serde_json::from_value::<Command>(json!({"type":"clearProfile"})).unwrap(),
+        Command::ClearProfile
+    ));
     for invalid in [
+        json!({"type":"clearProfile","profile":"mesh"}),
+        json!({"type":"clearProfile","expectedVersion":1}),
         json!({"type":"selectProfile"}),
         json!({"type":"selectProfile","profile":null}),
         json!({"type":"selectProfile","profile":"mesh","expectedVersion":1}),

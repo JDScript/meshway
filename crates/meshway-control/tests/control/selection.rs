@@ -164,6 +164,44 @@ async fn a_selection_reaches_the_next_netmap_and_refusals_keep_the_session() {
         .await
         .unwrap();
     assert_eq!(again.version.map(|v| v.get()), Some(3));
+
+    // Clearing under a stale base is refused like a selection.
+    let stale = meshway_control::shared::clear_profile(&control)
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        problem(&stale),
+        Some(Problem::VersionConflict { .. })
+    ));
+    crate::support::sync(&mut *control.lock().await)
+        .await
+        .unwrap();
+    // Clearing leaves no selection: the default applies with the next netmap.
+    let cleared = meshway_control::shared::clear_profile(&control)
+        .await
+        .unwrap();
+    assert_eq!(
+        (
+            cleared.requested_profile.as_deref(),
+            cleared.version,
+            cleared.applied_profile.as_str()
+        ),
+        (None, None, "mesh")
+    );
+    crate::support::sync(&mut *control.lock().await)
+        .await
+        .unwrap();
+    assert_eq!(control.lock().await.status().routing.unwrap(), cleared);
+    // Clearing nothing changes nothing; the next selection's version is
+    // still above every earlier one (the clearing used 4).
+    let nothing = meshway_control::shared::clear_profile(&control)
+        .await
+        .unwrap();
+    assert_eq!(nothing, cleared);
+    let after = meshway_control::shared::select_profile(&control, "local".into())
+        .await
+        .unwrap();
+    assert_eq!(after.version.map(|v| v.get()), Some(5));
     let control: Control = control.into_inner();
     control.shutdown().await.unwrap();
     server.close().await;

@@ -263,7 +263,7 @@ Manager→SecureNode owner 的 circuit 控制／诊断帧和 lifecycle 事件另
 Policy 给出候选集合，源节点按本机已知的连通事实排序：
 
 - **集合**（Policy，[routing](/v2/configuration-reference/routing#可行性、循环与失败) 的搜索）：必经点展开后最短优先、同长按节点 ID；同一长度的路径全部列出后才看更长的，列满 `MAX_PATHS`（8）条的那个长度结束搜索。拓扑允许 A–B 直连而没有 `via` 时，A→B 与拓扑允许的**每一个** A→R→B 都是候选，不按节点 ID 截断。中继与端点各自在自己的投影上用同一搜索准入，因此源选中的任一候选在中继和目标处都被接受。
-- **排序**（`SecureNode::choose_path`，`secure/netmap/selection.rs::ranked`）：直连路径在前；经中继的路径按（本机与其下一跳有通道，该中继在[最后已知事实](#last-known-facts)的 `connected` 中与路径上的下一节点有通道）字典序排列，即“与两端都有通道”的中继最先、只与本机有通道的次之、其余在后，同类保持 Policy 顺序。取前 8 条（含直连）；超出的中继不尝试，并记一条 debug 事件 `operation=path_candidates`（`kept`、`truncated_relays`）。
+- **排序**（`SecureNode::choose_path`，`secure/netmap/selection.rs::ranked`）：直连路径在前；经中继的路径按（本机与其下一跳有通道，路径上每个中继在[最后已知事实](#last-known-facts)的 `connected` 中都与其后的节点有通道）字典序排列，即整条链已知连通的路径最先、只与本机有通道的次之、其余在后，同类保持 Policy 顺序。只看第一个中继的下一节点不够：多中继路径的第一个中继与第二个中继相连并不说明能到目标（目标离线时它会排到所有单中继路径之前）。取前 8 条（含直连）；超出的中继不尝试，并记一条 debug 事件 `operation=path_candidates`（`kept`、`truncated_relays`）。
 
 新 circuit（业务首包、`meshway ping`、诊断任务）在排序后的候选上选路：
 
@@ -277,7 +277,7 @@ Policy 给出候选集合，源节点按本机已知的连通事实排序：
 
 源端握手到期（`handshake_timeout`，10 秒）仍无应答时，该路径暂停 `10 s × 2^(n−1)`（上限 60 秒），下一个 circuit 换用其他有通道的路径；`n` 是连续无应答次数，暂停结束只让路径重新可试、不清零 `n`，得到应答、该路径内容变化或有界回收（至多 256 条路径，满时让位给新路径的是暂停结束最久的一条）才清零。新 netmap 内容只清除自身内容变化了的路径的暂停：路径内容是路径上各节点的数据面密钥与相邻两跳之间双向的获准承载（`secure/netmap/pause.rs::PathContent`），其他节点的备注、Access、DNS、出口等变化保留暂停。这覆盖“中继有通道但到不了目标”：中继缺下一跳时只登记需求并拒绝 INIT（不消耗 CID），源不会因此永久固定在这条路径上。已建立的 circuit 与流始终保持原完整路径，切换承载或路径只作用于新 circuit。
 
-`meshway status` 对经中继的 peer 显示 `relay … via <R>`；有邻接需求、当前没有通道也没有 circuit，但按上述排序的第一条中继路径首跳有通道、且其上每个中继在最后已知事实中都与下一节点有通道时状态为 `relay (idle)`（`SecureNode::relay_route`），`unreachable` 只用于没有任何可用路径；任一无通道、无 circuit 的 peer 另显示新 circuit 会走的路径（`direct (idle)`／`relay (idle) via <R>`／`no path`，`SecureNode::idle_route`，与首包同一选择），见[运行状态](/v2/node/runtime)。`meshway ping` 每个回复显示 `via relay <R>`。直连不可能时（两端都在端点相关映射 NAT 后、无共同私网），流量经与双方都有通道的第三节点中继；R 不需要 listener，只要它与两端各有通道。
+`meshway status` 对经中继的 peer 显示 `relay … via <R>`；有邻接需求、当前没有通道也没有 circuit，但按上述排序的第一条中继路径首跳有通道、且其上每个中继在最后已知事实中都与下一节点有通道时状态为 `relay (idle)`（`SecureNode::relay_route`），`unreachable` 只用于没有任何可用路径；任一无通道、无 circuit 的 peer 另显示新 circuit 会走的路径（`direct (idle)`／`relay (idle) via <R>`／`no path`，`SecureNode::idle_route`，与首包同一选择；`unreachable`／`offline` 的 peer 没有可走的路径，总是 `no path`），见[运行状态](/v2/node/runtime)。`meshway ping` 每个回复显示 `via relay <R>`。直连不可能时（两端都在端点相关映射 NAT 后、无共同私网），流量经与双方都有通道的第三节点中继；R 不需要 listener，只要它与两端各有通道。
 
 实测（N4，2026-10-13）：6 节点 lab 中 lax、sha、nyc、meshway-vm 都到不了 meshway-planck（NAT 后的容器），只有 us-lax-it7（节点 ID 最大）与两端都有通道；此前四路径截断恰好去掉 it7，lax→planck ping 超时。现在四个源 `meshway ping meshway-planck` 各 10/10 `via relay us-lax-it7`，经 Mesh 的 HTTP 请求 200；见[验收范围](/v2/node/validation#n4-real-network)。
 

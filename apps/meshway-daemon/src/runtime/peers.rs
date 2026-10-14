@@ -85,12 +85,22 @@ pub(super) fn peers(inputs: &Inputs<'_>) -> Vec<PeerStatus> {
             }) {
                 peer.state = PeerState::Unreachable;
             }
-            if !matches!(peer.state, PeerState::Direct | PeerState::Relay) {
-                peer.idle_path = inputs
+            peer.idle_path = match peer.state {
+                // The actual path is the channel's or the circuit's.
+                PeerState::Direct | PeerState::Relay => None,
+                // The relay a new circuit takes, the one `via` names.
+                PeerState::RelayIdle => inputs
+                    .relays
+                    .get(id)
+                    .map(|path| idle_path(Some(path.as_slice()))),
+                // A failed adjacency without a relay reporting the peer, or
+                // no current facts of the peer: no path a circuit can take.
+                PeerState::Unreachable | PeerState::Offline => Some(idle_path(None)),
+                PeerState::Idle => inputs
                     .idle_paths
                     .get(id)
-                    .map(|path| idle_path(path.as_deref()));
-            }
+                    .map(|path| idle_path(path.as_deref())),
+            };
             peer
         })
         .collect();
@@ -151,6 +161,7 @@ mod tests {
     fn peers_without_a_channel_or_circuit_show_the_new_circuit_path() {
         let netmap = netmap();
         let (a, b, c, d) = (node(1), node(2), node(3), node(4));
+        let known = fresh(&[b, c, d], Utc::now());
         let idle_paths =
             BTreeMap::from([(b, Some(vec![a, b])), (c, Some(vec![a, b, c])), (d, None)]);
         let routes = BTreeMap::from([(d, vec![a, b, d])]);
@@ -161,7 +172,7 @@ mod tests {
             relays: &BTreeMap::new(),
             idle_paths: &idle_paths,
             rtts: &BTreeMap::new(),
-            known: None,
+            known: Some(&known),
             now: Utc::now(),
         });
         let by = |id: NodeId| status.iter().find(|peer| peer.node_id == id).unwrap();
@@ -191,7 +202,7 @@ mod tests {
             relays: &BTreeMap::new(),
             idle_paths: &idle_paths,
             rtts: &BTreeMap::new(),
-            known: None,
+            known: Some(&known),
             now: Utc::now(),
         });
         let d = status.iter().find(|peer| peer.node_id == d).unwrap();
@@ -204,5 +215,129 @@ mod tests {
         );
         let json = serde_json::to_value(d).unwrap();
         assert_eq!(json["idlePath"]["route"], "none");
+    }
+
+    fn fresh(peers: &[NodeId], now: DateTime<Utc>) -> meshway_control::KnownPeers {
+        meshway_control::KnownPeers {
+            netmap: meshway_model::NetmapRef {
+                revision: meshway_model::Revision::MIN,
+                serial: meshway_model::Version::MIN,
+                digest: meshway_model::Digest::from_bytes([1; 32]),
+            },
+            peers: std::sync::Arc::new(
+                peers
+                    .iter()
+                    .map(|peer| {
+                        (
+                            *peer,
+                            meshway_protocol::PeerFacts {
+                                node_id: *peer,
+                                listeners: BTreeMap::new(),
+                                exit: None,
+                                connected: Vec::new(),
+                                observed_at: now,
+                                expires_at: now + chrono::Duration::seconds(60),
+                            },
+                        )
+                    })
+                    .collect(),
+            ),
+            traversal_requests: Default::default(),
+        }
+    }
+
+    /// Each state allows only the idle paths it means: none while a channel
+    /// or circuit carries the peer, the relay `via` names for `relayIdle`,
+    /// `none` for a peer no circuit can reach (unreachable, offline) whatever
+    /// SecureNode would try, and SecureNode's path otherwise.
+    #[test]
+    fn every_state_shows_only_the_idle_paths_it_allows() {
+        let netmap = netmap();
+        let (a, b, c, d) = (node(1), node(2), node(3), node(4));
+        let now = Utc::now();
+        // SecureNode would open a relayed circuit toward each of them.
+        let idle_paths = BTreeMap::from([
+            (b, Some(vec![a, c, b])),
+            (c, Some(vec![a, d, b, c])),
+            (d, Some(vec![a, b, d])),
+        ]);
+        let routes = BTreeMap::new();
+        // b: unreachable with fresh facts; c: offline (no current facts);
+        // d: a relay reports a channel with it.
+        let relays = BTreeMap::from([(d, vec![a, c, d])]);
+        let facts = meshway_connectivity::Snapshot {
+            listeners: Vec::new(),
+            links: Vec::new(),
+            sockets: Vec::new(),
+            adjacencies: BTreeMap::from([
+                (b, AdjacencyStatus::Unreachable),
+                (d, AdjacencyStatus::Unreachable),
+            ]),
+            mtu: BTreeMap::new(),
+            unavailable: Vec::new(),
+        };
+        let known = fresh(&[b, d], now);
+        let status = peers(&Inputs {
+            netmap: &netmap,
+            facts: Some(&facts),
+            routes: &routes,
+            relays: &relays,
+            idle_paths: &idle_paths,
+            rtts: &BTreeMap::new(),
+            known: Some(&known),
+            now,
+        });
+        let by = |id: NodeId| status.iter().find(|peer| peer.node_id == id).unwrap();
+        let none = Some(IdlePath {
+            route: IdleRoute::None,
+            via: vec![],
+        });
+        assert_eq!(
+            (by(b).state, &by(b).idle_path),
+            (PeerState::Unreachable, &none)
+        );
+        assert_eq!((by(c).state, &by(c).idle_path), (PeerState::Offline, &none));
+        assert_eq!(by(d).state, PeerState::RelayIdle);
+        assert_eq!(
+            by(d).idle_path,
+            Some(IdlePath {
+                route: IdleRoute::Relay,
+                via: by(d).via.clone(),
+            })
+        );
+        assert_eq!(by(d).via, vec![c]);
+        // Fresh facts and no failed adjacency: idle, SecureNode's path.
+        let known = fresh(&[b, c, d], now);
+        let status = peers(&Inputs {
+            netmap: &netmap,
+            facts: None,
+            routes: &routes,
+            relays: &BTreeMap::new(),
+            idle_paths: &idle_paths,
+            rtts: &BTreeMap::new(),
+            known: Some(&known),
+            now,
+        });
+        let c = status.iter().find(|peer| peer.node_id == c).unwrap();
+        assert_eq!(c.state, PeerState::Idle);
+        assert_eq!(
+            c.idle_path,
+            Some(IdlePath {
+                route: IdleRoute::Relay,
+                via: vec![d, b],
+            })
+        );
+        for peer in &status {
+            let allowed = match peer.state {
+                PeerState::Direct | PeerState::Relay => peer.idle_path.is_none(),
+                PeerState::Unreachable | PeerState::Offline => peer.idle_path == none,
+                PeerState::RelayIdle => peer
+                    .idle_path
+                    .as_ref()
+                    .is_some_and(|path| path.route == IdleRoute::Relay && path.via == peer.via),
+                PeerState::Idle => peer.idle_path.is_some(),
+            };
+            assert!(allowed, "{peer:?}");
+        }
     }
 }

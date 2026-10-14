@@ -225,7 +225,7 @@ tags 是本次接入输入，注册后当前身份只来自 Configuration。模�
 | 表 | 字段与用途 |
 | --- | --- |
 | `execution_demands` | network_id、node_id、id、instance_id、request_digest、payload、expires_at、cancelled_at；有界业务需求与重试绑定 |
-| `routing_selections` | network_id、node_id、identity_digest、profile、version、selected_at；节点或用户提交的持久方案选择。只有 identity_digest 与当前身份一致时适用；version 跨身份单调递增 |
+| `routing_selections` | network_id、node_id、identity_digest、profile、version、selected_at；节点或用户提交的持久方案选择。只有 identity_digest 与当前身份一致时适用；version 跨身份单调递增。清除后行保留、profile 为空串（方案名不能为空）且不适用，以保持版本单调 |
 
 身份摘要不赋权，需求不绕过 access。重启恢复方案仍检查当前条件；实际方案由 NodeState 报告。
 
@@ -239,7 +239,7 @@ tags 是本次接入输入，注册后当前身份只来自 Configuration。模�
 | `scope`／`account_user_id`／`network_id` | account 或 network 作用域 |
 | `at`／`actor_kind`／`actor_user_id`／`actor_node_id`／`actor_email` | 完成时间与真实 user／node／system 主体，邮箱为历史快照；node 主体只用于 routing.select；`routing.autoResolve` 的主体为 system |
 | `action` | 固定管理动作枚举 |
-| `target_user_id`／`target_session_id`／`target_membership_id`／`target_join_link_id`／`target_node_id`＋`target_profile` | 按动作约束的目标关联；后两者只且必须用于 routing.select 与 routing.autoResolve，用户提交的 routing.select 以 (network, actor_user_id, request_id) 唯一索引作为重试记录 |
+| `target_user_id`／`target_session_id`／`target_membership_id`／`target_join_link_id`／`target_node_id`＋`target_profile` | 按动作约束的目标关联；后两者只且必须用于 routing.select 与 routing.autoResolve（清除选择的 routing.select 的 target_profile 为空串，读出为 null），用户提交的 routing.select 以 (network, actor_user_id, request_id) 唯一索引作为重试记录 |
 | `before_revision`／`after_revision`／`request_id` | 配置变更与请求关联 |
 | `previous_email` | 仅 account.email 允许非空：修改前的地址快照 |
 

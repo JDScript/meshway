@@ -1,7 +1,7 @@
 //! Node lifecycle effects of configuration changes: session retirement,
 //! revocation of removed Nodes, the compilation inputs every netmap shares
 //! and the netmap targets of a version.
-use super::{current_configuration, id, identity_digest, json, subjects, user_binding};
+use super::{current_configuration, id, json, subjects, user_binding};
 use crate::configuration::ConfigurationBindings;
 use crate::error::Error;
 use crate::secrets::Sealer;
@@ -26,23 +26,10 @@ pub(crate) fn compilation_context(
     cfg: &NetworkConfiguration,
     bindings: &ConfigurationBindings,
 ) -> Result<CompilationContext, Error> {
-    let mut selected_profiles = BTreeMap::new();
-    let mut statement = tx.prepare(
-        "SELECT node_id,identity_digest,profile FROM routing_selections WHERE network_id=?1",
-    )?;
-    let mut rows = statement.query([network.as_uuid().as_bytes().as_slice()])?;
-    while let Some(row) = rows.next()? {
-        let node: NodeId = id(row.get(0)?)?;
-        let stored: Vec<u8> = row.get(1)?;
-        if cfg.nodes.contains_key(&node) {
-            let digest = identity_digest(cfg, bindings, node)?;
-            if stored == digest.as_bytes() {
-                selected_profiles.insert(node, row.get::<_, String>(2)?);
-            }
-        }
-    }
-    drop(rows);
-    drop(statement);
+    let selected_profiles = super::selection::selections(tx, network, cfg, bindings)?
+        .into_iter()
+        .map(|(node, (profile, _))| (node, profile))
+        .collect();
     let subjects = subjects(tx, network, bindings)?;
     let inventory = trusted_inventory(tx, network, cfg, &subjects)?;
     Ok(CompilationContext {

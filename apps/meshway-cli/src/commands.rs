@@ -4,6 +4,7 @@ use crate::{
     output,
 };
 use meshway_configuration::selection::RoutingSelectionState;
+use meshway_model::Version;
 use meshway_protocol::ipc::{
     Client, Command, ErrorCode, NetworkMode, Phase, PingEvent, PingTarget, Status,
 };
@@ -128,8 +129,13 @@ pub(crate) async fn run(arguments: Arguments) -> Result<(), Error> {
         }
         return Err(Error::PingUnsuccessful);
     }
-    if let CliCommand::Exit { profile } = arguments.command {
-        return exit(&client, profile, arguments.json).await;
+    if let CliCommand::Exit { profile, default } = arguments.command {
+        let change = match (profile, default) {
+            (_, true) => Some(Change::Clear),
+            (Some(profile), false) => Some(Change::Select(profile)),
+            (None, false) => None,
+        };
+        return exit(&client, change, arguments.json).await;
     }
     let mut status = client.call(Command::Status).await?;
     match arguments.command {
@@ -219,68 +225,87 @@ fn routing(status: &Status) -> Option<&RoutingSelectionState> {
     status.netmap.as_ref()?.routing.as_ref()
 }
 
+/// What `meshway exit` asks the Server for.
+enum Change {
+    Select(String),
+    /// Clear the persistent selection: the default applies.
+    Clear,
+}
+
 /// Whether the Node runs the netmap carrying `selection` (or a later one).
-fn applied(status: &Status, selection: &RoutingSelectionState) -> bool {
+/// A cleared selection has no version; versions only grow, so its netmap is
+/// any whose version differs from `before`, the one held when clearing.
+fn applied(status: &Status, selection: &RoutingSelectionState, before: Option<Version>) -> bool {
     let Some(netmap) = &status.netmap else {
         return false;
     };
-    let carried = routing(status)
-        .is_some_and(|local| local.version.map(|v| v.get()) >= selection.version.map(|v| v.get()));
+    let carried = routing(status).is_some_and(|local| match selection.version {
+        Some(version) => local.version.is_some_and(|local| local >= version),
+        None => before.is_none() || local.version != before,
+    });
     // Control-only Nodes install nothing: holding the netmap is applying it.
     carried
         && (status.network_mode == NetworkMode::ControlOnly
             || status.applied == Some(netmap.netmap))
 }
 
-/// `meshway exit [profile]`: show the selection, or have the Server select a
-/// profile and wait until this Node applied the netmap carrying it.
-async fn exit(client: &Client, profile: Option<String>, json: bool) -> Result<(), Error> {
+/// `meshway exit [profile | --default]`: show the selection, or have the
+/// Server select a profile or clear the selection, and wait until this Node
+/// applied the netmap carrying it.
+async fn exit(client: &Client, change: Option<Change>, json: bool) -> Result<(), Error> {
     let mut status = client.call(Command::Status).await?;
-    let Some(profile) = profile else {
+    let Some(change) = change else {
         let selection = routing(&status).ok_or(Error::NoNetmap)?;
         return Ok(output::exit_view(&status, selection, json)?);
     };
-    let profile = if profile == "off" {
-        "mesh".into()
-    } else {
-        profile
-    };
-    let selection = match client.select_profile(profile.clone()).await {
-        Ok(selection) => selection,
-        Err(meshway_protocol::ipc::ClientError::Remote(ErrorCode::ProfileNotAllowed)) => {
-            let allowed = routing(&status)
-                .map(|local| {
-                    local
-                        .profiles
-                        .iter()
-                        .map(|p| p.name.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                })
-                .unwrap_or_default();
-            return Err(Error::ProfileNotAllowed { profile, allowed });
+    let before = routing(&status).and_then(|local| local.version);
+    let cleared = matches!(change, Change::Clear);
+    let answer = match change {
+        Change::Clear => client.clear_profile().await,
+        Change::Select(profile) => {
+            let profile = if profile == "off" {
+                "mesh".into()
+            } else {
+                profile
+            };
+            match client.select_profile(profile.clone()).await {
+                Err(meshway_protocol::ipc::ClientError::Remote(ErrorCode::ProfileNotAllowed)) => {
+                    let allowed = routing(&status)
+                        .map(|local| {
+                            local
+                                .profiles
+                                .iter()
+                                .map(|p| p.name.as_str())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        })
+                        .unwrap_or_default();
+                    return Err(Error::ProfileNotAllowed { profile, allowed });
+                }
+                Err(meshway_protocol::ipc::ClientError::Remote(ErrorCode::ProfileLocked)) => {
+                    return Err(Error::ProfileLocked {
+                        default: routing(&status)
+                            .map(|local| local.default_profile.clone())
+                            .unwrap_or_default(),
+                    });
+                }
+                other => other,
+            }
         }
-        Err(meshway_protocol::ipc::ClientError::Remote(ErrorCode::ProfileLocked)) => {
-            return Err(Error::ProfileLocked {
-                default: routing(&status)
-                    .map(|local| local.default_profile.clone())
-                    .unwrap_or_default(),
-            });
-        }
-        Err(error) => return Err(error.into()),
     };
+    let selection = answer?;
     let deadline = Instant::now() + Duration::from_secs(30);
-    while !applied(&status, &selection) && Instant::now() < deadline {
+    while !applied(&status, &selection, before) && Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(100)).await;
         status = client.call(Command::Status).await?;
     }
-    let done = applied(&status, &selection);
-    output::exit_selected(&status, &selection, done, json)?;
+    let done = applied(&status, &selection, before);
+    output::exit_selected(&status, &selection, done, cleared, json)?;
     if !done {
         tracing::warn!(
             phase = ?status.phase,
             problem = ?status.last_error,
-            "The Server saved the selection; this Node has not applied it yet. Use status --watch."
+            "The Server saved the change; this Node has not applied it yet. Use status --watch."
         );
     }
     Ok(())

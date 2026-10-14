@@ -254,6 +254,19 @@ pub mod shared {
         .await
     }
 
+    /// Ask the Server to clear this Node's routing selection so that the
+    /// assignment's default applies; the answer is as for [`select_profile`].
+    pub async fn clear_profile(
+        control: &Mutex<Control>,
+    ) -> Result<meshway_configuration::selection::RoutingSelectionState, Error> {
+        unlocked(
+            control,
+            Control::prepare_clear_profile,
+            Control::apply_select_profile,
+        )
+        .await
+    }
+
     pub async fn query_udp_traversal(
         control: &Mutex<Control>,
         netmap: NetmapRef,

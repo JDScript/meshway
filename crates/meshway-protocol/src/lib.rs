@@ -54,8 +54,8 @@ pub use enrollment::{
 };
 pub use events::{StreamEvent, UserEvent};
 pub use execution::{
-    AcquireInstanceRequest, InstanceLease, InstanceRequest, ReceiptRequest,
-    RoutingSelectionRequest, RoutingSelectionResponse,
+    AcquireInstanceRequest, ClearRoutingSelectionRequest, InstanceLease, InstanceRequest,
+    ReceiptRequest, RoutingSelectionRequest, RoutingSelectionResponse,
 };
 pub use history::{ActivityListResponse, ActivityResponse, ConfigurationRevisionList};
 pub use live::{ConfigurationApplyProgress, UserConfigurationView, UserEntitiesView};
@@ -75,11 +75,11 @@ pub use netmap::{
     netmap_lease_transcript,
 };
 pub use node::{
-    DeleteNodeRequest, NodeChallenge, NodeChallengeRequest, NodeInventoryResponse,
-    NodeInventoryView, NodeKeyMetadata, NodeLeaveRequest, NodeLeaveResponse, NodeRotationRequest,
-    NodeRoutingSelectionResponse, NodeRoutingSummary, NodeSessionRequest, NodeSessionResponse,
-    NodeSettingsResponse, PinnedServerKeyStatus, PinnedServerKeyView, RevokeNodeKeyRequest,
-    SelectNodeRoutingProfileRequest,
+    ClearNodeRoutingSelectionRequest, DeleteNodeRequest, NodeChallenge, NodeChallengeRequest,
+    NodeInventoryResponse, NodeInventoryView, NodeKeyMetadata, NodeLeaveRequest, NodeLeaveResponse,
+    NodeRotationRequest, NodeRoutingSelectionResponse, NodeRoutingSummary, NodeSessionRequest,
+    NodeSessionResponse, NodeSettingsResponse, PinnedServerKeyStatus, PinnedServerKeyView,
+    RevokeNodeKeyRequest, SelectNodeRoutingProfileRequest,
 };
 pub use node_observations::{
     CreateNodeObservation, NodeObservationCancelled, NodeObservationQuery, NodeObservationResponse,

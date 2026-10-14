@@ -109,6 +109,54 @@
       }
     }
   },
+  "clearNodeRoutingProfile": {
+    "request": {
+      "instance": {
+        "instanceId": "8f9a0b1c-2d3e-4f4a-9b5c-6d7e8f9a0b1c",
+        "generation": 1
+      },
+      "expectedVersion": 1
+    },
+    "responses": {
+      "200": {
+        "selection": {
+          "requestedProfile": null,
+          "version": null,
+          "appliedProfile": "mesh",
+          "requestedUnavailable": null,
+          "defaultProfile": "mesh",
+          "locked": false,
+          "profiles": [
+            {
+              "name": "mesh",
+              "kind": "mesh",
+              "rules": 0,
+              "exits": [],
+              "fallback": {
+                "type": "unmanaged"
+              }
+            },
+            {
+              "name": "global:e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50",
+              "kind": "global",
+              "rules": 0,
+              "exits": [
+                "e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50"
+              ],
+              "fallback": {
+                "type": "exit",
+                "nodes": [
+                  "node:e5f4a3b2-7c8d-4e5f-8a9b-7c6d5e4f3a50"
+                ],
+                "via": []
+              }
+            }
+          ],
+          "auto": null
+        }
+      }
+    }
+  },
   "syncNode": {
     "request": {
       "netmap": {

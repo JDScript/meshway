@@ -7,8 +7,9 @@ use std::collections::{BTreeMap, BTreeSet};
 /// The candidate order of [`SecureNode::choose_path`]: indices into `paths`
 /// (in Policy order, the direct path first), at most [`MAX_PATHS`], and how
 /// many relayed paths were cut. A relayed path ranks by whether this Node
-/// has a channel with its next hop, then whether that relay reports a
-/// channel with the Node after it; ties keep Policy order.
+/// has a channel with its next hop, then whether every relay on it reports
+/// a channel with the Node after it (the whole way to the target, not only
+/// the first relay's next hop); ties keep Policy order.
 fn ranked(
     paths: &[&[NodeId]],
     carriers: &BTreeMap<NodeId, super::super::Carrier>,
@@ -17,11 +18,7 @@ fn ranked(
     let rank = |path: &[NodeId]| -> (bool, bool, bool) {
         let relayed = path.len() > 2;
         let carried = path.get(1).is_some_and(|next| carriers.contains_key(next));
-        let onward = path.get(1).zip(path.get(2)).is_some_and(|(relay, after)| {
-            channels
-                .get(relay)
-                .is_some_and(|connected| connected.contains(after))
-        });
+        let onward = reported(path, channels);
         (relayed, !(relayed && carried), !(relayed && onward))
     };
     let mut order: Vec<usize> = (0..paths.len()).collect();
@@ -29,6 +26,16 @@ fn ranked(
     let truncated = order.len().saturating_sub(MAX_PATHS);
     order.truncate(MAX_PATHS);
     (order, truncated)
+}
+
+/// Whether every relay of `path` reports a channel with the Node after it.
+fn reported(path: &[NodeId], channels: &BTreeMap<NodeId, BTreeSet<NodeId>>) -> bool {
+    path.len() > 2
+        && path[1..].windows(2).all(|hop| {
+            channels
+                .get(&hop[0])
+                .is_some_and(|connected| connected.contains(&hop[1]))
+        })
 }
 
 impl SecureNode {
@@ -59,8 +66,10 @@ impl SecureNode {
 
     /// The path a new circuit toward `peer` would take now, though none is
     /// established ([`Self::fresh_route`] over the content's paths); `None`
-    /// when the content gives no path. Reporting only: no interest is
-    /// registered, and a circuit is still admitted and chosen per flow.
+    /// when the content gives no path. Whether that path reaches `peer` is
+    /// the caller's peer state: an unreachable or offline peer has none.
+    /// Reporting only: no interest is registered, and a circuit is still
+    /// admitted and chosen per flow.
     pub fn idle_route(&self, peer: NodeId) -> Option<Vec<NodeId>> {
         let paths = self
             .desired
@@ -155,14 +164,7 @@ impl SecureNode {
             .into_iter()
             .map(|index| paths[index])
             .find(|path| {
-                path.len() > 2
-                    && self.carriers.contains_key(&path[1])
-                    && path[1..].windows(2).all(|hop| {
-                        self.first
-                            .peer_channels
-                            .get(&hop[0])
-                            .is_some_and(|connected| connected.contains(&hop[1]))
-                    })
+                reported(path, &self.first.peer_channels) && self.carriers.contains_key(&path[1])
             })
             .map(<[NodeId]>::to_vec)
     }
@@ -269,6 +271,28 @@ mod tests {
         // Without any reported channel the relays keep Policy order.
         let (order, _) = ranked(&refs, &carriers, &BTreeMap::new());
         assert_eq!(order, [0, 1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn a_longer_relay_ranks_up_only_when_every_relay_reports_its_next_hop() {
+        // it7 → planck while planck is offline: vm reports a channel with
+        // lax, nobody one with planck. The two-relay path must not outrank
+        // the one-relay ones for its first relay's channel alone.
+        let (it7, vm, lax, sha, planck) = (node(5), node(3), node(1), node(2), node(6));
+        let paths = [
+            vec![it7, planck],
+            vec![it7, sha, planck],
+            vec![it7, vm, lax, planck],
+        ];
+        let refs: Vec<&[NodeId]> = paths.iter().map(Vec::as_slice).collect();
+        let carriers = carriers(it7, &[vm, sha]);
+        let mut channels = BTreeMap::from([(vm, BTreeSet::from([lax, it7]))]);
+        let (order, _) = ranked(&refs, &carriers, &channels);
+        assert_eq!(order, [0, 1, 2], "Policy order: nothing reaches planck");
+        // Once lax reports planck the whole chain is known: it ranks first.
+        channels.insert(lax, BTreeSet::from([planck]));
+        let (order, _) = ranked(&refs, &carriers, &channels);
+        assert_eq!(order, [0, 2, 1]);
     }
 
     #[test]

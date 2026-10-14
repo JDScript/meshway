@@ -61,8 +61,8 @@ Configuration{
 RoutingSelection{
     /// Node whose selection changed.
     #[serde(rename="nodeId")]node_id:NodeId,
-    /// Profile the selection names after the action; for `routing.autoResolve`, the profile `auto` now applies.
-    profile:String,
+    /// Profile the selection names after the action; null when a `routing.select` cleared the selection (the assignment's default applies). For `routing.autoResolve`, the profile `auto` now applies.
+    #[serde(deserialize_with="nullable")]profile:Option<String> [required=true],
 }}}
 
 macro_rules! actions {
@@ -139,7 +139,7 @@ actions! {
     JoinLinkCreate = "joinLink.create",
     /// Records revocation of a join link with a joinLink target carrying linkId.
     JoinLinkRevoke = "joinLink.revoke",
-    /// Records a committed routing profile selection by the Node itself or a user, with a routingSelection target carrying nodeId and the selected profile.
+    /// Records a committed routing profile selection or its clearing by the Node itself or a user, with a routingSelection target carrying nodeId and the selected profile (null when cleared).
     RoutingSelect = "routing.select",
     /// Records, with a system actor, that the profile `auto` resolves to for a Node changed (another profile, basis or region, such as after its declared region changed), with a routingSelection target carrying nodeId and the profile `auto` now applies.
     RoutingAutoResolve = "routing.autoResolve",

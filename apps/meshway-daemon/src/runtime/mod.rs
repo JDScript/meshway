@@ -33,7 +33,8 @@ pub(crate) struct PingRequest {
 
 /// An operator's routing profile selection for the control owner to send.
 pub(crate) struct Selection {
-    pub profile: String,
+    /// The profile to select; `None` clears the selection.
+    pub profile: Option<String>,
     /// The operator stops waiting then; an unserved request is dropped, never sent late.
     pub deadline: tokio::time::Instant,
     pub reply: tokio::sync::oneshot::Sender<

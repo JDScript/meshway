@@ -5,9 +5,7 @@
 //! keys and capabilities, rule-set content and profile selections. State
 //! reports, instance renewal and expiry, and observation subscriptions never
 //! call into this module.
-use super::execution::{
-    CompilationContext, compilation_context, current_configuration, id, identity_digest,
-};
+use super::execution::{CompilationContext, compilation_context, current_configuration, id};
 use crate::effect::Effect;
 use crate::error::Error;
 use crate::secrets::Sealer;
@@ -273,28 +271,10 @@ fn selection_versions(
     cfg: &NetworkConfiguration,
     bindings: &crate::configuration::ConfigurationBindings,
 ) -> Result<BTreeMap<NodeId, Version>, Error> {
-    let mut statement = tx.prepare(
-        "SELECT node_id,identity_digest,version FROM routing_selections WHERE network_id=?1",
-    )?;
-    let mut rows = statement.query([bytes(network.as_uuid())])?;
-    let mut versions = BTreeMap::new();
-    while let Some(row) = rows.next()? {
-        let node: NodeId = id(row.get(0)?)?;
-        let stored: Vec<u8> = row.get(1)?;
-        if cfg.nodes.contains_key(&node)
-            && stored == identity_digest(cfg, bindings, node)?.as_bytes()
-        {
-            let version: i64 = row.get(2)?;
-            versions.insert(
-                node,
-                u64::try_from(version)
-                    .ok()
-                    .and_then(|version| Version::new(version).ok())
-                    .ok_or(Error::decode("routing_selections.version"))?,
-            );
-        }
-    }
-    Ok(versions)
+    Ok(super::execution::selections(tx, network, cfg, bindings)?
+        .into_iter()
+        .map(|(node, (_, version))| (node, version))
+        .collect())
 }
 
 struct Head {

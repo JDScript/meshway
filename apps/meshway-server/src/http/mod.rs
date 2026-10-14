@@ -240,7 +240,7 @@ fn routes() -> OpenApiRouter<HttpState> {
         .routes(routes!(connectivity::accept))
         .routes(routes!(connectivity::cancel))
         .routes(routes!(agent::receipt))
-        .routes(routes!(agent::select_profile))
+        .routes(routes!(agent::select_profile, agent::clear_profile))
         .routes(routes!(enrollment::create))
         .routes(routes!(enrollment::inspect))
         .routes(routes!(enrollment::approve))
@@ -257,7 +257,8 @@ fn routes() -> OpenApiRouter<HttpState> {
         .routes(routes!(nodes::revoke_key))
         .routes(routes!(
             nodes::routing_selection,
-            nodes::select_routing_profile
+            nodes::select_routing_profile,
+            nodes::clear_routing_selection
         ))
 }
 
