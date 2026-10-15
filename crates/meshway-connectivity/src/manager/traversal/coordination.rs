@@ -33,6 +33,8 @@ struct Paused {
     link: Option<[u8; 32]>,
     facts: std::collections::BTreeSet<String>,
     own: std::collections::BTreeSet<String>,
+    /// This Node's underlay path changes: a roam starts every pause over.
+    network: u64,
 }
 
 /// The peer's listener endpoint addresses, without their freshness.
@@ -85,6 +87,7 @@ impl Coordination {
         let link = last_link(shared, peer);
         let facts = endpoint_facts(shared, peer);
         let own = workers::own_mappings(shared);
+        let network = shared.roam_epoch();
         let edge = shared.plan().edge(peer);
         if self.0.len() >= MAX_COORDINATED && !self.0.contains_key(&peer) {
             // Bounded: the peer whose pause ended longest ago gives way;
@@ -108,8 +111,14 @@ impl Coordination {
             link,
             facts: facts.clone(),
             own: own.clone(),
+            network,
         });
-        if entry.edge != edge || entry.link != link || entry.facts != facts || entry.own != own {
+        if entry.edge != edge
+            || entry.link != link
+            || entry.facts != facts
+            || entry.own != own
+            || entry.network != network
+        {
             entry.failures = 0;
         }
         entry.failures = entry.failures.saturating_add(1);
@@ -118,6 +127,7 @@ impl Coordination {
         entry.link = link;
         entry.facts = facts;
         entry.own = own;
+        entry.network = network;
         tracing::debug!(%peer, failures = entry.failures,
             retry_ms = entry.until.saturating_duration_since(Instant::now()).as_millis() as u64,
             "Traversal attempt ended without a channel");
@@ -130,6 +140,7 @@ impl Coordination {
                 && shared.plan().edge(peer) == paused.edge
                 && endpoint_facts(shared, peer) == paused.facts
                 && workers::own_mappings(shared) == paused.own
+                && shared.roam_epoch() == paused.network
         })
     }
 }
@@ -340,6 +351,7 @@ mod tests {
             link: None,
             facts: Default::default(),
             own: Default::default(),
+            network: 0,
         };
         let mut coordination = Coordination::default();
         coordination.ended(&shared, ids[1]);
@@ -357,6 +369,7 @@ mod tests {
             link: None,
             facts: Default::default(),
             own: Default::default(),
+            network: 0,
         };
         let now = Instant::now();
         for i in 0..MAX_COORDINATED {

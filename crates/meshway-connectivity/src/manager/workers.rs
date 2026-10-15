@@ -154,6 +154,8 @@ pub(super) struct Pacing {
     edge: Option<crate::plan::Edge>,
     targets: std::collections::BTreeSet<TargetKey>,
     own: std::collections::BTreeSet<String>,
+    /// Underlay path changes of this Node seen at the last sweep.
+    network: u64,
     last_link: Option<[u8; 32]>,
     failed: BTreeMap<TargetKey, (u32, tokio::time::Instant)>,
 }
@@ -175,12 +177,15 @@ impl Pacing {
         edge: crate::plan::Edge,
         targets: std::collections::BTreeSet<TargetKey>,
         own: std::collections::BTreeSet<String>,
+        network: u64,
         last_link: Option<[u8; 32]>,
     ) -> Option<&'static str> {
         let cause = if self.edge.as_ref() != Some(&edge) {
             Some("edge")
         } else if self.targets != targets {
             Some("candidates")
+        } else if self.network != network {
+            Some("own_network")
         } else if self.own != own {
             Some("own_mapping")
         } else if self.last_link != last_link {
@@ -195,6 +200,7 @@ impl Pacing {
         self.edge = Some(edge);
         self.targets = targets;
         self.own = own;
+        self.network = network;
         self.last_link = last_link;
         restarted
     }
@@ -248,6 +254,8 @@ pub(super) async fn dial(shared: Arc<Shared>, factory: Arc<dyn SocketFactory>, p
     let lifetime = shared.scope(None, false);
     let mut plans = shared.plans.subscribe();
     let mut pacing = Pacing::default();
+    // The peer facts the selected channel was last checked against.
+    let mut moved_from = shared.facts.get(peer);
     'acquisition: loop {
         if lifetime.check().is_err() {
             return;
@@ -262,6 +270,14 @@ pub(super) async fn dial(shared: Arc<Shared>, factory: Arc<dyn SocketFactory>, p
             .lock()
             .is_ok_and(|links| links.contains_key(&peer));
         if selected {
+            let facts = shared.facts.get(peer);
+            if moved_from != facts {
+                moved_from = facts;
+                moved(&shared, &factory, peer).await;
+                if lifetime.check().is_err() {
+                    return;
+                }
+            }
             pacing.connected(last_link(&shared, peer));
             if pause(&shared, &lifetime, peer, None).await.is_err() {
                 return;
@@ -286,6 +302,7 @@ pub(super) async fn dial(shared: Arc<Shared>, factory: Arc<dyn SocketFactory>, p
                 })
                 .collect(),
             own_mappings(&shared),
+            shared.roam_epoch(),
             last_link(&shared, peer),
         );
         if let Some(cause) = restarted
@@ -319,7 +336,9 @@ pub(super) async fn dial(shared: Arc<Shared>, factory: Arc<dyn SocketFactory>, p
                         continue;
                     }
                     let connected = if matches!(&candidate.driver, Driver::Datagram) {
-                        let _ = datagram::dial(
+                        // The dial owner serves its channel for the channel's
+                        // life; meanwhile the peer's listener may move.
+                        let primary = datagram::dial(
                             shared.clone(),
                             factory.clone(),
                             plan.clone(),
@@ -328,8 +347,37 @@ pub(super) async fn dial(shared: Arc<Shared>, factory: Arc<dyn SocketFactory>, p
                             &candidate.carrier,
                             target,
                             candidate.timeout,
-                        )
-                        .await;
+                            None,
+                        );
+                        tokio::pin!(primary);
+                        let mut replacement: Option<
+                            std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>,
+                        > = None;
+                        let mut served = false;
+                        let wake = shared.interests.waker(peer);
+                        loop {
+                            let notified = wake.notified();
+                            tokio::select! { biased;
+                                _ = &mut primary, if !served => {
+                                    served = true;
+                                    if replacement.is_none() { break; }
+                                },
+                                () = async { if let Some(attempt) = replacement.as_mut() { attempt.await } }, if replacement.is_some() => {
+                                    replacement = None;
+                                    if served { break; }
+                                },
+                                _ = notified, if replacement.is_none() && !served => {
+                                    let facts = shared.facts.get(peer);
+                                    if moved_from != facts {
+                                        moved_from = facts;
+                                        let (shared, factory) = (shared.clone(), factory.clone());
+                                        replacement = Some(Box::pin(async move {
+                                            moved(&shared, &factory, peer).await;
+                                        }));
+                                    }
+                                },
+                            }
+                        }
                         if lifetime.check().is_err() {
                             return;
                         }
@@ -444,6 +492,84 @@ pub(super) async fn dial(shared: Arc<Shared>, factory: Arc<dyn SocketFactory>, p
     }
 }
 
+/// The peer's listener moved: its facts publish new endpoints of the selected
+/// Native UDP channel's carrier, none of them that channel's remote (a
+/// roaming peer behind a new mapping). Dial them beside the healthy-looking
+/// channel; one that authenticates replaces exactly that channel. Endpoints
+/// named by host are not compared, and nothing is dialed for them.
+async fn moved(shared: &Arc<Shared>, factory: &Arc<dyn SocketFactory>, peer: NodeId) {
+    let plan = shared.plan();
+    let Some(link) = shared.links.lock().ok().and_then(|links| {
+        links
+            .get(&peer)
+            .filter(|link| {
+                link.scope.check().is_ok()
+                    && link.fact.carrier.protocol == TransportProtocol::NativeUdp
+                    && link.fact.carrier.dialer == plan.node
+            })
+            .map(|link| link.fact.clone())
+    }) else {
+        return;
+    };
+    let Ok(candidates) = candidates(shared, &plan, peer) else {
+        return;
+    };
+    let Some(candidate) = candidates
+        .iter()
+        .find(|candidate| candidate.carrier == link.carrier)
+    else {
+        return;
+    };
+    let targets: Vec<_> = candidate
+        .endpoints
+        .iter()
+        .filter(|target| DIALED.contains(&target.acquisition))
+        .collect();
+    let literal: Vec<Option<SocketAddr>> = targets
+        .iter()
+        .map(|target| {
+            target
+                .endpoint
+                .host
+                .parse::<std::net::IpAddr>()
+                .ok()
+                .map(|ip| SocketAddr::new(ip, target.endpoint.port.get()))
+        })
+        .collect();
+    if targets.is_empty()
+        || literal.iter().any(Option::is_none)
+        || literal.contains(&Some(link.remote))
+    {
+        return;
+    }
+    if diagnostic_event() {
+        tracing::debug!(operation = "roam", cause = "peer_candidates_moved", peer = %peer,
+            channel = ?link.id, remote = %link.remote, candidates = targets.len(),
+            "Connectivity roam");
+    }
+    for target in targets {
+        let _ = datagram::dial(
+            shared.clone(),
+            factory.clone(),
+            plan.clone(),
+            peer,
+            &candidate.key,
+            &candidate.carrier,
+            target,
+            candidate.timeout,
+            Some(link.id),
+        )
+        .await;
+        if shared.links.lock().is_ok_and(|links| {
+            links
+                .get(&peer)
+                .is_none_or(|current| current.fact.id != link.id)
+        }) {
+            return;
+        }
+    }
+}
+
 /// Wait until this peer is wanted (interest or resident), or the owner stops.
 async fn wanted(shared: &Shared, lifetime: &Scope, peer: NodeId) -> Result<(), Error> {
     let wake = shared.interests.waker(peer);
@@ -494,6 +620,9 @@ async fn pause(
     let link = last_link(shared, peer);
     let wake = shared.interests.waker(peer);
     let mut plans = shared.plans.subscribe();
+    // A path change of this Node is a new network: try again at once.
+    let mut roams = shared.roams.subscribe();
+    roams.borrow_and_update();
     let deadline =
         until.unwrap_or_else(|| tokio::time::Instant::now() + shared.limits.retry_backoff);
     lifetime
@@ -501,6 +630,7 @@ async fn pause(
             loop {
                 tokio::select! { biased;
                     result = plans.changed() => return result.map_err(|_| Error::Cancelled),
+                    result = roams.changed() => return result.map_err(|_| Error::Cancelled),
                     _ = tokio::time::sleep_until(deadline) => return Ok(()),
                     _ = wake.notified() => {
                         if shared.facts.get(peer) != facts || last_link(shared, peer) != link {
@@ -624,6 +754,7 @@ mod tests {
             crate::plan::Edge::default(),
             [private.clone(), public.clone()].into(),
             Default::default(),
+            0,
             None,
         );
         let base = Duration::from_secs(1);
@@ -656,6 +787,7 @@ mod tests {
             crate::plan::Edge::default(),
             [old.clone()].into(),
             Default::default(),
+            0,
             None,
         );
         failed(&mut pacing);
@@ -665,6 +797,7 @@ mod tests {
             crate::plan::Edge::default(),
             [old.clone()].into(),
             Default::default(),
+            0,
             None,
         );
         assert!(!pacing.due(&old, now + base));
@@ -673,6 +806,7 @@ mod tests {
             crate::plan::Edge::default(),
             [old.clone(), new.clone()].into(),
             Default::default(),
+            0,
             None,
         );
         assert!(pacing.due(&old, now));
@@ -682,7 +816,21 @@ mod tests {
             crate::plan::Edge::default(),
             [old.clone(), new.clone()].into(),
             ["203.0.113.9:40001".to_owned()].into(),
+            0,
             None,
+        );
+        assert!(pacing.due(&old, now));
+        failed(&mut pacing);
+        // This Node's underlay path changed (it roamed).
+        assert_eq!(
+            pacing.sweep(
+                crate::plan::Edge::default(),
+                [old.clone(), new.clone()].into(),
+                ["203.0.113.9:40001".to_owned()].into(),
+                1,
+                None,
+            ),
+            Some("own_network")
         );
         assert!(pacing.due(&old, now));
         failed(&mut pacing);
@@ -691,6 +839,7 @@ mod tests {
             crate::plan::Edge::default(),
             [old.clone(), new.clone()].into(),
             Default::default(),
+            0,
             Some([7; 32]),
         );
         assert!(pacing.due(&old, now));

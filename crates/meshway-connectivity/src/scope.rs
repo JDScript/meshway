@@ -134,6 +134,14 @@ impl meshway_transport::raw::Datagram for Datagram {
         self.inner.buffers()
     }
 
+    fn authorize_source(
+        &self,
+        peer: std::net::SocketAddr,
+        lifetime: std::sync::Arc<dyn meshway_transport::SendLifetime>,
+    ) -> std::io::Result<()> {
+        self.inner.authorize_source(peer, lifetime)
+    }
+
     fn local_addr(&self) -> std::io::Result<std::net::SocketAddr> {
         self.scope
             .check()

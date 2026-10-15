@@ -184,6 +184,16 @@ async fn run_content(
                 .lock()
                 .map(|requested| *requested)
                 .unwrap_or_default();
+            // A path change: every socket observes its new mapping now,
+            // without the diagnostic's size probes.
+            let roamed = shared
+                .roam_observation
+                .lock()
+                .map(|requested| *requested)
+                .unwrap_or_default();
+            let asked = |id: &[u8; 32], at: Option<Instant>| {
+                at.is_some_and(|at| rounds.get(id).is_none_or(|round| round.sent < at))
+            };
             let due: Vec<[u8; 32]> = endpoints
                 .keys()
                 .filter(|id| {
@@ -194,8 +204,8 @@ async fn run_content(
                         rounds.get(*id).copied(),
                         cadence(id, socket_active(&shared, &pending, id)),
                         Instant::now(),
-                    ) || requested
-                        .is_some_and(|at| rounds.get(*id).is_none_or(|round| round.sent < at)))
+                    ) || asked(id, requested)
+                        || asked(id, roamed))
                 })
                 .copied()
                 .collect();
@@ -205,9 +215,7 @@ async fn run_content(
             // Rounds a local diagnostic asked for, before they are recorded.
             let probed: Vec<[u8; 32]> = due
                 .iter()
-                .filter(|id| {
-                    requested.is_some_and(|at| rounds.get(*id).is_none_or(|round| round.sent < at))
-                })
+                .filter(|id| asked(id, requested))
                 .copied()
                 .collect();
             let observation_query = !due.is_empty()

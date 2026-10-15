@@ -21,6 +21,14 @@ const PROBE_INTERVAL: Duration = Duration::from_secs(2);
 const HEALTH_WINDOW: Duration = Duration::from_secs(6);
 const OUTPUT_WAIT: Duration = Duration::from_millis(100);
 const MAX_REPLAY: usize = 1024;
+/// After a path change every channel sends this many health Pings,
+/// [`RETRY`] apart, before returning to [`PROBE_INTERVAL`].
+const ROAM_PROBES: u8 = 4;
+/// How long a roaming peer's new source has to answer its challenge.
+const ROAM_CHALLENGE: Duration = Duration::from_millis(1500);
+/// New sources challenged at once: per channel, and per socket.
+const MAX_ROAM_SOURCES: usize = 2;
+const MAX_ROAM_CHALLENGES: usize = 8;
 
 /// Bounded retransmission of one short control exchange: at most `max`
 /// sends, `interval` apart. Each protocol keeps its own deadline, signature
@@ -113,6 +121,9 @@ struct Outbound {
     scope: Scope,
     capacity: Option<OwnedSemaphorePermit>,
     established: bool,
+    /// The selected channel this acquisition replaces, if any: its peer's
+    /// listener moved away from that channel's remote.
+    supersedes: Option<[u8; 32]>,
 }
 
 struct Channel {
@@ -131,6 +142,21 @@ struct Channel {
     _capacity: OwnedSemaphorePermit,
     recovery: Option<Recovery>,
     mtu: mtu::Search,
+    /// Health Pings still due at the roaming pace after a path change.
+    roam: u8,
+}
+
+/// A return-routability challenge of one roaming peer's new source: a
+/// fresh signed Ping of the existing channel, sent only there. Its Pong,
+/// signed by the peer and received from that source, moves the channel.
+struct RoamChallenge {
+    /// The channel's current remote (its key in `channels`).
+    channel: SocketAddr,
+    nonce: [u8; 32],
+    output: Vec<u8>,
+    /// Ends with the channel, at the deadline or once answered.
+    scope: Scope,
+    retry: Retry,
 }
 
 struct Owner {
@@ -154,6 +180,9 @@ struct Owner {
     traversal: BTreeMap<meshway_model::UdpTraversalId, traversal::Attempt>,
     commands: Option<mpsc::Receiver<super::traversal::Command>>,
     authorization: Option<Arc<dyn crate::DatagramAuthorization>>,
+    roams: tokio::sync::watch::Receiver<u64>,
+    /// Challenges of new sources, keyed by the source.
+    roaming: BTreeMap<SocketAddr, RoamChallenge>,
 }
 
 impl Owner {
@@ -233,7 +262,11 @@ impl Owner {
                 operations: 2,
             })
             .map_err(|_| Error::Limits)?;
+        let mut roams = shared.roams.subscribe();
+        roams.borrow_and_update();
         Ok(Self {
+            roams,
+            roaming: BTreeMap::new(),
             shared,
             id,
             local,
@@ -411,11 +444,200 @@ impl Owner {
                 _capacity: capacity,
                 recovery: None,
                 mtu: mtu::Search::new(),
+                roam: 0,
             },
         );
         self.measure_mtu();
         self.changed();
         Ok(true)
+    }
+
+    /// The underlay path changed: every channel proves itself at once, so a
+    /// peer sees this Node's new source within a round trip.
+    fn roamed(&mut self) {
+        for channel in self.channels.values_mut() {
+            channel.roam = ROAM_PROBES;
+            channel.next_probe = Instant::now();
+        }
+    }
+
+    /// A Ping from an unknown source that one of this socket's selected
+    /// channels signed: its peer roamed. Challenge the new source with a
+    /// fresh signed Ping of that channel; nothing changes until its Pong.
+    /// Returns whether a channel claimed the message.
+    async fn roam_challenge(&mut self, remote: SocketAddr, body: &[u8]) -> Result<bool, Error> {
+        if self.roaming.contains_key(&remote) {
+            return Ok(true);
+        }
+        let plan = self.shared.plan();
+        let Some(current) = self
+            .channels
+            .iter()
+            .find(|(_, channel)| {
+                self.selected(channel)
+                    && channel
+                        .transcript
+                        .verify_health(&plan, channel.fact.peer, Kind::Ping, body)
+                        .is_ok()
+            })
+            .map(|(current, _)| *current)
+        else {
+            return Ok(false);
+        };
+        if self.roaming.len() >= MAX_ROAM_CHALLENGES
+            || self
+                .roaming
+                .values()
+                .filter(|challenge| challenge.channel == current)
+                .count()
+                >= MAX_ROAM_SOURCES
+            || remote.is_ipv4() != self.local.is_ipv4()
+        {
+            return Ok(true);
+        }
+        let channel = &self.channels[&current];
+        let scope = Scope {
+            cancellation: channel.scope.cancellation.child_token(),
+            deadline: Some(Instant::now() + ROAM_CHALLENGE),
+            edge: channel.scope.edge.clone(),
+            health: None,
+        };
+        // A dial or traversal socket sends only to its own recipients: the
+        // challenge alone may reach this source, for its own lifetime.
+        if self
+            .path
+            .authorize_source(remote, Arc::new(scope.clone()))
+            .is_err()
+        {
+            scope.cancellation.cancel();
+            return Ok(true);
+        }
+        let nonce = adjacency::boot_nonce(&self.shared.boot)?;
+        let output = adjacency::encode(
+            Kind::Ping,
+            &channel
+                .transcript
+                .health(&self.shared.keys, &plan, Kind::Ping, &nonce)?,
+        )?;
+        diagnostic_link(
+            &self.shared,
+            &channel.fact,
+            &channel.scope,
+            "roam",
+            "source_challenged",
+            Some((remote, nonce)),
+        );
+        self.roaming.insert(
+            remote,
+            RoamChallenge {
+                channel: current,
+                nonce,
+                output,
+                scope,
+                retry: Retry::due(),
+            },
+        );
+        self.roam_tick().await;
+        Ok(true)
+    }
+
+    /// Send due challenges; drop ended ones.
+    async fn roam_tick(&mut self) {
+        self.roaming.retain(|_, challenge| {
+            let live = challenge.scope.check().is_ok();
+            if !live {
+                challenge.scope.cancellation.cancel();
+            }
+            live
+        });
+        for (remote, challenge) in &mut self.roaming {
+            if challenge.retry.take(RETRY, ROAM_PROBES) {
+                let _ = send_control(
+                    &self.sender,
+                    &challenge.scope,
+                    *remote,
+                    challenge.output.clone(),
+                )
+                .await;
+            }
+        }
+    }
+
+    /// A Pong from an unknown source: if it answers that source's challenge,
+    /// the channel moves there. Its identity, transcript and boot stay; only
+    /// the recipient changes, and the path size is searched again.
+    fn roam_answer(&mut self, remote: SocketAddr, body: &[u8]) -> Result<(), Error> {
+        let Some(challenge) = self.roaming.get(&remote) else {
+            return Ok(());
+        };
+        let Some(channel) = self.channels.get(&challenge.channel) else {
+            return Ok(());
+        };
+        let plan = self.shared.plan();
+        if challenge.scope.check().is_err()
+            || channel
+                .transcript
+                .verify_health(&plan, channel.fact.peer, Kind::Pong, body)
+                .ok()
+                != Some(challenge.nonce)
+        {
+            return Ok(());
+        }
+        let challenge = self.roaming.remove(&remote).ok_or(Error::Worker)?;
+        challenge.scope.cancellation.cancel();
+        let old = challenge.channel;
+        self.roaming.retain(|_, other| {
+            let keep = other.channel != old;
+            if !keep {
+                other.scope.cancellation.cancel();
+            }
+            keep
+        });
+        if self.channels.contains_key(&remote) {
+            return Ok(());
+        }
+        let mut channel = self.channels.remove(&old).ok_or(Error::Worker)?;
+        let moved = self
+            .path
+            .authorize_source(remote, Arc::new(channel.scope.clone()))
+            .is_ok()
+            && channel.scope.check().is_ok()
+            && {
+                let mut links = self.shared.links.lock().map_err(|_| Error::Worker)?;
+                match links.get_mut(&channel.fact.peer) {
+                    Some(link) if link.fact.id == channel.fact.id => {
+                        link.fact.remote = remote;
+                        true
+                    }
+                    _ => false,
+                }
+            };
+        if !moved {
+            self.channels.insert(old, channel);
+            return Ok(());
+        }
+        channel.fact.remote = remote;
+        channel.mtu = mtu::Search::new();
+        channel.probe = None;
+        channel.roam = 0;
+        channel.confirmed = true;
+        channel.next_probe = Instant::now() + PROBE_INTERVAL;
+        *channel.health.lock().map_err(|_| Error::Worker)? = Instant::now() + HEALTH_WINDOW;
+        if let Ok(mut known) = self.shared.path_mtu.lock() {
+            known.remove(&channel.fact.id);
+        }
+        diagnostic_link(
+            &self.shared,
+            &channel.fact,
+            &channel.scope,
+            "roam",
+            "source_moved",
+            Some((old, channel.fact.id)),
+        );
+        self.channels.insert(remote, channel);
+        self.measure_mtu();
+        self.changed();
+        Ok(())
     }
 
     async fn run(&mut self) -> Result<(), Error> {
@@ -426,6 +648,7 @@ impl Owner {
             let lifetime = self.lifetime.clone();
             enum Work {
                 Reconfigured,
+                Roamed,
                 Tick,
                 Frame(Result<Vec<Frame>, ReceiveError>, std::time::Instant),
                 Command(Option<super::traversal::Command>),
@@ -433,6 +656,7 @@ impl Owner {
             let work = lifetime.run(async {
                 tokio::select! { biased;
                     changed = plans.changed() => changed.map(|_| Work::Reconfigured).map_err(|_| Error::Cancelled),
+                    changed = self.roams.changed() => changed.map(|_| Work::Roamed).map_err(|_| Error::Cancelled),
                     _ = tick.tick() => Ok(Work::Tick),
                     command = async { match &mut self.commands { Some(commands) => commands.recv().await, None => std::future::pending().await } } => Ok(Work::Command(command)),
                     frame = self.receiver.as_mut().ok_or(Error::Unavailable)?.recv_batch() => Ok(Work::Frame(frame, std::time::Instant::now())),
@@ -441,6 +665,11 @@ impl Owner {
             let operation = async {
                 match work? {
                     Work::Reconfigured => self.reconfigured()?,
+                    Work::Roamed => {
+                        self.roams.borrow_and_update();
+                        self.roamed();
+                        self.tick().await?;
+                    }
                     Work::Command(Some(command)) => self.traversal_command(command)?,
                     Work::Command(None) => self.commands = None,
                     Work::Tick => self.tick().await?,
@@ -489,6 +718,7 @@ impl Owner {
         }
         self.stun_tick().await?;
         self.traversal_tick().await?;
+        self.roam_tick().await;
         self.lifetime.check()?;
         self.pending
             .retain(|_, attempt| attempt.scope.check().is_ok());
@@ -529,6 +759,7 @@ impl Owner {
                     .get(&outbound.peer)
                     .is_some_and(|link| {
                         link.scope.check().is_ok()
+                            && Some(link.fact.id) != outbound.supersedes
                             && (link.fact.carrier == outbound.carrier
                                 || link.fact.carrier.protocol != outbound.carrier.protocol)
                     })
@@ -604,7 +835,13 @@ impl Owner {
                 None => adjacency::boot_nonce(&self.shared.boot)?,
             };
             channel.probe = Some(nonce);
-            channel.next_probe = Instant::now() + PROBE_INTERVAL;
+            channel.next_probe = Instant::now()
+                + if channel.roam > 0 {
+                    channel.roam -= 1;
+                    RETRY
+                } else {
+                    PROBE_INTERVAL
+                };
             let bytes = adjacency::encode(
                 Kind::Ping,
                 &channel.transcript.health(
@@ -1099,7 +1336,9 @@ impl Owner {
                 .map_err(|_| Error::Worker)?
                 .get(&outbound.peer)
                 .is_some_and(|link| {
-                    link.scope.check().is_ok() && preferred_existing(&link.fact, &candidate)
+                    link.scope.check().is_ok()
+                        && Some(link.fact.id) != outbound.supersedes
+                        && preferred_existing(&link.fact, &candidate)
                 })
             {
                 // Do not sign a superseding ACK for a stale initial candidate
@@ -1151,6 +1390,9 @@ impl Owner {
             .scope
             .deadline_or(self.shared.limits.handshake_timeout);
         let acquisition = outbound.acquisition.clone();
+        let supersedes = outbound
+            .supersedes
+            .map_or(Replacement::Ranked, Replacement::Channel);
         if !self.promote(
             &plan,
             peer,
@@ -1159,7 +1401,7 @@ impl Owner {
             transcript,
             capacity,
             deadline,
-            Replacement::Ranked,
+            supersedes,
             acquisition,
         )? {
             return Err(Error::Unavailable);
@@ -1169,10 +1411,13 @@ impl Owner {
 
     async fn health(&mut self, remote: SocketAddr, kind: Kind, body: &[u8]) -> Result<(), Error> {
         let Some(channel) = self.channels.get_mut(&remote) else {
-            return if kind == Kind::Ping {
-                self.probe_recovery(remote, body).await
-            } else {
-                Ok(())
+            // A known channel's peer at a new source roamed; without one
+            // (a restarted listener) the source is challenged as recovery.
+            return match kind {
+                Kind::Ping if self.roam_challenge(remote, body).await? => Ok(()),
+                Kind::Ping => self.probe_recovery(remote, body).await,
+                Kind::Pong => self.roam_answer(remote, body),
+                _ => Ok(()),
             };
         };
         if channel.scope.check().is_err() {
@@ -1198,6 +1443,7 @@ impl Owner {
             }
             channel.probe = None;
             channel.confirmed = true;
+            channel.roam = 0;
             *channel.health.lock().map_err(|_| Error::Worker)? = Instant::now() + HEALTH_WINDOW;
         } else if Instant::now() >= channel.last_response + RETRY {
             channel.last_response = Instant::now();
@@ -1558,6 +1804,7 @@ pub(super) async fn dial(
     carrier: &Carrier,
     target: &workers::Target,
     timeout: Duration,
+    supersedes: Option<[u8; 32]>,
 ) -> Result<(), Error> {
     let mut scope = shared.scope(Some((peer, carrier.clone())), true);
     scope.deadline = Some(scope.deadline_or(timeout).min(Instant::now() + timeout));
@@ -1584,6 +1831,7 @@ pub(super) async fn dial(
             carrier.clone(),
             scope,
             acquisition.clone(),
+            supersedes,
         ));
     }
     let mut failed = false;
@@ -1599,6 +1847,7 @@ pub(super) async fn dial(
     Err(Error::Unavailable)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn dial_endpoint(
     shared: Arc<Shared>,
     plan: Arc<Plan>,
@@ -1607,6 +1856,7 @@ async fn dial_endpoint(
     carrier: Carrier,
     scope: Scope,
     acquisition: LinkAcquisition,
+    supersedes: Option<[u8; 32]>,
 ) -> Result<(), Error> {
     let DatagramSocket { endpoint, targets } = socket;
     if targets.is_empty() || targets.len() > 16 {
@@ -1657,6 +1907,7 @@ async fn dial_endpoint(
         scope,
         capacity: Some(capacity),
         established: false,
+        supersedes,
     });
     let result = owner.run().await;
     owner.shutdown().await?;
@@ -1735,6 +1986,8 @@ pub(in crate::manager) mod tests {
             instance: Default::default(),
             boot: crate::adjacency::boot().unwrap(),
             unbound: Arc::default(),
+            roams: Arc::new(tokio::sync::watch::channel(0).0),
+            roam_observation: Arc::default(),
         });
         (shared, receiver)
     }
@@ -2147,6 +2400,110 @@ pub(in crate::manager) mod tests {
             0,
             "business queue really saturated"
         );
+        owner.shutdown().await.unwrap();
+        fixture.close().await;
+    }
+
+    /// A peer that roamed: its signed Ping of the existing channel arrives
+    /// from a new source. The owner challenges that source with a fresh Ping
+    /// of the same channel and moves the channel there only on the peer's
+    /// Pong over that nonce from it: same channel identity and boot, new
+    /// remote. An unsolicited Pong or an unanswered challenge moves nothing.
+    #[tokio::test]
+    async fn a_roaming_peer_is_followed_only_after_its_new_source_answers_a_challenge() {
+        let mut fixture = Netmaps::start(false, true).await;
+        let ids = fixture.ids();
+        let (shared, _receiver) = shared(&fixture.desired[1], &fixture.keys[1]);
+        let socket = endpoint(fixture.take_udp(1)).await;
+        let local = socket.local_addr().unwrap();
+        let id = adjacency::nonce().unwrap();
+        let mut owner = Owner::new(shared.clone(), Box::new(socket), id).unwrap();
+        owner.listener = Some(ListenerFact {
+            socket_id: id,
+            key: "udp".into(),
+            protocol: TransportProtocol::NativeUdp,
+            local,
+            buffers: None,
+        });
+        let dialer = Plan::new(&fixture.desired[0]).unwrap();
+        let carrier = carriers(&fixture.desired[0])[&ids[1]].clone();
+        let old = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let (initiation, intro) =
+            Initiation::new(&fixture.keys[0], &dialer, &carrier, &DIALER_BOOT).unwrap();
+        owner.init(old.local_addr().unwrap(), &intro).await.unwrap();
+        let mut bytes = [0; adjacency::MAX_MESSAGE];
+        let (len, _) = control(&old, &mut bytes).await;
+        let (_, challenge) = adjacency::decode(&bytes[..len]).unwrap();
+        let transcript = initiation.challenge(&dialer, ids[1], challenge).unwrap();
+        let ack = transcript
+            .message(&fixture.keys[0], &dialer, Kind::Ack)
+            .unwrap();
+        owner.ack(old.local_addr().unwrap(), &ack).await.unwrap();
+        let channel = owner.channels[&old.local_addr().unwrap()].fact.clone();
+        let ping = |nonce: &[u8; 32]| {
+            transcript
+                .health(&fixture.keys[0], &dialer, Kind::Ping, nonce)
+                .unwrap()
+        };
+        // An unsolicited Pong from anywhere changes nothing.
+        let moved = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let source = moved.local_addr().unwrap();
+        let pong = transcript
+            .health(
+                &fixture.keys[0],
+                &dialer,
+                Kind::Pong,
+                &adjacency::nonce().unwrap(),
+            )
+            .unwrap();
+        owner.health(source, Kind::Pong, &pong).await.unwrap();
+        assert!(owner.channels.contains_key(&old.local_addr().unwrap()));
+        // A Ping from the new source: the source is challenged, not trusted.
+        owner
+            .health(source, Kind::Ping, &ping(&adjacency::nonce().unwrap()))
+            .await
+            .unwrap();
+        assert!(owner.channels.contains_key(&old.local_addr().unwrap()));
+        assert!(!owner.channels.contains_key(&source));
+        let nonce = loop {
+            let (len, from) = control(&moved, &mut bytes).await;
+            assert_eq!(from, local);
+            let (kind, body) = adjacency::decode(&bytes[..len]).unwrap();
+            if kind == Kind::Ping {
+                break transcript
+                    .verify_health(&dialer, ids[1], Kind::Ping, body)
+                    .unwrap();
+            }
+        };
+        // A Pong over another nonce, or from another source, moves nothing.
+        let wrong = transcript
+            .health(
+                &fixture.keys[0],
+                &dialer,
+                Kind::Pong,
+                &adjacency::nonce().unwrap(),
+            )
+            .unwrap();
+        owner.health(source, Kind::Pong, &wrong).await.unwrap();
+        let answer = transcript
+            .health(&fixture.keys[0], &dialer, Kind::Pong, &nonce)
+            .unwrap();
+        let elsewhere = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        owner
+            .health(elsewhere.local_addr().unwrap(), Kind::Pong, &answer)
+            .await
+            .unwrap();
+        assert!(owner.channels.contains_key(&old.local_addr().unwrap()));
+        // The answer from the challenged source moves the same channel.
+        owner.health(source, Kind::Pong, &answer).await.unwrap();
+        assert!(!owner.channels.contains_key(&old.local_addr().unwrap()));
+        let followed = &owner.channels[&source].fact;
+        assert_eq!(followed.id, channel.id);
+        assert_eq!(followed.peer_boot, channel.peer_boot);
+        assert_eq!(followed.remote, source);
+        let link = shared.links.lock().unwrap()[&ids[0]].fact.clone();
+        assert_eq!((link.id, link.remote), (channel.id, source));
+        owner.channels[&source].scope.check().unwrap();
         owner.shutdown().await.unwrap();
         fixture.close().await;
     }

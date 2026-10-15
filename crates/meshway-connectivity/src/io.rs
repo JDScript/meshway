@@ -112,6 +112,12 @@ pub trait SocketFactory: Send + Sync + 'static {
     ) -> BoxFuture<'a, Result<Box<dyn Datagram>, Error>> {
         Box::pin(async { Err(Error::Configuration) })
     }
+
+    /// The source address this Node's protected sockets take toward `remote`
+    /// now; `None` without a route, or when the factory cannot tell.
+    fn route_source<'a>(&'a self, _remote: SocketAddr) -> BoxFuture<'a, Option<std::net::IpAddr>> {
+        Box::pin(async { None })
+    }
 }
 
 /// A listener's bind failure keeps its cause; every other protected-socket
@@ -214,6 +220,9 @@ impl SocketFactory for meshway_underlay::SocketFactory {
                 })
                 .collect())
         })
+    }
+    fn route_source<'a>(&'a self, remote: SocketAddr) -> BoxFuture<'a, Option<std::net::IpAddr>> {
+        Box::pin(self.route_source(remote))
     }
     fn connect_endpoint<'a>(
         &'a self,

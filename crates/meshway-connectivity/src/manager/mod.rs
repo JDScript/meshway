@@ -31,6 +31,7 @@ mod interest;
 mod probe;
 mod rebind;
 mod resources;
+mod roam;
 #[cfg(test)]
 mod tests;
 mod traversal;
@@ -38,6 +39,7 @@ mod workers;
 pub use interest::{AdjacencyInterest, Interest};
 pub use probe::{SizeProbe, SocketObservation, StunProbe, StunReport, StunSample};
 pub use rebind::ListenerUnavailable;
+pub use roam::Roamed;
 
 // Diagnostics only: at most 64 events/second and 32768/process; contention drops
 // a diagnostic rather than delaying an owner or changing a selection decision.
@@ -324,6 +326,12 @@ struct Shared {
     boot: crate::Boot,
     /// Listeners of the current content whose bind is being retried.
     unbound: Arc<Mutex<BTreeMap<String, rebind::Unbound>>>,
+    /// Underlay path changes this Manager reacted to ([`Manager::path_changed`]):
+    /// every datagram owner probes its channels at once, and candidate
+    /// pacing starts over.
+    roams: Arc<tokio::sync::watch::Sender<u64>>,
+    /// A path change asked every traversal socket to observe its mapping now.
+    roam_observation: Arc<Mutex<Option<tokio::time::Instant>>>,
 }
 
 impl Shared {
@@ -358,7 +366,14 @@ impl Shared {
             instance: self.instance.clone(),
             boot: self.boot,
             unbound: self.unbound.clone(),
+            roams: self.roams.clone(),
+            roam_observation: self.roam_observation.clone(),
         })
+    }
+
+    /// Underlay path changes observed so far.
+    fn roam_epoch(&self) -> u64 {
+        *self.roams.borrow()
     }
 
     fn physical(&self) -> Result<Arc<scope::Physical>, Error> {
@@ -529,6 +544,8 @@ impl Manager {
             instance: Arc::new(Mutex::new(instance)),
             boot,
             unbound: Arc::default(),
+            roams: Arc::new(tokio::sync::watch::channel(0).0),
+            roam_observation: Arc::default(),
         });
         let (rebound_sender, rebound) = mpsc::channel(limits.listeners);
         let mut manager = Self {
@@ -1484,20 +1501,17 @@ fn install_ready(shared: &Shared, ready: ReadyPeer) -> Result<bool, Error> {
 }
 
 fn retire(shared: &Shared, fact: &LinkFact) -> Result<(), Error> {
+    retire_for(shared, fact, "owner_retire")
+}
+
+fn retire_for(shared: &Shared, fact: &LinkFact, cause: &'static str) -> Result<(), Error> {
     let mut links = shared.links.lock().map_err(|_| Error::Worker)?;
     if links
         .get(&fact.peer)
         .is_some_and(|link| link.fact.id == fact.id)
         && let Some(link) = links.remove(&fact.peer)
     {
-        diagnostic_link(
-            shared,
-            &link.fact,
-            &link.scope,
-            "retire",
-            "owner_retire",
-            None,
-        );
+        diagnostic_link(shared, &link.fact, &link.scope, "retire", cause, None);
         link.scope.cancellation.cancel();
     }
     Ok(())
