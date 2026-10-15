@@ -1,5 +1,5 @@
 //! Host-owned control actor and its independent bounded TUN I/O task.
-use super::super::verification::{Owner as Verified, Unverified, Verification};
+use super::super::verification::{Boxed, Owner as Verified, Unverified, Verification, retried};
 use super::io::ExitCutoff as Deadline;
 use super::{
     CtConfirmation, ExitReplyReader, ExitScope, ProjectionAck,
@@ -381,17 +381,64 @@ fn audit_ended(check: &'static str, verification: &Verification) {
     tracing::warn!(operation = "audit", check, error = %verification, "Exit owner stopping after a failed kernel operation");
 }
 
-/// A failed projection reconciliation stops the whole owner; say why.
-fn stopped(operation: &'static str, error: &Error) {
-    tracing::warn!(operation, %error, "Exit owner stopping after a failed kernel operation");
+/// A failed projection change stops the whole owner; say why.
+fn stopped(operation: &'static str, check: &'static str, error: &Error) {
+    tracing::warn!(operation, check, %error, "Exit owner stopping after a failed kernel operation");
 }
 
-async fn reconcile(backend: &mut Backend, incarnation: super::ExitIncarnation) -> Result<()> {
-    let result = backend.failed(incarnation).await;
-    if let Err(error) = &result {
-        stopped("reconcile", error);
+/// What a retried change needs from the owner: where its pending retry is
+/// published, and what ends its wait.
+struct Retrying<'a> {
+    changes: &'a tokio::sync::watch::Sender<Option<crate::KernelChangePending>>,
+    stops: [&'a CancellationToken; 3],
+}
+
+impl Retrying<'_> {
+    /// One kernel change of the owner. A failed attempt is read back and
+    /// retried while the owned objects read back consistent with the
+    /// journal or cannot be read, at most 30 s (see [`retried`]); then, or
+    /// at once on a read-back that differs, the owner stops as before.
+    async fn change(
+        &self,
+        backend: &mut Backend,
+        operation: &'static str,
+        run: impl for<'a> FnMut(&'a mut Backend) -> Boxed<'a, Result<()>>,
+        reread: impl for<'a> FnMut(&'a mut Backend) -> Boxed<'a, super::super::verification::Reread>,
+    ) -> Result<()> {
+        retried(
+            backend,
+            Verified::Exit,
+            operation,
+            self.changes,
+            &self.stops,
+            run,
+            reread,
+        )
+        .await
+        .map_err(|(error, check)| {
+            if check != "stopped" {
+                stopped(operation, check, &error);
+            }
+            error
+        })
     }
-    result
+
+    /// Retire one projection whose operation failed or was answered to
+    /// nobody (each step reads back and skips what is already done).
+    async fn reconcile(
+        &self,
+        backend: &mut Backend,
+        operation: &'static str,
+        incarnation: super::ExitIncarnation,
+    ) -> Result<()> {
+        self.change(
+            backend,
+            operation,
+            move |backend: &mut Backend| Box::pin(backend.failed(incarnation)),
+            move |backend: &mut Backend| Box::pin(backend.reread(incarnation)),
+        )
+        .await
+    }
 }
 
 impl super::super::Kernel {
@@ -614,7 +661,12 @@ impl super::super::Kernel {
         let conflict = self.shared.conflict.clone();
         let interface_name = backend.ledger.tun_name.clone();
         let shutdown = self.shared.tasks.stop.clone();
+        let shared = self.shared.clone();
         let task = tokio::spawn(async move {
+            let retrying = Retrying {
+                changes: &shared.changes,
+                stops: [&stop, &conflict, &shutdown],
+            };
             // Confirmations wait for a kernel fact; they never hold the owner.
             let mut confirming: Vec<(
                 super::ExitIncarnation,
@@ -656,7 +708,7 @@ impl super::super::Kernel {
                             };
                             let error = result.is_err();
                             let sent = reply.send(result).is_ok();
-                            if (error || !sent) && reconcile(&mut backend, incarnation).await.is_err() {
+                            if (error || !sent) && retrying.reconcile(&mut backend, "confirm", incarnation).await.is_err() {
                                 failed = true;
                                 break;
                             }
@@ -670,7 +722,7 @@ impl super::super::Kernel {
                         // owner: every projection retires with its exact CT.
                         if !authority.keeps_role() { tracing::debug!(operation = "role", "Exit owner stopping: role no longer installed"); break; }
                         // Projection cutoffs and explicit revocations.
-                        if let Err(error) = backend.maintain().await { stopped("maintain", &error); break; }
+                        if retrying.change(&mut backend, "maintain", |backend: &mut Backend| Box::pin(backend.maintain()), |backend: &mut Backend| Box::pin(backend.reread_maintain())).await.is_err() { break; }
                     },
                     request = receiver.recv() => {
                         let Some(request) = request else { break; };
@@ -708,7 +760,7 @@ impl super::super::Kernel {
                                     let result = installed.next().unwrap_or(Err(Error::Worker));
                                     if let Err(error) = &result { tracing::debug!(operation = "install", %error, "Exit projection operation failed"); }
                                     let result = result.and_then(|ack| { guard.check()?; Ok(ack) });
-                                    if result.is_err() && reconcile(&mut backend, *incarnation).await.is_err() { failed = true; break; }
+                                    if result.is_err() && retrying.reconcile(&mut backend, "install", *incarnation).await.is_err() { failed = true; break; }
                                     if let Some(slot) = results.iter_mut().find(|slot| slot.is_none()) { *slot = Some(result); }
                                 }
                                 if failed { break; }
@@ -717,7 +769,7 @@ impl super::super::Kernel {
                                 if reply.send(results).is_err() {
                                     // Nobody takes these acknowledgements: no flow may use them.
                                     for incarnation in delivered.into_iter().flatten() {
-                                        if reconcile(&mut backend, incarnation).await.is_err() { failed = true; break; }
+                                        if retrying.reconcile(&mut backend, "install", incarnation).await.is_err() { failed = true; break; }
                                     }
                                     if failed { break; }
                                 }
@@ -731,8 +783,8 @@ impl super::super::Kernel {
                                 let result = backend.renew(incarnation, deadline, scope).await;
                                 if let Err(error) = &result { tracing::debug!(operation = "renew", %error, "Exit projection operation failed"); }
                                 let result = result.and_then(|ack| { guard.check()?; Ok(ack) });
-                                if result.is_err() && reconcile(&mut backend, incarnation).await.is_err() { break; }
-                                if reply.send(result).is_err() && reconcile(&mut backend, incarnation).await.is_err() { break; }
+                                if result.is_err() && retrying.reconcile(&mut backend, "renew", incarnation).await.is_err() { break; }
+                                if reply.send(result).is_err() && retrying.reconcile(&mut backend, "renew", incarnation).await.is_err() { break; }
                             },
                             Request::Confirm { incarnation, reply } => match backend.confirmation_cutoff(incarnation) {
                                 Ok(until) => {
@@ -744,12 +796,11 @@ impl super::super::Kernel {
                                 Err(error) => {
                                     tracing::debug!(operation = "confirm", %error, "Exit projection operation failed");
                                     let _ = reply.send(Err(error));
-                                    if reconcile(&mut backend, incarnation).await.is_err() { break; }
+                                    if retrying.reconcile(&mut backend, "confirm", incarnation).await.is_err() { break; }
                                 }
                             },
                             Request::Retire { incarnation, reply } => {
-                                let result = backend.retire(incarnation).await;
-                                if let Err(error) = &result { stopped("retire", error); }
+                                let result = retrying.reconcile(&mut backend, "retire", incarnation).await;
                                 let failed = result.is_err();
                                 let _ = reply.send(result);
                                 if failed { break; }

@@ -3,7 +3,7 @@ use super::super::{
     monitor::Expected,
     plan::{PROTOCOL, encode_route, encode_rule, priority, route_table},
     tool::command::{Commands, Tool},
-    verification::Verification,
+    verification::{Reread, Verification},
 };
 use super::{
     plan::{self, Ranges},
@@ -187,6 +187,51 @@ impl Backend {
     pub async fn check(&mut self) -> Verification {
         self.check_gate(&self.ledger.gate.clone()).await
     }
+    /// The read-back after a failed change of the gate. The change's target
+    /// is the recorded pending gate (written before any set or route of it);
+    /// its start is the recorded gate. Each set and route of the capture
+    /// table at one of the two is the change's own path; anything else
+    /// differs.
+    pub async fn reread(&mut self) -> Reread {
+        let observed = match self.read().await {
+            Ok(observed) => observed,
+            Err(Unread::Unavailable(error)) => return Reread::Unavailable(error),
+            Err(Unread::Missing) => return Reread::Changed("table_missing"),
+        };
+        let Some(receipt) = self.ledger.receipt.as_ref() else {
+            return Reread::Changed("receipt_missing");
+        };
+        if observed.objects != receipt.objects || observed.handles != receipt.handles {
+            return Reread::Changed("objects_changed");
+        }
+        let start = self.ledger.gate.clone();
+        let target = self.ledger.pending_gate.clone();
+        let sets_done = target
+            .as_ref()
+            .is_some_and(|target| self.elements_match(&observed, target));
+        if !sets_done && !self.elements_match(&observed, &start) {
+            return Reread::Changed("set_elements_changed");
+        }
+        let actual: BTreeSet<_> = match self.table_routes().await {
+            Ok(routes) => routes.into_iter().map(encode_route).collect(),
+            Err(error) => return Reread::Unavailable(error),
+        };
+        if !actual.is_subset(&self.owned_routes()) {
+            return Reread::Changed("routes_changed");
+        }
+        let routes_done = target.as_ref().is_some_and(|target| {
+            actual
+                == routes(self.ledger.table, target)
+                    .into_iter()
+                    .map(encode_route)
+                    .collect()
+        });
+        if sets_done && routes_done {
+            Reread::Done
+        } else {
+            Reread::Start
+        }
+    }
     async fn verify_gate(&mut self, gate: Gate) -> Result<()> {
         self.check_gate(&gate).await.result()
     }
@@ -258,19 +303,64 @@ impl Backend {
         if observed.objects != receipt.objects || observed.handles != receipt.handles {
             return Err(Error::Conflict);
         }
+        self.release_stale_routes(&gate).await?;
         self.ledger.pending_gate = Some(gate.clone());
         self.store.persist(&self.ledger).await?;
-        let batch = self.ledger.program.replace(
-            &gate.ranges,
-            &gate.mesh,
-            gate.device.as_ref().map(|device| device.name.as_str()),
-        );
-        let _outcome = objects::apply(&mut self.commands, &batch).await;
+        // Sets read back at the gate already (a retry after a replacement
+        // whose tool failed once the kernel had applied it) are not replaced
+        // again: the change only reads and records them.
+        if !self.elements_match(&observed, &gate) {
+            let batch = self.ledger.program.replace(
+                &gate.ranges,
+                &gate.mesh,
+                gate.device.as_ref().map(|device| device.name.as_str()),
+            );
+            let _outcome = objects::apply(&mut self.commands, &batch).await;
+        }
         self.verify_gate(gate.clone()).await?;
         self.reconcile_routes(&gate).await?;
         self.ledger.gate = gate;
         self.ledger.pending_gate = None;
         self.store.persist(&self.ledger).await
+    }
+    /// An earlier change that did not finish may have left routes of its
+    /// own gate in the table, and its pending record is about to be
+    /// replaced: while they are still owned, remove those that neither the
+    /// recorded gate nor `next` keeps (removal only closes).
+    async fn release_stale_routes(&mut self, next: &Gate) -> Result<()> {
+        let Some(pending) = &self.ledger.pending_gate else {
+            return Ok(());
+        };
+        let table = self.ledger.table;
+        let keep: BTreeSet<_> = routes(table, &self.ledger.gate)
+            .into_iter()
+            .chain(routes(table, next))
+            .map(encode_route)
+            .collect();
+        if routes(table, pending)
+            .into_iter()
+            .map(encode_route)
+            .all(|route| keep.contains(&route))
+        {
+            return Ok(());
+        }
+        let owned = self.owned_routes();
+        let mut issued = 0;
+        for route in self.table_routes().await? {
+            let bytes = encode_route(route.clone());
+            if !owned.contains(&bytes) {
+                return Err(Error::Conflict);
+            }
+            if !keep.contains(&bytes) {
+                self.expect_route(true, bytes)?;
+                super::super::execute(self.handle.route().del(route).execute()).await?;
+                issued += 1;
+                if issued % ROUTE_BATCH == 0 {
+                    self.observed().await?;
+                }
+            }
+        }
+        self.observed().await
     }
     /// Delete every owned route `gate` lacks and add every one it needs, then
     /// prove the table holds exactly its routes. Any other route in the table

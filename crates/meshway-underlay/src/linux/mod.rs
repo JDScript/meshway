@@ -162,6 +162,13 @@ impl Host {
             .as_ref()
             .and_then(|owner| owner.role.cleanup_pending())
     }
+    /// The kernel change an owner of this Host is retrying, live: it reads
+    /// the owner's own fact, also while a Host operation waits for it.
+    pub fn kernel_changes(
+        &self,
+    ) -> tokio::sync::watch::Receiver<Option<crate::KernelChangePending>> {
+        self.kernel.shared.changes.subscribe()
+    }
     pub fn exit_role(&self) -> Option<ExitRole> {
         self.kernel
             .exit

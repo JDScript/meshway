@@ -316,6 +316,7 @@ async fn exit_nat_udp_real_reply_qualification_confirm_retire_and_expiry() {
 }
 
 mod adversarial;
+mod changes;
 mod cleanup;
 mod protocols;
 

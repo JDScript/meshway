@@ -79,6 +79,18 @@ impl Commands {
         if self.pending.is_some() || input.len() > LIMIT || arguments.len() > 64 {
             return Err(Failure::Limit);
         }
+        #[cfg(test)]
+        let lost = {
+            let mutation = !input.is_empty();
+            if faults::take(if mutation {
+                &faults::FAILING_CHANGES
+            } else {
+                &faults::FAILING_TOOL_READS
+            }) {
+                return Err(Failure::Limit);
+            }
+            mutation && faults::take(&faults::LOST_CHANGES)
+        };
         let permit = tokio::time::timeout(BUDGET / 2, PROCESS.acquire())
             .await
             .map_err(|_| Failure::Limit)?
@@ -89,7 +101,33 @@ impl Commands {
             let _permit = permit;
             execute(tool, &arguments, &input, end, fence.as_ref())
         }));
-        self.settle().await?.ok_or(Failure::Worker)
+        let output = self.settle().await?.ok_or(Failure::Worker);
+        #[cfg(test)]
+        if lost {
+            // The kernel applied it; the tool's answer was lost (its budget),
+            // and so is the next read's, as on a stalled host.
+            faults::FAILING_TOOL_READS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            return output.and(Err(Failure::Limit));
+        }
+        output
+    }
+}
+
+/// Kernel tool failures as on a stalled host, for the next runs.
+#[cfg(test)]
+pub(in crate::linux::kernel) mod faults {
+    use std::sync::atomic::{AtomicU32, Ordering::SeqCst};
+    /// Mutations that fail before the kernel sees them.
+    pub static FAILING_CHANGES: AtomicU32 = AtomicU32::new(0);
+    /// Mutations the kernel applies whose tool then fails, failing the
+    /// next read too.
+    pub static LOST_CHANGES: AtomicU32 = AtomicU32::new(0);
+    /// Reads (no input) that fail before the kernel sees them.
+    pub static FAILING_TOOL_READS: AtomicU32 = AtomicU32::new(0);
+    pub(super) fn take(counter: &AtomicU32) -> bool {
+        counter
+            .fetch_update(SeqCst, SeqCst, |left| left.checked_sub(1))
+            .is_ok()
     }
 }
 

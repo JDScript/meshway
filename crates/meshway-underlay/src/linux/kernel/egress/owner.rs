@@ -1,7 +1,7 @@
 use super::super::{
     monitor::Expected,
     tool::{child::Fence, command::Commands},
-    verification::{Owner as Verified, Unverified, Verification},
+    verification::{Boxed, Owner as Verified, Unverified, Verification, retried},
 };
 use super::{
     backend::Backend,
@@ -169,15 +169,77 @@ impl Drop for Owner {
     }
 }
 
+type Shared = super::super::super::protection::Shared;
+
+/// One capture change. A failed attempt is read back and retried while the
+/// kernel is at its start, on its own path or unreadable, at most 30 s (see
+/// [`retried`]); `Err` carries the last error and the check that failed.
+async fn change(
+    backend: &mut Backend,
+    shared: &Shared,
+    stop: &CancellationToken,
+    operation: &'static str,
+    run: impl for<'a> FnMut(&'a mut Backend) -> Boxed<'a, Result<()>>,
+) -> std::result::Result<(), (Error, &'static str)> {
+    retried(
+        backend,
+        Verified::Egress,
+        operation,
+        &shared.changes,
+        &[stop, &shared.tasks.stop, &shared.conflict],
+        run,
+        |backend: &mut Backend| Box::pin(backend.reread()),
+    )
+    .await
+}
+
+/// A finished change's result for its caller, or `None` once it ended
+/// kernel ownership: read back as neither start nor target, or unknown
+/// for the whole limit. A change given up while consistent
+/// (`change_unavailable`), refused or stopped is the caller's failure only.
+fn settled(
+    shared: &Shared,
+    operation: &'static str,
+    result: std::result::Result<(), (Error, &'static str)>,
+) -> Option<Result<()>> {
+    match result {
+        Ok(()) => Some(Ok(())),
+        Err((error, check @ ("verify" | "verify_unavailable"))) => {
+            stopped(shared, operation, check, &error);
+            None
+        }
+        Err((error, _)) => Some(Err(error)),
+    }
+}
+
+/// Close the gate (no device). `false`: kernel ownership ended, or the
+/// owner was stopped while it retried.
+async fn pause(backend: &mut Backend, shared: &Shared, stop: &CancellationToken) -> bool {
+    match change(backend, shared, stop, "pause", |backend: &mut Backend| {
+        Box::pin(backend.pause())
+    })
+    .await
+    {
+        Ok(()) => true,
+        Err((_, "stopped")) => false,
+        Err((error, check)) => {
+            stopped(shared, "pause", check, &error);
+            false
+        }
+    }
+}
+
 /// The egress owner ends the host's kernel ownership (every owner then
 /// fails closed until restart): say which operation failed and how.
 fn stopped(
     shared: &super::super::super::protection::Shared,
     operation: &'static str,
+    check: &'static str,
     error: &dyn std::fmt::Display,
 ) {
     tracing::warn!(
         operation,
+        check,
         error = %error,
         "Egress capture owner stopping after a failed kernel operation; kernel ownership ends"
     );
@@ -344,13 +406,13 @@ impl super::super::Kernel {
                     _ = shared.conflict.cancelled() => break,
                     _ = tick.tick() => {
                         let verification = backend.check().await;
-                        if let Err(reason) = unverified.record(&verification, std::time::Instant::now()) { stopped(&shared, reason, &verification); break; }
+                        if let Err(reason) = unverified.record(&verification, std::time::Instant::now()) { stopped(&shared, "verify", reason, &verification); break; }
                         if unverified.unknown() { continue; }
                         // Only withdrawal or a different plan withdraws an
                         // active capture.
                         if state.borrow().active && !keeps(&shared, &backend.ledger.plan) {
                             state.send_modify(|state| state.active = false);
-                            if let Err(error) = backend.pause().await { stopped(&shared, "pause", &error); break; }
+                            if !pause(&mut backend, &shared, &stop).await { break; }
                         }
                     },
                     request = receiver.recv() => {
@@ -389,16 +451,22 @@ impl super::super::Kernel {
                                     Verification::Unavailable(_) => Err(Error::Netlink),
                                     Verification::Changed(_) => Err(Error::Conflict),
                                 });
-                                if let Err(reason) = ended { stopped(&shared, reason, &verification); break; }
+                                if let Err(reason) = ended { stopped(&shared, "audit", reason, &verification); break; }
                                 continue;
                             },
                             Request::Stage(plan, reply) => {
-                                let result = match mesh(&expected) { Ok(mesh) => backend.stage(plan, mesh).await, Err(error) => Err(error) };
+                                let result = change(&mut backend, &shared, &stop, "stage", |backend: &mut Backend| {
+                                    let (plan, mesh) = (plan.clone(), mesh(&expected));
+                                    Box::pin(async move { backend.stage(plan, mesh?).await })
+                                }).await;
+                                let Some(result) = settled(&shared, "stage", result) else { let _ = reply.send(Err(Error::Conflict)); break; };
                                 (reply, result, false)
                             },
                             Request::Switch(plan, reply) => {
-                                let scope = current(&shared, &plan);
-                                let result = async {
+                                let result = change(&mut backend, &shared, &stop, "switch", |backend: &mut Backend| {
+                                    let (plan, shared, expected) = (plan.clone(), shared.clone(), expected.clone());
+                                    Box::pin(async move {
+                                    let scope = current(&shared, &plan);
                                     let mesh = mesh(&expected)?;
                                     backend.stage(plan.clone(), mesh.clone()).await?;
                                     let scope = scope?;
@@ -410,10 +478,15 @@ impl super::super::Kernel {
                                         Some(Device { index: *index, name: name.clone(), source: source.ok_or(Error::Target)? })
                                     };
                                     backend.commit_staged(plan, mesh, device, || scope.check()).await
-                                }.await;
+                                    })
+                                }).await;
+                                let Some(result) = settled(&shared, "switch", result) else { let _ = reply.send(Err(Error::Conflict)); break; };
                                 (reply, result, true)
                             },
-                            Request::Pause(reply) => (reply, backend.pause().await, false),
+                            Request::Pause(reply) => {
+                                if !pause(&mut backend, &shared, &stop).await { let _ = reply.send(Err(Error::Conflict)); break; }
+                                (reply, Ok(()), false)
+                            },
                             Request::Clamp(_) => unreachable!("handled above"),
                             Request::Retire(reply) => {
                                 let _ = super::super::exit::objects::apply(&mut backend.commands, &super::mss::batch(&backend.ledger.program.installation, None)).await;
@@ -422,15 +495,15 @@ impl super::super::Kernel {
                                 if ok { state.send_modify(|state| { state.active = false; state.retired = true; }); }
                                 let failed = result.as_ref().err().map(ToString::to_string);
                                 let _ = reply.send(result);
-                                if let Some(error) = failed { stopped(&shared, "retire", &error); }
+                                if let Some(error) = failed { stopped(&shared, "retire", "retire", &error); }
                                 stop.cancel();
                                 return if ok { Ok(()) } else { Err(Error::Conflict) };
                             },
                         };
                         let ok = result.is_ok();
-                        if !ok && let Err(error) = backend.pause().await { stopped(&shared, "pause", &error); break; }
+                        if !ok && !pause(&mut backend, &shared, &stop).await { let _ = reply.send(result); break; }
                         state.send_modify(|state| { state.plan = backend.ledger.plan.clone(); state.active = ok && active; });
-                        if reply.send(result).is_err() && active { state.send_modify(|state| state.active = false); if let Err(error) = backend.pause().await { stopped(&shared, "pause", &error); break; } }
+                        if reply.send(result).is_err() && active { state.send_modify(|state| state.active = false); if !pause(&mut backend, &shared, &stop).await { break; } }
                     },
                 }
             }

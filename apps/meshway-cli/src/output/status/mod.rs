@@ -158,6 +158,27 @@ pub(crate) fn write(
             ),
         )?;
     }
+    if let Some(change) = &status.change_pending {
+        let owner = match change.owner {
+            meshway_protocol::ipc::KernelChangeOwner::EgressCapture => "egress capture",
+            meshway_protocol::ipc::KernelChangeOwner::Exit => "exit role",
+        };
+        line(
+            output,
+            term,
+            "Kernel",
+            term.paint(
+                Role::Warn,
+                format!(
+                    "{owner} {} pending ({}; attempt {}, retry in {})",
+                    change.operation,
+                    change.reason,
+                    change.attempts,
+                    super::format::span((change.retry_at - now).num_seconds().max(0))
+                ),
+            ),
+        )?;
+    }
     if let Some(problem) = status.last_error {
         let mut text = term.paint(Role::Bad, words(problem));
         if let Some(at) = status.retry_at {

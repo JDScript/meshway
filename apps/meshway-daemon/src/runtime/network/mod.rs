@@ -97,6 +97,10 @@ pub(super) struct Report {
     /// The stopped exit role's cleanup its owner retries, as of the last
     /// capability probe.
     pub exit_cleanup: Option<meshway_underlay::ExitCleanupPending>,
+    /// The Host's live retried kernel change (egress capture or exit role);
+    /// read at each Status, also while an apply waits for that change. Set
+    /// once at Host start; every later report keeps it.
+    pub kernel_changes: Option<watch::Receiver<Option<meshway_underlay::KernelChangePending>>>,
     pub exit_flows: Option<u32>,
     /// The DNS owner's exit resolver fact of the installed content.
     pub exit_dns: Option<meshway_model::exit::ExitDns>,
@@ -151,6 +155,7 @@ impl Report {
             facts: None,
             exit_capability: None,
             exit_cleanup: None,
+            kernel_changes: None,
             exit_flows: None,
             exit_dns: None,
             generation: meshway_model::Sequence::MIN,
@@ -343,6 +348,8 @@ impl Handle {
                 return Err(startup_problem(&error));
             }
             let network_changes = host.network_changes();
+            let kernel_changes = host.kernel_changes();
+            reports.send_modify(|report| report.kernel_changes = Some(kernel_changes));
             let (commands, received) = mpsc::channel(8);
             let (observation_plans, plans_rx) = watch::channel(None);
             let (offer_sender, offers) = watch::channel(Offer::default());

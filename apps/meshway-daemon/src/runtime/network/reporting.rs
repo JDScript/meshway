@@ -126,7 +126,10 @@ impl Publisher {
     pub fn borrow(&self) -> watch::Ref<'_, Report> {
         self.reports.borrow()
     }
-    pub fn send_replace(&self, report: Report) {
+    pub fn send_replace(&self, mut report: Report) {
+        if report.kernel_changes.is_none() {
+            report.kernel_changes = self.reports.borrow().kernel_changes.clone();
+        }
         let key = Key::of(&report);
         let changed = **self.changes.borrow() != key;
         self.reports.send_replace(report);

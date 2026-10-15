@@ -281,6 +281,7 @@ mod tests {
             attempts: Arc::new(Semaphore::new(8)),
             resolutions: Arc::new(Semaphore::new(8)),
             execution: RwLock::new(None),
+            changes: tokio::sync::watch::channel(None).0,
         })
     }
 
