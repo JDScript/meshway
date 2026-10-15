@@ -11,7 +11,7 @@
 - 清理：角色撤回时清理失败，资源与 journal 保留，owner 按 1 秒起翻倍、上限 60 秒重试（WARN `Exit role cleanup failed; resources kept, retrying`），每次先重读内核：两张表都已不存在且 journal 已释放全部对象即确认完成，都在则从头再关闭（逐步读回、跳过已删除的），其余为冲突不动任何对象；进程重启的 journal 恢复用同一函数。重试期间 Status `exit.cleanupPending`（`reason`、`attempts`、`retryAt`），`meshway status` 显示 `cleanup pending (…; attempt N, retrying)`；完成后（INFO `Exit role cleanup completed after retrying; the role may install again`）下一次能力探测为 ready，角色以同一内容重装。此前保留的资源要等重启。见 [Exit 设计 · 审计与清理重试](/v2/node/exit-design#exit-audit)。
 - 验收：`exit/off` 组件阶段新增 `exit_recovery::netmap_exit_failed_cleanup_is_retried_and_the_role_installs_again` 与 `linux::kernel::exit::tests::cleanup::exit_audit_read_failures_are_unknown_and_a_failed_cleanup_completes_on_retry`；lab 复现见 [X11 证据](/v2/node/validation#x11-exit)。
 
-验证：Planck `exit/off` 前后交替各 5 次（`75fdaad3` 与 X11 产品代码，优化 dev 构建），每次运行的组件阶段含两项新测试并通过；本机 lab 复现见 [X11 证据](/v2/node/validation#x11-exit)，证据 `.meshway/validation/x11/`。真机未部署。
+验证：Planck `exit/off` 前后交替各 5 次（`75fdaad3` 与 X11 产品代码，优化 dev 构建），每次运行的组件阶段含两项新测试并通过；Planck 18 行矩阵 `20261015T195811Z-5b10ea68`（`d68cad6d`，并行 4）全部通过（`exit/off` 787.6 秒，第 16 阶段无 `Exit queue full`，echo 100／100）；此前并行 8 的一次 `20261015T193324Z-c16e4000` 中 netmap 三行因 Docker 地址池耗尽未开始，`exit/off` 第 16 阶段压力步中 E 一次投影退役的 nft 操作失败（`operation: retire`，`kernel netlink operation failed`，启动 load 4.9）按现行规则停止角色，该 TCP 流随之结束（iperf3 50 秒超时）。本机 lab 复现见 [X11 证据](/v2/node/validation#x11-exit)，证据 `.meshway/validation/x11/`。真机未部署。
 
 ## v0.1.0-alpha.12
 
