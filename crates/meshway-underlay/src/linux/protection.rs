@@ -268,7 +268,14 @@ impl ProtectionScope {
     }
     pub fn check(&self) -> Result<()> {
         self.owner_current()?;
-        if self.data && self.shared.installed()?.is_none() {
+        if self.data
+            && self
+                .shared
+                .execution
+                .read()
+                .map_err(|_| Error::Worker)?
+                .is_none()
+        {
             return Err(Error::Expired);
         }
         Ok(())

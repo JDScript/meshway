@@ -3,6 +3,7 @@ use super::super::{
     monitor::Expected,
     plan::{PROTOCOL, encode_route, encode_rule, priority, route_table},
     tool::command::{Commands, Tool},
+    verification::Verification,
 };
 use super::{
     plan::{self, Ranges},
@@ -36,27 +37,6 @@ enum Unread {
     Unavailable(Error),
     /// `nft list tables` succeeded and does not list the table.
     Missing,
-}
-
-/// One read-back of the capture table against its receipt.
-#[derive(Debug)]
-pub(super) enum Verification {
-    /// Read back and identical.
-    Holds,
-    /// The read failed; ownership is unknown, not lost.
-    Unavailable(Error),
-    /// Read back and different, or gone: what changed.
-    Changed(&'static str),
-}
-
-impl std::fmt::Display for Verification {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Holds => f.write_str("read back and identical"),
-            Self::Unavailable(error) => write!(f, "read back failed: {error}"),
-            Self::Changed(what) => write!(f, "read back and different: {what}"),
-        }
-    }
 }
 
 pub(super) struct Backend {
@@ -208,11 +188,7 @@ impl Backend {
         self.check_gate(&self.ledger.gate.clone()).await
     }
     async fn verify_gate(&mut self, gate: Gate) -> Result<()> {
-        match self.check_gate(&gate).await {
-            Verification::Holds => Ok(()),
-            Verification::Unavailable(error) => Err(error),
-            Verification::Changed(_) => Err(Error::Conflict),
-        }
+        self.check_gate(&gate).await.result()
     }
     async fn check_gate(&mut self, gate: &Gate) -> Verification {
         let observed = match self.read().await {

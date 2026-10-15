@@ -85,7 +85,36 @@ pub(in crate::linux::kernel) async fn apply(commands: &mut Commands, batch: &Val
     Ok(())
 }
 
-pub(super) async fn dump(commands: &mut Commands, program: &Program) -> Result<Receipt> {
+/// Why the owned tables could not be read back as a receipt.
+pub(super) enum Unread {
+    /// The read itself failed (the tool's budget, an interrupted netlink
+    /// dump, unreadable output, a table listed but not listable): nothing
+    /// is known about the tables.
+    Unavailable(Error),
+    /// Read back, and not this program's tables: what differs.
+    Changed(&'static str),
+}
+
+/// Reads that fail before reaching the kernel, as on a stalled host.
+#[cfg(test)]
+pub(super) static FAILING_READS: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new(0);
+
+/// Read the owned tables back, classifying a failure.
+pub(super) async fn read(
+    commands: &mut Commands,
+    program: &Program,
+) -> std::result::Result<Receipt, Unread> {
+    #[cfg(test)]
+    {
+        use std::sync::atomic::Ordering::SeqCst;
+        if FAILING_READS
+            .fetch_update(SeqCst, SeqCst, |left| left.checked_sub(1))
+            .is_ok()
+        {
+            return Err(Unread::Unavailable(Error::Netlink));
+        }
+    }
     let mut all = Receipt {
         objects: BTreeMap::new(),
         handles: BTreeMap::new(),
@@ -101,28 +130,45 @@ pub(super) async fn dump(commands: &mut Commands, program: &Program) -> Result<R
                     "list".into(),
                     "table".into(),
                     family.into(),
-                    name,
+                    name.clone(),
                 ],
                 Vec::new(),
             )
             .await
-            .map_err(|_| Error::Netlink)?;
+            .map_err(|_| Unread::Unavailable(Error::Netlink))?;
         if !output.success {
-            return Err(Error::Conflict);
+            // Only `nft list tables` succeeding without the table proves it
+            // gone.
+            use super::super::tool::nft::tables;
+            return Err(match tables(commands).await {
+                Ok(listed) if !listed.iter().any(|(f, n)| f == family && *n == name) => {
+                    Unread::Changed("table_missing")
+                }
+                _ => Unread::Unavailable(Error::Netlink),
+            });
         }
-        let mut receipt = decode(&output.stdout)?;
+        let mut receipt = decode(&output.stdout).map_err(Unread::Unavailable)?;
         for value in receipt.objects.values_mut() {
-            normalize(value, Some(program))?;
+            normalize(value, Some(program)).map_err(|_| Unread::Changed("objects_changed"))?;
         }
         for (key, value) in receipt.objects {
             if all.objects.insert(key, value).is_some() {
-                return Err(Error::Conflict);
+                return Err(Unread::Changed("objects_changed"));
             }
         }
         all.handles.extend(receipt.handles);
         all.elements.extend(receipt.elements);
     }
     Ok(all)
+}
+
+pub(super) async fn dump(commands: &mut Commands, program: &Program) -> Result<Receipt> {
+    read(commands, program)
+        .await
+        .map_err(|unread| match unread {
+            Unread::Unavailable(error) => error,
+            Unread::Changed(_) => Error::Conflict,
+        })
 }
 
 pub(super) async fn present(commands: &mut Commands, program: &Program) -> Result<usize> {

@@ -30,20 +30,7 @@ pub(in crate::linux::kernel) async fn recover(
         directory: store.directory.clone(),
         installation: ledger.program.installation.clone(),
     });
-    match objects::present(&mut commands, &ledger.program).await? {
-        0 if ledger.rules.is_empty()
-            && ledger.routes.is_empty()
-            && (ledger.projections.is_empty()
-                || (ledger.closing && ledger.projections.iter().all(|flow| flow.retired))) =>
-        {
-            ledger.removed = true;
-            ledger.pending = false;
-            return store.persist(&ledger).await;
-        }
-        2 => {}
-        _ => return Err(Error::Conflict),
-    }
-    if ledger.receipt.is_none() {
+    if ledger.receipt.is_none() && objects::present(&mut commands, &ledger.program).await? == 2 {
         if !ledger.projections.is_empty() || !ledger.rules.is_empty() || !ledger.routes.is_empty() {
             return Err(Error::Journal);
         }
@@ -67,5 +54,5 @@ pub(in crate::linux::kernel) async fn recover(
         local: Vec::new(),
         stop: CancellationToken::new(),
     };
-    backend.close(false).await
+    backend.close_observed(false).await
 }

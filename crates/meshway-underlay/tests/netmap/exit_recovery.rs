@@ -222,3 +222,153 @@ async fn netmap_exit_echo_reconnect_and_route_loss_stop_only_the_role() {
     host.shutdown(false).await.unwrap();
     server.close().await;
 }
+
+/// The exit role's inet table and its first chain, as `nft` lists them.
+fn exit_chain() -> (String, String) {
+    let tables: serde_json::Value =
+        serde_json::from_str(&tool("nft", &["-j", "list", "tables"])).unwrap();
+    let table = tables["nftables"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|item| item.get("table"))
+        .find(|table| {
+            table["family"] == "inet"
+                && table["name"].as_str().is_some_and(|name| {
+                    name.starts_with("meshway_exit_") && !name.starts_with("meshway_exit_nat_")
+                })
+        })
+        .and_then(|table| table["name"].as_str().map(str::to_owned))
+        .expect("the exit role's inet table");
+    let listed: serde_json::Value =
+        serde_json::from_str(&tool("nft", &["-j", "list", "table", "inet", &table])).unwrap();
+    let chain = listed["nftables"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find_map(|item| item.get("chain").and_then(|chain| chain["name"].as_str()))
+        .expect("a chain of the exit table")
+        .to_owned();
+    (table, chain)
+}
+
+/// Handles of the rules carrying `comment`.
+fn foreign_rules(table: &str, chain: &str, comment: &str) -> Vec<u64> {
+    let listed: serde_json::Value = serde_json::from_str(&tool(
+        "nft",
+        &["-j", "-a", "list", "chain", "inet", table, chain],
+    ))
+    .unwrap();
+    listed["nftables"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|item| item.get("rule"))
+        .filter(|rule| rule["comment"] == comment)
+        .filter_map(|rule| rule["handle"].as_u64())
+        .collect()
+}
+
+/// X11 (OPS11 lax): a role whose cleanup fails keeps its resources, and its
+/// owner retries the cleanup from what the kernel then holds; once it
+/// completes, the role installs again on the same content. Before, the
+/// first failure kept the resources until restart and every later
+/// installation was an ownership conflict.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires an isolated Linux exit namespace (ip_forward=1, loose RPF), nft, conntrack and NET_ADMIN"]
+async fn netmap_exit_failed_cleanup_is_retried_and_the_role_installs_again() {
+    let temp = isolated();
+    let server = Server::start().await;
+    let (mut control, script) = server.enroll(temp.path()).await;
+    let network = Network::new(&control, true);
+    let first = network.compile(None);
+    let role_plan = first.netmap.exit_role.clone().expect("exit role");
+    let snapshot = sync(&mut control, &script, &first, true, HOUR).await;
+    let mut host = host(&temp).await;
+    host.install(snapshot).await.unwrap();
+    let role = host.install_netmap_exit_role(&role_plan).await.unwrap();
+    let scope = ExitScope {
+        binding: meshway_model::Digest::from_bytes([76; 32]),
+        revoked: CancellationToken::new(),
+    };
+    exchange(&role, &scope, 1).await;
+
+    // Someone adds a rule to the role's own chain: the audit reads it back
+    // different and stops the role; its cleanup cannot prove the table its
+    // own while the rule is there.
+    let (table, chain) = exit_chain();
+    tool(
+        "nft",
+        &[
+            "add",
+            "rule",
+            "inet",
+            &table,
+            &chain,
+            "counter",
+            "comment",
+            "\"x11-foreign\"",
+        ],
+    );
+    ends(&role).await;
+    assert!(role.retire().await.is_err(), "the first cleanup fails");
+    let pending = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if let Some(pending) = host.exit_cleanup()
+                && pending.attempts >= 2
+            {
+                return pending;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the failed cleanup is retried");
+    println!(
+        "X11_EXIT_CLEANUP_PENDING=attempts={},reason={}",
+        pending.attempts, pending.reason
+    );
+    // While it is retried the resources are kept: no new role.
+    assert!(host.install_netmap_exit_role(&role_plan).await.is_err());
+    assert!(host.exit_cleanup().is_some());
+
+    // The foreign rule goes: the next attempt reads the table again and
+    // removes everything the role owned.
+    for handle in foreign_rules(&table, &chain, "x11-foreign") {
+        tool(
+            "nft",
+            &[
+                "delete",
+                "rule",
+                "inet",
+                &table,
+                &chain,
+                "handle",
+                &handle.to_string(),
+            ],
+        );
+    }
+    tokio::time::timeout(Duration::from_secs(70), async {
+        while host.exit_cleanup().is_some() {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .expect("the retried cleanup completes");
+    assert!(
+        !tool("nft", &["-j", "list", "tables"]).contains(&table),
+        "the role's tables are gone"
+    );
+    let again = host.install_netmap_exit_role(&role_plan).await.unwrap();
+    let renewed = exchange(&again, &scope, 2).await;
+    again.retire_flow(incarnation(2)).await.unwrap();
+    assert!(again.is_active());
+    println!("X11_EXIT_CLEANUP_RETRIED=resources-removed,reinstalled,ct={renewed}");
+
+    host.suspend().await.unwrap();
+    ends(&again).await;
+    again.retire().await.unwrap();
+    let _ = control.shutdown().await;
+    host.shutdown(false).await.unwrap();
+    server.close().await;
+}

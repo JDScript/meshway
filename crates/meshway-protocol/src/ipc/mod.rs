@@ -404,4 +404,20 @@ meshway_model::object! {
     pub active_flows: Option<u32>,
     /// Why this exit resolver answers its sources SERVFAIL; null while it serves or serves no source.
     pub dns_unavailable: Option<meshway_model::exit::ExitDnsUnavailableReason>,
+    /// A stopped exit role whose cleanup failed: its resources are kept and
+    /// the cleanup is retried; the role installs again once it completed.
+    /// Omitted otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cleanup_pending: Option<ExitCleanup>,
+} }
+
+meshway_model::object! {
+/// The retried cleanup of a stopped exit role.
+#[derive(Clone, Debug)] pub struct ExitCleanup {
+    /// The last attempt's error.
+    pub reason: String,
+    /// Attempts so far, the first one included.
+    pub attempts: u32,
+    /// When the next attempt starts (1 s after the first failure, doubling to 60 s).
+    pub retry_at: DateTime<Utc>,
 } }

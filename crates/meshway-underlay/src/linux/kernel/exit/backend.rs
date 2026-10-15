@@ -1,3 +1,4 @@
+use super::super::verification::Verification;
 use super::io::ExitCutoff as Deadline;
 use super::{
     api::{CtConfirmation, ProjectionAck},
@@ -109,14 +110,29 @@ impl Backend {
         Ok(backend)
     }
     pub async fn verify(&mut self) -> Result<()> {
-        self.store.settle().await?;
-        self.commands.settle().await.map_err(|_| Error::Netlink)?;
-        let dump = objects::verify(
-            &mut self.commands,
-            &self.ledger.program,
-            self.ledger.receipt.as_ref().ok_or(Error::Journal)?,
-        )
-        .await?;
+        self.check().await.result()
+    }
+    /// One read-back of the owned tables and projection elements against
+    /// the receipt and journal, classified: a read that fails is unknown,
+    /// never a change.
+    pub async fn check(&mut self) -> Verification {
+        if self.store.settle().await.is_err() {
+            return Verification::Changed("journal_unwritten");
+        }
+        if self.commands.settle().await.is_err() {
+            return Verification::Unavailable(Error::Netlink);
+        }
+        let Some(receipt) = self.ledger.receipt.as_ref() else {
+            return Verification::Changed("receipt_missing");
+        };
+        let dump = match objects::read(&mut self.commands, &self.ledger.program).await {
+            Ok(dump) => dump,
+            Err(objects::Unread::Unavailable(error)) => return Verification::Unavailable(error),
+            Err(objects::Unread::Changed(what)) => return Verification::Changed(what),
+        };
+        if dump.objects != receipt.objects || dump.handles != receipt.handles {
+            return Verification::Changed("objects_changed");
+        }
         let mut seen = Vec::new();
         for name in ["flows", "echo_flows"] {
             let key = format!("inet/{}/set/{name}", self.ledger.program.filter());
@@ -129,7 +145,7 @@ impl Backend {
                         .iter()
                         .any(|flow| !flow.retired && flow.tuple.key() == *key)
                 {
-                    return Err(Error::Conflict);
+                    return Verification::Changed("flow_unowned");
                 }
                 seen.push(key);
             }
@@ -139,9 +155,9 @@ impl Backend {
             .values()
             .any(|live| live.valid() && !seen.iter().any(|key| **key == live.tuple.key()))
         {
-            return Err(Error::Conflict);
+            return Verification::Changed("flow_missing");
         }
-        Ok(())
+        Verification::Holds
     }
     #[cfg(test)]
     pub async fn install(
@@ -942,6 +958,30 @@ impl Backend {
     pub async fn close(&mut self, monitored: bool) -> Result<()> {
         self.begin_close(monitored).await?;
         self.finish_close().await
+    }
+    /// Cleanup from what the kernel holds now: an earlier attempt may have
+    /// removed part of it. Tables gone after a closing journal released
+    /// every route, rule and projection are a completed removal; both tables
+    /// present are closed again from the start (each step re-reads and
+    /// skips what is already gone); anything else is not this owner's to
+    /// remove.
+    pub async fn close_observed(&mut self, monitored: bool) -> Result<()> {
+        let _write = self.store.settle().await;
+        let _command = self.commands.settle().await;
+        match objects::present(&mut self.commands, &self.ledger.program).await? {
+            0 if self.ledger.rules.is_empty()
+                && self.ledger.routes.is_empty()
+                && (self.ledger.projections.is_empty()
+                    || (self.ledger.closing
+                        && self.ledger.projections.iter().all(|flow| flow.retired))) =>
+            {
+                self.ledger.removed = true;
+                self.ledger.pending = false;
+                self.store.persist(&self.ledger).await
+            }
+            2 => self.close(monitored).await,
+            _ => Err(Error::Conflict),
+        }
     }
     pub async fn begin_close(&mut self, monitored: bool) -> Result<()> {
         #[cfg(test)]

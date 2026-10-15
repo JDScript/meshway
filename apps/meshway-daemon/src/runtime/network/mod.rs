@@ -85,6 +85,9 @@ pub(super) struct Report {
     pub facts_observed_at: DateTime<Utc>,
     pub facts: Option<meshway_connectivity::Snapshot>,
     pub exit_capability: Option<meshway_model::exit::ExitCapability>,
+    /// The stopped exit role's cleanup its owner retries, as of the last
+    /// capability probe.
+    pub exit_cleanup: Option<meshway_underlay::ExitCleanupPending>,
     pub exit_flows: Option<u32>,
     /// The DNS owner's exit resolver fact of the installed content.
     pub exit_dns: Option<meshway_model::exit::ExitDns>,
@@ -134,6 +137,7 @@ impl Report {
             facts_observed_at: Utc::now(),
             facts: None,
             exit_capability: None,
+            exit_cleanup: None,
             exit_flows: None,
             exit_dns: None,
             generation: meshway_model::Sequence::MIN,

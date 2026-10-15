@@ -163,6 +163,13 @@ impl View {
                 meshway_model::exit::ExitDnsStatus::Serving => None,
                 meshway_model::exit::ExitDnsStatus::Unavailable { reason } => Some(reason),
             }),
+            cleanup_pending: network.exit_cleanup.as_ref().map(|pending| {
+                meshway_protocol::ipc::ExitCleanup {
+                    reason: pending.reason.clone(),
+                    attempts: pending.attempts,
+                    retry_at: pending.retry_at.into(),
+                }
+            }),
         });
         let content = network
             .content
