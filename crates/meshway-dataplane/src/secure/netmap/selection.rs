@@ -84,7 +84,11 @@ impl SecureNode {
     /// The established circuit a new flow joins: the first in the candidate
     /// order of [`Self::choose_path`], up to the path a new circuit would
     /// take there. A circuit on a lower-ranked path (a relay that lost the far
-    /// end, while another one has channels to both) is not joined.
+    /// end, while another one has channels to both) is not joined. Neither is
+    /// a circuit whose next hop has no channel now (this Node roamed and is
+    /// acquiring it again) while a later path's next hop has one: the new
+    /// flow takes that path instead of waiting with the circuit. Without any
+    /// carried path it still joins that circuit.
     pub(super) fn joinable(
         &self,
         grant: &CircuitGrant,
@@ -93,20 +97,24 @@ impl SecureNode {
     ) -> Option<super::super::CircuitInfo> {
         let refs: Vec<&[NodeId]> = paths.iter().map(|path| path.nodes.as_slice()).collect();
         let (order, _) = ranked(&refs, &self.carriers, &self.first.peer_channels);
+        let mut uncarried = None;
         for index in order {
             let path = refs[index];
-            if let Some(info) = self.established(grant, path, reading) {
-                return Some(info);
-            }
-            if path
+            let carried = path
                 .get(1)
-                .is_some_and(|next| self.carriers.contains_key(next))
-                && !self.first.paused(path, reading.instant)
-            {
+                .is_some_and(|next| self.carriers.contains_key(next));
+            if let Some(info) = self.established(grant, path, reading) {
+                if carried {
+                    return Some(info);
+                }
+                uncarried.get_or_insert(info);
+                continue;
+            }
+            if carried && !self.first.paused(path, reading.instant) {
                 return None;
             }
         }
-        None
+        uncarried
     }
 
     /// Start a handshake on the path [`Self::choose_path`] selects, or wait

@@ -285,3 +285,76 @@ async fn preview_and_joined_route_report_the_circuit_a_new_flow_takes() {
     assert_eq!(f.a.joined_route(b), None);
     f.close().await;
 }
+
+/// A roamed: its direct channel to B is gone while it acquires it again, and
+/// R still carries. The established flow keeps its direct circuit and waits
+/// for the adjacency; a new flow does not wait with it but goes through R.
+#[tokio::test]
+async fn a_new_flow_goes_through_the_relay_while_the_direct_circuit_has_no_channel() {
+    use meshway_dataplane::secure::Received;
+    let mut f = direct_or_relayed().await;
+    let [a, r, b] = f.ids();
+    let direct = meshway_dataplane::secure::Carrier {
+        dialer: a,
+        listener: b,
+        listener_key: "tcp".into(),
+        protocol: meshway_model::TransportProtocol::NativeTcp,
+    };
+    f.a.set_carriers(BTreeMap::from([
+        (r, f.ar.carrier.clone()),
+        (b, direct.clone()),
+    ]))
+    .unwrap();
+    f.b.set_carriers(BTreeMap::from([
+        (r, f.rb.carrier.clone()),
+        (a, direct.clone()),
+    ]))
+    .unwrap();
+    let mut ab = super::support::secure::Link::connect(
+        tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(),
+        direct.clone(),
+    )
+    .await;
+    let Outbound::Queued { init: Some(init) } = f.a.outbound(f.mesh_udp(false, 42424)).unwrap()
+    else {
+        panic!("the direct path starts at once")
+    };
+    assert_eq!(init.next(), b);
+    let circuit = init.circuit();
+    ab.dial.send(init).await;
+    let first = ab.listen.recv().await;
+    let Received::Established {
+        response: Some(second),
+        ..
+    } = f.b.receive(&direct, first).unwrap()
+    else {
+        panic!("terminal handshake")
+    };
+    ab.listen.send(second).await;
+    let second = ab.dial.recv().await;
+    assert!(matches!(
+        f.a.receive(&direct, second).unwrap(),
+        Received::Established { circuit: source, response: None } if source == circuit
+    ));
+    let mut flushed = f.a.flush(32);
+    let Ok(Flushed::Send(job)) = flushed.remove(0) else {
+        panic!("queued packet")
+    };
+    assert_eq!(job.circuit(), circuit);
+    drop(job);
+    // A roamed: no channel to B, R still carries.
+    f.a.set_carriers(BTreeMap::from([(r, f.ar.carrier.clone())]))
+        .unwrap();
+    // The established flow keeps its circuit and waits for B's adjacency.
+    assert!(matches!(
+        f.a.outbound(f.mesh_udp(false, 42424)).unwrap(),
+        Outbound::AwaitingAdjacency
+    ));
+    let packet = super::packet::udp(f.address(0), f.address(2), 50001, 42424, b"new flow");
+    let Outbound::Queued { init: Some(init) } = f.a.outbound(packet).unwrap() else {
+        panic!("a new circuit through R")
+    };
+    assert_eq!(init.next(), r);
+    drop(init);
+    f.close().await;
+}
