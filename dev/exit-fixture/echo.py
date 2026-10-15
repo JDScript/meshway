@@ -10,12 +10,16 @@ Three steps, each on the real daemons:
   keeps serving.
 - recovery: a return route of E's exit role is deleted under A's ping. Only
   the role stops; it reinstalls on the same content while E stays applied
-  and connected, and A's system DNS (MagicDNS locally, ordinary names
-  through E's resolver over the Mesh) answers throughout.
+  and connected. A's MagicDNS (local) answers throughout; ordinary names
+  (through E's resolver over the Mesh) may fail only within the role's
+  outage as E itself reports it (see `outage_window`), at most once per
+  lookup that can overlap it, and answer everywhere else.
 
 Validation reads the real CLI, E's exit journal and E's daemon log; the
 daemons own every decision. No exit, NAT or admission code lives here."""
+import datetime
 import json
+import math
 import time
 
 CAPACITY = 128
@@ -25,6 +29,13 @@ PEAK_LIMIT = CAPACITY // 4
 LOAD_SECONDS = 60
 OWNER_STOPPED = "Exit owner stopping after a failed kernel operation"
 ROLE_FAILED = "Exit role failed; withdrawing it alone"
+ROLE_STOPPING = "Exit-owned kernel object removed outside its owner; stopping the exit role"
+REPORT_ACKNOWLEDGED = "State candidate publication acknowledged"
+# Seconds between the starts of two recovery lookups, at least.
+LOOKUP_SPACING = .5
+# A content change of E's facts is answered to A's held sync at once; this
+# bounds that answer and A applying it after E's report is acknowledged.
+FACT_DELIVERY = 1.0
 
 PING = ("import json,os,subprocess,sys\n"
         "target,interval,count,path=sys.argv[1:5]\n"
@@ -47,6 +58,45 @@ def summary(stdout):
             fields = line.replace(",", "").split()
             return int(fields[0]), int(fields[3])
     raise RuntimeError("ping printed no summary")
+
+
+def log_times(log, message):
+    """Wall-clock times of E's daemon log lines carrying `message`."""
+    times = []
+    for line in log.splitlines():
+        if message not in line:
+            continue
+        try:
+            stamp = json.loads(line)["timestamp"]
+        except (ValueError, KeyError):
+            continue
+        times.append(datetime.datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp())
+    return times
+
+
+def outage_window(log, window, deleted_at):
+    """The role's outage as A can observe it, from E's own timestamps: from
+    E's monitor stopping the role after the route deletion to the
+    acknowledgement of the first State report carrying the reinstalled
+    role's ready capability (plus `FACT_DELIVERY` for A to receive it).
+    Within it A may hold E's current not-ready fact and refuse its resolver."""
+    stopped = [at for at in log_times(log, ROLE_STOPPING) if at >= deleted_at]
+    if not stopped:
+        raise RuntimeError("E logged no role stop after its route was deleted")
+    ready = None
+    for sample in window:
+        capability = (sample["exit"] or {}).get("capability") or {}
+        if (sample["exit"] or {}).get("installedRole") and (capability.get("status") or {}).get("status") == "ready":
+            observed = datetime.datetime.fromisoformat(capability["observedAt"].replace("Z", "+00:00")).timestamp()
+            if observed > stopped[0]:
+                ready = observed
+                break
+    if ready is None:
+        raise RuntimeError("E reported no ready capability after its role reinstalled")
+    acknowledged = [at for at in log_times(log, REPORT_ACKNOWLEDGED) if at >= ready]
+    if not acknowledged:
+        raise RuntimeError("E's ready capability after the reinstall was never acknowledged")
+    return stopped[0], acknowledged[0] + FACT_DELIVERY
 
 
 def connected(sample):
@@ -174,9 +224,26 @@ def run(ctx):
         raise RuntimeError("E's exit role did not stop alone and reinstall after its route was deleted")
     if not all(connected(sample) for sample in window):
         raise RuntimeError("E's netmap or control connection failed with its exit role")
-    if not all(item["magic"]["value"].get("addresses") == [ctx.own] and item["ordinary"]["value"].get("addresses")
-               == ["198.51.100.10"] for item in lookups):
-        raise RuntimeError("A's system DNS failed while E's exit role recovered")
+    if not all(item["magic"]["value"].get("addresses") == [ctx.own] for item in lookups):
+        raise RuntimeError("A's MagicDNS failed while E's exit role recovered")
+    # E withdrawing its role reports itself not ready; A then refuses its
+    # resolver on that current fact (fail closed). Only lookups overlapping
+    # that outage may fail, at most as many as can overlap it.
+    begin, end = outage_window(log, window, deleted["startedAtUnixNs"] / 1e9)
+    inside, failed_inside, failed_outside = 0, 0, 0
+    for item in lookups:
+        record = item["ordinary"]["record"]
+        overlaps = (record["startedAtUnixNs"] / 1e9 <= end and record["finishedAtUnixNs"] / 1e9 >= begin)
+        answered = item["ordinary"]["value"].get("addresses") == ["198.51.100.10"]
+        inside += overlaps
+        failed_inside += overlaps and not answered
+        failed_outside += not overlaps and not answered
+    bound = math.ceil((end - begin) / LOOKUP_SPACING) + 1
+    result["recovery"]["dnsOutage"] = {"from": begin, "to": end, "lookups": inside, "failed": failed_inside,
+                                       "bound": bound, "failedOutside": failed_outside}
+    write(report / "echo-capacity.json", result)
+    if failed_outside or failed_inside > bound:
+        raise RuntimeError("A's exit DNS failed outside E's role outage, or more often than it can overlap it")
     # Echoes sent while the role was down are refused; the later ones return.
     tail = [line for line in pinged["stdout"].splitlines() if "icmp_seq=" in line]
     if not tail or received == 0 or not any("icmp_seq=" + str(transmitted - 1) in line or

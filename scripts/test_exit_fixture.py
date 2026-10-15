@@ -11,6 +11,9 @@ spec.loader.exec_module(pinging)
 spec = importlib.util.spec_from_file_location("exit_auto", Path(__file__).resolve().parents[1] / "dev/exit-fixture/auto.py")
 auto = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(auto)
+spec = importlib.util.spec_from_file_location("exit_echo", Path(__file__).resolve().parents[1] / "dev/exit-fixture/echo.py")
+echo = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(echo)
 
 
 class ExitEvidenceTests(unittest.TestCase):
@@ -131,3 +134,28 @@ class ExitAutoTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ExitEchoTests(unittest.TestCase):
+    def test_the_role_outage_is_bounded_by_es_own_timestamps(self):
+        import json
+
+        def line(at, message):
+            return json.dumps({"timestamp": "2026-10-15T06:23:%06.3fZ" % at, "fields": {"message": message}})
+        log = "\n".join([line(50.0, echo.ROLE_STOPPING), line(55.98, echo.ROLE_STOPPING),
+                          line(56.566, echo.REPORT_ACKNOWLEDGED), line(57.283, echo.REPORT_ACKNOWLEDGED)])
+        base = 1792045380.0  # 2026-10-15T06:23:00Z
+
+        def sample(observed, status="ready", role="r"):
+            return {"exit": {"installedRole": role, "capability": {
+                "status": {"status": status}, "observedAt": "2026-10-15T06:23:%06.3fZ" % observed}}}
+        # The sample before the stop still shows the old ready capability;
+        # the reinstalled one is observed at 56.625 and acknowledged at 57.283.
+        window = [sample(48.0), sample(56.2, "probing"), sample(56.625)]
+        begin, end = echo.outage_window(log, window, base + 55.95)
+        self.assertAlmostEqual(begin, base + 55.98, places=3)
+        self.assertAlmostEqual(end, base + 57.283 + echo.FACT_DELIVERY, places=3)
+        with self.assertRaises(RuntimeError):
+            echo.outage_window(log, [sample(48.0)], base + 55.95)
+        with self.assertRaises(RuntimeError):
+            echo.outage_window(log, window, base + 58.0)
