@@ -197,8 +197,10 @@ def main():
     parser.add_argument("--short", action="store_true", help="30-second diagnostic traffic; not acceptance")
     parser.add_argument("--only", choices=("main",), help="development only: controller and A/R/B; skips platform sidecars, never acceptance")
     parser.add_argument("--netmap-validity", default=None, help="explicit Server lease; default 60s, or 1800s for the offline/restart/revoke netmap scenarios")
-    parser.add_argument("--netmap-scenario", choices=("offline", "revoke", "expiry", "restart", "relay", "reconnect"),
-                        help="one netmap lifecycle row after the shared startup instead of the main sequence")
+    parser.add_argument("--netmap-scenario", choices=("offline", "revoke", "expiry", "restart", "relay", "reconnect",
+                                                      "roam-nat", "roam-relay", "roam-flap"),
+                        help="one netmap lifecycle row after the shared startup instead of the main sequence; "
+                             "roam-* select the roaming topology of --traversal roam (default roam/direct)")
     parser.add_argument("--runtime-image-manifest", type=Path, help="explicit locked node-lab OS image")
     parser.add_argument("--artifacts", type=Path, help="reuse a --build-only bin directory with matching source manifest")
     parser.add_argument("--transport", choices=("native-tcp", "native-udp", "vless", "trojan"), default="native-tcp",
@@ -220,7 +222,11 @@ def main():
         args.netmap_validity = "1800s" if args.netmap_scenario in ("offline", "restart", "revoke") else "60s"
     if args.netmap_scenario in ("relay", "reconnect") and (args.traversal != "nat" or args.traversal_fallback or args.dns_backend != "off"):
         parser.error("--netmap-scenario relay/reconnect require --traversal nat without fallback and --dns-backend off")
-    if args.netmap_scenario not in (None, "relay", "reconnect") and (args.traversal != "off" or args.dns_backend != "off"):
+    roam_scenario = (args.netmap_scenario or "").startswith("roam-")
+    if roam_scenario != (args.traversal == "roam" and args.netmap_scenario is not None):
+        parser.error("--netmap-scenario roam-* requires --traversal roam, which accepts no other scenario")
+    if (args.netmap_scenario not in (None, "relay", "reconnect") and not roam_scenario
+            and (args.traversal != "off" or args.dns_backend != "off")):
         parser.error("--netmap-scenario requires --traversal off --dns-backend off")
     if args.only and args.traversal == "exit":
         parser.error("--only main is the A/R/B runtime flow, not the exit topology")
@@ -318,7 +324,8 @@ def main():
             raise RuntimeError("Roam fixture orchestrator unavailable")
         fixture = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(fixture)
-        fixture.execute(report, artifacts, runtime_os, traversal_assets, platform, args.short, load)
+        fixture.execute(report, artifacts, runtime_os, traversal_assets, platform, args.short, load,
+                        (args.netmap_scenario or "roam-direct").removeprefix("roam-"))
         return
     if fingerprint() != source:
         raise RuntimeError("Sources changed before runtime start.")

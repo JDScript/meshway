@@ -1,6 +1,7 @@
-//! Roaming row (`roam/direct`): real daemons whose underlay the isolated
-//! Docker owner changes. Traffic, perturbation and measurement belong to
-//! `dev/roam-fixture/runtime.py`; these actors only run the daemons.
+//! Roaming rows (`roam/direct`, `roam/nat`, `roam/relay`, `roam/flap`): real
+//! daemons whose underlay the isolated Docker owner changes. Traffic,
+//! perturbation and measurement belong to `dev/roam-fixture/runtime.py`;
+//! these actors only run the daemons.
 use crate::{Cli, Result, actor};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{collections::BTreeMap, net::Ipv4Addr, path::Path, time::Duration};
@@ -15,6 +16,8 @@ pub enum Role {
     B,
     /// A's LAN peer, whose channel no uplink change may touch.
     C,
+    /// `roam/relay`: a public relay with channels to A and B.
+    R,
     /// A plain NAT router of one of A's uplinks; no Meshway process.
     Router,
 }
@@ -26,7 +29,37 @@ impl Role {
             Self::A => "a",
             Self::B => "b",
             Self::C => "c",
+            Self::R => "r",
             Self::Router => "router",
+        }
+    }
+}
+
+/// Which roaming row this topology runs.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Scenario {
+    /// A changes uplinks; B public (both edge directions).
+    Direct,
+    /// A and B each behind a port-restricted NAT: only coordinated traversal.
+    Nat,
+    /// `Nat` plus a public relay R on every policy path's alternative.
+    Relay,
+    /// A switches uplinks back and forth quickly; B public.
+    Flap,
+}
+impl Scenario {
+    pub fn phases(self) -> &'static [Phase] {
+        match self {
+            Self::Direct => &[Phase::Dialer, Phase::Listener],
+            Self::Flap => &[Phase::Dialer],
+            Self::Nat | Self::Relay => &[Phase::Traversal],
+        }
+    }
+    pub fn nodes(self) -> &'static [Role] {
+        match self {
+            Self::Relay => &[Role::A, Role::B, Role::C, Role::R],
+            _ => &Role::NODES,
         }
     }
 }
@@ -39,13 +72,15 @@ pub enum Phase {
     Dialer,
     /// B dials A's listener, published at A's first router.
     Listener,
+    /// A and B both behind NAT: the A–B channel is a coordinated traversal.
+    Traversal,
 }
 impl Phase {
-    pub const ALL: [Self; 2] = [Self::Dialer, Self::Listener];
     pub fn name(self) -> &'static str {
         match self {
             Self::Dialer => "dialer",
             Self::Listener => "listener",
+            Self::Traversal => "traversal",
         }
     }
 }
@@ -53,11 +88,15 @@ impl Phase {
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Topology {
+    pub scenario: Scenario,
     pub controller: Ipv4Addr,
     pub b: Ipv4Addr,
     pub c_lan: Ipv4Addr,
-    /// The WAN address of A's first router, which forwards UDP 35000 to A.
-    pub a_published: Ipv4Addr,
+    /// The WAN address of A's first router, which forwards UDP 35000 to A
+    /// (`direct` and `flap` only).
+    pub a_published: Option<Ipv4Addr>,
+    /// R's WAN address (`relay` only).
+    pub r: Option<Ipv4Addr>,
 }
 
 #[derive(Serialize, Deserialize)]

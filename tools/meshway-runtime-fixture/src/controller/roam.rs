@@ -5,16 +5,24 @@ use crate::roam::{
     Configured, Phase, Role as RoamRole, Topology, read, ready, stopped, wait, write,
 };
 
-fn udp_listener(endpoint: std::net::Ipv4Addr) -> Result<Listener> {
+/// A Native UDP listener on 35000; without a published endpoint the peer
+/// reaches it only through coordinated traversal (its STUN mapping).
+fn udp_listener(endpoint: Option<std::net::Ipv4Addr>) -> Result<Listener> {
     Ok(Listener::NativeUdp(NativeUdpListener {
         enabled: true,
         remark: String::new(),
         listen: "0.0.0.0".parse()?,
         listen_port: 35000.try_into()?,
-        endpoints: vec![Endpoint {
-            host: endpoint.to_string(),
-            port: 35000.try_into()?,
-        }],
+        endpoints: endpoint
+            .map(|endpoint| {
+                Ok::<_, crate::Error>(Endpoint {
+                    host: endpoint.to_string(),
+                    port: 35000.try_into()?,
+                })
+            })
+            .transpose()?
+            .into_iter()
+            .collect(),
         bind_interface: String::new(),
         socket: Default::default(),
     }))
@@ -79,7 +87,8 @@ pub(super) async fn coordinate(cli: &Cli) -> Result<()> {
     ready(cli, "roam-enroll").await?;
     let mut nodes = BTreeMap::new();
     let mut keys = Vec::new();
-    for role in RoamRole::NODES {
+    let roles = topology.scenario.nodes();
+    for &role in roles {
         let name = format!("roam-enrollment-{}.json", role.name());
         wait(cli, &name).await?;
         let status: meshway_protocol::ipc::Status = read(&cli.signals.join(name)).await?;
@@ -122,36 +131,39 @@ pub(super) async fn coordinate(cli: &Cli) -> Result<()> {
         nodes.insert(role.name().to_owned(), identity.node_id);
     }
     let node = |role: RoamRole| format!("node:{}", nodes[role.name()]);
-    for phase in Phase::ALL {
+    for &phase in topology.scenario.phases() {
         let original = source(&client, network, token).await?;
         input = original.configuration.clone();
-        for role in RoamRole::NODES {
+        for &role in roles {
             let config = input
                 .nodes
                 .get_mut(&nodes[role.name()])
                 .ok_or("roam node missing")?;
             // Exactly one side of each edge can dial: the edge is resident
             // and its direction is the phase's.
+            // Traversal: A and B both listen without a published endpoint
+            // and both dial, so only coordinated traversal joins them; R is
+            // a public listener both of them dial.
+            let listen = |endpoint| -> Result<_> {
+                Ok(BTreeMap::from([("udp".into(), udp_listener(endpoint)?)]))
+            };
             let (listeners, udp) = match (phase, role) {
                 (Phase::Dialer, RoamRole::A) => (BTreeMap::new(), true),
-                (Phase::Listener, RoamRole::A) => (
-                    BTreeMap::from([("udp".into(), udp_listener(topology.a_published)?)]),
-                    true,
-                ),
-                (Phase::Dialer, RoamRole::B) => (
-                    BTreeMap::from([("udp".into(), udp_listener(topology.b)?)]),
-                    false,
-                ),
+                (Phase::Listener, RoamRole::A) => (listen(topology.a_published)?, true),
+                (Phase::Dialer, RoamRole::B) => (listen(Some(topology.b))?, false),
                 (Phase::Listener, RoamRole::B) => (BTreeMap::new(), true),
-                (_, _) => (
-                    BTreeMap::from([("udp".into(), udp_listener(topology.c_lan)?)]),
-                    false,
-                ),
+                (Phase::Traversal, RoamRole::A | RoamRole::B) => (listen(None)?, true),
+                (_, RoamRole::R) => (listen(topology.r)?, false),
+                (_, _) => (listen(Some(topology.c_lan))?, false),
             };
             config.listeners = listeners;
             config.dialers = dialers(udp);
         }
-        input.topology = [(RoamRole::A, RoamRole::B), (RoamRole::A, RoamRole::C)]
+        let mut edges = vec![(RoamRole::A, RoamRole::B), (RoamRole::A, RoamRole::C)];
+        if roles.contains(&RoamRole::R) {
+            edges.extend([(RoamRole::A, RoamRole::R), (RoamRole::R, RoamRole::B)]);
+        }
+        input.topology = edges
             .into_iter()
             .map(|(a, b)| TopologyRule {
                 remark: String::new(),
@@ -159,7 +171,9 @@ pub(super) async fn coordinate(cli: &Cli) -> Result<()> {
                 a: node(a),
                 b: node(b),
                 transports: Input::Omitted,
-                keepalive: false,
+                // An edge only one side can dial is resident; the traversal
+                // edge, dialable both ways, is made resident explicitly.
+                keepalive: phase == Phase::Traversal && b == RoamRole::B && a == RoamRole::A,
             })
             .collect();
         input.access = vec![
@@ -182,7 +196,7 @@ pub(super) async fn coordinate(cli: &Cli) -> Result<()> {
         let revision = apply(&client, network, token, original.revision, &input).await?;
         let committed = source(&client, network, token).await?;
         let mut mesh = BTreeMap::new();
-        for role in RoamRole::NODES {
+        for &role in roles {
             let config = committed
                 .configuration
                 .nodes
@@ -210,7 +224,7 @@ pub(super) async fn coordinate(cli: &Cli) -> Result<()> {
             if stopped(cli).await? {
                 return Err("roam supervisor stopped the run".into());
             }
-            for role in RoamRole::NODES {
+            for &role in roles {
                 if let Ok(view) = client
                     .get_node_state(
                         &GetNodeStatePath {

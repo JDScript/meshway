@@ -5,7 +5,10 @@ same clock (the containers share one kernel).
 serve ADDRESS DIRECTORY STOP   UDP echo on 42424 and TCP echo on 42425 (B, C)
 client PEER DIRECTORY STOP     100 pps UDP sequence, 10/s ping and one TCP
                                stream writing a line every 50 ms (A)
-Both run until the file STOP exists.
+stream PEER DIRECTORY STOP     100 pps UDP sequence only, one new 5-tuple (A)
+flows PEER DIRECTORY STOP      a new UDP 5-tuple every 250 ms, one datagram
+                               each, its echo awaited for 20 s (A)
+Every mode runs until the file STOP exists.
 """
 import json
 import os
@@ -82,8 +85,7 @@ def serve(address, directory):
     received.close()
 
 
-def client(peer, directory):
-    events = Log(os.path.join(directory, "client.log"))
+def udp_stream(peer, events):
     udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     udp.connect((peer, UDP_PORT))
     udp.setblocking(False)
@@ -115,6 +117,56 @@ def client(peer, directory):
                     events.write("uerror", now(), -1, error.errno)
                     break
                 events.write("uecho", now(), payload.decode(errors="replace").split(" ", 1)[0])
+
+    return udp_loop
+
+
+def stream(peer, directory):
+    events = Log(os.path.join(directory, "client.log"))
+    udp_stream(peer, events)()
+    events.close()
+
+
+def flows(peer, directory):
+    """Each datagram is a new flow: the source picks its path at that packet."""
+    events = Log(os.path.join(directory, "client.log"))
+    open_flows = {}
+    identifier = 0
+    due = time.monotonic()
+    while not stopped():
+        current = time.monotonic()
+        if current >= due:
+            flow = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            flow.setblocking(False)
+            try:
+                flow.connect((peer, UDP_PORT))
+                flow.send(f"f{identifier} {now()}".encode())
+                events.write("fsend", now(), identifier)
+                open_flows[flow] = (identifier, current + 20)
+            except OSError as error:
+                events.write("ferror", now(), identifier, error.errno)
+                flow.close()
+            identifier += 1
+            due += 0.25
+        for flow, (_, expires) in list(open_flows.items()):
+            if current >= expires:
+                flow.close()
+                del open_flows[flow]
+        readable, _, _ = select.select(list(open_flows), [], [], max(0, min(due - time.monotonic(), 0.05)))
+        for flow in readable:
+            try:
+                payload = flow.recv(2048)
+            except OSError:
+                continue
+            events.write("fecho", now(), payload.decode(errors="replace").split(" ", 1)[0][1:])
+            flow.close()
+            del open_flows[flow]
+    events.close()
+
+
+def client(peer, directory):
+    events = Log(os.path.join(directory, "client.log"))
+    udp_loop = udp_stream(peer, events)
 
     def tcp_loop():
         stream = socket.create_connection((peer, TCP_PORT), timeout=10)
@@ -179,7 +231,7 @@ def main():
     os.makedirs(directory, exist_ok=True)
     with open(os.path.join(directory, "started.json"), "w") as started:
         json.dump({"atNs": now(), "pid": os.getpid()}, started)
-    {"serve": serve, "client": client}[mode](address, directory)
+    {"serve": serve, "client": client, "stream": stream, "flows": flows}[mode](address, directory)
 
 
 if __name__ == "__main__":
