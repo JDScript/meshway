@@ -8,7 +8,7 @@ use meshway_configuration::netmap::CompiledNetmap;
 use meshway_model::{NetmapLease, NetmapRef};
 use meshway_protocol::{NetmapSignature, PeerFactsDelta, StateCursor};
 use std::sync::Arc;
-pub use sync::KnownPeers;
+pub use sync::{KnownPeers, ReadyExits};
 
 pub(crate) mod artifacts;
 mod facts;

@@ -167,7 +167,7 @@ async fn ping_decision_names_the_rule_profile_action_and_path() {
     })
     .await;
     let [a, r, b] = f.ids();
-    f.a.set_ready_exits([b].into());
+    f.a.set_ready_exits([b].into(), Default::default());
     let now = 0;
     let exit = decide(&mut f.a, "8.8.8.8".parse().unwrap(), None, now);
     assert_eq!(exit.action, Some(PingAction::Exit { node: b }));

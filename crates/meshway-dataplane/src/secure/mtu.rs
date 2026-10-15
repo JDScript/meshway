@@ -95,7 +95,12 @@ impl SecureNode {
         }
         Clamps {
             peers,
-            other: self.first.ready_exits.iter().filter_map(toward).min(),
+            other: self
+                .first
+                .ready_exits
+                .union(&self.first.last_known_exits)
+                .filter_map(toward)
+                .min(),
         }
     }
 }

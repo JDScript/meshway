@@ -22,8 +22,8 @@ pub use leave::Left;
 mod netmap;
 pub use netmap::{
     ArtifactCall, ArtifactProblem, ArtifactReply, KnownPeers, NetmapChange, PeerFactsSink,
-    SYNC_TIMEOUT, SyncCall, SyncFuture, SyncOutcome, SyncReply, SyncTransport, fetch_artifacts,
-    sync_loop,
+    ReadyExits, SYNC_TIMEOUT, SyncCall, SyncFuture, SyncOutcome, SyncReply, SyncTransport,
+    fetch_artifacts, sync_loop,
 };
 mod observations;
 mod probe;

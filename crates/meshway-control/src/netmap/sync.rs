@@ -67,21 +67,30 @@ pub struct KnownPeers {
 }
 
 impl KnownPeers {
-    /// Exits whose readiness fact is current, ready and has IPv4 installed.
-    pub fn ready_exits(&self, now: chrono::DateTime<chrono::Utc>) -> BTreeSet<NodeId> {
-        self.peers
-            .iter()
-            .filter(|(_, facts)| facts.expires_at > now)
-            .filter(|(_, facts)| {
-                facts.exit.as_ref().is_some_and(|exit| {
-                    exit.status == meshway_model::exit::ExitStatus::Ready
-                        && exit
-                            .installed_families
-                            .contains(&meshway_model::exit::ExitFamily::Ipv4)
-                })
-            })
-            .map(|(peer, _)| *peer)
-            .collect()
+    /// Exits a new exit flow may choose, by their readiness facts. A fact
+    /// past its `expiresAt` is last known, not withdrawn: an exit last known
+    /// ready stays selectable after every currently ready one, so freshness
+    /// alone never refuses a flow the netmap allows. Selection input only;
+    /// the exit admits on its own netmap and role.
+    pub fn ready_exits(&self, now: chrono::DateTime<chrono::Utc>) -> ReadyExits {
+        let mut exits = ReadyExits::default();
+        for (peer, facts) in self.peers.iter() {
+            let ready = facts.exit.as_ref().is_some_and(|exit| {
+                exit.status == meshway_model::exit::ExitStatus::Ready
+                    && exit
+                        .installed_families
+                        .contains(&meshway_model::exit::ExitFamily::Ipv4)
+            });
+            if !ready {
+                continue;
+            }
+            if facts.expires_at > now {
+                exits.current.insert(*peer);
+            } else {
+                exits.last_known.insert(*peer);
+            }
+        }
+        exits
     }
 
     /// Each peer's reported authenticated channels, from current facts only:
@@ -107,6 +116,15 @@ impl PeerFactsSink for tokio::sync::watch::Sender<Option<KnownPeers>> {
     fn publish(&mut self, facts: KnownPeers) {
         self.send_replace(Some(facts));
     }
+}
+
+/// Exits whose last known readiness fact is ready with IPv4 installed.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ReadyExits {
+    /// The fact is current: chosen first.
+    pub current: BTreeSet<NodeId>,
+    /// The fact is past its freshness bound: chosen only after every current one.
+    pub last_known: BTreeSet<NodeId>,
 }
 
 /// What a successful sync did to the held netmap.

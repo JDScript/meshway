@@ -318,6 +318,25 @@ mod tests {
             known: Some(&known),
             now,
         });
+        // Past their `expiresAt` (the reporter stopped, or no sync renewed
+        // them) the same facts show `offline`.
+        let stale = peers(&Inputs {
+            netmap: &netmap,
+            facts: None,
+            routes: &routes,
+            relays: &BTreeMap::new(),
+            idle_paths: &idle_paths,
+            rtts: &BTreeMap::new(),
+            known: Some(&known),
+            now: now + chrono::Duration::seconds(61),
+        });
+        assert!(
+            stale
+                .iter()
+                .filter(|peer| peer.node_id != a)
+                .all(|peer| peer.state == PeerState::Offline),
+            "{stale:?}"
+        );
         let c = status.iter().find(|peer| peer.node_id == c).unwrap();
         assert_eq!(c.state, PeerState::Idle);
         assert_eq!(

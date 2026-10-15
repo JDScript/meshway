@@ -121,7 +121,7 @@ async fn netmap_exit_first_packet_selects_the_ready_exit_locally() {
     let b = f.ids()[2];
     let packet = udp(&f, false, 41000);
     assert!(matches!(f.a.outbound(packet).unwrap(), Outbound::Denied(_)));
-    f.a.set_ready_exits([b].into());
+    f.a.set_ready_exits([b].into(), Default::default());
     let packet = udp(&f, false, 41000);
     let Outbound::Queued { init: Some(init) } = f.a.outbound(packet).unwrap() else {
         panic!("exit circuit")
@@ -673,7 +673,7 @@ async fn netmap_exit_echo_diagnostic_measures_the_exit_reply_and_maps_errors_to_
         Preview::Denied(meshway_configuration::execution::UnavailableReason::ExitUnavailable),
         "no exit is ready yet"
     );
-    f.a.set_ready_exits([b].into());
+    f.a.set_ready_exits([b].into(), Default::default());
     assert!(matches!(f.a.preview(internet, icmp).unwrap(),
         Preview::Mesh { path, established: false, .. } if path == [a, r, b]));
     let std::net::IpAddr::V4(source) = f.address(0) else {

@@ -173,9 +173,10 @@ impl SecureNode {
                 .dns_service(reading.netmap(), reading.node())
                 .map_err(|_| Error::Policy)?;
             // Readiness is a selection fact: a query to an exit that is not
-            // ready fails here and is never resolved anywhere else.
+            // ready (current or last known) fails here and is never resolved
+            // anywhere else.
             if !service.transports.contains(&transport)
-                || !self.first.ready_exits.contains(&service.exit)
+                || !self.first.exit_selectable(&service.exit)
             {
                 return Err(Error::Policy);
             }

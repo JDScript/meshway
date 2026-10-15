@@ -868,10 +868,11 @@ impl SecureNode {
         if self.carriers.get(path.get(1).ok_or(Error::Context)?) != Some(carrier) {
             return Err(Error::Context);
         }
-        // An exit resolver circuit is only worth opening to a ready exit.
+        // An exit resolver circuit is only worth opening to a ready exit
+        // (current or last known).
         if grant.purpose == crate::Purpose::Dns
             && let Target::Mesh { node } = &grant.target
-            && !self.first.ready_exits.contains(node)
+            && !self.first.exit_selectable(node)
         {
             return Err(Error::Policy);
         }

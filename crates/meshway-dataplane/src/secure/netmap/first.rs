@@ -27,7 +27,11 @@ struct Waiting {
 pub(in crate::secure) struct FirstPackets {
     waiting: Vec<Waiting>,
     pub(super) interests: BTreeSet<NodeId>,
+    /// Exits whose readiness fact is current and ready: chosen first.
     pub ready_exits: BTreeSet<NodeId>,
+    /// Exits whose fact is past its freshness bound and was last known
+    /// ready: chosen only after every current one (selection, never authority).
+    pub last_known_exits: BTreeSet<NodeId>,
     /// Paths whose origin handshake ended unanswered: consecutive count and
     /// the end of the pause during which another carried path is preferred.
     pub(super) unanswered: BTreeMap<Vec<NodeId>, Paused>,
@@ -36,6 +40,22 @@ pub(in crate::secure) struct FirstPackets {
 }
 
 impl FirstPackets {
+    /// The exit a new exit flow takes among the decision's ordered `exits`:
+    /// the first currently ready one, else the first last known ready one.
+    pub fn choose_exit<'a>(&self, exits: &'a [NodeId]) -> Option<&'a NodeId> {
+        exits
+            .iter()
+            .find(|exit| self.ready_exits.contains(exit))
+            .or_else(|| {
+                exits
+                    .iter()
+                    .find(|exit| self.last_known_exits.contains(exit))
+            })
+    }
+    /// The exit may be chosen at all (current or last known ready).
+    pub fn exit_selectable(&self, exit: &NodeId) -> bool {
+        self.ready_exits.contains(exit) || self.last_known_exits.contains(exit)
+    }
     pub fn interest(&mut self, peer: NodeId) {
         if self.interests.len() < MAX_INTERESTS {
             self.interests.insert(peer);
@@ -169,5 +189,31 @@ impl SecureNode {
             self.first.waiting.push(waiting);
         }
         outputs
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_currently_ready_exit_is_chosen_before_a_last_known_one() {
+        let node = |n: u128| NodeId::new(uuid::Uuid::from_u128(n)).unwrap();
+        let (e1, e2, e3) = (node(1), node(2), node(3));
+        let mut first = FirstPackets {
+            last_known_exits: [e1].into(),
+            ..Default::default()
+        };
+        // e1 stopped reporting (stale), e2 is ready: failover to e2.
+        first.ready_exits = [e2].into();
+        assert_eq!(first.choose_exit(&[e1, e2]), Some(&e2));
+        // Every fact is stale (no sync): the decision's order among them.
+        first.ready_exits.clear();
+        first.last_known_exits = [e1, e2].into();
+        assert_eq!(first.choose_exit(&[e2, e1]), Some(&e2));
+        // An exit known not ready, or never known, is not chosen.
+        assert_eq!(first.choose_exit(&[e3]), None);
+        assert!(!first.exit_selectable(&e3));
+        assert!(first.exit_selectable(&e1));
     }
 }

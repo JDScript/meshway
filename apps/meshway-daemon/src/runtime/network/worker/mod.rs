@@ -839,12 +839,11 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             {
                 let known = peers.borrow();
                 let now = chrono::Utc::now();
-                secure.set_ready_exits(
-                    known
-                        .as_ref()
-                        .map(|known| known.ready_exits(now))
-                        .unwrap_or_default(),
-                );
+                let exits = known
+                    .as_ref()
+                    .map(|known| known.ready_exits(now))
+                    .unwrap_or_default();
+                secure.set_ready_exits(exits.current, exits.last_known);
                 if let Some(current) = channels.changed(known.as_ref(), now) {
                     secure.set_peer_channels(current);
                 }

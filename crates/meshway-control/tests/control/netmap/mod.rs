@@ -13,6 +13,7 @@ use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use support::{Facts, Script, compiled, full, lease, signed, unchanged};
 
 mod associations;
+mod facts;
 mod restart;
 mod review;
 mod server_key;

@@ -136,10 +136,7 @@ impl SecureNode {
                 if destination.is_ipv6() || source.is_ipv6() {
                     return Ok(NewRoute::Denied(UnavailableReason::UnsupportedFamily));
                 }
-                let Some(exit) = nodes
-                    .iter()
-                    .find(|exit| self.first.ready_exits.contains(exit))
-                else {
+                let Some(exit) = self.first.choose_exit(nodes) else {
                     return Ok(NewRoute::NoReadyExit);
                 };
                 decision

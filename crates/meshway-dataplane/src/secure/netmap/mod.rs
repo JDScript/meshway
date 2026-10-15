@@ -225,12 +225,15 @@ impl SecureNode {
             .collect()
     }
 
-    /// Exits whose readiness fact is fresh and ready; selection input only.
-    /// Exit flows go to the first ready exit of their ordered candidates and
-    /// are dropped (never sent direct) when none is ready; a DNS query to a
-    /// not-ready exit resolver fails.
-    pub fn set_ready_exits(&mut self, exits: BTreeSet<NodeId>) {
-        self.first.ready_exits = exits;
+    /// Exits whose readiness fact is current and ready, and those whose
+    /// fact is past its freshness bound but was last known ready; selection
+    /// input only. Exit flows go to the first ready exit of their ordered
+    /// candidates, else the first last known ready one, and are dropped
+    /// (never sent direct) when there is neither; a DNS query to an exit
+    /// resolver that is neither fails.
+    pub fn set_ready_exits(&mut self, ready: BTreeSet<NodeId>, last_known: BTreeSet<NodeId>) {
+        self.first.ready_exits = ready;
+        self.first.last_known_exits = last_known;
     }
 
     /// Each peer's reported authenticated channels, from fresh peer facts:
