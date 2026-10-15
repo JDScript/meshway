@@ -48,10 +48,10 @@ use std::{
 mod linux;
 #[cfg(target_os = "linux")]
 pub use linux::{
-    CtConfirmation, DatagramAuthorization, DatagramCandidate, EgressCapture, ExitCutoff,
-    ExitIncarnation, ExitReply, ExitReplyReader, ExitRole, ExitScope, ExitSendGuard, ExitTransport,
-    ExitWrite, ExitWriter, Host, Invalidated, OriginalTuple, ProjectionAck, ProtectedDatagram,
-    TraversalDatagram, ephemeral_ports, port_holders,
+    CtConfirmation, DatagramAuthorization, DatagramCandidate, EgressCapture, ExitCleanupPending,
+    ExitCutoff, ExitIncarnation, ExitReply, ExitReplyReader, ExitRole, ExitScope, ExitSendGuard,
+    ExitTransport, ExitWrite, ExitWriter, Host, Invalidated, OriginalTuple, ProjectionAck,
+    ProtectedDatagram, TraversalDatagram, ephemeral_ports, port_holders,
     sockets::{CandidateHandle, ListenerHandle, ProtectedListener, ProtectedTcp, SocketFactory},
 };
 

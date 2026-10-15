@@ -267,6 +267,15 @@ fn exit(term: &Term, exit: Option<&meshway_protocol::ipc::ExitState>) -> String 
     if exit.dns_unavailable.is_some() {
         text.push_str(&term.paint(Role::Warn, " · exit DNS unavailable"));
     }
+    if let Some(cleanup) = &exit.cleanup_pending {
+        text.push_str(&term.paint(
+            Role::Warn,
+            format!(
+                " · cleanup pending ({}; attempt {}, retrying)",
+                cleanup.reason, cleanup.attempts
+            ),
+        ));
+    }
     text
 }
 

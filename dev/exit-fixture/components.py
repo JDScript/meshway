@@ -14,7 +14,7 @@ from validation_support import bind_access_options
 
 # The netmap exit role owner: renewal and unchanged-serial apply keep it, Access
 # narrowing admits no new projection, withdrawal ends it; a flow refused at
-# projection capacity does not stop it; its own failures stop it alone. Then the role's nft transaction and the
+# projection capacity does not stop it; its own failures stop it alone, and a failed cleanup is retried. Then the role's nft transaction and the
 # live exit-prerequisite probe, in the same build.
 CASES = {
     "role": ("meshway-underlay-netmap-tests",
@@ -27,6 +27,13 @@ CASES = {
     # deleted exit-owned route stops the role alone, which reinstalls.
     "recovery": ("meshway-underlay-netmap-tests",
                  "exit_recovery::netmap_exit_echo_reconnect_and_route_loss_stop_only_the_role"),
+    # X11: a failed cleanup keeps the resources and is retried from what the
+    # kernel then holds; the role installs again once it completed. A failed
+    # audit read is unknown, never a change.
+    "cleanup": ("meshway-underlay-netmap-tests",
+                "exit_recovery::netmap_exit_failed_cleanup_is_retried_and_the_role_installs_again"),
+    "audit": ("meshway-underlay-kernel-tests",
+              "linux::kernel::exit::tests::cleanup::exit_audit_read_failures_are_unknown_and_a_failed_cleanup_completes_on_retry"),
     "nft": ("meshway-underlay-kernel-tests",
             "linux::kernel::exit::nft::tests::exit_nft_atomic_batch_readback_and_failed_transaction_leave_no_table"),
     "probe": ("meshway-underlay-kernel-tests",

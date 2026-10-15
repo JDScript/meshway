@@ -6,8 +6,9 @@ pub use datagram::{DatagramCandidate, ProtectedDatagram};
 mod kernel;
 pub use kernel::egress::EgressCapture;
 pub use kernel::exit::{
-    CtConfirmation, ExitCutoff, ExitIncarnation, ExitReply, ExitReplyReader, ExitRole, ExitScope,
-    ExitSendGuard, ExitTransport, ExitWrite, ExitWriter, Invalidated, OriginalTuple, ProjectionAck,
+    CtConfirmation, ExitCleanupPending, ExitCutoff, ExitIncarnation, ExitReply, ExitReplyReader,
+    ExitRole, ExitScope, ExitSendGuard, ExitTransport, ExitWrite, ExitWriter, Invalidated,
+    OriginalTuple, ProjectionAck,
 };
 mod protection;
 
@@ -153,6 +154,13 @@ impl Host {
         role: &meshway_configuration::netmap::ExitRole,
     ) -> Result<ExitRole> {
         self.kernel.install_exit_role(role.into()).await
+    }
+    /// The cleanup of a stopped exit role its owner is retrying.
+    pub fn exit_cleanup(&self) -> Option<ExitCleanupPending> {
+        self.kernel
+            .exit
+            .as_ref()
+            .and_then(|owner| owner.role.cleanup_pending())
     }
     pub fn exit_role(&self) -> Option<ExitRole> {
         self.kernel

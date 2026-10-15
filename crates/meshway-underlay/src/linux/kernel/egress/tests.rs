@@ -572,7 +572,10 @@ async fn verification_distinguishes_a_missing_rule_and_table_from_a_consistent_t
     } = setup().await;
     let verification = backend.check().await;
     assert!(
-        matches!(verification, backend::Verification::Holds),
+        matches!(
+            verification,
+            super::super::verification::Verification::Holds
+        ),
         "{verification}"
     );
     let table = backend.ledger.program.table();
@@ -601,7 +604,7 @@ async fn verification_distinguishes_a_missing_rule_and_table_from_a_consistent_t
     assert!(
         matches!(
             verification,
-            backend::Verification::Changed("objects_changed")
+            super::super::verification::Verification::Changed("objects_changed")
         ),
         "{verification}"
     );
@@ -610,7 +613,7 @@ async fn verification_distinguishes_a_missing_rule_and_table_from_a_consistent_t
     assert!(
         matches!(
             verification,
-            backend::Verification::Changed("table_missing")
+            super::super::verification::Verification::Changed("table_missing")
         ),
         "{verification}"
     );
