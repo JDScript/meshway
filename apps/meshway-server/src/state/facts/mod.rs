@@ -181,13 +181,26 @@ impl FactLedger {
         }
         let node = facts.node_id;
         let state = self.networks.entry(network).or_default();
-        if let Some(entry) = state.current.get_mut(&node)
-            && same_content(&entry.facts, &facts)
-            && facts.expires_at >= entry.facts.expires_at
-        {
-            entry.facts = facts;
-            return Ok(false);
-        }
+        let change = match state.current.get_mut(&node) {
+            Some(entry) => match content_change(&entry.facts, &facts) {
+                None if facts.expires_at >= entry.facts.expires_at => {
+                    entry.facts = facts;
+                    return Ok(false);
+                }
+                None => "earlierBound",
+                Some(change) => change,
+            },
+            None => "new",
+        };
+        // Every viewer of the reporter answers its held sync on this.
+        tracing::debug!(
+            network_id = %network,
+            reporter = %node,
+            change,
+            observed_at = %facts.observed_at,
+            expires_at = %facts.expires_at,
+            "Peer facts content changed"
+        );
         let sequence = Self::next(state)?;
         state.removed.remove(&node);
         state.current.insert(node, Entry { facts, sequence });
@@ -300,30 +313,39 @@ impl FactLedger {
     }
 }
 
-/// Same addresses, origins, exit readiness and channels. Observation times and
-/// freshness bounds (of the facts and of each STUN candidate) are not
-/// content: they travel compactly as `refreshed`, never as a wake-up.
-fn same_content(old: &PeerFacts, new: &PeerFacts) -> bool {
-    let shape = |facts: &PeerFacts| {
-        facts
-            .listeners
+/// Which content differs, if any: addresses, origins, exit readiness and
+/// channels. Observation times and freshness bounds (of the facts and of each
+/// STUN candidate) are not content: they travel compactly as `refreshed`,
+/// never as a wake-up.
+fn content_change(old: &PeerFacts, new: &PeerFacts) -> Option<&'static str> {
+    if old.exit != new.exit {
+        return Some("exit");
+    }
+    if old.connected != new.connected {
+        return Some("connected");
+    }
+    if old.listeners.len() != new.listeners.len() {
+        return Some("listeners");
+    }
+    let stun = |listener: &meshway_protocol::netmap::PeerListenerFacts| {
+        listener
+            .stun_candidates
             .iter()
-            .map(|(key, listener)| {
-                (
-                    key.clone(),
-                    listener.phase,
-                    listener.network,
-                    listener.local_endpoints.clone(),
-                    listener
-                        .stun_candidates
-                        .iter()
-                        .map(|candidate| (candidate.address.clone(), candidate.origin.clone()))
-                        .collect::<Vec<_>>(),
-                )
-            })
+            .map(|candidate| (candidate.address.clone(), candidate.origin.clone()))
             .collect::<Vec<_>>()
     };
-    old.exit == new.exit && old.connected == new.connected && shape(old) == shape(new)
+    for ((old_key, old), (new_key, new)) in old.listeners.iter().zip(&new.listeners) {
+        if old_key != new_key || old.phase != new.phase || old.network != new.network {
+            return Some("listeners");
+        }
+        if old.local_endpoints != new.local_endpoints {
+            return Some("localEndpoints");
+        }
+        if stun(old) != stun(new) {
+            return Some("stunCandidates");
+        }
+    }
+    None
 }
 
 /// Production `PeerFactsSource` over the State runtime's ledger.

@@ -128,6 +128,7 @@ mise run node:lab stop
 | 安装 | `mise run build:node:linux` 的 release 目录经 `dist/install.sh --artifact` 安装；身份在 `/var/lib/meshway` 跨升级保留 |
 | 沙箱 | OrbStack 为所有服务注入关闭沙箱的 `zzz-lxc-service.conf`；以更高优先级的 `/etc/systemd/system/meshwayd.service.d/zzzz-*.conf` 恢复本 unit 的取值，并用 `systemctl show` 核对 |
 | 接入 | Tag 接入密钥（`tag:lab`，listener `lab-udp` native_udp 35000）加入开发网络；临时 topology 规则与临时 Node 在验收结束后撤销／删除 |
+| 出网路由 | DHCP 默认路由 MTU 1,300（环境 workaround），见 [OrbStack 与 WARP](/v2/install#orbstack-warp) |
 
 可在 machine 内用 network namespace 构造额外 Node（独立 `--data-dir`、私有 mount namespace 中的 `/etc`），例如经端口保持型 masquerade 只能单向拨入 machine 的 LAN Node。它们的 nft 表、namespace 与数据目录由验收脚本命名并精确清理；不修改 machine 默认 namespace 中未知归属的规则。
 

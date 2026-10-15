@@ -341,6 +341,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                     .is_some_and(|fact| fact.status == meshway_model::exit::ExitStatus::Ready);
             let mut report = reports.borrow().clone();
             report.exit_capability = capability;
+            report.exit_cleanup = engine.components().host.exit_cleanup();
             reports.send_replace(report);
         }
         let structural = matches!(
@@ -605,6 +606,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                         if rebound {
                             report.exit_capability =
                                 engine.components_mut().exit_capability().await;
+                            report.exit_cleanup = engine.components().host.exit_cleanup();
                             // Content applied before the instance arrived
                             // could not observe the exit prerequisites.
                             exit_recovered = engine.components().exit_pending()
@@ -778,6 +780,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                         .is_some_and(|fact| fact.status == meshway_model::exit::ExitStatus::Ready);
                 let mut report = reports.borrow().clone();
                 report.exit_capability = capability;
+                report.exit_cleanup = engine.components().host.exit_cleanup();
                 report.exit_flows = None;
                 reports.send_replace(report);
                 continue;

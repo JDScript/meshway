@@ -84,6 +84,10 @@ pub(crate) fn peer_facts(
                     }
                 }
             }
+            // Report order is not content: while one observer's previous
+            // observation outlives another's, the mappings would otherwise
+            // swap places on every renewal and wake every viewer.
+            stun_candidates.sort_by(|a, b| stun_key(a).cmp(&stun_key(b)));
         }
         listeners.insert(
             key.clone(),
@@ -138,4 +142,12 @@ pub(crate) fn peer_facts(
         observed_at: report.observed_at,
         expires_at,
     })
+}
+
+fn stun_key(candidate: &meshway_model::state::EndpointCandidate) -> (&str, Option<&str>) {
+    let observer = match &candidate.origin {
+        EndpointSource::Stun { observer } => Some(observer.as_str()),
+        _ => None,
+    };
+    (candidate.address.as_str(), observer)
 }

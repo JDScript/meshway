@@ -97,23 +97,24 @@ live probe 成功返回 `ready` 和 `supportedFamilies=[ipv4]`，`installedFamil
 
 已应用的 netmap 带本节点 `exitRole` 时，网络 worker 在应用后调用 live probe。该 Future 的 monitor 预约不可跨线程移动，因此唯一网络 worker 在一个固定线程上驱动，并在停止时显式等待退出；Host、Control 和内核资源仍各只有一个 owner。出口前置条件不满足或角色安装失败时，内容照常 applied：`exitCapability` 为 `unavailable` 及具体原因并上报 State，IPC Status 显示 `Exit unavailable (<原因>)`，peer 与本节点作为源的流量不受影响，也不进入 apply 重试。能力探测按下文周期重新真实探测；观测为 `ready` 而当前内容的角色尚未安装时，网络 worker 以同一内容重新 apply（`Engine::reapply`），由此安装角色。实例在内容应用之后才取得（启动时从保存的 netmap 恢复）时，取得实例即探测一次。只有角色实际安装后才填充 `installedFamilies`。
 
-**运行中的角色失败只撤该角色**：已安装角色的 Host owner 因自身内核操作失败（`maintain`／`retire`／审计）或其自有对象在 owner 之外被删除（见下文 monitor 分类）而停止时，出口 driver 报告 `ended`，网络 worker 只结束出口 runtime：SecureNode 退役全部出口流、各投影随 CT 精确清理，日志 `Exit role failed; withdrawing it alone`；netmap 保持 applied，capture、DNS、邻接、控制中继与本节点作为源的流量不变。随后立即真实探测一次：`ready` 即以同一内容 `Engine::reapply` 重装角色；清理失败（资源保留）时探测报 `ownershipConflict`，该角色在下次进程启动的 journal 恢复之前保持不可用。被保留的残留（关闭的门、已消失的出口 TUN 上带 `IIF_DETACHED` 的规则）仍记在出口 journal 与 monitor 期望中，不使 Host 的 capture 校验或新内容安装失败；撤回一个仍在服务的角色失败仍是失败。
+**运行中的角色失败只撤该角色**：已安装角色的 Host owner 因自身内核操作失败（`maintain`／`retire`／审计）或其自有对象在 owner 之外被删除（见下文 monitor 分类）而停止时，出口 driver 报告 `ended`，网络 worker 只结束出口 runtime：SecureNode 退役全部出口流、各投影随 CT 精确清理，日志 `Exit role failed; withdrawing it alone`；netmap 保持 applied，capture、DNS、邻接、控制中继与本节点作为源的流量不变。随后立即真实探测一次：`ready` 即以同一内容 `Engine::reapply` 重装角色。清理失败时资源保留，owner 按 1 秒起翻倍、上限 60 秒重试清理（每次先重读内核，见 [Exit 设计 · 审计与清理重试](/v2/node/exit-design#exit-audit)），期间探测报 `ownershipConflict`、Status 报 `exit.cleanupPending`；清理完成后的下一次探测为 `ready`，角色以同一内容重装。审计回读本身失败不停止角色（未知，30 秒内重证）。被保留的残留（关闭的门、已消失的出口 TUN 上带 `IIF_DETACHED` 的规则）仍记在出口 journal 与 monitor 期望中，不使 Host 的 capture 校验或新内容安装失败；撤回一个仍在服务的角色失败仍是失败。
 
 出口职责只来自 Server 签名的 netmap：`exitRole` 绑定内容（`generation`），不绑定 instance，重新取得 instance 保留已安装的角色。`NodeState.exitCapability` 是独立观测：失败可在尚未 applied 时报告，观测绑定当前 instance、持有的 `netmap` 与其 `roleGeneration`；Control 在发送 HTTP 前拒绝 instance 或 netmap 已变化的观测（`StaleReport`，丢弃该报告而不改绑）。不确定交付的重试保留原内容、序号和 `observedAt`，不把旧探测换绑到新 netmap。能力报告不生成应用回执，也不替代必需组件的原子 applied 边界。netmap 带出口职责期间，网络 worker 在每个事件上检查该观测：超过 State 报告寿命（60 秒）的三分之一即重新真实探测，持续业务流量不推迟刷新。
 
 ### IPv4 出口角色与 NAT 投影
 
-Linux `Host::install_netmap_exit_role(&ExitRole)` 消费已应用 netmap 中本节点的出口职责（`meshway_configuration::netmap::ExitRole`），返回 Underlay 的 `ExitRole` handle。资源仍归该 Host 的唯一 Kernel owner；角色使用独立非持久 TUN，不暴露 FD。crate 根导出 `ExitRole`、`ExitScope`、`ExitCutoff`、`ExitIncarnation`、`ExitSendGuard`、`Invalidated`、`OriginalTuple`、`ExitTransport`、`ProjectionAck`、`CtConfirmation`、`ExitReplyReader` 和 `ExitReply`。
+Linux `Host::install_netmap_exit_role(&ExitRole)` 消费已应用 netmap 中本节点的出口职责（`meshway_configuration::netmap::ExitRole`），返回 Underlay 的 `ExitRole` handle。资源仍归该 Host 的唯一 Kernel owner；角色使用独立非持久 TUN，不暴露 FD。crate 根导出 `ExitRole`、`ExitScope`、`ExitCutoff`、`ExitIncarnation`、`ExitSendGuard`、`Invalidated`、`OriginalTuple`、`ExitTransport`、`ExitWriter`、`ExitCleanupPending`、`ProjectionAck`、`CtConfirmation`、`ExitReplyReader` 和 `ExitReply`。
 
 | 操作 | 行为 |
 | --- | --- |
 | `install(incarnation, original_tuple, deadline, scope)` | 拒绝已有冲突 CT／tuple／incarnation；安装回程路由与成对规则后，向内核取该对 forward 包的实际入路由判定（入接口为出口 TUN、带出口 mark，不发包），不是单播转发路由即拒绝该流，并在日志中指明原因（`rp_filter`、无转发路由、martian）；安装精确 timed set 资格并回读，返回 `ProjectionAck`，此后才允许提交首包 |
-| `send(incarnation, packet, guard: impl ExitSendGuard)` | 每个排队包独立持有原 guard 与入队时的投影；每次 TUN 写 future 的 poll 前同步检查该 guard，再受原截止／撤回／tuple 约束；不使用最新 Live 投影替换排队包的权限 |
+| `send(incarnation, packet, guard: impl ExitSendGuard)` | 写一个包并等待它自己的结果（driver 的首包）。每个排队包独立持有原 guard 与入队时的投影；每次 TUN 写 future 的 poll 前同步检查该 guard，再受原截止／撤回／tuple 约束；不使用最新 Live 投影替换排队包的权限 |
+| `writer(incarnation) -> Option<ExitWriter>`／`ExitWriter::push(packet, guard)` | 投影在此仍有效时取得其写入方，把包放入 I/O owner 的有界写队列（256）而不等待结果；队列满为 `Capacity`（只丢该包）。I/O owner 按批（至多 64）取出，按批读取一次角色权限，逐包在每次写 poll 前检查投影、guard 与权限，以 offload 合并相邻兼容包；写失败只丢该包并计数 |
 | `confirm(incarnation)` | 首包产生 CT 后，按 IPv4 original tuple＋归属 mark 检查，返回 `CtConfirmation::Confirmed`；有界等待不超过三秒及流截止，缺失或冲突时先关闭资格，再返回 `ConfirmFailed`；清理失败返回错误 |
 | `renew(incarnation, deadline, scope)` | 仅在旧资格仍活、绑定相同且已确认 CT 身份仍一致时原子续期 timed set；不创建新的 CT，不复活过期投影 |
 | `retire_flow(incarnation)` | 先关闭该资格和用户态输出；其它活 ICMP sequence 仍引用同一 CT 时保留共享映射，最后一个引用退役后按 family／original tuple／mark 精确删除并读回；释放不再共用的回程规则／路由 |
 | `reply_reader()` | 单次取得独立回包 reader；`recv()` 返回 incarnation 与逆 NAT 包，排队期间继续保留原 guard；业务回复仍须通过唯一 dataplane 流表与原完整路径准入 |
-| `retire()` | 停止正向 I/O，关闭全部资格、清理 CT／回程资源，join TUN owner 后移除所属 nft 表；失败保留 journal 和拒绝边界 |
+| `retire()` | 停止正向 I/O，关闭全部资格、清理 CT／回程资源，join TUN owner 后移除所属 nft 表；第一次尝试失败即返回错误，资源与 journal 保留，owner 继续重试清理（`cleanup_pending()`，`Host::exit_cleanup()`），完成后角色可重新安装 |
 
 `ExitScope` 携带 dataplane 提供的授权／路径 binding 与不可逆撤回 token，不签发业务权限。原 tuple 仅支持 IPv4 TCP、UDP 和 ICMP echo；角色不能替代精确源地址、目的、服务和活 flow。投影最多 128 个活项；未退役投影记录与 quarantine 合计最多 4096 项，容量耗尽只拒绝该新增流，已安装投影与角色不受影响。每个 ICMP echo 请求是一条流（键为 `(id, sequence)`）：等待回复或其 ICMP 错误至多 10 秒，收到回复后 2 秒结束（每一跳的流表相同，见[数据面](/v2/node/dataplane)），出口投影随之退役；一个 5 次／秒的 `ping` 因此只占约 10 个投影，traceroute 的探测各占至多 10 秒。按序号的 quarantine 使持续 echo 速率另受 4096 ／ 300 秒 ≈ 13 次／秒（全出口合计）的约束。
 
@@ -141,7 +142,7 @@ Mesh 池、loopback、链路本地、组播、保留／广播及出口本机地�
 
 ### daemon 出口装配与 applied
 
-出口驱动 FIFO 最多持有 128 个操作／原始包包装；先排入 SecureNode 的 Install／Renew，再排入依赖该 ACK 的包。驱动使用完整 256-bit incarnation、原 tuple、原单调／UTC 截止和同一 Control clock；先完成 Host 投影，再完成 dataplane ACK，等待 `projection_ready`，将每包 `exit_scope` 保留至最终 TUN write poll。首包后的 CT 确认失败调用 `fail_exit_projection`，只关闭对应 flow；回程 reader 输入 `exit_reply`，依赖续期的回复等待 ACK 后才进入既有 carrier 发送路径。
+出口驱动 FIFO 最多持有 128 个操作／原始包包装；先排入 SecureNode 的 Install／Renew，再排入依赖该 ACK 的包。驱动使用完整 256-bit incarnation、原 tuple、原单调／UTC 截止和同一 Control clock；先完成 Host 投影，再完成 dataplane ACK，等待 `projection_ready`，将每包 `exit_scope` 保留至最终 TUN write poll。驱动写出某流的一个包后，该流此后已 ACK 且 FIFO 中无同流包的包由包处理 owner 直接交给出口 I/O owner（`ExitRole::writer`），同样带 `exit_scope` 直到写 poll；每流在 FIFO 中的包数由 RAII 名额计数（`exit/lanes.rs`，只是调度，不是授权），保证同一流不乱序（见 [Exit 设计 · 出口队列](/v2/node/exit-design#exit-queue)）。首包后的 CT 确认失败调用 `fail_exit_projection`，只关闭对应 flow；回程 reader 输入 `exit_reply`，依赖续期的回复等待 ACK 后才进入既有 carrier 发送路径。
 
 驱动只记录已安装投影及 CT 是否确认，不持第二份业务流表。角色消失、出口关闭、实例替换或执行停止时，先取消原输出、调用 `retire_exits`，再排空退役事件；FIFO barrier 等待已交出的 ACK 释放命令预算，继续取出此前尚不能物化的 Retire。精确 CT 清理结果传给 RetirementAck，最后退役角色并等待驱动退出。原始已过期或已撤回的排队包不会换绑到续期后的投影。
 
@@ -186,7 +187,7 @@ IPC 12 的公开运行状态（`meshway status --json` 原样输出）：
 | `node` | 必填可空：已安装 netmap 中的本节点 `hostname` 与 Mesh `addresses`；未安装（down、control-only、准备中）为 null |
 | `peers` | 必填：已安装 netmap 中可见的其他节点（与 `ping` 解析名称的集合相同），按 hostname 排序；未安装为空。字段见下表 |
 | `sockets` | 必填：已安装 netmap 中本节点已绑定的 Native UDP listener 与拨号候选 socket（按地址族、地址排序），其后是绑定正在重试的 listener（按 key）；未安装为空。每项 `resource`（`listener`／`dial` 资源）、`boundAddress`、`receiveBuffer`／`sendBuffer`（内核读回的实际字节数，Linux 为授予值的两倍）、`receiveRequested`／`sendRequested`（配置值，0 时为默认值）与 `unavailable`；读回不足以容纳请求（Linux 上小于请求的两倍，判定唯一见 [UDP 批量接口](/v2/node/transport#udp-批量接口)）表示被 `rmem_max`／`wmem_max` 截断，`meshway status` 标注 `limited`。重试中的 listener 只有 `resource` 与 `unavailable`（最近一次失败，例如 `listener lab-udp cannot bind 0.0.0.0:35000: Address in use (os error 98)`），其余为 null，`meshway status` 显示 `unavailable`；重试绑定成功后同样读回缓冲。规则见 [UDP 批量接口](/v2/node/transport#udp-批量接口) |
-| `exit` | 可省略；包含 target-bound `capability`、已安装 role generation、`activeFlows` 和独立的 `dnsUnavailable`（出口 resolver 不能为源解析的原因，与 State [`exitDns`](/v2/state-reference#exitdns) 同源；可用或不服务时为 null）。未观测的计数保持 null，失去当前执行权限后不显示已安装角色／活流数 |
+| `exit` | 可省略；包含 target-bound `capability`、已安装 role generation、`activeFlows`、独立的 `dnsUnavailable`（出口 resolver 不能为源解析的原因，与 State [`exitDns`](/v2/state-reference#exitdns) 同源；可用或不服务时为 null），以及可省略的 `cleanupPending`：已停止角色的清理失败、资源保留并在重试时给出 `reason`（最近一次尝试的错误）、`attempts`（含第一次）与 `retryAt`（下次尝试；1 秒起翻倍、上限 60 秒），以最近一次能力探测为准（至多约 20 秒前），其余时候省略（见 [Exit 设计 · 审计与清理重试](/v2/node/exit-design#exit-audit)）。`meshway status` 的 Exit 行追加 `· cleanup pending (<reason>; attempt N, retrying)`。未观测的计数保持 null，失去当前执行权限后不显示已安装角色／活流数 |
 
 `peers[]` 只投影本节点自己的事实，不生成测量或授权：
 

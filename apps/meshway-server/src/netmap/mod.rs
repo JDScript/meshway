@@ -71,17 +71,32 @@ fn hold_within(hold: Duration, held: Option<hub::Held>, now_ms: u64) -> Duration
 fn facts_renewal_until_ms(
     facts: Option<&meshway_protocol::netmap::PeerFactsDelta>,
     now_ms: u64,
-) -> Option<u64> {
+) -> Option<FactsBound> {
     let facts = facts?;
     let floor = now_ms.saturating_add(u64::try_from(FACTS_RENEWAL_MARGIN.as_millis()).ok()?);
     facts
         .updated
-        .values()
-        .map(|facts| facts.expires_at)
-        .chain(facts.refreshed.values().copied())
-        .filter_map(|at| u64::try_from(at.timestamp_millis()).ok())
-        .filter(|at| *at > floor)
-        .min()
+        .iter()
+        .map(|(node, facts)| (*node, facts.expires_at, Some(facts.observed_at)))
+        .chain(facts.refreshed.iter().map(|(node, at)| (*node, *at, None)))
+        .filter_map(|(reporter, at, observed_at)| {
+            Some(FactsBound {
+                until_ms: u64::try_from(at.timestamp_millis()).ok()?,
+                reporter,
+                observed_at,
+            })
+        })
+        .filter(|bound| bound.until_ms > floor)
+        .min_by_key(|bound| bound.until_ms)
+}
+
+/// The fact bounding the next hold, kept for diagnostics.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct FactsBound {
+    until_ms: u64,
+    reporter: meshway_model::NodeId,
+    /// Only facts sent in full (`updated`) carry their observation time.
+    observed_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 /// Lease validity and hold timeout, validated when the App opens.
@@ -168,6 +183,70 @@ mod timing_tests {
         );
     }
 
+    /// Six Nodes, all visible to each other, each reporting every 20 s with
+    /// no content change: a viewer's holds are bounded by the facts only, at
+    /// least 35 s and on average about 39.6 s against the nominal 50 s, about
+    /// 1.26x the sync rate of an unbounded hold.
+    #[test]
+    fn six_steady_reporters_cost_a_bounded_sync_rate() {
+        use chrono::TimeZone;
+        let node = |n: u128| meshway_model::NodeId::new(uuid::Uuid::from_u128(n)).unwrap();
+        let (mut answers, mut shortest, mut seed) = (0u64, u64::MAX, 7u64);
+        let horizon = 3_600_000;
+        for _ in 0..20 {
+            let mut random = |range: u64| {
+                seed = seed
+                    .wrapping_mul(6_364_136_223_846_793_005)
+                    .wrapping_add(1_442_695_040_888_963_407);
+                (seed >> 33) % range
+            };
+            let phases: Vec<u64> = (0..5).map(|_| random(20_000)).collect();
+            // `now` is a request; the first names no lease and is answered at once.
+            let (mut now, mut held) = (random(20_000) + 20_000, None);
+            while now < horizon {
+                let hold = hold_within(Duration::from_millis(45_000 + random(10_000)), held, now);
+                if held.is_some() {
+                    shortest = shortest.min(hold.as_millis() as u64);
+                }
+                let answer = now + hold.as_millis() as u64;
+                // Every peer's latest report bounds its fact at +60 s.
+                let refreshed = phases
+                    .iter()
+                    .enumerate()
+                    .map(|(peer, phase)| {
+                        let reported = answer - (answer - phase) % 20_000;
+                        let at = chrono::Utc
+                            .timestamp_millis_opt((reported + 60_000) as i64)
+                            .unwrap();
+                        (node(peer as u128 + 2), at)
+                    })
+                    .collect();
+                let delta = meshway_protocol::netmap::PeerFactsDelta {
+                    base: None,
+                    cursor: meshway_protocol::netmap::StateCursor {
+                        epoch: meshway_model::StateEpoch::new(uuid::Uuid::from_u128(9)).unwrap(),
+                        sequence: meshway_model::Sequence::MIN,
+                    },
+                    netmap_serial: meshway_model::Version::new(1).unwrap(),
+                    updated: Default::default(),
+                    removed: vec![],
+                    refreshed,
+                };
+                held = Some(hub::Held {
+                    lease_until_ms: answer + 86_400_000,
+                    facts_until_ms: facts_renewal_until_ms(Some(&delta), answer)
+                        .map(|bound| bound.until_ms),
+                });
+                // The Node's next request follows its answer at once.
+                now = answer + 50;
+                answers += 1;
+            }
+        }
+        let mean = 20.0 * horizon as f64 / answers as f64;
+        assert!(shortest >= 34_900, "{shortest}");
+        assert!((37_000.0..42_000.0).contains(&mean), "{mean}");
+    }
+
     #[test]
     fn the_facts_bound_skips_facts_no_renewal_can_keep_fresh() {
         use chrono::TimeZone;
@@ -192,13 +271,18 @@ mod timing_tests {
             removed: vec![],
             refreshed: [(node(2), at(41_000)), (node(3), at(14_000))].into(),
         };
+        let until = |now| facts_renewal_until_ms(Some(&delta), now).map(|bound| bound.until_ms);
         // Issued at 10 s: node 3 (4 s left, its reporter stopped) can no
         // longer be renewed in time; node 2 bounds the next hold.
-        assert_eq!(facts_renewal_until_ms(Some(&delta), 10_000), Some(41_000));
+        assert_eq!(until(10_000), Some(41_000));
+        assert_eq!(
+            facts_renewal_until_ms(Some(&delta), 10_000).map(|bound| bound.reporter),
+            Some(node(2))
+        );
         // Issued at 36 s, the answer that bound was for: only node 1 is left,
         // so a stopped reporter never makes the next hold answer at once.
-        assert_eq!(facts_renewal_until_ms(Some(&delta), 36_000), Some(52_000));
-        assert_eq!(facts_renewal_until_ms(Some(&delta), 60_000), None);
+        assert_eq!(until(36_000), Some(52_000));
+        assert_eq!(until(60_000), None);
         assert_eq!(facts_renewal_until_ms(None, 0), None);
     }
 }
@@ -326,47 +410,77 @@ impl Netmaps {
             chrono::Utc::now().timestamp_millis().max(0) as u64,
             request.server_key_generation,
         );
-        let answered = |response: SyncResponse| {
-            records::Records::shared().issued(principal.network, principal.node, response.lease);
-            self.hub.issued(
-                principal.network,
-                principal.node,
-                response.lease,
-                facts_renewal_until_ms(response.peer_facts.as_ref(), response.lease.issued_at_ms),
-            );
-            response
-        };
         // Register before the first read: a change committed after this point
         // wakes the waiter, one committed before it is visible to the read.
         let mut waiter = self.hub.register(principal.network, principal.node)?;
         // Only the lease the request names, checked against those this
         // process issued, and the facts its answer carried bound the hold:
         // an answer generated earlier may never have reached the Node.
-        let deadline = tokio::time::Instant::now()
-            + hold_within(
-                self.timing.jittered_hold(),
-                self.hub
-                    .held(principal.network, principal.node, request.lease.as_ref()),
-                chrono::Utc::now().timestamp_millis().max(0) as u64,
+        let held = self
+            .hub
+            .held(principal.network, principal.node, request.lease.as_ref());
+        let started = tokio::time::Instant::now();
+        let hold = hold_within(
+            self.timing.jittered_hold(),
+            held,
+            chrono::Utc::now().timestamp_millis().max(0) as u64,
+        );
+        let deadline = started + hold;
+        let answered = |response: SyncResponse, reason: &'static str| {
+            records::Records::shared().issued(principal.network, principal.node, response.lease);
+            let bound =
+                facts_renewal_until_ms(response.peer_facts.as_ref(), response.lease.issued_at_ms);
+            self.hub.issued(
+                principal.network,
+                principal.node,
+                response.lease,
+                bound.map(|bound| bound.until_ms),
             );
+            // Why this hold ended and which fact bounds the next one.
+            tracing::debug!(
+                network_id = %principal.network,
+                node_id = %principal.node,
+                reason,
+                held_ms = started.elapsed().as_millis() as u64,
+                hold_ms = hold.as_millis() as u64,
+                held_facts_until_ms = held.and_then(|held| held.facts_until_ms),
+                next_facts_until_ms = bound.map(|bound| bound.until_ms),
+                next_facts_reporter = bound.map(|bound| bound.reporter.to_string()),
+                next_facts_observed_at = bound
+                    .and_then(|bound| bound.observed_at)
+                    .map(|at| at.to_rfc3339()),
+                issued_at_ms = response.lease.issued_at_ms,
+                "Sync answered"
+            );
+            response
+        };
+        let mut reason = "timeout";
         loop {
             let (response, changed) = self.read(token, &request).await?;
-            if !matches!(
-                response.netmap,
-                meshway_protocol::netmap::SyncNetmap::Unchanged
-            ) || response
-                .peer_facts
-                .as_ref()
-                .is_some_and(|facts| facts.base.is_none() || Some(facts.cursor) != request.state)
-                || response.associations.is_some()
-                || response.traversal_requests.as_slice().iter().any(|asked| {
+            let lacking =
+                if !matches!(
+                    response.netmap,
+                    meshway_protocol::netmap::SyncNetmap::Unchanged
+                ) {
+                    Some("netmap")
+                } else if response.peer_facts.as_ref().is_some_and(|facts| {
+                    facts.base.is_none() || Some(facts.cursor) != request.state
+                }) {
+                    Some("peerFacts")
+                } else if response.associations.is_some() {
+                    Some("associations")
+                } else if response.traversal_requests.as_slice().iter().any(|asked| {
                     !request
                         .traversal_requests
                         .as_slice()
                         .contains(&asked.attempt_id)
-                })
-            {
-                return Ok(answered(response));
+                }) {
+                    Some("traversal")
+                } else {
+                    None
+                };
+            if let Some(lacking) = lacking {
+                return Ok(answered(response, lacking));
             }
             let facts_changed = async move {
                 match changed {
@@ -375,14 +489,21 @@ impl Netmaps {
                 }
             };
             tokio::select! {
-                _ = waiter.woken() => break,
+                wake = waiter.woken() => {
+                    reason = match wake {
+                        hub::Wake::Changed => "netmap",
+                        hub::Wake::Replaced => "replaced",
+                        hub::Wake::Closed => "closed",
+                    };
+                    break;
+                }
                 () = facts_changed => continue,
                 () = tokio::time::sleep_until(deadline) => break,
             }
         }
         // Woken, replaced, closing or timed out: one final answer with a fresh lease.
         let response = self.read(token, &request).await?.0;
-        Ok(answered(response))
+        Ok(answered(response, reason))
     }
 
     /// Bytes of a rule-set artifact some netmap of the calling Node

@@ -244,7 +244,9 @@ Linux 的 Mesh 外层 UDP socket 设 `IP_PMTUDISC_DO`／`IPV6_MTU_DISCOVER=DO`�
 
 `path`／`inner` 是 channel 事实（`Snapshot.mtu`、`Manager::path_mtu`、IPC `peers[].mtu`），连接组件自己不据此改变发送。数据面据此对本节点超过 `inner` 的包回 fragmentation needed／packet too big，Underlay 据此限制 TCP MSS，见[通道 MTU](/v2/node/dataplane#channel-mtu)。探测丢失会让结果偏小（保守方向）。
 
-实测（2026-10-13，`f1aa2250`）：us-lax-it7（公网）→ meshway-vm（WARP）通道搜索得 `1444/1330`，内层 DF ping `-s 1302`（外层 1444）5/5 回复、`-s 1303`（外层 1445）0/5；反方向 `1500/1386`。证据 `.meshway/node-lab/n2a/`。
+**限制：中途剥离 DF 的路径。** 中途 NAT 剥离 DF 并在更窄的链路上分片、且远端在报文到达对端节点前重组时，认证探测无法发现分片：对端收到的是完整、长度正确的 Probe，结果偏大（最大为路由 MTU）。症状是该方向外层报文大量乱序（重组顺序），内层 TCP 窗口被压低、单流吞吐远低于同路径其他 TCP；ping 与健康检查不受影响。节点不做"DF 被剥离"的启发式判定；处置是在宿主侧把通往该路径的路由 MTU 限到窄链路的大小，通道即按[结果](#path-mtu)规则立即取较小值，数据面与 TCP MSS 随之收窄。实例：OrbStack machine 的出网 NAT 不保留 DF，Mac 经 Cloudflare WARP（MASQUE，utun MTU 1,300）出网，见[常驻 systemd 验收 VM](/v2/install#orbstack-warp)。
+
+实测（2026-10-13，`f1aa2250`）：us-lax-it7（公网）→ meshway-vm（WARP）通道搜索得 `1444/1330`，内层 DF ping `-s 1302`（外层 1444）5/5 回复、`-s 1303`（外层 1445）0/5；反方向当时报 `1500/1386`，实为上述 DF 剥离造成的偏大结果（2026-10-15 M5 定位），宿主限路由 MTU 后为 `1300/1186`。证据 `.meshway/node-lab/n2a/`、`.meshway/validation/m5/`。
 
 ### 持续 STUN 观测 {#continuous-stun}
 
@@ -262,7 +264,7 @@ Linux 的 Mesh 外层 UDP socket 设 `IP_PMTUDISC_DO`／`IPV6_MTU_DISCOVER=DO`�
 - 观测寿命 120 秒，独立于授权该 STUN 请求的元数据期限（它是映射事实，不是授权）。
 - 同一 observer、同一映射的确认**不触发 State 上报**；剩余寿命不足 60 秒时才以新观测续期并上报，续期时保留上一观测至其自然到期，使依据上一次已确认报告准备的 offer 仍可预留。
 - 映射变化（地址或端口不同）立即替换该 observer 的观测并唤醒 State 报告调度。
-- Server 把同一 listener 中地址与来源相同的 STUN 候选合并为一个事实（取较晚的期限）：续期不改变 peer facts 内容，只经 `refreshed` 更新新鲜度，不唤醒其他节点。
+- Server 把同一 listener 中地址与来源相同的 STUN 候选合并为一个事实（取较晚的期限），并按（地址, observer）排序：续期不改变 peer facts 内容，只经 `refreshed` 更新新鲜度，不唤醒其他节点。两个 observer 的续期相隔数秒时（例如 observer 各见不同映射端口），上一观测先后到期使报告中的候选顺序暂时互换，这也不是内容变化。
 
 按实际解析出的 STUN 地址族判断每个 socket 是否可观测；仅有 IPv4 STUN 目标时，空的 IPv6 socket 不持续重试。这个能力判断只保留至原元数据截止，新元数据会重新解析；解析失败仍可重试，不缓存为永久不支持。
 

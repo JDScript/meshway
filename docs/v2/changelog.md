@@ -4,15 +4,34 @@
 
 ## 未发布
 
-漫游第一切片（R1，`r1/roaming`）：wire 6、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约不变；IPC 仍为 12，`Status` 增加可省略字段 `lastNetworkChange`（同版本 CLI 与 daemon 一起发布；更旧的 CLI 读取新 daemon 时会拒绝该字段）。定义见[漫游](/v2/node/connectivity#roaming)。
+漫游第一切片（R1，`r1/roaming`）：wire 6、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约不变；IPC 12（`Status` 新增可省略字段 `lastNetworkChange`，与 `idlePath`／`cleanupPending` 同一先例：CLI 与 daemon 一起升级）。定义见[漫游](/v2/node/connectivity#roaming)。
 
-- Underlay：外部网络变化在 250 ms 合并后按指纹分为 path／refresh（外部 up 接口与载波、首选地址、以本节点 mark 经 RPDB 到 Server 的路由，非 main 表也计入），控制中继只在 path 类关闭连接；新网络的地址落入 Mesh 池时 fail closed、报 `meshPoolOverlap` 并在地址离开后自动重装；自有 capture 规则／私有表路由被他人删除时有界重装（1 分钟至多 3 次）。
+- Underlay：外部网络变化在 250 ms 合并后按指纹分为 path／refresh（外部 up 接口与载波、首选地址、以本节点 mark 经 RPDB 到 Server 的路由，非 main 表也计入），控制中继只在 path 类关闭连接；新网络的地址落入 Mesh 池时 fail closed、报 `meshPoolOverlap`（`lastErrorDetail` 前缀；类型化原因留作后续）并在地址离开后自动重装；自有 capture 规则／私有表路由被他人删除时有界重装（1 分钟至多 3 次）。
 - 连接：对端从新来源发来已有通道的签名 Ping 时，只向该来源发该通道的挑战 Ping，回来的认证 Pong 使同一通道（ID、transcript、boot 不变）跟随到新来源，拨号端与 listener 相同（此前拨号端丢弃，listener 以新握手替换）；本机 path 类变化后撤回旧 STUN 观测并立即重新观测、每条 UDP 通道按 250 ms 探测 4 次、候选节奏清零（`own_network`）、源地址离开路由的流式通道退役重拨；对端已发布候选不再包含通道 remote 时旁路拨号并精确替换；跟随后重新搜索 PMTU。
 - daemon／Control：路径变化后 1.5 秒内的 State 报告间隔 100 ms；本机关闭控制连接造成的 sync／Control 失败立即重试、不增长退避；出口能力在重新探测前报 `probing`；通道跟随／替换的 debug 记录带经该 peer 的 circuit CID。
 - 术语：CLI 表的“切网”改为“切换 Meshway 网络”；resolv.conf 文件后端声明不支持漫游。
 - 验收：新矩阵行 `roam/direct`（19 行）与三项 Underlay 内核测试（分类、重装、池重叠）；main 上 listener 两格首个回复 7.2／5.8 秒，R1 四格 0.21–0.27 秒且同一 circuit，见[漫游行](/v2/node/validation#roam-row)。
 
 验证：Planck 19 行矩阵 `20261015T212445Z-21b27563`（`2eae8716`，并行 8）全部通过；常驻 lab（lax 换 Docker 网络）与 `meshway-vm`（第二地址与默认路由源地址）真机检查，结束后恢复 main 程序；证据 `.meshway/validation/r1/`。
+
+## v0.1.0-alpha.13
+
+范围：wire 6、IPC 12（Status 新增可省略字段 `exit.cleanupPending`）、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约均不变（普通升级，无断网窗口；CLI 与 daemon 一起升级）。X11：出口已安装流由出口 I/O owner 批量写出口 TUN，写失败只丢该包，审计读取失败记为未知，清理失败有界重试并以 `exit.cleanupPending` 报告；P1b：STUN 候选排序后再比较事实内容，Server debug 日志 `Sync answered`／`Peer facts content changed`；M5：VM→it7 Mesh 吞吐（OrbStack DF 剥离与 WARP 路径 MTU）文档；以及下列 P1b、X11 工作包。
+
+sync 请求量（P1b，`p1b/sync-rate`）：wire 6、IPC 12、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约均不变（只改 Server）。OPS11 六台 10 分钟 sync 回答 101→208（2.06×，预期约 1.4×）。现网只读核对：各节点每 1–21 秒报告一次、事实一律 `observedAt` + 60 秒到期，以事实界结束的 hold 恰为最早剩余 − 5 秒、平均 41.0 秒（约 1.22×），P1 的界按设计工作；多出的回答来自事实内容"变化"唤醒：两个 STUN observer 续期相隔数秒（VM 约 10 秒）时，旧观测先后到期使报告里的候选顺序互换，Server 按报告顺序比较内容，每个续期周期（约 62 秒）两次唤醒所有看见该报告者的节点（5 分钟内 VM 9 次，同时刻六台一起回答）。
+
+- Server：同一 listener 的 STUN 候选按（地址, observer）排序后再比较内容，顺序互换不再推进事实游标或唤醒 hold；真实映射变化照旧立即唤醒。
+- Server：debug 日志 `Sync answered`（`reason`：`netmap`／`peerFacts`／`associations`／`traversal`／`timeout`／`replaced`／`closed`，`held_ms`，本次与下一 hold 的事实截止及报告者）与 `Peer facts content changed`（`change` 类别），用于定位提前结束的 hold。
+- 验收：App 测试 `staggered_stun_renewals_wake_no_hold`（修复前在 0.5 秒处被唤醒）；`six_steady_reporters_cost_a_bounded_sync_rate`（六台每 20 秒报告：hold ≥ 35 秒、平均 39.6 秒，约 1.26×）。证据 `.meshway/validation/p1b/`。真机未部署。
+
+出口正向写路径与出口审计／清理（X11，`x11/exit-write-path`）：wire 6、IPC 12（Status `exit.cleanupPending` 新增，可省略）、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约均不变；CLI 与 daemon 一起升级（旧 CLI 在该字段出现时解码失败，其余时候不受影响）。M4 遗留：出口正向受 driver 逐包串行写出口 TUN 限制（fixture 882 vs Mesh 1,996 Mbit/s，每次运行都有 `Exit queue full`；真机 planck 10 条告警计到 512，全在出口正向）。OPS11：lab 三节点升级前出口角色处于 ownership conflict——审计读取 `kernel netlink operation failed` 即停止角色，撤回时清理失败，资源保留，冲突持续到重启。
+
+- 写路径（不变量：已安装流的包不经逐包跨任务交接；准入仍逐包、按流确认后放行；队列仍有界。owner：daemon 出口 driver 与 Underlay 出口 I/O owner 的边界）：driver 写出某流的一个包后，该流此后投影已 ACK、FIFO 中无同流包的包由包处理 owner 每轮至多 32 个一批交给出口 I/O owner（队列 32 批），I/O owner 每次至多 64 个、每次写 poll 前逐包检查投影／guard／权限，以 offload 合并写入；每流在 FIFO 中的包数单独计数，两条路不使同一流乱序。出口 TUN 写失败与超出 MTU 的包只丢该包（计数，按 2 的幂 WARN `Exit TUN write failed; packet dropped, its flow kept`），此前结束整条流；I/O owner 处已无投影仍结束该流。fixture 出口正向 890 → 1,764 Mbit/s（Mesh 正向的 0.45 → 0.86），本阶段 `Exit queue full` 12 → 0 次，压力步 767 → 1,685。见 [Exit 设计 · 出口队列](/v2/node/exit-design#exit-queue)、[出口正向写路径](/v2/node/performance#exit-write-path)。
+- 审计（不变量同 D3：一次失败或被放弃的读取不能证明归属变化。owner：Underlay 出口 backend 的审计与清理）：出口 owner 每秒审计与探测审计的读取失败记为未知，角色与流保持，下一秒再证（WARN `Exit role audit unavailable; retrying, the role and its flows kept`，重证一致后 INFO `Exit role audit verified again; ownership kept`）；读成功而不符（`objects_changed`／`flow_unowned`／`flow_missing`）、表消失或未知满 30 秒才停止角色（`check` 字段）。分类与 egress capture 共用一份实现（`kernel/verification.rs`）。
+- 清理：角色撤回时清理失败，资源与 journal 保留，owner 按 1 秒起翻倍、上限 60 秒重试（WARN `Exit role cleanup failed; resources kept, retrying`），每次先重读内核：两张表都已不存在且 journal 已释放全部对象即确认完成，都在则从头再关闭（逐步读回、跳过已删除的），其余为冲突不动任何对象；进程重启的 journal 恢复用同一函数。重试期间 Status `exit.cleanupPending`（`reason`、`attempts`、`retryAt`），`meshway status` 显示 `cleanup pending (…; attempt N, retrying)`；完成后（INFO `Exit role cleanup completed after retrying; the role may install again`）下一次能力探测为 ready，角色以同一内容重装。此前保留的资源要等重启。见 [Exit 设计 · 审计与清理重试](/v2/node/exit-design#exit-audit)。
+- 验收：`exit/off` 组件阶段新增 `exit_recovery::netmap_exit_failed_cleanup_is_retried_and_the_role_installs_again` 与 `linux::kernel::exit::tests::cleanup::exit_audit_read_failures_are_unknown_and_a_failed_cleanup_completes_on_retry`；lab 复现见 [X11 证据](/v2/node/validation#x11-exit)。
+
+验证：Planck `exit/off` 前后交替各 5 次（`75fdaad3` 与 X11 产品代码，优化 dev 构建），每次运行的组件阶段含两项新测试并通过；Planck 18 行矩阵 `20261015T195811Z-5b10ea68`（`d68cad6d`，并行 4）全部通过（`exit/off` 787.6 秒，第 16 阶段无 `Exit queue full`，echo 100／100）；此前并行 8 的一次 `20261015T193324Z-c16e4000` 中 netmap 三行因 Docker 地址池耗尽未开始，`exit/off` 第 16 阶段压力步中 E 一次投影退役的 nft 操作失败（`operation: retire`，`kernel netlink operation failed`，启动 load 4.9）按现行规则停止角色，该 TCP 流随之结束（iperf3 50 秒超时）。本机 lab 复现见 [X11 证据](/v2/node/validation#x11-exit)，证据 `.meshway/validation/x11/`。真机未部署。
 
 ## v0.1.0-alpha.12
 

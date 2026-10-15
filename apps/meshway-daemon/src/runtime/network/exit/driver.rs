@@ -1,4 +1,4 @@
-use super::{Health, Work, scope::PacketGuard};
+use super::{Health, Lanes, Work, scope::PacketGuard};
 use meshway_dataplane::exit::{self, ExitProjection, FlowIncarnation};
 use meshway_protocol::ipc::Problem;
 use meshway_underlay::{CtConfirmation, ExitIncarnation, ExitRole, ExitScope};
@@ -201,7 +201,7 @@ fn classify(work: &Work) -> (Kind, Option<FlowIncarnation>) {
                 (Kind::Ordered, Some(*flow))
             }
         },
-        Work::Packet(packet) => (Kind::Packet, packet.exit_flow()),
+        Work::Packet(packet, _) => (Kind::Packet, packet.exit_flow()),
         Work::Barrier(_) => (Kind::Ordered, None),
     }
 }
@@ -291,6 +291,7 @@ pub(super) async fn run(
     failures: mpsc::Sender<FlowIncarnation>,
     health: watch::Sender<Health>,
     stop: CancellationToken,
+    lanes: Lanes,
 ) -> Result<(), Problem> {
     let mut resources: BTreeMap<FlowIncarnation, Resource> = BTreeMap::new();
     let mut failed = false;
@@ -348,6 +349,9 @@ pub(super) async fn run(
                         resource.revoked.cancel();
                         failure = Some(flow);
                     }
+                    if !confirmed {
+                        lanes.set(flow, false);
+                    }
                 }
                 None
             }
@@ -374,6 +378,9 @@ pub(super) async fn run(
                             installed,
                         } in outcomes
                         {
+                            if !installed {
+                                lanes.set(item.flow, false);
+                            }
                             if item.ack.complete(installed).is_ok() {
                                 resources.insert(
                                     item.flow,
@@ -403,6 +410,7 @@ pub(super) async fn run(
                     } => {
                         if ack.complete(renewed).is_err() {
                             revoked.cancel();
+                            lanes.set(flow, false);
                             failure = Some(flow);
                         }
                     }
@@ -485,6 +493,7 @@ pub(super) async fn run(
                         }));
                     }
                     ExitProjection::Retire { flow, ack, .. } => {
+                        lanes.set(flow, false);
                         if let Some(resource) = resources.remove(&flow) {
                             resource.revoked.cancel();
                         }
@@ -518,6 +527,7 @@ pub(super) async fn run(
                         {
                             if ack.complete(false).is_err() {
                                 revoked.cancel();
+                                lanes.set(flow, false);
                                 failure = Some(flow);
                             }
                         } else {
@@ -545,7 +555,9 @@ pub(super) async fn run(
                         }
                     }
                 },
-                Work::Packet(packet) => {
+                // `_queued` frees the flow's place in its lane once the
+                // packet is written or dropped, not before.
+                Work::Packet(packet, _queued) => {
                     let packet = *packet;
                     if let Some(flow) = packet.exit_flow()
                         && let Some(resource) = resources.get_mut(&flow)
@@ -588,6 +600,8 @@ pub(super) async fn run(
                             )
                             .await
                             .map_err(Some)?;
+                            // Released: its later packets need no driver turn.
+                            lanes.set(flow, true);
                             if !resource.confirmed && !resource.confirming {
                                 resource.confirming = true;
                                 let role = role.clone();
@@ -603,13 +617,24 @@ pub(super) async fn run(
                             Ok::<_, Option<meshway_underlay::Error>>(())
                         }
                         .await;
-                        // A full exit writer costs this packet only, like any
-                        // full queue; other write failures end the flow.
+                        // A full exit writer or a failed TUN write costs this
+                        // packet only, like any full queue. A projection the
+                        // owner no longer holds while the packet's own scope
+                        // is current ends the flow.
                         if let Err(error) = sent
-                            && !matches!(error, Some(meshway_underlay::Error::Capacity))
+                            && !matches!(
+                                error,
+                                Some(
+                                    meshway_underlay::Error::Capacity
+                                        | meshway_underlay::Error::Target
+                                        | meshway_underlay::Error::Tun(_)
+                                        | meshway_underlay::Error::Io(_)
+                                )
+                            )
                             && original.ensure_current().is_ok()
                         {
                             resource.revoked.cancel();
+                            lanes.set(flow, false);
                             failure = Some(flow);
                         }
                     }

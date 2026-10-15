@@ -9,6 +9,7 @@ pub(super) mod network;
 mod plan;
 mod rpdb;
 mod tool;
+mod verification;
 
 use futures_util::{TryStream, TryStreamExt};
 use meshway_engine::Desired;

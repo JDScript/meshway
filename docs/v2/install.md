@@ -49,8 +49,8 @@ net.core.wmem_max = 2097152
 ## 安装
 
 ```sh
-curl -fsSLO https://github.com/JDScript/meshway/releases/download/v0.1.0-alpha.12/install.sh
-sudo sh install.sh --version v0.1.0-alpha.12 --server https://controller.example.com
+curl -fsSLO https://github.com/JDScript/meshway/releases/download/v0.1.0-alpha.13/install.sh
+sudo sh install.sh --version v0.1.0-alpha.13 --server https://controller.example.com
 sudo meshway up --enrollment-key @/root/enrollment-key
 sudo meshway status
 ```
@@ -150,7 +150,7 @@ meshway version
 ```
 
 ```text
-meshway 0.1.0-alpha.12 (v0.1.0-alpha.12-0-g1234abcd)
+meshway 0.1.0-alpha.13 (v0.1.0-alpha.13-0-g1234abcd)
 target:   aarch64-unknown-linux-musl
 ipc:      12
 wire:     6
@@ -216,3 +216,24 @@ lab 对端 `meshway-lax` 位于 OrbStack Docker bridge 后（对 machine 单向 
 | 随后 `start` | 1.1 秒后 Mesh 名称解析恢复，`running`／`ready`，无需 `up` |
 | `SIGKILL` 后改写 `daemon.json`／`underlay-bootstrap.json` 记录的 socket device | systemd 5 秒后重启，两个 stale socket 按 inode 回收并重新绑定（新 inode），`running`／`ready`，记录更新为当前 device |
 | 单向 NAT 后的第二个 Node 经 Native UDP 拨入（machine 内 namespace，dialers 关闭的监听端） | `meshway ping -c 100` 与 OS ping 各 100/100；100 个样本同一 link ID 与源端口；拨号侧 102 秒内无通道转移 |
+
+### OrbStack 与 WARP 出网的路由 MTU {#orbstack-warp}
+
+常驻验收 VM `meshway-vm` 的环境 workaround，不是产品要求。OrbStack（2.2.4）machine 的出网 NAT 不保留 DF：VM 发出的带 DF 外层报文在 Mac 上照常转发；Mac 经 Cloudflare WARP（2026.7.1343，MASQUE，`utun` MTU 1,300）出网，超过 1,300 B 的报文在 Mac 分片、由 Cloudflare 重组后送达对端（对端 `IpReasmReqds` 为 0）。VM 的路由 MTU 仍是 eth0 的 1,500，认证路径 MTU 探测因此报 `1500/1386`，满长 Mesh 报文全部被分片，见[路径 MTU 限制](/v2/node/connectivity#path-mtu)。
+
+VM 以 systemd-networkd drop-in 只给 DHCP 默认路由加 MTU，同网段（lab 容器 `192.168.139.0/24`）不受影响：
+
+```ini
+# /etc/systemd/network/10-netplan-eth0.network.d/meshway-route-mtu.conf
+[DHCPv4]
+RouteMTUBytes=1300
+```
+
+| 项（2026-10-15，alpha.12，VM→it7） | 默认（路由 1,500） | 默认路由 MTU 1,300 |
+| --- | --- | --- |
+| `meshway status` 通道 | `1500/1386` | `1300/1186`（lab 同网段对端仍 `1500/1386`）；machine 重启后保持 |
+| Mesh UDP 30 Mbit/s 乱序 | 外层 1,342 B：18,748 个中 10,541 个乱序；外层 ≤1,292 B：0 | 20,423 个中 11 个 |
+| 内层 TCP | `reord_seen` 数千，cwnd 20–30 段 | MSS 1,134，`reord_seen` 83 |
+| Mesh TCP 单流（Mbit/s，与改动穿插） | 14.4–19.2（4 次） | 49.4–62.0（6 次；同期 `-M 1140` 49.7–56.8） |
+
+吞吐受 WARP 上行（约 95 Mbit/s，满载丢 1–2%）与 VM 内层 cubic 的丢包敏感度限制，同期 Mac 原生单流 TCP 81–116 Mbit/s；VM 直接对公网的 TCP 由 OrbStack 在 Mac 终结，其 0 重传不代表路径无丢包，不能作 Mesh 基线。证据 `.meshway/validation/m5/`。

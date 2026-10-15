@@ -1,9 +1,10 @@
 use super::super::{
     monitor::Expected,
     tool::{child::Fence, command::Commands},
+    verification::{Owner as Verified, Unverified, Verification},
 };
 use super::{
-    backend::{Backend, Verification},
+    backend::Backend,
     plan::{self, Ranges},
     program::Program,
     storage::{Device, Gate, Ledger, Store},
@@ -165,60 +166,6 @@ impl Owner {
 impl Drop for Owner {
     fn drop(&mut self) {
         self.capture.stop.cancel();
-    }
-}
-
-/// How long the capture table may stay unreadable before the owner fails
-/// closed: the DNS owner's recovery horizon. A read that fails proves nothing
-/// about ownership; only a read-back that differs ends it at once.
-const UNVERIFIED_LIMIT: Duration = Duration::from_secs(30);
-
-/// Consecutive periodic verifications that could not read the table.
-#[derive(Debug, Default)]
-struct Unverified {
-    since: Option<std::time::Instant>,
-    failures: u32,
-}
-impl Unverified {
-    /// Record one verification: `Err` names why kernel ownership ends now.
-    fn record(
-        &mut self,
-        verification: &Verification,
-        now: std::time::Instant,
-    ) -> std::result::Result<(), &'static str> {
-        match verification {
-            Verification::Holds => {
-                if let Some(since) = self.since.take() {
-                    tracing::info!(
-                        failures = self.failures,
-                        unverified_ms = now.duration_since(since).as_millis() as u64,
-                        "Egress capture verified again; ownership kept"
-                    );
-                }
-                self.failures = 0;
-                Ok(())
-            }
-            Verification::Unavailable(error) => {
-                let since = *self.since.get_or_insert(now);
-                self.failures = self.failures.saturating_add(1);
-                if self.failures == 1 {
-                    tracing::warn!(
-                        error = %error,
-                        limit_s = UNVERIFIED_LIMIT.as_secs(),
-                        "Egress capture verification unavailable; retrying, nothing new installed meanwhile"
-                    );
-                }
-                if now.duration_since(since) >= UNVERIFIED_LIMIT {
-                    Err("verify_unavailable")
-                } else {
-                    Ok(())
-                }
-            }
-            Verification::Changed(_) => Err("verify"),
-        }
-    }
-    fn unknown(&self) -> bool {
-        self.since.is_some()
     }
 }
 
@@ -387,7 +334,7 @@ impl super::super::Kernel {
         let shared = self.shared.clone();
         let expected = self.expected.clone();
         let task = tokio::spawn(async move {
-            let mut unverified = Unverified::default();
+            let mut unverified = Unverified::new(Verified::Egress);
             let mut tick = tokio::time::interval(Duration::from_secs(1));
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
@@ -545,41 +492,5 @@ mod clamp_tests {
         retry.succeeded();
         assert!(!retry.take_due(now + Duration::from_secs(3600)));
         assert_eq!(retry.failures, 0);
-    }
-}
-
-#[cfg(test)]
-mod unverified_tests {
-    use super::{Error, UNVERIFIED_LIMIT, Unverified, Verification};
-    use std::time::{Duration, Instant};
-
-    /// Failed reads keep ownership and are retried; a consistent read-back
-    /// clears them. Only a differing read-back, or reads failing for the
-    /// whole limit, ends kernel ownership.
-    #[test]
-    fn unreadable_verifications_keep_ownership_until_the_limit_and_a_change_ends_it() {
-        let start = Instant::now();
-        let mut unverified = Unverified::default();
-        for second in 0..5 {
-            let at = start + Duration::from_secs(second);
-            let unavailable = Verification::Unavailable(Error::Netlink);
-            assert_eq!(unverified.record(&unavailable, at), Ok(()));
-            assert!(unverified.unknown());
-        }
-        let at = start + Duration::from_secs(5);
-        assert_eq!(unverified.record(&Verification::Holds, at), Ok(()));
-        assert!(!unverified.unknown());
-        let changed = Verification::Changed("objects_changed");
-        assert_eq!(unverified.record(&changed, at), Err("verify"));
-
-        let mut unverified = Unverified::default();
-        let unavailable = Verification::Unavailable(Error::Netlink);
-        assert_eq!(unverified.record(&unavailable, start), Ok(()));
-        let before = start + UNVERIFIED_LIMIT - Duration::from_millis(1);
-        assert_eq!(unverified.record(&unavailable, before), Ok(()));
-        assert_eq!(
-            unverified.record(&unavailable, start + UNVERIFIED_LIMIT),
-            Err("verify_unavailable")
-        );
     }
 }

@@ -103,6 +103,7 @@ impl Plane {
             capability.installed_families = vec![meshway_model::exit::ExitFamily::Ipv4];
         }
         self.report.exit_capability = Some(capability.clone());
+        self.report.exit_cleanup = self.host.exit_cleanup();
         Some(capability)
     }
 
@@ -425,6 +426,7 @@ impl meshway_engine::Components for Plane {
             return Ok(());
         }
         // Exit prerequisites, observed on behalf of the live instance only.
+        self.report.exit_cleanup = self.host.exit_cleanup();
         self.report.exit_capability = match (&netmap.exit_role, self.instance.clone()) {
             (Some(role), Some(instance)) => Some(
                 self.host

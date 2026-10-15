@@ -1,4 +1,5 @@
 //! Host-owned control actor and its independent bounded TUN I/O task.
+use super::super::verification::{Owner as Verified, Unverified, Verification};
 use super::io::ExitCutoff as Deadline;
 use super::{
     CtConfirmation, ExitReplyReader, ExitScope, ProjectionAck,
@@ -55,6 +56,32 @@ struct Renew {
     reply: oneshot::Sender<Result<ProjectionAck>>,
 }
 
+/// The kept resources of a role that stopped serving and whose cleanup
+/// failed: the owner retries it (1 s, doubling to 60 s), reading the kernel
+/// again before each attempt. A failed cleanup is not an absence proof; the
+/// role installs again once the cleanup completed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExitCleanupPending {
+    /// The last attempt's error.
+    pub reason: String,
+    /// Attempts so far, the first one included.
+    pub attempts: u32,
+    pub retry_at: std::time::SystemTime,
+}
+
+/// First wait after a failed cleanup, and the longest.
+const CLEANUP_RETRY: Duration = Duration::from_secs(1);
+const CLEANUP_RETRY_MAX: Duration = Duration::from_secs(60);
+
+#[derive(Clone, Debug)]
+enum Closing {
+    Serving,
+    Pending(ExitCleanupPending),
+    /// Cleanup finished (`true`) or was given up with the Host (`false`:
+    /// the journal keeps the resources for the next start's recovery).
+    Done(bool),
+}
+
 /// A handle to the Host's single exit owner. It never owns the TUN descriptor.
 #[derive(Clone)]
 pub struct ExitRole {
@@ -62,7 +89,7 @@ pub struct ExitRole {
     writer: io::Writer,
     reader: Arc<Mutex<Option<ExitReplyReader>>>,
     stop: CancellationToken,
-    done: tokio::sync::watch::Receiver<Option<bool>>,
+    done: tokio::sync::watch::Receiver<Closing>,
     view: io::View,
     authority: Authority,
     pub(crate) plan: RoleIdentity,
@@ -193,6 +220,29 @@ impl ExitRole {
             .send(packet, guard, live, Box::new(packet_guard))
             .await
     }
+    /// The writer of `incarnation` while its projection is live here: its
+    /// packets go to the I/O owner's batches without a reply. `None` once
+    /// the projection was retired or revoked, or never existed; the caller's
+    /// awaited [`Self::send`] then reports what that means for its flow.
+    pub fn writer(&self, incarnation: super::ExitIncarnation) -> Option<super::ExitWriter> {
+        // Its cutoffs are checked at the write, with one clock reading.
+        let live = self
+            .view
+            .read()
+            .ok()?
+            .get(&incarnation)
+            .filter(|live| !live.ended())
+            .cloned()?;
+        Some(super::ExitWriter {
+            live,
+            writer: self.writer.clone(),
+        })
+    }
+    /// Queue one batch of writes (at most 64) for the I/O owner without
+    /// waiting for them; `Capacity`: its queue is full and none was queued.
+    pub fn submit_writes(&self, writes: Vec<super::ExitWrite>) -> Result<()> {
+        self.writer.submit(writes)
+    }
     pub fn reply_reader(&self) -> Result<ExitReplyReader> {
         self.reader
             .lock()
@@ -200,15 +250,26 @@ impl ExitRole {
             .take()
             .ok_or(Error::Conflict)
     }
-    /// Close positive I/O immediately, then await owned kernel cleanup.
+    /// Close positive I/O immediately, then await the first cleanup attempt.
+    /// A failed one is `Conflict` at once; the owner keeps retrying it (see
+    /// [`Self::cleanup_pending`]).
     pub async fn retire(&self) -> Result<()> {
         self.stop.cancel();
         let mut done = self.done.clone();
         loop {
-            if let Some(ok) = *done.borrow() {
-                return if ok { Ok(()) } else { Err(Error::Conflict) };
+            match &*done.borrow() {
+                Closing::Serving => {}
+                Closing::Done(true) => return Ok(()),
+                Closing::Done(false) | Closing::Pending(_) => return Err(Error::Conflict),
             }
             done.changed().await.map_err(|_| Error::Worker)?;
+        }
+    }
+    /// The stopped role's cleanup is being retried.
+    pub fn cleanup_pending(&self) -> Option<ExitCleanupPending> {
+        match &*self.done.borrow() {
+            Closing::Pending(pending) => Some(pending.clone()),
+            _ => None,
         }
     }
     /// The resource owner is live: its installed content still carries its
@@ -295,6 +356,10 @@ pub(in crate::linux) struct Owner {
 impl Owner {
     pub async fn shutdown(&mut self) -> Result<()> {
         let result = self.role.retire().await;
+        // A retried cleanup keeps its task; it is joined once it finished.
+        if self.role.cleanup_pending().is_some() {
+            return result;
+        }
         // Cancellation retains the join handle; completed joins are not polled twice.
         if let Some(task) = self.task.as_mut() {
             let joined = task.await.map_err(|_| Error::Worker);
@@ -321,6 +386,12 @@ impl Drop for Installing {
     }
 }
 
+/// The audit proved the role's objects changed, or could not read them for
+/// the whole limit: the owner stops.
+fn audit_ended(check: &'static str, verification: &Verification) {
+    tracing::warn!(operation = "audit", check, error = %verification, "Exit owner stopping after a failed kernel operation");
+}
+
 /// A failed projection reconciliation stops the whole owner; say why.
 fn stopped(operation: &'static str, error: &Error) {
     tracing::warn!(operation, %error, "Exit owner stopping after a failed kernel operation");
@@ -336,7 +407,9 @@ async fn reconcile(backend: &mut Backend, incarnation: super::ExitIncarnation) -
 
 impl super::super::Kernel {
     /// Keep uncertain cleanup attached to its owner. A stopped request queue is
-    /// not an ownership conflict, and a failed cleanup is not an absence proof.
+    /// not an ownership conflict, and a failed cleanup is not an absence proof:
+    /// while it is retried this is `Conflict`, after it completed the role
+    /// may install again.
     pub(super) async fn reconcile_stopped_exit(&mut self) -> Result<()> {
         if let Some(owner) = self.exit.as_mut()
             && !owner.role.is_active()
@@ -363,6 +436,12 @@ impl super::super::Kernel {
         };
         let stopped = !owner.role.is_active();
         let result = owner.shutdown().await;
+        if result.is_err() && owner.role.cleanup_pending().is_some() {
+            // Its owner retries the cleanup; its objects stay expected.
+            tracing::warn!("Exit role cleanup pending; its owner retries it");
+            self.exit = Some(owner);
+            return if stopped { Ok(()) } else { result };
+        }
         self.expected.lock().map_err(|_| Error::Worker)?.exit_stop = None;
         match result {
             Ok(()) => Ok(()),
@@ -532,7 +611,7 @@ impl super::super::Kernel {
         let (mut io, writer, reader) =
             io::Owner::start(tun, view.clone(), stop.clone(), authority.clone());
         let (sender, mut receiver) = mpsc::channel(64);
-        let (done, status) = tokio::sync::watch::channel(None);
+        let (done, status) = tokio::sync::watch::channel(Closing::Serving);
         let role = ExitRole {
             sender,
             writer,
@@ -558,12 +637,19 @@ impl super::super::Kernel {
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             let mut audit = tokio::time::interval(Duration::from_secs(1));
             audit.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            let mut unverified = Unverified::new(Verified::Exit);
             loop {
                 tokio::select! { biased;
                     _ = stop.cancelled() => break,
                     _ = conflict.cancelled() => break,
                     _ = shutdown.cancelled() => break,
-                    _ = audit.tick() => { if let Err(error) = backend.verify().await { stopped("audit", &error); break; } },
+                    // A read that fails is unknown, retried next second: the
+                    // role and its flows stay. Read back and different, or
+                    // unknown for 30 s, ends it.
+                    _ = audit.tick() => {
+                        let verification = backend.check().await;
+                        if let Err(reason) = unverified.record(&verification, Instant::now()) { audit_ended(reason, &verification); break; }
+                    },
                     _ = tokio::time::sleep_until(next_poll.into()), if !confirming.is_empty() => {
                         let mut failed = false;
                         let mut waiting = Vec::with_capacity(confirming.len());
@@ -601,8 +687,14 @@ impl super::super::Kernel {
                         let Some(request) = request else { break; };
                         match request {
                             Request::Audit { reply } => {
-                                let result = backend.verify().await.map(|()| backend.ledger.program.tables().into_iter().map(|(family, name)| (family.to_owned(), name)).collect());
-                                if let Err(error) = &result { stopped("audit", error); } let ok = result.is_ok(); let _ = reply.send(result); if !ok { break; }
+                                let verification = backend.check().await;
+                                let ended = unverified.record(&verification, Instant::now());
+                                let _ = reply.send(match &verification {
+                                    Verification::Holds => Ok(backend.ledger.program.tables().into_iter().map(|(family, name)| (family.to_owned(), name)).collect()),
+                                    Verification::Unavailable(_) => Err(Error::Netlink),
+                                    Verification::Changed(_) => Err(Error::Conflict),
+                                });
+                                if let Err(reason) = ended { audit_ended(reason, &verification); break; }
                             },
                             Request::Install { items, reply } => {
                                 // Rejected queued work never entered the kernel
@@ -678,14 +770,43 @@ impl super::super::Kernel {
                 }
             }
             stop.cancel();
-            let cleanup = backend.begin_close(true).await;
+            let first = backend.begin_close(true).await;
             let io_result = io.shutdown().await;
-            let finished = if cleanup.is_ok() && io_result.is_ok() {
-                backend.finish_close().await
-            } else {
-                Err(Error::Conflict)
+            let mut result = match (first, io_result) {
+                (Ok(()), Ok(())) => backend.finish_close().await,
+                (Err(error), _) | (_, Err(error)) => Err(error),
             };
-            done.send_replace(Some(finished.is_ok()));
+            // A failed cleanup keeps its resources and is retried from what
+            // the kernel holds then, until it completes or the Host ends.
+            let mut attempts = 1u32;
+            let mut wait = CLEANUP_RETRY;
+            while let Err(error) = result {
+                if attempts.is_power_of_two() {
+                    tracing::warn!(attempts, %error, retry_ms = wait.as_millis() as u64, "Exit role cleanup failed; resources kept, retrying");
+                }
+                done.send_replace(Closing::Pending(ExitCleanupPending {
+                    reason: error.to_string(),
+                    attempts,
+                    retry_at: std::time::SystemTime::now() + wait,
+                }));
+                tokio::select! { biased;
+                    _ = shutdown.cancelled() => {
+                        done.send_replace(Closing::Done(false));
+                        return;
+                    },
+                    _ = tokio::time::sleep(wait) => {},
+                }
+                wait = (wait * 2).min(CLEANUP_RETRY_MAX);
+                attempts = attempts.saturating_add(1);
+                result = backend.close_observed(true).await;
+            }
+            if attempts > 1 {
+                tracing::info!(
+                    attempts,
+                    "Exit role cleanup completed after retrying; the role may install again"
+                );
+            }
+            done.send_replace(Closing::Done(true));
         });
         self.exit = Some(Owner {
             role: role.clone(),
