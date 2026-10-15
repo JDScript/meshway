@@ -111,19 +111,21 @@ VM→it7 方向 Mesh TCP 远低于裸路径、UDP iperf 30 Mbit/s 时丢包 0.6%
 
 计时起点为新默认路由生效（A 自己的时钟，与流量记录同一时钟）。每格观察 12 秒；门槛（D14，合入条件）：首个内层 UDP 回复 ≤ 3 秒、A 的业务 circuit 集合不变（Server State 的 `paths`）、TCP 连接未重置、A–C 通道 ID 不变。另记录 ping 与 TCP 的首个回复、双向 UDP 丢包、最长中断、channel ID 与 remote、daemon 的漫游 debug 事件。
 
-| 格 | main 首个 UDP／最长 TCP 中断，A–B 通道 | R1 首个 UDP／最长 TCP 中断，A–B 通道 |
+| 格 | main：首个 UDP／最长 TCP 中断／候选发布，A–B 通道 | R1：首个 UDP／最长 TCP 中断／候选发布，A–B 通道 |
 | --- | --- | --- |
-| dialer/soft | 0.43 s／0.67 s，新通道（B 的 `probe_recovery` 握手） | 0.21 s／0.67 s，同一通道跟随到 router-a2 的映射 |
-| dialer/hard | 0.32 s／0.66 s，新通道 | 0.27 s／0.67 s，同一通道 |
-| listener/soft | 7.25 s／12.5 s（窗口内 TCP 无回显），B 健康失效后重拨 | 0.25 s／0.66 s，B 的拨号 socket 经挑战跟随，同一通道 |
-| listener/hard | 5.82 s／6.44 s | 0.26 s／0.67 s，同一通道 |
+| dialer/soft | 0.43／0.67／0.96 s，新通道（B 的 `probe_recovery` 握手） | 0.21／0.66／0.31 s，同一通道跟随到 router-a2 的映射 |
+| dialer/hard | 0.32／0.66／4.73 s，新通道 | 0.25／0.70／0.46 s，同一通道 |
+| listener/soft | 7.25／12.5（窗口内 TCP 无回显）／0.97 s，B 健康失效后重拨 | 0.53／0.67／0.43 s，B 的拨号 socket 经挑战跟随，同一通道 |
+| listener/hard | 5.82／6.44／4.69 s | 0.26／0.64／0.46 s，同一通道 |
 
-两边四格的 circuit 都保持（main 的空窗也短于 15 秒无回复上限），TCP 都未重置，A–C 通道与流量不受影响（R1 四格 LAN 丢包 0）。main 的 listener 两格不达门槛；R1 四格达标，UDP 丢包 25–54 个（100 pps），路由器计数见各行 `router-*` 证据。
+候选发布：A 在路径变化撤回旧 STUN 观测后第一份带候选的 State 被 Server 接受的时刻（自新路由起）；listener 阶段 B 在其后 1–2 ms 收到 A 的新事实（dialer 阶段 B 不拨号 A，不记录）。hard 格在 main 上的 4.7 秒来自无路由窗口内失败的 State 报告按 5 秒重试，R1 在随后的路径变化（新链路有路由）时立即重试。
+
+两边四格的 circuit 都保持（main 的空窗也短于 15 秒无回复上限），TCP 都未重置，A–C 通道与流量不受影响（R1 四格 LAN 丢包 0）。main 的 listener 两格不达门槛；R1 四格达标，UDP 丢包 25–58 个（100 pps），路由器计数见各行 `router-*` 证据。
 
 | 运行 | 结果 |
 | --- | --- |
 | 本机 main 基线：main `0af9393e`（产品代码同 `f007bde1`）＋本行 fixture，`20261015T174443Z-0af0b4fb` | listener 两格未达门槛（上表左列） |
-| 本机 R1 `f274753d`，`20261015T173450Z-9b555759` | 四格达标（上表右列） |
+| 本机 R1 `1aa1d67f`，`20261015T181918Z-bc4928d6` | 四格达标（上表右列）；此前 `f274753d` 的 `20261015T173450Z-9b555759` 同样达标，hard 格候选发布 6.7 秒（已修） |
 
 R1 之前的候选：A 的阶段切换（A 增加 listener）后一次 Manager apply 因 owner 提前结束而失败、重启邻接，C 看到新 boot 退役 A–C circuit 而 A 一侧保留，A→C 空等 15 秒（`20261015T172722Z-c3cc3381`）；未再复现，Manager 现记录意外结束的 owner。另一候选在 B 已经跟随 A 的新映射后又因“remote 不在候选集合”旁路拨号（`20261015T172314Z-d76d6adc`），现只在 remote 原是已发布候选时才拨。证据 `.meshway/validation/r1/`。
 
