@@ -170,9 +170,9 @@ async fn assert_dns_reader_capacity_cleanup(directory: Arc<Directory>) {
         meshway_dns::SystemDnsOwner::reserve(Default::default(), directory.clone())
             .await
             .unwrap();
-    // Kernel's request connection, monitor and change classifier exhaust
-    // this existing task budget.
-    let tasks = Tasks::new(3);
+    // Kernel's request and observer connections, monitor and change
+    // classifier exhaust this existing task budget.
+    let tasks = Tasks::new(4);
     let mut kernel = Kernel::open(directory, Default::default(), tasks.clone())
         .await
         .unwrap();

@@ -102,6 +102,16 @@ impl Kernel {
         )
         .await?;
         let monitor_socket = monitor::open()?;
+        // Observation (change fingerprints, route lookups) has its own
+        // request socket: it never queues behind or interleaves with the
+        // owner's mutations and their readback dumps.
+        let (observer_connection, observer, unsolicited) = rtnetlink::new_connection()?;
+        drop(unsolicited);
+        let observer_failed = conflict.clone();
+        tasks.spawn(async move {
+            observer_connection.await;
+            observer_failed.cancel();
+        })?;
         let (mut store, mut previous) = Store::open(directory).await?;
         let rules = get_rules(&handle, options.max_kernel_objects).await?;
         let routes = get_routes(&handle, options.max_kernel_objects).await?;
@@ -172,7 +182,7 @@ impl Kernel {
             mark: journal.mark,
             selectors,
             conflict,
-            network: network::Network::with_routes(handle.clone()),
+            network: network::Network::with_routes(observer.clone()),
             tasks: tasks.clone(),
             sockets: Arc::new(Semaphore::new(bootstrap_sockets)),
             data_sockets: Arc::new(Semaphore::new(options.max_sockets - bootstrap_sockets)),
@@ -209,7 +219,7 @@ impl Kernel {
         })?;
         tasks.spawn(network::classify(
             shared.clone(),
-            handle.clone(),
+            observer,
             expected.clone(),
             options.max_kernel_objects,
         ))?;
