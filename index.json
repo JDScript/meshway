@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-15T22:52:28.433216+00:00",
+  "updatedAt": "2026-10-15T22:56:19.177284+00:00",
   "runs": [
     {
       "id": 38818266751,
@@ -62,9 +62,9 @@
       "commit": "b9f7108d9fa339fe9ea118af34fe8e2d312cf002",
       "message": "docs: roam/direct post-merge Planck evidence",
       "createdAt": "2026-10-15T22:36:33Z",
-      "updatedAt": "2026-10-15T22:49:52Z",
-      "status": "in_progress",
-      "conclusion": null,
+      "updatedAt": "2026-10-15T22:53:36Z",
+      "status": "completed",
+      "conclusion": "success",
       "url": "https://github.com/JDScript/meshway/actions/runs/38818266728",
       "jobs": [
         {
@@ -82,15 +82,43 @@
           "id": 116708267453,
           "name": "node-linux (aarch64-unknown-linux-musl)",
           "runner": "planck",
-          "status": "in_progress",
-          "conclusion": null,
+          "status": "completed",
+          "conclusion": "success",
           "startedAt": "2026-10-15T22:49:52Z",
-          "completedAt": null,
-          "seconds": null,
+          "completedAt": "2026-10-15T22:53:35Z",
+          "seconds": 223.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/38818266728/job/116708267453"
         }
       ],
       "artifacts": [
+        {
+          "id": 12011279680,
+          "name": "node-aarch64-unknown-linux-musl-b9f7108d9fa339fe9ea118af34fe8e2d312cf002",
+          "bytes": 10572822,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38818266728/artifacts/12011279680",
+          "jobId": 116708267453,
+          "runner": "planck",
+          "seconds": 223.0,
+          "state": "ok",
+          "error": null,
+          "reports": [],
+          "matrices": [],
+          "builds": [
+            {
+              "target": "aarch64-unknown-linux-musl",
+              "binary": "meshway",
+              "bytes": 1932016,
+              "sha256": "2619da4039902a1140d911fc41729dfda7948ef95f38e4868b56d470359cccdf"
+            },
+            {
+              "target": "aarch64-unknown-linux-musl",
+              "binary": "meshwayd",
+              "bytes": 16063288,
+              "sha256": "92c118f54095c204a2852f1a67219acf6426201690ce4b94ff344d5c8959bb57"
+            }
+          ]
+        },
         {
           "id": 12011148320,
           "name": "node-x86_64-unknown-linux-musl-b9f7108d9fa339fe9ea118af34fe8e2d312cf002",
