@@ -12,6 +12,8 @@
 - 术语：CLI 表的“切网”改为“切换 Meshway 网络”；resolv.conf 文件后端声明不支持漫游。
 - 验收：新矩阵行 `roam/direct`（19 行）与三项 Underlay 内核测试（分类、重装、池重叠）；main 上 listener 两格首个回复 7.2／5.8 秒，R1 四格 0.21–0.27 秒且同一 circuit，见[漫游行](/v2/node/validation#roam-row)。
 
+验证：Planck 19 行矩阵 `20261015T212445Z-21b27563`（`2eae8716`，并行 8）全部通过；常驻 lab（lax 换 Docker 网络）与 `meshway-vm`（第二地址与默认路由源地址）真机检查，结束后恢复 main 程序；证据 `.meshway/validation/r1/`。
+
 ## v0.1.0-alpha.12
 
 范围：wire 6、IPC 12、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约均不变（普通升级，无断网窗口）。M4：出口流维护按 100 ms 调度而非每包扫描、出口 TUN 以 offload 批量 I/O、出口审计每秒一次读表；P1：peer 事实过期不再拒绝出口流（最后已知就绪仍可选）、sync hold 以节点持有事实的到期为界；以及下列 P1、M4 工作包。
