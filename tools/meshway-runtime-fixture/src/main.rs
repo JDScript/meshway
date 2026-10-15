@@ -14,6 +14,7 @@ mod ping;
 mod ping_cli;
 mod ping_management;
 mod recovery;
+mod roam;
 mod signals;
 mod traversal;
 
@@ -157,6 +158,8 @@ enum TraversalMode {
     Off,
     Nat,
     Exit,
+    /// `roam/direct`: A changes uplinks under live traffic.
+    Roam,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, ValueEnum, serde::Serialize, serde::Deserialize)]
@@ -216,6 +219,11 @@ enum Command {
         #[arg(long, value_enum)]
         role: exit::Role,
     },
+    /// Isolated roaming Server, real daemon, or NAT router.
+    RoamActor {
+        #[arg(long, value_enum)]
+        role: roam::Role,
+    },
     Prepare,
     Controller,
     Actor {
@@ -243,6 +251,14 @@ async fn main() -> std::process::ExitCode {
         || (cli.traversal == TraversalMode::Exit && cli.dns_backend != DnsBackend::Off)
     {
         eprintln!("--traversal exit requires exit-actor and --dns-backend off");
+        return std::process::ExitCode::FAILURE;
+    }
+    if (cli.traversal == TraversalMode::Roam) != matches!(cli.command, Command::RoamActor { .. })
+        || (cli.traversal == TraversalMode::Roam
+            && (cli.dns_backend != DnsBackend::Off
+                || !matches!(cli.transport, CarrierMode::NativeUdp)))
+    {
+        eprintln!("--traversal roam requires roam-actor, native-udp and --dns-backend off");
         return std::process::ExitCode::FAILURE;
     }
     if cli.reported_endpoints
@@ -280,6 +296,7 @@ async fn main() -> std::process::ExitCode {
     }
     let result = match cli.command {
         Command::ExitActor { role } => exit::run(&cli, role).await,
+        Command::RoamActor { role } => roam::run(&cli, role).await,
         Command::Prepare => prepare(&cli).await,
         Command::Controller => controller::run(&cli).await,
         Command::Actor { role } => actor::run(&cli, role).await,

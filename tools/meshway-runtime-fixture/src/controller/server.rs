@@ -16,12 +16,22 @@ impl Server<'_> {
     async fn open(cli: &Cli) -> Result<App> {
         let mut settings = Settings::new(cli.state.join("server"));
         settings.netmap.validity = cli.netmap_validity.as_std();
-        if cli.traversal == crate::TraversalMode::Nat {
+        if matches!(
+            cli.traversal,
+            crate::TraversalMode::Nat | crate::TraversalMode::Roam
+        ) {
+            let controller = if cli.traversal == crate::TraversalMode::Roam {
+                crate::roam::read::<crate::roam::Topology>(&cli.public.join("roam-topology.json"))
+                    .await?
+                    .controller
+            } else {
+                signals::underlay(cli).await?.controller
+            };
             settings.stun_listen = vec!["0.0.0.0:3478".parse()?];
             settings.stun_servers = BTreeMap::from([(
                 "fixture".into(),
                 Endpoint {
-                    host: signals::underlay(cli).await?.controller.to_string(),
+                    host: controller.to_string(),
                     port: 3478.try_into()?,
                 },
             )]);
@@ -166,6 +176,8 @@ pub(super) async fn run_server(cli: &Cli) -> Result<()> {
     let result = tokio::time::timeout(DEADLINE, async {
         if cli.traversal == crate::TraversalMode::Exit {
             exit::coordinate(cli, &availability).await
+        } else if cli.traversal == crate::TraversalMode::Roam {
+            roam::coordinate(cli).await
         } else {
             coordinate(cli, &audit, &availability, &server).await
         }
@@ -193,7 +205,10 @@ pub(super) async fn run_server(cli: &Cli) -> Result<()> {
     audit_result?;
     request_result?;
     result??;
-    if cli.traversal == crate::TraversalMode::Exit {
+    if matches!(
+        cli.traversal,
+        crate::TraversalMode::Exit | crate::TraversalMode::Roam
+    ) {
         return Ok(());
     }
     let signals = Signals::new(&cli.signals);

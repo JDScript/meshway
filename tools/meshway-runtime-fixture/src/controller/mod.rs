@@ -28,6 +28,7 @@ mod exit;
 mod interface_change;
 mod lifecycle;
 mod links;
+mod roam;
 mod scenario;
 mod server;
 mod streaming;

@@ -161,9 +161,10 @@ class MatrixTests(unittest.TestCase):
             with support.build_lock():
                 self.assertTrue((Path(temporary) / "build.lock").exists())
 
-    def test_rows_are_eighteen_and_filter_keeps_order_without_duplicates(self):
-        self.assertEqual(len(matrix.DEFAULT_ROWS), 18)
-        self.assertEqual(len(matrix.ROWS), 18)
+    def test_rows_are_nineteen_and_filter_keeps_order_without_duplicates(self):
+        self.assertEqual(len(matrix.DEFAULT_ROWS), 19)
+        self.assertEqual(len(matrix.ROWS), 19)
+        self.assertIn("roam/direct", matrix.DEFAULT_ROWS)
         self.assertIn("nat/relay", matrix.DEFAULT_ROWS)
         self.assertIn("nat/reconnect", matrix.DEFAULT_ROWS)
         self.assertEqual([name for name in matrix.DEFAULT_ROWS if name.startswith("netmap/")],
@@ -185,7 +186,7 @@ class MatrixTests(unittest.TestCase):
             self.assertIn("--artifacts", command)
             self.assertNotIn("--build-only", command)
             self.assertEqual("--dns-image-manifest" in command, name.endswith(("/resolved", "/resolv-conf")))
-            self.assertEqual("--traversal-image-manifest" in command, name.startswith("nat"))
+            self.assertEqual("--traversal-image-manifest" in command, name.startswith(("nat", "roam")))
             self.assertEqual("--short" in command, name != "tun")
             if name == "packet":
                 self.assertIn("--runtime-artifacts", command)
@@ -222,7 +223,7 @@ class MatrixTests(unittest.TestCase):
                 code = matrix.main(["--parallel", "4", "--short", "--run", "run"])
             report = json.loads((root / ".meshway/validation/matrix/run/matrix.json").read_text())
             self.assertEqual(code, 1)
-            self.assertEqual(len(report["rows"]), 18)
+            self.assertEqual(len(report["rows"]), 19)
             self.assertEqual(len(builds), 3)
             self.assertTrue(all("--build-only" in command for command in builds))
             self.assertEqual(report["scope"], "diagnostic-short")

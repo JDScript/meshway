@@ -201,7 +201,7 @@ def main():
                         help="real libc DNS conformance in an owned private mount namespace")
     parser.add_argument("--dns-image-manifest", type=Path,
                         help="parent-built dev/dns-fixture/build.py immutable OS image manifest")
-    parser.add_argument("--traversal", choices=("off", "nat", "exit"), default="off",
+    parser.add_argument("--traversal", choices=("off", "nat", "exit", "roam"), default="off",
                         help="real two-router IPv4 NAT acquisition with empty UDP endpoints")
     parser.add_argument("--traversal-fallback", action="store_true",
                          help="preauthorize TCP on R, then block only A-R UDP during the same 70-second flows")
@@ -218,8 +218,10 @@ def main():
         parser.error("--netmap-scenario requires --traversal off --dns-backend off")
     if args.only and args.traversal == "exit":
         parser.error("--only main is the A/R/B runtime flow, not the exit topology")
-    if args.traversal == "exit" and (args.dns_backend != "off" or args.transport != "native-udp"):
-        parser.error("--traversal exit requires --transport native-udp --dns-backend off")
+    if args.traversal in ("exit", "roam") and (args.dns_backend != "off" or args.transport != "native-udp"):
+        parser.error("--traversal exit/roam requires --transport native-udp --dns-backend off")
+    if args.only and args.traversal == "roam":
+        parser.error("--only main is the A/R/B runtime flow, not the roaming topology")
     if args.reported_endpoints and (args.transport != "native-udp" or args.traversal != "off" or args.dns_backend != "off"):
         parser.error("--reported-endpoints requires native-udp with traversal and DNS off")
     if not args.build_only and (args.dns_backend != "off") != bool(args.dns_image_manifest):
@@ -228,8 +230,8 @@ def main():
         parser.error("--traversal nat requires --transport native-udp")
     if args.traversal_fallback and args.traversal != "nat":
         parser.error("--traversal-fallback requires --traversal nat")
-    if not args.build_only and (args.traversal == "nat") != bool(args.traversal_image_manifest):
-        parser.error("NAT runs require --traversal-image-manifest; static runs must omit it")
+    if not args.build_only and (args.traversal in ("nat", "roam")) != bool(args.traversal_image_manifest):
+        parser.error("NAT and roam runs require --traversal-image-manifest; static runs must omit it")
     os.umask(0o077)
     target, platform, machine = docker_target()  # read-only engine architecture query
     report = report_directory("runtime", args.report_dir)
@@ -288,7 +290,7 @@ def main():
         shutil.copyfile(ROOT / "dev/dns-fixture/namespace.sh", report / "dns-support/namespace.sh")
     traversal_image = None
     traversal_assets = None
-    if args.traversal == "nat":
+    if args.traversal in ("nat", "roam"):
         traversal_assets = json.loads(args.traversal_image_manifest.read_text())
         lock_path = ROOT / "dev/traversal-fixture/assets.lock.json"
         lock = json.loads(lock_path.read_text())
@@ -304,6 +306,14 @@ def main():
                 or inspected_image["Architecture"] != platform.split("/")[1] or inspected_image["Config"].get("Volumes")):
             raise RuntimeError("Traversal OS image identity/platform/volumes mismatch")
         shutil.copyfile(ROOT / "dev/traversal-fixture/router.sh", report / "traversal-support/router.sh")
+    if args.traversal == "roam":
+        spec = importlib.util.spec_from_file_location("meshway_roam_fixture", ROOT / "dev/roam-fixture/runtime.py")
+        if spec is None or spec.loader is None:
+            raise RuntimeError("Roam fixture orchestrator unavailable")
+        fixture = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(fixture)
+        fixture.execute(report, artifacts, runtime_os, traversal_assets, platform, args.short, load)
+        return
     if fingerprint() != source:
         raise RuntimeError("Sources changed before runtime start.")
     label_key = "io.meshway.runtime-fixture"

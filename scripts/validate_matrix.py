@@ -33,6 +33,7 @@ ROWS = {
     "nat/relay": ("runtime", ("--transport", "native-udp", "--traversal", "nat", "--dns-backend", "off", "--netmap-scenario", "relay")),
     "nat/reconnect": ("runtime", ("--transport", "native-udp", "--traversal", "nat", "--dns-backend", "off", "--netmap-scenario", "reconnect")),
     "exit/off": ("runtime", ("--transport", "native-udp", "--traversal", "exit", "--dns-backend", "off")),
+    "roam/direct": ("runtime", ("--transport", "native-udp", "--traversal", "roam", "--dns-backend", "off")),
     "netmap/offline": ("runtime", ("--transport", "native-udp", "--dns-backend", "off", "--reported-endpoints", "--netmap-scenario", "offline")),
     "netmap/revoke": ("runtime", ("--transport", "native-tcp", "--dns-backend", "off", "--netmap-scenario", "revoke")),
     "netmap/expiry": ("runtime", ("--transport", "native-udp", "--dns-backend", "off", "--netmap-scenario", "expiry")),
@@ -111,7 +112,7 @@ def prepare_images(args, directory, platform):
     needed = {"runtime"} if any(name != "tun" for name in args.rows) else set()
     if any(name.endswith(("/resolved", "/resolv-conf")) for name in args.rows):
         needed.add("dns")
-    if any(name.startswith("nat") for name in args.rows):
+    if any(name.startswith(("nat", "roam")) for name in args.rows):
         needed.add("traversal")
     images = {}
     for kind in sorted(needed):
@@ -168,7 +169,7 @@ def row_command(name, report, artifacts, images, short):
         if short:
             command.append("--short")
     for image_kind, needed in (("dns", name.endswith(("/resolved", "/resolv-conf"))),
-                               ("traversal", name.startswith("nat"))):
+                               ("traversal", name.startswith(("nat", "roam")))):
         if needed:
             command += ["--" + image_kind + "-image-manifest", str(images[image_kind])]
     return command
