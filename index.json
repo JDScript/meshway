@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-15T00:13:41.887325+00:00",
+  "updatedAt": "2026-10-15T00:22:12.067951+00:00",
   "runs": [
     {
       "id": 38657256441,
@@ -12,35 +12,92 @@
       "commit": "6a6de59c9d0c3f3a206df7cd64baa450350aeedc",
       "message": "release: workspace version 0.1.0-alpha.10",
       "createdAt": "2026-10-14T23:58:09Z",
-      "updatedAt": "2026-10-14T23:58:10Z",
-      "status": "queued",
-      "conclusion": null,
+      "updatedAt": "2026-10-15T00:17:47Z",
+      "status": "completed",
+      "conclusion": "success",
       "url": "https://github.com/JDScript/meshway/actions/runs/38657256441",
       "jobs": [
         {
           "id": 116169851836,
           "name": "node-linux (x86_64-unknown-linux-musl)",
           "runner": "planck",
-          "status": "in_progress",
-          "conclusion": null,
+          "status": "completed",
+          "conclusion": "success",
           "startedAt": "2026-10-15T00:10:33Z",
-          "completedAt": null,
-          "seconds": null,
+          "completedAt": "2026-10-15T00:14:07Z",
+          "seconds": 214.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/38657256441/job/116169851836"
         },
         {
           "id": 116169852076,
           "name": "node-linux (aarch64-unknown-linux-musl)",
-          "runner": null,
-          "status": "queued",
-          "conclusion": null,
-          "startedAt": "2026-10-14T23:58:10Z",
-          "completedAt": null,
-          "seconds": null,
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-15T00:14:08Z",
+          "completedAt": "2026-10-15T00:17:46Z",
+          "seconds": 218.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/38657256441/job/116169852076"
         }
       ],
-      "artifacts": []
+      "artifacts": [
+        {
+          "id": 11937339711,
+          "name": "node-aarch64-unknown-linux-musl-6a6de59c9d0c3f3a206df7cd64baa450350aeedc",
+          "bytes": 10385639,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38657256441/artifacts/11937339711",
+          "jobId": 116169852076,
+          "runner": "planck",
+          "seconds": 218.0,
+          "state": "ok",
+          "error": null,
+          "reports": [],
+          "matrices": [],
+          "builds": [
+            {
+              "target": "aarch64-unknown-linux-musl",
+              "binary": "meshwayd",
+              "bytes": 15709944,
+              "sha256": "ac4feacba3c4cefba0b4c4af9211b6ef64b28cb6a5d5b914c01d7fa4dd57dbdb"
+            },
+            {
+              "target": "aarch64-unknown-linux-musl",
+              "binary": "meshway",
+              "bytes": 1928272,
+              "sha256": "893a2aee6e5386355e4f97e7a7969178cf7c13b525b9c4bbe2adb924648bfc2e"
+            }
+          ]
+        },
+        {
+          "id": 11937339214,
+          "name": "node-x86_64-unknown-linux-musl-6a6de59c9d0c3f3a206df7cd64baa450350aeedc",
+          "bytes": 11127321,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38657256441/artifacts/11937339214",
+          "jobId": 116169851836,
+          "runner": "planck",
+          "seconds": 214.0,
+          "state": "ok",
+          "error": null,
+          "reports": [],
+          "matrices": [],
+          "builds": [
+            {
+              "target": "x86_64-unknown-linux-musl",
+              "binary": "meshwayd",
+              "bytes": 19100392,
+              "sha256": "fa0e3daeb4f49f89a89ad9aa808ef62456a799fff329df6a67013ce8b918b1f7"
+            },
+            {
+              "target": "x86_64-unknown-linux-musl",
+              "binary": "meshway",
+              "bytes": 2194920,
+              "sha256": "4594a5c4e24080f9dacb681342a36408276b85637bcad104c615cdefae16b218"
+            }
+          ]
+        }
+      ]
     },
     {
       "id": 38657256342,
