@@ -215,7 +215,7 @@ Linux 的 Mesh 外层 UDP socket 设 `IP_PMTUDISC_DO`／`IPV6_MTU_DISCOVER=DO`�
 - 观测寿命 120 秒，独立于授权该 STUN 请求的元数据期限（它是映射事实，不是授权）。
 - 同一 observer、同一映射的确认**不触发 State 上报**；剩余寿命不足 60 秒时才以新观测续期并上报，续期时保留上一观测至其自然到期，使依据上一次已确认报告准备的 offer 仍可预留。
 - 映射变化（地址或端口不同）立即替换该 observer 的观测并唤醒 State 报告调度。
-- Server 把同一 listener 中地址与来源相同的 STUN 候选合并为一个事实（取较晚的期限）：续期不改变 peer facts 内容，只经 `refreshed` 更新新鲜度，不唤醒其他节点。
+- Server 把同一 listener 中地址与来源相同的 STUN 候选合并为一个事实（取较晚的期限），并按（地址, observer）排序：续期不改变 peer facts 内容，只经 `refreshed` 更新新鲜度，不唤醒其他节点。两个 observer 的续期相隔数秒时（例如 observer 各见不同映射端口），上一观测先后到期使报告中的候选顺序暂时互换，这也不是内容变化。
 
 按实际解析出的 STUN 地址族判断每个 socket 是否可观测；仅有 IPv4 STUN 目标时，空的 IPv6 socket 不持续重试。这个能力判断只保留至原元数据截止，新元数据会重新解析；解析失败仍可重试，不缓存为永久不支持。
 

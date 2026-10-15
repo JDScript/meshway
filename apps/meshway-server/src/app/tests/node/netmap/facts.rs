@@ -522,3 +522,91 @@ async fn a_stopped_reporter_shortens_one_hold_only() {
     assert_eq!(third.peer_facts.as_ref().unwrap().refreshed[&b], until);
     lab.app.shutdown().await.unwrap();
 }
+
+/// Two STUN observers see different mappings and renew a few seconds apart,
+/// each keeping its previous observation until it expires: the listed order
+/// changes twice per renewal. Order is not content, so the renewal wakes no
+/// held sync (OPS11: every viewer of such a reporter answered on each swap).
+#[tokio::test]
+async fn staggered_stun_renewals_wake_no_hold() {
+    let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
+    let mut lab = lab(false).await;
+    lab.app.netmap_timing.hold = std::time::Duration::from_secs(3);
+    let [_, b, _] = lab.nodes;
+    let now = chrono::Utc::now();
+    let seen = |address: &str, observer: &str, age: i64| EndpointCandidate {
+        address: address.into(),
+        origin: EndpointSource::Stun {
+            observer: observer.into(),
+        },
+        observed_at: now - chrono::Duration::seconds(age),
+        expires_at: now + chrono::Duration::seconds(120 - age),
+    };
+    let (x, y) = ("203.0.113.53:3478", "198.51.100.7:19302");
+    let (via_x, via_y) = ("203.0.113.10:40001", "203.0.113.10:40002");
+    lab.report_stun(
+        1,
+        1,
+        vec![
+            seen(via_x, x, 70),
+            seen(via_y, y, 60),
+            seen(via_x, x, 5),
+            seen(via_y, y, 0),
+        ],
+    )
+    .await;
+    let (first, _) = timed_sync(&lab, None).await;
+    let order = |facts: &meshway_protocol::PeerFacts| {
+        facts.listeners["udp"]
+            .stun_candidates
+            .iter()
+            .map(|candidate| candidate.address.clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        order(&first.peer_facts.as_ref().unwrap().updated[&b]),
+        [via_x, via_y]
+    );
+    // x's previous observation expires first, then y's.
+    let (second, elapsed) = tokio::join!(timed_sync(&lab, Some(&first)), async {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        lab.report_stun(
+            1,
+            2,
+            vec![seen(via_y, y, 60), seen(via_x, x, 5), seen(via_y, y, 0)],
+        )
+        .await;
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        lab.report_stun(1, 3, vec![seen(via_x, x, 5), seen(via_y, y, 0)])
+            .await;
+    })
+    .0;
+    assert!(
+        elapsed >= std::time::Duration::from_millis(2_500),
+        "{elapsed:?}"
+    );
+    let facts = second.peer_facts.as_ref().unwrap();
+    assert_eq!(facts.base, Some(first.peer_facts.as_ref().unwrap().cursor));
+    assert!(facts.updated.is_empty());
+    assert!(facts.refreshed.contains_key(&b));
+    // A real mapping change still wakes the hold at once.
+    let (third, elapsed) = tokio::join!(timed_sync(&lab, Some(&second)), async {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        lab.report_stun(
+            1,
+            4,
+            vec![seen(via_x, x, 5), seen("203.0.113.10:40003", y, 0)],
+        )
+        .await;
+    })
+    .0;
+    assert!(
+        elapsed < std::time::Duration::from_millis(2_000),
+        "{elapsed:?}"
+    );
+    assert_eq!(
+        order(&third.peer_facts.as_ref().unwrap().updated[&b]),
+        [via_x, "203.0.113.10:40003"]
+    );
+    lab.app.shutdown().await.unwrap();
+}
