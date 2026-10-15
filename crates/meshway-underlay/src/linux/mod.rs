@@ -7,7 +7,7 @@ mod kernel;
 pub use kernel::egress::EgressCapture;
 pub use kernel::exit::{
     CtConfirmation, ExitCutoff, ExitIncarnation, ExitReply, ExitReplyReader, ExitRole, ExitScope,
-    ExitSendGuard, ExitTransport, Invalidated, OriginalTuple, ProjectionAck,
+    ExitSendGuard, ExitTransport, ExitWrite, ExitWriter, Invalidated, OriginalTuple, ProjectionAck,
 };
 mod protection;
 

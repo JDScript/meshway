@@ -50,8 +50,8 @@ mod linux;
 pub use linux::{
     CtConfirmation, DatagramAuthorization, DatagramCandidate, EgressCapture, ExitCutoff,
     ExitIncarnation, ExitReply, ExitReplyReader, ExitRole, ExitScope, ExitSendGuard, ExitTransport,
-    Host, Invalidated, OriginalTuple, ProjectionAck, ProtectedDatagram, TraversalDatagram,
-    ephemeral_ports, port_holders,
+    ExitWrite, ExitWriter, Host, Invalidated, OriginalTuple, ProjectionAck, ProtectedDatagram,
+    TraversalDatagram, ephemeral_ports, port_holders,
     sockets::{CandidateHandle, ListenerHandle, ProtectedListener, ProtectedTcp, SocketFactory},
 };
 

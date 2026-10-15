@@ -9,13 +9,15 @@ pub trait ExitSendGuard: Send + Sync + 'static {
     fn check(&self) -> Result<(), Invalidated>;
 }
 
+/// Run `future` while `guard` holds, checking it before every poll: an
+/// invalidated packet never reaches another write poll.
 pub(super) async fn checked<F: std::future::Future>(
-    guard: &dyn ExitSendGuard,
+    guard: impl Fn() -> Result<(), Invalidated>,
     future: F,
 ) -> Result<F::Output, Invalidated> {
     let mut future = std::pin::pin!(future);
     std::future::poll_fn(|cx| {
-        if let Err(error) = guard.check() {
+        if let Err(error) = guard() {
             return std::task::Poll::Ready(Err(error));
         }
         future.as_mut().poll(cx).map(Ok)
@@ -53,7 +55,7 @@ mod tests {
             Poll::<()>::Pending
         });
         let guard = Guard(revoked.clone());
-        let mut operation = std::pin::pin!(checked(&guard, write));
+        let mut operation = std::pin::pin!(checked(|| guard.check(), write));
         assert!(futures_util::poll!(operation.as_mut()).is_pending());
         assert_eq!(polls.load(Ordering::SeqCst), 1);
         revoked.store(true, Ordering::SeqCst);
@@ -67,7 +69,11 @@ mod tests {
             "invalidated packet cannot poll the writer again"
         );
         let new_guard = Guard(Arc::new(AtomicBool::new(false)));
-        assert!(checked(&new_guard, std::future::ready(())).await.is_ok());
+        assert!(
+            checked(|| new_guard.check(), std::future::ready(()))
+                .await
+                .is_ok()
+        );
         assert!(
             guard.check().is_err(),
             "a new projection cannot renew an old packet's guard"

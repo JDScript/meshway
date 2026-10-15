@@ -193,6 +193,29 @@ impl ExitRole {
             .send(packet, guard, live, Box::new(packet_guard))
             .await
     }
+    /// The writer of `incarnation` while its projection is live here: its
+    /// packets go to the I/O owner's batches without a reply. `None` once
+    /// the projection was retired or revoked, or never existed; the caller's
+    /// awaited [`Self::send`] then reports what that means for its flow.
+    pub fn writer(&self, incarnation: super::ExitIncarnation) -> Option<super::ExitWriter> {
+        // Its cutoffs are checked at the write, with one clock reading.
+        let live = self
+            .view
+            .read()
+            .ok()?
+            .get(&incarnation)
+            .filter(|live| !live.ended())
+            .cloned()?;
+        Some(super::ExitWriter {
+            live,
+            writer: self.writer.clone(),
+        })
+    }
+    /// Queue one batch of writes (at most 64) for the I/O owner without
+    /// waiting for them; `Capacity`: its queue is full and none was queued.
+    pub fn submit_writes(&self, writes: Vec<super::ExitWrite>) -> Result<()> {
+        self.writer.submit(writes)
+    }
     pub fn reply_reader(&self) -> Result<ExitReplyReader> {
         self.reader
             .lock()

@@ -2,11 +2,13 @@
 //! The resource registry records only projection ACK/CT confirmation, never
 //! packet tuples, business admission or reverse-path routing.
 mod driver;
+mod lanes;
 mod scope;
 
 use meshway_dataplane::{PendingAction, exit::ExitProjection, secure::SecureNode};
 use meshway_protocol::ipc::Problem;
 use meshway_underlay::{ExitReplyReader, ExitRole};
+use scope::PacketGuard;
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
@@ -15,10 +17,19 @@ const CAPACITY: usize = 128;
 /// Slots packets of installed flows leave free: projections and the first
 /// packets of new flows still find room beside a saturating flow.
 const RESERVED: usize = CAPACITY / 4;
+/// Direct writes one batch to the exit TUN's owner carries at most (the
+/// packet owner's turn).
+const OUTBOX: usize = 32;
+
+type Lanes = lanes::Lanes<meshway_dataplane::exit::FlowIncarnation>;
 
 enum Work {
     Projection(Box<ExitProjection>),
-    Packet(Box<PendingAction>),
+    /// A packet the driver releases, with its place in the flow's lane.
+    Packet(
+        Box<PendingAction>,
+        Option<lanes::Queued<meshway_dataplane::exit::FlowIncarnation>>,
+    ),
     Barrier(tokio::sync::oneshot::Sender<()>),
 }
 
@@ -40,6 +51,9 @@ pub(super) struct Runtime {
     failures: mpsc::Receiver<meshway_dataplane::exit::FlowIncarnation>,
     pub health: watch::Receiver<Health>,
     stop: CancellationToken,
+    lanes: Lanes,
+    /// Writes of installed flows taken in this turn, submitted as one batch.
+    outbox: Vec<meshway_underlay::ExitWrite>,
     /// Packets dropped for want of queue room since the role started.
     dropped: u64,
     _on_drop: tokio_util::sync::DropGuard,
@@ -56,12 +70,14 @@ impl Runtime {
         let (failed, failures) = mpsc::channel(CAPACITY);
         let (status, health) = watch::channel(Health::default());
         let stop = CancellationToken::new();
+        let lanes = Lanes::default();
         let task = tokio::spawn(driver::run(
             role.clone(),
             received,
             failed,
             status,
             stop.clone(),
+            lanes.clone(),
         ));
         Ok(Self {
             plan,
@@ -72,14 +88,22 @@ impl Runtime {
             health,
             _on_drop: stop.clone().drop_guard(),
             stop,
+            lanes,
+            outbox: Vec::with_capacity(OUTBOX),
             dropped: 0,
             task,
         })
     }
 
-    /// Called before enqueueing packets and after admission/reconcile/maintenance.
-    /// Reserve queue capacity before claiming X2's move-only completion callback.
+    /// Called after a turn of packets and after admission/reconcile/maintenance:
+    /// submits the turn's direct writes, then drives projections.
     pub fn drive(&mut self, secure: &mut SecureNode) -> bool {
+        self.flush();
+        self.projections(secure)
+    }
+
+    /// Reserve queue capacity before claiming X2's move-only completion callback.
+    fn projections(&mut self, secure: &mut SecureNode) -> bool {
         while let Ok(flow) = self.failures.try_recv() {
             secure.fail_exit_projection(&flow);
         }
@@ -100,25 +124,80 @@ impl Runtime {
     /// interface queue would: its flow, projection and tuple stay live (no
     /// Retire, no tombstone) and the next packet is admitted as usual. The
     /// owner never waits here while holding SecureNode.
+    ///
+    /// A packet of a flow the driver already released one packet of, whose
+    /// own projection is acknowledged and still live at the exit TUN's
+    /// owner, and with no packet of its flow in the FIFO, is queued for that
+    /// owner's next batch instead: no driver turn, no awaited write.
     pub fn packet(&mut self, secure: &mut SecureNode, packet: PendingAction) {
-        let drained = self.drive(secure);
+        // A direct write creates and needs no projection operation; the
+        // turn's operations are driven at its end (`drive`).
+        if let Some(flow) = packet.exit_flow()
+            && self.lanes.direct(&flow)
+            && let Some(writer) = self
+                .role
+                .writer(meshway_underlay::ExitIncarnation::new(flow.bytes()))
+            && let Ok(scope) = packet.exit_scope()
+        {
+            let released = packet.release(|action| match action {
+                meshway_dataplane::Action::Exit { packet, .. } => Some(packet.into_bytes()),
+                _ => None,
+            });
+            if let Ok(Some(bytes)) = released {
+                let guard = PacketGuard {
+                    scope,
+                    stop: self.stop.clone(),
+                };
+                if let Ok(write) = writer.write(bytes, guard) {
+                    self.outbox.push(write);
+                }
+                if self.outbox.len() >= OUTBOX {
+                    self.flush();
+                }
+            }
+            return;
+        }
+        let drained = self.projections(secure);
         // A packet whose projection is already acknowledged belongs to an
         // installed flow; one still waiting for its ACK starts a new flow.
         let installed = packet.ensure_current().is_ok();
+        let flow = packet.exit_flow();
+        // Writes taken before this packet go first.
+        self.flush();
+        let queued = flow.and_then(|flow| self.lanes.enqueue(flow));
         if !admit(
             &self.sender,
             drained,
             installed,
-            Work::Packet(Box::new(packet)),
+            Work::Packet(Box::new(packet), queued),
         ) {
-            self.dropped = self.dropped.saturating_add(1);
-            meshway_logging::profile::event("exit.drop", "queue_capacity");
-            if self.dropped.is_power_of_two() {
-                tracing::warn!(
-                    dropped = self.dropped,
-                    "Exit queue full; packet dropped, its flow kept"
-                );
-            }
+            self.full(1);
+        }
+    }
+
+    /// Submit the turn's direct writes as one batch; without room they are
+    /// dropped as a full FIFO drops a packet.
+    fn flush(&mut self) {
+        if self.outbox.is_empty() {
+            return;
+        }
+        let writes = std::mem::replace(&mut self.outbox, Vec::with_capacity(OUTBOX));
+        let count = writes.len() as u64;
+        if let Err(meshway_underlay::Error::Capacity) = self.role.submit_writes(writes) {
+            self.full(count);
+        }
+    }
+
+    fn full(&mut self, count: u64) {
+        let before = self.dropped;
+        self.dropped = self.dropped.saturating_add(count);
+        meshway_logging::profile::event("exit.drop", "queue_capacity");
+        // One warn per power of two crossed (bounded).
+        if before.checked_ilog2() != self.dropped.checked_ilog2() {
+            tracing::warn!(
+                dropped = self.dropped,
+                "Exit queue full; packet dropped, its flow kept"
+            );
         }
     }
 
