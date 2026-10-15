@@ -100,10 +100,13 @@ def measure(cell, client, received, t_route, end):
     echoed = {seq for at, seq in client["uecho"] if seq in sent}
     at_b = {seq for seq in sent if seq in received}
     echo_after = [(at, seq) for at, seq in client["uecho"] if at >= t_route and client["usend"].get(seq, 0) >= t_route]
-    tcp = [at for at, *_ in client["techo"] if cell["perturbedAt"] - 2 <= at <= end]
-    gaps = [b - a for a, b in zip(tcp, tcp[1:])]
-    udp = sorted(at for at, _ in client["uecho"] if cell["perturbedAt"] - 2 <= at <= end)
-    udp_gaps = [b - a for a, b in zip(udp, udp[1:])]
+    def longest(arrivals):
+        # The window's edges count: no arrival at all is one stall to its end.
+        times = [cell["perturbedAt"], *sorted(at for at in arrivals if cell["perturbedAt"] <= at <= end), end]
+        return max(b - a for a, b in zip(times, times[1:]))
+
+    gaps = [longest([at for at, *_ in client["techo"]])]
+    udp_gaps = [longest([at for at, _ in client["uecho"]])]
     return {
         "firstUdpReplyS": round(min(at for at, _ in echo_after) - t_route, 3) if echo_after else None,
         "firstPingReplyS": first(client["pecho"]),
