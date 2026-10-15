@@ -706,6 +706,8 @@ pub struct SecureNode {
     carriers: BTreeMap<NodeId, Carrier>,
     /// Signed boot identities of the current adjacent channels.
     boots: BTreeMap<NodeId, PeerBoot>,
+    /// This Node's own adjacency boot its circuits were made under.
+    own_boot: Option<PeerBoot>,
     // Stable allocation for the owner state: remove/restore coordinates borrows
     // without moving replay windows, recovery state and session metadata per packet.
     circuits: BTreeMap<[u8; 32], Box<Circuit>>,
@@ -820,6 +822,7 @@ impl SecureNode {
             limits,
             carriers: BTreeMap::new(),
             boots: BTreeMap::new(),
+            own_boot: None,
             circuits: BTreeMap::new(),
             dead: BTreeMap::new(),
             probes: Default::default(),
@@ -1786,6 +1789,42 @@ impl SecureNode {
                 if diagnostics::event() {
                     tracing::debug!(operation = "set_peer_boots", cause = "peer_restarted",
                         cid = ?id, %peer, grant = ?circuit.context.grant,
+                        "Dataplane circuit retired");
+                }
+            }
+            self.close(id);
+        }
+        closes
+    }
+
+    /// Bind this Node's own adjacency boot (the one its channels sign). A
+    /// different one means its adjacencies restarted under a new boot: every
+    /// adjacent peer now ends its circuits through this Node (see
+    /// [`Self::set_peer_boots`]), so this owner ends all of its own at once,
+    /// symmetrically, and returns a Close toward each neighbour of each
+    /// circuit it still has a carrier to. The first call only binds.
+    pub fn set_own_boot(&mut self, boot: PeerBoot) -> Vec<PendingFrame> {
+        let previous = self.own_boot.replace(boot);
+        if previous.is_none_or(|previous| previous == boot) {
+            return Vec::new();
+        }
+        let desired = self.desired.clone();
+        let reading = View::of(&desired);
+        let local = reading.node();
+        let ids: Vec<_> = self.circuits.keys().copied().collect();
+        let mut closes = Vec::new();
+        for id in ids {
+            if let Some(circuit) = self.circuits.get(&id) {
+                if circuit.state.established() {
+                    for reply in [true, false] {
+                        if let Some(next) = Self::neighbour(circuit, reply, local) {
+                            closes.extend(self.close_output(circuit, next, reply, &reading));
+                        }
+                    }
+                }
+                if diagnostics::event() {
+                    tracing::debug!(operation = "set_own_boot", cause = "own_restarted",
+                        cid = ?id, grant = ?circuit.context.grant,
                         "Dataplane circuit retired");
                 }
             }

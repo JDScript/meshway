@@ -989,6 +989,13 @@ impl Manager {
             .collect())
     }
 
+    /// This Manager's own boot identity, signed into every adjacency it
+    /// makes. It outlives the Manager's internal restarts; a new Manager has
+    /// a new one, which every adjacent peer sees as a restart of this Node.
+    pub fn boot(&self) -> crate::Boot {
+        self.shared.boot
+    }
+
     pub fn carriers(&self) -> Result<BTreeMap<NodeId, Carrier>, Error> {
         static PROFILE: meshway_logging::profile::Metric =
             meshway_logging::profile::Metric::new("manager.carriers");
