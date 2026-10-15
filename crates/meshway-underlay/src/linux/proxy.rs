@@ -81,9 +81,13 @@ impl Proxy {
         shared.tasks.spawn(async move {
             loop {
                 let accepted = listener.accept().await;
-                let Ok((stream, _)) = accepted else {
-                    worker.conflict.cancel();
-                    break;
+                let (stream, _) = match accepted {
+                    Ok(accepted) => accepted,
+                    Err(error) => {
+                        tracing::warn!(%error, "Protected control relay listener failed; kernel ownership ends");
+                        worker.conflict.cancel();
+                        break;
+                    }
                 };
                 let allowed = stream
                     .peer_cred()
@@ -108,6 +112,7 @@ impl Proxy {
                     })
                     .is_err()
                 {
+                    tracing::warn!("Protected control relay task capacity exhausted; kernel ownership ends");
                     worker.conflict.cancel();
                     break;
                 }

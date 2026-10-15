@@ -64,13 +64,39 @@ impl Namespace {
             cookie: meshway_netns::cookie().map_err(|_| SystemDnsError::Unsupported)?,
         })
     }
-    fn verify_pid(&self, pid: u32) -> Result<(), SystemDnsError> {
-        let meta = std::fs::metadata(format!("/proc/{pid}/ns/net"))
-            .map_err(|_| SystemDnsError::Conflict)?;
-        if meta.dev() != self.device || meta.ino() != self.inode || !self.same(&Self::current()?) {
-            return Err(SystemDnsError::Conflict);
+    fn verify_pid(&self, pid: u32) -> Result<(), SystemDnsFailure> {
+        let source = format!("/proc/{pid}/ns/net");
+        let failure = |actual: String| {
+            SystemDnsFailure::new(SystemDnsError::Conflict, "resolved_namespace")
+                .expected(format!("resolved (pid {pid}) in netns {self}"))
+                .actual(actual)
+                .source(&source)
+        };
+        let meta = std::fs::metadata(&source).map_err(|error| failure(error.to_string()))?;
+        if meta.dev() != self.device || meta.ino() != self.inode {
+            return Err(failure(format!("netns {}:{}", meta.dev(), meta.ino())));
+        }
+        self.check_current()
+    }
+    /// This process still runs in the recorded namespace.
+    fn check_current(&self) -> Result<(), SystemDnsFailure> {
+        let current = Self::current().at("namespace")?;
+        if !self.same(&current) {
+            return Err(SystemDnsFailure::new(SystemDnsError::Conflict, "namespace")
+                .expected(self)
+                .actual(&current)
+                .source("/proc/self/ns/net, SO_NETNS_COOKIE, boot_id"));
         }
         Ok(())
+    }
+}
+impl std::fmt::Display for Namespace {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}:{}", self.device, self.inode)?;
+        if let Some(cookie) = self.cookie {
+            write!(f, " cookie {cookie}")?;
+        }
+        write!(f, " boot {}", self.boot)
     }
 }
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -195,6 +221,8 @@ pub struct SystemDnsOwner {
     served: Result<SystemResolverSnapshot, ExitDnsUnavailableReason>,
     writes: storage::Writes,
     invalid: CancellationToken,
+    /// Why the last failed operation failed; cleared by the next success.
+    failure: Option<SystemDnsFailure>,
 }
 /// The records of one namespace's DNS ownership in its directory.
 const RECORDS: [&str; 3] = ["owner.json", "resolv-conf.json", "resolved.json"];
@@ -277,7 +305,9 @@ impl SystemDnsOwner {
         anchor: Option<Arc<dyn OwnedDnsLink>>,
     ) -> Result<Self, SystemDnsError> {
         let reservation = Self::reserve(settings, data).await?;
-        Self::prepare_reserved(reservation, anchor).await
+        Self::prepare_reserved(reservation, anchor)
+            .await
+            .map_err(|failure| failure.error)
     }
 
     pub async fn reserve(
@@ -315,15 +345,25 @@ impl SystemDnsOwner {
     pub async fn prepare_reserved(
         reserved: SystemDnsReservation,
         anchor: Option<Arc<dyn OwnedDnsLink>>,
-    ) -> Result<Self, SystemDnsError> {
+    ) -> Result<Self, SystemDnsFailure> {
         let SystemDnsReservation {
             directory,
             reservation,
             mut writes,
         } = reserved;
-        writes.settle().await?;
-        if storage::read::<Reservation>(&directory, "owner.json")?.as_ref() != Some(&reservation) {
-            return Err(SystemDnsError::Conflict);
+        writes.settle().await.at("owner_record")?;
+        let source = directory.path().join("owner.json");
+        if storage::read::<Reservation>(&directory, "owner.json")
+            .at("owner_record")?
+            .as_ref()
+            != Some(&reservation)
+        {
+            return Err(
+                SystemDnsFailure::new(SystemDnsError::Conflict, "owner_record")
+                    .expected("the reservation this owner made")
+                    .actual("another or no reservation")
+                    .source(source.display()),
+            );
         }
         let (backend, snapshot, invalid) = Self::open(&directory, &reservation, anchor).await?;
         Ok(Self {
@@ -334,14 +374,34 @@ impl SystemDnsOwner {
             served: Err(ExitDnsUnavailableReason::Unobserved),
             writes,
             invalid,
+            failure: None,
         })
+    }
+    /// Why the last failed observation, recovery, installation or down
+    /// failed, until the next one succeeds.
+    pub fn failure(&self) -> Option<&SystemDnsFailure> {
+        self.failure.as_ref()
+    }
+    fn outcome(&mut self, result: Result<(), SystemDnsFailure>) -> Result<(), SystemDnsError> {
+        match result {
+            Ok(()) => {
+                self.failure = None;
+                Ok(())
+            }
+            Err(failure) => {
+                let error = failure.error;
+                self.failure = Some(failure);
+                Err(error)
+            }
+        }
     }
 
     async fn open(
         directory: &Arc<Directory>,
         reservation: &Reservation,
         anchor: Option<Arc<dyn OwnedDnsLink>>,
-    ) -> Result<(Backend, Option<SystemResolverSnapshot>, CancellationToken), SystemDnsError> {
+    ) -> Result<(Backend, Option<SystemResolverSnapshot>, CancellationToken), SystemDnsFailure>
+    {
         let settings = &reservation.settings;
         let invalid = CancellationToken::new();
         let (backend, snapshot) = match &settings.backend {
@@ -349,14 +409,28 @@ impl SystemDnsOwner {
                 let dir = directory.clone();
                 let path = path.clone();
                 let bind = settings.bind;
-                let backend =
-                    tokio::task::spawn_blocking(move || file::Backend::prepare(dir, path, bind))
-                        .await
-                        .map_err(|_| SystemDnsError::Storage)??;
+                let source = path.display().to_string();
+                let file = async {
+                    let backend = tokio::task::spawn_blocking(move || {
+                        file::Backend::prepare(dir, path, bind)
+                    })
+                    .await
+                    .map_err(|_| SystemDnsError::Storage)??;
+                    Ok::<_, SystemDnsError>((
+                        backend.snapshot_id()?,
+                        backend.upstreams()?,
+                        backend.transport()?,
+                        backend,
+                    ))
+                };
+                let (id, upstreams, primary, backend) = file
+                    .await
+                    .at("resolv_conf")
+                    .map_err(|failure| failure.source(source))?;
                 let snapshot = SystemResolverSnapshot {
-                    id: backend.snapshot_id()?,
-                    upstreams: Arc::new(backend.upstreams()?),
-                    primary: backend.transport()?,
+                    id,
+                    upstreams: Arc::new(upstreams),
+                    primary,
                     provenance: Provenance::Original,
                     invalid: invalid.clone(),
                     verified_until: Arc::new(Mutex::new(
@@ -371,7 +445,7 @@ impl SystemDnsOwner {
                         directory.clone(),
                         reservation.namespace.clone(),
                         settings.bind,
-                        anchor.ok_or(SystemDnsError::Settings)?,
+                        anchor.ok_or(SystemDnsError::Settings).at("anchor")?,
                     )
                     .await?,
                 )),
@@ -388,30 +462,57 @@ impl SystemDnsOwner {
     /// leaves the backend either at its proven installed settings or at its
     /// original settings, which the caller's next install replaces.
     pub async fn recover(&mut self) -> Result<(), SystemDnsError> {
+        let result = self.reprove().await;
+        self.outcome(result)
+    }
+    async fn reprove(&mut self) -> Result<(), SystemDnsFailure> {
         self.invalid.cancel();
-        self.writes.settle().await?;
+        self.writes.settle().await.at("record_write")?;
         let anchor = match &mut self.backend {
             Backend::File(file) => {
-                file.settle().await?;
+                file.settle().await.at("record_write")?;
                 None
             }
             Backend::Resolved(resolved) => {
-                resolved.settle().await?;
+                resolved.settle().await.at("record_write")?;
                 Some(resolved.anchor())
             }
         };
-        if !self.reservation.namespace.same(&Namespace::current()?)
-            || storage::read::<Reservation>(&self.directory, "owner.json")?.as_ref()
-                != Some(&self.reservation)
-        {
-            return Err(SystemDnsError::Conflict);
-        }
+        self.reservation.namespace.check_current()?;
+        self.check_reservation()?;
         let (backend, snapshot, invalid) =
             Self::open(&self.directory, &self.reservation, anchor).await?;
         self.backend = backend;
         self.snapshot = snapshot;
         self.served = Err(ExitDnsUnavailableReason::Unobserved);
         self.invalid = invalid;
+        Ok(())
+    }
+    /// The namespace's ownership record is still this owner's.
+    fn check_reservation(&self) -> Result<(), SystemDnsFailure> {
+        let source = self.directory.path().join("owner.json");
+        let recorded = storage::read::<Reservation>(&self.directory, "owner.json")
+            .at("owner_record")
+            .map_err(|failure| failure.source(source.display()))?;
+        if recorded.as_ref() != Some(&self.reservation) {
+            return Err(
+                SystemDnsFailure::new(SystemDnsError::Conflict, "owner_record")
+                    .expected(format!(
+                        "this owner ({}) in netns {}",
+                        self.reservation.data_owner.display(),
+                        self.reservation.namespace
+                    ))
+                    .actual(match &recorded {
+                        None => "no reservation".to_owned(),
+                        Some(other) => format!(
+                            "owner {} in netns {}",
+                            other.data_owner.display(),
+                            other.namespace
+                        ),
+                    })
+                    .source(source.display()),
+            );
+        }
         Ok(())
     }
 
@@ -439,17 +540,21 @@ impl SystemDnsOwner {
     }
 
     pub async fn install(&mut self, plan: &SystemDnsPlan) -> Result<(), SystemDnsError> {
-        plan.validate()?;
-        self.observe().await?;
-        let result = match &mut self.backend {
-            Backend::File(file) => file.install(plan).await,
-            Backend::Resolved(resolved) => resolved.install(plan).await,
-        };
-        if result.is_err() {
-            self.invalid.cancel();
+        let result = async {
+            plan.validate().at("plan")?;
+            self.checked_observe().await?;
+            let result = match &mut self.backend {
+                Backend::File(file) => file.install(plan).await.at("resolv_conf"),
+                Backend::Resolved(resolved) => resolved.install(plan).await,
+            };
+            if result.is_err() {
+                self.invalid.cancel();
+            }
+            result?;
+            self.checked_observe().await
         }
-        result?;
-        self.observe().await
+        .await;
+        self.outcome(result)
     }
 
     /// Keep, replace or withdraw the resolved proxy snapshot after a
@@ -512,18 +617,29 @@ impl SystemDnsOwner {
     }
 
     pub async fn observe(&mut self) -> Result<(), SystemDnsError> {
+        let result = self.checked_observe().await;
+        self.outcome(result)
+    }
+    async fn checked_observe(&mut self) -> Result<(), SystemDnsFailure> {
         let result = async {
-            self.writes.settle().await?;
-            if self.invalid.is_cancelled()
-                || !self.reservation.namespace.same(&Namespace::current()?)
-            {
-                return Err(SystemDnsError::Conflict);
+            self.writes.settle().await.at("record_write")?;
+            if self.invalid.is_cancelled() {
+                return Err(
+                    SystemDnsFailure::new(SystemDnsError::Conflict, "owner_fenced")
+                        .expected("no failed operation since the last re-proof")
+                        .actual("an earlier failure fenced this owner until it recovers"),
+                );
             }
+            self.reservation.namespace.check_current()?;
             if let Some(snapshot) = &self.snapshot {
-                snapshot.ensure_current()?;
+                snapshot.ensure_current().map_err(|error| {
+                    SystemDnsFailure::new(error, "resolver_snapshot")
+                        .expected("the recorded OS resolvers re-observed within 2 s")
+                        .actual("expired or fenced")
+                })?;
             }
             match &mut self.backend {
-                Backend::File(file) => file.observe().await.map(|()| None),
+                Backend::File(file) => file.observe().await.at("resolv_conf").map(|()| None),
                 Backend::Resolved(resolved) => {
                     resolved.observe().await?;
                     // An unusable inventory withdraws only served queries.
@@ -544,22 +660,21 @@ impl SystemDnsOwner {
             self.invalid.cancel();
             self.served = Err(ExitDnsUnavailableReason::Unobserved);
         } else if let Some(snapshot) = &self.snapshot {
-            snapshot.ensure_current()?;
-            *snapshot
-                .verified_until
-                .lock()
-                .map_err(|_| SystemDnsError::Conflict)? =
-                Instant::now() + std::time::Duration::from_secs(2);
+            snapshot.ensure_current().at("resolver_snapshot")?;
+            *snapshot.verified_until.lock().map_err(|_| {
+                SystemDnsFailure::new(SystemDnsError::Conflict, "resolver_snapshot")
+            })? = Instant::now() + std::time::Duration::from_secs(2);
         }
         result
     }
 
     pub async fn down(&mut self) -> Result<(), SystemDnsError> {
         self.invalid.cancel();
-        match &mut self.backend {
-            Backend::File(file) => file.down().await?,
-            Backend::Resolved(resolved) => resolved.down().await?,
-        }
+        let result = match &mut self.backend {
+            Backend::File(file) => file.down().await.at("resolv_conf"),
+            Backend::Resolved(resolved) => resolved.down().await,
+        };
+        self.outcome(result)?;
         self.writes
             .save(
                 self.directory.clone(),

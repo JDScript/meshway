@@ -6,7 +6,7 @@ pub(super) use actor::Attachment;
 use meshway_configuration::netmap::{DnsPlan, NodeNetmap};
 use meshway_dns::{
     CancellationToken, OwnerDispatcher, ResolverExchange, Scope, Service, SystemDnsBackend,
-    SystemDnsError, SystemDnsOwner, SystemDnsPlan, SystemDnsSettings,
+    SystemDnsError, SystemDnsFailure, SystemDnsOwner, SystemDnsPlan, SystemDnsSettings,
 };
 use meshway_engine::Desired;
 use meshway_model::exit::{ExitDns, ExitDnsStatus, ExitDnsUnavailableReason};
@@ -30,6 +30,8 @@ pub(super) struct Runtime {
     installed_plan: Option<SystemDnsPlan>,
     /// The one producer of the exit resolver fact; the plane reports it.
     exit_dns: watch::Sender<Option<ExitDns>>,
+    /// Why the last observation or recovery failed, until one succeeds.
+    failure: Option<SystemDnsFailure>,
 }
 impl Drop for Runtime {
     fn drop(&mut self) {
@@ -74,6 +76,7 @@ impl Runtime {
             service,
             installed_plan: None,
             exit_dns,
+            failure: None,
         })
     }
 
@@ -233,10 +236,34 @@ impl Runtime {
     /// a changed snapshot republishes the same content's scope, which ends
     /// this Node's in-flight queries of the old scope.
     pub async fn observe(&mut self) -> Result<(), SystemDnsError> {
+        let result = self.observed().await;
+        self.failure = result.as_ref().err().cloned();
+        result.map_err(|failure| failure.error)
+    }
+    /// Why the last observation or recovery failed, until one succeeds.
+    pub fn failure(&self) -> Option<&SystemDnsFailure> {
+        self.failure.as_ref()
+    }
+    fn system_failure(&self, error: SystemDnsError) -> SystemDnsFailure {
+        self.system
+            .failure()
+            .filter(|failure| failure.error == error)
+            .cloned()
+            .unwrap_or_else(|| SystemDnsFailure::new(error, "system_owner"))
+    }
+    fn service_failure() -> SystemDnsFailure {
+        SystemDnsFailure::new(SystemDnsError::Backend, "query_service")
+            .expected("the DNS query service serving its bind")
+            .actual("the service task ended")
+    }
+    async fn observed(&mut self) -> Result<(), SystemDnsFailure> {
         let result = if self.service.is_finished() {
-            Err(SystemDnsError::Backend)
+            Err(Self::service_failure())
         } else {
-            self.system.observe().await
+            match self.system.observe().await {
+                Ok(()) => Ok(()),
+                Err(error) => Err(self.system_failure(error)),
+            }
         };
         if result.is_err() {
             self.suspend();
@@ -255,7 +282,12 @@ impl Runtime {
             if !scope.equivalent(&next) {
                 if self.dispatcher.validate_scope(&next).is_err() {
                     self.suspend();
-                    return Err(SystemDnsError::ResolverPlan);
+                    return Err(SystemDnsFailure::new(
+                        SystemDnsError::ResolverPlan,
+                        "served_scope",
+                    )
+                    .expected("a valid scope for the re-observed served resolvers")
+                    .actual("the dispatcher rejected it"));
                 }
                 meshway_dns::publish_scope(&self.scopes, Some(next));
             }
@@ -268,15 +300,33 @@ impl Runtime {
     /// settings are installed afresh) and restart a finished query service.
     /// Query authority stays withdrawn until the parent installs content again.
     pub async fn recover(&mut self) -> Result<(), SystemDnsError> {
+        let result = self.recovered().await;
+        self.failure = result.as_ref().err().cloned();
+        result.map_err(|failure| failure.error)
+    }
+    async fn recovered(&mut self) -> Result<(), SystemDnsFailure> {
         self.suspend();
         if self.service.is_finished() {
-            self.service = serve(&self.settings, &self.dispatcher, &self.stop).await?;
+            self.service = serve(&self.settings, &self.dispatcher, &self.stop)
+                .await
+                .map_err(|error| {
+                    SystemDnsFailure::new(error, "query_service")
+                        .expected(format!(
+                            "the DNS query service bound to {}",
+                            self.settings.bind
+                        ))
+                        .actual("bind failed")
+                })?;
         }
-        self.system.recover().await?;
-        if let Some(plan) = &self.installed_plan {
-            self.system.install(plan).await?;
+        if let Err(error) = self.system.recover().await {
+            return Err(self.system_failure(error));
         }
-        self.observe().await
+        if let Some(plan) = &self.installed_plan
+            && let Err(error) = self.system.install(plan).await
+        {
+            return Err(self.system_failure(error));
+        }
+        self.observed().await
     }
     /// Explicit down restores DNS before the parent deletes the Kernel anchor.
     pub async fn shutdown(mut self, keep: bool) -> Result<(), SystemDnsError> {

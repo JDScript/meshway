@@ -9,8 +9,9 @@
 //! them leaves the link at its original settings for a fresh installation.
 use super::{
     DnsLinkIdentity, ExitDnsUnavailableReason, Namespace, OwnedDnsLink, SystemDnsError,
-    SystemDnsPlan, storage,
+    SystemDnsFailure, SystemDnsPlan, storage,
 };
+use crate::system::At;
 use meshway_private_storage::Directory;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -22,14 +23,17 @@ use zbus::zvariant::{DynamicDeserialize, DynamicType, OwnedObjectPath, OwnedValu
 
 const PATH: &str = "/org/freedesktop/resolve1";
 const IFACE: &str = "org.freedesktop.resolve1.Manager";
+const LINK: &str = "org.freedesktop.resolve1.Link";
 const SERVICE: &str = "org.freedesktop.resolve1";
 const TIMEOUT: Duration = Duration::from_secs(5);
 const VERSION: u32 = 2;
 const MARKER_SUFFIX: &str = "meshway-installation.invalid";
+const RECORD: &str = "resolved.json";
 type DnsServer = (i32, Vec<u8>, u16, String);
 type GlobalDomains = Vec<(i32, String, bool)>;
 /// resolved's manager-wide server lists: (ifindex, family, address, port, name).
 type GlobalServers = Vec<(i32, i32, Vec<u8>, u16, String)>;
+type Checked<T> = Result<T, SystemDnsFailure>;
 /// resolved's proxy stub (systemd ≥ 248, present with `DNSStubListener=yes`):
 /// queries are forwarded by resolved's per-link routing without local
 /// synthesis, LLMNR or mDNS. Exit resolvers serve sources through it.
@@ -54,6 +58,89 @@ struct LinkSettings {
     mdns: String,
     tls: String,
     dnssec: String,
+}
+impl LinkSettings {
+    /// The fields where `self` (expected) and `actual` differ, each side
+    /// rendered as resolvectl shows it.
+    fn differences(&self, actual: &Self) -> (String, String) {
+        let mut expected = Vec::new();
+        let mut found = Vec::new();
+        let mut field = |name: &str, same: bool, e: String, a: String| {
+            if !same {
+                expected.push(format!("{name}={e}"));
+                found.push(format!("{name}={a}"));
+            }
+        };
+        let servers = |dns: &[DnsServer]| {
+            let shown: Vec<_> = dns
+                .iter()
+                .map(|(family, bytes, port, _)| {
+                    let ip = match (family, bytes.as_slice()) {
+                        (2, b) => <[u8; 4]>::try_from(b).ok().map(IpAddr::from),
+                        (10, b) => <[u8; 16]>::try_from(b).ok().map(IpAddr::from),
+                        _ => None,
+                    };
+                    match ip {
+                        Some(ip) if *port != 0 => SocketAddr::new(ip, *port).to_string(),
+                        Some(ip) => ip.to_string(),
+                        None => format!("family {family} ({} bytes)", bytes.len()),
+                    }
+                })
+                .collect();
+            format!("[{}]", shown.join(", "))
+        };
+        let domains = |domains: &[(String, bool)]| {
+            let shown: Vec<_> = domains
+                .iter()
+                .map(|(name, route)| format!("{}{}", if *route { "~" } else { "" }, shown(name)))
+                .collect();
+            format!("[{}]", shown.join(", "))
+        };
+        field(
+            "dns",
+            self.dns == actual.dns,
+            servers(&self.dns),
+            servers(&actual.dns),
+        );
+        field(
+            "domains",
+            self.domains == actual.domains,
+            domains(&self.domains),
+            domains(&actual.domains),
+        );
+        field(
+            "defaultRoute",
+            self.default_route == actual.default_route,
+            self.default_route.to_string(),
+            actual.default_route.to_string(),
+        );
+        for (name, e, a) in [
+            ("llmnr", &self.llmnr, &actual.llmnr),
+            ("mdns", &self.mdns, &actual.mdns),
+            ("dnsOverTls", &self.tls, &actual.tls),
+            ("dnssec", &self.dnssec, &actual.dnssec),
+        ] {
+            field(name, e == a, e.clone(), a.clone());
+        }
+        (expected.join(" "), found.join(" "))
+    }
+}
+/// A domain as logged: the random installation marker shortened.
+fn shown(name: &str) -> String {
+    match name.strip_suffix(MARKER_SUFFIX) {
+        Some(marker) if marker.len() > 10 => format!("{}….{MARKER_SUFFIX}", &marker[..9]),
+        _ => name.to_owned(),
+    }
+}
+fn link_identity(identity: &DnsLinkIdentity) -> String {
+    format!(
+        "{} (index {}, {}, netns {}:{})",
+        identity.name,
+        identity.index,
+        identity.address,
+        identity.namespace_device,
+        identity.namespace_inode
+    )
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -87,15 +174,21 @@ pub(super) struct Backend {
     stub: Option<(String, std::time::Instant, bool)>,
 }
 pub(super) fn has_record(directory: &Directory) -> Result<bool, SystemDnsError> {
-    storage::read::<Record>(directory, "resolved.json").map(|record| record.is_some())
+    storage::read::<Record>(directory, RECORD).map(|record| record.is_some())
 }
 impl Backend {
+    fn record_source(&self) -> String {
+        self.directory.path().join(RECORD).display().to_string()
+    }
+    fn link_source(&self) -> String {
+        format!("D-Bus {} {} {LINK}", self.service_owner, self.path)
+    }
     pub async fn prepare(
         directory: Arc<Directory>,
         namespace: Namespace,
         bind: SocketAddr,
         anchor: Arc<dyn OwnedDnsLink>,
-    ) -> Result<Self, SystemDnsError> {
+    ) -> Checked<Self> {
         let identity = anchor.verify().await?;
         if identity.namespace_device != namespace.device
             || identity.namespace_inode != namespace.inode
@@ -103,59 +196,149 @@ impl Backend {
             || identity.index == 0
             || identity.index > i32::MAX as u32
         {
-            return Err(SystemDnsError::Conflict);
+            return Err(
+                SystemDnsFailure::new(SystemDnsError::Conflict, "anchor_namespace")
+                    .expected(format!(
+                        "anchor in netns {}:{} of boot {}",
+                        namespace.device, namespace.inode, namespace.boot
+                    ))
+                    .actual(link_identity(&identity))
+                    .source("Kernel DNS anchor record"),
+            );
         }
         let connection = tokio::time::timeout(TIMEOUT, zbus::Connection::system())
             .await
-            .map_err(|_| SystemDnsError::Unsupported)?
-            .map_err(|_| SystemDnsError::Unsupported)?;
+            .map_err(|_| "no connection within 5 s".to_owned())
+            .and_then(|connection| connection.map_err(|error| error.to_string()))
+            .map_err(|actual| {
+                SystemDnsFailure::new(SystemDnsError::Unsupported, "system_bus")
+                    .actual(actual)
+                    .source("D-Bus system bus")
+            })?;
         let (service_owner, path) = attach(&connection, &namespace, identity.index).await?;
         let actual = read_settings(&connection, &service_owner, &path).await?;
-        if anchor.verify().await? != identity {
-            return Err(SystemDnsError::Conflict);
+        let again = anchor.verify().await?;
+        if again != identity {
+            return Err(
+                SystemDnsFailure::new(SystemDnsError::Conflict, "anchor_identity")
+                    .expected(link_identity(&identity))
+                    .actual(link_identity(&again))
+                    .source("Kernel DNS anchor"),
+            );
         }
         let dir = directory.clone();
         let previous: Option<Record> =
-            tokio::task::spawn_blocking(move || storage::read(&dir, "resolved.json"))
+            tokio::task::spawn_blocking(move || storage::read(&dir, RECORD))
                 .await
-                .map_err(|_| SystemDnsError::Storage)??;
+                .map_err(|_| SystemDnsError::Storage)
+                .and_then(|read| read)
+                .at("record_read")
+                .map_err(|failure| failure.source(directory.path().join(RECORD).display()))?;
+        let source = directory.path().join(RECORD).display().to_string();
+        let link_source = format!("D-Bus {service_owner} {path} {LINK}");
+        let record_failure = |check, expected: &str, actual: String| {
+            SystemDnsFailure::new(SystemDnsError::Conflict, check)
+                .expected(expected)
+                .actual(actual)
+                .source(&source)
+        };
         let mut lost = false;
         let record = match previous {
             Some(mut record) => {
                 if !record.original.dns.is_empty() || !record.original.domains.is_empty() {
-                    return Err(SystemDnsError::Conflict);
+                    let (_, found) = local_settings(bind, Vec::new()).differences(&record.original);
+                    return Err(record_failure(
+                        "record_original",
+                        "original link settings without DNS servers or domains",
+                        found,
+                    ));
                 }
                 match (&record.installed, &record.plan) {
                     (Some(installed), Some(plan)) => {
-                        plan.validate()?;
-                        if *installed != record.settings(plan) {
-                            return Err(SystemDnsError::Conflict);
+                        plan.validate().at("record_plan")?;
+                        let (expected, found) = record.settings(plan).differences(installed);
+                        if !expected.is_empty() {
+                            return Err(record_failure(
+                                "record_plan",
+                                &format!("installed settings of the recorded plan: {expected}"),
+                                found,
+                            ));
                         }
                     }
                     (None, None) => {}
-                    _ => return Err(SystemDnsError::Conflict),
+                    (installed, plan) => {
+                        return Err(record_failure(
+                            "record_plan",
+                            "installed settings and plan both present or both absent",
+                            format!(
+                                "installed {}, plan {}",
+                                if installed.is_some() {
+                                    "present"
+                                } else {
+                                    "absent"
+                                },
+                                if plan.is_some() { "present" } else { "absent" }
+                            ),
+                        ));
+                    }
                 }
                 let valid = match record.version {
                     1 => record.service_owner.is_some() && record.installation.is_none(),
                     VERSION => record.service_owner.is_none() && record.installation.is_some(),
                     _ => false,
                 };
-                if !valid || record.pending || record.link != identity || record.bind != bind {
-                    return Err(SystemDnsError::Conflict);
+                if !valid {
+                    return Err(record_failure(
+                        "record_version",
+                        "version 1 with a service owner or version 2 with a marker",
+                        format!("version {}", record.version),
+                    ));
+                }
+                if record.pending {
+                    return Err(record_failure(
+                        "record_pending",
+                        "no interrupted settings change",
+                        "a recorded settings change that never completed".to_owned(),
+                    ));
+                }
+                if record.link != identity {
+                    return Err(record_failure(
+                        "record_link",
+                        &link_identity(&record.link),
+                        format!("anchor {}", link_identity(&identity)),
+                    ));
+                }
+                if record.bind != bind {
+                    return Err(record_failure(
+                        "record_bind",
+                        &record.bind.to_string(),
+                        bind.to_string(),
+                    ));
                 }
                 if record.installed.as_ref().unwrap_or(&record.original) != &actual {
                     // Only the exact original settings mean resolved dropped
                     // this link's runtime configuration (a restart without its
                     // saved link state). Any other value is a foreign writer.
                     if record.installed.is_none() || actual != record.original {
-                        return Err(SystemDnsError::Conflict);
+                        let (expected, found) = record
+                            .installed
+                            .as_ref()
+                            .unwrap_or(&record.original)
+                            .differences(&actual);
+                        return Err(SystemDnsFailure::new(
+                            SystemDnsError::Conflict,
+                            "link_settings",
+                        )
+                        .expected(expected)
+                        .actual(found)
+                        .source(&link_source));
                     }
                     record.installed = None;
                     record.plan = None;
                     lost = true;
                 }
                 if record.installation.is_none() {
-                    record.installation = Some(marker()?);
+                    record.installation = Some(marker().at("record_marker")?);
                 }
                 record.version = VERSION;
                 record.service_owner = None;
@@ -163,12 +346,18 @@ impl Backend {
             }
             None => {
                 if !actual.dns.is_empty() || !actual.domains.is_empty() {
-                    return Err(SystemDnsError::Conflict);
+                    let (_, found) = local_settings(bind, Vec::new()).differences(&actual);
+                    return Err(
+                        SystemDnsFailure::new(SystemDnsError::Conflict, "link_settings")
+                            .expected("a fresh anchor without DNS servers or domains")
+                            .actual(found)
+                            .source(&link_source),
+                    );
                 }
                 Record {
                     version: VERSION,
                     service_owner: None,
-                    installation: Some(marker()?),
+                    installation: Some(marker().at("record_marker")?),
                     link: identity,
                     bind,
                     original: actual,
@@ -193,28 +382,43 @@ impl Backend {
         if lost {
             // The link is at its original settings: record exactly that, so
             // the next install probes this resolved and installs afresh.
+            tracing::info!(
+                link = backend.record.link.name,
+                "resolved dropped the owned link's settings; installing afresh"
+            );
             backend.persist().await?;
         }
         backend.observe().await?;
         Ok(backend)
     }
-    async fn verify(&self) -> Result<(), SystemDnsError> {
+    async fn verify(&self) -> Checked<()> {
         verify_owner(&self.connection, &self.service_owner, &self.namespace).await?;
         verify_os_resolver(&self.connection, &self.service_owner).await?;
-        if self.anchor.verify().await? != self.record.link {
-            return Err(SystemDnsError::Conflict);
+        let identity = self.anchor.verify().await?;
+        if identity != self.record.link {
+            return Err(
+                SystemDnsFailure::new(SystemDnsError::Conflict, "anchor_identity")
+                    .expected(link_identity(&self.record.link))
+                    .actual(link_identity(&identity))
+                    .source("Kernel DNS anchor"),
+            );
         }
         Ok(())
     }
-    async fn call<B, R>(&self, method: &str, body: &B) -> Result<R, SystemDnsError>
+    async fn call<B, R>(&self, method: &'static str, body: &B) -> Checked<R>
     where
         B: Serialize + DynamicType,
         R: for<'d> DynamicDeserialize<'d>,
     {
         self.verify().await?;
         let result = tokio::select! { biased;
-            _ = self.anchor.ended() => return Err(SystemDnsError::Conflict),
-            result = raw(&self.connection, &self.service_owner, PATH, IFACE, method, body) => result,
+            _ = self.anchor.ended() => {
+                return Err(SystemDnsFailure::new(SystemDnsError::Conflict, "anchor_ended")
+                    .expected("the Kernel's DNS anchor")
+                    .actual(format!("anchor ended during {method}"))
+                    .source("Kernel DNS anchor"));
+            }
+            result = raw(&self.connection, &self.service_owner, PATH, IFACE, method, body, "resolved_call") => result,
         };
         self.verify().await?;
         result
@@ -225,54 +429,94 @@ impl Backend {
     pub fn anchor(&self) -> Arc<dyn OwnedDnsLink> {
         self.anchor.clone()
     }
-    async fn persist(&mut self) -> Result<(), SystemDnsError> {
+    async fn persist(&mut self) -> Checked<()> {
+        let source = self.record_source();
         self.writes
-            .save(self.directory.clone(), "resolved.json", &Some(&self.record))
+            .save(self.directory.clone(), RECORD, &Some(&self.record))
             .await
+            .at("record_write")
+            .map_err(|failure| failure.source(source))
     }
-    async fn conflicts(&self, plan: &SystemDnsPlan) -> Result<(), SystemDnsError> {
+    async fn conflicts(&self, plan: &SystemDnsPlan) -> Checked<()> {
+        let source = format!("D-Bus {} {PATH} {IFACE}.Domains", self.service_owner);
         let domains: GlobalDomains = property(
             &self.connection,
             &self.service_owner,
             PATH,
             IFACE,
             "Domains",
+            "foreign_domain",
         )
         .await?;
         if domains.len() > 4096 {
-            return Err(SystemDnsError::Capacity);
+            return Err(
+                SystemDnsFailure::new(SystemDnsError::Capacity, "foreign_domain")
+                    .expected("at most 4096 routing domains")
+                    .actual(domains.len())
+                    .source(source),
+            );
         }
-        if domains
-            .iter()
-            .any(|(index, name, _)| *index != self.record.link.index as i32 && plan.conflicts(name))
-        {
-            return Err(SystemDnsError::Conflict);
+        if let Some((index, name, route)) = domains.iter().find(|(index, name, _)| {
+            *index != self.record.link.index as i32 && plan.conflicts(name)
+        }) {
+            return Err(
+                SystemDnsFailure::new(SystemDnsError::Conflict, "foreign_domain")
+                    .expected(format!(
+                        "no link other than {} routing a name this plan routes",
+                        self.record.link.index
+                    ))
+                    .actual(format!(
+                        "link {index} has {}{}",
+                        if *route { "~" } else { "" },
+                        shown(name)
+                    ))
+                    .source(source),
+            );
         }
         Ok(())
     }
-    pub async fn observe(&mut self) -> Result<(), SystemDnsError> {
-        self.settle().await?;
+    pub async fn observe(&mut self) -> Checked<()> {
+        let source = self.record_source();
+        self.settle()
+            .await
+            .at("record_write")
+            .map_err(|failure| failure.source(&source))?;
         if self.record.pending {
-            return Err(SystemDnsError::Conflict);
+            return Err(
+                SystemDnsFailure::new(SystemDnsError::Conflict, "record_pending")
+                    .expected("no interrupted settings change")
+                    .actual("a recorded settings change that never completed")
+                    .source(source),
+            );
         }
         let (owner, path) =
             attach(&self.connection, &self.namespace, self.record.link.index).await?;
         if owner != self.service_owner {
             // A restarted resolved is adopted only if it kept these exact
             // settings; the comparison below is the ownership proof.
+            tracing::info!(
+                previous = self.service_owner,
+                current = owner,
+                "resolved has a new bus owner; re-proving the owned link"
+            );
             self.service_owner = owner;
             self.path = path;
         }
         self.verify().await?;
         let actual = read_settings(&self.connection, &self.service_owner, &self.path).await?;
-        if actual
-            != *self
-                .record
-                .installed
-                .as_ref()
-                .unwrap_or(&self.record.original)
-        {
-            return Err(SystemDnsError::Conflict);
+        let wanted = self
+            .record
+            .installed
+            .as_ref()
+            .unwrap_or(&self.record.original);
+        if actual != *wanted {
+            let (expected, found) = wanted.differences(&actual);
+            return Err(
+                SystemDnsFailure::new(SystemDnsError::Conflict, "link_settings")
+                    .expected(expected)
+                    .actual(found)
+                    .source(self.link_source()),
+            );
         }
         if let Some(plan) = &self.record.plan {
             self.conflicts(plan).await?;
@@ -293,10 +537,16 @@ impl Backend {
         let mut own_seen = false;
         let mut servers = Vec::new();
         for list in ["DNSEx", "FallbackDNSEx"] {
-            let entries: GlobalServers =
-                property(&self.connection, &self.service_owner, PATH, IFACE, list)
-                    .await
-                    .map_err(|_| ExitDnsUnavailableReason::Unobserved)?;
+            let entries: GlobalServers = property(
+                &self.connection,
+                &self.service_owner,
+                PATH,
+                IFACE,
+                list,
+                "proxy_servers",
+            )
+            .await
+            .map_err(|_| ExitDnsUnavailableReason::Unobserved)?;
             if entries.len() > 256 {
                 return Err(ExitDnsUnavailableReason::Unobserved);
             }
@@ -370,29 +620,34 @@ impl Backend {
         ));
         listening
     }
-    async fn settings(
-        &self,
-        previous: &LinkSettings,
-        settings: &LinkSettings,
-    ) -> Result<(), SystemDnsError> {
+    async fn settings(&self, previous: &LinkSettings, settings: &LinkSettings) -> Checked<()> {
         let index = self.record.link.index as i32;
         let mut current = previous.clone();
+        let changed = |expected: &LinkSettings, actual: &LinkSettings, check| {
+            let (expected, found) = expected.differences(actual);
+            SystemDnsFailure::new(SystemDnsError::Conflict, check)
+                .expected(expected)
+                .actual(found)
+                .source(self.link_source())
+        };
         macro_rules! set {
             ($field:ident, $method:literal, $value:expr) => {{
                 // Effective defaults are not configured overrides. In
                 // particular an implicit DefaultRoute=false becomes true
                 // when DNS servers appear: explicitly set it before DNS.
                 self.verify().await?;
-                if read_settings(&self.connection, &self.service_owner, &self.path).await?
-                    != current
-                {
-                    return Err(SystemDnsError::Conflict);
+                let actual =
+                    read_settings(&self.connection, &self.service_owner, &self.path).await?;
+                if actual != current {
+                    return Err(changed(&current, &actual, "link_settings"));
                 }
                 let mut next = current.clone();
                 next.$field = $value;
                 self.call::<_, ()>($method, &(index, &next.$field)).await?;
-                if read_settings(&self.connection, &self.service_owner, &self.path).await? != next {
-                    return Err(SystemDnsError::Conflict);
+                let actual =
+                    read_settings(&self.connection, &self.service_owner, &self.path).await?;
+                if actual != next {
+                    return Err(changed(&next, &actual, "link_settings_applied"));
                 }
                 current = next;
             }};
@@ -405,14 +660,15 @@ impl Backend {
         set!(dns, "SetLinkDNSEx", settings.dns.clone());
         set!(domains, "SetLinkDomains", settings.domains.clone());
         if current != *settings {
-            return Err(SystemDnsError::Conflict);
+            return Err(changed(settings, &current, "link_settings_applied"));
         }
-        if read_settings(&self.connection, &self.service_owner, &self.path).await? != *settings {
-            return Err(SystemDnsError::Conflict);
+        let actual = read_settings(&self.connection, &self.service_owner, &self.path).await?;
+        if actual != *settings {
+            return Err(changed(settings, &actual, "link_settings_applied"));
         }
         self.verify().await
     }
-    pub async fn install(&mut self, plan: &SystemDnsPlan) -> Result<(), SystemDnsError> {
+    pub async fn install(&mut self, plan: &SystemDnsPlan) -> Checked<()> {
         self.observe().await?;
         self.conflicts(plan).await?;
         if !self.probed {
@@ -448,16 +704,24 @@ impl Backend {
         self.persist().await?;
         self.observe().await
     }
-    async fn probe(&mut self) -> Result<(), SystemDnsError> {
+    async fn probe(&mut self) -> Checked<()> {
+        let probe_failure = |error, actual: &str| {
+            SystemDnsFailure::new(error, "probe")
+                .expected("resolved forwards a nonce query to the owned link over UDP then TCP")
+                .actual(actual)
+        };
         let udp = tokio::net::UdpSocket::bind(SocketAddr::new(self.record.bind.ip(), 0))
             .await
-            .map_err(|_| SystemDnsError::Backend)?;
-        let address = udp.local_addr().map_err(|_| SystemDnsError::Backend)?;
+            .map_err(|error| probe_failure(SystemDnsError::Backend, &error.to_string()))?;
+        let address = udp
+            .local_addr()
+            .map_err(|error| probe_failure(SystemDnsError::Backend, &error.to_string()))?;
         let tcp = tokio::net::TcpListener::bind(address)
             .await
-            .map_err(|_| SystemDnsError::Backend)?;
+            .map_err(|error| probe_failure(SystemDnsError::Backend, &error.to_string()))?;
         let mut nonce = [0u8; 16];
-        getrandom::fill(&mut nonce).map_err(|_| SystemDnsError::Backend)?;
+        getrandom::fill(&mut nonce)
+            .map_err(|_| probe_failure(SystemDnsError::Backend, "no randomness"))?;
         let name = format!("p{:032x}.meshway-probe.test", u128::from_be_bytes(nonce));
         let probe = local_settings(address, vec![(name.clone(), true)]);
         self.record.pending = true;
@@ -473,39 +737,57 @@ impl Backend {
         );
         // Restore even after a known probe failure, but only if our exact
         // temporary settings remain. An uncertain mutation retains the journal.
-        if read_settings(&self.connection, &self.service_owner, &self.path).await? != probe {
-            return Err(SystemDnsError::Conflict);
+        let actual = read_settings(&self.connection, &self.service_owner, &self.path).await?;
+        if actual != probe {
+            let (expected, found) = probe.differences(&actual);
+            return Err(
+                SystemDnsFailure::new(SystemDnsError::Conflict, "link_settings")
+                    .expected(expected)
+                    .actual(found)
+                    .source(self.link_source()),
+            );
         }
         self.settings(&probe, &self.record.original).await?;
         self.record.pending = false;
         self.persist().await?;
-        if lookup.is_err() || !matches!(served, Ok(Ok(()))) {
-            return Err(SystemDnsError::Unsupported);
+        match (lookup, served) {
+            (Ok(_), Ok(Ok(()))) => {}
+            (Err(failure), _) => {
+                return Err(probe_failure(
+                    SystemDnsError::Unsupported,
+                    &format!("lookup failed: {failure}"),
+                ));
+            }
+            (_, Ok(Err(error))) => {
+                return Err(probe_failure(
+                    SystemDnsError::Unsupported,
+                    &format!("probe server: {error}"),
+                ));
+            }
+            (_, Err(_)) => {
+                return Err(probe_failure(
+                    SystemDnsError::Unsupported,
+                    "no UDP and TCP query within 5 s",
+                ));
+            }
         }
         self.probed = true;
         Ok(())
     }
-    pub async fn down(&mut self) -> Result<(), SystemDnsError> {
+    pub async fn down(&mut self) -> Checked<()> {
         self.observe().await?;
-        if self.record.installed.is_some() {
+        if let Some(installed) = self.record.installed.clone() {
             self.record.pending = true;
             self.persist().await?;
-            self.settings(
-                self.record
-                    .installed
-                    .as_ref()
-                    .ok_or(SystemDnsError::Conflict)?,
-                &self.record.original,
-            )
-            .await?;
+            let original = self.record.original.clone();
+            self.settings(&installed, &original).await?;
         }
+        let source = self.record_source();
         self.writes
-            .save(
-                self.directory.clone(),
-                "resolved.json",
-                &Option::<Record>::None,
-            )
-            .await?;
+            .save(self.directory.clone(), RECORD, &Option::<Record>::None)
+            .await
+            .at("record_write")
+            .map_err(|failure| failure.source(source))?;
         self.record.pending = false;
         self.record.installed = None;
         self.record.plan = None;
@@ -553,20 +835,21 @@ async fn attach(
     connection: &zbus::Connection,
     namespace: &Namespace,
     index: u32,
-) -> Result<(String, String), SystemDnsError> {
-    let owner: String = raw(
-        connection,
-        "org.freedesktop.DBus",
-        "/org/freedesktop/DBus",
-        "org.freedesktop.DBus",
-        "GetNameOwner",
-        &(SERVICE,),
-    )
-    .await?;
+) -> Checked<(String, String)> {
+    let owner = name_owner(connection).await?;
     verify_owner(connection, &owner, namespace).await?;
     verify_os_resolver(connection, &owner).await?;
-    let path: OwnedObjectPath =
-        raw(connection, &owner, PATH, IFACE, "GetLink", &(index as i32,)).await?;
+    let path: OwnedObjectPath = raw(
+        connection,
+        &owner,
+        PATH,
+        IFACE,
+        "GetLink",
+        &(index as i32,),
+        "resolved_link",
+    )
+    .await
+    .map_err(|failure| failure.expected(format!("resolved knows link index {index}")))?;
     Ok((owner, path.to_string()))
 }
 fn local_settings(bind: SocketAddr, domains: Vec<(String, bool)>) -> LinkSettings {
@@ -584,6 +867,9 @@ fn local_settings(bind: SocketAddr, domains: Vec<(String, bool)>) -> LinkSetting
         dnssec: "no".into(),
     }
 }
+/// One resolve1 call or property read; `check` names it in a failure, whose
+/// `actual` is the D-Bus error (for example `ServiceUnknown` while resolved
+/// restarts) or the 5 s deadline.
 async fn raw<B, R>(
     connection: &zbus::Connection,
     destination: &str,
@@ -591,23 +877,30 @@ async fn raw<B, R>(
     interface: &str,
     method: &str,
     body: &B,
-) -> Result<R, SystemDnsError>
+    check: &'static str,
+) -> Checked<R>
 where
     B: Serialize + DynamicType,
     R: for<'d> DynamicDeserialize<'d>,
 {
+    let source = format!("D-Bus {destination} {path} {interface}.{method}");
+    let failure = |actual: String| {
+        SystemDnsFailure::new(SystemDnsError::Backend, check)
+            .actual(actual)
+            .source(&source)
+    };
     tokio::time::timeout(TIMEOUT, async {
         let reply = connection
             .call_method(Some(destination), path, Some(interface), method, body)
             .await
-            .map_err(|_| SystemDnsError::Backend)?;
+            .map_err(|error| failure(error.to_string()))?;
         reply
             .body()
             .deserialize()
-            .map_err(|_| SystemDnsError::Backend)
+            .map_err(|error| failure(format!("unexpected reply: {error}")))
     })
     .await
-    .map_err(|_| SystemDnsError::Backend)?
+    .map_err(|_| failure("no reply within 5 s".into()))?
 }
 async fn property<T>(
     connection: &zbus::Connection,
@@ -615,10 +908,12 @@ async fn property<T>(
     path: &str,
     interface: &str,
     name: &str,
-) -> Result<T, SystemDnsError>
+    check: &'static str,
+) -> Checked<T>
 where
     T: TryFrom<OwnedValue>,
 {
+    let source = format!("D-Bus {destination} {path} {interface}.{name}");
     let value: OwnedValue = raw(
         connection,
         destination,
@@ -626,26 +921,42 @@ where
         "org.freedesktop.DBus.Properties",
         "Get",
         &(interface, name),
+        check,
     )
-    .await?;
-    value.try_into().map_err(|_| SystemDnsError::Backend)
+    .await
+    .map_err(|failure| failure.source(&source))?;
+    value.try_into().map_err(|_| {
+        SystemDnsFailure::new(SystemDnsError::Backend, check)
+            .actual("unexpected property type")
+            .source(source)
+    })
 }
-async fn verify_owner(
-    connection: &zbus::Connection,
-    expected: &str,
-    namespace: &Namespace,
-) -> Result<(), SystemDnsError> {
-    let current: String = raw(
+async fn name_owner(connection: &zbus::Connection) -> Checked<String> {
+    raw(
         connection,
         "org.freedesktop.DBus",
         "/org/freedesktop/DBus",
         "org.freedesktop.DBus",
         "GetNameOwner",
         &(SERVICE,),
+        "resolved_owner",
     )
-    .await?;
+    .await
+    .map_err(|failure| failure.expected(format!("{SERVICE} has a bus owner")))
+}
+async fn verify_owner(
+    connection: &zbus::Connection,
+    expected: &str,
+    namespace: &Namespace,
+) -> Checked<()> {
+    let current = name_owner(connection).await?;
     if current != expected {
-        return Err(SystemDnsError::Conflict);
+        return Err(
+            SystemDnsFailure::new(SystemDnsError::Conflict, "resolved_owner")
+                .expected(expected)
+                .actual(current)
+                .source(format!("D-Bus GetNameOwner({SERVICE})")),
+        );
     }
     let pid: u32 = raw(
         connection,
@@ -654,6 +965,7 @@ async fn verify_owner(
         "org.freedesktop.DBus",
         "GetConnectionUnixProcessID",
         &(expected,),
+        "resolved_process",
     )
     .await?;
     // resolved commonly runs as systemd-resolve, not root. The system bus owns
@@ -661,19 +973,45 @@ async fn verify_owner(
     namespace.verify_pid(pid)
 }
 
-async fn verify_os_resolver(
-    connection: &zbus::Connection,
-    owner: &str,
-) -> Result<(), SystemDnsError> {
-    let mode: String = property(connection, owner, PATH, IFACE, "ResolvConfMode").await?;
-    let listener: String = property(connection, owner, PATH, IFACE, "DNSStubListener").await?;
+async fn verify_os_resolver(connection: &zbus::Connection, owner: &str) -> Checked<()> {
+    let mode: String = property(
+        connection,
+        owner,
+        PATH,
+        IFACE,
+        "ResolvConfMode",
+        "resolv_conf_mode",
+    )
+    .await?;
+    let listener: String = property(
+        connection,
+        owner,
+        PATH,
+        IFACE,
+        "DNSStubListener",
+        "stub_listener",
+    )
+    .await?;
     // An active resolve1 bus is insufficient: uplink/foreign resolv.conf lets
     // libc bypass per-link routing. Initial OS support requires the actual
     // dynamically maintained resolved stub file and both UDP/TCP listeners.
     // Static mode does not publish installed search domains to libc. NSS overrides are separate
     // host integration, never inferred from D-Bus method success.
-    if mode != "stub" || listener != "yes" {
-        return Err(SystemDnsError::Unsupported);
+    if mode != "stub" {
+        return Err(
+            SystemDnsFailure::new(SystemDnsError::Unsupported, "resolv_conf_mode")
+                .expected("stub")
+                .actual(mode)
+                .source(format!("D-Bus {owner} {PATH} {IFACE}.ResolvConfMode")),
+        );
+    }
+    if listener != "yes" {
+        return Err(
+            SystemDnsFailure::new(SystemDnsError::Unsupported, "stub_listener")
+                .expected("yes")
+                .actual(listener)
+                .source(format!("D-Bus {owner} {PATH} {IFACE}.DNSStubListener")),
+        );
     }
     Ok(())
 }
@@ -681,19 +1019,26 @@ async fn read_settings(
     connection: &zbus::Connection,
     owner: &str,
     path: &str,
-) -> Result<LinkSettings, SystemDnsError> {
-    const LINK: &str = "org.freedesktop.resolve1.Link";
+) -> Checked<LinkSettings> {
+    const CHECK: &str = "link_settings";
     let settings = LinkSettings {
-        dns: property(connection, owner, path, LINK, "DNSEx").await?,
-        domains: property(connection, owner, path, LINK, "Domains").await?,
-        default_route: property(connection, owner, path, LINK, "DefaultRoute").await?,
-        llmnr: property(connection, owner, path, LINK, "LLMNR").await?,
-        mdns: property(connection, owner, path, LINK, "MulticastDNS").await?,
-        tls: property(connection, owner, path, LINK, "DNSOverTLS").await?,
-        dnssec: property(connection, owner, path, LINK, "DNSSEC").await?,
+        dns: property(connection, owner, path, LINK, "DNSEx", CHECK).await?,
+        domains: property(connection, owner, path, LINK, "Domains", CHECK).await?,
+        default_route: property(connection, owner, path, LINK, "DefaultRoute", CHECK).await?,
+        llmnr: property(connection, owner, path, LINK, "LLMNR", CHECK).await?,
+        mdns: property(connection, owner, path, LINK, "MulticastDNS", CHECK).await?,
+        tls: property(connection, owner, path, LINK, "DNSOverTLS", CHECK).await?,
+        dnssec: property(connection, owner, path, LINK, "DNSSEC", CHECK).await?,
     };
     if settings.dns.len() > 8 || settings.domains.len() > 256 {
-        return Err(SystemDnsError::Capacity);
+        return Err(SystemDnsFailure::new(SystemDnsError::Capacity, CHECK)
+            .expected("at most 8 servers and 256 domains")
+            .actual(format!(
+                "{} servers, {} domains",
+                settings.dns.len(),
+                settings.domains.len()
+            ))
+            .source(format!("D-Bus {owner} {path} {LINK}")));
     }
     Ok(settings)
 }
@@ -765,6 +1110,51 @@ async fn serve_probe(
 
 #[cfg(test)]
 mod tests {
+    /// A link-settings conflict names only the fields that differ, as
+    /// resolvectl shows them, with the installation marker shortened.
+    #[test]
+    fn a_settings_conflict_names_the_differing_fields() {
+        let bind = "127.0.0.1:5354".parse().unwrap();
+        let marker = format!("i{}.{}", "ab".repeat(16), super::MARKER_SUFFIX);
+        let installed = super::local_settings(
+            bind,
+            vec![("meshway.test".into(), false), (marker.clone(), true)],
+        );
+        let mut actual = installed.clone();
+        actual.domains = vec![("meshway.test".into(), false)];
+        actual.default_route = true;
+        let (expected, found) = installed.differences(&actual);
+        assert_eq!(
+            expected,
+            "domains=[meshway.test, ~iabababab….meshway-installation.invalid] defaultRoute=false"
+        );
+        assert_eq!(found, "domains=[meshway.test] defaultRoute=true");
+        assert_eq!(
+            installed.differences(&installed),
+            (String::new(), String::new())
+        );
+        let original = super::local_settings(bind, Vec::new());
+        let (expected, found) = installed.differences(&original);
+        assert!(!expected.contains("dns="), "{expected}");
+        let mut cleared = original.clone();
+        cleared.dns.clear();
+        assert_eq!(
+            original.differences(&cleared),
+            ("dns=[127.0.0.1:5354]".into(), "dns=[]".into())
+        );
+        let failure =
+            crate::SystemDnsFailure::new(crate::SystemDnsError::Conflict, "link_settings")
+                .expected(expected)
+                .actual(found)
+                .source(
+                    "D-Bus :1.1 /org/freedesktop/resolve1/link/_34 org.freedesktop.resolve1.Link",
+                );
+        assert_eq!(
+            failure.to_string(),
+            "DNS link_settings check failed (system DNS resource ownership conflict): expected domains=[meshway.test, ~iabababab….meshway-installation.invalid]; found domains=[] [D-Bus :1.1 /org/freedesktop/resolve1/link/_34 org.freedesktop.resolve1.Link]"
+        );
+    }
+
     #[test]
     fn the_proxy_stub_needs_its_exact_udp_and_tcp_sockets() {
         let header = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n";

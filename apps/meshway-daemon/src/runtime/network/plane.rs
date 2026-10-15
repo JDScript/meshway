@@ -408,6 +408,7 @@ impl meshway_engine::Components for Plane {
             self.dns.down(&mut self.host).await.map_err(|_| ())
         };
         if negative.is_err() {
+            self.failure_detail = self.dns.detail();
             return Err(self.fail(Problem::Dns, ApplyFailure::Dns));
         }
         if !netmap.self_.enabled {

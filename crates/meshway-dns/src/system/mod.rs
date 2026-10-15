@@ -109,10 +109,93 @@ pub enum SystemDnsError {
     ResolverPlan,
 }
 
+/// Which ownership check a system DNS operation stopped at, what it expected
+/// and found, and where it read that: one record answers which invariant
+/// failed and what broke it. It never carries a secret (the installation
+/// marker is shortened) and grants nothing.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SystemDnsFailure {
+    pub error: SystemDnsError,
+    /// Stable snake_case name of the check, listed in the runtime reference.
+    pub check: &'static str,
+    pub expected: Option<String>,
+    pub actual: Option<String>,
+    /// The file, D-Bus property/method or netlink dump the check read.
+    pub source: Option<String>,
+}
+impl SystemDnsFailure {
+    pub fn new(error: SystemDnsError, check: &'static str) -> Self {
+        Self {
+            error,
+            check,
+            expected: None,
+            actual: None,
+            source: None,
+        }
+    }
+    pub fn expected(mut self, value: impl std::fmt::Display) -> Self {
+        self.expected = Some(bounded(value.to_string()));
+        self
+    }
+    pub fn actual(mut self, value: impl std::fmt::Display) -> Self {
+        self.actual = Some(bounded(value.to_string()));
+        self
+    }
+    pub fn source(mut self, value: impl std::fmt::Display) -> Self {
+        self.source = Some(bounded(value.to_string()));
+        self
+    }
+}
+/// One log line and one Status field: keep each part bounded.
+fn bounded(mut value: String) -> String {
+    const LIMIT: usize = 512;
+    if value.len() > LIMIT {
+        let mut end = LIMIT;
+        while !value.is_char_boundary(end) {
+            end -= 1;
+        }
+        value.truncate(end);
+        value.push('…');
+    }
+    value
+}
+impl std::fmt::Display for SystemDnsFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "DNS {} check failed ({})", self.check, self.error)?;
+        if let Some(expected) = &self.expected {
+            write!(f, ": expected {expected}")?;
+        }
+        if let Some(actual) = &self.actual {
+            write!(
+                f,
+                "{} found {actual}",
+                if self.expected.is_some() { ";" } else { ":" }
+            )?;
+        }
+        if let Some(source) = &self.source {
+            write!(f, " [{source}]")?;
+        }
+        Ok(())
+    }
+}
+/// Attach the failed check to a plain error.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) trait At<T> {
+    fn at(self, check: &'static str) -> Result<T, SystemDnsFailure>;
+}
+impl<T> At<T> for Result<T, SystemDnsError> {
+    fn at(self, check: &'static str) -> Result<T, SystemDnsFailure> {
+        self.map_err(|error| SystemDnsFailure::new(error, check))
+    }
+}
+
 /// A host adapter must verify the kernel-owned link before AND after external
 /// waits. Public metadata is not a grant and cannot substitute for that adapter.
+/// A failed or interrupted verification proves nothing either way: it fails
+/// this call only. The link ends (`ended`) only when its owner removes it or
+/// the Kernel's ownership ends.
 pub trait OwnedDnsLink: Send + Sync + 'static {
-    fn verify(&self) -> DnsFuture<'_, Result<DnsLinkIdentity, SystemDnsError>>;
+    fn verify(&self) -> DnsFuture<'_, Result<DnsLinkIdentity, SystemDnsFailure>>;
     fn ended(&self) -> DnsFuture<'_, ()>;
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -371,6 +454,9 @@ impl SystemDnsOwner {
     }
     pub async fn recover(&mut self) -> Result<(), SystemDnsError> {
         Err(SystemDnsError::Unsupported)
+    }
+    pub fn failure(&self) -> Option<&SystemDnsFailure> {
+        None
     }
     pub async fn down(&mut self) -> Result<(), SystemDnsError> {
         Err(SystemDnsError::Unsupported)

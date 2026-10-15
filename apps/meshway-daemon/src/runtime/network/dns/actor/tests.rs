@@ -63,6 +63,7 @@ async fn shutdown_during_observation(stall: bool) {
         stall,
     });
     let fault = actor.fault.clone();
+    let actor_detail = actor.detail.clone();
     tokio::time::timeout(Duration::from_secs(3), observing.recv())
         .await
         .unwrap()
@@ -77,6 +78,12 @@ async fn shutdown_during_observation(stall: bool) {
     assert!(!join.await.unwrap());
     assert_eq!(observations.load(Ordering::SeqCst), 1);
     assert_eq!(fault.borrow().is_some(), stall);
+    if stall {
+        // A stalled observation names the deadline it missed.
+        let detail = actor_detail.borrow().clone().unwrap();
+        assert_eq!(detail.check, "observe_deadline");
+        assert_eq!(detail.error, SystemDnsError::Backend);
+    }
 }
 
 struct FailingOwner {
@@ -112,6 +119,13 @@ impl Owner for FailingOwner {
     async fn shutdown(self, _: bool) -> Result<(), SystemDnsError> {
         Ok(())
     }
+    fn failure(&self) -> Option<SystemDnsFailure> {
+        Some(
+            SystemDnsFailure::new(SystemDnsError::Backend, "anchor_netlink")
+                .actual("dump failed: kernel netlink operation failed")
+                .source("rtnetlink RTM_GETROUTE"),
+        )
+    }
 }
 
 #[tokio::test]
@@ -127,6 +141,10 @@ async fn failed_owner_keeps_its_fault_while_it_retries_recovery_until_it_succeed
     });
     let mut fault = actor.fault.clone();
     fault.wait_for(Option::is_some).await.unwrap();
+    // The fault carries the check the owner recorded, for the report.
+    let detail = actor.detail.borrow().clone().unwrap();
+    assert_eq!(detail.check, "anchor_netlink");
+    assert_eq!(detail.source.as_deref(), Some("rtnetlink RTM_GETROUTE"));
     let mut recovered = actor.recovered.clone();
     tokio::time::timeout(
         RECOVERY_INTERVAL * 3,

@@ -146,11 +146,25 @@ async fn assert_dns_reader_drop(
     let mut pending = Box::pin(reader.verify());
     assert!(futures_util::poll!(pending.as_mut()).is_pending());
     drop(pending); // An interrupted dump must not leave a reusable reader FD.
-    tokio::time::timeout(Duration::from_secs(1), reader.ended())
-        .await
-        .unwrap();
-    assert!(reader.verify().await.is_err());
     dns_test_wait_reader_closed(&socket).await;
+    // ... but it proves nothing about the anchor (a host-wide RTNL stall
+    // abandons reads): the anchor stays, and the next read opens a new FD.
+    assert!(
+        tokio::time::timeout(Duration::from_millis(200), reader.ended())
+            .await
+            .is_err(),
+        "an interrupted read ended the anchor"
+    );
+    let sockets = dns_test_socket_ids();
+    assert_eq!(reader.verify().await.unwrap(), *identity);
+    let reopened = dns_test_new_reader_socket(&sockets);
+    assert_ne!(reopened, socket);
+    // A deadline that elapses mid-dump (the observation timeout) is the same.
+    for _ in 0..4 {
+        let _ = tokio::time::timeout(Duration::ZERO, reader.verify()).await;
+        assert_eq!(reader.verify().await.unwrap(), *identity);
+    }
+    drop(reader);
     assert_eq!(kept.verify().await.unwrap(), *identity);
     kernel.verify().await.unwrap();
 }
@@ -250,7 +264,25 @@ async fn foreign_dns_anchor_mutation_blocks_cleanup_without_removing_the_interfa
     )
     .await
     .unwrap();
-    assert!(guard.verify().await.is_err());
+    let failure = guard.verify().await.unwrap_err();
+    // The anchor's alias no longer matches: the failure names the check and
+    // what showed it (the dump, or the monitor ending kernel ownership if it
+    // saw the change first).
+    match failure.check {
+        "anchor_link" => assert_eq!(
+            failure.source.as_deref(),
+            Some("rtnetlink RTM_GETLINK"),
+            "{failure}"
+        ),
+        "anchor_ended" => assert!(
+            failure
+                .actual
+                .as_deref()
+                .is_some_and(|actual| actual.contains("kernel ownership ended")),
+            "{failure}"
+        ),
+        _ => panic!("unexpected check: {failure}"),
+    }
     assert!(kernel.remove_dns_anchor().await.is_err());
     let links = collect(
         kernel

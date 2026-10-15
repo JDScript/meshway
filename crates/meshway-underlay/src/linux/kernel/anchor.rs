@@ -2,7 +2,7 @@
 //! It has a local installation address, never a leased Server Mesh address.
 use super::{Kernel, Pending, collect, execute, get_addresses, get_routes};
 use crate::{Error, Result};
-use meshway_dns::{DnsFuture, DnsLinkIdentity, OwnedDnsLink, SystemDnsError};
+use meshway_dns::{DnsFuture, DnsLinkIdentity, OwnedDnsLink, SystemDnsError, SystemDnsFailure};
 use rtnetlink::{
     Handle, LinkDummy,
     packet_route::{
@@ -31,25 +31,76 @@ pub(super) struct Record {
     pub mtu: u32,
 }
 struct Guard {
-    // A separate request socket, used only by the read-only verifier below.
-    // Cloning Kernel.handle would share its multipart-dump slot with mutations
-    // and their verification. Cloning Arc<Guard> does not allocate another FD.
-    handle: Handle,
-    reads: tokio::sync::Mutex<()>,
+    /// The read-only verifier's own request socket. Cloning Kernel.handle
+    /// would share its multipart-dump slot with mutations and their
+    /// verification. A read that does not complete closes it and the next
+    /// read opens another: an interrupted read proves nothing about the
+    /// anchor, so it never ends the anchor itself.
+    reader: tokio::sync::Mutex<Option<Reader>>,
     shared: Arc<super::super::protection::Shared>,
     /// For the source-capture table, which the collision check exempts.
     expected: Arc<std::sync::Mutex<super::monitor::Expected>>,
     record: Record,
     limit: usize,
+    /// Ends the anchor: its owner removed it (`remove_dns_anchor`) or
+    /// dropped this guard.
     cancelled: CancellationToken,
 }
+#[derive(Clone)]
+struct Reader {
+    handle: Handle,
+    /// Closes this socket (its connection task ends), never the anchor.
+    closed: CancellationToken,
+}
 impl Guard {
-    fn check(&self) -> Result<()> {
-        self.shared.check()?;
-        if self.cancelled.is_cancelled() {
-            return Err(Error::Conflict);
-        }
-        Ok(())
+    fn check(&self) -> std::result::Result<(), SystemDnsFailure> {
+        let actual = if self.shared.conflict.is_cancelled() {
+            "the host's kernel ownership ended on a conflict (its owner logged why)"
+        } else if self.shared.tasks.stop.is_cancelled() {
+            "the host owner stopped"
+        } else if self.cancelled.is_cancelled() {
+            "the anchor was removed or its guard dropped"
+        } else {
+            return Ok(());
+        };
+        Err(
+            SystemDnsFailure::new(SystemDnsError::Conflict, "anchor_ended")
+                .expected(format!(
+                    "anchor {} owned by this Kernel",
+                    self.record.identity.name
+                ))
+                .actual(actual)
+                .source("Kernel DNS anchor"),
+        )
+    }
+    /// A new request socket and its connection task, bounded by the host's
+    /// task capacity.
+    fn open_reader(&self) -> Result<Reader> {
+        let closed = self.cancelled.child_token();
+        let (connection, handle, unsolicited) = rtnetlink::new_connection()?;
+        drop(unsolicited); // no multicast subscriptions on this read socket
+        let stop = closed.clone();
+        let conflict = self.shared.conflict.clone();
+        // Tasks rejects at its existing capacity bound. On rejection the
+        // supplied future (and its newly allocated socket) is dropped here.
+        self.shared.tasks.spawn(async move {
+            tokio::select! { biased;
+                _ = stop.cancelled() => {},
+                _ = conflict.cancelled() => {},
+                () = connection => { stop.cancel(); },
+            }
+        })?;
+        Ok(Reader { handle, closed })
+    }
+    fn failure(&self, mismatch: Mismatch) -> SystemDnsFailure {
+        let identity = &self.record.identity;
+        SystemDnsFailure::new(SystemDnsError::Conflict, mismatch.check)
+            .expected(format!(
+                "dummy {} index {} up with only {}/32 (alias {}), no other owner of that address",
+                identity.name, identity.index, identity.address, self.record.alias
+            ))
+            .actual(mismatch.actual)
+            .source(mismatch.source)
     }
 }
 impl Drop for Guard {
@@ -60,39 +111,51 @@ impl Drop for Guard {
 }
 
 // Dropping a response stream does not cancel the kernel's multipart dump. An
-// interrupted read must close/poison this reader before another caller can use
+// interrupted or failed read closes its reader before another caller can use
 // its FD. A caller cancelled while still waiting for the mutex owns no dump.
 struct Reading(Option<CancellationToken>);
 impl Drop for Reading {
     fn drop(&mut self) {
-        if let Some(cancelled) = &self.0 {
-            cancelled.cancel();
+        if let Some(closed) = &self.0 {
+            closed.cancel();
         }
     }
 }
 impl OwnedDnsLink for Guard {
-    fn verify(&self) -> DnsFuture<'_, std::result::Result<DnsLinkIdentity, SystemDnsError>> {
+    fn verify(&self) -> DnsFuture<'_, std::result::Result<DnsLinkIdentity, SystemDnsFailure>> {
         Box::pin(async {
-            self.check().map_err(|_| SystemDnsError::Conflict)?;
+            self.check()?;
             // GET execute() enqueues eagerly, so lock before invoking even the
             // first verifier helper, not inside collect(response_stream).
-            let _read = tokio::select! { biased;
-                _ = self.ended() => return Err(SystemDnsError::Conflict),
-                read = self.reads.lock() => read,
+            let mut slot = tokio::select! { biased;
+                _ = self.ended() => return Err(self.check().err().unwrap_or_else(|| self.failure(Mismatch::ended()))),
+                slot = self.reader.lock() => slot,
             };
-            self.check().map_err(|_| SystemDnsError::Conflict)?;
-            let mut reading = Reading(Some(self.cancelled.clone()));
+            self.check()?;
+            let reader = match slot.as_ref().filter(|reader| !reader.closed.is_cancelled()) {
+                Some(reader) => reader.clone(),
+                None => {
+                    let reader = self.open_reader().map_err(|error| {
+                        SystemDnsFailure::new(SystemDnsError::Backend, "anchor_reader")
+                            .actual(error.to_string())
+                            .source("rtnetlink socket")
+                    })?;
+                    *slot = Some(reader.clone());
+                    reader
+                }
+            };
+            let mut reading = Reading(Some(reader.closed.clone()));
             let capture = self
                 .expected
                 .lock()
-                .map_err(|_| SystemDnsError::Conflict)?
+                .map_err(|_| self.failure(Mismatch::ended()))?
                 .egress_table;
             tokio::select! { biased;
-                _ = self.ended() => return Err(SystemDnsError::Conflict),
-                result = verify(&self.handle, &self.record, capture, self.limit) => result.map_err(|_| SystemDnsError::Conflict)?,
+                _ = self.ended() => return Err(self.check().err().unwrap_or_else(|| self.failure(Mismatch::ended()))),
+                result = inspect(&reader.handle, &self.record, capture, self.limit) => result.map_err(|mismatch| self.failure(mismatch))?,
             }
-            self.check().map_err(|_| SystemDnsError::Conflict)?;
             reading.0 = None;
+            self.check()?;
             Ok(self.record.identity.clone())
         })
     }
@@ -320,30 +383,16 @@ impl Kernel {
         }
         let record = self.journal.anchor.clone().ok_or(Error::Journal)?;
         self.shared.check()?;
-        let cancelled = self.dns_cancel.child_token();
-        let (connection, handle, unsolicited) = rtnetlink::new_connection()?;
-        drop(unsolicited); // no multicast subscriptions on this read socket
-        let reader_stop = cancelled.clone();
-        let conflict = self.shared.conflict.clone();
-        // Tasks rejects at its existing capacity bound. On rejection the
-        // supplied future (and its newly allocated socket) is dropped here.
-        self.shared.tasks.spawn(async move {
-            tokio::select! { biased;
-                _ = reader_stop.cancelled() => {},
-                _ = conflict.cancelled() => {},
-                () = connection => { reader_stop.cancel(); },
-            }
-        })?;
-        let guard = Guard {
-            handle,
-            reads: tokio::sync::Mutex::new(()),
+        let mut guard = Guard {
+            reader: tokio::sync::Mutex::new(None),
             shared: self.shared.clone(),
             expected: self.expected.clone(),
             record,
             limit: self.options.max_kernel_objects,
-            cancelled,
+            cancelled: self.dns_cancel.child_token(),
         };
-        guard.check()?;
+        *guard.reader.get_mut() = Some(guard.open_reader()?);
+        guard.check().map_err(|_| Error::Conflict)?;
         Ok(Arc::new(guard))
     }
 
@@ -476,6 +525,83 @@ pub(super) fn route_conflicts(address: Ipv4Addr, owned: Option<u32>, route: &Rou
                 .any(|a| matches!(a, RouteAttribute::Oif(i) if *i == index))
         }))
 }
+/// Why the anchor failed a verification: the check, what was found and
+/// which dump showed it. `error` is what Kernel callers see.
+pub(super) struct Mismatch {
+    error: Error,
+    check: &'static str,
+    actual: String,
+    source: &'static str,
+}
+impl Mismatch {
+    fn new(check: &'static str, actual: String, source: &'static str) -> Self {
+        Self {
+            error: Error::Conflict,
+            check,
+            actual,
+            source,
+        }
+    }
+    fn ended() -> Self {
+        Self::new(
+            "anchor_ended",
+            "ended while verifying".into(),
+            "Kernel DNS anchor",
+        )
+    }
+    /// A dump that failed, timed out (5 s) or exceeded the object limit.
+    fn dump(source: &'static str) -> impl Fn(Error) -> Self {
+        move |error| Self {
+            actual: format!("dump failed: {error}"),
+            error,
+            check: "anchor_netlink",
+            source,
+        }
+    }
+}
+const LINKS: &str = "rtnetlink RTM_GETLINK";
+const ADDRESSES: &str = "rtnetlink RTM_GETADDR";
+const ROUTES: &str = "rtnetlink RTM_GETROUTE";
+
+fn describe_link(link: &LinkMessage) -> String {
+    let name = link.attributes.iter().find_map(|a| match a {
+        LinkAttribute::IfName(name) => Some(name.as_str()),
+        _ => None,
+    });
+    let mtu = link.attributes.iter().find_map(|a| match a {
+        LinkAttribute::Mtu(mtu) => Some(*mtu),
+        _ => None,
+    });
+    let dummy = link.attributes.iter().any(|a| matches!(a, LinkAttribute::LinkInfo(infos) if infos.iter().any(|info| matches!(info, LinkInfo::Kind(InfoKind::Dummy)))));
+    format!(
+        "index {} name {} mtu {} {} flags {:?}",
+        link.header.index,
+        name.unwrap_or("?"),
+        mtu.map_or_else(|| "?".into(), |mtu| mtu.to_string()),
+        if dummy { "dummy" } else { "not dummy" },
+        link.header.flags
+    )
+}
+fn describe_route(route: &RouteMessage) -> String {
+    let destination = route.attributes.iter().find_map(|a| match a {
+        RouteAttribute::Destination(RouteAddress::Inet(ip)) => Some(ip.to_string()),
+        _ => None,
+    });
+    let oif = route.attributes.iter().find_map(|a| match a {
+        RouteAttribute::Oif(index) => Some(*index),
+        _ => None,
+    });
+    format!(
+        "route {}/{} table {} dev index {} ({:?}, {:?})",
+        destination.unwrap_or_else(|| "?".into()),
+        route.header.destination_prefix_length,
+        super::route_table(route),
+        oif.map_or_else(|| "?".into(), |index| index.to_string()),
+        route.header.kind,
+        route.header.protocol
+    )
+}
+
 /// `capture` is the source-capture table: only the capture selector looks it
 /// up, after the local table, so its routes never steer the anchor address.
 async fn collision(
@@ -485,15 +611,39 @@ async fn collision(
     capture: Option<u32>,
     limit: usize,
 ) -> Result<()> {
-    let addresses = get_addresses(handle, limit).await?;
-    if addresses.iter().any(|entry| Some(entry.header.index) != owned && entry.attributes.iter().any(|a| matches!(a, AddressAttribute::Address(IpAddr::V4(ip)) | AddressAttribute::Local(IpAddr::V4(ip)) if *ip == address))) { return Err(Error::Conflict); }
-    if get_routes(handle, limit)
-        .await?
+    find_collision(handle, address, owned, capture, limit)
+        .await
+        .map_err(|mismatch| mismatch.error)
+}
+async fn find_collision(
+    handle: &Handle,
+    address: Ipv4Addr,
+    owned: Option<u32>,
+    capture: Option<u32>,
+    limit: usize,
+) -> std::result::Result<(), Mismatch> {
+    let addresses = get_addresses(handle, limit)
+        .await
+        .map_err(Mismatch::dump(ADDRESSES))?;
+    if let Some(entry) = addresses.iter().find(|entry| Some(entry.header.index) != owned && entry.attributes.iter().any(|a| matches!(a, AddressAttribute::Address(IpAddr::V4(ip)) | AddressAttribute::Local(IpAddr::V4(ip)) if *ip == address))) {
+        return Err(Mismatch::new(
+            "anchor_collision",
+            format!("{address} also on index {}", entry.header.index),
+            ADDRESSES,
+        ));
+    }
+    if let Some(route) = get_routes(handle, limit)
+        .await
+        .map_err(Mismatch::dump(ROUTES))?
         .iter()
         .filter(|route| capture != Some(super::route_table(route)))
-        .any(|route| route_conflicts(address, owned, route))
+        .find(|route| route_conflicts(address, owned, route))
     {
-        return Err(Error::Conflict);
+        return Err(Mismatch::new(
+            "anchor_collision",
+            describe_route(route),
+            ROUTES,
+        ));
     }
     Ok(())
 }
@@ -503,22 +653,42 @@ pub(super) async fn verify(
     capture: Option<u32>,
     limit: usize,
 ) -> Result<()> {
+    inspect(handle, record, capture, limit)
+        .await
+        .map_err(|mismatch| mismatch.error)
+}
+async fn inspect(
+    handle: &Handle,
+    record: &Record,
+    capture: Option<u32>,
+    limit: usize,
+) -> std::result::Result<(), Mismatch> {
     // The journal that holds this record carries the namespace cookie; the
     // anchor itself is proven resident by its link and alias below.
-    if !super::namespace::Identity::current()?.is(
+    let current = super::namespace::Identity::current().map_err(|error| Mismatch {
+        actual: format!("namespace unreadable: {error}"),
+        error,
+        check: "anchor_namespace",
+        source: "/proc/self/ns/net",
+    })?;
+    if !current.is(
         &record.identity.boot,
         record.identity.namespace_device,
         record.identity.namespace_inode,
         None,
     ) {
-        return Err(Error::Conflict);
+        return Err(Mismatch::new(
+            "anchor_namespace",
+            format!("netns {}:{}", current.device, current.inode),
+            "/proc/self/ns/net",
+        ));
     }
-    let link = owned_link(handle, record, limit).await?;
+    let link = find_owned_link(handle, record, limit).await?;
     if !link_matches(record, &link) {
-        return Err(Error::Conflict);
+        return Err(Mismatch::new("anchor_link", describe_link(&link), LINKS));
     }
-    verify_addresses(handle, record, limit).await?;
-    collision(
+    find_addresses(handle, record, limit).await?;
+    find_collision(
         handle,
         record.identity.address,
         Some(record.identity.index),
@@ -529,7 +699,18 @@ pub(super) async fn verify(
 }
 
 async fn owned_link(handle: &Handle, record: &Record, limit: usize) -> Result<LinkMessage> {
-    let links = collect(handle.link().get().execute(), limit).await?;
+    find_owned_link(handle, record, limit)
+        .await
+        .map_err(|mismatch| mismatch.error)
+}
+async fn find_owned_link(
+    handle: &Handle,
+    record: &Record,
+    limit: usize,
+) -> std::result::Result<LinkMessage, Mismatch> {
+    let links = collect(handle.link().get().execute(), limit)
+        .await
+        .map_err(Mismatch::dump(LINKS))?;
     let matches: Vec<_> = links
         .iter()
         .filter(|link| {
@@ -540,20 +721,64 @@ async fn owned_link(handle: &Handle, record: &Record, limit: usize) -> Result<Li
                 })
         })
         .collect();
-    if matches.len() != 1 || !device_matches(record, matches[0]) {
-        return Err(Error::Conflict);
+    match matches.as_slice() {
+        [link] if device_matches(record, link) => Ok((*link).clone()),
+        [link] => Err(Mismatch::new("anchor_link", describe_link(link), LINKS)),
+        links => Err(Mismatch::new(
+            "anchor_link",
+            format!(
+                "{} links with its index, name or alias{}",
+                links.len(),
+                links
+                    .iter()
+                    .map(|link| format!("; {}", describe_link(link)))
+                    .collect::<String>()
+            ),
+            LINKS,
+        )),
     }
-    Ok(matches[0].clone())
 }
 
 async fn verify_addresses(handle: &Handle, record: &Record, limit: usize) -> Result<()> {
-    let addresses = get_addresses(handle, limit).await?;
+    find_addresses(handle, record, limit)
+        .await
+        .map_err(|mismatch| mismatch.error)
+}
+async fn find_addresses(
+    handle: &Handle,
+    record: &Record,
+    limit: usize,
+) -> std::result::Result<(), Mismatch> {
+    let addresses = get_addresses(handle, limit)
+        .await
+        .map_err(Mismatch::dump(ADDRESSES))?;
     let owned: Vec<_> = addresses
         .iter()
         .filter(|address| address.header.index == record.identity.index)
         .collect();
-    if owned.len() != 1 || !address_matches(record, owned[0]) {
-        return Err(Error::Conflict);
+    match owned.as_slice() {
+        [address] if address_matches(record, address) => Ok(()),
+        owned => Err(Mismatch::new(
+            "anchor_address",
+            format!(
+                "{} addresses on index {}{}",
+                owned.len(),
+                record.identity.index,
+                owned
+                    .iter()
+                    .map(|address| format!(
+                        "; {:?}/{} scope {:?}",
+                        address.attributes.iter().find_map(|a| match a {
+                            AddressAttribute::Local(ip) | AddressAttribute::Address(ip) =>
+                                Some(*ip),
+                            _ => None,
+                        }),
+                        address.header.prefix_len,
+                        address.header.scope
+                    ))
+                    .collect::<String>()
+            ),
+            ADDRESSES,
+        )),
     }
-    Ok(())
 }

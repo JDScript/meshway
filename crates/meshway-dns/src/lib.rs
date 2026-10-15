@@ -41,7 +41,8 @@ pub use selection::{
 pub use service::{Service, ServiceLimits};
 pub use system::{
     DnsLinkIdentity, ExitDnsUnavailableReason, OwnedDnsLink, SystemDnsBackend, SystemDnsError,
-    SystemDnsOwner, SystemDnsPlan, SystemDnsSettings, SystemResolverSnapshot, exit_resolvers,
+    SystemDnsFailure, SystemDnsOwner, SystemDnsPlan, SystemDnsSettings, SystemResolverSnapshot,
+    exit_resolvers,
 };
 pub use tcp::{PayloadCodec, TcpCodec, TcpError};
 pub use wire::{

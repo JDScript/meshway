@@ -2,7 +2,8 @@
 use super::Runtime;
 use meshway_configuration::netmap::NodeNetmap;
 use meshway_dns::{
-    SystemDnsBackend, SystemDnsError, SystemDnsOwner, SystemDnsReservation, SystemDnsSettings,
+    SystemDnsBackend, SystemDnsError, SystemDnsFailure, SystemDnsOwner, SystemDnsReservation,
+    SystemDnsSettings,
 };
 use meshway_engine::Desired;
 use meshway_private_storage::Directory;
@@ -31,6 +32,30 @@ trait Owner: Send + 'static {
         desired: Desired,
     ) -> impl Future<Output = Result<(), SystemDnsError>> + Send;
     fn shutdown(self, keep: bool) -> impl Future<Output = Result<(), SystemDnsError>> + Send;
+    /// Why the last failed operation failed, if it recorded the check.
+    fn failure(&self) -> Option<SystemDnsFailure> {
+        None
+    }
+}
+
+/// The failure of `error` as recorded by the owner, or only its kind.
+fn failure_of(owner: &impl Owner, error: SystemDnsError) -> SystemDnsFailure {
+    owner
+        .failure()
+        .filter(|failure| failure.error == error)
+        .unwrap_or_else(|| SystemDnsFailure::new(error, "unrecorded"))
+}
+
+fn warn_failure(operation: &'static str, message: &'static str, failure: &SystemDnsFailure) {
+    tracing::warn!(
+        error = ?failure.error,
+        operation,
+        check = failure.check,
+        expected = failure.expected.as_deref(),
+        actual = failure.actual.as_deref(),
+        source = failure.source.as_deref(),
+        "{message}"
+    );
 }
 
 impl Owner for Runtime {
@@ -53,6 +78,11 @@ impl Owner for Runtime {
     async fn shutdown(self, keep: bool) -> Result<(), SystemDnsError> {
         Runtime::shutdown(self, keep).await
     }
+    fn failure(&self) -> Option<SystemDnsFailure> {
+        Runtime::failure(self)
+            .or_else(|| self.system.failure())
+            .cloned()
+    }
 }
 
 enum Command {
@@ -65,6 +95,8 @@ struct Actor {
     commands: mpsc::Sender<Command>,
     scopes: watch::Sender<Option<meshway_dns::Scope>>,
     fault: watch::Receiver<Option<SystemDnsError>>,
+    /// The check the current fault failed, for the plane's report.
+    detail: watch::Receiver<Option<SystemDnsFailure>>,
     /// The failed owner re-proved its installation; the fault stays until
     /// the parent's next hold starts a new installation on it.
     recovered: watch::Receiver<bool>,
@@ -74,6 +106,7 @@ impl Actor {
     fn start(mut runtime: impl Owner) -> Self {
         let (commands, mut received) = mpsc::channel(4);
         let (faults, fault) = watch::channel(None);
+        let (details, detail) = watch::channel(None::<SystemDnsFailure>);
         let (recoveries, recovered) = watch::channel(false);
         let scopes = runtime.scopes();
         let query_scopes = scopes.clone();
@@ -112,16 +145,18 @@ impl Actor {
                                 Some(error) => Err(error),
                                 None => {
                                     faults.send_replace(None);
+                                    details.send_replace(None);
                                     recoveries.send_replace(false);
                                     runtime.hold(&netmap).await
                                 }
                             };
                             if let Err(error) = result {
-                                tracing::warn!(
-                                    ?error,
-                                    operation = "hold",
-                                    "DNS owner operation failed"
-                                );
+                                let failure = match blocked {
+                                    Some(_) => details.borrow().clone(),
+                                    None => Some(failure_of(&runtime, error)),
+                                }
+                                .unwrap_or_else(|| SystemDnsFailure::new(error, "unrecorded"));
+                                warn_failure("hold", "DNS owner operation failed", &failure);
                             }
                             let _ = reply.send(result);
                             continue;
@@ -129,10 +164,10 @@ impl Actor {
                         Some(Command::Install(desired, reply)) => {
                             let result = runtime.install(*desired).await;
                             if let Err(error) = result {
-                                tracing::warn!(
-                                    ?error,
-                                    operation = "install",
-                                    "DNS owner operation failed"
+                                warn_failure(
+                                    "install",
+                                    "DNS owner operation failed",
+                                    &failure_of(&runtime, error),
                                 );
                             }
                             let _ = reply.send(result);
@@ -161,23 +196,46 @@ impl Actor {
                         continue;
                     }
                     recovery_at = tokio::time::Instant::now() + RECOVERY_INTERVAL;
-                    runtime.recover().await
-                } else {
-                    tokio::time::timeout(OBSERVE_TIMEOUT, runtime.observe())
+                    runtime
+                        .recover()
                         .await
-                        .unwrap_or(Err(SystemDnsError::Backend))
+                        .map_err(|error| failure_of(&runtime, error))
+                } else {
+                    let started = tokio::time::Instant::now();
+                    match tokio::time::timeout(OBSERVE_TIMEOUT, runtime.observe()).await {
+                        Ok(result) => result.map_err(|error| failure_of(&runtime, error)),
+                        // Abandoned mid-way: what it was waiting on is
+                        // unknown; a stalled process (host-wide RTNL, CPU)
+                        // shows as an elapsed time far beyond the deadline.
+                        Err(_) => Err(SystemDnsFailure::new(
+                            SystemDnsError::Backend,
+                            "observe_deadline",
+                        )
+                        .expected(format!(
+                            "an observation within {} ms",
+                            OBSERVE_TIMEOUT.as_millis()
+                        ))
+                        .actual(format!(
+                            "abandoned after {} ms",
+                            started.elapsed().as_millis()
+                        ))),
+                    }
                 };
                 match result {
-                    Err(error) => {
-                        if *faults.borrow() != Some(error) {
-                            tracing::warn!(
-                                ?error,
-                                operation = if faulted { "recover" } else { "observe" },
-                                "DNS owner health check failed"
+                    Err(failure) => {
+                        let error = failure.error;
+                        // Each distinct failure once: a recovery that keeps
+                        // failing the same check is not repeated every second.
+                        if details.borrow().as_ref() != Some(&failure) {
+                            warn_failure(
+                                if faulted { "recover" } else { "observe" },
+                                "DNS owner health check failed",
+                                &failure,
                             );
                         }
                         meshway_dns::publish_scope(&query_scopes, None);
                         faults.send_replace(Some(error));
+                        details.send_replace(Some(failure));
                     }
                     Ok(()) if faulted => {
                         tracing::info!("DNS owner recovered its system installation");
@@ -191,6 +249,7 @@ impl Actor {
             commands,
             scopes,
             fault,
+            detail,
             recovered,
             task,
         }
@@ -244,6 +303,8 @@ pub(in crate::runtime::network) struct Attachment {
     /// Association completions of served answers, for Control.
     reports: mpsc::Sender<meshway_protocol::DnsAssociationReport>,
     report_receiver: Option<mpsc::Receiver<meshway_protocol::DnsAssociationReport>>,
+    /// Why preparing the owner failed, while no actor runs.
+    prepare_failure: Option<SystemDnsFailure>,
 }
 impl Attachment {
     pub fn new(
@@ -264,6 +325,15 @@ impl Attachment {
             requests: Some(requests),
             dispatcher: None,
             exit_dns: watch::channel(None).0,
+            prepare_failure: None,
+        }
+    }
+    /// The checked reason of the current DNS fault, for the plane's report
+    /// (`lastErrorDetail`).
+    pub fn detail(&self) -> Option<String> {
+        match &self.actor {
+            Some(actor) => actor.detail.borrow().as_ref().map(ToString::to_string),
+            None => self.prepare_failure.as_ref().map(ToString::to_string),
         }
     }
     /// The exit resolver fact of the installed content; absent unless it
@@ -291,16 +361,28 @@ impl Attachment {
         self.reserve().await?;
         let reserved = self.reservation.as_ref().expect("reserved above");
         let anchor = if matches!(self.settings.backend, SystemDnsBackend::Resolved) {
-            Some(
-                host.dns_anchor(reserved)
-                    .await
-                    .map_err(|_| SystemDnsError::Backend)?,
-            )
+            Some(host.dns_anchor(reserved).await.map_err(|error| {
+                let failure = SystemDnsFailure::new(SystemDnsError::Backend, "anchor_create")
+                    .expected("the Kernel's DNS anchor for this reservation")
+                    .actual(error)
+                    .source("Underlay Kernel");
+                warn_failure("prepare", "DNS owner preparation failed", &failure);
+                self.prepare_failure = Some(failure);
+                SystemDnsError::Backend
+            })?)
         } else {
             None
         };
-        SystemDnsOwner::prepare_reserved(self.reservation.take().expect("reserved above"), anchor)
-            .await
+        let prepared = SystemDnsOwner::prepare_reserved(
+            self.reservation.take().expect("reserved above"),
+            anchor,
+        )
+        .await;
+        if let Err(failure) = &prepared {
+            warn_failure("prepare", "DNS owner preparation failed", failure);
+        }
+        self.prepare_failure = prepared.as_ref().err().cloned();
+        prepared.map_err(|failure| failure.error)
     }
     /// Prepare the owner if needed and hold the netmap's negative capture.
     pub async fn plan(

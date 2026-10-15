@@ -686,7 +686,11 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 let mut report = reports.borrow().clone();
                 report.plane = DataPlane::Failed;
                 report.content = None;
-                report.problem_detail = None;
+                report.problem_detail = if dns_error && cleanup.is_ok() {
+                    engine.components().dns.detail()
+                } else {
+                    None
+                };
                 report.problem = Some(if cleanup.is_err() {
                     Problem::Underlay
                 } else {

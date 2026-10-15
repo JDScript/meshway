@@ -168,6 +168,21 @@ impl Drop for Owner {
     }
 }
 
+/// The egress owner ends the host's kernel ownership (every owner then
+/// fails closed until restart): say which operation failed and how.
+fn stopped(
+    shared: &super::super::super::protection::Shared,
+    operation: &'static str,
+    error: &dyn std::fmt::Display,
+) {
+    tracing::warn!(
+        operation,
+        error = %error,
+        "Egress capture owner stopping after a failed kernel operation; kernel ownership ends"
+    );
+    shared.conflict.cancel();
+}
+
 struct Installing(Option<CancellationToken>);
 impl Drop for Installing {
     fn drop(&mut self) {
@@ -326,12 +341,12 @@ impl super::super::Kernel {
                     _ = shared.tasks.stop.cancelled() => break,
                     _ = shared.conflict.cancelled() => break,
                     _ = tick.tick() => {
-                        if backend.verify().await.is_err() { shared.conflict.cancel(); break; }
+                        if let Err(error) = backend.verify().await { stopped(&shared, "verify", &error); break; }
                         // Only withdrawal or a different plan withdraws an
                         // active capture.
                         if state.borrow().active && !keeps(&shared, &backend.ledger.plan) {
                             state.send_modify(|state| state.active = false);
-                            if backend.pause().await.is_err() { shared.conflict.cancel(); break; }
+                            if let Err(error) = backend.pause().await { stopped(&shared, "pause", &error); break; }
                         }
                     },
                     request = receiver.recv() => {
@@ -355,8 +370,8 @@ impl super::super::Kernel {
                         let (reply, result, active) = match request {
                             Request::Audit(reply) => {
                                 let result = backend.verify().await.map(|()| backend.ledger.program.table());
-                                let ok = result.is_ok(); let _ = reply.send(result);
-                                if !ok { shared.conflict.cancel(); break; }
+                                let failed = result.as_ref().err().map(ToString::to_string); let _ = reply.send(result);
+                                if let Some(error) = failed { stopped(&shared, "audit", &error); break; }
                                 continue;
                             },
                             Request::Stage(plan, reply) => {
@@ -387,16 +402,17 @@ impl super::super::Kernel {
                                 let result = backend.retire().await;
                                 let ok = result.is_ok();
                                 if ok { state.send_modify(|state| { state.active = false; state.retired = true; }); }
+                                let failed = result.as_ref().err().map(ToString::to_string);
                                 let _ = reply.send(result);
-                                if !ok { shared.conflict.cancel(); }
+                                if let Some(error) = failed { stopped(&shared, "retire", &error); }
                                 stop.cancel();
                                 return if ok { Ok(()) } else { Err(Error::Conflict) };
                             },
                         };
                         let ok = result.is_ok();
-                        if !ok && backend.pause().await.is_err() { shared.conflict.cancel(); break; }
+                        if !ok && let Err(error) = backend.pause().await { stopped(&shared, "pause", &error); break; }
                         state.send_modify(|state| { state.plan = backend.ledger.plan.clone(); state.active = ok && active; });
-                        if reply.send(result).is_err() && active { state.send_modify(|state| state.active = false); if backend.pause().await.is_err() { shared.conflict.cancel(); break; } }
+                        if reply.send(result).is_err() && active { state.send_modify(|state| state.active = false); if let Err(error) = backend.pause().await { stopped(&shared, "pause", &error); break; } }
                     },
                 }
             }
