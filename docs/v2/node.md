@@ -30,7 +30,7 @@ meshway CLI ── 本机 IPC ──► meshwayd
 - 用途受限 underlay、认证 stream／Native UDP 邻接、协调 UDP 穿透与受保护 L3 IP 包流，见[数据面](/v2/node/dataplane)与[连接获取](/v2/node/connectivity)。
 - 系统 DNS（resolved 或显式 resolv.conf 代理）与 `meshway ping`，见[路径诊断](/v2/node/diagnostics)。
 
-未实现：Exit／NAT、出口 resolver、userspace networking（netstack／SOCKS5）、动态插件、切网、非 Linux 平台的 TUN。安装门槛见[安装范围与状态](/v2/node/runtime#安装范围与状态)，验收状态见[验收范围](/v2/node/validation)。
+未实现：Exit／NAT、出口 resolver、userspace networking（netstack／SOCKS5）、动态插件、切换 Meshway 网络、非 Linux 平台的 TUN。安装门槛见[安装范围与状态](/v2/node/runtime#安装范围与状态)，验收状态见[验收范围](/v2/node/validation)。
 
 ## 规划方向
 

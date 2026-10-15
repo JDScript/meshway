@@ -66,7 +66,7 @@ daemon／CLI 共用[运行日志参数](/v2/logging)，日志位于 stderr；CLI
 | Exit／本机 egress | daemon 按已应用 netmap 探测并安装 IPv4 出口角色、精确 NAT 投影和源端 capture／IPv6 sink；回包由同一 SecureNode 按原完整路径返回。capture、承载及必需的负向 DNS 资源共同进入本机 applied 边界；出口角色是本节点为其他源提供的能力，其前置条件不满足或安装失败只报告 `exitCapability: unavailable`，不阻断 applied（见[出口宿主前置探测](#出口宿主前置探测)）。源节点 DNS 经出口 resolver 解析（[出口 resolver](/v2/node/dataplane#exit-resolver)），出口 resolver 不可用只对源 SERVFAIL 并单独报告 `exit.dnsUnavailable`；完整多进程验收范围见[验收范围](/v2/node/validation) |
 | 诊断 | `meshway ping` 的 Mesh 目标与 Server observation tasks 共用获准测量器；公网目标的 echo 是经同一 SecureNode 的普通本地包，见[路径诊断](/v2/node/diagnostics) |
 | 承载 | Manager 共用获准的 stream、Native UDP 静态端点和协调 UDP 穿透；会话与交接见[邻接管理](/v2/node/transport#邻接管理)，NAT 范围见[连接获取](/v2/node/connectivity) |
-| 其他平台／入口 | 非 Linux 的 tun 返回 unsupported；userspace（见[规划](#规划-userspace-networking)）、动态插件和切网尚未实现 |
+| 其他平台／入口 | 非 Linux 的 tun 返回 unsupported；userspace（见[规划](#规划-userspace-networking)）、动态插件和切换 Meshway 网络尚未实现 |
 
 仅验证 Mesh IP、无需系统 DNS 的场景，在 Server 的 [DNS 配置](/v2/configuration-reference/dns)中明确设置 `magicDNS=false`、`overrideLocal=false`，并保持 `servers`、`default`、`routes`、`searchDomains` 为空。此时不创建 DNS 服务／锚点，也不要求机器运行 resolved。存在 DNS 需求时须完成对应安装；本机后端选择不覆盖云端 DNS 业务配置。`control-only` 不安装系统 DNS。
 
@@ -178,9 +178,10 @@ IPC 12 的公开运行状态（`meshway status --json` 原样输出）：
 | `saved`／`applied` | 独立的必填可空目标引用；saved 来自持久保存，applied 来自对应实例／目标的实际成功安装结果 |
 | `phase` | 完整枚举见下表；结合 dataPlane、当前资格和错误读取 |
 | `lastError`／`retryAt` | 类型化故障与重试时点；安装问题可为 unsupportedMode、underlay、tun、dns、transport、apply |
-| `lastErrorDetail` | 必填可空：故障组件给出具体原因时的一行说明，目前有两类。`lastError: dns` 时为 DNS owner 失败的那一项检查（`DNS <check> check failed (<错误>): expected …; found … [<来源>]`，例如 `DNS resolv_conf_mode check failed (system DNS backend is unsupported): expected stub; found foreign [D-Bus :1.1 /org/freedesktop/resolve1 org.freedesktop.resolve1.Manager.ResolvConfMode]`；检查项与恢复边界见[系统 DNS 健康检查与恢复](/v2/node/dataplane#dns-health)），自动恢复后清空。`lastError: transport` 时为暂未绑定的 listener：bind 错误、占用该端口的进程（本 daemon 自己标注 `this daemon`）、端口在本机临时端口范围内时的提示，以 `retrying` 结尾（例如 `listener lab-udp cannot bind 0.0.0.0:35000: Address in use (os error 98); port 35000 is inside this host's ephemeral port range 32768-60999; retrying`，行为见[连接获取 · listener 绑定与重试](/v2/node/connectivity#listener-bind-retry)）；其他情况为 null。daemon 日志的同一告警带相同文本 |
+| `lastErrorDetail` | 必填可空：故障组件给出具体原因时的一行说明，目前有三类。`lastError: dns` 时为 DNS owner 失败的那一项检查（`DNS <check> check failed (<错误>): expected …; found … [<来源>]`，例如 `DNS resolv_conf_mode check failed (system DNS backend is unsupported): expected stub; found foreign [D-Bus :1.1 /org/freedesktop/resolve1 org.freedesktop.resolve1.Manager.ResolvConfMode]`；检查项与恢复边界见[系统 DNS 健康检查与恢复](/v2/node/dataplane#dns-health)），自动恢复后清空。`lastError: transport` 时为暂未绑定的 listener：bind 错误、占用该端口的进程（本 daemon 自己标注 `this daemon`）、端口在本机临时端口范围内时的提示，以 `retrying` 结尾（例如 `listener lab-udp cannot bind 0.0.0.0:35000: Address in use (os error 98); port 35000 is inside this host's ephemeral port range 32768-60999; retrying`，行为见[连接获取 · listener 绑定与重试](/v2/node/connectivity#listener-bind-retry)）。`lastError: underlay` 且新网络的地址落入 Mesh 池时为 `meshPoolOverlap: <接口> address <地址> is inside a Mesh address pool`，地址离开、自动重装后清空（[漫游](/v2/node/connectivity#roaming)）；其他情况为 null。daemon 日志的同一告警带相同文本 |
 | `sync` | 必填，`connected`（最近一次 sync 成功、下一次由 Server 挂起）、`reconnecting`、`disconnected`；不代表 Node 授权或业务连通 |
 | `lastSyncAt`／`syncError` | 必填可空：本进程最近一次返回已验签 netmap 的 sync 时间；sync 重试期间的失败类别 |
+| `lastNetworkChange` | 可省略：Underlay 最近一次分类外部网络变化（path 或 refresh，见[漫游](/v2/node/connectivity#roaming)）的时间；本进程尚未观测到时省略 |
 | `netmap` | 必填可空：当前 netmap 引用与签名租约 `issuedAt`／`expiresAt`，以及 `missingArtifacts`（引用但尚未持有的规则集 digest；命名它们的规则不可用，见[规则集 · 下发](/v2/configuration-reference/rule-sets#下发)）、`artifactProblem`（缺失时最后一次的 `download`／`integrity`／`storage`／`budget`，否则 null）与 `capture`（本节点从 netmap 与 artifact 计算并安装的出口捕获：`managedIpv4`／`sinkIpv6` 区间数、捕获表 `routes` 数，以及未安装分割而改为完整捕获时的 `unavailable` 原因，否则 null；本节点无出口捕获时整项为 null，计算见 [Routing · 节点侧上限](/v2/configuration-reference/routing#capture-limits)）、`routing`（本节点在该 netmap 下的路由方案选择 `RoutingSelectionState`，字段见 [Routing · 当前选择的状态](/v2/configuration-reference/routing#selection-state)；无法由 netmap 求出时为 null）；无有效租约为 null |
 | `node` | 必填可空：已安装 netmap 中的本节点 `hostname` 与 Mesh `addresses`；未安装（down、control-only、准备中）为 null |
 | `peers` | 必填：已安装 netmap 中可见的其他节点（与 `ping` 解析名称的集合相同），按 hostname 排序；未安装为空。字段见下表 |
@@ -263,7 +264,7 @@ Linux 首版每台机器运行一个系统级 `meshwayd`，同一时间只启用
 | `meshway netcheck` | 一次有界的本机网络诊断，见[路径诊断 · netcheck](/v2/node/diagnostics#netcheck) |
 | `meshway exit [profile \| --default]` | 无参数：显示本机 netmap 中的方案选择；带方案：请 Server 切换并等待本机应用，`off` 即 `mesh`；`--default`：请 Server 清除持久选择、回到默认方案。见[出口方案](#exit-profile) |
 | `meshway version` | 程序与协议版本；不连接 daemon |
-| 切网 | 尚未实现；先停止旧网络、完成隔离清理，再运行新网络 |
+| 切换 Meshway 网络 | 尚未实现；先停止旧网络、完成隔离清理，再运行新网络。同一网络内底层网络的变化是[漫游](/v2/node/connectivity#roaming)，自动处理 |
 
 CLI 通过 Unix domain socket 发命令、读结果；状态由 daemon／组件的唯一 owner 持有。`meshway_protocol::ipc` 是唯一的请求／响应定义，当前版本为 12，使用 JSON 与长度前缀，单条消息上限 64 KiB；CLI 和 daemon 同版本发布。每个连接处理一个请求，Ping 可返回有序的多个事件，Netcheck 返回一个报告，SelectProfile 与 ClearProfile 返回 Server 提交的选择（`Selection`）；连接数、请求等待、写入和队列均有上限。`Up` 的 `enrollmentKey` 可省略；`Up`／`Down`／`RotateKey`／`Logout` 的 `expectedRevision` 由 CLI 读取后提交，换钥与注销不会绕过本机 CAS。
 
@@ -378,7 +379,7 @@ Node 不消费 SSE 事件流（用户 SSE 保留给 Console）。已有待确认
 
 期望上线时，网络失败、HTTP 408／429／5xx、无可解码 body 的任何状态及 400 等其他已解码拒绝按 1–15 秒有界退避自动重试，签名租约内数据面持续运行。不可解码或超限响应会撤回旧运行上下文后重新取得资格；运行中的 session／instance 拒绝、lease 到期或实例更换会重新持钥认证、取得有效 instance 并上报 State，不要求再次执行 `up`。已解码的身份拒绝、Server（`controllerId`）／key／目标绑定错误进入 `blocked`：前者同时撤回数据面，后者让已持有的 netmap 运行到租约到期；本机记录损坏或写入结果不确定进入 `blocked` 并撤回数据面。分类定义见 [Node 控制组件](/v2/node/control#netmap-发布)；后台残留请求不能绕过该停止状态。
 
-Linux 运行中的外部接口删除／重建、地址变更及路由变化由既有 Underlay netlink 监视器通知；未 up 的接口的创建／删除（例如 VPN 守护进程反复重建的空闲 `ppp0`）不承载任何路径，不算变化，已 up 接口的停用另以其地址／路由删除通知。变化关闭旧控制 HTTP 的底层连接，后续请求按当前路由重新连接并沿用上述有界重试；受保护控制中继按 Happy Eyeballs（RFC 8305）连接 Server 解析出的地址：地址族交替（从解析结果的首个地址族开始），250 ms 未完成即并发尝试下一个，任一失败立即尝试下一个，先连上者胜出，因此无路由或黑洞的 IPv6 不拖住 IPv4；中继连接在双向 120 秒无字节时关闭（不按连接年龄截断，挂起的 sync 长轮询不被中继自己的时钟切断）；不要求重启 daemon、再次 `up` 或修改配置。本机端点变化经既有合并报告路径发布，刷新规则见[连接获取](/v2/node/connectivity#stun-与-server-协调)。只有 kernel 来源的 netlink 通知参与资源归属检查；用户态 multicast 消息被忽略，不能把普通接口重连变成永久保护冲突。当前 namespace 中真实的所属 TUN／DNS 锚点或保护规则冲突仍阻断执行。
+Linux 运行中的外部接口删除／重建、地址变更及路由变化由既有 Underlay netlink 监视器标记，合并后分类为 path 或 refresh（定义与反应见[漫游](/v2/node/connectivity#roaming)）；未 up 的接口的创建／删除（例如 VPN 守护进程反复重建的空闲 `ppp0`）不承载任何路径，不算变化，已 up 接口的停用另以其地址／路由删除通知。path 类变化关闭旧控制 HTTP 的底层连接，后续请求按当前路由重新连接；因此失败的在途 sync 与 Control 调用立即重试，不进入上述退避，refresh 类变化不关闭连接；受保护控制中继按 Happy Eyeballs（RFC 8305）连接 Server 解析出的地址：地址族交替（从解析结果的首个地址族开始），250 ms 未完成即并发尝试下一个，任一失败立即尝试下一个，先连上者胜出，因此无路由或黑洞的 IPv6 不拖住 IPv4；中继连接在双向 120 秒无字节时关闭（不按连接年龄截断，挂起的 sync 长轮询不被中继自己的时钟切断）；不要求重启 daemon、再次 `up` 或修改配置。本机端点变化经既有合并报告路径发布，刷新规则见[连接获取](/v2/node/connectivity#stun-与-server-协调)。只有 kernel 来源的 netlink 通知参与资源归属检查；用户态 multicast 消息被忽略，不能把普通接口重连变成永久保护冲突。当前 namespace 中真实的所属 TUN／DNS 锚点或保护规则冲突仍阻断执行。
 
 Underlay 启动时当前 namespace 的资源归属或路由保护冲突仍拒绝准入，保留现有资源；状态为 `retrying`／`lastError=underlay`，以同一 1–30 秒有界退避发布 `retryAt` 并重新检查。冲突 owner 释放资源后无需再次 `up`。损坏的 Underlay journal／私有存储错误归为 `storage`，安装参数或 bootstrap resolver 配置错误归为 `configuration`，仍须修正后恢复。
 
@@ -386,7 +387,7 @@ Underlay 启动时当前 namespace 的资源归属或路由保护冲突仍拒绝
 
 `state_scope_changed` 表示报告在交付期间遇到正常 scope 轮换：丢弃当前报告，1 秒后刷新并重新采样，不进入 `retrying`、不设置 `lastError=apply`，保持当前 phase，不影响 sync 长轮询。netmap 引用、saved 前置条件或回执内容冲突按[回执分类](/v2/api/problems#node-配置回执冲突)退役精确回执，1 秒后刷新并重新 apply 当前目标。两者均不 reset instance 或主动 suspend／删除 TUN。实际执行截止、撤回和连续性交接检查独立生效；旧回执、输出与报告不换绑新目标。
 
-自有负向规则、私有表路由以及 TUN 的创建／退役不会作为外部网络变化通知。TUN 关闭产生的延后地址／链路事件保留精确接口索引至事件排空，仅用于抑制自触发通知，不形成额外的资源归属或捕获豁免。suspended 期间的 Mesh `EHOSTUNREACH`／`ENETUNREACH` 是负向边界的实际结果，不触发控制连接重建或端点重枚举。
+自有负向规则、私有表路由以及 TUN 的创建／退役不会作为外部网络变化通知。网络管理器删除自有规则或私有表路由、或新网络的地址落入 Mesh 池时的有界重装与 fail closed 见[漫游 · 宿主资源](/v2/node/connectivity#roaming)。TUN 关闭产生的延后地址／链路事件保留精确接口索引至事件排空，仅用于抑制自触发通知，不形成额外的资源归属或捕获豁免。suspended 期间的 Mesh `EHOSTUNREACH`／`ENETUNREACH` 是负向边界的实际结果，不触发控制连接重建或端点重枚举。
 
 ## 持久与重建
 

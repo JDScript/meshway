@@ -86,6 +86,7 @@ TCP 乱序区间只记录已准入字节的序号，不制造接收确认：缺�
 | 承载约束 | carrier 包含实际 dialer、listener、listener key 与协议；验证该连接在所选完整路径的候选集合内，拨号方向与业务方向分别处理 |
 | 重放 | 每 circuit／方向独立的 64-bit nonce 和 1,024 包窗口；nonce 不回绕，只有通过认证与准入的包推进接收窗口 |
 | 生命周期 | circuit、流、permit 与 Control 截止取交集；关闭、销毁、失效同时取消排队密文和待交付明文 |
+| 承载更换 | circuit 只绑定相邻对端 boot，不绑定地址或 channel：同一 boot 的承载跟随或替换（含[漫游](/v2/node/connectivity#roaming)）保留 CID、nonce 与重放窗口；首个认证帧仍须在源端 15 秒无回复上限内到达 |
 
 **隐私范围：**IP 包通过 Noise 在业务两端之间加密，外层不公开五元组、TCP／echo 状态。CID、方向、序号与密文长度仍公开。中继不解密业务 payload；终点解密后解析真实 IP 包并执行业务准入。
 
@@ -305,7 +306,7 @@ exchange 适配器须在每次 connect／write／read poll 检查路由期限与
 | 后端 | 安装与限制 |
 | --- | --- |
 | resolved | 使用同一 network namespace 中真实 resolve1 服务；要求系统解析使用其动态维护的 stub resolv.conf，且真实 UDP→TCP 按链路探测通过。静态 stub 文件不发布搜索域，当前不作为已支持的系统安装模式。只修改独立锚点的 DNS／domain／安全选项，回读确认；外部相同或更精确的域路由冲突时拒绝安装。 |
-| 显式文件代理 | 只替换已验证所有权、祖先目录、mount identity 的普通 `/etc/resolv.conf`，不接管 symlink、硬链接或文件 bind mount。保存私有原文与安装身份，原子替换并同步；只在当前 inode／内容仍匹配时恢复，外部修改保留并报告冲突。 |
+| 显式文件代理 | 只替换已验证所有权、祖先目录、mount identity 的普通 `/etc/resolv.conf`，不接管 symlink、硬链接或文件 bind mount。保存私有原文与安装身份，原子替换并同步；只在当前 inode／内容仍匹配时恢复，外部修改保留并报告冲突。不支持[漫游](/v2/node/connectivity#roaming)：保存的原上游属于安装时的网络，DHCP 客户端改写文件即为外来修改；会漫游的节点使用 resolved 后端。 |
 
 两种后端均使用 namespace 级私有预约，避免不同数据目录竞争同一系统 DNS。MagicDNS 域加入系统搜索域；额外搜索域仍按配置执行。resolved 保留未捕获域的原有系统路由，不把原系统的分域配置压平成任意 nameserver 列表。需要这种未实现 fallback 的搜索域组合明确失败。
 

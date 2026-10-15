@@ -17,7 +17,7 @@
 
 可执行行 ID 来自 `scripts/validate_matrix.py` 的 `ROWS`：`tun`、`packet`、`udp/off`、`tcp/off`、`vless/off`、`trojan/off`、`udp/resolv-conf`、`udp/resolved`、`nat/off`、`nat+fallback/off`、`nat/resolved`，顺序对应下表十一个隔离入口。常驻 lab 不属于一次性矩阵。统一运行、并发预算与远程证据位置见[矩阵入口](/v2/development#validation-matrix)。
 
-默认矩阵另含 `exit/off`（真实 A→R→E IPv4 出口与单出口 DNS）、`nat/relay`（直连不可达时经第三节点中继，见[中继兜底行](#relay-row)）、`nat/reconnect`（Server 与 daemon 重启后打洞边自愈，见[重启自愈行](#reconnect-row)）与四个 `netmap/*` 生命周期行（见[netmap 生命周期行](#netmap-rows)）；出口详见[出口场景](#exit-scenario)。
+默认矩阵另含 `exit/off`（真实 A→R→E IPv4 出口与单出口 DNS）、`nat/relay`（直连不可达时经第三节点中继，见[中继兜底行](#relay-row)）、`nat/reconnect`（Server 与 daemon 重启后打洞边自愈，见[重启自愈行](#reconnect-row)）、`roam/direct`（运行中更换上联，见[漫游行](#roam-row)）与四个 `netmap/*` 生命周期行（见[netmap 生命周期行](#netmap-rows)）；出口详见[出口场景](#exit-scenario)。
 
 | 入口 | 承载 | DNS | NAT | 覆盖行为 | 状态 |
 | --- | --- | --- | --- | --- | --- |
@@ -99,6 +99,43 @@ VM→it7 方向 Mesh TCP 远低于裸路径、UDP iperf 30 Mbit/s 时丢包 0.6%
 | `ec24b778` | 单行 `20261013T132830Z-d8e85fdf`：`nat`／`server`／`restart-r` 分别 1.1／10.8／7.3 秒恢复；`restart-a` 未恢复——新进程没有业务需求（A–R 为按需边），fixture 据此改为无通道时持续 ping |
 | `7c0febbb` | 单行 `20261013T134136Z-fbcbd4ea` 通过：`nat` 1.2 秒、`server` 10.4 秒（A、R 在 Server 重新服务后 1.6／2.4 秒取得新 instance，8.3／8.9 秒 State `current`）、`restart-r` 7.3 秒、`restart-a` 9.6 秒；R 从 A 的签名 INIT 学到随机映射端口（候选 `:35000`／`:1391`／`:62265`，实际 `:24025`／`:22396`） |
 | `db193112`（全量矩阵） | `20261013T135826Z-fe73e26e` 通过：`nat` 10.5 秒、`server` 1.4 秒、`restart-r` 10.4 秒、`restart-a` 9.4 秒 |
+
+### 漫游行 {#roam-row}
+
+`roam/direct`（`--traversal roam`）是独立的 6 容器拓扑，资源全部为本行自有的 internal bridge 与容器：A 有两个上联（uplink1／uplink2，各经一个端口保持型 SNAT 路由器到 WAN；router-a1 另把 WAN 上的 UDP 35000 转发给 A）和一个与 C 共享的 LAN；Controller、公网 B 与 C 在 WAN 上。topology 只允许 A–B 与 A–C，每条边只有一方能拨出（常驻边）；租约 1,800 秒，避免租约换代混入测量。A 对 B 持续 100 pps 带序号 UDP 回显、10/s ping 与一条每 50 ms 一行的 TCP echo，对 C 同样运行（无关通道）。两个阶段各两格，扰动前要求 B、C 都已回复：
+
+| 阶段 | A–B 方向 | soft | hard |
+| --- | --- | --- | --- |
+| `dialer` | A 拨号 B 的已发布 listener | A 的默认路由改到 router-a2，再删除 uplink1 的地址 | 断开 uplink2，重新接入 uplink1 并设默认路由 |
+| `listener` | B 拨号 A 在 router-a1 上发布的 listener | 同上 | 同上 |
+
+计时起点为新默认路由生效（A 自己的时钟，与流量记录同一时钟）。每格观察 12 秒；门槛（D14，合入条件）：首个内层 UDP 回复 ≤ 3 秒、A 的业务 circuit 集合不变（Server State 的 `paths`）、TCP 连接未重置、A–C 通道 ID 不变。另记录 ping 与 TCP 的首个回复、双向 UDP 丢包、最长中断、channel ID 与 remote、daemon 的漫游 debug 事件。
+
+| 格 | main 首个 UDP／最长 TCP 中断，A–B 通道 | R1 首个 UDP／最长 TCP 中断，A–B 通道 |
+| --- | --- | --- |
+| dialer/soft | 0.43 s／0.67 s，新通道（B 的 `probe_recovery` 握手） | 0.21 s／0.67 s，同一通道跟随到 router-a2 的映射 |
+| dialer/hard | 0.32 s／0.66 s，新通道 | 0.27 s／0.67 s，同一通道 |
+| listener/soft | 7.25 s／12.5 s（窗口内 TCP 无回显），B 健康失效后重拨 | 0.25 s／0.66 s，B 的拨号 socket 经挑战跟随，同一通道 |
+| listener/hard | 5.82 s／6.44 s | 0.26 s／0.67 s，同一通道 |
+
+两边四格的 circuit 都保持（main 的空窗也短于 15 秒无回复上限），TCP 都未重置，A–C 通道与流量不受影响（R1 四格 LAN 丢包 0）。main 的 listener 两格不达门槛；R1 四格达标，UDP 丢包 25–54 个（100 pps），路由器计数见各行 `router-*` 证据。
+
+| 运行 | 结果 |
+| --- | --- |
+| 本机 main 基线：main `0af9393e`（产品代码同 `f007bde1`）＋本行 fixture，`20261015T174443Z-0af0b4fb` | listener 两格未达门槛（上表左列） |
+| 本机 R1 `f274753d`，`20261015T173450Z-9b555759` | 四格达标（上表右列） |
+
+R1 之前的候选：A 的阶段切换（A 增加 listener）后一次 Manager apply 因 owner 提前结束而失败、重启邻接，C 看到新 boot 退役 A–C circuit 而 A 一侧保留，A→C 空等 15 秒（`20261015T172722Z-c3cc3381`）；未再复现，Manager 现记录意外结束的 owner。另一候选在 B 已经跟随 A 的新映射后又因“remote 不在候选集合”旁路拨号（`20261015T172314Z-d76d6adc`），现只在 remote 原是已发布候选时才拨。证据 `.meshway/validation/r1/`。
+
+真机（R1 程序部署到常驻 lab 与 `meshway-vm`）：
+
+| 环境 | 扰动 | 观察 |
+| --- | --- | --- |
+| lab：lax 接入自有 bridge `meshway-r1-lab-roam` | lax 默认路由改到新 bridge（soft） | path 类变化，控制连接重连；sha／nyc→lax 5/s ping 无中断，lab bridge 上的通道不变 |
+| 同上 | 断开 lax 的 lab bridge（hard），8 秒后接回 | sha、nyc 的通道在断开后 0.11 秒内经挑战跟随到 `192.168.97.1:<同端口>`（宿主转发的新来源），接回时 1 ms 内跟随回原地址；ping 最长中断 sha 无、nyc 0.62 秒，channel ID 不变，无 circuit 退役 |
+| `meshway-vm`（systemd） | 在 eth0 增加第二地址，再把默认路由的 `src` 改为它（保留 `mtu 1300`），随后精确恢复 | 两次 path 类变化；sha→VM ping 无中断；运行 main 的 us-lax-it7 在恢复后约 12 秒失去与 VM 的通道、30 秒内恢复（对端没有拨号端跟随） |
+
+lab 与 VM 结束后恢复原程序与网络；私有记录在 `.meshway/validation/r1/lab/`、`.meshway/validation/r1/vm/`。Mac 切换 Wi-Fi（只有映射变化）由用户操作，未执行。
 
 ### N3 实网证据 {#n3-real-network}
 

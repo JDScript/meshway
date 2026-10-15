@@ -167,7 +167,56 @@ NAT 后两端都能拨出时，邻接按需建立：可能只有一方有需求�
 
 不变量：任意一方重启后，在一个 sync 周期加一个 State 周期（约 35 秒）内双方取得对方当前候选，需要打洞的边在 60 秒内重新直连（有需求时）。隔离验收见 [nat/reconnect 行](/v2/node/validation#reconnect-row)。
 
-运行中切网（漫游：默认路由、承载地址或公网映射变化）尚未支持：除上文 State 报告与持续 STUN 外没有专门的恢复序列，也没有验收；设计见[漫游设计](/v2/node/roaming-design)。
+### 漫游 {#roaming}
+
+漫游指同一 Meshway 网络内、本节点身份不变时底层网络的变化：换 Wi-Fi／LTE、换 NAT、默认路由、承载地址或公网映射变化。session、instance、netmap、租约与 `Desired` 都不因漫游变化；新来源只是投递信息，改变发送目的前必须由对端签名并通过返回可达（return-routability）挑战。切换到另一张 Meshway 网络不是漫游，见 [CLI 与 IPC](/v2/node/runtime#cli-与-ipc)。
+
+**分类（Underlay）。** Underlay 是唯一的 netlink owner。外部接口的 up 链路、地址，以及除本 owner 自有表（capture、源端捕获、出口）与 local 表之外任一路由表的路由（含 NetworkManager 多表、WARP／WireGuard 的 fwmark 表）的 kernel 通知只作标记；一串通知静止 250 ms 后计算一次指纹并发布 `NetworkChange { epoch, path, class, at }`（`Host::network_changes`）：
+
+| 类 | 判定 | 反应 |
+| --- | --- | --- |
+| path | 指纹改变：外部 up 接口的 index 与载波（`IFF_LOWER_UP`）、它们的首选地址（global，非 temporary／deprecated／tentative／dadfailed）、以本节点 mark 经完整 RPDB 查到控制中继最近连到的 Server 地址（每地址族一个）的路由（oif、网关、prefsrc）；指纹读不出也算 path | 控制中继关闭当前连接；Manager 漫游反应（下表）；State 报告不按每秒一次合并 |
+| refresh | 有外部通知但指纹不变（无关接口、链路地址、临时地址） | 只重新采样本机端点，按现有调度报告；控制连接保留 |
+| 映射 | 本机无通知，[持续 STUN](#continuous-stun) 发现同一 observer 给出另一映射 | 立即上报、清零候选节奏，该 socket 的每条通道按漫游节拍探测 |
+
+控制中继新连到的 Server 地址是新的参照，只更新基准指纹，不算变化。不观测 Wi-Fi SSID：载波闪断、地址、路由与 STUN 已覆盖它的路径影响。
+
+**本机漫游（Manager，path 类）：**
+
+| 步骤 | 规则 |
+| --- | --- |
+| STUN | 旧路径上的 STUN 观测立即撤回（下一份 State 不再携带），每个穿透 socket 立即观测（不附 size probe；未应答按 500 ms 重发，事务期限 5 秒） |
+| 漫游探测 | 每条 Native UDP 选定通道立即发健康 Ping，之后每 250 ms 一次共 4 次，再回到 2 秒节拍；匹配本机 nonce 的认证 Pong 结束。来源没变的对端照常应答，通道不变 |
+| 候选节奏 | 全部 peer 的显式与协调暂停清零（`candidate_pacing` 的 `cause=own_network`），等待中的拨号立即重试 |
+| 流式通道 | 本地地址不再是本节点 mark 查到其 remote 的路由首选源时退役，按[原候选来源优先级](#relay-fallback)重拨；未变的保留 |
+| 报告与控制 | 路径变化后 1.5 秒内的 State 报告只间隔 100 ms（首个立即发出，随后的新 STUN 映射不等合并），之后恢复每秒至多一次；中继关闭使在途 sync 或 Control 调用失败的立即重试，不增长 1–15 秒退避 |
+| PMTU | 跟随到新来源的通道重新搜索[路径 MTU](#path-mtu)，完成前 `inner` 未知 |
+
+**对端漫游（拨号端与 listener 相同）：**
+
+| 步骤 | 规则 |
+| --- | --- |
+| 新来源 | 未知来源的 Ping 按本 socket 某条已选定通道的 transcript 验签通过（该对端签名、该通道 ID） |
+| 挑战 | 只向该来源发送该通道新的签名 Ping（250 ms 间隔至多 4 次，1.5 秒期限）；每通道同时至多 2 个、每 socket 至多 8 个来源。拨号与穿透 socket 只能向自己的目标发送，Underlay 只在挑战期限内准许向该来源发送（`Datagram::authorize_source`，每 socket 同时至多 4 项、需同地址族的合法单播地址），通道跟随后改由通道自身的期限准许 |
+| 跟随 | 该来源回来的、对这个 nonce 的认证 Pong 使同一通道（ID、transcript、对端 boot、acquisition 均不变）的 remote 改为新来源，健康期限续期；旧来源同时丢弃，不保留双来源宽限 |
+| 拒绝 | 无挑战的 Pong、其他 nonce 或从其他来源到达的 Pong 都不改变目的；被重放的旧 Ping 至多让本节点向它的来源发出上述有界挑战，未认证报文不能让本节点向任意地址发送业务 |
+
+没有通道能验签的签名 Ping（对端 listener 已重启）仍走[重启后的恢复](#restart-recovery)的新握手。对端事实改变时：本机拨号的 Native UDP 通道的 remote 原是对端已发布（configured／local）候选、而新事实不再发布它并发布了同承载的其他字面地址候选，不等健康窗口，在原通道旁拨号新候选，认证成功即精确替换该通道；经返回可达跟随的映射地址从不是候选，不触发拨号，主机名候选不比较。circuit 只绑定相邻对端 boot，跟随与替换都是同一 boot 的承载更换，CID、nonce 与重放窗口保留（[受保护 circuit](/v2/node/dataplane#候选受保护-circuit)）。已有流不迁移到中继；漫游空窗内的新流按现有排序可经策略中继（[中继兜底](#relay-fallback)）。
+
+**宿主资源：**
+
+| 资源 | 漫游时 |
+| --- | --- |
+| Mesh TUN、地址、capture | 不变，不重建 |
+| 新网络分配的地址落在 Mesh 池内 | 已安装的数据会话与 descriptor 立即结束（fail closed），网络 owner 撤回安装；Status `lastError: underlay`，`lastErrorDetail` 以 `meshPoolOverlap:` 开头并给出接口与地址。地址离开后无需 `up` 即重新安装。外来路由覆盖 Mesh 池仍是永久冲突 |
+| 自有 capture 规则或私有表路由被他人删除（网络管理器清理外来规则） | 按 end、bypass、sink、lookup 的顺序重装并回读，1 分钟内至多 3 次；第 4 次或槽位已被外来对象占据为冲突。外来对象新增仍为冲突 |
+| 出口节点 | 路径变化后出口能力先报 `probing`，1 秒后重新探测前置条件；源端只选就绪出口 |
+| resolv.conf 文件后端 | 不支持漫游：保存的原 nameserver 属于旧网络；漫游节点使用 resolved 后端（[系统 DNS 安装](/v2/node/dataplane#系统-dns-安装)） |
+| 指定地址的 listener、显式 `bindInterface`／`localAddress` 的拨号 | 地址消失后不自动改绑 |
+
+**可观测：** Status `lastNetworkChange`（最近一次分类时间）。debug 事件 `Underlay network change classified`（class、epoch）、`Connectivity roam`（`path_changed` 的计数、`peer_candidates_moved`，以及 daemon 对每次通道跟随／替换的 `channel_moved`／`channel_replaced` 记录，含经该 peer 的业务 circuit 的 CID）、`Connectivity channel transition` 的 `roam`／`source_challenged`、`source_moved`。不新增 acquisition 值，漫游不进 Server State 与 Console。
+
+实测与验收见 [roam/direct 行](/v2/node/validation#roam-row)。未覆盖：两端都在端口相关过滤 NAT 后的重新协调穿透（`roam/nat`）、漫游中的策略中继（`roam/relay`）、出口节点漫游与快速往返切换、外层 IPv6 漫游、指定地址 listener 的地址消失与重绑、bootstrap resolver 上游是否随网络重读；只支持 Linux。设计与后续切片见[漫游设计](/v2/node/roaming-design)。
 
 ### 端点相关映射与来源学习 {#source-learning}
 
@@ -180,7 +229,7 @@ NAT 后两端都能拨出时，邻接按需建立：可能只有一方有需求�
 
 一方在公网（无 NAT）或其 NAT 的过滤只与地址相关、另一方在端点相关映射 NAT 后时由此直连：前者从对方 punch 的实际来源学习端口，回复经该映射进入 NAT。端点相关映射的一方遇到**端口相关过滤**（address-and-port-dependent，如 Linux conntrack 的 masquerade：只放行与已发出流 5 元组完全一致的回包）的一方，或双方都是端点相关映射时仍不可达：前者的 punch 从未被对方观测到的新端口发出、被对方过滤丢弃，对方也就无从学习（需要端口预测，不实现），此时经第三节点[中继](#relay-fallback)。
 
-本机的映射变化（另一出口地址或端口，例如 VPN 更换公网 IP）由同 socket 的[持续 STUN 观测](#continuous-stun)发现、立即上报，并使全部[候选节奏](#candidate-pacing)重新开始。
+本机的映射变化（另一出口地址或端口，例如 VPN 更换公网 IP）由同 socket 的[持续 STUN 观测](#continuous-stun)发现、立即上报，并使全部[候选节奏](#candidate-pacing)重新开始，该 socket 的通道按[漫游](#roaming)节拍探测。
 
 ### 外层路径 MTU {#path-mtu}
 
@@ -206,7 +255,7 @@ Linux 的 Mesh 外层 UDP socket 设 `IP_PMTUDISC_DO`／`IPV6_MTU_DISCOVER=DO`�
 | socket 承载健康的 Native UDP 选定通道或有在途尝试 | ~10 秒 |
 | 其他 | ~30 秒 |
 
-节拍带按 socket 固定的 ±10% 抖动，从最后一次经验证的响应起算；新 socket 立即观测。一轮未取得经验证响应时 2 秒后重试，连续失败倍增至 30 秒；没有可用 STUN 元数据（Server 未配置 STUN 或查询不可用）时，只为观测而发的元数据查询同样从 2 秒倍增至 30 秒。有效 discovery context 期间每轮观测只是同 socket 的 UDP 往返，不发 HTTP。
+节拍带按 socket 固定的 ±10% 抖动，从最后一次经验证的响应起算；新 socket 与本机路径变化（[漫游](#roaming)）后的每个 socket 立即观测。一轮未取得经验证响应时 2 秒后重试，连续失败倍增至 30 秒；没有可用 STUN 元数据（Server 未配置 STUN 或查询不可用）时，只为观测而发的元数据查询同样从 2 秒倍增至 30 秒。有效 discovery context 期间每轮观测只是同 socket 的 UDP 往返，不发 HTTP。
 
 观测结果的上报规则：
 

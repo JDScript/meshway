@@ -2,6 +2,16 @@
 
 按合入 main 的顺序记录工作包、提交与证据 ID。规则见[工程流程](/v2/process)；性能数字的口径见[分层性能测量](/v2/node/performance)，验收状态见[验收范围](/v2/node/validation)。
 
+## 未发布
+
+漫游第一切片（R1，`r1/roaming`）：wire 6、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约不变；IPC 仍为 12，`Status` 增加可省略字段 `lastNetworkChange`（同版本 CLI 与 daemon 一起发布；更旧的 CLI 读取新 daemon 时会拒绝该字段）。定义见[漫游](/v2/node/connectivity#roaming)。
+
+- Underlay：外部网络变化在 250 ms 合并后按指纹分为 path／refresh（外部 up 接口与载波、首选地址、以本节点 mark 经 RPDB 到 Server 的路由，非 main 表也计入），控制中继只在 path 类关闭连接；新网络的地址落入 Mesh 池时 fail closed、报 `meshPoolOverlap` 并在地址离开后自动重装；自有 capture 规则／私有表路由被他人删除时有界重装（1 分钟至多 3 次）。
+- 连接：对端从新来源发来已有通道的签名 Ping 时，只向该来源发该通道的挑战 Ping，回来的认证 Pong 使同一通道（ID、transcript、boot 不变）跟随到新来源，拨号端与 listener 相同（此前拨号端丢弃，listener 以新握手替换）；本机 path 类变化后撤回旧 STUN 观测并立即重新观测、每条 UDP 通道按 250 ms 探测 4 次、候选节奏清零（`own_network`）、源地址离开路由的流式通道退役重拨；对端已发布候选不再包含通道 remote 时旁路拨号并精确替换；跟随后重新搜索 PMTU。
+- daemon／Control：路径变化后 1.5 秒内的 State 报告间隔 100 ms；本机关闭控制连接造成的 sync／Control 失败立即重试、不增长退避；出口能力在重新探测前报 `probing`；通道跟随／替换的 debug 记录带经该 peer 的 circuit CID。
+- 术语：CLI 表的“切网”改为“切换 Meshway 网络”；resolv.conf 文件后端声明不支持漫游。
+- 验收：新矩阵行 `roam/direct`（19 行）与三项 Underlay 内核测试（分类、重装、池重叠）；main 上 listener 两格首个回复 7.2／5.8 秒，R1 四格 0.21–0.27 秒且同一 circuit，见[漫游行](/v2/node/validation#roam-row)。
+
 ## v0.1.0-alpha.12
 
 范围：wire 6、IPC 12、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约均不变（普通升级，无断网窗口）。M4：出口流维护按 100 ms 调度而非每包扫描、出口 TUN 以 offload 批量 I/O、出口审计每秒一次读表；P1：peer 事实过期不再拒绝出口流（最后已知就绪仍可选）、sync hold 以节点持有事实的到期为界；以及下列 P1、M4 工作包。
