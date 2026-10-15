@@ -54,6 +54,9 @@ KERNEL_TESTS = {
     "underlay-roam-repair": "linux::kernel::tests::roaming::own_capture_rules_removed_outside_their_owner_are_reinstalled_boundedly",
     "underlay-roam-overlap": "linux::kernel::tests::roaming::an_external_address_inside_a_mesh_pool_fails_closed_until_it_leaves",
 }
+# Kernel tests that create their own dummy interfaces: no underlay address,
+# so the fixed fixture address plan (routers, relays, replacement) is unchanged.
+NETWORKLESS_TESTS = ("underlay-roam-classify", "underlay-roam-repair", "underlay-roam-overlap")
 
 
 def fingerprint():
@@ -636,7 +639,7 @@ def main():
             raise RuntimeError("fixture needs an isolated IPv4 subnet with at least 64 addresses")
         if ipv6 != ipv6_requested:
             raise RuntimeError("fixture IPv6 underlay differs from requested documentation-only prefix")
-        network_roles = (*ROLES, "underlay-peer", "bootstrap", *KERNEL_TESTS)
+        network_roles = (*ROLES, "underlay-peer", "bootstrap", *(role for role in KERNEL_TESTS if role not in NETWORKLESS_TESTS))
         addresses = {role: str(ipv4.network_address + 10 + index) for index, role in enumerate(network_roles)}
         addresses6 = {role: str(ipv6.network_address + 10 + index) for index, role in enumerate(network_roles)}
         relays = RELAY_ROLES if args.netmap_scenario == "relay" else ()
@@ -723,7 +726,7 @@ def main():
                         environment.update(MESHWAY_UNDERLAY_PEER4=addresses["underlay-peer"] + ":42427",
                                            MESHWAY_UNDERLAY_PEER6="[" + addresses6["underlay-peer"] + "]:42427")
                     create(role, ["--include-ignored", "--exact", test, "--nocapture", "--test-threads=1"],
-                           address=addresses[role], address6=addresses6[role], admin=not role.startswith("underlay-journal-"),
+                           address=addresses.get(role), address6=addresses6.get(role), admin=not role.startswith("underlay-journal-"),
                             tun=role in ("underlay-local-conflict", "underlay-suspend-notification"),
                            executable=KERNEL_BINARY, environment=environment)
                     if role == "underlay-restart-a":
