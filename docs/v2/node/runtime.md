@@ -192,7 +192,7 @@ IPC 12 的公开运行状态（`meshway status --json` 原样输出）：
 | 字段 | 含义 |
 | --- | --- |
 | `nodeId`／`hostname`／`addresses` | 投影中的配置值 |
-| `state` | `direct`：有选定的认证通道；`relay`：有经其他节点的已建立 circuit（本节点为端点）；`relayIdle`：需要邻接但无通道、也无 circuit，而新 circuit 会经中继：排序第一的中继路径首跳有通道、其上每个中继在最后已知事实中都与下一节点有通道（`meshway status` 的 STATE 列显示 `relay (idle)`，见[中继兜底](/v2/node/connectivity#relay-fallback)）；`offline`：该 peer 的最后已知事实缺失或已过 `PeerFacts.expiresAt` 且以上皆无；`unreachable`：需要邻接但无通道、circuit 或可用中继，即确实没有路径；`idle`：其余（含非相邻且当前无 circuit） |
+| `state` | `direct`：有选定的认证通道；`relay`：有经其他节点的已建立 circuit（本节点为端点）；`relayIdle`：需要邻接但无通道、也无 circuit，而新 circuit 会经中继：排序第一的中继路径首跳有通道、其上每个中继在最后已知事实中都与下一节点有通道（`meshway status` 的 STATE 列显示 `relay (idle)`，见[中继兜底](/v2/node/connectivity#relay-fallback)）；`offline`：该 peer 的最后已知事实缺失或已过 `PeerFacts.expiresAt` 且以上皆无。报告者持续报告且本节点能 sync 时，Server 在事实到期前回答（[sync hold](/v2/node/netmap-design#sync-transport)），所以它表示报告者确实停止报告、或本节点联系不上 Server；只是显示，不拒绝任何流（出口选择见[最后已知事实](/v2/node/connectivity#last-known-facts)）；`unreachable`：需要邻接但无通道、circuit 或可用中继，即确实没有路径；`idle`：其余（含非相邻且当前无 circuit） |
 | `transport` | 必填可空：`direct` 为选定通道的承载，`relay`／`relayIdle` 为首跳通道的承载；其他为 null |
 | `endpoint` | 必填可空：`direct` 选定通道的实际远端地址；其他为 null |
 | `mtu` | 必填可空：`direct` 的 Native UDP 选定通道的 `path`（外层路径 MTU，IP 字节）与 `inner`（一个 Data 帧能承载的最大内层 IP 包）；搜索完成前、其他承载或未确认时为 null，定义见[外层路径 MTU](/v2/node/connectivity#path-mtu) |

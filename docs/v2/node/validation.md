@@ -289,7 +289,7 @@ W2 使用候选 `fbde424e`（生产修复 `0593e19b`，基于 main `1271be5d`）
 
 **planck 宿主 WiFi 的周期中断**（宿主问题，不在产品侧处理）：planck 宿主 ath12k 在每次 802.1X 重认证（约 8 h 24 min 一次）的 PTK 重新协商时 flush 约 5 秒，期间宿主范围的 netlink 停顿。D3 之后 planck 节点每次随之 DNS 健康检查失败、撤回包平面约 0.6 秒并自动重装，不再阻断至重启。
 
-**节点持有的 peer 事实可早于其租约到期**（X8 发现，未修复）：Server 只在事实内容变化时唤醒 sync hold，新鲜度随下一次普通 sync 捎带；节点的 hold 只以自己的租约为界（余 15 秒），事实按报告者的 `observedAt` + 60 秒到期。于是节点在 hold 期间或 Node HTTP 中断时，可在租约到期前（至多一个报告间隔）失去出口就绪事实，新出口流在本地被拒（`netmap_denied`），已有流不受影响。
+**节点持有的 peer 事实可早于其租约到期**（X8 发现，P1 已修复）：此前 Server 只在事实内容变化时唤醒 sync hold、hold 只以租约为界，而事实按报告者 `observedAt` + 60 秒到期，节点在 hold 期间或 Node HTTP 中断时可在租约到期前失去出口就绪事实，新出口流在本地被拒（`netmap_denied`）。现在 hold 也以节点持有事实的最早截止 − 5 秒为界（[sync hold](/v2/node/netmap-design#sync-transport)），且过期的出口就绪事实按最后已知值继续可选（[最后已知事实](/v2/node/connectivity#last-known-facts)）；`exit/off` 第 15 阶段等待 A 取得一次 sync 的绕过已去掉，第 8 阶段照旧断言 HTTP 中断期间直到租约到期前新出口流都能建立。证据见下方 P1 矩阵。
 
 V1 及中间候选的 STUN 候选为空、完整路径握手／状态发布不收敛等失败证据保留在各自原始报告和 V2 私有归档中；它们不被改写为通过。短模式只证明其工具和诊断行为，仍不计入本表完整验收。
 

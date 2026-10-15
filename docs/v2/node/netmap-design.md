@@ -129,7 +129,11 @@ SyncResponse { lease: NetmapLease,
 
 Server 挂起请求直至 netmap、可见事实或本节点的 DNS 关联 overlay 变化，或 ≤ 60 s 超时；超时回 `unchanged`＋`peerFacts: null`，即内建兜底。
 
-挂起不越过节点持有的租约：一次 hold 的上限为 `min(名义 hold, 节点持有的租约剩余 − 15 s)`，15 s 即节点传输退避上限（`BACKOFF_MAX`），使回答即使失败节点也还有一次重试。“节点持有的租约”是本 Server 进程对该节点最近一次、未被同节点更新请求取代的回答所带租约；被取代（节点已改发新请求）的回答不计入。Server 进程尚未回答过该节点（首次请求、Server 重启后）时立即回答。余量不足时也立即回答，回答本身即续租。唯一 owner 是 Server 的 sync hold（`netmap::Hub`），Node 不另做截断。限制：回答已写出但在传输中丢失、且节点在该请求结束后才重试时，Server 认为的租约可能新于节点实际持有的，由 15 s 余量与节点退避兜底。节点收到即发下一个请求，手里的 `NetmapRef`／`StateCursor` 就是游标，没有事件流与独立重放。`SyncResponse::check(request)` 校验租约指向最终内容、delta 的 base 等于请求、事实增量接续请求游标且属于同一 netmap serial。语义上仍是两条线：netmap 部分授权，`peerFacts` 部分只供选择。
+挂起不越过节点持有的租约：一次 hold 的上限为 `min(名义 hold, 节点持有的租约剩余 − 15 s)`，15 s 即节点传输退避上限（`BACKOFF_MAX`），使回答即使失败节点也还有一次重试。“节点持有的租约”是本 Server 进程对该节点最近一次、未被同节点更新请求取代的回答所带租约；被取代（节点已改发新请求）的回答不计入。Server 进程尚未回答过该节点（首次请求、Server 重启后）时立即回答。余量不足时也立即回答，回答本身即续租。唯一 owner 是 Server 的 sync hold（`netmap::Hub`），Node 不另做截断。限制：回答已写出但在传输中丢失、且节点在该请求结束后才重试时，Server 认为的租约可能新于节点实际持有的，由 15 s 余量与节点退避兜底。
+
+挂起也不越过节点持有的事实的新鲜度：报告者同内容的例行续期（每 20 s 一次的 State 报告，新 `observedAt`）不唤醒任何 hold，新的 `expiresAt` 由下一次回答的 `refreshed` 捎带；因此 hold 上限还取 `节点持有的事实中最早的 expiresAt − 5 s`（`FACTS_RENEWAL_MARGIN`）。“节点持有的事实”是带该请求所指租约的那次回答中 `updated` 与 `refreshed` 的截止（二者合起来覆盖节点当时持有的每份可见事实；节点只会把截止调大），与租约记在同一 `netmap::Hub` 条目里。回答时剩余不足 5 s 的事实不计入：这次回答是它最后的续期机会，若报告者已停止，下一个 hold 不会为它反复立即回答。于是只要报告者仍在报告、节点仍能联系 Server，节点持有的事实在其租约内不会仅因时间流逝而过期；报告者停止报告时事实照常过期（`offline`）。代价是 hold 缩短：报告间隔 20 s 时回答所带事实剩余 40–60 s，hold 约为 `min(名义 45–55 s, 最早剩余 − 5 s)`，可见 peer 越多越接近 35 s，每节点 sync 频率约为原来的 1.4 倍（报告延迟使事实送达时更旧则更高），与 peer 数无关。不在续期时唤醒 hold：那会让每个报告者的每次续期唤醒所有看见它的节点（N 个节点全互见时每节点每 20 s 被唤醒 N−1 次）。Node HTTP 中断时没有回答可以续期，事实照常过期，但过期只是新鲜度：出口选择按最后已知值继续（见[最后已知事实](/v2/node/connectivity#last-known-facts)），不拒绝租约内的新流。
+
+节点收到即发下一个请求，手里的 `NetmapRef`／`StateCursor` 就是游标，没有事件流与独立重放。`SyncResponse::check(request)` 校验租约指向最终内容、delta 的 base 等于请求、事实增量接续请求游标且属于同一 netmap serial。语义上仍是两条线：netmap 部分授权，`peerFacts` 部分只供选择。
 
 ### Server 侧
 
@@ -142,7 +146,7 @@ Server 挂起请求直至 netmap、可见事实或本节点的 DNS 关联 overla
 
 - Control 是唯一联系 Server 的 owner，循环发 `sync`：`netmap` 部分校验、保存、发布 → Engine `reconfig` → 各组件 `apply`；`peerFacts` 部分解码为 `PeerFacts { nodeId, listeners: key → { phase, network, localEndpoints, stunCandidates }, exit: { roleGeneration, status, installedFamilies }, observedAt, expiresAt }`，并入最后已知事实后以 `KnownPeers` 发布，不进入期望内容（[Netmap 发布](/v2/node/control#netmap-发布)）。
 - Manager 只读最新 `KnownPeers` 合并候选，不重建 epoch、不换 scope；已有健康通道不因候选变化断开。
-- 事实丢失（请求失败、Server 停机）时保留最后已知事实：`expiresAt` 只表示新鲜度，本机端点继续可拨，STUN 映射按各自截止停用；事实只在被替换、`removed`、离开投影或 netmap 结束时消失，并随 `peer-facts.json` 跨离线重启，见[最后已知事实](/v2/node/connectivity#last-known-facts)。
+- 事实丢失（请求失败、Server 停机）时保留最后已知事实：`expiresAt` 只表示新鲜度，本机端点继续可拨，最后已知就绪的出口继续可选（排在当前就绪出口之后），STUN 映射按各自截止停用；事实只在被替换、`removed`、离开投影或 netmap 结束时消失，并随 `peer-facts.json` 跨离线重启，见[最后已知事实](/v2/node/connectivity#last-known-facts)。
 
 ### 事实重建 {#facts-rebuild}
 

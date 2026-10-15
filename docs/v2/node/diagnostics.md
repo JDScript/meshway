@@ -140,7 +140,7 @@ dial meshway-sha/lab-udp  [::]:40651     —                     —            
 
 名称先经本节点自己的 DNS 路径解析：daemon 像普通应用一样调用系统解析（`getaddrinfo`，即本机安装的 resolved／resolv.conf 代理与 DNS owner），取第一个 IPv4 回答（没有则取第一个回答）。显示的解析路径来自 DNS owner 对该名称的同一选择（`meshway_dns::name_route`）：MagicDNS、`exit <E>`（出口 resolver）、`resolver <key>`（split／default 配置的 resolver）、`system DNS`（unmanaged）或 `no DNS path`。名称没有解析出地址时 `decision.destination`／`action` 为 null，随后以 `targetNotFound` 结束。
 
-地址的判定是本节点首包对 `icmp:*` 的同一判定（`SecureNode::preview`：Policy `LocalCompiler` 的决定、出口按就绪事实取第一个就绪出口、路径按 `choose_path` 排序，不登记邻接需求，不建 circuit）。被本节点可信 DNS 关联命名的地址按关联名称判定，其余按地址判定，与[可信域名关联](/v2/node/exit-design#trusted-dns-associations)一致；显示的规则同样来自 `egress_rule_for_name`（有关联）或 `egress_rule_for_ip`。
+地址的判定是本节点首包对 `icmp:*` 的同一判定（`SecureNode::preview`：Policy `LocalCompiler` 的决定、出口按就绪事实取第一个当前就绪出口、否则第一个最后已知就绪出口、路径按 `choose_path` 排序，不登记邻接需求，不建 circuit）。被本节点可信 DNS 关联命名的地址按关联名称判定，其余按地址判定，与[可信域名关联](/v2/node/exit-design#trusted-dns-associations)一致；显示的规则同样来自 `egress_rule_for_name`（有关联）或 `egress_rule_for_ip`。
 
 | `decision` 字段 | 含义 |
 | --- | --- |

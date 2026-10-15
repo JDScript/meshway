@@ -2,6 +2,15 @@
 
 按合入 main 的顺序记录工作包、提交与证据 ID。规则见[工程流程](/v2/process)；性能数字的口径见[分层性能测量](/v2/node/performance)，验收状态见[验收范围](/v2/node/validation)。
 
+## 未发布
+
+节点持有的 peer 事实在租约内不再仅因时间流逝而过期（P1，`p1/facts-freshness`）：wire 6、IPC 12、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约均不变（Server 与 Node 可分别升级）。X8 发现：事实按报告者 `observedAt` + 60 秒到期，同内容续期不唤醒 sync hold，hold 只以租约为界；节点在 hold 期间（每周期至多约 15–20 秒）或 Node HTTP 中断时失去出口就绪事实，新出口流在租约内被本地拒绝（`netmap_denied`），peer 短暂显示 `offline`（OPS10 观察窗一次）。
+
+- Server：sync hold 另以节点持有事实（带所指租约那次回答的 `updated`／`refreshed`）的最早 `expiresAt` − 5 秒为界，回答时剩余不足 5 秒的事实不计入（报告者停止时不会反复立即回答）。续期仍不唤醒 hold（否则每次续期唤醒所有看见报告者的节点）；每节点 sync 频率约 1.4 倍（报告延迟使事实送达时更旧则更多），与 peer 数无关。见 [sync hold](/v2/node/netmap-design#sync-transport)。
+- Node：过期的出口就绪事实按最后已知值继续可选，排在该决定所有当前就绪出口之后；最后已知未就绪或从未就绪的出口仍不选。只是选择，出口端照旧按自己的 netmap 与角色准入。见[最后已知事实](/v2/node/connectivity#last-known-facts)。
+- `offline` 语义不变（事实缺失或过期），只显示、不拒绝流；现在它表示报告者停止报告或本节点联系不上 Server。
+- 验收：`exit/off` 去掉第 15 阶段"等 A 取得一次 sync"的绕过；第 8 阶段照旧断言 HTTP 中断期间直到租约到期前新出口流都能建立。Server 单测与 App 测试（hold 在事实到期前带回续期；停止的报告者只缩短一次 hold）、Control 测试（中断期间过期的就绪出口仍是最后已知）、dataplane 黑盒 `netmap_exit_a_last_known_ready_exit_takes_new_flows`。
+
 ## v0.1.0-alpha.11
 
 范围：wire 6、IPC 12、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约均不变（普通升级，无断网窗口）。D3：DNS 锚点读取中断不再结束锚点、owner 失败按检查项字段化记录、egress capture 回读校验未知时有界重试（30 秒）；X10：出口队列溢出只丢包不结束流、已 ACK 流与投影操作公平预留、内核操作与包写入并行、回程批量读写；以及下列 D3、X10 工作包。

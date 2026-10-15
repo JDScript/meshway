@@ -75,7 +75,7 @@ Node 拨号候选的顺序为：netmap 中的 configured 端点，然后是 `pee
 | --- | --- | --- |
 | `localEndpoints` | 作为最后已知地址继续拨号 | 被同一 peer 的新事实替换、出现在 `removed`、peer 不在当前投影内，或 netmap 结束（`apply(empty)`） |
 | `stunCandidates` | 各候选按自己的 `expiresAt` 停用（NAT 绑定确实会失效） | 同上，或候选自身到期 |
-| 出口就绪 `exit` | 不再作为 ready 出口的依据 | 同上 |
+| 出口就绪 `exit` | 最后已知为就绪（IPv4 已安装）的出口仍可选，但排在该决定的所有当前就绪出口之后；最后已知为未就绪的不选。过期不拒绝 netmap 允许的新出口流，出口端仍按自己的 netmap 与角色准入（`KnownPeers::ready_exits`、`SecureNode::set_ready_exits`） | 同上 |
 | 通道 `connected` | 不再作为[中继排序](#relay-fallback)的依据 | 同上 |
 
 `connected` 是该 peer 自己 State 报告中已认证且未到期的 `links` 对端（只含其 netmap 投影内、且查看者投影内的节点，升序去重，最多 256 个）；变化即是事实内容变化，唤醒查看者的 `sync`。它只给中继候选排序，不授予邻接、路径或业务权限；省略表示 Server 未报告（旧 Server）。
