@@ -9,9 +9,9 @@
 - Server：sync hold 另以节点持有事实（带所指租约那次回答的 `updated`／`refreshed`）的最早 `expiresAt` − 5 秒为界，回答时剩余不足 5 秒的事实不计入（报告者停止时不会反复立即回答）。续期仍不唤醒 hold（否则每次续期唤醒所有看见报告者的节点）；每节点 sync 频率约 1.4 倍（报告延迟使事实送达时更旧则更多），与 peer 数无关。见 [sync hold](/v2/node/netmap-design#sync-transport)。
 - Node：过期的出口就绪事实按最后已知值继续可选，排在该决定所有当前就绪出口之后；最后已知未就绪或从未就绪的出口仍不选。只是选择，出口端照旧按自己的 netmap 与角色准入。见[最后已知事实](/v2/node/connectivity#last-known-facts)。
 - `offline` 语义不变（事实缺失或过期），只显示、不拒绝流；现在它表示报告者停止报告或本节点联系不上 Server。
-- 验收：`exit/off` 去掉第 15 阶段"等 A 取得一次 sync"的绕过；第 8 阶段照旧断言 HTTP 中断期间直到租约到期前新出口流都能建立。Server 单测与 App 测试（hold 在事实到期前带回续期；停止的报告者只缩短一次 hold）、Control 测试（中断期间过期的就绪出口仍是最后已知）、dataplane 黑盒 `netmap_exit_a_last_known_ready_exit_takes_new_flows`。
+- 验收：`exit/off` 第 15 阶段的出口 DNS 断言改为只允许角色中断窗内失败（窗由 E 的日志与 Status 时间戳界定：角色停止 → 重装后首份就绪能力报告被确认 + 1 秒，窗内失败 ≤ `ceil(窗长 / 0.5 s) + 1`，窗外 100% 成功；E 重装中如实报告未就绪、A 按当前事实拒绝是 fail closed）；去掉第 15 阶段"等 A 取得一次 sync"的绕过；第 8 阶段照旧断言 HTTP 中断期间直到租约到期前新出口流都能建立。Server 单测与 App 测试（hold 在事实到期前带回续期；停止的报告者只缩短一次 hold）、Control 测试（中断期间过期的就绪出口仍是最后已知）、dataplane 黑盒 `netmap_exit_a_last_known_ready_exit_takes_new_flows`。
 
-验证：Planck 18 行矩阵 `20261015T062652Z-9a95285c`（`541e48b5`，并行 4）全部通过；`exit/off` 复跑 `20261015T065227Z-9645d57c` 覆盖 A 的出口事实在租约内过期后新出口流照常建立，证据 `.meshway/validation/p1/`。真机未部署。
+验证：Planck 18 行矩阵 `20261015T062652Z-9a95285c`（`541e48b5`，并行 4）全部通过；`exit/off` 复跑 `20261015T065227Z-9645d57c` 覆盖 A 的出口事实在租约内过期后新出口流照常建立；第 15 阶段断言修改后（`f9115a91`）`exit/off` 单跑 `20261015T123419Z-c3f16022`、`20261015T125059Z-2a2f87b5` 通过，证据 `.meshway/validation/p1/`。真机未部署。
 
 ## v0.1.0-alpha.11
 
