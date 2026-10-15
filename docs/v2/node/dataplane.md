@@ -66,7 +66,7 @@ TCP 乱序区间只记录已准入字节的序号，不制造接收确认：缺�
 
 首包和触发续期的输出保留原 guard，通过 `PendingAction::projection_ready`／`PendingFrame::projection_ready` 等待 ACK；每次 `release` 仍检查原截止、流／cipher 取消和 ACK。`PendingAction::exit_flow` 给出该包的精确投影 incarnation；ACK 后的 `exit_scope` 供宿主异步写适配器逐次 poll 检查原包权限，不能用最新流 scope 替换旧排队包。安装失败、丢失 ACK 或等待超时使流不可执行。宿主丢弃一个包装（例如出口队列无空位）只丢这个包：流、incarnation 与投影不变，不发布 `Retire`、不产生隔离项，下一个包照常准入（宿主侧队列见 [Exit 设计 · 出口队列](/v2/node/exit-design#exit-queue)）。投影截止取流 idle 与所属 circuit 生命期的交集（不再有 permit 或执行／instance 截止）；投影绑定安装它的出口角色 generation，随 netmap 租约存续，租约到期、角色撤回或 generation 改变时 Retire；未 ACK 的投影 scope 还受命令等待及旧投影截止约束，不能先迟到安装再依赖 ACK 回调拒绝。续期不会因命令排队重置预算。同授权直接交接只为仍活流发出不超过旧流截止的 `Renew`，实际获准包才刷新流期限。未 ACK 的流不跨交接保留；授权 generation／路径变化结束旧流和 cipher。普通 tuple 退役以独立流 guard 取消旧输出，同 CID 的其他活 tuple 继续执行；最后一条流结束后退役该 cipher，出口端同时向来源方向发出一个逐跳认证的 `Close`（中继照常转发），来源立即结束自己一端，下一包新建 circuit，而不是在出口已不存在的 cipher 上等到 15 秒无回复。
 
-退役先取消流 guard，再发布 `Retire`；出口端从内核精确清理成功 ACK 起隔离 tuple 至少 120 秒，源端从退役起计时。清理失败／未知结果保留隔离项，延迟清理不会缩短隔离窗口。关闭 owner 前，宿主调用 `retire_exits` 并排空清理事件。撤回前已通过内核最终过滤的包的边界见 [内核排队](/v2/node/exit-design#生存期、撤回与内核排队)。
+退役先取消流 guard，再发布 `Retire`；出口端从内核精确清理成功 ACK 起隔离 tuple 至少 120 秒，源端从退役起计时。清理失败／未知结果保留隔离项，延迟清理不会缩短隔离窗口。投影失败或在 owner 之外被取消的流转为隔离项、隔离期满的项被清除，都按 100 ms 调度执行，不随每个包扫描全部流与隔离项；每次准入仍检查本流自身存活，失效流的包立即被拒，调度只使其槽位与隔离 tuple 至多多保留 100 ms。本 owner 自己的退役（空闲、投影失败回报、circuit 结束、撤回）立即产生隔离项。关闭 owner 前，宿主调用 `retire_exits` 并排空清理事件。撤回前已通过内核最终过滤的包的边界见 [内核排队](/v2/node/exit-design#生存期、撤回与内核排队)。
 
 正常 TCP 完成进入仅排空状态：最后 ACK／RST 沿原 guard 交付，不在提交流状态时取消它自身；随后不再接纳任何包，不刷新 idle，不跨执行交接保留，最多保留至已经安装的原流截止再发 `Retire`。撤回、显式关闭和实际到期仍立即取消，不能借排空继续旧业务。
 
