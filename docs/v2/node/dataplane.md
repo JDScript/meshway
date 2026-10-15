@@ -317,6 +317,37 @@ exchange 适配器须在每次 connect／write／read poll 检查路由期限与
 
 启动参数见[本机运行](/v2/node/runtime#启动与接入)。安装未完成时阻断整体 applied。
 
+### 健康检查与恢复 {#dns-health}
+
+DNS owner 每 250 ms 重新证明一次安装（observe），单次期限 2 秒。任一检查失败或超出期限都立即撤回查询许可，网络 worker 随即撤回整个包平面（`Required DNS component failed; suspending packet plane`），Status 为 `lastError: dns`。此后 owner 每秒按后端当前状态完整重证一次（recover：namespace、预约、锚点、resolve1 owner、链路设置与记录）。重证成功即以同一 netmap 重装，无需 `up` 或重启进程；失败则保持阻断，直到某次重证成功。
+
+| 可自动恢复 | 不可自动恢复（保持阻断） |
+| --- | --- |
+| resolved 重启（新 bus owner 保留了标记设置；或丢失设置后链路回到原始值，此时重新安装）；`/etc/resolv.conf` 被改写后又恢复为动态 stub；系统停顿使一次检查超时或 netlink 读取失败（宿主范围的 RTNL 占用、CPU 停顿）；外部同名域路由出现后又消失 | 锚点被删除或改动（Underlay monitor 判为冲突，宿主内核归属结束）；链路设置被外部写成既非已安装值、也非原始值的内容；记录处于中断的设置变更（`record_pending`）；预约属于另一个 owner；namespace 改变 |
+
+一次读取被中断或失败，不证明锚点归属有任何变化：锚点读取 socket 随之关闭，下一次读取另开新 socket，锚点本身只在 owner 删除它或宿主内核归属结束时结束。
+
+每次失败记录唯一一项检查，WARN 日志带 `operation`（`observe`／`recover`／`hold`／`install`／`prepare`）、`error`、`check`、`expected`、`actual`、`source` 字段，Status 的 `lastErrorDetail`（[本机运行](/v2/node/runtime)）给出同一内容的一行文本。同一失败（四个字段都相同）只记录一次，重证持续失败时不会每秒重复。`check` 取值：
+
+| `check` | 检查项 | `source` |
+| --- | --- | --- |
+| `observe_deadline` | 一次 observe 在 2 秒内完成；`actual` 为放弃时的实际耗时，远大于 2 秒说明进程或内核曾停顿 | — |
+| `namespace` | 进程仍在预约记录的 network namespace（boot、device／inode、cookie） | `/proc/self/ns/net` |
+| `owner_record`／`owner_fenced` | 预约仍属于本 owner；此前的失败已隔离本 owner，须先重证 | 预约文件 |
+| `anchor_ended` | Underlay 锚点仍有效：owner 删除了锚点，或宿主内核归属已因冲突结束（具体原因见此前那条冲突 WARN） | Kernel DNS anchor |
+| `anchor_netlink` | 锚点读取所需的 netlink dump 完成（失败、5 秒超时或超出对象上限） | `rtnetlink RTM_GETLINK`／`RTM_GETADDR`／`RTM_GETROUTE` |
+| `anchor_link`／`anchor_address`／`anchor_collision`／`anchor_namespace`／`anchor_identity` | 锚点链路、唯一地址、无其他持有该地址的地址或路由、所在 namespace、身份与记录一致 | 对应 dump |
+| `resolved_owner`／`resolved_process`／`resolved_namespace` | `org.freedesktop.resolve1` 有 bus owner，且在本 namespace 中运行 | D-Bus `GetNameOwner`／`GetConnectionUnixProcessID`、`/proc/<pid>/ns/net` |
+| `resolv_conf_mode`／`stub_listener` | resolved 报告 `ResolvConfMode=stub`、`DNSStubListener=yes`（后端不支持，error 为 `Unsupported`） | resolve1 Manager 属性 |
+| `resolved_link` | resolved 识别锚点链路 | resolve1 `GetLink` |
+| `link_settings` | 锚点链路的设置与记录的已安装值（未安装时为原始值）完全一致；`expected`／`actual` 只列出不同字段 | resolve1 Link 属性 |
+| `link_settings_applied` | 安装或恢复中的每一步设置回读一致 | resolve1 Link 属性 |
+| `foreign_domain` | 没有其他链路路由本计划的域 | resolve1 Manager `Domains` |
+| `record_*` | resolved 私有记录可读、版本、计划、链路、bind 一致且没有中断的变更 | 记录文件 |
+| `probe` | 首次安装的 UDP→TCP 探测通过 | — |
+| `resolv_conf` | 显式文件代理的 resolv.conf 检查 | 文件路径 |
+| `query_service` | DNS 查询服务仍在服务 bind | — |
+
 ## 验收范围 {#daemon-与内核资源-conformance}
 
 本页组件的 TUN、受保护包流与 daemon 整组验收状态统一见[验收范围](/v2/node/validation)。

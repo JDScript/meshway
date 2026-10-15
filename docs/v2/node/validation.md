@@ -183,6 +183,22 @@ Planck 18 行矩阵 `20261013T211635Z-273c8e3a`（`7a6dab15`）全部通过；`u
 
 `EADDRINUSE` 的占用者未在失败瞬间捕获（alpha.6）：采样显示失败前数毫秒同一 daemon 刚在 35000 绑定过一个 socket，失败约 200 ms 后已无进程持有该端口。后续（B2、H1）逐条核对了 Manager 的同端口改绑路径：首个 instance 到达的普通 listener → 协调 socket 改绑、内容变化与 Manager 重启都先 join 旧 owner（socket 同步关闭）再 bind；B2 前的接管路径和 H1 前“重试 owner 已绑定、未被接管的 socket 在 owner 退役后仍留在接管队列”两处会让新 bind 撞上本进程的旧 socket，均已改为先关闭再 bind，`manager::tests::netmap::rebind` 以真实同端口 bind 覆盖（旧顺序得到 `EADDRINUSE`）。alpha.8 常驻 lab 首次即绑定成功；alpha.6 那一次的确切占用者不再复现，重试仍是对其他进程占用的兜底。
 
+### D3 系统 DNS 健康检查证据 {#d3-dns-health}
+
+planck 2026-10-13 22:47:56Z、10-14 07:11:57Z、15:35:57Z、23:59:57Z 四次 DNS owner 阻断（前两次 `observe Backend` 后 `recover Conflict`，后两次只有 `observe Conflict`，均持续到进程重启）。四次都在宿主 WiFi（ath12k）重认证后的 PTK 重新协商结束时（3–82 ms 内）发生，间隔精确为 8 h 24 min，该处驱动的发送队列 flush 等满 5 秒；与宿主 CI、Docker 操作和 resolved 重启无关。原因链：宿主范围的 RTNL 占用使容器内全部 netlink 请求停顿，daemon 运行时停住，恢复时 2 秒 observe 期限（`Backend`）或锚点读取自己的 5 秒 netlink 期限（`Conflict`）已过；被中断的锚点读取把锚点 guard 永久结束，此后每次重证都以 `Conflict` 失败。证据 `.meshway/validation/d3/`。
+
+本机 lab（OrbStack，三节点）以隔离容器拆除大量 dummy 接口制造宿主 RTNL 占用，复现与修复对照：
+
+| 停顿 | main（alpha.10） | D3 |
+| --- | --- | --- |
+| 3.1 s／5.0 s | 三节点 `observe Backend` → `recover Conflict`，阻断至重启 | — |
+| 6.5 s | lax `observe Backend`／`recover Conflict`；sha 另有出口 `audit` netlink 失败（10-13 22:47 签名）；nyc 只有 `observe Conflict`（15:35／23:59 签名）；均阻断 | 6.7 s：`check=observe_deadline`（`abandoned after 6677 ms`）或 `check=anchor_netlink`（`RTM_GETADDR` dump 失败），20 ms 内重证成功，约 0.6 s 内重装，三节点 running／ready |
+| 12–13 s | — | 三节点 `observe_deadline` 后恢复；一次中 nyc 的 egress capture owner 校验失败使宿主内核归属结束（`anchor_ended`，保持阻断，见[剩余边界](#remaining-boundaries)） |
+
+其余候选（D3 构建）：`/etc/resolv.conf` 改为普通文件 4 秒 → `check=resolv_conf_mode`（`expected stub; found foreign`），Status `lastErrorDetail` 同文，改回后自动恢复；删除锚点 → monitor `anchor_link_changed`、DNS `resolved_link`（`Link 4 not known`）、`recover` 为 `anchor_ended`，保持阻断（归属真正丢失）；resolved 重启由 `nat/resolved` 的 `resolved-restart` 阶段覆盖；observe 与 apply 由同一 actor 任务串行执行，不会并发。单进程停顿（`SIGSTOP` 3 秒，8 次）在 main 上不触发失败：停顿期间内核已完成请求，不能代替 RTNL 占用。
+
+`dns_anchor_survives_suspend_and_owner_restart_until_explicit_removal` 新增：中断的读取与零期限读取后锚点不结束、下一次读取另开 socket 并成功（main 上 `an interrupted read ended the anchor`）。
+
 ### 当前验证证据
 
 `validate:matrix` 为每行独立保留报告并汇总 `matrix.json`／`summary.md`；通过结论同时要求 fixture `passed`、进程成功退出和本 run 无遗留资源。`--short` 的报告标记 `scope=diagnostic-short`：只运行 30 秒持续／纯接收窗口（退路 5 秒后触发），不要求已经跨原需求期限，未测到的延长为 null。其他场景仍执行，包括真实 instance 失效恢复；短模式不是整组验收，不能更新下述历史／当前通过状态。并发运行还需读取各行启动 load，不能与低负载串行结果不加区分地合并。
@@ -267,6 +283,8 @@ W2 使用候选 `fbde424e`（生产修复 `0593e19b`，基于 main `1271be5d`）
 ### 剩余边界 {#remaining-boundaries}
 
 本轮四个目标行没有剩余必需检查失败。**Planck 的静态 UDP/resolved 单独组合未在 V2 重验**：旧候选矩阵 `20261007T234146Z-c299a3b8` 与串行复跑 `20261008T002050Z-1d853e58`／行报告 `20261008T002332Z-de9c1b24` 曾在系统解析、ping 首样本或会合检查失败，不能由本轮 NAT/resolved 的通过替代。其他未验收范围见矩阵下方列表。
+
+**egress capture owner 把一次校验失败当作归属丢失**（D3 发现，未修复）：其每秒 `nft list` 校验在宿主 RTNL 停顿超过其工具期限时失败，owner 即结束宿主内核归属，控制中继、capture 与 DNS 随之阻断至重启（lab 12 秒停顿中出现一次；planck 四次事故的停顿约 5.5 秒，未出现）。现在该处记录 `Egress capture owner stopping after a failed kernel operation`（`operation`／`error`）。
 
 **节点持有的 peer 事实可早于其租约到期**（X8 发现，未修复）：Server 只在事实内容变化时唤醒 sync hold，新鲜度随下一次普通 sync 捎带；节点的 hold 只以自己的租约为界（余 15 秒），事实按报告者的 `observedAt` + 60 秒到期。于是节点在 hold 期间或 Node HTTP 中断时，可在租约到期前（至多一个报告间隔）失去出口就绪事实，新出口流在本地被拒（`netmap_denied`），已有流不受影响。
 

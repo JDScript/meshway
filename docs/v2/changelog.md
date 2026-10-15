@@ -2,6 +2,14 @@
 
 按合入 main 的顺序记录工作包、提交与证据 ID。规则见[工程流程](/v2/process)；性能数字的口径见[分层性能测量](/v2/node/performance)，验收状态见[验收范围](/v2/node/validation)。
 
+## 未发布
+
+系统 DNS 健康检查（D3，`d3/dns-observe`）：wire 6、IPC 12（`lastErrorDetail` 语义扩展，字段不变）、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约均不变。planck 四次 DNS owner 阻断（alpha.8／alpha.9）的触发源是宿主 WiFi 驱动 PTK 重新协商时约 5 秒的宿主范围 RTNL 占用，见[D3 证据](/v2/node/validation#d3-dns-health)。
+
+- 中断或失败的锚点读取不再结束 DNS 锚点：只关闭该读取 socket，下一次读取另开；锚点只在 owner 删除它或宿主内核归属结束时结束。停顿后 owner 的每秒重证即成功并自动重装（此前阻断至重启）。
+- DNS owner 的每次失败记录唯一一项检查：WARN 带 `check`、`expected`、`actual`、`source`，同一失败只记一次；Status `lastErrorDetail` 给出同一行文本；observe 超时为 `observe_deadline` 并带实际耗时。检查项与可恢复边界见[健康检查与恢复](/v2/node/dataplane#dns-health)。
+- 结束宿主内核归属的 egress capture owner 与控制中继监听失败现在各记一条 WARN（此前无日志）。
+
 ## v0.1.0-alpha.10
 
 范围：wire 6、IPC 12、`compilerVersion` `meshway-netmap-3`、Server schema 8 均不变（普通升级，无断网窗口；CLI 与 daemon 一起升级，IPC 12 新增命令 `ClearProfile`）。HTTP 契约新增 `DELETE /agent-api/v1/routing-selection`（`clearNodeRoutingProfile`）与 `DELETE /api/v1/networks/{networkId}/nodes/{nodeId}/routing-selection`（`clearNodeRoutingSelection`），`ActivityTarget.routingSelection.profile` 改为必有可空。X8：出口角色失败只撤该角色并自动重装、echo 流寿命（等待回复至多 10 秒、回复后 2 秒结束）、echo 连接 CT 换代按归属处理、出口 cipher 随最后一条流结束向来源发 `Close`；H2：清除方案选择（`meshway exit --default`）、`idlePath` 多中继排序修正；以及下列 H2、X8 工作包。
