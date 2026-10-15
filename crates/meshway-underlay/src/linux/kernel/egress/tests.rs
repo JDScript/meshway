@@ -553,3 +553,66 @@ fn narrow(managed: IpAddr, direct: IpAddr) -> EgressCapturePlan {
     plan.managed_ipv4 = vec![(managed, managed)];
     plan
 }
+
+/// A consistent read-back holds; a read-back that lacks one of the table's
+/// rules, or no table at all, is a change (only that ends kernel ownership;
+/// a failed read is `Unavailable`, see `owner::unverified_tests`).
+#[tokio::test]
+#[ignore = "requires an isolated Linux network namespace, TUN, nft and NET_ADMIN"]
+async fn verification_distinguishes_a_missing_rule_and_table_from_a_consistent_table() {
+    assert_eq!(
+        std::env::var("MESHWAY_UNDERLAY_ISOLATED").as_deref(),
+        Ok("1")
+    );
+    let Setup {
+        _temp,
+        tasks,
+        mut backend,
+        ..
+    } = setup().await;
+    let verification = backend.check().await;
+    assert!(
+        matches!(verification, backend::Verification::Holds),
+        "{verification}"
+    );
+    let table = backend.ledger.program.table();
+    let nft = |arguments: &[&str]| {
+        let output = std::process::Command::new("/usr/sbin/nft")
+            .args(arguments)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        output.stdout
+    };
+    let listed: serde_json::Value =
+        serde_json::from_slice(&nft(&["-j", "list", "table", "inet", &table])).unwrap();
+    let rule = listed["nftables"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find_map(|entry| entry.get("rule"))
+        .expect("the capture table has rules");
+    let (chain, handle) = (
+        rule["chain"].as_str().unwrap(),
+        rule["handle"].as_u64().unwrap().to_string(),
+    );
+    nft(&["delete", "rule", "inet", &table, chain, "handle", &handle]);
+    let verification = backend.check().await;
+    assert!(
+        matches!(
+            verification,
+            backend::Verification::Changed("objects_changed")
+        ),
+        "{verification}"
+    );
+    nft(&["delete", "table", "inet", &table]);
+    let verification = backend.check().await;
+    assert!(
+        matches!(
+            verification,
+            backend::Verification::Changed("table_missing")
+        ),
+        "{verification}"
+    );
+    tasks.shutdown().await.unwrap();
+}

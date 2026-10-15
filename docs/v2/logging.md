@@ -31,7 +31,7 @@ JSON 事件包含 `timestamp`、`level`、`target`、`fields`；`fields.message`
 | CLI | 命令失败、停止等待 | 命令名称 |
 | Server | 监听就绪、关闭、HTTP 5xx 故障 | HTTP 响应状态和响应头就绪耗时 |
 | DNS owner | 健康检查／安装失败（`DNS owner health check failed`、`DNS owner operation failed`、`DNS owner preparation failed`）带 `operation`、`error`、`check`、`expected`、`actual`、`source`，同一失败只记一次；恢复（`DNS owner recovered its system installation`）；resolve1 bus owner 变化 | 出口 served 快照变化 |
-| Underlay | 宿主内核归属结束的原因：monitor 冲突 `reason`、egress capture owner 的失败 `operation`／`error`、控制中继监听失败 | — |
+| Underlay | 宿主内核归属结束的原因：monitor 冲突 `reason`、egress capture owner 的失败 `operation`（含 `verify`、`verify_unavailable`）／`error`、控制中继监听失败；egress 回读暂不可用与重新校验一致（`failures`、`unverified_ms`） | — |
 | Connectivity | 组件错误类别 | channel transition；成功安装另记录 schema 1 的实际 channel／socket、端点、carrier、原 acquisition／attempt、Node／instance／配置引用和公钥绑定 |
 
 Server HTTP 使用 `tower-http` 的 `TraceLayer`，span 只包含 method、声明的 route 模板及 Server 生成的 request ID。原始 URI、查询参数、headers、请求／响应 body 均不进入该层日志。SSE 的响应耗时表示开始响应，不表示整个订阅持续时间。

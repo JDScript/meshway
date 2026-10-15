@@ -166,6 +166,8 @@ Mesh 池、loopback、链路本地、组播、保留／广播及出口本机地�
 
 `underlay-egress.json`（v2）保存 boot／namespace、随机 installation、mark／table、计划、当前门与待提交门（区间与设备）、nft 规范对象／handle、选择器规则及 removed；已 down（removed）或属于另一次启动的记录不论版本直接归档，同一次启动内仍持有资源的其他版本记录在解析内容前即以专用错误（含文件名与版本，提示先用写它的旧版本 `meshway down` 或重启主机再升级）阻止启动；捕获表路由由门推出，恢复时与表内实际路由精确对账。自有规则／路由变化注册到同一 monitor（路由每 64 条等待其观测，不使通知缓冲溢出），不制造外部切网事件。暂停、执行失效和同 namespace 重启保留负向范围；TUN 消失不会落回 main direct。恢复先关闭旧活动 selector 并清理旧正向资源，只有新的有效执行安装可以重新激活；显式 down 才解除所属负向边界。
 
+owner 每秒把捕获表回读并与收据比对。回读本身失败（工具 2 秒期限、netlink 中断、输出不可读，或 `nft list table` 失败而表仍在 `nft list tables` 中）不证明归属变化：记为未知，下一秒再证，WARN `Egress capture verification unavailable` 一次，重证一致后 INFO `Egress capture verified again; ownership kept`（`failures`、`unverified_ms`）；未知期间现有捕获保持原样，新的 stage／switch 一律拒绝（不安装新内容）。连续未知达 30 秒（与 DNS owner 的恢复口径一致）按 fail closed 结束宿主内核归属，原因 `verify_unavailable`。回读成功但对象、handle 或集合元素与收据不符（`objects_changed`／`set_elements_changed`），或表已不存在（`table_missing`），立即结束宿主内核归属。结束时记录 `Egress capture owner stopping after a failed kernel operation`（`operation`、`error`）。
+
 IPC 12 的公开运行状态（`meshway status --json` 原样输出）：
 
 | 字段 | 含义 |

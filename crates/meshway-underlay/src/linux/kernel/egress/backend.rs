@@ -30,6 +30,35 @@ use std::{
 /// default 208 KiB holds about 200: 64 leave a wide margin.
 const ROUTE_BATCH: usize = 64;
 
+/// Why the capture table could not be read back.
+enum Unread {
+    /// The read itself failed: nothing is known about the table.
+    Unavailable(Error),
+    /// `nft list tables` succeeded and does not list the table.
+    Missing,
+}
+
+/// One read-back of the capture table against its receipt.
+#[derive(Debug)]
+pub(super) enum Verification {
+    /// Read back and identical.
+    Holds,
+    /// The read failed; ownership is unknown, not lost.
+    Unavailable(Error),
+    /// Read back and different, or gone: what changed.
+    Changed(&'static str),
+}
+
+impl std::fmt::Display for Verification {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Holds => f.write_str("read back and identical"),
+            Self::Unavailable(error) => write!(f, "read back failed: {error}"),
+            Self::Changed(what) => write!(f, "read back and different: {what}"),
+        }
+    }
+}
+
 pub(super) struct Backend {
     pub store: Store,
     pub ledger: Ledger,
@@ -133,8 +162,14 @@ impl Backend {
             .iter()
             .any(|(family, table)| family == "inet" && *table == name))
     }
-    async fn dump(&mut self) -> Result<Receipt> {
-        self.commands.settle().await.map_err(|_| Error::Netlink)?;
+    /// Read the capture table back. A read that fails (the tool's 2 s
+    /// budget, an interrupted netlink dump, unreadable output) says nothing
+    /// about the table; only a table that is listed as absent is missing.
+    async fn read(&mut self) -> std::result::Result<Receipt, Unread> {
+        self.commands
+            .settle()
+            .await
+            .map_err(|_| Unread::Unavailable(Error::Netlink))?;
         let output = self
             .commands
             .run(
@@ -150,18 +185,44 @@ impl Backend {
                 Vec::new(),
             )
             .await
-            .map_err(|_| Error::Netlink)?;
+            .map_err(|_| Unread::Unavailable(Error::Netlink))?;
         if !output.success {
-            return Err(Error::Conflict);
+            return Err(match self.present().await {
+                Ok(false) => Unread::Missing,
+                Ok(true) | Err(_) => Unread::Unavailable(Error::Netlink),
+            });
         }
-        objects::decode(&output.stdout)
+        objects::decode(&output.stdout).map_err(Unread::Unavailable)
+    }
+    async fn dump(&mut self) -> Result<Receipt> {
+        self.read().await.map_err(|unread| match unread {
+            Unread::Unavailable(error) => error,
+            Unread::Missing => Error::Conflict,
+        })
     }
     pub async fn verify(&mut self) -> Result<()> {
         self.verify_gate(self.ledger.gate.clone()).await
     }
+    /// The periodic proof of the installed gate, classified.
+    pub async fn check(&mut self) -> Verification {
+        self.check_gate(&self.ledger.gate.clone()).await
+    }
     async fn verify_gate(&mut self, gate: Gate) -> Result<()> {
-        let observed = self.dump().await?;
-        let receipt = self.ledger.receipt.as_ref().ok_or(Error::Journal)?;
+        match self.check_gate(&gate).await {
+            Verification::Holds => Ok(()),
+            Verification::Unavailable(error) => Err(error),
+            Verification::Changed(_) => Err(Error::Conflict),
+        }
+    }
+    async fn check_gate(&mut self, gate: &Gate) -> Verification {
+        let observed = match self.read().await {
+            Ok(observed) => observed,
+            Err(Unread::Unavailable(error)) => return Verification::Unavailable(error),
+            Err(Unread::Missing) => return Verification::Changed("table_missing"),
+        };
+        let Some(receipt) = self.ledger.receipt.as_ref() else {
+            return Verification::Changed("receipt_missing");
+        };
         if observed.objects != receipt.objects || observed.handles != receipt.handles {
             #[cfg(test)]
             for (key, value) in &observed.objects {
@@ -172,12 +233,12 @@ impl Backend {
                     );
                 }
             }
-            return Err(Error::Conflict);
+            return Verification::Changed("objects_changed");
         }
-        if !self.elements_match(&observed, &gate) {
-            return Err(Error::Conflict);
+        if !self.elements_match(&observed, gate) {
+            return Verification::Changed("set_elements_changed");
         }
-        Ok(())
+        Verification::Holds
     }
     /// Every set holds exactly the gate's elements; the readback count is
     /// part of the comparison.

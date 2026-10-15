@@ -193,9 +193,12 @@ planck 2026-10-13 22:47:56Z、10-14 07:11:57Z、15:35:57Z、23:59:57Z 四次 DNS
 | --- | --- | --- |
 | 3.1 s／5.0 s | 三节点 `observe Backend` → `recover Conflict`，阻断至重启 | — |
 | 6.5 s | lax `observe Backend`／`recover Conflict`；sha 另有出口 `audit` netlink 失败（10-13 22:47 签名）；nyc 只有 `observe Conflict`（15:35／23:59 签名）；均阻断 | 6.7 s：`check=observe_deadline`（`abandoned after 6677 ms`）或 `check=anchor_netlink`（`RTM_GETADDR` dump 失败），20 ms 内重证成功，约 0.6 s 内重装，三节点 running／ready |
-| 12–13 s | — | 三节点 `observe_deadline` 后恢复；一次中 nyc 的 egress capture owner 校验失败使宿主内核归属结束（`anchor_ended`，保持阻断，见[剩余边界](#remaining-boundaries)） |
+| 12–13 s | — | 三节点 `observe_deadline` 后恢复；D3 第一版中一次 nyc 的 egress capture owner 校验读取失败即结束宿主内核归属（`anchor_ended`，阻断） |
+| 6–7 s ×8（含 egress 修复） | — | 每次三节点 DNS 均自动恢复；lax 两次 `Egress capture verification unavailable` 后 `verified again; ownership kept`（6352 ms、12 ms），全部 running／ready |
 
 其余候选（D3 构建）：`/etc/resolv.conf` 改为普通文件 4 秒 → `check=resolv_conf_mode`（`expected stub; found foreign`），Status `lastErrorDetail` 同文，改回后自动恢复；删除锚点 → monitor `anchor_link_changed`、DNS `resolved_link`（`Link 4 not known`）、`recover` 为 `anchor_ended`，保持阻断（归属真正丢失）；resolved 重启由 `nat/resolved` 的 `resolved-restart` 阶段覆盖；observe 与 apply 由同一 actor 任务串行执行，不会并发。单进程停顿（`SIGSTOP` 3 秒，8 次）在 main 上不触发失败：停顿期间内核已完成请求，不能代替 RTNL 占用。
+
+egress capture owner 按同一不变量：回读失败只记为未知（30 秒上限），回读不一致或表消失才结束归属，规则见[源端 egress capture](/v2/node/runtime#源端-egress-capture-与切换)；`unreadable_verifications_keep_ownership_until_the_limit_and_a_change_ends_it`（失败若干次后一致→保持；不一致→结束；未知满 30 秒→`verify_unavailable`）、隔离测试 `verification_distinguishes_a_missing_rule_and_table_from_a_consistent_table`（一致→`Holds`；删除一条规则→`objects_changed`；删除表→`table_missing`）。
 
 `dns_anchor_survives_suspend_and_owner_restart_until_explicit_removal` 新增：中断的读取与零期限读取后锚点不结束、下一次读取另开 socket 并成功（main 上 `an interrupted read ended the anchor`）。Planck `nat/resolved` 单行 `20261015T022035Z-05e74ab3`（行报告 `20261015T022219Z-b6110c78`，`ca9eec4f`）通过，含这两个锚点测试与 `resolved-restart` 阶段。
 
@@ -284,7 +287,7 @@ W2 使用候选 `fbde424e`（生产修复 `0593e19b`，基于 main `1271be5d`）
 
 本轮四个目标行没有剩余必需检查失败。**Planck 的静态 UDP/resolved 单独组合未在 V2 重验**：旧候选矩阵 `20261007T234146Z-c299a3b8` 与串行复跑 `20261008T002050Z-1d853e58`／行报告 `20261008T002332Z-de9c1b24` 曾在系统解析、ping 首样本或会合检查失败，不能由本轮 NAT/resolved 的通过替代。其他未验收范围见矩阵下方列表。
 
-**egress capture owner 把一次校验失败当作归属丢失**（D3 发现，未修复）：其每秒 `nft list` 校验在宿主 RTNL 停顿超过其工具期限时失败，owner 即结束宿主内核归属，控制中继、capture 与 DNS 随之阻断至重启（lab 12 秒停顿中出现一次；planck 四次事故的停顿约 5.5 秒，未出现）。现在该处记录 `Egress capture owner stopping after a failed kernel operation`（`operation`／`error`）。
+**planck 宿主 WiFi 的周期中断**（宿主问题，不在产品侧处理）：planck 宿主 ath12k 在每次 802.1X 重认证（约 8 h 24 min 一次）的 PTK 重新协商时 flush 约 5 秒，期间宿主范围的 netlink 停顿。D3 之后 planck 节点每次随之 DNS 健康检查失败、撤回包平面约 0.6 秒并自动重装，不再阻断至重启。
 
 **节点持有的 peer 事实可早于其租约到期**（X8 发现，未修复）：Server 只在事实内容变化时唤醒 sync hold，新鲜度随下一次普通 sync 捎带；节点的 hold 只以自己的租约为界（余 15 秒），事实按报告者的 `observedAt` + 60 秒到期。于是节点在 hold 期间或 Node HTTP 中断时，可在租约到期前（至多一个报告间隔）失去出口就绪事实，新出口流在本地被拒（`netmap_denied`），已有流不受影响。
 

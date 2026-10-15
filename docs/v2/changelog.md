@@ -8,7 +8,9 @@
 
 - 中断或失败的锚点读取不再结束 DNS 锚点：只关闭该读取 socket，下一次读取另开；锚点只在 owner 删除它或宿主内核归属结束时结束。停顿后 owner 的每秒重证即成功并自动重装（此前阻断至重启）。
 - DNS owner 的每次失败记录唯一一项检查：WARN 带 `check`、`expected`、`actual`、`source`，同一失败只记一次；Status `lastErrorDetail` 给出同一行文本；observe 超时为 `observe_deadline` 并带实际耗时。检查项与可恢复边界见[健康检查与恢复](/v2/node/dataplane#dns-health)。
+- egress capture owner 的每秒回读校验：回读失败只记为未知、下一秒再证，期间不安装新内容；连续未知 30 秒才 fail closed（`verify_unavailable`）；回读不一致或表消失立即结束宿主内核归属（此前任何一次失败都静默结束，lab 12 秒 RTNL 停顿中复现）。见[源端 egress capture](/v2/node/runtime#源端-egress-capture-与切换)。
 - 结束宿主内核归属的 egress capture owner 与控制中继监听失败现在各记一条 WARN（此前无日志）。
+- planck 宿主 WiFi 约 8.4 h 一次的停顿仍使该节点撤回包平面约 0.6 秒，随后自动重装。
 
 ## v0.1.0-alpha.10
 
