@@ -197,7 +197,7 @@ planck 2026-10-13 22:47:56Z、10-14 07:11:57Z、15:35:57Z、23:59:57Z 四次 DNS
 
 其余候选（D3 构建）：`/etc/resolv.conf` 改为普通文件 4 秒 → `check=resolv_conf_mode`（`expected stub; found foreign`），Status `lastErrorDetail` 同文，改回后自动恢复；删除锚点 → monitor `anchor_link_changed`、DNS `resolved_link`（`Link 4 not known`）、`recover` 为 `anchor_ended`，保持阻断（归属真正丢失）；resolved 重启由 `nat/resolved` 的 `resolved-restart` 阶段覆盖；observe 与 apply 由同一 actor 任务串行执行，不会并发。单进程停顿（`SIGSTOP` 3 秒，8 次）在 main 上不触发失败：停顿期间内核已完成请求，不能代替 RTNL 占用。
 
-`dns_anchor_survives_suspend_and_owner_restart_until_explicit_removal` 新增：中断的读取与零期限读取后锚点不结束、下一次读取另开 socket 并成功（main 上 `an interrupted read ended the anchor`）。
+`dns_anchor_survives_suspend_and_owner_restart_until_explicit_removal` 新增：中断的读取与零期限读取后锚点不结束、下一次读取另开 socket 并成功（main 上 `an interrupted read ended the anchor`）。Planck `nat/resolved` 单行 `20261015T022035Z-05e74ab3`（行报告 `20261015T022219Z-b6110c78`，`ca9eec4f`）通过，含这两个锚点测试与 `resolved-restart` 阶段。
 
 ### 当前验证证据
 
