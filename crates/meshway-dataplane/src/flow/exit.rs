@@ -11,6 +11,10 @@ use std::sync::{
 };
 use tokio_util::sync::CancellationToken;
 
+/// The longest a dead exit flow or an ended quarantine waits for its sweep,
+/// as for the other deadline-driven collection of the owner.
+const EXIT_SWEEP: std::time::Duration = std::time::Duration::from_millis(100);
+
 #[derive(Clone)]
 pub(super) struct ExitState {
     incarnation: FlowIncarnation,
@@ -182,9 +186,11 @@ impl FlowTable {
         // Cancellation precedes publishing Retire and removing flow/cipher state.
         state.cancel();
         self.retired_circuits_pending |= flow.circuit.is_some();
-        self.tombstones
-            .entry(key.tuple.clone())
-            .or_insert_with(|| Tombstone {
+        if let std::collections::btree_map::Entry::Vacant(entry) =
+            self.tombstones.entry(key.tuple.clone())
+        {
+            self.unclaimed_retires += usize::from(state.terminal);
+            entry.insert(Tombstone {
                 state: state.clone(),
                 circuit: flow.circuit,
                 claimed: Arc::new(AtomicBool::new(false)),
@@ -192,12 +198,21 @@ impl FlowTable {
                     (!state.terminal).then(|| Instant::now() + self.exit_limits.tombstone_timeout),
                 )),
             });
+        }
     }
 
+    /// Turns flows whose projection failed or was cancelled outside this
+    /// owner into tombstones and drops tombstones whose quarantine ended. It
+    /// runs at most once per [`EXIT_SWEEP`]: every admission still checks its
+    /// own flow's liveness, so a dead flow is refused at once, and a deferred
+    /// sweep only keeps a slot or a quarantined tuple refused a little longer.
+    /// Removals by this owner (failure, circuit end, retirement) tombstone at
+    /// once without it.
     pub(super) fn expire_exits(&mut self, now: Instant, now_ms: u64) {
-        if !self.has_exit_work() {
+        if !self.has_exit_work() || self.exit_sweep_at.is_some_and(|at| now < at) {
             return;
         }
+        self.exit_sweep_at = Some(now + EXIT_SWEEP);
         let dead: Vec<_> = self
             .entries
             .iter()
@@ -222,7 +237,13 @@ impl FlowTable {
     pub fn next_exit_projection(&mut self) -> Option<ExitProjection> {
         // Retire always drains before new positive operations and is available
         // even when the execution snapshot has expired.
-        for tombstone in self.tombstones.values() {
+        // Counted, so a packet's drive does not rescan every quarantined tuple.
+        let retires = if self.unclaimed_retires == 0 {
+            None
+        } else {
+            Some(self.tombstones.values())
+        };
+        for tombstone in retires.into_iter().flatten() {
             if tombstone.state.terminal && !tombstone.claimed.load(Ordering::Acquire) {
                 if self
                     .pending_projections
@@ -236,6 +257,7 @@ impl FlowTable {
                     break;
                 }
                 tombstone.claimed.store(true, Ordering::Release);
+                self.unclaimed_retires -= 1;
                 return Some(ExitProjection::Retire {
                     flow: tombstone.state.incarnation,
                     tuple: tombstone.state.tuple.clone(),
