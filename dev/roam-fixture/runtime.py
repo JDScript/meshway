@@ -288,8 +288,10 @@ def execute(report, artifacts, runtime_os, traversal_os, platform, short, load):
                 creation += [router_image, "/bin/sh", "/roam-fixture/router.sh", addresses[upstream][role],
                              addresses["wan"][role], addresses[upstream]["a"]]
             else:
+                # A long lease: circuit renewal at a 60 s lease end is not roaming.
                 creation += [image, "/fixtures/meshway-runtime-fixture", "--log-format", "json",
-                             "--transport", "native-udp", "--traversal", "roam", "roam-actor", "--role", role]
+                             "--transport", "native-udp", "--traversal", "roam", "--netmap-validity", "1800s",
+                             "roam-actor", "--role", role]
             containers[role] = run(*creation, capture=True).strip()
             manifest["resources"].setdefault("commands", {})[role] = creation
             save()

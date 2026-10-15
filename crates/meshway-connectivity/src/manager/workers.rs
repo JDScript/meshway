@@ -254,8 +254,9 @@ pub(super) async fn dial(shared: Arc<Shared>, factory: Arc<dyn SocketFactory>, p
     let lifetime = shared.scope(None, false);
     let mut plans = shared.plans.subscribe();
     let mut pacing = Pacing::default();
-    // The peer facts the selected channel was last checked against.
+    // The peer facts and candidates the selected channel was last checked against.
     let mut moved_from = shared.facts.get(peer);
+    let mut candidate_targets = dialed_targets(&shared, &shared.plan(), peer);
     'acquisition: loop {
         if lifetime.check().is_err() {
             return;
@@ -273,7 +274,7 @@ pub(super) async fn dial(shared: Arc<Shared>, factory: Arc<dyn SocketFactory>, p
             let facts = shared.facts.get(peer);
             if moved_from != facts {
                 moved_from = facts;
-                moved(&shared, &factory, peer).await;
+                moved(&shared, &factory, peer, &mut candidate_targets).await;
                 if lifetime.check().is_err() {
                     return;
                 }
@@ -371,8 +372,10 @@ pub(super) async fn dial(shared: Arc<Shared>, factory: Arc<dyn SocketFactory>, p
                                     if moved_from != facts {
                                         moved_from = facts;
                                         let (shared, factory) = (shared.clone(), factory.clone());
+                                        let mut previous = candidate_targets.clone();
+                                        candidate_targets = dialed_targets(&shared, &shared.plan(), peer);
                                         replacement = Some(Box::pin(async move {
-                                            moved(&shared, &factory, peer).await;
+                                            moved(&shared, &factory, peer, &mut previous).await;
                                         }));
                                     }
                                 },
@@ -492,13 +495,41 @@ pub(super) async fn dial(shared: Arc<Shared>, factory: Arc<dyn SocketFactory>, p
     }
 }
 
-/// The peer's listener moved: its facts publish new endpoints of the selected
-/// Native UDP channel's carrier, none of them that channel's remote (a
-/// roaming peer behind a new mapping). Dial them beside the healthy-looking
-/// channel; one that authenticates replaces exactly that channel. Endpoints
-/// named by host are not compared, and nothing is dialed for them.
-async fn moved(shared: &Arc<Shared>, factory: &Arc<dyn SocketFactory>, peer: NodeId) {
+/// The literal addresses of the peer's explicitly dialed candidates (named
+/// endpoints are not compared).
+fn dialed_targets(
+    shared: &Shared,
+    plan: &Plan,
+    peer: NodeId,
+) -> std::collections::BTreeSet<SocketAddr> {
+    candidates(shared, plan, peer)
+        .unwrap_or_default()
+        .iter()
+        .flat_map(|candidate| candidate.endpoints.iter())
+        .filter(|target| DIALED.contains(&target.acquisition))
+        .filter_map(|target| {
+            let ip = target.endpoint.host.parse::<std::net::IpAddr>().ok()?;
+            Some(SocketAddr::new(ip, target.endpoint.port.get()))
+        })
+        .collect()
+}
+
+/// The peer's listener moved: the selected Native UDP channel's remote was
+/// one of the peer's published candidates and its facts no longer publish
+/// it, but publish others for the channel's carrier. Dial those beside the
+/// channel; one that authenticates replaces exactly that channel. A remote
+/// that never was a candidate (a mapping the channel followed by
+/// return-routability) is not a reason to dial. `previous` holds the
+/// candidates seen at the last check.
+async fn moved(
+    shared: &Arc<Shared>,
+    factory: &Arc<dyn SocketFactory>,
+    peer: NodeId,
+    previous: &mut std::collections::BTreeSet<SocketAddr>,
+) {
     let plan = shared.plan();
+    let current = dialed_targets(shared, &plan, peer);
+    let before = std::mem::replace(previous, current);
     let Some(link) = shared.links.lock().ok().and_then(|links| {
         links
             .get(&peer)
@@ -537,6 +568,7 @@ async fn moved(shared: &Arc<Shared>, factory: &Arc<dyn SocketFactory>, peer: Nod
         })
         .collect();
     if targets.is_empty()
+        || !before.contains(&link.remote)
         || literal.iter().any(Option::is_none)
         || literal.contains(&Some(link.remote))
     {
