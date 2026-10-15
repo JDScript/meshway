@@ -256,6 +256,13 @@ impl Owner {
             expires_at: timestamp(now.saturating_add(OBSERVATION_LIFETIME_MS))?,
         };
         let mut sockets = self.shared.sockets.lock().map_err(|_| Error::Worker)?;
+        // The same observer saw another mapping before: peers now see this
+        // socket from a new source although nothing changed locally.
+        let remapped = sockets.get(&self.id).is_some_and(|fact| {
+            fact.endpoints
+                .iter()
+                .any(|old| old.origin == observation.origin && old.address != observation.address)
+        });
         let changed = sockets
             .get_mut(&self.id)
             .is_some_and(|fact| record(&mut fact.endpoints, observation, now));
@@ -282,6 +289,9 @@ impl Owner {
             }
         }
         self.discovery.remove(&transaction);
+        if remapped {
+            self.roamed();
+        }
         if changed {
             self.changed();
         }
