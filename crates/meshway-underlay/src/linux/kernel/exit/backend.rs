@@ -111,13 +111,12 @@ impl Backend {
     pub async fn verify(&mut self) -> Result<()> {
         self.store.settle().await?;
         self.commands.settle().await.map_err(|_| Error::Netlink)?;
-        objects::verify(
+        let dump = objects::verify(
             &mut self.commands,
             &self.ledger.program,
             self.ledger.receipt.as_ref().ok_or(Error::Journal)?,
         )
         .await?;
-        let dump = objects::dump(&mut self.commands, &self.ledger.program).await?;
         let mut seen = Vec::new();
         for name in ["flows", "echo_flows"] {
             let key = format!("inet/{}/set/{name}", self.ledger.program.filter());
