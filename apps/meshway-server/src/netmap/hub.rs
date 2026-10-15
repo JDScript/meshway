@@ -1,6 +1,7 @@
 //! At most one pending sync per Node, woken by committed netmap changes, and
-//! the leases issued to each Node, against which the lease a request names
-//! is checked before it bounds that request's hold.
+//! the answers issued to each Node: the lease a request names is checked
+//! against them before it, and the peer facts that answer carried, bound
+//! that request's hold.
 use crate::error::{Error, Unavailability};
 use meshway_model::{NetmapLease, NetworkId, NodeId};
 use std::collections::{BTreeSet, HashMap, VecDeque};
@@ -36,7 +37,23 @@ struct State {
     closed: bool,
     next: u64,
     waiters: HashMap<Key, (u64, oneshot::Sender<Wake>)>,
-    issued: HashMap<Key, VecDeque<NetmapLease>>,
+    issued: HashMap<Key, VecDeque<Issued>>,
+}
+
+/// One answer issued to a Node.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Issued {
+    lease: NetmapLease,
+    /// Earliest freshness bound among the peer facts it carried that a
+    /// renewal can still keep fresh; see `netmap::facts_renewal_until_ms`.
+    facts_until_ms: Option<u64>,
+}
+
+/// What the answer carrying a request's named lease left the Node holding.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Held {
+    pub(crate) lease_until_ms: u64,
+    pub(crate) facts_until_ms: Option<u64>,
 }
 
 impl Hub {
@@ -68,25 +85,37 @@ impl Hub {
         })
     }
 
-    /// End of `claimed` when this process issued exactly that lease to the
-    /// Node; `None` otherwise (none named, forged, or issued before a
-    /// restart), which answers without holding.
-    pub(crate) fn held_until_ms(
+    /// What the answer carrying `claimed` left the Node holding, when this
+    /// process issued exactly that lease to the Node; `None` otherwise (none
+    /// named, forged, or issued before a restart), which answers without
+    /// holding.
+    pub(crate) fn held(
         &self,
         network: NetworkId,
         node: NodeId,
         claimed: Option<&NetmapLease>,
-    ) -> Option<u64> {
+    ) -> Option<Held> {
         let claimed = claimed?;
         self.state()
             .issued
-            .get(&(network, node))
-            .filter(|issued| issued.contains(claimed))
-            .map(|_| claimed.expires_at_ms)
+            .get(&(network, node))?
+            .iter()
+            .find(|issued| issued.lease == *claimed)
+            .map(|issued| Held {
+                lease_until_ms: issued.lease.expires_at_ms,
+                facts_until_ms: issued.facts_until_ms,
+            })
     }
 
-    /// An answer carrying `lease` is about to be sent to the Node.
-    pub(crate) fn issued(&self, network: NetworkId, node: NodeId, lease: NetmapLease) {
+    /// An answer carrying `lease` and peer facts renewable until
+    /// `facts_until_ms` is about to be sent to the Node.
+    pub(crate) fn issued(
+        &self,
+        network: NetworkId,
+        node: NodeId,
+        lease: NetmapLease,
+        facts_until_ms: Option<u64>,
+    ) {
         let mut state = self.state();
         let key = (network, node);
         if state.issued.len() >= MAX_NODES
@@ -100,11 +129,20 @@ impl Hub {
             state.issued.remove(&forgotten);
         }
         let issued = state.issued.entry(key).or_default();
-        if !issued.contains(&lease) {
+        if let Some(known) = issued.iter_mut().find(|issued| issued.lease == lease) {
+            // Two answers with one lease: the Node holds at least the earlier facts.
+            known.facts_until_ms = match (known.facts_until_ms, facts_until_ms) {
+                (Some(known), Some(new)) => Some(known.min(new)),
+                (known, new) => known.or(new),
+            };
+        } else {
             if issued.len() == MAX_ISSUED {
                 issued.pop_front();
             }
-            issued.push_back(lease);
+            issued.push_back(Issued {
+                lease,
+                facts_until_ms,
+            });
         }
     }
 
@@ -211,25 +249,41 @@ mod tests {
             .unwrap()
         };
         let (first, second) = (lease(1, 1_000), lease(1, 2_000));
-        assert_eq!(hub.held_until_ms(network, node, None), None);
-        assert_eq!(hub.held_until_ms(network, node, Some(&first)), None);
-        hub.issued(network, node, first);
+        let until = |lease: &NetmapLease| Held {
+            lease_until_ms: lease.expires_at_ms,
+            facts_until_ms: None,
+        };
+        assert_eq!(hub.held(network, node, None), None);
+        assert_eq!(hub.held(network, node, Some(&first)), None);
+        hub.issued(network, node, first, None);
         // The answer carrying `second` is generated, then lost: the Node
-        // retries naming `first`, which still bounds its hold.
-        hub.issued(network, node, second);
-        assert_eq!(hub.held_until_ms(network, node, Some(&first)), Some(1_000));
-        assert_eq!(hub.held_until_ms(network, node, Some(&second)), Some(2_000));
-        // A lease never issued (a longer end, another Node) bounds nothing.
+        // retries naming `first`, which still bounds its hold, with the
+        // facts that answer carried.
+        hub.issued(network, node, second, Some(1_500));
+        assert_eq!(hub.held(network, node, Some(&first)), Some(until(&first)));
         assert_eq!(
-            hub.held_until_ms(network, node, Some(&lease(1, 9_000))),
-            None
+            hub.held(network, node, Some(&second)),
+            Some(Held {
+                lease_until_ms: 2_000,
+                facts_until_ms: Some(1_500)
+            })
         );
+        // The same lease issued twice keeps the earlier facts bound.
+        hub.issued(network, node, second, Some(1_800));
+        assert_eq!(
+            hub.held(network, node, Some(&second))
+                .unwrap()
+                .facts_until_ms,
+            Some(1_500)
+        );
+        // A lease never issued (a longer end, another Node) bounds nothing.
+        assert_eq!(hub.held(network, node, Some(&lease(1, 9_000))), None);
         let other: NodeId = "00000000-0000-4000-8000-000000000003".parse().unwrap();
-        assert_eq!(hub.held_until_ms(network, other, Some(&first)), None);
+        assert_eq!(hub.held(network, other, Some(&first)), None);
         // Only the latest few are remembered.
         for end in 3..3 + MAX_ISSUED as u64 {
-            hub.issued(network, node, lease(2, end * 1_000));
+            hub.issued(network, node, lease(2, end * 1_000), None);
         }
-        assert_eq!(hub.held_until_ms(network, node, Some(&first)), None);
+        assert_eq!(hub.held(network, node, Some(&first)), None);
     }
 }

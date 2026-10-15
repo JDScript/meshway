@@ -317,7 +317,7 @@ async fn a_hold_answers_before_the_lease_the_node_holds_ends() {
     // ago): a nominal 54 s hold answers 15 s before the end, with a renewal.
     let now = chrono::Utc::now().timestamp_millis() as u64;
     let held = meshway_model::NetmapLease::new(base, now - 43_000, now + 17_000).unwrap();
-    app.effects.netmaps.issued(network, a, held);
+    app.effects.netmaps.issued(network, a, held, None);
     let cursor = first.peer_facts.map(|facts| facts.cursor);
     let request = |lease| SyncRequest {
         netmap: Some(base),

@@ -386,3 +386,139 @@ async fn exit_resolver_availability_is_a_fact_of_a_serving_netmap() {
     assert!(lab.report_exit_dns(1, 2, not_serving).await.is_err());
     lab.app.shutdown().await.unwrap();
 }
+
+/// `a`'s sync naming what it holds, and how long the Server held it.
+async fn timed_sync(
+    lab: &Lab,
+    held: Option<&meshway_protocol::netmap::SyncResponse>,
+) -> (meshway_protocol::netmap::SyncResponse, std::time::Duration) {
+    let request = meshway_protocol::netmap::SyncRequest {
+        netmap: Some(lab.applied[0]),
+        state: held.and_then(|held| held.peer_facts.as_ref().map(|facts| facts.cursor)),
+        server_key_generation: None,
+        traversal_requests: Default::default(),
+        associations: held.and_then(|held| {
+            held.associations
+                .as_ref()
+                .map(|update| update.overlay.digest().unwrap())
+        }),
+        lease: held.map(|held| held.lease),
+    };
+    let started = std::time::Instant::now();
+    let answer = lab
+        .app
+        .netmaps()
+        .sync(&lab.tokens[0], request)
+        .await
+        .unwrap();
+    (answer, started.elapsed())
+}
+
+/// b's facts as a sees them, with `expires_at` set in the ledger directly
+/// (a reporter's routine renewal: same content, later bound, no wake-up).
+fn set_expiry(
+    lab: &Lab,
+    facts: &meshway_protocol::PeerFacts,
+    expires_at: chrono::DateTime<chrono::Utc>,
+) {
+    let mut runtime = lab.app.state_runtime.lock().unwrap();
+    runtime
+        .facts
+        .record(
+            lab.network,
+            meshway_protocol::PeerFacts {
+                expires_at,
+                ..facts.clone()
+            },
+            chrono::Utc::now(),
+        )
+        .unwrap();
+}
+
+#[tokio::test]
+async fn a_hold_delivers_a_renewal_before_the_held_fact_expires() {
+    let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
+    let mut lab = lab(false).await;
+    lab.app.netmap_timing.hold = std::time::Duration::from_secs(6);
+    let [a, b, _] = lab.nodes;
+    lab.report_endpoints(1, 1, &["10.1.0.1:23456"]).await;
+    let na = lab.netmap(a).await;
+    let reported = lab
+        .app
+        .peer_facts()
+        .peer_facts(&na, None, None)
+        .unwrap()
+        .unwrap()
+        .updated[&b]
+        .clone();
+    // b's fact reaches a with 8 s left.
+    let start = chrono::Utc::now();
+    set_expiry(&lab, &reported, start + chrono::Duration::seconds(8));
+    let (first, elapsed) = timed_sync(&lab, None).await;
+    assert!(elapsed < std::time::Duration::from_secs(2), "{elapsed:?}");
+    assert_eq!(
+        first.peer_facts.as_ref().unwrap().updated[&b].expires_at,
+        start + chrono::Duration::seconds(8)
+    );
+    // b keeps reporting: its renewal wakes nobody, yet a gets it 5 s before
+    // the fact it holds would expire, well within its 6 s nominal hold.
+    let renewed = start + chrono::Duration::seconds(60);
+    let (second, elapsed) = tokio::join!(timed_sync(&lab, Some(&first)), async {
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        set_expiry(&lab, &reported, renewed);
+    })
+    .0;
+    assert!(
+        elapsed >= std::time::Duration::from_millis(2_000)
+            && elapsed < std::time::Duration::from_millis(4_500),
+        "{elapsed:?}"
+    );
+    let facts = second.peer_facts.as_ref().unwrap();
+    assert!(facts.updated.is_empty());
+    assert_eq!(facts.refreshed[&b], renewed);
+    // Facts now outlast the nominal hold: it is not shortened.
+    let (_, elapsed) = timed_sync(&lab, Some(&second)).await;
+    assert!(
+        elapsed >= std::time::Duration::from_millis(5_000),
+        "{elapsed:?}"
+    );
+    lab.app.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_stopped_reporter_shortens_one_hold_only() {
+    let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
+    let mut lab = lab(false).await;
+    lab.app.netmap_timing.hold = std::time::Duration::from_secs(6);
+    let [a, b, _] = lab.nodes;
+    lab.report_endpoints(1, 1, &["10.1.0.1:23456"]).await;
+    let na = lab.netmap(a).await;
+    let reported = lab
+        .app
+        .peer_facts()
+        .peer_facts(&na, None, None)
+        .unwrap()
+        .unwrap()
+        .updated[&b]
+        .clone();
+    let until = chrono::Utc::now() + chrono::Duration::seconds(8);
+    set_expiry(&lab, &reported, until);
+    let (first, _) = timed_sync(&lab, None).await;
+    // b stops reporting: the answer 5 s before its bound carries the same
+    // bound, the last chance to renew it ...
+    let (second, elapsed) = timed_sync(&lab, Some(&first)).await;
+    assert!(
+        elapsed < std::time::Duration::from_millis(4_500),
+        "{elapsed:?}"
+    );
+    assert_eq!(second.peer_facts.as_ref().unwrap().refreshed[&b], until);
+    // ... and the next hold is the nominal one again: a stopped reporter
+    // never drives a sync loop; b's fact then expires on a.
+    let (third, elapsed) = timed_sync(&lab, Some(&second)).await;
+    assert!(
+        elapsed >= std::time::Duration::from_millis(5_000),
+        "{elapsed:?}"
+    );
+    assert_eq!(third.peer_facts.as_ref().unwrap().refreshed[&b], until);
+    lab.app.shutdown().await.unwrap();
+}

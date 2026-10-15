@@ -167,7 +167,8 @@ impl FactLedger {
 
     /// Record a reporter's complete current facts. Unchanged content does not
     /// advance the cursor or wake anyone. Freshness is piggybacked on the next
-    /// ordinary sync response. Returns whether semantic content advanced.
+    /// sync response, which the hold sends before the bound the viewer holds
+    /// ends (`netmap::FACTS_RENEWAL_MARGIN`). Returns whether semantic content advanced.
     /// A report already past its freshness bound replaces nothing.
     pub(crate) fn record(
         &mut self,

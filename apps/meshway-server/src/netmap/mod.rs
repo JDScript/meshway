@@ -6,7 +6,9 @@
 //! change or a traversal attempt the Node does not hold yet, a newer request
 //! of the same Node replaces it, or the hold times out. A hold never outlasts
 //! the lease the request names (one this process issued to the Node) less
-//! [`SYNC_RENEWAL_MARGIN`]. Every answer carries a fresh lease for the current netmap. Content is
+//! [`SYNC_RENEWAL_MARGIN`], nor the earliest freshness bound of the peer
+//! facts the answer carrying that lease gave it less
+//! [`FACTS_RENEWAL_MARGIN`]. Every answer carries a fresh lease for the current netmap. Content is
 //! stored by `store::netmap` and only changes in stable-input transactions.
 pub(crate) mod associations;
 mod hub;
@@ -34,17 +36,52 @@ pub const MAX_SYNC_HOLD: Duration = Duration::from_secs(54);
 /// answer leaves it one retry before it fails closed.
 pub const SYNC_RENEWAL_MARGIN: Duration = Duration::from_secs(15);
 
+/// A held sync answers at least this long before the earliest freshness
+/// bound of the peer facts the Node holds, so a reporter's renewal, which
+/// wakes no hold, reaches the Node before the fact it renews expires. It
+/// covers the answer and the Node's immediate next request; a late answer
+/// only shows the peer `offline` briefly (facts never refuse a flow).
+pub const FACTS_RENEWAL_MARGIN: Duration = Duration::from_secs(5);
+
 /// The hold of one request: the nominal hold, cut so the answer leaves the
-/// Node [`SYNC_RENEWAL_MARGIN`] of the lease it names. A request naming no
-/// lease this process issued to it (its first request to this process, or a
-/// lease it cannot prove) is answered at once.
-fn hold_within_lease(hold: Duration, held_until_ms: Option<u64>, now_ms: u64) -> Duration {
-    let Some(until) = held_until_ms else {
+/// Node [`SYNC_RENEWAL_MARGIN`] of the lease it names and
+/// [`FACTS_RENEWAL_MARGIN`] of the facts that lease's answer carried. A
+/// request naming no lease this process issued to it (its first request to
+/// this process, or a lease it cannot prove) is answered at once.
+fn hold_within(hold: Duration, held: Option<hub::Held>, now_ms: u64) -> Duration {
+    let Some(held) = held else {
         return Duration::ZERO;
     };
-    hold.min(
-        Duration::from_millis(until.saturating_sub(now_ms)).saturating_sub(SYNC_RENEWAL_MARGIN),
-    )
+    let before = |until: u64, margin: Duration| {
+        Duration::from_millis(until.saturating_sub(now_ms)).saturating_sub(margin)
+    };
+    let hold = hold.min(before(held.lease_until_ms, SYNC_RENEWAL_MARGIN));
+    match held.facts_until_ms {
+        Some(until) => hold.min(before(until, FACTS_RENEWAL_MARGIN)),
+        None => hold,
+    }
+}
+
+/// Earliest freshness bound among the peer facts an answer issued at
+/// `now_ms` carries (`updated` and `refreshed` together name every visible
+/// fact the Node then holds; it only ever raises them). A fact within
+/// [`FACTS_RENEWAL_MARGIN`] of its bound is left out: an answer now is the
+/// last that could renew it, and when its reporter stopped, holding for it
+/// again would only answer once more with the same bound.
+fn facts_renewal_until_ms(
+    facts: Option<&meshway_protocol::netmap::PeerFactsDelta>,
+    now_ms: u64,
+) -> Option<u64> {
+    let facts = facts?;
+    let floor = now_ms.saturating_add(u64::try_from(FACTS_RENEWAL_MARGIN.as_millis()).ok()?);
+    facts
+        .updated
+        .values()
+        .map(|facts| facts.expires_at)
+        .chain(facts.refreshed.values().copied())
+        .filter_map(|at| u64::try_from(at.timestamp_millis()).ok())
+        .filter(|at| *at > floor)
+        .min()
 }
 
 /// Lease validity and hold timeout, validated when the App opens.
@@ -78,21 +115,91 @@ mod timing_tests {
         }
     }
 
+    fn lease(until: u64) -> Option<hub::Held> {
+        Some(hub::Held {
+            lease_until_ms: until,
+            facts_until_ms: None,
+        })
+    }
+
     #[test]
     fn a_hold_leaves_the_node_a_renewal_before_its_lease_ends() {
         let hold = Duration::from_secs(55);
         // A 60 s lease with 50 s left: answered 15 s before it ends.
         assert_eq!(
-            hold_within_lease(hold, Some(60_000), 10_000),
+            hold_within(hold, lease(60_000), 10_000),
             Duration::from_secs(35)
         );
-        assert_eq!(hold_within_lease(hold, Some(86_400_000), 0), hold);
+        assert_eq!(hold_within(hold, lease(86_400_000), 0), hold);
+        assert_eq!(hold_within(hold, lease(20_000), 10_000), Duration::ZERO);
+        assert_eq!(hold_within(hold, lease(5_000), 10_000), Duration::ZERO);
+        assert_eq!(hold_within(hold, None, 0), Duration::ZERO);
+    }
+
+    #[test]
+    fn a_hold_answers_before_the_facts_the_node_holds_expire() {
+        let hold = Duration::from_secs(55);
+        let held = |facts| {
+            Some(hub::Held {
+                lease_until_ms: 86_400_000,
+                facts_until_ms: facts,
+            })
+        };
+        // A fact delivered with 40 s left (its reporter's last 20 s report
+        // was 20 s old): answered 5 s before it expires.
         assert_eq!(
-            hold_within_lease(hold, Some(20_000), 10_000),
-            Duration::ZERO
+            hold_within(hold, held(Some(40_000)), 0),
+            Duration::from_secs(35)
         );
-        assert_eq!(hold_within_lease(hold, Some(5_000), 10_000), Duration::ZERO);
-        assert_eq!(hold_within_lease(hold, None, 0), Duration::ZERO);
+        // Facts that outlast the nominal hold, or none, do not shorten it.
+        assert_eq!(hold_within(hold, held(Some(70_000)), 0), hold);
+        assert_eq!(hold_within(hold, held(None), 0), hold);
+        // The lease still bounds it when it ends first.
+        assert_eq!(
+            hold_within(
+                hold,
+                Some(hub::Held {
+                    lease_until_ms: 30_000,
+                    facts_until_ms: Some(40_000)
+                }),
+                0
+            ),
+            Duration::from_secs(15)
+        );
+    }
+
+    #[test]
+    fn the_facts_bound_skips_facts_no_renewal_can_keep_fresh() {
+        use chrono::TimeZone;
+        let at = |ms: i64| chrono::Utc.timestamp_millis_opt(ms).unwrap();
+        let node = |n: u128| meshway_model::NodeId::new(uuid::Uuid::from_u128(n)).unwrap();
+        let facts = |expires_at| meshway_protocol::netmap::PeerFacts {
+            node_id: node(1),
+            listeners: Default::default(),
+            exit: None,
+            connected: Default::default(),
+            observed_at: at(0),
+            expires_at,
+        };
+        let delta = meshway_protocol::netmap::PeerFactsDelta {
+            base: None,
+            cursor: meshway_protocol::netmap::StateCursor {
+                epoch: meshway_model::StateEpoch::new(uuid::Uuid::from_u128(9)).unwrap(),
+                sequence: meshway_model::Sequence::MIN,
+            },
+            netmap_serial: meshway_model::Version::new(1).unwrap(),
+            updated: [(node(1), facts(at(52_000)))].into(),
+            removed: vec![],
+            refreshed: [(node(2), at(41_000)), (node(3), at(14_000))].into(),
+        };
+        // Issued at 10 s: node 3 (4 s left, its reporter stopped) can no
+        // longer be renewed in time; node 2 bounds the next hold.
+        assert_eq!(facts_renewal_until_ms(Some(&delta), 10_000), Some(41_000));
+        // Issued at 36 s, the answer that bound was for: only node 1 is left,
+        // so a stopped reporter never makes the next hold answer at once.
+        assert_eq!(facts_renewal_until_ms(Some(&delta), 36_000), Some(52_000));
+        assert_eq!(facts_renewal_until_ms(Some(&delta), 60_000), None);
+        assert_eq!(facts_renewal_until_ms(None, 0), None);
     }
 }
 
@@ -221,21 +328,25 @@ impl Netmaps {
         );
         let answered = |response: SyncResponse| {
             records::Records::shared().issued(principal.network, principal.node, response.lease);
-            self.hub
-                .issued(principal.network, principal.node, response.lease);
+            self.hub.issued(
+                principal.network,
+                principal.node,
+                response.lease,
+                facts_renewal_until_ms(response.peer_facts.as_ref(), response.lease.issued_at_ms),
+            );
             response
         };
         // Register before the first read: a change committed after this point
         // wakes the waiter, one committed before it is visible to the read.
         let mut waiter = self.hub.register(principal.network, principal.node)?;
         // Only the lease the request names, checked against those this
-        // process issued, bounds the hold: an answer generated earlier may
-        // never have reached the Node.
+        // process issued, and the facts its answer carried bound the hold:
+        // an answer generated earlier may never have reached the Node.
         let deadline = tokio::time::Instant::now()
-            + hold_within_lease(
+            + hold_within(
                 self.timing.jittered_hold(),
                 self.hub
-                    .held_until_ms(principal.network, principal.node, request.lease.as_ref()),
+                    .held(principal.network, principal.node, request.lease.as_ref()),
                 chrono::Utc::now().timestamp_millis().max(0) as u64,
             );
         loop {
