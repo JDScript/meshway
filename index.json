@@ -1,8 +1,58 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-15T16:30:32.307942+00:00",
+  "updatedAt": "2026-10-15T19:04:40.089617+00:00",
   "runs": [
+    {
+      "id": 38790007665,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "15ddd4bac3d7457f789d8f3b009bb8de6802d141",
+      "message": "Merge branch 'p1b/sync-rate'",
+      "createdAt": "2026-10-15T18:58:10Z",
+      "updatedAt": "2026-10-15T19:01:48Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "url": "https://github.com/JDScript/meshway/actions/runs/38790007665",
+      "jobs": [
+        {
+          "id": 116611804061,
+          "name": "changes",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-15T18:58:13Z",
+          "completedAt": "2026-10-15T18:58:25Z",
+          "seconds": 12.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38790007665/job/116611804061"
+        },
+        {
+          "id": 116611922170,
+          "name": "web",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-15T18:58:27Z",
+          "completedAt": "2026-10-15T19:00:56Z",
+          "seconds": 149.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38790007665/job/116611922170"
+        },
+        {
+          "id": 116611922258,
+          "name": "cargo",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "failure",
+          "startedAt": "2026-10-15T18:58:26Z",
+          "completedAt": "2026-10-15T19:01:47Z",
+          "seconds": 201.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38790007665/job/116611922258"
+        }
+      ],
+      "artifacts": []
+    },
     {
       "id": 38769188207,
       "attempt": 1,
