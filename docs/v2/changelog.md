@@ -2,6 +2,18 @@
 
 按合入 main 的顺序记录工作包、提交与证据 ID。规则见[工程流程](/v2/process)；性能数字的口径见[分层性能测量](/v2/node/performance)，验收状态见[验收范围](/v2/node/validation)。
 
+## 未发布
+
+出口队列溢出与出口回程吞吐（X10，`x10/exit-queue`）：wire 6、IPC 12、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约均不变。OPS9 真机复现：出口 TCP 单流 3–20 秒处断流且不恢复，并发一路出口 ping 时 1 秒内必断；出口反向只有 16–20 Mbit/s（节点间 Mesh 反向 165）。
+
+- 队列溢出只丢包：出口工作队列（128 项）满或投影尚未入队时，`Runtime::packet` 此前把该包所属的流判为失败（Retire＋隔离项，同 tuple 的重传此后一律被拒）；现在只丢弃当前包、计数，并按 2 的幂打 warn `Exit queue full; packet dropped, its flow kept`。已 ACK 流的包至多占 96 项，其余留给投影操作与新流首包。
+- 内核操作不阻塞已安装流：driver 此前逐项串行，一轮安装（收集至多 10 ms）、续期与退役期间所有包都在队列中等待（约 22,000 包／秒时 128 项只够 6 ms）；现在一次一个内核操作与包写入并行，只有该操作涉及的流的包和其后的续期、退役、barrier 等它，操作结束后等待项按原顺序重放（其中的新流并入下一轮）。出口写入方满只丢该包。
+- 回程：worker 此前每个回包一整轮（含全部周期性工作）、逐个发送，出口 TUN 读取方在回包通道（64）满时静默丢弃；现在每轮至多取 32 个、一次批量发送，读取方只在有空位时读，消费方落后时回包留在出口 TUN 的队列与 fq_codel 中。
+- 数据路径说明：每个出口包都经出口节点用户态（解密／加密在 SecureNode 终止），投影安装只决定内核门；见 [Exit 设计 · 出口队列](/v2/node/exit-design#exit-queue)。
+- 验收：`exit/off` 新增第 16 阶段（出口与 Mesh 的 iperf3 正反向吞吐并排记录；echo 安装下的出口 TCP 流 20 秒不断流、echo ≥ 95 %），抓包分两段绕开本阶段；dataplane 黑盒 `netmap_exit_dropped_packet_keeps_its_flow`，daemon 单测覆盖队列预留与 driver 调度。见[验收范围 · 出口场景](/v2/node/validation#exit-scenario)。
+
+验证：Planck 18 行矩阵 `20261015T035310Z-a73ab52d`（`d4a79440`，并行 4）全部通过；`exit/off` 第 16 阶段出口反向为 Mesh 反向的 1.42 倍（main 上 0.43），压力步 42.5 Mbit/s 无断流（main 上第 2 秒起断流），证据 `.meshway/validation/x10/`。真机未部署。
+
 ## v0.1.0-alpha.10
 
 范围：wire 6、IPC 12、`compilerVersion` `meshway-netmap-3`、Server schema 8 均不变（普通升级，无断网窗口；CLI 与 daemon 一起升级，IPC 12 新增命令 `ClearProfile`）。HTTP 契约新增 `DELETE /agent-api/v1/routing-selection`（`clearNodeRoutingProfile`）与 `DELETE /api/v1/networks/{networkId}/nodes/{nodeId}/routing-selection`（`clearNodeRoutingSelection`），`ActivityTarget.routingSelection.profile` 改为必有可空。X8：出口角色失败只撤该角色并自动重装、echo 流寿命（等待回复至多 10 秒、回复后 2 秒结束）、echo 连接 CT 换代按归属处理、出口 cipher 随最后一条流结束向来源发 `Close`；H2：清除方案选择（`meshway exit --default`）、`idlePath` 多中继排序修正；以及下列 H2、X8 工作包。
