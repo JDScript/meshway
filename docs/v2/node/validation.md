@@ -202,6 +202,20 @@ egress capture owner 按同一不变量：回读失败只记为未知（30 秒�
 
 `dns_anchor_survives_suspend_and_owner_restart_until_explicit_removal` 新增：中断的读取与零期限读取后锚点不结束、下一次读取另开 socket 并成功（main 上 `an interrupted read ended the anchor`）。Planck `nat/resolved` 单行 `20261015T022035Z-05e74ab3`（行报告 `20261015T022219Z-b6110c78`，`ca9eec4f`）通过，含这两个锚点测试与 `resolved-restart` 阶段；含 egress 修复的 `fa23b64e` 复跑 `20261015T030829Z-3e88ac90`（行报告 `20261015T031141Z-1767bfe7`）通过。
 
+### X11 出口写路径与出口审计／清理证据 {#x11-exit}
+
+**写路径**：`exit/off` 第 16 阶段（优化 dev 构建，与 M4 同口径，前后交替各 5 次）出口正向中位数 890 → 1,764 Mbit/s，为 Mesh 正向的 0.45 → 0.86；本阶段 `Exit queue full` 告警 12 → 0 次（每次运行），压力步 767 → 1,685 Mbit/s 且 echo 100／100。数值与中间候选见[出口正向写路径](/v2/node/performance#exit-write-path)。
+
+**审计读取失败与清理重试**：OPS11 真机 lab lax 12:06:53Z（alpha.11）与本机 lab 15:45:40Z（alpha.12，三节点同时）的签名相同：出口 owner 审计 `kernel netlink operation failed` 即停止角色，撤回时清理再失败，资源保留，此后每次探测 `ownershipConflict` 直到进程重启（本机 lab 的 lax、sha 持续 1 小时，nyc 的清理恰好成功而恢复）。修复后同一 lab（lax／sha／nyc，X11 构建）：
+
+| 复现 | 结果 |
+| --- | --- |
+| lax CPU 限额 0.02 核 12 秒（`docker update --cpus`，使 `nft` 超出 2 秒预算，与宿主停顿时的失败形态相同） | `Exit role audit unavailable; retrying, the role and its flows kept` → 8.7 秒后 `verified again; ownership kept`（4 次失败），角色保持；main 构建的同一操作：DNS 健康检查失败撤回包平面，出口撤回失败，随后 egress capture `pause` 失败结束宿主内核归属（见剩余边界） |
+| sha 限额 45 秒、nyc 限额 16 秒 | DNS 先失败撤回包平面，撤回出口角色时清理失败：`Exit role cleanup failed; resources kept, retrying`（1 s、2 s、4 s…），限额解除后第 7／第 4 次完成 `Exit role cleanup completed after retrying`；同时 egress capture `pause` 失败结束宿主内核归属，节点需重启（与出口无关，见剩余边界） |
+| 宿主 RTNL 停顿（隔离容器拆除 17 万个 dummy 接口，约 8–11 秒，三次） | DNS `observe_deadline`／`anchor_netlink` 后恢复；出口审计读取未失败，三节点角色保持 |
+
+组件测试（`exit/off` 组件阶段，同一隔离容器形态）：`linux::kernel::exit::tests::cleanup::exit_audit_read_failures_are_unknown_and_a_failed_cleanup_completes_on_retry`（注入 5 次读取失败→未知、角色保持，随后一致；外来元素→`flow_unowned`；清理第一次读取失败→不删除任何对象，重试完成移除；表已删除而未确认→下一次以重读确认完成；重新安装）与 `exit_recovery::netmap_exit_failed_cleanup_is_retried_and_the_role_installs_again`（角色链中外来规则：审计停止角色，清理在规则存在期间每次失败、`Host::exit_cleanup` 报 pending、安装新角色被拒；移除规则后清理完成、表消失、角色重装并确认一条 CT）。证据 `.meshway/validation/x11/`。
+
 ### 当前验证证据
 
 `validate:matrix` 为每行独立保留报告并汇总 `matrix.json`／`summary.md`；通过结论同时要求 fixture `passed`、进程成功退出和本 run 无遗留资源。`--short` 的报告标记 `scope=diagnostic-short`：只运行 30 秒持续／纯接收窗口（退路 5 秒后触发），不要求已经跨原需求期限，未测到的延长为 null。其他场景仍执行，包括真实 instance 失效恢复；短模式不是整组验收，不能更新下述历史／当前通过状态。并发运行还需读取各行启动 load，不能与低负载串行结果不加区分地合并。
@@ -288,6 +302,8 @@ W2 使用候选 `fbde424e`（生产修复 `0593e19b`，基于 main `1271be5d`）
 本轮四个目标行没有剩余必需检查失败。**Planck 的静态 UDP/resolved 单独组合未在 V2 重验**：旧候选矩阵 `20261007T234146Z-c299a3b8` 与串行复跑 `20261008T002050Z-1d853e58`／行报告 `20261008T002332Z-de9c1b24` 曾在系统解析、ping 首样本或会合检查失败，不能由本轮 NAT/resolved 的通过替代。其他未验收范围见矩阵下方列表。
 
 **planck 宿主 WiFi 的周期中断**（宿主问题，不在产品侧处理）：planck 宿主 ath12k 在每次 802.1X 重认证（约 8 h 24 min 一次）的 PTK 重新协商时 flush 约 5 秒，期间宿主范围的 netlink 停顿。D3 之后 planck 节点每次随之 DNS 健康检查失败、撤回包平面约 0.6 秒并自动重装，不再阻断至重启。 真机（alpha.11）2026-10-15 08:23:57Z 一次：宿主探针记录 4.11 s 停顿，planck 节点 `observe_deadline`（abandoned after 3918 ms）后 146 ms 恢复、279 ms 内重装 netmap，每 2 s 的 249 份 Status 中仅 1 份 `preparing`；证据 `.meshway/node-lab/ops10/d3-rekey/`。
+
+**长时间停顿下 egress capture 的 `pause` 失败结束宿主内核归属**（X11 lab 发现，main 同样存在）：容器 CPU 限额 12–45 秒使 DNS 健康检查失败、撤回包平面，撤回时 egress capture owner 的 `pause`（一次 nft 变更，不是回读）因工具超时失败，按现行规则结束宿主内核归属（`Egress capture owner stopping after a failed kernel operation; kernel ownership ends`，`operation: pause`），节点 fail closed 直到重启。D3 的未知分类只覆盖回读；变更失败的处理未改。真机 planck 约 5 秒的 RTNL 停顿未触发。
 
 **节点持有的 peer 事实可早于其租约到期**（X8 发现，P1 已修复）：此前 Server 只在事实内容变化时唤醒 sync hold、hold 只以租约为界，而事实按报告者 `observedAt` + 60 秒到期，节点在 hold 期间或 Node HTTP 中断时可在租约到期前失去出口就绪事实，新出口流在本地被拒（`netmap_denied`）。现在 hold 也以节点持有事实的最早截止 − 5 秒为界（[sync hold](/v2/node/netmap-design#sync-transport)），且过期的出口就绪事实按最后已知值继续可选（[最后已知事实](/v2/node/connectivity#last-known-facts)）；`exit/off` 第 15 阶段等待 A 取得一次 sync 的绕过已去掉，第 8 阶段照旧断言 HTTP 中断期间直到租约到期前新出口流都能建立。P1 Planck 18 行矩阵 `20261015T062652Z-9a95285c`（`541e48b5`，并行 4）全部通过；单行 `exit/off` 复跑 `20261015T065227Z-9645d57c`（行 `20261015T065230Z-44e5de7b`）中 A 关于 E 的事实在首个路径租约到期前 7 秒过期，此后两条链路各 3 个新 UDP 出口流建立、无拒绝（main 上此时 `netmap_denied`）。同批另有两次失败：第 15 阶段 E 在角色重装进行中如实报告未就绪、A 据当前事实拒绝了一次出口 DNS 查询（`20261015T055930Z-782e79b3`；是 fixture 断言过严，第 15 阶段已改为中断窗界定，见[出口场景](#exit-scenario)）；两个 `exit/off` 并发时第 16 阶段 iperf3 超时（`20261015T065357Z-b98749cc`，与 P1 无关）。断言修改后（`f9115a91`）`exit/off` 单跑两次通过：`20261015T123419Z-c3f16022`（行 `20261015T123716Z-7753f918`，A 关于 E 的事实在首个租约到期前 3 秒过期，之后两条链路各 1 个新出口流成功）与 `20261015T125059Z-2a2f87b5`（行 `20261015T125103Z-83765480`，第 15 阶段中断窗 2.5 秒内 3 次查询失败 2 次、上限 7、窗外 0 次）。
 

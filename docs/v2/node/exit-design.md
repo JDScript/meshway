@@ -114,10 +114,12 @@ sha 应用 IPv4
 
 | 段 | 行为 |
 | --- | --- |
-| 正向队列 | daemon 出口 runtime 的单一 FIFO，128 项；一项是一个投影操作（Install／Renew／Retire）、一个包或一个 barrier。一个包准入时产生的投影操作先于该包入队。已 ACK 流的包至多占 96 项，其余 32 项留给投影操作和新流的首包，饱和的大流挤不掉新流，成批的新流也挤不掉已有流 |
-| 无空位 | 只丢弃当前包：计数，按 2 的幂打 warn `Exit queue full; packet dropped, its flow kept`（有界）。流、投影、tuple 不变：不 Retire、不留隔离项，下一个包照常写入，TCP 以重传恢复 |
-| 流的结束 | 只因退役条件：空闲、内容变化／撤回、租约到期，或本流自己的投影失败（安装或续期失败、ACK 超时、conntrack 确认失败、出口 TUN 写失败；出口写入方满只丢该包）。Access／容量拒绝不建流。隔离项（tombstone）只在退役后产生，见下文生存期 |
-| 内核操作 | driver 一次执行一个内核操作（一轮安装、一次续期或一次退役，按 FIFO 顺序），其间继续写入其他已安装流的包；只有该操作涉及的流的包和其后的续期、退役、barrier 等它，之后按原顺序继续；收集中的一轮照常接纳其后到达的新流，操作结束时等待项按原顺序重新分派，其中的新流同样并入下一轮（同一批新流一轮安装，其他流的续期或退役至多多等这一轮）。合并规则见下文生存期 |
+| 正向队列 | daemon 出口 runtime 的单一 FIFO（driver），128 项；一项是一个投影操作（Install／Renew／Retire）、一个包或一个 barrier。一个包准入时产生的投影操作先于该包入队。经 FIFO 的包只有待安装／安装中流的首包、等待续期 ACK 的包，以及其流仍有包在 FIFO 中的后续包；其中已 ACK 流的包至多占 96 项，其余 32 项留给投影操作和新流的首包，饱和的大流挤不掉新流，成批的新流也挤不掉已有流 |
+| 已安装流的写入 | driver 写出某流的一个包（并为它发起 conntrack 确认）后，该流此后的包不再经过 driver：包准入后其投影已 ACK、该流在 FIFO 中没有包、且出口 I/O owner 处该投影仍有效时，包处理 owner 直接把包放入出口 I/O owner 的有界写队列（256 项），不等待写入结果。I/O owner 每次取至多 64 个，按批读取一次角色权限，在每次 TUN 写 poll 前逐包检查其投影、原包 guard 与权限，相邻的兼容包（同一 TCP 流的连续段）以一次 offload 写合并成一个聚合（与回程对称）。一个流的包要么都在 FIFO、要么在 FIFO 排空后才走直写，两条路不使同一流乱序；准入、投影与 guard 仍逐包 |
+| 无空位 | FIFO 或写队列满时只丢弃当前包：计数，按 2 的幂打 warn `Exit queue full; packet dropped, its flow kept`（有界，两处同一计数）。流、投影、tuple 不变：不 Retire、不留隔离项，下一个包照常写入，TCP 以重传恢复 |
+| 写失败 | 出口 TUN 写失败或包超出 TUN MTU 只丢该包：计数，按 2 的幂打 warn `Exit TUN write failed; packet dropped, its flow kept`；写入前其投影、guard 或权限已结束的包静默丢弃。出口 I/O owner 处已无该投影而包自身 scope 仍有效时，该包改走 FIFO，由 driver 以本流投影失败结束该流 |
+| 流的结束 | 只因退役条件：空闲、内容变化／撤回、租约到期，或本流自己的投影失败（安装或续期失败、ACK 超时、conntrack 确认失败、出口 I/O owner 已无其投影）。队列满与写失败只丢包。Access／容量拒绝不建流。隔离项（tombstone）只在退役后产生，见下文生存期 |
+| 内核操作 | driver 一次执行一个内核操作（一轮安装、一次续期或一次退役，按 FIFO 顺序），已安装流的包不经过 driver，照常写入；只有该操作涉及的流的包和其后的续期、退役、barrier 等它，之后按原顺序继续；收集中的一轮照常接纳其后到达的新流，操作结束时等待项按原顺序重新分派，其中的新流同样并入下一轮（同一批新流一轮安装，其他流的续期或退役至多多等这一轮）。合并规则见下文生存期 |
 | 回程 | 出口 TUN 以 offload 批量 I/O 创建（与 Mesh TUN 相同的[能力探测](/v2/node/performance#tun-批量接口与能力验证)）：批量 TCP 的逆 NAT 回包以聚合进入内核队列，读取方拆成逐个回包，每段仍单独匹配投影并准入；读取方只在回包通道（64）有空位时读取；worker 每轮至多取 32 个回包，加密后一次批量发送，本轮的待发回包（128）满时不再取。消费方落后时回包留在出口 TUN 自己的队列与 qdisc 中，由内核 AQM 处理，不在用户态静默丢弃 |
 
 选择**独立出口 TUN**而不复用普通本机 Mesh TUN：`Action::Deliver` 给本机服务与 `Action::Exit` 给内核转发有不同的入口和规则；共享设备会使“从 TUN 来”不足以区分两种职责。两设备仍归同一个 Host／Kernel，不增加 Host 实例。专用 TUN 不暴露 FD，不接受外来接口接管，不绑定出口公网地址；回程按远端 Mesh 源 `/32` 导向它。
@@ -152,6 +154,20 @@ sha 应用 IPv4
 - 续期只对仍活、在新租约下判定不变的同路径 flow 更新；**方案切换总是结束旧出口连接**。超过旧截止后不能通过新的 set timeout 或保留 conntrack 复活它。
 - 崩溃后非持久 TUN 自动消失，timed set 到期、负向 capture 保留；重启先核对 boot／namespace／installation，再清除所属旧投影与 conntrack，以缓存的 netmap 重新握手。旧包不能因同 tuple 新建 flow 被接纳：journal 中的 quarantine 随恢复重新装入，覆盖延迟旧包窗口，容量耗尽拒绝新流。
 - 必须明确最终边界：已在撤回前通过内核最终过滤并排入网卡的包不能被“追回”。nft 超时／drop ACK 证明后续穿越该门的包被拒绝，不等价于物理链路上此后零字节。若要求逐网卡发射时刻零旧包，需要额外 qdisc／egress 门设计，不能由普通 nft forward hook 冒称满足。
+
+### 审计与清理重试 {#exit-audit}
+
+出口 owner 每秒回读自己的两张表并与收据、journal 比对（探测请求的审计同一实现）。分类与 egress capture 的[回读校验](/v2/node/runtime#源端-egress-capture-与切换)共用一份实现（`kernel/verification.rs`）：
+
+| 回读结果 | 行为 |
+| --- | --- |
+| 一致 | 保持；此前未知时 INFO `Exit role audit verified again; ownership kept`（`failures`、`unverified_ms`） |
+| 读取失败（工具 2 秒期限、netlink 中断、输出不可读、`nft list table` 失败而表仍在 `nft list tables` 中）| 未知，不证明归属变化：角色与其流保持，下一秒再证，WARN `Exit role audit unavailable; retrying, the role and its flows kept` 一次；探测请求的审计此时回 `netlink`（该次探测报 `ownershipConflict`，角色不撤） |
+| 读成功而不符（`objects_changed`、`flow_unowned`、`flow_missing`），表已不存在（`table_missing`），或连续未知 30 秒（`verify_unavailable`）| 角色停止：`Exit owner stopping after a failed kernel operation`（`operation: audit`、`check`、`error`），随后按下述清理并只撤该角色 |
+
+审计之外的内核操作（安装、续期、退役、conntrack 确认、维护）失败仍按原规则处理：安装失败只拒该流，其余在对账失败时停止角色。宿主 RTNL 长时间停顿期间有活流的角色因此仍可能停止，停顿结束后经下述清理重试与重装恢复。
+
+**清理重试**：角色停止后 owner 关闭资格、退役全部投影并清理 CT、移除回程路由与规则、删除两张表（第一次尝试与以前相同）。失败时资源与 journal 保留，monitor 继续把它们记为出口自有（已消失的 TUN 上的路由被内核删除不算外来变化），owner 按 1 秒起翻倍、上限 60 秒重试，直到成功或 Host 结束（结束时留给下次启动的 journal 恢复）。每次重试先重新读取内核：两张表都已不存在而 journal 已在关闭且路由、规则、投影均已释放，即确认移除完成；两张表都在则从头再关闭一次，各步读回并跳过已不存在的对象；其他情况（只剩一张表等）为 `Conflict`，不动任何对象，下次再读。进程重启的 journal 恢复使用同一函数。重试期间 `ExitRole::retire` 在第一次尝试后即返回失败，Kernel 保留该 owner：安装新角色与探测为 `ownershipConflict`，IPC Status `exit.cleanupPending` 给出最近一次的错误、次数与下次时刻；清理完成后下一次能力探测为 `ready`，网络 worker 以同一内容 `Engine::reapply` 重装角色。读成功而确属外来的对象（例如角色链中的外来规则）使每次重试都失败，直到它被移除；清理从不删除不属于本角色的对象。
 
 ## NAT 技术选择与宿主条件
 

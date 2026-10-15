@@ -2,6 +2,17 @@
 
 按合入 main 的顺序记录工作包、提交与证据 ID。规则见[工程流程](/v2/process)；性能数字的口径见[分层性能测量](/v2/node/performance)，验收状态见[验收范围](/v2/node/validation)。
 
+## 未发布
+
+出口正向写路径与出口审计／清理（X11，`x11/exit-write-path`）：wire 6、IPC 12（Status `exit.cleanupPending` 新增，可省略）、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约均不变；CLI 与 daemon 一起升级（旧 CLI 在该字段出现时解码失败，其余时候不受影响）。M4 遗留：出口正向受 driver 逐包串行写出口 TUN 限制（fixture 882 vs Mesh 1,996 Mbit/s，每次运行都有 `Exit queue full`；真机 planck 10 条告警计到 512，全在出口正向）。OPS11：lab 三节点升级前出口角色处于 ownership conflict——审计读取 `kernel netlink operation failed` 即停止角色，撤回时清理失败，资源保留，冲突持续到重启。
+
+- 写路径（不变量：已安装流的包不经逐包跨任务交接；准入仍逐包、按流确认后放行；队列仍有界。owner：daemon 出口 driver 与 Underlay 出口 I/O owner 的边界）：driver 写出某流的一个包后，该流此后投影已 ACK、FIFO 中无同流包的包由包处理 owner 每轮至多 32 个一批交给出口 I/O owner（队列 32 批），I/O owner 每次至多 64 个、每次写 poll 前逐包检查投影／guard／权限，以 offload 合并写入；每流在 FIFO 中的包数单独计数，两条路不使同一流乱序。出口 TUN 写失败与超出 MTU 的包只丢该包（计数，按 2 的幂 WARN `Exit TUN write failed; packet dropped, its flow kept`），此前结束整条流；I/O owner 处已无投影仍结束该流。fixture 出口正向 890 → 1,764 Mbit/s（Mesh 正向的 0.45 → 0.86），本阶段 `Exit queue full` 12 → 0 次，压力步 767 → 1,685。见 [Exit 设计 · 出口队列](/v2/node/exit-design#exit-queue)、[出口正向写路径](/v2/node/performance#exit-write-path)。
+- 审计（不变量同 D3：一次失败或被放弃的读取不能证明归属变化。owner：Underlay 出口 backend 的审计与清理）：出口 owner 每秒审计与探测审计的读取失败记为未知，角色与流保持，下一秒再证（WARN `Exit role audit unavailable; retrying, the role and its flows kept`，重证一致后 INFO `Exit role audit verified again; ownership kept`）；读成功而不符（`objects_changed`／`flow_unowned`／`flow_missing`）、表消失或未知满 30 秒才停止角色（`check` 字段）。分类与 egress capture 共用一份实现（`kernel/verification.rs`）。
+- 清理：角色撤回时清理失败，资源与 journal 保留，owner 按 1 秒起翻倍、上限 60 秒重试（WARN `Exit role cleanup failed; resources kept, retrying`），每次先重读内核：两张表都已不存在且 journal 已释放全部对象即确认完成，都在则从头再关闭（逐步读回、跳过已删除的），其余为冲突不动任何对象；进程重启的 journal 恢复用同一函数。重试期间 Status `exit.cleanupPending`（`reason`、`attempts`、`retryAt`），`meshway status` 显示 `cleanup pending (…; attempt N, retrying)`；完成后（INFO `Exit role cleanup completed after retrying; the role may install again`）下一次能力探测为 ready，角色以同一内容重装。此前保留的资源要等重启。见 [Exit 设计 · 审计与清理重试](/v2/node/exit-design#exit-audit)。
+- 验收：`exit/off` 组件阶段新增 `exit_recovery::netmap_exit_failed_cleanup_is_retried_and_the_role_installs_again` 与 `linux::kernel::exit::tests::cleanup::exit_audit_read_failures_are_unknown_and_a_failed_cleanup_completes_on_retry`；lab 复现见 [X11 证据](/v2/node/validation#x11-exit)。
+
+验证：Planck `exit/off` 前后交替各 5 次（`75fdaad3` 与 X11 产品代码，优化 dev 构建），每次运行的组件阶段含两项新测试并通过；本机 lab 复现见 [X11 证据](/v2/node/validation#x11-exit)，证据 `.meshway/validation/x11/`。真机未部署。
+
 ## v0.1.0-alpha.12
 
 范围：wire 6、IPC 12、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约均不变（普通升级，无断网窗口）。M4：出口流维护按 100 ms 调度而非每包扫描、出口 TUN 以 offload 批量 I/O、出口审计每秒一次读表；P1：peer 事实过期不再拒绝出口流（最后已知就绪仍可选）、sync hold 以节点持有事实的到期为界；以及下列 P1、M4 工作包。
