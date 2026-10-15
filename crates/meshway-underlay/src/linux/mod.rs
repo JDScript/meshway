@@ -246,10 +246,27 @@ impl Host {
     pub fn sockets(&self) -> SocketFactory {
         self.sockets.clone()
     }
-    /// Coalesced link/address/route changes observed by the existing kernel
-    /// monitor. Observations carry no execution authority.
-    pub fn network_changes(&self) -> tokio::sync::watch::Receiver<u64> {
-        self.kernel.shared.network_changes.subscribe()
+    /// External network changes, coalesced and classified as path or
+    /// refresh ([`crate::NetworkChange`]). Observations carry no authority.
+    pub fn network_changes(&self) -> tokio::sync::watch::Receiver<crate::NetworkChange> {
+        self.kernel.shared.network.changes.subscribe()
+    }
+    /// The external address inside a Mesh pool that keeps capture failed
+    /// closed, while one is assigned. Its departure is the recovery signal.
+    pub fn pool_overlap(&self) -> tokio::sync::watch::Receiver<Option<crate::PoolOverlap>> {
+        self.kernel.shared.network.overlap.subscribe()
+    }
+    /// Counts removals of owned capture objects outside this owner; each
+    /// change asks for [`Self::repair`].
+    pub fn repairs(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.kernel.shared.network.repairs.subscribe()
+    }
+    /// Reinstall owned capture rules and routes removed outside this owner
+    /// (a network manager's cleanup of rules it does not know). Bounded: a
+    /// fourth repair within a minute is a conflict, as is a slot another
+    /// owner now holds.
+    pub async fn repair(&mut self) -> Result<()> {
+        self.kernel.repair().await
     }
     /// Exact interface names held by this owner's journal (TUN and DNS anchor).
     pub fn owned_interfaces(&self) -> Vec<String> {

@@ -23,6 +23,16 @@ pub struct ProtectedDatagram {
     buffers: meshway_transport::udp::Buffers,
     targets: Option<Vec<SocketAddr>>,
     pub(super) traversal: Option<std::sync::Arc<super::traversal::Registry>>,
+    /// Sources a verified roaming peer sends from, beyond `targets`.
+    roamed: std::sync::Mutex<Vec<Roamed>>,
+}
+
+/// Recipients one restricted endpoint may hold for roaming peers at once.
+const MAX_ROAMED: usize = 4;
+
+struct Roamed {
+    address: SocketAddr,
+    lifetime: std::sync::Arc<dyn meshway_transport::SendLifetime>,
 }
 
 impl fmt::Debug for ProtectedDatagram {
@@ -74,7 +84,27 @@ impl ProtectedDatagram {
             buffers,
             targets,
             traversal: None,
+            roamed: std::sync::Mutex::new(Vec::new()),
         })
+    }
+
+    /// An unrestricted endpoint (a listener) sends anywhere; a dial or
+    /// traversal endpoint only to its targets, its live traversal recipients
+    /// and the live sources of roaming peers.
+    fn allows(&self, peer: SocketAddr) -> bool {
+        let Some(targets) = &self.targets else {
+            return true;
+        };
+        targets.contains(&peer)
+            || self
+                .traversal
+                .as_ref()
+                .is_some_and(|registry| registry.allows(peer))
+            || self.roamed.lock().is_ok_and(|roamed| {
+                roamed
+                    .iter()
+                    .any(|entry| entry.address == peer && entry.lifetime.is_current())
+            })
     }
 
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
@@ -109,15 +139,7 @@ impl Datagram for ProtectedDatagram {
         packets: &[DatagramSend<'_>],
     ) -> Poll<io::Result<usize>> {
         for packet in packets {
-            if self
-                .targets
-                .as_ref()
-                .is_some_and(|targets| !targets.contains(&packet.peer))
-                && !self
-                    .traversal
-                    .as_ref()
-                    .is_some_and(|registry| registry.allows(packet.peer))
-            {
+            if !self.allows(packet.peer) {
                 return Poll::Ready(Err(io_error(Error::Target)));
             }
         }
@@ -145,15 +167,7 @@ impl Datagram for ProtectedDatagram {
         bytes: &[u8],
         peer: SocketAddr,
     ) -> Poll<io::Result<usize>> {
-        if self
-            .targets
-            .as_ref()
-            .is_some_and(|targets| !targets.contains(&peer))
-            && !self
-                .traversal
-                .as_ref()
-                .is_some_and(|registry| registry.allows(peer))
-        {
+        if !self.allows(peer) {
             return Poll::Ready(Err(io_error(Error::Target)));
         }
         self.owned.wakers.write.register(cx.waker());
@@ -174,6 +188,35 @@ impl Datagram for ProtectedDatagram {
     /// sends nothing) only to read the route MTU, including a learned PMTU.
     fn buffers(&self) -> Option<meshway_transport::udp::Buffers> {
         Some(self.buffers)
+    }
+    /// At most [`MAX_ROAMED`] live grants, each for its own lifetime and of
+    /// this endpoint's address family; a restricted endpoint gains no other
+    /// recipient.
+    fn authorize_source(
+        &self,
+        peer: SocketAddr,
+        lifetime: std::sync::Arc<dyn meshway_transport::SendLifetime>,
+    ) -> io::Result<()> {
+        self.owned.scope.check().map_err(io_error)?;
+        if self.targets.is_none() {
+            return Ok(());
+        }
+        if peer.is_ipv4() != self.local.is_ipv4()
+            || meshway_control::connectivity::udp_recipient(&peer.to_string()).is_err()
+            || !lifetime.is_current()
+        {
+            return Err(io_error(Error::Target));
+        }
+        let mut roamed = self.roamed.lock().map_err(|_| io_error(Error::Worker))?;
+        roamed.retain(|entry| entry.lifetime.is_current());
+        if roamed.len() >= MAX_ROAMED {
+            return Err(io_error(Error::Capacity));
+        }
+        roamed.push(Roamed {
+            address: peer,
+            lifetime,
+        });
+        Ok(())
     }
     fn path_mtu(&self, peer: SocketAddr) -> Option<u16> {
         if peer.is_ipv4() != self.local.is_ipv4() {
@@ -231,7 +274,7 @@ mod tests {
             },
             selectors: Vec::new(),
             conflict: CancellationToken::new(),
-            network_changes: tokio::sync::watch::channel(0).0,
+            network: Default::default(),
             tasks: Tasks::new(16),
             sockets: Arc::new(Semaphore::new(8)),
             data_sockets: Arc::new(Semaphore::new(8)),

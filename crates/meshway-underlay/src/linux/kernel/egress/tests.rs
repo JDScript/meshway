@@ -87,7 +87,7 @@ async fn setup() -> Setup {
         .unwrap();
     kernel.quiesce().await.unwrap();
     kernel.expected.lock().unwrap().changing = false;
-    let mut changed = kernel.shared.network_changes.subscribe();
+    let mut changed = kernel.shared.network.dirty.subscribe();
     changed.borrow_and_update();
     let (store, old) = Store::open(directory).await.unwrap();
     assert!(old.is_none());

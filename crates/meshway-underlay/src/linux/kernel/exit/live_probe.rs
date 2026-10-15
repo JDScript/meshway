@@ -136,7 +136,7 @@ mod tests {
         let mut host = crate::Host::open(directory, Default::default())
             .await
             .unwrap();
-        let mut changes = host.network_changes();
+        let mut changes = host.kernel.shared.network.dirty.subscribe();
         changes.borrow_and_update();
         let instance = "11111111-1111-4111-8111-111111111111".parse().unwrap();
         let netmap = NetmapRef {

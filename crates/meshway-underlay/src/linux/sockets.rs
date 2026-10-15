@@ -118,6 +118,16 @@ impl SocketFactory {
             .await
     }
 
+    /// The source address this Node's protected sockets take toward `remote`
+    /// now: the preferred source of the marked route through the full RPDB;
+    /// `None` without a route.
+    pub async fn route_source(&self, remote: SocketAddr) -> Option<std::net::IpAddr> {
+        let routes = self.shared.network.routes.as_ref()?;
+        super::kernel::network::route(routes, remote.ip(), self.shared.mark.value)
+            .await?
+            .source
+    }
+
     /// The Host's installed content, for consumers that address sockets by
     /// resource only.
     pub fn installed(&self) -> Result<Desired> {

@@ -60,6 +60,11 @@ pub(super) struct Expected {
     pub wake: Arc<tokio::sync::Notify>,
     pub requested_drain: u64,
     pub drained: u64,
+    /// The capture block's own rules (encoded), as its journal records them.
+    /// One removed outside its owner is reinstalled, never a conflict.
+    pub own_rules: Vec<Vec<u8>>,
+    /// External addresses inside a Mesh pool, with their interface label.
+    pub overlaps: BTreeMap<(u32, std::net::IpAddr), String>,
 }
 
 // Kept inside the kernel-test binary: one fixed-field record on the first
@@ -248,6 +253,20 @@ impl Observed {
 }
 
 impl Expected {
+    /// An address message whose pool addresses are all recorded overlaps
+    /// of its interface.
+    pub fn overlapping(&self, address: &rtnetlink::packet_route::address::AddressMessage) -> bool {
+        address
+            .attributes
+            .iter()
+            .filter_map(|a| match a {
+                AddressAttribute::Local(ip) | AddressAttribute::Address(ip) => Some(*ip),
+                _ => None,
+            })
+            .filter(|ip| self.pools.iter().any(|pool| pool.contains(ip)))
+            .all(|ip| self.overlaps.contains_key(&(address.header.index, ip)))
+    }
+
     pub fn add(&mut self, event: Event) -> Result<()> {
         if self.events.len() >= 1024 {
             return Err(Error::Capacity);
@@ -334,7 +353,7 @@ pub(super) async fn run(
     expected: Arc<Mutex<Expected>>,
     table: u32,
 ) {
-    if let Err(_error) = monitor(socket, &expected, table, &shared.network_changes).await {
+    if let Err(_error) = monitor(socket, &expected, table, &shared).await {
         tracing::warn!(error = %_error, "Underlay kernel monitor stopped");
         #[cfg(test)]
         if let Ok(mut state) = expected.lock() {
@@ -358,7 +377,7 @@ async fn monitor(
     socket: AsyncFd<Socket>,
     expected: &Mutex<Expected>,
     table: u32,
-    changes: &tokio::sync::watch::Sender<u64>,
+    shared: &Shared,
 ) -> Result<()> {
     let mut buffer = vec![0; 65536];
     let wake = expected.lock().map_err(|_| Error::Worker)?.wake.clone();
@@ -432,7 +451,10 @@ async fn monitor(
                         return Err(Error::Conflict);
                     }};
                 }
-                let changed = network_changed(&state, &message.payload);
+                let changed = network_changed(&state, &message.payload, table);
+                let overlaps = state.overlaps.len();
+                let mut repair = false;
+                let mut overlapping = Vec::new();
                 let owned =
                     state
                         .tun
@@ -448,12 +470,56 @@ async fn monitor(
                     NetlinkPayload::InnerMessage(RouteNetlinkMessage::NewAddress(address))
                         if super::capture::address_conflicts(&state.pools, owned, address) =>
                     {
-                        conflict!("capture_address");
+                        // A network handing this Node an address inside a
+                        // Mesh pool: capture fails closed while it lasts.
+                        if !external(&state, address.header.index) {
+                            conflict!("capture_address");
+                        }
+                        let label = address
+                            .attributes
+                            .iter()
+                            .find_map(|a| match a {
+                                AddressAttribute::Label(label) => Some(label.clone()),
+                                _ => None,
+                            })
+                            .unwrap_or_else(|| format!("if{}", address.header.index));
+                        for ip in address.attributes.iter().filter_map(|a| match a {
+                            AddressAttribute::Local(ip) | AddressAttribute::Address(ip) => {
+                                Some(*ip)
+                            }
+                            _ => None,
+                        }) {
+                            if state.pools.iter().any(|pool| pool.contains(&ip)) {
+                                overlapping.push(((address.header.index, ip), label.clone()));
+                            }
+                        }
                     }
+                    // The kernel's own local routes of such an address are
+                    // part of that overlap, not a separate conflict.
                     NetlinkPayload::InnerMessage(RouteNetlinkMessage::NewRoute(route))
-                        if super::capture::route_conflicts(&state.pools, owned, route) =>
+                        if super::capture::route_conflicts(&state.pools, owned, route)
+                            && !overlap_route(&state, route) =>
                     {
                         conflict!("capture_route");
+                    }
+                    _ => {}
+                }
+                state.overlaps.extend(overlapping);
+                match &message.payload {
+                    NetlinkPayload::InnerMessage(RouteNetlinkMessage::DelAddress(address)) => {
+                        let index = address.header.index;
+                        for ip in address.attributes.iter().filter_map(|a| match a {
+                            AddressAttribute::Local(ip) | AddressAttribute::Address(ip) => {
+                                Some(*ip)
+                            }
+                            _ => None,
+                        }) {
+                            state.overlaps.remove(&(index, ip));
+                        }
+                    }
+                    NetlinkPayload::InnerMessage(RouteNetlinkMessage::DelLink(link)) => {
+                        let index = link.header.index;
+                        state.overlaps.retain(|(owner, _), _| *owner != index);
                     }
                     _ => {}
                 }
@@ -510,16 +576,23 @@ async fn monitor(
                     }
                     NetlinkPayload::InnerMessage(RouteNetlinkMessage::DelRule(rule)) => {
                         let exit = state.exit_owned_rule(&rule);
+                        let bytes = encode_rule(rule);
+                        let own = state.own_rules.contains(&bytes);
                         if state
                             .consume(Event {
                                 rule: true,
                                 deleted: true,
-                                bytes: encode_rule(rule),
+                                bytes,
                             })
                             .is_err()
                             && !(exit && state.stop_exit("unexpected_del_rule"))
                         {
-                            conflict!("unexpected_del_rule");
+                            // A network manager removing rules it does not
+                            // own: the capture owner reinstalls them.
+                            if !own {
+                                conflict!("unexpected_del_rule");
+                            }
+                            repair = true;
                         }
                     }
                     NetlinkPayload::InnerMessage(RouteNetlinkMessage::NewRoute(route))
@@ -550,6 +623,7 @@ async fn monitor(
                             || state.exit_tables.contains(&route_table(&route)) =>
                     {
                         let exit = state.exit_tables.contains(&route_table(&route));
+                        let own = route_table(&route) == table;
                         if state
                             .consume(Event {
                                 rule: false,
@@ -559,7 +633,10 @@ async fn monitor(
                             .is_err()
                             && !(exit && state.stop_exit("unexpected_del_route"))
                         {
-                            conflict!("unexpected_del_route");
+                            if !own {
+                                conflict!("unexpected_del_route");
+                            }
+                            repair = true;
                         }
                     }
                     NetlinkPayload::InnerMessage(RouteNetlinkMessage::DelLink(link)) => {
@@ -636,11 +713,37 @@ async fn monitor(
                     _ => return Err(Error::Netlink),
                 }
                 offset += (length + 3) & !3;
+                let overlap = (state.overlaps.len() != overlaps).then(|| {
+                    state
+                        .overlaps
+                        .iter()
+                        .next()
+                        .map(|((_, address), interface)| crate::PoolOverlap {
+                            interface: interface.clone(),
+                            address: *address,
+                        })
+                });
+                drop(state);
+                if let Some(overlap) = overlap {
+                    if let Some(found) = &overlap {
+                        tracing::warn!(interface = %found.interface, address = %found.address,
+                            "External address inside a Mesh pool; capture fails closed until it leaves");
+                        shared.suspend()?;
+                    }
+                    shared.network.overlap.send_replace(overlap);
+                }
+                if repair {
+                    tracing::warn!("Owned capture object removed outside its owner; reinstalling");
+                    shared
+                        .network
+                        .repairs
+                        .send_modify(|count| *count = count.wrapping_add(1));
+                }
                 if changed {
-                    changes.send_modify(|epoch| {
-                        *epoch = epoch.wrapping_add(1);
-                        tracing::debug!(network_epoch = *epoch, "External network change observed");
-                    });
+                    shared
+                        .network
+                        .dirty
+                        .send_modify(|count| *count = count.wrapping_add(1));
                 }
             }
             // Every received datagram is finite; cooperate even during event floods.
@@ -649,25 +752,49 @@ async fn monitor(
     }
 }
 
-fn network_changed(state: &Expected, payload: &NetlinkPayload<RouteNetlinkMessage>) -> bool {
-    let external = |index| {
-        index != 1
-            && state.probe_tun != Some(index)
-            && state.exit_tun != Some(index)
-            && state.retiring_tun != Some(index)
-            && state
-                .tun
-                .as_ref()
-                .is_none_or(|(owned, _, _, _)| *owned != index)
-            && state
-                .anchor
-                .as_ref()
-                .is_none_or(|anchor| anchor.identity.index != index)
-            && state
-                .anchor_creating
-                .as_ref()
-                .is_none_or(|(_, creating)| *creating != Some(index))
-    };
+/// An interface that is neither loopback nor one of this owner's own (Mesh,
+/// probe and exit TUNs, the DNS anchor, including while created or retired).
+pub(super) fn external(state: &Expected, index: u32) -> bool {
+    index != 1
+        && state.probe_tun != Some(index)
+        && state.exit_tun != Some(index)
+        && state.retiring_tun != Some(index)
+        && state
+            .tun
+            .as_ref()
+            .is_none_or(|(owned, _, _, _)| *owned != index)
+        && state
+            .anchor
+            .as_ref()
+            .is_none_or(|anchor| anchor.identity.index != index)
+        && state
+            .anchor_creating
+            .as_ref()
+            .is_none_or(|(_, creating)| *creating != Some(index))
+}
+
+/// A local-table route of an external interface that holds an address
+/// inside a Mesh pool: the kernel's own consequence of that address.
+pub(super) fn overlap_route(
+    state: &Expected,
+    route: &rtnetlink::packet_route::route::RouteMessage,
+) -> bool {
+    route_table(route) == 255
+        && route.attributes.iter().any(|attribute| {
+            matches!(attribute, RouteAttribute::Oif(index)
+                if state.overlaps.keys().any(|(owner, _)| owner == index))
+        })
+}
+
+/// Marks an external notification for classification: links that are up,
+/// addresses and routes of external interfaces, in any table but this
+/// owner's own (capture, source capture, exit) and local.
+fn network_changed(
+    state: &Expected,
+    payload: &NetlinkPayload<RouteNetlinkMessage>,
+    table: u32,
+) -> bool {
+    let external = |index| external(state, index);
     match payload {
         // A link that is not up carries no path: creating or deleting one
         // (a VPN daemon's idle ppp0, say) changes no route to anything. An up
@@ -689,7 +816,11 @@ fn network_changed(state: &Expected, payload: &NetlinkPayload<RouteNetlinkMessag
         NetlinkPayload::InnerMessage(
             RouteNetlinkMessage::NewRoute(route) | RouteNetlinkMessage::DelRoute(route),
         ) => {
-            route_table(route) == 254
+            let owner = route_table(route);
+            owner != table
+                && owner != 255
+                && state.egress_table != Some(owner)
+                && !state.exit_tables.contains(&owner)
                 && route.attributes.iter().all(|attribute| match attribute {
                     RouteAttribute::Oif(index) => external(*index),
                     _ => true,
@@ -776,16 +907,16 @@ mod tests {
             address.header.index = index;
             NetlinkPayload::InnerMessage(RouteNetlinkMessage::NewAddress(address))
         };
-        assert!(!network_changed(&state, &link(7, "mwd0123456789")));
-        assert!(network_changed(&state, &address(7)));
+        assert!(!network_changed(&state, &link(7, "mwd0123456789"), 0));
+        assert!(network_changed(&state, &address(7), 0));
         let state = Expected {
             anchor_creating: Some(("mwd0123456789".into(), Some(7))),
             ..Default::default()
         };
-        assert!(!network_changed(&state, &address(7)));
-        assert!(!network_changed(&state, &link(7, "mwd0123456789")));
-        assert!(network_changed(&state, &link(8, "eth1")));
-        assert!(network_changed(&state, &address(8)));
+        assert!(!network_changed(&state, &address(7), 0));
+        assert!(!network_changed(&state, &link(7, "mwd0123456789"), 0));
+        assert!(network_changed(&state, &link(8, "eth1"), 0));
+        assert!(network_changed(&state, &address(8), 0));
     }
 
     #[test]
@@ -801,13 +932,15 @@ mod tests {
         ] {
             assert!(!network_changed(
                 &state,
-                &NetlinkPayload::InnerMessage(message)
+                &NetlinkPayload::InnerMessage(message),
+                0
             ));
         }
         idle.header.flags = LinkFlags::Up;
         assert!(network_changed(
             &state,
-            &NetlinkPayload::InnerMessage(RouteNetlinkMessage::DelLink(idle))
+            &NetlinkPayload::InnerMessage(RouteNetlinkMessage::DelLink(idle)),
+            0
         ));
     }
 }

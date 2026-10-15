@@ -13,7 +13,8 @@ async fn owned_suspend_keeps_control_connection_and_reports_no_network_change() 
     let mut host = crate::Host::open(directory, Options::default())
         .await
         .unwrap();
-    let mut changes = host.network_changes();
+    // The monitor marks no owned event at all, before any classification.
+    let mut changes = host.kernel.shared.network.dirty.subscribe();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let origin = format!("http://{}", listener.local_addr().unwrap());
     // All four requests must traverse the same real protected pooled stream.

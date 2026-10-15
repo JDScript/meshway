@@ -158,6 +158,18 @@ pub trait Datagram: Send + Sync + 'static {
     fn buffers(&self) -> Option<Buffers> {
         None
     }
+    /// Let this endpoint also send to `peer` while `lifetime` is current.
+    /// Only the endpoint's authentication owner calls this, after verifying
+    /// a signed message of one of its channels from `peer` (a roaming peer's
+    /// new source). An endpoint that restricts its recipients bounds these
+    /// grants; one that does not restrict them needs none.
+    fn authorize_source(
+        &self,
+        _peer: SocketAddr,
+        _lifetime: std::sync::Arc<dyn crate::SendLifetime>,
+    ) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 impl<D: Datagram + ?Sized> Datagram for Box<D> {
@@ -201,6 +213,13 @@ impl<D: Datagram + ?Sized> Datagram for Box<D> {
     fn buffers(&self) -> Option<Buffers> {
         (**self).buffers()
     }
+    fn authorize_source(
+        &self,
+        peer: SocketAddr,
+        lifetime: std::sync::Arc<dyn crate::SendLifetime>,
+    ) -> io::Result<()> {
+        (**self).authorize_source(peer, lifetime)
+    }
 }
 
 /// A shared endpoint: one owner polls I/O, another may read path facts.
@@ -242,6 +261,13 @@ impl<D: Datagram + ?Sized> Datagram for std::sync::Arc<D> {
     }
     fn buffers(&self) -> Option<Buffers> {
         (**self).buffers()
+    }
+    fn authorize_source(
+        &self,
+        peer: SocketAddr,
+        lifetime: std::sync::Arc<dyn crate::SendLifetime>,
+    ) -> io::Result<()> {
+        (**self).authorize_source(peer, lifetime)
     }
 }
 

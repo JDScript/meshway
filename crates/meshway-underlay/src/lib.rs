@@ -55,6 +55,39 @@ pub use linux::{
     sockets::{CandidateHandle, ListenerHandle, ProtectedListener, ProtectedTcp, SocketFactory},
 };
 
+/// The Underlay's classification of external network changes, published by
+/// `Host::network_changes`. An observation only: it carries no authority.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct NetworkChange {
+    /// Every classified change, path or refresh.
+    pub epoch: u64,
+    /// Changes of the underlay path fingerprint: external up interfaces with
+    /// their carrier and preferred addresses, and this Node's marked route
+    /// toward the Server. Sockets may reach peers from another source now.
+    pub path: u64,
+    /// The latest change's class; `None` before the first.
+    pub class: Option<NetworkChangeClass>,
+    /// Wall-clock time of the latest change.
+    pub at: Option<std::time::SystemTime>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NetworkChangeClass {
+    /// The path fingerprint changed.
+    Path,
+    /// An external change that left the fingerprint as it was (an unrelated
+    /// interface, a temporary address): local endpoints are sampled again.
+    Refresh,
+}
+
+/// An address of an external interface inside a Mesh pool: capture fails
+/// closed while it lasts and recovers by itself once the address leaves.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PoolOverlap {
+    pub interface: String,
+    pub address: IpAddr,
+}
+
 /// Local installation inputs, never business DNS or execution authority.
 #[derive(Clone)]
 pub struct Options {

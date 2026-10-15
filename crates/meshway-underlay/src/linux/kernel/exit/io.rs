@@ -320,7 +320,7 @@ mod tests {
             mark: Mark { value: 1, mask: 1 },
             selectors: Vec::new(),
             conflict: CancellationToken::new(),
-            network_changes: tokio::sync::watch::channel(0).0,
+            network: Default::default(),
             tasks: tasks.clone(),
             sockets: Arc::new(Semaphore::new(1)),
             data_sockets: Arc::new(Semaphore::new(1)),

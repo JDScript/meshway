@@ -164,10 +164,13 @@ async fn relay(
     resolver: Resolver,
     timeout: Duration,
 ) -> Result<()> {
-    let mut changes = shared.network_changes.subscribe();
+    // Only a path change can leave this connection on a dead path; a
+    // refresh (another interface, a temporary address) keeps it.
+    let mut changes = shared.network.changes.subscribe();
+    let path = changes.borrow_and_update().path;
     tokio::select! { biased;
-        _ = changes.changed() => {
-            tracing::debug!("Closing control connection after external network change");
+        _ = changes.wait_for(|change| change.path != path) => {
+            tracing::debug!("Closing control connection after underlay path change");
             Ok(())
         },
         result = relay_current(local, host, port, shared, resolver, timeout) => result,
@@ -215,6 +218,10 @@ async fn relay_current(
         _ = scope.ended() => return Err(Error::Conflict),
         result = tokio::time::timeout(timeout, establish) => result.map_err(|_| Error::Io(io::ErrorKind::TimedOut.into()))??,
     };
+    // The route toward this address is part of the path fingerprint.
+    if let Ok(peer) = remote.peer_addr() {
+        shared.network.control_reached(peer.ip());
+    }
     // Fixed per-direction copy buffers; a connection quiet in both directions
     // for IDLE closes, and reqwest establishes a fresh protected one. Quiet,
     // not age: a request in flight (a sync long poll holds up to ~55 s with

@@ -5,6 +5,7 @@ pub(crate) mod exit;
 mod journal;
 mod monitor;
 mod namespace;
+pub(super) mod network;
 mod plan;
 mod rpdb;
 mod tool;
@@ -57,7 +58,13 @@ pub(super) struct Kernel {
     egress: Option<egress::Owner>,
     /// The MSS clamp last handed to the capture owner.
     clamp: Option<egress::mss::Clamp>,
+    /// When owned capture objects were last reinstalled ([`Self::repair`]).
+    repaired: std::collections::VecDeque<std::time::Instant>,
 }
+
+/// Repairs of removed capture objects allowed within [`REPAIR_WINDOW`].
+const MAX_REPAIRS: usize = 3;
+const REPAIR_WINDOW: Duration = Duration::from_secs(60);
 
 impl Kernel {
     pub fn owned_interfaces(&self) -> Vec<String> {
@@ -165,7 +172,7 @@ impl Kernel {
             mark: journal.mark,
             selectors,
             conflict,
-            network_changes: tokio::sync::watch::channel(0).0,
+            network: network::Network::with_routes(handle.clone()),
             tasks: tasks.clone(),
             sockets: Arc::new(Semaphore::new(bootstrap_sockets)),
             data_sockets: Arc::new(Semaphore::new(options.max_sockets - bootstrap_sockets)),
@@ -187,6 +194,11 @@ impl Kernel {
         let expected = Arc::new(Mutex::new(Expected {
             anchor: journal.anchor.clone(),
             pools: journal.pools.clone(),
+            own_rules: journal
+                .rules
+                .iter()
+                .map(|record| record.observed.clone())
+                .collect(),
             ..Expected::default()
         }));
         let watched = shared.clone();
@@ -195,6 +207,12 @@ impl Kernel {
         tasks.spawn(async move {
             monitor::run(monitor_socket, watched, events, table).await;
         })?;
+        tasks.spawn(network::classify(
+            shared.clone(),
+            handle.clone(),
+            expected.clone(),
+            options.max_kernel_objects,
+        ))?;
         store.persist(&journal).await?;
         shared.check()?;
         Ok(Self {
@@ -211,7 +229,92 @@ impl Kernel {
             probe: None,
             egress: None,
             clamp: None,
+            repaired: std::collections::VecDeque::new(),
         })
+    }
+
+    /// The monitor's view of the capture block's own rules follows the journal.
+    fn publish_own_rules(&self) -> Result<()> {
+        self.expected.lock().map_err(|_| Error::Worker)?.own_rules = self
+            .journal
+            .rules
+            .iter()
+            .map(|record| record.observed.clone())
+            .collect();
+        Ok(())
+    }
+
+    /// Reinstall journal rules and capture-table routes that something else
+    /// removed (a network manager cleaning up rules it does not know), in
+    /// the order the block needs them: end and bypass before the pool rules,
+    /// each pool's sink before its lookup. A slot another owner holds now is
+    /// a conflict; so is a fourth repair within a minute.
+    pub async fn repair(&mut self) -> Result<()> {
+        let now = std::time::Instant::now();
+        while self
+            .repaired
+            .front()
+            .is_some_and(|at| now.duration_since(*at) >= REPAIR_WINDOW)
+        {
+            self.repaired.pop_front();
+        }
+        if self.repaired.len() >= MAX_REPAIRS {
+            tracing::warn!("Owned capture objects keep being removed; ownership ends");
+            self.shared.conflict.cancel();
+            return Err(Error::Conflict);
+        }
+        self.repaired.push_back(now);
+        self.ready().await?;
+        let present: Vec<_> = get_rules(&self.handle, self.options.max_kernel_objects)
+            .await?
+            .into_iter()
+            .map(encode_rule)
+            .collect();
+        let mut missing: Vec<_> = self
+            .journal
+            .rules
+            .iter()
+            .filter(|record| !present.contains(&record.observed))
+            .cloned()
+            .collect();
+        missing.sort_by_key(|record| match record.spec.kind {
+            RuleKind::End => 0,
+            RuleKind::Bypass { .. } => 1,
+            RuleKind::Sink { .. } => 2,
+            RuleKind::Lookup { .. } => 3,
+        });
+        let routes: Vec<_> = get_routes(&self.handle, self.options.max_kernel_objects)
+            .await?
+            .into_iter()
+            .map(encode_route)
+            .collect();
+        let lost: Vec<_> = self
+            .journal
+            .routes
+            .iter()
+            .filter(|record| !routes.contains(&record.observed))
+            .cloned()
+            .collect();
+        tracing::warn!(
+            rules = missing.len(),
+            routes = lost.len(),
+            "Reinstalling owned capture objects removed outside their owner"
+        );
+        let result = async {
+            for record in &missing {
+                self.objects().add_rule(record.spec.message()).await?;
+            }
+            for record in &lost {
+                self.objects().add_route(record.spec.message()?).await?;
+            }
+            self.quiesce().await?;
+            self.verify().await
+        }
+        .await;
+        if result.is_err() {
+            self.shared.conflict.cancel();
+        }
+        result
     }
 
     async fn ready(&mut self) -> Result<()> {
@@ -276,7 +379,9 @@ impl Kernel {
             return Err(Error::Conflict);
         }
         let routes = get_routes(&self.handle, self.options.max_kernel_objects).await?;
-        self.verify_capture_routes(&self.journal.pools, &routes)
+        // Removal and repair proceed while an external address overlaps a
+        // pool; only installation refuses it.
+        self.verify_capture_routes(&self.journal.pools, &routes, true)
             .await?;
         let actual: Vec<_> = routes
             .into_iter()
@@ -299,13 +404,14 @@ impl Kernel {
 
     async fn verify_capture(&self, pools: &[ipnet::IpNet]) -> Result<()> {
         let routes = get_routes(&self.handle, self.options.max_kernel_objects).await?;
-        self.verify_capture_routes(pools, &routes).await
+        self.verify_capture_routes(pools, &routes, false).await
     }
 
     async fn verify_capture_routes(
         &self,
         pools: &[ipnet::IpNet],
         routes: &[RouteMessage],
+        overlap: bool,
     ) -> Result<()> {
         let addresses = get_addresses(&self.handle, self.options.max_kernel_objects).await?;
         let mut assigned = Vec::new();
@@ -330,15 +436,19 @@ impl Kernel {
         } else {
             None
         };
+        let expected = self.expected.lock().map_err(|_| Error::Worker)?;
+        let tolerated = |route: &RouteMessage| overlap && monitor::overlap_route(&expected, route);
         if routes
             .iter()
-            .any(|route| capture::route_conflicts(pools, owned, route))
-            || addresses
-                .iter()
-                .any(|address| capture::address_conflicts(pools, owned, address))
+            .any(|route| capture::route_conflicts(pools, owned, route) && !tolerated(route))
+            || addresses.iter().any(|address| {
+                capture::address_conflicts(pools, owned, address)
+                    && !(overlap && expected.overlapping(address))
+            })
         {
             return Err(Error::Conflict);
         }
+        drop(expected);
         self.shared.check()
     }
 
@@ -828,6 +938,7 @@ impl Kernel {
             self.journal
                 .rules
                 .retain(|existing| existing.spec != record.spec);
+            self.publish_own_rules()?;
             self.journal.pending = None;
             self.store.persist(&self.journal).await?;
         }
@@ -909,6 +1020,7 @@ impl Kernel {
             spec,
             observed: expected,
         });
+        self.publish_own_rules()?;
         self.journal.pending = None;
         self.store.persist(&self.journal).await
     }
