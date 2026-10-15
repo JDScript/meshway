@@ -235,10 +235,13 @@ impl Owner {
             return Err(Error::Capacity);
         }
         let links = self.shared.links.lock().map_err(|_| Error::Worker)?;
+        // The peer's offer may name the reverse direction of this Node's own
+        // UDP channel (one the peer prepared, this one this Node did): it
+        // replaces that channel all the same.
         let replacement = match links.get(&peer) {
             Some(link)
-                if link.fact.carrier == offer.offer().carrier
-                    && link.fact.carrier.protocol == TransportProtocol::NativeUdp =>
+                if link.fact.carrier.protocol == TransportProtocol::NativeUdp
+                    && offer.offer().carrier.protocol == TransportProtocol::NativeUdp =>
             {
                 Replacement::Channel(link.fact.id)
             }

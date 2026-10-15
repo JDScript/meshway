@@ -98,7 +98,9 @@ def parse_received(path):
 EVENT_MESSAGES = ("Dataplane circuit retired", "Connectivity channel transition", "Connectivity roam",
                   "Underlay network change classified", "Known peer facts updated",
                   "State candidate publication acknowledged", "Traversal attempt active",
-                  "Traversal prepared", "Traversal attempt ended without a channel")
+                  "Traversal prepared", "Traversal attempt ended without a channel",
+                  "Traversal accepted beside a selected channel", "Traversal reservation refused",
+                  "Connectivity channel health ended")
 
 
 def daemon_events(path, start, end):
@@ -692,6 +694,8 @@ def analyse(report, manifest):
                 (event["at"], "b") for event in b_events if event.get("message") == "Traversal prepared"]
             prepared = sorted(item for item in prepared if item[0] >= cell["routedAt"])
             measured["firstPreparedBy"] = prepared[0][1] if prepared else None
+            measured["bAcceptedBesideChannel"] = any(
+                event.get("message") == "Traversal accepted beside a selected channel" for event in b_events)
             checks["reacquired"] = measured["reacquiredS"] is not None
         if scenario == "relay":
             checks.update(relay_checks(report, cell, measured, phase))
