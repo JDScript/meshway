@@ -2,6 +2,14 @@
 
 按合入 main 的顺序记录工作包、提交与证据 ID。规则见[工程流程](/v2/process)；性能数字的口径见[分层性能测量](/v2/node/performance)，验收状态见[验收范围](/v2/node/validation)。
 
+## 未发布
+
+sync 请求量（P1b，`p1b/sync-rate`）：wire 6、IPC 12、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约均不变（只改 Server）。OPS11 六台 10 分钟 sync 回答 101→208（2.06×，预期约 1.4×）。现网只读核对：各节点每 1–21 秒报告一次、事实一律 `observedAt` + 60 秒到期，以事实界结束的 hold 恰为最早剩余 − 5 秒、平均 41.0 秒（约 1.22×），P1 的界按设计工作；多出的回答来自事实内容"变化"唤醒：两个 STUN observer 续期相隔数秒（VM 约 10 秒）时，旧观测先后到期使报告里的候选顺序互换，Server 按报告顺序比较内容，每个续期周期（约 62 秒）两次唤醒所有看见该报告者的节点（5 分钟内 VM 9 次，同时刻六台一起回答）。
+
+- Server：同一 listener 的 STUN 候选按（地址, observer）排序后再比较内容，顺序互换不再推进事实游标或唤醒 hold；真实映射变化照旧立即唤醒。
+- Server：debug 日志 `Sync answered`（`reason`：`netmap`／`peerFacts`／`associations`／`traversal`／`timeout`／`replaced`／`closed`，`held_ms`，本次与下一 hold 的事实截止及报告者）与 `Peer facts content changed`（`change` 类别），用于定位提前结束的 hold。
+- 验收：App 测试 `staggered_stun_renewals_wake_no_hold`（修复前在 0.5 秒处被唤醒）；`six_steady_reporters_cost_a_bounded_sync_rate`（六台每 20 秒报告：hold ≥ 35 秒、平均 39.6 秒，约 1.26×）。证据 `.meshway/validation/p1b/`。真机未部署。
+
 ## v0.1.0-alpha.12
 
 范围：wire 6、IPC 12、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约均不变（普通升级，无断网窗口）。M4：出口流维护按 100 ms 调度而非每包扫描、出口 TUN 以 offload 批量 I/O、出口审计每秒一次读表；P1：peer 事实过期不再拒绝出口流（最后已知就绪仍可选）、sync hold 以节点持有事实的到期为界；以及下列 P1、M4 工作包。
