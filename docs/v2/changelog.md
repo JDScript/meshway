@@ -10,7 +10,7 @@
 - 出口 TUN 以 offload 批量 I/O 创建：批量 TCP 的逆 NAT 回包以聚合进入内核队列，不再在 tun 队列溢出（真机一次 20 秒出口反向丢 243 包，即出口反向波动的来源）；每段仍单独匹配投影并准入（`08ff561c`）。
 - 出口角色每秒审计只读一次两张表：每个出口节点每秒少 2 个 `nft` 进程，审计周期与检查项不变（`89def831`）。
 
-验证：Planck `exit/off` 第 16 阶段（优化的 dev profile，交替运行）Mesh 正向／反向中位数 669→1,996／839→2,015 Mbit/s，出口正向 761→882、反向 1,030→1,362，出口反向时出口 TUN 丢包 69–133→0 次，压力步 echo 最小 RTT 38.2→27.5 ms（各 5 次）；L3 secure-direct（release，2 CPU）前后 2,724／2,727 Mbit/s 不变。18 行矩阵 M4_MATRIX。真机未部署。
+验证：Planck `exit/off` 第 16 阶段（优化的 dev profile，交替运行）Mesh 正向／反向中位数 669→1,996／839→2,015 Mbit/s，出口正向 761→882、反向 1,030→1,362，出口反向时出口 TUN 丢包 69–133→0 次，压力步 echo 最小 RTT 38.2→27.5 ms（各 5 次）；L3 secure-direct（release，2 CPU）前后 2,724／2,727 Mbit/s 不变。Planck 18 行矩阵 `20261015T102511Z-fd1dcaa1`（`1839e70a`，并行 8）全部通过，证据 `.meshway/validation/m4/`。真机未部署。
 
 ## v0.1.0-alpha.11
 
