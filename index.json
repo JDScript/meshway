@@ -1,8 +1,193 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-15T04:59:53.546980+00:00",
+  "updatedAt": "2026-10-15T13:27:05.884885+00:00",
   "runs": [
+    {
+      "id": 38740872713,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "5a7502596a74e515bb9ad4f8237447a1abbe39fd",
+      "message": "docs: phase 15 outage-window DNS semantics and P1 follow-up evidence",
+      "createdAt": "2026-10-15T13:13:25Z",
+      "updatedAt": "2026-10-15T13:23:35Z",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/JDScript/meshway/actions/runs/38740872713",
+      "jobs": [
+        {
+          "id": 116441924500,
+          "name": "changes",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-15T13:13:29Z",
+          "completedAt": "2026-10-15T13:13:40Z",
+          "seconds": 11.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38740872713/job/116441924500"
+        },
+        {
+          "id": 116442041861,
+          "name": "cargo",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-15T13:13:43Z",
+          "completedAt": "2026-10-15T13:20:52Z",
+          "seconds": 429.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38740872713/job/116442041861"
+        },
+        {
+          "id": 116442042794,
+          "name": "web",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-15T13:20:55Z",
+          "completedAt": "2026-10-15T13:23:34Z",
+          "seconds": 159.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38740872713/job/116442042794"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 38740872341,
+      "attempt": 1,
+      "workflow": "Build",
+      "event": "push",
+      "branch": "main",
+      "commit": "5a7502596a74e515bb9ad4f8237447a1abbe39fd",
+      "message": "docs: phase 15 outage-window DNS semantics and P1 follow-up evidence",
+      "createdAt": "2026-10-15T13:13:25Z",
+      "updatedAt": "2026-10-15T13:20:58Z",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/JDScript/meshway/actions/runs/38740872341",
+      "jobs": [
+        {
+          "id": 116441923979,
+          "name": "node-linux (aarch64-unknown-linux-musl)",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-15T13:17:02Z",
+          "completedAt": "2026-10-15T13:20:57Z",
+          "seconds": 235.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38740872341/job/116441923979"
+        },
+        {
+          "id": 116441924330,
+          "name": "node-linux (x86_64-unknown-linux-musl)",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-15T13:13:27Z",
+          "completedAt": "2026-10-15T13:17:01Z",
+          "seconds": 214.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38740872341/job/116441924330"
+        }
+      ],
+      "artifacts": [
+        {
+          "id": 11976462313,
+          "name": "node-x86_64-unknown-linux-musl-5a7502596a74e515bb9ad4f8237447a1abbe39fd",
+          "bytes": 11215158,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38740872341/artifacts/11976462313",
+          "jobId": 116441924330,
+          "runner": "planck",
+          "seconds": 214.0,
+          "state": "ok",
+          "error": null,
+          "reports": [],
+          "matrices": [],
+          "builds": [
+            {
+              "target": "x86_64-unknown-linux-musl",
+              "binary": "meshwayd",
+              "bytes": 19298792,
+              "sha256": "07465ccf39fa1012b4c1aea0a8154839a269c3530923a8928443a90ab596ac10"
+            },
+            {
+              "target": "x86_64-unknown-linux-musl",
+              "binary": "meshway",
+              "bytes": 2194920,
+              "sha256": "e3c41cf7c0ff5c333591d4a2f6e5753911a37c61cc10365b188b8e08acf85c62"
+            }
+          ]
+        },
+        {
+          "id": 11976098188,
+          "name": "node-aarch64-unknown-linux-musl-5a7502596a74e515bb9ad4f8237447a1abbe39fd",
+          "bytes": 10456562,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38740872341/artifacts/11976098188",
+          "jobId": 116441923979,
+          "runner": "planck",
+          "seconds": 235.0,
+          "state": "ok",
+          "error": null,
+          "reports": [],
+          "matrices": [],
+          "builds": [
+            {
+              "target": "aarch64-unknown-linux-musl",
+              "binary": "meshwayd",
+              "bytes": 15842680,
+              "sha256": "521dd742fdeda79fc3ebc55a58b901ebc2c722ff3a86d6b8b75419bb3edbd936"
+            },
+            {
+              "target": "aarch64-unknown-linux-musl",
+              "binary": "meshway",
+              "bytes": 1928272,
+              "sha256": "df7c4eef4024f91b390e5d6e928e7b2c8b6dca8265675c7413bb246d9ea6cfbd"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 38740872300,
+      "attempt": 1,
+      "workflow": "Perf",
+      "event": "push",
+      "branch": "main",
+      "commit": "5a7502596a74e515bb9ad4f8237447a1abbe39fd",
+      "message": "docs: phase 15 outage-window DNS semantics and P1 follow-up evidence",
+      "createdAt": "2026-10-15T13:13:25Z",
+      "updatedAt": "2026-10-15T13:20:58Z",
+      "status": "in_progress",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/38740872300",
+      "jobs": [
+        {
+          "id": 116441924992,
+          "name": "perf-arm64",
+          "runner": "jp-tyo-arm64",
+          "status": "completed",
+          "conclusion": "failure",
+          "startedAt": "2026-10-15T13:13:28Z",
+          "completedAt": "2026-10-15T13:13:42Z",
+          "seconds": 14.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38740872300/job/116441924992"
+        },
+        {
+          "id": 116441925282,
+          "name": "perf",
+          "runner": "planck",
+          "status": "in_progress",
+          "conclusion": null,
+          "startedAt": "2026-10-15T13:20:58Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38740872300/job/116441925282"
+        }
+      ],
+      "artifacts": []
+    },
     {
       "id": 38682092007,
       "attempt": 1,
