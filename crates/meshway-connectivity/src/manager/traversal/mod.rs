@@ -166,9 +166,13 @@ async fn run_content(
             });
             // Finish issued control work before unrelated discovery HTTP.
             for value in pending.values_mut() {
-                if !shared.links.lock().is_ok_and(|links| {
-                    links.contains_key(&value.offer.peer().candidate.socket.node_id)
-                }) {
+                let peer = value.offer.peer().candidate.socket.node_id;
+                if shared.facts.asked(peer, now)
+                    || !shared
+                        .links
+                        .lock()
+                        .is_ok_and(|links| links.contains_key(&peer))
+                {
                     accept(gateway, endpoints, value).await;
                 }
             }
@@ -281,6 +285,15 @@ async fn run_content(
                             && let Some(endpoint) = matching_endpoint(&shared, &offer)
                             && reserve(endpoints, endpoint, &offer).await.is_ok()
                         {
+                            let peer = offer.peer().candidate.socket.node_id;
+                            if shared
+                                .links
+                                .lock()
+                                .is_ok_and(|links| links.contains_key(&peer))
+                            {
+                                tracing::debug!(%peer, attempt = %id, cause = "peer_asked",
+                                    "Traversal accepted beside a selected channel");
+                            }
                             let value = pending.entry(id).or_insert(Pending {
                                 offer,
                                 endpoint,

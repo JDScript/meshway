@@ -154,12 +154,17 @@ pub(super) fn needs_acquisition(
     plan.peers().any(|peer| {
         // The selected owner retires unhealthy channels. A selected channel is
         // not a vacant physical slot: prepare() must wait for that owner too.
-        if shared
-            .links
-            .lock()
-            .is_ok_and(|links| links.contains_key(&peer))
+        // A peer that asks has none toward this Node (it prepares only
+        // without one): this Node's channel is the half the peer already
+        // gave up, and the peer's attempt replaces it exactly.
+        let asked = shared.facts.asked(peer, wall_ms());
+        if (!asked
+            && shared
+                .links
+                .lock()
+                .is_ok_and(|links| links.contains_key(&peer)))
             || !shared.wanted(peer)
-            || (coordination.paused(shared, peer) && !shared.facts.asked(peer, wall_ms()))
+            || (coordination.paused(shared, peer) && !asked)
         {
             return false;
         }
@@ -291,6 +296,48 @@ mod tests {
         fixture.close().await;
     }
 
+    /// A selected channel suppresses this Node's own acquisition toward the
+    /// peer. A live request of that peer does not wait for it: the peer
+    /// prepares only without a channel, so this Node's is the half the peer
+    /// gave up (it would otherwise block the peer for a whole health window).
+    #[tokio::test]
+    async fn a_peer_that_asks_is_accepted_beside_a_selected_channel() {
+        let mut fixture = Netmaps::start(false, false).await;
+        let ids = fixture.ids();
+        let (shared, _receiver) = shared(&fixture.desired[1], &fixture.keys[1]);
+        let peer = ids[0];
+        shared.interests.touch(peer);
+        let owner = crate::manager::datagram::tests::accepted_link(&mut fixture, &shared).await;
+        let coordination = Coordination::default();
+        assert!(
+            !needs_acquisition(&shared, &BTreeMap::new(), &coordination),
+            "a selected channel: no own query"
+        );
+        let (publish, source) = tokio::sync::watch::channel(None);
+        shared.facts.attach(source);
+        publish.send_replace(Some(meshway_control::KnownPeers {
+            netmap: shared.plan().reference,
+            peers: Arc::default(),
+            traversal_requests: Arc::new(vec![meshway_protocol::UdpTraversalRequest {
+                attempt_id: UdpTraversalId::new(uuid::Uuid::from_u128(7)).unwrap(),
+                peer_id: peer,
+                carrier: Carrier {
+                    dialer: peer,
+                    listener: ids[1],
+                    listener_key: "udp".into(),
+                    protocol: TransportProtocol::NativeUdp,
+                },
+                expires_at_ms: wall_ms() + 9_000,
+            }]),
+        }));
+        assert!(
+            needs_acquisition(&shared, &BTreeMap::new(), &coordination),
+            "the peer's request is queried for beside the channel"
+        );
+        drop(owner);
+        fixture.close().await;
+    }
+
     #[tokio::test]
     async fn an_attempt_without_a_channel_pauses_coordination_toward_that_peer() {
         let fixture = Netmaps::start(false, false).await;
@@ -328,6 +375,15 @@ mod tests {
         // So does a channel installed (and maybe ended) since.
         coordination.0.get_mut(&peer).unwrap().link = Some([9; 32]);
         assert!(!coordination.paused(&shared, peer));
+        // Only what concerns a peer ends its pause: another peer's new
+        // candidates (it roamed) leave this one's in place.
+        let other = ids[2];
+        coordination.ended(&shared, peer);
+        coordination.ended(&shared, other);
+        coordination.0.get_mut(&other).unwrap().facts =
+            ["udp 198.51.100.7:35000".to_owned()].into();
+        assert!(!coordination.paused(&shared, other));
+        assert!(coordination.paused(&shared, peer));
         fixture.close().await;
     }
 

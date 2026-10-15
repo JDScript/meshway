@@ -223,6 +223,7 @@ pub(super) async fn prepare(
             Err(_) => gateway.request(operation()).await,
         };
         if let Ok(Reply::Prepare(Outcome::Current(offer))) = response {
+            tracing::debug!(%peer, attempt = %offer.offer().attempt_id, "Traversal prepared");
             if reserve(endpoints, endpoint, &offer).await.is_ok() {
                 // Install before the RPC so cancellation/uncertainty always
                 // retains the exact reserved slot in this content's cleanup set.
