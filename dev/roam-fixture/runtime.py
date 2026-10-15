@@ -21,7 +21,8 @@ flows the actor started (port-restricted filtering).
 - `relay`: `nat` plus a public R both A and B keep channels to; during the
   re-traversal new flows go through R, flows already there stay there.
 - `flap`: A dials public B; A switches uplinks twice within 2 s (soft,
-  default route only) and five times (hard, uplink1's link down and up).
+  default route only), three times within microseconds (burst: one path
+  change after coalescing) and five times (hard, uplink1's link down and up).
 """
 import ipaddress
 import json
@@ -39,7 +40,7 @@ SCENARIOS = {
     "direct": {"phases": ("dialer", "listener"), "cells": ("soft", "hard"), "nodes": ("a", "b", "c")},
     "nat": {"phases": ("traversal",), "cells": ("soft", "hard"), "nodes": ("a", "b", "c")},
     "relay": {"phases": ("traversal",), "cells": ("soft", "hard"), "nodes": ("a", "b", "c", "r")},
-    "flap": {"phases": ("dialer",), "cells": ("soft", "hard"), "nodes": ("a", "b", "c")},
+    "flap": {"phases": ("dialer",), "cells": ("soft", "burst", "hard"), "nodes": ("a", "b", "c")},
 }
 # D14: with the peer directly reachable, the first inner reply within 3 s of
 # the new uplink's route, on the same circuit; behind two NATs (a new
@@ -47,8 +48,10 @@ SCENARIOS = {
 FIRST_REPLY_LIMIT = {"direct": 3.0, "flap": 3.0, "nat": 5.0, "relay": 5.0}
 # Traffic observed after the route before a cell is judged.
 SETTLE = {"direct": 12.0, "flap": 12.0, "nat": 25.0, "relay": 25.0}
-# The flap cells: (step, at seconds after the first) — at most 2 s in all.
-FLAPS = {"soft": 2, "hard": 5}
+# The flap cells' switches, FLAP_SPACING apart (at most 2 s in all); the
+# burst cell's three switches are one shell command, well inside the 250 ms
+# coalescing, and count as one path change.
+FLAPS = {"soft": 2, "burst": 3, "hard": 5}
 FLAP_SPACING = 0.4
 # Each path change publishes candidates through State reports spaced 100 ms
 # for 1.5 s (connectivity.md, roaming): a cell of n path changes accepts at
@@ -489,7 +492,13 @@ def execute(report, artifacts, runtime_os, traversal_os, platform, short, load, 
                     record["perturbedAt"] = clock()
                     steps = []
                     uplink1 = a_interface(addresses["uplink1"]["a"])
-                    for step in range(FLAPS[cell]):
+                    if cell == "burst":
+                        a1, a2 = addresses["uplink1"]["router-a1"], addresses["uplink2"]["router-a2"]
+                        routed = command("a", "/bin/sh", "-c", f"ip route replace default via {a2} && ip route replace "
+                                         f"default via {a1} && ip route replace default via {a2} && date +%s%N")
+                        at = int(routed["stdout"].strip()) / 1e9
+                        steps = [{"towards": towards, "at": at} for towards in ("router-a2", "router-a1", "router-a2")]
+                    for step in range(FLAPS[cell] if cell != "burst" else 0):
                         towards_a2 = step % 2 == 0
                         if cell == "soft":
                             routed = route_a("router-a2" if towards_a2 else "router-a1")
@@ -682,6 +691,7 @@ def analyse(report, manifest):
         if scenario == "relay":
             checks.update(relay_checks(report, cell, measured, phase))
         if scenario == "flap":
+            measured["cell"] = name.split("/")[1]
             checks.update(flap_checks(cell, measured, events, b_events, manifest))
         measured["checks"] = checks
         passed = all(checks.values())
@@ -767,8 +777,9 @@ def flap_checks(cell, measured, events, b_events, manifest):
     measured["flap"] = {"steps": len(cell["steps"]), "pathChanges": len(classified), "reactions": len(reactions),
                         "candidateReports": len(reports), "candidateReportBound": bound,
                         "bSourceMoves": len(moves), "bFinalEndpoint": endpoint, "expectedSource": final}
+    changes = (1, 1) if measured.get("cell") == "burst" else (1, len(cell["steps"]))
     return {
-        "oneReactionPerPathChange": len(classified) == len(reactions) and 1 <= len(classified) <= len(cell["steps"]),
+        "oneReactionPerPathChange": len(classified) == len(reactions) and changes[0] <= len(classified) <= changes[1],
         "candidateReportsBounded": len(reports) <= bound,
         "noCircuitRetired": measured["circuitsRetired"] == 0,
         "followsFinalSource": endpoint.startswith(final + ":"),
