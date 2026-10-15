@@ -232,7 +232,7 @@ def execute(report, artifacts, runtime_os, platform, short, load):
                 "traversal": "exit", "dnsBackend": "off", "runtimeOsAssets": runtime_os,
                 "loadBeforeRuntime": load, "resources": {"containers": containers, "networks": networks},
                 "productStatus": "running", "cleanup": {}, "processes": {},
-                "stages": {str(n): {"status": "notRun"} for n in range(1, 16)}}
+                "stages": {str(n): {"status": "notRun"} for n in range(1, 17)}}
     metadata = report / "report.json"
     started = time.monotonic()
     failure = None
@@ -351,6 +351,9 @@ def execute(report, artifacts, runtime_os, platform, short, load):
         spec = importlib.util.spec_from_file_location("meshway_exit_echo", ROOT / "dev/exit-fixture/echo.py")
         echoing = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(echoing)
+        spec = importlib.util.spec_from_file_location("meshway_exit_throughput", ROOT / "dev/exit-fixture/throughput.py")
+        throughput = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(throughput)
         save()
         for role in ROLES:
             (report / role).mkdir(exist_ok=True)
@@ -445,21 +448,35 @@ def execute(report, artifacts, runtime_os, platform, short, load):
             links = json.loads(command(role, "ip", "-j", "address")["stdout"])
             interfaces[role] = {address["local"]: link["ifname"] for link in links for address in link["addr_info"]
                                 if address["family"] == "inet"}
-            for interface in sorted(set(interfaces[role].values()) - {"lo"}):
-                if not interface.isalnum():
-                    raise RuntimeError("unexpected Docker interface name")
-                log = (report / role / (interface + "-tcpdump.log")).open("w")
-                capture = subprocess.Popen(["docker", "exec", containers[role], "/bin/sh", "-ec",
-                    f"echo $$ > /evidence/{interface}.pid; exec /usr/bin/tcpdump -Z root -U -n -i {interface} -c 65536 -s 256 -w /evidence/{interface}.pcap"],
-                    stdout=log, stderr=subprocess.STDOUT, close_fds=True)
-                captures.append((role, interface, capture, log))
-        # tcpdump emits its pcap header once capture setup has completed.
-        for role, interface, process, _ in captures:
-            deadline = time.monotonic() + 10
-            while command(role, "test", "-s", f"/evidence/{interface}.pcap", required=False)["exitCode"]:
-                if process.poll() is not None or time.monotonic() >= deadline:
-                    raise RuntimeError("exit packet capture readiness failed")
-                time.sleep(0.1)
+            if not all(interface.isalnum() for interface in interfaces[role].values()):
+                raise RuntimeError("unexpected Docker interface name")
+        # Capture parts: phase 16's bulk traffic runs between two of them, so
+        # neither part's bounded packet count ends before its window does.
+        capture_parts = []
+
+        def start_captures(part):
+            capture_parts.append(part)
+            started = []
+            for role in ("a", "r", "e"):
+                for interface in sorted(set(interfaces[role].values()) - {"lo"}):
+                    stem = interface + part
+                    log = (report / role / (stem + "-tcpdump.log")).open("w")
+                    capture = subprocess.Popen(["docker", "exec", containers[role], "/bin/sh", "-ec",
+                        f"echo $$ > /evidence/{stem}.pid; exec /usr/bin/tcpdump -Z root -U -n -i {interface} -c 65536 -s 256 -w /evidence/{stem}.pcap"],
+                        stdout=log, stderr=subprocess.STDOUT, close_fds=True)
+                    captures.append((role, stem, capture, log))
+                    started.append((role, stem, capture))
+            # tcpdump emits its pcap header once capture setup has completed.
+            for role, stem, process in started:
+                deadline = time.monotonic() + 10
+                while command(role, "test", "-s", f"/evidence/{stem}.pcap", required=False)["exitCode"]:
+                    if process.poll() is not None or time.monotonic() >= deadline:
+                        raise RuntimeError("exit packet capture readiness failed")
+                    time.sleep(0.1)
+
+        def capture_files(role, interface):
+            return ["/evidence/" + interface + part + ".pcap" for part in capture_parts]
+        start_captures("")
         command("e", "/usr/sbin/nft", "add", "table", "inet", "meshway_x7b_sentinel")
         sentinel = command("e", "/usr/sbin/nft", "-j", "list", "table", "inet", "meshway_x7b_sentinel")
         write(report / "foreign-sentinel-before.json", sentinel)
@@ -1048,7 +1065,7 @@ def execute(report, artifacts, runtime_os, platform, short, load):
         path = [projected[role]["nodeId"] for role in ("a", "r", "e")]
         if any(json.loads(after["r"]["tunReceived"]["stdout"]).values()):
             raise RuntimeError("relay TUN delivered business plaintext")
-        grant = {"src": ["node:" + path[0]], "dst": sorted(["autogroup:internet", lan_subnet])}
+        grant = {"src": ["node:" + path[0]], "dst": sorted(["autogroup:internet", lan_subnet, "node:" + path[2]])}
         routes = {}
         exit_action = {"type": "exit", "nodes": [path[2]], "via": [path[1]]}
         plan_a = projected["a"]["egress"]
@@ -1165,6 +1182,19 @@ def execute(report, artifacts, runtime_os, platform, short, load):
             own=own["ipv4"], source=own["ipv4"], tag=dns_tag, zone=exit_zone,
             logs=lambda role: command(role, "cat", "/evidence/daemon.stderr")["stdout"]))
         manifest["stages"]["15"] = {"status": "passed", "evidence": ["echo-capacity.json"]}
+        # Exit throughput beside the Mesh, and queue pressure (phase 16): dev/exit-fixture/throughput.py.
+        manifest["status"] = "exit-throughput"
+        save()
+        stop_captures()
+        manifest["captureGap"] = {"phase": "16", "from": time.time()}
+        throughput.run(types.SimpleNamespace(
+            command=command, write=write, report=report, target=addresses["external"]["external"],
+            e_mesh=plans["e"]["self"]["addresses"]["ipv4"], start=start_on_a, detached=detached,
+            status=status, running=running,
+            logs=lambda role: command(role, "cat", "/evidence/daemon.stderr")["stdout"]))
+        manifest["captureGap"]["to"] = time.time()
+        start_captures("p2")
+        manifest["stages"]["16"] = {"status": "passed", "evidence": ["exit-throughput.json"]}
         # HTTP outage under the netmap model: closing Node HTTP never withdraws
         # the exit. Existing and new flows continue on the signed lease, with
         # no Server contact, until its actual expiry, which fails closed.
@@ -1301,7 +1331,7 @@ def execute(report, artifacts, runtime_os, platform, short, load):
         # DNS circuit; E's capture shows its OS resolver asking for them.
         for role in ("a", "r", "e"):
             for interface in sorted(set(interfaces[role].values()) - {"lo"}):
-                found = command(role, "python3", "-c", "import pathlib; b=pathlib.Path('/evidence/" + interface + ".pcap').read_bytes().lower(); print(int(b'exit-dns' in b))")["stdout"].strip()
+                found = command(role, "python3", "-c", "import pathlib,sys; b=b''.join(pathlib.Path(p).read_bytes() for p in sys.argv[1:]).lower(); print(int(b'exit-dns' in b))", *capture_files(role, interface))["stdout"].strip()
                 external_link = role == "e" and interfaces["e"].get(addresses["external"]["e"]) == interface
                 if found != ("1" if external_link else "0"):
                     raise RuntimeError("ordinary DNS name capture mismatch on " + role + "/" + interface)
@@ -1312,14 +1342,14 @@ def execute(report, artifacts, runtime_os, platform, short, load):
         for role in ("r", "e"):
             manifest["packetTuples"][role] = {}
             for interface in sorted(set(interfaces[role].values()) - {"lo"}):
-                record = command(role, "/usr/bin/tcpdump", "-nn", "-tt", "-r", f"/evidence/{interface}.pcap")
+                record = [command(role, "/usr/bin/tcpdump", "-nn", "-tt", "-r", path) for path in capture_files(role, interface)]
                 write(report / role / (interface + "-tuples.json"), record)
                 manifest["packetTuples"][role][interface] = {"status": "collected", "natProof": None}
                 if role == "r":
                     # The pcap includes every physical interface, but never a
                     # source/exit plaintext delivery. Component driver separately
                     # asserts SecureNode::exit_reply and zero relay flows.
-                    body = command(role, "python3", "-c", "import pathlib; b=pathlib.Path('/evidence/" + interface + ".pcap').read_bytes(); print(int(b'meshway-exit-encrypted-through-r' in b or bytes([90])*64 in b))")["stdout"]
+                    body = command(role, "python3", "-c", "import pathlib,sys; print(int(any(b'meshway-exit-encrypted-through-r' in b or bytes([90])*64 in b for b in (pathlib.Path(p).read_bytes() for p in sys.argv[1:]))))", *capture_files(role, interface))["stdout"]
                     if body.strip() != "0": raise RuntimeError("relay pcap contains business plaintext")
         manifest["stages"]["7"] = {"status": "passed", "evidence": ["components/driver.log", "nat-proof.json", "r/*-tuples.json"]}
         manifest["infrastructure"] = "collected"
