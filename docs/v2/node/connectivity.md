@@ -195,7 +195,9 @@ Linux 的 Mesh 外层 UDP socket 设 `IP_PMTUDISC_DO`／`IPV6_MTU_DISCOVER=DO`�
 
 `path`／`inner` 是 channel 事实（`Snapshot.mtu`、`Manager::path_mtu`、IPC `peers[].mtu`），连接组件自己不据此改变发送。数据面据此对本节点超过 `inner` 的包回 fragmentation needed／packet too big，Underlay 据此限制 TCP MSS，见[通道 MTU](/v2/node/dataplane#channel-mtu)。探测丢失会让结果偏小（保守方向）。
 
-实测（2026-10-13，`f1aa2250`）：us-lax-it7（公网）→ meshway-vm（WARP）通道搜索得 `1444/1330`，内层 DF ping `-s 1302`（外层 1444）5/5 回复、`-s 1303`（外层 1445）0/5；反方向 `1500/1386`。证据 `.meshway/node-lab/n2a/`。
+**限制：中途剥离 DF 的路径。** 中途 NAT 剥离 DF 并在更窄的链路上分片、且远端在报文到达对端节点前重组时，认证探测无法发现分片：对端收到的是完整、长度正确的 Probe，结果偏大（最大为路由 MTU）。症状是该方向外层报文大量乱序（重组顺序），内层 TCP 窗口被压低、单流吞吐远低于同路径其他 TCP；ping 与健康检查不受影响。节点不做"DF 被剥离"的启发式判定；处置是在宿主侧把通往该路径的路由 MTU 限到窄链路的大小，通道即按[结果](#path-mtu)规则立即取较小值，数据面与 TCP MSS 随之收窄。实例：OrbStack machine 的出网 NAT 不保留 DF，Mac 经 Cloudflare WARP（MASQUE，utun MTU 1,300）出网，见[常驻 systemd 验收 VM](/v2/install#orbstack-warp)。
+
+实测（2026-10-13，`f1aa2250`）：us-lax-it7（公网）→ meshway-vm（WARP）通道搜索得 `1444/1330`，内层 DF ping `-s 1302`（外层 1444）5/5 回复、`-s 1303`（外层 1445）0/5；反方向当时报 `1500/1386`，实为上述 DF 剥离造成的偏大结果（2026-10-15 M5 定位），宿主限路由 MTU 后为 `1300/1186`。证据 `.meshway/node-lab/n2a/`、`.meshway/validation/m5/`。
 
 ### 持续 STUN 观测 {#continuous-stun}
 
