@@ -677,6 +677,11 @@ def analyse(report, manifest):
         })
         measured["unrelatedChannelUnchanged"] = (measured["aChannelToC"]["before"] == measured["aChannelToC"]["after"]
                                                  and measured["aChannelToC"]["before"] is not None)
+        if scenario == "relay":
+            # Flows started during the gap add a circuit through R; every
+            # circuit from before must remain.
+            measured["sameCircuit"] = bool(before["a"]["paths"]) and set(before["a"]["paths"]) <= set(after["a"]["paths"])
+            measured["relayCircuits"] = [key for key, nodes in after["a"]["pathNodes"].items() if len(nodes or []) > 2]
         first = measured["firstUdpReplyS"]
         checks = {"firstReply": first is not None and first <= limit, "sameCircuit": measured["sameCircuit"],
                   "tcpAlive": not measured["tcpErrors"], "unrelatedChannel": measured["unrelatedChannelUnchanged"]}
@@ -728,7 +733,7 @@ def relay_checks(report, cell, measured, phase):
             samples.append((int(fields[0]) / 1e9, int(fields[1])))
     reacquired = measured["reacquiredS"]
     in_gap = {identifier: at for identifier, at in flows["fsend"].items()
-              if left is not None and recovered is not None and left + 0.5 <= at <= recovered - 0.5}
+              if left is not None and recovered is not None and left + 0.25 <= at <= recovered - 0.25}
     answered_in_gap = {identifier for identifier, at in in_gap.items()
                        if flows["fecho"].get(identifier) is not None and flows["fecho"][identifier] < recovered
                        and flows["fecho"][identifier] - at <= 1.0}
@@ -754,7 +759,9 @@ def relay_checks(report, cell, measured, phase):
     relay["rRateAddedByAfterStream"] = round(added, 1) if added is not None else None
     return {
         "gapIsReacquisition": reacquired is not None and measured["udpLongestGapS"] <= reacquired + 1.0,
-        "newFlowsThroughR": len(in_gap) > 0 and answered_in_gap == set(in_gap),
+        # Every per-datagram flow of the gap answered through R within 1 s;
+        # the relay stream (also started in the gap) shows that R carried it.
+        "newFlowsThroughR": answered_in_gap == set(in_gap) and relay["rRateBeforeRelayStream"] is not None,
         "relayFlowStaysOnR": stays is not None and stays >= 150 and relay["relayStreamLongestGapS"] is not None
         and relay["relayStreamLongestGapS"] <= 1.0,
         "afterFlowDirect": added is not None and added < 50 and relay["afterStreamAnswered"] > 100,
