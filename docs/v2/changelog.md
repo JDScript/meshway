@@ -2,7 +2,9 @@
 
 按合入 main 的顺序记录工作包、提交与证据 ID。规则见[工程流程](/v2/process)；性能数字的口径见[分层性能测量](/v2/node/performance)，验收状态见[验收范围](/v2/node/validation)。
 
-## 未发布
+## v0.1.0-alpha.11
+
+范围：wire 6、IPC 12、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约均不变（普通升级，无断网窗口）。D3：DNS 锚点读取中断不再结束锚点、owner 失败按检查项字段化记录、egress capture 回读校验未知时有界重试（30 秒）；X10：出口队列溢出只丢包不结束流、已 ACK 流与投影操作公平预留、内核操作与包写入并行、回程批量读写；以及下列 D3、X10 工作包。
 
 系统 DNS 健康检查（D3，`d3/dns-observe`）：wire 6、IPC 12（`lastErrorDetail` 语义扩展，字段不变）、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约均不变。planck 四次 DNS owner 阻断（alpha.8／alpha.9）的触发源是宿主 WiFi 驱动 PTK 重新协商时约 5 秒的宿主范围 RTNL 占用，见[D3 证据](/v2/node/validation#d3-dns-health)。
 
