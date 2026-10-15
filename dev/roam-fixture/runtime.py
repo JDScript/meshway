@@ -84,7 +84,8 @@ def daemon_events(path, start, end):
         fields = record.get("fields", {})
         message = fields.get("message", "")
         if (message in ("Dataplane circuit retired", "Connectivity channel transition", "Connectivity roam",
-                        "Underlay network change classified", "Known peer facts updated")
+                        "Underlay network change classified", "Known peer facts updated",
+                        "State candidate publication acknowledged")
                 or fields.get("operation") in ("roam", "probe_recovery")):
             records.append({"at": at, **fields})
     return records
@@ -459,6 +460,22 @@ def analyse(report, manifest):
         events = daemon_events(report / "a" / "daemon.stderr", cell["perturbedAt"], end)
         b_events = daemon_events(report / "b" / "daemon.stderr", cell["perturbedAt"], end)
         retired = [event for event in events if event.get("message") == "Dataplane circuit retired"]
+        # STUN → candidate publication: A's first accepted State report that
+        # carries a candidate again after the path change withdrew them; the
+        # peer's receipt: B's first peer-fact update after it.
+        published = None
+        withdrawn = False
+        for event in events:
+            if event.get("message") != "State candidate publication acknowledged" or event["at"] < cell["routedAt"]:
+                continue
+            if event.get("candidate_count") == 0:
+                withdrawn = True
+            elif withdrawn or published is None:
+                published = event["at"]
+                if withdrawn:
+                    break
+        received = next((event["at"] for event in b_events if event.get("message") == "Known peer facts updated"
+                         and published is not None and event["at"] >= published), None)
         measured.update({
             "circuitsBefore": before["a"]["paths"], "circuitsAfter": after["a"]["paths"],
             "sameCircuit": bool(a_paths_kept) and before["a"]["paths"] == after["a"]["paths"],
@@ -468,10 +485,13 @@ def analyse(report, manifest):
             "aEndpointOfB": {"before": before["aStatus"]["b"], "after": after["aStatus"]["b"]},
             "bEndpointOfA": {"before": before["bStatus"], "after": after["bStatus"]},
             "aChannelToC": {"before": before["a"]["links"].get(nodes["c"]), "after": after["a"]["links"].get(nodes["c"])},
+            "candidatePublishedS": round(published - cell["routedAt"], 3) if published else None,
+            "peerReceivedCandidateS": round(received - published, 3) if published and received else None,
             "lanUdpLost": lan_measured["udpLostToB"] + lan_measured["udpLostFromB"],
             "lanUdpLongestGapS": lan_measured["udpLongestGapS"],
             "aSockets": {"before": before["a"]["sockets"], "after": after["a"]["sockets"]},
-            "aRoamEvents": [event for event in events if event.get("message") != "Dataplane circuit retired"][:64],
+            "aRoamEvents": [event for event in events if event.get("message") not in
+                            ("Dataplane circuit retired", "State candidate publication acknowledged")][:64],
             "bRoamEvents": b_events[:64],
         })
         measured["unrelatedChannelUnchanged"] = (measured["aChannelToC"]["before"] == measured["aChannelToC"]["after"]

@@ -463,10 +463,19 @@ pub async fn sync_loop_with(
             None => idle.then_some(IDLE_SPACING),
         };
         if let Some(delay) = delay {
-            tokio::select! { biased;
-                _ = stop.cancelled() => return Ok(()),
-                _ = tokio::time::sleep(delay) => {},
+            // A path change of this host during the pause (a new link now
+            // routes) ends it: the next call goes out at once.
+            let paused = local_resets();
+            let until = tokio::time::Instant::now() + delay;
+            while tokio::time::Instant::now() < until && local_resets() == paused {
+                tokio::select! { biased;
+                    _ = stop.cancelled() => return Ok(()),
+                    _ = tokio::time::sleep_until(until.min(tokio::time::Instant::now() + LOCAL_POLL)) => {},
+                }
             }
         }
     }
 }
+
+/// How often a backoff pause looks for a local path change.
+const LOCAL_POLL: Duration = Duration::from_millis(100);

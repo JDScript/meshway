@@ -163,6 +163,9 @@ struct Maintenance {
     reported: Option<Instant>,
     tasks: Option<Instant>,
     retry_at: Option<Instant>,
+    /// The host's path changes when `retry_at` was set: a later path change
+    /// (a new link now routes) retries at once.
+    retry_path: u64,
     /// The instance and netmap whose installation outcome was receipted.
     receipted: Option<(InstanceId, NetmapRef, bool)>,
 }
@@ -1035,10 +1038,10 @@ async fn maintain(
     changed: bool,
 ) -> Result<(), Ended> {
     let now = Instant::now();
-    if work.retry_at.is_some_and(|at| now < at) {
+    let resets = network.as_deref().map(network::Handle::path_changes);
+    if work.retry_at.is_some_and(|at| now < at) && resets.unwrap_or(0) == work.retry_path {
         return Ok(());
     }
-    let resets = network.as_deref().map(network::Handle::path_changes);
     let result = maintain_once(shared, network.as_deref_mut(), settings, work, changed).await;
     // This host closed its Control connections itself (a path change)
     // while the work ran: try again at once instead of backing off.
@@ -1089,6 +1092,10 @@ async fn maintain(
                 .retry_after
                 .unwrap_or(Duration::from_secs(if failure.reset { 1 } else { 5 }));
             work.retry_at = Some(now + delay);
+            work.retry_path = network
+                .as_deref()
+                .map(network::Handle::path_changes)
+                .unwrap_or(0);
             publish(
                 reported,
                 plan,

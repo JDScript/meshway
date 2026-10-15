@@ -141,6 +141,11 @@ async fn run_content(
     let mut pending: BTreeMap<UdpTraversalId, Pending> = BTreeMap::new();
     let mut retired: BTreeMap<UdpTraversalId, u64> = BTreeMap::new();
     let mut prepare_at = Instant::now();
+    let mut roam_seen = shared
+        .roam_observation
+        .lock()
+        .map(|requested| *requested)
+        .unwrap_or_default();
     let mut context: Option<DiscoveryContext> = None;
     let mut observers: Option<Observers> = None;
     let reference = shared.plan().reference;
@@ -191,6 +196,10 @@ async fn run_content(
                 .lock()
                 .map(|requested| *requested)
                 .unwrap_or_default();
+            if roamed != roam_seen {
+                roam_seen = roamed;
+                queries.roamed(Instant::now());
+            }
             let asked = |id: &[u8; 32], at: Option<Instant>| {
                 at.is_some_and(|at| rounds.get(id).is_none_or(|round| round.sent < at))
             };

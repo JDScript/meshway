@@ -54,6 +54,14 @@ impl QuerySchedule {
         true
     }
 
+    /// This Node's path changed: an observation query may go out at once,
+    /// with the backoff of earlier failures (on the old path) forgotten.
+    pub(super) fn roamed(&mut self, now: Instant) {
+        self.observation_backoff = STUN_RETRY;
+        self.observation_at = now;
+        self.next = self.next.min(now);
+    }
+
     /// Whether the last admitted observation query produced a usable STUN
     /// context; its outcome paces the next one.
     pub(super) fn observed(&mut self, usable: bool) {
