@@ -26,6 +26,12 @@ const MAX_REPLAY: usize = 1024;
 const ROAM_PROBES: u8 = 4;
 /// How long a roaming peer's new source has to answer its challenge.
 const ROAM_CHALLENGE: Duration = Duration::from_millis(1500);
+/// How long a channel this Node can acquire again has, after a path change
+/// (or a new mapping of its socket), to answer the roaming probes: the
+/// peer's challenge of the new source fits in it. Unanswered, the peer could
+/// not follow (its NAT filters the new source): the channel ends at once and
+/// is acquired again, instead of waiting out [`HEALTH_WINDOW`].
+const ROAM_ANSWER: Duration = Duration::from_millis(1500);
 /// New sources challenged at once: per channel, and per socket.
 const MAX_ROAM_SOURCES: usize = 2;
 const MAX_ROAM_CHALLENGES: usize = 8;
@@ -144,6 +150,14 @@ struct Channel {
     mtu: mtu::Search,
     /// Health Pings still due at the roaming pace after a path change.
     roam: u8,
+    /// Until when the roaming probes may stay unanswered (see [`ROAM_ANSWER`]).
+    roam_until: Option<Instant>,
+    /// Since the last Pong to this Node's own nonce: health Pings sent, the
+    /// peer's authenticated Pings received, and when it was. Why a health
+    /// window ended: the path died both ways, or only one direction did.
+    unanswered: u16,
+    peer_pings: u16,
+    answered_at: Instant,
 }
 
 /// A return-routability challenge of one roaming peer's new source: a
@@ -183,6 +197,25 @@ struct Owner {
     roams: tokio::sync::watch::Receiver<u64>,
     /// Challenges of new sources, keyed by the source.
     roaming: BTreeMap<SocketAddr, RoamChallenge>,
+}
+
+impl Channel {
+    /// Why this channel's health window ended, from its own counters: the
+    /// peer's Pings still arriving while none of this Node's was answered is
+    /// one direction lost, none arriving the whole path.
+    fn health_ended(&self) {
+        let expired = self
+            .health
+            .lock()
+            .is_ok_and(|deadline| Instant::now() >= *deadline);
+        if expired && diagnostic_event() {
+            tracing::debug!(operation = "health", peer = %self.fact.peer, channel = ?self.fact.id,
+                remote = %self.fact.remote, unanswered = self.unanswered, peer_pings = self.peer_pings,
+                answered_ms = self.answered_at.elapsed().as_millis() as u64,
+                cause = if self.peer_pings == 0 { "no_peer_traffic" } else { "own_probes_unanswered" },
+                "Connectivity channel health ended");
+        }
+    }
 }
 
 impl Owner {
@@ -445,6 +478,10 @@ impl Owner {
                 recovery: None,
                 mtu: mtu::Search::new(),
                 roam: 0,
+                roam_until: None,
+                unanswered: 0,
+                peer_pings: 0,
+                answered_at: Instant::now(),
             },
         );
         self.measure_mtu();
@@ -458,7 +495,36 @@ impl Owner {
         for channel in self.channels.values_mut() {
             channel.roam = ROAM_PROBES;
             channel.next_probe = Instant::now();
+            // An inbound channel is the peer's to dial again; ending it here
+            // would only stop the Pings that let the peer follow.
+            if channel.fact.acquisition != LinkAcquisition::AcceptedInbound {
+                channel.roam_until = Some(Instant::now() + ROAM_ANSWER);
+            }
         }
+    }
+
+    /// A channel whose roaming probes went unanswered past [`ROAM_ANSWER`]
+    /// ends its health window now: the peer could not follow this Node's new
+    /// source, and the channel is acquired again (for a peer behind NAT, by
+    /// a new coordinated traversal this Node starts).
+    fn roam_unanswered(&mut self) -> Result<(), Error> {
+        let now = Instant::now();
+        for channel in self.channels.values_mut() {
+            if channel.roam_until.is_none_or(|until| now < until) {
+                continue;
+            }
+            channel.roam_until = None;
+            diagnostic_link(
+                &self.shared,
+                &channel.fact,
+                &channel.scope,
+                "roam",
+                "unanswered",
+                None,
+            );
+            *channel.health.lock().map_err(|_| Error::Worker)? = now;
+        }
+        Ok(())
     }
 
     /// A Ping from an unknown source that one of this socket's selected
@@ -620,6 +686,7 @@ impl Owner {
         channel.mtu = mtu::Search::new();
         channel.probe = None;
         channel.roam = 0;
+        channel.roam_until = None;
         channel.confirmed = true;
         channel.next_probe = Instant::now() + PROBE_INTERVAL;
         *channel.health.lock().map_err(|_| Error::Worker)? = Instant::now() + HEALTH_WINDOW;
@@ -722,6 +789,7 @@ impl Owner {
         self.lifetime.check()?;
         self.pending
             .retain(|_, attempt| attempt.scope.check().is_ok());
+        self.roam_unanswered()?;
         let stale: Vec<_> = self
             .channels
             .iter()
@@ -739,6 +807,7 @@ impl Owner {
                     "scope_invalid_or_deselected",
                     None,
                 );
+                channel.health_ended();
                 channel.scope.cancellation.cancel();
                 retire(&self.shared, &channel.fact)?;
                 self.changed();
@@ -851,6 +920,7 @@ impl Owner {
                     &nonce,
                 )?,
             )?;
+            channel.unanswered = channel.unanswered.saturating_add(1);
             if let Err(error) = send_control(&self.sender, &channel.scope, *remote, bytes).await {
                 tracing::debug!(?error, peer = %channel.fact.peer, channel = ?channel.fact.id,
                     "UDP health probe send failed");
@@ -1444,8 +1514,16 @@ impl Owner {
             channel.probe = None;
             channel.confirmed = true;
             channel.roam = 0;
+            channel.roam_until = None;
+            channel.unanswered = 0;
+            channel.peer_pings = 0;
+            channel.answered_at = Instant::now();
             *channel.health.lock().map_err(|_| Error::Worker)? = Instant::now() + HEALTH_WINDOW;
-        } else if Instant::now() >= channel.last_response + RETRY {
+        } else {
+            channel.peer_pings = channel.peer_pings.saturating_add(1);
+            if Instant::now() < channel.last_response + RETRY {
+                return Ok(());
+            }
             channel.last_response = Instant::now();
             let bytes = adjacency::encode(
                 Kind::Pong,
@@ -2008,6 +2086,46 @@ pub(in crate::manager) mod tests {
         UdpTransport::adopt(socket, &Default::default()).unwrap()
     }
 
+    /// Node 1 (`shared`) accepts node 0's real Native UDP handshake: a
+    /// selected channel toward node 0 is in its link table while the
+    /// returned owner lives.
+    pub(in crate::manager) async fn accepted_link(
+        fixture: &mut Netmaps,
+        shared: &Arc<Shared>,
+    ) -> Box<dyn std::any::Any + Send> {
+        let ids = fixture.ids();
+        let socket = endpoint(fixture.take_udp(1)).await;
+        let local = socket.local_addr().unwrap();
+        let id = adjacency::nonce().unwrap();
+        let mut owner = Owner::new(shared.clone(), Box::new(socket), id).unwrap();
+        owner.listener = Some(ListenerFact {
+            socket_id: id,
+            key: "udp".into(),
+            protocol: TransportProtocol::NativeUdp,
+            local,
+            buffers: None,
+        });
+        let dialer = Plan::new(&fixture.desired[0]).unwrap();
+        let carrier = carriers(&fixture.desired[0])[&ids[1]].clone();
+        let peer = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let (initiation, intro) =
+            Initiation::new(&fixture.keys[0], &dialer, &carrier, &DIALER_BOOT).unwrap();
+        owner
+            .init(peer.local_addr().unwrap(), &intro)
+            .await
+            .unwrap();
+        let mut bytes = [0; adjacency::MAX_MESSAGE];
+        let (len, _) = control(&peer, &mut bytes).await;
+        let (_, challenge) = adjacency::decode(&bytes[..len]).unwrap();
+        let transcript = initiation.challenge(&dialer, ids[1], challenge).unwrap();
+        let ack = transcript
+            .message(&fixture.keys[0], &dialer, Kind::Ack)
+            .unwrap();
+        owner.ack(peer.local_addr().unwrap(), &ack).await.unwrap();
+        assert!(shared.links.lock().unwrap().contains_key(&ids[0]));
+        Box::new(owner)
+    }
+
     /// The next datagram `client` receives, within [`CONTROL_WAIT`].
     async fn control(client: &UdpSocket, bytes: &mut [u8]) -> (usize, SocketAddr) {
         tokio::time::timeout(CONTROL_WAIT, client.recv_from(bytes))
@@ -2506,6 +2624,78 @@ pub(in crate::manager) mod tests {
         let link = shared.links.lock().unwrap()[&ids[0]].fact.clone();
         assert_eq!((link.id, link.remote), (channel.id, source));
         owner.channels[&source].scope.check().unwrap();
+        owner.shutdown().await.unwrap();
+        fixture.close().await;
+    }
+
+    /// After a path change a channel this Node can acquire again must answer
+    /// its roaming probes within `ROAM_ANSWER`, or it ends at once rather than
+    /// after the health window; an answered one stays. An inbound channel is
+    /// the peer's to dial again and only keeps probing.
+    #[tokio::test]
+    async fn an_unanswered_roam_ends_an_acquirable_channel_and_keeps_an_inbound_one() {
+        let mut fixture = Netmaps::start(false, true).await;
+        let ids = fixture.ids();
+        let (shared, _receiver) = shared(&fixture.desired[1], &fixture.keys[1]);
+        let socket = endpoint(fixture.take_udp(1)).await;
+        let local = socket.local_addr().unwrap();
+        let id = adjacency::nonce().unwrap();
+        let mut owner = Owner::new(shared.clone(), Box::new(socket), id).unwrap();
+        owner.listener = Some(ListenerFact {
+            socket_id: id,
+            key: "udp".into(),
+            protocol: TransportProtocol::NativeUdp,
+            local,
+            buffers: None,
+        });
+        let dialer = Plan::new(&fixture.desired[0]).unwrap();
+        let carrier = carriers(&fixture.desired[0])[&ids[1]].clone();
+        let peer = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let remote = peer.local_addr().unwrap();
+        let (initiation, intro) =
+            Initiation::new(&fixture.keys[0], &dialer, &carrier, &DIALER_BOOT).unwrap();
+        owner.init(remote, &intro).await.unwrap();
+        let mut bytes = [0; adjacency::MAX_MESSAGE];
+        let (len, _) = control(&peer, &mut bytes).await;
+        let (_, challenge) = adjacency::decode(&bytes[..len]).unwrap();
+        let transcript = initiation.challenge(&dialer, ids[1], challenge).unwrap();
+        let ack = transcript
+            .message(&fixture.keys[0], &dialer, Kind::Ack)
+            .unwrap();
+        owner.ack(remote, &ack).await.unwrap();
+        assert_eq!(
+            owner.channels[&remote].fact.acquisition,
+            LinkAcquisition::AcceptedInbound
+        );
+        owner.roamed();
+        assert!(owner.channels[&remote].roam_until.is_none(), "inbound");
+        // The same channel as one this Node dialed: answered probes keep it.
+        owner.channels.get_mut(&remote).unwrap().fact.acquisition =
+            LinkAcquisition::PublishedEndpoint;
+        owner.roamed();
+        assert!(owner.channels[&remote].roam_until.is_some());
+        owner.tick().await.unwrap();
+        let nonce = loop {
+            let (len, _) = control(&peer, &mut bytes).await;
+            let (kind, body) = adjacency::decode(&bytes[..len]).unwrap();
+            if kind == Kind::Ping {
+                break transcript
+                    .verify_health(&dialer, ids[1], Kind::Ping, body)
+                    .unwrap();
+            }
+        };
+        let pong = transcript
+            .health(&fixture.keys[0], &dialer, Kind::Pong, &nonce)
+            .unwrap();
+        owner.health(remote, Kind::Pong, &pong).await.unwrap();
+        assert!(owner.channels[&remote].roam_until.is_none(), "answered");
+        // Unanswered past the bound: the channel and its link end now.
+        owner.roamed();
+        owner.channels.get_mut(&remote).unwrap().roam_until = Some(Instant::now());
+        owner.channels[&remote].scope.check().unwrap();
+        owner.tick().await.unwrap();
+        assert!(!owner.channels.contains_key(&remote));
+        assert!(!shared.links.lock().unwrap().contains_key(&ids[0]));
         owner.shutdown().await.unwrap();
         fixture.close().await;
     }
