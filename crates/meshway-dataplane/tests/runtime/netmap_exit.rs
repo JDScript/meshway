@@ -544,6 +544,35 @@ async fn netmap_exit_idle_tuple_retirement_preserves_other_tuples_on_the_same_ci
     f.close().await;
 }
 
+/// A host that cannot queue an exit packet drops its wrapper: before or after
+/// the projection ACK, the flow keeps its incarnation, no Retire or tombstone
+/// appears and the next packet of the tuple is written and answered.
+#[tokio::test]
+async fn netmap_exit_dropped_packet_keeps_its_flow() {
+    let mut f = standard().await;
+    let id = handshake(&mut f).await;
+    let input = udp(&f, false, 41000);
+    drop(forward(&mut f, id, input));
+    let flow = install(&mut f);
+    for _ in 0..3 {
+        let input = udp(&f, false, 41000);
+        let dropped = forward(&mut f, id, input);
+        assert_eq!(dropped.exit_flow(), Some(flow));
+        drop(dropped);
+    }
+    assert!(f.b.next_exit_projection().is_none());
+    assert_eq!(f.b.flow_count(), 1);
+    let input = udp(&f, false, 41000);
+    let next = forward(&mut f, id, input);
+    assert_eq!(next.exit_flow(), Some(flow));
+    next.projection_ready().await.unwrap();
+    next.release(|_| ()).unwrap();
+    let reply = udp(&f, true, 41000);
+    deliver_reply(&mut f, id, reply);
+    assert_eq!(f.b.flow_count(), 1);
+    f.close().await;
+}
+
 #[tokio::test]
 async fn netmap_exit_selection_change_ends_the_old_exit_connection() {
     let mut f = standard().await;
