@@ -200,7 +200,7 @@ planck 2026-10-13 22:47:56Z、10-14 07:11:57Z、15:35:57Z、23:59:57Z 四次 DNS
 
 egress capture owner 按同一不变量：回读失败只记为未知（30 秒上限），回读不一致或表消失才结束归属，规则见[源端 egress capture](/v2/node/runtime#源端-egress-capture-与切换)；`unreadable_verifications_keep_ownership_until_the_limit_and_a_change_ends_it`（失败若干次后一致→保持；不一致→结束；未知满 30 秒→`verify_unavailable`）、隔离测试 `verification_distinguishes_a_missing_rule_and_table_from_a_consistent_table`（一致→`Holds`；删除一条规则→`objects_changed`；删除表→`table_missing`）。
 
-`dns_anchor_survives_suspend_and_owner_restart_until_explicit_removal` 新增：中断的读取与零期限读取后锚点不结束、下一次读取另开 socket 并成功（main 上 `an interrupted read ended the anchor`）。Planck `nat/resolved` 单行 `20261015T022035Z-05e74ab3`（行报告 `20261015T022219Z-b6110c78`，`ca9eec4f`）通过，含这两个锚点测试与 `resolved-restart` 阶段。
+`dns_anchor_survives_suspend_and_owner_restart_until_explicit_removal` 新增：中断的读取与零期限读取后锚点不结束、下一次读取另开 socket 并成功（main 上 `an interrupted read ended the anchor`）。Planck `nat/resolved` 单行 `20261015T022035Z-05e74ab3`（行报告 `20261015T022219Z-b6110c78`，`ca9eec4f`）通过，含这两个锚点测试与 `resolved-restart` 阶段；含 egress 修复的 `fa23b64e` 复跑 `20261015T030829Z-3e88ac90`（行报告 `20261015T031141Z-1767bfe7`）通过。
 
 ### 当前验证证据
 
