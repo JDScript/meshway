@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-15T04:36:28.885866+00:00",
+  "updatedAt": "2026-10-15T04:40:04.466484+00:00",
   "runs": [
     {
       "id": 38682092007,
@@ -12,21 +12,43 @@
       "commit": "c72a498a112cf04242e3784a0b4ac00a72dd5232",
       "message": "release: workspace version 0.1.0-alpha.11",
       "createdAt": "2026-10-15T04:33:29Z",
-      "updatedAt": "2026-10-15T04:33:29Z",
-      "status": "queued",
-      "conclusion": null,
+      "updatedAt": "2026-10-15T04:37:06Z",
+      "status": "completed",
+      "conclusion": "success",
       "url": "https://github.com/JDScript/meshway/actions/runs/38682092007",
       "jobs": [
         {
           "id": 116248672629,
           "name": "changes",
-          "runner": null,
-          "status": "queued",
-          "conclusion": null,
-          "startedAt": "2026-10-15T04:33:30Z",
-          "completedAt": null,
-          "seconds": null,
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-15T04:36:54Z",
+          "completedAt": "2026-10-15T04:37:06Z",
+          "seconds": 12.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/38682092007/job/116248672629"
+        },
+        {
+          "id": 116249664478,
+          "name": "cargo",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "skipped",
+          "startedAt": "2026-10-15T04:37:06Z",
+          "completedAt": "2026-10-15T04:37:06Z",
+          "seconds": 0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38682092007/job/116249664478"
+        },
+        {
+          "id": 116249664582,
+          "name": "web",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "skipped",
+          "startedAt": "2026-10-15T04:37:06Z",
+          "completedAt": "2026-10-15T04:37:06Z",
+          "seconds": 0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38682092007/job/116249664582"
         }
       ],
       "artifacts": []
@@ -40,7 +62,7 @@
       "commit": "c72a498a112cf04242e3784a0b4ac00a72dd5232",
       "message": "release: workspace version 0.1.0-alpha.11",
       "createdAt": "2026-10-15T04:33:29Z",
-      "updatedAt": "2026-10-15T04:33:50Z",
+      "updatedAt": "2026-10-15T04:37:21Z",
       "status": "queued",
       "conclusion": null,
       "url": "https://github.com/JDScript/meshway/actions/runs/38682091711",
@@ -48,13 +70,35 @@
         {
           "id": 116248760471,
           "name": "changes",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-15T04:37:08Z",
+          "completedAt": "2026-10-15T04:37:20Z",
+          "seconds": 12.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38682091711/job/116248760471"
+        },
+        {
+          "id": 116249728567,
+          "name": "cargo",
           "runner": null,
           "status": "queued",
           "conclusion": null,
-          "startedAt": "2026-10-15T04:33:50Z",
+          "startedAt": "2026-10-15T04:37:21Z",
           "completedAt": null,
           "seconds": null,
-          "url": "https://github.com/JDScript/meshway/actions/runs/38682091711/job/116248760471"
+          "url": "https://github.com/JDScript/meshway/actions/runs/38682091711/job/116249728567"
+        },
+        {
+          "id": 116249728597,
+          "name": "web",
+          "runner": null,
+          "status": "queued",
+          "conclusion": null,
+          "startedAt": "2026-10-15T04:37:21Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38682091711/job/116249728597"
         }
       ],
       "artifacts": []
