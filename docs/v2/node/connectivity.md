@@ -91,7 +91,7 @@ Node 拨号候选的顺序为：netmap 中的 configured 端点，然后是 `pee
 
 “这条边”是内容对该 peer 的描述（`plan.rs::Plan::edge`）：对端注册密钥、双向的承载与拨号候选（含双方 listener／dialer 参数与 configured 端点）、该边是否常驻（决定它的 topology 规则的 `keepalive` 或单向可拨）。与它无关的内容变化（其他节点加入或改备注、Access、出口、DNS）不重置暂停；协调暂停同样跨内容与本机资源变化保留。暂停因上述原因重新开始时记一条 debug 事件 `operation=candidate_pacing`（`peer`、`cause`：`edge`／`candidates`／`own_mapping`／`channel`），每次失败记 `operation=candidate_backoff`（`failures`、`retry_ms`）。
 
-协调暂停只约束本节点主动发起：该 peer 发来仍有效的[穿透请求](#traversal-signalling)时，本节点不论自己是否在暂停中都立即查询并接受该尝试（不因此 prepare，也不清零自己的暂停）。因此一端重启或恢复后由它发起的尝试，另一端当场参与，两端不会因各自的暂停节奏错开。
+协调暂停只约束本节点主动发起：该 peer 发来仍有效的[穿透请求](#traversal-signalling)时，本节点不论自己是否在暂停中、是否仍持有与它的选定通道（见[漫游](#roaming)“接收方的旧半边”），都立即查询并接受该尝试（不因此 prepare，也不清零自己的暂停）。因此一端重启或恢复后由它发起的尝试，另一端当场参与，两端不会因各自的暂停节奏错开。
 
 同一 peer 一旦有选定通道就停止探测它的其他候选。暂停期间其余候选各按自己的节奏尝试；首次暂停为 1 秒（`Limits::retry_backoff`），连续失败 7 次（累计约 1 分钟）后到达每分钟一次，因此对端重启、路径恢复后至多约一分钟内重试。没有失败记录的候选立即可试。暂停只影响尝试节奏，不改变候选顺序、准入或通道的健康判定。协调暂停表在每次内容切换时剔除已不在投影里的 peer，且至多 1,024 个 peer（满时让位给新 peer 的是暂停结束最久的一个，全部仍在暂停中则不记录新的失败）。实现唯一归属 Manager 的候选调度（`manager/workers.rs::Pacing`、`manager/traversal/coordination.rs::Coordination`）。
 
@@ -201,7 +201,22 @@ NAT 后两端都能拨出时，邻接按需建立：可能只有一方有需求�
 | 跟随 | 该来源回来的、对这个 nonce 的认证 Pong 使同一通道（ID、transcript、对端 boot、acquisition 均不变）的 remote 改为新来源，健康期限续期；旧来源同时丢弃，不保留双来源宽限 |
 | 拒绝 | 无挑战的 Pong、其他 nonce 或从其他来源到达的 Pong 都不改变目的；被重放的旧 Ping 至多让本节点向它的来源发出上述有界挑战，未认证报文不能让本节点向任意地址发送业务 |
 
-没有通道能验签的签名 Ping（对端 listener 已重启）仍走[重启后的恢复](#restart-recovery)的新握手。对端事实改变时：本机拨号的 Native UDP 通道的 remote 原是对端已发布（configured／local）候选、而新事实不再发布它并发布了同承载的其他字面地址候选，不等健康窗口，在原通道旁拨号新候选，认证成功即精确替换该通道；经返回可达跟随的映射地址从不是候选，不触发拨号，主机名候选不比较。circuit 只绑定相邻对端 boot，跟随与替换都是同一 boot 的承载更换，CID、nonce 与重放窗口保留（[受保护 circuit](/v2/node/dataplane#候选受保护-circuit)）。已有流不迁移到中继；漫游空窗内的新流按现有排序可经策略中继（[中继兜底](#relay-fallback)）。
+没有通道能验签的签名 Ping（对端 listener 已重启）仍走[重启后的恢复](#restart-recovery)的新握手。对端事实改变时：本机拨号的 Native UDP 通道的 remote 原是对端已发布（configured／local）候选、而新事实不再发布它并发布了同承载的其他字面地址候选，不等健康窗口，在原通道旁拨号新候选，认证成功即精确替换该通道；经返回可达跟随的映射地址从不是候选，不触发拨号，主机名候选不比较。circuit 只绑定相邻对端 boot，跟随与替换都是同一 boot 的承载更换，CID、nonce 与重放窗口保留（[受保护 circuit](/v2/node/dataplane#候选受保护-circuit)）。
+
+**跟随不成（对端在 NAT 后）：** 对端的 NAT 只放行发往本机旧映射的流的回包（端口相关过滤），漫游探测到不了对端，对端也就无从挑战。此时重新协调穿透，由漫游方发起：
+
+| 步骤 | 规则 |
+| --- | --- |
+| 结束旧通道 | 本机可以再次获取的通道（acquisition 不是 `acceptedInbound`）在路径变化或其 socket 的映射变化后 1.5 秒内没有对漫游探测的认证 Pong：它的健康窗口当即结束（debug `Connectivity channel transition` 的 `roam`／`unanswered`），不等 6 秒健康窗口。接受得来的通道由对端重拨或跟随，本机只继续探测（每个 Ping 都让对端有机会挑战新来源）。每次路径变化重新计这 1.5 秒 |
+| 重新协调 | 漫游方的候选节奏已清零（`own_network`），新 STUN 映射经 State 确认后即 prepare（debug `Traversal prepared`）；接收方对漫游方的暂停只因漫游方的候选变化而清零，对其他 peer 的暂停不变 |
+| 接收方的旧半边 | peer 只在没有通道时 prepare，所以它仍有效的[穿透请求](#traversal-signalling)说明接收方手上的选定通道已是对方放弃的一半：接收方不等该通道的健康窗口，立即查询、预留并接受（debug `Traversal accepted beside a selected channel`），认证完成的新通道精确替换它（`Replacement::Channel`）；offer 的承载方向可以与旧通道相反（旧通道由接收方准备） |
+| 空窗 | 同 boot 的承载替换，CID 保留；已有流在空窗内等待，空窗即重新穿透的时间。空窗内的新流见下文 |
+
+两端都在端口相关过滤 NAT 后、漫游方换到另一台端口保持型 NAT：首个内层回复 2.6–3.1 秒（main 5.2–6.5 秒，等健康窗口失效），见 [roam/nat 行](/v2/node/validation#roam-nat-row)。端点相关映射一侧漫游后仍不可直连（[来源学习](#source-learning)的限制）。
+
+**漫游中的策略中继：** 已有流不迁移到中继（保持原完整路径与 circuit，等直连恢复）。本机重新获取直连通道期间，下一跳没有通道的已建立 circuit 不接纳新流（排序中其后有带通道的路径时），新流在空窗内经策略中继新建 circuit，并一直留在那条路径上；直连恢复后，新流重新加入直连 circuit（[中继兜底](#relay-fallback)）。没有策略中继时空窗内的新流与已有流一样等待。验收见 [roam/relay 行](/v2/node/validation#roam-relay-row)。
+
+**快速往返：** 每次 path 类变化各触发一次完整反应（撤回 STUN、立即观测、漫游探测、候选节奏清零、报告间隔 100 ms）；通知静止前 250 ms 内的多次切换只比较一次指纹，回到原状态即 refresh 类。通道只跟随对该来源挑战 nonce 的、从该来源到达的 Pong，所以最终跟随最后一次切换后的来源，途中旧来源的 Pong 不会把它拉回。每次 path 类变化后的 1.5 秒内 State 报告至多 16 份（100 ms 间隔），实测每次 2 份（撤回、带新映射）。验收见 [roam/flap 行](/v2/node/validation#roam-flap-row)。
 
 **宿主资源：**
 
@@ -214,9 +229,11 @@ NAT 后两端都能拨出时，邻接按需建立：可能只有一方有需求�
 | resolv.conf 文件后端 | 不支持漫游：保存的原 nameserver 属于旧网络；漫游节点使用 resolved 后端（[系统 DNS 安装](/v2/node/dataplane#系统-dns-安装)） |
 | 指定地址的 listener、显式 `bindInterface`／`localAddress` 的拨号 | 地址消失后不自动改绑 |
 
-**可观测：** Status `lastNetworkChange`（最近一次分类时间）。debug 事件 `Underlay network change classified`（class、epoch）、`Connectivity roam`（`path_changed` 的计数、`peer_candidates_moved`，以及 daemon 对每次通道跟随／替换的 `channel_moved`／`channel_replaced` 记录，含经该 peer 的业务 circuit 的 CID）、`Connectivity channel transition` 的 `roam`／`source_challenged`、`source_moved`。不新增 acquisition 值，漫游不进 Server State 与 Console。
+**可观测：** Status `lastNetworkChange`（最近一次分类时间）。debug 事件 `Underlay network change classified`（class、epoch）、`Connectivity roam`（`path_changed` 的计数、`peer_candidates_moved`，以及 daemon 对每次通道跟随／替换的 `channel_moved`／`channel_replaced` 记录，含经该 peer 的业务 circuit 的 CID）、`Connectivity channel transition` 的 `roam`／`source_challenged`、`source_moved`、`unanswered`，`Traversal prepared`、`Traversal accepted beside a selected channel`。不新增 acquisition 值，漫游不进 Server State 与 Console。
 
-实测与验收见 [roam/direct 行](/v2/node/validation#roam-row)。未覆盖：两端都在端口相关过滤 NAT 后的重新协调穿透（`roam/nat`）、漫游中的策略中继（`roam/relay`）、出口节点漫游与快速往返切换、外层 IPv6 漫游、指定地址 listener 的地址消失与重绑、bootstrap resolver 上游是否随网络重读；只支持 Linux。设计与后续切片见[漫游设计](/v2/node/roaming-design)。
+每次 UDP 通道健康窗口结束都另记 debug `Connectivity channel health ended`：`unanswered`（上次本机 nonce 得到 Pong 以来发出的健康 Ping）、`peer_pings`（同期收到的对端认证 Ping）、`answered_ms`（距上次 Pong）与 `cause`——`no_peer_traffic`（整条路径不通）或 `own_probes_unanswered`（对端的 Ping 仍到达，只是本机的探测或对端的 Pong 丢失）。
+
+实测与验收见 [roam/direct 行](/v2/node/validation#roam-row) 及其后三行。未覆盖：出口节点漫游（`roam/exit`）、外层 IPv6 漫游、端点相关映射一侧的漫游、指定地址 listener 的地址消失与重绑、bootstrap resolver 上游是否随网络重读；只支持 Linux。设计与后续切片见[漫游设计](/v2/node/roaming-design)。
 
 ### 端点相关映射与来源学习 {#source-learning}
 
@@ -324,7 +341,7 @@ Policy 给出候选集合，源节点按本机已知的连通事实排序：
 2. 排在所选路径之前、下一跳没有通道的路径（通常是直连）登记邻接需求，Manager 按[候选节奏](#candidate-pacing)继续获取；直连建立后，新流走直连。
 3. 没有任何路径的下一跳有通道时，为保留的全部下一跳登记需求并排队首包，任一通道就绪即在其路径上握手。
 
-新流只加入排在第 1 条所选路径及其之前的已建立 circuit：已失去远端的中继（事实中不再与目标有通道）或直连已有通道时的中继上的旧 circuit 不再接纳新流，新流在所选路径上新建 circuit。已经建立的流始终保持自己的原完整路径。
+新流只加入排在第 1 条所选路径及其之前的已建立 circuit：已失去远端的中继（事实中不再与目标有通道）或直连已有通道时的中继上的旧 circuit 不再接纳新流，新流在所选路径上新建 circuit。下一跳当前没有通道的已建立 circuit（本机漫游后正在重新获取直连）在排序中其后有带通道的路径时也不接纳新流；没有任何带通道的路径时新流仍加入它并等待（`SecureNode::joinable`）。已经建立的流始终保持自己的原完整路径。
 
 候选计算有界：一次目标搜索共享 16,384 工作项预算、队列 2,048 项，每目标最多 2,048 条（`MAX_SEARCH_PATHS`）。先只朝下一必经点扩展、再扩展绕行，使 1,000 个节点的全连通投影中直连＋998 个两跳中继约用 5,000 个工作项列出，随后因已满 8 条而结束，不扩展三跳；排序只看前 8 条，每个新流的 circuit 查找也只在这 8 条上进行。
 

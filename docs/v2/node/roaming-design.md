@@ -1,6 +1,6 @@
 # 漫游（底层网络切换）设计
 
-> **第一切片（R1）已实现**，现行行为的唯一定义是[连接获取 · 漫游](/v2/node/connectivity#roaming)，验收见 [roam/direct 行](/v2/node/validation#roam-row)；D9、D10、D12 随 R1 实现。本页其余部分仍是设计稿：节点在运行中更换底层网络（Wi-Fi→LTE、换 NAT、地址或默认路由变化）时连接、数据面与宿主资源应有的行为、可选方案与验收办法。现行行为的唯一定义仍是[连接获取](/v2/node/connectivity)、[数据面](/v2/node/dataplane)与[运行状态](/v2/node/runtime)；验收状态只以[验收范围](/v2/node/validation)为准。本页不加入文档导航。
+> **第一切片（R1）已实现**，现行行为的唯一定义是[连接获取 · 漫游](/v2/node/connectivity#roaming)，验收见 [roam/direct 行](/v2/node/validation#roam-row)；D9、D10、D12 随 R1 实现。**第二切片（R2）中 NAT↔NAT 重新穿透、漫游中的策略中继与快速往返已实现**（[roam/nat](/v2/node/validation#roam-nat-row)、[roam/relay](/v2/node/validation#roam-relay-row)、[roam/flap](/v2/node/validation#roam-flap-row)，`roam/nat` 门槛按 D14 收紧到 5 秒）；`roam/exit`、指定地址 listener 与 U1 倍增清零、bootstrap resolver 重读仍是设计稿。本页其余部分仍是设计稿：节点在运行中更换底层网络（Wi-Fi→LTE、换 NAT、地址或默认路由变化）时连接、数据面与宿主资源应有的行为、可选方案与验收办法。现行行为的唯一定义仍是[连接获取](/v2/node/connectivity)、[数据面](/v2/node/dataplane)与[运行状态](/v2/node/runtime)；验收状态只以[验收范围](/v2/node/validation)为准。本页不加入文档导航。
 >
 > 术语：本页的“漫游”指**同一 Meshway 网络内、本节点身份不变**时底层网络的变化。[CLI 表](/v2/node/runtime#cli-与-ipc)中“切网”一行指的是切换到另一张 Meshway 网络，与本页无关（见[待用户决定](#decisions) D1）。
 
@@ -229,7 +229,7 @@ A（两个上联）─┤                                         ├─ interne
 
 | 量 | 方法 | R1 门槛 |
 | --- | --- | --- |
-| 首个内层回复 | 100 pps 带序号 UDP 双向流与 10/s `ping`，取扰动后首个回复时刻 | `roam/direct` ≤3 s；`roam/nat` ≤10 s |
+| 首个内层回复 | 100 pps 带序号 UDP 双向流与 10/s `ping`，取扰动后首个回复时刻 | `roam/direct` ≤3 s；`roam/nat` ≤10 s（R2 起 ≤5 s） |
 | UDP 丢包 | 双向序号缺口计数 | ≤ 门槛时长 × 速率 |
 | TCP | 长连接 echo（每 50 ms 一条带时间戳记录），取最大到达间隔；连接不得重置 | 同一连接存活，最大间隔 ≤5 s |
 | circuit 保持 | 扰动前后 A、B 的 CID（debug 事件或 IPC 字段，见 D13） | 同一 CID |
@@ -267,7 +267,7 @@ A（两个上联）─┤                                         ├─ interne
 | 切片 | 范围 | 矩阵行 |
 | --- | --- | --- |
 | **R1**（已实现，见[漫游](/v2/node/connectivity#roaming)；另含 D9、D10、D12） | Underlay：path／refresh 分类、指纹（含非 main 表的路由查询）与 250 ms 合并，替代裸计数；控制中继只在 path 类关闭。Manager：path 类后立即 STUN（旧指纹观测作废）、清零全部候选节奏、受影响 UDP 通道立即漫游探测、拨号端接受漫游（经挑战）、流式通道按本地地址／路由退役重拨、替换后重新搜索 PMTU、对端候选变化且当前 remote 不在新集合时并行获取。daemon／Control：首个 State 报告不等合并、本机关闭引起的控制失败立即重试。文档与 `roam/direct` | `roam/direct` |
-| R2 | NAT↔NAT 由漫游方发起的重新穿透与时延收紧；指定地址 listener 的地址消失处理与 U1 倍增清零；自有规则被删的自愈（D10）；`meshPoolOverlap`（D9）；出口节点漫游（D12）；bootstrap resolver 上游重读 | `roam/nat`、`roam/relay`、`roam/exit`、`roam/flap` |
+| R2 | **已实现**：NAT↔NAT 由漫游方发起的重新穿透与时延收紧（漫游探测 1.5 秒无应答即结束可再获取的通道；peer 的请求在接收方旧通道旁接受并替换）；漫游空窗内新流经策略中继（下一跳无通道的 circuit 不接纳新流）；快速往返。D9、D10、D12 已随 R1 实现。**未实现**：指定地址 listener 的地址消失处理与 U1 倍增清零；出口节点漫游的验收；bootstrap resolver 上游重读 | `roam/nat`、`roam/relay`、`roam/flap`（已有）；`roam/exit`（未有） |
 | R3 | 已有流迁移到中继（D7 的 (b)，需单独产品决定）；双上联先连后断／多路径；IPv6 临时地址与前缀委派细化；非 Linux 平台 | 另定 |
 
 R1 不改 wire（漫游探测复用现有签名 Ping 与 challenge 消息），不改 HTTP 契约、不改 IPC 版本（D13 推荐时）。

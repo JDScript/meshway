@@ -4,6 +4,14 @@
 
 ## 未发布
 
+漫游第二切片（R2，`r2/roaming-nat`）：wire 6、IPC 12、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约均不变（只改 Node）。定义见[漫游](/v2/node/connectivity#roaming)。
+
+- 连接（不变量：跟随不成时由本机重新获取，不等健康窗口；owner：Manager datagram owner）：路径或 socket 映射变化后，本机可再次获取的 UDP 通道（非 `acceptedInbound`）1.5 秒内没有对漫游探测的认证 Pong 即结束健康窗口并重新获取（对端在 NAT 后时由漫游方 prepare），此前等 6 秒。
+- 连接（不变量：peer 的有效穿透请求说明本机的通道是对方已放弃的一半；owner：Manager 穿透 owner）：持有选定通道时也查询、预留并接受该 peer 的请求，新通道精确替换旧通道，offer 方向可与旧通道相反（此前要等本机健康窗口失效，即 it7→sha `relayIdle` 不对称约 6–7 秒的机制）。
+- 数据面（不变量 D7：已有流不迁移，空窗内新流经策略中继；owner：`SecureNode::joinable`）：下一跳没有通道的已建立 circuit 在其后有带通道的路径时不接纳新流；此前空窗内的新流加入失去通道的直连 circuit 一起等待。
+- 诊断：debug `Connectivity channel health ended`（`unanswered`、`peer_pings`、`answered_ms`、`cause`）、`Connectivity channel transition` `roam`／`unanswered`、`Traversal prepared`、`Traversal accepted beside a selected channel`。
+- 验收：新矩阵行 `roam/nat`、`roam/relay`、`roam/flap`（22 行）；main 上 `roam/nat` 首个回复 5.2／5.8 秒、`roam/relay` 空窗新流不经 R，R2 为 2.6–3.1 秒且空窗新流经 R，见 [roam/nat 行](/v2/node/validation#roam-nat-row)。
+
 漫游第一切片（R1，`r1/roaming`）：wire 6、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约不变；IPC 12（`Status` 新增可省略字段 `lastNetworkChange`，与 `idlePath`／`cleanupPending` 同一先例：CLI 与 daemon 一起升级）。定义见[漫游](/v2/node/connectivity#roaming)。
 
 - Underlay：外部网络变化在 250 ms 合并后按指纹分为 path／refresh（外部 up 接口与载波、首选地址、以本节点 mark 经 RPDB 到 Server 的路由，非 main 表也计入），控制中继只在 path 类关闭连接；新网络的地址落入 Mesh 池时 fail closed、报 `meshPoolOverlap`（`lastErrorDetail` 前缀；类型化原因留作后续）并在地址离开后自动重装；自有 capture 规则／私有表路由被他人删除时有界重装（1 分钟至多 3 次）。

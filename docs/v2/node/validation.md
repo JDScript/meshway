@@ -17,7 +17,7 @@
 
 可执行行 ID 来自 `scripts/validate_matrix.py` 的 `ROWS`：`tun`、`packet`、`udp/off`、`tcp/off`、`vless/off`、`trojan/off`、`udp/resolv-conf`、`udp/resolved`、`nat/off`、`nat+fallback/off`、`nat/resolved`，顺序对应下表十一个隔离入口。常驻 lab 不属于一次性矩阵。统一运行、并发预算与远程证据位置见[矩阵入口](/v2/development#validation-matrix)。
 
-默认矩阵另含 `exit/off`（真实 A→R→E IPv4 出口与单出口 DNS）、`nat/relay`（直连不可达时经第三节点中继，见[中继兜底行](#relay-row)）、`nat/reconnect`（Server 与 daemon 重启后打洞边自愈，见[重启自愈行](#reconnect-row)）、`roam/direct`（运行中更换上联，见[漫游行](#roam-row)）与四个 `netmap/*` 生命周期行（见[netmap 生命周期行](#netmap-rows)）；出口详见[出口场景](#exit-scenario)。
+默认矩阵另含 `exit/off`（真实 A→R→E IPv4 出口与单出口 DNS）、`nat/relay`（直连不可达时经第三节点中继，见[中继兜底行](#relay-row)）、`nat/reconnect`（Server 与 daemon 重启后打洞边自愈，见[重启自愈行](#reconnect-row)）、`roam/direct`、`roam/nat`、`roam/relay`、`roam/flap`（运行中更换上联，见[漫游行](#roam-row)及其后三行）与四个 `netmap/*` 生命周期行（见[netmap 生命周期行](#netmap-rows)）；出口详见[出口场景](#exit-scenario)。
 
 | 入口 | 承载 | DNS | NAT | 覆盖行为 | 状态 |
 | --- | --- | --- | --- | --- | --- |
@@ -34,6 +34,9 @@
 | `test:runtime:linux --traversal nat` | Native UDP 协调穿透 | resolved | 双 IPv4 端口保持型 SNAT | 整组组合 | 当前 wire 已通过（两次）；Planck `20261008T032749Z-d13bd2a9`、`20261008T050153Z-1978b05b` |
 | [常驻三节点 lab](/v2/node/docker-lab) | Native UDP 显式端点 | resolved | — | 六向双栈系统解析／echo、路径诊断、关闭插桩的同路径 TCP 吞吐对照 | 未验收（当前整组）；2026-10-07 已有下述 L5 局部证据；共享 bridge 不构成 NAT 证明 |
 | `validate:matrix --rows roam/direct` | Native UDP 已发布 listener（两个方向） | off | A 的两个端口保持型 SNAT 上联 | 运行中换上联（soft／hard × A 拨号／listener）的首个回复、丢包、TCP、circuit／通道连续性与无关通道，见[漫游行](#roam-row) | 通过；Planck 矩阵 `20261015T220339Z-2b25a4b8` 行 `20261015T221317Z-40f317f5`（合入 alpha.13 后），此前 `20261015T212445Z-21b27563` |
+| `validate:matrix --rows roam/nat` | Native UDP 协调穿透（两端空端点） | off | A 两个、B 一个端口保持型 SNAT（端口相关过滤） | A 换上联后由 A 发起的重新穿透：首个回复 ≤ 5 秒、同一 circuit、B 接受时替换旧半边，见 [roam/nat 行](#roam-nat-row) | 本机通过，见该行 |
+| `validate:matrix --rows roam/relay` | 同上＋公网中继 R | off | 同上 | 空窗内新流经 R 且留在 R、旧流空窗等于重新穿透、恢复后新流直连，见 [roam/relay 行](#roam-relay-row) | 本机通过，见该行 |
+| `validate:matrix --rows roam/flap` | Native UDP 已发布 listener | off | A 的两个端口保持型 SNAT 上联 | 2 次（soft）、合并窗内 3 次（burst）、5 次（hard，链路 down/up）快速往返：每次 path 变化一次反应、报告有界、无 circuit 退役、跟随最终来源，见 [roam/flap 行](#roam-flap-row) | 本机通过（main 同样通过），见该行 |
 | `validate:matrix --rows exit/off` | Native UDP；声明 Native TCP 能力 | 三端 resolved 后端（MagicDNS＋一个 `useWithExit` split） | IPv4 出口 masquerade | A→R→E；能力／安装、公网与 LAN、长流／仅接收、撤回、HTTP 中断内离线出口与租约到期全撤／恢复、journal；单出口 DNS（第 9 阶段）；域名出口与可信关联（第 10 阶段）；方案切换含 `global:E`（第 11 阶段）；ICMP 错误、PMTU 与窄通道 MSS／fragmentation needed（第 12 阶段）；`meshway ping` Mesh 外目标：公网 IP 经 E、direct、域名经 E resolver 与关联、撤权后 denied（第 13 阶段）；`auto` 按 A 的地区选方案（第 14 阶段）；echo 寿命、出口投影容量与出口角色恢复（第 15 阶段）；出口与 Mesh 吞吐并排、echo 安装下的出口 TCP 流（第 16 阶段）；A 的 7,000 区间节点侧分割 | 当前 wire 已通过（含 DNS、域名出口阶段与节点侧分割）；R3＋X6 矩阵 `20261012T115405Z-61e14403` 行 `20261012T115835Z-1812d1b8`；D2（第 13 阶段）矩阵 `20261013T160631Z-761b2963` 行 `20261013T161638Z-b6eb53a0`；X6 Planck 矩阵 `20261012T101704Z-ae64c486` 行 `20261012T102856Z-a05feedb`，见[出口场景](#exit-scenario) |
 
 以下范围未验收：外层 IPv6 NAT、隔离 fixture 中的端点相关映射（仅有下述[实网证据](#real-nat)）、两端都在端点相关映射 NAT 后、映射轮换、NAT 与 resolv-conf 的组合、VLESS WS/TLS 承载上的 daemon 包流、TLS／WS 材料轮换、多路径切换、文件后端（resolv-conf）出口 resolver、resolved 代理 stub 缺失（systemd < 248 或 `DNSStubListener=no`）时的出口 resolver 不可用（仅组件测试）、`dns.overrideLocal` 出口 resolver（仅组件测试）、显式多出口 DNS plan、出口 IPv6、完整 TCP conntrack、中继到下一跳更窄时的 ICMP 回报（只有首跳通道上限可知，见[通道 MTU](/v2/node/dataplane#channel-mtu)）、出口对外部超限回包的错误回报、Mesh IPv6 packet too big 的真实包流（仅组件与 A→R→B 运行测试）及分片重组、userspace／SOCKS5。整机重启与 resolved 停机间隙不属于隔离矩阵，由系统服务安装单独实测：重启（含 Server 不可达）通过，systemd-resolved 重启后 5 秒内、停止再启动后 10 秒内恢复 Mesh 名称解析，见 [Linux 安装与系统服务](/v2/install#验收记录)；`udp/resolved` 行另在隔离 namespace 内重启 resolved 并要求 5 秒内再次解析 Mesh 名称。
@@ -142,6 +145,47 @@ R1 之前的候选：A 的阶段切换（A 增加 listener）后一次 Manager a
 | `meshway-vm`（systemd） | 在 eth0 增加第二地址，再把默认路由的 `src` 改为它（保留 `mtu 1300`），随后精确恢复 | 两次 path 类变化；sha→VM ping 无中断；运行 main 的 us-lax-it7 在恢复后约 12 秒失去与 VM 的通道、30 秒内恢复（对端没有拨号端跟随） |
 
 lab 与 VM 结束后恢复原程序与网络；私有记录在 `.meshway/validation/r1/lab/`、`.meshway/validation/r1/vm/`。Mac 切换 Wi-Fi（只有映射变化）由用户操作，未执行。
+
+### roam/nat 行 {#roam-nat-row}
+
+`roam/nat`（`--traversal roam --netmap-scenario roam-nat`）在漫游行的拓扑上把 B 放进自己的 NAT（router-b），三台路由器都是端口保持型 SNAT、只放行本侧主机发起的流的回包，没有任何转发端口；A、B 的 Native UDP listener 都没有发布端点、都能拨出，A–B 为常驻边，只能经协调穿透连通。单一阶段两格：soft（A 默认路由改到 router-a2 再删 uplink1 地址）与 hard（断开 uplink2、接回 uplink1 并设路由；soft 结束后 router-b 忘记它为 router-a1 保留的回包（conntrack 删除），使 hard 也是 B 的 NAT 没见过的映射）。每格观察 25 秒；门槛：首个内层 UDP 回复 ≤ 5 秒（D14 收紧）、circuit 集合不变、TCP 未重置、A–C 通道不变、A 取得新通道。另记重新获取时刻（A 的新通道安装）、首个 prepare 的一方、B 是否在仍持有旧通道时接受。
+
+| 格 | main `b9f7108d`＋本行：首个 UDP／重新获取／最长 TCP 中断 | R2：首个 UDP／重新获取／最长 TCP 中断 |
+| --- | --- | --- |
+| soft | 5.24／5.23／6.45 秒：A、B 各等 6 秒健康窗口失效后才重新协调 | 3.14／3.13／3.17 秒：A 在探测无应答 1.5 秒后结束旧通道并 prepare，B 在旧通道旁接受（offer 方向与旧通道相反） |
+| hard | 5.80／5.79／6.42 秒 | 2.83／2.83／6.70 秒 |
+
+两边 circuit 都保持、TCP 未重置；TCP 最长中断在空窗约 3 秒时为 3.2 或 6.4–6.7 秒（内核 RTO 退避的下一次重传）。中间候选 `ee16929b` 的 soft 格 4.9／5.3 秒：B 以“承载不同”拒绝了与其旧通道方向相反的 offer，已修。
+
+### roam/relay 行 {#roam-relay-row}
+
+`roam/relay`（`--netmap-scenario roam-relay`）在 `roam/nat` 的拓扑上增加公网中继 R（WAN 上的已发布 listener，A、B 都拨它；A–R、R–B 常驻），无 `via`，Policy 的候选为 `[A, B]` 与 `[A, R, B]`。除主流量外 A 每 250 ms 用一个新 5 元组发一个 UDP 报文（每个都是新流）；A 的 status 失去对 B 的直连时启动第二条 100 pps UDP 流（“中继流”），恢复直连 2 秒后再启动第三条（“恢复后流”）4 秒；R 的收包计数每 250 ms 采样。门槛在 `roam/nat` 的之外：旧直连流的最长中断 ≤ 重新获取＋1 秒；空窗内（失去直连 0.25 秒后至恢复前 0.25 秒）的每个新流都在 1 秒内经 R 得到回复；直连恢复后中继流仍经 R（R 收包 ≥ 150 pps）且最长中断 ≤ 1 秒；恢复后流得到回复且让 R 的收包增加 < 50 pps（不经 R）；扰动前的 circuit 全部仍在（空窗内新增一条经 R 的）。
+
+| 格 | main：旧流中断／重新获取，空窗新流，中继流 | R2：旧流中断／重新获取，空窗新流，中继流，恢复后流 |
+| --- | --- | --- |
+| soft | 6.48／6.47 秒；空窗内 5 个新流 0 个经 R——它们加入了下一跳已无通道的直连 circuit 并一起等待；中继流同样等到直连恢复，R 无流量 | 2.99／2.98 秒；2/2 经 R；中继流恢复后仍经 R（200 pps，最长中断 0.08 秒）；恢复后流 406 个回复、R 增加 2.7 pps |
+| hard | 6.47／5.84 秒；同上 | 2.91／2.58 秒；2/2 经 R；同上（200 pps、0.10 秒）；R 增加 2.0 pps |
+
+即 D7 的语义成立：已有流不迁移、空窗内断且空窗就是重新穿透时间；空窗内的新流经策略中继并留在中继，恢复后的新流回到直连。
+
+### roam/flap 行 {#roam-flap-row}
+
+`roam/flap`（`--netmap-scenario roam-flap`）用漫游行的拓扑、A 拨号公网 B 的一个阶段，两个上联始终接入：soft 在 0.4 秒间隔内切换默认路由 router-a2→router-a1；burst 在一条 shell 命令内连切三次（a2→a1→a2，远小于 250 ms 合并窗）；hard 以 uplink1 链路 down／up 加路由切换往返 5 次（0.4 秒间隔，约 2 秒）。门槛：分类出的 path 变化数等于 Manager 的漫游反应数（burst 恰为 1，其余 1 至切换次数）；State 报告 ≤ path 变化数 × 16 ＋ 1；无 circuit 退役、circuit 集合不变；B 的通道最终指向 A 最后一次切换所用路由器；首个回复 ≤ 3 秒、TCP 未重置、A–C 不变。
+
+| 格 | main：path 变化／反应／报告（上限），B 跟随次数 | R2：同左 |
+| --- | --- | --- |
+| soft（2 次） | 2／2／4（33），2 | 2／2／4（33），0（a2 只停留 0.4 秒，挑战未完成即回到原来源） |
+| burst（3 次） | —（R2 新增） | 1／1／2（17），1 |
+| hard（5 次） | 5／5／10（81），5 | 4／4／6（65），4（两次切换落在同一合并窗） |
+
+main（R1）已满足本行的不变量；R2 的改动未改变它（每次 path 变化的报告实测 2 份：撤回旧观测、带新映射）。
+
+| 运行 | 结果 |
+| --- | --- |
+| 本机基线：main `b9f7108d`＋三行 fixture `6cbe366a`，`baseline-nat-1` 行 `20261015T230204Z-f1530c30`、`baseline-rf-1` 行 `20261015T230421Z-3c5fe0a6`／`20261015T230549Z-8f506fc3` | `roam/nat` 两格超过 5 秒；`roam/relay` 空窗新流与中继流不经 R；`roam/flap` 通过 |
+| 本机 R2 `r2-3`：`roam/nat` `20261015T232835Z-340b4faf`、`roam/relay` `20261015T233003Z-80dcd05e`；`r2-1`：`roam/direct` `20261015T231657Z-1ba2e939`、`roam/flap` `20261015T232141Z-20335112` | 四行全部通过 |
+
+证据 `.meshway/validation/r2/`。
 
 ### N3 实网证据 {#n3-real-network}
 
