@@ -2,6 +2,7 @@ use super::*;
 
 mod network_changes;
 mod restart;
+mod roaming;
 
 #[test]
 fn dns_anchor_address_conflicts_with_specific_routes_but_not_the_default_route() {

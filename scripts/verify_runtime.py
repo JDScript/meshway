@@ -50,6 +50,9 @@ KERNEL_TESTS = {
     "underlay-dns-anchor": "linux::kernel::tests::dns_anchor_survives_suspend_and_owner_restart_until_explicit_removal",
     "underlay-dns-foreign": "linux::kernel::tests::foreign_dns_anchor_mutation_blocks_cleanup_without_removing_the_interface",
     "underlay-local-conflict": "linux::kernel::capture::tests::local_route_preflight_and_live_address_conflicts_preserve_foreign_resources",
+    "underlay-roam-classify": "linux::kernel::tests::roaming::external_changes_are_classified_as_path_or_refresh",
+    "underlay-roam-repair": "linux::kernel::tests::roaming::own_capture_rules_removed_outside_their_owner_are_reinstalled_boundedly",
+    "underlay-roam-overlap": "linux::kernel::tests::roaming::an_external_address_inside_a_mesh_pool_fails_closed_until_it_leaves",
 }
 
 
