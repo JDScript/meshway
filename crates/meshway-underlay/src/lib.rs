@@ -48,10 +48,10 @@ use std::{
 mod linux;
 #[cfg(target_os = "linux")]
 pub use linux::{
-    CtConfirmation, DatagramAuthorization, DatagramCandidate, EgressCapture, ExitCleanupPending,
-    ExitCutoff, ExitIncarnation, ExitReply, ExitReplyReader, ExitRole, ExitScope, ExitSendGuard,
-    ExitTransport, ExitWrite, ExitWriter, Host, Invalidated, OriginalTuple, ProjectionAck,
-    ProtectedDatagram, TraversalDatagram, ephemeral_ports, port_holders,
+    CtConfirmation, DatagramAuthorization, DatagramCandidate, EgressCapture, ExitCutoff,
+    ExitIncarnation, ExitReply, ExitReplyReader, ExitRole, ExitScope, ExitSendGuard, ExitTransport,
+    ExitWrite, ExitWriter, Host, Invalidated, OriginalTuple, ProjectionAck, ProtectedDatagram,
+    TraversalDatagram, ephemeral_ports, port_holders,
     sockets::{CandidateHandle, ListenerHandle, ProtectedListener, ProtectedTcp, SocketFactory},
 };
 
@@ -86,6 +86,19 @@ pub enum NetworkChangeClass {
 pub struct PoolOverlap {
     pub interface: String,
     pub address: IpAddr,
+}
+
+/// The kept resources of a role that stopped serving and whose cleanup
+/// failed: the owner retries it (1 s, doubling to 60 s), reading the kernel
+/// again before each attempt. A failed cleanup is not an absence proof; the
+/// role installs again once the cleanup completed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExitCleanupPending {
+    /// The last attempt's error.
+    pub reason: String,
+    /// Attempts so far, the first one included.
+    pub attempts: u32,
+    pub retry_at: std::time::SystemTime,
 }
 
 /// Local installation inputs, never business DNS or execution authority.

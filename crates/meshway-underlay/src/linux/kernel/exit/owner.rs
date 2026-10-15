@@ -56,18 +56,7 @@ struct Renew {
     reply: oneshot::Sender<Result<ProjectionAck>>,
 }
 
-/// The kept resources of a role that stopped serving and whose cleanup
-/// failed: the owner retries it (1 s, doubling to 60 s), reading the kernel
-/// again before each attempt. A failed cleanup is not an absence proof; the
-/// role installs again once the cleanup completed.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ExitCleanupPending {
-    /// The last attempt's error.
-    pub reason: String,
-    /// Attempts so far, the first one included.
-    pub attempts: u32,
-    pub retry_at: std::time::SystemTime,
-}
+pub use crate::ExitCleanupPending;
 
 /// First wait after a failed cleanup, and the longest.
 const CLEANUP_RETRY: Duration = Duration::from_secs(1);
