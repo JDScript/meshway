@@ -97,7 +97,7 @@ live probe 成功返回 `ready` 和 `supportedFamilies=[ipv4]`，`installedFamil
 
 已应用的 netmap 带本节点 `exitRole` 时，网络 worker 在应用后调用 live probe。该 Future 的 monitor 预约不可跨线程移动，因此唯一网络 worker 在一个固定线程上驱动，并在停止时显式等待退出；Host、Control 和内核资源仍各只有一个 owner。出口前置条件不满足或角色安装失败时，内容照常 applied：`exitCapability` 为 `unavailable` 及具体原因并上报 State，IPC Status 显示 `Exit unavailable (<原因>)`，peer 与本节点作为源的流量不受影响，也不进入 apply 重试。能力探测按下文周期重新真实探测；观测为 `ready` 而当前内容的角色尚未安装时，网络 worker 以同一内容重新 apply（`Engine::reapply`），由此安装角色。实例在内容应用之后才取得（启动时从保存的 netmap 恢复）时，取得实例即探测一次。只有角色实际安装后才填充 `installedFamilies`。
 
-**运行中的角色失败只撤该角色**：已安装角色的 Host owner 因自身内核操作失败（`maintain`／`retire`／审计）或其自有对象在 owner 之外被删除（见下文 monitor 分类）而停止时，出口 driver 报告 `ended`，网络 worker 只结束出口 runtime：SecureNode 退役全部出口流、各投影随 CT 精确清理，日志 `Exit role failed; withdrawing it alone`；netmap 保持 applied，capture、DNS、邻接、控制中继与本节点作为源的流量不变。随后立即真实探测一次：`ready` 即以同一内容 `Engine::reapply` 重装角色。清理失败时资源保留，owner 按 1 秒起翻倍、上限 60 秒重试清理（每次先重读内核，见 [Exit 设计 · 审计与清理重试](/v2/node/exit-design#exit-audit)），期间探测报 `ownershipConflict`、Status 报 `exit.cleanupPending`；清理完成后的下一次探测为 `ready`，角色以同一内容重装。审计回读本身失败不停止角色（未知，30 秒内重证）。被保留的残留（关闭的门、已消失的出口 TUN 上带 `IIF_DETACHED` 的规则）仍记在出口 journal 与 monitor 期望中，不使 Host 的 capture 校验或新内容安装失败；撤回一个仍在服务的角色失败仍是失败。
+**运行中的角色失败只撤该角色**：已安装角色的 Host owner 因自身内核操作失败（`maintain`／`retire` 在[重读与有界重试](#kernel-change)后仍失败、读到外来状态，或审计）或其自有对象在 owner 之外被删除（见下文 monitor 分类）而停止时，出口 driver 报告 `ended`，网络 worker 只结束出口 runtime：SecureNode 退役全部出口流、各投影随 CT 精确清理，日志 `Exit role failed; withdrawing it alone`；netmap 保持 applied，capture、DNS、邻接、控制中继与本节点作为源的流量不变。随后立即真实探测一次：`ready` 即以同一内容 `Engine::reapply` 重装角色。清理失败时资源保留，owner 按 1 秒起翻倍、上限 60 秒重试清理（每次先重读内核，见 [Exit 设计 · 审计与清理重试](/v2/node/exit-design#exit-audit)），期间探测报 `ownershipConflict`、Status 报 `exit.cleanupPending`；清理完成后的下一次探测为 `ready`，角色以同一内容重装。审计回读本身失败不停止角色（未知，30 秒内重证）。被保留的残留（关闭的门、已消失的出口 TUN 上带 `IIF_DETACHED` 的规则）仍记在出口 journal 与 monitor 期望中，不使 Host 的 capture 校验或新内容安装失败；撤回一个仍在服务的角色失败仍是失败。
 
 出口职责只来自 Server 签名的 netmap：`exitRole` 绑定内容（`generation`），不绑定 instance，重新取得 instance 保留已安装的角色。`NodeState.exitCapability` 是独立观测：失败可在尚未 applied 时报告，观测绑定当前 instance、持有的 `netmap` 与其 `roleGeneration`；Control 在发送 HTTP 前拒绝 instance 或 netmap 已变化的观测（`StaleReport`，丢弃该报告而不改绑）。不确定交付的重试保留原内容、序号和 `observedAt`，不把旧探测换绑到新 netmap。能力报告不生成应用回执，也不替代必需组件的原子 applied 边界。netmap 带出口职责期间，网络 worker 在每个事件上检查该观测：超过 State 报告寿命（60 秒）的三分之一即重新真实探测，持续业务流量不推迟刷新。
 
@@ -167,7 +167,20 @@ Mesh 池、loopback、链路本地、组播、保留／广播及出口本机地�
 
 `underlay-egress.json`（v2）保存 boot／namespace、随机 installation、mark／table、计划、当前门与待提交门（区间与设备）、nft 规范对象／handle、选择器规则及 removed；已 down（removed）或属于另一次启动的记录不论版本直接归档，同一次启动内仍持有资源的其他版本记录在解析内容前即以专用错误（含文件名与版本，提示先用写它的旧版本 `meshway down` 或重启主机再升级）阻止启动；捕获表路由由门推出，恢复时与表内实际路由精确对账。自有规则／路由变化注册到同一 monitor（路由每 64 条等待其观测，不使通知缓冲溢出），不制造外部切网事件。暂停、执行失效和同 namespace 重启保留负向范围；TUN 消失不会落回 main direct。恢复先关闭旧活动 selector 并清理旧正向资源，只有新的有效执行安装可以重新激活；显式 down 才解除所属负向边界。
 
-owner 每秒把捕获表回读并与收据比对。回读本身失败（工具 2 秒期限、netlink 中断、输出不可读，或 `nft list table` 失败而表仍在 `nft list tables` 中）不证明归属变化：记为未知，下一秒再证，WARN `Egress capture verification unavailable` 一次，重证一致后 INFO `Egress capture verified again; ownership kept`（`failures`、`unverified_ms`）；未知期间现有捕获保持原样，新的 stage／switch 一律拒绝（不安装新内容）。连续未知达 30 秒（与 DNS owner 的恢复口径一致）按 fail closed 结束宿主内核归属，原因 `verify_unavailable`。回读成功但对象、handle 或集合元素与收据不符（`objects_changed`／`set_elements_changed`），或表已不存在（`table_missing`），立即结束宿主内核归属。结束时记录 `Egress capture owner stopping after a failed kernel operation`（`operation`、`error`）。
+owner 每秒把捕获表回读并与收据比对。回读本身失败（工具 2 秒期限、netlink 中断、输出不可读，或 `nft list table` 失败而表仍在 `nft list tables` 中）不证明归属变化：记为未知，下一秒再证，WARN `Egress capture verification unavailable` 一次，重证一致后 INFO `Egress capture verified again; ownership kept`（`failures`、`unverified_ms`）；未知期间现有捕获保持原样，新的 stage／switch 一律拒绝（不安装新内容）。连续未知达 30 秒（与 DNS owner 的恢复口径一致）按 fail closed 结束宿主内核归属，原因 `verify_unavailable`。回读成功但对象、handle 或集合元素与收据不符（`objects_changed`／`set_elements_changed`），或表已不存在（`table_missing`），立即结束宿主内核归属。结束时记录 `Egress capture owner stopping after a failed kernel operation`（`operation`、`check`、`error`）。
+
+#### 内核变更失败 {#kernel-change}
+
+一次失败的内核变更（nft 批、netlink 增删，含工具 2 秒期限内未回答）不能证明内核处于哪一种状态：工具可能在内核已应用后超时，也可能内核从未见到。所属 owner 因此先重读现状再决定；分类只有 `kernel/verification.rs` 一份实现，egress capture owner 用于 `pause`／`stage`／`switch`，出口 owner 用于投影退役（`retire`，以及 `renew`／`install`／`confirm` 失败后对该投影的退役）和 `maintain`（到期投影退役、quarantine 过期删除）。
+
+| 失败后的重读 | 行为 |
+| --- | --- |
+| 已在目标（egress：集合与路由均为待提交门；出口：该投影的 journal 记录已移除） | 视为已完成：变更立即再执行一次，只读回并记录（集合已是目标门时不再替换） |
+| 在起点，或在变更自己的路径上（每个对象都在起点或目标；出口：所属对象与收据、journal 一致） | 有界重试：1 秒后再执行，间隔翻倍、上限 60 秒，自首次失败起至多 30 秒（与 DNS owner、回读未知同一口径），仍不成功即按原规则 fail closed，原因 `change_unavailable` |
+| 读取失败 | 未知，同样在 30 秒内重读并重试，届满为 `verify_unavailable` |
+| 读成功而两者都不是（外来规则、元素、路由，表不存在） | 立即按原规则 fail closed（`verify`）：egress 结束宿主内核归属，出口停止角色 |
+
+确定性的拒绝（执行已失效、目标不符、容量）不涉及内核结果，不重试。重试期间 owner 的请求按序等待（Host 的 suspend／install 随之等待，网络 worker 不处理新内容），出口其他流的已安装写路径不受影响；WARN `Egress capture change failed; read back, retrying`／`Exit role change failed; read back, retrying`（`operation`、`attempts`、`error`、`reread`、`retry_ms`，第 1、2、4… 次），完成后 INFO `… change completed after retrying`（`attempts`、`elapsed_ms`），放弃时为原来的 stopping 日志并带 `check`。IPC Status `changePending` 给出正在重试的变更。egress 门在替换待提交记录前，先移除上一次未完成变更留下、现门与新门都不保留的自有路由（此前部分提交的 `switch` 之后的 `pause` 会因“外来路由”冲突而结束归属）。出口 `renew` 的原子批失败时重读元素：仍在则同一批再执行一次（无论新旧期限都设为新期限），否则关闭该投影；conntrack 确认期间一次查询失败为未知，继续查到截止，不当作不存在。
 
 IPC 12 的公开运行状态（`meshway status --json` 原样输出）：
 
@@ -183,6 +196,7 @@ IPC 12 的公开运行状态（`meshway status --json` 原样输出）：
 | `sync` | 必填，`connected`（最近一次 sync 成功、下一次由 Server 挂起）、`reconnecting`、`disconnected`；不代表 Node 授权或业务连通 |
 | `lastSyncAt`／`syncError` | 必填可空：本进程最近一次返回已验签 netmap 的 sync 时间；sync 重试期间的失败类别 |
 | `lastNetworkChange` | 可省略：Underlay 最近一次分类外部网络变化（path 或 refresh，见[漫游](/v2/node/connectivity#roaming)）的时间；本进程尚未观测到时省略 |
+| `changePending` | 可省略：egress capture 或出口 owner 正在重试的一次失败内核变更：`owner`（`egressCapture`／`exit`）、`operation`（egress `pause`／`stage`／`switch`；出口为其投影退役所跟随的请求 `retire`／`renew`／`install`／`confirm`，或 `maintain`）、`reason`（最近一次尝试的错误）、`attempts`（含第一次）与 `retryAt`；直接读 Host 的现值（Host 操作等待它时也可读），至多持续 30 秒，其余时候省略（见[内核变更失败](#kernel-change)）。`meshway status` 显示 `Kernel` 行 `<owner> <operation> pending (<reason>; attempt N, retry in …)` |
 | `netmap` | 必填可空：当前 netmap 引用与签名租约 `issuedAt`／`expiresAt`，以及 `missingArtifacts`（引用但尚未持有的规则集 digest；命名它们的规则不可用，见[规则集 · 下发](/v2/configuration-reference/rule-sets#下发)）、`artifactProblem`（缺失时最后一次的 `download`／`integrity`／`storage`／`budget`，否则 null）与 `capture`（本节点从 netmap 与 artifact 计算并安装的出口捕获：`managedIpv4`／`sinkIpv6` 区间数、捕获表 `routes` 数，以及未安装分割而改为完整捕获时的 `unavailable` 原因，否则 null；本节点无出口捕获时整项为 null，计算见 [Routing · 节点侧上限](/v2/configuration-reference/routing#capture-limits)）、`routing`（本节点在该 netmap 下的路由方案选择 `RoutingSelectionState`，字段见 [Routing · 当前选择的状态](/v2/configuration-reference/routing#selection-state)；无法由 netmap 求出时为 null）；无有效租约为 null |
 | `node` | 必填可空：已安装 netmap 中的本节点 `hostname` 与 Mesh `addresses`；未安装（down、control-only、准备中）为 null |
 | `peers` | 必填：已安装 netmap 中可见的其他节点（与 `ping` 解析名称的集合相同），按 hostname 排序；未安装为空。字段见下表 |

@@ -131,7 +131,7 @@ VM→it7 方向 Mesh TCP 远低于裸路径的原因已定位（2026-10-15）：
 | Planck 19 行矩阵 `20261015T212445Z-21b27563`（R1 `2eae8716`，并行 8，墙钟 1,066 秒） | 19 行全部通过；`roam/direct` 行 `20261015T213122Z-49aac8c7` 首个 UDP 回复 0.24／0.03／0.23／0.06 秒（dialer soft／hard、listener soft／hard），TCP 最长中断 ≤ 0.67 秒，同一 circuit 与通道，候选发布 0.11–0.45 秒，B 收到候选 7／109 ms，LAN 丢包 0 |
 | Planck 此前两次（`20261015T193138Z-e662edb4`、`20261015T204321Z-92dbe6a6`） | `roam/direct` 均通过；其余 runtime 行分别因新内核测试超出 DNS 锚点测试的任务预算、新增内核测试地址挤占接口替换地址而失败（fixture 已修）；`20261015T211031Z-1660d855` 中 `exit/off` 的组件测试一次 Netlink 错误（之前两次通过），变化观测随后改用独立 netlink socket |
 
-R1 之前的候选：A 的阶段切换（A 增加 listener）后一次 Manager apply 因 owner 提前结束而失败、重启邻接，C 看到新 boot 退役 A–C circuit 而 A 一侧保留，A→C 空等 15 秒（`20261015T172722Z-c3cc3381`）；未再复现，Manager 现记录意外结束的 owner。另一候选在 B 已经跟随 A 的新映射后又因“remote 不在候选集合”旁路拨号（`20261015T172314Z-d76d6adc`），现只在 remote 原是已发布候选时才拨。证据 `.meshway/validation/r1/`。
+R1 之前的候选：A 的阶段切换（A 增加 listener）后一次 Manager apply 失败、重启邻接，C 看到新 boot 退役 A–C circuit 而 A 一侧保留，A→C 空等 15 秒（`20261015T172722Z-c3cc3381`）；本节点换 boot 的对称处理见 [X12](#x12-change)，apply 失败的 owner 未能定位，Manager 现记录意外结束的 owner。另一候选在 B 已经跟随 A 的新映射后又因“remote 不在候选集合”旁路拨号（`20261015T172314Z-d76d6adc`），现只在 remote 原是已发布候选时才拨。证据 `.meshway/validation/r1/`。
 
 真机（R1 程序部署到常驻 lab 与 `meshway-vm`）：
 
@@ -259,6 +259,22 @@ egress capture owner 按同一不变量：回读失败只记为未知（30 秒�
 
 组件测试（`exit/off` 组件阶段，同一隔离容器形态）：`linux::kernel::exit::tests::cleanup::exit_audit_read_failures_are_unknown_and_a_failed_cleanup_completes_on_retry`（注入 5 次读取失败→未知、角色保持，随后一致；外来元素→`flow_unowned`；清理第一次读取失败→不删除任何对象，重试完成移除；表已删除而未确认→下一次以重读确认完成；重新安装）与 `exit_recovery::netmap_exit_failed_cleanup_is_retried_and_the_role_installs_again`（角色链中外来规则：审计停止角色，清理在规则存在期间每次失败、`Host::exit_cleanup` 报 pending、安装新角色被拒；移除规则后清理完成、表消失、角色重装并确认一条 CT）。Planck 18 行矩阵 `20261015T195811Z-5b10ea68`（`d68cad6d`，并行 4）全部通过，`exit/off` 行 `20261015T200914Z-4b1882e0` 787.6 秒，含上述两项组件测试；并行 8 的 `20261015T193324Z-c16e4000` 中 netmap 三行因 Docker 地址池耗尽未开始，`exit/off` 第 16 阶段压力步中 E 一次投影退役的 nft 操作失败而停止角色（见剩余边界）。证据 `.meshway/validation/x11/`。
 
+### X12 内核变更失败与本节点 boot 证据 {#x12-change}
+
+**变更失败**：分类见[内核变更失败](/v2/node/runtime#kernel-change)。组件测试（`exit/off` 组件阶段 `changes-egress`／`changes-exit`，与 X11 组件同一隔离容器形态，另有本机 OrbStack 同形态运行）对每条变更路径各注入两种失败（测试专用工具故障：内核已应用而工具与下一次读取失败；内核未见到）：`linux::kernel::egress::tests::changes::failed_capture_changes_are_read_back_and_completed` 中 `stage` 已应用→目标、未应用→起点，`switch` 已应用→目标（其 stage 步）、未应用→起点，`pause`（switch 之后，带设备路由）两种都在起点路径上，六项均经重试完成且回读一致、无待提交门；之后外来删除一条规则→`objects_changed`→`verify` 不重试。`linux::kernel::exit::tests::changes::failed_exit_changes_are_read_back_and_completed`（真实 UDP echo、已确认 CT）中 `renew` 两种均续期成功，`retire` 两种重读为起点、重试后 CT 删除、journal 清空、审计一致，`maintain`（到期投影的 quarantine 写入失败）两种均完成；外来元素→`flow_unowned`→`verify`。另有纯逻辑测试 `verification::tests`（重读分类、1／2／4／8／16 秒退避与 30 秒上限、拒绝不重试、`stopped` 结束等待、`changePending` 发布与撤回）。
+
+**lab 复现**（本机 OrbStack lab，X12 构建 release `76552504…`，X11 方法 `docker update --cpus 0.02`，`.meshway/validation/x12/lab/`）：
+
+| 复现 | 结果 |
+| --- | --- |
+| sha 45 秒（`x12-throttle-3`） | DNS 失败撤回包平面，撤回时 `pause` 失败：`Egress capture change failed; read back, retrying`（`reread: unavailable` → 第 2 次 `start`）→ 23.8 秒后 `Egress capture change completed after retrying`（`attempts: 3`）；轮询期间 Status `changePending` `{"owner":"egressCapture","operation":"pause","attempts":3,…}`；恢复后一次 `pause` 失败重读为 `target`、548 ms 完成。宿主内核归属保持，三节点 running／ready，出口角色经清理重试后重装 |
+| sha 45 秒（`x12-throttle-4`） | `pause` 失败一次、8.5 秒后完成；归属保持 |
+| sha 45 秒（`x12-throttle-1`）、nyc 16 秒（`x12-throttle-2`） | 撤回在限额解除后发生，`pause` 未失败；`x12-throttle-1` 中出口审计连续 30 秒读不到而停止角色（见[剩余边界](#remaining-boundaries)），清理第 4 次完成后重装 |
+
+X11 同一场景（main／X11 构建）：`Egress capture owner stopping … kernel ownership ends`，Host fail closed 直到重启。lab 结束后恢复为原 release `2d03609d…`（alpha.13），三节点 running、出口 ready。
+
+**本节点换 boot**：`netmap_lifecycle::own_new_boot_ends_every_circuit_at_once_and_its_close_reaches_the_far_end`（A→R→B）：A 首次绑定 boot、同一 boot 保留，换 boot 后 A 的 circuit 立即结束，`Close` 经 R 转发到 B，A 的下一个包立即发出新 INIT（1 ms，不等 15 秒）。R1 那次 apply 失败（`20261015T172722Z-c3cc3381`）：A 在一次 path 变化约 2 秒后 Manager apply 返回 `transport operation cancelled or timed out`（Manager 已停止或一次绑定超时），该构建尚无 `Connectivity owner ended unrequested` 日志，没有 `Datagram socket owner ended`，不能定位到具体 owner；此后的构建记录意外结束的 owner。
+
 ### 当前验证证据
 
 `validate:matrix` 为每行独立保留报告并汇总 `matrix.json`／`summary.md`；通过结论同时要求 fixture `passed`、进程成功退出和本 run 无遗留资源。`--short` 的报告标记 `scope=diagnostic-short`：只运行 30 秒持续／纯接收窗口（退路 5 秒后触发），不要求已经跨原需求期限，未测到的延长为 null。其他场景仍执行，包括真实 instance 失效恢复；短模式不是整组验收，不能更新下述历史／当前通过状态。并发运行还需读取各行启动 load，不能与低负载串行结果不加区分地合并。
@@ -346,9 +362,7 @@ W2 使用候选 `fbde424e`（生产修复 `0593e19b`，基于 main `1271be5d`）
 
 **planck 宿主 WiFi 的周期中断**（宿主问题，不在产品侧处理）：planck 宿主 ath12k 在每次 802.1X 重认证（约 8 h 24 min 一次）的 PTK 重新协商时 flush 约 5 秒，期间宿主范围的 netlink 停顿。D3 之后 planck 节点每次随之 DNS 健康检查失败、撤回包平面约 0.6 秒并自动重装，不再阻断至重启。 真机（alpha.11）2026-10-15 08:23:57Z 一次：宿主探针记录 4.11 s 停顿，planck 节点 `observe_deadline`（abandoned after 3918 ms）后 146 ms 恢复、279 ms 内重装 netmap，每 2 s 的 249 份 Status 中仅 1 份 `preparing`；证据 `.meshway/node-lab/ops10/d3-rekey/`。
 
-**长时间停顿下 egress capture 的 `pause` 失败结束宿主内核归属**（X11 lab 发现，main 同样存在）：容器 CPU 限额 12–45 秒使 DNS 健康检查失败、撤回包平面，撤回时 egress capture owner 的 `pause`（一次 nft 变更，不是回读）因工具超时失败，按现行规则结束宿主内核归属（`Egress capture owner stopping after a failed kernel operation; kernel ownership ends`，`operation: pause`），节点 fail closed 直到重启。D3 的未知分类只覆盖回读；变更失败的处理未改。真机 planck 约 5 秒的 RTNL 停顿未触发。
-
-**审计以外的出口内核操作失败仍停止角色**（X11）：退役、续期、维护与 conntrack 确认的 nft／netlink 操作失败（含工具 2 秒期限）仍停止整个角色，其上的流随之结束，角色经清理与重装恢复。并行 8 的 18 行矩阵 `20261015T193324Z-c16e4000`（启动 load 4.9）中 `exit/off` 第 16 阶段压力步一次 `operation: retire` 失败即如此，出口 TCP 流断开。审计的未知分类不覆盖这些操作。
+**长于 30 秒的内核停顿仍 fail closed**（X12 之后）：变更失败与回读失败共用 30 秒上限（与 DNS owner 一致）。停顿期间每一次回读都失败满 30 秒时，出口审计照旧停止角色（lab sha 限额 45 秒一次：`operation: audit`、`check: verify_unavailable`，清理第 4 次完成后重装），egress capture 结束宿主内核归属；变更在起点反复失败满 30 秒为 `change_unavailable`，同样按原规则。X11 发现的 `pause` 失败（main 上停机到重启）与并行矩阵中出口 `retire` 超时停止角色已按[内核变更失败](/v2/node/runtime#kernel-change)处理，证据见 [X12](#x12-change)。
 
 **节点持有的 peer 事实可早于其租约到期**（X8 发现，P1 已修复）：此前 Server 只在事实内容变化时唤醒 sync hold、hold 只以租约为界，而事实按报告者 `observedAt` + 60 秒到期，节点在 hold 期间或 Node HTTP 中断时可在租约到期前失去出口就绪事实，新出口流在本地被拒（`netmap_denied`）。现在 hold 也以节点持有事实的最早截止 − 5 秒为界（[sync hold](/v2/node/netmap-design#sync-transport)），且过期的出口就绪事实按最后已知值继续可选（[最后已知事实](/v2/node/connectivity#last-known-facts)）；`exit/off` 第 15 阶段等待 A 取得一次 sync 的绕过已去掉，第 8 阶段照旧断言 HTTP 中断期间直到租约到期前新出口流都能建立。P1 Planck 18 行矩阵 `20261015T062652Z-9a95285c`（`541e48b5`，并行 4）全部通过；单行 `exit/off` 复跑 `20261015T065227Z-9645d57c`（行 `20261015T065230Z-44e5de7b`）中 A 关于 E 的事实在首个路径租约到期前 7 秒过期，此后两条链路各 3 个新 UDP 出口流建立、无拒绝（main 上此时 `netmap_denied`）。同批另有两次失败：第 15 阶段 E 在角色重装进行中如实报告未就绪、A 据当前事实拒绝了一次出口 DNS 查询（`20261015T055930Z-782e79b3`；是 fixture 断言过严，第 15 阶段已改为中断窗界定，见[出口场景](#exit-scenario)）；两个 `exit/off` 并发时第 16 阶段 iperf3 超时（`20261015T065357Z-b98749cc`，与 P1 无关）。断言修改后（`f9115a91`）`exit/off` 单跑两次通过：`20261015T123419Z-c3f16022`（行 `20261015T123716Z-7753f918`，A 关于 E 的事实在首个租约到期前 3 秒过期，之后两条链路各 1 个新出口流成功）与 `20261015T125059Z-2a2f87b5`（行 `20261015T125103Z-83765480`，第 15 阶段中断窗 2.5 秒内 3 次查询失败 2 次、上限 7、窗外 0 次）。
 
