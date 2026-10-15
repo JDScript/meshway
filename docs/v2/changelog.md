@@ -2,7 +2,9 @@
 
 按合入 main 的顺序记录工作包、提交与证据 ID。规则见[工程流程](/v2/process)；性能数字的口径见[分层性能测量](/v2/node/performance)，验收状态见[验收范围](/v2/node/validation)。
 
-## 未发布
+## v0.1.0-alpha.13
+
+范围：wire 6、IPC 12（Status 新增可省略字段 `exit.cleanupPending`）、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约均不变（普通升级，无断网窗口；CLI 与 daemon 一起升级）。X11：出口已安装流由出口 I/O owner 批量写出口 TUN，写失败只丢该包，审计读取失败记为未知，清理失败有界重试并以 `exit.cleanupPending` 报告；P1b：STUN 候选排序后再比较事实内容，Server debug 日志 `Sync answered`／`Peer facts content changed`；M5：VM→it7 Mesh 吞吐（OrbStack DF 剥离与 WARP 路径 MTU）文档；以及下列 P1b、X11 工作包。
 
 sync 请求量（P1b，`p1b/sync-rate`）：wire 6、IPC 12、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约均不变（只改 Server）。OPS11 六台 10 分钟 sync 回答 101→208（2.06×，预期约 1.4×）。现网只读核对：各节点每 1–21 秒报告一次、事实一律 `observedAt` + 60 秒到期，以事实界结束的 hold 恰为最早剩余 − 5 秒、平均 41.0 秒（约 1.22×），P1 的界按设计工作；多出的回答来自事实内容"变化"唤醒：两个 STUN observer 续期相隔数秒（VM 约 10 秒）时，旧观测先后到期使报告里的候选顺序互换，Server 按报告顺序比较内容，每个续期周期（约 62 秒）两次唤醒所有看见该报告者的节点（5 分钟内 VM 9 次，同时刻六台一起回答）。
 
