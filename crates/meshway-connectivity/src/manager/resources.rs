@@ -63,7 +63,10 @@ impl Manager {
             impl Drop for Exit {
                 fn drop(&mut self) {
                     if !self.0.is_cancelled() {
-                        tracing::warn!(owner = %self.2, "Connectivity owner ended unrequested; stopping the Manager");
+                        if !self.1.is_cancelled() {
+                            tracing::warn!(owner = %self.2,
+                                "Connectivity owner ended unrequested; stopping the Manager");
+                        }
                         self.1.cancel();
                     }
                 }
