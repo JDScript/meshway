@@ -149,16 +149,11 @@ async fn assert_dns_reader_drop(
     dns_test_wait_reader_closed(&socket).await;
     // ... but it proves nothing about the anchor (a host-wide RTNL stall
     // abandons reads): the anchor stays, and the next read opens a new FD.
-    assert!(
-        tokio::time::timeout(Duration::from_millis(200), reader.ended())
-            .await
-            .is_err(),
-        "an interrupted read ended the anchor"
-    );
+    let ended = tokio::time::timeout(Duration::from_millis(200), reader.ended()).await;
+    assert!(ended.is_err(), "an interrupted read ended the anchor");
     let sockets = dns_test_socket_ids();
     assert_eq!(reader.verify().await.unwrap(), *identity);
-    let reopened = dns_test_new_reader_socket(&sockets);
-    assert_ne!(reopened, socket);
+    assert_ne!(dns_test_new_reader_socket(&sockets), socket);
     // A deadline that elapses mid-dump (the observation timeout) is the same.
     for _ in 0..4 {
         let _ = tokio::time::timeout(Duration::ZERO, reader.verify()).await;
