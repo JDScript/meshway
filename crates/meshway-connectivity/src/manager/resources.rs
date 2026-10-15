@@ -55,18 +55,20 @@ impl Manager {
         let requested = CancellationToken::new();
         let expected = requested.clone();
         let future = build(shared);
+        let label = format!("{key:?}");
         let task = tokio::spawn(async move {
             // Also fence a panic: the resource task's Drop is not an ordinary
             // retirement request and must surface at Manager::recv.
-            struct Exit(CancellationToken, CancellationToken);
+            struct Exit(CancellationToken, CancellationToken, String);
             impl Drop for Exit {
                 fn drop(&mut self) {
                     if !self.0.is_cancelled() {
+                        tracing::warn!(owner = %self.2, "Connectivity owner ended unrequested; stopping the Manager");
                         self.1.cancel();
                     }
                 }
             }
-            let _exit = Exit(expected, root);
+            let _exit = Exit(expected, root, label);
             future.await;
         });
         self.owners.insert(

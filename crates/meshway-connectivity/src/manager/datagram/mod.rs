@@ -1767,7 +1767,8 @@ pub(super) async fn listen(shared: Arc<Shared>, fact: ListenerFact, endpoint: Bo
         result
     }
     .await;
-    if result.is_err() {
+    if let Err(error) = &result {
+        tracing::debug!(%error, "Datagram socket owner ended");
         shared.stop.cancel();
     }
 }
@@ -1789,7 +1790,8 @@ pub(super) async fn listen_traversal(
         result
     }
     .await;
-    if result.is_err() {
+    if let Err(error) = &result {
+        tracing::debug!(%error, "Datagram socket owner ended");
         shared.stop.cancel();
     }
 }

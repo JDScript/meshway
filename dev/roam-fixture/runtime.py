@@ -332,6 +332,13 @@ def execute(report, artifacts, runtime_os, traversal_os, platform, short, load):
                 subprocess.run(["docker", "exec", "-d", containers["a"], "python3", "/roam-fixture/traffic.py", "client",
                                 mesh[role], f"/evidence/traffic-{phase}-{role}", stop], check=True)
             wait_for(lambda: read_json("a", f"/evidence/traffic-{phase}-b/started.json"), "A traffic", 20)
+
+            def flowing():
+                # Both peers answer before any perturbation: the cell measures
+                # roaming, not the phase's content change.
+                return all(command("a", "grep", "-q", "^uecho", f"/evidence/traffic-{phase}-{role}/client.log",
+                                   required=False)["exitCode"] == 0 for role in ("b", "c"))
+            wait_for(flowing, f"{phase} traffic answered by B and C", 60)
             time.sleep(5)
             for cell in ("soft", "hard"):
                 name = f"{phase}/{cell}"
