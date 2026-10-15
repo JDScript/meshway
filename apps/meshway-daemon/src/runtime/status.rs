@@ -258,6 +258,7 @@ impl View {
             } else {
                 None
             },
+            last_network_change: network.last_network_change,
         }
     }
 }

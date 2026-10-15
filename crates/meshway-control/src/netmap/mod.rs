@@ -17,7 +17,7 @@ mod sync;
 pub use artifacts::{ArtifactCall, ArtifactProblem, ArtifactReply, fetch_artifacts};
 pub use sync::{
     NetmapChange, PeerFactsSink, SYNC_TIMEOUT, SyncCall, SyncFuture, SyncOutcome, SyncReply,
-    SyncTransport, sync_loop,
+    SyncTransport, sync_loop, sync_loop_with,
 };
 
 /// Same-content leases are written again once they extend the saved expiry

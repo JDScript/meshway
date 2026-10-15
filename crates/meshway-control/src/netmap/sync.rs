@@ -114,6 +114,12 @@ pub trait PeerFactsSink {
 
 impl PeerFactsSink for tokio::sync::watch::Sender<Option<KnownPeers>> {
     fn publish(&mut self, facts: KnownPeers) {
+        tracing::debug!(
+            netmap_serial = facts.netmap.serial.get(),
+            peers = facts.peers.len(),
+            traversal_requests = facts.traversal_requests.len(),
+            "Known peer facts updated"
+        );
         self.send_replace(Some(facts));
     }
 }
@@ -348,6 +354,21 @@ pub async fn sync_loop(
     errors: &tokio::sync::watch::Sender<Option<SyncError>>,
     stop: &CancellationToken,
 ) -> Result<(), Error> {
+    sync_loop_with(control, sink, netmaps, errors, stop, &|| 0).await
+}
+
+/// [`sync_loop`] on a host that closes its own Control connections when its
+/// network path changes: `local_resets` counts those closes. A failure of a
+/// call during which this host closed the connection is its own doing, not
+/// the Server's: it is retried at once and does not grow the backoff.
+pub async fn sync_loop_with(
+    control: &tokio::sync::Mutex<Control>,
+    sink: &mut (dyn PeerFactsSink + Send),
+    netmaps: &tokio::sync::watch::Sender<Option<meshway_engine::Netmap>>,
+    errors: &tokio::sync::watch::Sender<Option<SyncError>>,
+    stop: &CancellationToken,
+    local_resets: &(dyn Fn() -> u64 + Send + Sync),
+) -> Result<(), Error> {
     let failed = |error: &Error| {
         errors.send_if_modified(|current| {
             current.replace(error.sync_error()) != Some(error.sync_error())
@@ -357,6 +378,7 @@ pub async fn sync_loop(
     loop {
         let mut wait = None;
         let mut idle = false;
+        let resets = local_resets();
         let call = {
             let mut driver = tokio::select! { biased;
                 _ = stop.cancelled() => return Ok(()),
@@ -428,6 +450,10 @@ pub async fn sync_loop(
                     wait = Some(backoff);
                 }
             }
+        }
+        if wait.is_some() && local_resets() != resets {
+            tracing::debug!("Node sync interrupted by a local path change; retrying at once");
+            wait = None;
         }
         let delay = match wait {
             Some(delay) => {

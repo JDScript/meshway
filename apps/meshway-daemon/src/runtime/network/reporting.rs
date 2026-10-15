@@ -7,6 +7,12 @@ use std::{collections::BTreeMap, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{sync::watch, time::Instant};
 
 pub(super) const CHANGE_INTERVAL: Duration = Duration::from_secs(1);
+/// After an underlay path change, reports are not coalesced to
+/// [`CHANGE_INTERVAL`] for this long: the first one (and the new STUN
+/// mapping that follows it) leaves at once, still spaced by
+/// [`ROAM_SPACING`].
+const ROAM_WINDOW: Duration = Duration::from_millis(1500);
+const ROAM_SPACING: Duration = Duration::from_millis(100);
 
 #[derive(PartialEq, Eq)]
 struct ExitKey {
@@ -32,6 +38,7 @@ pub(super) struct Key {
     completion: Option<Result<(), ApplyFailure>>,
     generation: Sequence,
     interface_epoch: u64,
+    network_path: u64,
     dns_live: bool,
     exit: Option<ExitKey>,
     exit_dns: Option<meshway_model::exit::ExitDns>,
@@ -56,6 +63,7 @@ impl Key {
             completion: report.completion,
             generation: report.generation,
             interface_epoch: report.interface_epoch,
+            network_path: report.network_path,
             dns_live,
             exit: report.exit_capability.as_ref().map(|exit| ExitKey {
                 instance: exit.instance_id,
@@ -163,11 +171,15 @@ pub(super) struct Schedule {
     handled: Mark,
     last_attempt: Option<Instant>,
     pending: Option<Pending>,
+    /// The latest path change seen, and until when reports follow it unspaced.
+    path: u64,
+    roaming_until: Option<Instant>,
 }
 
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub(super) fn channel(reports: watch::Sender<Report>) -> (Publisher, Schedule) {
     let key = Arc::new(Key::of(&reports.borrow()));
+    let path = key.network_path;
     let (changes, received) = watch::channel(key.clone());
     let receipt = Arc::new(());
     let handled = Mark {
@@ -182,6 +194,8 @@ pub(super) fn channel(reports: watch::Sender<Report>) -> (Publisher, Schedule) {
             handled,
             last_attempt: None,
             pending: None,
+            path,
+            roaming_until: None,
         },
     )
 }
@@ -193,22 +207,39 @@ impl Schedule {
             receipt: self.receipt.clone(),
         }
     }
-    fn next_attempt(&self) -> Instant {
-        self.last_attempt
-            .map_or_else(Instant::now, |at| at + CHANGE_INTERVAL)
+    /// The spacing of the next report: [`ROAM_SPACING`] within the window
+    /// after a path change, [`CHANGE_INTERVAL`] otherwise.
+    fn spacing(&mut self) -> Duration {
+        let path = self.changes.borrow().network_path;
+        if path != self.path {
+            self.path = path;
+            self.roaming_until = Some(Instant::now() + ROAM_WINDOW);
+        }
+        if self
+            .roaming_until
+            .is_some_and(|until| Instant::now() < until)
+        {
+            ROAM_SPACING
+        } else {
+            CHANGE_INTERVAL
+        }
     }
-    fn due(&self, routine: bool) -> bool {
+    fn next_attempt(&mut self) -> Instant {
+        let spacing = self.spacing();
+        self.last_attempt
+            .map_or_else(Instant::now, |at| at + spacing)
+    }
+    fn due(&mut self, routine: bool) -> bool {
+        let spacing = self.spacing();
         let ready = self
             .last_attempt
-            .is_none_or(|at| Instant::now() >= at + CHANGE_INTERVAL);
+            .is_none_or(|at| Instant::now() >= at + spacing);
         ready && (routine || self.pending.is_some() || !self.handled.same(&self.latest()))
     }
     pub fn defer(&mut self) {
         let now = Instant::now();
-        if self
-            .last_attempt
-            .is_none_or(|at| at + CHANGE_INTERVAL <= now)
-        {
+        let spacing = self.spacing();
+        if self.last_attempt.is_none_or(|at| at + spacing <= now) {
             self.last_attempt = Some(now);
         }
     }
@@ -448,6 +479,32 @@ mod tests {
         report.facts.as_mut().unwrap().listeners[0].socket_id = [2; 32];
         publisher.send_replace(report);
         assert!(!Arc::ptr_eq(&physical, &schedule.latest().key));
+    }
+
+    #[test]
+    fn reports_after_a_path_change_are_not_held_to_the_change_interval() {
+        let (reports, _) = watch::channel(Report::stopped());
+        let (publisher, mut schedule) = channel(reports);
+        schedule.last_attempt = Some(Instant::now());
+        assert!(!schedule.due(true), "routine reports keep their spacing");
+        let mut report = Report::stopped();
+        report.network_path = 1;
+        publisher.send_replace(report);
+        std::thread::sleep(ROAM_SPACING + Duration::from_millis(10));
+        assert!(
+            schedule.due(false),
+            "the path change leaves within its spacing"
+        );
+        schedule.last_attempt = Some(Instant::now());
+        std::thread::sleep(ROAM_SPACING + Duration::from_millis(10));
+        assert!(schedule.due(true), "as do the reports of its window");
+        schedule.roaming_until = Some(Instant::now());
+        schedule.last_attempt = Some(Instant::now());
+        std::thread::sleep(ROAM_SPACING + Duration::from_millis(10));
+        assert!(
+            !schedule.due(true),
+            "after the window the interval applies again"
+        );
     }
 
     #[test]

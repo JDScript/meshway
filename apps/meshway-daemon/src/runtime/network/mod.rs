@@ -44,6 +44,15 @@ fn startup_problem(error: &meshway_underlay::Error) -> Problem {
     }
 }
 
+/// The detail of a Mesh pool overlap, led by its stable reason.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(super) fn pool_overlap_detail(overlap: &meshway_underlay::PoolOverlap) -> String {
+    format!(
+        "meshPoolOverlap: {} address {} is inside a Mesh address pool",
+        overlap.interface, overlap.address
+    )
+}
+
 pub(super) fn capabilities() -> std::collections::BTreeMap<String, meshway_model::state::Capability>
 {
     let mut capabilities = meshway_connectivity::capabilities();
@@ -89,7 +98,11 @@ pub(super) struct Report {
     /// The DNS owner's exit resolver fact of the installed content.
     pub exit_dns: Option<meshway_model::exit::ExitDns>,
     pub generation: meshway_model::Sequence,
+    /// Every classified external network change, and the path changes
+    /// among them (`meshway_underlay::NetworkChange`).
     pub interface_epoch: u64,
+    pub network_path: u64,
+    pub last_network_change: Option<DateTime<Utc>>,
     pub owned_interfaces: Vec<String>,
     pub dependencies: std::collections::BTreeMap<meshway_model::NodeId, u32>,
     pub observation_dependencies:
@@ -138,6 +151,8 @@ impl Report {
             exit_dns: None,
             generation: meshway_model::Sequence::MIN,
             interface_epoch: 0,
+            network_path: 0,
+            last_network_change: None,
             owned_interfaces: Vec::new(),
             dependencies: Default::default(),
             observation_dependencies: Default::default(),
@@ -267,6 +282,10 @@ pub(super) struct Handle {
     peers: watch::Sender<Option<meshway_control::KnownPeers>>,
     #[cfg(target_os = "linux")]
     traversal_acknowledged: watch::Sender<traversal::Acknowledged>,
+    /// The Underlay's classified network changes; its relay closes Control
+    /// connections on each path change.
+    #[cfg(target_os = "linux")]
+    network_changes: watch::Receiver<meshway_underlay::NetworkChange>,
 }
 
 impl Handle {
@@ -319,6 +338,7 @@ impl Handle {
                 }
                 return Err(startup_problem(&error));
             }
+            let network_changes = host.network_changes();
             let (commands, received) = mpsc::channel(8);
             let (observation_plans, plans_rx) = watch::channel(None);
             let (offer_sender, offers) = watch::channel(Offer::default());
@@ -357,7 +377,34 @@ impl Handle {
                 reporting,
                 peers,
                 traversal_acknowledged,
+                network_changes,
             })
+        }
+    }
+
+    /// How many Underlay path changes this host has seen: each closed the
+    /// Control connections it carried.
+    pub fn path_changes(&self) -> u64 {
+        #[cfg(target_os = "linux")]
+        {
+            self.network_changes.borrow().path
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            0
+        }
+    }
+
+    /// A counter of [`Self::path_changes`] that outlives this borrow.
+    pub fn path_counter(&self) -> impl Fn() -> u64 + Send + Sync + 'static {
+        #[cfg(target_os = "linux")]
+        {
+            let changes = self.network_changes.clone();
+            move || changes.borrow().path
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            || 0
         }
     }
 

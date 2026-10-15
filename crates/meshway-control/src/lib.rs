@@ -23,7 +23,7 @@ mod netmap;
 pub use netmap::{
     ArtifactCall, ArtifactProblem, ArtifactReply, KnownPeers, NetmapChange, PeerFactsSink,
     ReadyExits, SYNC_TIMEOUT, SyncCall, SyncFuture, SyncOutcome, SyncReply, SyncTransport,
-    fetch_artifacts, sync_loop,
+    fetch_artifacts, sync_loop, sync_loop_with,
 };
 mod observations;
 mod probe;

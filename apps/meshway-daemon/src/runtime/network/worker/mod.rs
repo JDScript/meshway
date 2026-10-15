@@ -20,7 +20,7 @@ mod peers;
 mod sample;
 mod withdrawal;
 use peers::PeerChannels;
-use sample::sample_host;
+use sample::{RoamEvidence, sample_host};
 use withdrawal::{finish_withdrawal, shutdown, withdraw};
 
 /// Exit replies taken in one turn, like one Mesh TUN read turn.
@@ -88,6 +88,17 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
         mtu,
     } = inputs;
     let mut network_changes = host.network_changes();
+    let mut path = network_changes.borrow_and_update().path;
+    let mut overlaps = host.pool_overlap();
+    let mut repairs = host.repairs();
+    repairs.borrow_and_update();
+    // An external address inside a Mesh pool: nothing installs while it
+    // lasts, and its departure installs the offered netmap again.
+    let mut overlap: Option<meshway_underlay::PoolOverlap> = overlaps.borrow_and_update().clone();
+    let mut overlap_cleared = false;
+    // A path change re-probes the exit prerequisites after reporting `probing`.
+    let mut exit_probe_at: Option<tokio::time::Instant> = None;
+    let mut roams = RoamEvidence::default();
     let mut engine = Engine::new(Plane::new(host, dns, peers, traversal)?);
     let workers = std::env::var("MESHWAY_DATAPLANE_WORKERS")
         .ok()
@@ -171,6 +182,8 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             Tick,
             SampleDue,
             NetworkChanged,
+            PoolOverlap,
+            Repair,
             ExitChanged,
             ExitFailed,
             /// The DNS owner's exit resolver fact changed.
@@ -202,6 +215,9 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
         if let Some(at) = dns_queries.wake_at() {
             wake_at = Some(wake_at.map_or(at, |old| old.min(at)));
         }
+        if let Some(at) = exit_probe_at {
+            wake_at = Some(wake_at.map_or(at, |old| old.min(at)));
+        }
         if plane
             .installed
             .as_ref()
@@ -217,7 +233,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
         }
         let retry_at = retry
             .at
-            .filter(|_| plane.installed.is_none() || engine_degraded);
+            .filter(|_| (plane.installed.is_none() || engine_degraded) && overlap.is_none());
         let Plane {
             host,
             dns,
@@ -236,6 +252,9 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             _ = sleep_until(retry_at) => Work::Retry,
             () = std::future::ready(()), if exit_recovered => Work::ExitRecovered,
             () = std::future::ready(()), if listeners_changed => Work::ListenersChanged,
+            () = std::future::ready(()), if overlap_cleared => Work::Offer,
+            changed = overlaps.changed() => if changed.is_ok() { Work::PoolOverlap } else { Work::Command(None) },
+            changed = repairs.changed() => if changed.is_ok() { Work::Repair } else { Work::Command(None) },
             _ = dns.failed(), if !dns_failed => Work::DnsFailure,
             _ = dns.recovered(), if dns_failed => Work::DnsRecovered,
             _ = host.ended(), if installed.is_some() => Work::HostFailed,
@@ -311,8 +330,10 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             .is_some_and(|fact| {
                 chrono::Utc::now() - fact.observed_at
                     >= chrono::Duration::seconds(meshway_protocol::STATE_REPORT_TTL_SECONDS / 3)
-            });
+            })
+            || exit_probe_at.is_some_and(|at| tokio::time::Instant::now() >= at);
         if stale && engine.desired().is_some() {
+            exit_probe_at = None;
             let capability = engine.components_mut().exit_capability().await;
             exit_recovered = engine.components().exit_pending()
                 && capability
@@ -339,10 +360,88 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 continue;
             }
             Work::NetworkChanged => {
-                network_changes.borrow_and_update();
+                let change = *network_changes.borrow_and_update();
+                if change.path != path {
+                    path = change.path;
+                    // The Manager reacts on its own sockets and channels;
+                    // identity, content and leases stay as they are.
+                    if let Some(manager) = engine
+                        .components()
+                        .installed
+                        .as_ref()
+                        .and_then(|state| state.manager.as_ref())
+                    {
+                        match manager.path_changed().await {
+                            Ok(roamed) => tracing::debug!(
+                                operation = "roam",
+                                path_epoch = change.path,
+                                datagram_channels = roamed.datagram_channels,
+                                streams_retired = roamed.streams_retired,
+                                observations_withdrawn = roamed.observations_withdrawn,
+                                "Underlay path changed"
+                            ),
+                            Err(error) => {
+                                tracing::debug!(%error, "Underlay path change not applied to connectivity")
+                            }
+                        }
+                    }
+                    // The exit's prerequisites (its outer interface, reverse
+                    // path filter) may differ on the new path: the role
+                    // reports probing until the probe ran again.
+                    if engine.desired().is_some() && reports.borrow().exit_capability.is_some() {
+                        let mut report = reports.borrow().clone();
+                        if let Some(capability) = &mut report.exit_capability {
+                            capability.status = meshway_model::exit::ExitStatus::Probing;
+                            capability.observed_at = chrono::Utc::now();
+                        }
+                        reports.send_replace(report);
+                        exit_probe_at = Some(tokio::time::Instant::now() + Duration::from_secs(1));
+                    }
+                }
                 let report =
                     sample_host(engine.components(), &diagnostics, reports.borrow().clone());
                 reports.send_replace(report);
+                continue;
+            }
+            Work::PoolOverlap => {
+                let current = overlaps.borrow_and_update().clone();
+                match current {
+                    Some(found) => {
+                        if overlap.is_none() {
+                            tracing::warn!(interface = %found.interface, address = %found.address,
+                                "Mesh pool overlap; the packet plane fails closed until the address leaves");
+                            diagnostics.invalidate();
+                            diagnostics.stop().await;
+                            dns_queries.stop().await;
+                            let _ = engine.reconfig(None).await;
+                        }
+                        let mut report = reports.borrow().clone();
+                        report.plane = DataPlane::Failed;
+                        report.problem = Some(Problem::Underlay);
+                        report.problem_detail = Some(super::pool_overlap_detail(&found));
+                        report.completion = Some(Err(ApplyFailure::Underlay));
+                        report.content = None;
+                        report.facts = None;
+                        report.exit_flows = None;
+                        report.observed_at = chrono::Utc::now();
+                        reports.send_replace(report);
+                        overlap = Some(found);
+                    }
+                    None => {
+                        if overlap.take().is_some() {
+                            tracing::info!("Mesh pool overlap ended; installing the netmap again");
+                            retry = Retry::default();
+                            overlap_cleared = true;
+                        }
+                    }
+                }
+                continue;
+            }
+            Work::Repair => {
+                repairs.borrow_and_update();
+                if let Err(error) = engine.components_mut().host.repair().await {
+                    tracing::warn!(%error, "Reinstalling owned capture objects failed; kernel ownership ends");
+                }
                 continue;
             }
             Work::ExitDns => {
@@ -459,6 +558,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 }
                 exit_recovered = false;
                 listeners_changed = false;
+                overlap_cleared = false;
                 if !matches!(work, Work::Retry) {
                     retry = Retry::default();
                 }
@@ -481,6 +581,10 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                     }
                     continue;
                 };
+                if overlap.is_some() {
+                    // Kept offered; installed once the overlapping address leaves.
+                    continue;
+                }
                 let reference = netmap.content.reference();
                 // Same healthy content and associations: Engine extends its
                 // own timer only. Changed associations, other content and a
@@ -874,6 +978,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
         }
         if structural {
             let report = sample_host(engine.components(), &diagnostics, reports.borrow().clone());
+            roams.observe(&report);
             reports.send_replace(report);
             sample_at = None;
         } else {

@@ -393,6 +393,10 @@ meshway_model::object! { #[derive(Clone, Debug)] pub struct Status {
     pub last_error_detail: Option<String> [required = true],
     #[serde(deserialize_with = "meshway_model::wire::required_nullable")]
     pub retry_at: Option<DateTime<Utc>> [required = true],
+    /// When the Underlay last classified an external network change of
+    /// this host (a path change or a refresh); omitted before the first.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_network_change: Option<DateTime<Utc>>,
 } }
 
 meshway_model::object! {

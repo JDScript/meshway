@@ -1,4 +1,48 @@
 use super::super::{Report, plane::Plane};
+use meshway_connectivity::LinkFact;
+use meshway_model::NodeId;
+use std::collections::BTreeMap;
+
+/// Circuit continuity across roaming, as a debug record: each selected
+/// channel that moved to another remote or was replaced by one with the same
+/// peer boot, with the business circuits through that peer (their CIDs are
+/// unchanged when the circuits survived).
+#[derive(Default)]
+pub(super) struct RoamEvidence(BTreeMap<NodeId, LinkFact>);
+impl RoamEvidence {
+    pub fn observe(&mut self, report: &Report) {
+        let Some(facts) = &report.facts else {
+            return;
+        };
+        let current: BTreeMap<_, _> = facts
+            .links
+            .iter()
+            .map(|link| (link.peer, link.clone()))
+            .collect();
+        for (peer, now) in &current {
+            let Some(before) = self.0.get(peer) else {
+                continue;
+            };
+            if before.peer_boot != now.peer_boot
+                || (before.id == now.id && before.remote == now.remote)
+            {
+                continue;
+            }
+            let circuits: Vec<String> = report
+                .circuits
+                .iter()
+                .filter(|(_, (path, _))| path.contains(peer))
+                .map(|(id, _)| id.iter().map(|byte| format!("{byte:02x}")).collect())
+                .collect();
+            tracing::debug!(operation = "roam",
+                cause = if before.id == now.id { "channel_moved" } else { "channel_replaced" },
+                peer = %peer, channel_before = ?before.id, channel = ?now.id,
+                remote_before = %before.remote, remote = %now.remote,
+                circuits = ?circuits, "Connectivity roam");
+        }
+        self.0 = current;
+    }
+}
 
 /// An explicit measurement by the resource owner. Application observation time
 /// remains immutable; sampling current sockets is distinct from receipt replay.
@@ -7,7 +51,10 @@ pub(super) fn sample_host(
     diagnostics: &super::super::diagnostics::Diagnostics,
     mut report: Report,
 ) -> Report {
-    report.interface_epoch = *plane.host.network_changes().borrow();
+    let change = *plane.host.network_changes().borrow();
+    report.interface_epoch = change.epoch;
+    report.network_path = change.path;
+    report.last_network_change = change.at.map(chrono::DateTime::<chrono::Utc>::from);
     report.owned_interfaces = plane.host.owned_interfaces();
     report.known_peers = Some(plane.peers.clone());
     sample(&plane.installed, diagnostics, report)

@@ -900,8 +900,13 @@ async fn online_session(
     let mut sync = {
         let shared = shared.clone();
         let stop = stop.clone();
+        let resets: Box<dyn Fn() -> u64 + Send + Sync> = match network.as_deref() {
+            Some(network) => Box::new(network.path_counter()),
+            None => Box::new(|| 0),
+        };
         tokio::spawn(async move {
-            meshway_control::sync_loop(&shared, &mut sink, &netmaps, &errors, &stop).await
+            meshway_control::sync_loop_with(&shared, &mut sink, &netmaps, &errors, &stop, &*resets)
+                .await
         })
     };
     // The verified lease reaches Engine without the Control lock or this
@@ -1033,7 +1038,11 @@ async fn maintain(
     if work.retry_at.is_some_and(|at| now < at) {
         return Ok(());
     }
+    let resets = network.as_deref().map(network::Handle::path_changes);
     let result = maintain_once(shared, network.as_deref_mut(), settings, work, changed).await;
+    // This host closed its Control connections itself (a path change)
+    // while the work ran: try again at once instead of backing off.
+    let local = network.as_deref().map(network::Handle::path_changes) != resets;
     let control = &*shared.lock().await;
     match result {
         Ok(()) => {
@@ -1066,6 +1075,14 @@ async fn maintain(
                     problem: failure.problem,
                     withdraw: failure.withdraw,
                 });
+            }
+            if local {
+                tracing::debug!(
+                    operation,
+                    "Control work interrupted by a local path change; retrying at once"
+                );
+                work.retry_at = None;
+                return Ok(());
             }
             // A reset context (session or instance gone) is re-acquired at once.
             let delay = failure
