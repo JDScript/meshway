@@ -184,6 +184,30 @@ impl Lab {
         addresses: &[&str],
         peers: &[NodeId],
     ) {
+        self.report_listener(index, sequence, addresses, peers, vec![])
+            .await;
+    }
+
+    /// The same report with the `udp` listener socket's STUN observations, in
+    /// the order the Node lists them.
+    pub async fn report_stun(
+        &self,
+        index: usize,
+        sequence: u64,
+        candidates: Vec<meshway_model::state::EndpointCandidate>,
+    ) {
+        self.report_listener(index, sequence, &[], &[], candidates)
+            .await;
+    }
+
+    async fn report_listener(
+        &self,
+        index: usize,
+        sequence: u64,
+        addresses: &[&str],
+        peers: &[NodeId],
+        stun: Vec<meshway_model::state::EndpointCandidate>,
+    ) {
         let applied = self.applied[index];
         let now = chrono::Utc::now();
         let links = peers
@@ -245,7 +269,7 @@ impl Lab {
                         generation: Sequence::new(1).unwrap(),
                         network: SocketNetwork::Udp,
                         bound_address: "0.0.0.0:23456".parse().unwrap(),
-                        endpoints: vec![],
+                        endpoints: stun,
                         local_endpoints: Some(
                             addresses
                                 .iter()
