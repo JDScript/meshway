@@ -268,16 +268,29 @@ pub(super) async fn coordinate(
     input.access = vec![AccessRule {
         remark: "exact measured Internet and exit LAN services".into(),
         src: vec![format!("node:{}", nodes["a"])],
-        dst: vec!["autogroup:internet".into(), topology.lan_cidr.clone()],
+        // E itself only for phase 16's Mesh throughput baseline.
+        dst: vec![
+            "autogroup:internet".into(),
+            topology.lan_cidr.clone(),
+            format!("node:{}", nodes["e"]),
+        ],
         ip: vec![
             "tcp:8080".into(),
             "udp:8080".into(),
             "udp:8081".into(),
             "icmp:*".into(),
+            // Phase 16 throughput (iperf3).
+            "tcp:5201".into(),
         ],
         bidirectional: false,
     }];
-    input.routing.mesh.clear();
+    // The Mesh baseline crosses the same A→R→E channels as the exit.
+    input.routing.mesh = vec![MeshRoute {
+        remark: "Mesh throughput baseline via the exit relay".into(),
+        src: vec![format!("node:{}", nodes["a"])],
+        dst: vec![format!("node:{}", nodes["e"])],
+        via: vec![format!("node:{}", nodes["r"])],
+    }];
     // Ordinary names go to E's resolver before resolution; MagicDNS stays
     // local and the useWithExit split resolver keeps its own direct route.
     let split = topology.addresses["split"]["resolver"];

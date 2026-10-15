@@ -108,6 +108,18 @@ sha 应用 IPv4
 | DNS owner | 查询、响应、受控系统 resolver 适配、pending／TTL／取消 | 专用 DNS permit、查询名／来源／实际完整路径和输出截止；不是任意代理 |
 | daemon | 装配、驱动有界队列、完成真实安装／上报 | 不持第二份流表、DNS 授权数据库或 nft owner |
 
+### 包路径、出口队列与回程 {#exit-queue}
+
+每个出口包都经过出口节点的用户态，安装前后相同：正向密文在出口的 SecureNode 解密、准入后由 daemon 写入出口 TUN；回程经内核逆 NAT 进入出口 TUN，由 daemon 读出，SecureNode 加密后沿原路径发出。内核只承担出口 TUN 与出接口之间的一段（FORWARD、nft 投影门、masquerade、conntrack）。端到端保护在 Meshway 用户态终止，所以“安装后零用户态逐包处理”不成立；投影安装只决定内核门是否放行该流。每包的用户态开销与节点间 Mesh 同类（一次解密或加密），出口额外只有一次出口 TUN 读或写。
+
+| 段 | 行为 |
+| --- | --- |
+| 正向队列 | daemon 出口 runtime 的单一 FIFO，128 项；一项是一个投影操作（Install／Renew／Retire）、一个包或一个 barrier。一个包准入时产生的投影操作先于该包入队。已 ACK 流的包至多占 96 项，其余 32 项留给投影操作和新流的首包，饱和的大流挤不掉新流，成批的新流也挤不掉已有流 |
+| 无空位 | 只丢弃当前包：计数，按 2 的幂打 warn `Exit queue full; packet dropped, its flow kept`（有界）。流、投影、tuple 不变：不 Retire、不留隔离项，下一个包照常写入，TCP 以重传恢复 |
+| 流的结束 | 只因退役条件：空闲、内容变化／撤回、租约到期，或本流自己的投影失败（安装或续期失败、ACK 超时、conntrack 确认失败、出口 TUN 写失败；出口写入方满只丢该包）。Access／容量拒绝不建流。隔离项（tombstone）只在退役后产生，见下文生存期 |
+| 内核操作 | driver 一次执行一个内核操作（一轮安装、一次续期或一次退役，按 FIFO 顺序），其间继续写入其他已安装流的包；只有该操作涉及的流的包和其后的续期、退役、barrier 等它，之后按原顺序继续；收集中的一轮照常接纳其后到达的新流，操作结束时等待项按原顺序重新分派，其中的新流同样并入下一轮（同一批新流一轮安装，其他流的续期或退役至多多等这一轮）。合并规则见下文生存期 |
+| 回程 | 出口 TUN 的读取方只在回包通道（64）有空位时读取；worker 每轮至多取 32 个回包，加密后一次批量发送，本轮的待发回包（128）满时不再取。消费方落后时回包留在出口 TUN 自己的队列与 qdisc 中，由内核 AQM 处理，不在用户态静默丢弃 |
+
 选择**独立出口 TUN**而不复用普通本机 Mesh TUN：`Action::Deliver` 给本机服务与 `Action::Exit` 给内核转发有不同的入口和规则；共享设备会使“从 TUN 来”不足以区分两种职责。两设备仍归同一个 Host／Kernel，不增加 Host 实例。专用 TUN 不暴露 FD，不接受外来接口接管，不绑定出口公网地址；回程按远端 Mesh 源 `/32` 导向它。
 
 ### 内核规则与回程识别
@@ -135,7 +147,7 @@ sha 应用 IPv4
 
 只删 MASQUERADE 规则不足以终止已有 NAT：conntrack 保留映射；只删 daemon 流也不足以撤回已交给内核的正向工作。因此采用两层截止：
 
-- dataplane 为已准入 flow 输出不透明的内核投影操作（flow incarnation、原 tuple、当前 deadline、scope），Underlay 只安装其镜像。nft 的有界 timed set 在 forward／回程交付门逐包检查，超时不得长于 flow idle 与 netmap 租约截止的较早者；新增／续期等待 ACK 后才 release 第一包。相对 timeout 从提交时剩余预算保守换算，排队／执行命令不重置原截止，ACK 后再次检查原 guard；时钟失效即关闭门。按批差量操作，不能每包启动 `nft`：daemon 的投影 driver 把紧随第一条到达的新增投影（相邻间隔不超过 3 ms，一轮至多 10 ms、64 条，例如一次 traceroute 的各探测）交给 Underlay 作为一轮（单独的新流因此至多多等 3 ms），表归属 dump 校验、日志落盘、nft 事务与回读 dump 每轮各一次；每条投影仍各自做归属与冲突检查（journal、owned conntrack、特殊地址）、各自在内核变更前写入 journal 记录、各自在回读中核对自己的元素后才 ACK，结果逐条回执，一条失败不改变其他条的结果（整轮事务失败时逐条重试）。续期、退役与 conntrack 确认不合轮。
+- dataplane 为已准入 flow 输出不透明的内核投影操作（flow incarnation、原 tuple、当前 deadline、scope），Underlay 只安装其镜像。nft 的有界 timed set 在 forward／回程交付门逐包检查，超时不得长于 flow idle 与 netmap 租约截止的较早者；新增／续期等待 ACK 后才 release 第一包。相对 timeout 从提交时剩余预算保守换算，排队／执行命令不重置原截止，ACK 后再次检查原 guard；时钟失效即关闭门。按批差量操作，不能每包启动 `nft`：daemon 的投影 driver 把紧随第一条到达的新增投影（相邻间隔不超过 3 ms，一轮至多 10 ms、64 条，例如一次 traceroute 的各探测）交给 Underlay 作为一轮（单独的新流因此至多多等 3 ms），表归属 dump 校验、日志落盘、nft 事务与回读 dump 每轮各一次；每条投影仍各自做归属与冲突检查（journal、owned conntrack、特殊地址）、各自在内核变更前写入 journal 记录、各自在回读中核对自己的元素后才 ACK，结果逐条回执，一条失败不改变其他条的结果（整轮事务失败时逐条重试）。续期、退役与 conntrack 确认不合轮。收集与执行一轮期间，其他已安装流的包不等待（[出口队列](#exit-queue)）。
 - 正常撤回／方案切换先使原 guard 失效并停止新准入，再原子删除内核可转发投影、取消排队输出、退役旧 flow／cipher，精确删除其 ct mark＋original tuple 对应 conntrack，确认后投影记录离开历史，转换后的 reply tuple 进入有寿命的 quarantine（拒绝迟到回包；生命周期见 [IPv4 出口角色与 NAT 投影](/v2/node/runtime#ipv4-出口角色与-nat-投影)），同一原 tuple 此后可由新 incarnation 重新安装。删除失败保持 drop 门与 journal，不回收该 tuple，不回滚到旧许可。不能全局 flush conntrack。
 - 续期只对仍活、在新租约下判定不变的同路径 flow 更新；**方案切换总是结束旧出口连接**。超过旧截止后不能通过新的 set timeout 或保留 conntrack 复活它。
 - 崩溃后非持久 TUN 自动消失，timed set 到期、负向 capture 保留；重启先核对 boot／namespace／installation，再清除所属旧投影与 conntrack，以缓存的 netmap 重新握手。旧包不能因同 tuple 新建 flow 被接纳：journal 中的 quarantine 随恢复重新装入，覆盖延迟旧包窗口，容量耗尽拒绝新流。

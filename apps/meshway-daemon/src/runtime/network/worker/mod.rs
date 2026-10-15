@@ -23,6 +23,9 @@ use peers::PeerChannels;
 use sample::sample_host;
 use withdrawal::{finish_withdrawal, shutdown, withdraw};
 
+/// Exit replies taken in one turn, like one Mesh TUN read turn.
+const EXIT_REPLY_BATCH: usize = 32;
+
 pub(super) struct Inputs {
     pub host: Host,
     pub commands: mpsc::Receiver<Command>,
@@ -172,13 +175,14 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             ExitFailed,
             /// The DNS owner's exit resolver fact changed.
             ExitDns,
-            ExitReply(Result<meshway_underlay::ExitReply, meshway_underlay::Error>),
+            ExitReply(Result<Vec<meshway_underlay::ExitReply>, meshway_underlay::Error>),
         }
         let live = engine.desired().is_some() && engine.components().secure().is_some();
         let expiry = engine.next_expiry();
         let engine_degraded = engine.degraded();
         let plane = engine.components_mut();
         let can_read = live && plane.packets.can_read(&pool);
+        let can_take_replies = live && plane.packets.can_take_exit_replies(EXIT_REPLY_BATCH);
         let has_outputs = plane.packets.has_outputs();
         let mut wake_at = live.then(|| plane.packets.wake_at()).flatten();
         if let Some(at) = live
@@ -248,7 +252,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 // work. Reconfiguration remains the outer priority.
                 tokio::select! {
                     _ = async { match &mut health { Some(health) => { let _ = health.changed().await; }, None => std::future::pending().await } } => Work::ExitChanged,
-                    reply = async { match exit.as_mut() { Some(exit) => exit.reader.recv().await, None => std::future::pending().await } }, if live => Work::ExitReply(reply),
+                    reply = async { match exit.as_mut() { Some(exit) => exit.reader.recv_batch(EXIT_REPLY_BATCH).await, None => std::future::pending().await } }, if can_take_replies => Work::ExitReply(reply),
                     _ = packets.sent(host), if has_outputs => Work::Tick,
                     _ = pool.ready(), if live && pool.has_pending() => Work::Tick,
                     result = async {
@@ -734,26 +738,26 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                     }
                 }
             }
-            Work::ExitReply(Ok(reply)) => {
+            Work::ExitReply(Ok(replies)) => {
                 let Plane {
                     installed, packets, ..
                 } = engine.components_mut();
                 if let Some(state) = installed
                     && let Some(secure) = &mut state.secure
                 {
-                    match Packet::parse(reply.packet) {
-                        Ok(packet) => match secure
-                            .exit_reply(meshway_dataplane::exit::ExitReplyIngress::new(packet))
-                        {
-                            Ok(frame) => {
-                                if let Some(exit) = &mut state.exit {
-                                    exit.drive(secure);
-                                }
-                                packets.exit_reply(frame);
-                            }
-                            Err(_) => packets.drop_packet("exit_reply_admission"),
-                        },
-                        Err(_) => packets.drop_packet("exit_reply_malformed"),
+                    for reply in replies {
+                        match Packet::parse(reply.packet) {
+                            Ok(packet) => match secure
+                                .exit_reply(meshway_dataplane::exit::ExitReplyIngress::new(packet))
+                            {
+                                Ok(frame) => packets.exit_reply(frame),
+                                Err(_) => packets.drop_packet("exit_reply_admission"),
+                            },
+                            Err(_) => packets.drop_packet("exit_reply_malformed"),
+                        }
+                    }
+                    if let Some(exit) = &mut state.exit {
+                        exit.drive(secure);
                     }
                 }
             }

@@ -10,7 +10,11 @@ use meshway_underlay::{ExitReplyReader, ExitRole};
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
+/// Work items (projections, packets, barriers) the driver FIFO holds.
 const CAPACITY: usize = 128;
+/// Slots packets of installed flows leave free: projections and the first
+/// packets of new flows still find room beside a saturating flow.
+const RESERVED: usize = CAPACITY / 4;
 
 enum Work {
     Projection(Box<ExitProjection>),
@@ -36,6 +40,8 @@ pub(super) struct Runtime {
     failures: mpsc::Receiver<meshway_dataplane::exit::FlowIncarnation>,
     pub health: watch::Receiver<Health>,
     stop: CancellationToken,
+    /// Packets dropped for want of queue room since the role started.
+    dropped: u64,
     _on_drop: tokio_util::sync::DropGuard,
     task: tokio::task::JoinHandle<Result<(), Problem>>,
 }
@@ -66,6 +72,7 @@ impl Runtime {
             health,
             _on_drop: stop.clone().drop_guard(),
             stop,
+            dropped: 0,
             task,
         })
     }
@@ -88,20 +95,30 @@ impl Runtime {
         false
     }
 
+    /// All operations created by this admission precede its packet in this
+    /// single FIFO. Without room the packet alone is dropped, as a full
+    /// interface queue would: its flow, projection and tuple stay live (no
+    /// Retire, no tombstone) and the next packet is admitted as usual. The
+    /// owner never waits here while holding SecureNode.
     pub fn packet(&mut self, secure: &mut SecureNode, packet: PendingAction) {
         let drained = self.drive(secure);
-        // All operations created by this admission precede its packet in this
-        // single FIFO. A full queue rejects the flow instead of waiting while
-        // holding the SecureNode owner or dropping an unacknowledged callback.
-        let flow = packet.exit_flow();
-        if (!drained
-            || self
-                .sender
-                .try_send(Work::Packet(Box::new(packet)))
-                .is_err())
-            && let Some(flow) = flow
-        {
-            secure.fail_exit_projection(&flow);
+        // A packet whose projection is already acknowledged belongs to an
+        // installed flow; one still waiting for its ACK starts a new flow.
+        let installed = packet.ensure_current().is_ok();
+        if !admit(
+            &self.sender,
+            drained,
+            installed,
+            Work::Packet(Box::new(packet)),
+        ) {
+            self.dropped = self.dropped.saturating_add(1);
+            meshway_logging::profile::event("exit.drop", "queue_capacity");
+            if self.dropped.is_power_of_two() {
+                tracing::warn!(
+                    dropped = self.dropped,
+                    "Exit queue full; packet dropped, its flow kept"
+                );
+            }
         }
     }
 
@@ -180,5 +197,40 @@ impl Runtime {
             return Err(Problem::Underlay);
         }
         Ok(())
+    }
+}
+
+/// Queue one packet without waiting. Packets of installed flows leave
+/// `RESERVED` slots to projections and new flows' first packets, so neither
+/// a saturating flow nor a burst of new flows starves the other.
+fn admit<T>(sender: &mpsc::Sender<T>, drained: bool, installed: bool, item: T) -> bool {
+    let room = sender.capacity() > if installed { RESERVED } else { 0 };
+    drained && room && sender.try_send(item).is_ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_full_queue_drops_the_packet_and_accepts_the_next_once_drained() {
+        let (sender, mut received) = mpsc::channel(CAPACITY);
+        for item in 0..CAPACITY - RESERVED {
+            assert!(admit(&sender, true, true, item));
+        }
+        // An installed flow's packet finds the reserve closed to it ...
+        assert!(!admit(&sender, true, true, usize::MAX));
+        // ... while new flows' first packets still enter.
+        for item in 0..RESERVED {
+            assert!(admit(&sender, true, false, item));
+        }
+        assert!(!admit(&sender, true, false, usize::MAX));
+        // Projections not yet queued come first: the packet waits for none.
+        assert!(received.try_recv().is_ok());
+        assert!(!admit(&sender, false, false, usize::MAX));
+        while received.try_recv().is_ok() {}
+        // The next packet of the same flow is queued as usual.
+        assert!(admit(&sender, true, true, 7));
+        assert_eq!(received.try_recv().ok(), Some(7));
     }
 }
