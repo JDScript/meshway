@@ -496,11 +496,14 @@ fn normalize_mark_prefix(compare: &mut serde_json::Map<String, Value>) -> Result
     Ok(())
 }
 
+/// The owned objects and handles match `expected`; returns the dump read
+/// for that (its set elements included), so a caller checking elements too
+/// reads the kernel once.
 pub(super) async fn verify(
     commands: &mut Commands,
     program: &Program,
     expected: &Receipt,
-) -> Result<()> {
+) -> Result<Receipt> {
     let observed = dump(commands, program).await?;
     if observed.objects != expected.objects || observed.handles != expected.handles {
         #[cfg(test)]
@@ -523,7 +526,7 @@ pub(super) async fn verify(
         }
         return Err(Error::Conflict);
     }
-    Ok(())
+    Ok(observed)
 }
 
 #[cfg(test)]

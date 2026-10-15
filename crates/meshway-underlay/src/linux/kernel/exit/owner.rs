@@ -471,7 +471,11 @@ impl super::super::Kernel {
         let mut installing = Installing(Some(self.shared.conflict.clone()));
         let tun = {
             let mut expected = self.expected.lock().map_err(|_| Error::Worker)?;
-            let tun = meshway_tun::Tun::create(meshway_tun::Options::new(self.options.mtu)?)?;
+            // Offload: reverse-NAT replies of a bulk flow reach the reader as
+            // one aggregate per kernel queue slot instead of one per segment.
+            let tun = meshway_tun::Tun::create(
+                meshway_tun::Options::new(self.options.mtu)?.with_batch_io(true),
+            )?;
             expected.exit_tun = Some(tun.if_index()?);
             expected.exit_tables.push(table);
             tun

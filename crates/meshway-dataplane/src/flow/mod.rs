@@ -290,6 +290,10 @@ pub(super) struct FlowTable {
     tombstones: BTreeMap<Tuple, exit::Tombstone>,
     pending_projections: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     exit_count: usize,
+    /// Terminal tombstones whose Retire has not been handed out yet.
+    unclaimed_retires: usize,
+    /// When the next sweep of dead exit flows and ended quarantines is due.
+    exit_sweep_at: Option<Instant>,
     retired_circuits_pending: bool,
     /// Endpoint TCP tuples whose state was reclaimed while idle, under the
     /// current content only; at most `max_flows`.
@@ -312,6 +316,8 @@ impl FlowTable {
             tombstones: Default::default(),
             pending_projections: Default::default(),
             exit_count: 0,
+            unclaimed_retires: 0,
+            exit_sweep_at: None,
             retired_circuits_pending: false,
             idle: Default::default(),
         }

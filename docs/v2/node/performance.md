@@ -245,6 +245,7 @@ OrbStack 同轮 raw 自身丢包27.39%，不能把全部 UDP 丢包归给转发�
 | L3 Planck 2 CPU relay | 2,127 | 195,072 | 2G，2/2 | 同上 |
 | L3 CI x86_64 2 CPU direct（`2254d0f9`，wire 6／netmap） | 2,705／2,705 | 208,262／208,313 | 2G，2/2，丢包 ≤0.03% | `perf-38143155889`／`20261011t133440z-e33c27b2` |
 | L3 CI x86_64 2 CPU relay（同上） | 2,637／2,590 | 208,334／208,218 | 2G，2/2，丢包 ≤0.05% | 同上 |
+| L3 Planck 2 CPU direct（`c72a498a`→`289e3058`，M4） | 2,724→2,727 | 104,154→104,164 | 1G（输入上限），2/2，丢包 ≤0.01% | `20261015t071207z-7d3a9547`→`20261015t071647z-4e21cce5`；L3 不产生出口流，[出口流维护](#出口流维护与真机-cpu)不改变这一层 |
 
 P 两核报告10/12成功，relay与plain UDP各一次严格接收账本失败；历史relay为1,482.99 Mbps／96,874 pps（UDP仅一次成功）。direct在其窗口达到1 Gbps／100k pps，但2G有丢包，不是无损容量。P的四核完整矩阵12/12成功，direct为1,675.20 Mbps／139,511 pps、relay为1,427.12／95,674；配额增大不等于专用核。新relay使用500M输入，不能以49,612 pps解释为容量回退。
 
@@ -352,6 +353,51 @@ M2（`e5a56b27` → `9c6e4cb3`）。Planck（Ryzen 9 9950X、kernel 6.8、宿主
 - netem 下 manager-direct fixture 两种版本都起不来（双方同时拨号 `existing_rank` 后 `Context`），40 秒以上的 UDP 窗口紧跟 TCP 时以 `State` 退出；均与缓冲无关，未作为样本。CPU 配额不是独占核；共享宿主首尾一分钟 load 3.2–7.2，逐样本见 `results[].hostLoad*`。
 
 报告与脚本在 `.meshway/validation/m2/`（`perf/`、`runs.txt`、`logs/r4.list`、`samples*.txt`）：最终对照 4 MiB `20261013t211518z-904289c2`、`20261013t212217z-e0e0ecc9`、`20261013t212309z-334276f9`、`20261013t212454z-a2a529b8`、`20261013t212546z-944777aa`，同轮 7 MiB `20261013t210933z-8b199dcb`、`20261013t212058z-f02425d3`、`20261013t212150z-aacae5ac`、`20261013t212336z-0c688328`、`20261013t212428z-2de6e09d`；改动前 `20261013t192411z-9034b130`、`20261013t194224z-e6ff6eb8`、`20261013t200659z-7b0ca5be`、`20261013t200923z-960e09ad`；发送节奏的测量报告列在 `runs.txt`。
+
+### 出口流维护与真机 CPU
+
+M4（`c72a498a` → `89def831`）。真机只读观察 alpha.11 release（未部署新版本）：it7（AMD EPYC Genoa VM，2 vCPU，kernel 6.8，内层 TCP BBR）向 planck 的 Mesh 地址发 iperf3 30 秒，248 Mbit/s：
+
+| 项 | 实测 |
+| --- | --- |
+| 网络 owner 线程（TUN 读、准入与加密、UDP 发送和 worker 其余工作都在这一个线程） | 76.8%（user 46.2、sys 30.6） |
+| 两个 Tokio worker（回程 ACK 的 UDP 接收，约每次 `recvmmsg` 一个报文） | 14.4%／13.6%；其他线程 <1% |
+| 批量 I/O | eth0 发送 26.3k 包／秒；owner 每秒 1,884 次 `sendmsg`（每次约 14 个 GSO 段）；TUN 每秒 1,048 次读（TSO 聚合，约 21 段）；每秒 3,574 次 TUN 写，即逐个回程纯 ACK（纯 ACK 按设计不 GRO） |
+| 每外层包 owner CPU | 约 29 µs（user 17.6、sys 11.7） |
+| perf 全部线程 | meshwayd 用户态 49.5%、内核 41.2%、vdso 2.9%、`nft`／`sh` 子进程 5.5% |
+| 内层 TCP | RTT 88.8 ms（最小 72.5）、`sndbuf_limited` 25.4%；32 段重传全部为 DSACK（乱序，不是丢包）；`tcp_wmem` 上限 4 MiB |
+
+GSO、TUN vnet_hdr／TSO 与 recvmmsg 都在用，单 owner 线程没有锁争用。真机 Mesh 正向因此同时受两点限制：owner 接近饱和，以及内层发送缓冲在排队抬高的 RTT 下封顶。发布产物没有符号表，用户态函数无法在真机归因（同源重建能复现布局但同样无符号）。空闲时进程仍占 15.6% 核，子进程另 9.8%：出口角色每秒审计经 `/bin/sh` 闸门执行 `nft`，实测每秒 5.45 次，其中 4 次来自出口审计（两次 dump × 两张表），1 次来自 egress capture 回读。
+
+**出口流隔离项按包扫描**：每次准入经 `maintain_circuits` 执行 `FlowTable::expire_exits`，扫描全部流并对每个隔离项（最多 4,096，保留 120 秒）加锁检查。最近有出口流时（每个 echo、每个经出口的 DNS 查询都是一条流），每个包都付这份线性成本，与该包是否经出口无关。真机复现：it7 经出口 ping 60 秒（300 条 echo 流）后，Mesh 正向降到 207 Mbit/s，owner 升到 93.6%（user 64.4%），约每包多 13 µs（约 43 ns／隔离项）。fixture 采样（下述构建，`perf` 1999 Hz）：发送端 A 52.7% 的样本在这一处，出口 E 16–21%。
+
+| 提交 | 不变量／唯一 owner | 改动 |
+| --- | --- | --- |
+| `289e3058` | 每个包仍检查本流存活，失效即拒；隔离只会更长；wire v6、逐跳 MAC、有界流水线不变／dataplane `FlowTable` | 失效出口流转隔离项与到期隔离项清除按 100 ms 调度（见[数据面](/v2/node/dataplane)）；待发 `Retire` 计数，drive 不再逐个扫描隔离项 |
+| `08ff561c` | 每个回程段仍单独匹配投影并准入／underlay 出口 I/O owner | 出口 TUN 以 offload 批量 I/O 创建，逆 NAT 回包以聚合占一个内核队列槽 |
+| `89def831` | 审计周期与检查项不变／underlay 出口 backend | 每秒审计读一次两张表（此前两次），每个出口节点每秒少 2 个 `nft` 进程 |
+
+fixture 前后对照：`exit/off` 行第 16 阶段（A→R→E，每容器 2 CPU，Planck；iperf3 TCP 20 秒）。daemon 构建为 **dev profile 覆盖 opt-level 3、关闭 debug assertions／溢出检查、保留行表**（`CARGO_PROFILE_DEV_*` 环境变量；不是 release 的 fat LTO／单 codegen unit／panic abort，矩阵默认是未优化 debug 构建），前后同一覆盖、交替运行，Mbit/s 为 各 5 次运行的中位数（范围）：
+
+| 指标 | 改动前 `c72a498a` | 改动后 `89def831` |
+| --- | ---: | ---: |
+| Mesh 正向 | 669（597–718） | **1,996**（1,962–2,016） |
+| Mesh 反向 | 839（693–873） | **2,015**（2,005–2,064） |
+| 出口正向 | 761（620–765） | 882（873–890） |
+| 出口反向 | 1,030（957–1,061） | 1,362（1,334–1,380） |
+| 出口反向时 E 的出口 TUN TX 丢包／次 | 69–133 | 0 |
+| 压力步（出口 TCP 旁每 0.2 秒一条新 echo 流） | 672（660–689），echo 100% | 777（756–780），echo 100% |
+| 压力步 echo 最小 RTT（ms） | 38.2（35.1–38.6） | 27.5（26.0–29.1） |
+
+改动前一次运行（base-4）在第 16 阶段之后的租约阶段失败（`new exit flow refused within the lease: lan`，产品代码未改，其第 16 阶段计入）；改动后一次运行（a3-2）在出口反向时遇到 planck 宿主约 8.4 小时一次的 RTNL 停顿（08:23:57Z，与 D3 预测的 08:23:58Z 一致：DNS `observe_deadline` 4.1 秒、撤回包平面、iperf3 超时），不计入，另补一次。出口反向／Mesh 反向的比值由 1.20–1.39 变为 0.66–0.68，是 Mesh 反向提高的结果，不是出口回退。改后采样（`perf` 499 Hz、DWARF 栈）：A 的 owner 线程以 ChaCha20-Poly1305 封装 8.4%、HMAC-SHA256 7.6%、内存复制 5% 为首，另有 10.2% 在 vdso 时钟读取（每包多次 `Instant::now`／`SystemTime::now`）；E 在出口正向时 12.5% 在 vdso，两个 Tokio worker（出口 driver 与出口 I/O owner）各约 26%。
+
+- 第一项提交单独（`289e3058`，两次）即得到 Mesh 正向 1,976、反向 2,030、出口正向 907、出口反向 1,356：吞吐增益全部来自隔离项扫描。改后 Mesh 正反向约为同环境 L3 secure-direct（2,724，release）的 0.73 倍，其余是 relay 一跳、daemon 每轮工作与构建差异。
+- 出口反向：改动前 E 的出口 TUN 发送队列每次丢 69–133 个包（`ip -s link` TX dropped，等于该次重传数）；改后为 0。fixture 没有 WAN 时延，这些丢包在 1 ms RTT 下只损失少量吞吐；真机的 cubic 发送方在 73 ms RTT 下每次丢包都要很久恢复，planck 一次 20 秒出口反向 tun1 丢 243 个包、重传 136 个（98 Mbit/s），这就是真机出口反向 81–161 波动的来源。改后剩余的出口反向重传（372–3,157 次）不在任何可见计数上，未定位。
+- 出口 echo 延迟：每个 echo 是一条新出口流，要等一轮安装（nft 事务、journal、conntrack 确认），fixture 无负载时也约 35 ms（真机 Mesh 73 ms、出口 112 ms）。压力步中 echo 最小 RTT 由 38.2 ms 降到 27.5 ms（第一项单独为 36.7），与审计少用一半 `nft` 进程一致（同一进程信号量串行全部 nft 调用）。
+- 出口正向现在受出口 driver 逐包串行写出口 TUN 限制（每包两次跨任务交接并等待写入结果，压力步与正向运行都记录 `Exit queue full`），是下一项。
+- A 每秒回读约 7,000 条直连路由的 capture 表（fixture 的国家级规则集），路由 dump 与解析约占其样本 8%；真机 it7 没有这类规则集。
+
+报告：`.meshway/validation/m4/`（`rows/` 每次运行的第 16 阶段 JSON，`extract.py`／`summary.txt` 汇总，`field/` 真机观察脚本与原始输出，`prof/` 采样归因）。下一项按样本排序：出口 driver 的逐包串行写入，以及每包的时钟读取。
 
 ### 匿名驻留与分配器对照
 

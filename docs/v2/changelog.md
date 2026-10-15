@@ -13,6 +13,14 @@
 
 验证：Planck 18 行矩阵 `20261015T062652Z-9a95285c`（`541e48b5`，并行 4）全部通过；`exit/off` 复跑 `20261015T065227Z-9645d57c` 覆盖 A 的出口事实在租约内过期后新出口流照常建立；第 15 阶段断言修改后（`f9115a91`）`exit/off` 单跑 `20261015T123419Z-c3f16022`、`20261015T125059Z-2a2f87b5` 通过，证据 `.meshway/validation/p1/`。真机未部署。
 
+出口流维护与出口 I/O（M4，`m4/cpu-path`）：wire 6、IPC 12、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约均不变。真机 it7 的 Mesh 正向由单个网络 owner 线程承担（76.8%，每外层包约 29 µs），GSO、TUN offload 与 recvmmsg 已在用；分解见[出口流维护与真机 CPU](/v2/node/performance#出口流维护与真机-cpu)。
+
+- 出口流隔离项不再按包扫描：每次准入此前都扫描全部流并逐个加锁检查最多 4,096 个隔离项（每个出口 echo、每个经出口的 DNS 查询都留一个，保留 120 秒），与包是否经出口无关；真机 300 个隔离项使 it7 每包多约 13 µs。失效流转隔离项与到期隔离项清除改为按 100 ms 调度，每个包仍检查本流存活（`289e3058`）。
+- 出口 TUN 以 offload 批量 I/O 创建：批量 TCP 的逆 NAT 回包以聚合进入内核队列，不再在 tun 队列溢出（真机一次 20 秒出口反向丢 243 包，即出口反向波动的来源）；每段仍单独匹配投影并准入（`08ff561c`）。
+- 出口角色每秒审计只读一次两张表：每个出口节点每秒少 2 个 `nft` 进程，审计周期与检查项不变（`89def831`）。
+
+验证：Planck `exit/off` 第 16 阶段（优化的 dev profile，交替运行）Mesh 正向／反向中位数 669→1,996／839→2,015 Mbit/s，出口正向 761→882、反向 1,030→1,362，出口反向时出口 TUN 丢包 69–133→0 次，压力步 echo 最小 RTT 38.2→27.5 ms（各 5 次）；L3 secure-direct（release，2 CPU）前后 2,724／2,727 Mbit/s 不变。Planck 18 行矩阵 `20261015T102511Z-fd1dcaa1`（`1839e70a`，并行 8）全部通过，证据 `.meshway/validation/m4/`。真机未部署。
+
 ## v0.1.0-alpha.11
 
 范围：wire 6、IPC 12、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约均不变（普通升级，无断网窗口）。D3：DNS 锚点读取中断不再结束锚点、owner 失败按检查项字段化记录、egress capture 回读校验未知时有界重试（30 秒）；X10：出口队列溢出只丢包不结束流、已 ACK 流与投影操作公平预留、内核操作与包写入并行、回程批量读写；以及下列 D3、X10 工作包。
