@@ -2,7 +2,9 @@
 
 按合入 main 的顺序记录工作包、提交与证据 ID。规则见[工程流程](/v2/process)；性能数字的口径见[分层性能测量](/v2/node/performance)，验收状态见[验收范围](/v2/node/validation)。
 
-## 未发布
+## v0.1.0-alpha.12
+
+范围：wire 6、IPC 12、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约均不变（普通升级，无断网窗口）。M4：出口流维护按 100 ms 调度而非每包扫描、出口 TUN 以 offload 批量 I/O、出口审计每秒一次读表；P1：peer 事实过期不再拒绝出口流（最后已知就绪仍可选）、sync hold 以节点持有事实的到期为界；以及下列 P1、M4 工作包。
 
 节点持有的 peer 事实在租约内不再仅因时间流逝而过期（P1，`p1/facts-freshness`）：wire 6、IPC 12、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约均不变（Server 与 Node 可分别升级）。X8 发现：事实按报告者 `observedAt` + 60 秒到期，同内容续期不唤醒 sync hold，hold 只以租约为界；节点在 hold 期间（每周期至多约 15–20 秒）或 Node HTTP 中断时失去出口就绪事实，新出口流在租约内被本地拒绝（`netmap_denied`），peer 短暂显示 `offline`（OPS10 观察窗一次）。
 
