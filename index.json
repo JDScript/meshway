@@ -1,8 +1,58 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-15T16:21:11.581729+00:00",
+  "updatedAt": "2026-10-15T16:30:32.307942+00:00",
   "runs": [
+    {
+      "id": 38769188207,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "0af9393e01163194b436b44fa3f84783c1864f9f",
+      "message": "docs: OrbStack DF stripping + WARP path MTU limit (M5)",
+      "createdAt": "2026-10-15T16:27:45Z",
+      "updatedAt": "2026-10-15T16:29:23Z",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/JDScript/meshway/actions/runs/38769188207",
+      "jobs": [
+        {
+          "id": 116540227302,
+          "name": "changes",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-15T16:27:48Z",
+          "completedAt": "2026-10-15T16:28:01Z",
+          "seconds": 13.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38769188207/job/116540227302"
+        },
+        {
+          "id": 116540349751,
+          "name": "web",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-15T16:28:03Z",
+          "completedAt": "2026-10-15T16:29:22Z",
+          "seconds": 79.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38769188207/job/116540349751"
+        },
+        {
+          "id": 116540352265,
+          "name": "cargo",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "skipped",
+          "startedAt": "2026-10-15T16:28:02Z",
+          "completedAt": "2026-10-15T16:28:01Z",
+          "seconds": 0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38769188207/job/116540352265"
+        }
+      ],
+      "artifacts": []
+    },
     {
       "id": 38767449777,
       "attempt": 1,
