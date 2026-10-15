@@ -70,6 +70,11 @@ impl Packets {
             self.drop_packet("exit_reply_capacity");
         }
     }
+    /// Room for one more batch of exit replies; otherwise they wait in the
+    /// exit TUN's queue instead of being dropped here.
+    pub fn can_take_exit_replies(&self, batch: usize) -> bool {
+        self.exit_replies.len() + batch <= MAX_PACKETS
+    }
     pub fn closes(&mut self, frames: Vec<secure::PendingFrame>) {
         for frame in frames {
             if self.closes.len() < MAX_SENDS {
@@ -325,7 +330,8 @@ impl Packets {
         if let Some(exit) = exit.as_deref_mut() {
             exit.drive(secure);
         }
-        for _ in 0..32 {
+        let mut replies = Vec::new();
+        for _ in 0..MAX_SENDS {
             let Some(frame) = self.exit_replies.pop_front() else {
                 break;
             };
@@ -342,14 +348,12 @@ impl Packets {
                     self.exit_replies.push_front(frame);
                     break;
                 }
-                std::task::Poll::Ready(Ok(())) => {
-                    if manager.send(frame).await.is_err() {
-                        self.drop_packet("exit_reply_send");
-                    }
-                }
+                std::task::Poll::Ready(Ok(())) => replies.push(frame),
                 std::task::Poll::Ready(Err(_)) => self.drop_packet("exit_reply_expired"),
             }
         }
+        // One batched send per turn, as for Mesh frames.
+        self.flush_sends(manager, &mut replies).await;
         let ended = secure.take_exit_closes();
         self.closes(ended);
         let mut closes = std::mem::take(&mut self.closes);

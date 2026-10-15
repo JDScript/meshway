@@ -139,13 +139,30 @@ impl ExitReplyReader {
                 _ = self.stop.cancelled() => return Err(Error::Expired),
                 reply = self.receiver.recv() => reply.ok_or(Error::Expired)?,
             };
-            if !self.stop.is_cancelled() && reply.guard.valid() && reply.authority.check().is_ok() {
-                return Ok(ExitReply {
-                    incarnation: reply.incarnation,
-                    packet: reply.packet,
-                });
+            if let Some(reply) = self.admit(reply) {
+                return Ok(reply);
             }
         }
+    }
+
+    /// The next reply, then those already queued behind it, at most `max`:
+    /// the consumer handles a burst in one turn instead of one per wakeup.
+    pub async fn recv_batch(&mut self, max: usize) -> Result<Vec<ExitReply>> {
+        let mut batch = vec![self.recv().await?];
+        while batch.len() < max
+            && let Ok(reply) = self.receiver.try_recv()
+        {
+            batch.extend(self.admit(reply));
+        }
+        Ok(batch)
+    }
+
+    fn admit(&self, reply: Reply) -> Option<ExitReply> {
+        (!self.stop.is_cancelled() && reply.guard.valid() && reply.authority.check().is_ok())
+            .then_some(ExitReply {
+                incarnation: reply.incarnation,
+                packet: reply.packet,
+            })
     }
 }
 
@@ -233,13 +250,20 @@ impl Owner {
                         };
                         let _ = write.reply.send(result);
                     },
-                    result = tun.recv(&mut buffer) => {
+                    // A reply is read only with room for it: while the consumer
+                    // is behind, replies wait in the TUN's own queue (and its
+                    // qdisc), never silently dropped here.
+                    (permit, result) = async {
+                        let permit = replies.reserve().await.ok();
+                        (permit, tun.recv(&mut buffer).await)
+                    } => {
                         let Ok(size) = result else { break; };
                         let packet = &buffer[..size];
                         let guard = view.read().ok().and_then(|view| view.iter().find(|(_, live)| live.valid() && live.reply(packet)).map(|(id, live)| (*id, live.clone())));
-                        if let Some((incarnation, guard)) = guard
+                        if let Some(permit) = permit
+                            && let Some((incarnation, guard)) = guard
                             && let Ok(authority) = authority.validate(guard.tuple, &guard.deadline) {
-                            let _ = replies.try_send(Reply { incarnation, guard, authority, packet: packet.to_vec() });
+                            permit.send(Reply { incarnation, guard, authority, packet: packet.to_vec() });
                         }
                     },
                 }
