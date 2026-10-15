@@ -11,6 +11,8 @@
 - `offline` 语义不变（事实缺失或过期），只显示、不拒绝流；现在它表示报告者停止报告或本节点联系不上 Server。
 - 验收：`exit/off` 去掉第 15 阶段"等 A 取得一次 sync"的绕过；第 8 阶段照旧断言 HTTP 中断期间直到租约到期前新出口流都能建立。Server 单测与 App 测试（hold 在事实到期前带回续期；停止的报告者只缩短一次 hold）、Control 测试（中断期间过期的就绪出口仍是最后已知）、dataplane 黑盒 `netmap_exit_a_last_known_ready_exit_takes_new_flows`。
 
+验证：Planck 18 行矩阵 `20261015T062652Z-9a95285c`（`541e48b5`，并行 4）全部通过；`exit/off` 复跑 `20261015T065227Z-9645d57c` 覆盖 A 的出口事实在租约内过期后新出口流照常建立，证据 `.meshway/validation/p1/`。真机未部署。
+
 ## v0.1.0-alpha.11
 
 范围：wire 6、IPC 12、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约均不变（普通升级，无断网窗口）。D3：DNS 锚点读取中断不再结束锚点、owner 失败按检查项字段化记录、egress capture 回读校验未知时有界重试（30 秒）；X10：出口队列溢出只丢包不结束流、已 ACK 流与投影操作公平预留、内核操作与包写入并行、回程批量读写；以及下列 D3、X10 工作包。
