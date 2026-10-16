@@ -1,8 +1,269 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-16T21:39:06.971592+00:00",
+  "updatedAt": "2026-10-16T22:43:44.050216+00:00",
   "runs": [
+    {
+      "id": 38977113633,
+      "attempt": 1,
+      "workflow": "Build",
+      "event": "push",
+      "branch": "main",
+      "commit": "f499a8090138853064a8733485a6703a4aaf980c",
+      "message": "release: workspace version 0.1.0-alpha.17",
+      "createdAt": "2026-10-16T22:40:11Z",
+      "updatedAt": "2026-10-16T22:40:12Z",
+      "status": "queued",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/38977113633",
+      "jobs": [
+        {
+          "id": 117229121538,
+          "name": "node-linux (aarch64-unknown-linux-musl)",
+          "runner": null,
+          "status": "queued",
+          "conclusion": null,
+          "startedAt": "2026-10-16T22:40:12Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38977113633/job/117229121538"
+        },
+        {
+          "id": 117229121977,
+          "name": "node-linux (x86_64-unknown-linux-musl)",
+          "runner": null,
+          "status": "queued",
+          "conclusion": null,
+          "startedAt": "2026-10-16T22:40:12Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38977113633/job/117229121977"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 38977113562,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "f499a8090138853064a8733485a6703a4aaf980c",
+      "message": "release: workspace version 0.1.0-alpha.17",
+      "createdAt": "2026-10-16T22:40:11Z",
+      "updatedAt": "2026-10-16T22:40:32Z",
+      "status": "queued",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/38977113562",
+      "jobs": [
+        {
+          "id": 117229227697,
+          "name": "changes",
+          "runner": null,
+          "status": "queued",
+          "conclusion": null,
+          "startedAt": "2026-10-16T22:40:32Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38977113562/job/117229227697"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 38977113530,
+      "attempt": 1,
+      "workflow": "Perf",
+      "event": "push",
+      "branch": "main",
+      "commit": "f499a8090138853064a8733485a6703a4aaf980c",
+      "message": "release: workspace version 0.1.0-alpha.17",
+      "createdAt": "2026-10-16T22:40:11Z",
+      "updatedAt": "2026-10-16T22:40:11Z",
+      "status": "pending",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/38977113530",
+      "jobs": [],
+      "artifacts": []
+    },
+    {
+      "id": 38977113528,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "v0.1.0-alpha.17",
+      "commit": "f499a8090138853064a8733485a6703a4aaf980c",
+      "message": "release: workspace version 0.1.0-alpha.17",
+      "createdAt": "2026-10-16T22:40:11Z",
+      "updatedAt": "2026-10-16T22:40:48Z",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/JDScript/meshway/actions/runs/38977113528",
+      "jobs": [
+        {
+          "id": 117229117654,
+          "name": "changes",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-16T22:40:34Z",
+          "completedAt": "2026-10-16T22:40:47Z",
+          "seconds": 13.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38977113528/job/117229117654"
+        },
+        {
+          "id": 117229310023,
+          "name": "cargo",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "skipped",
+          "startedAt": "2026-10-16T22:40:48Z",
+          "completedAt": "2026-10-16T22:40:47Z",
+          "seconds": 0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38977113528/job/117229310023"
+        },
+        {
+          "id": 117229310525,
+          "name": "web",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "skipped",
+          "startedAt": "2026-10-16T22:40:48Z",
+          "completedAt": "2026-10-16T22:40:47Z",
+          "seconds": 0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38977113528/job/117229310525"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 38976894233,
+      "attempt": 1,
+      "workflow": "Build",
+      "event": "push",
+      "branch": "main",
+      "commit": "345d63f90a384b5368621976ddf240a3abc2c0bc",
+      "message": "docs: F6a verification (Planck 23-row matrix 20261016T220618Z-939baafd)",
+      "createdAt": "2026-10-16T22:37:53Z",
+      "updatedAt": "2026-10-16T22:40:12Z",
+      "status": "completed",
+      "conclusion": "cancelled",
+      "url": "https://github.com/JDScript/meshway/actions/runs/38976894233",
+      "jobs": [
+        {
+          "id": 117228390975,
+          "name": "node-linux (x86_64-unknown-linux-musl)",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "cancelled",
+          "startedAt": "2026-10-16T22:37:53Z",
+          "completedAt": "2026-10-16T22:40:11Z",
+          "seconds": 138.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38976894233/job/117228390975"
+        },
+        {
+          "id": 117228391178,
+          "name": "node-linux (aarch64-unknown-linux-musl)",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "cancelled",
+          "startedAt": "2026-10-16T22:37:53Z",
+          "completedAt": "2026-10-16T22:40:11Z",
+          "seconds": 138.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38976894233/job/117228391178"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 38976894179,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "345d63f90a384b5368621976ddf240a3abc2c0bc",
+      "message": "docs: F6a verification (Planck 23-row matrix 20261016T220618Z-939baafd)",
+      "createdAt": "2026-10-16T22:37:53Z",
+      "updatedAt": "2026-10-16T22:40:32Z",
+      "status": "completed",
+      "conclusion": "cancelled",
+      "url": "https://github.com/JDScript/meshway/actions/runs/38976894179",
+      "jobs": [
+        {
+          "id": 117228390985,
+          "name": "changes",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-16T22:37:55Z",
+          "completedAt": "2026-10-16T22:38:07Z",
+          "seconds": 12.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38976894179/job/117228390985"
+        },
+        {
+          "id": 117228466145,
+          "name": "web",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "cancelled",
+          "startedAt": "2026-10-16T22:38:10Z",
+          "completedAt": "2026-10-16T22:40:31Z",
+          "seconds": 141.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38976894179/job/117228466145"
+        },
+        {
+          "id": 117228466228,
+          "name": "cargo",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "cancelled",
+          "startedAt": "2026-10-16T22:38:07Z",
+          "completedAt": "2026-10-16T22:40:11Z",
+          "seconds": 124.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38976894179/job/117228466228"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 38976894150,
+      "attempt": 1,
+      "workflow": "Perf",
+      "event": "push",
+      "branch": "main",
+      "commit": "345d63f90a384b5368621976ddf240a3abc2c0bc",
+      "message": "docs: F6a verification (Planck 23-row matrix 20261016T220618Z-939baafd)",
+      "createdAt": "2026-10-16T22:37:53Z",
+      "updatedAt": "2026-10-16T22:37:56Z",
+      "status": "in_progress",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/38976894150",
+      "jobs": [
+        {
+          "id": 117228390727,
+          "name": "perf",
+          "runner": "planck",
+          "status": "in_progress",
+          "conclusion": null,
+          "startedAt": "2026-10-16T22:37:54Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38976894150/job/117228390727"
+        },
+        {
+          "id": 117228391265,
+          "name": "perf-arm64",
+          "runner": "jp-tyo-arm64",
+          "status": "in_progress",
+          "conclusion": null,
+          "startedAt": "2026-10-16T22:37:55Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38976894150/job/117228391265"
+        }
+      ],
+      "artifacts": []
+    },
     {
       "id": 38968788512,
       "attempt": 1,
