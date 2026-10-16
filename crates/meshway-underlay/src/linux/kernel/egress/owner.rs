@@ -49,9 +49,8 @@ impl ClampRetry {
     }
     fn failed(&mut self, now: std::time::Instant) -> Duration {
         self.failures = self.failures.saturating_add(1);
-        let wait = Duration::from_secs(1)
-            .saturating_mul(1 << self.failures.saturating_sub(1).min(6))
-            .min(Duration::from_secs(60));
+        let wait = meshway_model::Backoff::new(Duration::from_secs(1), Duration::from_secs(60))
+            .delay(self.failures);
         self.at = Some(now + wait);
         wait
     }

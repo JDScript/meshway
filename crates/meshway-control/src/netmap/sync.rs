@@ -457,7 +457,7 @@ pub async fn sync_loop_with(
         }
         let delay = match wait {
             Some(delay) => {
-                backoff = (backoff * 2).min(BACKOFF_MAX);
+                backoff = meshway_model::Backoff::new(BACKOFF_MIN, BACKOFF_MAX).next(backoff);
                 Some(delay)
             }
             None => idle.then_some(IDLE_SPACING),

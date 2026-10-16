@@ -225,7 +225,8 @@ impl Retry {
             Reread::Unavailable(_) if left.is_zero() => return Err("verify_unavailable"),
             Reread::Done | Reread::Start | Reread::Unavailable(_) => {
                 let wait = self.wait.min(left);
-                self.wait = (self.wait * 2).min(CHANGE_RETRY_MAX);
+                self.wait =
+                    meshway_model::Backoff::new(CHANGE_RETRY, CHANGE_RETRY_MAX).next(self.wait);
                 wait
             }
         };

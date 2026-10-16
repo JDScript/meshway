@@ -150,10 +150,9 @@ struct Reproof {
 impl Reproof {
     /// When the next attempt is due after an unavailable end at `ended`.
     fn due(&self, ended: std::time::Instant) -> std::time::Instant {
-        let wait = REPROOF
-            .saturating_mul(1 << self.attempts.min(5))
-            .min(REPROOF_MAX);
-        self.last.unwrap_or(ended) + if self.attempts == 0 { REPROOF } else { wait }
+        self.last.unwrap_or(ended)
+            + meshway_model::Backoff::new(REPROOF, REPROOF_MAX)
+                .delay(self.attempts.saturating_add(1))
     }
 }
 

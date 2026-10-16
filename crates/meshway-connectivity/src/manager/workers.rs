@@ -105,8 +105,7 @@ pub(super) const MAX_CANDIDATE_BACKOFF: std::time::Duration = std::time::Duratio
 /// The pause after `failures` consecutive failures: `base · 2^(failures − 1)`,
 /// at most [`MAX_CANDIDATE_BACKOFF`].
 pub(super) fn backoff(base: std::time::Duration, failures: u32) -> std::time::Duration {
-    base.saturating_mul(1 << failures.saturating_sub(1).min(16))
-        .min(MAX_CANDIDATE_BACKOFF)
+    meshway_model::Backoff::new(base, MAX_CANDIDATE_BACKOFF).delay(failures)
 }
 
 /// Endpoint sources an explicit dial tries, in this priority order. STUN

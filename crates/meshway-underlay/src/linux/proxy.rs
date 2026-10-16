@@ -428,9 +428,7 @@ fn retry_delay(error: &Error, attempts: u32) -> Duration {
     const LIMIT: Duration = Duration::from_secs(60);
     match error {
         Error::Io(error) if error.kind() == io::ErrorKind::PermissionDenied => LIMIT,
-        _ => Duration::from_secs(1)
-            .saturating_mul(1 << attempts.saturating_sub(1).min(6))
-            .min(LIMIT),
+        _ => meshway_model::Backoff::new(Duration::from_secs(1), LIMIT).delay(attempts),
     }
 }
 

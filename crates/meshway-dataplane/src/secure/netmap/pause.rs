@@ -75,10 +75,7 @@ impl FirstPackets {
             entry.content = content;
         }
         entry.count = entry.count.saturating_add(1);
-        entry.until = now
-            + base
-                .saturating_mul(1 << (entry.count - 1).min(16))
-                .min(MAX_PATH_PAUSE);
+        entry.until = now + meshway_model::Backoff::new(base, MAX_PATH_PAUSE).delay(entry.count);
     }
     /// New content keeps the pause of every path whose own content is equal.
     pub(super) fn retain_paths(

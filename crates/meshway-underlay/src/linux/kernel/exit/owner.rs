@@ -858,7 +858,7 @@ impl super::super::Kernel {
                     },
                     _ = tokio::time::sleep(wait) => {},
                 }
-                wait = (wait * 2).min(CLEANUP_RETRY_MAX);
+                wait = meshway_model::Backoff::new(CLEANUP_RETRY, CLEANUP_RETRY_MAX).next(wait);
                 attempts = attempts.saturating_add(1);
                 result = backend.close_observed(true).await;
             }
