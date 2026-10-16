@@ -2,6 +2,14 @@
 
 按合入 main 的顺序记录工作包、提交与证据 ID。规则见[工程流程](/v2/process)；性能数字的口径见[分层性能测量](/v2/node/performance)，验收状态见[验收范围](/v2/node/validation)。
 
+## 未发布
+
+宿主内核归属的暂态阻断自愈（X13，`x13/unavailable-recovery`）：wire 6、IPC 12、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约均不变（只改 Node；Status 字段不变，`lastErrorDetail` 多一类文本）。
+
+- Underlay（不变量：因读不到或变更结果未知满 30 秒而进入的 fail closed 是暂态阻断，只有读到已证实的外来不一致才是持久冲突；owner：Host 的宿主内核归属）：归属结束记录原因（`OwnershipEnd`：`unavailable`／`conflict`）；暂态阻断后 Host 在结束后 1 秒起、翻倍、间隔至多 8 秒重证：结束旧一期（任务、控制中继、owner、TUN），按进程启动的同一路径打开新一期，与 journal 一致即以同一 netmap 重装，读到外来对象则改为持久冲突。此前 alpha.14 lab sha 限额 45 秒 3 次中 2 次在 `verify_unavailable` 后每次安装报 conflict，直到 `docker restart`：整个 Host 共用的 conflict token 一旦取消再无更新途径，内核与 journal 并无外来对象。定义见[宿主内核归属的结束与重证](/v2/node/runtime#ownership-end)。
+- Status：`lastErrorDetail` 给出 `kernelOwnership: unavailable (<check>); proving ownership again`／`… conflict (<check>); stays failed closed until restart`；`exit.cleanupPending` 直接读出口 owner 的现值，清理完成即消失（此前随能力探测刷新，约晚 15 秒）。
+- 验收：隔离测试 `reproof::an_unavailable_ownership_end_is_proved_again_and_a_foreign_object_keeps_it_ended`；lab sha 限额 60 秒 3 次、90 秒 3 次，其中 2 次走 `verify_unavailable`，6 次均在限额解除后 2 秒内 running／ready，见 [X13](/v2/node/validation#x13-reproof)。
+
 ## v0.1.0-alpha.14
 
 范围：wire 6、IPC 12（Status 新增可省略字段 `lastNetworkChange`、`changePending`）、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约均不变（普通升级，无断网窗口；CLI 与 daemon 一起升级）。R1：漫游按指纹分类 path／refresh、已有通道跟随到新来源、本机网络变化后候选节奏清零；R2：NAT 后由漫游方重新穿透、空窗内新流经策略中继、flap，对端持旧半边时也接受其穿透请求；X12：内核变更失败视为未知，先重读再有界重试并以 `changePending` 报告，本端换 boot 与对端换 boot 对称退役 circuit，apply 失败重建 Manager 时保留 boot；以及下列 R2、X12、R1 工作包。
