@@ -28,15 +28,19 @@ use super::{
 };
 use crate::{Error, Options, Result};
 
+/// An upstream resolver and the configuration generation it was built from.
+type Built = (u64, HickoryResolver<Provider>);
+
 #[derive(Clone)]
 pub(super) struct Resolver {
-    inner: Option<HickoryResolver<Provider>>,
+    upstreams: Arc<Upstreams>,
+    /// The upstream resolver built for this scope from the upstream
+    /// configuration of the generation it names.
+    inner: Arc<std::sync::Mutex<Option<Built>>>,
     hosts: Arc<HostsFile>,
     overrides: Arc<BTreeMap<String, Vec<IpAddr>>>,
     shared: Arc<Shared>,
     scope: ProtectionScope,
-    config: Option<ResolverConfig>,
-    resolver_options: ResolverOpts,
     timeout: Duration,
 }
 
@@ -56,8 +60,7 @@ impl Resolver {
             }
             overrides.insert(name, addresses.clone());
         }
-        let mut resolver_options = hickory_resolver::config::ResolverOpts::default();
-        let config = if let Some(upstreams) = &options.bootstrap_nameservers {
+        let upstreams = if let Some(upstreams) = &options.bootstrap_nameservers {
             if upstreams.iter().any(|a| {
                 a.port() == 0
                     || a.ip().is_loopback()
@@ -76,67 +79,23 @@ impl Resolver {
                     config
                 })
                 .collect();
-            Some(ResolverConfig::from_parts(None, Vec::new(), servers))
+            Upstreams::fixed(
+                ResolverConfig::from_parts(None, Vec::new(), servers),
+                options.connect_timeout,
+            )
         } else {
-            let mut parsed = match read_bounded("/etc/resolv.conf").await {
-                Ok(bytes) => hickory_resolver::system_conf::parse_resolv_conf(&bytes).ok(),
-                Err(_) => None,
-            };
-            if parsed
-                .as_ref()
-                .is_some_and(|(cfg, _)| cfg.name_servers().iter().any(|s| s.ip.is_loopback()))
-            {
-                // Only the known systemd stub mapping has a discoverable real
-                // upstream file. Docker and arbitrary local stubs stay unsupported.
-                let known = tokio::fs::canonicalize("/etc/resolv.conf")
-                    .await
-                    .ok()
-                    .is_some_and(|path| {
-                        path == std::path::Path::new("/run/systemd/resolve/stub-resolv.conf")
-                    });
-                parsed = if known {
-                    match read_bounded("/run/systemd/resolve/resolv.conf").await {
-                        Ok(bytes) => hickory_resolver::system_conf::parse_resolv_conf(&bytes).ok(),
-                        Err(_) => None,
-                    }
-                } else {
-                    None
-                };
-            }
-            match parsed {
-                Some((cfg, opts))
-                    if !cfg.name_servers().is_empty()
-                        && cfg.name_servers().len() <= 8
-                        && cfg.name_servers().iter().all(|s| {
-                            !s.ip.is_loopback() && !s.ip.is_unspecified() && !s.ip.is_multicast()
-                        }) =>
-                {
-                    resolver_options = opts;
-                    Some(cfg)
-                }
-                _ => None,
-            }
+            Upstreams::system(SystemPaths::default(), options.connect_timeout)
         };
-        resolver_options.timeout = options.connect_timeout;
-        resolver_options.attempts = 2;
-        resolver_options.cache_size = 64;
-        resolver_options.num_concurrent_reqs = 2;
-        let hosts = Arc::new(hosts);
+        let upstreams = Arc::new(upstreams);
+        upstreams.current().await?;
         let scope = shared.bootstrap();
-        let inner = build(
-            config.clone(),
-            resolver_options.clone(),
-            scope.clone(),
-            options.connect_timeout,
-        )?;
         Ok(Self {
-            inner,
-            hosts,
+            upstreams,
+            inner: Arc::default(),
+            hosts: Arc::new(hosts),
             overrides: Arc::new(overrides),
             shared,
             scope,
-            config,
-            resolver_options,
             timeout: options.connect_timeout,
         })
     }
@@ -145,17 +104,31 @@ impl Resolver {
     /// cannot borrow the Server bootstrap exemption after publication expiry.
     pub fn scoped(&self, scope: ProtectionScope) -> Result<Self> {
         scope.check()?;
-        let inner = build(
-            self.config.clone(),
-            self.resolver_options.clone(),
-            scope.clone(),
-            self.timeout,
-        )?;
         Ok(Self {
-            inner,
+            inner: Arc::default(),
             scope,
             ..self.clone()
         })
+    }
+
+    /// The upstream resolver of the system configuration as it is now; a
+    /// changed configuration (a new network's DHCP or resolved upstreams)
+    /// builds a new one.
+    async fn upstream(&self) -> Result<Option<HickoryResolver<Provider>>> {
+        let (generation, config) = self.upstreams.current().await?;
+        let mut inner = self.inner.lock().map_err(|_| Error::Worker)?;
+        if let Some((built, resolver)) = inner.as_ref()
+            && *built == generation
+        {
+            return Ok(Some(resolver.clone()));
+        }
+        let Some((config, options)) = config else {
+            *inner = None;
+            return Ok(None);
+        };
+        let resolver = build(config, options, self.scope.clone(), self.timeout)?;
+        *inner = Some((generation, resolver.clone()));
+        Ok(Some(resolver))
     }
 
     pub async fn resolve(&self, host: &str, port: u16) -> Result<Vec<SocketAddr>> {
@@ -199,7 +172,7 @@ impl Resolver {
             }
         }
         if addresses.is_empty() {
-            let resolver = self.inner.as_ref().ok_or(Error::Resolver)?;
+            let resolver = self.upstream().await?.ok_or(Error::Resolver)?;
             let scope = self.scope.clone();
             let answer = tokio::select! { biased;
                 _ = scope.ended() => return Err(Error::Conflict),
@@ -216,41 +189,206 @@ impl Resolver {
     }
 }
 
+/// Where the system resolver configuration lives.
+#[derive(Clone)]
+struct SystemPaths {
+    resolv: std::path::PathBuf,
+    /// The systemd stub `resolv` may point at; only it has a discoverable
+    /// real upstream file.
+    stub: std::path::PathBuf,
+    /// resolved's real upstreams behind that stub.
+    upstream: std::path::PathBuf,
+}
+
+impl Default for SystemPaths {
+    fn default() -> Self {
+        Self {
+            resolv: "/etc/resolv.conf".into(),
+            stub: "/run/systemd/resolve/stub-resolv.conf".into(),
+            upstream: "/run/systemd/resolve/resolv.conf".into(),
+        }
+    }
+}
+
+type UpstreamConfig = Option<(ResolverConfig, ResolverOpts)>;
+
+/// The bootstrap resolver's upstreams: explicit ones, or the system's as its
+/// files are now. Every lookup compares the files' identity and change times
+/// (and where `resolv.conf` points) and parses them again when they differ,
+/// so a network whose DHCP or resolved replaces the upstreams needs no
+/// service restart.
+struct Upstreams {
+    paths: Option<SystemPaths>,
+    timeout: Duration,
+    current: std::sync::Mutex<UpstreamState>,
+}
+
+struct UpstreamState {
+    /// `None` until read; then the files' stamps it was read from.
+    stamp: Option<UpstreamStamp>,
+    generation: u64,
+    config: UpstreamConfig,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct UpstreamStamp {
+    target: Option<std::path::PathBuf>,
+    resolv: Option<HostsStamp>,
+    upstream: Option<HostsStamp>,
+}
+
+impl Upstreams {
+    fn fixed(config: ResolverConfig, timeout: Duration) -> Self {
+        Self {
+            paths: None,
+            timeout,
+            current: std::sync::Mutex::new(UpstreamState {
+                stamp: None,
+                generation: 0,
+                config: Some((config, options(ResolverOpts::default(), timeout))),
+            }),
+        }
+    }
+
+    fn system(paths: SystemPaths, timeout: Duration) -> Self {
+        Self {
+            paths: Some(paths),
+            timeout,
+            current: std::sync::Mutex::new(UpstreamState {
+                stamp: None,
+                generation: 0,
+                config: None,
+            }),
+        }
+    }
+
+    /// The configuration's generation (it changes with the configuration)
+    /// and the configuration; `None` without a usable upstream.
+    async fn current(&self) -> Result<(u64, UpstreamConfig)> {
+        let Some(paths) = &self.paths else {
+            let current = self.current.lock().map_err(|_| Error::Worker)?;
+            return Ok((current.generation, current.config.clone()));
+        };
+        let stamp = UpstreamStamp {
+            target: tokio::fs::canonicalize(&paths.resolv).await.ok(),
+            // An unreadable file is no upstream, as an absent one.
+            resolv: stamp(&paths.resolv).await.ok().flatten(),
+            upstream: stamp(&paths.upstream).await.ok().flatten(),
+        };
+        {
+            let current = self.current.lock().map_err(|_| Error::Worker)?;
+            if current.stamp.as_ref() == Some(&stamp) {
+                return Ok((current.generation, current.config.clone()));
+            }
+        }
+        let config = system_config(paths, stamp.target.as_deref())
+            .await
+            .map(|(config, parsed)| (config, options(parsed, self.timeout)));
+        let mut current = self.current.lock().map_err(|_| Error::Worker)?;
+        if current.stamp.is_some() {
+            tracing::info!(
+                upstreams = config
+                    .as_ref()
+                    .map_or(0, |(config, _)| config.name_servers().len()),
+                "Bootstrap resolver upstreams changed; using the current configuration"
+            );
+        }
+        current.generation = current.generation.wrapping_add(1);
+        current.stamp = Some(stamp);
+        current.config = config;
+        Ok((current.generation, current.config.clone()))
+    }
+}
+
+/// This resolver's fixed limits over whatever the configuration asks for.
+fn options(mut options: ResolverOpts, timeout: Duration) -> ResolverOpts {
+    options.timeout = timeout;
+    options.attempts = 2;
+    options.cache_size = 64;
+    options.num_concurrent_reqs = 2;
+    options
+}
+
+/// The system's real upstreams: `resolv.conf`'s, or behind the systemd stub
+/// resolved's own file. Docker and arbitrary local stubs stay unsupported.
+async fn system_config(
+    paths: &SystemPaths,
+    target: Option<&std::path::Path>,
+) -> Option<(ResolverConfig, ResolverOpts)> {
+    let mut parsed = match read_bounded(&paths.resolv).await {
+        Ok(bytes) => hickory_resolver::system_conf::parse_resolv_conf(&bytes).ok(),
+        Err(_) => None,
+    };
+    if parsed
+        .as_ref()
+        .is_some_and(|(cfg, _)| cfg.name_servers().iter().any(|s| s.ip.is_loopback()))
+    {
+        parsed = if target == Some(paths.stub.as_path()) {
+            match read_bounded(&paths.upstream).await {
+                Ok(bytes) => hickory_resolver::system_conf::parse_resolv_conf(&bytes).ok(),
+                Err(_) => None,
+            }
+        } else {
+            None
+        };
+    }
+    parsed.filter(|(cfg, _)| {
+        !cfg.name_servers().is_empty()
+            && cfg.name_servers().len() <= 8
+            && cfg
+                .name_servers()
+                .iter()
+                .all(|s| !s.ip.is_loopback() && !s.ip.is_unspecified() && !s.ip.is_multicast())
+    })
+}
+
 fn build(
-    config: Option<ResolverConfig>,
+    config: ResolverConfig,
     options: ResolverOpts,
     scope: ProtectionScope,
     timeout: Duration,
-) -> Result<Option<HickoryResolver<Provider>>> {
-    config
-        .map(|config| {
-            let upstreams = config
-                .name_servers()
+) -> Result<HickoryResolver<Provider>> {
+    let upstreams = config
+        .name_servers()
+        .iter()
+        .flat_map(|server| {
+            server
+                .connections
                 .iter()
-                .flat_map(|server| {
-                    server
-                        .connections
-                        .iter()
-                        .map(move |connection| SocketAddr::new(server.ip, connection.port))
-                })
-                .collect();
-            let provider = Provider {
-                scope,
-                upstreams: Arc::new(upstreams),
-                timeout,
-            };
-            let mut builder = HickoryResolver::builder_with_config(config, provider);
-            *builder.options_mut() = options;
-            let mut resolver = builder.build().map_err(|_| Error::Resolver)?;
-            // System hosts are answered above from the current file only;
-            // the upstream resolver never holds a copy that could go stale.
-            resolver.set_hosts(Arc::new(Hosts::default()));
-            Ok(resolver)
+                .map(move |connection| SocketAddr::new(server.ip, connection.port))
         })
-        .transpose()
+        .collect();
+    let provider = Provider {
+        scope,
+        upstreams: Arc::new(upstreams),
+        timeout,
+    };
+    let mut builder = HickoryResolver::builder_with_config(config, provider);
+    *builder.options_mut() = options;
+    let mut resolver = builder.build().map_err(|_| Error::Resolver)?;
+    // System hosts are answered above from the current file only; the
+    // upstream resolver never holds a copy that could go stale.
+    resolver.set_hosts(Arc::new(Hosts::default()));
+    Ok(resolver)
 }
 
 const HOSTS: &str = "/etc/hosts";
+
+/// A file's identity and change times as they are now; `None` when absent.
+async fn stamp(path: &std::path::Path) -> Result<Option<HostsStamp>> {
+    use std::os::unix::fs::MetadataExt;
+    match tokio::fs::metadata(path).await {
+        Ok(meta) => Ok(Some(HostsStamp {
+            device: meta.dev(),
+            inode: meta.ino(),
+            size: meta.size(),
+            modified: (meta.mtime(), meta.mtime_nsec()),
+            changed: (meta.ctime(), meta.ctime_nsec()),
+        })),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.into()),
+    }
+}
 
 /// The system hosts file as it is now: every lookup compares the file's
 /// identity and change times and re-reads it when they differ, so editing
@@ -278,18 +416,7 @@ impl HostsFile {
     }
 
     async fn current(&self) -> Result<Arc<Hosts>> {
-        use std::os::unix::fs::MetadataExt;
-        let stamp = match tokio::fs::metadata(&self.path).await {
-            Ok(meta) => Some(HostsStamp {
-                device: meta.dev(),
-                inode: meta.ino(),
-                size: meta.size(),
-                modified: (meta.mtime(), meta.mtime_nsec()),
-                changed: (meta.ctime(), meta.ctime_nsec()),
-            }),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-            Err(error) => return Err(error.into()),
-        };
+        let stamp = stamp(&self.path).await?;
         {
             let current = self.current.lock().map_err(|_| Error::Worker)?;
             if current.0 == stamp {
@@ -481,6 +608,66 @@ mod tests {
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    fn servers(config: &UpstreamConfig) -> Vec<IpAddr> {
+        config
+            .as_ref()
+            .map(|(config, _)| {
+                config
+                    .name_servers()
+                    .iter()
+                    .map(|server| server.ip)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    #[tokio::test]
+    async fn bootstrap_upstreams_follow_the_system_files_as_they_are_now() {
+        let root = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(root.path()).unwrap();
+        let paths = SystemPaths {
+            resolv: root.join("resolv.conf"),
+            stub: root.join("stub-resolv.conf"),
+            upstream: root.join("upstream.conf"),
+        };
+        let replace = |path: &std::path::Path, text: &str| {
+            let next = root.join("next");
+            std::fs::write(&next, text).unwrap();
+            std::fs::rename(&next, path).unwrap();
+        };
+        let upstreams = Upstreams::system(paths.clone(), Duration::from_secs(1));
+        assert!(servers(&upstreams.current().await.unwrap().1).is_empty());
+        replace(&paths.resolv, "nameserver 192.0.2.1\n");
+        let (first, config) = upstreams.current().await.unwrap();
+        assert_eq!(servers(&config), ["192.0.2.1".parse::<IpAddr>().unwrap()]);
+        assert_eq!(upstreams.current().await.unwrap().0, first);
+        // A new network's DHCP client replaces the file.
+        replace(&paths.resolv, "nameserver 192.0.2.2\n");
+        let (second, config) = upstreams.current().await.unwrap();
+        assert_ne!(second, first);
+        assert_eq!(servers(&config), ["192.0.2.2".parse::<IpAddr>().unwrap()]);
+        // resolved's stub: its real upstream file is read, and followed.
+        replace(&paths.stub, "nameserver 127.0.0.53\n");
+        replace(&paths.upstream, "nameserver 198.51.100.1\n");
+        std::fs::remove_file(&paths.resolv).unwrap();
+        std::os::unix::fs::symlink(&paths.stub, &paths.resolv).unwrap();
+        let config = upstreams.current().await.unwrap().1;
+        assert_eq!(
+            servers(&config),
+            ["198.51.100.1".parse::<IpAddr>().unwrap()]
+        );
+        replace(&paths.upstream, "nameserver 198.51.100.2\n");
+        let config = upstreams.current().await.unwrap().1;
+        assert_eq!(
+            servers(&config),
+            ["198.51.100.2".parse::<IpAddr>().unwrap()]
+        );
+        // Any other local stub has no discoverable upstream.
+        std::fs::remove_file(&paths.resolv).unwrap();
+        replace(&paths.resolv, "nameserver 127.0.0.11\n");
+        assert!(servers(&upstreams.current().await.unwrap().1).is_empty());
     }
 
     #[tokio::test]
