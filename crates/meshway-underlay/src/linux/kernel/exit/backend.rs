@@ -1203,6 +1203,7 @@ pub(super) fn replicate(error: &Error) -> Error {
         },
         Error::Resolver => Error::Resolver,
         Error::Netlink => Error::Netlink,
+        Error::Drain => Error::Drain,
         Error::Worker => Error::Worker,
         Error::Io(error) | Error::Bind { source: error, .. } => {
             Error::Io(std::io::Error::new(error.kind(), error.to_string()))

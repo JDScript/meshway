@@ -133,7 +133,8 @@ pub enum OwnershipEnd {
     /// An owner could not read its objects back, or a change of them stayed
     /// unknown, for its whole limit (`check`: `verify_unavailable`,
     /// `change_unavailable`, `monitor_unavailable`, `install_unavailable`,
-    /// `repair_unavailable`). Nothing proved another writer: the Host proves
+    /// `repair_unavailable`, `drain_unavailable`, `connection_unavailable`,
+    /// `relay_unavailable`). Nothing proved another writer: the Host proves
     /// its ownership again (1 s after the end, doubling, at most 8 s apart) and
     /// recovers on its own once the kernel reads back consistent.
     Unavailable { check: &'static str },
@@ -266,6 +267,11 @@ pub enum Error {
     Tun(#[from] meshway_tun::Error),
     #[error("kernel netlink operation failed")]
     Netlink,
+    /// The kernel monitor did not drain the notifications of an owner's own
+    /// change within its deadline (a stalled host): proves nothing about
+    /// ownership.
+    #[error("kernel monitor did not drain the owner's notifications within 3 s")]
+    Drain,
     #[error("underlay worker stopped unexpectedly")]
     Worker,
 }

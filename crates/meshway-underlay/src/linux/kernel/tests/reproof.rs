@@ -242,3 +242,24 @@ async fn an_unavailable_ownership_end_is_proved_again_and_a_foreign_object_keeps
     let mut host = Host::open(directory, Options::default()).await.unwrap();
     host.down().await.unwrap();
 }
+
+/// X15: a monitor drain that misses its 3 s deadline is an unavailable end
+/// with its own cause (re-proved like any other), not a conflict; a
+/// read-back that differs still is one. The stopped request connection's
+/// end: `protection::tests`.
+#[test]
+fn a_missed_drain_ends_ownership_as_unavailable() {
+    use crate::OwnershipEnd;
+    for operation in ["install", "repair"] {
+        assert_eq!(
+            super::super::ended(operation, &Error::Drain),
+            OwnershipEnd::Unavailable {
+                check: "drain_unavailable"
+            }
+        );
+    }
+    assert_eq!(
+        super::super::ended("install", &Error::Conflict),
+        OwnershipEnd::Conflict { check: "install" }
+    );
+}

@@ -45,7 +45,7 @@ pub(super) struct Shared {
     pub selectors: Vec<Selector>,
     /// Ends this term of kernel ownership; [`Self::end`] records why.
     pub conflict: CancellationToken,
-    pub ending: Mutex<Option<(crate::OwnershipEnd, std::time::Instant)>>,
+    pub ending: Arc<Ending>,
     pub network: super::kernel::network::Network,
     pub tasks: Tasks,
     pub sockets: Arc<Semaphore>,
@@ -125,12 +125,18 @@ impl Resources {
     }
 }
 
-impl Shared {
-    /// End this term of kernel ownership for `cause`. A proven conflict
-    /// replaces an earlier unavailable end, never the reverse; a token
-    /// cancelled without a recorded cause counts as a conflict.
-    pub fn end(&self, cause: crate::OwnershipEnd) {
-        if let Ok(mut ending) = self.ending.lock() {
+/// Why and when a term of kernel ownership ended. Created with the term's
+/// token, before [`Shared`], so the term's own netlink connection tasks
+/// record their end too.
+#[derive(Default)]
+pub(super) struct Ending(Mutex<Option<(crate::OwnershipEnd, std::time::Instant)>>);
+
+impl Ending {
+    /// End the term of `conflict` for `cause`. A proven conflict replaces an
+    /// earlier unavailable end, never the reverse; a token cancelled without
+    /// a recorded cause counts as a conflict.
+    pub fn end(&self, conflict: &CancellationToken, cause: crate::OwnershipEnd) {
+        if let Ok(mut ending) = self.0.lock() {
             let replace = match &*ending {
                 None => true,
                 Some((crate::OwnershipEnd::Unavailable { .. }, _)) => {
@@ -142,7 +148,17 @@ impl Shared {
                 *ending = Some((cause, std::time::Instant::now()));
             }
         }
-        self.conflict.cancel();
+        conflict.cancel();
+    }
+    fn recorded(&self) -> Option<(crate::OwnershipEnd, std::time::Instant)> {
+        self.0.lock().ok().and_then(|ending| *ending)
+    }
+}
+
+impl Shared {
+    /// End this term of kernel ownership for `cause` (see [`Ending::end`]).
+    pub fn end(&self, cause: crate::OwnershipEnd) {
+        self.ending.end(&self.conflict, cause);
     }
 
     /// The channels a new term of this Host continues.
@@ -169,7 +185,7 @@ impl Shared {
         if !self.conflict.is_cancelled() {
             return None;
         }
-        let recorded = self.ending.lock().ok().and_then(|ending| *ending);
+        let recorded = self.ending.recorded();
         Some(recorded.unwrap_or((
             crate::OwnershipEnd::Conflict {
                 check: "unrecorded",
@@ -388,6 +404,48 @@ pub(super) fn io_error(error: Error) -> io::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// X15: a term's request connection that stops ends it as unavailable
+    /// with that cause recorded (not an unrecorded conflict); the first
+    /// unavailable cause stands, and a proven conflict replaces it, never
+    /// the reverse.
+    #[test]
+    fn a_stopped_connection_records_an_unavailable_end_a_conflict_replaces() {
+        use crate::OwnershipEnd;
+        let conflict = CancellationToken::new();
+        let ending = Ending::default();
+        ending.end(
+            &conflict,
+            OwnershipEnd::Unavailable {
+                check: "connection_unavailable",
+            },
+        );
+        assert!(conflict.is_cancelled());
+        ending.end(
+            &conflict,
+            OwnershipEnd::Unavailable {
+                check: "monitor_unavailable",
+            },
+        );
+        assert_eq!(
+            ending.recorded().map(|(cause, _)| cause),
+            Some(OwnershipEnd::Unavailable {
+                check: "connection_unavailable"
+            }),
+            "the first unavailable cause stands"
+        );
+        ending.end(&conflict, OwnershipEnd::Conflict { check: "monitor" });
+        ending.end(
+            &conflict,
+            OwnershipEnd::Unavailable {
+                check: "drain_unavailable",
+            },
+        );
+        assert_eq!(
+            ending.recorded().map(|(cause, _)| cause),
+            Some(OwnershipEnd::Conflict { check: "monitor" })
+        );
+    }
 
     #[test]
     fn preserves_external_bits_and_rejects_changed_selector_results() {

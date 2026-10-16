@@ -273,12 +273,12 @@ impl Host {
             return Err(Error::Conflict);
         }
         let origin = meshway_control::server_origin(origin).map_err(|_| Error::Origin)?;
-        self.open_proxy(&origin).await?;
+        self.open_proxy(&origin, proxy::Listen::Now).await?;
         self.origin = Some(origin);
         Ok(())
     }
 
-    async fn open_proxy(&mut self, origin: &str) -> Result<()> {
+    async fn open_proxy(&mut self, origin: &str, listen: proxy::Listen) -> Result<()> {
         self.kernel.shared.check()?;
         let resolver = self.sockets.resolver().await?.clone();
         self.proxy = Some(
@@ -289,6 +289,7 @@ impl Host {
                 resolver,
                 self.sockets.options.max_sockets,
                 self.sockets.options.connect_timeout,
+                listen,
             )
             .await?,
         );
@@ -361,10 +362,11 @@ impl Host {
         self.sockets = sockets;
         self.tasks = tasks;
         if let Some(origin) = self.origin.clone()
-            && let Err(error) = self.open_proxy(&origin).await
+            && let Err(error) = self.open_proxy(&origin, proxy::Listen::Retrying).await
         {
-            // The new term holds; only its relay did not open. End it as
-            // unavailable: the next attempt opens both again.
+            // The new term holds; only its relay's resolver did not open (a
+            // socket that cannot listen yet is the relay's own retry). End
+            // it as unavailable: the next attempt opens both again.
             tracing::warn!(%error, "Protected control relay did not open in the new ownership term");
             self.kernel.shared.end(crate::OwnershipEnd::Unavailable {
                 check: "relay_unavailable",
@@ -392,7 +394,7 @@ impl Host {
     /// A failed re-proof: a read or change that failed again keeps the end
     /// unavailable; anything else makes it a conflict.
     fn reproof_failed(&mut self, error: Error) -> Error {
-        let transient = matches!(error, Error::Netlink | Error::Io(_));
+        let transient = matches!(error, Error::Netlink | Error::Io(_) | Error::Drain);
         let failure = error.to_string();
         if self.reproof.failure.as_ref() != Some(&failure) {
             if transient {

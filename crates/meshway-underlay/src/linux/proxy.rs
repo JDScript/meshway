@@ -29,9 +29,18 @@ struct Record {
 
 pub(super) struct Proxy {
     path: PathBuf,
-    record: Record,
-    uid: u32,
-    _directory: Arc<Directory>,
+    socket: Arc<Socket>,
+    /// Stops the listener owner with this Proxy.
+    stop: tokio_util::sync::CancellationToken,
+}
+
+/// How [`Proxy::open`] treats a socket that cannot listen yet.
+pub(super) enum Listen {
+    /// At startup: the error is the attachment's.
+    Now,
+    /// In a re-proved term: the owner keeps retrying (see [`serve`]); the
+    /// term holds meanwhile.
+    Retrying,
 }
 
 impl Proxy {
@@ -42,6 +51,7 @@ impl Proxy {
         resolver: Resolver,
         limit: usize,
         timeout: Duration,
+        listen: Listen,
     ) -> Result<Self> {
         let url = reqwest::Url::parse(origin).map_err(|_| Error::Origin)?;
         let host = url
@@ -53,72 +63,43 @@ impl Proxy {
         let port = url.port_or_known_default().ok_or(Error::Origin)?;
         let path = directory.path().join(crate::files::BOOTSTRAP_SOCKET);
         let uid = std::fs::metadata(directory.path())?.uid();
-        recover(&directory, &path, uid).await?;
-        let listener = UnixListener::bind(&path)?;
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
-        let metadata = std::fs::symlink_metadata(&path)?;
-        let record = Record {
-            device: metadata.dev(),
-            inode: metadata.ino(),
-        };
-        let proxy = Self {
-            path,
-            record,
+        let socket = Arc::new(Socket {
+            directory,
+            path: path.clone(),
             uid,
-            _directory: directory.clone(),
+            state: Default::default(),
+        });
+        // No accept/network work starts before the record is durable.
+        let first = match (socket.bind().await, listen) {
+            (Err(error), Listen::Now) => return Err(error),
+            (first, _) => first,
         };
-        let bytes = serde_json::to_vec(&proxy.record).map_err(|_| Error::Journal)?;
-        // Accepted replacement owns its directory lock even if startup's caller
-        // cancels. No accept/network work starts before durable completion.
-        tokio::task::spawn_blocking(move || {
-            directory.replace(crate::files::BOOTSTRAP_RECORD, &bytes)
-        })
-        .await
-        .map_err(|_| Error::Worker)??;
-        let permits = Arc::new(Semaphore::new(limit));
+        let stop = tokio_util::sync::CancellationToken::new();
         let tasks = shared.tasks.clone();
-        let worker = shared.clone();
-        shared.tasks.spawn(async move {
-            loop {
-                let accepted = listener.accept().await;
-                let (stream, _) = match accepted {
-                    Ok(accepted) => accepted,
-                    Err(error) => {
-                        tracing::warn!(%error, "Protected control relay listener failed; kernel ownership ends");
-                        worker.end(crate::OwnershipEnd::Conflict { check: "relay_listener" });
-                        break;
+        let connections = Connections {
+            tasks: tasks.clone(),
+            permits: Arc::new(Semaphore::new(limit)),
+            uid,
+            refused: 0,
+            relay: move |stream| {
+                let (host, shared, resolver) = (host.clone(), shared.clone(), resolver.clone());
+                async move {
+                    if let Err(error) = relay(stream, &host, port, shared, resolver, timeout).await
+                    {
+                        tracing::warn!(error = %error, "Protected control relay failed");
                     }
-                };
-                let allowed = stream
-                    .peer_cred()
-                    .is_ok_and(|credential| credential.uid() == 0 || credential.uid() == uid);
-                if !allowed {
-                    continue;
                 }
-                let Ok(permit) = permits.clone().try_acquire_owned() else {
-                    continue;
-                };
-                let resolver = resolver.clone();
-                let shared = worker.clone();
-                let host = host.clone();
-                if tasks
-                    .spawn(async move {
-                        let _permit = permit;
-                        if let Err(error) =
-                            relay(stream, &host, port, shared, resolver, timeout).await
-                        {
-                            tracing::warn!(error = %error, "Protected control relay failed");
-                        }
-                    })
-                    .is_err()
-                {
-                    tracing::warn!("Protected control relay task capacity exhausted; kernel ownership ends");
-                    worker.end(crate::OwnershipEnd::Conflict { check: "relay_capacity" });
-                    break;
-                }
+            },
+        };
+        let owner = serve(socket.clone(), first, connections);
+        let stopped = stop.clone();
+        tasks.spawn(async move {
+            tokio::select! { biased;
+                _ = stopped.cancelled() => {},
+                () = owner => {},
             }
         })?;
-        Ok(proxy)
+        Ok(Self { path, socket, stop })
     }
 
     pub fn client_builder(&self) -> Result<reqwest::ClientBuilder> {
@@ -373,13 +354,224 @@ fn matches(metadata: &std::fs::Metadata, record: Option<&Record>, uid: u32, devi
 
 impl Drop for Proxy {
     fn drop(&mut self) {
-        let device = std::fs::metadata(self._directory.path()).map(|meta| meta.dev());
-        if let Ok(device) = device
+        self.stop.cancel();
+        self.socket.close();
+    }
+}
+
+/// The relay's UDS. It binds only after reclaiming its own stale socket,
+/// records the inode it bound, and removes only that inode.
+struct Socket {
+    directory: Arc<Directory>,
+    path: PathBuf,
+    uid: u32,
+    state: std::sync::Mutex<Bound>,
+}
+
+#[derive(Default)]
+struct Bound {
+    record: Option<Record>,
+    /// The Proxy was dropped: nothing binds again.
+    closed: bool,
+}
+
+impl Socket {
+    async fn bind(&self) -> Result<UnixListener> {
+        recover(&self.directory, &self.path, self.uid).await?;
+        let (listener, bytes) = {
+            let mut bound = self.state.lock().map_err(|_| Error::Worker)?;
+            if bound.closed {
+                return Err(Error::Worker);
+            }
+            let listener = UnixListener::bind(&self.path)?;
+            std::fs::set_permissions(&self.path, std::fs::Permissions::from_mode(0o600))?;
+            let metadata = std::fs::symlink_metadata(&self.path)?;
+            let record = Record {
+                device: metadata.dev(),
+                inode: metadata.ino(),
+            };
+            let bytes = serde_json::to_vec(&record).map_err(|_| Error::Journal)?;
+            bound.record = Some(record);
+            (listener, bytes)
+        };
+        // Accepted replacement owns its directory lock even if the caller
+        // cancels.
+        let directory = self.directory.clone();
+        tokio::task::spawn_blocking(move || {
+            directory.replace(crate::files::BOOTSTRAP_RECORD, &bytes)
+        })
+        .await
+        .map_err(|_| Error::Worker)??;
+        Ok(listener)
+    }
+
+    fn close(&self) {
+        let Ok(mut bound) = self.state.lock() else {
+            return;
+        };
+        bound.closed = true;
+        let device = std::fs::metadata(self.directory.path()).map(|meta| meta.dev());
+        if let (Ok(device), Some(record)) = (device, bound.record.as_ref())
             && std::fs::symlink_metadata(&self.path)
-                .is_ok_and(|metadata| matches(&metadata, Some(&self.record), self.uid, device))
+                .is_ok_and(|metadata| matches(&metadata, Some(record), self.uid, device))
         {
             let _ = std::fs::remove_file(&self.path);
         }
+    }
+}
+
+/// When the relay's socket tries again after `attempts` failures, the U1
+/// listener cadence: a cause that can clear by itself (`EADDRINUSE`, a live
+/// or not yet reclaimable socket, a stalled accept) 1 s doubling to 60 s; a
+/// permission (`EACCES`) every 60 s.
+fn retry_delay(error: &Error, attempts: u32) -> Duration {
+    const LIMIT: Duration = Duration::from_secs(60);
+    match error {
+        Error::Io(error) if error.kind() == io::ErrorKind::PermissionDenied => LIMIT,
+        _ => Duration::from_secs(1)
+            .saturating_mul(1 << attempts.saturating_sub(1).min(6))
+            .min(LIMIT),
+    }
+}
+
+/// The relay's connections: bounded by its permits and the Host's task
+/// capacity. At either limit a new connection is refused (closed) and the
+/// current ones are kept; the first connection admitted again ends that.
+struct Connections<R> {
+    tasks: super::tasks::Tasks,
+    permits: Arc<Semaphore>,
+    uid: u32,
+    relay: R,
+    /// Connections refused since the limit was reached.
+    refused: u64,
+}
+
+enum Admission {
+    Admitted,
+    Refused,
+    /// The Host's tasks stop.
+    Stopped,
+}
+
+impl<R, F> Connections<R>
+where
+    R: Fn(UnixStream) -> F,
+    F: std::future::Future<Output = ()> + Send + 'static,
+{
+    fn admit(&mut self, stream: UnixStream) -> Admission {
+        let allowed = stream
+            .peer_cred()
+            .is_ok_and(|credential| credential.uid() == 0 || credential.uid() == self.uid);
+        if !allowed {
+            return Admission::Refused;
+        }
+        let Ok(permit) = self.permits.clone().try_acquire_owned() else {
+            return self.refuse("connections");
+        };
+        let relay = (self.relay)(stream);
+        match self.tasks.spawn(async move {
+            let _permit = permit;
+            relay.await;
+        }) {
+            Ok(()) => {
+                if self.refused > 0 {
+                    tracing::info!(
+                        refused = self.refused,
+                        "Protected control relay accepts connections again"
+                    );
+                    self.refused = 0;
+                }
+                Admission::Admitted
+            }
+            Err(Error::Capacity) => self.refuse("tasks"),
+            Err(_) => Admission::Stopped,
+        }
+    }
+
+    fn refuse(&mut self, limit: &'static str) -> Admission {
+        if self.refused == 0 {
+            tracing::warn!(
+                limit,
+                "Protected control relay at capacity; refusing new connections, keeping current ones"
+            );
+        }
+        self.refused = self.refused.saturating_add(1);
+        Admission::Refused
+    }
+}
+
+/// The relay's listener owner. A socket that cannot listen and a failed
+/// accept are retried on [`retry_delay`] and reported once per distinct
+/// error; neither ends kernel ownership (the relay's connections already
+/// end with it). Returns once the Host's tasks stop or the Proxy closes.
+async fn serve<R, F>(
+    socket: Arc<Socket>,
+    first: Result<UnixListener>,
+    mut connections: Connections<R>,
+) where
+    R: Fn(UnixStream) -> F,
+    F: std::future::Future<Output = ()> + Send + 'static,
+{
+    let mut failures = 0u32;
+    let mut reported: Option<String> = None;
+    let mut next = first;
+    let listener = loop {
+        match next {
+            Ok(listener) => break listener,
+            Err(Error::Worker) => return,
+            Err(error) => {
+                failures = failures.saturating_add(1);
+                report(
+                    &mut reported,
+                    &error,
+                    failures,
+                    "Protected control relay cannot listen; retrying, kernel ownership kept",
+                );
+                tokio::time::sleep(retry_delay(&error, failures)).await;
+                next = socket.bind().await;
+            }
+        }
+    };
+    if failures > 0 {
+        tracing::info!(
+            attempts = failures + 1,
+            "Protected control relay listening again"
+        );
+        failures = 0;
+        reported = None;
+    }
+    loop {
+        match listener.accept().await {
+            Ok((stream, _)) => {
+                if failures > 0 {
+                    tracing::info!(failures, "Protected control relay accepting again");
+                    failures = 0;
+                    reported = None;
+                }
+                if let Admission::Stopped = connections.admit(stream) {
+                    return;
+                }
+            }
+            Err(error) => {
+                failures = failures.saturating_add(1);
+                let error = Error::Io(error);
+                report(
+                    &mut reported,
+                    &error,
+                    failures,
+                    "Protected control relay accept failed; retrying, kernel ownership kept",
+                );
+                tokio::time::sleep(retry_delay(&error, failures)).await;
+            }
+        }
+    }
+}
+
+fn report(reported: &mut Option<String>, error: &Error, attempts: u32, message: &'static str) {
+    let text = error.to_string();
+    if reported.as_ref() != Some(&text) {
+        tracing::warn!(error = %text, attempts, retry_ms = retry_delay(error, attempts).as_millis() as u64, "{message}");
+        *reported = Some(text);
     }
 }
 
@@ -464,6 +656,142 @@ mod tests {
         directory
             .replace("underlay-bootstrap.json", &bytes)
             .unwrap();
+    }
+
+    fn relay_socket(root: &tempfile::TempDir) -> Arc<Socket> {
+        let path = root.path().canonicalize().unwrap().join("relay");
+        let directory = Arc::new(Directory::open(&path, "underlay.lock").unwrap());
+        let uid = std::fs::metadata(&path).unwrap().uid();
+        Arc::new(Socket {
+            path: path.join(crate::files::BOOTSTRAP_SOCKET),
+            directory,
+            uid,
+            state: Default::default(),
+        })
+    }
+
+    /// Echoes until the client closes.
+    fn echo(
+        tasks: super::super::tasks::Tasks,
+        limit: usize,
+        uid: u32,
+    ) -> Connections<
+        impl Fn(UnixStream) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>,
+    > {
+        Connections {
+            tasks,
+            permits: Arc::new(Semaphore::new(limit)),
+            uid,
+            refused: 0,
+            relay: |stream: UnixStream| -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
+                Box::pin(async move {
+                    let (mut read, mut write) = stream.into_split();
+                    let _ = tokio::io::copy(&mut read, &mut write).await;
+                })
+            },
+        }
+    }
+
+    async fn echoes(path: &std::path::Path) -> Option<UnixStream> {
+        use tokio::io::AsyncWriteExt;
+        let mut stream = UnixStream::connect(path).await.ok()?;
+        stream.write_all(b"x").await.ok()?;
+        let mut byte = [0; 1];
+        match tokio::time::timeout(Duration::from_secs(2), stream.read(&mut byte)).await {
+            Ok(Ok(1)) => Some(stream),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn listener_retries_follow_the_u1_cadence() {
+        let busy = Error::Io(io::ErrorKind::AddrInUse.into());
+        let delays: Vec<_> = (1..=8)
+            .map(|attempt| retry_delay(&busy, attempt).as_secs())
+            .collect();
+        assert_eq!(delays, [1, 2, 4, 8, 16, 32, 60, 60]);
+        assert_eq!(retry_delay(&Error::Conflict, 1), Duration::from_secs(1));
+        let denied = Error::Io(io::ErrorKind::PermissionDenied.into());
+        assert_eq!(retry_delay(&denied, 1), Duration::from_secs(60));
+        assert_eq!(retry_delay(&busy, u32::MAX), Duration::from_secs(60));
+    }
+
+    /// X15: a re-proved term's relay whose socket is still held (here a live
+    /// listener on its path, `EADDRINUSE` to a plain bind) keeps retrying on
+    /// its own and listens once the path is free; the term is not ended
+    /// (the owner has no way to end it).
+    #[tokio::test]
+    async fn a_relay_that_cannot_listen_retries_until_its_socket_is_free() {
+        let root = tempfile::tempdir().unwrap();
+        let socket = relay_socket(&root);
+        let held = UnixListener::bind(&socket.path).unwrap();
+        std::fs::set_permissions(&socket.path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let first = socket.bind().await;
+        assert!(
+            matches!(first, Err(Error::Conflict)),
+            "a live socket is never reclaimed"
+        );
+        let tasks = super::super::tasks::Tasks::new(8);
+        let owner = tokio::spawn(serve(
+            socket.clone(),
+            first,
+            echo(tasks.clone(), 8, socket.uid),
+        ));
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(!owner.is_finished(), "the owner keeps retrying");
+        drop(held);
+        let started = std::time::Instant::now();
+        let listening = loop {
+            if let Some(stream) = echoes(&socket.path).await {
+                break stream;
+            }
+            assert!(
+                started.elapsed() < Duration::from_secs(5),
+                "listening after the next retry"
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        };
+        drop(listening);
+        socket.close();
+        assert!(
+            !socket.path.exists(),
+            "the owner removes the socket it bound"
+        );
+        owner.abort();
+        let _ = tasks.shutdown().await;
+    }
+
+    /// X15: at the task capacity a new connection is refused and the current
+    /// one kept; once the capacity falls back, connections are admitted again.
+    #[tokio::test]
+    async fn a_relay_at_capacity_refuses_new_connections_and_keeps_current_ones() {
+        let root = tempfile::tempdir().unwrap();
+        let socket = relay_socket(&root);
+        let first = socket.bind().await;
+        assert!(first.is_ok());
+        let tasks = super::super::tasks::Tasks::new(1);
+        let connections = echo(tasks.clone(), 8, socket.uid);
+        let owner = tokio::spawn(serve(socket.clone(), first, connections));
+        let mut current = echoes(&socket.path)
+            .await
+            .expect("first connection relayed");
+        assert!(echoes(&socket.path).await.is_none(), "refused at capacity");
+        {
+            use tokio::io::AsyncWriteExt;
+            current.write_all(b"y").await.unwrap();
+            let mut byte = [0; 1];
+            current.read_exact(&mut byte).await.unwrap();
+            assert_eq!(&byte, b"y", "the current connection is kept");
+        }
+        drop(current);
+        let started = std::time::Instant::now();
+        while echoes(&socket.path).await.is_none() {
+            assert!(started.elapsed() < Duration::from_secs(5), "admitted again");
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert!(!owner.is_finished());
+        owner.abort();
+        let _ = tasks.shutdown().await;
     }
 
     #[tokio::test]

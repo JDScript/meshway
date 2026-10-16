@@ -102,10 +102,28 @@ impl Kernel {
         let (connection, handle, unsolicited) = rtnetlink::new_connection()?;
         drop(unsolicited); // request socket has no multicast subscriptions
         let conflict = CancellationToken::new();
-        let failed = conflict.clone();
+        let ending = Arc::new(super::protection::Ending::default());
+        // A request connection that stops (its socket failed) ends the term
+        // as unavailable: nothing was read, and a re-proof opens new ones.
+        let connection_ended = |name: &'static str| {
+            let (conflict, ending) = (conflict.clone(), ending.clone());
+            move || {
+                tracing::warn!(
+                    connection = name,
+                    "Kernel netlink connection ended; kernel ownership ends"
+                );
+                ending.end(
+                    &conflict,
+                    crate::OwnershipEnd::Unavailable {
+                        check: "connection_unavailable",
+                    },
+                );
+            }
+        };
+        let failed = connection_ended("owner");
         tasks.spawn(async move {
             connection.await;
-            failed.cancel();
+            failed();
         })?;
         exit::recovery::recover(&handle, directory.clone(), options.max_kernel_objects).await?;
         egress::recover(
@@ -121,10 +139,10 @@ impl Kernel {
         // owner's mutations and their readback dumps.
         let (observer_connection, observer, unsolicited) = rtnetlink::new_connection()?;
         drop(unsolicited);
-        let observer_failed = conflict.clone();
+        let observer_failed = connection_ended("observer");
         tasks.spawn(async move {
             observer_connection.await;
-            observer_failed.cancel();
+            observer_failed();
         })?;
         let (mut store, mut previous) = Store::open(directory).await?;
         let rules = get_rules(&handle, options.max_kernel_objects).await?;
@@ -202,7 +220,7 @@ impl Kernel {
             mark: journal.mark,
             selectors,
             conflict,
-            ending: Default::default(),
+            ending,
             network,
             tasks: tasks.clone(),
             sockets: Arc::new(Semaphore::new(bootstrap_sockets)),
@@ -347,7 +365,7 @@ impl Kernel {
         }
         .await;
         if let Err(error) = &result {
-            self.shared.end(ended("repair", error));
+            self.end_after("repair", error);
         }
         result
     }
@@ -578,13 +596,13 @@ impl Kernel {
                 // Known creations can be rolled back without turning a
                 // cancelled installation into a protection conflict.
                 if let Err(error) = self.suspend().await {
-                    self.shared.end(ended("install", &error));
+                    self.end_after("install", &error);
                     return Err(error);
                 }
             } else {
                 self.shared.suspend()?;
                 if let Err(error) = &outcome {
-                    self.shared.end(ended("install", error));
+                    self.end_after("install", error);
                 }
             }
             // Descriptor ownership makes dropping this new device safe even if
@@ -1131,7 +1149,17 @@ impl Kernel {
             }
         })
         .await
-        .map_err(|_| Error::Conflict)?
+        .map_err(|_| Error::Drain)?
+    }
+
+    /// End ownership after `operation` failed with `error`. An operation
+    /// that failed in a term already ended (its monitor stopped, a
+    /// connection dropped) failed because of that end and proves nothing
+    /// more: the first cause stands, and a re-proof reads the kernel again.
+    fn end_after(&self, operation: &'static str, error: &Error) {
+        if self.shared.ended().is_none() {
+            self.shared.end(ended(operation, error));
+        }
     }
 }
 
@@ -1140,6 +1168,9 @@ impl Kernel {
 /// anything else (a read-back that differs) is a conflict.
 fn ended(operation: &'static str, error: &Error) -> crate::OwnershipEnd {
     match (error, operation) {
+        (Error::Drain, _) => crate::OwnershipEnd::Unavailable {
+            check: "drain_unavailable",
+        },
         (Error::Netlink | Error::Io(_), "repair") => crate::OwnershipEnd::Unavailable {
             check: "repair_unavailable",
         },
