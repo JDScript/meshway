@@ -167,7 +167,7 @@ Mesh 池、loopback、链路本地、组播、保留／广播及出口本机地�
 
 `underlay-egress.json`（v2）保存 boot／namespace、随机 installation、mark／table、计划、当前门与待提交门（区间与设备）、nft 规范对象／handle、选择器规则及 removed；已 down（removed）或属于另一次启动的记录不论版本直接归档，同一次启动内仍持有资源的其他版本记录在解析内容前即以专用错误（含文件名与版本，提示先用写它的旧版本 `meshway down` 或重启主机再升级）阻止启动；捕获表路由由门推出，恢复时与表内实际路由精确对账。自有规则／路由变化注册到同一 monitor（路由每 64 条等待其观测，不使通知缓冲溢出），不制造外部切网事件。暂停、执行失效和同 namespace 重启保留负向范围；TUN 消失不会落回 main direct。恢复先关闭旧活动 selector 并清理旧正向资源，只有新的有效执行安装可以重新激活；显式 down 才解除所属负向边界。
 
-owner 每秒把捕获表回读并与收据比对。回读本身失败（工具 2 秒期限、netlink 中断、输出不可读，或 `nft list table` 失败而表仍在 `nft list tables` 中）不证明归属变化：记为未知，下一秒再证，WARN `Egress capture verification unavailable` 一次，重证一致后 INFO `Egress capture verified again; ownership kept`（`failures`、`unverified_ms`）；未知期间现有捕获保持原样，新的 stage／switch 一律拒绝（不安装新内容）。连续未知达 30 秒（与 DNS owner 的恢复口径一致）按 fail closed 结束宿主内核归属，原因 `verify_unavailable`。回读成功但对象、handle 或集合元素与收据不符（`objects_changed`／`set_elements_changed`），或表已不存在（`table_missing`），立即结束宿主内核归属。结束时记录 `Egress capture owner stopping after a failed kernel operation`（`operation`、`check`、`error`）。
+owner 每秒把捕获表回读并与收据比对。回读本身失败（工具 2 秒期限、netlink 中断、输出不可读，或 `nft list table` 失败而表仍在 `nft list tables` 中）不证明归属变化：记为未知，下一秒再证，WARN `Egress capture verification unavailable` 一次，重证一致后 INFO `Egress capture verified again; ownership kept`（`failures`、`unverified_ms`）；未知期间现有捕获保持原样，新的 stage／switch 一律拒绝（不安装新内容）。连续未知达 30 秒（与 DNS owner 的恢复口径一致）按 fail closed 结束宿主内核归属，原因 `verify_unavailable`（暂态阻断，Host 自行重证恢复，见[宿主内核归属的结束与重证](#ownership-end)）。回读成功但对象、handle 或集合元素与收据不符（`objects_changed`／`set_elements_changed`），或表已不存在（`table_missing`），立即结束宿主内核归属（持久冲突）。结束时记录 `Egress capture owner stopping after a failed kernel operation`（`operation`、`check`、`error`）。
 
 #### 内核变更失败 {#kernel-change}
 
@@ -176,11 +176,26 @@ owner 每秒把捕获表回读并与收据比对。回读本身失败（工具 2
 | 失败后的重读 | 行为 |
 | --- | --- |
 | 已在目标（egress：集合与路由均为待提交门；出口：该投影的 journal 记录已移除） | 视为已完成：变更立即再执行一次，只读回并记录（集合已是目标门时不再替换） |
-| 在起点，或在变更自己的路径上（每个对象都在起点或目标；出口：所属对象与收据、journal 一致） | 有界重试：1 秒后再执行，间隔翻倍、上限 60 秒，自首次失败起至多 30 秒（与 DNS owner、回读未知同一口径），仍不成功即按原规则 fail closed，原因 `change_unavailable` |
+| 在起点，或在变更自己的路径上（每个对象都在起点或目标；出口：所属对象与收据、journal 一致） | 有界重试：1 秒后再执行，间隔翻倍、上限 60 秒，自首次失败起至多 30 秒（与 DNS owner、回读未知同一口径），仍不成功即按原规则 fail closed，原因 `change_unavailable`（egress 为暂态阻断，见[归属的结束与重证](#ownership-end)） |
 | 读取失败 | 未知，同样在 30 秒内重读并重试，届满为 `verify_unavailable` |
-| 读成功而两者都不是（外来规则、元素、路由，表不存在） | 立即按原规则 fail closed（`verify`）：egress 结束宿主内核归属，出口停止角色 |
+| 读成功而两者都不是（外来规则、元素、路由，表不存在） | 立即按原规则 fail closed（`verify`）：egress 结束宿主内核归属（持久冲突），出口停止角色 |
 
 确定性的拒绝（执行已失效、目标不符、容量）不涉及内核结果，不重试。重试期间 owner 的请求按序等待（Host 的 suspend／install 随之等待，网络 worker 不处理新内容），出口其他流的已安装写路径不受影响；WARN `Egress capture change failed; read back, retrying`／`Exit role change failed; read back, retrying`（`operation`、`attempts`、`error`、`reread`、`retry_ms`，第 1、2、4… 次），完成后 INFO `… change completed after retrying`（`attempts`、`elapsed_ms`），放弃时为原来的 stopping 日志并带 `check`。IPC Status `changePending` 给出正在重试的变更。egress 门在替换待提交记录前，先移除上一次未完成变更留下、现门与新门都不保留的自有路由（此前部分提交的 `switch` 之后的 `pause` 会因“外来路由”冲突而结束归属）。出口 `renew` 的原子批失败时重读元素：仍在则同一批再执行一次（无论新旧期限都设为新期限），否则关闭该投影；conntrack 确认期间一次查询失败为未知，继续查到截止，不当作不存在。
+
+#### 宿主内核归属的结束与重证 {#ownership-end}
+
+宿主内核归属（Host 的唯一 Kernel owner：capture RPDB 与私有表、Mesh TUN、egress capture、出口角色、DNS 锚点、受保护 socket 与控制中继）结束时，所有 owner 一起 fail closed：撤回执行与全部描述符，不安装新内容，控制中继拒绝连接，DNS 锚点报 `anchor_ended`。结束按原因分两类，由 `Shared::end` 记录（`meshway_underlay::OwnershipEnd`）：
+
+| 类别 | 原因（`check`） | 之后 |
+| --- | --- | --- |
+| 暂态阻断 `unavailable` | 读不到或变更结果未知满 30 秒：egress `verify_unavailable`／`change_unavailable`；monitor socket 读取失败（通知可能丢失）`monitor_unavailable`；安装或自有对象重装中 netlink／工具超时 `install_unavailable`／`repair_unavailable`；新一期的控制中继未能打开 `relay_unavailable` | Host 按退避重证（结束后 1 秒，此后翻倍，间隔至多 8 秒），成功即以同一 netmap 重装，无需 `up` 或重启进程 |
+| 持久冲突 `conflict` | 读成功而与所属记录不符：egress `verify`、monitor 读到外来对象 `monitor`、重证读到外来对象或不可恢复的 journal `reproof`、自有对象 1 分钟内第 4 次被删 `repair_limit`、安装／重装读到不符 `install`／`repair`、安装被取消 `install_cancelled`、控制中继监听或任务容量失败 | 保持 fail closed 直到重启（人工处置） |
+
+持久冲突覆盖暂态阻断，反之不会：暂态阻断期间旧一期的 monitor 仍在运行，读到外来对象即改为 `conflict`。
+
+**重证**（`Host::recover`，只在暂态阻断后、到 `Host::recovery_at` 时由网络 worker 调用）：第一次先结束旧一期——停止其任务（monitor、网络分类、控制中继及其连接、受保护 socket），join egress capture 与出口 owner（出口清理不在此重试，留给新一期的 journal 恢复），关闭 Mesh TUN，落盘 journal；然后按进程启动的同一路径（`Kernel::open_term`）打开新一期：出口与 egress journal 恢复到负向边界、base journal 与内核现状精确对账、DNS 锚点校验。读取或变更再次失败（netlink／I/O）保持暂态，按退避再试，同一失败只记一次 WARN `Kernel ownership re-proof unavailable; retrying`；读到与 journal 不符（外来规则、私有表中的路由、不可恢复的 journal）改为持久冲突，WARN `Kernel ownership re-proof read back a conflict; ownership stays ended until restart`。成功时 INFO `Kernel ownership proved again; the Host owns a new term`（`check`、`attempts`、`elapsed_ms`）：新一期沿用同一 journal（同一 installation、mark、table）、同一控制中继 origin 与 UDS 路径（已有 HTTP client 照常连接）以及 Host 发布的观察通道（网络变化、`changePending`、`cleanupPending`）；网络 worker 停止 DNS owner（其锚点与 socket 属于旧一期，系统 DNS 安装保留，与重启相同）后以同一 offer 重装（`Kernel ownership recovered; reinstalling the netmap`），DNS owner 在新一期上重新准备。未知的存储（journal 处于中断变更、版本不符）与重启时一样 fail closed，不因重证放宽。
+
+阻断期间 Status 为 `lastError: underlay`，`lastErrorDetail` 为 `kernelOwnership: unavailable (<check>); proving ownership again` 或 `kernelOwnership: conflict (<check>); stays failed closed until restart`。lab 复现与时间见[验收 · X13](/v2/node/validation#x13-reproof)。
 
 IPC 12 的公开运行状态（`meshway status --json` 原样输出）：
 
@@ -192,7 +207,7 @@ IPC 12 的公开运行状态（`meshway status --json` 原样输出）：
 | `saved`／`applied` | 独立的必填可空目标引用；saved 来自持久保存，applied 来自对应实例／目标的实际成功安装结果 |
 | `phase` | 完整枚举见下表；结合 dataPlane、当前资格和错误读取 |
 | `lastError`／`retryAt` | 类型化故障与重试时点；安装问题可为 unsupportedMode、underlay、tun、dns、transport、apply |
-| `lastErrorDetail` | 必填可空：故障组件给出具体原因时的一行说明，目前有三类。`lastError: dns` 时为 DNS owner 失败的那一项检查（`DNS <check> check failed (<错误>): expected …; found … [<来源>]`，例如 `DNS resolv_conf_mode check failed (system DNS backend is unsupported): expected stub; found foreign [D-Bus :1.1 /org/freedesktop/resolve1 org.freedesktop.resolve1.Manager.ResolvConfMode]`；检查项与恢复边界见[系统 DNS 健康检查与恢复](/v2/node/dataplane#dns-health)），自动恢复后清空。`lastError: transport` 时为暂未绑定的 listener：bind 错误、占用该端口的进程（本 daemon 自己标注 `this daemon`）、端口在本机临时端口范围内时的提示，以 `retrying` 结尾（例如 `listener lab-udp cannot bind 0.0.0.0:35000: Address in use (os error 98); port 35000 is inside this host's ephemeral port range 32768-60999; retrying`，行为见[连接获取 · listener 绑定与重试](/v2/node/connectivity#listener-bind-retry)）。`lastError: underlay` 且新网络的地址落入 Mesh 池时为 `meshPoolOverlap: <接口> address <地址> is inside a Mesh address pool`，地址离开、自动重装后清空（[漫游](/v2/node/connectivity#roaming)）；其他情况为 null。daemon 日志的同一告警带相同文本 |
+| `lastErrorDetail` | 必填可空：故障组件给出具体原因时的一行说明，目前有三类。`lastError: dns` 时为 DNS owner 失败的那一项检查（`DNS <check> check failed (<错误>): expected …; found … [<来源>]`，例如 `DNS resolv_conf_mode check failed (system DNS backend is unsupported): expected stub; found foreign [D-Bus :1.1 /org/freedesktop/resolve1 org.freedesktop.resolve1.Manager.ResolvConfMode]`；检查项与恢复边界见[系统 DNS 健康检查与恢复](/v2/node/dataplane#dns-health)），自动恢复后清空。`lastError: transport` 时为暂未绑定的 listener：bind 错误、占用该端口的进程（本 daemon 自己标注 `this daemon`）、端口在本机临时端口范围内时的提示，以 `retrying` 结尾（例如 `listener lab-udp cannot bind 0.0.0.0:35000: Address in use (os error 98); port 35000 is inside this host's ephemeral port range 32768-60999; retrying`，行为见[连接获取 · listener 绑定与重试](/v2/node/connectivity#listener-bind-retry)）。`lastError: underlay` 且新网络的地址落入 Mesh 池时为 `meshPoolOverlap: <接口> address <地址> is inside a Mesh address pool`，地址离开、自动重装后清空（[漫游](/v2/node/connectivity#roaming)）；宿主内核归属结束时为 `kernelOwnership: unavailable (<check>); proving ownership again`／`kernelOwnership: conflict (<check>); stays failed closed until restart`（[归属的结束与重证](#ownership-end)），重证成功后清空；其他情况为 null。daemon 日志的同一告警带相同文本 |
 | `sync` | 必填，`connected`（最近一次 sync 成功、下一次由 Server 挂起）、`reconnecting`、`disconnected`；不代表 Node 授权或业务连通 |
 | `lastSyncAt`／`syncError` | 必填可空：本进程最近一次返回已验签 netmap 的 sync 时间；sync 重试期间的失败类别 |
 | `lastNetworkChange` | 可省略：Underlay 最近一次分类外部网络变化（path 或 refresh，见[漫游](/v2/node/connectivity#roaming)）的时间；本进程尚未观测到时省略 |
@@ -201,7 +216,7 @@ IPC 12 的公开运行状态（`meshway status --json` 原样输出）：
 | `node` | 必填可空：已安装 netmap 中的本节点 `hostname` 与 Mesh `addresses`；未安装（down、control-only、准备中）为 null |
 | `peers` | 必填：已安装 netmap 中可见的其他节点（与 `ping` 解析名称的集合相同），按 hostname 排序；未安装为空。字段见下表 |
 | `sockets` | 必填：已安装 netmap 中本节点已绑定的 Native UDP listener 与拨号候选 socket（按地址族、地址排序），其后是绑定正在重试的 listener（按 key）；未安装为空。每项 `resource`（`listener`／`dial` 资源）、`boundAddress`、`receiveBuffer`／`sendBuffer`（内核读回的实际字节数，Linux 为授予值的两倍）、`receiveRequested`／`sendRequested`（配置值，0 时为默认值）与 `unavailable`；读回不足以容纳请求（Linux 上小于请求的两倍，判定唯一见 [UDP 批量接口](/v2/node/transport#udp-批量接口)）表示被 `rmem_max`／`wmem_max` 截断，`meshway status` 标注 `limited`。重试中的 listener 只有 `resource` 与 `unavailable`（最近一次失败，例如 `listener lab-udp cannot bind 0.0.0.0:35000: Address in use (os error 98)`），其余为 null，`meshway status` 显示 `unavailable`；重试绑定成功后同样读回缓冲。规则见 [UDP 批量接口](/v2/node/transport#udp-批量接口) |
-| `exit` | 可省略；包含 target-bound `capability`、已安装 role generation、`activeFlows`、独立的 `dnsUnavailable`（出口 resolver 不能为源解析的原因，与 State [`exitDns`](/v2/state-reference#exitdns) 同源；可用或不服务时为 null），以及可省略的 `cleanupPending`：已停止角色的清理失败、资源保留并在重试时给出 `reason`（最近一次尝试的错误）、`attempts`（含第一次）与 `retryAt`（下次尝试；1 秒起翻倍、上限 60 秒），以最近一次能力探测为准（至多约 20 秒前），其余时候省略（见 [Exit 设计 · 审计与清理重试](/v2/node/exit-design#exit-audit)）。`meshway status` 的 Exit 行追加 `· cleanup pending (<reason>; attempt N, retrying)`。未观测的计数保持 null，失去当前执行权限后不显示已安装角色／活流数 |
+| `exit` | 可省略；包含 target-bound `capability`、已安装 role generation、`activeFlows`、独立的 `dnsUnavailable`（出口 resolver 不能为源解析的原因，与 State [`exitDns`](/v2/state-reference#exitdns) 同源；可用或不服务时为 null），以及可省略的 `cleanupPending`：已停止角色的清理失败、资源保留并在重试时给出 `reason`（最近一次尝试的错误）、`attempts`（含第一次）与 `retryAt`（下次尝试；1 秒起翻倍、上限 60 秒），直接读出口 owner 的现值（每次失败尝试时设置，清理完成即撤回），其余时候省略（见 [Exit 设计 · 审计与清理重试](/v2/node/exit-design#exit-audit)）。`meshway status` 的 Exit 行追加 `· cleanup pending (<reason>; attempt N, retrying)`。未观测的计数保持 null，失去当前执行权限后不显示已安装角色／活流数 |
 
 `peers[]` 只投影本节点自己的事实，不生成测量或授权：
 

@@ -62,13 +62,6 @@ impl Default for Network {
 }
 
 impl Network {
-    pub fn with_routes(routes: Handle) -> Self {
-        Self {
-            routes: Some(routes),
-            ..Self::default()
-        }
-    }
-
     /// The remotes connectivity sends to now, in its priority order; only
     /// the first [`MAX_REMOTES`] distinct unicast addresses are followed.
     pub fn remotes_observed(&self, remotes: impl IntoIterator<Item = IpAddr>) {

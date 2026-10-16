@@ -84,6 +84,19 @@ impl Kernel {
     }
 
     pub async fn open(directory: Arc<Directory>, options: Options, tasks: Tasks) -> Result<Self> {
+        Self::open_term(directory, options, tasks, Default::default()).await
+    }
+
+    /// Open one term of kernel ownership: recover and verify everything the
+    /// journals record, exactly as at process start. A Host that proves its
+    /// ownership again after an unavailable end opens its next term here,
+    /// continuing what the ended term published.
+    pub async fn open_term(
+        directory: Arc<Directory>,
+        options: Options,
+        tasks: Tasks,
+        published: super::protection::Published,
+    ) -> Result<Self> {
         // Subscribe before the baseline dump so rule changes cannot disappear
         // between discovery and the monitor's start.
         let (connection, handle, unsolicited) = rtnetlink::new_connection()?;
@@ -178,19 +191,27 @@ impl Kernel {
         let mut baseline: Vec<_> = foreign.into_iter().map(encode_rule).collect();
         baseline.sort();
         let bootstrap_sockets = (options.max_sockets / 8).clamp(1, 16);
+        let super::protection::Published {
+            mut network,
+            changes,
+            cleanups,
+        } = published;
+        network.routes = Some(observer.clone());
         let shared = Arc::new(Shared {
             resources: super::protection::Resources::new(options.max_sockets * 4),
             mark: journal.mark,
             selectors,
             conflict,
-            network: network::Network::with_routes(observer.clone()),
+            ending: Default::default(),
+            network,
             tasks: tasks.clone(),
             sockets: Arc::new(Semaphore::new(bootstrap_sockets)),
             data_sockets: Arc::new(Semaphore::new(options.max_sockets - bootstrap_sockets)),
             attempts: Arc::new(Semaphore::new(options.max_sockets)),
             resolutions: Arc::new(Semaphore::new(options.max_sockets)),
             execution: RwLock::new(None),
-            changes: tokio::sync::watch::channel(None).0,
+            changes,
+            cleanups,
         });
         // Permissions and readback are real even before the first connection.
         for socket in [
@@ -272,7 +293,9 @@ impl Kernel {
         }
         if self.repaired.len() >= MAX_REPAIRS {
             tracing::warn!("Owned capture objects keep being removed; ownership ends");
-            self.shared.conflict.cancel();
+            self.shared.end(crate::OwnershipEnd::Conflict {
+                check: "repair_limit",
+            });
             return Err(Error::Conflict);
         }
         self.repaired.push_back(now);
@@ -323,8 +346,8 @@ impl Kernel {
             self.verify().await
         }
         .await;
-        if result.is_err() {
-            self.shared.conflict.cancel();
+        if let Err(error) = &result {
+            self.shared.end(ended("repair", error));
         }
         result
     }
@@ -555,12 +578,14 @@ impl Kernel {
                 // Known creations can be rolled back without turning a
                 // cancelled installation into a protection conflict.
                 if let Err(error) = self.suspend().await {
-                    self.shared.conflict.cancel();
+                    self.shared.end(ended("install", &error));
                     return Err(error);
                 }
             } else {
                 self.shared.suspend()?;
-                self.shared.conflict.cancel();
+                if let Err(error) = &outcome {
+                    self.shared.end(ended("install", error));
+                }
             }
             // Descriptor ownership makes dropping this new device safe even if
             // an interrupted netlink operation has an uncertain outcome.
@@ -970,6 +995,26 @@ impl Kernel {
     pub async fn settle(&mut self) -> Result<()> {
         self.store.settle().await
     }
+
+    /// End this ownership term after it ended (`Shared::end`): withdraw
+    /// every operation, join the capture and exit owners, close the owned
+    /// TUN and settle the journal. Kernel objects stay as the journals record
+    /// them; the Host's next term recovers them like a restart. The caller
+    /// stops the term's tasks.
+    pub async fn close_term(&mut self) {
+        let _ = self.shared.suspend();
+        self.dns_cancel.cancel();
+        if let Some(mut owner) = self.egress.take() {
+            self.clamp = None;
+            let _ = owner.shutdown(false).await;
+        }
+        if let Some(mut owner) = self.exit.take() {
+            owner.abandon().await;
+        }
+        self.probe = None;
+        self.drop_owned_tun();
+        let _ = self.store.settle().await;
+    }
     /// Clamp the TCP MSS of SYNs crossing the Mesh TUN (and the exit TUN) to
     /// `limits`. Only a change reaches nft; without a capture owner or TUN
     /// nothing is clamped.
@@ -1087,6 +1132,22 @@ impl Kernel {
         })
         .await
         .map_err(|_| Error::Conflict)?
+    }
+}
+
+/// How an owner's failed kernel operation ends ownership: a read or change
+/// that timed out or failed in the kernel proves nothing (`<operation>_unavailable`);
+/// anything else (a read-back that differs) is a conflict.
+fn ended(operation: &'static str, error: &Error) -> crate::OwnershipEnd {
+    match (error, operation) {
+        (Error::Netlink | Error::Io(_), "repair") => crate::OwnershipEnd::Unavailable {
+            check: "repair_unavailable",
+        },
+        (Error::Netlink | Error::Io(_), _) => crate::OwnershipEnd::Unavailable {
+            check: "install_unavailable",
+        },
+        (_, "repair") => crate::OwnershipEnd::Conflict { check: "repair" },
+        _ => crate::OwnershipEnd::Conflict { check: "install" },
     }
 }
 

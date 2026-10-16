@@ -4,6 +4,14 @@
 
 ## 未发布
 
+宿主内核归属的暂态阻断自愈（X13，`x13/unavailable-recovery`）：wire 6、IPC 12、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约均不变（只改 Node；Status 字段不变，`lastErrorDetail` 多一类文本）。
+
+- Underlay（不变量：因读不到或变更结果未知满 30 秒而进入的 fail closed 是暂态阻断，只有读到已证实的外来不一致才是持久冲突；owner：Host 的宿主内核归属）：归属结束记录原因（`OwnershipEnd`：`unavailable`／`conflict`）；暂态阻断后 Host 在结束后 1 秒起、翻倍、间隔至多 8 秒重证：结束旧一期（任务、控制中继、owner、TUN），按进程启动的同一路径打开新一期，与 journal 一致即以同一 netmap 重装，读到外来对象则改为持久冲突。此前 alpha.14 lab sha 限额 45 秒 3 次中 2 次在 `verify_unavailable` 后每次安装报 conflict，直到 `docker restart`：整个 Host 共用的 conflict token 一旦取消再无更新途径，内核与 journal 并无外来对象。定义见[宿主内核归属的结束与重证](/v2/node/runtime#ownership-end)。
+- Status：`lastErrorDetail` 给出 `kernelOwnership: unavailable (<check>); proving ownership again`／`… conflict (<check>); stays failed closed until restart`；`exit.cleanupPending` 直接读出口 owner 的现值，清理完成即消失（此前随能力探测刷新，约晚 15 秒）。
+- 验收：隔离测试 `reproof::an_unavailable_ownership_end_is_proved_again_and_a_foreign_object_keeps_it_ended`；lab sha 限额 60 秒 3 次、90 秒 3 次，其中 2 次走 `verify_unavailable`，6 次均在限额解除后 2 秒内 running／ready，见 [X13](/v2/node/validation#x13-reproof)。
+
+验证：Planck 22 行矩阵 `20261016T101528Z-e959e64c`（`9a640af4`，并行 4）全部通过；并行 8 的两次各一行负载失败（`udp/resolved` 与并发矩阵重叠、`exit/off` 第 16 阶段 echo 94／100），单行复跑通过，见 [X13](/v2/node/validation#x13-reproof)。
+
 漫游第三切片（R3，`r3/roaming-fingerprint`）：wire 6、IPC 12、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约均不变（只改 Node）。定义见[漫游](/v2/node/connectivity#roaming)。
 
 - Underlay（不变量：任一地址族上到 Server 或任一当前 remote 的真实路由变化、外部 up 接口有效地址的变化都是 path 类，地址标志按地址族解释；owner：Underlay 网络指纹）：指纹的路由参照加入 Manager 报告的 remote（选定通道的 remote 与无通道 peer 的字面 IP 候选，至多 64 个），新参照只查入基准；IPv4 `IFA_F_SECONDARY` 第二地址计入，只有 IPv6 `IFA_F_TEMPORARY` 排除（同为位 0x01）。此前 `meshway-vm`（经 IPv6 连 Server）的 IPv4 第二地址与默认路由 `src` 变化三次都是 refresh，只靠 it7 挑战跟随（OPS13，VM→it7 中断 1.65 秒）；现在三次都是 path，本机立即重新 STUN 与漫游探测，中断 ≤ 0.45 秒。

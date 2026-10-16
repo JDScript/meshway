@@ -130,6 +130,9 @@ impl Publisher {
         if report.kernel_changes.is_none() {
             report.kernel_changes = self.reports.borrow().kernel_changes.clone();
         }
+        if report.exit_cleanups.is_none() {
+            report.exit_cleanups = self.reports.borrow().exit_cleanups.clone();
+        }
         let key = Key::of(&report);
         let changed = **self.changes.borrow() != key;
         self.reports.send_replace(report);

@@ -498,6 +498,8 @@ mod tests {
             resolutions: Arc::new(Semaphore::new(1)),
             execution: RwLock::new(None),
             changes: tokio::sync::watch::channel(None).0,
+            cleanups: tokio::sync::watch::channel(None).0,
+            ending: Default::default(),
             resources: Resources::new(4),
         });
         let guard = Live {

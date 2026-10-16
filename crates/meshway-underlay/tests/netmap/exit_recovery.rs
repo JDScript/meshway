@@ -331,6 +331,15 @@ async fn netmap_exit_failed_cleanup_is_retried_and_the_role_installs_again() {
     // While it is retried the resources are kept: no new role.
     assert!(host.install_netmap_exit_role(&role_plan).await.is_err());
     assert!(host.exit_cleanup().is_some());
+    // The Host's live fact (what Status reads) is the owner's.
+    let mut cleanups = host.exit_cleanups();
+    assert_eq!(
+        cleanups
+            .borrow()
+            .as_ref()
+            .map(|pending| pending.attempts >= 2),
+        Some(true)
+    );
 
     // The foreign rule goes: the next attempt reads the table again and
     // removes everything the role owned.
@@ -348,13 +357,12 @@ async fn netmap_exit_failed_cleanup_is_retried_and_the_role_installs_again() {
             ],
         );
     }
-    tokio::time::timeout(Duration::from_secs(70), async {
-        while host.exit_cleanup().is_some() {
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-    })
-    .await
-    .expect("the retried cleanup completes");
+    tokio::time::timeout(Duration::from_secs(70), cleanups.wait_for(Option::is_none))
+        .await
+        .expect("the retried cleanup completes")
+        .unwrap();
+    // Cleared the moment the cleanup completed, not at a later probe.
+    assert!(host.exit_cleanup().is_none());
     assert!(
         !tool("nft", &["-j", "list", "tables"]).contains(&table),
         "the role's tables are gone"

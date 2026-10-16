@@ -358,6 +358,17 @@ impl Owner {
         result
     }
 }
+impl Owner {
+    /// The Host's ownership term ended: stop the role and join its owner
+    /// without retrying its cleanup here; the next term's recovery cleans up
+    /// from the journal.
+    pub(in crate::linux::kernel) async fn abandon(&mut self) {
+        self.role.stop.cancel();
+        if let Some(task) = self.task.take() {
+            let _ = task.await;
+        }
+    }
+}
 impl Drop for Owner {
     fn drop(&mut self) {
         self.role.stop.cancel();
@@ -366,11 +377,13 @@ impl Drop for Owner {
 
 /// Covers cancellation of the Host installation future after its first owned
 /// resource is allocated. Restart reconciles the durable intent before reuse.
-struct Installing(Option<CancellationToken>);
+struct Installing(Option<Arc<crate::linux::protection::Shared>>);
 impl Drop for Installing {
     fn drop(&mut self) {
-        if let Some(conflict) = self.0.take() {
-            conflict.cancel();
+        if let Some(shared) = self.0.take() {
+            shared.end(crate::OwnershipEnd::Conflict {
+                check: "install_cancelled",
+            });
         }
     }
 }
@@ -583,7 +596,7 @@ impl super::super::Kernel {
                     _ => None,
                 })
                 .collect();
-        let mut installing = Installing(Some(self.shared.conflict.clone()));
+        let mut installing = Installing(Some(self.shared.clone()));
         let tun = {
             let mut expected = self.expected.lock().map_err(|_| Error::Worker)?;
             // Offload: reverse-NAT replies of a bulk flow reach the reader as
@@ -824,14 +837,17 @@ impl super::super::Kernel {
                 if attempts.is_power_of_two() {
                     tracing::warn!(attempts, %error, retry_ms = wait.as_millis() as u64, "Exit role cleanup failed; resources kept, retrying");
                 }
-                done.send_replace(Closing::Pending(ExitCleanupPending {
+                let pending = ExitCleanupPending {
                     reason: error.to_string(),
                     attempts,
                     retry_at: std::time::SystemTime::now() + wait,
-                }));
+                };
+                shared.cleanups.send_replace(Some(pending.clone()));
+                done.send_replace(Closing::Pending(pending));
                 tokio::select! { biased;
                     _ = shutdown.cancelled() => {
                         done.send_replace(Closing::Done(false));
+                        shared.cleanups.send_replace(None);
                         return;
                     },
                     _ = tokio::time::sleep(wait) => {},
@@ -847,6 +863,9 @@ impl super::super::Kernel {
                 );
             }
             done.send_replace(Closing::Done(true));
+            shared
+                .cleanups
+                .send_if_modified(|pending| pending.take().is_some());
         });
         self.exit = Some(Owner {
             role: role.clone(),
