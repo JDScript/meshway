@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-16T06:59:02.838695+00:00",
+  "updatedAt": "2026-10-16T07:01:48.814080+00:00",
   "runs": [
     {
       "id": 38863167150,
@@ -162,9 +162,9 @@
       "commit": "733bf059ba399071a14ef689ba481ada7593ae74",
       "message": "release: workspace version 0.1.0-alpha.14",
       "createdAt": "2026-10-16T06:45:13Z",
-      "updatedAt": "2026-10-16T06:55:02Z",
-      "status": "in_progress",
-      "conclusion": null,
+      "updatedAt": "2026-10-16T06:58:37Z",
+      "status": "completed",
+      "conclusion": "success",
       "url": "https://github.com/JDScript/meshway/actions/runs/38862991925",
       "jobs": [
         {
@@ -182,15 +182,43 @@
           "id": 116849334630,
           "name": "node-linux (x86_64-unknown-linux-musl)",
           "runner": "planck",
-          "status": "in_progress",
-          "conclusion": null,
+          "status": "completed",
+          "conclusion": "success",
           "startedAt": "2026-10-16T06:55:01Z",
-          "completedAt": null,
-          "seconds": null,
+          "completedAt": "2026-10-16T06:58:36Z",
+          "seconds": 215.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/38862991925/job/116849334630"
         }
       ],
       "artifacts": [
+        {
+          "id": 12030433743,
+          "name": "node-x86_64-unknown-linux-musl-733bf059ba399071a14ef689ba481ada7593ae74",
+          "bytes": 11371752,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38862991925/artifacts/12030433743",
+          "jobId": 116849334630,
+          "runner": "planck",
+          "seconds": 215.0,
+          "state": "ok",
+          "error": null,
+          "reports": [],
+          "matrices": [],
+          "builds": [
+            {
+              "target": "x86_64-unknown-linux-musl",
+              "binary": "meshwayd",
+              "bytes": 19649960,
+              "sha256": "10c8b415be2317d28d52e226613420a1a0c29b7ad4e05e5eaca94fb94d460fd4"
+            },
+            {
+              "target": "x86_64-unknown-linux-musl",
+              "binary": "meshway",
+              "bytes": 2205416,
+              "sha256": "a486f97c51f745acfec760b17b2a72aade8ddc5db59fef2861469faf167af65d"
+            }
+          ]
+        },
         {
           "id": 12029889553,
           "name": "node-aarch64-unknown-linux-musl-733bf059ba399071a14ef689ba481ada7593ae74",
@@ -230,18 +258,18 @@
       "commit": "733bf059ba399071a14ef689ba481ada7593ae74",
       "message": "release: workspace version 0.1.0-alpha.14",
       "createdAt": "2026-10-16T06:45:13Z",
-      "updatedAt": "2026-10-16T06:50:15Z",
-      "status": "queued",
+      "updatedAt": "2026-10-16T06:58:37Z",
+      "status": "in_progress",
       "conclusion": null,
       "url": "https://github.com/JDScript/meshway/actions/runs/38862991842",
       "jobs": [
         {
           "id": 116850875253,
           "name": "perf",
-          "runner": null,
-          "status": "queued",
+          "runner": "planck",
+          "status": "in_progress",
           "conclusion": null,
-          "startedAt": "2026-10-16T06:50:15Z",
+          "startedAt": "2026-10-16T06:58:37Z",
           "completedAt": null,
           "seconds": null,
           "url": "https://github.com/JDScript/meshway/actions/runs/38862991842/job/116850875253"
