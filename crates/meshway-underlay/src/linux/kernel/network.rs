@@ -24,8 +24,11 @@ use tokio::sync::watch;
 use super::{super::protection::Shared, collect, monitor};
 
 /// A burst of notifications (DHCP, router advertisements, a link flap) this
-/// close together is one change.
+/// close together is one change: it is classified once no notification came
+/// for this long (trailing), and at the latest [`COALESCE_LIMIT`] after its
+/// first notification, so a steady stream of events cannot postpone it.
 pub(super) const COALESCE: Duration = Duration::from_millis(250);
+pub(super) const COALESCE_LIMIT: Duration = Duration::from_secs(1);
 /// One route lookup; a kernel that does not answer within it is no route.
 const LOOKUP: Duration = Duration::from_secs(1);
 
@@ -285,6 +288,28 @@ async fn fingerprint(
     Ok(print)
 }
 
+/// Wait out a burst that started with the notification just seen: until
+/// [`COALESCE`] passed without another, or [`COALESCE_LIMIT`] since its
+/// start. `false` once the notifications' sender is gone.
+async fn settled(dirty: &mut watch::Receiver<u64>) -> bool {
+    let start = tokio::time::Instant::now();
+    let mut last = start;
+    dirty.borrow_and_update();
+    loop {
+        let due = (last + COALESCE).min(start + COALESCE_LIMIT);
+        tokio::select! {
+            () = tokio::time::sleep_until(due) => return true,
+            changed = dirty.changed() => {
+                if changed.is_err() {
+                    return false;
+                }
+                dirty.borrow_and_update();
+                last = tokio::time::Instant::now();
+            }
+        }
+    }
+}
+
 /// Classify every settled burst of external notifications. A fingerprint
 /// that cannot be read counts as a path change: reacting once too often is
 /// bounded, missing a roam is not.
@@ -328,8 +353,9 @@ pub(super) async fn classify(
                 continue;
             }
         }
-        tokio::time::sleep(COALESCE).await;
-        dirty.borrow_and_update();
+        if !settled(&mut dirty).await {
+            return;
+        }
         let destinations = {
             let reached = *control.borrow();
             references(reached, &remotes.borrow())
@@ -386,6 +412,48 @@ async fn rebase(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// F6a C6: a burst settles 250 ms after its last notification, not 250 ms
+    /// after its first; a stream that never pauses settles 1 s after it began.
+    #[tokio::test(start_paused = true)]
+    async fn a_burst_settles_after_its_last_notification_within_a_bound() {
+        let (sender, mut dirty) = watch::channel(0u64);
+        let started = tokio::time::Instant::now();
+        let feed = tokio::spawn({
+            let sender = sender.clone();
+            async move {
+                // Spread across two fixed 250 ms windows, 200 ms apart.
+                for _ in 0..2 {
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                    sender.send_modify(|count| *count += 1);
+                }
+            }
+        });
+        assert!(settled(&mut dirty).await);
+        assert_eq!(started.elapsed(), Duration::from_millis(650));
+        feed.await.unwrap();
+        assert!(
+            !dirty.has_changed().unwrap(),
+            "one burst, one classification"
+        );
+
+        let started = tokio::time::Instant::now();
+        let feed = tokio::spawn({
+            let sender = sender.clone();
+            async move {
+                for _ in 0..20 {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    sender.send_modify(|count| *count += 1);
+                }
+            }
+        });
+        assert!(settled(&mut dirty).await);
+        assert_eq!(started.elapsed(), COALESCE_LIMIT);
+        feed.abort();
+        let _ = feed.await;
+        drop(sender);
+        assert!(!settled(&mut dirty).await);
+    }
 
     #[test]
     fn address_flags_are_read_per_family() {

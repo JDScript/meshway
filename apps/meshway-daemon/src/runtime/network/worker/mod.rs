@@ -240,6 +240,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             .at
             .filter(|_| (plane.installed.is_none() || engine_degraded) && overlap.is_none());
         let recovery_at = plane.host.recovery_at().map(tokio::time::Instant::from_std);
+        let repair_at = plane.host.repair_at().map(tokio::time::Instant::from_std);
         let Plane {
             host,
             dns,
@@ -261,6 +262,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             () = std::future::ready(()), if overlap_cleared => Work::Offer,
             changed = overlaps.changed() => if changed.is_ok() { Work::PoolOverlap } else { Work::Command(None) },
             changed = repairs.changed() => if changed.is_ok() { Work::Repair } else { Work::Command(None) },
+            _ = sleep_until(repair_at) => Work::Repair,
             due = lifecycle::next(recovery_at, dns.health(), dns_failed, host.ended(), installed.is_some()) => match due {
                 lifecycle::Lifecycle::HostRecovery => Work::HostRecovery,
                 lifecycle::Lifecycle::DnsFailure => Work::DnsFailure,
@@ -474,8 +476,13 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             }
             Work::Repair => {
                 repairs.borrow_and_update();
-                if let Err(error) = engine.components_mut().host.repair().await {
-                    tracing::warn!(%error, "Reinstalling owned capture objects failed; kernel ownership ends");
+                let host = &mut engine.components_mut().host;
+                if let Err(error) = host.repair().await {
+                    if host.repair_at().is_some() {
+                        tracing::debug!(%error, "Owned capture objects unreadable; the repair stays owed");
+                    } else {
+                        tracing::warn!(%error, "Reinstalling owned capture objects failed; kernel ownership ends");
+                    }
                 }
                 continue;
             }
@@ -628,7 +635,9 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                     }
                     continue;
                 };
-                if overlap.is_some() {
+                // A new ownership term publishes the overlap it read before
+                // the worker sees that change.
+                if overlap.is_some() || overlaps.borrow().is_some() {
                     // Kept offered; installed once the overlapping address leaves.
                     continue;
                 }

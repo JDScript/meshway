@@ -357,6 +357,80 @@ async fn own_capture_rules_removed_outside_their_owner_are_reinstalled_boundedly
     task.abort();
 }
 
+/// F6a B1: an own rule removed outside its owner whose first repair read
+/// fails is still owed: the repair is due again, and its next attempt
+/// reinstalls the rule. Reads that keep failing end ownership as
+/// unavailable instead of leaving a healthy-looking owner without the rule.
+#[tokio::test]
+#[ignore = "isolated Linux NET_ADMIN namespace required"]
+async fn a_repair_whose_read_fails_stays_owed_and_completes() {
+    use crate::linux::kernel::tool::command::faults::FAILING_RULE_READS;
+    use std::sync::atomic::Ordering::SeqCst;
+    isolated();
+    let temp = tempfile::tempdir().unwrap();
+    let directory = Arc::new(Directory::open(&temp.path().join("node"), "node.lock").unwrap());
+    let mut host = crate::Host::open(directory, Options::default())
+        .await
+        .unwrap();
+    let pools = ["100.96.0.0/16".parse().unwrap()];
+    host.kernel.retain_negative(&pools).await.unwrap();
+    host.kernel.quiesce().await.unwrap();
+    let mut repairs = host.repairs();
+    repairs.borrow_and_update();
+    let (handle, task) = foreign().await;
+    let remove_one = async |host: &crate::Host| {
+        let owned = host.kernel.journal.rules[0].observed.clone();
+        for rule in get_rules(&handle, 65_536).await.unwrap() {
+            if encode_rule(rule.clone()) == owned {
+                handle.rule().del(rule).execute().await.unwrap();
+            }
+        }
+    };
+    remove_one(&host).await;
+    tokio::time::timeout(Duration::from_secs(3), repairs.changed())
+        .await
+        .unwrap()
+        .unwrap();
+    repairs.borrow_and_update();
+    FAILING_RULE_READS.store(1, SeqCst);
+    assert!(host.repair().await.is_err());
+    FAILING_RULE_READS.store(0, SeqCst);
+    assert!(host.ownership_ended().is_none());
+    let due = host.repair_at().expect("the failed repair stays owed");
+    assert!(due > std::time::Instant::now());
+    assert!(
+        host.kernel.verify().await.is_err(),
+        "the rule is still missing"
+    );
+    host.repair().await.unwrap();
+    assert!(host.repair_at().is_none());
+    host.kernel.verify().await.unwrap();
+    host.kernel.shared.check().unwrap();
+
+    // Reads failing on every attempt: the owner ends as unavailable.
+    remove_one(&host).await;
+    tokio::time::timeout(Duration::from_secs(3), repairs.changed())
+        .await
+        .unwrap()
+        .unwrap();
+    FAILING_RULE_READS.store(u32::MAX, SeqCst);
+    for _ in 1..super::super::MAX_REPAIR_READS {
+        assert!(host.repair().await.is_err());
+        assert!(host.repair_at().is_some());
+    }
+    assert!(host.repair().await.is_err());
+    FAILING_RULE_READS.store(0, SeqCst);
+    assert_eq!(
+        host.ownership_ended(),
+        Some(crate::OwnershipEnd::Unavailable {
+            check: "repair_unavailable"
+        })
+    );
+    assert!(host.repair_at().is_none());
+    assert!(host.recovery_at().is_some());
+    task.abort();
+}
+
 #[tokio::test]
 #[ignore = "isolated Linux NET_ADMIN namespace required"]
 async fn an_external_address_inside_a_mesh_pool_fails_closed_until_it_leaves() {
@@ -420,6 +494,67 @@ async fn an_external_address_inside_a_mesh_pool_fails_closed_until_it_leaves() {
         .unwrap();
     host.kernel.verify_capture(&pools).await.unwrap();
     handle.link().del(index).execute().await.unwrap();
+    host.down().await.unwrap();
+    host.shutdown(false).await.unwrap();
+    task.abort();
+}
+
+/// F6a B7: a new ownership term reads the pool overlap as it is now. An
+/// external address still inside a retained pool opens the term failed
+/// closed on that overlap (not a conflict); an overlap that left while no
+/// term watched is withdrawn by the next term's publication.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "isolated Linux NET_ADMIN namespace required"]
+async fn a_new_ownership_term_publishes_the_pool_overlap_it_reads() {
+    use crate::linux::kernel::tool::command::faults::FAILING_RULE_READS;
+    use std::sync::atomic::Ordering::SeqCst;
+    isolated();
+    let temp = tempfile::tempdir().unwrap();
+    let directory = Arc::new(Directory::open(&temp.path().join("node"), "node.lock").unwrap());
+    let mut host = crate::Host::open(directory, Options::default())
+        .await
+        .unwrap();
+    let pools = ["100.96.0.0/16".parse().unwrap()];
+    host.kernel.retain_negative(&pools).await.unwrap();
+    host.kernel.quiesce().await.unwrap();
+    let mut overlap = host.pool_overlap();
+    let (handle, task) = foreign().await;
+    let index = dummy(&handle, "b7-overlap").await;
+    handle
+        .address()
+        .add(index, "100.96.9.9".parse().unwrap(), 32)
+        .execute()
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(3), overlap.wait_for(Option::is_some))
+        .await
+        .unwrap()
+        .unwrap();
+    let unavailable = crate::OwnershipEnd::Unavailable {
+        check: "verify_unavailable",
+    };
+
+    // The address stays: the new term holds and starts on the overlap.
+    host.kernel.shared.end(unavailable);
+    host.recover().await.unwrap();
+    assert!(host.ownership_ended().is_none());
+    let found = overlap.borrow_and_update().clone().unwrap();
+    assert_eq!(found.address, "100.96.9.9".parse::<IpAddr>().unwrap());
+    assert!(host.kernel.verify_capture(&pools).await.is_err());
+    host.kernel.verify().await.unwrap();
+    host.kernel.shared.check().unwrap();
+
+    // Ended again; the first re-proof (unreadable) closes the term and its
+    // monitor, then the address leaves unobserved.
+    host.kernel.shared.end(unavailable);
+    FAILING_RULE_READS.store(1, SeqCst);
+    assert!(host.recover().await.is_err());
+    FAILING_RULE_READS.store(0, SeqCst);
+    handle.link().del(index).execute().await.unwrap();
+    assert!(overlap.borrow().is_some(), "no term observed the departure");
+    host.recover().await.unwrap();
+    assert!(overlap.borrow_and_update().is_none());
+    host.kernel.verify_capture(&pools).await.unwrap();
     host.down().await.unwrap();
     host.shutdown(false).await.unwrap();
     task.abort();

@@ -267,6 +267,17 @@ impl Expected {
             .all(|ip| self.overlaps.contains_key(&(address.header.index, ip)))
     }
 
+    /// The overlap capture reports while one lasts.
+    pub fn overlap(&self) -> Option<crate::PoolOverlap> {
+        self.overlaps
+            .iter()
+            .next()
+            .map(|((_, address), interface)| crate::PoolOverlap {
+                interface: interface.clone(),
+                address: *address,
+            })
+    }
+
     pub fn add(&mut self, event: Event) -> Result<()> {
         if self.events.len() >= 1024 {
             return Err(Error::Capacity);
@@ -369,15 +380,28 @@ pub(super) async fn run(
             }
             .reject(&mut state, "monitor_error");
         }
-        // Lost or unreadable notifications prove nothing about ownership;
-        // a notification read and found foreign does.
-        shared.end(match _error {
-            Error::Io(_) | Error::Netlink => crate::OwnershipEnd::Unavailable {
-                check: "monitor_unavailable",
-            },
-            _ => crate::OwnershipEnd::Conflict { check: "monitor" },
-        });
+        shared.end(ended(&_error));
     }
+}
+
+/// Lost, truncated or unreadable notifications prove nothing about
+/// ownership; a notification read completely and found foreign does.
+fn ended(error: &Error) -> crate::OwnershipEnd {
+    match error {
+        Error::Io(_) | Error::Netlink => crate::OwnershipEnd::Unavailable {
+            check: "monitor_unavailable",
+        },
+        _ => crate::OwnershipEnd::Conflict { check: "monitor" },
+    }
+}
+
+/// A received datagram the monitor can decode: neither empty nor filling the
+/// whole buffer (a notification the kernel truncated to fit).
+fn complete(size: usize, capacity: usize) -> Result<()> {
+    if size == 0 || size >= capacity {
+        return Err(Error::Netlink);
+    }
+    Ok(())
 }
 
 async fn monitor(
@@ -417,17 +441,18 @@ async fn monitor(
                 tokio::task::yield_now().await;
                 continue;
             }
-            if size == 0 || size >= buffer.len() {
-                #[cfg(test)]
-                if let Ok(mut state) = expected.lock() {
-                    Facts {
-                        kind: "DATAGRAM",
-                        ..Facts::default()
-                    }
-                    .reject(&mut state, "invalid_datagram");
+            let decodable = complete(size, buffer.len());
+            #[cfg(test)]
+            if decodable.is_err()
+                && let Ok(mut state) = expected.lock()
+            {
+                Facts {
+                    kind: "DATAGRAM",
+                    ..Facts::default()
                 }
-                return Err(Error::Conflict);
+                .reject(&mut state, "invalid_datagram");
             }
+            decodable?;
             let mut offset = 0;
             while offset < size {
                 let header = buffer.get(offset..offset + 4).ok_or(Error::Netlink)?;
@@ -482,24 +507,7 @@ async fn monitor(
                         if !external(&state, address.header.index) {
                             conflict!("capture_address");
                         }
-                        let label = address
-                            .attributes
-                            .iter()
-                            .find_map(|a| match a {
-                                AddressAttribute::Label(label) => Some(label.clone()),
-                                _ => None,
-                            })
-                            .unwrap_or_else(|| format!("if{}", address.header.index));
-                        for ip in address.attributes.iter().filter_map(|a| match a {
-                            AddressAttribute::Local(ip) | AddressAttribute::Address(ip) => {
-                                Some(*ip)
-                            }
-                            _ => None,
-                        }) {
-                            if state.pools.iter().any(|pool| pool.contains(&ip)) {
-                                overlapping.push(((address.header.index, ip), label.clone()));
-                            }
-                        }
+                        overlapping.extend(pool_addresses(&state, address));
                     }
                     // The kernel's own local routes of such an address are
                     // part of that overlap, not a separate conflict.
@@ -720,16 +728,7 @@ async fn monitor(
                     _ => return Err(Error::Netlink),
                 }
                 offset += (length + 3) & !3;
-                let overlap = (state.overlaps.len() != overlaps).then(|| {
-                    state
-                        .overlaps
-                        .iter()
-                        .next()
-                        .map(|((_, address), interface)| crate::PoolOverlap {
-                            interface: interface.clone(),
-                            address: *address,
-                        })
-                });
+                let overlap = (state.overlaps.len() != overlaps).then(|| state.overlap());
                 drop(state);
                 if let Some(overlap) = overlap {
                     if let Some(found) = &overlap {
@@ -778,6 +777,32 @@ pub(super) fn external(state: &Expected, index: u32) -> bool {
             .anchor_creating
             .as_ref()
             .is_none_or(|(_, creating)| *creating != Some(index))
+}
+
+/// The addresses of an external interface's address message inside a Mesh
+/// pool, keyed as [`Expected::overlaps`] with the interface label.
+pub(super) fn pool_addresses(
+    state: &Expected,
+    address: &rtnetlink::packet_route::address::AddressMessage,
+) -> Vec<((u32, std::net::IpAddr), String)> {
+    let label = address
+        .attributes
+        .iter()
+        .find_map(|a| match a {
+            AddressAttribute::Label(label) => Some(label.clone()),
+            _ => None,
+        })
+        .unwrap_or_else(|| format!("if{}", address.header.index));
+    address
+        .attributes
+        .iter()
+        .filter_map(|a| match a {
+            AddressAttribute::Local(ip) | AddressAttribute::Address(ip) => Some(*ip),
+            _ => None,
+        })
+        .filter(|ip| state.pools.iter().any(|pool| pool.contains(ip)))
+        .map(|ip| ((address.header.index, ip), label.clone()))
+        .collect()
 }
 
 /// A local-table route of an external interface that holds an address
@@ -841,6 +866,25 @@ fn network_changed(
 mod tests {
     use super::*;
     use rtnetlink::packet_route::address::AddressMessage;
+
+    /// F6a B8: an empty or buffer-filling (truncated) datagram proves
+    /// nothing: the monitor ends ownership as unavailable, re-proved later.
+    /// Only a notification decoded and found foreign is a conflict.
+    #[test]
+    fn empty_or_truncated_datagrams_end_ownership_as_unavailable() {
+        let unavailable = crate::OwnershipEnd::Unavailable {
+            check: "monitor_unavailable",
+        };
+        for size in [0, 65536, 70000] {
+            let error = complete(size, 65536).unwrap_err();
+            assert_eq!(ended(&error), unavailable, "size {size}");
+        }
+        complete(16, 65536).unwrap();
+        assert_eq!(
+            ended(&Error::Conflict),
+            crate::OwnershipEnd::Conflict { check: "monitor" }
+        );
+    }
 
     #[test]
     fn first_conflict_is_bounded_and_omits_unselected_attributes_and_expected_bytes() {

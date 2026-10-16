@@ -447,9 +447,14 @@ impl Host {
     /// Reinstall owned capture rules and routes removed outside this owner
     /// (a network manager's cleanup of rules it does not know). Bounded: a
     /// fourth repair within a minute is a conflict, as is a slot another
-    /// owner now holds.
+    /// owner now holds. A repair whose reads failed stays owed until
+    /// [`Self::repair_at`]; repeated failed reads end ownership as unavailable.
     pub async fn repair(&mut self) -> Result<()> {
         self.kernel.repair().await
+    }
+    /// When an owed [`Self::repair`] is due again.
+    pub fn repair_at(&self) -> Option<std::time::Instant> {
+        self.kernel.repair_at()
     }
     /// Exact interface names held by this owner's journal (TUN and DNS anchor).
     pub fn owned_interfaces(&self) -> Vec<String> {
