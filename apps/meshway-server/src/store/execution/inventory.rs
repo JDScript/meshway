@@ -141,6 +141,8 @@ pub(crate) fn inventory_in_transaction(
 ) -> Result<NodeInventoryResponse, Error> {
     let now = now()?;
     let subjects = super::subjects(tx, network, bindings)?;
+    // One read of every selection; each Node's is then decided by Policy.
+    let selections = super::selection::selections(tx, network, cfg, bindings)?;
     let mut items = Vec::new();
     for (node, settings) in &cfg.nodes {
         if !visible.contains(node) {
@@ -161,7 +163,7 @@ pub(crate) fn inventory_in_transaction(
             |r| r.get(0),
         )?;
         let record = crate::netmap::records::Records::shared().get(network, *node);
-        let selection = super::selection::state(tx, network, cfg, bindings, &subjects, *node)?;
+        let selection = super::selection::decided(cfg, &subjects, selections.get(node), *node)?;
         items.push(NodeInventoryView {
             routing: meshway_protocol::NodeRoutingSummary {
                 can_select: super::selection::can_select(&selection),

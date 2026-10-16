@@ -28,7 +28,7 @@ pub(crate) fn compilation_context(
 ) -> Result<CompilationContext, Error> {
     let selected_profiles = super::selection::selections(tx, network, cfg, bindings)?
         .into_iter()
-        .map(|(node, (profile, _))| (node, profile))
+        .filter_map(|(node, stored)| Some((node, stored.profile?)))
         .collect();
     let subjects = subjects(tx, network, bindings)?;
     let inventory = trusted_inventory(tx, network, cfg, &subjects)?;

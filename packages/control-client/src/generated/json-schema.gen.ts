@@ -14817,7 +14817,7 @@ export const schemaDocument = {
             "oneOf": [
               {
                 "$ref": "#/components/schemas/Version",
-                "description": "Persistent selection version, the base of the next compare-and-swap; null when there is no selection."
+                "description": "Persistent selection version, the base of the next compare-and-swap; a cleared selection keeps its version; null only before the first selection under the Node's current identity."
               },
               {
                 "type": "null"

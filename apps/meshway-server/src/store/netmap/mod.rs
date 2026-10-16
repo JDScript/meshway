@@ -264,7 +264,8 @@ fn netmap_error(error: NetmapError, trigger: Trigger) -> Error {
     }
 }
 
-/// Persisted selection versions of Nodes whose selection matches their current identity.
+/// Persisted selection versions of Nodes whose selection matches their
+/// current identity, a cleared one included: the base of its next change.
 fn selection_versions(
     tx: &Transaction<'_>,
     network: NetworkId,
@@ -273,7 +274,7 @@ fn selection_versions(
 ) -> Result<BTreeMap<NodeId, Version>, Error> {
     Ok(super::execution::selections(tx, network, cfg, bindings)?
         .into_iter()
-        .map(|(node, (_, version))| (node, version))
+        .map(|(node, stored)| (node, stored.version))
         .collect())
 }
 

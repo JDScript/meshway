@@ -12,7 +12,7 @@ object! {
 pub struct RoutingSelectionState {
     /// Profile the Node's persistent selection names under its current identity; null when it has none.
     #[serde(deserialize_with = "nullable")] pub requested_profile: Option<String> [required = true],
-    /// Persistent selection version, the base of the next compare-and-swap; null when there is no selection.
+    /// Persistent selection version, the base of the next compare-and-swap; a cleared selection keeps its version; null only before the first selection under the Node's current identity.
     #[serde(deserialize_with = "nullable")] pub version: Option<Version> [required = true],
     /// Profile in effect: the requested one while it is allowed and not locked out, otherwise the default.
     pub applied_profile: String,

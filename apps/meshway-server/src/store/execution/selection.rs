@@ -30,16 +30,25 @@ enum Actor {
 /// `routing.select` activity carries the same value as its target profile.
 const CLEARED: &str = "";
 
-/// Every configured Node's persistent selection under its current identity:
-/// its profile and version. A cleared selection or one made under an earlier
-/// identity is none. The one reading compilation, netmap versions and the
-/// selection state share.
+/// A Node's persistent selection under its current identity: the selected
+/// profile (`None` once cleared) and the version of the last change. A
+/// cleared selection keeps its version: it is the compare-and-swap base
+/// that every later change must name.
+#[derive(Clone, Debug)]
+pub(crate) struct Stored {
+    pub profile: Option<String>,
+    pub version: Version,
+}
+
+/// Every configured Node's persistent selection under its current identity.
+/// One made under an earlier identity is none. The one reading compilation,
+/// netmap versions, inventories and the selection state share.
 pub(crate) fn selections(
     tx: &Transaction<'_>,
     network: NetworkId,
     cfg: &NetworkConfiguration,
     bindings: &ConfigurationBindings,
-) -> Result<BTreeMap<NodeId, (String, Version)>, Error> {
+) -> Result<BTreeMap<NodeId, Stored>, Error> {
     let mut statement = tx.prepare(
         "SELECT node_id,identity_digest,profile,version FROM routing_selections WHERE network_id=?1",
     )?;
@@ -47,21 +56,35 @@ pub(crate) fn selections(
     let mut out = BTreeMap::new();
     while let Some(row) = rows.next()? {
         let node: NodeId = id(row.get(0)?)?;
-        let digest: Vec<u8> = row.get(1)?;
-        let profile: String = row.get(2)?;
-        if profile == CLEARED
-            || !cfg.nodes.contains_key(&node)
-            || digest != identity_digest(cfg, bindings, node)?.as_bytes()
-        {
-            continue;
+        if let Some(stored) = decode(row, cfg, bindings, node)? {
+            out.insert(node, stored);
         }
-        let version = u64::try_from(row.get::<_, i64>(3)?)
-            .ok()
-            .and_then(|version| Version::new(version).ok())
-            .ok_or(Error::decode("routing_selections.version"))?;
-        out.insert(node, (profile, version));
     }
     Ok(out)
+}
+
+/// One `routing_selections` row of `node` (columns identity digest, profile,
+/// version from index 1), when it belongs to the Node's current identity.
+fn decode(
+    row: &rusqlite::Row<'_>,
+    cfg: &NetworkConfiguration,
+    bindings: &ConfigurationBindings,
+    node: NodeId,
+) -> Result<Option<Stored>, Error> {
+    let digest: Vec<u8> = row.get(1)?;
+    if !cfg.nodes.contains_key(&node) || digest != identity_digest(cfg, bindings, node)?.as_bytes()
+    {
+        return Ok(None);
+    }
+    let profile: String = row.get(2)?;
+    let version = u64::try_from(row.get::<_, i64>(3)?)
+        .ok()
+        .and_then(|version| Version::new(version).ok())
+        .ok_or(Error::decode("routing_selections.version"))?;
+    Ok(Some(Stored {
+        profile: (profile != CLEARED).then_some(profile),
+        version,
+    }))
 }
 
 /// The Node's persistent selection under its current identity.
@@ -71,8 +94,18 @@ fn stored(
     cfg: &NetworkConfiguration,
     bindings: &ConfigurationBindings,
     node: NodeId,
-) -> Result<Option<(String, Version)>, Error> {
-    Ok(selections(tx, network, cfg, bindings)?.remove(&node))
+) -> Result<Option<Stored>, Error> {
+    let mut statement = tx.prepare(
+        "SELECT node_id,identity_digest,profile,version FROM routing_selections WHERE network_id=?1 AND node_id=?2",
+    )?;
+    let mut rows = statement.query(params![
+        network.as_uuid().as_bytes().as_slice(),
+        node.as_uuid().as_bytes().as_slice()
+    ])?;
+    match rows.next()? {
+        Some(row) => decode(row, cfg, bindings, node),
+        None => Ok(None),
+    }
 }
 
 /// A configured Node's selection as the current configuration decides it.
@@ -84,12 +117,26 @@ pub(crate) fn state(
     subjects: &meshway_policy::SubjectContext,
     node: NodeId,
 ) -> Result<RoutingSelectionState, Error> {
-    let selected = stored(tx, network, cfg, bindings, node)?;
+    decided(
+        cfg,
+        subjects,
+        stored(tx, network, cfg, bindings, node)?.as_ref(),
+        node,
+    )
+}
+
+/// What the current configuration makes of a Node's stored selection.
+pub(crate) fn decided(
+    cfg: &NetworkConfiguration,
+    subjects: &meshway_policy::SubjectContext,
+    stored: Option<&Stored>,
+    node: NodeId,
+) -> Result<RoutingSelectionState, Error> {
     Ok(meshway_policy::compile::routing_selection(
         cfg,
         subjects,
-        selected.as_ref().map(|(profile, _)| profile.as_str()),
-        selected.as_ref().map(|(_, version)| *version),
+        stored.and_then(|stored| stored.profile.as_deref()),
+        stored.map(|stored| stored.version),
         node,
     )?)
 }
@@ -145,7 +192,12 @@ fn commit(
     if expected.is_some_and(|expected| expected != current.version) {
         return Err(Error::VersionConflict);
     }
-    if profile.is_none() && current.version.is_none() {
+    if profile.is_none() && current.requested_profile.is_none() {
+        // Nothing to clear. A user's request still leaves its receipt, so
+        // a retry of it never clears a later selection.
+        if matches!(actor, Actor::User(_)) {
+            activity(tx, network, node, actor, request, CLEARED, now)?;
+        }
         return Ok((current, Vec::new()));
     }
     let profile = profile.unwrap_or_else(|| CLEARED.to_owned());
@@ -165,6 +217,34 @@ fn commit(
         Version::new(previous.unwrap_or(0) as u64 + 1).map_err(|_| Error::VersionConflict)?;
     let digest = identity_digest(&cfg, &bindings, node)?;
     tx.execute("INSERT INTO routing_selections(network_id,node_id,identity_digest,profile,version,selected_at) VALUES(?1,?2,?3,?4,?5,?6) ON CONFLICT(network_id,node_id) DO UPDATE SET identity_digest=excluded.identity_digest,profile=excluded.profile,version=excluded.version,selected_at=excluded.selected_at",params![network.as_uuid().as_bytes().as_slice(),node.as_uuid().as_bytes().as_slice(),digest.as_bytes().as_slice(),profile,version.get() as i64,now])?;
+    activity(tx, network, node, actor, request, &profile, now)?;
+    let netmap = crate::store::netmap::recompile(
+        tx,
+        sealer,
+        network,
+        now,
+        crate::store::netmap::Trigger::Node,
+    )?;
+    let selection = state(tx, network, &cfg, &bindings, &subjects, node)?;
+    // The new netmaps change configuration progress and the inventory views.
+    let mut effects = vec![Effect::Progress {
+        network_id: network,
+    }];
+    effects.extend(netmap.effects());
+    Ok((selection, effects))
+}
+
+/// The `routing.select` activity of one request: the record of the change
+/// and, for a user, the receipt a retry of the same request ID finds.
+fn activity(
+    tx: &Transaction<'_>,
+    network: NetworkId,
+    node: NodeId,
+    actor: Actor,
+    request: RequestId,
+    profile: &str,
+    now: i64,
+) -> Result<(), Error> {
     let (kind, user, actor_node) = match actor {
         Actor::Node => ("node", None, Some(node)),
         Actor::User(user) => ("user", Some(user), None),
@@ -183,20 +263,7 @@ fn commit(
             profile,
         ],
     )?;
-    let netmap = crate::store::netmap::recompile(
-        tx,
-        sealer,
-        network,
-        now,
-        crate::store::netmap::Trigger::Node,
-    )?;
-    let selection = state(tx, network, &cfg, &bindings, &subjects, node)?;
-    // The new netmaps change configuration progress and the inventory views.
-    let mut effects = vec![Effect::Progress {
-        network_id: network,
-    }];
-    effects.extend(netmap.effects());
-    Ok((selection, effects))
+    Ok(())
 }
 
 pub(crate) fn select_profile(

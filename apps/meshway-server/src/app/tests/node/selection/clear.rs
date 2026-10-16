@@ -31,24 +31,29 @@ async fn a_node_clears_its_selection_under_its_version_and_the_default_applies()
             cleared.requested_unavailable,
             cleared.applied_profile.as_str()
         ),
-        (None, None, None, "mesh")
+        (None, Version::new(2).ok(), None, "mesh")
     );
-    // The new netmap carries no selection version and the same state.
+    // The new netmap carries the cleared selection's version, the base of
+    // the next change, and the same state.
     let after = lab.netmap(lab.a).await;
     assert!(after.reference().serial > selected.reference().serial);
+    assert_eq!(
+        after.netmap.projection.selection_versions.get(&lab.a),
+        Version::new(2).ok().as_ref()
+    );
     assert!(
         !after
             .netmap
             .projection
-            .selection_versions
+            .selected_profiles
             .contains_key(&lab.a)
     );
     assert_eq!(
         meshway_policy::compile::netmap::routing_selection(&after.netmap).unwrap(),
         cleared
     );
-    // Versions keep growing: the clearing used 2.
-    let again = lab.node_select(None, "auto").await.unwrap().selection;
+    // Versions keep growing: the clearing used 2, the next change's base.
+    let again = lab.node_select(Some(2), "auto").await.unwrap().selection;
     assert_eq!(again.version.map(Version::get), Some(3));
     let events = lab.activities().await;
     assert_eq!(events.len(), 3);
@@ -206,4 +211,107 @@ async fn members_clear_only_their_own_devices_and_a_lock_does_not_refuse_it() {
     assert!(matches!(&member.actor, ActivityActor::User { .. }));
     assert_eq!(event_profile(member), (lab.m, None));
     assert_eq!(event_profile(&events[0]), (lab.a, None));
+}
+
+/// F6a A1: a cleared selection keeps its version as the compare-and-swap
+/// base. A change made before the clearing (an empty base, or the selected
+/// version) is stale afterwards: no A-B-A through the cleared state.
+#[tokio::test]
+async fn a_cleared_selection_keeps_its_version_and_a_stale_base_conflicts() {
+    let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
+    let lab = selection().await;
+    lab.node_select(None, "work").await.unwrap();
+    let cleared = lab.node_clear(Some(1)).await.unwrap().selection;
+    assert_eq!(cleared.version.map(Version::get), Some(2));
+    // Read before the first selection, or before the clearing: both stale.
+    assert_eq!(
+        lab.node_select(None, "auto").await.unwrap_err(),
+        Error::VersionConflict
+    );
+    assert_eq!(
+        lab.node_select(Some(1), "auto").await.unwrap_err(),
+        Error::VersionConflict
+    );
+    // Clearing again under the cleared version changes nothing.
+    let serial = lab.netmap(lab.a).await.reference().serial;
+    let again = lab.node_clear(Some(2)).await.unwrap().selection;
+    assert_eq!(again, cleared);
+    assert_eq!(lab.netmap(lab.a).await.reference().serial, serial);
+    assert_eq!(lab.activities().await.len(), 2);
+    // The current base selects.
+    let selected = lab.node_select(Some(2), "auto").await.unwrap().selection;
+    assert_eq!(selected.version.map(Version::get), Some(3));
+    // The user view and the inventory agree with the Node's netmap.
+    let carried =
+        meshway_policy::compile::netmap::routing_selection(&lab.netmap(lab.a).await.netmap)
+            .unwrap();
+    assert_eq!(carried, selected);
+    assert_eq!(
+        lab.app
+            .execution()
+            .routing_selection(&lab.owner, lab.network, lab.a)
+            .await
+            .unwrap(),
+        selected
+    );
+}
+
+/// F6a A2: a user's clearing without a selection still leaves its receipt:
+/// its retry after a later selection returns that selection and clears
+/// nothing, and its request ID cannot select a profile.
+#[tokio::test]
+async fn a_retried_clearing_without_a_selection_never_clears_a_later_one() {
+    let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
+    let lab = selection().await;
+    let request = rid();
+    let nothing = lab.user_clear(&lab.owner, lab.a, request).await.unwrap();
+    assert_eq!((nothing.requested_profile, nothing.version), (None, None));
+    let events = lab.activities().await;
+    assert_eq!(events.len(), 1);
+    assert_eq!(event_profile(&events[0]), (lab.a, None));
+    let serial = lab.netmap(lab.a).await.reference().serial;
+    let selected = lab
+        .app
+        .execution()
+        .select_user_profile(
+            &lab.owner,
+            lab.network,
+            lab.a,
+            SelectNodeRoutingProfileRequest {
+                request_id: rid(),
+                profile: "work".into(),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(lab.netmap(lab.a).await.reference().serial > serial);
+    // The retry is the same clearing: it finds its receipt.
+    assert_eq!(
+        lab.user_clear(&lab.owner, lab.a, request).await.unwrap(),
+        selected
+    );
+    assert_eq!(lab.activities().await.len(), 2);
+    // Its ID on another Node, or for a selection, is a conflict.
+    assert_eq!(
+        lab.user_clear(&lab.owner, lab.m, request)
+            .await
+            .unwrap_err(),
+        Error::RequestConflict
+    );
+    assert_eq!(
+        lab.app
+            .execution()
+            .select_user_profile(
+                &lab.owner,
+                lab.network,
+                lab.a,
+                SelectNodeRoutingProfileRequest {
+                    request_id: request,
+                    profile: "work".into(),
+                },
+            )
+            .await
+            .unwrap_err(),
+        Error::RequestConflict
+    );
 }

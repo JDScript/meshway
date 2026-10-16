@@ -216,7 +216,7 @@ macro_rules! empty_route {
 }
 /// Select an authorized routing profile for the current Node.
 ///
-/// Requires a Node session and current instance. `expectedVersion` is the Node's current selection version (its netmap's `selectionVersions` entry, null without a selection); a mismatch returns version_conflict.
+/// Requires a Node session and current instance. `expectedVersion` is the Node's current selection version (its netmap's `selectionVersions` entry, a cleared selection's included; null only before the first selection under the Node's identity); a mismatch returns version_conflict.
 /// A profile outside the Node's allowed profiles, or other than the default of a locked assignment, returns routing_profile_unavailable with the allowed profiles.
 /// Acceptance records a `routing.select` activity with the Node as actor and recompiles the Node's netmap, delivered by its next sync; the answer is the committed selection.
 #[utoipa::path(post,path="/agent-api/v1/routing-selection",operation_id="selectNodeRoutingProfile",tag="execution",security(("nodeSession"=[])),request_body=RoutingSelectionRequest,responses((status=200,body=RoutingSelectionResponse),(status=400,body=ErrorResponse,description="invalid_request"),(status=401,body=ErrorResponse,description="invalid_credentials"),(status=403,body=ErrorResponse,description="node_identity_rejected"),(status=409,body=ErrorResponse,description="version_conflict, binding_conflict, state_conflict"),(status=413,body=ErrorResponse,description="request_too_large"),(status=415,body=ErrorResponse,description="unsupported_media_type"),(status=422,body=ErrorResponse,description="routing_profile_unavailable"),(status=503,body=ErrorResponse,description="busy, service_unavailable")))]
@@ -237,7 +237,7 @@ pub(super) async fn select_profile(
 /// Clear the current Node's routing profile selection.
 ///
 /// Requires a Node session and current instance. `expectedVersion` is the Node's current selection version, as for `selectNodeRoutingProfile`; a mismatch returns version_conflict.
-/// Afterwards the assignment's default applies (`auto` included). Without a selection (`expectedVersion` null) nothing changes and no activity is recorded.
+/// Afterwards the assignment's default applies (`auto` included). Without a selected profile nothing changes and no activity is recorded; the version stays the base.
 /// Acceptance records a `routing.select` activity with the Node as actor and a null target profile, and recompiles the Node's netmap, delivered by its next sync; the answer is the committed selection.
 #[utoipa::path(delete,path="/agent-api/v1/routing-selection",operation_id="clearNodeRoutingProfile",tag="execution",security(("nodeSession"=[])),request_body=ClearRoutingSelectionRequest,responses((status=200,body=RoutingSelectionResponse),(status=400,body=ErrorResponse,description="invalid_request"),(status=401,body=ErrorResponse,description="invalid_credentials"),(status=403,body=ErrorResponse,description="node_identity_rejected"),(status=409,body=ErrorResponse,description="version_conflict, binding_conflict, state_conflict"),(status=413,body=ErrorResponse,description="request_too_large"),(status=415,body=ErrorResponse,description="unsupported_media_type"),(status=503,body=ErrorResponse,description="busy, service_unavailable")))]
 pub(super) async fn clear_profile(
