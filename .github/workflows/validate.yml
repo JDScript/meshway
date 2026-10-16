@@ -34,6 +34,11 @@ on:
       - "apps/meshway-server/src/state/**"
       - "apps/meshway-server/src/netmap/**"
       - "apps/meshway-server/src/resources/**"
+      - "apps/meshway-server/src/configuration/**"
+      - "apps/meshway-server/src/store/execution/selection.rs"
+      - "apps/meshway-server/src/store/netmap/**"
+      - "apps/meshway-server/src/http/agent.rs"
+      - "apps/meshway-server/src/http/nodes.rs"
       - "tools/meshway-runtime-fixture/**"
       - "tools/meshway-packet-fixture/**"
       - "tools/meshway-test-server/**"
@@ -43,6 +48,10 @@ on:
       - "scripts/validation_support.py"
       - "scripts/node_lab.py"
       - "dev/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "mise.toml"
+      - "mise.lock"
       - ".github/workflows/validate.yml"
   workflow_dispatch:
     inputs:

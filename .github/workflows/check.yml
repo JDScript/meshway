@@ -33,6 +33,7 @@ jobs:
               - "Cargo.lock"
               - "mise.toml"
               - "mise.lock"
+              - ".config/nextest.toml"
               - "crates/**"
               - "apps/meshway-server/**"
               - "apps/meshway-daemon/**"
