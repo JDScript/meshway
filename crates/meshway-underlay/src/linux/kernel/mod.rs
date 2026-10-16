@@ -190,6 +190,7 @@ impl Kernel {
             attempts: Arc::new(Semaphore::new(options.max_sockets)),
             resolutions: Arc::new(Semaphore::new(options.max_sockets)),
             execution: RwLock::new(None),
+            changes: tokio::sync::watch::channel(None).0,
         });
         // Permissions and readback are real even before the first connection.
         for socket in [

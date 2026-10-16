@@ -1,4 +1,4 @@
-use super::super::verification::Verification;
+use super::super::verification::{Reread, Verification};
 use super::io::ExitCutoff as Deadline;
 use super::{
     api::{CtConfirmation, ProjectionAck},
@@ -158,6 +158,23 @@ impl Backend {
             return Verification::Changed("flow_missing");
         }
         Verification::Holds
+    }
+    /// The read-back after a failed retirement of `incarnation`: the owned
+    /// objects as [`Self::check`] reads them; the retirement is at its target
+    /// once its journal record is gone (it is removed last), otherwise each
+    /// step reads back and skips what is already done.
+    pub async fn reread(&mut self, incarnation: super::ExitIncarnation) -> Reread {
+        let done = !self
+            .ledger
+            .projections
+            .iter()
+            .any(|flow| flow.incarnation == incarnation);
+        Reread::of(self.check().await, done)
+    }
+    /// The read-back after failed housekeeping: the owned objects; each of
+    /// its steps reads back and skips what is already done.
+    pub async fn reread_maintain(&mut self) -> Reread {
+        Reread::of(self.check().await, false)
     }
     #[cfg(test)]
     pub async fn install(
@@ -573,7 +590,9 @@ impl Backend {
                         }
                     }
                 }
-                Ok(Ok(None)) => return Ok(None),
+                // Not there yet, or a lookup that failed: unknown, not an
+                // absence. Look again until the cutoff.
+                Ok(Ok(None) | Err(_)) => return Ok(None),
                 _ => {}
             }
         }
@@ -629,8 +648,25 @@ impl Backend {
         // An expired old element makes DELETE fail and aborts the entire batch.
         let batch = json!({"nftables": [self.ledger.program.element("delete", old.tuple.set(), vec![old.tuple.key()]), self.ledger.program.element("add", old.tuple.set(), vec![timed(old.tuple, seconds)])]});
         if objects::mutate(&mut self.commands, &batch).await.is_err() {
-            self.close_projection(incarnation).await?;
-            return Err(Error::Expired);
+            // A failed batch proves neither outcome. It is atomic: the element
+            // is there (with its old or its new timeout), or gone with an
+            // expired old one. While it reads back there, the same batch runs
+            // once more: it sets the new timeout either way. A read that
+            // fails proves nothing either; it is read again (three reads).
+            let _ = self.commands.settle().await;
+            let mut present = Err(Error::Netlink);
+            for _ in 0..3 {
+                present = self.present(&[old.tuple]).await;
+                if !matches!(present, Err(Error::Netlink)) {
+                    break;
+                }
+            }
+            let again = matches!(present.as_deref(), Ok([true]))
+                && objects::mutate(&mut self.commands, &batch).await.is_ok();
+            if !again {
+                self.close_projection(incarnation).await?;
+                return Err(Error::Expired);
+            }
         }
         self.verify_element(old.tuple, true).await?;
         let gate_until = submitted + Duration::from_secs(seconds);
@@ -944,11 +980,21 @@ impl Backend {
         }) {
             self.expire_quarantine(QUARANTINE_AGE).await?;
         }
-        let expired: Vec<_> = self
+        // Expired projections, and recorded ones no longer live: a
+        // retirement that failed part way is completed here (each step reads
+        // back and skips what is already done).
+        let expired: std::collections::BTreeSet<_> = self
             .live
             .iter()
             .filter(|(_, live)| !live.valid())
             .map(|(id, _)| *id)
+            .chain(
+                self.ledger
+                    .projections
+                    .iter()
+                    .filter(|flow| !self.live.contains_key(&flow.incarnation))
+                    .map(|flow| flow.incarnation),
+            )
             .collect();
         for incarnation in expired {
             self.retire(incarnation).await?;

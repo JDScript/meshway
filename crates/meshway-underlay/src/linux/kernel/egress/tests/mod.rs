@@ -619,3 +619,5 @@ async fn verification_distinguishes_a_missing_rule_and_table_from_a_consistent_t
     );
     tasks.shutdown().await.unwrap();
 }
+
+mod changes;

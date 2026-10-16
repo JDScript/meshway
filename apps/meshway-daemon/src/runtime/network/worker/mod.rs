@@ -939,7 +939,10 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 }
             }
             // A restarted adjacent peer lost its circuits: end them here and
-            // pass a Close on to the surviving side of each relayed one.
+            // pass a Close on to the surviving side of each relayed one. A
+            // new Manager of this Node (its adjacencies restarted) is a new
+            // boot to every peer: end this Node's own circuits the same way.
+            packets.closes(secure.set_own_boot(manager.boot()));
             if let Ok(boots) = manager.peer_boots() {
                 packets.closes(secure.set_peer_boots(boots));
             }

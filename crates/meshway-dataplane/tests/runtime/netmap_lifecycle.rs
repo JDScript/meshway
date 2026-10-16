@@ -96,6 +96,55 @@ async fn restarted_origin_ends_the_terminal_circuit_without_any_frame() {
     f.close().await;
 }
 
+/// X12: this Node's own adjacencies restarted under a new boot (a new
+/// Manager). Every adjacent peer now ends its circuits through it; it ends
+/// its own at once too, its Close reaches the far end through the relay, and
+/// its next packet re-handshakes at once instead of waiting out the 15 s
+/// reply timeout on a circuit the peers no longer hold.
+#[tokio::test]
+async fn own_new_boot_ends_every_circuit_at_once_and_its_close_reaches_the_far_end() {
+    let mut f = NetmapMesh::start().await;
+    let [_, r, b] = f.ids();
+    let id = {
+        let packet = f.mesh_udp(false, 42424);
+        first(&mut f, packet)
+    }
+    .await;
+    assert!(f.a.set_own_boot([1; 16]).is_empty(), "the first call binds");
+    assert!(
+        f.a.set_own_boot([1; 16]).is_empty(),
+        "the same boot keeps all"
+    );
+    assert!(f.a.circuit_info(id).unwrap().is_some());
+    let started = std::time::Instant::now();
+    let mut closes = f.a.set_own_boot([2; 16]);
+    assert!(f.a.circuit_info(id).unwrap().is_none(), "ended at once");
+    assert_eq!(closes.len(), 1, "one Close toward the next hop");
+    let close = closes.remove(0);
+    assert_eq!((close.next(), close.circuit()), (r, id));
+    let Received::Forward(forward) = f.r.receive(&f.ar.carrier, wire(close)).unwrap() else {
+        panic!("the relay passes the Close on")
+    };
+    assert_eq!(forward.next(), b);
+    assert!(f.r.circuit_info(id).unwrap().is_none());
+    assert!(matches!(
+        f.b.receive(&f.rb.carrier, wire(forward)).unwrap(),
+        Received::Closed { circuit } if circuit == id
+    ));
+    assert!(f.b.circuit_info(id).unwrap().is_none());
+    let packet = f.mesh_udp(false, 42424);
+    let Outbound::Queued { init: Some(init) } = f.a.outbound(packet).unwrap() else {
+        panic!("a fresh circuit for the unchanged path")
+    };
+    assert_ne!(init.circuit(), id);
+    assert!(started.elapsed() < std::time::Duration::from_secs(1));
+    println!(
+        "X12_OWN_BOOT=retired-at-once,close-relayed-to-terminal,new-init-ms={}",
+        started.elapsed().as_millis()
+    );
+    f.close().await;
+}
+
 #[tokio::test]
 async fn a_terminal_that_only_receives_answers_with_a_passive_keepalive() {
     let mut f = NetmapMesh::start().await;

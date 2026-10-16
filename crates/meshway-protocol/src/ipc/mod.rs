@@ -397,6 +397,37 @@ meshway_model::object! { #[derive(Clone, Debug)] pub struct Status {
     /// this host (a path change or a refresh); omitted before the first.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_network_change: Option<DateTime<Utc>>,
+    /// A kernel change of the egress capture or exit owner whose attempt
+    /// failed and that the owner retries after reading the kernel back (at
+    /// most 30 s from the first failure); omitted otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub change_pending: Option<KernelChange>,
+} }
+
+meshway_model::string_enum! {
+/// The Underlay kernel owner of a retried change.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum KernelChangeOwner {
+    /// The egress capture owner (`pause`, `stage`, `switch`).
+    EgressCapture,
+    /// The exit role owner: a projection's retirement after the named
+    /// request (`retire`, `renew`, `install`, `confirm`), or `maintain`.
+    Exit,
+}
+}
+
+meshway_model::object! {
+/// A failed kernel change its owner retries.
+#[derive(Clone, Debug)] pub struct KernelChange {
+    pub owner: KernelChangeOwner,
+    pub operation: String,
+    /// The last attempt's error.
+    pub reason: String,
+    /// Attempts so far, the first one included.
+    pub attempts: u32,
+    /// When the next attempt starts (1 s after the first failure, doubling).
+    pub retry_at: DateTime<Utc>,
 } }
 
 meshway_model::object! {

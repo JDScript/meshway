@@ -188,6 +188,7 @@ async fn adopted_after(instances: &[u8]) -> (Manager, Arc<Factory>, Netmaps, Soc
         Arc::new(Offline),
         meshway_model::Sequence::MIN.checked_next().unwrap(),
         None,
+        None,
     )
     .await
     .unwrap();
@@ -229,6 +230,7 @@ async fn the_first_instance_rebinds_an_installed_plain_listener_on_its_port() {
         Default::default(),
         Arc::new(Offline),
         meshway_model::Sequence::MIN.checked_next().unwrap(),
+        None,
         None,
     )
     .await
@@ -303,5 +305,115 @@ async fn a_coordination_bind_adopted_after_a_new_instance_names_it() {
         "the authorization was rebound to instance 2"
     );
     b.shutdown().await.unwrap();
+    fixture.close().await;
+}
+
+type Change = Box<dyn FnOnce(&mut meshway_configuration::NetworkConfiguration)>;
+
+/// X12/R2: a configuration change applied to Managers serving traversal
+/// sockets and a live channel (a listener of this Node removed and added
+/// again, as in the R1 stage change, and an unrelated rename) is applied in
+/// place: every apply succeeds, the Manager keeps running and its boot, so
+/// the network worker never restarts adjacencies (a new boot to every peer).
+#[tokio::test]
+async fn configuration_changes_with_live_traversal_channels_keep_the_manager_and_its_boot() {
+    let mut fixture = Netmaps::start(false, true).await;
+    let ids = fixture.ids();
+    let factory = fixture.factory();
+    let instance = |n: u8| -> meshway_protocol::InstanceRequest {
+        serde_json::from_value(serde_json::json!({
+            "instanceId": format!("00000000-0000-4000-8000-0000000000d{n}"),
+            "generation": 1
+        }))
+        .unwrap()
+    };
+    let mut managers = Vec::new();
+    for index in 0..2 {
+        let mut manager = Manager::start_with_traversal(
+            &fixture.desired[index],
+            fixture.keys[index].clone(),
+            factory.clone(),
+            Default::default(),
+            Arc::new(super::Offline),
+            meshway_model::Sequence::MIN.checked_next().unwrap(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        manager
+            .set_instance(Some(instance(index as u8 + 1)))
+            .await
+            .unwrap();
+        managers.push(manager);
+    }
+    let boots: Vec<_> = managers.iter().map(Manager::boot).collect();
+    managers[0].interest().interest(ids[1]);
+    eventually("a links b", || links(&managers[0]).contains_key(&ids[1])).await;
+    let (a, c) = (ids[0], ids[2]);
+    let listener = fixture.cfg.nodes[&a].listeners.clone();
+    for round in 0..3 {
+        let listener = listener.clone();
+        let changes: [Change; 3] = [
+            Box::new(move |cfg| cfg.nodes.get_mut(&a).unwrap().listeners = Default::default()),
+            Box::new(move |cfg| cfg.nodes.get_mut(&a).unwrap().listeners = listener.clone()),
+            Box::new(move |cfg| {
+                cfg.nodes.get_mut(&c).unwrap().hostname = format!("renamed-{round}")
+            }),
+        ];
+        for change in changes {
+            fixture.publish(change).await;
+            for (index, manager) in managers.iter_mut().enumerate() {
+                let applied = tokio::time::timeout(
+                    Duration::from_secs(10),
+                    manager.apply(&fixture.desired[index]),
+                )
+                .await
+                .unwrap();
+                assert!(applied.is_ok(), "round {round} node {index}: {applied:?}");
+                assert!(manager.is_running(), "round {round} node {index}");
+            }
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            assert!(managers.iter().all(Manager::is_running), "round {round}");
+        }
+        managers[0].interest().interest(ids[1]);
+        eventually("a links b again", || {
+            links(&managers[0]).contains_key(&ids[1])
+        })
+        .await;
+    }
+    assert_eq!(
+        managers.iter().map(Manager::boot).collect::<Vec<_>>(),
+        boots
+    );
+    // The network worker's restart after a failed apply carries the boot
+    // while its packet owner keeps the circuits: the peer sees the same one.
+    managers[0].shutdown().await.unwrap();
+    managers[0] = Manager::start_with_traversal(
+        &fixture.desired[0],
+        fixture.keys[0].clone(),
+        factory.clone(),
+        Default::default(),
+        Arc::new(super::Offline),
+        meshway_model::Sequence::MIN.checked_next().unwrap(),
+        Some(instance(1)),
+        Some(boots[0]),
+    )
+    .await
+    .unwrap();
+    assert_eq!(managers[0].boot(), boots[0]);
+    managers[0].interest().interest(ids[1]);
+    eventually("b sees a's new channel with the same boot", || {
+        let own = links(&managers[0]).get(&ids[1]).map(|link| link.id);
+        own.is_some()
+            && links(&managers[1]).get(&ids[0]).map(|link| link.id) == own
+            && managers[1]
+                .peer_boots()
+                .is_ok_and(|peers| peers.get(&ids[0]) == Some(&boots[0]))
+    })
+    .await;
+    for mut manager in managers {
+        manager.shutdown().await.unwrap();
+    }
     fixture.close().await;
 }

@@ -34,6 +34,14 @@ CASES = {
                 "exit_recovery::netmap_exit_failed_cleanup_is_retried_and_the_role_installs_again"),
     "audit": ("meshway-underlay-kernel-tests",
               "linux::kernel::exit::tests::cleanup::exit_audit_read_failures_are_unknown_and_a_failed_cleanup_completes_on_retry"),
+    # X12: a failed kernel change proves neither outcome; the owner reads
+    # back and completes it from the target or the start (each change path
+    # injected applied-then-failed and failed-unseen), or fails closed on a
+    # read-back that is neither.
+    "changes-exit": ("meshway-underlay-kernel-tests",
+                     "linux::kernel::exit::tests::changes::failed_exit_changes_are_read_back_and_completed"),
+    "changes-egress": ("meshway-underlay-kernel-tests",
+                       "linux::kernel::egress::tests::changes::failed_capture_changes_are_read_back_and_completed"),
     "nft": ("meshway-underlay-kernel-tests",
             "linux::kernel::exit::nft::tests::exit_nft_atomic_batch_readback_and_failed_transaction_leave_no_table"),
     "probe": ("meshway-underlay-kernel-tests",

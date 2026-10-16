@@ -6,7 +6,7 @@ use crate::Error;
 use std::sync::atomic::Ordering::SeqCst;
 
 /// A projection-free exit backend on a fresh TUN, as the owner creates it.
-async fn create(kernel: &mut Kernel, tun: &meshway_tun::Tun) -> backend::Backend {
+pub(super) async fn create(kernel: &mut Kernel, tun: &meshway_tun::Tun) -> backend::Backend {
     let mut nonce = [0; 16];
     getrandom::fill(&mut nonce).unwrap();
     let mark = if kernel.journal.mark.mask != 1 { 1 } else { 2 };
@@ -71,7 +71,7 @@ async fn create(kernel: &mut Kernel, tun: &meshway_tun::Tun) -> backend::Backend
 }
 
 /// An exit TUN the monitor expects, as the owner creates it.
-fn tun(kernel: &Kernel) -> meshway_tun::Tun {
+pub(super) fn tun(kernel: &Kernel) -> meshway_tun::Tun {
     let mut expected = kernel.expected.lock().unwrap();
     let tun = meshway_tun::Tun::create(meshway_tun::Options::new(1280).unwrap()).unwrap();
     expected.exit_tun = Some(tun.if_index().unwrap());

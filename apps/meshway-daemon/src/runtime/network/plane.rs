@@ -38,6 +38,10 @@ pub(super) struct Plane {
     keys: Option<DataPlaneKeys>,
     instance: Option<InstanceRequest>,
     generation: meshway_model::Sequence,
+    /// The boot of a Manager restarted after a failed apply while SecureNode
+    /// kept its circuits: the next Manager signs the same one, so no peer
+    /// sees a restart of this Node (see `SecureNode::set_own_boot`).
+    boot: Option<meshway_connectivity::Boot>,
 }
 
 impl Plane {
@@ -60,6 +64,7 @@ impl Plane {
             keys: None,
             instance: None,
             generation: meshway_model::Sequence::MIN,
+            boot: None,
         })
     }
 
@@ -191,6 +196,7 @@ impl Plane {
         }
         self.installed = None;
         self.packets = Packets::default();
+        self.boot = None;
         if failed {
             Err(Problem::Underlay)
         } else {
@@ -282,6 +288,7 @@ impl meshway_engine::Components for Plane {
     /// Authenticated adjacencies: unchanged resources and channels survive.
     async fn apply_adjacencies(&mut self, desired: Option<&Desired>) -> Result<(), Error> {
         let Some(desired) = desired else {
+            self.boot = None;
             if let Some(state) = &mut self.installed
                 && let Some(mut manager) = state.manager.take()
             {
@@ -290,6 +297,7 @@ impl meshway_engine::Components for Plane {
             return Ok(());
         };
         if !desired.local().enabled {
+            self.boot = None;
             if let Some(state) = &mut self.installed
                 && let Some(mut manager) = state.manager.take()
             {
@@ -321,6 +329,7 @@ impl meshway_engine::Components for Plane {
                 }
                 Err(error) => {
                     tracing::warn!(%error, "Adjacency apply failed; restarting adjacencies");
+                    self.boot = Some(manager.boot());
                     let _ = manager.shutdown().await;
                     self.failure = Some((Problem::Transport, ApplyFailure::Listeners));
                     self.failure_detail = detail(&error);
@@ -336,6 +345,12 @@ impl meshway_engine::Components for Plane {
                     return Err(self.fail(Problem::Apply, ApplyFailure::Validation));
                 };
                 warn_ephemeral(desired);
+                // Carried only while the circuits it was signed for live on.
+                let boot = self.boot.take().filter(|_| {
+                    self.installed
+                        .as_ref()
+                        .is_some_and(|state| state.secure.is_some())
+                });
                 match Manager::start_with_traversal(
                     desired,
                     keys,
@@ -344,12 +359,14 @@ impl meshway_engine::Components for Plane {
                     self.traversal.clone(),
                     generation,
                     self.instance.clone(),
+                    boot,
                 )
                 .await
                 {
                     Ok(manager) => manager,
                     Err(error) => {
                         tracing::warn!(%error, "Adjacency start failed");
+                        self.boot = boot;
                         self.failure = Some((Problem::Transport, ApplyFailure::Listeners));
                         self.failure_detail = detail(&error);
                         return Err(Error::Degraded);

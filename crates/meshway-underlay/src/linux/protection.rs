@@ -52,6 +52,8 @@ pub(super) struct Shared {
     pub resolutions: Arc<Semaphore>,
     pub execution: RwLock<Option<Installed>>,
     pub resources: Resources,
+    /// The kernel change an owner is retrying after a failed attempt.
+    pub changes: tokio::sync::watch::Sender<Option<crate::KernelChangePending>>,
 }
 
 /// The desired content capture is installed for. `session` ends every data

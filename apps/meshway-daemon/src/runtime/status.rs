@@ -266,6 +266,24 @@ impl View {
                 None
             },
             last_network_change: network.last_network_change,
+            change_pending: network
+                .kernel_changes
+                .as_ref()
+                .and_then(|changes| changes.borrow().clone())
+                .map(|pending| meshway_protocol::ipc::KernelChange {
+                    owner: match pending.owner {
+                        meshway_underlay::KernelChangeOwner::EgressCapture => {
+                            meshway_protocol::ipc::KernelChangeOwner::EgressCapture
+                        }
+                        meshway_underlay::KernelChangeOwner::Exit => {
+                            meshway_protocol::ipc::KernelChangeOwner::Exit
+                        }
+                    },
+                    operation: pending.operation,
+                    reason: pending.reason,
+                    attempts: pending.attempts,
+                    retry_at: pending.retry_at.into(),
+                }),
         }
     }
 }

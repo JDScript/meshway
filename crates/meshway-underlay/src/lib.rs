@@ -101,6 +101,31 @@ pub struct ExitCleanupPending {
     pub retry_at: std::time::SystemTime,
 }
 
+/// The kernel owner a retried change belongs to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KernelChangeOwner {
+    /// The egress capture owner (`pause`, `stage`, `switch`).
+    EgressCapture,
+    /// The exit role owner: a projection's retirement after the named
+    /// request (`retire`, `renew`, `install`, `confirm`), or `maintain`.
+    Exit,
+}
+
+/// A kernel change whose attempt failed and that its owner retries after
+/// reading the kernel back: a failed change proves neither outcome. Present
+/// while the retry lasts (at most 30 s from the first failure); the owner then
+/// fails closed as before.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KernelChangePending {
+    pub owner: KernelChangeOwner,
+    pub operation: String,
+    /// The last attempt's error.
+    pub reason: String,
+    /// Attempts so far, the first one included.
+    pub attempts: u32,
+    pub retry_at: std::time::SystemTime,
+}
+
 /// Local installation inputs, never business DNS or execution authority.
 #[derive(Clone)]
 pub struct Options {

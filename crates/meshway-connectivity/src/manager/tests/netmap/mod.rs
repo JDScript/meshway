@@ -627,6 +627,7 @@ async fn dial_only_traversal_sockets_bind_once_the_first_instance_arrives() {
         Arc::new(Offline),
         meshway_model::Sequence::MIN.checked_next().unwrap(),
         None,
+        None,
     )
     .await
     .unwrap();
@@ -683,6 +684,7 @@ async fn a_replaced_instance_rebinds_every_traversal_socket() {
         Default::default(),
         Arc::new(Offline),
         meshway_model::Sequence::MIN.checked_next().unwrap(),
+        None,
         None,
     )
     .await

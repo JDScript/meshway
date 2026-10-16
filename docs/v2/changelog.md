@@ -15,6 +15,11 @@
 
 验证：Planck 22 行矩阵 `20261016T001640Z-78eb74de`（`0ff3e157`，并行 8）全部通过；it7→sha 复原与只读采样见 `.meshway/validation/r2/it7-sha/`；常驻 lab 部署后因开发网络配置（修订 27，全部经 it7 VLESS）没有 Native UDP 边可测，已恢复 alpha.13，VM 未部署。
 
+内核变更失败的分类与本节点换 boot 的 circuit 对称（X12，`x12/change-op-unknown`）：wire 6、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约不变；IPC 12（`Status` 新增可省略字段 `changePending`，与 `cleanupPending`／`lastNetworkChange` 同一先例：CLI 与 daemon 一起升级）。
+
+- Underlay：一次失败的内核变更不再直接 fail closed。egress capture 的 `pause`／`stage`／`switch` 与出口投影退役（`retire`，以及 `renew`／`install`／`confirm` 失败后的退役）、`maintain` 失败后先重读：已在目标即记录完成，在起点或其路径上 1 秒起翻倍重试至多 30 秒（`change_unavailable`），读取失败为未知、同一期限（`verify_unavailable`），读到外来状态立即按原规则（`verify`）；重试期间 Status `changePending`、`meshway status` 的 `Kernel` 行。此前容器 CPU 限额 45 秒时撤回包平面的 `pause` 超出工具预算即结束宿主内核归属、节点停机到重启（X11 lab，main 同样存在），并行矩阵中一次出口 `retire` 超时即停止角色、断开其上的流。另：egress 门替换待提交记录前先移除上一次未完成变更留下的自有路由（部分提交的 `switch` 之后的 `pause` 曾因“外来路由”冲突结束归属）；出口 `renew` 的原子批失败而元素仍在时同一批再执行一次；确认期间 conntrack 查询失败视为未知；维护也完成 journal 中已不在服务的投影的退役。定义见[内核变更失败](/v2/node/runtime#kernel-change)。
+- 数据面／daemon：网络 worker 在 Manager apply 失败后重建 Manager 时沿用原 boot（SecureNode 仍保留 circuit 时），对端不再把它当作本节点重启；本节点 boot 真的改变时 SecureNode 立即结束自己持有的全部 circuit、向仍有承载的相邻节点发 `Close`，与相邻对端换 boot 的处理对称。此前重建带新 boot：所有对端退役经本节点的 circuit 而本节点保留，源端流量在其上等满 15 秒无回复上限（R1 `20261015T172722Z-c3cc3381`，A→C），lab sha 在一次配置变更（serial 34）时全部 circuit 两端重建（R2 观察）。定义见[数据面 · 发送流水线与连续性](/v2/node/dataplane#发送流水线与连续性)。
+
 漫游第一切片（R1，`r1/roaming`）：wire 6、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约不变；IPC 12（`Status` 新增可省略字段 `lastNetworkChange`，与 `idlePath`／`cleanupPending` 同一先例：CLI 与 daemon 一起升级）。定义见[漫游](/v2/node/connectivity#roaming)。
 
 - Underlay：外部网络变化在 250 ms 合并后按指纹分为 path／refresh（外部 up 接口与载波、首选地址、以本节点 mark 经 RPDB 到 Server 的路由，非 main 表也计入），控制中继只在 path 类关闭连接；新网络的地址落入 Mesh 池时 fail closed、报 `meshPoolOverlap`（`lastErrorDetail` 前缀；类型化原因留作后续）并在地址离开后自动重装；自有 capture 规则／私有表路由被他人删除时有界重装（1 分钟至多 3 次）。

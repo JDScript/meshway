@@ -451,6 +451,10 @@ impl Manager {
     /// With coordinated UDP acquisition through the host's Control gateway.
     /// `instance` qualifies State socket references from the first bind, so
     /// Native UDP listeners are coordination sockets whenever one is live.
+    /// `boot`: the boot of the Manager this one replaces while the packet
+    /// owner keeps its circuits (peers must not see a restart); `None` for a
+    /// new one.
+    #[allow(clippy::too_many_arguments)]
     pub async fn start_with_traversal(
         desired: &Desired,
         keys: DataPlaneKeys,
@@ -459,6 +463,7 @@ impl Manager {
         gateway: Arc<dyn crate::traversal::TraversalGateway>,
         generation: meshway_model::Sequence,
         instance: Option<meshway_protocol::InstanceRequest>,
+        boot: Option<crate::Boot>,
     ) -> Result<Self, Error> {
         if generation.get() == 0 {
             return Err(Error::Configuration);
@@ -471,6 +476,7 @@ impl Manager {
             Some((gateway, generation)),
             Some(Carried {
                 instance,
+                boot,
                 ..Default::default()
             }),
         )
@@ -987,6 +993,13 @@ impl Manager {
             .filter(|link| link.scope.check().is_ok())
             .map(|link| (link.fact.peer, link.fact.peer_boot))
             .collect())
+    }
+
+    /// This Manager's own boot identity, signed into every adjacency it
+    /// makes. It outlives the Manager's internal restarts; a new Manager has
+    /// a new one, which every adjacent peer sees as a restart of this Node.
+    pub fn boot(&self) -> crate::Boot {
+        self.shared.boot
     }
 
     pub fn carriers(&self) -> Result<BTreeMap<NodeId, Carrier>, Error> {
