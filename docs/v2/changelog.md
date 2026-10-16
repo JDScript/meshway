@@ -12,6 +12,8 @@ worker 忙循环与控制中继暂态（X15，`x15/worker-livelock`）：wire 6�
 - Underlay（不变量：未读到外来对象的失败是暂态；owner：Host 宿主内核归属）：monitor drain 3 秒超时记 `drain_unavailable`（此前 `Conflict`，在有 pending 变更时归持久 `install`），本期 netlink 请求连接结束记 `connection_unavailable`（此前未记录原因的冲突）；已结束的一期中失败的操作不再把暂态升级为冲突。
 - 验收：单测 `worker::lifecycle::tests::*`、DNS actor、`proxy::tests::*`、`reproof::a_missed_drain_ends_ownership_as_unavailable`、`protection::tests::a_stopped_connection_records_an_unavailable_end_a_conflict_replaces`；lab sha 限额 90 秒两轮 13 次，含一次 OPS14 顺序（5.6 秒重证），见 [X15](/v2/node/validation#x15-livelock)。
 
+验证：Planck 23 行矩阵 `20261016T150131Z-1f0563e0`（`0ecab400`，并行 8）全部通过；证据 `.meshway/validation/x15/`。
+
 ## v0.1.0-alpha.15
 
 范围：wire 6、IPC 12、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约均不变（普通升级，无断网窗口；只改 Node）。X13：读不到或变更结果未知导致的暂态归属结束自动重证并以同一 netmap 重装，`exit.cleanupPending` 即时反映出口 owner 现值；R3：网络指纹计入全部 remote 路由与 IPv4 secondary 地址、dual-stack 节点只改 IPv4 默认路由也判 path，`roam/exit` 出口漫游后后继 conntrack 条目精确退役、`down` 可完成，指定地址 listener 地址回来即重绑，bootstrap resolver 随系统配置变化重读；以及下列 X13、R3 工作包。
