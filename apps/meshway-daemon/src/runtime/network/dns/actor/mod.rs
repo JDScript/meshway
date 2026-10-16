@@ -157,18 +157,25 @@ impl Actor {
                                 }
                                 .unwrap_or_else(|| SystemDnsFailure::new(error, "unrecorded"));
                                 warn_failure("hold", "DNS owner operation failed", &failure);
+                                // The plane reads why before it sees the answer.
+                                details.send_replace(Some(failure));
                             }
                             let _ = reply.send(result);
                             continue;
                         }
                         Some(Command::Install(desired, reply)) => {
                             let result = runtime.install(*desired).await;
-                            if let Err(error) = result {
-                                warn_failure(
-                                    "install",
-                                    "DNS owner operation failed",
-                                    &failure_of(&runtime, error),
-                                );
+                            match result {
+                                Err(error) => {
+                                    let failure = failure_of(&runtime, error);
+                                    warn_failure("install", "DNS owner operation failed", &failure);
+                                    details.send_replace(Some(failure));
+                                }
+                                // A fault keeps its own detail until a hold.
+                                Ok(()) if faults.borrow().is_none() => {
+                                    details.send_replace(None);
+                                }
+                                Ok(()) => {}
                             }
                             let _ = reply.send(result);
                             continue;

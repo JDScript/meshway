@@ -197,6 +197,14 @@ impl View {
             })
             .unwrap_or_default();
         let sockets = sockets(content.and(network.facts.as_ref()), network.netmap);
+        let network_error =
+            network
+                .problem
+                .filter(|_| active)
+                .map(|problem| meshway_protocol::ipc::NetworkError {
+                    problem,
+                    detail: network.problem_detail.clone(),
+                });
         Status {
             process_id: std::process::id(),
             revision: desired.revision,
@@ -254,14 +262,13 @@ impl View {
             last_error: report
                 .problem
                 .or(if active { network.problem } else { None }),
-            last_error_detail: if report.problem.is_none() && active {
-                network
-                    .problem_detail
-                    .clone()
-                    .filter(|_| network.problem.is_some())
-            } else {
-                None
-            },
+            // Each cause stays with its own failure: the packet plane's
+            // is `lastErrorDetail` when it is `lastError`, else beside it.
+            last_error_detail: network_error
+                .as_ref()
+                .filter(|_| report.problem.is_none())
+                .and_then(|failure| failure.detail.clone()),
+            network_error: network_error.filter(|_| report.problem.is_some()),
             retry_at: if current && desired.up {
                 report.retry_at
             } else {
@@ -387,5 +394,56 @@ mod tests {
                 .contains("Address in use")
         );
         assert!(sockets(None, None).is_empty());
+    }
+
+    /// F6a B10: a Control problem is `lastError`, yet the packet plane's
+    /// own failure and its cause stay visible beside it; without one, the
+    /// packet plane's failure is `lastError` with its detail.
+    #[test]
+    fn a_control_problem_keeps_the_packet_planes_cause_beside_it() {
+        let revision = meshway_model::Version::MIN;
+        let (_desired, desired) = watch::channel(Desired {
+            revision,
+            up: true,
+            shutdown: false,
+            retry_enrollment: false,
+            enrollment_key: None,
+            rotation: None,
+            reenroll: false,
+            logout: None,
+        });
+        let (reported, report) = watch::channel(Report::initial(revision));
+        let mut network = super::super::network::Report::stopped();
+        network.plane = DataPlane::Failed;
+        network.problem = Some(Problem::Dns);
+        network.problem_detail = Some("DNS resolved_link check failed".into());
+        let (_network, network) = watch::channel(network);
+        let (_sync, sync) = watch::channel(super::super::control::SyncStatus::default());
+        let view = View {
+            desired,
+            report,
+            server: "https://server.test".into(),
+            network_mode: NetworkMode::Tun,
+            network,
+            sync,
+        };
+        let status = view.status();
+        assert_eq!(status.last_error, Some(Problem::Dns));
+        assert_eq!(
+            status.last_error_detail.as_deref(),
+            Some("DNS resolved_link check failed")
+        );
+        assert!(status.network_error.is_none());
+
+        reported.send_modify(|report| report.problem = Some(Problem::Credentials));
+        let status = view.status();
+        assert_eq!(status.last_error, Some(Problem::Credentials));
+        assert!(status.last_error_detail.is_none(), "Control names no cause");
+        let failure = status.network_error.expect("the packet plane's failure");
+        assert_eq!(failure.problem, Problem::Dns);
+        assert_eq!(
+            failure.detail.as_deref(),
+            Some("DNS resolved_link check failed")
+        );
     }
 }

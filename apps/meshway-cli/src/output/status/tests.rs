@@ -138,3 +138,23 @@ fn json_keeps_every_status_field_including_peers_and_nulls() {
     let decoded: Status = serde_json::from_value(value).unwrap();
     assert_eq!(decoded.peers, status().peers);
 }
+
+/// F6a B10: with a Control problem as `lastError`, the packet plane's own
+/// failure and its cause are still shown.
+#[test]
+fn the_packet_planes_failure_is_shown_beside_a_control_problem() {
+    let mut status = status();
+    status.last_error = Some(meshway_protocol::ipc::Problem::Credentials);
+    status.network_error = Some(meshway_protocol::ipc::NetworkError {
+        problem: meshway_protocol::ipc::Problem::Dns,
+        detail: Some("DNS resolved_link check failed".into()),
+    });
+    let mut output = Vec::new();
+    write(&mut output, &Term::plain(), &status, now()).unwrap();
+    let text = String::from_utf8(output).unwrap();
+    assert!(text.contains("  Problem    credentials\n"), "{text}");
+    assert!(
+        text.contains("  Network    dns\n             DNS resolved_link check failed\n"),
+        "{text}"
+    );
+}

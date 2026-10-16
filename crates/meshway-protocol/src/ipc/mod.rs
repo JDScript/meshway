@@ -393,6 +393,11 @@ meshway_model::object! { #[derive(Clone, Debug)] pub struct Status {
     pub last_error_detail: Option<String> [required = true],
     #[serde(deserialize_with = "meshway_model::wire::required_nullable")]
     pub retry_at: Option<DateTime<Utc>> [required = true],
+    /// The packet plane's own failure while `lastError` is another
+    /// component's (Control): its class and cause, which `lastError` does
+    /// not carry then; omitted otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub network_error: Option<NetworkError>,
     /// When the Underlay last classified an external network change of
     /// this host (a path change or a refresh); omitted before the first.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -416,6 +421,15 @@ pub enum KernelChangeOwner {
     Exit,
 }
 }
+
+meshway_model::object! {
+/// A failure of the packet plane, with its cause when it names one.
+#[derive(Clone, Debug)] pub struct NetworkError {
+    pub problem: Problem,
+    /// As `lastErrorDetail` for this failure; null when it names none.
+    #[serde(deserialize_with = "meshway_model::wire::required_nullable")]
+    pub detail: Option<String> [required = true],
+} }
 
 meshway_model::object! {
 /// A failed kernel change its owner retries.

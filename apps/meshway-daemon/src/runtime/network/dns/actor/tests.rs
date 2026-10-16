@@ -179,3 +179,96 @@ async fn failed_owner_keeps_its_fault_while_it_retries_recovery_until_it_succeed
         .expect("the recovery stays until the hold");
     actor.shutdown(true).await.unwrap();
 }
+
+/// An owner whose hold and installation fail on a recorded check.
+struct RefusingOwner {
+    scopes: watch::Sender<Option<meshway_dns::Scope>>,
+    install: bool,
+}
+
+impl Owner for RefusingOwner {
+    fn scopes(&self) -> watch::Sender<Option<meshway_dns::Scope>> {
+        self.scopes.clone()
+    }
+    async fn observe(&mut self) -> Result<(), SystemDnsError> {
+        Ok(())
+    }
+    async fn recover(&mut self) -> Result<(), SystemDnsError> {
+        Ok(())
+    }
+    async fn hold(&mut self, _: &NodeNetmap) -> Result<(), SystemDnsError> {
+        Err(SystemDnsError::Backend)
+    }
+    async fn install(&mut self, _: Desired) -> Result<(), SystemDnsError> {
+        if self.install {
+            Ok(())
+        } else {
+            Err(SystemDnsError::Backend)
+        }
+    }
+    async fn shutdown(self, _: bool) -> Result<(), SystemDnsError> {
+        Ok(())
+    }
+    fn failure(&self) -> Option<SystemDnsFailure> {
+        Some(
+            SystemDnsFailure::new(SystemDnsError::Backend, "link_settings")
+                .source("resolve1 SetLinkDNS"),
+        )
+    }
+}
+
+fn compiled() -> meshway_configuration::netmap::CompiledNetmap {
+    use meshway_test_server::configuration::{compile_one, network, node, tag_node, trusted};
+    let mut cfg = network("dns-actor.internal");
+    cfg.nodes.insert(
+        node(1),
+        tag_node("a", 1, std::collections::BTreeMap::new(), false),
+    );
+    let inventory = [(node(1), trusted(1, false))].into_iter().collect();
+    compile_one(
+        "00000000-0000-4003-8000-000000000009".parse().unwrap(),
+        &cfg,
+        &inventory,
+        node(1),
+        None,
+    )
+}
+
+/// F6a B9: a failed hold or installation publishes its recorded check
+/// before the plane sees the answer (`lastErrorDetail` is never empty over
+/// a known reason); a later successful installation clears it.
+#[tokio::test]
+async fn a_failed_hold_or_installation_publishes_its_check_before_answering() {
+    let (scopes, _) = watch::channel(None);
+    let actor = Actor::start(RefusingOwner {
+        scopes,
+        install: false,
+    });
+    let compiled = std::sync::Arc::new(compiled());
+    let netmap = compiled.netmap.as_ref().clone();
+    assert_eq!(actor.hold(&netmap).await, Err(SystemDnsError::Backend));
+    let detail = actor.detail.borrow().clone().expect("the hold's check");
+    assert_eq!(detail.check, "link_settings");
+    assert_eq!(detail.source.as_deref(), Some("resolve1 SetLinkDNS"));
+    let desired = Desired::new(&compiled, &Default::default()).unwrap();
+    assert_eq!(
+        actor.install(desired.clone()).await,
+        Err(SystemDnsError::Backend)
+    );
+    assert_eq!(
+        actor.detail.borrow().as_ref().map(|failure| failure.check),
+        Some("link_settings")
+    );
+    actor.shutdown(true).await.unwrap();
+
+    let (scopes, _) = watch::channel(None);
+    let actor = Actor::start(RefusingOwner {
+        scopes,
+        install: true,
+    });
+    assert!(actor.hold(&netmap).await.is_err());
+    assert!(actor.detail.borrow().is_some());
+    actor.install(desired).await.unwrap();
+    assert!(actor.detail.borrow().is_none(), "success clears it");
+    actor.shutdown(true).await.unwrap();
+}

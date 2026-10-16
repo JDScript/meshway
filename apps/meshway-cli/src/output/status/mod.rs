@@ -192,6 +192,17 @@ pub(crate) fn write(
             line(output, term, "", term.paint(Role::Bad, detail))?;
         }
     }
+    if let Some(failure) = &status.network_error {
+        line(
+            output,
+            term,
+            "Network",
+            term.paint(Role::Bad, words(failure.problem)),
+        )?;
+        if let Some(detail) = &failure.detail {
+            line(output, term, "", term.paint(Role::Bad, detail))?;
+        }
+    }
     if let Some(url) = &status.enrollment_url {
         writeln!(output, "\nApprove this device in your browser:\n{url}")?;
     } else if status.phase == Phase::AwaitingApproval {
