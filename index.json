@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-16T22:53:21.381081+00:00",
+  "updatedAt": "2026-10-16T22:57:20.722114+00:00",
   "runs": [
     {
       "id": 38977113633,
@@ -80,9 +80,9 @@
       "commit": "f499a8090138853064a8733485a6703a4aaf980c",
       "message": "release: workspace version 0.1.0-alpha.17",
       "createdAt": "2026-10-16T22:40:11Z",
-      "updatedAt": "2026-10-16T22:47:19Z",
-      "status": "in_progress",
-      "conclusion": null,
+      "updatedAt": "2026-10-16T22:54:47Z",
+      "status": "completed",
+      "conclusion": "success",
       "url": "https://github.com/JDScript/meshway/actions/runs/38977113562",
       "jobs": [
         {
@@ -100,11 +100,11 @@
           "id": 117230344272,
           "name": "cargo",
           "runner": "mars-14900k",
-          "status": "in_progress",
-          "conclusion": null,
+          "status": "completed",
+          "conclusion": "success",
           "startedAt": "2026-10-16T22:46:52Z",
-          "completedAt": null,
-          "seconds": null,
+          "completedAt": "2026-10-16T22:54:47Z",
+          "seconds": 475.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/38977113562/job/117230344272"
         },
         {
@@ -139,11 +139,11 @@
           "id": 117231332198,
           "name": "perf-arm64",
           "runner": "jp-tyo-arm64",
-          "status": "in_progress",
-          "conclusion": null,
+          "status": "completed",
+          "conclusion": "success",
           "startedAt": "2026-10-16T22:47:21Z",
-          "completedAt": null,
-          "seconds": null,
+          "completedAt": "2026-10-16T22:54:05Z",
+          "seconds": 404.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/38977113530/job/117231332198"
         },
         {
@@ -158,7 +158,84 @@
           "url": "https://github.com/JDScript/meshway/actions/runs/38977113530/job/117231332357"
         }
       ],
-      "artifacts": []
+      "artifacts": [
+        {
+          "id": 12080226531,
+          "name": "perf-arm64-38977113530",
+          "bytes": 46544,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38977113530/artifacts/12080226531",
+          "jobId": 117231332198,
+          "runner": "jp-tyo-arm64",
+          "seconds": 404.0,
+          "state": "ok",
+          "error": null,
+          "reports": [
+            {
+              "reportId": "20261016T225035Z-966f948c",
+              "kind": "circuit",
+              "revision": "f499a8090138853064a8733485a6703a4aaf980c",
+              "dirty": false,
+              "quick": false,
+              "sourcesUnchanged": null,
+              "loadMin": 0.23974609375,
+              "loadMax": 1.77880859375,
+              "metrics": [
+                {
+                  "label": "L0 2 nodes CPU",
+                  "unit": "µs/packet",
+                  "scope": "{\"bytes\": 1280, \"nodes\": 2, \"profile\": 0, \"rounds\": 10000, \"warmup\": 200, \"workers\": null}",
+                  "value": 14.946788,
+                  "samples": 3,
+                  "attempted": 3
+                },
+                {
+                  "label": "L0 2 nodes pps",
+                  "unit": "pps",
+                  "scope": "{\"bytes\": 1280, \"nodes\": 2, \"profile\": 0, \"rounds\": 10000, \"warmup\": 200, \"workers\": null}",
+                  "value": 66884.081399345,
+                  "samples": 3,
+                  "attempted": 3
+                },
+                {
+                  "label": "L0 3 nodes CPU",
+                  "unit": "µs/packet",
+                  "scope": "{\"bytes\": 1280, \"nodes\": 3, \"profile\": 0, \"rounds\": 10000, \"warmup\": 200, \"workers\": null}",
+                  "value": 19.78869,
+                  "samples": 3,
+                  "attempted": 3
+                },
+                {
+                  "label": "L0 3 nodes pps",
+                  "unit": "pps",
+                  "scope": "{\"bytes\": 1280, \"nodes\": 3, \"profile\": 0, \"rounds\": 10000, \"warmup\": 200, \"workers\": null}",
+                  "value": 50494.56943908034,
+                  "samples": 3,
+                  "attempted": 3
+                },
+                {
+                  "label": "L0 5 nodes CPU",
+                  "unit": "µs/packet",
+                  "scope": "{\"bytes\": 1280, \"nodes\": 5, \"profile\": 0, \"rounds\": 10000, \"warmup\": 200, \"workers\": null}",
+                  "value": 29.59134,
+                  "samples": 3,
+                  "attempted": 3
+                },
+                {
+                  "label": "L0 5 nodes pps",
+                  "unit": "pps",
+                  "scope": "{\"bytes\": 1280, \"nodes\": 5, \"profile\": 0, \"rounds\": 10000, \"warmup\": 200, \"workers\": null}",
+                  "value": 33788.49225583976,
+                  "samples": 3,
+                  "attempted": 3
+                }
+              ]
+            }
+          ],
+          "matrices": [],
+          "builds": []
+        }
+      ]
     },
     {
       "id": 38977113528,
