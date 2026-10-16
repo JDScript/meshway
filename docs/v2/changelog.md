@@ -2,7 +2,9 @@
 
 按合入 main 的顺序记录工作包、提交与证据 ID。规则见[工程流程](/v2/process)；性能数字的口径见[分层性能测量](/v2/node/performance)，验收状态见[验收范围](/v2/node/validation)。
 
-## 未发布
+## v0.1.0-alpha.14
+
+范围：wire 6、IPC 12（Status 新增可省略字段 `lastNetworkChange`、`changePending`）、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约均不变（普通升级，无断网窗口；CLI 与 daemon 一起升级）。R1：漫游按指纹分类 path／refresh、已有通道跟随到新来源、本机网络变化后候选节奏清零；R2：NAT 后由漫游方重新穿透、空窗内新流经策略中继、flap，对端持旧半边时也接受其穿透请求；X12：内核变更失败视为未知，先重读再有界重试并以 `changePending` 报告，本端换 boot 与对端换 boot 对称退役 circuit，apply 失败重建 Manager 时保留 boot；以及下列 R2、X12、R1 工作包。
 
 漫游第二切片（R2，`r2/roaming-nat`）：wire 6、IPC 12、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约均不变（只改 Node）。定义见[漫游](/v2/node/connectivity#roaming)。
 
