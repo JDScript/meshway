@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-16T11:06:08.760254+00:00",
+  "updatedAt": "2026-10-16T11:11:01.367286+00:00",
   "runs": [
     {
       "id": 38890584564,
@@ -108,9 +108,9 @@
       "commit": "68fab20f604c3db5c37bcc4d7a7dea21aaed760f",
       "message": "underlay tests: capture plan unit tests in their own file (kernel/tests/mod.rs within 800 lines)",
       "createdAt": "2026-10-16T10:57:08Z",
-      "updatedAt": "2026-10-16T11:00:25Z",
-      "status": "in_progress",
-      "conclusion": null,
+      "updatedAt": "2026-10-16T11:08:24Z",
+      "status": "completed",
+      "conclusion": "success",
       "url": "https://github.com/JDScript/meshway/actions/runs/38890584497",
       "jobs": [
         {
@@ -139,11 +139,11 @@
           "id": 116938907571,
           "name": "cargo",
           "runner": "mars-14900k",
-          "status": "in_progress",
-          "conclusion": null,
+          "status": "completed",
+          "conclusion": "success",
           "startedAt": "2026-10-16T11:00:24Z",
-          "completedAt": null,
-          "seconds": null,
+          "completedAt": "2026-10-16T11:08:23Z",
+          "seconds": 479.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/38890584497/job/116938907571"
         }
       ],
