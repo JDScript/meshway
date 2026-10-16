@@ -290,6 +290,49 @@ impl Actor {
 #[cfg(test)]
 mod tests;
 
+/// The DNS owner's health as the packet plane observes it. A fault the owner
+/// already re-proved waits for the plane's next hold and is not a failure:
+/// each fault is one failure and at most one recovery, never a level that
+/// stays ready while the plane cannot reach the hold (another component's
+/// installation failing first).
+#[derive(Clone)]
+pub(in crate::runtime::network) struct Health {
+    fault: watch::Receiver<Option<SystemDnsError>>,
+    recovered: watch::Receiver<bool>,
+}
+impl Health {
+    pub fn new(
+        fault: watch::Receiver<Option<SystemDnsError>>,
+        recovered: watch::Receiver<bool>,
+    ) -> Self {
+        Self { fault, recovered }
+    }
+    /// Resolves while the owner has a fault it has not re-proved, or once
+    /// the owner has gone.
+    pub async fn failed(mut self) {
+        loop {
+            if self.fault.borrow_and_update().is_some() && !*self.recovered.borrow_and_update() {
+                return;
+            }
+            tokio::select! {
+                changed = self.fault.changed() => if changed.is_err() { return },
+                changed = self.recovered.changed() => if changed.is_err() { return },
+            }
+        }
+    }
+    /// Resolves once a failed owner has re-proved its system installation.
+    pub async fn recovered(mut self) {
+        if self
+            .recovered
+            .wait_for(|recovered| *recovered)
+            .await
+            .is_err()
+        {
+            std::future::pending::<()>().await;
+        }
+    }
+}
+
 pub(in crate::runtime::network) struct Attachment {
     settings: SystemDnsSettings,
     directory: Arc<Directory>,
@@ -428,24 +471,16 @@ impl Attachment {
     pub fn guard(&self) -> Option<watch::Receiver<Option<SystemDnsError>>> {
         self.actor.as_ref().map(|actor| actor.fault.clone())
     }
-    pub async fn failed(&self) {
-        match &self.actor {
-            Some(actor) => {
-                let mut fault = actor.fault.clone();
-                let _ = fault.wait_for(|error| error.is_some()).await;
-            }
-            None => std::future::pending().await,
-        }
+    /// The running owner's health; `None` while no owner runs.
+    pub fn health(&self) -> Option<Health> {
+        self.actor
+            .as_ref()
+            .map(|actor| Health::new(actor.fault.clone(), actor.recovered.clone()))
     }
-    /// Resolves once a failed owner has re-proven its system installation.
-    pub async fn recovered(&self) {
-        match &self.actor {
-            Some(actor) => {
-                let mut recovered = actor.recovered.clone();
-                if recovered.wait_for(|recovered| *recovered).await.is_err() {
-                    std::future::pending::<()>().await;
-                }
-            }
+    /// See [`Health::failed`]; never while no owner runs.
+    pub async fn failed(&self) {
+        match self.health() {
+            Some(health) => health.failed().await,
             None => std::future::pending().await,
         }
     }

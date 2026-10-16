@@ -141,6 +141,12 @@ async fn failed_owner_keeps_its_fault_while_it_retries_recovery_until_it_succeed
     });
     let mut fault = actor.fault.clone();
     fault.wait_for(Option::is_some).await.unwrap();
+    tokio::time::timeout(
+        RECOVERY_INTERVAL / 2,
+        super::Health::new(actor.fault.clone(), actor.recovered.clone()).failed(),
+    )
+    .await
+    .expect("a fault not yet re-proved is a failure");
     // The fault carries the check the owner recorded, for the report.
     let detail = actor.detail.borrow().clone().unwrap();
     assert_eq!(detail.check, "anchor_netlink");
@@ -159,5 +165,17 @@ async fn failed_owner_keeps_its_fault_while_it_retries_recovery_until_it_succeed
     assert_eq!(observations.load(Ordering::SeqCst), 1);
     assert_eq!(recoveries.load(Ordering::SeqCst), 2);
     assert_eq!(*fault.borrow(), Some(SystemDnsError::Backend));
+    // The plane sees that fault once: re-proved, it is a recovery and no
+    // longer a failure while it waits for the hold.
+    let health = super::Health::new(actor.fault.clone(), actor.recovered.clone());
+    assert!(
+        tokio::time::timeout(RECOVERY_INTERVAL, health.clone().failed())
+            .await
+            .is_err(),
+        "a re-proved fault is not a failure"
+    );
+    tokio::time::timeout(RECOVERY_INTERVAL, health.recovered())
+        .await
+        .expect("the recovery stays until the hold");
     actor.shutdown(true).await.unwrap();
 }

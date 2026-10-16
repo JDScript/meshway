@@ -2,7 +2,7 @@
 //! Every resolver route is decided by the installed netmap itself.
 mod actor;
 pub(super) mod mesh;
-pub(super) use actor::Attachment;
+pub(super) use actor::{Attachment, Health};
 use meshway_configuration::netmap::{DnsPlan, NodeNetmap};
 use meshway_dns::{
     CancellationToken, OwnerDispatcher, ResolverExchange, Scope, Service, SystemDnsBackend,

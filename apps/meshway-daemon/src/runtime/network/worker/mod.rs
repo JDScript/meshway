@@ -16,6 +16,7 @@ use meshway_underlay::Host;
 use std::{sync::Arc, time::Duration};
 use tokio::sync::{mpsc, watch};
 
+mod lifecycle;
 mod peers;
 mod sample;
 mod withdrawal;
@@ -260,10 +261,12 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             () = std::future::ready(()), if overlap_cleared => Work::Offer,
             changed = overlaps.changed() => if changed.is_ok() { Work::PoolOverlap } else { Work::Command(None) },
             changed = repairs.changed() => if changed.is_ok() { Work::Repair } else { Work::Command(None) },
-            _ = dns.failed(), if !dns_failed => Work::DnsFailure,
-            _ = dns.recovered(), if dns_failed => Work::DnsRecovered,
-            _ = host.ended(), if installed.is_some() => Work::HostFailed,
-            _ = sleep_until(recovery_at) => Work::HostRecovery,
+            due = lifecycle::next(recovery_at, dns.health(), dns_failed, host.ended(), installed.is_some()) => match due {
+                lifecycle::Lifecycle::HostRecovery => Work::HostRecovery,
+                lifecycle::Lifecycle::DnsFailure => Work::DnsFailure,
+                lifecycle::Lifecycle::DnsRecovered => Work::DnsRecovered,
+                lifecycle::Lifecycle::HostFailed => Work::HostFailed,
+            },
             changed = network_changes.changed() => if changed.is_ok() { Work::NetworkChanged } else { Work::Command(None) },
             _ = sleep_until(sample_at) => Work::SampleDue,
             Ok(()) = exit_dns.changed() => Work::ExitDns,
@@ -845,11 +848,21 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 let mut report = reports.borrow().clone();
                 report.plane = DataPlane::Failed;
                 report.content = None;
+                // The DNS check that failed, else why kernel ownership ended
+                // (the cleanup of an ended term fails): never an empty detail
+                // over a known reason.
                 report.problem_detail = if dns_error && cleanup.is_ok() {
                     engine.components().dns.detail()
                 } else {
                     None
-                };
+                }
+                .or_else(|| {
+                    engine
+                        .components()
+                        .host
+                        .ownership_ended()
+                        .map(|end| end.to_string())
+                });
                 report.problem = Some(if cleanup.is_err() {
                     Problem::Underlay
                 } else {
