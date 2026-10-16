@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-16T15:53:56.158113+00:00",
+  "updatedAt": "2026-10-16T16:04:31.898045+00:00",
   "runs": [
     {
       "id": 38925423857,
@@ -12,35 +12,92 @@
       "commit": "9c24fa928c52a9aceaa4c010f9485fc38360e90b",
       "message": "release: workspace version 0.1.0-alpha.16",
       "createdAt": "2026-10-16T15:37:18Z",
-      "updatedAt": "2026-10-16T15:38:10Z",
-      "status": "queued",
-      "conclusion": null,
+      "updatedAt": "2026-10-16T16:03:22Z",
+      "status": "completed",
+      "conclusion": "success",
       "url": "https://github.com/JDScript/meshway/actions/runs/38925423857",
       "jobs": [
         {
           "id": 117055995103,
           "name": "node-linux (aarch64-unknown-linux-musl)",
-          "runner": null,
-          "status": "queued",
-          "conclusion": null,
-          "startedAt": "2026-10-16T15:38:10Z",
-          "completedAt": null,
-          "seconds": null,
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-16T15:52:21Z",
+          "completedAt": "2026-10-16T15:56:06Z",
+          "seconds": 225.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/38925423857/job/117055995103"
         },
         {
           "id": 117055995504,
           "name": "node-linux (x86_64-unknown-linux-musl)",
-          "runner": null,
-          "status": "queued",
-          "conclusion": null,
-          "startedAt": "2026-10-16T15:38:10Z",
-          "completedAt": null,
-          "seconds": null,
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-16T15:59:44Z",
+          "completedAt": "2026-10-16T16:03:22Z",
+          "seconds": 218.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/38925423857/job/117055995504"
         }
       ],
-      "artifacts": []
+      "artifacts": [
+        {
+          "id": 12057701889,
+          "name": "node-aarch64-unknown-linux-musl-9c24fa928c52a9aceaa4c010f9485fc38360e90b",
+          "bytes": 10650417,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38925423857/artifacts/12057701889",
+          "jobId": 117055995103,
+          "runner": "planck",
+          "seconds": 225.0,
+          "state": "ok",
+          "error": null,
+          "reports": [],
+          "matrices": [],
+          "builds": [
+            {
+              "target": "aarch64-unknown-linux-musl",
+              "binary": "meshwayd",
+              "bytes": 16202744,
+              "sha256": "765c22f6e32b00064e5de7f1029af4fe1fafe243c9392595e45c7f69400e32a5"
+            },
+            {
+              "target": "aarch64-unknown-linux-musl",
+              "binary": "meshway",
+              "bytes": 1936720,
+              "sha256": "699ca06bd751c5384aa004cff341a3e60d2aff3423b201f4ed45154618c6e900"
+            }
+          ]
+        },
+        {
+          "id": 12057643266,
+          "name": "node-x86_64-unknown-linux-musl-9c24fa928c52a9aceaa4c010f9485fc38360e90b",
+          "bytes": 11444203,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38925423857/artifacts/12057643266",
+          "jobId": 117055995504,
+          "runner": "planck",
+          "seconds": 218.0,
+          "state": "ok",
+          "error": null,
+          "reports": [],
+          "matrices": [],
+          "builds": [
+            {
+              "target": "x86_64-unknown-linux-musl",
+              "binary": "meshwayd",
+              "bytes": 19787176,
+              "sha256": "7481dd8a9133fa8b9b91c793e4d029ce00d16f5b47fec8b54ce727b569674cb4"
+            },
+            {
+              "target": "x86_64-unknown-linux-musl",
+              "binary": "meshway",
+              "bytes": 2205416,
+              "sha256": "fddb79b89f9f82e71bd57e59fb6270b634a6f244d72679db3bbbd408562ce015"
+            }
+          ]
+        }
+      ]
     },
     {
       "id": 38925423849,
