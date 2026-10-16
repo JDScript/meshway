@@ -10,6 +10,8 @@
 - Status：`lastErrorDetail` 给出 `kernelOwnership: unavailable (<check>); proving ownership again`／`… conflict (<check>); stays failed closed until restart`；`exit.cleanupPending` 直接读出口 owner 的现值，清理完成即消失（此前随能力探测刷新，约晚 15 秒）。
 - 验收：隔离测试 `reproof::an_unavailable_ownership_end_is_proved_again_and_a_foreign_object_keeps_it_ended`；lab sha 限额 60 秒 3 次、90 秒 3 次，其中 2 次走 `verify_unavailable`，6 次均在限额解除后 2 秒内 running／ready，见 [X13](/v2/node/validation#x13-reproof)。
 
+验证：Planck 22 行矩阵 `20261016T101528Z-e959e64c`（`9a640af4`，并行 4）全部通过；并行 8 的两次各一行负载失败（`udp/resolved` 与并发矩阵重叠、`exit/off` 第 16 阶段 echo 94／100），单行复跑通过，见 [X13](/v2/node/validation#x13-reproof)。
+
 ## v0.1.0-alpha.14
 
 范围：wire 6、IPC 12（Status 新增可省略字段 `lastNetworkChange`、`changePending`）、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约均不变（普通升级，无断网窗口；CLI 与 daemon 一起升级）。R1：漫游按指纹分类 path／refresh、已有通道跟随到新来源、本机网络变化后候选节奏清零；R2：NAT 后由漫游方重新穿透、空窗内新流经策略中继、flap，对端持旧半边时也接受其穿透请求；X12：内核变更失败视为未知，先重读再有界重试并以 `changePending` 报告，本端换 boot 与对端换 boot 对称退役 circuit，apply 失败重建 Manager 时保留 boot；以及下列 R2、X12、R1 工作包。

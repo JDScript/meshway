@@ -339,7 +339,9 @@ X11 同一场景（main／X11 构建）：`Egress capture owner stopping … ker
 | `x13-4` | 90 s | `verify_unavailable` 09:08:16.3 | 09:09:08.3 → 09:09:09.84（1.5 s，第 1 次）→ 09:09:10（≤ 2 s），ping 09:09:10.3 |
 | `x13-5`、`x13-6` | 90 s | X12 变更重试（29.1／16.1 秒完成），归属保持 | ≤ 2 s |
 
-6 次全部在限额解除后 2 秒内 running／ready，无需重启或 `up`；`exit.cleanupPending` 在 `Exit role cleanup completed after retrying` 之后的第一次轮询（≤ 2 s 轮询间隔）即消失（alpha.14：约 15 秒后）。60 秒限额下走哪条路径取决于 DNS 撤回时 `pause` 是否失败（失败时 owner 在变更重试中，周期回读不计时），90 秒使回读未知必然满 30 秒。
+6 次全部在限额解除后 2 秒内 running／ready，无需重启或 `up`；`exit.cleanupPending` 在 `Exit role cleanup completed after retrying` 之后的第一次轮询（≤ 2 s 轮询间隔）即消失（alpha.14：约 15 秒后）。60 秒限额下走哪条路径取决于 DNS 撤回时 `pause` 是否失败（失败时 owner 在变更重试中，周期回读不计时），90 秒使回读未知必然满 30 秒。lab 结束后恢复为原 release `cb647b05…`（alpha.14），三节点 running、CPU 为 compose 原值。
+
+Planck 22 行矩阵 `20261016T101528Z-e959e64c`（`9a640af4`，并行 4，墙钟 1,471 秒）全部通过，`exit/off` 行 `20261016T102643Z-cf5618c7` 799.0 秒；矩阵各行日志中没有宿主内核归属结束（自然负载未触发）。同一提交的两次并行 8 矩阵各一行失败：`20261016T092812Z-67eae514` 的 `udp/resolved`（同机另一矩阵并发运行，三节点同时 `observe_deadline` 4.96 秒、Server 503，fixture 在 `outage-deadlines` 之后超时；单行复跑 `20261016T095226Z-a832ff54` 通过）；`20261016T095733Z-8ebca7ac` 的 `exit/off` 第 16 阶段 echo 94／100（压力步中 E 一次投影退役的 nft 操作失败、按 X12 重读重试 1 秒，与 X11 记录的并行 8 现象相同）。证据 `.meshway/validation/x13/`。
 
 ### 当前验证证据
 
