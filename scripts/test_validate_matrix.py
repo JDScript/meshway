@@ -1,10 +1,12 @@
 """Matrix orchestration regressions; no real builds, Docker, SSH or measurements."""
+import concurrent.futures
 import json
 import contextlib
 import os
 from pathlib import Path
 import subprocess
 import tempfile
+import time
 import sys
 from types import SimpleNamespace
 import unittest
@@ -228,6 +230,24 @@ class MatrixTests(unittest.TestCase):
             self.assertEqual(len(builds), 3)
             self.assertTrue(all("--build-only" in command for command in builds))
             self.assertEqual(report["scope"], "diagnostic-short")
+
+    def test_roam_rows_never_run_at_once(self):
+        import threading
+        active, peak, lock = [0], [0], threading.Lock()
+        def now(name, *_):
+            with lock:
+                active[0] += 1
+                peak[0] = max(peak[0], active[0])
+            time.sleep(0.05)
+            with lock:
+                active[0] -= 1
+            return name
+        names = ["roam/direct", "roam/nat", "roam/relay", "roam/flap"]
+        with patch.object(matrix, "execute_row_now", side_effect=now):
+            with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+                done = list(executor.map(lambda name: matrix.execute_row(name, None, None, None, None), names))
+        self.assertEqual(done, names)
+        self.assertEqual(peak[0], 1)
 
     def test_successful_fixture_with_leftover_container_fails_row(self):
         with tempfile.TemporaryDirectory() as temporary:

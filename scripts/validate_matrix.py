@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 
 from dev import DevError
@@ -233,7 +234,20 @@ def remaining_resources(report, kind):
     return resources
 
 
+# Each roam row owns four or five Docker bridges. Docker's default address
+# pools are a shared host resource (planck: exhausted with four roam rows and
+# the exit row at once), so roam rows run one at a time.
+ROAM_ROWS = threading.Semaphore(1)
+
+
 def execute_row(name, directory, artifacts, images, args):
+    if name.startswith("roam/"):
+        with ROAM_ROWS:
+            return execute_row_now(name, directory, artifacts, images, args)
+    return execute_row_now(name, directory, artifacts, images, args)
+
+
+def execute_row_now(name, directory, artifacts, images, args):
     kind = ROWS[name][0]
     row_dir = directory / "rows" / name.replace("/", "-")
     row_dir.mkdir(parents=True)
