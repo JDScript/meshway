@@ -158,11 +158,22 @@ pub trait Datagram: Send + Sync + 'static {
     fn buffers(&self) -> Option<Buffers> {
         None
     }
-    /// Let this endpoint also send to `peer` while `lifetime` is current.
-    /// Only the endpoint's authentication owner calls this, after verifying
-    /// a signed message of one of its channels from `peer` (a roaming peer's
-    /// new source). An endpoint that restricts its recipients bounds these
-    /// grants; one that does not restrict them needs none.
+    /// Let this endpoint also send a challenge to `peer` while `lifetime` is
+    /// current. Only the endpoint's authentication owner calls this, after
+    /// verifying a signed message of one of its channels from `peer` (a
+    /// roaming peer's new source). An endpoint that restricts its recipients
+    /// bounds these grants; one that does not restrict them needs none.
+    fn authorize_challenge(
+        &self,
+        _peer: SocketAddr,
+        _lifetime: std::sync::Arc<dyn crate::SendLifetime>,
+    ) -> io::Result<()> {
+        Ok(())
+    }
+    /// Let this endpoint send to `peer`, the source a channel authenticated
+    /// and now follows, while `lifetime` (that channel's grant, revoked when
+    /// it moves again) is current. Bounded apart from challenges; a live
+    /// grant of the same address is replaced, not added beside.
     fn authorize_source(
         &self,
         _peer: SocketAddr,
@@ -213,6 +224,13 @@ impl<D: Datagram + ?Sized> Datagram for Box<D> {
     fn buffers(&self) -> Option<Buffers> {
         (**self).buffers()
     }
+    fn authorize_challenge(
+        &self,
+        peer: SocketAddr,
+        lifetime: std::sync::Arc<dyn crate::SendLifetime>,
+    ) -> io::Result<()> {
+        (**self).authorize_challenge(peer, lifetime)
+    }
     fn authorize_source(
         &self,
         peer: SocketAddr,
@@ -261,6 +279,13 @@ impl<D: Datagram + ?Sized> Datagram for std::sync::Arc<D> {
     }
     fn buffers(&self) -> Option<Buffers> {
         (**self).buffers()
+    }
+    fn authorize_challenge(
+        &self,
+        peer: SocketAddr,
+        lifetime: std::sync::Arc<dyn crate::SendLifetime>,
+    ) -> io::Result<()> {
+        (**self).authorize_challenge(peer, lifetime)
     }
     fn authorize_source(
         &self,

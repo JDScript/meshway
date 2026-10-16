@@ -23,16 +23,49 @@ pub struct ProtectedDatagram {
     buffers: meshway_transport::udp::Buffers,
     targets: Option<Vec<SocketAddr>>,
     pub(super) traversal: Option<std::sync::Arc<super::traversal::Registry>>,
-    /// Sources a verified roaming peer sends from, beyond `targets`.
-    roamed: std::sync::Mutex<Vec<Roamed>>,
+    /// Sources of roaming peers, beyond `targets`.
+    roamed: std::sync::Mutex<Roamed>,
 }
 
-/// Recipients one restricted endpoint may hold for roaming peers at once.
+/// Challenged sources, and authenticated channel sources, one restricted
+/// endpoint may hold at once (each kind on its own).
 const MAX_ROAMED: usize = 4;
 
-struct Roamed {
+struct Grant {
     address: SocketAddr,
     lifetime: std::sync::Arc<dyn meshway_transport::SendLifetime>,
+}
+
+/// The live send grants of a restricted endpoint's roaming peers: sources
+/// being challenged, and sources channels authenticated and now follow.
+#[derive(Default)]
+struct Roamed {
+    challenges: Vec<Grant>,
+    sources: Vec<Grant>,
+}
+
+impl Roamed {
+    fn allows(&self, peer: SocketAddr) -> bool {
+        self.challenges
+            .iter()
+            .chain(&self.sources)
+            .any(|grant| grant.address == peer && grant.lifetime.is_current())
+    }
+
+    /// Add one grant of its kind: ended grants leave first, and a live one
+    /// for the same address is replaced, never added beside it.
+    fn add(
+        grants: &mut Vec<Grant>,
+        address: SocketAddr,
+        lifetime: std::sync::Arc<dyn meshway_transport::SendLifetime>,
+    ) -> Result<()> {
+        grants.retain(|grant| grant.lifetime.is_current() && grant.address != address);
+        if grants.len() >= MAX_ROAMED {
+            return Err(Error::Capacity);
+        }
+        grants.push(Grant { address, lifetime });
+        Ok(())
+    }
 }
 
 impl fmt::Debug for ProtectedDatagram {
@@ -84,7 +117,7 @@ impl ProtectedDatagram {
             buffers,
             targets,
             traversal: None,
-            roamed: std::sync::Mutex::new(Vec::new()),
+            roamed: std::sync::Mutex::default(),
         })
     }
 
@@ -100,11 +133,27 @@ impl ProtectedDatagram {
                 .traversal
                 .as_ref()
                 .is_some_and(|registry| registry.allows(peer))
-            || self.roamed.lock().is_ok_and(|roamed| {
-                roamed
-                    .iter()
-                    .any(|entry| entry.address == peer && entry.lifetime.is_current())
-            })
+            || self.roamed.lock().is_ok_and(|roamed| roamed.allows(peer))
+    }
+
+    fn grant(
+        &self,
+        peer: SocketAddr,
+        lifetime: std::sync::Arc<dyn meshway_transport::SendLifetime>,
+        kind: impl FnOnce(&mut Roamed) -> &mut Vec<Grant>,
+    ) -> io::Result<()> {
+        self.owned.scope.check().map_err(io_error)?;
+        if self.targets.is_none() {
+            return Ok(());
+        }
+        if peer.is_ipv4() != self.local.is_ipv4()
+            || meshway_control::connectivity::udp_recipient(&peer.to_string()).is_err()
+            || !lifetime.is_current()
+        {
+            return Err(io_error(Error::Target));
+        }
+        let mut roamed = self.roamed.lock().map_err(|_| io_error(Error::Worker))?;
+        Roamed::add(kind(&mut roamed), peer, lifetime).map_err(io_error)
     }
 
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
@@ -189,34 +238,23 @@ impl Datagram for ProtectedDatagram {
     fn buffers(&self) -> Option<meshway_transport::udp::Buffers> {
         Some(self.buffers)
     }
-    /// At most [`MAX_ROAMED`] live grants, each for its own lifetime and of
-    /// this endpoint's address family; a restricted endpoint gains no other
-    /// recipient.
+    /// At most [`MAX_ROAMED`] live challenge grants, each for its own
+    /// lifetime and of this endpoint's address family; a restricted endpoint
+    /// gains no other recipient.
+    fn authorize_challenge(
+        &self,
+        peer: SocketAddr,
+        lifetime: std::sync::Arc<dyn meshway_transport::SendLifetime>,
+    ) -> io::Result<()> {
+        self.grant(peer, lifetime, |roamed| &mut roamed.challenges)
+    }
+    /// At most [`MAX_ROAMED`] live channel sources, apart from challenges.
     fn authorize_source(
         &self,
         peer: SocketAddr,
         lifetime: std::sync::Arc<dyn meshway_transport::SendLifetime>,
     ) -> io::Result<()> {
-        self.owned.scope.check().map_err(io_error)?;
-        if self.targets.is_none() {
-            return Ok(());
-        }
-        if peer.is_ipv4() != self.local.is_ipv4()
-            || meshway_control::connectivity::udp_recipient(&peer.to_string()).is_err()
-            || !lifetime.is_current()
-        {
-            return Err(io_error(Error::Target));
-        }
-        let mut roamed = self.roamed.lock().map_err(|_| io_error(Error::Worker))?;
-        roamed.retain(|entry| entry.lifetime.is_current());
-        if roamed.len() >= MAX_ROAMED {
-            return Err(io_error(Error::Capacity));
-        }
-        roamed.push(Roamed {
-            address: peer,
-            lifetime,
-        });
-        Ok(())
+        self.grant(peer, lifetime, |roamed| &mut roamed.sources)
     }
     fn path_mtu(&self, peer: SocketAddr) -> Option<u16> {
         if peer.is_ipv4() != self.local.is_ipv4() {
@@ -247,6 +285,80 @@ impl Drop for ProtectedDatagram {
         if let Some(registry) = &self.traversal {
             registry.closed.cancel();
         }
+    }
+}
+
+#[cfg(test)]
+mod grant_tests {
+    use super::*;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering::SeqCst},
+    };
+
+    #[derive(Debug, Default)]
+    struct Revocable(AtomicBool);
+    impl meshway_transport::SendLifetime for Revocable {
+        fn is_current(&self) -> bool {
+            !self.0.load(SeqCst)
+        }
+        fn ended(
+            self: Arc<Self>,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
+            Box::pin(std::future::pending())
+        }
+    }
+
+    /// F6a B3: a channel that follows its peer six times holds one grant,
+    /// for its current source, each move revoking the last; repeating an
+    /// address replaces its grant, and live challenges never take a
+    /// channel source's room (nor the reverse).
+    #[test]
+    fn a_channel_follows_any_number_of_moves_with_one_grant() {
+        let mut roamed = Roamed::default();
+        for _ in 0..MAX_ROAMED {
+            let address = format!("192.0.2.{}:9", roamed.challenges.len() + 1);
+            let lifetime = Arc::new(Revocable::default());
+            Roamed::add(&mut roamed.challenges, address.parse().unwrap(), lifetime).unwrap();
+        }
+        let mut previous: Option<Arc<Revocable>> = None;
+        for step in 1..=6 {
+            let address: SocketAddr = format!("198.51.100.{step}:9").parse().unwrap();
+            let lifetime = Arc::new(Revocable::default());
+            Roamed::add(&mut roamed.sources, address, lifetime.clone()).unwrap();
+            if let Some(old) = previous.replace(lifetime) {
+                old.0.store(true, SeqCst);
+            }
+            assert!(roamed.allows(address));
+            if step > 1 {
+                let earlier: SocketAddr = format!("198.51.100.{}:9", step - 1).parse().unwrap();
+                assert!(
+                    !roamed.allows(earlier),
+                    "the move revoked step {step}'s predecessor"
+                );
+            }
+        }
+        let current: SocketAddr = "198.51.100.6:9".parse().unwrap();
+        for _ in 0..8 {
+            Roamed::add(&mut roamed.sources, current, Arc::new(Revocable::default())).unwrap();
+        }
+        assert_eq!(
+            roamed
+                .sources
+                .iter()
+                .filter(|grant| grant.address == current)
+                .count(),
+            1
+        );
+        assert_eq!(roamed.challenges.len(), MAX_ROAMED);
+        assert!(matches!(
+            Roamed::add(
+                &mut roamed.challenges,
+                "192.0.2.99:9".parse().unwrap(),
+                Arc::new(Revocable::default())
+            ),
+            Err(Error::Capacity)
+        ));
     }
 }
 
