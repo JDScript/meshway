@@ -183,13 +183,6 @@ impl Host {
     ) -> Result<ExitRole> {
         self.kernel.install_exit_role(role.into()).await
     }
-    /// The cleanup of a stopped exit role its owner is retrying.
-    pub fn exit_cleanup(&self) -> Option<RetryPending> {
-        self.kernel
-            .exit
-            .as_ref()
-            .and_then(|owner| owner.role.cleanup_pending())
-    }
     /// The stopped exit role's cleanup its owner is retrying, live: set
     /// when an attempt fails, cleared the moment the cleanup completes.
     pub fn exit_cleanups(&self) -> tokio::sync::watch::Receiver<Option<RetryPending>> {
