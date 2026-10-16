@@ -14,6 +14,8 @@
 - 结构：resolved 后端拆为 `resolved/{mod,bus,probe,tests}.rs`，系统 DNS 的 `Namespace` 移出 `system/linux/mod.rs`，`proxy` 测试与 Manager 候选节奏（`workers/pacing.rs`）各自成文件，`runtime-fixture` 的 `roam.rs`、tun 的单消费者 helper 移到 `tests/linux/`。
 - 文档：AGENTS 摘要补漫游已支持与 IPC 12 现有字段；[漫游设计](/v2/node/roaming-design)的“现状”改为 R1 前基线。
 
+验证：Perf 手动运行 `38936723416`（`80fdac8b`）的 `perf-arm64` 通过；三节点 wildcard 测试 Planck 连续 50 次 0 失败（`e6fd2405`）；Planck 矩阵 `20261016T203517Z-c61ef972`（`e6fd2405`，并行 5，同机无其他矩阵）`roam/nat`、`roam/relay`、`exit/off`、`udp/resolved`、`tun` 全部通过，`roam/relay` 两格空窗新流 6/6、2/2 经 R，两行四格均由 A 首先 prepare、B 旁接受。
+
 ## v0.1.0-alpha.16
 
 范围：wire 6、IPC 12、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约均不变（普通升级，无断网窗口；只改 Node；新增的公开错误 `Error::Drain` 是 Rust API，不是 wire）。X15：网络 worker 事件循环的 DNS 失败／恢复改为边沿、到期的宿主内核归属重证最先选中，出口 owner 停止即拒绝已排队请求，控制中继监听失败与容量满为暂态，monitor drain 超时与本期连接结束归暂态；以及下列 X15 工作包。
