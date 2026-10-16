@@ -157,15 +157,15 @@ sha 应用 IPv4
 
 ### 审计与清理重试 {#exit-audit}
 
-出口 owner 每秒回读自己的两张表并与收据、journal 比对（探测请求的审计同一实现）。分类与 egress capture 的[回读校验](/v2/node/runtime#源端-egress-capture-与切换)共用一份实现（`kernel/verification.rs`）：
+出口 owner 每秒回读自己的两张表并与收据、journal 比对（探测请求的审计同一实现）。下一次审计在上一次结束 1 秒后到期（100 ms 的维护同样从上一次结束算起），因此审计持续变慢但仍成功时，排队的安装、续期、退役、暂停与审计请求在两次之间照常处理；停止信号始终最先。egress capture 的每秒回读相同。分类与 egress capture 的[回读校验](/v2/node/runtime#源端-egress-capture-与切换)共用一份实现（`kernel/verification.rs`）：
 
 | 回读结果 | 行为 |
 | --- | --- |
 | 一致 | 保持；此前未知时 INFO `Exit role audit verified again; ownership kept`（`failures`、`unverified_ms`） |
-| 读取失败（工具 2 秒期限、netlink 中断、输出不可读、`nft list table` 失败而表仍在 `nft list tables` 中）| 未知，不证明归属变化：角色与其流保持，下一秒再证，WARN `Exit role audit unavailable; retrying, the role and its flows kept` 一次；探测请求的审计此时回 `netlink`（该次探测报 `ownershipConflict`，角色不撤） |
+| 读取失败（工具 2 秒期限、netlink 中断、输出不可读、`nft list table` 失败而表仍在 `nft list tables` 中）| 未知，不证明归属变化：角色与其流保持，一秒后再证，WARN `Exit role audit unavailable; retrying, the role and its flows kept` 一次；探测请求的审计此时回 `netlink`（该次探测报 `ownershipConflict`，角色不撤） |
 | 读成功而不符（`objects_changed`、`flow_unowned`、`flow_missing`），表已不存在（`table_missing`），或连续未知 30 秒（`verify_unavailable`）| 角色停止：`Exit owner stopping after a failed kernel operation`（`operation: audit`、`check`、`error`），随后按下述清理并只撤该角色 |
 
-审计之外的内核变更失败按[内核变更失败](/v2/node/runtime#kernel-change)分类：安装失败只拒该流；续期、退役、conntrack 确认失败后对该投影的退役，以及维护，先重读角色——到达目标即记录完成，在起点或其路径上（所属对象与收据、journal 一致）1 秒起翻倍重试至多 30 秒，读取失败为未知、同一期限内重试，读到外来对象立即停止角色。重试期间角色与其他流保持（Status `changePending`）；30 秒内未完成仍停止角色，经下述清理重试与重装恢复。续期的原子批失败时元素仍在则同一批再执行一次，否则只关闭该投影；确认期间 conntrack 查询失败视为未知、继续查到截止。维护每次也完成 journal 中已不在服务的投影的退役。
+审计之外的内核变更失败按[内核变更失败](/v2/node/runtime#kernel-change)分类：安装失败只拒该流；续期、退役、conntrack 确认失败后对该投影的退役，以及维护，先重读角色——到达目标即记录完成，在起点或其路径上（所属对象与收据、journal 一致）1 秒起翻倍重试至多 30 秒，读取失败为未知、同一期限内重试，读到外来对象立即停止角色。重试期间角色与其他流保持（Status `changePending`）；30 秒内未完成仍停止角色，经下述清理重试与重装恢复。续期的原子批失败时元素仍在则同一批再执行一次，否则只关闭该投影；确认期间 conntrack 查询失败视为未知、继续查到截止。维护每次也完成 journal 中已不在服务的投影的退役。quarantine 过期删除先读回两个 quarantine 集合，只删除仍在其中的元素，已不在的直接从 journal 去掉：内核已执行而回答丢失的删除由重试的 journal 写入完成，不对不存在的元素重复删除直到角色停止。
 
 **清理重试**：角色停止后 owner 关闭资格、退役全部投影并清理 CT、移除回程路由与规则、删除两张表（第一次尝试与以前相同）。失败时资源与 journal 保留，monitor 继续把它们记为出口自有（已消失的 TUN 上的路由被内核删除不算外来变化），owner 按 1 秒起翻倍、上限 60 秒重试，直到成功或 Host 结束（结束时留给下次启动、或宿主内核归属[重证](/v2/node/runtime#ownership-end)后新一期的 journal 恢复）。每次重试先重新读取内核：两张表都已不存在而 journal 已在关闭且路由、规则、投影均已释放，即确认移除完成；两张表都在则从头再关闭一次，各步读回并跳过已不存在的对象；其他情况（只剩一张表等）为 `Conflict`，不动任何对象，下次再读。进程重启的 journal 恢复使用同一函数。重试期间 `ExitRole::retire` 在第一次尝试后即返回失败，Kernel 保留该 owner：安装新角色与探测为 `ownershipConflict`，IPC Status `exit.cleanupPending` 直接读 owner 的现值，给出最近一次的错误、次数与下次时刻，清理完成即撤回；清理完成后下一次能力探测为 `ready`，网络 worker 以同一内容 `Engine::reapply` 重装角色。读成功而确属外来的对象（例如角色链中的外来规则）使每次重试都失败，直到它被移除；清理从不删除不属于本角色的对象。
 

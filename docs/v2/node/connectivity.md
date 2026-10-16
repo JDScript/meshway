@@ -173,7 +173,7 @@ NAT 后两端都能拨出时，邻接按需建立：可能只有一方有需求�
 
 漫游指同一 Meshway 网络内、本节点身份不变时底层网络的变化：换 Wi-Fi／LTE、换 NAT、默认路由、承载地址或公网映射变化。session、instance、netmap、租约与 `Desired` 都不因漫游变化；新来源只是投递信息，改变发送目的前必须由对端签名并通过返回可达（return-routability）挑战。切换到另一张 Meshway 网络不是漫游，见 [CLI 与 IPC](/v2/node/runtime#cli-与-ipc)。
 
-**分类（Underlay）。** Underlay 是唯一的 netlink owner。外部接口的 up 链路、地址，以及除本 owner 自有表（capture、源端捕获、出口）与 local 表之外任一路由表的路由（含 NetworkManager 多表、WARP／WireGuard 的 fwmark 表）的 kernel 通知只作标记；一串通知静止 250 ms 后计算一次指纹并发布 `NetworkChange { epoch, path, class, at }`（`Host::network_changes`）：
+**分类（Underlay）。** Underlay 是唯一的 netlink owner。外部接口的 up 链路、地址，以及除本 owner 自有表（capture、源端捕获、出口）与 local 表之外任一路由表的路由（含 NetworkManager 多表、WARP／WireGuard 的 fwmark 表）的 kernel 通知只作标记；一串通知在最后一条之后静止 250 ms（trailing debounce；通知持续不断时，至迟在这串的第一条之后 1 秒）计算一次指纹并发布 `NetworkChange { epoch, path, class, at }`（`Host::network_changes`）：
 
 | 类 | 判定 | 反应 |
 | --- | --- | --- |
@@ -192,7 +192,7 @@ NAT 后两端都能拨出时，邻接按需建立：可能只有一方有需求�
 | 候选节奏 | 全部 peer 的显式与协调暂停清零（`candidate_pacing` 的 `cause=own_network`），等待中的拨号立即重试 |
 | 流式通道 | 本地地址不再是本节点 mark 查到其 remote 的路由首选源时退役，按[原候选来源优先级](#relay-fallback)重拨；未变的保留 |
 | 报告与控制 | 路径变化后 1.5 秒内的 State 报告只间隔 100 ms（首个立即发出，随后的新 STUN 映射不等合并），之后恢复每秒至多一次；中继关闭使在途 sync 或 Control 调用失败的立即重试，不增长 1–15 秒退避 |
-| PMTU | 跟随到新来源的通道重新搜索[路径 MTU](#path-mtu)，完成前 `inner` 未知 |
+| PMTU | 跟随到新来源的通道，以及本节点自己的 path 类变化或 STUN 映射变化后的每条 UDP 通道，都立即重新搜索[路径 MTU](#path-mtu)：旧测量当即撤回，完成前 `inner` 未知（路由 MTU 不变而真实路径变小时不沿用旧值） |
 | listener | 绑定指定地址、而该地址已不属于本机（以本节点 mark 查该地址的路由不在 local 表）的 listener 关闭并进入 [U1 重试](#listener-bind-retry)；所有正在重试的 listener 立即再试一次，倍增从 1 秒重新开始。通配地址 listener 不动 |
 
 **对端漫游（拨号端与 listener 相同）：**
@@ -200,7 +200,7 @@ NAT 后两端都能拨出时，邻接按需建立：可能只有一方有需求�
 | 步骤 | 规则 |
 | --- | --- |
 | 新来源 | 未知来源的 Ping 按本 socket 某条已选定通道的 transcript 验签通过（该对端签名、该通道 ID） |
-| 挑战 | 只向该来源发送该通道新的签名 Ping（250 ms 间隔至多 4 次，1.5 秒期限）；每通道同时至多 2 个、每 socket 至多 8 个来源。拨号与穿透 socket 只能向自己的目标发送，Underlay 只在挑战期限内准许向该来源发送（`Datagram::authorize_source`，每 socket 同时至多 4 项、需同地址族的合法单播地址），通道跟随后改由通道自身的期限准许 |
+| 挑战 | 只向该来源发送该通道新的签名 Ping（250 ms 间隔至多 4 次，1.5 秒期限）；每通道同时至多 2 个、每 socket 至多 8 个来源。拨号与穿透 socket 只能向自己的目标发送，Underlay 只在挑战期限内准许向该来源发送（`Datagram::authorize_challenge`，每 socket 同时至多 4 项、需同地址族的合法单播地址）。通道跟随后由该通道的一份许可准许它的当前来源（`Datagram::authorize_source`，与挑战分开计数，每 socket 同时至多 4 项，同一地址只保留一份）；通道再次跟随时撤回上一份，因此任意多次迁移都只占一项，通道结束即全部失效 |
 | 跟随 | 该来源回来的、对这个 nonce 的认证 Pong 使同一通道（ID、transcript、对端 boot、acquisition 均不变）的 remote 改为新来源，健康期限续期；旧来源同时丢弃，不保留双来源宽限 |
 | 拒绝 | 无挑战的 Pong、其他 nonce 或从其他来源到达的 Pong 都不改变目的；被重放的旧 Ping 至多让本节点向它的来源发出上述有界挑战，未认证报文不能让本节点向任意地址发送业务 |
 
@@ -226,11 +226,11 @@ NAT 后两端都能拨出时，邻接按需建立：可能只有一方有需求�
 | 资源 | 漫游时 |
 | --- | --- |
 | Mesh TUN、地址、capture | 不变，不重建 |
-| 新网络分配的地址落在 Mesh 池内 | 已安装的数据会话与 descriptor 立即结束（fail closed），网络 owner 撤回安装；Status `lastError: underlay`，`lastErrorDetail` 以 `meshPoolOverlap:` 开头并给出接口与地址。地址离开后无需 `up` 即重新安装。外来路由覆盖 Mesh 池仍是永久冲突 |
-| 自有 capture 规则或私有表路由被他人删除（网络管理器清理外来规则） | 按 end、bypass、sink、lookup 的顺序重装并回读，1 分钟内至多 3 次；第 4 次或槽位已被外来对象占据为冲突。外来对象新增仍为冲突 |
+| 新网络分配的地址落在 Mesh 池内 | 已安装的数据会话与 descriptor 立即结束（fail closed），网络 owner 撤回安装；Status `lastError: underlay`，`lastErrorDetail` 以 `meshPoolOverlap:` 开头并给出接口与地址。地址离开后无需 `up` 即重新安装。宿主内核归属的新一期（进程启动或[重证](/v2/node/runtime#ownership-end)）按当时读到的地址重建并发布 overlap：地址仍在则以 overlap 开始（不是冲突），期间已离开则撤回上一期的 overlap 并重装。外来路由覆盖 Mesh 池仍是永久冲突 |
+| 自有 capture 规则或私有表路由被他人删除（网络管理器清理外来规则） | 按 end、bypass、sink、lookup 的顺序重装并回读，1 分钟内至多 3 次；第 4 次或槽位已被外来对象占据为冲突。重装前读不到现状（netlink 失败）时这次重装仍然欠着：1 秒后再试，不计入 3 次，连续 5 次读不到即以 `repair_unavailable` 暂态结束归属；不会在缺对象时仍当作健康。外来对象新增仍为冲突 |
 | 出口节点 | 路径变化后出口能力先报 `probing`，1 秒后重新探测前置条件（实测新路由后 1.5–1.7 秒报 `ready`）；源端只选就绪出口。经该出口的已有外部连接：内核 masquerade 在旧出口地址离开时删除其 conntrack，流的下一个包按新出接口地址重新转换——UDP 流以新来源继续（服务端看到新地址），TCP 连接在服务端是另一 4 元组、不再前进（实测无 RST）；新流从新上联建立。出口 owner 把内核为同一原始 tuple 新建的标记条目视为该投影的后继：退役时新旧两个回复 tuple 都进隔离、后继被精确删除。经出口节点的 Mesh 流不受影响。验收见 [roam/exit 行](/v2/node/validation#roam-exit-row) |
 | resolv.conf 文件后端 | 不支持漫游：保存的原 nameserver 属于旧网络；漫游节点使用 resolved 后端（[系统 DNS 安装](/v2/node/dataplane#系统-dns-安装)） |
-| bootstrap resolver（Server 名称） | 每次解析比对 `/etc/resolv.conf`（及其指向）与 resolved 上游文件 `/run/systemd/resolve/resolv.conf` 的身份与修改时间，变了即重读，新网络的 DHCP／resolved 上游无需重启即用；显式 `--bootstrap-nameserver` 不变 |
+| bootstrap resolver（Server 名称） | 每次解析比对 `/etc/resolv.conf`（及其指向）与 resolved 上游文件 `/run/systemd/resolve/resolv.conf` 的身份与修改时间，变了即重读，新网络的 DHCP／resolved 上游无需重启即用；文件不存在为没有上游，读取出错（I/O 错误）为未知：沿用正在用的上游、不记下这次的文件身份，下次解析再读；显式 `--bootstrap-nameserver` 不变 |
 | 指定地址的 listener | 地址消失后关闭并重试绑定，地址回来的 path 类变化时重绑（见上表 listener 行） |
 | 显式 `bindInterface`／`localAddress` 的拨号 | 地址消失后不自动改绑 |
 

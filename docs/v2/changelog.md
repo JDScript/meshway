@@ -2,6 +2,25 @@
 
 按合入 main 的顺序记录工作包、提交与证据 ID。规则见[工程流程](/v2/process)；性能数字的口径见[分层性能测量](/v2/node/performance)，验收状态见[验收范围](/v2/node/validation)。
 
+## 未发布
+
+第三轮审阅的行为／安全修复（F6a，`f6a/review-fixes`）：wire 6、`compilerVersion` `meshway-netmap-3`、Server schema 8 不变；IPC 12（Status 新增可省略字段 `networkError`，与 `changePending` 同一先例：CLI 与 daemon 一起升级）；HTTP 契约只改说明（选择版本与清除回执），类型与路由不变；netmap 的 `selectionVersions` 另含已清除选择的版本。
+
+- A1 Server 选择（不变量：CAS 基准单调，清除不把版本退回 null；owner：`store::execution::selection`）：清除后的墓碑行保留版本，`version` 与 netmap `selectionVersions` 仍给出它，清除前读到的基准（null 或旧版本）之后一律 `version_conflict`；判断“无可清除”看 `requestedProfile`。此前清除把版本连同方案一起过滤，陈旧的 `expectedVersion: null` 在清除后又能选中（A-B-A）。见 [Routing · 选择的入口](/v2/configuration-reference/routing#选择的入口)。
+- A2 Server 选择（不变量：用户入口同一 `requestId` 只有一个结果；owner：同上）：没有选中方案时的用户清除也在同一事务记 `routing.select` 活动作为回执；此前重试会清掉之后的选择，复用 ID 也不报 `request_id_conflict`。
+- A3 Server 选择（不变量：读一个节点不扫全网；owner：同上）：单节点读取按节点查询；库存 GET／SSE 一次读入全部选择、逐节点交 Policy，共享同一行解码。此前每个节点各做一次全网扫描与逐行身份 digest（N×S）。
+- B1 Underlay capture 重装（不变量：Host 不在缺少自有对象时仍为健康 owner；owner：Kernel）：重装前的读取失败纳入同一出口：这次重装仍欠着（`Host::repair_at`，1 秒后再试，不计入 1 分钟 3 次），连续 5 次读不到以 `repair_unavailable` 暂态结束归属。此前 worker 已消费重装通知，读表失败只记日志，被删的规则不再重装。
+- B2 出口／egress owner（不变量：慢但成功的周期审计不饿死请求；owner：两个 owner 的事件循环）：下一次审计（与出口 100 ms 维护）在上一次结束后一个周期到期，排队的请求在两次之间处理，停止信号仍最先。此前审计持续超过 1 秒时 `biased` select 每轮都先选审计，Install／Renew／Retire／Pause／Audit 永远排不上。
+- B3 连接（不变量：每条通道只为当前 remote 持一份可撤销许可；owner：Manager 的 UDP owner 与 `ProtectedDatagram`）：通道跟随新来源时以新许可替换旧的，挑战许可（`authorize_challenge`）与通道来源许可（`authorize_source`）分开计数，同一地址不追加。此前许可随通道存活、只增不撤，第 5 次迁移起无法发送。
+- B4 连接（不变量：路径换了，PMTU 测量随之作废；owner：Manager 的 UDP owner）：本机 path 类变化与 STUN 映射变化后每条 UDP 通道立即重新搜索并撤回旧测量，与跟随对端对称。此前旧测量最多保留 600 秒，路由 MTU 不变而真实路径变小时大包黑洞。
+- B5 bootstrap resolver（不变量：读不到不等于没有上游；owner：Underlay bootstrap resolver）：上游文件的 I/O 错误为未知，不记下文件身份，下次解析再读，期间沿用正在用的上游；此前折叠为“无上游”并缓存文件身份，I/O 恢复后仍无上游。
+- B6 出口 quarantine（不变量：已生效但回答丢失的删除由 journal 完成；owner：出口 backend）：过期删除先读回 quarantine 集合，只删仍在的元素；此前重试一直删除已不存在的元素，30 秒后停止角色。
+- B7 Underlay（不变量：每一期的 overlap 是本期读到的事实；owner：Kernel 打开一期）：新一期按读表重建 Mesh 池 overlap 并发布：地址仍在则以 overlap 开始而非冲突，已离开则撤回上一期发布的 overlap；网络 worker 在新一期发布的 overlap 处理前不安装。此前重证遇到 overlap 变成永久冲突，overlap 期间离开则旧值一直拒装。
+- B8 Underlay monitor（不变量：未读到外来对象不是冲突；owner：kernel monitor）：空或填满缓冲（截断）的数据报为 `monitor_unavailable`（暂态、重证），只有完整解码并核实不符才是冲突；此前直接 `Conflict`。
+- C6 Underlay 网络变化分类（不变量：合并窗与文档一致；owner：`kernel/network.rs`）：250 ms 合并改为 trailing debounce（最后一条通知后静止 250 ms），通知持续不断时至迟在首条后 1 秒分类；此前为首条通知起的固定窗口。
+- B9 DNS owner（不变量：失败应答前详情已发布；owner：DNS actor）：hold／install 失败把所记检查写入 `lastErrorDetail` 后才回答，成功的 install 清空；此前只写日志，hold 先清空了旧详情。
+- B10 Status（不变量：每项详情绑定自己的来源；owner：daemon Status 投影）：`lastErrorDetail` 只描述 `lastError`；`lastError` 为 Control 问题时，包平面自己的失败与原因经新字段 `networkError` 给出，`meshway status` 显示 `Network` 行。此前网络侧原因被置空。见[运行状态](/v2/node/runtime)。
+
 ## v0.1.0-alpha.16
 
 范围：wire 6、IPC 12、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约均不变（普通升级，无断网窗口；只改 Node；新增的公开错误 `Error::Drain` 是 Rust API，不是 wire）。X15：网络 worker 事件循环的 DNS 失败／恢复改为边沿、到期的宿主内核归属重证最先选中，出口 owner 停止即拒绝已排队请求，控制中继监听失败与容量满为暂态，monitor drain 超时与本期连接结束归暂态；以及下列 X15 工作包。

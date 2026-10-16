@@ -60,7 +60,7 @@ Server 在配置 revision 固定时为每个节点生成 **netmap**（配置投�
 | `routing.egress` | 公共 `rules` 与 `auto` 全量；`assignments` 只保留 target 命中 V 中某节点的（原顺序）；`profiles` 只保留被保留 assignment（allowed／default）、V 中节点的 `selectedProfiles` 或 `auto` 引用的 |
 | `groups`、`tagsOwners` | 名称：被保留规则（access／topology／mesh／assignment）以 `group:`／`tag:` 引用的，或含 V 中 User 节点的用户（组）／V 中节点携带的（tag）；成员与 owner 只保留 V 中 User 节点的用户邮箱 |
 | `ruleSets` 引用 | 只保留公共 egress 规则或被保留 profile 的规则在 `match.ruleSets` 引用的 key（含 `<provider>:<name>`）；`configuration.ruleSets` 与 `configuration.ruleSetProviders` 的定义（URL、目录、inline 列表）一律不投影 |
-| `inventory`、`subjects`、`selectedProfiles`、`selectionVersions` | 限于 V；`users`／`members` 只保留 V 中 User 节点的绑定 |
+| `inventory`、`subjects`、`selectedProfiles`、`selectionVersions` | 限于 V；`users`／`members` 只保留 V 中 User 节点的绑定。`selectedProfiles` 只含选中了方案的节点；`selectionVersions` 另含已清除选择的节点（其版本即下一次选择的 CAS 基准，见 [Routing · 清除](/v2/configuration-reference/routing#选择的入口)） |
 | `eligibleExits` | 被保留 egress 规则／profile（含 fallback）的出口集合中排在另一节点之前、且在全量配置中启用并 `exitEnabled` 的节点，升序；不论是否在 V 中，为空时省略。出口集合含源自身时，自身之前的出口只按此判定可用（[Action](/v2/configuration-reference/routing#action)）：出口不在投影里（被 topology 隔离、未登记或已吊销）不等于不可用 |
 | 其余（defaults、addressPools、dns） | 全量 |
 
