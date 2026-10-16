@@ -168,7 +168,7 @@ R3 真机（`meshway-vm`，同一扰动，sha 与 it7 运行 alpha.14、只读�
 
 ### roam/nat 行 {#roam-nat-row}
 
-`roam/nat`（`--traversal roam --netmap-scenario roam-nat`）在漫游行的拓扑上把 B 放进自己的 NAT（router-b），三台路由器都是端口保持型 SNAT、只放行本侧主机发起的流的回包，没有任何转发端口；A、B 的 Native UDP listener 都没有发布端点、都能拨出，A–B 为常驻边，只能经协调穿透连通。单一阶段两格：soft（A 默认路由改到 router-a2 再删 uplink1 地址）与 hard（断开 uplink2、接回 uplink1 并设路由；soft 结束后 router-b 忘记它为 router-a1 保留的回包（conntrack 删除），使 hard 也是 B 的 NAT 没见过的映射）。每格观察 25 秒；门槛：首个内层 UDP 回复 ≤ 5 秒（D14 收紧）、circuit 集合不变、TCP 未重置、A–C 通道不变、A 取得新通道。另记重新获取时刻（A 的新通道安装）、首个 prepare 的一方、B 是否在仍持有旧通道时接受。
+`roam/nat`（`--traversal roam --netmap-scenario roam-nat`）在漫游行的拓扑上把 B 放进自己的 NAT（router-b），三台路由器都是端口保持型 SNAT、只放行本侧主机发起的流的回包，没有任何转发端口；A、B 的 Native UDP listener 都没有发布端点、都能拨出，A–B 为常驻边，只能经协调穿透连通。单一阶段两格：soft（A 默认路由改到 router-a2 再删 uplink1 地址）与 hard（断开 uplink2、接回 uplink1 并设路由；soft 结束后 router-b 忘记它为 router-a1 保留的回包（conntrack 删除），使 hard 也是 B 的 NAT 没见过的映射）。每格观察 25 秒；门槛：首个内层 UDP 回复 ≤ 5 秒（D14 收紧）、circuit 集合不变、TCP 未重置、A–C 通道不变、A 取得新通道、新穿透首个 prepare 的一方是 A、B 在仍持有旧通道时接受（旁接受）。另记重新获取时刻（A 的新通道安装）。
 
 | 格 | main `b9f7108d`＋本行：首个 UDP／重新获取／最长 TCP 中断 | R2：首个 UDP／重新获取／最长 TCP 中断 |
 | --- | --- | --- |
@@ -179,7 +179,7 @@ R3 真机（`meshway-vm`，同一扰动，sha 与 it7 运行 alpha.14、只读�
 
 ### roam/relay 行 {#roam-relay-row}
 
-`roam/relay`（`--netmap-scenario roam-relay`）在 `roam/nat` 的拓扑上增加公网中继 R（WAN 上的已发布 listener，A、B 都拨它；A–R、R–B 常驻），无 `via`，Policy 的候选为 `[A, B]` 与 `[A, R, B]`。除主流量外 A 每 250 ms 用一个新 5 元组发一个 UDP 报文（每个都是新流）；A 的 status 失去对 B 的直连时启动第二条 100 pps UDP 流（“中继流”），恢复直连 2 秒后再启动第三条（“恢复后流”）4 秒；R 的收包计数每 250 ms 采样。门槛在 `roam/nat` 的之外：旧直连流的最长中断 ≤ 重新获取＋1 秒；空窗内（失去直连 0.25 秒后至恢复前 0.25 秒）的每个新流都在 1 秒内经 R 得到回复；直连恢复后中继流仍经 R（R 收包 ≥ 150 pps）且最长中断 ≤ 1 秒；恢复后流得到回复且让 R 的收包增加 < 50 pps（不经 R）；扰动前的 circuit 全部仍在（空窗内新增一条经 R 的）。
+`roam/relay`（`--netmap-scenario roam-relay`）在 `roam/nat` 的拓扑上增加公网中继 R（WAN 上的已发布 listener，A、B 都拨它；A–R、R–B 常驻），无 `via`，Policy 的候选为 `[A, B]` 与 `[A, R, B]`。除主流量外 A 每 250 ms 用一个新 5 元组发一个 UDP 报文（每个都是新流）；A 的 status 失去对 B 的直连时启动第二条 100 pps UDP 流（“中继流”），恢复直连 2 秒后再启动第三条（“恢复后流”）4 秒；R 的收包计数每 250 ms 采样。门槛在 `roam/nat` 的之外：旧直连流的最长中断 ≤ 重新获取＋1 秒；空窗内（失去直连 0.25 秒后至恢复前 0.25 秒）至少有一个新流，且每个新流都在 1 秒内经 R 得到回复，R 在中继流启动前的收包速率 > 0；直连恢复后中继流仍经 R（R 收包 ≥ 150 pps）且最长中断 ≤ 1 秒；恢复后流得到回复且让 R 的收包增加 < 50 pps（不经 R）；扰动前的 circuit 全部仍在（空窗内新增一条经 R 的）。
 
 | 格 | main：旧流中断／重新获取，空窗新流，中继流 | R2：旧流中断／重新获取，空窗新流，中继流，恢复后流 |
 | --- | --- | --- |

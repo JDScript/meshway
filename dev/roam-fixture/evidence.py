@@ -245,7 +245,7 @@ def analyse(report, manifest):
             measured["firstPreparedBy"] = prepared[0][1] if prepared else None
             measured["bAcceptedBesideChannel"] = any(
                 event.get("message") == "Traversal accepted beside a selected channel" for event in b_events)
-            checks["reacquired"] = measured["reacquiredS"] is not None
+            checks.update(traversal_checks(measured))
         if scenario == "relay":
             checks.update(relay_checks(report, cell, measured, phase))
         if scenario == "flap":
@@ -272,10 +272,12 @@ def analyse(report, manifest):
     results["gate"] = {"passed": not failures and len(results["cells"]) == expected, "failedCells": failures,
                        "rule": f"first inner UDP reply ≤ {limit} s after the new route, same circuit, "
                                "TCP stream not reset, unrelated LAN channel unchanged" + {
-                                   "nat": "; a new channel to B", "direct": "",
-                                   "relay": "; a new channel to B; the old direct flow's gap ≤ re-acquisition + 1 s; "
-                                            "new flows in the gap answered through R; a flow started on R stays on R "
-                                            "and a flow started after re-acquisition does not cross R",
+                                   "nat": "; a new channel to B, prepared first by A, accepted by B beside its old one",
+                                   "direct": "",
+                                   "relay": "; a new channel to B, prepared first by A, accepted by B beside its old "
+                                            "one; the old direct flow's gap ≤ re-acquisition + 1 s; "
+                                            "at least one new flow in the gap, each answered through R, R receiving; "
+                                            "a flow started on R stays on R and a flow started after re-acquisition does not cross R",
                                    "flap": "; one path reaction per classified path change; candidate reports bounded; "
                                            "no circuit retired; B follows A's final source",
                                    "exit": "; A's exit capability probing then ready again; the cell's exit TCP "
@@ -337,6 +339,22 @@ def exit_checks(report, cell, measured, phase, name, events, manifest):
     }
 
 
+def traversal_checks(measured):
+    """The re-traversal after A's move: A gets a new channel to B, A (the one
+    that moved) prepares it first, and B accepts it beside its old half."""
+    return {
+        "reacquired": measured["reacquiredS"] is not None,
+        "aStartedTraversal": measured["firstPreparedBy"] == "a",
+        "bAcceptedBesideChannel": measured["bAcceptedBesideChannel"] is True,
+    }
+
+
+def through_relay(in_gap, answered, relay_rate):
+    """New flows of the gap went through R: at least one was started, every one
+    was answered in time, and R actually received the relay stream."""
+    return bool(in_gap) and set(answered) == set(in_gap) and relay_rate is not None and relay_rate > 0
+
+
 def relay_checks(report, cell, measured, phase):
     """The relay cell's own evidence: the old direct flow waits exactly for the
     re-traversal, new flows in that gap go through R, a flow started on R stays
@@ -380,7 +398,7 @@ def relay_checks(report, cell, measured, phase):
         "gapIsReacquisition": reacquired is not None and measured["udpLongestGapS"] <= reacquired + 1.0,
         # Every per-datagram flow of the gap answered through R within 1 s;
         # the relay stream (also started in the gap) shows that R carried it.
-        "newFlowsThroughR": answered_in_gap == set(in_gap) and relay["rRateBeforeRelayStream"] is not None,
+        "newFlowsThroughR": through_relay(in_gap, answered_in_gap, relay["rRateBeforeRelayStream"]),
         "relayFlowStaysOnR": stays is not None and stays >= 150 and relay["relayStreamLongestGapS"] is not None
         and relay["relayStreamLongestGapS"] <= 1.0,
         "afterFlowDirect": added is not None and added < 50 and relay["afterStreamAnswered"] > 100,
