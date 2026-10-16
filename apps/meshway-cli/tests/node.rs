@@ -513,7 +513,8 @@ async fn exit_profiles(
     assert!(off.contains("  Requested  mesh · version 2\n"), "{off}");
 
     // `--default` clears the persistent selection: the default applies and
-    // the version counter keeps growing (the clear itself used version 3).
+    // the version counter keeps growing (the clear itself used version 3,
+    // which stays the base of the next change).
     let cleared = cli(socket, "exit --default", true).await;
     assert!(
         cleared.status.success(),
@@ -527,7 +528,7 @@ async fn exit_profiles(
         cleared["committed"]["requestedProfile"],
         serde_json::Value::Null
     );
-    assert_eq!(cleared["committed"]["version"], serde_json::Value::Null);
+    assert_eq!(cleared["committed"]["version"], 3);
     assert_eq!(
         cleared["local"]["requestedProfile"],
         serde_json::Value::Null
