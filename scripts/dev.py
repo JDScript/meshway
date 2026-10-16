@@ -86,10 +86,21 @@ def run(args, *, cwd=ROOT, check=True, timeout=30, env=None):
     return result
 
 
-def command(service, root):
+def command(service, root, log_filter=None):
     if service == "server":
-        return [str(root / "target/debug/meshway-server"), "--listen", "127.0.0.1:8420", "--data-dir", str(root / ".meshway/server"), "--console-origin", CONSOLE_ORIGIN, *(argument for server in STUN_SERVERS for argument in ("--stun-server", server)), "--delegation-client", SITE_CLIENT]
+        launch = [str(root / "target/debug/meshway-server"), "--listen", "127.0.0.1:8420", "--data-dir", str(root / ".meshway/server"), "--console-origin", CONSOLE_ORIGIN, *(argument for server in STUN_SERVERS for argument in ("--stun-server", server)), "--delegation-client", SITE_CLIENT]
+        return launch + (["--log-filter", log_filter] if log_filter else [])
+    if log_filter:
+        raise DevError("--log-filter applies only to the server")
     return ["pnpm", "--filter", "@meshway/docs", "dev"]
+
+
+def log_filter(value):
+    # The Server parses the directive itself; this only keeps the recorded
+    # launch one argv word that `ps` reproduces exactly.
+    if not re.fullmatch(r"[A-Za-z0-9_:=,.\-\[\]{}]+", value):
+        raise argparse.ArgumentTypeError("log filter must be one word of tracing directives")
+    return value
 
 
 def known_start(raw, launch, root, log):
@@ -379,17 +390,19 @@ class LocalServices:
         print("server: building locked service and dataset binaries…", flush=True)
         run(["cargo", "build", "--locked", "-p", "meshway-server", "--bin", "meshway-server", "--bin", "ip-datasets"], cwd=self.root, timeout=None, env=env)
 
-    def start(self, service):
+    def start(self, service, log_filter=None):
         pane = self.pane(service)
         self.port(service, pane)
+        if pane and log_filter and self.state(service)["launchCommand"] != command(service, self.root, log_filter):
+            raise DevError(service + ": running with another launch; use restart or update to change --log-filter")
         if not pane:
+            launch = command(service, self.root, log_filter)
             if service == "server" and not (self.root / "target/debug/meshway-server").is_file():
                 self.build()
             if service == "docs" and not (self.root / "node_modules").is_dir():
                 raise DevError("dependencies missing; run pnpm install --frozen-lockfile")
             log = self.directory / ("meshway-" + service + ".log")
             private(log, create=True)
-            launch = command(service, self.root)
             shell = "exec " + shlex.join(launch) + " >>" + shlex.quote(str(log)) + " 2>&1"
             # tmux may predate the current mise environment; new services must
             # resolve tools from this invocation rather than its global PATH.
@@ -593,9 +606,12 @@ def main(argv=None):
     parser.add_argument("action", choices=("start", "status", "stop", "restart", "update", "reset"))
     parser.add_argument("service", nargs="?", default="all", choices=(*SERVICES, "all"))
     parser.add_argument("--json", action="store_true")
+    parser.add_argument("--log-filter", type=log_filter, help="Server tracing filter for start/restart/update, e.g. info,meshway_server=debug")
     args = parser.parse_args(argv)
     if args.json and args.action != "status":
         raise DevError("--json is supported only for status")
+    if args.log_filter and (args.service != "server" or args.action not in ("start", "restart", "update")):
+        raise DevError("--log-filter requires start, restart or update of the explicit server selection")
     if args.action == "reset" and args.service != "server":
         raise DevError("reset requires the explicit server selection")
     local = LocalServices()
@@ -620,7 +636,7 @@ def main(argv=None):
             if args.action in ("stop", "restart", "update"):
                 local.stop(service)
             if args.action in ("start", "restart", "update"):
-                local.start(service)
+                local.start(service, args.log_filter)
             if service == "server" and args.action != "stop":
                 reset = local.reset_state()
                 if reset and reset["phase"] != "complete":

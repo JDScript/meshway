@@ -112,12 +112,56 @@ class Services(unittest.TestCase):
         saved = self.record(launch=dev.command("server", self.root)[:-2])
         order = []
         pane = {"pane": "%8", "pid": 101, "processes": {101}}
-        with patch.object(dev, "LocalServices", return_value=self.local), patch.object(self.local, "pane", return_value=pane), patch.object(self.local, "port", return_value=True), patch.object(self.local, "build", side_effect=lambda: order.append("build")), patch.object(self.local, "stop", side_effect=lambda service: order.append(self.local.state(service)["launchCommand"])), patch.object(self.local, "start", side_effect=lambda service: order.append(dev.command(service, self.root))), patch.object(self.local, "reset") as reset, patch.object(dev, "snapshot_datasets") as snapshot, patch("builtins.print"):
+        with patch.object(dev, "LocalServices", return_value=self.local), patch.object(self.local, "pane", return_value=pane), patch.object(self.local, "port", return_value=True), patch.object(self.local, "build", side_effect=lambda: order.append("build")), patch.object(self.local, "stop", side_effect=lambda service: order.append(self.local.state(service)["launchCommand"])), patch.object(self.local, "start", side_effect=lambda service, log_filter=None: order.append(dev.command(service, self.root, log_filter))), patch.object(self.local, "reset") as reset, patch.object(dev, "snapshot_datasets") as snapshot, patch("builtins.print"):
             self.assertEqual(dev.main(["update", "server"]), 0)
             self.assertEqual(dev.main(["start", "server"]), 0)
-        self.assertEqual(order, ["build", saved["launchCommand"], dev.command("server", self.root), dev.command("server", self.root)])
+            self.assertEqual(dev.main(["update", "server", "--log-filter", "info,meshway_server=debug"]), 0)
+        filtered = dev.command("server", self.root) + ["--log-filter", "info,meshway_server=debug"]
+        self.assertEqual(dev.command("server", self.root, "info,meshway_server=debug"), filtered)
+        self.assertEqual(order, ["build", saved["launchCommand"], dev.command("server", self.root), dev.command("server", self.root), "build", saved["launchCommand"], filtered])
         reset.assert_not_called()
         snapshot.assert_not_called()
+
+    def test_log_filter_launch_is_recorded_owned_and_replaced_only_by_restart(self):
+        launch = dev.command("server", self.root, "info,meshway_server=debug")
+        running = False
+        table = {101: (1, "S", " ".join(launch))}
+
+        def run(args, **kwargs):
+            nonlocal running
+            if args[:2] == ["tmux", "new-session"]:
+                running = True
+                self.assertEqual(args[-1].split(" >>")[0], "exec " + shlex.join(launch))
+                return subprocess.CompletedProcess(args, 0, "%8\t101\n", "")
+            if args[:2] == ["tmux", "list-panes"]:
+                text = ""
+                if running:
+                    saved = json.loads((self.local.directory / "server.json").read_text())
+                    text = f"meshway-server\t%8\t101\t{self.root}\t{saved['startCommand']}\n"
+                return subprocess.CompletedProcess(args, 0, text, "")
+            self.fail("unexpected external command")
+
+        with patch.object(dev, "run", side_effect=run), patch.object(dev, "process_table", return_value=table), patch.object(dev, "process_identity", return_value=self.identity), patch.object(self.local, "port", return_value=True), patch.object(self.local, "health", return_value=True):
+            self.local.start("server", "info,meshway_server=debug")
+            self.assertEqual(self.local.state("server")["launchCommand"], launch)
+            self.assertEqual(self.local.pane("server")["pid"], 101)
+            # Plain start keeps the running filtered launch; another filter needs restart.
+            self.local.start("server")
+            self.local.start("server", "info,meshway_server=debug")
+            with self.assertRaisesRegex(dev.DevError, "another launch"):
+                self.local.start("server", "debug")
+
+    def test_log_filter_is_server_only_and_one_word(self):
+        for argv in (["update", "docs", "--log-filter", "debug"], ["update", "all", "--log-filter", "debug"], ["stop", "server", "--log-filter", "debug"], ["status", "server", "--log-filter", "debug"]):
+            with self.subTest(argv=argv), patch.object(dev, "LocalServices") as services:
+                with self.assertRaisesRegex(dev.DevError, "--log-filter requires"):
+                    dev.main(argv)
+                services.assert_not_called()
+        for value in ("info meshway_server=debug", "debug;rm", ""):
+            with self.subTest(value=value), patch("sys.stderr"), self.assertRaises(SystemExit):
+                dev.main(["update", "server", "--log-filter", value])
+        with self.assertRaisesRegex(dev.DevError, "only to the server"):
+            dev.command("docs", self.root, "debug")
 
     def test_build_includes_the_offline_dataset_tool_and_pinned_target(self):
         with patch.object(dev.shutil, "disk_usage", return_value=SimpleNamespace(free=50 * 1024**3)), patch.object(dev, "run") as run, patch("builtins.print"):

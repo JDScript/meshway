@@ -70,6 +70,7 @@ MESHWAY_CONTROLLER_URL=https://meshway-dev-api.jdscript.dev mise run dev:console
 ### 生命周期与归属
 
 - `start` 幂等启动或检查健康，缺少 Server 二进制时才构建；`restart` 重启现有程序；`update server` 构建锁定程序（同时产出 `meshway-server` 与离线维护工具 `ip-datasets`）后停旧启新。这些操作保留数据库、私有材料与开发登录文件，不隐式导入或替换部署数据集。
+- Server 的 `start`／`restart`／`update` 可加 `--log-filter <过滤器>`（如 `info,meshway_server=debug`，语法见[日志](/v2/logging)），作为启动参数传给 Server 并计入记录的启动命令；之后不带该参数的 `restart`／`update` 回到默认 `info`，运行中改过滤器须 `restart`。
 - 脚本记录实际启动命令与进程身份（tmux 会话 `meshway-server`／`meshway-docs`）；记录、进程或工作树路径与预期不符，或端口被外部 listener 占用时，拒绝操作而不迁移未知进程。
 - `stop` 只对核验过的进程树发送 SIGINT，超时保留现场。
 - 合并源码、重新编译和更新正在运行的服务是三个独立动作；部署后用 `services status --json` 核对，再从外部 URL 和 Console 检查实际访问。
