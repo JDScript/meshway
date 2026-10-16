@@ -228,7 +228,7 @@ NAT 后两端都能拨出时，邻接按需建立：可能只有一方有需求�
 | Mesh TUN、地址、capture | 不变，不重建 |
 | 新网络分配的地址落在 Mesh 池内 | 已安装的数据会话与 descriptor 立即结束（fail closed），网络 owner 撤回安装；Status `lastError: underlay`，`lastErrorDetail` 以 `meshPoolOverlap:` 开头并给出接口与地址。地址离开后无需 `up` 即重新安装。外来路由覆盖 Mesh 池仍是永久冲突 |
 | 自有 capture 规则或私有表路由被他人删除（网络管理器清理外来规则） | 按 end、bypass、sink、lookup 的顺序重装并回读，1 分钟内至多 3 次；第 4 次或槽位已被外来对象占据为冲突。外来对象新增仍为冲突 |
-| 出口节点 | 路径变化后出口能力先报 `probing`，1 秒后重新探测前置条件（实测约 1.1–1.4 秒后 `ready`）；源端只选就绪出口。经该出口的已有外部连接：内核 masquerade 在旧出口地址离开时删除其 conntrack，流的下一个包按新出接口地址重新转换——UDP 流以新来源继续（服务端看到新地址），TCP 连接在服务端是另一 4 元组、不再前进（实测无 RST）；新流从新上联建立。出口 owner 把内核为同一原始 tuple 新建的标记条目视为该投影的后继：退役时新旧两个回复 tuple 都进隔离、后继被精确删除。经出口节点的 Mesh 流不受影响。验收见 [roam/exit 行](/v2/node/validation#roam-exit-row) |
+| 出口节点 | 路径变化后出口能力先报 `probing`，1 秒后重新探测前置条件（实测新路由后 1.5–1.7 秒报 `ready`）；源端只选就绪出口。经该出口的已有外部连接：内核 masquerade 在旧出口地址离开时删除其 conntrack，流的下一个包按新出接口地址重新转换——UDP 流以新来源继续（服务端看到新地址），TCP 连接在服务端是另一 4 元组、不再前进（实测无 RST）；新流从新上联建立。出口 owner 把内核为同一原始 tuple 新建的标记条目视为该投影的后继：退役时新旧两个回复 tuple 都进隔离、后继被精确删除。经出口节点的 Mesh 流不受影响。验收见 [roam/exit 行](/v2/node/validation#roam-exit-row) |
 | resolv.conf 文件后端 | 不支持漫游：保存的原 nameserver 属于旧网络；漫游节点使用 resolved 后端（[系统 DNS 安装](/v2/node/dataplane#系统-dns-安装)） |
 | bootstrap resolver（Server 名称） | 每次解析比对 `/etc/resolv.conf`（及其指向）与 resolved 上游文件 `/run/systemd/resolve/resolv.conf` 的身份与修改时间，变了即重读，新网络的 DHCP／resolved 上游无需重启即用；显式 `--bootstrap-nameserver` 不变 |
 | 指定地址的 listener | 地址消失后关闭并重试绑定，地址回来的 path 类变化时重绑（见上表 listener 行） |

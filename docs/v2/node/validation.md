@@ -33,11 +33,11 @@
 | `test:runtime:linux --transport native-udp --traversal nat --traversal-fallback` | Native UDP＋A–R Native TCP 退路 | off | 双 IPv4 端口保持型 SNAT | 共同场景＋穿透场景＋同路径 TCP 退路 | W5 短模式通过：`20261008T184559Z-c77e0683`；既有全长证据：`20261008T032749Z-4299bfde`、`20261008T050153Z-d30caa20` |
 | `test:runtime:linux --traversal nat` | Native UDP 协调穿透 | resolved | 双 IPv4 端口保持型 SNAT | 整组组合 | 当前 wire 已通过（两次）；Planck `20261008T032749Z-d13bd2a9`、`20261008T050153Z-1978b05b` |
 | [常驻三节点 lab](/v2/node/docker-lab) | Native UDP 显式端点 | resolved | — | 六向双栈系统解析／echo、路径诊断、关闭插桩的同路径 TCP 吞吐对照 | 未验收（当前整组）；2026-10-07 已有下述 L5 局部证据；共享 bridge 不构成 NAT 证明 |
-| `validate:matrix --rows roam/direct` | Native UDP 已发布 listener（两个方向） | off | A 的两个端口保持型 SNAT 上联；A 经独立 IPv6 网络连 Server | 运行中换上联（soft／hard／dual-stack × A 拨号／listener）的首个回复、丢包、TCP、circuit／通道连续性与无关通道；dual-stack 只改 IPv4 默认路由时 A 自己判为 path 并反应，见[漫游行](#roam-row) | 通过；R3 Planck 23 行矩阵 @@R3MATRIX@@ 行 @@R3DIRECT@@（main 上 dual-stack 两格不达门槛） |
+| `validate:matrix --rows roam/direct` | Native UDP 已发布 listener（两个方向） | off | A 的两个端口保持型 SNAT 上联；A 经独立 IPv6 网络连 Server | 运行中换上联（soft／hard／dual-stack × A 拨号／listener）的首个回复、丢包、TCP、circuit／通道连续性与无关通道；dual-stack 只改 IPv4 默认路由时 A 自己判为 path 并反应，见[漫游行](#roam-row) | 通过；R3 Planck 23 行矩阵 `20261016T110000Z-ef91dc08` 行 `20261016T110648Z-47047c57`（main 上 dual-stack 两格不达门槛） |
 | `validate:matrix --rows roam/nat` | Native UDP 协调穿透（两端空端点） | off | A 两个、B 一个端口保持型 SNAT（端口相关过滤） | A 换上联后由 A 发起的重新穿透：首个回复 ≤ 5 秒、同一 circuit、B 接受时替换旧半边，见 [roam/nat 行](#roam-nat-row) | 通过；Planck 22 行矩阵 `20261016T001640Z-78eb74de` 行 `20261016T002910Z-06f28a33` |
 | `validate:matrix --rows roam/relay` | 同上＋公网中继 R | off | 同上 | 空窗内新流经 R 且留在 R、旧流空窗等于重新穿透、恢复后新流直连，见 [roam/relay 行](#roam-relay-row) | 通过；同一矩阵行 `20261016T002745Z-01c614f4` |
 | `validate:matrix --rows roam/flap` | Native UDP 已发布 listener | off | A 的两个端口保持型 SNAT 上联 | 2 次（soft）、合并窗内 3 次（burst）、5 次（hard，链路 down/up）快速往返：每次 path 变化一次反应、报告有界、无 circuit 退役、跟随最终来源，见 [roam/flap 行](#roam-flap-row) | 通过（main 同样通过）；同一矩阵行 `20261016T002641Z-4d5f6d62` |
-| `validate:matrix --rows roam/exit` | Native UDP 已发布 listener（A 拨号） | off | A（B 的出口）的两个端口保持型 SNAT 上联，出口服务 T 在 WAN | 出口节点漫游：能力 `probing`→`ready`、旧出口 TCP 连接结束、新流经新上联、出口角色保持并可撤回、B→A Mesh 流不受影响，见 [roam/exit 行](#roam-exit-row) | 通过；同一矩阵行 @@R3EXIT@@（main 上 `down` 时出口退役一直冲突、行失败） |
+| `validate:matrix --rows roam/exit` | Native UDP 已发布 listener（A 拨号） | off | A（B 的出口）的两个端口保持型 SNAT 上联，出口服务 T 在 WAN | 出口节点漫游：能力 `probing`→`ready`、旧出口 TCP 连接结束、新流经新上联、出口角色保持并可撤回、B→A Mesh 流不受影响，见 [roam/exit 行](#roam-exit-row) | 通过；同一矩阵行 `20261016T111250Z-273a0df4`（main 上 `down` 时出口退役一直冲突、行失败） |
 | `validate:matrix --rows exit/off` | Native UDP；声明 Native TCP 能力 | 三端 resolved 后端（MagicDNS＋一个 `useWithExit` split） | IPv4 出口 masquerade | A→R→E；能力／安装、公网与 LAN、长流／仅接收、撤回、HTTP 中断内离线出口与租约到期全撤／恢复、journal；单出口 DNS（第 9 阶段）；域名出口与可信关联（第 10 阶段）；方案切换含 `global:E`（第 11 阶段）；ICMP 错误、PMTU 与窄通道 MSS／fragmentation needed（第 12 阶段）；`meshway ping` Mesh 外目标：公网 IP 经 E、direct、域名经 E resolver 与关联、撤权后 denied（第 13 阶段）；`auto` 按 A 的地区选方案（第 14 阶段）；echo 寿命、出口投影容量与出口角色恢复（第 15 阶段）；出口与 Mesh 吞吐并排、echo 安装下的出口 TCP 流（第 16 阶段）；A 的 7,000 区间节点侧分割 | 当前 wire 已通过（含 DNS、域名出口阶段与节点侧分割）；R3＋X6 矩阵 `20261012T115405Z-61e14403` 行 `20261012T115835Z-1812d1b8`；D2（第 13 阶段）矩阵 `20261013T160631Z-761b2963` 行 `20261013T161638Z-b6eb53a0`；X6 Planck 矩阵 `20261012T101704Z-ae64c486` 行 `20261012T102856Z-a05feedb`，见[出口场景](#exit-scenario) |
 
 以下范围未验收：外层 IPv6 NAT、隔离 fixture 中的端点相关映射（仅有下述[实网证据](#real-nat)）、两端都在端点相关映射 NAT 后、映射轮换、NAT 与 resolv-conf 的组合、VLESS WS/TLS 承载上的 daemon 包流、TLS／WS 材料轮换、多路径切换、文件后端（resolv-conf）出口 resolver、resolved 代理 stub 缺失（systemd < 248 或 `DNSStubListener=no`）时的出口 resolver 不可用（仅组件测试）、`dns.overrideLocal` 出口 resolver（仅组件测试）、显式多出口 DNS plan、出口 IPv6、完整 TCP conntrack、中继到下一跳更窄时的 ICMP 回报（只有首跳通道上限可知，见[通道 MTU](/v2/node/dataplane#channel-mtu)）、出口对外部超限回包的错误回报、Mesh IPv6 packet too big 的真实包流（仅组件与 A→R→B 运行测试）及分片重组、userspace／SOCKS5。整机重启与 resolved 停机间隙不属于隔离矩阵，由系统服务安装单独实测：重启（含 Server 不可达）通过，systemd-resolved 重启后 5 秒内、停止再启动后 10 秒内恢复 Mesh 名称解析，见 [Linux 安装与系统服务](/v2/install#验收记录)；`udp/resolved` 行另在隔离 namespace 内重启 resolved 并要求 5 秒内再次解析 Mesh 名称。
@@ -127,10 +127,10 @@ VM→it7 方向 Mesh TCP 远低于裸路径的原因已定位（2026-10-15）：
 
 dual-stack 格（R3）：
 
-| 格 | main `34987b0d`＋本行 fixture（Planck `20261016T085917Z-6ee48043`） | R3（Planck @@R3MATRIX@@） |
+| 格 | main `34987b0d`＋本行 fixture（Planck `20261016T085917Z-6ee48043`） | R3（Planck `20261016T110000Z-ef91dc08`） |
 | --- | --- | --- |
-| dialer/dual-stack | 分类 refresh、无漫游反应（不达门槛）；首个 UDP 0.48 秒、TCP 最长中断 0.72 秒——B 在 A 的下一次例行健康 Ping 后挑战跟随 | @@DUALD@@ |
-| listener/dual-stack | 同上；0.42／0.72 秒 | @@DUALL@@ |
+| dialer/dual-stack | 分类 refresh、无漫游反应（不达门槛）；首个 UDP 0.48 秒、TCP 最长中断 0.72 秒——B 在 A 的下一次例行健康 Ping 后挑战跟随 | path（新路由后 0.25 秒）与一次漫游反应；首个 UDP 0.62 秒、TCP 最长中断 0.73 秒：B 在 0.26 秒挑战新来源，第二个挑战 Ping 的 Pong 使通道在 0.61 秒跟随（第一个未得到应答；dialer 阶段在 R3 的三次运行中都如此，main 上 B 由 A 的例行 Ping 触发挑战，0.48 秒） |
+| listener/dual-stack | 同上；0.42／0.72 秒 | path（0.25 秒）与一次反应；0.28／0.32 秒 |
 
 soft／hard 四格在 A 经 IPv6 连 Server 后两边仍达标（地址或链路的变化本身即 path 类）。
 
@@ -164,7 +164,7 @@ R3 真机（`meshway-vm`，同一扰动，sha 与 it7 运行 alpha.14、只读�
 | alpha.14（R3 复测 `before-alpha14`） | refresh ×3 | 0.28／1.03／0.60 秒 | 0.30／1.03／0.56 秒 | 无 |
 | R3 `9b83d08e`（`after-r3-1`、`after-r3-2`） | path ×3（两次） | 0.21／0.41／0.42、0.39／0.41／0.45 秒 | 0.21／0.41／0.43、0.39／0.41／0.60 秒 | 每次撤回 10 个 STUN 观测并在约 0.15 秒内重新发布、4 条 UDP 通道漫游探测；it7 的 VM 端点 `:47656`→`:47832`→`:47656` 跟随，通道不变 |
 
-私有记录 `.meshway/validation/r3/vm/`。Mac 切换 Wi-Fi（只有映射变化）由用户操作，未执行。
+私有记录 `.meshway/validation/r3/vm/`；矩阵证据 `.meshway/validation/r3/planck/`。Mac 切换 Wi-Fi（只有映射变化）由用户操作，未执行。
 
 ### roam/nat 行 {#roam-nat-row}
 
@@ -213,11 +213,18 @@ main（R1）已满足本行的不变量；R2 的改动未改变它（每次 path
 
 `roam/exit`（`--netmap-scenario roam-exit`）用漫游行的拓扑、A 拨号公网 B 的一个阶段：A 开启 `exitEnabled`、`ip_forward=1`，是 B 的出口；B 的方案 `exit` 只有一条 IP 规则（WAN 上的服务 T 的 /32 经 A 出口，回退 direct，无 DNS 计划），Access 允许 B→T 的 UDP 42424／TCP 42425／ICMP。T 是 WAN 上的普通容器（UDP／TCP 回显，记录每个新 UDP 来源与每个接受的 TCP 对端）。B 对 A 持续运行 Mesh 流量（100 pps UDP、ping、TCP），A 对 C 同样（无关通道）；每格前 B 对 T 启动一组新的出口流量（同样三种），扰动同 `roam/direct` 的 soft、hard 两格；观察 12 秒后 B 对 T 建一条新 TCP 连接（回显一行）与一个新 UDP 流（回显一个报文）。A 的出口能力（Server State `exitCapability`）每 0.2 秒采样。门槛：B→A Mesh 首个 UDP 回复 ≤ 3 秒、B 的 circuit 集合不缩小、Mesh TCP 未重置、A–C 不变；能力先报 `probing`、5 秒内回到 `ready` 且仍装有 IPv4；本格的出口 TCP 连接结束（报错，或新路由 3 秒后不再有回显）；新 TCP 与 UDP 流得到回复，T 看到的新 TCP 来源是 A 的新上联路由器；A 没有出口角色停止／失败记录；行结束时各节点 `down` 成功。
 
-| 格 | main `34987b0d`＋本行 fixture（Planck `20261016T085917Z-6ee48043`） | R3（Planck @@R3MATRIX@@） |
+| 格 | main `34987b0d`＋本行 fixture（Planck `20261016T085917Z-6ee48043`） | R3（Planck `20261016T110000Z-ef91dc08`） |
 | --- | --- | --- |
-| soft | `probing` 0.57 秒、`ready` 1.65 秒；Mesh 首个 UDP 0.28 秒、TCP 最长中断 0.46 秒；出口 UDP 0.29 秒后以 router-a2 的地址继续（同端口），出口 TCP 停滞、无 RST；新 TCP／UDP 流成功 | @@EXITS@@ |
-| hard | `probing` 0.14 秒、`ready` 1.49 秒；0.06／0.66 秒；同上（新来源 router-a1） | @@EXITH@@ |
+| soft | `probing` 0.57 秒、`ready` 1.65 秒；Mesh 首个 UDP 0.28 秒、TCP 最长中断 0.46 秒；出口 UDP 0.29 秒后以 router-a2 的地址继续（同端口），出口 TCP 停滞、无 RST；新 TCP／UDP 流成功 | `probing` 0.56 秒、`ready` 1.65 秒；Mesh 0.28／0.47 秒；出口 UDP 0.29 秒后以 router-a2 的地址继续，出口 TCP 停滞、无 RST；新 TCP 来源为 router-a2，新 UDP 成功；无出口角色失败记录 |
+| hard | `probing` 0.14 秒、`ready` 1.49 秒；0.06／0.66 秒；同上（新来源 router-a1） | `probing` 0.42 秒、`ready` 1.51 秒；0.05／0.64 秒；出口 UDP 0.05 秒；新 TCP 来源为 router-a1 |
 | 行结束 | A 的 `down` 未完成：出口 `maintain`／退役反复 `kernel ownership or routing protection conflict`（内核为同一原始 tuple 新建的条目被判为外来），`meshway down` 超时，行失败 | 各节点 `down` 成功，出口清理完成 |
+
+| 运行 | 结果 |
+| --- | --- |
+| main 基线：`34987b0d`＋fixture `28ebb42c`，Planck `20261016T085917Z-6ee48043`（`roam/exit` 行 `20261016T090336Z-2531ae82`、`roam/direct` 行 `20261016T090455Z-bfec3635`） | `roam/exit`：两格测量项均达门槛，行结束时 A 的 `down` 失败；`roam/direct`：dual-stack 两格不达门槛 |
+| R3 中间候选 `1a65b3bd`，Planck `20261016T091146Z-e6a4d826` | `roam/exit`、`roam/direct`、`exit/off` 通过；`udp/off` 的新内核测试失败：IPv6 临时地址与 Server 路由同在一个接口，它是该路由的首选源，删除它确实改变了路由（测试已改为另一接口） |
+| R3 `9b83d08e`，Planck `20261016T092905Z-255b4d91` | `udp/off`（含 `underlay-roam-family`）通过 |
+| R3 Planck 23 行矩阵 `20261016T110000Z-ef91dc08`（`b425ccc9`，并行 8，墙钟 1,094 秒） | 23 行全部通过；`roam/direct` 六格首个 UDP 0.07–0.62 秒、TCP 最长中断 ≤ 0.73 秒；`roam/exit` 见上表；`roam/nat` 3.72／2.84 秒、`roam/relay` 3.64／2.76 秒 |
 
 本机（Mac，负载 20–40）上的同一基线另见出口重新探测与 A 的全部流量一起停滞 6–9 秒（`baseline-1`）；Planck 上没有出现，视为宿主 CPU 饥饿，不作为 main 的行为结论。
 
