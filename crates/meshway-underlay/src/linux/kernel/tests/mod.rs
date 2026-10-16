@@ -1,4 +1,9 @@
 use super::*;
+use super::{
+    install::same_pools,
+    proof::{live_routes_match, verify_rules},
+    term::allocate,
+};
 
 mod capture_plan;
 mod network_changes;
