@@ -20,7 +20,7 @@
 - Underlay（不变量：bootstrap resolver 使用解析当时系统配置的上游；owner：bootstrap resolver）：每次解析比对 `/etc/resolv.conf`、其指向与 resolved 上游文件的身份与修改时间，变化即重读；此前启动时读一次。
 - 验收：新矩阵行 `roam/exit`（23 行），`roam/direct` 增加 dual-stack 两格（A 经独立 IPv6 网络连 Server，只改 IPv4 默认路由）；新内核测试 `underlay-roam-family`。
 
-验证：Planck 23 行矩阵 `20261016T110000Z-ef91dc08`（`b425ccc9`）；main 基线 `20261016T085917Z-6ee48043`（dual-stack 两格分类 refresh、`roam/exit` `down` 失败）；`meshway-vm` 真机前后见[漫游行](/v2/node/validation#roam-row)，结束后恢复 alpha.14；证据 `.meshway/validation/r3/`。
+验证：合入 X13 后 Planck 23 行矩阵 `20261016T113938Z-2b403235`（`75b51cbc`）全部通过，合入前 `20261016T110000Z-ef91dc08`（`b425ccc9`）；main 基线 `20261016T085917Z-6ee48043`（dual-stack 两格分类 refresh、`roam/exit` `down` 失败）；`meshway-vm` 真机前后见[漫游行](/v2/node/validation#roam-row)，结束后恢复 alpha.14；证据 `.meshway/validation/r3/`。
 
 ## v0.1.0-alpha.14
 
