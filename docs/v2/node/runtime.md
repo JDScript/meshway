@@ -188,10 +188,14 @@ owner 每秒把捕获表回读并与收据比对。回读本身失败（工具 2
 
 | 类别 | 原因（`check`） | 之后 |
 | --- | --- | --- |
-| 暂态阻断 `unavailable` | 读不到或变更结果未知满 30 秒：egress `verify_unavailable`／`change_unavailable`；monitor socket 读取失败（通知可能丢失）`monitor_unavailable`；安装或自有对象重装中 netlink／工具超时 `install_unavailable`／`repair_unavailable`；新一期的控制中继未能打开 `relay_unavailable` | Host 按退避重证（结束后 1 秒，此后翻倍，间隔至多 8 秒），成功即以同一 netmap 重装，无需 `up` 或重启进程 |
-| 持久冲突 `conflict` | 读成功而与所属记录不符：egress `verify`、monitor 读到外来对象 `monitor`、重证读到外来对象或不可恢复的 journal `reproof`、自有对象 1 分钟内第 4 次被删 `repair_limit`、安装／重装读到不符 `install`／`repair`、安装被取消 `install_cancelled`、控制中继监听或任务容量失败 | 保持 fail closed 直到重启（人工处置） |
+| 暂态阻断 `unavailable` | 读不到或变更结果未知满 30 秒：egress `verify_unavailable`／`change_unavailable`；monitor socket 读取失败（通知可能丢失）`monitor_unavailable`；安装或自有对象重装中 netlink／工具超时 `install_unavailable`／`repair_unavailable`；monitor 未在 3 秒内消化 owner 自身变更的通知 `drain_unavailable`；本期的 netlink 请求连接在其 Kernel 存续时结束 `connection_unavailable`；新一期的控制中继 resolver 未能打开 `relay_unavailable` | Host 按退避重证（结束后 1 秒，此后翻倍，间隔至多 8 秒），成功即以同一 netmap 重装，无需 `up` 或重启进程 |
+| 持久冲突 `conflict` | 读成功而与所属记录不符：egress `verify`、monitor 读到外来对象 `monitor`、重证读到外来对象或不可恢复的 journal `reproof`、自有对象 1 分钟内第 4 次被删 `repair_limit`、安装／重装读到不符 `install`／`repair`、安装被取消 `install_cancelled` | 保持 fail closed 直到重启（人工处置） |
 
-持久冲突覆盖暂态阻断，反之不会：暂态阻断期间旧一期的 monitor 仍在运行，读到外来对象即改为 `conflict`。
+持久冲突覆盖暂态阻断，反之不会：暂态阻断期间旧一期的 monitor 仍在运行，读到外来对象即改为 `conflict`。已结束的一期中失败的安装／重装操作（因结束本身失败）不改变已记录的原因：重证会重新读内核。
+
+**控制中继不结束归属**：控制中继（Underlay 的 UDS 中继，唯一 owner 为其 listener owner）监听不了（`EADDRINUSE`、仍有活进程或不能回收的旧 socket、`EACCES`）或 accept 失败时自行按 [U1 口径](/v2/node/connectivity#listener-bind-retry)重试——可自行消失的原因 1 秒起翻倍、上限 60 秒，`EACCES` 每 60 秒——同一错误只记一次 WARN `Protected control relay cannot listen; retrying, kernel ownership kept`（accept 失败为 `Protected control relay accept failed; retrying, kernel ownership kept`），恢复后 INFO `Protected control relay listening again`／`… accepting again`；期间 Control 请求连不上 UDS，按 sync `Network` 重试。连接数或 Host 任务容量满时拒绝新连接（立即关闭）、保留已有连接，WARN `Protected control relay at capacity; refusing new connections, keeping current ones` 一次，容量回落后第一个接纳的连接 INFO `Protected control relay accepts connections again`（`refused`）。进程启动时 `attach_control` 监听失败仍是启动失败。
+
+**网络 worker 的恢复优先级**：worker 的事件循环每轮至少推进一个状态；到期的重证（`Host::recovery_at`）在组件生命周期事件中最先选中，DNS owner 的失败与恢复是边沿而非电平——owner 已重证的故障（等待下一次 hold）不再算失败，同一故障至多处理一次失败与一次恢复，即使重装在 DNS hold 之前就因归属已结束而失败。阻断期间 `lastErrorDetail` 在 DNS 详情缺失时给出归属结束的原因，不被空值覆盖。停止服务的出口 owner 立即丢弃已排队的请求（调用方即得错误），不让 worker 等它的清理重试。
 
 **重证**（`Host::recover`，只在暂态阻断后、到 `Host::recovery_at` 时由网络 worker 调用）：第一次先结束旧一期——停止其任务（monitor、网络分类、控制中继及其连接、受保护 socket），join egress capture 与出口 owner（出口清理不在此重试，留给新一期的 journal 恢复），关闭 Mesh TUN，落盘 journal；然后按进程启动的同一路径（`Kernel::open_term`）打开新一期：出口与 egress journal 恢复到负向边界、base journal 与内核现状精确对账、DNS 锚点校验。读取或变更再次失败（netlink／I/O）保持暂态，按退避再试，同一失败只记一次 WARN `Kernel ownership re-proof unavailable; retrying`；读到与 journal 不符（外来规则、私有表中的路由、不可恢复的 journal）改为持久冲突，WARN `Kernel ownership re-proof read back a conflict; ownership stays ended until restart`。成功时 INFO `Kernel ownership proved again; the Host owns a new term`（`check`、`attempts`、`elapsed_ms`）：新一期沿用同一 journal（同一 installation、mark、table）、同一控制中继 origin 与 UDS 路径（已有 HTTP client 照常连接）以及 Host 发布的观察通道（网络变化、`changePending`、`cleanupPending`）；网络 worker 停止 DNS owner（其锚点与 socket 属于旧一期，系统 DNS 安装保留，与重启相同）后以同一 offer 重装（`Kernel ownership recovered; reinstalling the netmap`），DNS owner 在新一期上重新准备。未知的存储（journal 处于中断变更、版本不符）与重启时一样 fail closed，不因重证放宽。
 

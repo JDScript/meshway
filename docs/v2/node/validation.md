@@ -383,6 +383,30 @@ X11 同一场景（main／X11 构建）：`Egress capture owner stopping … ker
 
 Planck 22 行矩阵 `20261016T101528Z-e959e64c`（`9a640af4`，并行 4，墙钟 1,471 秒）全部通过，`exit/off` 行 `20261016T102643Z-cf5618c7` 799.0 秒；矩阵各行日志中没有宿主内核归属结束（自然负载未触发）。同一提交的两次并行 8 矩阵各一行失败：`20261016T092812Z-67eae514` 的 `udp/resolved`（同机另一矩阵并发运行，三节点同时 `observe_deadline` 4.96 秒、Server 503，fixture 在 `outage-deadlines` 之后超时；单行复跑 `20261016T095226Z-a832ff54` 通过）；`20261016T095733Z-8ebca7ac` 的 `exit/off` 第 16 阶段 echo 94／100（压力步中 E 一次投影退役的 nft 操作失败、按 X12 重读重试 1 秒，与 X11 记录的并行 8 现象相同）。证据 `.meshway/validation/x13/`。
 
+### X15 worker 忙循环与重证证据 {#x15-livelock}
+
+规则见[网络 worker 的恢复优先级](/v2/node/runtime#ownership-end)。alpha.15 真机（OPS14，lab sha 限额 0.02 核 90 秒）3 次中 2 次限额解除后不自愈、sha meshwayd 约 110 % CPU：DNS owner 先自行重证（故障仍在、`recovered` 已为真，等待 hold），随后宿主内核归属暂态结束；worker 的 `biased` select 里 DNS 失败与恢复两个电平分支轮流立即就绪（恢复 → 重装在 capture 处因归属已结束失败、到不了 DNS hold → 失败 → …，约 37,000 次／秒），排在其后的到期重证永远选不到；`lastErrorDetail` 被 DNS 分支置空。
+
+单测：`worker::lifecycle::tests::a_recovered_dns_fault_and_an_ended_term_reach_the_reproof_without_spinning`（DNS 已出错 → 已恢复 → 归属结束、1 秒后到期：恢复只处理一次，第 2 轮即选中重证，10 秒内、轮数上限 4）与 `…::a_due_reproof_is_selected_before_dns_facts_that_stay_ready`；DNS actor 测试断言已重证的故障不再是失败。把 `Health::failed` 改回电平语义时前者失败（`the worker spins`）。控制中继：`proxy::tests::a_relay_that_cannot_listen_retries_until_its_socket_is_free`、`…::a_relay_at_capacity_refuses_new_connections_and_keeps_current_ones`、`…::listener_retries_follow_the_u1_cadence`；分类：`kernel::tests::reproof::a_missed_drain_ends_ownership_as_unavailable`、`protection::tests::a_stopped_connection_records_an_unavailable_end_a_conflict_replaces`。证据 `.meshway/validation/x15/local/`。
+
+**lab 复现**（本机 OrbStack lab，`docker update --cpus 0.02` 90 秒、恢复 `--cpus 2`；Status 每 2 秒、nyc→sha ping 每 0.5 秒、sha 日志实时跟随并按秒计四条循环消息、sha CPU 每 5 秒；`.meshway/validation/x15/lab/`）。第一轮（`b2955d06`）：
+
+| 运行 | 路径 | 限额解除 → 重证成功 → running／ready |
+| --- | --- | --- |
+| `x15-1` | X12 `pause` 重试完成，DNS 自行恢复，归属保持 | 14:05:40.3 → — → 14:05:42 |
+| `x15-2` | **OPS14 顺序**：DNS 14:07:29 失败、14:08:26.8 重证恢复，14:08:31.8 `change_unavailable` 结束归属；worker 处理恢复 1 次（重装在 capture 失败）后不再循环，重证 1 次 `unavailable` | 14:08:56.3 → 14:09:01.9（5.6 s）→ 14:09:03；四条循环消息全程 8 条（alpha.15：约 37,000 条／秒），sha CPU ≤ 14 % |
+| `x15-3` | 出口审计 14:11:15 先停止角色，`verify_unavailable` 14:11:22.5 | 14:12:12.3 → 14:12:36.3（24 s）→ 14:12:38：worker 等一个排在已停止出口 owner 队列里、永不回答的探测 audit 73 秒，直到出口清理第 7 次完成 |
+| `x15-4`、`x15-5` | `verify_unavailable`（`x15-4` 先 X12 `pause` 重试） | 4.1／0.8 s 重证，6／2 s running |
+
+`x15-3` 另修（`49bf0c59`）：停止服务的出口 owner 立即丢弃已排队请求；失败的重证新一期丢下连接时不再记 `connection ended`。第二轮（`49bf0c59`）8 次：
+
+| 运行 | 路径 | 限额解除 → 重证成功 → running／ready |
+| --- | --- | --- |
+| `x15-1`…`x15-4`、`x15-6`、`x15-7` | `verify_unavailable`，阻断期间重证 `unavailable` | 0.1／2.0／0.3／4.2／1.1／0.7 s 重证，≤ 2 s（`x15-4` 6 s）running |
+| `x15-5`、`x15-8` | X12 `pause` 重试后 `verify_unavailable` | 0.5／0.8 s 重证，2 s running |
+
+两轮 13 次中 12 次在限额解除后 10 秒内 running／ready（第一轮 `x15-3` 24 秒，原因已修，第二轮 8／8），无需重启或 `up`；四条循环消息每秒至多 4 条，限额解除后 sha CPU 至多 34 %。DNS 先恢复、归属后结束的顺序在 13 次中出现 1 次（第一轮 `x15-2`，修复后的构建上，单测覆盖同一顺序）。lab 结束后恢复为 alpha.15 release `136f3efc…`。
+
 ### 当前验证证据
 
 `validate:matrix` 为每行独立保留报告并汇总 `matrix.json`／`summary.md`；通过结论同时要求 fixture `passed`、进程成功退出和本 run 无遗留资源。`--short` 的报告标记 `scope=diagnostic-short`：只运行 30 秒持续／纯接收窗口（退路 5 秒后触发），不要求已经跨原需求期限，未测到的延长为 null。其他场景仍执行，包括真实 instance 失效恢复；短模式不是整组验收，不能更新下述历史／当前通过状态。并发运行还需读取各行启动 load，不能与低负载串行结果不加区分地合并。
@@ -470,7 +494,7 @@ W2 使用候选 `fbde424e`（生产修复 `0593e19b`，基于 main `1271be5d`）
 
 **planck 宿主 WiFi 的周期中断**（宿主问题，不在产品侧处理）：planck 宿主 ath12k 在每次 802.1X 重认证（约 8 h 24 min 一次）的 PTK 重新协商时 flush 约 5 秒，期间宿主范围的 netlink 停顿。D3 之后 planck 节点每次随之 DNS 健康检查失败、撤回包平面约 0.6 秒并自动重装，不再阻断至重启。 真机（alpha.11）2026-10-15 08:23:57Z 一次：宿主探针记录 4.11 s 停顿，planck 节点 `observe_deadline`（abandoned after 3918 ms）后 146 ms 恢复、279 ms 内重装 netmap，每 2 s 的 249 份 Status 中仅 1 份 `preparing`；证据 `.meshway/node-lab/ops10/d3-rekey/`。
 
-**长于 30 秒的内核停顿仍 fail closed，停顿结束后自愈**（X13 之后）：变更失败与回读失败共用 30 秒上限（与 DNS owner 一致）。停顿期间每一次回读都失败满 30 秒时，出口审计照旧停止角色（lab sha 限额 45 秒一次：`operation: audit`、`check: verify_unavailable`，清理第 4 次完成后重装），egress capture 以暂态阻断结束宿主内核归属，Host 每 1–8 秒重证、停顿结束后自动重装（[X13](#x13-reproof)）；变更在起点反复失败满 30 秒为 `change_unavailable`，同样按暂态处理。控制中继监听失败与任务容量耗尽仍记为持久冲突（需重启），未在 lab 中出现。X11 发现的 `pause` 失败（main 上停机到重启）与并行矩阵中出口 `retire` 超时停止角色已按[内核变更失败](/v2/node/runtime#kernel-change)处理，证据见 [X12](#x12-change)。
+**长于 30 秒的内核停顿仍 fail closed，停顿结束后自愈**（X13 之后）：变更失败与回读失败共用 30 秒上限（与 DNS owner 一致）。停顿期间每一次回读都失败满 30 秒时，出口审计照旧停止角色（lab sha 限额 45 秒一次：`operation: audit`、`check: verify_unavailable`，清理第 4 次完成后重装），egress capture 以暂态阻断结束宿主内核归属，Host 每 1–8 秒重证、停顿结束后自动重装（[X13](#x13-reproof)）；变更在起点反复失败满 30 秒为 `change_unavailable`，同样按暂态处理。控制中继监听失败与任务容量耗尽不结束归属，由中继自行重试／拒新保旧（X15，见[归属的结束与重证](/v2/node/runtime#ownership-end)）。X11 发现的 `pause` 失败（main 上停机到重启）与并行矩阵中出口 `retire` 超时停止角色已按[内核变更失败](/v2/node/runtime#kernel-change)处理，证据见 [X12](#x12-change)。
 
 **节点持有的 peer 事实可早于其租约到期**（X8 发现，P1 已修复）：此前 Server 只在事实内容变化时唤醒 sync hold、hold 只以租约为界，而事实按报告者 `observedAt` + 60 秒到期，节点在 hold 期间或 Node HTTP 中断时可在租约到期前失去出口就绪事实，新出口流在本地被拒（`netmap_denied`）。现在 hold 也以节点持有事实的最早截止 − 5 秒为界（[sync hold](/v2/node/netmap-design#sync-transport)），且过期的出口就绪事实按最后已知值继续可选（[最后已知事实](/v2/node/connectivity#last-known-facts)）；`exit/off` 第 15 阶段等待 A 取得一次 sync 的绕过已去掉，第 8 阶段照旧断言 HTTP 中断期间直到租约到期前新出口流都能建立。P1 Planck 18 行矩阵 `20261015T062652Z-9a95285c`（`541e48b5`，并行 4）全部通过；单行 `exit/off` 复跑 `20261015T065227Z-9645d57c`（行 `20261015T065230Z-44e5de7b`）中 A 关于 E 的事实在首个路径租约到期前 7 秒过期，此后两条链路各 3 个新 UDP 出口流建立、无拒绝（main 上此时 `netmap_denied`）。同批另有两次失败：第 15 阶段 E 在角色重装进行中如实报告未就绪、A 据当前事实拒绝了一次出口 DNS 查询（`20261015T055930Z-782e79b3`；是 fixture 断言过严，第 15 阶段已改为中断窗界定，见[出口场景](#exit-scenario)）；两个 `exit/off` 并发时第 16 阶段 iperf3 超时（`20261015T065357Z-b98749cc`，与 P1 无关）。断言修改后（`f9115a91`）`exit/off` 单跑两次通过：`20261015T123419Z-c3f16022`（行 `20261015T123716Z-7753f918`，A 关于 E 的事实在首个租约到期前 3 秒过期，之后两条链路各 1 个新出口流成功）与 `20261015T125059Z-2a2f87b5`（行 `20261015T125103Z-83765480`，第 15 阶段中断窗 2.5 秒内 3 次查询失败 2 次、上限 7、窗外 0 次）。
 

@@ -2,6 +2,16 @@
 
 按合入 main 的顺序记录工作包、提交与证据 ID。规则见[工程流程](/v2/process)；性能数字的口径见[分层性能测量](/v2/node/performance)，验收状态见[验收范围](/v2/node/validation)。
 
+## 未发布
+
+worker 忙循环与控制中继暂态（X15，`x15/worker-livelock`）：wire 6、IPC 12、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约均不变（只改 Node；Status 字段不变）。
+
+- 网络 worker（不变量：事件循环每轮至少推进一个状态，同一事实只处理一次直到它变化，任何分支不得饿死定时恢复；owner：网络 worker 的事件循环）：DNS owner 的失败／恢复改为边沿——owner 已重证、等待 hold 的故障不再算失败；到期的宿主内核归属重证在组件生命周期事件中最先选中；`lastErrorDetail` 在 DNS 详情缺失时给出归属结束原因。此前 alpha.15（OPS14）DNS 先恢复、归属随后暂态结束时，两个电平分支每秒约 37,000 次交替，重证永远选不到，3 次中 2 次不自愈、约 110 % CPU。定义见[网络 worker 的恢复优先级](/v2/node/runtime#ownership-end)。
+- 出口（不变量：停止服务的 owner 不让调用方等它的清理重试；owner：出口角色 owner）：owner 停止后立即丢弃已排队请求。此前 lab 一次出口审计先停止角色时，worker 等一个排队的探测 audit 73 秒（直到清理重试完成），重证与 DNS 失败随之延后。
+- Underlay 控制中继（不变量：中继监听不了或容量满不证明归属变化；owner：控制中继的 listener owner）：监听／accept 失败按 U1 口径自行重试并报告（1 秒起翻倍、上限 60 秒，`EACCES` 每 60 秒），容量满拒新保旧、回落即恢复；都不结束宿主内核归属（此前为持久冲突 `relay_listener`／`relay_capacity`）。重证新一期的中继 socket 暂时监听不了不再结束新一期。
+- Underlay（不变量：未读到外来对象的失败是暂态；owner：Host 宿主内核归属）：monitor drain 3 秒超时记 `drain_unavailable`（此前 `Conflict`，在有 pending 变更时归持久 `install`），本期 netlink 请求连接结束记 `connection_unavailable`（此前未记录原因的冲突）；已结束的一期中失败的操作不再把暂态升级为冲突。
+- 验收：单测 `worker::lifecycle::tests::*`、DNS actor、`proxy::tests::*`、`reproof::a_missed_drain_ends_ownership_as_unavailable`、`protection::tests::a_stopped_connection_records_an_unavailable_end_a_conflict_replaces`；lab sha 限额 90 秒两轮 13 次，含一次 OPS14 顺序（5.6 秒重证），见 [X15](/v2/node/validation#x15-livelock)。
+
 ## v0.1.0-alpha.15
 
 范围：wire 6、IPC 12、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约均不变（普通升级，无断网窗口；只改 Node）。X13：读不到或变更结果未知导致的暂态归属结束自动重证并以同一 netmap 重装，`exit.cleanupPending` 即时反映出口 owner 现值；R3：网络指纹计入全部 remote 路由与 IPv4 secondary 地址、dual-stack 节点只改 IPv4 默认路由也判 path，`roam/exit` 出口漫游后后继 conntrack 条目精确退役、`down` 可完成，指定地址 listener 地址回来即重绑，bootstrap resolver 随系统配置变化重读；以及下列 X13、R3 工作包。
