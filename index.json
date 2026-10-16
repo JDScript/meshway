@@ -1,8 +1,174 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-16T16:10:57.970605+00:00",
+  "updatedAt": "2026-10-16T17:11:54.226450+00:00",
   "runs": [
+    {
+      "id": 38936723787,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "f6b/hygiene",
+      "commit": "80fdac8b804d99dcf37d1b148a1b0533126741e7",
+      "message": "ci(perf): lock linux-arm64 tool records; trigger perf on mise and perf script changes",
+      "createdAt": "2026-10-16T17:03:25Z",
+      "updatedAt": "2026-10-16T17:03:44Z",
+      "status": "in_progress",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/38936723787",
+      "jobs": [
+        {
+          "id": 117093970727,
+          "name": "changes",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-16T17:03:29Z",
+          "completedAt": "2026-10-16T17:03:41Z",
+          "seconds": 12.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38936723787/job/117093970727"
+        },
+        {
+          "id": 117094086403,
+          "name": "cargo",
+          "runner": "mars-14900k",
+          "status": "in_progress",
+          "conclusion": null,
+          "startedAt": "2026-10-16T17:03:44Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38936723787/job/117094086403"
+        },
+        {
+          "id": 117094086474,
+          "name": "web",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-16T17:03:42Z",
+          "completedAt": "2026-10-16T17:05:01Z",
+          "seconds": 79.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38936723787/job/117094086474"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "id": 38936723416,
+      "attempt": 1,
+      "workflow": "Perf",
+      "event": "workflow_dispatch",
+      "branch": "f6b/hygiene",
+      "commit": "80fdac8b804d99dcf37d1b148a1b0533126741e7",
+      "message": "ci(perf): lock linux-arm64 tool records; trigger perf on mise and perf script changes",
+      "createdAt": "2026-10-16T17:03:25Z",
+      "updatedAt": "2026-10-16T17:10:36Z",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/JDScript/meshway/actions/runs/38936723416",
+      "jobs": [
+        {
+          "id": 117093975207,
+          "name": "perf-arm64",
+          "runner": "jp-tyo-arm64",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-16T17:03:29Z",
+          "completedAt": "2026-10-16T17:10:35Z",
+          "seconds": 426.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38936723416/job/117093975207"
+        },
+        {
+          "id": 117093975536,
+          "name": "perf",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-16T17:03:28Z",
+          "completedAt": "2026-10-16T17:03:36Z",
+          "seconds": 8.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38936723416/job/117093975536"
+        }
+      ],
+      "artifacts": [
+        {
+          "id": 12061882016,
+          "name": "perf-arm64-38936723416",
+          "bytes": 46232,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38936723416/artifacts/12061882016",
+          "jobId": 117093975207,
+          "runner": "jp-tyo-arm64",
+          "seconds": 426.0,
+          "state": "ok",
+          "error": null,
+          "reports": [
+            {
+              "reportId": "20261016T170705Z-fcd75214",
+              "kind": "circuit",
+              "revision": "80fdac8b804d99dcf37d1b148a1b0533126741e7",
+              "dirty": false,
+              "quick": false,
+              "sourcesUnchanged": null,
+              "loadMin": 0.18896484375,
+              "loadMax": 1.6962890625,
+              "metrics": [
+                {
+                  "label": "L0 2 nodes CPU",
+                  "unit": "µs/packet",
+                  "scope": "{\"bytes\": 1280, \"nodes\": 2, \"profile\": 0, \"rounds\": 10000, \"warmup\": 200, \"workers\": null}",
+                  "value": 14.856054,
+                  "samples": 3,
+                  "attempted": 3
+                },
+                {
+                  "label": "L0 2 nodes pps",
+                  "unit": "pps",
+                  "scope": "{\"bytes\": 1280, \"nodes\": 2, \"profile\": 0, \"rounds\": 10000, \"warmup\": 200, \"workers\": null}",
+                  "value": 67304.2295374404,
+                  "samples": 3,
+                  "attempted": 3
+                },
+                {
+                  "label": "L0 3 nodes CPU",
+                  "unit": "µs/packet",
+                  "scope": "{\"bytes\": 1280, \"nodes\": 3, \"profile\": 0, \"rounds\": 10000, \"warmup\": 200, \"workers\": null}",
+                  "value": 19.900072,
+                  "samples": 3,
+                  "attempted": 3
+                },
+                {
+                  "label": "L0 3 nodes pps",
+                  "unit": "pps",
+                  "scope": "{\"bytes\": 1280, \"nodes\": 3, \"profile\": 0, \"rounds\": 10000, \"warmup\": 200, \"workers\": null}",
+                  "value": 50249.20995177161,
+                  "samples": 3,
+                  "attempted": 3
+                },
+                {
+                  "label": "L0 5 nodes CPU",
+                  "unit": "µs/packet",
+                  "scope": "{\"bytes\": 1280, \"nodes\": 5, \"profile\": 0, \"rounds\": 10000, \"warmup\": 200, \"workers\": null}",
+                  "value": 29.570252,
+                  "samples": 3,
+                  "attempted": 3
+                },
+                {
+                  "label": "L0 5 nodes pps",
+                  "unit": "pps",
+                  "scope": "{\"bytes\": 1280, \"nodes\": 5, \"profile\": 0, \"rounds\": 10000, \"warmup\": 200, \"workers\": null}",
+                  "value": 33811.03799338901,
+                  "samples": 3,
+                  "attempted": 3
+                }
+              ]
+            }
+          ],
+          "matrices": [],
+          "builds": []
+        }
+      ]
+    },
     {
       "id": 38925423857,
       "attempt": 1,
