@@ -2,7 +2,7 @@ use super::super::{
     exit::objects::{self, Receipt},
     monitor::Expected,
     plan::{PROTOCOL, encode_route, encode_rule, priority, route_table},
-    tool::command::{Commands, Tool},
+    tool::command::Commands,
     verification::{Reread, Verification},
 };
 use super::{
@@ -150,29 +150,14 @@ impl Backend {
             .settle()
             .await
             .map_err(|_| Unread::Unavailable(Error::Netlink))?;
-        let output = self
-            .commands
-            .run(
-                Tool::Nft,
-                vec![
-                    "-j".into(),
-                    "-nnn".into(),
-                    "list".into(),
-                    "table".into(),
-                    "inet".into(),
-                    self.ledger.program.table(),
-                ],
-                Vec::new(),
-            )
+        use super::super::tool::nft::{TableUnread, table};
+        let stdout = table(&mut self.commands, "inet", &self.ledger.program.table())
             .await
-            .map_err(|_| Unread::Unavailable(Error::Netlink))?;
-        if !output.success {
-            return Err(match self.present().await {
-                Ok(false) => Unread::Missing,
-                Ok(true) | Err(_) => Unread::Unavailable(Error::Netlink),
-            });
-        }
-        objects::decode(&output.stdout).map_err(Unread::Unavailable)
+            .map_err(|unread| match unread {
+                TableUnread::Missing => Unread::Missing,
+                TableUnread::Unavailable => Unread::Unavailable(Error::Netlink),
+            })?;
+        objects::decode(&stdout).map_err(Unread::Unavailable)
     }
     async fn dump(&mut self) -> Result<Receipt> {
         self.read().await.map_err(|unread| match unread {
