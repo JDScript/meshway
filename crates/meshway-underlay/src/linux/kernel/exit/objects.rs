@@ -121,33 +121,14 @@ pub(super) async fn read(
         elements: BTreeMap::new(),
     };
     for (family, name) in program.tables() {
-        let output = commands
-            .run(
-                Tool::Nft,
-                vec![
-                    "-j".into(),
-                    "-nnn".into(),
-                    "list".into(),
-                    "table".into(),
-                    family.into(),
-                    name.clone(),
-                ],
-                Vec::new(),
-            )
+        use super::super::tool::nft::{TableUnread, table};
+        let stdout = table(commands, family, &name)
             .await
-            .map_err(|_| Unread::Unavailable(Error::Netlink))?;
-        if !output.success {
-            // Only `nft list tables` succeeding without the table proves it
-            // gone.
-            use super::super::tool::nft::tables;
-            return Err(match tables(commands).await {
-                Ok(listed) if !listed.iter().any(|(f, n)| f == family && *n == name) => {
-                    Unread::Changed("table_missing")
-                }
-                _ => Unread::Unavailable(Error::Netlink),
-            });
-        }
-        let mut receipt = decode(&output.stdout).map_err(Unread::Unavailable)?;
+            .map_err(|unread| match unread {
+                TableUnread::Missing => Unread::Changed("table_missing"),
+                TableUnread::Unavailable => Unread::Unavailable(Error::Netlink),
+            })?;
+        let mut receipt = decode(&stdout).map_err(Unread::Unavailable)?;
         for value in receipt.objects.values_mut() {
             normalize(value, Some(program)).map_err(|_| Unread::Changed("objects_changed"))?;
         }

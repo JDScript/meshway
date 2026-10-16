@@ -68,7 +68,7 @@ impl QuerySchedule {
         self.observation_backoff = if usable {
             STUN_RETRY
         } else {
-            (self.observation_backoff * 2).min(STUN_IDLE)
+            meshway_model::Backoff::new(STUN_RETRY, STUN_IDLE).next(self.observation_backoff)
         };
         self.observation_at = self.observation_last + self.observation_backoff;
     }
@@ -106,9 +106,7 @@ pub(super) fn observation_due(
 }
 
 fn retry(failures: u32) -> Duration {
-    STUN_RETRY
-        .saturating_mul(1 << failures.min(4))
-        .min(STUN_IDLE)
+    meshway_model::Backoff::new(STUN_RETRY, STUN_IDLE).delay(failures.saturating_add(1))
 }
 
 #[cfg(test)]

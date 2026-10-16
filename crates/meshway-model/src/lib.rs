@@ -5,6 +5,7 @@
 
 #![forbid(unsafe_code)]
 
+mod backoff;
 mod digest;
 pub mod exit;
 mod ids;
@@ -23,6 +24,7 @@ pub mod timestamp;
 pub mod transport;
 pub mod wire;
 
+pub use backoff::Backoff;
 pub use digest::{Digest, InvalidDigest};
 pub use ids::{
     ActivityId, ArtifactId, ChallengeId, EnrollmentKeyId, EnrollmentRequestId, EventId, InstanceId,

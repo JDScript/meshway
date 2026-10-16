@@ -8,7 +8,7 @@ use rtnetlink::{
     Handle,
     packet_route::{
         AddressFamily,
-        address::{AddressAttribute, AddressScope},
+        address::{AddressAttribute, AddressMessage, AddressScope},
         link::LinkFlags,
         route::{RouteAddress, RouteAttribute, RouteMessage, RouteType},
     },
@@ -189,6 +189,19 @@ const UNUSABLE: u32 = 0x08 | 0x20 | 0x40;
 /// effective as the primary).
 const TEMPORARY_OR_SECONDARY: u32 = 0x01;
 
+/// An address's flags: the extended `IFA_FLAGS` attribute when present,
+/// otherwise the legacy header byte. Owners interpret the bits.
+pub(super) fn address_flags(address: &AddressMessage) -> u32 {
+    address
+        .attributes
+        .iter()
+        .find_map(|attribute| match attribute {
+            AddressAttribute::Flags(flags) => Some(flags.bits()),
+            _ => None,
+        })
+        .unwrap_or(u32::from(address.header.flags.bits()))
+}
+
 /// An address that carries this Node's traffic as a source: usable, and not
 /// an IPv6 temporary address. Flags are read per address family.
 fn effective(address: IpAddr, flags: u32) -> bool {
@@ -247,14 +260,7 @@ async fn fingerprint(
         }
     }
     for entry in &addresses {
-        let flags = entry
-            .attributes
-            .iter()
-            .find_map(|attribute| match attribute {
-                AddressAttribute::Flags(flags) => Some(flags.bits()),
-                _ => None,
-            })
-            .unwrap_or(u32::from(entry.header.flags.bits()));
+        let flags = address_flags(entry);
         if !print.links.contains_key(&entry.header.index)
             || entry.header.scope != AddressScope::Universe
         {

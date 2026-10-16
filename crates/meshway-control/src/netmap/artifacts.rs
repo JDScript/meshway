@@ -346,9 +346,8 @@ impl Control {
                             retry_at: Instant::now(),
                         });
                     failure.attempts = failure.attempts.saturating_add(1);
-                    let delay = RETRY_MIN
-                        .saturating_mul(1 << failure.attempts.saturating_sub(1).min(6))
-                        .min(RETRY_MAX);
+                    let delay =
+                        meshway_model::Backoff::new(RETRY_MIN, RETRY_MAX).delay(failure.attempts);
                     failure.retry_at = Instant::now() + delay;
                 }
             }

@@ -1,6 +1,5 @@
 use meshway_configuration::execution::{DialCandidate, DialEndpoint};
 use meshway_engine::Desired;
-use meshway_model::NodeId;
 use meshway_model::TransportProtocol;
 use meshway_transport::spec::{
     DialParameters, Endpoint, Listener, PreparedListener, SocketOptions, TcpOptions,
@@ -39,29 +38,13 @@ pub struct SocketFactory {
 #[derive(Clone)]
 pub struct CandidateHandle {
     scope: ProtectionScope,
-    local: NodeId,
     candidate: DialCandidate,
     endpoint: Endpoint,
 }
 
 impl CandidateHandle {
-    pub fn local(&self) -> NodeId {
-        self.local
-    }
-    pub fn peer(&self) -> NodeId {
-        self.candidate.peer
-    }
-    pub fn listener_key(&self) -> &str {
-        &self.candidate.listener_key
-    }
-    pub fn protocol(&self) -> TransportProtocol {
+    fn protocol(&self) -> TransportProtocol {
         self.candidate.parameters.transport()
-    }
-    pub fn parameters(&self) -> &DialParameters {
-        &self.candidate.parameters
-    }
-    pub fn endpoint(&self) -> &Endpoint {
-        &self.endpoint
     }
 }
 
@@ -76,21 +59,7 @@ impl fmt::Debug for CandidateHandle {
 #[derive(Clone)]
 pub struct ListenerHandle {
     scope: ProtectionScope,
-    local: NodeId,
-    key: String,
     declaration: PreparedListener,
-}
-
-impl ListenerHandle {
-    pub fn local(&self) -> NodeId {
-        self.local
-    }
-    pub fn key(&self) -> &str {
-        &self.key
-    }
-    pub fn declaration(&self) -> &PreparedListener {
-        &self.declaration
-    }
 }
 
 impl fmt::Debug for ListenerHandle {
@@ -257,7 +226,6 @@ impl SocketFactory {
         let endpoint = endpoint.endpoint();
         Ok(CandidateHandle {
             scope,
-            local: view.node_id(),
             candidate,
             endpoint,
         })
@@ -273,12 +241,7 @@ impl SocketFactory {
         let view = View::of(desired);
         let declaration = view.listeners().get(key).ok_or(Error::Target)?.clone();
         validate_listener(declaration.declaration())?;
-        Ok(ListenerHandle {
-            scope,
-            local: view.node_id(),
-            key: key.to_owned(),
-            declaration,
-        })
+        Ok(ListenerHandle { scope, declaration })
     }
 
     pub async fn connect(&self, candidate: &CandidateHandle) -> Result<ProtectedTcp> {

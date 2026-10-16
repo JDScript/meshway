@@ -7,6 +7,11 @@ version = "0.9.146"
 backend = "aqua:nextest-rs/nextest/cargo-nextest"
 specifiers = ["0.9.146"]
 
+[tools."aqua:nextest-rs/nextest/cargo-nextest"."platforms.linux-arm64"]
+checksum = "sha256:b2e33d7c72de7ade0ff7b3a948ac37516b24f8a836b7a8870c1f634a94be9de9"
+url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.146/cargo-nextest-0.9.146-aarch64-unknown-linux-gnu.tar.gz"
+url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/579608024"
+
 [tools."aqua:nextest-rs/nextest/cargo-nextest"."platforms.linux-x64"]
 checksum = "sha256:682c21b777c333e96fd532e114d3a5a894e0729ab88d94c0a9f20f8419695428"
 url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.146/cargo-nextest-0.9.146-x86_64-unknown-linux-gnu.tar.gz"
@@ -21,6 +26,11 @@ url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/57963
 version = "0.23.4"
 backend = "github:rust-cross/cargo-zigbuild"
 specifiers = ["0.23.4"]
+
+[tools."github:rust-cross/cargo-zigbuild"."platforms.linux-arm64"]
+checksum = "sha256:25cf2cdc6cde848b33a761ff2cf46d1efe6ba7e1adfc4b6f3ee2d570cacb5419"
+url = "https://github.com/rust-cross/cargo-zigbuild/releases/download/v0.23.4/cargo-zigbuild-aarch64-unknown-linux-gnu.tar.xz"
+url_api = "https://api.github.com/repos/rust-cross/cargo-zigbuild/releases/assets/541272860"
 
 [tools."github:rust-cross/cargo-zigbuild"."platforms.linux-x64"]
 checksum = "sha256:6b69963040818ca1ef573d8135a95aa902e17cf7f873c32c6426642dadfe7f59"
@@ -37,6 +47,10 @@ version = "24.19.0"
 backend = "core:node"
 specifiers = ["24.19.0"]
 
+[tools.node."platforms.linux-arm64"]
+checksum = "sha256:d28c8a5bf0a808f0ed434a1dce8c54ae98f0371c0bd86ac58abc613f73e6643f"
+url = "https://nodejs.org/dist/v24.19.0/node-v24.19.0-linux-arm64.tar.gz"
+
 [tools.node."platforms.linux-x64"]
 checksum = "sha256:f625d97cd707df4ff96254916fbc5ff014f09c09effe5a1e0ca8f6d41a8789d4"
 url = "https://nodejs.org/dist/v24.19.0/node-v24.19.0-linux-x64.tar.gz"
@@ -49,6 +63,12 @@ url = "https://nodejs.org/dist/v24.19.0/node-v24.19.0-darwin-arm64.tar.gz"
 version = "11.24.0"
 backend = "aqua:pnpm/pnpm"
 specifiers = ["11.24.0"]
+
+[tools.pnpm."platforms.linux-arm64"]
+checksum = "sha256:52f9cd410ef3bbb1cdd79c399b27772fa6d929bc3cf7c80ff3923a81e1c93be3"
+url = "https://github.com/pnpm/pnpm/releases/download/v11.24.0/pnpm-linux-arm64.tar.gz"
+url_api = "https://api.github.com/repos/pnpm/pnpm/releases/assets/527747053"
+provenance = "github-attestations"
 
 [tools.pnpm."platforms.linux-x64"]
 checksum = "sha256:0a9b76dedb5fe8cc5e7f3a9fd70854181cfb08a487ebaf0c9cfb044dc860936c"
@@ -66,6 +86,11 @@ provenance = "github-attestations"
 version = "3.14.7"
 backend = "core:python"
 specifiers = ["3.14.7"]
+
+[tools.python."platforms.linux-arm64"]
+checksum = "sha256:9b8bd45d06fc3fcdc56f2713a62535fe1c019816461ae87c170dd56184dd3f4d"
+url = "https://github.com/astral-sh/python-build-standalone/releases/download/20260929/cpython-3.14.7+20260929-aarch64-unknown-linux-gnu-install_only_stripped.tar.gz"
+provenance = "github-attestations"
 
 [tools.python."platforms.linux-x64"]
 checksum = "sha256:da5357f47b1d9c8d4c439004d463d893ef688a44c27438a62b47073d26d1377e"
@@ -90,6 +115,10 @@ profile = "minimal"
 version = "0.17.0"
 backend = "core:zig"
 specifiers = ["0.17.0"]
+
+[tools.zig."platforms.linux-arm64"]
+checksum = "sha256:9e8d11661d4ae3bd57702a3832781e23ad151dde5798e16a5ccd503f65234ff8"
+url = "https://ziglang.org/download/0.17.0/zig-aarch64-linux-0.17.0.tar.xz"
 
 [tools.zig."platforms.linux-x64"]
 checksum = "sha256:1cbe9df9f27e6b78d14ccbca43b6703a404ef79ef1c463de901d7f088d4e2026"

@@ -1,5 +1,7 @@
-//! The one strict, bounded decoder of `nft -j list tables`. Owners interpret
-//! the returned identities; none of them is ownership by itself.
+//! The one strict, bounded decoder of `nft -j list tables`, and the one
+//! read of a single table with its existence classified. Owners interpret
+//! the returned identities and decode the table; none of them is ownership
+//! by itself.
 use super::command::{Commands, Tool};
 use serde::Deserialize;
 
@@ -98,4 +100,47 @@ pub(in crate::linux::kernel) async fn tables(
         return Err(TablesError::Unavailable);
     }
     decode(&output.stdout)
+}
+
+/// Why one table could not be listed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::linux::kernel) enum TableUnread {
+    /// The read itself failed (the tool's budget, an interrupted netlink
+    /// dump, a table listed but not listable): nothing is known about it.
+    Unavailable,
+    /// `nft list tables` succeeded and does not list the table.
+    Missing,
+}
+
+/// `nft -j -nnn list table FAMILY NAME`'s output. A failed listing is
+/// missing only when `nft list tables` succeeds without the table.
+pub(in crate::linux::kernel) async fn table(
+    commands: &mut Commands,
+    family: &str,
+    name: &str,
+) -> Result<Vec<u8>, TableUnread> {
+    let output = commands
+        .run(
+            Tool::Nft,
+            vec![
+                "-j".into(),
+                "-nnn".into(),
+                "list".into(),
+                "table".into(),
+                family.into(),
+                name.into(),
+            ],
+            Vec::new(),
+        )
+        .await
+        .map_err(|_| TableUnread::Unavailable)?;
+    if output.success {
+        return Ok(output.stdout);
+    }
+    match tables(commands).await {
+        Ok(listed) if !listed.iter().any(|(f, n)| f == family && n == name) => {
+            Err(TableUnread::Missing)
+        }
+        _ => Err(TableUnread::Unavailable),
+    }
 }

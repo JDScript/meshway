@@ -167,11 +167,7 @@ impl View {
                 .exit_cleanups
                 .as_ref()
                 .and_then(|cleanups| cleanups.borrow().clone())
-                .map(|pending| meshway_protocol::ipc::ExitCleanup {
-                    reason: pending.reason,
-                    attempts: pending.attempts,
-                    retry_at: pending.retry_at.into(),
-                }),
+                .map(retry_pending),
         });
         let content = network
             .content
@@ -279,21 +275,29 @@ impl View {
                 .kernel_changes
                 .as_ref()
                 .and_then(|changes| changes.borrow().clone())
-                .map(|pending| meshway_protocol::ipc::KernelChange {
-                    owner: match pending.owner {
-                        meshway_underlay::KernelChangeOwner::EgressCapture => {
-                            meshway_protocol::ipc::KernelChangeOwner::EgressCapture
-                        }
-                        meshway_underlay::KernelChangeOwner::Exit => {
-                            meshway_protocol::ipc::KernelChangeOwner::Exit
-                        }
-                    },
-                    operation: pending.operation,
-                    reason: pending.reason,
-                    attempts: pending.attempts,
-                    retry_at: pending.retry_at.into(),
+                .map(|pending| {
+                    meshway_protocol::ipc::KernelChange::new(
+                        match pending.owner {
+                            meshway_underlay::KernelChangeOwner::EgressCapture => {
+                                meshway_protocol::ipc::KernelChangeOwner::EgressCapture
+                            }
+                            meshway_underlay::KernelChangeOwner::Exit => {
+                                meshway_protocol::ipc::KernelChangeOwner::Exit
+                            }
+                        },
+                        pending.operation,
+                        retry_pending(pending.retry),
+                    )
                 }),
         }
+    }
+}
+
+fn retry_pending(pending: meshway_underlay::RetryPending) -> meshway_protocol::ipc::RetryPending {
+    meshway_protocol::ipc::RetryPending {
+        reason: pending.reason,
+        attempts: pending.attempts,
+        retry_at: pending.retry_at.into(),
     }
 }
 

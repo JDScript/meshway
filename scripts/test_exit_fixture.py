@@ -132,10 +132,6 @@ class ExitAutoTests(unittest.TestCase):
         self.assertFalse(auto.ended_at_switch({**flow, "tcp": [[1, True]]}, 4, 6))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class ExitEchoTests(unittest.TestCase):
     def test_the_role_outage_is_bounded_by_es_own_timestamps(self):
         import json
@@ -159,3 +155,19 @@ class ExitEchoTests(unittest.TestCase):
             echo.outage_window(log, [sample(48.0)], base + 55.95)
         with self.assertRaises(RuntimeError):
             echo.outage_window(log, window, base + 58.0)
+        # Only a ready capability of an installed role after the stop ends it:
+        # a probing or unavailable one, a missing capability or role does not.
+        stopped = [sample(48.0), sample(56.2, "probing")]
+        for after in (sample(56.625, "probing"),
+                      {"exit": {"installedRole": "r", "capability": {
+                          "status": {"status": "unavailable", "reason": "ownershipConflict"},
+                          "observedAt": "2026-10-15T06:23:56.625Z"}}},
+                      {"exit": {"installedRole": "r", "capability": None}},
+                      {"exit": None},
+                      sample(56.625, role=None)):
+            with self.assertRaises(RuntimeError):
+                echo.outage_window(log, stopped + [after], base + 55.95)
+
+
+if __name__ == "__main__":
+    unittest.main()

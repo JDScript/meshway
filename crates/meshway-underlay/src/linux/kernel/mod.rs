@@ -798,17 +798,7 @@ impl Kernel {
                 return Err(Error::Conflict);
             }
             let address = matches[0];
-            let flags = address
-                .attributes
-                .iter()
-                .find_map(|a| {
-                    if let AddressAttribute::Flags(flags) = a {
-                        Some(flags.bits())
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or(u32::from(address.header.flags.bits()));
+            let flags = network::address_flags(address);
             if flags & 0xc8 != 0x80
                 || address.header.prefix_len != if wanted.is_ipv4() { 32 } else { 128 }
             {
@@ -975,7 +965,7 @@ impl Kernel {
                 let ready = [wanted.ipv4.map(IpAddr::V4), wanted.ipv6.map(IpAddr::V6)].into_iter().flatten().all(|wanted| addresses.iter().any(|address| {
                     // IFA_F_TENTATIVE=0x40, IFA_F_DADFAILED=0x08. Check the
                     // extended flags as well as the legacy header byte.
-                    let flags = address.attributes.iter().find_map(|a| if let AddressAttribute::Flags(flags) = a { Some(flags.bits()) } else { None }).unwrap_or(u32::from(address.header.flags.bits()));
+                    let flags = network::address_flags(address);
                     address.header.index == index && flags & 0x48 == 0 && address.header.prefix_len == if wanted.is_ipv4() { 32 } else { 128 }
                         && address.attributes.iter().any(|a| matches!(a, AddressAttribute::Address(ip) | AddressAttribute::Local(ip) if *ip == wanted))
                 }));

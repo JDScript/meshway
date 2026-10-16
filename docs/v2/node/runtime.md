@@ -114,7 +114,7 @@ Linux `Host::install_netmap_exit_role(&ExitRole)` 消费已应用 netmap 中本�
 | `renew(incarnation, deadline, scope)` | 仅在旧资格仍活、绑定相同且已确认 CT 身份仍一致时原子续期 timed set；不创建新的 CT，不复活过期投影 |
 | `retire_flow(incarnation)` | 先关闭该资格和用户态输出；其它活 ICMP sequence 仍引用同一 CT 时保留共享映射，最后一个引用退役后按 family／original tuple／mark 精确删除并读回；释放不再共用的回程规则／路由 |
 | `reply_reader()` | 单次取得独立回包 reader；`recv()` 返回 incarnation 与逆 NAT 包，排队期间继续保留原 guard；业务回复仍须通过唯一 dataplane 流表与原完整路径准入 |
-| `retire()` | 停止正向 I/O，关闭全部资格、清理 CT／回程资源，join TUN owner 后移除所属 nft 表；第一次尝试失败即返回错误，资源与 journal 保留，owner 继续重试清理（`cleanup_pending()`，`Host::exit_cleanup()`），完成后角色可重新安装 |
+| `retire()` | 停止正向 I/O，关闭全部资格、清理 CT／回程资源，join TUN owner 后移除所属 nft 表；第一次尝试失败即返回错误，资源与 journal 保留，owner 继续重试清理（`cleanup_pending()`，Host 的实时事实 `Host::exit_cleanups()`），完成后角色可重新安装 |
 
 `ExitScope` 携带 dataplane 提供的授权／路径 binding 与不可逆撤回 token，不签发业务权限。原 tuple 仅支持 IPv4 TCP、UDP 和 ICMP echo；角色不能替代精确源地址、目的、服务和活 flow。投影最多 128 个活项；未退役投影记录与 quarantine 合计最多 4096 项，容量耗尽只拒绝该新增流，已安装投影与角色不受影响。每个 ICMP echo 请求是一条流（键为 `(id, sequence)`）：等待回复或其 ICMP 错误至多 10 秒，收到回复后 2 秒结束（每一跳的流表相同，见[数据面](/v2/node/dataplane)），出口投影随之退役；一个 5 次／秒的 `ping` 因此只占约 10 个投影，traceroute 的探测各占至多 10 秒。按序号的 quarantine 使持续 echo 速率另受 4096 ／ 300 秒 ≈ 13 次／秒（全出口合计）的约束。
 

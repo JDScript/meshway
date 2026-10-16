@@ -57,7 +57,7 @@ pub(super) struct Shared {
     /// The kernel change an owner is retrying after a failed attempt.
     pub changes: tokio::sync::watch::Sender<Option<crate::KernelChangePending>>,
     /// The stopped exit role's cleanup its owner is retrying, live.
-    pub cleanups: tokio::sync::watch::Sender<Option<crate::ExitCleanupPending>>,
+    pub cleanups: tokio::sync::watch::Sender<Option<crate::RetryPending>>,
 }
 
 /// What a Host publishes across its ownership terms: a re-proved term
@@ -66,7 +66,7 @@ pub(super) struct Shared {
 pub(super) struct Published {
     pub network: super::kernel::network::Network,
     pub changes: tokio::sync::watch::Sender<Option<crate::KernelChangePending>>,
-    pub cleanups: tokio::sync::watch::Sender<Option<crate::ExitCleanupPending>>,
+    pub cleanups: tokio::sync::watch::Sender<Option<crate::RetryPending>>,
 }
 
 /// The desired content capture is installed for. `session` ends every data

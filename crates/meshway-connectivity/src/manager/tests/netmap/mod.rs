@@ -172,11 +172,17 @@ async fn wildcard_keepalive_keeps_every_edge_of_three_nodes_resident() {
         manager(&fixture, 2, &factory, limits(idle)).await,
     ];
     let pairs = [(0, 1), (0, 2), (1, 2)];
+    // As in `keepalive_edge_is_resident_without_interest`: both ends of each
+    // edge dial, and the channel dialed by the lower Node ID may still replace
+    // an earlier one. Only that final channel, held by both ends, converged.
     let converged = || {
         pairs.iter().all(|&(x, y)| {
             let (from, to) = (links(&managers[x]), links(&managers[y]));
-            from.get(&ids[y])
-                .is_some_and(|link| to.get(&ids[x]).is_some_and(|back| back.id == link.id))
+            let preferred = ids[x].min(ids[y]);
+            from.get(&ids[y]).is_some_and(|link| {
+                link.carrier.dialer == preferred
+                    && to.get(&ids[x]).is_some_and(|back| back.id == link.id)
+            })
         })
     };
     eventually("every wildcard keepalive edge converges", converged).await;

@@ -34,8 +34,6 @@ pub enum SelectionUnavailable {
     DiscoveryRequired,
     /// Existing DnsExecution carries no executable exit DNS plan.
     MissingExitPlan,
-    /// Resolver configuration exists, but no approved shared route was supplied.
-    MissingResolverPlan,
     /// The local projection only implements A and AAAA answers.
     UnsupportedRecordType,
 }

@@ -311,28 +311,24 @@ async fn netmap_exit_failed_cleanup_is_retried_and_the_role_installs_again() {
         ],
     );
     ends(&role).await;
+    // The Host's live fact (what Status reads) is the owner's.
+    let mut cleanups = host.exit_cleanups();
     assert!(role.retire().await.is_err(), "the first cleanup fails");
-    let pending = tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            if let Some(pending) = host.exit_cleanup()
-                && pending.attempts >= 2
-            {
-                return pending;
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
-    })
+    let pending = tokio::time::timeout(
+        Duration::from_secs(5),
+        cleanups.wait_for(|pending| pending.as_ref().is_some_and(|p| p.attempts >= 2)),
+    )
     .await
-    .expect("the failed cleanup is retried");
+    .expect("the failed cleanup is retried")
+    .unwrap()
+    .clone()
+    .unwrap();
     println!(
         "X11_EXIT_CLEANUP_PENDING=attempts={},reason={}",
         pending.attempts, pending.reason
     );
     // While it is retried the resources are kept: no new role.
     assert!(host.install_netmap_exit_role(&role_plan).await.is_err());
-    assert!(host.exit_cleanup().is_some());
-    // The Host's live fact (what Status reads) is the owner's.
-    let mut cleanups = host.exit_cleanups();
     assert_eq!(
         cleanups
             .borrow()
@@ -362,7 +358,7 @@ async fn netmap_exit_failed_cleanup_is_retried_and_the_role_installs_again() {
         .expect("the retried cleanup completes")
         .unwrap();
     // Cleared the moment the cleanup completed, not at a later probe.
-    assert!(host.exit_cleanup().is_none());
+    assert!(cleanups.borrow().is_none());
     assert!(
         !tool("nft", &["-j", "list", "tables"]).contains(&table),
         "the role's tables are gone"

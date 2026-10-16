@@ -73,9 +73,7 @@ fn delay(recoverable: bool, attempts: u32) -> Duration {
     if !recoverable {
         return MAX;
     }
-    FIRST
-        .saturating_mul(1 << attempts.saturating_sub(1).min(6))
-        .min(MAX)
+    meshway_model::Backoff::new(FIRST, MAX).delay(attempts)
 }
 
 /// Bind one listener of the current content. Native UDP binds as a

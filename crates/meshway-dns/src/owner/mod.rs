@@ -540,9 +540,7 @@ impl State {
                 Outcome::Unavailable(Unavailable::MissingExitPlan)
             }
             // Candidate configuration never becomes socket/route authority.
-            Selection::Resolvers(_)
-            | Selection::ExitResolver
-            | Selection::Unavailable(SelectionUnavailable::MissingResolverPlan) => {
+            Selection::Resolvers(_) | Selection::ExitResolver => {
                 Outcome::Unavailable(Unavailable::MissingResolverPlan)
             }
             Selection::Unmanaged => Outcome::Unmanaged,
