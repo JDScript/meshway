@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-16T22:43:44.050216+00:00",
+  "updatedAt": "2026-10-16T22:46:41.472083+00:00",
   "runs": [
     {
       "id": 38977113633,
@@ -51,7 +51,7 @@
       "commit": "f499a8090138853064a8733485a6703a4aaf980c",
       "message": "release: workspace version 0.1.0-alpha.17",
       "createdAt": "2026-10-16T22:40:11Z",
-      "updatedAt": "2026-10-16T22:40:32Z",
+      "updatedAt": "2026-10-16T22:44:07Z",
       "status": "queued",
       "conclusion": null,
       "url": "https://github.com/JDScript/meshway/actions/runs/38977113562",
@@ -59,13 +59,35 @@
         {
           "id": 117229227697,
           "name": "changes",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-16T22:43:55Z",
+          "completedAt": "2026-10-16T22:44:06Z",
+          "seconds": 11.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38977113562/job/117229227697"
+        },
+        {
+          "id": 117230344272,
+          "name": "cargo",
           "runner": null,
           "status": "queued",
           "conclusion": null,
-          "startedAt": "2026-10-16T22:40:32Z",
+          "startedAt": "2026-10-16T22:44:07Z",
           "completedAt": null,
           "seconds": null,
-          "url": "https://github.com/JDScript/meshway/actions/runs/38977113562/job/117229227697"
+          "url": "https://github.com/JDScript/meshway/actions/runs/38977113562/job/117230344272"
+        },
+        {
+          "id": 117230344337,
+          "name": "web",
+          "runner": null,
+          "status": "queued",
+          "conclusion": null,
+          "startedAt": "2026-10-16T22:44:07Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38977113562/job/117230344337"
         }
       ],
       "artifacts": []
@@ -254,15 +276,92 @@
           "id": 117228391265,
           "name": "perf-arm64",
           "runner": "jp-tyo-arm64",
-          "status": "in_progress",
-          "conclusion": null,
+          "status": "completed",
+          "conclusion": "success",
           "startedAt": "2026-10-16T22:37:55Z",
-          "completedAt": null,
-          "seconds": null,
+          "completedAt": "2026-10-16T22:44:41Z",
+          "seconds": 406.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/38976894150/job/117228391265"
         }
       ],
-      "artifacts": []
+      "artifacts": [
+        {
+          "id": 12079153309,
+          "name": "perf-arm64-38976894150",
+          "bytes": 46276,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38976894150/artifacts/12079153309",
+          "jobId": 117228391265,
+          "runner": "jp-tyo-arm64",
+          "seconds": 406.0,
+          "state": "ok",
+          "error": null,
+          "reports": [
+            {
+              "reportId": "20261016T224111Z-75a1e4ea",
+              "kind": "circuit",
+              "revision": "345d63f90a384b5368621976ddf240a3abc2c0bc",
+              "dirty": false,
+              "quick": false,
+              "sourcesUnchanged": null,
+              "loadMin": 0.20068359375,
+              "loadMax": 1.72998046875,
+              "metrics": [
+                {
+                  "label": "L0 2 nodes CPU",
+                  "unit": "µs/packet",
+                  "scope": "{\"bytes\": 1280, \"nodes\": 2, \"profile\": 0, \"rounds\": 10000, \"warmup\": 200, \"workers\": null}",
+                  "value": 14.992944,
+                  "samples": 3,
+                  "attempted": 3
+                },
+                {
+                  "label": "L0 2 nodes pps",
+                  "unit": "pps",
+                  "scope": "{\"bytes\": 1280, \"nodes\": 2, \"profile\": 0, \"rounds\": 10000, \"warmup\": 200, \"workers\": null}",
+                  "value": 66691.00999683235,
+                  "samples": 3,
+                  "attempted": 3
+                },
+                {
+                  "label": "L0 3 nodes CPU",
+                  "unit": "µs/packet",
+                  "scope": "{\"bytes\": 1280, \"nodes\": 3, \"profile\": 0, \"rounds\": 10000, \"warmup\": 200, \"workers\": null}",
+                  "value": 19.944022,
+                  "samples": 3,
+                  "attempted": 3
+                },
+                {
+                  "label": "L0 3 nodes pps",
+                  "unit": "pps",
+                  "scope": "{\"bytes\": 1280, \"nodes\": 3, \"profile\": 0, \"rounds\": 10000, \"warmup\": 200, \"workers\": null}",
+                  "value": 50134.41412434844,
+                  "samples": 3,
+                  "attempted": 3
+                },
+                {
+                  "label": "L0 5 nodes CPU",
+                  "unit": "µs/packet",
+                  "scope": "{\"bytes\": 1280, \"nodes\": 5, \"profile\": 0, \"rounds\": 10000, \"warmup\": 200, \"workers\": null}",
+                  "value": 29.782346,
+                  "samples": 3,
+                  "attempted": 3
+                },
+                {
+                  "label": "L0 5 nodes pps",
+                  "unit": "pps",
+                  "scope": "{\"bytes\": 1280, \"nodes\": 5, \"profile\": 0, \"rounds\": 10000, \"warmup\": 200, \"workers\": null}",
+                  "value": 33573.12969193405,
+                  "samples": 3,
+                  "attempted": 3
+                }
+              ]
+            }
+          ],
+          "matrices": [],
+          "builds": []
+        }
+      ]
     },
     {
       "id": 38968788512,
