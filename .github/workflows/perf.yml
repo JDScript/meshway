@@ -11,6 +11,9 @@ on:
       - "tools/meshway-*-perf/**"
       - "Cargo.toml"
       - "Cargo.lock"
+      - "mise.toml"
+      - "mise.lock"
+      - "scripts/perf/**"
       - ".github/workflows/perf.yml"
   workflow_dispatch:
     inputs:
