@@ -54,10 +54,13 @@ KERNEL_TESTS = {
     "underlay-roam-repair": "linux::kernel::tests::roaming::own_capture_rules_removed_outside_their_owner_are_reinstalled_boundedly",
     "underlay-roam-overlap": "linux::kernel::tests::roaming::an_external_address_inside_a_mesh_pool_fails_closed_until_it_leaves",
     "underlay-roam-family": "linux::kernel::tests::roaming::addresses_by_family_and_routes_toward_remotes_classify_the_path",
+    "underlay-roam-repair-read": "linux::kernel::tests::roaming::a_repair_whose_read_fails_stays_owed_and_completes",
+    "underlay-roam-overlap-term": "linux::kernel::tests::roaming::a_new_ownership_term_publishes_the_pool_overlap_it_reads",
 }
 # Kernel tests that create their own dummy interfaces: no underlay address,
 # so the fixed fixture address plan (routers, relays, replacement) is unchanged.
-NETWORKLESS_TESTS = ("underlay-roam-classify", "underlay-roam-repair", "underlay-roam-overlap", "underlay-roam-family")
+NETWORKLESS_TESTS = ("underlay-roam-classify", "underlay-roam-repair", "underlay-roam-overlap", "underlay-roam-family",
+                     "underlay-roam-repair-read", "underlay-roam-overlap-term")
 
 
 def fingerprint():

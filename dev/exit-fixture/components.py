@@ -40,6 +40,10 @@ CASES = {
     # read-back that is neither.
     "changes-exit": ("meshway-underlay-kernel-tests",
                      "linux::kernel::exit::tests::changes::failed_exit_changes_are_read_back_and_completed"),
+    # F6a B6: an aged quarantine deletion applied but unanswered completes
+    # from the read-back instead of deleting nothing until the role stops.
+    "quarantine": ("meshway-underlay-kernel-tests",
+                   "linux::kernel::exit::tests::changes::a_lost_quarantine_expiry_is_completed_from_the_read_back"),
     "changes-egress": ("meshway-underlay-kernel-tests",
                        "linux::kernel::egress::tests::changes::failed_capture_changes_are_read_back_and_completed"),
     "nft": ("meshway-underlay-kernel-tests",
