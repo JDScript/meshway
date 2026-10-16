@@ -118,8 +118,10 @@ EVENT_MESSAGES = ("Dataplane circuit retired", "Connectivity channel transition"
 # The exit role's own records (the `exit` row): every one is kept.
 EXIT_PREFIX = "Exit"
 # Of those, the role ending or refusing flows.
+# A flow refused while A has no route at all (between hard's disconnect and
+# its new default route) is the kernel's answer, recorded but no failure.
 EXIT_FAILURES = ("Exit-owned kernel object", "Exit owner stopping", "Exit role failed",
-                 "Exit role installation failed", "Exit forwarding refused")
+                 "Exit role installation failed", "Exit role change failed")
 
 
 def daemon_events(path, start, end):
@@ -895,7 +897,10 @@ def exit_checks(report, cell, measured, phase, name, events, manifest):
     if path.exists():
         peers = [line.split() for line in path.read_text().splitlines() if len(line.split()) == 2]
     expected = manifest["addresses"]["wan"]["router-a2" if name == "soft" else "router-a1"]
-    last_peer = peers[-1][1] if peers else None
+    # The new TCP flow's source as T saw it: the peer T accepted during the probe.
+    window = (probe.get("startedAtNs", 0), probe.get("endedAtNs", 0))
+    probed = [peer for at, peer in peers if window[0] <= int(at) <= window[1]]
+    last_peer = probed[-1] if probed else None
     stopped = [event for event in events if str(event.get("message", "")).startswith(EXIT_FAILURES)]
     measured["exit"] = {"capability": timeline[:32], "probingS": probing, "readyS": ready,
                         "existingTcpEnded": [(round(at - routed, 3), *rest) for at, *rest in ended][:4],
