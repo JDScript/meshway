@@ -247,10 +247,17 @@ async fn addresses_by_family_and_routes_toward_remotes_classify_the_path() {
     );
     // IFA_F_TEMPORARY: the kernel derives a privacy address from a managed
     // one (`use_tempaddr` of the fixture namespace); the managed address is
-    // a path change, the temporary one's removal only a refresh.
+    // a path change, the temporary one's removal only a refresh. On its own
+    // interface: a temporary address is the preferred source on its
+    // interface, so there it would be the Server route's real source.
+    let temporaries = dummy(&handle, "r3-temp").await;
+    assert_eq!(
+        next_class(&mut changes, "second interface").await,
+        crate::NetworkChangeClass::Path
+    );
     let mut add = handle
         .address()
-        .add(index, "2001:db8:2::1".parse().unwrap(), 64);
+        .add(temporaries, "2001:db8:2::1".parse().unwrap(), 64);
     add.message_mut().attributes.push(AddressAttribute::Flags(
         AddressFlags::Nodad | AddressFlags::Managetempaddr,
     ));
@@ -264,7 +271,7 @@ async fn addresses_by_family_and_routes_toward_remotes_classify_the_path() {
         let mut addresses = handle
             .address()
             .get()
-            .set_link_index_filter(index)
+            .set_link_index_filter(temporaries)
             .execute();
         let mut found = None;
         while let Some(address) = addresses.try_next().await.unwrap() {
@@ -292,6 +299,7 @@ async fn addresses_by_family_and_routes_toward_remotes_classify_the_path() {
         "an IPv6 temporary address is not followed"
     );
     host.kernel.shared.check().unwrap();
+    handle.link().del(temporaries).execute().await.unwrap();
     handle.link().del(index).execute().await.unwrap();
     host.shutdown(false).await.unwrap();
     task.abort();
