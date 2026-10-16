@@ -200,6 +200,67 @@ async fn exit_nat_udp_real_reply_qualification_confirm_retire_and_expiry() {
         .await
         .unwrap();
     backend.retire(id(2)).await.unwrap();
+    // The kernel deletes a projection's confirmed entry (masquerade, when the
+    // outer address it translated to leaves on a roam); the flow's next
+    // packet creates its successor. Retiring the projection retires that
+    // successor too: it is not foreign, and cleanup completes.
+    let roamed = OriginalTuple {
+        transport: ExitTransport::Udp {
+            source_port: 17005,
+            destination_port: remote.port(),
+        },
+        ..tuple
+    };
+    let roamed_packet = udp(roamed, b"x3-roamed");
+    backend
+        .install(id(6), roamed, cutoff(30_000), scope.clone())
+        .await
+        .unwrap();
+    kernel.quiesce().await.unwrap();
+    tun.send(&roamed_packet).await.unwrap();
+    assert!(matches!(
+        backend.confirm(id(6)).await.unwrap(),
+        CtConfirmation::Confirmed { .. }
+    ));
+    tokio::time::timeout(Duration::from_secs(2), recv_ipv4(&tun, &mut reply))
+        .await
+        .unwrap()
+        .unwrap();
+    let confirmed = backend
+        .ledger
+        .projections
+        .iter()
+        .find(|flow| flow.incarnation == id(6))
+        .and_then(|flow| flow.ct.clone())
+        .unwrap();
+    conntrack::delete(roamed, &confirmed, mark).await.unwrap();
+    tun.send(&roamed_packet).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(2), recv_ipv4(&tun, &mut reply))
+        .await
+        .unwrap()
+        .unwrap();
+    let successor = conntrack::lookup_owned(roamed, mark)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_ne!(
+        successor.id, confirmed.id,
+        "the flow's next packet made a new entry"
+    );
+    backend.retire(id(6)).await.unwrap();
+    assert!(
+        conntrack::lookup_owned(roamed, mark)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        !backend
+            .ledger
+            .projections
+            .iter()
+            .any(|flow| flow.incarnation == id(6))
+    );
     let expiring = OriginalTuple {
         transport: ExitTransport::Udp {
             source_port: 17002,

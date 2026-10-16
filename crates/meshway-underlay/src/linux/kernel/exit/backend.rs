@@ -835,15 +835,32 @@ impl Backend {
         // (its ICMP timeout) was re-created by a later sequence: this
         // record's entry is gone (one entry per original tuple) and the
         // current one belongs to that projection, which deletes it in turn.
-        let replaced = match (&record.ct, &current) {
+        // Any other flow has one projection per original tuple: a different
+        // marked entry of it is this projection's own successor. The kernel
+        // deleted the recorded one (masquerade, when the outer address it
+        // translated to left this host on a roam) and the flow's next packet
+        // created it, translated to the current outer address; both reply
+        // tuples are quarantined and the successor is deleted.
+        let echo = matches!(
+            record.tuple.transport,
+            super::ExitTransport::IcmpEcho { .. }
+        );
+        let (replaced, superseded) = match (&record.ct, &current) {
             (Some(old), Some(entry)) if !same_entry(old, entry) => {
-                if !self.attributable(Some(incarnation), record.tuple, entry) {
+                if !echo {
+                    (false, Some(old.clone()))
+                } else if self.attributable(Some(incarnation), record.tuple, entry) {
+                    (true, None)
+                } else {
                     return Err(Error::Conflict);
                 }
-                true
             }
-            _ => false,
+            _ => (false, None),
         };
+        if let Some(old) = &superseded {
+            self.quarantine_reply(incarnation, record.tuple, old)
+                .await?;
+        }
         // Preserve a confirmed translated tuple even if conntrack aged out
         // before retirement. Absence must not erase the old-reply tombstone.
         let entry = if replaced {
@@ -852,39 +869,8 @@ impl Backend {
             current.or(record.ct.clone())
         };
         if let Some(entry) = entry {
-            let retired = conntrack::RetiredTuple {
-                tuple: entry.reply.clone(),
-                sequence: record.tuple.sequence(),
-                retired_ms: now_ms(),
-            };
-            if self.ledger.program.legacy {
-                if !self.ledger.legacy_quarantine.contains(&entry.reply) {
-                    self.ledger.legacy_quarantine.push(entry.reply.clone());
-                }
-                self.store.persist(&self.ledger).await?;
-                objects::mutate(&mut self.commands, &json!({"nftables": [self.ledger.program.element("add", "quarantine", vec![entry.reply.key()])]})).await?;
-            } else {
-                if !self
-                    .ledger
-                    .quarantine
-                    .iter()
-                    .any(|old| old.tuple == retired.tuple && old.sequence == retired.sequence)
-                {
-                    if self.ledger.quarantine.len() + self.ledger.legacy_quarantine.len() >= HISTORY
-                    {
-                        self.expire_quarantine(Duration::ZERO).await?;
-                    }
-                    self.ledger.quarantine.push(retired.clone());
-                }
-                self.ledger
-                    .projections
-                    .iter_mut()
-                    .find(|flow| flow.incarnation == incarnation)
-                    .ok_or(Error::Journal)?
-                    .ct = Some(entry.clone());
-                self.store.persist(&self.ledger).await?;
-                objects::mutate(&mut self.commands, &json!({"nftables": [self.ledger.program.element("add", retired.set(), vec![retired.key()])]})).await?;
-            }
+            self.quarantine_reply(incarnation, record.tuple, &entry)
+                .await?;
             let shared = self
                 .live
                 .values()
@@ -913,6 +899,49 @@ impl Backend {
             .projections
             .retain(|flow| flow.incarnation != incarnation);
         self.store.persist(&self.ledger).await
+    }
+
+    /// Quarantine `entry`'s reply tuple for `incarnation` and record it as
+    /// the projection's entry (journal first, then the kernel set).
+    async fn quarantine_reply(
+        &mut self,
+        incarnation: super::ExitIncarnation,
+        tuple: OriginalTuple,
+        entry: &conntrack::Entry,
+    ) -> Result<()> {
+        let retired = conntrack::RetiredTuple {
+            tuple: entry.reply.clone(),
+            sequence: tuple.sequence(),
+            retired_ms: now_ms(),
+        };
+        if self.ledger.program.legacy {
+            if !self.ledger.legacy_quarantine.contains(&entry.reply) {
+                self.ledger.legacy_quarantine.push(entry.reply.clone());
+            }
+            self.store.persist(&self.ledger).await?;
+            objects::mutate(&mut self.commands, &json!({"nftables": [self.ledger.program.element("add", "quarantine", vec![entry.reply.key()])]})).await?;
+            return Ok(());
+        }
+        if !self
+            .ledger
+            .quarantine
+            .iter()
+            .any(|old| old.tuple == retired.tuple && old.sequence == retired.sequence)
+        {
+            if self.ledger.quarantine.len() + self.ledger.legacy_quarantine.len() >= HISTORY {
+                self.expire_quarantine(Duration::ZERO).await?;
+            }
+            self.ledger.quarantine.push(retired.clone());
+        }
+        self.ledger
+            .projections
+            .iter_mut()
+            .find(|flow| flow.incarnation == incarnation)
+            .ok_or(Error::Journal)?
+            .ct = Some(entry.clone());
+        self.store.persist(&self.ledger).await?;
+        objects::mutate(&mut self.commands, &json!({"nftables": [self.ledger.program.element("add", retired.set(), vec![retired.key()])]})).await?;
+        Ok(())
     }
 
     /// Drop quarantined reply tuples retired at least `age` ago, oldest
