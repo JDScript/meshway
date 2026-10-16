@@ -482,14 +482,7 @@ fn installed_settings_match(record: &Record, link: &LinkMessage) -> bool {
         })
 }
 pub(super) fn address_matches(record: &Record, address: &AddressMessage) -> bool {
-    let flags = address
-        .attributes
-        .iter()
-        .find_map(|a| match a {
-            AddressAttribute::Flags(f) => Some(f.bits()),
-            _ => None,
-        })
-        .unwrap_or(u32::from(address.header.flags.bits()));
+    let flags = super::network::address_flags(address);
     address.header.index == record.identity.index && address.header.family == AddressFamily::Inet
         && address.header.prefix_len == 32 && address.header.scope == AddressScope::Universe && flags & 0x68 == 0
         && address.attributes.iter().any(|a| matches!(a, AddressAttribute::Local(IpAddr::V4(ip)) if *ip == record.identity.address))

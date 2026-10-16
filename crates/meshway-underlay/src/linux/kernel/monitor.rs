@@ -111,19 +111,7 @@ impl Facts {
                     }
                 }),
                 prefix: Some(address.header.prefix_len),
-                flags: Some(
-                    address
-                        .attributes
-                        .iter()
-                        .find_map(|a| {
-                            if let AddressAttribute::Flags(flags) = a {
-                                Some(flags.bits())
-                            } else {
-                                None
-                            }
-                        })
-                        .unwrap_or(u32::from(address.header.flags.bits())),
-                ),
+                flags: Some(super::network::address_flags(address)),
             },
             NetlinkPayload::InnerMessage(
                 RouteNetlinkMessage::NewLink(link) | RouteNetlinkMessage::DelLink(link),
@@ -689,17 +677,7 @@ async fn monitor(
                         if let Some((index, _, _, known)) = &state.tun
                             && *index == address.header.index
                         {
-                            let flags = address
-                                .attributes
-                                .iter()
-                                .find_map(|a| {
-                                    if let AddressAttribute::Flags(flags) = a {
-                                        Some(flags.bits())
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .unwrap_or(u32::from(address.header.flags.bits()));
+                            let flags = super::network::address_flags(&address);
                             if flags & 0xc8 != 0x80 || !address.attributes.iter().any(|a| matches!(a, AddressAttribute::Address(ip) | AddressAttribute::Local(ip) if known.contains(ip) && address.header.prefix_len == if ip.is_ipv4() { 32 } else { 128 })) {
                             conflict!("tun_address_changed");
                         }
