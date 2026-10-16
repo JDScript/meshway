@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-16T16:04:31.898045+00:00",
+  "updatedAt": "2026-10-16T16:10:57.970605+00:00",
   "runs": [
     {
       "id": 38925423857,
@@ -325,20 +325,31 @@
     },
     {
       "id": 38925423696,
-      "attempt": 1,
+      "attempt": 2,
       "workflow": "Check",
       "event": "push",
       "branch": "main",
       "commit": "9c24fa928c52a9aceaa4c010f9485fc38360e90b",
       "message": "release: workspace version 0.1.0-alpha.16",
       "createdAt": "2026-10-16T15:37:18Z",
-      "updatedAt": "2026-10-16T15:48:36Z",
+      "updatedAt": "2026-10-16T16:08:12Z",
       "status": "completed",
       "conclusion": "failure",
       "url": "https://github.com/JDScript/meshway/actions/runs/38925423696",
       "jobs": [
         {
-          "id": 117055724981,
+          "id": 117067678645,
+          "name": "cargo",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "failure",
+          "startedAt": "2026-10-16T16:03:55Z",
+          "completedAt": "2026-10-16T16:08:11Z",
+          "seconds": 256.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38925423696/job/117067678645"
+        },
+        {
+          "id": 117067679419,
           "name": "changes",
           "runner": "mars-14900k",
           "status": "completed",
@@ -346,21 +357,10 @@
           "startedAt": "2026-10-16T15:38:06Z",
           "completedAt": "2026-10-16T15:38:17Z",
           "seconds": 11.0,
-          "url": "https://github.com/JDScript/meshway/actions/runs/38925423696/job/117055724981"
+          "url": "https://github.com/JDScript/meshway/actions/runs/38925423696/job/117067679419"
         },
         {
-          "id": 117056049963,
-          "name": "cargo",
-          "runner": "mars-14900k",
-          "status": "completed",
-          "conclusion": "failure",
-          "startedAt": "2026-10-16T15:41:33Z",
-          "completedAt": "2026-10-16T15:45:46Z",
-          "seconds": 253.0,
-          "url": "https://github.com/JDScript/meshway/actions/runs/38925423696/job/117056049963"
-        },
-        {
-          "id": 117056050048,
+          "id": 117067680867,
           "name": "web",
           "runner": "mars-14900k",
           "status": "completed",
@@ -368,7 +368,7 @@
           "startedAt": "2026-10-16T15:45:48Z",
           "completedAt": "2026-10-16T15:48:35Z",
           "seconds": 167.0,
-          "url": "https://github.com/JDScript/meshway/actions/runs/38925423696/job/117056050048"
+          "url": "https://github.com/JDScript/meshway/actions/runs/38925423696/job/117067680867"
         }
       ],
       "artifacts": []
