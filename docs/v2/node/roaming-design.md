@@ -1,6 +1,6 @@
 # 漫游（底层网络切换）设计
 
-> **第一切片（R1）已实现**，现行行为的唯一定义是[连接获取 · 漫游](/v2/node/connectivity#roaming)，验收见 [roam/direct 行](/v2/node/validation#roam-row)；D9、D10、D12 随 R1 实现。**第二切片（R2）中 NAT↔NAT 重新穿透、漫游中的策略中继与快速往返已实现**（[roam/nat](/v2/node/validation#roam-nat-row)、[roam/relay](/v2/node/validation#roam-relay-row)、[roam/flap](/v2/node/validation#roam-flap-row)，`roam/nat` 门槛按 D14 收紧到 5 秒）；`roam/exit`、指定地址 listener 与 U1 倍增清零、bootstrap resolver 重读仍是设计稿。本页其余部分仍是设计稿：节点在运行中更换底层网络（Wi-Fi→LTE、换 NAT、地址或默认路由变化）时连接、数据面与宿主资源应有的行为、可选方案与验收办法。现行行为的唯一定义仍是[连接获取](/v2/node/connectivity)、[数据面](/v2/node/dataplane)与[运行状态](/v2/node/runtime)；验收状态只以[验收范围](/v2/node/validation)为准。本页不加入文档导航。
+> **第一切片（R1）已实现**，现行行为的唯一定义是[连接获取 · 漫游](/v2/node/connectivity#roaming)，验收见 [roam/direct 行](/v2/node/validation#roam-row)；D9、D10、D12 随 R1 实现。**第二切片（R2）中 NAT↔NAT 重新穿透、漫游中的策略中继与快速往返已实现**（[roam/nat](/v2/node/validation#roam-nat-row)、[roam/relay](/v2/node/validation#roam-relay-row)、[roam/flap](/v2/node/validation#roam-flap-row)，`roam/nat` 门槛按 D14 收紧到 5 秒）；**R2 剩余项已实现**（R2 剩余，`r3/roaming-fingerprint`）：`roam/exit`（[roam/exit 行](/v2/node/validation#roam-exit-row)）、指定地址 listener 的地址消失与 U1 倍增清零、bootstrap resolver 上游重读，同时修正指纹（按地址族解释地址标志、路由参照含当前 remote，见[漫游](/v2/node/connectivity#roaming)）。本页其余部分仍是设计稿：节点在运行中更换底层网络（Wi-Fi→LTE、换 NAT、地址或默认路由变化）时连接、数据面与宿主资源应有的行为、可选方案与验收办法。现行行为的唯一定义仍是[连接获取](/v2/node/connectivity)、[数据面](/v2/node/dataplane)与[运行状态](/v2/node/runtime)；验收状态只以[验收范围](/v2/node/validation)为准。本页不加入文档导航。
 >
 > 术语：本页的“漫游”指**同一 Meshway 网络内、本节点身份不变**时底层网络的变化。[CLI 表](/v2/node/runtime#cli-与-ipc)中“切网”一行指的是切换到另一张 Meshway 网络，与本页无关（见[待用户决定](#decisions) D1）。
 
@@ -190,11 +190,11 @@ R1 不迁移已有流；漫游空窗内的新流按现有排序可经中继（`n
 | 自有规则／路由 | 不变 | 网络管理器在重新配置链路时删除“外来”策略规则（systemd-networkd `ManageForeignRoutingPolicyRules=yes` 为默认值；NetworkManager 视配置而定）→ 现为 `unexpected_del_rule`、fail closed。见 D10 |
 | DNS 锚点（resolved 后端） | 不变；新链路的 DNS 服务器由 resolved 自己管理 | Wi-Fi 重认证造成的宿主 RTNL 停顿已由 [D3](/v2/node/validation#d3-dns-health) 的观察期限分类覆盖 |
 | resolv.conf 文件后端 | 不变 | DHCP 客户端改写 `/etc/resolv.conf` → `resolv_conf_mode` foreign；保存的“原 nameserver”属于旧网络，漫游后不可达。见 D11 |
-| bootstrap resolver | — | 需核对：若上游在启动时取快照，漫游后 Server 名称解析失败。要求每次解析重读 resolved 上游文件或系统 resolv.conf 真实上游 |
+| bootstrap resolver | — | 已实现（R2 剩余，`r3/roaming-fingerprint`）：原为启动时取快照；现每次解析按文件身份比对并重读 resolved 上游文件或系统 resolv.conf 真实上游 |
 | 源端 egress capture | 不变 | LAN 例外只来自显式 CIDR，新 LAN 不自动放行（现有语义） |
 | MSS clamp | 随通道 MTU 重新测量更新 | 第 2 节步骤 7 |
-| 出口 TUN／NAT（出口节点自己漫游） | masquerade 使用实际出接口地址，新流自动用新地址 | 旧地址的 conntrack 由内核 masquerade 在地址／设备消失时清除，经该出口的外部连接必然中断（公网地址变了）；出口 owner 的精确清理须把“已被内核删除”视为已删除，需验证。path 类变化后立即重跑出口前置探测（新接口的 `rp_filter`、转发条件），结果经 State 上报 |
-| listener | 通配地址 listener 无需重绑 | 绑定**指定地址**的 listener 在该地址消失后无法发送：Manager 应在该地址删除时关闭它并进入 [U1 重试](/v2/node/connectivity#listener-bind-retry)；path 类变化清零该重试的倍增（否则可能在 60 s 上限才重绑）。临时端口范围冲突（`ephemeral_listener_port`）仍由 U1 重试兜底 |
+| 出口 TUN／NAT（出口节点自己漫游） | masquerade 使用实际出接口地址，新流自动用新地址 | 已验证（R2 剩余，`r3/roaming-fingerprint`），见 [roam/exit 行](/v2/node/validation#roam-exit-row)：旧地址的 conntrack 由内核清除，UDP 流以新来源继续、TCP 连接停滞；内核为同一原始 tuple 新建的条目原被出口 owner 判为外来、角色无法撤回，现视为该投影的后继。path 类变化后 1 秒重跑出口前置探测，结果经 State 上报 |
+| listener | 通配地址 listener 无需重绑 | 已实现（R2 剩余，`r3/roaming-fingerprint`）：绑定**指定地址**的 listener 在 path 类变化时若地址已不在本机即关闭并进入 [U1 重试](/v2/node/connectivity#listener-bind-retry)；path 类变化让重试立即再试并清零倍增。临时端口范围冲突（`ephemeral_listener_port`）仍由 U1 重试兜底 |
 | 拨号 socket | 默认不绑定本地地址，内核按每次发送选源地址 | 显式 `bindInterface`／`localAddress` 的拨号在该接口／地址消失后失败，属于配置结果，不自动改绑 |
 
 journal 与“外来变更”判定：漫游本身不触碰任何自有对象，现有分类（只有 kernel 来源通知参与归属；未 up 链路不算变化；自有对象排除）不会把普通漫游当作冲突。会被判为冲突的只有上表两种：地址落入 Mesh 池，以及网络管理器删除自有规则／路由。
@@ -247,7 +247,7 @@ A（两个上联）─┤                                         ├─ interne
 | `roam/nat` | A 两上联 ↔ NAT 后 B（端口相关过滤），uplink2 为 `--random-fully` | 漫游方发起的重新协调穿透；nat-reboot |
 | `roam/relay` | A 两上联，uplink2 丢弃 A↔B；R2 与两端常驻 | 新流经 R2；已有直连流在直连恢复前不迁移（D7）；uplink1 恢复后新流回到直连 |
 
-后续：`roam/exit`（E 漫游，出口能力重新探测、旧外部连接结束、新流用新地址）、`roam/flap`（1 s 内往返切换 10 次，检查预算与无泄漏）。
+其后实现：`roam/flap`（R2）与 `roam/exit`（E 漫游，出口能力重新探测、旧外部连接结束、新流用新地址；R2 剩余），定义见[验收范围](/v2/node/validation#roam-exit-row)。
 
 ### 真机
 
@@ -267,7 +267,7 @@ A（两个上联）─┤                                         ├─ interne
 | 切片 | 范围 | 矩阵行 |
 | --- | --- | --- |
 | **R1**（已实现，见[漫游](/v2/node/connectivity#roaming)；另含 D9、D10、D12） | Underlay：path／refresh 分类、指纹（含非 main 表的路由查询）与 250 ms 合并，替代裸计数；控制中继只在 path 类关闭。Manager：path 类后立即 STUN（旧指纹观测作废）、清零全部候选节奏、受影响 UDP 通道立即漫游探测、拨号端接受漫游（经挑战）、流式通道按本地地址／路由退役重拨、替换后重新搜索 PMTU、对端候选变化且当前 remote 不在新集合时并行获取。daemon／Control：首个 State 报告不等合并、本机关闭引起的控制失败立即重试。文档与 `roam/direct` | `roam/direct` |
-| R2 | **已实现**：NAT↔NAT 由漫游方发起的重新穿透与时延收紧（漫游探测 1.5 秒无应答即结束可再获取的通道；peer 的请求在接收方旧通道旁接受并替换）；漫游空窗内新流经策略中继（下一跳无通道的 circuit 不接纳新流）；快速往返。D9、D10、D12 已随 R1 实现。**未实现**：指定地址 listener 的地址消失处理与 U1 倍增清零；出口节点漫游的验收；bootstrap resolver 上游重读 | `roam/nat`、`roam/relay`、`roam/flap`（已有）；`roam/exit`（未有） |
+| R2 | **已实现**：NAT↔NAT 由漫游方发起的重新穿透与时延收紧（漫游探测 1.5 秒无应答即结束可再获取的通道；peer 的请求在接收方旧通道旁接受并替换）；漫游空窗内新流经策略中继（下一跳无通道的 circuit 不接纳新流）；快速往返。D9、D10、D12 已随 R1 实现。指定地址 listener 的地址消失处理与 U1 倍增清零、出口节点漫游的验收、bootstrap resolver 上游重读已实现（R2 剩余，`r3/roaming-fingerprint`） | `roam/nat`、`roam/relay`、`roam/flap`、`roam/exit` |
 | R3 | 已有流迁移到中继（D7 的 (b)，需单独产品决定）；双上联先连后断／多路径；IPv6 临时地址与前缀委派细化；非 Linux 平台 | 另定 |
 
 R1 不改 wire（漫游探测复用现有签名 Ping 与 challenge 消息），不改 HTTP 契约、不改 IPC 版本（D13 推荐时）。

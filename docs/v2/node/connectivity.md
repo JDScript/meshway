@@ -30,6 +30,8 @@ Manager 是 listener 生命周期的唯一 owner。安装内容时先绑定全�
 | 可自行消失（`EADDRINUSE`、`EADDRNOTAVAIL` 等） | 1 s 起翻倍，上限 60 s |
 | 需要运维处理（`EACCES`） | 每 60 s |
 
+重试不会放弃：可自行消失的原因一直按上限 60 秒重试。本机 path 类[漫游](#roaming)变化（地址可能回来了）让每个正在重试的 listener 立即再试一次，倍增从 1 秒重新开始；`attempts` 仍累计。绑定指定地址的 listener 在该地址离开本机时由同一变化关闭并进入本重试（`EADDRNOTAVAIL`）。
+
 绑定成功后 Manager 接管该 socket（Native UDP 有 live instance 时为协调 socket，进入 STUN 观测并重新发布候选），发出 `Changed`。接管时按**当时**的 instance 重新确认：绑定后、接管前才到达第一个 instance 的普通 Native UDP socket 先同步释放、再绑定为协调 socket（不会撞上自己刚占的端口），协调 socket 的 State 引用与 Underlay 授权改为当前 instance；内容变化使该 key 不再存在或声明改变时，重试 owner 随旧资源退役。
 
 同一端口上任何改绑都是“旧 socket 关闭后再 bind”，由 `manager::rebind` 统一保证：内容变化、首个 instance 到达（普通 listener 改为协调 socket）与 Manager 重启都先 join 旧 owner（其 socket 随 owner 同步关闭）；重试 owner 已绑定、尚未被接管的 socket 在该 owner 退役时同步关闭（内容变化在重新安装前、`shutdown` 在返回前），不会留在接管队列里占住端口。重试期间：
@@ -175,11 +177,11 @@ NAT 后两端都能拨出时，邻接按需建立：可能只有一方有需求�
 
 | 类 | 判定 | 反应 |
 | --- | --- | --- |
-| path | 指纹改变：外部 up 接口的 index 与载波（`IFF_LOWER_UP`）、它们的首选地址（global，非 temporary／deprecated／tentative／dadfailed）、以本节点 mark 经完整 RPDB 查到控制中继最近连到的 Server 地址（每地址族一个）的路由（oif、网关、prefsrc）；指纹读不出也算 path | 控制中继关闭当前连接；Manager 漫游反应（下表）；State 报告不按每秒一次合并 |
-| refresh | 有外部通知但指纹不变（无关接口、链路地址、临时地址） | 只重新采样本机端点，按现有调度报告；控制连接保留 |
+| path | 指纹改变：外部 up 接口的 index 与载波（`IFF_LOWER_UP`）；它们的有效地址（global，非 deprecated／tentative／dadfailed；标志按地址族解释：位 0x01 在 IPv4 是 `IFA_F_SECONDARY`，同前缀的第二地址照样有效、计入，在 IPv6 是 `IFA_F_TEMPORARY`，隐私地址每天轮换、不计入）；以本节点 mark 经完整 RPDB 查到的每个参照目的地的路由（oif、网关、prefsrc），参照为控制中继最近连到的 Server 地址（每地址族一个）与本节点当前发送的 remote（每条选定通道的 remote，及没有通道的可拨 peer 的字面 IP 候选，至多 64 个，由 Manager 报告），所有地址族都计入；指纹读不出也算 path | 控制中继关闭当前连接；Manager 漫游反应（下表）；State 报告不按每秒一次合并 |
+| refresh | 有外部通知但指纹不变（无关接口、链路地址、IPv6 临时地址、不通往任何参照的路由） | 只重新采样本机端点，按现有调度报告；控制连接保留 |
 | 映射 | 本机无通知，[持续 STUN](#continuous-stun) 发现同一 observer 给出另一映射 | 立即上报、清零候选节奏，该 socket 的每条通道按漫游节拍探测 |
 
-控制中继新连到的 Server 地址是新的参照，只更新基准指纹，不算变化。不观测 Wi-Fi SSID：载波闪断、地址、路由与 STUN 已覆盖它的路径影响。
+控制中继新连到的 Server 地址与 Manager 新报告的 remote 是新的参照：只把它们的路由查入基准，基准中已有参照的值不变（与参照更新同时发生的变化仍被比较），不算变化；不再是参照的目的地从基准移除。两次指纹之间才成为参照的目的地不参与比较。例如 Server 经 IPv6、对端经 IPv4 的节点（`meshway-vm`）只改 IPv4 默认路由的 `src` 或增加第二个 IPv4 地址，都是 path 类变化（[roam/direct 行](/v2/node/validation#roam-row) 的 dual-stack 格）。不观测 Wi-Fi SSID：载波闪断、地址、路由与 STUN 已覆盖它的路径影响。
 
 **本机漫游（Manager，path 类）：**
 
@@ -191,6 +193,7 @@ NAT 后两端都能拨出时，邻接按需建立：可能只有一方有需求�
 | 流式通道 | 本地地址不再是本节点 mark 查到其 remote 的路由首选源时退役，按[原候选来源优先级](#relay-fallback)重拨；未变的保留 |
 | 报告与控制 | 路径变化后 1.5 秒内的 State 报告只间隔 100 ms（首个立即发出，随后的新 STUN 映射不等合并），之后恢复每秒至多一次；中继关闭使在途 sync 或 Control 调用失败的立即重试，不增长 1–15 秒退避 |
 | PMTU | 跟随到新来源的通道重新搜索[路径 MTU](#path-mtu)，完成前 `inner` 未知 |
+| listener | 绑定指定地址、而该地址已不属于本机（以本节点 mark 查该地址的路由不在 local 表）的 listener 关闭并进入 [U1 重试](#listener-bind-retry)；所有正在重试的 listener 立即再试一次，倍增从 1 秒重新开始。通配地址 listener 不动 |
 
 **对端漫游（拨号端与 listener 相同）：**
 
@@ -225,15 +228,17 @@ NAT 后两端都能拨出时，邻接按需建立：可能只有一方有需求�
 | Mesh TUN、地址、capture | 不变，不重建 |
 | 新网络分配的地址落在 Mesh 池内 | 已安装的数据会话与 descriptor 立即结束（fail closed），网络 owner 撤回安装；Status `lastError: underlay`，`lastErrorDetail` 以 `meshPoolOverlap:` 开头并给出接口与地址。地址离开后无需 `up` 即重新安装。外来路由覆盖 Mesh 池仍是永久冲突 |
 | 自有 capture 规则或私有表路由被他人删除（网络管理器清理外来规则） | 按 end、bypass、sink、lookup 的顺序重装并回读，1 分钟内至多 3 次；第 4 次或槽位已被外来对象占据为冲突。外来对象新增仍为冲突 |
-| 出口节点 | 路径变化后出口能力先报 `probing`，1 秒后重新探测前置条件；源端只选就绪出口 |
+| 出口节点 | 路径变化后出口能力先报 `probing`，1 秒后重新探测前置条件（实测约 1.1–1.4 秒后 `ready`）；源端只选就绪出口。经该出口的已有外部连接：内核 masquerade 在旧出口地址离开时删除其 conntrack，流的下一个包按新出接口地址重新转换——UDP 流以新来源继续（服务端看到新地址），TCP 连接在服务端是另一 4 元组、不再前进（实测无 RST）；新流从新上联建立。出口 owner 把内核为同一原始 tuple 新建的标记条目视为该投影的后继：退役时新旧两个回复 tuple 都进隔离、后继被精确删除。经出口节点的 Mesh 流不受影响。验收见 [roam/exit 行](/v2/node/validation#roam-exit-row) |
 | resolv.conf 文件后端 | 不支持漫游：保存的原 nameserver 属于旧网络；漫游节点使用 resolved 后端（[系统 DNS 安装](/v2/node/dataplane#系统-dns-安装)） |
-| 指定地址的 listener、显式 `bindInterface`／`localAddress` 的拨号 | 地址消失后不自动改绑 |
+| bootstrap resolver（Server 名称） | 每次解析比对 `/etc/resolv.conf`（及其指向）与 resolved 上游文件 `/run/systemd/resolve/resolv.conf` 的身份与修改时间，变了即重读，新网络的 DHCP／resolved 上游无需重启即用；显式 `--bootstrap-nameserver` 不变 |
+| 指定地址的 listener | 地址消失后关闭并重试绑定，地址回来的 path 类变化时重绑（见上表 listener 行） |
+| 显式 `bindInterface`／`localAddress` 的拨号 | 地址消失后不自动改绑 |
 
 **可观测：** Status `lastNetworkChange`（最近一次分类时间）。debug 事件 `Underlay network change classified`（class、epoch）、`Connectivity roam`（`path_changed` 的计数、`peer_candidates_moved`，以及 daemon 对每次通道跟随／替换的 `channel_moved`／`channel_replaced` 记录，含经该 peer 的业务 circuit 的 CID）、`Connectivity channel transition` 的 `roam`／`source_challenged`、`source_moved`、`unanswered`，`Traversal prepared`、`Traversal accepted beside a selected channel`。不新增 acquisition 值，漫游不进 Server State 与 Console。
 
 每次 UDP 通道健康窗口结束都另记 debug `Connectivity channel health ended`：`unanswered`（上次本机 nonce 得到 Pong 以来发出的健康 Ping）、`peer_pings`（同期收到的对端认证 Ping）、`answered_ms`（距上次 Pong）与 `cause`——`no_peer_traffic`（整条路径不通）或 `own_probes_unanswered`（对端的 Ping 仍到达，只是本机的探测或对端的 Pong 丢失）。
 
-实测与验收见 [roam/direct 行](/v2/node/validation#roam-row) 及其后三行。未覆盖：出口节点漫游（`roam/exit`）、外层 IPv6 漫游、端点相关映射一侧的漫游、指定地址 listener 的地址消失与重绑、bootstrap resolver 上游是否随网络重读；只支持 Linux。设计与后续切片见[漫游设计](/v2/node/roaming-design)。
+实测与验收见 [roam/direct 行](/v2/node/validation#roam-row) 及其后四行。未覆盖：外层 IPv6 承载的漫游（`roam/direct` 只让 A 的控制路径走 IPv6，承载与对端仍为 IPv4）、端点相关映射一侧的漫游；指定地址 listener 与 bootstrap resolver 只有单元／组件测试（`manager::tests::netmap::roam`、`dns::tests`），没有矩阵行；只支持 Linux。设计与后续切片见[漫游设计](/v2/node/roaming-design)。
 
 ### 端点相关映射与来源学习 {#source-learning}
 

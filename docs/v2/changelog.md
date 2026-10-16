@@ -2,6 +2,18 @@
 
 按合入 main 的顺序记录工作包、提交与证据 ID。规则见[工程流程](/v2/process)；性能数字的口径见[分层性能测量](/v2/node/performance)，验收状态见[验收范围](/v2/node/validation)。
 
+## 未发布
+
+漫游第三切片（R3，`r3/roaming-fingerprint`）：wire 6、IPC 12、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约均不变（只改 Node）。定义见[漫游](/v2/node/connectivity#roaming)。
+
+- Underlay（不变量：任一地址族上到 Server 或任一当前 remote 的真实路由变化、外部 up 接口有效地址的变化都是 path 类，地址标志按地址族解释；owner：Underlay 网络指纹）：指纹的路由参照加入 Manager 报告的 remote（选定通道的 remote 与无通道 peer 的字面 IP 候选，至多 64 个），新参照只查入基准；IPv4 `IFA_F_SECONDARY` 第二地址计入，只有 IPv6 `IFA_F_TEMPORARY` 排除（同为位 0x01）。此前 `meshway-vm`（经 IPv6 连 Server）的 IPv4 第二地址与默认路由 `src` 变化三次都是 refresh，只靠 it7 挑战跟随（OPS13，VM→it7 中断 1.65 秒）；现在三次都是 path，本机立即重新 STUN 与漫游探测，中断 ≤ 0.45 秒。
+- 出口（不变量：出口节点漫游后出口角色仍可撤回，`apply(empty)` 即全撤；owner：出口角色 owner 的退役）：内核 masquerade 删除旧出口地址的 conntrack 后，同一原始 tuple 的下一个包新建的标记条目视为该投影的后继，退役时两个回复 tuple 都隔离、后继精确删除。此前除 echo 外判为外来冲突，退役与 `maintain` 永远重试，`down` 不能完成（main 上 `roam/exit` 行失败）。
+- 连接（不变量：指定地址的 listener 在地址离开时关闭并重试、地址回来即重绑，从不永久 unavailable；owner：Manager 的 listener 生命周期）：path 类变化关闭地址已不在本机的 listener 并进入 U1 重试，且让所有正在重试的 listener 立即再试、倍增重新开始（此前地址回来后可能等到 60 秒上限；绑定在消失地址上的 socket 一直报告为已绑定）。`Manager::path_changed` 现取 `&mut self`。
+- Underlay（不变量：bootstrap resolver 使用解析当时系统配置的上游；owner：bootstrap resolver）：每次解析比对 `/etc/resolv.conf`、其指向与 resolved 上游文件的身份与修改时间，变化即重读；此前启动时读一次。
+- 验收：新矩阵行 `roam/exit`（23 行），`roam/direct` 增加 dual-stack 两格（A 经独立 IPv6 网络连 Server，只改 IPv4 默认路由）；新内核测试 `underlay-roam-family`。
+
+验证：Planck 23 行矩阵 @@R3MATRIX@@（@@R3REV@@）；main 基线 `20261016T085917Z-6ee48043`（dual-stack 两格分类 refresh、`roam/exit` `down` 失败）；`meshway-vm` 真机前后见[漫游行](/v2/node/validation#roam-row)，结束后恢复 alpha.14；证据 `.meshway/validation/r3/`。
+
 ## v0.1.0-alpha.14
 
 范围：wire 6、IPC 12（Status 新增可省略字段 `lastNetworkChange`、`changePending`）、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约均不变（普通升级，无断网窗口；CLI 与 daemon 一起升级）。R1：漫游按指纹分类 path／refresh、已有通道跟随到新来源、本机网络变化后候选节奏清零；R2：NAT 后由漫游方重新穿透、空窗内新流经策略中继、flap，对端持旧半边时也接受其穿透请求；X12：内核变更失败视为未知，先重读再有界重试并以 `changePending` 报告，本端换 boot 与对端换 boot 对称退役 circuit，apply 失败重建 Manager 时保留 boot；以及下列 R2、X12、R1 工作包。
