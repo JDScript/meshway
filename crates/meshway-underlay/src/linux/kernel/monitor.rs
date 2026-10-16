@@ -369,7 +369,14 @@ pub(super) async fn run(
             }
             .reject(&mut state, "monitor_error");
         }
-        shared.conflict.cancel();
+        // Lost or unreadable notifications prove nothing about ownership;
+        // a notification read and found foreign does.
+        shared.end(match _error {
+            Error::Io(_) | Error::Netlink => crate::OwnershipEnd::Unavailable {
+                check: "monitor_unavailable",
+            },
+            _ => crate::OwnershipEnd::Conflict { check: "monitor" },
+        });
     }
 }
 

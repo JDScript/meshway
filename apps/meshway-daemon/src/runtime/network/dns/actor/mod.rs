@@ -449,6 +449,19 @@ impl Attachment {
             None => std::future::pending().await,
         }
     }
+    /// The Host proved its kernel ownership again in a new term: this owner's
+    /// anchor and sockets belonged to the ended one. Stop it and keep the
+    /// system installation as a restart keeps it; the next `plan` prepares
+    /// the owner again on the new term (its anchor verified, not adopted by
+    /// name).
+    pub async fn detach(&mut self) -> Result<(), SystemDnsError> {
+        self.suspend();
+        self.dispatcher = None;
+        match self.actor.take() {
+            Some(actor) => actor.shutdown(true).await,
+            None => Ok(()),
+        }
+    }
     /// Restore DNS before deleting the separately journalled kernel anchor.
     pub async fn down(&mut self, host: &mut Host) -> Result<(), SystemDnsError> {
         self.suspend();

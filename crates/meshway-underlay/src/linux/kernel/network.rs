@@ -58,13 +58,6 @@ impl Default for Network {
 }
 
 impl Network {
-    pub fn with_routes(routes: Handle) -> Self {
-        Self {
-            routes: Some(routes),
-            ..Self::default()
-        }
-    }
-
     /// The control relay reached `address`.
     pub fn control_reached(&self, address: IpAddr) {
         self.control.send_if_modified(|known| {

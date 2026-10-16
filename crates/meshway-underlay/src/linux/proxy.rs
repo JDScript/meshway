@@ -85,7 +85,7 @@ impl Proxy {
                     Ok(accepted) => accepted,
                     Err(error) => {
                         tracing::warn!(%error, "Protected control relay listener failed; kernel ownership ends");
-                        worker.conflict.cancel();
+                        worker.end(crate::OwnershipEnd::Conflict { check: "relay_listener" });
                         break;
                     }
                 };
@@ -113,7 +113,7 @@ impl Proxy {
                     .is_err()
                 {
                     tracing::warn!("Protected control relay task capacity exhausted; kernel ownership ends");
-                    worker.conflict.cancel();
+                    worker.end(crate::OwnershipEnd::Conflict { check: "relay_capacity" });
                     break;
                 }
             }

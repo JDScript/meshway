@@ -230,7 +230,9 @@ async fn pause(backend: &mut Backend, shared: &Shared, stop: &CancellationToken)
 }
 
 /// The egress owner ends the host's kernel ownership (every owner then
-/// fails closed until restart): say which operation failed and how.
+/// fails closed): say which operation failed and how. Objects unreadable,
+/// or a change unknown, for the whole limit is an unavailable end the Host
+/// proves again; anything else is a conflict.
 fn stopped(
     shared: &super::super::super::protection::Shared,
     operation: &'static str,
@@ -243,14 +245,19 @@ fn stopped(
         error = %error,
         "Egress capture owner stopping after a failed kernel operation; kernel ownership ends"
     );
-    shared.conflict.cancel();
+    shared.end(match check {
+        "verify_unavailable" | "change_unavailable" => crate::OwnershipEnd::Unavailable { check },
+        _ => crate::OwnershipEnd::Conflict { check },
+    });
 }
 
-struct Installing(Option<CancellationToken>);
+struct Installing(Option<Arc<Shared>>);
 impl Drop for Installing {
     fn drop(&mut self) {
-        if let Some(conflict) = self.0.take() {
-            conflict.cancel();
+        if let Some(shared) = self.0.take() {
+            shared.end(crate::OwnershipEnd::Conflict {
+                check: "install_cancelled",
+            });
         }
     }
 }
@@ -374,7 +381,7 @@ impl super::super::Kernel {
             start,
             monitored: true,
         };
-        let mut installing = Installing(Some(self.shared.conflict.clone()));
+        let mut installing = Installing(Some(self.shared.clone()));
         backend.initialize().await?;
         backend.stage(plan.clone(), mesh(&self.expected)?).await?;
         self.quiesce().await?;

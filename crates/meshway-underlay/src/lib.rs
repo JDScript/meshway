@@ -126,6 +126,46 @@ pub struct KernelChangePending {
     pub retry_at: std::time::SystemTime,
 }
 
+/// Why a Host's kernel ownership ended. Every owner fails closed either way;
+/// they differ in what follows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OwnershipEnd {
+    /// An owner could not read its objects back, or a change of them stayed
+    /// unknown, for its whole limit (`check`: `verify_unavailable`,
+    /// `change_unavailable`, `monitor_unavailable`, `install_unavailable`,
+    /// `repair_unavailable`). Nothing proved another writer: the Host proves
+    /// its ownership again (1 s after the end, doubling, at most 8 s apart) and
+    /// recovers on its own once the kernel reads back consistent.
+    Unavailable { check: &'static str },
+    /// The kernel was read back different from what this Host owns (or an
+    /// owner ended for a reason that is not a read): it stays ended until an
+    /// operator acts (restart).
+    Conflict { check: &'static str },
+}
+
+impl OwnershipEnd {
+    pub fn check(&self) -> &'static str {
+        match self {
+            Self::Unavailable { check } | Self::Conflict { check } => check,
+        }
+    }
+}
+
+impl std::fmt::Display for OwnershipEnd {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unavailable { check } => write!(
+                f,
+                "kernelOwnership: unavailable ({check}); proving ownership again"
+            ),
+            Self::Conflict { check } => write!(
+                f,
+                "kernelOwnership: conflict ({check}); stays failed closed until restart"
+            ),
+        }
+    }
+}
+
 /// Local installation inputs, never business DNS or execution authority.
 #[derive(Clone)]
 pub struct Options {

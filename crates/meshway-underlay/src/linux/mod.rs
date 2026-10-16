@@ -124,8 +124,37 @@ pub struct Host {
     directory: Arc<Directory>,
     sockets: SocketFactory,
     tasks: Tasks,
+    options: Options,
+    /// The fixed Server origin of the attached Control relay.
+    origin: Option<String>,
+    reproof: Reproof,
     // Released after the kernel, proxy and private-directory ownership.
     _owner: HostOwner,
+}
+
+/// The first re-proof of an unavailable end, and the longest wait between two.
+const REPROOF: std::time::Duration = std::time::Duration::from_secs(1);
+const REPROOF_MAX: std::time::Duration = std::time::Duration::from_secs(8);
+
+/// Re-proofs of the ended term's ownership so far.
+#[derive(Default)]
+struct Reproof {
+    /// The ended term's owners are joined and its tasks stopped.
+    closed: bool,
+    attempts: u32,
+    last: Option<std::time::Instant>,
+    /// The last failure, logged once while it repeats.
+    failure: Option<String>,
+}
+
+impl Reproof {
+    /// When the next attempt is due after an unavailable end at `ended`.
+    fn due(&self, ended: std::time::Instant) -> std::time::Instant {
+        let wait = REPROOF
+            .saturating_mul(1 << self.attempts.min(5))
+            .min(REPROOF_MAX);
+        self.last.unwrap_or(ended) + if self.attempts == 0 { REPROOF } else { wait }
+    }
 }
 
 impl Host {
@@ -161,6 +190,11 @@ impl Host {
             .exit
             .as_ref()
             .and_then(|owner| owner.role.cleanup_pending())
+    }
+    /// The stopped exit role's cleanup its owner is retrying, live: set
+    /// when an attempt fails, cleared the moment the cleanup completes.
+    pub fn exit_cleanups(&self) -> tokio::sync::watch::Receiver<Option<ExitCleanupPending>> {
+        self.kernel.shared.cleanups.subscribe()
     }
     /// The kernel change an owner of this Host is retrying, live: it reads
     /// the owner's own fact, also while a Host operation waits for it.
@@ -205,7 +239,7 @@ impl Host {
         let mut opening = Opening(Some(tasks.clone()));
         let opened = async {
             let kernel = Kernel::open(directory.clone(), options.clone(), tasks.clone()).await?;
-            let sockets = SocketFactory::new(kernel.shared.clone(), options);
+            let sockets = SocketFactory::new(kernel.shared.clone(), options.clone());
             Ok::<_, Error>((kernel, sockets))
         }
         .await;
@@ -218,6 +252,9 @@ impl Host {
                     directory,
                     sockets,
                     tasks,
+                    options,
+                    origin: None,
+                    reproof: Reproof::default(),
                     _owner: owner,
                 })
             }
@@ -236,12 +273,18 @@ impl Host {
             return Err(Error::Conflict);
         }
         let origin = meshway_control::server_origin(origin).map_err(|_| Error::Origin)?;
+        self.open_proxy(&origin).await?;
+        self.origin = Some(origin);
+        Ok(())
+    }
+
+    async fn open_proxy(&mut self, origin: &str) -> Result<()> {
         self.kernel.shared.check()?;
         let resolver = self.sockets.resolver().await?.clone();
         self.proxy = Some(
             Proxy::open(
                 self.directory.clone(),
-                &origin,
+                origin,
                 self.kernel.shared.clone(),
                 resolver,
                 self.sockets.options.max_sockets,
@@ -250,6 +293,129 @@ impl Host {
             .await?,
         );
         Ok(())
+    }
+
+    /// Why this Host's kernel ownership ended; `None` while it holds.
+    pub fn ownership_ended(&self) -> Option<crate::OwnershipEnd> {
+        self.kernel.shared.ended().map(|(cause, _)| cause)
+    }
+
+    /// When [`Self::recover`] is due: only after an unavailable end, 1 s
+    /// after it, then doubling to at most 8 s between attempts.
+    pub fn recovery_at(&self) -> Option<std::time::Instant> {
+        match self.kernel.shared.ended()? {
+            (crate::OwnershipEnd::Unavailable { .. }, ended) => Some(self.reproof.due(ended)),
+            (crate::OwnershipEnd::Conflict { .. }, _) => None,
+        }
+    }
+
+    /// Prove kernel ownership again after an unavailable end. The ended
+    /// term's owners are joined, its TUN closed and its tasks (Control relay
+    /// included) stopped; then a new term opens exactly as at process start:
+    /// every journal is recovered and verified against the kernel as it is
+    /// now. Kernel objects read back as recorded (or a clean start) give a
+    /// new term with the same journal, published channels and relay origin;
+    /// the caller installs its content again. A read or change that fails
+    /// again keeps the end unavailable (`Netlink`/`Io`, retried at
+    /// [`Self::recovery_at`]); anything else read back (a foreign object, an
+    /// unrecoverable journal) is a conflict that stays.
+    pub async fn recover(&mut self) -> Result<()> {
+        match self.kernel.shared.ended() {
+            None => return Ok(()),
+            Some((crate::OwnershipEnd::Conflict { .. }, _)) => return Err(Error::Conflict),
+            Some((crate::OwnershipEnd::Unavailable { .. }, _)) => {}
+        }
+        if !self.reproof.closed {
+            // The exit owner retries its cleanup until the Host's tasks stop.
+            self.tasks.stop.cancel();
+            self.kernel.close_term().await;
+            self.proxy = None;
+            let _ = self.tasks.shutdown().await;
+            self.reproof.closed = true;
+        }
+        self.reproof.attempts = self.reproof.attempts.saturating_add(1);
+        self.reproof.last = Some(std::time::Instant::now());
+        let tasks = Tasks::new(self.options.max_sockets * 4 + 32);
+        let opened = async {
+            let kernel = Kernel::open_term(
+                self.directory.clone(),
+                self.options.clone(),
+                tasks.clone(),
+                self.kernel.shared.published(),
+            )
+            .await?;
+            let sockets = SocketFactory::new(kernel.shared.clone(), self.options.clone());
+            Ok::<_, Error>((kernel, sockets))
+        }
+        .await;
+        let (kernel, sockets) = match opened {
+            Ok(opened) => opened,
+            Err(error) => {
+                let _ = tasks.shutdown().await;
+                return Err(self.reproof_failed(error));
+            }
+        };
+        let attempts = self.reproof.attempts;
+        let ended = self.kernel.shared.ended();
+        self.kernel = kernel;
+        self.sockets = sockets;
+        self.tasks = tasks;
+        if let Some(origin) = self.origin.clone()
+            && let Err(error) = self.open_proxy(&origin).await
+        {
+            // The new term holds; only its relay did not open. End it as
+            // unavailable: the next attempt opens both again.
+            tracing::warn!(%error, "Protected control relay did not open in the new ownership term");
+            self.kernel.shared.end(crate::OwnershipEnd::Unavailable {
+                check: "relay_unavailable",
+            });
+            self.reproof = Reproof {
+                attempts,
+                last: Some(std::time::Instant::now()),
+                ..Reproof::default()
+            };
+            return Err(error);
+        }
+        let (check, elapsed_ms) = ended.map_or(("unrecorded", 0), |(cause, at)| {
+            (cause.check(), at.elapsed().as_millis() as u64)
+        });
+        tracing::info!(
+            check,
+            attempts,
+            elapsed_ms,
+            "Kernel ownership proved again; the Host owns a new term"
+        );
+        self.reproof = Reproof::default();
+        Ok(())
+    }
+
+    /// A failed re-proof: a read or change that failed again keeps the end
+    /// unavailable; anything else makes it a conflict.
+    fn reproof_failed(&mut self, error: Error) -> Error {
+        let transient = matches!(error, Error::Netlink | Error::Io(_));
+        let failure = error.to_string();
+        if self.reproof.failure.as_ref() != Some(&failure) {
+            if transient {
+                tracing::warn!(
+                    attempts = self.reproof.attempts,
+                    error = %failure,
+                    "Kernel ownership re-proof unavailable; retrying"
+                );
+            } else {
+                tracing::warn!(
+                    attempts = self.reproof.attempts,
+                    error = %failure,
+                    "Kernel ownership re-proof read back a conflict; ownership stays ended until restart"
+                );
+            }
+            self.reproof.failure = Some(failure);
+        }
+        if !transient {
+            self.kernel
+                .shared
+                .end(crate::OwnershipEnd::Conflict { check: "reproof" });
+        }
+        error
     }
 
     pub fn client_builder(&self) -> Result<reqwest::ClientBuilder> {

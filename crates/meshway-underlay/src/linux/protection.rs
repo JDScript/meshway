@@ -43,7 +43,9 @@ impl Mark {
 pub(super) struct Shared {
     pub mark: Mark,
     pub selectors: Vec<Selector>,
+    /// Ends this term of kernel ownership; [`Self::end`] records why.
     pub conflict: CancellationToken,
+    pub ending: Mutex<Option<(crate::OwnershipEnd, std::time::Instant)>>,
     pub network: super::kernel::network::Network,
     pub tasks: Tasks,
     pub sockets: Arc<Semaphore>,
@@ -54,6 +56,17 @@ pub(super) struct Shared {
     pub resources: Resources,
     /// The kernel change an owner is retrying after a failed attempt.
     pub changes: tokio::sync::watch::Sender<Option<crate::KernelChangePending>>,
+    /// The stopped exit role's cleanup its owner is retrying, live.
+    pub cleanups: tokio::sync::watch::Sender<Option<crate::ExitCleanupPending>>,
+}
+
+/// What a Host publishes across its ownership terms: a re-proved term
+/// continues the same channels, so their subscribers keep them.
+#[derive(Default)]
+pub(super) struct Published {
+    pub network: super::kernel::network::Network,
+    pub changes: tokio::sync::watch::Sender<Option<crate::KernelChangePending>>,
+    pub cleanups: tokio::sync::watch::Sender<Option<crate::ExitCleanupPending>>,
 }
 
 /// The desired content capture is installed for. `session` ends every data
@@ -113,6 +126,56 @@ impl Resources {
 }
 
 impl Shared {
+    /// End this term of kernel ownership for `cause`. A proven conflict
+    /// replaces an earlier unavailable end, never the reverse; a token
+    /// cancelled without a recorded cause counts as a conflict.
+    pub fn end(&self, cause: crate::OwnershipEnd) {
+        if let Ok(mut ending) = self.ending.lock() {
+            let replace = match &*ending {
+                None => true,
+                Some((crate::OwnershipEnd::Unavailable { .. }, _)) => {
+                    matches!(cause, crate::OwnershipEnd::Conflict { .. })
+                }
+                Some((crate::OwnershipEnd::Conflict { .. }, _)) => false,
+            };
+            if replace {
+                *ending = Some((cause, std::time::Instant::now()));
+            }
+        }
+        self.conflict.cancel();
+    }
+
+    /// The channels a new term of this Host continues.
+    pub fn published(&self) -> Published {
+        let network = &self.network;
+        Published {
+            network: super::kernel::network::Network {
+                changes: network.changes.clone(),
+                dirty: network.dirty.clone(),
+                control: network.control.clone(),
+                overlap: network.overlap.clone(),
+                repairs: network.repairs.clone(),
+                routes: None,
+            },
+            changes: self.changes.clone(),
+            cleanups: self.cleanups.clone(),
+        }
+    }
+
+    /// Why this term ended, and when; `None` while it holds.
+    pub fn ended(&self) -> Option<(crate::OwnershipEnd, std::time::Instant)> {
+        if !self.conflict.is_cancelled() {
+            return None;
+        }
+        let recorded = self.ending.lock().ok().and_then(|ending| *ending);
+        Some(recorded.unwrap_or((
+            crate::OwnershipEnd::Conflict {
+                check: "unrecorded",
+            },
+            std::time::Instant::now(),
+        )))
+    }
+
     pub fn check(&self) -> Result<()> {
         if self.conflict.is_cancelled() {
             return Err(Error::Conflict);

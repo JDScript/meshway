@@ -94,9 +94,9 @@ pub(super) struct Report {
     pub facts_observed_at: DateTime<Utc>,
     pub facts: Option<meshway_connectivity::Snapshot>,
     pub exit_capability: Option<meshway_model::exit::ExitCapability>,
-    /// The stopped exit role's cleanup its owner retries, as of the last
-    /// capability probe.
-    pub exit_cleanup: Option<meshway_underlay::ExitCleanupPending>,
+    /// The stopped exit role's cleanup its owner retries, live (read at
+    /// each Status). Set once at Host start, like `kernel_changes`.
+    pub exit_cleanups: Option<watch::Receiver<Option<meshway_underlay::ExitCleanupPending>>>,
     /// The Host's live retried kernel change (egress capture or exit role);
     /// read at each Status, also while an apply waits for that change. Set
     /// once at Host start; every later report keeps it.
@@ -154,7 +154,7 @@ impl Report {
             facts_observed_at: Utc::now(),
             facts: None,
             exit_capability: None,
-            exit_cleanup: None,
+            exit_cleanups: None,
             kernel_changes: None,
             exit_flows: None,
             exit_dns: None,
@@ -349,7 +349,11 @@ impl Handle {
             }
             let network_changes = host.network_changes();
             let kernel_changes = host.kernel_changes();
-            reports.send_modify(|report| report.kernel_changes = Some(kernel_changes));
+            let exit_cleanups = host.exit_cleanups();
+            reports.send_modify(|report| {
+                report.kernel_changes = Some(kernel_changes);
+                report.exit_cleanups = Some(exit_cleanups);
+            });
             let (commands, received) = mpsc::channel(8);
             let (observation_plans, plans_rx) = watch::channel(None);
             let (offer_sender, offers) = watch::channel(Offer::default());

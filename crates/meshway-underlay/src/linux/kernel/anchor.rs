@@ -54,8 +54,15 @@ struct Reader {
 }
 impl Guard {
     fn check(&self) -> std::result::Result<(), SystemDnsFailure> {
-        let actual = if self.shared.conflict.is_cancelled() {
-            "the host's kernel ownership ended on a conflict (its owner logged why)"
+        let actual = if let Some((cause, _)) = self.shared.ended() {
+            match cause {
+                crate::OwnershipEnd::Unavailable { .. } => {
+                    "the host's kernel ownership ended unavailable (the Host proves it again; DNS prepares again on its next term)"
+                }
+                crate::OwnershipEnd::Conflict { .. } => {
+                    "the host's kernel ownership ended on a conflict (its owner logged why)"
+                }
+            }
         } else if self.shared.tasks.stop.is_cancelled() {
             "the host owner stopped"
         } else if self.cancelled.is_cancelled() {

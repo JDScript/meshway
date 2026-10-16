@@ -168,6 +168,10 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             ListenersChanged,
             Expired,
             HostFailed,
+            /// An unavailable end of kernel ownership is due for its re-proof.
+            HostRecovery,
+            /// The Host proved its ownership again in a new term.
+            HostRecovered,
             DnsFailure,
             /// The failed DNS owner re-proved its system installation.
             DnsRecovered,
@@ -234,6 +238,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
         let retry_at = retry
             .at
             .filter(|_| (plane.installed.is_none() || engine_degraded) && overlap.is_none());
+        let recovery_at = plane.host.recovery_at().map(tokio::time::Instant::from_std);
         let Plane {
             host,
             dns,
@@ -258,6 +263,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             _ = dns.failed(), if !dns_failed => Work::DnsFailure,
             _ = dns.recovered(), if dns_failed => Work::DnsRecovered,
             _ = host.ended(), if installed.is_some() => Work::HostFailed,
+            _ = sleep_until(recovery_at) => Work::HostRecovery,
             changed = network_changes.changed() => if changed.is_ok() { Work::NetworkChanged } else { Work::Command(None) },
             _ = sleep_until(sample_at) => Work::SampleDue,
             Ok(()) = exit_dns.changed() => Work::ExitDns,
@@ -303,6 +309,30 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             work
         };
         let work = match work {
+            Work::HostRecovery => {
+                let plane = engine.components_mut();
+                match plane.host.recover().await {
+                    Ok(()) => {
+                        // The DNS owner's anchor and sockets belonged to the
+                        // ended term; it prepares again on the new one.
+                        if let Err(error) = plane.dns.detach().await {
+                            tracing::warn!(
+                                ?error,
+                                "DNS owner did not stop with the ended ownership term"
+                            );
+                        }
+                        Work::HostRecovered
+                    }
+                    Err(_) => {
+                        let mut report = reports.borrow().clone();
+                        report.problem_detail =
+                            plane.host.ownership_ended().map(|end| end.to_string());
+                        report.observed_at = chrono::Utc::now();
+                        reports.send_replace(report);
+                        continue;
+                    }
+                }
+            }
             Work::ExitChanged => {
                 let failed = engine
                     .components_mut()
@@ -341,7 +371,6 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                     .is_some_and(|fact| fact.status == meshway_model::exit::ExitStatus::Ready);
             let mut report = reports.borrow().clone();
             report.exit_capability = capability;
-            report.exit_cleanup = engine.components().host.exit_cleanup();
             reports.send_replace(report);
         }
         let structural = matches!(
@@ -349,6 +378,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             Work::Offer
                 | Work::Retry
                 | Work::DnsRecovered
+                | Work::HostRecovered
                 | Work::ExitRecovered
                 | Work::ListenersChanged
         ) || matches!(&work, Work::Carrier(events) if events.iter().any(|event| matches!(event, Event::Changed)));
@@ -544,6 +574,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             Work::Offer
             | Work::Retry
             | Work::DnsRecovered
+            | Work::HostRecovered
             | Work::ExitRecovered
             | Work::ListenersChanged => {
                 // An offer and a recovered component are new inputs; a retry
@@ -566,6 +597,17 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 if matches!(work, Work::DnsRecovered) {
                     tracing::info!("Required DNS component recovered; reinstalling the netmap");
                     dns_failed = false;
+                }
+                if matches!(work, Work::HostRecovered) {
+                    tracing::info!("Kernel ownership recovered; reinstalling the netmap");
+                    dns_failed = false;
+                    // Nothing of the ended term is installed: whatever the
+                    // Engine still holds applies again from the start.
+                    if engine.desired().is_some() {
+                        diagnostics.invalidate();
+                        diagnostics.stop().await;
+                        withdraw(&mut engine, &reports, true).await;
+                    }
                 }
                 let offer = offers.borrow_and_update().clone();
                 if let Some(floor) = offer.clock_floor_ms {
@@ -606,7 +648,6 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                         if rebound {
                             report.exit_capability =
                                 engine.components_mut().exit_capability().await;
-                            report.exit_cleanup = engine.components().host.exit_cleanup();
                             // Content applied before the instance arrived
                             // could not observe the exit prerequisites.
                             exit_recovered = engine.components().exit_pending()
@@ -758,6 +799,13 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             Work::HostFailed => {
                 diagnostics.stop().await;
                 withdraw(&mut engine, &reports, true).await;
+                let mut report = reports.borrow().clone();
+                report.problem_detail = engine
+                    .components()
+                    .host
+                    .ownership_ended()
+                    .map(|end| end.to_string());
+                reports.send_replace(report);
                 continue;
             }
             Work::ExitFailed | Work::ExitReply(Err(_)) => {
@@ -780,7 +828,6 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                         .is_some_and(|fact| fact.status == meshway_model::exit::ExitStatus::Ready);
                 let mut report = reports.borrow().clone();
                 report.exit_capability = capability;
-                report.exit_cleanup = engine.components().host.exit_cleanup();
                 report.exit_flows = None;
                 reports.send_replace(report);
                 continue;
@@ -896,7 +943,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             }
             Work::Tick => {}
             Work::DiagnosticSent => {}
-            Work::ExitChanged => unreachable!("mapped above"),
+            Work::ExitChanged | Work::HostRecovery => unreachable!("mapped above"),
         }
         let live = engine.desired().is_some();
         let instance = engine
