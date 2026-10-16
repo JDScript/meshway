@@ -417,10 +417,17 @@ impl Kernel {
     /// kernel no longer holds.
     async fn repair_reads(&mut self) -> Result<(Vec<RuleRecord>, Vec<RouteRecord>)> {
         self.ready().await?;
+        // A goto rule whose target was removed carries the kernel's
+        // UNRESOLVED state flag: still the owner's own rule, not missing.
         let present: Vec<_> = get_rules(&self.handle, self.options.max_kernel_objects)
             .await?
             .into_iter()
-            .map(encode_rule)
+            .map(|mut rule| {
+                rule.header
+                    .flags
+                    .remove(rtnetlink::packet_route::rule::RuleFlags::Unresolved);
+                encode_rule(rule)
+            })
             .collect();
         let mut missing: Vec<_> = self
             .journal

@@ -9,7 +9,7 @@
 - A1 Server 选择（不变量：CAS 基准单调，清除不把版本退回 null；owner：`store::execution::selection`）：清除后的墓碑行保留版本，`version` 与 netmap `selectionVersions` 仍给出它，清除前读到的基准（null 或旧版本）之后一律 `version_conflict`；判断“无可清除”看 `requestedProfile`。此前清除把版本连同方案一起过滤，陈旧的 `expectedVersion: null` 在清除后又能选中（A-B-A）。见 [Routing · 选择的入口](/v2/configuration-reference/routing#选择的入口)。
 - A2 Server 选择（不变量：用户入口同一 `requestId` 只有一个结果；owner：同上）：没有选中方案时的用户清除也在同一事务记 `routing.select` 活动作为回执；此前重试会清掉之后的选择，复用 ID 也不报 `request_id_conflict`。
 - A3 Server 选择（不变量：读一个节点不扫全网；owner：同上）：单节点读取按节点查询；库存 GET／SSE 一次读入全部选择、逐节点交 Policy，共享同一行解码。此前每个节点各做一次全网扫描与逐行身份 digest（N×S）。
-- B1 Underlay capture 重装（不变量：Host 不在缺少自有对象时仍为健康 owner；owner：Kernel）：重装前的读取失败纳入同一出口：这次重装仍欠着（`Host::repair_at`，1 秒后再试，不计入 1 分钟 3 次），连续 5 次读不到以 `repair_unavailable` 暂态结束归属。此前 worker 已消费重装通知，读表失败只记日志，被删的规则不再重装。
+- B1 Underlay capture 重装（不变量：Host 不在缺少自有对象时仍为健康 owner；owner：Kernel）：重装前的读取失败纳入同一出口：这次重装仍欠着（`Host::repair_at`，1 秒后再试，不计入 1 分钟 3 次），连续 5 次读不到以 `repair_unavailable` 暂态结束归属。此前 worker 已消费重装通知，读表失败只记日志，被删的规则不再重装。只删 end 规则时，跳向它的 bypass 规则带内核的 UNRESOLVED 状态位，现按自有规则计（此前被当作缺失重装，`EEXIST` 结束归属）。
 - B2 出口／egress owner（不变量：慢但成功的周期审计不饿死请求；owner：两个 owner 的事件循环）：下一次审计（与出口 100 ms 维护）在上一次结束后一个周期到期，排队的请求在两次之间处理，停止信号仍最先。此前审计持续超过 1 秒时 `biased` select 每轮都先选审计，Install／Renew／Retire／Pause／Audit 永远排不上。
 - B3 连接（不变量：每条通道只为当前 remote 持一份可撤销许可；owner：Manager 的 UDP owner 与 `ProtectedDatagram`）：通道跟随新来源时以新许可替换旧的，挑战许可（`authorize_challenge`）与通道来源许可（`authorize_source`）分开计数，同一地址不追加。此前许可随通道存活、只增不撤，第 5 次迁移起无法发送。
 - B4 连接（不变量：路径换了，PMTU 测量随之作废；owner：Manager 的 UDP owner）：本机 path 类变化与 STUN 映射变化后每条 UDP 通道立即重新搜索并撤回旧测量，与跟随对端对称。此前旧测量最多保留 600 秒，路由 MTU 不变而真实路径变小时大包黑洞。

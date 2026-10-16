@@ -340,14 +340,7 @@ async fn system_config(
 ) -> Result<Option<(ResolverConfig, ResolverOpts)>> {
     let parse = async |path: &std::path::Path| -> Result<_> {
         #[cfg(test)]
-        if tests::FAILING_READS
-            .fetch_update(
-                std::sync::atomic::Ordering::SeqCst,
-                std::sync::atomic::Ordering::SeqCst,
-                |left| left.checked_sub(1),
-            )
-            .is_ok()
-        {
+        if tests::failing(path) {
             return Err(io::Error::from(io::ErrorKind::Interrupted).into());
         }
         Ok(match read_bounded(path).await {
@@ -630,10 +623,20 @@ impl futures_util::io::AsyncWrite for DnsTcp {
 mod tests {
     use super::*;
 
-    /// Upstream file reads that fail with an I/O error (not absence), for the
-    /// next reads.
-    pub(super) static FAILING_READS: std::sync::atomic::AtomicU32 =
-        std::sync::atomic::AtomicU32::new(0);
+    /// Upstream files whose next read fails with an I/O error (not absence).
+    static FAILING_READS: std::sync::Mutex<Vec<std::path::PathBuf>> =
+        std::sync::Mutex::new(Vec::new());
+
+    pub(super) fn failing(path: &std::path::Path) -> bool {
+        let mut failing = FAILING_READS.lock().unwrap();
+        let before = failing.len();
+        failing.retain(|failing| failing != path);
+        failing.len() != before
+    }
+
+    fn fail_next_read(path: &std::path::Path) {
+        FAILING_READS.lock().unwrap().push(path.to_owned());
+    }
 
     /// F6a B5: an unreadable upstream file is unknown, not "no upstream":
     /// once it reads again, unchanged, its upstreams are used.
@@ -647,10 +650,11 @@ mod tests {
             upstream: root.join("upstream.conf"),
         };
         std::fs::write(&paths.resolv, "nameserver 192.0.2.1\n").unwrap();
+        let resolv = paths.resolv.clone();
         let upstreams = Upstreams::system(paths, Duration::from_secs(1));
-        FAILING_READS.store(1, std::sync::atomic::Ordering::SeqCst);
+        fail_next_read(&resolv);
         assert!(servers(&upstreams.current().await.unwrap().1).is_empty());
-        assert_eq!(FAILING_READS.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert!(!failing(&resolv), "the read failed");
         assert_eq!(
             servers(&upstreams.current().await.unwrap().1),
             ["192.0.2.1".parse::<IpAddr>().unwrap()]
@@ -658,7 +662,7 @@ mod tests {
         // Unreadable again later: the upstreams in use stay.
         std::fs::write(root.join("next"), "nameserver 192.0.2.2\n").unwrap();
         std::fs::rename(root.join("next"), root.join("resolv.conf")).unwrap();
-        FAILING_READS.store(1, std::sync::atomic::Ordering::SeqCst);
+        fail_next_read(&resolv);
         assert_eq!(
             servers(&upstreams.current().await.unwrap().1),
             ["192.0.2.1".parse::<IpAddr>().unwrap()]

@@ -357,9 +357,10 @@ async fn own_capture_rules_removed_outside_their_owner_are_reinstalled_boundedly
     task.abort();
 }
 
-/// F6a B1: an own rule removed outside its owner whose first repair read
+/// F6a B1: an own rule removed outside its owner (the end rule other own
+/// rules jump to, which leaves them unresolved) whose first repair read
 /// fails is still owed: the repair is due again, and its next attempt
-/// reinstalls the rule. Reads that keep failing end ownership as
+/// reinstalls the rule alone. Reads that keep failing end ownership as
 /// unavailable instead of leaving a healthy-looking owner without the rule.
 #[tokio::test]
 #[ignore = "isolated Linux NET_ADMIN namespace required"]
