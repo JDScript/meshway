@@ -56,7 +56,7 @@ struct Renew {
     reply: oneshot::Sender<Result<ProjectionAck>>,
 }
 
-pub use crate::ExitCleanupPending;
+pub use crate::RetryPending;
 
 /// First wait after a failed cleanup, and the longest.
 const CLEANUP_RETRY: Duration = Duration::from_secs(1);
@@ -65,7 +65,7 @@ const CLEANUP_RETRY_MAX: Duration = Duration::from_secs(60);
 #[derive(Clone, Debug)]
 enum Closing {
     Serving,
-    Pending(ExitCleanupPending),
+    Pending(RetryPending),
     /// Cleanup finished (`true`) or was given up with the Host (`false`:
     /// the journal keeps the resources for the next start's recovery).
     Done(bool),
@@ -255,7 +255,7 @@ impl ExitRole {
         }
     }
     /// The stopped role's cleanup is being retried.
-    pub fn cleanup_pending(&self) -> Option<ExitCleanupPending> {
+    pub fn cleanup_pending(&self) -> Option<RetryPending> {
         match &*self.done.borrow() {
             Closing::Pending(pending) => Some(pending.clone()),
             _ => None,
@@ -843,7 +843,7 @@ impl super::super::Kernel {
                 if attempts.is_power_of_two() {
                     tracing::warn!(attempts, %error, retry_ms = wait.as_millis() as u64, "Exit role cleanup failed; resources kept, retrying");
                 }
-                let pending = ExitCleanupPending {
+                let pending = RetryPending {
                     reason: error.to_string(),
                     attempts,
                     retry_at: std::time::SystemTime::now() + wait,

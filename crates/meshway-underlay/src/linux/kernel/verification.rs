@@ -280,9 +280,11 @@ impl Retry {
                 Owner::Exit => crate::KernelChangeOwner::Exit,
             },
             operation: self.operation.to_owned(),
-            reason: self.reason.clone(),
-            attempts: self.attempts,
-            retry_at: std::time::SystemTime::now() + retry_at,
+            retry: crate::RetryPending {
+                reason: self.reason.clone(),
+                attempts: self.attempts,
+                retry_at: std::time::SystemTime::now() + retry_at,
+            },
         }
     }
 }
@@ -465,7 +467,7 @@ mod tests {
         let pending = retry.pending();
         assert_eq!(pending.owner, crate::KernelChangeOwner::Exit);
         assert_eq!(
-            (pending.operation.as_str(), pending.attempts),
+            (pending.operation.as_str(), pending.retry.attempts),
             ("retire", 1)
         );
         assert!(uncertain(&Error::Netlink) && uncertain(&Error::Conflict));
@@ -557,7 +559,10 @@ mod tests {
         };
         let (result, pending) = tokio::join!(result, waiter);
         assert!(result.is_ok() && unseen.applied);
-        assert_eq!((pending.operation.as_str(), pending.attempts), ("stage", 1));
+        assert_eq!(
+            (pending.operation.as_str(), pending.retry.attempts),
+            ("stage", 1)
+        );
         assert!(changes.borrow().is_none(), "withdrawn once completed");
         // Read back as neither: fails closed at once.
         let mut foreign = Kernel {

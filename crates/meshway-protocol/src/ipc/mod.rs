@@ -430,6 +430,24 @@ meshway_model::object! {
     pub retry_at: DateTime<Utc>,
 } }
 
+impl KernelChange {
+    /// The change `operation` of `owner` and its retry, flat on the wire.
+    pub fn new(owner: KernelChangeOwner, operation: String, retry: RetryPending) -> Self {
+        let RetryPending {
+            reason,
+            attempts,
+            retry_at,
+        } = retry;
+        Self {
+            owner,
+            operation,
+            reason,
+            attempts,
+            retry_at,
+        }
+    }
+}
+
 meshway_model::object! {
 /// Target-bound facts from the installed exit adapter. Missing measurements
 /// remain absent, including before the first probe and after authority loss.
@@ -443,16 +461,18 @@ meshway_model::object! {
     /// the cleanup is retried; the role installs again once it completed.
     /// Omitted otherwise.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub cleanup_pending: Option<ExitCleanup>,
+    pub cleanup_pending: Option<RetryPending>,
 } }
 
 meshway_model::object! {
-/// The retried cleanup of a stopped exit role.
-#[derive(Clone, Debug)] pub struct ExitCleanup {
+/// A failed kernel operation its owner retries: the cleanup of a stopped
+/// exit role (1 s after the first failure, doubling to 60 s). A
+/// [`KernelChange`] carries the same three fields.
+#[derive(Clone, Debug)] pub struct RetryPending {
     /// The last attempt's error.
     pub reason: String,
     /// Attempts so far, the first one included.
     pub attempts: u32,
-    /// When the next attempt starts (1 s after the first failure, doubling to 60 s).
+    /// When the next attempt starts.
     pub retry_at: DateTime<Utc>,
 } }

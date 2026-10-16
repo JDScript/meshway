@@ -88,12 +88,13 @@ pub struct PoolOverlap {
     pub address: IpAddr,
 }
 
-/// The kept resources of a role that stopped serving and whose cleanup
-/// failed: the owner retries it (1 s, doubling to 60 s), reading the kernel
-/// again before each attempt. A failed cleanup is not an absence proof; the
-/// role installs again once the cleanup completed.
+/// A failed kernel operation its owner retries: the kept resources of an
+/// exit role whose cleanup failed (1 s, doubling to 60 s; a failed cleanup is
+/// not an absence proof, the role installs again once it completed), or a
+/// [`KernelChangePending`]. The owner reads the kernel again before each
+/// attempt.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ExitCleanupPending {
+pub struct RetryPending {
     /// The last attempt's error.
     pub reason: String,
     /// Attempts so far, the first one included.
@@ -119,11 +120,7 @@ pub enum KernelChangeOwner {
 pub struct KernelChangePending {
     pub owner: KernelChangeOwner,
     pub operation: String,
-    /// The last attempt's error.
-    pub reason: String,
-    /// Attempts so far, the first one included.
-    pub attempts: u32,
-    pub retry_at: std::time::SystemTime,
+    pub retry: RetryPending,
 }
 
 /// Why a Host's kernel ownership ended. Every owner fails closed either way;

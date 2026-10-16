@@ -6,9 +6,9 @@ pub use datagram::{DatagramCandidate, ProtectedDatagram};
 mod kernel;
 pub use kernel::egress::EgressCapture;
 pub use kernel::exit::{
-    CtConfirmation, ExitCleanupPending, ExitCutoff, ExitIncarnation, ExitReply, ExitReplyReader,
-    ExitRole, ExitScope, ExitSendGuard, ExitTransport, ExitWrite, ExitWriter, Invalidated,
-    OriginalTuple, ProjectionAck,
+    CtConfirmation, ExitCutoff, ExitIncarnation, ExitReply, ExitReplyReader, ExitRole, ExitScope,
+    ExitSendGuard, ExitTransport, ExitWrite, ExitWriter, Invalidated, OriginalTuple, ProjectionAck,
+    RetryPending,
 };
 mod protection;
 
@@ -184,7 +184,7 @@ impl Host {
         self.kernel.install_exit_role(role.into()).await
     }
     /// The cleanup of a stopped exit role its owner is retrying.
-    pub fn exit_cleanup(&self) -> Option<ExitCleanupPending> {
+    pub fn exit_cleanup(&self) -> Option<RetryPending> {
         self.kernel
             .exit
             .as_ref()
@@ -192,7 +192,7 @@ impl Host {
     }
     /// The stopped exit role's cleanup its owner is retrying, live: set
     /// when an attempt fails, cleared the moment the cleanup completes.
-    pub fn exit_cleanups(&self) -> tokio::sync::watch::Receiver<Option<ExitCleanupPending>> {
+    pub fn exit_cleanups(&self) -> tokio::sync::watch::Receiver<Option<RetryPending>> {
         self.kernel.shared.cleanups.subscribe()
     }
     /// The kernel change an owner of this Host is retrying, live: it reads

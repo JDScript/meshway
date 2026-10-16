@@ -25,7 +25,7 @@ pub use api::{CtConfirmation, ProjectionAck};
 pub use guard::{ExitSendGuard, Invalidated};
 pub use incarnation::ExitIncarnation;
 pub use io::{ExitCutoff, ExitReply, ExitReplyReader, ExitScope, ExitWrite, ExitWriter};
-pub use owner::{ExitCleanupPending, ExitRole};
+pub use owner::{ExitRole, RetryPending};
 pub use probe::ExitProbe;
 pub use tuple::{ExitTransport, OriginalTuple};
 

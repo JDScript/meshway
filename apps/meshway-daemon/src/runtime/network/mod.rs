@@ -96,7 +96,7 @@ pub(super) struct Report {
     pub exit_capability: Option<meshway_model::exit::ExitCapability>,
     /// The stopped exit role's cleanup its owner retries, live (read at
     /// each Status). Set once at Host start, like `kernel_changes`.
-    pub exit_cleanups: Option<watch::Receiver<Option<meshway_underlay::ExitCleanupPending>>>,
+    pub exit_cleanups: Option<watch::Receiver<Option<meshway_underlay::RetryPending>>>,
     /// The Host's live retried kernel change (egress capture or exit role);
     /// read at each Status, also while an apply waits for that change. Set
     /// once at Host start; every later report keeps it.
