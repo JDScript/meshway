@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-16T17:11:54.226450+00:00",
+  "updatedAt": "2026-10-16T17:12:59.212474+00:00",
   "runs": [
     {
       "id": 38936723787,
@@ -12,9 +12,9 @@
       "commit": "80fdac8b804d99dcf37d1b148a1b0533126741e7",
       "message": "ci(perf): lock linux-arm64 tool records; trigger perf on mise and perf script changes",
       "createdAt": "2026-10-16T17:03:25Z",
-      "updatedAt": "2026-10-16T17:03:44Z",
-      "status": "in_progress",
-      "conclusion": null,
+      "updatedAt": "2026-10-16T17:11:09Z",
+      "status": "completed",
+      "conclusion": "success",
       "url": "https://github.com/JDScript/meshway/actions/runs/38936723787",
       "jobs": [
         {
@@ -32,11 +32,11 @@
           "id": 117094086403,
           "name": "cargo",
           "runner": "mars-14900k",
-          "status": "in_progress",
-          "conclusion": null,
+          "status": "completed",
+          "conclusion": "success",
           "startedAt": "2026-10-16T17:03:44Z",
-          "completedAt": null,
-          "seconds": null,
+          "completedAt": "2026-10-16T17:11:01Z",
+          "seconds": 437.0,
           "url": "https://github.com/JDScript/meshway/actions/runs/38936723787/job/117094086403"
         },
         {
