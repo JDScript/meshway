@@ -176,17 +176,18 @@ async fn a_selection_reaches_the_next_netmap_and_refusals_keep_the_session() {
     crate::support::sync(&mut *control.lock().await)
         .await
         .unwrap();
-    // Clearing leaves no selection: the default applies with the next netmap.
+    // Clearing leaves no selection: the default applies with the next
+    // netmap, whose version (the clearing's, 4) is the next base.
     let cleared = meshway_control::shared::clear_profile(&control)
         .await
         .unwrap();
     assert_eq!(
         (
             cleared.requested_profile.as_deref(),
-            cleared.version,
+            cleared.version.map(|v| v.get()),
             cleared.applied_profile.as_str()
         ),
-        (None, None, "mesh")
+        (None, Some(4), "mesh")
     );
     crate::support::sync(&mut *control.lock().await)
         .await
