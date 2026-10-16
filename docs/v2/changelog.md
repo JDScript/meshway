@@ -32,6 +32,9 @@
 - C6 Underlay 网络变化分类（不变量：合并窗与文档一致；owner：`kernel/network.rs`）：250 ms 合并改为 trailing debounce（最后一条通知后静止 250 ms），通知持续不断时至迟在首条后 1 秒分类；此前为首条通知起的固定窗口。
 - B9 DNS owner（不变量：失败应答前详情已发布；owner：DNS actor）：hold／install 失败把所记检查写入 `lastErrorDetail` 后才回答，成功的 install 清空；此前只写日志，hold 先清空了旧详情。
 - B10 Status（不变量：每项详情绑定自己的来源；owner：daemon Status 投影）：`lastErrorDetail` 只描述 `lastError`；`lastError` 为 Control 问题时，包平面自己的失败与原因经新字段 `networkError` 给出，`meshway status` 显示 `Network` 行。此前网络侧原因被置空。见[运行状态](/v2/node/runtime)。
+- 验收：每项有对应行为测试（Server `selection::clear::*`；Underlay 隔离测试 `roaming::a_repair_whose_read_fails_stays_owed_and_completes`、`roaming::a_new_ownership_term_publishes_the_pool_overlap_it_reads`、`exit::tests::changes::a_lost_quarantine_expiry_is_completed_from_the_read_back` 已加入矩阵；单测 `verification::tests::requests_are_served_between_slow_but_successful_audits`、`network::tests::a_burst_settles_after_its_last_notification_within_a_bound`、`monitor::tests::empty_or_truncated_datagrams_end_ownership_as_unavailable`、`dns::tests::an_upstream_file_unreadable_once_is_read_again_unchanged`、`datagram::grant_tests::*`；Manager `a_channel_follows_six_moves_holding_one_source_grant`、`an_own_path_change_searches_the_path_size_again`；DNS actor 与 Status／CLI 的 `networkError`）。
+
+验证：Planck 23 行矩阵 `20261016T220618Z-939baafd`（`e0645b1d`，并行 8，1,107 秒）全部通过；此前 `20261016T214625Z-eff29493` 的 `exit/off` 第 14 阶段 ⑥ 仍按旧语义要求清除后版本为 null，fixture 已改。证据 `.meshway/validation/f6a/`。
 
 ## v0.1.0-alpha.16
 
