@@ -2,7 +2,9 @@
 
 按合入 main 的顺序记录工作包、提交与证据 ID。规则见[工程流程](/v2/process)；性能数字的口径见[分层性能测量](/v2/node/performance)，验收状态见[验收范围](/v2/node/validation)。
 
-## 未发布
+## v0.1.0-alpha.15
+
+范围：wire 6、IPC 12、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约均不变（普通升级，无断网窗口；只改 Node）。X13：读不到或变更结果未知导致的暂态归属结束自动重证并以同一 netmap 重装，`exit.cleanupPending` 即时反映出口 owner 现值；R3：网络指纹计入全部 remote 路由与 IPv4 secondary 地址、dual-stack 节点只改 IPv4 默认路由也判 path，`roam/exit` 出口漫游后后继 conntrack 条目精确退役、`down` 可完成，指定地址 listener 地址回来即重绑，bootstrap resolver 随系统配置变化重读；以及下列 X13、R3 工作包。
 
 宿主内核归属的暂态阻断自愈（X13，`x13/unavailable-recovery`）：wire 6、IPC 12、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约均不变（只改 Node；Status 字段不变，`lastErrorDetail` 多一类文本）。
 
