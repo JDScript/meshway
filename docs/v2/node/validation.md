@@ -275,7 +275,7 @@ Planck 19 行矩阵 `20261015T235403Z-98e9f030`（`17005fcd`，并行 8，墙钟
 
 X11 同一场景（main／X11 构建）：`Egress capture owner stopping … kernel ownership ends`，Host fail closed 直到重启。lab 结束后恢复为原 release `2d03609d…`（alpha.13），三节点 running、出口 ready。
 
-**本节点换 boot**：`netmap_lifecycle::own_new_boot_ends_every_circuit_at_once_and_its_close_reaches_the_far_end`（A→R→B）：A 首次绑定 boot、同一 boot 保留，换 boot 后 A 的 circuit 立即结束，`Close` 经 R 转发到 B，A 的下一个包立即发出新 INIT（1 ms，不等 15 秒）。R1 那次 apply 失败（`20261015T172722Z-c3cc3381`）：A 在一次 path 变化约 2 秒后 Manager apply 返回 `transport operation cancelled or timed out`（Manager 已停止或一次绑定超时），该构建尚无 `Connectivity owner ended unrequested` 日志，没有 `Datagram socket owner ended`，不能定位到具体 owner；此后的构建记录意外结束的 owner。
+**本节点换 boot**：网络 worker 的 Manager 重建（apply 失败后）就是 boot 变化的来源，现沿用原 boot：`manager::tests::netmap::rebind::configuration_changes_with_live_traversal_channels_keep_the_manager_and_its_boot`（traversal socket 与活通道上 3 轮配置变更：移除再加回本节点 listener、无关改名，每次 apply 成功、Manager 保持运行与原 boot；随后按 worker 的方式以原 boot 重建，对端的新通道读到同一 boot）。`netmap_lifecycle::own_new_boot_ends_every_circuit_at_once_and_its_close_reaches_the_far_end`（A→R→B）：A 首次绑定 boot、同一 boot 保留，换 boot 后 A 的 circuit 立即结束，`Close` 经 R 转发到 B，A 的下一个包立即发出新 INIT（1 ms，不等 15 秒）。R1 那次 apply 失败（`20261015T172722Z-c3cc3381`）：A 在一次 path 变化约 2 秒后 Manager apply 返回 `transport operation cancelled or timed out`（Manager 已停止或一次绑定超时），该构建尚无 `Connectivity owner ended unrequested` 日志，没有 `Datagram socket owner ended`，不能定位到具体 owner；此后的构建记录意外结束的 owner。R2 观察的 lab sha 配置变更（serial 34，alpha.13）同一签名：restart 分支只在 Manager 已停止（或失败早于发布新内容）时走到，`transport operation cancelled or timed out` 即 Manager 的根停止已被取消，即某个 owner 未经请求结束；该容器日志已随 lab 重新部署丢失，上述测试在测试 socket 工厂上未复现，具体 owner 仍未定位（下次由 WARN 的 `owner` 字段给出）。
 
 ### 当前验证证据
 
