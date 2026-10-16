@@ -118,6 +118,16 @@ pub trait SocketFactory: Send + Sync + 'static {
     fn route_source<'a>(&'a self, _remote: SocketAddr) -> BoxFuture<'a, Option<std::net::IpAddr>> {
         Box::pin(async { None })
     }
+
+    /// Whether `address` is assigned to this host now; `None` when the
+    /// factory cannot tell (then nothing is retired for it).
+    fn address_assigned<'a>(&'a self, _address: std::net::IpAddr) -> BoxFuture<'a, Option<bool>> {
+        Box::pin(async { None })
+    }
+
+    /// The remotes this Node sends to now, in priority order: the host's
+    /// network change classification follows the route toward each.
+    fn observe_remotes(&self, _remotes: Vec<std::net::IpAddr>) {}
 }
 
 /// A listener's bind failure keeps its cause; every other protected-socket
@@ -223,6 +233,12 @@ impl SocketFactory for meshway_underlay::SocketFactory {
     }
     fn route_source<'a>(&'a self, remote: SocketAddr) -> BoxFuture<'a, Option<std::net::IpAddr>> {
         Box::pin(self.route_source(remote))
+    }
+    fn address_assigned<'a>(&'a self, address: std::net::IpAddr) -> BoxFuture<'a, Option<bool>> {
+        Box::pin(self.address_assigned(address))
+    }
+    fn observe_remotes(&self, remotes: Vec<std::net::IpAddr>) {
+        meshway_underlay::SocketFactory::observe_remotes(self, remotes);
     }
     fn connect_endpoint<'a>(
         &'a self,

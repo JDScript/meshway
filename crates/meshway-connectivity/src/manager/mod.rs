@@ -1198,6 +1198,9 @@ impl Manager {
                         WALL.elapsed(received_at.elapsed());
                     }
                 }
+                if events.iter().any(|event| matches!(event, Event::Changed)) {
+                    self.observe_remotes();
+                }
                 return events;
             }
             tokio::task::yield_now().await;

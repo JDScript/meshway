@@ -78,6 +78,11 @@ pub(in crate::manager::tests) struct Factory {
     /// State references each traversal socket was rebound to, in order.
     pub(in crate::manager::tests) rebinds:
         Arc<Mutex<Vec<meshway_control::connectivity::SocketReference>>>,
+    /// Addresses the simulated host does not have now: a bind to one fails
+    /// as the kernel's `EADDRNOTAVAIL`.
+    pub(in crate::manager::tests) absent: Mutex<BTreeSet<std::net::IpAddr>>,
+    /// Every remote set the Manager told the host it sends to.
+    pub(in crate::manager::tests) remotes: Mutex<Vec<Vec<std::net::IpAddr>>>,
 }
 
 /// Coordination authority that grants no target: binding only.
@@ -120,6 +125,16 @@ impl crate::DatagramAuthorization for Unauthorized {
     }
 }
 impl Factory {
+    fn present(&self, key: &str, address: SocketAddr) -> Result<(), Error> {
+        if self.absent.lock().unwrap().contains(&address.ip()) {
+            return Err(bind_error(
+                key,
+                address,
+                io::ErrorKind::AddrNotAvailable.into(),
+            ));
+        }
+        Ok(())
+    }
     pub(in crate::manager::tests) fn endpoint(&self, socket: UdpSocket) -> Box<dyn Datagram> {
         Box::new(Endpoint {
             inner: UdpTransport::adopt(socket, &Default::default()).unwrap(),
@@ -237,6 +252,7 @@ impl SocketFactory for Factory {
         Box::pin(async move {
             let cfg = crate::plan::Plan::new(desired)?;
             let address = listener_address(cfg.listeners[key].declaration())?;
+            self.present(key, address)?;
             let reserved = self.tcp.lock().unwrap().remove(&address);
             let socket = match reserved {
                 Some(socket) => socket,
@@ -274,6 +290,7 @@ impl SocketFactory for Factory {
                 return Err(Error::Configuration);
             };
             let address = SocketAddr::new(listener.listen, listener.listen_port.get());
+            self.present(key, address)?;
             let reserved = self.udp.lock().unwrap().remove(&address);
             let socket = match reserved {
                 Some(socket) => socket,
@@ -284,5 +301,11 @@ impl SocketFactory for Factory {
             assert_eq!(socket.local_addr()?.port(), listener.listen_port.get());
             Ok(self.endpoint(socket))
         })
+    }
+    fn address_assigned<'a>(&'a self, address: std::net::IpAddr) -> BoxFuture<'a, Option<bool>> {
+        Box::pin(async move { Some(!self.absent.lock().unwrap().contains(&address)) })
+    }
+    fn observe_remotes(&self, remotes: Vec<std::net::IpAddr>) {
+        self.remotes.lock().unwrap().push(remotes);
     }
 }

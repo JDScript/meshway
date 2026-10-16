@@ -110,6 +110,193 @@ async fn external_changes_are_classified_as_path_or_refresh() {
     task.abort();
 }
 
+/// Wait for the next classified change after `before` and return its class.
+async fn next_class(
+    changes: &mut tokio::sync::watch::Receiver<crate::NetworkChange>,
+    what: &str,
+) -> crate::NetworkChangeClass {
+    let before = changes.borrow_and_update().epoch;
+    let change = *tokio::time::timeout(
+        Duration::from_secs(3),
+        changes.wait_for(|change| change.epoch > before),
+    )
+    .await
+    .unwrap_or_else(|_| panic!("no change classified: {what}"))
+    .unwrap();
+    settled(changes).await;
+    change.class.unwrap()
+}
+
+/// The VM case of OPS13: the Server is reached over IPv6 (unchanged), the
+/// peer over IPv4; a second IPv4 address (IFA_F_SECONDARY) and a default
+/// route source moved to it are path changes. An IPv6 temporary address
+/// (IFA_F_TEMPORARY, the same flag bit) and a route toward no reference are
+/// refreshes.
+#[tokio::test]
+#[ignore = "isolated Linux NET_ADMIN namespace required"]
+async fn addresses_by_family_and_routes_toward_remotes_classify_the_path() {
+    use rtnetlink::{
+        RouteMessageBuilder,
+        packet_route::address::{AddressAttribute, AddressFlags},
+    };
+    use std::net::{Ipv4Addr, Ipv6Addr};
+    isolated();
+    let temp = tempfile::tempdir().unwrap();
+    let directory = Arc::new(Directory::open(&temp.path().join("node"), "node.lock").unwrap());
+    let host = crate::Host::open(directory, Options::default())
+        .await
+        .unwrap();
+    let mut changes = host.network_changes();
+    let (handle, task) = foreign().await;
+    let index = dummy(&handle, "r3-roam").await;
+    tokio::time::timeout(Duration::from_secs(3), changes.wait_for(|c| c.path >= 1))
+        .await
+        .unwrap()
+        .unwrap();
+    settled(&mut changes).await;
+    let primary: Ipv4Addr = "192.0.2.77".parse().unwrap();
+    let secondary: Ipv4Addr = "192.0.2.78".parse().unwrap();
+    let gateway: Ipv4Addr = "192.0.2.1".parse().unwrap();
+    handle
+        .address()
+        .add(index, primary.into(), 24)
+        .execute()
+        .await
+        .unwrap();
+    assert_eq!(
+        next_class(&mut changes, "primary IPv4 address").await,
+        crate::NetworkChangeClass::Path
+    );
+    // The Server over IPv6, on the same interface; its route never changes.
+    let mut add = handle
+        .address()
+        .add(index, "2001:db8:1::7".parse().unwrap(), 64);
+    add.message_mut()
+        .attributes
+        .push(AddressAttribute::Flags(AddressFlags::Nodad));
+    add.execute().await.unwrap();
+    assert_eq!(
+        next_class(&mut changes, "IPv6 address").await,
+        crate::NetworkChangeClass::Path
+    );
+    host.kernel
+        .shared
+        .network
+        .control_reached("2001:db8:1::443".parse().unwrap());
+    // The peer over IPv4, its route sourced from the primary address.
+    let toward_peer = |source: Ipv4Addr| {
+        RouteMessageBuilder::<Ipv4Addr>::new()
+            .destination_prefix("198.51.100.0".parse().unwrap(), 24)
+            .gateway(gateway)
+            .pref_source(source)
+            .output_interface(index)
+            .build()
+    };
+    handle
+        .route()
+        .add(toward_peer(primary))
+        .execute()
+        .await
+        .unwrap();
+    next_class(&mut changes, "route toward the peer's prefix").await;
+    host.sockets()
+        .observe_remotes(["198.51.100.9".parse::<IpAddr>().unwrap()]);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    // IFA_F_SECONDARY: a second address of the same IPv4 prefix is effective.
+    handle
+        .address()
+        .add(index, secondary.into(), 24)
+        .execute()
+        .await
+        .unwrap();
+    assert_eq!(
+        next_class(&mut changes, "secondary IPv4 address").await,
+        crate::NetworkChangeClass::Path,
+        "an IPv4 secondary address is an effective address"
+    );
+    // Only the IPv4 source toward the peer moves; the IPv6 route to the
+    // Server, links and addresses are as they were.
+    handle
+        .route()
+        .add(toward_peer(secondary))
+        .replace()
+        .execute()
+        .await
+        .unwrap();
+    assert_eq!(
+        next_class(&mut changes, "IPv4 source toward the peer").await,
+        crate::NetworkChangeClass::Path,
+        "the marked IPv4 route toward a remote is part of the path"
+    );
+    // A route toward no reference destination.
+    handle
+        .route()
+        .add(
+            RouteMessageBuilder::<Ipv4Addr>::new()
+                .destination_prefix("203.0.113.0".parse().unwrap(), 24)
+                .gateway(gateway)
+                .output_interface(index)
+                .build(),
+        )
+        .execute()
+        .await
+        .unwrap();
+    assert_eq!(
+        next_class(&mut changes, "route toward no reference").await,
+        crate::NetworkChangeClass::Refresh
+    );
+    // IFA_F_TEMPORARY: the kernel derives a privacy address from a managed
+    // one (`use_tempaddr` of the fixture namespace); the managed address is
+    // a path change, the temporary one's removal only a refresh.
+    let mut add = handle
+        .address()
+        .add(index, "2001:db8:2::1".parse().unwrap(), 64);
+    add.message_mut().attributes.push(AddressAttribute::Flags(
+        AddressFlags::Nodad | AddressFlags::Managetempaddr,
+    ));
+    add.execute().await.unwrap();
+    assert_eq!(
+        next_class(&mut changes, "managed IPv6 address").await,
+        crate::NetworkChangeClass::Path
+    );
+    let temporary = {
+        use futures_util::TryStreamExt;
+        let mut addresses = handle
+            .address()
+            .get()
+            .set_link_index_filter(index)
+            .execute();
+        let mut found = None;
+        while let Some(address) = addresses.try_next().await.unwrap() {
+            let flags = address
+                .attributes
+                .iter()
+                .find_map(|attribute| match attribute {
+                    AddressAttribute::Flags(flags) => Some(flags.bits()),
+                    _ => None,
+                });
+            let in_prefix = address.attributes.iter().any(|attribute| {
+                matches!(attribute, AddressAttribute::Address(IpAddr::V6(ip))
+                    if ip.segments()[..4] == "2001:db8:2::".parse::<Ipv6Addr>().unwrap().segments()[..4])
+            });
+            if in_prefix && flags.is_some_and(|flags| flags & 0x01 != 0) {
+                found = Some(address);
+            }
+        }
+        found.expect("the kernel created a temporary address (use_tempaddr=2)")
+    };
+    handle.address().del(temporary).execute().await.unwrap();
+    assert_eq!(
+        next_class(&mut changes, "temporary IPv6 address removed").await,
+        crate::NetworkChangeClass::Refresh,
+        "an IPv6 temporary address is not followed"
+    );
+    host.kernel.shared.check().unwrap();
+    handle.link().del(index).execute().await.unwrap();
+    host.shutdown(false).await.unwrap();
+    task.abort();
+}
+
 #[tokio::test]
 #[ignore = "isolated Linux NET_ADMIN namespace required"]
 async fn own_capture_rules_removed_outside_their_owner_are_reinstalled_boundedly() {

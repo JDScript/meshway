@@ -4,7 +4,9 @@
 //! the Manager from installing everything else, nor stays unbound until the
 //! Node restarts: its own owner retries the bind under the current content,
 //! starting after 1 s and doubling to 60 s (60 s throughout for a cause that
-//! needs an operator), and reports why it is unavailable until it binds.
+//! needs an operator), and reports why it is unavailable until it binds. A
+//! path change (an address may have come back) runs the next attempt at once
+//! and starts the backoff over.
 use super::*;
 use std::time::Duration;
 
@@ -157,9 +159,18 @@ pub(super) async fn bind(
 }
 
 impl Shared {
-    fn record_unbound(&self, token: u64, key: &str, error: &Error, attempts: u32) -> Duration {
+    /// `step` counts the failures since the backoff last started over;
+    /// `attempts` all of them.
+    fn record_unbound(
+        &self,
+        token: u64,
+        key: &str,
+        error: &Error,
+        attempts: u32,
+        step: u32,
+    ) -> Duration {
         let recoverable = recoverable(error);
-        let wait = delay(recoverable, attempts);
+        let wait = delay(recoverable, step);
         let report = ListenerUnavailable {
             key: key.to_owned(),
             address: match error {
@@ -198,10 +209,17 @@ async fn retry(
     rebound: mpsc::Sender<Rebound>,
 ) {
     let mut attempts = 1;
+    let mut step = 1;
+    let mut roams = shared.roams.subscribe();
+    roams.borrow_and_update();
     loop {
         tokio::select! {
             _ = shared.stop.cancelled() => return,
             _ = tokio::time::sleep(wait) => {}
+            Ok(()) = roams.changed() => {
+                roams.borrow_and_update();
+                step = 0;
+            }
         }
         match bind(&shared, &factory, traversal, &key).await {
             Ok(bound) => {
@@ -216,7 +234,8 @@ async fn retry(
             }
             Err(error) => {
                 attempts += 1;
-                wait = shared.record_unbound(token, &key, &error, attempts);
+                step += 1;
+                wait = shared.record_unbound(token, &key, &error, attempts, step);
             }
         }
     }
@@ -227,7 +246,7 @@ impl Manager {
     pub(super) fn retry_listener(&mut self, key: String, error: &Error) -> Result<(), Error> {
         self.rebind_tokens = self.rebind_tokens.checked_add(1).ok_or(Error::Capacity)?;
         let token = self.rebind_tokens;
-        let wait = self.shared.record_unbound(token, &key, error, 1);
+        let wait = self.shared.record_unbound(token, &key, error, 1, 1);
         let factory = self.factory.clone();
         let traversal = self.traversal.is_some();
         let sender = self.rebound_sender.clone();

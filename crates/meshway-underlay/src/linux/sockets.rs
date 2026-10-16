@@ -128,6 +128,24 @@ impl SocketFactory {
             .source
     }
 
+    /// Whether `address` is assigned to this host now (its marked route is
+    /// the local table's); `None` when the kernel cannot tell (no route at
+    /// all, no answer).
+    pub async fn address_assigned(&self, address: std::net::IpAddr) -> Option<bool> {
+        let routes = self.shared.network.routes.as_ref()?;
+        super::kernel::network::route(routes, address, self.shared.mark.value)
+            .await
+            .map(|route| route.local)
+    }
+
+    /// The remotes this Node's connectivity sends to now, in priority order:
+    /// the network fingerprint follows the marked route toward each of them,
+    /// so a change of only that route is a path change. An observation; it
+    /// authorizes no recipient.
+    pub fn observe_remotes(&self, remotes: impl IntoIterator<Item = std::net::IpAddr>) {
+        self.shared.network.remotes_observed(remotes);
+    }
+
     /// The Host's installed content, for consumers that address sockets by
     /// resource only.
     pub fn installed(&self) -> Result<Desired> {

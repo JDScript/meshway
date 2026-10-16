@@ -10,6 +10,7 @@ use meshway_transport::spec::NativeUdpDialer;
 use support::{Netmaps, eventually, links};
 
 mod rebind;
+mod roam;
 pub(in crate::manager) mod support;
 
 fn limits(idle: Duration) -> Limits {

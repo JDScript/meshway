@@ -367,10 +367,10 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                     // The Manager reacts on its own sockets and channels;
                     // identity, content and leases stay as they are.
                     if let Some(manager) = engine
-                        .components()
+                        .components_mut()
                         .installed
-                        .as_ref()
-                        .and_then(|state| state.manager.as_ref())
+                        .as_mut()
+                        .and_then(|state| state.manager.as_mut())
                     {
                         match manager.path_changed().await {
                             Ok(roamed) => tracing::debug!(
@@ -379,6 +379,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                                 datagram_channels = roamed.datagram_channels,
                                 streams_retired = roamed.streams_retired,
                                 observations_withdrawn = roamed.observations_withdrawn,
+                                listeners_unbound = roamed.listeners_unbound,
                                 "Underlay path changed"
                             ),
                             Err(error) => {

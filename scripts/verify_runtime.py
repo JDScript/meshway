@@ -53,10 +53,11 @@ KERNEL_TESTS = {
     "underlay-roam-classify": "linux::kernel::tests::roaming::external_changes_are_classified_as_path_or_refresh",
     "underlay-roam-repair": "linux::kernel::tests::roaming::own_capture_rules_removed_outside_their_owner_are_reinstalled_boundedly",
     "underlay-roam-overlap": "linux::kernel::tests::roaming::an_external_address_inside_a_mesh_pool_fails_closed_until_it_leaves",
+    "underlay-roam-family": "linux::kernel::tests::roaming::addresses_by_family_and_routes_toward_remotes_classify_the_path",
 }
 # Kernel tests that create their own dummy interfaces: no underlay address,
 # so the fixed fixture address plan (routers, relays, replacement) is unchanged.
-NETWORKLESS_TESTS = ("underlay-roam-classify", "underlay-roam-repair", "underlay-roam-overlap")
+NETWORKLESS_TESTS = ("underlay-roam-classify", "underlay-roam-repair", "underlay-roam-overlap", "underlay-roam-family")
 
 
 def fingerprint():
@@ -386,6 +387,12 @@ def main():
         if role == "underlay-negative":
             command.extend(["--sysctl", "net.ipv4.conf.all.rp_filter=0",
                             "--sysctl", "net.ipv4.conf.default.rp_filter=0"])
+        if role == "underlay-roam-family":
+            # IPv6 on the test's own dummy interface, and the kernel's
+            # privacy addresses for the managed address it adds.
+            command.extend(["--sysctl", "net.ipv6.conf.all.disable_ipv6=0",
+                            "--sysctl", "net.ipv6.conf.default.disable_ipv6=0",
+                            "--sysctl", "net.ipv6.conf.default.use_tempaddr=2"])
         if address:
             command.extend(["--ip", str(address)])
         if address6:

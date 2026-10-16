@@ -11,6 +11,9 @@ pub struct Roamed {
     pub datagram_channels: usize,
     /// Stream channels retired because their local source left the route.
     pub streams_retired: usize,
+    /// Listeners bound to a specific address that is no longer assigned:
+    /// closed, their bind retried ([`crate::manager`] listener retry).
+    pub listeners_unbound: usize,
     /// STUN observations made on the previous path, withdrawn.
     pub observations_withdrawn: usize,
 }
@@ -27,8 +30,11 @@ impl Manager {
     ///   round trip and challenges it;
     /// - candidate pacing of every peer starts over (`own_network`);
     /// - a stream channel whose local address is no longer the marked
-    ///   route's source toward its remote is retired and dialed again.
-    pub async fn path_changed(&self) -> Result<Roamed, Error> {
+    ///   route's source toward its remote is retired and dialed again;
+    /// - a listener bound to a specific address the host no longer has is
+    ///   closed and its bind retried; every listener bind being retried runs
+    ///   again now, its backoff starting over (the address may be back).
+    pub async fn path_changed(&mut self) -> Result<Roamed, Error> {
         self.check_view()?;
         let mut report = Roamed::default();
         {
@@ -74,6 +80,7 @@ impl Manager {
                 report.streams_retired += 1;
             }
         }
+        report.listeners_unbound = self.unbind_departed_listeners().await?;
         if report.observations_withdrawn != 0 {
             let _ = self.shared.control_events.try_send(Event::Changed);
         }
@@ -84,9 +91,90 @@ impl Manager {
                 datagram_channels = report.datagram_channels,
                 streams_retired = report.streams_retired,
                 observations_withdrawn = report.observations_withdrawn,
+                listeners_unbound = report.listeners_unbound,
                 "Connectivity roam"
             );
         }
         Ok(report)
+    }
+}
+
+/// The remotes this Node sends to now, in priority order: every selected
+/// channel's remote, then the literal dial candidates (configured and from
+/// facts) of the peers it may dial without a channel. The host's change
+/// classification follows the route toward each ([`SocketFactory::observe_remotes`]).
+fn remotes(shared: &Shared) -> Result<Vec<std::net::IpAddr>, Error> {
+    let plan = shared.plan();
+    let mut out = Vec::new();
+    let connected: std::collections::BTreeSet<NodeId> = {
+        let links = shared.links.lock().map_err(|_| Error::Worker)?;
+        out.extend(links.values().map(|link| link.fact.remote.ip()));
+        links.keys().copied().collect()
+    };
+    let now = chrono::Utc::now().timestamp_millis();
+    for peer in plan.dial_peers() {
+        if connected.contains(&peer) {
+            continue;
+        }
+        let facts = shared.facts.get(peer);
+        for (_, candidate) in plan.outgoing(peer)? {
+            let network = if candidate.parameters.transport() == TransportProtocol::NativeUdp {
+                meshway_model::state::SocketNetwork::Udp
+            } else {
+                meshway_model::state::SocketNetwork::Tcp
+            };
+            let learned = facts.iter().flat_map(|facts| {
+                crate::plan::fact_endpoints(facts, &candidate.listener_key, network, now)
+            });
+            out.extend(
+                candidate
+                    .endpoints
+                    .iter()
+                    .cloned()
+                    .chain(learned)
+                    .filter_map(|endpoint| endpoint.host.parse::<std::net::IpAddr>().ok()),
+            );
+        }
+    }
+    Ok(out)
+}
+
+impl Manager {
+    /// Close every listener whose specific bound address is no longer
+    /// assigned and hand its key to the bind retry. A wildcard listener
+    /// never moves; an address the host cannot answer for is kept.
+    async fn unbind_departed_listeners(&mut self) -> Result<usize, Error> {
+        let mut departed = Vec::new();
+        for fact in &self.listeners {
+            let ip = fact.local.ip();
+            if !ip.is_unspecified() && self.factory.address_assigned(ip).await == Some(false) {
+                departed.push((fact.key.clone(), fact.local));
+            }
+        }
+        for (key, address) in &departed {
+            let owners = self.retire_keys(&[resources::Key::Listener(key.clone())]);
+            self.join_retired(owners).await?;
+            tracing::warn!(key, %address, "Listener address left the host; closing it and retrying its bind");
+            self.retry_listener(
+                key.clone(),
+                &Error::Bind {
+                    key: key.clone(),
+                    address: *address,
+                    source: std::io::ErrorKind::AddrNotAvailable.into(),
+                },
+            )?;
+        }
+        if !departed.is_empty() {
+            let _ = self.shared.control_events.try_send(Event::Changed);
+        }
+        Ok(departed.len())
+    }
+
+    /// Tell the host which remotes this Node sends to now.
+    pub(super) fn observe_remotes(&self) {
+        match remotes(&self.shared) {
+            Ok(remotes) => self.factory.observe_remotes(remotes),
+            Err(error) => tracing::debug!(%error, "Connectivity remotes not observed"),
+        }
     }
 }

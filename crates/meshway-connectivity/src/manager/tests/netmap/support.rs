@@ -214,6 +214,8 @@ impl Netmaps {
             traversal_binds: AtomicUsize::new(0),
             traversal_listeners: AtomicUsize::new(0),
             rebinds: Arc::default(),
+            absent: Mutex::default(),
+            remotes: Mutex::default(),
         })
     }
 
