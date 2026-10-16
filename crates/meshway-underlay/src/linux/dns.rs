@@ -263,40 +263,63 @@ impl Upstreams {
     }
 
     /// The configuration's generation (it changes with the configuration)
-    /// and the configuration; `None` without a usable upstream.
+    /// and the configuration; `None` without a usable upstream. Files that
+    /// could not be read (an I/O error, not their absence) tell nothing:
+    /// the configuration in use stays and the next lookup reads them again.
     async fn current(&self) -> Result<(u64, UpstreamConfig)> {
         let Some(paths) = &self.paths else {
             let current = self.current.lock().map_err(|_| Error::Worker)?;
             return Ok((current.generation, current.config.clone()));
         };
-        let stamp = UpstreamStamp {
-            target: tokio::fs::canonicalize(&paths.resolv).await.ok(),
-            // An unreadable file is no upstream, as an absent one.
-            resolv: stamp(&paths.resolv).await.ok().flatten(),
-            upstream: stamp(&paths.upstream).await.ok().flatten(),
-        };
-        {
-            let current = self.current.lock().map_err(|_| Error::Worker)?;
-            if current.stamp.as_ref() == Some(&stamp) {
-                return Ok((current.generation, current.config.clone()));
+        let read = async {
+            let stamp = UpstreamStamp {
+                target: absent(tokio::fs::canonicalize(&paths.resolv).await)?,
+                resolv: stamp(&paths.resolv).await?,
+                upstream: stamp(&paths.upstream).await?,
+            };
+            {
+                let current = self.current.lock().map_err(|_| Error::Worker)?;
+                if current.stamp.as_ref() == Some(&stamp) {
+                    return Ok(None);
+                }
+            }
+            let config = system_config(paths, stamp.target.as_deref())
+                .await?
+                .map(|(config, parsed)| (config, options(parsed, self.timeout)));
+            Ok::<_, Error>(Some((stamp, config)))
+        }
+        .await;
+        let mut current = self.current.lock().map_err(|_| Error::Worker)?;
+        match read {
+            Ok(Some((stamp, config))) => {
+                if current.stamp.is_some() {
+                    tracing::info!(
+                        upstreams = config
+                            .as_ref()
+                            .map_or(0, |(config, _)| config.name_servers().len()),
+                        "Bootstrap resolver upstreams changed; using the current configuration"
+                    );
+                }
+                current.generation = current.generation.wrapping_add(1);
+                current.stamp = Some(stamp);
+                current.config = config;
+            }
+            Ok(None) => {}
+            Err(Error::Worker) => return Err(Error::Worker),
+            Err(error) => {
+                tracing::debug!(%error, "Bootstrap resolver upstream files unreadable; read again on the next lookup");
             }
         }
-        let config = system_config(paths, stamp.target.as_deref())
-            .await
-            .map(|(config, parsed)| (config, options(parsed, self.timeout)));
-        let mut current = self.current.lock().map_err(|_| Error::Worker)?;
-        if current.stamp.is_some() {
-            tracing::info!(
-                upstreams = config
-                    .as_ref()
-                    .map_or(0, |(config, _)| config.name_servers().len()),
-                "Bootstrap resolver upstreams changed; using the current configuration"
-            );
-        }
-        current.generation = current.generation.wrapping_add(1);
-        current.stamp = Some(stamp);
-        current.config = config;
         Ok((current.generation, current.config.clone()))
+    }
+}
+
+/// A path's value, `None` when it does not exist.
+fn absent<T>(result: io::Result<T>) -> io::Result<Option<T>> {
+    match result {
+        Ok(value) => Ok(Some(value)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
     }
 }
 
@@ -314,32 +337,52 @@ fn options(mut options: ResolverOpts, timeout: Duration) -> ResolverOpts {
 async fn system_config(
     paths: &SystemPaths,
     target: Option<&std::path::Path>,
-) -> Option<(ResolverConfig, ResolverOpts)> {
-    let mut parsed = match read_bounded(&paths.resolv).await {
-        Ok(bytes) => hickory_resolver::system_conf::parse_resolv_conf(&bytes).ok(),
-        Err(_) => None,
+) -> Result<Option<(ResolverConfig, ResolverOpts)>> {
+    let parse = async |path: &std::path::Path| -> Result<_> {
+        #[cfg(test)]
+        if tests::FAILING_READS
+            .fetch_update(
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+                |left| left.checked_sub(1),
+            )
+            .is_ok()
+        {
+            return Err(io::Error::from(io::ErrorKind::Interrupted).into());
+        }
+        Ok(match read_bounded(path).await {
+            Ok(bytes) => hickory_resolver::system_conf::parse_resolv_conf(&bytes).ok(),
+            // Absent, or larger than any resolver file: no upstream.
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::NotFound | io::ErrorKind::InvalidData
+                ) =>
+            {
+                None
+            }
+            Err(error) => return Err(error.into()),
+        })
     };
+    let mut parsed = parse(&paths.resolv).await?;
     if parsed
         .as_ref()
         .is_some_and(|(cfg, _)| cfg.name_servers().iter().any(|s| s.ip.is_loopback()))
     {
         parsed = if target == Some(paths.stub.as_path()) {
-            match read_bounded(&paths.upstream).await {
-                Ok(bytes) => hickory_resolver::system_conf::parse_resolv_conf(&bytes).ok(),
-                Err(_) => None,
-            }
+            parse(&paths.upstream).await?
         } else {
             None
         };
     }
-    parsed.filter(|(cfg, _)| {
+    Ok(parsed.filter(|(cfg, _)| {
         !cfg.name_servers().is_empty()
             && cfg.name_servers().len() <= 8
             && cfg
                 .name_servers()
                 .iter()
                 .all(|s| !s.ip.is_loopback() && !s.ip.is_unspecified() && !s.ip.is_multicast())
-    })
+    }))
 }
 
 fn build(
@@ -586,6 +629,45 @@ impl futures_util::io::AsyncWrite for DnsTcp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Upstream file reads that fail with an I/O error (not absence), for the
+    /// next reads.
+    pub(super) static FAILING_READS: std::sync::atomic::AtomicU32 =
+        std::sync::atomic::AtomicU32::new(0);
+
+    /// F6a B5: an unreadable upstream file is unknown, not "no upstream":
+    /// once it reads again, unchanged, its upstreams are used.
+    #[tokio::test]
+    async fn an_upstream_file_unreadable_once_is_read_again_unchanged() {
+        let root = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(root.path()).unwrap();
+        let paths = SystemPaths {
+            resolv: root.join("resolv.conf"),
+            stub: root.join("stub-resolv.conf"),
+            upstream: root.join("upstream.conf"),
+        };
+        std::fs::write(&paths.resolv, "nameserver 192.0.2.1\n").unwrap();
+        let upstreams = Upstreams::system(paths, Duration::from_secs(1));
+        FAILING_READS.store(1, std::sync::atomic::Ordering::SeqCst);
+        assert!(servers(&upstreams.current().await.unwrap().1).is_empty());
+        assert_eq!(FAILING_READS.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(
+            servers(&upstreams.current().await.unwrap().1),
+            ["192.0.2.1".parse::<IpAddr>().unwrap()]
+        );
+        // Unreadable again later: the upstreams in use stay.
+        std::fs::write(root.join("next"), "nameserver 192.0.2.2\n").unwrap();
+        std::fs::rename(root.join("next"), root.join("resolv.conf")).unwrap();
+        FAILING_READS.store(1, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(
+            servers(&upstreams.current().await.unwrap().1),
+            ["192.0.2.1".parse::<IpAddr>().unwrap()]
+        );
+        assert_eq!(
+            servers(&upstreams.current().await.unwrap().1),
+            ["192.0.2.2".parse::<IpAddr>().unwrap()]
+        );
+    }
 
     async fn addresses(hosts: &HostsFile, name: &str) -> Vec<IpAddr> {
         let query = hickory_proto::op::Query::query(
