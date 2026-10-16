@@ -2,7 +2,9 @@
 
 按合入 main 的顺序记录工作包、提交与证据 ID。规则见[工程流程](/v2/process)；性能数字的口径见[分层性能测量](/v2/node/performance)，验收状态见[验收范围](/v2/node/validation)。
 
-## 未发布
+## v0.1.0-alpha.16
+
+范围：wire 6、IPC 12、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约均不变（普通升级，无断网窗口；只改 Node；新增的公开错误 `Error::Drain` 是 Rust API，不是 wire）。X15：网络 worker 事件循环的 DNS 失败／恢复改为边沿、到期的宿主内核归属重证最先选中，出口 owner 停止即拒绝已排队请求，控制中继监听失败与容量满为暂态，monitor drain 超时与本期连接结束归暂态；以及下列 X15 工作包。
 
 worker 忙循环与控制中继暂态（X15，`x15/worker-livelock`）：wire 6、IPC 12、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约均不变（只改 Node；Status 字段不变）。
 
