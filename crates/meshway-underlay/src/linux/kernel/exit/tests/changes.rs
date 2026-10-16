@@ -204,3 +204,87 @@ async fn failed_exit_changes_are_read_back_and_completed() {
     drop(kernel);
     tasks.shutdown().await.unwrap();
 }
+
+/// F6a B6: an aged quarantine deletion the kernel applied whose answer was
+/// lost is completed: the retry reads the set, finds the element gone and
+/// only writes the journal, instead of deleting it again until the role
+/// stops. One the kernel never saw is deleted on the retry.
+#[tokio::test]
+#[ignore = "requires an isolated Linux NFT/TUN namespace and NET_ADMIN"]
+async fn a_lost_quarantine_expiry_is_completed_from_the_read_back() {
+    assert_eq!(
+        std::env::var("MESHWAY_UNDERLAY_ISOLATED").as_deref(),
+        Ok("1")
+    );
+    let temp = tempfile::tempdir().unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(temp.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    let directory = Arc::new(Directory::open(temp.path(), "node.lock").unwrap());
+    let tasks = Tasks::new(64);
+    let mut kernel = Kernel::open(directory, Default::default(), tasks.clone())
+        .await
+        .unwrap();
+    kernel
+        .retain_negative(&["100.96.0.0/11".parse().unwrap()])
+        .await
+        .unwrap();
+    let exit_tun = tun(&kernel);
+    kernel.quiesce().await.unwrap();
+    let mut backend = create(&mut kernel, &exit_tun).await;
+    let filter = backend.ledger.program.filter();
+    for (port, lost) in [(4001, true), (4002, false)] {
+        let retired = conntrack::RetiredTuple {
+            tuple: conntrack::Tuple {
+                source: "192.0.2.9".parse().unwrap(),
+                destination: "100.96.0.1".parse().unwrap(),
+                protocol: 17,
+                source_key: 53,
+                destination_key: port,
+            },
+            sequence: 0,
+            retired_ms: 1,
+        };
+        let element = backend
+            .ledger
+            .program
+            .element("add", retired.set(), vec![retired.key()]);
+        objects::mutate(
+            &mut backend.commands,
+            &serde_json::json!({"nftables": [element]}),
+        )
+        .await
+        .unwrap();
+        backend.ledger.quarantine.push(retired.clone());
+        arm(lost);
+        let (changes, _) = tokio::sync::watch::channel(None);
+        let stop = CancellationToken::new();
+        let maintained = retried(
+            &mut backend,
+            Owner::Exit,
+            "maintain",
+            &changes,
+            &[&stop],
+            |backend: &mut backend::Backend| Box::pin(backend.maintain()),
+            |backend: &mut backend::Backend| Box::pin(backend.reread_maintain()),
+        )
+        .await;
+        assert!(maintained.is_ok(), "{}: {maintained:?}", label(lost));
+        assert_eq!(LOST_CHANGES.load(SeqCst) + FAILING_CHANGES.load(SeqCst), 0);
+        assert!(backend.ledger.quarantine.is_empty(), "{}", label(lost));
+        let dump = objects::dump(&mut backend.commands, &backend.ledger.program)
+            .await
+            .unwrap();
+        assert!(
+            dump.elements
+                .get(&format!("inet/{filter}/set/quarantine"))
+                .is_none_or(Vec::is_empty),
+            "{}",
+            label(lost)
+        );
+        assert!(matches!(backend.check().await, Verification::Holds));
+    }
+    drop(backend);
+    drop(exit_tun);
+    drop(kernel);
+    tasks.shutdown().await.unwrap();
+}

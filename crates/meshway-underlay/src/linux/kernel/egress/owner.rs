@@ -1,7 +1,7 @@
 use super::super::{
     monitor::Expected,
     tool::{child::Fence, command::Commands},
-    verification::{Boxed, Owner as Verified, Unverified, Verification, retried},
+    verification::{Boxed, Cadence, Owner as Verified, Unverified, Verification, retried},
 };
 use super::{
     backend::Backend,
@@ -404,15 +404,17 @@ impl super::super::Kernel {
         let expected = self.expected.clone();
         let task = tokio::spawn(async move {
             let mut unverified = Unverified::new(Verified::Egress);
-            let mut tick = tokio::time::interval(Duration::from_secs(1));
-            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            // Due a full second after the last audit ended: a slow audit
+            // never starves the requests queued behind it.
+            let mut audit = Cadence::new(Duration::from_secs(1));
             loop {
                 tokio::select! { biased;
                     _ = stop.cancelled() => break,
                     _ = shared.tasks.stop.cancelled() => break,
                     _ = shared.conflict.cancelled() => break,
-                    _ = tick.tick() => {
+                    _ = audit.due() => {
                         let verification = backend.check().await;
+                        audit.ran();
                         if let Err(reason) = unverified.record(&verification, std::time::Instant::now()) { stopped(&shared, "verify", reason, &verification); break; }
                         if unverified.unknown() { continue; }
                         // Only withdrawal or a different plan withdraws an

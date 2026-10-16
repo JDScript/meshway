@@ -385,9 +385,82 @@ pub(super) fn uncertain(error: &Error) -> bool {
     matches!(error, Error::Netlink | Error::Conflict | Error::Io(_))
 }
 
+/// A periodic duty of an owner loop (an audit, maintenance): due a full
+/// period after its last run ended, never at once again after a run that
+/// took longer than the period. Requests queued behind a slow but successful
+/// duty are therefore served between its runs.
+pub(super) struct Cadence {
+    period: Duration,
+    at: tokio::time::Instant,
+}
+
+impl Cadence {
+    /// The first run is due now.
+    pub fn new(period: Duration) -> Self {
+        Self {
+            period,
+            at: tokio::time::Instant::now(),
+        }
+    }
+    pub async fn due(&self) {
+        tokio::time::sleep_until(self.at).await;
+    }
+    /// The run that was due ended now.
+    pub fn ran(&mut self) {
+        self.at = tokio::time::Instant::now() + self.period;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// F6a B2: an audit that always takes 1.5 s against a 1 s period, ahead
+    /// of requests in a biased owner loop (stop first, then the audit, then
+    /// requests): every request is still answered, one between audits.
+    #[tokio::test(start_paused = true)]
+    async fn requests_are_served_between_slow_but_successful_audits() {
+        let (sender, mut requests) =
+            tokio::sync::mpsc::channel::<tokio::sync::oneshot::Sender<()>>(8);
+        let stop = tokio_util::sync::CancellationToken::new();
+        let owner = tokio::spawn({
+            let stop = stop.clone();
+            async move {
+                let mut audit = Cadence::new(Duration::from_secs(1));
+                let mut audits = 0u32;
+                loop {
+                    tokio::select! { biased;
+                        _ = stop.cancelled() => break,
+                        _ = audit.due() => {
+                            tokio::time::sleep(Duration::from_millis(1500)).await;
+                            audit.ran();
+                            audits += 1;
+                        },
+                        request = requests.recv() => {
+                            let Some(reply) = request else { break };
+                            let _ = reply.send(());
+                        },
+                    }
+                }
+                audits
+            }
+        });
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        for _ in 0..5 {
+            let (reply, answered) = tokio::sync::oneshot::channel();
+            sender.send(reply).await.unwrap();
+            tokio::time::timeout(Duration::from_secs(5), answered)
+                .await
+                .expect("a request queued behind a slow audit is answered")
+                .unwrap();
+        }
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        stop.cancel();
+        assert!(
+            owner.await.unwrap() >= 2,
+            "the audits kept running meanwhile"
+        );
+    }
 
     /// Failed reads keep ownership and are retried; a consistent read-back
     /// clears them. Only a differing read-back, or reads failing for the

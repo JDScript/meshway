@@ -949,24 +949,38 @@ impl Backend {
     /// covers late replies of retired flows after conntrack deletion; an
     /// entry older than [`QUARANTINE_MIN_AGE`] has outlived every kernel
     /// timeout that could still deliver such a reply.
+    ///
+    /// The kernel sets are read first and only elements still present are
+    /// deleted: a deletion the kernel applied whose answer was lost is
+    /// completed by the journal write, never retried against nothing.
     async fn expire_quarantine(&mut self, age: Duration) -> Result<()> {
         let expired = expired_quarantine(&self.ledger.quarantine, now_ms(), age)?;
         if expired.is_empty() {
             return Ok(());
         }
+        let dump = objects::dump(&mut self.commands, &self.ledger.program).await?;
+        let filter = self.ledger.program.filter();
         let elements: Vec<_> = ["quarantine", "echo_quarantine"]
             .into_iter()
             .filter_map(|name| {
+                let present = dump
+                    .elements
+                    .get(&format!("inet/{filter}/set/{name}"))
+                    .map(Vec::as_slice)
+                    .unwrap_or_default();
                 let values: Vec<_> = expired
                     .iter()
                     .filter(|old| old.set() == name)
                     .map(conntrack::RetiredTuple::key)
+                    .filter(|key| present.iter().any(|element| element_key(element) == key))
                     .collect();
                 (!values.is_empty()).then(|| self.ledger.program.element("delete", name, values))
             })
             .collect();
         // Kernel first: a crash before the journal write re-adds them.
-        objects::mutate(&mut self.commands, &json!({"nftables": elements})).await?;
+        if !elements.is_empty() {
+            objects::mutate(&mut self.commands, &json!({"nftables": elements})).await?;
+        }
         self.ledger.quarantine.retain(|old| !expired.contains(old));
         self.store.persist(&self.ledger).await
     }

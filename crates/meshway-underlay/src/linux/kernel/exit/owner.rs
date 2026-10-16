@@ -1,5 +1,7 @@
 //! Host-owned control actor and its independent bounded TUN I/O task.
-use super::super::verification::{Boxed, Owner as Verified, Unverified, Verification, retried};
+use super::super::verification::{
+    Boxed, Cadence, Owner as Verified, Unverified, Verification, retried,
+};
 use super::io::ExitCutoff as Deadline;
 use super::{
     CtConfirmation, ExitReplyReader, ExitScope, ProjectionAck,
@@ -687,10 +689,10 @@ impl super::super::Kernel {
                 oneshot::Sender<Result<CtConfirmation>>,
             )> = Vec::new();
             let mut next_poll = Instant::now();
-            let mut tick = tokio::time::interval(Duration::from_millis(100));
-            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-            let mut audit = tokio::time::interval(Duration::from_secs(1));
-            audit.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            // Each duty is due a full period after its last run ended, so a
+            // slow one never starves the requests queued behind it.
+            let mut tick = Cadence::new(Duration::from_millis(100));
+            let mut audit = Cadence::new(Duration::from_secs(1));
             let mut unverified = Unverified::new(Verified::Exit);
             loop {
                 tokio::select! { biased;
@@ -700,8 +702,9 @@ impl super::super::Kernel {
                     // A read that fails is unknown, retried next second: the
                     // role and its flows stay. Read back and different, or
                     // unknown for 30 s, ends it.
-                    _ = audit.tick() => {
+                    _ = audit.due() => {
                         let verification = backend.check().await;
+                        audit.ran();
                         if let Err(reason) = unverified.record(&verification, Instant::now()) { audit_ended(reason, &verification); break; }
                     },
                     _ = tokio::time::sleep_until(next_poll.into()), if !confirming.is_empty() => {
@@ -730,12 +733,13 @@ impl super::super::Kernel {
                         next_poll = Instant::now() + super::backend::CONFIRM_POLL;
                         if failed { break; }
                     },
-                    _ = tick.tick() => {
+                    _ = tick.due() => {
                         // Withdrawal, Host suspension or a withdrawn role stops the
                         // owner: every projection retires with its exact CT.
                         if !authority.keeps_role() { tracing::debug!(operation = "role", "Exit owner stopping: role no longer installed"); break; }
                         // Projection cutoffs and explicit revocations.
                         if retrying.change(&mut backend, "maintain", |backend: &mut Backend| Box::pin(backend.maintain()), |backend: &mut Backend| Box::pin(backend.reread_maintain())).await.is_err() { break; }
+                        tick.ran();
                     },
                     request = receiver.recv() => {
                         let Some(request) = request else { break; };
