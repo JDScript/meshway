@@ -260,7 +260,7 @@ nft 进程峰值 RSS 约 1.6 KB／区间（16,384 区间 28 MB）。带回显的
 
 | 字段 | 含义 |
 | --- | --- |
-| `requestedProfile`／`version` | 节点当前身份下的持久选择与版本；没有选择为 null（下一次节点 CAS 基准为 null） |
+| `requestedProfile`／`version` | 节点当前身份下的持久选择与版本；没有选中方案时 `requestedProfile` 为 null，清除过的选择仍带清除所用的版本，节点当前身份下从未选择过时 `version` 才为 null（即下一次节点 CAS 基准） |
 | `appliedProfile` | 生效方案：请求的方案仍在 allowed 且未被锁定时为它，否则为 `defaultProfile` |
 | `requestedUnavailable` | 请求的方案为何未生效：`notAllowed`、`locked`；生效或无请求为 null |
 | `defaultProfile`／`locked` | 合并后的 assignment 默认方案与锁定 |

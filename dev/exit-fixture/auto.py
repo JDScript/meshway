@@ -176,14 +176,15 @@ def run(c):
 
     # 6. Clearing the persistent selection follows the default `auto` again:
     # from a manual `exit`, `meshway exit --default` leaves no requested
-    # profile and resolves FR as before; returning to auto is one change.
+    # profile (the clearing's version stays, the base of the next change) and
+    # resolves FR as before; returning to auto is one change.
     if not c.applied(c.exit_cli("exit"), "exit"):
         raise RuntimeError("meshway exit exit was not applied before clearing")
     cleared = c.exit_cli("--default")
     result["steps"]["cleared"] = {"selection": cleared["local"]}
     if (not c.applied(cleared, "auto") or cleared.get("cleared") is not True
             or cleared["local"].get("requestedProfile") is not None
-            or cleared["local"].get("version") is not None):
+            or not isinstance(cleared["local"].get("version"), int)):
         raise RuntimeError("meshway exit --default did not clear the selection")
     expect("cleared", cleared["local"], "mesh", "noRuleMatched", "FR")
     if recorded(6, "cleared") != ["mesh", "mesh", "exit-alt", "exit-alt", "exit", "mesh"]:
