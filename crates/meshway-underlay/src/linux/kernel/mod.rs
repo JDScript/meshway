@@ -45,6 +45,10 @@ use plan::{
 };
 
 pub(super) struct Kernel {
+    /// Alive while this term's Kernel is: its request connections report
+    /// their own end only meanwhile (first field: dropped before `handle`,
+    /// whose drop ends the owner connection).
+    _term: Arc<()>,
     handle: Handle,
     store: Store,
     journal: Journal,
@@ -103,11 +107,18 @@ impl Kernel {
         drop(unsolicited); // request socket has no multicast subscriptions
         let conflict = CancellationToken::new();
         let ending = Arc::new(super::protection::Ending::default());
-        // A request connection that stops (its socket failed) ends the term
-        // as unavailable: nothing was read, and a re-proof opens new ones.
+        // Set once this term opened; a connection that ends before (a failed
+        // open dropping its handles) or after its Kernel is dropped is no end.
+        let term = Arc::new(std::sync::OnceLock::<std::sync::Weak<()>>::new());
+        // A request connection that stops while its Kernel lives (its socket
+        // failed) ends the term as unavailable: nothing was read, and a
+        // re-proof opens new ones.
         let connection_ended = |name: &'static str| {
-            let (conflict, ending) = (conflict.clone(), ending.clone());
+            let (conflict, ending, term) = (conflict.clone(), ending.clone(), term.clone());
             move || {
+                if term.get().and_then(std::sync::Weak::upgrade).is_none() {
+                    return;
+                }
                 tracing::warn!(
                     connection = name,
                     "Kernel netlink connection ended; kernel ownership ends"
@@ -266,7 +277,10 @@ impl Kernel {
         ))?;
         store.persist(&journal).await?;
         shared.check()?;
+        let alive = Arc::new(());
+        let _ = term.set(Arc::downgrade(&alive));
         Ok(Self {
+            _term: alive,
             handle,
             store,
             journal,

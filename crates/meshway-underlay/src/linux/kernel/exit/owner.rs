@@ -823,6 +823,12 @@ impl super::super::Kernel {
                 }
             }
             stop.cancel();
+            // A stopped owner serves nothing more: requests queued before it
+            // stopped are dropped now (their callers see `Worker` at once),
+            // never left waiting on its cleanup retries below.
+            receiver.close();
+            while receiver.try_recv().is_ok() {}
+            drop(std::mem::take(&mut confirming));
             let first = backend.begin_close(true).await;
             let io_result = io.shutdown().await;
             let mut result = match (first, io_result) {
