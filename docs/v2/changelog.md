@@ -2,6 +2,18 @@
 
 按合入 main 的顺序记录工作包、提交与证据 ID。规则见[工程流程](/v2/process)；性能数字的口径见[分层性能测量](/v2/node/performance)，验收状态见[验收范围](/v2/node/validation)。
 
+## 未发布
+
+第三轮审阅的卫生、CI 与测试确定化（F6b，`f6b/hygiene`）：wire 6、IPC 12、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约均不变（只改结构、CI 与测试；Status JSON 形状不变）。
+
+- CI：`mise.lock` 补 `linux-arm64` 平台记录（`mise lock` 生成），`perf-arm64` 不再被 `mise install --locked` 拒绝；Perf 另按 `mise.toml`／`mise.lock`／`scripts/perf/**` 触发。Validate 的 pull-request 路径补 Server 中矩阵实际经过的 `configuration/**`、`store/execution/selection.rs`、`store/netmap/**`、`http/{agent,nodes}.rs` 与根 `Cargo.toml`／`Cargo.lock`／`mise.toml`／`mise.lock`，Check 的 Rust 过滤补 `.config/nextest.toml`；`scripts/test_validate_workflow.py` 按具体子树校验。
+- 测试：`wildcard_keepalive_keeps_every_edge_of_three_nodes_resident` 等三条边都由较小 Node ID 一方拨出的最终通道收敛后才开空闲窗口（此前优选拨号方迟到的握手可在窗口内合法替换，约 1/5 失败）；`scripts/test_exit_fixture.py` 直接执行时也收集 `ExitEchoTests`，并补 probing／unavailable／缺失能力的负例。
+- 漫游 fixture：证据解析与门槛移入 `dev/roam-fixture/evidence.py`，`runtime.py` 只做 Docker 编排；`roam/relay` 要求空窗内确有新流、逐个经 R 回复且 R 收包速率 > 0，`roam/nat`／`roam/relay` 要求新穿透由 A 首先 prepare、B 在旧半边旁接受（此前空窗口、零计数或 B 先发起也能通过）；离线负例 `scripts/test_roam_fixture.py`。门槛见 [roam/nat 行](/v2/node/validation#roam-nat-row)、[roam/relay 行](/v2/node/validation#roam-relay-row)。
+- 重复实现：`meshway_model::Backoff`（有界指数退避，无状态）取代 11 处各自的倍增计算，各 owner 保留错误分类、总期限与 EACCES 固定间隔；egress 与出口共用 `tool::nft::table` 读单表并分类缺失；六处地址标志读取共用 `network::address_flags`；出口清理与内核变更重试共用 `RetryPending`（Underlay 与 IPC 各一个类型、daemon 一个转换）。
+- 删除：`CandidateHandle`／`ListenerHandle` 无读者的 getter 与字段、无构造点的 `SelectionUnavailable::MissingResolverPlan`、只剩测试消费者的 `Host::exit_cleanup()`（测试改读 `exit_cleanups()`）。
+- 结构：resolved 后端拆为 `resolved/{mod,bus,probe,tests}.rs`，系统 DNS 的 `Namespace` 移出 `system/linux/mod.rs`，`proxy` 测试与 Manager 候选节奏（`workers/pacing.rs`）各自成文件，`runtime-fixture` 的 `roam.rs`、tun 的单消费者 helper 移到 `tests/linux/`。
+- 文档：AGENTS 摘要补漫游已支持与 IPC 12 现有字段；[漫游设计](/v2/node/roaming-design)的“现状”改为 R1 前基线。
+
 ## v0.1.0-alpha.16
 
 范围：wire 6、IPC 12、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约均不变（普通升级，无断网窗口；只改 Node；新增的公开错误 `Error::Drain` 是 Rust API，不是 wire）。X15：网络 worker 事件循环的 DNS 失败／恢复改为边沿、到期的宿主内核归属重证最先选中，出口 owner 停止即拒绝已排队请求，控制中继监听失败与容量满为暂态，monitor drain 超时与本期连接结束归暂态；以及下列 X15 工作包。

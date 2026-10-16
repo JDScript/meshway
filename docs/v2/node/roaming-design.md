@@ -4,9 +4,11 @@
 >
 > 术语：本页的“漫游”指**同一 Meshway 网络内、本节点身份不变**时底层网络的变化。[CLI 表](/v2/node/runtime#cli-与-ipc)中“切网”一行指的是切换到另一张 Meshway 网络，与本页无关（见[待用户决定](#decisions) D1）。
 
-## 现状
+## R1 前基线 {#baseline}
 
-| 项 | 当前行为 | 定义位置 |
+> 以下两表是 R1 实现前（设计稿提交 `f007bde1` 时）的行为与推算，只作为本页方案的出发点保留，**不是现行行为**：R1–R3 已取代其中的变化来源、拨号端来源变化、STUN 提前观测、NAT 后重新穿透与验收各项，现行定义见[连接获取 · 漫游](/v2/node/connectivity#roaming)，验收见[漫游行](/v2/node/validation#roam-row)及其后四行。表中的源码位置是当时的位置。
+
+| 项 | R1 前行为 | 当时的定义位置 |
 | --- | --- | --- |
 | 变化来源 | Underlay rtnetlink monitor 只发一个单调计数 `network_changes`：外部接口的 up 链路增删、地址增删，以及 **main 表（254）**中出接口为外部接口的路由增删；未 up 链路、自有 TUN／出口 TUN／DNS 锚点、自有规则与私有表不计 | `crates/meshway-underlay/src/linux/kernel/monitor.rs::network_changed`；[控制调度与恢复](/v2/node/runtime#控制调度与恢复) |
 | 消费者 | ① 控制中继关闭当前连接（挂起的 `sync` 随之中断，按 1–15 s 有界退避重连）；② 网络 worker 重新采样并唤醒 State 报告（最多每秒一次，重新枚举 `localEndpoints`） | `linux/proxy.rs::relay`；`runtime/network/worker` `Work::NetworkChanged` |
@@ -19,7 +21,7 @@
 | 事实传播 | State 报告写 Server State，候选内容变化立即唤醒可见它的节点挂起的 `sync` | [Netmap · 传输](/v2/node/netmap-design#sync-transport) |
 | 验收 | 无漫游行；[nat/reconnect](/v2/node/validation#reconnect-row) 只覆盖重启与映射清空，[N3](/v2/node/validation#n3-real-network) 记“WARP 更换出口 IP 后的恢复”未观测 | [验收范围](/v2/node/validation) |
 
-据此推算的今天的结果（未实测）：
+据此推算的 R1 前结果（当时未实测；R1–R3 的实测见上述验收行）：
 
 | 情形 | 预计 |
 | --- | --- |
