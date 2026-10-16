@@ -2,8 +2,9 @@
 //! the Server State the supervisor reads (circuit and channel identities).
 use super::*;
 use crate::roam::{
-    Configured, Phase, Role as RoamRole, Topology, read, ready, stopped, wait, write,
+    Configured, Phase, Role as RoamRole, Scenario, Topology, read, ready, stopped, wait, write,
 };
+use meshway_configuration::{ProfileAssignment, RouteAction, RoutingProfile};
 
 /// A Native UDP listener on 35000; without a published endpoint the peer
 /// reaches it only through coordinated traversal (its STUN mapping).
@@ -158,6 +159,7 @@ pub(super) async fn coordinate(cli: &Cli) -> Result<()> {
             };
             config.listeners = listeners;
             config.dialers = dialers(udp);
+            config.exit_enabled = topology.scenario == Scenario::Exit && role == RoamRole::A;
         }
         let mut edges = vec![(RoamRole::A, RoamRole::B), (RoamRole::A, RoamRole::C)];
         if roles.contains(&RoamRole::R) {
@@ -193,6 +195,41 @@ pub(super) async fn coordinate(cli: &Cli) -> Result<()> {
             },
         ];
         input.routing.mesh.clear();
+        if topology.scenario == Scenario::Exit {
+            // B reaches T only through its exit A, by an IP rule (no DNS
+            // plan); the business flows to T are B's.
+            let target = format!("{}/32", topology.t.ok_or("roam exit without T")?);
+            input.access.push(AccessRule {
+                remark: "the WAN service through the roaming exit".into(),
+                src: vec![node(RoamRole::B)],
+                dst: vec![target.clone()],
+                ip: vec!["udp:42424".into(), "tcp:42425".into(), "icmp:*".into()],
+                bidirectional: false,
+            });
+            input.routing.egress.profiles.insert(
+                "exit".into(),
+                RoutingProfile {
+                    rules: vec![meshway_configuration::EgressRule {
+                        remark: "T through A".into(),
+                        matcher: meshway_configuration::RouteMatch {
+                            ip_cidr: vec![target],
+                            ..Default::default()
+                        },
+                        action: meshway_configuration::RuleAction::Exit {
+                            nodes: vec![node(RoamRole::A)],
+                            via: Vec::new(),
+                        },
+                    }],
+                    fallback: RouteAction::Direct,
+                },
+            );
+            input.routing.egress.assignments = vec![ProfileAssignment {
+                target: vec![node(RoamRole::B)],
+                allowed: vec!["exit".into(), "mesh".into()],
+                default: "exit".into(),
+                locked: false,
+            }];
+        }
         let revision = apply(&client, network, token, original.revision, &input).await?;
         let committed = source(&client, network, token).await?;
         let mut mesh = BTreeMap::new();

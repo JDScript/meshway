@@ -1,10 +1,16 @@
-//! Roaming rows (`roam/direct`, `roam/nat`, `roam/relay`, `roam/flap`): real
+//! Roaming rows (`roam/direct`, `roam/nat`, `roam/relay`, `roam/flap`,
+//! `roam/exit`): real
 //! daemons whose underlay the isolated Docker owner changes. Traffic,
 //! perturbation and measurement belong to `dev/roam-fixture/runtime.py`;
 //! these actors only run the daemons.
 use crate::{Cli, Result, actor};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use std::{collections::BTreeMap, net::Ipv4Addr, path::Path, time::Duration};
+use std::{
+    collections::BTreeMap,
+    net::{Ipv4Addr, Ipv6Addr},
+    path::Path,
+    time::Duration,
+};
 
 #[derive(Clone, Copy, PartialEq, Eq, clap::ValueEnum, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -47,12 +53,15 @@ pub enum Scenario {
     Relay,
     /// A switches uplinks back and forth quickly; B public.
     Flap,
+    /// A is B's exit; its masquerade leaves through the uplink it roams on,
+    /// toward a service T on the WAN.
+    Exit,
 }
 impl Scenario {
     pub fn phases(self) -> &'static [Phase] {
         match self {
             Self::Direct => &[Phase::Dialer, Phase::Listener],
-            Self::Flap => &[Phase::Dialer],
+            Self::Flap | Self::Exit => &[Phase::Dialer],
             Self::Nat | Self::Relay => &[Phase::Traversal],
         }
     }
@@ -97,6 +106,12 @@ pub struct Topology {
     pub a_published: Option<Ipv4Addr>,
     /// R's WAN address (`relay` only).
     pub r: Option<Ipv4Addr>,
+    /// The controller's address on a network only A and it share, which A
+    /// reaches the Server at: A's control path is IPv6 while its peers are
+    /// IPv4 (`direct` only).
+    pub controller6: Option<Ipv6Addr>,
+    /// T, the WAN service B reaches through its exit A (`exit` only).
+    pub t: Option<Ipv4Addr>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -153,7 +168,11 @@ pub async fn run(cli: &Cli, role: Role) -> Result<()> {
     }
     let topology: Topology = read(&cli.public.join("roam-topology.json")).await?;
     wait(cli, "roam-enroll").await?;
-    let mut daemon = actor::spawn_named_daemon(cli, role.name(), topology.controller)?;
+    let controller: std::net::IpAddr = match (role, topology.controller6) {
+        (Role::A, Some(controller6)) => controller6.into(),
+        _ => topology.controller.into(),
+    };
+    let mut daemon = actor::spawn_named_daemon(cli, role.name(), controller)?;
     let result = async {
         actor::wait_ipc(cli, &mut daemon).await?;
         actor::command(cli, "up").await?;

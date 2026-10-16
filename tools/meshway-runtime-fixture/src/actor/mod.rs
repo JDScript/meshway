@@ -111,8 +111,9 @@ fn spawn_daemon(cli: &Cli, role: Role, controller: std::net::Ipv4Addr) -> Result
 pub(super) fn spawn_named_daemon(
     cli: &Cli,
     name: &str,
-    controller: std::net::Ipv4Addr,
+    controller: impl Into<std::net::IpAddr>,
 ) -> Result<Child> {
+    let controller: std::net::IpAddr = controller.into();
     let mut daemon_command = Command::new(cli.binaries.join("meshwayd"));
     let filter = "info,meshway_underlay=debug,meshway_daemon=debug,meshway_dataplane::secure=debug,meshway_dataplane::flow=debug,meshway_connectivity::manager=debug,meshway_control::netmap=debug,meshway_dns=debug,meshway_daemon::runtime::network::circuit_packet=debug";
     if cli.traversal == crate::TraversalMode::Exit {

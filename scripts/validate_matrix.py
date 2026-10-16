@@ -38,6 +38,7 @@ ROWS = {
     "roam/nat": ("runtime", ("--transport", "native-udp", "--traversal", "roam", "--dns-backend", "off", "--netmap-scenario", "roam-nat")),
     "roam/relay": ("runtime", ("--transport", "native-udp", "--traversal", "roam", "--dns-backend", "off", "--netmap-scenario", "roam-relay")),
     "roam/flap": ("runtime", ("--transport", "native-udp", "--traversal", "roam", "--dns-backend", "off", "--netmap-scenario", "roam-flap")),
+    "roam/exit": ("runtime", ("--transport", "native-udp", "--traversal", "roam", "--dns-backend", "off", "--netmap-scenario", "roam-exit")),
     "netmap/offline": ("runtime", ("--transport", "native-udp", "--dns-backend", "off", "--reported-endpoints", "--netmap-scenario", "offline")),
     "netmap/revoke": ("runtime", ("--transport", "native-tcp", "--dns-backend", "off", "--netmap-scenario", "revoke")),
     "netmap/expiry": ("runtime", ("--transport", "native-udp", "--dns-backend", "off", "--netmap-scenario", "expiry")),

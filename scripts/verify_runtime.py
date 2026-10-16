@@ -198,7 +198,7 @@ def main():
     parser.add_argument("--only", choices=("main",), help="development only: controller and A/R/B; skips platform sidecars, never acceptance")
     parser.add_argument("--netmap-validity", default=None, help="explicit Server lease; default 60s, or 1800s for the offline/restart/revoke netmap scenarios")
     parser.add_argument("--netmap-scenario", choices=("offline", "revoke", "expiry", "restart", "relay", "reconnect",
-                                                      "roam-nat", "roam-relay", "roam-flap"),
+                                                      "roam-nat", "roam-relay", "roam-flap", "roam-exit"),
                         help="one netmap lifecycle row after the shared startup instead of the main sequence; "
                              "roam-* select the roaming topology of --traversal roam (default roam/direct)")
     parser.add_argument("--runtime-image-manifest", type=Path, help="explicit locked node-lab OS image")

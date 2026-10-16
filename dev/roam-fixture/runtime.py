@@ -4,17 +4,21 @@ every reaction; this supervisor only changes A's underlay and measures.
 Topology (every network an owned internal bridge):
 
     A ─ uplink1 ─ router-a1 (SNAT) ┐
-    A ─ uplink2 ─ router-a2 (SNAT) ├─ wan ─ controller, B (direct, flap), C, R (relay)
+    A ─ uplink2 ─ router-a2 (SNAT) ├─ wan ─ controller, B (direct, flap, exit), C, R (relay), T (exit)
     A ─ lan ─ C                    │
     B ─ bnet ─ router-b (SNAT) ────┘        (nat, relay)
+    A ─ srv6 ─ controller                   (direct: A's Server path is IPv6)
 
 Every router maps its actor port-preservingly and admits only replies of
 flows the actor started (port-restricted filtering).
 
 - `direct`: two phases (A dials B; B dials A at router-a1's WAN address,
-  which forwards UDP 35000 to A), each with two cells: soft (default route to
-  router-a2, then uplink1's address deleted) and hard (uplink2 disconnected,
-  uplink1 connected again and routed).
+  which forwards UDP 35000 to A), each with three cells: soft (default route
+  to router-a2, then uplink1's address deleted), hard (uplink2 disconnected,
+  uplink1 connected again and routed) and dual-stack (uplink2 attached again,
+  then only the IPv4 default route to router-a2). A reaches the Server over
+  IPv6 on its own network, so in dual-stack nothing of A's Server path, links
+  or addresses changes: only the IPv4 route toward its peers (the OPS13 VM).
 - `nat`: A and B both behind NAT, the resident A–B channel a coordinated
   traversal; the same two cells. Each new uplink is a new mapping B's NAT
   never saw, so only a new traversal joins them again.
@@ -23,12 +27,18 @@ flows the actor started (port-restricted filtering).
 - `flap`: A dials public B; A switches uplinks twice within 2 s (soft,
   default route only), three times within microseconds (burst: one path
   change after coalescing) and five times (hard, uplink1's link down and up).
+- `exit`: A is B's exit toward T on the WAN (masquerade through the uplink A
+  roams on); A dials public B; the soft and hard cells. B runs Mesh traffic to
+  A and, per cell, a new exit flow set to T; after each cell one new TCP and
+  UDP flow to T.
 """
 import ipaddress
 import json
 import shutil
 import subprocess
+import threading
 import time
+import uuid
 from datetime import datetime
 
 from node_lab import ROOT, run, sha256
@@ -37,17 +47,21 @@ from verification_sources import fingerprint
 
 NETWORKS = ("wan", "uplink1", "uplink2", "lan")
 SCENARIOS = {
-    "direct": {"phases": ("dialer", "listener"), "cells": ("soft", "hard"), "nodes": ("a", "b", "c")},
+    "direct": {"phases": ("dialer", "listener"), "cells": ("soft", "hard", "dual-stack"), "nodes": ("a", "b", "c")},
     "nat": {"phases": ("traversal",), "cells": ("soft", "hard"), "nodes": ("a", "b", "c")},
     "relay": {"phases": ("traversal",), "cells": ("soft", "hard"), "nodes": ("a", "b", "c", "r")},
     "flap": {"phases": ("dialer",), "cells": ("soft", "burst", "hard"), "nodes": ("a", "b", "c")},
+    "exit": {"phases": ("dialer",), "cells": ("soft", "hard"), "nodes": ("a", "b", "c")},
 }
 # D14: with the peer directly reachable, the first inner reply within 3 s of
 # the new uplink's route, on the same circuit; behind two NATs (a new
 # coordinated traversal), within 5 s.
-FIRST_REPLY_LIMIT = {"direct": 3.0, "flap": 3.0, "nat": 5.0, "relay": 5.0}
+FIRST_REPLY_LIMIT = {"direct": 3.0, "flap": 3.0, "nat": 5.0, "relay": 5.0, "exit": 3.0}
 # Traffic observed after the route before a cell is judged.
-SETTLE = {"direct": 12.0, "flap": 12.0, "nat": 25.0, "relay": 25.0}
+SETTLE = {"direct": 12.0, "flap": 12.0, "nat": 25.0, "relay": 25.0, "exit": 12.0}
+# exit: the role reports `probing` after A's path change and `ready` once
+# probed again (1 s later, connectivity.md); within this of the new route.
+EXIT_READY_LIMIT = 5.0
 # The flap cells' switches, FLAP_SPACING apart (at most 2 s in all); the
 # burst cell's three switches are one shell command, well inside the 250 ms
 # coalescing, and count as one path change.
@@ -101,6 +115,11 @@ EVENT_MESSAGES = ("Dataplane circuit retired", "Connectivity channel transition"
                   "Traversal prepared", "Traversal attempt ended without a channel",
                   "Traversal accepted beside a selected channel", "Traversal reservation refused",
                   "Connectivity channel health ended")
+# The exit role's own records (the `exit` row): every one is kept.
+EXIT_PREFIX = "Exit"
+# Of those, the role ending or refusing flows.
+EXIT_FAILURES = ("Exit-owned kernel object", "Exit owner stopping", "Exit role failed",
+                 "Exit role installation failed", "Exit forwarding refused")
 
 
 def daemon_events(path, start, end):
@@ -121,7 +140,8 @@ def daemon_events(path, start, end):
             continue
         fields = record.get("fields", {})
         message = fields.get("message", "")
-        if message in EVENT_MESSAGES or fields.get("operation") in ("roam", "probe_recovery"):
+        if (message in EVENT_MESSAGES or message.startswith(EXIT_PREFIX)
+                or fields.get("operation") in ("roam", "probe_recovery")):
             if "install_json" in fields:
                 try:
                     fields = {**fields, "install": json.loads(fields["install_json"])}
@@ -181,13 +201,39 @@ def rate(samples, start, end):
     return round((last - first) / (last_at - first_at), 1) if last_at > first_at else None
 
 
+class Sampler:
+    """Distinct values of `read` (5/s, wall-clock stamped) until stopped."""
+
+    def __init__(self, read):
+        self.read, self.samples, self.done = read, [], threading.Event()
+        self.thread = threading.Thread(target=self.run, daemon=True)
+        self.thread.start()
+
+    def run(self):
+        while not self.done.is_set():
+            try:
+                value = self.read()
+            except Exception as error:
+                value = {"error": str(error)}
+            if not self.samples or self.samples[-1]["value"] != value:
+                self.samples.append({"at": time.time(), "value": value})
+            self.done.wait(0.2)
+
+    def stop(self):
+        self.done.set()
+        self.thread.join(timeout=10)
+        return self.samples
+
+
 def execute(report, artifacts, runtime_os, traversal_os, platform, short, load, scenario="direct"):
     plan = SCENARIOS[scenario]
     nodes_of_row = plan["nodes"]
     nat = scenario in ("nat", "relay")
+    dual = scenario == "direct"
+    exit_row = scenario == "exit"
     routers = ("router-a1", "router-a2", *(("router-b",) if nat else ()))
-    roles = ("controller", *routers, *nodes_of_row)
-    networks_of_row = NETWORKS + (("bnet",) if nat else ())
+    roles = ("controller", *routers, *nodes_of_row, *(("t",) if exit_row else ()))
+    networks_of_row = NETWORKS + (("bnet",) if nat else ()) + (("srv6",) if dual else ())
     identity = report.name
     label_key = "io.meshway.runtime-fixture"
     label = label_key + "=" + identity
@@ -361,18 +407,30 @@ def execute(report, artifacts, runtime_os, traversal_os, platform, short, load, 
                        image, "/fixtures/meshway-runtime-fixture", "prepare"]
         run(*preparation, capture=True)
         for name in networks_of_row:
-            identifier = run("docker", "network", "create", "--internal", "--label", label,
+            ipv6 = []
+            if name == "srv6":
+                salt = uuid.uuid4().hex
+                ipv6 = ["--ipv6", "--subnet", f"2001:db8:{salt[:4]}:{salt[4:8]}::/64"]
+            identifier = run("docker", "network", "create", "--internal", *ipv6, "--label", label,
                              f"meshway-runtime-{identity.lower()}-roam-{name}", capture=True).strip()
             networks[name] = identifier
             save()
             inspection = owned("network", identifier)
+            if name == "srv6":
+                # A's Server path only; Docker may add an IPv4 subnet besides.
+                subnet6 = next((ipaddress.ip_network(config["Subnet"]) for config in inspection["IPAM"]["Config"]
+                                if ipaddress.ip_network(config["Subnet"]).version == 6), None)
+                if not inspection["Internal"] or inspection["Driver"] != "bridge" or str(subnet6) != ipv6[2]:
+                    raise RuntimeError("srv6 must be the requested internal IPv6 bridge")
+                addresses[name] = {"controller": str(subnet6.network_address + 2), "a": str(subnet6.network_address + 3)}
+                continue
             subnet = ipaddress.ip_network(inspection["IPAM"]["Config"][0]["Subnet"])
             if (not inspection["Internal"] or inspection["Driver"] != "bridge" or subnet.version != 4
                     or subnet.overlaps(ipaddress.ip_network("100.64.0.0/10"))):
                 raise RuntimeError("roam network must be an internal IPv4 bridge outside the Mesh pool")
             base = subnet.network_address
             if name == "wan":
-                on_wan = ("controller", "b", "c", "router-a1", "router-a2") if not nat else (
+                on_wan = ("controller", "b", "c", "router-a1", "router-a2", "t") if not nat else (
                     "controller", "c", "router-a1", "router-a2", "router-b", "r")
                 addresses[name] = {role: str(base + 2 + index) for index, role in enumerate(on_wan)
                                    if role in roles}
@@ -388,10 +446,13 @@ def execute(report, artifacts, runtime_os, traversal_os, platform, short, load, 
             "scenario": scenario, "controller": addresses["wan"]["controller"],
             "b": addresses["bnet"]["b"] if nat else addresses["wan"]["b"],
             "cLan": addresses["lan"]["c"], "aPublished": None if nat else addresses["wan"]["router-a1"],
-            "r": addresses["wan"]["r"] if "r" in roles else None})
-        attachments = {"controller": ["wan"], "b": ["bnet"] if nat else ["wan"], "c": ["wan", "lan"], "r": ["wan"],
+            "r": addresses["wan"]["r"] if "r" in roles else None,
+            "controller6": addresses["srv6"]["controller"] if dual else None,
+            "t": addresses["wan"]["t"] if exit_row else None})
+        attachments = {"controller": ["wan", *(("srv6",) if dual else ())], "b": ["bnet"] if nat else ["wan"],
+                       "c": ["wan", "lan"], "r": ["wan"], "t": ["wan"],
                        "router-a1": ["wan", "uplink1"], "router-a2": ["wan", "uplink2"], "router-b": ["wan", "bnet"],
-                       "a": ["lan", "uplink1", "uplink2"]}
+                       "a": ["lan", "uplink1", "uplink2", *(("srv6",) if dual else ())]}
         for role in roles:
             first = attachments[role][0]
             router = role.startswith("router-")
@@ -400,22 +461,31 @@ def execute(report, artifacts, runtime_os, traversal_os, platform, short, load, 
                         "--security-opt", "no-new-privileges", "--cpus", "2", "--memory", "768m", "--pids-limit", "128",
                         "--tmpfs", "/state:rw,nosuid,nodev,mode=700", "--entrypoint", "",
                         "--network", networks[first], "--ip", addresses[first][role],
-                        "--sysctl", "net.ipv4.ip_forward=" + ("1" if router else "0"),
+                        # A forwards as B's exit (`exit`); the role probes it.
+                        "--sysctl", "net.ipv4.ip_forward=" + ("1" if router or (exit_row and role == "a") else "0"),
                         "--sysctl", "net.ipv4.conf.all.rp_filter=0", "--sysctl", "net.ipv4.conf.default.rp_filter=0",
                         "--env", "TMPDIR=/state", "--env", "MESHWAY_ROAM_FIXTURE_OWNED=1", *bind_access_options()]
             if router:
                 creation += ["--cap-add", "NET_ADMIN", "--cap-add", "NET_RAW",
                              "--tmpfs", "/run:rw,nosuid,nodev,mode=700"]
-            elif role != "controller":
+            elif role not in ("controller", "t"):
                 creation += ["--cap-add", "NET_ADMIN", "--cap-add", "NET_RAW", "--device", "/dev/net/tun:/dev/net/tun",
                              "--sysctl", "net.ipv6.conf.all.disable_ipv6=0", "--sysctl", "net.ipv6.conf.default.disable_ipv6=0"]
+                if exit_row and role == "a":
+                    creation += ["--sysctl", "net.netfilter.nf_conntrack_acct=0"]
+            elif role == "controller" and dual:
+                creation += ["--sysctl", "net.ipv6.conf.all.disable_ipv6=0", "--sysctl", "net.ipv6.conf.default.disable_ipv6=0"]
             mounts = [("bin", "/fixtures", True), (role, "/evidence", False), ("signals", "/signals", False),
                       ("public", "/public", True), ("roam-support", "/roam-fixture", True)]
             if role == "controller":
                 mounts.append(("controller", "/controller", True))
             for source, target, readonly in mounts:
                 creation += ["--mount", f"type=bind,source={report / source},target={target}" + (",readonly" if readonly else "")]
-            if router:
+            if role == "t":
+                # A plain WAN service: UDP/TCP echo, recording its peers.
+                creation += [image, "/bin/sh", "-c", "touch /evidence/ready && exec python3 /roam-fixture/traffic.py "
+                             f"serve {addresses['wan']['t']} /evidence/target /signals/roam-stop"]
+            elif router:
                 inside = {"router-a1": "uplink1", "router-a2": "uplink2", "router-b": "bnet"}[role]
                 actor = "b" if role == "router-b" else "a"
                 mode = "forward" if role == "router-a1" and not nat else "nat"
@@ -430,7 +500,8 @@ def execute(report, artifacts, runtime_os, traversal_os, platform, short, load, 
             manifest["resources"].setdefault("commands", {})[role] = creation
             save()
             for name in attachments[role][1:]:
-                run("docker", "network", "connect", "--ip", addresses[name][role], networks[name], containers[role], capture=True)
+                flag = "--ip6" if name == "srv6" else "--ip"
+                run("docker", "network", "connect", flag, addresses[name][role], networks[name], containers[role], capture=True)
             run("docker", "start", containers[role], capture=True)
         deadline = time.monotonic() + 30
         for role in roles:
@@ -450,6 +521,7 @@ def execute(report, artifacts, runtime_os, traversal_os, platform, short, load, 
             detached("r", "/bin/sh", "-c", "while test ! -f /signals/roam-stop; do printf '%s %s\\n' "
                      "\"$(date +%s%N)\" \"$(cat /sys/class/net/eth0/statistics/rx_packets)\" >> /evidence/r-rx.log; "
                      "sleep 0.25; done")
+        topology_t = addresses["wan"].get("t")
         manifest["status"] = "enrolling"
         save()
         signal("roam-start")
@@ -466,20 +538,25 @@ def execute(report, artifacts, runtime_os, traversal_os, platform, short, load, 
                 return all((peer("a", nodes[node]) or {}).get("state") == "direct" for node in ("b", "c")) and (
                     "r" not in roles or (peer("a", nodes["r"]) or {}).get("state") == "direct")
             wait_for(direct, f"{phase} A–B and A–C channels", 120)
-            for role in ("b", "c"):
-                detached(role, "python3", "/roam-fixture/traffic.py", "serve", mesh[role], f"/evidence/traffic-{phase}", stop)
+            # Who serves and who sends: A sends to B and C; in `exit` B sends
+            # to A (its exit) and A to C.
+            pairs = (("b", "a"), ("a", "c")) if exit_row else (("a", "b"), ("a", "c"))
+            for _, server in pairs:
+                detached(server, "python3", "/roam-fixture/traffic.py", "serve", mesh[server], f"/evidence/traffic-{phase}", stop)
             time.sleep(1)
-            for role in ("b", "c"):
-                detached("a", "python3", "/roam-fixture/traffic.py", "client", mesh[role], f"/evidence/traffic-{phase}-{role}", stop)
+            for client, server in pairs:
+                detached(client, "python3", "/roam-fixture/traffic.py", "client", mesh[server], f"/evidence/traffic-{phase}-{server}", stop)
             if scenario == "relay":
                 detached("a", "python3", "/roam-fixture/traffic.py", "flows", mesh["b"], f"/evidence/traffic-{phase}-flows", stop)
-            wait_for(lambda: read_json("a", f"/evidence/traffic-{phase}-b/started.json"), "A traffic", 20)
+            wait_for(lambda: read_json(pairs[0][0], f"/evidence/traffic-{phase}-{pairs[0][1]}/started.json"), "traffic", 20)
+
+            def answered(client, path):
+                return command(client, "grep", "-q", "^uecho", path, required=False)["exitCode"] == 0
 
             def flowing():
                 # Both peers answer before any perturbation: the cell measures
                 # roaming, not the phase's content change.
-                return all(command("a", "grep", "-q", "^uecho", f"/evidence/traffic-{phase}-{role}/client.log",
-                                   required=False)["exitCode"] == 0 for role in ("b", "c"))
+                return all(answered(client, f"/evidence/traffic-{phase}-{server}/client.log") for client, server in pairs)
             wait_for(flowing, f"{phase} traffic answered by B and C", 60)
             time.sleep(5)
             if nat:
@@ -487,8 +564,32 @@ def execute(report, artifacts, runtime_os, traversal_os, platform, short, load, 
                 wait_for(lambda: (peer("a", nodes["b"]) or {}).get("state") == "direct", "A–B direct before roaming", 30)
             for cell in plan["cells"]:
                 name = f"{phase}/{cell}"
+                exit_stop = f"/signals/roam-exit-stop-{cell}"
+                if exit_row:
+                    # A new set of exit flows to T for this cell: an exit
+                    # connection the cell's roam ends, if any, is this one.
+                    t_dir = f"/evidence/traffic-{phase}-t-{cell}"
+                    detached("b", "python3", "/roam-fixture/traffic.py", "client", topology_t, t_dir, exit_stop)
+                    wait_for(lambda: answered("b", t_dir + "/client.log") and command(
+                        "b", "grep", "-q", "^techo", t_dir + "/client.log", required=False)["exitCode"] == 0,
+                        f"{cell} exit flows to T answered", 60)
+                    time.sleep(3)
+                if cell == "dual-stack":
+                    # Back to both uplinks (hard left uplink1 only); that
+                    # attachment settles before the cell's single change.
+                    run("docker", "network", "connect", "--ip", addresses["uplink2"]["a"], networks["uplink2"],
+                        containers["a"], capture=True)
+                    time.sleep(6)
                 record = {"before": snapshot(nodes)}
-                if scenario == "flap":
+                if dual:
+                    record["aServerRoute"] = command("a", "ip", "-j", "route", "get", addresses["srv6"]["controller"],
+                                                     required=False)["stdout"]
+                sampler = Sampler(lambda: {"server": report_of(state("a"), nodes["a"]).get("exitCapability"),
+                                           "status": status("a").get("exit")}) if exit_row else None
+                if cell == "dual-stack":
+                    record["perturbedAt"] = clock()
+                    record["routedAt"] = int(route_a("router-a2")["stdout"].strip()) / 1e9
+                elif scenario == "flap":
                     # Both uplinks attached: soft switches only the default
                     # route; hard takes uplink1's link down and up.
                     record["perturbedAt"] = clock()
@@ -540,6 +641,14 @@ def execute(report, artifacts, runtime_os, traversal_os, platform, short, load, 
                     time.sleep(SETTLE[scenario])
                 record["observedUntil"] = clock()
                 record["after"] = snapshot(nodes)
+                if sampler:
+                    record["exitCapability"] = sampler.stop()
+                    # New flows once the cell settled, then this cell's old ones end.
+                    probe_dir = f"/evidence/probe-{phase}-{cell}"
+                    command("b", "python3", "/roam-fixture/traffic.py", "probe", topology_t, probe_dir, exit_stop,
+                            timeout=30)
+                    record["exitProbe"] = read_json("b", probe_dir + "/result.json")
+                    signal(exit_stop.rsplit("/", 1)[1])
                 manifest["cells"][name] = record
                 save()
                 if cell == "soft" and scenario != "flap":
@@ -549,7 +658,11 @@ def execute(report, artifacts, runtime_os, traversal_os, platform, short, load, 
                         record["forgotHoles"] = forget_holes("router-b", addresses["wan"]["router-a1"])
                         save()
                     time.sleep(3)
-            if scenario != "flap":
+            if dual:
+                # dual-stack left both uplinks attached: route as at the start.
+                route_a("router-a1")
+                time.sleep(3)
+            elif scenario != "flap":
                 # Back to the starting attachment for the next phase.
                 run("docker", "network", "connect", "--ip", addresses["uplink2"]["a"], networks["uplink2"],
                     containers["a"], capture=True)
@@ -566,6 +679,9 @@ def execute(report, artifacts, runtime_os, traversal_os, platform, short, load, 
         errors = []
         for phase in plan["phases"]:
             signal(f"roam-traffic-stop-{phase}")
+        for cell in plan["cells"]:
+            if exit_row:
+                signal(f"roam-exit-stop-{cell}")
         signal("roam-down")
         signal("roam-stop")
         for role, identifier in containers.items():
@@ -625,10 +741,12 @@ def analyse(report, manifest):
     results = {"cells": {}}
     failures = []
     nodes = manifest["nodes"]
+    # The measured Mesh flow: A to B, or in `exit` B to its exit A.
+    sender, receiver = ("b", "a") if scenario == "exit" else ("a", "b")
     for name, cell in manifest["cells"].items():
         phase = name.split("/")[0]
-        client = parse_client(report / "a" / f"traffic-{phase}-b" / "client.log")
-        received = parse_received(report / "b" / f"traffic-{phase}" / "udp-received.log")
+        client = parse_client(report / sender / f"traffic-{phase}-{receiver}" / "client.log")
+        received = parse_received(report / receiver / f"traffic-{phase}" / "udp-received.log")
         lan = parse_client(report / "a" / f"traffic-{phase}-c" / "client.log")
         end = cell["observedUntil"]
         measured = measure(cell, client, received, cell["routedAt"], end)
@@ -679,6 +797,17 @@ def analyse(report, manifest):
         })
         measured["unrelatedChannelUnchanged"] = (measured["aChannelToC"]["before"] == measured["aChannelToC"]["after"]
                                                  and measured["aChannelToC"]["before"] is not None)
+        # A's own reaction: the classified path changes and Manager reactions.
+        classified = [event for event in events if event.get("message") == "Underlay network change classified"
+                      and event["at"] >= cell["routedAt"] - 0.05]
+        measured["aClassified"] = [{"atS": round(event["at"] - cell["routedAt"], 3), "class": event.get("class")}
+                                   for event in classified][:16]
+        measured["aRoamReactions"] = sum(1 for event in events if event.get("message") == "Connectivity roam"
+                                         and event.get("cause") == "path_changed" and event["at"] >= cell["routedAt"])
+        if scenario == "exit":
+            # B's exit flows start and end per cell; B's circuits from before
+            # remain.
+            measured["sameCircuit"] = bool(before["b"]["paths"]) and set(before["b"]["paths"]) <= set(after["b"]["paths"])
         if scenario == "relay":
             # Flows started during the gap add a circuit through R; every
             # circuit from before must remain.
@@ -702,6 +831,17 @@ def analyse(report, manifest):
         if scenario == "flap":
             measured["cell"] = name.split("/")[1]
             checks.update(flap_checks(cell, measured, events, b_events, manifest))
+        if name.endswith("/dual-stack"):
+            # Only A's IPv4 route toward its peers moved (its IPv6 Server
+            # path did not): a path change A itself reacts to.
+            first_path = next((item["atS"] for item in measured["aClassified"]
+                               if item["class"] in ("Path", "path")), None)
+            measured["aPathClassifiedS"] = first_path
+            measured["aServerRoute"] = cell.get("aServerRoute")
+            checks["pathClassified"] = first_path is not None and first_path <= 1.0
+            checks["roamReaction"] = measured["aRoamReactions"] >= 1
+        if scenario == "exit":
+            checks.update(exit_checks(report, cell, measured, phase, name.split("/")[1], events, manifest))
         measured["checks"] = checks
         passed = all(checks.values())
         measured["gatePassed"] = passed
@@ -717,9 +857,61 @@ def analyse(report, manifest):
                                             "new flows in the gap answered through R; a flow started on R stays on R "
                                             "and a flow started after re-acquisition does not cross R",
                                    "flap": "; one path reaction per classified path change; candidate reports bounded; "
-                                           "no circuit retired; B follows A's final source"}[scenario]}
+                                           "no circuit retired; B follows A's final source",
+                                   "exit": "; A's exit capability probing then ready again; the cell's exit TCP "
+                                           "connection to T ends; new TCP and UDP flows to T answered from A's new "
+                                           "uplink; A's exit role kept"}[scenario]
+                       + ("; dual-stack: A classifies a path change within 1 s and reacts" if scenario == "direct" else "")}
     write(report / "roam-results.json", results)
     return results
+
+
+def exit_checks(report, cell, measured, phase, name, events, manifest):
+    """The roaming exit: its capability is probed again, conntrack entries of
+    the old outer address end the connection they carried (T sees another
+    source), new flows leave through the new uplink, and the role stays."""
+    routed = cell["routedAt"]
+    samples = cell.get("exitCapability") or []
+
+    def status_of(value):
+        capability = (value or {}).get("server") or {}
+        status = capability.get("status")
+        return status.get("status") if isinstance(status, dict) else status
+
+    timeline = [{"atS": round(sample["at"] - routed, 3), "status": status_of(sample["value"]),
+                 "installed": ((sample["value"] or {}).get("server") or {}).get("installedFamilies")}
+                for sample in samples]
+    probing = next((item["atS"] for item in timeline if item["status"] == "probing" and item["atS"] >= -0.5), None)
+    ready = next((item["atS"] for item in timeline
+                  if probing is not None and item["status"] == "ready" and item["atS"] > probing), None)
+    final = timeline[-1] if timeline else {}
+    t_client = parse_client(report / "b" / f"traffic-{phase}-t-{name}" / "client.log")
+    late_echo = [at for at, *_ in t_client["techo"] if at >= routed + 3]
+    ended = [event for event in t_client["terror"] + t_client["tclosed"] if event[0] >= routed - 0.5]
+    udp_after = [at for at, _ in t_client["uecho"] if at >= routed]
+    probe = cell.get("exitProbe") or {}
+    peers = []
+    path = report / "t" / "target" / "tcp-peers.log"
+    if path.exists():
+        peers = [line.split() for line in path.read_text().splitlines() if len(line.split()) == 2]
+    expected = manifest["addresses"]["wan"]["router-a2" if name == "soft" else "router-a1"]
+    last_peer = peers[-1][1] if peers else None
+    stopped = [event for event in events if str(event.get("message", "")).startswith(EXIT_FAILURES)]
+    measured["exit"] = {"capability": timeline[:32], "probingS": probing, "readyS": ready,
+                        "existingTcpEnded": [(round(at - routed, 3), *rest) for at, *rest in ended][:4],
+                        "existingTcpEchoesAfter3s": len(late_echo),
+                        "existingUdpFirstReplyS": round(min(udp_after) - routed, 3) if udp_after else None,
+                        "newFlows": probe, "tLastTcpPeer": last_peer, "expectedSource": expected,
+                        "roleEvents": stopped[:8]}
+    return {
+        "exitProbing": probing is not None,
+        "exitReadyAgain": ready is not None and ready <= EXIT_READY_LIMIT
+        and "ipv4" in [str(family).lower() for family in (final.get("installed") or [])],
+        "existingExitTcpEnds": bool(ended) or not late_echo,
+        "newExitFlows": probe.get("tcp") is True and probe.get("udp") is True,
+        "newSourceAtT": bool(last_peer) and last_peer.rsplit(":", 1)[0] == expected,
+        "exitRoleKept": not stopped,
+    }
 
 
 def relay_checks(report, cell, measured, phase):

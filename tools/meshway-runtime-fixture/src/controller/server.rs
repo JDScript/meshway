@@ -93,7 +93,18 @@ impl Server<'_> {
 }
 
 pub(super) async fn run_server(cli: &Cli) -> Result<()> {
-    let listener = TcpListener::bind("0.0.0.0:8443").await?;
+    // A roaming row whose A reaches the Server over IPv6 needs both families.
+    let dual_stack = cli.traversal == crate::TraversalMode::Roam
+        && crate::roam::read::<crate::roam::Topology>(&cli.public.join("roam-topology.json"))
+            .await?
+            .controller6
+            .is_some();
+    let listener = TcpListener::bind(if dual_stack {
+        "[::]:8443"
+    } else {
+        "0.0.0.0:8443"
+    })
+    .await?;
     let tls = meshway_packet_fixture::tls_server(&cli.public, &cli.private).await?;
     let app = Server::open(cli).await?;
     let (routers, _) = watch::channel(axum::Router::new());

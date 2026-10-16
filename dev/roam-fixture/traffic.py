@@ -8,7 +8,11 @@ client PEER DIRECTORY STOP     100 pps UDP sequence, 10/s ping and one TCP
 stream PEER DIRECTORY STOP     100 pps UDP sequence only, one new 5-tuple (A)
 flows PEER DIRECTORY STOP      a new UDP 5-tuple every 250 ms, one datagram
                                each, its echo awaited for 20 s (A)
-Every mode runs until the file STOP exists.
+probe PEER DIRECTORY STOP      one new TCP connection with one echoed line and
+                               one new UDP flow with one echo, then exits (B)
+Every mode but probe runs until the file STOP exists. serve also records
+each new UDP source and every TCP peer it accepts (udp-sources.log,
+tcp-peers.log).
 """
 import json
 import os
@@ -60,6 +64,9 @@ def serve(address, directory):
     tcp.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     tcp.bind((address, TCP_PORT))
     tcp.listen(4)
+    sources = Log(os.path.join(directory, "udp-sources.log"))
+    peers = Log(os.path.join(directory, "tcp-peers.log"))
+    source = None
     streams = []
     while not stopped():
         readable, _, _ = select.select([udp, tcp, *streams], [], [], 0.2)
@@ -67,9 +74,13 @@ def serve(address, directory):
             if ready is udp:
                 payload, peer = udp.recvfrom(2048)
                 received.write(now(), payload.decode(errors="replace").split(" ", 1)[0])
+                if peer != source:
+                    source = peer
+                    sources.write(now(), f"{peer[0]}:{peer[1]}")
                 udp.sendto(payload, peer)
             elif ready is tcp:
-                stream, _ = tcp.accept()
+                stream, peer = tcp.accept()
+                peers.write(now(), f"{peer[0]}:{peer[1]}")
                 stream.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
                 streams.append(stream)
             else:
@@ -83,6 +94,8 @@ def serve(address, directory):
                     continue
                 ready.sendall(data)
     received.close()
+    sources.close()
+    peers.close()
 
 
 def udp_stream(peer, events):
@@ -225,13 +238,51 @@ def client(peer, directory):
     events.close()
 
 
+def probe(peer, directory):
+    """New flows: one TCP connection echoing one line, one UDP datagram."""
+    result = {"startedAtNs": now()}
+    try:
+        with socket.create_connection((peer, TCP_PORT), timeout=5) as stream:
+            stream.settimeout(5)
+            stream.sendall(b"probe\n")
+            data = b""
+            while b"\n" not in data:
+                chunk = stream.recv(64)
+                if not chunk:
+                    break
+                data += chunk
+            result["tcp"] = data == b"probe\n"
+    except OSError as error:
+        result["tcp"] = False
+        result["tcpError"] = error.errno
+    udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    udp.settimeout(1)
+    result["udp"] = False
+    try:
+        udp.connect((peer, UDP_PORT))
+        for _ in range(3):
+            udp.send(b"p0 probe")
+            try:
+                result["udp"] = udp.recv(2048).startswith(b"p0 ")
+                break
+            except socket.timeout:
+                continue
+    except OSError as error:
+        result["udpError"] = error.errno
+    finally:
+        udp.close()
+    result["endedAtNs"] = now()
+    with open(os.path.join(directory, "result.json"), "w") as out:
+        json.dump(result, out)
+
+
 def main():
     global STOP
     mode, address, directory, STOP = sys.argv[1:5]
     os.makedirs(directory, exist_ok=True)
     with open(os.path.join(directory, "started.json"), "w") as started:
         json.dump({"atNs": now(), "pid": os.getpid()}, started)
-    {"serve": serve, "client": client, "stream": stream, "flows": flows}[mode](address, directory)
+    {"serve": serve, "client": client, "stream": stream, "flows": flows, "probe": probe}[mode](address, directory)
 
 
 if __name__ == "__main__":
