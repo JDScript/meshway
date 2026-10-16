@@ -212,7 +212,7 @@ NAT 后两端都能拨出时，邻接按需建立：可能只有一方有需求�
 | 接收方的旧半边 | peer 只在没有通道时 prepare，所以它仍有效的[穿透请求](#traversal-signalling)说明接收方手上的选定通道已是对方放弃的一半：接收方不等该通道的健康窗口，立即查询、预留并接受（debug `Traversal accepted beside a selected channel`），认证完成的新通道精确替换它（`Replacement::Channel`）；offer 的承载方向可以与旧通道相反（旧通道由接收方准备） |
 | 空窗 | 同 boot 的承载替换，CID 保留；已有流在空窗内等待，空窗即重新穿透的时间。空窗内的新流见下文 |
 
-两端都在端口相关过滤 NAT 后、漫游方换到另一台端口保持型 NAT：首个内层回复 2.6–3.1 秒（main 5.2–6.5 秒，等健康窗口失效），见 [roam/nat 行](/v2/node/validation#roam-nat-row)。端点相关映射一侧漫游后仍不可直连（[来源学习](#source-learning)的限制）。
+两端都在端口相关过滤 NAT 后、漫游方换到另一台端口保持型 NAT：首个内层回复 2.6–3.7 秒（main 5.2–6.5 秒，等健康窗口失效），见 [roam/nat 行](/v2/node/validation#roam-nat-row)。端点相关映射一侧漫游后仍不可直连（[来源学习](#source-learning)的限制）。
 
 **漫游中的策略中继：** 已有流不迁移到中继（保持原完整路径与 circuit，等直连恢复）。本机重新获取直连通道期间，下一跳没有通道的已建立 circuit 不接纳新流（排序中其后有带通道的路径时），新流在空窗内经策略中继新建 circuit，并一直留在那条路径上；直连恢复后，新流重新加入直连 circuit（[中继兜底](#relay-fallback)）。没有策略中继时空窗内的新流与已有流一样等待。验收见 [roam/relay 行](/v2/node/validation#roam-relay-row)。
 

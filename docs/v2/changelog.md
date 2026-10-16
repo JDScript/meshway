@@ -10,7 +10,10 @@
 - 连接（不变量：peer 的有效穿透请求说明本机的通道是对方已放弃的一半；owner：Manager 穿透 owner）：持有选定通道时也查询、预留并接受该 peer 的请求，新通道精确替换旧通道，offer 方向可与旧通道相反（此前要等本机健康窗口失效，即 it7→sha `relayIdle` 不对称约 6–7 秒的机制）。
 - 数据面（不变量 D7：已有流不迁移，空窗内新流经策略中继；owner：`SecureNode::joinable`）：下一跳没有通道的已建立 circuit 在其后有带通道的路径时不接纳新流；此前空窗内的新流加入失去通道的直连 circuit 一起等待。
 - 诊断：debug `Connectivity channel health ended`（`unanswered`、`peer_pings`、`answered_ms`、`cause`）、`Connectivity channel transition` `roam`／`unanswered`、`Traversal prepared`、`Traversal accepted beside a selected channel`。
-- 验收：新矩阵行 `roam/nat`、`roam/relay`、`roam/flap`（22 行）；main 上 `roam/nat` 首个回复 5.2／5.8 秒、`roam/relay` 空窗新流不经 R，R2 为 2.6–3.1 秒且空窗新流经 R，见 [roam/nat 行](/v2/node/validation#roam-nat-row)。
+- 验收：新矩阵行 `roam/nat`、`roam/relay`、`roam/flap`（22 行）；main 上 `roam/nat` 首个回复 5.2／5.8 秒、`roam/relay` 空窗新流不经 R，R2 为 2.6–3.7 秒且空窗新流经 R，见 [roam/nat 行](/v2/node/validation#roam-nat-row)。
+- 矩阵：roam 行逐个运行（每行 4–5 个 Docker bridge，四行并发时 Docker 默认地址池耗尽）。
+
+验证：Planck 22 行矩阵 `20261016T001640Z-78eb74de`（`0ff3e157`，并行 8）全部通过；it7→sha 复原与只读采样见 `.meshway/validation/r2/it7-sha/`；常驻 lab 部署后因开发网络配置（修订 27，全部经 it7 VLESS）没有 Native UDP 边可测，已恢复 alpha.13，VM 未部署。
 
 漫游第一切片（R1，`r1/roaming`）：wire 6、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约不变；IPC 12（`Status` 新增可省略字段 `lastNetworkChange`，与 `idlePath`／`cleanupPending` 同一先例：CLI 与 daemon 一起升级）。定义见[漫游](/v2/node/connectivity#roaming)。
 
