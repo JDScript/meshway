@@ -1,6 +1,6 @@
 # macOS App 设计
 
-> **设计稿，尚未实现。**本页记录 macOS App 的已定方向、组件边界、分阶段计划与待验证项。现行 Node 行为的唯一定义仍是[运行状态](/v2/node/runtime)、[数据面](/v2/node/dataplane)与[连接获取](/v2/node/connectivity)；验收状态只以[验收范围](/v2/node/validation)为准。本页不加入文档导航。
+> **设计稿，A2 Swift 薄壳已建立，Node 接线与平台验收未完成。**本页记录 macOS App 的已定方向、组件边界、分阶段计划与待验证项。现行 Node 行为的唯一定义仍是[运行状态](/v2/node/runtime)、[数据面](/v2/node/dataplane)与[连接获取](/v2/node/connectivity)；验收状态只以[验收范围](/v2/node/validation)为准。本页不加入文档导航。
 >
 > 归档 `archive/apple-007e9deb`（`apps/apple`、`docs/apple-app.md`）对接已退役的 agent 协议，且由 App 自行联系 Server。本设计只按[复用白名单](#reuse)取用其中的工程外壳，不恢复其控制流程。
 
@@ -72,6 +72,8 @@ System Extension 以 root 运行。状态目录为 `/Library/Application Support
 - 负载是现有 `meshway_protocol::ipc` 的帧编码（IPC 13），由 `meshway-node` 的同一分派处理；ping 等流式命令在同一 XPC 连接上按帧推送，断开即取消订阅。
 - macOS 的 `meshway` CLI 随 App 打包（`Meshway.app/Contents/MacOS/meshway`），复用现有 `meshway-cli` 的参数、命令与输出，只替换传输。
 
+A2 薄壳当前以 `Meshway.app/Contents/MacOS/Meshway --probe` 复用 App 签名验证连接；不是正式 `meshway` CLI。`Shared/FrameProtocol.swift` 只传 `Data`，`FrameSession.dispatchFrame` 是待接 Rust 的唯一入口。当前 echo 和 `shell-fixture: runtime=absent` 连续推送不冒充 IPC 13 Status。服务端限制为 8 连接、每帧 1 MiB、每连接一个未 ACK push；5 秒未 ACK 或断线取消该连接。App 消费帧后再 ACK，避免把推送无限堆入 UI 队列。工程、VM 与命令见 [macOS lab](/v2/node/macos-lab)。
+
 ### 生命周期
 
 | 系统事件 | 运行时行为 |
@@ -96,7 +98,7 @@ System Extension 以 root 运行。状态目录为 `/Library/Application Support
 | 阶段 | 内容 | 验收 |
 | --- | --- | --- |
 | A1 | 抽出 `crates/meshway-node` 与平台 Host 接口；dataplane carrier 依赖包设备接口；IPC 分派与传输分离 | Linux 行为不变：`mise run check`、现有矩阵回归；workspace 在 macOS 原生编译 |
-| A2 | Tart 验收 VM；`apps/meshway-apple` 工程、System Extension 激活、XPC 通道与帧转发、桥接包 start／stop／IPC | VM 中 App 激活 extension，CLI 经 XPC 取得 control-only Status |
+| A2 | Tart 验收 VM；`apps/meshway-apple` 工程、System Extension 激活、XPC 通道与帧转发、桥接包 start／stop／IPC | **未完成**：工程 unsigned 编译与开发签名静态校验通过；VM 已创建，来宾交互／Recovery 设置待人工完成；Rust bridge 未接。仍须 VM 中真实激活 extension、CLI 经 XPC 取得 control-only Status |
 | A3 | Apple Host：utun fd、socket 绑定、NE 路由与负向边界、DNS、`NWPathMonitor` | VM 与 Linux lab 节点 Mesh 双向 TCP／UDP、Mesh DNS、租约到期 fail closed、离线载入、出口使用、漫游；新增 `macos/*` 验收行 |
 | A4 | App 界面 | 人工验收 |
 | A5 | Developer ID 签名、公证、安装与升级 extension | 未关闭 SIP 的干净 VM 上安装、升级、卸载 |
@@ -105,10 +107,10 @@ System Extension 以 root 运行。状态目录为 `/Library/Application Support
 
 以下是本设计依赖、但尚未在本项目中实测的平台行为；A2／A3 首先验证，不成立时回到本页修改方案：
 
-1. Packet Tunnel System Extension 自身创建的 socket 不进入本隧道，包括 `includeAllNetworks` 打开时。
+1. Packet Tunnel System Extension 自身创建的 socket 不进入本隧道，包括 `includeAllNetworks` 打开时。**未能验证（A2 薄壳）**：已提供私网／默认 IPv4 路由及 `includeAllNetworks` 开关，并在 extension 的 NE 设置前后分别执行有截止时间的 URLSession HTTPS 探测；因 VM 来宾交互／extension 加载未完成，尚无 HTTP 结果。即使 URLSession 后续通过，仍须补普通 Rust socket／UDP 证据。
 2. 从 NE 进程中找到 utun 描述符并以 Rust 批量读写的可行性与性能，以及 `NEPacketTunnelFlow` 退路的吞吐。
-3. 关闭 SIP 与 AMFI 校验的 VM 中，未经 provisioning profile 的 NE entitlement 能否激活 System Extension。
-4. root System Extension 提供的 XPC Mach service 能被用户 App 与 CLI 连接，并能以代码签名要求认证对端。
+3. 关闭 SIP 与 AMFI 校验的 VM 中，未经 provisioning profile 的 NE entitlement 能否激活 System Extension。**未能验证（2026-10-17）**：Tart 2.32.1 已创建官方 Tahoe vanilla digest 锁定的 `meshway-mac-vm`（4 CPU／4 GiB、默认 NAT）；Tart 报告 running 并曾返回 DHCP 地址，但 SSH 未建立、自动显示检查未取得可操作画面，SIP／boot-args／developer mode 均未取得来宾读回证据。Xcode 27.1 unsigned 编译通过；正常签名构建明确缺少 NE／System Extension provisioning profile；独立 `sign-lab.sh` 用真实开发证书签署无 profile 产物且 `codesign --verify --deep --strict` 通过。静态签名不能证明激活可行。人工 Recovery 步骤和只读共享产物入口见 [macOS lab](/v2/node/macos-lab)。
+4. root System Extension 提供的 XPC Mach service 能被用户 App 与 CLI 连接，并能以代码签名要求认证对端。**未能验证（A2 薄壳）**：`NEMachServiceName`、App Group／Team 前缀、listener/client 双向签名 requirement、echo／连续推送与断线取消已编译；签名产物满足 Team OU＋精确 identifier 的静态 requirement 校验。真实 root provider→用户 App／`--probe` 连接、拒绝不匹配签名及取消证据受第 3 项阻塞，不能据编译宣称成立。
 
 ## 待定 {#open}
 
