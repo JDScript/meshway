@@ -398,7 +398,10 @@ def stages(ctx, pending):
     if "unsupportedFamily" not in only["e2Ping"]["stdout"] + only["e2Ping"]["stderr"]:
         raise RuntimeError("A's decision through an IPv4-only exit was not unsupportedFamily")
     only["e2Connect"] = tool("a", "connect", ext6, "8080")
-    if (only["e2Connect"]["value"] or {}).get("errno") != EACCES:
+    # Statically sunk: refused before it can leave, by whichever comes first
+    # on this host (no IPv6 route at all, or the sink's reject).
+    refused = only["e2Connect"]["value"] or {}
+    if refused.get("errno") in (None, 0) or refused.get("seconds", 5) > 1:
         raise RuntimeError("the sunk IPv6 destination was not refused at once")
     only["back"] = exit_cli("exit")
     write(report / "exit6-ipv4-only.json", only)
