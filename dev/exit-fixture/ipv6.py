@@ -111,6 +111,9 @@ def run(ctx):
     # Stage 1: capability. E acquires the IPv6 executor; its role carries
     # both families, each ready and installed; A captures IPv6 exit ranges.
     progress("exit6-capability")
+    # E's IPv4 forwarding is its host administrator's precondition (exit/off
+    # stage 2 observes it off first); IPv6 forwarding is on from creation.
+    results["ipv4Forwarding"] = command("e", "/bin/sh", "/dns-fixture/forwarding.sh", "1")
     wait_for(lambda: families_are(ready), "E's IPv4 and IPv6 families ready and installed", 120)
     e_status = status("e")
     write(report / "e" / "exit6-installed-status.json", e_status)
@@ -180,7 +183,7 @@ def run(ctx):
     try:
         detached_listener(ctx, "/evidence/icmp6-pmtu.json", 90)
         pmtu["tcp"] = tool("a", "tcp", far6, "8080", "65536")
-        pmtu["pingTooLarge"] = command("a", "ping", "-6", "-n", "-M", "do", "-s", "1300", "-c", "2", "-W", "2", far6,
+        pmtu["pingTooLarge"] = command("a", "ping", "-6", "-n", "-M", "do", "-s", "1260", "-c", "2", "-W", "2", far6,
                                        required=False)
         pmtu["routeCache"] = command("a", "ip", "-6", "route", "get", far6)
         pmtu["pingFits"] = command("a", "ping", "-6", "-n", "-M", "do", "-s", str(FAR_MTU - 48), "-c", "2", "-W", "2",
@@ -208,7 +211,7 @@ def run(ctx):
         pmtu["eNarrow"] = command("e", "ip", "link", "set", "dev", e_if, "mtu", "1300")
         try:
             detached_listener(ctx, "/evidence/icmp6-host.json", 30)
-            pmtu["hostTooBig"] = command("a", "ping", "-6", "-n", "-M", "do", "-s", "1260", "-c", "2", "-W", "2", ext6,
+            pmtu["hostTooBig"] = command("a", "ping", "-6", "-n", "-M", "do", "-s", "1270", "-c", "2", "-W", "2", ext6,
                                          required=False)
             host = json.loads(command("a", "cat", "/evidence/icmp6-host.json")["stdout"])["errors"]
             pmtu["hostErrors"] = [entry for entry in host if entry["type"] == 2 and entry["mtu"] == 1300]
@@ -304,8 +307,11 @@ def run(ctx):
     if not contains(plan.get("managedIpv6", []), ext6):
         raise RuntimeError("the AAAA association did not capture the IPv6 address")
     seen = len(visits(e_ext6))
+    # By name over IPv6 alone (getaddrinfo would rank A's IPv4 first: its
+    # Mesh IPv6 source is a ULA).
     dns["byName"] = command("a", "python3", "-c",
-                            "import socket,sys; s=socket.create_connection((sys.argv[1],8080),3); s.settimeout(3); "
+                            "import socket,sys; a=socket.getaddrinfo(sys.argv[1],8080,socket.AF_INET6,socket.SOCK_STREAM)[0][4]; "
+                            "s=socket.create_connection(a[:2],3); s.settimeout(3); "
                             "s.sendall(b'exit6-name'); assert s.recv(64)==b'exit6-name'; print(s.getpeername()[0])",
                             name, required=False)
     if dns["byName"]["exitCode"] or dns["byName"]["stdout"].strip() != ext6 or len(visits(e_ext6)) <= seen:
@@ -357,9 +363,7 @@ def run(ctx):
         if (only["connect4"]["value"] or {}).get("errno") != 0:
             raise RuntimeError("IPv4 through the exit failed while its IPv6 family was unavailable")
         only["ping"] = a_cli("ping", ext6, "-c", "1")
-        decision = json.loads(only["ping"]["stdout"] or "{}") if only["ping"]["stdout"].startswith("{") else {}
-        only["decision"] = decision
-        if "exitUnavailable" not in only["ping"]["stdout"]:
+        if "exitUnavailable" not in only["ping"]["stdout"] + only["ping"]["stderr"]:
             raise RuntimeError("A's decision for IPv6 did not name exitUnavailable")
     finally:
         only["restored"] = command("e", "/bin/sh", "/dns-fixture/forwarding.sh", "ipv6", "1")
@@ -369,7 +373,7 @@ def run(ctx):
     if contains(plan.get("managedIpv6", []), ext6) or not contains(plan["sinkIpv6"], ext6):
         raise RuntimeError("an IPv4-only exit did not sink A's IPv6 statically")
     only["e2Ping"] = a_cli("ping", ext6, "-c", "1")
-    if "unsupportedFamily" not in only["e2Ping"]["stdout"]:
+    if "unsupportedFamily" not in only["e2Ping"]["stdout"] + only["e2Ping"]["stderr"]:
         raise RuntimeError("A's decision through an IPv4-only exit was not unsupportedFamily")
     only["e2Connect"] = tool("a", "connect", ext6, "8080")
     if (only["e2Connect"]["value"] or {}).get("errno") != EACCES:

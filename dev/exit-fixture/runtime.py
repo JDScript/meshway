@@ -365,7 +365,9 @@ def execute(report, artifacts, runtime_os, platform, short, load, variant="ipv4"
         spec = importlib.util.spec_from_file_location("meshway_exit_components", ROOT / "dev/exit-fixture/components.py")
         components = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(components)
-        manifest["componentChecks"] = components.execute(report, image, platform, identity)
+        # Component evidence is exit/off's; exit6/off runs the same build.
+        if variant == "ipv4":
+            manifest["componentChecks"] = components.execute(report, image, platform, identity)
         spec = importlib.util.spec_from_file_location("meshway_exit_evidence", ROOT / "dev/exit-fixture/evidence.py")
         evidence = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(evidence)
