@@ -204,7 +204,8 @@ def run(ctx):
                 or f"mtu {FAR_MTU}" not in pmtu["routeCache"]["stdout"] or not pmtu["packetTooBig"]):
             raise RuntimeError("IPv6 PMTU discovery through the exit did not converge")
         if hops.get(1) not in e6 or hops.get(3) != far6 or 2 not in hops:
-            raise RuntimeError("traceroute -6 through the exit did not show E, the router and the target")
+            raise RuntimeError("traceroute -6 through the exit did not show E, the router and the target: "
+                               + json.dumps(hops))
         # E's own packet too big: its external interface narrower than A's packet.
         e_if = [link["ifname"] for link in json.loads(command("e", "ip", "-j", "address")["stdout"])
                 if any(item.get("local") == e_ext6 for item in link["addr_info"])][0]
@@ -223,7 +224,7 @@ def run(ctx):
         pmtu["routeRemoved"] = command("e", "ip", "-6", "route", "del", ctx.subnets6["far"], "via", router6,
                                        required=False)
         pmtu["restored"] = command("router", "ip", "link", "set", "dev", narrow[0], "mtu", "1500", required=False)
-    write(report / "exit6-pmtu.json", pmtu)
+        write(report / "exit6-pmtu.json", pmtu)
     stage(4, ["exit6-pmtu.json"])
 
     # Stage 5: MSS. With the A–R link at NARROW_MTU, A's IPv6 SYN through the
