@@ -102,6 +102,21 @@ pub struct RetryPending {
     pub retry_at: std::time::SystemTime,
 }
 
+/// The Control relay's listener owner while it does not serve every new
+/// connection, published by `Host::control_relay` (`None` while it listens
+/// and accepts). Neither state ends kernel ownership; both end by themselves.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ControlRelayState {
+    /// The relay cannot listen on its socket, or its accept fails: the
+    /// owner retries on the U1 cadence. `reason` names the operation and the
+    /// last attempt's error.
+    Retrying(RetryPending),
+    /// A connection or Host task limit (`limit`) is reached: new connections
+    /// are refused (`refused` so far), current ones kept; the next admitted
+    /// connection ends it.
+    AtCapacity { limit: &'static str, refused: u64 },
+}
+
 /// The kernel owner a retried change belongs to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum KernelChangeOwner {

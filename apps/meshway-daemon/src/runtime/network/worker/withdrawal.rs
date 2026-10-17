@@ -1,6 +1,8 @@
-//! Ending the packet plane: shutdown and lease withdrawal.
+//! Ending the packet plane: shutdown, failure and lease withdrawal, and the
+//! reinstall that ends a failure withdrawal.
 use super::super::{plane::Plane, reporting::Publisher};
 use meshway_engine::Engine;
+use meshway_protocol::execution::ApplyFailure;
 use meshway_protocol::ipc::{DataPlane, Problem};
 
 pub(super) async fn shutdown(
@@ -48,7 +50,15 @@ pub(super) fn finish_withdrawal(engine: &mut Engine<Plane>, reports: &Publisher,
         DataPlane::Suspended
     };
     report.problem = failed.then_some(Problem::Underlay);
-    report.problem_detail = None;
+    report.persistent = failed && conflict(engine);
+    // Why kernel ownership ended, while it stays ended: never an empty
+    // detail over a known reason.
+    report.problem_detail = engine
+        .components()
+        .host
+        .ownership_ended()
+        .filter(|_| failed)
+        .map(|end| end.to_string());
     report.completion = None;
     report.content = None;
     report.expires_at = None;
@@ -58,4 +68,133 @@ pub(super) fn finish_withdrawal(engine: &mut Engine<Plane>, reports: &Publisher,
         capability.installed_families.clear();
     }
     reports.send_replace(report);
+}
+
+/// Publish the withdrawal for a failed component before its cleanup runs:
+/// the cleanup can wait for seconds (a kernel change retried, a stalled
+/// process), and the plane is withdrawing meanwhile, so its cause is known
+/// to Status from the first moment on (`lastError`, `lastErrorDetail`).
+pub(super) fn withdrawing(
+    reports: &Publisher,
+    problem: Problem,
+    detail: Option<String>,
+    persistent: bool,
+) -> super::super::Report {
+    let mut report = reports.borrow().clone();
+    report.plane = DataPlane::Failed;
+    report.persistent = persistent;
+    report.content = None;
+    report.problem = Some(problem);
+    report.problem_detail = detail;
+    report.completion = Some(Err(failure(problem)));
+    report.observed_at = chrono::Utc::now();
+    report.facts = None;
+    report.exit_flows = None;
+    if let Some(capability) = &mut report.exit_capability {
+        capability.installed_families.clear();
+    }
+    reports.send_replace(report.clone());
+    report
+}
+
+/// Kernel ownership ended in a proven conflict: it stays ended until restart.
+fn conflict(engine: &Engine<Plane>) -> bool {
+    matches!(
+        engine.components().host.ownership_ended(),
+        Some(meshway_underlay::OwnershipEnd::Conflict { .. })
+    )
+}
+
+/// Whether a failed plane has no automatic way back (Status `blocked`):
+/// kernel ownership ended in a proven conflict, or — ownership holding —
+/// nothing retries `problem`. An unavailable end is re-proved, a DNS fault
+/// re-proved by its owner, an overlap ends when the address leaves, and a
+/// `retrying` failure is retried by the worker: all transient.
+pub(super) fn persistent(
+    engine: &Engine<Plane>,
+    problem: Option<Problem>,
+    retrying: bool,
+    overlap: bool,
+) -> bool {
+    match engine.components().host.ownership_ended() {
+        Some(meshway_underlay::OwnershipEnd::Conflict { .. }) => true,
+        Some(meshway_underlay::OwnershipEnd::Unavailable { .. }) => false,
+        None => !(retrying || overlap || problem == Some(Problem::Dns)),
+    }
+}
+
+/// The receipt failure of a component's `problem`.
+pub(super) fn failure(problem: Problem) -> ApplyFailure {
+    match problem {
+        Problem::Dns => ApplyFailure::Dns,
+        Problem::Tun => ApplyFailure::Tun,
+        Problem::Transport => ApplyFailure::Listeners,
+        _ => ApplyFailure::Underlay,
+    }
+}
+
+/// Why installed content was withdrawn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Cause {
+    /// A required component failed (`problem`).
+    Failure(Problem),
+    /// The netmap lease ended.
+    LeaseEnded,
+    /// Control withdrew the lease.
+    Withdrawn,
+}
+
+/// Installed content was withdrawn: why and when. Kept until content
+/// installs again, whatever input triggers that install.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Withdrawn {
+    pub cause: Cause,
+    pub at: tokio::time::Instant,
+}
+
+impl Withdrawn {
+    pub fn now(problem: Problem) -> Self {
+        Self::of(Cause::Failure(problem))
+    }
+    pub fn of(cause: Cause) -> Self {
+        Self {
+            cause,
+            at: tokio::time::Instant::now(),
+        }
+    }
+    /// The one log line of the reinstall that ends this withdrawal, at the
+    /// point the content is installed again; `trigger` names the input that
+    /// led there (an offer, a retry, a component's recovery).
+    pub fn reinstalled(self, trigger: &'static str, serial: u64, complete: bool) {
+        let withdrawn_ms = self.at.elapsed().as_millis() as u64;
+        match self.cause {
+            Cause::Failure(Problem::Dns) => tracing::info!(
+                trigger,
+                withdrawn_ms,
+                netmap_serial = serial,
+                complete,
+                "Required DNS component recovered; netmap reinstalled"
+            ),
+            Cause::Failure(problem) => tracing::info!(
+                ?problem,
+                trigger,
+                withdrawn_ms,
+                netmap_serial = serial,
+                complete,
+                "Required packet plane component recovered; netmap reinstalled"
+            ),
+            Cause::LeaseEnded | Cause::Withdrawn => tracing::info!(
+                cause = if self.cause == Cause::LeaseEnded {
+                    "leaseEnded"
+                } else {
+                    "netmapWithdrawn"
+                },
+                trigger,
+                withdrawn_ms,
+                netmap_serial = serial,
+                complete,
+                "Netmap installed again after its withdrawal"
+            ),
+        }
+    }
 }

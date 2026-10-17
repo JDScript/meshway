@@ -27,11 +27,11 @@ JSON 事件包含 `timestamp`、`level`、`target`、`fields`；`fields.message`
 
 | 来源 | 常规日志 | debug 日志 |
 | --- | --- | --- |
-| daemon | 启动／就绪／退出、已提交的意图及 revision、状态转换、失败类别和重试等待 | 控制轮次是否续租／上报 |
+| daemon | 启动／就绪／退出、已提交的意图及 revision、状态转换、失败类别和重试等待；包平面每次撤回与每次重装各一条，记在撤回／安装真正执行处、与触发它的输入无关：必需组件失败撤回为 WARN `Required DNS component failed; suspending packet plane`（DNS）或 `Required packet plane component failed; suspending packet plane`（`problem`：TUN、承载），Control 撤回租约／Host 失败为 INFO `Netmap withdrawn; terminating the packet plane`（`host_failed`），租约到期为 INFO `Netmap lease ended; terminating the packet plane`；撤回之后内容再次安装时 INFO `Required DNS component recovered; netmap reinstalled`（DNS）、`Required packet plane component recovered; netmap reinstalled`（`problem`）或 `Netmap installed again after its withdrawal`（`cause`：`leaseEnded`／`netmapWithdrawn`），带 `trigger`（`offer`／`retry`／`dnsRecovered`／`hostRecovered`／`exitRecovered`／`listenersChanged`）、`withdrawn_ms`、`netmap_serial`、`complete`（缺能力的安装为 false） | 控制轮次是否续租／上报 |
 | CLI | 命令失败、停止等待 | 命令名称 |
 | Server | 监听就绪、关闭、HTTP 5xx 故障 | HTTP 响应状态和响应头就绪耗时 |
 | DNS owner | 健康检查／安装失败（`DNS owner health check failed`、`DNS owner operation failed`、`DNS owner preparation failed`）带 `operation`、`error`、`check`、`expected`、`actual`、`source`，同一失败只记一次；恢复（`DNS owner recovered its system installation`）；resolve1 bus owner 变化 | 出口 served 快照变化 |
-| Underlay | 宿主内核归属结束的原因：monitor 冲突 `reason`、egress capture owner 的失败 `operation`（含 `verify`、`verify_unavailable`）／`error`、控制中继监听失败；egress 回读暂不可用与重新校验一致（`failures`、`unverified_ms`）；暂态阻断后的归属重证（`Kernel ownership re-proof unavailable`／`… read back a conflict`、成功时 `Kernel ownership proved again`：`check`、`attempts`、`elapsed_ms`） | — |
+| Underlay | 宿主内核归属结束的原因：monitor 冲突 `reason`、egress capture owner 的失败 `operation`（含 `verify`、`verify_unavailable`）／`error`、控制中继监听／accept 失败与恢复（`Protected control relay cannot listen; retrying, kernel ownership kept`、`… listening again`）及容量满（`… at capacity; refusing new connections, keeping current ones`、`… accepts connections again`）；egress 回读暂不可用与重新校验一致（`failures`、`unverified_ms`）；暂态阻断后的归属重证（`Kernel ownership re-proof unavailable`／`… read back a conflict`、成功时 `Kernel ownership proved again`：`check`、`attempts`、`elapsed_ms`） | — |
 | Connectivity | 组件错误类别 | channel transition；成功安装另记录 schema 1 的实际 channel／socket、端点、carrier、原 acquisition／attempt、Node／instance／配置引用和公钥绑定 |
 
 Server HTTP 使用 `tower-http` 的 `TraceLayer`，span 只包含 method、声明的 route 模板及 Server 生成的 request ID。原始 URI、查询参数、headers、请求／响应 body 均不进入该层日志。SSE 的响应耗时表示开始响应，不表示整个订阅持续时间。

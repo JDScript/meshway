@@ -134,11 +134,15 @@ pub(crate) fn write(
         term,
         "Data plane",
         format!(
-            "{plane} · mode {}",
+            "{plane} · mode {}{}",
             match status.network_mode {
                 meshway_protocol::ipc::NetworkMode::Tun => "tun",
                 meshway_protocol::ipc::NetworkMode::ControlOnly => "control-only",
-            }
+            },
+            term.paint(
+                Role::Dim,
+                format!(" · changed {}", ago(status.observed_at, now))
+            )
         ),
     )?;
     line(output, term, "Exit", exit(term, status.exit.as_ref()))?;
@@ -178,6 +182,25 @@ pub(crate) fn write(
                 ),
             ),
         )?;
+    }
+    if let Some(relay) = &status.control_relay {
+        let text = match relay.state {
+            meshway_protocol::ipc::ControlRelayState::Retrying => format!(
+                "retrying ({}; attempt {}, retry in {})",
+                relay.reason,
+                relay.attempts,
+                super::format::span(
+                    relay
+                        .retry_at
+                        .map_or(0, |at| (at - now).num_seconds().max(0))
+                )
+            ),
+            meshway_protocol::ipc::ControlRelayState::AtCapacity => format!(
+                "at capacity ({} limit; {} refused, current connections kept)",
+                relay.reason, relay.attempts
+            ),
+        };
+        line(output, term, "Relay", term.paint(Role::Warn, text))?;
     }
     if let Some(problem) = status.last_error {
         let mut text = term.paint(Role::Bad, words(problem));

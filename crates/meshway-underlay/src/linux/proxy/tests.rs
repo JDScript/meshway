@@ -96,6 +96,7 @@ fn echo(
     tasks: super::super::tasks::Tasks,
     limit: usize,
     uid: u32,
+    state: State,
 ) -> Connections<
     impl Fn(UnixStream) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>,
 > {
@@ -104,6 +105,7 @@ fn echo(
         permits: Arc::new(Semaphore::new(limit)),
         uid,
         refused: 0,
+        state,
         relay:
             |stream: UnixStream| -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
                 Box::pin(async move {
@@ -138,10 +140,11 @@ fn listener_retries_follow_the_u1_cadence() {
     assert_eq!(retry_delay(&busy, u32::MAX), Duration::from_secs(60));
 }
 
-/// X15: a re-proved term's relay whose socket is still held (here a live
-/// listener on its path, `EADDRINUSE` to a plain bind) keeps retrying on
-/// its own and listens once the path is free; the term is not ended
-/// (the owner has no way to end it).
+/// X15/H4: a relay whose socket is still held (here a live listener on its
+/// path, `EADDRINUSE` to a plain bind) — in a re-proved term or at process
+/// start — keeps retrying on its own and listens once the path is free; the
+/// term is not ended (the owner has no way to end it). Each attempt is
+/// published (Status `controlRelay`), and listening clears it.
 #[tokio::test]
 async fn a_relay_that_cannot_listen_retries_until_its_socket_is_free() {
     let root = tempfile::tempdir().unwrap();
@@ -154,13 +157,26 @@ async fn a_relay_that_cannot_listen_retries_until_its_socket_is_free() {
         "a live socket is never reclaimed"
     );
     let tasks = super::super::tasks::Tasks::new(8);
+    let (state, mut states) = tokio::sync::watch::channel(None);
     let owner = tokio::spawn(serve(
         socket.clone(),
         first,
-        echo(tasks.clone(), 8, socket.uid),
+        echo(tasks.clone(), 8, socket.uid, state),
     ));
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert!(!owner.is_finished(), "the owner keeps retrying");
+    match states.borrow_and_update().clone() {
+        Some(crate::ControlRelayState::Retrying(pending)) => {
+            assert_eq!(pending.attempts, 1);
+            assert!(
+                pending.reason.starts_with("cannot listen: "),
+                "{}",
+                pending.reason
+            );
+            assert!(pending.retry_at > std::time::SystemTime::now());
+        }
+        other => panic!("retrying is published, not {other:?}"),
+    }
     drop(held);
     let started = std::time::Instant::now();
     let listening = loop {
@@ -173,6 +189,7 @@ async fn a_relay_that_cannot_listen_retries_until_its_socket_is_free() {
         );
         tokio::time::sleep(Duration::from_millis(50)).await;
     };
+    assert_eq!(*states.borrow(), None, "listening clears the retry");
     drop(listening);
     socket.close();
     assert!(
@@ -192,12 +209,21 @@ async fn a_relay_at_capacity_refuses_new_connections_and_keeps_current_ones() {
     let first = socket.bind().await;
     assert!(first.is_ok());
     let tasks = super::super::tasks::Tasks::new(1);
-    let connections = echo(tasks.clone(), 8, socket.uid);
+    let (state, states) = tokio::sync::watch::channel(None);
+    let connections = echo(tasks.clone(), 8, socket.uid, state);
     let owner = tokio::spawn(serve(socket.clone(), first, connections));
     let mut current = echoes(&socket.path)
         .await
         .expect("first connection relayed");
+    assert_eq!(*states.borrow(), None);
     assert!(echoes(&socket.path).await.is_none(), "refused at capacity");
+    assert_eq!(
+        *states.borrow(),
+        Some(crate::ControlRelayState::AtCapacity {
+            limit: "tasks",
+            refused: 1
+        })
+    );
     {
         use tokio::io::AsyncWriteExt;
         current.write_all(b"y").await.unwrap();
@@ -211,6 +237,7 @@ async fn a_relay_at_capacity_refuses_new_connections_and_keeps_current_ones() {
         assert!(started.elapsed() < Duration::from_secs(5), "admitted again");
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
+    assert_eq!(*states.borrow(), None, "an admitted connection ends it");
     assert!(!owner.is_finished());
     owner.abort();
     let _ = tasks.shutdown().await;

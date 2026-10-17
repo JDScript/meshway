@@ -241,8 +241,10 @@ impl Actor {
                             );
                         }
                         meshway_dns::publish_scope(&query_scopes, None);
-                        faults.send_replace(Some(error));
+                        // Why before the fault itself: the plane reads the
+                        // detail as soon as it sees the fault.
                         details.send_replace(Some(failure));
+                        faults.send_replace(Some(error));
                     }
                     Ok(()) if faulted => {
                         tracing::info!("DNS owner recovered its system installation");
@@ -493,6 +495,10 @@ impl Attachment {
         if let Some(actor) = &self.actor {
             actor.suspend();
         }
+    }
+    /// The check the running owner's current fault failed, live.
+    pub fn detail_watch(&self) -> Option<watch::Receiver<Option<SystemDnsFailure>>> {
+        self.actor.as_ref().map(|actor| actor.detail.clone())
     }
     pub fn guard(&self) -> Option<watch::Receiver<Option<SystemDnsError>>> {
         self.actor.as_ref().map(|actor| actor.fault.clone())
