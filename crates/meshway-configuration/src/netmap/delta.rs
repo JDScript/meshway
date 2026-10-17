@@ -67,6 +67,9 @@ pub struct NetmapDelta {
     /// Complete replacement profile selections.
     #[serde(deserialize_with = "unique_map")]
     pub selected_profiles: BTreeMap<NodeId, String>,
+    /// Complete replacement eligible exits; omitted when empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub eligible_exits: Vec<super::EligibleExit>,
     /// Complete replacement selection versions.
     #[serde(deserialize_with = "unique_map")]
     pub selection_versions: BTreeMap<NodeId, meshway_model::Version>,
@@ -149,6 +152,7 @@ pub fn netmap_delta(
         },
         rule_sets: t.projection.rule_sets.clone(),
         selected_profiles: t.projection.selected_profiles.clone(),
+        eligible_exits: t.projection.eligible_exits.clone(),
         selection_versions: t.projection.selection_versions.clone(),
         dialers: NetmapDialerDelta {
             remove: dialers_remove,
@@ -191,6 +195,7 @@ pub fn apply_netmap_delta(
     t.projection.subjects = delta.subjects;
     t.projection.rule_sets = delta.rule_sets;
     t.projection.selected_profiles = delta.selected_profiles;
+    t.projection.eligible_exits = delta.eligible_exits;
     t.projection.selection_versions = delta.selection_versions;
     apply(
         &mut t.projection.configuration.nodes,

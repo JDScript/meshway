@@ -2912,6 +2912,7 @@ export const zNetmapDelta = z.strictObject({
   ["dialers"]: zNetmapDialerDelta,
   ["dns"]: zNetmapDns,
   ["egress"]: zEgressPlan.nullable(),
+  ["eligibleExits"]: z.array(zEligibleExit).exactOptional(),
   ["exitRole"]: zExitRole.nullable(),
   ["inventory"]: zNetmapInventoryDelta,
   ["networkId"]: zNetworkId,

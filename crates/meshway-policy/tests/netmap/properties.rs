@@ -194,6 +194,34 @@ fn digest_round_trip_and_delta_reconstruct_exact_target() {
     assert!(netmap_delta(target, base).is_err(), "serial must increase");
 }
 
+/// The eligible exits a projection carries change with an exit's
+/// `exitFamilies` alone; a delta replaces them and reproduces the target.
+#[test]
+fn a_delta_carries_the_eligible_exits_of_its_target() {
+    let mut s = base(5);
+    s.cfg.access = vec![access(
+        &[sel(1)],
+        &["autogroup:internet".into()],
+        &["tcp:443"],
+        false,
+    )];
+    s.cfg.routing.egress.rules = vec![egress_rule("8.0.0.0/8", exit_action(&[4], &[]))];
+    let first = netmaps(&s);
+    s.cfg.nodes.get_mut(&node(4)).unwrap().exit_families = vec![
+        meshway_model::exit::ExitFamily::Ipv4,
+        meshway_model::exit::ExitFamily::Ipv6,
+    ];
+    let second = compile_with(&s, &previous(&first), Revision::new(2).unwrap());
+    let (base, target) = (&first.nodes[&node(1)], &second.nodes[&node(1)]);
+    assert_ne!(
+        base.netmap.projection.eligible_exits,
+        target.netmap.projection.eligible_exits
+    );
+    let delta = netmap_delta(base, target).unwrap();
+    let delta: NetmapDelta = serde_json::from_str(&serde_json::to_string(&delta).unwrap()).unwrap();
+    assert_eq!(&apply_netmap_delta(base, delta).unwrap(), target);
+}
+
 #[test]
 fn wire_rejects_duplicate_keys_unknown_fields_and_positional_objects() {
     let mut s = base(3);

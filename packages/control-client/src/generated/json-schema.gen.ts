@@ -8429,6 +8429,13 @@ export const schemaDocument = {
               }
             ]
           },
+          "eligibleExits": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EligibleExit"
+            },
+            "description": "Complete replacement eligible exits; omitted when empty."
+          },
           "exitRole": {
             "oneOf": [
               {
