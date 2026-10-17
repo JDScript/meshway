@@ -120,7 +120,7 @@ impl<M> TunPending<M> {
 
     /// Every successful syscall commits its prefix before the next await.
     /// A cancelled wait leaves the unwritten suffix and original lifetime here.
-    pub async fn ready(&mut self, tun: &meshway_tun::Tun) -> (Result<(), Error>, M) {
+    pub async fn ready(&mut self, tun: &dyn meshway_tun::PacketDevice) -> (Result<(), Error>, M) {
         let Some(entry) = self.0.entries.front_mut() else {
             return std::future::pending().await;
         };

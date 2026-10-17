@@ -31,7 +31,7 @@ unicode-width = "0.2"
 getrandom.workspace = true
 uuid.workspace = true
 axum.workspace = true
-meshway-daemon = { path = "../meshway-daemon" }
+meshway-node = { path = "../../crates/meshway-node" }
 meshway-server = { path = "../meshway-server" }
 meshway-control-client = { path = "../../crates/meshway-control-client" }
 meshway-protocol = { path = "../../crates/meshway-protocol" }

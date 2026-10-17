@@ -288,13 +288,19 @@ impl meshway_transport::SendLifetime for OutputLifetime {
 /// Keep the plaintext packet and all circuit/flow/lease guards owned throughout
 /// the asynchronous write. Every resumed device poll rechecks those guards.
 /// Exit/NAT forwarding has a separate owner and cannot use local TUN delivery.
-pub async fn deliver(tun: &meshway_tun::Tun, pending: PendingAction) -> Result<(), Error> {
+pub async fn deliver(
+    tun: &dyn meshway_tun::PacketDevice,
+    pending: PendingAction,
+) -> Result<(), Error> {
     static PROFILE: meshway_logging::profile::Metric =
         meshway_logging::profile::Metric::new("carrier.deliver.poll");
     PROFILE.poll(deliver_owned(tun, pending)).await
 }
 
-async fn deliver_owned(tun: &meshway_tun::Tun, pending: PendingAction) -> Result<(), Error> {
+async fn deliver_owned(
+    tun: &dyn meshway_tun::PacketDevice,
+    pending: PendingAction,
+) -> Result<(), Error> {
     if pending.hop() != Hop::Deliver {
         return Err(Error::Destination);
     }

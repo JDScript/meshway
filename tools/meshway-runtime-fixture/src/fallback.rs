@@ -44,7 +44,7 @@ struct Blocked {
     blocked_at_ms: u64,
 }
 
-// Production trace seam: target meshway_daemon::runtime::network::circuit_packet,
+// Production trace seam: target meshway_node::runtime::network::circuit_packet,
 // message "Mesh circuit packet ready". Emit only for a real business frame at
 // the actual packet owner, using PendingFrame::circuit() and circuit_info().
 // cid is 64 hex characters; path_json is a serialized Vec<NodeId>. No packet,
@@ -63,7 +63,7 @@ pub(super) struct PacketObservation {
 
 pub(super) fn packet_observation(event: &serde_json::Value) -> Result<Option<PacketObservation>> {
     if event.get("target").and_then(serde_json::Value::as_str)
-        != Some("meshway_daemon::runtime::network::circuit_packet")
+        != Some("meshway_node::runtime::network::circuit_packet")
         || event
             .get("fields")
             .and_then(|fields| fields.get("message"))

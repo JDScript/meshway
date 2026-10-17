@@ -1,6 +1,6 @@
 //! Recover and remove only a stale socket of this daemon's private directory.
+use meshway_node::ipc::SocketIdentity;
 use meshway_private_storage::Directory;
-use serde::{Deserialize, Serialize};
 use std::{
     fs,
     os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt},
@@ -12,16 +12,6 @@ use tokio::net::{UnixListener, UnixStream};
 
 /// The local IPC socket in the daemon's private state directory.
 pub(crate) const FILE: &str = "control.sock";
-
-#[derive(Clone, Copy, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct SocketIdentity {
-    /// Kept for the record format only: the same state directory may be
-    /// mounted on a renumbered device (Docker engine or host restart). The
-    /// socket must be on the state directory's current device.
-    device: u64,
-    inode: u64,
-}
 
 pub(crate) struct Socket {
     pub(super) listener: UnixListener,

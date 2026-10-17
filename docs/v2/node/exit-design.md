@@ -29,7 +29,7 @@
 | `crates/meshway-underlay/src/linux/dns.rs`、`resolver_exchange.rs` | 前者仅 bootstrap resolver；后者消费密封 local resolver route，不能将 bootstrap 权限借给出口 DNS |
 | `crates/meshway-dns/src/{selection,route,exit_route,association,owner/mod,dispatcher/mod,service/mod}.rs` | MagicDNS、useWithExit 选择、精确上游许可、出口 resolver 路由、可信关联、query ticket 与输出取消 |
 | `crates/meshway-dns/src/system/linux/{mod,resolved,file/mod,storage}.rs` | namespace 预约、真实上游来源、系统 DNS 安装与恢复；不得绕过现有归属机制 |
-| `apps/meshway-daemon/src/runtime/network/{worker,plane,reporting}.rs`、`exit/` | 装配：出口 driver、能力探测与上报；不持第二份流表或 nft owner |
+| `crates/meshway-node/src/runtime/network/`、`host/linux/exit/` | 装配：出口 driver、能力探测与上报；不持第二份流表或 nft owner |
 
 没有独立的 `docs/v2/node/dns.md`；现行 DNS 组件定义在 [dataplane](/v2/node/dataplane#dns-查询-owner)。
 
