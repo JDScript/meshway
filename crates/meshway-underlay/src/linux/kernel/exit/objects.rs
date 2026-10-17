@@ -278,7 +278,7 @@ pub(in crate::linux::kernel) fn decode(bytes: &[u8]) -> Result<Receipt> {
                 .ok_or(Error::Journal)
         };
         let family = text("family")?;
-        if !matches!(family.as_str(), "inet" | "ip") {
+        if !matches!(family.as_str(), "inet" | "ip" | "ip6") {
             return Err(Error::Journal);
         }
         let table = if kind == "table" {
@@ -306,8 +306,10 @@ pub(in crate::linux::kernel) fn decode(bytes: &[u8]) -> Result<Receipt> {
         if matches!(kind.as_str(), "set" | "map") {
             data.remove("count");
             // Permission data is checked separately from immutable object shape.
-            if !matches!(data.get("name").and_then(Value::as_str), Some("mesh"))
-                && let Some(elements) = data.remove("elem")
+            if !matches!(
+                data.get("name").and_then(Value::as_str),
+                Some("mesh" | "mesh6")
+            ) && let Some(elements) = data.remove("elem")
             {
                 let elements = elements
                     .as_array()
@@ -631,6 +633,55 @@ mod tests {
                 }
             }
         }
+    }
+
+    fn program(families: Vec<meshway_model::exit::ExitFamily>) -> Program {
+        Program {
+            legacy: false,
+            installation: "a".repeat(32),
+            interface: 7,
+            interface_name: "tun1".into(),
+            mark: 0x100,
+            pools: vec!["100.64.0.0/10".parse().unwrap()],
+            pools6: if families.len() == 2 {
+                vec!["fd79::/48".parse().unwrap()]
+            } else {
+                Vec::new()
+            },
+            families,
+        }
+    }
+
+    #[test]
+    fn the_ipv6_program_is_its_own_receipt_and_the_ipv4_program_has_no_ipv6_object() {
+        use meshway_model::exit::ExitFamily::{Ipv4, Ipv6};
+        let both = program(vec![Ipv4, Ipv6]);
+        let receipt = decode(&serde_json::to_vec(&both.create()).unwrap()).unwrap();
+        let keys: Vec<&String> = receipt.objects.keys().collect();
+        for wanted in [
+            "ip6/meshway_exit_nat6_",
+            "/set/flows6",
+            "/set/quarantine6",
+            "/set/echo_flows6",
+            "/set/mesh6",
+        ] {
+            assert!(keys.iter().any(|key| key.contains(wanted)), "{wanted}");
+        }
+        assert_eq!(both.tables().len(), 3);
+        let four = program(vec![Ipv4]);
+        let receipt = decode(&serde_json::to_vec(&four.create()).unwrap()).unwrap();
+        assert!(receipt.objects.keys().all(|key| {
+            !key.starts_with("ip6/")
+                && !["flows6", "quarantine6", "mesh6"]
+                    .iter()
+                    .any(|set| key.ends_with(set))
+        }));
+        assert_eq!(four.tables().len(), 2);
+        // A ledger written before families reads as the IPv4 program.
+        let text = serde_json::to_value(&four).unwrap();
+        assert!(text.get("families").is_none() && text.get("pools6").is_none());
+        let read: Program = serde_json::from_value(text).unwrap();
+        assert_eq!(read.families, [Ipv4]);
     }
 
     #[test]
