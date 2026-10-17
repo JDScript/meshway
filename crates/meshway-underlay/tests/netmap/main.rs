@@ -171,7 +171,7 @@ async fn netmap_exit_role_survives_renewal_and_unchanged_serial_and_ends_on_with
         next_port += 1;
         let tuple = OriginalTuple {
             source: source.parse().unwrap(),
-            destination,
+            destination: destination.into(),
             transport: ExitTransport::Udp {
                 source_port: next_port,
                 destination_port: 42424,
@@ -263,7 +263,7 @@ async fn netmap_exit_projection_capacity_refuses_one_flow_and_keeps_the_role() {
     };
     let tuple = |port: u16| OriginalTuple {
         source: "100.64.0.2".parse().unwrap(),
-        destination: routable(),
+        destination: routable().into(),
         transport: ExitTransport::Udp {
             source_port: port,
             destination_port: 42424,
@@ -348,7 +348,7 @@ async fn netmap_exit_projection_round_acknowledges_each_flow_by_itself() {
     // traceroute -I: one identifier, one sequence per probe.
     let echo = |sequence: u16| OriginalTuple {
         source: "100.64.0.2".parse().unwrap(),
-        destination: routable(),
+        destination: routable().into(),
         transport: ExitTransport::IcmpEcho {
             identifier: 4242,
             sequence,

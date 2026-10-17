@@ -32,8 +32,8 @@ fn incarnation(sequence: u16) -> ExitIncarnation {
 
 fn echo(sequence: u16) -> OriginalTuple {
     OriginalTuple {
-        source: SOURCE,
-        destination: routable(),
+        source: SOURCE.into(),
+        destination: routable().into(),
         transport: ExitTransport::IcmpEcho {
             identifier: IDENTIFIER,
             sequence,

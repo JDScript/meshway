@@ -67,7 +67,7 @@ async fn exit_nat_udp_real_reply_qualification_confirm_retire_and_expiry() {
         node: "22222222-2222-4222-8222-222222222222".parse().unwrap(),
         plan: crate::target::RoleIdentity {
             generation: Digest::from_bytes([1; 32]),
-            family: ExitFamily::Ipv4,
+            families: vec![ExitFamily::Ipv4],
             nat: ExitNat::Masquerade,
         },
         program: program::Program {
@@ -77,6 +77,8 @@ async fn exit_nat_udp_real_reply_qualification_confirm_retire_and_expiry() {
             interface_name: tun.name().to_owned(),
             mark,
             pools: vec!["100.96.0.0/11".parse().unwrap()],
+            families: vec![ExitFamily::Ipv4],
+            pools6: Vec::new(),
         },
         tun_name: tun.name().to_owned(),
         mtu: tun.mtu(),
@@ -104,7 +106,7 @@ async fn exit_nat_udp_real_reply_qualification_confirm_retire_and_expiry() {
         ledger,
         routing,
         Arc::new(RwLock::new(BTreeMap::new())),
-        vec![external_source.parse().unwrap(), Ipv4Addr::LOCALHOST],
+        vec![external_source.parse().unwrap(), Ipv4Addr::LOCALHOST.into()],
         CancellationToken::new(),
     )
     .await
@@ -127,7 +129,7 @@ async fn exit_nat_udp_real_reply_qualification_confirm_retire_and_expiry() {
     );
     let tuple = OriginalTuple {
         source: "100.96.0.1".parse().unwrap(),
-        destination: *remote.ip(),
+        destination: (*remote.ip()).into(),
         transport: ExitTransport::Udp {
             source_port: 17001,
             destination_port: remote.port(),
@@ -168,7 +170,7 @@ async fn exit_nat_udp_real_reply_qualification_confirm_retire_and_expiry() {
         .unwrap()
         .unwrap();
     assert_eq!(&reply[12..16], &remote.ip().octets());
-    assert_eq!(&reply[16..20], &tuple.source.octets());
+    assert_eq!(&reply[16..20], &v4(tuple.source).octets());
     assert_eq!(
         &reply[28..size],
         format!("from={external_source}|x3-qualified").as_bytes()
@@ -481,8 +483,8 @@ fn udp(tuple: OriginalTuple, payload: &[u8]) -> Vec<u8> {
     packet[2..4].copy_from_slice(&length.to_be_bytes());
     packet[8] = 64;
     packet[9] = 17;
-    packet[12..16].copy_from_slice(&tuple.source.octets());
-    packet[16..20].copy_from_slice(&tuple.destination.octets());
+    packet[12..16].copy_from_slice(&v4(tuple.source).octets());
+    packet[16..20].copy_from_slice(&v4(tuple.destination).octets());
     packet[20..22].copy_from_slice(&source.to_be_bytes());
     packet[22..24].copy_from_slice(&destination.to_be_bytes());
     packet[24..26].copy_from_slice(&(length - 20).to_be_bytes());
@@ -498,4 +500,12 @@ fn udp(tuple: OriginalTuple, payload: &[u8]) -> Vec<u8> {
     }
     packet[10..12].copy_from_slice(&(!(sum as u16)).to_be_bytes());
     packet
+}
+
+/// The IPv4 address of an IPv4 projection, for building its packets.
+pub(super) fn v4(address: std::net::IpAddr) -> Ipv4Addr {
+    match address {
+        std::net::IpAddr::V4(address) => address,
+        std::net::IpAddr::V6(_) => panic!("an IPv4 projection"),
+    }
 }

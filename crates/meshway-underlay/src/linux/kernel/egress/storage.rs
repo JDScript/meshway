@@ -13,11 +13,15 @@ const LIMIT: usize = 16 * 1024 * 1024;
 pub(super) struct Device {
     pub index: u32,
     pub name: String,
-    pub source: std::net::Ipv4Addr,
+    /// Mesh IPv4 address: the source of managed IPv4 routes.
+    pub source: Option<std::net::Ipv4Addr>,
+    /// Mesh IPv6 address: the source of managed IPv6 routes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source6: Option<std::net::Ipv6Addr>,
 }
 /// The capture sets and, with a device, the routes of the capture table:
-/// the CIDR cover of `ranges.v4` through the device. No other route is ever
-/// in that table.
+/// the CIDR covers of `ranges.v4` and `ranges.v6` through the device. No
+/// other route is ever in that table.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Gate {
@@ -41,7 +45,7 @@ pub(super) struct Ledger {
     pub gate: Gate,
     pub pending_gate: Option<Gate>,
     pub receipt: Option<super::super::exit::objects::Receipt>,
-    /// Owned RPDB rules: the capture-table selector.
+    /// Owned RPDB rules: the capture-table selector of each family.
     pub rules: Vec<Vec<u8>>,
     pub removed: bool,
 }
@@ -155,7 +159,7 @@ impl Ledger {
                 .all(|b| b.is_ascii_hexdigit())
             || !self.program.mark.is_power_of_two()
             || self.table < 10000
-            || self.rules.len() > 1
+            || self.rules.len() > 2
         {
             return Err(Error::Journal);
         }
@@ -163,7 +167,7 @@ impl Ledger {
             // A staged gate is the union of two plans; routes exist only
             // for one plan's ranges.
             if !gate.ranges.canonical()
-                || gate.ranges.v4.len() + gate.ranges.v6.len() > super::plan::UNION_RANGES
+                || gate.ranges.len() > super::plan::UNION_RANGES
                 || (gate.device.is_some() && !gate.ranges.within_limits())
                 || !gate.mesh.canonical()
                 || gate.mesh.v4.len() + gate.mesh.v6.len() > 128

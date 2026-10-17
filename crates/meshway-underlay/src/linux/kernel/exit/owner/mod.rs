@@ -20,7 +20,7 @@ use crate::{
 use meshway_model::exit::ExitFamily;
 use std::{
     collections::BTreeMap,
-    net::{IpAddr, Ipv4Addr},
+    net::IpAddr,
     sync::{Arc, Mutex, RwLock},
     time::{Duration, Instant},
 };

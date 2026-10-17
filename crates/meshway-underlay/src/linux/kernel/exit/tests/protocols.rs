@@ -187,8 +187,8 @@ fn ip(tuple: OriginalTuple, body: &[u8]) -> Vec<u8> {
     packet[2..4].copy_from_slice(&u16::try_from(20 + body.len()).unwrap().to_be_bytes());
     packet[8] = 64;
     packet[9] = tuple.fields().0;
-    packet[12..16].copy_from_slice(&tuple.source.octets());
-    packet[16..20].copy_from_slice(&tuple.destination.octets());
+    packet[12..16].copy_from_slice(&v4(tuple.source).octets());
+    packet[16..20].copy_from_slice(&v4(tuple.destination).octets());
     let sum = checksum(&packet);
     packet[10..12].copy_from_slice(&sum.to_be_bytes());
     packet.extend_from_slice(body);
@@ -205,8 +205,8 @@ fn segment(tuple: OriginalTuple, sequence: u32, ack: u32, flags: u8, payload: &[
     body[14..16].copy_from_slice(&4096u16.to_be_bytes());
     body.extend_from_slice(payload);
     let mut pseudo = Vec::new();
-    pseudo.extend_from_slice(&tuple.source.octets());
-    pseudo.extend_from_slice(&tuple.destination.octets());
+    pseudo.extend_from_slice(&v4(tuple.source).octets());
+    pseudo.extend_from_slice(&v4(tuple.destination).octets());
     pseudo.extend_from_slice(&[0, 6]);
     pseudo.extend_from_slice(&u16::try_from(body.len()).unwrap().to_be_bytes());
     pseudo.extend_from_slice(&body);

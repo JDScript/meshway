@@ -9,8 +9,8 @@ impl Ruleset {
     pub(super) fn from_nft(objects: &[host::Object]) -> Self {
         let mut ruleset = Self::default();
         for object in objects {
-            // IPv4 exit traffic: bridge, ARP and netdev hooks see no routed packet.
-            if !matches!(object.family.as_str(), "ip" | "inet") {
+            // Routed exit traffic: bridge, ARP and netdev hooks see none of it.
+            if !matches!(object.family.as_str(), "ip" | "ip6" | "inet") {
                 continue;
             }
             let field = |name: &str| object.data.get(name).and_then(Value::as_str);
@@ -88,10 +88,28 @@ fn nft_match(object: &Value) -> Match {
             .and_then(|value| value.get("key"))
             .and_then(Value::as_str)
     };
-    if left.pointer("/payload/protocol").and_then(Value::as_str) == Some("ip")
+    if let Some(protocol @ ("ip" | "ip6")) =
+        left.pointer("/payload/protocol").and_then(Value::as_str)
         && left.pointer("/payload/field").and_then(Value::as_str) == Some("daddr")
     {
-        return ipv4_nets(right).map_or(Match::Unknown, |nets| Match::Destination(equal, nets));
+        let ipv4 = protocol == "ip";
+        return nets(right)
+            .filter(|nets| nets.iter().all(|net| net.addr().is_ipv4() == ipv4))
+            .map_or(Match::Unknown, |nets| Match::Destination(equal, nets));
+    }
+    // A reverse-path filter: no route back out of the input interface for
+    // the source (firewalld's `fib saddr . mark . iif oif missing drop`).
+    if left.pointer("/fib/result").and_then(Value::as_str) == Some("oif")
+        && left
+            .pointer("/fib/flags")
+            .and_then(Value::as_array)
+            .is_some_and(|flags| {
+                flags.iter().any(|flag| flag == "saddr") && flags.iter().any(|flag| flag == "iif")
+            })
+        && op == "=="
+        && right == &Value::Bool(false)
+    {
+        return Match::ReversePath;
     }
     let Some(values) = strings(right) else {
         return Match::Unknown;
@@ -105,29 +123,27 @@ fn nft_match(object: &Value) -> Match {
     }
 }
 
-/// An nft address, prefix or anonymous set of them as IPv4 networks.
-fn ipv4_nets(value: &Value) -> Option<Vec<ipnet::Ipv4Net>> {
+/// An nft address, prefix or anonymous set of them as networks.
+fn nets(value: &Value) -> Option<Vec<ipnet::IpNet>> {
     match value {
         Value::String(text) => text
-            .parse::<ipnet::Ipv4Net>()
+            .parse::<ipnet::IpNet>()
             .ok()
-            .or_else(|| text.parse::<std::net::Ipv4Addr>().ok().map(Into::into))
+            .or_else(|| text.parse::<std::net::IpAddr>().ok().map(Into::into))
             .map(|net| vec![net]),
         Value::Array(values) => values
             .iter()
-            .map(ipv4_nets)
+            .map(nets)
             .collect::<Option<Vec<_>>>()
             .map(|nets| nets.concat()),
         Value::Object(object) => {
             if let Some(set) = object.get("set") {
-                return ipv4_nets(set);
+                return nets(set);
             }
             let prefix = object.get("prefix")?;
-            let address = prefix.get("addr")?.as_str()?.parse().ok()?;
+            let address: std::net::IpAddr = prefix.get("addr")?.as_str()?.parse().ok()?;
             let length = u8::try_from(prefix.get("len")?.as_u64()?).ok()?;
-            ipnet::Ipv4Net::new(address, length)
-                .ok()
-                .map(|net| vec![net])
+            ipnet::IpNet::new(address, length).ok().map(|net| vec![net])
         }
         _ => None,
     }
@@ -407,9 +423,16 @@ mod tests {
                 Ok(()),
             ),
         ] {
-            assert_eq!(ruleset.judge(&crossing), expected, "{case}");
+            assert_eq!(
+                ruleset.judge(&crossing, meshway_model::exit::ExitFamily::Ipv4),
+                expected,
+                "{case}"
+            );
         }
         // Without an egress interface only locally sent errors cross.
-        assert_eq!(docker("drop").judge(&Crossing::default()), Ok(()));
+        assert_eq!(
+            docker("drop").judge(&Crossing::default(), meshway_model::exit::ExitFamily::Ipv4),
+            Ok(())
+        );
     }
 }

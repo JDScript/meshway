@@ -1,7 +1,9 @@
 use super::{ExitError, command::Commands};
-use meshway_model::exit::{ExitCapability, ExitStatus, ExitUnavailableReason as Reason};
+use meshway_model::exit::{
+    ExitCapability, ExitFamily, ExitFamilyCapability, ExitStatus, ExitUnavailableReason as Reason,
+};
 use meshway_model::{InstanceId, NetmapRef};
-use std::time::SystemTime;
+use std::{collections::BTreeMap, time::SystemTime};
 
 /// Owned probe operation. Keep this value until `finish` completes, even if the
 /// original requester is cancelled. No UID/capability bitmap stands in for I/O.
@@ -38,37 +40,42 @@ impl ExitProbe {
             monitor: Some(monitor),
         }
     }
-    /// Read-only host prerequisites and atomic, net-zero nft feature transaction.
-    /// `interfaces` must be the actual ingress and egress interfaces. Strict RPF
-    /// is conservatively unsupported until a bidirectional proof is available.
-    /// This is a prerequisite observation; it never reports installed families.
+    /// Read-only host prerequisites and atomic, net-zero nft feature
+    /// transaction, per family of the role. `interfaces` must be the actual
+    /// ingress and egress interfaces. Strict RPF is conservatively
+    /// unsupported until a bidirectional proof is available. A shared
+    /// prerequisite (TUN, NET_ADMIN, nft, ctnetlink, ownership) fails every
+    /// family with the same reason. This is a prerequisite observation; it
+    /// never reports installed families.
     pub async fn observe(
         &mut self,
         instance_id: InstanceId,
         netmap: NetmapRef,
         role_generation: meshway_model::Digest,
+        families: &[ExitFamily],
         interfaces: &[String],
     ) -> ExitCapability {
-        let result = self.check(interfaces).await;
+        let result = self.check(interfaces, families).await;
+        let live = self.monitor.is_some();
         ExitCapability {
             instance_id,
             netmap,
             role_generation,
-            supported_families: if result.is_ok() && self.monitor.is_some() {
-                vec![meshway_model::exit::ExitFamily::Ipv4]
-            } else {
-                Vec::new()
-            },
-            installed_families: Vec::new(),
-            status: match result {
-                // Route/rule installation and precise conntrack deletion still
-                // require the Kernel owner's journaled resource transaction.
-                Ok(()) if self.monitor.is_some() => ExitStatus::Ready,
-                Ok(()) => ExitStatus::Probing,
-                Err(error) => ExitStatus::Unavailable {
-                    reason: error.reason,
-                },
-            },
+            families: families
+                .iter()
+                .map(|family| ExitFamilyCapability {
+                    family: *family,
+                    status: match result.get(family) {
+                        Some(Err(reason)) => ExitStatus::Unavailable { reason: *reason },
+                        // Route/rule installation and precise conntrack
+                        // deletion still require the Kernel owner's
+                        // journaled resource transaction.
+                        Some(Ok(())) if live => ExitStatus::Ready,
+                        _ => ExitStatus::Probing,
+                    },
+                    installed: false,
+                })
+                .collect(),
             observed_at: SystemTime::now().into(),
         }
     }
@@ -84,9 +91,39 @@ impl ExitProbe {
             .map_err(|_| Reason::NftUnavailable.into())
     }
 
-    async fn check(&mut self, interfaces: &[String]) -> Result<(), ExitError> {
+    /// Each family's result. A family's own prerequisite is reported before
+    /// shared ones (the forwarding a host administrator sets is read first);
+    /// a shared failure fails every family not failed already.
+    async fn check(
+        &mut self,
+        interfaces: &[String],
+        families: &[ExitFamily],
+    ) -> BTreeMap<ExitFamily, Result<(), Reason>> {
+        let mut results: BTreeMap<ExitFamily, Result<(), Reason>> =
+            families.iter().map(|family| (*family, Ok(()))).collect();
+        if let Err(reason) = forwarding(read_sysctl("/proc/sys/net/ipv4/ip_forward")) {
+            fail(&mut results, ExitFamily::Ipv4, reason);
+        }
+        if families.contains(&ExitFamily::Ipv6)
+            && let Err(reason) = self.ipv6()
+        {
+            fail(&mut results, ExitFamily::Ipv6, reason);
+        }
+        if let Err(error) = self.shared(interfaces, families, &mut results).await {
+            for family in families {
+                fail(&mut results, *family, error.reason);
+            }
+        }
+        results
+    }
+
+    async fn shared(
+        &mut self,
+        interfaces: &[String],
+        families: &[ExitFamily],
+        results: &mut BTreeMap<ExitFamily, Result<(), Reason>>,
+    ) -> Result<(), ExitError> {
         self.finish().await?;
-        forwarding(read_sysctl("/proc/sys/net/ipv4/ip_forward"))?;
         if interfaces.is_empty() || interfaces.len() > 128 {
             return Err(Reason::ForwardingProbeFailed.into());
         }
@@ -110,10 +147,23 @@ impl ExitProbe {
                 "/proc/sys/net/ipv4/conf/{interface}/src_valid_mark"
             ))
             .map_err(|_| Reason::ForwardingProbeFailed)?;
-            reverse_path(all_rpf, rpf, all_mark, mark)?;
+            if let Err(reason) = reverse_path(all_rpf, rpf, all_mark, mark) {
+                fail(results, ExitFamily::Ipv4, reason);
+            }
         }
         if self.monitor.is_some() {
-            super::firewall::check(&mut self.commands, &self.owned_tables, &self.crossing).await?;
+            for (family, judged) in super::firewall::check(
+                &mut self.commands,
+                &self.owned_tables,
+                &self.crossing,
+                families,
+            )
+            .await?
+            {
+                if let Err(reason) = judged {
+                    fail(results, family, reason);
+                }
+            }
         }
         let _device = std::fs::OpenOptions::new()
             .read(true)
@@ -147,13 +197,18 @@ impl ExitProbe {
             tun.name()
         ))
         .map_err(|_| Reason::ForwardingProbeFailed)?;
-        reverse_path(all_rpf, ingress_rpf, all_mark, ingress_mark)?;
+        if let Err(reason) = reverse_path(all_rpf, ingress_rpf, all_mark, ingress_mark) {
+            fail(results, ExitFamily::Ipv4, reason);
+        }
         // A new interface inherits `default/forwarding`, not `ip_forward`:
-        // the exit TUN forwards only if this fresh TUN does.
-        forwarding(read_sysctl(&format!(
+        // the exit TUN forwards only if this fresh TUN does. IPv6
+        // forwarding is `all` alone.
+        if let Err(reason) = forwarding(read_sysctl(&format!(
             "/proc/sys/net/ipv4/conf/{}/forwarding",
             tun.name()
-        )))?;
+        ))) {
+            fail(results, ExitFamily::Ipv4, reason);
+        }
         let mut random = [0u8; 16];
         getrandom::fill(&mut random).map_err(|_| Reason::NftUnavailable)?;
         let name = format!(
@@ -171,6 +226,7 @@ impl ExitProbe {
         self.finish().await?;
         outcome?;
         if self.monitor.is_some() {
+            // The program of every family of the role, NAT66 included.
             let program = super::program::Program {
                 legacy: false,
                 installation: random.iter().map(|byte| format!("{byte:02x}")).collect(),
@@ -182,6 +238,12 @@ impl ExitProbe {
                         .parse()
                         .map_err(|_| Reason::NftUnavailable)?,
                 ],
+                families: families.to_vec(),
+                pools6: if families.contains(&ExitFamily::Ipv6) {
+                    vec!["fd00::/64".parse().map_err(|_| Reason::NftUnavailable)?]
+                } else {
+                    Vec::new()
+                },
             };
             let mut batch = program.create();
             for (family, name) in program.tables() {
@@ -197,6 +259,45 @@ impl ExitProbe {
         drop(tun);
         super::conntrack::available().await?;
         Ok(())
+    }
+
+    /// The IPv6 family's own prerequisites: forwarding (`all` alone decides
+    /// IPv6 forwarding), a usable global address and a route toward the
+    /// Internet on some egress interface, and router advertisements that
+    /// still reach the host: with forwarding on, an interface whose
+    /// Internet route an advertisement installed must have `accept_ra = 2`,
+    /// or that route lapses. Meshway never sets these.
+    fn ipv6(&self) -> Result<(), Reason> {
+        match read_sysctl("/proc/sys/net/ipv6/conf/all/forwarding") {
+            Ok(1) => {}
+            Ok(0) => return Err(Reason::Ipv6ForwardDisabled),
+            _ => return Err(Reason::ForwardingProbeFailed),
+        }
+        if self.crossing.egress6.is_empty() || self.crossing.local6.is_empty() {
+            return Err(Reason::Ipv6NoEgress);
+        }
+        for interface in &self.crossing.advertised6 {
+            if interface.is_empty() || interface.contains('/') || interface.starts_with('.') {
+                return Err(Reason::ForwardingProbeFailed);
+            }
+            match read_sysctl(&format!("/proc/sys/net/ipv6/conf/{interface}/accept_ra")) {
+                Ok(2) => {}
+                Ok(_) => return Err(Reason::Ipv6RouterAdvertisementsIgnored),
+                Err(()) => return Err(Reason::ForwardingProbeFailed),
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Fail `family` with `reason` unless it failed already.
+fn fail(
+    results: &mut BTreeMap<ExitFamily, Result<(), Reason>>,
+    family: ExitFamily,
+    reason: Reason,
+) {
+    if let Some(result @ Ok(())) = results.get_mut(&family) {
+        *result = Err(reason);
     }
 }
 
@@ -241,14 +342,19 @@ mod tests {
         let role_generation = meshway_model::Digest::from_bytes([4; 32]);
         let before = SystemTime::now();
         let observation = probe
-            .observe(instance, netmap, role_generation, &["lo".into()])
+            .observe(
+                instance,
+                netmap,
+                role_generation,
+                &[ExitFamily::Ipv4],
+                &["lo".into()],
+            )
             .await;
-        assert_eq!(observation.status, ExitStatus::Probing);
+        assert_eq!(observation.families[0].status, ExitStatus::Probing);
         assert_eq!(observation.instance_id, instance);
         assert_eq!(observation.netmap, netmap);
         assert_eq!(observation.role_generation, role_generation);
-        assert!(observation.installed_families.is_empty());
-        assert!(observation.supported_families.is_empty());
+        assert!(!observation.families[0].installed);
         let observed: SystemTime = observation.observed_at.into();
         assert!(observed >= before);
         assert!(observed <= SystemTime::now());
@@ -267,8 +373,8 @@ mod tests {
         assert_eq!(read_sysctl("/proc/sys/net/ipv4/ip_forward"), Ok(0));
         let mut probe = crate::Host::exit_probe().unwrap();
         assert_eq!(
-            probe.check(&["lo".into()]).await.unwrap_err().reason,
-            Reason::IpForwardDisabled
+            probe.check(&["lo".into()], &[ExitFamily::Ipv4]).await[&ExitFamily::Ipv4],
+            Err(Reason::IpForwardDisabled)
         );
         probe.finish().await.unwrap();
     }
@@ -283,8 +389,8 @@ mod tests {
         assert_eq!(read_sysctl("/proc/sys/net/ipv4/ip_forward"), Ok(1));
         let mut probe = crate::Host::exit_probe().unwrap();
         assert_eq!(
-            probe.check(&["lo".into()]).await.unwrap_err().reason,
-            Reason::NetAdminMissing
+            probe.check(&["lo".into()], &[ExitFamily::Ipv4]).await[&ExitFamily::Ipv4],
+            Err(Reason::NetAdminMissing)
         );
         probe.finish().await.unwrap();
     }
@@ -300,8 +406,8 @@ mod tests {
         assert_eq!(read_sysctl("/proc/sys/net/ipv4/conf/lo/rp_filter"), Ok(1));
         let mut probe = crate::Host::exit_probe().unwrap();
         assert_eq!(
-            probe.check(&["lo".into()]).await.unwrap_err().reason,
-            Reason::ReversePathFilterConflict
+            probe.check(&["lo".into()], &[ExitFamily::Ipv4]).await[&ExitFamily::Ipv4],
+            Err(Reason::ReversePathFilterConflict)
         );
         probe.finish().await.unwrap();
     }

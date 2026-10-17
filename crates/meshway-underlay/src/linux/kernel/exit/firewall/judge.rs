@@ -1,5 +1,5 @@
 use super::{crossing::Crossing, interface::interface};
-use meshway_model::exit::ExitUnavailableReason as Reason;
+use meshway_model::exit::{ExitFamily, ExitUnavailableReason as Reason};
 use std::collections::BTreeMap;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -56,7 +56,7 @@ pub(super) enum Interface<'a> {
     Absent,
 }
 
-/// What an exit packet's IPv4 destination can be.
+/// What an exit packet's destination can be.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Destination {
     /// Forwarded out of the exit TUN: any Internet-classified address.
@@ -68,6 +68,7 @@ pub(super) enum Destination {
 
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Packet<'a> {
+    family: ExitFamily,
     hook: Hook,
     input: Interface<'a>,
     output: Interface<'a>,
@@ -80,10 +81,15 @@ pub(super) enum Match {
     Output(bool, Vec<String>),
     /// `ct state` membership; exit traffic is new, established or related.
     State(bool, Vec<String>),
-    /// `meta nfproto`: exit traffic is IPv4.
+    /// `meta nfproto`: the judged packet's family.
     Family(bool, Vec<String>),
-    /// IPv4 destination membership (`ip daddr`, iptables `-d`).
-    Destination(bool, Vec<ipnet::Ipv4Net>),
+    /// Destination membership (`ip daddr`, `ip6 daddr`, iptables `-d`), of
+    /// one family; a packet of the other family never matches it.
+    Destination(bool, Vec<ipnet::IpNet>),
+    /// A reverse-path filter (`fib saddr . mark . iif oif missing`,
+    /// `-m rpfilter`): satisfied, since every projection proves before its
+    /// ACK that the reverse lookup of its source reaches the exit TUN.
+    ReversePath,
     Unknown,
 }
 
@@ -112,8 +118,9 @@ pub(super) struct Chain {
     pub(super) rules: Vec<Rule>,
 }
 
-/// Chains keyed by (source, table, name); `source` separates nft families
-/// from legacy iptables.
+/// Chains keyed by (source, table, name); `source` is the nft family (`ip`,
+/// `ip6`, `inet`) or legacy `iptables`/`ip6tables` (`legacy`, `legacy6`):
+/// a chain sees the packets of its own family.
 #[derive(Clone, Debug, Default)]
 pub(super) struct Ruleset {
     pub(super) chains: BTreeMap<(String, String, String), Chain>,
@@ -137,26 +144,33 @@ struct Walk<'r> {
 }
 
 impl Ruleset {
-    /// The exit's packets on each judged hook: arriving from its TUN and
-    /// from every egress interface (prerouting), forwarded out of and
-    /// replies into its TUN through every egress interface, and this host's
-    /// own ICMP errors sent to the TUN.
-    pub(super) fn judge(&self, crossing: &Crossing) -> Result<(), Reason> {
+    /// The exit's packets of `family` on each judged hook: arriving from
+    /// its TUN and from every egress interface of the family
+    /// (prerouting), forwarded out of and replies into its TUN through every
+    /// such egress interface, and this host's own ICMP errors sent to the TUN.
+    pub(super) fn judge(&self, crossing: &Crossing, family: ExitFamily) -> Result<(), Reason> {
         let mut packets = vec![Packet {
+            family,
             hook: Hook::Output,
             input: Interface::Absent,
             output: Interface::Exit,
             destination: Destination::Reply,
         }];
         packets.push(Packet {
+            family,
             hook: Hook::Prerouting,
             input: Interface::Exit,
             output: Interface::Absent,
             destination: Destination::Internet,
         });
-        for egress in &crossing.egress {
+        let egresses = match family {
+            ExitFamily::Ipv4 => &crossing.egress,
+            ExitFamily::Ipv6 => &crossing.egress6,
+        };
+        for egress in egresses {
             let egress = Interface::Named(egress);
             packets.push(Packet {
+                family,
                 hook: Hook::Prerouting,
                 input: egress,
                 output: Interface::Absent,
@@ -164,12 +178,14 @@ impl Ruleset {
             });
             for hook in [Hook::Forward, Hook::Postrouting] {
                 packets.push(Packet {
+                    family,
                     hook,
                     input: Interface::Exit,
                     output: egress,
                     destination: Destination::Internet,
                 });
                 packets.push(Packet {
+                    family,
                     hook,
                     input: egress,
                     output: Interface::Exit,
@@ -185,6 +201,9 @@ impl Ruleset {
         };
         for (key, chain) in &self.chains {
             let Some(hook) = chain.hook else { continue };
+            if !sees(&key.0, family) {
+                continue;
+            }
             for (index, packet) in packets.iter().enumerate() {
                 if packet.hook != hook {
                     continue;
@@ -283,6 +302,15 @@ impl Walk<'_> {
     }
 }
 
+/// Whether a chain of `source` sees packets of `family`.
+fn sees(source: &str, family: ExitFamily) -> bool {
+    match source {
+        "ip" | "legacy" => family == ExitFamily::Ipv4,
+        "ip6" | "legacy6" => family == ExitFamily::Ipv6,
+        _ => true,
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum End {
     /// Accepted (or dropped) in this or a called chain: no later rule applies.
@@ -304,9 +332,17 @@ fn evaluate(matched: &Match, packet: &Packet<'_>, crossing: &Crossing) -> Truth 
             interface(packet.output, name, crossing)
         }),
         Match::Destination(equal, nets) => {
-            let found = destination(packet.destination, nets, crossing);
+            // An address match of the other family never applies.
+            if nets
+                .iter()
+                .any(|net| ExitFamily::of(net.addr()) != packet.family)
+            {
+                return Truth::No;
+            }
+            let found = destination(packet.family, packet.destination, nets, crossing);
             if *equal { found } else { found.not() }
         }
+        Match::ReversePath => Truth::No,
         Match::State(equal, states) => {
             let ours = ["new", "established", "related"];
             let covered = ours
@@ -321,35 +357,44 @@ fn evaluate(matched: &Match, packet: &Packet<'_>, crossing: &Crossing) -> Truth 
             if *equal { found } else { found.not() }
         }
         Match::Family(equal, families) => member(families, *equal, &|family| match family {
-            "ipv4" => Truth::Yes,
-            "ipv6" | "arp" | "bridge" => Truth::No,
+            "ipv4" if packet.family == ExitFamily::Ipv4 => Truth::Yes,
+            "ipv6" if packet.family == ExitFamily::Ipv6 => Truth::Yes,
+            "ipv4" | "ipv6" | "arp" | "bridge" => Truth::No,
             _ => Truth::Maybe,
         }),
         Match::Unknown => Truth::Maybe,
     }
 }
 
-/// Whether a destination of class `class` lies in `nets`: Yes when every one
-/// does, No when none can.
-fn destination(class: Destination, nets: &[ipnet::Ipv4Net], crossing: &Crossing) -> Truth {
-    let overlaps = |a: &ipnet::Ipv4Net, b: &ipnet::Ipv4Net| a.contains(b) || b.contains(a);
-    let covered = |range: &ipnet::Ipv4Net| nets.iter().any(|net| net.contains(range));
-    let ranges: Vec<ipnet::Ipv4Net> = match class {
+/// Whether a `family` destination of class `class` lies in `nets` (of the
+/// same family): Yes when every one does, No when none can.
+fn destination(
+    family: ExitFamily,
+    class: Destination,
+    nets: &[ipnet::IpNet],
+    crossing: &Crossing,
+) -> Truth {
+    let overlaps = |a: &ipnet::IpNet, b: &ipnet::IpNet| a.contains(b) || b.contains(a);
+    let covered = |range: &ipnet::IpNet| nets.iter().any(|net| net.contains(range));
+    let own = |net: &&ipnet::IpNet| ExitFamily::of(net.addr()) == family;
+    let ranges: Vec<ipnet::IpNet> = match class {
         Destination::Internet => meshway_policy::internet_ranges()
             .iter()
-            .filter_map(|range| match range {
-                ipnet::IpNet::V4(range) => Some(*range),
-                ipnet::IpNet::V6(_) => None,
-            })
+            .filter(own)
+            .copied()
             .collect(),
         Destination::Reply => crossing
             .local
             .iter()
-            .map(|ip| ipnet::Ipv4Net::from(*ip))
-            .chain(crossing.mesh.iter().filter_map(|pool| match pool {
-                ipnet::IpNet::V4(pool) => Some(*pool),
-                ipnet::IpNet::V6(_) => None,
-            }))
+            .map(|ip| ipnet::IpNet::from(std::net::IpAddr::V4(*ip)))
+            .chain(
+                crossing
+                    .local6
+                    .iter()
+                    .map(|ip| ipnet::IpNet::from(std::net::IpAddr::V6(*ip))),
+            )
+            .chain(crossing.mesh.iter().copied())
+            .filter(|net| ExitFamily::of(net.addr()) == family)
             .collect(),
     };
     if ranges.is_empty() {
@@ -398,7 +443,10 @@ mod tests {
         }
         items.push(chain("ip", "filter", "c40", None, ""));
         let started = std::time::Instant::now();
-        assert_eq!(nft(Value::Array(items)).judge(&crossing()), Ok(()));
+        assert_eq!(
+            nft(Value::Array(items)).judge(&crossing(), ExitFamily::Ipv4),
+            Ok(())
+        );
         assert!(started.elapsed() < std::time::Duration::from_secs(5));
         let mut large = Ruleset::default();
         let forward = large
@@ -413,6 +461,9 @@ mod tests {
             };
             BUDGET / 2 + 1
         ];
-        assert_eq!(large.judge(&crossing()), Err(Reason::FirewallConflict));
+        assert_eq!(
+            large.judge(&crossing(), ExitFamily::Ipv4),
+            Err(Reason::FirewallConflict)
+        );
     }
 }

@@ -2,7 +2,7 @@ use rtnetlink::packet_route::{
     AddressFamily,
     address::{AddressAttribute, AddressMessage},
     link::{LinkAttribute, LinkMessage},
-    route::{RouteAddress, RouteAttribute, RouteMessage, RouteType},
+    route::{RouteAddress, RouteAttribute, RouteMessage, RouteProtocol, RouteType},
 };
 use std::collections::BTreeMap;
 
@@ -21,6 +21,15 @@ pub(in crate::linux::kernel) struct Crossing {
     /// IPv4 addresses of the egress interfaces: a reply's destination before
     /// the masquerade is undone.
     pub local: Vec<std::net::Ipv4Addr>,
+    /// Interfaces of main-table IPv6 routes toward Internet-classified
+    /// addresses.
+    pub egress6: Vec<String>,
+    /// Usable (not tentative, failed or deprecated) Internet-classified IPv6
+    /// addresses of the IPv6 egress interfaces: what masquerade uses.
+    pub local6: Vec<std::net::Ipv6Addr>,
+    /// IPv6 egress interfaces whose route toward the Internet a router
+    /// advertisement installed.
+    pub advertised6: Vec<String>,
     /// Mesh address pools: a reply's destination after it is undone, and
     /// that of this host's own errors toward the exit TUN.
     pub mesh: Vec<ipnet::IpNet>,
@@ -43,30 +52,66 @@ impl Crossing {
                     })
             })
             .collect();
-        let mut egress = Vec::new();
-        for route in routes.iter().filter(|route| {
-            route.header.address_family == AddressFamily::Inet
-                && route.header.kind == RouteType::Unicast
-                && super::super::super::plan::route_table(route) == 254
-                && reaches_internet(route)
-        }) {
-            for attribute in &route.attributes {
-                let indexes: Vec<u32> = match attribute {
-                    RouteAttribute::Oif(index) => vec![*index],
-                    RouteAttribute::MultiPath(hops) => {
-                        hops.iter().map(|hop| hop.interface_index).collect()
-                    }
-                    _ => continue,
-                };
-                for index in indexes {
-                    if let Some(name) = names.get(&index)
-                        && !egress.contains(name)
-                    {
-                        egress.push(name.clone());
+        let egress_of = |family: AddressFamily, advertised: &mut Vec<String>| {
+            let mut egress: Vec<String> = Vec::new();
+            for route in routes.iter().filter(|route| {
+                route.header.address_family == family
+                    && route.header.kind == RouteType::Unicast
+                    && super::super::super::plan::route_table(route) == 254
+                    && reaches_internet(route)
+            }) {
+                for attribute in &route.attributes {
+                    let indexes: Vec<u32> = match attribute {
+                        RouteAttribute::Oif(index) => vec![*index],
+                        RouteAttribute::MultiPath(hops) => {
+                            hops.iter().map(|hop| hop.interface_index).collect()
+                        }
+                        _ => continue,
+                    };
+                    for index in indexes {
+                        if let Some(name) = names.get(&index) {
+                            if !egress.contains(name) {
+                                egress.push(name.clone());
+                            }
+                            if route.header.protocol == RouteProtocol::Ra
+                                && !advertised.contains(name)
+                            {
+                                advertised.push(name.clone());
+                            }
+                        }
                     }
                 }
             }
-        }
+            egress
+        };
+        let mut advertised6 = Vec::new();
+        let egress = egress_of(AddressFamily::Inet, &mut Vec::new());
+        let egress6 = egress_of(AddressFamily::Inet6, &mut advertised6);
+        let local6 = addresses
+            .iter()
+            .filter(|address| {
+                names
+                    .get(&address.header.index)
+                    .is_some_and(|name| egress6.contains(name))
+                    // Tentative, deprecated or failed duplicate detection:
+                    // not a source masquerade selects.
+                    && super::super::super::network::address_flags(address) & 0x68 == 0
+            })
+            .flat_map(|address| &address.attributes)
+            .filter_map(|attribute| match attribute {
+                AddressAttribute::Address(std::net::IpAddr::V6(ip))
+                    if meshway_policy::is_internet_address((*ip).into()) =>
+                {
+                    Some(*ip)
+                }
+                _ => None,
+            })
+            .fold(Vec::new(), |mut local, ip| {
+                if !local.contains(&ip) {
+                    local.push(ip);
+                }
+                local
+            });
         let local = addresses
             .iter()
             .filter(|address| {
@@ -91,6 +136,9 @@ impl Crossing {
             present: names.into_values().collect(),
             installed: None,
             local,
+            egress6,
+            local6,
+            advertised6,
             mesh: Vec::new(),
         }
     }
@@ -100,16 +148,24 @@ impl Crossing {
 /// default route, or a connected public network.
 fn reaches_internet(route: &RouteMessage) -> bool {
     let length = route.header.destination_prefix_length;
-    let address = route
+    let destination = route
         .attributes
         .iter()
         .find_map(|attribute| match attribute {
-            RouteAttribute::Destination(RouteAddress::Inet(address)) => Some(*address),
+            RouteAttribute::Destination(RouteAddress::Inet(address)) => {
+                Some(std::net::IpAddr::V4(*address))
+            }
+            RouteAttribute::Destination(RouteAddress::Inet6(address)) => {
+                Some(std::net::IpAddr::V6(*address))
+            }
             _ => None,
-        })
-        .unwrap_or(std::net::Ipv4Addr::UNSPECIFIED);
-    let Ok(prefix) = ipnet::Ipv4Net::new(address, length).map(|net| ipnet::IpNet::V4(net.trunc()))
-    else {
+        });
+    let address = destination.unwrap_or(if route.header.address_family == AddressFamily::Inet6 {
+        std::net::Ipv6Addr::UNSPECIFIED.into()
+    } else {
+        std::net::Ipv4Addr::UNSPECIFIED.into()
+    });
+    let Ok(prefix) = ipnet::IpNet::new(address, length).map(|net| net.trunc()) else {
         return false;
     };
     meshway_policy::internet_ranges()

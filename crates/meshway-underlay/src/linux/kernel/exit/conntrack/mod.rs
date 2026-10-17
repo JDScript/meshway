@@ -3,15 +3,15 @@
 use super::{ExitError, tuple::OriginalTuple};
 use meshway_model::exit::ExitUnavailableReason as Reason;
 use serde::{Deserialize, Serialize};
-use std::net::Ipv4Addr;
+use std::net::IpAddr;
 
 mod netlink;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Tuple {
-    pub source: Ipv4Addr,
-    pub destination: Ipv4Addr,
+    pub source: IpAddr,
+    pub destination: IpAddr,
     pub protocol: u8,
     pub source_key: u16,
     pub destination_key: u16,
@@ -33,18 +33,22 @@ pub(super) struct RetiredTuple {
     pub retired_ms: u64,
 }
 impl RetiredTuple {
+    fn echo(&self) -> bool {
+        matches!(self.tuple.protocol, 1 | 58)
+    }
     pub fn key(&self) -> serde_json::Value {
-        if self.tuple.protocol == 1 {
+        if self.echo() {
             serde_json::json!({"concat": [self.tuple.source.to_string(), self.tuple.destination.to_string(), self.tuple.source_key, self.sequence]})
         } else {
             self.tuple.key()
         }
     }
     pub fn set(&self) -> &'static str {
-        if self.tuple.protocol == 1 {
-            "echo_quarantine"
-        } else {
-            "quarantine"
+        match (self.echo(), self.tuple.source.is_ipv4()) {
+            (true, true) => "echo_quarantine",
+            (false, true) => "quarantine",
+            (true, false) => "echo_quarantine6",
+            (false, false) => "quarantine6",
         }
     }
 }
@@ -119,7 +123,7 @@ pub(super) async fn delete(
     Ok(())
 }
 
-/// Whether no IPv4 entry carries `mark`.
+/// Whether no entry of either family carries `mark`.
 pub(super) async fn mark_unused(mark: u32) -> Result<bool, ExitError> {
     Ok(!netlink::any_marked(mark, mark)
         .await

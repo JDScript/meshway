@@ -340,11 +340,17 @@ fn normalize(value: &mut Value, program: Option<&Program>) -> Result<()> {
         }
         Value::Object(values) => {
             if values.get("payload").is_some_and(|payload| {
-                payload.get("protocol").and_then(Value::as_str) == Some("icmp")
-                    && payload.get("field").and_then(Value::as_str) == Some("gateway")
+                matches!(
+                    (
+                        payload.get("protocol").and_then(Value::as_str),
+                        payload.get("field").and_then(Value::as_str)
+                    ),
+                    (Some("icmp"), Some("gateway")) | (Some("icmpv6"), Some("mtu"))
+                )
             }) {
                 // nft delinearizes the 32-bit word at ICMP offset 4 as the
-                // union's gateway member, even when the rule admits only echo.
+                // union's gateway member (ICMPv6: its MTU member), even when
+                // the rule admits only echo.
                 values.insert(
                     "payload".into(),
                     json!({"base": "th", "offset": 32, "len": 32}),
@@ -354,14 +360,18 @@ fn normalize(value: &mut Value, program: Option<&Program>) -> Result<()> {
                 normalize(value, program)?;
             }
             if let Some(ct) = values.get_mut("ct").and_then(Value::as_object_mut)
-                && ct.get("family").and_then(Value::as_str) == Some("ip")
+                && let Some(family) = ct
+                    .get("family")
+                    .and_then(Value::as_str)
+                    .filter(|family| matches!(*family, "ip" | "ip6"))
+                    .map(str::to_owned)
                 && let Some(key) = ct
                     .get("key")
                     .and_then(Value::as_str)
                     .filter(|key| matches!(*key, "saddr" | "daddr"))
                     .map(str::to_owned)
             {
-                ct.insert("key".into(), json!(format!("ip {key}")));
+                ct.insert("key".into(), json!(format!("{family} {key}")));
                 ct.remove("family");
             }
             // `-nnn` lists the icmpx reject code as its number.
@@ -577,6 +587,8 @@ mod tests {
             interface_name: tun.name().to_owned(),
             mark: 0x8000_0000,
             pools: vec!["100.96.0.0/11".parse().unwrap()],
+            families: vec![meshway_model::exit::ExitFamily::Ipv4],
+            pools6: Vec::new(),
         };
         let mut commands = Commands::default();
         let receipt = mutate(&mut commands, &program.create()).await.unwrap();

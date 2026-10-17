@@ -149,8 +149,15 @@ pub(super) fn uses_mark(value: &Value) -> bool {
 }
 
 /// Loaded legacy iptables tables; an absent list means none are loaded.
-pub(super) fn legacy_tables() -> Result<Vec<String>, Failure> {
-    match std::fs::read_to_string("/proc/net/ip_tables_names") {
+/// Loaded legacy iptables tables of one family: `ip_tables_names` for
+/// IPv4, `ip6_tables_names` for IPv6.
+pub(super) fn legacy_tables(ipv6: bool) -> Result<Vec<String>, Failure> {
+    let path = if ipv6 {
+        "/proc/net/ip6_tables_names"
+    } else {
+        "/proc/net/ip_tables_names"
+    };
+    match std::fs::read_to_string(path) {
         Ok(text) => Ok(text
             .lines()
             .map(str::trim)

@@ -27,7 +27,7 @@ pub(super) async fn create(kernel: &mut Kernel, tun: &meshway_tun::Tun) -> backe
         node: "22222222-2222-4222-8222-222222222222".parse().unwrap(),
         plan: crate::target::RoleIdentity {
             generation: Digest::from_bytes([1; 32]),
-            family: ExitFamily::Ipv4,
+            families: vec![ExitFamily::Ipv4],
             nat: ExitNat::Masquerade,
         },
         program: program::Program {
@@ -37,6 +37,8 @@ pub(super) async fn create(kernel: &mut Kernel, tun: &meshway_tun::Tun) -> backe
             interface_name: tun.name().to_owned(),
             mark,
             pools: vec!["100.96.0.0/11".parse().unwrap()],
+            families: vec![ExitFamily::Ipv4],
+            pools6: Vec::new(),
         },
         tun_name: tun.name().to_owned(),
         mtu: tun.mtu(),
@@ -63,7 +65,7 @@ pub(super) async fn create(kernel: &mut Kernel, tun: &meshway_tun::Tun) -> backe
         ledger,
         routing,
         Arc::new(RwLock::new(BTreeMap::new())),
-        vec![Ipv4Addr::LOCALHOST],
+        vec![Ipv4Addr::LOCALHOST.into()],
         CancellationToken::new(),
     )
     .await

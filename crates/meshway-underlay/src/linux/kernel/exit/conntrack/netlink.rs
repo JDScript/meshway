@@ -1,5 +1,6 @@
 //! Minimal nf_conntrack netlink (`NFNL_SUBSYS_CTNETLINK`) client: exact
-//! default-zone IPv4 GET/DELETE by original tuple and a mark-filtered dump.
+//! default-zone IPv4/IPv6 GET/DELETE by original tuple and a mark-filtered
+//! dump of both families.
 //! Every request names its tuple; this codec cannot express a flush. Replies
 //! are decoded from one bounded receive buffer and never trusted to be
 //! well formed.
@@ -7,7 +8,7 @@ use super::{Entry, Tuple};
 use meshway_model::exit::ExitUnavailableReason as Reason;
 use rtnetlink::sys::{Socket, SocketAddr, protocols::NETLINK_NETFILTER};
 use std::{
-    net::Ipv4Addr,
+    net::{IpAddr, Ipv4Addr, Ipv6Addr},
     time::{Duration, Instant},
 };
 use tokio::io::unix::AsyncFd;
@@ -40,7 +41,9 @@ const NFNL_SUBSYS_CTNETLINK: u16 = 1;
 const IPCTNL_MSG_CT_NEW: u16 = 0;
 const IPCTNL_MSG_CT_GET: u16 = 1;
 const IPCTNL_MSG_CT_DELETE: u16 = 2;
+const AF_UNSPEC: u8 = 0;
 const AF_INET: u8 = 2;
+const AF_INET6: u8 = 10;
 
 const CTA_TUPLE_ORIG: u16 = 1;
 const CTA_TUPLE_REPLY: u16 = 2;
@@ -56,12 +59,17 @@ const CTA_TUPLE_IP: u16 = 1;
 const CTA_TUPLE_PROTO: u16 = 2;
 const CTA_IP_V4_SRC: u16 = 1;
 const CTA_IP_V4_DST: u16 = 2;
+const CTA_IP_V6_SRC: u16 = 3;
+const CTA_IP_V6_DST: u16 = 4;
 const CTA_PROTO_NUM: u16 = 1;
 const CTA_PROTO_SRC_PORT: u16 = 2;
 const CTA_PROTO_DST_PORT: u16 = 3;
 const CTA_PROTO_ICMP_ID: u16 = 4;
 const CTA_PROTO_ICMP_TYPE: u16 = 5;
 const CTA_PROTO_ICMP_CODE: u16 = 6;
+const CTA_PROTO_ICMPV6_ID: u16 = 7;
+const CTA_PROTO_ICMPV6_TYPE: u16 = 8;
+const CTA_PROTO_ICMPV6_CODE: u16 = 9;
 /// `IPS_OFFLOAD` and `IPS_HW_OFFLOAD`: a flowtable owns the forwarding.
 const IPS_OFFLOAD: u32 = (1 << 14) | (1 << 15);
 #[cfg(test)]
@@ -119,7 +127,7 @@ fn io(error: &std::io::Error) -> Failure {
 
 /// Exact entry by original tuple in the default zone; `None` if absent.
 pub(super) async fn get(tuple: &Tuple) -> Result<Option<Entry>, Failure> {
-    let request = Request::new(IPCTNL_MSG_CT_GET, NLM_F_REQUEST | NLM_F_ACK)
+    let request = Request::new(IPCTNL_MSG_CT_GET, NLM_F_REQUEST | NLM_F_ACK, family(tuple))
         .tuple(CTA_TUPLE_ORIG, tuple)
         .u16(CTA_ZONE, 0);
     let mut found = None;
@@ -140,10 +148,14 @@ pub(super) async fn get(tuple: &Tuple) -> Result<Option<Entry>, Failure> {
 
 /// Delete exactly the entry with this original tuple, default zone and id.
 pub(super) async fn delete(tuple: &Tuple, id: u32) -> Result<Deleted, Failure> {
-    let request = Request::new(IPCTNL_MSG_CT_DELETE, NLM_F_REQUEST | NLM_F_ACK)
-        .tuple(CTA_TUPLE_ORIG, tuple)
-        .u16(CTA_ZONE, 0)
-        .u32(CTA_ID, id);
+    let request = Request::new(
+        IPCTNL_MSG_CT_DELETE,
+        NLM_F_REQUEST | NLM_F_ACK,
+        family(tuple),
+    )
+    .tuple(CTA_TUPLE_ORIG, tuple)
+    .u16(CTA_ZONE, 0)
+    .u32(CTA_ID, id);
     match exchange(request, |_| Err(Failure::Unavailable)).await? {
         Answer::Ack => Ok(Deleted::Deleted),
         Answer::Errno(ENOENT) => Ok(Deleted::Absent),
@@ -151,10 +163,20 @@ pub(super) async fn delete(tuple: &Tuple, id: u32) -> Result<Deleted, Failure> {
     }
 }
 
-/// Whether any IPv4 entry carries all bits of `mask` as in `value`. The
-/// kernel filters the dump; each entry is checked again regardless.
+/// The nfgenmsg family of a tuple's addresses.
+fn family(tuple: &Tuple) -> u8 {
+    if tuple.source.is_ipv4() {
+        AF_INET
+    } else {
+        AF_INET6
+    }
+}
+
+/// Whether any entry of either family carries all bits of `mask` as in
+/// `value`. The kernel filters the dump; each entry is checked again
+/// regardless.
 pub(super) async fn any_marked(value: u32, mask: u32) -> Result<bool, Failure> {
-    let request = Request::new(IPCTNL_MSG_CT_GET, NLM_F_REQUEST | NLM_F_DUMP)
+    let request = Request::new(IPCTNL_MSG_CT_GET, NLM_F_REQUEST | NLM_F_DUMP, AF_UNSPEC)
         .u32(CTA_MARK, value)
         .u32(CTA_MARK_MASK, mask);
     let mut seen = 0;
@@ -186,20 +208,21 @@ pub(super) async fn insert(tuple: &Tuple, mark: u32, timeout: u32) -> Result<(),
         source: tuple.destination,
         destination: tuple.source,
         protocol: tuple.protocol,
-        source_key: if tuple.protocol == 1 {
+        source_key: if matches!(tuple.protocol, 1 | 58) {
             tuple.source_key
         } else {
             tuple.destination_key
         },
-        destination_key: if tuple.protocol == 1 {
-            0
-        } else {
-            tuple.source_key
+        destination_key: match tuple.protocol {
+            1 => 0,
+            58 => 129 << 8,
+            _ => tuple.source_key,
         },
     };
     let request = Request::new(
         IPCTNL_MSG_CT_NEW,
         NLM_F_REQUEST | NLM_F_ACK | NLM_F_CREATE | NLM_F_EXCL,
+        family(tuple),
     )
     .tuple(CTA_TUPLE_ORIG, tuple)
     .tuple(CTA_TUPLE_REPLY, &reply)
@@ -388,7 +411,7 @@ fn byte(value: Option<&[u8]>) -> Result<u8, Failure> {
 /// Top-level attributes after the nfgenmsg (family, version, resource id).
 fn message(payload: &[u8]) -> Result<Vec<(u16, &[u8])>, Failure> {
     match payload {
-        [AF_INET, 0, _, _, attributes @ ..] => self::attributes(attributes),
+        [AF_INET | AF_INET6, 0, _, _, attributes @ ..] => self::attributes(attributes),
         _ => Err(Failure::Unavailable),
     }
 }
@@ -412,9 +435,9 @@ fn parse_entry(payload: &[u8]) -> Result<Entry, Failure> {
     {
         return Err(Failure::Ownership);
     }
-    let original = parse_tuple(unique(&attributes, CTA_TUPLE_ORIG)?, 8)?;
-    let reply = parse_tuple(unique(&attributes, CTA_TUPLE_REPLY)?, 0)?;
-    if original.protocol != reply.protocol {
+    let original = parse_tuple(unique(&attributes, CTA_TUPLE_ORIG)?, true)?;
+    let reply = parse_tuple(unique(&attributes, CTA_TUPLE_REPLY)?, false)?;
+    if original.protocol != reply.protocol || original.source.is_ipv4() != reply.source.is_ipv4() {
         return Err(Failure::Unavailable);
     }
     Ok(Entry {
@@ -425,8 +448,9 @@ fn parse_entry(payload: &[u8]) -> Result<Entry, Failure> {
     })
 }
 
-/// `echo`: the ICMP type the direction must carry (8 request, 0 reply).
-fn parse_tuple(value: Option<&[u8]>, echo: u8) -> Result<Tuple, Failure> {
+/// `request`: the direction carries the echo request (ICMP 8, ICMPv6 128),
+/// else the echo reply (0, 129).
+fn parse_tuple(value: Option<&[u8]>, request: bool) -> Result<Tuple, Failure> {
     let tuple = attributes(value.ok_or(Failure::Unavailable)?)?;
     // A directional zone (CTA_TUPLE_ZONE) or any other member is not exact.
     if tuple
@@ -439,11 +463,22 @@ fn parse_tuple(value: Option<&[u8]>, echo: u8) -> Result<Tuple, Failure> {
     if ip.len() != 2 {
         return Err(Failure::Unavailable);
     }
-    let address = |kind| -> Result<Ipv4Addr, Failure> {
-        let octets: [u8; 4] = unique(&ip, kind)?
-            .and_then(|value| value.try_into().ok())
-            .ok_or(Failure::Unavailable)?;
-        Ok(Ipv4Addr::from(octets))
+    let address = |kind| -> Result<IpAddr, Failure> {
+        let value = unique(&ip, kind)?.ok_or(Failure::Unavailable)?;
+        match kind {
+            CTA_IP_V4_SRC | CTA_IP_V4_DST => <[u8; 4]>::try_from(value)
+                .map(|octets| Ipv4Addr::from(octets).into())
+                .map_err(|_| Failure::Unavailable),
+            _ => <[u8; 16]>::try_from(value)
+                .map(|octets| Ipv6Addr::from(octets).into())
+                .map_err(|_| Failure::Unavailable),
+        }
+    };
+    let ipv4 = unique(&ip, CTA_IP_V4_SRC)?.is_some();
+    let (source_kind, destination_kind) = if ipv4 {
+        (CTA_IP_V4_SRC, CTA_IP_V4_DST)
+    } else {
+        (CTA_IP_V6_SRC, CTA_IP_V6_DST)
     };
     let proto = attributes(unique(&tuple, CTA_TUPLE_PROTO)?.ok_or(Failure::Unavailable)?)?;
     let protocol = byte(unique(&proto, CTA_PROTO_NUM)?)?;
@@ -452,21 +487,33 @@ fn parse_tuple(value: Option<&[u8]>, echo: u8) -> Result<Tuple, Failure> {
             be16(unique(&proto, CTA_PROTO_SRC_PORT)?)?,
             be16(unique(&proto, CTA_PROTO_DST_PORT)?)?,
         ),
-        1 if proto.len() == 4 => {
-            let kind = byte(unique(&proto, CTA_PROTO_ICMP_TYPE)?)?;
-            if kind != echo || byte(unique(&proto, CTA_PROTO_ICMP_CODE)?)? != 0 {
+        1 | 58 if proto.len() == 4 && (protocol == 1) == ipv4 => {
+            let (id, kind, code, echo) = if protocol == 1 {
+                (
+                    CTA_PROTO_ICMP_ID,
+                    CTA_PROTO_ICMP_TYPE,
+                    CTA_PROTO_ICMP_CODE,
+                    if request { 8 } else { 0 },
+                )
+            } else {
+                (
+                    CTA_PROTO_ICMPV6_ID,
+                    CTA_PROTO_ICMPV6_TYPE,
+                    CTA_PROTO_ICMPV6_CODE,
+                    if request { 128 } else { 129 },
+                )
+            };
+            let kind = byte(unique(&proto, kind)?)?;
+            if kind != echo || byte(unique(&proto, code)?)? != 0 {
                 return Err(Failure::Unavailable);
             }
-            (
-                be16(unique(&proto, CTA_PROTO_ICMP_ID)?)?,
-                u16::from(kind) << 8,
-            )
+            (be16(unique(&proto, id)?)?, u16::from(kind) << 8)
         }
         _ => return Err(Failure::Unavailable),
     };
     Ok(Tuple {
-        source: address(CTA_IP_V4_SRC)?,
-        destination: address(CTA_IP_V4_DST)?,
+        source: address(source_kind)?,
+        destination: address(destination_kind)?,
         protocol,
         source_key,
         destination_key,
@@ -479,7 +526,7 @@ struct Request {
 }
 
 impl Request {
-    fn new(message: u16, flags: u16) -> Self {
+    fn new(message: u16, flags: u16, family: u8) -> Self {
         let mut random = [0; 4];
         // A predictable sequence only weakens stale-answer detection on this
         // private, freshly bound socket; it never authorizes an entry.
@@ -491,7 +538,7 @@ impl Request {
         bytes.extend(flags.to_ne_bytes());
         bytes.extend(sequence.to_ne_bytes());
         bytes.extend(0u32.to_ne_bytes());
-        bytes.extend([AF_INET, 0, 0, 0]);
+        bytes.extend([family, 0, 0, 0]);
         Self { sequence, bytes }
     }
 
@@ -510,22 +557,35 @@ impl Request {
 
     fn tuple(self, kind: u16, tuple: &Tuple) -> Self {
         let mut ip = Vec::new();
-        put(&mut ip, CTA_IP_V4_SRC, &tuple.source.octets());
-        put(&mut ip, CTA_IP_V4_DST, &tuple.destination.octets());
+        match (tuple.source, tuple.destination) {
+            (IpAddr::V4(source), IpAddr::V4(destination)) => {
+                put(&mut ip, CTA_IP_V4_SRC, &source.octets());
+                put(&mut ip, CTA_IP_V4_DST, &destination.octets());
+            }
+            (source, destination) => {
+                let six = |address: IpAddr| match address {
+                    IpAddr::V6(address) => address.octets(),
+                    IpAddr::V4(address) => address.to_ipv6_mapped().octets(),
+                };
+                put(&mut ip, CTA_IP_V6_SRC, &six(source));
+                put(&mut ip, CTA_IP_V6_DST, &six(destination));
+            }
+        }
         let mut proto = Vec::new();
         put(&mut proto, CTA_PROTO_NUM, &[tuple.protocol]);
-        if tuple.protocol == 1 {
-            put(
-                &mut proto,
-                CTA_PROTO_ICMP_ID,
-                &tuple.source_key.to_be_bytes(),
-            );
-            put(
-                &mut proto,
-                CTA_PROTO_ICMP_TYPE,
-                &[(tuple.destination_key >> 8) as u8],
-            );
-            put(&mut proto, CTA_PROTO_ICMP_CODE, &[0]);
+        if matches!(tuple.protocol, 1 | 58) {
+            let (id, kind, code) = if tuple.protocol == 1 {
+                (CTA_PROTO_ICMP_ID, CTA_PROTO_ICMP_TYPE, CTA_PROTO_ICMP_CODE)
+            } else {
+                (
+                    CTA_PROTO_ICMPV6_ID,
+                    CTA_PROTO_ICMPV6_TYPE,
+                    CTA_PROTO_ICMPV6_CODE,
+                )
+            };
+            put(&mut proto, id, &tuple.source_key.to_be_bytes());
+            put(&mut proto, kind, &[(tuple.destination_key >> 8) as u8]);
+            put(&mut proto, code, &[0]);
         } else {
             put(
                 &mut proto,
@@ -566,8 +626,8 @@ mod tests {
 
     fn udp(source_port: u16) -> Tuple {
         Tuple {
-            source: Ipv4Addr::new(100, 96, 0, 1),
-            destination: Ipv4Addr::new(192, 0, 2, 2),
+            source: Ipv4Addr::new(100, 96, 0, 1).into(),
+            destination: Ipv4Addr::new(192, 0, 2, 2).into(),
             protocol: 17,
             source_key: source_port,
             destination_key: 53,
@@ -577,7 +637,7 @@ mod tests {
     fn reply_of(tuple: &Tuple) -> Tuple {
         Tuple {
             source: tuple.destination,
-            destination: Ipv4Addr::new(198, 51, 100, 1),
+            destination: Ipv4Addr::new(198, 51, 100, 1).into(),
             protocol: tuple.protocol,
             source_key: if tuple.protocol == 1 {
                 456
@@ -590,7 +650,9 @@ mod tests {
 
     /// A kernel-shaped answer: one CT message, then the ACK.
     fn answer(sequence: u32, build: impl FnOnce(Request) -> Request) -> Vec<u8> {
-        let mut message = build(Request::new(IPCTNL_MSG_CT_NEW, 0)).finish().unwrap();
+        let mut message = build(Request::new(IPCTNL_MSG_CT_NEW, 0, AF_INET))
+            .finish()
+            .unwrap();
         message[8..12].copy_from_slice(&sequence.to_ne_bytes());
         let mut ack = Vec::new();
         ack.extend(36u32.to_ne_bytes());
@@ -633,7 +695,7 @@ mod tests {
     #[test]
     fn ctnetlink_requests_always_name_one_exact_tuple_zone_and_id() {
         let tuple = udp(12345);
-        let request = Request::new(IPCTNL_MSG_CT_DELETE, NLM_F_REQUEST | NLM_F_ACK)
+        let request = Request::new(IPCTNL_MSG_CT_DELETE, NLM_F_REQUEST | NLM_F_ACK, AF_INET)
             .tuple(CTA_TUPLE_ORIG, &tuple)
             .u16(CTA_ZONE, 0)
             .u32(CTA_ID, 77);
@@ -655,7 +717,7 @@ mod tests {
         );
         assert_eq!(be32(unique(&top, CTA_ID).unwrap()).unwrap(), 77);
         assert_eq!(
-            parse_tuple(unique(&top, CTA_TUPLE_ORIG).unwrap(), 8).unwrap(),
+            parse_tuple(unique(&top, CTA_TUPLE_ORIG).unwrap(), true).unwrap(),
             tuple
         );
         let echo = Tuple {
@@ -664,15 +726,72 @@ mod tests {
             destination_key: 0x0800,
             ..udp(0)
         };
-        let bytes = Request::new(IPCTNL_MSG_CT_GET, NLM_F_REQUEST)
+        let bytes = Request::new(IPCTNL_MSG_CT_GET, NLM_F_REQUEST, AF_INET)
             .tuple(CTA_TUPLE_ORIG, &echo)
             .finish()
             .unwrap();
         let top = message(&bytes[16..]).unwrap();
         assert_eq!(
-            parse_tuple(unique(&top, CTA_TUPLE_ORIG).unwrap(), 8).unwrap(),
+            parse_tuple(unique(&top, CTA_TUPLE_ORIG).unwrap(), true).unwrap(),
             echo
         );
+    }
+
+    #[test]
+    fn ipv6_requests_and_entries_use_their_own_family_and_attributes() {
+        let six = |text: &str| -> IpAddr { text.parse().unwrap() };
+        let udp = Tuple {
+            source: six("fd79::5"),
+            destination: six("3ffe:1:2:3::7"),
+            protocol: 17,
+            source_key: 4321,
+            destination_key: 53,
+        };
+        let bytes = Request::new(IPCTNL_MSG_CT_GET, NLM_F_REQUEST, family(&udp))
+            .tuple(CTA_TUPLE_ORIG, &udp)
+            .finish()
+            .unwrap();
+        assert_eq!(bytes[16], AF_INET6);
+        let top = message(&bytes[16..]).unwrap();
+        assert_eq!(
+            parse_tuple(unique(&top, CTA_TUPLE_ORIG).unwrap(), true).unwrap(),
+            udp
+        );
+        let echo = Tuple {
+            protocol: 58,
+            source_key: 99,
+            destination_key: 128 << 8,
+            ..udp.clone()
+        };
+        let reply = Tuple {
+            source: echo.destination,
+            destination: six("3ffe:1:2:3::2"),
+            protocol: 58,
+            source_key: 99,
+            destination_key: 129 << 8,
+        };
+        let created = Request::new(IPCTNL_MSG_CT_NEW, 0, AF_INET6)
+            .tuple(CTA_TUPLE_ORIG, &echo)
+            .tuple(CTA_TUPLE_REPLY, &reply)
+            .u32(CTA_STATUS, IPS_SEEN_REPLY)
+            .u32(CTA_MARK, 8)
+            .u32(CTA_ID, 5)
+            .finish()
+            .unwrap();
+        let entry = parse_entry(&created[16..]).unwrap();
+        assert_eq!((entry.original, entry.reply), (echo.clone(), reply));
+        // An ICMPv4 protocol under IPv6 addresses is not an exact tuple.
+        let mixed = Tuple {
+            protocol: 1,
+            destination_key: 0x0800,
+            ..echo
+        };
+        let bytes = Request::new(IPCTNL_MSG_CT_GET, NLM_F_REQUEST, AF_INET6)
+            .tuple(CTA_TUPLE_ORIG, &mixed)
+            .finish()
+            .unwrap();
+        let top = message(&bytes[16..]).unwrap();
+        assert!(parse_tuple(unique(&top, CTA_TUPLE_ORIG).unwrap(), true).is_err());
     }
 
     #[test]
@@ -742,7 +861,10 @@ mod tests {
         let mut tuple_zone = Vec::new();
         put(&mut tuple_zone, CTA_TUPLE_IP | NLA_F_NESTED, &ip);
         put(&mut tuple_zone, 3, &0u16.to_be_bytes());
-        assert_eq!(parse_tuple(Some(&tuple_zone), 8), Err(Failure::Ownership));
+        assert_eq!(
+            parse_tuple(Some(&tuple_zone), true),
+            Err(Failure::Ownership)
+        );
         // Missing mark or id is not an identity.
         let bare = |request: Request| {
             request
@@ -752,7 +874,9 @@ mod tests {
         };
         assert!(collect(&answer(9, bare), 9).is_err());
         // A dump reads only the mark; an absent mark is the kernel's zero.
-        let bytes = Request::new(IPCTNL_MSG_CT_NEW, 0).finish().unwrap();
+        let bytes = Request::new(IPCTNL_MSG_CT_NEW, 0, AF_INET)
+            .finish()
+            .unwrap();
         assert_eq!(parse_mark(&bytes[16..]), Ok(0));
     }
 
@@ -808,7 +932,7 @@ mod tests {
     #[test]
     fn an_interrupted_dump_is_unavailable_not_empty() {
         let message = |flags: u16| {
-            let mut message = Request::new(IPCTNL_MSG_CT_NEW, 0)
+            let mut message = Request::new(IPCTNL_MSG_CT_NEW, 0, AF_INET)
                 .tuple(CTA_TUPLE_ORIG, &udp(1))
                 .finish()
                 .unwrap();

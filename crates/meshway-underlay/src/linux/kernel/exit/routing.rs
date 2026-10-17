@@ -13,9 +13,26 @@ use rtnetlink::{
     },
 };
 use std::{
-    net::Ipv4Addr,
+    net::{IpAddr, Ipv4Addr, Ipv6Addr},
     sync::{Arc, Mutex},
 };
+
+/// The rule family and host prefix length of an address.
+fn family(address: IpAddr) -> (AddressFamily, u8) {
+    match address {
+        IpAddr::V4(_) => (AddressFamily::Inet, 32),
+        IpAddr::V6(_) => (AddressFamily::Inet6, 128),
+    }
+}
+
+/// The rule families the program carries.
+fn families(ledger: &Ledger) -> Vec<AddressFamily> {
+    let mut families = vec![AddressFamily::Inet];
+    if ledger.program.ipv6() {
+        families.push(AddressFamily::Inet6);
+    }
+    families
+}
 
 pub(in crate::linux::kernel) const RESERVED: u32 = 512;
 
@@ -41,19 +58,24 @@ impl Routing {
         if self.start <= RESERVED {
             return Err(Error::Conflict);
         }
-        let mut rule = RuleMessage::default();
-        rule.header.family = AddressFamily::Inet;
-        rule.header.action = RuleAction::Goto;
-        rule.attributes = vec![
-            RuleAttribute::Priority(self.start - RESERVED),
-            RuleAttribute::Table(ledger.route_table),
-            RuleAttribute::Protocol(PROTOCOL.into()),
-            RuleAttribute::FwMark(ledger.program.mark),
-            RuleAttribute::FwMask(ledger.program.mark),
-            RuleAttribute::Iifname(ledger.tun_name.clone()),
-            RuleAttribute::Goto(self.end),
-        ];
-        self.add_rule(rule, ledger, store).await
+        // IPv4 and IPv6 rules are separate lists: one rule of each family
+        // at the same priority.
+        for family in families(ledger) {
+            let mut rule = RuleMessage::default();
+            rule.header.family = family;
+            rule.header.action = RuleAction::Goto;
+            rule.attributes = vec![
+                RuleAttribute::Priority(self.start - RESERVED),
+                RuleAttribute::Table(ledger.route_table),
+                RuleAttribute::Protocol(PROTOCOL.into()),
+                RuleAttribute::FwMark(ledger.program.mark),
+                RuleAttribute::FwMask(ledger.program.mark),
+                RuleAttribute::Iifname(ledger.tun_name.clone()),
+                RuleAttribute::Goto(self.end),
+            ];
+            self.add_rule(rule, ledger, store).await?;
+        }
+        Ok(())
     }
 
     /// ICMP errors about owned flows come from routers beyond this exit or
@@ -61,38 +83,60 @@ impl Routing {
     /// lookup of the return table after every pair rule. The table holds only
     /// the projected sources' routes, so other destinations fall through.
     pub async fn related(&self, ledger: &mut Ledger, store: &mut Store) -> Result<()> {
-        let mut rule = RuleMessage::default();
-        rule.header.family = AddressFamily::Inet;
-        rule.header.action = RuleAction::ToTable;
-        rule.attributes = vec![
-            RuleAttribute::Priority(
-                self.start - RESERVED + 1 + 2 * super::program::CAPACITY as u32,
-            ),
-            RuleAttribute::Table(ledger.route_table),
-            RuleAttribute::Protocol(PROTOCOL.into()),
-            RuleAttribute::FwMark(ledger.program.mark),
-            RuleAttribute::FwMask(ledger.program.mark),
-            RuleAttribute::IpProtocol(rtnetlink::packet_route::IpProtocol::Icmp),
-        ];
-        self.add_rule(rule, ledger, store).await
+        for family in families(ledger) {
+            let mut rule = RuleMessage::default();
+            rule.header.family = family;
+            rule.header.action = RuleAction::ToTable;
+            rule.attributes = vec![
+                RuleAttribute::Priority(
+                    self.start - RESERVED + 1 + 2 * super::program::CAPACITY as u32,
+                ),
+                RuleAttribute::Table(ledger.route_table),
+                RuleAttribute::Protocol(PROTOCOL.into()),
+                RuleAttribute::FwMark(ledger.program.mark),
+                RuleAttribute::FwMask(ledger.program.mark),
+                RuleAttribute::IpProtocol(if family == AddressFamily::Inet6 {
+                    rtnetlink::packet_route::IpProtocol::Other(58)
+                } else {
+                    rtnetlink::packet_route::IpProtocol::Icmp
+                }),
+            ];
+            self.add_rule(rule, ledger, store).await?;
+        }
+        Ok(())
     }
 
     pub async fn source(
         &self,
-        source: Ipv4Addr,
-        remote: Ipv4Addr,
+        source: IpAddr,
+        remote: IpAddr,
         ledger: &mut Ledger,
         store: &mut Store,
     ) -> Result<()> {
-        let route = RouteMessageBuilder::<Ipv4Addr>::new()
-            .destination_prefix(source, 32)
-            .output_interface(ledger.program.interface)
-            .table_id(ledger.route_table)
-            .priority(100)
-            .protocol(PROTOCOL.into())
-            .scope(RouteScope::Link)
-            .kind(RouteType::Unicast)
-            .build();
+        let (rule_family, host) = family(source);
+        if family(remote).0 != rule_family {
+            return Err(Error::Target);
+        }
+        let route = match source {
+            IpAddr::V4(source) => RouteMessageBuilder::<Ipv4Addr>::new()
+                .destination_prefix(source, 32)
+                .output_interface(ledger.program.interface)
+                .table_id(ledger.route_table)
+                .priority(100)
+                .protocol(PROTOCOL.into())
+                .scope(RouteScope::Link)
+                .kind(RouteType::Unicast)
+                .build(),
+            IpAddr::V6(source) => RouteMessageBuilder::<Ipv6Addr>::new()
+                .destination_prefix(source, 128)
+                .output_interface(ledger.program.interface)
+                .table_id(ledger.route_table)
+                .priority(100)
+                .protocol(PROTOCOL.into())
+                .scope(RouteScope::Universe)
+                .kind(RouteType::Unicast)
+                .build(),
+        };
         let bytes = encode_route(route.clone());
         if !ledger.routes.contains(&bytes) {
             ledger.pending = true;
@@ -126,10 +170,10 @@ impl Routing {
             .ok_or(Error::Capacity)?;
         for (offset, action) in [(0, RuleAction::ToTable), (1, RuleAction::Unreachable)] {
             let mut rule = RuleMessage::default();
-            rule.header.family = AddressFamily::Inet;
+            rule.header.family = rule_family;
             rule.header.action = action;
-            rule.header.src_len = 32;
-            rule.header.dst_len = 32;
+            rule.header.src_len = host;
+            rule.header.dst_len = host;
             // An ordinary local socket never has the permitted external peer's
             // source address. No mark-only /0 lookup can hijack bootstrap I/O.
             rule.attributes = vec![
@@ -161,21 +205,21 @@ impl Routing {
     /// as they leave the exit TUN with the exit mark: forwarding on the TUN,
     /// a route out, the reverse-path filter. Nothing is sent. A refusal names
     /// the host condition that stops forwarding instead of a silent drop.
-    pub async fn forwards(
-        &self,
-        ledger: &Ledger,
-        source: Ipv4Addr,
-        remote: Ipv4Addr,
-    ) -> Result<()> {
+    pub async fn forwards(&self, ledger: &Ledger, source: IpAddr, remote: IpAddr) -> Result<()> {
         use futures_util::TryStreamExt;
         use rtnetlink::packet_route::route::{RouteAddress, RouteAttribute, RouteMessage};
+        let (address_family, host) = family(source);
+        let address = |address: IpAddr| match address {
+            IpAddr::V4(address) => RouteAddress::Inet(address),
+            IpAddr::V6(address) => RouteAddress::Inet6(address),
+        };
         let mut message = RouteMessage::default();
-        message.header.address_family = AddressFamily::Inet;
-        message.header.destination_prefix_length = 32;
-        message.header.source_prefix_length = 32;
+        message.header.address_family = address_family;
+        message.header.destination_prefix_length = host;
+        message.header.source_prefix_length = host;
         message.attributes = vec![
-            RouteAttribute::Destination(RouteAddress::Inet(remote)),
-            RouteAttribute::Source(RouteAddress::Inet(source)),
+            RouteAttribute::Destination(address(remote)),
+            RouteAttribute::Source(address(source)),
             RouteAttribute::Iif(ledger.program.interface),
             RouteAttribute::Mark(ledger.program.mark),
         ];

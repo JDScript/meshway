@@ -22,7 +22,7 @@ use rtnetlink::{
 use serde_json::json;
 use std::{
     collections::BTreeSet,
-    net::{IpAddr, Ipv4Addr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr},
     sync::{Arc, Mutex},
 };
 
@@ -50,22 +50,22 @@ pub(super) struct Backend {
     pub monitored: bool,
 }
 
-/// Exact routes of the capture table for `gate`: the CIDR cover of its IPv4
-/// ranges through its device, and none without one.
+/// Exact routes of the capture table for `gate`: the CIDR covers of its
+/// managed IPv4 and IPv6 ranges through its device, each from the device's
+/// Mesh address of that family, and none without one.
 fn routes(table: u32, gate: &Gate) -> Vec<RouteMessage> {
     let Some(device) = &gate.device else {
         return Vec::new();
     };
-    gate.ranges
-        .routes()
-        .map(|net| {
+    let four = device.source.into_iter().flat_map(|source| {
+        gate.ranges.routes().map(move |net| {
             let mut builder = RouteMessageBuilder::<Ipv4Addr>::new();
             if net.prefix_len() != 0 {
                 builder = builder.destination_prefix(net.network(), net.prefix_len());
             }
             builder
                 .output_interface(device.index)
-                .pref_source(device.source)
+                .pref_source(source)
                 .table_id(table)
                 .priority(100)
                 .protocol(PROTOCOL.into())
@@ -73,7 +73,25 @@ fn routes(table: u32, gate: &Gate) -> Vec<RouteMessage> {
                 .kind(RouteType::Unicast)
                 .build()
         })
-        .collect()
+    });
+    let six = device.source6.into_iter().flat_map(|source| {
+        gate.ranges.routes6().map(move |net| {
+            let mut builder = RouteMessageBuilder::<Ipv6Addr>::new();
+            if net.prefix_len() != 0 {
+                builder = builder.destination_prefix(net.network(), net.prefix_len());
+            }
+            builder
+                .output_interface(device.index)
+                .pref_source(source)
+                .table_id(table)
+                .priority(100)
+                .protocol(PROTOCOL.into())
+                .scope(RouteScope::Universe)
+                .kind(RouteType::Unicast)
+                .build()
+        })
+    });
+    four.chain(six).collect()
 }
 
 impl Backend {
@@ -441,10 +459,16 @@ impl Backend {
         &mut self,
         plan: EgressCapturePlan,
         mesh: Ranges,
-        device: Option<Device>,
+        mut device: Option<Device>,
         check: impl Fn() -> Result<()>,
     ) -> Result<()> {
         let next = plan::parse(&plan)?;
+        // A table without IPv6 capture rejects all IPv6: no route leads there.
+        if !self.ledger.program.capture6
+            && let Some(device) = &mut device
+        {
+            device.source6 = None;
+        }
         check()?;
         if plan.unavailable.is_some() {
             return Err(Error::Target);
@@ -499,11 +523,22 @@ impl Backend {
         self.ledger.removed = true;
         self.store.persist(&self.ledger).await
     }
-    /// The single IPv4 selector: local-origin traffic without the protected
-    /// mark looks up the capture table; a miss continues in the host RPDB.
-    fn selector(&self) -> RuleMessage {
+    /// The selector of each family the table captures: local-origin traffic
+    /// without the protected mark looks up the capture table; a miss
+    /// continues in the host RPDB.
+    fn selectors(&self) -> Vec<RuleMessage> {
+        let mut families = vec![AddressFamily::Inet];
+        if self.ledger.program.capture6 {
+            families.push(AddressFamily::Inet6);
+        }
+        families
+            .into_iter()
+            .map(|family| self.selector(family))
+            .collect()
+    }
+    fn selector(&self, family: AddressFamily) -> RuleMessage {
         let mut rule = RuleMessage::default();
-        rule.header.family = AddressFamily::Inet;
+        rule.header.family = family;
         rule.header.action = RuleAction::ToTable;
         rule.attributes = vec![
             RuleAttribute::Priority(self.start),
@@ -515,12 +550,21 @@ impl Backend {
         rule
     }
     async fn install_selector(&mut self) -> Result<()> {
-        let selector = encode_rule(self.selector());
-        if self.ledger.rules == [selector.clone()] {
+        let selectors = self.selectors();
+        if self.ledger.rules
+            == selectors
+                .iter()
+                .cloned()
+                .map(encode_rule)
+                .collect::<Vec<_>>()
+        {
             return Ok(());
         }
         self.remove_rules().await?;
-        self.add_rule(self.selector()).await
+        for selector in selectors {
+            self.add_rule(selector).await?;
+        }
+        Ok(())
     }
     async fn add_rule(&mut self, rule: RuleMessage) -> Result<()> {
         let bytes = encode_rule(rule.clone());

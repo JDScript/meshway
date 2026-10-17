@@ -11,7 +11,7 @@ use super::{
     command::{Commands, Tool},
     host::{self, Failure},
 };
-use meshway_model::exit::ExitUnavailableReason as Reason;
+use meshway_model::exit::{ExitFamily, ExitUnavailableReason as Reason};
 
 mod crossing;
 mod interface;
@@ -23,20 +23,24 @@ pub(in crate::linux::kernel) use crossing::Crossing;
 use iptables::Legacy;
 use judge::Ruleset;
 
-/// Readiness observation: a blocking foreign rule for exit traffic, foreign
-/// mark manipulation and offload, read from nft and from legacy iptables.
+/// Readiness observation: a blocking foreign rule for exit traffic of each
+/// of `families`, foreign mark manipulation and offload, read from nft and
+/// from legacy iptables/ip6tables. `Err` fails every family (unreadable
+/// ruleset, foreign marks or offload); otherwise each family is judged on
+/// its own packets.
 pub(super) async fn check(
     commands: &mut Commands,
     owned: &[(String, String)],
     crossing: &Crossing,
-) -> Result<(), ExitError> {
+    families: &[ExitFamily],
+) -> Result<Vec<(ExitFamily, Result<(), Reason>)>, ExitError> {
     let foreign = host::foreign_ruleset(commands, owned)
         .await
         .map_err(|_| Reason::NftUnavailable)?;
     for object in &foreign {
         if matches!(
             object.family.as_str(),
-            "inet" | "ip" | "bridge" | "netdev" | "arp"
+            "inet" | "ip" | "ip6" | "bridge" | "netdev" | "arp"
         ) && (host::contains(&object.data, &["mangle", "flow", "ct helper"])
             || object.kind == "flowtable")
         {
@@ -44,33 +48,54 @@ pub(super) async fn check(
         }
     }
     let mut ruleset = Ruleset::from_nft(&foreign);
-    let legacy = legacy(commands)
-        .await
-        .map_err(|_| Reason::FirewallConflict)?;
-    if let Some(legacy) = legacy {
-        if legacy.marks {
-            return Err(Reason::OwnershipConflict.into());
+    let mut unread = Vec::new();
+    for &family in families {
+        match legacy(commands, family).await {
+            Ok(Some(legacy)) if legacy.marks => return Err(Reason::OwnershipConflict.into()),
+            Ok(Some(legacy)) => ruleset.chains.extend(legacy.ruleset.chains),
+            Ok(None) => {}
+            // Only this family's legacy tables are unreadable.
+            Err(_) => unread.push(family),
         }
-        ruleset.chains.extend(legacy.ruleset.chains);
     }
-    ruleset.judge(crossing).map_err(Into::into)
+    Ok(families
+        .iter()
+        .map(|family| {
+            let judged = if unread.contains(family) {
+                Err(Reason::FirewallConflict)
+            } else {
+                ruleset.judge(crossing, *family)
+            };
+            (*family, judged)
+        })
+        .collect())
 }
 
-/// The loaded legacy iptables tables, parsed; `None` when none are loaded.
-/// Loaded tables that cannot be read cannot be judged.
-pub(super) async fn legacy(commands: &mut Commands) -> Result<Option<Legacy>, Failure> {
-    if host::legacy_tables()?.is_empty() {
+/// The loaded legacy iptables (IPv4) or ip6tables (IPv6) tables, parsed;
+/// `None` when none are loaded. Loaded tables that cannot be read cannot be
+/// judged.
+pub(super) async fn legacy(
+    commands: &mut Commands,
+    family: ExitFamily,
+) -> Result<Option<Legacy>, Failure> {
+    let ipv6 = family == ExitFamily::Ipv6;
+    if host::legacy_tables(ipv6)?.is_empty() {
         return Ok(None);
     }
+    let (tool, source) = if ipv6 {
+        (Tool::Ip6tablesLegacySave, "legacy6")
+    } else {
+        (Tool::IptablesLegacySave, "legacy")
+    };
     let output = commands
-        .run(Tool::IptablesLegacySave, Vec::new(), Vec::new())
+        .run(tool, Vec::new(), Vec::new())
         .await
         .map_err(|_| Failure::Unavailable)?;
     if !output.success {
         return Err(Failure::Unavailable);
     }
     let text = std::str::from_utf8(&output.stdout).map_err(|_| Failure::Malformed)?;
-    Legacy::parse(text).map(Some)
+    Legacy::parse(text, source).map(Some)
 }
 
 #[cfg(test)]
@@ -86,7 +111,13 @@ mod tests {
                 .to_vec(),
             installed: None,
             local: vec!["104.194.68.10".parse().unwrap()],
-            mesh: vec!["100.64.0.0/10".parse().unwrap()],
+            egress6: vec!["eth0".into()],
+            local6: vec!["3ffe:1:2:3::10".parse().unwrap()],
+            advertised6: Vec::new(),
+            mesh: vec![
+                "100.64.0.0/10".parse().unwrap(),
+                "fd79:5c1e:e325::/48".parse().unwrap(),
+            ],
         }
     }
 

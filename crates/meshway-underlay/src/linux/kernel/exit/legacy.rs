@@ -131,8 +131,8 @@ pub(super) fn decode(bytes: &[u8]) -> Result<Ledger> {
                         incarnation: ExitIncarnation::new(handle),
                         slot: old.slot,
                         tuple: OriginalTuple {
-                            source: old.tuple.source,
-                            destination: old.tuple.destination,
+                            source: old.tuple.source.into(),
+                            destination: old.tuple.destination.into(),
                             transport,
                         },
                         expires_ms: old.expires_ms,
@@ -152,7 +152,7 @@ pub(super) fn decode(bytes: &[u8]) -> Result<Ledger> {
                 node: old.node,
                 plan: crate::target::RoleIdentity {
                     generation: old.plan.generation,
-                    family: old.plan.family,
+                    families: vec![old.plan.family],
                     nat: old.plan.nat,
                 },
                 program,

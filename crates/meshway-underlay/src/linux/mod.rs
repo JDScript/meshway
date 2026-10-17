@@ -163,16 +163,17 @@ impl Host {
     ) -> Result<EgressCapture> {
         self.kernel.install_egress_capture(plan).await
     }
-    /// Probe the exit prerequisites for the role of `netmap` with
-    /// `role_generation`, on behalf of `instance`.
+    /// Probe the exit prerequisites of each family of the role of `netmap`
+    /// with `role_generation`, on behalf of `instance`.
     pub async fn probe_exit(
         &mut self,
         instance: meshway_model::InstanceId,
         netmap: meshway_model::NetmapRef,
         role_generation: meshway_model::Digest,
+        families: &[meshway_model::exit::ExitFamily],
     ) -> meshway_model::exit::ExitCapability {
         self.kernel
-            .probe_exit(instance, netmap, role_generation)
+            .probe_exit(instance, netmap, role_generation, families)
             .await
     }
     /// Prepare the installed netmap's exit role. It is bound to the content,

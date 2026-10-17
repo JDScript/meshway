@@ -71,7 +71,8 @@ async fn setup() -> Setup {
     let device = Device {
         index: tun.if_index().unwrap(),
         name: tun.name().to_owned(),
-        source: addresses.ipv4.unwrap(),
+        source: addresses.ipv4,
+        source6: addresses.ipv6,
     };
     kernel.journal.tun = Some(TunRecord {
         name: device.name.clone(),
@@ -104,6 +105,7 @@ async fn setup() -> Setup {
         program: program::Program {
             installation: random.iter().map(|byte| format!("{byte:02x}")).collect(),
             mark: kernel.journal.mark.mask,
+            capture6: true,
         },
         table: 24000,
         plan: full(),
@@ -536,6 +538,7 @@ fn full() -> EgressCapturePlan {
             std::net::Ipv4Addr::BROADCAST,
         )],
         default_capture: true,
+        managed_ipv6: Vec::new(),
         sink_ipv6: vec![(
             std::net::Ipv6Addr::UNSPECIFIED,
             std::net::Ipv6Addr::from(u128::MAX),

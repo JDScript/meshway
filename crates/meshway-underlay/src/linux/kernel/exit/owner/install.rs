@@ -145,7 +145,7 @@ impl super::super::super::Kernel {
         let cfg = View::of(&desired);
         if cfg.exit_role().as_ref() != Some(&plan)
             || !cfg.exit_enabled()
-            || plan.family != ExitFamily::Ipv4
+            || !plan.families.contains(&ExitFamily::Ipv4)
         {
             return Err(Error::Target);
         }
@@ -164,6 +164,16 @@ impl super::super::super::Kernel {
         if pools.is_empty() || self.journal.start <= super::super::routing::RESERVED {
             return Err(Error::Target);
         }
+        let ipv6 = plan.families.contains(&ExitFamily::Ipv6);
+        let pools6: Vec<_> = if ipv6 {
+            cfg.mesh_address_pools()
+                .ipv6
+                .iter()
+                .map(|pool| pool.parse::<ipnet::Ipv6Net>().map_err(|_| Error::Target))
+                .collect::<Result<_>>()?
+        } else {
+            Vec::new()
+        };
         let rules =
             super::super::super::get_rules(&self.handle, self.options.max_kernel_objects).await?;
         let routes =
@@ -214,16 +224,14 @@ impl super::super::super::Kernel {
                         .any(|rule| super::super::super::plan::rule_table(rule) == *table)
             })
             .ok_or(Error::Conflict)?;
-        let local: Vec<Ipv4Addr> =
+        let local: Vec<IpAddr> =
             super::super::super::get_addresses(&self.handle, self.options.max_kernel_objects)
                 .await?
                 .into_iter()
                 .flat_map(|address| address.attributes)
                 .filter_map(|attribute| match attribute {
-                    rtnetlink::packet_route::address::AddressAttribute::Address(IpAddr::V4(ip))
-                    | rtnetlink::packet_route::address::AddressAttribute::Local(IpAddr::V4(ip)) => {
-                        Some(ip)
-                    }
+                    rtnetlink::packet_route::address::AddressAttribute::Address(ip)
+                    | rtnetlink::packet_route::address::AddressAttribute::Local(ip) => Some(ip),
                     _ => None,
                 })
                 .collect();
@@ -258,6 +266,12 @@ impl super::super::super::Kernel {
                 interface_name: tun.name().to_owned(),
                 mark,
                 pools,
+                families: if ipv6 {
+                    vec![ExitFamily::Ipv4, ExitFamily::Ipv6]
+                } else {
+                    vec![ExitFamily::Ipv4]
+                },
+                pools6,
             },
             tun_name: tun.name().to_owned(),
             mtu: tun.mtu(),

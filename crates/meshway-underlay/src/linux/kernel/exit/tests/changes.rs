@@ -79,7 +79,7 @@ async fn failed_exit_changes_are_read_back_and_completed() {
         port += 1;
         let tuple = OriginalTuple {
             source: "100.96.0.1".parse().unwrap(),
-            destination: *remote.ip(),
+            destination: (*remote.ip()).into(),
             transport: ExitTransport::Udp {
                 source_port: port,
                 destination_port: remote.port(),

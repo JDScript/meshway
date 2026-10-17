@@ -124,7 +124,7 @@ impl Backend {
             return Err(Error::Conflict);
         }
         item.tuple
-            .validate(&self.ledger.program.pools, &self.local)
+            .validate(&self.ledger.program.mesh_pools(), &self.local)
             .map_err(|_| Error::Target)?;
         timeout(&item.deadline)?;
         Ok(())
@@ -208,7 +208,7 @@ impl Backend {
                 .collect();
         }
         // Routes and rules are per source/destination pair.
-        let mut pairs: BTreeMap<(Ipv4Addr, Ipv4Addr), Result<()>> = BTreeMap::new();
+        let mut pairs: BTreeMap<(IpAddr, IpAddr), Result<()>> = BTreeMap::new();
         for (slot, &index) in accepted.iter().enumerate() {
             if results[slot].is_some() {
                 continue;

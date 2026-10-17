@@ -11,6 +11,12 @@ use serde_json::{Value, json};
 pub(super) struct Program {
     pub installation: String,
     pub mark: u32,
+    /// The table hands managed IPv6 to the TUN (`managed6` while active,
+    /// `sink6` always rejected). A table an earlier version created rejects
+    /// all of `managed6`: its gates put both kinds there until it is
+    /// recreated (at `down` or another boot).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub capture6: bool,
 }
 impl Program {
     pub fn table(&self) -> String {
@@ -26,7 +32,11 @@ impl Program {
             ("managed6", "ipv6_addr"),
             ("mesh4", "ipv4_addr"),
             ("mesh6", "ipv6_addr"),
+            ("sink6", "ipv6_addr"),
         ] {
+            if name == "sink6" && !self.capture6 {
+                continue;
+            }
             items.push(json!({"add": {"set": {"family": "inet", "table": table, "name": name, "type": kind, "flags": ["interval"], "size": SET_SIZE}}}));
         }
         items.push(json!({"add": {"set": {"family": "inet", "table": table, "name": "active", "type": "ifname", "size": 1}}}));
@@ -86,9 +96,26 @@ impl Program {
                 compare("==", destination.clone(), json!(format!("@mesh{family}"))),
                 json!({"return": null}),
             ]);
-            if family == 4 {
+            // Sunk IPv6 first: it never reaches the TUN, also where a staged
+            // union holds it managed too.
+            if family == 6 && self.capture6 {
                 rules.push(vec![
-                    compare("==", destination.clone(), json!("@managed4")),
+                    compare("==", destination.clone(), json!("@sink6")),
+                    compare("==", json!({"meta": {"key": "l4proto"}}), json!(6)),
+                    json!({"reject": {"type": "tcp reset"}}),
+                ]);
+                rules.push(vec![
+                    compare("==", destination.clone(), json!("@sink6")),
+                    json!({"reject": {"type": "icmpx", "expr": "admin-prohibited"}}),
+                ]);
+            }
+            if family == 4 || self.capture6 {
+                rules.push(vec![
+                    compare(
+                        "==",
+                        destination.clone(),
+                        json!(format!("@managed{family}")),
+                    ),
                     compare("==", json!({"meta": {"key": "oifname"}}), json!("@active")),
                     json!({"return": null}),
                 ]);
@@ -140,16 +167,33 @@ impl Program {
                 json!({"range": [start.to_string(), end.to_string()]})
             }
         }
-        vec![
+        let mut sets = vec![
             ("managed4", ranges.v4.iter().map(range).collect()),
-            ("managed6", ranges.v6.iter().map(range).collect()),
+            if self.capture6 {
+                ("managed6", ranges.v6.iter().map(range).collect())
+            } else {
+                // Without IPv6 capture every IPv6 range is rejected.
+                (
+                    "managed6",
+                    meshway_rules::ranges::merge(
+                        ranges.v6.iter().chain(&ranges.sink6).copied().collect(),
+                    )
+                    .iter()
+                    .map(range)
+                    .collect(),
+                )
+            },
             ("mesh4", mesh.v4.iter().map(range).collect()),
             ("mesh6", mesh.v6.iter().map(range).collect()),
             (
                 "active",
                 active.map(|name| vec![json!(name)]).unwrap_or_default(),
             ),
-        ]
+        ];
+        if self.capture6 {
+            sets.push(("sink6", ranges.sink6.iter().map(range).collect()));
+        }
+        sets
     }
 }
 fn compare(op: &str, left: Value, right: Value) -> Value {

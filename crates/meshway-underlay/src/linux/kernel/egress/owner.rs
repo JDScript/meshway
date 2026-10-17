@@ -349,6 +349,7 @@ impl super::super::Kernel {
                 program: Program {
                     installation,
                     mark: self.journal.mark.mask,
+                    capture6: true,
                 },
                 table,
                 plan: plan.clone(),
@@ -479,11 +480,14 @@ impl super::super::Kernel {
                                     backend.stage(plan.clone(), mesh.clone()).await?;
                                     let scope = scope?;
                                     let desired = scope.execution()?;
-                                    let source = View::of(&desired).addresses().ipv4;
-                                    let device = if plan.managed_ipv4.is_empty() { None } else {
+                                    let addresses = View::of(&desired).addresses();
+                                    let device = if plan.managed_ipv4.is_empty() && plan.managed_ipv6.is_empty() { None } else {
                                         let expected = expected.lock().map_err(|_| Error::Worker)?;
                                         let (index, name, _, _) = expected.tun.as_ref().ok_or(Error::Expired)?;
-                                        Some(Device { index: *index, name: name.clone(), source: source.ok_or(Error::Target)? })
+                                        // Each managed family needs the Mesh address its routes leave from.
+                                        let source = match addresses.ipv4 { Some(source) => Some(source), None if plan.managed_ipv4.is_empty() => None, None => return Err(Error::Target) };
+                                        let source6 = match addresses.ipv6 { Some(source) if !plan.managed_ipv6.is_empty() => Some(source), _ if plan.managed_ipv6.is_empty() => None, _ => return Err(Error::Target) };
+                                        Some(Device { index: *index, name: name.clone(), source, source6 })
                                     };
                                     backend.commit_staged(plan, mesh, device, || scope.check()).await
                                     })

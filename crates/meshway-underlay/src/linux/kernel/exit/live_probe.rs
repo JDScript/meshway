@@ -1,6 +1,9 @@
 use meshway_model::{
     InstanceId, NetmapRef,
-    exit::{ExitCapability, ExitStatus, ExitUnavailableReason as Reason},
+    exit::{
+        ExitCapability, ExitFamily, ExitFamilyCapability, ExitStatus,
+        ExitUnavailableReason as Reason,
+    },
 };
 use rtnetlink::packet_route::link::{LinkAttribute, LinkFlags};
 
@@ -10,17 +13,25 @@ impl super::super::Kernel {
         instance_id: InstanceId,
         netmap: NetmapRef,
         role_generation: meshway_model::Digest,
+        families: &[ExitFamily],
     ) -> ExitCapability {
-        let result = self.live_probe(instance_id, netmap, role_generation).await;
+        let result = self
+            .live_probe(instance_id, netmap, role_generation, families)
+            .await;
         match result {
             Ok(observation) => observation,
             Err(reason) => ExitCapability {
                 instance_id,
                 netmap,
                 role_generation,
-                supported_families: Vec::new(),
-                installed_families: Vec::new(),
-                status: ExitStatus::Unavailable { reason },
+                families: families
+                    .iter()
+                    .map(|family| ExitFamilyCapability {
+                        family: *family,
+                        status: ExitStatus::Unavailable { reason },
+                        installed: false,
+                    })
+                    .collect(),
                 observed_at: std::time::SystemTime::now().into(),
             },
         }
@@ -30,6 +41,7 @@ impl super::super::Kernel {
         instance: InstanceId,
         netmap: NetmapRef,
         role_generation: meshway_model::Digest,
+        families: &[ExitFamily],
     ) -> Result<ExitCapability, Reason> {
         self.ready().await.map_err(|_| Reason::OwnershipConflict)?;
         self.reconcile_stopped_exit()
@@ -104,7 +116,7 @@ impl super::super::Kernel {
         probe.owned_tables = owned_tables;
         probe.crossing = crossing;
         let observation = probe
-            .observe(instance, netmap, role_generation, &interfaces)
+            .observe(instance, netmap, role_generation, families, &interfaces)
             .await;
         probe.finish().await.map_err(|error| error.reason)?;
         self.quiesce()
@@ -154,29 +166,56 @@ mod tests {
                 {"add": {"chain": {"family": "inet", "table": "x3c_foreign_sentinel", "name": "forward", "type": "filter", "hook": "forward", "prio": 0, "policy": "drop"}}}
             ]})).await.unwrap();
         }
-        let observation = host.probe_exit(instance, netmap, role_generation).await;
+        let families = if std::env::var("MESHWAY_PROBE_IPV6").as_deref() == Ok("1") {
+            vec![ExitFamily::Ipv4, ExitFamily::Ipv6]
+        } else {
+            vec![ExitFamily::Ipv4]
+        };
+        let observation = host
+            .probe_exit(instance, netmap, role_generation, &families)
+            .await;
+        let status = observation.families[0].status.clone();
         match expected.as_str() {
             "ready" => {
-                assert_eq!(observation.status, ExitStatus::Ready);
+                assert_eq!(status, ExitStatus::Ready);
+                assert_eq!(observation.families.len(), families.len());
+            }
+            "ipv6-ready" => assert_eq!(
+                observation
+                    .families
+                    .iter()
+                    .map(|entry| entry.status.clone())
+                    .collect::<Vec<_>>(),
+                [ExitStatus::Ready, ExitStatus::Ready]
+            ),
+            "ipv6-forwarding" | "ipv6-noegress" | "ipv6-ra" => {
+                // IPv4 stays ready while the IPv6 family alone is unavailable.
+                assert_eq!(status, ExitStatus::Ready);
                 assert_eq!(
-                    observation.supported_families,
-                    vec![meshway_model::exit::ExitFamily::Ipv4]
+                    observation.families[1].status,
+                    ExitStatus::Unavailable {
+                        reason: match expected.as_str() {
+                            "ipv6-forwarding" => Reason::Ipv6ForwardDisabled,
+                            "ipv6-noegress" => Reason::Ipv6NoEgress,
+                            _ => Reason::Ipv6RouterAdvertisementsIgnored,
+                        }
+                    }
                 );
             }
             "forwarding" => assert_eq!(
-                observation.status,
+                status,
                 ExitStatus::Unavailable {
                     reason: Reason::IpForwardDisabled
                 }
             ),
             "rpf" => assert_eq!(
-                observation.status,
+                status,
                 ExitStatus::Unavailable {
                     reason: Reason::ReversePathFilterConflict
                 }
             ),
             "firewall" => assert_eq!(
-                observation.status,
+                status,
                 ExitStatus::Unavailable {
                     reason: Reason::FirewallConflict
                 }
@@ -186,7 +225,7 @@ mod tests {
         assert_eq!(observation.instance_id, instance);
         assert_eq!(observation.netmap, netmap);
         assert_eq!(observation.role_generation, role_generation);
-        assert!(observation.installed_families.is_empty());
+        assert!(observation.families.iter().all(|entry| !entry.installed));
         let observed: std::time::SystemTime = observation.observed_at.into();
         assert!(observed >= before);
         assert!(!changes.has_changed().unwrap());

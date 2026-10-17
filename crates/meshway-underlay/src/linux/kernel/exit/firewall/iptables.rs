@@ -10,8 +10,9 @@ pub(super) fn legacy_blocks(target: &str) -> bool {
     )
 }
 
-/// `iptables-legacy-save` output: its chains, and whether any rule reads or
-/// writes the packet or connection mark or conntrack handling.
+/// `iptables-legacy-save` (or `ip6tables-legacy-save`) output: its chains,
+/// and whether any rule reads or writes the packet or connection mark or
+/// conntrack handling.
 #[derive(Debug, Default)]
 pub(in crate::linux::kernel::exit) struct Legacy {
     pub(super) ruleset: Ruleset,
@@ -19,7 +20,8 @@ pub(in crate::linux::kernel::exit) struct Legacy {
 }
 
 impl Legacy {
-    pub fn parse(text: &str) -> Result<Self, Failure> {
+    /// `source` keys the chains: `legacy` (IPv4) or `legacy6` (IPv6).
+    pub fn parse(text: &str, source: &str) -> Result<Self, Failure> {
         let mut legacy = Self::default();
         let mut table: Option<String> = None;
         for line in text.lines().map(str::trim) {
@@ -35,7 +37,7 @@ impl Legacy {
                 continue;
             }
             let table = table.as_deref().ok_or(Failure::Malformed)?;
-            let key = |chain: &str| ("legacy".to_owned(), table.to_owned(), chain.to_owned());
+            let key = |chain: &str| (source.to_owned(), table.to_owned(), chain.to_owned());
             if let Some(declaration) = line.strip_prefix(':') {
                 let mut fields = declaration.split_whitespace();
                 let name = fields.next().ok_or(Failure::Malformed)?;
@@ -138,7 +140,22 @@ fn legacy_rule(
                     .collect(),
             )),
             "-m" | "--match" => {
-                marks |= matches!(value(index + 1)?.as_str(), "mark" | "connmark");
+                let module = value(index + 1)?;
+                marks |= matches!(module.as_str(), "mark" | "connmark");
+                // `-m rpfilter [--invert] [--loose] [--validmark]
+                // [--accept-local]`: a reverse-path filter, satisfied.
+                if module == "rpfilter" {
+                    matches.push(Match::ReversePath);
+                    index += 2;
+                    while matches!(
+                        tokens.get(index).map(String::as_str),
+                        Some("--invert" | "--loose" | "--validmark" | "--accept-local")
+                    ) {
+                        index += 1;
+                    }
+                    negated = false;
+                    continue;
+                }
             }
             "-j" | "--jump" | "-g" | "--goto" => {
                 let target = value(index + 1)?;
@@ -160,9 +177,9 @@ fn legacy_rule(
                 value(index + 1)?
                     .split(',')
                     .map(|net| {
-                        net.parse::<ipnet::Ipv4Net>()
+                        net.parse::<ipnet::IpNet>()
                             .ok()
-                            .or_else(|| net.parse::<std::net::Ipv4Addr>().ok().map(Into::into))
+                            .or_else(|| net.parse::<std::net::IpAddr>().ok().map(Into::into))
                     })
                     .collect::<Option<Vec<_>>>()
                     .map_or(Match::Unknown, |nets| Match::Destination(!negated, nets)),
@@ -185,7 +202,7 @@ fn legacy_rule(
 mod tests {
     use super::super::tests::crossing;
     use super::*;
-    use meshway_model::exit::ExitUnavailableReason as Reason;
+    use meshway_model::exit::{ExitFamily, ExitUnavailableReason as Reason};
 
     /// Docker's raw protection of a published container (`-d <container>
     /// ! -i <bridge> -j DROP`) excludes every exit destination.
@@ -194,17 +211,26 @@ mod tests {
         let docker = "*raw\n:PREROUTING ACCEPT [0:0]\n:OUTPUT ACCEPT [0:0]\n\
             -A PREROUTING -d 172.17.0.2/32 ! -i docker0 -j DROP\nCOMMIT\n";
         assert_eq!(
-            Legacy::parse(docker).unwrap().ruleset.judge(&crossing()),
+            Legacy::parse(docker, "legacy")
+                .unwrap()
+                .ruleset
+                .judge(&crossing(), ExitFamily::Ipv4),
             Ok(())
         );
         let all = "*raw\n:PREROUTING ACCEPT [0:0]\n-A PREROUTING ! -i docker0 -j DROP\nCOMMIT\n";
         assert_eq!(
-            Legacy::parse(all).unwrap().ruleset.judge(&crossing()),
+            Legacy::parse(all, "legacy")
+                .unwrap()
+                .ruleset
+                .judge(&crossing(), ExitFamily::Ipv4),
             Err(Reason::FirewallConflict)
         );
         let policy = "*mangle\n:PREROUTING DROP [0:0]\nCOMMIT\n";
         assert_eq!(
-            Legacy::parse(policy).unwrap().ruleset.judge(&crossing()),
+            Legacy::parse(policy, "legacy")
+                .unwrap()
+                .ruleset
+                .judge(&crossing(), ExitFamily::Ipv4),
             Err(Reason::FirewallConflict)
         );
     }
@@ -222,29 +248,36 @@ mod tests {
             -A DOCKER-ISOLATION-STAGE-1 -j RETURN\n-A DOCKER-ISOLATION-STAGE-2 -o docker0 -j DROP\n\
             -A DOCKER-ISOLATION-STAGE-2 -j RETURN\n-A DOCKER-USER -j RETURN\n\
             -A DOCKER -d 172.17.0.2/32 ! -i docker0 -o docker0 -p tcp -m tcp --dport 80 -j ACCEPT\nCOMMIT\n";
-        let legacy = Legacy::parse(docker).unwrap();
+        let legacy = Legacy::parse(docker, "legacy").unwrap();
         assert!(!legacy.marks);
-        assert_eq!(legacy.ruleset.judge(&crossing()), Ok(()));
-        let dropping = Legacy::parse(&docker.replace(":FORWARD ACCEPT", ":FORWARD DROP")).unwrap();
+        assert_eq!(legacy.ruleset.judge(&crossing(), ExitFamily::Ipv4), Ok(()));
+        let dropping = Legacy::parse(
+            &docker.replace(":FORWARD ACCEPT", ":FORWARD DROP"),
+            "legacy",
+        )
+        .unwrap();
         assert_eq!(
-            dropping.ruleset.judge(&crossing()),
+            dropping.ruleset.judge(&crossing(), ExitFamily::Ipv4),
             Err(Reason::FirewallConflict)
         );
         let ufw = "*filter\n:FORWARD DROP [0:0]\n:ufw-user-forward - [0:0]\n\
             -A FORWARD -j ufw-user-forward\n-A ufw-user-forward -i eth0 -o eth0 -j ACCEPT\n\
             -A ufw-user-forward -m comment --comment \"a \\\"quoted\\\" note\" -j RETURN\nCOMMIT\n";
         assert_eq!(
-            Legacy::parse(ufw).unwrap().ruleset.judge(&crossing()),
+            Legacy::parse(ufw, "legacy")
+                .unwrap()
+                .ruleset
+                .judge(&crossing(), ExitFamily::Ipv4),
             Err(Reason::FirewallConflict)
         );
         let marking = "*mangle\n:PREROUTING ACCEPT [0:0]\n-A PREROUTING -i eth1 -j MARK --set-xmark 0x1/0xffffffff\nCOMMIT\n";
-        assert!(Legacy::parse(marking).unwrap().marks);
+        assert!(Legacy::parse(marking, "legacy").unwrap().marks);
         for malformed in [
             "-A FORWARD -j DROP\n",
             "*filter\n-A FORWARD -i\nCOMMIT\n",
             "*filter\n",
         ] {
-            assert!(Legacy::parse(malformed).is_err(), "{malformed:?}");
+            assert!(Legacy::parse(malformed, "legacy").is_err(), "{malformed:?}");
         }
     }
 }

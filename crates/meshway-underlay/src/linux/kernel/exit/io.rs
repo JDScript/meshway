@@ -88,32 +88,7 @@ impl Live {
     /// The reverse-NAT reply of this projection or an ICMP error quoting its
     /// forward packet (conntrack RELATED); framing only, the flow owner admits.
     fn reply(&self, packet: &[u8]) -> bool {
-        self.tuple.related(packet) || self.exact_reply(packet)
-    }
-    fn exact_reply(&self, packet: &[u8]) -> bool {
-        if packet.len() < 28
-            || packet[0] != 0x45
-            || usize::from(u16::from_be_bytes([packet[2], packet[3]])) != packet.len()
-            || u16::from_be_bytes([packet[6], packet[7]]) & 0x3fff != 0
-            || packet[12..16] != self.tuple.destination.octets()
-            || packet[16..20] != self.tuple.source.octets()
-        {
-            return false;
-        }
-        let (protocol, source, destination) = self.tuple.fields();
-        if packet[9] != protocol {
-            return false;
-        }
-        if protocol == 1 {
-            packet[20] == 0
-                && packet[21] == 0
-                && u16::from_be_bytes([packet[24], packet[25]]) == source
-                && u16::from_be_bytes([packet[26], packet[27]]) == self.tuple.sequence()
-        } else {
-            (protocol != 6 || packet.len() >= 40)
-                && u16::from_be_bytes([packet[20], packet[21]]) == destination
-                && u16::from_be_bytes([packet[22], packet[23]]) == source
-        }
+        self.tuple.related(packet) || self.tuple.reply(packet)
     }
 }
 

@@ -94,12 +94,15 @@ mod tests {
             rule("inet", "own", "forward", json!([name("iifname", "==", json!("tun1")), {"drop": null}])),
         ]));
         assert_eq!(
-            blocking.judge(&crossing),
+            blocking.judge(&crossing, meshway_model::exit::ExitFamily::Ipv4),
             Ok(()),
             "a present tun1 is not a fresh exit TUN"
         );
         crossing.installed = Some("tun1".into());
-        assert_eq!(blocking.judge(&crossing), Err(Reason::FirewallConflict));
+        assert_eq!(
+            blocking.judge(&crossing, meshway_model::exit::ExitFamily::Ipv4),
+            Err(Reason::FirewallConflict)
+        );
         for (pattern, expected) in [
             ("tun1", Truth::Yes),
             ("tun*", Truth::Yes),

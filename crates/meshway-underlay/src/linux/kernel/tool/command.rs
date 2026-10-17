@@ -17,6 +17,8 @@ pub(in crate::linux::kernel) enum Tool {
     Nft,
     /// Read-only dump of loaded legacy iptables tables.
     IptablesLegacySave,
+    /// Read-only dump of loaded legacy ip6tables tables.
+    Ip6tablesLegacySave,
 }
 
 impl Tool {
@@ -24,6 +26,7 @@ impl Tool {
         match self {
             Self::Nft => "/usr/sbin/nft",
             Self::IptablesLegacySave => "/usr/sbin/iptables-legacy-save",
+            Self::Ip6tablesLegacySave => "/usr/sbin/ip6tables-legacy-save",
         }
     }
 }

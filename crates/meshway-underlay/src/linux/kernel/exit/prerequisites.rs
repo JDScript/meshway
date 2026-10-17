@@ -55,9 +55,19 @@ pub(super) async fn check(commands: &mut Commands, owned: &[(String, String)]) -
     }
     // Legacy iptables by content, as the probe judges it: loaded tables that
     // cannot be read, or that touch marks or conntrack handling, conflict.
-    match super::firewall::legacy(commands).await {
-        Ok(None) => Ok(()),
-        Ok(Some(legacy)) if !legacy.marks => Ok(()),
-        Ok(Some(_)) | Err(_) => Err(Error::Conflict),
+    for family in [
+        meshway_model::exit::ExitFamily::Ipv4,
+        meshway_model::exit::ExitFamily::Ipv6,
+    ] {
+        match super::firewall::legacy(commands, family).await {
+            Ok(None) => {}
+            Ok(Some(legacy)) if !legacy.marks => {}
+            Ok(Some(_)) => return Err(Error::Conflict),
+            // An unreadable IPv6 table set blocks only the IPv6 family,
+            // which the probe reports; installation needs IPv4.
+            Err(_) if family == meshway_model::exit::ExitFamily::Ipv6 => {}
+            Err(_) => return Err(Error::Conflict),
+        }
     }
+    Ok(())
 }

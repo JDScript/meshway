@@ -29,8 +29,25 @@ pub(crate) struct View<'a>(
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct RoleIdentity {
     pub generation: Digest,
-    pub family: ExitFamily,
+    /// A journal written before families has `family`, one family.
+    #[serde(alias = "family", deserialize_with = "families")]
+    pub families: Vec<ExitFamily>,
     pub nat: ExitNat,
+}
+
+/// A list of families, or the single family an earlier journal recorded.
+#[cfg(target_os = "linux")]
+fn families<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<ExitFamily>, D::Error> {
+    #[derive(serde::Deserialize)]
+    #[serde(untagged)]
+    enum Families {
+        One(ExitFamily),
+        Many(Vec<ExitFamily>),
+    }
+    Ok(match <Families as serde::Deserialize>::deserialize(d)? {
+        Families::One(family) => vec![family],
+        Families::Many(families) => families,
+    })
 }
 
 #[cfg(target_os = "linux")]
@@ -38,7 +55,7 @@ impl From<&meshway_configuration::netmap::ExitRole> for RoleIdentity {
     fn from(role: &meshway_configuration::netmap::ExitRole) -> Self {
         Self {
             generation: role.generation,
-            family: role.family,
+            families: role.families.clone(),
             nat: role.nat,
         }
     }

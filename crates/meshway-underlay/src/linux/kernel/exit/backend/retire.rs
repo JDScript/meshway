@@ -203,7 +203,10 @@ impl Backend {
         }
         let dump = objects::dump(&mut self.commands, &self.ledger.program).await?;
         let filter = self.ledger.program.filter();
-        let elements: Vec<_> = ["quarantine", "echo_quarantine"]
+        let elements: Vec<_> = self
+            .ledger
+            .program
+            .quarantine_sets()
             .into_iter()
             .filter_map(|name| {
                 let present = dump
@@ -217,7 +220,7 @@ impl Backend {
                     .map(conntrack::RetiredTuple::key)
                     .filter(|key| present.iter().any(|element| element_key(element) == key))
                     .collect();
-                (!values.is_empty()).then(|| self.ledger.program.element("delete", name, values))
+                (!values.is_empty()).then(|| self.ledger.program.element("delete", &name, values))
             })
             .collect();
         // Kernel first: a crash before the journal write re-adds them.

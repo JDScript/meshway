@@ -56,12 +56,19 @@ pub(super) fn batch(installation: &str, clamp: Option<&Clamp>) -> Value {
         .iter()
         .filter_map(|(address, limit)| Some((*address, mss(*limit, address.is_ipv4(), clamp.mtu)?)))
         .collect();
+    // Destinations outside the Mesh (through an exit), by family: an IPv6
+    // segment carries 20 more header bytes.
     let other = clamp
         .limits
         .other
         .and_then(|limit| mss(limit, true, clamp.mtu));
+    let other6 = clamp
+        .limits
+        .other
+        .and_then(|limit| mss(limit, false, clamp.mtu));
     let mut values: BTreeSet<u16> = entries.iter().map(|(_, value)| *value).collect();
     values.extend(other);
+    values.extend(other6);
     let floor = values.first().copied();
     let value = |v: u16| {
         if values.len() > MAX_VALUES {
@@ -106,15 +113,14 @@ pub(super) fn batch(installation: &str, clamp: Option<&Clamp>) -> Value {
         json!({"&": [{"payload": {"protocol": "tcp", "field": "flags"}}, {"|": ["syn", "rst"]}]}),
         json!("syn"),
     );
-    let pools4: Vec<Value> = clamp
-        .pools
-        .iter()
-        .filter_map(|pool| match pool {
-            IpNet::V4(net) => Some(json!({"prefix": {"addr": net.network().to_string(),
-                "len": net.prefix_len()}})),
-            IpNet::V6(_) => None,
-        })
-        .collect();
+    let pools = |ipv4: bool| -> Vec<Value> {
+        clamp
+            .pools
+            .iter()
+            .filter(|pool| matches!(pool, IpNet::V4(_)) == ipv4)
+            .map(|net| json!({"prefix": {"addr": net.network().to_string(), "len": net.prefix_len()}}))
+            .collect()
+    };
     let address =
         |protocol: &str, field: &str| json!({"payload": {"protocol": protocol, "field": field}});
     // Locally sent SYNs by destination, received ones by source: what the
@@ -140,14 +146,22 @@ pub(super) fn batch(installation: &str, clamp: Option<&Clamp>) -> Value {
                 json!({"vmap": {"key": address("ip6", field), "data": "@peer6"}}),
             ],
         ];
-        if let Some(other) = other {
+        for (other, protocol, nfproto, ipv4) in
+            [(other, "ip", "ipv4", true), (other6, "ip6", "ipv6", false)]
+        {
+            let Some(other) = other else { continue };
             let mut rule = vec![
                 on(&clamp.mesh),
                 syn.clone(),
-                compare("==", json!({"meta": {"key": "nfproto"}}), json!("ipv4")),
+                compare("==", json!({"meta": {"key": "nfproto"}}), json!(nfproto)),
             ];
-            if !pools4.is_empty() {
-                rule.push(compare("!=", address("ip", field), json!({"set": pools4})));
+            let pools = pools(ipv4);
+            if !pools.is_empty() {
+                rule.push(compare(
+                    "!=",
+                    address(protocol, field),
+                    json!({"set": pools}),
+                ));
             }
             rule.push(json!({"goto": {"target": format!("m{}", value(other))}}));
             rules.push(rule);
@@ -161,6 +175,11 @@ pub(super) fn batch(installation: &str, clamp: Option<&Clamp>) -> Value {
                 on(exit),
                 syn.clone(),
                 json!({"vmap": {"key": address("ip", "saddr"), "data": "@peer4"}}),
+            ]);
+            rules.push(vec![
+                on(exit),
+                syn.clone(),
+                json!({"vmap": {"key": address("ip6", "saddr"), "data": "@peer6"}}),
             ]);
         }
         for expr in rules {
@@ -195,8 +214,9 @@ mod unit {
             },
         };
         let text = batch("ab", Some(&clamp)).to_string();
-        // 1330 - 40, 1330 - 60, 1300 - 40; 1386 is above the TUN MTU.
-        for chain in ["m1290", "m1270", "m1260"] {
+        // 1330 - 40, 1330 - 60, 1300 - 40, 1300 - 60 (IPv6 through an exit);
+        // 1386 is above the TUN MTU.
+        for chain in ["m1290", "m1270", "m1260", "m1240"] {
             assert!(text.contains(&format!("\"name\":\"{chain}\"")), "{chain}");
         }
         assert!(!text.contains("100.64.0.5"));

@@ -16,7 +16,7 @@ use crate::{Error, Result};
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
-    net::Ipv4Addr,
+    net::IpAddr,
     time::{Duration, Instant},
 };
 use tokio_util::sync::CancellationToken;
@@ -40,7 +40,7 @@ pub(super) struct Backend {
     pub routing: Routing,
     pub view: View,
     pub live: BTreeMap<super::ExitIncarnation, Live>,
-    pub local: Vec<Ipv4Addr>,
+    pub local: Vec<IpAddr>,
     pub stop: CancellationToken,
 }
 
@@ -50,7 +50,7 @@ impl Backend {
         ledger: Ledger,
         routing: Routing,
         view: View,
-        local: Vec<Ipv4Addr>,
+        local: Vec<IpAddr>,
         stop: CancellationToken,
     ) -> Result<Self> {
         store.persist(&ledger).await?;
@@ -75,7 +75,10 @@ impl Backend {
         backend.store.persist(&backend.ledger).await?;
         backend.verify().await?;
         if !backend.ledger.quarantine.is_empty() {
-            let elements: Vec<_> = ["quarantine", "echo_quarantine"]
+            let elements: Vec<_> = backend
+                .ledger
+                .program
+                .quarantine_sets()
                 .into_iter()
                 .filter_map(|name| {
                     let values: Vec<_> = backend
@@ -86,7 +89,7 @@ impl Backend {
                         .map(conntrack::RetiredTuple::key)
                         .collect();
                     (!values.is_empty())
-                        .then(|| backend.ledger.program.element("add", name, values))
+                        .then(|| backend.ledger.program.element("add", &name, values))
                 })
                 .collect();
             let batch = json!({"nftables": elements});
@@ -138,7 +141,7 @@ impl Backend {
             return Verification::Changed("objects_changed");
         }
         let mut seen = Vec::new();
-        for name in ["flows", "echo_flows"] {
+        for name in self.ledger.program.flow_sets() {
             let key = format!("inet/{}/set/{name}", self.ledger.program.filter());
             for element in dump.elements.get(&key).into_iter().flatten() {
                 let key = element_key(element);
