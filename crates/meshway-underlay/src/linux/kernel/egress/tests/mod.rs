@@ -624,3 +624,66 @@ async fn verification_distinguishes_a_missing_rule_and_table_from_a_consistent_t
 }
 
 mod changes;
+
+/// Managed IPv6 (an IPv6 exit) installs its capture-table routes and the
+/// IPv6 selector exactly as read back; sunk IPv6 stays rejected.
+#[tokio::test]
+#[ignore = "requires isolated Linux NFT/TUN namespace and NET_ADMIN"]
+async fn managed_ipv6_capture_installs_reads_back_and_retires() {
+    assert_eq!(
+        std::env::var("MESHWAY_UNDERLAY_ISOLATED").as_deref(),
+        Ok("1")
+    );
+    let Setup {
+        _temp,
+        tasks,
+        mut kernel,
+        mut backend,
+        device,
+        mesh,
+        changed,
+    } = setup().await;
+    let mut plan = full();
+    plan.default_capture = false;
+    plan.managed_ipv4 = vec![("8.0.0.0".parse().unwrap(), "8.255.255.255".parse().unwrap())];
+    plan.managed_ipv6 = vec![
+        (
+            "2000::".parse().unwrap(),
+            "2001:ffff:ffff:ffff:ffff:ffff:ffff:ffff".parse().unwrap(),
+        ),
+        (
+            "3ffe::".parse().unwrap(),
+            "3ffe:ffff:ffff:ffff:ffff:ffff:ffff:ffff".parse().unwrap(),
+        ),
+    ];
+    plan.sink_ipv6 = vec![(
+        "2400::".parse().unwrap(),
+        "24ff:ffff:ffff:ffff:ffff:ffff:ffff:ffff".parse().unwrap(),
+    )];
+    backend.stage(plan.clone(), mesh.clone()).await.unwrap();
+    backend
+        .commit_staged(plan.clone(), mesh.clone(), Some(device.clone()), || Ok(()))
+        .await
+        .unwrap();
+    backend.verify().await.unwrap();
+    let routes: Vec<_> = super::super::get_routes(&kernel.handle, 65_536)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|route| super::super::route_table(route) == backend.ledger.table)
+        .collect();
+    let six = routes
+        .iter()
+        .filter(|route| {
+            route.header.address_family == rtnetlink::packet_route::AddressFamily::Inet6
+        })
+        .count();
+    assert_eq!(six, 2, "{routes:?}");
+    assert_eq!(backend.ledger.rules.len(), 2);
+    kernel.quiesce().await.unwrap();
+    kernel.verify().await.unwrap();
+    assert!(!changed.has_changed().unwrap());
+    backend.retire().await.unwrap();
+    kernel.quiesce().await.unwrap();
+    drop(tasks);
+}

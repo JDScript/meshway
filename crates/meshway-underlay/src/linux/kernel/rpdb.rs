@@ -59,6 +59,8 @@ impl Objects<'_> {
             .filter(|rule| same_slot(rule, &wanted))
             .collect();
         if matching.len() != 1 || encode_rule(matching[0].clone()) != bytes {
+            #[cfg(test)]
+            eprintln!("rule readback differs: wanted={wanted:?} matching={matching:?}");
             return Err(Error::Conflict);
         }
         Ok(())

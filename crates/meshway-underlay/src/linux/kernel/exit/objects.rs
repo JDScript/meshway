@@ -306,11 +306,14 @@ pub(in crate::linux::kernel) fn decode(bytes: &[u8]) -> Result<Receipt> {
         if matches!(kind.as_str(), "set" | "map") {
             data.remove("count");
             // Permission data is checked separately from immutable object shape.
-            if !matches!(
-                data.get("name").and_then(Value::as_str),
-                Some("mesh" | "mesh6")
-            ) && let Some(elements) = data.remove("elem")
-            {
+            // An exit program's Mesh pool sets are static; the capture
+            // table's `mesh4`/`mesh6` and every other set are permission data.
+            let static_pools = table.starts_with("meshway_exit_")
+                && matches!(
+                    data.get("name").and_then(Value::as_str),
+                    Some("mesh" | "mesh6")
+                );
+            if !static_pools && let Some(elements) = data.remove("elem") {
                 let elements = elements
                     .as_array()
                     .filter(|elements| elements.len() <= ELEMENTS)

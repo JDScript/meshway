@@ -509,3 +509,127 @@ pub(super) fn v4(address: std::net::IpAddr) -> Ipv4Addr {
         std::net::IpAddr::V6(_) => panic!("an IPv4 projection"),
     }
 }
+
+/// The IPv6 half of an exit role: the NAT66 program, the IPv6 forward and
+/// ICMPv6 rules and one source's /128 pair rules and route install, read
+/// back exactly and leave nothing. The namespace provides an IPv6 route to
+/// `MESHWAY_X6_REMOTE` and IPv6 forwarding.
+#[tokio::test]
+#[ignore = "requires isolated Linux NFT/TUN namespace with IPv6 forwarding and NET_ADMIN"]
+async fn exit_ipv6_program_rules_and_routes_install_and_leave_nothing() {
+    assert_eq!(
+        std::env::var("MESHWAY_UNDERLAY_ISOLATED").as_deref(),
+        Ok("1")
+    );
+    let remote: std::net::IpAddr = std::env::var("MESHWAY_X6_REMOTE").unwrap().parse().unwrap();
+    let temp = tempfile::tempdir().unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(temp.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    let directory = Arc::new(Directory::open(temp.path(), "node.lock").unwrap());
+    let tasks = Tasks::new(64);
+    let mut kernel = Kernel::open(directory, Default::default(), tasks.clone())
+        .await
+        .unwrap();
+    kernel
+        .retain_negative(&[
+            "100.96.0.0/11".parse().unwrap(),
+            "fd79::/48".parse().unwrap(),
+        ])
+        .await
+        .unwrap();
+    let tun = {
+        let mut expected = kernel.expected.lock().unwrap();
+        let tun = meshway_tun::Tun::create(meshway_tun::Options::new(1280).unwrap()).unwrap();
+        expected.exit_tun = Some(tun.if_index().unwrap());
+        expected.exit_tables.push(20000);
+        tun
+    };
+    kernel.quiesce().await.unwrap();
+    let mut nonce = [0; 16];
+    getrandom::fill(&mut nonce).unwrap();
+    let mark = if kernel.journal.mark.mask != 1 { 1 } else { 2 };
+    let namespace = crate::linux::kernel::namespace::Identity::current().unwrap();
+    let (store, _) = storage::Store::open(kernel.store.directory())
+        .await
+        .unwrap();
+    let families = vec![ExitFamily::Ipv4, ExitFamily::Ipv6];
+    let ledger = storage::Ledger {
+        version: 2,
+        boot: namespace.boot,
+        namespace_device: namespace.device,
+        namespace_inode: namespace.inode,
+        namespace_cookie: namespace.cookie,
+        base_installation: kernel.journal.installation.clone(),
+        network: "11111111-1111-4111-8111-111111111111".parse().unwrap(),
+        node: "22222222-2222-4222-8222-222222222222".parse().unwrap(),
+        plan: crate::target::RoleIdentity {
+            generation: Digest::from_bytes([1; 32]),
+            families: families.clone(),
+            nat: ExitNat::Masquerade,
+        },
+        program: program::Program {
+            legacy: false,
+            installation: nonce.iter().map(|byte| format!("{byte:02x}")).collect(),
+            interface: tun.if_index().unwrap(),
+            interface_name: tun.name().to_owned(),
+            mark,
+            pools: vec!["100.96.0.0/11".parse().unwrap()],
+            families,
+            pools6: vec!["fd79::/48".parse().unwrap()],
+        },
+        tun_name: tun.name().to_owned(),
+        mtu: tun.mtu(),
+        route_table: 20000,
+        rules: Vec::new(),
+        routes: Vec::new(),
+        receipt: None,
+        projections: Vec::new(),
+        quarantine: Vec::new(),
+        legacy_quarantine: Vec::new(),
+        closing: false,
+        removed: false,
+        pending: true,
+    };
+    let routing = routing::Routing {
+        handle: kernel.handle.clone(),
+        expected: kernel.expected.clone(),
+        limit: 16384,
+        start: kernel.journal.start,
+        end: kernel.journal.end(),
+    };
+    let mut backend = backend::Backend::create(
+        store,
+        ledger,
+        routing,
+        Arc::new(RwLock::new(BTreeMap::new())),
+        vec![std::net::Ipv6Addr::LOCALHOST.into()],
+        CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    // IPv4 and IPv6: one forward and one ICMP rule each.
+    assert_eq!(backend.ledger.rules.len(), 4);
+    let source: std::net::IpAddr = "fd79::5".parse().unwrap();
+    backend
+        .routing
+        .source(source, remote, &mut backend.ledger, &mut backend.store)
+        .await
+        .unwrap();
+    backend
+        .routing
+        .forwards(&backend.ledger, source, remote)
+        .await
+        .unwrap();
+    assert_eq!(backend.ledger.routes.len(), 1);
+    kernel.quiesce().await.unwrap();
+    backend
+        .routing
+        .remove(&mut backend.ledger, &mut backend.store, true)
+        .await
+        .unwrap();
+    assert!(backend.ledger.rules.is_empty() && backend.ledger.routes.is_empty());
+    let mut commands = command::Commands::default();
+    objects::mutate(&mut commands, &serde_json::json!({"nftables": backend.ledger.program.tables().into_iter().map(|(family, name)| serde_json::json!({"delete": {"table": {"family": family, "name": name}}})).collect::<Vec<_>>()})).await.unwrap();
+    kernel.quiesce().await.unwrap();
+    drop(tasks);
+}
