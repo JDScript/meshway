@@ -219,6 +219,19 @@ profile 开关分组，正式吞吐取 0。TCP checkpoint、UDP 停止并 join �
 | Planck，`planck-20261007T070124Z-c7b84c03` | 140,454／98,093／61,793 | 未在本页汇总 | `5a30247d`，1280B CPU 7.12／10.19／16.18 µs |
 | OrbStack | 当前最终同步矩阵未测 | 未测 | 历史插桩CPU不能替代 |
 
+### 原生 ARM64 L0（jp-tyo） {#l0-arm64}
+
+`perf.yml` 运行 `38977113530`（push，`f499a809`）的两个 job 用同一源码各自原生构建、运行默认 `perf:circuit` 矩阵：`perf-arm64` 在 jp-tyo 自托管 runner（Oracle Ampere，Neoverse N1 4 核，kernel 6.17，`aarch64-unknown-linux-gnu`），`perf` 在 Planck 自托管 runner（x86_64，32 逻辑 CPU，kernel 6.8）。下表取 profile 关闭、每格三个独立进程的中位数；CPU／包为 harness 线程 CPU／实际交付 IP 包（含全部路径角色），A.send／A.recv 为发送端 A 每次调用的 owner 线程 CPU。报告为该运行的 artifact `perf-arm64-38977113530` 与 `perf-38977113530`。
+
+| 节点／IP 字节 | ARM64 pps | ARM64 CPU ns／包 | ARM64 A.send／A.recv ns | Planck x86 pps | Planck x86 CPU ns／包 | Planck x86 A.send／A.recv ns | pps 比值 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 2／1280 | 66,884 | 14,947 | 5,930／6,850 | 171,733 | 5,823 | 2,287／2,705 | 0.39 |
+| 2／52 | 112,266 | 8,906 | 3,665／4,274 | 265,344 | 3,768 | 1,590／1,836 | 0.42 |
+| 3／1280 | 50,495 | 19,789 | 6,025／6,869 | 121,911 | 8,201 | 2,337／2,747 | 0.41 |
+| 5／1280 | 33,788 | 29,591 | 6,084／6,972 | 76,732 | 13,031 | 2,385／2,844 | 0.44 |
+
+原生 ARM64 的单线程 L0 吞吐约为同运行 Planck x86 的 0.4（各格 0.39–0.44，3／5 节点 52 B 为 80.7k／52.2k pps，比值 0.41／0.43），A 的发送与接收 CPU 各约为 x86 的 2.5–2.6 倍，节点数增加时比值不变差。两台 runner 均非独占，ARM64 job 仅在 load1 ≤ 2.0 时开始测量（本次各格测前 load1 0.24–1.78）。arm64 job 只跑 L0＋原语（原语仅在手动运行指定 `crypto` 层时，本次 push 运行没有），无 L3／L4，不能据此推算 ARM64 真实 TUN／UDP 吞吐。
+
 ### L1 当前结果范围
 
 | 环境 | 已有能力 | 最终数值 |
