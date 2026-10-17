@@ -338,7 +338,20 @@ impl Program {
                 .iter()
                 .filter(|net| net.addr().is_ipv6() == family.v6())
             {
-                out.push(self.rule("route", vec![self.ingress(), eq(packet(*family, "daddr"), json!({"prefix": {"addr": prefix.addr().to_string(), "len": prefix.prefix_len()}})), json!({"drop": null})]));
+                // nft lists a host prefix as the address itself.
+                let destination = if prefix.prefix_len() == prefix.max_prefix_len() {
+                    json!(prefix.addr().to_string())
+                } else {
+                    json!({"prefix": {"addr": prefix.addr().to_string(), "len": prefix.prefix_len()}})
+                };
+                out.push(self.rule(
+                    "route",
+                    vec![
+                        self.ingress(),
+                        eq(packet(*family, "daddr"), destination),
+                        json!({"drop": null}),
+                    ],
+                ));
             }
         }
         for (field, kinds) in [
@@ -607,9 +620,10 @@ fn sequence_rules(rule: Value, mark: u32) -> Vec<Value> {
         .expect("generated rule");
     let mut checks = vec![eq(ct("protocol"), json!(icmp))];
     if related && family.v6() {
+        // Quoted IPv6 version nibble, as nft lists it (a masked byte).
         checks.push(eq(
-            json!({"payload": {"base": "th", "offset": 64, "len": 4}}),
-            json!(6),
+            json!({"&": [{"payload": {"base": "th", "offset": 64, "len": 8}}, 0xf0]}),
+            json!(0x60),
         ));
         checks.push(eq(
             json!({"payload": {"base": "th", "offset": 112, "len": 8}}),

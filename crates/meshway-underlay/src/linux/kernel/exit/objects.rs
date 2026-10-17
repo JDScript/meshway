@@ -580,32 +580,40 @@ mod tests {
             Ok("1")
         );
         let tun = meshway_tun::Tun::create(meshway_tun::Options::new(1280).unwrap()).unwrap();
-        let mut nonce = [0; 16];
-        getrandom::fill(&mut nonce).unwrap();
-        let program = Program {
-            legacy: false,
-            installation: nonce.iter().map(|byte| format!("{byte:02x}")).collect(),
-            interface: tun.if_index().unwrap(),
-            interface_name: tun.name().to_owned(),
-            mark: 0x8000_0000,
-            pools: vec!["100.96.0.0/11".parse().unwrap()],
-            families: vec![meshway_model::exit::ExitFamily::Ipv4],
-            pools6: Vec::new(),
-        };
-        let mut commands = Commands::default();
-        let receipt = mutate(&mut commands, &program.create()).await.unwrap();
-        let result = verify(&mut commands, &program, &receipt).await;
-        // The intended program is exactly what nft installed and lists.
-        let recovered = recover_create(&mut commands, &program).await;
-        mutate(&mut commands, &json!({"nftables": program.tables().into_iter().map(|(family, name)| json!({"delete": {"table": {"family": family, "name": name}}})).collect::<Vec<_>>()})).await.unwrap();
-        assert_eq!(present(&mut commands, &program).await.unwrap(), 0);
-        assert!(
-            result.is_ok(),
-            "high-bit mark must survive actual NFT readback: {result:?}"
-        );
-        let recovered = recovered.unwrap();
-        assert_eq!(recovered.objects, receipt.objects);
-        assert_eq!(recovered.handles, receipt.handles);
+        use meshway_model::exit::ExitFamily::{Ipv4, Ipv6};
+        // The IPv4 program and the IPv4+IPv6 (NAT66) one alike.
+        for families in [vec![Ipv4], vec![Ipv4, Ipv6]] {
+            let mut nonce = [0; 16];
+            getrandom::fill(&mut nonce).unwrap();
+            let program = Program {
+                legacy: false,
+                installation: nonce.iter().map(|byte| format!("{byte:02x}")).collect(),
+                interface: tun.if_index().unwrap(),
+                interface_name: tun.name().to_owned(),
+                mark: 0x8000_0000,
+                pools: vec!["100.96.0.0/11".parse().unwrap()],
+                pools6: if families.len() == 2 {
+                    vec!["fd79::/48".parse().unwrap()]
+                } else {
+                    Vec::new()
+                },
+                families,
+            };
+            let mut commands = Commands::default();
+            let receipt = mutate(&mut commands, &program.create()).await.unwrap();
+            let result = verify(&mut commands, &program, &receipt).await;
+            // The intended program is exactly what nft installed and lists.
+            let recovered = recover_create(&mut commands, &program).await;
+            mutate(&mut commands, &json!({"nftables": program.tables().into_iter().map(|(family, name)| json!({"delete": {"table": {"family": family, "name": name}}})).collect::<Vec<_>>()})).await.unwrap();
+            assert_eq!(present(&mut commands, &program).await.unwrap(), 0);
+            assert!(
+                result.is_ok(),
+                "high-bit mark must survive actual NFT readback: {result:?}"
+            );
+            let recovered = recovered.unwrap();
+            assert_eq!(recovered.objects, receipt.objects);
+            assert_eq!(recovered.handles, receipt.handles);
+        }
     }
 
     fn rule(expression: Value) -> Value {
