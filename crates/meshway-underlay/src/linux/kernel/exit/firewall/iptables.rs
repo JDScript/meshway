@@ -235,6 +235,45 @@ mod tests {
         );
     }
 
+    /// ip6tables chains judge only IPv6 packets and IPv4 chains only IPv4;
+    /// Docker's `FORWARD DROP` blocks the family whose table carries it;
+    /// an rpfilter drop is satisfied.
+    #[test]
+    fn legacy_ip6tables_are_judged_for_ipv6_alone() {
+        let drop = "*filter\n:FORWARD DROP [0:0]\nCOMMIT\n";
+        let six = Legacy::parse(drop, "legacy6").unwrap();
+        assert_eq!(
+            six.ruleset.judge(&crossing(), ExitFamily::Ipv6),
+            Err(Reason::FirewallConflict)
+        );
+        assert_eq!(six.ruleset.judge(&crossing(), ExitFamily::Ipv4), Ok(()));
+        let four = Legacy::parse(drop, "legacy").unwrap();
+        assert_eq!(four.ruleset.judge(&crossing(), ExitFamily::Ipv6), Ok(()));
+        // firewalld's IPv6_rpfilter in legacy form.
+        let rpfilter = "*raw\n:PREROUTING ACCEPT [0:0]\n\
+            -A PREROUTING -m rpfilter --invert -j DROP\nCOMMIT\n";
+        assert_eq!(
+            Legacy::parse(rpfilter, "legacy6")
+                .unwrap()
+                .ruleset
+                .judge(&crossing(), ExitFamily::Ipv6),
+            Ok(())
+        );
+        // An IPv4 destination match never applies to IPv6 packets.
+        let v4 = "*raw\n:PREROUTING ACCEPT [0:0]\n-A PREROUTING -d 0.0.0.0/0 -j DROP\nCOMMIT\n";
+        let mut ruleset = Legacy::parse(v4, "legacy").unwrap().ruleset;
+        ruleset.chains = ruleset
+            .chains
+            .into_iter()
+            .map(|((_, table, chain), value)| (("inet".into(), table, chain), value))
+            .collect();
+        assert_eq!(ruleset.judge(&crossing(), ExitFamily::Ipv6), Ok(()));
+        assert_eq!(
+            ruleset.judge(&crossing(), ExitFamily::Ipv4),
+            Err(Reason::FirewallConflict)
+        );
+    }
+
     #[test]
     fn legacy_chains_are_judged_by_content() {
         let docker = "*nat\n:PREROUTING ACCEPT [0:0]\n:POSTROUTING ACCEPT [0:0]\n:DOCKER - [0:0]\n\

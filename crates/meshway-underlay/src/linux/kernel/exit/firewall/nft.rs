@@ -265,6 +265,48 @@ mod tests {
         ]))
     }
 
+    /// firewalld's reverse-path filter (`fib saddr . mark . iif oif missing
+    /// drop`, nft JSON `== false`) is satisfied; an `ip6` drop judges only
+    /// IPv6 packets; an `ip6 daddr` match only IPv6 destinations.
+    #[test]
+    fn ipv6_rules_are_judged_for_ipv6_and_reverse_path_filters_are_satisfied() {
+        use meshway_model::exit::{ExitFamily, ExitUnavailableReason as Reason};
+        let crossing = super::super::tests::crossing();
+        let rpfilter = nft(json!([
+            {"table": {"family": "inet", "name": "firewalld"}},
+            {"chain": {"family": "inet", "table": "firewalld", "name": "filter_PREROUTING", "type": "filter", "hook": "prerouting", "prio": 10, "policy": "accept"}},
+            rule("inet", "firewalld", "filter_PREROUTING", json!([
+                {"match": {"op": "==", "left": {"meta": {"key": "nfproto"}}, "right": "ipv6"}},
+                {"match": {"op": "==", "left": {"fib": {"result": "oif", "flags": ["saddr", "mark", "iif"]}}, "right": false}},
+                {"drop": null}
+            ])),
+        ]));
+        for family in [ExitFamily::Ipv4, ExitFamily::Ipv6] {
+            assert_eq!(rpfilter.judge(&crossing, family), Ok(()), "{family:?}");
+        }
+        let six = nft(json!([
+            {"table": {"family": "ip6", "name": "filter"}},
+            chain("ip6", "filter", "FORWARD", Some("forward"), "drop"),
+        ]));
+        assert_eq!(
+            six.judge(&crossing, ExitFamily::Ipv6),
+            Err(Reason::FirewallConflict)
+        );
+        assert_eq!(six.judge(&crossing, ExitFamily::Ipv4), Ok(()));
+        let target = nft(json!([
+            {"table": {"family": "inet", "name": "t"}},
+            chain("inet", "t", "f", Some("forward"), "accept"),
+            rule("inet", "t", "f", json!([
+                {"match": {"op": "==", "left": {"payload": {"protocol": "ip6", "field": "daddr"}}, "right": {"prefix": {"addr": "fc00::", "len": 8}}}},
+                {"drop": null}
+            ])),
+        ]));
+        // fc00::/8 is neither Internet-classified (forward) nor a Mesh pool
+        // or egress address (reply): it never matches exit traffic.
+        assert_eq!(target.judge(&crossing, ExitFamily::Ipv6), Ok(()));
+        assert_eq!(target.judge(&crossing, ExitFamily::Ipv4), Ok(()));
+    }
+
     #[test]
     fn foreign_rules_conflict_only_when_they_can_match_exit_traffic() {
         let ufw = {
