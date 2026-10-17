@@ -419,6 +419,27 @@ Planck 23 行矩阵 `20261016T150131Z-1f0563e0`（`0ecab400`，并行 8，墙钟
 
 Planck 23 行矩阵 `20261017T003157Z-9cccbf41`（`e7a01397`，并行 8，墙钟 1,099 秒，同机无其他矩阵）全部通过，无遗留容器／网络。证据 `.meshway/validation/s4/matrix/`。
 
+### H4 撤回原因、重装日志、observedAt 与控制中继状态证据 {#h4}
+
+规则见[撤回期间的原因](/v2/node/runtime#ownership-end)、[控制中继不结束归属](/v2/node/runtime#ownership-end)、Status 表的 `observedAt`／`controlObservedAt`／`controlRelay` 与[日志](/v2/logging#事件与字段)。
+
+**根因（OPS17 lab，alpha.18，sha `--cpus 0.02` 30 秒）**。① 两轮都没有 `Required DNS component recovered`：撤回清理结束后，Control 在停顿期间收到的 offer 先于 DNS 恢复边沿被选中，以同一 netmap 重装并清掉故障，而日志只写在 DNS 恢复分支。② 撤回期间 `lastError` 为 null：worker 02:35:46.05 判定 DNS 失败后先 `reconfig(None)`、清理结束才发布撤回报告；清理等待 egress capture 的 pause 重试与出口退役共 31 秒（02:36:17.77 完成），其间网络报告仍是旧的 ready＋内容，DNS 故障使安装不再 current，Status 读作 `synchronizing`／`suspended`、原因 null（02:36:12–17 的读数）。并非报告被覆盖。③ `observedAt` 在安装不再 current 时取 Control 最后一次发布时间，停在故障前。
+
+**修复后 lab**（lab release `c933b048…`，revision `54f188ea`＝本分支 `90a13fc0` 去掉 CLI 黑盒测试一行断言的改动，sha 30 秒 ×2，`.meshway/validation/h4/lab/`）：
+
+| run | 限制／恢复 | Status 原因 | observedAt | 重装日志 | running |
+| --- | --- | --- | --- | --- | --- |
+| h4-1 | 03:46:27／03:46:57.1 | 03:46:27 起 `blocked`／`failed`／`dns` 带 `observe_deadline` 详情，03:46:51 起 `preparing`／`dns` 同一详情 | 03:46:29.580（撤回）→ 03:46:48.883（preparing）→ 03:46:57.294（running） | 03:46:57.29 `Required DNS component recovered; netmap reinstalled`（`trigger=offer`，`withdrawn_ms=27714`） | 03:46:58 |
+| h4-2 | 03:49:13／03:49:43.3 | 03:49:13 `synchronizing`／`suspended`／`dns`（worker 尚未处理的故障，详情已在），此后同 h4-1 | 03:49:15.681（故障）→ 15.779（撤回）→ 40.782 → 43.560 | 03:49:43.56 同上（`withdrawn_ms=27781`） | 03:49:44 |
+
+两轮 `controlObservedAt` 都停在 03:44:58.533（Control 无变化），`observedAt` 只在三者变化时前进。中间轮次（`round1/`）暴露两处并已修复：清理因出口退役失败把原因改成无详情的 `underlay`（现保持最早原因，只有清理期间归属结束才改为 `underlay`）；DNS owner 先发布故障后发布详情，worker 在 22 µs 内读到空详情（现先发布详情）。`round0/` 为第一版。两轮中每次失败撤回恰一条 WARN、每次重装恰一条 INFO。
+
+**控制中继**。Underlay 单测 `linux::proxy::tests::a_relay_that_cannot_listen_retries_until_its_socket_is_free`（发布 `retrying`、attempts 1、监听后清除）与 `…at_capacity_refuses_new_connections_and_keeps_current_ones`（`atCapacity` tasks／refused 1，接纳后清除）；隔离 NET_ADMIN 测试 `linux::tests::control_attachment_listens_once_a_held_socket_is_released`（进程启动时活 listener 占住路径：`attach_control` 成功、发布 `retrying`（`cannot listen: …`）、放开后 729 ms 经中继得到 HTTP 回答）。daemon 层（`.meshway/validation/h4/x14b/`，一次性容器）：占住 `underlay-bootstrap.sock` 后启动 meshwayd，IPC 就绪、Status `controlRelay.retrying`、CLI `Relay` 行，放开后下一次尝试回收并 `listening again`（attempts 5）；占位 socket 权限不是 `0600` 时从不回收、一直 `retrying`（`run-foreign-mode.txt`）。
+
+Daemon 单测：`status::tests::observed_at_is_the_last_change_of_the_shown_state`、`…a_dns_fault_the_worker_has_not_reported_is_already_the_cause`；CLI `a_control_relay_that_does_not_serve_every_connection_is_shown`。Linux 无特权容器 `runtime::network`、`runtime::status`、`linux::proxy`、`linux::protection` 全部通过，X13 重证测试照常（`.meshway/validation/h4/local/`）。
+
+Planck 23 行矩阵 `20261017T035656Z-d07a17c4`（`673c17be`，与本分支 `3076d3e9` 只差同一行测试断言，并行 8，墙钟 1,091 秒，同机无其他矩阵）全部通过。证据 `.meshway/validation/h4/matrix/`。
+
 ### 当前验证证据
 
 `validate:matrix` 为每行独立保留报告并汇总 `matrix.json`／`summary.md`；通过结论同时要求 fixture `passed`、进程成功退出和本 run 无遗留资源。`--short` 的报告标记 `scope=diagnostic-short`：只运行 30 秒持续／纯接收窗口（退路 5 秒后触发），不要求已经跨原需求期限，未测到的延长为 null。其他场景仍执行，包括真实 instance 失效恢复；短模式不是整组验收，不能更新下述历史／当前通过状态。并发运行还需读取各行启动 load，不能与低负载串行结果不加区分地合并。
