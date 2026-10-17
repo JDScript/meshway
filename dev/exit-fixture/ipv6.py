@@ -34,6 +34,20 @@ def peer_address(peer):
 
 
 def run(ctx):
+    """Every stage's evidence dict is also kept in `pending`: a failing
+    stage's partial evidence is written before the failure propagates."""
+    pending = {}
+    try:
+        stages(ctx, pending)
+    finally:
+        for name, value in pending.items():
+            try:
+                write(ctx.report / ("exit6-partial-" + name + ".json"), value)
+            except (TypeError, ValueError, OSError):
+                pass
+
+
+def stages(ctx, pending):
     report, manifest, command, status, wait_for = ctx.report, ctx.manifest, ctx.command, ctx.status, ctx.wait_for
     addresses, addresses6 = ctx.addresses, ctx.addresses6
     ext6, ext4 = addresses6["external"]["external"], addresses["external"]["external"]
@@ -153,6 +167,7 @@ def run(ctx):
     traffic = {"tcp": tcp_echo(ext6), "udp": tool("a", "echo", ext6, "8080"),
                "ping": command("a", "ping", "-6", "-n", "-c", "3", "-W", "2", ext6, required=False),
                "lan": tcp_echo(lan6)}
+    pending["traffic"] = traffic
     traffic["tcpVisits"] = visits(e_ext6)
     traffic["udpVisits"] = visits(e_ext6, "udp")
     traffic["lanVisits"] = visits(addresses6["lan"]["e"], service="lan")
@@ -174,6 +189,7 @@ def run(ctx):
     # every traceroute hop's time exceeded returns to A.
     progress("exit6-pmtu")
     pmtu = {}
+    pending["pmtu"] = pmtu
     narrow = [link["ifname"] for link in json.loads(command("router", "ip", "-j", "address")["stdout"])
               if any(item.get("local") == addresses6["far"]["router"] for item in link["addr_info"])]
     if len(narrow) != 1:
@@ -232,6 +248,7 @@ def run(ctx):
     # minimum the channel carries no IPv6 and A answers itself (no route).
     progress("exit6-mss")
     mss = {}
+    pending["mss"] = mss
     r_node = plans["r"]["nodeId"]
     links = {role: interface_of(command, role, addresses["ar"][role]) for role in ("a", "r")}
 
@@ -250,8 +267,9 @@ def run(ctx):
             if len(tables) != 1:
                 return False
             mss["table"] = command("a", "nft", "list", "table", *tables[0].split()[1:])
+            # nft lists the family dependency of `ip6 daddr` implicitly.
             return (f"maxseg size set {NARROW_INNER - 60}" in mss["table"]["stdout"]
-                    and "meta nfproto ipv6" in mss["table"]["stdout"])
+                    and f"goto m{NARROW_INNER - 60}" in mss["table"]["stdout"])
         wait_for(clamped, "A's IPv6 MSS clamp through the exit", 10)
         mss["tcp"] = tcp_echo(ext6, 65536)
         if mss["tcp"]["exitCode"] or (mss["tcp"]["value"] or {}).get("mss", 1 << 16) > NARROW_INNER - 60:
@@ -277,6 +295,7 @@ def run(ctx):
     # connects by name through E.
     progress("exit6-dns")
     dns = {}
+    pending["dns"] = dns
 
     def stage_config(signal, done):
         (report / "signals" / signal).touch()
@@ -326,6 +345,7 @@ def run(ctx):
     # ranges leave the managed boundary.
     progress("exit6-switch")
     switch = {}
+    pending["switch"] = switch
     holder = hold_flow(ctx, ext6, "/evidence/exit6-switch-flow.json", 30)
     wait_for(lambda: sum(ok for _, ok in (holder() or {}).get("tcp", [])) >= 3, "IPv6 exit flow before the switch", 30)
     switch["requested"] = time.time()
@@ -348,6 +368,7 @@ def run(ctx):
     # whose `exitFamilies` is IPv4 (R) sinks A's IPv6 statically.
     progress("exit6-ipv4-only")
     only = {"forwarding": command("e", "/bin/sh", "/dns-fixture/forwarding.sh", "ipv6", "0")}
+    pending["only"] = only
     try:
         wait_for(lambda: families_are({"ipv4": ({"status": "ready"}, True),
                                        "ipv6": ({"status": "unavailable", "reason": "ipv6ForwardDisabled"}, True)}),
@@ -389,6 +410,7 @@ def run(ctx):
     # installed while forwarding ignores advertisements makes it unavailable.
     progress("exit6-prerequisites")
     prerequisites = {}
+    pending["prerequisites"] = prerequisites
     holder = hold_flow(ctx, ext4, "/evidence/exit6-ipv4-flow.json", 40)
     wait_for(lambda: sum(ok for _, ok in (holder() or {}).get("tcp", [])) >= 3, "IPv4 exit flow", 30)
     role = (status("e").get("exit") or {}).get("installedRole")
@@ -428,6 +450,7 @@ def run(ctx):
     # quarantined and the reinstalled role loads it from the journal.
     progress("exit6-withdrawal")
     withdrawal = {}
+    pending["withdrawal"] = withdrawal
     holder = hold_flow(ctx, ext6, "/evidence/exit6-withdraw-flow.json", 30)
     wait_for(lambda: sum(ok for _, ok in (holder() or {}).get("tcp", [])) >= 3, "IPv6 flow before withdrawal", 30)
     withdrawal["before"] = conntrack6(ext6)
