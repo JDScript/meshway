@@ -129,9 +129,9 @@ pub(crate) fn logout(before: &Status, after: &Status, json: bool) -> io::Result<
 
 /// Build and protocol identity; CLI and daemon of one release share it.
 pub(crate) fn version(json: bool) -> io::Result<()> {
-    let version = env!("CARGO_PKG_VERSION");
-    let git = env!("MESHWAY_BUILD_GIT");
-    let target = env!("MESHWAY_BUILD_TARGET");
+    let version = meshway_build::VERSION;
+    let git = meshway_build::GIT;
+    let target = meshway_build::TARGET;
     let ipc = meshway_protocol::ipc::VERSION;
     let wire = meshway_dataplane::secure::WIRE_VERSION;
     let compiler = meshway_configuration::netmap::NETMAP_COMPILER_VERSION;

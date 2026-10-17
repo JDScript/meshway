@@ -13,6 +13,9 @@ use std::{collections::BTreeMap, time::Instant};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
+/// One build throughout: only configuration changes select Nodes.
+const BUILD: &str = "meshway-netmap-perf";
+
 #[derive(Parser)]
 struct Options {
     #[command(flatten)]
@@ -174,7 +177,7 @@ fn measure(
     let mut evaluated = None;
     for _ in 0..samples {
         let start = Instant::now();
-        let incremental = compile_incremental(s.input(Revision::new(2)?), &base.inputs)?;
+        let incremental = compile_incremental(s.input(Revision::new(2)?), &base.inputs, BUILD)?;
         incremental_ms.push(start.elapsed().as_secs_f64() * 1000.0);
         evaluated = Some(incremental.compiled.nodes.len());
         let start = Instant::now();
@@ -208,7 +211,7 @@ fn main() -> Result<()> {
         return Err("require 2..10000 nodes, group size >= 2 and nonzero samples".into());
     }
     let mut s = Scenario::new(options.nodes, options.group_size)?;
-    let base = compile_incremental(s.input(Revision::MIN), &BTreeMap::new())?;
+    let base = compile_incremental(s.input(Revision::MIN), &BTreeMap::new(), BUILD)?;
     s.previous = base
         .compiled
         .nodes

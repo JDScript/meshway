@@ -164,7 +164,8 @@ pub fn project(
 }
 
 pub fn compile_netmap(input: NetmapInput<'_>) -> Result<CompiledNetmaps, NetmapError> {
-    Ok(compile_incremental(input, &BTreeMap::new())?.compiled)
+    // Nothing is compared against these fingerprints.
+    Ok(compile_incremental(input, &BTreeMap::new(), "")?.compiled)
 }
 
 fn compile_selected(

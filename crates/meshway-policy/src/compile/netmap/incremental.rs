@@ -11,14 +11,20 @@ pub struct IncrementalNetmaps {
     pub inputs: BTreeMap<NodeId, Digest>,
 }
 
+/// `build` is the committing Server's build identity
+/// (`meshway_build::identity`): another build may compile the same inputs
+/// differently, so it is an input of every fingerprint and the first
+/// compilation by a new build selects every Node. Content that did not change
+/// keeps its serial.
 pub fn compile_incremental(
     input: NetmapInput<'_>,
     previous_inputs: &BTreeMap<NodeId, Digest>,
+    build: &str,
 ) -> Result<IncrementalNetmaps, NetmapError> {
     let members = validate(&input)?;
     let graph = paths::Graph::new(input.topology())?;
     let index = project::Index::new(&input, &graph, &members)?;
-    let inputs = fingerprints(&input, &index, &members)?;
+    let inputs = fingerprints(&input, &index, &members, build)?;
     let selected = inputs
         .iter()
         .filter_map(|(id, fingerprint)| {
@@ -30,15 +36,11 @@ pub fn compile_incremental(
     Ok(IncrementalNetmaps { compiled, inputs })
 }
 
-/// Raised when a projection holds more for unchanged inputs (2:
-/// `eligibleExits`): the next recompilation of a network then refreshes every
-/// netmap, and content that did not change keeps its serial.
-const PROJECTION_INPUTS: u32 = 2;
-
 fn fingerprints(
     input: &NetmapInput<'_>,
     index: &project::Index,
     members: &[NodeId],
+    build: &str,
 ) -> Result<BTreeMap<NodeId, Digest>, NetmapError> {
     // Exhaustive destructuring makes additions to the canonical input require
     // an explicit dependency decision. Revisions/comments are not semantics.
@@ -62,7 +64,7 @@ fn fingerprints(
     let global = digest(&(
         (
             NETMAP_COMPILER_VERSION,
-            PROJECTION_INPUTS,
+            build,
             input.network,
             address_pools,
             defaults,

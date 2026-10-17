@@ -1,5 +1,6 @@
-//! Build identity for `meshway version`: the release workflow passes
-//! `MESHWAY_GIT_DESCRIBE`; local builds ask Git and fall back to `unknown`.
+//! Build identity (`meshway version`, the Server's netmap compiler input):
+//! the release workflow passes `MESHWAY_GIT_DESCRIBE`; local builds ask Git
+//! and fall back to `unknown`.
 use std::process::Command;
 
 fn git(arguments: &[&str]) -> Option<String> {

@@ -1,10 +1,22 @@
 use super::*;
 
+const BUILD: &str = "0.1.0 (v0.1.0-0-g00000001)";
+
 fn run(
     s: &Scenario,
     previous: &BTreeMap<NodeId, PreviousNetmap>,
     inputs: &BTreeMap<NodeId, Digest>,
     revision: Revision,
+) -> IncrementalNetmaps {
+    run_by(s, previous, inputs, revision, BUILD)
+}
+
+fn run_by(
+    s: &Scenario,
+    previous: &BTreeMap<NodeId, PreviousNetmap>,
+    inputs: &BTreeMap<NodeId, Digest>,
+    revision: Revision,
+    build: &str,
 ) -> IncrementalNetmaps {
     compile_incremental(
         NetmapInput {
@@ -19,8 +31,36 @@ fn run(
             previous,
         },
         inputs,
+        build,
     )
     .unwrap()
+}
+
+/// S4: the build is an input of every fingerprint. Another build selects
+/// every Node; its content equals the old build's here, so every serial stays.
+#[test]
+fn another_build_selects_every_node_and_unchanged_content_keeps_its_serial() {
+    let s = base(4);
+    let first = run(&s, &BTreeMap::new(), &BTreeMap::new(), Revision::MIN);
+    let previous = previous(&first.compiled);
+    let same = run(&s, &previous, &first.inputs, Revision::MIN);
+    assert!(same.compiled.nodes.is_empty());
+    assert_eq!(same.inputs, first.inputs);
+    let upgraded = run_by(
+        &s,
+        &previous,
+        &first.inputs,
+        Revision::MIN,
+        "0.1.1 (v0.1.1-0-g00000002)",
+    );
+    assert_eq!(
+        upgraded.compiled.nodes.keys().collect::<Vec<_>>(),
+        first.compiled.nodes.keys().collect::<Vec<_>>()
+    );
+    for (node, netmap) in &upgraded.compiled.nodes {
+        assert_eq!(netmap.reference(), first.compiled.nodes[node].reference());
+        assert_ne!(upgraded.inputs[node], first.inputs[node]);
+    }
 }
 
 #[test]
