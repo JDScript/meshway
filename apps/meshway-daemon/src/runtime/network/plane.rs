@@ -102,11 +102,9 @@ impl Plane {
         let instance = self.instance.as_ref()?.instance_id;
         let mut capability = self
             .host
-            .probe_exit(instance, reference, role.generation)
+            .probe_exit(instance, reference, role.generation, &role.families)
             .await;
-        if installed {
-            capability.installed_families = vec![meshway_model::exit::ExitFamily::Ipv4];
-        }
+        capability.set_installed(installed);
         self.report.exit_capability = Some(capability.clone());
         Some(capability)
     }
@@ -125,7 +123,7 @@ impl Plane {
             None => Err(Problem::Underlay),
         };
         if let Some(capability) = &mut self.report.exit_capability {
-            capability.installed_families.clear();
+            capability.set_installed(false);
         }
         result
     }
@@ -278,7 +276,7 @@ impl meshway_engine::Components for Plane {
                 return Err(self.fail(problem, ApplyFailure::Underlay));
             }
             if let Some(capability) = &mut self.report.exit_capability {
-                capability.installed_families = vec![meshway_model::exit::ExitFamily::Ipv4];
+                capability.set_installed(true);
             }
         }
         Ok(())
@@ -446,7 +444,12 @@ impl meshway_engine::Components for Plane {
         self.report.exit_capability = match (&netmap.exit_role, self.instance.clone()) {
             (Some(role), Some(instance)) => Some(
                 self.host
-                    .probe_exit(instance.instance_id, desired.reference(), role.generation)
+                    .probe_exit(
+                        instance.instance_id,
+                        desired.reference(),
+                        role.generation,
+                        &role.families,
+                    )
                     .await,
             ),
             _ => None,
@@ -481,8 +484,13 @@ impl meshway_engine::Components for Plane {
                 .report
                 .exit_capability
                 .as_ref()
-                .map(|capability| &capability.status);
-            if status != Some(&meshway_model::exit::ExitStatus::Ready) {
+                .map(|capability| &capability.families);
+            if !self
+                .report
+                .exit_capability
+                .as_ref()
+                .is_some_and(meshway_model::exit::ExitCapability::installable)
+            {
                 // No status yet: content applied from the saved netmap before
                 // the instance its observation binds to was known.
                 tracing::info!(
@@ -492,9 +500,9 @@ impl meshway_engine::Components for Plane {
             } else if let Err(error) = self.host.install_netmap_exit_role(role).await {
                 tracing::warn!(%error, "Exit role installation failed");
                 if let Some(capability) = &mut self.report.exit_capability {
-                    capability.status = meshway_model::exit::ExitStatus::Unavailable {
+                    capability.set_status(meshway_model::exit::ExitStatus::Unavailable {
                         reason: meshway_model::exit::ExitUnavailableReason::OwnershipConflict,
-                    };
+                    });
                 }
             }
         }

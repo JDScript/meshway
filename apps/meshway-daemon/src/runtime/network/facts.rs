@@ -40,7 +40,7 @@ impl Report {
                 })
                 .map(|mut exit| {
                     if applied.is_none() {
-                        exit.installed_families.clear();
+                        exit.set_installed(false);
                     }
                     exit
                 }),

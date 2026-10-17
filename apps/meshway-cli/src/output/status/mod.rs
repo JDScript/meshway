@@ -101,9 +101,13 @@ pub(crate) fn write(
     line(output, term, "Netmap", netmap)?;
     if let Some(capture) = status.netmap.as_ref().and_then(|n| n.capture.as_ref()) {
         let text = match capture.unavailable {
-            None => format!(
+            None if capture.managed_ipv6 == 0 => format!(
                 "{} IPv4 · {} IPv6 sink ranges · {} routes",
                 capture.managed_ipv4, capture.sink_ipv6, capture.routes
+            ),
+            None => format!(
+                "{} IPv4 · {} IPv6 · {} IPv6 sink ranges · {} routes",
+                capture.managed_ipv4, capture.managed_ipv6, capture.sink_ipv6, capture.routes
             ),
             Some(reason) => term.paint(
                 Role::Warn,
@@ -277,18 +281,35 @@ fn exit(term: &Term, exit: Option<&meshway_protocol::ipc::ExitState>) -> String 
     let Some(exit) = exit else {
         return term.paint(Role::Dim, "none");
     };
-    use meshway_model::exit::ExitStatus;
-    let mut text = match exit
-        .capability
-        .as_ref()
-        .map(|capability| &capability.status)
-    {
-        None | Some(ExitStatus::NotRequested) => "not requested".into(),
-        Some(ExitStatus::Probing) => term.paint(Role::Warn, "probing"),
-        Some(ExitStatus::Ready) => term.paint(Role::Good, "ready"),
-        Some(ExitStatus::Unavailable { reason }) => {
+    use meshway_model::exit::{ExitFamily, ExitStatus};
+    let status = |status: &ExitStatus| match status {
+        ExitStatus::NotRequested => "not requested".into(),
+        ExitStatus::Probing => term.paint(Role::Warn, "probing"),
+        ExitStatus::Ready => term.paint(Role::Good, "ready"),
+        ExitStatus::Unavailable { reason } => {
             term.paint(Role::Bad, format!("unavailable ({})", words(reason)))
         }
+    };
+    let families = exit
+        .capability
+        .as_ref()
+        .map(|capability| capability.families.as_slice())
+        .unwrap_or_default();
+    // One family reads as before families; each of two is named.
+    let mut text = match families {
+        [] => "not requested".into(),
+        [only] => status(&only.status),
+        families => families
+            .iter()
+            .map(|entry| {
+                let family = match entry.family {
+                    ExitFamily::Ipv4 => "IPv4",
+                    ExitFamily::Ipv6 => "IPv6",
+                };
+                format!("{family} {}", status(&entry.status))
+            })
+            .collect::<Vec<_>>()
+            .join(", "),
     };
     if exit.installed_role.is_some() {
         text.push_str(" · role installed");

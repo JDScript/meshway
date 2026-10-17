@@ -55,7 +55,7 @@ pub(super) fn finish_withdrawal(engine: &mut Engine<Plane>, reports: &Publisher,
     report.facts = None;
     report.exit_flows = None;
     if let Some(capability) = &mut report.exit_capability {
-        capability.installed_families.clear();
+        capability.set_installed(false);
     }
     reports.send_replace(report);
 }

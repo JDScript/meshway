@@ -342,7 +342,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             exit_recovered = engine.components().exit_pending()
                 && capability
                     .as_ref()
-                    .is_some_and(|fact| fact.status == meshway_model::exit::ExitStatus::Ready);
+                    .is_some_and(meshway_model::exit::ExitCapability::installable);
             let mut report = reports.borrow().clone();
             report.exit_capability = capability;
             reports.send_replace(report);
@@ -397,7 +397,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                     if engine.desired().is_some() && reports.borrow().exit_capability.is_some() {
                         let mut report = reports.borrow().clone();
                         if let Some(capability) = &mut report.exit_capability {
-                            capability.status = meshway_model::exit::ExitStatus::Probing;
+                            capability.set_status(meshway_model::exit::ExitStatus::Probing);
                             capability.observed_at = chrono::Utc::now();
                         }
                         reports.send_replace(report);
@@ -634,9 +634,10 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                             // Content applied before the instance arrived
                             // could not observe the exit prerequisites.
                             exit_recovered = engine.components().exit_pending()
-                                && report.exit_capability.as_ref().is_some_and(|fact| {
-                                    fact.status == meshway_model::exit::ExitStatus::Ready
-                                });
+                                && report
+                                    .exit_capability
+                                    .as_ref()
+                                    .is_some_and(meshway_model::exit::ExitCapability::installable);
                         }
                         reports.send_replace(report);
                     }
@@ -808,7 +809,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 exit_recovered = engine.components().exit_pending()
                     && capability
                         .as_ref()
-                        .is_some_and(|fact| fact.status == meshway_model::exit::ExitStatus::Ready);
+                        .is_some_and(meshway_model::exit::ExitCapability::installable);
                 let mut report = reports.borrow().clone();
                 report.exit_capability = capability;
                 report.exit_flows = None;
@@ -865,7 +866,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 report.facts = None;
                 report.exit_flows = None;
                 if let Some(capability) = &mut report.exit_capability {
-                    capability.installed_families.clear();
+                    capability.set_installed(false);
                 }
                 retry.failed(
                     report
@@ -992,11 +993,16 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             {
                 let known = peers.borrow();
                 let now = chrono::Utc::now();
-                let exits = known
-                    .as_ref()
-                    .map(|known| known.ready_exits(now))
-                    .unwrap_or_default();
-                secure.set_ready_exits(exits.current, exits.last_known);
+                for family in [
+                    meshway_model::exit::ExitFamily::Ipv4,
+                    meshway_model::exit::ExitFamily::Ipv6,
+                ] {
+                    let exits = known
+                        .as_ref()
+                        .map(|known| known.ready_exits(now, family))
+                        .unwrap_or_default();
+                    secure.set_ready_exits(family, exits.current, exits.last_known);
+                }
                 if let Some(current) = channels.changed(known.as_ref(), now) {
                     secure.set_peer_channels(current);
                 }

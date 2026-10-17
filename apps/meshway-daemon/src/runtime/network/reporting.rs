@@ -18,9 +18,7 @@ const ROAM_SPACING: Duration = Duration::from_millis(100);
 struct ExitKey {
     instance: meshway_model::InstanceId,
     netmap: NetmapRef,
-    supported: Vec<meshway_model::exit::ExitFamily>,
-    installed: Vec<meshway_model::exit::ExitFamily>,
-    status: meshway_model::exit::ExitStatus,
+    families: Vec<meshway_model::exit::ExitFamilyCapability>,
 }
 
 #[derive(PartialEq, Eq)]
@@ -68,9 +66,7 @@ impl Key {
             exit: report.exit_capability.as_ref().map(|exit| ExitKey {
                 instance: exit.instance_id,
                 netmap: exit.netmap,
-                supported: exit.supported_families.clone(),
-                installed: exit.installed_families.clone(),
-                status: exit.status.clone(),
+                families: exit.families.clone(),
             }),
             exit_dns: report.exit_dns.clone(),
             listeners: BTreeMap::new(),

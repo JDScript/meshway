@@ -43,7 +43,7 @@ fn status() -> Status {
         "identity":null,"authenticated":true,"sync":"connected","lastSyncAt":"2026-10-11T11:59:48Z",
         "syncError":null,"instance":null,
         "netmap":{"netmap":reference,"issuedAt":"2026-10-11T11:00:00Z","expiresAt":"2026-10-12T11:59:00Z","missingArtifacts":[],"artifactProblem":null,
-            "capture":{"managedIpv4":4341,"sinkIpv6":2256,"routes":12680,"unavailable":null},
+            "capture":{"managedIpv4":4341,"managedIpv6":0,"sinkIpv6":2256,"routes":12680,"unavailable":null},
             "routing":{"requestedProfile":"work","version":2,"appliedProfile":"work","requestedUnavailable":null,
                 "defaultProfile":"mesh","locked":false,"profiles":[],"auto":null}},
         "saved":reference,"applied":reference,"dataPlane":"ready","networkMode":"tun",

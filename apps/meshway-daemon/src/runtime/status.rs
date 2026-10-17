@@ -145,7 +145,7 @@ impl View {
         .then(|| meshway_protocol::ipc::ExitState {
             capability: network.exit_capability.clone().map(|mut capability| {
                 if !network_current {
-                    capability.installed_families.clear();
+                    capability.set_installed(false);
                 }
                 capability
             }),
@@ -154,7 +154,7 @@ impl View {
                     network
                         .exit_capability
                         .as_ref()
-                        .filter(|c| !c.installed_families.is_empty())
+                        .filter(|c| c.installed())
                         .map(|c| c.role_generation)
                 })
                 .flatten(),
