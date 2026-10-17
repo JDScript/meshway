@@ -542,6 +542,13 @@ def execute(report, artifacts, runtime_os, traversal_os, platform, short, load, 
             if exit_row:
                 signal(f"roam-exit-stop-{cell}")
         signal("roam-down")
+        # Nodes go down while the Server still answers: a Control request in
+        # flight when it vanishes waits for its connect timeout, which the
+        # actor's bounded `down` would not outlast (bounded, best effort).
+        settle = time.monotonic() + 40
+        while time.monotonic() < settle and not all(
+                (report / "signals" / f"roam-down-{role}").exists() for role in nodes_of_row):
+            time.sleep(.2)
         signal("roam-stop")
         for role, identifier in containers.items():
             try:
