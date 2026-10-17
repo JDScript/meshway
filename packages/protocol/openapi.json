@@ -11761,6 +11761,7 @@
                       "assignment": null,
                       "capture": {
                         "managedIpv4": 0,
+                        "managedIpv6": 0,
                         "routes": 0,
                         "sinkIpv6": 0,
                         "unavailable": null
