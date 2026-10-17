@@ -332,13 +332,15 @@ impl App {
                 ),
             }
         }
-        tracing::info!(
-            build = %meshway_build::identity(),
-            networks = networks.len(),
-            changed_nodes = changed,
-            elapsed_ms = started.elapsed().as_millis() as u64,
-            "Stored netmaps checked against this build"
-        );
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let build = meshway_build::identity();
+        if changed > 0 {
+            tracing::info!(%build, networks = networks.len(), changed_nodes = changed, elapsed_ms,
+                "Stored netmaps compiled again by this build");
+        } else {
+            tracing::debug!(%build, networks = networks.len(), elapsed_ms,
+                "Stored netmaps checked against this build; nothing changed");
+        }
         Ok(())
     }
 
