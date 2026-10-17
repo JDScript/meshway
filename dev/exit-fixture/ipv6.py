@@ -476,6 +476,9 @@ def stages(ctx, pending):
         raise RuntimeError("an IPv6 exit flow outlived the withdrawal")
     (report / "signals/exit-restore").touch()
     wait_for(lambda: (report / "signals/exit-restored.json").exists(), "restore configured")
+    restored = json.loads(command("controller", "cat", "/signals/exit-restored.json")["stdout"])
+    wait_for(lambda: all(ctx.running(value := status(role)) and value["applied"]["revision"] == restored
+                         for role in ("a", "r", "e")), "restore applied", 120)
     wait_for(lambda: families_are(ready), "E's role reinstalled", 120)
     nft = json.loads(command("e", "/usr/sbin/nft", "-j", "list", "ruleset")["stdout"])["nftables"]
     loaded = [item["set"] for item in nft if "set" in item and item["set"]["name"] in ("quarantine6", "echo_quarantine6")
