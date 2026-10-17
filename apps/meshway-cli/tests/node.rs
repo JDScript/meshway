@@ -310,7 +310,7 @@ async fn real_cli_enrollment(console_origin: Option<&str>, key_stdin: Option<boo
     let human = cli(&socket, "status", false).await;
     assert!(human.status.success());
     let human_text = String::from_utf8_lossy(&human.stdout);
-    assert!(human_text.contains("  Data plane control only · mode control-only\n"));
+    assert!(human_text.contains("  Data plane control only · mode control-only · changed "));
     assert!(human_text.contains(" · not applied"));
     assert!(!human_text.contains("mwns_") && !human_text.contains('\u{1b}'));
     assert!(!human_text.contains("ask its operator"));

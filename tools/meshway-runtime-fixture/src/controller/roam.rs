@@ -282,5 +282,12 @@ pub(super) async fn coordinate(cli: &Cli) -> Result<()> {
             tokio::time::sleep(Duration::from_millis(200)).await;
         }
     }
-    wait(cli, "roam-complete").await
+    wait(cli, "roam-complete").await?;
+    // The Server answers until the supervisor stops the run: the nodes go
+    // down first (roam-down), and a Control request in flight then finds it
+    // answering rather than waiting for its connect timeout.
+    while !stopped(cli).await? {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    Ok(())
 }

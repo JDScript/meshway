@@ -4,7 +4,7 @@
 
 ## 未发布
 
-范围：⚠ 断网窗口——`compilerVersion` `meshway-netmap-3` → `meshway-netmap-4`（[升级方式](/v2/install#compiler-version-upgrade)），IPC 12 → 13（`exit.capability` 按族，CLI 与 daemon 一起升级）；wire 6 与 Server schema 8 不变；HTTP 契约变化见下（OpenAPI／SDK 已重生成）。I6-1：IPv6 出口第一切片（NAT66），以及下列 I6-1 工作包。
+范围：⚠ 断网窗口——`compilerVersion` `meshway-netmap-3` → `meshway-netmap-4`（[升级方式](/v2/install#compiler-version-upgrade)），IPC 12 → 13（`exit.capability` 按族；另含下列 H4 的可省略 Status 字段；CLI 与 daemon 一起升级）；wire 6 与 Server schema 8 不变；HTTP 契约变化见下（OpenAPI／SDK 已重生成）。I6-1：IPv6 出口第一切片（NAT66）；H4：Status 撤回原因、`observedAt`／`controlObservedAt`、`controlRelay` 与 phase 映射；以及下列 I6-1、H4 工作包。
 
 IPv6 出口（I6-1，`i61/ipv6-exit`，规格为 [IPv6 出口设计](/v2/node/ipv6-exit-design) 的 11 条拍板，行为定义见 [Exit 设计 · IPv6 出口](/v2/node/exit-design#ipv6)）：
 
@@ -15,6 +15,18 @@ IPv6 出口（I6-1，`i61/ipv6-exit`，规格为 [IPv6 出口设计](/v2/node/ip
 - Console：节点设置“出口同时承载 IPv6”、按族的出口状态与告警、新原因与 `invalid_exit_family` 的中英文案。
 - 修复（不变量：delta 精确重建目标；owner：`meshway-configuration::netmap::delta`）：`NetmapDelta` 未携带投影的 `eligibleExits`，持有基线的节点重建出旧列表、digest 不符，sync 以 `Contract` 失败。自 F5a 引入该字段即潜在，只在出口集合里出口排在另一节点之前时出现；I6-1 让每个被命名的出口都进入该列表后在 `exit/off` 首跑暴露。
 - 验收：新增默认矩阵行 `exit6/off`（[验收范围](/v2/node/validation#exit6-off)）；`exit/off` 不变并继续证明默认 IPv6 sink。真实宿主 IPv6 出口未验收（it7／planck 无全局 IPv6）。I6-2（出口前缀变化退役、出口对外部超限回包合成 packet too big）未实现。
+
+Status 与可观测性（H4，`h4/status-observability`）：wire 6、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约均不变；IPC 12 的 Status 新增可省略字段 `controlObservedAt`、`controlRelay`，`observedAt` 语义改变（CLI 与 daemon 一起升级）。
+
+- 撤回期间的原因（不变量：包平面因组件失败撤回、正在撤回或重新准备期间 `lastError` 必有值且为最早原因；owner：网络 worker 的撤回执行点，DNS owner 的故障与详情）：worker 在清理之前发布撤回报告；尚未处理的 DNS 故障在 Status 里已是 `dns`；重新准备保留原因；清理因其他原因失败不改原因。此前 OPS17 lab 清理等 egress pause 重试 31 秒，Status 一直 `suspended`、原因 null。DNS owner 先发布检查详情再发布故障。
+- 重装日志（不变量：每次撤回与每次重装各一条日志，与触发它的 select 分支无关；owner：worker 的撤回／安装执行点）：失败撤回后内容再次安装时记 `Required DNS component recovered; netmap reinstalled`／`Required packet plane component recovered; netmap reinstalled`（`trigger`、`withdrawn_ms`）；TUN／承载失败撤回记 `Required packet plane component failed; suspending packet plane`；租约到期或 Control 撤回之后的再次安装记 `Netmap installed again after its withdrawal`（`cause`）。DNS 恢复分支不再单独记日志（OPS17 两轮重装都经 offer，原日志从未出现）。
+- `observedAt`（S4 需决定 2）：`phase`／`applied`／`dataPlane` 最后一次变化的时间，由 daemon 在每个输入变化时求值记时；Control 的发布时间另为 `controlObservedAt`。`meshway status` 的 Data plane 行显示 `changed … ago`。
+- phase 映射（不变量：`blocked` 只表示需要人工；owner：Status 投影的 phase 映射，输入为网络 worker 对失败是否有自动恢复路径的判定与 Host 的 `changePending`／`cleanupPending` 现值）：`dataPlane: failed` 时，会自动恢复的失败（DNS 故障、归属暂态阻断、池重叠、仍在重试的安装失败、内核变更／出口清理重试中）为 `retrying`，只有持久冲突或重试已用完／不重试为 `blocked`。此前任何包平面失败都显示 `blocked`（`up` 亦以 1 退出）。
+- 控制中继（X14）：listener 监听重试与容量满由其 owner 发布，Status `controlRelay`（`retrying`／`atCapacity`、`reason`、`attempts`、`retryAt`），CLI `Relay` 行；进程启动时 socket 监听不了不再是启动失败，与重证后同一 U1 口径后台重试（无效 origin、resolver 打不开仍失败）。
+
+- roam fixture：controller 服务到 `roam-stop`（此前在 `roam-complete` 即退出），supervisor 等每个节点 `roam-down` 后才 `roam-stop`；此前节点 Control 若有请求在飞，`down` 等它 10 秒连接超时，超出 fixture 的 10 秒（`roam/flap`、`roam/nat` 偶发）。
+
+验证：daemon／CLI／Underlay 单测，Linux 无特权容器与隔离 NET_ADMIN 测试，lab `--cpus 0.02` 30 秒 ×3（含决定 1 后一轮 `retrying`），daemon 层启动占位测试；Planck 23 行矩阵 `20261017T035656Z-d07a17c4` 与最终 `20261017T095424Z-df6f8adf`（`ec9374c7`）全部通过。证据见 [H4](/v2/node/validation#h4)。
 
 ## v0.1.0-alpha.18
 

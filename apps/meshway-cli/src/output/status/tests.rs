@@ -39,7 +39,7 @@ fn status() -> Status {
     let reference = json!({"revision":42,"serial":17,"digest":"01".repeat(32)});
     serde_json::from_value(json!({
         "processId":1,"revision":3,"desiredUp":true,"phase":"running","server":"http://127.0.0.1:8420",
-        "observedAt":"2026-10-11T12:00:00Z","enrollmentRequestId":null,"enrollmentUrl":null,
+        "observedAt":"2026-10-11T11:57:00Z","controlObservedAt":"2026-10-11T11:59:48Z","enrollmentRequestId":null,"enrollmentUrl":null,
         "identity":null,"authenticated":true,"sync":"connected","lastSyncAt":"2026-10-11T11:59:48Z",
         "syncError":null,"instance":null,
         "netmap":{"netmap":reference,"issuedAt":"2026-10-11T11:00:00Z","expiresAt":"2026-10-12T11:59:00Z","missingArtifacts":[],"artifactProblem":null,
@@ -77,7 +77,11 @@ fn plain_summary_and_peer_table_have_no_escapes() {
     assert!(text.contains("  Netmap     revision 42 · serial 17 · lease 23h 59m left\n"));
     assert!(text.contains("  Egress     4341 IPv4 · 2256 IPv6 sink ranges · 12680 routes\n"));
     assert!(text.contains("  Profile    work (meshway exit)\n"));
-    assert!(text.contains("  Data plane ready · mode tun\n"));
+    assert!(
+        text.contains("  Data plane ready · mode tun · changed 3m 0s ago\n"),
+        "{text}"
+    );
+    assert!(!text.contains("Relay"));
     let header = lines
         .iter()
         .position(|line| line.starts_with("PEER"))
@@ -155,6 +159,76 @@ fn the_packet_planes_failure_is_shown_beside_a_control_problem() {
     assert!(text.contains("  Problem    credentials\n"), "{text}");
     assert!(
         text.contains("  Network    dns\n             DNS resolved_link check failed\n"),
+        "{text}"
+    );
+}
+
+/// H4 (X14-a): a Control relay that cannot listen, or that refuses new
+/// connections at its limit, is one line.
+#[test]
+fn a_control_relay_that_does_not_serve_every_connection_is_shown() {
+    let mut status = status();
+    status.control_relay = Some(meshway_protocol::ipc::ControlRelay {
+        state: meshway_protocol::ipc::ControlRelayState::Retrying,
+        reason: "cannot listen: address in use".into(),
+        attempts: 3,
+        retry_at: Some("2026-10-11T12:00:04Z".parse().unwrap()),
+    });
+    let mut output = Vec::new();
+    write(&mut output, &Term::plain(), &status, now()).unwrap();
+    let text = String::from_utf8(output).unwrap();
+    assert!(
+        text.contains(
+            "  Relay      retrying (cannot listen: address in use; attempt 3, retry in 4s)\n"
+        ),
+        "{text}"
+    );
+    status.control_relay = Some(meshway_protocol::ipc::ControlRelay {
+        state: meshway_protocol::ipc::ControlRelayState::AtCapacity,
+        reason: "tasks".into(),
+        attempts: 2,
+        retry_at: None,
+    });
+    let mut output = Vec::new();
+    write(&mut output, &Term::plain(), &status, now()).unwrap();
+    let text = String::from_utf8(output).unwrap();
+    assert!(
+        text.contains(
+            "  Relay      at capacity (tasks limit; 2 refused, current connections kept)\n"
+        ),
+        "{text}"
+    );
+    let mut json = Vec::new();
+    crate::output::json(&mut json, &status).unwrap();
+    let value: serde_json::Value = serde_json::from_slice(&json).unwrap();
+    assert_eq!(value["controlRelay"]["state"], "atCapacity");
+    assert!(value["controlRelay"]["retryAt"].is_null());
+    assert_eq!(value["controlObservedAt"], "2026-10-11T11:59:48Z");
+}
+
+/// H4 decision 1: a packet plane withdrawn for a failure that recovers by
+/// itself reads `retrying` (not the operator's `blocked`) with its cause.
+#[test]
+fn a_recovering_failed_plane_is_retrying_with_its_cause() {
+    let mut status = status();
+    status.phase = Phase::Retrying;
+    status.data_plane = DataPlane::Failed;
+    status.applied = None;
+    status.last_error = Some(meshway_protocol::ipc::Problem::Dns);
+    status.last_error_detail = Some("DNS observe_deadline check failed".into());
+    let mut output = Vec::new();
+    write(&mut output, &Term::plain(), &status, now()).unwrap();
+    let text = String::from_utf8(output).unwrap();
+    assert!(
+        text.starts_with("meshway-lax  100.64.0.4  retrying\n"),
+        "{text}"
+    );
+    assert!(
+        text.contains("  Data plane failed · mode tun · changed 3m 0s ago\n"),
+        "{text}"
+    );
+    assert!(
+        text.contains("  Problem    dns\n             DNS observe_deadline check failed\n"),
         "{text}"
     );
 }
