@@ -1024,7 +1024,23 @@ mod tests {
     #[ignore = "requires isolated Linux namespace with NET_ADMIN and nf_conntrack_netlink"]
     async fn ctnetlink_exact_delete_reports_absent_and_keeps_a_replacement() {
         isolated();
+        let six = |tuple: Tuple| Tuple {
+            source: "fd79::5".parse().unwrap(),
+            destination: "3ffe:1::7".parse().unwrap(),
+            ..tuple
+        };
         for tuple in [
+            six(udp(41003)),
+            six(Tuple {
+                protocol: 6,
+                ..udp(41004)
+            }),
+            six(Tuple {
+                protocol: 58,
+                source_key: 41005,
+                destination_key: 128 << 8,
+                ..udp(0)
+            }),
             udp(41000),
             Tuple {
                 protocol: 6,

@@ -461,9 +461,11 @@ def stages(ctx, pending):
     wait_for(lambda: (report / "signals/exit-withdrawn.json").exists(), "withdrawal configured")
     withdrawn = time.time()
     wait_for(lambda: not (status("e").get("exit") or {}).get("installedRole"), "E's role withdrawn", 60)
-    withdrawal["after"] = conntrack6(ext6)
-    if "mark=" in withdrawal["after"]["stdout"] or withdrawal["after"]["exitCode"]:
-        raise RuntimeError("owned IPv6 conntrack survived the withdrawal")
+    # The withdrawn role ends its projections after Status stops showing it.
+    def gone():
+        withdrawal["after"] = conntrack6(ext6)
+        return withdrawal["after"]["exitCode"] == 0 and "mark=" not in withdrawal["after"]["stdout"]
+    wait_for(gone, "owned IPv6 conntrack removed by the withdrawal")
     journal = json.loads(command("e", "cat", "/state/node/underlay-exit.json")["stdout"])
     withdrawal["quarantine"] = [item for item in journal.get("quarantine", []) if ":" in item["tuple"]["source"]]
     if not withdrawal["quarantine"]:
