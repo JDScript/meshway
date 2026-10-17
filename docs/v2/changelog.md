@@ -14,7 +14,12 @@ IPv6 出口（I6-1，`i61/ipv6-exit`，规格为 [IPv6 出口设计](/v2/node/ip
 - Underlay（不变量：一个角色一个程序，只有 IPv4 的角色安装与此前完全相同的对象；旧版本留下的捕获表保持 fail closed；只检测不改宿主；owner：Kernel 出口 owner 与 egress backend）：出口程序按族集合与规则、`ip6 meshway_exit_nat6_<inst>` masquerade、ICMPv6 RELATED 1/2/3；ctnetlink `AF_INET6`（GET／DELETE／回读、ICMPv6 echo、两族 mark dump）；RPDB `/128` 成对规则与路由、IPv6 转发与 ICMPv6 规则；按族前置探测（`all.forwarding`、出口地址与路由、RA 安装的路由要求 `accept_ra=2`）；防火墙按族判定 `ip`／`ip6`／`inet` 与 `ip6tables-legacy-save`，`fib`／`rpfilter` 反向路径判为满足；源端 `managed6`／`sink6`、IPv6 捕获表路由与第二条选择器；MSS clamp 的 IPv6 经出口规则。
 - Console：节点设置“出口同时承载 IPv6”、按族的出口状态与告警、新原因与 `invalid_exit_family` 的中英文案。
 - 修复（不变量：delta 精确重建目标；owner：`meshway-configuration::netmap::delta`）：`NetmapDelta` 未携带投影的 `eligibleExits`，持有基线的节点重建出旧列表、digest 不符，sync 以 `Contract` 失败。自 F5a 引入该字段即潜在，只在出口集合里出口排在另一节点之前时出现；I6-1 让每个被命名的出口都进入该列表后在 `exit/off` 首跑暴露。
+- 修复（不变量：Mesh 地址只标识一个节点；owner：Configuration 地址分配）：IPv6 自动分配不再取池的全零地址（Subnet-Router anycast，RFC 4291 §2.6.1）：持有该池路由的主机（每个出口经 Mesh TUN 路由）把它当 anycast、不向它发 ICMPv6 错误，`exit6/off` 中第一个节点因此收不到出口自己的 time exceeded。已有分配保留，显式地址不新增拒绝（需用户决定是否迁移）。
+- 修复（nft 读回）：IPv6 出口程序的回执原被 decode 拒收（`ip6` 族），nft 把被引用 IPv6 头的版本半字节与 /128 前缀以另一形式列出；源端捕获表的 `mesh6` 曾被误当作静态集合导致回读冲突——均在 `exit6/off` 首跑暴露，已修。
+- 矩阵（不变量：并发行不超过宿主 Docker 地址池；owner：`scripts/validate_matrix.py` 调度）：每行运行期间按 bridge 数占用 24 的预算（出口 10、漫游 5、NAT 3、其余 runtime 1），漫游行仍逐个；此前 24 行时 `exit/off` 创建网络失败。
 - 验收：新增默认矩阵行 `exit6/off`（[验收范围](/v2/node/validation#exit6-off)）；`exit/off` 不变并继续证明默认 IPv6 sink。真实宿主 IPv6 出口未验收（it7／planck 无全局 IPv6）。I6-2（出口前缀变化退役、出口对外部超限回包合成 packet too big）未实现。
+
+验证：Policy／Configuration／Server／Control／dataplane／CLI 单测与投影等价（双栈随机场景）；Linux musl 单测与隔离 NET_ADMIN 测试（IPv6 nft 程序、捕获、RPDB、ctnetlink）；Console 类型检查、lint 与测试；`exit6/off` 单行 `20261017T102314Z-37ac6ad7`；Planck 24 行矩阵 `20261017T213601Z-935b9b88`（`752673fe`，并行 8，墙钟 1,477 秒）全部通过。证据见 [exit6/off](/v2/node/validation#exit6-off)。
 
 Status 与可观测性（H4，`h4/status-observability`）：wire 6、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约均不变；IPC 12 的 Status 新增可省略字段 `controlObservedAt`、`controlRelay`，`observedAt` 语义改变（CLI 与 daemon 一起升级）。
 
