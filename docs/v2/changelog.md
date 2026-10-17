@@ -4,6 +4,18 @@
 
 ## 未发布
 
+范围：⚠ 断网窗口——`compilerVersion` `meshway-netmap-3` → `meshway-netmap-4`（[升级方式](/v2/install#compiler-version-upgrade)），IPC 12 → 13（`exit.capability` 按族，CLI 与 daemon 一起升级）；wire 6 与 Server schema 8 不变；HTTP 契约变化见下（OpenAPI／SDK 已重生成）。I6-1：IPv6 出口第一切片（NAT66），以及下列 I6-1 工作包。
+
+IPv6 出口（I6-1，`i61/ipv6-exit`，规格为 [IPv6 出口设计](/v2/node/ipv6-exit-design) 的 11 条拍板，行为定义见 [Exit 设计 · IPv6 出口](/v2/node/exit-design#ipv6)）：
+
+- 配置／契约（不变量：出口只在管理员列出 IPv6 且节点声明后端时承载 IPv6；owner：Configuration 校验与 `meshway-policy` 投影）：`nodes.<id>.exitFamilies`（默认 `["ipv4"]`、必须含 `ipv4`，`invalid_exit_family`；`NodeSettingsView`／`NodeSettingsPatch`）；`ExitRole.families`（只有 IPv4 的角色保留原 `generation`，不重装）；投影 `eligibleExits` 改为 `[{node, families}]` 并列出保留路由中出现的每个合格出口；`ExitCapability.families[{family, status, installed}]` 取代 `supportedFamilies`／`installedFamilies`／`status`（`PeerExitFacts` 同）；新原因 `ipv6ForwardDisabled`、`ipv6NoEgress`、`ipv6RouterAdvertisementsIgnored`；`CaptureSummary.managedIpv6`；acquire 能力 `feature:exit-ipv6` v1。存储 schema 不变（出口观测在 TEMP 表，配置为 JSON）。
+- Policy（不变量：族资格只有一个读者 `matching::Exits::eligible(node, family)`，运行时就绪从不进入编译；owner：`meshway-policy`）：分割的 IPv6 出口区间在出口集合承载 IPv6 且源有 Mesh IPv6 时为 `managedIpv6`，否则 `sinkIpv6`；判定按目的的族选出口集合与能力，`unsupportedFamily` 只表示静态不承载；自指按族求；IPv6 绝对排除（`::ffff:0:0/96`、NAT64 前缀等，唯一列表 `exit_exclusions`，出口 nft 同用）；IPv6 CIDR Access；关联与保留捕获按族；`admit_forward` 拒绝角色不承载的族。投影等价随机场景覆盖双栈与 IPv6 出口。
+- Control／数据面（不变量：不就绪不放宽为 direct；owner：Control 的 `KnownPeers` 与 dataplane `SecureNode`）：`ready_exits(now, family)`、`choose_exit(nodes, family)`（两族可经不同出口）；`ExitTuple` 按 `IpAddr`；IPv6 出口首包无就绪出口时本机合成 ICMPv6 1/1（admin prohibited，`EACCES`），与本机 PMTU 错误同限额；混合族包拒绝（`family_rejected`）。
+- Underlay（不变量：一个角色一个程序，只有 IPv4 的角色安装与此前完全相同的对象；旧版本留下的捕获表保持 fail closed；只检测不改宿主；owner：Kernel 出口 owner 与 egress backend）：出口程序按族集合与规则、`ip6 meshway_exit_nat6_<inst>` masquerade、ICMPv6 RELATED 1/2/3；ctnetlink `AF_INET6`（GET／DELETE／回读、ICMPv6 echo、两族 mark dump）；RPDB `/128` 成对规则与路由、IPv6 转发与 ICMPv6 规则；按族前置探测（`all.forwarding`、出口地址与路由、RA 安装的路由要求 `accept_ra=2`）；防火墙按族判定 `ip`／`ip6`／`inet` 与 `ip6tables-legacy-save`，`fib`／`rpfilter` 反向路径判为满足；源端 `managed6`／`sink6`、IPv6 捕获表路由与第二条选择器；MSS clamp 的 IPv6 经出口规则。
+- Console：节点设置“出口同时承载 IPv6”、按族的出口状态与告警、新原因与 `invalid_exit_family` 的中英文案。
+- 修复（不变量：delta 精确重建目标；owner：`meshway-configuration::netmap::delta`）：`NetmapDelta` 未携带投影的 `eligibleExits`，持有基线的节点重建出旧列表、digest 不符，sync 以 `Contract` 失败。自 F5a 引入该字段即潜在，只在出口集合里出口排在另一节点之前时出现；I6-1 让每个被命名的出口都进入该列表后在 `exit/off` 首跑暴露。
+- 验收：新增默认矩阵行 `exit6/off`（[验收范围](/v2/node/validation#exit6-off)）；`exit/off` 不变并继续证明默认 IPv6 sink。真实宿主 IPv6 出口未验收（it7／planck 无全局 IPv6）。I6-2（出口前缀变化退役、出口对外部超限回包合成 packet too big）未实现。
+
 ## v0.1.0-alpha.18
 
 范围：wire 6、IPC 12、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约均不变（普通升级，无断网窗口）。S4：Server 换构建启动自动重编译（`meshway-build` 构建身份进编译指纹，只有内容变化的节点得到新 serial），DNS 未确认故障算一次失败（撤回 → 恢复 → 重装）；F6c 纯移动（无行为变化）；以及下列 F6c、S4 工作包。

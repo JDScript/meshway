@@ -51,6 +51,7 @@ TCP 乱序区间只记录已准入字节的序号，不制造接收确认：缺�
 | 机制 | Owner | 行为 |
 | --- | --- | --- |
 | 超限包 | dataplane | 端点业务包准入后、消耗 nonce 之前，若它比到下一跳那条通道的 `inner` 大即丢弃（`Error::TooBig`）。本节点 TUN 是该流本机一端时（源发出的包；Mesh 流终点的回包），合成一条错误交本机 TUN：IPv4 为 fragmentation needed（3/4，next-hop MTU = `inner`，引用原包 IPv4 头＋8 字节），IPv6 为 packet too big（2/0，MTU = `inner`，引用原包至多 1,232 字节），源地址为原包目的地址，像该路径上的路由器发出。`inner` 低于 IPv6 最小链路 MTU 1,280 的通道**不承载 IPv6**：任何大小的 IPv6 包都丢弃（`Error::Ipv6Unavailable`，profile 事件 `host.reject.kind` 为 `ipv6_unavailable`），本机一端合成 ICMPv6 destination unreachable（1/0，no route），不再发出无法收敛的 packet too big 1,280；不做外层分片重组。错误绑定该流的期限与取消，经与收到的包相同的 TUN 交付（`take_local_errors` → `deliver_batch`），不进入网络、不经 `admit_related`；全节点每秒至多 32 条、待交付至多 32 条。应用栈据此学到 PMTU（Linux 路由缓存 `mtu <inner>`），TCP 降段、`ping -M do` 报告 `Frag needed` |
+| 无就绪出口的 IPv6 | dataplane | 本节点 IPv6 出口流的首包，判定允许但该族没有就绪（含最后已知就绪）出口：不建流、不 direct，合成 ICMPv6 destination unreachable 1/1（administratively prohibited，源地址为原包目的）交本机 TUN，Linux 报 `EACCES`，应用立即改用 IPv4；与超限包错误同一交付路径与限额（期限 1 秒）。IPv4 静默丢弃（[IPv6 出口](/v2/node/exit-design#ipv6)） |
 | TCP MSS | Underlay（nft） | 自有表 `inet meshway_mss_<installation>`（与出口捕获同一 installation、同一命令序列化），每次变化以一个 nft 事务整表替换（事务失败时同一内容按 1 s 起翻倍、上限 60 s 重试，直到成功或内容再变），随捕获退役删除，出口前置探测把它算作本节点所有。Mesh TUN 上发出的 SYN 按目的、收到的 SYN 按来源、出口 TUN 收到的源节点 SYN 按来源，把 MSS 限到上限 −40（IPv4）／−60（IPv6）；不小于 TUN 给出的 MSS 时不限，没有任何限制时表不存在 |
 | 上限 | dataplane（`SecureNode::clamps`） | 直连 peer：到它那条通道的 `inner`；经中继的 peer：已知上限中最小者（首跳未知）；Mesh 以外的目的（经出口）：到各就绪出口（含最后已知就绪）的上限中最小者。daemon 每秒把结果交 Underlay（`Host::clamp_mss`），只有变化才写 nft；直连↔中继切换或通道重新测量后随之更新 |
 
@@ -58,11 +59,11 @@ TCP 乱序区间只记录已准入字节的序号，不制造接收确认：缺�
 
 ### IPv4 出口流与内核投影
 
-出口业务复用同一 `SecureNode`／`FlowTable`：Policy 在本节点投影上检查已认证原始源、`sourceAddresses`、出口 `Decision` 的精确目的／服务、selection 和完整路径；出口端另需本地 `exitRole`（[Routing · 出口联合许可](/v2/configuration-reference/routing#出口联合许可)）。首版拒绝出口 IPv6 并计数。出口回程由 `exit::ExitReplyIngress` 交给 `SecureNode::exit_reply`，只从已有流选择原 CID，再执行 `admit_reply` 和原路径反向 Noise 保护；未关联包丢弃并计数。出口之外路由器与出口主机自己产生的 [ICMP 错误](#icmp-errors)走同一回程，内核侧见 [Exit 设计 · ICMP 错误](/v2/node/exit-design#icmp-errors)。
+出口业务复用同一 `SecureNode`／`FlowTable`：Policy 在本节点投影上检查已认证原始源、`sourceAddresses`、出口 `Decision` 的精确目的／服务、selection 和完整路径；出口端另需本地 `exitRole`（[Routing · 出口联合许可](/v2/configuration-reference/routing#出口联合许可)）。出口端只转发角色 `families` 中的族，混合族包与角色不承载的族拒绝并计数（`family_rejected`）；IPv6 的捕获、按族选择与快速拒绝见 [Exit 设计 · IPv6 出口](/v2/node/exit-design#ipv6)。出口回程由 `exit::ExitReplyIngress` 交给 `SecureNode::exit_reply`，只从已有流选择原 CID，再执行 `admit_reply` 和原路径反向 Noise 保护；未关联包丢弃并计数。出口之外路由器与出口主机自己产生的 [ICMP 错误](#icmp-errors)走同一回程，内核侧见 [Exit 设计 · ICMP 错误](/v2/node/exit-design#icmp-errors)。
 
 出口角色是本节点为其他源提供的能力，不是本节点自身流量的必需组件：本地 `exitRole` 的前置条件不满足或角色安装失败时，本节点其余内容照常 applied，只报告 `exitCapability: unavailable`；角色未安装时出口端不建立出口流（源端按出口就绪事实不选它）。宿主条件与恢复见[出口宿主前置探测](/v2/node/runtime#出口宿主前置探测)。
 
-`SecureNode::next_exit_projection` 按需返回一个不透明 `exit::ExitProjection`：`Install`／`Renew` 携带 flow incarnation、原 IPv4 tuple、不可换绑的 `ProjectionScope` 和一次性 ACK；`Retire` 携带原资源绑定与独立清理 ACK。**内核侧由 Underlay 执行，见 [Exit 设计](/v2/node/exit-design#数据路径与唯一-owner)**；daemon 映射类型并驱动事件和 I/O，不增加业务流表。此接口本身不证明 Linux NAT 安装或包流已验收。
+`SecureNode::next_exit_projection` 按需返回一个不透明 `exit::ExitProjection`：`Install`／`Renew` 携带 flow incarnation、原 tuple（`ExitTuple` 两族同一形状）、不可换绑的 `ProjectionScope` 和一次性 ACK；`Retire` 携带原资源绑定与独立清理 ACK。**内核侧由 Underlay 执行，见 [Exit 设计](/v2/node/exit-design#数据路径与唯一-owner)**；daemon 映射类型并驱动事件和 I/O，不增加业务流表。此接口本身不证明 Linux NAT 安装或包流已验收。
 
 首包和触发续期的输出保留原 guard，通过 `PendingAction::projection_ready`／`PendingFrame::projection_ready` 等待 ACK；每次 `release` 仍检查原截止、流／cipher 取消和 ACK。`PendingAction::exit_flow` 给出该包的精确投影 incarnation；ACK 后的 `exit_scope` 供宿主异步写适配器逐次 poll 检查原包权限，不能用最新流 scope 替换旧排队包。安装失败、丢失 ACK 或等待超时使流不可执行。宿主丢弃一个包装（例如出口队列无空位、出口 TUN 写失败）只丢这个包：流、incarnation 与投影不变，不发布 `Retire`、不产生隔离项，下一个包照常准入。已安装流的后续包由宿主直接交给出口 TUN 的 I/O owner 批量写入，仍各自持有 `exit_scope` 至写 poll（宿主侧队列与写路径见 [Exit 设计 · 出口队列](/v2/node/exit-design#exit-queue)）。投影截止取流 idle 与所属 circuit 生命期的交集（不再有 permit 或执行／instance 截止）；投影绑定安装它的出口角色 generation，随 netmap 租约存续，租约到期、角色撤回或 generation 改变时 Retire；未 ACK 的投影 scope 还受命令等待及旧投影截止约束，不能先迟到安装再依赖 ACK 回调拒绝。续期不会因命令排队重置预算。同授权直接交接只为仍活流发出不超过旧流截止的 `Renew`，实际获准包才刷新流期限。未 ACK 的流不跨交接保留；授权 generation／路径变化结束旧流和 cipher。普通 tuple 退役以独立流 guard 取消旧输出，同 CID 的其他活 tuple 继续执行；最后一条流结束后退役该 cipher，出口端同时向来源方向发出一个逐跳认证的 `Close`（中继照常转发），来源立即结束自己一端，下一包新建 circuit，而不是在出口已不存在的 cipher 上等到 15 秒无回复。
 
@@ -297,7 +298,7 @@ exchange 适配器须在每次 connect／write／read poll 检查路由期限与
 
 可信域名关联（X6）：served 路径回答源节点名称规则决定的名称后，产生一份关联任务完成交 Control 上报（不等待、不扩大 DNS permit，队列满即丢弃）；源节点的 client 路径持有这类回答直至 Engine 应用覆盖其地址的关联（到该查询截止前 250 ms、至多 5 秒，否则 SERVFAIL；其他查询不等它），TTL 截为关联剩余寿命。关联变化不结束 DNS scope 与已接纳查询，也不重判已建立的流；新流由 `Decisions` 以当前关联判定。见 [Exit 设计 · 可信域名关联](/v2/node/exit-design#trusted-dns-associations)。
 
-限制：resolved 后端的出口查询需要 systemd ≥ 248 且 `DNSStubListener=yes`（提供代理 stub `127.0.0.54`），否则出口查询不可用（`proxyStubMissing`），见 [Linux 安装](/v2/install)。首版只解析经 IPv4 出口的普通查询；AAAA 原样返回出口 resolver 的真实回答，不伪造 NXDOMAIN，受管 IPv6 包仍由源端捕获 sink 与 permit 双重拒绝。名称规则经多个出口的显式 DNS plan 未实现（保存即拒绝）。DNS 消息上限 4096 bytes，单查询不超过 5 秒。这些范围以外或任何必需安装失败均阻断整体 applied。
+限制：resolved 后端的出口查询需要 systemd ≥ 248 且 `DNSStubListener=yes`（提供代理 stub `127.0.0.54`），否则出口查询不可用（`proxyStubMissing`），见 [Linux 安装](/v2/install)。出口查询经出口的 IPv4 Mesh 服务；A 与 AAAA 都原样返回出口 resolver 的真实回答，不按出口能力过滤、不伪造 NXDOMAIN；IPv6 目的按 [IPv6 出口](/v2/node/exit-design#ipv6) 捕获与准入。名称规则经多个出口的显式 DNS plan 未实现（保存即拒绝）。DNS 消息上限 4096 bytes，单查询不超过 5 秒。这些范围以外或任何必需安装失败均阻断整体 applied。
 
 ## 系统 DNS 安装
 

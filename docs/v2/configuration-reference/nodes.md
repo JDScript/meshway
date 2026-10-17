@@ -19,7 +19,8 @@
         "ipv6": "fd42:7a65:8800::10"
       },
       "listeners": {},
-      "exitEnabled": false,
+      "exitEnabled": true,
+      "exitFamilies": ["ipv4", "ipv6"],
       "region": "US"
     }
   }
@@ -38,6 +39,7 @@
 | `listeners` | `Record<string, Listener>` | `{}` | [本节点入站配置](/v2/configuration-reference/listeners) |
 | `dialers` | `DialerSet` | 省略则继承 | 显式 `{}` 禁用主动建连；非空集合替换默认 |
 | `exitEnabled` | `boolean` | `false` | 管理员允许此节点承担出口；不是执行就绪状态 |
+| `exitFamilies` | `("ipv4" \| "ipv6")[]` | `["ipv4"]` | 作为出口承载的内层地址族，见 [exitFamilies](#exitfamilies) |
 | `region` | `string` | 省略 | 管理员声明的地区，见 [region](#region) |
 
 ## hostname
@@ -92,6 +94,12 @@ user 分支不接受 tags，tag 分支不接受 user。Node 数据库记录不�
 ISO 3166-1 alpha-2 代码（两个大写字母，如 `US`、`JP`），只作为[自动方案](/v2/configuration-reference/routing#auto) `auto` 的输入：源节点的有效方案为 `auto` 时，按此代码在 `routing.egress.auto.rules` 中选方案。省略表示未声明（`auto` 采用 fallback，basis `noTrustedRegion`），规范输出省略该字段；`null` 不是合法值，编辑操作 `setNodeSettings` 的 `fields.region: null` 表示清除。不合法的值以 `invalid_country_code` 拒绝（路径 `/nodes/<id>/region`，`params.value`）。
 
 只有 Owner／Admin 能写：它是普通配置字段，经配置提交入口保存；接入的初始设置（`initialSettings`）与节点自助接口不能携带它，成员不能声明自己设备的地区。它不是观测：Server 不按节点的公网地址或 GeoIP 推断、也不校验它，节点不在本机判断地区。
+
+## exitFamilies
+
+本节点作为出口承载的内层地址族，升序去重保存；必须含 `ipv4`（IPv6 是在 IPv4 之外加开的族），否则以 `invalid_exit_family` 拒绝（路径 `/nodes/<id>/exitFamilies`，空列表或重复同样拒绝）。默认 `["ipv4"]`，规范输出省略默认值。只在 `exitEnabled` 时有意义；含 `ipv6` 且节点 acquire 声明 `feature:exit-ipv6` v1 时出口角色承载 IPv6（NAT66），行为与宿主前提见 [Exit 设计 · IPv6 出口](/v2/node/exit-design#ipv6)。
+
+默认不开 IPv6：`autogroup:internet` 本已覆盖 IPv6 公网，按能力自动开启会让升级后的网络在配置未变时开始经出口转发 IPv6。改变族集合即改变出口角色身份，已安装角色重装一次（其上的 IPv4 出口连接断一次）。与 `exitEnabled` 相同，只有 Owner／Admin 经配置提交写入；接入的初始设置不能携带它。
 
 ## 生命周期
 

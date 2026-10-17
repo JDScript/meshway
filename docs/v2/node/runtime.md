@@ -63,7 +63,7 @@ daemon／CLI 共用[运行日志参数](/v2/logging)，日志位于 stderr；CLI
 | --- | --- |
 | Linux Mesh-only | TUN capture、Native TCP／Native UDP 静态端点认证邻接、协调 UDP 穿透、双栈 UDP／TCP 多跳包流、持续续租和失效清理；验收状态见[验收范围](/v2/node/validation) |
 | DNS | 已接入 loopback 服务、精确 resolver 需求、resolved／显式文件代理；所有必需组件安装成功才可 applied，后端约束见[系统 DNS 安装](/v2/node/dataplane#系统-dns-安装)。健康检查失败撤回整个包平面并每秒按后端当前状态重证，可恢复的外部变化（resolved 重启、resolv.conf 改回、系统停顿）重证成功即自动重装，归属真正丢失时保持阻断；失败的检查项写入日志与 `lastErrorDetail`，见[健康检查与恢复](/v2/node/dataplane#dns-health) |
-| Exit／本机 egress | daemon 按已应用 netmap 探测并安装 IPv4 出口角色、精确 NAT 投影和源端 capture／IPv6 sink；回包由同一 SecureNode 按原完整路径返回。capture、承载及必需的负向 DNS 资源共同进入本机 applied 边界；出口角色是本节点为其他源提供的能力，其前置条件不满足或安装失败只报告 `exitCapability: unavailable`，不阻断 applied（见[出口宿主前置探测](#出口宿主前置探测)）。源节点 DNS 经出口 resolver 解析（[出口 resolver](/v2/node/dataplane#exit-resolver)），出口 resolver 不可用只对源 SERVFAIL 并单独报告 `exit.dnsUnavailable`；完整多进程验收范围见[验收范围](/v2/node/validation) |
+| Exit／本机 egress | daemon 按已应用 netmap 探测并安装出口角色（IPv4，及管理员开启的 IPv6，见 [IPv6 出口](/v2/node/exit-design#ipv6)）、精确 NAT 投影和源端 capture／IPv6 sink；回包由同一 SecureNode 按原完整路径返回。capture、承载及必需的负向 DNS 资源共同进入本机 applied 边界；出口角色是本节点为其他源提供的能力，其前置条件不满足或安装失败只报告 `exitCapability: unavailable`，不阻断 applied（见[出口宿主前置探测](#出口宿主前置探测)）。源节点 DNS 经出口 resolver 解析（[出口 resolver](/v2/node/dataplane#exit-resolver)），出口 resolver 不可用只对源 SERVFAIL 并单独报告 `exit.dnsUnavailable`；完整多进程验收范围见[验收范围](/v2/node/validation) |
 | 诊断 | `meshway ping` 的 Mesh 目标与 Server observation tasks 共用获准测量器；公网目标的 echo 是经同一 SecureNode 的普通本地包，见[路径诊断](/v2/node/diagnostics) |
 | 承载 | Manager 共用获准的 stream、Native UDP 静态端点和协调 UDP 穿透；会话与交接见[邻接管理](/v2/node/transport#邻接管理)，NAT 范围见[连接获取](/v2/node/connectivity) |
 | 其他平台／入口 | 非 Linux 的 tun 返回 unsupported；userspace（见[规划](#规划-userspace-networking)）、动态插件和切换 Meshway 网络尚未实现 |
@@ -76,26 +76,27 @@ Linux `Host::exit_probe` 在打开 Host 前执行，独占本进程的 Host 预�
 
 `ip_forward=0`，或新建 TUN 继承的 `forwarding`（来自 `conf/default/forwarding`，临时 TUN 上读取）为 0，返回 `ipForwardDisabled`；读取失败或格式错误返回 `forwardingProbeFailed`；实际 TUN 管理操作无权限返回 `netAdminMissing`。有效 `rp_filter=max(all,interface)` 为 strict 时返回 `reversePathFilterConflict`，不会自动改为 loose/off；loose（2）与 off（0）可用：出口 TUN 没有 IPv4 地址，内核对它的入包做反向路径检查时只在反向查找本身落到该 TUN 才放行，回程表的成对规则因此不带出口 mark，正是该反向查找（见[IPv4 出口角色与 NAT 投影](#ipv4-出口角色与-nat-投影)）。nft 不可用返回 `nftUnavailable`；ctnetlink 不可用（无 `nf_conntrack_netlink`、不支持 mark 过滤、回答畸形或超时）返回 `conntrackUnavailable`，内核以 `EPERM`／`EACCES` 拒绝返回 `netAdminMissing`。观测保留原始 `observedAt`，重试上报不得重新计时。
 
-此前置探测成功仍为 `probing`，`supportedFamilies`／`installedFamilies` 为空。探测与下面的角色安装是不同操作，不能据此前置探测发布 `ready`／`applied`。宿主管理员预配置 forwarding 和提供工具／设备不等于完整出口功能已可用。
+此前置探测成功仍为各族 `probing`，`installed` 为 false。探测与下面的角色安装是不同操作，不能据此前置探测发布 `ready`／`applied`。宿主管理员预配置 forwarding 和提供工具／设备不等于完整出口功能已可用。
 
-已打开的 Host 使用 `probe_exit(&mut self, instance: InstanceId, netmap: NetmapRef, role_generation: Digest) -> ExitCapability`。它使用真实、处于 up 状态的外部接口，排除所属 Mesh／出口 TUN 和 DNS 锚点；临时设备的精确 index 注册到同一 monitor，创建／删除不会制造外部切网事件。探测检查实际 TUN 权限、转发／反向路径条件、完整 IPv4 nft 程序和 ctnetlink 读取；排除经 owner 回读确认的自有表后，可能挡住出口流量的宿主规则返回 `firewallConflict`，未知 mark 修改／offload 返回 `ownershipConflict`，不改写宿主规则。
+已打开的 Host 使用 `probe_exit(&mut self, instance: InstanceId, netmap: NetmapRef, role_generation: Digest, families: &[ExitFamily]) -> ExitCapability`，按角色的每个族给出一条结果；IPv6 族另检查 `all.forwarding`、出口地址与路由、路由器通告（[IPv6 出口](/v2/node/exit-design#ipv6)）。它使用真实、处于 up 状态的外部接口，排除所属 Mesh／出口 TUN 和 DNS 锚点；临时设备的精确 index 注册到同一 monitor，创建／删除不会制造外部切网事件。探测检查实际 TUN 权限、转发／反向路径条件、完整 IPv4 nft 程序和 ctnetlink 读取；排除经 owner 回读确认的自有表后，可能挡住出口流量的宿主规则返回 `firewallConflict`，未知 mark 修改／offload 返回 `ownershipConflict`，不改写宿主规则。
 
-宿主规则只在**能匹配出口流量**时冲突。判定（`exit/firewall/` 的唯一实现）对 `ip`／`inet` 族的 nft 规则和已加载 legacy iptables 表的内容做同一遍历，考察的包为：从出口 TUN 进入与从出口接口进入的回包（prerouting 钩子，含 raw／mangle／nat 等各优先级）、经出口 TUN 转发到出口接口及其回包（forward、postrouting 钩子；出口接口为主路由表中通往 Internet 分类地址的 IPv4 路由的接口，即默认路由与直连公网网段，只通往私网的路由如 Docker 网桥不在内）、本机发往出口 TUN 的 ICMP 错误（output 钩子）。安装前的探测把出口 TUN 视为新建的内核 `tun<N>`（名字不同于任何现有接口）；已安装角色的周期探测按实际出口 TUN 名精确匹配。
+宿主规则只在**能匹配出口流量**时冲突。判定（`exit/firewall/` 的唯一实现）按族进行：IPv4 包遍历 `ip`／`inet` 族的 nft 规则与已加载 legacy iptables 表，IPv6 包遍历 `ip6`／`inet` 族与已加载 legacy ip6tables 表（`ip6tables-legacy-save`，IPv6 出口接口取主表通往 Internet 分类 IPv6 地址的路由），考察的包为：从出口 TUN 进入与从出口接口进入的回包（prerouting 钩子，含 raw／mangle／nat 等各优先级）、经出口 TUN 转发到出口接口及其回包（forward、postrouting 钩子；出口接口为主路由表中通往 Internet 分类地址的 IPv4 路由的接口，即默认路由与直连公网网段，只通往私网的路由如 Docker 网桥不在内）、本机发往出口 TUN 的 ICMP 错误（output 钩子）。安装前的探测把出口 TUN 视为新建的内核 `tun<N>`（名字不同于任何现有接口）；已安装角色的周期探测按实际出口 TUN 名精确匹配。
 
 | 规则 | 判定 |
 | --- | --- |
 | `drop`／`reject`／`queue`／`tproxy`／`dup`／`fwd`，legacy 的 `DROP`／`REJECT`／`NFQUEUE`／`QUEUE`／`TPROXY`／`TEE` | 其匹配可能命中上述任一包即冲突；经 `jump`／`goto`（legacy 为自定义链目标）可达的链同样遍历 |
 | 接口约束（`iifname`／`oifname`／`iif`／`oif`，legacy `-i`／`-o`，含 `!`、集合与 `*`／`+` 通配） | 按实际接口判定：只匹配其他接口（如 Docker 的 `br-*`／`docker0`）的规则不命中出口流量；`tun*` 命中出口 TUN |
-| `ct state` 只含 `invalid`／`untracked`，`meta nfproto ipv6` | 不命中（出口流量为 IPv4 且被跟踪） |
-| 目的地址（`ip daddr`，legacy `-d`，含前缀与集合） | 转发方向的目的是 Internet 分类地址，回包方向是出口接口地址或 Mesh 地址池：与之不相交（如 Docker 为发布容器加的 raw `-d <容器> ! -i <网桥> -j DROP`）即不命中 |
+| `ct state` 只含 `invalid`／`untracked`，`meta nfproto` 为另一族 | 不命中（出口流量被跟踪，族即考察包的族） |
+| 目的地址（`ip daddr`／`ip6 daddr`，legacy `-d`，含前缀与集合） | 转发方向的目的是该族 Internet 分类地址，回包方向是出口接口地址或 Mesh 地址池：与之不相交（如 Docker 为发布容器加的 raw `-d <容器> ! -i <网桥> -j DROP`）即不命中；另一族的地址匹配不命中 |
+| 反向路径过滤（`fib saddr … iif oif missing`，legacy `-m rpfilter`） | 满足：每个投影 ACK 前已证明反向查找落到出口 TUN |
 | 其他匹配（源地址、端口、`limit`、xt match 等） | 视为可能命中 |
 | prerouting／forward／output／postrouting 基链 `policy drop`（legacy 内建链 `DROP`） | 出口流量不能确定在此前被同链 `accept` 时冲突 |
 
 因此 Docker（`DOCKER-ISOLATION-STAGE-*`、`DOCKER` 链只丢弃进出其网桥的包）与出口共存，Docker 把 `FORWARD` 置为 `policy drop`（Docker 自己打开 `ip_forward` 时的默认）、ufw 默认 forward drop、firewalld 区域转发拒绝和不限接口的 drop 仍冲突。input 钩子与 netdev／bridge／arp 族不在判定范围；它们若丢弃出口流量，表现为下面的逐流路由判定拒绝或 conntrack 确认失败。遍历按（链, 包）记忆结果，共享子链不会成倍展开；一次判定最多评估 2^20 条规则，超过即 `firewallConflict`（无法判定）。
 
-live probe 成功返回 `ready` 和 `supportedFamilies=[ipv4]`，`installedFamilies` 仍为空；其含义是所报后端前置条件完成，不代替角色安装或业务连通证明。失败携带具体原因。返回值保留传入的 instance、`netmap` 与 `roleGeneration` 及本次真实 `observedAt`，调用方不自行把 `probing` 改成 `ready`。
+live probe 成功返回各族 `ready`，`installed` 仍为 false；其含义是所报后端前置条件完成，不代替角色安装或业务连通证明。失败携带具体原因。返回值保留传入的 instance、`netmap` 与 `roleGeneration` 及本次真实 `observedAt`，调用方不自行把 `probing` 改成 `ready`。
 
-已应用的 netmap 带本节点 `exitRole` 时，网络 worker 在应用后调用 live probe。该 Future 的 monitor 预约不可跨线程移动，因此唯一网络 worker 在一个固定线程上驱动，并在停止时显式等待退出；Host、Control 和内核资源仍各只有一个 owner。出口前置条件不满足或角色安装失败时，内容照常 applied：`exitCapability` 为 `unavailable` 及具体原因并上报 State，IPC Status 显示 `Exit unavailable (<原因>)`，peer 与本节点作为源的流量不受影响，也不进入 apply 重试。能力探测按下文周期重新真实探测；观测为 `ready` 而当前内容的角色尚未安装时，网络 worker 以同一内容重新 apply（`Engine::reapply`），由此安装角色。实例在内容应用之后才取得（启动时从保存的 netmap 恢复）时，取得实例即探测一次。只有角色实际安装后才填充 `installedFamilies`。
+已应用的 netmap 带本节点 `exitRole` 时，网络 worker 在应用后调用 live probe。该 Future 的 monitor 预约不可跨线程移动，因此唯一网络 worker 在一个固定线程上驱动，并在停止时显式等待退出；Host、Control 和内核资源仍各只有一个 owner。出口前置条件不满足或角色安装失败时，内容照常 applied：`exitCapability` 为 `unavailable` 及具体原因并上报 State，IPC Status 显示 `Exit unavailable (<原因>)`，peer 与本节点作为源的流量不受影响，也不进入 apply 重试。能力探测按下文周期重新真实探测；观测为 `ready` 而当前内容的角色尚未安装时，网络 worker 以同一内容重新 apply（`Engine::reapply`），由此安装角色。实例在内容应用之后才取得（启动时从保存的 netmap 恢复）时，取得实例即探测一次。只有角色实际安装后各族 `installed` 才为 true；角色在 IPv4 族就绪时安装，其 IPv6 族随之安装，之后各族状态独立变化（[IPv6 出口](/v2/node/exit-design#ipv6)）。
 
 **运行中的角色失败只撤该角色**：已安装角色的 Host owner 因自身内核操作失败（`maintain`／`retire` 在[重读与有界重试](#kernel-change)后仍失败、读到外来状态，或审计）或其自有对象在 owner 之外被删除（见下文 monitor 分类）而停止时，出口 driver 报告 `ended`，网络 worker 只结束出口 runtime：SecureNode 退役全部出口流、各投影随 CT 精确清理，日志 `Exit role failed; withdrawing it alone`；netmap 保持 applied，capture、DNS、邻接、控制中继与本节点作为源的流量不变。随后立即真实探测一次：`ready` 即以同一内容 `Engine::reapply` 重装角色。清理失败时资源保留，owner 按 1 秒起翻倍、上限 60 秒重试清理（每次先重读内核，见 [Exit 设计 · 审计与清理重试](/v2/node/exit-design#exit-audit)），期间探测报 `ownershipConflict`、Status 报 `exit.cleanupPending`；清理完成后的下一次探测为 `ready`，角色以同一内容重装。审计回读本身失败不停止角色（未知，30 秒内重证）。被保留的残留（关闭的门、已消失的出口 TUN 上带 `IIF_DETACHED` 的规则）仍记在出口 journal 与 monitor 期望中，不使 Host 的 capture 校验或新内容安装失败；撤回一个仍在服务的角色失败仍是失败。
 
@@ -130,7 +131,7 @@ incarnation 的类型为 `ExitIncarnation`：`new([u8; 32])`／`bytes() -> [u8; 
 
 角色安装使用 `inet meshway_exit_<installation>` 与 `ip meshway_exit_nat_<installation>` 私有表。只有独立 TUN ingress、Mesh 源、精确活投影、NEW 状态且归属 bit 尚未设置时，FORWARD 才设置 CT mark；已归属 NEW／ESTABLISHED／RELATED 必须继续匹配投影，未归属 ESTABLISHED 不接管。NEW 重传仍受同一资格约束。PREROUTING 只准备专用路由 bit，回程要求 reply direction／原 tuple／归属 mark；最终 postrouting 再检查资格。原方向执行 masquerade，回程 RPDB 将逆 NAT 后的源节点 `/32` 导向出口 TUN。正向绕过客户端 capture 的规则同时匹配出口 iif 与资格生成的 mark。每对（远端、源）的回程规则 `from <远端>/32 to <源>/32 lookup <回程表>` 不带 mark，同时是内核对该对 forward 包的反向路径查找；带 mark 的配对 `unreachable` 规则在表中无路由时终止回程查找。不带 mark 而走到出口 TUN 的包没有归属 mark，被 forward／final 链的 `oif` 规则丢弃。
 
-Mesh 池、loopback、链路本地、组播、保留／广播及出口本机地址不能作为外部转发目的。IPv6 出口拒绝。宿主必须提供实际可用的 TUN／NET_ADMIN、固定路径 nft、内核 ctnetlink、`ip_forward=1` 和已支持的 loose/off 反向路径校验（宿主前提见 [Linux 安装 · 出口宿主](/v2/install#出口宿主)）；无法证明 mark 写入或 flow offload 不冲突时停装。**不要求或修改 `nf_conntrack_acct`**，计数不用于 CT 归属证明。宿主原有防火墙仍可拒绝包。
+Mesh 池、loopback、链路本地、组播、保留／广播及出口本机地址不能作为外部转发目的。IPv6 只在角色承载它时转发，表、集合、回程与清理见 [IPv6 出口](/v2/node/exit-design#ipv6)。宿主必须提供实际可用的 TUN／NET_ADMIN、固定路径 nft、内核 ctnetlink、`ip_forward=1` 和已支持的 loose/off 反向路径校验（宿主前提见 [Linux 安装 · 出口宿主](/v2/install#出口宿主)）；无法证明 mark 写入或 flow offload 不冲突时停装。**不要求或修改 `nf_conntrack_acct`**，计数不用于 CT 归属证明。宿主原有防火墙仍可拒绝包。
 
 所有 nft 变更通过结构化 JSON 原子批提交；工具执行每次两秒预算，全局命令槽最多等待一秒，输入和各输出管道各 8 MiB（容纳 2 × 16,384 个区间的暂存捕获并集及其回读），进程并发与请求／包队列均有界。timeout 使用秒，按原单调／墙钟截止减去预算保守取整，实际资格可提前到期。续期在异步检查后再次核验旧资格，ACK 不延长原 guard。取消或丢失响应后 join 并读回核验，不把工具被杀视作回滚。
 
@@ -201,7 +202,7 @@ owner 每秒把捕获表回读并与收据比对。回读本身失败（工具 2
 
 阻断期间 Status 为 `lastError: underlay`，`lastErrorDetail` 为 `kernelOwnership: unavailable (<check>); proving ownership again` 或 `kernelOwnership: conflict (<check>); stays failed closed until restart`。lab 复现与时间见[验收 · X13](/v2/node/validation#x13-reproof)。
 
-IPC 12 的公开运行状态（`meshway status --json` 原样输出）：
+IPC 13 的公开运行状态（`meshway status --json` 原样输出）：
 
 | 字段 | 含义 |
 | --- | --- |
@@ -221,7 +222,7 @@ IPC 12 的公开运行状态（`meshway status --json` 原样输出）：
 | `node` | 必填可空：已安装 netmap 中的本节点 `hostname` 与 Mesh `addresses`；未安装（down、control-only、准备中）为 null |
 | `peers` | 必填：已安装 netmap 中可见的其他节点（与 `ping` 解析名称的集合相同），按 hostname 排序；未安装为空。字段见下表 |
 | `sockets` | 必填：已安装 netmap 中本节点已绑定的 Native UDP listener 与拨号候选 socket（按地址族、地址排序），其后是绑定正在重试的 listener（按 key）；未安装为空。每项 `resource`（`listener`／`dial` 资源）、`boundAddress`、`receiveBuffer`／`sendBuffer`（内核读回的实际字节数，Linux 为授予值的两倍）、`receiveRequested`／`sendRequested`（配置值，0 时为默认值）与 `unavailable`；读回不足以容纳请求（Linux 上小于请求的两倍，判定唯一见 [UDP 批量接口](/v2/node/transport#udp-批量接口)）表示被 `rmem_max`／`wmem_max` 截断，`meshway status` 标注 `limited`。重试中的 listener 只有 `resource` 与 `unavailable`（最近一次失败，例如 `listener lab-udp cannot bind 0.0.0.0:35000: Address in use (os error 98)`），其余为 null，`meshway status` 显示 `unavailable`；重试绑定成功后同样读回缓冲。规则见 [UDP 批量接口](/v2/node/transport#udp-批量接口) |
-| `exit` | 可省略；包含 target-bound `capability`、已安装 role generation、`activeFlows`、独立的 `dnsUnavailable`（出口 resolver 不能为源解析的原因，与 State [`exitDns`](/v2/state-reference#exitdns) 同源；可用或不服务时为 null），以及可省略的 `cleanupPending`：已停止角色的清理失败、资源保留并在重试时给出 `reason`（最近一次尝试的错误）、`attempts`（含第一次）与 `retryAt`（下次尝试；1 秒起翻倍、上限 60 秒），直接读出口 owner 的现值（每次失败尝试时设置，清理完成即撤回），其余时候省略（见 [Exit 设计 · 审计与清理重试](/v2/node/exit-design#exit-audit)）。`meshway status` 的 Exit 行追加 `· cleanup pending (<reason>; attempt N, retrying)`。未观测的计数保持 null，失去当前执行权限后不显示已安装角色／活流数 |
+| `exit` | 可省略；包含 target-bound `capability`（与 State [`exitCapability`](/v2/state-reference#exitcapability) 同形，按族 `families[]`；IPC 13 起取代 `supportedFamilies`／`installedFamilies`／`status`，`meshway status` 的 Exit 行在角色有两个族时分别显示 `IPv4 …, IPv6 …`）、已安装 role generation、`activeFlows`、独立的 `dnsUnavailable`（出口 resolver 不能为源解析的原因，与 State [`exitDns`](/v2/state-reference#exitdns) 同源；可用或不服务时为 null），以及可省略的 `cleanupPending`：已停止角色的清理失败、资源保留并在重试时给出 `reason`（最近一次尝试的错误）、`attempts`（含第一次）与 `retryAt`（下次尝试；1 秒起翻倍、上限 60 秒），直接读出口 owner 的现值（每次失败尝试时设置，清理完成即撤回），其余时候省略（见 [Exit 设计 · 审计与清理重试](/v2/node/exit-design#exit-audit)）。`meshway status` 的 Exit 行追加 `· cleanup pending (<reason>; attempt N, retrying)`。未观测的计数保持 null，失去当前执行权限后不显示已安装角色／活流数 |
 
 `peers[]` 只投影本节点自己的事实，不生成测量或授权：
 

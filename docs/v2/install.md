@@ -17,7 +17,7 @@
 
 ## 出口宿主
 
-管理员为节点打开 `exitEnabled` 后，daemon 自动探测并安装 IPv4 出口角色；前提不满足时节点照常 running，只报告 `Exit unavailable (<原因>)`（State `exitCapability`），条件满足后约 20 秒内自动安装，无需重启或 `up`。daemon 从不修改宿主 sysctl 或防火墙。判定细节见[出口宿主前置探测](/v2/node/runtime#出口宿主前置探测)。
+管理员为节点打开 `exitEnabled` 后，daemon 自动探测并安装出口角色（IPv4；`exitFamilies` 含 `ipv6` 时同一角色另承载 IPv6，见下文 [IPv6 出口宿主](#ipv6-exit-host)）；前提不满足时节点照常 running，只报告 `Exit unavailable (<原因>)`（State `exitCapability`），条件满足后约 20 秒内自动安装，无需重启或 `up`。daemon 从不修改宿主 sysctl 或防火墙。判定细节见[出口宿主前置探测](/v2/node/runtime#出口宿主前置探测)。
 
 | 项 | 要求 | 不满足时 |
 | --- | --- | --- |
@@ -31,6 +31,20 @@
 Docker 可以与出口共存：Docker 自己的 `DOCKER-*` 链只丢弃进出其网桥的包，不算冲突。Docker 启动时若由它打开 `ip_forward`，会把 `FORWARD` 置为 `policy drop`，这确实挡住出口流量；在 Docker 启动前由系统配置打开 `ip_forward`，或在 `/etc/docker/daemon.json` 中设置 `"ip-forward-no-drop": true`（[Docker 文档](https://docs.docker.com/engine/network/packet-filtering-firewalls/#docker-on-a-router)），FORWARD 保持 accept。也可在 `DOCKER-USER` 中显式放行 `-i tun+`／`-o tun+`（放行全部 `tun*` 接口的转发，是宿主管理员的决定）。
 
 出口节点本身运行在 Docker 容器中时，容器需要 `NET_ADMIN`、`/dev/net/tun`、`--sysctl net.ipv4.ip_forward=1` 和镜像内的 nft（不需要 conntrack 工具）；容器继承的 loose `rp_filter`（2）可用。
+
+### IPv6 出口宿主 {#ipv6-exit-host}
+
+`exitFamilies` 含 `ipv6` 的出口另需（每项只影响 IPv6 族，IPv4 族照常就绪；判定见 [Exit 设计 · IPv6 出口](/v2/node/exit-design#ipv6)）：
+
+| 项 | 要求 | 不满足时 |
+| --- | --- | --- |
+| 转发 | `net.ipv6.conf.all.forwarding=1` | `ipv6ForwardDisabled` |
+| 出口地址与路由 | 至少一个可用的全局单播 IPv6 地址（如 VPS 的 on-link /64 内的地址），且主路由表有通往 Internet 的 IPv6 路由（默认路由或直连公网前缀） | `ipv6NoEgress` |
+| 路由器通告 | 开启 forwarding 后，靠 SLAAC／RA 得到默认路由的接口须设 `net.ipv6.conf.<接口>.accept_ra=2`，或改为静态配置；否则路由与地址在寿命到期后消失 | `ipv6RouterAdvertisementsIgnored` |
+| NAT66 | `ip6` 族 nat 链与 `masquerade`（Linux ≥ 5.1 自带） | `nftUnavailable` |
+| 防火墙 | 同上表，按 IPv6 包判定 `ip6`／`inet` 族；已加载 legacy ip6tables 表时还需 `/usr/sbin/ip6tables-legacy-save`。Docker ≥ 27 默认管理 ip6tables，其 `FORWARD policy drop` 同样挡住 IPv6 出口；firewalld 的 `IPv6_rpfilter` 不算冲突 | `firewallConflict` |
+
+出口地址由内核按 RFC 6724 选源：宿主启用 `use_tempaddr=2` 时多数出口流量以临时（privacy）地址出网，这是宿主自己的选择。容器中的出口另需 `--sysctl net.ipv6.conf.all.disable_ipv6=0`、`--sysctl net.ipv6.conf.all.forwarding=1` 与 IPv6 网络。
 
 ## 高吞吐宿主 {#high-throughput}
 
@@ -152,9 +166,9 @@ meshway version
 ```text
 meshway 0.1.0-alpha.18 (v0.1.0-alpha.18-0-g1234abcd)
 target:   aarch64-unknown-linux-musl
-ipc:      12
+ipc:      13
 wire:     6
-compiler: meshway-netmap-3
+compiler: meshway-netmap-4
 ```
 
 `--json` 输出同名字段（`version`、`git`、`target`、`ipc`、`wire`、`compilerVersion`）。`wire` 是受保护 circuit 版本，同一路径上的节点必须一致；`compilerVersion` 是 netmap 编译契约。该命令不联系 daemon。
@@ -171,6 +185,8 @@ compiler: meshway-netmap-3
 2. **先备齐产物**：开始前确认该版本的全部产物已就绪——Release 的各架构 tar 与 `SHA256SUMS` 已发布并校验，Server 已按该版本构建，Docker lab 等需单独构建的环境（`mise run build:node:linux`）已构建完成。不要在产物仍在排队构建时就升级第一台节点。
 3. **顺序不变**：仍先 Node（CLI 与 daemon 一起）后 Server；Server 升级后，各节点下一次 `sync` 即取得新 netmap 并恢复，无需 `up`。
 4. **窗口长度**＝从第一台节点升级到 Server 升级完成；节点升级本身只需数秒，窗口主要由节点之间的等待与 Server 升级决定。
+
+**升级时的源端 IPv6 捕获**：同一次启动内由旧版本建立、未 `down` 的源端捕获表没有 IPv6 捕获（`underlay-egress.json` 的程序不含 `capture6`），新版本沿用它时把受管与 sink 的 IPv6 出口区间都拒绝（fail closed），IPv6 出口在该节点 `meshway down` 后再 `up`，或主机重启后才生效；IPv4 不受影响。
 
 `wire` 变化时同一路径上新旧节点的帧互不兼容（[数据面 · wire](/v2/node/dataplane)），同样在一个窗口内全部升级。
 

@@ -46,15 +46,15 @@ Config 定义期望和许可，State 定义当前事实。上报 State 不会修
 
 | 字段 | 含义 |
 | --- | --- |
-| `instanceId`／`target` | 实际探测实例和完整 `ConfigurationRef`；必须属于当前职责 |
-| `supportedFamilies` | 后端支持的内层地址族，`ipv4`／`ipv6`；首版执行仅 IPv4 |
-| `installedFamilies` | 实际已安装地址族；不得把支持能力填成安装成功，非空须绑定当前 applied |
-| `status` | `{status: "notRequested"}`、`{status: "probing"}`、`{status: "ready"}` 或 `{status: "unavailable", reason: ...}` |
+| `instanceId`／`netmap`／`roleGeneration` | 实际探测实例、所探测 netmap 与其出口角色的 `generation`；必须属于当前职责 |
+| `families[]` | 角色的每个内层地址族一条（升序、不重复，只含角色的族；没有角色时为空）：`family`（`ipv4`／`ipv6`）、`status`、`installed` |
+| `families[].status` | `{status: "probing"}`、`{status: "ready"}` 或 `{status: "unavailable", reason: ...}`；共享前提失败时各族同一原因 |
+| `families[].installed` | 该族资源已安装；不得把就绪填成安装成功，为 true 须绑定当前 applied |
 | `observedAt` | 原始探测时间；重放不刷新样本 |
 
-原因枚举：`ipForwardDisabled`、`forwardingProbeFailed`、`netAdminMissing`、`nftUnavailable`、`conntrackUnavailable`、`reversePathFilterConflict`、`tunUnavailable`、`firewallConflict`、`routeConflict`、`unsupportedFamily`、`ownershipConflict`。HTTP 使用同一模型的 camelCase 名称。出口 resolver 不可用不否定 IPv4 出口，不是出口能力原因，单独见 [exitDns](#exitdns)。
+原因枚举：`ipForwardDisabled`、`ipv6ForwardDisabled`、`ipv6NoEgress`、`ipv6RouterAdvertisementsIgnored`（三者为 IPv6 族自己的前提，见 [IPv6 出口](/v2/node/exit-design#ipv6)）、`forwardingProbeFailed`、`netAdminMissing`、`nftUnavailable`、`conntrackUnavailable`、`reversePathFilterConflict`、`tunUnavailable`、`firewallConflict`、`routeConflict`、`unsupportedFamily`、`ownershipConflict`。HTTP 使用同一模型的 camelCase 名称。出口 resolver 不可用不否定出口能力，不是出口能力原因，单独见 [exitDns](#exitdns)。
 
-Server 在 applied 前接纳当前 role 的探测与失败；`ready` 还要求 acquire 声明 `feature:exit-ipv4` version 1。能力投影最多存活至原观察后 60 秒与当前 instance lease 截止的交集，绑定同一源 revision／角色；未知、过期、旧实例或旧职责不授予出口可用资格。重启不恢复为 ready。路径检测显示 `exitUnavailable` 与新鲜具体原因，业务许可到期不长于能力预算；netmap 链（实现中）中就绪只是经 `peerFacts` 下发的选择事实（`roleGeneration`／`status`／`installedFamilies`），从不是编译输入；拒绝／不可用仍保留源端 capture。职责、capture 和业务许可见[出口联合许可](/v2/configuration-reference/routing#执行捕获与精确许可)。
+Server 在 applied 前接纳当前 role 的探测与失败；某族 `ready` 还要求 acquire 声明该族后端（`feature:exit-ipv4`／`feature:exit-ipv6` version 1）。能力投影最多存活至原观察后 60 秒与当前 instance lease 截止的交集，绑定同一源 revision／角色；未知、过期、旧实例或旧职责不授予出口可用资格。重启不恢复为 ready。路径检测显示 `exitUnavailable` 与新鲜具体原因，业务许可到期不长于能力预算；netmap 链（实现中）中就绪只是经 `peerFacts` 下发的选择事实（`roleGeneration`／`families`，源端按流的族选择该族 `ready` 且 `installed` 的出口），从不是编译输入；拒绝／不可用仍保留源端 capture。职责、capture 和业务许可见[出口联合许可](/v2/configuration-reference/routing#执行捕获与精确许可)。
 
 ## exitDns {#exitdns}
 

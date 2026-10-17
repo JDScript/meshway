@@ -1,6 +1,8 @@
 # IPv6 出口设计
 
-> **设计稿，未实现。**现行出口只支持 IPv4（[Exit 设计](/v2/node/exit-design)）：受管 IPv6 由源端捕获 sink、出口判定返回 `unsupportedFamily`、出口 TUN 的 IPv6 一律 drop。本页给出 IPv6 出口的方案、推荐与需用户拍板的问题；定稿后行为定义写回 [Exit 设计](/v2/node/exit-design)、[数据面](/v2/node/dataplane)、[Routing](/v2/configuration-reference/routing) 与 [DNS](/v2/configuration-reference/dns)，验收状态只在[验收范围](/v2/node/validation)维护。
+> **I6-1 已实现**（行为定义已写回 [Exit 设计 · IPv6 出口](/v2/node/exit-design#ipv6)，验收见 [exit6/off](/v2/node/validation#exit6-off)）；I6-2（前缀变化退役、出口合成 packet too big）未实现。下文保留设计依据与拍板记录，“现状”一节描述的是 I6-1 之前。
+>
+> **原设计稿说明：**现行出口只支持 IPv4（[Exit 设计](/v2/node/exit-design)）：受管 IPv6 由源端捕获 sink、出口判定返回 `unsupportedFamily`、出口 TUN 的 IPv6 一律 drop。本页给出 IPv6 出口的方案、推荐与需用户拍板的问题；定稿后行为定义写回 [Exit 设计](/v2/node/exit-design)、[数据面](/v2/node/dataplane)、[Routing](/v2/configuration-reference/routing) 与 [DNS](/v2/configuration-reference/dns)，验收状态只在[验收范围](/v2/node/validation)维护。
 
 ## 现状 {#baseline}
 
@@ -273,7 +275,7 @@ DNS plan（`dns_resolution` 的 `noExit`／`viaExit`／`exitPlanRequired`）与�
 
 ## 8. 切片 {#slices}
 
-### I6-1（最小可交付）
+### I6-1（最小可交付，已实现）
 
 | 组件 | 内容 |
 | --- | --- |

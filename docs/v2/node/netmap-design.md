@@ -20,9 +20,9 @@ Server 在配置 revision 固定时为每个节点生成 **netmap**（配置投�
 | --- | --- | --- |
 | `NetmapRef { revision, serial, digest }` | `crates/meshway-model/src/netmap.rs` | `digest` 是内容摘要，不含租约、`revision`、`serial`、`dependencyDigest` |
 | `NetmapLease { netmap, issuedAt, expiresAt }` | 同上 | `NetmapLease::validate` 要求 `issuedAt < expiresAt ≤ issuedAt + 24 h`；配置下限 `MIN_NETMAP_VALIDITY_MS`＝60 s、`MAX_NETMAP_BYTES`＝8 MiB |
-| `NodeNetmap`、`CompiledNetmap { digest, netmap }` | `crates/meshway-configuration/src/netmap/mod.rs` | `NodeNetmap::content_digest`、`CompiledNetmap::verify`／`reference`；`NETMAP_COMPILER_VERSION`＝`meshway-netmap-3` |
+| `NodeNetmap`、`CompiledNetmap { digest, netmap }` | `crates/meshway-configuration/src/netmap/mod.rs` | `NodeNetmap::content_digest`、`CompiledNetmap::verify`／`reference`；`NETMAP_COMPILER_VERSION`＝`meshway-netmap-4` |
 | `ProjectedConfiguration` | `crates/meshway-configuration/src/netmap/projection.rs` | 投影本体，见[内容字段](#内容字段) |
-| `NetmapDelta` 与 `netmap_delta`／`apply_netmap_delta` | `crates/meshway-configuration/src/netmap/delta.rs` | 投影的 nodes／inventory 与 dialers 按键增删，其余整块替换；重建后必须复现目标 digest，serial 必须增大 |
+| `NetmapDelta` 与 `netmap_delta`／`apply_netmap_delta` | `crates/meshway-configuration/src/netmap/delta.rs` | 投影的 nodes／inventory 与 dialers 按键增删，其余（含 `eligibleExits`）整块替换；重建后必须复现目标 digest，serial 必须增大 |
 
 | 字段 | 含义 |
 | --- | --- |
@@ -30,7 +30,7 @@ Server 在配置 revision 固定时为每个节点生成 **netmap**（配置投�
 | `serial` | 每节点单调递增的内容序号；内容 digest 不变则不递增 |
 | `digest` | 规范序列化内容摘要；Node 校验后保存 |
 | `dependencyDigest` | 产生该 serial 的整网投影输入摘要（配置、主体、库存密钥／能力、方案选择及版本、规则集）；与 `revision` 一样随 serial 保留，不进入 `digest` |
-| `compilerVersion` | **`meshway-netmap-3`**：投影的 `ruleSets` 为 digest 引用；`nodes` 带 `region`，`auto` 按它解析且解析结果计入 `egress.generation`（`-2` 起为 digest 引用）。其他版本的 netmap 不通过 `CompiledNetmap::verify`：节点拒收 Server 的回答并报告，已缓存的视为过时、作废重取 |
+| `compilerVersion` | **`meshway-netmap-4`**：`exitRole.families` 取代单一 `family`，投影的 `eligibleExits` 为 `[{ node, families }]` 且列出保留路由中出现的每个合格出口，`nodes` 带 `exitFamilies`（`-3` 起 `nodes` 带 `region`、`auto` 按它解析且解析结果计入 `egress.generation`；`-2` 起投影的 `ruleSets` 为 digest 引用）。其他版本的 netmap 不通过 `CompiledNetmap::verify`：节点拒收 Server 的回答并报告，已缓存的视为过时、作废重取 |
 | `issuedAt`／`expiresAt` | 租约，不进入 `digest`；Server 每次成功查询签发 `now + 有效期`（默认 24 h） |
 
 没有“依赖截止”缩短整份 netmap：可信 DNS 关联作为独立 overlay 按条目携带自己的截止，见[出口与 DNS](#出口与-dns)。
@@ -45,7 +45,7 @@ Server 在配置 revision 固定时为每个节点生成 **netmap**（配置投�
 | `projection` | `ProjectedConfiguration { configuration: ConfigurationView, subjects: SubjectContext, inventory, ruleSets, selectedProfiles, selectionVersions }` | 全量配置的单调子集，复用现有 `ConfigurationView`／`NodeSettingsView`（已脱敏的 listener／dialer 声明）、`AccessRule`／`TopologyRule`／`MeshRoute`、`TrustedNode`、`SubjectContext`（移入 configuration crate）；`ruleSets` 为 `key → RuleSetRef { digest, format, bytes, entries }`，见[规则集 artifact](#rule-set-artifacts) |
 | `dialers` | `String → DialCandidate`（候选键） | 本节点到每个 topology 相邻可见节点的拨号候选与客户端材料；只含 configured 端点，local 端点走事实线 |
 | `egress` | `Option<EgressPlan { generation, rules, fallback, unavailable }>` | 禁用节点为 null；`rules` 为生效规则 `{rule: JSON Pointer, action: EgressAction::{Exit { nodes, via }, Direct, Unmanaged}}`（公共在前），`fallback` 为未命中动作；不含前缀——分割由节点用投影与 artifact 计算（[Routing · 执行捕获](/v2/configuration-reference/routing#执行捕获与精确许可)） |
-| `exitRole` | `Option<ExitRole { generation, family, nat }>` | enabled ∧ exitEnabled ∧ `feature:exit-ipv4` v1 时下发 |
+| `exitRole` | `Option<ExitRole { generation, families, nat }>` | enabled ∧ exitEnabled ∧ `feature:exit-ipv4` v1 时下发；`families` 另含 `ipv6` 当 `exitFamilies` 含它且声明 `feature:exit-ipv6` v1（[IPv6 出口](/v2/node/exit-design#ipv6)） |
 | `dns` | `NetmapDns { meshHosts, resolvers, profile, egress: DnsPlan }` | DNS settings 在投影里；`resolvers` 为每个配置 resolver 键的 `ResolverAction::{Direct, Unmanaged, Exit, Rejected}`；`DnsService` 不含 instance 与截止 |
 
 投影规则（`meshway_policy::compile::netmap::project`）：
@@ -53,7 +53,7 @@ Server 在配置 revision 固定时为每个节点生成 **netmap**（配置投�
 | 部分 | 纳入条件 |
 | --- | --- |
 | 可见节点 V(n) | n 自身 ∪ n 在可用节点（已登记且 enabled）topology 允许图中的连通分量 ∪ 与 n 有任一方向 Access 规则的已登记节点 ∪ 被保留 routing 规则 `via` 的节点（迭代至不动点） |
-| `nodes` | V 中节点的 `NodeSettingsView`（listener 私钥、凭据与敏感头值均已脱敏；含 `region`，中继与出口据此重算源端 `auto`） |
+| `nodes` | V 中节点的 `NodeSettingsView`（listener 私钥、凭据与敏感头值均已脱敏；含 `region`，中继与出口据此重算源端 `auto`；含 `exitFamilies`） |
 | `access` | src 命中 V 且（dst 命中 V 或 dst 含外部选择器）的规则，原顺序 |
 | `topology` | a、b 两端都命中 V 的规则，原顺序 |
 | `routing.mesh` | src、dst 都命中 V 的规则，原顺序 |
@@ -61,7 +61,7 @@ Server 在配置 revision 固定时为每个节点生成 **netmap**（配置投�
 | `groups`、`tagsOwners` | 名称：被保留规则（access／topology／mesh／assignment）以 `group:`／`tag:` 引用的，或含 V 中 User 节点的用户（组）／V 中节点携带的（tag）；成员与 owner 只保留 V 中 User 节点的用户邮箱 |
 | `ruleSets` 引用 | 只保留公共 egress 规则或被保留 profile 的规则在 `match.ruleSets` 引用的 key（含 `<provider>:<name>`）；`configuration.ruleSets` 与 `configuration.ruleSetProviders` 的定义（URL、目录、inline 列表）一律不投影 |
 | `inventory`、`subjects`、`selectedProfiles`、`selectionVersions` | 限于 V；`users`／`members` 只保留 V 中 User 节点的绑定。`selectedProfiles` 只含选中了方案的节点；`selectionVersions` 另含已清除选择的节点（其版本即下一次选择的 CAS 基准，见 [Routing · 清除](/v2/configuration-reference/routing#选择的入口)） |
-| `eligibleExits` | 被保留 egress 规则／profile（含 fallback）的出口集合中排在另一节点之前、且在全量配置中启用并 `exitEnabled` 的节点，升序；不论是否在 V 中，为空时省略。出口集合含源自身时，自身之前的出口只按此判定可用（[Action](/v2/configuration-reference/routing#action)）：出口不在投影里（被 topology 隔离、未登记或已吊销）不等于不可用 |
+| `eligibleExits` | `[{ node, families }]`：被保留 egress 规则／profile（含 fallback）的出口集合，以及被保留 assignment、`auto` 与 V 中节点选择的 `global:<node>` 方案中出现、且在全量配置中启用并 `exitEnabled` 的节点，按节点升序，`families` 为其 `exitFamilies`；不论是否在 V 中，为空时省略。出口资格与“配置上承载哪些族”只按此判定：出口集合含源自身时自身之前的出口（[Action](/v2/configuration-reference/routing#action)），以及 IPv6 出口区间受管还是 sink（[IPv6 出口](/v2/node/exit-design#ipv6)）；出口不在投影里（被 topology 隔离、未登记或已吊销）不等于不合格 |
 | 其余（defaults、addressPools、dns） | 全量 |
 
 正确性依据：节点作为端点或中继参与的每条路径都在它的连通分量里；路径搜索只为 topology 允许的边计预算，routing 每段只以段端点 first-match，被删的规则不可能匹配分量内的段、边或流，因此投影上的结果与全量配置逐项相同（[差分验证](#规模与预算)）。
@@ -147,7 +147,7 @@ Server 挂起请求直至 netmap、可见事实或本节点的 DNS 关联 overla
 
 ### Node 侧
 
-- Control 是唯一联系 Server 的 owner，循环发 `sync`：`netmap` 部分校验、保存、发布 → Engine `reconfig` → 各组件 `apply`；`peerFacts` 部分解码为 `PeerFacts { nodeId, listeners: key → { phase, network, localEndpoints, stunCandidates }, exit: { roleGeneration, status, installedFamilies }, observedAt, expiresAt }`，并入最后已知事实后以 `KnownPeers` 发布，不进入期望内容（[Netmap 发布](/v2/node/control#netmap-发布)）。
+- Control 是唯一联系 Server 的 owner，循环发 `sync`：`netmap` 部分校验、保存、发布 → Engine `reconfig` → 各组件 `apply`；`peerFacts` 部分解码为 `PeerFacts { nodeId, listeners: key → { phase, network, localEndpoints, stunCandidates }, exit: { roleGeneration, families: [{ family, status, installed }] }, observedAt, expiresAt }`，并入最后已知事实后以 `KnownPeers` 发布，不进入期望内容（[Netmap 发布](/v2/node/control#netmap-发布)）。
 - Manager 只读最新 `KnownPeers` 合并候选，不重建 epoch、不换 scope；已有健康通道不因候选变化断开。
 - 事实丢失（请求失败、Server 停机）时保留最后已知事实：`expiresAt` 只表示新鲜度，本机端点继续可拨，最后已知就绪的出口继续可选（排在当前就绪出口之后），STUN 映射按各自截止停用；事实只在被替换、`removed`、离开投影或 netmap 结束时消失，并随 `peer-facts.json` 跨离线重启，见[最后已知事实](/v2/node/connectivity#last-known-facts)。
 
@@ -305,7 +305,7 @@ netmap 租约到期时 **已有流与新流一并终止**：全部 circuit 退�
 | 项 | 归属 | 说明 |
 | --- | --- | --- |
 | 出口决定（源→出口的服务、路径、selection） | netmap 投影上本地编译 | Access ∩ 允许方案 ∩ `exitEnabled` ∩ 能力 ∩ 路径；不要求就绪 |
-| `exitRole`（`ExitRole`） | netmap（出口节点） | 只要 `exitEnabled` 且声明 `feature:exit-ipv4` 就下发；不绑定 instance。职责本身不转发包 |
+| `exitRole`（`ExitRole`） | netmap（出口节点） | 只要 `exitEnabled` 且声明 `feature:exit-ipv4` 就下发（族见上表）；不绑定 instance。职责本身不转发包 |
 | `egress`（规则引用与 fallback；分割与 `EgressCapturePlan` 由节点计算） | netmap（源节点） | 按 revision＋选择版本 |
 | `ExitCapability`（probing／ready／unavailable、families） | 动态事实 | 出口节点 State 上报，经 `sync` 的 `peerFacts` 送给看见该出口的节点 |
 

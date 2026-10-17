@@ -67,7 +67,7 @@ TD3 已将健康观察测试的失效选择器改为当前名称，覆盖其跨�
 
 ## 隔离 Linux 整组（T2）
 
-`exit/off` 是默认矩阵行；使用 `mise run validate:remote -- --ref <commit> --rows exit/off --short` 单独诊断真实 Server／daemon 出口路径。隔离拓扑、组件／进程断言边界与公网分类见 `dev/exit-fixture/README.md`，实际结果见[出口场景](/v2/node/validation#exit-scenario)。
+`exit/off` 与 `exit6/off`（同一 fixture 的双栈变体，E 承载 IPv6／NAT66，阶段见 [exit6/off](/v2/node/validation#exit6-off)）是默认矩阵行；使用 `mise run validate:remote -- --ref <commit> --rows exit/off --short` 单独诊断真实 Server／daemon 出口路径。隔离拓扑、组件／进程断言边界与公网分类见 `dev/exit-fixture/README.md`，实际结果见[出口场景](/v2/node/validation#exit-scenario)。
 
 | 入口 | 行 | 单行耗时 | 验证什么 |
 | --- | --- | ---: | --- |
@@ -80,6 +80,7 @@ TD3 已将健康观察测试的失效选择器改为当前名称，覆盖其跨�
 | `test:runtime:linux --traversal roam --netmap-scenario roam-relay` | roam/relay | ~1.5 分钟 | roam/nat 加公网中继 R：空窗内每 250 ms 一个新流经 R、空窗内启动的流恢复后仍经 R、恢复后的新流直连（R 的收包计数），旧流空窗等于重新穿透，见 [roam/relay 行](/v2/node/validation#roam-relay-row) |
 | `test:runtime:linux --traversal roam --netmap-scenario roam-flap` | roam/flap | ~1 分钟 | A 2 次、合并窗内 3 次与 5 次（链路 down／up）快速切换上联：每次 path 变化一次反应、报告有界、无 circuit 退役、B 跟随最终来源，见 [roam/flap 行](/v2/node/validation#roam-flap-row) |
 | `test:runtime:linux --traversal roam --netmap-scenario roam-exit` | roam/exit | ~1 分钟 | A 是 B 到 WAN 服务 T 的出口并换上联（soft／hard）：能力 `probing`→`ready`、旧出口 TCP 连接结束、新 TCP／UDP 流经新上联、出口角色保持且 `down` 完成、B→A Mesh 流不受影响，见 [roam/exit 行](/v2/node/validation#roam-exit-row) |
+| `test:runtime:linux --traversal exit6` | exit6/off | 全长验收 | 同一拓扑双栈（external／far 为 `3ffe::/16` 内随机 /64、LAN 为 ULA）：两族能力与 IPv6 前置条件、IPv6 TCP／UDP／ICMPv6 经 NAT66、PMTU 与 MSS、AAAA 关联、方案切换、运行时只有 IPv4 的出口快速拒绝与静态 sink、撤回与 quarantine；不跑 `exit/off` 的组件阶段 |
 | `test:runtime:linux --traversal exit` | exit/off | 短模式诊断／全长验收 | 真实 Controller／A／R／E、隔离公网分类目标与私有 LAN；能力／安装、NAT tuple、完整路径、长流／仅接收、撤回／到期／journal／精确清理；内部 ACK／截止边界单独调用正式组件测试 |
 | `test:runtime:linux` | vless/off、trojan/off | 各 ~8 分钟 | 同一 daemon 共同场景；A/B 只经所选 TCP/TLS 承载拨入 R，SecureNode 包流与原路径回复；独立 TLS 材料与精确叶证书验证 |
 

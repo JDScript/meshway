@@ -1,10 +1,10 @@
 # Exit／NAT 设计
 
-> 首版（X1–X7：Linux IPv4 出口、单出口 DNS、可信域名关联、真实出口宿主前置条件）已实现。本页记录设计依据、owner 边界与限制；运行行为定义见[IPv4 出口角色与 NAT 投影](/v2/node/runtime#ipv4-出口角色与-nat-投影)与[数据面](/v2/node/dataplane)，验收状态以[验收范围](/v2/node/validation#exit-scenario)为唯一定义。
+> 首版（X1–X7：Linux IPv4 出口、单出口 DNS、可信域名关联、真实出口宿主前置条件）与 IPv6 出口第一切片（I6-1：管理员按节点开启的 NAT66，见 [IPv6 出口](#ipv6)）已实现。本页记录设计依据、owner 边界与限制；运行行为定义见[IPv4 出口角色与 NAT 投影](/v2/node/runtime#ipv4-出口角色与-nat-投影)与[数据面](/v2/node/dataplane)，验收状态以[验收范围](/v2/node/validation#exit-scenario)为唯一定义。
 
 ## 目标与建议
 
-首版实现 Linux **IPv4 内核转发＋状态型 masquerade**，公网与显式授权的出口 LAN 使用同一准入、流生命周期和撤回机制。IPv6 在模型中明确表达，但首版出口执行拒绝；不能因没有 IPv6 NAT 而让受管 IPv6 从源端本地出网。
+首版实现 Linux **IPv4 内核转发＋状态型 masquerade**，公网与显式授权的出口 LAN 使用同一准入、流生命周期和撤回机制。IPv6 出口为同一机制的第二个地址族（NAT66），由管理员按节点开启，定义见 [IPv6 出口](#ipv6)；未开启或运行时不可用的 IPv6 一律 fail closed，不能让受管 IPv6 从源端本地出网。
 
 权限只有一个来源：Server 签名的 netmap。Control 验签并缓存它，Engine 由它计算本节点唯一的 `Desired`，Policy 在本节点投影上对首包给出 `Decision`（目标、服务、完整路径与出口 selection）；netmap 的 `exitRole` 只是资源职责，不是转发许可。Underlay 的唯一 Kernel owner 管理独立出口 TUN、nftables 私有表、路由、归属 journal 和精确 conntrack 清理；nft 变更经固定路径的 `nft` CLI 以类型化生成的批事务提交，conntrack 经内核 ctnetlink 直接读取与删除。dataplane 保持唯一业务流表、Noise、完整有序路径和最终输出检查。DNS 由现有 DNS owner 扩展为经 Mesh 的受许可 resolver 服务。
 
@@ -136,7 +136,7 @@ sha 应用 IPv4
 
 #### ICMP 错误 {#icmp-errors}
 
-已投影流的 ICMP 错误是 conntrack RELATED 报文，在内核侧按原路回到出口 TUN，再由数据面按[被引用的流](/v2/node/dataplane#icmp-errors)准入；没有第二份白名单。IPv4 首版，受管 IPv6 仍 sink。
+已投影流的 ICMP 错误是 conntrack RELATED 报文，在内核侧按原路回到出口 TUN，再由数据面按[被引用的流](/v2/node/dataplane#icmp-errors)准入；没有第二份白名单。错误类型按族：ICMPv4 3／11，ICMPv6 1／2／3（destination unreachable、packet too big、time exceeded，与数据面能解析的集合一致，不放行 parameter problem）；IPv6 的两种来源与下表相同，回程用同一回程表的 ICMPv6 RPDB 规则。
 
 | 来源 | 内核路径 |
 | --- | --- |
@@ -218,7 +218,7 @@ conntrack 精确删除由 Underlay 唯一的 conntrack 模块经 ctnetlink（`NF
 - 普通查询在解析前选定 resolver，不先向源端 DNS 泄漏问题再按答案选出口。只有名称规则需要先解析才能判定：IP 规则（含只含 IP 的规则集）与答案无关，不论经几个出口，普通查询都用本机系统 resolver（`noExit`）。
 - 有经出口的名称规则或出口 fallback 时，它们共同的那一个出口（含有序 via）解析全部普通查询（`viaExit`）；名称不先在本机解析，因此不会泄漏。
 - 名称规则／出口 fallback 指向不同出口或 via、或出口集合有主备时，需要“哪个名称交哪个出口”的显式 DNS plan，首版未实现：判定为 `exitPlanRequired`，Server 保存配置时即以 `dns_exit_plan_required` 拒绝，不下发到节点再 fail closed。
-- IPv4 首版的出口解析通道可解析 A；AAAA 的存在不能变成 IPv6 路由豁免。已实现为保留真实 DNS 回答语义（AAAA 原样返回，不伪造 NXDOMAIN）；任何受管 IPv6 包由捕获和 permit 双重拒绝。只屏蔽 AAAA 不是防泄漏措施。
+- 出口解析通道对 A 与 AAAA 相同：AAAA 原样返回，不按出口能力过滤、不伪造 NXDOMAIN；IPv6 目的按 [IPv6 出口](#ipv6) 的捕获与准入执行（出口不承载 IPv6 时为 sink 或快速拒绝）。只屏蔽 AAAA 不是防泄漏措施。
 
 ### 可信域名关联 {#trusted-dns-associations}
 
@@ -255,26 +255,63 @@ Server 的完成校验（任一失败即拒绝，不部分接受）：
 **节点侧执行**：
 
 - 判定：`LocalCompiler::decide_with(source, dst, …, &Associations)`。dst 有该源在当前 selection 下的关联名称时，按有效规则顺序 first-match，规则命中条件为“匹配该地址**或**匹配其任一名称”；各名称得到的动作必须相同，否则 `egressConflict`（同 IP 多名称动作不相容即不可执行）。服务为覆盖该地址的 CIDR／`autogroup:internet` 授权与覆盖其任一名称的 `domain:` 授权之并。没有关联的地址只按 IP 分割决定：名称成员不拥有任何地址（`capture` 分割不再因名称规则整体 `egressConflict`）。
-- 捕获：关联地址是节点侧分割的一类输入。Engine 的 `Desired` 在本节点计算的捕获区间上加入本源的关联地址——出口（及冲突）地址并入 `managedIpv4`／`sinkIpv6` 区间，direct／unmanaged 地址移出受管区间（`LocalCompiler::associated_capture`）；selection identity 不变。关联到期即以新的 `Desired` 重新应用、移除该地址；但本节点仍存活、经出口建立的流（唯一流表 `SecureNode::exit_destinations`）的目的地址留在捕获中（`Desired::retaining`，Policy `retained_capture`；只保留先前边界已捕获、新边界释放的 IPv4 地址，不新增），这些流按原判定继续经出口与必经点，流退役后（节点每次唤醒检查，至多约 1 s）才移除；保留期间新到该地址的流按新判定，direct／unmanaged 包在 Mesh 接口上丢弃，绝不从物理网卡带着 Mesh 源出网。netmap 内容变化不保留（数据面按新内容重判全部流）。超出节点侧上限（[Routing · 节点侧上限](/v2/configuration-reference/routing#capture-limits)）时按分割的 fail closed 形态（全范围捕获、IPv6 sink、`routingLimit`）；Server 不再预先校验捕获大小。
+- 捕获：关联地址是节点侧分割的一类输入。Engine 的 `Desired` 在本节点计算的捕获区间上加入本源的关联地址——出口（及冲突）地址并入受管区间（IPv4 `managedIpv4`；IPv6 在名称规则的出口集合承载 IPv6 且源有 Mesh IPv6 时并入 `managedIpv6`，否则 `sinkIpv6`），direct／unmanaged 地址移出受管区间（`LocalCompiler::associated_capture`）；selection identity 不变。关联到期即以新的 `Desired` 重新应用、移除该地址；但本节点仍存活、经出口建立的流（唯一流表 `SecureNode::exit_destinations`）的目的地址留在捕获中（`Desired::retaining`，Policy `retained_capture`；只保留先前边界已受管、新边界不再受管的地址（两族），不新增），这些流按原判定继续经出口与必经点，流退役后（节点每次唤醒检查，至多约 1 s）才移除；保留期间新到该地址的流按新判定，direct／unmanaged 包在 Mesh 接口上丢弃，绝不从物理网卡带着 Mesh 源出网。netmap 内容变化不保留（数据面按新内容重判全部流）。超出节点侧上限（[Routing · 节点侧上限](/v2/configuration-reference/routing#capture-limits)）时按分割的 fail closed 形态（全范围捕获、IPv6 sink、`routingLimit`）；Server 不再预先校验捕获大小。
 - 中继与出口握手：`transit` 对 `(nodes, via)` 也接受“有名称成员且动作完全相同的规则＋源有 `domain:` 或 Internet 授权”，中继不需要关联；出口在自己的投影上以同一 overlay 为源的新流作判定；已建立的流（源、中继与出口各自的唯一流表）在同一内容（同一 `Desired` 编译器）下保留准入时的判定，关联到期不改变它，netmap 内容变化才重判。
 - 关联变化只影响新流：同一内容、不同关联时 `SecureNode` 只换判定缓存，已建立的流和 circuit 不重判（其捕获见上一条的保留）；DNS owner 保留 scope 与已接纳查询。netmap 内容变化时照常以当时的关联重判全部流。
 
 **往返与等待**：首次解析到可用 ＝ 一次 Mesh DNS 往返（含出口解析）＋ E→Server 一次 HTTP 往返＋ Server→A 挂起 `sync` 的回答（半个往返）＋ A 应用；A 的回答至多为此再等到查询截止前（≤ 5 s）。之后在关联寿命内：本机缓存命中（TTL 已截短）零往返；缓存未命中的再次查询仍经 E 解析，但 E 见到仍剩余 ≥ 一半寿命的覆盖条目即不再完成任务，A 见到覆盖条目即刻放行，零额外 Server 往返；同名第二次连接直接按已应用关联建流。
 
-**限制**：域名授权仍是解析地址集合，关联期间对该地址的任何连接（不经名称也一样）都按名称规则判定，不保证同 IP 的应用身份隔离；未经该源 Mesh DNS 得到的地址（硬编码 IP、DoH、其他 resolver、忽略 TTL 的应用缓存）只按 IP 规则判定。只有经出口 resolver 的普通查询产生关联：MagicDNS、`useWithExit` split 与 `DnsPlan::NoExit` 的方案不产生，其名称规则只是不匹配任何地址。AAAA 真实回答也产生关联，但受管 IPv6 包仍由捕获 sink 与准入双重拒绝。多出口／依赖答案选出口的显式 DNS plan 仍未实现。
+**限制**：域名授权仍是解析地址集合，关联期间对该地址的任何连接（不经名称也一样）都按名称规则判定，不保证同 IP 的应用身份隔离；未经该源 Mesh DNS 得到的地址（硬编码 IP、DoH、其他 resolver、忽略 TTL 的应用缓存）只按 IP 规则判定。只有经出口 resolver 的普通查询产生关联：MagicDNS、`useWithExit` split 与 `DnsPlan::NoExit` 的方案不产生，其名称规则只是不匹配任何地址。AAAA 真实回答产生独立的 AAAA 关联，其地址按 [IPv6 出口](#ipv6) 捕获。多出口／依赖答案选出口的显式 DNS plan 仍未实现。
+
+## IPv6 出口（NAT66） {#ipv6}
+
+I6-1 为出口增加 IPv6 族，与 IPv4 共用同一投影、两阶段 ACK、quarantine、精确 conntrack 清理与 RELATED 机制；地址模型为 masquerade 到出口接口的全局 IPv6 地址（内核按 RFC 6724 选源，可能选到临时地址）。设计依据与被拒方案见 [IPv6 出口设计](/v2/node/ipv6-exit-design)。
+
+**开启与角色**：管理员在 `nodes.<id>.exitFamilies` 列出族（默认 `["ipv4"]`，必须含 `ipv4`，否则 `invalid_exit_family`，见 [Nodes](/v2/configuration-reference/nodes)）。只有 `exitEnabled`、`exitFamilies` 含 `ipv6` 且 acquire 声明 `feature:exit-ipv6` v1 时，netmap 的 `exitRole.families` 为 `["ipv4", "ipv6"]`。只有 IPv4 的角色保留原 `generation`；族集合变化即 `generation` 变化，已安装角色重装，其上 IPv4 出口连接断一次。
+
+**资格（静态）**：出口“配置上承载 IPv6”＝启用、`exitEnabled` 且 `exitFamilies` 含 `ipv6`。投影的 `eligibleExits: [{ node, families }]` 列出保留路由中出现的每个合格出口（[Netmap 设计](/v2/node/netmap-design)），分割、判定、DNS plan 与路径检测都经 `matching::Exits::eligible(node, family)` 读取。出口集合含源自身时按族各自求：`[other, self]` 中 other 不承载 IPv6，该源的 IPv6 目的为 direct、IPv4 经 other。
+
+| 源端捕获区间 | 条件 |
+| --- | --- |
+| `managedIpv6`（进本节点 TUN，路由 src 为源的 Mesh IPv6） | 出口动作的 IPv6 区间，动作的出口集合中有配置上承载 IPv6 的出口，且源有 Mesh IPv6 地址 |
+| `sinkIpv6`（OUTPUT 拒绝，TCP reset／ICMPv6 admin-prohibited） | 其他出口动作的 IPv6 区间 |
+| 不捕获 | direct／unmanaged |
+
+上限（16,384 个区间、32,768 条路由）按两族合计，见 [Routing · 节点侧上限](/v2/configuration-reference/routing#capture-limits)。
+
+**判定与运行时选择**：目的地址决定族；源没有该族 Mesh 地址或（IPv6）出口集合无出口承载 IPv6 为 `unsupportedFamily`（静态）；承载但缺 `feature:exit-ipv6` 为 `exitUnavailable`。首包按族选出口：`choose_exit(nodes, family)` 取该族就绪且已安装的第一个（含最后已知就绪），所以同一方案下 IPv4 与 IPv6 可以经不同出口。没有就绪出口时 fail closed：IPv6 包由数据面向本机 TUN 合成 ICMPv6 destination unreachable code 1（administratively prohibited），与本机路径 MTU 错误同一路径与限额（每秒 32 条），Linux 映射为 `EACCES`，应用立即退回 IPv4；绝不 direct。IPv4 照旧静默丢弃。绝对排除另含 `::/128`、`::1/128`、`::ffff:0:0/96`（IPv4-mapped 不是 IPv4 的别名）、`64:ff9b::/96`、`64:ff9b:1::/48`（NAT64 前缀）、`fe80::/10`、`ff00::/8` 与 Mesh 池（唯一列表 `meshway_policy::exit_exclusions`，出口 nft 用同一份）；ULA 只经显式 CIDR Access（出口 LAN）。出口按自己角色的族准入：`admit_forward` 拒绝角色不承载的族，混合族包在每一跳拒绝。
+
+**能力按族**：`exitCapability.families` 每族一条 `{ family, status, installed }`。共享前提（TUN、NET_ADMIN、nft、ctnetlink、所有权）失败时两族同一原因；IPv6 自己的前提：
+
+| 项 | 不满足 |
+| --- | --- |
+| `net.ipv6.conf.all.forwarding = 1`（IPv6 转发只看 `all`） | `ipv6ForwardDisabled`；读失败 `forwardingProbeFailed` |
+| 主表有通往 Internet 分类 IPv6 地址的路由，其接口上有可用（非 tentative／deprecated／dadfailed）的 Internet 分类全局地址 | `ipv6NoEgress` |
+| 该路由由路由器通告安装（`proto ra`）时，接口 `accept_ra = 2`（开启 forwarding 后 `accept_ra=1` 不再处理通告，路由与地址到期后消失） | `ipv6RouterAdvertisementsIgnored` |
+| 宿主防火墙按 IPv6 包判定：遍历 `ip6`／`inet` 族与 `ip6tables-legacy-save`；`fib saddr … iif oif missing` 与 `-m rpfilter` 判为满足（每个投影 ACK 前已证明反向查找落到出口 TUN） | `firewallConflict` |
+
+角色在 IPv4 族就绪时安装，角色的每个族随之安装（`installed`）；IPv6 族的前提之后变化只改变它自己的 `status`，不重装角色、不影响 IPv4 流。源端只选择该族 `ready` 且 `installed` 的出口。Meshway 只检测，不修改宿主 sysctl 或防火墙。
+
+**出口程序**：同一 `inet meshway_exit_<installation>` 过滤表增加 IPv6 集合 `flows6`／`quarantine6`／`echo_flows6`／`echo_quarantine6` 与 `mesh6`，每条按族的规则（资格、回程、RELATED、禁止目的）IPv4 一条、IPv6 一条；NAT 另建 `ip6 meshway_exit_nat6_<installation>` 的 masquerade。conntrack 经 ctnetlink `AF_INET6` 按原 tuple GET／按 id DELETE／回读，ICMPv6 echo 以 `(identifier, sequence)` 投影；mark 选择的 dump 覆盖两族。回程用源 `/128` 的成对规则与路由（与 IPv4 的规则列表分开，共用 128 个对槽位），以及 ICMPv6 RELATED 规则。只有 IPv4 的角色安装与此前完全相同的程序。
+
+**源端捕获表**：`meshway_egress_<installation>` 增加 `sink6`（总是拒绝，先于受管判定）与 IPv6 的活动放行；私有捕获表含受管 IPv6 区间的最小 CIDR 覆盖，第二条 RPDB 选择器（IPv6）查它。旧版本创建、仍在同一启动内的捕获表没有 IPv6 捕获：其门把受管与 sink 的 IPv6 都放在旧集合里拒绝，直到 `meshway down` 或重启后重建（fail closed，见 [Linux 安装 · 升级](/v2/install#compiler-version-upgrade)）。
+
+**MSS 与 PMTU**：TCP MSS clamp 的“经出口”规则按族各一条（IPv6 为通道上限 −60），出口 TUN 入向同时查 `peer6`。出口之外的路由器与出口宿主自己的 packet too big 经 RELATED 逆 NAT 回到源（IPv6 路由器不分片，这是 IPv6 PMTU 的唯一途径）；内层上限低于 1280 的通道不承载 IPv6，经它的 IPv6 出口流本机回 ICMPv6 no route（[数据面 · 通道 MTU](/v2/node/dataplane#channel-mtu)）。
+
+**限制（I6-2 及以后）**：出口对外部超限回包仍只丢弃（不合成 packet too big，IPv4 相同）；出口前缀变化（PD 换前缀）不主动退役绑定旧前缀的流，等内核删除地址；源独立公网 IPv6（路由前缀／NPTv6）与入站准入不支持；IPv6 扩展头与分片同数据面现行范围；真实宿主的 IPv6 出口未验收（[验收范围 · exit6/off](/v2/node/validation#exit6-off)）。
 
 ## 协议与模型
 
 | 面 | 类型（所属 crate 为准，HTTP 经生成 OpenAPI／SDK 发布） |
 | --- | --- |
-| 出口职责 | netmap 的 `exitRole`：`meshway_configuration::netmap::ExitRole { generation, family, nat }`，只授权准备资源；实际 NAT 投影仍需活 flow 与 Policy 判定 |
-| 源端捕获 | 节点由 netmap 规则与 artifact 计算 `Desired::capture`（`EgressCapturePlan`）；受管 IPv6 必须 sink |
+| 出口职责 | netmap 的 `exitRole`：`meshway_configuration::netmap::ExitRole { generation, families, nat }`，只授权准备资源；实际 NAT 投影仍需活 flow 与 Policy 判定 |
+| 源端捕获 | 节点由 netmap 规则与 artifact 计算 `Desired::capture`（`EgressCapturePlan { managedIpv4, managedIpv6, sinkIpv6, … }`），见 [IPv6 出口](#ipv6) |
 | 业务判定 | Policy `Decision`（目标、服务、完整路径、出口 selection）；握手 transcript 绑路径授权摘要，wire v6 |
-| 能力事实 | `NodeState.exitCapability`：`ExitCapability { instanceId, netmap, roleGeneration, supportedFamilies, installedFamilies, status, observedAt }`，`ExitStatus`／`ExitUnavailableReason`；没有观测时省略，不补 ready。报告失败不要求 applied，角色准备失败也不阻断本节点其余内容的 applied（[出口宿主前置探测](/v2/node/runtime#出口宿主前置探测)）。静态 IPv4 后端声明使用 acquire 的 `feature:exit-ipv4` version 1 |
+| 能力事实 | `NodeState.exitCapability`：`ExitCapability { instanceId, netmap, roleGeneration, families: [{ family, status, installed }], observedAt }`，`ExitStatus`／`ExitUnavailableReason`；没有观测时省略，不补 ready。报告失败不要求 applied，角色准备失败也不阻断本节点其余内容的 applied（[出口宿主前置探测](/v2/node/runtime#出口宿主前置探测)）。后端在 acquire 声明 `feature:exit-ipv4`、`feature:exit-ipv6` version 1 |
 | 出口 DNS | netmap 的 `DnsPlan::ViaExit`／`ServeExitResolver` 与 `DnsService`；`NodeState.exitDns`（[exitDns](/v2/state-reference#exitdns)）；关联见[可信域名关联](#trusted-dns-associations) |
 | 判定失败 | `UnavailableReason::ExitUnavailable`／`UnsupportedFamily`／`EgressConflict` 等，由 Policy 在节点判定中给出 |
 
-版本：`compilerVersion` 为 `meshway-netmap-3`，数据面 wire v6（含 DNS circuit 帧）；现有 HTTP 根不变。显式多出口 DNS plan 未建模，Server 保存时以 `dns_exit_plan_required` 拒绝。
+版本：`compilerVersion` 为 `meshway-netmap-4`（`exitRole.families`、`eligibleExits` 带族），数据面 wire v6（含 DNS circuit 帧）；现有 HTTP 根不变。显式多出口 DNS plan 未建模，Server 保存时以 `dns_exit_plan_required` 拒绝。
 
 ## 安全边界与限制清单
 
@@ -284,7 +321,7 @@ Server 的完成校验（任一失败即拒绝，不部分接受）：
 - **hairpin：**首版禁止出口本机／所属虚拟设备／Mesh 池作为外部转发目标，避免 local INPUT、递归 TUN 或 NAT 回卷。出口集合中源节点自己的位置对该源就是 direct（[Routing · Action](/v2/configuration-reference/routing#action)），不产生单节点出口路径。
 - **状态回复：**conntrack 不证明 business flow；TCP／UDP／echo 仍经过唯一 FlowTable。相同 tuple 换 path、profile／selection 或迟到旧回复不能接管新流。
 - **撤回：**路径节点、成员、Access、出口开关、方案或 netmap 租约变化均检查；旧内核投影、DNS ticket、密文／明文队列一起失效。禁用出口后宿主原本开启的 ip_forward 不改回，但 Meshway 转发资格与 NAT 全部撤回。
-- **IPv6：**首版拒绝 IPv6 出口判定，客户端受管 IPv6 负向捕获，出口专用 TUN 的 IPv6 转发 drop；外层 IPv6 carrier 与内层 IPv6 出口能力分别表达。已授权 Mesh IPv6 可继续使用自己的路径。IPv6 出口仍不支持，方案与待定问题见 [IPv6 出口设计](/v2/node/ipv6-exit-design)。
+- **IPv6：**只在管理员开启的出口上执行（[IPv6 出口](#ipv6)）；其余情况客户端 IPv6 出口区间负向捕获、运行时不就绪本机快速拒绝，出口专用 TUN 对角色不承载的族 drop。外层 IPv6 carrier 与内层 IPv6 出口能力分别表达。已授权 Mesh IPv6 可继续使用自己的路径。路由前缀／NPTv6（源独立公网 IPv6）不支持，见 [IPv6 出口设计](/v2/node/ipv6-exit-design)。
 - **MTU／协议：**首版继承现有 IPv4 无 options／分片、TCP／UDP／ICMP echo 范围；明确限制超 MTU UDP。源节点自己超过首跳通道内层上限的包由源数据面回 fragmentation needed，源与出口的 TCP SYN 按通道上限限制 MSS（[通道 MTU](/v2/node/dataplane#channel-mtu)）；出口对来自外部的超限回包（UDP 等）只丢弃，不向外部发送错误。ICMP 错误不当业务 reply：只作为被引用活流的 RELATED 报文按[ICMP 错误](#icmp-errors)放行（内嵌 tuple 校验、每流每秒 10 条），PMTU 发现由此收敛；不开放通用 RELATED helpers。禁止 NFT flowtable／硬件 offload 绕过逐包截止门。
 - **资源与宿主：**每节点流上限、nft set／ct 投影、query 数、命令队列和 buffers 有界。未知表／相同名字的外部资源／mark 冲突停装；mark 归属检查须覆盖外部 nft／connmark 写入，不能只检查当前 RPDB selector。规则丢失监测、部分事务、NET_ADMIN 丢失均停止正向 I/O，保留可核验恢复证据。出口角色自身的失败只停止该角色并以同一内容重装，不撤本节点的 netmap、capture 或 DNS（[运行中的角色失败](/v2/node/runtime#ipv4-出口角色与-nat-投影)）。
 - **投影容量：**活投影 128 个（`exit::program::CAPACITY`）同时是成对回程规则的槽位数：每个 (源, 远端) 对占 RPDB 两个优先级、ICMP RELATED 规则一个，共 257 个，位于捕获规则之前的 512 个保留优先级内；nft 集合与 journal 历史为 4096（`HISTORY`，含 quarantine）。128 对 echo 足够（每个 echo 流在回复后 2 秒结束），对多源业务出口偏小：一个浏览器页面即可并发数十条 TCP。提高活投影上限不受 nft（4096）限制，但成对规则需与投影上限解耦（按对计数，对数仍受保留优先级约束），且每轮安装的归属 dump 与整份 journal 落盘随投影数线性增长（128 投影＋325 quarantine 时 journal 约 190 KB，每轮写两次）；现状保持 128；后续工作包 X9：先把 journal 改为增量记录、测量每轮安装耗时，再把活投影提高到 1024（对数保持 ≤ 128）。按序号的 echo quarantine 另把全出口持续 echo 速率限制在约 13 次／秒（4096 ／ 300 秒）。

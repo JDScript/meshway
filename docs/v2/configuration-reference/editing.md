@@ -54,7 +54,7 @@ JSONC 输入使用 `type: "document"`、expectedRevision、requestId、sourceJso
 | `setAddresses` | NodeId＋各族地址覆盖，省略／null 按地址合同 |
 | `deleteNode` | NodeId；提交时永久删除 |
 
-没有任意 `replace(pointer, JSON)` 操作。NodeSettingsPatch 仅含 hostname、remark、enabled、exitEnabled、dialers 等明确定义字段；不借通用 fields 改身份、凭据或另一张网络。新增 Node 仍由接入流程创建。
+没有任意 `replace(pointer, JSON)` 操作。NodeSettingsPatch 仅含 hostname、remark、enabled、exitEnabled、exitFamilies、region、dialers 等明确定义字段；不借通用 fields 改身份、凭据或另一张网络。新增 Node 仍由接入流程创建。
 
 ListenerUpdate 使用明确的协议字段与更新语义：已有秘密省略或写[保留标记](#secret-retained-marker)为保持，显式值为修改；首次创建按该协议规则补全／要求必要输入。服务端合成完整 Listener 再校验，不能要求表单提交它未读取的旧私钥，也不把保留标记当成新值。
 

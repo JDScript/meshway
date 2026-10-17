@@ -159,19 +159,19 @@ A→C via B
 | `fallback` | 无规则命中时的动作 |
 | `unavailable` | 持有全部 artifact 时分割仍不可用的原因（`egressConflict`、`routingLimit` 等）；可用为 null |
 
-分割语义：按顺序从尚未命中的 IPv4／IPv6 地址中扣除每条规则自己的 CIDR 与所引用集合的合并区间（first-match），余下归 fallback。结果是覆盖两族全部地址的有序、互斥区间，相邻区间动作不同。节点安装的捕获边界只有受管部分：出口动作的 IPv4 区间（受管，进本节点 TUN）与出口动作的 IPv6 区间（`sinkIpv6`，拒绝；已授权 Mesh IPv6 仍走 Mesh 路由，源端没有 IPv6 地址也不省略），direct／unmanaged 是其补集，交宿主路由。fallback 为出口且还剩 IPv4 时为默认捕获。
+分割语义：按顺序从尚未命中的 IPv4／IPv6 地址中扣除每条规则自己的 CIDR 与所引用集合的合并区间（first-match），余下归 fallback。结果是覆盖两族全部地址的有序、互斥区间，相邻区间动作不同。节点安装的捕获边界只有受管部分：出口动作的 IPv4 区间（`managedIpv4`，进本节点 TUN）；出口动作的 IPv6 区间在出口集合中有出口配置上承载 IPv6（`exitFamilies` 含 `ipv6`）且源有 Mesh IPv6 时为 `managedIpv6`（进本节点 TUN），否则为 `sinkIpv6`（拒绝；已授权 Mesh IPv6 仍走 Mesh 路由，源端没有 IPv6 地址也不省略），见 [Exit 设计 · IPv6 出口](/v2/node/exit-design#ipv6)；direct／unmanaged 是其补集，交宿主路由。fallback 为出口且还剩 IPv4 时为默认捕获。
 
-规则引用的集合未持有（artifact 缺失）时该规则 `missingDependency`，分割不可用。名称成员不参与分割；源节点在自己的分割之上加入其可信关联地址（见[域名规则的执行](#域名规则的执行)）：名称规则决定为出口（或名称间冲突）的地址并入受管区间（IPv6 并入 sink），决定为 direct／unmanaged 的移出；关联到期即由 Engine 以新的 `Desired` 移除。加入后超出节点侧上限时全范围捕获、`routingLimit`。不可用时安装全范围 IPv4 捕获与全范围 IPv6 sink，没有 direct／unmanaged 例外，新流拒绝；不能把 DNS 查询猜成普通 IP 包的业务身份。
+规则引用的集合未持有（artifact 缺失）时该规则 `missingDependency`，分割不可用。名称成员不参与分割；源节点在自己的分割之上加入其可信关联地址（见[域名规则的执行](#域名规则的执行)）：名称规则决定为出口（或名称间冲突）的地址并入受管区间（IPv6 在出口集合承载 IPv6 且源有 Mesh IPv6 时并入 `managedIpv6`，否则 sink），决定为 direct／unmanaged 的移出；关联到期即由 Engine 以新的 `Desired` 移除。加入后超出节点侧上限时全范围捕获、`routingLimit`。不可用时安装全范围 IPv4 捕获与全范围 IPv6 sink，没有 direct／unmanaged 例外，新流拒绝；不能把 DNS 查询猜成普通 IP 包的业务身份。
 
 #### 节点侧上限 {#capture-limits}
 
 | 上限 | 值 | 计数 |
 | --- | --- | --- |
-| 捕获区间 | 16,384 | 受管 IPv4 区间＋sink IPv6 区间（nft interval 元素） |
-| 捕获路由 | 32,768 | 受管 IPv4 区间的最小 CIDR 覆盖（私有捕获表路由） |
+| 捕获区间 | 16,384 | 受管 IPv4＋受管 IPv6＋sink IPv6 区间合计（nft interval 元素） |
+| 捕获路由 | 32,768 | 受管 IPv4 与受管 IPv6 区间的最小 CIDR 覆盖合计（私有捕获表路由） |
 | 计算量 | 2²⁴ 次区间操作 | 一次分割计算 |
 
-超限时该方案 `unavailable: routingLimit`（全范围捕获），节点对一切外部目的 fail closed，路径检测对外部目的同样给出 `outcome: unavailable`（原因同 `capture.unavailable`）。配置校验对每个可分配方案计算同一分割，超限给出警告 `egress_partition_limit`（`params.profile`／`ranges`／`maxRanges`／`routes`／`maxRoutes`，路径为方案或 `/routing/egress/rules`；分割计算先耗尽其工作预算时没有计数，同一警告只带 `profile` 与 `work`（预算），节点同样 fail closed）；路径检测的 `profile.capture` 给出 `{managedIpv4, sinkIpv6, routes, unavailable}`，与节点 IPC `NetmapStatus.capture`（CLI `meshway status` 的 Egress 行）同一计算；节点侧的数字另含本源当前生效的可信域名关联（按实际安装的捕获边界计数，关联变化或到期后随之更新）。`geoip:cn` 的直连方案（补集）约 4,341 个受管 IPv4 区间、12,680 条路由。
+超限时该方案 `unavailable: routingLimit`（全范围捕获），节点对一切外部目的 fail closed，路径检测对外部目的同样给出 `outcome: unavailable`（原因同 `capture.unavailable`）。配置校验对每个可分配方案计算同一分割，超限给出警告 `egress_partition_limit`（`params.profile`／`ranges`／`maxRanges`／`routes`／`maxRoutes`，路径为方案或 `/routing/egress/rules`；分割计算先耗尽其工作预算时没有计数，同一警告只带 `profile` 与 `work`（预算），节点同样 fail closed）；路径检测的 `profile.capture` 给出 `{managedIpv4, managedIpv6, sinkIpv6, routes, unavailable}`（方案级预览假定源有 Mesh IPv6），与节点 IPC `NetmapStatus.capture`（CLI `meshway status` 的 Egress 行）同一计算；节点侧的数字另含本源当前生效的可信域名关联（按实际安装的捕获边界计数，关联变化或到期后随之更新）。`geoip:cn` 的直连方案（补集）约 4,341 个受管 IPv4 区间、12,680 条路由。
 
 上限由实测定出（`mise run perf:capture`，Linux 6.8／AMD 9950X、Linux 7.0／OrbStack VM，nftables 1.0.9；原始结果在私有证据 `.meshway/validation/r3/perf/`）：
 
@@ -188,9 +188,9 @@ nft 进程峰值 RSS 约 1.6 KB／区间（16,384 区间 28 MB）。带回显的
 
 节点首包判定（`LocalCompiler`）对一条源流给出 `Decision`：`source`、精确 `destination`、`target`（`mesh { node }`，或 `exit { nodes, via }`：有序主备出口及其前的有序中转）、该源对该目的可用的全部 `services`、全部允许的 `paths`（完整节点序列与按实际拨号方分组的承载候选）以及出口决定的 `selection`。范围分类只限制精确目的，不授予范围内其他目的；回复沿原完整路径返回，由数据面绑定。`selection` 即源端 `egress.generation`：不含 revision，无关配置变更不改变它，任何选择切换（含切回同名方案）与 `auto` 解析结果的变化都改变它；数据面握手把它绑入路径授权摘要，出口节点从自己的投影重算源端 selection 并核对。
 
-出口节点的 netmap 带 `exitRole: ExitRole { generation, family, nat }`：当前固定为 `ipv4`／`masquerade`，`generation` 是网络、节点、family 与 nat 的 digest，角色内容不变即不变（不含 revision、选择或 instance）。只有节点 `exitEnabled` 且 inventory 中有 `feature:exit-ipv4` v1 能力时才有角色；角色本身不转发包，转发仍需上述 `Decision`。
+出口节点的 netmap 带 `exitRole: ExitRole { generation, families, nat }`：`families` 为 `["ipv4"]`，或节点 `exitFamilies` 含 `ipv6` 且 inventory 有 `feature:exit-ipv6` v1 时为 `["ipv4", "ipv6"]`；`nat` 固定 `masquerade`。`generation` 是网络、节点、族集合与 nat 的 digest（只有 IPv4 的角色与此前相同），角色内容不变即不变（不含 revision、选择或 instance）。只有节点 `exitEnabled` 且 inventory 中有 `feature:exit-ipv4` v1 能力时才有角色；角色本身不转发包，转发仍需上述 `Decision`。
 
-出口能力未知、过期或失败时返回 `unavailable/exitUnavailable`，保留捕获边界；路径检测的 `targets[].exitUnavailableReason` 展示新鲜的具体失败。IPv6 出口返回 `unsupportedFamily`。能力事实不能增加 Access 或绕过 topology。真实出口安装与包流验收范围见 [Node](/v2/node)。
+出口能力未知、过期或失败时返回 `unavailable/exitUnavailable`，保留捕获边界；路径检测按目的的族判定，`targets[].exitUnavailableReason` 展示该族新鲜的具体失败（如 `ipv6ForwardDisabled`）。目的的族在配置上不被承载（源无该族 Mesh 地址，或 IPv6 目的的出口 `exitFamilies` 不含 `ipv6`）为 `unsupportedFamily`；名称与 `autogroup:internet` 按 IPv4 判定。能力事实不能增加 Access 或绕过 topology。真实出口安装与包流验收范围见 [Node](/v2/node)。
 
 新方案分配含主体未获授权的目标时拒绝保存。后续身份／access／出口撤销必须可以执行，不能被旧方案引用阻止；受影响执行变为拒绝／不可用，不偷偷恢复 direct 或其他更宽路径。
 
