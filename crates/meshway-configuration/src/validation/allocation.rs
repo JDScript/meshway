@@ -78,9 +78,12 @@ pub fn allocate_addresses(
             node.addresses.ipv4 = Input::Value(selected);
         }
         if allocate6 {
+            // Never the pool's all-zero address: it is the Subnet-Router
+            // anycast address (RFC 4291 §2.6.1), to which hosts holding the
+            // pool route send no ICMPv6 error.
             let selected = v6
                 .iter()
-                .flat_map(|p| p.hosts())
+                .flat_map(|p| p.hosts().filter(move |ip| *ip != p.network()))
                 .take(used.len() + 1)
                 .find(|ip| !used.contains(&IpAddr::V6(*ip)));
             if selected.is_none() && !v6.is_empty() {

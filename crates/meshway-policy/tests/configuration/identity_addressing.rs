@@ -151,3 +151,22 @@ fn ipam_point_to_point_and_single_address_allocations_keep_their_boundaries() {
     c.nodes.insert(id(1), n);
     assert!(normalize(c, &context()).is_ok());
 }
+
+/// An initial IPv6 allocation never takes the pool's all-zero address (the
+/// Subnet-Router anycast address, to which an exit routing the pool sends no
+/// ICMPv6 error); IPv4 allocation is unchanged.
+#[test]
+fn ipv6_allocation_skips_the_subnet_router_anycast_address() {
+    let mut c = input();
+    let mut fresh: NodeSettingsInput = serde_json::from_str(
+        r#"{"hostname":"node-1","identity":{"type":"user","user":"alice@example.com"}}"#,
+    )
+    .unwrap();
+    fresh.exit_enabled = false;
+    c.nodes.insert(id(1), fresh);
+    let allocated =
+        allocate_addresses(&mut c, &initial(), &Default::default(), &Default::default()).unwrap();
+    let addresses = &allocated[&id(1)];
+    assert_eq!(addresses.ipv6, Some("fd42:7a65:8800::1".parse().unwrap()));
+    assert_eq!(addresses.ipv4, Some("100.80.0.1".parse().unwrap()));
+}
