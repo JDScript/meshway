@@ -37,7 +37,13 @@ const plan = (
       allowed: [],
       locked: false,
       requested: false,
-      capture: { managedIpv4: 0, sinkIpv6: 0, routes: 0, unavailable: null },
+      capture: {
+        managedIpv4: 0,
+        managedIpv6: 0,
+        sinkIpv6: 0,
+        routes: 0,
+        unavailable: null,
+      },
     },
     route: null,
     outcome: allowed

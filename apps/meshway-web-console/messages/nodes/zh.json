@@ -211,6 +211,7 @@
   "nodes_settings_dialers_mode": "拨号",
   "nodes_settings_enabled": "启用业务执行",
   "nodes_settings_exit": "可作为出口",
+  "nodes_settings_exit_ipv6": "出口同时承载 IPv6",
   "nodes_settings_identity": "标签",
   "nodes_settings_identity_switch": "应用后这个设备改为标签身份，不再按用户和组授权",
   "nodes_settings_pools": "地址池：{pools}；留空表示不分配这一族地址",

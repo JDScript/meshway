@@ -300,6 +300,15 @@ function SettingsBody({
                   setSettings({ ...value, exitEnabled })
                 }
               />
+              <SwitchRow
+                id={field("exit-ipv6")}
+                label={m.nodes_settings_exit_ipv6()}
+                checked={value.exitIpv6}
+                disabled={!editable}
+                onCheckedChange={(exitIpv6) =>
+                  setSettings({ ...value, exitIpv6 })
+                }
+              />
             </div>
           </div>
         </Section>

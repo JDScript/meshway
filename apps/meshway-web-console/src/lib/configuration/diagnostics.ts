@@ -278,6 +278,7 @@ const TEXT: Record<IssueCode, (p: Params, node: NodeNamer) => string> = {
     }),
   invalid_country_code: (p) =>
     m.configuration_issue_invalid_country_code({ value: p.value ?? "?" }),
+  invalid_exit_family: () => m.configuration_issue_invalid_exit_family(),
   exit_outside_access: (p, node) =>
     m.configuration_issue_exit_outside_access({
       node: node(p.node ?? "?"),

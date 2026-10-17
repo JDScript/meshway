@@ -121,16 +121,14 @@ export function NodeOverview({
       at: problem.observedAt,
       tone: "destructive" as const,
     })),
-    ...(exit?.status.status === "unavailable"
-      ? [
-          {
-            key: "exit",
-            text: m.nodes_alert_exit({ reason: exitStatusText(exit.status) }),
-            at: exit.observedAt,
-            tone: "warning" as const,
-          },
-        ]
-      : []),
+    ...(exit?.families ?? [])
+      .filter((entry) => entry.status.status === "unavailable")
+      .map((entry) => ({
+        key: `exit:${entry.family}`,
+        text: m.nodes_alert_exit({ reason: exitStatusText(entry.status) }),
+        at: exit?.observedAt,
+        tone: "warning" as const,
+      })),
     ...(exitDns?.status.status === "unavailable"
       ? [
           {

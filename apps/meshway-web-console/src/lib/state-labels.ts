@@ -74,6 +74,10 @@ export const netmapText = (netmap: NetmapRef) =>
 
 const exitUnavailableLabel: Record<ExitUnavailableReason, () => string> = {
   ipForwardDisabled: () => m.state_exit_ip_forward_disabled(),
+  ipv6ForwardDisabled: () => m.state_exit_ipv6_forward_disabled(),
+  ipv6NoEgress: () => m.state_exit_ipv6_no_egress(),
+  ipv6RouterAdvertisementsIgnored: () =>
+    m.state_exit_ipv6_router_advertisements_ignored(),
   forwardingProbeFailed: () => m.state_exit_forwarding_probe_failed(),
   netAdminMissing: () => m.state_exit_net_admin_missing(),
   nftUnavailable: () => m.state_exit_nft_unavailable(),

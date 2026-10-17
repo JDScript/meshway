@@ -707,6 +707,7 @@
   "configuration_issue_auto_target_unknown": "The automatic profile names {profile}, which does not exist or is automatic itself",
   "configuration_issue_conflicting_assignments": "Overlaps assignment {index} but has another default or lock",
   "configuration_issue_invalid_country_code": "{value} is not a two-letter uppercase country or region code",
+  "configuration_issue_invalid_exit_family": "Exit families must include IPv4 and name each family once",
   "configuration_issue_exit_outside_access": "{node} has no access to {destination}, so it cannot go there through an exit",
   "configuration_issue_global_exit_requires_internet": "{node} has no access to the internet, so it cannot use {profile}",
   "configuration_issue_exit_fallback_requires_internet": "{node} has no access to the internet, so profile {profile} cannot fall back to an exit",

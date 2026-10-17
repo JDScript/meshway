@@ -211,6 +211,7 @@
   "nodes_settings_dialers_mode": "Dialers",
   "nodes_settings_enabled": "Runs business traffic",
   "nodes_settings_exit": "May be an exit",
+  "nodes_settings_exit_ipv6": "Exit also carries IPv6",
   "nodes_settings_identity": "Tags",
   "nodes_settings_identity_switch": "Applied, this device takes a Tag identity and no longer gets user or group grants",
   "nodes_settings_pools": "Pools: {pools}; empty: no address of that family",

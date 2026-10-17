@@ -154,21 +154,40 @@ const familyText = (families: readonly string[]) =>
 function Exit({ report, now }: { report: NodeState; now: number }) {
   const exit = report.exitCapability
   const dns = report.exitDns
-  if ((!exit || exit.status.status === "notRequested") && !dns) return null
+  const families = exit?.families ?? []
+  if (families.length === 0 && !dns) return null
+  const installed = families
+    .filter((entry) => entry.installed)
+    .map((entry) => entry.family)
+  // One family reads as before; each of two is named.
+  const [only] = families
+  const statusText =
+    families.length === 1 && only
+      ? exitStatusText(only.status)
+      : families
+          .map(
+            (entry) =>
+              `${familyText([entry.family])} ${exitStatusText(entry.status)}`
+          )
+          .join("；")
   return (
     <Section title={m.nodes_exit()}>
       <div className={GRID}>
         <div className="col-span-2">
           <Tile
             label={m.nodes_exit_status()}
-            tone={exit?.status.status === "unavailable" ? "warning" : undefined}
+            tone={
+              families.some((entry) => entry.status.status === "unavailable")
+                ? "warning"
+                : undefined
+            }
           >
-            {exit ? exitStatusText(exit.status) : "—"}
+            {families.length > 0 ? statusText : "—"}
           </Tile>
         </div>
         <Tile label={m.nodes_exit_families()}>
-          {exit && exit.installedFamilies.length > 0 ? (
-            familyText(exit.installedFamilies)
+          {installed.length > 0 ? (
+            familyText(installed)
           ) : (
             <span className="font-normal text-muted-foreground">
               {m.nodes_exit_families_none()}

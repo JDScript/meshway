@@ -104,6 +104,8 @@ export type NodeSettingsValue = {
   remark: string
   enabled: boolean
   exitEnabled: boolean
+  /** Whether the node, as an exit, also carries IPv6 (`exitFamilies`). */
+  exitIpv6: boolean
   /** ISO 3166-1 alpha-2 region `auto` resolves by; null when undeclared. */
   region: string | null
   /** null: inherits the network's defaults (the field is omitted). */
@@ -115,6 +117,7 @@ export const settingsBase = (view: NodeSettingsView): NodeSettingsValue => ({
   remark: view.remark,
   enabled: view.enabled,
   exitEnabled: view.exitEnabled,
+  exitIpv6: (view.exitFamilies ?? ["ipv4"]).includes("ipv6"),
   region: view.region ?? null,
   dialers: view.dialers ? dialerUpdate(view.dialers) : null,
 })
@@ -143,6 +146,10 @@ export function settingsOf(
     remark: fields.remark ?? value.remark,
     enabled: fields.enabled ?? value.enabled,
     exitEnabled: fields.exitEnabled ?? value.exitEnabled,
+    exitIpv6:
+      fields.exitFamilies !== undefined
+        ? fields.exitFamilies.includes("ipv6")
+        : value.exitIpv6,
     region: fields.region !== undefined ? fields.region : value.region,
     dialers: fields.dialers !== undefined ? fields.dialers : value.dialers,
   }
@@ -159,6 +166,8 @@ function settingsPatch(
   if (value.enabled !== base.enabled) patch.enabled = value.enabled
   if (value.exitEnabled !== base.exitEnabled)
     patch.exitEnabled = value.exitEnabled
+  if (value.exitIpv6 !== base.exitIpv6)
+    patch.exitFamilies = value.exitIpv6 ? ["ipv4", "ipv6"] : ["ipv4"]
   if (value.region !== base.region) patch.region = value.region
   if (!sameDialerChoice(value.dialers, base.dialers))
     patch.dialers = value.dialers
