@@ -33,6 +33,8 @@ struct DiscoveryAuthority {
     epoch: StateEpoch,
     deadline: Deadline,
     servers: StunServers,
+    /// The response's Server `asOf` and the moment it was applied here.
+    as_of: (u64, Instant),
 }
 
 impl DiscoveryContext {
@@ -61,6 +63,14 @@ impl DiscoveryContext {
     }
     pub fn now_ms(&self) -> Result<u64, Error> {
         self.inner.deadline.now_ms().map_err(Error::from)
+    }
+    /// The Server's clock now, counted from this context's `asOf` on the
+    /// monotonic clock. It is never ahead of the Server's own reading, whatever
+    /// this Node's wall clock says, so a lifetime the Server bounds by its own
+    /// clock is expressed in it.
+    pub fn server_now_ms(&self) -> u64 {
+        let (as_of, applied) = self.inner.as_of;
+        as_of.saturating_add(u64::try_from(applied.elapsed().as_millis()).unwrap_or(u64::MAX))
     }
     pub fn ensure_current(&self) -> Result<(), Error> {
         if !self.inner.deadline.valid() {
@@ -299,6 +309,7 @@ impl Control {
                 epoch: state_epoch,
                 deadline: Deadline::from_response(started.clone(), expires_at_ms)?,
                 servers: stun_servers,
+                as_of: (as_of_ms, Instant::now()),
             }),
         };
         let mut views = Vec::new();
@@ -515,9 +526,8 @@ impl Control {
             || request.peer_candidate.socket.node_id != request.peer_id
             || request.expires_at_ms > context.expires_at_ms()
             || request.expires_at_ms
-                > self
-                    .clock
-                    .now()?
+                > context
+                    .server_now_ms()
                     .saturating_add(MAX_UDP_TRAVERSAL_LIFETIME_MS)
         {
             return Err(Error::Contract);
@@ -662,9 +672,11 @@ pub fn prepare_request(
         netmap: context.netmap(),
         state_epoch: context.state_epoch(),
         request_id: RequestId::new(crate::random_id()?).map_err(|_| Error::Cryptography)?,
+        // The Server bounds the lifetime by its own clock, from receipt; a Node
+        // clock ahead of it must not make every request inadmissible.
         expires_at_ms: context.expires_at_ms().min(
             context
-                .now_ms()?
+                .server_now_ms()
                 .saturating_add(MAX_UDP_TRAVERSAL_LIFETIME_MS),
         ),
         peer_id: peer.socket.node_id,
