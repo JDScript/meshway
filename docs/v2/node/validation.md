@@ -417,7 +417,7 @@ Planck 23 行矩阵 `20261016T150131Z-1f0563e0`（`0ecab400`，并行 8，墙钟
 
 **DNS 故障边沿**。OPS16 前 planck（alpha.16）23:03:54 实测 Status 为 `synchronizing`／`suspended`、`applied` null 而 Mesh 包照通，23:05 重启后消失；按日志与代码，该状态始于 17:59:57（16:49 的 OPS15 采样仍为 running）：日志 17:59:57.946 `DNS owner health check failed`（`observe_deadline`，`abandoned after 4490 ms`），7 ms 后 `DNS owner recovered its system installation`，没有 `Required DNS component failed`／`recovered`；22:29:56–22:30:10 的 502／ServerBusy 只经 Control 发布 `retrying` → `controlReady`（刷新 `observedAt`），无 Engine 调用。worker 的 `Health::failed` 把“已重证”的故障视为非失败，于是包平面未撤回也未重装，DNS 查询许可停在撤回、故障停在未清（Status 的安装不再 current）。lax 同时段日志已随 lab 重建丢失。单测 `worker::lifecycle::tests::a_fault_re_proved_before_the_plane_looked_is_one_failure_and_one_recovery`（未确认的已重证故障 → 失败 → 恢复 → 确认后不再失败 → 新故障再失败）与 DNS actor 的 `failed_owner_keeps_its_fault_while_it_retries_recovery_until_it_succeeds`（确认前已重证的故障仍是失败）；把 `Health::failed` 改回旧语义时两者失败，X15 的 `…without_spinning` 仍通过。证据 `.meshway/validation/s4/planck-evidence/`、`.meshway/validation/s4/unit/`。
 
-S4_MATRIX_PLACEHOLDER
+Planck 23 行矩阵 `20261017T003157Z-9cccbf41`（`e7a01397`，并行 8，墙钟 1,099 秒，同机无其他矩阵）全部通过，无遗留容器／网络。证据 `.meshway/validation/s4/matrix/`。
 
 ### 当前验证证据
 
