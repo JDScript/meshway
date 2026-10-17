@@ -144,7 +144,8 @@ class ExitEchoTests(unittest.TestCase):
 
         def sample(observed, status="ready", role="r"):
             return {"exit": {"installedRole": role, "capability": {
-                "status": {"status": status}, "observedAt": "2026-10-15T06:23:%06.3fZ" % observed}}}
+                "families": [{"family": "ipv4", "status": {"status": status}, "installed": role is not None}],
+                "observedAt": "2026-10-15T06:23:%06.3fZ" % observed}}}
         # The sample before the stop still shows the old ready capability;
         # the reinstalled one is observed at 56.625 and acknowledged at 57.283.
         window = [sample(48.0), sample(56.2, "probing"), sample(56.625)]
@@ -160,7 +161,8 @@ class ExitEchoTests(unittest.TestCase):
         stopped = [sample(48.0), sample(56.2, "probing")]
         for after in (sample(56.625, "probing"),
                       {"exit": {"installedRole": "r", "capability": {
-                          "status": {"status": "unavailable", "reason": "ownershipConflict"},
+                          "families": [{"family": "ipv4", "installed": True,
+                                        "status": {"status": "unavailable", "reason": "ownershipConflict"}}],
                           "observedAt": "2026-10-15T06:23:56.625Z"}}},
                       {"exit": {"installedRole": "r", "capability": None}},
                       {"exit": None},

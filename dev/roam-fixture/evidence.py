@@ -295,13 +295,16 @@ def exit_checks(report, cell, measured, phase, name, events, manifest):
     routed = cell["routedAt"]
     samples = cell.get("exitCapability") or []
 
-    def status_of(value):
+    def entry_of(value):
         capability = (value or {}).get("server") or {}
-        status = capability.get("status")
+        return next((entry for entry in capability.get("families") or [] if entry.get("family") == "ipv4"), {})
+
+    def status_of(value):
+        status = entry_of(value).get("status")
         return status.get("status") if isinstance(status, dict) else status
 
     timeline = [{"atS": round(sample["at"] - routed, 3), "status": status_of(sample["value"]),
-                 "installed": ((sample["value"] or {}).get("server") or {}).get("installedFamilies")}
+                 "installed": ["ipv4"] if entry_of(sample["value"]).get("installed") else []}
                 for sample in samples]
     probing = next((item["atS"] for item in timeline if item["status"] == "probing" and item["atS"] >= -0.5), None)
     ready = next((item["atS"] for item in timeline

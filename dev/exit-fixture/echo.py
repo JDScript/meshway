@@ -86,7 +86,8 @@ def outage_window(log, window, deleted_at):
     ready = None
     for sample in window:
         capability = (sample["exit"] or {}).get("capability") or {}
-        if (sample["exit"] or {}).get("installedRole") and (capability.get("status") or {}).get("status") == "ready":
+        entry = next((entry for entry in capability.get("families") or [] if entry.get("family") == "ipv4"), {})
+        if (sample["exit"] or {}).get("installedRole") and (entry.get("status") or {}).get("status") == "ready":
             observed = datetime.datetime.fromisoformat(capability["observedAt"].replace("Z", "+00:00")).timestamp()
             if observed > stopped[0]:
                 ready = observed

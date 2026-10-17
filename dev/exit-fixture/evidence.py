@@ -3,6 +3,19 @@ import json
 import re
 
 
+def family_status(capability, family="ipv4"):
+    """One family's reported status of an exit capability (`families[]`)."""
+    for entry in (capability or {}).get("families") or []:
+        if entry.get("family") == family:
+            return entry.get("status")
+    return None
+
+
+def installed_families(capability):
+    """The families an exit capability reports installed."""
+    return [entry["family"] for entry in (capability or {}).get("families") or [] if entry.get("installed")]
+
+
 def conntrack_flows(text):
     flows = []
     for line in text.splitlines():

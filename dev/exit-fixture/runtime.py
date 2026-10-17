@@ -586,8 +586,8 @@ def execute(report, artifacts, runtime_os, platform, short, load):
             if node not in states: return False
             state = states[node]
             reported = ((state.get("report") or {}).get("report") or {}).get("exitCapability")
-            matched = (capability.get("status") == {"status": "unavailable", "reason": "ipForwardDisabled"}
-                    and capability.get("installedFamilies") == [] and (value.get("exit") or {}).get("installedRole") is None
+            matched = (evidence.family_status(capability) == {"status": "unavailable", "reason": "ipForwardDisabled"}
+                    and evidence.installed_families(capability) == [] and (value.get("exit") or {}).get("installedRole") is None
                     # An unavailable exit role is a reported fact: the netmap is applied.
                     and running(value) and reported == capability and state["freshness"] == "current")
             if matched:
@@ -608,10 +608,10 @@ def execute(report, artifacts, runtime_os, platform, short, load):
         def installed():
             value = status("e")
             capability = (value.get("exit") or {}).get("capability") or {}
-            matched = (capability.get("status") == {"status": "ready"}
+            matched = (evidence.family_status(capability) == {"status": "ready"}
                     and capability.get("instanceId") == (value.get("instance") or {}).get("instanceId")
-                    and capability.get("supportedFamilies") == ["ipv4"]
-                    and capability.get("installedFamilies") == ["ipv4"]
+                    and [entry["family"] for entry in capability.get("families") or []] == ["ipv4"]
+                    and evidence.installed_families(capability) == ["ipv4"]
                     and capability.get("netmap") == value.get("applied")
                     and bool((value.get("exit") or {}).get("installedRole"))
                     and running(value))
