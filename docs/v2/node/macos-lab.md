@@ -7,6 +7,7 @@
 | 项 | 取值 |
 | --- | --- |
 | VM 名称 | `meshway-mac-vm` |
+| 实际系统 | macOS 26.6.2 (25G83) arm64；4 CPU／4096 MiB |
 | 基础镜像 | `ghcr.io/cirruslabs/macos-tahoe-vanilla@sha256:eeec54bfe1f076e27786c5d92b89187a05b1d109b5071eb2dcdf02d596e34640` |
 | 镜像形态 | Cirrus Labs 官方 Tahoe arm64，无 Xcode／Homebrew／Tart Guest Agent；比同系列 base 更小 |
 | 镜像大小 | OCI 压缩约 22.34 GiB，虚拟磁盘 50 GB；clone 使用 APFS copy-on-write |
@@ -16,7 +17,9 @@
 | 安装 | VM 的 `/Applications/Meshway.app`；extension 位于 App 的 `Contents/Library/SystemExtensions` |
 | 当前程序 | A2 Swift 薄壳；XPC echo／定时 fixture，未链接 Node／Rust bridge |
 
-本机建立记录（2026-10-17）：Tart 2.32.1 官方发布包校验通过；镜像拉取前余量 178 GiB，clone 后 140 GiB。`meshway-mac-vm` 为 4 CPU／4096 MiB，Tart 能报告 running，但正常启动的 SSH 未建立，Recovery 的自动显示检查只取得黑屏／光标，未取得可操作界面。SIP、AMFI boot-args、System Extension developer mode **均未取得来宾实际状态**，对应修改命令没有成功执行回执。VM 当前已停止，保留磁盘，需从本机交互式终端启动 Tart 并完成下面的 Recovery 步骤。已签名构建产物保留在宿主构建目录；只读目录共享已配置试启动，但来宾安装未完成。
+当前 VM 正常运行，IP 为 `192.168.64.2`，SSH 专用密钥可用。来宾实际读回 `csrutil status=disabled`、`kern.bootargs=amfi_get_out_of_my_way=1`（已重启）、`systemextensionsctl developer=on`、`kern.hv_vmm_present=1`。App 已安装到 `/Applications`，无 profile extension 已通过系统校验／安装，当前为 **activated waiting for user**。VPN 配置已移除，没有运行中的 shell tunnel；extension 安装状态保留。需要用户在 VM GUI 的 **System Settings → General → Login Items & Extensions → Network Extensions** 允许 **Meshway Packet Tunnel** 后继续验收。
+
+Tart 2.32.1 官方发布包校验通过；镜像拉取前余量 178 GiB，clone 后 140 GiB。常驻 Tart 进程由环境 owner 启动并挂载只读构建目录；验收操作使用 SSH，不停止或替换该进程。需要重启来宾时在来宾内执行 `sudo shutdown -r now`。
 
 ## 安装 Tart 与创建 VM
 
@@ -57,6 +60,16 @@ ssh admin@"$(tart ip meshway-mac-vm)"
 
 SSH 密码为 `admin`。首次核对并保存该 VM 的 SSH host key；重建 VM 后只更新对应 VM 的 known_hosts 条目。vanilla 没有 guest agent，不能用 `tart exec` 代替 SSH。Recovery 没有正常系统的 SSH 服务，使用 Tart GUI。
 
+常驻 VM 已配置专用密钥和独立 SSH config（位于仓库公共私有目录，不随工作树复制）：
+
+```sh
+export MESHWAY_VM_SSH_CONFIG=/Users/zeyu/Developer/meshway/.meshway/macos-lab/ssh/config
+ssh -F "$MESHWAY_VM_SSH_CONFIG" meshway-mac-vm
+scp -F "$MESHWAY_VM_SSH_CONFIG" artifact.zip meshway-mac-vm:artifact.zip
+```
+
+下面的 Recovery 设置只用于首次建立或重新 clone；当前 VM 已完成。
+
 1. 在 VM 内执行 `sudo shutdown -h now`，等 `tart run` 退出。
 2. 宿主执行 `tart run --recovery meshway-mac-vm`。
 3. 在 **VM 窗口**选择恢复用户 `admin` 并输入 `admin`（若询问），进入 Recovery 后从菜单 **Utilities → Terminal** 打开终端。
@@ -73,12 +86,13 @@ SSH 密码为 `admin`。首次核对并保存该 VM 的 SSH host key；重建 VM
 
    ```sh
    csrutil status
-   nvram boot-args
+    nvram boot-args
+    sysctl kern.bootargs
    sudo systemextensionsctl developer on
    systemextensionsctl developer
    ```
 
-`csrutil status` 必须显示 disabled，boot-args 必须读回对应值；boot-args 仅证明参数已写入，AMFI 对 NE entitlement 的实际放行仍以激活／加载结果判断。developer mode 不代替 SIP／签名校验，也不代替用户对 extension／VPN 的批准。
+`csrutil status` 必须显示 disabled，`nvram boot-args` 证明参数已写入，重启后的 `sysctl kern.bootargs` 证明当前启动使用了该参数；AMFI 对 NE entitlement 的实际放行仍以激活／加载结果判断。developer mode 不代替用户对 extension／VPN 的批准。
 
 ## 构建与签名
 
@@ -111,9 +125,11 @@ bash apps/meshway-apple/scripts/sign-lab.sh
 
 ```sh
 TART="${TART:-tart}" bash apps/meshway-apple/scripts/deploy-vm.sh
+# 使用上面的专用 SSH config 时，不要求 tart 在 PATH 中：
+MESHWAY_VM_SSH_CONFIG="$MESHWAY_VM_SSH_CONFIG" bash apps/meshway-apple/scripts/deploy-vm.sh
 ```
 
-部署脚本只从名称 `meshway-mac-vm` 取得 IP，使用 scp 上传、SSH 检查 guest hypervisor 标记，再安装到 VM `/Applications`。若已有 App 则停止；更新前在 VM 内 Stop、移除本 App 的 VPN 配置、Deactivate extension、退出 App，并把旧 App 移到具名备份目录后重试。不要让宿主 Launch Services 打开构建产物。
+部署脚本默认从 Tart 解析 `meshway-mac-vm` 的 IP；指定 `MESHWAY_VM_SSH_CONFIG` 时，scp／ssh 都使用该 config 的 `meshway-mac-vm` Host。脚本检查 guest hypervisor 标记，再安装到 VM `/Applications`。若已有 App 则停止；更新前在 VM 内 Stop、移除本 App 的 VPN 配置、Deactivate extension、退出 App，并把旧 App 移到具名备份目录后重试。不要让宿主 Launch Services 打开构建产物。
 
 SSH 尚不可用时可先挂只读产物目录，在恢复正常启动并登录后从 VM Finder 拷贝：
 
@@ -132,12 +148,26 @@ VM SSH 会话中：
 systemextensionsctl list
 codesign -d --entitlements :- /Applications/Meshway.app
 /Applications/Meshway.app/Contents/MacOS/Meshway --probe
-log show --last 5m --style compact --predicate 'category == "shell" OR category == "xpc-shell"'
+sudo /usr/bin/log show --last 5m --style compact --predicate 'category == "shell" OR category == "xpc-shell"'
 ```
 
 探针要求实际 echo、发送 ACK 和至少两个独立连续 push 才退出 0；4 秒截止，断线／缺帧返回非零。fixture 为 `shell-fixture: runtime=absent`，**不是 IPC 13 Status**。服务端最多 8 连接、每帧 1 MiB、每连接一个未 ACK push，5 秒 ACK 超时取消连接；连接中断撤销 timer 和将来 Rust stream 的取消入口。
 
+无 GUI 的 VM 可通过同一 App 控制器触发实验：
+
+```sh
+/Applications/Meshway.app/Contents/MacOS/Meshway --lab activate
+/Applications/Meshway.app/Contents/MacOS/Meshway --lab start-private
+/Applications/Meshway.app/Contents/MacOS/Meshway --lab remove
+```
+
+`--lab` 检查 `kern.hv_vmm_present`，只接受一个 action：`activate`、`start-private`、`start-default`、`start-all`、`remove`。`start-default` 捕获默认 IPv4 路由，`start-all` 额外启用 `includeAllNetworks`；扩大捕获范围前先在来宾安排定时 stop／remove，避免把 SSH 管理流量一并捕获后无法停止实验。start 退出 0 只代表请求被接受，实际 connected、provider PID／UID、NE 设置和探测日志仍须分别读回。
+
+退出 77 表示需要 GUI 批准，78 表示要求重启，124 表示系统请求在 60 秒内未回答。当前 `activate` 返回 77；不要反复提交代替用户批准。批准 extension 后，首次保存 VPN 配置如出现“Meshway would like to add VPN configurations”，仍需用户在 VM 中点 **Allow／允许**。
+
 外连实验分别在私网路由、默认 IPv4 路由、默认路由＋`includeAllNetworks` 下重启 tunnel。extension 在设置路由前完成一次 URLSession HTTPS 请求，在设置完成后再做一次（`https://1.1.1.1/cdn-cgi/trace`，10 秒截止），只记录 HTTP 状态或错误，不记录响应正文。对照普通 VM 进程访问同地址与 tunnel 包捕获，才能区分 provider 绕行、VM 物理网络不可用或请求落入隧道。URLSession 结果不能证明 Rust 普通 socket／UDP 的全部行为。
+
+当前未启用 VPN 的来宾对 `1.1.1.1`、`example.com`、`www.apple.com` 的上述 HTTPS 对照均在 10 秒超时，HTTP 000；默认路由为 en0→192.168.64.1。先恢复有效公网对照，再运行绕行实验。utun 前置观察已编译：NE 设置后最多扫描 4096 个 fd，只对 AF_SYSTEM socket 读取 `UTUN_OPT_IFNAME` 并记录接口名／fd／PID／UID；不读写包、不向 Rust 交接，当前尚无 provider 运行结果。
 
 ## 停止、重置与清理
 
@@ -156,4 +186,4 @@ tart clone ghcr.io/cirruslabs/macos-tahoe-vanilla@sha256:eeec54bfe1f076e27786c5d
 
 结论维护在 [macOS App 待验证项](/v2/node/apple-design#unverified)。VM 启动、代码签名和 unsigned 编译分别记录；只有 VM 中真实激活／加载、对端认证正负例、流式回包和取消证据才能完成 A2 平台验收。当前薄壳尚无 Node 运行时，因此不能交付 control-only Status 或 Mesh 包流。
 
-Xcode 27.1 上 `check.sh`（unsigned App＋extension）、`sign-lab.sh`（真实开发签名、无 profile）和静态 Team／identifier requirement 校验通过；普通 `build.sh` 因缺少 NE／System Extension provisioning profile 失败。`mise run check:docs` 通过。上述结果不包含 VM 内 App 安装、System Extension 激活、XPC 实际回包或 provider 外连。
+Xcode 27.1 上 unsigned App＋extension、`sign-lab.sh`（真实开发签名、无 profile）和静态 Team／identifier requirement 校验通过；普通 `build.sh` 因缺少 NE／System Extension provisioning profile 失败。VM 内 App 已运行，`codesign --verify --deep --strict` 通过；`sysextd` 通过 category validation，接受 `CDWF84L4TA.dev.meshway.lab.meshway.ipc` 的 MachServices 声明并将 extension 安装到 `/Library/SystemExtensions`，状态为 `activated waiting for user`。这些证据没有覆盖获批后的 provider 启动、XPC 实际回包／认证负例／取消、utun 枚举或 provider 外连。私有原始证据位于仓库公共 `.meshway/macos-lab/` 的 `activation.log`、`activation-state.log`、`sysext-activation.log`、`vm-baseline.log` 与 `vm-public-network.log`。
