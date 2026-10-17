@@ -26,7 +26,9 @@ use packets::{packet_pool, receive_packets};
 use peers::PeerChannels;
 use sample::{RoamEvidence, sample_host};
 use timing::{Retry, lease_end, sleep_until};
-use withdrawal::{Withdrawn, finish_withdrawal, persistent, shutdown, withdraw, withdrawing};
+use withdrawal::{
+    Cause, Withdrawn, finish_withdrawal, persistent, shutdown, withdraw, withdrawing,
+};
 
 /// Exit replies taken in one turn, like one Mesh TUN read turn.
 const EXIT_REPLY_BATCH: usize = 32;
@@ -115,6 +117,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             }
             if engine.desired().is_none() {
                 diagnostics.stop().await;
+                withdrawn.get_or_insert(Withdrawn::now(Problem::Underlay));
                 finish_withdrawal(&mut engine, &reports, true);
                 continue;
             }
@@ -621,6 +624,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                         diagnostics.invalidate();
                         diagnostics.stop().await;
                         withdraw(&mut engine, &reports, false).await;
+                        withdrawn.get_or_insert(Withdrawn::of(Cause::Withdrawn));
                     }
                     continue;
                 };
@@ -794,14 +798,15 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             Work::Expired => {
                 // An ended association only narrows the desired state; the
                 // lease's diagnostics stop with the lease alone.
-                let (withdrawn, failed) =
+                let (ended, failed) =
                     super::transitions::expire(&mut engine, async || diagnostics.stop().await)
                         .await;
                 if failed {
                     tracing::warn!("Netmap expiry cleanup failed");
                 }
-                if withdrawn {
+                if ended {
                     tracing::info!("Netmap lease ended; terminating the packet plane");
+                    withdrawn.get_or_insert(Withdrawn::of(Cause::LeaseEnded));
                     finish_withdrawal(&mut engine, &reports, false);
                 } else {
                     let mut report = reports.borrow().clone();

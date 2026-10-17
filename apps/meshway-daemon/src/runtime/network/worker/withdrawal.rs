@@ -133,18 +133,32 @@ pub(super) fn failure(problem: Problem) -> ApplyFailure {
     }
 }
 
-/// A failure withdrew installed content: its cause and when. Kept until
-/// content installs again, whatever input triggers that install.
+/// Why installed content was withdrawn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Cause {
+    /// A required component failed (`problem`).
+    Failure(Problem),
+    /// The netmap lease ended.
+    LeaseEnded,
+    /// Control withdrew the lease.
+    Withdrawn,
+}
+
+/// Installed content was withdrawn: why and when. Kept until content
+/// installs again, whatever input triggers that install.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Withdrawn {
-    pub problem: Problem,
+    pub cause: Cause,
     pub at: tokio::time::Instant,
 }
 
 impl Withdrawn {
     pub fn now(problem: Problem) -> Self {
+        Self::of(Cause::Failure(problem))
+    }
+    pub fn of(cause: Cause) -> Self {
         Self {
-            problem,
+            cause,
             at: tokio::time::Instant::now(),
         }
     }
@@ -153,23 +167,34 @@ impl Withdrawn {
     /// led there (an offer, a retry, a component's recovery).
     pub fn reinstalled(self, trigger: &'static str, serial: u64, complete: bool) {
         let withdrawn_ms = self.at.elapsed().as_millis() as u64;
-        if self.problem == Problem::Dns {
-            tracing::info!(
+        match self.cause {
+            Cause::Failure(Problem::Dns) => tracing::info!(
                 trigger,
                 withdrawn_ms,
                 netmap_serial = serial,
                 complete,
                 "Required DNS component recovered; netmap reinstalled"
-            );
-        } else {
-            tracing::info!(
-                problem = ?self.problem,
+            ),
+            Cause::Failure(problem) => tracing::info!(
+                ?problem,
                 trigger,
                 withdrawn_ms,
                 netmap_serial = serial,
                 complete,
                 "Required packet plane component recovered; netmap reinstalled"
-            );
+            ),
+            Cause::LeaseEnded | Cause::Withdrawn => tracing::info!(
+                cause = if self.cause == Cause::LeaseEnded {
+                    "leaseEnded"
+                } else {
+                    "netmapWithdrawn"
+                },
+                trigger,
+                withdrawn_ms,
+                netmap_serial = serial,
+                complete,
+                "Netmap installed again after its withdrawal"
+            ),
         }
     }
 }
