@@ -1,8 +1,242 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-16T23:14:49.277749+00:00",
+  "updatedAt": "2026-10-17T00:54:38.668406+00:00",
   "runs": [
+    {
+      "id": 38987447210,
+      "attempt": 1,
+      "workflow": "Perf",
+      "event": "push",
+      "branch": "main",
+      "commit": "654924aae126a271c315a12680f62ab601fd9a6f",
+      "message": "F6c docs: module paths after the datagram/kernel/monitor/exit backend+owner/worker splits; changelog",
+      "createdAt": "2026-10-17T00:40:26Z",
+      "updatedAt": "2026-10-17T00:44:29Z",
+      "status": "in_progress",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/38987447210",
+      "jobs": [
+        {
+          "id": 117262099632,
+          "name": "perf-arm64",
+          "runner": "jp-tyo-arm64",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-17T00:40:28Z",
+          "completedAt": "2026-10-17T00:47:19Z",
+          "seconds": 411.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38987447210/job/117262099632"
+        },
+        {
+          "id": 117262099740,
+          "name": "perf",
+          "runner": "planck",
+          "status": "in_progress",
+          "conclusion": null,
+          "startedAt": "2026-10-17T00:44:28Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38987447210/job/117262099740"
+        }
+      ],
+      "artifacts": [
+        {
+          "id": 12083801902,
+          "name": "perf-arm64-38987447210",
+          "bytes": 46159,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38987447210/artifacts/12083801902",
+          "jobId": 117262099632,
+          "runner": "jp-tyo-arm64",
+          "seconds": 411.0,
+          "state": "ok",
+          "error": null,
+          "reports": [
+            {
+              "reportId": "20261017T004350Z-4a43dc3e",
+              "kind": "circuit",
+              "revision": "654924aae126a271c315a12680f62ab601fd9a6f",
+              "dirty": false,
+              "quick": false,
+              "sourcesUnchanged": null,
+              "loadMin": 0.173828125,
+              "loadMax": 1.892578125,
+              "metrics": [
+                {
+                  "label": "L0 2 nodes CPU",
+                  "unit": "µs/packet",
+                  "scope": "{\"bytes\": 1280, \"nodes\": 2, \"profile\": 0, \"rounds\": 10000, \"warmup\": 200, \"workers\": null}",
+                  "value": 14.830915999999998,
+                  "samples": 3,
+                  "attempted": 3
+                },
+                {
+                  "label": "L0 2 nodes pps",
+                  "unit": "pps",
+                  "scope": "{\"bytes\": 1280, \"nodes\": 2, \"profile\": 0, \"rounds\": 10000, \"warmup\": 200, \"workers\": null}",
+                  "value": 67416.9174050704,
+                  "samples": 3,
+                  "attempted": 3
+                },
+                {
+                  "label": "L0 3 nodes CPU",
+                  "unit": "µs/packet",
+                  "scope": "{\"bytes\": 1280, \"nodes\": 3, \"profile\": 0, \"rounds\": 10000, \"warmup\": 200, \"workers\": null}",
+                  "value": 19.769738,
+                  "samples": 3,
+                  "attempted": 3
+                },
+                {
+                  "label": "L0 3 nodes pps",
+                  "unit": "pps",
+                  "scope": "{\"bytes\": 1280, \"nodes\": 3, \"profile\": 0, \"rounds\": 10000, \"warmup\": 200, \"workers\": null}",
+                  "value": 50575.00211871327,
+                  "samples": 3,
+                  "attempted": 3
+                },
+                {
+                  "label": "L0 5 nodes CPU",
+                  "unit": "µs/packet",
+                  "scope": "{\"bytes\": 1280, \"nodes\": 5, \"profile\": 0, \"rounds\": 10000, \"warmup\": 200, \"workers\": null}",
+                  "value": 29.59837,
+                  "samples": 3,
+                  "attempted": 3
+                },
+                {
+                  "label": "L0 5 nodes pps",
+                  "unit": "pps",
+                  "scope": "{\"bytes\": 1280, \"nodes\": 5, \"profile\": 0, \"rounds\": 10000, \"warmup\": 200, \"workers\": null}",
+                  "value": 33783.070002297995,
+                  "samples": 3,
+                  "attempted": 3
+                }
+              ]
+            }
+          ],
+          "matrices": [],
+          "builds": []
+        }
+      ]
+    },
+    {
+      "id": 38987447205,
+      "attempt": 1,
+      "workflow": "Build",
+      "event": "push",
+      "branch": "main",
+      "commit": "654924aae126a271c315a12680f62ab601fd9a6f",
+      "message": "F6c docs: module paths after the datagram/kernel/monitor/exit backend+owner/worker splits; changelog",
+      "createdAt": "2026-10-17T00:40:26Z",
+      "updatedAt": "2026-10-17T00:40:26Z",
+      "status": "queued",
+      "conclusion": null,
+      "url": "https://github.com/JDScript/meshway/actions/runs/38987447205",
+      "jobs": [
+        {
+          "id": 117262099585,
+          "name": "node-linux (x86_64-unknown-linux-musl)",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-17T00:40:32Z",
+          "completedAt": "2026-10-17T00:44:28Z",
+          "seconds": 236.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38987447205/job/117262099585"
+        },
+        {
+          "id": 117262099664,
+          "name": "node-linux (aarch64-unknown-linux-musl)",
+          "runner": null,
+          "status": "queued",
+          "conclusion": null,
+          "startedAt": "2026-10-17T00:40:26Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38987447205/job/117262099664"
+        }
+      ],
+      "artifacts": [
+        {
+          "id": 12082849250,
+          "name": "node-x86_64-unknown-linux-musl-654924aae126a271c315a12680f62ab601fd9a6f",
+          "bytes": 11450983,
+          "expired": false,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38987447205/artifacts/12082849250",
+          "jobId": 117262099585,
+          "runner": "planck",
+          "seconds": 236.0,
+          "state": "ok",
+          "error": null,
+          "reports": [],
+          "matrices": [],
+          "builds": [
+            {
+              "target": "x86_64-unknown-linux-musl",
+              "binary": "meshwayd",
+              "bytes": 19805352,
+              "sha256": "0c7f7c79af9740ea1732d7c9e2207d93e97d8c14cf54b182220e177d971b3e89"
+            },
+            {
+              "target": "x86_64-unknown-linux-musl",
+              "binary": "meshway",
+              "bytes": 2208904,
+              "sha256": "7a2d101af406b43c3c7413f05fcd58f0accbf5d27da3b088b73b83685c8edc01"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 38987447204,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "654924aae126a271c315a12680f62ab601fd9a6f",
+      "message": "F6c docs: module paths after the datagram/kernel/monitor/exit backend+owner/worker splits; changelog",
+      "createdAt": "2026-10-17T00:40:26Z",
+      "updatedAt": "2026-10-17T00:51:38Z",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/JDScript/meshway/actions/runs/38987447204",
+      "jobs": [
+        {
+          "id": 117262099548,
+          "name": "changes",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-17T00:40:28Z",
+          "completedAt": "2026-10-17T00:40:31Z",
+          "seconds": 3.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38987447204/job/117262099548"
+        },
+        {
+          "id": 117262119552,
+          "name": "cargo",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-17T00:40:34Z",
+          "completedAt": "2026-10-17T00:48:25Z",
+          "seconds": 471.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38987447204/job/117262119552"
+        },
+        {
+          "id": 117262119640,
+          "name": "web",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-17T00:48:27Z",
+          "completedAt": "2026-10-17T00:51:38Z",
+          "seconds": 191.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38987447204/job/117262119640"
+        }
+      ],
+      "artifacts": []
+    },
     {
       "id": 38977113633,
       "attempt": 1,
