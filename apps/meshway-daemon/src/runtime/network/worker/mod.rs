@@ -26,7 +26,7 @@ use packets::{packet_pool, receive_packets};
 use peers::PeerChannels;
 use sample::{RoamEvidence, sample_host};
 use timing::{Retry, lease_end, sleep_until};
-use withdrawal::{Withdrawn, finish_withdrawal, shutdown, withdraw, withdrawing};
+use withdrawal::{Withdrawn, finish_withdrawal, persistent, shutdown, withdraw, withdrawing};
 
 /// Exit replies taken in one turn, like one Mesh TUN read turn.
 const EXIT_REPLY_BATCH: usize = 32;
@@ -304,6 +304,8 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                         report.problem_detail =
                             plane.host.ownership_ended().map(|end| end.to_string());
                         report.observed_at = chrono::Utc::now();
+                        report.persistent =
+                            persistent(&engine, report.problem, retry.at.is_some(), false);
                         reports.send_replace(report);
                         continue;
                     }
@@ -428,6 +430,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                         }
                         let mut report = reports.borrow().clone();
                         report.plane = DataPlane::Failed;
+                        report.persistent = false;
                         report.problem = Some(Problem::Underlay);
                         report.problem_detail = Some(super::pool_overlap_detail(&found));
                         report.completion = Some(Err(ApplyFailure::Underlay));
@@ -712,6 +715,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                         // problem (a listener that bound on retry).
                         report.problem = None;
                         report.problem_detail = None;
+                        report.persistent = false;
                         report.completion = Some(Ok(()));
                         report.content = Some(netmap.content.clone());
                         report.capture = capture;
@@ -746,6 +750,8 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                             DataPlane::Failed
                         };
                         retry.failed(failure);
+                        report.persistent =
+                            persistent(&engine, Some(problem), retry.at.is_some(), false);
                     }
                     Err(error) if plane.failure.is_none() && kept => {
                         // Rejected input (regressing reference or stale lease):
@@ -779,6 +785,8 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                         report.problem_detail = plane.failure_detail.take();
                         report.plane = DataPlane::Failed;
                         retry.failed(failure);
+                        report.persistent =
+                            persistent(&engine, Some(problem), retry.at.is_some(), false);
                     }
                 }
                 reports.send_replace(report);
@@ -813,6 +821,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                         .host
                         .ownership_ended()
                         .map(|end| end.to_string()),
+                    persistent(&engine, Some(Problem::Underlay), false, false),
                 );
                 withdrawn.get_or_insert(Withdrawn::now(Problem::Underlay));
                 diagnostics.stop().await;
@@ -880,7 +889,13 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 } else {
                     ended
                 };
-                let mut report = withdrawing(&reports, problem, detail);
+                retry.failed(withdrawal::failure(problem));
+                let mut report = withdrawing(
+                    &reports,
+                    problem,
+                    detail,
+                    persistent(&engine, Some(problem), retry.at.is_some(), false),
+                );
                 withdrawn.get_or_insert(Withdrawn::now(problem));
                 // The decisions of every external ping go with the content.
                 diagnostics.withdraw().await;
@@ -896,15 +911,11 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                     report.problem = Some(Problem::Underlay);
                     report.problem_detail = Some(end.to_string());
                     report.completion = Some(Err(ApplyFailure::Underlay));
+                    report.persistent =
+                        persistent(&engine, report.problem, retry.at.is_some(), false);
                     report.observed_at = chrono::Utc::now();
                     reports.send_replace(report.clone());
                 }
-                retry.failed(
-                    report
-                        .completion
-                        .and_then(Result::err)
-                        .unwrap_or(ApplyFailure::Underlay),
-                );
                 continue;
             }
             Work::Packet(Ok(received)) => {

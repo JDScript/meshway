@@ -92,6 +92,10 @@ pub(super) struct Report {
     /// Netmap whose installation this report describes.
     pub netmap: Option<NetmapRef>,
     pub completion: Option<Result<(), ApplyFailure>>,
+    /// A failed plane has no automatic way back: kernel ownership ended in a
+    /// proven conflict, or nothing retries the failure (validation, retries
+    /// spent). Status shows `blocked` for it, else `retrying`.
+    pub persistent: bool,
     pub observed_at: DateTime<Utc>,
     pub facts_observed_at: DateTime<Utc>,
     pub facts: Option<meshway_connectivity::Snapshot>,
@@ -156,6 +160,7 @@ impl Report {
             dns_detail: None,
             netmap: None,
             completion: None,
+            persistent: false,
             observed_at: Utc::now(),
             facts_observed_at: Utc::now(),
             facts: None,
@@ -200,6 +205,19 @@ impl Report {
                 .as_ref()
                 .and_then(|detail| detail.borrow().as_ref().map(ToString::to_string)),
         )
+    }
+    /// The failed plane recovers by itself: its failure is transient, or a
+    /// kernel change or exit cleanup is being retried right now.
+    pub fn recovering(&self) -> bool {
+        !self.persistent
+            || self
+                .kernel_changes
+                .as_ref()
+                .is_some_and(|changes| changes.borrow().is_some())
+            || self
+                .exit_cleanups
+                .as_ref()
+                .is_some_and(|cleanups| cleanups.borrow().is_some())
     }
     /// The netmap whose every required resource is installed.
     pub fn applied(&self) -> Option<NetmapRef> {

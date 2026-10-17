@@ -214,7 +214,13 @@ impl View {
             {
                 phase = Phase::Running;
             } else if data_plane == DataPlane::Failed && phase == Phase::ControlReady {
-                phase = Phase::Blocked;
+                // A failure that recovers by itself retries; only one with
+                // no automatic way back needs an operator.
+                phase = if network.recovering() {
+                    Phase::Retrying
+                } else {
+                    Phase::Blocked
+                };
             } else if !ready && phase == Phase::ControlReady {
                 phase = Phase::Synchronizing;
             }
@@ -708,6 +714,42 @@ mod tests {
                 .is_some_and(|detail| detail.contains("observe_deadline")),
             "{:?}",
             status.last_error_detail
+        );
+    }
+
+    /// H4 decision 1: a failed plane whose failure recovers by itself is
+    /// `retrying`; `blocked` only when nothing brings it back (a proven
+    /// ownership conflict, retries spent), unless a kernel change or exit
+    /// cleanup is being retried right now.
+    #[test]
+    fn a_transient_failure_retries_and_only_a_persistent_one_blocks() {
+        let mut network = super::super::network::Report::stopped();
+        network.plane = DataPlane::Failed;
+        network.problem = Some(Problem::Dns);
+        let (view, reported, network, _desired) = view(network);
+        reported.send_modify(|report| report.phase = Phase::ControlReady);
+        let status = view.status();
+        assert_eq!(
+            (status.phase, status.data_plane),
+            (Phase::Retrying, DataPlane::Failed)
+        );
+        network.send_modify(|report| {
+            report.problem = Some(Problem::Underlay);
+            report.persistent = true;
+        });
+        assert_eq!(view.status().phase, Phase::Blocked);
+        let (cleanup, cleanups) = watch::channel(None);
+        network.send_modify(|report| report.exit_cleanups = Some(cleanups));
+        assert_eq!(view.status().phase, Phase::Blocked);
+        cleanup.send_replace(Some(meshway_underlay::RetryPending {
+            reason: "kernel netlink operation failed".into(),
+            attempts: 2,
+            retry_at: std::time::SystemTime::now(),
+        }));
+        assert_eq!(
+            view.status().phase,
+            Phase::Retrying,
+            "a cleanup being retried"
         );
     }
 }
