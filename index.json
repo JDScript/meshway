@@ -1,8 +1,58 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-17T02:28:46.884523+00:00",
+  "updatedAt": "2026-10-17T05:31:48.857705+00:00",
   "runs": [
+    {
+      "id": 39006214289,
+      "attempt": 1,
+      "workflow": "Check",
+      "event": "push",
+      "branch": "main",
+      "commit": "b825b44bae8dd1e0b53437f5d2e7feb4fa7920d2",
+      "message": "docs: IPv6 exit design (I6-D)",
+      "createdAt": "2026-10-17T05:25:37Z",
+      "updatedAt": "2026-10-17T05:28:58Z",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/JDScript/meshway/actions/runs/39006214289",
+      "jobs": [
+        {
+          "id": 117319124545,
+          "name": "changes",
+          "runner": "planck",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-17T05:25:39Z",
+          "completedAt": "2026-10-17T05:25:42Z",
+          "seconds": 3.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39006214289/job/117319124545"
+        },
+        {
+          "id": 117319136164,
+          "name": "web",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-17T05:25:44Z",
+          "completedAt": "2026-10-17T05:28:58Z",
+          "seconds": 194.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39006214289/job/117319136164"
+        },
+        {
+          "id": 117319137395,
+          "name": "cargo",
+          "runner": null,
+          "status": "completed",
+          "conclusion": "skipped",
+          "startedAt": "2026-10-17T05:25:42Z",
+          "completedAt": "2026-10-17T05:25:42Z",
+          "seconds": 0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/39006214289/job/117319137395"
+        }
+      ],
+      "artifacts": []
+    },
     {
       "id": 38992886254,
       "attempt": 1,
