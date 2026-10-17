@@ -251,8 +251,8 @@ IPC 12 的公开运行状态（`meshway status --json` 原样输出）：
 | `synchronizing` | 正在同步当前运行目标 |
 | `controlReady` | 控制流程就绪；结合 `dataPlane` 判断安装 |
 | `running` | 当前目标的数据面已就绪 |
-| `retrying` | 故障后等待有界重试 |
-| `blocked` | 需要操作员处理，后台不继续准入 |
+| `retrying` | 故障后等待有界重试；也包括包平面因会自动恢复的组件故障撤回（`dataPlane: failed`）期间：DNS 故障（owner 每秒重证）、宿主内核归属的暂态阻断（`*_unavailable`，按退避重证）、Mesh 池重叠（地址离开即恢复）、worker 仍在有界重试的安装失败，以及 `changePending`／`exit.cleanupPending` 正在重试的时候 |
+| `blocked` | 需要操作员处理，后台不继续准入：Control 的持久问题（身份失权、存储、契约等），或包平面失败且没有自动恢复的路径——宿主内核归属以持久冲突结束（已证实的外来对象，`kernelOwnership: conflict`），或 worker 的有界重试已用完／失败不重试（校验） |
 | `stopping` | 正在停止与清理 |
 | `leaving` | 持久注销意图等待 Server 确认：数据面已停，按 1–15 秒退避重试 `leave`，期间不重新接入（见[自助注销](/v2/configuration-reference/nodes#node-self-leave)） |
 
