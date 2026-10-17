@@ -1,9 +1,10 @@
 """Exit echo lifetime, capacity and recovery (phase 15) on the real A→R→E row.
 
 Three steps, each on the real daemons:
-- capacity: A pings an external address every 0.2 s for 60 s while it
-  repeats `traceroute -I` to it. E's projections stay far below the exit
-  owner's capacity (128), A loses no echo, E's role never fails.
+- capacity: A pings an external address 5 times a second for 60 s while it
+  repeats `traceroute -I` to it. E's projections stay within what that load
+  can hold alive (`PEAK_LIMIT`, far below the exit owner's capacity of 128),
+  A loses no echo, E's role never fails.
 - reconnect (OPS8): E's conntrack entry of A's echo id is deleted twice while
   A keeps pinging, as the ICMP conntrack timeout ends it while earlier
   sequences are still projected. The next sequence re-creates it; the role
@@ -23,9 +24,24 @@ import math
 import time
 
 CAPACITY = 128
-# Far below the capacity: a 5/s ping and repeated traceroutes, with echo
-# projections ending at their reply, stay under a quarter of it.
-PEAK_LIMIT = CAPACITY // 4
+# Echo flows end 2 s after their reply and 10 s after an unanswered request
+# (`meshway_dataplane::flow::ECHO_ANSWERED`／`ECHO_UNANSWERED`); every echo
+# sequence is a flow. The load below therefore has at most
+# - ping: PING_RATE × (PING_WAIT + ECHO_ANSWERED) + 1 flows (a reply later
+#   than PING_WAIT is a lost echo, failed separately), and
+# - traceroute: each run sends TRACE_PROBES requests and the next one starts at
+#   least TRACE_SPACING later, so at most ⌈ECHO_UNANSWERED / TRACE_SPACING⌉
+#   runs' probes are alive, each probe at most ECHO_UNANSWERED.
+# Their sum bounds the projections whatever the round-trip times are (the load
+# of the host only moves the count within it). Echoes that did not end at their
+# reply would keep the ping alone at PING_RATE × ECHO_UNANSWERED, above it.
+PING_RATE, PING_WAIT = 5, 2
+TRACE_PROBES, TRACE_WAIT, TRACE_SPACING = 5, 2, 2
+ECHO_ANSWERED, ECHO_UNANSWERED = 2, 10
+PEAK_LIMIT = (PING_RATE * (PING_WAIT + ECHO_ANSWERED) + 1
+              + math.ceil(ECHO_UNANSWERED / TRACE_SPACING) * TRACE_PROBES)
+# Echoes that outlive their reply must not fit under the bound.
+assert PING_RATE * ECHO_UNANSWERED > PEAK_LIMIT
 LOAD_SECONDS = 60
 OWNER_STOPPED = "Exit owner stopping after a failed kernel operation"
 ROLE_FAILED = "Exit role failed; withdrawing it alone"
@@ -39,16 +55,17 @@ FACT_DELIVERY = 1.0
 
 PING = ("import json,os,subprocess,sys\n"
         "target,interval,count,path=sys.argv[1:5]\n"
-        "r=subprocess.run(['ping','-n','-i',interval,'-c',count,'-W','2',target],capture_output=True,text=True)\n"
+        "r=subprocess.run(['ping','-n','-i',interval,'-c',count,'-W','%d',target],capture_output=True,text=True)\n"
         "open(path+'.tmp','w').write(json.dumps({'exitCode':r.returncode,'stdout':r.stdout}))\n"
-        "os.replace(path+'.tmp',path)\n")
+        "os.replace(path+'.tmp',path)\n") % PING_WAIT
 TRACE = ("import json,os,subprocess,sys,time\n"
          "target,seconds,path=sys.argv[1],float(sys.argv[2]),sys.argv[3]\n"
          "runs=[]; start=time.monotonic()\n"
          "while time.monotonic()-start<seconds:\n"
-         " r=subprocess.run(['traceroute','-I','-n','-q','1','-w','2','-m','5',target],capture_output=True,text=True)\n"
-         " runs.append({'exitCode':r.returncode,'stdout':r.stdout}); time.sleep(2)\n"
-         "open(path+'.tmp','w').write(json.dumps(runs)); os.replace(path+'.tmp',path)\n")
+         " r=subprocess.run(['traceroute','-I','-n','-q','1','-w','%d','-m','%d',target],capture_output=True,text=True)\n"
+         " runs.append({'exitCode':r.returncode,'stdout':r.stdout}); time.sleep(%d)\n"
+         "open(path+'.tmp','w').write(json.dumps(runs)); os.replace(path+'.tmp',path)\n") % (
+             TRACE_WAIT, TRACE_PROBES, TRACE_SPACING)
 
 
 def summary(stdout):
@@ -141,8 +158,8 @@ def run(ctx):
 
     stopped_before = e_log().count(OWNER_STOPPED)
 
-    # Capacity: a 0.2 s ping for 60 s and traceroutes beside it.
-    load = ping_on_a("echo-load", "0.2", LOAD_SECONDS * 5)
+    # Capacity: a 5/s ping for 60 s and traceroutes beside it.
+    load = ping_on_a("echo-load", str(1 / PING_RATE), LOAD_SECONDS * PING_RATE)
     command("a", "rm", "-f", "/evidence/echo-traces.json")
     ctx.start(TRACE, target, str(LOAD_SECONDS - 10), "/evidence/echo-traces.json")
     samples = []

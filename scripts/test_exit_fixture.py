@@ -16,6 +16,17 @@ echo = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(echo)
 
 
+class EchoBoundTests(unittest.TestCase):
+    def test_peak_limit_uses_the_dataplane_echo_lifetimes_and_detects_unended_echoes(self):
+        import re
+        source = (Path(__file__).resolve().parents[1] / "crates/meshway-dataplane/src/flow/mod.rs").read_text()
+        lifetime = {name: int(value) for name, value in
+                    re.findall(r"const (ECHO_\w+): Duration = Duration::from_secs\((\d+)\)", source)}
+        self.assertEqual(lifetime, {"ECHO_UNANSWERED": echo.ECHO_UNANSWERED, "ECHO_ANSWERED": echo.ECHO_ANSWERED})
+        self.assertLess(echo.PEAK_LIMIT, echo.CAPACITY)
+        self.assertGreater(echo.PING_RATE * echo.ECHO_UNANSWERED, echo.PEAK_LIMIT)
+
+
 class ExitEvidenceTests(unittest.TestCase):
     def test_tuple_requires_original_and_reverse_nat_and_owned_mark(self):
         line = "udp 17 29 src=100.64.0.1 dst=11.77.2.3 sport=40000 dport=8080 src=11.77.2.3 dst=11.77.2.2 sport=8080 dport=41000 mark=8 use=1"
