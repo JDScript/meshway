@@ -236,23 +236,45 @@ def remaining_resources(report, kind):
     return resources
 
 
-# Each roam row owns four or five Docker bridges and each exit row nine.
-# Docker's default address pools are a shared host resource (planck:
-# exhausted with four roam rows and the exit row at once, and again with
-# exit/off and exit6/off beside the other rows), so roam rows run one at a
-# time, and so do exit rows.
+# Docker's default address pools are a shared host resource (31 networks;
+# planck's own services hold about six). A row holds its Docker bridges for
+# its whole run: exit rows nine plus one for their component checks, roam
+# rows four or five, NAT rows three, other runtime rows one. Rows wait for
+# their bridges in this budget instead of failing `docker network create`
+# (planck: exhausted with four roam rows and the exit row at once, and with
+# exit/off beside the NAT and roam rows, matrix 20261017T211436Z-522aba47).
+NETWORK_BUDGET = 24
+NETWORKS = threading.Condition()
+# Roam rows also run one at a time: their timing gates are sensitive to
+# one another's network changes.
 ROAM_ROWS = threading.Semaphore(1)
-EXIT_ROWS = threading.Semaphore(1)
+NETWORKS_FREE = [NETWORK_BUDGET]
+
+
+def bridges(name):
+    if name.startswith(("exit/", "exit6/")):
+        return 10
+    if name.startswith("roam/"):
+        return 5
+    if name.startswith("nat"):
+        return 3
+    return 0 if name in ("tun", "packet") else 1
 
 
 def execute_row(name, directory, artifacts, images, args):
-    if name.startswith("roam/"):
-        with ROAM_ROWS:
-            return execute_row_now(name, directory, artifacts, images, args)
-    if name.startswith(("exit/", "exit6/")):
-        with EXIT_ROWS:
-            return execute_row_now(name, directory, artifacts, images, args)
-    return execute_row_now(name, directory, artifacts, images, args)
+    need = min(bridges(name), NETWORK_BUDGET)
+    with NETWORKS:
+        NETWORKS.wait_for(lambda: NETWORKS_FREE[0] >= need)
+        NETWORKS_FREE[0] -= need
+    try:
+        if name.startswith("roam/"):
+            with ROAM_ROWS:
+                return execute_row_now(name, directory, artifacts, images, args)
+        return execute_row_now(name, directory, artifacts, images, args)
+    finally:
+        with NETWORKS:
+            NETWORKS_FREE[0] += need
+            NETWORKS.notify_all()
 
 
 def execute_row_now(name, directory, artifacts, images, args):

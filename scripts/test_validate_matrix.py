@@ -249,6 +249,25 @@ class MatrixTests(unittest.TestCase):
         self.assertEqual(done, names)
         self.assertEqual(peak[0], 1)
 
+    def test_rows_wait_for_their_docker_bridges(self):
+        import threading
+        held, peak, lock = [0], [0], threading.Lock()
+        def now(name, *_):
+            with lock:
+                held[0] += matrix.bridges(name)
+                peak[0] = max(peak[0], held[0])
+            time.sleep(0.05)
+            with lock:
+                held[0] -= matrix.bridges(name)
+            return name
+        names = ["exit/off", "exit6/off", "nat/off", "nat/relay", "nat/resolved", "roam/direct", "udp/off"]
+        with patch.object(matrix, "execute_row_now", side_effect=now):
+            with concurrent.futures.ThreadPoolExecutor(max_workers=7) as executor:
+                done = list(executor.map(lambda name: matrix.execute_row(name, None, None, None, None), names))
+        self.assertEqual(done, names)
+        self.assertLessEqual(peak[0], matrix.NETWORK_BUDGET)
+        self.assertEqual(matrix.NETWORKS_FREE[0], matrix.NETWORK_BUDGET)
+
     def test_successful_fixture_with_leftover_container_fails_row(self):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
