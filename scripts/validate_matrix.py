@@ -236,15 +236,21 @@ def remaining_resources(report, kind):
     return resources
 
 
-# Each roam row owns four or five Docker bridges. Docker's default address
-# pools are a shared host resource (planck: exhausted with four roam rows and
-# the exit row at once), so roam rows run one at a time.
+# Each roam row owns four or five Docker bridges and each exit row nine.
+# Docker's default address pools are a shared host resource (planck:
+# exhausted with four roam rows and the exit row at once, and again with
+# exit/off and exit6/off beside the other rows), so roam rows run one at a
+# time, and so do exit rows.
 ROAM_ROWS = threading.Semaphore(1)
+EXIT_ROWS = threading.Semaphore(1)
 
 
 def execute_row(name, directory, artifacts, images, args):
     if name.startswith("roam/"):
         with ROAM_ROWS:
+            return execute_row_now(name, directory, artifacts, images, args)
+    if name.startswith(("exit/", "exit6/")):
+        with EXIT_ROWS:
             return execute_row_now(name, directory, artifacts, images, args)
     return execute_row_now(name, directory, artifacts, images, args)
 
