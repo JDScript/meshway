@@ -4,6 +4,7 @@ use chrono::{DateTime, Utc};
 use meshway_control::StatusSnapshot;
 use meshway_model::Version;
 use meshway_protocol::ipc::{DataPlane, NetworkMode, Phase, Problem, Status, SyncState};
+use std::sync::{Arc, Mutex};
 use tokio::sync::watch;
 
 #[derive(Clone, Copy)]
@@ -39,6 +40,31 @@ impl Report {
         }
     }
 }
+/// The packet plane's state as Status shows it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PlaneState {
+    phase: Phase,
+    applied: Option<meshway_model::state::NetmapRef>,
+    data_plane: DataPlane,
+}
+
+/// When the shown [`PlaneState`] last changed (Status `observedAt`). Both
+/// [`View::track`], which sees every input change, and each Status read
+/// advance it; neither restamps an unchanged state.
+struct Clock {
+    state: Option<PlaneState>,
+    since: DateTime<Utc>,
+}
+impl Clock {
+    fn observe(&mut self, state: PlaneState) -> DateTime<Utc> {
+        if self.state != Some(state) {
+            self.state = Some(state);
+            self.since = Utc::now();
+        }
+        self.since
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct View {
     pub(super) desired: watch::Receiver<Desired>,
@@ -47,16 +73,87 @@ pub(crate) struct View {
     pub(super) network_mode: NetworkMode,
     pub(super) network: watch::Receiver<super::network::Report>,
     pub(super) sync: watch::Receiver<super::control::SyncStatus>,
+    clock: Arc<Mutex<Clock>>,
 }
+
+/// One consistent read of the inputs and what they derive.
+struct Derived {
+    desired: Desired,
+    report: Report,
+    network: super::network::Report,
+    current: bool,
+    active: bool,
+    network_current: bool,
+    lease: Option<meshway_model::NetmapLease>,
+    plane: PlaneState,
+}
+
 impl View {
-    pub fn status(&self) -> Status {
+    pub(super) fn new(
+        desired: watch::Receiver<Desired>,
+        report: watch::Receiver<Report>,
+        server: String,
+        network_mode: NetworkMode,
+        network: watch::Receiver<super::network::Report>,
+        sync: watch::Receiver<super::control::SyncStatus>,
+    ) -> Self {
+        Self {
+            desired,
+            report,
+            server,
+            network_mode,
+            network,
+            sync,
+            clock: Arc::new(Mutex::new(Clock {
+                state: None,
+                since: Utc::now(),
+            })),
+        }
+    }
+
+    fn observe(&self, state: PlaneState) -> DateTime<Utc> {
+        match self.clock.lock() {
+            Ok(mut clock) => clock.observe(state),
+            Err(poisoned) => poisoned.into_inner().observe(state),
+        }
+    }
+
+    /// Stamp each change of the shown packet plane state when it happens,
+    /// read or not: Control's report, the network owner's report, the DNS
+    /// owner's fault behind it and the intent. Ends at `stop` or once an
+    /// input's owner is gone.
+    pub(super) async fn track(mut self, mut stop: watch::Receiver<bool>) {
+        loop {
+            let derived = self.derive();
+            self.observe(derived.plane);
+            let guard = derived
+                .network
+                .dns_guard
+                .clone()
+                .filter(|guard| guard.has_changed().is_ok());
+            tokio::select! {
+                _ = stop.wait_for(|stopped| *stopped) => return,
+                changed = self.desired.changed() => if changed.is_err() { return },
+                changed = self.report.changed() => if changed.is_err() { return },
+                changed = self.network.changed() => if changed.is_err() { return },
+                _ = async {
+                    match guard {
+                        // Closed: one more turn reads it, then it is filtered out.
+                        Some(mut guard) => { let _ = guard.changed().await; }
+                        None => std::future::pending().await,
+                    }
+                } => {},
+            }
+        }
+    }
+
+    fn derive(&self) -> Derived {
         let mut desired = self.desired.borrow().clone();
         desired.shutdown |= self.desired.has_changed().is_err();
         let report = self.report.borrow().clone();
+        let network = self.network.borrow().clone();
         let control = report.control.as_ref().map(StatusSnapshot::status);
         let current = report.revision == desired.revision;
-        let network = self.network.borrow().clone();
-        let sync = self.sync.borrow().clone();
         let active = current && desired.up && !desired.shutdown;
         let lease = control.as_ref().and_then(|c| c.netmap);
         // The installation is of the netmap Control currently authorizes.
@@ -125,6 +222,41 @@ impl View {
         if active && phase == Phase::ControlReady && lease.is_none() {
             phase = Phase::Synchronizing;
         }
+        Derived {
+            plane: PlaneState {
+                phase,
+                applied,
+                data_plane,
+            },
+            desired,
+            report,
+            network,
+            current,
+            active,
+            network_current,
+            lease,
+        }
+    }
+
+    pub fn status(&self) -> Status {
+        let Derived {
+            desired,
+            report,
+            network,
+            current,
+            active,
+            network_current,
+            lease,
+            plane,
+        } = self.derive();
+        let observed_at = self.observe(plane);
+        let PlaneState {
+            phase,
+            applied,
+            data_plane,
+        } = plane;
+        let control = report.control.as_ref().map(StatusSnapshot::status);
+        let sync = self.sync.borrow().clone();
         let sync_state = if !active || !sync.running {
             SyncState::Disconnected
         } else if sync
@@ -193,25 +325,23 @@ impl View {
             })
             .unwrap_or_default();
         let sockets = sockets(content.and(network.facts.as_ref()), network.netmap);
-        let network_error =
-            network
-                .problem
-                .filter(|_| active)
-                .map(|problem| meshway_protocol::ipc::NetworkError {
-                    problem,
-                    detail: network.problem_detail.clone(),
-                });
+        // The DNS owner's fault the worker has not withdrawn for yet: the
+        // plane withdraws for it, so it is already the cause.
+        let network_failure = match network.problem {
+            Some(problem) => Some((problem, network.problem_detail.clone())),
+            None => network.dns_fault().map(|detail| (Problem::Dns, detail)),
+        };
+        let network_error = network_failure
+            .filter(|_| active)
+            .map(|(problem, detail)| meshway_protocol::ipc::NetworkError { problem, detail });
         Status {
             process_id: std::process::id(),
             revision: desired.revision,
             desired_up: desired.up,
             phase,
             server: self.server.clone(),
-            observed_at: if network_current {
-                report.observed_at.max(network.observed_at)
-            } else {
-                report.observed_at
-            },
+            observed_at,
+            control_observed_at: Some(report.observed_at),
             enrollment_request_id: control.as_ref().and_then(|c| c.enrollment_request_id),
             enrollment_url: if current && desired.up {
                 report.enrollment_url
@@ -255,9 +385,7 @@ impl View {
             node: content.map(|netmap| super::peers::own(netmap)),
             peers,
             sockets,
-            last_error: report
-                .problem
-                .or(if active { network.problem } else { None }),
+            last_error: report.problem.or(network_error.as_ref().map(|e| e.problem)),
             // Each cause stays with its own failure: the packet plane's
             // is `lastErrorDetail` when it is `lastError`, else beside it.
             last_error_detail: network_error
@@ -288,6 +416,24 @@ impl View {
                         pending.operation,
                         retry_pending(pending.retry),
                     )
+                }),
+            control_relay: network
+                .control_relay
+                .as_ref()
+                .filter(|_| self.network_mode == NetworkMode::Tun)
+                .and_then(|relay| relay.borrow().clone())
+                .map(|state| match state {
+                    meshway_underlay::ControlRelayState::Retrying(retry) => {
+                        meshway_protocol::ipc::ControlRelay::retrying(retry_pending(retry))
+                    }
+                    meshway_underlay::ControlRelayState::AtCapacity { limit, refused } => {
+                        meshway_protocol::ipc::ControlRelay {
+                            state: meshway_protocol::ipc::ControlRelayState::AtCapacity,
+                            reason: limit.into(),
+                            attempts: u32::try_from(refused).unwrap_or(u32::MAX),
+                            retry_at: None,
+                        }
+                    }
                 }),
         }
     }
@@ -423,14 +569,14 @@ mod tests {
         network.problem_detail = Some("DNS resolved_link check failed".into());
         let (_network, network) = watch::channel(network);
         let (_sync, sync) = watch::channel(super::super::control::SyncStatus::default());
-        let view = View {
+        let view = View::new(
             desired,
             report,
-            server: "https://server.test".into(),
-            network_mode: NetworkMode::Tun,
+            "https://server.test".into(),
+            NetworkMode::Tun,
             network,
             sync,
-        };
+        );
         let status = view.status();
         assert_eq!(status.last_error, Some(Problem::Dns));
         assert_eq!(
@@ -448,6 +594,120 @@ mod tests {
         assert_eq!(
             failure.detail.as_deref(),
             Some("DNS resolved_link check failed")
+        );
+    }
+
+    fn view(
+        network: super::super::network::Report,
+    ) -> (
+        View,
+        watch::Sender<Report>,
+        watch::Sender<super::super::network::Report>,
+        watch::Sender<Desired>,
+    ) {
+        let revision = meshway_model::Version::MIN;
+        let (desired_tx, desired) = watch::channel(Desired {
+            revision,
+            up: true,
+            shutdown: false,
+            retry_enrollment: false,
+            enrollment_key: None,
+            rotation: None,
+            reenroll: false,
+            logout: None,
+        });
+        let (reported, report) = watch::channel(Report::initial(revision));
+        let (network_tx, network) = watch::channel(network);
+        let (_sync, sync) = watch::channel(super::super::control::SyncStatus::default());
+        let view = View::new(
+            desired,
+            report,
+            "https://server.test".into(),
+            NetworkMode::Tun,
+            network,
+            sync,
+        );
+        (view, reported, network_tx, desired_tx)
+    }
+
+    /// H4 (S4 decision 2, OPS17 ③): `observedAt` is when the shown packet
+    /// plane state last changed; Control republishing the same phase moves
+    /// only `controlObservedAt`.
+    #[tokio::test(flavor = "current_thread")]
+    async fn observed_at_is_the_last_change_of_the_shown_state() {
+        let (view, reported, network, _desired) = view(super::super::network::Report::stopped());
+        let (stop, stopped) = watch::channel(false);
+        let clock = tokio::spawn(view.clone().track(stopped));
+        tokio::task::yield_now().await;
+        let first = view.status();
+        assert_eq!(first.phase, Phase::Starting);
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        // Control republishes the same phase (a retried sync failure).
+        reported.send_modify(|report| report.observed_at = Utc::now());
+        tokio::task::yield_now().await;
+        let again = view.status();
+        assert_eq!(
+            again.observed_at, first.observed_at,
+            "no change, no restamp"
+        );
+        assert!(again.control_observed_at > first.control_observed_at);
+        // A change is stamped when it happens, read or not.
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        let before = Utc::now();
+        reported.send_modify(|report| report.phase = Phase::Synchronizing);
+        tokio::task::yield_now().await;
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        let changed = view.status();
+        assert_eq!(changed.phase, Phase::Synchronizing);
+        assert!(
+            changed.observed_at >= before
+                && changed.observed_at < Utc::now() - chrono::Duration::milliseconds(10),
+            "stamped by the tracker at the change, not by this read"
+        );
+        network.send_modify(|report| report.plane = DataPlane::Preparing);
+        tokio::task::yield_now().await;
+        assert!(view.status().observed_at > changed.observed_at);
+        stop.send_replace(true);
+        clock.await.unwrap();
+    }
+
+    /// H4 (OPS17 ②): the DNS owner's fault before the worker withdrew for
+    /// it already is the packet plane's cause: `suspended` never shows
+    /// with a null `lastError`.
+    #[test]
+    fn a_dns_fault_the_worker_has_not_reported_is_already_the_cause() {
+        let mut network = super::super::network::Report::stopped();
+        network.plane = DataPlane::Ready;
+        network.completion = Some(Ok(()));
+        network.content = Some(std::sync::Arc::new(meshway_test_server::single_node(
+            "a", None,
+        )));
+        let (fault, guard) = watch::channel(None);
+        let (detail, details) = watch::channel(None);
+        network.dns_guard = Some(guard);
+        network.dns_detail = Some(details);
+        let (view, _reported, _network, _desired) = view(network);
+        assert_eq!(view.status().last_error, None);
+        fault.send_replace(Some(meshway_dns::SystemDnsError::Backend));
+        detail.send_replace(Some(
+            meshway_dns::SystemDnsFailure::new(
+                meshway_dns::SystemDnsError::Backend,
+                "observe_deadline",
+            )
+            .expected("an observation within 2000 ms")
+            .actual("abandoned after 2101 ms"),
+        ));
+        let status = view.status();
+        assert_eq!(status.data_plane, DataPlane::Suspended);
+        assert!(status.applied.is_none());
+        assert_eq!(status.last_error, Some(Problem::Dns));
+        assert!(
+            status
+                .last_error_detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("observe_deadline")),
+            "{:?}",
+            status.last_error_detail
         );
     }
 }

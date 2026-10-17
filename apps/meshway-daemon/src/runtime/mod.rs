@@ -71,14 +71,14 @@ pub async fn run(
     let mut completions = report_rx.clone();
     let (sync_status, sync_rx) = watch::channel(control::SyncStatus::default());
     let (network_reported, network_report) = watch::channel(network::Report::stopped());
-    let view = View {
-        desired: desired_rx.clone(),
-        report: report_rx,
-        server: settings.server.clone(),
-        network_mode: settings.network_mode,
-        network: network_report,
-        sync: sync_rx,
-    };
+    let view = View::new(
+        desired_rx.clone(),
+        report_rx,
+        settings.server.clone(),
+        settings.network_mode,
+        network_report,
+        sync_rx,
+    );
     let (commands, mut received) = mpsc::channel::<Mutation>(16);
     let (pings, mut ping_requests) = mpsc::channel::<PingRequest>(8);
     let (netchecks, mut netcheck_requests) =
@@ -109,6 +109,7 @@ pub async fn run(
         view.clone(),
         stop_rx.clone(),
     ));
+    let clock = tokio::spawn(view.clone().track(stop_rx.clone()));
     let mut ping_forwarders = tokio::task::JoinSet::new();
     let mut netcheck_runs = tokio::task::JoinSet::new();
     let mut listener_done = false;
@@ -221,6 +222,7 @@ pub async fn run(
         let _ = reply.send(Err(ErrorCode::Stopping));
     }
     stop_ipc.send_replace(true);
+    let _ = clock.await;
     while ping_forwarders.join_next().await.is_some() {}
     netcheck_runs.shutdown().await;
     if !listener_done {

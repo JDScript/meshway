@@ -351,7 +351,13 @@ meshway_model::object! { #[derive(Clone, Debug)] pub struct Status {
     pub desired_up: bool,
     pub phase: Phase,
     pub server: String,
+    /// When the packet plane's state as shown here (`phase`, `applied`,
+    /// `dataPlane`) last changed.
     pub observed_at: DateTime<Utc>,
+    /// When Control last published its phase and problem (a retried sync
+    /// failure republishes it); omitted by daemons that do not report it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub control_observed_at: Option<DateTime<Utc>>,
     #[serde(deserialize_with = "meshway_model::wire::required_nullable")]
     pub enrollment_request_id: Option<EnrollmentRequestId> [required = true],
     #[serde(deserialize_with = "meshway_model::wire::required_nullable")]
@@ -407,7 +413,56 @@ meshway_model::object! { #[derive(Clone, Debug)] pub struct Status {
     /// most 30 s from the first failure); omitted otherwise.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub change_pending: Option<KernelChange>,
+    /// The Underlay's Control relay while it does not serve every new
+    /// connection: its socket cannot listen (or accept fails) and is
+    /// retried, or a connection limit is reached; omitted while it listens
+    /// and accepts.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub control_relay: Option<ControlRelay>,
 } }
+
+meshway_model::string_enum! {
+/// Why the Control relay does not serve every new connection.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum ControlRelayState {
+    /// Its socket cannot listen, or its accept fails: retried (1 s doubling
+    /// to 60 s; a permission every 60 s).
+    Retrying,
+    /// A connection or Host task limit is reached: new connections are
+    /// refused, current ones kept, until one is admitted again.
+    AtCapacity,
+}
+}
+
+meshway_model::object! {
+/// The Control relay's listener owner while it does not serve every new
+/// connection. Control requests meanwhile fail as sync `network`.
+#[derive(Clone, Debug)] pub struct ControlRelay {
+    pub state: ControlRelayState,
+    /// `retrying`: the operation and the last attempt's error (`cannot
+    /// listen: …`, `accept failed: …`); `atCapacity`: the limit reached
+    /// (`connections` or `tasks`).
+    pub reason: String,
+    /// `retrying`: attempts so far, the first one included; `atCapacity`:
+    /// connections refused since the limit was reached.
+    pub attempts: u32,
+    /// `retrying`: when the next attempt starts; `atCapacity`: null.
+    #[serde(deserialize_with = "meshway_model::wire::required_nullable")]
+    pub retry_at: Option<DateTime<Utc>> [required = true],
+} }
+
+impl ControlRelay {
+    /// A retried listen or accept, flat on the wire.
+    pub fn retrying(retry: RetryPending) -> Self {
+        Self {
+            state: ControlRelayState::Retrying,
+            reason: retry.reason,
+            attempts: retry.attempts,
+            retry_at: Some(retry.retry_at),
+        }
+    }
+}
 
 meshway_model::string_enum! {
 /// The Underlay kernel owner of a retried change.

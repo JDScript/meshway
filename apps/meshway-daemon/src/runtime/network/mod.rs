@@ -87,6 +87,8 @@ pub(super) struct Report {
     /// Egress capture Engine computed for `content`; reporting only.
     pub capture: Option<meshway_configuration::evaluation::CaptureSummary>,
     pub dns_guard: Option<watch::Receiver<Option<meshway_dns::SystemDnsError>>>,
+    /// The check the DNS owner's current fault failed, live beside `dns_guard`.
+    pub dns_detail: Option<watch::Receiver<Option<meshway_dns::SystemDnsFailure>>>,
     /// Netmap whose installation this report describes.
     pub netmap: Option<NetmapRef>,
     pub completion: Option<Result<(), ApplyFailure>>,
@@ -101,6 +103,9 @@ pub(super) struct Report {
     /// read at each Status, also while an apply waits for that change. Set
     /// once at Host start; every later report keeps it.
     pub kernel_changes: Option<watch::Receiver<Option<meshway_underlay::KernelChangePending>>>,
+    /// The Control relay's listener state, live; set once at Host start
+    /// like `kernel_changes`.
+    pub control_relay: Option<watch::Receiver<Option<meshway_underlay::ControlRelayState>>>,
     pub exit_flows: Option<u32>,
     /// The DNS owner's exit resolver fact of the installed content.
     pub exit_dns: Option<meshway_model::exit::ExitDns>,
@@ -148,6 +153,7 @@ impl Report {
             expires_at: None,
             capture: None,
             dns_guard: None,
+            dns_detail: None,
             netmap: None,
             completion: None,
             observed_at: Utc::now(),
@@ -156,6 +162,7 @@ impl Report {
             exit_capability: None,
             exit_cleanups: None,
             kernel_changes: None,
+            control_relay: None,
             exit_flows: None,
             exit_dns: None,
             generation: meshway_model::Sequence::MIN,
@@ -179,6 +186,20 @@ impl Report {
             .as_ref()
             .is_none_or(|guard| guard.has_changed().is_ok() && guard.borrow().is_none())
             && self.content.is_some()
+    }
+    /// The DNS owner's fault while content is installed, with the check it
+    /// failed: the plane withdraws for it (or does already), so it is the
+    /// cause Status shows before the worker's own report.
+    pub fn dns_fault(&self) -> Option<Option<String>> {
+        let guard = self.dns_guard.as_ref()?;
+        if self.content.is_none() || (guard.has_changed().is_ok() && guard.borrow().is_none()) {
+            return None;
+        }
+        Some(
+            self.dns_detail
+                .as_ref()
+                .and_then(|detail| detail.borrow().as_ref().map(ToString::to_string)),
+        )
     }
     /// The netmap whose every required resource is installed.
     pub fn applied(&self) -> Option<NetmapRef> {
@@ -350,9 +371,11 @@ impl Handle {
             let network_changes = host.network_changes();
             let kernel_changes = host.kernel_changes();
             let exit_cleanups = host.exit_cleanups();
+            let control_relay = host.control_relay();
             reports.send_modify(|report| {
                 report.kernel_changes = Some(kernel_changes);
                 report.exit_cleanups = Some(exit_cleanups);
+                report.control_relay = Some(control_relay);
             });
             let (commands, received) = mpsc::channel(8);
             let (observation_plans, plans_rx) = watch::channel(None);

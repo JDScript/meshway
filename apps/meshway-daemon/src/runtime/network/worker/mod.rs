@@ -26,7 +26,7 @@ use packets::{packet_pool, receive_packets};
 use peers::PeerChannels;
 use sample::{RoamEvidence, sample_host};
 use timing::{Retry, lease_end, sleep_until};
-use withdrawal::{finish_withdrawal, shutdown, withdraw};
+use withdrawal::{Withdrawn, finish_withdrawal, shutdown, withdraw, withdrawing};
 
 /// Exit replies taken in one turn, like one Mesh TUN read turn.
 const EXIT_REPLY_BATCH: usize = 32;
@@ -85,6 +85,8 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
     let mut dns_queries = super::dns::mesh::Queries::default();
     let mut retry = Retry::default();
     let mut dns_failed = false;
+    // A failure withdrew installed content and nothing installed since.
+    let mut withdrawn: Option<Withdrawn> = None;
     // The exit role's prerequisites came to hold after its content applied
     // without it: apply that content again so the role installs.
     let mut exit_recovered = false;
@@ -419,6 +421,9 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                             diagnostics.invalidate();
                             diagnostics.stop().await;
                             dns_queries.stop().await;
+                            if engine.desired().is_some() {
+                                withdrawn.get_or_insert(Withdrawn::now(Problem::Underlay));
+                            }
                             let _ = engine.reconfig(None).await;
                         }
                         let mut report = reports.borrow().clone();
@@ -522,6 +527,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 diagnostics.stop().await;
                 let closing = engine.reconfig(None).await.map_err(|_| Problem::Underlay);
                 retry = Retry::default();
+                withdrawn = None;
                 let plane = engine.components_mut();
                 let dns_result = if down {
                     plane
@@ -574,8 +580,17 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 if !matches!(work, Work::Retry) {
                     retry = Retry::default();
                 }
+                // The reinstall below logs once it installs, whichever input
+                // led to it (see `Withdrawn::reinstalled`).
+                let trigger = match work {
+                    Work::Offer => "offer",
+                    Work::Retry => "retry",
+                    Work::DnsRecovered => "dnsRecovered",
+                    Work::HostRecovered => "hostRecovered",
+                    Work::ExitRecovered => "exitRecovered",
+                    _ => "listenersChanged",
+                };
                 if matches!(work, Work::DnsRecovered) {
-                    tracing::info!("Required DNS component recovered; reinstalling the netmap");
                     dns_failed = false;
                     engine.components_mut().dns.acknowledge();
                 }
@@ -588,6 +603,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                         diagnostics.invalidate();
                         diagnostics.stop().await;
                         withdraw(&mut engine, &reports, true).await;
+                        withdrawn.get_or_insert(Withdrawn::now(Problem::Underlay));
                     }
                 }
                 let offer = offers.borrow_and_update().clone();
@@ -650,10 +666,11 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 let mut report = previous.clone();
                 // Changed associations keep the installed content's work: its
                 // report stays until the new desired state's outcome below.
+                // The last outcome's problem stays until this one's outcome:
+                // a plane withdrawn for a failure keeps its cause while it
+                // prepares again.
                 if change == Some(super::transitions::Change::Content) {
                     report.plane = DataPlane::Preparing;
-                    report.problem = None;
-                    report.problem_detail = None;
                     report.netmap = Some(reference);
                     report.completion = None;
                     report.facts = None;
@@ -681,8 +698,13 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 let plane = engine.components_mut();
                 let mut report = std::mem::replace(&mut plane.report, Report::stopped());
                 report.dns_guard = plane.dns.guard();
+                report.dns_detail = plane.dns.detail_watch();
                 report.exit_dns = exit_dns.borrow_and_update().clone();
                 report.observed_at = chrono::Utc::now();
+                let installed = matches!(result, Ok(()) | Err(meshway_engine::Error::Degraded));
+                if installed && let Some(withdrawal) = withdrawn.take() {
+                    withdrawal.reinstalled(trigger, reference.serial.get(), result.is_ok());
+                }
                 match result {
                     Ok(()) => {
                         dns_failed = false;
@@ -749,6 +771,9 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                             "Node netmap installation did not complete"
                         );
                         diagnostics.invalidate();
+                        if previous.content.is_some() {
+                            withdrawn.get_or_insert(Withdrawn::now(problem));
+                        }
                         report.completion = Some(Err(failure));
                         report.problem = Some(problem);
                         report.problem_detail = plane.failure_detail.take();
@@ -780,15 +805,18 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 continue;
             }
             Work::HostFailed => {
+                withdrawing(
+                    &reports,
+                    Problem::Underlay,
+                    engine
+                        .components()
+                        .host
+                        .ownership_ended()
+                        .map(|end| end.to_string()),
+                );
+                withdrawn.get_or_insert(Withdrawn::now(Problem::Underlay));
                 diagnostics.stop().await;
                 withdraw(&mut engine, &reports, true).await;
-                let mut report = reports.borrow().clone();
-                report.problem_detail = engine
-                    .components()
-                    .host
-                    .ownership_ended()
-                    .map(|end| end.to_string());
-                reports.send_replace(report);
                 continue;
             }
             Work::ExitFailed | Work::ExitReply(Err(_)) => {
@@ -816,56 +844,60 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 continue;
             }
             Work::CarrierClosed | Work::Packet(Err(_)) | Work::DnsFailure => {
-                // The decisions of every external ping go with the content.
-                diagnostics.withdraw().await;
                 let dns_error = matches!(work, Work::DnsFailure);
-                if dns_error {
-                    tracing::warn!("Required DNS component failed; suspending packet plane");
-                }
-                dns_failed |= dns_error;
-                if dns_error {
-                    engine.components_mut().dns.acknowledge();
-                }
-                let cleanup = engine.reconfig(None).await;
-                let mut report = reports.borrow().clone();
-                report.plane = DataPlane::Failed;
-                report.content = None;
-                // The DNS check that failed, else why kernel ownership ended
-                // (the cleanup of an ended term fails): never an empty detail
-                // over a known reason.
-                report.problem_detail = if dns_error && cleanup.is_ok() {
-                    engine.components().dns.detail()
-                } else {
-                    None
-                }
-                .or_else(|| {
-                    engine
-                        .components()
-                        .host
-                        .ownership_ended()
-                        .map(|end| end.to_string())
-                });
-                report.problem = Some(if cleanup.is_err() {
+                // Kernel ownership that ended first is the cause (the DNS
+                // anchor ends with it); otherwise the failed component.
+                let ended = engine
+                    .components()
+                    .host
+                    .ownership_ended()
+                    .map(|end| end.to_string());
+                let problem = if ended.is_some() {
                     Problem::Underlay
                 } else {
                     match work {
                         Work::DnsFailure => Problem::Dns,
                         Work::Packet(_) => Problem::Tun,
-                        Work::CarrierClosed => Problem::Transport,
-                        _ => Problem::Underlay,
+                        _ => Problem::Transport,
                     }
-                });
-                report.completion = Some(Err(match report.problem {
-                    Some(Problem::Dns) => ApplyFailure::Dns,
-                    Some(Problem::Tun) => ApplyFailure::Tun,
-                    Some(Problem::Transport) => ApplyFailure::Listeners,
-                    _ => ApplyFailure::Underlay,
-                }));
-                report.observed_at = chrono::Utc::now();
-                report.facts = None;
-                report.exit_flows = None;
-                if let Some(capability) = &mut report.exit_capability {
-                    capability.installed_families.clear();
+                };
+                if dns_error {
+                    tracing::warn!("Required DNS component failed; suspending packet plane");
+                } else {
+                    tracing::warn!(
+                        ?problem,
+                        "Required packet plane component failed; suspending packet plane"
+                    );
+                }
+                dns_failed |= dns_error;
+                if dns_error {
+                    engine.components_mut().dns.acknowledge();
+                }
+                // The DNS check that failed, else why kernel ownership ended:
+                // never an empty detail over a known reason.
+                let detail = if problem == Problem::Dns {
+                    engine.components().dns.detail().or(ended)
+                } else {
+                    ended
+                };
+                let mut report = withdrawing(&reports, problem, detail);
+                withdrawn.get_or_insert(Withdrawn::now(problem));
+                // The decisions of every external ping go with the content.
+                diagnostics.withdraw().await;
+                let cleanup = engine.reconfig(None).await;
+                // Kernel ownership that ended during the cleanup is the
+                // Host's failure now (its re-proof recovers it). A cleanup
+                // that failed otherwise (an exit retirement its owner
+                // retries) keeps the earliest cause.
+                if cleanup.is_err()
+                    && problem != Problem::Underlay
+                    && let Some(end) = engine.components().host.ownership_ended()
+                {
+                    report.problem = Some(Problem::Underlay);
+                    report.problem_detail = Some(end.to_string());
+                    report.completion = Some(Err(ApplyFailure::Underlay));
+                    report.observed_at = chrono::Utc::now();
+                    reports.send_replace(report.clone());
                 }
                 retry.failed(
                     report
@@ -873,7 +905,6 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                         .and_then(Result::err)
                         .unwrap_or(ApplyFailure::Underlay),
                 );
-                reports.send_replace(report);
                 continue;
             }
             Work::Packet(Ok(received)) => {
