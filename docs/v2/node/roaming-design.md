@@ -10,11 +10,11 @@
 
 | 项 | R1 前行为 | 当时的定义位置 |
 | --- | --- | --- |
-| 变化来源 | Underlay rtnetlink monitor 只发一个单调计数 `network_changes`：外部接口的 up 链路增删、地址增删，以及 **main 表（254）**中出接口为外部接口的路由增删；未 up 链路、自有 TUN／出口 TUN／DNS 锚点、自有规则与私有表不计 | `crates/meshway-underlay/src/linux/kernel/monitor.rs::network_changed`；[控制调度与恢复](/v2/node/runtime#控制调度与恢复) |
+| 变化来源 | Underlay rtnetlink monitor 只发一个单调计数 `network_changes`：外部接口的 up 链路增删、地址增删，以及 **main 表（254）**中出接口为外部接口的路由增删；未 up 链路、自有 TUN／出口 TUN／DNS 锚点、自有规则与私有表不计 | `crates/meshway-underlay/src/linux/kernel/monitor/classify.rs::network_changed`；[控制调度与恢复](/v2/node/runtime#控制调度与恢复) |
 | 消费者 | ① 控制中继关闭当前连接（挂起的 `sync` 随之中断，按 1–15 s 有界退避重连）；② 网络 worker 重新采样并唤醒 State 报告（最多每秒一次，重新枚举 `localEndpoints`） | `linux/proxy.rs::relay`；`runtime/network/worker` `Work::NetworkChanged` |
 | STUN | 每 socket 固定节拍（有通道 ~10 s，否则 ~30 s）；**不因网络变化提前观测**；映射变化立即上报并清零全部候选节奏 | [持续 STUN 观测](/v2/node/connectivity#continuous-stun) |
 | UDP 通道 | 以对端 `SocketAddr` 为键；未知来源的业务帧丢弃；认证 Ping 每 2 s、健康窗口 6 s | [邻接管理](/v2/node/transport#邻接管理) |
-| 来源变化的接住 | **listener 端**收到未知来源、按现有通道签名的 Ping 时，向新来源发起新的 source challenge，完成后以新 channel 精确替换旧 channel（`probe_recovery`）；**拨号端没有对应路径**；穿透尝试内的[来源学习](/v2/node/connectivity#source-learning)（≤2 个来源）只在建立期有效 | `manager/datagram/mod.rs::probe_recovery` |
+| 来源变化的接住 | **listener 端**收到未知来源、按现有通道签名的 Ping 时，向新来源发起新的 source challenge，完成后以新 channel 精确替换旧 channel（`probe_recovery`）；**拨号端没有对应路径**；穿透尝试内的[来源学习](/v2/node/connectivity#source-learning)（≤2 个来源）只在建立期有效 | `manager/datagram/session.rs::probe_recovery` |
 | 流式通道 | 只在连接结束时退役，没有应用层健康检查；本机地址消失后可能长时间挂起（内核 TCP 重传上限） | [通道稳定性](/v2/node/connectivity#channel-stability) |
 | circuit | 绑定相邻对端的 **boot**，不绑 link／地址；同 boot 的承载更换保留 circuit；源端连续 15 s 无认证帧、双向 90 s 无帧时结束 | [受保护 circuit](/v2/node/dataplane#候选受保护-circuit) |
 | 候选节奏 | 有选定通道即停止探测该 peer 其他候选；候选集合变化、本机映射变化、该边内容变化清零暂停 | [候选节奏](/v2/node/connectivity#candidate-pacing) |

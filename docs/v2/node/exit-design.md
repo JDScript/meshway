@@ -23,9 +23,9 @@
 | `crates/meshway-engine/src/lib.rs`：`Desired` | 节点唯一授权状态：已验签内容、捕获边界、可信关联与保留地址 |
 | `crates/meshway-configuration/src/netmap/mod.rs`：`ExitRole`、`DnsService`；`execution/exit.rs`：`EgressCapturePlan`、`ExitNat` | 出口职责与捕获计划；`ExitRole` 只是资源职责，不是转发许可 |
 | `crates/meshway-dataplane/src/secure/exit.rs`：`exit_reply`、`fail_exit_projection`、`retire_exits`、`related_counters` | 出口流在唯一 SecureNode 流表中的投影、回复与退役 |
-| `crates/meshway-underlay/src/linux/kernel/exit/` | 出口 TUN、nft 程序、ctnetlink conntrack、quarantine、journal、能力探测与宿主规则判定（`firewall/`：`judge.rs` 遍历判定，`nft.rs`／`iptables.rs` 解析） |
-| `crates/meshway-underlay/src/linux/kernel/{mod,plan,capture/mod,journal,monitor}.rs`、`kernel/egress/` | 唯一 Kernel、私有 RPDB/table、正向 capture／负向 sink、源端 egress 门、资源监控；`plan::pools` 明确拒绝 `/0` |
-| `crates/meshway-underlay/src/linux/protection.rs`：`Mark::transform`、`Shared::prepare` | SO_MARK 读改写／读回并保持外部 selector 语义；`kernel::allocate` 随机起点选择空闲单 bit，**不是固定 `0x40000000`** |
+| `crates/meshway-underlay/src/linux/kernel/exit/` | 出口 TUN、nft 程序、ctnetlink conntrack、quarantine、journal、能力探测与宿主规则判定（`firewall/`：`judge.rs` 遍历判定，`nft.rs`／`iptables.rs` 解析）；出口 owner 在 `owner/`（`mod.rs` 请求接口，`install.rs` 安装、事件循环与清理重试），表操作在 `backend/`（`install.rs` 安装批，`confirm.rs` 确认／续期与元素回读，`retire.rs` 退役与 quarantine，`mod.rs` 读表与关闭） |
+| `crates/meshway-underlay/src/linux/kernel/{mod,term,install,proof,repair,plan,capture/mod,journal}.rs`、`kernel/monitor/`、`kernel/egress/` | 唯一 Kernel（`term.rs` 打开／重证一期，`install.rs` 安装与暂停，`proof.rs` 回读，`repair.rs` 重装被外部删除的自有对象）、私有 RPDB/table、正向 capture／负向 sink、源端 egress 门、资源监控（`monitor/`：`decode.rs` 解码、`classify.rs` 分类，订阅循环在 `mod.rs`）；`plan::pools` 明确拒绝 `/0` |
+| `crates/meshway-underlay/src/linux/protection.rs`：`Mark::transform`、`Shared::prepare` | SO_MARK 读改写／读回并保持外部 selector 语义；`kernel/term.rs::allocate` 随机起点选择空闲单 bit，**不是固定 `0x40000000`** |
 | `crates/meshway-underlay/src/linux/dns.rs`、`resolver_exchange.rs` | 前者仅 bootstrap resolver；后者消费密封 local resolver route，不能将 bootstrap 权限借给出口 DNS |
 | `crates/meshway-dns/src/{selection,route,exit_route,association,owner/mod,dispatcher/mod,service/mod}.rs` | MagicDNS、useWithExit 选择、精确上游许可、出口 resolver 路由、可信关联、query ticket 与输出取消 |
 | `crates/meshway-dns/src/system/linux/{mod,resolved,file/mod,storage}.rs` | namespace 预约、真实上游来源、系统 DNS 安装与恢复；不得绕过现有归属机制 |

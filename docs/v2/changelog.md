@@ -2,6 +2,10 @@
 
 按合入 main 的顺序记录工作包、提交与证据 ID。规则见[工程流程](/v2/process)；性能数字的口径见[分层性能测量](/v2/node/performance)，验收状态见[验收范围](/v2/node/validation)。
 
+## 未发布
+
+- 结构（F6c，`f6c/splits`，无行为变化）：只移动代码、改模块路径与可见性。Manager `datagram/mod.rs` 拆为 `{mod,session,roam,health,receive}.rs`＋`tests/{mod,roam}.rs`；Underlay `kernel/mod.rs` 拆出 `{term,repair,proof,install}.rs`，`kernel/monitor.rs` 拆为 `monitor/{mod,decode,classify,tests}.rs`，出口 `backend.rs` 拆为 `backend/{mod,install,confirm,retire}.rs`、`owner.rs` 拆为 `owner/{mod,install}.rs`；daemon 网络 worker 的非 `run` 部分移入 `worker/{packets,timing}.rs`（`run` 仍为单函数）。落点见 [Exit 设计](/v2/node/exit-design#当前实现落点)。
+
 ## v0.1.0-alpha.17
 
 范围：wire 6、`compilerVersion` `meshway-netmap-3`、Server schema 8 不变（普通升级，无断网窗口）；IPC 12 的 Status 新增可省略字段 `networkError`（CLI 与 daemon 一起升级）；HTTP 类型与路由不变，`routing-selection` 响应的 `version` 语义改为清除后保留版本。F6a 13 条审阅修复——清除选择的 CAS 基准单调、无操作清除的幂等回执与单节点读取，capture 重装读取失败仍欠着，慢审计不饿死请求，漫游来源许可替换与本机路径变化重搜 PMTU，bootstrap resolver 上游三态，出口 quarantine 读回后删除，新一期重建 overlap，monitor 截断数据报为暂态，网络变化 trailing debounce，DNS 失败详情先发布，`networkError`；F6b CI、测试确定化与卫生；以及下列 F6b、F6a 工作包。
