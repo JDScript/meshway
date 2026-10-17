@@ -127,6 +127,8 @@ pub struct Host {
     options: Options,
     /// The fixed Server origin of the attached Control relay.
     origin: Option<String>,
+    /// The relay's listener state, continued across ownership terms.
+    relay: tokio::sync::watch::Sender<Option<crate::ControlRelayState>>,
     reproof: Reproof,
     // Released after the kernel, proxy and private-directory ownership.
     _owner: HostOwner,
@@ -195,6 +197,12 @@ impl Host {
     ) -> tokio::sync::watch::Receiver<Option<crate::KernelChangePending>> {
         self.kernel.shared.changes.subscribe()
     }
+    /// The Control relay's listener state, live: `None` while it listens
+    /// and accepts (or no relay is attached); a retried listen or accept, or
+    /// a reached connection limit, otherwise.
+    pub fn control_relay(&self) -> tokio::sync::watch::Receiver<Option<crate::ControlRelayState>> {
+        self.relay.subscribe()
+    }
     pub fn exit_role(&self) -> Option<ExitRole> {
         self.kernel
             .exit
@@ -246,6 +254,7 @@ impl Host {
                     tasks,
                     options,
                     origin: None,
+                    relay: tokio::sync::watch::channel(None).0,
                     reproof: Reproof::default(),
                     _owner: owner,
                 })
@@ -260,17 +269,20 @@ impl Host {
 
     /// Attach the bootstrap resolver and fixed-origin Control relay to this
     /// owner's protected sockets. A live attachment cannot be replaced/rebound.
+    /// An invalid origin or a resolver that does not open fails the
+    /// attachment; a socket that cannot listen yet does not: the relay's
+    /// owner retries it (see [`Self::control_relay`]).
     pub async fn attach_control(&mut self, origin: &str) -> Result<()> {
         if self.proxy.is_some() {
             return Err(Error::Conflict);
         }
         let origin = meshway_control::server_origin(origin).map_err(|_| Error::Origin)?;
-        self.open_proxy(&origin, proxy::Listen::Now).await?;
+        self.open_proxy(&origin).await?;
         self.origin = Some(origin);
         Ok(())
     }
 
-    async fn open_proxy(&mut self, origin: &str, listen: proxy::Listen) -> Result<()> {
+    async fn open_proxy(&mut self, origin: &str) -> Result<()> {
         self.kernel.shared.check()?;
         let resolver = self.sockets.resolver().await?.clone();
         self.proxy = Some(
@@ -281,7 +293,7 @@ impl Host {
                 resolver,
                 self.sockets.options.max_sockets,
                 self.sockets.options.connect_timeout,
-                listen,
+                self.relay.clone(),
             )
             .await?,
         );
@@ -354,7 +366,7 @@ impl Host {
         self.sockets = sockets;
         self.tasks = tasks;
         if let Some(origin) = self.origin.clone()
-            && let Err(error) = self.open_proxy(&origin, proxy::Listen::Retrying).await
+            && let Err(error) = self.open_proxy(&origin).await
         {
             // The new term holds; only its relay's resolver did not open (a
             // socket that cannot listen yet is the relay's own retry). End

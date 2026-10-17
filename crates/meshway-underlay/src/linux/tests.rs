@@ -217,3 +217,77 @@ async fn control_attachment_relays_before_and_after_down_until_shutdown() {
     assert!(!directory.path().join("underlay-bootstrap.sock").exists());
     assert!(client.get(&origin).send().await.is_err());
 }
+
+/// H4 (X14-b): at process start a relay socket that cannot listen yet (a
+/// live listener still holds its path) does not fail the attachment: the
+/// relay's owner retries it, publishes the retry, and relays once the path
+/// is free — the same cadence as in a re-proved term.
+#[tokio::test]
+#[ignore = "isolated Linux NET_ADMIN namespace required"]
+async fn control_attachment_listens_once_a_held_socket_is_released() {
+    use std::os::unix::fs::PermissionsExt;
+    assert_eq!(
+        std::env::var("MESHWAY_UNDERLAY_ISOLATED").as_deref(),
+        Ok("1")
+    );
+    let temp = tempfile::tempdir().unwrap();
+    let directory = Arc::new(Directory::open(&temp.path().join("private"), "test.lock").unwrap());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut request = vec![0; 4096];
+        assert!(stream.read(&mut request).await.unwrap() > 0);
+        stream
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+            .await
+            .unwrap();
+    });
+    let path = directory.path().join("underlay-bootstrap.sock");
+    let held = std::os::unix::net::UnixListener::bind(&path).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let mut host = Host::open(directory.clone(), Options::default())
+        .await
+        .unwrap();
+    let states = host.control_relay();
+    host.attach_control(&origin).await.unwrap();
+    let client = host
+        .client_builder()
+        .unwrap()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    match states.borrow().clone() {
+        Some(crate::ControlRelayState::Retrying(pending)) => {
+            eprintln!(
+                "H4_RELAY_RETRYING reason={} attempts={}",
+                pending.reason, pending.attempts
+            );
+            assert!(pending.reason.starts_with("cannot listen: "));
+        }
+        other => panic!("the held socket is a published retry, not {other:?}"),
+    }
+    host.kernel.shared.check().unwrap();
+    drop(held);
+    let released = std::time::Instant::now();
+    let answer = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            match client.get(&origin).send().await {
+                Ok(response) => break response.text().await.unwrap(),
+                Err(_) => tokio::time::sleep(std::time::Duration::from_millis(100)).await,
+            }
+        }
+    })
+    .await
+    .expect("relayed once the socket is free");
+    assert_eq!(answer, "ok");
+    eprintln!(
+        "H4_RELAY_LISTENING after_ms={}",
+        released.elapsed().as_millis()
+    );
+    assert_eq!(*states.borrow(), None);
+    server.await.unwrap();
+    host.shutdown(false).await.unwrap();
+    assert!(!path.exists());
+}

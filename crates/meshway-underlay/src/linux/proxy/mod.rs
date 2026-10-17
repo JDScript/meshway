@@ -34,14 +34,9 @@ pub(super) struct Proxy {
     stop: tokio_util::sync::CancellationToken,
 }
 
-/// How [`Proxy::open`] treats a socket that cannot listen yet.
-pub(super) enum Listen {
-    /// At startup: the error is the attachment's.
-    Now,
-    /// In a re-proved term: the owner keeps retrying (see [`serve`]); the
-    /// term holds meanwhile.
-    Retrying,
-}
+/// Where the relay's listener owner publishes whether it serves every new
+/// connection (`None`) or not; the Host keeps it across terms.
+pub(super) type State = tokio::sync::watch::Sender<Option<crate::ControlRelayState>>;
 
 impl Proxy {
     pub async fn open(
@@ -51,7 +46,7 @@ impl Proxy {
         resolver: Resolver,
         limit: usize,
         timeout: Duration,
-        listen: Listen,
+        state: State,
     ) -> Result<Self> {
         let url = reqwest::Url::parse(origin).map_err(|_| Error::Origin)?;
         let host = url
@@ -69,11 +64,10 @@ impl Proxy {
             uid,
             state: Default::default(),
         });
-        // No accept/network work starts before the record is durable.
-        let first = match (socket.bind().await, listen) {
-            (Err(error), Listen::Now) => return Err(error),
-            (first, _) => first,
-        };
+        // No accept/network work starts before the record is durable. A
+        // socket that cannot listen yet is the owner's to retry, at process
+        // start as in a re-proved term (see [`serve`]).
+        let first = socket.bind().await;
         let stop = tokio_util::sync::CancellationToken::new();
         let tasks = shared.tasks.clone();
         let connections = Connections {
@@ -81,6 +75,7 @@ impl Proxy {
             permits: Arc::new(Semaphore::new(limit)),
             uid,
             refused: 0,
+            state,
             relay: move |stream| {
                 let (host, shared, resolver) = (host.clone(), shared.clone(), resolver.clone());
                 async move {
@@ -442,6 +437,7 @@ struct Connections<R> {
     relay: R,
     /// Connections refused since the limit was reached.
     refused: u64,
+    state: State,
 }
 
 enum Admission {
@@ -478,6 +474,7 @@ where
                         "Protected control relay accepts connections again"
                     );
                     self.refused = 0;
+                    self.state.send_replace(None);
                 }
                 Admission::Admitted
             }
@@ -494,14 +491,20 @@ where
             );
         }
         self.refused = self.refused.saturating_add(1);
+        self.state
+            .send_replace(Some(crate::ControlRelayState::AtCapacity {
+                limit,
+                refused: self.refused,
+            }));
         Admission::Refused
     }
 }
 
 /// The relay's listener owner. A socket that cannot listen and a failed
-/// accept are retried on [`retry_delay`] and reported once per distinct
-/// error; neither ends kernel ownership (the relay's connections already
-/// end with it). Returns once the Host's tasks stop or the Proxy closes.
+/// accept are retried on [`retry_delay`], logged once per distinct error and
+/// published at every attempt; neither ends kernel ownership (the relay's
+/// connections already end with it). Returns once the Host's tasks stop or
+/// the Proxy closes.
 async fn serve<R, F>(
     socket: Arc<Socket>,
     first: Result<UnixListener>,
@@ -525,7 +528,9 @@ async fn serve<R, F>(
                     failures,
                     "Protected control relay cannot listen; retrying, kernel ownership kept",
                 );
-                tokio::time::sleep(retry_delay(&error, failures)).await;
+                let delay = retry_delay(&error, failures);
+                publish(&connections.state, "cannot listen", &error, failures, delay);
+                tokio::time::sleep(delay).await;
                 next = socket.bind().await;
             }
         }
@@ -538,6 +543,7 @@ async fn serve<R, F>(
         failures = 0;
         reported = None;
     }
+    connections.state.send_replace(None);
     loop {
         match listener.accept().await {
             Ok((stream, _)) => {
@@ -545,6 +551,7 @@ async fn serve<R, F>(
                     tracing::info!(failures, "Protected control relay accepting again");
                     failures = 0;
                     reported = None;
+                    connections.state.send_replace(None);
                 }
                 if let Admission::Stopped = connections.admit(stream) {
                     return;
@@ -559,14 +566,39 @@ async fn serve<R, F>(
                     failures,
                     "Protected control relay accept failed; retrying, kernel ownership kept",
                 );
-                tokio::time::sleep(retry_delay(&error, failures)).await;
+                let delay = retry_delay(&error, failures);
+                publish(&connections.state, "accept failed", &error, failures, delay);
+                tokio::time::sleep(delay).await;
             }
         }
     }
 }
 
+/// Why the relay's socket did not listen or accept: a socket on its path
+/// that [`recover`] does not reclaim is named as such, not as the Host's
+/// ownership conflict the same error kind stands for elsewhere.
+fn describe(error: &Error) -> String {
+    match error {
+        Error::Conflict => {
+            "its path is held by a live listener or a socket it cannot reclaim".into()
+        }
+        error => error.to_string(),
+    }
+}
+
+/// The retry of `operation` after `attempts` failures, the last `error`.
+fn publish(state: &State, operation: &str, error: &Error, attempts: u32, delay: Duration) {
+    state.send_replace(Some(crate::ControlRelayState::Retrying(
+        crate::RetryPending {
+            reason: format!("{operation}: {}", describe(error)),
+            attempts,
+            retry_at: std::time::SystemTime::now() + delay,
+        },
+    )));
+}
+
 fn report(reported: &mut Option<String>, error: &Error, attempts: u32, message: &'static str) {
-    let text = error.to_string();
+    let text = describe(error);
     if reported.as_ref() != Some(&text) {
         tracing::warn!(error = %text, attempts, retry_ms = retry_delay(error, attempts).as_millis() as u64, "{message}");
         *reported = Some(text);
