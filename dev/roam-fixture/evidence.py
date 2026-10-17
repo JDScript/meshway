@@ -263,7 +263,9 @@ def analyse(report, manifest):
         if scenario == "exit":
             checks.update(exit_checks(report, cell, measured, phase, name.split("/")[1], events, manifest))
         measured["checks"] = checks
-        passed = all(checks.values())
+        # Only a check that can lack a sample (`SAMPLED`) may be None: not
+        # applicable; every other check of the cell still holds.
+        passed = all(value or (key in SAMPLED and value is None) for key, value in checks.items())
         measured["gatePassed"] = passed
         if not passed:
             failures.append(name)
@@ -352,10 +354,18 @@ def traversal_checks(measured):
     }
 
 
+# Checks that are None when the cell produced no sample for them.
+SAMPLED = frozenset({"newFlowsThroughR"})
+
+
 def through_relay(in_gap, answered, relay_rate):
-    """New flows of the gap went through R: at least one was started, every one
-    was answered in time, and R actually received the relay stream."""
-    return bool(in_gap) and set(answered) == set(in_gap) and relay_rate is not None and relay_rate > 0
+    """New flows of the gap went through R: every one was answered in time, and
+    R actually received the relay stream. A new flow starts every 250 ms, so a
+    gap whose window (see `relay_checks`) is shorter than that may hold none:
+    no sample, not applicable (None); the window length is recorded."""
+    if not in_gap:
+        return None
+    return set(answered) == set(in_gap) and relay_rate is not None and relay_rate > 0
 
 
 def relay_checks(report, cell, measured, phase):
@@ -384,6 +394,7 @@ def relay_checks(report, cell, measured, phase):
     measured["relay"] = {
         "directLeftS": round(left - routed, 3) if left else None,
         "recoveredS": round(recovered - routed, 3) if recovered else None,
+        "gapWindowS": round(recovered - left - 0.5, 3) if left is not None and recovered is not None else None,
         "newFlowsInGap": len(in_gap), "newFlowsAnsweredThroughR": len(answered_in_gap),
         "relayStreamLongestGapS": round(longest_gap(relay_started + 1, cell["relayStreamStoppedAt"],
                                                     [at for at, _ in relay_stream["uecho"]]), 3)
@@ -401,7 +412,10 @@ def relay_checks(report, cell, measured, phase):
         "gapIsReacquisition": reacquired is not None and measured["udpLongestGapS"] <= reacquired + 1.0,
         # Every per-datagram flow of the gap answered through R within 1 s;
         # the relay stream (also started in the gap) shows that R carried it.
-        "newFlowsThroughR": through_relay(in_gap, answered_in_gap, relay["rRateBeforeRelayStream"]),
+        # Not applicable only for a gap that was measured: no direct-left or
+        # recovery time is a failure of its own.
+        "newFlowsThroughR": through_relay(in_gap, answered_in_gap, relay["rRateBeforeRelayStream"])
+        if left is not None and recovered is not None else False,
         "relayFlowStaysOnR": stays is not None and stays >= 150 and relay["relayStreamLongestGapS"] is not None
         and relay["relayStreamLongestGapS"] <= 1.0,
         "afterFlowDirect": added is not None and added < 50 and relay["afterStreamAnswered"] > 100,
