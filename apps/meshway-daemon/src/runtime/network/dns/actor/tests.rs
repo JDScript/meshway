@@ -133,7 +133,7 @@ async fn failed_owner_keeps_its_fault_while_it_retries_recovery_until_it_succeed
     let (scopes, _) = watch::channel(None);
     let observations = Arc::new(AtomicUsize::new(0));
     let recoveries = Arc::new(AtomicUsize::new(0));
-    let actor = Actor::start(FailingOwner {
+    let mut actor = Actor::start(FailingOwner {
         scopes,
         observations: observations.clone(),
         recoveries: recoveries.clone(),
@@ -165,8 +165,16 @@ async fn failed_owner_keeps_its_fault_while_it_retries_recovery_until_it_succeed
     assert_eq!(observations.load(Ordering::SeqCst), 1);
     assert_eq!(recoveries.load(Ordering::SeqCst), 2);
     assert_eq!(*fault.borrow(), Some(SystemDnsError::Backend));
-    // The plane sees that fault once: re-proved, it is a recovery and no
-    // longer a failure while it waits for the hold.
+    // Not yet acknowledged, the re-proved fault is still the plane's failure.
+    tokio::time::timeout(
+        RECOVERY_INTERVAL,
+        super::Health::new(actor.fault.clone(), actor.recovered.clone()).failed(),
+    )
+    .await
+    .expect("an unacknowledged re-proved fault is a failure");
+    // The plane sees that fault once (`Attachment::acknowledge`): re-proved,
+    // it is a recovery and no longer a failure while it waits for the hold.
+    actor.fault.borrow_and_update();
     let health = super::Health::new(actor.fault.clone(), actor.recovered.clone());
     assert!(
         tokio::time::timeout(RECOVERY_INTERVAL, health.clone().failed())

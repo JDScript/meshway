@@ -104,6 +104,71 @@ mod tests {
         );
     }
 
+    /// S4 (OPS16, planck 17:59:57): the process stalled 4.5 s; the owner's
+    /// observation failed and its recovery succeeded 7 ms later, before the
+    /// plane looked. Unacknowledged, that fault is still one failure and then
+    /// one recovery (alpha.16 saw neither: the plane kept its content while
+    /// DNS query authority stayed withdrawn and Status read `suspended`).
+    /// Acknowledged and re-proved, it waits for the plane's hold.
+    #[tokio::test(start_paused = true)]
+    async fn a_fault_re_proved_before_the_plane_looked_is_one_failure_and_one_recovery() {
+        let owner = Owner::new();
+        let mut acknowledged = owner.fault.subscribe();
+        let health = |acknowledged: &watch::Receiver<Option<SystemDnsError>>| {
+            Health::new(acknowledged.clone(), owner.recovered.subscribe())
+        };
+        let within = |next| tokio::time::timeout(Duration::from_secs(10), next);
+        owner.fault.send_replace(Some(SystemDnsError::Backend));
+        owner.recovered.send_replace(true);
+        let failed = within(next(
+            None,
+            Some(health(&acknowledged)),
+            false,
+            std::future::pending(),
+            true,
+        ))
+        .await;
+        assert_eq!(failed.ok(), Some(Lifecycle::DnsFailure));
+        acknowledged.borrow_and_update();
+        let recovered = within(next(
+            None,
+            Some(health(&acknowledged)),
+            true,
+            std::future::pending(),
+            false,
+        ))
+        .await;
+        assert_eq!(recovered.ok(), Some(Lifecycle::DnsRecovered));
+        acknowledged.borrow_and_update();
+        // The reinstall did not reach the hold: no second failure.
+        let idle = within(next(
+            None,
+            Some(health(&acknowledged)),
+            false,
+            std::future::pending(),
+            false,
+        ))
+        .await;
+        assert!(
+            idle.is_err(),
+            "an acknowledged re-proved fault is no failure"
+        );
+        // The hold clears it; a later fault is a new failure, re-proved or not.
+        owner.fault.send_replace(None);
+        owner.recovered.send_replace(false);
+        owner.fault.send_replace(Some(SystemDnsError::Conflict));
+        owner.recovered.send_replace(true);
+        let again = within(next(
+            None,
+            Some(health(&acknowledged)),
+            false,
+            std::future::pending(),
+            true,
+        ))
+        .await;
+        assert_eq!(again.ok(), Some(Lifecycle::DnsFailure));
+    }
+
     /// OPS14 x13-1/x13-2: the DNS owner failed and re-proved itself, then
     /// kernel ownership ended unavailable before the plane's reinstall could
     /// reach the DNS hold (the capture installation fails first and the

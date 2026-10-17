@@ -608,6 +608,7 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                 if matches!(work, Work::DnsRecovered) {
                     tracing::info!("Required DNS component recovered; reinstalling the netmap");
                     dns_failed = false;
+                    engine.components_mut().dns.acknowledge();
                 }
                 if matches!(work, Work::HostRecovered) {
                     tracing::info!("Kernel ownership recovered; reinstalling the netmap");
@@ -853,6 +854,9 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
                     tracing::warn!("Required DNS component failed; suspending packet plane");
                 }
                 dns_failed |= dns_error;
+                if dns_error {
+                    engine.components_mut().dns.acknowledge();
+                }
                 let cleanup = engine.reconfig(None).await;
                 let mut report = reports.borrow().clone();
                 report.plane = DataPlane::Failed;
