@@ -12,7 +12,9 @@ Status 与可观测性（H4，`h4/status-observability`）：wire 6、`compilerV
 - phase 映射（不变量：`blocked` 只表示需要人工；owner：Status 投影的 phase 映射，输入为网络 worker 对失败是否有自动恢复路径的判定与 Host 的 `changePending`／`cleanupPending` 现值）：`dataPlane: failed` 时，会自动恢复的失败（DNS 故障、归属暂态阻断、池重叠、仍在重试的安装失败、内核变更／出口清理重试中）为 `retrying`，只有持久冲突或重试已用完／不重试为 `blocked`。此前任何包平面失败都显示 `blocked`（`up` 亦以 1 退出）。
 - 控制中继（X14）：listener 监听重试与容量满由其 owner 发布，Status `controlRelay`（`retrying`／`atCapacity`、`reason`、`attempts`、`retryAt`），CLI `Relay` 行；进程启动时 socket 监听不了不再是启动失败，与重证后同一 U1 口径后台重试（无效 origin、resolver 打不开仍失败）。
 
-验证：daemon／CLI／Underlay 单测，Linux 无特权容器与隔离 NET_ADMIN 测试，lab `--cpus 0.02` 30 秒 ×2，daemon 层启动占位测试；Planck 23 行矩阵 `20261017T035656Z-d07a17c4` 全部通过。证据见 [H4](/v2/node/validation#h4)。
+- roam fixture：controller 服务到 `roam-stop`（此前在 `roam-complete` 即退出），supervisor 等每个节点 `roam-down` 后才 `roam-stop`；此前节点 Control 若有请求在飞，`down` 等它 10 秒连接超时，超出 fixture 的 10 秒（`roam/flap`、`roam/nat` 偶发）。
+
+验证：daemon／CLI／Underlay 单测，Linux 无特权容器与隔离 NET_ADMIN 测试，lab `--cpus 0.02` 30 秒 ×3（含决定 1 后一轮 `retrying`），daemon 层启动占位测试；Planck 23 行矩阵 `20261017T035656Z-d07a17c4` 与最终 `20261017T095424Z-df6f8adf`（`ec9374c7`）全部通过。证据见 [H4](/v2/node/validation#h4)。
 
 ## v0.1.0-alpha.18
 

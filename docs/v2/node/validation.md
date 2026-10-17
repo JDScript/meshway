@@ -442,6 +442,19 @@ Daemon 单测：`status::tests::observed_at_is_the_last_change_of_the_shown_stat
 
 Planck 23 行矩阵 `20261017T035656Z-d07a17c4`（`673c17be`，与本分支 `3076d3e9` 只差同一行测试断言，并行 8，墙钟 1,091 秒，同机无其他矩阵）全部通过。证据 `.meshway/validation/h4/matrix/`。
 
+决定 1 之后的全量矩阵（同机无其他矩阵，每轮开始前 `docker ps` 只有常驻容器）：最终 `20261017T095424Z-df6f8adf`（`ec9374c7`，并行 8，墙钟 1,101 秒）23 行全部通过，证据 `.meshway/validation/h4/matrix13/`。此前各轮每轮一行失败、行各不相同，行启动 load 7–12：
+
+| run | 失败行 | 签名 | 归因 |
+| --- | --- | --- | --- |
+| `20261017T053722Z-1a07d234`、`…060640Z-a914c818` | `roam/flap` | 结束时节点 `down` 超过 fixture 的 10 秒 | fixture：controller 在 `roam-complete` 即退出，`roam-down` 与 `roam-stop` 同时发出；节点的 Control 正有请求在飞时等其 10 秒连接超时。`20261017T091216Z-074139d9` 的 `roam/nat` 同一签名。已修：supervisor 等每个节点 `roam-down` 后才 `roam-stop`（至多 40 秒），controller 服务到 `roam-stop` |
+| `…053722Z-1a07d234`、`…082502Z-2e0eefcf` | `nat/resolved` | 租约到期恢复后 `ping` 60 秒停在 `path_handshake`：R 等待 R→B 认证通道，B 的穿透 `prepare` 一直 `NotAvailable` | 中继侧通道获取；H4 未改动该路径。同一时段 main `f58def1b` 全量 `20261017T080104Z-70baa7e4` 全部通过 |
+| `…064349Z-19673857` | `exit/off` | Docker `all predefined address pools have been fully subnetted` | 已知并发网络数（见 [roam/flap 行](#roam-flap-row)的 `20261015T233743Z-e3b061a6` 记录） |
+| `…070252Z-9b56eb4d`、`…074258Z-6ebe6e29`、`…093221Z-b49150f4` | `exit/off` | 全局方案下新连接 3 秒内未经 E（circuit 3 秒才就绪）；echo 投影峰值 33（上限 32）；echo 299/300 | 高负载下的 fixture 计时与上限 |
+| `…072236Z-ad684c7a`、`…084541Z-e7a66243`（并行 4） | `roam/relay` | `newFlowsThroughR`：0.6–0.75 秒的空窗内新流 0–1 个、未经 R 回复 | 空窗过短的门槛 |
+| `…074258Z-6ebe6e29` | `nat/resolved` | 持续窗口初始 IPv4 UDP 无 echo | 高负载 |
+
+这些签名都不经过 H4 改动的代码（Status 投影、失败撤回／重装的发布与日志、控制中继状态发布）。证据 `.meshway/validation/h4/matrix2/`–`matrix12/`、`matrix-main-baseline/`、`matrix4/`（修 fixture 前后 `roam/flap` 单行各 4／1 次通过）。
+
 ### 当前验证证据
 
 `validate:matrix` 为每行独立保留报告并汇总 `matrix.json`／`summary.md`；通过结论同时要求 fixture `passed`、进程成功退出和本 run 无遗留资源。`--short` 的报告标记 `scope=diagnostic-short`：只运行 30 秒持续／纯接收窗口（退路 5 秒后触发），不要求已经跨原需求期限，未测到的延长为 null。其他场景仍执行，包括真实 instance 失效恢复；短模式不是整组验收，不能更新下述历史／当前通过状态。并发运行还需读取各行启动 load，不能与低负载串行结果不加区分地合并。
