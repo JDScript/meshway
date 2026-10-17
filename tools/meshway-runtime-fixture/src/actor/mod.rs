@@ -116,7 +116,7 @@ pub(super) fn spawn_named_daemon(
     let controller: std::net::IpAddr = controller.into();
     let mut daemon_command = Command::new(cli.binaries.join("meshwayd"));
     let filter = "info,meshway_underlay=debug,meshway_daemon=debug,meshway_dataplane::secure=debug,meshway_dataplane::flow=debug,meshway_connectivity::manager=debug,meshway_control::netmap=debug,meshway_dns=debug,meshway_daemon::runtime::network::circuit_packet=debug";
-    if cli.traversal == crate::TraversalMode::Exit {
+    if cli.exit_fixture() {
         daemon_command.args(["--dns-backend", "resolved", "--dns-bind", "127.0.0.1:5354"]);
     } else if cli.dns_backend.enabled() {
         daemon_command.args([

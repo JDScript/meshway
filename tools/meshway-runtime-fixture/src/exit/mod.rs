@@ -42,6 +42,12 @@ impl Role {
 pub struct Topology {
     pub addresses: BTreeMap<String, BTreeMap<String, Ipv4Addr>>,
     pub lan_cidr: String,
+    /// exit6/off: the IPv6 addresses of the dual-stack links.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub addresses6: BTreeMap<String, BTreeMap<String, std::net::Ipv6Addr>>,
+    /// exit6/off: the exit LAN's ULA prefix.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lan6_cidr: Option<String>,
 }
 impl Topology {
     pub fn controller(&self, role: Role) -> Ipv4Addr {

@@ -55,7 +55,7 @@ impl Server<'_> {
             self.requests.clone(),
             crate::control_requests::observe,
         ));
-        if self.cli.traversal == crate::TraversalMode::Exit {
+        if self.cli.exit_fixture() {
             // The hold precedes admission so closing the gate can drain already
             // admitted database work independently of deliberately held requests.
             router = router.layer(axum::middleware::from_fn_with_state(
@@ -185,7 +185,7 @@ pub(super) async fn run_server(cli: &Cli) -> Result<()> {
     });
     tracing::info!(phase = "controller-listening", "real Server HTTPS ready");
     let result = tokio::time::timeout(DEADLINE, async {
-        if cli.traversal == crate::TraversalMode::Exit {
+        if cli.exit_fixture() {
             exit::coordinate(cli, &availability).await
         } else if cli.traversal == crate::TraversalMode::Roam {
             roam::coordinate(cli).await
@@ -218,7 +218,7 @@ pub(super) async fn run_server(cli: &Cli) -> Result<()> {
     result??;
     if matches!(
         cli.traversal,
-        crate::TraversalMode::Exit | crate::TraversalMode::Roam
+        crate::TraversalMode::Exit | crate::TraversalMode::Exit6 | crate::TraversalMode::Roam
     ) {
         return Ok(());
     }

@@ -88,6 +88,11 @@ struct Cli {
 }
 
 impl Cli {
+    /// `exit/off` or `exit6/off`: the exit topology and its actors.
+    fn exit_fixture(&self) -> bool {
+        matches!(self.traversal, TraversalMode::Exit | TraversalMode::Exit6)
+    }
+
     /// `nat/off`: A–R is an on-demand NAT–NAT edge. R can also dial A
     /// (Native TCP to A's unpublished TCP listener, unreachable through A's
     /// NAT), so neither end holds the edge and only A has business toward R;
@@ -158,6 +163,8 @@ enum TraversalMode {
     Off,
     Nat,
     Exit,
+    /// `exit6/off`: the exit topology dual-stack, E carrying IPv6 (NAT66).
+    Exit6,
     /// `roam/direct`: A changes uplinks under live traffic.
     Roam,
 }
@@ -247,10 +254,11 @@ enum Command {
 async fn main() -> std::process::ExitCode {
     STARTED.get_or_init(std::time::Instant::now);
     let cli = Cli::parse();
-    if (cli.traversal == TraversalMode::Exit) != matches!(cli.command, Command::ExitActor { .. })
-        || (cli.traversal == TraversalMode::Exit && cli.dns_backend != DnsBackend::Off)
+    let exit = matches!(cli.traversal, TraversalMode::Exit | TraversalMode::Exit6);
+    if exit != matches!(cli.command, Command::ExitActor { .. })
+        || (exit && cli.dns_backend != DnsBackend::Off)
     {
-        eprintln!("--traversal exit requires exit-actor and --dns-backend off");
+        eprintln!("--traversal exit/exit6 requires exit-actor and --dns-backend off");
         return std::process::ExitCode::FAILURE;
     }
     if (cli.traversal == TraversalMode::Roam) != matches!(cli.command, Command::RoamActor { .. })

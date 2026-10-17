@@ -208,12 +208,20 @@ pub(super) async fn coordinate(
     }
     let original = source(&client, network, token).await?;
     input = original.configuration.clone();
+    // exit6/off: E carries IPv6 too; R is a second, IPv4-only exit (E2).
+    let ipv6 = cli.traversal == crate::TraversalMode::Exit6;
     for role in ExitRole::NODES {
         let node = input
             .nodes
             .get_mut(&nodes[role.name()])
             .ok_or("exit node missing")?;
-        node.exit_enabled = role == ExitRole::E;
+        node.exit_enabled = role == ExitRole::E || (ipv6 && role == ExitRole::R);
+        if ipv6 && role == ExitRole::E {
+            node.exit_families = vec![
+                meshway_model::exit::ExitFamily::Ipv4,
+                meshway_model::exit::ExitFamily::Ipv6,
+            ];
+        }
         let links: &[&str] = match role {
             ExitRole::A => &["ar"],
             ExitRole::R => &["ar", "re"],
@@ -269,11 +277,14 @@ pub(super) async fn coordinate(
         remark: "exact measured Internet and exit LAN services".into(),
         src: vec![format!("node:{}", nodes["a"])],
         // E itself only for phase 16's Mesh throughput baseline.
-        dst: vec![
-            "autogroup:internet".into(),
+        dst: [
+            "autogroup:internet".to_owned(),
             topology.lan_cidr.clone(),
             format!("node:{}", nodes["e"]),
-        ],
+        ]
+        .into_iter()
+        .chain(topology.lan6_cidr.clone())
+        .collect(),
         ip: vec![
             "tcp:8080".into(),
             "udp:8080".into(),
@@ -323,11 +334,12 @@ pub(super) async fn coordinate(
     // partition and every A decision use its artifact, fetched by digest. A
     // missing artifact would fail every exit flow closed (this rule precedes
     // the fallback), so the row's exit traffic proves the artifact is held.
+    let lan: Vec<String> = std::iter::once(topology.lan_cidr.clone())
+        .chain(topology.lan6_cidr.clone())
+        .collect();
     input.rule_sets.insert(
         "exit-lan".into(),
-        serde_json::from_value(serde_json::json!({
-            "type": "inline", "ipCIDR": [topology.lan_cidr.clone()]
-        }))?,
+        serde_json::from_value(serde_json::json!({"type": "inline", "ipCIDR": lan}))?,
     );
     input.routing.egress.profiles.insert(
         "exit".into(),
@@ -367,14 +379,30 @@ pub(super) async fn coordinate(
         .egress
         .profiles
         .insert("exit-alt".into(), alternative);
+    let mut allowed = vec![
+        "exit".into(),
+        "exit-alt".into(),
+        "mesh".into(),
+        format!("global:{}", nodes["e"]),
+    ];
+    if ipv6 {
+        // exit6/off: everything through R, an exit whose `exitFamilies` is
+        // the default `["ipv4"]`.
+        input.routing.egress.profiles.insert(
+            "exit-ipv4".into(),
+            RoutingProfile {
+                rules: Vec::new(),
+                fallback: RouteAction::Exit {
+                    nodes: vec![format!("node:{}", nodes["r"])],
+                    via: Vec::new(),
+                },
+            },
+        );
+        allowed.push("exit-ipv4".into());
+    }
     input.routing.egress.assignments = vec![ProfileAssignment {
         target: vec![format!("node:{}", nodes["a"])],
-        allowed: vec![
-            "exit".into(),
-            "exit-alt".into(),
-            "mesh".into(),
-            format!("global:{}", nodes["e"]),
-        ],
+        allowed,
         default: "exit".into(),
         locked: false,
     }];

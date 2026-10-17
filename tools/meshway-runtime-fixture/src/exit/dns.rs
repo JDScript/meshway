@@ -44,7 +44,7 @@ struct Question {
 
 fn answer(
     role: Role,
-    service: Option<Ipv4Addr>,
+    (service, service6): (Option<Ipv4Addr>, Option<Ipv6Addr>),
     bytes: &[u8],
     limit: Option<usize>,
 ) -> Result<(Message, Vec<u8>)> {
@@ -80,7 +80,10 @@ fn answer(
                 service.ok_or("name zone without service address")?,
             ))]
         }
-        (Role::External, RecordType::AAAA) if name.ends_with(NAME_ZONE) => Vec::new(),
+        // exit6/off: the service's IPv6 address, a public-classified one.
+        (Role::External, RecordType::AAAA) if name.ends_with(NAME_ZONE) => service6
+            .map(|address| vec![RData::AAAA(rdata::AAAA(address))])
+            .unwrap_or_default(),
         (Role::External, RecordType::A) => vec![RData::A(rdata::A(EXIT_A))],
         (Role::External, RecordType::AAAA) if !name.starts_with("big.") => {
             vec![RData::AAAA(rdata::AAAA(EXIT_AAAA))]
@@ -144,13 +147,20 @@ fn record(
 pub(super) async fn run(cli: &Cli, role: Role) -> Result<()> {
     let service = if role == Role::External {
         let topology: Topology = read(&cli.public.join("exit-topology.json")).await?;
-        topology
-            .addresses
-            .get("external")
-            .and_then(|link| link.get("external"))
-            .copied()
+        (
+            topology
+                .addresses
+                .get("external")
+                .and_then(|link| link.get("external"))
+                .copied(),
+            topology
+                .addresses6
+                .get("external")
+                .and_then(|link| link.get("external"))
+                .copied(),
+        )
     } else {
-        None
+        (None, None)
     };
     let udp = UdpSocket::bind("0.0.0.0:53").await?;
     let tcp = TcpListener::bind("0.0.0.0:53").await?;

@@ -57,12 +57,16 @@ pub(super) fn capabilities() -> std::collections::BTreeMap<String, meshway_model
 {
     let mut capabilities = meshway_connectivity::capabilities();
     if cfg!(target_os = "linux") {
-        capabilities.insert(
-            meshway_model::exit::EXIT_IPV4_FEATURE.into(),
-            meshway_model::state::Capability::Feature {
-                version: meshway_model::exit::EXIT_IPV4_VERSION,
-            },
-        );
+        for family in [
+            meshway_model::exit::ExitFamily::Ipv4,
+            meshway_model::exit::ExitFamily::Ipv6,
+        ] {
+            let (feature, version) = family.feature();
+            capabilities.insert(
+                feature.into(),
+                meshway_model::state::Capability::Feature { version },
+            );
+        }
         capabilities.insert(
             "feature:path-observation".into(),
             meshway_model::state::Capability::Feature { version: 1 },

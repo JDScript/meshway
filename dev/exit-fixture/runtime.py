@@ -26,6 +26,11 @@ LINKS = {"ca": ("controller", "a"), "cr": ("controller", "r"),
          "external": ("e", "external", "router"), "lan": ("e", "lan"), "split": ("a", "resolver"),
          "far": ("router", "external")}
 PUBLIC_LINKS = ("external", "far")
+# exit6/off: dual-stack links. External and far take random /64s inside
+# 3ffe::/16 (the returned 6bone prefix: in 2000::/3 and outside every
+# exclusion, so Internet-classified like 11.77/16 for IPv4; never the
+# documentation prefix, which is not); the LAN a random ULA /64.
+IPV6_LINKS = ("external", "far", "lan")
 FAR_MTU = 1280
 # Largest RTT a later traceroute hop may add over the first (hops 2 and 3: at
 # most 10 ms per hop).
@@ -41,6 +46,22 @@ NETMAP_CONTENT = "import json; print(json.dumps(json.load(open('/state/node/iden
 # Direct ranges of A's split-resolver rule set (tools/meshway-runtime-fixture
 # controller/exit.rs): a country-IP-set scale.
 DIRECT_RANGES = 7000
+
+
+# exit6/off stages of I6-1; stage 9 (prefix change) is I6-2.
+IPV6_STAGES = (1, 2, 3, 4, 5, 6, 7, 8, 10)
+
+
+def ipv6_sysctls(role):
+    """exit6/off: IPv6 in every actor; forwarding on the router and on E (its
+    host administrator's precondition, set in E's own namespace); services
+    bind IPv6 apart from IPv4."""
+    values = ["net.ipv6.conf.all.disable_ipv6=0", "net.ipv6.conf.default.disable_ipv6=0"]
+    if role in ("router", "e"):
+        values.append("net.ipv6.conf.all.forwarding=1")
+    if role in ("external", "lan"):
+        values.append("net.ipv6.bindv6only=1")
+    return [item for value in values for item in ("--sysctl", value)]
 
 
 def managed(plan, address):
@@ -221,18 +242,24 @@ def run_narrow_channel(command, detached, status, wait_for, addresses, r_node):
     return result
 
 
-def execute(report, artifacts, runtime_os, platform, short, load):
+class Ipv6StagesDone(Exception):
+    """exit6/off ran its own stages; the IPv4 sequence does not run."""
+
+
+def execute(report, artifacts, runtime_os, platform, short, load, variant="ipv4"):
     identity = report.name
     label_key = "io.meshway.runtime-fixture"
     label = label_key + "=" + identity
     image = runtime_os["imageId"]
     containers, networks, addresses, subnets, captures = {}, {}, {}, {}, []
+    addresses6, subnets6 = {}, {}
     manifest = {**artifacts, "run": identity, "passed": False, "status": "preparing",
                 "scope": "diagnostic-short" if short else "acceptance",
-                "traversal": "exit", "dnsBackend": "off", "runtimeOsAssets": runtime_os,
+                "traversal": "exit" if variant == "ipv4" else "exit6", "variant": variant,
+                "dnsBackend": "off", "runtimeOsAssets": runtime_os,
                 "loadBeforeRuntime": load, "resources": {"containers": containers, "networks": networks},
                 "productStatus": "running", "cleanup": {}, "processes": {},
-                "stages": {str(n): {"status": "notRun"} for n in range(1, 17)}}
+                "stages": {str(n): {"status": "notRun"} for n in (range(1, 17) if variant == "ipv4" else IPV6_STAGES)}}
     metadata = report / "report.json"
     started = time.monotonic()
     failure = None
@@ -365,6 +392,10 @@ def execute(report, artifacts, runtime_os, platform, short, load):
                 octet = next(value for value in (uuid.uuid4().int % 256 for _ in range(64))
                              if f"11.77.{value}.0/29" not in subnets.values())
                 options = ["--subnet", f"11.77.{octet}.0/29"]
+            if variant == "ipv6" and link in IPV6_LINKS:
+                salt = uuid.uuid4().hex
+                prefix = "3ffe" if link in PUBLIC_LINKS else "fd" + salt[8:10]
+                options += ["--ipv6", "--subnet", f"{prefix}:{salt[:4]}:{salt[4:8]}::/64"]
             identifier = run("docker", "network", "create", "--internal", "--label", label, *options,
                              f"meshway-runtime-{identity.lower()}-exit-{link}", capture=True).strip()
             networks[link] = identifier
@@ -372,9 +403,17 @@ def execute(report, artifacts, runtime_os, platform, short, load):
             inspection = owned("network", identifier)
             if not inspection["Internal"] or inspection["Driver"] != "bridge":
                 raise RuntimeError("exit link must be an internal bridge")
-            subnet = ipaddress.ip_network(inspection["IPAM"]["Config"][0]["Subnet"])
-            if subnet.version != 4 or subnet.num_addresses < 8:
+            configured = [ipaddress.ip_network(item["Subnet"]) for item in inspection["IPAM"]["Config"]]
+            subnet = next((net for net in configured if net.version == 4), None)
+            if subnet is None or subnet.num_addresses < 8:
                 raise RuntimeError("exit link requires IPv4 /29 or larger")
+            if variant == "ipv6" and link in IPV6_LINKS:
+                subnet6 = next((net for net in configured if net.version == 6), None)
+                expected = "3ffe::/16" if link in PUBLIC_LINKS else "fc00::/7"
+                if subnet6 is None or subnet6.prefixlen != 64 or not subnet6.subnet_of(ipaddress.ip_network(expected)):
+                    raise RuntimeError("exit6 link requires its own IPv6 /64")
+                addresses6[link] = {role: str(subnet6.network_address + 2 + index) for index, role in enumerate(roles)}
+                subnets6[link] = str(subnet6)
             if link not in PUBLIC_LINKS and not any(subnet.subnet_of(ipaddress.ip_network(private)) for private in
                                               ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")):
                 raise RuntimeError("exit underlay/LAN must be RFC1918")
@@ -383,9 +422,15 @@ def execute(report, artifacts, runtime_os, platform, short, load):
             manifest["resources"].setdefault("networkInspections", {})[link] = inspection
         manifest["addresses"] = addresses
         manifest["subnets"] = subnets
+        if variant == "ipv6":
+            manifest["addresses6"] = addresses6
+            manifest["subnets6"] = subnets6
         manifest["externalClassification"] = "11.77/16: public-classified isolated address; permit scope must be Internet"
-        lan_subnet = manifest["resources"]["networkInspections"]["lan"]["IPAM"]["Config"][0]["Subnet"]
-        write(report / "public/exit-topology.json", {"addresses": addresses, "lanCidr": lan_subnet})
+        lan_subnet = subnets["lan"]
+        topology = {"addresses": addresses, "lanCidr": lan_subnet}
+        if variant == "ipv6":
+            topology.update(addresses6=addresses6, lan6Cidr=subnets6["lan"])
+        write(report / "public/exit-topology.json", topology)
         save()
         for role in ROLES:
             links = [link for link, roles in LINKS.items() if role in roles]
@@ -395,7 +440,9 @@ def execute(report, artifacts, runtime_os, platform, short, load):
                         "--security-opt", "no-new-privileges", "--cpus", "2", "--memory", "768m", "--pids-limit", "128",
                         "--tmpfs", "/state:rw,nosuid,nodev,mode=700", "--entrypoint", "",
                         "--network", networks[first], "--ip", addresses[first][role],
+                        *(["--ip6", addresses6[first][role]] if first in addresses6 else []),
                         "--sysctl", "net.ipv4.ip_forward=" + ("1" if role == "router" else "0"),
+                        *(ipv6_sysctls(role) if variant == "ipv6" else []),
                         "--sysctl", "net.ipv4.conf.all.rp_filter=0", "--sysctl", "net.ipv4.conf.default.rp_filter=0",
                         "--env", "TMPDIR=/state", "--env", "MESHWAY_EXIT_FIXTURE_OWNED=1", *bind_access_options()]
             if role in ("external", "resolver"):
@@ -423,13 +470,14 @@ def execute(report, artifacts, runtime_os, platform, short, load):
                 creation += ["--mount", f"type=bind,source={report / source},target={target}" + (",readonly" if readonly else "")]
             creation += [image]
             if role in ("a", "r", "e"): creation += ["/bin/sh", "/dns-fixture/namespace.sh"]
-            creation += ["/fixtures/meshway-runtime-fixture", *(["--short"] if short else []), "--log-format", "json", "--transport", "native-udp", "--traversal", "exit",
+            creation += ["/fixtures/meshway-runtime-fixture", *(["--short"] if short else []), "--log-format", "json", "--transport", "native-udp", "--traversal", "exit" if variant == "ipv4" else "exit6",
                          "exit-actor", "--role", role]
             containers[role] = run(*creation, capture=True).strip()
             manifest["resources"].setdefault("commands", {})[role] = creation
             save()
             for link in links[1:]:
-                run("docker", "network", "connect", "--ip", addresses[link][role], networks[link], containers[role], capture=True)
+                six = ["--ip6", addresses6[link][role]] if link in addresses6 else []
+                run("docker", "network", "connect", "--ip", addresses[link][role], *six, networks[link], containers[role], capture=True)
             run("docker", "start", containers[role], capture=True)
             inspection = owned("container", containers[role])
             if {value["NetworkID"] for value in inspection["NetworkSettings"]["Networks"].values()} != {networks[link] for link in links}:
@@ -482,6 +530,11 @@ def execute(report, artifacts, runtime_os, platform, short, load):
         write(report / "foreign-sentinel-before.json", sentinel)
         baseline = snapshot("baseline")
         (report / "signals/exit-start").touch()
+
+        def detached(role, *arguments):
+            owned("container", containers[role])
+            subprocess.run(["docker", "exec", "-d", containers[role], *arguments], check=True, timeout=15,
+                           close_fds=True)
 
         def wait_for(predicate, description, timeout=90):
             deadline = time.monotonic() + timeout
@@ -574,6 +627,19 @@ def execute(report, artifacts, runtime_os, platform, short, load):
             return True
 
         wait_for(lambda: (report / "signals/exit-configured.json").exists(), "configuration")
+        if variant == "ipv6":
+            spec = importlib.util.spec_from_file_location("meshway_exit_ipv6", ROOT / "dev/exit-fixture/ipv6.py")
+            ipv6 = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(ipv6)
+            ipv6.run(types.SimpleNamespace(
+                report=report, manifest=manifest, save=save, command=command, detached=detached,
+                snapshot=snapshot, status=status, running=running, wait_for=wait_for, evidence=evidence,
+                addresses=addresses, addresses6=addresses6, subnets=subnets, subnets6=subnets6,
+                interfaces=interfaces, capture_files=capture_files, stop_captures=stop_captures,
+                baseline=baseline, sentinel=sentinel, lookup=lookup, short=short))
+            manifest["infrastructure"] = "collected"
+            manifest["status"] = "finishing"
+            raise Ipv6StagesDone
         manifest["status"] = "prerequisite"
         save()
         def unavailable():
@@ -1163,11 +1229,6 @@ def execute(report, artifacts, runtime_os, platform, short, load):
             if echo["exitCode"]: raise RuntimeError("real exit ICMP echo failed")
         manifest["status"] = "icmp-errors"
         save()
-        def detached(role, *arguments):
-            owned("container", containers[role])
-            subprocess.run(["docker", "exec", "-d", containers[role], *arguments], check=True, timeout=15,
-                           close_fds=True)
-
         icmp = run_icmp_phase(command, detached, evidence, addresses, subnets, own["ipv4"])
         write(report / "icmp-errors.json", icmp)
         narrow = run_narrow_channel(command, detached, status, wait_for, addresses, plans["r"]["nodeId"])
@@ -1354,6 +1415,8 @@ def execute(report, artifacts, runtime_os, platform, short, load):
         manifest["stages"]["7"] = {"status": "passed", "evidence": ["components/driver.log", "nat-proof.json", "r/*-tuples.json"]}
         manifest["infrastructure"] = "collected"
         manifest["status"] = "finishing"
+    except Ipv6StagesDone:
+        pass
     except BaseException as error:
         failure = error
         manifest["failedAt"] = manifest["status"]
@@ -1423,7 +1486,8 @@ def execute(report, artifacts, runtime_os, platform, short, load):
             manifest["cleanupErrors"] = errors
             manifest["status"] = "failed"
         if failure is None and not errors and manifest["status"] == "finishing":
-            manifest["passed"] = evidence.all_stages_passed(manifest)
+            manifest["passed"] = (evidence.all_stages_passed(manifest) if variant == "ipv4"
+                                  else evidence.all_ipv6_stages_passed(manifest))
             manifest["status"] = "passed" if manifest["passed"] else "incomplete"
         manifest["runtimeElapsedSeconds"] = time.monotonic() - started
         save()
