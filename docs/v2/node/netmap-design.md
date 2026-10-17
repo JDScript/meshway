@@ -139,6 +139,9 @@ Server 挂起请求直至 netmap、可见事实或本节点的 DNS 关联 overla
 
 - State 报告（本机端点、出口能力）只写 State 投影并唤醒挂起的 `sync`，不重新投影；端点不写进 `DialCandidate`。
 - 实例 acquire／renew／release 只修改实例；acquire 时库存能力若变化（构建升级），作为库存输入触发该节点及看见它的节点重新投影，这是唯一由 acquire 引起的 netmap 变化。
+- **Server 构建是编译输入**：已存 netmap 只能是当前 Server 构建对当前配置、主体、库存、方案选择（含版本）与规则集的编译结果。增量编译给每个节点记一个输入指纹（`node_netmap_inputs`，只是选择提示，不授权），指纹覆盖 `compilerVersion`、Server 构建身份（`meshway-build`：版本＋`git describe`，即 `meshway version` 的 `version`／`git`）和上述输入；指纹相同的节点不重新物化，内容 digest 不变的节点保留 serial。
+- **启动时重编译**：Server 打开存储后、受理任何请求前，按网络逐个（每网络一个事务）以节点触发重编译全部存活网络。同一构建重启：指纹全部相同，不写任何行；换了构建（升级、降级或另一提交）：每个节点重新编译，只有内容真的变了的节点得到新 serial，节点下一次 `sync` 即收到（旧节点仍能解码，前提是 `compilerVersion` 未变）；租约续期只重签当前内容，从不代替重编译。超限节点按节点触发规则排除（不阻止启动）；某网络编译失败时保留其已存 netmap、记 error 日志，下一次输入变化时再编译。耗时：编译成本与全量编译相同——1000 节点单网约 2.3 s、同构建只算指纹约 33 ms、6 节点 < 1 ms（M3 Pro，`mise run perf:netmap`）；只对变化内容加密写入。
+- 与 `compilerVersion` 的区别：`compilerVersion` 是节点必须理解的内容契约，变化时新旧两端互不接受（[断网窗口](/v2/install#compiler-version-upgrade)）；构建身份只是 Server 的编译输入，变化不改变契约，只保证同一输入不会停留在旧构建的编译结果上。构建身份把同一提交上的不同未提交改动（`-dirty`）视为同一构建；无 Git 信息的构建为 `unknown`，此时只有版本号变化才触发。
 - 节点 State 的可见范围为本节点投影的 `nodes`；端点细节只披露给 topology 相邻（`dialers` 指向或可拨入本节点）的可见节点。范围只随 serial 变化。
 - UDP 穿透 prepare／accept 的授权：双方当前投影互相可见、topology 允许且有 Native UDP 承载；候选 CAS、双边接受、nonce／epoch 与短期限见[连接获取](/v2/node/connectivity)。
 

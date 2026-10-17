@@ -2,6 +2,13 @@
 
 按合入 main 的顺序记录工作包、提交与证据 ID。规则见[工程流程](/v2/process)；性能数字的口径见[分层性能测量](/v2/node/performance)，验收状态见[验收范围](/v2/node/validation)。
 
+## 未发布
+
+Server 构建作为编译输入与 DNS 故障边沿（S4，`s4/recompile-on-upgrade`）：wire 6、IPC 12、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约均不变（普通升级）。升级后 Server 第一次启动会按新构建重编译全部已存 netmap，内容变化的节点得到新 serial（无需运维手动触发）。
+
+- 重编译（不变量：已存 netmap 只能是当前 Server 构建对当前配置／选择／能力／事实的编译结果，构建变化即编译输入变化；owner：Server 增量编译的输入指纹）：新 crate `meshway-build` 是 `meshway version` 的同一份构建身份（版本＋`git describe`），CLI 与 Server 共用；`compile_incremental` 以它为每个指纹的输入（取代手动递增的 `PROJECTION_INPUTS`）；`App::open` 在受理请求之前按网络逐个重编译（节点触发）：同一构建不写任何行，另一构建只给内容变化的节点新 serial。此前编译输出随构建变化（F6a 的 `selectionVersions`、F5a 的 `eligibleExits`）而输入不变时，Server 启动不重编译、续租只重签旧内容，OPS16 中 alpha.17 前清除过选择的 lax 每次节点 CAS 都 `version_conflict`，直到一次用户选择触发重编译；OPS7 曾手动改配置触发。1000 节点单网启动重编译约 2.3 s（同构建只算指纹约 33 ms）。见 [Netmap 设计 · Server 侧](/v2/node/netmap-design#server-侧)、[Server 升级](/v2/install#server-upgrade)。
+- DNS 故障边沿（不变量：Status 的 `phase`／`applied`／`dataPlane` 与包平面一致，必需 DNS 故障撤回并重装 netmap；owner：DNS owner 的 `Health` 边沿与网络 worker 的确认）：worker 尚未处理过的故障即使 owner 已在它看到之前重证也算一次失败（撤回 → 恢复 → 以同一 netmap 重装，hold 恢复查询许可并清除故障）；worker 在失败与恢复两处确认，X15 的不空转性质不变。此前 OPS16 planck（alpha.16）17:59:57 进程停顿 4.5 s，观察超时后 7 ms 即重证，worker 两个边沿都没看到：包平面与内容保持、Mesh 包照通，而 DNS 查询许可一直撤回、故障一直未清，Status 自此为 `synchronizing`／`suspended`、`applied` null，直到重启；22:30 的 502 只刷新了 Status 的 `observedAt`，Control 的暂态失败不调用 Engine。见[本机运行 · Status](/v2/node/runtime)、[网络 worker 的恢复优先级](/v2/node/runtime#ownership-end)。
+
 ## v0.1.0-alpha.17
 
 范围：wire 6、`compilerVersion` `meshway-netmap-3`、Server schema 8 不变（普通升级，无断网窗口）；IPC 12 的 Status 新增可省略字段 `networkError`（CLI 与 daemon 一起升级）；HTTP 类型与路由不变，`routing-selection` 响应的 `version` 语义改为清除后保留版本。F6a 13 条审阅修复——清除选择的 CAS 基准单调、无操作清除的幂等回执与单节点读取，capture 重装读取失败仍欠着，慢审计不饿死请求，漫游来源许可替换与本机路径变化重搜 PMTU，bootstrap resolver 上游三态，出口 quarantine 读回后删除，新一期重建 overlap，monitor 截断数据报为暂态，网络变化 trailing debounce，DNS 失败详情先发布，`networkError`；F6b CI、测试确定化与卫生；以及下列 F6b、F6a 工作包。

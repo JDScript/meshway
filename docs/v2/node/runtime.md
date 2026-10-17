@@ -195,7 +195,7 @@ owner 每秒把捕获表回读并与收据比对。回读本身失败（工具 2
 
 **控制中继不结束归属**：控制中继（Underlay 的 UDS 中继，唯一 owner 为其 listener owner）监听不了（`EADDRINUSE`、仍有活进程或不能回收的旧 socket、`EACCES`）或 accept 失败时自行按 [U1 口径](/v2/node/connectivity#listener-bind-retry)重试——可自行消失的原因 1 秒起翻倍、上限 60 秒，`EACCES` 每 60 秒——同一错误只记一次 WARN `Protected control relay cannot listen; retrying, kernel ownership kept`（accept 失败为 `Protected control relay accept failed; retrying, kernel ownership kept`），恢复后 INFO `Protected control relay listening again`／`… accepting again`；期间 Control 请求连不上 UDS，按 sync `Network` 重试。连接数或 Host 任务容量满时拒绝新连接（立即关闭）、保留已有连接，WARN `Protected control relay at capacity; refusing new connections, keeping current ones` 一次，容量回落后第一个接纳的连接 INFO `Protected control relay accepts connections again`（`refused`）。进程启动时 `attach_control` 监听失败仍是启动失败。
 
-**网络 worker 的恢复优先级**：worker 的事件循环每轮至少推进一个状态；到期的重证（`Host::recovery_at`）在组件生命周期事件中最先选中，DNS owner 的失败与恢复是边沿而非电平——owner 已重证的故障（等待下一次 hold）不再算失败，同一故障至多处理一次失败与一次恢复，即使重装在 DNS hold 之前就因归属已结束而失败。阻断期间 `lastErrorDetail` 在 DNS 详情缺失时给出归属结束的原因，不被空值覆盖。停止服务的出口 owner 立即丢弃已排队的请求（调用方即得错误），不让 worker 等它的清理重试。
+**网络 worker 的恢复优先级**：worker 的事件循环每轮至少推进一个状态；到期的重证（`Host::recovery_at`）在组件生命周期事件中最先选中，DNS owner 的失败与恢复是边沿而非电平——每个故障恰好处理一次失败与至多一次恢复：worker 尚未处理过的故障即使 owner 已在它看到之前重证（进程停顿数秒后观察超时、随即重证成功），仍先撤回包平面再以同一 netmap 重装，因为查询许可要到下一次 hold 才恢复；worker 已处理过且 owner 已重证的故障（等待下一次 hold）不再算失败，即使重装在 DNS hold 之前就因归属已结束而失败也不空转。阻断期间 `lastErrorDetail` 在 DNS 详情缺失时给出归属结束的原因，不被空值覆盖。停止服务的出口 owner 立即丢弃已排队的请求（调用方即得错误），不让 worker 等它的清理重试。
 
 **重证**（`Host::recover`，只在暂态阻断后、到 `Host::recovery_at` 时由网络 worker 调用）：第一次先结束旧一期——停止其任务（monitor、网络分类、控制中继及其连接、受保护 socket），join egress capture 与出口 owner（出口清理不在此重试，留给新一期的 journal 恢复），关闭 Mesh TUN，落盘 journal；然后按进程启动的同一路径（`Kernel::open_term`）打开新一期：出口与 egress journal 恢复到负向边界、base journal 与内核现状精确对账、DNS 锚点校验。读取或变更再次失败（netlink／I/O）保持暂态，按退避再试，同一失败只记一次 WARN `Kernel ownership re-proof unavailable; retrying`；读到与 journal 不符（外来规则、私有表中的路由、不可恢复的 journal）改为持久冲突，WARN `Kernel ownership re-proof read back a conflict; ownership stays ended until restart`。成功时 INFO `Kernel ownership proved again; the Host owns a new term`（`check`、`attempts`、`elapsed_ms`）：新一期沿用同一 journal（同一 installation、mark、table）、同一控制中继 origin 与 UDS 路径（已有 HTTP client 照常连接）以及 Host 发布的观察通道（网络变化、`changePending`、`cleanupPending`）；网络 worker 停止 DNS owner（其锚点与 socket 属于旧一期，系统 DNS 安装保留，与重启相同）后以同一 offer 重装（`Kernel ownership recovered; reinstalling the netmap`），DNS owner 在新一期上重新准备。未知的存储（journal 处于中断变更、版本不符）与重启时一样 fail closed，不因重证放宽。
 
@@ -206,7 +206,7 @@ IPC 12 的公开运行状态（`meshway status --json` 原样输出）：
 | 字段 | 含义 |
 | --- | --- |
 | `networkMode` | `tun`／`controlOnly`，本机选择 |
-| `dataPlane` | `controlOnly`、`stopped`、`preparing`、`ready`、`suspended`、`failed`；来自组件实际安装状态，netmap 刷新不自行投影为 suspended。ready 不代替当前执行许可 |
+| `dataPlane` | `controlOnly`、`stopped`、`preparing`、`ready`、`suspended`、`failed`；来自组件实际安装状态，netmap 刷新不自行投影为 suspended。ready 不代替当前执行许可。与 `phase`／`applied` 一致：`applied` 非空且为 `ready` 时，除 `blocked` 外 `phase` 为 `running`（Server 不可达的 `retrying` 也一样，数据面只依赖租约）；安装不再是当前的（内容已撤回、DNS owner 有未清的故障或安装的不是 Control 当前授权的 netmap）时为 `suspended`、`applied` 为 null，此时包平面同时被撤回或正在撤回——不存在持续的“显示 suspended 而 Mesh 包仍通”。Control 的暂态失败（502、503、网络错误）只改 `phase`／`lastError`／`retryAt`，不调用 Engine，不改变 `dataPlane` |
 | `authenticated`／`instance` | 当前有效会话与仍持有的有效实例（`instanceId`／`generation`／`expiresAt`）；instance 只绑定 State 与回执，不是数据面期限（数据面只受 `netmap.expiresAt` 约束）。停止、fencing、身份失效、session／instance 截止使其失效 |
 | `saved`／`applied` | 独立的必填可空目标引用；saved 来自持久保存，applied 来自对应实例／目标的实际成功安装结果 |
 | `phase` | 完整枚举见下表；结合 dataPlane、当前资格和错误读取 |

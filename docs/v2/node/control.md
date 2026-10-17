@@ -127,7 +127,7 @@ Server [轮换签发钥](/v2/server#netmap-签发钥轮换)期间，sync 回复�
 
 ### sync 失败类别
 
-本机 Status（IPC 12）的 `syncError` 是 sync 长轮询最后一次失败的类别，重试期间保持，下一次成功 sync 即为 null；sync 未运行时为 null。`meshway status` 以 `Sync error: <类别> (retrying)` 显示，`--json` 原样输出。失败本身不撤回租约（撤回与身份拒绝仍按上文，另见 `lastError`）。
+本机 Status（IPC 12）的 `syncError` 是 sync 长轮询最后一次失败的类别，重试期间保持，下一次成功 sync 即为 null；sync 未运行时为 null。`meshway status` 以 `Sync error: <类别> (retrying)` 显示，`--json` 原样输出。失败本身不撤回租约（撤回与身份拒绝仍按上文，另见 `lastError`）。暂态失败（502／503／网络）与之后的恢复只发布 Control 的 phase（`retrying` → `controlReady`），每次向 Engine 提交的仍是同一份已验证 netmap，Engine 不重装也不撤回；`dataPlane`／`applied` 只由包平面实际安装决定，一致性规则见[本机运行 · Status](/v2/node/runtime)。
 
 | `syncError` | 来源 |
 | --- | --- |
