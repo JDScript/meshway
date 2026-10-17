@@ -150,12 +150,10 @@ impl Routing {
         if ledger.rules.iter().any(|bytes| {
             decode_rule(bytes).is_ok_and(|rule| {
                 rule.header.action == RuleAction::ToTable
+                    && rule.attributes.contains(&RuleAttribute::Source(remote))
                     && rule
                         .attributes
-                        .contains(&RuleAttribute::Source(remote.into()))
-                    && rule
-                        .attributes
-                        .contains(&RuleAttribute::Destination(source.into()))
+                        .contains(&RuleAttribute::Destination(source))
             })
         }) {
             return Ok(());
@@ -193,8 +191,8 @@ impl Routing {
                 ]);
             }
             rule.attributes.extend([
-                RuleAttribute::Source(remote.into()),
-                RuleAttribute::Destination(source.into()),
+                RuleAttribute::Source(remote),
+                RuleAttribute::Destination(source),
             ]);
             self.add_rule(rule, ledger, store).await?;
         }
@@ -324,10 +322,10 @@ impl Routing {
                 .filter(|bytes| {
                     decode_rule(bytes).is_ok_and(|rule| {
                         rule.attributes
-                            .contains(&RuleAttribute::Source(tuple.destination.into()))
+                            .contains(&RuleAttribute::Source(tuple.destination))
                             && rule
                                 .attributes
-                                .contains(&RuleAttribute::Destination(tuple.source.into()))
+                                .contains(&RuleAttribute::Destination(tuple.source))
                     })
                 })
                 .cloned()

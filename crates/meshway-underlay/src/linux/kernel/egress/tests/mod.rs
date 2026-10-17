@@ -637,7 +637,7 @@ async fn managed_ipv6_capture_installs_reads_back_and_retires() {
     let Setup {
         _temp,
         tasks,
-        mut kernel,
+        kernel,
         mut backend,
         device,
         mesh,

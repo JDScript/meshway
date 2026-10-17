@@ -4,7 +4,7 @@
 use super::*;
 use meshway_model::exit::ExitFamily;
 use meshway_policy::admission::{AdmissionError, Hop, Traffic, netmap::admit_forward};
-use std::net::{IpAddr, Ipv6Addr};
+use std::net::Ipv6Addr;
 
 const PUBLIC6: &str = "3ffe:1:2:3::7";
 
@@ -238,7 +238,7 @@ fn the_exit_admits_only_the_families_its_role_carries() {
     // A forged mixed-family packet is not its traffic.
     let forged = Traffic {
         source: "100.64.0.1".parse().unwrap(),
-        ..traffic.clone()
+        ..traffic
     };
     assert_eq!(
         admit_forward(at_exit, &decision, path, node(1), previous, &forged),
@@ -251,5 +251,4 @@ fn the_exit_admits_only_the_families_its_role_carries() {
         admit_forward(&v4, &decision, path, node(1), previous, &traffic),
         Err(AdmissionError::Traffic)
     );
-    let _: IpAddr = traffic.destination;
 }
