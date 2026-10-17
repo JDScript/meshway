@@ -1,0 +1,4 @@
+/build/
+/Config/Local.xcconfig
+xcuserdata/
+*.xcuserstate
