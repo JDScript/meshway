@@ -34,9 +34,10 @@ pub struct Clock {
 }
 impl Clock {
     pub fn new() -> Result<Self, Error> {
+        let wall = now()?;
         Ok(Self {
             born: Instant::now(),
-            offset: AtomicU64::new(now()?),
+            offset: AtomicU64::new(wall),
             changed: tokio::sync::Notify::new(),
         })
     }
@@ -46,6 +47,9 @@ impl Clock {
         let _ = self.observe(floor_ms, Instant::now());
     }
 
+    /// `monotonic` must be read after `wall`: the offset then never exceeds
+    /// the true one, so a delay between the two reads (preemption, CPU quota)
+    /// cannot leave this clock permanently ahead of the wall clock.
     fn observe(&self, wall: u64, monotonic: Instant) -> Result<u64, Error> {
         let elapsed: u64 = monotonic
             .duration_since(self.born)
@@ -70,8 +74,9 @@ impl Clock {
         static PROFILE: meshway_logging::profile::Metric =
             meshway_logging::profile::Metric::detail("control.clock", 2);
         let _profile = PROFILE.enter();
+        let wall = now()?;
         let monotonic = Instant::now();
-        Ok((self.observe(now()?, monotonic)?, monotonic))
+        Ok((self.observe(wall, monotonic)?, monotonic))
     }
 
     pub async fn wait_until(
@@ -112,9 +117,10 @@ pub struct Started {
 }
 impl Started {
     pub fn now(clock: &Arc<Clock>) -> Result<Self, Error> {
+        let wall = now()?;
         let monotonic = Instant::now();
         Ok(Self {
-            wall: clock.observe(now()?, monotonic)?,
+            wall: clock.observe(wall, monotonic)?,
             monotonic,
             clock: Arc::clone(clock),
         })
@@ -221,6 +227,16 @@ mod tests {
         clock.observe(wall, Instant::now()).unwrap();
         assert!(!deadline.valid());
         assert!(Deadline::from_response(Started::now(&clock).unwrap(), wall + 60_000).is_err());
+    }
+    #[test]
+    fn a_delay_between_the_two_reads_never_puts_the_clock_ahead() {
+        let clock = Clock::new().unwrap();
+        // Preempted after the wall read: the monotonic read comes 50 ms later.
+        let wall = now().unwrap();
+        std::thread::sleep(Duration::from_millis(50));
+        clock.observe(wall, Instant::now()).unwrap();
+        let reading = clock.now().unwrap();
+        assert!(reading <= now().unwrap(), "clock ahead of the wall clock");
     }
     #[test]
     fn response_transit_time_is_not_added_to_its_deadline() {
