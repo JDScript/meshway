@@ -17,8 +17,11 @@ fn exit_facts(peer: meshway_model::NodeId, status: ExitStatus, left: Duration) -
         listeners: Default::default(),
         exit: Some(PeerExitFacts {
             role_generation: meshway_model::Digest::from_bytes([1; 32]),
-            status,
-            installed_families: vec![ExitFamily::Ipv4],
+            families: vec![meshway_model::exit::ExitFamilyCapability {
+                family: ExitFamily::Ipv4,
+                status,
+                installed: true,
+            }],
         }),
         connected: Vec::new(),
         observed_at: now,
@@ -51,14 +54,14 @@ async fn an_exit_last_known_ready_stays_selectable_past_its_freshness_within_the
     script.push(Ok(response));
     control.sync(&mut Facts::default()).await.unwrap();
     let known = control.known_peers().unwrap();
-    let fresh = known.ready_exits(chrono::Utc::now());
+    let fresh = known.ready_exits(chrono::Utc::now(), ExitFamily::Ipv4);
     assert_eq!(fresh.current, [peer].into());
     assert!(fresh.last_known.is_empty());
     // No further answer (Node HTTP closed): the fact expires, the lease does not.
     tokio::time::sleep(Duration::from_millis(400)).await;
     assert!(control.netmap().is_some(), "the lease still holds");
     let known = control.known_peers().unwrap();
-    let stale = known.ready_exits(chrono::Utc::now());
+    let stale = known.ready_exits(chrono::Utc::now(), ExitFamily::Ipv4);
     assert!(stale.current.is_empty());
     assert_eq!(
         stale.last_known,
@@ -72,7 +75,10 @@ async fn an_exit_last_known_ready_stays_selectable_past_its_freshness_within_the
         peers: std::sync::Arc::new(peers),
         ..known
     };
-    assert_eq!(probing.ready_exits(chrono::Utc::now()), Default::default());
+    assert_eq!(
+        probing.ready_exits(chrono::Utc::now(), ExitFamily::Ipv4),
+        Default::default()
+    );
     control.shutdown().await.unwrap();
     proxy.close().await;
     server.close().await;

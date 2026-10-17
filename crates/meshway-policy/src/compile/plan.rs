@@ -126,6 +126,14 @@ fn plan_inner(
     {
         let graph = paths::Graph::new(top)?;
         let mut reason = UnavailableReason::NoPath;
+        // A name or the Internet is judged as IPv4, as its resolver is.
+        let family = match &destination {
+            EvaluatedDestination::Address { address, .. } => address
+                .parse::<IpAddr>()
+                .map(meshway_model::exit::ExitFamily::of)
+                .unwrap_or(meshway_model::exit::ExitFamily::Ipv4),
+            _ => meshway_model::exit::ExitFamily::Ipv4,
+        };
         for target in &route.targets {
             let settings = cfg.nodes.get(target).ok_or(CompileError::InvalidInput)?;
             let problem = if !settings.enabled {
@@ -135,12 +143,21 @@ fn plan_inner(
             } else if !top.inventory.contains_key(target) {
                 Some(TargetProblem::NotEnrolled)
             } else if route.kind == RouteKind::Exit
-                && matches!(&destination, EvaluatedDestination::Address { address, .. } if address.parse::<IpAddr>().is_ok_and(|ip| ip.is_ipv6()))
+                && (!matching::Exits::Full(cfg).eligible(*target, family)
+                    || match family {
+                        meshway_model::exit::ExitFamily::Ipv4 => {
+                            cfg.nodes[&source].addresses.ipv4.is_none()
+                        }
+                        meshway_model::exit::ExitFamily::Ipv6 => {
+                            cfg.nodes[&source].addresses.ipv6.is_none()
+                        }
+                    })
             {
                 reason = UnavailableReason::UnsupportedFamily;
                 Some(TargetProblem::UnsupportedFamily)
             } else if route.kind == RouteKind::Exit
-                && runtime.is_some_and(|runtime| !exit::available(top, runtime, *target, now_ms))
+                && runtime
+                    .is_some_and(|runtime| !exit::available(top, runtime, *target, family, now_ms))
             {
                 reason = UnavailableReason::ExitUnavailable;
                 Some(TargetProblem::ExitUnavailable)
@@ -181,7 +198,9 @@ fn plan_inner(
                 problem,
                 paths: u32::try_from(found.len()).unwrap_or(u32::MAX),
                 exit_unavailable_reason: if route.kind == RouteKind::Exit {
-                    runtime.and_then(|runtime| runtime.unavailable_reasons.get(target).copied())
+                    runtime.and_then(|runtime| {
+                        runtime.unavailable_reasons.get(&(*target, family)).copied()
+                    })
                 } else {
                     None
                 },
@@ -438,30 +457,36 @@ fn mesh_route(
 }
 
 /// The route `source` executes for the deciding action ([`matching::executed`]).
+#[allow(clippy::too_many_arguments)]
 fn route_of(
     cfg: &NetworkConfiguration,
     source: NodeId,
+    family: meshway_model::exit::ExitFamily,
     kind_action: &RouteAction,
     rule: Option<String>,
     profile: Option<String>,
     rule_set: Option<RuleSetMatch>,
     resolution_dependent: Vec<String>,
 ) -> Result<RouteEvaluation, CompileError> {
-    let (kind, targets, via) =
-        match &matching::executed(matching::Exits::Full(cfg), kind_action.clone(), source)? {
-            RouteAction::Exit { nodes, via } => (
-                RouteKind::Exit,
-                nodes
-                    .iter()
-                    .map(|s| matching::node_selector(s))
-                    .collect::<Result<Vec<_>, _>>()?,
-                via.iter()
-                    .map(|s| matching::node_selector(s))
-                    .collect::<Result<Vec<_>, _>>()?,
-            ),
-            RouteAction::Direct => (RouteKind::Direct, Vec::new(), Vec::new()),
-            RouteAction::Unmanaged => (RouteKind::Unmanaged, Vec::new(), Vec::new()),
-        };
+    let (kind, targets, via) = match &matching::executed(
+        matching::Exits::Full(cfg),
+        kind_action.clone(),
+        source,
+        family,
+    )? {
+        RouteAction::Exit { nodes, via } => (
+            RouteKind::Exit,
+            nodes
+                .iter()
+                .map(|s| matching::node_selector(s))
+                .collect::<Result<Vec<_>, _>>()?,
+            via.iter()
+                .map(|s| matching::node_selector(s))
+                .collect::<Result<Vec<_>, _>>()?,
+        ),
+        RouteAction::Direct => (RouteKind::Direct, Vec::new(), Vec::new()),
+        RouteAction::Unmanaged => (RouteKind::Unmanaged, Vec::new(), Vec::new()),
+    };
     Ok(RouteEvaluation {
         kind,
         rule,
@@ -543,6 +568,13 @@ fn external_route(
     let cfg = request.topology.configuration;
     let matchers = rules::Matchers::new(cfg)?;
     let mut skipped = Vec::new();
+    let family = match destination {
+        EvaluatedDestination::Address { address, .. } => address
+            .parse::<IpAddr>()
+            .map(meshway_model::exit::ExitFamily::of)
+            .unwrap_or(meshway_model::exit::ExitFamily::Ipv4),
+        _ => meshway_model::exit::ExitFamily::Ipv4,
+    };
     let public = match first_match(
         request,
         &matchers,
@@ -562,6 +594,7 @@ fn external_route(
             Some(route_of(
                 cfg,
                 request.source,
+                family,
                 &rule.action.clone().into(),
                 Some(format!("/routing/egress/rules/{index}")),
                 None,
@@ -590,6 +623,7 @@ fn external_route(
                 Some(route_of(
                     cfg,
                     request.source,
+                    family,
                     &RouteAction::Unmanaged,
                     None,
                     Some(name),
@@ -604,6 +638,7 @@ fn external_route(
                 Some(route_of(
                     cfg,
                     request.source,
+                    family,
                     &RouteAction::Exit {
                         nodes: vec![format!("node:{node}")],
                         via: vec![],
@@ -649,6 +684,7 @@ fn external_route(
         Some(route_of(
             cfg,
             request.source,
+            family,
             &action,
             Some(rule),
             Some(name),

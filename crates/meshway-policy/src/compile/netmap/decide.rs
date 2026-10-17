@@ -2,6 +2,7 @@
 //! routing and Access evaluation, without dynamic exit facts or server grants.
 use super::*;
 use crate::compile::{routing::PathError, rules};
+use meshway_model::exit::ExitFamily;
 use meshway_transport::spec::Port;
 use std::{
     net::IpAddr,
@@ -95,6 +96,7 @@ pub(super) fn rebuild(view: &ConfigurationView) -> NetworkConfiguration {
                         listeners: BTreeMap::new(),
                         dialers: Input::Omitted,
                         exit_enabled: n.exit_enabled,
+                        exit_families: n.exit_families.clone(),
                         region: n.region.clone(),
                     },
                 )
@@ -248,7 +250,13 @@ impl LocalCompiler {
         }
         let generation = self.egress(node)?.generation;
         Ok(Some(match self.partition(node)? {
-            Ok(partition) => partition.capture(generation),
+            Ok(partition) => partition.capture(
+                generation,
+                self.configuration
+                    .nodes
+                    .get(&node)
+                    .is_some_and(|n| n.addresses.ipv6.is_some()),
+            ),
             Err(reason) => crate::compile::unavailable_capture(generation, reason),
         }))
     }
@@ -305,6 +313,12 @@ impl LocalCompiler {
             &projection.selected_profiles,
             source,
         )?;
+        // A name is executed as its resolver's family, IPv4 (see
+        // `dns::resolution`); an address as its own.
+        let family = match destination {
+            rules::Destination::Address(address) => ExitFamily::of(address),
+            rules::Destination::Name(_) => ExitFamily::Ipv4,
+        };
         let mut skipped = Vec::new();
         let public = "/routing/egress/rules";
         let hit = |index: usize,
@@ -319,6 +333,7 @@ impl LocalCompiler {
                     self.exits(),
                     rules[index].action.clone().into(),
                     source,
+                    family,
                 )?,
             })
         };
@@ -486,6 +501,7 @@ impl LocalCompiler {
             return Ok(LocalDecision::Denied(UnavailableReason::InactiveNode));
         }
         let canonical = destination.to_canonical();
+        let family = ExitFamily::of(canonical);
         let mesh = cfg
             .nodes
             .iter()
@@ -542,10 +558,24 @@ impl LocalCompiler {
             if !services.contains(protocol, port) {
                 return Ok(LocalDecision::Denied(UnavailableReason::Unauthorized));
             }
-            if destination.is_ipv6() || cfg.nodes[&source].addresses.ipv4.is_none() {
+            // Statically uncarried: the source has no Mesh address of the
+            // family, or no exit of the set carries IPv6 by configuration
+            // (every eligible exit carries IPv4; an ineligible one has no
+            // path, as before families).
+            let addresses = &cfg.nodes[&source].addresses;
+            let own = match family {
+                ExitFamily::Ipv4 => addresses.ipv4.is_some(),
+                ExitFamily::Ipv6 => addresses.ipv6.is_some(),
+            };
+            if !own
+                || (family == ExitFamily::Ipv6 && !matching::carries(self.exits(), &nodes, family))
+            {
                 return Ok(LocalDecision::Denied(UnavailableReason::UnsupportedFamily));
             }
-            if !crate::is_exit_destination(canonical) {
+            // A mapped IPv6 destination is not its IPv4 address.
+            if !crate::is_exit_destination(destination)
+                || destination.is_ipv6() != canonical.is_ipv6()
+            {
                 return Ok(LocalDecision::Denied(UnavailableReason::Unauthorized));
             }
             (Target::Exit { nodes, via }, services, Some(generation))
@@ -569,10 +599,11 @@ impl LocalCompiler {
                 .get(target)
                 .is_some_and(|node| node.enabled && (via.is_none() || node.exit_enabled))
                 || (via.is_some() && *target == source)
+                || (via.is_some() && !self.exits().eligible(*target, family))
             {
                 continue;
             }
-            if via.is_some() && !exit::capable(input, *target) {
+            if via.is_some() && !exit::capable(input, *target, family) {
                 reason = UnavailableReason::ExitUnavailable;
                 continue;
             }
@@ -623,20 +654,40 @@ impl LocalCompiler {
                 search(&graph, origin, *node, None)
             }
             Target::Exit { nodes, via } => {
-                if cfg.nodes[&origin].addresses.ipv4.is_none() {
+                let addresses = &cfg.nodes[&origin].addresses;
+                if addresses.ipv4.is_none() && addresses.ipv6.is_none() {
                     return Ok(Vec::new());
                 }
                 let Ok(partition) = self.partition(origin)? else {
                     return Ok(Vec::new());
                 };
-                if !partition
-                    .ipv4()
-                    .filter(|(_, action)| {
-                        matches!(action, EgressAction::Exit { nodes: n, via: v } if n == nodes && v == via)
-                    })
-                    .any(|(range, _)| external_overlaps(cfg, input.subjects, origin, &range))
-                    && !self.name_exit(origin, nodes, via)?
-                {
+                let same = |action: &EgressAction| matches!(action, EgressAction::Exit { nodes: n, via: v } if n == nodes && v == via);
+                let ipv4 = addresses.ipv4.is_some()
+                    && partition
+                        .ipv4()
+                        .filter(|(_, action)| same(action))
+                        .any(|(range, _)| {
+                            external_overlaps(
+                                cfg,
+                                input.subjects,
+                                origin,
+                                &(IpAddr::V4(*range.start())..=IpAddr::V4(*range.end())),
+                            )
+                        });
+                let ipv6 = addresses.ipv6.is_some()
+                    && matching::carries(self.exits(), nodes, ExitFamily::Ipv6)
+                    && partition
+                        .ipv6()
+                        .filter(|(_, action)| same(action))
+                        .any(|(range, _)| {
+                            external_overlaps(
+                                cfg,
+                                input.subjects,
+                                origin,
+                                &(IpAddr::V6(*range.start())..=IpAddr::V6(*range.end())),
+                            )
+                        });
+                if !ipv4 && !ipv6 && !self.name_exit(origin, nodes, via)? {
                     return Ok(Vec::new());
                 }
                 let mut paths = Vec::new();
@@ -646,7 +697,7 @@ impl LocalCompiler {
                             .nodes
                             .get(exit)
                             .is_some_and(|n| n.enabled && n.exit_enabled)
-                        || !exit::capable(input, *exit)
+                        || !exit::capable(input, *exit, ExitFamily::Ipv4)
                     {
                         continue;
                     }
@@ -680,11 +731,7 @@ fn external_scope(selector: &str) -> Option<IpScope> {
     if selector == "autogroup:internet" {
         Some(IpScope::Internet)
     } else {
-        selector
-            .parse::<ipnet::IpNet>()
-            .ok()
-            .filter(|net| net.addr().is_ipv4())
-            .map(IpScope::Net)
+        selector.parse::<ipnet::IpNet>().ok().map(IpScope::Net)
     }
 }
 
@@ -730,11 +777,18 @@ fn external_overlaps(
     cfg: &NetworkConfiguration,
     subjects: &SubjectContext,
     source: NodeId,
-    range: &std::ops::RangeInclusive<std::net::Ipv4Addr>,
+    range: &std::ops::RangeInclusive<IpAddr>,
 ) -> bool {
-    let overlap = |net: &ipnet::IpNet| match net {
-        ipnet::IpNet::V4(net) => net.network() <= *range.end() && *range.start() <= net.broadcast(),
-        ipnet::IpNet::V6(_) => false,
+    // Both bounds of `range` are of one family; a net of the other family
+    // compares false.
+    let overlap = |net: &ipnet::IpNet| match (net, range.start(), range.end()) {
+        (ipnet::IpNet::V4(net), IpAddr::V4(start), IpAddr::V4(end)) => {
+            net.network() <= *end && *start <= net.broadcast()
+        }
+        (ipnet::IpNet::V6(net), IpAddr::V6(start), IpAddr::V6(end)) => {
+            net.network() <= *end && *start <= net.broadcast()
+        }
+        _ => false,
     };
     external_rules(cfg, subjects, source).any(|(rule, scope)| {
         !crate::access::token_services(&rule.ip)

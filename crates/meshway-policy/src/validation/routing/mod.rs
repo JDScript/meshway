@@ -813,6 +813,7 @@ mod limit_tests {
     fn an_exhausted_work_budget_warns_without_counts_and_other_failures_do_not() {
         let summary = |n: u32, unavailable| CaptureSummary {
             managed_ipv4: n,
+            managed_ipv6: 0,
             sink_ipv6: n,
             routes: n,
             unavailable,

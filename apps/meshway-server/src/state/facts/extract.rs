@@ -107,12 +107,11 @@ pub(crate) fn peer_facts(
         {
             Some(PeerExitFacts {
                 role_generation: role.generation,
-                status: capability.status.clone(),
-                installed_families: capability
-                    .installed_families
+                families: capability
+                    .families
                     .iter()
-                    .filter(|family| **family == role.family)
-                    .copied()
+                    .filter(|entry| role.families.contains(&entry.family))
+                    .cloned()
                     .collect(),
             })
         }

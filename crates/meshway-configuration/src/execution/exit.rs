@@ -15,6 +15,11 @@ pub struct EgressCapturePlan {
     pub managed_ipv4: Vec<(Ipv4Addr, Ipv4Addr)>,
     /// True for default IPv4 capture, including a first-match exit covering all IPv4.
     pub default_capture: bool,
+    /// IPv6 ranges handed to the unique data-plane owner: exit ranges some
+    /// of whose exits carry IPv6, for a source with a Mesh IPv6 address.
+    /// Absent in a capture plan an earlier version recorded.
+    #[serde(default)]
+    pub managed_ipv6: Vec<(Ipv6Addr, Ipv6Addr)>,
     /// IPv6 exit ranges that must be sunk; Mesh routes take precedence.
     pub sink_ipv6: Vec<(Ipv6Addr, Ipv6Addr)>,
     /// Unresolved routing requires a fail-closed boundary, not local fallback.
@@ -26,7 +31,7 @@ meshway_model::string_enum! {
 #[serde(rename_all = "camelCase")]
 /// Translation mode allowed for an exit role.
 pub enum ExitNat {
-    /// Stateful IPv4 source masquerade on the real egress interface.
+    /// Stateful source masquerade (IPv4, and NAT66 for IPv6) on the real egress interface.
     Masquerade,
 }
 }

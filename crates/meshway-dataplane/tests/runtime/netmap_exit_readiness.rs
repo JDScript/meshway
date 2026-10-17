@@ -18,7 +18,11 @@ async fn netmap_exit_a_last_known_ready_exit_takes_new_flows() {
         Outbound::Denied(UnavailableReason::ExitUnavailable)
     ));
     // Its fact went stale (no sync during the lease): still the choice.
-    f.a.set_ready_exits(Default::default(), [b].into());
+    f.a.set_ready_exits(
+        meshway_model::exit::ExitFamily::Ipv4,
+        Default::default(),
+        [b].into(),
+    );
     let packet = udp(&f, false, 41000);
     let Outbound::Queued { init: Some(init) } = f.a.outbound(packet).unwrap() else {
         panic!("exit circuit to the last known ready exit")

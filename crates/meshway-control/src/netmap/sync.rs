@@ -67,19 +67,25 @@ pub struct KnownPeers {
 }
 
 impl KnownPeers {
-    /// Exits a new exit flow may choose, by their readiness facts. A fact
-    /// past its `expiresAt` is last known, not withdrawn: an exit last known
-    /// ready stays selectable after every currently ready one, so freshness
-    /// alone never refuses a flow the netmap allows. Selection input only;
-    /// the exit admits on its own netmap and role.
-    pub fn ready_exits(&self, now: chrono::DateTime<chrono::Utc>) -> ReadyExits {
+    /// Exits a new exit flow of `family` may choose, by their readiness
+    /// facts: that family ready and installed. A fact past its `expiresAt`
+    /// is last known, not withdrawn: an exit last known ready stays
+    /// selectable after every currently ready one, so freshness alone never
+    /// refuses a flow the netmap allows. Selection input only; the exit
+    /// admits on its own netmap and role.
+    pub fn ready_exits(
+        &self,
+        now: chrono::DateTime<chrono::Utc>,
+        family: meshway_model::exit::ExitFamily,
+    ) -> ReadyExits {
         let mut exits = ReadyExits::default();
         for (peer, facts) in self.peers.iter() {
             let ready = facts.exit.as_ref().is_some_and(|exit| {
-                exit.status == meshway_model::exit::ExitStatus::Ready
-                    && exit
-                        .installed_families
-                        .contains(&meshway_model::exit::ExitFamily::Ipv4)
+                exit.families.iter().any(|entry| {
+                    entry.family == family
+                        && entry.status == meshway_model::exit::ExitStatus::Ready
+                        && entry.installed
+                })
             });
             if !ready {
                 continue;
@@ -124,7 +130,7 @@ impl PeerFactsSink for tokio::sync::watch::Sender<Option<KnownPeers>> {
     }
 }
 
-/// Exits whose last known readiness fact is ready with IPv4 installed.
+/// Exits whose last known readiness fact is ready with one family installed.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ReadyExits {
     /// The fact is current: chosen first.

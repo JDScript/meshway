@@ -13,6 +13,7 @@ mod auto;
 mod equivalence;
 mod exit;
 mod incremental;
+mod ipv6_exit;
 mod partition;
 mod projection;
 mod properties;

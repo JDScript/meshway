@@ -141,9 +141,12 @@ fn eligible_exits_are_omitted_when_empty_and_round_trip() {
     s.cfg.routing.egress.rules = vec![egress_rule("1.2.5.0/24", exit_action(&[4, 1], &[]))];
     let compiled = netmaps(&s);
     let projection = &compiled.nodes[&node(1)].netmap.projection;
-    assert_eq!(projection.eligible_exits, [node(4)]);
+    assert_eq!(projection.eligible_exits, [eligible(4)]);
     let text = serde_json::to_value(projection).unwrap();
-    assert_eq!(text["eligibleExits"], serde_json::json!([node(4)]));
+    assert_eq!(
+        text["eligibleExits"],
+        serde_json::json!([{"node": node(4), "families": ["ipv4"]}])
+    );
     let decoded: ProjectedConfiguration = serde_json::from_value(text).unwrap();
     assert_eq!(&decoded, projection);
 }

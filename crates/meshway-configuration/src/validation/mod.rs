@@ -410,6 +410,17 @@ fn normalize_inner(
                     .with("value", region),
             );
         }
+        let mut exit_families = node.exit_families.clone();
+        exit_families.sort_unstable();
+        exit_families.dedup();
+        if !exit_families.contains(&meshway_model::exit::ExitFamily::Ipv4)
+            || exit_families.len() != node.exit_families.len()
+        {
+            check.issue(ConfigurationIssue::new(
+                format!("{path}/exitFamilies"),
+                IssueCode::InvalidExitFamily,
+            ));
+        }
         let addresses = NodeAddresses {
             ipv4: addresses::resolve(
                 node.addresses.ipv4,
@@ -486,6 +497,7 @@ fn normalize_inner(
                 listeners,
                 dialers: node.dialers,
                 exit_enabled: node.exit_enabled,
+                exit_families,
                 region: node.region,
             },
         );
@@ -566,6 +578,7 @@ impl From<&NetworkConfiguration> for NetworkConfigurationInput {
                                 .collect(),
                             dialers: n.dialers.clone(),
                             exit_enabled: n.exit_enabled,
+                            exit_families: n.exit_families.clone(),
                             region: n.region.clone(),
                         },
                     )

@@ -46,7 +46,10 @@ fn projected_and_full_configuration_have_identical_local_admission_and_paths() {
                 .nodes
                 .iter()
                 .filter(|(_, n)| n.enabled && n.exit_enabled)
-                .map(|(id, _)| *id)
+                .map(|(id, n)| EligibleExit {
+                    node: *id,
+                    families: n.exit_families.clone(),
+                })
                 .collect();
             let full = LocalCompiler::from_shared(Arc::new(full), &Default::default());
             let local = LocalCompiler::from_shared(projected.netmap.clone(), &Default::default());

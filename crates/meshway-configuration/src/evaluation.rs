@@ -58,9 +58,11 @@ object! {
 pub struct CaptureSummary {
     /// Managed IPv4 ranges (interval elements).
     pub managed_ipv4: u32,
+    /// Managed IPv6 ranges (interval elements): exit ranges whose exits carry IPv6.
+    pub managed_ipv6: u32,
     /// Sunk IPv6 ranges (interval elements).
     pub sink_ipv6: u32,
-    /// Capture-table routes: the CIDR cover of the managed IPv4 ranges.
+    /// Capture-table routes: the CIDR covers of the managed IPv4 and IPv6 ranges.
     pub routes: u32,
     /// Why no partition is installed (full capture instead); null otherwise.
     #[serde(deserialize_with = "nullable")] pub unavailable: Option<UnavailableReason> [required = true],

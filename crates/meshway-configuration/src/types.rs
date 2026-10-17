@@ -113,6 +113,14 @@ pub struct TopologyRule {
 fn yes() -> bool {
     true
 }
+/// The inner families an exit carries unless its settings name others.
+pub fn default_exit_families() -> Vec<meshway_model::exit::ExitFamily> {
+    vec![meshway_model::exit::ExitFamily::Ipv4]
+}
+/// Whether `families` is the default, omitted from canonical documents.
+pub fn is_default_exit_families(families: &[meshway_model::exit::ExitFamily]) -> bool {
+    families == [meshway_model::exit::ExitFamily::Ipv4]
+}
 object! {
 /// Canonical settings for a registered node, including prepared listener materials.
 pub struct NodeSettings {
@@ -132,6 +140,8 @@ pub struct NodeSettings {
     #[serde(default, skip_serializing_if = "Input::is_omitted")] pub dialers: Input<DialerSet> [value_type = DialerSet],
     /// Permit selection as an exit node; defaults to false and does not indicate execution readiness.
     #[serde(default)] pub exit_enabled: bool,
+    /// Inner families this Node carries as an exit, ascending and unique; defaults to `["ipv4"]` and is omitted when it is the default. IPv6 also requires the `feature:exit-ipv6` capability.
+    #[serde(default = "default_exit_families", skip_serializing_if = "is_default_exit_families")] pub exit_families: Vec<meshway_model::exit::ExitFamily>,
     /// Administrator-declared ISO 3166-1 alpha-2 region (uppercase) that `auto` resolves by; omitted when undeclared.
     #[serde(default, deserialize_with = "crate::editing_secrets::present", skip_serializing_if = "Option::is_none")] pub region: Option<String> [value_type = String],
 } }
@@ -154,6 +164,8 @@ pub struct NodeSettingsInput {
     #[serde(default, skip_serializing_if = "Input::is_omitted")] pub dialers: Input<DialerSet> [value_type = DialerSet],
     /// Permit selection as an exit node; defaults to false and does not indicate execution readiness.
     #[serde(default)] pub exit_enabled: bool,
+    /// Inner families this Node carries as an exit: unique families including `ipv4`, stored ascending; omission is `["ipv4"]`.
+    #[serde(default = "default_exit_families", skip_serializing_if = "is_default_exit_families")] pub exit_families: Vec<meshway_model::exit::ExitFamily>,
     /// Administrator-declared ISO 3166-1 alpha-2 region (uppercase) that `auto` resolves by; omission declares none.
     #[serde(default, deserialize_with = "crate::editing_secrets::present", skip_serializing_if = "Option::is_none")] pub region: Option<String> [value_type = String],
 } }

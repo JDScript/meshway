@@ -7,7 +7,7 @@ pub mod admission;
 pub mod compile;
 pub mod dns_route;
 mod internet;
-pub use internet::{internet_ranges, is_exit_destination, is_internet_address};
+pub use internet::{exit_exclusions, internet_ranges, is_exit_destination, is_internet_address};
 mod subjects;
 mod validation;
 

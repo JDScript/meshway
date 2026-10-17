@@ -23,6 +23,16 @@ pub struct RuleSetRef {
 } }
 
 object! {
+/// An exit the full configuration makes eligible (enabled with
+/// `exitEnabled`) and the inner families its `exitFamilies` carry.
+pub struct EligibleExit {
+    /// Exit Node.
+    pub node: NodeId,
+    /// Configured families, ascending and unique.
+    pub families: Vec<meshway_model::exit::ExitFamily>,
+} }
+
+object! {
 /// A monotone subset of the full configuration: every rule is an unchanged
 /// full-configuration rule in its original relative order, and every Node
 /// declaration is the existing redacted `NodeSettingsView` of a visible Node.
@@ -45,10 +55,10 @@ pub struct ProjectedConfiguration {
     /// Persisted selection versions of visible Nodes; each switch increments one.
     #[serde(deserialize_with = "unique_map")]
     pub selection_versions: BTreeMap<NodeId, meshway_model::Version>,
-    /// Ascending Nodes the full configuration makes eligible exits (enabled
-    /// with `exitEnabled`) among those a retained exit set lists ahead of
-    /// another Node, visible or not. A source named in such a set resolves the
-    /// exits before it against this list only; omitted when empty.
+    /// Eligible exits (enabled with `exitEnabled`) the retained routing
+    /// names, visible or not, ascending by Node, with their configured
+    /// families. Exit eligibility and the families an exit carries are read
+    /// from this list only; omitted when empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub eligible_exits: Vec<NodeId>,
+    pub eligible_exits: Vec<EligibleExit>,
 } }

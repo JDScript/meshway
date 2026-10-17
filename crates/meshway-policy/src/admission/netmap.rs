@@ -130,7 +130,8 @@ pub fn admit_handshake(
             if !nodes.contains(&terminal) {
                 return Err(AdmissionError::Path);
             }
-            if decision.selection.is_none() || addresses(netmap, origin)?.ipv4.is_none() {
+            let own = addresses(netmap, origin)?;
+            if decision.selection.is_none() || (own.ipv4.is_none() && own.ipv6.is_none()) {
                 return Err(AdmissionError::Traffic);
             }
             if terminal == netmap.node_id {
@@ -138,7 +139,7 @@ pub fn admit_handshake(
                     return Err(AdmissionError::ExitDisabled);
                 }
                 if !netmap.exit_role.as_ref().is_some_and(|role| {
-                    role.family == ExitFamily::Ipv4 && role.nat == ExitNat::Masquerade
+                    role.families.contains(&ExitFamily::Ipv4) && role.nat == ExitNat::Masquerade
                 }) {
                     return Err(AdmissionError::Permit);
                 }
@@ -175,6 +176,8 @@ fn admitted_traffic(
         }
         Target::Exit { .. } => {
             if destination != decision.destination.to_canonical()
+                || traffic.destination.is_ipv6() != decision.destination.is_ipv6()
+                || traffic.destination.is_ipv6() != destination.is_ipv6()
                 || contains(&netmap.self_.addresses, destination)
                 || netmap
                     .projection
@@ -203,6 +206,15 @@ pub fn admit_forward(
 ) -> Result<Hop, AdmissionError> {
     let hop = admit_handshake(netmap, decision, path, origin, previous, false)?;
     admitted_traffic(netmap, decision, traffic)?;
+    // The exit forwards only the families its role carries.
+    if hop == Hop::Exit
+        && !netmap
+            .exit_role
+            .as_ref()
+            .is_some_and(|role| role.families.contains(&ExitFamily::of(traffic.destination)))
+    {
+        return Err(AdmissionError::Traffic);
+    }
     Ok(hop)
 }
 

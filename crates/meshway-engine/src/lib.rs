@@ -43,7 +43,7 @@ pub struct Desired {
     capture_summary: Option<meshway_configuration::evaluation::CaptureSummary>,
     /// Addresses the capture keeps only for live flows established through
     /// an earlier boundary (see [`Desired::retaining`]).
-    retained: Arc<[std::net::Ipv4Addr]>,
+    retained: Arc<[std::net::IpAddr]>,
     /// The signed overlay this state was built from, and its live entries.
     overlay: Option<Arc<DnsAssociationOverlay>>,
     associations: Arc<Associations>,
@@ -143,7 +143,7 @@ impl Desired {
     }
 
     /// Addresses captured only for live flows of an earlier boundary.
-    pub fn retained(&self) -> &[std::net::Ipv4Addr] {
+    pub fn retained(&self) -> &[std::net::IpAddr] {
         &self.retained
     }
 
@@ -523,7 +523,7 @@ impl<C: Components> Engine<C> {
         if current
             .retained
             .iter()
-            .all(|address| live.contains(&std::net::IpAddr::V4(*address)))
+            .all(|address| live.contains(address))
         {
             return Ok(());
         }

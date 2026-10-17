@@ -1,8 +1,10 @@
 //! The ICMP error this Node itself reports for one of its own packets that
 //! does not fit the path: IPv4 fragmentation needed (3/4) or ICMPv6 packet
-//! too big (2/0), as a router on that path would send it; and ICMPv6
+//! too big (2/0), as a router on that path would send it; ICMPv6
 //! destination unreachable, no route (1/0), for a path that cannot carry
-//! IPv6 at all (a channel below the IPv6 minimum MTU).
+//! IPv6 at all (a channel below the IPv6 minimum MTU); and ICMPv6
+//! destination unreachable, administratively prohibited (1/1), for an IPv6
+//! exit destination no exit of its decision is ready to carry.
 use super::*;
 
 /// IPv6 minimum link MTU (RFC 8200): a channel below it carries no IPv6.
@@ -31,6 +33,18 @@ pub(crate) fn no_route(packet: &Packet) -> Option<Packet> {
         return None;
     }
     error(packet, (3, 4, 0), (1, 0, 0))
+}
+
+/// ICMPv6 destination unreachable (administratively prohibited) for an IPv6
+/// `packet` refused before any flow: Linux reports it to the socket as
+/// `EACCES`, a hard error, so `connect` fails at once and the application
+/// falls back to its next address. `None` for IPv4 or a packet no error may
+/// quote.
+pub(crate) fn prohibited(packet: &Packet) -> Option<Packet> {
+    if !packet.traffic().destination.is_ipv6() {
+        return None;
+    }
+    error(packet, (3, 13, 0), (1, 1, 0))
 }
 
 /// `(type, code, next-hop MTU)` for IPv4 and `(type, code, 32-bit field)`
@@ -173,6 +187,22 @@ mod tests {
         assert_eq!(error.traffic().destination, packet.traffic().source);
         assert!(error.facts().validate().is_ok());
         assert!(no_route(&tcp("100.64.0.1", "100.64.0.4", 100)).is_none());
+    }
+
+    #[test]
+    fn a_refused_ipv6_exit_packet_is_answered_administratively_prohibited() {
+        let packet = tcp("fd00::1", "2606:4700:4700::1111", 100);
+        let error = prohibited(&packet).unwrap();
+        let Transport::Error(icmp) = error.transport() else {
+            panic!("{error:?}");
+        };
+        assert_eq!((icmp.kind, icmp.code), (1, 1));
+        assert_eq!(icmp.quoted.traffic, packet.traffic());
+        assert_eq!(error.traffic().destination, packet.traffic().source);
+        assert!(error.facts().validate().is_ok());
+        // IPv4 refusals stay silent drops.
+        assert!(prohibited(&tcp("100.64.0.1", "8.8.8.8", 100)).is_none());
+        assert!(prohibited(&error).is_none());
     }
 
     #[test]

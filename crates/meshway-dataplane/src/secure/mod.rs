@@ -875,7 +875,9 @@ impl SecureNode {
         // (current or last known).
         if grant.purpose == crate::Purpose::Dns
             && let Target::Mesh { node } = &grant.target
-            && !self.first.exit_selectable(node)
+            && !self
+                .first
+                .exit_selectable(node, meshway_model::exit::ExitFamily::Ipv4)
         {
             return Err(Error::Policy);
         }

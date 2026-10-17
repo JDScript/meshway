@@ -56,8 +56,11 @@ impl Engine {
             meshway_logging::profile::Metric::new("flow.admit");
         let _profile = PROFILE.enter();
         let exit = matches!(entry.grant, Target::Exit { .. });
-        if exit && (facts.traffic.source.is_ipv6() || facts.traffic.destination.is_ipv6()) {
-            self.exit_counters.ipv6_rejected = self.exit_counters.ipv6_rejected.saturating_add(1);
+        // An exit packet is of one family; which families an exit carries
+        // its own admission decides.
+        if exit && facts.traffic.source.is_ipv6() != facts.traffic.destination.is_ipv6() {
+            self.exit_counters.family_rejected =
+                self.exit_counters.family_rejected.saturating_add(1);
             return Err(Error::Flow);
         }
         if let Transport::Error(error) = facts.transport {

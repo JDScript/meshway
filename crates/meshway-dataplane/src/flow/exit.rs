@@ -41,10 +41,10 @@ impl ExitState {
         }
     }
     fn new(tuple: &Tuple, terminal: bool) -> Result<Self, Error> {
-        let (IpAddr::V4(source), IpAddr::V4(destination)) = (tuple.source, tuple.destination)
-        else {
+        let (source, destination) = (tuple.source, tuple.destination);
+        if source.is_ipv4() != destination.is_ipv4() {
             return Err(Error::Flow);
-        };
+        }
         let mut id = [0; 32];
         getrandom::fill(&mut id).map_err(|_| Error::Flow)?;
         Ok(Self {

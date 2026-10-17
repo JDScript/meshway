@@ -13,6 +13,7 @@ mod auto;
 mod declarations;
 mod diagnostics;
 mod dns_plans;
+mod exit_families;
 mod identity_addressing;
 mod routing;
 mod schema;

@@ -530,6 +530,7 @@ export const zUnavailableReason = z.enum(["exitUnavailable","unsupportedFamily",
 
 export const zCaptureSummary = z.strictObject({
   ["managedIpv4"]: z.int().gte(0).lte(2147483647),
+  ["managedIpv6"]: z.int().gte(0).lte(2147483647),
   ["routes"]: z.int().gte(0).lte(2147483647),
   ["sinkIpv6"]: z.int().gte(0).lte(2147483647),
   ["unavailable"]: zUnavailableReason.nullable()
@@ -743,7 +744,7 @@ export const zExitFamily = z.enum(["ipv4","ipv6"]);
 export const zExitNat = z.enum(["masquerade"]);
 
 export const zExitRole = z.strictObject({
-  ["family"]: zExitFamily,
+  ["families"]: z.array(zExitFamily),
   ["generation"]: zDigest,
   ["nat"]: zExitNat
 });
@@ -914,6 +915,7 @@ export const zNodeSettingsView = z.strictObject({
   ["dialers"]: zDialerSetView.exactOptional(),
   ["enabled"]: z.boolean(),
   ["exitEnabled"]: z.boolean(),
+  ["exitFamilies"]: z.array(zExitFamily).exactOptional(),
   ["hostname"]: z.string(),
   ["identity"]: zNodeIdentity,
   ["listeners"]: typedMap(z.string(), zListenerView, {}),
@@ -1032,6 +1034,11 @@ export const zConfigurationView = z.strictObject({
   ["topology"]: z.array(zTopologyRule)
 });
 
+export const zEligibleExit = z.strictObject({
+  ["families"]: z.array(zExitFamily),
+  ["node"]: zNodeId
+});
+
 export const zTrustedNode = z.strictObject({
   ["capabilities"]: typedMap(z.string(), zCapability, {}),
   ["controlKey"]: zBoundNodeKey,
@@ -1058,7 +1065,7 @@ export const zSubjectContext = z.strictObject({
 
 export const zProjectedConfiguration = z.strictObject({
   ["configuration"]: zConfigurationView,
-  ["eligibleExits"]: z.array(zNodeId).exactOptional(),
+  ["eligibleExits"]: z.array(zEligibleExit).exactOptional(),
   ["inventory"]: typedMap(z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u")), zTrustedNode, {}),
   ["ruleSets"]: typedMap(z.string(), zRuleSetRef, {}),
   ["selectedProfiles"]: typedMap(z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u")), z.string(), {}),
@@ -1221,7 +1228,7 @@ export const zConfigurationComparison = z.strictObject({
   ["toRevision"]: zRevision
 });
 
-export const zIssueCode = z.enum(["invalid_jsonc","invalid_shape","incomplete_version","unknown_user","invalid_group_name","invalid_tag_name","unknown_group","unknown_tag","duplicate_tag","identity_membership_missing","empty_tag_identity","unknown_node","unknown_node_selector","retained_membership_inactive","empty_selector_set","bidirectional_requires_mesh","invalid_port_set","invalid_domain_suffix","invalid_domain","noncanonical_cidr","invalid_dns_domain","invalid_node_dns_name","dns_override_requires_default","unknown_resolver","invalid_resolver","empty_resolver_set","duplicate_dns_suffix","invalid_dns_suffix","invalid_hostname","duplicate_hostname","empty_listener_key","invalid_transport","invalid_listener_materials","overlapping_pools","invalid_pool","address_outside_pool","duplicate_address","unknown_reassignment_target","no_address_available","repeated_required_node","empty_exit_set","repeated_exit","exit_not_enabled","invalid_destination_cidr","empty_route_match","unknown_rule_set","invalid_rule_source","empty_rule_set_key","invalid_rule_set_key","unknown_rule_set_provider","invalid_rule_set_provider","egress_partition_limit","empty_inline_rule_set","rule_set_budget","rule_set_unavailable","rule_set_timeout","reserved_profile_name","unknown_profile","default_not_allowed","auto_target_not_allowed","auto_target_unknown","conflicting_assignments","invalid_country_code","exit_outside_access","global_exit_requires_internet","exit_fallback_requires_internet","dns_exit_plan_required","netmap_limit","netmap_budget","resolver_outside_access","shadowed_rule","ineffective_block_option","ephemeral_listener_port","auto_region_unmatched","auto_region_missing"]);
+export const zIssueCode = z.enum(["invalid_jsonc","invalid_shape","incomplete_version","unknown_user","invalid_group_name","invalid_tag_name","unknown_group","unknown_tag","duplicate_tag","identity_membership_missing","empty_tag_identity","unknown_node","unknown_node_selector","retained_membership_inactive","empty_selector_set","bidirectional_requires_mesh","invalid_port_set","invalid_domain_suffix","invalid_domain","noncanonical_cidr","invalid_dns_domain","invalid_node_dns_name","dns_override_requires_default","unknown_resolver","invalid_resolver","empty_resolver_set","duplicate_dns_suffix","invalid_dns_suffix","invalid_hostname","duplicate_hostname","empty_listener_key","invalid_transport","invalid_listener_materials","overlapping_pools","invalid_pool","address_outside_pool","duplicate_address","unknown_reassignment_target","no_address_available","repeated_required_node","empty_exit_set","repeated_exit","exit_not_enabled","invalid_destination_cidr","empty_route_match","unknown_rule_set","invalid_rule_source","empty_rule_set_key","invalid_rule_set_key","unknown_rule_set_provider","invalid_rule_set_provider","egress_partition_limit","empty_inline_rule_set","rule_set_budget","rule_set_unavailable","rule_set_timeout","reserved_profile_name","unknown_profile","default_not_allowed","auto_target_not_allowed","auto_target_unknown","conflicting_assignments","invalid_country_code","invalid_exit_family","exit_outside_access","global_exit_requires_internet","exit_fallback_requires_internet","dns_exit_plan_required","netmap_limit","netmap_budget","resolver_outside_access","shadowed_rule","ineffective_block_option","ephemeral_listener_port","auto_region_unmatched","auto_region_missing"]);
 
 export const zConfigurationIssue = z.strictObject({
   ["code"]: zIssueCode,
@@ -1264,6 +1271,7 @@ export const zNodeSettingsPatch = z.strictObject({
   ["dialers"]: zDialerSetUpdate.nullable().exactOptional(),
   ["enabled"]: z.boolean().exactOptional(),
   ["exitEnabled"]: z.boolean().exactOptional(),
+  ["exitFamilies"]: z.array(zExitFamily).exactOptional(),
   ["hostname"]: z.string().exactOptional(),
   ["region"]: z.string().nullable().exactOptional(),
   ["remark"]: z.string().exactOptional()
@@ -1574,6 +1582,7 @@ export const zNodeSettingsInput = z.strictObject({
   ["dialers"]: zDialerSet.exactOptional(),
   ["enabled"]: z.boolean().exactOptional(),
   ["exitEnabled"]: z.boolean().exactOptional(),
+  ["exitFamilies"]: z.array(zExitFamily).exactOptional(),
   ["hostname"]: z.string(),
   ["identity"]: zNodeIdentity,
   ["listeners"]: typedMap(z.string(), zListener, {}).exactOptional(),
@@ -2240,7 +2249,7 @@ export const zRouteEvaluation = z.strictObject({
   ["via"]: z.array(zNodeId)
 });
 
-export const zExitUnavailableReason = z.enum(["ipForwardDisabled","forwardingProbeFailed","netAdminMissing","nftUnavailable","conntrackUnavailable","reversePathFilterConflict","tunUnavailable","firewallConflict","routeConflict","unsupportedFamily","ownershipConflict"]);
+export const zExitUnavailableReason = z.enum(["ipForwardDisabled","ipv6ForwardDisabled","ipv6NoEgress","ipv6RouterAdvertisementsIgnored","forwardingProbeFailed","netAdminMissing","nftUnavailable","conntrackUnavailable","reversePathFilterConflict","tunUnavailable","firewallConflict","routeConflict","unsupportedFamily","ownershipConflict"]);
 
 export const zTargetProblem = z.enum(["disabled","exitDisabled","exitUnavailable","unsupportedFamily","notEnrolled","noPath","routingCycle","routingLimit"]);
 
@@ -2299,14 +2308,18 @@ export const zExitStatus = z.union([z.strictObject({
   ["status"]: z.enum(["unavailable"])
 })]);
 
+export const zExitFamilyCapability = z.strictObject({
+  ["family"]: zExitFamily,
+  ["installed"]: z.boolean(),
+  ["status"]: zExitStatus
+});
+
 export const zExitCapability = z.strictObject({
-  ["installedFamilies"]: z.array(zExitFamily),
+  ["families"]: z.array(zExitFamilyCapability),
   ["instanceId"]: zInstanceId,
   ["netmap"]: zNetmapRef,
   ["observedAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
-  ["roleGeneration"]: zDigest,
-  ["status"]: zExitStatus,
-  ["supportedFamilies"]: z.array(zExitFamily)
+  ["roleGeneration"]: zDigest
 });
 
 export const zExitDnsUnavailableReason = z.enum(["unobserved","noServers","localServer","anchorServer","meshServer","exitRoutedServer","proxyStubMissing"]);
@@ -3318,9 +3331,8 @@ export const zPasswordResetRedeemRequest = z.strictObject({
 });
 
 export const zPeerExitFacts = z.strictObject({
-  ["installedFamilies"]: z.array(zExitFamily),
-  ["roleGeneration"]: zDigest,
-  ["status"]: zExitStatus
+  ["families"]: z.array(zExitFamilyCapability),
+  ["roleGeneration"]: zDigest
 });
 
 export const zPeerListenerFacts = z.strictObject({

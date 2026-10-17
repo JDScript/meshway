@@ -187,7 +187,12 @@ impl LocalCompiler {
                     break;
                 }
             }
-            let action = matching::executed(self.exits(), action, source)?;
+            let action = matching::executed(
+                self.exits(),
+                action,
+                source,
+                meshway_model::exit::ExitFamily::of(address),
+            )?;
             match &decided {
                 Some(previous) if *previous != action => return Ok(None),
                 _ => decided = Some(action),
@@ -221,7 +226,7 @@ impl LocalCompiler {
                         } else {
                             selector
                                 .parse::<IpNet>()
-                                .is_ok_and(|net| net.addr().is_ipv4() && net.contains(&address))
+                                .is_ok_and(|net| net.contains(&address))
                         }
                     })
                 })
@@ -251,21 +256,28 @@ impl LocalCompiler {
             return Ok(false);
         }
         let (rules, _) = self.effective_rules(origin)?;
+        let parsed = |selectors: &[String]| {
+            selectors
+                .iter()
+                .map(|s| matching::node_selector(s))
+                .collect::<Result<Vec<_>, _>>()
+        };
         for (rule, own) in rules {
-            let RouteAction::Exit {
-                nodes: exits,
-                via: waypoints,
-            } = matching::executed(self.exits(), rule.action.clone().into(), origin)?
-            else {
-                continue;
-            };
-            let parsed = |selectors: &[String]| {
-                selectors
-                    .iter()
-                    .map(|s| matching::node_selector(s))
-                    .collect::<Result<Vec<_>, _>>()
-            };
-            if parsed(&exits)? != nodes || parsed(&waypoints)? != via {
+            // A name's addresses may be of either family.
+            let mut same = false;
+            for family in [
+                meshway_model::exit::ExitFamily::Ipv4,
+                meshway_model::exit::ExitFamily::Ipv6,
+            ] {
+                if let RouteAction::Exit {
+                    nodes: exits,
+                    via: waypoints,
+                } = matching::executed(self.exits(), rule.action.clone().into(), origin, family)?
+                {
+                    same |= parsed(&exits)? == nodes && parsed(&waypoints)? == via;
+                }
+            }
+            if !same {
                 continue;
             }
             let mut names = own.is_some_and(|set| {
@@ -289,8 +301,10 @@ impl LocalCompiler {
 
     /// `capture` with every associated address of `source` captured as its
     /// association decides it: exit (and conflicting) addresses are managed
-    /// (IPv6: sunk) so they reach the packet owner, direct and unmanaged ones
-    /// leave the managed ranges. The selection identity stays the signed
+    /// so they reach the packet owner, direct and unmanaged ones leave the
+    /// managed ranges. An IPv6 address is sunk instead when its decision
+    /// cannot carry IPv6 (no exit of the set carries it, the source has no
+    /// Mesh IPv6 address, or names conflict). The selection identity stays the signed
     /// one; only the ranges change. A result beyond the node-side limits
     /// fails closed like the partition itself: full IPv4 capture, IPv6 sink,
     /// no exception, `routingLimit`. Returned with what the Node installs
@@ -312,11 +326,36 @@ impl LocalCompiler {
         }
         let generation = capture.generation;
         let mut next = capture.clone();
+        let ipv6 = self
+            .configuration
+            .nodes
+            .get(&source)
+            .is_some_and(|node| node.addresses.ipv6.is_some());
         for address in associations.addresses(source, generation) {
             let names = associations.names(source, generation, address);
             let action = self.associated_action(source, address, &names)?;
-            let captured = !matches!(action, Some(RouteAction::Direct | RouteAction::Unmanaged));
-            crate::compile::capture::assign(&mut next, address, captured);
+            use crate::compile::CaptureAssignment as How;
+            let how = match &action {
+                Some(RouteAction::Direct | RouteAction::Unmanaged) => How::Released,
+                _ if address.is_ipv4() => How::Managed,
+                Some(RouteAction::Exit { nodes, .. }) if ipv6 => {
+                    let nodes: Vec<NodeId> = nodes
+                        .iter()
+                        .filter_map(|selector| matching::node_selector(selector).ok())
+                        .collect();
+                    if matching::carries(
+                        self.exits(),
+                        &nodes,
+                        meshway_model::exit::ExitFamily::Ipv6,
+                    ) {
+                        How::Managed
+                    } else {
+                        How::Sunk
+                    }
+                }
+                _ => How::Sunk,
+            };
+            crate::compile::capture::assign(&mut next, address, how);
         }
         let summary = crate::compile::capture::plan_summary(&next);
         if !crate::compile::capture::installable(&next) {

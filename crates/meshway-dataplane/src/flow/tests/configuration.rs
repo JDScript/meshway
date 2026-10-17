@@ -69,6 +69,7 @@ impl Scene {
                     )]),
                     dialers: Input::Omitted,
                     exit_enabled: external && i == 3,
+                    exit_families: meshway_configuration::default_exit_families(),
                     region: None,
                 },
             );

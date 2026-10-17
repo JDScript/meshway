@@ -6,7 +6,7 @@ use crate::{error::Error, secrets::Sealer, store::execution};
 use chrono::{DateTime, Duration, Utc};
 use meshway_model::{
     NetworkId, NodeId, Revision,
-    exit::{EXIT_IPV4_FEATURE, EXIT_IPV4_VERSION, ExitFamily, ExitStatus},
+    exit::{ExitFamily, ExitStatus},
 };
 use meshway_policy::compile::ExitInputs;
 use meshway_protocol::state::StateReport;
@@ -14,7 +14,7 @@ use rusqlite::{OptionalExtension, Transaction, params};
 
 #[derive(serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 struct Observation {
-    status: ExitStatus,
+    families: Vec<(ExitFamily, ExitStatus)>,
     observed_at: DateTime<Utc>,
 }
 
@@ -54,21 +54,11 @@ pub(super) fn replace(
         || !admission.configurations.contains(&capability.netmap)
         || capability.observed_at > report.observed_at
         || capability.observed_at + Duration::seconds(REPORT_TTL_SECONDS) <= now
-        || capability.supported_families.len() > 2
-        || capability.installed_families.len() > 2
+        // One entry per family, ascending.
         || capability
-            .supported_families
-            .iter()
-            .enumerate()
-            .any(|(i, family)| capability.supported_families[..i].contains(family))
-        || capability
-            .installed_families
-            .iter()
-            .enumerate()
-            .any(|(i, family)| {
-                capability.installed_families[..i].contains(family)
-                    || !capability.supported_families.contains(family)
-            })
+            .families
+            .windows(2)
+            .any(|pair| pair[0].family >= pair[1].family)
     {
         return Err(Error::InvalidRequest);
     }
@@ -89,40 +79,40 @@ pub(super) fn replace(
         Some(role) if role.generation != capability.role_generation => {
             return Err(Error::StateScopeChanged);
         }
+        // Entries describe the role's own families only.
         Some(role)
             if capability
-                .installed_families
+                .families
                 .iter()
-                .any(|family| family != &role.family) =>
+                .any(|entry| !role.families.contains(&entry.family)) =>
         {
             return Err(Error::InvalidRequest);
         }
         Some(_) => {}
-        None if capability.status == ExitStatus::NotRequested
-            && capability.installed_families.is_empty() => {}
+        None if capability.families.is_empty() => {}
         None => return Err(Error::InvalidRequest),
     }
-    if !capability.installed_families.is_empty()
+    if capability.families.iter().any(|entry| entry.installed)
         && report.state.configuration.applied.as_ref() != Some(&reference)
     {
         return Err(Error::InvalidRequest);
     }
-    if capability.status == ExitStatus::Ready
-        && (!capability.supported_families.contains(&ExitFamily::Ipv4)
-            || netmap
-                .netmap
-                .self_
-                .self_keys
-                .capabilities
-                .get(EXIT_IPV4_FEATURE)
-                != Some(&meshway_model::state::Capability::Feature {
-                    version: EXIT_IPV4_VERSION,
-                }))
-    {
+    // A ready family needs the executor it declares at acquire.
+    let capabilities = &netmap.netmap.self_.self_keys.capabilities;
+    if capability.families.iter().any(|entry| {
+        let (feature, version) = entry.family.feature();
+        entry.status == ExitStatus::Ready
+            && capabilities.get(feature)
+                != Some(&meshway_model::state::Capability::Feature { version })
+    }) {
         return Err(Error::InvalidRequest);
     }
     let observation = Observation {
-        status: capability.status.clone(),
+        families: capability
+            .families
+            .iter()
+            .map(|entry| (entry.family, entry.status.clone()))
+            .collect(),
         observed_at: capability.observed_at,
     };
     let payload = execution::bytes(&observation)?;
@@ -223,16 +213,18 @@ pub(crate) fn inputs(
     let mut rows = statement.query(params![network.as_uuid().as_bytes(), now])?;
     while let Some(row) = rows.next()? {
         let node: NodeId = execution::id(row.get(0)?)?;
-        match execution::json::<Observation>(&row.get::<_, Vec<u8>>(1)?)?.status {
-            ExitStatus::Ready => {
-                inputs
-                    .ready_until_ms
-                    .insert(node, row.get::<_, i64>(2)? as u64);
+        let until = row.get::<_, i64>(2)? as u64;
+        for (family, status) in execution::json::<Observation>(&row.get::<_, Vec<u8>>(1)?)?.families
+        {
+            match status {
+                ExitStatus::Ready => {
+                    inputs.ready_until_ms.insert((node, family), until);
+                }
+                ExitStatus::Unavailable { reason } => {
+                    inputs.unavailable_reasons.insert((node, family), reason);
+                }
+                _ => {}
             }
-            ExitStatus::Unavailable { reason } => {
-                inputs.unavailable_reasons.insert(node, reason);
-            }
-            _ => {}
         }
     }
     Ok(inputs)

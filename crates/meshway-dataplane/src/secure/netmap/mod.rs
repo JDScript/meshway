@@ -225,15 +225,20 @@ impl SecureNode {
             .collect()
     }
 
-    /// Exits whose readiness fact is current and ready, and those whose
-    /// fact is past its freshness bound but was last known ready; selection
-    /// input only. Exit flows go to the first ready exit of their ordered
-    /// candidates, else the first last known ready one, and are dropped
-    /// (never sent direct) when there is neither; a DNS query to an exit
-    /// resolver that is neither fails.
-    pub fn set_ready_exits(&mut self, ready: BTreeSet<NodeId>, last_known: BTreeSet<NodeId>) {
-        self.first.ready_exits = ready;
-        self.first.last_known_exits = last_known;
+    /// Exits whose `family` readiness fact is current and ready, and those
+    /// whose fact is past its freshness bound but was last known ready;
+    /// selection input only. Exit flows of the family go to the first ready
+    /// exit of their ordered candidates, else the first last known ready
+    /// one, and are refused (never sent direct) when there is neither; a DNS
+    /// query to an exit resolver not so for IPv4 fails.
+    pub fn set_ready_exits(
+        &mut self,
+        family: meshway_model::exit::ExitFamily,
+        ready: BTreeSet<NodeId>,
+        last_known: BTreeSet<NodeId>,
+    ) {
+        self.first.ready_exits.insert(family, ready);
+        self.first.last_known_exits.insert(family, last_known);
     }
 
     /// Each peer's reported authenticated channels, from fresh peer facts:

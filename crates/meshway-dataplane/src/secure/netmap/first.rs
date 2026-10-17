@@ -2,7 +2,7 @@ use super::super::{CircuitGrant, Error, SecureNode, State, View};
 use super::{Flushed, Outbound, pause::Paused};
 use crate::{Packet, Purpose};
 use meshway_configuration::execution::LogicalPath;
-use meshway_model::NodeId;
+use meshway_model::{NodeId, exit::ExitFamily};
 use meshway_policy::compile::netmap::Target;
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
@@ -27,11 +27,13 @@ struct Waiting {
 pub(in crate::secure) struct FirstPackets {
     waiting: Vec<Waiting>,
     pub(super) interests: BTreeSet<NodeId>,
-    /// Exits whose readiness fact is current and ready: chosen first.
-    pub ready_exits: BTreeSet<NodeId>,
-    /// Exits whose fact is past its freshness bound and was last known
-    /// ready: chosen only after every current one (selection, never authority).
-    pub last_known_exits: BTreeSet<NodeId>,
+    /// Per inner family, exits whose readiness fact is current and ready:
+    /// chosen first.
+    pub ready_exits: BTreeMap<ExitFamily, BTreeSet<NodeId>>,
+    /// Per inner family, exits whose fact is past its freshness bound and
+    /// was last known ready: chosen only after every current one
+    /// (selection, never authority).
+    pub last_known_exits: BTreeMap<ExitFamily, BTreeSet<NodeId>>,
     /// Paths whose origin handshake ended unanswered: consecutive count and
     /// the end of the pause during which another carried path is preferred.
     pub(super) unanswered: BTreeMap<Vec<NodeId>, Paused>,
@@ -40,21 +42,27 @@ pub(in crate::secure) struct FirstPackets {
 }
 
 impl FirstPackets {
-    /// The exit a new exit flow takes among the decision's ordered `exits`:
-    /// the first currently ready one, else the first last known ready one.
-    pub fn choose_exit<'a>(&self, exits: &'a [NodeId]) -> Option<&'a NodeId> {
+    /// The exit a new exit flow of `family` takes among the decision's
+    /// ordered `exits`: the first currently ready one, else the first last
+    /// known ready one. The two families of one source may take different
+    /// exits of the same ordered set.
+    pub fn choose_exit<'a>(&self, exits: &'a [NodeId], family: ExitFamily) -> Option<&'a NodeId> {
+        let ready = self.ready_exits.get(&family);
+        let last_known = self.last_known_exits.get(&family);
         exits
             .iter()
-            .find(|exit| self.ready_exits.contains(exit))
+            .find(|exit| ready.is_some_and(|set| set.contains(exit)))
             .or_else(|| {
                 exits
                     .iter()
-                    .find(|exit| self.last_known_exits.contains(exit))
+                    .find(|exit| last_known.is_some_and(|set| set.contains(exit)))
             })
     }
-    /// The exit may be chosen at all (current or last known ready).
-    pub fn exit_selectable(&self, exit: &NodeId) -> bool {
-        self.ready_exits.contains(exit) || self.last_known_exits.contains(exit)
+    /// The exit may be chosen at all for `family` (current or last known ready).
+    pub fn exit_selectable(&self, exit: &NodeId, family: ExitFamily) -> bool {
+        [&self.ready_exits, &self.last_known_exits]
+            .into_iter()
+            .any(|sets| sets.get(&family).is_some_and(|set| set.contains(exit)))
     }
     pub fn interest(&mut self, peer: NodeId) {
         if self.interests.len() < MAX_INTERESTS {
@@ -200,20 +208,26 @@ mod tests {
     fn a_currently_ready_exit_is_chosen_before_a_last_known_one() {
         let node = |n: u128| NodeId::new(uuid::Uuid::from_u128(n)).unwrap();
         let (e1, e2, e3) = (node(1), node(2), node(3));
+        let v4 = ExitFamily::Ipv4;
         let mut first = FirstPackets {
-            last_known_exits: [e1].into(),
+            last_known_exits: [(v4, [e1].into())].into(),
             ..Default::default()
         };
         // e1 stopped reporting (stale), e2 is ready: failover to e2.
-        first.ready_exits = [e2].into();
-        assert_eq!(first.choose_exit(&[e1, e2]), Some(&e2));
+        first.ready_exits = [(v4, [e2].into())].into();
+        assert_eq!(first.choose_exit(&[e1, e2], v4), Some(&e2));
         // Every fact is stale (no sync): the decision's order among them.
         first.ready_exits.clear();
-        first.last_known_exits = [e1, e2].into();
-        assert_eq!(first.choose_exit(&[e2, e1]), Some(&e2));
+        first.last_known_exits = [(v4, [e1, e2].into())].into();
+        assert_eq!(first.choose_exit(&[e2, e1], v4), Some(&e2));
         // An exit known not ready, or never known, is not chosen.
-        assert_eq!(first.choose_exit(&[e3]), None);
-        assert!(!first.exit_selectable(&e3));
-        assert!(first.exit_selectable(&e1));
+        assert_eq!(first.choose_exit(&[e3], v4), None);
+        assert!(!first.exit_selectable(&e3, v4));
+        assert!(first.exit_selectable(&e1, v4));
+        // Readiness is per family: e1 is not an IPv6 exit.
+        assert_eq!(first.choose_exit(&[e1, e2], ExitFamily::Ipv6), None);
+        first.ready_exits = [(ExitFamily::Ipv6, [e2].into())].into();
+        assert_eq!(first.choose_exit(&[e1, e2], ExitFamily::Ipv6), Some(&e2));
+        assert_eq!(first.choose_exit(&[e1, e2], v4), Some(&e1));
     }
 }

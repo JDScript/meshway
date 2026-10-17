@@ -244,6 +244,8 @@ pub struct NodeSettingsView {
     #[serde(default,skip_serializing_if="Input::is_omitted")] pub dialers: Input<DialerSetView> [value_type=DialerSetView],
     /// Administrative exit eligibility, independent of actual forwarding readiness.
     pub exit_enabled: bool,
+    /// Inner families this Node carries as an exit; omitted when it is the default `["ipv4"]`.
+    #[serde(default = "crate::default_exit_families", skip_serializing_if = "crate::is_default_exit_families")] pub exit_families: Vec<meshway_model::exit::ExitFamily>,
     /// Administrator-declared ISO 3166-1 alpha-2 region that `auto` resolves by; omitted when undeclared.
     #[serde(default, deserialize_with = "crate::editing_secrets::present", skip_serializing_if = "Option::is_none")] pub region: Option<String> [value_type = String],
 } }
@@ -313,6 +315,7 @@ impl From<&NodeSettings> for NodeSettingsView {
                 Input::Value(d) => Input::Value(d.into()),
             },
             exit_enabled: n.exit_enabled,
+            exit_families: n.exit_families.clone(),
             region: n.region.clone(),
         }
     }

@@ -61,6 +61,7 @@ pub fn tag_node(
         listeners,
         dialers: Input::Omitted,
         exit_enabled,
+        exit_families: meshway_configuration::default_exit_families(),
         region: None,
     }
 }

@@ -25,7 +25,7 @@ pub use projection::*;
 pub use services::*;
 
 /// Contract family of every netmap produced by this compiler generation.
-pub const NETMAP_COMPILER_VERSION: &str = "meshway-netmap-3";
+pub const NETMAP_COMPILER_VERSION: &str = "meshway-netmap-4";
 
 tagged! {
 /// Source-local action for one managed destination prefix.
@@ -76,8 +76,9 @@ object! {
 pub struct ExitRole {
     /// Role identity, stable while the role content is unchanged.
     pub generation: Digest,
-    /// Inner family implemented by this role.
-    pub family: ExitFamily,
+    /// Inner families implemented by this role, ascending and unique: the
+    /// configured `exitFamilies` the Node's capabilities support.
+    pub families: Vec<ExitFamily>,
     /// Required translation mode.
     pub nat: ExitNat,
 } }
@@ -195,7 +196,7 @@ pub struct NodeNetmap {
     pub revision: Revision,
     /// Per-node content sequence.
     pub serial: Version,
-    /// Compiler contract family, `meshway-netmap-3`.
+    /// Compiler contract family, `meshway-netmap-4`.
     pub compiler_version: String,
     /// Digest of the network compilation input that produced this serial.
     pub dependency_digest: Digest,

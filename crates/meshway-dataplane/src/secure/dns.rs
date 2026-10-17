@@ -176,7 +176,9 @@ impl SecureNode {
             // ready (current or last known) fails here and is never resolved
             // anywhere else.
             if !service.transports.contains(&transport)
-                || !self.first.exit_selectable(&service.exit)
+                || !self
+                    .first
+                    .exit_selectable(&service.exit, meshway_model::exit::ExitFamily::Ipv4)
             {
                 return Err(Error::Policy);
             }

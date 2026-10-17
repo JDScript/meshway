@@ -6,19 +6,19 @@
 //! covers IPv4 and IPv6 completely; adjacent ranges never share an action.
 use super::{matching::EgressProfile, *};
 use meshway_configuration::{evaluation::CaptureSummary, netmap::EgressAction};
-use meshway_model::Digest;
+use meshway_model::{Digest, exit::ExitFamily};
 use meshway_rules::ranges::{self as intervals, Address};
 use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
     ops::RangeInclusive,
 };
 
-/// Interval elements of the capture sets (managed IPv4 plus sunk IPv6) a Node
-/// installs. One nft batch and its readback stay below 1.6 MB and 0.07 s
-/// (measured, see Routing · node-side limits).
+/// Interval elements of the capture sets (managed IPv4, managed IPv6 and
+/// sunk IPv6 together) a Node installs. One nft batch and its readback stay
+/// below 1.6 MB and 0.07 s (measured, see Routing · node-side limits).
 pub const MAX_CAPTURE_RANGES: usize = 16_384;
-/// Routes of the private capture table: the CIDR cover of the managed IPv4
-/// ranges.
+/// Routes of the private capture tables: the CIDR covers of the managed IPv4
+/// and IPv6 ranges together.
 pub const MAX_CAPTURE_ROUTES: usize = 32_768;
 /// Range operations of one partition computation, bounding its CPU time.
 pub const MAX_WORK: usize = 1 << 24;
@@ -70,6 +70,9 @@ pub struct EgressPartition {
     ipv4: Vec<(u32, u32, usize)>,
     ipv6: Vec<(u128, u128, usize)>,
     actions: Vec<EgressAction>,
+    /// Per action: an exit some of whose exits carries IPv6 by configuration
+    /// ([`matching::carries`]). An IPv6 exit range of another is sunk.
+    carries_ipv6: Vec<bool>,
     /// The fallback is an exit and keeps some IPv4 range.
     default_capture: bool,
 }
@@ -127,61 +130,113 @@ impl EgressPartition {
             .map(|(s, e, a)| (Ipv6Addr::from(*s)..=Ipv6Addr::from(*e), &self.actions[*a]))
     }
 
-    /// Exit-owned ranges of one family, adjacent ones merged.
-    fn managed<T: Address>(&self, ranges: &[(T, T, usize)]) -> Vec<(T, T)> {
+    /// Ranges of one family whose action `keep` selects, adjacent ones merged.
+    fn selected<T: Address>(
+        &self,
+        ranges: &[(T, T, usize)],
+        keep: impl Fn(usize) -> bool,
+    ) -> Vec<(T, T)> {
         intervals::merge(
             ranges
                 .iter()
-                .filter(|r| matches!(self.actions[r.2], EgressAction::Exit { .. }))
+                .filter(|r| matches!(self.actions[r.2], EgressAction::Exit { .. }) && keep(r.2))
                 .map(|r| (r.0, r.1))
                 .collect(),
         )
     }
 
-    /// What a Node installs for this partition, as counted against the
-    /// node-side limits.
-    pub fn summary(&self) -> CaptureSummary {
-        let managed = self.managed(&self.ipv4);
-        let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
-        CaptureSummary {
-            managed_ipv4: count(managed.len()),
-            sink_ipv6: count(self.managed(&self.ipv6).len()),
-            routes: count(
-                managed
-                    .iter()
-                    .map(|(s, e)| intervals::cover(*s, *e).count())
-                    .sum(),
-            ),
-            unavailable: None,
-        }
+    /// Managed IPv4, managed IPv6 and sunk IPv6 ranges for a source that
+    /// has (`ipv6`) or lacks a Mesh IPv6 address: without one, every IPv6
+    /// exit range is sunk.
+    fn ranges(&self, ipv6: bool) -> (Spans<u32>, Spans<u128>, Spans<u128>) {
+        let managed4 = self.selected(&self.ipv4, |_| true);
+        let carried = |id: usize| ipv6 && self.carries_ipv6[id];
+        (
+            managed4,
+            self.selected(&self.ipv6, carried),
+            self.selected(&self.ipv6, |id| !carried(id)),
+        )
+    }
+
+    /// What a source with or without a Mesh IPv6 address (`ipv6`) installs
+    /// for this partition, as counted against the node-side limits.
+    pub fn summary(&self, ipv6: bool) -> CaptureSummary {
+        let (managed4, managed6, sink6) = self.ranges(ipv6);
+        counts(&managed4, &managed6, sink6.len(), None)
     }
 
     fn within_limits(&self) -> bool {
-        let summary = self.summary();
-        (summary.managed_ipv4 as usize + summary.sink_ipv6 as usize) <= MAX_CAPTURE_RANGES
-            && summary.routes as usize <= MAX_CAPTURE_ROUTES
+        // Both forms count the same ranges; with an IPv6 source managed
+        // IPv6 also has routes.
+        within(&self.summary(true)) && within(&self.summary(false))
     }
 
-    /// The capture boundary of this partition.
-    pub fn capture(&self, generation: Digest) -> EgressCapturePlan {
-        let managed_ipv4: Vec<_> = self
-            .managed(&self.ipv4)
+    /// The capture boundary of this partition for a source with or without
+    /// a Mesh IPv6 address (`ipv6`).
+    pub fn capture(&self, generation: Digest, ipv6: bool) -> EgressCapturePlan {
+        let (managed4, managed6, sink6) = self.ranges(ipv6);
+        let managed_ipv4: Vec<_> = managed4
             .into_iter()
             .map(|(s, e)| (Ipv4Addr::from(s), Ipv4Addr::from(e)))
             .collect();
+        let six = |ranges: Spans<u128>| {
+            ranges
+                .into_iter()
+                .map(|(s, e)| (Ipv6Addr::from(s), Ipv6Addr::from(e)))
+                .collect()
+        };
         EgressCapturePlan {
             generation,
             default_capture: self.default_capture
                 || managed_ipv4 == [(Ipv4Addr::UNSPECIFIED, Ipv4Addr::BROADCAST)],
             managed_ipv4,
-            sink_ipv6: self
-                .managed(&self.ipv6)
-                .into_iter()
-                .map(|(s, e)| (Ipv6Addr::from(s), Ipv6Addr::from(e)))
-                .collect(),
+            managed_ipv6: six(managed6),
+            sink_ipv6: six(sink6),
             unavailable: None,
         }
     }
+}
+
+fn counts(
+    managed4: &[(u32, u32)],
+    managed6: &[(u128, u128)],
+    sink6: usize,
+    unavailable: Option<UnavailableReason>,
+) -> CaptureSummary {
+    let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+    CaptureSummary {
+        managed_ipv4: count(managed4.len()),
+        managed_ipv6: count(managed6.len()),
+        sink_ipv6: count(sink6),
+        routes: count(
+            managed4
+                .iter()
+                .map(|(s, e)| intervals::cover(*s, *e).count())
+                .sum::<usize>()
+                + managed6
+                    .iter()
+                    .map(|(s, e)| intervals::cover(*s, *e).count())
+                    .sum::<usize>(),
+        ),
+        unavailable,
+    }
+}
+
+fn within(summary: &CaptureSummary) -> bool {
+    (summary.managed_ipv4 as usize + summary.managed_ipv6 as usize + summary.sink_ipv6 as usize)
+        <= MAX_CAPTURE_RANGES
+        && summary.routes as usize <= MAX_CAPTURE_ROUTES
+}
+
+/// How one associated address is captured.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Assignment {
+    /// Handed to the packet owner (managed IPv4 or IPv6).
+    Managed,
+    /// IPv6 only: rejected locally, never handed to the owner.
+    Sunk,
+    /// Released to the host.
+    Released,
 }
 
 fn assign_range<T: Address>(ranges: &mut Vec<(T, T)>, address: T, captured: bool) {
@@ -194,9 +249,20 @@ fn assign_range<T: Address>(ranges: &mut Vec<(T, T)>, address: T, captured: bool
     *ranges = intervals::merge(next);
 }
 
-/// `plan` with `address` captured (managed IPv4, sunk IPv6) or released to
-/// the host. Used for the addresses of trusted DNS associations.
-pub fn assign(plan: &mut EgressCapturePlan, address: IpAddr, captured: bool) {
+fn six<T: Copy>(ranges: &[(T, T)], into: impl Fn(T) -> u128) -> Vec<(u128, u128)> {
+    ranges.iter().map(|(s, e)| (into(*s), into(*e))).collect()
+}
+
+fn back(ranges: Vec<(u128, u128)>) -> Vec<(Ipv6Addr, Ipv6Addr)> {
+    ranges
+        .into_iter()
+        .map(|(s, e)| (Ipv6Addr::from(s), Ipv6Addr::from(e)))
+        .collect()
+}
+
+/// `plan` with `address` assigned as `how`. Used for the addresses of
+/// trusted DNS associations and of live exit flows.
+pub fn assign(plan: &mut EgressCapturePlan, address: IpAddr, how: Assignment) {
     match address.to_canonical() {
         IpAddr::V4(a) => {
             let mut ranges: Vec<(u32, u32)> = plan
@@ -204,23 +270,19 @@ pub fn assign(plan: &mut EgressCapturePlan, address: IpAddr, captured: bool) {
                 .iter()
                 .map(|(s, e)| (u32::from(*s), u32::from(*e)))
                 .collect();
-            assign_range(&mut ranges, u32::from(a), captured);
+            assign_range(&mut ranges, u32::from(a), how != Assignment::Released);
             plan.managed_ipv4 = ranges
                 .into_iter()
                 .map(|(s, e)| (Ipv4Addr::from(s), Ipv4Addr::from(e)))
                 .collect();
         }
         IpAddr::V6(a) => {
-            let mut ranges: Vec<(u128, u128)> = plan
-                .sink_ipv6
-                .iter()
-                .map(|(s, e)| (u128::from(*s), u128::from(*e)))
-                .collect();
-            assign_range(&mut ranges, u128::from(a), captured);
-            plan.sink_ipv6 = ranges
-                .into_iter()
-                .map(|(s, e)| (Ipv6Addr::from(s), Ipv6Addr::from(e)))
-                .collect();
+            let mut managed = six(&plan.managed_ipv6, u128::from);
+            let mut sunk = six(&plan.sink_ipv6, u128::from);
+            assign_range(&mut managed, u128::from(a), how == Assignment::Managed);
+            assign_range(&mut sunk, u128::from(a), how == Assignment::Sunk);
+            plan.managed_ipv6 = back(managed);
+            plan.sink_ipv6 = back(sunk);
         }
     }
 }
@@ -228,42 +290,43 @@ pub fn assign(plan: &mut EgressCapturePlan, address: IpAddr, captured: bool) {
 /// What a Node installs for `plan`, counted as [`EgressPartition::summary`]
 /// counts a partition.
 pub fn plan_summary(plan: &EgressCapturePlan) -> CaptureSummary {
-    let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
-    CaptureSummary {
-        managed_ipv4: count(plan.managed_ipv4.len()),
-        sink_ipv6: count(plan.sink_ipv6.len()),
-        routes: count(
-            plan.managed_ipv4
-                .iter()
-                .map(|(s, e)| intervals::cover(*s, *e).count())
-                .sum(),
-        ),
-        unavailable: plan.unavailable,
-    }
+    let managed4: Vec<(u32, u32)> = plan
+        .managed_ipv4
+        .iter()
+        .map(|(s, e)| (u32::from(*s), u32::from(*e)))
+        .collect();
+    counts(
+        &managed4,
+        &six(&plan.managed_ipv6, u128::from),
+        plan.sink_ipv6.len(),
+        plan.unavailable,
+    )
 }
 
-/// `next` with every IPv4 address of `keep` still captured that `previous`
-/// captured and `next` releases: the destinations of flows established
-/// through the previous boundary keep reaching the packet owner, which keeps
-/// their original decision, until those flows end. Beyond the node-side
-/// limits the result fails closed like a partition does. Returned with the
-/// retained addresses and the summary of the result.
+/// `next` with every address of `keep` still managed that `previous`
+/// managed and `next` no longer manages: the destinations of flows
+/// established through the previous boundary keep reaching the packet
+/// owner, which keeps their original decision, until those flows end.
+/// Beyond the node-side limits the result fails closed like a partition
+/// does. Returned with the retained addresses and the summary of the result.
 pub fn retained_capture(
     previous: &EgressCapturePlan,
     next: &EgressCapturePlan,
     keep: impl IntoIterator<Item = IpAddr>,
-) -> (EgressCapturePlan, Vec<Ipv4Addr>, CaptureSummary) {
-    let managed = |plan: &EgressCapturePlan, address: Ipv4Addr| {
-        plan.managed_ipv4
+) -> (EgressCapturePlan, Vec<IpAddr>, CaptureSummary) {
+    let managed = |plan: &EgressCapturePlan, address: IpAddr| match address {
+        IpAddr::V4(address) => plan
+            .managed_ipv4
             .iter()
-            .any(|(start, end)| *start <= address && address <= *end)
+            .any(|(start, end)| *start <= address && address <= *end),
+        IpAddr::V6(address) => plan
+            .managed_ipv6
+            .iter()
+            .any(|(start, end)| *start <= address && address <= *end),
     };
-    let mut kept: Vec<Ipv4Addr> = keep
+    let mut kept: Vec<IpAddr> = keep
         .into_iter()
-        .filter_map(|address| match address.to_canonical() {
-            IpAddr::V4(address) => Some(address),
-            IpAddr::V6(_) => None,
-        })
+        .map(|address| address.to_canonical())
         .filter(|address| managed(previous, *address) && !managed(next, *address))
         .collect();
     kept.sort_unstable();
@@ -273,7 +336,7 @@ pub fn retained_capture(
     }
     let mut plan = next.clone();
     for address in &kept {
-        assign(&mut plan, IpAddr::V4(*address), true);
+        assign(&mut plan, *address, Assignment::Managed);
     }
     let summary = plan_summary(&plan);
     if !installable(&plan) {
@@ -291,9 +354,7 @@ pub fn retained_capture(
 
 /// Whether a capture plan fits what a Node installs.
 pub fn installable(plan: &EgressCapturePlan) -> bool {
-    let summary = plan_summary(plan);
-    (summary.managed_ipv4 as usize + summary.sink_ipv6 as usize) <= MAX_CAPTURE_RANGES
-        && summary.routes as usize <= MAX_CAPTURE_ROUTES
+    within(&plan_summary(plan))
 }
 
 /// The fail-closed boundary of an unavailable partition: full IPv4 capture,
@@ -303,6 +364,7 @@ pub fn unavailable_capture(generation: Digest, reason: UnavailableReason) -> Egr
         generation,
         managed_ipv4: vec![(Ipv4Addr::UNSPECIFIED, Ipv4Addr::BROADCAST)],
         default_capture: true,
+        managed_ipv6: Vec::new(),
         sink_ipv6: vec![(Ipv6Addr::UNSPECIFIED, Ipv6Addr::from(u128::MAX))],
         unavailable: Some(reason),
     }
@@ -370,8 +432,12 @@ pub(super) fn names_exit(
             .map(|(_, rule)| rule.action.clone().into())
             .chain(std::iter::once(fallback))
             .any(|route| {
-                matching::executed(exits, route.clone(), source)
-                    .map_or(true, |executed| executed != route)
+                [ExitFamily::Ipv4, ExitFamily::Ipv6]
+                    .into_iter()
+                    .any(|family| {
+                        matching::executed(exits, route.clone(), source, family)
+                            .map_or(true, |executed| executed != route)
+                    })
             })
     })
 }
@@ -401,15 +467,17 @@ fn unavailable(error: CompileError) -> UnavailableReason {
     }
 }
 
-/// Rule actions as `source` executes them ([`matching::executed`]); without a
-/// source (a profile-level preview) as written.
+/// Rule actions as `source` executes them toward `family`
+/// ([`matching::executed`]); without a source (a profile-level preview) as
+/// written.
 fn executed(
     exits: matching::Exits<'_>,
     route: RouteAction,
     source: Option<NodeId>,
+    family: ExitFamily,
 ) -> Result<RouteAction, CompileError> {
     match source {
-        Some(source) => matching::executed(exits, route, source),
+        Some(source) => matching::executed(exits, route, source, family),
         None => Ok(route),
     }
 }
@@ -425,7 +493,9 @@ pub fn compute(
     source: Option<NodeId>,
 ) -> Result<EgressPartition, UnavailableReason> {
     let Selection { rules, fallback } = selection(cfg, profile, source).map_err(unavailable)?;
-    let fallback = executed(exits, fallback, source).map_err(unavailable)?;
+    let fallback4 =
+        executed(exits, fallback.clone(), source, ExitFamily::Ipv4).map_err(unavailable)?;
+    let fallback6 = executed(exits, fallback, source, ExitFamily::Ipv6).map_err(unavailable)?;
     let mut actions = Vec::new();
     let mut remaining4 = vec![(0u32, u32::MAX)];
     let mut remaining6 = vec![(0u128, u128::MAX)];
@@ -438,21 +508,28 @@ pub fn compute(
         // A rule's names own no address: they decide only the addresses of
         // a trusted association (`netmap::Associations`).
         let rules::Ranges { v4, v6 } = rules::ranges(&rule.matcher, sets).map_err(unavailable)?;
-        let id = index(
-            &mut actions,
-            action(&executed(exits, rule.action.clone().into(), source).map_err(unavailable)?)
+        let mut id = |family| -> Result<usize, UnavailableReason> {
+            Ok(index(
+                &mut actions,
+                action(
+                    &executed(exits, rule.action.clone().into(), source, family)
+                        .map_err(unavailable)?,
+                )
                 .map_err(unavailable)?,
-        );
+            ))
+        };
+        let (id4, id6) = (id(ExitFamily::Ipv4)?, id(ExitFamily::Ipv6)?);
         let (hit, rest) = split(&remaining4, &intervals::merge(v4), &mut work)?;
-        out4.extend(hit.into_iter().map(|(s, e)| (s, e, id)));
+        out4.extend(hit.into_iter().map(|(s, e)| (s, e, id4)));
         remaining4 = rest;
         let (hit, rest) = split(&remaining6, &intervals::merge(v6), &mut work)?;
-        out6.extend(hit.into_iter().map(|(s, e)| (s, e, id)));
+        out6.extend(hit.into_iter().map(|(s, e)| (s, e, id6)));
         remaining6 = rest;
     }
-    let default_capture = matches!(fallback, RouteAction::Exit { .. }) && !remaining4.is_empty();
-    let id = index(&mut actions, action(&fallback).map_err(unavailable)?);
+    let default_capture = matches!(fallback4, RouteAction::Exit { .. }) && !remaining4.is_empty();
+    let id = index(&mut actions, action(&fallback4).map_err(unavailable)?);
     out4.extend(remaining4.into_iter().map(|(s, e)| (s, e, id)));
+    let id = index(&mut actions, action(&fallback6).map_err(unavailable)?);
     out6.extend(remaining6.into_iter().map(|(s, e)| (s, e, id)));
     // A resolver kept under an exit (`useWithExit`) is reached from this
     // Node itself: its address is a direct exception of any exit range.
@@ -471,10 +548,18 @@ pub fn compute(
             }
         }
     }
+    let carries_ipv6 = actions
+        .iter()
+        .map(|action| match action {
+            EgressAction::Exit { nodes, .. } => matching::carries(exits, nodes, ExitFamily::Ipv6),
+            _ => false,
+        })
+        .collect();
     Ok(EgressPartition {
         ipv4: assemble(out4),
         ipv6: assemble(out6),
         actions,
+        carries_ipv6,
         default_capture,
     })
 }
@@ -603,7 +688,12 @@ pub fn summary(
 ) -> CaptureSummary {
     match compute(cfg, exits, sets, profile, source) {
         Ok(partition) => {
-            let summary = partition.summary();
+            // A previewed source has a Mesh IPv6 address when it is known
+            // to; a profile-level preview assumes one.
+            let ipv6 = source
+                .and_then(|node| cfg.nodes.get(&node))
+                .is_none_or(|node| node.addresses.ipv6.is_some());
+            let summary = partition.summary(ipv6);
             if partition.within_limits() {
                 summary
             } else {
@@ -615,6 +705,7 @@ pub fn summary(
         }
         Err(reason) => CaptureSummary {
             managed_ipv4: 1,
+            managed_ipv6: 0,
             sink_ipv6: 1,
             routes: 1,
             unavailable: Some(reason),
@@ -634,6 +725,7 @@ mod tests {
             generation,
             managed_ipv4: ranges.iter().map(|(a, b)| (host(a), host(b))).collect(),
             default_capture: false,
+            managed_ipv6: vec![],
             sink_ipv6: vec![],
             unavailable: None,
         };
@@ -645,7 +737,7 @@ mod tests {
         let keep = ["203.0.113.9", "192.0.2.1", "198.51.100.7"].map(|a| IpAddr::V4(host(a)));
         let (kept_plan, kept, summary) = retained_capture(&previous, &next, keep);
         // Only the released one: never one `previous` did not capture.
-        assert_eq!(kept, [host("203.0.113.9")]);
+        assert_eq!(kept, [IpAddr::V4(host("203.0.113.9"))]);
         assert_eq!(kept_plan.managed_ipv4, previous.managed_ipv4);
         assert_eq!(summary.managed_ipv4, 2);
         // Without live flows the release takes effect.

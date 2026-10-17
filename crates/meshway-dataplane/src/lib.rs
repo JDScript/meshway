@@ -345,6 +345,36 @@ impl PendingRoute {
         Ok(())
     }
 
+    /// An ICMP error this Node reports about its own packet refused before
+    /// any flow (no exit of `grant` ready for its family): delivered to its
+    /// own TUN only, from the refused destination, within `cap` and
+    /// `cancellation`. It admits nothing and never leaves this Node.
+    pub(crate) fn refusal(
+        error: Packet,
+        grant: Target,
+        local: NodeId,
+        cap: authority::Cap,
+        cancellation: tokio_util::sync::CancellationToken,
+    ) -> Result<PendingAction, Error> {
+        let pending = Self {
+            life: Lifetime::new(Some(cap), cancellation),
+            constrained: false,
+            checked: CommittedRoute {
+                hop: Hop::Deliver,
+                route: Route {
+                    grant,
+                    origin: local,
+                    original_path: vec![local],
+                    direction: Direction::Reply,
+                },
+            },
+            facts: error.facts(),
+            projection: None,
+            exit_incarnation: None,
+        };
+        pending.attach(error)
+    }
+
     pub(crate) fn attach(self, packet: Packet) -> Result<PendingAction, Error> {
         self.facts.check_packet(&packet)?;
         self.ensure_current()?;

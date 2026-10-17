@@ -98,7 +98,9 @@ impl SecureNode {
             other: self
                 .first
                 .ready_exits
-                .union(&self.first.last_known_exits)
+                .values()
+                .chain(self.first.last_known_exits.values())
+                .flatten()
                 .filter_map(toward)
                 .min(),
         }

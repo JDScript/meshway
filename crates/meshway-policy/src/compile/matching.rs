@@ -1,4 +1,6 @@
 use super::*;
+use meshway_configuration::netmap::EligibleExit;
+use meshway_model::exit::ExitFamily;
 use std::{collections::BTreeSet, net::IpAddr};
 
 pub(super) fn node_selector(s: &str) -> Result<NodeId, CompileError> {
@@ -7,77 +9,110 @@ pub(super) fn node_selector(s: &str) -> Result<NodeId, CompileError> {
         .parse()
         .map_err(|_| CompileError::InvalidInput)
 }
-/// Exit eligibility (enabled with `exitEnabled`) as the full configuration
-/// defines it. A projection lacks Nodes outside the visible set, so a Node
-/// reads the list the Server derived from the full configuration
+/// Exit eligibility (enabled with `exitEnabled`) and the families an exit
+/// carries (`exitFamilies`) as the full configuration defines them. A
+/// projection lacks Nodes outside the visible set, so a Node reads the list
+/// the Server derived from the full configuration
 /// (`ProjectedConfiguration::eligible_exits`); absence from a projection
 /// never means ineligible.
 #[derive(Clone, Copy)]
 pub enum Exits<'a> {
     Full(&'a NetworkConfiguration),
-    Projected(&'a [NodeId]),
+    Projected(&'a [EligibleExit]),
 }
 
 impl Exits<'_> {
-    pub fn eligible(self, node: NodeId) -> bool {
+    /// Whether `node` is an eligible exit carrying `family`.
+    pub fn eligible(self, node: NodeId, family: ExitFamily) -> bool {
         match self {
-            Self::Full(cfg) => cfg
-                .nodes
-                .get(&node)
-                .is_some_and(|settings| settings.enabled && settings.exit_enabled),
-            Self::Projected(exits) => exits.contains(&node),
+            Self::Full(cfg) => cfg.nodes.get(&node).is_some_and(|settings| {
+                settings.enabled
+                    && settings.exit_enabled
+                    && settings.exit_families.contains(&family)
+            }),
+            Self::Projected(exits) => exits
+                .iter()
+                .any(|exit| exit.node == node && exit.families.contains(&family)),
         }
     }
 }
 
-/// What a projection carries for [`Exits::Projected`]: eligible exits listed
-/// ahead of another Node in some exit set of `routing` (only those can stand
-/// before a source naming itself), ascending.
-pub(super) fn eligible_exits(cfg: &NetworkConfiguration, routing: &EgressRouting) -> Vec<NodeId> {
-    let ahead = |nodes: &[String]| -> Vec<NodeId> {
-        nodes
-            .split_last()
-            .map_or(&[][..], |(_, ahead)| ahead)
-            .iter()
-            .filter_map(|selector| node_selector(selector).ok())
-            .collect()
+/// What a projection carries for [`Exits::Projected`]: every eligible exit
+/// the retained `routing` names (exit sets, `global:<node>` profiles of its
+/// assignments and `auto`, and `selected` profiles), ascending, with its
+/// configured families.
+pub(super) fn eligible_exits<'a>(
+    cfg: &NetworkConfiguration,
+    routing: &'a EgressRouting,
+    selected: impl IntoIterator<Item = &'a str>,
+) -> Vec<EligibleExit> {
+    let mut named = BTreeSet::new();
+    let mut exit_set = |nodes: &[String]| {
+        named.extend(
+            nodes
+                .iter()
+                .filter_map(|selector| node_selector(selector).ok()),
+        );
     };
-    let mut exits = BTreeSet::new();
     for rule in routing
         .rules
         .iter()
         .chain(routing.profiles.values().flat_map(|profile| &profile.rules))
     {
         if let RuleAction::Exit { nodes, .. } = &rule.action {
-            exits.extend(ahead(nodes));
+            exit_set(nodes);
         }
     }
     for profile in routing.profiles.values() {
         if let RouteAction::Exit { nodes, .. } = &profile.fallback {
-            exits.extend(ahead(nodes));
+            exit_set(nodes);
         }
     }
-    exits
+    let mut profiles: Vec<&str> = routing
+        .assignments
+        .iter()
+        .flat_map(|assignment| assignment.allowed.iter().chain([&assignment.default]))
+        .map(String::as_str)
+        .chain(selected)
+        .collect();
+    if let Input::Value(auto) = &routing.auto {
+        profiles.extend(auto.rules.iter().map(|rule| rule.profile.as_str()));
+        profiles.push(auto.fallback.as_str());
+    }
+    named.extend(
+        profiles
+            .into_iter()
+            .filter_map(|profile| profile.strip_prefix("global:")?.parse::<NodeId>().ok()),
+    );
+    named
         .into_iter()
-        .filter(|node| Exits::Full(cfg).eligible(*node))
+        .filter_map(|node| {
+            let settings = cfg.nodes.get(&node)?;
+            (settings.enabled && settings.exit_enabled).then(|| EligibleExit {
+                node,
+                families: settings.exit_families.clone(),
+            })
+        })
         .collect()
 }
 
-/// The action `source` executes for `route`. Exit sets are ordered
-/// primary/backup; the source itself in such a set is its own direct egress,
-/// always available at its position: from the source on, nothing later is
-/// tried. Before it, the set keeps, in order, only the exits the full
-/// configuration makes eligible ([`Exits`]); with none, the source is
-/// direct. `[self, other]` is direct; `[other, self]` exits through `other`
-/// while it is eligible, else direct. Its `via` is then an empty segment.
-/// Every executed partition, plan, DNS plan and preview of a source goes
-/// through here; Access is unaffected. Runtime exit readiness and
-/// reachability are not inputs: an eligible exit that is not ready, isolated
-/// or not enrolled fails closed like any exit.
+/// The action `source` executes for `route` toward destinations of
+/// `family`. Exit sets are ordered primary/backup; the source itself in such
+/// a set is its own direct egress, always available at its position: from
+/// the source on, nothing later is tried. Before it, the set keeps, in
+/// order, only the exits the full configuration makes eligible for `family`
+/// ([`Exits`]); with none, the source is direct. `[self, other]` is direct;
+/// `[other, self]` exits through `other` while it is eligible for the
+/// family, else direct. Its `via` is then an empty segment. Every executed
+/// partition, plan, DNS plan and preview of a source goes through here;
+/// Access is unaffected. Runtime exit readiness and reachability are not
+/// inputs: an eligible exit that is not ready, isolated or not enrolled
+/// fails closed like any exit.
 pub(super) fn executed(
     exits: Exits<'_>,
     route: RouteAction,
     source: NodeId,
+    family: ExitFamily,
 ) -> Result<RouteAction, CompileError> {
     let RouteAction::Exit { nodes, via } = route else {
         return Ok(route);
@@ -88,7 +123,7 @@ pub(super) fn executed(
         }
         let before: Vec<String> = nodes[..at]
             .iter()
-            .filter(|exit| node_selector(exit).is_ok_and(|exit| exits.eligible(exit)))
+            .filter(|exit| node_selector(exit).is_ok_and(|exit| exits.eligible(exit, family)))
             .cloned()
             .collect();
         if before.is_empty() {
@@ -98,6 +133,14 @@ pub(super) fn executed(
     }
     Ok(RouteAction::Exit { nodes, via })
 }
+
+/// Whether some exit of `nodes` carries `family` by configuration: an IPv6
+/// destination of an exit range none of whose exits carries IPv6 is sunk
+/// statically, never handed to the packet owner.
+pub(super) fn carries(exits: Exits<'_>, nodes: &[NodeId], family: ExitFamily) -> bool {
+    nodes.iter().any(|node| exits.eligible(*node, family))
+}
+
 pub(super) fn selectors(
     cfg: &NetworkConfiguration,
     subjects: &SubjectContext,

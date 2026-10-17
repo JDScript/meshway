@@ -4,7 +4,7 @@ use super::*;
 use crate::compile::dns::DnsResolution;
 use ipnet::IpNet;
 use meshway_configuration::execution::{DnsEgressUnavailable, ExecutionAddress, ExitNat};
-use meshway_model::exit::{EXIT_IPV4_FEATURE, EXIT_IPV4_VERSION, ExitFamily};
+use meshway_model::exit::ExitFamily;
 use std::net::IpAddr;
 
 pub(super) struct Local {
@@ -82,11 +82,17 @@ pub(super) fn egress(
                         exits,
                         egress.action.clone().into(),
                         node,
+                        ExitFamily::Ipv4,
                     )?)?,
                 })
             })
             .collect::<Result<_, CompileError>>()?,
-        fallback: capture::action(&matching::executed(exits, fallback, node)?)?,
+        fallback: capture::action(&matching::executed(
+            exits,
+            fallback,
+            node,
+            ExitFamily::Ipv4,
+        )?)?,
         unavailable: partition.as_ref().err().copied(),
     })
 }
@@ -97,29 +103,44 @@ pub(super) fn exit_role(
     inventory: &BTreeMap<NodeId, TrustedNode>,
     node: NodeId,
 ) -> Result<Option<ExitRole>, CompileError> {
-    let capable = inventory.get(&node).is_some_and(|trusted| {
-        trusted.capabilities.get(EXIT_IPV4_FEATURE)
-            == Some(&meshway_model::state::Capability::Feature {
-                version: EXIT_IPV4_VERSION,
-            })
-    });
-    if !capable
-        || !cfg
-            .nodes
-            .get(&node)
-            .is_some_and(|n| n.enabled && n.exit_enabled)
+    let Some(settings) = cfg.nodes.get(&node).filter(|n| n.enabled && n.exit_enabled) else {
+        return Ok(None);
+    };
+    // Configuration requires IPv4 in `exitFamilies`; IPv6 joins the role
+    // when configured and the Node declares its executor.
+    if !settings.exit_families.contains(&ExitFamily::Ipv4)
+        || !super::super::exit::capable_of(inventory, node, ExitFamily::Ipv4)
     {
         return Ok(None);
     }
-    Ok(Some(ExitRole {
-        generation: digest(&(
+    let families: Vec<ExitFamily> = settings
+        .exit_families
+        .iter()
+        .copied()
+        .filter(|family| super::super::exit::capable_of(inventory, node, *family))
+        .collect();
+    // The IPv4-only role keeps the identity it had before families: the
+    // same role does not reinstall across the upgrade.
+    let generation = if families == [ExitFamily::Ipv4] {
+        digest(&(
             "meshway-netmap-exit-role",
             network,
             node,
             ExitFamily::Ipv4,
             ExitNat::Masquerade,
-        ))?,
-        family: ExitFamily::Ipv4,
+        ))?
+    } else {
+        digest(&(
+            "meshway-netmap-exit-role",
+            network,
+            node,
+            &families,
+            ExitNat::Masquerade,
+        ))?
+    };
+    Ok(Some(ExitRole {
+        generation,
+        families,
         nat: ExitNat::Masquerade,
     }))
 }

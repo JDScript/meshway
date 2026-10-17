@@ -1,6 +1,7 @@
 //! Which resolver a source's ordinary names use is decided before resolution.
 //! Answers never decide which resolver was authorized to obtain them.
 use super::*;
+use meshway_model::exit::ExitFamily;
 
 pub(super) fn external_access(
     configuration: &NetworkConfiguration,
@@ -78,7 +79,11 @@ pub fn resolution(
         .chain(std::iter::once((fallback_pointer, fallback)));
     let mut chosen: Option<(NodeId, Vec<NodeId>)> = None;
     for (pointer, action) in deciding {
-        let RouteAction::Exit { nodes, via } = matching::executed(exits, action, source)? else {
+        // The resolver is the IPv4 Mesh service of the exit: the IPv4
+        // execution of the selection decides it.
+        let RouteAction::Exit { nodes, via } =
+            matching::executed(exits, action, source, ExitFamily::Ipv4)?
+        else {
             continue;
         };
         let [exit] = nodes.as_slice() else {

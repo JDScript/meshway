@@ -59,21 +59,34 @@ pub fn is_internet_address(address: IpAddr) -> bool {
 
 /// Absolute external forwarding exclusions, including explicitly granted CIDRs.
 /// RFC1918 and CGNAT remain possible only through explicit CIDR Access.
+/// Mesh pools are excluded by their owners, which know them. IPv4-mapped
+/// IPv6 is not an alias of an IPv4 exit destination, and a NAT64 prefix is
+/// never translated to IPv4 through an exit.
 pub fn is_exit_destination(address: IpAddr) -> bool {
-    let IpAddr::V4(address) = address else {
-        return false;
-    };
-    ![
-        "0.0.0.0/8",
-        "127.0.0.0/8",
-        "169.254.0.0/16",
-        "224.0.0.0/4",
-        "240.0.0.0/4",
-    ]
-    .iter()
-    .any(|net| {
-        net.parse::<ipnet::Ipv4Net>()
-            .expect("constant prefix")
-            .contains(&address)
+    !exit_exclusions().iter().any(|net| net.contains(&address))
+}
+
+/// The prefixes [`is_exit_destination`] excludes; the exit's nft program
+/// drops the same ones.
+pub fn exit_exclusions() -> &'static [IpNet] {
+    static EXCLUDED: OnceLock<Vec<IpNet>> = OnceLock::new();
+    EXCLUDED.get_or_init(|| {
+        [
+            "0.0.0.0/8",
+            "127.0.0.0/8",
+            "169.254.0.0/16",
+            "224.0.0.0/4",
+            "240.0.0.0/4",
+            "::/128",
+            "::1/128",
+            "::ffff:0:0/96",
+            "64:ff9b::/96",
+            "64:ff9b:1::/48",
+            "fe80::/10",
+            "ff00::/8",
+        ]
+        .iter()
+        .map(|net| net.parse().expect("constant prefix"))
+        .collect()
     })
 }

@@ -304,7 +304,7 @@ impl Lab {
         sequence: u64,
         status: meshway_model::exit::ExitStatus,
     ) {
-        use meshway_model::exit::{ExitCapability, ExitFamily};
+        use meshway_model::exit::{ExitCapability, ExitFamily, ExitFamilyCapability};
         let now = chrono::Utc::now();
         let report = StateReport {
             instance_id: self.instances[index].instance_id,
@@ -330,9 +330,11 @@ impl Lab {
                         .as_ref()
                         .unwrap()
                         .generation,
-                    supported_families: vec![ExitFamily::Ipv4],
-                    installed_families: vec![],
-                    status,
+                    families: vec![ExitFamilyCapability {
+                        family: ExitFamily::Ipv4,
+                        status,
+                        installed: false,
+                    }],
                     observed_at: now,
                 }),
                 exit_dns: None,

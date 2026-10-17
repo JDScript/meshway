@@ -16,7 +16,7 @@ use meshway_configuration::{
 use meshway_model::{
     Digest, KeyId, NetmapLease, NetmapRef, NetworkId, NodeId, NodePublicKey, Sequence, StateEpoch,
     Version,
-    exit::{ExitFamily, ExitStatus},
+    exit::ExitFamilyCapability,
     state::{EndpointCandidate, ListenerPhase, LocalEndpoint, SocketNetwork},
 };
 use std::collections::BTreeMap;
@@ -479,10 +479,8 @@ wire_object! {
 pub struct PeerExitFacts {
     /// Role generation from the peer's netmap that was probed.
     pub role_generation: Digest,
-    /// Reported lifecycle; unavailable carries its typed cause.
-    pub status: ExitStatus,
-    /// Families actually installed.
-    pub installed_families: Vec<ExitFamily>,
+    /// Reported prerequisites and installation of each family of the role; unavailable carries its typed cause.
+    pub families: Vec<ExitFamilyCapability>,
 } }
 
 /// Peers whose channels one State report may list (its `links` bound).

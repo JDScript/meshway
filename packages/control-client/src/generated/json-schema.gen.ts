@@ -1267,6 +1267,7 @@ export const schemaDocument = {
         "description": "Size of a source's egress partition as a Node installs it: nftables\ninterval elements and routes of its private capture table. A Node computes\nthe same numbers from its netmap and artifacts.",
         "required": [
           "managedIpv4",
+          "managedIpv6",
           "sinkIpv6",
           "routes",
           "unavailable"
@@ -1278,10 +1279,16 @@ export const schemaDocument = {
             "description": "Managed IPv4 ranges (interval elements).",
             "minimum": 0
           },
+          "managedIpv6": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Managed IPv6 ranges (interval elements): exit ranges whose exits carry IPv6.",
+            "minimum": 0
+          },
           "routes": {
             "type": "integer",
             "format": "int32",
-            "description": "Capture-table routes: the CIDR cover of the managed IPv4 ranges.",
+            "description": "Capture-table routes: the CIDR covers of the managed IPv4 and IPv6 ranges.",
             "minimum": 0
           },
           "sinkIpv6": {
@@ -4301,6 +4308,28 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "EligibleExit": {
+        "type": "object",
+        "description": "An exit the full configuration makes eligible (enabled with\n`exitEnabled`) and the inner families its `exitFamilies` carry.",
+        "required": [
+          "node",
+          "families"
+        ],
+        "properties": {
+          "families": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExitFamily"
+            },
+            "description": "Configured families, ascending and unique."
+          },
+          "node": {
+            "$ref": "#/components/schemas/NodeId",
+            "description": "Exit Node."
+          }
+        },
+        "additionalProperties": false
+      },
       "EmptyParams": {
         "type": "object",
         "description": "Empty parameter object for problem codes that expose no additional context.",
@@ -5514,18 +5543,16 @@ export const schemaDocument = {
           "instanceId",
           "netmap",
           "roleGeneration",
-          "supportedFamilies",
-          "installedFamilies",
-          "status",
+          "families",
           "observedAt"
         ],
         "properties": {
-          "installedFamilies": {
+          "families": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/ExitFamily"
+              "$ref": "#/components/schemas/ExitFamilyCapability"
             },
-            "description": "Families actually installed; ready alone does not imply installed."
+            "description": "One entry per family of the role, ascending and unique."
           },
           "instanceId": {
             "$ref": "#/components/schemas/InstanceId",
@@ -5543,17 +5570,6 @@ export const schemaDocument = {
           "roleGeneration": {
             "$ref": "#/components/schemas/Digest",
             "description": "Generation of that netmap's exit role."
-          },
-          "status": {
-            "$ref": "#/components/schemas/ExitStatus",
-            "description": "Actual prerequisite or installation result."
-          },
-          "supportedFamilies": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ExitFamily"
-            },
-            "description": "Families supported by the running backend."
           }
         },
         "additionalProperties": false
@@ -5640,6 +5656,30 @@ export const schemaDocument = {
           "ipv6"
         ]
       },
+      "ExitFamilyCapability": {
+        "type": "object",
+        "description": "One inner family of an exit role: its own prerequisites and installation.",
+        "required": [
+          "family",
+          "status",
+          "installed"
+        ],
+        "properties": {
+          "family": {
+            "$ref": "#/components/schemas/ExitFamily",
+            "description": "Inner family this entry describes."
+          },
+          "installed": {
+            "type": "boolean",
+            "description": "Whether this family's forwarding resources are installed; ready alone does not imply installed."
+          },
+          "status": {
+            "$ref": "#/components/schemas/ExitStatus",
+            "description": "Prerequisite result of this family; shared prerequisites fail both families with the same reason."
+          }
+        },
+        "additionalProperties": false
+      },
       "ExitNat": {
         "type": "string",
         "description": "Translation mode allowed for an exit role.",
@@ -5652,13 +5692,16 @@ export const schemaDocument = {
         "description": "Exit resource responsibility; never a grant to forward a packet.",
         "required": [
           "generation",
-          "family",
+          "families",
           "nat"
         ],
         "properties": {
-          "family": {
-            "$ref": "#/components/schemas/ExitFamily",
-            "description": "Inner family implemented by this role."
+          "families": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExitFamily"
+            },
+            "description": "Inner families implemented by this role, ascending and unique: the\nconfigured `exitFamilies` the Node's capabilities support."
           },
           "generation": {
             "$ref": "#/components/schemas/Digest",
@@ -5750,6 +5793,9 @@ export const schemaDocument = {
         "description": "Concrete prerequisite preventing exit installation or execution.",
         "enum": [
           "ipForwardDisabled",
+          "ipv6ForwardDisabled",
+          "ipv6NoEgress",
+          "ipv6RouterAdvertisementsIgnored",
           "forwardingProbeFailed",
           "netAdminMissing",
           "nftUnavailable",
@@ -6440,6 +6486,7 @@ export const schemaDocument = {
           "auto_target_unknown",
           "conflicting_assignments",
           "invalid_country_code",
+          "invalid_exit_family",
           "exit_outside_access",
           "global_exit_requires_internet",
           "exit_fallback_requires_internet",
@@ -9664,7 +9711,7 @@ export const schemaDocument = {
         "properties": {
           "compilerVersion": {
             "type": "string",
-            "description": "Compiler contract family, `meshway-netmap-3`."
+            "description": "Compiler contract family, `meshway-netmap-4`."
           },
           "dependencyDigest": {
             "$ref": "#/components/schemas/Digest",
@@ -10108,6 +10155,13 @@ export const schemaDocument = {
             "type": "boolean",
             "description": "Permit selection as an exit node; defaults to false and does not indicate execution readiness."
           },
+          "exitFamilies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExitFamily"
+            },
+            "description": "Inner families this Node carries as an exit: unique families including `ipv4`, stored ascending; omission is `[\"ipv4\"]`."
+          },
           "hostname": {
             "type": "string",
             "description": "Network-unique DNS label of 1–63 letters, digits or interior hyphens, normalized to lowercase."
@@ -10159,6 +10213,13 @@ export const schemaDocument = {
           "exitEnabled": {
             "type": "boolean",
             "description": "Administrative exit eligibility; omission retains the current setting."
+          },
+          "exitFamilies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExitFamily"
+            },
+            "description": "Inner families carried as an exit; omission retains them."
           },
           "hostname": {
             "type": "string",
@@ -10240,6 +10301,13 @@ export const schemaDocument = {
           "exitEnabled": {
             "type": "boolean",
             "description": "Administrative exit eligibility, independent of actual forwarding readiness."
+          },
+          "exitFamilies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExitFamily"
+            },
+            "description": "Inner families this Node carries as an exit; omitted when it is the default `[\"ipv4\"]`."
           },
           "hostname": {
             "type": "string",
@@ -11422,24 +11490,19 @@ export const schemaDocument = {
         "description": "Exit readiness of a peer's installed role; selection input only.",
         "required": [
           "roleGeneration",
-          "status",
-          "installedFamilies"
+          "families"
         ],
         "properties": {
-          "installedFamilies": {
+          "families": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/ExitFamily"
+              "$ref": "#/components/schemas/ExitFamilyCapability"
             },
-            "description": "Families actually installed."
+            "description": "Reported prerequisites and installation of each family of the role; unavailable carries its typed cause."
           },
           "roleGeneration": {
             "$ref": "#/components/schemas/Digest",
             "description": "Role generation from the peer's netmap that was probed."
-          },
-          "status": {
-            "$ref": "#/components/schemas/ExitStatus",
-            "description": "Reported lifecycle; unavailable carries its typed cause."
           }
         },
         "additionalProperties": false
@@ -13812,9 +13875,9 @@ export const schemaDocument = {
           "eligibleExits": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/NodeId"
+              "$ref": "#/components/schemas/EligibleExit"
             },
-            "description": "Ascending Nodes the full configuration makes eligible exits (enabled\nwith `exitEnabled`) among those a retained exit set lists ahead of\nanother Node, visible or not. A source named in such a set resolves the\nexits before it against this list only; omitted when empty."
+            "description": "Eligible exits (enabled with `exitEnabled`) the retained routing\nnames, visible or not, ascending by Node, with their configured\nfamilies. Exit eligibility and the families an exit carries are read\nfrom this list only; omitted when empty."
           },
           "inventory": {
             "type": "object",

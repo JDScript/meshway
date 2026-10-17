@@ -253,7 +253,11 @@ fn a_self_naming_source_never_infers_direct_from_a_missing_exit() {
         }
         assert_eq!(
             netmap.projection.eligible_exits,
-            if direct { vec![] } else { vec![node(4)] },
+            if direct {
+                vec![eligible(5)]
+            } else {
+                vec![eligible(4), eligible(5)]
+            },
             "{name}"
         );
         let compiler = LocalCompiler::new(netmap, &Default::default());
@@ -361,6 +365,6 @@ fn ineligible_exits_before_a_self_naming_source_leave_its_dns_plan() {
     // 6 is ineligible: the projection only carries 4.
     assert_eq!(
         compiled.nodes[&node(5)].netmap.projection.eligible_exits,
-        [node(4)]
+        [eligible(4), eligible(5)]
     );
 }

@@ -209,7 +209,7 @@ fn interval_partition_equals_prefix_subtraction_and_first_match() {
 
         // The capture boundary is the merged exit ranges, as the summary counts.
         let capture = compiler.capture().unwrap().unwrap();
-        let summary = partition.summary();
+        let summary = partition.summary(true);
         assert_eq!(capture.managed_ipv4.len(), summary.managed_ipv4 as usize);
         let managed: u64 = ranges
             .iter()

@@ -12,8 +12,9 @@ enum NewRoute {
     Direct,
     Unmanaged,
     Denied(UnavailableReason),
-    /// Permitted, but none of the decision's exits is ready.
-    NoReadyExit,
+    /// Permitted, but none of the decision's exits is ready for the
+    /// destination's family.
+    NoReadyExit(Target),
 }
 
 impl SecureNode {
@@ -94,7 +95,25 @@ impl SecureNode {
             NewRoute::Direct => return Ok(Outbound::Direct),
             NewRoute::Unmanaged => return Ok(Outbound::Unmanaged),
             NewRoute::Denied(reason) => return Ok(Outbound::Denied(reason)),
-            NewRoute::NoReadyExit => {
+            NewRoute::NoReadyExit(target) => {
+                // Fail closed, never direct: an IPv6 application learns it at
+                // once (EACCES) and falls back to its IPv4 address.
+                if let Some(error) = crate::packet::prohibited(&packet)
+                    && let Some(cap) = crate::authority::Cap::after(
+                        reading.instant,
+                        reading.now_ms,
+                        std::time::Duration::from_secs(1),
+                    )
+                    && let Ok(error) = crate::PendingRoute::refusal(
+                        error,
+                        target,
+                        local,
+                        cap,
+                        self.cancellation.child_token(),
+                    )
+                {
+                    self.mtu.report(error, reading.instant);
+                }
                 return Ok(Outbound::Denied(UnavailableReason::ExitUnavailable));
             }
         };
@@ -133,11 +152,12 @@ impl SecureNode {
         let paths: Vec<LogicalPath> = match &decision.target {
             Target::Mesh { .. } => decision.paths.clone(),
             Target::Exit { nodes, .. } => {
-                if destination.is_ipv6() || source.is_ipv6() {
+                let family = meshway_model::exit::ExitFamily::of(destination);
+                if family != meshway_model::exit::ExitFamily::of(source) {
                     return Ok(NewRoute::Denied(UnavailableReason::UnsupportedFamily));
                 }
-                let Some(exit) = self.first.choose_exit(nodes) else {
-                    return Ok(NewRoute::NoReadyExit);
+                let Some(exit) = self.first.choose_exit(nodes, family) else {
+                    return Ok(NewRoute::NoReadyExit(decision.target.clone()));
                 };
                 decision
                     .paths
@@ -189,7 +209,7 @@ impl SecureNode {
                 NewRoute::Direct => Preview::Direct,
                 NewRoute::Unmanaged => Preview::Unmanaged,
                 NewRoute::Denied(reason) => Preview::Denied(reason),
-                NewRoute::NoReadyExit => Preview::Denied(UnavailableReason::ExitUnavailable),
+                NewRoute::NoReadyExit(_) => Preview::Denied(UnavailableReason::ExitUnavailable),
             },
         )
     }

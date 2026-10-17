@@ -155,6 +155,7 @@ pub(super) fn base(count: u8) -> Scenario {
                 listeners,
                 dialers: Input::Omitted,
                 exit_enabled: i == 4 || i == 5,
+                exit_families: default_exit_families(),
                 region: None,
             },
         );
@@ -435,7 +436,46 @@ pub(super) fn generated(seed: u64) -> Scenario {
         default,
         locked: false,
     });
+    // Dual stack, after every earlier draw: some Nodes have Mesh IPv6, and
+    // exits carry IPv6 by configuration, with or without its executor.
+    if rng.chance(50) {
+        dual_stack(
+            &mut s,
+            &[1, 2, 3, 4, 5].map(|i| rng.chance(80).then_some(i)),
+        );
+        for exit in [4, 5] {
+            if rng.chance(60) {
+                ipv6_exit(&mut s, exit, rng.chance(80));
+            }
+        }
+    }
     s
+}
+
+/// Mesh IPv6 `fd79::<i>` for each listed Node, from the pool `fd79::/64`.
+pub(super) fn dual_stack(s: &mut Scenario, nodes: &[Option<u8>]) {
+    s.cfg.address_pools.ipv6 = vec!["fd79::/64".into()];
+    for i in nodes.iter().flatten() {
+        s.cfg.nodes.get_mut(&node(*i)).unwrap().addresses.ipv6 =
+            Some(format!("fd79::{i}").parse().unwrap());
+    }
+}
+
+/// Exit `i` carries IPv6 by configuration; `capable`: it declares the
+/// `feature:exit-ipv6` executor.
+pub(super) fn ipv6_exit(s: &mut Scenario, i: u8, capable: bool) {
+    let settings = s.cfg.nodes.get_mut(&node(i)).unwrap();
+    settings.exit_enabled = true;
+    settings.exit_families = vec![
+        meshway_model::exit::ExitFamily::Ipv4,
+        meshway_model::exit::ExitFamily::Ipv6,
+    ];
+    if capable && let Some(trusted) = s.inventory.get_mut(&node(i)) {
+        trusted.capabilities.insert(
+            "feature:exit-ipv6".into(),
+            Capability::Feature { version: 1 },
+        );
+    }
 }
 
 pub(super) fn netmaps(s: &Scenario) -> CompiledNetmaps {
@@ -467,4 +507,12 @@ pub(super) fn previous(compiled: &CompiledNetmaps) -> BTreeMap<NodeId, PreviousN
         .iter()
         .map(|(id, netmap)| (*id, PreviousNetmap::from(netmap)))
         .collect()
+}
+
+/// Node `i` as an eligible exit carrying the default families.
+pub fn eligible(i: u8) -> EligibleExit {
+    EligibleExit {
+        node: node(i),
+        families: default_exit_families(),
+    }
 }

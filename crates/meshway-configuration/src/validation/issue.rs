@@ -148,6 +148,8 @@ pub enum IssueCode {
     ConflictingAssignments,
     /// A country list is empty or contains a value, or a node `region` is a value, other than an uppercase two-letter code; params `value` identifies an invalid entry and is absent for an empty list.
     InvalidCountryCode,
+    /// A node's `exitFamilies` lacks `ipv4` (IPv6 is carried in addition to IPv4) or names a family twice.
+    InvalidExitFamily,
     /// An exit rule sends a destination the node has no access grant for;
     /// params `node`, `destination`.
     ExitOutsideAccess,
@@ -266,6 +268,7 @@ impl IssueCode {
             AutoTargetUnknown => "unknown or recursive auto target",
             ConflictingAssignments => "overlapping assignments have conflicting default or locked",
             InvalidCountryCode => "expected uppercase two-letter country codes",
+            InvalidExitFamily => "expected distinct exit families including ipv4",
             ExitOutsideAccess => "assigned exit destination is outside access grants",
             GlobalExitRequiresInternet => "global exit requires internet access grant",
             ExitFallbackRequiresInternet => "exit fallback requires internet access grant",

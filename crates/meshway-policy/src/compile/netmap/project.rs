@@ -413,7 +413,14 @@ pub fn project(input: &NetmapInput<'_>, index: &Index, node: NodeId) -> Projecte
         },
     };
     ProjectedConfiguration {
-        eligible_exits: matching::eligible_exits(cfg, &routing.egress),
+        eligible_exits: matching::eligible_exits(
+            cfg,
+            &routing.egress,
+            visible
+                .iter()
+                .filter_map(|id| input.selected_profiles.get(id))
+                .map(String::as_str),
+        ),
         configuration: ConfigurationView {
             address_pools: cfg.address_pools.clone(),
             defaults: (&cfg.defaults).into(),

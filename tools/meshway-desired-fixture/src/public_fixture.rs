@@ -84,6 +84,7 @@ impl PublicFixture {
                     )]),
                     dialers: Input::Omitted,
                     exit_enabled: false,
+                    exit_families: meshway_configuration::default_exit_families(),
                     region: None,
                 },
             );

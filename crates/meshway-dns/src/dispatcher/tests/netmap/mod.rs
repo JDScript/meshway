@@ -529,7 +529,11 @@ async fn exit_resolver_serves_only_authenticated_requests_of_its_current_plan() 
             .start_grant(grant.clone(), service.path.nodes.clone(), &carrier)
             .is_err()
     );
-    origin.set_ready_exits([network.e].into(), Default::default());
+    origin.set_ready_exits(
+        meshway_model::exit::ExitFamily::Ipv4,
+        [network.e].into(),
+        Default::default(),
+    );
     let (desired, keys) = packet(&control);
     let mut exit = meshway_dataplane::secure::SecureNode::new(
         &desired,

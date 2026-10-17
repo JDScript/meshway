@@ -4,21 +4,43 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use utoipa::ToSchema;
 
-/// Acquire capability key for the initial Linux IPv4 masquerade executor.
+/// Acquire capability key for the Linux IPv4 masquerade executor.
 pub const EXIT_IPV4_FEATURE: &str = "feature:exit-ipv4";
 /// Version of that backend contract, independent of the encrypted packet wire.
 pub const EXIT_IPV4_VERSION: u16 = 1;
+/// Acquire capability key for the Linux IPv6 masquerade (NAT66) executor.
+pub const EXIT_IPV6_FEATURE: &str = "feature:exit-ipv6";
+/// Version of that backend contract.
+pub const EXIT_IPV6_VERSION: u16 = 1;
 
 crate::string_enum! {
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 /// Inner address family, independent of the outer carrier.
 pub enum ExitFamily {
     /// IPv4 inner packets.
     Ipv4,
-    /// IPv6 inner packets; unsupported by the initial exit executor.
+    /// IPv6 inner packets.
     Ipv6,
 }
+}
+
+impl ExitFamily {
+    /// The family of an inner address.
+    pub fn of(address: std::net::IpAddr) -> Self {
+        match address.to_canonical() {
+            std::net::IpAddr::V4(_) => Self::Ipv4,
+            std::net::IpAddr::V6(_) => Self::Ipv6,
+        }
+    }
+
+    /// Acquire capability key and version of this family's executor.
+    pub fn feature(self) -> (&'static str, u16) {
+        match self {
+            Self::Ipv4 => (EXIT_IPV4_FEATURE, EXIT_IPV4_VERSION),
+            Self::Ipv6 => (EXIT_IPV6_FEATURE, EXIT_IPV6_VERSION),
+        }
+    }
 }
 crate::string_enum! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
@@ -27,6 +49,12 @@ crate::string_enum! {
 pub enum ExitUnavailableReason {
     /// Host IPv4 forwarding is disabled.
     IpForwardDisabled,
+    /// Host IPv6 forwarding (`net.ipv6.conf.all.forwarding`) is disabled.
+    Ipv6ForwardDisabled,
+    /// The host has no global IPv6 address or no IPv6 route toward the Internet.
+    Ipv6NoEgress,
+    /// The IPv6 egress route comes from router advertisements that forwarding makes the host ignore (`accept_ra` is not 2).
+    Ipv6RouterAdvertisementsIgnored,
     /// Host forwarding could not be read or verified.
     ForwardingProbeFailed,
     /// A real NET_ADMIN operation failed.
@@ -112,6 +140,17 @@ pub struct ExitDns {
 }
 crate::object! {
 #[derive(Clone, Debug, PartialEq, Eq)]
+/// One inner family of an exit role: its own prerequisites and installation.
+pub struct ExitFamilyCapability {
+    /// Inner family this entry describes.
+    pub family: ExitFamily,
+    /// Prerequisite result of this family; shared prerequisites fail both families with the same reason.
+    pub status: ExitStatus,
+    /// Whether this family's forwarding resources are installed; ready alone does not imply installed.
+    pub installed: bool,
+} }
+crate::object! {
+#[derive(Clone, Debug, PartialEq, Eq)]
 /// Target-bound exit capability observation, accepted before applied as well as after it.
 pub struct ExitCapability {
     /// Runtime incarnation which made the observation.
@@ -120,13 +159,50 @@ pub struct ExitCapability {
     pub netmap: NetmapRef,
     /// Generation of that netmap's exit role.
     pub role_generation: Digest,
-    /// Families supported by the running backend.
-    pub supported_families: Vec<ExitFamily>,
-    /// Families actually installed; ready alone does not imply installed.
-    pub installed_families: Vec<ExitFamily>,
-    /// Actual prerequisite or installation result.
-    pub status: ExitStatus,
+    /// One entry per family of the role, ascending and unique.
+    pub families: Vec<ExitFamilyCapability>,
     /// Original observation time, preserved on retries.
     pub observed_at: DateTime<Utc>,
 }
+}
+
+impl ExitCapability {
+    /// The entry of `family`, if the role has it.
+    pub fn family(&self, family: ExitFamily) -> Option<&ExitFamilyCapability> {
+        self.families.iter().find(|entry| entry.family == family)
+    }
+
+    /// Whether `family` is ready and installed: a new exit flow of it may
+    /// choose this exit.
+    pub fn serves(&self, family: ExitFamily) -> bool {
+        self.family(family)
+            .is_some_and(|entry| entry.status == ExitStatus::Ready && entry.installed)
+    }
+
+    /// Whether the role may install: its IPv4 family is ready. A role
+    /// always carries IPv4; its IPv6 family installs with it and is
+    /// selectable while its own prerequisites hold.
+    pub fn installable(&self) -> bool {
+        self.family(ExitFamily::Ipv4)
+            .is_some_and(|entry| entry.status == ExitStatus::Ready)
+    }
+
+    /// Whether any family is installed.
+    pub fn installed(&self) -> bool {
+        self.families.iter().any(|entry| entry.installed)
+    }
+
+    /// Report every family with `status` (a shared condition).
+    pub fn set_status(&mut self, status: ExitStatus) {
+        for entry in &mut self.families {
+            entry.status = status.clone();
+        }
+    }
+
+    /// Mark every family installed or not, as the role is.
+    pub fn set_installed(&mut self, installed: bool) {
+        for entry in &mut self.families {
+            entry.installed = installed;
+        }
+    }
 }

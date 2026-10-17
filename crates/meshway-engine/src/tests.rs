@@ -398,7 +398,7 @@ async fn content_applies_before_its_artifacts_and_again_once_they_load() {
     assert!(desired.partition().is_some());
     assert_eq!(
         desired.capture_summary().unwrap(),
-        desired.partition().unwrap().summary()
+        desired.partition().unwrap().summary(false)
     );
     // Offering it once more changes nothing.
     let calls = engine.components.calls.len();

@@ -3,7 +3,7 @@
 use crate::{Error, Packet, authority::Cap, secure::OutputBinding};
 use meshway_configuration::execution::BusinessProtocol;
 use std::{
-    net::Ipv4Addr,
+    net::IpAddr,
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering},
@@ -62,12 +62,13 @@ impl FlowIncarnation {
     }
 }
 
-/// Original, pre-NAT IPv4 tuple. Echo has no ports; its identifier and sequence
-/// are explicit and cannot alias a TCP/UDP projection.
+/// Original, pre-NAT tuple; source and destination are of one family. Echo
+/// has no ports; its identifier and sequence are explicit and cannot alias a
+/// TCP/UDP projection.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExitTuple {
-    pub source: Ipv4Addr,
-    pub destination: Ipv4Addr,
+    pub source: IpAddr,
+    pub destination: IpAddr,
     pub source_port: Option<u16>,
     pub destination_port: Option<u16>,
     pub protocol: BusinessProtocol,
@@ -359,7 +360,8 @@ impl ExitReplyIngress {
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Counters {
-    pub ipv6_rejected: u64,
+    /// Exit packets refused for their family: mixed, or not carried by the role.
+    pub family_rejected: u64,
     pub unassociated_reply: u64,
     pub reply_rejected: u64,
 }

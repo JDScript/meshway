@@ -32,6 +32,7 @@ pub(super) fn configuration() -> NetworkConfiguration {
                 listeners: BTreeMap::from([("udp".into(), PreparedListener::prepare(l).unwrap())]),
                 dialers: Input::Omitted,
                 exit_enabled: i == 4,
+                exit_families: default_exit_families(),
                 region: None,
             },
         );

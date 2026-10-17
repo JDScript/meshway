@@ -87,11 +87,18 @@ impl SecureNode {
     /// same FlowTable and original CID/path. No reverse demand is compiled.
     pub fn exit_reply(&mut self, ingress: ExitReplyIngress) -> Result<PendingFrame, Error> {
         self.collect_exit_flows();
-        if ingress.packet.facts().traffic.source.is_ipv6()
-            || ingress.packet.facts().traffic.destination.is_ipv6()
+        // Only the families the installed role carries return; a reply of
+        // another (or of mixed families) is not this role's.
+        let traffic = ingress.packet.facts().traffic;
+        let family = meshway_model::exit::ExitFamily::of(traffic.destination);
+        if traffic.source.is_ipv6() != traffic.destination.is_ipv6()
+            || !self
+                .desired
+                .exit_role()
+                .is_some_and(|role| role.families.contains(&family))
         {
-            self.engine.exit_counters.ipv6_rejected =
-                self.engine.exit_counters.ipv6_rejected.saturating_add(1);
+            self.engine.exit_counters.family_rejected =
+                self.engine.exit_counters.family_rejected.saturating_add(1);
             return Err(Error::Packet);
         }
         let result = (|| {

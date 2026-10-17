@@ -223,7 +223,7 @@ async fn exit_readiness_is_only_a_fact() {
     let facts = lab.app.peer_facts();
     let ready = facts.peer_facts(&before, None, None).unwrap().unwrap();
     let exit = ready.updated[&b].exit.clone().unwrap();
-    assert_eq!(exit.status, ExitStatus::Ready);
+    assert_eq!(exit.families[0].status, ExitStatus::Ready);
     assert_eq!(exit.role_generation, role.generation);
     lab.report_exit(1, 2, ExitStatus::Probing).await;
     let probing = facts
@@ -231,7 +231,7 @@ async fn exit_readiness_is_only_a_fact() {
         .unwrap()
         .unwrap();
     assert_eq!(
-        probing.updated[&b].exit.as_ref().unwrap().status,
+        probing.updated[&b].exit.as_ref().unwrap().families[0].status,
         ExitStatus::Probing
     );
     // Facts and observations never change any netmap.
@@ -283,7 +283,11 @@ async fn unrelated_configuration_revision_does_not_withdraw_current_exit_readine
         })
         .await
         .unwrap();
-    assert!(inputs.ready_until_ms.contains_key(&exit));
+    assert!(
+        inputs
+            .ready_until_ms
+            .contains_key(&(exit, meshway_model::exit::ExitFamily::Ipv4))
+    );
     lab.app.shutdown().await.unwrap();
 }
 
