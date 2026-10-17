@@ -34,6 +34,7 @@ ROWS = {
     "nat/relay": ("runtime", ("--transport", "native-udp", "--traversal", "nat", "--dns-backend", "off", "--netmap-scenario", "relay")),
     "nat/reconnect": ("runtime", ("--transport", "native-udp", "--traversal", "nat", "--dns-backend", "off", "--netmap-scenario", "reconnect")),
     "exit/off": ("runtime", ("--transport", "native-udp", "--traversal", "exit", "--dns-backend", "off")),
+    "exit6/off": ("runtime", ("--transport", "native-udp", "--traversal", "exit6", "--dns-backend", "off")),
     "roam/direct": ("runtime", ("--transport", "native-udp", "--traversal", "roam", "--dns-backend", "off")),
     "roam/nat": ("runtime", ("--transport", "native-udp", "--traversal", "roam", "--dns-backend", "off", "--netmap-scenario", "roam-nat")),
     "roam/relay": ("runtime", ("--transport", "native-udp", "--traversal", "roam", "--dns-backend", "off", "--netmap-scenario", "roam-relay")),

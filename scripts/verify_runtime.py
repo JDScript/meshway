@@ -213,7 +213,7 @@ def main():
                         help="real libc DNS conformance in an owned private mount namespace")
     parser.add_argument("--dns-image-manifest", type=Path,
                         help="parent-built dev/dns-fixture/build.py immutable OS image manifest")
-    parser.add_argument("--traversal", choices=("off", "nat", "exit", "roam"), default="off",
+    parser.add_argument("--traversal", choices=("off", "nat", "exit", "exit6", "roam"), default="off",
                         help="real two-router IPv4 NAT acquisition with empty UDP endpoints")
     parser.add_argument("--traversal-fallback", action="store_true",
                          help="preauthorize TCP on R, then block only A-R UDP during the same 70-second flows")
@@ -232,10 +232,10 @@ def main():
     if (args.netmap_scenario not in (None, "relay", "reconnect") and not roam_scenario
             and (args.traversal != "off" or args.dns_backend != "off")):
         parser.error("--netmap-scenario requires --traversal off --dns-backend off")
-    if args.only and args.traversal == "exit":
+    if args.only and args.traversal in ("exit", "exit6"):
         parser.error("--only main is the A/R/B runtime flow, not the exit topology")
-    if args.traversal in ("exit", "roam") and (args.dns_backend != "off" or args.transport != "native-udp"):
-        parser.error("--traversal exit/roam requires --transport native-udp --dns-backend off")
+    if args.traversal in ("exit", "exit6", "roam") and (args.dns_backend != "off" or args.transport != "native-udp"):
+        parser.error("--traversal exit/exit6/roam requires --transport native-udp --dns-backend off")
     if args.only and args.traversal == "roam":
         parser.error("--only main is the A/R/B runtime flow, not the roaming topology")
     if args.reported_endpoints and (args.transport != "native-udp" or args.traversal != "off" or args.dns_backend != "off"):
@@ -277,13 +277,14 @@ def main():
     description = json.loads(run("docker", "image", "inspect", image, capture=True))[0]
     if description["Os"] != "linux" or description["Architecture"] != platform.split("/")[1] or description["Config"].get("Volumes"):
         raise RuntimeError("Expected the existing native Linux digest-pinned runtime image without volumes.")
-    if args.traversal == "exit":
+    if args.traversal in ("exit", "exit6"):
         spec = importlib.util.spec_from_file_location("meshway_exit_fixture", ROOT / "dev/exit-fixture/runtime.py")
         if spec is None or spec.loader is None:
             raise RuntimeError("Exit fixture orchestrator unavailable")
         fixture = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(fixture)
-        fixture.execute(report, artifacts, runtime_os, platform, args.short, load)
+        fixture.execute(report, artifacts, runtime_os, platform, args.short, load,
+                        variant="ipv4" if args.traversal == "exit" else "ipv6")
         return
     dns_image = None
     dns_assets = None

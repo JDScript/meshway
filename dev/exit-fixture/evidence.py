@@ -70,6 +70,17 @@ def negative_boundary(record):
         raise RuntimeError("source egress gate is not a negative boundary after lease expiry")
 
 
+def all_ipv6_stages_passed(manifest):
+    """exit6/off: every I6-1 stage (1-8, 10) passed, every actor finished,
+    no plaintext IPv6 business packet on A and no cleanup error."""
+    return (set(manifest["stages"]) == {str(i) for i in (1, 2, 3, 4, 5, 6, 7, 8, 10)}
+            and all(stage.get("status") == "passed" for stage in manifest["stages"].values())
+            and set(manifest.get("processes", {})) == {"controller", "a", "r", "e", "external", "lan", "resolver", "router"}
+            and manifest.get("exit6", {}).get("plaintextLeaks") == 0
+            and all(state["ExitCode"] == 0 and not state["Running"] and not state["OOMKilled"] for state in manifest["processes"].values())
+            and not manifest.get("cleanupErrors"))
+
+
 def all_stages_passed(manifest):
     return (set(manifest["stages"]) == {str(i) for i in range(1, 17)}
             and all(stage.get("status") == "passed" for stage in manifest["stages"].values())
