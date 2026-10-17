@@ -4,6 +4,10 @@
 
 ## 未发布
 
+## v0.1.0-alpha.18
+
+范围：wire 6、IPC 12、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约均不变（普通升级，无断网窗口）。S4：Server 换构建启动自动重编译（`meshway-build` 构建身份进编译指纹，只有内容变化的节点得到新 serial），DNS 未确认故障算一次失败（撤回 → 恢复 → 重装）；F6c 纯移动（无行为变化）；以及下列 F6c、S4 工作包。
+
 - 结构（F6c，`f6c/splits`，无行为变化）：只移动代码、改模块路径与可见性。Manager `datagram/mod.rs` 拆为 `{mod,session,roam,health,receive}.rs`＋`tests/{mod,roam}.rs`；Underlay `kernel/mod.rs` 拆出 `{term,repair,proof,install}.rs`，`kernel/monitor.rs` 拆为 `monitor/{mod,decode,classify,tests}.rs`，出口 `backend.rs` 拆为 `backend/{mod,install,confirm,retire}.rs`、`owner.rs` 拆为 `owner/{mod,install}.rs`；daemon 网络 worker 的非 `run` 部分移入 `worker/{packets,timing}.rs`（`run` 仍为单函数）。落点见 [Exit 设计](/v2/node/exit-design#当前实现落点)。
 
 Server 构建作为编译输入与 DNS 故障边沿（S4，`s4/recompile-on-upgrade`）：wire 6、IPC 12、`compilerVersion` `meshway-netmap-3`、Server schema 8 与 HTTP 契约均不变（普通升级）。升级后 Server 第一次启动会按新构建重编译全部已存 netmap，内容变化的节点得到新 serial（无需运维手动触发）。
