@@ -14,4 +14,6 @@ bash apps/meshway-apple/scripts/build.sh
 
 `check.sh` compiles both targets with `CODE_SIGNING_ALLOWED=NO`. Configure signing in ignored `Config/Local.xcconfig`; no Team is committed. `sign-lab.sh` explicitly creates the profile-less development-signed VM experiment. `deploy-vm.sh` installs only inside the named Tart VM.
 
+Set `MESHWAY_VM_SSH_CONFIG` to use a dedicated SSH config for deployment. In the VM, `Meshway --lab activate|start-private|start-default|start-all|remove` invokes the same controller as the GUI; exit 77 requires user approval in System Settings. The provider's utun fd scan is observation-only and does not transfer ownership to Rust.
+
 Full environment, Recovery, signing, deployment and cleanup reference: [`docs/v2/node/macos-lab.md`](../../docs/v2/node/macos-lab.md). Component boundaries and acceptance: [`apple-design.md`](../../docs/v2/node/apple-design.md).

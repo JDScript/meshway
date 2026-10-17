@@ -6,6 +6,8 @@ struct MeshwayEntry {
     @MainActor static func main() {
         if CommandLine.arguments.contains("--probe") {
             Probe.run()
+        } else if CommandLine.arguments.contains("--lab") {
+            LabCommand.run()
         } else {
             MeshwayApp.main()
         }

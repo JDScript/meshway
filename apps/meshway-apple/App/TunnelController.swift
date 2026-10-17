@@ -5,20 +5,25 @@ import SystemExtensions
 
 @MainActor @Observable
 final class TunnelController: NSObject, OSSystemExtensionRequestDelegate {
-    var message = "Shell only — Node runtime is not linked."
+    var message = "Shell only — Node runtime is not linked." {
+        didSet { report?(message) }
+    }
+    var report: ((String) -> Void)?
+    private var activationCompletion: ((Int32) -> Void)?
     var frames = ""
     var busy = false
     private var manager: NETunnelProviderManager?
     private var client: FrameClient?
 
-    func activate() {
+    func activate(completion: ((Int32) -> Void)? = nil) {
+        activationCompletion = completion
         do {
             let request = OSSystemExtensionRequest.activationRequest(
                 forExtensionWithIdentifier: try ShellConfiguration.value("MeshwayExtensionID"), queue: .main)
             request.delegate = self
             OSSystemExtensionManager.shared.submitRequest(request)
             message = "Activation requested"
-        } catch { message = error.localizedDescription }
+        } catch { message = error.localizedDescription; finishActivation(1) }
     }
 
     func deactivate() {
@@ -30,8 +35,9 @@ final class TunnelController: NSObject, OSSystemExtensionRequestDelegate {
         } catch { message = error.localizedDescription }
     }
 
-    func start(defaultRoute: Bool, includeAllNetworks: Bool) async {
-        guard !busy else { return }
+    @discardableResult
+    func start(defaultRoute: Bool, includeAllNetworks: Bool) async -> Bool {
+        guard !busy else { return false }
         busy = true
         defer { busy = false }
         do {
@@ -51,7 +57,8 @@ final class TunnelController: NSObject, OSSystemExtensionRequestDelegate {
             self.manager = manager
             try manager.connection.startVPNTunnel()
             message = "Tunnel start requested (shell drops captured packets)"
-        } catch { message = error.localizedDescription }
+            return true
+        } catch { message = error.localizedDescription; return false }
     }
 
     func stop() {
@@ -61,7 +68,8 @@ final class TunnelController: NSObject, OSSystemExtensionRequestDelegate {
         message = "Tunnel stop requested"
     }
 
-    func removeConfiguration() async {
+    @discardableResult
+    func removeConfiguration() async -> Bool {
         do {
             let identifier = try ShellConfiguration.value("MeshwayExtensionID")
             for item in try await NETunnelProviderManager.loadAllFromPreferences()
@@ -70,7 +78,8 @@ final class TunnelController: NSObject, OSSystemExtensionRequestDelegate {
                 try await item.removeFromPreferences()
             }
             message = "Shell VPN configuration removed"
-        } catch { message = error.localizedDescription }
+            return true
+        } catch { message = error.localizedDescription; return false }
     }
 
     func send(_ text: String) {
@@ -93,15 +102,23 @@ final class TunnelController: NSObject, OSSystemExtensionRequestDelegate {
     }
 
     nonisolated func requestNeedsUserApproval(_ request: OSSystemExtensionRequest) {
-        Task { @MainActor in message = "Approve Meshway in System Settings → General → Login Items & Extensions → Network Extensions" }
+        Task { @MainActor in
+            message = "Approve Meshway in System Settings → General → Login Items & Extensions → Network Extensions"
+            finishActivation(77)
+        }
     }
     nonisolated func request(_ request: OSSystemExtensionRequest, didFinishWithResult result: OSSystemExtensionRequest.Result) {
         let text = result == .completed ? "Extension request completed" : "Extension request requires reboot"
-        Task { @MainActor in message = text }
+        Task { @MainActor in message = text; finishActivation(result == .completed ? 0 : 78) }
     }
     nonisolated func request(_ request: OSSystemExtensionRequest, didFailWithError error: Error) {
         let text = error.localizedDescription
-        Task { @MainActor in message = text }
+        Task { @MainActor in message = text; finishActivation(1) }
+    }
+    private func finishActivation(_ status: Int32) {
+        let completion = activationCompletion
+        activationCompletion = nil
+        completion?(status)
     }
     nonisolated func request(_ request: OSSystemExtensionRequest, actionForReplacingExtension existing: OSSystemExtensionProperties, withExtension ext: OSSystemExtensionProperties) -> OSSystemExtensionRequest.ReplacementAction { .replace }
 }

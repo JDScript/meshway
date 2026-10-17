@@ -2,6 +2,7 @@ import Foundation
 import NetworkExtension
 import os
 import Synchronization
+import Darwin
 
 // NetworkExtension owns the provider lifecycle. Only the locked task/server slot
 // crosses callbacks; each settings object and URLSession is local to its task.
@@ -28,6 +29,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
                     settings.mtu = 1280
                     try await setTunnelNetworkSettings(settings)
                     try Task.checkCancellation()
+                    observeUtunDescriptors()
                     let server = FrameServer()
                     lifecycle.withLock { $0.server = server }
                     server.start()
@@ -69,5 +71,30 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         } catch {
             logger.error("underlay-probe \(label, privacy: .public) error \(String(describing: error), privacy: .public)")
         }
+    }
+
+    // Observation only: no fd ownership transfer, duplicate, read or write.
+    private func observeUtunDescriptors() {
+        var found = 0
+        let limit = min(getdtablesize(), 4096)
+        for fd in 0..<limit {
+            var address = sockaddr_storage()
+            var addressSize = socklen_t(MemoryLayout.size(ofValue: address))
+            let result = withUnsafeMutablePointer(to: &address) { pointer in
+                pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                    getsockname(fd, $0, &addressSize)
+                }
+            }
+            guard result == 0, address.ss_family == AF_SYSTEM else { continue }
+            var name = [CChar](repeating: 0, count: Int(IFNAMSIZ))
+            var nameSize = socklen_t(name.count)
+            // <net/if_utun.h>: UTUN_OPT_IFNAME = 2, level SYSPROTO_CONTROL.
+            guard getsockopt(fd, SYSPROTO_CONTROL, 2, &name, &nameSize) == 0 else { continue }
+            let interface = String(decoding: name.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
+            guard interface.hasPrefix("utun") else { continue }
+            found += 1
+            logger.notice("utun-observation pid=\(getpid()) uid=\(getuid()) fd=\(fd) interface=\(interface, privacy: .public)")
+        }
+        logger.notice("utun-observation scanned=\(limit) found=\(found)")
     }
 }
