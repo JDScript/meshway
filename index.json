@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "JDScript/meshway",
-  "updatedAt": "2026-10-17T01:59:23.091156+00:00",
+  "updatedAt": "2026-10-17T02:02:12.868104+00:00",
   "runs": [
     {
       "id": 38992886254,
@@ -12,7 +12,7 @@
       "commit": "f58def1bff7a17fcbe0aae5c53aad1bcb0517e89",
       "message": "docs: native ARM64 L0 next to Planck x86 (perf run 38977113530)",
       "createdAt": "2026-10-17T01:55:42Z",
-      "updatedAt": "2026-10-17T01:56:06Z",
+      "updatedAt": "2026-10-17T01:59:45Z",
       "status": "queued",
       "conclusion": null,
       "url": "https://github.com/JDScript/meshway/actions/runs/38992886254",
@@ -20,13 +20,35 @@
         {
           "id": 117278980246,
           "name": "changes",
+          "runner": "mars-14900k",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-10-17T01:59:34Z",
+          "completedAt": "2026-10-17T01:59:45Z",
+          "seconds": 11.0,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38992886254/job/117278980246"
+        },
+        {
+          "id": 117279699163,
+          "name": "cargo",
           "runner": null,
           "status": "queued",
           "conclusion": null,
-          "startedAt": "2026-10-17T01:56:05Z",
+          "startedAt": "2026-10-17T01:59:45Z",
           "completedAt": null,
           "seconds": null,
-          "url": "https://github.com/JDScript/meshway/actions/runs/38992886254/job/117278980246"
+          "url": "https://github.com/JDScript/meshway/actions/runs/38992886254/job/117279699163"
+        },
+        {
+          "id": 117279699180,
+          "name": "web",
+          "runner": null,
+          "status": "queued",
+          "conclusion": null,
+          "startedAt": "2026-10-17T01:59:45Z",
+          "completedAt": null,
+          "seconds": null,
+          "url": "https://github.com/JDScript/meshway/actions/runs/38992886254/job/117279699180"
         }
       ],
       "artifacts": []
