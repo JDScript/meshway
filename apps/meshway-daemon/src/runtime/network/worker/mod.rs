@@ -17,11 +17,15 @@ use std::{sync::Arc, time::Duration};
 use tokio::sync::{mpsc, watch};
 
 mod lifecycle;
+mod packets;
 mod peers;
 mod sample;
+mod timing;
 mod withdrawal;
+use packets::{packet_pool, receive_packets};
 use peers::PeerChannels;
 use sample::{RoamEvidence, sample_host};
+use timing::{Retry, lease_end, sleep_until};
 use withdrawal::{finish_withdrawal, shutdown, withdraw};
 
 /// Exit replies taken in one turn, like one Mesh TUN read turn.
@@ -38,41 +42,6 @@ pub(super) struct Inputs {
     pub observation_plans: watch::Receiver<Option<ObservationPlan>>,
     pub peers: watch::Receiver<Option<meshway_control::KnownPeers>>,
     pub mtu: usize,
-}
-
-/// Covers the existing 128 queued packets, 32 sends and one 32-packet read
-/// turn without allocating overflow buffers; every buffer holds one TUN MTU
-/// packet. The pool belongs to this owner.
-fn packet_pool(mtu: usize) -> Result<PacketPool, Problem> {
-    PacketPool::new(256, mtu, DEFAULT_HEADROOM, DEFAULT_TAILROOM).map_err(|_| Problem::Tun)
-}
-
-/// Bounded retry of a transient installation failure of the same netmap.
-#[derive(Default)]
-struct Retry {
-    failures: u8,
-    at: Option<tokio::time::Instant>,
-}
-impl Retry {
-    fn failed(&mut self, failure: ApplyFailure) {
-        self.failures = self.failures.saturating_add(1);
-        let transient = !matches!(failure, ApplyFailure::Validation | ApplyFailure::Dataplane);
-        self.at = (transient && self.failures < 3).then(|| {
-            tokio::time::Instant::now()
-                + Duration::from_secs(if self.failures == 1 { 5 } else { 15 })
-        });
-    }
-}
-
-fn lease_end(lease: &meshway_model::NetmapLease) -> Option<chrono::DateTime<chrono::Utc>> {
-    chrono::DateTime::from_timestamp_millis(i64::try_from(lease.expires_at_ms).ok()?)
-}
-
-async fn sleep_until(at: Option<tokio::time::Instant>) {
-    match at {
-        Some(at) => tokio::time::sleep_until(at).await,
-        None => std::future::pending().await,
-    }
 }
 
 pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
@@ -1064,39 +1033,6 @@ pub(super) async fn run(inputs: Inputs) -> Result<(), Problem> {
             sample_at.get_or_insert_with(|| {
                 tokio::time::Instant::now() + super::reporting::CHANGE_INTERVAL
             });
-        }
-    }
-}
-
-/// A cancellation-safe TUN read has no read-ahead owner. After the first packet,
-/// drain only immediately-ready reads, bounded to 32; lifecycle work then regains
-/// priority. Packet admission still happens individually in the unique engine.
-async fn receive_packets(
-    tun: &meshway_tun::Tun,
-    buffers: &PacketPool,
-) -> Result<Vec<Result<Packet, meshway_dataplane::PacketError>>, meshway_tun::Error> {
-    tun.recv_batch_map(|bytes| {
-        let mut buffer = buffers
-            .acquire(bytes.len())
-            .map_err(|_| meshway_tun::Error::Io(std::io::Error::other("packet pool exhausted")))?;
-        buffer.copy_from_slice(bytes);
-        Ok(Packet::parse(buffer))
-    })
-    .await?
-    .into_iter()
-    .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::packet_pool;
-
-    #[test]
-    fn packet_pool_holds_one_full_mtu_packet() {
-        for mtu in [1280, meshway_dataplane::secure::DEFAULT_INNER_MTU, 1500] {
-            let pool = packet_pool(mtu).unwrap();
-            assert!(pool.acquire(mtu).is_ok(), "mtu {mtu}");
-            assert!(pool.acquire(mtu + 1).is_err(), "mtu {mtu}");
         }
     }
 }
