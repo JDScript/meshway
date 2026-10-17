@@ -17,7 +17,9 @@
 | 安装 | VM 的 `/Applications/Meshway.app`；extension 位于 App 的 `Contents/Library/SystemExtensions` |
 | 当前程序 | A2 Swift 薄壳；XPC echo／定时 fixture，未链接 Node／Rust bridge |
 
-当前 VM 正常运行，IP 为 `192.168.64.2`，SSH 专用密钥可用。来宾实际读回 `csrutil status=disabled`、`kern.bootargs=amfi_get_out_of_my_way=1`（已重启）、`systemextensionsctl developer=on`、`kern.hv_vmm_present=1`。App 已安装到 `/Applications`，无 profile extension 已通过系统校验／安装，当前为 **activated waiting for user**。VPN 配置已移除，没有运行中的 shell tunnel；extension 安装状态保留。需要用户在 VM GUI 的 **System Settings → General → Login Items & Extensions → Network Extensions** 允许 **Meshway Packet Tunnel** 后继续验收。
+当前 VM 正常运行，IP 为 `192.168.64.2`，SSH 专用密钥可用。来宾实际读回 `csrutil status=disabled`、`kern.bootargs=amfi_get_out_of_my_way=1`（已重启）、`systemextensionsctl developer=on`、`kern.hv_vmm_present=1`。App 已安装到 `/Applications`，无 profile extension 已获用户批准，当前为 **activated enabled**。另有 4 个旧实例为 `terminated waiting to uninstall on reboot`，可在环境 owner 安排的来宾重启时清理。VPN 配置已移除，没有运行中的 shell tunnel；extension 启用状态保留。
+
+当前阻塞在首次 VPN 配置保存：`--lab start-private` 发起 `Saving configuration Meshway Shell Lab` 后 60 秒未获回答，退出 124，未产生 VPN 配置。自动截图未取得显示内容，尚未直接确认对话框画面。需要用户通过 VM 屏幕共享 `vnc://192.168.64.2` 打开 Meshway，保持两个 lab 路由开关关闭，点击 **Start tunnel** 并在添加 VPN 配置对话框中点 **Allow／允许** 后继续验收。
 
 Tart 2.32.1 官方发布包校验通过；镜像拉取前余量 178 GiB，clone 后 140 GiB。常驻 Tart 进程由环境 owner 启动并挂载只读构建目录；验收操作使用 SSH，不停止或替换该进程。需要重启来宾时在来宾内执行 `sudo shutdown -r now`。
 
@@ -163,11 +165,11 @@ sudo /usr/bin/log show --last 5m --style compact --predicate 'category == "shell
 
 `--lab` 检查 `kern.hv_vmm_present`，只接受一个 action：`activate`、`start-private`、`start-default`、`start-all`、`remove`。`start-default` 捕获默认 IPv4 路由，`start-all` 额外启用 `includeAllNetworks`；扩大捕获范围前先在来宾安排定时 stop／remove，避免把 SSH 管理流量一并捕获后无法停止实验。start 退出 0 只代表请求被接受，实际 connected、provider PID／UID、NE 设置和探测日志仍须分别读回。
 
-退出 77 表示需要 GUI 批准，78 表示要求重启，124 表示系统请求在 60 秒内未回答。当前 `activate` 返回 77；不要反复提交代替用户批准。批准 extension 后，首次保存 VPN 配置如出现“Meshway would like to add VPN configurations”，仍需用户在 VM 中点 **Allow／允许**。
+退出 77 表示需要 GUI 批准，78 表示要求重启，124 表示系统请求在 60 秒内未回答。当前 extension 已获批准，首次 `start-private` 保存 VPN 配置返回 124；不要反复提交代替用户批准。首次保存 VPN 配置如出现“Meshway would like to add VPN configurations”，仍需用户在 VM 中点 **Allow／允许**。
 
 外连实验分别在私网路由、默认 IPv4 路由、默认路由＋`includeAllNetworks` 下重启 tunnel。extension 在设置路由前完成一次 URLSession HTTPS 请求，在设置完成后再做一次（`https://1.1.1.1/cdn-cgi/trace`，10 秒截止），只记录 HTTP 状态或错误，不记录响应正文。对照普通 VM 进程访问同地址与 tunnel 包捕获，才能区分 provider 绕行、VM 物理网络不可用或请求落入隧道。URLSession 结果不能证明 Rust 普通 socket／UDP 的全部行为。
 
-当前未启用 VPN 的来宾对 `1.1.1.1`、`example.com`、`www.apple.com` 的上述 HTTPS 对照均在 10 秒超时，HTTP 000；默认路由为 en0→192.168.64.1。先恢复有效公网对照，再运行绕行实验。utun 前置观察已编译：NE 设置后最多扫描 4096 个 fd，只对 AF_SYSTEM socket 读取 `UTUN_OPT_IFNAME` 并记录接口名／fd／PID／UID；不读写包、不向 Rust 交接，当前尚无 provider 运行结果。
+当前无 VPN 的来宾公网对照已恢复：`curl https://example.com` 与 `curl https://1.1.1.1/cdn-cgi/trace` 均返回 HTTP 200。每次扩大路由范围前仍先记录无 VPN 对照。utun 前置观察已编译：NE 设置后最多扫描 4096 个 fd，只对 AF_SYSTEM socket 读取 `UTUN_OPT_IFNAME` 并记录接口名／fd／PID／UID；不读写包、不向 Rust 交接，当前尚无 provider 运行结果。
 
 ## 停止、重置与清理
 
@@ -186,4 +188,4 @@ tart clone ghcr.io/cirruslabs/macos-tahoe-vanilla@sha256:eeec54bfe1f076e27786c5d
 
 结论维护在 [macOS App 待验证项](/v2/node/apple-design#unverified)。VM 启动、代码签名和 unsigned 编译分别记录；只有 VM 中真实激活／加载、对端认证正负例、流式回包和取消证据才能完成 A2 平台验收。当前薄壳尚无 Node 运行时，因此不能交付 control-only Status 或 Mesh 包流。
 
-Xcode 27.1 上 unsigned App＋extension、`sign-lab.sh`（真实开发签名、无 profile）和静态 Team／identifier requirement 校验通过；普通 `build.sh` 因缺少 NE／System Extension provisioning profile 失败。VM 内 App 已运行，`codesign --verify --deep --strict` 通过；`sysextd` 通过 category validation，接受 `CDWF84L4TA.dev.meshway.lab.meshway.ipc` 的 MachServices 声明并将 extension 安装到 `/Library/SystemExtensions`，状态为 `activated waiting for user`。这些证据没有覆盖获批后的 provider 启动、XPC 实际回包／认证负例／取消、utun 枚举或 provider 外连。私有原始证据位于仓库公共 `.meshway/macos-lab/` 的 `activation.log`、`activation-state.log`、`sysext-activation.log`、`vm-baseline.log` 与 `vm-public-network.log`。
+Xcode 27.1 上 unsigned App＋extension、`sign-lab.sh`（真实开发签名、无 profile）和静态 Team／identifier requirement 校验通过；普通 `build.sh` 因缺少 NE／System Extension provisioning profile 失败。VM 内 App 已运行，`codesign --verify --deep --strict` 通过；无 profile extension 已实际 `activated enabled`，`nesessionmanager` 已提交包含 `CDWF84L4TA.dev.meshway.lab.meshway.ipc` 的 launchd job。首次 VPN 配置保存未获回答，这些证据尚未覆盖 provider／tunnel 启动、XPC 实际回包／认证负例／取消、utun 枚举或 provider 外连。私有原始证据位于仓库公共 `.meshway/macos-lab/`；当前状态和公网对照见 `approved-baseline.log`，保存截止见 `start-private.log`，launchd job 与最终清理状态见 `vpn-permission-state.log`；无 profile 初次注册证据见 `sysext-activation.log`。
