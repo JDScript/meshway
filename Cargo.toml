@@ -19,6 +19,7 @@ members = [
     "crates/meshway-private-storage",
     "crates/meshway-control",
     "crates/meshway-logging",
+    "crates/meshway-build",
     "crates/meshway-transport",
     "crates/meshway-transport-stream",
     "crates/meshway-rules",

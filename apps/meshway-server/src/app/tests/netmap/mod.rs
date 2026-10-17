@@ -17,6 +17,7 @@ mod commit;
 mod dns;
 mod signing;
 mod sync;
+mod upgrade;
 
 fn rid() -> RequestId {
     RequestId::new(random_uuid().unwrap()).unwrap()

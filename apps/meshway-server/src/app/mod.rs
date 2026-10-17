@@ -292,7 +292,56 @@ impl App {
                 crate::error::Error::Storage(_) => AppError::Database,
                 _ => AppError::StorageIntegrity,
             })?;
+        app.refresh_netmaps().await?;
         Ok(app)
+    }
+
+    /// Before any request: every stored netmap becomes this build's
+    /// compilation of its current inputs (`store::netmap::refresh`), one
+    /// transaction per network. A network that cannot be compiled keeps its
+    /// stored netmaps and is logged; its next input change compiles again.
+    async fn refresh_netmaps(&self) -> Result<(), AppError> {
+        let started = std::time::Instant::now();
+        let handle = self.executor.handle();
+        let networks = handle
+            .read(crate::store::netmap::networks)
+            .await
+            .map_err(|_| AppError::Database)?;
+        let mut changed = 0;
+        for network in &networks {
+            let (network, sealer) = (*network, Arc::clone(&self.sealer));
+            let result = handle
+                .transact(rusqlite::TransactionBehavior::Immediate, move |tx| {
+                    let now = crate::store::execution::now()?;
+                    let netmap = crate::store::netmap::refresh(tx, &sealer, network, now)?;
+                    let mut effects = netmap.effects();
+                    if !effects.is_empty() {
+                        effects.push(crate::effect::Effect::Progress {
+                            network_id: network,
+                        });
+                    }
+                    Ok((netmap.changed.len(), effects))
+                })
+                .await;
+            match result {
+                Ok(nodes) => changed += nodes,
+                Err(error) => tracing::error!(
+                    network_id = %network,
+                    %error,
+                    "Stored netmaps not compiled by this build; they stay until the next input change"
+                ),
+            }
+        }
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let build = meshway_build::identity();
+        if changed > 0 {
+            tracing::info!(%build, networks = networks.len(), changed_nodes = changed, elapsed_ms,
+                "Stored netmaps compiled again by this build");
+        } else {
+            tracing::debug!(%build, networks = networks.len(), elapsed_ms,
+                "Stored netmaps checked against this build; nothing changed");
+        }
+        Ok(())
     }
 
     /// An account service handle, without network or instance privileges.

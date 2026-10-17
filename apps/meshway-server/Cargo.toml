@@ -17,6 +17,7 @@ ed25519-dalek = { version = "2.2", default-features = false, features = ["std", 
 futures-util.workspace = true
 idna.workspace = true
 ipnet.workspace = true
+meshway-build = { path = "../../crates/meshway-build" }
 meshway-model = { path = "../../crates/meshway-model" }
 meshway-logging = { path = "../../crates/meshway-logging" }
 meshway-private-storage = { path = "../../crates/meshway-private-storage" }

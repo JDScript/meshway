@@ -159,6 +159,10 @@ compiler: meshway-netmap-3
 
 `--json` 输出同名字段（`version`、`git`、`target`、`ipc`、`wire`、`compilerVersion`）。`wire` 是受保护 circuit 版本，同一路径上的节点必须一致；`compilerVersion` 是 netmap 编译契约。该命令不联系 daemon。
 
+### Server 升级 {#server-upgrade}
+
+先升级全部 Node（CLI 与 daemon 一起），再升级 Server。新 Server 启动时、受理请求之前，把每个网络已存的 netmap 按本构建重新编译（[Server 构建是编译输入](/v2/node/netmap-design#server-侧)）：内容因新构建而变化的节点得到新 serial，下一次 `sync` 即收到，内容不变的节点保留 serial；不需要为此改配置、改选择或手动触发重编译。有节点得到新 serial 时 Server 记 info `Stored netmaps compiled again by this build`（`build`、`networks`、`changed_nodes`、`elapsed_ms`）；没有变化（同一构建重启，或新构建编译出相同内容）只记 debug `Stored netmaps checked against this build; nothing changed`。启动耗时随节点数线性，1000 节点的网络约 2–3 秒。
+
 ### compilerVersion 变化的版本 {#compiler-version-upgrade}
 
 `compilerVersion` 变化时（[changelog](/v2/changelog) 中该版本的范围句以 “⚠ 断网窗口” 开头），新 Node 不接受旧 Server 签发的 netmap，旧 Node 也不接受新 Server 的：已升级的 Node 每次 `sync` 都以 `Contract` 失败并重试，`meshway status` 为 `synchronizing · Sync reconnecting (contract)`、Netmap none、数据面 suspended／stopped；本机缓存的旧 `netmap.json` 保留在磁盘但不载入。该节点从升级起到 Server 升级完成为止没有 Mesh。这是该类版本的固有窗口，产品不提供兼容轨，因此按以下方式把窗口压到最短：

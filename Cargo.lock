@@ -1733,6 +1733,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "meshway-build"
+version = "0.1.0-alpha.17"
+
+[[package]]
 name = "meshway-circuit-perf"
 version = "0.1.0-alpha.17"
 dependencies = [
@@ -1754,6 +1758,7 @@ dependencies = [
  "chrono",
  "clap",
  "getrandom 0.3.4",
+ "meshway-build",
  "meshway-configuration",
  "meshway-control-client",
  "meshway-daemon",
@@ -2268,6 +2273,7 @@ dependencies = [
  "idna",
  "ipnet",
  "maxminddb",
+ "meshway-build",
  "meshway-configuration",
  "meshway-logging",
  "meshway-model",

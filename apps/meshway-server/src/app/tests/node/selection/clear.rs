@@ -315,3 +315,68 @@ async fn a_retried_clearing_without_a_selection_never_clears_a_later_one() {
         Error::RequestConflict
     );
 }
+
+/// S4 (OPS16): a selection cleared under alpha.16, whose stored netmap an
+/// earlier build compiled without the cleared version. The Server start by
+/// this build compiles it again: the Node's netmap carries the version its
+/// next change is based on, without any configuration or selection change.
+#[tokio::test]
+async fn a_start_by_another_build_restores_the_cleared_version_in_the_netmap() {
+    let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
+    let lab = selection().await;
+    lab.node_select(None, "work").await.unwrap();
+    lab.node_clear(Some(1)).await.unwrap();
+    let current = lab.netmap(lab.a).await;
+    assert_eq!(
+        current.netmap.projection.selection_versions.get(&lab.a),
+        Version::new(2).ok().as_ref()
+    );
+    let mut earlier = (*current.netmap).clone();
+    earlier.serial = earlier.serial.checked_next().unwrap();
+    earlier.projection.selection_versions.remove(&lab.a);
+    let earlier = meshway_configuration::netmap::CompiledNetmap {
+        digest: earlier.content_digest().unwrap(),
+        netmap: std::sync::Arc::new(earlier),
+    };
+    let held = earlier.reference();
+    let (sealer, network, a) = (lab.app.sealer(), lab.network, lab.a);
+    lab.app
+        .executor
+        .handle()
+        .write(move |tx| {
+            let now = crate::store::execution::now()?;
+            crate::store::netmap::store_as_another_build(tx, &sealer, network, a, &earlier, now)
+        })
+        .await
+        .unwrap();
+    assert!(
+        !lab.netmap(a)
+            .await
+            .netmap
+            .projection
+            .selection_versions
+            .contains_key(&a)
+    );
+    let Selection { _dir: dir, app, .. } = lab;
+    app.shutdown().await.unwrap();
+    let app = App::open(crate::settings::Settings::new(
+        dir.path().canonicalize().unwrap().join("data"),
+    ))
+    .await
+    .unwrap();
+    let netmaps = app.netmaps.clone();
+    let refreshed = app
+        .executor
+        .handle()
+        .read(move |tx| netmaps.current(tx, network, a))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(refreshed.netmap.serial.get(), held.serial.get() + 1);
+    assert_eq!(refreshed.digest, current.digest);
+    assert_eq!(
+        refreshed.netmap.projection.selection_versions.get(&a),
+        Version::new(2).ok().as_ref()
+    );
+    app.shutdown().await.unwrap();
+}

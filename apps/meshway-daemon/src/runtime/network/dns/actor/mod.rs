@@ -297,11 +297,14 @@ impl Actor {
 #[cfg(test)]
 mod tests;
 
-/// The DNS owner's health as the packet plane observes it. A fault the owner
-/// already re-proved waits for the plane's next hold and is not a failure:
-/// each fault is one failure and at most one recovery, never a level that
-/// stays ready while the plane cannot reach the hold (another component's
-/// installation failing first).
+/// The DNS owner's health as the packet plane observes it. Each fault is one
+/// failure and at most one recovery: a fault the plane has not acknowledged
+/// ([`Attachment::acknowledge`]) is a failure even when the owner re-proved
+/// it before the plane looked (its query authority stays withdrawn until the
+/// plane's next hold, so the plane withdraws and reinstalls); an
+/// acknowledged fault the owner re-proved is not, and waits for that hold
+/// without becoming a level that stays ready while the plane cannot reach
+/// the hold (another component's installation failing first).
 #[derive(Clone)]
 pub(in crate::runtime::network) struct Health {
     fault: watch::Receiver<Option<SystemDnsError>>,
@@ -314,15 +317,23 @@ impl Health {
     ) -> Self {
         Self { fault, recovered }
     }
-    /// Resolves while the owner has a fault it has not re-proved, or once
-    /// the owner has gone.
+    /// Resolves while the owner has a fault the plane has not acknowledged
+    /// or the owner has not re-proved, or once the owner has gone.
     pub async fn failed(mut self) {
+        // `fault` carries the plane's acknowledged version: a change since
+        // is a fault (or a hold's clearing) the plane has not reacted to.
+        let mut unacknowledged = self.fault.has_changed().unwrap_or(true);
         loop {
-            if self.fault.borrow_and_update().is_some() && !*self.recovered.borrow_and_update() {
+            if self.fault.borrow_and_update().is_some()
+                && (unacknowledged || !*self.recovered.borrow_and_update())
+            {
                 return;
             }
             tokio::select! {
-                changed = self.fault.changed() => if changed.is_err() { return },
+                changed = self.fault.changed() => {
+                    if changed.is_err() { return }
+                    unacknowledged = true;
+                },
                 changed = self.recovered.changed() => if changed.is_err() { return },
             }
         }
@@ -376,6 +387,14 @@ impl Attachment {
             dispatcher: None,
             exit_dns: watch::channel(None).0,
             prepare_failure: None,
+        }
+    }
+    /// The plane reacted to the owner's current fault: it withdrew for it,
+    /// or reinstalls after its recovery. [`Health::failed`] then reports
+    /// only a later fault, or this one while it is not re-proved.
+    pub fn acknowledge(&mut self) {
+        if let Some(actor) = &mut self.actor {
+            actor.fault.borrow_and_update();
         }
     }
     /// The checked reason of the current DNS fault, for the plane's report

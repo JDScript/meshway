@@ -409,6 +409,16 @@ Planck 22 行矩阵 `20261016T101528Z-e959e64c`（`9a640af4`，并行 4，墙钟
 
 Planck 23 行矩阵 `20261016T150131Z-1f0563e0`（`0ecab400`，并行 8，墙钟 1,082 秒，同机无其他矩阵）全部通过。证据 `.meshway/validation/x15/`。
 
+### S4 构建身份重编译与 DNS 故障边沿证据 {#s4}
+
+规则见 [Netmap 设计 · Server 侧](/v2/node/netmap-design#server-侧) 与[网络 worker 的恢复优先级](/v2/node/runtime#ownership-end)。
+
+**重编译**。OPS16（alpha.17 现场升级）lax 的已存 netmap（serial 38）由 alpha.16 编译、缺清除后保留的选择版本；Server 启动不重编译、续租只重签它，节点 CAS 连续 `version_conflict`。Server 单测（真实 App、加密存储、重开进程）：`app::tests::netmap::upgrade::a_start_by_another_build_recompiles_and_the_nodes_next_sync_receives_it`——同一构建重开不写任何 netmap／指纹行；换成“另一构建留下的”指纹与 `a` 的不同内容后重开，`a` 得到 serial +1 且 digest 等于本构建编译结果，`b` 保留 serial，`a` 持旧引用的 `sync` 立即收到新 serial；`node::selection::clear::a_start_by_another_build_restores_the_cleared_version_in_the_netmap` 按 OPS16 形状（清除后缺版本的旧 netmap）重开后 `selectionVersions` 恢复。Policy：`netmap::incremental::another_build_selects_every_node_and_unchanged_content_keeps_its_serial`。去掉启动重编译时两条 Server 测试失败。耗时（M3 Pro release，`mise run perf:netmap`）：1000 节点全量编译中位 2.37 s、同构建只算指纹 33 ms；6 节点 0.36／0.11 ms。证据 `.meshway/validation/s4/startup-cost/`。
+
+**DNS 故障边沿**。OPS16 前 planck（alpha.16）23:03:54 实测 Status 为 `synchronizing`／`suspended`、`applied` null 而 Mesh 包照通，23:05 重启后消失；按日志与代码，该状态始于 17:59:57（16:49 的 OPS15 采样仍为 running）：日志 17:59:57.946 `DNS owner health check failed`（`observe_deadline`，`abandoned after 4490 ms`），7 ms 后 `DNS owner recovered its system installation`，没有 `Required DNS component failed`／`recovered`；22:29:56–22:30:10 的 502／ServerBusy 只经 Control 发布 `retrying` → `controlReady`（刷新 `observedAt`），无 Engine 调用。worker 的 `Health::failed` 把“已重证”的故障视为非失败，于是包平面未撤回也未重装，DNS 查询许可停在撤回、故障停在未清（Status 的安装不再 current）。lax 同时段日志已随 lab 重建丢失。单测 `worker::lifecycle::tests::a_fault_re_proved_before_the_plane_looked_is_one_failure_and_one_recovery`（未确认的已重证故障 → 失败 → 恢复 → 确认后不再失败 → 新故障再失败）与 DNS actor 的 `failed_owner_keeps_its_fault_while_it_retries_recovery_until_it_succeeds`（确认前已重证的故障仍是失败）；把 `Health::failed` 改回旧语义时两者失败，X15 的 `…without_spinning` 仍通过。证据 `.meshway/validation/s4/planck-evidence/`、`.meshway/validation/s4/unit/`。
+
+Planck 23 行矩阵 `20261017T003157Z-9cccbf41`（`e7a01397`，并行 8，墙钟 1,099 秒，同机无其他矩阵）全部通过，无遗留容器／网络。证据 `.meshway/validation/s4/matrix/`。
+
 ### 当前验证证据
 
 `validate:matrix` 为每行独立保留报告并汇总 `matrix.json`／`summary.md`；通过结论同时要求 fixture `passed`、进程成功退出和本 run 无遗留资源。`--short` 的报告标记 `scope=diagnostic-short`：只运行 30 秒持续／纯接收窗口（退路 5 秒后触发），不要求已经跨原需求期限，未测到的延长为 null。其他场景仍执行，包括真实 instance 失效恢复；短模式不是整组验收，不能更新下述历史／当前通过状态。并发运行还需读取各行启动 load，不能与低负载串行结果不加区分地合并。

@@ -1,0 +1,9 @@
+[package]
+name = "meshway-build"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Build identity of Meshway executables"
+
+[lints]
+workspace = true

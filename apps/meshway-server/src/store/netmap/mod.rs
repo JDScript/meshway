@@ -63,6 +63,37 @@ pub(crate) enum Trigger {
     Node,
 }
 
+/// This Server's build identity, an input of every netmap fingerprint: the
+/// first compilation by another build compiles every Node again. See
+/// [`refresh`].
+static BUILD: std::sync::LazyLock<String> = std::sync::LazyLock::new(meshway_build::identity);
+
+/// Live networks, oldest first: those whose stored netmaps [`refresh`] checks
+/// when the Server starts.
+pub(crate) fn networks(tx: &Transaction<'_>) -> Result<Vec<NetworkId>, Error> {
+    let mut statement =
+        tx.prepare("SELECT id FROM networks WHERE deleted_at IS NULL ORDER BY sequence")?;
+    let rows = statement
+        .query_map([], |row| row.get::<_, Vec<u8>>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    rows.into_iter().map(id).collect()
+}
+
+/// Bring a network's stored netmaps to this build's compilation of its
+/// current inputs. A build that compiles them as the stored fingerprints
+/// record changes nothing; another build compiles every Node, and only
+/// content that differs gets a new serial (a Node's next `sync` receives it).
+/// Node-triggered: an over-limit Node is excluded rather than the start
+/// refused.
+pub(crate) fn refresh(
+    tx: &Transaction<'_>,
+    sealer: &Sealer,
+    network: NetworkId,
+    now: i64,
+) -> Result<Recompiled, Error> {
+    recompile(tx, sealer, network, now, Trigger::Node)
+}
+
 /// How many over-limit Nodes one Node-triggered recompilation excludes before
 /// it gives up and the operation itself is unavailable.
 const MAX_EXCLUDED: usize = 16;
@@ -122,6 +153,7 @@ pub(crate) fn recompile_with_rule_sets(
                 previous: &previous,
             },
             &previous_inputs,
+            &BUILD,
         ) {
             Ok(compiled) => break compiled,
             Err(NetmapError::Limit { node, bytes }) if trigger == Trigger::Node => {
@@ -568,6 +600,26 @@ pub(crate) fn load(
         return Err(Error::decode("node_netmaps.payload"));
     }
     Ok(netmap)
+}
+
+/// What an earlier build left: `node`'s head replaced by `netmap` (compiled
+/// differently, e.g. without a field this build adds) and every fingerprint
+/// of the network replaced by one this build never computes.
+#[cfg(test)]
+pub(crate) fn store_as_another_build(
+    tx: &Transaction<'_>,
+    sealer: &Sealer,
+    network: NetworkId,
+    node: NodeId,
+    netmap: &CompiledNetmap,
+    now: i64,
+) -> Result<(), Error> {
+    insert(tx, sealer, network, node, netmap, now)?;
+    tx.execute(
+        "UPDATE node_netmap_inputs SET digest=?2 WHERE network_id=?1",
+        params![bytes(network.as_uuid()), [0xa5_u8; 32].as_slice()],
+    )?;
+    Ok(())
 }
 
 fn bytes(id: &uuid::Uuid) -> &[u8] {

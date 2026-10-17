@@ -68,6 +68,8 @@ mise exec -- cargo run -p meshway-server --bin meshway-server --locked -- \
 
 空库初始化属于正常启动，不提供首用户认领／实例初始化 API，首个公开账户不取得全局管理权限。部署配置、存储和 Node 信任的切换须协调，不通过任意数据库错误自动清库。
 
+每次打开存储（服务启动及下列离线命令）在受理请求之前按本构建重编译全部存活网络的已存 netmap：同一构建不写任何行，换了构建只有内容变化的节点得到新 serial，升级后无需手动触发重编译。规则与耗时见 [Netmap 设计 · Server 侧](/v2/node/netmap-design#server-侧)，升级顺序见 [Server 升级](/v2/install#server-upgrade)。
+
 ## 运维命令
 
 运维密码恢复使用 `reset-password` binary，须先停止占有同一 dataDir 的服务：
