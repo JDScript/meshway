@@ -4,7 +4,9 @@
 
 ## A3 Node 接线与当前部署
 
-当前源码链接 `meshway-apple-bridge` 的 XCFramework，并由 extension 内唯一 Node 驱动 Apple Host。VM 仍安装下文的 A2 **0.1/2**，没有 VPN 配置；源码构建不代表 VM 已更新。通过 SSH 请求卸载旧 extension 时返回 `AuthorizationCreate failed: ... no user interaction was possible`（退出 70），须在来宾 GUI 完成旧 extension 的停用／授权后再部署。没有替换现有 App，没有停止 Tart。A3 私有证据在工作树 `.meshway/macos-lab/a3/`。
+当前源码链接 `meshway-apple-bridge` 的 XCFramework，并由 extension 内唯一 Node 驱动 Apple Host。VM 已通过 scp 部署 **0.1/4**，同 Team／bundle ID 的 0.1/2→0.1/3→0.1/4 替换均由 `--lab activate` 完成，退出 0，实际为 `activated enabled`，无需 GUI 再次批准 extension。旧版本等待来宾重启卸载。A3 私有证据在工作树 `.meshway/macos-lab/a3/`。
+
+**当前阻塞是新增 VPN 配置的独立确认。** A2 的 VPN 配置此前已移除；`loadAllFromPreferences`／`scutil --nc list` 无可复用配置。普通用户与 sudo 的 `start-private` 均停在保存配置；root 的 `start-system` 成功取得 `system.preferences.network` AuthorizationRef 并交给公开 `NEVPNManager.setAuthorization`，仍触发 `nehelper` 的 “Would Like to Add VPN Configurations / Allow” 确认，60 秒未回答退出 124。`profiles install` 明确返回不再支持安装；该 VM 的 DEP／MDM enrollment 都为 No。配置未保存，provider 与 Node 未启动，因此尚无 macOS 包流结论。
 
 宿主构建（先检查磁盘余量超过 50 GiB）：
 
@@ -16,18 +18,37 @@ MESHWAY_CORE_PROFILE=debug bash apps/meshway-apple/scripts/sign-lab.sh
 
 `build.sh` 先运行 `build-core.sh`：mise 锁定 Rust、`CARGO_INCREMENTAL=0`，默认复用当前工作树 `target/`（可用 `CARGO_TARGET_DIR` 指定），目标 `aarch64-apple-darwin`、deployment target 26.0；生成 Swift、头文件和 `build/MeshwayCore.xcframework`。`MESHWAY_CORE_PROFILE` 默认 release，debug 用于 lab。生成目录被忽略；Xcode 直接引用生成物。
 
-完成 GUI 授权与本页的升级清理后，用 `MESHWAY_VM_SSH_CONFIG` 和 `deploy-vm.sh` 部署。来宾 Node 命令（尚未完成 VM 验收）：
+已安装 App 的非 GUI 升级使用：
+
+```sh
+MESHWAY_VM_REPLACE=1 MESHWAY_VM_SSH_CONFIG=/Users/zeyu/Developer/meshway/.meshway/macos-lab/ssh/config \
+  bash apps/meshway-apple/scripts/deploy-vm.sh
+```
+
+脚本验证旧／新 App 签名、Team、bundle ID 和递增的整数 CFBundleVersion，保留旧 App 到来宾 `~/Meshway-backups/`，经 legacy scp 传送并校验新包，再调用 `--lab activate`；delegate 返回 `.replace`。不先卸载 extension，不移除 VPN preferences。已有版本时未显式选择 `MESHWAY_VM_REPLACE=1` 会停止。当前 VM 无共享目录，部署只用 scp。
+
+来宾 Node 命令（完整 VM 验收尚未完成）：
 
 ```sh
 MESHWAY_SERVER_URL=https://192.168.64.1:PORT /Applications/Meshway.app/Contents/MacOS/Meshway --lab start-private
 /Applications/Meshway.app/Contents/MacOS/Meshway --probe status
 /Applications/Meshway.app/Contents/MacOS/Meshway --probe up --enrollment-key @/absolute/private/enrollment-key
 /Applications/Meshway.app/Contents/MacOS/Meshway --probe down
+# 仅限 root 的 VM lab：提供网络管理授权；不绕过新增 VPN 的独立确认
+sudo /Applications/Meshway.app/Contents/MacOS/Meshway --lab start-system
 ```
 
 `start-private` 保留 lab action 名，当前捕获完全由签名 netmap 决定，不再固定 `10.203.0.0/24`；旧默认路由 lab action 在此包拒绝。Server origin 经 NE providerConfiguration 交给 Node，远端必须 HTTPS 并通过平台信任；未重新设置环境变量时保留已有 VPN 配置的 origin，供 stop/start 离线恢复。`--probe up --server ORIGIN` 只核对正在运行的 Node origin，不改变 IPC 13 或切换网络。每个 probe 请求新建一条 XPC／Rust IPC 会话，完整帧上限 64 KiB＋4 字节；回包消费后 ACK，5 秒无 ACK 关闭。状态目录为 root 0700 的 `/Library/Application Support/Meshway`，日志为 os_log `dev.meshway.node`／`node`。
 
 DNS 本机地址方案见 [Apple Host](/v2/node/apple-design#local-dns)：默认 `198.18.255.254`，用 `MESHWAY_DNS_ANCHOR_ADDRESS` 可覆盖同一本机参数；冲突阻断 applied。A3 目标环境为独立 Server 数据目录／随机端口和带所有权标签的 Linux peer 容器，不使用另一工作流的 `127.0.0.1:8420`。接入、双向包流、系统 DNS、租约／停机／恢复和离线载入当前均未取得 VM 证据。
+
+本次隔离环境使用真实 Server 二进制、独立数据目录与 60 秒签名租约，绑定 `192.168.64.1` 的随机端口；专用测试 CA／leaf TLS 入口单独提供 HTTPS。Linux peer 使用现有 `node_lab.build` 生成的 `9e4c040b` ELF 与已核验 Ubuntu 工具镜像，独立 bridge／状态卷、`io.meshway.a3` 标签，复用原 lab 的私有 mount／D-Bus／resolved 入口。该 peer 已接入、running、取得签名 netmap 并经系统 resolver 解析自己的 Mesh 名；不代表 macOS peer 已接入。私有参数、证书与证据见 `lab/server.json`、`lab/peer.json`、`lab/peer-verified.log`。
+
+### 黑屏观察与后续条件
+
+用户报告 VNC／Tart 窗口黑屏、左上角光标；环境 owner 已将来宾关机后，以 `tart run meshway-mac-vm --no-graphics` 启动，未挂 A2 目录。SSH 读到 WindowServer／loginwindow 存在，`kern.bootargs=amfi_get_out_of_my_way=1`；启动后负载曾达 730，WindowServer 约 90% CPU，随后负载回落。日志包含 SkyLight 对进程 ping 超时；现有采样没有足以归因 AMFI 的错误，也没有关闭该参数的对照，**原因未确定**。只采集日志，没有修复显示栈、修改 AMFI 或停止 Tart。
+
+继续 Node 验收需要恢复一份曾获批准的 VPN 配置，或通过已具备管理条件的 MDM 下发匹配此 provider 的 VPN payload；否则仍需能够完成一次 VPN 确认的交互会话。恢复显示属于单独环境处置，不由本页的网络验收脚本执行。新增 VPN 确认与 extension 替换授权是不同步骤。
 
 下文 A2 0.1/2 的平台实验步骤与结果描述的是薄壳版本；其中 echo／定时 fixture 与固定路由开关已退出当前源码。保留这些结论仅用于界定已经验证的平台前提。
 
@@ -44,11 +65,11 @@ DNS 本机地址方案见 [Apple Host](/v2/node/apple-design#local-dns)：默认
 | 网络 | Tart 默认 shared NAT；不传 `--net-bridged`、`--net-softnet`，不修改宿主 DNS／路由／防火墙 |
 | 构建 | `apps/meshway-apple/build/DerivedData`，macOS 26+、arm64、Swift 6 严格并发 |
 | 安装 | VM 的 `/Applications/Meshway.app`；extension 位于 App 的 `Contents/Library/SystemExtensions` |
-| 当前程序 | A2 Swift 薄壳；XPC echo／定时 fixture，未链接 Node／Rust bridge |
+| 当前程序 | A3 0.1/4 App／extension 已替换并启用；无已保存 VPN 配置，Node 未启动 |
 
-当前 VM 正常运行，IP 为 `192.168.64.2`，SSH 专用密钥和屏幕共享 `vnc://192.168.64.2` 可用。来宾实际读回 `csrutil status=disabled`、`kern.bootargs=amfi_get_out_of_my_way=1`（已重启）、`systemextensionsctl developer=on`、`kern.hv_vmm_present=1`。App／extension 0.1/2 已安装，extension 为 **activated enabled**；另有一个旧 0.1/1 实例为 `terminated waiting to uninstall on reboot`，由环境 owner 安排的来宾重启清理。用户批准 extension 和 VPN 后，真实 tunnel、root XPC、fd 发现和本页路由实验均已完成。最终 VPN 配置已移除，没有运行中的 shell tunnel；保留 extension 启用状态和 App，普通 HTTP 已恢复，默认路由为 en0→192.168.64.1。
+当前 VM IP 为 `192.168.64.2`，SSH 专用密钥可用；显示状态见上节。SIP disabled、AMFI 开发参数、developer mode 与虚拟机标记的 A2 读回见下文。A2 曾在用户批准 extension 和 VPN 后完成真实 tunnel、root XPC、fd 发现与路由实验，随后移除了 VPN 配置；该历史不表示当前 A3 已启动 Node。
 
-Tart 2.32.1 官方发布包校验通过；镜像拉取前余量 178 GiB，clone 后 140 GiB。常驻 Tart 进程由环境 owner 启动并挂载只读构建目录；验收操作使用 SSH，不停止或替换该进程。需要重启来宾时在来宾内执行 `sudo shutdown -r now`。
+Tart 2.32.1 官方发布包校验通过；镜像拉取前余量 178 GiB，clone 后 140 GiB。常驻 Tart 进程由环境 owner 启动；当前不挂构建目录，验收操作使用 SSH，不停止或替换该进程。需要重启来宾时在来宾内执行 `sudo shutdown -r now`。
 
 ## 安装 Tart 与创建 VM
 
@@ -158,7 +179,7 @@ TART="${TART:-tart}" bash apps/meshway-apple/scripts/deploy-vm.sh
 MESHWAY_VM_SSH_CONFIG="$MESHWAY_VM_SSH_CONFIG" bash apps/meshway-apple/scripts/deploy-vm.sh
 ```
 
-部署脚本默认从 Tart 解析 `meshway-mac-vm` 的 IP；指定 `MESHWAY_VM_SSH_CONFIG` 时，scp／ssh 都使用该 config 的 `meshway-mac-vm` Host。脚本检查 guest hypervisor 标记，再安装到 VM `/Applications`。若已有 App 则停止；更新前在 VM 内 Stop、移除本 App 的 VPN 配置、Deactivate extension、退出 App，并把旧 App 移到具名备份目录后重试。不要让宿主 Launch Services 打开构建产物。
+部署脚本默认从 Tart 解析 `meshway-mac-vm` 的 IP；指定 `MESHWAY_VM_SSH_CONFIG` 时，scp／ssh 都使用该 config 的 `meshway-mac-vm` Host。脚本检查 guest hypervisor 标记，再安装到 VM `/Applications`；已有 App 使用上文的同身份替换流程，保留 VPN 配置与授权。只有明确卸载本 App 时才移除 VPN 配置／Deactivate。不要让宿主 Launch Services 打开构建产物。
 
 SSH 尚不可用时可先挂只读产物目录，在恢复正常启动并登录后从 VM Finder 拷贝：
 
@@ -192,7 +213,7 @@ sudo /usr/bin/log show --last 5m --style compact --predicate 'category == "shell
 
 `--lab` 检查 `kern.hv_vmm_present`，只接受一个 action：`activate`、`start-private`、`start-default`、`start-all`、`start-default-local`、`start-all-local`、`app-frame`、`remove`。`start-default` 捕获默认 IPv4 路由，`start-all` 额外启用 `includeAllNetworks`；`-local` 后缀设置 `excludeLocalNetworks=true`，优先用此组合。`app-frame` 验证与调试视图共用的控制器 send／状态更新及连续推送，随后关闭 XPC。start 退出 0 只代表请求被接受，实际 connected、provider PID／UID、NE 设置和探测日志仍须分别读回。
 
-退出 77 表示需要 GUI 批准，78 表示要求重启，124 表示系统请求在 60 秒内未回答。不要反复提交代替用户批准。首次保存 VPN 配置如出现“Meshway would like to add VPN configurations”，仍需用户在 VM 中点 **Allow／允许**。当前 VM 已完成这两项批准。
+退出 77 表示需要 GUI 批准，78 表示要求重启，124 表示系统请求在 60 秒内未回答。不要反复提交代替用户批准。A2 曾完成 extension 与 VPN 两项批准；VPN 配置移除后，A3 新建配置再次请求 **Allow／允许**。同身份 extension 替换本身无需再次批准，当前阻塞范围见页首。
 
 外连实验分别在私网路由、默认 IPv4 路由、默认路由＋`includeAllNetworks` 下重启 tunnel。extension 在设置路由前完成一次 URLSession HTTPS 请求，在设置完成后再做一次（`https://1.1.1.1/cdn-cgi/trace`，10 秒截止），只记录 HTTP 状态或错误，不记录响应正文。对照普通 VM 进程访问同地址与 tunnel 包捕获，才能区分 provider 绕行、VM 物理网络不可用或请求落入隧道。URLSession 结果不能证明 Rust 普通 socket／UDP 的全部行为。
 

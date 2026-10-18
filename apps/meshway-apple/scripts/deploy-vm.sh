@@ -7,7 +7,7 @@ app="$root/build/DerivedData/Build/Products/${CONFIGURATION:-Debug}/Meshway.app"
 test -d "$app"
 codesign --verify --deep --strict "$app"
 ssh_command=(ssh)
-scp_command=(scp)
+scp_command=(scp -O)
 if [[ -n "${MESHWAY_VM_SSH_CONFIG:-}" ]]; then
   ssh_command+=(-F "$MESHWAY_VM_SSH_CONFIG")
   scp_command+=(-F "$MESHWAY_VM_SSH_CONFIG")

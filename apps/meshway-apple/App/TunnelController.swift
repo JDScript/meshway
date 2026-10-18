@@ -2,6 +2,8 @@ import Foundation
 import NetworkExtension
 import Observation
 import SystemExtensions
+import Security
+import Darwin
 
 @MainActor @Observable
 final class TunnelController: NSObject, OSSystemExtensionRequestDelegate {
@@ -37,7 +39,7 @@ final class TunnelController: NSObject, OSSystemExtensionRequestDelegate {
     }
 
     @discardableResult
-    func start(defaultRoute: Bool, includeAllNetworks: Bool, excludeLocalNetworks: Bool = false) async -> Bool {
+    func start(defaultRoute: Bool, includeAllNetworks: Bool, excludeLocalNetworks: Bool = false, systemAuthorization: Bool = false) async -> Bool {
         guard !defaultRoute, !includeAllNetworks else { message = "Default capture lab switches are not enabled for this Mesh-only package"; return false }
         guard !busy else { return false }
         busy = true
@@ -46,6 +48,23 @@ final class TunnelController: NSObject, OSSystemExtensionRequestDelegate {
             let identifier = try ShellConfiguration.value("MeshwayExtensionID")
             let managers = try await NETunnelProviderManager.loadAllFromPreferences()
             let manager = managers.first { ($0.protocolConfiguration as? NETunnelProviderProtocol)?.providerBundleIdentifier == identifier } ?? NETunnelProviderManager()
+            var authorization: AuthorizationRef?
+            defer { if let authorization { AuthorizationFree(authorization, []) } }
+            if systemAuthorization {
+                guard getuid() == 0 else { message = "System configuration lab action requires root"; return false }
+                let status = "system.preferences.network".withCString { rightName in
+                    var item = AuthorizationItem(name: rightName, valueLength: 0, value: nil, flags: 0)
+                    return withUnsafeMutablePointer(to: &item) { item in
+                        var rights = AuthorizationRights(count: 1, items: item)
+                        return AuthorizationCreate(&rights, nil, [.extendRights, .preAuthorize], &authorization)
+                    }
+                }
+                guard status == errAuthorizationSuccess, let authorization else {
+                    message = "Network configuration authorization failed (\(status))"; return false
+                }
+                manager.setAuthorization(authorization)
+                message = "Network configuration authorization obtained"
+            }
             let configuration = NETunnelProviderProtocol()
             configuration.providerBundleIdentifier = identifier
             let savedOrigin = (manager.protocolConfiguration as? NETunnelProviderProtocol)?.providerConfiguration?["serverOrigin"] as? String

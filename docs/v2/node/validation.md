@@ -15,13 +15,14 @@
 
 ## macOS 实验验收 {#macos}
 
-以下是 [Apple Host](/v2/node/apple-design) 的 VM 验收行，不属于 `validate_matrix.py` 的 Linux 入口。VM 仍为 A2 薄壳，A3 升级被来宾 GUI 授权阻塞；不得用原生 Rust 单测、Swift 编译／签名或 A2 URLSession 证据代替这些行。环境与操作见 [macOS lab](/v2/node/macos-lab)，私有记录位于 A3 工作树 `.meshway/macos-lab/a3/`。
+以下是 [Apple Host](/v2/node/apple-design) 的 VM 验收行，不属于 `validate_matrix.py` 的 Linux 入口。同身份 extension 非 GUI 替换已通过；当前阻塞是被移除的 VPN 配置需要再次确认，普通／root／AuthorizationRef 保存均未完成，provider 尚未启动。不得用原生 Rust 单测、Swift 编译／签名或 A2 URLSession 证据代替 Node 包流行。环境与操作见 [macOS lab](/v2/node/macos-lab)，私有记录位于 A3 工作树 `.meshway/macos-lab/a3/`。
 
 A3 共享边界的 Linux 回归（协调者执行，`9e4c040b`）：Planck 24 行矩阵 `20261018T021749Z-d3409553` 中其余 23 行通过，`roam/exit` 单行复跑 `20261018T024724Z-d36cf1ef` 通过；证据 `.meshway/validation/remote/`。此结果不替代 macOS 行。
 
 | 行 | 必需场景 | 状态 |
 | --- | --- | --- |
-| `macos/ipc` | App／probe → 签名认证 XPC → Rust IPC 13 的 Status、Up、Down、断连取消与有序 stop／join | 未验收（VM）；真实 Node control-only 分派已有原生单测，VM 尚未替换薄壳 |
+| `macos/upgrade` | 同 Team／bundle ID、递增 CFBundleVersion，经 scp 与 `.replace` 激活 | 平台步骤通过：0.1/2→0.1/3→0.1/4，无 GUI 批准，实际 activated enabled；`replace-3-complete.log`、`replace-4.log`、`headless-final-observations.log` |
+| `macos/ipc` | App／probe → 签名认证 XPC → Rust IPC 13 的 Status、Up、Down、断连取消与有序 stop／join | 未验收（VM）；真实 Node control-only 分派已有原生单测，VPN 配置未保存、provider 未启动 |
 | `macos/enrollment` | enrollment key 接入、验签与保存 netmap、实际 applied／running／peer | 未验收 |
 | `macos/mesh` | utun ↔ Linux peer 的双向 IPv4／IPv6 ping、TCP、UDP；Rust provider underlay 绕行 | 未验收 |
 | `macos/dns` | 系统 resolver 解析 Mesh 名、UDP／TCP DNS 与撤回 | 未验收（VM）；DNS 包服务、同一 OwnerDispatcher 的 UDP／TCP、排队回答撤回、地址／Mesh 池冲突已有组件测试 |

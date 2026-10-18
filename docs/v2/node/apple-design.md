@@ -122,7 +122,7 @@ System Extension 以 root 运行。状态目录为 `/Library/Application Support
 | 阶段 | 内容 | 验收 |
 | --- | --- | --- |
 | A1 | 抽出 `crates/meshway-node` 与平台 Host 接口；dataplane carrier 依赖包设备接口；IPC 分派与传输分离 | Linux 行为不变：`mise run check`、现有矩阵回归；workspace 在 macOS 原生编译 |
-| A2 | Tart 验收 VM；`apps/meshway-apple` 工程、System Extension 激活、XPC 通道与帧转发、桥接包 start／stop／IPC | **Swift／平台部分已验，VM Rust 分派待验**：VM 无 profile 激活、真实 tunnel、root XPC、签名拒绝、连续推送与断开取消通过；桥接的真实 control-only IPC 单测、Swift 编译／签名已通过，升级 VM 需 GUI 授权 |
+| A2 | Tart 验收 VM；`apps/meshway-apple` 工程、System Extension 激活、XPC 通道与帧转发、桥接包 start／stop／IPC | **Swift／平台部分已验，VM Rust 分派待验**：VM 无 profile 激活、真实 tunnel、root XPC、签名拒绝、连续推送与断开取消通过；桥接的真实 control-only IPC 单测、Swift 编译／签名已通过。同身份 extension 非 GUI 替换已实测；当前阻塞为重新创建 VPN 的独立确认，见 [macOS lab](/v2/node/macos-lab) |
 | A3 | Apple Host：utun fd、socket 绑定、NE 路由与负向边界、DNS、`NWPathMonitor` | 实现已接线，DNS 本机地址与包服务方案已定并接线；VM 与 Linux peer Mesh 双向 TCP／UDP、系统 Mesh DNS、租约到期 fail closed、离线载入均待验。出口使用与漫游完整验收留后续包 |
 | A4 | App 界面 | 人工验收 |
 | A5 | Developer ID 签名、公证、安装与升级 extension | 未关闭 SIP 的干净 VM 上安装、升级、卸载 |
