@@ -17,6 +17,27 @@ macro_rules! enumeration {
     };
 }
 enumeration!(
+    ClientArtifactProblem,
+    ipc::ArtifactProblem,
+    Download,
+    Integrity,
+    Storage,
+    Budget
+);
+enumeration!(
+    ClientUnavailableReason,
+    meshway_configuration::execution::UnavailableReason,
+    ExitUnavailable,
+    UnsupportedFamily,
+    EgressConflict,
+    Unauthorized,
+    NoPath,
+    RoutingCycle,
+    RoutingLimit,
+    MissingDependency,
+    InactiveNode
+);
+enumeration!(
     ClientPhase,
     ipc::Phase,
     Down,
@@ -275,7 +296,7 @@ pub struct ClientNetmap {
     pub issued_at: std::time::SystemTime,
     pub expires_at: std::time::SystemTime,
     pub missing_artifacts: Vec<String>,
-    pub artifact_problem: Option<String>,
+    pub artifact_problem: Option<ClientArtifactProblem>,
     pub routing: Option<ClientSelection>,
 }
 #[derive(Clone, Debug, uniffi::Record)]
@@ -338,7 +359,7 @@ impl From<ipc::Status> for ClientStatus {
                 issued_at: v.issued_at.into(),
                 expires_at: v.expires_at.into(),
                 missing_artifacts: v.missing_artifacts,
-                artifact_problem: v.artifact_problem.map(|v| format!("{v:?}")),
+                artifact_problem: v.artifact_problem.map(Into::into),
                 routing: v.routing.map(Into::into),
             }),
             saved: v.saved.map(Into::into),
@@ -543,7 +564,7 @@ pub enum ClientPingAction {
     Exit { node: String },
     Direct,
     Unmanaged,
-    Denied { reason: String },
+    Denied { reason: ClientUnavailableReason },
 }
 #[derive(Clone, Debug, uniffi::Enum)]
 pub enum ClientResolver {
@@ -579,6 +600,12 @@ pub struct ClientDecision {
 pub struct ClientRule {
     pub pointer: String,
     pub remark: String,
+    pub rule_set: Option<ClientRuleSetMatch>,
+}
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct ClientRuleSetMatch {
+    pub key: String,
+    pub entry: String,
 }
 #[derive(Clone, Debug, uniffi::Record)]
 pub struct ClientTarget {
@@ -616,6 +643,65 @@ pub struct ClientProbe {
     pub completed_at: Option<std::time::SystemTime>,
     pub path: Vec<String>,
     pub transport: Option<String>,
+    pub channels: Option<ClientProbeChannels>,
+}
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct ClientProbeChannels {
+    pub request: ClientChannel,
+    pub reply: Option<ClientChannel>,
+}
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct ClientChannel {
+    pub link_id: String,
+    pub socket_id: String,
+    pub peer_node_id: String,
+    pub transport: String,
+    pub local_address: String,
+    pub remote_address: String,
+    pub acquisition: ClientAcquisition,
+}
+enumeration!(
+    ClientEndpointKind,
+    ipc::EndpointKind,
+    Configured,
+    Interface,
+    Stun
+);
+#[derive(Clone, Debug, uniffi::Enum)]
+pub enum ClientAcquisition {
+    PublishedEndpoint,
+    LocalEndpoint,
+    StunEndpoint,
+    AcceptedInbound,
+    CoordinatedUdp {
+        attempt_id: String,
+        endpoint_source: ClientEndpointKind,
+    },
+}
+impl From<meshway_model::observations::ProbeChannel> for ClientChannel {
+    fn from(v: meshway_model::observations::ProbeChannel) -> Self {
+        Self {
+            link_id: v.link_id.to_string(),
+            socket_id: v.socket_id.to_string(),
+            peer_node_id: v.peer_node_id.to_string(),
+            transport: v.transport.as_str().into(),
+            local_address: v.local_address.to_string(),
+            remote_address: v.remote_address.to_string(),
+            acquisition: match v.acquisition {
+                ipc::LinkAcquisition::PublishedEndpoint => ClientAcquisition::PublishedEndpoint,
+                ipc::LinkAcquisition::LocalEndpoint => ClientAcquisition::LocalEndpoint,
+                ipc::LinkAcquisition::StunEndpoint => ClientAcquisition::StunEndpoint,
+                ipc::LinkAcquisition::AcceptedInbound => ClientAcquisition::AcceptedInbound,
+                ipc::LinkAcquisition::CoordinatedUdp {
+                    attempt_id,
+                    endpoint_source,
+                } => ClientAcquisition::CoordinatedUdp {
+                    attempt_id: attempt_id.to_string(),
+                    endpoint_source: endpoint_source.into(),
+                },
+            },
+        }
+    }
 }
 #[derive(Clone, Debug, uniffi::Enum)]
 pub enum ClientPingEvent {
@@ -663,6 +749,10 @@ impl From<ipc::PingEvent> for ClientPingEvent {
                     rule: v.rule.map(|v| ClientRule {
                         pointer: v.pointer,
                         remark: v.remark,
+                        rule_set: v.rule_set.map(|v| ClientRuleSetMatch {
+                            key: v.key,
+                            entry: v.entry,
+                        }),
                     }),
                     path: v.path.iter().map(ToString::to_string).collect(),
                     action: v.action.map(|v| match v {
@@ -673,7 +763,7 @@ impl From<ipc::PingEvent> for ClientPingEvent {
                         ipc::PingAction::Direct => ClientPingAction::Direct,
                         ipc::PingAction::Unmanaged => ClientPingAction::Unmanaged,
                         ipc::PingAction::Denied { reason } => ClientPingAction::Denied {
-                            reason: format!("{reason:?}"),
+                            reason: reason.into(),
                         },
                     }),
                     resolution: v.resolution.map(|v| ClientResolution {
@@ -726,6 +816,10 @@ impl From<ipc::PingEvent> for ClientPingEvent {
                     completed_at: v.completed_at.map(Into::into),
                     path: v.path.iter().map(ToString::to_string).collect(),
                     transport: v.transport,
+                    channels: v.channels.map(|v| ClientProbeChannels {
+                        request: v.request.into(),
+                        reply: v.reply.map(Into::into),
+                    }),
                 }),
             },
             ipc::PingEvent::Echo { echo: v } => Self::Echo {

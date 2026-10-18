@@ -1,8 +1,12 @@
 //! Debug-only visual fixtures built as real IPC values, serialized by its codec.
 use super::ClientError;
+#[cfg(any(debug_assertions, test))]
 use chrono::{Duration, Utc};
+#[cfg(any(debug_assertions, test))]
 use meshway_configuration::{NodeAddresses, selection::*};
+#[cfg(any(debug_assertions, test))]
 use meshway_model::{NetmapRef, NodeId, Sequence, Version};
+#[cfg(any(debug_assertions, test))]
 use meshway_protocol::ipc;
 
 #[derive(Clone, Copy, uniffi::Enum)]
@@ -13,6 +17,7 @@ pub enum ClientSample {
     Error,
 }
 
+#[cfg(any(debug_assertions, test))]
 pub(super) fn status(sample: ClientSample) -> ipc::Status {
     let now = Utc::now();
     let mut status = ipc::Status {
@@ -183,6 +188,7 @@ pub(super) fn status(sample: ClientSample) -> ipc::Status {
     }
     status
 }
+#[cfg(any(debug_assertions, test))]
 fn addresses(ipv4: &str, ipv6: &str) -> NodeAddresses {
     NodeAddresses {
         ipv4: Some(ipv4.parse().expect("sample IPv4")),
@@ -195,16 +201,26 @@ pub async fn client_sample_frame(
     sample: ClientSample,
     request_id: String,
 ) -> Result<Vec<u8>, ClientError> {
-    let response = ipc::Response {
-        version: ipc::VERSION,
-        request_id: request_id.parse().map_err(|_| ClientError::Input)?,
-        result: ipc::ResultBody::Status {
-            status: Box::new(status(sample)),
-        },
-    };
-    let mut frame = Vec::new();
-    ipc::write(&mut frame, &response)
-        .await
-        .map_err(|_| ClientError::Frame)?;
-    Ok(frame)
+    // Keep binding metadata stable when a Debug App links an optimized core.
+    // Release libraries contain no fixture data and cannot produce samples.
+    #[cfg(not(any(debug_assertions, test)))]
+    {
+        let _ = (sample, request_id);
+        Err(ClientError::Input)
+    }
+    #[cfg(any(debug_assertions, test))]
+    {
+        let response = ipc::Response {
+            version: ipc::VERSION,
+            request_id: request_id.parse().map_err(|_| ClientError::Input)?,
+            result: ipc::ResultBody::Status {
+                status: Box::new(status(sample)),
+            },
+        };
+        let mut frame = Vec::new();
+        ipc::write(&mut frame, &response)
+            .await
+            .map_err(|_| ClientError::Frame)?;
+        Ok(frame)
+    }
 }

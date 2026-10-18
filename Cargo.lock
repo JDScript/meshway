@@ -1944,6 +1944,7 @@ dependencies = [
  "chrono",
  "libc",
  "meshway-configuration",
+ "meshway-control",
  "meshway-dns",
  "meshway-logging",
  "meshway-model",

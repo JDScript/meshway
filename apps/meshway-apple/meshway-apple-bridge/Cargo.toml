@@ -20,6 +20,7 @@ meshway-node = { path = "../../../crates/meshway-node" }
 meshway-protocol = { path = "../../../crates/meshway-protocol" }
 meshway-model = { path = "../../../crates/meshway-model" }
 meshway-configuration = { path = "../../../crates/meshway-configuration" }
+meshway-control = { path = "../../../crates/meshway-control" }
 chrono.workspace = true
 serde_json.workspace = true
 meshway-logging = { path = "../../../crates/meshway-logging" }

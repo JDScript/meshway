@@ -141,3 +141,83 @@ async fn ping_stream_consumes_one_frame_with_sequence_and_terminal_boundary() {
         }
     }
 }
+
+#[tokio::test]
+async fn stream_rejects_skips_and_response_request_binding_changes() {
+    let client = request(ClientCommand::Ping {
+        target: "peer".into(),
+        count: 1,
+    });
+    let response = ipc::Response {
+        version: ipc::VERSION,
+        request_id: ID.parse().unwrap(),
+        result: ipc::ResultBody::Ping {
+            sequence: meshway_model::Sequence::new(1).unwrap(),
+            event: ipc::PingEvent::Preparing {
+                elapsed_ms: meshway_model::Sequence::MIN,
+            },
+        },
+    };
+    let mut frame = Vec::new();
+    ipc::write(&mut frame, &response).await.unwrap();
+    assert!(matches!(
+        client.decode(frame).await,
+        Err(ClientError::Contract)
+    ));
+    let frame = client_sample_frame(
+        ClientSample::Unenrolled,
+        "00000000-0000-4000-8000-000000000002".into(),
+    )
+    .await
+    .unwrap();
+    assert!(matches!(
+        request(ClientCommand::Status).decode(frame).await,
+        Err(ClientError::Contract)
+    ));
+}
+
+#[tokio::test]
+async fn netcheck_keeps_unknown_mapping_and_unmeasured_latency_distinct() {
+    let report = ipc::NetcheckReport {
+        observed_at: chrono::Utc::now(),
+        server: ipc::NetcheckServer {
+            origin: "https://server.example/".into(),
+            reachable: None,
+            rtt_us: None,
+        },
+        unavailable: None,
+        ipv4: false,
+        ipv6: false,
+        udp: false,
+        sockets: vec![ipc::NetcheckSocket {
+            resource: meshway_model::state::ResourceRef::Listener { key: "udp".into() },
+            bound_address: "0.0.0.0:10000".parse().unwrap(),
+            mappings: vec![],
+            port_mapping: ipc::PortMapping::Unknown,
+            endpoint_mapping: ipc::EndpointMapping::Unknown,
+        }],
+        observers: vec![],
+    };
+    let response = ipc::Response {
+        version: ipc::VERSION,
+        request_id: ID.parse().unwrap(),
+        result: ipc::ResultBody::Netcheck {
+            report: Box::new(report),
+        },
+    };
+    let mut frame = Vec::new();
+    ipc::write(&mut frame, &response).await.unwrap();
+    let ClientResult::Netcheck { report } = request(ClientCommand::Netcheck)
+        .decode(frame)
+        .await
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert!(report.server_reachable.is_none());
+    assert!(report.server_rtt_us.is_none());
+    assert_eq!(
+        report.sockets[0].endpoint_mapping,
+        ClientEndpointMapping::Unknown
+    );
+}

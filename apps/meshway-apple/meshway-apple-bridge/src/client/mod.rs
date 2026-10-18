@@ -2,7 +2,6 @@
 //! Decode the entire closed IPC contract before projecting presentation records.
 mod view;
 pub use view::*;
-#[cfg(debug_assertions)]
 mod samples;
 #[cfg(test)]
 mod tests;
@@ -10,6 +9,12 @@ mod tests;
 use meshway_model::{RequestId, Version};
 use meshway_protocol::ipc;
 use std::sync::{Arc, Mutex};
+
+/// Pure startup-origin validation shared with Control; no client or Node opens.
+#[uniffi::export]
+pub fn client_server_origin(value: String) -> Result<String, ClientError> {
+    meshway_control::server_origin(&value).map_err(|_| ClientError::Input)
+}
 
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 pub enum ClientError {
@@ -101,6 +106,9 @@ impl TryFrom<ClientCommand> for ipc::Command {
 }
 
 #[derive(uniffi::Enum)]
+// UniFFI record payloads cross the ABI by value; Box<Record> is not an FFI type.
+// Only one bounded response is decoded per request, outside the packet path.
+#[allow(clippy::large_enum_variant)]
 pub enum ClientResult {
     Status {
         status: ClientStatus,
@@ -167,7 +175,7 @@ impl ClientRequest {
             return Err(ClientError::Contract);
         }
         match (&self.request.command, &response.result) {
-            (_, ipc::ResultBody::Error { .. }) => {}
+            (_, ipc::ResultBody::Error { .. }) if progress.next == 0 => {}
             (ipc::Command::Ping { .. }, ipc::ResultBody::Ping { sequence, event })
                 if sequence.get() == progress.next =>
             {
