@@ -146,7 +146,16 @@ private final class SettingsSink: TunnelSettingsSink, @unchecked Sendable {
                 if !settings.routes6.isEmpty || settings.ipv6 != nil {
                     let addresses = settings.ipv6.map { [$0] } ?? []
                     let ipv6 = NEIPv6Settings(addresses: addresses, networkPrefixLengths: addresses.map { _ in NSNumber(value: 128) })
-                    ipv6.includedRoutes = settings.routes6.map { NEIPv6Route(destinationAddress: $0.address, networkPrefixLength: NSNumber(value: $0.prefix)) }
+                    // NE does not promote a ULA-only tunnel to the IPv6 default
+                    // service. Explicit half-defaults preserve the exact ::/0
+                    // boundary without depending on default-service election.
+                    ipv6.includedRoutes = settings.routes6.flatMap { route in
+                        if route.prefix == 0 {
+                            return [NEIPv6Route(destinationAddress: "::", networkPrefixLength: 1),
+                                    NEIPv6Route(destinationAddress: "8000::", networkPrefixLength: 1)]
+                        }
+                        return [NEIPv6Route(destinationAddress: route.address, networkPrefixLength: NSNumber(value: route.prefix))]
+                    }
                     value.ipv6Settings = ipv6
                 }
                 value.mtu = NSNumber(value: settings.mtu)
