@@ -20,8 +20,8 @@ pub use sync::{
     SyncTransport, sync_loop, sync_loop_with,
 };
 
-/// Same-content leases are written again once they extend the saved expiry
-/// by this much, bounding writes to about one per hour of renewals.
+/// Maximum persistence step for same-content renewals. Short leases use a
+/// quarter of their duration so a live Node does not retain an expired cache.
 const PERSIST_STEP_MS: u64 = 60 * 60 * 1000;
 
 /// Private caches of the held identity, removed when the Node leaves.
@@ -339,11 +339,14 @@ impl Control {
             NetmapChange::New { previous }
         };
         self.netmap.lease = Some(lease);
+        let persist_step = PERSIST_STEP_MS
+            .min(lease.expires_at_ms.saturating_sub(lease.issued_at_ms) / 4)
+            .max(1);
         if !matches!(change, NetmapChange::New { .. })
             && self
                 .netmap
                 .persisted_expiry
-                .is_none_or(|saved| lease.expires_at_ms >= saved.saturating_add(PERSIST_STEP_MS))
+                .is_none_or(|saved| lease.expires_at_ms >= saved.saturating_add(persist_step))
         {
             let base = self.netmap.base.clone().ok_or(Error::Lifecycle)?;
             self.persist_netmap(&base, &lease, signature).await?;
