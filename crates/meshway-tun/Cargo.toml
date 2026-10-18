@@ -12,5 +12,8 @@ tokio = { workspace = true, features = ["io-util"] }
 [target.'cfg(target_os = "linux")'.dependencies]
 tun-rs = { version = "=2.8.11", default-features = false, features = ["async_tokio"] }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+rustix.workspace = true
+
 [lints]
 workspace = true

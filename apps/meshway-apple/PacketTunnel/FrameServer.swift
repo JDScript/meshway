@@ -6,13 +6,15 @@ import os
 // each session owns its own bounded in-flight push and cancellation state.
 final class FrameServer: NSObject, NSXPCListenerDelegate, @unchecked Sendable {
     private let listener: NSXPCListener
+    private let node: NodeHandle
     private struct Membership {
         var stopping = false
         var sessions: [UUID: FrameSession] = [:]
     }
     private let sessions = Mutex(Membership())
 
-    override init() {
+    init(node: NodeHandle) {
+        self.node = node
         do {
             listener = NSXPCListener(machServiceName: try ShellConfiguration.value("MeshwayMachService"))
             super.init()
@@ -36,7 +38,8 @@ final class FrameServer: NSObject, NSXPCListenerDelegate, @unchecked Sendable {
 
     func listener(_ listener: NSXPCListener, shouldAcceptNewConnection connection: NSXPCConnection) -> Bool {
         let id = UUID()
-        let session = FrameSession(connection: connection)
+        let session = FrameSession(connection: connection, node: node)
+        guard session.available else { session.cancel(); return false }
         let accepted = sessions.withLock { state in
             guard !state.stopping, state.sessions.count < 8 else { return false }
             state.sessions[id] = session
@@ -57,20 +60,26 @@ final class FrameServer: NSObject, NSXPCListenerDelegate, @unchecked Sendable {
     }
 }
 
-final class FrameSession: NSObject, FrameService, @unchecked Sendable {
+final class FrameSession: NSObject, FrameService, FrameSink, @unchecked Sendable {
     private struct State {
         var cancelled = false
         var inFlight = false
         var deadline: ContinuousClock.Instant?
+        var rust: Session?
     }
     private let state = Mutex(State())
     private let connection: NSXPCConnection
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "Meshway", category: "xpc-shell")
     private let timer = DispatchSource.makeTimerSource(queue: DispatchQueue(label: "meshway.xpc.push"))
+    var available: Bool { state.withLock { !$0.cancelled && $0.rust != nil } }
 
-    init(connection: NSXPCConnection) {
+    init(connection: NSXPCConnection, node: NodeHandle) {
         self.connection = connection
         super.init()
+        do {
+            let session = try node.openIpcSession(sink: self)
+            state.withLock { $0.rust = session }
+        } catch { logger.error("Rust IPC session unavailable") }
         timer.setEventHandler { [weak self] in self?.tick() }
         timer.schedule(deadline: .now() + 1, repeating: 1)
         timer.activate()
@@ -87,7 +96,12 @@ final class FrameSession: NSObject, FrameService, @unchecked Sendable {
             timer.cancel()
             connection.invalidate()
             logger.notice("session cancelled peer-pid=\(self.connection.processIdentifier)")
-            // The Rust session/stream cancellation handle will be closed here.
+            let session = state.withLock { state in
+                let session = state.rust
+                state.rust = nil
+                return session
+            }
+            Task { await session?.close() }
         }
     }
 
@@ -100,16 +114,27 @@ final class FrameSession: NSObject, FrameService, @unchecked Sendable {
         dispatchFrame(frame, reply: reply)
     }
 
-    // Single integration point for future Rust dispatch. Echo is a shell fixture,
-    // deliberately not a second implementation of IPC 13 or Node Status.
     private func dispatchFrame(_ frame: Data, reply: @escaping @Sendable (Bool) -> Void) {
-        push(frame, completion: reply)
+        do {
+            guard let session = state.withLock({ $0.cancelled ? nil : $0.rust }) else { reply(false); return }
+            try session.send(frame: frame)
+            reply(true)
+        } catch { reply(false); cancel() }
     }
 
     private func tick() {
         let expired = state.withLock { $0.deadline.map { $0 < .now } ?? false }
         if expired { cancel(); return }
-        push(Data("shell-fixture: runtime=absent".utf8), completion: { _ in })
+    }
+
+    // UniFFI invokes this on a blocking worker, never on the Node's executor.
+    // One ACK and a fixed deadline bound both XPC buffering and stop/join.
+    func onFrame(frame: Data) -> Bool {
+        let done = DispatchSemaphore(value: 0)
+        let accepted = Mutex(false)
+        push(frame) { success in accepted.withLock { $0 = success }; done.signal() }
+        guard done.wait(timeout: .now() + 5) == .success else { cancel(); return false }
+        return accepted.withLock { $0 }
     }
 
     private func push(_ frame: Data, completion: @escaping @Sendable (Bool) -> Void) {

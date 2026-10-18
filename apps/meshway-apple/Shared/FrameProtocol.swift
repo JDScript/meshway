@@ -11,7 +11,7 @@ import Foundation
 }
 
 enum ShellConfiguration {
-    static let maximumFrameSize = 1_048_576
+    static let maximumFrameSize = 65_536 + 4
 
     static func value(_ key: String) throws -> String {
         guard let value = Bundle.main.object(forInfoDictionaryKey: key) as? String,

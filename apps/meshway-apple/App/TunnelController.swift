@@ -5,7 +5,7 @@ import SystemExtensions
 
 @MainActor @Observable
 final class TunnelController: NSObject, OSSystemExtensionRequestDelegate {
-    var message = "Shell only — Node runtime is not linked." {
+    var message = "Node bridge — control-only lab." {
         didSet { report?(message) }
     }
     var report: ((String) -> Void)?
@@ -37,6 +37,7 @@ final class TunnelController: NSObject, OSSystemExtensionRequestDelegate {
 
     @discardableResult
     func start(defaultRoute: Bool, includeAllNetworks: Bool, excludeLocalNetworks: Bool = false) async -> Bool {
+        guard !defaultRoute, !includeAllNetworks else { message = "Packet capture requires Apple Host (not connected yet)"; return false }
         guard !busy else { return false }
         busy = true
         defer { busy = false }
@@ -46,8 +47,9 @@ final class TunnelController: NSObject, OSSystemExtensionRequestDelegate {
             let manager = managers.first { ($0.protocolConfiguration as? NETunnelProviderProtocol)?.providerBundleIdentifier == identifier } ?? NETunnelProviderManager()
             let configuration = NETunnelProviderProtocol()
             configuration.providerBundleIdentifier = identifier
-            configuration.serverAddress = "Meshway shell lab"
-            configuration.providerConfiguration = ["labDefaultRoute": defaultRoute]
+            let origin = ProcessInfo.processInfo.environment["MESHWAY_SERVER_URL"] ?? "http://127.0.0.1:8430"
+            configuration.serverAddress = origin
+            configuration.providerConfiguration = ["serverOrigin": origin]
             configuration.includeAllNetworks = includeAllNetworks
             configuration.excludeLocalNetworks = excludeLocalNetworks
             manager.protocolConfiguration = configuration
@@ -57,7 +59,7 @@ final class TunnelController: NSObject, OSSystemExtensionRequestDelegate {
             try await manager.loadFromPreferences()
             self.manager = manager
             try manager.connection.startVPNTunnel()
-            message = "Tunnel start requested (shell drops captured packets)"
+            message = "Control-only Node start requested"
             return true
         } catch { message = error.localizedDescription; return false }
     }
@@ -88,19 +90,22 @@ final class TunnelController: NSObject, OSSystemExtensionRequestDelegate {
     }
 
     func send(_ text: String) {
+        disconnectFrames()
         do {
             if client == nil {
                 client = try FrameClient(output: { [weak self] frame, acknowledge in
                     Task { @MainActor in
                         defer { acknowledge() }
                         guard let self else { return }
-                        self.frames = String((self.frames + "\n" + String(decoding: frame, as: UTF8.self)).suffix(8192))
+                        guard let body = try? Probe.body(frame) else { self.message = "Invalid IPC frame"; return }
+                        self.frames = String((self.frames + "\n" + String(decoding: body, as: UTF8.self)).suffix(8192))
                     }
                 }, disconnected: { [weak self] in
                     Task { @MainActor in self?.client = nil; self?.message = "XPC disconnected" }
                 })
             }
-            client?.send(Data(text.utf8)) { [weak self] accepted in
+            let (_, request) = try Probe.request(Probe.Command(type: "status"))
+            client?.send(request) { [weak self] accepted in
                 Task { @MainActor in self?.message = accepted ? "Frame acknowledged" : "Frame rejected / busy" }
             }
         } catch { message = error.localizedDescription }

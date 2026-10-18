@@ -21,6 +21,11 @@ use std::{
 mod device;
 pub use device::{Io, PacketDevice};
 
+#[cfg(target_os = "macos")]
+mod apple;
+#[cfg(target_os = "macos")]
+pub use apple::Utun;
+
 /// Largest inner packets the path toward a destination carries, as the
 /// packet owner knows them from its channels: per Mesh address of a peer,
 /// and for every destination outside the Mesh. A host clamps the TCP MSS of

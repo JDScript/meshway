@@ -31,10 +31,9 @@ enum LabCommand {
                 controller.send("meshway-app-frame")
                 try? await Task.sleep(for: .seconds(4))
                 print(controller.frames)
-                let passed = controller.frames.contains("meshway-app-frame")
-                    && controller.frames.components(separatedBy: "shell-fixture: runtime=absent").count >= 3
+                let passed = controller.frames.contains("\"controlOnly\"") && controller.frames.contains("\"version\":13")
                 controller.disconnectFrames()
-                print(passed ? "PASS App controller echo + continuous pushes" : "FAIL App controller frames")
+                print(passed ? "PASS App controller IPC 13 Status" : "FAIL App controller Status")
                 exit(passed ? 0 : 1)
             case "remove":
                 exit(await controller.removeConfiguration() ? 0 : 1)

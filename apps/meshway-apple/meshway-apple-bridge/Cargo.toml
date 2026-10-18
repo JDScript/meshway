@@ -1,0 +1,32 @@
+[package]
+name = "meshway-apple-bridge"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[features]
+bindgen = ["uniffi/cli"]
+
+[[bin]]
+name = "meshway-apple-bindgen"
+path = "src/bin/bindgen.rs"
+required-features = ["bindgen"]
+
+[target.'cfg(target_os = "macos")'.dependencies]
+meshway-node = { path = "../../../crates/meshway-node" }
+meshway-protocol = { path = "../../../crates/meshway-protocol" }
+meshway-logging = { path = "../../../crates/meshway-logging" }
+tokio.workspace = true
+tokio-util.workspace = true
+thiserror.workspace = true
+uniffi = { version = "=0.32.0", features = ["tokio"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+# Generated ABI only; business code remains denied. See src/lib.rs.
+[lints.rust]
+unsafe_code = "deny"

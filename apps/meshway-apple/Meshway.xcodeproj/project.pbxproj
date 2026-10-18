@@ -18,8 +18,12 @@
   A00000000000000000000020 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
   A00000000000000000000021 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
   A00000000000000000000022 = {isa = PBXCopyFilesBuildPhase; buildActionMask = 2147483647; dstPath = "$(CONTENTS_FOLDER_PATH)/Library/SystemExtensions"; dstSubfolderSpec = 16; files = (A00000000000000000000045); name = "Embed System Extensions"; runOnlyForDeploymentPostprocessing = 0; };
-  A00000000000000000000023 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
-  A00000000000000000000024 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+  A00000000000000000000023 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000070); runOnlyForDeploymentPostprocessing = 0; };
+  A00000000000000000000024 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000071); runOnlyForDeploymentPostprocessing = 0; };
+  A00000000000000000000070 = {isa = PBXBuildFile; fileRef = A00000000000000000000072; };
+  A00000000000000000000071 = {isa = PBXBuildFile; fileRef = A00000000000000000000073; };
+  A00000000000000000000072 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = build/bindings/meshway_apple_bridge.swift; sourceTree = SOURCE_ROOT; };
+  A00000000000000000000073 = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = build/MeshwayCore.xcframework; sourceTree = SOURCE_ROOT; };
   A00000000000000000000030 = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000060, A00000000000000000000061); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
   A00000000000000000000031 = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000062, A00000000000000000000063); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
   A00000000000000000000032 = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000064, A00000000000000000000065); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
