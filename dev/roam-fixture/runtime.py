@@ -279,7 +279,7 @@ def execute(report, artifacts, runtime_os, traversal_os, platform, short, load, 
                 # A's Server path only; Docker may add an IPv4 subnet besides.
                 subnet6 = next((ipaddress.ip_network(config["Subnet"]) for config in inspection["IPAM"]["Config"]
                                 if ipaddress.ip_network(config["Subnet"]).version == 6), None)
-                if not inspection["Internal"] or inspection["Driver"] != "bridge" or str(subnet6) != ipv6[2]:
+                if not inspection["Internal"] or inspection["Driver"] != "bridge" or subnet6 != ipaddress.ip_network(ipv6[2]):
                     raise RuntimeError("srv6 must be the requested internal IPv6 bridge")
                 addresses[name] = {"controller": str(subnet6.network_address + 2), "a": str(subnet6.network_address + 3)}
                 continue
