@@ -6,7 +6,7 @@
 
 当前源码链接 `meshway-apple-bridge` 的 XCFramework，并由 extension 内唯一 Node 驱动 Apple Host。VM 已通过 scp 部署 **0.1/4**，同 Team／bundle ID 的 0.1/2→0.1/3→0.1/4 替换均由 `--lab activate` 完成，退出 0，实际为 `activated enabled`，无需 GUI 再次批准 extension。旧版本等待来宾重启卸载。A3 私有证据在工作树 `.meshway/macos-lab/a3/`。
 
-**当前阻塞是新增 VPN 配置的独立确认。** A2 的 VPN 配置此前已移除；`loadAllFromPreferences`／`scutil --nc list` 无可复用配置。普通用户与 sudo 的 `start-private` 均停在保存配置；root 的 `start-system` 成功取得 `system.preferences.network` AuthorizationRef 并交给公开 `NEVPNManager.setAuthorization`，仍触发 `nehelper` 的 “Would Like to Add VPN Configurations / Allow” 确认，60 秒未回答退出 124。`profiles install` 明确返回不再支持安装；该 VM 的 DEP／MDM enrollment 都为 No。配置未保存，provider 与 Node 未启动，因此尚无 macOS 包流结论。
+VPN 配置已由用户批准，固定 UUID 为 **8FFD2452-D3B2-48F2-A81D-9CD4900DCAB5**，名称 `Meshway Shell Lab`。此后不得移除或重建；启停用该 UUID 的 `scutil --nc start/stop`，修改参数时 load 现有 manager 后 save。实测把 Server origin 改为隔离 Server 时保存无再次确认、UUID 不变。provider 已在 root 下接入并 running，双栈包流与系统 DNS 的精确结果见[验收范围](/v2/node/validation#macos)。此前新建配置的确认与 root AuthorizationRef 失败记录保留在私有证据中。
 
 宿主构建（先检查磁盘余量超过 50 GiB）：
 
@@ -65,7 +65,7 @@ DNS 本机地址方案见 [Apple Host](/v2/node/apple-design#local-dns)：默认
 | 网络 | Tart 默认 shared NAT；不传 `--net-bridged`、`--net-softnet`，不修改宿主 DNS／路由／防火墙 |
 | 构建 | `apps/meshway-apple/build/DerivedData`，macOS 26+、arm64、Swift 6 严格并发 |
 | 安装 | VM 的 `/Applications/Meshway.app`；extension 位于 App 的 `Contents/Library/SystemExtensions` |
-| 当前程序 | A3 0.1/4 App／extension 已替换并启用；无已保存 VPN 配置，Node 未启动 |
+| 当前程序 | A3 0.1/4 App／extension；已批准固定 UUID 的 VPN 配置，须保留 |
 
 当前 VM IP 为 `192.168.64.2`，SSH 专用密钥可用；显示状态见上节。SIP disabled、AMFI 开发参数、developer mode 与虚拟机标记的 A2 读回见下文。A2 曾在用户批准 extension 和 VPN 后完成真实 tunnel、root XPC、fd 发现与路由实验，随后移除了 VPN 配置；该历史不表示当前 A3 已启动 Node。
 

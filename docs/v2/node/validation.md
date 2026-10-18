@@ -15,17 +15,17 @@
 
 ## macOS 实验验收 {#macos}
 
-以下是 [Apple Host](/v2/node/apple-design) 的 VM 验收行，不属于 `validate_matrix.py` 的 Linux 入口。同身份 extension 非 GUI 替换已通过；当前阻塞是被移除的 VPN 配置需要再次确认，普通／root／AuthorizationRef 保存均未完成，provider 尚未启动。不得用原生 Rust 单测、Swift 编译／签名或 A2 URLSession 证据代替 Node 包流行。环境与操作见 [macOS lab](/v2/node/macos-lab)，私有记录位于 A3 工作树 `.meshway/macos-lab/a3/`。
+以下是 [Apple Host](/v2/node/apple-design) 的 VM 验收行，不属于 `validate_matrix.py` 的 Linux 入口。用户已批准固定 VPN 配置，0.1/4 provider 实际运行；配置更新保存已验证不再次请求确认，UUID 保持不变。不得用原生 Rust 单测、Swift 编译／签名或 A2 URLSession 证据代替 Node 包流行。环境与操作见 [macOS lab](/v2/node/macos-lab)，私有记录位于 A3 工作树 `.meshway/macos-lab/a3/`。
 
 A3 共享边界的 Linux 回归（协调者执行，`9e4c040b`）：Planck 24 行矩阵 `20261018T021749Z-d3409553` 中其余 23 行通过，`roam/exit` 单行复跑 `20261018T024724Z-d36cf1ef` 通过；证据 `.meshway/validation/remote/`。此结果不替代 macOS 行。
 
 | 行 | 必需场景 | 状态 |
 | --- | --- | --- |
 | `macos/upgrade` | 同 Team／bundle ID、递增 CFBundleVersion，经 scp 与 `.replace` 激活 | 平台步骤通过：0.1/2→0.1/3→0.1/4，无 GUI 批准，实际 activated enabled；`replace-3-complete.log`、`replace-4.log`、`headless-final-observations.log` |
-| `macos/ipc` | App／probe → 签名认证 XPC → Rust IPC 13 的 Status、Up、Down、断连取消与有序 stop／join | 未验收（VM）；真实 Node control-only 分派已有原生单测，VPN 配置未保存、provider 未启动 |
-| `macos/enrollment` | enrollment key 接入、验签与保存 netmap、实际 applied／running／peer | 未验收 |
-| `macos/mesh` | utun ↔ Linux peer 的双向 IPv4／IPv6 ping、TCP、UDP；Rust provider underlay 绕行 | 未验收 |
-| `macos/dns` | 系统 resolver 解析 Mesh 名、UDP／TCP DNS 与撤回 | 未验收（VM）；DNS 包服务、同一 OwnerDispatcher 的 UDP／TCP、排队回答撤回、地址／Mesh 池冲突已有组件测试 |
+| `macos/ipc` | App／probe → 签名认证 XPC → Rust IPC 13 的 Status、Up、Down、断连取消与有序 stop／join | 部分已验：真实 Status、Up、同 UUID 配置更新与 tunnel stop/start；完整关闭／撤回待下面生命周期场景，`approved-baseline.log`、`existing-profile-update.log`、`mac-enroll.log` |
+| `macos/enrollment` | enrollment key 接入、验签与保存 netmap、实际 applied／running／peer | 通过：`mac-enrolled-status.log`，provider PID 881／root，revision 5 serial 2，running／applied，Native UDP direct peer |
+| `macos/mesh` | utun ↔ Linux peer 的双向 IPv4／IPv6 ping、TCP、UDP；Rust provider underlay 绕行 | 当前 wire 通过：两端双栈 ping 各 5/5；8 个方向／协议／地址族组合均校验 payload SHA-256（TCP 各 32768 B，UDP 各 512 B），`mac-ping-dns.log`、`lab/peer-ping-mac.log`、`lab/traffic-results.json` |
+| `macos/dns` | 系统 resolver 解析 Mesh 名、UDP／TCP DNS 与撤回 | 正向已验：VM 系统 resolver 返回 peer A／AAAA，198.18.255.254 的 UDP／TCP 查询为正确 TTL 0 回答，`mac-ping-dns.log`；撤回待生命周期场景 |
 | `macos/offline` | Server 停机，签名租约内持续通信 | 未验收 |
 | `macos/lease` | 短租约实际到期后包被丢弃且不落物理网络；Server 恢复后自动恢复 | 未验收 |
 | `macos/restart` | stopTunnel/startTunnel 后在 Server 离线时从 netmap.json 恢复，保持租约期限 | 未验收 |
