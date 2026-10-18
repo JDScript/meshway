@@ -17,6 +17,8 @@
 
 以下是 [Apple Host](/v2/node/apple-design) 的 VM 验收行，不属于 `validate_matrix.py` 的 Linux 入口。VM 仍为 A2 薄壳，A3 升级被来宾 GUI 授权阻塞；不得用原生 Rust 单测、Swift 编译／签名或 A2 URLSession 证据代替这些行。环境与操作见 [macOS lab](/v2/node/macos-lab)，私有记录位于 A3 工作树 `.meshway/macos-lab/a3/`。
 
+A3 共享边界的 Linux 回归（协调者执行，`9e4c040b`）：Planck 24 行矩阵 `20261018T021749Z-d3409553` 中其余 23 行通过，`roam/exit` 单行复跑 `20261018T024724Z-d36cf1ef` 通过；证据 `.meshway/validation/remote/`。此结果不替代 macOS 行。
+
 | 行 | 必需场景 | 状态 |
 | --- | --- | --- |
 | `macos/ipc` | App／probe → 签名认证 XPC → Rust IPC 13 的 Status、Up、Down、断连取消与有序 stop／join | 未验收（VM）；真实 Node control-only 分派已有原生单测，VM 尚未替换薄壳 |
