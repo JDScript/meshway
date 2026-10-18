@@ -1,6 +1,6 @@
 # macOS App 设计
 
-> **实验实现，Apple Host 与 Rust 桥接已接线，VM Node 验收未完成。**本页记录 macOS App 的已定方向、组件边界、分阶段计划与待验证项。现行 Node 行为的唯一定义仍是[运行状态](/v2/node/runtime)、[数据面](/v2/node/dataplane)与[连接获取](/v2/node/connectivity)；验收状态只以[验收范围](/v2/node/validation)为准。本页不加入文档导航。
+> **实验实现，Apple Host 的 VM Mesh 客户端验收已通过。**本页记录 macOS App 的已定方向、组件边界、分阶段计划与待验证项。现行 Node 行为的唯一定义仍是[运行状态](/v2/node/runtime)、[数据面](/v2/node/dataplane)与[连接获取](/v2/node/connectivity)；精确验收范围只以[验收范围](/v2/node/validation#macos)为准。本页不加入文档导航。
 >
 > 归档 `archive/apple-007e9deb`（`apps/apple`、`docs/apple-app.md`）对接已退役的 agent 协议，且由 App 自行联系 Server。本设计只按[复用白名单](#reuse)取用其中的工程外壳，不恢复其控制流程。
 
@@ -58,7 +58,7 @@ App / CLI(macOS) ──XPC──► extension ──FFI──► meshway-apple-b
 ### Apple Host {#apple-host}
 
 - **路由**：Mesh 网段放入 `includedRoutes`；选择出口方案时加入默认路由，必要时 `includeAllNetworks`。`apply(empty)` 与租约到期时保留 Mesh 网段（及已选出口的默认路由）的捕获并丢弃或回 ICMP admin-prohibited，作为负向边界，不撤 NE 设置让流量落回物理网络。
-- **underlay 绕行**：依赖 NE 不把 provider 自身流量送回本隧道，因此方案不引入 Linux 的 route／rule journal。URLSession IPv4 HTTPS 在默认路由／`includeAllNetworks` 下已验证，Rust 普通 socket／UDP 仍须补证据（[平台验证](#unverified)）。
+- **underlay 绕行**：依赖 NE 不把 provider 自身流量送回本隧道，因此方案不引入 Linux 的 route／rule journal。URLSession IPv4 HTTPS 在默认路由／`includeAllNetworks` 下已验证；Rust Native TCP／UDP 在 Mesh-only capture 下已完成真实双栈包流（[平台验证](#unverified)）。
 - **DNS**：`NEDNSSettings.matchDomains` 为 Mesh 区域；当[出口 DNS 判定](/v2/node/dataplane)要求普通查询经出口时加入空匹配域。DNS 服务地址是隧道内一个保留地址，worker 把发往该地址的 UDP／TCP 53 交给现有 `meshway-dns` OwnerDispatcher，不另写解析实现。
 - **漫游**：`NWPathMonitor` 的接口／网关变化映射为现有 `NetworkChange` path／refresh 分类，复用[漫游](/v2/node/connectivity#roaming)的通道跟随与重新穿透。
 
@@ -69,7 +69,7 @@ App / CLI(macOS) ──XPC──► extension ──FFI──► meshway-apple-b
 - NE 设置串行提交，只在系统 completion 成功后确认；5 秒未完成则报错并撤回包输出，原调用完成前拒绝下一次设置变更，不把超时当作已回滚或已安装。
 - `meshway_tun::Utun::from_owned_fd` 以 rustix＋Tokio AsyncFd 读写 Darwin 的 4 字节 AF 头，无后台包发送者；每次写只提交一个报文并返回已提交前缀，读批沿用 32 包／64 KiB 上限。桥接只用 `F_DUPFD_CLOEXEC` 复制 NE 的原 fd，成功结果才转入 `OwnedFd`；Swift 不调用 packetFlow 的读写。
 - Apple socket 工厂实现完整 `SocketFactory`，TCP／UDP 普通 socket 绑定当前物理接口（`IP_BOUND_IF`／`IPV6_BOUND_IF`）。资源差量沿用同一 `netmap_resource_compatible`；STUN／attempt／learned／channel 授权与 Linux 共用 `meshway_underlay::traversal`，没有 Apple 专用协调权限实现。实际 UDP 截断／缓冲与批量 I/O 复用 `meshway-transport` 的 macOS 后端。
-- Control 使用直连、平台信任、无代理／空闲连接池。Host 的 `RequestInterrupt` 在 path 事件时中断有限 HTTP 请求（包括 body 与 sync 长轮询）；refresh 不中断。该钩子不改变 Linux UDS relay。Control 与承载 bootstrap 各有独立的最多 8 个系统名称解析工作；已交给 libc 的解析不能强行中止，取消后不使用结果、保留工作预算，Host shutdown 等待 join。真实 provider 中的 Rust TCP／UDP 绕行、吞吐与漫游尚未验收。
+- Control 使用直连、平台信任、无代理／空闲连接池。Host 的 `RequestInterrupt` 在 path 事件时中断有限 HTTP 请求（包括 body 与 sync 长轮询）；refresh 不中断。该钩子不改变 Linux UDS relay。Control 与承载 bootstrap 各有独立的最多 8 个系统名称解析工作；已交给 libc 的解析不能强行中止，取消后不使用结果、保留工作预算，Host shutdown 等待 join。真实 provider 的 Rust Native TCP／UDP 已有 Mesh-only 包流证据；吞吐测量与漫游尚未验收。
 - MSS clamp 返回明确的不支持错误，使用隧道 MTU 与既有 PTB；不宣称安装了 clamp。出口角色不声明能力；外部直接 ICMP 不支持。出口使用仍未启用：出现外部受管范围时只安装负向默认捕获并拒绝 applied，不直出；该保留边界需显式 down 才移除。
 
 #### 本机 DNS 服务地址（已定） {#local-dns}
@@ -82,11 +82,11 @@ macOS 与 Linux 共用本机 `SystemDnsSettings.anchor_address`，默认 **198.1
 - 入口与出口队列各至多 32 包，至多 128 个查询、32 条 TCP 连接；TCP 每连接顺序处理查询，保留回答许可至 ACK 或结束。每次实际 TUN 写 poll 都检查原回答许可；租约到期发布空 DNS scope，正向回答失效，保留的服务可回 SERVFAIL，DNS 捕获不撤到物理网络。显式 down 才恢复系统 DNS 并移除捕获。
 - 配置上游 DNS 的事务随机化、来源／问题校验、截断与 TCP framing 只有 `meshway-dns::upstream` 一份实现，Linux 与 Apple 只提供各自的受保护 socket。未捕获名称仍由系统处理；需要将原系统分域规则压平作 fallback 的搜索域组合仍不支持，与现有分域后端限制一致。
 
-上述 UDP／TCP 查询、TTL 0 MagicDNS、排队回答撤回与安装冲突已有组件测试；系统 resolver、NE 沙箱与真实 utun 路径仍须 VM 验收。
+上述 UDP／TCP 查询、TTL 0 MagicDNS、排队回答撤回与安装冲突已有组件测试；VM 系统 resolver、真实 utun DNS、租约到期 SERVFAIL 与 Down 后系统 DNS 清理已验，见[验收范围](/v2/node/validation#macos)。
 
 ### 状态目录与身份
 
-System Extension 以 root 运行。状态目录为 `/Library/Application Support/Meshway`（root、0700），extension 的 Sandbox entitlement 只为该目录声明 absolute-path read-write exception；实际 VM 沙箱放行尚未验收。沿用 Control 与 `meshway-private-storage` 的私有文件与原子发布，不为 Apple 另写 Keychain 身份存储。`netmap.json` 离线载入与租约语义与 Linux 相同。
+System Extension 以 root 运行。状态目录为 `/Library/Application Support/Meshway`（root、0700），extension 的 Sandbox entitlement 只为该目录声明 absolute-path read-write exception；VM 已实测创建目录、写入身份／签名 netmap 与离线重启载入。沿用 Control 与 `meshway-private-storage` 的私有文件与原子发布，不为 Apple 另写 Keychain 身份存储。`netmap.json` 离线载入与租约语义与 Linux 相同，续租保存步长见 [Control](/v2/node/control)。
 
 ### App ↔ extension IPC {#ipc}
 
@@ -122,8 +122,8 @@ System Extension 以 root 运行。状态目录为 `/Library/Application Support
 | 阶段 | 内容 | 验收 |
 | --- | --- | --- |
 | A1 | 抽出 `crates/meshway-node` 与平台 Host 接口；dataplane carrier 依赖包设备接口；IPC 分派与传输分离 | Linux 行为不变：`mise run check`、现有矩阵回归；workspace 在 macOS 原生编译 |
-| A2 | Tart 验收 VM；`apps/meshway-apple` 工程、System Extension 激活、XPC 通道与帧转发、桥接包 start／stop／IPC | **Swift／平台部分已验，VM Rust 分派待验**：VM 无 profile 激活、真实 tunnel、root XPC、签名拒绝、连续推送与断开取消通过；桥接的真实 control-only IPC 单测、Swift 编译／签名已通过。同身份 extension 非 GUI 替换已实测；当前阻塞为重新创建 VPN 的独立确认，见 [macOS lab](/v2/node/macos-lab) |
-| A3 | Apple Host：utun fd、socket 绑定、NE 路由与负向边界、DNS、`NWPathMonitor` | 实现已接线，DNS 本机地址与包服务方案已定并接线；VM 与 Linux peer Mesh 双向 TCP／UDP、系统 Mesh DNS、租约到期 fail closed、离线载入均待验。出口使用与漫游完整验收留后续包 |
+| A2 | Tart 验收 VM；`apps/meshway-apple` 工程、System Extension 激活、XPC 通道与帧转发、桥接包 start／stop／IPC | 平台激活、root XPC、签名拒绝、薄壳推送／取消与同身份非 GUI 替换已验；A3 已补真实 Rust IPC 13 Status／Up／Down 与有序关闭。流式 Rust IPC 的 VM 取消验收仍单列于[验收范围](/v2/node/validation#macos) |
+| A3 | Apple Host：utun fd、socket 绑定、NE 路由与负向边界、DNS、`NWPathMonitor` | Mesh 客户端 VM 验收通过：Native TCP／UDP、内层双栈双向 ping／TCP／UDP、系统 Mesh DNS、Server 停机租约内通信、到期 fail closed、自动恢复、stop/start 离线载入。出口使用、漫游与性能验收留后续包 |
 | A4 | App 界面 | 人工验收 |
 | A5 | Developer ID 签名、公证、安装与升级 extension | 未关闭 SIP 的干净 VM 上安装、升级、卸载 |
 
@@ -131,8 +131,8 @@ System Extension 以 root 运行。状态目录为 `/Library/Application Support
 
 以下记录本设计的平台依赖与实测边界。Swift 薄壳证据不替代 Rust Node 接线与包流验收；实验环境、命令与管理通道保护见 [macOS lab](/v2/node/macos-lab)。
 
-1. Packet Tunnel System Extension 自身创建的 socket 不进入本隧道，包括 `includeAllNetworks` 打开时。**本次 URLSession IPv4 HTTPS 范围成立**：私网 capture，以及默认 IPv4 路由配 `(includeAllNetworks, excludeLocalNetworks)=(false,true)/(true,true)/(true,false)`，provider 在 NE 设置前后请求 `https://1.1.1.1/cdn-cgi/trace` 均为 HTTP 200。三个默认路由用例中，普通来宾进程同目标请求在 capture 期间均 8 秒超时（HTTP 000），无 VPN 前置对照及独立回滚后均为 200，证明 capture 生效而 provider 外连可用。此结论不外推到 Rust 普通 TCP／UDP socket、IPv6、漫游或长期连接。
-2. 从 NE 进程中找到 utun 描述符并以 Rust 批量读写的可行性与性能，以及 `NEPacketTunnelFlow` 退路的吞吐。**fd 发现前置成立，批量 I/O／性能未验证**：provider PID 915、UID 0 在 NE 设置后以 `getsockopt(SYSPROTO_CONTROL, UTUN_OPT_IFNAME)` 实际取得 `utun4`，首次 fd 5，后续 stop/start 为 fd 7；`lsof` 独立显示 `com.apple.net.utun_control`。扫描最多 4096 个 fd，不依赖 `getsockname` 的地址族过滤，不复制、接管或读写 fd。描述符生命周期／所有权、Rust 批处理与吞吐仍属 A3。
+1. Packet Tunnel System Extension 自身创建的 socket 不进入本隧道，包括 `includeAllNetworks` 打开时。**URLSession IPv4 HTTPS 范围成立**：私网 capture，以及默认 IPv4 路由配 `(includeAllNetworks, excludeLocalNetworks)=(false,true)/(true,true)/(true,false)`，provider 在 NE 设置前后请求 `https://1.1.1.1/cdn-cgi/trace` 均为 HTTP 200。三个默认路由用例中，普通来宾进程同目标请求在 capture 期间均 8 秒超时（HTTP 000），无 VPN 前置对照及独立回滚后均为 200，证明 capture 生效而 provider 外连可用。A3 另已实测 Mesh-only capture 下 Rust HTTPS Control、Native TCP／UDP IPv4 外层承载及双栈内层包流；不外推到 Rust 默认路由／`includeAllNetworks`、外层 IPv6 或漫游。
+2. 从 NE 进程中找到 utun 描述符并以 Rust 批量读写的可行性与性能，以及 `NEPacketTunnelFlow` 退路的吞吐。**A3 Rust fd 包路径与 stop/start 已验，吞吐未测量**：`getsockopt(SYSPROTO_CONTROL, UTUN_OPT_IFNAME)` 扫描最多 4096 个 fd，桥接复制后交唯一 `Utun`；VM `utun4` 的真实双栈包流、DNS、租约撤回与离线重新打开均通过。TCP 每方向校验 32768 B 不代表吞吐或批处理性能结论；packetFlow 退路尚未实现／验收。
 3. 关闭 SIP 与 AMFI 校验的 VM 中，未经 provisioning profile 的 NE entitlement 能否激活 System Extension。**本 VM 开发形态成立（2026-10-18 UTC）**：macOS 26.6.2 (25G83) arm64，SIP disabled、`kern.bootargs=amfi_get_out_of_my_way=1`、developer mode on；真实 Apple Development 签名、无 embedded provisioning profile 的 App／extension 0.1/2，在用户批准 extension 和 VPN 配置后实际 `activated enabled`，tunnel 为 Connected、地址 `10.203.0.2`、接口 `utun4`，provider 以 UID 0 运行。停止／重启、扩大 capture 与最终移除 VPN 配置已执行；不代表 SIP 开启时的 Developer ID 分发或 A5 通过。
 4. root System Extension 提供的 XPC Mach service 能被用户 App 与 CLI 连接，并能以代码签名要求认证对端。**Swift 帧通道范围成立**：root provider 的 `CDWF84L4TA.dev.meshway.lab.meshway.ipc` 分别通过 App 控制器路径（`--lab app-frame`，复用调试视图的 send／状态更新）和 `--probe` 取得 echo、ACK 与至少两个独立连续 push。真实开发证书、同 Team、错误 signing identifier 的客户端退出 2，服务端记录 `Dropping check-in message due to code signing requirement`，授权客户端随后成功。正常关闭和客户端 SIGTERM 后均记录对应 peer PID 的 session cancelled，重新启动 tunnel 后两入口仍成功。这里验证的是 shell fixture 和连接级取消；不是 Rust IPC 13 分派／ping 流，也不替代 GUI 人工视觉验收。
 

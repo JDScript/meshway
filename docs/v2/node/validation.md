@@ -15,20 +15,22 @@
 
 ## macOS 实验验收 {#macos}
 
-以下是 [Apple Host](/v2/node/apple-design) 的 VM 验收行，不属于 `validate_matrix.py` 的 Linux 入口。用户已批准固定 VPN 配置，0.1/4 provider 实际运行；配置更新保存已验证不再次请求确认，UUID 保持不变。不得用原生 Rust 单测、Swift 编译／签名或 A2 URLSession 证据代替 Node 包流行。环境与操作见 [macOS lab](/v2/node/macos-lab)，私有记录位于 A3 工作树 `.meshway/macos-lab/a3/`。
+以下是 [Apple Host](/v2/node/apple-design) 的 VM 验收行，不属于 `validate_matrix.py` 的 Linux 入口。用户已批准固定 VPN 配置，0.1/5 provider（`e5dc03a7`）实际运行；配置更新保存已验证不再次请求确认，UUID 保持不变。VM 为 macOS 26.6.2 arm64，Linux peer 为 `9e4c040b`；外层 IPv4、Mesh-only capture。不得用原生 Rust 单测、Swift 编译／签名或 A2 URLSession 证据代替 Node 包流行。环境与操作见 [macOS lab](/v2/node/macos-lab)，私有记录位于 A3 工作树 `.meshway/macos-lab/a3/`。
 
 A3 共享边界的 Linux 回归（协调者执行，`9e4c040b`）：Planck 24 行矩阵 `20261018T021749Z-d3409553` 中其余 23 行通过，`roam/exit` 单行复跑 `20261018T024724Z-d36cf1ef` 通过；证据 `.meshway/validation/remote/`。此结果不替代 macOS 行。
 
 | 行 | 必需场景 | 状态 |
 | --- | --- | --- |
-| `macos/upgrade` | 同 Team／bundle ID、递增 CFBundleVersion，经 scp 与 `.replace` 激活 | 平台步骤通过：0.1/2→0.1/3→0.1/4，无 GUI 批准，实际 activated enabled；`replace-3-complete.log`、`replace-4.log`、`headless-final-observations.log` |
-| `macos/ipc` | App／probe → 签名认证 XPC → Rust IPC 13 的 Status、Up、Down、断连取消与有序 stop／join | 部分已验：真实 Status、Up、同 UUID 配置更新与 tunnel stop/start；完整关闭／撤回待下面生命周期场景，`approved-baseline.log`、`existing-profile-update.log`、`mac-enroll.log` |
+| `macos/upgrade` | 同 Team／bundle ID、递增 CFBundleVersion，经 scp 与 `.replace` 激活 | 通过：0.1/2→0.1/3→0.1/4→0.1/5，无 GUI 再批准 extension，实际 activated enabled；`replace-3-complete.log`、`replace-4.log`、`replace-5.log`、`start-5.log` |
+| `macos/ipc` | App／probe → 签名认证 XPC → Rust IPC 13 的 Status、Up、Down、断连取消与有序 stop／join | Status／Up／Down 与 stop/start 已验；Down 收敛为 down／stopped，Node stopped failed=false，`mac-enroll.log`、`final-down-status.json`、`final-vm-retained.log`。Rust 流式 IPC 的 VM 断连取消仍未单独验收；A2 薄壳取消不替代该项 |
 | `macos/enrollment` | enrollment key 接入、验签与保存 netmap、实际 applied／running／peer | 通过：`mac-enrolled-status.log`，provider PID 881／root，revision 5 serial 2，running／applied，Native UDP direct peer |
-| `macos/mesh` | utun ↔ Linux peer 的双向 IPv4／IPv6 ping、TCP、UDP；Rust provider underlay 绕行 | 当前 wire 通过：两端双栈 ping 各 5/5；8 个方向／协议／地址族组合均校验 payload SHA-256（TCP 各 32768 B，UDP 各 512 B），`mac-ping-dns.log`、`lab/peer-ping-mac.log`、`lab/traffic-results.json` |
-| `macos/dns` | 系统 resolver 解析 Mesh 名、UDP／TCP DNS 与撤回 | 正向已验：VM 系统 resolver 返回 peer A／AAAA，198.18.255.254 的 UDP／TCP 查询为正确 TTL 0 回答，`mac-ping-dns.log`；撤回待生命周期场景 |
-| `macos/offline` | Server 停机，签名租约内持续通信 | 未验收 |
-| `macos/lease` | 短租约实际到期后包被丢弃且不落物理网络；Server 恢复后自动恢复 | 未验收 |
-| `macos/restart` | stopTunnel/startTunnel 后在 Server 离线时从 netmap.json 恢复，保持租约期限 | 未验收 |
+| `macos/mesh` | utun ↔ Linux peer 的双向 IPv4／IPv6 ping、TCP、UDP；Rust provider underlay 绕行 | 当前 wire 通过：两端双栈 ping 各 5/5；Native TCP 与 Native UDP 分别读回 direct 后，各通过 8 个方向／协议／地址族组合的 payload SHA-256（TCP 各 32768 B，UDP 各 512 B），`mac-ping-dns.log`、`lab/peer-ping-mac.log`、`lab/tcp-carrier-results.json`、`lab/udp-carrier-results.json` |
+| `macos/dns` | 系统 resolver 解析 Mesh 名、UDP／TCP DNS 与撤回 | 通过：系统 resolver 返回 peer A／AAAA，198.18.255.254 的 UDP／TCP 查询为正确 TTL 0 回答；到期为 SERVFAIL，Down 完成后 Mesh resolver／路由移除，`mac-ping-dns.log`、`lab/expiry-results.json`、`final-dns-routes.log` |
+| `macos/offline` | Server 停机，签名租约内通信 | 短租约场景通过：确认真实 Server PID 已退出后，四向双栈 ping 各 3/3、系统 Mesh DNS 成功；`lab/expiry-results.json`。该场景约 60 秒窗口，不代表 10 分钟离线长流验收 |
+| `macos/lease` | 短租约实际到期后包被丢弃且不落物理网络；Server 恢复后自动恢复 | 通过（Native UDP）：停机 04:55:42 UTC，实际截止 04:56:41 UTC；两端 netmap／applied 撤回，四向 ping 失败、DNS SERVFAIL，Mesh 双栈与 DNS 路由仍指向 utun，en0 过滤抓包 0 包／内核丢包 0。恢复无第二次 up，包流复核通过；`lab/expiry-version5.log`、`lab/expiry-results.json`、`lab/final-version5-recovery.json`、`lab/final-udp-traffic.log` |
+| `macos/restart` | stopTunnel/startTunnel 后在 Server 离线时从 netmap.json 恢复，保持租约期限 | 通过（0.1/5）：Server 退出后同 UUID stop/start，同身份、缓存 SHA-256、实际保存的签名截止 04:53:29.862 UTC 均不变，双栈 ping 与系统 DNS 成功；`lab/offline-restart-results.json`。短租约续存修复在唯一 Control 中，见[缓存语义](/v2/node/control) |
+
+以上不覆盖外层 IPv6、默认路由／出口使用、漫游、性能、正式 App UI／macOS CLI 或 Developer ID 分发。主线 Linux 矩阵引用对应 `9e4c040b`；后续短租约续存改动另有共享 Control 重启回归，不能把原矩阵标成该改动后的实测。
 
 ## 验收矩阵
 

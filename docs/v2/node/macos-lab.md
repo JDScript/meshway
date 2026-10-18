@@ -4,7 +4,7 @@
 
 ## A3 Node 接线与当前部署
 
-当前源码链接 `meshway-apple-bridge` 的 XCFramework，并由 extension 内唯一 Node 驱动 Apple Host。VM 已通过 scp 部署 **0.1/4**，同 Team／bundle ID 的 0.1/2→0.1/3→0.1/4 替换均由 `--lab activate` 完成，退出 0，实际为 `activated enabled`，无需 GUI 再次批准 extension。旧版本等待来宾重启卸载。A3 私有证据在工作树 `.meshway/macos-lab/a3/`。
+当前源码链接 `meshway-apple-bridge` 的 XCFramework，并由 extension 内唯一 Node 驱动 Apple Host。VM 已通过 scp 部署 **0.1/5**，同 Team／bundle ID 的 0.1/2→0.1/3→0.1/4→0.1/5 替换均由 `--lab activate` 完成，退出 0，实际为 `activated enabled`，无需 GUI 再次批准 extension。旧版本等待来宾重启卸载。A3 私有证据在工作树 `.meshway/macos-lab/a3/`。
 
 VPN 配置已由用户批准，固定 UUID 为 **8FFD2452-D3B2-48F2-A81D-9CD4900DCAB5**，名称 `Meshway Shell Lab`。此后不得移除或重建；启停用该 UUID 的 `scutil --nc start/stop`，修改参数时 load 现有 manager 后 save。实测把 Server origin 改为隔离 Server 时保存无再次确认、UUID 不变。provider 已在 root 下接入并 running，双栈包流与系统 DNS 的精确结果见[验收范围](/v2/node/validation#macos)。此前新建配置的确认与 root AuthorizationRef 失败记录保留在私有证据中。
 
@@ -27,7 +27,7 @@ MESHWAY_VM_REPLACE=1 MESHWAY_VM_SSH_CONFIG=/Users/zeyu/Developer/meshway/.meshwa
 
 脚本验证旧／新 App 签名、Team、bundle ID 和递增的整数 CFBundleVersion，保留旧 App 到来宾 `~/Meshway-backups/`，经 legacy scp 传送并校验新包，再调用 `--lab activate`；delegate 返回 `.replace`。不先卸载 extension，不移除 VPN preferences。已有版本时未显式选择 `MESHWAY_VM_REPLACE=1` 会停止。当前 VM 无共享目录，部署只用 scp。
 
-来宾 Node 命令（完整 VM 验收尚未完成）：
+来宾 Node 命令：
 
 ```sh
 MESHWAY_SERVER_URL=https://192.168.64.1:PORT /Applications/Meshway.app/Contents/MacOS/Meshway --lab start-private
@@ -40,15 +40,15 @@ sudo /Applications/Meshway.app/Contents/MacOS/Meshway --lab start-system
 
 `start-private` 保留 lab action 名，当前捕获完全由签名 netmap 决定，不再固定 `10.203.0.0/24`；旧默认路由 lab action 在此包拒绝。Server origin 经 NE providerConfiguration 交给 Node，远端必须 HTTPS 并通过平台信任；未重新设置环境变量时保留已有 VPN 配置的 origin，供 stop/start 离线恢复。`--probe up --server ORIGIN` 只核对正在运行的 Node origin，不改变 IPC 13 或切换网络。每个 probe 请求新建一条 XPC／Rust IPC 会话，完整帧上限 64 KiB＋4 字节；回包消费后 ACK，5 秒无 ACK 关闭。状态目录为 root 0700 的 `/Library/Application Support/Meshway`，日志为 os_log `dev.meshway.node`／`node`。
 
-DNS 本机地址方案见 [Apple Host](/v2/node/apple-design#local-dns)：默认 `198.18.255.254`，用 `MESHWAY_DNS_ANCHOR_ADDRESS` 可覆盖同一本机参数；冲突阻断 applied。A3 目标环境为独立 Server 数据目录／随机端口和带所有权标签的 Linux peer 容器，不使用另一工作流的 `127.0.0.1:8420`。接入、双向包流、系统 DNS、租约／停机／恢复和离线载入当前均未取得 VM 证据。
+DNS 本机地址方案见 [Apple Host](/v2/node/apple-design#local-dns)：默认 `198.18.255.254`，用 `MESHWAY_DNS_ANCHOR_ADDRESS` 可覆盖同一本机参数；冲突阻断 applied。A3 环境为独立 Server 数据目录／随机端口和带所有权标签的 Linux peer 容器，不使用另一工作流的 `127.0.0.1:8420`。接入、双向包流、系统 DNS、租约／停机／恢复和离线载入已取得 VM 证据；各行与限制见[验收范围](/v2/node/validation#macos)。
 
-本次隔离环境使用真实 Server 二进制、独立数据目录与 60 秒签名租约，绑定 `192.168.64.1` 的随机端口；专用测试 CA／leaf TLS 入口单独提供 HTTPS。Linux peer 使用现有 `node_lab.build` 生成的 `9e4c040b` ELF 与已核验 Ubuntu 工具镜像，独立 bridge／状态卷、`io.meshway.a3` 标签，复用原 lab 的私有 mount／D-Bus／resolved 入口。该 peer 已接入、running、取得签名 netmap 并经系统 resolver 解析自己的 Mesh 名；不代表 macOS peer 已接入。私有参数、证书与证据见 `lab/server.json`、`lab/peer.json`、`lab/peer-verified.log`。
+本次隔离环境使用真实 Server 二进制、独立数据目录与 60 秒签名租约，绑定 `192.168.64.1` 的随机端口；专用测试 CA／leaf TLS 入口单独提供 HTTPS。Linux peer 使用现有 `node_lab.build` 生成的 `9e4c040b` ELF 与已核验 Ubuntu 工具镜像，独立 bridge／状态卷、`io.meshway.a3` 标签，复用原 lab 的私有 mount／D-Bus／resolved 入口。两端已接入并完成真实包流；macOS 最终版本为 `e5dc03a7` 的 0.1/5。私有参数、证书与证据见 `lab/server.json`、`lab/peer.json` 与证据索引；容器重启后须读回实际发布端口并经生成 SDK 更新 listener。收尾状态为 Node Down、tunnel 停止、固定 VPN 与 extension 保留，隔离 peer／Server 停止、身份与证据保留。
 
-### 黑屏观察与后续条件
+### 显示模式与启动等待
 
-用户报告 VNC／Tart 窗口黑屏、左上角光标；环境 owner 已将来宾关机后，以 `tart run meshway-mac-vm --no-graphics` 启动，未挂 A2 目录。SSH 读到 WindowServer／loginwindow 存在，`kern.bootargs=amfi_get_out_of_my_way=1`；启动后负载曾达 730，WindowServer 约 90% CPU，随后负载回落。日志包含 SkyLight 对进程 ping 超时；现有采样没有足以归因 AMFI 的错误，也没有关闭该参数的对照，**原因未确定**。只采集日志，没有修复显示栈、修改 AMFI 或停止 Tart。
+协调者确认：图形模式启动初期高负载可能持续数分钟，在显示就绪前 VNC／窗口为黑屏，来宾 `screencapture` 可返回 `could not create image from display`；应等待启动负载回落后再判断。`--no-graphics` 模式没有来宾显示，不能在该模式完成 GUI 批准。早期 SkyLight 超时与 AMFI 参数同时出现不能作为 AMFI 导致黑屏的证据。
 
-继续 Node 验收需要恢复一份曾获批准的 VPN 配置，或通过已具备管理条件的 MDM 下发匹配此 provider 的 VPN payload；否则仍需能够完成一次 VPN 确认的交互会话。恢复显示属于单独环境处置，不由本页的网络验收脚本执行。新增 VPN 确认与 extension 替换授权是不同步骤。
+固定 VPN 已在图形会话获批；后续 headless 验收复用同一配置即可。当前 Tart 由环境 owner 以 `--no-graphics` 启动且无共享目录。外部关闭窗口／来宾重启中断验收的记录归私有索引，不能算作产品自发断连。新增 VPN 确认与 extension 替换授权是不同步骤。
 
 下文 A2 0.1/2 的平台实验步骤与结果描述的是薄壳版本；其中 echo／定时 fixture 与固定路由开关已退出当前源码。保留这些结论仅用于界定已经验证的平台前提。
 
@@ -65,9 +65,9 @@ DNS 本机地址方案见 [Apple Host](/v2/node/apple-design#local-dns)：默认
 | 网络 | Tart 默认 shared NAT；不传 `--net-bridged`、`--net-softnet`，不修改宿主 DNS／路由／防火墙 |
 | 构建 | `apps/meshway-apple/build/DerivedData`，macOS 26+、arm64、Swift 6 严格并发 |
 | 安装 | VM 的 `/Applications/Meshway.app`；extension 位于 App 的 `Contents/Library/SystemExtensions` |
-| 当前程序 | A3 0.1/4 App／extension；已批准固定 UUID 的 VPN 配置，须保留 |
+| 当前程序 | A3 0.1/5 App／extension；已批准固定 UUID 的 VPN 配置，须保留 |
 
-当前 VM IP 为 `192.168.64.2`，SSH 专用密钥可用；显示状态见上节。SIP disabled、AMFI 开发参数、developer mode 与虚拟机标记的 A2 读回见下文。A2 曾在用户批准 extension 和 VPN 后完成真实 tunnel、root XPC、fd 发现与路由实验，随后移除了 VPN 配置；该历史不表示当前 A3 已启动 Node。
+当前 VM IP 为 `192.168.64.2`，SSH 专用密钥可用；显示状态见上节。SIP disabled、AMFI 开发参数、developer mode 与虚拟机标记的 A2 读回见下文。A2 的薄壳实验与 A3 的真实 Node 结果分别保留；下文历史操作不用于移除当前固定 VPN。
 
 Tart 2.32.1 官方发布包校验通过；镜像拉取前余量 178 GiB，clone 后 140 GiB。常驻 Tart 进程由环境 owner 启动；当前不挂构建目录，验收操作使用 SSH，不停止或替换该进程。需要重启来宾时在来宾内执行 `sudo shutdown -r now`。
 
@@ -213,7 +213,7 @@ sudo /usr/bin/log show --last 5m --style compact --predicate 'category == "shell
 
 `--lab` 检查 `kern.hv_vmm_present`，只接受一个 action：`activate`、`start-private`、`start-default`、`start-all`、`start-default-local`、`start-all-local`、`app-frame`、`remove`。`start-default` 捕获默认 IPv4 路由，`start-all` 额外启用 `includeAllNetworks`；`-local` 后缀设置 `excludeLocalNetworks=true`，优先用此组合。`app-frame` 验证与调试视图共用的控制器 send／状态更新及连续推送，随后关闭 XPC。start 退出 0 只代表请求被接受，实际 connected、provider PID／UID、NE 设置和探测日志仍须分别读回。
 
-退出 77 表示需要 GUI 批准，78 表示要求重启，124 表示系统请求在 60 秒内未回答。不要反复提交代替用户批准。A2 曾完成 extension 与 VPN 两项批准；VPN 配置移除后，A3 新建配置再次请求 **Allow／允许**。同身份 extension 替换本身无需再次批准，当前阻塞范围见页首。
+退出 77 表示需要 GUI 批准，78 表示要求重启，124 表示系统请求在 60 秒内未回答。不要反复提交代替用户批准。A2 曾完成 extension 与 VPN 两项批准；其 VPN 配置移除后，A3 新建配置再次请求 **Allow／允许**，现已获批。同身份 extension 替换本身无需再次批准，固定配置的保留要求见页首。
 
 外连实验分别在私网路由、默认 IPv4 路由、默认路由＋`includeAllNetworks` 下重启 tunnel。extension 在设置路由前完成一次 URLSession HTTPS 请求，在设置完成后再做一次（`https://1.1.1.1/cdn-cgi/trace`，10 秒截止），只记录 HTTP 状态或错误，不记录响应正文。对照普通 VM 进程访问同地址与 tunnel 包捕获，才能区分 provider 绕行、VM 物理网络不可用或请求落入隧道。URLSession 结果不能证明 Rust 普通 socket／UDP 的全部行为。
 
