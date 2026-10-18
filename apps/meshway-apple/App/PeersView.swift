@@ -63,6 +63,7 @@ struct ProfilesView: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack { Label("Exit profile", systemImage: "arrow.up.forward.circle").font(.headline); Spacer(); Text(selection.appliedProfile).fontWeight(.semibold) }
             Text("Default: \(selection.defaultProfile)" + (selection.locked ? " · locked by administrator" : "")).font(.callout).foregroundStyle(.secondary)
+            if !model.netmapApplied { Text("Netmap selection · not yet installed locally").font(.callout).foregroundStyle(.orange) }
             Text(selection.requestedProfile.map { "Requested: \($0)" } ?? "Following the default profile").font(.caption).foregroundStyle(.secondary)
             if let reason = selection.requestedUnavailable { Text("Requested profile unavailable: \(human(reason))").foregroundStyle(.orange) }
             if let auto = selection.auto { Text("Auto → \(auto.profile) · \(human(auto.basis)) · region \(auto.region ?? "not declared")").font(.caption) }

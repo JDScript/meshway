@@ -7,6 +7,7 @@ struct MainView: View {
     @State private var advanced = false
 
     var body: some View {
+        ScrollViewReader { proxy in
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 ConnectionHeader(model: model, compact: false)
@@ -20,8 +21,8 @@ struct MainView: View {
                     if status.identity == nil && status.phase == .down { enrollment }
                     nodeCard(status)
                     if let routing = model.selection { ProfilesView(model: model, selection: routing) }
-                    peerList(status)
-                    DiagnosticsView(model: model)
+                    peerList(status).id("peers")
+                    DiagnosticsView(model: model).id("diagnostics")
                     HStack {
                         Button("Rotate key", systemImage: "key.horizontal") { Task { await model.identityOperation(logout: false) } }
                             .disabled(status.identity == nil || model.busy || model.sampleMode)
@@ -32,6 +33,12 @@ struct MainView: View {
                 }
             }.padding(28).frame(maxWidth: 1000)
                 .frame(maxWidth: .infinity)
+        }
+        .task {
+            #if DEBUG
+            if model.sampleMode, let section = model.previewSection { proxy.scrollTo(section, anchor: .top) }
+            #endif
+        }
         }
         .background(Color(nsColor: .windowBackgroundColor))
         .toolbar {
@@ -117,7 +124,7 @@ struct MainView: View {
             HStack { Text("Peers").font(.headline); Text("\(status.peers.count)").foregroundStyle(.secondary); Spacer() }
             HStack { Image(systemName: "magnifyingglass").foregroundStyle(.secondary); TextField("Search name or Mesh address", text: $model.search).textFieldStyle(.plain) }.padding(10).background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
             if model.peers.isEmpty {
-                ContentUnavailableView(model.search.isEmpty ? "No peers in the installed netmap" : "No matching peers", systemImage: "network", description: Text(model.search.isEmpty ? "Peers appear when a netmap is installed." : "Try another name or address."))
+                ContentUnavailableView(model.search.isEmpty ? (status.node == nil ? "Peers unavailable" : "No visible peers") : "No matching peers", systemImage: "network", description: Text(model.search.isEmpty ? (status.node == nil ? "No netmap is currently installed." : "The installed netmap contains no other nodes.") : "Try another name or address."))
             } else {
                 VStack(spacing: 0) {
                     ForEach(model.peers, id: \.nodeId) { peer in

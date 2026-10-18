@@ -33,7 +33,11 @@ enum PreviewMode {
                 default: throw IPCFailure.result
                 }
                 let model = try await model(sample)
-                let main = window(MainView(model: model), size: NSSize(width: 860, height: 1040), title: "Meshway · SAMPLE DATA")
+                if let index = args.firstIndex(of: "--preview-section"), args.count > index + 1 {
+                    guard ["peers", "diagnostics"].contains(args[index + 1]) else { throw IPCFailure.result }
+                    model.previewSection = args[index + 1]
+                }
+                let main = window(MainView(model: model).safeAreaInset(edge: .bottom) { SampleBanner().padding(10).frame(maxWidth: .infinity).background(Color(nsColor: .windowBackgroundColor)) }, size: NSSize(width: 860, height: 1040), title: "Meshway · SAMPLE DATA")
                 let panel = window(MenuPanel(model: model), size: NSSize(width: 380, height: sample == .running ? 650 : 380), title: "Meshway menu panel · SAMPLE DATA")
                 windows = [main, panel]
                 main.setFrameOrigin(NSPoint(x: 60, y: 80)); panel.setFrameOrigin(NSPoint(x: 950, y: 160))
@@ -42,8 +46,9 @@ enum PreviewMode {
                     try await Task.sleep(for: .seconds(2))
                     let directory = URL(fileURLWithPath: args[index + 1], isDirectory: true)
                     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-                    try snapshot(main, to: directory.appendingPathComponent("\(sampleName)-main.png"))
-                    try snapshot(panel, to: directory.appendingPathComponent("\(sampleName)-panel.png"))
+                    let stem = sampleName + (model.previewSection.map { "-\($0)" } ?? "")
+                    try snapshot(main, to: directory.appendingPathComponent("\(stem)-main.png"))
+                    try snapshot(panel, to: directory.appendingPathComponent("\(stem)-panel.png"))
                     print("Preview screenshots saved to \(directory.path)")
                     main.close(); panel.close(); exit(0)
                 }

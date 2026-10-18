@@ -58,6 +58,11 @@ pub(super) fn status(sample: ClientSample) -> ipc::Status {
         ClientSample::AwaitingApproval => {
             status.desired_up = true;
             status.phase = ipc::Phase::AwaitingApproval;
+            status.enrollment_request_id = Some(
+                "00000000-0000-4000-8000-000000000010"
+                    .parse()
+                    .expect("sample enrollment"),
+            );
             status.enrollment_url = Some("https://console.example/approve/sample".into());
         }
         ClientSample::Running | ClientSample::Error => {
@@ -65,6 +70,36 @@ pub(super) fn status(sample: ClientSample) -> ipc::Status {
             status.phase = ipc::Phase::Running;
             status.data_plane = ipc::DataPlane::Ready;
             status.authenticated = true;
+            let key = |number, algorithm| meshway_model::BoundNodeKey {
+                id: format!("00000000-0000-4000-8000-{number:012}")
+                    .parse()
+                    .expect("sample key id"),
+                generation: Version::MIN,
+                public_key: meshway_model::NodePublicKey {
+                    algorithm,
+                    bytes: meshway_model::Digest::from_bytes([number; 32]),
+                },
+            };
+            status.identity = Some(meshway_protocol::EnrollmentResponse {
+                controller_id: "00000000-0000-4000-8000-000000000011"
+                    .parse()
+                    .expect("sample controller"),
+                network_id: "00000000-0000-4000-8000-000000000012"
+                    .parse()
+                    .expect("sample network"),
+                node_id: "00000000-0000-4000-8000-000000000002"
+                    .parse()
+                    .expect("sample node"),
+                keys: meshway_protocol::NodeKeyMetadata {
+                    control: key(20, meshway_model::KeyAlgorithm::Ed25519),
+                    dataplane: key(21, meshway_model::KeyAlgorithm::X25519),
+                },
+                server_signing_key: meshway_protocol::netmap::ServerSigningKey {
+                    key_id: key(22, meshway_model::KeyAlgorithm::Ed25519).id,
+                    key_generation: Version::MIN,
+                    public_key: key(22, meshway_model::KeyAlgorithm::Ed25519).public_key,
+                },
+            });
             status.sync = ipc::SyncState::Connected;
             status.last_sync_at = Some(now - Duration::seconds(24));
             status.node = Some(ipc::NodeSelf {

@@ -20,6 +20,9 @@ final class AppModel {
     var pingTarget = ""
     var pingRunning = false
     var sampleMode = false
+    #if DEBUG
+    var previewSection: String?
+    #endif
     private var openedApproval: String?
     private var polling = false
     private var pollTask: Task<Void, Never>?
@@ -37,6 +40,10 @@ final class AppModel {
     var title: String { status?.node?.hostname ?? (status?.identity == nil ? "Join your network" : "This Mac") }
     var phase: String { status.map { label($0.phase) } ?? "Node status unavailable" }
     var selection: ClientSelection? { status?.netmap?.routing }
+    var netmapApplied: Bool {
+        guard let reference = status?.netmap?.reference, let applied = status?.applied else { return false }
+        return reference == applied
+    }
     var vpnLabel: String {
         if sampleMode { return "Sample VPN state" }
         if tunnel.preferencesError != nil { return "Status unavailable" }
@@ -76,8 +83,7 @@ final class AppModel {
         if let committed = committedSelection,
            let local = selection, committed.version == local.version,
            committed.requestedProfile == local.requestedProfile,
-           let netmap = status.netmap, let applied = status.applied,
-           netmap.reference.digest == applied.digest && netmap.reference.serial == applied.serial {
+           netmapApplied {
             notice = "Routing selection applied."
             committedSelection = nil
         }

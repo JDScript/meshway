@@ -20,7 +20,7 @@ struct MenuPanel: View {
                 }
                 if let error = status.lastError { Label(human(error), systemImage: "exclamationmark.circle").foregroundStyle(.orange) }
                 if let error = status.networkError { Text("Network · \(human(error.problem))").foregroundStyle(.orange) }
-                if let selection = model.selection { LabeledContent("Exit profile", value: selection.appliedProfile).font(.callout) }
+                if let selection = model.selection { LabeledContent("Exit profile", value: selection.appliedProfile + (model.netmapApplied ? "" : " · not applied")).font(.callout) }
                 if !status.peers.isEmpty {
                     Text("PEERS").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                     ForEach(Array(status.peers.prefix(3)), id: \.nodeId) { peer in PeerRow(model: model, peer: peer).contextMenu { PeerCopyActions(peer: peer) } }
@@ -37,5 +37,6 @@ struct MenuPanel: View {
                 Menu { Button("Quit Meshway") { NSApp.terminate(nil) } } label: { Image(systemName: "ellipsis.circle") }.menuStyle(.borderlessButton).fixedSize()
             }
         }.padding(20).frame(width: 380)
+            .background(Color(nsColor: .windowBackgroundColor))
     }
 }
