@@ -1,5 +1,5 @@
-//! I/O injection only. Production opening, resolution and socket protection have
-//! exactly one implementation, in meshway-underlay.
+//! Platform-owned I/O injection: Linux Underlay and Apple Host each own their
+//! physical descriptors; traversal recipient authorization is shared in Underlay.
 use crate::Error;
 use futures_util::future::BoxFuture;
 use meshway_transport::raw::{Datagram, Stream};

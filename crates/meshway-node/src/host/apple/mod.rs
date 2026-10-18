@@ -183,6 +183,7 @@ impl Platform for Apple {
                 interface: self.interface.clone(),
                 hosts: options.bootstrap_hosts,
                 timeout: options.connect_timeout,
+                resolver: Arc::new(Default::default()),
             });
             let watched_routes = settings
                 .as_ref()
@@ -197,8 +198,13 @@ impl Platform for Apple {
                 settings,
                 watched_routes,
                 check_at: std::time::Instant::now() + std::time::Duration::from_secs(1),
-                sockets,
+                sockets: sockets.clone(),
                 facts: Facts::default(),
+                http: Arc::new(sockets::resolver::HttpResolver {
+                    queries: Arc::new(Default::default()),
+                    stop: tokio_util::sync::CancellationToken::new(),
+                    hosts: sockets.hosts.clone(),
+                }),
             }) as Box<dyn Host>)
         })
     }
@@ -221,11 +227,13 @@ struct Attachment {
     settings: Option<TunnelSettings>,
     sockets: Arc<sockets::Factory>,
     facts: Facts,
+    http: Arc<sockets::resolver::HttpResolver>,
     watched_routes: Vec<ipnet::IpNet>,
     check_at: std::time::Instant,
 }
 impl Drop for Attachment {
     fn drop(&mut self) {
+        self.http.stop.cancel();
         let _ = self.sockets.resources.apply(None);
     }
 }
@@ -301,16 +309,8 @@ impl Host for Attachment {
                 return Err(Error::Unsupported("capture prefix capacity"));
             }
             let settings = TunnelSettings {
-                ipv4: desired
-                    .local()
-                    .addresses
-                    .ipv4
-                    .or_else(|| self.settings.as_ref().and_then(|settings| settings.ipv4)),
-                ipv6: desired
-                    .local()
-                    .addresses
-                    .ipv6
-                    .or_else(|| self.settings.as_ref().and_then(|settings| settings.ipv6)),
+                ipv4: desired.local().addresses.ipv4,
+                ipv6: desired.local().addresses.ipv6,
                 routes,
                 mtu: self.device.mtu() as u16,
             };
@@ -364,11 +364,17 @@ impl Host for Attachment {
     }
     fn shutdown(mut self: Box<Self>, keep: bool) -> Local<'static, Result<()>> {
         Box::pin(async move {
-            if keep {
+            let result = if keep {
                 self.suspend().await
             } else {
                 self.down().await
-            }
+            };
+            self.http.stop.cancel();
+            tokio::join!(
+                self.sockets.resolver.shutdown(),
+                self.http.queries.shutdown()
+            );
+            result
         })
     }
     fn tun(&self) -> Option<&dyn meshway_tun::PacketDevice> {
@@ -382,7 +388,12 @@ impl Host for Attachment {
     }
     fn client_builder(&self) -> Result<reqwest::ClientBuilder> {
         meshway_control_client::http_client_builder()
-            .map(|builder| builder.no_proxy().pool_max_idle_per_host(0))
+            .map(|builder| {
+                builder
+                    .no_proxy()
+                    .pool_max_idle_per_host(0)
+                    .dns_resolver(self.http.clone())
+            })
             .map_err(|error| io::Error::other(error.to_string()).into())
     }
     fn network_changes(&self) -> watch::Receiver<NetworkChange> {

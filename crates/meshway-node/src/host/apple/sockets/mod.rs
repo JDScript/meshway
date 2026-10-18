@@ -1,4 +1,5 @@
 //! Apple physical sockets; traversal checks are shared with Linux Underlay.
+pub(super) mod resolver;
 mod tcp;
 mod udp;
 use super::resources::{Resource, Resources};
@@ -27,6 +28,7 @@ pub(super) struct Factory {
     pub interface: Arc<Mutex<Option<String>>>,
     pub hosts: BTreeMap<String, Vec<IpAddr>>,
     pub timeout: Duration,
+    pub resolver: Arc<resolver::Resolver>,
 }
 impl Factory {
     pub fn protect(
@@ -72,7 +74,7 @@ impl Factory {
     }
     pub async fn resolve(
         &self,
-        resource: &Resource,
+        resource: &Arc<Resource>,
         endpoint: &Endpoint,
     ) -> io::Result<Vec<SocketAddr>> {
         resource.check()?;
@@ -82,11 +84,14 @@ impl Factory {
         } else if let Some(hosts) = self.hosts.get(&endpoint.host) {
             hosts.iter().map(|ip| SocketAddr::new(*ip, port)).collect()
         } else {
-            tokio::select! { biased;
-                _ = resource.stop.cancelled() => return Err(io::ErrorKind::NotConnected.into()),
-                result = tokio::time::timeout(self.timeout, tokio::net::lookup_host((endpoint.host.as_str(), port))) =>
-                    result.map_err(|_| io::ErrorKind::TimedOut)??.take(16).collect(),
-            }
+            self.resolver
+                .lookup(
+                    resource.stop.clone(),
+                    endpoint.host.clone(),
+                    port,
+                    self.timeout,
+                )
+                .await?
         };
         resource.check()?;
         if addresses.is_empty() {

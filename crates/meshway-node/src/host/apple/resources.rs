@@ -138,30 +138,6 @@ impl<T> Drop for Owned<T> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tokio::io::AsyncReadExt;
-
-    #[tokio::test]
-    async fn dropping_packet_owner_closes_descriptor_even_with_retained_authorization_context() {
-        let capacity = Arc::new(Semaphore::new(1));
-        let resource = Arc::new(Resource {
-            purpose: ResourceRef::Listener { key: "test".into() },
-            stop: CancellationToken::new(),
-            close: Mutex::new(None),
-            permit: Mutex::new(Some(capacity.clone().try_acquire_owned().unwrap())),
-        });
-        let authorization = resource.clone();
-        let (socket, mut remote) = tokio::io::duplex(128);
-        let owned = Owned::new(socket, resource).unwrap();
-        assert_eq!(capacity.available_permits(), 0);
-        drop(owned);
-        assert!(authorization.check().is_err());
-        assert_eq!(capacity.available_permits(), 1);
-        assert_eq!(remote.read(&mut [0; 1]).await.unwrap(), 0);
-    }
-}
 impl<T: Send + 'static> Owned<T> {
     pub fn new(socket: T, resource: Arc<Resource>) -> io::Result<Self> {
         let physical = Arc::new(Physical {
@@ -209,5 +185,30 @@ impl<T: Send + 'static> Owned<T> {
             .lock()
             .map_err(|_| io::ErrorKind::Other)?;
         call(socket.as_mut().ok_or(io::ErrorKind::NotConnected)?, cx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::AsyncReadExt;
+
+    #[tokio::test]
+    async fn dropping_packet_owner_closes_descriptor_even_with_retained_authorization_context() {
+        let capacity = Arc::new(Semaphore::new(1));
+        let resource = Arc::new(Resource {
+            purpose: ResourceRef::Listener { key: "test".into() },
+            stop: CancellationToken::new(),
+            close: Mutex::new(None),
+            permit: Mutex::new(Some(capacity.clone().try_acquire_owned().unwrap())),
+        });
+        let authorization = resource.clone();
+        let (socket, mut remote) = tokio::io::duplex(128);
+        let owned = Owned::new(socket, resource).unwrap();
+        assert_eq!(capacity.available_permits(), 0);
+        drop(owned);
+        assert!(authorization.check().is_err());
+        assert_eq!(capacity.available_permits(), 1);
+        assert_eq!(remote.read(&mut [0; 1]).await.unwrap(), 0);
     }
 }
